@@ -4,7 +4,7 @@ import { MageMark } from './MageMark';
 import { AppMenu } from './AppMenu';
 import { AccountSwitcher } from './AccountSwitcher';
 import { Icon } from './Icon';
-import { buildBugReportUrl } from '../bugReport';
+import { buildBugReportUrl, buildIdeaUrl } from '../bugReport';
 
 // Ancho que reserva Windows para sus tres botones de sistema (minimizar/maximizar/cerrar) en la franja
 // de `titleBarOverlay`. Se deja libre a la derecha: cualquier cosa pintada debajo seria inalcanzable.
@@ -77,6 +77,7 @@ export function TitleBar(): React.JSX.Element {
         <>
           <AccountSwitcher />
           <div className="flex-1" />
+          <IdeaButton />
           <BugReportButton />
         </>
       )}
@@ -84,10 +85,55 @@ export function TitleBar(): React.JSX.Element {
   );
 }
 
-// Informar de un fallo, pegado a la IZQUIERDA de los botones del SO. No puede ir entre ellos: esa
-// franja la pinta Windows y aqui solo se reserva su ancho (ver WINDOWS_CONTROLS_WIDTH_PX), asi que
-// cualquier cosa dibujada debajo seria inalcanzable. Este es el sitio mas cercano que existe.
+// Los dos botones que llevan a GitHub -idea y fallo-, pegados a la IZQUIERDA de los botones del SO.
+// No pueden ir entre ellos: esa franja la pinta Windows y aqui solo se reserva su ancho (ver
+// WINDOWS_CONTROLS_WIDTH_PX), asi que cualquier cosa dibujada debajo seria inalcanzable. Este es el
+// sitio mas cercano que existe.
 //
+// El estilo se comparte, y no es una abstraccion "por si acaso": son dos controles pegados que tienen
+// que verse identicos, y tenerlo escrito dos veces es como se despegan.
+function TitleBarIssueButton({
+  icon,
+  tip,
+  label,
+  onClick,
+}: {
+  readonly icon: 'bug' | 'sparkles';
+  readonly tip: string;
+  readonly label: string;
+  readonly onClick: () => void;
+}): React.JSX.Element {
+  return (
+    <button
+      onClick={onClick}
+      style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+      data-tip={tip}
+      // Dice que ABRE EL NAVEGADOR: el control se va de la app, y eso se anuncia antes de pulsarlo.
+      aria-label={label}
+      className="flex shrink-0 items-center rounded-[5px] p-[3px] text-mg-sec transition-colors duration-150 ease-out hover:bg-mg-hover hover:text-mg-body"
+    >
+      <Icon name={icon} size={15} />
+    </button>
+  );
+}
+
+// Aportar una idea. A diferencia del informe de fallo NO pide la version: `idea.yml` no tiene ese
+// campo, asi que no hay nada que prerrellenar y se ahorra el viaje por IPC (ver `buildIdeaUrl`).
+function IdeaButton(): React.JSX.Element {
+  return (
+    <TitleBarIssueButton
+      icon="sparkles"
+      tip="Aportar una idea en GitHub"
+      label="Aportar una idea o sugerencia (abre GitHub en el navegador)"
+      onClick={() => {
+        window.mage
+          .openExternal(buildIdeaUrl())
+          .catch((err: unknown) => console.warn('No se pudo abrir el formulario de idea:', err));
+      }}
+    />
+  );
+}
+
 // La version se pide AL PULSAR, no al montar: `getAbout()` trae ademas el texto ENTERO de
 // THIRD-PARTY-NOTICES.txt (85 dependencias), y cruzar eso por IPC en cada arranque de la ventana para
 // leer un numero de version seria pagar un fichero por un dato. Aqui se paga solo quien informa.
@@ -110,16 +156,12 @@ function BugReportButton(): React.JSX.Element {
   };
 
   return (
-    <button
+    <TitleBarIssueButton
+      icon="bug"
+      tip="Informar de un fallo en GitHub"
+      label="Informar de un fallo (abre GitHub en el navegador)"
       onClick={openReport}
-      style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
-      data-tip="Informar de un fallo en GitHub"
-      // Dice que ABRE EL NAVEGADOR: el control se va de la app, y eso se anuncia antes de pulsarlo.
-      aria-label="Informar de un fallo (abre GitHub en el navegador)"
-      className="flex shrink-0 items-center rounded-[5px] p-[3px] text-mg-sec transition-colors duration-150 ease-out hover:bg-mg-hover hover:text-mg-body"
-    >
-      <Icon name="bug" size={15} />
-    </button>
+    />
   );
 }
 

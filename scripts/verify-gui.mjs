@@ -264,6 +264,50 @@ const CHECKS = [
     },
   },
   {
+    // Boton de aportar una idea (2026-09-23, peticion del usuario: "junto al de reportar bug"). Se
+    // mide ORDENADO respecto al de fallo, porque es lo unico que distingue "hay dos botones" de "hay
+    // dos botones puestos donde toca": la idea a la izquierda, el fallo pegado a la franja del SO.
+    //
+    // Y se mide que NO abren el mismo formulario. No se pulsa ninguno -abriria el navegador a mitad
+    // de la tanda-, asi que el destino se compara por la etiqueta accesible, que es lo unico que el
+    // DOM expone de a donde va cada uno. Las URL en si las cubre `bugReport.test.ts`.
+    name: 'Cabecera: los dos botones de GitHub (idea y fallo) estan, en orden y sin solaparse',
+    async run(page) {
+      const measured = await page.evaluate(() => {
+        const idea = document.querySelector('button[aria-label^="Aportar una idea"]');
+        const fallo = document.querySelector('button[aria-label^="Informar de un fallo"]');
+        if (!idea || !fallo) return null;
+        const i = idea.getBoundingClientRect();
+        const f = fallo.getBoundingClientRect();
+        return {
+          etiquetaIdea: idea.getAttribute('aria-label') ?? '',
+          tipIdea: idea.getAttribute('data-tip') ?? '',
+          region: getComputedStyle(idea).getPropertyValue('-webkit-app-region'),
+          svgs: idea.querySelectorAll('svg').length,
+          // El icono NO puede ser el mismo: dos botones pegados con el mismo dibujo no se distinguen.
+          mismoIcono: (idea.querySelector('path')?.getAttribute('d') ?? 'a') === (fallo.querySelector('path')?.getAttribute('d') ?? 'b'),
+          ideaAntes: Math.round(i.right) <= Math.round(f.left),
+          separacionPx: Math.round(f.left - i.right),
+          mismaAltura: Math.round(i.top) === Math.round(f.top),
+          alto: Math.round(i.height),
+        };
+      });
+      const ok =
+        measured !== null &&
+        measured.svgs === 1 &&
+        measured.region === 'no-drag' &&
+        !measured.mismoIcono &&
+        measured.ideaAntes &&
+        measured.separacionPx >= 0 &&
+        measured.mismaAltura &&
+        measured.alto >= 16 &&
+        // Dice que se va al navegador ANTES de pulsarlo, igual que el de fallo.
+        /navegador/i.test(measured.etiquetaIdea) &&
+        /GitHub/i.test(measured.tipIdea);
+      return { ok, detail: `idea=${JSON.stringify(measured)}` };
+    },
+  },
+  {
     // 2.9.b: el menu de aplicacion propio SUSTITUYE al `Menu` nativo. La medida que demuestra la
     // sustitucion es que el desplegable esta EN EL DOM del renderer (el nativo no lo estaba), y que sus
     // atajos vienen del catalogo de acciones — por eso se busca `Ctrl+N`, que nadie escribio a mano.

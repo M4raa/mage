@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildBugReportUrl, GITHUB_REPO, issueOsFromPlatform } from './bugReport';
+import { buildBugReportUrl, buildIdeaUrl, GITHUB_REPO, issueOsFromPlatform } from './bugReport';
 
 // Lo que estas pruebas protegen no es la cadena: es que el formulario de GitHub salga RELLENO. Si un
 // nombre de parametro deja de casar con el `id` del campo en `fallo.yml`, GitHub no avisa —abre el
@@ -69,5 +69,30 @@ describe('buildBugReportUrl', () => {
     const url = new URL(buildBugReportUrl({ appVersion: '0.1.0+dev build', platform: 'Win32' }));
 
     expect(url.searchParams.get('version')).toBe('0.1.0+dev build');
+  });
+});
+
+describe('buildIdeaUrl', () => {
+  it('sinContexto_apuntaAIdeaYmlConLaEtiquetaQueExiste', () => {
+    const url = new URL(buildIdeaUrl());
+
+    expect(url.origin + url.pathname).toBe(`https://github.com/${GITHUB_REPO}/issues/new`);
+    expect(url.searchParams.get('template')).toBe('idea.yml');
+    // `enhancement` y no `idea`: GitHub descarta en silencio las etiquetas que no existen ya en el
+    // repositorio. Tiene que seguir casando con el `labels:` de `.github/ISSUE_TEMPLATE/idea.yml`.
+    expect(url.searchParams.get('labels')).toBe('enhancement');
+  });
+
+  it('noMandaVersionNiSo_porqueIdeaYmlNoTieneEsosCampos', () => {
+    const url = new URL(buildIdeaUrl());
+
+    expect(url.searchParams.has('version')).toBe(false);
+    expect(url.searchParams.has('so')).toBe(false);
+  });
+
+  it('noEsLaMismaUrlQueLaDelFallo', () => {
+    // Protege el copy-paste: dos botones pegados que abriesen el mismo formulario es justo el fallo
+    // que nadie mira dos veces.
+    expect(buildIdeaUrl()).not.toBe(buildBugReportUrl({ appVersion: null, platform: 'Win32' }));
   });
 });
