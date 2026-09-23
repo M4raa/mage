@@ -1,0 +1,111 @@
+# Empaquetado e instaladores (B1, cierre de M3). Un fichero por SO, sin firma de codigo todavia.
+appId: com.m4raa.mage
+productName: Mage
+copyright: © 2026 M4raa
+
+# ffmpeg LIBRE (B.4 de la revision de licencias de terceros): Electron trae de serie codecs propietarios (H.264/AAC) que
+# Mage no usa —no reproduce video ni audio— y cuya distribucion exige licencias de patentes. El hook
+# descarga la build sin esos codecs de la MISMA version de Electron y pisa el binario del paquete.
+# Falla ruidosamente si no lo encuentra: publicarlos sin saberlo es el fallo que viene a evitar.
+afterPack: scripts/after-pack-free-ffmpeg.mjs
+
+directories:
+  output: release
+  buildResources: resources/brand
+
+# QUE entra en el bundle. `resources/brand` va DENTRO del asar a proposito: el main resuelve los
+# iconos como `join(out/main, '../../resources/brand')`, ruta que funciona igual en dev y dentro del
+# asar. Si se movieran a extraResources habria que reescribir esas rutas con process.resourcesPath.
+# Se incluyen solo los rasterizados que se usan en runtime: los .svg son fuente del script `pnpm
+# icons`, y el brandbook/screenshots/uploads de `resources/` son decenas de MB que no pinta nadie.
+files:
+  - out/**
+  - package.json
+  # Avisos de terceros (B.2/B.3 de la revision legal): las 85 dependencias de produccion exigen
+  # conservar su copyright al redistribuir, y el bundle minificado los borra. Este fichero es lo que
+  # cumple la clausula, y la pantalla «Acerca de» lo lee de la raiz del asar. Se genera con
+  # `pnpm notices`; `pnpm check` falla si se queda desfasado respecto a las dependencias instaladas.
+  - THIRD-PARTY-NOTICES.txt
+  - resources/brand/*.png
+  - resources/brand/*.ico
+  # electron-builder incluye SIEMPRE las dependencies de produccion en node_modules, aunque no esten en
+  # esta lista. Aqui no hacen falta: electron-vite bundlea renderer y preload enteros, y en main
+  # bundlea ademas electron-updater y zod (exclude explicito en electron.vite.config.ts) porque
+  # `externalizeDepsPlugin` los deja como import externo que no existe dentro del asar. El resto de
+  # deps de main (react, react-dom, zustand, react-window...) solo las usa el renderer, que si va
+  # bundleado entero. Sin esta exclusion el asar arrastraba ~10 MB de node_modules, incluidos los
+  # builds de DESARROLLO y profiling de react-dom, que en produccion no se ejecutan nunca. No hay
+  # modulos NATIVOS en runtime (@resvg/resvg-js es devDependency, solo la usa `pnpm icons`), asi que no
+  # se pierde nada. Si algun dia se anade una dependencia nativa o main pasa a usar otro paquete
+  # externalizado, habra que dejarlo fuera del bundle y quitarlo de esta exclusion.
+  - '!node_modules/**'
+
+# Auto-update por GitHub Releases (B2). Esto hace dos cosas: genera `latest.yml` junto al instalador
+# (los metadatos que electron-updater consulta) y mete `app-update.yml` en el bundle (de donde el
+# updater saca owner/repo en runtime).
+#
+# FALTA para que el update funcione de principio a fin (nada de esto esta hecho):
+#   1. PUBLICAR una release en github.com/M4raa/mage con el instalador Y su `latest.yml`
+#      (`pnpm dist:win` los deja en `release/`; subirlos a la release del tag correspondiente, o usar
+#      `electron-builder --publish always` con GH_TOKEN). Sin `latest.yml` publicado el updater
+#      responde 404 y Mage se queda en su version (logueado como warn, sin molestar al usuario).
+#   2. FIRMA DE CODIGO: el instalador de hoy NO esta firmado (ver B1). En Windows, aplicar un update
+#      sin firma dispara el aviso de SmartScreen/UAC en cada actualizacion, y en macOS el updater
+#      RECHAZA el paquete (exige que la firma coincida con la de la app instalada).
+#   3. Probar un update real 0.1.0 -> 0.1.1 sobre una instalacion hecha con el .exe, no en dev.
+publish:
+  provider: github
+  owner: M4raa
+  repo: mage
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+    # MSI ademas del NSIS: el .exe es el que se descarga una persona, y el .msi es el que se puede
+    # desplegar por politica de grupo o con `msiexec /qn` sin asistente. Los dos salen del mismo build.
+    - target: msi
+      arch: [x64]
+  # .ico MULTI-TAMAÑO: los tamaños pequeños llevan el glifo simplificado, nitido a 16 px.
+  icon: resources/brand/icon.ico
+
+msi:
+  oneClick: false
+  perMachine: false
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Mage
+  artifactName: mage-setup-beta-${version}.${ext}
+
+nsis:
+  # Instalador con asistente (no one-click) para poder elegir carpeta, y POR USUARIO: asi no pide
+  # permisos de administrador, que para una app de escritorio de un solo usuario es friccion inutil.
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Mage
+  artifactName: mage-setup-beta-${version}.${ext}
+
+mac:
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+  category: public.app-category.developer-tools
+  # Sin .icns en el repo: electron-builder lo deriva del PNG de 1024 al construir en macOS.
+  icon: resources/brand/icon-1024.png
+  artifactName: mage-setup-beta-${version}-${arch}.${ext}
+
+linux:
+  target:
+    - target: AppImage
+      arch: [x64]
+    - target: deb
+      arch: [x64]
+    - target: rpm
+      arch: [x64]
+  category: Development
+  icon: resources/brand/icon-1024.png
+  synopsis: Wrapper multiagentico y multi-proveedor sobre agentes de codigo
+  artifactName: mage-setup-beta-${version}-${arch}.${ext}

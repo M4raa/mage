@@ -1,0 +1,18 @@
+# Configuracion de pnpm. En pnpm 11+ los build scripts (postinstall) se autorizan aqui.
+# Solo estos paquetes pueden ejecutar scripts al instalar:
+#   - electron: descarga/extrae su binario nativo (en Windows se extrae a mano, ver ROADMAP).
+#   - esbuild:  coloca su binario de plataforma (lo usa Vite).
+#   - electron-winstaller: dependencia de electron-builder para el instalador SQUIRREL, que no usamos
+#     (en Windows generamos NSIS). Sus scripts no se ejecutan; la decision se deja explicita para que
+#     `pnpm install` no falle pidiendola (ERR_PNPM_IGNORED_BUILDS), que rompia el empaquetado.
+allowBuilds:
+  electron: true
+  electron-winstaller: false
+  esbuild: true
+
+# Overrides de resolucion. `js-yaml` entra en PRODUCCION por electron-updater y la 4.3.1 arrastra
+# GHSA-2883-xcg3-v3hh (severidad alta, B.7 de la revision de licencias de terceros). El arbol ya resolvia
+# la 4.3.2 en otros sitios: esto obliga a que la de produccion tambien lo sea, sin esperar a que
+# electron-updater publique version.
+overrides:
+  js-yaml@<4.3.2: ^4.3.2

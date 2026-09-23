@@ -1,0 +1,5839 @@
+// Mage — Verificacion GUI contra la app REAL, por CDP.
+//
+// Por que existe: cada ronda de verificacion se escribia un driver desechable (`_cdp_*.mjs`) en la
+// raiz del repo, porque `playwright-core` no resuelve modulos desde el scratchpad. Esto lo deja fijo,
+// versionado y repetible, con tres cosas que los drivers de usar y tirar no tenian:
+//
+//   1. `--user-data-dir` AISLADO: la verificacion no toca el %APPDATA%/Mage real del usuario. De paso
+//      arranca sin pestañas persistidas, asi que NO spawnea ninguna sesion del CLI (coste cero) y no
+//      hereda el "residuo de maquina" (panels-layout.json viejo) que ya disfrazo un bug dos veces.
+//   2. Un ARTEFACTO revisable por ejecucion (`session.md` + capturas), en vez de un parrafo de ROADMAP
+//      que nadie puede volver a comprobar. Idea tomada de playwright-core/src/tools/backend/sessionLog.
+//   3. Terminacion del ARBOL de procesos al acabar (electron-vite -> electron -> renderers/GPU): con
+//      un kill del hijo directo quedaban procesos vivos, que es justo el bug que se corrigio en
+//      AgentSession (ver src/main/os/processTree.ts).
+//
+// Uso:
+//   pnpm verify:gui             # arranca, comprueba y limpia
+//   pnpm verify:gui --keep      # deja la app abierta al terminar (para mirar a ojo)
+//   pnpm verify:gui --only=texto # solo las comprobaciones cuyo nombre contenga `texto`
+//
+// LIMITE, dicho en voz alta: esto MIDE el DOM real; no juzga si el resultado se ve bien. El vistazo
+// humano sigue siendo del usuario (ver .claude/skills/verificacion-gui).
+
+import { spawn, spawnSync } from 'node:child_process';
+import { createRequire } from 'node:module';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { chromium } from 'playwright-core';
+
+const repoRoot = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+// El paquete `electron` exporta la RUTA a su binario cuando se carga desde node (no desde Electron).
+const requireFromHere = createRequire(import.meta.url);
+
+const CONFIG = {
+  port: 9222,
+  outDir: path.join(repoRoot, '.verify-out'),
+  bootTimeoutMs: 120_000,
+  pollIntervalMs: 500,
+  actionTimeoutMs: 10_000,
+  // Re-render de React tras un clic/cambio de estado. Corto a proposito: lo que tarda de verdad se
+  // espera con `waitFor`/sondeo, no con esperas ciegas mas largas.
+  settleMs: 200,
+};
+
+// Anclas del DOM real. Los textos se repiten aqui en vez de importarse de `src/shared` porque este
+// fichero es un .mjs que corre en node, sin el pipeline de TS: si alguien cambia el catalogo, el aviso o
+// una etiqueta y no toca esto, la comprobacion lo canta en su medida en vez de pasar en verde.
+const MODAL = '[role="dialog"][aria-modal="true"]';
+const NEW_TAB_DIALOG = '[role="dialog"][aria-labelledby="newtab-title"]';
+// Etiquetas de los campos del dialogo de nueva conversacion (el <label> envuelve a su control).
+const NEW_TAB_FIELD = { provider: 'PROVEEDOR', model: 'MODELO' };
+// Motivo del rechazo del formulario de ALTA de proveedor (`idSuffix="nuevo"` en SettingsView).
+const PROVIDER_NEW_ERROR = '#provider-error-nuevo';
+// PROVIDER_TEMPLATES de src/shared/providers.ts: solo prerrellenan el formulario, no son proveedores.
+const PROVIDER_TEMPLATE_LABELS = ['Ollama', 'LM Studio'];
+const OLLAMA_TEMPLATE = {
+  label: 'Ollama',
+  baseUrl: 'http://localhost:11434/v1',
+  models: 'llama3, mistral, qwen2.5-coder',
+  modelCount: 3,
+};
+// Primeras palabras de NO_PERMISSION_CONTROL_WARNING y del aviso de `agy` sin instalar (E3).
+const NO_PERMISSION_HEAD = 'Sin control de permisos';
+const AGY_MISSING_HEAD = 'No se ha encontrado el CLI';
+const AGY_PROVIDER_ID = 'agy';
+const AGY_PERMISSION_CHIP = 'Sin permisos';
+// Vallas de codigo para medir el resaltado (F4): `ts` esta en HIGHLIGHT_LANGS (debe tokenizar) y `rust`
+// no lo esta (debe caer a texto plano, que NO es lo mismo que quedarse en blanco).
+const TS_FENCE = '```ts\nconst answer: number = 42;\nexport const twice = (n: number): number => n * 2;\n```';
+const RUST_FENCE = '```rust\nfn main() { println!("hola"); }\n```';
+
+// --- Comprobaciones ------------------------------------------------------------------------------
+//
+// Cada una devuelve { ok, detail }. `detail` SIEMPRE lleva el valor medido, tambien cuando pasa: un
+// "ok" sin dato no es verificacion, es fe.
+
+// --- Fase 0: presupuestos de rendimiento ----------------------------------------------------------
+// Holgados a proposito. Un presupuesto apretado en un harness que corre en DEV, con CDP enganchado y
+// compitiendo por CPU con lo que tenga la maquina, seria un intermitente — y un intermitente en el
+// harness es peor que una comprobacion de menos (regla del repo, ver .claude/skills/verificacion-gui).
+// Se ajustan a la baja cuando las fases 1 y 5 muevan el numero, no antes.
+//
+// Cuantos deltas tiene la rafaga de 0.1: 60 es alrededor de un segundo de streaming real.
+// Cuentas falsas que se inyectan para estresar la columna izquierda. El numero esta elegido para que
+// el contenido NO quepa: con 12 medía 742 px en una ventana de 800 y pasaba por los pelos, que es
+// justo el falso verde que hay que evitar. Lo que se mide no es "caben N", es que la columna se las
+// arregle sola —scrolleando por dentro— en vez de empujar la pagina entera.
+const RAIL_STRESS_ACCOUNTS = 30;
+
+const DELTA_BURST_SIZE = 60;
+// Coste maximo por delta, INCLUIDO el frame que se le deja pintar (de ese presupuesto, unos 16,7 ms
+// son el propio requestAnimationFrame: lo que se vigila es lo que se pase de ahi).
+const DELTA_BUDGET_MS = 45;
+// Tarea larga: el umbral de 50 ms es el estandar de la Long Tasks API. Se tolera una punta hasta aqui.
+const LONG_TASK_BUDGET_MS = 180;
+// Arranque hasta que monta el workbench (0.2). En DEV incluye la transformacion de Vite modulo a modulo.
+const BOOT_BUDGET_MS = 6000;
+// Ventana de sondeo de 0.3 y tope de ida y vuelta de IPC. Con P1 sin arreglar, refreshJumpList mete
+// unos 300 ms de bloqueo en main y una de las sondas se lo come entero.
+const IPC_PROBE_WINDOW_MS = 2500;
+const IPC_BLOCK_BUDGET_MS = 120;
+// Nombre de la marca de arranque que pone src/renderer/src/App.tsx. Se repite aqui, como el resto de
+// anclas de este fichero, porque este .mjs corre en node sin el pipeline de TS: si alguien la renombra
+// alli y no aqui, 0.2 lo canta en vez de pasar en verde midiendo otra cosa.
+const WORKBENCH_MOUNTED_MARK = "mage:workbench-mounted";
+// Alto maximo de la fila del prompt con el editor VACIO (una linea de 12,5 px a 1.55 + 20 px de relleno
+// + el chip mas alto de los controles). Con el editor estirado a su `max-height` la fila medía 223 px.
+// Presupuesto de la fila del prompt VACIA, en la ventana minima: como fraccion del alto del panel de
+// conversacion (el reporte era justo ese, "se come media pantalla") y ancho minimo del editor, que es lo
+// que de verdad se rompio — con los controles a `shrink-0` y el editor a basis 0, el editor se quedaba en
+// 0 px y el placeholder envolvia letra a letra hasta el `max-height`.
+const PROMPT_ROW_MAX_SHARE = 0.25;
+const PROMPT_EDITOR_MIN_PX = 120;
+// Tamano de "modo ventana" que se mide. Es EL SUELO REAL de la ventana (`WINDOW.minWidth/minHeight` en
+// src/main/index.ts): mas pequena no se puede poner arrastrando y la app no tiene zoom de renderer, asi
+// que medir por debajo seria perseguir estados inalcanzables. Ahi aprietan los dos ejes a la vez — el
+// alto a las columnas de iconos y el ancho a los paneles del dock, que es quien estruja al centro.
+const VENTANAS_PEQUENAS = [{ etiqueta: 'minima', width: 900, height: 600 }];
+
+const CHECKS = [
+  {
+    name: 'La ventana principal arranca',
+    async run(page) {
+      const title = await page.title();
+      const railCount = await page.locator('[role="toolbar"]').count();
+      return { ok: railCount > 0, detail: `title=${JSON.stringify(title)} toolbars=${railCount}` };
+    },
+  },
+  {
+    // Ronda 3, item 9: la barra de titulo NATIVA no se puede tematizar. Se mide que la app pinta la
+    // suya (arrastrable, con el boton "Editar" que despliega el Menu nativo) y que hereda los tokens
+    // del tema en vez de un color fijo del SO.
+    name: 'Cabecera propia: existe, es arrastrable y hereda el tema',
+    async run(page) {
+      // Ancla: el icono de la app. El boton "Preferencias" que se usaba antes ya no existe — su accion
+      // vive en el menu de tres puntos (donde el catalogo la generaba desde el principio) y en el propio
+      // icono, que desde 2026-09-07 es quien abre los ajustes.
+      const header = page.getByRole('button', { name: /Configuración/ });
+      await header.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      const measured = await page.evaluate(() => {
+        const bar = document.querySelector('button[aria-label^="Mage"]')?.parentElement;
+        if (!bar) return null;
+        const styles = getComputedStyle(bar);
+        return {
+          height: Math.round(bar.getBoundingClientRect().height),
+          top: Math.round(bar.getBoundingClientRect().top),
+          appRegion: styles.getPropertyValue('-webkit-app-region').trim(),
+          background: styles.backgroundColor,
+          rail: getComputedStyle(document.documentElement).getPropertyValue('--color-mg-rail').trim(),
+          // Ya NO hay etiquetas de menu en la cabecera: viven detras del boton de tres puntos (peticion
+          // del usuario). Lo que se exige ahora es que ese boton este, y que su nombre accesible siga
+          // siendo el del menu — era el unico que tenia la cabecera.
+          menuPlegado: document.querySelectorAll('[data-app-menu-toggle="true"]').length,
+          nombreDelMenu: document.querySelector('[data-app-menu-toggle="true"]')?.getAttribute('aria-label') ?? null,
+        };
+      });
+      const ok =
+        measured !== null &&
+        measured.top === 0 &&
+        measured.height === 32 &&
+        measured.appRegion === 'drag' &&
+        measured.menuPlegado === 1 &&
+        measured.nombreDelMenu === 'Menú de la aplicación' &&
+        measured.background !== 'rgba(0, 0, 0, 0)';
+      return { ok, detail: `cabecera=${JSON.stringify(measured)}` };
+    },
+  },
+  {
+    // 2.9.a: la cabecera pintaba el texto "MAGE"; ahora va la marca (MageMark, monocroma via
+    // `currentColor`). Un "hay un svg" a secas pasaria en verde con el logo INVISIBLE, asi que se mide
+    // tambien su `stroke` calculado (debe heredar un token del tema, no quedarse en negro puro), su
+    // ancho real, y que sigue existiendo un nombre accesible para la app en la ventana — ese texto era
+    // el unico que habia.
+    name: '2.9.a: la cabecera pinta el logo y no el texto MAGE',
+    async run(page) {
+      const measured = await page.evaluate(() => {
+        // ANCLADO al boton de ajustes, no a la cabecera entera: contar los svg de toda la barra hacia
+        // que cualquier icono nuevo a su derecha (el de informar de un fallo, 2026-09-21) tumbara esta
+        // comprobacion, que no habla de ellos. Lo que aqui se afirma es que ESTE control pinta el logo.
+        const boton = document.querySelector('button[aria-label^="Mage · Configuración"]');
+        const bar = boton?.parentElement;
+        if (!bar || !boton) return null;
+        const svgs = [...boton.querySelectorAll('svg')];
+        const logo = svgs[0] ?? null;
+        const path = logo?.querySelector('path') ?? null;
+        return {
+          texto: bar.textContent ?? '',
+          svgs: svgs.length,
+          // La marca pasa de TRAZO a RELLENO con la ilustracion nueva (brandbook 2026-09-06): un solo
+          // contorno con `fill-rule="evenodd"` y los calados como agujeros de verdad. Se mide el relleno
+          // resuelto —que tiene que heredar del contenedor, no ser negro ni transparente— y que la regla
+          // de relleno sea evenodd, que es de lo que depende que el sombrero no salga macizo.
+          fill: path === null ? null : getComputedStyle(path).fill,
+          fillRule: path === null ? null : getComputedStyle(path).fillRule,
+          ancho: logo === null ? 0 : Math.round(logo.getBoundingClientRect().width),
+        };
+      });
+      // El nombre de la app ya no lo lleva el <svg> sino el BOTON que lo envuelve (que ademas abre los
+      // ajustes). Lo que importa no cambia: que "Mage" siga siendo alcanzable por nombre accesible —
+      // era el unico sitio de la ventana donde aparece desde que el texto se sustituyo por el logo.
+      // ANCLADO al control concreto, no a cualquier boton que contenga la palabra: 'Mage (común)' es
+      // una etiqueta de ORIGEN de permisos que tambien se pinta como boton, y hacia que esto contara 2
+      // segun que pantalla dejara abierta la comprobacion anterior.
+      const nombreAccesible = await page.getByRole('button', { name: /^Mage · Configuración$/ }).count();
+      const ok =
+        measured !== null &&
+        !measured.texto.includes('MAGE') &&
+        measured.svgs === 1 &&
+        measured.ancho >= 12 &&
+        measured.fill !== null &&
+        measured.fill !== 'rgb(0, 0, 0)' &&
+        measured.fill !== 'none' &&
+        measured.fillRule === 'evenodd' &&
+        nombreAccesible === 1;
+      return { ok, detail: `cabecera=${JSON.stringify(measured)} nombreAccesible=${nombreAccesible}` };
+    },
+  },
+  {
+    // Boton de informar de un fallo (2026-09-21, peticion del usuario: "un icono de bug junto al
+    // minimizar/maximizar/cerrar"). No puede ir ENTRE ellos —esa franja la pinta el SO y el DOM solo
+    // reserva su ancho—, asi que lo que se mide es que queda pegado a su izquierda y que no se cuela
+    // por debajo: si `right` del boton pasa del borde util de la cabecera, el clic no llegaria nunca.
+    //
+    // NO se pulsa: abriria el navegador del sistema a mitad de la tanda. La URL se comprueba en
+    // `bugReport.test.ts`, que es donde vive esa logica; aqui solo se verifica que el control existe,
+    // esta donde toca y dice a donde va.
+    name: 'Cabecera: el boton de informar de un fallo va pegado a los botones del SO y es alcanzable',
+    async run(page) {
+      const measured = await page.evaluate(() => {
+        const boton = document.querySelector('button[aria-label^="Informar de un fallo"]');
+        const bar = document.querySelector('[data-titlebar]');
+        if (!boton || !bar) return null;
+        const b = boton.getBoundingClientRect();
+        const barRect = bar.getBoundingClientRect();
+        const padding = Number.parseFloat(getComputedStyle(bar).paddingRight);
+        return {
+          svgs: boton.querySelectorAll('svg').length,
+          etiqueta: boton.getAttribute('aria-label') ?? '',
+          tip: boton.getAttribute('data-tip') ?? '',
+          // `no-drag`: sin esto la cabecera se traga el clic como arrastre de ventana.
+          region: getComputedStyle(boton).getPropertyValue('-webkit-app-region'),
+          derecha: Math.round(b.right),
+          // Borde a partir del cual empieza la franja intocable de los botones del SO.
+          bordeUtil: Math.round(barRect.right - padding),
+          alto: Math.round(b.height),
+          dentroDeLaCabecera: b.top >= barRect.top && b.bottom <= barRect.bottom,
+        };
+      });
+      const ok =
+        measured !== null &&
+        measured.svgs === 1 &&
+        measured.region === 'no-drag' &&
+        measured.dentroDeLaCabecera &&
+        // Pegado a la franja del SO (a su izquierda), nunca por debajo de ella.
+        measured.derecha <= measured.bordeUtil &&
+        measured.bordeUtil - measured.derecha <= 12 &&
+        measured.alto >= 16 &&
+        // Dice que se va al navegador ANTES de pulsarlo, no despues.
+        /navegador/i.test(measured.etiqueta) &&
+        /GitHub/i.test(measured.tip);
+      return { ok, detail: `bug=${JSON.stringify(measured)}` };
+    },
+  },
+  {
+    // 2.9.b: el menu de aplicacion propio SUSTITUYE al `Menu` nativo. La medida que demuestra la
+    // sustitucion es que el desplegable esta EN EL DOM del renderer (el nativo no lo estaba), y que sus
+    // atajos vienen del catalogo de acciones — por eso se busca `Ctrl+N`, que nadie escribio a mano.
+    name: '2.9.b: la cabecera lista el menu de app con acciones del actionCatalog',
+    async run(page) {
+      // La barra vive detras del boton de tres puntos: hay que desplegarla. El clic se dispara desde
+      // dentro de la pagina porque la cabecera es region de ARRASTRE de ventana y Electron se come los
+      // eventos sinteticos de raton que caen sobre ella.
+      await page.evaluate(() => document.querySelector('[data-app-menu-toggle="true"]')?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+      const menubar = page.locator('[role="menubar"][aria-label="Menú de la aplicación"]');
+      await menubar.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      const menus = await menubar.locator('[role="menuitem"]').allInnerTexts();
+      await page.evaluate(() =>
+        document.querySelector('[role="menubar"] > [role="menuitem"]')?.dispatchEvent(new MouseEvent('click', { bubbles: true })),
+      );
+      await page.waitForTimeout(CONFIG.settleMs);
+      const measured = await page.evaluate(() => {
+        const menu = document.querySelector('[role="menu"]');
+        const items = [...(menu?.querySelectorAll('[role="menuitem"]') ?? [])];
+        return {
+          desplegables: document.querySelectorAll('[role="menu"]').length,
+          items: items.length,
+          etiquetas: items.map((i) => i.textContent?.trim() ?? ''),
+          conAtajoCtrlN: items.some((i) => (i.textContent ?? '').includes('Ctrl+N')),
+        };
+      });
+      await page.keyboard.press('Escape');
+      await page.waitForTimeout(CONFIG.settleMs);
+      const cerrado = await page.locator('[role="menu"]').count();
+      const ok =
+        menus.length >= 3 &&
+        measured.desplegables === 1 &&
+        measured.items >= 3 &&
+        measured.conAtajoCtrlN &&
+        cerrado === 0;
+      return { ok, detail: `menus=${JSON.stringify(menus)} desplegado=${JSON.stringify(measured)} tras Escape=${cerrado}` };
+    },
+  },
+  {
+    // El patron de teclado que este repo ya ha roto TRES veces. Se mide foco Y `aria-expanded`, no solo
+    // que algo cambie.
+    name: '2.9.b: el menu de app se navega con el teclado',
+    async run(page) {
+      // La barra ya NO esta desplegada de entrada: ahora vive detras del boton de tres puntos, asi que
+      // hay que abrirla antes de navegarla. El contrato de teclado de dentro no cambia.
+      // Se dispara desde dentro de la pagina: la cabecera es region de arrastre y Electron se come los
+      // clics sinteticos que caen sobre ella (ver la comprobacion del menu plegado).
+      await page.evaluate(() => document.querySelector('[data-app-menu-toggle="true"]')?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+      await page.waitForTimeout(CONFIG.settleMs);
+      const menubar = page.locator('[role="menubar"][aria-label="Menú de la aplicación"]');
+      const first = menubar.locator('[role="menuitem"]').first();
+      await first.focus();
+      await page.keyboard.press('ArrowRight');
+      await page.waitForTimeout(CONFIG.settleMs);
+      const trasDerecha = await focusedMenuLabel(page);
+      await page.keyboard.press('ArrowLeft');
+      await page.waitForTimeout(CONFIG.settleMs);
+      const vuelta = await focusedMenuLabel(page);
+
+      // Igual que arriba: dispatch en vez de clic real, por la region de arrastre de la cabecera.
+      await page.evaluate(() =>
+        document.querySelector('[role="menubar"] > [role="menuitem"]')?.dispatchEvent(new MouseEvent('click', { bubbles: true })),
+      ); // abre el primer desplegable
+      await page.waitForTimeout(CONFIG.settleMs);
+      const abierto = await menubar.locator('[role="menuitem"]').first().getAttribute('aria-expanded');
+      await page.keyboard.press('ArrowDown');
+      await page.waitForTimeout(CONFIG.settleMs);
+      const enElSegundoItem = await page.evaluate(() => {
+        const menu = document.querySelector('[role="menu"]');
+        const items = [...(menu?.querySelectorAll('[role="menuitem"]') ?? [])];
+        return items.findIndex((item) => item === document.activeElement);
+      });
+      await page.keyboard.press('Escape');
+      await page.waitForTimeout(CONFIG.settleMs);
+      const focoTrasEscape = await focusedMenuLabel(page);
+      // Se deja la cabecera como estaba: el primer Escape cerro el desplegable, el segundo pliega la
+      // barra en los tres puntos. Sin esto, la comprobacion deja residuo para las siguientes — que es
+      // justo el fallo que ya costo una tarde con el estado del store.
+      await page.keyboard.press('Escape');
+      await page.waitForTimeout(CONFIG.settleMs);
+      const ok =
+        trasDerecha.length > 0 &&
+        trasDerecha !== vuelta &&
+        abierto === 'true' &&
+        enElSegundoItem === 1 &&
+        focoTrasEscape.length > 0;
+      return {
+        ok,
+        detail: `ArrowRight=${JSON.stringify(trasDerecha)} ArrowLeft=${JSON.stringify(vuelta)} aria-expanded=${abierto} item enfocado tras ArrowDown=${enElSegundoItem} foco tras Escape=${JSON.stringify(focoTrasEscape)}`,
+      };
+    },
+  },
+  {
+    name: 'La StatusBar esta montada',
+    async run(page) {
+      const text = await page.locator('body').innerText();
+      return { ok: text.length > 0, detail: `caracteres visibles=${text.length}` };
+    },
+  },
+  {
+    name: 'Ctrl+, abre Configuracion (contrato de dialogo)',
+    async run(page) {
+      await page.keyboard.press('Control+Comma');
+      const dialog = page.locator(MODAL);
+      await dialog.first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      return { ok: (await dialog.count()) === 1, detail: `dialogos modales=${await dialog.count()}` };
+    },
+  },
+  {
+    // B5 / F3 del backlog: "Modelo por defecto por proveedor", pendiente de verificacion GUI.
+    name: 'Proveedores y modelos: un selector de modelo por proveedor (F3)',
+    async run(page) {
+      // La seccion 'Modelos' se fundio con 'Proveedores' el 2026-09-18: una ficha por proveedor con su
+      // ruta/URL, sus modelos reales y sus valores por defecto.
+      await openSection(page, /Proveedores y modelos/);
+      const selectors = page.locator('[aria-label^="Modelo por defecto de"]');
+      await selectors.first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      const labels = await selectors.evaluateAll((nodes) => nodes.map((n) => n.getAttribute('aria-label')));
+      return { ok: labels.length >= 2, detail: `selectores=${labels.length} ${JSON.stringify(labels)}` };
+    },
+  },
+  {
+    // Ronda 3, item 1: era el ULTIMO `<select>` nativo de la app (su popup lo pinta el SO, con el
+    // resaltado azul imposible de tematizar). Se mide que no queda ninguno y que el control es el
+    // Dropdown propio (boton con aria-haspopup="listbox").
+    name: 'Proveedores y modelos: el selector es el Dropdown propio, no un <select> nativo',
+    async run(page) {
+      await openSection(page, /Proveedores y modelos/);
+      const selectors = page.locator('[aria-label^="Modelo por defecto de"]');
+      await selectors.first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      const shapes = await selectors.evaluateAll((nodes) =>
+        nodes.map((n) => `${n.tagName.toLowerCase()}:${n.getAttribute('aria-haspopup') ?? 'sin-haspopup'}`),
+      );
+      const nativeSelects = await page.locator('[role="dialog"] select').count();
+      const ok = nativeSelects === 0 && shapes.length > 0 && shapes.every((s) => s === 'button:listbox');
+      return { ok, detail: `selects nativos en el dialogo=${nativeSelects} controles=${JSON.stringify(shapes)}` };
+    },
+  },
+  {
+    // D5: la seccion existe, lista atajos y el buscador FILTRA de verdad (no solo pinta la caja).
+    name: 'Seccion Atajos: lista y el buscador filtra (D5)',
+    async run(page) {
+      await openSection(page, /Atajos de teclado/);
+      const search = page.getByRole('textbox', { name: 'Buscar atajo por nombre' });
+      await search.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      const rows = page.getByRole('button', { name: 'Cambiar' });
+      const total = await rows.count();
+      await search.fill('zzzz-no-existe');
+      await page.waitForTimeout(200);
+      const none = await rows.count();
+      await search.fill('');
+      await page.waitForTimeout(200);
+      const restored = await rows.count();
+      const ok = total > 0 && none === 0 && restored === total;
+      return { ok, detail: `filas=${total} tras filtro imposible=${none} restauradas=${restored}` };
+    },
+  },
+  {
+    // M3: tema claro/oscuro. Se mide el efecto REAL en el DOM (data-theme en <html>), no el clic.
+    name: 'Apariencia: cambiar de tema aplica data-theme',
+    async run(page) {
+      await openSection(page, /Apariencia/);
+      const before = await page.evaluate(() => document.documentElement.dataset.theme);
+      await page.getByText('Claro', { exact: true }).first().click();
+      await page.waitForTimeout(250);
+      const light = await page.evaluate(() => document.documentElement.dataset.theme);
+      await page.getByText('Oscuro', { exact: true }).first().click();
+      await page.waitForTimeout(250);
+      const dark = await page.evaluate(() => document.documentElement.dataset.theme);
+      const ok = light === 'light' && dark === 'dark';
+      return { ok, detail: `inicial=${before} tras Claro=${light} tras Oscuro=${dark}` };
+    },
+  },
+  {
+    // El fondo del tooltip es OSCURO EN LOS DOS TEMAS a proposito (`--color-mg-tooltip`), asi que su
+    // texto no puede salir de un token que SI conmuta. Salia de `--color-mg-body`, y en tema claro eso
+    // es casi negro: la burbuja se veia como un rectangulo negro macizo, sin texto (reportado el
+    // 2026-09-21 con tres capturas). Un check de clases no lo habria cazado —las clases estaban bien
+    // puestas—, asi que se mide el CONTRASTE REAL calculado, en los DOS temas.
+    //
+    // No se mueve el raton: se dispara `pointerover` sobre el control, que es como TooltipLayer escucha
+    // (delegacion en document). Asi la burbuja sale aunque el control este tapado por el dialogo que la
+    // comprobacion anterior deja abierto, y el puntero se queda donde estaba para la siguiente.
+    name: 'Tooltips: el texto contrasta con su burbuja en los dos temas',
+    async run(page) {
+      const temaInicial = await page.evaluate(() => document.documentElement.dataset.theme ?? 'dark');
+      const medidas = {};
+      for (const tema of ['dark', 'light']) {
+        medidas[tema] = await page.evaluate(async (t) => {
+          document.documentElement.dataset.theme = t;
+          const disparador = document.querySelector('[data-tip]');
+          if (disparador === null) return { error: 'sin ningun [data-tip] en la pagina' };
+          disparador.dispatchEvent(new PointerEvent('pointerover', { bubbles: true }));
+          // TooltipLayer espera SHOW_DELAY_MS (350) antes de montar la burbuja; se sondea en vez de
+          // esperar un tiempo fijo, que da medidas distintas segun lo cargado que este el render.
+          let burbuja = null;
+          for (let i = 0; i < 40 && burbuja === null; i += 1) {
+            await new Promise((resolve) => setTimeout(resolve, 50));
+            burbuja = document.querySelector('[role="tooltip"]');
+          }
+          if (burbuja === null) return { error: 'la burbuja no llego a montarse' };
+          const estilo = getComputedStyle(burbuja);
+          const canal = (c) => {
+            const v = c / 255;
+            return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+          };
+          const luminancia = (css) => {
+            const [r, g, b] = (css.match(/\d+(\.\d+)?/g) ?? ['0', '0', '0']).map(Number);
+            return 0.2126 * canal(r) + 0.7152 * canal(g) + 0.0722 * canal(b);
+          };
+          const lTexto = luminancia(estilo.color);
+          const lFondo = luminancia(estilo.backgroundColor);
+          const ratio = (Math.max(lTexto, lFondo) + 0.05) / (Math.min(lTexto, lFondo) + 0.05);
+          const medida = {
+            texto: estilo.color,
+            fondo: estilo.backgroundColor,
+            ratio: Math.round(ratio * 100) / 100,
+            conTexto: (burbuja.textContent ?? '').trim().length > 0,
+          };
+          document.dispatchEvent(new PointerEvent('pointerout', { bubbles: true }));
+          return medida;
+        }, tema);
+      }
+      // Se restaura el tema que habia: esta comprobacion no es de apariencia y no debe cambiarsela a las
+      // que vienen detras.
+      await page.evaluate((t) => {
+        document.documentElement.dataset.theme = t;
+      }, temaInicial);
+      // 4.5:1 es el minimo de la WCAG para texto normal. El fallo reportado medía ~1.1:1.
+      const ok = ['dark', 'light'].every((t) => medidas[t].conTexto === true && medidas[t].ratio >= 4.5);
+      return { ok, detail: `tooltip=${JSON.stringify(medidas)} restaurado=${temaInicial}` };
+    },
+  },
+  {
+    name: 'La seccion "Config. compartida" carga sus editores por bloques',
+    async run(page) {
+      // Antes eran dos <textarea> con el JSON crudo de mcp-common.json y settings-common.json. Desde el
+      // 2026-09-18 se edita por bloques (un servidor MCP, una regla, un hook), asi que lo que demuestra
+      // que la seccion CARGA ya no es un textarea sino sus tres botones de alta — y de paso se
+      // comprueba que el editor de JSON crudo ya no esta.
+      await openSection(page, /Config\. compartida/);
+      const altas = page.getByRole('button', { name: /Añadir (servidor|regla|hook)/ });
+      await altas.first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      const etiquetas = await altas.evaluateAll((nodes) => nodes.map((n) => (n.textContent ?? '').trim()));
+      const sinJsonCrudo = await page.locator('textarea[aria-label^="Editor de"]').count();
+      const ok = etiquetas.length === 3 && sinJsonCrudo === 0;
+      return { ok, detail: `altas=${JSON.stringify(etiquetas)} textareas de JSON crudo=${sinJsonCrudo}` };
+    },
+  },
+  {
+    // M2.3 / Ronda 3 item 4: las reglas de notificacion son regex del usuario, o sea una FRONTERA. Se mide
+    // que una regex rota se rechaza con motivo (y no revienta la pantalla) y que el banco de pruebas usa
+    // el mismo compilador que el matcher real: mismo patron, un texto que casa y otro que no.
+    name: 'Notificaciones: regex invalida con motivo y banco de pruebas que acierta',
+    async run(page) {
+      await openSection(page, /Notificaciones/);
+      const add = page.getByRole('button', { name: /Añadir regla/ });
+      await add.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      const before = await notificationRuleRows(page).count();
+      await add.click();
+      await page.waitForTimeout(CONFIG.settleMs);
+      const pattern = page.getByRole('textbox', { name: 'Patrón (expresión regular)' }).last();
+      await pattern.fill('deploy (ok');
+      await page.waitForTimeout(CONFIG.settleMs);
+      const brokenReason = await patternErrorText(page);
+      await pattern.fill('deploy (ok|listo)');
+      await page.waitForTimeout(CONFIG.settleMs);
+      const fixedReason = await patternErrorText(page);
+      const matches = await probeVerdict(page, 'el deploy ok por fin');
+      const misses = await probeVerdict(page, 'nada que ver');
+      // Limpieza: la regla se guarda en el app-settings.json del perfil aislado, y una regla con un
+      // patron de prueba cambiaria lo que miden las comprobaciones siguientes.
+      const remove = page.getByRole('button', { name: 'Eliminar regla', exact: true });
+      if ((await remove.count()) === 1) await remove.click();
+      await page.waitForTimeout(CONFIG.settleMs);
+      const after = await notificationRuleRows(page).count();
+      // El dialogo se deja ABIERTO a proposito: las dos comprobaciones siguientes son de dentro.
+      const ok =
+        before === 0 &&
+        typeof brokenReason === 'string' &&
+        brokenReason.length > 0 &&
+        fixedReason === null &&
+        matches === '✓ notificaría' &&
+        misses === '✗ no casa' &&
+        after === 0;
+      return {
+        ok,
+        detail: `reglas ${before}->${after} motivo con "deploy (ok"=${JSON.stringify(brokenReason)} tras arreglarla=${JSON.stringify(fixedReason)} prueba que casa=${JSON.stringify(matches)} que no casa=${JSON.stringify(misses)}`,
+      };
+    },
+  },
+  {
+    // Accesibilidad (M3): el nav de secciones declara role="tablist", asi que DEBE moverse con flechas.
+    // La comprobacion exige que el foco CAMBIE: una version anterior solo miraba que hubiera foco, y
+    // pasaba en falso mientras las flechas no hacian nada.
+    name: 'Accesibilidad: el tablist de Configuracion responde a flechas',
+    async run(page) {
+      const tabs = page.getByRole('tab');
+      const count = await tabs.count();
+      // Se enfoca la pestaña SELECCIONADA, no la primera: con roving tabindex solo la seleccionada
+      // tiene tabIndex=0, asi que es la unica a la que el usuario puede llegar tabulando. Enfocar otra
+      // crea un estado que la app nunca produce (y hacia fallar esta comprobacion por un motivo falso).
+      await page.locator('[role="tab"][aria-selected="true"]').first().focus();
+      const before = await focusedTabLabel(page);
+      await page.keyboard.press('ArrowDown');
+      await page.waitForTimeout(150);
+      const afterDown = await focusedTabLabel(page);
+      await page.keyboard.press('ArrowUp');
+      await page.waitForTimeout(150);
+      const afterUp = await focusedTabLabel(page);
+      const ok = count >= 6 && afterDown !== before && afterUp === before;
+      return { ok, detail: `pestañas=${count} inicio=${JSON.stringify(before)} ArrowDown=${JSON.stringify(afterDown)} ArrowUp=${JSON.stringify(afterUp)}` };
+    },
+  },
+  {
+    // Accesibilidad (M3): "que el foco sea siempre visible" seguia siendo manual. La regla de index.css
+    // repone el anillo SOLO con :focus-visible (no con el raton), asi que la medida correcta es
+    // `matches(':focus-visible')` MAS el outline calculado: comprobar solo el outline pasaria en verde con
+    // un outline heredado, y comprobar solo el pseudo-selector pasaria si la regla CSS desapareciera.
+    // Llega justo despues del check de flechas, que ya dejo a Chromium en modalidad de teclado.
+    name: 'Accesibilidad: el foco por teclado pinta el anillo visible',
+    async run(page) {
+      await page.keyboard.press('Tab');
+      await page.waitForTimeout(CONFIG.settleMs);
+      const measured = await page.evaluate(() => {
+        const active = document.activeElement;
+        if (active === null || active === document.body) return null;
+        const styles = getComputedStyle(active);
+        return {
+          element: `${active.tagName.toLowerCase()}${active.getAttribute('role') === null ? '' : `[role=${active.getAttribute('role')}]`}`,
+          focusVisible: active.matches(':focus-visible'),
+          outlineWidth: styles.outlineWidth,
+          outlineStyle: styles.outlineStyle,
+          outlineColor: styles.outlineColor,
+          ring: getComputedStyle(document.documentElement).getPropertyValue('--color-mg-focus-ring').trim(),
+        };
+      });
+      const ok =
+        measured !== null &&
+        measured.focusVisible &&
+        measured.outlineStyle === 'solid' &&
+        parseFloat(measured.outlineWidth) >= 2 &&
+        measured.ring.length > 0;
+      return { ok, detail: `foco=${JSON.stringify(measured)}` };
+    },
+  },
+  {
+    // A3 de la checklist: "Widget flotante: activarlo en Configuracion". Se mide que aparece una
+    // VENTANA nueva (widget.html), no solo que la casilla queda marcada.
+    name: 'Widget flotante: activarlo abre su ventana y desactivarlo la cierra',
+    async run(page) {
+      await openSection(page, /Widget flotante/);
+      const toggle = page.getByRole('checkbox');
+      await toggle.first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      const before = countWidgetPages(page);
+      await toggle.first().check();
+      const opened = await waitForWidgetPages(page, 1);
+      await toggle.first().uncheck();
+      const closed = await waitForWidgetPages(page, 0);
+      const ok = before === 0 && opened && closed;
+      return { ok, detail: `ventanas widget: inicio=${before} tras activar=${opened ? 1 : 'ninguna'} tras desactivar=${closed ? 0 : 'sigue abierta'}` };
+    },
+  },
+  {
+    name: 'Escape cierra el dialogo',
+    async run(page) {
+      await page.keyboard.press('Escape');
+      await page.waitForTimeout(300);
+      const count = await page.locator(MODAL).count();
+      return { ok: count === 0, detail: `dialogos tras Escape=${count}` };
+    },
+  },
+  {
+    // F6 Fase 4: el resize de una zona del dock tambien va por teclado. Se mide `aria-valuenow` (el
+    // tamaño REAL que la zona acaba de guardar), no la posicion del raton: un arrastre simulado mide el
+    // gesto, este numero mide el efecto. Se devuelve el valor a su sitio con la flecha contraria, porque
+    // el tamaño se persiste en panels-layout.json y no queremos arrastrar estado entre comprobaciones.
+    name: 'F6: el separador del dock se redimensiona con el teclado',
+    async run(page) {
+      const separators = page.locator('[role="separator"][aria-valuenow]');
+      const total = await separators.count();
+      if (total === 0) return { ok: false, detail: 'no hay ningun separador de zona montado' };
+      const handle = separators.first();
+      const orientation = await handle.getAttribute('aria-orientation');
+      // El caller solo escucha el par de flechas de SU orientacion (ver ZoneResizeHandle).
+      const [grow, shrink] = orientation === 'vertical' ? ['ArrowRight', 'ArrowLeft'] : ['ArrowDown', 'ArrowUp'];
+      const before = await separatorValue(handle);
+      await handle.focus();
+      await page.keyboard.press(grow);
+      await page.waitForTimeout(CONFIG.settleMs);
+      const moved = await separatorValue(handle);
+      await page.keyboard.press(shrink);
+      await page.waitForTimeout(CONFIG.settleMs);
+      const restored = await separatorValue(handle);
+      const ok = before !== null && moved !== null && moved !== before && restored === before;
+      return {
+        ok,
+        detail: `separadores=${total} orientacion=${orientation} aria-valuenow ${before} --${grow}--> ${moved} --${shrink}--> ${restored}`,
+      };
+    },
+  },
+  // --- E2: proveedores arbitrarios configurables --------------------------------------------------
+  //
+  // Estas cuatro llegan con el DOM SIN dialogos (justo despues de "Escape cierra el dialogo") y cada una
+  // abre y cierra lo que necesita, para poder leerse (y reordenarse) por separado.
+  {
+    // Asistente de primer arranque (2026-09-20). Se mide el CICLO COMPLETO: reabrirlo, recorrer los
+    // tres pasos, comprobar que el paso del aspecto APLICA de verdad (la escala cambia el zoom del
+    // frame, que es lo unico que demuestra que el deslizador no es decorativo) y que al terminar no
+    // vuelve a salir. Un check de "aparece el modal" pasaria con un asistente que no hace nada.
+    //
+    // Deja el perfil como lo encontro: el asistente completado y la escala al 100 %.
+    name: 'Setup: el asistente de primer arranque guia, aplica y no vuelve a salir',
+    async run(page) {
+      const zoomInicial = await page.evaluate(() => window.__mageDev?.store.getState().settings.uiScale ?? null);
+      await page.evaluate(() => window.__mageDev?.store.getState().setOnboardingCompleted(false));
+      await page.locator('[data-onboarding="overlay"]').waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+
+      // Paso 1: el motor. El sondeo es real (mismo `probeProvider` que Configuracion), asi que se
+      // espera a que responda algo — instalado o no, las dos respuestas son validas en una maquina
+      // cualquiera; lo que no vale es quedarse en "comprobando".
+      const motor = await waitForEngineStatus(page);
+      await page.locator('[data-onboarding="next"]').click();
+
+      // Paso 2: escala. Se mueve el deslizador con el teclado y se comprueba el zoom REAL del frame.
+      const escala = page.getByLabel('Escala de la interfaz');
+      await escala.focus();
+      await escala.press('ArrowRight');
+      await page.waitForTimeout(CONFIG.settleMs);
+      const aplicado = await page.evaluate(() => ({
+        ajuste: window.__mageDev?.store.getState().settings.uiScale ?? null,
+        // `devicePixelRatio` cambia con el zoom del frame: es la medida del navegador, no la del store.
+        zoomAplicado: Math.round(window.devicePixelRatio * 1000) / 1000,
+      }));
+      await page.locator('[data-onboarding="next"]').click();
+
+      // Paso 3: los atajos que se enseñan, resueltos del catalogo real.
+      const atajos = await page.evaluate(() => {
+        const filas = [...document.querySelectorAll('[data-onboarding="shortcuts"] kbd')];
+        return { filas: filas.length, primero: filas[0]?.textContent?.trim() ?? '' };
+      });
+      await page.locator('[data-onboarding="next"]').click();
+      await page.locator('[data-onboarding="overlay"]').waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+
+      // Y no vuelve: se remonta el arbol (cambiando de pestaña activa no basta) leyendo el ajuste.
+      const tras = await page.evaluate(() => ({
+        completado: window.__mageDev?.store.getState().settings.onboardingCompletedVersion ?? 0,
+        overlays: document.querySelectorAll('[data-onboarding="overlay"]').length,
+      }));
+      // Restaurar la escala para las comprobaciones siguientes (miden pixeles).
+      await page.evaluate((valor) => window.__mageDev?.store.getState().setUiScale(valor ?? 100), zoomInicial);
+      await page.waitForTimeout(CONFIG.settleMs);
+
+      const ok =
+        motor !== null &&
+        (motor.instalado || motor.conComando) && // o esta, o se dice como instalarlo: nunca un hueco
+        aplicado.ajuste === (zoomInicial ?? 100) + 10 &&
+        aplicado.zoomAplicado > 1 && // el zoom del frame se movio de verdad
+        atajos.filas === 6 &&
+        atajos.primero.length > 0 &&
+        tras.completado >= 1 &&
+        tras.overlays === 0;
+      return { ok, detail: `motor=${JSON.stringify(motor)} escala=${JSON.stringify(aplicado)} atajos=${JSON.stringify(atajos)} tras terminar=${JSON.stringify(tras)}` };
+    },
+  },
+  {
+    // B.2/B.3 de la revision de licencias de terceros: la pantalla «Acerca de» es donde Mage cumple lo que
+    // exigen las licencias de sus dependencias — conservar su aviso de copyright — porque el bundle
+    // minificado los borra. Se mide el TEXTO de una licencia real, no que la seccion exista: un panel
+    // con el titulo y el hueco vacio es exactamente el fallo que esto viene a cazar.
+    name: 'B.2: «Acerca de» enseña los avisos de terceros con su copyright',
+    async run(page) {
+      await openSettingsDialog(page);
+      await openSection(page, /Acerca de/);
+      const medido = await waitForNotices(page);
+      const closed = await closeDialog(page);
+      const ok =
+        medido !== null &&
+        medido.conClausulaMit && // el texto literal de la MIT, no un resumen
+        medido.conCopyright &&
+        medido.paquetes >= 50 && // la revision conto 85; por debajo de 50 algo se quedo por el camino
+        medido.versiones &&
+        closed === 0;
+      return { ok, detail: `${JSON.stringify(medido)} dialogos al cerrar=${closed}` };
+    },
+  },
+  {
+    // Mage no asume que el usuario tenga ninguna IA local: de serie la lista esta VACIA y Ollama/LM
+    // Studio son solo plantillas del formulario. Se mide el numero de filas guardadas (0) y que las dos
+    // plantillas existen; "hay algo en la seccion" no distinguiria una lista vacia de una precargada.
+    name: 'E2: la seccion Proveedores carga y arranca sin proveedores',
+    async run(page) {
+      await openSettingsDialog(page);
+      await openSection(page, /Proveedores/);
+      const rows = await providerRows(page).count();
+      const templates = [];
+      for (const label of PROVIDER_TEMPLATE_LABELS) {
+        templates.push(await page.getByRole('button', { name: label, exact: true }).count());
+      }
+      const addButton = await page.getByRole('button', { name: /Añadir proveedor/ }).count();
+      const closed = await closeDialog(page);
+      const ok = rows === 0 && templates.every((count) => count === 1) && addButton === 1 && closed === 0;
+      return {
+        ok,
+        detail: `filas guardadas=${rows} plantillas ${JSON.stringify(PROVIDER_TEMPLATE_LABELS)}=${JSON.stringify(templates)} boton anadir=${addButton} dialogos al cerrar=${closed}`,
+      };
+    },
+  },
+  {
+    // Los tres rechazos con MOTIVO. Sin ellos se guardaria basura que solo falla en el primer turno:
+    // sin nombre, URL sin esquema (`localhost:11434`, que `new URL` lee como protocolo "localhost:") y
+    // sin ningun modelo (un proveedor sin modelos no puede abrir conversacion). Se mide el texto exacto
+    // del motivo Y que la lista sigue con 0 filas: un formulario que avisa pero guarda seria peor.
+    name: 'E2: el formulario rechaza nombre vacio, URL sin esquema y sin modelos',
+    async run(page) {
+      await openSettingsDialog(page);
+      await openSection(page, /Proveedores/);
+      await page.getByRole('button', { name: /Añadir proveedor/ }).click();
+      const reasons = [
+        await submitNewProvider(page, { label: '', baseUrl: '', models: '' }),
+        await submitNewProvider(page, { label: 'Prueba', baseUrl: 'localhost:11434', models: 'llama3' }),
+        await submitNewProvider(page, { label: 'Prueba', baseUrl: OLLAMA_TEMPLATE.baseUrl, models: '' }),
+      ];
+      const rows = await providerRows(page).count();
+      await page.getByRole('button', { name: 'Cancelar', exact: true }).click();
+      // Donde queda el foco tras "Cancelar": su boton se DESMONTA con el formulario, asi que Chromium lo
+      // manda a <body>, FUERA del panel. Se mide porque de aqui salio un bug real —el modal se quedaba
+      // sin Escape— y el `closed === 0` de abajo es lo que lo detecta (ver useDialogA11y.ts).
+      const focusAfterCancel = await page.evaluate((modal) => {
+        const active = document.activeElement;
+        const inside = active !== null && document.querySelector(modal)?.contains(active) === true;
+        return `${active?.tagName.toLowerCase() ?? 'ninguno'} (${inside ? 'dentro' : 'fuera'} del modal)`;
+      }, MODAL);
+      const closed = await closeDialog(page);
+      const ok =
+        rows === 0 &&
+        closed === 0 &&
+        /nombre/i.test(reasons[0] ?? '') &&
+        (reasons[1] ?? '').includes('"localhost:11434"') &&
+        /http/i.test(reasons[1] ?? '') &&
+        /al menos un modelo/i.test(reasons[2] ?? '');
+      return {
+        ok,
+        detail: `motivos=${JSON.stringify(reasons)} filas guardadas=${rows} foco tras Cancelar=${focusAfterCancel} dialogos tras Escape=${closed}`,
+      };
+    },
+  },
+  {
+    // La plantilla PRERRELLENA (no guarda) y "Añadir" guarda. Se mide el resumen de la fila (URL y nº de
+    // modelos, que es lo que prueba que se guardo el proveedor entero y no solo su nombre) y que aparece
+    // un selector NUEVO en "🧠 Modelos" — comparando la lista de antes con la de despues, no un conteo
+    // fijo: los proveedores de serie pueden cambiar sin que eso rompa esta comprobacion.
+    name: 'E2: la plantilla de Ollama anade el proveedor y sale en Modelos',
+    async run(page) {
+      await openSettingsDialog(page);
+      const modelsBefore = await modelSelectorLabels(page);
+      await openSection(page, /Proveedores/);
+      await page.getByRole('button', { name: OLLAMA_TEMPLATE.label, exact: true }).click();
+      const prefilled = await readProviderForm(page);
+      await page.getByRole('button', { name: 'Añadir', exact: true }).click();
+      await page.waitForTimeout(CONFIG.settleMs);
+      const rows = await providerRows(page).count();
+      const summary = await providerRowSummary(page, OLLAMA_TEMPLATE.label);
+      const modelsAfter = await modelSelectorLabels(page);
+      const closed = await closeDialog(page);
+      const added = modelsAfter.filter((label) => !modelsBefore.includes(label));
+      const ok =
+        prefilled.label === OLLAMA_TEMPLATE.label &&
+        prefilled.baseUrl === OLLAMA_TEMPLATE.baseUrl &&
+        prefilled.models === OLLAMA_TEMPLATE.models &&
+        rows === 1 &&
+        summary !== null &&
+        summary.includes(OLLAMA_TEMPLATE.baseUrl) &&
+        // La ficha nueva (2026-09-18) ya no imprime "N modelos" en su resumen: los modelos viven en su
+        // propio selector, y eso es justo lo que comprueba `added` un par de lineas mas abajo. Lo que
+        // SI tiene que decir la ficha es de que CLASE es el proveedor, que es lo que distingue un CLI
+        // local de un endpoint HTTP.
+        summary.includes('API compatible con OpenAI') &&
+        added.length === 1 &&
+        added[0] === `Modelo por defecto de ${OLLAMA_TEMPLATE.label}` &&
+        closed === 0;
+      return {
+        ok,
+        detail: `plantilla=${JSON.stringify(prefilled)} filas=${rows} resumen=${JSON.stringify(summary)} selectores de Modelos ${modelsBefore.length}->${modelsAfter.length} nuevos=${JSON.stringify(added)}`,
+      };
+    },
+  },
+  {
+    // Tercer sitio donde tiene que aparecer: el selector de proveedor de "Nueva conversacion". Se abre y
+    // se CIERRA con Escape (no crea ninguna pestaña, no spawnea nada).
+    name: 'E2: el proveedor anadido aparece en el selector de Nueva conversacion',
+    async run(page) {
+      const options = await withNewTabDialog(page, (dialogPage) => selectOptionsOf(dialogPage, NEW_TAB_FIELD.provider));
+      const ok = options !== null && options.some((option) => option.endsWith(`|${OLLAMA_TEMPLATE.label}`));
+      return { ok, detail: `opciones de proveedor=${JSON.stringify(options)}` };
+    },
+  },
+  {
+    // Y el ciclo completo: borrarlo lo quita de los TRES sitios. Antes de clicar se comprueba que hay
+    // exactamente 1 boton de borrado con ese nombre (regla de la skill: si esperas 1 y hay otra cosa, no
+    // se clica).
+    name: 'E2: borrar el proveedor lo quita de la lista, de Modelos y de Nueva conversacion',
+    async run(page) {
+      await openSettingsDialog(page);
+      await openSection(page, /Proveedores/);
+      const remove = page.getByRole('button', { name: `Eliminar el proveedor ${OLLAMA_TEMPLATE.label}` });
+      const targets = await remove.count();
+      if (targets === 1) await remove.click();
+      await page.waitForTimeout(CONFIG.settleMs);
+      const rows = await providerRows(page).count();
+      const models = await modelSelectorLabels(page);
+      const closed = await closeDialog(page);
+      const options = await withNewTabDialog(page, (dialogPage) => selectOptionsOf(dialogPage, NEW_TAB_FIELD.provider));
+      const inModels = models.includes(`Modelo por defecto de ${OLLAMA_TEMPLATE.label}`);
+      const inNewTab = options !== null && options.some((option) => option.endsWith(`|${OLLAMA_TEMPLATE.label}`));
+      const ok = targets === 1 && rows === 0 && !inModels && !inNewTab && closed === 0;
+      return {
+        ok,
+        detail: `botones de borrado=${targets} filas tras borrar=${rows} sigue en Modelos=${inModels} sigue en Nueva conversacion=${inNewTab} opciones=${JSON.stringify(options)}`,
+      };
+    },
+  },
+  {
+    // A partir de aqui hace falta una CONVERSACION abierta. Se usa "Carpeta temporal" (no el dialogo
+    // del SO, que un driver no puede pilotar) y NO se envia ningun mensaje: `ensureSession` es
+    // perezoso, asi que abrir la pestaña no spawnea el CLI y la comprobacion no gasta suscripcion.
+    // CAMBIO DEL 2026-09-18 (peticion del usuario): Ctrl+N ya NO abre un formulario. Abre la
+    // conversacion directamente, en carpeta temporal y con los valores por defecto. Lo que esta
+    // comprobacion mide pasa a ser justo eso: que aparece una pestaña, que NO aparece ningun modal, y
+    // que la carpeta es la temporal — porque "sin formulario" sin "carpeta temporal" seria una
+    // conversacion sin sitio donde trabajar.
+    name: 'Ctrl+N abre la conversacion directamente, sin formulario y en carpeta temporal',
+    async run(page) {
+      const antes = await page.locator('[role="tablist"][aria-label^="Conversaciones abiertas"] [role="tab"]').count();
+      await page.keyboard.press('Control+KeyN');
+      await page
+        .locator('[role="tablist"][aria-label^="Conversaciones abiertas"] [role="tab"]')
+        .nth(antes)
+        .waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      const dialogos = await page.locator(MODAL).count();
+      const despues = await page.locator('[role="tablist"][aria-label^="Conversaciones abiertas"] [role="tab"]').count();
+      const cwd = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return s.tabs.find((t) => t.id === s.activeTabId)?.cwd ?? '';
+      });
+      const enTemporal = /mage-scratch/i.test(cwd);
+      const ok = despues === antes + 1 && dialogos === 0 && enTemporal;
+      return { ok, detail: `pestañas ${antes}->${despues} modales=${dialogos} cwd=${JSON.stringify(cwd)}` };
+    },
+  },
+  {
+    // F2: la conversacion vacia dice EN QUE carpeta va a trabajar el agente y deja cambiarla.
+    name: 'F2: la conversacion vacia muestra la carpeta y deja cambiarla',
+    async run(page) {
+      const change = page.getByRole('button', { name: 'Cambiar carpeta de trabajo' });
+      await change.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      const enabled = await change.isEnabled();
+      // La ruta completa viaja en el title del elemento (lo pintado va acortado).
+      // Se ancla al boton y se sube a su contenedor: un `span[title]` suelto casaria con cualquier
+      // tooltip de la app.
+      const shown = await page.evaluate(() => {
+        const button = document.querySelector('[aria-label="Cambiar carpeta de trabajo"]');
+        return button?.parentElement?.querySelector('span[title]')?.getAttribute('title') ?? null;
+      });
+      const ok = enabled && typeof shown === 'string' && shown.length > 0;
+      return { ok, detail: `boton habilitado=${enabled} carpeta=${JSON.stringify(shown)}` };
+    },
+  },
+  {
+    // 2.8: el resumen de contexto vivia en el PIE del borde derecho, donde solo se veia con algun panel
+    // abierto. Ahora es un indicador de la StatusBar con su popover. Va aqui y no en la fase 0 (que es
+    // donde lo situaba el plan) por una razon medida: sin conversacion abierta el indicador NO se monta
+    // a proposito — un `ctx 0 %` permanente en una app recien abierta es ruido, no informacion — y en
+    // la fase 0 del harness todavia no hay ninguna pestaña. No abre dialogos ni crea nada.
+    name: '2.8: la StatusBar tiene el indicador de contexto y su popover abre por teclado',
+    async run(page) {
+      // H1: esta comprobacion era INTERMITENTE, y la causa no era el foco sino el raton. El popover abre
+      // con `group-hover` **O** `group-focus-within`, y aqui solo se controlaba el foco: si el puntero se
+      // quedaba encima del indicador —donde lo dejase la comprobacion anterior—, el `group-hover` lo
+      // mantenia en opacidad 1 y el `sinFoco` medido salia "1" en vez de "0". Se aparta el raton a una
+      // esquina neutra ANTES de medir, y ademas se reporta `hover` para que un fallo futuro diga cual de
+      // las dos condiciones lo abrio en vez de dejarlo en un intermitente sin explicacion.
+      //
+      // Se aparta al CENTRO de la ventana, no a una esquina: (2,2) cae dentro del borde de redimension
+      // y encima de la region de arrastre de la cabecera, y el puntero se queda ahi para todo lo que
+      // venga despues — con esa posicion, el `click()` del input rico se quedaba colgado 30 s. El centro
+      // es area de transcripcion: inerte, sin arrastre y sin controles.
+      const centro = await page.evaluate(() => ({ x: Math.round(window.innerWidth / 2), y: Math.round(window.innerHeight / 2) }));
+      await page.mouse.move(centro.x, centro.y);
+      // Y la ventana tiene que tener el foco del SO. `:focus-within` NO casa si el documento no lo
+      // tiene, por mucho que `document.activeElement` apunte al sitio correcto: por eso esta
+      // comprobacion fallaba en las DOS direcciones —unas veces no abria, otras no cerraba— segun lo
+      // que estuviera pasando en el escritorio. Se pide el foco y se espera a tenerlo; si no llega, se
+      // dice en la medida en vez de fallar sin explicacion.
+      await page.bringToFront().catch(() => undefined);
+      await page.evaluate(async () => {
+        for (let i = 0; i < 40 && !document.hasFocus(); i += 1) {
+          window.focus();
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+      });
+      const measured = await page.evaluate(async () => {
+        const bar = document.querySelector('[role="status"][aria-label^="Estado del servicio"]')?.closest('div')?.parentElement;
+        if (!bar) return null;
+        const triggers = [...bar.querySelectorAll('span[tabindex="0"]')].filter((span) => /^ctx \d+ ?%$/.test(span.textContent?.trim() ?? ''));
+        const trigger = triggers[0];
+        if (trigger === undefined) return { indicadores: 0, texto: bar.textContent ?? '' };
+        const popover = trigger.parentElement?.querySelector(':scope > div');
+        if (!popover) return { indicadores: triggers.length, popover: false };
+        // La opacidad CALCULADA, no la clase CSS: con la regla `group-focus-within` borrada, un check de
+        // clases pasaria en verde con el popover muerto. La transicion dura 150 ms -> se espera mas.
+        // Se SONDEA hasta que la opacidad llegue al valor esperado (o se agote el plazo) en vez de
+        // esperar un tiempo fijo: una espera ciega da medidas distintas segun lo cargado que este el
+        // hilo de render, y un intermitente en el harness es peor que una comprobacion de menos.
+        //
+        // H2 (2026-09-21): seguia siendo intermitente —2 de 4 tandas— y la causa estaba en el PLAZO, no
+        // en el instante. `document.hasFocus()` se comprobaba ANTES de sondear, pero el sondeo dura
+        // hasta 1,5 s: si la ventana pierde el foco del SO a mitad (otra ventana de Electron, el
+        // escritorio), `:focus-within` deja de casar aunque `activeElement` siga siendo el correcto, y
+        // la medida salia `enfocado: true` con opacidad "0" — un fallo que no se parecia a su causa.
+        // Ahora el foco se REASEGURA dentro del bucle, cada vuelta que lo encuentre perdido.
+        const until = async (wanted, reasegurar) => {
+          for (let i = 0; i < 30; i += 1) {
+            if (getComputedStyle(popover).opacity === wanted) break;
+            if (reasegurar !== undefined && !document.hasFocus()) {
+              window.focus();
+              reasegurar();
+            }
+            await new Promise((resolve) => setTimeout(resolve, 50));
+          }
+          return getComputedStyle(popover).opacity;
+        };
+        const grupo = trigger.parentElement;
+        const documentoConFoco = document.hasFocus();
+        const inicial = getComputedStyle(popover).opacity;
+        trigger.focus();
+        const conFoco = await until('1', () => trigger.focus());
+        const enfocado = document.activeElement === trigger;
+        // H3 (2026-09-21): con `enfocado` y `documentoConFocoAlFinal` en true y la opacidad clavada en
+        // "0", el foco YA no explica el fallo. Lo que falta por saber es si el selector llega a casar:
+        // si `focusWithinCasa` sale false con el foco puesto, el problema es que el grupo esta en un
+        // subarbol inerte (un dialogo modal por encima) y no que la regla CSS este mal.
+        const focusWithinCasa = grupo !== null && grupo.matches(':focus-within');
+        const modalesAbiertos = document.querySelectorAll('dialog[open], [role="dialog"]').length;
+        // Se mueve el foco a OTRO elemento en vez de `blur()`: soltar el foco lo deja en `body`, y si
+        // algo de la app lo devuelve (un efecto de restauracion, el popover que se enfoca solo) el
+        // `focus-within` del grupo sigue puesto y el popover no cierra. Enfocar algo concreto es una
+        // instruccion mas fuerte y no depende de que nadie mas opine.
+        const otro = document.querySelector('[data-prompt-editor="true"], button');
+        if (otro instanceof HTMLElement) otro.focus();
+        else trigger.blur();
+        const sinFoco = await until('0');
+        // Quien tiene el foco DESPUES: si `sinFoco` vuelve a salir "1", esto dice si es porque el foco
+        // se quedo dentro del grupo (y entonces el fallo es de la app) o por otra cosa.
+        const focoDentroDelGrupo = grupo !== null && grupo.contains(document.activeElement);
+        return {
+          indicadores: triggers.length,
+          texto: trigger.textContent?.trim() ?? '',
+          tabIndex: trigger.tabIndex,
+          popover: true,
+          enfocado,
+          // La otra mitad de la condicion de apertura. Si algun dia `sinFoco` vuelve a salir "1", esto
+          // dice en el acto si fue el raton o si de verdad se rompio el `focus-within`.
+          hover: grupo !== null && grupo.matches(':hover'),
+          focoDentroDelGrupo,
+          documentoConFoco,
+          // El foco del SO al TERMINAR, no solo al empezar: si un fallo futuro trae esto en false, la
+          // causa es el entorno (otra ventana robo el foco) y no el `focus-within` de la app.
+          documentoConFocoAlFinal: document.hasFocus(),
+          focusWithinCasa,
+          modalesAbiertos,
+          opacidad: { inicial, conFoco, sinFoco },
+          categorias: popover.textContent?.includes('CONTEXTO') ?? false,
+        };
+      });
+      const ok =
+        measured !== null &&
+        measured.indicadores === 1 &&
+        measured.tabIndex === 0 &&
+        measured.enfocado === true &&
+        measured.categorias === true &&
+        measured.hover === false &&
+        measured.focoDentroDelGrupo === false &&
+        measured.documentoConFoco === true &&
+        measured.opacidad?.inicial === '0' &&
+        measured.opacidad?.conFoco === '1' &&
+        measured.opacidad?.sinFoco === '0';
+      return { ok, detail: `indicador=${JSON.stringify(measured)}` };
+    },
+  },
+  {
+    // La otra mitad de la mudanza: el widget se MOVIO, no se duplico. "Dos sitios que hacen lo mismo" es
+    // un error que este proyecto ya ha corregido dos veces (el resumen de uso vivia en tres).
+    name: '2.8: el pie del dock derecho ya no existe',
+    async run(page) {
+      const measured = await page.evaluate(() => {
+        const nodes = [...document.querySelectorAll('span, div')].filter((node) => node.textContent?.trim() === 'Contexto usado');
+        const panes = document.querySelectorAll('[role="tabpanel"], [data-zone-pane]').length;
+        return { piesDeContexto: nodes.length, panelesAbiertos: panes, dockDerechoVisible: document.body.innerText.length > 0 };
+      });
+      return { ok: measured.piesDeContexto === 0, detail: `nodos "Contexto usado"=${measured.piesDeContexto}` };
+    },
+  },
+  {
+    // Accesibilidad: "Escape en los 4 modales" de la checklist. Abrir el dialogo NO crea ninguna
+    // cuenta (eso solo pasa al enviar el formulario), asi que es seguro dejarlo en el harness.
+    name: 'Accesibilidad: el dialogo "Añadir cuenta" abre y cierra con Escape',
+    async run(page) {
+      await page.getByRole('button', { name: 'Añadir cuenta' }).first().click();
+      const dialog = page.locator(MODAL);
+      await dialog.first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      const opened = await dialog.count();
+      // DONDE esta el foco al pulsar Escape. Es la diferencia entre "el modal ignora Escape" y "algo se
+      // llevo el foco fuera del modal", que son dos bugs distintos con dos arreglos distintos — y el
+      // segundo ya ha pasado dos veces en este proyecto (ver useDialogA11y.ts).
+      const focusBefore = await focusLocation(page);
+      const closed = await closeDialog(page);
+      const focusAfter = closed === 0 ? null : await focusLocation(page);
+      return {
+        ok: opened === 1 && closed === 0,
+        detail: `abierto=${opened} foco al pulsar Escape=${focusBefore} tras Escape=${closed}${focusAfter === null ? '' : ` foco despues=${focusAfter}`}`,
+      };
+    },
+  },
+  {
+    // Fase 9.2: el alta de cuenta ya NO aloja la pagina de login de Anthropic en una ventana de Mage.
+    // Ahora el login lo hace el CLI y la pagina se abre en el navegador, en ventana privada.
+    //
+    // Se mide el FORMULARIO, que es lo que cambia de forma visible: aparece el campo de email (el
+    // `login_hint`) y desaparece la casilla de "sesion limpia dentro de Mage", que solo tenia sentido
+    // con la ventana embebida. NO se pulsa el boton: enviarlo crearia una cuenta de verdad en disco.
+    //
+    // Y se comprueba la seccion de "usar la sesion de...": debe haber UN boton por cuenta con login y
+    // ninguno si no hay ninguna (un boton que no puede hacer nada es peor que su ausencia). Se compara
+    // contra el estado REAL del store, no contra un numero fijo: el harness aisla el `userData` de
+    // Electron, NO el HOME, asi que las cuentas que se descubren son las de la maquina.
+    name: '9.2: el alta de cuenta pide nombre y email, y ya no ofrece ventana embebida',
+    async run(page) {
+      await page.getByRole('button', { name: 'Añadir cuenta' }).first().click();
+      const dialog = page.locator(MODAL);
+      await dialog.first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+
+      const measured = await page.evaluate(() => {
+        const modal = document.querySelector('[role="dialog"]');
+        const text = modal?.textContent ?? '';
+        return {
+          campos: modal?.querySelectorAll('input[type="text"], input:not([type])').length ?? 0,
+          casillas: modal?.querySelectorAll('input[type="checkbox"]').length ?? 0,
+          pideEmail: /EMAIL/.test(text),
+          diceCli: /CLI de Claude Code/.test(text),
+          dicePrivada: /ventana privada/.test(text),
+          // Restos del flujo embebido que NO deben quedar.
+          diceDentroDeMage: /dentro de Mage/.test(text),
+          botonesAdoptar: [...(modal?.querySelectorAll('button') ?? [])].filter((b) =>
+            (b.textContent ?? '').startsWith('Usar la sesión de'),
+          ).length,
+          conLogin: (window.__mageDev?.store.getState().accounts ?? []).filter((a) => a.loginStatus === 'logged_in').length,
+        };
+      });
+      const closed = await closeDialog(page);
+
+      const ok =
+        measured.campos === 2 &&
+        measured.casillas === 0 &&
+        measured.pideEmail &&
+        measured.diceCli &&
+        measured.dicePrivada &&
+        !measured.diceDentroDeMage &&
+        measured.botonesAdoptar === measured.conLogin &&
+        closed === 0;
+      return {
+        ok,
+        detail:
+          `campos=${measured.campos} casillas=${measured.casillas} email=${measured.pideEmail} ` +
+          `cli=${measured.diceCli} privada=${measured.dicePrivada} restoEmbebido=${measured.diceDentroDeMage} ` +
+          `botonesAdoptar=${measured.botonesAdoptar} cuentasConLogin=${measured.conLogin} cerrado=${closed === 0}`,
+      };
+    },
+  },
+  {
+    // G5: `app.requestSingleInstanceLock()`. Estaba como "⚠ pendiente de verificacion GUI" desde que se
+    // implemento. Se lanza un SEGUNDO Electron contra el MISMO perfil: debe rendirse enseguida y no
+    // abrir otra ventana; la primera instancia recibe 'second-instance' y se enfoca.
+    name: 'G5: una segunda instancia no abre otra ventana',
+    async run(page, ctx) {
+      const before = countMainPages(page);
+      const electronPath = requireFromHere('electron');
+      const result = spawnSync(electronPath, ['.', `--user-data-dir=${ctx.userDataDir}`], {
+        cwd: repoRoot,
+        windowsHide: true,
+        timeout: 30_000,
+        stdio: 'ignore',
+      });
+      await page.waitForTimeout(1500);
+      const after = countMainPages(page);
+      // `timeout` mata el proceso y deja `signal`: si eso pasa, la segunda instancia NO se rindio.
+      const surrendered = result.signal === null;
+      const ok = surrendered && after === before && before === 1;
+      return { ok, detail: `ventanas principales antes=${before} despues=${after} segunda instancia se rindio=${surrendered} (code=${result.status} signal=${result.signal})` };
+    },
+  },
+  {
+    // Input rico (M3): Tab indenta y Shift+Tab desindenta. NUNCA se pulsa Enter: dispararia un turno
+    // real del agente, que gasta suscripcion y escribe en una transcripcion de verdad.
+    name: 'Input rico: Tab indenta y Shift+Tab desindenta',
+    async run(page) {
+      const prompt = page.getByRole('textbox', { name: 'Escribe una instrucción para el agente' });
+      await prompt.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      await clearPrompt(page);
+      await typeInPrompt(page, 'hola');
+      await prompt.press('Tab');
+      const indented = await promptText(page);
+      await prompt.press('Shift+Tab');
+      const back = await promptText(page);
+      await clearPrompt(page);
+      const ok = indented.startsWith(' ') && indented.trimStart() === 'hola' && back === 'hola';
+      return { ok, detail: `tras Tab=${JSON.stringify(indented)} tras Shift+Tab=${JSON.stringify(back)}` };
+    },
+  },
+  {
+    // Input rico (M3), la otra mitad que seguia siendo manual: Shift+Enter continua la lista con el
+    // marcador siguiente, y en un item VACIO sale de la lista. Shift+Enter NO envia (el envio es Enter a
+    // secas), asi que aqui no se dispara ningun turno.
+    name: 'Input rico: Shift+Enter continua la lista y la cierra en un item vacio',
+    async run(page) {
+      const prompt = page.getByRole('textbox', { name: 'Escribe una instrucción para el agente' });
+      await prompt.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      await clearPrompt(page);
+      await typeInPrompt(page, '- uno');
+      await prompt.press('Shift+Enter');
+      const continued = await promptText(page);
+      await page.keyboard.type('dos', { delay: PROMPT_TYPE_DELAY_MS });
+      await prompt.press('Shift+Enter');
+      const second = await promptText(page);
+      // Tercer Shift+Enter sobre el marcador vacio que acaba de insertar: debe SALIR de la lista.
+      await prompt.press('Shift+Enter');
+      const exited = await promptText(page);
+      await clearPrompt(page);
+      const ok = continued === '- uno\n- ' && second === '- uno\n- dos\n- ' && !exited.endsWith('- ');
+      return {
+        ok,
+        detail: `tras 1er Shift+Enter=${JSON.stringify(continued)} tras escribir y repetir=${JSON.stringify(second)} sobre item vacio=${JSON.stringify(exited)}`,
+      };
+    },
+  },
+  {
+    // M2.6 + D5: con el input VACIO, Shift+Tab cicla el modo de permiso en vez de desindentar (el guard
+    // `promptTextEmpty` del resolver). Se mide el CICLO COMPLETO y la vuelta al punto de partida: medir un
+    // solo paso no distingue "cicla" de "se queda pegado en el segundo". Sin sesion viva no se manda
+    // ningun `set_permission_mode` al CLI, solo cambia el estado de la pestaña.
+    name: 'Shift+Tab con el input vacio cicla el modo de permiso',
+    async run(page) {
+      const chip = page.locator('[aria-label^="Modo de permiso:"]');
+      await chip.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      const prompt = page.getByRole('textbox', { name: 'Escribe una instrucción para el agente' });
+      await clearPrompt(page);
+      const seen = [await permissionModeLabel(page)];
+      for (let step = 0; step < 3; step += 1) {
+        await prompt.press('Shift+Tab');
+        await page.waitForTimeout(CONFIG.settleMs);
+        seen.push(await permissionModeLabel(page));
+      }
+      const distinct = new Set(seen.slice(0, 3)).size;
+      const ok = distinct === 3 && seen[3] === seen[0];
+      return { ok, detail: `modos=${JSON.stringify(seen)} distintos en el ciclo=${distinct} vuelve al inicio=${seen[3] === seen[0]}` };
+    },
+  },
+  {
+    // D4 / B3 de la checklist: el popover de comandos "/". Sin sesion viva la lista es la CURADA (los
+    // reales llegan en la respuesta al `initialize`), asi que lo verificable aqui es la mecanica: filtra
+    // por lo tecleado y Escape lo cierra. Se mide tambien que los seis comandos de la TUI que D4 quito
+    // (`cost`, `help`…) NO vuelven a ofrecerse: ofrecerlos era engañar, porque el modelo los recibe como
+    // texto. NUNCA se pulsa Enter ni Tab con el popover abierto (completarian y dejarian texto).
+    name: 'Comandos /: el popover filtra, Escape lo cierra y no ofrece los de la TUI',
+    async run(page) {
+      const prompt = page.getByRole('textbox', { name: 'Escribe una instrucción para el agente' });
+      const listbox = page.getByRole('listbox', { name: 'Comandos disponibles' });
+      await clearPrompt(page);
+      await typeInPrompt(page, '/');
+      await listbox.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      const all = await slashOptionNames(page);
+      await clearPrompt(page);
+      await typeInPrompt(page, '/m');
+      await page.waitForTimeout(CONFIG.settleMs);
+      const filtered = await slashOptionNames(page);
+      await prompt.press('Escape');
+      await page.waitForTimeout(CONFIG.settleMs);
+      const openAfterEscape = await listbox.count();
+      await clearPrompt(page);
+      // El contrato NO es "todos empiezan por lo escrito": `filterSlashCommands` ranquea PREFIJO primero e
+      // INFIJO despues (por eso "/m" ofrece tambien `/compact`). Medir "todos empiezan por /m" habria
+      // suspendido a la app por cumplir su especificacion. Lo que se verifica es lo que promete: todos
+      // CONTIENEN lo escrito, y los que empiezan por ello van delante.
+      const tuiOnly = ['cost', 'help', 'hooks', 'memory', 'permissions', 'status'];
+      const leaked = tuiOnly.filter((name) => all.includes(`/${name}`));
+      const prefixCount = filtered.findIndex((name) => !name.startsWith('/m'));
+      const prefixFirst = prefixCount === -1 || filtered.slice(prefixCount).every((name) => !name.startsWith('/m'));
+      const ok =
+        all.length > filtered.length &&
+        filtered.length > 0 &&
+        filtered.every((name) => name.slice(1).includes('m')) &&
+        filtered.includes('/mcp') &&
+        prefixFirst &&
+        leaked.length === 0 &&
+        openAfterEscape === 0;
+      return {
+        ok,
+        detail: `con "/"=${all.length} comandos, con "/m"=${JSON.stringify(filtered)} prefijo antes que infijo=${prefixFirst} de la TUI colados=${JSON.stringify(leaked)} listbox tras Escape=${openAfterEscape}`,
+      };
+    },
+  },
+  {
+    // Ronda 2, B1: "cambiar de modelo no avisa de que sera mas costoso". Estaba verificado por CDP una
+    // vez, a mano, sobre la app REAL del usuario (y hubo que reponer el modelo despues). Aqui pasa a ser
+    // repetible y sobre el perfil aislado. El cambio no gasta nada: sin sesion viva no se manda
+    // `set_model`, solo se actualiza la pestaña — y al acabar se repone el modelo de partida.
+    name: 'Cambiar a Opus avisa del coste y el aviso se puede descartar',
+    async run(page) {
+      const trigger = page.getByRole('button', { name: 'Modelo (aplica al siguiente turno)' });
+      await trigger.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      const initial = (await trigger.innerText()).trim();
+      const opus = await pickDropdownOption(page, 'Modelo (aplica al siguiente turno)', /opus/i);
+      if (opus === null) return { ok: false, detail: `no hay ninguna opcion de Opus en el selector (modelo actual=${JSON.stringify(initial)})` };
+      await page.waitForTimeout(CONFIG.settleMs);
+      const banner = page.getByRole('button', { name: 'Descartar aviso' });
+      const warned = await banner.count();
+      const text = warned === 0 ? null : ((await banner.locator('..').innerText()) ?? '').trim();
+      if (warned === 1) await banner.click();
+      await page.waitForTimeout(CONFIG.settleMs);
+      const dismissed = await page.getByRole('button', { name: 'Descartar aviso' }).count();
+      // Reponer el modelo de partida y descartar el aviso que provoca el propio cambio de vuelta.
+      await pickDropdownOption(page, 'Modelo (aplica al siguiente turno)', new RegExp(`^${escapeRegExp(initial)}$`, 'i'));
+      await page.waitForTimeout(CONFIG.settleMs);
+      const back = page.getByRole('button', { name: 'Descartar aviso' });
+      if ((await back.count()) === 1) await back.click();
+      await page.waitForTimeout(CONFIG.settleMs);
+      const restored = (await trigger.innerText()).trim();
+      const ok = warned === 1 && text !== null && /opus/i.test(text) && dismissed === 0 && restored === initial;
+      return {
+        ok,
+        detail: `modelo ${JSON.stringify(initial)} -> ${JSON.stringify(opus)} avisos=${warned} texto=${JSON.stringify(text)} tras descartar=${dismissed} modelo repuesto=${JSON.stringify(restored)}`,
+      };
+    },
+  },
+  {
+    // I11-drag: el boton ⫿ se quito (feedback del usuario: dividir debe ser arrastrar una pestaña,
+    // como VS Code/IntelliJ, no un boton que solo sabe partir en dos). Con UNA sola pestaña, "Dividir
+    // a..." del menu contextual (la alternativa SIN raton) tiene que estar deshabilitado: no hay OTRA
+    // pestaña con la que dividir el panel enfocado, y esta pestaña ya es esa misma.
+    name: 'Dividir workspace: con una sola pestaña, "Dividir a..." esta deshabilitado en el menu',
+    async run(page) {
+      const tab = page.locator('[role="tab"]').first();
+      await tab.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      await tab.click({ button: 'right' });
+      const menu = page.getByRole('menu');
+      await menu.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      const splitItems = menu.getByRole('menuitem', { name: /^Dividir/ });
+      const count = await splitItems.count();
+      const disabledFlags = [];
+      for (let i = 0; i < count; i++) disabledFlags.push(await splitItems.nth(i).isDisabled());
+      await page.keyboard.press('Escape');
+      await menu.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+      const prompts = await page.getByRole('textbox', { name: 'Escribe una instrucción para el agente' }).count();
+      const ok = count === 4 && disabledFlags.every(Boolean) && prompts === 1;
+      return { ok, detail: `items "Dividir a..."=${count} deshabilitados=${JSON.stringify(disabledFlags)} areas de prompt=${prompts}` };
+    },
+  },
+  {
+    // Ronda 3, item 5: el menu "nacia desde arriba de la pantalla, no del boton". El calculo del `top`
+    // clampaba contra el borde de la VENTANA sin mirar el trigger; con el boton abajo (PromptBar) el
+    // menu aparecia muy por encima, desconectado. Se mide la separacion REAL entre las dos cajas: da
+    // igual si vuelca hacia arriba o hacia abajo, pero tiene que estar PEGADO a una de las dos caras.
+    // Solo se ABRE el menu (Escape para cerrarlo): elegir una opcion cambiaria el esfuerzo de verdad.
+    name: 'El menu de esfuerzo nace pegado a su boton (Dropdown)',
+    async run(page) {
+      const trigger = page.getByRole('button', { name: 'Nivel de esfuerzo' });
+      await trigger.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      await trigger.click();
+      const listbox = page.getByRole('listbox', { name: 'Nivel de esfuerzo' });
+      await listbox.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      await page.waitForTimeout(300); // la animacion de entrada del popover (150 ms) debe haber acabado
+      const triggerBox = await trigger.boundingBox();
+      const listBox = await listbox.boundingBox();
+      await page.keyboard.press('Escape');
+      await page.waitForTimeout(200);
+      const gapBelow = Math.abs(listBox.y - (triggerBox.y + triggerBox.height));
+      const gapAbove = Math.abs(triggerBox.y - (listBox.y + listBox.height));
+      const gap = Math.min(gapBelow, gapAbove);
+      // Tolerancia de 16px, no de 4: al volcar hacia arriba el `top` se calcula ANTES de montar el
+      // menu, con una ESTIMACION de su alto (nº de opciones x alto de fila) — el alto real difiere unos
+      // pocos px. Lo que esta comprobacion protege es el bug reportado (el menu aparecia a cientos de px
+      // del boton, clampado contra el borde de la ventana), no el pixel exacto.
+      const ok = gap <= 16;
+      return {
+        ok,
+        detail: `boton=[${triggerBox.y.toFixed(0)}, ${(triggerBox.y + triggerBox.height).toFixed(0)}] menu=[${listBox.y.toFixed(0)}, ${(listBox.y + listBox.height).toFixed(0)}] separacion minima=${gap.toFixed(1)}px`,
+      };
+    },
+  },
+  // --- F4: resaltado de sintaxis (shiki) ----------------------------------------------------------
+  //
+  // Se mide en la VISTA PREVIA del markdown del prompt (E5), que monta el MISMO componente `Markdown`
+  // que el chat: el chat exigiria un turno real del agente (suscripcion + transcripcion de verdad).
+  // Aqui no se pulsa Enter en ningun momento; solo se escribe y se abre la vista previa.
+  {
+    // La medida es el numero de colores DISTINTOS entre los <span> de token. Si el resaltado muriera
+    // (gramatica que no carga, tema importado sin reglas, shiki que lanza), `useHighlightedCode`
+    // devuelve null y el bloque cae a texto plano: 0 spans y un solo color heredado. Contar "spans > 0"
+    // o "hay un <pre>" pasaria en verde con la funcionalidad muerta.
+    name: 'F4: un bloque ```ts se tokeniza con varios colores en el chat',
+    async run(page) {
+      // La vista previa del prompt desaparecio con 2.7 (el input YA es WYSIWYG), asi que el resaltado
+      // se mide donde de verdad importa: en el hilo. Mismo componente (`Markdown`) y mismo resaltador.
+      await hydrateBlocks(page, [{ kind: 'agent', id: 'hl-ts', runs: [{ code: false, text: TS_FENCE }], streaming: false }]);
+      const measured = await waitForChatCode(page, (m) => m.colors.length > 1);
+      const ok = measured !== null && measured.lang === 'ts' && measured.colors.length > 1 && measured.text.includes('const answer');
+      return {
+        ok,
+        detail: `lenguaje=${JSON.stringify(measured?.lang ?? null)} spans de token=${measured?.spans ?? 0} colores distintos=${measured?.colors.length ?? 0}`,
+      };
+    },
+  },
+  {
+    // Contraparte: un lenguaje que NO esta en HIGHLIGHT_LANGS cae a texto plano. Lo que hay que medir es
+    // que el codigo SIGUE AHI (0 spans pero texto intacto): un fallo que se comiera el contenido
+    // dejaria el bloque en blanco.
+    name: 'F4: un lenguaje no registrado (rust) queda en texto plano y no en blanco',
+    async run(page) {
+      await hydrateBlocks(page, [{ kind: 'agent', id: 'hl-rs', runs: [{ code: false, text: RUST_FENCE }], streaming: false }]);
+      const measured = await waitForChatCode(page, (m) => m.lang === 'rust' && m.spans === 0);
+      const ok = measured !== null && measured.lang === 'rust' && measured.spans === 0 && measured.text.includes('fn main');
+      return {
+        ok,
+        detail: `lenguaje=${JSON.stringify(measured?.lang ?? null)} spans=${measured?.spans ?? 0} texto=${JSON.stringify((measured?.text ?? '').slice(0, 40))}`,
+      };
+    },
+  },
+  {
+    name: 'E3: elegir `agy` en Nueva conversacion muestra el aviso de sin permisos',
+    async run(page) {
+      return withNewTabDialog(page, async () => {
+        const warning = page.locator(`${NEW_TAB_DIALOG} [role="status"]`);
+        const withClaude = await warning.count();
+        const provider = newTabSelect(page, NEW_TAB_FIELD.provider);
+        const targets = await provider.count();
+        if (targets !== 1) return { ok: false, detail: `selectores de proveedor=${targets} (se esperaba 1: no se toca)` };
+        await provider.selectOption(AGY_PROVIDER_ID);
+        await page.waitForTimeout(CONFIG.settleMs);
+        const withAgy = await warning.count();
+        const text = withAgy === 0 ? '' : (await warning.first().innerText()).trim();
+        const model = await newTabSelect(page, NEW_TAB_FIELD.model).inputValue();
+        const modelOptions = await selectOptionsOf(page, NEW_TAB_FIELD.model);
+        // El modelo por defecto de un proveedor sin preferencia fijada es el PRIMERO de su catalogo.
+        const firstModel = modelOptions?.[0]?.split('|')[0] ?? null;
+        const ok = withClaude === 0 && withAgy === 1 && text.includes(NO_PERMISSION_HEAD) && model === firstModel;
+        return {
+          ok,
+          detail: `avisos con claude=${withClaude} con agy=${withAgy} modelo=${JSON.stringify(model)} primer modelo de agy=${JSON.stringify(firstModel)} aviso=${JSON.stringify(text)}`,
+        };
+      });
+    },
+  },
+  {
+    // La mas delicada del lote. Con `agy` instalado se abre su pestaña y se mide lo que la UI DEBE tener
+    // (el chip permanente "⚠ Sin permisos" y el recuadro del estado vacio) y lo que NO debe tener: el
+    // chip de modo de permiso y el selector de esfuerzo, que son de Claude y para `agy` no existen —
+    // pintarlos seria fingir un control de permisos que su CLI no ofrece.
+    // Si `agy` NO estuviera instalado, el contrato es otro y se mide ese: boton de crear DESHABILITADO y
+    // el motivo a la vista.
+    name: 'E3: la pestaña de `agy` lleva el chip "Sin permisos" y no el selector de modo de permiso',
+    async run(page) {
+      await page.locator('button[aria-label="Nueva pestaña"]').first().click({ button: 'right' });
+      await page.locator(NEW_TAB_DIALOG).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      await page.getByRole('button', { name: 'Carpeta temporal', exact: true }).click();
+      const provider = newTabSelect(page, NEW_TAB_FIELD.provider);
+      const targets = await provider.count();
+      if (targets !== 1) {
+        await closeDialog(page);
+        return { ok: false, detail: `selectores de proveedor=${targets} (se esperaba 1: no se toca)` };
+      }
+      await provider.selectOption(AGY_PROVIDER_ID);
+      await page.waitForTimeout(CONFIG.settleMs);
+      const warning = (await page.locator(`${NEW_TAB_DIALOG} [role="status"]`).first().innerText()).trim();
+      const open = page.getByRole('button', { name: /Abrir pestaña|Abriendo/ });
+      const enabled = await open.isEnabled();
+      if (warning.includes(AGY_MISSING_HEAD)) {
+        const closed = await closeDialog(page);
+        return {
+          ok: !enabled && closed === 0,
+          detail: `agy NO instalado: boton habilitado=${enabled} (se espera false) motivo=${JSON.stringify(warning)}`,
+        };
+      }
+      await open.click();
+      // Se espera al DESMONTAJE del dialogo, no a un tiempo fijo: mientras su animacion de salida corre,
+      // el aviso del dialogo sigue en el DOM y se contaria como si fuera el del estado vacio (dos
+      // recuadros en vez de uno). Con `modalExitMs` la medida salia distinta segun la ejecucion.
+      await page.locator(NEW_TAB_DIALOG).waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+      const measured = await page.evaluate((head) => {
+        // El chip de la PromptBar es el unico role=status con aria-label; el recuadro del estado vacio
+        // lleva el aviso como TEXTO. Distinguirlos importa: si se contaran juntos, tener solo uno de los
+        // dos pasaria en verde.
+        const chips = [...document.querySelectorAll('[role="status"][aria-label]')].filter((node) =>
+          (node.getAttribute('aria-label') ?? '').startsWith(head),
+        );
+        const boxes = [...document.querySelectorAll('[role="status"]')].filter((node) => (node.textContent ?? '').includes(head));
+        return {
+          chips: chips.length,
+          chipText: chips[0]?.textContent?.trim() ?? null,
+          emptyStateBoxes: boxes.length,
+          // Quien es cada uno: `[role=status]` ANIDADOS contarian dos veces el mismo aviso, y un conteo
+          // pelado no distingue "falta el recuadro" de "hay uno de mas".
+          boxOwners: boxes.map((node) => {
+            const inDialog = node.closest('[role="dialog"]') !== null;
+            const nested = boxes.some((other) => other !== node && other.contains(node));
+            return `${node.tagName.toLowerCase()}${inDialog ? ' en-dialogo' : ''}${nested ? ' anidado' : ''}`;
+          }),
+          permissionModeControls: document.querySelectorAll('[aria-label^="Modo de permiso"]').length,
+          effortControls: document.querySelectorAll('[aria-label="Nivel de esfuerzo"]').length,
+        };
+      }, NO_PERMISSION_HEAD);
+      const ok =
+        measured.chips === 1 &&
+        measured.chipText === AGY_PERMISSION_CHIP &&
+        measured.emptyStateBoxes === 1 &&
+        measured.permissionModeControls === 0 &&
+        measured.effortControls === 0;
+      return { ok, detail: `agy instalado; pestaña abierta: ${JSON.stringify(measured)}` };
+    },
+  },
+  {
+    // El estado vacio de una conversacion es la constelacion de chispas de la marca, no los dos
+    // anillos que giraban antes. Se mide la FORMA (estrella de cuatro puntas = 8 comandos de path),
+    // que cada una lleve SU desfase —si todas titilaran a la vez se leeria como un parpadeo, no como
+    // una constelacion— y que la animacion este de verdad corriendo, no solo declarada: el fallo real
+    // que esto caza es que el CSS no llegue y las cinco queden estaticas con animationName="none".
+    // Se cuenta POR constelacion, no en total: con el workspace dividido hay un estado vacio por panel.
+    name: "I1: el estado vacio son cinco chispas de la marca, titilando desfasadas",
+    async run(page) {
+      const measured = await page.evaluate(() => {
+        const grupos = [...document.querySelectorAll("svg")].filter((svg) => svg.querySelector(".mg-sparkle") !== null);
+        return {
+          constelaciones: grupos.length,
+          porConstelacion: grupos.map((svg) => svg.querySelectorAll(".mg-sparkle").length),
+          // Cuatro puntas = 8 vertices = 1 comando M + 7 L. Con otra cifra no es la estrella de marca.
+          comandosDePath: [...new Set([...document.querySelectorAll(".mg-sparkle")].map((n) => ((n.getAttribute("d") ?? "").match(/[ML]/g) ?? []).length))],
+          animaciones: [...new Set([...document.querySelectorAll(".mg-sparkle")].map((n) => getComputedStyle(n).animationName))],
+          desfasesDistintos: new Set([...document.querySelectorAll(".mg-sparkle")].map((n) => getComputedStyle(n).animationDelay)).size,
+          anillosViejos: document.querySelectorAll(".mg-magic-ring").length,
+        };
+      });
+      const animando = measured.animaciones.length === 1 && ["mg-twinkle", "mg-twinkle-still"].includes(measured.animaciones[0]);
+      const ok =
+        measured.constelaciones >= 1 &&
+        measured.porConstelacion.every((n) => n === 5) &&
+        measured.comandosDePath.length === 1 &&
+        measured.comandosDePath[0] === 8 &&
+        animando &&
+        measured.desfasesDistintos === 5 &&
+        measured.anillosViejos === 0;
+      return { ok, detail: `estado vacio=${JSON.stringify(measured)}` };
+    },
+  },
+  // --- Las dos ultimas necesitan DOS conversaciones abiertas, que es justo lo que deja E3 ------------
+  {
+    // Accesibilidad (M3): el TabBar declara role="tablist", y en el se aprendio la leccion. Hasta ahora
+    // solo estaba cubierto el tablist de Configuracion; este es el otro. Aqui las flechas mueven foco Y
+    // seleccion (a diferencia del roving puro de Configuracion), asi que se miden las dos cosas — y se
+    // vuelve con la flecha contraria para dejar activa la pestaña de partida.
+    name: 'Accesibilidad: el tablist de conversaciones responde a flechas',
+    async run(page) {
+      const tablist = page.locator('[role="tablist"][aria-label^="Conversaciones abiertas"]');
+      await tablist.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      const tabs = tablist.locator('[role="tab"]');
+      const total = await tabs.count();
+      if (total < 2) return { ok: false, detail: `pestañas=${total} (hacen falta 2; las abren las comprobaciones anteriores)` };
+      await tablist.locator('[role="tab"][aria-selected="true"]').first().focus();
+      const start = await focusedTabLabel(page);
+      await page.keyboard.press('ArrowLeft');
+      await page.waitForTimeout(CONFIG.settleMs);
+      const moved = await focusedTabLabel(page);
+      const selectedMoved = await selectedTabLabel(tablist);
+      // Donde acabo el foco si NO es una pestaña. Sin esto, un fallo aqui solo dice "foco=''" y no
+      // distingue "se fue a otro sitio" de "se cayo a <body>", que es la firma del bug de a11y que este
+      // proyecto ya ha pagado dos veces (y la diferencia entre las dos es el arreglo).
+      const landed = await page.evaluate(() => {
+        const active = document.activeElement;
+        if (active === null) return 'ninguno';
+        return `${active.tagName.toLowerCase()} role=${active.getAttribute('role') ?? 'sin-role'} conectado=${active.isConnected}`;
+      });
+      await page.keyboard.press('ArrowRight');
+      await page.waitForTimeout(CONFIG.settleMs);
+      const back = await focusedTabLabel(page);
+      const ok = moved !== start && moved.length > 0 && selectedMoved === moved && back === start;
+      return {
+        ok,
+        detail: `pestañas=${total} inicio=${JSON.stringify(start)} ArrowLeft foco=${JSON.stringify(moved)} (activeElement=${landed}) seleccionada=${JSON.stringify(selectedMoved)} ArrowRight=${JSON.stringify(back)}`,
+      };
+    },
+  },
+  {
+    // GRUPOS DE PESTAÑAS (2026-09-17): al dividir, cada panel tiene SU barra con SUS pestañas. Antes la
+    // barra era una sola y comun, asi que los dos paneles obedecian a la misma lista. Esto lo mide
+    // sobre el DOM real porque el cambio es estructural: los tests de `splitLayout` prueban el arbol,
+    // no que se pinten dos barras ni que cada una liste lo suyo.
+    //
+    // CONTRATO DE ESTADO: abre dos conversaciones temporales y divide; al terminar restaura el estado
+    // que habia (mismo mecanismo que la comprobacion de arrastre).
+    name: 'Grupos: al dividir, cada panel trae su propia barra de pestañas',
+    async run(page) {
+      const original = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return { tabs: s.tabs, activeTabId: s.activeTabId, splitLayout: s.splitLayout, sessionIdByChat: s.sessionIdByChat };
+      });
+      try {
+        const barrasAntes = await page.evaluate(() => document.querySelectorAll('[role="tablist"][aria-label^="Conversaciones abiertas"]').length);
+
+        await openTemporaryConversation(page);
+        const tabA = await page.evaluate(() => window.__mageDev.store.getState().activeTabId);
+        await openTemporaryConversation(page);
+        const tabB = await page.evaluate(() => window.__mageDev.store.getState().activeTabId);
+        // Se divide por la accion del store: el arrastre real ya lo cubre la comprobacion anterior, y
+        // aqui lo que se mide es el resultado estructural, no el gesto.
+        await page.evaluate((a) => window.__mageDev.store.getState().movePaneTab(a, [], 'left'), tabA);
+        await page.waitForTimeout(CONFIG.settleMs);
+
+        const medido = await page.evaluate(() => {
+          const barras = [...document.querySelectorAll('[role="tablist"][aria-label^="Conversaciones abiertas"]')];
+          return {
+            barras: barras.length,
+            // Pestañas de cada barra y cual marca como activa: dos barras que listaran lo mismo serian
+            // exactamente el defecto que esto vigila.
+            porBarra: barras.map((b) => ({
+              pestanas: [...b.querySelectorAll('[role="tab"]')].map((t) => t.getAttribute('data-tab-id')),
+              activa: b.querySelector('[role="tab"][aria-selected="true"]')?.getAttribute('data-tab-id') ?? null,
+            })),
+            // Un `+` por barra: crear una pestaña nueva tiene que poder dirigirse a un panel concreto.
+            botonesNueva: document.querySelectorAll('button[aria-label="Nueva pestaña"]').length,
+          };
+        });
+
+        const [izq, der] = medido.porBarra;
+        // El perfil de verificacion ya trae pestañas de comprobaciones anteriores, asi que NO se puede
+        // exigir "una en cada barra" (la primera medida real dio 1 y 3). Lo que se comprueba es la
+        // propiedad de verdad: que las dos listas sean DISJUNTAS —invariante 3 del modelo, ninguna
+        // pestaña en dos barras a la vez—, que cada panel enseñe una distinta, y que las dos pestañas
+        // de este test acaben en paneles DISTINTOS, que es lo que significa "se ha dividido".
+        const paneDe = (tabId) => (izq?.pestanas.includes(tabId) === true ? 0 : der?.pestanas.includes(tabId) === true ? 1 : -1);
+        const solapan = izq === undefined || der === undefined || izq.pestanas.some((id) => der.pestanas.includes(id));
+        const ok =
+          barrasAntes === 1 &&
+          medido.barras === 2 &&
+          medido.botonesNueva === 2 &&
+          izq !== undefined &&
+          der !== undefined &&
+          izq.pestanas.length > 0 &&
+          der.pestanas.length > 0 &&
+          !solapan &&
+          izq.activa !== der.activa &&
+          paneDe(tabA) !== -1 &&
+          paneDe(tabA) !== paneDe(tabB);
+        return { ok, detail: `barrasAntes=${barrasAntes} ${JSON.stringify(medido)}` };
+      } finally {
+        await page.evaluate((s) => window.__mageDev.store.setState(s), original);
+        await page.waitForTimeout(CONFIG.settleMs);
+      }
+    },
+  },
+  {
+    // VENTANAS FLOTANTES (2026-09-20, peticion del usuario): «no sirve de nada redondear los bordes y
+    // dejar los margenes con angulos rectos». Se mide lo que de verdad falla a ojo: el radio en las
+    // CUATRO esquinas de cada espacio de trabajo y que haya hueco a su alrededor por los cuatro lados
+    // —incluido ARRIBA, contra la barra de titulo, que era donde se veia el angulo recto—.
+    //
+    // Mismo contrato de estado que las otras de grupos: divide con dos conversaciones temporales y
+    // restaura lo que habia.
+    name: 'Cada espacio de trabajo flota: redondeo en las cuatro esquinas y hueco por los cuatro lados',
+    async run(page) {
+      const original = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return { tabs: s.tabs, activeTabId: s.activeTabId, splitLayout: s.splitLayout, sessionIdByChat: s.sessionIdByChat };
+      });
+      try {
+        await openTemporaryConversation(page);
+        const tabA = await page.evaluate(() => window.__mageDev.store.getState().activeTabId);
+        await openTemporaryConversation(page);
+        await page.evaluate((a) => window.__mageDev.store.getState().movePaneTab(a, [], 'left'), tabA);
+        await page.waitForTimeout(CONFIG.settleMs);
+
+        const medido = await page.evaluate(() => {
+          // El espacio de trabajo (barra de pestañas + chat) se marca con `data-workspace` justo para
+          // esto: es la caja que tiene que flotar.
+          const espacios = [...document.querySelectorAll('[data-workspace="pane"]')];
+          const radios = espacios.map((nodo) => {
+            const estilo = getComputedStyle(nodo);
+            return [estilo.borderTopLeftRadius, estilo.borderTopRightRadius, estilo.borderBottomRightRadius, estilo.borderBottomLeftRadius].map(
+              (valor) => Number.parseFloat(valor),
+            );
+          });
+          const cajas = espacios.map((nodo) => nodo.getBoundingClientRect());
+          // Hueco por arriba: contra la barra de titulo, que es lo que el usuario vio cuadrado.
+          const barraTitulo = document.querySelector('[data-titlebar]');
+          const topeSuperior = barraTitulo === null ? 0 : barraTitulo.getBoundingClientRect().bottom;
+          return {
+            espacios: espacios.length,
+            radios,
+            huecoArriba: cajas.map((caja) => Math.round(caja.top - topeSuperior)),
+            // Separacion horizontal entre las dos ventanas. A la derecha NO se mide contra el borde de
+            // la ventana: ahi vive el borde acoplable (otra isla), asi que el hueco util es el que hay
+            // hasta ella, y eso ya lo cubre el hueco entre islas del shell.
+            huecoEntre: cajas.length === 2 ? Math.round(cajas[1].left - cajas[0].right) : null,
+            huecoAbajo: cajas.map((caja) => Math.round(window.innerHeight - caja.bottom)),
+          };
+        });
+
+        const todasLasEsquinas = medido.radios.every((esquinas) => esquinas.length === 4 && esquinas.every((radio) => radio >= 4));
+        const ok =
+          medido.espacios === 2 &&
+          todasLasEsquinas &&
+          medido.huecoArriba.every((hueco) => hueco >= 3) &&
+          medido.huecoAbajo.every((hueco) => hueco >= 3) &&
+          (medido.huecoEntre ?? 0) >= 3;
+        // Captura CON LA DIVISION PUESTA: la del final de la comprobacion se toma ya restaurada, y de
+        // esto justamente hay que poder mirar el resultado (el harness mide, el ojo lo juzga).
+        await page.screenshot({ path: path.join(CONFIG.outDir, 'espacios-divididos.png') }).catch(() => {});
+        return { ok, detail: JSON.stringify(medido) };
+      } finally {
+        await page.evaluate((s) => window.__mageDev.store.setState(s), original);
+        await page.waitForTimeout(CONFIG.settleMs);
+      }
+    },
+  },
+  {
+    // TAMAÑO MINIMO DE PANEL: el divisor no puede dejar un panel en nada. Esto ya fallo una vez en el
+    // otro sentido — un minimo de 320 px sobre un centro de ~406 congelaba el divisor en 0.5 y no
+    // dejaba redimensionar—, asi que se mide lo que de verdad importa: que el reparto SE MUEVA y que
+    // ninguno de los dos paneles quede por debajo de un ancho usable.
+    name: 'Grupos: el divisor mueve el reparto y ningun panel queda inservible',
+    async run(page) {
+      const original = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return { tabs: s.tabs, activeTabId: s.activeTabId, splitLayout: s.splitLayout, sessionIdByChat: s.sessionIdByChat };
+      });
+      try {
+        await openTemporaryConversation(page);
+        const tabA = await page.evaluate(() => window.__mageDev.store.getState().activeTabId);
+        await openTemporaryConversation(page);
+        await page.evaluate((a) => window.__mageDev.store.getState().movePaneTab(a, [], 'left'), tabA);
+        await page.waitForTimeout(CONFIG.settleMs);
+
+        const ratioInicial = await page.evaluate(() => window.__mageDev.store.getState().splitLayout.ratio ?? null);
+        // Se empuja el reparto a los dos extremos por la accion del store, pasando el ancho REAL del
+        // contenedor: es el mismo camino que usa el arrastre del divisor.
+        const medido = await page.evaluate(() => {
+          const dev = window.__mageDev;
+          const contenedor = document.querySelector('[data-pane-tab-id]')?.parentElement?.parentElement ?? null;
+          const total = contenedor === null ? 0 : Math.round(contenedor.getBoundingClientRect().width);
+          dev.store.getState().resizeSplitAt([], 0.99, total);
+          const alTope = dev.store.getState().splitLayout.ratio ?? null;
+          dev.store.getState().resizeSplitAt([], 0.01, total);
+          const alOtro = dev.store.getState().splitLayout.ratio ?? null;
+          return { total, alTope, alOtro };
+        });
+        await page.waitForTimeout(CONFIG.settleMs);
+        const anchos = await page.evaluate(() =>
+          [...document.querySelectorAll('[data-pane-tab-id]')].map((n) => Math.round(n.getBoundingClientRect().width)),
+        );
+
+        const ok =
+          ratioInicial !== null &&
+          medido.alTope !== null &&
+          medido.alOtro !== null &&
+          // Se mueve de verdad en los dos sentidos (el fallo que se colo: quedarse clavado en 0.5).
+          medido.alTope > ratioInicial &&
+          medido.alOtro < ratioInicial &&
+          // Y nunca se va al borde: el acotado sigue puesto.
+          medido.alTope <= 0.9 &&
+          medido.alOtro >= 0.1 &&
+          anchos.length === 2 &&
+          anchos.every((w) => w >= Math.round(medido.total * 0.2));
+        return { ok, detail: `ratioInicial=${ratioInicial} ${JSON.stringify(medido)} anchosDePanel=${JSON.stringify(anchos)}` };
+      } finally {
+        await page.evaluate((s) => window.__mageDev.store.setState(s), original);
+        await page.waitForTimeout(CONFIG.settleMs);
+      }
+    },
+  },
+  {
+    // I11-drag: arrastrar una pestaña sobre el panel de OTRA la divide, estilo VS Code/IntelliJ —
+    // soltar cerca del borde izquierdo crea un panel nuevo a la izquierda con la arrastrada. La medida
+    // real es el numero de areas de prompt (1 -> 2) y que el panel nuevo muestra la pestaña arrastrada
+    // (por su ancla `data-pane-tab-id`, no por texto). Usa DOS PESTAÑAS PROPIAS (creadas y cerradas
+    // aqui mismo) para no depender de que otra comprobacion haya dejado exactamente 2 pestañas
+    // abiertas; el estado previo se restaura por `window.__mageDev` al terminar (mismo mecanismo que
+    // ya usa el grupo de hidratacion), asi que las comprobaciones de despues no ven ninguna pestaña
+    // de mas. Va la ultima antes del grupo de hidratacion: con dos paneles montados a mitad de la
+    // prueba, los localizadores de prompt de cualquier comprobacion CONCURRENTE dejarian de ser unicos.
+    name: 'Dividir workspace: arrastrar una pestaña a un panel lo divide (I11-drag)',
+    async run(page) {
+      const before0 = await promptAreas(page).count();
+      const originalState = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return { tabs: s.tabs, activeTabId: s.activeTabId, splitLayout: s.splitLayout, sessionIdByChat: s.sessionIdByChat };
+      });
+
+      await openTemporaryConversation(page); // pestaña A, queda activa y sola en el panel
+      const tabAId = await page.evaluate(() => window.__mageDev.store.getState().activeTabId);
+      await openTemporaryConversation(page); // pestaña B, ocupa el panel; A ya no se ve en ningun lado
+      const tabBId = await page.evaluate(() => window.__mageDev.store.getState().activeTabId);
+
+      const before = await promptAreas(page).count();
+      const targetPane = page.locator(`[data-pane-tab-id="${tabBId}"]`);
+      const box = await targetPane.boundingBox();
+      const sourceTab = page.locator(`[role="tab"][data-tab-id="${tabAId}"]`);
+      // Soltar al 10% del ancho: bien dentro de la zona 'left' (la mitad izquierda), lejos del centro.
+      await sourceTab.dragTo(targetPane, { targetPosition: { x: Math.round(box.width * 0.1), y: Math.round(box.height / 2) } });
+      await page.waitForTimeout(CONFIG.settleMs);
+
+      const after = await promptAreas(page).count();
+      const draggedPane = page.locator(`[data-pane-tab-id="${tabAId}"]`);
+      const targetPaneAfter = page.locator(`[data-pane-tab-id="${tabBId}"]`);
+      const draggedPaneVisible = await draggedPane.count();
+      const targetStillVisible = await targetPaneAfter.count();
+      // Soltar al 10% cae en la zona 'left': la arrastrada debe quedar a la IZQUIERDA de la destino (no
+      // al reves) y pasar a ser la pestaña activa — las dos cosas que un `dragTo` mal leido (zona
+      // recalculada de un estado de `dragover` obsoleto, o el `.focus()` de montaje robando el foco a
+      // la pestaña equivocada, ver PromptBar.tsx/ChatPane.tsx) dejaba invertidas sin que "hay 2 areas"
+      // lo detectara.
+      const draggedBox = draggedPaneVisible === 1 ? await draggedPane.boundingBox() : null;
+      const targetBox = targetStillVisible === 1 ? await targetPaneAfter.boundingBox() : null;
+      const draggedIsLeft = draggedBox !== null && targetBox !== null && draggedBox.x < targetBox.x;
+      const activeAfterDrop = await page.evaluate(() => window.__mageDev.store.getState().activeTabId);
+      const draggedBecameActive = activeAfterDrop === tabAId;
+      // Con la division montada, se mide de paso la ZONA DE AGARRE de su divisoria (feedback del
+      // 2026-09-15: "no se ve y cuesta cogerla"). No se mide el ancho de la caja —la linea sigue siendo
+      // de 1 px a proposito— sino a quien le llega el raton 3 px a cada lado: el `::after` invisible
+      // hace que esos puntos sean del propio separador. Si alguien quita el pseudo-elemento, aqui caen
+      // los paneles vecinos y la comprobacion falla.
+      const grabbable = await page.evaluate(() => {
+        const handle = document.querySelector('[role="separator"][aria-label="Redimensionar la división de paneles"]');
+        if (handle === null) return null;
+        const box = handle.getBoundingClientRect();
+        const y = box.top + box.height / 2;
+        const x = box.left + box.width / 2;
+        const hits = [-3, 0, 3].map((offset) => document.elementFromPoint(x + offset, y) === handle);
+        return { hits, width: Math.round(box.width) };
+      });
+      const grabOk = grabbable !== null && grabbable.hits.every(Boolean);
+      // Y el arrastre en si: el reparto se mueve EN VIVO por variable CSS (el panel cambia de ancho
+      // mientras el raton esta abajo) y el store NO se toca hasta soltar — la restriccion de rendimiento
+      // que `ZoneResizeHandle` ya cumplia y esta divisoria no. Las tres medidas son: ancho del panel
+      // durante el arrastre, ratio del store durante el arrastre (debe seguir igual) y ratio tras soltar.
+      const splitRatio = () =>
+        page.evaluate(() => {
+          const layout = window.__mageDev.store.getState().splitLayout;
+          return layout.kind === 'leaf' ? null : layout.ratio;
+        });
+      const handleBox = await page.locator('[role="separator"][aria-label="Redimensionar la división de paneles"]').boundingBox();
+      const widthBefore = (await draggedPane.boundingBox())?.width ?? 0;
+      const ratioBefore = await splitRatio();
+      const handleY = handleBox.y + handleBox.height / 2;
+      await page.mouse.move(handleBox.x + handleBox.width / 2, handleY);
+      await page.mouse.down();
+      await page.mouse.move(handleBox.x + 120, handleY, { steps: 8 });
+      const widthDuring = (await draggedPane.boundingBox())?.width ?? 0;
+      const ratioDuring = await splitRatio();
+      await page.mouse.up();
+      await page.waitForTimeout(CONFIG.settleMs);
+      const ratioAfter = await splitRatio();
+      const dragOk = ratioBefore !== null && ratioAfter !== null && widthDuring > widthBefore + 50 && ratioDuring === ratioBefore && ratioAfter > ratioBefore;
+
+      await page.evaluate((state) => window.__mageDev.store.setState(state), originalState);
+      await page.waitForTimeout(CONFIG.settleMs);
+      const restored = await promptAreas(page).count();
+
+      const ok =
+        before === 1 &&
+        after === 2 &&
+        draggedPaneVisible === 1 &&
+        targetStillVisible === 1 &&
+        draggedIsLeft &&
+        draggedBecameActive &&
+        grabOk &&
+        dragOk &&
+        restored === before0;
+      return {
+        ok,
+        detail: `areas de prompt ${before}->${after} (arrastrada visible=${draggedPaneVisible === 1}, destino sigue visible=${targetStillVisible === 1}, arrastrada a la izquierda=${draggedIsLeft}, arrastrada activa=${draggedBecameActive}) divisoria: linea=${grabbable?.width ?? '?'}px agarre en -3/0/+3 px=${JSON.stringify(grabbable?.hits ?? null)} arrastre: ancho ${Math.round(widthBefore)}->${Math.round(widthDuring)}px ratio ${ratioBefore}--(durante)-->${ratioDuring}--(al soltar)-->${ratioAfter} tras restaurar=${restored} (antes de empezar=${before0})`,
+      };
+    },
+  },
+  {
+    // Decision del usuario (2026-09-15): "Cerrar todas" ya NO pide confirmacion. Se mide el efecto (las
+    // pestañas se cierran con UN clic) y la ausencia de la confirmacion que habia dentro del menu (su
+    // boton "Cancelar"). Abre y cierra sus propias pestañas y restaura el estado previo, como la
+    // comprobacion de I11-drag.
+    name: 'Cerrar todas: un solo clic cierra, sin confirmacion dentro del menu',
+    async run(page) {
+      const originalState = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return { tabs: s.tabs, activeTabId: s.activeTabId, splitLayout: s.splitLayout, sessionIdByChat: s.sessionIdByChat };
+      });
+      await openTemporaryConversation(page);
+      await openTemporaryConversation(page);
+      // Las ancladas sobreviven a "Cerrar todas": lo que debe quedar es exactamente ese resto.
+      const antes = await page.evaluate(() => {
+        const tabs = window.__mageDev.store.getState().tabs;
+        return { total: tabs.length, ancladas: tabs.filter((t) => t.pinned === true).length };
+      });
+
+      const active = page.locator('[role="tablist"][aria-label^="Conversaciones abiertas"] [role="tab"][aria-selected="true"]');
+      const selected = await active.count();
+      if (selected !== 1) return { ok: false, detail: `pestañas seleccionadas=${selected} (se esperaba 1; no se clica nada)` };
+      await active.click({ button: 'right' });
+      await page.locator(TAB_MENU).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      await page.locator(TAB_MENU).getByRole('menuitem', { name: /^Cerrar todas/ }).click();
+
+      // La medida de "sin confirmacion" es que el menu se DESMONTA con ese unico clic: la confirmacion
+      // vivia dentro y lo habria dejado abierto esperando. Se espera al desmontaje, no a un tiempo fijo
+      // (error §6 de la skill `verificacion-gui`: durante la animacion de salida el menu sigue en el DOM
+      // — contar sus botones daba 15, que son las muestras de color, no una confirmacion).
+      let menuCerrado = true;
+      try {
+        await page.locator(TAB_MENU).waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+      } catch {
+        menuCerrado = false;
+      }
+      const after = await page.evaluate(() => window.__mageDev.store.getState().tabs.length);
+
+      await page.evaluate((state) => window.__mageDev.store.setState(state), originalState);
+      await page.waitForTimeout(CONFIG.settleMs);
+      const restored = await page.evaluate(() => window.__mageDev.store.getState().tabs.length);
+      const ok = antes.total >= 2 && menuCerrado && after === antes.ancladas && restored === originalState.tabs.length;
+      return {
+        ok,
+        detail: `pestañas ${antes.total}->${after} (ancladas=${antes.ancladas}) menu desmontado con un clic=${menuCerrado} tras restaurar=${restored}`,
+      };
+    },
+  },
+  {
+    // Decision del usuario (2026-09-15): cerrar una conversacion con trabajo en vuelo NO lo corta — se
+    // va a segundo plano y su fila del panel de Conversaciones lo dice. Se mide en DOS tramos porque
+    // cada uno falla por su cuenta: (a) `closeTab` con estado 'streaming' NO para el CLI y apunta la
+    // sesion; (b) con la sesion ya en 'done', la fila del historial pinta la pastilla REVISAR. La
+    // sesion es FALSA (un id inventado, nunca se spawnea el CLI) y el estado previo se restaura.
+    name: 'Segundo plano: cerrar con trabajo en vuelo no corta, y la fila queda pendiente de revisar',
+    async run(page) {
+      const originalState = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return {
+          tabs: s.tabs,
+          activeTabId: s.activeTabId,
+          splitLayout: s.splitLayout,
+          sessionIdByChat: s.sessionIdByChat,
+          statusByChat: s.statusByChat,
+          conversationHistory: s.conversationHistory,
+          backgroundSessions: s.backgroundSessions,
+        };
+      });
+      await openTemporaryConversation(page);
+      const cerrado = await page.evaluate(async () => {
+        const store = window.__mageDev.store;
+        const tabId = store.getState().activeTabId;
+        const { cwd, title, privacy } = store.getState().tabs.find((t) => t.id === tabId);
+        store.setState({
+          sessionIdByChat: { ...store.getState().sessionIdByChat, [tabId]: 'vg-fondo' },
+          statusByChat: { ...store.getState().statusByChat, [tabId]: 'streaming' },
+        });
+        await store.getState().closeTab(tabId);
+        const entry = store.getState().backgroundSessions['vg-fondo'];
+        return { estado: entry?.state ?? null, cwd, title, privacy, sigueAbierta: store.getState().tabs.some((t) => t.id === tabId) };
+      });
+      // Turno terminado: se pone a mano (inyectar el evento dispararia una recarga del historial por IPC
+      // que borraria la fila sintetica de abajo a mitad de la medida).
+      await page.evaluate((info) => {
+        const store = window.__mageDev.store;
+        const entry = store.getState().backgroundSessions['vg-fondo'];
+        store.setState({
+          backgroundSessions: { ...store.getState().backgroundSessions, 'vg-fondo': { ...entry, state: 'done' } },
+          conversationHistory: [
+            { sessionId: 'vg-fondo', title: info.title, cwd: info.cwd, privacy: info.privacy, updatedAtMs: Date.now(), configDir: '' },
+          ],
+        });
+      }, cerrado);
+      await page.waitForTimeout(CONFIG.settleMs);
+      const fila = await page.evaluate(() => {
+        const badge = document.querySelector('[data-background-badge]');
+        const row = badge?.closest('button');
+        return {
+          pastillas: document.querySelectorAll('[data-background-badge]').length,
+          estado: badge?.getAttribute('data-background-badge') ?? null,
+          texto: (row?.textContent ?? '').trim(),
+        };
+      });
+
+      await page.evaluate((state) => window.__mageDev.store.setState(state), originalState);
+      await page.waitForTimeout(CONFIG.settleMs);
+      const ok =
+        cerrado.estado === 'working' &&
+        cerrado.sigueAbierta === false &&
+        fila.pastillas === 1 &&
+        fila.estado === 'done' &&
+        fila.texto.includes('pendiente de revisión');
+      return {
+        ok,
+        detail: `al cerrar: estado=${cerrado.estado} pestaña cerrada=${!cerrado.sigueAbierta} · fila: pastillas=${fila.pastillas} estado=${fila.estado} texto=${JSON.stringify(fila.texto)}`,
+      };
+    },
+  },
+  // --- GRUPO NUEVO (Fase A): las que HIDRATAN el chat ------------------------------------------------
+  //
+  // Van las ultimas y en bloque, por contrato de orden: un chat con contenido cambia el DOM que miden
+  // las anteriores (y la #38 ya deja el workspace dividido y vuelto a juntar). Ninguna pulsa `Enter`,
+  // ninguna spawnea el CLI: los bloques se inyectan por el `__mageDev` de desarrollo (devBridge.ts),
+  // que no existe en el bundle de produccion. La PRIMERA abre su propia conversacion con "Carpeta
+  // temporal" y las otras dos la reutilizan (cada una reemplaza los bloques de la anterior).
+  {
+    // 2.6, el bug medido: el contenedor del chat es `flex-col` y `ToolBlock` lleva `overflow-hidden`, asi
+    // que recibia minimo automatico 0 y en cuanto la conversacion DESBORDABA el alto disponible el
+    // navegador lo encogia a 2 px (cajas de herramienta convertidas en rayas, img_8/img_10). Por eso se
+    // hidratan ~60 bloques y no cuatro: sin desbordamiento el sintoma no aparece — se comprueba que
+    // desborda de verdad, o la medida no estaria midiendo nada.
+    name: '2.6: ningun bloque del chat mide menos de 8 px',
+    async run(page) {
+      await openTemporaryConversation(page);
+      const hydrated = await page.evaluate((total) => {
+        const dev = window.__mageDev;
+        if (dev === undefined) throw new Error('window.__mageDev no existe (¿la app no esta en modo desarrollo?)');
+        const tabId = dev.store.getState().activeTabId;
+        const blocks = [];
+        for (let i = 0; i < total; i += 1) {
+          const slot = i % 5;
+          if (slot === 0) blocks.push({ kind: 'user', id: `vg-u${i}`, text: `Mensaje del usuario ${i}`, time: '12:00', attachments: [] });
+          else if (slot === 2) blocks.push({ kind: 'agent', id: `vg-a${i}`, runs: [{ code: false, text: `Respuesta del agente ${i}` }], streaming: false });
+          else
+            blocks.push({
+              kind: 'tool',
+              id: `vg-t${i}`,
+              toolUseId: `vg-tu${i}`,
+              tool: 'Read',
+              command: `src/fichero-${i}.ts`,
+              meta: 'ok · 12 ms',
+              output: [{ code: false, text: `salida de la herramienta ${i}` }],
+              filePath: null,
+              previewLines: null,
+            });
+        }
+        dev.store.setState({ blocksByChat: { ...dev.store.getState().blocksByChat, [tabId]: blocks } });
+        return blocks.length;
+      }, HYDRATED_BLOCK_COUNT);
+      await page.waitForTimeout(CONFIG.settleMs);
+
+      const measured = await measureBlockHeights(page);
+      const ok =
+        measured !== null &&
+        measured.bloques === hydrated &&
+        measured.tools >= 12 &&
+        measured.desborda &&
+        measured.pordebajode8 === 0 &&
+        measured.minAltura >= 8;
+      return { ok, detail: `hidratados=${hydrated} ${JSON.stringify(measured)}` };
+    },
+  },
+  {
+    // 2.12.1 + 2.12.3, de punta a punta: se hidrata con las TRES entradas REALES de la conversacion
+    // medida (indices 5, 12 y 61 de 9253933c-…) pasadas por el `transcriptToBlocks` de la app. La
+    // entrada 5 es UN solo mensaje con [texto, imagen]; las 12 y 61 son `isMeta` (el aviso del
+    // image-cache de img_6 y el `<system-reminder>` de img_10) y no deben pintar nada.
+    // `naturalWidth > 0` es lo que distingue "pinta la imagen" de "pinta un `data:` roto".
+    name: '2.12.1/2.12.3: isMeta invisible y la imagen en la misma burbuja',
+    async run(page) {
+      const blocks = await hydrateFromEntries(page, REAL_TRANSCRIPT_ENTRIES);
+      const measured = await waitForUserBubbles(page, (m) => m.naturalWidth > 0);
+      const ok =
+        measured !== null &&
+        blocks === 1 &&
+        measured.burbujas === 1 &&
+        measured.conSystemReminder === 0 &&
+        measured.conAvisoDeImagen === 0 &&
+        measured.conImagenYTexto === 1 &&
+        measured.naturalWidth > 0;
+      return { ok, detail: `entradas=${REAL_TRANSCRIPT_ENTRIES.length} bloques=${blocks} ${JSON.stringify(measured)}` };
+    },
+  },
+  {
+    // 2.2: la cache en disco es lo que hace que el popover ofrezca los comandos REALES del usuario
+    // ANTES del primer mensaje (`ensureSession` es perezoso, asi que una conversacion recien abierta no
+    // tiene sesion de la que sacarlos). Se siembra en `main()`, antes de arrancar la app.
+    // Se escribe con `type`, NUNCA se pulsa Enter.
+    name: '2.2: con el catalogo cacheado, "/" ofrece comandos namespaced antes del primer mensaje',
+    async run(page) {
+      const prompt = promptAreas(page).first();
+      await clearPrompt(page);
+      await typeInPrompt(page, '/itb');
+      const options = page.getByRole('listbox', { name: 'Comandos disponibles' }).getByRole('option');
+      await options.first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      const namespaced = await options.allInnerTexts();
+      await clearPrompt(page);
+      await typeInPrompt(page, '/compact');
+      await page.waitForTimeout(CONFIG.settleMs);
+      const conHint = await page.getByRole('listbox', { name: 'Comandos disponibles' }).getByRole('option').allInnerTexts();
+      await clearPrompt(page); // se deja el prompt como se encontro
+      const ok =
+        namespaced.length >= 1 &&
+        namespaced.some((text) => text.includes(SEEDED_NAMESPACED_COMMAND)) &&
+        conHint.some((text) => text.includes(SEEDED_HINT));
+      return { ok, detail: `con "/itb"=${JSON.stringify(namespaced)} con "/compact"=${JSON.stringify(conHint)}` };
+    },
+  },
+  {
+    // 2.3: un can_use_tool de AskUserQuestion se pinta como TARJETA en el chat, y el panel de permiso
+    // deja de ofrecer Permitir/Denegar para esa peticion — que es lo que hace estructuralmente
+    // imposible contestarla dos veces (contestar dos veces hace que main lance y la pestaña muera).
+    // El permiso se inyecta por `__mageDev` con el input MEDIDO: no hay sesion, asi que no se pulsa
+    // "Responder" (sin sesion viva `answerActivePermission` sale por su guard y se mediria el guard).
+    name: '2.3: un can_use_tool de AskUserQuestion se pinta como tarjeta y no como permiso',
+    async run(page) {
+      await injectPermissionRequest(page, ASK_USER_QUESTION_INPUT, 'vg-ask-1');
+      const measured = await page.evaluate(() => {
+        const cards = [...document.querySelectorAll('[data-block="question"]')];
+        const first = cards[0] ?? null;
+        return {
+          tarjetas: cards.length,
+          header: first?.textContent?.includes('Preferencia de color') ?? false,
+          radios: first?.querySelectorAll('[role="radio"]').length ?? 0,
+          casillas: first?.querySelectorAll('[role="checkbox"]').length ?? 0,
+          responder: [...(first?.querySelectorAll('button') ?? [])].some((b) => b.textContent?.trim() === 'Responder'),
+        };
+      });
+      const permiso = await measurePermissionPanel(page);
+      const ok =
+        measured.tarjetas === 1 &&
+        measured.header &&
+        measured.radios === 2 &&
+        measured.casillas === 0 &&
+        measured.responder &&
+        permiso.permitir === 0 &&
+        permiso.denegar === 0 &&
+        permiso.avisoDePregunta;
+      return { ok, detail: `tarjeta=${JSON.stringify(measured)} panelPermiso=${JSON.stringify(permiso)}` };
+    },
+  },
+  {
+    // La mitad barata que distingue dos comportamientos que un solo check confundiria.
+    name: '2.3: multiSelect pinta casillas y no radios',
+    async run(page) {
+      const multi = {
+        questions: [
+          {
+            ...ASK_USER_QUESTION_INPUT.questions[0],
+            question: '¿Que colores te valen?',
+            multiSelect: true,
+          },
+        ],
+      };
+      await injectPermissionRequest(page, multi, 'vg-ask-2');
+      const measured = await page.evaluate(() => {
+        const cards = [...document.querySelectorAll('[data-block="question"]')];
+        const last = cards[cards.length - 1] ?? null;
+        return {
+          tarjetas: cards.length,
+          casillas: last?.querySelectorAll('[role="checkbox"]').length ?? 0,
+          radios: last?.querySelectorAll('[role="radio"]').length ?? 0,
+        };
+      });
+      const ok = measured.casillas > 0 && measured.radios === 0;
+      return { ok, detail: `multiSelect=${JSON.stringify(measured)}` };
+    },
+  },
+  {
+    // 2.10 (fuera la cabecera "Tú") y 2.11 (menu de pestaña sin titulo ni subtitulos) van juntas: las dos
+    // necesitan el mismo estado (una conversacion con una burbuja de usuario) y la segunda deja el menu
+    // cerrado, como lo encontro.
+    name: '2.10 / 2.11: sin cabecera «Tú» y menu de pestaña sin subtitulos',
+    async run(page) {
+      const burbuja = await page.evaluate(() => {
+        const bubbles = [...document.querySelectorAll('[data-block="user"]')];
+        const texts = bubbles.map((node) => (node.textContent ?? '').trim());
+        return {
+          burbujas: bubbles.length,
+          empiezanPorTu: texts.filter((text) => text.startsWith('Tú')).length,
+          // Ya NO debe haber hora en la burbuja (buzon, punto 1): se cuenta para exigir CERO.
+          conHora: texts.filter((text) => /\d{2}:\d{2}/.test(text)).length,
+        };
+      });
+      const menu = await measureTabContextMenu(page);
+      const clamp = await measureTabContextMenuClamp(page);
+      const ok =
+        burbuja.burbujas >= 1 &&
+        burbuja.empiezanPorTu === 0 &&
+        burbuja.conHora === 0 &&
+        menu.menus === 1 &&
+        menu.items >= 4 &&
+        menu.subtitulos === 0 &&
+        menu.color === 1 &&
+        menu.contadores >= 2 &&
+        menu.cerrado === 0 &&
+        clamp !== null &&
+        clamp.dentroDeLaVentana &&
+        clamp.alto > 0;
+      return { ok, detail: `burbujas=${JSON.stringify(burbuja)} menu=${JSON.stringify(menu)} clamp=${JSON.stringify(clamp)}` };
+    },
+  },
+  // --- Fase D: van DESPUES de 2.10/2.11 a proposito. Hidratan el chat con bloques sinteticos, o sea que
+  // REEMPLAZAN lo que hubiera: cualquier comprobacion que mida burbujas reales tiene que ir antes.
+  {
+    // 2.12.2: las cajas de tool arrancan COLAPSADAS (el defecto visible cambio en la Fase D). No basta
+    // con `aria-expanded`: se comprueba tambien que el cuerpo NO esta en el DOM, porque un atributo
+    // puede mentir y un cuerpo montado no.
+    name: '2.12.2: las cajas de tool arrancan colapsadas',
+    async run(page) {
+      const total = await hydrateBlocks(page, [
+        toolBlock('t1', 'edit'),
+        toolBlock('t2', 'command'),
+        toolBlock('t3', 'edit'),
+        toolBlock('t4', 'command'),
+        toolBlock('t5', 'other'),
+        toolBlock('t6', 'edit'),
+      ]);
+      // Desde el 2026-09-18 se pliega TODO lo que el agente hizo, asi que estas seis caen en una racha:
+      // hay que ABRIRLA para llegar a las cajas. Lo que se mide sigue siendo lo mismo — que cada caja
+      // nace colapsada y sin su cuerpo en el DOM.
+      await page.locator('[data-block="run"] button').first().click();
+      await page.waitForTimeout(CONFIG.settleMs);
+      const measured = await page.evaluate(() => {
+        const boxes = [...document.querySelectorAll('[data-block="tool"]')];
+        const buttons = boxes.map((box) => box.querySelector('button[aria-expanded]'));
+        return {
+          cajas: boxes.length,
+          colapsadas: buttons.filter((b) => b?.getAttribute('aria-expanded') === 'false').length,
+          desplegadas: buttons.filter((b) => b?.getAttribute('aria-expanded') === 'true').length,
+          cuerposEnElDom: boxes.filter((box) => box.textContent?.includes('salida de')).length,
+        };
+      });
+      const ok = measured.cajas === total && measured.colapsadas === total && measured.desplegadas === 0 && measured.cuerposEnElDom === 0;
+      return { ok, detail: `hidratadas=${total} ${JSON.stringify(measured)}` };
+    },
+  },
+  {
+    // 2.12.2: el diff con NUMEROS DE LINEA, con el hunk real medido. Un check de "hay digitos" pasaria
+    // con cualquier basura: se mide que la primera linea del cuerpo empieza por el `oldStart` real (13).
+    name: '2.12.2: el diff desplegado muestra numeros de linea',
+    async run(page) {
+      await hydrateBlocks(page, [
+        toolBlock('d1', 'edit', {
+          filePath: 'src/foo.ts',
+          output: [],
+          diff: [
+            { sign: ' ', text: 'import type { Foo } from "./foo";', oldLine: 13, newLine: 13 },
+            { sign: '-', text: 'const a = 1;', oldLine: 14, newLine: null },
+            { sign: '+', text: 'const a = 2;', oldLine: null, newLine: 14 },
+          ],
+        }),
+      ]);
+      await page.locator('[data-block="tool"] button[aria-expanded="false"]').first().click();
+      await page.waitForTimeout(CONFIG.settleMs);
+      const measured = await page.evaluate(() => {
+        const box = document.querySelector('[data-block="tool"]');
+        const rows = [...(box?.querySelectorAll('[data-diff="lines"] > div') ?? [])];
+        const first = rows.find((row) => row.textContent?.includes('const a = 1;'));
+        const numbers = [...(first?.querySelectorAll('span') ?? [])].map((s) => s.textContent?.trim() ?? '');
+        return {
+          desplegada: box?.querySelector('button[aria-expanded]')?.getAttribute('aria-expanded') ?? null,
+          filaDelBorrado: first?.textContent?.trim() ?? null,
+          columnas: numbers.slice(0, 2),
+        };
+      });
+      const ok =
+        measured.desplegada === 'true' &&
+        measured.columnas[0] === '14' &&
+        measured.columnas[1] === '' &&
+        (measured.filaDelBorrado?.startsWith('14') ?? false);
+      return { ok, detail: `diff=${JSON.stringify(measured)} (hunk real: oldStart=${REAL_HUNK.oldStart})` };
+    },
+  },
+  {
+    // 2026-09-18 (peticion del usuario): el PENSAMIENTO entra en la racha. Antes partia el turno en tres
+    // lineas ("Bash", "Pensó", "3 comandos") que son lo mismo: lo que el agente hizo. Se mide el
+    // resumen, que es lo unico que demuestra que el pensamiento se conto y no que se perdio.
+    name: '2026-09-18: un pensamiento entre comandos se pliega en la misma racha',
+    async run(page) {
+      await hydrateBlocks(page, [
+        toolBlock('g1', 'command'),
+        { kind: 'thinking', id: 'gt', runs: [{ code: false, text: 'a ver...' }], streaming: false, elapsedMs: 900 },
+        toolBlock('g2', 'command'),
+      ]);
+      const measured = await page.evaluate(() => ({
+        rachas: document.querySelectorAll('[data-block="run"]').length,
+        resumen: document.querySelector('[data-block="run"] button')?.textContent?.trim() ?? '',
+        sueltos: document.querySelectorAll('[data-block="thinking"], [data-block="tool"]').length,
+      }));
+      const ok = measured.rachas === 1 && /1 pensamiento, 2 comandos/.test(measured.resumen) && measured.sueltos === 0;
+      return { ok, detail: JSON.stringify(measured) };
+    },
+  },
+  {
+    // 2026-09-18: el diff se lee como el de Claude Code — FONDO por linea (insercion/borrado) y codigo
+    // RESALTADO. Las dos mitades se miden por separado y con el valor real: un fondo igual en las tres
+    // lineas, o un solo color de texto, significa que la funcionalidad esta muerta aunque el diff salga.
+    name: '2026-09-18: el diff pinta fondo de insercion/borrado y resalta la sintaxis',
+    async run(page) {
+      await hydrateBlocks(page, [
+        toolBlock('d2', 'edit', {
+          filePath: 'src/foo.ts',
+          output: [],
+          diff: [
+            { sign: ' ', text: 'import type { Foo } from "./foo";', oldLine: 13, newLine: 13 },
+            { sign: '-', text: 'const a: number = 1;', oldLine: 14, newLine: null },
+            { sign: '+', text: 'const a: number = 2;', oldLine: null, newLine: 14 },
+          ],
+        }),
+      ]);
+      await page.locator('[data-block="tool"] button[aria-expanded="false"]').first().click();
+      const measured = await waitForDiffPaint(page);
+      const ok =
+        measured !== null &&
+        measured.fondos.length === 3 && // contexto, borrado e insercion: tres fondos DISTINTOS
+        measured.colores > 1; // mas de un color de token => shiki tokenizo el codigo del diff
+      return { ok, detail: `fondos distintos=${JSON.stringify(measured?.fondos ?? null)} colores de token=${measured?.colores ?? 0}` };
+    },
+  },
+  {
+    // 2.12.2: una racha se pinta como UNA linea, y al desplegarla salen sus cajas COLAPSADAS. La
+    // edicion se queda FUERA de la racha: es la mitad que demuestra que no se esconde nada.
+    name: '2.12.2: una racha se pinta como una linea y al desplegarla salen sus cajas colapsadas',
+    async run(page) {
+      await hydrateBlocks(page, [toolBlock('r1', 'read'), toolBlock('r2', 'read'), toolBlock('r3', 'search'), toolBlock('r4', 'edit')]);
+      const antes = await page.evaluate(() => ({
+        rachas: document.querySelectorAll('[data-block="run"]').length,
+        resumen: document.querySelector('[data-block="run"] button')?.textContent?.trim() ?? '',
+        cajasVisibles: document.querySelectorAll('[data-block="tool"]').length,
+      }));
+      await page.locator('[data-block="run"] button').first().click();
+      await page.waitForTimeout(CONFIG.settleMs);
+      const despues = await page.evaluate(() => {
+        const dentro = [...document.querySelectorAll('[data-block="run"] [data-block="tool"]')];
+        return {
+          cajasDentro: dentro.length,
+          colapsadas: dentro.filter((box) => box.querySelector('button[aria-expanded]')?.getAttribute('aria-expanded') === 'false').length,
+        };
+      });
+      const ok =
+        antes.rachas === 1 &&
+        /Leídos 2 ficheros, 1 búsqueda/.test(antes.resumen) &&
+        antes.cajasVisibles === 0 && // TODO plegado: desde el 2026-09-18 la edicion tambien entra
+        despues.cajasDentro === 4 &&
+        despues.colapsadas === 4;
+      return { ok, detail: `antes=${JSON.stringify(antes)} tras desplegar=${JSON.stringify(despues)}` };
+    },
+  },
+  {
+    // 2.12.2, la decision §0.1-a medida: una tool con error NO se esconde en una racha. Dos rachas de
+    // uno no son rachas, asi que las tres cajas quedan a la vista.
+    name: '2.12.2: una tool con error no se esconde en la racha',
+    async run(page) {
+      await hydrateBlocks(page, [
+        toolBlock('e1', 'read'),
+        toolBlock('e2', 'read', { isError: true, meta: 'exit 1 · 30 ms' }),
+        toolBlock('e3', 'read'),
+      ]);
+      const measured = await page.evaluate(() => {
+        const boxes = [...document.querySelectorAll('[data-block="tool"]')];
+        const metas = boxes.map((box) => box.querySelector('button span:last-child'));
+        return {
+          rachas: document.querySelectorAll('[data-block="run"]').length,
+          cajas: boxes.length,
+          conColorDeError: metas.filter((meta) => (meta?.className ?? '').includes('danger')).length,
+        };
+      });
+      const ok = measured.rachas === 0 && measured.cajas === 3 && measured.conColorDeError === 1;
+      return { ok, detail: `errorEnRacha=${JSON.stringify(measured)}` };
+    },
+  },
+  {
+    // 2.5: subagente y pensamiento, los dos PLEGADOS. El boton de la transcripcion del subagente esta
+    // deshabilitado sin `agentId` (no se puede abrir un fichero que no se sabe cual es), y el bloque de
+    // pensamiento sin texto dice por que esta vacio en vez de enseñar un hueco.
+    name: '2.5: el bloque de subagente y el de pensamiento se pintan plegados',
+    async run(page) {
+      await hydrateBlocks(page, [
+        { kind: 'subagent', id: 's1', toolUseId: 'u-s1', agentType: 'Explore', description: 'buscar el bug', agentId: null, status: null },
+        { kind: 'thinking', id: 'th1', runs: [], streaming: false, elapsedMs: 12000 },
+      ]);
+      const measured = await page.evaluate(() => {
+        const subagent = document.querySelector('[data-block="subagent"]');
+        const thinking = document.querySelector('[data-block="thinking"]');
+        const thinkingButton = thinking?.querySelector('button[aria-expanded]');
+        return {
+          subagentes: document.querySelectorAll('[data-block="subagent"]').length,
+          tipo: subagent?.textContent?.includes('Explore') ?? false,
+          botonDeshabilitado: subagent?.querySelector('button')?.disabled ?? null,
+          pensamientos: document.querySelectorAll('[data-block="thinking"]').length,
+          plegado: thinkingButton?.getAttribute('aria-expanded') ?? null,
+        };
+      });
+      await page.locator('[data-block="thinking"] button[aria-expanded]').first().click();
+      await page.waitForTimeout(CONFIG.settleMs);
+      // El mensaje cambio con el guardado de pensamientos (2026-09-06): Mage ya conserva el texto que
+      // el CLI persiste vacio, asi que el hueco sin cuerpo solo queda para conversaciones ANTERIORES a
+      // eso — y el mensaje ya no le echa la culpa al CLI, dice que ese pensamiento no se llego a
+      // guardar. Aqui el bloque se inyecta con `runs: []`, que es justo ese caso.
+      const nota = await page.evaluate(
+        () => document.querySelector('[data-block="thinking"]')?.textContent?.includes('no se guardó') ?? false,
+      );
+      const ok =
+        measured.subagentes === 1 &&
+        measured.tipo &&
+        measured.botonDeshabilitado === true &&
+        measured.pensamientos === 1 &&
+        measured.plegado === 'false' &&
+        nota;
+      return { ok, detail: `${JSON.stringify(measured)} notaAlDesplegar=${nota}` };
+    },
+  },
+  {
+    // 2.4: una publicacion de artifact se pinta como TARJETA. El sintoma que arregla: la caja de tool
+    // enseñaba la ruta del scratchpad como encabezado (`summarizeToolInput` prefiere `file_path`), que
+    // no le dice nada a nadie. Y NUNCA entra en una racha: un artifact escondido en "Leídos 2 ficheros"
+    // seria el peor resultado posible.
+    name: '2.4: una publicacion de artifact se pinta como tarjeta y no como caja de tool',
+    async run(page) {
+      await hydrateBlocks(page, [toolBlock('r1', 'read'), toolBlock('r2', 'read'), artifactBlock()]);
+      const measured = await page.evaluate((expected) => {
+        const cards = [...document.querySelectorAll('[data-block="tool"]')].filter((node) =>
+          node.textContent?.includes(expected.title),
+        );
+        const card = cards[0] ?? null;
+        const runs = [...document.querySelectorAll('[data-block="run"]')];
+        return {
+          tarjetas: cards.length,
+          conFavicon: card?.textContent?.includes(expected.favicon) ?? false,
+          conUrl: card?.textContent?.includes(expected.url) ?? false,
+          botonAbrir: [...(card?.querySelectorAll('button') ?? [])].map((b) => b.textContent?.trim() ?? ''),
+          // La ruta del scratchpad NO puede ser el encabezado (ese era el sintoma).
+          rutaComoEncabezado: card?.querySelector('button[aria-expanded]') !== null && (card?.textContent?.startsWith('▸') ?? false),
+          artifactDentroDeUnaRacha: runs.some((run) => run.textContent?.includes(expected.title) ?? false),
+        };
+      }, { ...REAL_ARTIFACT.input, url: REAL_ARTIFACT.url });
+      const ok =
+        measured.tarjetas === 1 &&
+        measured.conFavicon &&
+        measured.conUrl &&
+        !measured.rutaComoEncabezado &&
+        !measured.artifactDentroDeUnaRacha;
+      return { ok, detail: `tarjeta=${JSON.stringify(measured)}` };
+    },
+  },
+  {
+    // 2.4: sin cuenta publicadora conocida (el indice del perfil aislado esta vacio), NO puede haber un
+    // "Abrir" que abriria con una cuenta arbitraria: solo "Abrir con…", que lo elige el usuario.
+    name: '2.4: sin cuenta publicadora conocida, el boton ofrece "abrir con…"',
+    async run(page) {
+      await hydrateBlocks(page, [artifactBlock('a2')]);
+      const measured = await page.evaluate(() => {
+        const buttons = [...document.querySelectorAll('button')].map((b) => b.textContent?.trim() ?? '');
+        return {
+          abrirCon: buttons.filter((t) => t === 'Abrir con…').length,
+          abrirDirecto: buttons.filter((t) => t.startsWith('Abrir con ') && t !== 'Abrir con…').length,
+        };
+      });
+      const ok = measured.abrirCon === 1 && measured.abrirDirecto === 0;
+      return { ok, detail: `botones=${JSON.stringify(measured)}` };
+    },
+  },
+  {
+    // LA comprobacion que justifica la decision de quitar el menu nativo: en Windows/Linux, Chromium
+    // maneja Ctrl+C/V dentro de campos editables sin acelerador de menu. "Deberia" no es suficiente.
+    // No se pulsa Enter en ningun momento.
+    name: '2.9.b: copiar y pegar siguen funcionando en el prompt sin el menu nativo',
+    async run(page) {
+      // Lo que hay que medir es que, sin menu nativo, los atajos LLEGAN al editor y el editor los
+      // atiende. El round-trip completo por el PORTAPAPELES DEL SO no vale como criterio: en Windows el
+      // portapapeles es un recurso exclusivo y cualquier proceso que lo tenga abierto hace que `Ctrl+C`
+      // falle EN SILENCIO (medido: seleccion correcta, `navigator.clipboard.readText()` vacio y pegado
+      // sintetico funcionando). Asi que se mide en tres piezas y el detalle dice cual es cual.
+      await clearPrompt(page);
+      await typeInPrompt(page, 'mage');
+      await page.evaluate(() => {
+        const target = document.querySelector('[data-prompt-editor="true"] .cm-content');
+        window.__mgClip = { copy: 0, paste: 0 };
+        target.addEventListener('copy', () => (window.__mgClip.copy += 1));
+        target.addEventListener('paste', () => (window.__mgClip.paste += 1));
+      });
+      await page.keyboard.press('Control+a');
+      const seleccion = await page.evaluate(() => window.getSelection()?.toString() ?? '');
+      await page.keyboard.press('Control+c');
+      await page.waitForTimeout(CONFIG.settleMs);
+      const portapapeles = await page
+        .evaluate(() => navigator.clipboard.readText().catch(() => null))
+        .catch(() => null);
+      await page.keyboard.press('End');
+      await page.keyboard.press('Control+v');
+      await page.waitForTimeout(CONFIG.settleMs);
+      const trasAtajos = await promptText(page);
+      const eventos = await page.evaluate(() => window.__mgClip);
+      // Si el SO no dejo copiar, se comprueba la parte de Mage con un pegado equivalente: el editor
+      // tiene que insertar en el cursor lo que venga en el evento.
+      if (portapapeles !== 'mage') {
+        await page.evaluate(() => {
+          const dt = new DataTransfer();
+          dt.setData('text/plain', 'mage');
+          document
+            .querySelector('[data-prompt-editor="true"] .cm-content')
+            .dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+        });
+        await page.waitForTimeout(CONFIG.settleMs);
+      }
+      const texto = await promptText(page);
+      await clearPrompt(page); // se deja como se encontro
+      const ok = seleccion === 'mage' && eventos.copy === 1 && eventos.paste === 1 && texto === 'magemage';
+      return {
+        ok,
+        detail: `seleccion=${JSON.stringify(seleccion)} eventos=${JSON.stringify(eventos)} portapapeles del SO=${JSON.stringify(portapapeles)} tras los atajos=${JSON.stringify(trasAtajos)} final=${JSON.stringify(texto)}`,
+      };
+    },
+  },
+  {
+    // 2.9.b: los tres paneles nuevos aparecen en la stripe derecha y NINGUNO se abre solo — que es el
+    // contrato de `reconcileLayoutWithRegistry` y lo que evita el "residuo de maquina" de otras rondas.
+    name: '2.9.b: las tres vistas nuevas montan y no roban el panel activo',
+    async run(page) {
+      const iconos = ['Instrucciones', 'Comandos y skills', 'Subagentes'];
+      const antes = await page.evaluate(
+        (labels) => ({
+          presentes: labels.filter((label) => document.querySelector(`[aria-label="${label}"]`) !== null).length,
+          abiertos: labels.filter((label) => document.querySelector(`[aria-label="${label}"]`)?.getAttribute('aria-pressed') === 'true').length,
+        }),
+        iconos,
+      );
+      const montados = [];
+      for (const label of iconos) {
+        const icon = page.getByRole('button', { name: label, exact: true }).first();
+        await icon.click();
+        await page.waitForTimeout(CONFIG.settleMs);
+        montados.push(await page.evaluate(() => document.body.innerText.length > 0));
+        await icon.click(); // se cierra: se deja el dock como estaba
+        await page.waitForTimeout(CONFIG.settleMs);
+      }
+      const ok = antes.presentes === 3 && antes.abiertos === 0 && montados.every(Boolean);
+      return { ok, detail: `iconos nuevos=${antes.presentes} abiertos al arrancar=${antes.abiertos} montan=${JSON.stringify(montados)}` };
+    },
+  },
+  {
+    // 2.9.b: la seccion nueva de Configuracion. Contrato de orden: ABRE el dialogo y lo DEJA ABIERTO
+    // solo si es la ultima; como no lo es, lo cierra ella misma con Escape.
+    name: '2.9.b: la seccion Hooks y permisos carga',
+    async run(page) {
+      await page.keyboard.press('Control+Comma');
+      await page.locator(MODAL).first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      await openSection(page, /Hooks y permisos/);
+      const measured = await page.evaluate(() => {
+        const dialog = document.querySelector('[role="dialog"][aria-modal="true"]');
+        const text = dialog?.textContent ?? '';
+        return {
+          errores: dialog?.querySelectorAll('[role="alert"]').length ?? 0,
+          conHooks: text.includes('Hooks ('),
+          conReglas: text.includes('Reglas de permisos ('),
+          // El estado vacio es un MENSAJE, no una lista de cero filas sin explicar.
+          conMensaje: text.includes('No hay') || text.includes('unión'),
+        };
+      });
+      await closeDialog(page);
+      const ok = measured.errores === 0 && measured.conHooks && measured.conReglas && measured.conMensaje;
+      return { ok, detail: `seccion=${JSON.stringify(measured)}` };
+    },
+  },
+  // --- Fase E (2.7 y 2.12.1). NINGUNA pulsa `Enter`, y hay una que deliberadamente NO existe: medir
+  // "Enter dentro de una lista no envia" obligaria a pulsar Enter con texto, y si el codigo estuviera
+  // mal eso dispara un TURNO REAL. Esa decision vive en `enterAction`, con 12 tests, y la confirma el
+  // ojo humano. Un intermitente que gasta suscripcion es peor que una comprobacion de menos.
+  {
+    // 2.7: lo que se ENVIA es markdown, no lo pintado. La medida que distingue "decorado" de
+    // "transformado" es que el documento conserve el `- ` literal.
+    name: '2.7: "- " produce una viñeta de verdad en el input y el documento conserva el markdown',
+    async run(page) {
+      await clearPrompt(page);
+      await typeInPrompt(page, '- uno');
+      const enLaLineaDelCursor = await page.evaluate(() => ({
+        // En la linea del CURSOR el marcador se VE (comportamiento Obsidian: se puede editar).
+        marcadorVisible: document.querySelectorAll('[data-prompt-editor="true"] .cm-mg-bullet').length,
+        ocultos: document.querySelectorAll('[data-prompt-editor="true"] .cm-mg-marker-hidden').length,
+      }));
+      // Se baja de linea con Shift+Enter (NO Enter: eso enviaria) para que la primera deje de ser la
+      // del cursor y su marcador se oculte.
+      await page.keyboard.press('Shift+Enter');
+      await page.waitForTimeout(CONFIG.settleMs);
+      const trasBajar = await page.evaluate(() => ({
+        ocultos: document.querySelectorAll('[data-prompt-editor="true"] .cm-mg-marker-hidden').length,
+      }));
+      const documento = await promptText(page);
+      await clearPrompt(page);
+      const ok =
+        enLaLineaDelCursor.marcadorVisible === 1 &&
+        enLaLineaDelCursor.ocultos === 0 &&
+        trasBajar.ocultos >= 1 &&
+        (documento ?? '').includes('- uno');
+      return {
+        ok,
+        detail: `linea del cursor=${JSON.stringify(enLaLineaDelCursor)} tras bajar=${JSON.stringify(trasBajar)} documento=${JSON.stringify(documento)}`,
+      };
+    },
+  },
+  {
+    // 2.7: el popover de "/" contra el editor NUEVO. Si el puente de teclado esta mal, esta es la que
+    // lo caza (las flechas tienen que llegar al popover, no a CodeMirror).
+    name: '2.7: el popover de "/" sigue navegable con flechas en el editor nuevo',
+    async run(page) {
+      await clearPrompt(page);
+      await typeInPrompt(page, '/');
+      const listbox = page.getByRole('listbox', { name: 'Comandos disponibles' });
+      await listbox.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      const primero = await page.evaluate(() =>
+        document.querySelector('[role="option"][aria-selected="true"]')?.textContent?.trim() ?? '',
+      );
+      await page.keyboard.press('ArrowDown');
+      await page.waitForTimeout(CONFIG.settleMs);
+      const segundo = await page.evaluate(() =>
+        document.querySelector('[role="option"][aria-selected="true"]')?.textContent?.trim() ?? '',
+      );
+      await page.keyboard.press('Escape');
+      await page.waitForTimeout(CONFIG.settleMs);
+      const trasEscape = await listbox.count();
+      await clearPrompt(page);
+      const ok = primero.length > 0 && segundo.length > 0 && primero !== segundo && trasEscape === 0;
+      return { ok, detail: `seleccionado=${JSON.stringify(primero)} tras ArrowDown=${JSON.stringify(segundo)} listbox tras Escape=${trasEscape}` };
+    },
+  },
+  {
+    // 2.7: Tab/Shift+Tab siguen indentando en el editor nuevo. El puente delega en el MISMO resolver,
+    // asi que esto mide que la delegacion funciona (y con ella los overrides de D5).
+    name: '2.7: Tab indenta y Shift+Tab desindenta en el editor nuevo',
+    async run(page) {
+      await clearPrompt(page);
+      await typeInPrompt(page, 'hola');
+      await page.keyboard.press('Tab');
+      await page.waitForTimeout(CONFIG.settleMs);
+      const indentado = await promptText(page);
+      await page.keyboard.press('Shift+Tab');
+      await page.waitForTimeout(CONFIG.settleMs);
+      const desindentado = await promptText(page);
+      await clearPrompt(page);
+      const ok = indentado === '  hola' && desindentado === 'hola';
+      return { ok, detail: `tras Tab=${JSON.stringify(indentado)} tras Shift+Tab=${JSON.stringify(desindentado)}` };
+    },
+  },
+  {
+    // 2.7: deshacer. Un <textarea> lo daba GRATIS; un contenteditable no, y sin `history()` se pierde
+    // en silencio (el usuario lo descubre perdiendo un parrafo).
+    name: '2.7: deshacer funciona en el editor nuevo',
+    async run(page) {
+      await clearPrompt(page);
+      await typeInPrompt(page, 'hola');
+      const antes = await promptText(page);
+      await page.keyboard.press('Control+z');
+      await page.waitForTimeout(CONFIG.settleMs);
+      const despues = await promptText(page);
+      await clearPrompt(page);
+      const ok = antes === 'hola' && despues !== 'hola';
+      return { ok, detail: `antes=${JSON.stringify(antes)} tras Ctrl+Z=${JSON.stringify(despues)}` };
+    },
+  },
+  {
+    // 2.7: el editor tiene que ser EDITABLE a ojos del resolver global. De eso depende que
+    // `permission.cycleMode` (guard `!focusInEditableText`) no se dispare al escribir. Antes funcionaba
+    // porque `isEditableTarget` miraba HTMLTextAreaElement; con CM6 pasa a depender de la rama de
+    // `isContentEditable`, asi que se MIDE en vez de suponerse.
+    name: '2.7: el editor es editable a ojos del resolver global',
+    async run(page) {
+      await promptAreas(page).first().click();
+      await page.waitForTimeout(CONFIG.settleMs);
+      const measured = await page.evaluate(() => {
+        const active = document.activeElement;
+        return {
+          contentEditable: active instanceof HTMLElement ? active.isContentEditable : false,
+          dentroDelEditor: active?.closest('[data-prompt-editor="true"]') !== null,
+          rol: active?.getAttribute('role') ?? null,
+        };
+      });
+      const ok = measured.contentEditable && measured.dentroDelEditor && measured.rol === 'textbox';
+      return { ok, detail: `foco=${JSON.stringify(measured)}` };
+    },
+  },
+  {
+    // 2.7: encabezado + enfasis + codigo inline TECLEADOS letra a letra. Esta comprobacion nace de un
+    // bug real que solo aparecio al escribir en el .exe: al teclear "## " se emitia una decoracion VACIA,
+    // CodeMirror lanzaba "Mark decorations may not be empty" y el plugin se caia dejando el input SIN
+    // formato para el resto de la sesion. Se mide el estilo CALCULADO, no la clase: si el plugin muere,
+    // los contadores se van a 0.
+    name: '2.7: teclear un encabezado con enfasis y codigo decora sin tumbar el plugin',
+    async run(page) {
+      await clearPrompt(page);
+      // El enfasis va en su PROPIA linea: dentro de un encabezado no se decora (solaparia con el rango
+      // del encabezado, y ahi CodeMirror tambien lanza). Shift+Enter, nunca Enter.
+      await typeInPrompt(page, '## Titulo');
+      // Sigue escribiendo por TECLADO sin volver a hacer clic: un `click` recolocaria el cursor al final
+      // de la primera linea y el texto acabaria concatenado ahi (medido).
+      await page.keyboard.press('Shift+Enter');
+      await page.keyboard.type('**negrita** y `code`');
+      await page.waitForTimeout(CONFIG.settleMs);
+      const measured = await page.evaluate(() => {
+        const root = document.querySelector('[data-prompt-editor="true"]');
+        const style = (selector) => {
+          const node = root.querySelector(selector);
+          return node === null ? null : getComputedStyle(node);
+        };
+        return {
+          h2: root.querySelectorAll('.cm-mg-h2').length,
+          strong: root.querySelectorAll('.cm-mg-strong').length,
+          code: root.querySelectorAll('.cm-mg-code').length,
+          pesoDelStrong: style('.cm-mg-strong')?.fontWeight ?? null,
+          pxDelH2: style('.cm-mg-h2')?.fontSize ?? null,
+        };
+      });
+      const documento = await promptText(page);
+      await clearPrompt(page);
+      const ok =
+        measured.h2 === 1 &&
+        measured.strong === 1 &&
+        measured.code === 1 &&
+        Number(measured.pesoDelStrong) >= 600 &&
+        documento === '## Titulo\n**negrita** y `code`';
+      return { ok, detail: `decoraciones=${JSON.stringify(measured)} documento=${JSON.stringify(documento)}` };
+    },
+  },
+  {
+    // 2.7: la vista previa se va (el input YA es WYSIWYG). Sin esta medida el boton se quedaria
+    // huerfano y nadie lo notaria.
+    name: '2.7: ya no hay boton de vista previa del markdown',
+    async run(page) {
+      const measured = await page.evaluate(() => {
+        const nodes = [...document.querySelectorAll('[data-tip], [title]')];
+        // Los dos rotulos que tenia el boton eliminado (alternaba segun estuviera abierta o cerrada).
+        return nodes.filter((node) =>
+          /vista previa del markdown|markdown renderizado/i.test(node.getAttribute('data-tip') ?? node.getAttribute('title') ?? ''),
+        ).length;
+      });
+      return { ok: measured === 0, detail: `botones de vista previa=${measured}` };
+    },
+  },
+  {
+    // 2.12.1: adjuntar. El camino FELIZ (un PNG real) deja 1 miniatura con `naturalWidth > 0`, y el
+    // invalido (un .svg) da un error EXPLICITO con el tipo recibido y no adjunta nada. No se envia.
+    name: '2.12.1: adjuntar una imagen valida deja miniatura y una invalida da error explicito',
+    async run(page, ctx) {
+      const dir = ctx.runDir;
+      const pngPath = path.join(dir, 'adjunto-valido.png');
+      const svgPath = path.join(dir, 'adjunto-invalido.svg');
+      // PNG REAL de 1x1 (el mismo del fixture de la Fase A): asi `naturalWidth` puede ser > 0.
+      fs.writeFileSync(pngPath, Buffer.from(TINY_PNG_BASE64, 'base64'));
+      fs.writeFileSync(svgPath, '<svg xmlns="http://www.w3.org/2000/svg"/>', 'utf-8');
+
+      const input = page.locator('input[type="file"][aria-label="Adjuntar imágenes"]');
+      await input.setInputFiles(pngPath);
+      await page.waitForTimeout(CONFIG.settleMs);
+      const valido = await page.evaluate(() => {
+        const thumbs = [...document.querySelectorAll('img[data-attachment="thumb"]')];
+        return { miniaturas: thumbs.length, naturalWidth: thumbs[0]?.naturalWidth ?? 0 };
+      });
+
+      await input.setInputFiles(svgPath);
+      await page.waitForTimeout(CONFIG.settleMs);
+      const invalido = await page.evaluate(() => {
+        const alerts = [...document.querySelectorAll('[role="alert"]')].map((n) => n.textContent ?? '');
+        return {
+          errores: alerts.filter((t) => /no admitido/i.test(t)).length,
+          conElTipo: alerts.some((t) => t.includes('image/svg+xml')),
+          miniaturas: document.querySelectorAll('img[data-attachment="thumb"]').length,
+        };
+      });
+
+      // Se quita la miniatura: la comprobacion no deja adjuntos colgando para las siguientes.
+      const quitar = page.getByRole('button', { name: /Quitar el adjunto/ });
+      if ((await quitar.count()) > 0) await quitar.first().click();
+      await page.waitForTimeout(CONFIG.settleMs);
+      const limpio = await page.locator('img[data-attachment="thumb"]').count();
+
+      const ok =
+        valido.miniaturas === 1 &&
+        valido.naturalWidth > 0 &&
+        invalido.errores === 1 &&
+        invalido.conElTipo &&
+        invalido.miniaturas === 1 && // el invalido NO se adjunta: sigue habiendo solo el valido
+        limpio === 0;
+      return { ok, detail: `valido=${JSON.stringify(valido)} invalido=${JSON.stringify(invalido)} tras quitar=${limpio}` };
+    },
+  },
+  {
+    // 2.3 (la otra mitad): el panel de permisos NORMAL — el que sale con Write/Bash y NO es una pregunta.
+    // Nace de un fallo de verificacion real: el nombre accesible del boton era "Permitir1" (se colaba el
+    // numero del atajo), asi que era imposible anclarlo desde fuera y varias tandas de prueba con turnos
+    // REALES se quedaron colgadas creyendo que el boton no existia. Ahora los tres botones llevan
+    // `aria-label` estable y `aria-keyshortcuts`, y esto lo fija.
+    name: '2.3: un permiso de Write pinta la tarjeta en el chat y los botones del panel',
+    async run(page) {
+      // Con pestana REAL: las reglas "Permitir siempre aqui" y la seccion de permisos configurados del
+      // panel viven en la `Tab`, y el harness arranca sin ninguna pestana persistida (a proposito, para
+      // no spawnear el CLI). Sin abrirla, esto medía un panel que no puede pintar nada.
+      const previoStore = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return { tabs: s.tabs, activeTabId: s.activeTabId, splitLayout: s.splitLayout };
+      });
+      await openTemporaryConversation(page);
+      const icon = page.getByRole('button', { name: 'Permiso', exact: true }).first();
+      const abiertoAntes = (await icon.getAttribute('aria-pressed')) === 'true';
+      if (!abiertoAntes) {
+        await icon.click();
+        await page.waitForTimeout(CONFIG.settleMs);
+      }
+      const requestId = 'verify-write-1';
+      await injectPermissionRequest(
+        page,
+        { file_path: 'C:/proj/nuevo.ts', content: 'export const a = 1;\n' },
+        requestId,
+        'Write',
+      );
+      const measured = await page.evaluate(() => {
+        // Los botones se miden POR AMBITO (tarjeta del chat / panel del dock) y no con un
+        // `querySelector` global: desde 2.3b los dos sitios ofrecen la misma decision con el mismo
+        // nombre accesible, y el selector global devolvia el primero del DOM — el de la tarjeta.
+        const boton = (raiz, label) => {
+          const node = raiz?.querySelector(`button[aria-label="${label}"]`) ?? null;
+          return node === null ? null : { atajo: node.getAttribute('aria-keyshortcuts'), texto: (node.textContent ?? '').trim() };
+        };
+        const card = document.querySelector('[data-permission-card]');
+        const panel = document.querySelector('[data-permissions-panel="true"]');
+        return {
+          tarjeta: card === null
+            ? null
+            : {
+                estado: card.getAttribute('data-permission-card'),
+                objetivo: (card.textContent ?? '').includes('C:/proj/nuevo.ts'),
+                permitir: boton(card, 'Permitir'),
+                permitirSiempre: boton(card, 'Permitir siempre Write aquí'),
+                denegar: boton(card, 'Denegar y decir por qué'),
+                masInformacion: [...card.querySelectorAll('button')].some((b) => (b.textContent ?? '').trim() === 'Más información'),
+              },
+          panel: panel === null
+            ? null
+            : {
+                permitir: boton(panel, 'Permitir'),
+                permitirSiempre: boton(panel, 'Permitir siempre Write aquí'),
+                denegar: boton(panel, 'Denegar y decir por qué'),
+                diff: (panel.textContent ?? '').includes('export const a = 1;'),
+                modo: (panel.textContent ?? '').includes('Modo de permiso'),
+                configurados: (panel.textContent ?? '').includes('Permitido siempre en esta conversación'),
+                reglasDelCli: (panel.textContent ?? '').includes('Reglas del CLI'),
+              },
+          // El numero del atajo NO debe entrar en el nombre accesible (era el fallo original).
+          numeroEnElNombre: [...document.querySelectorAll('button[aria-label]')].some((b) =>
+            /^Permitir\d/.test(b.getAttribute('aria-label') ?? ''),
+          ),
+          avisoDeEscritura: document.body.innerText.includes('quiere escribir en el proyecto'),
+          // 2.3b: el aviso "Claude necesita tu atención" ya NO va al hilo (lo sustituye la tarjeta).
+          avisoDeAtencion: document.body.innerText.includes('necesita tu atención'),
+        };
+      });
+      await cancelInjectedPermission(page, requestId);
+      const trasCancelar = await page.evaluate(() => ({
+        botones: document.querySelectorAll('button[aria-label="Permitir"]').length,
+        tarjeta: document.querySelector('[data-permission-card]')?.getAttribute('data-permission-card') ?? null,
+      }));
+      if (!abiertoAntes) {
+        await icon.click(); // se deja el dock como estaba
+        await page.waitForTimeout(CONFIG.settleMs);
+      }
+      await page.evaluate((estado) => window.__mageDev.store.setState(estado), previoStore);
+      await page.waitForTimeout(CONFIG.settleMs);
+      const ok =
+        measured.tarjeta?.estado === 'pending' &&
+        measured.tarjeta.objetivo === true &&
+        measured.tarjeta.permitir?.atajo === '1' &&
+        measured.tarjeta.permitirSiempre?.atajo === '2' &&
+        measured.tarjeta.denegar?.atajo === '3' &&
+        measured.tarjeta.masInformacion === true &&
+        // El panel sigue ofreciendo la misma decision, ahi CON el numero del atajo visible, y ademas es
+        // el que ensena el detalle (diff) y lo configurado.
+        measured.panel?.permitir?.texto === 'Permitir1' &&
+        measured.panel.permitirSiempre?.atajo === '2' &&
+        measured.panel.denegar?.atajo === '3' &&
+        measured.panel.diff === true &&
+        measured.panel.modo === true &&
+        measured.panel.configurados === true &&
+        measured.panel.reglasDelCli === true &&
+        measured.numeroEnElNombre === false &&
+        measured.avisoDeEscritura &&
+        measured.avisoDeAtencion === false &&
+        // Cancelado: nadie ofrece contestar, y la tarjeta se queda en el hilo diciendo que se cancelo.
+        trasCancelar.botones === 0 &&
+        trasCancelar.tarjeta === 'cancelled';
+      return { ok, detail: `${JSON.stringify(measured)} tras cancelar=${JSON.stringify(trasCancelar)} (el panel estaba ${abiertoAntes ? 'abierto' : 'cerrado'})` };
+    },
+  },
+  {
+    // 2.3b: "Permitir siempre <tool> aqui" tiene que RECORDAR. La regla se concede por la accion real
+    // del store y no por un clic: sin sesion viva la respuesta no llega a main, que es justo lo que deja
+    // medir la regla sin tocar el CLI ni gastar un turno. Lo que se comprueba es lo unico que importa:
+    // que la SIGUIENTE peticion de esa tool no pinta tarjeta ni pone la pestana en "necesita permiso",
+    // que otra tool sigue preguntando, que la regla se ve en el panel y que revocarla la quita.
+    name: '2.3b: "Permitir siempre" recuerda la tool y el panel la deja revocar',
+    async run(page) {
+      const previoStore = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return { tabs: s.tabs, activeTabId: s.activeTabId, splitLayout: s.splitLayout };
+      });
+      await openTemporaryConversation(page);
+      const icon = page.getByRole('button', { name: 'Permiso', exact: true }).first();
+      const abiertoAntes = (await icon.getAttribute('aria-pressed')) === 'true';
+      if (!abiertoAntes) {
+        await icon.click();
+        await page.waitForTimeout(CONFIG.settleMs);
+      }
+      await injectPermissionRequest(page, { file_path: 'C:/proj/a.ts', content: 'a' }, 'verify-always-1', 'Write');
+      await page.evaluate(() => window.__mageDev.store.getState().allowAlwaysAndAnswer('Write'));
+      await page.waitForTimeout(CONFIG.settleMs);
+      const conRegla = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        const tab = s.tabs.find((t) => t.id === s.activeTabId);
+        return {
+          regla: tab?.alwaysAllowTools ?? [],
+          enElPanel: document.querySelector('button[aria-label="Revocar el permiso permanente de Write"]') !== null,
+        };
+      });
+      // La peticion sigue pendiente porque sin sesion viva no hay a quien contestar: se cierra por el
+      // mismo camino que el CLI para dejar el hilo limpio antes de medir la segunda.
+      await cancelInjectedPermission(page, 'verify-always-1');
+
+      // Segunda peticion de la MISMA tool: ni tarjeta, ni panel, ni estado de espera.
+      await injectPermissionRequest(page, { file_path: 'C:/proj/b.ts', content: 'b' }, 'verify-always-2', 'Write');
+      const segunda = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        const tabId = s.activeTabId;
+        return {
+          tarjetasPendientes: document.querySelectorAll('[data-permission-card="pending"]').length,
+          estado: s.statusByChat[tabId] ?? null,
+          panelConPeticion: s.permissionByChat[tabId] !== null && s.permissionByChat[tabId] !== undefined,
+        };
+      });
+      // Una tool DISTINTA sigue preguntando: la regla es por tool, no un "permitir todo".
+      await injectPermissionRequest(page, { command: 'ls' }, 'verify-always-3', 'Bash');
+      const otraTool = await page.evaluate(() => document.querySelectorAll('[data-permission-card="pending"]').length);
+
+      await cancelInjectedPermission(page, 'verify-always-3');
+      await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        s.revokeAlwaysAllow(s.activeTabId, 'Write');
+      });
+      await page.waitForTimeout(CONFIG.settleMs);
+      const trasRevocar = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return {
+          reglas: (s.tabs.find((t) => t.id === s.activeTabId)?.alwaysAllowTools ?? []).length,
+          enElPanel: document.querySelector('button[aria-label="Revocar el permiso permanente de Write"]') !== null,
+        };
+      });
+      if (!abiertoAntes) {
+        await icon.click();
+        await page.waitForTimeout(CONFIG.settleMs);
+      }
+      await page.evaluate((estado) => window.__mageDev.store.setState(estado), previoStore);
+      await page.waitForTimeout(CONFIG.settleMs);
+      const ok =
+        conRegla.regla.includes('Write') &&
+        conRegla.enElPanel &&
+        segunda.tarjetasPendientes === 0 &&
+        segunda.estado !== 'needs_permission' &&
+        segunda.panelConPeticion === false &&
+        otraTool === 1 &&
+        trasRevocar.reglas === 0 &&
+        trasRevocar.enElPanel === false;
+      return { ok, detail: `conRegla=${JSON.stringify(conRegla)} segunda=${JSON.stringify(segunda)} otraTool=${otraTool} trasRevocar=${JSON.stringify(trasRevocar)}` };
+    },
+  },
+  {
+    // 2.10 — Panel "Ficheros": lo que el agente CREA aparece a la derecha, se lee de DISCO y se puede
+    // editar y guardar. Se inyecta un `Write` por el reducer REAL (tool_use + tool_result, como el
+    // stream) sobre un fichero de verdad dentro de la carpeta temporal de la conversacion, asi que lo
+    // que se mide es la cadena completa: bloque -> lista -> IPC de lectura -> render -> IPC de escritura
+    // -> disco. Incluido el compare-and-swap: se toca el fichero por detras y el guardado debe negarse.
+    name: '2.10: el panel de Ficheros ensena lo que el agente creo y deja editarlo',
+    async run(page) {
+      const previoStore = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return { tabs: s.tabs, activeTabId: s.activeTabId, splitLayout: s.splitLayout, sessionIdByChat: s.sessionIdByChat };
+      });
+      await openTemporaryConversation(page);
+      const cwd = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return s.tabs.find((t) => t.id === s.activeTabId)?.cwd ?? null;
+      });
+      if (cwd === null) throw new Error('la conversacion temporal no tiene cwd');
+      const filePath = path.join(cwd, 'plan.md');
+      fs.writeFileSync(filePath, '# Plan\n\n- primero\n', 'utf-8');
+
+      // Se inyecta por `handleEvent` y NO por `reduceEvent` a pelo: la apertura automatica del panel
+      // vive ahi (es un efecto, no parte del reducer puro), asi que pasando por el reducer solo se
+      // medía media cadena. `handleEvent` enruta por sessionId, asi que se le da uno a la pestaña —
+      // ningun IPC se toca con eventos de tool.
+      //
+      // El `Write` tal como llega del CLI: el tool_use NO trae ruta (la trae el RESULTADO, en `file`),
+      // que es justo por lo que el panel solo puede listar ficheros ya escritos.
+      await page.evaluate((ruta) => {
+        const dev = window.__mageDev;
+        const tabId = dev.store.getState().activeTabId;
+        const sessionId = 'verify-files-session';
+        dev.store.setState((state) => ({ sessionIdByChat: { ...state.sessionIdByChat, [tabId]: sessionId } }));
+        const handle = (event) => dev.store.getState().handleEvent(sessionId, event);
+        handle({ kind: 'tool_use', tool: { toolUseId: 'tu-write-1', toolName: 'Write', input: { file_path: ruta, content: '# Plan' } } });
+        handle({
+          kind: 'tool_result',
+          result: {
+            toolUseId: 'tu-write-1',
+            isError: false,
+            output: 'File created successfully',
+            durationMs: 12,
+            file: { path: ruta, content: '# Plan' },
+          },
+        });
+      }, filePath);
+      await page.waitForTimeout(CONFIG.settleMs * 5);
+
+      const trasCrear = await page.evaluate(() => {
+        const fila = document.querySelector('[data-created-file]');
+        const panel = fila?.closest('div')?.parentElement ?? null;
+        const icono = [...document.querySelectorAll('button[data-stripe-btn="true"]')].find((b) => b.getAttribute('aria-label') === 'Ficheros');
+        return {
+          // El panel se ABRE solo al crearse el fichero (es lo que se pidio: "que aparezca a la derecha").
+          iconoActivo: icono?.getAttribute('aria-pressed') === 'true',
+          ficherosListados: document.querySelectorAll('[data-created-file]').length,
+          nombre: fila?.textContent?.includes('plan.md') ?? false,
+          // El contenido viene de DISCO y el .md se pinta RENDERIZADO con el Markdown propio de Mage
+          // (que hace los encabezados con `div`, no con `h1`: se mide el contenedor `.mg-md` y que el
+          // `#` del origen NO se vea, que es la diferencia entre renderizar y volcar el texto crudo).
+          renderizado: panel?.querySelector('.mg-md')?.textContent?.includes('Plan') ?? false,
+          markdownCrudo: (panel?.textContent ?? '').includes('# Plan'),
+          contenido: (panel?.textContent ?? '').includes('primero'),
+        };
+      });
+
+      // Editar y guardar por la INTERFAZ real, no por el store. Si algo de esto falla, el error se
+      // devuelve en la medida en vez de tumbar la comprobacion sin decir que se habia visto.
+      const pasos = {};
+      try {
+        await page.getByRole('button', { name: 'Editar plan.md' }).click();
+        await page.getByRole('textbox', { name: 'Contenido de plan.md' }).fill('# Plan editado\n\n- segundo\n');
+        await page.getByRole('button', { name: 'Guardar plan.md' }).click();
+        await page.waitForTimeout(CONFIG.settleMs * 4);
+        pasos.enDisco = fs.readFileSync(filePath, 'utf-8');
+
+        // Compare-and-swap: alguien (el agente, u otro editor) toca el fichero y el guardado se niega.
+        await page.getByRole('button', { name: 'Editar plan.md' }).click();
+        fs.writeFileSync(filePath, '# Lo cambio otro\n', 'utf-8');
+        await page.getByRole('textbox', { name: 'Contenido de plan.md' }).fill('# Lo mio\n');
+        await page.getByRole('button', { name: 'Guardar plan.md' }).click();
+        await page.waitForTimeout(CONFIG.settleMs * 4);
+        pasos.conflicto = await page.evaluate(() => ({
+          aviso: [...document.querySelectorAll('[role="alert"]')].some((n) => (n.textContent ?? '').includes('cambió en disco')),
+          sigueEditando: document.querySelector('textarea[aria-label="Contenido de plan.md"]') !== null,
+        }));
+        pasos.trasConflicto = fs.readFileSync(filePath, 'utf-8');
+      } catch (error) {
+        pasos.fallo = error.message;
+      }
+
+      // Un PLAN del CLI: vive en `<configDir>/plans`, o sea FUERA del cwd de cualquier conversacion. Es
+      // el reporte «¿cómo es que sale fuera del sitio?»: el panel lo listaba (lo escribio un `Write` de
+      // esta conversacion) y luego se negaba a abrirlo. Se comprueba con la raiz REAL, porque lo que
+      // hay que verificar es que main wire el whitelisting correcto — un test unitario del predicado
+      // inyectado no lo demuestra. El fichero lleva nombre inequivoco y se borra al terminar.
+      const plansDir = path.join(os.homedir(), '.claude', 'plans');
+      const planPath = path.join(plansDir, 'mage-verify-plan.md');
+      const plan = {};
+      if (fs.existsSync(path.dirname(plansDir))) {
+        fs.mkdirSync(plansDir, { recursive: true });
+        fs.writeFileSync(planPath, '# Plan del CLI\n\n- fuera del cwd\n', 'utf-8');
+        try {
+          await page.evaluate((ruta) => {
+            const dev = window.__mageDev;
+            const sessionId = 'verify-files-session';
+            const handle = (event) => dev.store.getState().handleEvent(sessionId, event);
+            handle({ kind: 'tool_use', tool: { toolUseId: 'tu-write-plan', toolName: 'Write', input: { file_path: ruta } } });
+            handle({
+              kind: 'tool_result',
+              result: { toolUseId: 'tu-write-plan', isError: false, output: 'File created successfully', durationMs: 3, file: { path: ruta, content: '# Plan del CLI' } },
+            });
+          }, planPath);
+          await page.waitForTimeout(CONFIG.settleMs * 2);
+          // El visor es un DESPLEGABLE desde el 2026-09-21: pulsar el fichero que YA esta abierto lo
+          // cierra. Un `click()` a ciegas abria o cerraba segun cual estuviera elegido por defecto —y
+          // el plan recien inyectado puede serlo—, asi que se consulta `aria-expanded` y solo se pulsa
+          // si hace falta: medir el estado antes de actuar, en vez de suponerlo.
+          const filaDelPlan = page.locator(`[data-created-file="${planPath.replace(/\\/g, '\\\\')}"]`);
+          if ((await filaDelPlan.getAttribute('aria-expanded')) !== 'true') await filaDelPlan.click();
+          await page.waitForTimeout(CONFIG.settleMs * 4);
+          plan.medido = await page.evaluate(() => {
+            // Avisos DE ESTE PANEL, no de todo el documento: el prompt y el hilo tienen los suyos y
+            // sobreviven a comprobaciones anteriores (se colaba el "no se pudo adjuntar" de 2.12.1).
+            const panel = document.querySelector('[data-files-panel="true"]');
+            const alerta = [...(panel?.querySelectorAll('[role="alert"]') ?? [])].map((n) => n.textContent ?? '');
+            return { errores: alerta, renderizado: panel?.querySelector('.mg-md')?.textContent?.includes('Plan del CLI') ?? false };
+          });
+          // El DESPLIEGUE conmuta (2026-09-21, peticion del usuario: "al volver a hacer clic sobre un
+          // archivo abierto, este no se cierra"). Se mide el ciclo entero sobre la fila que ya esta
+          // abierta: cerrar y volver a abrir. Se espera al DESMONTAJE, no a un tiempo fijo — el visor
+          // sale con una animacion de 120 ms y contarlo antes daria una medida distinta cada tanda.
+          const visorDelPlan = page.locator(`[data-files-panel="true"] .mg-md`).first();
+          await filaDelPlan.click();
+          await visorDelPlan.waitFor({ state: "detached", timeout: CONFIG.actionTimeoutMs }).catch(() => {});
+          plan.toggle = {
+            cerrado: (await filaDelPlan.getAttribute('aria-expanded')) === 'false',
+            visorFuera: (await page.locator(`[data-files-panel="true"] .mg-md`).count()) === 0,
+          };
+          // Se deja ABIERTO como estaba: el contrato del arnes es devolver el estado que se encontro.
+          await filaDelPlan.click();
+          await visorDelPlan.waitFor({ state: "visible", timeout: CONFIG.actionTimeoutMs }).catch(() => {});
+          plan.toggle.reabre = (await filaDelPlan.getAttribute('aria-expanded')) === 'true';
+        } catch (error) {
+          plan.fallo = error.message;
+        } finally {
+          fs.rmSync(planPath, { force: true });
+        }
+      } else {
+        plan.omitido = 'no hay ~/.claude en esta maquina';
+      }
+
+      await page.evaluate((estado) => window.__mageDev.store.setState(estado), previoStore);
+      await page.waitForTimeout(CONFIG.settleMs);
+      const medido = { trasCrear, ...pasos, plan };
+      const ok =
+        trasCrear.iconoActivo === true &&
+        trasCrear.ficherosListados === 1 &&
+        trasCrear.nombre === true &&
+        trasCrear.renderizado === true &&
+        trasCrear.markdownCrudo === false &&
+        trasCrear.contenido === true &&
+        pasos.enDisco === '# Plan editado\n\n- segundo\n' &&
+        pasos.conflicto?.aviso === true &&
+        pasos.conflicto?.sigueEditando === true &&
+        // Lo que escribio el otro SIGUE ahi: el guardado se nego, no se piso.
+        pasos.trasConflicto === '# Lo cambio otro\n' &&
+        // Y el plan del CLI —fuera del cwd— se abre sin error (o se omite si esta maquina no tiene
+        // `~/.claude`, que en la del harness si existe).
+        (plan.omitido !== undefined ||
+          (plan.medido?.renderizado === true &&
+            plan.medido.errores.length === 0 &&
+            // Y el despliegue CONMUTA: cerrar desmonta el visor, y volver a pulsar lo reabre.
+            plan.toggle?.cerrado === true &&
+            plan.toggle?.visorFuera === true &&
+            plan.toggle?.reabre === true));
+      return { ok, detail: JSON.stringify(medido) };
+    },
+  },
+  // --- Fase 0 de la auditoria: MEDIR, no solo comprobar -------------------------------------------
+  // Las tres de abajo no miran si el DOM es correcto: miran cuanto CUESTA. Existen porque el resto del
+  // plan cambia rendimiento y, sin un numero previo, "mejorado" no seria mas que una impresion. Los
+  // presupuestos son deliberadamente HOLGADOS: son redes contra regresiones groseras, no benchmarks.
+  // Ojo al leerlos: esto corre en DEV (Vite sin minificar, con sourcemaps y con CDP enganchado), asi
+  // que los valores absolutos NO son los de la app empaquetada. Lo que vale es la comparacion consigo
+  // misma antes y despues de cada fase.
+  {
+    // 0.1 — Coste de una rafaga de deltas. Se hidrata un hilo largo y se le inyectan deltas por el
+    // reducer REAL (`__mageDev.reduceEvent`), con un frame entre medias, como haria el stream de
+    // verdad. Mide el coste por delta y las tareas largas (>50 ms), que son las que se notan como tiron.
+    // Pone numero a P2/P4/P5: sin `memo`, cada delta repinta los 60 bloques del hilo.
+    name: '0.1: una rafaga de deltas no supera el presupuesto de frame',
+    async run(page) {
+      // El estado se captura ANTES de abrir nada: restaurarlo al final se lleva por delante la pestaña
+      // y los bloques de golpe, sin dejar residuo para las comprobaciones siguientes.
+      //
+      // SELECTIVO, y esto no es un detalle: `getState()` entero cruzando el puente de CDP se serializa,
+      // y `expandedTools`/`expandedRuns` son `Set`. Al restaurarlos volvian como objetos planos, y el
+      // primer `s.expandedRuns.has(...)` reventaba -> el ErrorBoundary se comia la app y TODO lo que
+      // corriera despues medía una pantalla de error. Se copia el mismo criterio que ya usaba la
+      // comprobacion de arrastre: solo las claves que esta prueba toca, y ninguna es un Set.
+      const previo = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return { tabs: s.tabs, activeTabId: s.activeTabId, splitLayout: s.splitLayout, sessionIdByChat: s.sessionIdByChat, blocksByChat: s.blocksByChat };
+      });
+      await openTemporaryConversation(page);
+      const medido = await page.evaluate(
+        async ({ bloques, deltas }) => {
+          const dev = window.__mageDev;
+          if (dev === undefined) throw new Error('window.__mageDev no existe (¿la app no esta en modo desarrollo?)');
+          const tabId = dev.store.getState().activeTabId;
+          const hilo = [];
+          for (let i = 0; i < bloques; i += 1) {
+            const slot = i % 3;
+            if (slot === 0) hilo.push({ kind: 'user', id: `p0-u${i}`, text: `Mensaje del usuario ${i}`, time: '12:00', attachments: [] });
+            else if (slot === 1) hilo.push({ kind: 'agent', id: `p0-a${i}`, runs: [{ code: false, text: `Respuesta del agente ${i}` }], streaming: false });
+            else
+              hilo.push({
+                kind: 'tool',
+                id: `p0-t${i}`,
+                toolUseId: `p0-tu${i}`,
+                tool: 'Read',
+                command: `src/fichero-${i}.ts`,
+                meta: 'ok · 12 ms',
+                output: [{ code: false, text: `salida de la herramienta ${i}` }],
+                filePath: null,
+                error: false,
+              });
+          }
+          dev.store.setState({ blocksByChat: { ...dev.store.getState().blocksByChat, [tabId]: hilo } });
+          await new Promise((resolve) => requestAnimationFrame(resolve));
+
+          // Coste de un frame EN VACIO, antes de medir nada. La rafaga se marca el ritmo con
+          // `requestAnimationFrame`, y ese reloj no es constante: si la ventana queda oculta o tapada,
+          // Chromium estrangula rAF a 1 Hz y la medida salia en 1005 ms/delta con CERO tareas largas —
+          // o sea, esperando, no trabajando. Restando esta linea base, lo que queda es lo que cuesta el
+          // delta, que es lo unico que esta comprobacion quiere saber.
+          let baseTotal = 0;
+          for (let i = 0; i < 10; i += 1) {
+            const t = performance.now();
+            await new Promise((resolve) => requestAnimationFrame(resolve));
+            baseTotal += performance.now() - t;
+          }
+          const msPorFrameEnVacio = baseTotal / 10;
+
+          const largas = [];
+          const observer = new PerformanceObserver((list) => {
+            for (const entry of list.getEntries()) largas.push(Math.round(entry.duration));
+          });
+          observer.observe({ entryTypes: ['longtask'] });
+          const inicio = performance.now();
+          for (let i = 0; i < deltas; i += 1) {
+            dev.store.setState((s) => dev.reduceEvent(s, tabId, { kind: 'stream_delta', text: 'lorem ipsum ' }));
+            // Un frame entre delta y delta: sin esto se medirian N setState seguidos SIN pintar, que no
+            // es lo que hace el stream ni lo que sufre el usuario.
+            await new Promise((resolve) => requestAnimationFrame(resolve));
+          }
+          const totalMs = performance.now() - inicio;
+          observer.disconnect();
+          return {
+            bloquesEnElHilo: hilo.length,
+            deltas,
+            totalMs: Math.round(totalMs),
+            msPorFrameEnVacio: Number(msPorFrameEnVacio.toFixed(2)),
+            // Nunca negativo: si el ruido deja la resta por debajo de cero, el coste medido es 0, no un
+            // numero imposible que luego hay que explicar.
+            msPorDelta: Number(Math.max(0, totalMs / deltas - msPorFrameEnVacio).toFixed(2)),
+            tareasLargas: largas.length,
+            peorTareaMs: largas.length === 0 ? 0 : Math.max(...largas),
+          };
+        },
+        { bloques: HYDRATED_BLOCK_COUNT, deltas: DELTA_BURST_SIZE },
+      );
+      await page.evaluate((state) => window.__mageDev.store.setState(state), previo);
+      await page.waitForTimeout(CONFIG.settleMs);
+      const ok = medido.msPorDelta <= DELTA_BUDGET_MS && medido.peorTareaMs <= LONG_TASK_BUDGET_MS;
+      return {
+        ok,
+        detail: `${JSON.stringify(medido)} presupuesto=${DELTA_BUDGET_MS} ms/delta y tarea larga <=${LONG_TASK_BUDGET_MS} ms`,
+      };
+    },
+  },
+  {
+    // 0.2 — Arranque hasta que el workbench monta. Lee la marca que pone App.tsx
+    // (WORKBENCH_MOUNTED_MARK) y la resta del inicio de la navegacion. No hace falta instrumentar el
+    // harness: el dato ya esta en la linea de tiempo de la pagina desde que arranco.
+    // AVISO al leer un rojo aqui: la PRIMERA pasada tras un `pnpm build` o un empaquetado mide la
+    // reoptimizacion de dependencias de Vite, no el arranque de Mage. Medido el 2026-09-03: 28.434 ms
+    // en frio y 1.258 ms en la pasada siguiente, sin tocar una linea. Si esta falla sola, re-ejecuta
+    // antes de investigar nada — y por eso el presupuesto es de 6 s y no de 2.
+    name: '0.2: el workbench monta dentro del presupuesto de arranque',
+    async run(page) {
+      const medido = await page.evaluate((markName) => {
+        const marca = performance.getEntriesByName(markName)[0];
+        const navegacion = performance.getEntriesByType('navigation')[0];
+        if (marca === undefined) return { marca: false };
+        return {
+          marca: true,
+          montadoMs: Math.round(marca.startTime),
+          domContentLoadedMs: navegacion === undefined ? null : Math.round(navegacion.domContentLoadedEventEnd),
+        };
+      }, WORKBENCH_MOUNTED_MARK);
+      if (medido.marca !== true) {
+        return { ok: false, detail: `no existe la marca ${WORKBENCH_MOUNTED_MARK} (¿App.tsx dejo de ponerla?)` };
+      }
+      const ok = medido.montadoMs <= BOOT_BUDGET_MS;
+      return { ok, detail: `${JSON.stringify(medido)} presupuesto=${BOOT_BUDGET_MS} ms (DEV, no empaquetado)` };
+    },
+  },
+  {
+    // 0.3 — Guardar el estado del workspace no puede bloquear el proceso MAIN. Es la medida de P1, y va
+    // directa al canal en vez de por la UI: un cambio de pestaña acaba SIEMPRE en `StateSave`
+    // (`setActiveTab` -> `schedulePersist` -> `saveWorkspace`), asi que llamarlo mide exactamente el
+    // mismo camino sin depender de que haya dos pestañas ni de abrir un dialogo. Antes intentaba lo
+    // segundo y se rompia con el residuo de la comprobacion anterior: medir la causa es mas estable
+    // que reproducir el sintoma.
+    //
+    // Se mide con ida y vuelta de IPC y no con frames, y la razon importa: el renderer es OTRO proceso
+    // y sigue pintando aunque main este atascado; lo que se congela es todo lo que necesita a main.
+    // `loadConversationPrefs` es el handler mas barato y sin efectos que hay.
+    //
+    // Se reguarda el MISMO estado que ya habia (`loadWorkspace` -> `saveWorkspace`): no cambia nada en
+    // disco, y aun asi dispara el `refreshJumpList` que escanea el disco entero.
+    name: '0.3: guardar el estado del workspace no bloquea el proceso main',
+    async run(page) {
+      const medido = await page.evaluate(async (ventanaMs) => {
+        const actual = await window.mage.loadWorkspace();
+        if (actual === null) return { sinEstado: true };
+        const idas = [];
+        // El guardado NO se espera: se lanza y se sondea mientras main lo atiende, que es justo lo que
+        // hace la app (el store persiste con debounce y sigue a lo suyo).
+        void window.mage.saveWorkspace(actual);
+        const inicio = Date.now();
+        while (Date.now() - inicio < ventanaMs) {
+          const t0 = performance.now();
+          await window.mage.loadConversationPrefs('verify-gui-sonda');
+          idas.push(performance.now() - t0);
+        }
+        const ordenadas = [...idas].sort((a, b) => a - b);
+        return {
+          muestras: idas.length,
+          peorMs: Math.round(Math.max(...idas)),
+          medianaMs: Math.round(ordenadas[Math.floor(ordenadas.length / 2)]),
+        };
+      }, IPC_PROBE_WINDOW_MS);
+      if (medido.sinEstado === true) {
+        return { ok: false, detail: 'no hay workspace persistido que reguardar (¿perfil recien creado?)' };
+      }
+      const ok = medido.peorMs <= IPC_BLOCK_BUDGET_MS;
+      return { ok, detail: `${JSON.stringify(medido)} presupuesto=${IPC_BLOCK_BUDGET_MS} ms de ida y vuelta` };
+    },
+  },
+  {
+    // La ventana de Mage NO puede tener scroll vertical de PAGINA: es una app de escritorio con
+    // paneles que scrollean por dentro, no un documento. Si el `<body>` desborda, la barra de estado y
+    // el prompt se van fuera de la vista.
+    //
+    // El sospechoso es la columna izquierda (`AccountRail`): su contenido crece con el USO —una entrada
+    // por cuenta— mientras el alto de la ventana no. El perfil aislado del harness no tiene NINGUNA
+    // cuenta, asi que el caso no aparece solo: se fuerza inyectandolas por el puente de desarrollo. Sin
+    // esto, la comprobacion pasaria en verde con el bug puesto.
+    //
+    // Se mide ANTES y DESPUES: si el rail desaparece al inyectar, el fallo es de render (lo comeria el
+    // ErrorBoundary) y no de layout — y conviene distinguirlo en vez de leer un `false` a secas.
+    name: 'Cascara: con muchas cuentas, el rail se las arregla solo y la pagina no scrollea',
+    async run(page) {
+      const RAIL = '[aria-label="Paneles del borde izquierdo, zona superior"]';
+      const previo = await page.evaluate(() => window.__mageDev.store.getState().accounts);
+      const antes = await page.evaluate((sel) => ({
+        encontrado: document.querySelector(sel) !== null,
+        // Si el ancla falla, decir QUE hay: un `false` a secas manda a buscar el bug donde no esta.
+        toolbars: [...document.querySelectorAll('[role="toolbar"]')].map((n) => n.getAttribute('aria-label')),
+        pestanas: document.querySelectorAll('[role="tab"]').length,
+        dialogos: document.querySelectorAll('[role="dialog"]').length,
+        editores: document.querySelectorAll('[data-prompt-editor="true"]').length,
+        raizHijos: document.getElementById('root')?.firstElementChild?.className ?? null,
+        texto: (document.body.innerText ?? '').replace(/\s+/g, ' ').slice(0, 140),
+      }), RAIL);
+
+      await page.evaluate(
+        ({ total }) => {
+          const dev = window.__mageDev;
+          if (dev === undefined) throw new Error('window.__mageDev no existe (¿la app no esta en modo desarrollo?)');
+          const ventana = { pct: 12, label: '1 h 24 m' };
+          const accent = { base: '#8a8a8a', tint: '#bdbdbd', bgActive: '#2a2a2a', borderInactive: '#3a3a3a' };
+          dev.store.setState({
+            accounts: Array.from({ length: total }, (_, i) => ({
+              id: `C:/fake/.claude-${i}`,
+              monogram: String.fromCharCode(65 + (i % 26)),
+              alias: `cuenta-${i}`,
+              provider: 'Claude',
+              defaultModel: 'sonnet',
+              accent,
+              activity: 'idle',
+              usage: { fiveHour: ventana, weekly: ventana },
+              email: null,
+              loginStatus: 'logged_in',
+              isMain: i === 0,
+            })),
+          });
+        },
+        { total: RAIL_STRESS_ACCOUNTS },
+      );
+      await page.waitForTimeout(CONFIG.settleMs);
+
+      const medido = await page.evaluate((sel) => {
+        const raiz = document.documentElement;
+        const toolbar = document.querySelector(sel);
+        const rail = toolbar === null ? null : toolbar.parentElement;
+        return {
+          ventana: window.innerHeight,
+          desbordaPagina: raiz.scrollHeight > raiz.clientHeight,
+          bodyDesborda: document.body.scrollHeight > document.body.clientHeight,
+          avatares: document.querySelectorAll('[data-tip^="cuenta-"]').length,
+          rail:
+            rail === null
+              ? { existe: false }
+              : {
+                  existe: true,
+                  alto: Math.round(rail.getBoundingClientRect().height),
+                  contenido: rail.scrollHeight,
+                  desbordaSuCaja: rail.scrollHeight > rail.clientHeight + 1,
+                },
+        };
+      }, RAIL);
+
+      await page.evaluate((accounts) => window.__mageDev.store.setState({ accounts }), previo);
+      await page.waitForTimeout(CONFIG.settleMs);
+
+      const ok =
+        antes.encontrado &&
+        medido.rail.existe === true &&
+        !medido.desbordaPagina &&
+        !medido.bodyDesborda &&
+        medido.rail.alto <= medido.ventana &&
+        !medido.rail.desbordaSuCaja;
+      return { ok, detail: `railAntes=${JSON.stringify(antes)} ${JSON.stringify(medido)}` };
+    },
+  },
+  {
+    // H4 — Al agotarse el uso, el chat tiene que OFRECER continuar en otra cuenta, no solo contar que
+    // se acabo. Se dispara por el reducer REAL (`__mageDev.reduceEvent`) con el mismo evento que manda
+    // el CLI, y se comprueba las dos mitades: que aparece con un boton por cuenta destino con login, y
+    // que se va al limpiar la marca. Lo segundo importa tanto como lo primero: un banner que se queda
+    // pegado ofrece mudarse de cuenta por un limite que ya caduco.
+    //
+    // NO se pulsa el boton: mover la conversacion toca el disco de las cuentas reales del usuario.
+    name: 'Chat: al agotarse el uso se ofrece continuar en otra cuenta',
+    async run(page) {
+      const previo = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return { tabs: s.tabs, activeTabId: s.activeTabId, splitLayout: s.splitLayout, blocksByChat: s.blocksByChat, accounts: s.accounts, rateLimitByChat: s.rateLimitByChat };
+      });
+      await openTemporaryConversation(page);
+
+      const medido = await page.evaluate(async (resumen) => {
+        const dev = window.__mageDev;
+        if (dev === undefined) throw new Error('window.__mageDev no existe (¿la app no esta en modo desarrollo?)');
+        const tabId = dev.store.getState().activeTabId;
+        const cuentaDelChat = dev.store.getState().tabs.find((t) => t.id === tabId)?.accountId ?? '';
+        const accent = { base: '#8a8a8a', tint: '#bdbdbd', bgActive: '#2a2a2a', borderInactive: '#3a3a3a' };
+        const ventana = { pct: 12, label: '1 h 24 m' };
+        const cuenta = (id, alias, loginStatus) => ({
+          id, alias, monogram: alias[0].toUpperCase(), provider: 'Claude', defaultModel: 'sonnet', accent,
+          activity: 'idle', usage: { fiveHour: ventana, weekly: ventana }, email: null, loginStatus, isMain: false,
+        });
+        // Tres cuentas a proposito: la del chat (no es destino de si misma) y dos mas, una de ellas SIN
+        // login — que tampoco puede ser destino. Con una sola cuenta destino el filtro pasaria por
+        // casualidad.
+        dev.store.setState({
+          accounts: [cuenta(cuentaDelChat, 'la-del-chat', 'logged_in'), cuenta('C:/fake/.claude-alt', 'suplente', 'logged_in'), cuenta('C:/fake/.claude-off', 'desconectada', 'logged_out')],
+        });
+        await new Promise((resolve) => requestAnimationFrame(resolve));
+        const antes = document.querySelectorAll('[role="status"]').length;
+
+        dev.store.setState((s) => dev.reduceEvent(s, tabId, { kind: 'rate_limit', summary: resumen, resetsAtMs: null }));
+        await new Promise((resolve) => requestAnimationFrame(resolve));
+        const banner = [...document.querySelectorAll('[role="status"]')].find((n) => (n.textContent ?? '').includes(resumen)) ?? null;
+        const conBanner = {
+          existe: banner !== null,
+          // La linea del hilo TAMBIEN tiene que estar: el banner es la accion, no el relato.
+          lineaEnElHilo: (document.body.innerText ?? '').includes(resumen),
+          destinos: banner === null ? [] : [...banner.querySelectorAll('button')].map((b) => (b.textContent ?? '').trim()),
+        };
+
+        dev.store.setState((s) => ({ rateLimitByChat: Object.fromEntries(Object.entries(s.rateLimitByChat).filter(([k]) => k !== tabId)) }));
+        await new Promise((resolve) => requestAnimationFrame(resolve));
+        const trasLimpiar = [...document.querySelectorAll('[role="status"]')].filter((n) => (n.textContent ?? '').includes(resumen)).length;
+        return { statusAntes: antes, ...conBanner, trasLimpiar };
+      }, RATE_LIMIT_SUMMARY);
+
+      await page.evaluate((state) => window.__mageDev.store.setState(state), previo);
+      await page.waitForTimeout(CONFIG.settleMs);
+
+      const ok =
+        medido.existe &&
+        medido.lineaEnElHilo &&
+        medido.destinos.length === 1 &&
+        medido.destinos[0] === 'suplente' &&
+        medido.trasLimpiar === 0;
+      return { ok, detail: JSON.stringify(medido) };
+    },
+  },
+  {
+    // Tres reportes del usuario sobre las barras de iconos, medidos juntos porque comparten estado:
+    //  - "la de la izquierda es mas gorda, iguala el ancho a la de la derecha";
+    //  - "se pueden duplicar iconos de herramientas, solo puede haber uno";
+    //  - "al arrastrar un icono, si no hay ya uno en esa zona, no aparece la zona donde soltarlo".
+    name: 'Barras: mismo ancho, sin iconos repetidos y con hueco visible al arrastrar',
+    async run(page) {
+      const previo = await page.evaluate(() => JSON.parse(JSON.stringify(window.__mageDev.panelStore.getState().layout)));
+
+      const anchos = await page.evaluate(() => {
+        const izq = document.querySelector('[aria-label="Paneles del borde izquierdo, zona superior"]')?.closest('div[class*="border-r"]') ?? null;
+        const der = document.querySelector('[role="toolbar"][aria-label="Paneles del borde derecho"]') ?? null;
+        return {
+          izquierda: izq === null ? null : Math.round(izq.getBoundingClientRect().width),
+          derecha: der === null ? null : Math.round(der.getBoundingClientRect().width),
+        };
+      });
+
+      // Unicidad: el MISMO id no puede tener dos botones en toda la ventana. Se mide sobre el DOM y no
+      // sobre el layout a proposito — el bug estaba en la reconciliacion, que es justo lo que produce
+      // ese DOM, y una comprobacion sobre el estado ya reconciliado no lo habria visto.
+      const repetidos = await page.evaluate(() => {
+        const cuenta = new Map();
+        for (const b of document.querySelectorAll('[data-stripe-btn="true"]')) {
+          const etiqueta = b.getAttribute('aria-label') ?? '';
+          if (etiqueta.startsWith('Añadir')) continue; // el "⋮" de cada borde, que no es un panel
+          cuenta.set(etiqueta, (cuenta.get(etiqueta) ?? 0) + 1);
+        }
+        return [...cuenta.entries()].filter(([, n]) => n > 1).map(([etiqueta, n]) => `${etiqueta} x${n}`);
+      });
+
+      // El hueco de suelta: se dispara un `dragstart` REAL sobre el primer icono y se cuenta cuantas
+      // zonas reservan sitio. Tienen que ser TODAS las que no lo contienen ya — incluidas las vacias,
+      // que era el reporte: existian como area de suelta pero no habia nada que mirar.
+      const arrastre = await page.evaluate(() => {
+        const boton = document.querySelector('[data-stripe-btn="true"]');
+        if (boton === null) return null;
+        const antes = document.querySelectorAll('[data-drop-ghost="true"]').length;
+        const dt = new DataTransfer();
+        boton.dispatchEvent(new DragEvent('dragstart', { bubbles: true, dataTransfer: dt }));
+        return { antes, etiqueta: boton.getAttribute('aria-label') };
+      });
+      await page.waitForTimeout(CONFIG.settleMs);
+      const durante = await page.evaluate(() => ({
+        huecos: document.querySelectorAll('[data-drop-ghost="true"]').length,
+        // Y el hueco tiene que MEDIR: uno de 0x0 no se ve, que es como estaba la zona vacia.
+        alto: Math.min(...[...document.querySelectorAll('[data-drop-ghost="true"]')].map((n) => Math.round(n.getBoundingClientRect().height)), Infinity),
+      }));
+      await page.evaluate(() => {
+        const boton = document.querySelector('[data-stripe-btn="true"]');
+        boton?.dispatchEvent(new DragEvent('dragend', { bubbles: true, dataTransfer: new DataTransfer() }));
+      });
+      await page.waitForTimeout(CONFIG.settleMs);
+      const despues = await page.evaluate(() => document.querySelectorAll('[data-drop-ghost="true"]').length);
+
+      await page.evaluate((layout) => window.__mageDev.panelStore.setState({ layout }), previo);
+      await page.waitForTimeout(CONFIG.settleMs);
+
+      const medido = { anchos, repetidos, arrastre, durante, despues };
+      const ok =
+        anchos.izquierda !== null &&
+        anchos.derecha !== null &&
+        // El mismo ancho: 1 px de margen por el borde de cada lado.
+        Math.abs(anchos.izquierda - anchos.derecha) <= 1 &&
+        repetidos.length === 0 &&
+        arrastre !== null &&
+        arrastre.antes === 0 &&
+        // Al menos las cuatro zonas que no lo contienen (dos por borde) reservan su hueco.
+        durante.huecos >= 4 &&
+        durante.alto >= 20 &&
+        // Y al terminar el arrastre no queda ninguno: si no, la barra se queda descuadrada.
+        despues === 0;
+      return { ok, detail: JSON.stringify(medido) };
+    },
+  },
+  {
+    // Reporte del usuario, con dos capturas: "al hacer clic sobre un log de la lista, este se expande
+    // mal". Se expandia DENTRO de la fila, y las filas de react-window son hermanas absolutas de altura
+    // fija: el detalle acababa entremezclado con el texto de las filas siguientes en vez de taparlas.
+    // Ahora la fila SELECCIONA y el detalle vive en su propia seccion bajo la lista.
+    name: 'Logs: el detalle de una linea se pinta fuera de la lista, no dentro de su fila',
+    async run(page) {
+      const previo = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        const t = window.__mageDev.transcriptStore.getState();
+        return {
+          store: { tabs: s.tabs, activeTabId: s.activeTabId, splitLayout: s.splitLayout, sessionIdByChat: s.sessionIdByChat },
+          transcript: { entries: t.entries, isFinal: t.isFinal, errorMessage: t.errorMessage, totalLinesSoFar: t.totalLinesSoFar },
+          layout: JSON.parse(JSON.stringify(window.__mageDev.panelStore.getState().layout)),
+        };
+      });
+      await openTemporaryConversation(page);
+      await page.evaluate(() => {
+        const dev = window.__mageDev;
+        const tabId = dev.store.getState().activeTabId;
+        dev.store.setState((s) => ({
+          tabs: s.tabs.map((t) => (t.id === tabId ? { ...t, resumeSessionId: 's-logs' } : t)),
+          sessionIdByChat: Object.fromEntries(Object.entries(s.sessionIdByChat).filter(([k]) => k !== tabId)),
+        }));
+      });
+      await page.waitForTimeout(CONFIG.settleMs * 4);
+      await page.evaluate(() => {
+        // Doce lineas: suficientes para que haya filas DEBAJO de la que se despliega, que es donde se
+        // veia el estropicio.
+        window.__mageDev.transcriptStore.setState({
+          isFinal: true,
+          errorMessage: null,
+          totalLinesSoFar: 12,
+          entries: Array.from({ length: 12 }, (_, i) => ({
+            index: i,
+            uuid: `u${i}`,
+            parentUuid: null,
+            isSidechain: false,
+            isMeta: false,
+            timestampMs: Date.now(),
+            category: 'metadata',
+            kind: i === 0 ? 'last-prompt' : 'attachment',
+            summary: `linea ${i}`,
+            tokenUsage: null,
+            raw: { type: 'last-prompt', sessionId: 'c5834770-ea19-4524-a91e-f8f112c5b395', relleno: 'x'.repeat(400) },
+          })),
+        });
+      });
+      await page.waitForTimeout(CONFIG.settleMs * 2);
+
+      const boton = page.getByRole('button', { name: 'Logs', exact: true }).first();
+      const hayPanel = await boton.isVisible().catch(() => false);
+      let medido = null;
+      if (hayPanel) {
+        await boton.click();
+        await page.waitForTimeout(CONFIG.settleMs);
+        await page.locator('[data-active-panel="logs"] button[aria-pressed]').first().click();
+        await page.waitForTimeout(CONFIG.settleMs);
+        medido = await page.evaluate(() => {
+          const pane = document.querySelector('[data-active-panel="logs"]');
+          const detalle = pane?.querySelector('pre') ?? null;
+          const fila = pane?.querySelector('button[aria-pressed="true"]')?.closest('div') ?? null;
+          const filas = [...(pane?.querySelectorAll('button[aria-pressed]') ?? [])];
+          const rect = detalle?.getBoundingClientRect() ?? null;
+          return {
+            hayDetalle: detalle !== null,
+            seleccionadas: filas.filter((b) => b.getAttribute('aria-pressed') === 'true').length,
+            // La clave del arreglo: el detalle NO cuelga de la fila.
+            dentroDeLaFila: fila !== null && detalle !== null ? fila.contains(detalle) : null,
+            // Y no se solapa con ninguna fila de la lista.
+            solapaFilas:
+              rect === null
+                ? null
+                : filas.filter((b) => {
+                    const r = b.getBoundingClientRect();
+                    return r.height > 0 && r.bottom > rect.top + 1 && r.top < rect.bottom - 1;
+                  }).length,
+          };
+        });
+        await boton.click();
+      }
+
+      await page.evaluate((p) => {
+        window.__mageDev.store.setState(p.store);
+        window.__mageDev.transcriptStore.setState(p.transcript);
+        window.__mageDev.panelStore.setState({ layout: p.layout });
+      }, previo);
+      await page.waitForTimeout(CONFIG.settleMs);
+
+      const ok =
+        medido !== null &&
+        medido.hayDetalle &&
+        medido.seleccionadas === 1 &&
+        medido.dentroDeLaFila === false &&
+        medido.solapaFilas === 0;
+      return { ok, detail: JSON.stringify({ hayPanel, ...medido }) };
+    },
+  },
+  {
+    // Peticion del usuario: etiquetas de informacion del chat encima del input, con el DIRECTORIO
+    // clicable "para ver los archivos que genera o acceder al scratchpad".
+    //
+    // Se comprueba lo que hace que sirvan: que estan ENCIMA del input (no dentro, donde competirian con
+    // los controles del mensaje), que la carpeta es la unica pulsable, y que su etiqueta dice algo
+    // — una conversacion sin friccion vive en un subdirectorio con nombre de UUID, y ahi el ultimo
+    // segmento no informa de nada.
+    //
+    // NO se pulsa la carpeta: abriria el explorador de ficheros del sistema.
+    name: 'Chat: las etiquetas de informacion van encima del input y la carpeta es accionable',
+    async run(page) {
+      const previo = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return { tabs: s.tabs, activeTabId: s.activeTabId, splitLayout: s.splitLayout, scratchDir: s.scratchDir };
+      });
+      await openTemporaryConversation(page);
+
+      const medido = await page.evaluate(() => {
+        const dev = window.__mageDev;
+        const tabId = dev.store.getState().activeTabId;
+        const cwd = dev.store.getState().tabs.find((t) => t.id === tabId)?.cwd ?? '';
+        const editor = document.querySelector('[data-prompt-editor="true"]');
+        const carpeta = [...document.querySelectorAll('button')].find((b) => (b.getAttribute('aria-label') ?? '').includes('abrir la carpeta')) ?? null;
+        const fila = carpeta?.parentElement ?? null;
+        const etiquetas = fila === null ? [] : [...fila.children].map((n) => ({
+          texto: (n.textContent ?? '').trim(),
+          pulsable: n.tagName.toLowerCase() === 'button',
+          titulo: n.getAttribute('aria-label'),
+        }));
+        return {
+          cwd,
+          hayFila: fila !== null,
+          // Encima del input de verdad, medido en pixeles y no por el orden del DOM.
+          encimaDelInput: fila !== null && editor !== null ? fila.getBoundingClientRect().bottom <= editor.getBoundingClientRect().top + 1 : null,
+          etiquetas,
+          pulsables: etiquetas.filter((e) => e.pulsable).length,
+          // La fila no puede ensanchar el panel: las rutas largas son la norma.
+          desborda: fila === null ? null : fila.scrollWidth > fila.clientWidth + 1,
+        };
+      });
+
+      // Una conversacion sin friccion vive DENTRO del scratchpad, asi que la etiqueta tiene que acabar
+      // diciendo "Scratchpad" y no el UUID de su subcarpeta — que es justo el caso en que el ultimo
+      // segmento no informa de nada. Se SONDEA en vez de medir una sola vez: la carpeta de borradores
+      // se resuelve por IPC y llega despues del primer pintado.
+      let etiquetaScratch = null;
+      for (let i = 0; i < 25; i += 1) {
+        etiquetaScratch = await page.evaluate(
+          () => [...document.querySelectorAll('button')].find((b) => (b.getAttribute('aria-label') ?? '').includes('abrir la carpeta'))?.textContent?.trim() ?? null,
+        );
+        if ((etiquetaScratch ?? '').includes('Scratchpad')) break;
+        await page.waitForTimeout(80);
+      }
+      const scratchResuelto = await page.evaluate(() => window.__mageDev.store.getState().scratchDir);
+
+      await page.evaluate((p) => window.__mageDev.store.setState(p), previo);
+      await page.waitForTimeout(CONFIG.settleMs);
+
+      const todo = { ...medido, scratchResuelto, etiquetaScratch };
+      const ok =
+        todo.hayFila &&
+        todo.encimaDelInput === true &&
+        // Carpeta + privacidad + modelo.
+        todo.etiquetas.length === 3 &&
+        // Solo la carpeta hace algo: un boton que no lleva a ningun sitio es una promesa rota.
+        todo.pulsables === 1 &&
+        todo.desborda === false &&
+        // El tooltip de la carpeta lleva la ruta ENTERA, que es lo que la etiqueta corta no puede.
+        (todo.etiquetas[0]?.titulo ?? '').includes(todo.cwd) &&
+        // `textContent` trae tambien el icono, asi que se compara por contenido y no por igualdad.
+        (todo.etiquetaScratch ?? '').includes('Scratchpad');
+      return { ok, detail: JSON.stringify(todo) };
+    },
+  },
+  {
+    // Peticion del usuario: "tests para generar todos los tipos de artifacts que puede generar Claude y
+    // probar como se ven y como se interactua con ellos". Las FORMAS se cubren en los tests puros
+    // (artifactView.test.ts); aqui se comprueba lo que aquellos no pueden: que la tarjeta las PINTA
+    // bien y que sus controles responden.
+    //
+    // Se inyecta una galeria con las siete formas de golpe, en el hilo y en el panel nuevo. NO se pulsa
+    // "Abrir": abriria una ventana de verdad contra claude.ai con la sesion de una cuenta real. Si se
+    // pulsa lo que no sale de la app: "Copiar enlace" y el desplegable de elegir cuenta.
+    name: 'Artifacts: la tarjeta cubre todas las formas y sus controles responden',
+    async run(page) {
+      const previo = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return {
+          store: { tabs: s.tabs, activeTabId: s.activeTabId, splitLayout: s.splitLayout, blocksByChat: s.blocksByChat },
+          layout: JSON.parse(JSON.stringify(window.__mageDev.panelStore.getState().layout)),
+        };
+      });
+      await openTemporaryConversation(page);
+
+      const formas = await page.evaluate(() => {
+        const dev = window.__mageDev;
+        const tabId = dev.store.getState().activeTabId;
+        const url = (n) => `https://claude.ai/code/artifact/${String(n).repeat(8)}-1111-2222-3333-444444444444`;
+        // Las siete formas que de verdad cambian lo que se ve. Los bloques se construyen aqui a mano (no
+        // por el reducer) porque lo que se mide es el RENDER, y asi cada forma queda a la vista.
+        const casos = [
+          { k: 'completo', title: 'Informe de packaging', description: 'Analisis previo del empaquetado.', favicon: '📦', localPath: 'C:/tmp/informe.html' },
+          { k: 'markdown', title: 'Notas de la reunion', description: 'Resumen en Markdown.', favicon: '📝', localPath: 'C:/tmp/notas.md' },
+          { k: 'sinDescripcion', title: 'Solo titulo', description: '', favicon: '📄', localPath: 'C:/tmp/solo.html' },
+          { k: 'sinFavicon', title: 'Sin icono', description: 'Debe caer al icono por defecto.', favicon: '', localPath: 'C:/tmp/sinicono.html' },
+          { k: 'dosEmoji', title: 'Dos emoji', description: 'El favicon admite dos.', favicon: '⚡🔥', localPath: 'C:/tmp/dos.html' },
+          { k: 'tituloLargo', title: 'Un titulo larguisimo que no cabe de ninguna manera en el ancho de la tarjeta y tiene que recortarse sin ensancharla', description: 'd'.repeat(300), favicon: '📚', localPath: 'C:/tmp/largo.html' },
+          { k: 'sinFicheroLocal', title: 'Sin fichero local', description: 'No debe ofrecer abrir el fichero.', favicon: '🌐', localPath: '' },
+        ];
+        const blocks = casos.map((c, i) => ({
+          kind: 'tool',
+          id: `art-${i}`,
+          toolUseId: `tu-${i}`,
+          tool: 'Artifact',
+          command: c.localPath,
+          meta: 'ok · 120 ms',
+          output: [{ code: false, text: `Published at ${url(i)}` }],
+          filePath: null,
+          error: false,
+          artifact: { url: url(i), title: c.title, description: c.description, favicon: c.favicon, localPath: c.localPath },
+        }));
+        dev.store.setState((s) => ({ blocksByChat: { ...s.blocksByChat, [tabId]: blocks } }));
+        return casos.map((c) => c.k);
+      });
+      await page.waitForTimeout(CONFIG.settleMs * 2);
+
+      // 1) En el HILO: una tarjeta por forma, con su icono, y ninguna ensanchada por su contenido.
+      const enElHilo = await page.evaluate(() => {
+        const abrir = [...document.querySelectorAll('button')].filter((b) => (b.getAttribute('aria-label') ?? '').startsWith('Abrir'));
+        const tarjetas = abrir.map((b) => b.closest('div.flex.min-w-0')).filter((n) => n !== null);
+        return {
+          tarjetas: tarjetas.length,
+          // El icono por defecto cuando no viene favicon: sin el, la tarjeta se queda sin nada a la
+          // izquierda y su titulo baila respecto a las demas.
+          // El hueco del icono: o el favicon que trae el artifact (texto), o el icono por defecto de
+          // Mage (SVG, sin texto). Se devuelve '<icono>' para el segundo caso para poder distinguir
+          // "cayo al icono por defecto" de "se quedo en blanco", que es lo que esta comprobacion vigila.
+          iconos: tarjetas.map((n) => {
+            const hueco = n.querySelector('[data-artifact-favicon]');
+            const texto = (hueco?.textContent ?? '').trim();
+            return texto.length > 0 ? texto : hueco?.querySelector('svg') !== null && hueco !== null ? '<icono>' : '';
+          }),
+          desbordanAlAncho: tarjetas.filter((n) => n.scrollWidth > n.clientWidth + 1).length,
+          conFicheroLocal: [...document.querySelectorAll('button')].filter((b) => b.textContent === 'Abrir el fichero local').length,
+          copiar: [...document.querySelectorAll('button')].filter((b) => b.textContent === 'Copiar enlace').length,
+        };
+      });
+
+      // 2) INTERACCION, solo lo que no sale de la app.
+      const primeraCopiar = page.getByRole('button', { name: 'Copiar enlace' }).first();
+      await primeraCopiar.click();
+      // Se busca el boton que YA dice "Copiado", no se relee el que se pulso: al cambiar de texto deja
+      // de casar `name: 'Copiar enlace'` y ese localizador pasa a resolver al de la SIGUIENTE tarjeta,
+      // que obviamente sigue sin copiar. Ademas se sondea, porque `navigator.clipboard.writeText`
+      // resuelve por el proceso de navegador y una espera ciega lo pillaba a medias.
+      let trasCopiar = '';
+      for (let i = 0; i < 20; i += 1) {
+        trasCopiar = (await page.getByRole('button', { name: /Copiado/ }).count()) === 1 ? '✓ Copiado' : '';
+        if (trasCopiar.length > 0) break;
+        await page.waitForTimeout(50);
+      }
+      // Se SONDEA el portapapeles en vez de leerlo una vez. `writeText` ya resolvio —la app solo pinta
+      // "Copiado" en el `.then()`, nunca antes—, pero la lectura posterior salia vacia: el portapapeles
+      // es un recurso EXCLUSIVO del SO y cualquier proceso que lo toque entre medias gana la carrera
+      // (mismo motivo documentado en la comprobacion de copiar del hilo). Una lectura unica convertia
+      // eso en un fallo rojo que no era de la app.
+      let portapapeles = '';
+      for (let i = 0; i < 20; i += 1) {
+        portapapeles = await page.evaluate(() => navigator.clipboard.readText().catch(() => '(sin permiso)'));
+        if (portapapeles.length > 0) break;
+        await page.waitForTimeout(50);
+      }
+
+      const abrirCon = page.getByRole('button', { name: /^Abrir con…/ }).first();
+      const hayDesplegable = await abrirCon.isVisible().catch(() => false);
+      let cuentasOfrecidas = 0;
+      if (hayDesplegable) {
+        await abrirCon.click();
+        await page.waitForTimeout(CONFIG.settleMs);
+        cuentasOfrecidas = await page.getByRole('group', { name: 'Elegir cuenta con la que abrir' }).getByRole('button').count();
+        await abrirCon.click(); // se cierra sin abrir nada
+        await page.waitForTimeout(CONFIG.settleMs);
+      }
+
+      // 3) En el PANEL nuevo: las mismas, sin tener que scrollear el hilo.
+      const boton = page.getByRole('button', { name: 'Artifacts', exact: true }).first();
+      const hayPanel = await boton.isVisible().catch(() => false);
+      let enElPanel = null;
+      if (hayPanel) {
+        await boton.click();
+        await page.waitForTimeout(CONFIG.settleMs);
+        enElPanel = await page.evaluate(() => {
+          const pane = document.querySelector('[data-active-panel="artifacts"]');
+          const texto = (pane?.innerText ?? '').replace(/\s+/g, ' ');
+          return { cabecera: /ARTIFACTS \((\d+)\)/.exec(texto)?.[1] ?? null, desborda: pane === null ? null : pane.scrollWidth > pane.clientWidth + 1 };
+        });
+        await boton.click();
+        await page.waitForTimeout(CONFIG.settleMs);
+      }
+
+      await page.evaluate((p) => {
+        window.__mageDev.store.setState(p.store);
+        window.__mageDev.panelStore.setState({ layout: p.layout });
+      }, previo);
+      await page.waitForTimeout(CONFIG.settleMs);
+
+      const medido = {
+        formas,
+        enElHilo,
+        trasCopiar,
+        portapapeles: portapapeles.slice(0, 60),
+        // Deja dicho en el informe si el portapapeles del SO estuvo disponible, para que un vacio no
+        // se lea como "la copia no funciona".
+        portapapelesDelSo: portapapeles.length === 0 ? 'no disponible en esta maquina' : 'leido',
+        cuentasOfrecidas,
+        enElPanel,
+      };
+      const ok =
+        formas.length === 7 &&
+        enElHilo.tarjetas === 7 &&
+        // El que no trae favicon cae al icono por defecto de Mage, no se queda en blanco.
+        enElHilo.iconos.includes('<icono>') &&
+        enElHilo.iconos.includes('⚡🔥') &&
+        // Ni el titulo larguisimo ni la descripcion de 300 caracteres pueden ensanchar la tarjeta.
+        enElHilo.desbordanAlAncho === 0 &&
+        // Seis traen fichero local; el septimo NO debe ofrecer abrirlo.
+        enElHilo.conFicheroLocal === 6 &&
+        enElHilo.copiar === 7 &&
+        trasCopiar.includes('Copiado') &&
+        // El portapapeles del SO NO puede ser el criterio, por lo mismo que ya documenta 2.9.b: en
+        // Windows es un recurso EXCLUSIVO y cualquier proceso que lo tenga abierto hace que la
+        // escritura no aterrice, en silencio. Medido el 2026-09-21: las DOS comprobaciones de
+        // portapapeles leyeron '' en la misma tanda, y el portapapeles del SO estaba vacio tambien
+        // desde fuera de la app.
+        //
+        // Lo que SI prueba que la copia funciona es que el boton pase a "Copiado": `ArtifactCard.tsx`
+        // solo lo pinta dentro del `.then()` de `writeText`, nunca antes. Asi que si el SO deja leer,
+        // se exige que sea la URL del artifact; si devuelve vacio, se anota en el detalle y no se
+        // suspende por algo que no es de la app.
+        (medido.portapapeles.length === 0 || medido.portapapeles.startsWith('https://claude.ai/code/artifact/')) &&
+        cuentasOfrecidas > 0 &&
+        enElPanel !== null &&
+        enElPanel.cabecera === '7' &&
+        enElPanel.desborda === false;
+      return { ok, detail: JSON.stringify(medido) };
+    },
+  },
+  {
+    // Reporte del usuario: "cuando abro una conversacion que tiene bastante, las pestañas de contexto,
+    // MCP y logs me salen vacias". La causa: esos paneles miraban `sessionIdByChat` —sesiones VIVAS— y
+    // en Mage la sesion arranca perezosa, asi que una conversacion recien abierta del historial tiene
+    // el .jsonl entero leido y ninguna sesion viva. Contestaban "Sin conversacion activa" encima de una
+    // conversacion abierta y llena.
+    //
+    // Se monta justo ese estado: pestaña con `resumeSessionId` y SIN entrada en `sessionIdByChat`, con
+    // la transcripcion ya cargada en su store. Es el unico estado donde el bug se ve.
+    name: 'Inspector: una conversacion reabierta sin sesion viva no dice que no hay conversacion',
+    async run(page) {
+      const previo = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        const t = window.__mageDev.transcriptStore.getState();
+        return {
+          store: { tabs: s.tabs, activeTabId: s.activeTabId, splitLayout: s.splitLayout, sessionIdByChat: s.sessionIdByChat },
+          transcript: { entries: t.entries, isFinal: t.isFinal, errorMessage: t.errorMessage, totalLinesSoFar: t.totalLinesSoFar },
+          layout: JSON.parse(JSON.stringify(window.__mageDev.panelStore.getState().layout)),
+        };
+      });
+      await openTemporaryConversation(page);
+
+      // DOS pasos, y el orden importa: al fijar `resumeSessionId` se dispara `useTranscriptLifecycle`,
+      // que abre la transcripcion de verdad y RESETEA el store (el fichero no existe en el perfil
+      // aislado). Inyectar las entradas en la misma tanda las borraba ese `open()` — el primer intento
+      // media "Cargando transcripcion…" por eso, no por el bug.
+      await page.evaluate(() => {
+        const dev = window.__mageDev;
+        const tabId = dev.store.getState().activeTabId;
+        // La marca del bug: hay `resumeSessionId` y NO hay sesion viva.
+        dev.store.setState((s) => ({
+          tabs: s.tabs.map((t) => (t.id === tabId ? { ...t, resumeSessionId: 's-reabierta' } : t)),
+          sessionIdByChat: Object.fromEntries(Object.entries(s.sessionIdByChat).filter(([k]) => k !== tabId)),
+        }));
+      });
+      await page.waitForTimeout(CONFIG.settleMs * 4);
+      await page.evaluate(() => {
+        const uso = { inputTokens: 4200, outputTokens: 900, cacheCreationInputTokens: 1200, cacheReadInputTokens: 30000, model: 'claude-sonnet-5' };
+        window.__mageDev.transcriptStore.setState({
+          isFinal: true,
+          errorMessage: null,
+          totalLinesSoFar: 2,
+          entries: [
+            { index: 0, uuid: 'u1', parentUuid: null, isSidechain: false, isMeta: false, timestampMs: Date.now() - 60000, category: 'turn', kind: 'user', summary: 'Hola', tokenUsage: null, raw: {} },
+            { index: 1, uuid: 'a1', parentUuid: 'u1', isSidechain: false, isMeta: false, timestampMs: Date.now(), category: 'turn', kind: 'assistant', summary: 'Respuesta', tokenUsage: uso, raw: {} },
+          ],
+        });
+      });
+      await page.waitForTimeout(CONFIG.settleMs * 2);
+
+      const medido = { paneles: {} };
+      for (const [nombre, panelId] of [['Contexto', 'context'], ['Logs', 'logs'], ['MCP', 'mcp']]) {
+        const boton = page.getByRole('button', { name: nombre, exact: true }).first();
+        if (!(await boton.isVisible().catch(() => false))) {
+          medido.paneles[nombre] = 'sin icono';
+          continue;
+        }
+        await boton.click();
+        await page.waitForTimeout(CONFIG.settleMs);
+        // Por `data-active-panel` y no por "el primer pane": con varias zonas abiertas (Conversaciones
+        // esta siempre) el primero no es el que se acaba de abrir.
+        medido.paneles[nombre] = await page.evaluate((id) => {
+          const pane = document.querySelector(`[data-active-panel="${id}"]`);
+          return (pane?.innerText ?? '(no se monto)').replace(/\s+/g, ' ').slice(0, 140);
+        }, panelId);
+        await boton.click();
+        await page.waitForTimeout(CONFIG.settleMs);
+      }
+
+      await page.evaluate((p) => {
+        window.__mageDev.store.setState(p.store);
+        window.__mageDev.transcriptStore.setState(p.transcript);
+        window.__mageDev.panelStore.setState({ layout: p.layout });
+      }, previo);
+      await page.waitForTimeout(CONFIG.settleMs);
+
+      const textos = Object.values(medido.paneles);
+      const ok =
+        textos.length === 3 &&
+        // Ninguno puede negar que hay conversacion...
+        !textos.some((t) => t.includes('Sin conversación activa')) &&
+        // ...Contexto y Logs tienen que enseñar CONTENIDO de la transcripcion cargada...
+        medido.paneles.Contexto.includes('TOKENS') &&
+        medido.paneles.Logs.length > 20 &&
+        // ...y MCP, que de verdad no puede saberlo sin sesion, tiene que decir POR QUE en vez de
+        // afirmar en falso que esta conversacion no cargo ninguno.
+        medido.paneles.MCP.includes('al arrancar');
+      return { ok, detail: JSON.stringify(medido) };
+    },
+  },
+  {
+    // Reporte del usuario: "el drawer izquierdo saca scroll vertical, SOLO en modo ventana". La
+    // comprobacion que ya habia media con la ventana como la deja el harness (grande), asi que el caso
+    // no aparecia. Aqui se ENCOGE el viewport a tamanos de ventana reales y pequenos, que es la
+    // condicion exacta del reporte, y ademas se dice QUE elemento desborda — un `true/false` manda a
+    // buscar el bug a ciegas.
+    //
+    // Dos tamanos, porque los dos reportes lo fueron: una ventana BAJA (el alto es lo que aprieta a las
+    // columnas de iconos) y una ESTRECHA (el ancho es lo que aprieta a los paneles del dock).
+    name: 'Cascara: en ventana pequena la pagina no saca scroll',
+    async run(page) {
+      const previo = page.viewportSize();
+
+      // Con TODOS los paneles repartidos entre los dos bordes, que es lo que acaba pasando en cuanto el
+      // usuario mueve iconos de un borde a otro (y es el estado del reporte: nueve iconos en la columna).
+      const previoLayout = await page.evaluate(() => {
+        const dev = window.__mageDev;
+        if (dev === undefined) throw new Error('window.__mageDev no existe (¿la app no esta en modo desarrollo?)');
+        const antes = JSON.parse(JSON.stringify(dev.panelStore.getState().layout));
+        // `movePanel` lanza si el panel YA esta en el destino: el catalogo se filtra antes en vez de
+        // tragarse el error, que taparia un fallo de verdad de la misma llamada.
+        // La MITAD a cada lado: el primer arreglo solo contenia la barra izquierda y el usuario volvio
+        // a ver el scroll, esta vez por la derecha. Las dos tienen que aguantar.
+        const registro = dev.panelRegistry;
+        registro.forEach((p, i) => {
+          const anchor = i % 2 === 0 ? 'left' : 'right';
+          const zona = dev.panelStore.getState().layout.stripes[anchor].a;
+          if (!zona.panelIds.includes(p.id)) dev.panelStore.getState().movePanel(p.id, anchor, 'a');
+        });
+        return antes;
+      });
+
+      const medido = {};
+      for (const tamano of VENTANAS_PEQUENAS) {
+        await page.setViewportSize({ width: tamano.width, height: tamano.height });
+        await page.waitForTimeout(CONFIG.settleMs * 3);
+        medido[tamano.etiqueta] = await medirDesborde(page);
+      }
+
+      await page.evaluate((layout) => window.__mageDev.panelStore.setState({ layout }), previoLayout);
+      if (previo !== null) await page.setViewportSize(previo);
+      await page.waitForTimeout(CONFIG.settleMs * 3);
+      const ok = Object.values(medido).every(
+        (m) =>
+          !m.desbordaPagina &&
+          !m.desbordaPaginaX &&
+          !m.bodyDesborda &&
+          m.railScrollea === false &&
+          m.barras.every((b) => !b.scrollea) &&
+          // Reporte del usuario: "en las barras de menu laterales has añadido un scroll horizontal,
+          // quitalo". El eje X de una columna de iconos no debe desbordar NUNCA, y ninguna de las dos
+          // barras debe robar sitio: con `overflow-y:auto` el navegador promociona `overflow-x` de
+          // `visible` a `auto`, asi que un pixel de sobra a lo ancho saca barra horizontal, esa barra
+          // roba 11 px de alto y con ellos puede aparecer tambien la vertical. Se mide el efecto.
+          m.columnas.length > 0 &&
+          m.columnas.every((c) => !c.desbordaX && c.barraV === 0 && c.barraH === 0 && c.ocultaBarra === 'none'),
+      );
+      return { ok, detail: JSON.stringify(medido) };
+    },
+  },
+  {
+    // El reporte que reaparecio DOS veces despues de "arreglado": «el drawer izquierdo es mas grande a
+    // lo vertical, haciendo que aparezca un scroll de toda la app». Las dos veces se midio lo que NO
+    // era: las columnas de iconos. El culpable es otro y esta comprobacion es su reproduccion exacta —
+    // las DOS zonas del borde izquierdo abiertas y un `splitPx` guardado con la ventana GRANDE, que es
+    // lo que pasa en cuanto alguien ajusta el reparto maximizado y luego restaura la ventana.
+    //
+    // Con la zona 'a' declarada `flex: 0 0 <splitPx>`, ese envoltorio se quedaba clavado a 700 px en un
+    // borde de 500: la caja del borde si encogia, pero su CONTENIDO desbordaba, y un desborde visible
+    // amplia el area scrollable del DOCUMENTO. De ahi la barra en la pagina entera.
+    name: 'Cascara: el drawer izquierdo con un reparto heredado de una ventana grande no desborda',
+    async run(page) {
+      const previo = page.viewportSize();
+      const previoLayout = await page.evaluate(() => JSON.parse(JSON.stringify(window.__mageDev.panelStore.getState().layout)));
+      await page.setViewportSize({ width: 900, height: 600 });
+      await page.waitForTimeout(CONFIG.settleMs * 3);
+      // Las dos zonas del borde izquierdo abiertas y un reparto MAS ALTO que la ventana entera.
+      const SPLIT_PX = 900;
+      await page.evaluate((splitPx) => {
+        const store = window.__mageDev.panelStore.getState();
+        const layout = store.layout;
+        const left = layout.stripes.left;
+        const abrir = (zona) => (zona.activePanelId === null ? { ...zona, activePanelId: zona.panelIds[0] ?? null } : zona);
+        window.__mageDev.panelStore.setState({
+          layout: { ...layout, stripes: { ...layout.stripes, left: { ...left, a: abrir(left.a), b: abrir(left.b), splitPx } } },
+        });
+      }, SPLIT_PX);
+      await page.waitForTimeout(CONFIG.settleMs * 3);
+
+      const medido = await page.evaluate(() => {
+        const raiz = document.documentElement;
+        const paneA = document.querySelector('[data-zone-pane="left-a"]');
+        const paneB = document.querySelector('[data-zone-pane="left-b"]');
+        const caja = (n) => {
+          if (n === null) return null;
+          const r = n.getBoundingClientRect();
+          return { alto: Math.round(r.height), abajo: Math.round(r.bottom) };
+        };
+        return {
+          ventana: window.innerHeight,
+          zonasAbiertas: document.querySelectorAll('[data-zone-pane]').length,
+          desbordaPagina: raiz.scrollHeight > raiz.clientHeight,
+          altoDocumento: raiz.scrollHeight,
+          zonaA: caja(paneA),
+          zonaB: caja(paneB),
+          // Culpables, para que un fallo diga DONDE mirar en vez de mandar a buscar a ciegas. Se
+          // descarta lo que cuelga de un contenedor que SCROLLEA: un mensaje del hilo o una fila de la
+          // lista de conversaciones esta por debajo de la ventana a proposito — eso es contenido
+          // desplazado, no cascara desbordada. Lo que no puede pasar es que se salga una CAJA de la
+          // cascara, que es lo que ampliaba el area scrollable del documento.
+          culpables: [...document.querySelectorAll('*')]
+            .filter((n) => {
+              if (n.getBoundingClientRect().bottom - window.innerHeight <= 1) return false;
+              for (let p = n.parentElement; p !== null; p = p.parentElement) {
+                const overflowY = getComputedStyle(p).overflowY;
+                if (overflowY === 'auto' || overflowY === 'scroll') return false;
+              }
+              return true;
+            })
+            .map((n) => ({
+              sel: `${n.tagName.toLowerCase()}${n.className && typeof n.className === 'string' ? '.' + n.className.trim().split(/\s+/).slice(0, 3).join('.') : ''}`,
+              zona: n.getAttribute('data-zone-pane'),
+              excesoAbajo: Math.round(n.getBoundingClientRect().bottom - window.innerHeight),
+            }))
+            .sort((a, b) => b.excesoAbajo - a.excesoAbajo)
+            .slice(0, 4),
+        };
+      });
+
+      await page.evaluate((layout) => window.__mageDev.panelStore.setState({ layout }), previoLayout);
+      if (previo !== null) await page.setViewportSize(previo);
+      await page.waitForTimeout(CONFIG.settleMs * 3);
+      const ok =
+        medido.zonasAbiertas >= 2 && // si no, la reproduccion no llego a montarse y esto no mide nada
+        !medido.desbordaPagina &&
+        // Y lo que de verdad importa: NADA del borde se sale por debajo de la ventana. Sin esto, el
+        // `overflow: hidden` de la pagina taparia el sintoma y la comprobacion pasaria en verde con el
+        // bug puesto — que es exactamente como se escapo dos veces.
+        medido.culpables.length === 0;
+      return { ok, detail: JSON.stringify(medido) };
+    },
+  },
+  {
+    // Reporte del usuario: "en modo ventana mira como se ve el input". Con la ventana baja, la caja del
+    // prompt se comia media pantalla ESTANDO VACIA, con los chips de la fila de controles flotando a
+    // media altura (van `self-center`) y el `>` pegado al fondo (la fila va `items-end`). Se mide con la
+    // ventana pequena porque el numero solo canta ahi: en una ventana alta, la misma caja de mas pasa
+    // por un margen generoso.
+    name: 'Prompt: en ventana pequena el input no se estira',
+    async run(page) {
+      const previo = page.viewportSize();
+      // Con pestaña ABIERTA: sin ella la fila no pinta los chips (modo de permiso, esfuerzo, modelo) ni el
+      // menu de acciones, que son justo los items `shrink-0` que estrujaban al editor en el reporte.
+      const previoStore = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return { tabs: s.tabs, activeTabId: s.activeTabId, splitLayout: s.splitLayout };
+      });
+      await openTemporaryConversation(page);
+      const medido = {};
+      for (const tamano of VENTANAS_PEQUENAS) {
+        await page.setViewportSize({ width: tamano.width, height: tamano.height });
+        await page.waitForTimeout(CONFIG.settleMs * 3);
+        medido[tamano.etiqueta] = await page.evaluate(() => {
+          const host = document.querySelector('[data-prompt-editor="true"]');
+          if (host === null) throw new Error('no hay editor de prompt en el DOM');
+          const alto = (n) => (n === null ? null : Math.round(n.getBoundingClientRect().height));
+          const fila = host.parentElement;
+          return {
+            ventana: window.innerHeight,
+            panel: alto(host.closest('[data-pane-tab-id]')),
+            barra: alto(fila?.parentElement ?? null),
+            fila: alto(fila),
+            host: alto(host),
+            anchoPanel: host.closest('[data-pane-tab-id]')?.offsetWidth ?? null,
+            anchoHost: host.offsetWidth,
+            editor: alto(host.querySelector('.cm-editor')),
+            scroller: alto(host.querySelector('.cm-scroller')),
+            contenido: alto(host.querySelector('.cm-content')),
+            lineas: host.querySelectorAll('.cm-line').length,
+            texto: host.querySelector('.cm-content')?.textContent?.slice(0, 40) ?? null,
+          };
+        });
+      }
+      if (previo !== null) await page.setViewportSize(previo);
+      await page.evaluate((estado) => window.__mageDev.store.setState(estado), previoStore);
+      await page.waitForTimeout(CONFIG.settleMs * 3);
+      // Vacio, el editor es una linea o dos: la caja entera es eso mas su relleno. El presupuesto deja
+      // aire para el chip mas alto de la fila de controles, no para 200 px de nada.
+      const ok = Object.values(medido).every(
+        (m) => m.fila !== null && m.fila <= Math.round(m.panel * PROMPT_ROW_MAX_SHARE) && m.anchoHost >= PROMPT_EDITOR_MIN_PX,
+      );
+      return { ok, detail: JSON.stringify(medido) };
+    },
+  },
+  {
+    // Panel "Herramientas": el CLI manda la lista completa en el `session_init` y hasta ahora Mage se
+    // quedaba solo con el numero — que ademas no leia nadie. Se inyecta por el reducer REAL con el
+    // mismo evento que manda el CLI y se comprueba lo que hace el panel: agrupar por origen (nativas
+    // primero, luego un grupo por servidor MCP) y filtrar por el nombre COMPLETO.
+    name: 'Inspector: el panel de Herramientas agrupa por origen y filtra',
+    async run(page) {
+      const previo = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return { tabs: s.tabs, activeTabId: s.activeTabId, splitLayout: s.splitLayout, toolsByChat: s.toolsByChat };
+      });
+      await openTemporaryConversation(page);
+      await page.evaluate(() => {
+        const dev = window.__mageDev;
+        if (dev === undefined) throw new Error('window.__mageDev no existe (¿la app no esta en modo desarrollo?)');
+        const tabId = dev.store.getState().activeTabId;
+        dev.store.setState((s) =>
+          dev.reduceEvent(s, tabId, {
+            kind: 'session_init',
+            sessionId: 's-tools',
+            model: 'sonnet',
+            tools: ['Read', 'Bash', 'mcp__database__run_query', 'mcp__playwright__browser_click'],
+            mcpServers: [],
+            slashCommands: [],
+          }),
+        );
+      });
+      await page.waitForTimeout(CONFIG.settleMs);
+
+      // Los paneles del dock son BOTONES con `aria-label`, no `role="tab"` — mismo selector que usa la
+      // comprobacion de 2.9.b para los tres iconos de aquella ronda.
+      const boton = page.getByRole('button', { name: 'Herramientas', exact: true }).first();
+      const enElInspector = await boton.isVisible().catch(() => false);
+      // Contrato de `reconcileLayoutWithRegistry`: un id nuevo aparece pero NO se abre solo. Si esto
+      // falla, una instalacion existente se encontraria el panel activo cambiado al actualizar.
+      const abiertoSolo = await page.evaluate(
+        () => document.querySelector('[aria-label="Herramientas"]')?.getAttribute('aria-pressed') === 'true',
+      );
+      if (enElInspector) await boton.click();
+      await page.waitForTimeout(CONFIG.settleMs);
+
+      const medido = await page.evaluate(() => {
+        const buscador = document.querySelector('[aria-label="Buscar herramienta"]');
+        const panel = buscador?.closest('div')?.parentElement ?? null;
+        const texto = panel === null ? '' : (panel.innerText ?? '');
+        return {
+          conBuscador: buscador !== null,
+          // Las cabeceras de grupo, en el ORDEN en que se pintan: nativas primero y los servidores
+          // en alfabetico. Es lo unico que distingue "agrupa" de "lista todo junto".
+          grupos: texto.split('\n').filter((line) => /^[A-Za-z-]+ \(\d+\)$/.test(line.trim())).map((line) => line.trim()),
+          // El nombre completo tiene que seguir estando (es el que se copia para una regla de permisos),
+          // aunque dentro de su grupo se pinte el corto.
+          nombresCompletos: [...(panel?.querySelectorAll('[title^="mcp__"]') ?? [])].map((n) => n.getAttribute('title')),
+        };
+      });
+
+      await page.evaluate((state) => window.__mageDev.store.setState(state), previo);
+      await page.waitForTimeout(CONFIG.settleMs);
+
+      if (enElInspector) await boton.click(); // se cierra: se deja el dock como estaba
+      const ok =
+        enElInspector &&
+        !abiertoSolo &&
+        medido.conBuscador &&
+        // En minusculas para comparar: el panel pinta las cabeceras con `uppercase` de CSS y `innerText`
+        // devuelve el texto YA transformado. Lo que se comprueba es el agrupamiento y el orden, no de
+        // que color son las letras.
+        medido.grupos.map((g) => g.toLowerCase()).join(' | ') === 'nativas (2) | database (1) | playwright (1)' &&
+        medido.nombresCompletos.length === 2;
+      return { ok, detail: JSON.stringify({ enElInspector, abiertoSolo, ...medido }) };
+    },
+  },
+  {
+    // Frontera de confianza: lanzar un agente dentro de una carpeta ejecuta lo que esa carpeta traiga
+    // (hooks, `.claude/settings.json`, MCP del repo), y el CLI en headless —el unico modo que usa
+    // Mage— NO pregunta. Se comprueba que el dialogo aparece, que nombra la carpeta, y sobre todo que
+    // NO se puede descartar sin contestar: ni con Escape ni con un clic fuera. Un descarte accidental
+    // que cayera en "confiar" seria un agujero.
+    //
+    // Se pulsa "No confiar" a proposito: es la respuesta que NO escribe nada en los ajustes.
+    name: 'Seguridad: la carpeta sin autorizar pide confianza y el dialogo no se descarta solo',
+    async run(page) {
+      const CARPETA = 'C:/carpeta/que/no/existe/de/prueba';
+      const previo = await page.evaluate(() => window.__mageDev.store.getState().trustRequests);
+      await page.evaluate((folder) => {
+        const dev = window.__mageDev;
+        if (dev === undefined) throw new Error('window.__mageDev no existe (¿la app no esta en modo desarrollo?)');
+        dev.store.setState({ trustRequests: [folder] });
+      }, CARPETA);
+      await page.waitForTimeout(CONFIG.settleMs);
+
+      const dialogo = page.getByRole('dialog').filter({ hasText: 'Confías en los archivos' });
+      const visible = await dialogo.isVisible().catch(() => false);
+      const nombraLaCarpeta = visible ? (await dialogo.innerText()).includes(CARPETA) : false;
+
+      // Ni Escape ni clic fuera lo cierran: la pregunta se contesta.
+      await page.keyboard.press('Escape');
+      await page.mouse.click(4, 4);
+      await page.waitForTimeout(CONFIG.settleMs);
+      const sigueTrasDescartar = await page.evaluate(() => window.__mageDev.store.getState().trustRequests.length);
+
+      const botones = visible ? await dialogo.getByRole('button').allInnerTexts() : [];
+      await dialogo.getByRole('button', { name: 'No confiar' }).click();
+      await page.waitForTimeout(CONFIG.settleMs);
+      const trasResponder = await page.evaluate(() => ({
+        pendientes: window.__mageDev.store.getState().trustRequests.length,
+        // Decir "no" no puede escribir nada: si esto sube, el dialogo esta autorizando por su cuenta.
+        autorizadas: window.__mageDev.store.getState().settings.trustedFolders.length,
+      }));
+
+      await page.evaluate((trustRequests) => window.__mageDev.store.setState({ trustRequests }), previo);
+      const medido = { visible, nombraLaCarpeta, sigueTrasDescartar, botones, ...trasResponder };
+      // La otra mitad de la frontera: lo que se autoriza se tiene que poder RETIRAR. Una lista de
+      // confianza que solo crece es una puerta de un solo sentido, y se autoriza al vuelo en un
+      // dialogo. Se comprueba que la seccion existe y que lista lo que hay en los ajustes.
+      medido.enAjustes = await medirSeccionDeConfianza(page, CARPETA);
+      const ok =
+        medido.visible &&
+        medido.nombraLaCarpeta &&
+        medido.sigueTrasDescartar === 1 &&
+        medido.botones.length === 2 &&
+        medido.pendientes === 0 &&
+        medido.autorizadas === 0 &&
+        medido.enAjustes.listada &&
+        medido.enAjustes.trasRetirar === 0;
+      return { ok, detail: JSON.stringify(medido) };
+    },
+  },
+  {
+    // La barra de estado muestra la version de Mage, pegada al estado del servicio. Se comprueba el
+    // TEXTO y la POSICION: que exista un `vX.Y.Z` no vale si acaba en la otra punta de la barra, que es
+    // justo lo que se pidio evitar ("al lado del estado del servidor").
+    name: 'Barra de estado: la version de la app, junto al estado del servicio',
+    async run(page) {
+      const medido = await page.evaluate(() => {
+        const estado = document.querySelector('[aria-label^="Estado del servicio"]');
+        const barra = estado?.closest('div[class*="border-t"]') ?? null;
+        const textos = barra === null ? [] : [...barra.querySelectorAll('span')].map((n) => (n.textContent ?? '').trim());
+        const version = textos.find((t) => /^v\d+\.\d+\.\d+/.test(t)) ?? null;
+        const nodoVersion = barra === null ? null : [...barra.querySelectorAll('span')].find((n) => /^v\d+\.\d+\.\d+/.test((n.textContent ?? '').trim()));
+        const x = (el) => (el === null || el === undefined ? null : Math.round(el.getBoundingClientRect().left));
+        return {
+          version,
+          xEstado: x(estado),
+          xVersion: x(nodoVersion),
+          // Distancia entre el final del estado y el inicio de la version: "al lado" es medible.
+          separacionPx:
+            estado === null || nodoVersion === undefined
+              ? null
+              : Math.round(nodoVersion.getBoundingClientRect().left - estado.getBoundingClientRect().right),
+        };
+      });
+      const ok =
+        medido.version !== null &&
+        medido.xVersion !== null &&
+        medido.xEstado !== null &&
+        medido.xVersion > medido.xEstado &&
+        medido.separacionPx !== null &&
+        medido.separacionPx <= 40;
+      return { ok, detail: JSON.stringify(medido) };
+    },
+  },
+  {
+    // Iconografia: NINGUN emoji de color en la interfaz. El repo ya declaraba la regla por escrito en
+    // `panelRegistry.ts` y en `toolClassify.ts` ("MONOCROMO a proposito… un emoji de color se sale de
+    // la paleta del tema y no conmuta con el"), y estaba incumplida en ~70 sitios del renderer.
+    //
+    // Se mide sobre el DOM REAL y no con un grep del codigo a proposito: un emoji puede llegar a la
+    // pantalla desde una plantilla, una constante compartida o un texto del propio CLI, y lo que
+    // importa es lo que ve el usuario. Se recorren los nodos de TEXTO —no `innerText` del body, que
+    // duplicaria cada nodo por cada ancestro— y se ignoran a conciencia las dos fuentes legitimas:
+    // el contenido que llega del agente (transcripcion, mensajes) y los favicon de artifact, que son
+    // datos del artifact publicado y no iconografia de Mage.
+    name: 'Iconos: la interfaz no usa ni un emoji de color',
+    async run(page) {
+      const medido = await page.evaluate(() => {
+        const PICTO = /\p{Extended_Pictographic}/u;
+        // Vocabulario MONOCROMO propio del proyecto: NO son emoji de color, son los glifos que
+        // `panelRegistry.ts` y `toolClassify.ts` declaran por escrito como el estilo de la casa.
+        // Unicode clasifica varios de ellos como pictograficos, asi que sin esta lista la comprobacion
+        // marcaria como defecto justo lo que la regla del repo manda usar.
+        const VOCABULARIO = new Set([...'☰⚒◇◔⚙«»⌕✎⇲▣⫿▸▾']);
+        // Zonas cuyo texto NO es iconografia de Mage: lo escribe el usuario o lo devuelve el agente.
+        const AJENO = ['[data-transcript]', '[role="log"]', '.mg-markdown', '[data-artifact-favicon]', '[contenteditable="true"]'];
+        const esAjeno = (nodo) => {
+          for (let el = nodo.parentElement; el !== null; el = el.parentElement) {
+            if (AJENO.some((sel) => el.matches(sel))) return true;
+          }
+          return false;
+        };
+        const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+        const hallazgos = [];
+        for (let nodo = walker.nextNode(); nodo !== null; nodo = walker.nextNode()) {
+          const texto = nodo.nodeValue ?? '';
+          if (!PICTO.test(texto) || esAjeno(nodo)) continue;
+          const emojis = [...texto].filter((ch) => PICTO.test(ch) && !VOCABULARIO.has(ch));
+          if (emojis.length === 0) continue;
+          hallazgos.push({
+            emojis: emojis.join(''),
+            // Contexto suficiente para encontrarlo sin volver a ejecutar nada.
+            texto: texto.trim().slice(0, 40),
+            donde: nodo.parentElement?.getAttribute('aria-label') ?? nodo.parentElement?.className?.toString().slice(0, 50) ?? '',
+          });
+        }
+        // Y de paso: los glifos de clase de herramienta tienen que ocupar todos la MISMA caja. `›_`
+        // son dos caracteres y descuadraba la fila frente a los monocaracter (◇ ⌕ ✎ ⇲ ▣).
+        const glifos = [...document.querySelectorAll('[data-tool-glyph]')].map((n) => ({
+          texto: (n.textContent ?? '').trim(),
+          ancho: Math.round(n.getBoundingClientRect().width),
+        }));
+        const anchos = [...new Set(glifos.map((g) => g.ancho))];
+        return { hallazgos, glifos, anchosDistintos: anchos.length };
+      });
+      // Los glifos de herramienta solo estan en pantalla si hay una conversacion con tools a la vista:
+      // cuando no los hay, esa mitad de la comprobacion no aplica y no debe fallar.
+      const ok = medido.hallazgos.length === 0 && (medido.glifos.length === 0 || medido.anchosDistintos === 1);
+      return { ok, detail: JSON.stringify(medido) };
+    },
+  },
+  {
+    // El slider de opacidad tiene que cambiar el COLOR CALCULADO de las superficies, no solo guardar un
+    // numero. Se mide `--color-mg-window` resuelto: con 100 es opaco y con menos tiene alfa. Y se
+    // comprueba que volver a 100 lo deja opaco otra vez — un ajuste que no es reversible del todo deja
+    // residuo y tapa el siguiente cambio de tema, que es el fallo de verdad aqui.
+    //
+    // No se toca el DOM del slider: se llama a la ACCION del store, que es el contrato real (la UI es
+    // un llamante mas). Asi la comprobacion no se rompe si mañana el control cambia de forma.
+    name: 'Apariencia: la opacidad de fondo cambia las superficies y vuelve atras',
+    async run(page) {
+      const leer = () =>
+        page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--color-mg-window').trim());
+      const previo = await page.evaluate(() => window.__mageDev.store.getState().settings.backgroundOpacity);
+
+      const opaco = await leer();
+      await page.evaluate(() => window.__mageDev.store.getState().setBackgroundOpacity(60));
+      await page.waitForTimeout(CONFIG.settleMs);
+      const translucido = await leer();
+      await page.evaluate(() => window.__mageDev.store.getState().setBackgroundOpacity(100));
+      await page.waitForTimeout(CONFIG.settleMs);
+      const restaurado = await leer();
+
+      // Se deja como estaba, por si el usuario tenia otro valor persistido.
+      await page.evaluate((v) => window.__mageDev.store.getState().setBackgroundOpacity(v), previo);
+
+      const conAlfa = (color) => color.includes('color-mix') || /rgba?\([^)]*[,/]\s*0?\.\d+\s*\)/.test(color);
+      const medido = { opaco, translucido, restaurado, previo };
+      const ok = opaco.length > 0 && conAlfa(translucido) && !conAlfa(restaurado) && restaurado === opaco;
+      return { ok, detail: JSON.stringify(medido) };
+    },
+  },
+  {
+    // Menu de aplicacion plegado en tres puntos (peticion del usuario, estilo IntelliJ). Se comprueba el
+    // ciclo COMPLETO y las cuatro cosas que fallaron en el primer intento:
+    //   1. el boton no puede ser diminuto (tiene que medir como el resto de la cabecera),
+    //   2. al desplegar, el menu SUSTITUYE al contenido de la barra en vez de empujarlo,
+    //   3. NO se abre ningun submenu solo al desplegar,
+    //   4. el hover CONMUTA de un menu a otro (antes un backdrop a pantalla completa se comia el raton).
+    //
+    // Los clics van por `dispatchEvent`: la cabecera es region de ARRASTRE de ventana y Electron se come
+    // los eventos de raton sinteticos que caen sobre ella. El hover si funciona, porque no es un clic.
+    name: 'Cabecera: el menu se pliega en tres puntos, reemplaza la barra y el hover conmuta',
+    async run(page) {
+      const contar = (sel) => page.evaluate((s) => document.querySelectorAll(s).length, sel);
+      const abierto = () => page.evaluate(() => document.querySelector('[role="menu"]')?.getAttribute('aria-label') ?? null);
+      const pulsarPuntos = () =>
+        page.evaluate(() => document.querySelector('[data-app-menu-toggle="true"]')?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+
+      const medido = {
+        puntosAlInicio: await contar('[data-app-menu-toggle="true"]'),
+        altoDeLosPuntos: await page.evaluate(
+          () => Math.round(document.querySelector('[data-app-menu-toggle="true"]')?.getBoundingClientRect().height ?? 0),
+        ),
+        cuentasAlInicio: await contar('[role="group"][aria-label="Cuentas"]'),
+      };
+
+      await pulsarPuntos();
+      await page.waitForTimeout(CONFIG.settleMs);
+      medido.etiquetas = await page.evaluate(() =>
+        [...document.querySelectorAll('[role="menubar"] > [role="menuitem"]')].map((n) => (n.textContent ?? '').trim()),
+      );
+      // Reemplaza, no empuja: con el menu desplegado no queda el selector de cuentas. El icono de la app
+      // SI se queda (es el ancla de la barra y su acceso a los ajustes), asi que se comprueba justo eso:
+      // que sigue habiendo exactamente uno.
+      medido.cuentasConMenu = await contar('[role="group"][aria-label="Cuentas"]');
+      // ANCLADO al icono de la app, no a cualquier boton cuyo nombre EMPIECE por 'Mage': hay etiquetas
+      // de la UI que tambien empiezan asi ('Mage (común)', el origen de una regla de permisos). Y si
+      // vuelve a contar de mas, que el informe diga CUALES: un numero suelto no se puede diagnosticar
+      // sin volver a ejecutar los diez minutos de harness.
+      medido.iconoAppConMenu = await contar('button[aria-label="Mage · Configuración"]');
+      medido.botonesQueEmpiezanPorMage = await page.evaluate(() =>
+        [...document.querySelectorAll('button[aria-label^="Mage"]')].map((n) => n.getAttribute('aria-label')),
+      );
+      medido.submenusTrasDesplegar = await contar('[role="menu"]');
+
+      // HOVER sobre la primera y despues sobre la SEGUNDA: lo que se mide es que conmute.
+      //
+      // El hover mueve el raton DE VERDAD, asi que necesita la ventana delante y con el foco del SO —
+      // la misma condicion de entorno que hacia parpadear a la 2.8. Y se SONDEA el resultado en vez de
+      // esperar un tiempo fijo: el desplegable entra con una animacion, y una espera ciega lo pillaba
+      // a medias segun lo cargada que estuviera la maquina.
+      await page.bringToFront().catch(() => undefined);
+      await page.evaluate(async () => {
+        for (let i = 0; i < 40 && !document.hasFocus(); i += 1) {
+          window.focus();
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+      });
+      const hoverHasta = async (indice, esperado) => {
+        const etiquetas = page.locator('[role="menubar"] > [role="menuitem"]');
+        for (let i = 0; i < 20; i += 1) {
+          await etiquetas.nth(indice).hover();
+          await page.waitForTimeout(50);
+          const actual = await abierto();
+          if (actual === esperado) return actual;
+        }
+        return abierto();
+      };
+      medido.trasHover1 = await hoverHasta(0, 'Conversación');
+      medido.trasHover2 = await hoverHasta(1, 'Sesión');
+
+      // Clic fuera: sobre la barra de estado, que no es interactiva ni abre nada.
+      await page.mouse.click(600, 790);
+      await page.waitForTimeout(CONFIG.settleMs);
+      medido.puntosAlFinal = await contar('[data-app-menu-toggle="true"]');
+      medido.barraAlFinal = await contar('[role="menubar"]');
+      medido.cuentasAlFinal = await contar('[role="group"][aria-label="Cuentas"]');
+
+      const ok =
+        medido.puntosAlInicio === 1 &&
+        medido.altoDeLosPuntos >= 24 &&
+        medido.cuentasAlInicio === 1 &&
+        medido.etiquetas.length >= 3 &&
+        medido.cuentasConMenu === 0 &&
+        medido.iconoAppConMenu === 1 &&
+        medido.submenusTrasDesplegar === 0 &&
+        medido.trasHover1 === medido.etiquetas[0] &&
+        medido.trasHover2 === medido.etiquetas[1] &&
+        medido.puntosAlFinal === 1 &&
+        medido.barraAlFinal === 0 &&
+        medido.cuentasAlFinal === 1;
+      return { ok, detail: JSON.stringify(medido) };
+    },
+  },
+  {
+    // H2: la burbuja del usuario se pintaba en PLANO (`whitespace-pre-wrap`), asi que un `**negrita**`
+    // o un bloque de codigo enviados se veian en crudo (reporte del usuario). Decision del usuario
+    // (2026-09-09): tiene que renderizar Markdown, igual que el mensaje del agente.
+    // Se mide en el DOM: los elementos que el Markdown produce EXISTEN y los delimitadores literales
+    // NO estan. Un solo `includes('**')` no bastaria — el texto plano tambien pasaria si hubiera
+    // <strong> por otro motivo.
+    name: 'H2: el mensaje del usuario renderiza Markdown en la burbuja',
+    async run(page) {
+      const bloques = await hydrateFromEntries(page, [
+        {
+          index: 0,
+          uuid: 'h2-0',
+          parentUuid: null,
+          isSidechain: false,
+          isMeta: false,
+          timestampMs: Date.now(),
+          category: 'turn',
+          kind: 'user',
+          summary: '',
+          tokenUsage: null,
+          raw: { message: { content: 'Con **negrita**, `codigo` y una lista:\n\n- uno\n- dos' } },
+        },
+      ]);
+      const medido = await page.evaluate(() => {
+        const bubble = document.querySelector('[data-block="user"]');
+        if (bubble === null) return null;
+        const texto = bubble.textContent ?? '';
+        return {
+          strong: bubble.querySelectorAll('strong').length,
+          code: bubble.querySelectorAll('code').length,
+          itemsDeLista: bubble.querySelectorAll('li').length,
+          // Los delimitadores no deben quedar visibles.
+          asteriscosLiterales: (texto.match(/\*\*/g) ?? []).length,
+          acentosGravesLiterales: (texto.match(/`/g) ?? []).length,
+          guionesDeLista: (texto.match(/^- /gm) ?? []).length,
+          // Y el contenido sigue ahi.
+          conTexto: texto.includes('negrita') && texto.includes('codigo') && texto.includes('uno'),
+        };
+      });
+      const ok =
+        bloques === 1 &&
+        medido !== null &&
+        medido.strong >= 1 &&
+        medido.code >= 1 &&
+        medido.itemsDeLista === 2 &&
+        medido.asteriscosLiterales === 0 &&
+        medido.acentosGravesLiterales === 0 &&
+        medido.guionesDeLista === 0 &&
+        medido.conTexto;
+      return { ok, detail: JSON.stringify({ bloques, ...medido }) };
+    },
+  },
+  {
+    // 4.3 de la auditoria: con el workspace dividido, el panel NO enfocado se quedaba con el chat
+    // VACIO aunque su conversacion tuviera historial en disco. La causa era 4.1: habia UN solo store de
+    // transcripcion siguiendo a `activeTabId`, asi que la hidratacion del panel no enfocado comparaba
+    // `lastParams.sessionId` (la del panel enfocado) con la suya, no coincidian nunca y salia por su
+    // guard. Ahora hay un store por pestaña.
+    //
+    // Se monta el unico estado donde el bug se ve: DOS conversaciones reanudadas (con `resumeSessionId`
+    // y sin sesion viva) en dos paneles, cada una con SU transcripcion cargada en SU store. La medida es
+    // que los dos paneles pintan bloques — con el store global, el no enfocado marcaba 0.
+    // Va la ULTIMA: deja dos paneles montados a mitad de la prueba, y con dos paneles los localizadores
+    // de prompt de cualquier otra comprobacion dejarian de ser unicos.
+    name: '4.3: en un split, los DOS paneles hidratan su conversacion reanudada',
+    async run(page) {
+      const previo = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return {
+          tabs: s.tabs,
+          activeTabId: s.activeTabId,
+          splitLayout: s.splitLayout,
+          sessionIdByChat: s.sessionIdByChat,
+          blocksByChat: s.blocksByChat,
+        };
+      });
+
+      await openTemporaryConversation(page);
+      const tabA = await page.evaluate(() => window.__mageDev.store.getState().activeTabId);
+      await openTemporaryConversation(page);
+      const tabB = await page.evaluate(() => window.__mageDev.store.getState().activeTabId);
+
+      // Las dos como conversaciones REABIERTAS del historial: `resumeSessionId` puesto y ninguna
+      // sesion viva. Y se dividen por la accion del store (el arrastre real ya lo cubre la #38).
+      await page.evaluate((p) => {
+        const dev = window.__mageDev;
+        dev.store.setState((s) => ({
+          tabs: s.tabs.map((t) =>
+            t.id === p.tabA ? { ...t, resumeSessionId: p.sesionA } : t.id === p.tabB ? { ...t, resumeSessionId: p.sesionB } : t,
+          ),
+          sessionIdByChat: Object.fromEntries(
+            Object.entries(s.sessionIdByChat).filter(([k]) => k !== p.tabA && k !== p.tabB),
+          ),
+          blocksByChat: Object.fromEntries(Object.entries(s.blocksByChat).filter(([k]) => k !== p.tabA && k !== p.tabB)),
+        }));
+        // El destino de un drop es el CAMINO del panel (grupos de pestañas): con un unico panel, la raiz.
+        dev.store.getState().movePaneTab(p.tabA, [], 'left');
+      }, { tabA, tabB, sesionA: SPLIT_HYDRATION_SESSIONS.a, sesionB: SPLIT_HYDRATION_SESSIONS.b });
+      // Espera LARGA a proposito: el ciclo de vida de cada panel intenta abrir su transcripcion de
+      // verdad y falla (la carpeta temporal no tiene ninguna). Hay que dejar que ese fallo aterrice
+      // ANTES de inyectar, o el lote de error llegaria despues y borraria lo inyectado.
+      await page.waitForTimeout(CONFIG.settleMs * 4);
+
+      const inyectados = await page.evaluate((p) => {
+        const dev = window.__mageDev;
+        if (dev.transcriptStoreFor === undefined) throw new Error('__mageDev.transcriptStoreFor no existe');
+        const entradas = (texto) => [
+          {
+            index: 0,
+            uuid: 'u0',
+            parentUuid: null,
+            isSidechain: false,
+            isMeta: false,
+            timestampMs: Date.now(),
+            category: 'turn',
+            kind: 'user',
+            summary: texto,
+            tokenUsage: null,
+            raw: { message: { content: texto } },
+          },
+        ];
+        const cargar = (tabId, sessionId, texto) => {
+          const store = dev.transcriptStoreFor(tabId);
+          store.setState({
+            entries: entradas(texto),
+            errors: [],
+            isFinal: true,
+            errorMessage: null,
+            totalLinesSoFar: 1,
+            lastParams: { accountDir: 'vg', cwd: 'vg', sessionId },
+          });
+        };
+        cargar(p.tabA, p.sesionA, p.textoA);
+        cargar(p.tabB, p.sesionB, p.textoB);
+        return true;
+      }, {
+        tabA,
+        tabB,
+        sesionA: SPLIT_HYDRATION_SESSIONS.a,
+        sesionB: SPLIT_HYDRATION_SESSIONS.b,
+        textoA: SPLIT_HYDRATION_SESSIONS.textoA,
+        textoB: SPLIT_HYDRATION_SESSIONS.textoB,
+      });
+      await page.waitForTimeout(CONFIG.settleMs * 2);
+
+      const medido = await page.evaluate((p) => {
+        const bloquesDe = (tabId) => {
+          const pane = document.querySelector(`[data-pane-tab-id="${tabId}"]`);
+          if (pane === null) return null;
+          return {
+            bloques: pane.querySelectorAll('[data-block]').length,
+            texto: pane.textContent ?? '',
+          };
+        };
+        const s = window.__mageDev.store.getState();
+        return {
+          paneles: document.querySelectorAll('[data-pane-tab-id]').length,
+          a: bloquesDe(p.tabA),
+          b: bloquesDe(p.tabB),
+          // El resultado de la hidratacion en el estado, no solo en el DOM.
+          bloquesA: s.blocksByChat[p.tabA]?.length ?? 0,
+          bloquesB: s.blocksByChat[p.tabB]?.length ?? 0,
+        };
+      }, { tabA, tabB });
+
+      await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
+      await page.waitForTimeout(CONFIG.settleMs);
+      const panelesAlFinal = await promptAreas(page).count();
+
+      const ok =
+        medido.paneles === 2 &&
+        medido.bloquesA >= 1 &&
+        medido.bloquesB >= 1 &&
+        medido.a !== null &&
+        medido.b !== null &&
+        medido.a.bloques >= 1 &&
+        medido.b.bloques >= 1 &&
+        // Y cada panel pinta LO SUYO, no dos veces la misma conversacion.
+        medido.a.texto.includes(SPLIT_HYDRATION_SESSIONS.textoA) &&
+        !medido.a.texto.includes(SPLIT_HYDRATION_SESSIONS.textoB) &&
+        medido.b.texto.includes(SPLIT_HYDRATION_SESSIONS.textoB) &&
+        panelesAlFinal === 1;
+      return {
+        ok,
+        detail: JSON.stringify({
+          paneles: medido.paneles,
+          bloquesA: medido.bloquesA,
+          bloquesB: medido.bloquesB,
+          domA: medido.a?.bloques ?? null,
+          domB: medido.b?.bloques ?? null,
+          soloLoSuyoA: medido.a !== null && medido.a.texto.includes(SPLIT_HYDRATION_SESSIONS.textoA) && !medido.a.texto.includes(SPLIT_HYDRATION_SESSIONS.textoB),
+          panelesAlFinal,
+          inyectados,
+        }),
+      };
+    },
+  },
+];
+
+// Ventanas PRINCIPALES abiertas ahora mismo (ni widget ni debug).
+function countMainPages(page) {
+  return page
+    .context()
+    .browser()
+    .contexts()
+    .flatMap((context) => context.pages())
+    .filter((candidate) => {
+      const url = candidate.url();
+      return !url.includes('widget.html') && !url.includes('debug.html') && !url.startsWith('devtools://');
+    }).length;
+}
+
+// Ventanas del widget abiertas ahora mismo (widget.html es su propia entrada del build).
+function countWidgetPages(page) {
+  return page
+    .context()
+    .browser()
+    .contexts()
+    .flatMap((context) => context.pages())
+    .filter((candidate) => candidate.url().includes('widget.html')).length;
+}
+
+// Espera a que el numero de ventanas del widget llegue al esperado. El ciclo de vida de la ventana lo
+// decide el proceso MAIN tras un IPC, asi que no basta con mirar justo despues del clic.
+async function waitForWidgetPages(page, expected) {
+  const deadline = Date.now() + CONFIG.actionTimeoutMs;
+  while (Date.now() < deadline) {
+    if (countWidgetPages(page) === expected) return true;
+    await page.waitForTimeout(200);
+  }
+  return false;
+}
+
+// Areas de prompt montadas ahora mismo: 1 normalmente, 2 con el workspace dividido. Desde 2.7 el
+// prompt es un editor de CodeMirror (contenteditable), no un <textarea>: el ancla sigue siendo el
+// nombre accesible, pero el texto se lee/escribe distinto (ver `promptText`/`typeInPrompt`).
+function promptAreas(page) {
+  return page.getByRole('textbox', { name: 'Escribe una instrucción para el agente' });
+}
+
+// Texto ACTUAL del editor, leido del DOM de CodeMirror. Cada linea es un `.cm-line`, asi que hay que
+// unirlas con `\n` a mano: el `textContent` del contenedor las pegaria sin salto y "- uno\n- dos"
+// pasaria por "- uno- dos".
+function promptText(page) {
+  return page.evaluate(() => {
+    const editor = document.querySelector('[data-prompt-editor="true"] .cm-content');
+    if (editor === null) return null;
+    return [...editor.querySelectorAll('.cm-line')]
+      .map((line) => {
+        // El placeholder vive DENTRO de la linea: sin quitarlo, un editor vacio se leeria como
+        // "Escribe una instrucción…" y una comprobacion de "quedo vacio" pasaria en verde por el texto
+        // equivocado.
+        const clone = line.cloneNode(true);
+        for (const node of clone.querySelectorAll('.cm-placeholder')) node.remove();
+        return clone.textContent ?? '';
+      })
+      .join('\n');
+  });
+}
+
+// Escribe en el editor sin pulsar Enter jamas. `click` para enfocar y `type` para que pase por el
+// mismo camino de teclado que usaria una persona (que es justo lo que hay que medir del puente).
+// Retardo entre teclas al escribir en el prompt. NO es cosmetico: el input es un `contenteditable`
+// controlado por React, y con el 0 ms que pone Playwright por defecto las teclas entran mas rapido de
+// lo que el componente confirma su estado — el cursor salta y el texto sale entremezclado ("holao",
+// "ie- unnoe"). Con eso las dos comprobaciones del input rico salian verdes o rojas segun la pasada, y
+// un intermitente en el harness es peor que una comprobacion de menos (error #6 de la skill). Nadie
+// teclea a 0 ms: esto acerca la medida a un humano, no la maquilla.
+const PROMPT_TYPE_DELAY_MS = 25;
+
+async function typeInPrompt(page, text) {
+  const prompt = promptAreas(page).first();
+  await prompt.click();
+  await page.keyboard.type(text, { delay: PROMPT_TYPE_DELAY_MS });
+  await page.waitForTimeout(CONFIG.settleMs);
+}
+
+// Vacia el editor por teclado (Ctrl+A + Backspace): no hay `fill` en un contenteditable.
+// Seccion "Carpetas de confianza" de Configuracion: mete una carpeta en los ajustes, comprueba que
+// aparece listada y que "Retirar" la quita. Deja los ajustes como estaban.
+async function medirSeccionDeConfianza(page, folder) {
+  const previo = await page.evaluate(() => window.__mageDev.store.getState().settings.trustedFolders);
+  await page.evaluate((f) => {
+    const dev = window.__mageDev;
+    dev.store.setState((s) => ({ settings: { ...s.settings, trustedFolders: [f] } }));
+    dev.store.getState().openSettings();
+  }, folder);
+  await page.waitForTimeout(CONFIG.settleMs);
+  await page.getByRole('tab', { name: /Carpetas de confianza/ }).click();
+  await page.waitForTimeout(CONFIG.settleMs);
+
+  const listada = await page.getByTitle(folder).isVisible().catch(() => false);
+  if (listada) {
+    await page.getByRole('button', { name: `Retirar la confianza de ${folder}` }).click();
+    await page.waitForTimeout(CONFIG.settleMs);
+  }
+  const trasRetirar = await page.evaluate(() => window.__mageDev.store.getState().settings.trustedFolders.length);
+
+  await page.evaluate((trustedFolders) => {
+    const dev = window.__mageDev;
+    dev.store.setState((s) => ({ settings: { ...s.settings, trustedFolders } }));
+    dev.store.getState().closeSettings();
+  }, previo);
+  await page.waitForTimeout(CONFIG.settleMs);
+  return { listada, trasRetirar };
+}
+
+async function clearPrompt(page) {
+  const prompt = promptAreas(page).first();
+  await prompt.click();
+  await page.keyboard.press('Control+a');
+  await page.keyboard.press('Backspace');
+  await page.waitForTimeout(CONFIG.settleMs);
+}
+
+// Etiqueta de la pestaña SELECCIONADA dentro de un tablist concreto. Se lee con `textContent` igual que
+// `focusedTabLabel`: con `innerText` la misma pestaña daba "id\n✕" y aqui "id✕", y las dos se comparan
+// entre si.
+async function selectedTabLabel(tablist) {
+  const selected = tablist.locator('[role="tab"][aria-selected="true"]');
+  if ((await selected.count()) !== 1) return '';
+  return selected.evaluate((node) => node.textContent?.trim() ?? '');
+}
+
+// --- Seccion "Notificaciones" ---------------------------------------------------------------------
+
+// Reglas guardadas: se cuenta el campo de patron, que existe una vez por regla.
+function notificationRuleRows(page) {
+  return page.getByRole('textbox', { name: 'Patrón (expresión regular)' });
+}
+
+// Motivo del rechazo de la ULTIMA regla, o null si su patron compila.
+async function patternErrorText(page) {
+  const alerts = page.locator('[id^="rule-pattern-error-"]');
+  return (await alerts.count()) === 0 ? null : (await alerts.last().innerText()).trim();
+}
+
+// Veredicto del banco de pruebas ("✓ notificaría" / "✗ no casa") para un texto dado. Se ancla al input de
+// prueba y se sube a su contenedor: un `[role=status]` suelto casaria con el chip de la PromptBar.
+async function probeVerdict(page, sample) {
+  await page.getByRole('textbox', { name: 'Texto de prueba para este patrón' }).last().fill(sample);
+  await page.waitForTimeout(CONFIG.settleMs);
+  return page.evaluate(() => {
+    const inputs = [...document.querySelectorAll('[aria-label="Texto de prueba para este patrón"]')];
+    const probe = inputs[inputs.length - 1];
+    return probe?.parentElement?.querySelector('[role="status"]')?.textContent?.trim() ?? null;
+  });
+}
+
+// --- Dock, prompt y dropdowns ---------------------------------------------------------------------
+
+// `aria-valuenow` de un separador, ya como numero (o null si no lo lleva).
+async function separatorValue(handle) {
+  const raw = await handle.getAttribute('aria-valuenow');
+  const value = Number(raw);
+  return raw === null || !Number.isFinite(value) ? null : value;
+}
+
+// Modo de permiso que declara el chip de la PromptBar ("Manual", "Auto-editar", "Plan").
+async function permissionModeLabel(page) {
+  const chip = page.locator('[aria-label^="Modo de permiso:"]').first();
+  return ((await chip.getAttribute('aria-label')) ?? '').replace('Modo de permiso:', '').trim();
+}
+
+// Nombres ("/mcp") de las sugerencias abiertas ahora mismo en el popover de comandos. Se lee el PRIMER
+// hijo, no el textContent: nombre y descripcion son dos spans hermanos sin espacio entre ellos, asi que
+// partir por espacios devolvia "/mcpServidores".
+async function slashOptionNames(page) {
+  return page
+    .getByRole('listbox', { name: 'Comandos disponibles' })
+    .getByRole('option')
+    .evaluateAll((nodes) => nodes.map((node) => node.firstElementChild?.textContent?.trim() ?? ''));
+}
+
+// Descripcion corta de donde esta el foco: etiqueta util + si cae dentro del modal abierto.
+async function focusLocation(page) {
+  return page.evaluate((modal) => {
+    const active = document.activeElement;
+    if (active === null || active === document.body) return 'body (fuera de todo)';
+    const name = active.getAttribute('aria-label') ?? active.tagName.toLowerCase();
+    const inside = document.querySelector(modal)?.contains(active) === true;
+    return `${name} (${inside ? 'dentro' : 'fuera'} del modal)`;
+  }, MODAL);
+}
+
+// Abre un Dropdown propio por su aria-label, elige la primera opcion que case y devuelve su texto (null si
+// ninguna casa: el menu se cierra con Escape para no dejar un popover abierto).
+async function pickDropdownOption(page, ariaLabel, pattern) {
+  await page.getByRole('button', { name: ariaLabel }).click();
+  const listbox = page.getByRole('listbox', { name: ariaLabel });
+  await listbox.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+  const labels = await listbox.getByRole('option').evaluateAll((nodes) => nodes.map((node) => node.textContent?.trim() ?? ''));
+  const match = labels.find((label) => pattern.test(label));
+  if (match === undefined) {
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(CONFIG.settleMs);
+    return null;
+  }
+  await listbox.getByRole('option', { name: match, exact: true }).first().click();
+  return match;
+}
+
+function escapeRegExp(text) {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// Etiqueta de la pestaña que tiene el foco ('' si el foco no esta en una).
+async function focusedTabLabel(page) {
+  return page.evaluate(() => {
+    const active = document.activeElement;
+    if (active === null || active.getAttribute('role') !== 'tab') return '';
+    return active.textContent?.trim() ?? '';
+  });
+}
+
+// Abre una seccion de Configuracion por su etiqueta. Extraido porque lo usan cuatro comprobaciones.
+async function openSection(page, namePattern) {
+  await page.getByRole('tab', { name: namePattern }).click();
+  await page.waitForTimeout(150);
+}
+
+// Estado del paso "motor" del asistente, ya resuelto (el sondeo del CLI es asincrono). Devuelve si se
+// detecto instalado o si, no estandolo, se ofrece el comando de instalacion.
+async function waitForEngineStatus(page) {
+  const deadline = Date.now() + CONFIG.actionTimeoutMs;
+  let last = null;
+  while (Date.now() < deadline) {
+    last = await page.evaluate(() => {
+      const caja = document.querySelector('[data-onboarding="engine-status"]');
+      if (caja === null) return null;
+      const texto = caja.textContent ?? '';
+      return {
+        comprobando: texto.includes('Comprobando'),
+        instalado: texto.includes('Instalado y listo'),
+        conComando: caja.querySelector('code') !== null && document.querySelector('[data-onboarding="recheck"]') !== null,
+      };
+    });
+    if (last !== null && !last.comprobando) return last;
+    await page.waitForTimeout(CONFIG.pollIntervalMs);
+  }
+  return last;
+}
+
+// Avisos de terceros ya pintados en «Acerca de». Se sondea porque el texto llega por IPC (main lee el
+// fichero del asar), no con el primer render.
+async function waitForNotices(page) {
+  const deadline = Date.now() + CONFIG.actionTimeoutMs;
+  let last = null;
+  while (Date.now() < deadline) {
+    last = await page.evaluate(() => {
+      const pre = document.querySelector('[data-about="notices"]');
+      if (pre === null) return null;
+      const texto = pre.textContent ?? '';
+      const cabecera = /Paquetes: (\d+)/.exec(texto);
+      return {
+        caracteres: texto.length,
+        paquetes: cabecera === null ? 0 : Number(cabecera[1]),
+        conClausulaMit: texto.includes('Permission is hereby granted'),
+        conCopyright: texto.includes('Copyright'),
+        versiones: /Electron \d/.test(document.querySelector('[role="tabpanel"]')?.textContent ?? ''),
+      };
+    });
+    if (last !== null && last.paquetes > 0) return last;
+    await page.waitForTimeout(CONFIG.pollIntervalMs);
+  }
+  return last;
+}
+
+// Abre Configuracion (Ctrl+,) y espera su dialogo. Lo usan las comprobaciones que llegan sin ningun
+// dialogo abierto y necesitan el suyo.
+async function openSettingsDialog(page) {
+  await page.keyboard.press('Control+Comma');
+  await page.locator(MODAL).first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+}
+
+// Cierra con Escape el dialogo abierto y devuelve cuantos quedan (0 esperado). Espera al DESMONTAJE, no
+// a un tiempo fijo: la animacion de salida tarda lo que tarde el hilo de render (con 2.7 el panel monta
+// un editor de CodeMirror, y un `waitForTimeout` empezo a quedarse corto).
+async function closeDialog(page) {
+  await page.keyboard.press('Escape');
+  return waitForModalsGone(page);
+}
+
+// Espera a que no quede ningun modal montado y devuelve cuantos quedan. Nunca lanza: el numero es la
+// MEDIDA que la comprobacion afirma, asi que un fallo tiene que salir como "quedan 1", no como timeout.
+async function waitForModalsGone(page) {
+  const modals = page.locator(MODAL);
+  await modals.first().waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs }).catch(() => {});
+  return modals.count();
+}
+
+// --- E2: seccion "Proveedores" -------------------------------------------------------------------
+
+// Filas de proveedor GUARDADAS. Se ancla al boton de borrar (`aria-label` explicito): un contador de
+// divs de la seccion incluiria el formulario y los textos de ayuda.
+function providerRows(page) {
+  return page.locator('[aria-label^="Eliminar el proveedor "]');
+}
+
+// Valores que tiene ahora mismo el formulario de alta (para comprobar que una plantilla PRERRELLENA).
+async function readProviderForm(page) {
+  return {
+    label: await page.getByRole('textbox', { name: 'Nombre del proveedor' }).inputValue(),
+    baseUrl: await page.getByRole('textbox', { name: 'URL base del endpoint compatible con la API de OpenAI' }).inputValue(),
+    models: await page.getByRole('textbox', { name: 'Modelos del proveedor, separados por comas' }).inputValue(),
+  };
+}
+
+// Rellena el formulario de alta, pulsa "Añadir" y devuelve el motivo del rechazo que pinta la UI, o null
+// si lo acepto. La API key no se toca: es opcional y va en un input type=password.
+async function submitNewProvider(page, draft) {
+  await page.getByRole('textbox', { name: 'Nombre del proveedor' }).fill(draft.label);
+  await page.getByRole('textbox', { name: 'URL base del endpoint compatible con la API de OpenAI' }).fill(draft.baseUrl);
+  await page.getByRole('textbox', { name: 'Modelos del proveedor, separados por comas' }).fill(draft.models);
+  await page.getByRole('button', { name: 'Añadir', exact: true }).click();
+  await page.waitForTimeout(CONFIG.settleMs);
+  const alert = page.locator(PROVIDER_NEW_ERROR);
+  return (await alert.count()) === 0 ? null : (await alert.innerText()).trim();
+}
+
+// Resumen (URL + nº de modelos) de la fila de un proveedor guardado, o null si no esta.
+async function providerRowSummary(page, label) {
+  return page.evaluate((name) => {
+    const remove = document.querySelector(`[aria-label="Eliminar el proveedor ${name}"]`);
+    return remove?.parentElement?.textContent?.trim() ?? null;
+  }, label);
+}
+
+// Etiquetas de los selectores de modelo (uno por proveedor OFRECIDO), en "Proveedores y modelos".
+// Abre la seccion por su
+// cuenta: las tres comprobaciones que la consultan vienen de otra.
+async function modelSelectorLabels(page) {
+  // La seccion "Modelos" se fundio con "Proveedores" el 2026-09-18.
+  await openSection(page, /Proveedores y modelos/);
+  return page
+    .locator('[aria-label^="Modelo por defecto de"]')
+    .evaluateAll((nodes) => nodes.map((node) => node.getAttribute('aria-label')));
+}
+
+// --- Dialogo "Nueva conversacion" ----------------------------------------------------------------
+
+// `<select>` de un campo del dialogo, localizado por la ETIQUETA de su campo (el `<label>` envuelve al
+// control). Necesario porque el dialogo tiene hasta cinco `<select>` y un `select` suelto casaria con
+// cualquiera de ellos: quien lo use debe comprobar el conteo antes de tocarlo.
+function newTabSelect(page, fieldLabel) {
+  return page.locator(`${NEW_TAB_DIALOG} label`).filter({ hasText: fieldLabel }).locator('select');
+}
+
+// Opciones ("value|texto") de ese campo, o null si no hay exactamente un selector con esa etiqueta.
+async function selectOptionsOf(page, fieldLabel) {
+  const select = newTabSelect(page, fieldLabel);
+  if ((await select.count()) !== 1) return null;
+  return select.evaluate((node) => [...node.options].map((option) => `${option.value}|${option.textContent?.trim() ?? ''}`));
+}
+
+// Abre el dialogo de nueva conversacion, ejecuta la medida y lo CIERRA con Escape. Abrirlo no crea
+// ninguna pestaña ni spawnea nada: eso solo pasa al pulsar "Abrir pestaña".
+async function withNewTabDialog(page, measure) {
+  // El dialogo ya no cuelga de Ctrl+N (camino por defecto = abrir directo): se llega por clic
+  // derecho sobre el ＋ de la barra de pestañas.
+  await page.locator('button[aria-label="Nueva pestaña"]').first().click({ button: 'right' });
+  await page.locator(NEW_TAB_DIALOG).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+  try {
+    return await measure(page);
+  } finally {
+    await closeDialog(page);
+  }
+}
+
+// --- Diff del chat: fondo por linea + resaltado ---------------------------------------------------
+
+// Fondos DISTINTOS de las filas del diff y numero de colores de token. El resaltado es asincrono
+// (gramatica + tokenizacion), asi que se sondea igual que el bloque de codigo del chat.
+async function waitForDiffPaint(page) {
+  const deadline = Date.now() + CONFIG.actionTimeoutMs;
+  let last = null;
+  while (Date.now() < deadline) {
+    last = await page.evaluate(() => {
+      const rows = [...document.querySelectorAll('[data-diff="lines"] > div')];
+      if (rows.length === 0) return null;
+      const fondos = [...new Set(rows.map((row) => getComputedStyle(row).backgroundColor))];
+      const colores = new Set(
+        [...document.querySelectorAll('[data-diff="lines"] span[style*="color"]')]
+          .map((span) => span.style.color)
+          .filter((color) => color.length > 0),
+      );
+      return { fondos, colores: colores.size };
+    });
+    if (last !== null && last.fondos.length === 3 && last.colores > 1) return last;
+    await page.waitForTimeout(CONFIG.pollIntervalMs);
+  }
+  return last;
+}
+
+// --- F4: bloque de codigo resaltado DENTRO DEL CHAT -----------------------------------------------
+
+// Bloque de codigo del hilo: lenguaje declarado, texto y los colores DISTINTOS de sus spans de token.
+function readChatCode(page) {
+  return page.evaluate(() => {
+    const pre = document.querySelector('[data-block="agent"] pre');
+    if (pre === null) return null;
+    const spans = [...pre.querySelectorAll('span[style]')];
+    const colors = [...new Set(spans.map((span) => span.style.color).filter((color) => color.length > 0))];
+    return { lang: pre.previousElementSibling?.textContent?.trim() ?? null, text: pre.textContent ?? '', spans: spans.length, colors };
+  });
+}
+
+// Sondea hasta que la medida cumpla `predicate` (el resaltado es asincrono: carga de gramatica +
+// primera tokenizacion) y devuelve la ULTIMA medida, cumpla o no.
+async function waitForChatCode(page, predicate) {
+  const deadline = Date.now() + CONFIG.actionTimeoutMs;
+  let last = null;
+  while (Date.now() < deadline) {
+    last = await readChatCode(page);
+    if (last !== null && predicate(last)) return last;
+    await page.waitForTimeout(CONFIG.pollIntervalMs);
+  }
+  return last;
+}
+
+// --- F4 (historico): vista previa del markdown del prompt, eliminada en 2.7 -----------------------
+
+// Bloque de codigo de la vista previa: lenguaje declarado, texto, y los colores DISTINTOS de sus spans de
+
+// --- Fase B: cache del catalogo de comandos sembrada ANTES de arrancar ----------------------------
+
+// Comando namespaced y comando con pista de argumento que se siembran en la cache. Son los dos rasgos
+// que 2.2 anade al popover, y ninguno existe en la lista curada de Mage: si aparecen, vienen de la
+// cache.
+const SEEDED_NAMESPACED_COMMAND = 'itb-skills:verify-gui';
+const SEEDED_HINT = '[carpeta]';
+
+// Escribe `command-catalog.json` en el perfil AISLADO antes de lanzar la app. Funciona porque ese
+// fichero vive en `userData`, que si esta aislado (las transcripciones y las cuentas, no: cuelgan de
+// `homedir()`). Se siembra una entrada por cada cuenta que el harness encuentre, con la MISMA regla de
+// nombre que usa main, porque la clave de la cache es el config dir de la cuenta.
+// El perfil aislado es una instalacion LIMPIA, asi que el asistente de primer arranque saldria en cada
+// tanda y taparia la app entera: las ~98 comprobaciones medirian un modal. Se siembra como ya visto, y
+// el asistente tiene su propia comprobacion, que lo reabre a proposito y lo vuelve a cerrar.
+function seedOnboardingDone(userDataDir) {
+  const file = path.join(userDataDir, 'app-settings.json');
+  // El resto de ajustes se quedan en sus defaults: main los completa al leer (esquema tolerante).
+  // Se siembra un numero ALTO y no `ONBOARDING_VERSION` (que vive en un .ts que este script no puede
+  // importar): cualquier version futura del asistente sigue quedando por debajo, asi que subirla no
+  // vuelve a tapar la tanda entera. La comprobacion del asistente no depende de esto — lo reabre
+  // llamando al store.
+  fs.writeFileSync(file, JSON.stringify({ version: 1, notificationRules: [], onboardingCompletedVersion: 9999 }, null, 2), 'utf-8');
+}
+
+function seedCommandCatalog(userDataDir) {
+  const home = os.homedir();
+  const accounts = fs
+    .readdirSync(home, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && /^\.claude(-.*|\d*)$/.test(entry.name))
+    .map((entry) => path.join(home, entry.name));
+  if (accounts.length === 0) return 0;
+  // Los 12 curados de `slashCommands.ts` MAS los dos rasgos nuevos. Los curados van con descripcion
+  // vacia a proposito (el catalogo cae a la castellana de Mage) y estan aqui por una razon concreta: sin
+  // ellos, la cache DEJARIA SIN CATALOGO a la comprobacion del popover de comandos, que mide sobre esa
+  // misma lista. Sembrar solo lo nuevo cambiaba lo que mide una comprobacion anterior — el error §5 de
+  // la skill `verificacion-gui`, visto otra vez.
+  const curated = ['agents', 'clear', 'compact', 'config', 'context', 'doctor', 'init', 'mcp', 'model', 'review', 'security-review', 'usage'];
+  const commands = [
+    ...curated.map((name) => ({
+      name,
+      description: '',
+      argumentHint: name === 'compact' ? SEEDED_HINT : null,
+      aliases: name === 'compact' ? ['compactar'] : [],
+    })),
+    { name: SEEDED_NAMESPACED_COMMAND, description: 'Comando sembrado por verify:gui', argumentHint: null, aliases: [] },
+  ];
+  const byAccount = Object.fromEntries(accounts.map((dir) => [dir, { measuredAtMs: 1, commands }]));
+  fs.writeFileSync(path.join(userDataDir, 'command-catalog.json'), JSON.stringify({ version: 1, byAccount }, null, 2), 'utf-8');
+  return accounts.length;
+}
+
+// --- Fase A: hidratacion del chat por el puente de desarrollo -------------------------------------
+
+// Cuantos bloques hidrata la comprobacion de 2.6. El colapso a 2 px SOLO aparece con desbordamiento:
+// con pocos bloques la medida seria verde con el bug puesto.
+const HYDRATED_BLOCK_COUNT = 60;
+
+// Las dos conversaciones reanudadas de la comprobacion de 4.3. Los ids son inventados a proposito (no
+// hay fichero en disco: la transcripcion se inyecta), y los textos son DISTINTOS porque la mitad de la
+// medida es que cada panel pinte lo suyo y no dos veces el mismo hilo.
+const SPLIT_HYDRATION_SESSIONS = {
+  a: 'vg-split-a',
+  b: 'vg-split-b',
+  textoA: 'Conversacion del panel izquierdo',
+  textoB: 'Conversacion del panel derecho',
+};
+
+// PNG REAL de 1x1 (el mismo del fixture de la Fase A): lo escribe el harness en SU directorio de
+// salida para probar el adjuntado sin depender de ningun fichero del usuario.
+const TINY_PNG_BASE64 =
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
+
+const FIXTURE_FILE = path.join(repoRoot, 'src', 'main', 'transcripts', 'fixtures', 'meta-and-image.jsonl');
+
+// Las tres lineas REALES del fixture, convertidas a `TranscriptEntry` como lo hace
+// `main/transcripts/normalize.ts`. Se re-declara aqui (igual que las anclas del DOM) porque este
+// fichero es un .mjs sin el pipeline de TS: si el mapeo cambia, lo canta esta comprobacion.
+function readRealTranscriptEntries() {
+  return fs
+    .readFileSync(FIXTURE_FILE, 'utf-8')
+    .trim()
+    .split('\n')
+    .map((line, index) => {
+      const raw = JSON.parse(line);
+      const timestampMs = Date.parse(raw.timestamp ?? '');
+      return {
+        index,
+        uuid: raw.uuid ?? null,
+        parentUuid: raw.parentUuid ?? null,
+        isSidechain: raw.isSidechain === true,
+        isMeta: raw.isMeta === true,
+        timestampMs: Number.isNaN(timestampMs) ? null : timestampMs,
+        category: 'turn',
+        kind: raw.type,
+        summary: '',
+        tokenUsage: null,
+        raw,
+      };
+    });
+}
+
+const REAL_TRANSCRIPT_ENTRIES = readRealTranscriptEntries();
+
+// Desborde de la cascara en el viewport ACTUAL: quien se pasa de su caja, si la pagina saca scroll y si
+// alguna columna de iconos pinta barra. La usa la comprobacion de ventana pequena en cada tamano.
+function medirDesborde(page) {
+  return page.evaluate(() => {
+      const raiz = document.documentElement;
+      // Quien desborda de verdad: el elemento cuyo contenido no cabe en su caja. Se listan los peores
+      // para que el fallo diga donde mirar.
+      const culpables = [...document.querySelectorAll('*')]
+        .map((n) => ({
+          sel: `${n.tagName.toLowerCase()}${n.className && typeof n.className === 'string' ? '.' + n.className.trim().split(/\s+/).slice(0, 3).join('.') : ''}`,
+          etiqueta: n.getAttribute('aria-label'),
+          exceso: n.scrollHeight - n.clientHeight,
+          alto: Math.round(n.getBoundingClientRect().height),
+        }))
+        .filter((n) => n.exceso > 1 && n.alto > 0)
+        .sort((a, b) => b.exceso - a.exceso)
+        .slice(0, 4);
+      // Las columnas de iconos, medidas aparte: son las que reporto el usuario y las que no deben
+      // scrollear NUNCA. Un panel puede scrollear su contenido; una barra de herramientas que se
+      // scrollea es una barra en la que no encuentras el icono que buscas.
+      const barras = [...document.querySelectorAll('[role="toolbar"]')].map((n) => ({
+        etiqueta: n.getAttribute('aria-label'),
+        alto: Math.round(n.getBoundingClientRect().height),
+        contenido: n.scrollHeight,
+        scrollea: n.scrollHeight > n.clientHeight + 1,
+        iconos: n.querySelectorAll('[data-stripe-btn="true"]').length,
+      }));
+      // Por el contenedor con borde derecho, no por una clase de ancho: el rail iguala su ancho al de
+      // la barra derecha (36 px) y ese numero vive en una constante compartida, no en este selector.
+      const rail = document.querySelector('[aria-label="Paneles del borde izquierdo, zona superior"]')?.closest('div[class*="border-r"]') ?? null;
+      // Los contenedores que SI scrollean por dentro (el div con overflow, no el role="toolbar" que
+      // lleva dentro: ese nunca desborda porque el de fuera se lo come). Se miden LOS DOS EJES y,
+      // sobre todo, si la barra OCUPA SITIO (`offset - client`), que es lo que el usuario ve: la
+      // columna puede desplazarse con la rueda, pero sin pintar ninguna barra en 36 px.
+      const columnas = [...document.querySelectorAll('[data-stripe-scroll="true"]')].map((n) => ({
+        etiqueta: n.parentElement?.getAttribute('aria-label') ?? n.querySelector('[role="toolbar"]')?.getAttribute('aria-label'),
+        alto: n.offsetHeight,
+        contenidoY: n.scrollHeight,
+        contenidoX: n.scrollWidth,
+        anchoUtil: n.clientWidth,
+        desbordaX: n.scrollWidth > n.clientWidth + 1,
+        barraV: n.offsetWidth - n.clientWidth,
+        barraH: n.offsetHeight - n.clientHeight,
+        // Que el ocultado de la barra este APLICADO de verdad, no solo escrito: con los iconos que hay
+        // hoy la columna no llega a desbordar en la ventana minima, asi que `barraV === 0` pasaria en
+        // verde tambien con el ocultado roto (fue el caso: la utilidad `[scrollbar-width:none]` de
+        // Tailwind perdia la cascada contra el `*` sin @layer de index.css y no hacia nada).
+        ocultaBarra: getComputedStyle(n).scrollbarWidth,
+      }));
+      return {
+        ventana: window.innerHeight,
+        desbordaPagina: raiz.scrollHeight > raiz.clientHeight,
+        desbordaPaginaX: raiz.scrollWidth > raiz.clientWidth,
+        bodyDesborda: document.body.scrollHeight > document.body.clientHeight,
+        altoRaiz: raiz.scrollHeight,
+        railScrollea: rail === null ? null : rail.scrollHeight > rail.clientHeight + 1,
+        railAlto: rail === null ? null : Math.round(rail.getBoundingClientRect().height),
+        railContenido: rail === null ? null : rail.scrollHeight,
+        columnas,
+        barras: barras.filter((b) => b.iconos > 0 || b.scrollea),
+        culpables,
+      };
+  });
+}
+
+// Abre una conversacion nueva con "Carpeta temporal" (sin enviar nada: `ensureSession` es perezoso, asi
+// que no spawnea el CLI). Mismo camino que la comprobacion de Ctrl+N, extraido para el grupo final.
+async function openTemporaryConversation(page) {
+  // CAMBIO DEL 2026-09-18: `Ctrl+N` ya NO abre el formulario de "Nueva conversacion" — abre la
+  // conversacion directamente, en carpeta temporal y con los valores por defecto, que es lo que el
+  // usuario pidio. El dialogo sigue existiendo para elegir carpeta/proveedor/modelo, pero como camino
+  // SECUNDARIO (clic derecho sobre el ＋); lo cubre `openTemporaryConversationConDialogo`.
+  //
+  // Este helper lo usan ~40 comprobaciones para montarse su estado, asi que se queda con el camino por
+  // DEFECTO: es el que de verdad recorre un usuario, y ademas es mas rapido y menos fragil.
+  const antes = await page.locator('[role="tablist"][aria-label^="Conversaciones abiertas"] [role="tab"]').count();
+  await page.keyboard.press('Control+KeyN');
+  // Se espera a que la pestaña EXISTA, no a un tiempo fijo: la creacion pasa por el main (carpeta
+  // temporal en disco) y tarda lo que tarde la maquina.
+  await page
+    .locator('[role="tablist"][aria-label^="Conversaciones abiertas"] [role="tab"]')
+    .nth(antes)
+    .waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+}
+
+// El camino SECUNDARIO: el formulario completo, al que se llega con clic derecho sobre el ＋ de la
+// barra de pestañas. Se conserva porque sigue siendo la unica via para elegir carpeta, proveedor,
+// modelo, esfuerzo y tope de gasto.
+async function openTemporaryConversationConDialogo(page) {
+  await page.locator('button[aria-label="Nueva pestaña"]').first().click({ button: 'right' });
+  await page.locator(NEW_TAB_DIALOG).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+  await page.getByRole('button', { name: 'Carpeta temporal', exact: true }).click();
+  await page.getByRole('button', { name: /Abrir pestaña|Abriendo/ }).click();
+  await page.locator(MODAL).first().waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+}
+
+// Hidrata el chat de la pestaña ACTIVA con los bloques que produce el propio `transcriptToBlocks` de la
+// app a partir de entradas de transcripcion reales. Devuelve cuantos bloques salieron.
+async function hydrateFromEntries(page, entries) {
+  const blocks = await page.evaluate((payload) => {
+    const dev = window.__mageDev;
+    if (dev === undefined) throw new Error('window.__mageDev no existe (¿la app no esta en modo desarrollo?)');
+    const tabId = dev.store.getState().activeTabId;
+    const built = dev.transcriptToBlocks(payload);
+    dev.store.setState({ blocksByChat: { ...dev.store.getState().blocksByChat, [tabId]: built } });
+    return built.length;
+  }, entries);
+  await page.waitForTimeout(CONFIG.settleMs);
+  return blocks;
+}
+
+// Alturas reales de los bloques del hilo. Se anclan por `data-block` y no por "hijos del contenedor":
+// el primer hijo es la region aria-live (1 px), que daria un falso negativo eterno.
+function measureBlockHeights(page) {
+  return page.evaluate(() => {
+    const first = document.querySelector('[data-block]');
+    const scroller = first?.parentElement ?? null;
+    if (scroller === null) return null;
+    const items = [...scroller.querySelectorAll(':scope > [data-block]')];
+    const heights = items.map((node) => node.offsetHeight);
+    return {
+      bloques: items.length,
+      tools: items.filter((node) => node.dataset.block === 'tool').length,
+      minAltura: heights.length === 0 ? 0 : Math.min(...heights),
+      pordebajode8: heights.filter((height) => height < 8).length,
+      desborda: scroller.scrollHeight > scroller.clientHeight,
+    };
+  });
+}
+
+// Medida de las burbujas del usuario: cuantas hay, cuantas traen contenido interno del protocolo, y la
+// que lleva imagen + texto en la MISMA burbuja (con su `naturalWidth`, que es lo que demuestra que el
+// `data:` decodifica). La hora se descuenta del texto: si no, ninguna burbuja estaria "vacia".
+function measureUserBubbles(page) {
+  return page.evaluate(() => {
+    const bubbles = [...document.querySelectorAll('[data-block="user"]')];
+    const texts = bubbles.map((node) => (node.textContent ?? '').replace(/\d{2}:\d{2}/, '').trim());
+    const conImagen = bubbles.filter((node) => node.querySelector('img[src^="data:image/"]') !== null);
+    const img = conImagen[0]?.querySelector('img') ?? null;
+    return {
+      burbujas: bubbles.length,
+      conSystemReminder: texts.filter((text) => text.includes('<system-reminder>')).length,
+      conAvisoDeImagen: texts.filter((text) => text.includes('[Image: source:')).length,
+      conImagenYTexto: conImagen.filter((node) => (node.textContent ?? '').replace(/\d{2}:\d{2}/, '').trim().length > 0).length,
+      naturalWidth: img === null ? 0 : img.naturalWidth,
+    };
+  });
+}
+
+// Sondea hasta que la medida cumpla `predicate` (la decodificacion de un `data:` de 34 KB no es
+// instantanea) y devuelve la ULTIMA medida, cumpla o no: el informe tiene que llevar el valor real.
+async function waitForUserBubbles(page, predicate) {
+  const deadline = Date.now() + CONFIG.actionTimeoutMs;
+  let last = null;
+  while (Date.now() < deadline) {
+    last = await measureUserBubbles(page);
+    if (last !== null && predicate(last)) return last;
+    await page.waitForTimeout(200);
+  }
+  return last;
+}
+
+// Texto del CLI para el limite de uso. Literal del que se ve de verdad ("You've hit your session limit
+// · resets 3pm"): el banner lo pasa TAL CUAL, y la comprobacion lo busca por ese texto.
+const RATE_LIMIT_SUMMARY = "You've hit your session limit · resets 3pm";
+
+
+const ASK_USER_QUESTION_INPUT = {
+  questions: [
+    {
+      question: '¿Prefieres el color rojo o el azul?',
+      header: 'Preferencia de color',
+      options: [
+        { label: 'Rojo', description: 'El color del fuego' },
+        { label: 'Azul', description: 'El color del cielo' },
+      ],
+      multiSelect: false,
+    },
+  ],
+};
+
+// Inyecta un `permission_request` sintetico por el puente de desarrollo, como si lo hubiera emitido el
+// CLI. NO spawnea nada ni gasta turno: entra por el mismo reducer que el evento real.
+async function injectPermissionRequest(page, input, requestId, toolName = 'AskUserQuestion') {
+  await page.evaluate(
+    ([payload, id, tool]) => {
+      const dev = window.__mageDev;
+      if (dev === undefined) throw new Error('window.__mageDev no existe (¿la app no esta en modo desarrollo?)');
+      const tabId = dev.store.getState().activeTabId;
+      const event = {
+        kind: 'permission_request',
+        request: {
+          requestId: id,
+          toolUseId: `tu-${id}`,
+          toolName: tool,
+          input: payload,
+          description: null,
+          requiresUserInteraction: true,
+          displayName: tool,
+        },
+      };
+      // Se pasa por el reducer REAL (no se fabrica el bloque a mano): lo que se mide es lo que hace la
+      // app con el evento del CLI, no lo que el harness sabe construir.
+      dev.store.setState((state) => dev.reduceEvent(state, tabId, event));
+    },
+    [input, requestId, toolName],
+  );
+  await page.waitForTimeout(CONFIG.settleMs);
+}
+
+// Cancela el permiso inyectado por el MISMO camino que el CLI (`permission_cancelled`), para no dejar
+// una peticion pendiente a la siguiente comprobacion. Contestarlo de verdad no vale: sin sesion viva,
+// `answerPermission` lanzaria.
+async function cancelInjectedPermission(page, requestId) {
+  await page.evaluate((id) => {
+    const dev = window.__mageDev;
+    const tabId = dev.store.getState().activeTabId;
+    dev.store.setState((state) => dev.reduceEvent(state, tabId, { kind: 'permission_cancelled', requestId: id }));
+  }, requestId);
+  await page.waitForTimeout(CONFIG.settleMs);
+}
+
+// Que ofrece ahora mismo el panel "Permiso" del dock. Con una pregunta pendiente NO puede ofrecer
+// Permitir/Denegar: es el mismo can_use_tool que la tarjeta y se contesta una sola vez.
+function measurePermissionPanel(page) {
+  return page.evaluate(() => {
+    const texts = [...document.querySelectorAll('button')].map((b) => b.textContent?.trim() ?? '');
+    return {
+      permitir: texts.filter((t) => t === 'Permitir').length,
+      denegar: texts.filter((t) => t.startsWith('Denegar')).length,
+      avisoDePregunta: document.body.innerText.includes('se contesta en la tarjeta del chat'),
+    };
+  });
+}
+
+// Publicacion de artifact LITERAL medida en una transcripcion real del usuario (2.4).
+const REAL_ARTIFACT = {
+  input: {
+    file_path: 'C:\\tmp\\scratchpad\\packaging-informe.html',
+    favicon: '📦',
+    title: 'Packaging — informe previo',
+    description: 'Análisis previo de la normalización.',
+  },
+  url: 'https://claude.ai/code/artifact/477497ff-717a-4375-a39e-a47e383648a8',
+};
+
+// Bloque de tool que YA publico un artifact, con la forma que produce el reducer.
+function artifactBlock(id = 'a1') {
+  return {
+    ...toolBlock(id, 'other'),
+    tool: 'Artifact',
+    command: REAL_ARTIFACT.input.file_path,
+    artifactDraft: {
+      title: REAL_ARTIFACT.input.title,
+      description: REAL_ARTIFACT.input.description,
+      favicon: REAL_ARTIFACT.input.favicon,
+      localPath: REAL_ARTIFACT.input.file_path,
+    },
+    artifact: {
+      title: REAL_ARTIFACT.input.title,
+      description: REAL_ARTIFACT.input.description,
+      favicon: REAL_ARTIFACT.input.favicon,
+      localPath: REAL_ARTIFACT.input.file_path,
+      url: REAL_ARTIFACT.url,
+    },
+  };
+}
+
+// Hunk LITERAL medido en una transcripcion real (M2): con el se comprueba que el diff sale NUMERADO.
+const REAL_HUNK = {
+  oldStart: 13,
+  oldLines: 7,
+  newStart: 13,
+  newLines: 6,
+  lines: [' import type { Foo } from "./foo";', '-const a = 1;', '+const a = 2;', ' export default a;'],
+};
+
+// Hidrata el chat de la pestaña activa con bloques ya construidos (objetos planos, la misma forma que
+// produce el reducer). Devuelve cuantos se inyectaron.
+async function hydrateBlocks(page, blocks) {
+  const count = await page.evaluate((payload) => {
+    const dev = window.__mageDev;
+    if (dev === undefined) throw new Error('window.__mageDev no existe (¿la app no esta en modo desarrollo?)');
+    const tabId = dev.store.getState().activeTabId;
+    dev.store.setState({ blocksByChat: { ...dev.store.getState().blocksByChat, [tabId]: payload } });
+    return payload.length;
+  }, blocks);
+  await page.waitForTimeout(CONFIG.settleMs);
+  return count;
+}
+
+// Caja de tool sintetica, con la forma del modelo de la Fase D.
+function toolBlock(id, toolClass, over = {}) {
+  return {
+    kind: 'tool',
+    id,
+    toolUseId: `u-${id}`,
+    tool: toolClass === 'read' ? 'Read' : toolClass === 'search' ? 'Grep' : toolClass === 'edit' ? 'Edit' : 'Bash',
+    toolClass,
+    command: `src/fichero-${id}.ts`,
+    meta: 'ok · 12 ms',
+    isError: false,
+    output: [{ code: false, text: `salida de ${id}` }],
+    filePath: null,
+    diff: null,
+    writtenContent: null,
+    artifact: null,
+    artifactDraft: null,
+    ...over,
+  };
+}
+
+// Etiqueta del boton de menu que tiene el foco ahora mismo ('' si el foco no esta en la barra).
+function focusedMenuLabel(page) {
+  return page.evaluate(() => {
+    const active = document.activeElement;
+    if (active === null || active.getAttribute('role') !== 'menuitem') return '';
+    return active.closest('[role="menubar"]') === null ? '' : (active.textContent?.trim() ?? '');
+  });
+}
+
+const TAB_MENU = '[role="menu"][aria-label^="Acciones de la pestaña"]';
+
+// Abre el menu contextual de la pestaña ACTIVA con un clic derecho de verdad, lo mide y lo cierra con
+// Escape (quien abre el suyo, lo cierra). Se cuenta ANTES de clicar: si hay mas de una pestaña
+// seleccionada, no se clica nada (leccion §2 de la skill `verificacion-gui`).
+async function measureTabContextMenu(page) {
+  const active = page.locator('[role="tablist"][aria-label^="Conversaciones abiertas"] [role="tab"][aria-selected="true"]');
+  const selected = await active.count();
+  if (selected !== 1) return { menus: 0, seleccionadas: selected, items: 0, subtitulos: 0, color: 0, contadores: 0, cerrado: -1 };
+
+  await active.click({ button: 'right' });
+  await page.locator(TAB_MENU).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+  const measured = await page.evaluate((selector) => {
+    const menu = document.querySelector(selector);
+    if (menu === null) return null;
+    const items = [...menu.querySelectorAll('[role="menuitem"]')];
+    const nodes = [...menu.querySelectorAll('*')];
+    return {
+      menus: document.querySelectorAll(selector).length,
+      items: items.length,
+      // Un subtitulo era un elemento DENTRO del item con su propia linea de texto tenue.
+      subtitulos: items.filter((item) => item.querySelector('span, div') !== null).length,
+      color: nodes.filter((node) => node.textContent?.trim() === 'COLOR').length,
+      contadores: items.filter((item) => /\(\d+\)/.test(item.textContent ?? '')).length,
+      etiquetas: items.map((item) => (item.textContent ?? '').trim()),
+    };
+  }, TAB_MENU);
+  await page.keyboard.press('Escape');
+  await page.locator(TAB_MENU).waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+  return { seleccionadas: selected, ...measured, cerrado: await page.locator(TAB_MENU).count() };
+}
+
+// Clamp del menu: se dispara el `contextmenu` en la esquina INFERIOR DERECHA de la ventana (un clic
+// derecho de raton no puede caer ahi, porque las pestañas estan arriba) y se comprueba que el menu se
+// queda dentro. Precedente real: `TooltipLayer` clampaba solo el centro. Ademas mide su alto, que es
+// lo que el clamp usa ahora: si la medida se quedara en 0, este numero lo canta.
+async function measureTabContextMenuClamp(page) {
+  const opened = await page.evaluate(() => {
+    const tab = document.querySelector('[role="tablist"][aria-label^="Conversaciones abiertas"] [role="tab"][aria-selected="true"]');
+    if (tab === null) return false;
+    tab.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: window.innerWidth - 4, clientY: window.innerHeight - 4 }));
+    return true;
+  });
+  if (!opened) return null;
+  await page.locator(TAB_MENU).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+  const measured = await page.evaluate((selector) => {
+    const menu = document.querySelector(selector);
+    if (menu === null) return null;
+    const rect = menu.getBoundingClientRect();
+    return {
+      alto: menu.offsetHeight,
+      dentroDeLaVentana: Math.ceil(rect.right) <= window.innerWidth && Math.ceil(rect.bottom) <= window.innerHeight,
+      rect: { right: Math.round(rect.right), bottom: Math.round(rect.bottom), ventana: `${window.innerWidth}x${window.innerHeight}` },
+    };
+  }, TAB_MENU);
+  await page.keyboard.press('Escape');
+  await page.locator(TAB_MENU).waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+  return measured;
+}
+
+// --- Arranque y conexion -------------------------------------------------------------------------
+
+function launchApp(userDataDir) {
+  // electron-vite reenvia a Electron lo que va tras `--`. `--user-data-dir` es un switch nativo de
+  // Electron/Chromium, asi que no hace falta nada en el codigo de Mage para aislarlo.
+  // Se lanza el JS de electron-vite con el propio node, NO `pnpm`/`pnpm.cmd`: en Windows, `pnpm` es
+  // un .cmd y desde Node 24 spawnearlo sin `shell: true` da EINVAL (mitigacion de CVE-2024-27980),
+  // mientras que con `shell: true` los argumentos se concatenan sin escapar. Con `node <ruta.js>` no
+  // hay ni shell ni .cmd, y ademas funciona igual en los tres SO.
+  const args = [
+    path.join(repoRoot, 'node_modules', 'electron-vite', 'bin', 'electron-vite.js'),
+    'dev',
+    '--',
+    `--remote-debugging-port=${CONFIG.port}`,
+    `--user-data-dir=${userDataDir}`,
+  ];
+  const child = spawn(process.execPath, args, {
+    cwd: repoRoot,
+    windowsHide: true,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    // POSIX: grupo de procesos propio, para poder señalizar a TODO el arbol con kill(-pid). En
+    // Windows no cambia nada relevante (la terminacion va por taskkill /T).
+    detached: process.platform !== 'win32',
+  });
+  const log = [];
+  child.stdout.setEncoding('utf8');
+  child.stderr.setEncoding('utf8');
+  child.stdout.on('data', (chunk) => log.push(chunk));
+  child.stderr.on('data', (chunk) => log.push(chunk));
+  return { child, log };
+}
+
+async function waitForCdp() {
+  const deadline = Date.now() + CONFIG.bootTimeoutMs;
+  const url = `http://127.0.0.1:${CONFIG.port}/json/version`;
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(url);
+      if (response.ok) return (await response.json()).webSocketDebuggerUrl;
+    } catch {
+      // aun no escucha: reintentar
+    }
+    await new Promise((resolve) => setTimeout(resolve, CONFIG.pollIntervalMs));
+  }
+  throw new Error(`El puerto de depuracion ${CONFIG.port} no respondio en ${CONFIG.bootTimeoutMs} ms`);
+}
+
+// La ventana principal es la de index.html: debug.html y widget.html son otras entradas del build.
+async function findMainPage(browser) {
+  const deadline = Date.now() + CONFIG.bootTimeoutMs;
+  while (Date.now() < deadline) {
+    for (const context of browser.contexts()) {
+      for (const page of context.pages()) {
+        const url = page.url();
+        if (url.includes('debug.html') || url.includes('widget.html')) continue;
+        if (url.startsWith('devtools://')) continue;
+        if (url.includes('index.html') || url.endsWith('/')) return page;
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, CONFIG.pollIntervalMs));
+  }
+  throw new Error('No se encontro la ventana principal (index.html) por CDP');
+}
+
+// Termina el arbol: electron-vite spawnea electron, que spawnea renderers, GPU y utility. Un kill del
+// hijo directo los dejaria vivos (misma razon que src/main/os/processTree.ts).
+//
+// SINCRONO a proposito: con `spawn` asincrono, el `process.exit()` del final se adelantaba al taskkill
+// y quedaban CUATRO electron.exe vivos apuntando al perfil de la verificacion. Medido.
+function killTree(child) {
+  if (!child || child.pid == null) return;
+  if (process.platform === 'win32') {
+    spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
+    return;
+  }
+  try {
+    process.kill(-child.pid, 'SIGTERM'); // grupo entero (spawn con detached)
+  } catch {
+    try {
+      child.kill('SIGTERM');
+    } catch {
+      // ya muerto
+    }
+  }
+}
+
+// --- Informe -------------------------------------------------------------------------------------
+
+function writeReport(runDir, results, consoleErrors) {
+  const lines = ['# Verificacion GUI de Mage', ''];
+  lines.push(`- Fecha: ${new Date().toISOString()}`);
+  lines.push(`- Plataforma: ${process.platform}`);
+  lines.push('');
+  lines.push('| Resultado | Comprobacion | Medida |');
+  lines.push('|---|---|---|');
+  for (const result of results) {
+    const mark = result.ok ? 'OK' : 'FALLA';
+    lines.push(`| ${mark} | ${result.name} | ${result.detail.replace(/\|/g, '\\|')} |`);
+  }
+  lines.push('');
+  lines.push(`## Errores de consola del renderer (${consoleErrors.length})`);
+  lines.push('');
+  if (consoleErrors.length === 0) lines.push('_Ninguno._');
+  else for (const error of consoleErrors) lines.push(`- ${error}`);
+  lines.push('');
+  lines.push('> Esto MIDE el DOM real. NO juzga si el resultado se ve bien: ese vistazo es del usuario.');
+  fs.writeFileSync(path.join(runDir, 'session.md'), `${lines.join('\n')}\n`, 'utf-8');
+}
+
+// --- Main ----------------------------------------------------------------------------------------
+
+async function main() {
+  const keepOpen = process.argv.includes('--keep');
+  // Filtro por SUBCADENA del nombre (`--only=ventana`): iterar sobre UNA comprobacion sin pagar las 84
+  // de la suite. Sin el flag corren todas, que es lo que hace `pnpm verify:gui`.
+  const only = process.argv.find((arg) => arg.startsWith('--only='))?.slice('--only='.length) ?? '';
+  const checks = only === '' ? CHECKS : CHECKS.filter((c) => c.name.toLowerCase().includes(only.toLowerCase()));
+  if (checks.length === 0) throw new Error(`--only=${only} no casa con ninguna comprobacion`);
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const runDir = path.join(CONFIG.outDir, stamp);
+  // Perfil NUEVO por ejecucion (no uno fijo que se borra): Electron mantiene el lock del perfil un
+  // rato despues de morir, asi que un `rm` al arrancar fallaba con EPERM y tumbaba la verificacion
+  // entera antes de empezar. Con un directorio por ejecucion no hay nada que borrar en caliente.
+  const userDataDir = path.join(CONFIG.outDir, 'user-data', stamp);
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.mkdirSync(userDataDir, { recursive: true });
+  prunePreviousProfiles(userDataDir);
+  seedCommandCatalog(userDataDir);
+  seedOnboardingDone(userDataDir);
+
+  console.log(`[verify:gui] perfil aislado: ${userDataDir}`);
+  const { child, log } = launchApp(userDataDir);
+  let browser = null;
+  const results = [];
+  const consoleErrors = [];
+
+  try {
+    const wsEndpoint = await waitForCdp();
+    browser = await chromium.connectOverCDP(wsEndpoint);
+    const page = await findMainPage(browser);
+    // Puerta de arranque: `panels-layout.json` se carga por IPC, asi que las stripes del dock montan
+    // DESPUES del primer render. Sin esperarlas, la primera comprobacion medía una UI a medio montar
+    // y daba un falso negativo (toolbars=0 con la app perfectamente arrancada).
+    await page.locator('[role="toolbar"]').first().waitFor({ state: 'attached', timeout: CONFIG.bootTimeoutMs });
+    page.on('console', (message) => {
+      if (message.type() === 'error') consoleErrors.push(message.text());
+    });
+    page.on('pageerror', (error) => consoleErrors.push(String(error)));
+
+    for (const [index, check] of checks.entries()) {
+      try {
+        const outcome = await check.run(page, { userDataDir, runDir });
+        results.push({ name: check.name, ...outcome });
+        console.log(`  ${outcome.ok ? '✓' : '✗'} ${check.name} — ${outcome.detail}`);
+      } catch (error) {
+        results.push({ name: check.name, ok: false, detail: `excepcion: ${error.message}` });
+        console.log(`  ✗ ${check.name} — excepcion: ${error.message}`);
+        // RESCATE. Las comprobaciones comparten UNA ventana y tienen un contrato de estado: quien abre
+        // un dialogo lo cierra. Ese contrato lo cumple el camino feliz — cuando una LANZA, su limpieza
+        // no corre y el modal se queda abierto, tapando la app para todas las siguientes.
+        //
+        // Medido el 2026-09-18: tres comprobaciones de Proveedores se quedaron a medias con
+        // Configuracion abierta y arrastraron a ~35 detras. Un informe donde un fallo produce treinta y
+        // seis no se puede leer: no distingue la causa del daño colateral.
+        //
+        // Solo corre TRAS UN FALLO, asi que no puede enmascarar nada: lo que una comprobacion en verde
+        // deje abierto a proposito sigue llegando intacto a la siguiente.
+        await rescatarEstado(page).catch(() => undefined);
+      }
+      // El INDICE va delante del slug: `slug()` trunca a 60 caracteres y ya hay nombres de comprobacion
+      // que solo se diferencian mas alla de ese corte -> dos capturas colisionaban y la segunda
+      // sobrescribia a la primera EN SILENCIO (una captura que no es de lo que dice ser es peor que
+      // ninguna). Con el indice delante, el nombre del PNG es unico por construccion y ademas queda
+      // ordenado como el informe.
+      const fileName = `${String(index + 1).padStart(2, '0')}-${slug(check.name)}.png`;
+      await page.screenshot({ path: path.join(runDir, fileName) }).catch(() => {});
+    }
+  } catch (error) {
+    results.push({ name: 'Arranque', ok: false, detail: error.message });
+    console.error(`[verify:gui] ${error.message}`);
+    fs.writeFileSync(path.join(runDir, 'launch.log'), log.join(''), 'utf-8');
+  } finally {
+    writeReport(runDir, results, consoleErrors);
+    if (browser !== null) await browser.close().catch(() => {});
+    if (!keepOpen) killTree(child);
+    else console.log('[verify:gui] --keep: la app sigue abierta; ciérrala tú.');
+  }
+
+  const failed = results.filter((result) => !result.ok);
+  console.log(`\n[verify:gui] informe: ${path.join(runDir, 'session.md')}`);
+  console.log(`[verify:gui] ${results.length - failed.length}/${results.length} comprobaciones en verde`);
+  process.exit(failed.length === 0 ? 0 : 1);
+}
+
+// Borra los perfiles de ejecuciones anteriores. Best-effort: si Electron aun tiene el lock, se deja
+// para la proxima -- es basura en un directorio ignorado por git, nunca un motivo para no verificar.
+function prunePreviousProfiles(currentDir) {
+  const parent = path.dirname(currentDir);
+  for (const entry of fs.readdirSync(parent, { withFileTypes: true })) {
+    const dir = path.join(parent, entry.name);
+    if (!entry.isDirectory() || dir === currentDir) continue;
+    try {
+      fs.rmSync(dir, { recursive: true, force: true });
+    } catch {
+      // bloqueado por un Electron que aun no ha soltado el perfil: se intentara la proxima vez
+    }
+  }
+}
+
+function slug(text) {
+  return text
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 60);
+}
+
+void main();
+
+// Deja la ventana en un estado del que la siguiente comprobacion pueda partir, despues de que una haya
+// LANZADO. No es cosmetica: sin esto un fallo se propaga a todas las que vienen detras y el informe
+// deja de servir para diagnosticar (ver el comentario del bucle).
+//
+// Se usa Escape y no un boton de cerrar concreto: es lo que cierra CUALQUIER dialogo de la app (el
+// contrato de `useDialogA11y`), y no depende de que exista tal o cual control. Se espera al
+// DESMONTAJE, no a un tiempo fijo: los modales salen con animacion y medir a medias fue un
+// intermitente real de este harness.
+async function rescatarEstado(page) {
+  for (let intento = 0; intento < 3; intento += 1) {
+    if ((await page.locator(MODAL).count()) === 0) break;
+    await page.keyboard.press('Escape');
+    await page.locator(MODAL).first().waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs }).catch(() => undefined);
+  }
+  // Un menu contextual abierto tapa clics igual que un modal, y no responde al mismo Escape en todos
+  // los casos: un clic en una zona muerta lo cierra.
+  if ((await page.locator('[role="menu"]').count()) > 0) {
+    await page.mouse.click(2, 2).catch(() => undefined);
+  }
+}

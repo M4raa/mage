@@ -1,0 +1,262 @@
+import { describe, expect, it } from 'vitest';
+import { reconcileLayoutWithRegistry, type Anchor, type PanelLayoutState, type PanelPlacement, type ZoneKey } from '@shared/panelLayout';
+import { allAssignedPanelIds, didZoneJustOpen, locatePanel, moveDestinations, movePanelToZone, removePanelFromLayout, resizeSplit, resizeZone, toggleZonePanel } from './panelLayoutOps';
+
+function panel(id: string, defaultAnchor: Anchor, defaultZone: ZoneKey): PanelPlacement {
+  return { id, defaultAnchor, defaultZone };
+}
+
+// Layout base para los tests: p1 en left/a, p2 y p3 en right/a (comparten zona, como el catalogo
+// real), right/b y bottom vacios.
+function baseLayout(): PanelLayoutState {
+  const registry = [panel('p1', 'left', 'a'), panel('p2', 'right', 'a'), panel('p3', 'right', 'a')];
+  return reconcileLayoutWithRegistry(null, registry);
+}
+
+describe('locatePanel', () => {
+  it('locatePanel_panelExistente_devuelveSuAnchorYZona', () => {
+    const result = locatePanel(baseLayout(), 'p2');
+
+    expect(result).toEqual({ anchor: 'right', zone: 'a' });
+  });
+
+  it('locatePanel_panelInexistente_devuelveUndefined', () => {
+    const result = locatePanel(baseLayout(), 'no-existe');
+
+    expect(result).toBeUndefined();
+  });
+});
+
+describe('removePanelFromLayout', () => {
+  it('removePanelFromLayout_panelUnicoDeSuZona_laDejaVaciaYCerrada', () => {
+    const result = removePanelFromLayout(baseLayout(), 'p1'); // left/a: solo p1, activo
+
+    expect(result.stripes.left.a.panelIds).toEqual([]);
+    expect(result.stripes.left.a.activePanelId).toBeNull();
+    expect(allAssignedPanelIds(result).has('p1')).toBe(false);
+  });
+
+  it('removePanelFromLayout_panelActivoConHermanos_activaAlSiguiente', () => {
+    const result = removePanelFromLayout(baseLayout(), 'p2'); // right/a: ['p2','p3'], activo p2
+
+    expect(result.stripes.right.a.panelIds).toEqual(['p3']);
+    expect(result.stripes.right.a.activePanelId).toBe('p3');
+  });
+
+  it('removePanelFromLayout_panelNoActivo_noCambiaElActivo', () => {
+    const result = removePanelFromLayout(baseLayout(), 'p3'); // right/a: activo es p2
+
+    expect(result.stripes.right.a.panelIds).toEqual(['p2']);
+    expect(result.stripes.right.a.activePanelId).toBe('p2');
+  });
+
+  it('removePanelFromLayout_panelInexistente_devuelveElLayoutSinCambios', () => {
+    const layout = baseLayout();
+
+    expect(removePanelFromLayout(layout, 'no-existe')).toBe(layout);
+  });
+
+  it('removePanelFromLayout_dosVeces_esIdempotente', () => {
+    const once = removePanelFromLayout(baseLayout(), 'p1');
+
+    expect(removePanelFromLayout(once, 'p1')).toBe(once);
+  });
+});
+
+describe('allAssignedPanelIds', () => {
+  it('allAssignedPanelIds_layoutConVariosBordes_devuelveLosDeTodasLasZonas', () => {
+    const result = allAssignedPanelIds(baseLayout());
+
+    expect([...result].sort()).toEqual(['p1', 'p2', 'p3']);
+  });
+
+  it('allAssignedPanelIds_panelMovidoAOtroBorde_sigueContandoComoAsignado', () => {
+    // El caso del item 19: p1 pasa de left/a a right/b y NO debe reaparecer como "añadible".
+    const layout = movePanelToZone(baseLayout(), 'p1', 'right', 'b');
+
+    expect(allAssignedPanelIds(layout).has('p1')).toBe(true);
+  });
+
+  it('allAssignedPanelIds_layoutSinPaneles_devuelveConjuntoVacio', () => {
+    const result = allAssignedPanelIds(reconcileLayoutWithRegistry(null, []));
+
+    expect(result.size).toBe(0);
+  });
+});
+
+describe('toggleZonePanel', () => {
+  it('toggleZonePanel_zonaAbiertaConEsePanelActivo_laCierra', () => {
+    const layout = baseLayout(); // left/a ya abierta con p1 activo (unico panel de la zona)
+
+    const result = toggleZonePanel(layout, 'left', 'a', 'p1');
+
+    expect(result.stripes.left.a.activePanelId).toBeNull();
+    expect(result.stripes.left.a.panelIds).toEqual(['p1']); // sigue en la zona, solo se cierra
+  });
+
+  it('toggleZonePanel_zonaCerrada_laAbreConEsePanel', () => {
+    const cerrado = toggleZonePanel(baseLayout(), 'left', 'a', 'p1'); // cierra primero
+
+    const result = toggleZonePanel(cerrado, 'left', 'a', 'p1');
+
+    expect(result.stripes.left.a.activePanelId).toBe('p1');
+  });
+
+  it('toggleZonePanel_otroPanelDeLaMismaZonaActivo_cambiaLaPestanaActiva', () => {
+    const layout = baseLayout(); // right/a abierta con p2 activo (el primero, por defecto)
+
+    const result = toggleZonePanel(layout, 'right', 'a', 'p3');
+
+    expect(result.stripes.right.a.activePanelId).toBe('p3');
+    expect(result.stripes.right.a.panelIds).toEqual(['p2', 'p3']); // el orden no cambia, solo el activo
+  });
+
+  it('toggleZonePanel_panelAjenoALaZona_lanzaConElIdRecibido', () => {
+    expect(() => toggleZonePanel(baseLayout(), 'left', 'a', 'p2')).toThrow(/p2/);
+  });
+});
+
+// §6: solo una apertura EXPLICITA de una zona antes cerrada roba el foco — ni cambiar de pestaña
+// dentro de una zona ya abierta, ni cerrarla, deben hacerlo. Estos tests cubren el criterio puro que
+// usa el store para decidirlo (panelLayoutStore.ts, togglePanel), sin tocar window.mage/IPC.
+describe('didZoneJustOpen', () => {
+  it('didZoneJustOpen_deCerradaAConUnPanelActivo_devuelveTrue', () => {
+    const layout = baseLayout();
+    const cerrada = toggleZonePanel(layout, 'left', 'a', 'p1'); // left/a: activo por defecto -> la cerramos
+
+    const abierta = toggleZonePanel(cerrada, 'left', 'a', 'p1');
+
+    expect(didZoneJustOpen(cerrada.stripes.left.a, abierta.stripes.left.a)).toBe(true);
+  });
+
+  it('didZoneJustOpen_deAbiertaACambioDePestañaDeLaMismaZona_devuelveFalse', () => {
+    const layout = baseLayout(); // right/a: ['p2','p3'], activo p2
+
+    const cambiada = toggleZonePanel(layout, 'right', 'a', 'p3');
+
+    expect(didZoneJustOpen(layout.stripes.right.a, cambiada.stripes.right.a)).toBe(false);
+  });
+
+  it('didZoneJustOpen_deAbiertaACerrada_devuelveFalse', () => {
+    const layout = baseLayout(); // left/a: abierta con p1 activo
+
+    const cerrada = toggleZonePanel(layout, 'left', 'a', 'p1');
+
+    expect(didZoneJustOpen(layout.stripes.left.a, cerrada.stripes.left.a)).toBe(false);
+  });
+
+  it('didZoneJustOpen_permaneceCerrada_devuelveFalse', () => {
+    const cerrada = { panelIds: ['p1'], activePanelId: null, sizePx: 200 } as const;
+
+    expect(didZoneJustOpen(cerrada, cerrada)).toBe(false);
+  });
+});
+
+describe('movePanelToZone', () => {
+  it('movePanelToZone_destinoVacio_saleDeOrigenYEntraActivoAlDestinoConTamañoPorDefecto', () => {
+    const layout = baseLayout();
+
+    const result = movePanelToZone(layout, 'p1', 'right', 'b');
+
+    expect(result.stripes.left.a).toEqual({ panelIds: [], activePanelId: null, sizePx: layout.stripes.left.a.sizePx });
+    expect(result.stripes.right.b.panelIds).toEqual(['p1']);
+    expect(result.stripes.right.b.activePanelId).toBe('p1');
+  });
+
+  it('movePanelToZone_destinoConContenido_seAñadeAlFinalActivoYConservaElTamañoExistente', () => {
+    const layout = baseLayout();
+    const conTamañoPersonalizado = resizeZone(layout, 'right', 'a', 400);
+
+    const result = movePanelToZone(conTamañoPersonalizado, 'p1', 'right', 'a');
+
+    expect(result.stripes.right.a.panelIds).toEqual(['p2', 'p3', 'p1']);
+    expect(result.stripes.right.a.activePanelId).toBe('p1');
+    expect(result.stripes.right.a.sizePx).toBe(400); // no salta de tamaño por la llegada
+  });
+
+  it('movePanelToZone_origenQuedaConMasPaneles_activaElPrimeroQueQueda', () => {
+    const layout = baseLayout(); // right/a: ['p2','p3'], activo p2
+
+    const result = movePanelToZone(layout, 'p2', 'left', 'b');
+
+    expect(result.stripes.right.a).toEqual({ panelIds: ['p3'], activePanelId: 'p3', sizePx: layout.stripes.right.a.sizePx });
+  });
+
+  it('movePanelToZone_panelInexistenteEnElLayout_lanzaConElIdRecibido', () => {
+    expect(() => movePanelToZone(baseLayout(), 'no-existe', 'left', 'b')).toThrow(/no-existe/);
+  });
+
+  it('movePanelToZone_mismaZonaDeOrigenYDestino_lanza', () => {
+    expect(() => movePanelToZone(baseLayout(), 'p1', 'left', 'a')).toThrow(/p1/);
+  });
+});
+
+describe('resizeZone', () => {
+  it('resizeZone_tamañoValido_loFijaTalCual', () => {
+    const result = resizeZone(baseLayout(), 'left', 'a', 320);
+
+    expect(result.stripes.left.a.sizePx).toBe(320);
+  });
+
+  it('resizeZone_tamañoPorDebajoDelMinimo_seClampeaAlMinimo', () => {
+    const result = resizeZone(baseLayout(), 'left', 'a', 10);
+
+    expect(result.stripes.left.a.sizePx).toBe(160); // MIN_ZONE_SIZE_PX
+  });
+
+  it('resizeZone_noAfectaOtrasZonas', () => {
+    const layout = baseLayout();
+
+    const result = resizeZone(layout, 'left', 'a', 320);
+
+    expect(result.stripes.right.a).toEqual(layout.stripes.right.a);
+    expect(result.stripes.left.b).toEqual(layout.stripes.left.b);
+  });
+});
+
+describe('resizeSplit', () => {
+  it('resizeSplit_tamañoValido_loFijaTalCual', () => {
+    const result = resizeSplit(baseLayout(), 'right', 320);
+
+    expect(result.stripes.right.splitPx).toBe(320);
+  });
+
+  it('resizeSplit_tamañoPorDebajoDelMinimo_seClampeaAlMinimo', () => {
+    const result = resizeSplit(baseLayout(), 'right', 10);
+
+    expect(result.stripes.right.splitPx).toBe(160); // MIN_ZONE_SIZE_PX
+  });
+
+  it('resizeSplit_noAfectaLasZonasNiOtrasStripes', () => {
+    const layout = baseLayout();
+
+    const result = resizeSplit(layout, 'right', 320);
+
+    expect(result.stripes.right.a).toEqual(layout.stripes.right.a);
+    expect(result.stripes.right.b).toEqual(layout.stripes.right.b);
+    expect(result.stripes.left.splitPx).toBe(layout.stripes.left.splitPx);
+  });
+});
+
+describe('moveDestinations', () => {
+  it('moveDestinations_zonaActualLeftA_devuelveLasOtrasCincoSinLeftA', () => {
+    const result = moveDestinations({ anchor: 'left', zone: 'a' });
+
+    expect(result).toHaveLength(5);
+    expect(result.some((d) => d.anchor === 'left' && d.zone === 'a')).toBe(false);
+    expect(result).toEqual([
+      { anchor: 'left', zone: 'b', label: 'Izquierda medio' },
+      { anchor: 'right', zone: 'a', label: 'Derecha arriba' },
+      { anchor: 'right', zone: 'b', label: 'Derecha medio' },
+      { anchor: 'bottom', zone: 'a', label: 'Abajo izquierda' },
+      { anchor: 'bottom', zone: 'b', label: 'Abajo derecha' },
+    ]);
+  });
+
+  it('moveDestinations_zonaActualBottomB_excluyeSoloEsa', () => {
+    const result = moveDestinations({ anchor: 'bottom', zone: 'b' });
+
+    expect(result).toHaveLength(5);
+    expect(result.some((d) => d.anchor === 'bottom' && d.zone === 'b')).toBe(false);
+  });
+});

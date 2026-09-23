@@ -1,0 +1,314 @@
+import { describe, expect, it } from 'vitest';
+import type { CustomProvider } from '@shared/providers';
+import {
+  AGY_PROVIDER_ID,
+  BUILT_IN_PROVIDERS,
+  CODEX_PROVIDER_ID,
+  CUSTOM_PROVIDER_ID_PREFIX,
+  hasAdapter,
+  isAutoApprovedProvider,
+  writesClaudeTranscript,
+} from '@shared/providers';
+import {
+  EMPTY_CUSTOM_PROVIDER_DRAFT,
+  modelOptionsForProvider,
+  modelsToDraftText,
+  nextCustomProviderId,
+  parseModelIds,
+  providerFallbackModel,
+  providerModels,
+  providerOptions,
+  validateCustomProviderDraft,
+  type CustomProviderDraft,
+} from './models';
+
+const CLAUDE_MODELS = BUILT_IN_PROVIDERS.find((provider) => provider.id === 'claude')?.models ?? [];
+
+function customProvider(overrides: Partial<CustomProvider> = {}): CustomProvider {
+  return {
+    id: 'custom:ollama',
+    label: 'Ollama',
+    baseUrl: 'http://localhost:11434/v1',
+    apiKey: '',
+    models: [{ id: 'llama3', label: 'llama3' }],
+    ...overrides,
+  };
+}
+
+function draft(overrides: Partial<CustomProviderDraft> = {}): CustomProviderDraft {
+  return { label: 'Ollama', baseUrl: 'http://localhost:11434/v1', apiKey: '', models: 'llama3, mistral', ...overrides };
+}
+
+describe('modelOptionsForProvider', () => {
+  it('modelOptionsForProvider_proveedorConocido_devuelveSusModelos', () => {
+    const ids = modelOptionsForProvider('gemini', 'gemini-2.5-flash').map((m) => m.id);
+
+    expect(ids).toEqual(['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-1.5-flash', 'gemini-1.5-pro']);
+  });
+
+  it('modelOptionsForProvider_proveedorDesconocido_caeAClaude', () => {
+    expect(modelOptionsForProvider('inventado', 'sonnet')).toEqual(CLAUDE_MODELS);
+  });
+
+  it('modelOptionsForProvider_modeloFueraDeLaLista_loAnadeAlPrincipio', () => {
+    // Un modelo persistido de otra version no puede desaparecer del selector: se leeria como si Mage
+    // hubiera cambiado el modelo por su cuenta.
+    const options = modelOptionsForProvider('claude', 'claude-sonnet-4-5');
+
+    expect(options[0]).toEqual({ id: 'claude-sonnet-4-5', label: 'claude-sonnet-4-5' });
+    expect(options).toHaveLength(CLAUDE_MODELS.length + 1);
+  });
+
+  it('modelOptionsForProvider_modeloYaEnLaLista_noSeDuplica', () => {
+    const ids = modelOptionsForProvider('claude', 'opus').map((m) => m.id);
+
+    expect(ids.filter((id) => id === 'opus')).toHaveLength(1);
+  });
+
+  it('modelOptionsForProvider_modeloVacio_devuelveLaListaSinAnadirNada', () => {
+    expect(modelOptionsForProvider('claude', '')).toEqual(CLAUDE_MODELS);
+  });
+
+  it('modelOptionsForProvider_modeloConSufijoDeContexto_seReconoce', () => {
+    // Los ids con sufijo `[1m]` son los que activan la ventana de 1M en contextView.
+    const ids = modelOptionsForProvider('claude', 'opus[1m]').map((m) => m.id);
+
+    expect(ids.filter((id) => id === 'opus[1m]')).toHaveLength(1);
+  });
+
+  it('modelOptionsForProvider_proveedorDelUsuario_devuelveSusModelos', () => {
+    const ids = modelOptionsForProvider('custom:ollama', 'llama3', [customProvider()]).map((m) => m.id);
+
+    expect(ids).toEqual(['llama3']);
+  });
+
+  it('modelOptionsForProvider_proveedorDelUsuarioSinModelos_caeAClaude', () => {
+    expect(modelOptionsForProvider('custom:ollama', 'sonnet', [customProvider({ models: [] })])).toEqual(CLAUDE_MODELS);
+  });
+});
+
+describe('providerOptions', () => {
+  // Los de serie QUE SE PUEDEN EJECUTAR: desde el 2026-09-18 el catalogo tambien incluye proveedores
+  // DETECTADOS pero sin adapter (hoy Codex), que se ven en Ajustes y no aqui — ofrecer algo que falla
+  // al primer mensaje es peor que no ofrecerlo.
+  it('providerOptions_sinProveedoresDelUsuario_devuelveLosDeSerieConAdapter', () => {
+    const conAdapter = BUILT_IN_PROVIDERS.filter((p) => hasAdapter(p.id)).map((p) => p.id);
+
+    expect(providerOptions([]).map((p) => p.id)).toEqual(conAdapter);
+  });
+
+  it('providerOptions_proveedorSinAdapter_noSeOfrece', () => {
+    expect(providerOptions([]).map((p) => p.id)).not.toContain(CODEX_PROVIDER_ID);
+  });
+
+  it('providerOptions_conProveedorDelUsuario_loAnadeAlFinal', () => {
+    const ids = providerOptions([customProvider()]).map((p) => p.id);
+
+    expect(ids[ids.length - 1]).toBe('custom:ollama');
+    expect(ids).toHaveLength(BUILT_IN_PROVIDERS.filter((p) => hasAdapter(p.id)).length + 1);
+  });
+
+  it('providerOptions_proveedorSinModelos_noSeOfrece', () => {
+    // Ofrecerlo dejaria el selector de modelo vacio y no se podria abrir la conversacion.
+    expect(providerOptions([customProvider({ models: [] })]).map((p) => p.id)).not.toContain('custom:ollama');
+  });
+
+  it('providerOptions_idQueColisionaConUnoDeSerie_seDescarta', () => {
+    const options = providerOptions([customProvider({ id: 'openai', label: 'Impostor' })]);
+
+    expect(options.filter((p) => p.id === 'openai')).toHaveLength(1);
+    expect(options.find((p) => p.id === 'openai')?.label).not.toBe('Impostor');
+  });
+
+  it('providerOptions_dosProveedoresConElMismoId_soloElPrimero', () => {
+    const options = providerOptions([customProvider({ label: 'Uno' }), customProvider({ label: 'Dos' })]);
+
+    expect(options.filter((p) => p.id === 'custom:ollama')).toHaveLength(1);
+    expect(options.find((p) => p.id === 'custom:ollama')?.label).toBe('Uno');
+  });
+});
+
+describe('providerModels y providerFallbackModel', () => {
+  it('providerFallbackModel_proveedorDeSerie_devuelveSuPrimerModelo', () => {
+    expect(providerFallbackModel('openai', [])).toBe('gpt-4o');
+  });
+
+  it('providerFallbackModel_proveedorDelUsuario_devuelveSuPrimerModelo', () => {
+    expect(providerFallbackModel('custom:ollama', [customProvider()])).toBe('llama3');
+  });
+
+  it('providerFallbackModel_proveedorDesconocido_devuelveNull', () => {
+    expect(providerFallbackModel('inventado', [])).toBeNull();
+  });
+
+  it('providerModels_proveedorDelUsuarioSinModelos_devuelveNull', () => {
+    expect(providerModels('custom:ollama', [customProvider({ models: [] })])).toBeNull();
+  });
+});
+
+describe('parseModelIds', () => {
+  it('parseModelIds_comasYSaltosDeLinea_devuelveLosIdsLimpios', () => {
+    expect(parseModelIds(' llama3 ,mistral\nqwen2.5-coder ')).toEqual(['llama3', 'mistral', 'qwen2.5-coder']);
+  });
+
+  it('parseModelIds_duplicados_losColapsa', () => {
+    expect(parseModelIds('llama3, llama3')).toEqual(['llama3']);
+  });
+
+  it('parseModelIds_textoVacioOSoloSeparadores_devuelveVacio', () => {
+    expect(parseModelIds('')).toEqual([]);
+    expect(parseModelIds(' , ,\n')).toEqual([]);
+  });
+});
+
+describe('nextCustomProviderId', () => {
+  it('nextCustomProviderId_etiquetaNormal_devuelveSlugConPrefijo', () => {
+    expect(nextCustomProviderId('LM Studio', [])).toBe(`${CUSTOM_PROVIDER_ID_PREFIX}lm-studio`);
+  });
+
+  it('nextCustomProviderId_idYaCogido_anadeSufijoNumerico', () => {
+    const taken = [`${CUSTOM_PROVIDER_ID_PREFIX}ollama`, `${CUSTOM_PROVIDER_ID_PREFIX}ollama-2`];
+
+    expect(nextCustomProviderId('Ollama', taken)).toBe(`${CUSTOM_PROVIDER_ID_PREFIX}ollama-3`);
+  });
+
+  it('nextCustomProviderId_etiquetaSinCaracteresUtiles_usaUnNombreGenerico', () => {
+    expect(nextCustomProviderId('###', [])).toBe(`${CUSTOM_PROVIDER_ID_PREFIX}proveedor`);
+  });
+
+  it('nextCustomProviderId_siempreLlevaPrefijo_nuncaColisionaConUnoDeSerie', () => {
+    for (const builtIn of BUILT_IN_PROVIDERS) {
+      expect(nextCustomProviderId(builtIn.label, [])).not.toBe(builtIn.id);
+    }
+  });
+});
+
+describe('validateCustomProviderDraft', () => {
+  it('validateCustomProviderDraft_completo_devuelveElProveedor', () => {
+    const result = validateCustomProviderDraft(draft({ apiKey: '  k  ' }), [], null);
+
+    expect(result).toEqual({
+      ok: true,
+      provider: {
+        id: `${CUSTOM_PROVIDER_ID_PREFIX}ollama`,
+        label: 'Ollama',
+        baseUrl: 'http://localhost:11434/v1',
+        apiKey: 'k',
+        models: [
+          { id: 'llama3', label: 'llama3' },
+          { id: 'mistral', label: 'mistral' },
+        ],
+      },
+    });
+  });
+
+  it('validateCustomProviderDraft_sinNombre_rechazaConElMotivo', () => {
+    const result = validateCustomProviderDraft(draft({ label: '   ' }), [], null);
+
+    expect(result).toEqual({ ok: false, message: expect.stringContaining('nombre') });
+  });
+
+  it('validateCustomProviderDraft_urlVacia_rechaza', () => {
+    expect(validateCustomProviderDraft(draft({ baseUrl: '' }), [], null).ok).toBe(false);
+  });
+
+  it('validateCustomProviderDraft_urlNoParseable_rechazaConElValorRecibido', () => {
+    const result = validateCustomProviderDraft(draft({ baseUrl: 'localhost:11434' }), [], null);
+
+    expect(result.ok).toBe(false);
+    expect(result.ok ? '' : result.message).toContain('localhost:11434');
+  });
+
+  it('validateCustomProviderDraft_sinModelos_rechaza', () => {
+    const result = validateCustomProviderDraft(draft({ models: '  ,  ' }), [], null);
+
+    expect(result).toEqual({ ok: false, message: expect.stringContaining('al menos un modelo') });
+  });
+
+  it('validateCustomProviderDraft_formularioVacio_rechaza', () => {
+    expect(validateCustomProviderDraft(EMPTY_CUSTOM_PROVIDER_DRAFT, [], null).ok).toBe(false);
+  });
+
+  it('validateCustomProviderDraft_nombreQueYaExiste_generaUnIdDistinto', () => {
+    const result = validateCustomProviderDraft(draft(), [customProvider()], null);
+
+    expect(result.ok ? result.provider.id : '').toBe(`${CUSTOM_PROVIDER_ID_PREFIX}ollama-2`);
+  });
+
+  it('validateCustomProviderDraft_editando_conservaSuId', () => {
+    const result = validateCustomProviderDraft(draft({ label: 'Ollama renombrado' }), [customProvider()], 'custom:ollama');
+
+    expect(result.ok ? result.provider.id : '').toBe('custom:ollama');
+    expect(result.ok ? result.provider.label : '').toBe('Ollama renombrado');
+  });
+});
+
+describe('modelsToDraftText', () => {
+  it('modelsToDraftText_variosModelos_devuelveLosIdsSeparadosPorComas', () => {
+    expect(modelsToDraftText([{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }])).toBe('a, b');
+  });
+
+  it('modelsToDraftText_sinModelos_devuelveTextoVacio', () => {
+    expect(modelsToDraftText([])).toBe('');
+  });
+});
+
+describe('catalogo de proveedores de serie', () => {
+  it('cadaProveedorDeSerieTieneModelos', () => {
+    for (const provider of BUILT_IN_PROVIDERS) {
+      expect(provider.models.length, `sin modelos: ${provider.id}`).toBeGreaterThan(0);
+    }
+  });
+
+  it('noHayIdsDeModeloDuplicadosDentroDeUnProveedor', () => {
+    for (const provider of BUILT_IN_PROVIDERS) {
+      const ids = provider.models.map((m) => m.id);
+      expect(new Set(ids).size, `ids duplicados en ${provider.id}`).toBe(ids.length);
+    }
+  });
+
+  it('noHayIdsDeProveedorDuplicados', () => {
+    const ids = BUILT_IN_PROVIDERS.map((p) => p.id);
+
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  // Los alias existen para traducir un modelo de Claude arrastrado por la sesion: apuntar a un modelo
+  // que el proveedor no declara mandaria al upstream un id que no conoce.
+  it('cadaAliasDeModeloApuntaAUnModeloDeclarado', () => {
+    for (const provider of BUILT_IN_PROVIDERS) {
+      const declared = provider.models.map((m) => m.id);
+      for (const target of Object.values(provider.modelAliases)) {
+        expect(declared, `alias de ${provider.id}`).toContain(target);
+      }
+    }
+  });
+
+  // Los motores NATIVOS (claude, agy) lanzan su propio CLI y no pasan por el gateway; el resto tiene
+  // que declarar su URL base o `resolveUpstream` no sabria a donde reenviar.
+  it('losProveedoresNativosNoTienenUrlBase_elRestoSi', () => {
+    // Los NATIVOS (CLI propio, sin gateway) ya son tres: claude, agy y codex.
+    const native = ['claude', AGY_PROVIDER_ID, CODEX_PROVIDER_ID];
+    for (const provider of BUILT_IN_PROVIDERS) {
+      if (native.includes(provider.id)) expect(provider.baseUrl, provider.id).toBeNull();
+      else expect(provider.baseUrl, provider.id).not.toBeNull();
+    }
+  });
+
+  // El aviso de "sin permisos" que pinta la UI se apoya en esta lista: si `agy` desapareciera de ella,
+  // sus pestanas dejarian de avisar de que auto-aprueban y esa es la peor regresion posible aqui.
+  it('isAutoApprovedProvider_agy_true', () => {
+    expect(isAutoApprovedProvider(AGY_PROVIDER_ID)).toBe(true);
+    expect(isAutoApprovedProvider('claude')).toBe(false);
+    expect(isAutoApprovedProvider('custom:ollama')).toBe(false);
+  });
+
+  // Los de gateway tambien dejan transcripcion (su motor sigue siendo el CLI de Claude Code); solo
+  // `agy` no. Si esto se invirtiera, el Inspector pediria un fichero inexistente en cada pestana suya.
+  it('writesClaudeTranscript_soloAgyNoLaEscribe', () => {
+    expect(writesClaudeTranscript(AGY_PROVIDER_ID)).toBe(false);
+    expect(writesClaudeTranscript('claude')).toBe(true);
+    expect(writesClaudeTranscript('gemini')).toBe(true);
+    expect(writesClaudeTranscript('custom:ollama')).toBe(true);
+  });
+});

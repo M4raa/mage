@@ -1,0 +1,13 @@
+# Normalizacion de finales de linea. Sin esto, cada `git diff` en Windows escupia 26 avisos de
+# "LF will be replaced by CRLF" y el ruido tapaba lo que importaba.
+# `text=auto eol=lf`: en el repositorio SIEMPRE LF; en el working tree, lo que el SO use.
+* text=auto eol=lf
+
+# Binarios: nunca tocar.
+*.png binary
+*.ico binary
+*.zip binary
+*.asar binary
+
+# El lockfile es generado: no ensucia las revisiones.
+pnpm-lock.yaml linguist-generated=true -diff

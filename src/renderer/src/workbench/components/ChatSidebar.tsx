@@ -1,0 +1,554 @@
+import { useMemo, useState } from 'react';
+import { Icon } from './Icon';
+import { AnimatePresence } from 'motion/react';
+import { selectAccount, useWorkbenchStore } from '../workbenchStore';
+import type { Account, ChatStatus, Tab } from '../types';
+import type { ConversationSummary } from '@shared/conversations';
+import { filterConversationRows, mergeConversationRows, type ConversationRow } from '../conversationList';
+import { backgroundLabel, type BackgroundSession } from '../backgroundWork';
+import { ConversationContextMenu, type ConversationTarget } from './ConversationContextMenu';
+import type { ConversationPrivacy } from '@shared/state';
+
+// Estado del menu contextual abierto (posicion + conversacion objetivo).
+interface MenuState {
+  readonly target: ConversationTarget;
+  readonly x: number;
+  readonly y: number;
+  // La fila del HISTORIAL sobre la que se abrio el menu, si venia de ahi. Es lo que hace falta para
+  // "Abrir en una pestaña nueva": `ConversationTarget` no lleva cwd/configDir/updatedAtMs, y
+  // `openConversation` los necesita para reanudar con `--resume` en vez de abrir una pestaña vacia.
+  readonly item: ConversationSummary | undefined;
+}
+
+// Nº de conversaciones visibles por seccion antes de "mostrar más" (#1 de AJUSTES) y tamaño del
+// incremento de cada pulsacion: se revela DE 10 EN 10, no todo de golpe (feedback GUI A1).
+const COLLAPSED_LIMIT = 5;
+const REVEAL_STEP = 10;
+
+// Sidebar (252px): cabecera de cuenta (alias/email/modelo) y lista de pestanas/conversaciones de la
+// cuenta activa. El resumen de uso vive solo en el panel "Uso" del dock y en el hover de la StatusBar
+// (feedback del usuario: repetirlo aqui tambien era redundante). Una pestana = una conversacion real.
+export function ChatSidebar(): React.JSX.Element {
+  const account = useWorkbenchStore((s) => selectAccount(s, s.activeAccountId));
+  // Estado bruto (referencias estables) + useMemo para derivar. Nunca pasar a useWorkbenchStore un
+  // selector que devuelva un array nuevo por render (bucle infinito en Zustand v5).
+  const tabs = useWorkbenchStore((s) => s.tabs);
+  const activeAccountId = useWorkbenchStore((s) => s.activeAccountId);
+  const activeTabId = useWorkbenchStore((s) => s.activeTabId);
+  const statusByChat = useWorkbenchStore((s) => s.statusByChat);
+  const sessionIdByChat = useWorkbenchStore((s) => s.sessionIdByChat);
+  const conversationHistory = useWorkbenchStore((s) => s.conversationHistory);
+  // Sesiones que siguen vivas sin pestaña (cerrar con trabajo en vuelo no lo corta): su fila del
+  // historial lo dice, que es donde el usuario decidio verlo.
+  const backgroundSessions = useWorkbenchStore((s) => s.backgroundSessions);
+  const setActiveTab = useWorkbenchStore((s) => s.setActiveTab);
+  const createConversation = useWorkbenchStore((s) => s.createConversation);
+  const openNewTabDialog = useWorkbenchStore((s) => s.openNewTabDialog);
+  const openConversation = useWorkbenchStore((s) => s.openConversation);
+  const renameTab = useWorkbenchStore((s) => s.renameTab);
+  const deleteAccount = useWorkbenchStore((s) => s.deleteAccount);
+  const accounts = useWorkbenchStore((s) => s.accounts);
+  const deleteConversation = useWorkbenchStore((s) => s.deleteConversation);
+  const moveConversation = useWorkbenchStore((s) => s.moveConversation);
+  // Menu contextual (clic derecho, #2). Objetivo + posicion; null cuando esta cerrado.
+  const [menu, setMenu] = useState<MenuState | null>(null);
+  const openMenu = (target: ConversationTarget, x: number, y: number, item?: ConversationSummary): void =>
+    setMenu({ target, x, y, item });
+  // Dos secciones (M2.6): compartido (por defecto) y privado. Cada una fusiona el HISTORIAL en disco
+  // con las pestanas ABIERTAS. useMemo sobre estado bruto (nunca un selector que devuelva array nuevo
+  // por render -> bucle en Zustand v5).
+  // Busqueda de conversaciones (#4 de AJUSTES): filtra ambas secciones por titulo.
+  const [search, setSearch] = useState('');
+  const sharedRows = useMemo(
+    () => filterConversationRows(mergeConversationRows(tabs, conversationHistory, sessionIdByChat, activeAccountId, 'shared'), search),
+    [tabs, conversationHistory, sessionIdByChat, activeAccountId, search],
+  );
+  const privateRows = useMemo(
+    () => filterConversationRows(mergeConversationRows(tabs, conversationHistory, sessionIdByChat, activeAccountId, 'private'), search),
+    [tabs, conversationHistory, sessionIdByChat, activeAccountId, search],
+  );
+  if (account === undefined) {
+    return (
+      <div className="flex h-full w-full items-center justify-center bg-mg-panel p-4 text-center text-[11px] text-mg-muted">
+        Descubriendo cuentas…
+      </div>
+    );
+  }
+
+  return (
+    // Sin ancho ni borde propios (F6: el ancho lo fija la zona del dock via CSS var y el borde ya lo
+    // pinta ZonePane.tsx, borderClassName — duplicarlo aqui solo grosaba la linea) y CON alto completo
+    // (h-full) — sin esto, este panel solo media lo que medía su contenido (la lista de conversaciones),
+    // dejando un hueco de fondo sin pintar antes del suelo de la ventana.
+    <div className="flex h-full w-full flex-col bg-mg-panel">
+      {/* Sin boton « de "ocultar panel" (Ronda 3, item 17): era el tercer disparador de lo mismo, y el
+          unico que ademas no decia donde vuelve a aparecer el panel. El icono de la stripe/rail es el
+          control unico de visibilidad. */}
+      <header className="flex items-center gap-[9px] border-b border-mg-border-subtle p-[11px_12px]">
+        <span aria-hidden="true" className="h-2 w-2 rounded-[3px]" style={{ background: account.accent.base }} />
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-[12.5px] font-bold text-mg-text">{account.alias}</div>
+          <div className="truncate text-[10px] text-mg-ter">
+            {account.email ?? 'sin email'} · {account.defaultModel}
+          </div>
+        </div>
+      </header>
+
+      {/* Cuenta huérfana (sin login y no principal): permitir eliminarla para no dejarla a medias. */}
+      {!account.isMain && account.loginStatus !== 'logged_in' && (
+        <OrphanBanner account={account} onDelete={deleteAccount} />
+      )}
+
+      <div className="border-b border-mg-border-subtle p-[8px_10px]">
+        <div className="flex items-center gap-[6px] rounded-[7px] border border-mg-border-ctrl bg-mg-window px-[8px] py-[5px] focus-within:border-mg-border-pop">
+          <span aria-hidden="true" className="text-[11px] text-mg-muted">⌕</span>
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Buscar conversaciones…"
+            aria-label="Buscar conversaciones"
+            className="min-w-0 flex-1 bg-transparent text-[11.5px] text-mg-body placeholder:text-mg-muted outline-none"
+          />
+          {search.length > 0 && (
+            <button
+              onClick={() => setSearch('')}
+              aria-label="Limpiar búsqueda"
+              className="flex-none text-[11px] text-mg-muted hover:text-mg-body"
+            >
+              ✕
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div className="flex flex-1 flex-col gap-[10px] overflow-y-auto p-[6px] text-[12px]">
+        <ConversationSection
+          icon="◇"
+          title="COMPARTIDO"
+          rows={sharedRows}
+          expandedByDefault={search.length > 0}
+          account={account}
+          activeTabId={activeTabId}
+          statusByChat={statusByChat}
+          sessionIdByChat={sessionIdByChat}
+          backgroundSessions={backgroundSessions}
+          onSelect={setActiveTab}
+          onOpen={openConversation}
+          onRename={renameTab}
+          onContextMenu={openMenu}
+          onCreate={() => void createConversation('shared')}
+          onCreateWithOptions={openNewTabDialog}
+          emptyHint={search.length > 0 ? 'Sin coincidencias.' : 'Sin conversaciones compartidas.'}
+        />
+        <ConversationSection
+          icon={<Icon name="lock" size={12} />}
+          title="PRIVADO"
+          rows={privateRows}
+          expandedByDefault={search.length > 0}
+          account={account}
+          activeTabId={activeTabId}
+          statusByChat={statusByChat}
+          sessionIdByChat={sessionIdByChat}
+          backgroundSessions={backgroundSessions}
+          onSelect={setActiveTab}
+          onOpen={openConversation}
+          onRename={renameTab}
+          onContextMenu={openMenu}
+          onCreate={() => void createConversation('private')}
+          onCreateWithOptions={openNewTabDialog}
+          emptyHint={search.length > 0 ? 'Sin coincidencias.' : 'Sin conversaciones privadas.'}
+        />
+      </div>
+
+      <AnimatePresence>
+        {menu !== null && (
+          <ConversationContextMenu
+            key="conversation-context-menu"
+            target={menu.target}
+            x={menu.x}
+            y={menu.y}
+            accounts={accounts}
+            activeAccountId={activeAccountId}
+            onClose={() => setMenu(null)}
+            onOpenInNewTab={
+              menu.item === undefined
+                ? undefined
+                : () => {
+                    const item = menu.item;
+                    if (item !== undefined) void openConversation(item);
+                    setMenu(null);
+                  }
+            }
+            onDelete={() => {
+              void deleteConversation(menu.target.sessionId ?? '', menu.target.cwd, menu.target.privacy);
+              setMenu(null);
+            }}
+            onMove={(destAccountDir: string, destPrivacy: ConversationPrivacy) => {
+              void moveConversation(menu.target.sessionId ?? '', menu.target.cwd, menu.target.privacy, destAccountDir, destPrivacy);
+              setMenu(null);
+            }}
+          />
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+// Aviso de cuenta huérfana (sin login) con confirmación EN LA APP (no dialogo nativo del SO).
+function OrphanBanner({
+  account,
+  onDelete,
+}: {
+  readonly account: Account;
+  readonly onDelete: (configDir: string) => Promise<void>;
+}): React.JSX.Element {
+  const [confirming, setConfirming] = useState(false);
+
+  if (!confirming) {
+    return (
+      <div className="flex items-center justify-between gap-[8px] border-b border-mg-border-subtle bg-mg-danger-bg p-[7px_12px] text-[10.5px] text-mg-danger">
+        <span>Cuenta sin login válido.</span>
+        <button
+          onClick={() => setConfirming(true)}
+          className="rounded-[6px] border border-mg-danger-border px-[8px] py-[3px] text-mg-danger hover:bg-mg-danger-bg"
+        >
+          Eliminar
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-[7px] border-b border-mg-border-subtle bg-mg-danger-bg p-[8px_12px] text-[10.5px] text-mg-danger">
+      <span>
+        ¿Eliminar <b>{account.alias}</b>? Se borra su carpeta de config; los datos compartidos NO se
+        tocan.
+      </span>
+      <div className="flex justify-end gap-[6px]">
+        <button
+          onClick={() => setConfirming(false)}
+          className="rounded-[6px] border border-mg-border-emph px-[8px] py-[3px] text-mg-body2 hover:bg-mg-hover"
+        >
+          Cancelar
+        </button>
+        <button
+          onClick={() => void onDelete(account.id)}
+          className="rounded-[6px] bg-mg-danger-strong px-[8px] py-[3px] font-semibold text-mg-danger-ink hover:bg-mg-danger-strong-hover"
+        >
+          Sí, eliminar
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function SectionLabel({
+  icon,
+  text,
+  hint,
+}: {
+  readonly icon: React.ReactNode;
+  readonly text: string;
+  readonly hint: string;
+}): React.JSX.Element {
+  return (
+    <div className="flex items-center gap-[7px] p-[8px_8px_4px] text-[10px] font-bold tracking-[.08em] text-mg-ter">
+      <span>{icon}</span>
+      {text}
+      <span className="ml-auto truncate font-normal text-mg-muted">{hint}</span>
+    </div>
+  );
+}
+
+// Una seccion de conversaciones (M2.6): compartido o privado. Fusiona el historial en disco con las
+// pestanas abiertas (rows) y ofrece su propio boton de "nueva conversacion" (sin dialogo).
+function ConversationSection({
+  icon,
+  title,
+  rows,
+  expandedByDefault,
+  account,
+  activeTabId,
+  statusByChat,
+  sessionIdByChat,
+  backgroundSessions,
+  onSelect,
+  onOpen,
+  onRename,
+  onContextMenu,
+  onCreate,
+  onCreateWithOptions,
+  emptyHint,
+}: {
+  readonly icon: React.ReactNode;
+  readonly title: string;
+  readonly rows: readonly ConversationRow[];
+  readonly expandedByDefault: boolean; // al buscar, se muestran todas las coincidencias sin cap
+  readonly account: Account;
+  readonly activeTabId: string;
+  readonly statusByChat: Readonly<Record<string, ChatStatus>>;
+  readonly sessionIdByChat: Readonly<Record<string, string>>;
+  readonly backgroundSessions: Readonly<Record<string, BackgroundSession>>;
+  readonly onSelect: (tabId: string) => void;
+  readonly onOpen: (item: ConversationSummary) => void;
+  readonly onRename: (tabId: string, title: string) => void;
+  readonly onContextMenu: (target: ConversationTarget, x: number, y: number, item?: ConversationSummary) => void;
+  readonly onCreate: () => void;
+  readonly onCreateWithOptions: () => void;
+  readonly emptyHint: string;
+}): React.JSX.Element {
+  // Tope inicial de 5 y luego +10 por pulsacion (#1 + A1). Al buscar se muestran todas las
+  // coincidencias sin tope (el filtro ya reduce la lista).
+  const [limit, setLimit] = useState(COLLAPSED_LIMIT);
+  const showAll = expandedByDefault;
+  const visible = showAll ? rows : rows.slice(0, limit);
+  const hidden = rows.length - visible.length;
+  const nextStep = Math.min(hidden, REVEAL_STEP);
+  return (
+    <section className="flex flex-col gap-px">
+      <SectionLabel icon={icon} text={title} hint={`${rows.length}`} />
+      {rows.length === 0 && <div className="p-[8px_9px] text-[11px] text-mg-muted">{emptyHint}</div>}
+      {visible.map((row) =>
+        row.kind === 'tab' ? (
+          <TabItem
+            key={row.tab.id}
+            tab={row.tab}
+            status={statusByChat[row.tab.id] ?? 'idle'}
+            account={account}
+            selected={row.tab.id === activeTabId}
+            onClick={() => onSelect(row.tab.id)}
+            onRename={onRename}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              onContextMenu(
+                { sessionId: sessionIdByChat[row.tab.id] ?? row.tab.resumeSessionId, cwd: row.tab.cwd, privacy: row.tab.privacy, title: row.tab.title },
+                e.clientX,
+                e.clientY,
+              );
+            }}
+          />
+        ) : (
+          <HistoryItem
+            key={`h:${row.item.sessionId}`}
+            item={row.item}
+            account={account}
+            background={backgroundSessions[row.item.sessionId]}
+            onOpen={() => onOpen(row.item)}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              onContextMenu(
+                { sessionId: row.item.sessionId, cwd: row.item.cwd, privacy: row.item.privacy, title: row.item.title },
+                e.clientX,
+                e.clientY,
+                row.item,
+              );
+            }}
+          />
+        ),
+      )}
+      {!showAll && hidden > 0 && (
+        <button
+          onClick={() => setLimit((current) => current + REVEAL_STEP)}
+          className="mx-[2px] mt-[2px] rounded-[6px] p-[5px_9px] text-left text-[11px] text-mg-icon transition-colors duration-150 ease-out hover:bg-mg-hover hover:text-mg-body"
+        >
+          Mostrar {nextStep} más… <span className="text-mg-muted">({hidden} restantes)</span>
+        </button>
+      )}
+      {!showAll && limit > COLLAPSED_LIMIT && (
+        <button
+          onClick={() => setLimit(COLLAPSED_LIMIT)}
+          className="mx-[2px] mt-[2px] rounded-[6px] p-[5px_9px] text-left text-[11px] text-mg-icon transition-colors duration-150 ease-out hover:bg-mg-hover hover:text-mg-body"
+        >
+          Mostrar menos
+        </button>
+      )}
+      {/* Camino POR DEFECTO: carpeta temporal y valores por defecto, sin formulario. El dialogo de
+          "elegir cuenta/carpeta/proveedor/modelo" sigue ahi, como accion SECUNDARIA (clic derecho),
+          igual que el resto de menus contextuales de la app. */}
+      <button
+        onClick={onCreate}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          onCreateWithOptions();
+        }}
+        data-tip="Nueva conversación · clic derecho para elegir carpeta y modelo"
+        aria-label="Nueva conversación (clic derecho: elegir carpeta y modelo)"
+        className="mx-[2px] mt-[6px] rounded-[7px] border border-dashed border-mg-border-emph p-[6px_10px] text-center text-[11px] text-mg-icon transition-colors duration-150 ease-out hover:bg-mg-hover"
+      >
+        ＋ nueva conversación
+      </button>
+    </section>
+  );
+}
+
+// Entrada de HISTORIAL (conversacion en disco no abierta): al pulsar, la reanuda (abre pestana).
+function HistoryItem({
+  item,
+  account,
+  background,
+  onOpen,
+  onContextMenu,
+}: {
+  readonly item: ConversationSummary;
+  readonly account: Account;
+  // Presente = esta conversacion se cerro con trabajo en vuelo y su CLI sigue vivo.
+  readonly background: BackgroundSession | undefined;
+  readonly onOpen: () => void;
+  readonly onContextMenu: (e: React.MouseEvent) => void;
+}): React.JSX.Element {
+  const state = background?.state;
+  return (
+    <button
+      onClick={onOpen}
+      onContextMenu={onContextMenu}
+      data-tip={background === undefined ? item.title : `${item.title} · ${backgroundLabel(background.state)} (se corta y se reanuda al abrirla)`}
+      aria-label={background === undefined ? item.title : `${item.title}, ${backgroundLabel(background.state)}`}
+      className="flex items-center gap-2 rounded-[6px] p-[7px_9px] text-left transition-colors duration-150 ease-out hover:bg-mg-hover"
+    >
+      <span
+        aria-hidden="true"
+        className={`h-[6px] w-[6px] flex-none rounded-full ${state === 'working' ? 'bg-mg-activity mg-pulse' : 'bg-mg-idle'}`}
+        style={{ borderColor: account.accent.base }}
+      />
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-mg-sec">{item.title}</span>
+        <span className="block truncate text-[10px] text-mg-muted">
+          {background === undefined ? relativeTime(item.updatedAtMs) : backgroundLabel(background.state)}
+          {/* El PESO de la conversacion (peticion del usuario): dice de un vistazo cual es la larga y
+              cual la de dos mensajes, y cuanto va a tardar en reabrirse. Solo acompaña a la fecha —
+              cuando la fila dice algo mas urgente ("en segundo plano"), no compite con ello. */}
+          {background === undefined && item.sizeBytes > 0 && (
+            <>
+              <span aria-hidden="true"> · </span>
+              <span title={`${item.sizeBytes.toLocaleString('es-ES')} bytes en disco`}>{formatSize(item.sizeBytes)}</span>
+            </>
+          )}
+        </span>
+      </span>
+      {/* Solo las dos que piden algo del usuario llevan pastilla; "en segundo plano" ya se ve en el
+          punto que late y en la linea de abajo. */}
+      {(state === 'needs_action' || state === 'done') && (
+        <span
+          data-background-badge={state}
+          className={`rounded-full border px-[6px] py-px text-[9.5px] font-bold ${
+            state === 'needs_action' ? 'border-mg-warn-border text-mg-warn-text' : 'border-mg-focus text-mg-text'
+          }`}
+        >
+          {state === 'needs_action' ? 'ACCIÓN' : 'REVISAR'}
+        </span>
+      )}
+    </button>
+  );
+}
+
+// Peso del fichero de la conversacion, compacto. Un decimal solo por debajo de 10 para que la columna
+// no baile: "9,4 kB" y "940 kB" ocupan casi lo mismo, pero "1024 kB" frente a "1 MB" no.
+function formatSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  const kb = bytes / 1024;
+  if (kb < 1024) return kb < 10 ? `${kb.toFixed(1).replace('.', ',')} kB` : `${Math.round(kb)} kB`;
+  const mb = kb / 1024;
+  return mb < 10 ? `${mb.toFixed(1).replace('.', ',')} MB` : `${Math.round(mb)} MB`;
+}
+
+// Tiempo relativo compacto (es) para la entrada de historial. Sin libs: umbrales simples.
+function relativeTime(ms: number): string {
+  const diff = Date.now() - ms;
+  const min = Math.floor(diff / 60_000);
+  if (min < 1) return 'ahora';
+  if (min < 60) return `hace ${min} min`;
+  const hours = Math.floor(min / 60);
+  if (hours < 24) return `hace ${hours} h`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `hace ${days} d`;
+  return new Date(ms).toISOString().slice(0, 10);
+}
+
+function TabItem({
+  tab,
+  status,
+  account,
+  selected,
+  onClick,
+  onRename,
+  onContextMenu,
+}: {
+  readonly tab: Tab;
+  readonly status: ChatStatus; // estado real del motor para esa pestana
+  readonly account: Account;
+  readonly selected: boolean;
+  readonly onClick: () => void;
+  readonly onRename: (tabId: string, title: string) => void;
+  readonly onContextMenu: (e: React.MouseEvent) => void;
+}): React.JSX.Element {
+  const active = status === 'streaming' || status === 'needs_permission';
+  const [editing, setEditing] = useState(false);
+  const commit = (value: string): void => {
+    setEditing(false);
+    onRename(tab.id, value);
+  };
+
+  // Modo edicion de titulo (doble clic): input inline en vez del boton (no anidar input en button).
+  if (editing) {
+    return (
+      <div
+        style={{ borderLeft: `2px solid ${account.accent.base}` }}
+        className="flex items-center gap-2 rounded-[6px] bg-mg-sel p-[7px_9px]"
+      >
+        <span aria-hidden="true" className="h-[6px] w-[6px] flex-none rounded-full bg-mg-idle" />
+        <input
+          autoFocus
+          defaultValue={tab.title}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') commit((e.target as HTMLInputElement).value);
+            else if (e.key === 'Escape') setEditing(false);
+          }}
+          onBlur={(e) => commit(e.target.value)}
+          aria-label="Renombrar conversación"
+          className="min-w-0 flex-1 bg-transparent text-[12px] font-semibold text-mg-text outline-none"
+        />
+      </div>
+    );
+  }
+
+  return (
+    <button
+      onClick={onClick}
+      onDoubleClick={() => setEditing(true)}
+      onContextMenu={onContextMenu}
+      aria-current={selected}
+      aria-label={`${tab.title}, ${tab.provider} ${tab.model}, ${statusLabel(status)}`}
+      data-tip="Doble clic para renombrar · clic derecho para más"
+      style={selected ? { borderLeft: `2px solid ${account.accent.base}` } : undefined}
+      className={`flex items-center gap-2 rounded-[6px] p-[7px_9px] text-left transition-colors duration-150 ease-out ${selected ? 'bg-mg-sel' : 'hover:bg-mg-hover'}`}
+    >
+      <span aria-hidden="true" className={`h-[6px] w-[6px] flex-none rounded-full ${active ? 'bg-mg-activity mg-pulse' : 'bg-mg-idle'}`} />
+      <span className="min-w-0 flex-1">
+        <span className={`block truncate font-semibold ${selected ? 'text-mg-text' : 'text-mg-body2'}`}>
+          {tab.title}
+        </span>
+        <span className="block truncate text-[10px] text-mg-ter">
+          {tab.provider} · {tab.model}
+        </span>
+      </span>
+      {status === 'needs_permission' && (
+        <span className="rounded-full border border-mg-focus px-[6px] py-px text-[9.5px] font-bold text-mg-text">PERMISO</span>
+      )}
+    </button>
+  );
+}
+
+// Estado de la conversacion en palabras (para el nombre accesible de la pestaña del sidebar).
+function statusLabel(status: ChatStatus): string {
+  switch (status) {
+    case 'streaming':
+      return 'generando';
+    case 'needs_permission':
+      return 'permiso pendiente';
+    case 'error':
+      return 'error';
+    default:
+      return 'en espera';
+  }
+}
+

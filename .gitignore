@@ -1,0 +1,35 @@
+# Dependencias
+node_modules/
+
+# Build / artefactos de electron-vite y electron-builder
+out/
+dist/
+release/
+*.tsbuildinfo
+
+# Credenciales y secretos — NUNCA commitear (invariante de seguridad)
+.credentials.json
+*.credentials.json
+.env
+.env.*
+
+# Logs y temporales
+*.log
+npm-debug.log*
+
+# SO
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+
+# Informe de cobertura (regenerable con `pnpm test:coverage`)
+coverage/
+
+# Artefactos de la verificacion GUI (informes, capturas y perfil aislado)
+.verify-out/
+
+# Grafo de conocimiento generado por graphify (regenerable con `graphify update .`)
+graphify-out/

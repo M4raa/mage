@@ -1,0 +1,491 @@
+@import 'tailwindcss';
+
+/* Sistema de diseno de Mage — Workbench. Base neutra en gris; tema conmutable claro/oscuro (M3).
+   Los tokens `mg-*` viven como variables CSS: el bloque @theme son los valores OSCUROS por defecto
+   (Tailwind v4 genera las utilidades `bg-mg-*`/`text-mg-*`/... que resuelven var(--color-mg-*) en
+   runtime). El tema claro SOLO sobrescribe esas variables bajo `:root[data-theme='light']`, sin tocar
+   ninguna className. Los unicos colores cromaticos siguen siendo acentos POR CUENTA (inline, data-driven)
+   y las series de graficas/estado (variables `--mg-*` mas abajo). NO usar `@theme inline` (inlinearia
+   los valores y romperia el override por variable). */
+@theme {
+  /* Fondos */
+  --color-mg-window: #141414;
+  --color-mg-rail: #131313;
+  --color-mg-panel: #1a1a1a;
+  --color-mg-block: #1c1c1c;
+  --color-mg-tool: #191919;
+  --color-mg-code: #141414;
+  --color-mg-popover: #222222;
+  --color-mg-sel: #2a2a2a;
+
+  /* Bordes */
+  --color-mg-border: #242424;
+  --color-mg-border-subtle: #222222;
+  --color-mg-border-ctrl: #2e2e2e;
+  --color-mg-border-emph: #333333;
+  --color-mg-border-pop: #3a3a3a;
+
+  /* Texto */
+  --color-mg-text: #f0f0f0;
+  --color-mg-body: #dcdcdc;
+  --color-mg-body2: #cfcfcf;
+  --color-mg-sec: #9a9a9a;
+  --color-mg-sec2: #bdbdbd;
+  --color-mg-ter: #8a8a8a;
+  --color-mg-muted: #6e6e6e;
+  --color-mg-disabled: #5f5f5f;
+
+  /* Neutros funcionales */
+  --color-mg-activity: #bdbdbd;
+  --color-mg-idle: #4a4a4a;
+  --color-mg-focus: #d8d8d8;
+  /* Anillo de foco (a11y): tono sutil, NO el acento casi-blanco de --color-mg-focus (rectangulo feo). */
+  --color-mg-focus-ring: #5a6072;
+  --color-mg-track: #2c2c2c;
+  --color-mg-fill: #8f8f8f;
+  --color-mg-primary: #e6e6e6;
+  --color-mg-primary-ink: #161616;
+
+  /* Semanticos de UI (M3, antes literales dispersos) */
+  --color-mg-hover: #202020; /* fondo de hover en superficies */
+  --color-mg-icon: #7a7a7a; /* iconos/glifos muted */
+  --color-mg-tooltip: #222222; /* fondo de tooltip (texto claro en ambos temas) */
+  /* Tinta del tooltip. Existe porque su fondo es OSCURO EN LOS DOS TEMAS a proposito, asi que el texto
+     no puede salir de `--color-mg-body`: en el tema claro `body` es casi negro y la burbuja quedaba
+     negro sobre negro, ilegible (reportado el 2026-09-21 con capturas). Es clara en los dos bloques. */
+  --color-mg-tooltip-ink: #ededed;
+  --color-mg-scrim: rgba(0, 0, 0, 0.5); /* velo de los modales */
+
+  /* Semanticos de error/peligro (cluster reutilizado) */
+  --color-mg-danger: #e0a0a0; /* texto de error */
+  --color-mg-danger-emph: #c0504d; /* borde de campo invalido */
+  --color-mg-danger-border: #5a3030; /* borde de caja de error */
+  --color-mg-danger-bg: #241a1a; /* fondo de caja de error */
+  --color-mg-danger-ink: #f0c0c0; /* texto de error enfatizado */
+
+  /* Peligro "fuerte" (boton destructivo) */
+  --color-mg-danger-strong: #5a3030;
+  --color-mg-danger-strong-hover: #6a3838;
+
+  /* Aviso ambar (skin de contexto medio) */
+  --color-mg-warn-text: #e0c98a;
+  --color-mg-warn-border: #5a5030;
+  --color-mg-warn-bg: #242017;
+
+  /* Diff: texto + FONDO de linea (2026-09-18). El fondo es lo que hace que una insercion y un
+     borrado se distingan de un vistazo sin leer el signo, como en Claude Code. Muy desaturados: el
+     diff lleva encima resaltado de sintaxis y un fondo fuerte se lo comeria. */
+  --color-mg-diff-add: #7cc79c;
+  --color-mg-diff-del: #e0a0a0;
+  --color-mg-diff-add-bg: #14301f;
+  --color-mg-diff-del-bg: #351b1b;
+}
+
+/* Variables consumidas SOLO via var() en JS/SVG (graficas, estado, sombras). Van en :root (no en
+   @theme) para que Tailwind no las descarte por no estar referenciadas en ninguna utilidad. Valores
+   OSCUROS por defecto; el override claro esta mas abajo. */
+:root {
+  color-scheme: dark;
+
+  /* Sombras */
+  --mg-shadow-modal: 0 18px 50px rgba(0, 0, 0, 0.6);
+  --mg-shadow-pop: 0 10px 30px rgba(0, 0, 0, 0.5);
+
+  /* Radio de las ISLAS (paneles de los bordes, dock de abajo, barra de estado, el centro). UN solo
+     numero para todas: si cada isla elige el suyo, el conjunto se ve descuadrado. Es un redondeo
+     LIGERO a proposito — la app es una rejilla de superficies pegadas, no una baraja de tarjetas.
+     NO es el radio de los controles (botones, inputs, popovers), que siguen con el suyo propio. */
+  --mg-radius-island: 7px;
+
+  /* Estado del servicio / severidad de uso */
+  --mg-warn: #e0a458;
+  --mg-major: #e0763f;
+  --mg-crit: #e06c6c;
+  --mg-info: #6b9fe8;
+
+  /* Series y estructura de las graficas */
+  --mg-chart-1: #3987e5;
+  --mg-chart-2: #008300;
+  --mg-chart-3: #d55181;
+  --mg-chart-4: #c98500;
+  --mg-chart-event: #ec835a;
+  --mg-chart-grid: #2c2c2a;
+  --mg-chart-baseline: #383835;
+  --mg-chart-axis: #898781;
+  --mg-chart-surface: #1a1a1a;
+  --mg-chart-series-fill: rgba(57, 135, 229, 0.12);
+
+  /* Acentos POR CUENTA (asignados por indice en accountView). Como variables -> conmutan con el tema
+     sin recolorear en JS. 6 acentos x {base, tint, bg-active, border-inactive}. Valores OSCUROS. */
+  --mg-accent-0-base: #e08256; --mg-accent-0-tint: #e8a37f; --mg-accent-0-bg-active: #241b16; --mg-accent-0-border-inactive: #e08256; /* naranja */
+  --mg-accent-1-base: #6b9fe8; --mg-accent-1-tint: #8db1ea; --mg-accent-1-bg-active: #161c26; --mg-accent-1-border-inactive: #3d5f94; /* azul */
+  --mg-accent-2-base: #57b07a; --mg-accent-2-tint: #7cc79c; --mg-accent-2-bg-active: #14201a; --mg-accent-2-border-inactive: #34694a; /* verde */
+  --mg-accent-3-base: #a884e0; --mg-accent-3-tint: #c0a6ea; --mg-accent-3-bg-active: #1e1826; --mg-accent-3-border-inactive: #6a4f94; /* morado */
+  --mg-accent-4-base: #e0768f; --mg-accent-4-tint: #eaa0b0; --mg-accent-4-bg-active: #26161b; --mg-accent-4-border-inactive: #94465a; /* rosa */
+  --mg-accent-5-base: #56b8b0; --mg-accent-5-tint: #7cccc6; --mg-accent-5-bg-active: #14201f; --mg-accent-5-border-inactive: #34696a; /* turquesa */
+}
+
+/* --- Tema CLARO: override de todas las variables (mg-* de @theme + las --mg-* de JS) ------------- */
+:root[data-theme='light'] {
+  color-scheme: light;
+
+  /* Fondos */
+  --color-mg-window: #f4f4f5;
+  --color-mg-rail: #ececed;
+  --color-mg-panel: #ffffff;
+  --color-mg-block: #fafafb;
+  --color-mg-tool: #f2f2f4;
+  --color-mg-code: #f0f0f2;
+  --color-mg-popover: #ffffff;
+  --color-mg-sel: #e4e4e8;
+
+  /* Bordes */
+  --color-mg-border: #e3e3e7;
+  --color-mg-border-subtle: #ececef;
+  --color-mg-border-ctrl: #d7d7dc;
+  --color-mg-border-emph: #cacace;
+  --color-mg-border-pop: #bdbdc4;
+
+  /* Texto (oscuro sobre claro; contraste AA) */
+  --color-mg-text: #18181b;
+  --color-mg-body: #27272a;
+  --color-mg-body2: #3f3f46;
+  --color-mg-sec: #6b6b73;
+  --color-mg-sec2: #52525b;
+  --color-mg-ter: #78787f;
+  --color-mg-muted: #9797a0;
+  --color-mg-disabled: #b1b1b8;
+
+  /* Neutros funcionales (invertidos) */
+  --color-mg-activity: #52525b;
+  --color-mg-idle: #c6c6cb;
+  --color-mg-focus: #27272a;
+  --color-mg-focus-ring: #9aa0b4;
+  --color-mg-track: #e3e3e7;
+  --color-mg-fill: #71717a;
+  --color-mg-primary: #18181b;
+  --color-mg-primary-ink: #f7f7f8;
+
+  /* Semanticos de UI */
+  --color-mg-hover: #e9e9ee;
+  --color-mg-icon: #86868e;
+  --color-mg-tooltip: #27272a;
+  /* CLARA tambien aqui: el fondo de la burbuja sigue siendo oscuro en tema claro (ver arriba). */
+  --color-mg-tooltip-ink: #f4f4f5;
+  --color-mg-scrim: rgba(0, 0, 0, 0.35);
+
+  /* Error/peligro (rojos legibles sobre claro) */
+  --color-mg-danger: #b42318;
+  --color-mg-danger-emph: #d92d20;
+  --color-mg-danger-border: #f4bcbc;
+  --color-mg-danger-bg: #fef3f2;
+  --color-mg-danger-ink: #7a271a;
+
+  /* Peligro fuerte */
+  --color-mg-danger-strong: #d92d20;
+  --color-mg-danger-strong-hover: #b42318;
+
+  /* Aviso ambar */
+  --color-mg-warn-text: #92610a;
+  --color-mg-warn-border: #f0d9a0;
+  --color-mg-warn-bg: #fef8ec;
+
+  /* Diff */
+  --color-mg-diff-add: #067647;
+  --color-mg-diff-del: #b42318;
+  --color-mg-diff-add-bg: #e7f6ec;
+  --color-mg-diff-del-bg: #fdeceb;
+
+  /* Sombras (mas suaves en claro) */
+  --mg-shadow-modal: 0 18px 50px rgba(0, 0, 0, 0.18);
+  --mg-shadow-pop: 0 10px 30px rgba(0, 0, 0, 0.15);
+
+  /* Estado / severidad */
+  --mg-warn: #b25e09;
+  --mg-major: #c2410c;
+  --mg-crit: #d92d20;
+  --mg-info: #2563eb;
+
+  /* Graficas */
+  --mg-chart-1: #2563eb;
+  --mg-chart-2: #067647;
+  --mg-chart-3: #be1858;
+  --mg-chart-4: #b25e09;
+  --mg-chart-event: #d9631f;
+  --mg-chart-grid: #e3e3e7;
+  --mg-chart-baseline: #cacace;
+  --mg-chart-axis: #6b6b73;
+  --mg-chart-surface: #ffffff;
+  --mg-chart-series-fill: rgba(37, 99, 235, 0.1);
+
+  /* Acentos por cuenta — variante CLARA: base/tint mas saturados-oscuros (legibles sobre blanco),
+     bg-active como tinte palido, border-inactive tono medio. */
+  --mg-accent-0-base: #c2410c; --mg-accent-0-tint: #9a3412; --mg-accent-0-bg-active: #fdf0e8; --mg-accent-0-border-inactive: #f0b088; /* naranja */
+  --mg-accent-1-base: #2563eb; --mg-accent-1-tint: #1e40af; --mg-accent-1-bg-active: #eef4fe; --mg-accent-1-border-inactive: #a9c5f0; /* azul */
+  --mg-accent-2-base: #067647; --mg-accent-2-tint: #065f38; --mg-accent-2-bg-active: #eafaf1; --mg-accent-2-border-inactive: #94ccae; /* verde */
+  --mg-accent-3-base: #7c3aed; --mg-accent-3-tint: #5b21b6; --mg-accent-3-bg-active: #f4eefe; --mg-accent-3-border-inactive: #c6adec; /* morado */
+  --mg-accent-4-base: #be1858; --mg-accent-4-tint: #9d174d; --mg-accent-4-bg-active: #fdeef3; --mg-accent-4-border-inactive: #eaa6b8; /* rosa */
+  --mg-accent-5-base: #0e7490; --mg-accent-5-tint: #155e63; --mg-accent-5-bg-active: #e9f9f7; --mg-accent-5-border-inactive: #92cfca; /* turquesa */
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  /* La PAGINA no scrollea nunca: esto es una app de escritorio, y el scroll pertenece a sus areas
+     (el hilo, los paneles, las columnas de iconos), no al documento. Sin esta linea, CUALQUIER caja
+     que se pase de su hueco amplia el area scrollable del documento y saca una barra que mueve la
+     barra de titulo, el prompt y la barra de estado fuera de la vista — sintoma que este proyecto ya
+     ha pagado TRES veces, cada una por un culpable distinto (los iconos del rail, la barra derecha y
+     el envoltorio no-encogible de la zona 'a' del borde). Se arregla la causa de cada una igual, pero
+     el fallo deja de ser catastrofico: como mucho se recorta algo por el borde de la ventana.
+     Los flotantes (tooltips, menus, modales) van todos en `position: fixed`, que NO se recorta. */
+  overflow: hidden;
+}
+
+body {
+  background-color: var(--color-mg-window);
+  color: var(--color-mg-body);
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  font-size: 12px;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Utilidades de sombra tematizadas (box-shadow no encaja en el namespace de color de Tailwind). */
+.mg-shadow-modal {
+  box-shadow: var(--mg-shadow-modal);
+}
+.mg-shadow-pop {
+  box-shadow: var(--mg-shadow-pop);
+}
+
+/* Isla de la interfaz: una superficie de primer nivel del workbench. Solo el radio; el recorte del
+   contenido NO se fuerza aqui porque hay islas (la barra de estado) que sacan popovers por encima de
+   su propio borde y `overflow: hidden` se los comeria. La isla que pinte fondos hasta el borde
+   (una barra de pestañas, por ejemplo) anade ademas `overflow-hidden` en su className. */
+.mg-island {
+  border-radius: var(--mg-radius-island);
+}
+
+/* Animaciones del handoff: pulso de actividad y cursor de streaming. */
+@keyframes mg-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+@keyframes mg-blink {
+  0%,
+  49% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0;
+  }
+}
+.mg-pulse {
+  animation: mg-pulse 1.2s infinite;
+}
+.mg-blink {
+  animation: mg-blink 1s steps(1) infinite;
+}
+
+/* Estado vacio de una conversacion: constelacion de chispas de la marca (la misma estrella de cuatro
+   puntas del icono) que titilan desfasadas, de mayor a menor. Monocromo (currentColor), autocontenida
+   y sin dependencias. El desfase de cada estrella entra por la variable --mg-twinkle-delay. */
+@keyframes mg-twinkle {
+  0%,
+  100% {
+    opacity: 0.16;
+    transform: scale(0.7);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+/* Movimiento reducido (incluye Windows con los "efectos de animacion" desactivados): se cae la
+   escala y queda solo el latido de opacidad — sin desplazamiento, pero la constelacion no queda
+   muerta. */
+@keyframes mg-twinkle-still {
+  0%,
+  100% {
+    opacity: 0.3;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+.mg-sparkle {
+  /* transform-box: sin esto, transform-origin se mide contra el viewBox ENTERO y cada estrella se
+     escala desde la esquina del svg en vez de desde su propio centro. */
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: mg-twinkle 2.8s ease-in-out infinite;
+  animation-delay: var(--mg-twinkle-delay, 0s);
+}
+@media (prefers-reduced-motion: reduce) {
+  .mg-sparkle {
+    animation-name: mg-twinkle-still;
+    animation-duration: 5s;
+  }
+}
+
+/* Accesibilidad (M3) — foco visible global. Muchos controles usan `outline-none` (Tailwind) para el
+   diseño; para la navegacion por teclado se repone un anillo visible SOLO con :focus-visible (no en
+   foco por raton), con el token de tema --color-mg-focus. El !important es una garantia de a11y: gana a
+   los outline-none de los inputs sin tener que tocar cada className. */
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--color-mg-focus-ring) !important;
+  outline-offset: 1px;
+}
+
+/* Barra de scroll propia (#7 de AJUSTES): la nativa de Windows es ancha y desentona con el tema.
+   Fina, sin flechas, con pulgar tematizado que resalta al pasar el raton. Firefox usa las propiedades
+   estandar `scrollbar-*`.
+
+   Ronda 3, item 16 — el pulgar se deriva del color de TEXTO con alpha, no de --color-mg-track:
+   - `--color-mg-track` no esta en el TOKEN_MAP de vscodeTheme.ts, asi que en un tema IMPORTADO se
+     quedaba con el gris base de Mage mientras el resto de la app cambiaba de color (el caso "todo rojo
+     menos la barra"). `--color-mg-body` SI se mapea (editor.foreground/foreground).
+   - Un alpha sobre el color de texto garantiza contraste en CUALQUIER tema por construccion: el texto
+     siempre contrasta con su fondo. Al 50% el pulgar da >=3:1 (contraste de componente de UI) sobre los
+     fondos de los dos temas base: oscuro 4.1:1 sobre --color-mg-panel, claro 3.1:1 sobre blanco.
+   - Radio proporcional al ANCHO PINTADO, no al del carril: con `border: 2px transparent` +
+     `background-clip: padding-box`, de los 10px del carril solo se pintan 6 -> radio 5 (interior 3 =
+     pastilla exacta). La barra de pestañas usa 6px de carril y 1px de borde (4 pintados) -> radio 4.
+   - `background-color` (no el atajo `background`) en los estados: el atajo reinicia `background-clip`
+     y habria que repetirlo en cada regla. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--color-mg-body) 50%, transparent) transparent;
+}
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background-color: color-mix(in srgb, var(--color-mg-body) 50%, transparent);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  border-radius: 5px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background-color: color-mix(in srgb, var(--color-mg-body) 70%, transparent);
+}
+::-webkit-scrollbar-thumb:active {
+  background-color: color-mix(in srgb, var(--color-mg-body) 85%, transparent);
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+/* Barras que se ocultan A PROPOSITO (las columnas de iconos del dock: en 28 px utiles, una barra de 11
+   se come un tercio de la columna; se sigue desplazando con la rueda). Tiene que ser una clase de AQUI y
+   no la utilidad `[scrollbar-width:none]` de Tailwind: la regla `*` de arriba va sin @layer y las
+   utilidades viven en `@layer utilities`, que pierde la cascada contra lo no capado por mucha
+   especificidad que tenga. */
+.mg-noscrollbar {
+  scrollbar-width: none;
+}
+.mg-noscrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+/* Barra de pestañas: scroll horizontal fino y discreto (no roba altura a la barra). */
+.mg-tabscroll {
+  scrollbar-width: thin;
+}
+.mg-tabscroll::-webkit-scrollbar {
+  height: 6px;
+}
+.mg-tabscroll::-webkit-scrollbar-thumb {
+  border-width: 1px;
+  border-radius: 4px;
+}
+
+/* Contenido PLEGADO (mensaje del usuario recortado en el chat): se desvanece por abajo para dejar claro
+   que hay mas texto, sin meter otro borde. Mask sobre el propio contenido -> funciona con cualquier
+   fondo (tema claro/oscuro/importado) porque no pinta ningun degradado de color. */
+.mg-fade-bottom {
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent 100%);
+}
+
+/* Solo para lectores de pantalla: oculto visualmente pero presente en el arbol de accesibilidad
+   (patron estandar de clip). Se usa para dar texto a indicadores solo-color y regiones aria-live. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* --- Input WYSIWYG del prompt (2.7, CodeMirror 6) ------------------------------------------------
+   Los rangos los calcula `promptDecorations.ts` (puro y testeado); aqui solo viven los COLORES, y
+   todos salen de tokens del tema para que conmuten en claro, oscuro y en un tema importado de Open
+   VSX igual que el resto de la app.
+
+   `marker-hidden` es lo que hace el efecto Obsidian: el `- `, el `1. ` o las `##` desaparecen SALVO en
+   la linea donde esta el cursor (eso lo decide el modulo puro, no el CSS). Se usa `font-size: 0` y no
+   `display: none` a proposito: el caracter sigue OCUPANDO su posicion en el documento, asi que el
+   cursor y la seleccion siguen cayendo donde el usuario espera. */
+.cm-mg-marker-hidden {
+  font-size: 0;
+}
+.cm-mg-bullet,
+.cm-mg-ordinal {
+  color: var(--color-mg-ter);
+}
+.cm-mg-strong {
+  font-weight: 700;
+  color: var(--color-mg-text);
+}
+.cm-mg-em {
+  font-style: italic;
+}
+.cm-mg-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: var(--color-mg-code);
+  border-radius: 4px;
+  padding: 0 3px;
+}
+.cm-mg-fence {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--color-mg-sec);
+}
+.cm-mg-h1,
+.cm-mg-h2,
+.cm-mg-h3,
+.cm-mg-h4,
+.cm-mg-h5,
+.cm-mg-h6 {
+  font-weight: 700;
+  color: var(--color-mg-text);
+}
+.cm-mg-h1 {
+  font-size: 1.25em;
+}
+.cm-mg-h2 {
+  font-size: 1.15em;
+}
+.cm-mg-h3 {
+  font-size: 1.07em;
+}

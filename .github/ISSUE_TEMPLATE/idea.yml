@@ -1,0 +1,33 @@
+name: Idea o mejora
+description: Algo que Mage debería hacer, o hacer de otra manera
+labels: [idea]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Cuenta el **problema** que tienes, no solo la solución que imaginas: la mitad de las buenas
+        decisiones de este proyecto salieron de entender el problema de otra manera.
+
+  - type: textarea
+    id: problema
+    attributes:
+      label: Qué problema tienes hoy
+      description: Qué estás intentando hacer y dónde se te atraganta.
+    validations:
+      required: true
+
+  - type: textarea
+    id: idea
+    attributes:
+      label: Qué se te ocurre
+      description: Cómo lo resolverías. Si no lo tienes claro, déjalo en blanco.
+    validations:
+      required: false
+
+  - type: textarea
+    id: alternativas
+    attributes:
+      label: Qué haces mientras tanto
+      description: El apaño que uses ahora dice mucho de lo que hace falta de verdad.
+    validations:
+      required: false

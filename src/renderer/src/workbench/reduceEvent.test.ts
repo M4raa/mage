@@ -1,0 +1,401 @@
+import { describe, expect, it } from 'vitest';
+import type { ContextUsage, MageEvent } from '@shared/events';
+import { reduceEvent, type WorkbenchState } from './workbenchStore';
+import type { Block, Tab } from './types';
+
+const TAB = 'tab-1';
+
+// Estado minimo con lo que el reducer lee. Se castea porque WorkbenchState incluye toda la API de
+// acciones del store, que el reducer no toca (es una funcion pura sobre los mapas por pestana).
+function state(overrides: Partial<WorkbenchState> = {}): WorkbenchState {
+  return {
+    blocksByChat: {},
+    streamingIdByChat: {},
+    statusByChat: {},
+    permissionByChat: {},
+    pendingByChat: {},
+    slashCommandsByChat: {},
+    contextUsageByChat: {},
+    // `tabs` hace falta desde 2.3b: el reducer consulta las reglas "Permitir siempre aqui" de la
+    // conversacion para decidir si la peticion lleva tarjeta o se auto-aprueba.
+    tabs: [],
+    ...overrides,
+  } as WorkbenchState;
+}
+
+// Pestaña minima con lo que lee el reducer. Se castea por el mismo motivo que `state`.
+function tab(overrides: Partial<Tab> = {}): Tab {
+  return { id: TAB, ...overrides } as Tab;
+}
+
+function blocksOf(patch: Partial<WorkbenchState>): readonly Block[] {
+  return patch.blocksByChat?.[TAB] ?? [];
+}
+
+describe('reduceEvent — streaming y bloques', () => {
+  it('reduceEvent_streamDelta_abreBloqueDeAgenteYMarcaStreaming', () => {
+    const patch = reduceEvent(state(), TAB, { kind: 'stream_delta', text: 'hola' });
+
+    expect(blocksOf(patch)).toHaveLength(1);
+    expect(patch.statusByChat?.[TAB]).toBe('streaming');
+    expect(patch.streamingIdByChat?.[TAB]).not.toBeNull();
+  });
+
+  it('reduceEvent_assistantText_noTocaLaConversacionParaNoDuplicarLosDeltas', () => {
+    // El CLI manda los deltas Y LUEGO el mensaje completo. Mage lanza siempre con
+    // --include-partial-messages, asi que el texto ya esta pintado por los deltas: anadir tambien el
+    // mensaje completo lo duplicaria. Este evento SI se usa, pero fuera del reducer (las reglas de
+    // notificacion por regex de notify.ts).
+    const afterDelta = reduceEvent(state(), TAB, { kind: 'stream_delta', text: 'hola mundo' });
+    const withStream = state({
+      blocksByChat: afterDelta.blocksByChat ?? {},
+      streamingIdByChat: afterDelta.streamingIdByChat ?? {},
+    });
+
+    const patch = reduceEvent(withStream, TAB, { kind: 'assistant_text', text: 'hola mundo' });
+
+    expect(patch).toEqual({});
+  });
+
+  it('reduceEvent_error_pintaBloqueDeErrorYDejaLaPestanaEnError', () => {
+    const patch = reduceEvent(state(), TAB, { kind: 'error', message: 'boom' });
+
+    expect(blocksOf(patch).at(-1)).toMatchObject({ kind: 'error', message: 'boom' });
+    expect(patch.statusByChat?.[TAB]).toBe('error');
+    expect(patch.streamingIdByChat?.[TAB]).toBeNull();
+  });
+
+  it('reduceEvent_eventoDeOtroKindNoManejado_noCambiaNada', () => {
+    const patch = reduceEvent(state(), TAB, {
+      kind: 'hook_fired',
+      requestId: 'r1',
+      event: 'UserPromptSubmit',
+      detail: null,
+    });
+
+    expect(patch).toEqual({});
+  });
+});
+
+describe('reduceEvent — permisos', () => {
+  it('reduceEvent_permissionRequest_dejaLaPestanaEsperandoPermiso', () => {
+    const patch = reduceEvent(state(), TAB, {
+      kind: 'permission_request',
+      request: { requestId: 'r1', toolUseId: 't1', toolName: 'Write', input: {}, description: null, requiresUserInteraction: false, displayName: null },
+    });
+
+    expect(patch.statusByChat?.[TAB]).toBe('needs_permission');
+    expect(patch.pendingByChat?.[TAB]).toEqual({ requestId: 'r1', input: {} });
+    expect(patch.permissionByChat?.[TAB]).not.toBeNull();
+    // 2.3b: ademas del panel, la peticion se pinta como TARJETA en el hilo.
+    expect(blocksOf(patch)).toMatchObject([{ kind: 'permission', requestId: 'r1', toolName: 'Write', state: 'pending' }]);
+  });
+
+  it('reduceEvent_permissionRequestRepetido_noDuplicaLaTarjetaDePermiso', () => {
+    // El CLI puede reenviar el mismo can_use_tool: dos tarjetas ofrecerian contestar dos veces lo mismo.
+    const request = { requestId: 'r1', toolUseId: 't1', toolName: 'Write', input: {}, description: null, requiresUserInteraction: false, displayName: null };
+    const first = reduceEvent(state(), TAB, { kind: 'permission_request', request });
+    const second = reduceEvent(state({ blocksByChat: { [TAB]: blocksOf(first) } }), TAB, { kind: 'permission_request', request });
+
+    expect(second.blocksByChat).toBeUndefined();
+  });
+
+  it('reduceEvent_permissionRequestDeToolConReglaSiempre_niTarjetaNiEstadoDePermiso', () => {
+    // "Permitir siempre Write aqui": la peticion queda apuntada (de ahi sale el requestId con el que
+    // `handleEvent` contesta) y NADA MAS — ni tarjeta, ni panel, ni "necesita permiso".
+    const current = state({ tabs: [tab({ alwaysAllowTools: ['Write'] })] });
+
+    const patch = reduceEvent(current, TAB, {
+      kind: 'permission_request',
+      request: { requestId: 'r9', toolUseId: 't9', toolName: 'Write', input: {}, description: null, requiresUserInteraction: false, displayName: null },
+    });
+
+    expect(patch.pendingByChat?.[TAB]).toEqual({ requestId: 'r9', input: {} });
+    expect(patch.blocksByChat).toBeUndefined();
+    expect(patch.permissionByChat).toBeUndefined();
+    expect(patch.statusByChat).toBeUndefined();
+  });
+
+  it('reduceEvent_permissionCancelled_cierraLaTarjetaDePermisoComoCancelada', () => {
+    const request = { requestId: 'r1', toolUseId: 't1', toolName: 'Write', input: {}, description: null, requiresUserInteraction: false, displayName: null };
+    const conTarjeta = reduceEvent(state(), TAB, { kind: 'permission_request', request });
+    const current = state({ blocksByChat: { [TAB]: blocksOf(conTarjeta) }, pendingByChat: { [TAB]: { requestId: 'r1', input: {} } } });
+
+    const patch = reduceEvent(current, TAB, { kind: 'permission_cancelled', requestId: 'r1' });
+
+    expect(blocksOf(patch)).toMatchObject([{ kind: 'permission', state: 'cancelled' }]);
+  });
+
+  it('reduceEvent_permissionCancelledDelPermisoEnCurso_limpiaElDialogo', () => {
+    // Es lo que emite AgentSession cuando el proceso muere con permisos en vuelo (C1): el dialogo no
+    // puede quedarse esperando una respuesta que ya nadie va a leer.
+    const current = state({ pendingByChat: { [TAB]: { requestId: 'r1', input: {} } } });
+
+    const patch = reduceEvent(current, TAB, { kind: 'permission_cancelled', requestId: 'r1' });
+
+    expect(patch.permissionByChat?.[TAB]).toBeNull();
+    expect(patch.pendingByChat?.[TAB]).toBeNull();
+    expect(patch.statusByChat?.[TAB]).toBe('idle');
+  });
+
+  it('reduceEvent_permissionCancelledDeOtroPermiso_noTocaElActual', () => {
+    const current = state({ pendingByChat: { [TAB]: { requestId: 'r1', input: {} } } });
+
+    const patch = reduceEvent(current, TAB, { kind: 'permission_cancelled', requestId: 'otro' });
+
+    expect(patch).toEqual({});
+  });
+});
+
+describe('reduceEvent — AskUserQuestion (2.3)', () => {
+  // El input LITERAL medido en el control_request del CLI.
+  const ASK_INPUT = {
+    questions: [
+      {
+        question: '¿Prefieres el color rojo o el azul?',
+        header: 'Preferencia de color',
+        options: [{ label: 'Rojo', description: '' }, { label: 'Azul', description: '' }],
+        multiSelect: false,
+      },
+    ],
+  };
+
+  const askRequest = (requestId = 'r1'): MageEvent => ({
+    kind: 'permission_request',
+    request: {
+      requestId,
+      toolUseId: 'u1',
+      toolName: 'AskUserQuestion',
+      input: ASK_INPUT,
+      description: null,
+      requiresUserInteraction: true,
+      displayName: 'AskUserQuestion',
+    },
+  });
+
+  it('reduceEvent_permissionRequestDeAskUserQuestion_anadeBloqueQuestionYDejaElPermisoPendiente', () => {
+    // La tarjeta NO sustituye al permiso: es la MISMA peticion, y `pendingByChat` es lo que permite
+    // contestarla (una sola vez) desde la tarjeta.
+    const patch = reduceEvent(state(), TAB, askRequest());
+
+    const question = blocksOf(patch).at(-1);
+    expect(question).toMatchObject({ kind: 'question', requestId: 'r1', state: 'pending', answers: null });
+    expect(patch.pendingByChat?.[TAB]).toEqual({ requestId: 'r1', input: ASK_INPUT });
+    expect(patch.statusByChat?.[TAB]).toBe('needs_permission');
+  });
+
+  it('reduceEvent_permissionRequestNormal_anadeTarjetaDePermisoYNoDePregunta', () => {
+    const patch = reduceEvent(state(), TAB, {
+      kind: 'permission_request',
+      request: {
+        requestId: 'r2',
+        toolUseId: 'u2',
+        toolName: 'Bash',
+        input: { command: 'ls' },
+        description: null,
+        requiresUserInteraction: false,
+        displayName: null,
+      },
+    });
+
+    expect(blocksOf(patch).map((b) => b.kind)).toEqual(['permission']);
+  });
+
+  it('reduceEvent_permissionRequestRepetidoMismoRequestId_noDuplicaElBloque', () => {
+    const first = reduceEvent(state(), TAB, askRequest());
+    const current = state({ blocksByChat: first.blocksByChat ?? {} });
+
+    const second = reduceEvent(current, TAB, askRequest());
+
+    expect(second.blocksByChat).toBeUndefined();
+  });
+
+  it('reduceEvent_permissionCancelled_marcaElBloqueCancelado', () => {
+    const first = reduceEvent(state(), TAB, askRequest());
+    const current = state({
+      blocksByChat: first.blocksByChat ?? {},
+      pendingByChat: { [TAB]: { requestId: 'r1', input: ASK_INPUT } },
+    });
+
+    const patch = reduceEvent(current, TAB, { kind: 'permission_cancelled', requestId: 'r1' });
+
+    expect(blocksOf(patch).at(-1)).toMatchObject({ kind: 'question', state: 'cancelled' });
+    expect(patch.pendingByChat?.[TAB]).toBeNull();
+  });
+
+  it('reduceEvent_subagentsAvailable_seGuardaPorPestana', () => {
+    const patch = reduceEvent(state(), TAB, {
+      kind: 'subagents_available',
+      subagents: [{ name: 'Explore', description: 'Busca', model: null }],
+    });
+
+    expect(patch.subagentsByChat?.[TAB]).toEqual([{ name: 'Explore', description: 'Busca', model: null }]);
+  });
+});
+
+describe('reduceEvent — reinicio automatico (C1)', () => {
+  it('reduceEvent_sessionRestarting_avisaEnLaConversacionYVuelveAIdle', () => {
+    const patch = reduceEvent(state(), TAB, { kind: 'session_restarting', attempt: 2, delayMs: 2_000 });
+
+    const marker = blocksOf(patch).at(-1);
+    expect(marker).toMatchObject({ kind: 'system' });
+    expect(marker?.kind === 'system' && marker.text).toContain('2.0 s');
+    expect(marker?.kind === 'system' && marker.text).toContain('intento 2');
+    // Ni 'error' ni 'streaming': el motor esta reanudando por su cuenta.
+    expect(patch.statusByChat?.[TAB]).toBe('idle');
+    expect(patch.streamingIdByChat?.[TAB]).toBeNull();
+  });
+
+  it('reduceEvent_sessionRestartingConTextoAMedias_cierraElBloqueEnStreaming', () => {
+    const afterDelta = reduceEvent(state(), TAB, { kind: 'stream_delta', text: 'a medio decir' });
+    const withStream = state({
+      blocksByChat: afterDelta.blocksByChat ?? {},
+      streamingIdByChat: afterDelta.streamingIdByChat ?? {},
+    });
+
+    const patch = reduceEvent(withStream, TAB, { kind: 'session_restarting', attempt: 1, delayMs: 1_000 });
+
+    const agent = blocksOf(patch).find((b) => b.kind === 'agent');
+    expect(agent?.kind === 'agent' && agent.streaming).toBe(false);
+  });
+});
+
+describe('reduceEvent — protocolo de control (D2/D3/D4)', () => {
+  it('reduceEvent_sessionInit_guardaLosComandosSinDescripcion', () => {
+    const patch = reduceEvent(state(), TAB, {
+      kind: 'session_init',
+      sessionId: 's1',
+      model: 'sonnet',
+      tools: ['Read', 'Bash', 'Task'],
+      mcpServers: [],
+      slashCommands: ['compact', 'recap'],
+    });
+
+    expect(patch.slashCommandsByChat?.[TAB]).toEqual([
+      { name: 'compact', description: '', argumentHint: null, aliases: [] },
+      { name: 'recap', description: '', argumentHint: null, aliases: [] },
+    ]);
+  });
+
+  it('reduceEvent_commandsAvailable_pisaElCatalogoConLasDescripcionesReales', () => {
+    const current = state({ slashCommandsByChat: { [TAB]: [{ name: 'compact', description: '', argumentHint: null, aliases: [] }] } });
+
+    const patch = reduceEvent(current, TAB, {
+      kind: 'commands_available',
+      commands: [{ name: 'compact', description: 'Compact the conversation', argumentHint: '[instrucciones]', aliases: ['compactar'] }],
+    });
+
+    expect(patch.slashCommandsByChat?.[TAB]).toEqual([
+      { name: 'compact', description: 'Compact the conversation', argumentHint: '[instrucciones]', aliases: ['compactar'] },
+    ]);
+  });
+
+  it('reduceEvent_contextUsage_seGuardaPorPestana', () => {
+    const usage: ContextUsage = {
+      totalTokens: 39_365,
+      maxTokens: 967_000,
+      percentage: 4,
+      categories: [{ name: 'System prompt', tokens: 9_882, isDeferred: false }],
+    };
+
+    const patch = reduceEvent(state(), TAB, { kind: 'context_usage', usage });
+
+    expect(patch.contextUsageByChat?.[TAB]).toBe(usage);
+  });
+
+  it('reduceEvent_noPisaElEstadoDeOtrasPestanas', () => {
+    const current = state({ contextUsageByChat: { otra: { totalTokens: 1, maxTokens: 2, percentage: 3, categories: [] } } });
+    const usage: ContextUsage = { totalTokens: 10, maxTokens: 20, percentage: 50, categories: [] };
+
+    const patch = reduceEvent(current, TAB, { kind: 'context_usage', usage });
+
+    expect(patch.contextUsageByChat?.otra).toEqual({ totalTokens: 1, maxTokens: 2, percentage: 3, categories: [] });
+    expect(patch.contextUsageByChat?.[TAB]).toBe(usage);
+  });
+});
+
+describe('reduceEvent — estado de sesion y compactacion', () => {
+  it('reduceEvent_sessionStateRunning_mapeaAStreaming', () => {
+    expect(reduceEvent(state(), TAB, { kind: 'session_state', state: 'running' }).statusByChat?.[TAB]).toBe(
+      'streaming',
+    );
+  });
+
+  it('reduceEvent_sessionStateRequiresAction_mapeaANeedsPermission', () => {
+    expect(
+      reduceEvent(state(), TAB, { kind: 'session_state', state: 'requires_action' }).statusByChat?.[TAB],
+    ).toBe('needs_permission');
+  });
+
+  it('reduceEvent_compacted_pintaElMarcador', () => {
+    const patch = reduceEvent(state(), TAB, { kind: 'compacted', trigger: 'auto' });
+
+    expect(blocksOf(patch).at(-1)).toMatchObject({ kind: 'system' });
+  });
+
+  it('reduceEvent_permissionModeDesconocido_caeADefault', () => {
+    const current = state({ tabs: [{ id: TAB, permissionMode: 'plan' }] } as unknown as Partial<WorkbenchState>);
+
+    const patch = reduceEvent(current, TAB, { kind: 'permission_mode', mode: 'bypassPermissions' });
+
+    expect(patch.tabs?.[0]?.permissionMode).toBe('default');
+  });
+});
+
+// Uso real en el terminador del turno (E3, `agy`): se deja como marcador de sistema en la conversacion.
+describe('reduceEvent — uso del turno (E3)', () => {
+  const RESULT_BASE = { isError: false, subtype: 'success', costUsd: null, numTurns: 1 };
+
+  it('reduceEvent_resultConUsage_dejaUnMarcadorDeSistemaConLosTokens', () => {
+    const event: MageEvent = {
+      kind: 'result',
+      result: {
+        ...RESULT_BASE,
+        usage: { inputTokens: 17533, outputTokens: 7, totalTokens: 17540, thinkingTokens: 112, cacheReadTokens: 24410 },
+      },
+    };
+
+    const patch = reduceEvent(state(), TAB, event);
+    const blocks = blocksOf(patch);
+
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0]).toMatchObject({ kind: 'system' });
+    expect((blocks[0] as Extract<Block, { kind: 'system' }>).text).toContain('Tokens del turno');
+    expect(patch.statusByChat?.[TAB]).toBe('idle');
+  });
+
+  // El CLI de Claude no reporta uso en su `result`: su conversacion no debe ganar ningun marcador.
+  it('reduceEvent_resultSinUsage_noAnadeNingunBloque', () => {
+    const patch = reduceEvent(state(), TAB, { kind: 'result', result: RESULT_BASE });
+
+    expect(blocksOf(patch)).toEqual([]);
+    expect(patch.statusByChat?.[TAB]).toBe('idle');
+  });
+});
+
+// H4: el limite de uso no puede quedarse en una linea tenue del hilo. Ademas de contarlo, MARCA la
+// pestana, y esa marca es lo que enciende la oferta de continuar en otra cuenta.
+describe('reduceEvent — limite de uso (H4)', () => {
+  it('reduceEvent_rateLimit_marcaLaPestanaYAdemasLoCuentaEnElHilo', () => {
+    const patch = reduceEvent(state(), TAB, { kind: 'rate_limit', summary: "You've hit your limit", resetsAtMs: null });
+
+    expect(patch.rateLimitByChat?.[TAB]).toEqual({ summary: "You've hit your limit", resetsAtMs: null });
+    expect(blocksOf(patch)).toHaveLength(1);
+  });
+
+  it('reduceEvent_rateLimitSinTexto_marcaIgual', () => {
+    // Sin resumen el CLI sigue estando limitado: la salida tiene que ofrecerse igual (el banner pone
+    // su propio texto). Marcar solo cuando hay texto seria perder el caso justo por el borde.
+    const patch = reduceEvent(state(), TAB, { kind: 'rate_limit', summary: '   ', resetsAtMs: null });
+
+    expect(patch.rateLimitByChat?.[TAB]).toEqual({ summary: '   ', resetsAtMs: null });
+  });
+
+  it('reduceEvent_rateLimit_noPisaLaMarcaDeOtraPestana', () => {
+    const previo = { rateLimitByChat: { otra: { summary: 'antes', resetsAtMs: null } } };
+    const patch = reduceEvent(state(previo), TAB, { kind: 'rate_limit', summary: 'ahora', resetsAtMs: 5 });
+
+    expect(patch.rateLimitByChat?.otra).toEqual({ summary: 'antes', resetsAtMs: null });
+    expect(patch.rateLimitByChat?.[TAB]).toEqual({ summary: 'ahora', resetsAtMs: 5 });
+  });
+});

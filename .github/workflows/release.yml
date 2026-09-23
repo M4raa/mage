@@ -1,0 +1,90 @@
+# Construye los instaladores al etiquetar una version y los sube como borrador de release.
+#
+# POR QUE EXISTE, mas alla de la comodidad: la firma de codigo GRATUITA para proyectos de codigo
+# abierto (SignPath Foundation) NO firma un binario que te hayas construido en tu
+# portatil — firma lo que produce un pipeline de CI verificable, a partir de un commit publico. Sin
+# este workflow no hay camino a un instalador firmado sin pagar un certificado.
+#
+# La release se crea como BORRADOR a proposito: publicarla es una accion humana, y hasta que no se
+# publica el auto-updater no ve nada (busca `latest.yml` en la ultima release publicada).
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  # Tambien a mano, para poder probar el empaquetado sin gastar un tag.
+  workflow_dispatch:
+
+permissions:
+  contents: write # crear la release y subirle los artefactos
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # Las mismas puertas que `check.yml`: un instalador que no pasa los tests no se publica.
+      - run: pnpm check
+      - run: pnpm dist:win
+      # El humo del EMPAQUETADO, que es lo unico que prueba que el .exe arranca de verdad. Necesita
+      # una sesion con escritorio: `windows-latest` la tiene, a diferencia de los runners de Linux.
+      - run: pnpm smoke:packaged
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-installers
+          path: |
+            release/*.exe
+            release/*.msi
+            release/latest.yml
+      - name: Crear/actualizar la release en borrador
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          files: |
+            release/*.exe
+            release/*.msi
+            release/latest.yml
+
+  # Linux y macOS NO se han construido nunca (ver README). Se dejan preparados pero desactivados para
+  # no publicar un artefacto que nadie ha visto arrancar: se activan quitando el `if: false` cuando
+  # alguien pueda probarlos en esa plataforma.
+  linux:
+    if: false
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm dist:linux
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-packages
+          path: release/*.{AppImage,deb,rpm}
+
+  macos:
+    if: false
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm dist:mac
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-dmg
+          path: release/*.dmg

@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Vulnerabilidad de seguridad
+    url: https://github.com/M4raa/mage/security/advisories/new
+    about: No abras una issue pública. Usa el aviso privado de GitHub.
+  - name: Cómo contribuir
+    url: https://github.com/M4raa/mage/blob/main/CONTRIBUTING.md
+    about: Levantar el proyecto, qué se espera de un PR y los invariantes que no se rompen.

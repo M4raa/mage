@@ -1,0 +1,27 @@
+# CI minimo: lo mismo que se corre a mano antes de cada commit, pero sin depender de acordarse.
+# Con la suite en ~4 s, no correrlo no ahorra nada. NO incluye `verify:gui`: arranca Electron de
+# verdad y necesita una pantalla; ese sigue siendo un paso local (y esta documentado como tal).
+name: check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: windows-latest # el unico SO donde hoy se empaqueta y se verifica; los otros dos siguen sin maquina
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # `check` = typecheck (node + web) + tests + avisos de terceros al dia (B.2/B.3: publicar
+      # binarios con THIRD-PARTY-NOTICES.txt desfasado incumple las licencias de las dependencias).
+      # `build` ademas atrapa fallos de bundle, que el typecheck no ve: es como se descubrio que zod
+      # externalizado rompia el .exe empaquetado.
+      - run: pnpm check
+      - run: pnpm build

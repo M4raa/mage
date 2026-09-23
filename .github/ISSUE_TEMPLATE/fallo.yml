@@ -1,0 +1,64 @@
+name: Fallo
+description: Algo no funciona como debería
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Gracias por avisar. Cuanto más concreto, antes se arregla — y si el fallo tiene que ver con
+        seguridad, **no lo cuentes aquí**: ver [SECURITY.md](../blob/main/SECURITY.md).
+
+  - type: textarea
+    id: que-pasa
+    attributes:
+      label: Qué pasa
+      description: Qué esperabas y qué pasó en su lugar. Si hay un error en pantalla, cópialo entero.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproducir
+    attributes:
+      label: Cómo reproducirlo
+      placeholder: |
+        1. Abro una conversación en…
+        2. Escribo…
+        3. Pasa…
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Versión de Mage
+      description: Está en Configuración → Acerca de Mage.
+      placeholder: "0.1.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: so
+    attributes:
+      label: Sistema operativo
+      options:
+        - Windows
+        - macOS
+        - Linux
+    validations:
+      required: true
+
+  - type: input
+    id: cli
+    attributes:
+      label: Versión del CLI del agente
+      description: "`claude --version`, o la del CLI que uses."
+    validations:
+      required: false
+
+  - type: textarea
+    id: mas
+    attributes:
+      label: Cualquier otra cosa
+      description: Capturas, qué proveedor usabas, si pasa siempre o solo a veces.
+    validations:
+      required: false

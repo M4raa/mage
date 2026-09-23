@@ -1,0 +1,16 @@
+/* Estilos de la ventana del WIDGET FLOTANTE (M3). Reutiliza el sistema de diseno de la app
+   (tokens mg-* + utilidades de Tailwind + tema claro/oscuro por [data-theme]) importando index.css,
+   asi el widget conmuta de tema exactamente igual que la ventana principal. */
+@import '../index.css';
+
+html,
+body,
+#widget-root {
+  height: 100%;
+  margin: 0;
+}
+
+/* La ventana es frameless: el body no debe hacer scroll ni desbordar (el contenido scrollea dentro). */
+body {
+  overflow: hidden;
+}
