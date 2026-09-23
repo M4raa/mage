@@ -1,6 +1,9 @@
 name: Idea o mejora
 description: Algo que Mage debería hacer, o hacer de otra manera
-labels: [idea]
+# `enhancement`, no `idea`: la etiqueta TIENE que existir ya en el repositorio o GitHub la
+# descarta en silencio y la issue nace sin etiquetar. `enhancement` viene de serie en todo repo
+# nuevo; `idea` habria que crearla a mano. Mismo criterio que `fallo.yml`, que usa `bug`.
+labels: [enhancement]
 body:
   - type: markdown
     attributes:

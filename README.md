@@ -11,6 +11,7 @@ y el control de lo que cada uno toca antes de que lo toque.
 [![versión](https://img.shields.io/badge/versión-0.1.0--beta-blue)](https://github.com/M4raa/mage/releases)
 [![licencia](https://img.shields.io/badge/licencia-MIT-green)](LICENSE)
 [![plataforma](https://img.shields.io/badge/instalador-Windows%20x64-0078D4)](https://github.com/M4raa/mage/releases)
+[![linux y macos](https://img.shields.io/badge/Linux%20y%20macOS-pr%C3%B3ximamente-lightgrey)](#macos-y-linux--pr%C3%B3ximamente)
 
 [![Electron](https://img.shields.io/badge/Electron-34-47848F?logo=electron&logoColor=white)](https://www.electronjs.org/)
 [![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)](https://react.dev/)
@@ -64,7 +65,8 @@ Mage no sustituye nada de eso: lo envuelve.
 > sesión iniciada. Lee [Qué tienes que poner tú](#qué-tienes-que-poner-tú) — sin eso la app arranca,
 > pero no podrás abrir una conversación.
 
-1. Descarga `Mage-<versión>-win-x64-setup.exe` de la sección de **[releases](https://github.com/M4raa/mage/releases)**.
+1. Descarga `mage-setup-beta-<versión>.exe` de la sección de **[releases](https://github.com/M4raa/mage/releases)**. Hay también un `.msi`, para desplegar
+   por política de grupo o con `msiexec /qn`; para instalarlo tú, el que quieres es el `.exe`.
 2. Ejecútalo. Se instala **por usuario**, sin permisos de administrador.
 3. Al primer arranque sale un asistente de tres pasos: comprueba el motor, eliges tema y escala, y te
    enseña los atajos.
@@ -75,15 +77,22 @@ Mage no sustituye nada de eso: lo envuelve.
 > [SignPath Foundation](https://signpath.org/), que exige que el proyecto ya esté publicado — por eso esta
 > primera beta sale sin ella.
 
-<details>
-<summary><b>macOS y Linux</b></summary>
+### macOS y Linux — próximamente
 
-El código es multiplataforma desde el primer día y no hay una sola ruta ni comando específico de un
-sistema fuera de la capa de SO. Pero **nunca se ha construido ni probado** en esos dos: hay
-configuración de empaquetado (`pnpm dist:mac`, `pnpm dist:linux`) y no hay instaladores publicados.
-Si lo levantas ahí desde el código, cuéntalo en una issue.
+El código es multiplataforma desde el primer día: no hay una sola ruta ni comando específico de un
+sistema fuera de la capa de SO. Lo que falta no es código, es **haberlo construido y visto arrancar**
+en esas dos máquinas, y de eso no se publica un instalador.
 
-</details>
+La configuración de empaquetado ya está escrita —`AppImage`, `.deb` y `.rpm` para Linux x64; `.dmg`
+para macOS Intel y Apple Silicon— y los jobs de CI están preparados y desactivados. Mientras tanto,
+desde el código:
+
+```bash
+pnpm install && pnpm dist:linux   # o: pnpm dist:mac
+```
+
+**Si lo levantas ahí, cuéntalo en una issue**: un informe de que arranca (o de que no) es lo único que
+falta para activar esos dos instaladores.
 
 ### Qué tienes que poner tú
 
