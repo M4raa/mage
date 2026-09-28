@@ -27,6 +27,11 @@ export const POPOVER_VARIANTS: Variants = {
   exit: { opacity: 0, scale: 0.98, y: -2, transition: { duration: 0.12, ease: 'easeIn' } },
 };
 
+// Los selectores del prompt bajando a su fila cuando el texto salta de linea (P-026 3.1): `layout` de
+// motion (FLIP), mismo registro. Con movimiento reducido, `MotionConfig reducedMotion="user"` lo vuelve
+// un salto instantaneo.
+export const COMPOSER_LAYOUT_TRANSITION: Transition = { duration: 0.18, ease: 'easeOut' };
+
 // Indicador compartido de pestaña activa (TabBar, layoutId + FLIP): mismo registro 120-200ms.
 export const TAB_INDICATOR_TRANSITION: Transition = { duration: 0.2, ease: 'easeOut' };
 

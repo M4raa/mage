@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { TranscriptBatch, TranscriptEntry } from '@shared/transcripts';
+import type { TranscriptBatch } from '@shared/transcripts';
 import { groupIntoBatches } from './transcriptReader';
 import type { ParsedLineResult } from './normalize';
 import { makeEntry } from '@testing/transcriptEntry';

@@ -1,18 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import {
   emitLine,
-  fakeAdapter,
   harness,
   PERMISO_R1,
   written,
-  type FakeChild,
 } from './agentSession.harness';
 
 describe('AgentSession reinicio automatico (C1)', () => {
   it('onExit_unexpectedCrash_emitsRestartingAndResumesTheConversation', () => {
     const h = harness();
     h.session.start();
-    emitLine(h.children[0]!, [{ kind: 'session_init', sessionId: 's1', model: 'sonnet', tools: ['Read'], mcpServers: [], slashCommands: [] }]);
+    emitLine(h.children[0]!, [{ kind: 'session_init', sessionId: 's1', model: 'sonnet', tools: ['Read'], mcpServers: [], slashCommands: [], skills: [], plugins: [], pluginErrors: [] }]);
 
     h.children[0]!.exit(1, null);
 

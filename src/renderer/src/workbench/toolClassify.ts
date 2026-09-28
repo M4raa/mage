@@ -31,11 +31,6 @@ export function classifyTool(toolName: string): ToolClass {
   return TOOL_CLASSES.get(toolName.trim()) ?? 'other';
 }
 
-// CODIGO MUERTO (2026-09-18, anotado en el registro de codigo muerto): desde que se agrupan TODAS las clases,
-// quien decide que se pliega es `RUN_LABELS` en `toolGrouping` — tener etiqueta ES la condicion. Esta
-// constante ya no la usa nadie en produccion; se queda anotada, no borrada, hasta la proxima auditoria.
-export const GROUPABLE_TOOL_CLASSES: ReadonlySet<ToolClass> = new Set<ToolClass>(['read', 'search']);
-
 // Glifo por clase. MONOCROMO a proposito (misma regla que el registro de paneles): un emoji de color
 // se sale de la paleta del tema y no conmuta con el.
 export const TOOL_CLASS_GLYPH: Readonly<Record<ToolClass, string>> = {

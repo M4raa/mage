@@ -1,7 +1,7 @@
 import { sanitizeAlwaysAllow } from './permissionRules';
 import type { ConversationPrefs } from '@shared/conversationIndex';
 import type { PermissionMode } from '@shared/ipc';
-import { PERMISSION_MODES } from '@shared/ipc';
+import { isPermissionMode, PERMISSION_MODES } from '@shared/ipc';
 import { resolveDefaultModel } from './modelDefaults';
 
 // Decision PURA de con que modelo, esfuerzo y modo de permiso se abre una conversacion del historial
@@ -71,13 +71,13 @@ function firstNonEmpty(value: string | undefined): string | undefined {
 export function toConversationPrefs(tab: {
   readonly model: string;
   readonly effort?: string;
-  readonly permissionMode?: PermissionMode;
+  readonly permissionMode?: string;
   readonly alwaysAllowTools?: readonly string[];
 }): ConversationPrefs {
   return {
     model: tab.model,
     effort: tab.effort ?? '',
-    ...(tab.permissionMode === undefined ? {} : { permissionMode: tab.permissionMode }),
+    ...(isPermissionMode(tab.permissionMode) ? { permissionMode: tab.permissionMode } : {}),
     // Se manda SIEMPRE que la pestana tenga el campo, aunque este vacio: la lista es el estado completo
     // de las reglas, y vacia significa "revocadas todas" — omitirla dejaria en el indice las que el
     // usuario acaba de quitar.

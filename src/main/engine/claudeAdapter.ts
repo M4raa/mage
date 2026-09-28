@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { ImageAttachment } from '@shared/ipc';
 import { base64ByteLength, validateAttachment } from '@shared/attachments';
+import { buildUserContentBlocks } from '@shared/imageRefs';
 import type { MageEvent, PermissionDecision } from '@shared/events';
 import { resolveClaudeBinary } from '../os/claudeBinaryResolver';
 import { normalizeRawEvent } from './normalize';
@@ -10,7 +11,9 @@ import { scrubAgentEnv } from '../os/agentEnv';
 // Argumentos fijos del CLI headless stream-json (confirmados en el spike M1.0).
 // --output-format stream-json EXIGE --verbose. --permission-prompt-tool stdio activa el
 // round-trip de permisos por stdin/stdout.
-const BASE_ARGS = [
+// Exportados para el sondeo de modelos (P-026 2.4): tiene que lanzar el CLI EXACTAMENTE igual que una
+// sesion, o mediria otra cosa.
+export const BASE_ARGS = [
   '-p',
   '--input-format',
   'stream-json',
@@ -20,6 +23,10 @@ const BASE_ARGS = [
   '--permission-prompt-tool',
   'stdio',
   '--include-partial-messages',
+  // P-026 2.3 (D9): sin este flag el CLI rechaza `set_permission_mode bypassPermissions` («the session
+  // was not launched with --dangerously-skip-permissions», medido en 2.1.283). Solo HABILITA el modo
+  // «Omitir permisos» del ciclo: la sesion sigue arrancando en el modo que toque (medido: `default`).
+  '--allow-dangerously-skip-permissions',
 ] as const;
 
 // Hooks que Mage registra al arrancar (D2). Todos son de OBSERVACION del ciclo de vida: dan
@@ -75,9 +82,10 @@ export class ClaudeAdapter implements ProviderAdapter {
     // Tope de gasto opcional (M2.4): centavos enteros -> dolares con 2 decimales SOLO en la frontera
     // del argumento del CLI (internamente el dinero nunca es float). Ya validado (>0) aguas arriba.
     if (params.maxBudgetUsdCents !== undefined) args.push('--max-budget-usd', centsToUsd(params.maxBudgetUsdCents));
-    // Modo de permiso inicial opcional (M2.6): --permission-mode <mode>. Solo se anade si NO es el
-    // default (evita ruido). Confirmado contra el fuente del CLI (initialPermissionModeFromCLI).
-    if (params.permissionMode !== undefined && params.permissionMode.length > 0 && params.permissionMode !== 'default') {
+    // Modo de permiso inicial opcional (M2.6): --permission-mode <mode>. Sin el, el CLI arranca en el
+    // modo configurado de la cuenta y Mage lo adopta (P-026 2.3). Con el, incluido `default`: un Manual
+    // elegido a mano no lo cambia el `defaultMode` de la cuenta.
+    if (params.permissionMode !== undefined && params.permissionMode.length > 0) {
       args.push('--permission-mode', params.permissionMode);
     }
     // Config comun (D1 Fase 1): --mcp-config/--settings ya resueltos por SharedConfigService.
@@ -101,14 +109,9 @@ export class ClaudeAdapter implements ProviderAdapter {
     for (const attachment of attachments) {
       validateAttachment({ mediaType: attachment.mediaType, byteLength: base64ByteLength(attachment.data) });
     }
-    const content = [
-      // Un mensaje de SOLO imagen es valido: entonces no se manda un bloque de texto vacio.
-      ...(text.length === 0 ? [] : [{ type: 'text', text }]),
-      ...attachments.map((attachment) => ({
-        type: 'image',
-        source: { type: 'base64', media_type: attachment.mediaType, data: attachment.data },
-      })),
-    ];
+    // Cada imagen justo detras de su token `[Imagen N]` (P-026 3.2; MEDIDO en S3: el CLI respeta el orden
+    // intercalado). Nunca un bloque de texto vacio: un mensaje de SOLO imagen tambien vale.
+    const content = buildUserContentBlocks(text, attachments);
     return { type: 'user', message: { role: 'user', content }, parent_tool_use_id: null };
   }
 

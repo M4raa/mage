@@ -220,6 +220,9 @@ export function parseInline(text: string): readonly MdInline[] {
   return parseInlineInto(text);
 }
 
+// Puntuacion ASCII: los unicos caracteres que una barra invertida escapa en CommonMark.
+const ESCAPABLE = /^[!-/:-@[-`{-~]$/;
+
 function parseInlineInto(text: string): MdInline[] {
   const out: MdInline[] = [];
   let plain = '';
@@ -232,7 +235,9 @@ function parseInlineInto(text: string): MdInline[] {
   let i = 0;
   while (i < text.length) {
     const ch = text[i] ?? '';
-    if (ch === '\\' && i + 1 < text.length) {
+    // CommonMark solo escapa PUNTUACION ASCII. Con «\ + cualquier cosa», `C:\Users\x` se pintaba como
+    // `C:Usersx` en todos los mensajes (P-026, 1.3).
+    if (ch === '\\' && ESCAPABLE.test(text[i + 1] ?? '')) {
       plain += text[i + 1];
       i += 2;
       continue;

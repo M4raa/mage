@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { SlashCommandInfo } from '@shared/events';
+import type { ProviderModel } from '@shared/providers';
 import { writeAtomic, type AtomicWriteDeps } from '../os/atomicFile';
 
 // Cache en disco del catalogo de comandos "/" POR CUENTA (2.2), en userData/command-catalog.json.
@@ -18,6 +19,9 @@ export const COMMAND_CATALOG_VERSION = 1;
 export interface CommandCatalogEntry {
   readonly measuredAtMs: number;
   readonly commands: readonly SlashCommandInfo[];
+  // Catalogo de modelos de la cuenta (P-026 2.4), del MISMO `initialize` que los comandos. Opcional: un
+  // fichero de antes no lo trae y sigue valiendo (misma version).
+  readonly models?: readonly ProviderModel[];
 }
 
 export interface CommandCatalogFile {
@@ -32,9 +36,12 @@ const COMMAND_SCHEMA = z.object({
   aliases: z.array(z.string()),
 });
 
+const MODEL_SCHEMA = z.object({ id: z.string().min(1), label: z.string() });
+
 const ENTRY_SCHEMA = z.object({
   measuredAtMs: z.number().int().nonnegative(),
   commands: z.array(COMMAND_SCHEMA),
+  models: z.array(MODEL_SCHEMA).optional(),
 });
 
 const CATALOG_FILE_SCHEMA = z.object({
@@ -47,6 +54,7 @@ export interface CommandCatalogStoreDeps extends AtomicWriteDeps {
 }
 
 const EMPTY_COMMANDS: readonly SlashCommandInfo[] = [];
+const EMPTY_MODELS: readonly ProviderModel[] = [];
 
 export class CommandCatalogStore {
   constructor(private readonly deps: CommandCatalogStoreDeps) {}
@@ -62,13 +70,29 @@ export class CommandCatalogStore {
   // Reescribe el catalogo de UNA cuenta conservando el de las demas. `measuredAtMs` lo pasa el llamante
   // (main tiene el reloj; este modulo no lo inventa) para que el fichero diga cuando se midio.
   save(accountDir: string, commands: readonly SlashCommandInfo[], measuredAtMs: number): void {
+    // Los modelos de la entrada se conservan: los comandos y los modelos se cachean por separado.
+    this.writeEntry(accountDir, measuredAtMs, (entry) => ({ ...entry, commands }));
+  }
+
+  // Modelos cacheados de UNA cuenta. Vacio en los mismos casos que `load`: entonces el selector usa la
+  // lista de reserva, que es lo de antes de la cache.
+  loadModels(accountDir: string): readonly ProviderModel[] {
+    return this.readFileOrNull()?.byAccount[accountDir]?.models ?? EMPTY_MODELS;
+  }
+
+  saveModels(accountDir: string, models: readonly ProviderModel[], measuredAtMs: number): void {
+    this.writeEntry(accountDir, measuredAtMs, (entry) => ({ ...entry, models }));
+  }
+
+  private writeEntry(accountDir: string, measuredAtMs: number, update: (entry: CommandCatalogEntry) => CommandCatalogEntry): void {
     if (accountDir.length === 0) {
       throw new Error(`Config dir vacio al guardar el catalogo de comandos: ${JSON.stringify(accountDir)}`);
     }
     const current = this.readFileOrNull();
+    const previous = current?.byAccount[accountDir] ?? { measuredAtMs, commands: EMPTY_COMMANDS };
     const next: CommandCatalogFile = {
       version: COMMAND_CATALOG_VERSION,
-      byAccount: { ...(current?.byAccount ?? {}), [accountDir]: { measuredAtMs, commands } },
+      byAccount: { ...(current?.byAccount ?? {}), [accountDir]: update({ ...previous, measuredAtMs }) },
     };
     const result = CATALOG_FILE_SCHEMA.safeParse(next);
     if (!result.success) {

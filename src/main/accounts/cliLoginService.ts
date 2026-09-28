@@ -9,7 +9,8 @@ import type { EmbeddedLoginResult } from '@shared/accounts';
 // quisiera. Es una propiedad de la arquitectura, no una declaracion de intenciones.
 //
 // Todo lo de aqui esta MEDIDO contra el CLI 2.1.270 el 2026-09-14 (`spike/cli-login-spike.mjs`):
-//   - `auth login` sin TTY imprime la URL y espera el *code* en stdin.
+//   - `auth login` sin TTY imprime la URL y espera el *code* en stdin; tras canjearlo, SALE (los
+//     fallos los midio S2 de P-026: ver INVALID_CODE_PATTERN).
 //   - La URL viaja envuelta en un hyperlink OSC-8, asi que aparece DOS VECES seguidas.
 //   - `auth status --json` responde contra cualquier config dir, sin TTY, y trae email/orgName.
 
@@ -34,9 +35,24 @@ export interface CliLoginDeps {
   readonly log?: (level: 'warn', message: string) => void;
   // Tiempo maximo desde el spawn hasta que aparece la URL. Sin esto un CLI colgado deja el dialogo fijo.
   readonly urlTimeoutMs?: number;
+  // Tiempo maximo desde que se escribe el *code* hasta que el CLI sale (o lo rechaza).
+  readonly exchangeTimeoutMs?: number;
 }
 
 const DEFAULT_URL_TIMEOUT_MS = 30_000;
+// Medido (S2 de P-026, CLI 2.1.283): un code que rechaza el servidor hace salir al CLI en ~0,3 s. El
+// plazo cubre una red lenta sin dejar el dialogo colgado para siempre.
+const DEFAULT_EXCHANGE_TIMEOUT_MS = 60_000;
+// Cola de salida que se guarda tras el code: solo se busca en ella una frase conocida.
+const MAX_TAIL_CHARS = 4_096;
+
+// Frases del CLI que Mage reconoce tras el code (LISTA BLANCA, medida en S2 de P-026). La salida cruda
+// no se loguea nunca: solo se traduce una de estas a un `reason` seguro.
+//   - «Invalid code. Please make sure the full code was copied.»: validacion LOCAL de formato (el code
+//     bueno es `<code>#<state>`). El CLI NO sale: vuelve a esperar otro code.
+//   - «Login failed: Request failed with status code 400»: el servidor rechazo el canje; sale con 1.
+const INVALID_CODE_PATTERN = /Invalid code/i;
+const LOGIN_FAILED_PATTERN = /Login failed/i;
 
 // Lo que se le devuelve al renderer al arrancar el login: la URL (por si hay que ensenarla) y como se
 // abrio el navegador. `browser: 'normal'` es un AVISO, no un fallo: el login sigue siendo posible.
@@ -49,7 +65,14 @@ interface Pending {
   readonly configDir: string;
   readonly process: CliLoginProcess;
   exited: boolean;
+  exitCode: number | null;
+  // Salida del CLI desde el ultimo code escrito (acotada a MAX_TAIL_CHARS).
+  tail: string;
+  // Despierta a quien espera el resultado del code; null si nadie espera.
+  wake: (() => void) | null;
 }
+
+type ExchangeOutcome = 'exit' | 'invalid_code' | 'timeout';
 
 export class CliLoginService {
   // Un login a la vez: un proceso, una ventana, un *code*. Dos a la vez confundirian al usuario sobre
@@ -65,10 +88,16 @@ export class CliLoginService {
     if (this.pending !== null) throw new Error(`Ya hay un login en curso para ${this.pending.configDir}`);
 
     const child = this.deps.spawnLogin(configDir, email);
-    const pending: Pending = { configDir, process: child, exited: false };
+    const pending: Pending = { configDir, process: child, exited: false, exitCode: null, tail: '', wake: null };
     this.pending = pending;
-    child.onExit(() => {
+    child.onOutput((chunk) => {
+      pending.tail = (pending.tail + chunk).slice(-MAX_TAIL_CHARS);
+      pending.wake?.();
+    });
+    child.onExit((code) => {
       pending.exited = true;
+      pending.exitCode = code;
+      pending.wake?.();
     });
 
     try {
@@ -84,7 +113,10 @@ export class CliLoginService {
     }
   }
 
-  // Relaya el *code* pegado por el usuario y verifica el resultado contra el propio CLI.
+  // Relaya el *code* pegado por el usuario y espera a que el CLI termine el canje ANTES de verificar.
+  // El fallo de la alpha (punto 1 de P-025): se verificaba en el acto y se mataba el CLI en mitad del
+  // intercambio, con lo que `auth status` corria antes de que hubiera credenciales y el code, de un solo
+  // uso, quedaba gastado. Nunca se mata el CLI antes de su `exit` salvo que venza el plazo.
   async submitCode(code: string): Promise<EmbeddedLoginResult> {
     const pending = this.pending;
     if (pending === null) return failure('no_login_in_progress');
@@ -93,7 +125,10 @@ export class CliLoginService {
     // Un *code* con salto de linea partiria el relay en dos lineas y el CLI leeria basura como segunda
     // respuesta. Se rechaza en la frontera en vez de sanearlo a escondidas.
     if (clean.length === 0 || /\s/.test(clean)) return failure('bad_code_format');
+    // El CLI ya murio mientras esperaba: escribir en su stdin cerrado no llegaria a nadie.
+    if (pending.exited) return this.settleExit(pending);
 
+    pending.tail = '';
     try {
       pending.process.writeLine(clean);
     } catch {
@@ -101,9 +136,23 @@ export class CliLoginService {
       return failure('cli_stdin_closed');
     }
 
-    const status = await this.verify(pending.configDir);
-    this.cancel();
-    return status;
+    const outcome = await waitForExchange(pending, this.deps.exchangeTimeoutMs ?? DEFAULT_EXCHANGE_TIMEOUT_MS);
+    // Code con formato invalido: el CLI sigue vivo esperando otro, asi que el login NO se cierra.
+    if (outcome === 'invalid_code') return failure('cli_invalid_code');
+    if (outcome === 'timeout') {
+      this.cancel();
+      return failure('cli_exchange_timeout');
+    }
+    return this.settleExit(pending);
+  }
+
+  // El CLI salio: se libera el login y, solo si salio bien, se le pregunta si la sesion vale.
+  private async settleExit(pending: Pending): Promise<EmbeddedLoginResult> {
+    if (this.pending === pending) this.pending = null;
+    if (pending.exitCode !== 0) {
+      return failure(LOGIN_FAILED_PATTERN.test(pending.tail) ? 'cli_login_rejected' : `cli_exit_${pending.exitCode}`);
+    }
+    return this.verify(pending.configDir);
   }
 
   // Aborta el login en curso (el usuario cerro el dialogo, o algo fallo). Idempotente.
@@ -181,6 +230,25 @@ export function parseAuthStatus(raw: string): AuthStatus | null {
 }
 
 // --- Interno ------------------------------------------------------------------------------------
+
+// Espera al primero de: la salida del CLI, la frase de code invalido (el CLI sigue vivo) o el plazo.
+// La salida gana si llegan a la vez: un CLI que ya salio no va a leer otro code.
+function waitForExchange(pending: Pending, timeoutMs: number): Promise<ExchangeOutcome> {
+  return new Promise((resolve) => {
+    const finish = (outcome: ExchangeOutcome): void => {
+      clearTimeout(timer);
+      pending.wake = null;
+      resolve(outcome);
+    };
+    const check = (): void => {
+      if (pending.exited) finish('exit');
+      else if (INVALID_CODE_PATTERN.test(pending.tail)) finish('invalid_code');
+    };
+    const timer = setTimeout(() => finish('timeout'), timeoutMs);
+    pending.wake = check;
+    check();
+  });
+}
 
 // Espera a que la URL aparezca en la salida. Se acumula TODO lo que llega porque la URL puede venir
 // partida entre dos trozos del stream.

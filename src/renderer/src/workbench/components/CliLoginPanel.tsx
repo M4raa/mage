@@ -34,8 +34,12 @@ export function useCliLogin(onDone: (result: EmbeddedLoginResult) => void): CliL
   const begin = useCallback((configDir: string, email: string | null) => {
     setError(null);
     setPhase('starting');
+    // Tras un code invalido el CLI sigue vivo esperando otro: «Reintentar» lo cierra antes de arrancar
+    // uno nuevo, o el servicio contestaria «ya hay un login en curso». Cancelar es idempotente.
     void window.mage
-      .startLogin({ configDir, email })
+      .cancelLogin()
+      .catch(() => undefined)
+      .then(() => window.mage.startLogin({ configDir, email }))
       .then((started) => {
         setStart(started);
         setPhase('awaitingCode');
@@ -180,11 +184,20 @@ function reasonText(result: EmbeddedLoginResult): string {
   switch (result.reason) {
     case 'bad_code_format':
       return 'El código pegado no vale (no puede llevar espacios ni saltos de línea).';
+    case 'cli_invalid_code':
+      // El CLI sigue esperando otro code (medido, S2 de P-026): se puede volver a pegar sin reintentar.
+      return 'El CLI dice que el código no es válido. Copia el código completo de la página de autorización y pégalo otra vez.';
+    case 'cli_exchange_timeout':
+      return 'El CLI no respondió a tiempo. Pulsa «Reintentar» para empezar de nuevo.';
     case 'auth_status_not_logged_in':
       return 'El CLI no registró la sesión: puede que el código fuera de otra cuenta o ya estuviera usado.';
     case 'no_login_in_progress':
       return 'El login se canceló antes de tiempo. Vuelve a intentarlo.';
     default:
+      // `cli_login_rejected` y `cli_exit_<n>`: el CLI salio sin sesion, asi que el login ya no existe.
+      if (result.reason === 'cli_login_rejected' || result.reason?.startsWith('cli_exit_') === true) {
+        return `El CLI rechazó el código (${result.reason}). Pulsa «Reintentar» para empezar de nuevo.`;
+      }
       return `No se completó el inicio de sesión (${result.reason ?? result.status}).`;
   }
 }

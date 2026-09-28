@@ -12,7 +12,6 @@ function state(overrides: Partial<WorkbenchState> = {}): WorkbenchState {
     blocksByChat: {},
     streamingIdByChat: {},
     statusByChat: {},
-    permissionByChat: {},
     pendingByChat: {},
     slashCommandsByChat: {},
     contextUsageByChat: {},
@@ -78,6 +77,14 @@ describe('reduceEvent — streaming y bloques', () => {
 });
 
 describe('reduceEvent — permisos', () => {
+  const request = (requestId: string) =>
+    ({ requestId, toolUseId: `t-${requestId}`, toolName: 'Write', input: {}, description: null, requiresUserInteraction: false, displayName: null }) as const;
+  const pendingEntry = (requestId: string) => ({
+    requestId,
+    input: {},
+    view: { prompt: '', target: '', toolLabel: 'Write', diff: [], summary: '' },
+  });
+
   it('reduceEvent_permissionRequest_dejaLaPestanaEsperandoPermiso', () => {
     const patch = reduceEvent(state(), TAB, {
       kind: 'permission_request',
@@ -85,8 +92,7 @@ describe('reduceEvent — permisos', () => {
     });
 
     expect(patch.statusByChat?.[TAB]).toBe('needs_permission');
-    expect(patch.pendingByChat?.[TAB]).toEqual({ requestId: 'r1', input: {} });
-    expect(patch.permissionByChat?.[TAB]).not.toBeNull();
+    expect(patch.pendingByChat?.[TAB]).toMatchObject([{ requestId: 'r1', input: {}, view: { toolLabel: 'Write' } }]);
     // 2.3b: ademas del panel, la peticion se pinta como TARJETA en el hilo.
     expect(blocksOf(patch)).toMatchObject([{ kind: 'permission', requestId: 'r1', toolName: 'Write', state: 'pending' }]);
   });
@@ -101,8 +107,8 @@ describe('reduceEvent — permisos', () => {
   });
 
   it('reduceEvent_permissionRequestDeToolConReglaSiempre_niTarjetaNiEstadoDePermiso', () => {
-    // "Permitir siempre Write aqui": la peticion queda apuntada (de ahi sale el requestId con el que
-    // `handleEvent` contesta) y NADA MAS — ni tarjeta, ni panel, ni "necesita permiso".
+    // "Permitir siempre Write aqui": NADA en el estado — ni tarjeta, ni cola, ni panel, ni "necesita
+    // permiso". La respuesta la manda `handleEvent` con el requestId del propio evento.
     const current = state({ tabs: [tab({ alwaysAllowTools: ['Write'] })] });
 
     const patch = reduceEvent(current, TAB, {
@@ -110,16 +116,13 @@ describe('reduceEvent — permisos', () => {
       request: { requestId: 'r9', toolUseId: 't9', toolName: 'Write', input: {}, description: null, requiresUserInteraction: false, displayName: null },
     });
 
-    expect(patch.pendingByChat?.[TAB]).toEqual({ requestId: 'r9', input: {} });
-    expect(patch.blocksByChat).toBeUndefined();
-    expect(patch.permissionByChat).toBeUndefined();
-    expect(patch.statusByChat).toBeUndefined();
+    expect(patch).toEqual({});
   });
 
   it('reduceEvent_permissionCancelled_cierraLaTarjetaDePermisoComoCancelada', () => {
     const request = { requestId: 'r1', toolUseId: 't1', toolName: 'Write', input: {}, description: null, requiresUserInteraction: false, displayName: null };
     const conTarjeta = reduceEvent(state(), TAB, { kind: 'permission_request', request });
-    const current = state({ blocksByChat: { [TAB]: blocksOf(conTarjeta) }, pendingByChat: { [TAB]: { requestId: 'r1', input: {} } } });
+    const current = state({ blocksByChat: { [TAB]: blocksOf(conTarjeta) }, pendingByChat: conTarjeta.pendingByChat ?? {} });
 
     const patch = reduceEvent(current, TAB, { kind: 'permission_cancelled', requestId: 'r1' });
 
@@ -129,17 +132,46 @@ describe('reduceEvent — permisos', () => {
   it('reduceEvent_permissionCancelledDelPermisoEnCurso_limpiaElDialogo', () => {
     // Es lo que emite AgentSession cuando el proceso muere con permisos en vuelo (C1): el dialogo no
     // puede quedarse esperando una respuesta que ya nadie va a leer.
-    const current = state({ pendingByChat: { [TAB]: { requestId: 'r1', input: {} } } });
+    const current = state({ pendingByChat: { [TAB]: [pendingEntry('r1')] } });
 
     const patch = reduceEvent(current, TAB, { kind: 'permission_cancelled', requestId: 'r1' });
 
-    expect(patch.permissionByChat?.[TAB]).toBeNull();
-    expect(patch.pendingByChat?.[TAB]).toBeNull();
+    expect(patch.pendingByChat?.[TAB]).toEqual([]);
     expect(patch.statusByChat?.[TAB]).toBe('idle');
   });
 
+  it('reduceEvent_dosPermissionRequestSeguidos_encolaLosDosEnOrden', () => {
+    // Tools en paralelo: el CLI manda el segundo can_use_tool sin esperar al primero. Antes el segundo
+    // PISABA al primero y este se quedaba sin respuesta posible (turno colgado).
+    const first = reduceEvent(state(), TAB, { kind: 'permission_request', request: request('r1') });
+    const second = reduceEvent(state({ blocksByChat: first.blocksByChat ?? {}, pendingByChat: first.pendingByChat ?? {} }), TAB, {
+      kind: 'permission_request',
+      request: request('r2'),
+    });
+
+    expect(second.pendingByChat?.[TAB]?.map((p) => p.requestId)).toEqual(['r1', 'r2']);
+    expect(blocksOf(second).filter((b) => b.kind === 'permission')).toHaveLength(2);
+  });
+
+  it('reduceEvent_permissionRequestReenviado_noSeEncolaDosVeces', () => {
+    const current = state({ pendingByChat: { [TAB]: [pendingEntry('r1')] } });
+
+    const patch = reduceEvent(current, TAB, { kind: 'permission_request', request: request('r1') });
+
+    expect(patch.pendingByChat).toBeUndefined();
+  });
+
+  it('reduceEvent_permissionCancelledConOtroEnCola_loQuitaYSigueEsperandoPermiso', () => {
+    const current = state({ pendingByChat: { [TAB]: [pendingEntry('r1'), pendingEntry('r2')] } });
+
+    const patch = reduceEvent(current, TAB, { kind: 'permission_cancelled', requestId: 'r1' });
+
+    expect(patch.pendingByChat?.[TAB]?.map((p) => p.requestId)).toEqual(['r2']);
+    expect(patch.statusByChat?.[TAB]).toBe('needs_permission');
+  });
+
   it('reduceEvent_permissionCancelledDeOtroPermiso_noTocaElActual', () => {
-    const current = state({ pendingByChat: { [TAB]: { requestId: 'r1', input: {} } } });
+    const current = state({ pendingByChat: { [TAB]: [pendingEntry('r1')] } });
 
     const patch = reduceEvent(current, TAB, { kind: 'permission_cancelled', requestId: 'otro' });
 
@@ -180,7 +212,7 @@ describe('reduceEvent — AskUserQuestion (2.3)', () => {
 
     const question = blocksOf(patch).at(-1);
     expect(question).toMatchObject({ kind: 'question', requestId: 'r1', state: 'pending', answers: null });
-    expect(patch.pendingByChat?.[TAB]).toEqual({ requestId: 'r1', input: ASK_INPUT });
+    expect(patch.pendingByChat?.[TAB]).toMatchObject([{ requestId: 'r1', input: ASK_INPUT }]);
     expect(patch.statusByChat?.[TAB]).toBe('needs_permission');
   });
 
@@ -214,13 +246,13 @@ describe('reduceEvent — AskUserQuestion (2.3)', () => {
     const first = reduceEvent(state(), TAB, askRequest());
     const current = state({
       blocksByChat: first.blocksByChat ?? {},
-      pendingByChat: { [TAB]: { requestId: 'r1', input: ASK_INPUT } },
+      pendingByChat: first.pendingByChat ?? {},
     });
 
     const patch = reduceEvent(current, TAB, { kind: 'permission_cancelled', requestId: 'r1' });
 
     expect(blocksOf(patch).at(-1)).toMatchObject({ kind: 'question', state: 'cancelled' });
-    expect(patch.pendingByChat?.[TAB]).toBeNull();
+    expect(patch.pendingByChat?.[TAB]).toEqual([]);
   });
 
   it('reduceEvent_subagentsAvailable_seGuardaPorPestana', () => {
@@ -269,6 +301,9 @@ describe('reduceEvent — protocolo de control (D2/D3/D4)', () => {
       tools: ['Read', 'Bash', 'Task'],
       mcpServers: [],
       slashCommands: ['compact', 'recap'],
+      skills: [],
+      plugins: [],
+      pluginErrors: [],
     });
 
     expect(patch.slashCommandsByChat?.[TAB]).toEqual([
@@ -333,18 +368,25 @@ describe('reduceEvent — estado de sesion y compactacion', () => {
     expect(blocksOf(patch).at(-1)).toMatchObject({ kind: 'system' });
   });
 
-  it('reduceEvent_permissionModeDesconocido_caeADefault', () => {
+  it('reduceEvent_permissionModeDesconocido_seEnsenaSinCoaccionar', () => {
+    // P-026 2.3: la pestaña dice el modo en el que ESTA el CLI, aunque Mage no lo ofrezca en el ciclo.
     const current = state({ tabs: [{ id: TAB, permissionMode: 'plan' }] } as unknown as Partial<WorkbenchState>);
 
-    const patch = reduceEvent(current, TAB, { kind: 'permission_mode', mode: 'bypassPermissions' });
+    const patch = reduceEvent(current, TAB, { kind: 'permission_mode', mode: 'dontAsk' });
 
-    expect(patch.tabs?.[0]?.permissionMode).toBe('default');
+    expect(patch.tabs?.[0]?.permissionMode).toBe('dontAsk');
+  });
+
+  it('reduceEvent_permissionModeAuto_loAdopta', () => {
+    const current = state({ tabs: [{ id: TAB }] } as unknown as Partial<WorkbenchState>);
+
+    expect(reduceEvent(current, TAB, { kind: 'permission_mode', mode: 'auto' }).tabs?.[0]?.permissionMode).toBe('auto');
   });
 });
 
 // Uso real en el terminador del turno (E3, `agy`): se deja como marcador de sistema en la conversacion.
 describe('reduceEvent — uso del turno (E3)', () => {
-  const RESULT_BASE = { isError: false, subtype: 'success', costUsd: null, numTurns: 1 };
+  const RESULT_BASE = { isError: false, subtype: 'success', numTurns: 1 };
 
   it('reduceEvent_resultConUsage_dejaUnMarcadorDeSistemaConLosTokens', () => {
     const event: MageEvent = {
@@ -397,5 +439,27 @@ describe('reduceEvent — limite de uso (H4)', () => {
 
     expect(patch.rateLimitByChat?.otra).toEqual({ summary: 'antes', resetsAtMs: null });
     expect(patch.rateLimitByChat?.[TAB]).toEqual({ summary: 'ahora', resetsAtMs: 5 });
+  });
+});
+
+// P-026 2.4: el catalogo de la sesion viva se guarda por config dir EFECTIVO (el perfil privado tiene
+// el suyo) y manda sobre la cache.
+describe('reduceEvent — catalogo de modelos', () => {
+  const MODELS = [{ id: 'opus', label: 'Opus 5.5' }];
+
+  it('reduceEvent_modelsAvailable_loGuardaPorLaCuenta', () => {
+    const current = state({ tabs: [{ id: TAB, accountId: '/home/u/.claude' }] } as unknown as Partial<WorkbenchState>);
+
+    expect(reduceEvent(current, TAB, { kind: 'models_available', models: MODELS }).modelCatalogByAccount).toEqual({ '/home/u/.claude': MODELS });
+  });
+
+  it('reduceEvent_modelsAvailableEnConversacionPrivada_usaElConfigDirEfectivo', () => {
+    const current = state({
+      tabs: [{ id: TAB, accountId: '/home/u/.claude', resolvedConfigDir: '/home/u/.claude/mage-private' }],
+    } as unknown as Partial<WorkbenchState>);
+
+    expect(Object.keys(reduceEvent(current, TAB, { kind: 'models_available', models: MODELS }).modelCatalogByAccount ?? {})).toEqual([
+      '/home/u/.claude/mage-private',
+    ]);
   });
 });

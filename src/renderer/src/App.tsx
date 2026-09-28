@@ -24,6 +24,7 @@ import { TrustFolderDialog } from './workbench/components/TrustFolderDialog';
 // spinner mientras carga el chunk seria un parpadeo donde antes no habia nada.
 const NewTabDialog = lazy(() => import('./workbench/components/NewTabDialog').then((m) => ({ default: m.NewTabDialog })));
 const AddAccountDialog = lazy(() => import('./workbench/components/AddAccountDialog').then((m) => ({ default: m.AddAccountDialog })));
+const AccountSwitchDialog = lazy(() => import('./workbench/components/AccountSwitchDialog').then((m) => ({ default: m.AccountSwitchDialog })));
 const HandoffModal = lazy(() => import('./workbench/components/HandoffModal').then((m) => ({ default: m.HandoffModal })));
 import { OnboardingWizard } from './workbench/components/OnboardingWizard';
 
@@ -256,6 +257,7 @@ export function App(): React.JSX.Element {
         <NewTabDialog />
         <AddAccountDialog />
         <HandoffModal />
+        <AccountSwitchDialog />
         <SettingsView />
       </Suspense>
       <TrustFolderDialog />

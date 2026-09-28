@@ -5,7 +5,7 @@
 import { EFFORT_LEVELS } from '@shared/ipc';
 
 // Peso relativo de consumo de cada familia de modelos de Claude (mayor = agota antes la bolsa).
-// Se compara por FAMILIA (el sufijo [1m] no cambia de familia, pero si encarece por contexto).
+// Se compara por FAMILIA. El sufijo [1m] ya no avisa de nada: el 1M es el contexto de todos (2026-09-26).
 const MODEL_WEIGHT: Readonly<Record<string, number>> = { haiku: 1, sonnet: 2, opus: 3 };
 
 // Etiqueta legible de una familia (para el texto del aviso).
@@ -27,13 +27,8 @@ export function modelFamily(modelId: string): string | null {
   return null;
 }
 
-// ¿El id pide la ventana de 1M de contexto? (encarece cada turno: mas contexto = mas tokens de entrada)
-export function isLongContext(modelId: string): boolean {
-  return modelId.trim().toLowerCase().includes('[1m]');
-}
-
-// Aviso al cambiar de modelo. null si no hay nada que decir (mismo modelo, o cambio a algo mas barato
-// y sin ventana larga). No inventa cifras: describe la direccion del cambio.
+// Aviso al cambiar de modelo. null si no hay nada que decir (mismo modelo). No inventa cifras: describe
+// la direccion del cambio.
 export function modelChangeAdvice(from: string, to: string): CostAdvice | null {
   if (from.trim() === to.trim()) return null;
   const fromWeight = weightOf(from);
@@ -44,13 +39,6 @@ export function modelChangeAdvice(from: string, to: string): CostAdvice | null {
     return {
       severity: 'warn',
       message: `${toLabel} consume tu bolsa de uso bastante más rápido que ${labelOf(from)}. Aplica al siguiente turno.`,
-    };
-  }
-  const longContext = isLongContext(to) && !isLongContext(from);
-  if (longContext) {
-    return {
-      severity: 'warn',
-      message: `La ventana de 1M de contexto encarece cada turno (más tokens de entrada). Aplica al siguiente turno.`,
     };
   }
   return { severity: 'info', message: `Modelo cambiado a ${toLabel}. Aplica al siguiente turno.` };

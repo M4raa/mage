@@ -2,8 +2,9 @@ import { useEffect, useMemo } from 'react';
 import { Icon } from './Icon';
 import { useWorkbenchStore } from '../workbenchStore';
 import { usePaneTabId } from '../paneContext';
-import { folderChip, modelChip, privacyChip, type ChatChip } from '../chatInfoView';
-import { modelLabel } from '../models';
+import { diffChip, folderChip, gitChip, privacyChip, type ChatChip } from '../chatInfoView';
+import { canSwitchBranch } from '../canSwitchBranch';
+import { Dropdown } from './Dropdown';
 
 // Fila de informacion del chat, encima del input (peticion del usuario).
 //
@@ -18,24 +19,32 @@ import { modelLabel } from '../models';
 export function ChatInfoBar(): React.JSX.Element | null {
   const tabId = usePaneTabId();
   const tab = useWorkbenchStore((s) => s.tabs.find((t) => t.id === tabId));
-  const resolvedModel = useWorkbenchStore((s) => s.resolvedModelByChat[tabId] ?? null);
   const scratchDir = useWorkbenchStore((s) => s.scratchDir);
   const ensureScratchDir = useWorkbenchStore((s) => s.ensureScratchDir);
-  const customProviders = useWorkbenchStore((s) => s.settings.customProviders);
 
   useEffect(() => {
     void ensureScratchDir();
   }, [ensureScratchDir]);
 
+  // Git se refresca por eventos (P-026 3.5), sin watchers ni timers: al activar la pestaña o cambiar su
+  // carpeta, y al volver el foco a la ventana. El fin de turno y el cambio de rama los lanza el store.
+  const refreshGit = useWorkbenchStore((s) => s.refreshGit);
+  const cwd = tab?.cwd;
+  useEffect(() => {
+    if (cwd === undefined) return;
+    void refreshGit(tabId);
+    const onFocus = (): void => void refreshGit(tabId);
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [tabId, cwd, refreshGit]);
+
   const chips = useMemo((): readonly ChatChip[] => {
     if (tab === undefined) return [];
     const folder = folderChip(tab.cwd, scratchDir);
-    return [
-      ...(folder === null ? [] : [folder]),
-      privacyChip(tab.privacy),
-      modelChip(modelLabel(tab.provider, tab.model, customProviders), resolvedModel),
-    ];
-  }, [tab, scratchDir, resolvedModel, customProviders]);
+    // Sin el chip del modelo (P-026, D18): salia aqui, en el selector del input y en la barra de estado.
+    // Se queda solo en el selector, que es donde se puede cambiar.
+    return [...(folder === null ? [] : [folder]), privacyChip(tab.privacy)];
+  }, [tab, scratchDir]);
 
   // Sin pestaña no hay nada que contar, y una fila vacia solo roba alto al hilo.
   if (tab === undefined || chips.length === 0) return null;
@@ -52,6 +61,7 @@ export function ChatInfoBar(): React.JSX.Element | null {
         <Icon name={folder!.icon} size={12} />
         <span className="truncate">{folder!.label}</span>
       </button>
+      <GitChips tabId={tabId} cwd={tab.cwd} />
       {rest.map((chip) => (
         // Las informativas NO son botones: nada ocurre al pulsarlas, y un boton que no hace nada es una
         // promesa rota. El dato largo va en el tooltip y en el nombre accesible.
@@ -67,4 +77,68 @@ export function ChatInfoBar(): React.JSX.Element | null {
       ))}
     </div>
   );
+}
+
+const CHIP_CLASS = 'inline-flex max-w-[280px] items-center gap-[5px] rounded-full border border-mg-border-ctrl px-[8px] py-[2px]';
+
+// Rama, cambios y «Confirmar cambios» (P-026 3.5, D25–D27). Sin repo, sin git o sin confianza, nada.
+function GitChips({ tabId, cwd }: { readonly tabId: string; readonly cwd: string }): React.JSX.Element | null {
+  const view = useWorkbenchStore((s) => s.gitByCwd[cwd]);
+  const turnActive = useWorkbenchStore((s) => s.tabs.some((t) => t.cwd === cwd && isTurnLive(s.statusByChat[t.id])));
+  const switchGitBranch = useWorkbenchStore((s) => s.switchGitBranch);
+  const insertCommitPrompt = useWorkbenchStore((s) => s.insertCommitPrompt);
+  const snapshot = view?.snapshot;
+  const branch = gitChip(snapshot);
+  if (view === undefined || branch === null || snapshot?.kind !== 'repo') return null;
+  const diff = diffChip(snapshot);
+  const verdict = canSwitchBranch({ turnActive, dirty: snapshot.dirty, detached: snapshot.detached });
+  const onSwitch = (name: string): void => {
+    if (name === snapshot.branch) return;
+    void switchGitBranch(tabId, name).catch((err: unknown) => console.warn('No se pudo cambiar de rama:', err));
+  };
+  return (
+    <>
+      {verdict.allowed ? (
+        <Dropdown
+          value={snapshot.branch ?? ''}
+          options={view.branches.map((name) => ({ value: name, label: name }))}
+          onChange={onSwitch}
+          ariaLabel="Cambiar de rama"
+          tip={branch.title}
+          leading={<Icon name="branch" size={12} />}
+          triggerClassName="max-w-[280px] self-auto text-mg-muted"
+        />
+      ) : (
+        <span data-tip={`${branch.title} · ${verdict.reason}`} aria-label={`Cambiar de rama: ${verdict.reason}`} aria-disabled="true" className={`${CHIP_CLASS} cursor-not-allowed`}>
+          <Icon name="branch" size={12} />
+          <span className="truncate">{branch.label}</span>
+        </span>
+      )}
+      {diff !== null && (
+        <span data-git-diff data-tip={diff.title} aria-label={diff.title} className={`${CHIP_CLASS} cursor-help font-mono`}>
+          <span className="text-mg-diff-add">{diff.added}</span>
+          <span className="text-mg-diff-del">{diff.removed}</span>
+        </span>
+      )}
+      {diff !== null && (
+        <button
+          onClick={() => insertCommitPrompt(tabId)}
+          data-git-commit
+          data-tip="Deja en el input un prompt para que el agente haga el commit; lo envías tú"
+          className={`${CHIP_CLASS} text-mg-body2 transition-colors duration-150 ease-out hover:bg-mg-hover hover:text-mg-body`}
+        >
+          Confirmar cambios
+        </button>
+      )}
+      {view.error !== null && (
+        <span role="alert" className="max-w-[320px] truncate text-mg-danger" data-tip={view.error}>
+          {view.error}
+        </span>
+      )}
+    </>
+  );
+}
+
+function isTurnLive(status: string | undefined): boolean {
+  return status === 'streaming' || status === 'needs_permission';
 }

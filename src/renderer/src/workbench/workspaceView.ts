@@ -1,6 +1,7 @@
 import { sanitizeAlwaysAllow } from './permissionRules';
 import type { PersistedTab, PersistedWorkspace, SplitLayout } from '@shared/state';
 import { WORKSPACE_STATE_VERSION } from '@shared/state';
+import { isPermissionMode } from '@shared/ipc';
 import type { Tab } from './types';
 import { findLeafPath, fromLegacySplit, singleLeaf, pruneSplitLayout } from './splitLayout';
 
@@ -31,7 +32,7 @@ export function toPersistedWorkspace(
       ...(sessionId === undefined ? {} : { sessionId }),
       ...(tab.effort === undefined ? {} : { effort: tab.effort }),
       ...(tab.maxBudgetUsdCents === undefined ? {} : { maxBudgetUsdCents: tab.maxBudgetUsdCents }),
-      ...(tab.permissionMode === undefined ? {} : { permissionMode: tab.permissionMode }),
+      ...(isPermissionMode(tab.permissionMode) ? { permissionMode: tab.permissionMode } : {}),
       // Vacia NO se guarda: en el workspace, "sin reglas" y "sin campo" son lo mismo (el estado
       // duradero de las reglas vive en el indice de conversaciones, que si distingue los dos casos).
       ...(tab.alwaysAllowTools === undefined || tab.alwaysAllowTools.length === 0 ? {} : { alwaysAllowTools: tab.alwaysAllowTools }),
@@ -39,6 +40,7 @@ export function toPersistedWorkspace(
       ...(tab.lastMessageAtMs === undefined ? {} : { lastMessageAtMs: tab.lastMessageAtMs }),
       ...(tab.pinned === undefined ? {} : { pinned: tab.pinned }),
       ...(tab.colorIndex === undefined ? {} : { colorIndex: tab.colorIndex }),
+      ...(tab.pendingCliTitle === undefined ? {} : { pendingCliTitle: tab.pendingCliTitle }),
     };
   });
   return {
@@ -90,6 +92,7 @@ export function restoreTabs(
       ...(t.lastMessageAtMs === undefined ? {} : { lastMessageAtMs: t.lastMessageAtMs }),
       ...(t.pinned === undefined ? {} : { pinned: t.pinned }),
       ...(t.colorIndex === undefined ? {} : { colorIndex: t.colorIndex }),
+      ...(t.pendingCliTitle === undefined ? {} : { pendingCliTitle: t.pendingCliTitle }),
     }));
 
   const activeTabId = tabs.some((t) => t.id === persisted.activeTabId)

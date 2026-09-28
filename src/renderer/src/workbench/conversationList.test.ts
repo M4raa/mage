@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   filterConversationRows,
+  formatSize,
   mergeConversationRows,
   planOpenConversation,
+  relativeTime,
   rowTitle,
   type ConversationRow,
 } from './conversationList';
@@ -29,6 +31,7 @@ const hist = (over: Partial<ConversationSummary>): ConversationSummary => ({
   privacy: 'shared',
   updatedAtMs: 1000,
   sizeBytes: 2048,
+  isScheduled: false,
   ...over,
 });
 
@@ -214,5 +217,54 @@ describe('planOpenConversation', () => {
     expect(() => planOpenConversation({ ...CTX, sessionId: '', tabs: [], sessionIdByChat: {} })).toThrow(
       /sessionId vacio/i,
     );
+  });
+});
+
+// P-026, 1.7 (D19): la fila de una pestaña abierta enseña lo mismo que la de una cerrada.
+describe('mergeConversationRows — resumen de la pestaña', () => {
+  it('mergeConversationRows_pestanaAbiertaConHistorial_adjuntaSuResumen', () => {
+    const summary = hist({ sessionId: 'sX', sizeBytes: 4096 });
+
+    const rows = mergeConversationRows([tab({ id: 'tA', resumeSessionId: 'sX' })], [summary], {}, '.claude-p', 'shared');
+
+    expect(rows).toEqual([{ kind: 'tab', tab: expect.objectContaining({ id: 'tA' }), history: summary }]);
+  });
+
+  it('mergeConversationRows_pestanaSinFichero_sinResumen', () => {
+    const rows = mergeConversationRows([tab({ id: 'tNueva', createdAtMs: 5 })], [hist({ sessionId: 'otra' })], {}, '.claude-p', 'shared');
+    const fila = rows.find((r) => r.kind === 'tab');
+
+    expect(fila !== undefined && fila.kind === 'tab' ? fila.history : 'no hay fila').toBeUndefined();
+  });
+});
+
+describe('formatSize', () => {
+  it('formatSize_limites', () => {
+    expect(formatSize(0)).toBe('0 B');
+    expect(formatSize(1023)).toBe('1023 B');
+    expect(formatSize(1024)).toBe('1,0 kB');
+    expect(formatSize(10 * 1024 * 1024)).toBe('10 MB');
+  });
+
+  it('formatSize_negativoONoEntero_lanzaConElValor', () => {
+    expect(() => formatSize(-1)).toThrow(/-1/);
+    expect(() => formatSize(1.5)).toThrow(/1.5/);
+  });
+});
+
+describe('relativeTime', () => {
+  const NOW = Date.UTC(2026, 8, 26, 12, 0, 0);
+
+  it('relativeTime_limites', () => {
+    expect(relativeTime(NOW, NOW)).toBe('ahora');
+    expect(relativeTime(NOW - 59_999, NOW)).toBe('ahora');
+    expect(relativeTime(NOW - 60_000, NOW)).toBe('hace 1 min');
+    expect(relativeTime(NOW - 60 * 60_000, NOW)).toBe('hace 1 h');
+    expect(relativeTime(NOW - 24 * 60 * 60_000, NOW)).toBe('hace 1 d');
+    expect(relativeTime(NOW - 30 * 24 * 60 * 60_000, NOW)).toBe('2026-08-27');
+  });
+
+  it('relativeTime_instanteFuturo_ahora', () => {
+    expect(relativeTime(NOW + 5_000, NOW)).toBe('ahora');
   });
 });

@@ -4,6 +4,7 @@ import { useWorkbenchStore } from './workbenchStore';
 import { transcriptStoreForTab } from './transcriptStore';
 import { useThinkingStore } from './thinkingStore';
 import type { ChatStatus } from './types';
+import { latestCustomTitle } from './conversationTitle';
 
 // Ciclo de vida de la lectura de la transcripcion de UNA pestaña (M2.2.2): abre, cancela y refresca
 // la lectura que consumen el panel de Logs, el de Contexto y —lo que importa de verdad— la
@@ -49,6 +50,18 @@ export function useTranscriptLifecycle(tabId: string): void {
   const cancelTranscript = useTranscriptStore((s) => s.cancel);
   const refreshTranscript = useTranscriptStore((s) => s.refresh);
   const loadThinking = useThinkingStore((s) => s.load);
+  // Nombre que la conversacion tiene en el CLI (`/rename`, P-026 1.6). Selector a una CADENA: zustand
+  // compara por valor, asi que la pestaña solo se re-renderiza cuando el nombre cambia de verdad.
+  const cliTitle = useTranscriptStore((s) => latestCustomTitle(s.entries));
+  const renameTab = useWorkbenchStore((s) => s.renameTab);
+
+  useEffect(() => {
+    if (cliTitle === null) return;
+    const tab = useWorkbenchStore.getState().tabs.find((t) => t.id === tabId);
+    // Un nombre puesto en Mage que aun no llego al CLI gana (D3): la transcripcion trae el viejo.
+    if (tab === undefined || tab.pendingCliTitle !== undefined || tab.title === cliTitle) return;
+    renameTab(tabId, cliTitle);
+  }, [tabId, cliTitle, renameTab]);
 
   useEffect(() => {
     if (configDir === undefined || cwd === undefined || sessionId === undefined) return;

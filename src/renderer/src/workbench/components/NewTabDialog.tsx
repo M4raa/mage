@@ -5,11 +5,15 @@ import { EFFORT_LEVELS } from '@shared/ipc';
 import { NO_PERMISSION_CONTROL_WARNING, isAutoApprovedProvider } from '@shared/providers';
 import { useWorkbenchStore } from '../workbenchStore';
 import { useDialogA11y } from '../a11y/useDialogA11y';
-import { modelOptionsForProvider, providerFallbackModel, providerOptions } from '../models';
+import { displayModelId, modelOptionsForProvider, providerFallbackModel, providerOptions } from '../models';
+import type { ProviderModel } from '@shared/providers';
 import { resolveDefaultModel } from '../modelDefaults';
 import { MODAL_PANEL_VARIANTS, MODAL_SCRIM_VARIANTS } from '../motionPresets';
 import type { Account } from '../types';
 import { CliLoginPanel, useCliLogin } from './CliLoginPanel';
+
+// Referencia ESTABLE para el selector de zustand (un array nuevo por render seria un bucle).
+const NO_MODELS: readonly ProviderModel[] = [];
 
 // Dialogo de nueva pestana: selecciona {cuenta, proyecto, proveedor, modelo} y abre una conversacion real
 // aislada. El proyecto se elige con el selector de carpeta del SO (o carpeta temporal scratch).
@@ -100,9 +104,11 @@ function DialogBody({
   const customProviders = useWorkbenchStore((s) => s.settings.customProviders);
   const selectedAccount = accounts.find((a) => a.id === accountId);
   const providers = useMemo(() => providerOptions(customProviders), [customProviders]);
+  // Modelos que el CLI publico para la cuenta elegida (P-026 2.4); sin sondear aun, la reserva.
+  const claudeCatalog = useWorkbenchStore((s) => s.modelCatalogByAccount[accountId] ?? NO_MODELS);
   const modelOptions = useMemo(
-    () => modelOptionsForProvider(provider, model, customProviders),
-    [provider, model, customProviders],
+    () => modelOptionsForProvider(provider, model, customProviders, claudeCatalog),
+    [provider, model, customProviders, claudeCatalog],
   );
   // Proveedor sin puente de permisos (E3, `agy`): hay que avisar antes de abrir la pestana y, como su
   // CLI no lo instala Mage, comprobar que existe. null = aun sin respuesta (no se bloquea por eso).
@@ -260,7 +266,7 @@ function DialogBody({
 
         <Field label="Modelo">
           <select
-            value={model}
+            value={displayModelId(model, modelOptions)}
             onChange={(e) => setModel(e.target.value)}
             className="w-full rounded-[7px] border border-mg-border-ctrl bg-mg-window p-[7px_9px] text-mg-body outline-none"
           >

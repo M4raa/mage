@@ -1,11 +1,12 @@
 import type { TranscriptEntry } from '@shared/transcripts';
-import type { Block, ImageAttachment, TextRun } from './types';
+import type { Block, ImageAttachment } from './types';
 import { SUPPORTED_IMAGE_MEDIA_TYPES } from './types';
 import { extractToolResult, extractToolUses } from './toolView';
 import { classifyTool } from './toolClassify';
 import { completeArtifactPublication, parseArtifactDraft } from '@shared/artifacts';
 import { SUBAGENT_TOOL_NAMES } from './toolSummary';
 import { noticeTextFor } from './cliNotices';
+import { classifySystemWrapper } from '@shared/systemWrappers';
 
 // Reconstruye los bloques del chat (M2.5b) a partir de una transcripcion persistida ya cargada, para
 // que una conversacion REANUDADA no arranque con el panel principal vacio. PURO (datos -> datos,
@@ -70,9 +71,34 @@ function appendUserOrResult(entry: TranscriptEntry, blocks: Block[], toolIndexBy
   const { text, attachments } = userMessageContent(entry.raw);
   // Un mensaje que era SOLO una imagen tambien es un mensaje: con la condicion antigua (solo texto)
   // desaparecia del hilo.
-  if (text.length > 0 || attachments.length > 0) {
-    blocks.push({ kind: 'user', id: blockId(entry.index, 0), text, time: formatTime(entry.timestampMs), attachments });
+  if (text.length === 0 && attachments.length === 0) return;
+  if (attachments.length === 0 && appendWrapperNotice(entry, text, blocks)) return;
+  blocks.push({ kind: 'user', id: blockId(entry.index, 0), text, time: formatTime(entry.timestampMs), attachments });
+}
+
+// Envoltorios de sistema que el CLI guarda como mensaje del usuario (P-026, D20): los avisos y los
+// recordatorios no se pintan, y la salida de un comando o el aviso de una tarea en segundo plano son una
+// linea de sistema. Devuelve true si la entrada ya esta resuelta. Un COMANDO y una TAREA PROGRAMADA
+// siguen siendo del usuario: se quedan como bloque `user` y `BlockChat` los pinta como chip y tarjeta.
+function appendWrapperNotice(entry: TranscriptEntry, text: string, blocks: Block[]): boolean {
+  const wrapper = classifySystemWrapper(text);
+  switch (wrapper.kind) {
+    case 'caveat':
+    case 'reminder':
+      return true;
+    case 'command-output':
+      if (wrapper.output.length > 0) blocks.push({ kind: 'system', id: blockId(entry.index, 0), text: wrapper.output });
+      return true;
+    case 'task-notification':
+      blocks.push({ kind: 'system', id: blockId(entry.index, 0), text: taskNotificationText(wrapper.summary) });
+      return true;
+    default:
+      return false;
   }
+}
+
+function taskNotificationText(summary: string): string {
+  return summary.length === 0 ? 'Tarea en segundo plano terminada' : `Tarea en segundo plano: ${summary}`;
 }
 
 // Una linea `assistant` puede traer texto y/o varios tool_use. Emite el bloque de texto (si lo hay) y
@@ -118,6 +144,7 @@ function appendAssistant(entry: TranscriptEntry, blocks: Block[], toolIndexById:
         description: stringOrNull(use.input.description),
         agentId: null,
         status: null,
+        elapsedMs: null,
       });
       toolIndexById.set(use.toolUseId, blocks.length - 1);
       continue;
@@ -137,6 +164,8 @@ function appendAssistant(entry: TranscriptEntry, blocks: Block[], toolIndexById:
       writtenContent: null,
       artifact: null,
       artifactDraft: parseArtifactDraft(use.toolName, use.input),
+      // Los pasos de los subagentes viven en su propio `agent-<id>.jsonl`: en el principal, todo es suyo.
+      parentToolUseId: null,
     });
     toolIndexById.set(use.toolUseId, blocks.length - 1);
   }
@@ -147,7 +176,16 @@ function appendAssistant(entry: TranscriptEntry, blocks: Block[], toolIndexById:
 // en su momento.
 function appendSystemNotice(entry: TranscriptEntry, blocks: Block[]): void {
   const raw = entry.raw;
-  if (!isRecord(raw) || raw.subtype !== 'compact_boundary') return;
+  if (!isRecord(raw)) return;
+  // Comando local del CLI interactivo (`/rename` desde el terminal): el comando y su salida llegan como
+  // lineas `system/local_command`, con los MISMOS envoltorios que en una linea de usuario.
+  if (raw.subtype === 'local_command' && typeof raw.content === 'string') {
+    if (!appendWrapperNotice(entry, raw.content, blocks) && classifySystemWrapper(raw.content).kind === 'command') {
+      blocks.push({ kind: 'user', id: blockId(entry.index, 0), text: raw.content, time: formatTime(entry.timestampMs), attachments: [] });
+    }
+    return;
+  }
+  if (raw.subtype !== 'compact_boundary') return;
   const metadata = isRecord(raw.compact_metadata) ? raw.compact_metadata : null;
   const trigger = typeof metadata?.trigger === 'string' ? metadata.trigger : 'manual';
   const text = noticeTextFor({ kind: 'compacted', trigger });

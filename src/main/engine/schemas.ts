@@ -24,6 +24,17 @@ export const InitSchema = z.object({
   // Comandos '/' reales de la sesion (array de nombres), incluidos los del proyecto y los que
   // aportan plugins/skills. Misma tolerancia: es dato informativo.
   slash_commands: z.array(z.string()).catch([]).optional(),
+  // Modo de permiso con el que arranco la sesion (P-026 2.3). Informativo: forma rara -> se ignora.
+  permissionMode: z.string().optional().catch(undefined),
+  // Skills y plugins cargados (P-026 2.6), medidos en 2.1.283. Informativos y tolerantes: una forma nueva
+  // degrada el panel del Inspector, nunca el arranque. `plugin_errors` no esta medido (no llego sin
+  // errores): se acepta cualquier elemento y se traduce a texto al normalizar.
+  skills: z.array(z.string()).catch([]).optional(),
+  plugins: z
+    .array(z.object({ name: z.string(), source: z.string().optional() }).passthrough())
+    .catch([])
+    .optional(),
+  plugin_errors: z.array(z.unknown()).catch([]).optional(),
 });
 
 // system/session_state_changed: estado del worker (idle/running/requires_action).
@@ -196,6 +207,14 @@ export const InitializeResponseSchema = z.object({
         .passthrough(),
     )
     .catch([]),
+  // Modo de permiso en el que esta la sesion (MEDIDO en 2.1.283: `default` sin `--permission-mode`, o
+  // el de la cuenta). Llega ANTES de cualquier turno, asi que es lo que adopta una pestaña nueva.
+  current_permission_mode: z.string().optional().catch(undefined),
+  // Catalogo de modelos de la cuenta (P-026 2.4). MEDIDO en 2.1.283: `value`, `displayName`,
+  // `description`, `resolvedModel`, `supportsEffort`… y NINGUN `disabled`. Tolerante como los demas.
+  models: z
+    .array(z.object({ value: z.string().min(1), displayName: z.string().optional() }).passthrough())
+    .catch([]),
 });
 
 // result: terminador autoritativo del turno.
@@ -203,7 +222,6 @@ export const ResultSchema = z.object({
   type: z.literal('result'),
   subtype: z.string(),
   is_error: z.boolean().optional(),
-  total_cost_usd: z.number().nullish(),
   num_turns: z.number().nullish(),
 });
 

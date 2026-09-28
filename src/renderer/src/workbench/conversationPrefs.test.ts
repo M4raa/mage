@@ -45,10 +45,18 @@ describe('resolveReopenedTabPrefs', () => {
   it('resolveReopenedTabPrefs_permissionModeInvalidoEnDisco_caeADefault', () => {
     const prefs = resolveReopenedTabPrefs({
       ...BASE,
-      indexPrefs: { model: 'opus', permissionMode: 'bypassPermissions' as never },
+      indexPrefs: { model: 'opus', permissionMode: 'dontAsk' as never },
     });
 
-    expect('permissionMode' in prefs).toBe(false); // nunca se arranca con un modo que el CLI no conoce
+    expect('permissionMode' in prefs).toBe(false); // nunca se arranca con un modo que Mage no ofrece
+  });
+
+  it('resolveReopenedTabPrefs_autoYBypassEnDisco_seRespetan', () => {
+    // P-026 2.3: los dos modos nuevos del ciclo sobreviven al cierre de la pestaña.
+    expect(resolveReopenedTabPrefs({ ...BASE, indexPrefs: { model: 'opus', permissionMode: 'auto' } }).permissionMode).toBe('auto');
+    expect(resolveReopenedTabPrefs({ ...BASE, indexPrefs: { model: 'opus', permissionMode: 'bypassPermissions' } }).permissionMode).toBe(
+      'bypassPermissions',
+    );
   });
 
   it('resolveReopenedTabPrefs_camposEnBlancoEnDisco_seIgnoran', () => {

@@ -73,10 +73,22 @@ export function toolNames(tools: readonly unknown[] | undefined): readonly strin
     .filter((name): name is string => name !== null && name.length > 0);
 }
 
+// Texto de un error de plugin. La forma NO esta medida (sin errores no llega el campo): se usa lo que
+// parezca un mensaje y, si no hay, el elemento entero en JSON, recortado.
+const MAX_PLUGIN_ERROR_CHARS = 200;
+function pluginErrorText(error: unknown): string {
+  if (typeof error === 'string') return error;
+  if (isRecord(error)) {
+    const message = [error.message, error.error, error.plugin].find((value): value is string => typeof value === 'string');
+    if (message !== undefined) return message;
+  }
+  return JSON.stringify(error).slice(0, MAX_PLUGIN_ERROR_CHARS);
+}
+
 function normalizeSystem(raw: Record<string, unknown>): MageEvent[] {
   if (raw.subtype === 'init') {
     const init = InitSchema.parse(raw);
-    return [
+    const events: MageEvent[] = [
       {
         kind: 'session_init',
         sessionId: init.session_id,
@@ -86,8 +98,14 @@ function normalizeSystem(raw: Record<string, unknown>): MageEvent[] {
         // "el CLI no lo reporto" de "no hay ninguno" para pintarlo.
         mcpServers: init.mcp_servers ?? [],
         slashCommands: init.slash_commands ?? [],
+        skills: init.skills ?? [],
+        plugins: (init.plugins ?? []).map((plugin) => ({ name: plugin.name, source: plugin.source ?? null })),
+        pluginErrors: (init.plugin_errors ?? []).map(pluginErrorText),
       },
     ];
+    // El modo con el que arranco la sesion (P-026 2.3): la pestaña enseña el del CLI, no uno supuesto.
+    if (init.permissionMode !== undefined && init.permissionMode.length > 0) events.push({ kind: 'permission_mode', mode: init.permissionMode });
+    return events;
   }
   if (raw.subtype === 'session_state_changed') {
     return [{ kind: 'session_state', state: SessionStateSchema.parse(raw).state }];
@@ -146,6 +164,12 @@ function normalizeControlResponse(raw: Record<string, unknown>): MageEvent[] {
     const events: MageEvent[] = [];
     if (commands.length > 0) events.push({ kind: 'commands_available', commands });
     if (subagents.length > 0) events.push({ kind: 'subagents_available', subagents });
+    const models = parsed.models.map((model) => ({ id: model.value, label: model.displayName ?? model.value }));
+    if (models.length > 0) events.push({ kind: 'models_available', models });
+    // Modo real de la sesion ANTES del primer turno (P-026 2.3): una conversacion nueva se lanza sin
+    // `--permission-mode` y adopta el que tenga la cuenta.
+    const mode = parsed.current_permission_mode;
+    if (mode !== undefined && mode.length > 0) events.push({ kind: 'permission_mode', mode });
     return events;
   }
   if (!Array.isArray(payload.categories) || typeof payload.totalTokens !== 'number') return [];
@@ -209,8 +233,9 @@ function normalizeAssistant(raw: Record<string, unknown>): MageEvent[] {
   const events: MageEvent[] = [];
   const text = assistantTextOf(message.content);
   if (text.length > 0) events.push({ kind: 'assistant_text', text });
+  const parent = typeof raw.parent_tool_use_id === 'string' && raw.parent_tool_use_id.length > 0 ? raw.parent_tool_use_id : null;
   for (const block of message.content) {
-    const tool = toToolUse(block);
+    const tool = toToolUse(block, parent);
     if (tool !== null) events.push({ kind: 'tool_use', tool });
   }
   return events;
@@ -397,7 +422,6 @@ function normalizeResult(raw: Record<string, unknown>): MageEvent[] {
       result: {
         isError,
         subtype: parsed.subtype,
-        costUsd: parsed.total_cost_usd ?? null,
         numTurns: parsed.num_turns ?? null,
       },
     },
@@ -405,11 +429,13 @@ function normalizeResult(raw: Record<string, unknown>): MageEvent[] {
 }
 
 // Extrae un ToolUse de un bloque de contenido, o null si no es un tool_use valido.
-function toToolUse(block: unknown): ToolUse | null {
+function toToolUse(block: unknown, parentToolUseId: string | null): ToolUse | null {
   if (!isRecord(block) || block.type !== 'tool_use') return null;
   if (typeof block.id !== 'string' || typeof block.name !== 'string') return null;
   const input = isRecord(block.input) ? block.input : {};
-  return { toolUseId: block.id, toolName: block.name, input };
+  return parentToolUseId === null
+    ? { toolUseId: block.id, toolName: block.name, input }
+    : { toolUseId: block.id, toolName: block.name, input, parentToolUseId };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -25,6 +25,9 @@ describe('normalizeAgyEvent', () => {
         tools: [],
         mcpServers: [],
         slashCommands: [],
+        skills: [],
+        plugins: [],
+        pluginErrors: [],
       },
     ]);
   });
@@ -152,7 +155,6 @@ describe('normalizeAgyEvent', () => {
         result: {
           isError: false,
           subtype: 'success',
-          costUsd: null,
           numTurns: 1,
           usage: { inputTokens: 17533, outputTokens: 7, totalTokens: 17540, thinkingTokens: 112, cacheReadTokens: 24410 },
         },
@@ -183,7 +185,7 @@ describe('normalizeAgyEvent', () => {
   it('normalizeAgyEvent_resultSinUsage_noInventaContadores', () => {
     const events = normalizeAgyEvent({ event: 'result', result: { status: 'SUCCESS', response: '' } });
 
-    expect(events).toEqual([{ kind: 'result', result: { isError: false, subtype: 'success', costUsd: null, numTurns: null } }]);
+    expect(events).toEqual([{ kind: 'result', result: { isError: false, subtype: 'success', numTurns: null } }]);
   });
 
   it('normalizeAgyEvent_usageParcial_loQueFaltaViajaComoNull', () => {

@@ -5,7 +5,8 @@
 // Enlaces, tablas, citas y `---` se quedan en TEXTO PLANO — se envian igual, solo no se pintan.
 //
 // Comportamiento "Obsidian": en la LINEA DEL CURSOR los marcadores NO se ocultan, para poder editarlos.
-// En las demas si.
+// En las demas, las `##` se ocultan y la viñeta `-` se pinta como `•`; el numero de una lista se ve
+// siempre (D12 de P-026).
 //
 // DOS INVARIANTES que hay que respetar si o si, porque CodeMirror LANZA con cualquiera de las dos roto
 // y al caerse el plugin el input se queda SIN formato (medido en el .exe empaquetado):
@@ -17,6 +18,7 @@
 
 export type DecorationKind =
   | 'bullet'
+  | 'bullet-painted'
   | 'ordinal'
   | 'marker-hidden'
   | 'list-indent'
@@ -90,14 +92,20 @@ function appendLineRanges(ranges: DecorationRange[], line: string, offset: numbe
     const markerFrom = offset + indent.length;
     const markerTo = markerFrom + marker.length + space.length;
     if (indent.length > 0) ranges.push({ from: offset, to: markerFrom, kind: 'list-indent' });
-    // En la linea del cursor el marcador se VE (se esta editando); en las demas se sustituye por la
-    // viñeta pintada.
-    ranges.push({ from: markerFrom, to: markerTo, kind: isCursorLine ? (list[2] !== undefined ? 'bullet' : 'ordinal') : 'marker-hidden' });
+    // El NUMERO de una lista se ve siempre: ocultarlo fuera del cursor dejaba un «6.» suelto en el
+    // parrafo activo y ninguno en los demas (P-026, 1.5). La viñeta `-`/`*`/`+` se ve tal cual en la
+    // linea del cursor (se esta editando) y en las demas se pinta como `•`.
+    ranges.push({ from: markerFrom, to: markerTo, kind: listMarkerKind(list[2] !== undefined, isCursorLine) });
     appendInlineRanges(ranges, line.slice(markerTo - offset), markerTo);
     return;
   }
 
   appendInlineRanges(ranges, line, offset);
+}
+
+function listMarkerKind(isBullet: boolean, isCursorLine: boolean): DecorationKind {
+  if (!isBullet) return 'ordinal';
+  return isCursorLine ? 'bullet' : 'bullet-painted';
 }
 
 // Inline: codigo primero (lo que hay dentro de backticks no es enfasis), luego `**`/`__` y luego `_`/`*`

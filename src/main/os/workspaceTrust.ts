@@ -60,13 +60,6 @@ export function isTrusted(folder: string, trusted: readonly string[]): boolean {
   return trusted.some((entry) => entry.trim().length > 0 && keys.some((key) => sameKey(key, trustKey(entry))));
 }
 
-// Anade la carpeta a la lista, sin duplicar. Devuelve la MISMA referencia si ya estaba cubierta: quien
-// llama puede usar eso para no reescribir el fichero de ajustes por nada.
-export function withTrusted(folder: string, trusted: readonly string[]): readonly string[] {
-  if (isTrusted(folder, trusted)) return trusted;
-  return [...trusted, trustKey(folder)];
-}
-
 export interface CliTrustDeps {
   readonly readFile: (path: string) => string;
   readonly exists: (path: string) => boolean;

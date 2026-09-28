@@ -27,7 +27,7 @@ export interface ConversationIndexFile {
 const PREFS_SCHEMA = z.object({
   model: z.string().min(1).optional(),
   effort: z.string().min(1).optional(),
-  permissionMode: z.enum(['default', 'acceptEdits', 'plan']).optional(),
+  permissionMode: z.enum(['default', 'acceptEdits', 'plan', 'auto', 'bypassPermissions']).optional().catch(undefined),
   // "Permitir siempre <tool> aqui" (2.3b).
   alwaysAllowTools: z.array(z.string().min(1)).optional(),
 });

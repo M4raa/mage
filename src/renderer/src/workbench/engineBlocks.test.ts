@@ -106,6 +106,7 @@ describe('appendToolUse', () => {
         writtenContent: null,
         artifact: null,
         artifactDraft: null,
+        parentToolUseId: null,
       },
     ]);
   });
@@ -338,6 +339,7 @@ describe('hasVisibleContent', () => {
       writtenContent: null,
       artifact: null,
       artifactDraft: null,
+      parentToolUseId: null,
     } as const;
     expect(hasVisibleContent({ ...base, tool: 'Bash' })).toBe(true);
     expect(hasVisibleContent({ ...base, tool: '' })).toBe(false);
@@ -360,6 +362,7 @@ describe('pendingToolName', () => {
     writtenContent: null,
     artifact: null,
     artifactDraft: null,
+    parentToolUseId: null,
     ...over,
   });
 
@@ -446,6 +449,7 @@ describe('subagentes y pensamiento (2.5)', () => {
       // Llega con el tool_result: hasta entonces no se puede abrir su transcripcion.
       agentId: null,
       status: null,
+      elapsedMs: null,
     });
   });
 
@@ -460,6 +464,14 @@ describe('subagentes y pensamiento (2.5)', () => {
     });
 
     expect(next[0]).toMatchObject({ agentId: 'agent-42', status: 'completado' });
+  });
+
+  it('applySubagentResult_conDuracion_laGuarda', () => {
+    const blocks = appendSubagentBlock([], task, 's1');
+
+    const next = applySubagentResult(blocks, { toolUseId: 'tu1', isError: true, output: '', durationMs: 9000 });
+
+    expect(next[0]).toMatchObject({ status: 'error', elapsedMs: 9000 });
   });
 
   it('applySubagentResult_sinCoincidencia_noCambiaNada', () => {
@@ -503,7 +515,7 @@ describe('subagentes y pensamiento (2.5)', () => {
   });
 
   it('hasVisibleContent_subagente_seMuestra', () => {
-    const block: Block = { kind: 'subagent', id: 's', toolUseId: 'u', agentType: null, description: null, agentId: null, status: null };
+    const block: Block = { kind: 'subagent', id: 's', toolUseId: 'u', agentType: null, description: null, agentId: null, status: null, elapsedMs: null };
 
     expect(hasVisibleContent(block)).toBe(true);
   });

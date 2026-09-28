@@ -16,7 +16,6 @@ export const DRAG_MIME = 'application/x-mage-panel-id';
 
 export interface StripeProps {
   readonly ariaLabel: string;
-  readonly orientation: 'vertical' | 'horizontal';
   readonly zoneAPanels: readonly PanelDefinition[];
   readonly zoneAActiveId: PanelId | null;
   readonly zoneBPanels: readonly PanelDefinition[];
@@ -126,9 +125,8 @@ export function DockZoneToolbar({
 // SU tema: `--color-mg-body` sale de `editor.foreground`/`foreground`, que todo tema trae. Un 30% de
 // ese color es una linea sutil pero visible con cualquier tema importado, claro u oscuro, sin depender
 // de ningun token opcional.
-export function StripeSeparator({ orientation }: { readonly orientation: 'vertical' | 'horizontal' }): React.JSX.Element {
-  const axisClass = orientation === 'vertical' ? 'my-[3px] h-px w-full' : 'mx-[3px] w-px self-stretch';
-  return <div aria-hidden="true" className={`shrink-0 bg-mg-body opacity-30 ${axisClass}`} />;
+export function StripeSeparator(): React.JSX.Element {
+  return <div aria-hidden="true" className="my-[3px] h-px w-full shrink-0 bg-mg-body opacity-30" />;
 }
 
 // Stripe de iconos de un borde (F6, PLAN-F6-PANELES.md §3.2/§6, ajustada con el feedback del usuario
@@ -139,7 +137,6 @@ export function StripeSeparator({ orientation }: { readonly orientation: 'vertic
 // borde inferior.
 export function Stripe({
   ariaLabel,
-  orientation,
   zoneAPanels,
   zoneAActiveId,
   zoneBPanels,
@@ -173,17 +170,16 @@ export function Stripe({
       ref={containerRef}
       role="toolbar"
       aria-label={ariaLabel}
-      aria-orientation={orientation}
+      aria-orientation="vertical"
       onKeyDown={onKeyDown}
-      className={`flex ${orientation === 'vertical' ? `flex-col ${STRIPE_WIDTH_CLASS}` : 'flex-row'} min-h-0 items-center gap-[2px] bg-mg-rail ${STRIPE_PAD_CLASS} ${className}`}
+      className={`flex flex-col ${STRIPE_WIDTH_CLASS} min-h-0 items-center gap-[2px] bg-mg-rail ${STRIPE_PAD_CLASS} ${className}`}
     >
       {/* Los iconos van dentro de un contenedor que scrollea y los controles de abajo ("añadir") fuera,
           siempre a la vista. Sin esto, con muchos paneles en un mismo borde la columna crecia por encima
           del alto de la ventana y empujaba el scroll a la PAGINA — reporte del usuario, medido primero
           en la barra izquierda y luego otra vez en esta. */}
-      <div data-stripe-scroll="true" className={`flex ${orientation === 'vertical' ? 'w-full flex-col' : 'h-full flex-row'} items-center gap-[2px] ${STRIPE_SCROLL_CLASS}`}>
+      <div data-stripe-scroll="true" className={`flex w-full flex-col items-center gap-[2px] ${STRIPE_SCROLL_CLASS}`}>
       <StripeZoneButtons
-        orientation={orientation}
         panels={zoneAPanels}
         activeId={zoneAActiveId}
         badgedPanelIds={badgedPanelIds}
@@ -194,9 +190,8 @@ export function Stripe({
       {/* Separador entre "arriba" y "medio" (feedback del usuario, 2026-08-06: en JetBrains van
           pegadas arriba, separadas por una linea — no "medio" empujada al fondo por el hueco
           flexible, que es lo que le pasaba a la "abajo" real). */}
-      <StripeSeparator orientation={orientation} />
+      <StripeSeparator />
       <StripeZoneButtons
-        orientation={orientation}
         panels={zoneBPanels}
         activeId={zoneBActiveId}
         badgedPanelIds={badgedPanelIds}
@@ -212,10 +207,9 @@ export function Stripe({
           min-h-7 de StripeZoneButtons le da area de suelta aun sin iconos. */}
       {/* Separador antes de "abajo", igual que en AccountRail.tsx: sin el, la tercera posicion no se
           distingue del hueco elastico y una zona de suelta que no se ve es una zona que nadie usa. */}
-      {onDropThird !== undefined && <StripeSeparator orientation={orientation} />}
+      {onDropThird !== undefined && <StripeSeparator />}
       {onDropThird !== undefined && (
         <StripeZoneButtons
-          orientation={orientation}
           panels={thirdPanels}
           activeId={thirdActiveId}
           onClick={(id) => onToggleThird?.(id)}
@@ -240,7 +234,6 @@ export function Stripe({
 }
 
 export function StripeZoneButtons({
-  orientation,
   panels,
   activeId,
   onClick,
@@ -248,7 +241,6 @@ export function StripeZoneButtons({
   onDrop,
   badgedPanelIds,
 }: {
-  readonly orientation: 'vertical' | 'horizontal';
   readonly panels: readonly PanelDefinition[];
   readonly activeId: PanelId | null;
   readonly onClick: (panelId: PanelId) => void;
@@ -298,17 +290,15 @@ export function StripeZoneButtons({
   // arriba queda un espacio muerto"). En reposo la zona vacia mide 0 y no ocupa nada; en cuanto
   // empieza un arrastre recupera su area de suelta y ademas pinta el hueco fantasma, asi que sigue
   // siendo visible y soltable — que era lo que este minimo vino a arreglar.
-  const minSizeAxisClass = orientation === 'vertical' ? 'min-h-7' : 'min-w-7';
-  const minSizeClass = dragging === null ? '' : minSizeAxisClass;
+  const minSizeClass = dragging === null ? '' : 'min-h-7';
 
   return (
     <div
       onDragOver={onDragOver}
       onDragLeave={() => setDragOver(false)}
       onDrop={onDropZone}
-      // El eje SIGUE al de la stripe que la aloja (vertical=columna, horizontal=fila) — sin esto los
-      // iconos de una stripe vertical (left/right) salian en fila en vez de en columna. min-h/min-w
-      // de un icono (feedback del usuario: "no deja arrastrar a una zona vacia") — sin paneles, este
+      // En columna, como la stripe (todas son verticales: la horizontal no llego a usarse y se quito).
+      // min-h de un icono (feedback del usuario: "no deja arrastrar a una zona vacia") — sin paneles, este
       // div media 0x0 (sin hijos) y dejaba de existir como area de suelta valida; con el minimo, sigue
       // habiendo algo donde soltar aunque la zona este vacia.
       // `outline-offset:-2px` no es cosmetico: el contenedor que scrollea los iconos lleva
@@ -316,7 +306,7 @@ export function StripeZoneButtons({
       // (28 px de icono en 29 de hueco util), asi que un outline pintado HACIA FUERA se comia el
       // recorte por los dos lados y la marca de suelta salia cortada (reporte del usuario). Dibujado
       // hacia dentro cabe entero sin tocar el ancho de la barra ni el de los iconos.
-      className={`flex ${orientation === 'vertical' ? 'flex-col' : 'flex-row'} ${minSizeClass} gap-[2px] rounded-[6px] outline outline-2 [outline-offset:-2px] transition-[outline-color,background-color] duration-150 ease-out ${dragOver ? 'bg-mg-sel outline-mg-focus' : 'outline-transparent'}`}
+      className={`flex flex-col ${minSizeClass} gap-[2px] rounded-[6px] outline outline-2 [outline-offset:-2px] transition-[outline-color,background-color] duration-150 ease-out ${dragOver ? 'bg-mg-sel outline-mg-focus' : 'outline-transparent'}`}
     >
       {panels.map((p, i) => (
         <StripeIconButton

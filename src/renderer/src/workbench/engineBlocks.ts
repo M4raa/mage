@@ -1,4 +1,4 @@
-import type { PermissionRequest, ToolFileInfo, ToolResult, ToolUse, TurnUsage } from '@shared/events';
+import type { PermissionRequest, ToolResult, ToolUse, TurnUsage } from '@shared/events';
 import type { AskQuestion } from '@shared/askUserQuestion';
 import type { Block, ImageAttachment, PermissionView, TextRun } from './types';
 import type { DiffLine } from './diffLines';
@@ -65,6 +65,17 @@ export interface NewUserBlock {
 // Bloque de usuario (optimista: lo anadimos al enviar; el CLI no reemite el mensaje del usuario).
 export function appendUserBlock(blocks: readonly Block[], user: NewUserBlock): readonly Block[] {
   return [...blocks, { kind: 'user', ...user }];
+}
+
+// ¿La peticion pendiente es una PREGUNTA (AskUserQuestion) aun sin contestar? Es el mismo can_use_tool
+// que un permiso, pero no se contesta con Permitir/Denegar: ni el panel ni los atajos 1/2/3 pueden
+// responderla (contestarla vacia la dejaba viva y al agente sin respuestas, P-026 1.4).
+export function hasPendingQuestion(
+  pending: { readonly requestId: string } | null | undefined,
+  blocks: readonly Block[],
+): boolean {
+  if (pending === null || pending === undefined) return false;
+  return blocks.some((b) => b.kind === 'question' && b.requestId === pending.requestId && b.state === 'pending');
 }
 
 // Tarjeta de pregunta del agente (2.3, AskUserQuestion). Nace `pending`: hasta que se conteste, el
@@ -172,6 +183,7 @@ export function appendToolUse(blocks: readonly Block[], tool: ToolUse, id: strin
     // Del input de la tool solo se guarda lo que la tarjeta necesita (titulo, descripcion, favicon,
     // ruta): el resto del input no entra en el estado.
     artifactDraft: parseArtifactDraft(tool.toolName, tool.input),
+    parentToolUseId: tool.parentToolUseId ?? null,
   };
   return [...blocks, block];
 }
@@ -189,6 +201,7 @@ export function appendSubagentBlock(blocks: readonly Block[], tool: ToolUse, id:
       description: stringOrNull(tool.input.description),
       agentId: null,
       status: null,
+      elapsedMs: null,
     },
   ];
 }
@@ -200,7 +213,7 @@ export function applySubagentResult(blocks: readonly Block[], result: ToolResult
   const agentId = extractAgentId(result.output);
   return blocks.map((block) =>
     block.kind === 'subagent' && block.toolUseId === result.toolUseId
-      ? { ...block, agentId: agentId ?? block.agentId, status: result.isError ? 'error' : 'completado' }
+      ? { ...block, agentId: agentId ?? block.agentId, status: result.isError ? 'error' : 'completado', elapsedMs: result.durationMs }
       : block,
   );
 }

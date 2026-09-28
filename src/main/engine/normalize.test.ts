@@ -188,7 +188,7 @@ describe('normalizeRawEvent: el turno', () => {
     const raw = { type: 'result', subtype: 'success', total_cost_usd: 0.01, num_turns: 2 };
 
     expect(normalizeRawEvent(raw)).toEqual([
-      { kind: 'result', result: { isError: false, subtype: 'success', costUsd: 0.01, numTurns: 2 } },
+      { kind: 'result', result: { isError: false, subtype: 'success', numTurns: 2 } },
     ]);
   });
 
@@ -196,7 +196,7 @@ describe('normalizeRawEvent: el turno', () => {
     const raw = { type: 'result', subtype: 'error_max_turns' };
 
     expect(normalizeRawEvent(raw)).toEqual([
-      { kind: 'result', result: { isError: true, subtype: 'error_max_turns', costUsd: null, numTurns: null } },
+      { kind: 'result', result: { isError: true, subtype: 'error_max_turns', numTurns: null } },
     ]);
   });
 
@@ -216,5 +216,25 @@ describe('normalizeRawEvent: el turno', () => {
   it('normalize_recognizedButInvalidShape_throws', () => {
     // result reconocido pero sin subtype (campo del que dependemos) -> error en la frontera.
     expect(() => normalizeRawEvent({ type: 'result' })).toThrow();
+  });
+
+  // P-026 3.4, MEDIDO en 2.1.283 (`engine-spike --subagent`): los pasos de un subagente llegan como
+  // `assistant` completos con `parent_tool_use_id` = el tool_use del Agent que lo lanzo.
+  it('normalize_assistantDeSubagente_llevaSuParentToolUseId', () => {
+    const raw = {
+      type: 'assistant',
+      parent_tool_use_id: 'toolu_agent',
+      message: { content: [{ type: 'tool_use', id: 't2', name: 'Glob', input: { pattern: '*.json' } }] },
+    };
+
+    expect(normalizeRawEvent(raw)).toEqual([
+      { kind: 'tool_use', tool: { toolUseId: 't2', toolName: 'Glob', input: { pattern: '*.json' }, parentToolUseId: 'toolu_agent' } },
+    ]);
+  });
+
+  it('normalize_assistantPrincipal_sinParentToolUseId', () => {
+    const raw = { type: 'assistant', parent_tool_use_id: null, message: { content: [{ type: 'tool_use', id: 't3', name: 'Read', input: {} }] } };
+
+    expect(normalizeRawEvent(raw)[0]).toEqual({ kind: 'tool_use', tool: { toolUseId: 't3', toolName: 'Read', input: {} } });
   });
 });

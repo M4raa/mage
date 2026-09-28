@@ -4,7 +4,6 @@ import { fileURLToPath } from 'node:url';
 import { Readable } from 'node:stream';
 import { describe, expect, it } from 'vitest';
 import type { TranscriptBatch } from '@shared/transcripts';
-import { TRANSCRIPT_TAIL_START } from '@shared/transcripts';
 import { TranscriptService, type TranscriptDeps, type TranscriptServiceOptions } from './transcriptService';
 
 const currentDir = dirname(fileURLToPath(import.meta.url));

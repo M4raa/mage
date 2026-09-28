@@ -38,11 +38,24 @@ export function SharedConfigSection(): React.JSX.Element {
     <div className="flex min-h-0 flex-1 flex-col gap-[14px] overflow-y-auto p-[14px_16px]">
       <p className="text-[11px] leading-[1.5] text-mg-sec">
         Lo que definas aquí se <strong>suma</strong> a la configuración de <strong>todas</strong> tus cuentas al lanzar
-        una conversación, sin sustituir nunca la suya. Son dos ficheros propios de Mage, aparte de los del CLI
-        (<code>.mcp.json</code>, <code>settings.json</code>, <code>.claude.json</code>): <strong>no</strong> son los MCP
-        de tu cuenta, así que empezar vacío es lo normal. Para ver los de una cuenta concreta, abre una conversación
-        suya y mira la pestaña <strong>MCP</strong> del Inspector.
+        una conversación, sin sustituir nunca la suya. Mage es la fuente de estos MCP compartidos: la primera vez se
+        importan de <code>~/.claude/mcp-shared.json</code> y de los MCP de cada cuenta, y a partir de ahí se gestionan
+        aquí. Para ver los que carga una conversación concreta, mira la pestaña <strong>MCP</strong> del Inspector.
       </p>
+
+      {/* Colisiones de la importacion inicial (P-026 2.5, D10): mismo nombre con otra configuracion. */}
+      {snapshot.mcpCommonImportNotes.length > 0 && (
+        <div role="status" data-mcp-import-notes="true" className="flex flex-col gap-[3px] rounded-[7px] border border-mg-border-subtle bg-mg-code p-[8px_10px]">
+          <span className="text-[10px] font-semibold text-mg-sec">Importados por primera vez, con avisos</span>
+          <ul className="flex flex-col gap-[2px]">
+            {snapshot.mcpCommonImportNotes.map((note) => (
+              <li key={note} className="text-[10px] text-mg-sec">
+                {note}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       <McpServersEditor />
       <CommonRulesEditor />

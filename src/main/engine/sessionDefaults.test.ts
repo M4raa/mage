@@ -81,15 +81,25 @@ describe('resolveLaunchParams', () => {
     expect(resolveLaunchParams('s1', { ...params, permissionMode: 'plan' }, deps({})).permissionMode).toBe('plan');
   });
 
-  it('resolve_permissionModeDefault_noSePropaga', () => {
-    expect(resolveLaunchParams('s1', { ...params, permissionMode: 'default' }, deps({})).permissionMode).toBeUndefined();
+  it('resolve_permissionModeDefaultElegido_sePropaga', () => {
+    // P-026 2.3: un Manual elegido a mano viaja, para que el `defaultMode` de la cuenta no lo cambie.
+    expect(resolveLaunchParams('s1', { ...params, permissionMode: 'default' }, deps({})).permissionMode).toBe('default');
+  });
+
+  it('resolve_sinPermissionMode_noSePropaga', () => {
+    // Conversacion nueva: sin flag, el CLI arranca en el modo de la cuenta y Mage lo adopta.
     expect(resolveLaunchParams('s1', params, deps({})).permissionMode).toBeUndefined();
   });
 
-  it('resolve_permissionModeInvalido_lanza', () => {
+  it('resolve_permissionModeAutoYBypass_seAceptan', () => {
+    expect(resolveLaunchParams('s1', { ...params, permissionMode: 'auto' }, deps({})).permissionMode).toBe('auto');
+    expect(resolveLaunchParams('s1', { ...params, permissionMode: 'bypassPermissions' }, deps({})).permissionMode).toBe('bypassPermissions');
+  });
+
+  it('resolve_permissionModeInvalido_lanzaConElValor', () => {
     expect(() =>
       resolveLaunchParams('s1', { ...params, permissionMode: 'yolo' as never }, deps({})),
-    ).toThrow(/modo de permiso/i);
+    ).toThrow(/modo de permiso invalido: "yolo"/i);
   });
 
   it('resolve_budgetCentsValido_sePropaga', () => {

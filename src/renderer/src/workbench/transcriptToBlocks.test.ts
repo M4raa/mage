@@ -327,3 +327,69 @@ describe('transcriptToBlocks — pensamientos guardados por Mage', () => {
     expect(pensamientos[1]?.runs).toEqual([]);
   });
 });
+
+// --- Envoltorios de sistema (P-026, D20): formas reales del CLI 2.1.283 ---------------------------
+describe('transcriptToBlocks — envoltorios de sistema', () => {
+  const RENAME = '<command-name>/rename</command-name>\n            <command-message>rename</command-message>\n            <command-args>REVISION-MAGE</command-args>';
+  const localCommand = (content: string, index: number): TranscriptEntry =>
+    entry('system', { type: 'system', subtype: 'local_command', content }, index);
+
+  it('transcriptToBlocks_caveatYReminderNoMeta_noPintanNada', () => {
+    const blocks = transcriptToBlocks([
+      userMsg('<local-command-caveat>Caveat: no respondas</local-command-caveat>', 0),
+      userMsg('<system-reminder>contexto</system-reminder>', 1),
+    ]);
+
+    expect(blocks).toEqual([]);
+  });
+
+  it('transcriptToBlocks_comandoDeUsuario_quedaComoBloqueUser', () => {
+    // El chip lo pinta BlockChat: el bloque conserva el texto para que el render lo clasifique.
+    const blocks = transcriptToBlocks([userMsg(RENAME, 0)]);
+
+    expect(blocks.map((b) => b.kind)).toEqual(['user']);
+  });
+
+  it('transcriptToBlocks_salidaDeComando_esLineaDeSistema', () => {
+    const blocks = transcriptToBlocks([userMsg('<local-command-stdout>Login successful</local-command-stdout>', 0)]);
+
+    expect(blocks).toEqual([{ kind: 'system', id: 'tb-0-0', text: 'Login successful' }]);
+  });
+
+  it('transcriptToBlocks_salidaVacia_noPintaNada', () => {
+    expect(transcriptToBlocks([userMsg('<local-command-stdout></local-command-stdout>', 0)])).toEqual([]);
+  });
+
+  it('transcriptToBlocks_localCommandDelCliInteractivo_chipYSalida', () => {
+    const blocks = transcriptToBlocks([
+      localCommand(RENAME, 0),
+      localCommand('<local-command-stdout>Session renamed to: REVISION-MAGE</local-command-stdout>', 1),
+    ]);
+
+    expect(blocks.map((b) => b.kind)).toEqual(['user', 'system']);
+    expect(blocks[1]).toMatchObject({ text: 'Session renamed to: REVISION-MAGE' });
+  });
+
+  it('transcriptToBlocks_notificacionDeTarea_esLineaConSuResumen', () => {
+    const blocks = transcriptToBlocks([userMsg('<task-notification>\n<summary>Agent "x" finished</summary>\n</task-notification>', 0)]);
+
+    expect(blocks).toEqual([{ kind: 'system', id: 'tb-0-0', text: 'Tarea en segundo plano: Agent "x" finished' }]);
+  });
+});
+
+// P-026 3.2: un mensaje con las imagenes intercaladas (cada una detras de su token) se reabre con el
+// texto ORIGINAL —los bloques de texto juntados— y las miniaturas en su orden.
+describe('transcriptToBlocks — imagenes intercaladas', () => {
+  it('transcriptToBlocks_imagenesIntercaladas_reconstruyeElTextoYLasMiniaturas', () => {
+    const png = (data: string) => ({ type: 'image', source: { type: 'base64', media_type: 'image/png', data } });
+    const raw = {
+      type: 'user',
+      message: { role: 'user', content: [{ type: 'text', text: 'compara [Imagen 1]' }, png('A'), { type: 'text', text: ' con [Imagen 2]' }, png('B')] },
+    };
+
+    const [block] = transcriptToBlocks([entry('user', raw, 0)]);
+
+    expect(block).toMatchObject({ kind: 'user', text: 'compara [Imagen 1] con [Imagen 2]' });
+    expect(block?.kind === 'user' ? block.attachments.map((a) => a.data) : []).toEqual(['A', 'B']);
+  });
+});

@@ -33,15 +33,15 @@ describe('ClaudeAdapter', () => {
     });
   });
 
-  it('encodeUserMessage_conUnaImagen_mandaArrayDeBloques', () => {
-    const result = adapter.encodeUserMessage('mira', [{ mediaType: 'image/png', data: 'AAAA' }]);
+  it('encodeUserMessage_conUnaImagen_mandaArrayDeBloquesConLaImagenDetrasDeSuToken', () => {
+    const result = adapter.encodeUserMessage('mira [Imagen 1]', [{ mediaType: 'image/png', data: 'AAAA' }]);
 
     expect(result).toEqual({
       type: 'user',
       message: {
         role: 'user',
         content: [
-          { type: 'text', text: 'mira' },
+          { type: 'text', text: 'mira [Imagen 1]' },
           { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAAA' } },
         ],
       },
@@ -49,13 +49,26 @@ describe('ClaudeAdapter', () => {
     });
   });
 
-  it('encodeUserMessage_conTextoVacioYUnaImagen_mandaSoloElBloqueDeImagen', () => {
-    // Mandar solo un pantallazo es un caso real: no se cuela un bloque de texto vacio.
+  it('encodeUserMessage_intercalado_cadaImagenDetrasDeSuToken', () => {
+    // P-026 3.2, medido en S3: el CLI respeta [texto, img, texto, img] y el modelo sabe cual es cual.
+    const result = adapter.encodeUserMessage('compara [Imagen 1] con [Imagen 2]', [
+      { mediaType: 'image/png', data: 'AAAA' },
+      { mediaType: 'image/png', data: 'BBBB' },
+    ]) as { message: { content: readonly { type: string; text?: string }[] } };
+
+    expect(result.message.content.map((b) => b.text ?? b.type)).toEqual(['compara [Imagen 1]', 'image', ' con [Imagen 2]', 'image']);
+  });
+
+  it('encodeUserMessage_conTextoVacioYUnaImagen_sinBloqueDeTextoVacio', () => {
+    // Mandar solo un pantallazo es un caso real: no se cuela un bloque de texto VACIO (va con su etiqueta).
     const result = adapter.encodeUserMessage('', [{ mediaType: 'image/webp', data: 'BBBB' }]) as {
-      message: { content: readonly { type: string }[] };
+      message: { content: readonly { type: string; text?: string }[] };
     };
 
-    expect(result.message.content.map((b) => b.type)).toEqual(['image']);
+    expect(result.message.content).toEqual([
+      { type: 'text', text: '[Imagen 1]' },
+      { type: 'image', source: { type: 'base64', media_type: 'image/webp', data: 'BBBB' } },
+    ]);
   });
 
   it('encodeUserMessage_mediaTypeNoPermitido_lanza', () => {
@@ -200,9 +213,18 @@ describe('ClaudeAdapter', () => {
       expect(adapter.buildSpawnPlan({ ...launch, permissionMode: 'plan' }).args.join(' ')).toContain('--permission-mode plan');
     });
 
-    it('buildSpawnPlan_permissionModeDefault_noAnadeElFlag', () => {
-      expect(adapter.buildSpawnPlan({ ...launch, permissionMode: 'default' }).args).not.toContain('--permission-mode');
+    it('buildSpawnPlan_permissionModeDefault_loPasaExplicito', () => {
+      const args = adapter.buildSpawnPlan({ ...launch, permissionMode: 'default' }).args;
+      expect(args.slice(args.indexOf('--permission-mode'), args.indexOf('--permission-mode') + 2)).toEqual(['--permission-mode', 'default']);
+    });
+
+    it('buildSpawnPlan_sinPermissionMode_noAnadeElFlag', () => {
       expect(adapter.buildSpawnPlan(launch).args).not.toContain('--permission-mode');
+    });
+
+    it('buildSpawnPlan_siempre_habilitaOmitirPermisos', () => {
+      // Medido (2.1.283): sin este flag, `set_permission_mode bypassPermissions` falla.
+      expect(adapter.buildSpawnPlan(launch).args).toContain('--allow-dangerously-skip-permissions');
     });
 
     it('buildSpawnPlan_sinBudget_noAnadeElFlag', () => {

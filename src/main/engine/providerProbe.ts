@@ -1,6 +1,5 @@
-import { execFile, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { promisify } from 'node:util';
 import { z } from 'zod';
 import type { ProviderProbeParams, ProviderProbeResult } from '@shared/ipc';
 import type { ProviderModel } from '@shared/providers';
@@ -8,6 +7,7 @@ import { AGY_PROVIDER_ID, BUILT_IN_PROVIDERS, CODEX_PROVIDER_ID, modelsUrl } fro
 import { resolveClaudeBinary } from '../os/claudeBinaryResolver';
 import { findAgyBinary } from '../os/agyBinaryResolver';
 import { findCodexBinary } from '../os/codexBinaryResolver';
+import { execCapturingStdout } from '../os/execCapture';
 
 // Sondeo de un proveedor para la seccion "Proveedores y modelos" de Configuracion (D2): a donde apunta
 // (ruta del binario detectada, o URL del endpoint) y que modelos ofrece DE VERDAD.
@@ -17,9 +17,9 @@ import { findCodexBinary } from '../os/codexBinaryResolver';
 //   - `agy models` -> una linea por modelo, `id<TAB>etiqueta`, precedida de "Fetching available
 //     models...". Se consulta en vivo: la lista de `BUILT_IN_PROVIDERS` ya estaba desfasada (la cuenta
 //     real ofrece Gemini 3.8 y 3.7, que no figuran ahi).
-//   - `claude` NO tiene ningun subcomando ni flag que liste modelos (`claude --help` no trae `models`;
-//     `--model` solo acepta uno). No se inventa: el sondeo responde "no se pudo listar" con el motivo
-//     y la UI cae en el catalogo curado de `BUILT_IN_PROVIDERS`.
+//   - `claude` NO tiene ningun subcomando ni flag que liste modelos, pero SI los publica en la respuesta
+//     a `initialize` (P-026 2.4, medido en 2.1.283 con `spike/init-spike.mjs`, sin turno). Main los
+//     sondea al arrancar y los guarda por cuenta; aqui se lee esa cache (`loadClaudeModels`).
 //   - proveedores por gateway (openai/gemini) y del usuario: `GET <base>/models` (convencion OpenAI).
 
 // CORRECCION del 2026-09-18, MEDIDA sobre el bundle del CLI 2.1.276: era FALSO decir que el catalogo
@@ -30,11 +30,10 @@ import { findCodexBinary } from '../os/codexBinaryResolver';
 // Mage puede hacer la misma llamada: el camino ya esta montado en `usage/usageService.ts`, que lee el
 // token OAuth de la cuenta SOLO para la cabecera Authorization y jamas lo cachea ni lo loguea.
 //
-// NO se ha cableado todavia a proposito, y conviene decidirlo a sabiendas: seria OTRA llamada a la API
-// de Anthropic con el Bearer FUERA del camino del CLI. Mientras tanto se usa la lista curada.
+// Esa llamada NO se hace: seria el Bearer FUERA del camino del CLI. El catalogo sale del propio CLI, por `initialize` (P-026 2.4).
 export const CLAUDE_NO_CATALOG_REASON =
-  'Lista mantenida por Mage. El catálogo real se puede consultar (el propio CLI lo pide a ' +
-  '/v1/models), pero todavía no está cableado aquí. Puedes escribir cualquier id de modelo a mano.';
+  'Todavía no se ha sondeado el catálogo de esta cuenta (se pide al CLI al arrancar Mage): mientras, ' +
+  'la lista de reserva de Mage. Puedes escribir cualquier id de modelo a mano.';
 
 export const CODEX_NO_ADAPTER_REASON =
   'Detectado, pero todavía no se puede usar: falta el adapter de Mage para su protocolo. Codex sí ' +
@@ -56,13 +55,15 @@ export interface ProbeDeps {
   readonly runCli: (bin: string, args: readonly string[]) => Promise<string>;
   readonly fetchJson: (url: string, apiKey: string) => Promise<unknown>;
   readonly env: Readonly<Record<string, string | undefined>>;
+  // Catalogo de Claude cacheado de la cuenta principal (P-026 2.4); vacio si aun no se sondeo.
+  readonly loadClaudeModels: () => readonly ProviderModel[];
 }
 
 // Sondea un proveedor. NUNCA lanza por un fallo del proveedor (binario ausente, endpoint caido, JSON
 // raro): eso es informacion para la UI y viaja en `error`. Solo lanza si la PETICION es invalida.
 export async function probeProvider(
   params: ProviderProbeParams,
-  deps: ProbeDeps = defaultProbeDeps(),
+  deps: ProbeDeps,
 ): Promise<ProviderProbeResult> {
   const providerId = params.providerId.trim();
   if (providerId.length === 0) {
@@ -74,15 +75,16 @@ export async function probeProvider(
   return probeHttp(providerId, params, deps);
 }
 
-// Claude: solo se puede detectar el binario. El catalogo no es preguntable (ver cabecera).
+// Claude: el binario y el catalogo que dio su `initialize` (cacheado por main; ver cabecera).
 function probeClaude(deps: ProbeDeps): ProviderProbeResult {
   const bin = deps.findClaudeBinary();
-  return {
-    kind: 'cli',
-    endpoint: bin,
-    models: null,
-    error: bin === null ? 'No se encontró el binario de Claude Code. Fija MAGE_CLAUDE_BIN con su ruta.' : CLAUDE_NO_CATALOG_REASON,
-  };
+  if (bin === null) {
+    return { kind: 'cli', endpoint: null, models: null, error: 'No se encontró el binario de Claude Code. Fija MAGE_CLAUDE_BIN con su ruta.' };
+  }
+  const models = deps.loadClaudeModels();
+  return models.length === 0
+    ? { kind: 'cli', endpoint: bin, models: null, error: CLAUDE_NO_CATALOG_REASON }
+    : { kind: 'cli', endpoint: bin, models, error: null };
 }
 
 // agy: binario por el resolutor de siempre y catalogo por `agy models` contra la cuenta real.
@@ -209,8 +211,10 @@ function describe(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-function defaultProbeDeps(): ProbeDeps {
+// Los reales, salvo el catalogo de Claude: vive en un store de main que este modulo no conoce.
+export function defaultProbeDeps(loadClaudeModels: () => readonly ProviderModel[]): ProbeDeps {
   return {
+    loadClaudeModels,
     findClaudeBinary: findInstalledClaudeBinary,
     findAgyBinary: () => findAgyBinary(),
     findCodexBinary: () => findCodexBinary(),
@@ -235,17 +239,10 @@ function commandInPath(bin: string): boolean {
   return result.status === 0;
 }
 
-const execFileAsync = promisify(execFile);
-
 // Ejecuta un CLI y devuelve su stdout. Lanza (con el mensaje del propio proceso) si falla o si tarda
 // mas de CLI_TIMEOUT_MS: el llamante lo convierte en el texto que ve el usuario.
-async function runCliCapturingStdout(bin: string, args: readonly string[]): Promise<string> {
-  const { stdout } = await execFileAsync(bin, [...args], {
-    timeout: CLI_TIMEOUT_MS,
-    windowsHide: true,
-    maxBuffer: 1024 * 1024,
-  });
-  return stdout;
+function runCliCapturingStdout(bin: string, args: readonly string[]): Promise<string> {
+  return execCapturingStdout(bin, args, { timeoutMs: CLI_TIMEOUT_MS });
 }
 
 // GET con timeout y, si hay credencial, cabecera Authorization. Un status != 2xx lanza con el codigo:

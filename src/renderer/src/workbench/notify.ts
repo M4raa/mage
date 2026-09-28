@@ -23,16 +23,21 @@ const NOTIFIABLE_HOOKS: ReadonlyMap<string, string> = new Map([
 // Eventos que merecen avisar al usuario cuando no esta mirando: fin de turno, permiso pendiente
 // (bloquea el avance), error, y texto del asistente que casa con una regla regex del usuario
 // (assistant_text llega UNA vez por turno, no por delta -> sin spam). El resto es ruido -> null.
-export function notificationForEvent(
-  event: MageEvent,
-  tabTitle: string,
-  rules: readonly NotificationRule[] = [],
-): NotificationContent | null {
+export interface NotificationContext {
+  readonly tabTitle: string;
+  readonly rules?: readonly NotificationRule[];
+  // La peticion de permiso ya la contesto Mage sola («Permitir siempre aqui»): no hay nada que pedir al
+  // usuario, y avisar «Permiso requerido» era mentirle (P-026, 1.8).
+  readonly autoAllowed?: boolean;
+}
+
+export function notificationForEvent(event: MageEvent, context: NotificationContext): NotificationContent | null {
+  const { tabTitle, rules = [], autoAllowed = false } = context;
   switch (event.kind) {
     case 'result':
       return { title: 'Turno completado', body: tabTitle };
     case 'permission_request':
-      return { title: 'Permiso requerido', body: `${tabTitle}: ${event.request.toolName}` };
+      return autoAllowed ? null : { title: 'Permiso requerido', body: `${tabTitle}: ${event.request.toolName}` };
     case 'error':
       return { title: 'Error en la conversación', body: `${tabTitle}: ${event.message}` };
     case 'assistant_text':

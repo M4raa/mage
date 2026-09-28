@@ -20,21 +20,35 @@ const STATUS_CON_SESION = JSON.stringify({
 });
 const STATUS_SIN_SESION = JSON.stringify({ loggedIn: false, authMethod: 'none' });
 
-// Proceso falso: guarda lo escrito por stdin y deja disparar salida/exit desde el test.
-function fakeProcess(): CliLoginProcess & { emit: (chunk: string) => void; exit: (code: number | null) => void; readonly written: string[] } {
+type FakeProcess = CliLoginProcess & {
+  emit: (chunk: string) => void;
+  exit: (code: number | null) => void;
+  readonly written: string[];
+};
+
+// Proceso falso: guarda lo escrito por stdin y deja disparar salida/exit desde el test. Con
+// `exitOnWrite`, sale con ese codigo tras recibir el code, como el CLI real tras canjearlo.
+function fakeProcess(exitOnWrite: number | null = null): FakeProcess {
   const outputs: ((chunk: string) => void)[] = [];
   const exits: ((code: number | null) => void)[] = [];
   const written: string[] = [];
+  const exit = (code: number | null): void => exits.forEach((listener) => listener(code));
   return {
     written,
     onOutput: (listener) => outputs.push(listener),
     onExit: (listener) => exits.push(listener),
-    writeLine: (text) => written.push(text),
+    writeLine: (text) => {
+      written.push(text);
+      if (exitOnWrite !== null) queueMicrotask(() => exit(exitOnWrite));
+    },
     kill: vi.fn(),
     emit: (chunk) => outputs.forEach((listener) => listener(chunk)),
-    exit: (code) => exits.forEach((listener) => listener(code)),
+    exit,
   };
 }
+
+// Deja correr las microtareas pendientes (el servicio encadena varias antes de decidir).
+const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 
 function deps(overrides: Partial<CliLoginDeps> = {}): CliLoginDeps {
   return {
@@ -163,18 +177,107 @@ describe('CliLoginService.start', () => {
 });
 
 describe('CliLoginService.submitCode', () => {
-  // Arranca un login ya listo para recibir el code.
-  async function started(overrides: Partial<CliLoginDeps> = {}): Promise<{
-    service: CliLoginService;
-    child: ReturnType<typeof fakeProcess>;
-  }> {
-    const child = fakeProcess();
+  // Arranca un login ya listo para recibir el code. Por defecto el CLI falso sale con 0 tras el code.
+  async function started(
+    overrides: Partial<CliLoginDeps> = {},
+    exitOnWrite: number | null = 0,
+  ): Promise<{ service: CliLoginService; child: FakeProcess }> {
+    const child = fakeProcess(exitOnWrite);
     const service = new CliLoginService(deps({ spawnLogin: () => child, ...overrides }));
     const pending = service.start(DIR, null);
     child.emit(SALIDA_REAL);
     await pending;
     return { service, child };
   }
+
+  it('submitCode_antesDeSalirElCli_noConsultaAuthStatus', async () => {
+    const readAuthStatus = vi.fn(async () => STATUS_CON_SESION);
+    const { service, child } = await started({ readAuthStatus }, null);
+
+    const result = service.submitCode('abc123#state');
+    await flush();
+    expect(readAuthStatus).not.toHaveBeenCalled();
+    child.exit(0);
+
+    expect((await result).status).toBe('ok');
+    expect(readAuthStatus).toHaveBeenCalledTimes(1);
+  });
+
+  it('submitCode_cliSaleCon0_verificaYDevuelveOk', async () => {
+    const { service } = await started();
+
+    expect(await service.submitCode('abc123#state')).toEqual({ status: 'ok', email: 'a@b.c', org: 'gar.im', reason: null });
+  });
+
+  it('submitCode_cliSaleConDistintoDe0_devuelveErrorSinAuthStatus', async () => {
+    const readAuthStatus = vi.fn(async () => STATUS_CON_SESION);
+    const { service } = await started({ readAuthStatus }, 1);
+
+    expect(await service.submitCode('abc#def')).toMatchObject({ status: 'error', reason: 'cli_exit_1' });
+    expect(readAuthStatus).not.toHaveBeenCalled();
+  });
+
+  it('submitCode_cliDiceLoginFailed_traduceLaFraseConocida', async () => {
+    const { service, child } = await started({}, null);
+
+    const result = service.submitCode('abc#def');
+    child.emit('Login failed: Request failed with status code 400\n');
+    child.exit(1);
+
+    expect((await result).reason).toBe('cli_login_rejected');
+  });
+
+  it('submitCode_cliNoSaleEnPlazo_mataYDevuelveTimeout', async () => {
+    const { service, child } = await started({ exchangeTimeoutMs: 10 }, null);
+
+    expect((await service.submitCode('abc123#state')).reason).toBe('cli_exchange_timeout');
+    expect(child.kill).toHaveBeenCalledTimes(1);
+  });
+
+  it('submitCode_noMataAntesDelExit', async () => {
+    const { service, child } = await started({}, null);
+
+    const result = service.submitCode('abc123#state');
+    await flush();
+    expect(child.kill).not.toHaveBeenCalled();
+    child.exit(0);
+    await result;
+
+    expect(child.kill).not.toHaveBeenCalled();
+  });
+
+  it('submitCode_cliDiceInvalidCode_devuelveErrorSinMatarYAdmiteOtroCode', async () => {
+    // Medido (S2 de P-026): con un code sin `#` el CLI avisa y vuelve a esperar, sin salir.
+    const { service, child } = await started({}, null);
+
+    const first = service.submitCode('123456');
+    child.emit('Invalid code. Please make sure the full code was copied.\nPaste code here if prompted > ');
+    expect((await first).reason).toBe('cli_invalid_code');
+    expect(child.kill).not.toHaveBeenCalled();
+
+    const second = service.submitCode('abc123#state');
+    child.exit(0);
+    expect((await second).status).toBe('ok');
+    expect(child.written).toEqual(['123456', 'abc123#state']);
+  });
+
+  it('submitCode_invalidCodeDeUnIntentoAnterior_noContaminaElSiguiente', async () => {
+    const { service, child } = await started({ exchangeTimeoutMs: 10 }, null);
+    const first = service.submitCode('123456');
+    child.emit('Invalid code. Please make sure the full code was copied.\n');
+    await first;
+
+    // Sin salida nueva tras el segundo code, la frase vieja no debe decidir: vence el plazo.
+    expect((await service.submitCode('abc123#state')).reason).toBe('cli_exchange_timeout');
+  });
+
+  it('submitCode_cliYaMuertoAntesDelCode_noEscribeYDevuelveSuSalida', async () => {
+    const { service, child } = await started({}, null);
+    child.exit(1);
+
+    expect((await service.submitCode('abc123#state')).reason).toBe('cli_exit_1');
+    expect(child.written).toEqual([]);
+  });
 
   it('submitCode_sinLoginEnCurso_devuelveError', async () => {
     const result = await new CliLoginService(deps()).submitCode('abc123');

@@ -53,6 +53,7 @@ export function Dropdown({
   ariaLabel,
   tip,
   triggerClassName = '',
+  leading,
 }: {
   readonly value: string;
   readonly options: readonly DropdownOption[];
@@ -60,6 +61,8 @@ export function Dropdown({
   readonly ariaLabel: string;
   readonly tip?: string;
   readonly triggerClassName?: string;
+  // Algo que va delante de la etiqueta en el disparador (el icono de la rama de git, P-026 3.5).
+  readonly leading?: React.ReactNode;
 }): React.JSX.Element {
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -108,7 +111,14 @@ export function Dropdown({
         data-tip={tip}
         className={`shrink-0 cursor-pointer self-center rounded-full border border-mg-border-ctrl bg-transparent px-[8px] py-[2px] text-[10.5px] text-mg-sec outline-none transition-colors duration-150 ease-out hover:text-mg-body ${triggerClassName}`}
       >
-        {selectedLabel}
+        {leading === undefined ? (
+          selectedLabel
+        ) : (
+          <span className="inline-flex items-center gap-[5px]">
+            {leading}
+            <span className="truncate">{selectedLabel}</span>
+          </span>
+        )}
       </button>
       {createPortal(
         // AnimatePresence VA DENTRO del portal, no envolviendolo: un createPortal(...) no es un

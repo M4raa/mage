@@ -3,8 +3,6 @@ import { describe, expect, it, vi } from 'vitest';
 import { writeCredentials, type CredentialsDeps } from './credentialsStore';
 import type { ClaudeAiOauth } from './oauthFlow';
 
-const HOME = '/home/u';
-
 const CREDS: ClaudeAiOauth = {
   accessToken: 'AT',
   refreshToken: 'RT',

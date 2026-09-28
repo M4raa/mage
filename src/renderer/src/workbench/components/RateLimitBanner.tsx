@@ -49,7 +49,9 @@ export function RateLimitBanner(): React.JSX.Element | null {
               disabled={moving}
               onClick={() => {
                 setMoving(true);
-                void continueInAccount(tabId, account.id).finally(() => setMoving(false));
+                continueInAccount(tabId, account.id)
+                  .catch((err: unknown) => console.error('No se pudo continuar en la otra cuenta:', err instanceof Error ? err.message : String(err)))
+                  .finally(() => setMoving(false));
               }}
               className="inline-flex items-center gap-[6px] rounded-[6px] border border-mg-border-emph px-[8px] py-[3px] text-mg-body transition-colors duration-150 ease-out hover:bg-mg-hover disabled:opacity-50"
             >

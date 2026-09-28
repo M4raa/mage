@@ -11,6 +11,7 @@ function deps(overrides: Partial<ProbeDeps> = {}): ProbeDeps {
     runCli: () => Promise.reject(new Error('runCli no esperado')),
     fetchJson: () => Promise.reject(new Error('fetchJson no esperado')),
     env: {},
+    loadClaudeModels: () => [],
     ...overrides,
   };
 }
@@ -66,6 +67,17 @@ describe('probeProvider', () => {
     await expect(probeProvider({ providerId: '  ', baseUrl: null, apiKey: null }, deps())).rejects.toThrow(/"  "/);
   });
 
+  it('probeProvider_claudeConCatalogoSondeado_devuelveSusModelos', async () => {
+    // P-026 2.4: el catalogo sale del `initialize` del CLI, que main cachea por cuenta.
+    const models = [{ id: 'opus', label: 'Opus 5.5' }];
+    const result = await probeProvider(
+      { providerId: 'claude', baseUrl: null, apiKey: null },
+      deps({ findClaudeBinary: () => '/home/u/.local/bin/claude', loadClaudeModels: () => models }),
+    );
+
+    expect(result).toEqual({ kind: 'cli', endpoint: '/home/u/.local/bin/claude', models, error: null });
+  });
+
   it('probeProvider_claudeInstalado_devuelveLaRutaYLaListaCurada', async () => {
     const result = await probeProvider(
       { providerId: 'claude', baseUrl: null, apiKey: null },
@@ -75,7 +87,7 @@ describe('probeProvider', () => {
     expect(result.kind).toBe('cli');
     expect(result.endpoint).toBe('/home/u/.local/bin/claude');
     expect(result.models).toBeNull();
-    expect(result.error).toMatch(/Lista mantenida por Mage/);
+    expect(result.error).toMatch(/Todavía no se ha sondeado/);
   });
 
   it('probeProvider_agyInstalado_listaLosModelosQueDiceElCli', async () => {

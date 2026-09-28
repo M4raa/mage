@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { useWorkbenchStore } from '../workbenchStore';
+import { headPermission, useWorkbenchStore } from '../workbenchStore';
 import { buildAppMenuModel, type AppMenu as AppMenuModel, type AppMenuItem } from '../appMenuModel';
 import { nextIndexForArrow } from '../a11y/keyboardNav';
 import { runGlobalAction } from '../keybindings/useGlobalKeybindings';
+import { hasPendingQuestion } from '../engineBlocks';
 
 // Barra de menus PROPIA (2.9.b), que sustituye al `Menu` nativo. Los items se generan del catalogo de
 // acciones (`appMenuModel`), asi que un atajo re-asignado en Configuracion se ve aqui sin tocar nada.
@@ -24,9 +25,10 @@ export function AppMenu({
   // Un selector por VALOR PRIMITIVO, nunca uno que devuelva un objeto nuevo: zustand compara el
   // resultado por identidad, y un objeto recien creado en cada llamada es un re-render infinito (la app
   // no llegaba ni a montar). El objeto se compone despues, con useMemo.
-  const permissionPending = useWorkbenchStore((s) => s.pendingByChat[s.activeTabId] !== null && s.pendingByChat[s.activeTabId] !== undefined);
+  const permissionPending = useWorkbenchStore((s) => headPermission(s, s.activeTabId) !== null);
+  const questionPending = useWorkbenchStore((s) => hasPendingQuestion(headPermission(s, s.activeTabId), s.blocksByChat[s.activeTabId] ?? []));
   const status = useWorkbenchStore((s) => s.statusByChat[s.activeTabId]);
-  const dialogOpen = useWorkbenchStore((s) => s.settingsOpen || s.newTabOpen || s.addAccountOpen || s.handoffOpen);
+  const dialogOpen = useWorkbenchStore((s) => s.settingsOpen || s.newTabOpen || s.addAccountOpen || s.handoffOpen || s.accountSwitchPrompt !== null);
   const menus = useMemo(
     () =>
       buildAppMenuModel({
@@ -35,12 +37,13 @@ export function AppMenu({
         guardContext: {
           promptTextEmpty: true,
           permissionPending,
+          questionPending,
           turnRunning: status === 'streaming' || status === 'needs_permission',
           dialogOrPopoverOpen: dialogOpen,
           focusInEditableText: false,
         },
       }),
-    [overrides, permissionPending, status, dialogOpen],
+    [overrides, permissionPending, questionPending, status, dialogOpen],
   );
   // PLEGADO por defecto (peticion del usuario, estilo IntelliJ). El estado lo lleva la CABECERA, no
   // este componente: al desplegarse, la barra de menus SUSTITUYE al resto del contenido (cuentas,

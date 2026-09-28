@@ -9,6 +9,8 @@ import { BlockChat } from './BlockChat';
 import { PromptBar } from './PromptBar';
 import { RateLimitBanner } from './RateLimitBanner';
 import { ChatInfoBar } from './ChatInfoBar';
+import { QuestionDock } from './QuestionDock';
+import { AgentsDock } from './AgentsDock';
 
 // Resaltado visual de la zona bajo el puntero mientras se arrastra una pestaña (I11-drag, estilo VS
 // Code/IntelliJ): un rectangulo semitransparente que ocupa la MITAD del panel hacia ese borde, o un
@@ -105,6 +107,9 @@ export function ChatPane({
         {/* Encima del input, no dentro: es informacion de la CONVERSACION, no un control del mensaje
             que se esta escribiendo. Ese es tambien el orden en que se lee la pantalla. */}
         <ChatInfoBar />
+        {/* La pregunta pendiente del agente, anclada encima del input (P-026 3.3). */}
+        <QuestionDock />
+        <AgentsDock />
         <PromptBar />
         {dropZone !== null && (
           <div aria-hidden="true" className="pointer-events-none absolute inset-0 z-10">

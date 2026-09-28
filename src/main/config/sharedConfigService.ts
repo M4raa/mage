@@ -161,6 +161,63 @@ export function mcpCommonServerNames(mcpCommon: { readonly mcpServers: Record<st
   return mcpCommon === null ? [] : Object.keys(mcpCommon.mcpServers);
 }
 
+// --- Importacion inicial de mcp-common.json (P-026 2.5, D10) ------------------------------------
+
+// Mage es la fuente de verdad de los MCP compartidos. La primera vez (sin mcp-common.json) se importa
+// lo que el usuario ya tenia: `~/.claude/mcp-shared.json` —que hasta ahora regeneraba su script de
+// PowerShell con la union de las cuentas— y los `mcpServers` de ambito usuario del `.claude.json` de
+// cada cuenta. De `.claude.json` se lee SOLO `mcpServers`: `oauthAccount`, `userID` y demas no salen
+// nunca de esta funcion. En colision de nombre con configuracion distinta gana `mcp-shared.json` (y
+// entre cuentas, la primera: la principal va delante), y cada colision deja su nota.
+export interface McpImportSource {
+  readonly label: string; // para las notas: 'mcp-shared.json', '.claude-p'…
+  readonly text: string | null; // null = el fichero no existe
+}
+
+export interface McpImportResult {
+  readonly mcpServers: Record<string, unknown>;
+  readonly notes: readonly string[];
+}
+
+// El script de PowerShell escribe `mcp-shared.json` con BOM (medido en la maquina del usuario), y
+// `JSON.parse` no lo acepta.
+const UTF8_BOM = /^﻿/;
+
+export function buildMcpCommonImport(shared: McpImportSource, accounts: readonly McpImportSource[]): McpImportResult {
+  const servers: Record<string, unknown> = {};
+  const origin = new Map<string, string>();
+  const notes: string[] = [];
+  for (const source of [shared, ...accounts]) {
+    for (const [name, config] of Object.entries(mcpServersOf(source))) {
+      const previous = origin.get(name);
+      if (previous === undefined) {
+        servers[name] = config;
+        origin.set(name, source.label);
+      } else if (JSON.stringify(servers[name]) !== JSON.stringify(config)) {
+        notes.push(`«${name}» está en ${previous} y en ${source.label} con otra configuración: se queda la de ${previous}.`);
+      }
+    }
+  }
+  return { mcpServers: servers, notes };
+}
+
+// `mcpServers` de una fuente. Ausente o sin ese campo -> ninguno. JSON invalido o `mcpServers` que no es
+// un objeto -> LANZA con la fuente y su tamaño (nunca el texto: lleva los `env` de los servidores).
+function mcpServersOf(source: McpImportSource): Record<string, unknown> {
+  if (source.text === null) return {};
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(source.text.replace(UTF8_BOM, ''));
+  } catch (error) {
+    throw new Error(`${source.label} no es JSON valido (${describeError(error)}): ${source.text.length} caracteres`);
+  }
+  if (!isRecord(parsed) || parsed.mcpServers === undefined) return {};
+  if (!isRecord(parsed.mcpServers)) {
+    throw new Error(`${source.label}: "mcpServers" no es un objeto (${typeof parsed.mcpServers})`);
+  }
+  return parsed.mcpServers;
+}
+
 // --- Servicio con FS inyectado ------------------------------------------------------------------
 
 export class SharedConfigService {
@@ -242,6 +299,16 @@ export class SharedConfigService {
       throw new Error(`settings-common.json invalido, no se guarda (${warnings.join('; ')}): ${text.length} caracteres`);
     }
     return this.writeGuarded(path, text, expected, warnings);
+  }
+
+  // Crea mcp-common.json con la importacion (D10) SOLO si no existe: una vez que existe, aunque este
+  // vacio, es del usuario y no se vuelve a importar. Devuelve las notas, o null si no importo nada.
+  importMcpCommonIfMissing(path: string, shared: McpImportSource, accounts: readonly McpImportSource[]): readonly string[] | null {
+    if (this.deps.exists(path)) return null;
+    const { mcpServers, notes } = buildMcpCommonImport(shared, accounts);
+    const outcome = this.writeGuarded(path, JSON.stringify({ mcpServers }, null, 2), null, []);
+    if (outcome.status === 'stale') throw new Error(outcome.message);
+    return notes;
   }
 
   // Lectura+parseo tolerante compartida por los dos loaders: I/O -> warn + null (JSON invalido lo

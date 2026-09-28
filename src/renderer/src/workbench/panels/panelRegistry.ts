@@ -24,6 +24,7 @@ import { ToolsPanel } from '../components/ToolsPanel';
 import { ArtifactsPanel } from '../components/ArtifactsPanel';
 import { FilesPanel } from '../components/FilesPanel';
 import { UsagePanel } from '../components/UsagePanel';
+import { ActivityPanel } from '../components/ActivityPanel';
 
 export interface PanelDefinition {
   readonly id: PanelId;
@@ -76,6 +77,9 @@ export const PANEL_REGISTRY: readonly PanelDefinition[] = [
   // obligar a borrar `panels-layout.json`. Lo que SI lo abre solo es que el agente cree un fichero
   // (`revealPanelById('files')` desde el store) — es justo lo que se pidio.
   { id: 'files', title: 'Ficheros', icon: '◰', defaultAnchor: 'right', defaultZone: 'a', render: () => createElement(FilesPanel) },
+  // Lo que el agente HACE, paso a paso (P-026 3.4): las herramientas salieron del chat. Id nuevo en la
+  // misma zona: aparece sin abrirse solo; lo abre la linea de estado del chat (`revealPanelById`).
+  { id: 'activity', title: 'Actividad', icon: '≡', defaultAnchor: 'right', defaultZone: 'a', render: () => createElement(ActivityPanel) },
 ];
 
 export function findPanelDefinition(id: PanelId): PanelDefinition | undefined {

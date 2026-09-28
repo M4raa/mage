@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
-import { useWorkbenchStore } from '../workbenchStore';
+import { headPermission, useWorkbenchStore } from '../workbenchStore';
 import { usePaneTabId } from '../paneContext';
+import { hasPendingQuestion } from '../engineBlocks';
 import { Hint } from './TranscriptHint';
 import { PermissionDecisionButtons } from './PermissionDecisionButtons';
 import type { PermissionRule, SettingsOrigin } from '@shared/ipc';
@@ -34,6 +35,8 @@ const MODE_LABEL: Readonly<Record<string, string>> = {
   default: 'Manual: pide permiso para cada acción',
   acceptEdits: 'Auto-editar: acepta ediciones dentro de la carpeta',
   plan: 'Plan: el agente no ejecuta escrituras',
+  auto: 'Auto: el CLI decide qué acciones necesitan permiso',
+  bypassPermissions: 'Omitir permisos: el agente ejecuta todo sin preguntar',
 };
 
 export function PermissionPanel(): React.JSX.Element {
@@ -41,19 +44,14 @@ export function PermissionPanel(): React.JSX.Element {
   // la conversacion del panel al que pertenece.
   const tabId = usePaneTabId();
   const tab = useWorkbenchStore((s) => s.tabs.find((t) => t.id === tabId));
-  const permission = useWorkbenchStore((s) => s.permissionByChat[tabId] ?? null);
+  const permission = useWorkbenchStore((s) => headPermission(s, tabId)?.view ?? null);
   const revoke = useWorkbenchStore((s) => s.revokeAlwaysAllow);
   const focusChat = useWorkbenchStore((s) => s.focusPrompt);
   // ¿La peticion pendiente es una PREGUNTA (2.3)? Entonces se contesta en su tarjeta del chat, y este
   // panel NO puede ofrecer Permitir/Denegar: es el MISMO can_use_tool y contestarlo dos veces hace que
   // `AgentSession.answerPermission` lance ("Permiso desconocido o ya resuelto") y la pestaña se vaya a
   // error. Esto es lo que hace ESTRUCTURALMENTE imposible la doble respuesta, no una convencion.
-  const pendingQuestion = useWorkbenchStore((s) => {
-    const pending = s.pendingByChat[tabId];
-    if (pending === null || pending === undefined) return false;
-    const blocks = s.blocksByChat[tabId] ?? [];
-    return blocks.some((b) => b.kind === 'question' && b.requestId === pending.requestId && b.state === 'pending');
-  });
+  const pendingQuestion = useWorkbenchStore((s) => hasPendingQuestion(headPermission(s, tabId), s.blocksByChat[tabId] ?? []));
 
   return (
     // Ancla ESTABLE para `pnpm verify:gui`: la tarjeta del chat y el panel ofrecen los MISMOS botones
@@ -64,7 +62,7 @@ export function PermissionPanel(): React.JSX.Element {
       {permission !== null && pendingQuestion && (
         <div className="flex flex-col gap-[10px] border-b border-mg-border-subtle p-[14px] text-[12px] leading-[1.5] text-mg-body2">
           <div>
-            El agente ha hecho una <strong>pregunta</strong>: se contesta en la tarjeta del chat.
+            El agente ha hecho una <strong>pregunta</strong>: se contesta encima del input.
           </div>
           <button
             onClick={focusChat}

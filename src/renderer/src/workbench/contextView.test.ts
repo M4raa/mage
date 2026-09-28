@@ -218,8 +218,16 @@ describe('contextWindowForModel', () => {
     expect(contextWindowForModel('sonnet[1m]')).toBe(1_000_000);
   });
 
-  it('modeloNormal_devuelve200k', () => {
-    expect(contextWindowForModel('sonnet')).toBe(200_000);
+  it('modeloGrandeSinSufijo_devuelve1Millon', () => {
+    // Desde 2026-09-26 el 1M es el contexto de los modelos grandes sin necesidad de sufijo.
+    expect(contextWindowForModel('sonnet')).toBe(1_000_000);
+    expect(contextWindowForModel('claude-opus-4-8')).toBe(1_000_000);
+    expect(contextWindowForModel('claude-fable-5-1')).toBe(1_000_000);
+  });
+
+  it('haikuODesconocido_devuelve200k', () => {
+    expect(contextWindowForModel('haiku')).toBe(200_000);
+    expect(contextWindowForModel('gpt-4o')).toBe(200_000);
     expect(contextWindowForModel('')).toBe(200_000);
   });
 });
@@ -333,15 +341,15 @@ describe('toContextInfo', () => {
     expect(info.tokensOut).toBe('42,0k');
   });
 
-  it('modeloNormal_usaVentana200k', () => {
-    const info = toContextInfo(100_000, 0, 'sonnet');
+  it('haiku_usaVentana200k', () => {
+    const info = toContextInfo(100_000, 0, 'haiku');
 
     expect(info.maxTokens).toBe('200k');
     expect(info.usedPct).toBe(50);
   });
 
   it('contextoMayorQueVentana_pctAcotadoA100', () => {
-    expect(toContextInfo(300_000, 0, 'sonnet').usedPct).toBe(100);
+    expect(toContextInfo(300_000, 0, 'haiku').usedPct).toBe(100);
   });
 });
 

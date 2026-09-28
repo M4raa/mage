@@ -11,6 +11,8 @@ import {
 } from '@shared/providers';
 import {
   EMPTY_CUSTOM_PROVIDER_DRAFT,
+  claudeModelOptions,
+  displayModelId,
   modelOptionsForProvider,
   modelsToDraftText,
   nextCustomProviderId,
@@ -69,11 +71,9 @@ describe('modelOptionsForProvider', () => {
     expect(modelOptionsForProvider('claude', '')).toEqual(CLAUDE_MODELS);
   });
 
-  it('modelOptionsForProvider_modeloConSufijoDeContexto_seReconoce', () => {
-    // Los ids con sufijo `[1m]` son los que activan la ventana de 1M en contextView.
-    const ids = modelOptionsForProvider('claude', 'opus[1m]').map((m) => m.id);
-
-    expect(ids.filter((id) => id === 'opus[1m]')).toHaveLength(1);
+  it('modelOptionsForProvider_opus1mGuardado_noDuplicaSuBase', () => {
+    // Un `opus[1m]` guardado de antes se enseña como `opus` (displayModelId): no se añade otra opcion.
+    expect(modelOptionsForProvider('claude', 'opus[1m]').map((m) => m.id)).not.toContain('opus[1m]');
   });
 
   it('modelOptionsForProvider_proveedorDelUsuario_devuelveSusModelos', () => {
@@ -310,5 +310,81 @@ describe('catalogo de proveedores de serie', () => {
     expect(writesClaudeTranscript('claude')).toBe(true);
     expect(writesClaudeTranscript('gemini')).toBe(true);
     expect(writesClaudeTranscript('custom:ollama')).toBe(true);
+  });
+});
+
+// P-026 2.4 (D7): el catalogo que publica el CLI manda sobre la lista fija, que queda de reserva.
+describe('modelOptionsForProvider — catalogo del CLI', () => {
+  // Forma REAL (recortada) del catalogo de 2.1.283 ya normalizado.
+  const CATALOG = [
+    { id: 'default', label: 'Default (recommended)' },
+    { id: 'opus', label: 'Opus 5.5' },
+    { id: 'sonnet', label: 'Sonnet 5' },
+    { id: 'claude-opus-4-8', label: 'Opus 4.8' },
+  ];
+
+  it('modelOptionsForProvider_conCatalogo_usaElDelCliYNoLaReserva', () => {
+    const ids = modelOptionsForProvider('claude', 'opus', [], CATALOG).map((m) => m.id);
+
+    expect(ids).toContain('claude-opus-4-8');
+    expect(ids).not.toContain('claude-fable-5-1'); // solo esta en la reserva
+  });
+
+  it('modelOptionsForProvider_conCatalogo_quitaDefaultYNoAnadeVariantes1M', () => {
+    const options = modelOptionsForProvider('claude', 'sonnet', [], CATALOG);
+
+    expect(options.map((m) => m.id)).toEqual(['opus', 'sonnet', 'claude-opus-4-8']);
+  });
+
+  it('modelOptionsForProvider_opus1mGuardadoConCatalogo_noAnadeOpcionExtra', () => {
+    expect(modelOptionsForProvider('claude', 'opus[1m]', [], CATALOG).map((m) => m.id)).toEqual(['opus', 'sonnet', 'claude-opus-4-8']);
+  });
+
+  it('modelOptionsForProvider_sinCatalogo_caeALaReserva', () => {
+    expect(modelOptionsForProvider('claude', 'opus', [], [])).toEqual(BUILT_IN_PROVIDERS.find((p) => p.id === 'claude')?.models);
+  });
+
+  it('modelOptionsForProvider_modeloActualFueraDelCatalogo_seConservaDelante', () => {
+    const options = modelOptionsForProvider('claude', 'claude-haiku-x', [], CATALOG);
+
+    expect(options[0]).toEqual({ id: 'claude-haiku-x', label: 'claude-haiku-x' });
+  });
+
+  it('modelOptionsForProvider_otroProveedor_ignoraElCatalogoDeClaude', () => {
+    const ids = modelOptionsForProvider('agy', '', [], CATALOG).map((m) => m.id);
+
+    expect(ids).not.toContain('claude-opus-4-8');
+  });
+});
+
+describe('claudeModelOptions', () => {
+  it('claudeModelOptions_catalogoConUnIdPropio1M_loRespeta', () => {
+    // Medido: el catalogo del perfil privado trae `claude-fable-5[1m]` como un modelo mas.
+    const catalog = [{ id: 'default', label: 'Default' }, { id: 'opus', label: 'Opus' }, { id: 'claude-fable-5[1m]', label: 'Fable' }];
+
+    expect(claudeModelOptions(catalog).map((m) => m.id)).toEqual(['opus', 'claude-fable-5[1m]']);
+  });
+});
+
+describe('displayModelId', () => {
+  const OPTIONS = [
+    { id: 'opus', label: 'Opus 5.5' },
+    { id: 'claude-fable-5[1m]', label: 'Fable' },
+  ];
+
+  it('displayModelId_opus1mGuardadoConSuBaseEnLaLista_enseñaLaBase', () => {
+    expect(displayModelId('opus[1m]', OPTIONS)).toBe('opus');
+  });
+
+  it('displayModelId_id1mQueEstaEnLaLista_seQuedaTalCual', () => {
+    expect(displayModelId('claude-fable-5[1m]', OPTIONS)).toBe('claude-fable-5[1m]');
+  });
+
+  it('displayModelId_id1mSinBaseEnLaLista_seQuedaTalCual', () => {
+    expect(displayModelId('sonnet[1m]', OPTIONS)).toBe('sonnet[1m]');
+  });
+
+  it('displayModelId_sinSufijo_talCual', () => {
+    expect(displayModelId('haiku', OPTIONS)).toBe('haiku');
   });
 });

@@ -3,6 +3,7 @@ import { useWorkbenchStore } from '../workbenchStore';
 import { usePaneTabId } from '../paneContext';
 import { filterTools, groupToolsByOrigin } from '../toolsView';
 import { Hint } from './TranscriptHint';
+import type { SessionExtensions } from '../types';
 
 // Panel "Herramientas": lo que la sesion REALMENTE puede usar, agrupado por origen (nativas y luego un
 // grupo por servidor MCP).
@@ -16,6 +17,7 @@ const EMPTY: readonly string[] = [];
 export function ToolsPanel(): React.JSX.Element {
   const tabId = usePaneTabId();
   const tools = useWorkbenchStore((s) => s.toolsByChat[tabId] ?? EMPTY);
+  const extensions = useWorkbenchStore((s) => s.extensionsByChat[tabId]);
   const [query, setQuery] = useState('');
 
   const groups = useMemo(() => groupToolsByOrigin(filterTools(tools, query)), [tools, query]);
@@ -58,7 +60,50 @@ export function ToolsPanel(): React.JSX.Element {
             </section>
           ))
         )}
+        {extensions !== undefined && <ExtensionsSection extensions={extensions} />}
       </div>
     </div>
+  );
+}
+
+// Plugins y skills que cargo ESTA sesion (P-026 2.6). Mismo motivo que las herramientas: la sesion es la
+// unica fuente fiable, y es lo que permite ver que una conversacion privada no traia las skills de los
+// plugins de la cuenta. Plegados: son listas largas (155 skills en la cuenta del usuario, medido).
+function ExtensionsSection({ extensions }: { readonly extensions: SessionExtensions }): React.JSX.Element {
+  return (
+    <section data-session-extensions="true" className="flex flex-col gap-[6px] border-t border-mg-border-subtle pt-[8px]">
+      {extensions.pluginErrors.length > 0 && (
+        <div role="alert" className="rounded-[6px] border border-mg-danger-border bg-mg-danger-bg p-[6px_8px] text-[10.5px] text-mg-danger">
+          {extensions.pluginErrors.map((error) => (
+            <div key={error}>{error}</div>
+          ))}
+        </div>
+      )}
+      <ExtensionList title="Plugins" items={extensions.plugins.map((plugin) => ({ key: plugin.source ?? plugin.name, label: plugin.name, tip: plugin.source ?? plugin.name }))} />
+      <ExtensionList title="Skills" items={extensions.skills.map((skill) => ({ key: skill, label: skill, tip: skill }))} />
+    </section>
+  );
+}
+
+function ExtensionList({
+  title,
+  items,
+}: {
+  readonly title: string;
+  readonly items: readonly { readonly key: string; readonly label: string; readonly tip: string }[];
+}): React.JSX.Element {
+  return (
+    <details data-extension-list={title}>
+      <summary className="cursor-pointer text-[9.5px] font-bold uppercase tracking-[.07em] text-mg-ter">
+        {title} ({items.length})
+      </summary>
+      <div className="mt-[3px] flex flex-col gap-[2px]">
+        {items.map((item) => (
+          <div key={item.key} title={item.tip} className="truncate rounded-[6px] p-[2px_6px] font-mono text-[11px] text-mg-body">
+            {item.label}
+          </div>
+        ))}
+      </div>
+    </details>
   );
 }

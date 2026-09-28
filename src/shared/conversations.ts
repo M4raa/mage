@@ -16,6 +16,9 @@ export interface ConversationSummary {
   // mtime, asi que listar el historial no cuesta ni una llamada mas. Es el tamaño del fichero, no un
   // recuento de tokens: dice cuanto ocupa y cuanto va a tardar en reabrirse, que es lo que se nota.
   readonly sizeBytes: number;
+  // La conversacion la empezo una TAREA PROGRAMADA (`<scheduled-task>`), no el usuario: el historial
+  // lo marca con una insignia (P-026, D20).
+  readonly isScheduled: boolean;
 }
 
 // Borrado de una conversacion en disco (#2 de AJUSTES). accountDir es la cuenta RAIZ; privacy indica

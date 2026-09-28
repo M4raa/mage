@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { AnimatePresence } from 'motion/react';
-import { useWorkbenchStore } from '../workbenchStore';
+import { headPermission, useWorkbenchStore } from '../workbenchStore';
 import { allAssignedPanelIds, type MoveDestination } from '../panels/panelLayoutOps';
 import { findPanelDefinition, PANEL_REGISTRY, resolvePanelDefinitions } from '../panels/panelRegistry';
 import { usePanelLayoutStore } from '../panelLayoutStore';
@@ -54,7 +54,7 @@ export function RightDock(): React.JSX.Element {
   const movePanel = usePanelLayoutStore((s) => s.movePanel);
   const hidePanel = usePanelLayoutStore((s) => s.hidePanel);
   const destinationsFor = usePanelLayoutStore((s) => s.destinationsFor);
-  const permissionPending = useWorkbenchStore((s) => s.permissionByChat[s.activeTabId] !== null && s.permissionByChat[s.activeTabId] !== undefined);
+  const permissionPending = useWorkbenchStore((s) => headPermission(s, s.activeTabId) !== null);
   const [moveMenu, setMoveMenu] = useState<{ readonly panelId: PanelId; readonly x: number; readonly y: number } | null>(null);
   const [addMenu, setAddMenu] = useState<{ readonly x: number; readonly y: number } | null>(null);
 
@@ -74,7 +74,6 @@ export function RightDock(): React.JSX.Element {
     <>
       <Stripe
         ariaLabel="Paneles del borde derecho"
-        orientation="vertical"
         zoneAPanels={resolvePanelDefinitions(stripe.a.panelIds)}
         zoneAActiveId={stripe.a.activePanelId}
         zoneBPanels={resolvePanelDefinitions(stripe.b.panelIds)}

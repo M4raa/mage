@@ -7,9 +7,20 @@ const kinds = (ranges: readonly DecorationRange[]): readonly string[] => ranges.
 const NO_CURSOR = -1;
 
 describe('decorationRangesFor — listas', () => {
-  it('decorationRangesFor_guionYEspacio_devuelveBulletYMarcadorOculto', () => {
-    // Fuera de la linea del cursor, el `- ` se oculta y se pinta la viñeta.
-    expect(kinds(decorationRangesFor('- uno', NO_CURSOR))).toContain('marker-hidden');
+  it('decorationRangesFor_bulletFueraDelCursor_devuelveBulletPintado', () => {
+    // Fuera de la linea del cursor, el `- ` se oculta y un `::before` pinta la viñeta.
+    const ranges = decorationRangesFor('- uno', NO_CURSOR);
+
+    expect(kinds(ranges)).toContain('bullet-painted');
+    expect(kinds(ranges)).not.toContain('marker-hidden');
+  });
+
+  it('decorationRangesFor_ordinalFueraDelCursor_mantieneElNumero', () => {
+    // El fallo de la alpha: solo se veia el numero del parrafo con el cursor.
+    const ranges = decorationRangesFor('1. uno\n2. dos\n3. tres', 1);
+
+    expect(kinds(ranges).filter((kind) => kind === 'ordinal')).toHaveLength(3);
+    expect(kinds(ranges)).not.toContain('marker-hidden');
   });
 
   it('decorationRangesFor_lineaDelCursor_noOcultaElMarcador', () => {

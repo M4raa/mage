@@ -34,7 +34,9 @@ export const PERSISTED_TAB_SCHEMA = z.object({
   sessionId: z.string().optional(), // presente solo si la sesion llego a crearse (permite --resume)
   effort: z.string().optional(), // nivel --effort (M2.4)
   maxBudgetUsdCents: z.number().int().positive().optional(), // tope --max-budget-usd, centavos enteros
-  permissionMode: z.enum(['default', 'acceptEdits', 'plan']).optional(), // modo de permiso (M2.6)
+  // Modo de permiso (M2.6; `auto` y `bypassPermissions` desde P-026 2.3). `.catch(undefined)`: un modo
+  // que esta version no conoce no tumba la restauracion del workspace entero.
+  permissionMode: z.enum(['default', 'acceptEdits', 'plan', 'auto', 'bypassPermissions']).optional().catch(undefined),
   // Marcas de tiempo para ORDENAR el sidebar por recencia (ms epoch). Ausentes en estados
   // persistidos anteriores: la fusion cae al mtime de la transcripcion.
   createdAtMs: z.number().int().positive().optional(),
@@ -47,6 +49,9 @@ export const PERSISTED_TAB_SCHEMA = z.object({
   // Ronda 3, item 12: estaban en el TIPO pero no aqui, asi que Zod los borraba al cargar Y al guardar.
   pinned: z.boolean().optional(),
   colorIndex: z.number().int().min(0).optional(), // indice de acento del tema (0..5)
+  // Nombre puesto en Mage que aun no llego al CLI como `/rename` (P-026, D3). Opcional: un estado
+  // anterior sin el campo parsea igual.
+  pendingCliTitle: z.string().min(1).optional(),
 });
 
 // Arbol de division del centro (I11, ampliado en I12): generaliza `splitTabId`/`splitDirection`

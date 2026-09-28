@@ -121,9 +121,13 @@ export const DEFAULT_CONTEXT_WINDOW_TOKENS = 200_000;
 // Modelos con ventana de 1M de contexto: sufijo `[1m]` (p.ej. `opus[1m]`, `sonnet[1m]`).
 export const MILLION_CONTEXT_WINDOW_TOKENS = 1_000_000;
 
-// Ventana de contexto del modelo: 1M si el id lleva el sufijo [1m]; si no, 200k (Claude estandar).
+// Ventana de contexto del modelo, solo de RESPALDO: con sesion viva manda el desglose del CLI, que da la
+// efectiva. Desde 2026-09-26 los modelos grandes de Claude traen 1M sin sufijo (el `[1m]` dejo de
+// distinguir nada); Haiku y lo desconocido se quedan en 200k.
+const MILLION_CONTEXT_MODEL = /\[1m\]|opus|sonnet|fable/i;
+
 export function contextWindowForModel(model: string): number {
-  return /\[1m\]/i.test(model) ? MILLION_CONTEXT_WINDOW_TOKENS : DEFAULT_CONTEXT_WINDOW_TOKENS;
+  return MILLION_CONTEXT_MODEL.test(model) ? MILLION_CONTEXT_WINDOW_TOKENS : DEFAULT_CONTEXT_WINDOW_TOKENS;
 }
 
 // Formato compacto de tokens (es): <1000 tal cual; miles -> "12,3k"; millones -> "1,2M".
@@ -181,9 +185,6 @@ export function occupiedCategories(usage: ContextUsage): readonly ContextCategor
     .slice()
     .sort((a, b) => b.tokens - a.tokens);
 }
-
-// Cuantas categorias caben en el desglose corto sin volverse ilegible.
-const BREAKDOWN_MAX_CATEGORIES = 4;
 
 // Etiqueta corta del indicador de contexto de la barra de estado (2.8): `ctx 45 %`. Devuelve `null`
 // cuando el porcentaje no es un numero utilizable (el CLI aun no ha reportado contexto): el llamador

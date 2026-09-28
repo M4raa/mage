@@ -3,13 +3,14 @@
 // abierto. Los atajos de scope 'prompt' NO viven aqui: se resuelven donde ya esta el `onKeyDown` del
 // textarea (PromptBar.tsx), que es quien tiene el estado local (texto, seleccion) que necesitan.
 import { useEffect } from 'react';
-import { useWorkbenchStore } from '../workbenchStore';
+import { headPermission, useWorkbenchStore } from '../workbenchStore';
 import type { WorkbenchState } from '../workbenchStore';
 import { usePanelLayoutStore } from '../panelLayoutStore';
 import type { PanelId } from '@shared/panelLayout';
 import { resolveKeyEvent } from './resolver';
 import type { KeyEventLike } from './keyParser';
 import { isMacPlatform } from './platform';
+import { hasPendingQuestion } from '../engineBlocks';
 
 const PANEL_TOGGLE_PREFIX = 'panel.toggle.';
 
@@ -26,7 +27,7 @@ function toKeyEventLike(e: KeyboardEvent): KeyEventLike {
 // Cualquiera de los 4 modales reales abierto: el resolver global se apaga por completo mientras dure
 // (el modal se queda con el teclado; su propio Escape/Tab los gestiona useDialogA11y, ajeno al catalogo).
 function isAnyDialogOpen(state: WorkbenchState): boolean {
-  return state.newTabOpen || state.addAccountOpen || state.handoffOpen || state.settingsOpen;
+  return state.newTabOpen || state.addAccountOpen || state.handoffOpen || state.settingsOpen || state.accountSwitchPrompt !== null;
 }
 
 // Exportada desde la Fase F: el MENU de aplicacion dispara exactamente las mismas acciones que los
@@ -80,7 +81,7 @@ export function runGlobalAction(actionId: string): void {
       // Mismo alcance que el boton del panel (2.3b): concede Y guarda la regla por conversacion. Hasta
       // ahora el atajo hacia un `allow` a secas —igual que la tecla de al lado— asi que el usuario
       // pulsaba "Permitir siempre" y la siguiente peticion de la misma tool volvia a preguntar.
-      const tool = store.permissionByChat[store.activeTabId]?.toolLabel;
+      const tool = headPermission(store, store.activeTabId)?.view.toolLabel;
       if (tool !== undefined) store.allowAlwaysAndAnswer(tool);
       return;
     }
@@ -109,7 +110,8 @@ export function useGlobalKeybindings(): void {
         focusInEditableText,
         guardContext: {
           promptTextEmpty: false, // ninguna accion global usa este flag (solo prompt.cyclePermissionMode)
-          permissionPending: state.pendingByChat[state.activeTabId] !== null && state.pendingByChat[state.activeTabId] !== undefined,
+          permissionPending: headPermission(state, state.activeTabId) !== null,
+          questionPending: hasPendingQuestion(headPermission(state, state.activeTabId), state.blocksByChat[state.activeTabId] ?? []),
           turnRunning: status === 'streaming' || status === 'needs_permission',
           dialogOrPopoverOpen: dialogOpen,
           focusInEditableText,

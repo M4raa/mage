@@ -4,7 +4,7 @@ import { AnimatePresence } from 'motion/react';
 import { selectAccount, useWorkbenchStore } from '../workbenchStore';
 import type { Account, ChatStatus, Tab } from '../types';
 import type { ConversationSummary } from '@shared/conversations';
-import { filterConversationRows, mergeConversationRows, type ConversationRow } from '../conversationList';
+import { filterConversationRows, formatSize, mergeConversationRows, relativeTime, rowRecency, type ConversationRow } from '../conversationList';
 import { backgroundLabel, type BackgroundSession } from '../backgroundWork';
 import { ConversationContextMenu, type ConversationTarget } from './ConversationContextMenu';
 import type { ConversationPrivacy } from '@shared/state';
@@ -45,7 +45,7 @@ export function ChatSidebar(): React.JSX.Element {
   const createConversation = useWorkbenchStore((s) => s.createConversation);
   const openNewTabDialog = useWorkbenchStore((s) => s.openNewTabDialog);
   const openConversation = useWorkbenchStore((s) => s.openConversation);
-  const renameTab = useWorkbenchStore((s) => s.renameTab);
+  const renameConversation = useWorkbenchStore((s) => s.renameConversation);
   const deleteAccount = useWorkbenchStore((s) => s.deleteAccount);
   const accounts = useWorkbenchStore((s) => s.accounts);
   const deleteConversation = useWorkbenchStore((s) => s.deleteConversation);
@@ -134,7 +134,7 @@ export function ChatSidebar(): React.JSX.Element {
           backgroundSessions={backgroundSessions}
           onSelect={setActiveTab}
           onOpen={openConversation}
-          onRename={renameTab}
+          onRename={renameConversation}
           onContextMenu={openMenu}
           onCreate={() => void createConversation('shared')}
           onCreateWithOptions={openNewTabDialog}
@@ -152,7 +152,7 @@ export function ChatSidebar(): React.JSX.Element {
           backgroundSessions={backgroundSessions}
           onSelect={setActiveTab}
           onOpen={openConversation}
-          onRename={renameTab}
+          onRename={renameConversation}
           onContextMenu={openMenu}
           onCreate={() => void createConversation('private')}
           onCreateWithOptions={openNewTabDialog}
@@ -184,7 +184,9 @@ export function ChatSidebar(): React.JSX.Element {
               setMenu(null);
             }}
             onMove={(destAccountDir: string, destPrivacy: ConversationPrivacy) => {
-              void moveConversation(menu.target.sessionId ?? '', menu.target.cwd, menu.target.privacy, destAccountDir, destPrivacy);
+              moveConversation(menu.target.sessionId ?? '', menu.target.cwd, menu.target.privacy, destAccountDir, destPrivacy).catch(
+                (err: unknown) => console.error('No se pudo mover la conversacion:', err instanceof Error ? err.message : String(err)),
+              );
               setMenu(null);
             }}
           />
@@ -313,6 +315,8 @@ function ConversationSection({
           <TabItem
             key={row.tab.id}
             tab={row.tab}
+            history={row.history}
+            recencyMs={rowRecency(row)}
             status={statusByChat[row.tab.id] ?? 'idle'}
             account={account}
             selected={row.tab.id === activeTabId}
@@ -411,7 +415,15 @@ function HistoryItem({
         style={{ borderColor: account.accent.base }}
       />
       <span className="min-w-0 flex-1">
-        <span className="block truncate text-mg-sec">{item.title}</span>
+        <span className="flex min-w-0 items-center gap-[5px]">
+          <span className="truncate text-mg-sec">{item.title}</span>
+          {/* La empezo una tarea programada, no el usuario (P-026, D20). */}
+          {item.isScheduled && (
+            <span data-scheduled-badge="true" className="flex-none rounded-full border border-mg-border-subtle px-[5px] text-[9px] text-mg-muted">
+              programada
+            </span>
+          )}
+        </span>
         <span className="block truncate text-[10px] text-mg-muted">
           {background === undefined ? relativeTime(item.updatedAtMs) : backgroundLabel(background.state)}
           {/* El PESO de la conversacion (peticion del usuario): dice de un vistazo cual es la larga y
@@ -441,31 +453,10 @@ function HistoryItem({
   );
 }
 
-// Peso del fichero de la conversacion, compacto. Un decimal solo por debajo de 10 para que la columna
-// no baile: "9,4 kB" y "940 kB" ocupan casi lo mismo, pero "1024 kB" frente a "1 MB" no.
-function formatSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  const kb = bytes / 1024;
-  if (kb < 1024) return kb < 10 ? `${kb.toFixed(1).replace('.', ',')} kB` : `${Math.round(kb)} kB`;
-  const mb = kb / 1024;
-  return mb < 10 ? `${mb.toFixed(1).replace('.', ',')} MB` : `${Math.round(mb)} MB`;
-}
-
-// Tiempo relativo compacto (es) para la entrada de historial. Sin libs: umbrales simples.
-function relativeTime(ms: number): string {
-  const diff = Date.now() - ms;
-  const min = Math.floor(diff / 60_000);
-  if (min < 1) return 'ahora';
-  if (min < 60) return `hace ${min} min`;
-  const hours = Math.floor(min / 60);
-  if (hours < 24) return `hace ${hours} h`;
-  const days = Math.floor(hours / 24);
-  if (days < 30) return `hace ${days} d`;
-  return new Date(ms).toISOString().slice(0, 10);
-}
-
 function TabItem({
   tab,
+  history,
+  recencyMs,
   status,
   account,
   selected,
@@ -474,6 +465,9 @@ function TabItem({
   onContextMenu,
 }: {
   readonly tab: Tab;
+  // Resumen de su transcripcion en disco; undefined en una conversacion que aun no tiene fichero.
+  readonly history: ConversationSummary | undefined;
+  readonly recencyMs: number;
   readonly status: ChatStatus; // estado real del motor para esa pestana
   readonly account: Account;
   readonly selected: boolean;
@@ -518,7 +512,7 @@ function TabItem({
       onContextMenu={onContextMenu}
       aria-current={selected}
       aria-label={`${tab.title}, ${tab.provider} ${tab.model}, ${statusLabel(status)}`}
-      data-tip="Doble clic para renombrar · clic derecho para más"
+      data-tip={`${tab.provider} · ${tab.model} · doble clic para renombrar · clic derecho para más`}
       style={selected ? { borderLeft: `2px solid ${account.accent.base}` } : undefined}
       className={`flex items-center gap-2 rounded-[6px] p-[7px_9px] text-left transition-colors duration-150 ease-out ${selected ? 'bg-mg-sel' : 'hover:bg-mg-hover'}`}
     >
@@ -527,8 +521,11 @@ function TabItem({
         <span className={`block truncate font-semibold ${selected ? 'text-mg-text' : 'text-mg-body2'}`}>
           {tab.title}
         </span>
-        <span className="block truncate text-[10px] text-mg-ter">
-          {tab.provider} · {tab.model}
+        {/* La MISMA linea que una conversacion cerrada (P-026, D19): cuando y cuanto pesa. Proveedor y
+            modelo van al tooltip y al nombre accesible. Sin fichero todavia, solo el tiempo («ahora»). */}
+        <span data-row-meta="true" className="block truncate text-[10px] text-mg-ter">
+          {relativeTime(recencyMs === 0 ? Date.now() : recencyMs)}
+          {history !== undefined && history.sizeBytes > 0 && <span aria-hidden="true"> · {formatSize(history.sizeBytes)}</span>}
         </span>
       </span>
       {status === 'needs_permission' && (

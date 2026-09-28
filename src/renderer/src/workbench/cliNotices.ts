@@ -51,7 +51,8 @@ const PERMISSION_MODE_LABELS: Readonly<Record<string, string>> = {
   default: 'manual',
   acceptEdits: 'auto-editar',
   plan: 'plan',
-  bypassPermissions: 'sin permisos',
+  auto: 'auto',
+  bypassPermissions: 'omitir permisos',
 };
 
 function permissionModeLabel(mode: string): string {

@@ -22,6 +22,8 @@ function makeDeps(existing: readonly string[], over: Partial<ConversationAdminDe
     removeDir,
     ensureDir,
     move,
+    // Sin enlaces: cada ruta es su propio fichero (el caso del junction lo cubre el test de integracion).
+    realpath: (p) => p,
     privateProfileDir: (dir) => join(dir, 'mage-private'),
     ensurePrivateProfile: (dir) => join(dir, 'mage-private'),
     ...over,

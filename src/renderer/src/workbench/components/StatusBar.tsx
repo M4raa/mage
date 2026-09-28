@@ -144,7 +144,8 @@ function AccountStatus({ account }: { readonly account: Account }): React.JSX.El
         <span className="h-[7px] w-[7px] rounded-[2px]" style={{ background: account.accent.base }} />
         {account.alias} · {account.provider} ▾
       </span>
-      <span>{account.defaultModel} ▾</span>
+      {/* Sin el modelo por defecto de la cuenta (P-026, D18): no era el del chat, su ▾ no abria nada y
+          el modelo ya se ve —y se cambia— en el selector del input. */}
 
       {/* Feedback del usuario (2026-08-06): este indicador ya NO abre el panel "Uso" del dock (ese
           disparador se deja SOLO en el icono ◔ del rail izquierdo, para no tener dos sitios que hagan

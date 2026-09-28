@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { deriveTitleFromPrompt, isPlaceholderTitle, NEW_CONVERSATION_TITLE } from './conversationTitle';
+import { deriveTitleFromPrompt, isPlaceholderTitle, latestCustomTitle, NEW_CONVERSATION_TITLE } from './conversationTitle';
+import { makeEntry } from '@testing/transcriptEntry';
 
 describe('deriveTitleFromPrompt', () => {
   it('promptCorto_devuelveElTextoTalCual', () => {
@@ -31,7 +32,30 @@ describe('isPlaceholderTitle', () => {
     expect(isPlaceholderTitle('   ')).toBe(true);
   });
 
+  it('isPlaceholderTitle_placeholderAnteriorPersistido_true', () => {
+    // Pestañas guardadas antes de P-026 (D19) siguen auto-titulandose con su primer mensaje.
+    expect(isPlaceholderTitle('Nueva conversación')).toBe(true);
+  });
+
   it('tituloReal_false', () => {
     expect(isPlaceholderTitle('Refactor del parser')).toBe(false);
+  });
+});
+
+describe('latestCustomTitle', () => {
+  const titleEntry = (customTitle: unknown, index: number) => makeEntry({ kind: 'custom-title', raw: { type: 'custom-title', customTitle }, index });
+
+  it('latestCustomTitle_sinEntradas_null', () => {
+    expect(latestCustomTitle([])).toBeNull();
+  });
+
+  it('latestCustomTitle_varias_ultima', () => {
+    const entries = [titleEntry('Viejo', 0), makeEntry({ kind: 'user', raw: {}, index: 1 }), titleEntry('Nuevo', 2)];
+
+    expect(latestCustomTitle(entries)).toBe('Nuevo');
+  });
+
+  it('latestCustomTitle_ultimaVaciaOMalFormada_usaLaAnterior', () => {
+    expect(latestCustomTitle([titleEntry('Bueno', 0), titleEntry('  ', 1), titleEntry(42, 2)])).toBe('Bueno');
   });
 });

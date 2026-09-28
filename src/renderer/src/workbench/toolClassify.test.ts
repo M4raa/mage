@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { classifyTool, GROUPABLE_TOOL_CLASSES, TOOL_CLASS_GLYPH } from './toolClassify';
+import { classifyTool, TOOL_CLASS_GLYPH } from './toolClassify';
 
 describe('classifyTool', () => {
   it('classifyTool_read_devuelveRead', () => {
@@ -44,21 +44,6 @@ describe('classifyTool', () => {
 
   it('classifyTool_conEspacios_seRecorta', () => {
     expect(classifyTool(' Read ')).toBe('read');
-  });
-});
-
-describe('GROUPABLE_TOOL_CLASSES', () => {
-  it('GROUPABLE_TOOL_CLASSES_noIncluyeEditNiCommandNiSubagent', () => {
-    // El invariante de la decision del usuario, blindado: una edicion, un comando o un subagente NUNCA
-    // pueden esconderse dentro de una racha-resumen.
-    expect(GROUPABLE_TOOL_CLASSES.has('edit')).toBe(false);
-    expect(GROUPABLE_TOOL_CLASSES.has('command')).toBe(false);
-    expect(GROUPABLE_TOOL_CLASSES.has('subagent')).toBe(false);
-    expect(GROUPABLE_TOOL_CLASSES.has('other')).toBe(false);
-  });
-
-  it('GROUPABLE_TOOL_CLASSES_incluyeLecturaYBusqueda', () => {
-    expect([...GROUPABLE_TOOL_CLASSES].sort()).toEqual(['read', 'search']);
   });
 });
 

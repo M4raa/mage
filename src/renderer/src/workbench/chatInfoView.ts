@@ -1,3 +1,4 @@
+import type { GitSnapshot } from '@shared/git';
 import type { IconName } from './components/Icon';
 // Modelo de vista de las etiquetas de informacion del chat (la fila que va encima del input). PURO:
 // datos -> etiquetas.
@@ -48,20 +49,38 @@ export function folderChip(cwd: string, scratchDir: string | null): ChatChip | n
   };
 }
 
-// Etiqueta del modelo. `resolved` es lo que el CLI dijo al arrancar (`session_init.model`, p.ej.
-// `claude-sonnet-5`): los ids de Claude son ALIAS que apuntan a la ultima version de su familia, asi
-// que la unica version que no miente es la que reporta la sesion. Va al tooltip, no a la etiqueta:
-// en la fila cabe el nombre corto, y el largo es para cuando importa.
-export function modelChip(modelLabel: string, resolved: string | null): ChatChip {
-  return {
-    icon: 'brain',
-    label: modelLabel,
-    title: resolved === null || resolved.length === 0 ? `Modelo ${modelLabel}` : `Modelo ${modelLabel} · la sesión resolvió ${resolved}`,
-  };
-}
-
 export function privacyChip(privacy: 'shared' | 'private'): ChatChip {
   return privacy === 'private'
     ? { icon: 'lock', label: 'Privado', title: 'Conversación privada: usa el perfil mage-private de la cuenta' }
     : { icon: 'diamond', label: 'Compartido', title: 'Conversación compartida: usa el pozo común de la cuenta' };
+}
+
+// Etiqueta de la rama (P-026 3.5). Sin repo, sin git o sin confianza, no hay etiqueta. Con la HEAD
+// suelta se enseña el commit, que es lo unico que la identifica.
+export function gitChip(snapshot: GitSnapshot | undefined): ChatChip | null {
+  if (snapshot?.kind !== 'repo') return null;
+  const label = snapshot.branch ?? snapshot.headShort ?? 'HEAD';
+  const sync =
+    snapshot.upstream === null
+      ? 'sin rama remota'
+      : `${snapshot.ahead} por delante y ${snapshot.behind} por detrás de ${snapshot.upstream}`;
+  return { icon: 'branch', label, title: `${snapshot.detached ? 'HEAD suelta en' : 'Rama'} ${label} · ${sync}` };
+}
+
+export interface DiffChip {
+  readonly added: string; // "+3520"
+  readonly removed: string; // "−231"
+  readonly title: string;
+}
+
+// Cambios sin confirmar, como en la captura del punto 12: `+N −M` en verde y rojo. Solo con el arbol
+// sucio; los ficheros sin seguir no tienen lineas que contar y van al tooltip.
+export function diffChip(snapshot: GitSnapshot | undefined): DiffChip | null {
+  if (snapshot?.kind !== 'repo' || !snapshot.dirty) return null;
+  const untracked = snapshot.untracked > 0 ? ` y ${snapshot.untracked} sin seguir` : '';
+  return {
+    added: `+${snapshot.added}`,
+    removed: `−${snapshot.removed}`,
+    title: `${snapshot.changedFiles} ${snapshot.changedFiles === 1 ? 'fichero cambiado' : 'ficheros cambiados'}${untracked}: +${snapshot.added} líneas, −${snapshot.removed}`,
+  };
 }

@@ -11,7 +11,9 @@ import {
 } from './credentialsConvergence';
 
 // Carpetas que comparten TODAS las cuentas via enlace hacia ~/.claude/<name> (datos comunes).
-const SHARED_FOLDERS = ['paste-cache', 'plugins', 'projects', 'sessions', 'skills', 'todos'] as const;
+// `commands` y `agents` desde P-026 2.6 (D11): los comandos y subagentes del usuario tambien son suyos
+// en cualquier cuenta. Son directorios, asi que el enlace sobrevive al tmp+rename del CLI.
+const SHARED_FOLDERS = ['paste-cache', 'plugins', 'projects', 'sessions', 'skills', 'todos', 'commands', 'agents'] as const;
 // Perfil privado de una cuenta (M2.6): subdir anidado con `projects` PROPIO (historial privado) y el
 // MISMO login de la cuenta (hard link de .credentials.json). Anidado -> nunca se descubre como cuenta
 // (discoverConfigDirs solo escanea el nivel superior de HOME).
@@ -34,6 +36,11 @@ function accountDirPattern(mainDirName: string): RegExp {
 }
 // Modelo semilla para settings.json de una cuenta nueva (default conceptual de la app).
 const DEFAULT_SEED_MODEL = 'sonnet';
+// Claves que la semilla HEREDA del settings.json de la cuenta principal (P-026 2.6, D11). Sin
+// `enabledPlugins` (y el marketplace de donde salen) el CLI no carga las skills de los plugins —medido
+// en 2.1.283: el perfil privado cargaba 95 skills frente a 155 y ningun plugin del usuario—, y sin
+// `permissions` las reglas de la cuenta no valen en las otras.
+const INHERITED_SETTINGS_KEYS = ['enabledPlugins', 'extraKnownMarketplaces', 'permissions'] as const;
 
 // Dependencias inyectables (FS/reloj/enlaces) -> modulo puro y testable con mocks.
 export interface AccountDeps {
@@ -286,12 +293,18 @@ export class AccountService {
   // linea a la escritura atomica (tmp+rename) "por consistencia" con el resto romperia los 4 enlaces
   // en silencio. El guard de abajo (solo escribe si NO existe) es lo que hace esto seguro: sobre un
   // dir ya sembrado no se escribe nunca.
+  //
+  // Unica excepcion al «solo si no existe» (P-026 2.6): la semilla MINIMA que escribia Mage antes,
+  // `{model}` y nada mas. Esa la escribio Mage y nadie la ha tocado, asi que se completa con lo heredado
+  // (era justo el perfil privado del usuario, sin plugins). Cualquier otra cosa es del usuario.
   private seedSettings(dir: string): void {
     const settingsPath = join(dir, SETTINGS_FILE);
-    if (this.deps.exists(settingsPath)) return;
-    // Semilla minima: solo el modelo por defecto. Sin flags de TUI/permisos (no aplican al wrapper
-    // headless: Mage gestiona permisos por stdio y no usa la TUI del CLI).
-    this.deps.writeFile(settingsPath, JSON.stringify({ model: DEFAULT_SEED_MODEL }, null, 2));
+    const existing = this.deps.exists(settingsPath) ? this.deps.readJson(settingsPath) : undefined;
+    if (existing !== undefined && !isLegacyMinimalSeed(existing)) return;
+    const inherited = inheritedSettings(this.deps.readJson(join(this.mainDir, SETTINGS_FILE)));
+    if (existing !== undefined && Object.keys(inherited).length === 0) return; // nada que añadir
+    const model = isLegacyMinimalSeed(existing) ? existing.model : DEFAULT_SEED_MODEL;
+    this.deps.writeFile(settingsPath, JSON.stringify({ model, ...inherited }, null, 2));
   }
 
   private isMainDir(dir: string): boolean {
@@ -336,4 +349,20 @@ function readOauthAccount(stateJson: unknown): { email: string | null; org: stri
 function byMainThenName(a: AccountInfo, b: AccountInfo): number {
   if (a.isMain !== b.isMain) return a.isMain ? -1 : 1;
   return a.name.localeCompare(b.name);
+}
+
+// Lo que la semilla hereda del settings.json de la principal: solo las claves de INHERITED_SETTINGS_KEYS,
+// y solo si son objetos (un escalar no se copia; el CLI valida el resto al leerlo).
+function inheritedSettings(mainSettings: unknown): Record<string, unknown> {
+  if (!isRecord(mainSettings)) return {};
+  const inherited: Record<string, unknown> = {};
+  for (const key of INHERITED_SETTINGS_KEYS) {
+    if (isRecord(mainSettings[key])) inherited[key] = mainSettings[key];
+  }
+  return inherited;
+}
+
+// La semilla que escribia Mage antes de P-026: `{"model": "..."}` y ninguna clave mas.
+function isLegacyMinimalSeed(value: unknown): value is { readonly model: string } {
+  return isRecord(value) && Object.keys(value).length === 1 && typeof value.model === 'string';
 }

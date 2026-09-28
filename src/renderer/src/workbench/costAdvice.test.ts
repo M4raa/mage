@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { effortChangeAdvice, isLongContext, modelChangeAdvice, modelFamily } from './costAdvice';
+import { effortChangeAdvice, modelChangeAdvice, modelFamily } from './costAdvice';
 
 describe('modelFamily', () => {
   it('reconoceLasFamiliasDeClaude', () => {
@@ -11,13 +11,6 @@ describe('modelFamily', () => {
   it('modeloDesconocido_devuelveNull', () => {
     expect(modelFamily('gpt-4o')).toBeNull();
     expect(modelFamily('')).toBeNull();
-  });
-});
-
-describe('isLongContext', () => {
-  it('detectaElSufijo1m', () => {
-    expect(isLongContext('sonnet[1m]')).toBe(true);
-    expect(isLongContext('sonnet')).toBe(false);
   });
 });
 
@@ -39,11 +32,9 @@ describe('modelChangeAdvice', () => {
     expect(modelChangeAdvice('opus', 'haiku')?.severity).toBe('info');
   });
 
-  it('mismaFamiliaPeroContexto1M_avisa', () => {
-    const advice = modelChangeAdvice('sonnet', 'sonnet[1m]');
-
-    expect(advice?.severity).toBe('warn');
-    expect(advice?.message).toContain('1M');
+  it('mismaFamiliaConSufijo1M_soloInforma', () => {
+    // El 1M es ya el contexto de todos los modelos (2026-09-26): el sufijo no encarece nada.
+    expect(modelChangeAdvice('sonnet', 'sonnet[1m]')?.severity).toBe('info');
   });
 
   it('modeloDesconocido_informaSinComparar', () => {

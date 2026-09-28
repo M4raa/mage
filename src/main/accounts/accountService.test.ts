@@ -432,7 +432,7 @@ describe('AccountService.createAccount', () => {
     const info = service.createAccount('work');
 
     expect(mkdir).toHaveBeenCalledWith(join(HOME, '.claude-work'));
-    expect(createDirLink).toHaveBeenCalledTimes(6); // 6 carpetas compartidas
+    expect(createDirLink).toHaveBeenCalledTimes(8); // 8 carpetas compartidas (commands y agents desde P-026 2.6)
     expect(createDirLink).toHaveBeenCalledWith(
       join(HOME, '.claude', 'projects'),
       join(HOME, '.claude-work', 'projects'),
@@ -456,6 +456,96 @@ describe('AccountService.createAccount', () => {
     service.createAccount('work');
 
     expect(writeFile).not.toHaveBeenCalled();
+  });
+});
+
+// P-026 2.6 (D11): la semilla hereda de la principal lo que hace que las skills de plugin carguen.
+describe('AccountService — semilla heredada', () => {
+  const MAIN_SETTINGS = join(HOME, '.claude', 'settings.json');
+  const MAIN = {
+    model: 'opus[1m]',
+    enabledPlugins: { 'obsidian@obsidian-skills': true },
+    extraKnownMarketplaces: { 'obsidian-skills': { source: { source: 'github', repo: 'x/y' } } },
+    permissions: { allow: ['Bash(git status)'] },
+    statusLine: { type: 'command', command: 'algo' },
+    theme: 'dark',
+  };
+
+  it('createAccount_heredaPluginsMarketplacesYPermisos', () => {
+    const writeFile = vi.fn();
+    const service = new AccountService(deps({ writeFile, readJson: jsonFrom({ [MAIN_SETTINGS]: MAIN }) }));
+
+    service.createAccount('work');
+
+    const seeded = JSON.parse(String(writeFile.mock.calls[0]?.[1]));
+    expect(seeded).toEqual({
+      model: 'sonnet',
+      enabledPlugins: MAIN.enabledPlugins,
+      extraKnownMarketplaces: MAIN.extraKnownMarketplaces,
+      permissions: MAIN.permissions,
+    });
+  });
+
+  it('createAccount_principalSinSettings_soloElModelo', () => {
+    const writeFile = vi.fn();
+    new AccountService(deps({ writeFile })).createAccount('work');
+
+    expect(JSON.parse(String(writeFile.mock.calls[0]?.[1]))).toEqual({ model: 'sonnet' });
+  });
+
+  it('ensurePrivateProfile_semillaMinimaDeAntes_laCompletaConservandoElModelo', () => {
+    // El perfil privado del usuario: `{"model":"sonnet"}` escrito por Mage, sin plugins (medido).
+    const privateSettings = join(HOME, '.claude', 'mage-private', 'settings.json');
+    const writeFile = vi.fn();
+    const service = new AccountService(
+      deps({
+        exists: (p) => p === privateSettings,
+        writeFile,
+        readJson: jsonFrom({ [MAIN_SETTINGS]: MAIN, [privateSettings]: { model: 'haiku' } }),
+      }),
+    );
+
+    service.ensurePrivateProfile(join(HOME, '.claude'));
+
+    const [path, content] = writeFile.mock.calls.find(([p]) => p === privateSettings) ?? [];
+    expect(path).toBe(privateSettings);
+    expect(JSON.parse(String(content))).toMatchObject({ model: 'haiku', enabledPlugins: MAIN.enabledPlugins });
+  });
+
+  it('ensurePrivateProfile_settingsEditadoPorElUsuario_noLoToca', () => {
+    const privateSettings = join(HOME, '.claude', 'mage-private', 'settings.json');
+    const writeFile = vi.fn();
+    const service = new AccountService(
+      deps({
+        exists: (p) => p === privateSettings,
+        writeFile,
+        readJson: jsonFrom({ [MAIN_SETTINGS]: MAIN, [privateSettings]: { model: 'haiku', theme: 'light' } }),
+      }),
+    );
+
+    service.ensurePrivateProfile(join(HOME, '.claude'));
+
+    expect(writeFile.mock.calls.some(([p]) => p === privateSettings)).toBe(false);
+  });
+
+  it('ensurePrivateProfile_semillaMinimaYPrincipalSinNadaQueHeredar_noEscribe', () => {
+    const privateSettings = join(HOME, '.claude', 'mage-private', 'settings.json');
+    const writeFile = vi.fn();
+    const service = new AccountService(
+      deps({ exists: (p) => p === privateSettings, writeFile, readJson: jsonFrom({ [privateSettings]: { model: 'sonnet' } }) }),
+    );
+
+    service.ensurePrivateProfile(join(HOME, '.claude'));
+
+    expect(writeFile.mock.calls.some(([p]) => p === privateSettings)).toBe(false);
+  });
+
+  it('createAccount_comparteCommandsYAgents', () => {
+    const createDirLink = vi.fn();
+    new AccountService(deps({ linkService: { createDirLink } as unknown as LinkService })).createAccount('work');
+
+    expect(createDirLink).toHaveBeenCalledWith(join(HOME, '.claude', 'commands'), join(HOME, '.claude-work', 'commands'));
+    expect(createDirLink).toHaveBeenCalledWith(join(HOME, '.claude', 'agents'), join(HOME, '.claude-work', 'agents'));
   });
 });
 
@@ -492,8 +582,8 @@ describe('AccountService.deleteAccount', () => {
 
     service.deleteAccount(dir);
 
-    // 6 compartidas de la cuenta + 5 del perfil privado (mage-private, sin projects) = 11.
-    expect(removeDirLink).toHaveBeenCalledTimes(11);
+    // 8 compartidas de la cuenta + 7 del perfil privado (mage-private, sin projects) = 15.
+    expect(removeDirLink).toHaveBeenCalledTimes(15);
     expect(removeDirLink).toHaveBeenCalledWith(join(dir, 'projects'));
     expect(removeDirLink).toHaveBeenCalledWith(join(dir, 'mage-private', 'sessions'));
     expect(rmrf).toHaveBeenCalledWith(dir);
@@ -542,7 +632,7 @@ describe('AccountService.ensurePrivateProfile (M2.6)', () => {
 
     expect(result).toBe(profile);
     expect(mkdir).toHaveBeenCalledWith(join(profile, 'projects')); // projects PRIVADO real
-    expect(createDirLink).toHaveBeenCalledTimes(5); // 6 compartidas MENOS projects
+    expect(createDirLink).toHaveBeenCalledTimes(7); // 8 compartidas MENOS projects
     // projects NO se enlaza (es lo que se aisla); sessions si (ejemplo de compartida).
     expect(createDirLink).not.toHaveBeenCalledWith(
       join(HOME, '.claude', 'projects'),

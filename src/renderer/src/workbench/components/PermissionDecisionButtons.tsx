@@ -1,4 +1,6 @@
 import { useWorkbenchStore } from '../workbenchStore';
+import type { PermissionDecision } from '@shared/events';
+import { usePaneTabId } from '../paneContext';
 
 // Las TRES decisiones de un permiso, en un solo sitio (2.3b). Las pintan la tarjeta del chat
 // (PermissionCard) y el panel de Permisos, y son la misma cosa: el mismo can_use_tool, los mismos
@@ -11,15 +13,22 @@ import { useWorkbenchStore } from '../workbenchStore';
 
 export function PermissionDecisionButtons({
   toolLabel,
+  requestId,
   compact = false,
 }: {
   readonly toolLabel: string;
+  // La peticion que contestan. La tarjeta pasa la SUYA: con varias en cola (tools en paralelo), cada
+  // tarjeta decide sobre su can_use_tool. Sin ella (panel), la primera de la cola.
+  readonly requestId?: string;
   // En la tarjeta del chat los botones van en FILA y sin el numero del atajo: es una tarjeta dentro del
   // hilo, no el contenido de un panel, y ahi el ancho es el recurso escaso.
   readonly compact?: boolean;
 }): React.JSX.Element {
-  const answer = useWorkbenchStore((s) => s.answerActivePermission);
-  const allowAlways = useWorkbenchStore((s) => s.allowAlwaysAndAnswer);
+  const tabId = usePaneTabId();
+  const answerFor = useWorkbenchStore((s) => s.answerPermissionFor);
+  const allowAlwaysFor = useWorkbenchStore((s) => s.allowAlwaysAndAnswer);
+  const answer = (decision: PermissionDecision): void => answerFor(tabId, decision, requestId);
+  const allowAlways = (tool: string): void => allowAlwaysFor(tool, tabId);
   return (
     <div className={compact ? 'flex flex-wrap items-center gap-[6px] text-[11.5px]' : 'flex flex-col gap-[6px] text-[12px]'}>
       <Option shortcut="1" label="Permitir" primary compact={compact} onClick={() => answer({ behavior: 'allow' })}>

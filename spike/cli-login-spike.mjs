@@ -18,6 +18,7 @@
 // Uso:
 //   node spike/cli-login-spike.mjs          # sondas GRATIS: no autentica, no toca ~/.claude
 //   node spike/cli-login-spike.mjs --live   # ademas, un login REAL en un config dir temporal
+//   node spike/cli-login-spike.mjs --bad-code  # solo: dos codes falsos (S2 de P-026), gratis
 //
 // El modo --live abre una sesion OAuth mas de tu cuenta contra un CLAUDE_CONFIG_DIR temporal que se
 // borra al final. No modifica ninguna cuenta existente.
@@ -508,6 +509,50 @@ function reportAccountFiles(configDir) {
   }
 }
 
+// --- S2 de P-026: que hace el CLI con un code INVALIDO (gratis, no autentica) -------------------
+
+// Mide lo que necesita el arreglo del bucle de login (1.1 del plan de retoques de la alpha): tras
+// escribir el code, ¿el CLI sale solo? ¿con que codigo y en cuanto? ¿que frases imprime? Dos pasadas
+// con dos codes falsos, cada una en un config dir temporal NUEVO que se borra al acabar.
+const BAD_CODES = ['123456', 'abc#def'];
+const BAD_CODE_EXIT_TIMEOUT_MS = 90_000;
+
+// Lo que el CLI imprime tras el code, sin escapes y con cualquier cosa larga que parezca un secreto
+// tapada. Un intercambio fallido no deberia traer ninguno, pero la salida se imprime: mejor tapar de mas.
+function sanitizeCliTail(text) {
+  return text
+    .replace(/\u001b\]8;;[^\u0007\u001b]*(?:\u0007|\u001b\\)/g, ' ')
+    .replace(/\u001b\[[0-9;?]*[A-Za-z]/g, '')
+    .replace(/[A-Za-z0-9_\-]{32,}/g, '<largo>')
+    .replace(/https:\/\/\S+/g, '<url>')
+    .trim();
+}
+
+async function badCodeOnce(code) {
+  const configDir = makeTempConfigDir();
+  const session = startLogin({ configDir, email: null, suppressBrowser: true });
+  try {
+    await session.waitForUrl(CONFIG.urlTimeoutMs);
+    const offset = session.output.length;
+    const sentAt = Date.now();
+    session.child.stdin.write(`${code}\n`);
+    const exit = await session.waitForExit(BAD_CODE_EXIT_TIMEOUT_MS);
+    const elapsedMs = Date.now() - sentAt;
+    const status = authStatus(configDir);
+    console.log(`\n  code=${JSON.stringify(code)} -> exit=${exit} en ${elapsedMs} ms`);
+    console.log(`  salida tras el code: ${JSON.stringify(sanitizeCliTail(session.output.slice(offset)))}`);
+    console.log(`  auth status loggedIn=${status === null ? '(sin JSON)' : status.loggedIn}`);
+  } finally {
+    if (session.child.exitCode === null) session.child.kill();
+    removeDir(configDir);
+  }
+}
+
+async function probeBadCode() {
+  console.log('\n=== S2 (P-026) - login con un code invalido (gratis, no autentica) ===');
+  for (const code of BAD_CODES) await badCodeOnce(code);
+}
+
 // --- Orquestacion -----------------------------------------------------------------------------
 
 async function main() {
@@ -520,6 +565,10 @@ async function main() {
 
   const wantsBrowserArgv = process.argv.includes('--browser-argv');
   const wantsLive = process.argv.includes('--live');
+  if (process.argv.includes('--bad-code')) {
+    await probeBadCode();
+    return;
+  }
 
   await probeUrlAndListener();
   await probeBrowserNoop();

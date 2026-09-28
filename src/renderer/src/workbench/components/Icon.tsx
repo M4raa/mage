@@ -33,7 +33,6 @@ export type IconName =
   | 'gear'
   | 'pencil'
   | 'clipboard'
-  | 'paperclip'
   | 'save'
   | 'stop'
   | 'pin'
@@ -53,6 +52,7 @@ export type IconName =
   | 'lock'
   // Objetos
   | 'folder'
+  | 'branch'
   | 'folderOpen'
   | 'file'
   | 'note'
@@ -78,7 +78,6 @@ const PATHS: Readonly<Record<IconName, string>> = {
   gear: 'M8 6.1a1.9 1.9 0 1 0 0 3.8 1.9 1.9 0 0 0 0-3.8ZM8 2.4l.5 1.4 1.5.4 1.1-1 1.3 1.3-1 1.1.4 1.5 1.4.5v1.8l-1.4.5-.4 1.5 1 1.1-1.3 1.3-1.1-1-1.5.4-.5 1.4H7.1l-.5-1.4-1.5-.4-1.1 1-1.3-1.3 1-1.1-.4-1.5-1.4-.5V7.1l1.4-.5.4-1.5-1-1.1 1.3-1.3 1.1 1 1.5-.4.5-1.4Z',
   pencil: 'M11.2 2.9 13.1 4.8 5.3 12.6 2.9 13.1 3.4 10.7ZM9.9 4.2l1.9 1.9',
   clipboard: 'M6 3.4H4.4v9.8h7.2V3.4H10M6 2.4h4v2H6ZM6 7.6h4M6 10h4',
-  paperclip: 'M12 7.2 7.3 11.9a2.9 2.9 0 0 1-4.1-4.1l5-5a1.9 1.9 0 0 1 2.7 2.7l-5 5a1 1 0 0 1-1.4-1.4l4.6-4.6',
   save: 'M3.2 3.2h7.4l2.2 2.2v7.4H3.2ZM5.4 3.2v3.4h4.6V3.2M5.4 12.8V9.4h5.2v3.4',
   stop: 'M5 5h6v6H5Z',
   pin: 'M6.2 2.6h3.6l-.5 4 2.3 2.1H4.4l2.3-2.1ZM8 8.7v4.7',
@@ -98,6 +97,8 @@ const PATHS: Readonly<Record<IconName, string>> = {
   hourglass: 'M4.4 2.8h7.2M4.4 13.2h7.2M4.9 2.8v2.1L8 8l3.1-3.1V2.8M4.9 13.2v-2.1L8 8l3.1 3.1v2.1',
   lock: 'M4.4 7.2h7.2v6H4.4ZM6 7.2V5.4a2 2 0 0 1 4 0v1.8M8 9.5v1.6',
   folder: 'M2.6 4.2h4l1.3 1.6h5.5v6.8H2.6Z',
+  // Rama de git (P-026 3.5): tronco, un nodo en cada punta y la rama que sale hacia la derecha.
+  branch: 'M5 4.9v6.2M11 6.9c0 2.4-6 1.8-6 4.2M5 2.4a1.25 1.25 0 1 1 0 2.5a1.25 1.25 0 1 1 0-2.5ZM5 11.1a1.25 1.25 0 1 1 0 2.5a1.25 1.25 0 1 1 0-2.5ZM11 4.4a1.25 1.25 0 1 1 0 2.5a1.25 1.25 0 1 1 0-2.5Z',
   folderOpen: 'M2.6 4.2h4l1.3 1.6h5.5v1.6M2.6 4.2v8.4h10.8l1.4-5.2H4Z',
   file: 'M4.2 2.6h5l3 3v7.8H4.2ZM9.2 2.6v3.2h3M6 8.6h4M6 10.8h4',
   note: 'M3.6 2.8h8.8v10.4H3.6ZM5.8 5.6h4.4M5.8 8h4.4M5.8 10.4h2.6',

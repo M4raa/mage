@@ -1,9 +1,14 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
-import { EFFORT_LEVELS } from '@shared/ipc';
+import { EFFORT_LEVELS, isPermissionMode, PERMISSION_MODES } from '@shared/ipc';
 import type { EditorInfo } from '@shared/ipc';
 import { NO_PERMISSION_CONTROL_WARNING, isAutoApprovedProvider } from '@shared/providers';
 import { useWorkbenchStore } from '../workbenchStore';
-import { modelOptionsForProvider } from '../models';
+import { displayModelId, modelOptionsForProvider } from '../models';
+import { insertImageTokens, removeImageToken } from '@shared/imageRefs';
+import { motion } from 'motion/react';
+import { COMPOSER_LAYOUT_TRANSITION } from '../motionPresets';
+import { composerLayout, type ComposerLayout } from '../composerLayout';
+import type { ProviderModel } from '@shared/providers';
 import { continueListOnNewline, indentLines, outdentLines, type TextState } from '../promptEditing';
 import { enterAction } from '../promptEnter';
 import { validateAttachmentSet } from '@shared/attachments';
@@ -19,6 +24,8 @@ import { Dropdown } from './Dropdown';
 import { usePaneTabId } from '../paneContext';
 import type { PermissionMode } from '@shared/ipc';
 
+// Referencia ESTABLE para el selector de zustand (un array nuevo por render seria un bucle).
+const NO_MODELS: readonly ProviderModel[] = [];
 
 // Diferido (I6): CodeMirror 6 pesa +560 kB en el chunk de arranque; no hace falta hasta que se pinta
 // el prompt. `PromptEditor` es un named export, de ahi el .then que lo adapta al `default` que pide lazy.
@@ -46,7 +53,30 @@ const PERMISSION_MODE_LABEL: Readonly<Record<PermissionMode, string>> = {
   default: 'Manual',
   acceptEdits: 'Auto-editar',
   plan: 'Plan',
+  auto: 'Auto',
+  bypassPermissions: 'Omitir permisos',
 };
+
+const PERMISSION_MODE_ICON: Readonly<Partial<Record<PermissionMode, IconName>>> = {
+  acceptEdits: 'pencil',
+  plan: 'clipboard',
+  auto: 'sparkles',
+  bypassPermissions: 'warning',
+};
+
+// Un modo que Mage no ofrece (el CLI puede estar en `dontAsk`) se enseña con su nombre crudo.
+function permissionModeLabel(mode: string): string {
+  return isPermissionMode(mode) ? PERMISSION_MODE_LABEL[mode] : mode;
+}
+
+// Neutro en Manual, ambar en los que relajan permisos y rojo en «Omitir permisos» (D9: mismo ciclo, con su aviso).
+function permissionChipSkin(mode: string): string {
+  if (mode === 'default') return 'border-mg-border-ctrl text-mg-sec hover:text-mg-body';
+  if (mode === 'bypassPermissions') return 'border-mg-danger-border bg-mg-danger-bg font-semibold text-mg-danger';
+  return 'border-mg-warn-border bg-mg-warn-bg text-mg-warn-text';
+}
+
+const PERMISSION_CYCLE_TIP = `Modo de permiso (click o Shift+Tab con el input vacío): ${PERMISSION_MODES.map((mode) => PERMISSION_MODE_LABEL[mode]).join(' → ')}`;
 
 // Caja de prompt. Enter (sin shift) envia al motor real del chat activo; Shift+Enter salto de linea.
 // Input rico (M3): Shift+Enter continua listas (- / * / + / 1.) y Tab/Shift+Tab indenta/desindenta
@@ -70,6 +100,11 @@ async function readImageFile(file: File): Promise<PendingAttachment> {
 // selector de zustand viera un valor distinto siempre y repintara la barra en bucle.
 const EMPTY_DRAFT: PromptDraft = { text: '', attachments: [] };
 
+// Borrador ACTUAL de una pestaña, leido del store (no del render): lo usan los callbacks asincronos.
+function draftOf(tabId: string): PromptDraft {
+  return useWorkbenchStore.getState().draftByChat[tabId] ?? EMPTY_DRAFT;
+}
+
 export function PromptBar(): React.JSX.Element {
   // La pestaña de ESTE panel (item 13). Las acciones del store siguen operando sobre la pestaña
   // ACTIVA, no sobre esta: es correcto porque el panel se enfoca (focusPane) en cuanto se interactua
@@ -78,6 +113,14 @@ export function PromptBar(): React.JSX.Element {
   const sendActiveMessage = useWorkbenchStore((s) => s.sendActiveMessage);
   const activeTab = useWorkbenchStore((s) => s.tabs.find((t) => t.id === activeTabId));
   const sessionId = useWorkbenchStore((s) => s.sessionIdByChat[activeTabId]);
+  const resolvedModel = useWorkbenchStore((s) => s.resolvedModelByChat[activeTabId] ?? null);
+  // Modelos reales de la cuenta (P-026 2.4): el config dir EFECTIVO (el perfil privado tiene el suyo)
+  // y, si aun no hay sesion, el de la cuenta. Sin ninguno, la lista de reserva.
+  const claudeCatalog = useWorkbenchStore((s) => {
+    const tab = s.tabs.find((t) => t.id === activeTabId);
+    if (tab === undefined) return NO_MODELS;
+    return s.modelCatalogByAccount[tab.resolvedConfigDir ?? tab.accountId] ?? s.modelCatalogByAccount[tab.accountId] ?? NO_MODELS;
+  });
   const openHandoff = useWorkbenchStore((s) => s.openHandoff);
   const setActiveModel = useWorkbenchStore((s) => s.setActiveModel);
   const cyclePermissionMode = useWorkbenchStore((s) => s.cyclePermissionMode);
@@ -100,11 +143,6 @@ export function PromptBar(): React.JSX.Element {
   const text = draft.text;
   const attachments = draft.attachments;
   const setText = (next: string): void => setDraft(activeTabId, { text: next, attachments });
-  // Acepta valor o actualizador, como el `useState` al que sustituye: asi los dos sitios que añaden o
-  // quitan un adjunto siguen leyendose igual.
-  const setAttachments = (
-    next: readonly PendingAttachment[] | ((current: readonly PendingAttachment[]) => readonly PendingAttachment[]),
-  ): void => setDraft(activeTabId, { text, attachments: typeof next === 'function' ? next(attachments) : next });
   // Aviso de coste tras cambiar modelo/esfuerzo (B1). Se autodescarta a los pocos segundos.
   const [advice, setAdvice] = useState<CostAdvice | null>(null);
   // Autocompletado de comandos "/" (M2.6): indice seleccionado + flag de descartado (Escape).
@@ -113,6 +151,15 @@ export function PromptBar(): React.JSX.Element {
   const [preview, setPreview] = useState<string | null>(null); // sugerencia de mejora (editable)
   const [busy, setBusy] = useState(false); // mejorando/rehaciendo
   const [error, setError] = useState<string | null>(null);
+  // Selectores en linea o en su fila (P-026 3.1, D17). `wraps` lo dice el editor; la histeresis vive en
+  // `composerLayout` (apilado solo vuelve con el input vacio).
+  const [wraps, setWraps] = useState(false);
+  const [layout, setLayout] = useState<ComposerLayout>('inline');
+  const promptEmpty = text.trim().length === 0;
+  useEffect(() => setLayout((current) => composerLayout(current, { wraps, empty: promptEmpty })), [wraps, promptEmpty]);
+  // La barra no se remonta al cambiar de pestaña (ver el borrador, arriba): sin esto, un error de la
+  // pestaña A (p. ej. «mas de 10 imagenes») se quedaba pintado en B para siempre.
+  useEffect(() => setError(null), [activeTabId]);
   // Editores detectados en el PATH (se cargan una vez; el PATH no cambia durante la sesion).
   const [editors, setEditors] = useState<readonly EditorInfo[]>([]);
   // Editor WYSIWYG (2.7). El handle expone lo unico que la barra necesita del editor: foco, estado de
@@ -120,14 +167,16 @@ export function PromptBar(): React.JSX.Element {
   // textarea (CodeMirror aplica seleccion en la misma transaccion) y el efecto de auto-crecimiento (que
   // ahora es UNA regla CSS sobre `.cm-scroller`, en vez del mismo 200 escrito en dos sitios).
   const editorRef = useRef<PromptEditorHandle>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  // Imagenes pegadas cuyo base64 aun se esta leyendo: cuentan para numerar el token del siguiente pegado.
+  const pendingReadsRef = useRef(0);
 
   const disabled = activeTabId.length === 0;
   const activeModel = activeTab?.model ?? '';
+  const modelOptions = useMemo(() => modelOptionsForProvider('claude', activeModel, [], claudeCatalog), [activeModel, claudeCatalog]);
   const isClaude = activeTab?.provider === 'claude';
   // Proveedor sin puente de permisos (E3, `agy`): auto-aprueba las tools y la UI tiene que decirlo.
   const autoApproved = activeTab !== undefined && isAutoApprovedProvider(activeTab.provider);
-  const permissionMode: PermissionMode = activeTab?.permissionMode ?? 'default';
+  const permissionMode: string = activeTab?.permissionMode ?? 'default';
   const effort = activeTab?.effort ?? '';
   // Turno en marcha (generando o esperando permiso): se puede interrumpir.
   const running = chatStatus === 'streaming' || chatStatus === 'needs_permission';
@@ -335,6 +384,7 @@ export function PromptBar(): React.JSX.Element {
       guardContext: {
         promptTextEmpty: text.trim().length === 0,
         permissionPending: false,
+        questionPending: false,
         turnRunning: false,
         dialogOrPopoverOpen: false,
         focusInEditableText: true,
@@ -360,26 +410,70 @@ export function PromptBar(): React.JSX.Element {
     }
   };
 
-  // Adjuntar imagenes (2.12.1), por pegado o por el selector de ficheros. La validacion es la del
+  // Adjuntar imagenes (2.12.1), por pegado (el selector de ficheros se quito en P-026, 2.1). La validacion es la del
   // modulo puro y su error se pinta en la linea `role="alert"` que ya existe: un adjunto que se cae en
   // silencio es peor que un error.
+  //
+  // P-026 3.2 (D13): cada imagen deja un token `[Imagen N]` donde esta el cursor, y al enviar viaja justo
+  // detras de el. Numero y tipo se validan ANTES de leer (`File.type`/`size` ya los dan), asi que el
+  // error sale al pegar y no se inserta ningun token; los tokens van en el acto y el base64 despues.
   const addFiles = (files: readonly File[]): void => {
     if (files.length === 0) return;
+    const tabId = activeTabId;
+    const current = draftOf(tabId);
+    try {
+      const metas = current.attachments.map((a) => ({ mediaType: a.attachment.mediaType, byteLength: a.byteLength }));
+      validateAttachmentSet(metas, files.map((file) => ({ mediaType: file.type, byteLength: file.size })));
+    } catch (err) {
+      setError(`No se pudo adjuntar: ${err instanceof Error ? err.message : String(err)}`);
+      return;
+    }
+    setError(null);
+    // ponytail: numeracion con un contador de lecturas en vuelo; dos pegados SIMULTANEOS que juntos pasen
+    // de MAX_ATTACHMENTS no se frenan aqui (sí al enviar, en main). Techo aceptable para un Ctrl+V.
+    const fromN = current.attachments.length + pendingReadsRef.current + 1;
+    pendingReadsRef.current += files.length;
+    insertTokensAtCursor(fromN, files.length, current.text);
     void Promise.all(files.map(readImageFile))
       .then((candidates) => {
-        const metas = attachments.map((a) => ({ mediaType: a.attachment.mediaType, byteLength: a.byteLength }));
-        validateAttachmentSet(metas, candidates.map((c) => ({ mediaType: c.attachment.mediaType, byteLength: c.byteLength })));
-        setError(null);
-        setAttachments((current) => [...current, ...candidates]);
+        // Del store, no del cierre: mientras se leia, el usuario pudo seguir escribiendo.
+        const latest = draftOf(tabId);
+        setDraft(tabId, { text: latest.text, attachments: [...latest.attachments, ...candidates] });
       })
-      .catch((err: unknown) => setError(`No se pudo adjuntar: ${err instanceof Error ? err.message : String(err)}`));
+      .catch((err: unknown) => setError(`No se pudo adjuntar: ${err instanceof Error ? err.message : String(err)}`))
+      .finally(() => {
+        pendingReadsRef.current -= files.length;
+      });
+  };
+
+  const insertTokensAtCursor = (fromN: number, count: number, fallbackText: string): void => {
+    const editor = editorRef.current;
+    if (editor === null) {
+      const end = fallbackText.length;
+      setText(insertImageTokens({ value: fallbackText, selectionStart: end, selectionEnd: end }, fromN, count).value);
+      return;
+    }
+    editor.applyTextState(insertImageTokens(editor.getTextState(), fromN, count));
+  };
+
+  // Quitar la miniatura N quita su token y renumera los de detras (igual que la lista de adjuntos).
+  const removeAttachment = (index: number): void => {
+    setError(null);
+    setDraft(activeTabId, { text: removeImageToken(text, index + 1), attachments: attachments.filter((_, i) => i !== index) });
   };
 
   return (
     <div className="border-t border-mg-border p-[12px_22px]">
       {/* Una sola linea de error para toda la barra: cada origen (mejora del prompt, adjuntos) pone su
           propio prefijo, para que el mensaje describa lo que de verdad ha fallado. */}
-      {error !== null && <div role="alert" className="mb-[6px] text-[10.5px] text-mg-danger">{error}</div>}
+      {error !== null && (
+        <div role="alert" className="mb-[6px] flex items-center gap-[8px] text-[10.5px] text-mg-danger">
+          <span className="min-w-0 flex-1">{error}</span>
+          <button onClick={() => setError(null)} aria-label="Cerrar el error" className="shrink-0 opacity-70 hover:opacity-100">
+            <Icon name="close" size={11} label="Cerrar el error" />
+          </button>
+        </div>
+      )}
 
       {preview !== null && (
         <ImprovePreview
@@ -399,6 +493,18 @@ export function PromptBar(): React.JSX.Element {
 
       {advice !== null && <CostAdviceBanner advice={advice} onDismiss={() => setAdvice(null)} />}
 
+      {/* «Omitir permisos» (D9): va en el mismo ciclo que los demas modos, pero mientras esta activo lo
+          dice una franja FIJA encima del input, no solo el color del chip. */}
+      {isClaude && permissionMode === 'bypassPermissions' && (
+        <div
+          role="status"
+          data-bypass-warning="true"
+          className="mb-[6px] flex items-center gap-[6px] rounded-[7px] border border-mg-danger-border bg-mg-danger-bg p-[5px_10px] text-[10.5px] font-semibold text-mg-danger"
+        >
+          <Icon name="warning" size={12} /> Omitir permisos: el agente ejecuta todo sin preguntar
+        </div>
+      )}
+
       {/* Tira de adjuntos (2.12.1): las imagenes que se van a enviar con este mensaje. */}
       {attachments.length > 0 && (
         <div className="mb-[8px] flex flex-wrap gap-[6px]">
@@ -411,7 +517,7 @@ export function PromptBar(): React.JSX.Element {
                 className="h-[56px] w-auto rounded-[6px] border border-mg-border-ctrl"
               />
               <button
-                onClick={() => setAttachments((current) => current.filter((_, i) => i !== index))}
+                onClick={() => removeAttachment(index)}
                 aria-label={`Quitar el adjunto ${index + 1}`}
                 className="absolute -right-[6px] -top-[6px] flex h-[16px] w-[16px] items-center justify-center rounded-full border border-mg-border-ctrl bg-mg-panel text-[9px] text-mg-body2 hover:bg-mg-hover"
               >
@@ -466,150 +572,137 @@ export function PromptBar(): React.JSX.Element {
             onChange={onChangeText}
             onKeyDown={onKeyDown}
             onPasteImages={addFiles}
+            onWrapChange={setWraps}
+            stacked={layout === 'stacked'}
           />
         </Suspense>
-        {/* Adjuntar imagenes (2.12.1): un `<input type="file">` NATIVO, sin IPC ni dialogo de main —
-            es la via mas barata y ya funciona en los tres SO. */}
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="image/png,image/jpeg,image/webp,image/gif"
-          multiple
-          className="hidden"
-          aria-label="Adjuntar imágenes"
-          onChange={(e) => {
-            addFiles([...(e.target.files ?? [])]);
-            e.target.value = ''; // permite volver a elegir el MISMO fichero
-          }}
-        />
-        {/* "Adjuntar" ya NO es un boton propio de la barra (peticion del usuario): vive en el menu de
-            opciones, junto al resto de acciones sobre el mensaje. Pegar una imagen sigue funcionando
-            igual — es la via rapida, y esta no compite con ella por sitio en la barra. */}
-        {activeTab !== undefined && (
-          <ActionsMenu
-            busy={busy}
-            items={[
-              {
-                icon: 'paperclip',
-                label: 'Adjuntar una imagen',
-                onClick: () => fileInputRef.current?.click(),
-                // Sin pestaña abierta no hay a donde adjuntar: mismo criterio que el editor.
-                disabled,
-                title: disabled ? 'Abre una pestaña para poder adjuntar' : 'También puedes pegar una imagen en el editor',
-              },
-              { icon: 'sparkles', label: 'Mejorar prompt', onClick: () => void runImprove(), disabled: !canImprove, hidden: !isClaude },
-              {
-                icon: 'handshake',
-                label: 'Prompt de handoff',
-                onClick: openHandoff,
-                disabled: !canHandoff,
-                hidden: !isClaude,
-                title: canHandoff ? undefined : 'Envía al menos un mensaje para poder hacer handoff',
-              },
-              {
-                icon: 'compress',
-                label: 'Compactar ahora',
-                onClick: () => void compactActiveSession(),
-                // Mismo criterio que el handoff: hace falta una sesion viva o reanudable.
-                disabled: !canHandoff,
-                hidden: !isClaude,
-                title: canHandoff ? 'Compacta el contexto de la sesión (/compact)' : 'Envía al menos un mensaje para poder compactar',
-              },
-              { icon: 'folder', label: 'Abrir carpeta', onClick: () => void window.mage.openPath(activeTab.cwd).catch(() => undefined) },
-              { icon: 'monitor', label: 'Abrir terminal', onClick: () => void window.mage.openTerminal(activeTab.cwd).catch(() => undefined) },
-              // "Abrir en <editor>": un item por editor detectado; si no hay ninguno, un unico
-              // item deshabilitado con el motivo en el title.
-              ...(editors.length > 0
-                ? editors.map((editor) => ({
-                    icon: 'pencil' as const,
-                    label: `Abrir en ${editor.label}`,
-                    onClick: () =>
-                      void window.mage.openEditor({ bin: editor.bin, cwd: activeTab.cwd }).catch(() => undefined),
-                  }))
-                : [
-                    {
+        {/* Los selectores van JUNTOS (P-026 3.1): en linea con el texto mientras cabe, y en su propia fila,
+            a la derecha, cuando el texto salta de linea. `layout="position"` anima el salto (FLIP). */}
+        <motion.div
+          layout="position"
+          transition={COMPOSER_LAYOUT_TRANSITION}
+          data-prompt-controls="true"
+          className={`flex min-w-0 max-w-full flex-wrap items-center justify-end gap-[10px] ${layout === 'stacked' ? 'ml-auto' : ''}`}
+        >
+          {/* Ni «Adjuntar una imagen» ni «Abrir carpeta» en el menu (P-026, 2.1, peticion del usuario): las
+              imagenes entran pegandolas (Ctrl+V) y la carpeta se abre desde su insignia, encima del input. */}
+          {activeTab !== undefined && (
+            <ActionsMenu
+              busy={busy}
+              items={[
+                { icon: 'sparkles', label: 'Mejorar prompt', onClick: () => void runImprove(), disabled: !canImprove, hidden: !isClaude },
+                {
+                  icon: 'handshake',
+                  label: 'Prompt de handoff',
+                  onClick: openHandoff,
+                  disabled: !canHandoff,
+                  hidden: !isClaude,
+                  title: canHandoff ? undefined : 'Envía al menos un mensaje para poder hacer handoff',
+                },
+                {
+                  icon: 'compress',
+                  label: 'Compactar ahora',
+                  onClick: () => void compactActiveSession(),
+                  // Mismo criterio que el handoff: hace falta una sesion viva o reanudable.
+                  disabled: !canHandoff,
+                  hidden: !isClaude,
+                  title: canHandoff ? 'Compacta el contexto de la sesión (/compact)' : 'Envía al menos un mensaje para poder compactar',
+                },
+                { icon: 'monitor', label: 'Abrir terminal', onClick: () => void window.mage.openTerminal(activeTab.cwd).catch(() => undefined) },
+                // "Abrir en <editor>": un item por editor detectado; si no hay ninguno, un unico
+                // item deshabilitado con el motivo en el title.
+                ...(editors.length > 0
+                  ? editors.map((editor) => ({
                       icon: 'pencil' as const,
-                      label: 'Abrir en editor',
-                      onClick: () => undefined,
-                      disabled: true,
-                      title: 'No se detectó ningún editor en el PATH',
-                    },
-                  ]),
-            ]}
-          />
-        )}
-        {autoApproved && (
-          // Aviso PERMANENTE de "sin control de permisos" (E3). Ocupa el sitio del chip de modo de
-          // permiso, que para este proveedor no existe y no puede fingir que si: su CLI no tiene puente
-          // de permisos, asi que la pestana auto-aprueba. No es solo un color: lleva el glifo y el texto
-          // "Sin permisos" visibles, el detalle completo en el tooltip y en el aria-label, y `role=status`
-          // para que un lector de pantalla lo anuncie al abrir la pestana.
-          <span
-            role="status"
-            data-tip={NO_PERMISSION_CONTROL_WARNING}
-            aria-label={NO_PERMISSION_CONTROL_WARNING}
-            className="shrink-0 cursor-help self-center rounded-full border border-mg-warn-border bg-mg-warn-bg px-[8px] py-[2px] text-[10.5px] font-semibold text-mg-warn-text"
-          >
-            <Icon name="warning" size={12} /> Sin permisos
-          </span>
-        )}
-        {isClaude && (
-          // Chip de modo de permiso (M2.6, solo Claude): click cicla default->acceptEdits->plan;
-          // tambien con Shift+Tab si el input esta vacio. plan/acceptEdits se resaltan (ambar).
-          <button
-            onClick={() => cyclePermissionMode()}
-            data-tip="Modo de permiso (click o Shift+Tab con el input vacío): Manual → Auto-editar → Plan"
-            aria-label={`Modo de permiso: ${PERMISSION_MODE_LABEL[permissionMode]}`}
-            className={`shrink-0 cursor-pointer self-center rounded-full border px-[8px] py-[2px] text-[10.5px] ${
-              permissionMode === 'default'
-                ? 'border-mg-border-ctrl text-mg-sec hover:text-mg-body'
-                : 'border-mg-warn-border bg-mg-warn-bg text-mg-warn-text'
-            }`}
-          >
-            {permissionMode === 'plan' ? <Icon name="clipboard" size={11} /> : permissionMode === 'acceptEdits' ? <Icon name="pencil" size={11} /> : null}
-            {PERMISSION_MODE_LABEL[permissionMode]}
-          </button>
-        )}
-        {isClaude && (
-          // Selector de esfuerzo (--effort, M2.4 / B4): flag de ARRANQUE del CLI, no hay cambio en
-          // caliente; el aviso lo aclara al elegir. Dropdown propio (F6, feedback del usuario): el
-          // `<select>` nativo se veia inconsistente con el resto de la app y su popup, al ser del propio
-          // navegador, tapaba cualquier tooltip mientras estaba abierto.
-          <Dropdown
-            value={effort}
-            onChange={changeEffort}
-            options={[{ value: '', label: EFFORT_LABEL[''] ?? '' }, ...EFFORT_LEVELS.map((level) => ({ value: level, label: EFFORT_LABEL[level] ?? level }))]}
-            tip="Nivel de esfuerzo del modelo (--effort). Se aplica al arrancar o reabrir la conversación."
-            ariaLabel="Nivel de esfuerzo"
-          />
-        )}
-        {activeModel.length > 0 && isClaude && (
-          // Dropdown de modelo en caliente (M2.4, solo Claude): set_model aplica al siguiente turno.
-          <Dropdown
-            value={activeModel}
-            onChange={changeModel}
-            options={modelOptionsForProvider('claude', activeModel).map((option) => ({ value: option.id, label: option.label }))}
-            tip="Cambiar el modelo (aplica al siguiente turno)"
-            ariaLabel="Modelo (aplica al siguiente turno)"
-          />
-        )}
-        {activeModel.length > 0 && !isClaude && (
-          <span className="shrink-0 self-center rounded-full border border-mg-border-ctrl px-[8px] py-[2px] text-[10.5px] text-mg-sec">{activeModel}</span>
-        )}
-        {canInterrupt ? (
-          // Parar la acción en curso (B3): interrumpe el turno (control_request interrupt). El CLI
-          // cierra el turno con su `result` y el chat vuelve a 'idle'.
-          <button
-            onClick={interruptActiveSession}
-            data-tip="Parar la acción en curso (interrumpe el turno)"
-            aria-label="Parar la acción en curso"
-            className="shrink-0 cursor-pointer self-center rounded-full border border-mg-danger-border bg-mg-danger-bg px-[9px] py-[2px] text-[10.5px] font-semibold text-mg-danger hover:opacity-90"
-          >
-            <Icon name="stop" size={11} /> Parar
-          </button>
-        ) : (
-          <span className="shrink-0 self-center font-mono text-[10.5px] text-mg-muted">⏎</span>
-        )}
+                      label: `Abrir en ${editor.label}`,
+                      onClick: () =>
+                        void window.mage.openEditor({ bin: editor.bin, cwd: activeTab.cwd }).catch(() => undefined),
+                    }))
+                  : [
+                      {
+                        icon: 'pencil' as const,
+                        label: 'Abrir en editor',
+                        onClick: () => undefined,
+                        disabled: true,
+                        title: 'No se detectó ningún editor en el PATH',
+                      },
+                    ]),
+              ]}
+            />
+          )}
+          {autoApproved && (
+            // Aviso PERMANENTE de "sin control de permisos" (E3). Ocupa el sitio del chip de modo de
+            // permiso, que para este proveedor no existe y no puede fingir que si: su CLI no tiene puente
+            // de permisos, asi que la pestana auto-aprueba. No es solo un color: lleva el glifo y el texto
+            // "Sin permisos" visibles, el detalle completo en el tooltip y en el aria-label, y `role=status`
+            // para que un lector de pantalla lo anuncie al abrir la pestana.
+            <span
+              role="status"
+              data-tip={NO_PERMISSION_CONTROL_WARNING}
+              aria-label={NO_PERMISSION_CONTROL_WARNING}
+              className="shrink-0 cursor-help self-center rounded-full border border-mg-warn-border bg-mg-warn-bg px-[8px] py-[2px] text-[10.5px] font-semibold text-mg-warn-text"
+            >
+              <Icon name="warning" size={12} /> Sin permisos
+            </span>
+          )}
+          {isClaude && (
+            // Chip de modo de permiso (M2.6, solo Claude): click cicla los cinco modos de PERMISSION_MODES;
+            // tambien con Shift+Tab si el input esta vacio.
+            <button
+              onClick={() => cyclePermissionMode()}
+              data-tip={PERMISSION_CYCLE_TIP}
+              aria-label={`Modo de permiso: ${permissionModeLabel(permissionMode)}`}
+              className={`shrink-0 cursor-pointer self-center rounded-full border px-[8px] py-[2px] text-[10.5px] ${permissionChipSkin(permissionMode)}`}
+            >
+              {isPermissionMode(permissionMode) && PERMISSION_MODE_ICON[permissionMode] !== undefined && (
+                <Icon name={PERMISSION_MODE_ICON[permissionMode]} size={11} />
+              )}
+              {permissionModeLabel(permissionMode)}
+            </button>
+          )}
+          {isClaude && (
+            // Selector de esfuerzo (--effort, M2.4 / B4): flag de ARRANQUE del CLI, no hay cambio en
+            // caliente; el aviso lo aclara al elegir. Dropdown propio (F6, feedback del usuario): el
+            // `<select>` nativo se veia inconsistente con el resto de la app y su popup, al ser del propio
+            // navegador, tapaba cualquier tooltip mientras estaba abierto.
+            <Dropdown
+              value={effort}
+              onChange={changeEffort}
+              options={[{ value: '', label: EFFORT_LABEL[''] ?? '' }, ...EFFORT_LEVELS.map((level) => ({ value: level, label: EFFORT_LABEL[level] ?? level }))]}
+              tip="Nivel de esfuerzo del modelo (--effort). Se aplica al arrancar o reabrir la conversación."
+              ariaLabel="Nivel de esfuerzo"
+            />
+          )}
+          {activeModel.length > 0 && isClaude && (
+            // Dropdown de modelo en caliente (M2.4, solo Claude): set_model aplica al siguiente turno.
+            <Dropdown
+              value={displayModelId(activeModel, modelOptions)}
+              onChange={changeModel}
+              options={modelOptions.map((option) => ({ value: option.id, label: option.label }))}
+              // El UNICO sitio del modelo (P-026, D18): lo que resolvio la sesion (el alias apunta a la
+              // ultima version de su familia) vive aqui, y no en una insignia aparte.
+              tip={resolvedModel === null ? 'Cambiar el modelo (aplica al siguiente turno)' : `La sesión resolvió ${resolvedModel} · cambiar el modelo (aplica al siguiente turno)`}
+              ariaLabel="Modelo (aplica al siguiente turno)"
+            />
+          )}
+          {activeModel.length > 0 && !isClaude && (
+            <span className="shrink-0 self-center rounded-full border border-mg-border-ctrl px-[8px] py-[2px] text-[10.5px] text-mg-sec">{activeModel}</span>
+          )}
+          {canInterrupt ? (
+            // Parar la acción en curso (B3): interrumpe el turno (control_request interrupt). El CLI
+            // cierra el turno con su `result` y el chat vuelve a 'idle'.
+            <button
+              onClick={interruptActiveSession}
+              data-tip="Parar la acción en curso (interrumpe el turno)"
+              aria-label="Parar la acción en curso"
+              className="shrink-0 cursor-pointer self-center rounded-full border border-mg-danger-border bg-mg-danger-bg px-[9px] py-[2px] text-[10.5px] font-semibold text-mg-danger hover:opacity-90"
+            >
+              <Icon name="stop" size={11} /> Parar
+            </button>
+          ) : (
+            <span className="shrink-0 self-center font-mono text-[10.5px] text-mg-muted">⏎</span>
+          )}
+        </motion.div>
       </div>
     </div>
   );
@@ -697,7 +790,7 @@ interface ActionItem {
   readonly title?: string; // motivo cuando esta deshabilitado
 }
 
-// Menu "⋯" que agrupa las acciones de la barra (mejorar, handoff, abrir carpeta/terminal) en un
+// Menu "⋯" que agrupa las acciones de la barra (mejorar, handoff, compactar, terminal, editor) en un
 // popover, para no llenar la fila del input de iconos sueltos. Popover hacia ARRIBA (la barra esta
 // abajo) con cierre al hacer click fuera (backdrop transparente).
 function ActionsMenu({ items, busy }: { readonly items: readonly ActionItem[]; readonly busy: boolean }): React.JSX.Element {

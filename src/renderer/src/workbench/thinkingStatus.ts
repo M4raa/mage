@@ -25,7 +25,7 @@ export function computeThinkingStatus(elapsedMs: number, sinceActivityMs: number
   };
 }
 
-function formatElapsed(ms: number): string {
+export function formatElapsed(ms: number): string {
   const totalSec = Math.max(0, Math.floor(ms / 1000));
   if (totalSec < 60) return `${totalSec} s`;
   const min = Math.floor(totalSec / 60);

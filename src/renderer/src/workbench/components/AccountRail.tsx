@@ -1,6 +1,5 @@
 import { useState } from 'react';
 import { AnimatePresence } from 'motion/react';
-import { useWorkbenchStore } from '../workbenchStore';
 import { usePanelLayoutStore } from '../panelLayoutStore';
 import { findPanelDefinition, PANEL_REGISTRY, resolvePanelDefinitions } from '../panels/panelRegistry';
 import { allAssignedPanelIds, type MoveDestination } from '../panels/panelLayoutOps';
@@ -14,9 +13,7 @@ import {
 } from './dock/Stripe';
 import { PanelMoveMenu } from './dock/PanelMoveMenu';
 import { AddPanelMenu } from './dock/AddPanelMenu';
-import type { Account } from '../types';
 import type { Anchor, PanelId } from '@shared/panelLayout';
-import { loginDot, loginLabel } from './accountBadge';
 
 const LEFT_ANCHOR: Anchor = 'left';
 const BOTTOM_ANCHOR: Anchor = 'bottom';
@@ -32,8 +29,6 @@ const BOTTOM_ANCHOR: Anchor = 'bottom';
 // grupo "medio", no hace falta un botón aparte que abra otra cosa por su cuenta. Tercer grupo, 2026-08-
 // 06: "abajo" (bottom/a) — icono aqui, panel en el borde compartido de abajo (ver mas abajo en el JSX).
 export function AccountRail(): React.JSX.Element {
-  const activeAccountId = useWorkbenchStore((s) => s.activeAccountId);
-  const setActiveAccount = useWorkbenchStore((s) => s.setActiveAccount);
 
   const layout = usePanelLayoutStore((s) => s.layout);
   const stripe = layout.stripes.left;
@@ -78,7 +73,6 @@ export function AccountRail(): React.JSX.Element {
       <div data-stripe-scroll="true" className={`flex w-full flex-col items-center gap-[2px] ${STRIPE_SCROLL_CLASS}`}>
       <DockZoneToolbar ariaLabel="Paneles del borde izquierdo, zona superior">
         <StripeZoneButtons
-          orientation="vertical"
           panels={resolvePanelDefinitions(stripe.a.panelIds)}
           activeId={stripe.a.activePanelId}
           onClick={(id) => togglePanel(LEFT_ANCHOR, 'a', id)}
@@ -89,11 +83,10 @@ export function AccountRail(): React.JSX.Element {
 
       {/* Separador entre "arriba" y "medio" (feedback del usuario, 2026-08-06: en JetBrains van
           pegadas arriba con una linea entre medias, no "medio" empujada al fondo). */}
-      <StripeSeparator orientation="vertical" />
+      <StripeSeparator />
 
       <DockZoneToolbar ariaLabel="Paneles del borde izquierdo, zona media">
         <StripeZoneButtons
-          orientation="vertical"
           panels={resolvePanelDefinitions(stripe.b.panelIds)}
           activeId={stripe.b.activePanelId}
           onClick={(id) => togglePanel(LEFT_ANCHOR, 'b', id)}
@@ -111,14 +104,13 @@ export function AccountRail(): React.JSX.Element {
           puesto la barra separadora"). Sin el, esta tercera zona no se distinguia del boton de ajustes
           ni del hueco elastico, asi que la posicion existia pero no se veia — y una zona de suelta que
           no se ve es una zona que nadie usa. */}
-      <StripeSeparator orientation="vertical" />
+      <StripeSeparator />
 
       {/* Posicion "abajo" (2026-08-06): icono aqui, en la barra izquierda, pero panel en el borde
           COMPARTIDO de abajo (bottom/a) — no en un pane de este lado. Vacio por defecto (ningun panel
           del catalogo lo targetea); aparece en cuanto el usuario mueve algo aqui con "Mover a...". */}
       <DockZoneToolbar ariaLabel="Paneles del borde izquierdo, zona abajo (panel compartido)">
         <StripeZoneButtons
-          orientation="vertical"
           panels={resolvePanelDefinitions(bottomStripe.a.panelIds)}
           activeId={bottomStripe.a.activePanelId}
           onClick={(id) => togglePanel(BOTTOM_ANCHOR, 'a', id)}

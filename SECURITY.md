@@ -30,7 +30,7 @@ en su tiempo: no hay acuerdos de nivel de servicio ni programa de recompensas.
 
 ## Versiones con soporte
 
-Solo la **última versión publicada**. El proyecto está en beta y no se retro-portan arreglos.
+Solo la **última versión publicada**. El proyecto está en alpha y no se retro-portan arreglos.
 
 ## Qué cuenta y qué no
 

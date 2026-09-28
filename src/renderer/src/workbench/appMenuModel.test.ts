@@ -5,6 +5,7 @@ import type { GuardContext, KeybindingAction } from './keybindings/actionCatalog
 const CTX: GuardContext = {
   promptTextEmpty: true,
   permissionPending: false,
+  questionPending: false,
   turnRunning: false,
   dialogOrPopoverOpen: false,
   focusInEditableText: false,

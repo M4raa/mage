@@ -16,7 +16,8 @@ import { loginDot, loginLabel } from './accountBadge';
 export function AccountSwitcher(): React.JSX.Element | null {
   const accounts = useWorkbenchStore((s) => s.accounts);
   const activeAccountId = useWorkbenchStore((s) => s.activeAccountId);
-  const setActiveAccount = useWorkbenchStore((s) => s.setActiveAccount);
+  // Con una conversacion abierta de otra cuenta no basta con cambiar la activa (P-026 2.7).
+  const requestAccountSwitch = useWorkbenchStore((s) => s.requestAccountSwitch);
   const openAddAccount = useWorkbenchStore((s) => s.openAddAccount);
 
   // Sin cuentas descubiertas todavia no se pinta nada: un grupo con solo "＋" en la cabecera es ruido
@@ -46,7 +47,7 @@ export function AccountSwitcher(): React.JSX.Element | null {
           key={account.id}
           account={account}
           active={account.id === activeAccountId}
-          onClick={() => setActiveAccount(account.id)}
+          onClick={() => requestAccountSwitch(account.id)}
         />
       ))}
     </div>

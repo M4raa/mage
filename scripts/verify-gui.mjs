@@ -553,8 +553,13 @@ const CHECKS = [
       await altas.first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
       const etiquetas = await altas.evaluateAll((nodes) => nodes.map((n) => (n.textContent ?? '').trim()));
       const sinJsonCrudo = await page.locator('textarea[aria-label^="Editor de"]').count();
-      const ok = etiquetas.length === 3 && sinJsonCrudo === 0;
-      return { ok, detail: `altas=${JSON.stringify(etiquetas)} textareas de JSON crudo=${sinJsonCrudo}` };
+      // P-026 2.5: los servidores de mcp-common.json (sembrados en `main()`) se listan.
+      const servidores = await page.evaluate((nombres) => {
+        const valores = [...document.querySelectorAll('input')].map((input) => input.value);
+        return { cabecera: (document.body.textContent ?? '').includes(`Servidores MCP comunes (${nombres.length})`), listados: nombres.filter((n) => valores.includes(n)) };
+      }, SEEDED_MCP_SERVERS);
+      const ok = etiquetas.length === 3 && sinJsonCrudo === 0 && servidores.cabecera && servidores.listados.length === SEEDED_MCP_SERVERS.length;
+      return { ok, detail: `altas=${JSON.stringify(etiquetas)} textareas de JSON crudo=${sinJsonCrudo} servidores=${JSON.stringify(servidores)}` };
     },
   },
   {
@@ -1261,18 +1266,37 @@ const CHECKS = [
     name: 'Shift+Tab con el input vacio cicla el modo de permiso',
     async run(page) {
       const chip = page.locator('[aria-label^="Modo de permiso:"]');
+      // Autosuficiente: con `--only` no hay pestaña de una comprobacion anterior.
+      const previo = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return { tabs: s.tabs, activeTabId: s.activeTabId, splitLayout: s.splitLayout };
+      });
+      const propia = (await chip.count()) === 0;
+      if (propia) await openTemporaryConversation(page);
       await chip.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
       const prompt = page.getByRole('textbox', { name: 'Escribe una instrucción para el agente' });
       await clearPrompt(page);
+      // P-026 2.3 (D8/D9): CINCO modos, y con «Omitir permisos» una franja fija encima del input.
+      const MODES = 5;
       const seen = [await permissionModeLabel(page)];
-      for (let step = 0; step < 3; step += 1) {
+      let franjaEnOmitir = null;
+      let franjaFuera = 0;
+      for (let step = 0; step < MODES; step += 1) {
         await prompt.press('Shift+Tab');
         await page.waitForTimeout(CONFIG.settleMs);
-        seen.push(await permissionModeLabel(page));
+        const label = await permissionModeLabel(page);
+        seen.push(label);
+        const franjas = await page.locator('[data-bypass-warning="true"]').count();
+        if (label === 'Omitir permisos') franjaEnOmitir = franjas;
+        else franjaFuera += franjas;
       }
-      const distinct = new Set(seen.slice(0, 3)).size;
-      const ok = distinct === 3 && seen[3] === seen[0];
-      return { ok, detail: `modos=${JSON.stringify(seen)} distintos en el ciclo=${distinct} vuelve al inicio=${seen[3] === seen[0]}` };
+      if (propia) await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
+      const distinct = new Set(seen.slice(0, MODES)).size;
+      const ok = distinct === MODES && seen[MODES] === seen[0] && seen.includes('Auto') && franjaEnOmitir === 1 && franjaFuera === 0;
+      return {
+        ok,
+        detail: `modos=${JSON.stringify(seen)} distintos=${distinct} vuelve al inicio=${seen[MODES] === seen[0]} franja con Omitir=${franjaEnOmitir} fuera=${franjaFuera}`,
+      };
     },
   },
   {
@@ -2052,6 +2076,10 @@ const CHECKS = [
               output: [{ code: false, text: `salida de la herramienta ${i}` }],
               filePath: null,
               previewLines: null,
+              // Desde P-026 3.4 una herramienta solo deja rastro en el chat si FALLA (la linea de D22):
+              // con error, siguen siendo items del hilo que el bug de 2.6 podia aplastar.
+              isError: true,
+              parentToolUseId: null,
             });
         }
         dev.store.setState({ blocksByChat: { ...dev.store.getState().blocksByChat, [tabId]: blocks } });
@@ -2092,6 +2120,339 @@ const CHECKS = [
     },
   },
   {
+    // P-026, 1.3: el Markdown trataba «\ + cualquier caracter» como escape, y una ruta de Windows salia
+    // como `C:Usersx` en todos los mensajes. CommonMark solo escapa puntuacion ASCII.
+    name: 'Markdown: una ruta de Windows conserva sus barras invertidas en la burbuja',
+    async run(page) {
+      const previo = await page.evaluate(() => window.__mageDev.store.getState().blocksByChat);
+      await hydrateBlocks(page, [
+        { kind: 'user', id: 'vg-ruta', text: 'mira C:\\Users\\x\\notas.md y \\*esto\\*', time: '12:00', attachments: [] },
+      ]);
+      const texto = await page.evaluate(() => document.querySelector('[data-block="user"]')?.textContent ?? '');
+      await page.evaluate((estado) => window.__mageDev.store.setState({ blocksByChat: estado }), previo);
+      const ok = texto.includes('C:\\Users\\x\\notas.md') && texto.includes('*esto*') && !texto.includes('\\*');
+      return { ok, detail: `texto=${JSON.stringify(texto)}` };
+    },
+  },
+  {
+    // P-026, 3.3 (D14-D16): una pregunta de TRES pasos queda anclada encima del input, fuera del hilo, y se
+    // maneja con el teclado sin tocar el input. Se inyecta por el reducer real y se cancela al final por
+    // el mismo camino que el CLI. Nunca se pulsa Enter (contestaria).
+    name: 'Preguntas: el dock va encima del input, fuera del hilo, y se maneja con el teclado',
+    async run(page) {
+      const previo = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return { tabs: s.tabs, activeTabId: s.activeTabId, splitLayout: s.splitLayout };
+      });
+      await openTemporaryConversation(page);
+      const base = ASK_USER_QUESTION_INPUT.questions[0];
+      const tres = { questions: [base, { ...base, question: '¿Y de fondo?' }, { ...base, question: '¿Y el borde?' }] };
+      await injectPermissionRequest(page, tres, 'vg-ask-3');
+      const dock = page.locator('[data-question-dock="true"]');
+      await dock.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      await page.waitForTimeout(CONFIG.settleMs);
+      const posicion = await page.evaluate(() => {
+        const d = document.querySelector('[data-question-dock="true"]').getBoundingClientRect();
+        const fila = document.querySelector('[data-prompt-editor="true"]').parentElement.getBoundingClientRect();
+        const scroller = document.querySelector('[data-pane-tab-id] [class*="overflow-y-auto"]');
+        if (scroller !== null) scroller.scrollTop = 0;
+        return {
+          encimaDelInput: d.bottom <= fila.top + 1,
+          contador: document.querySelector('[data-question-counter]')?.textContent?.trim() ?? null,
+          enElHilo: document.querySelectorAll('[data-block="question"]').length,
+        };
+      });
+      const visibleTrasScroll = await dock.evaluate((node) => {
+        const r = node.getBoundingClientRect();
+        return r.bottom > 0 && r.top < window.innerHeight;
+      });
+      await dock.focus();
+      await page.keyboard.press('Digit2');
+      await page.waitForTimeout(CONFIG.settleMs);
+      const trasElegir = await page.evaluate(() => ({
+        opcion2: document.querySelectorAll('[data-question-dock] [role="radio"]')[1]?.getAttribute('aria-checked') ?? null,
+        sigue: window.__mageDev.store.getState().pendingByChat[window.__mageDev.store.getState().activeTabId]?.[0]?.requestId ?? null,
+      }));
+      await page.keyboard.press('ArrowRight');
+      await page.waitForTimeout(CONFIG.settleMs);
+      const contadorTras = await page.evaluate(() => document.querySelector('[data-question-counter]')?.textContent?.trim() ?? null);
+      await cancelInjectedPermission(page, 'vg-ask-3');
+      await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
+      await page.waitForTimeout(CONFIG.settleMs);
+      const ok =
+        posicion.encimaDelInput &&
+        posicion.contador === '1 de 3' &&
+        posicion.enElHilo === 0 &&
+        visibleTrasScroll &&
+        trasElegir.opcion2 === 'true' &&
+        trasElegir.sigue === 'vg-ask-3' &&
+        contadorTras === '2 de 3';
+      return { ok, detail: JSON.stringify({ ...posicion, visibleTrasScroll, ...trasElegir, contadorTras }) };
+    },
+  },
+  {
+    // P-026, 3.2 (D13): pegar imagenes deja un token `[Imagen N]` en el cursor por cada una, y quitar una
+    // miniatura quita su token y renumera. Pegado sintetico; el borrador se limpia al final.
+    name: 'Prompt: pegar dos imagenes deja [Imagen 1] y [Imagen 2], y quitar la primera renumera',
+    async run(page) {
+      const previo = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return { tabs: s.tabs, activeTabId: s.activeTabId, splitLayout: s.splitLayout };
+      });
+      await openTemporaryConversation(page);
+      const tabId = await page.evaluate(() => window.__mageDev.store.getState().activeTabId);
+      const leer = () =>
+        page.evaluate((id) => ({
+          texto: window.__mageDev.store.getState().draftByChat[id]?.text ?? '',
+          miniaturas: document.querySelectorAll('img[data-attachment="thumb"]').length,
+        }), tabId);
+      await pasteFiles(page, [
+        { name: 'uno.png', type: 'image/png', base64: TINY_PNG_BASE64 },
+        { name: 'dos.png', type: 'image/png', base64: TINY_PNG_BASE64 },
+      ]);
+      await page.waitForTimeout(CONFIG.settleMs * 2);
+      const pegadas = await leer();
+      await page.getByRole('button', { name: 'Quitar el adjunto 1' }).click();
+      await page.waitForTimeout(CONFIG.settleMs);
+      const trasQuitar = await leer();
+      await page.evaluate((id) => window.__mageDev.store.getState().setDraft(id, null), tabId);
+      await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
+      await page.waitForTimeout(CONFIG.settleMs);
+      const ok =
+        pegadas.texto.includes('[Imagen 1]') &&
+        pegadas.texto.includes('[Imagen 2]') &&
+        pegadas.miniaturas === 2 &&
+        trasQuitar.texto.includes('[Imagen 1]') &&
+        !trasQuitar.texto.includes('[Imagen 2]') &&
+        trasQuitar.miniaturas === 1;
+      return { ok, detail: `pegadas=${JSON.stringify(pegadas)} tras quitar la 1=${JSON.stringify(trasQuitar)}` };
+    },
+  },
+  {
+    // P-026, 3.1 (D17): con el texto largo, los selectores bajan a su fila y el editor se queda con el
+    // ancho; con el input vacio, vuelven al lado del texto. Borrador fijado por el store (no se envia).
+    name: 'Prompt: los selectores bajan cuando el texto salta de linea y vuelven con el input vacio',
+    async run(page) {
+      const previo = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return { tabs: s.tabs, activeTabId: s.activeTabId, splitLayout: s.splitLayout };
+      });
+      await openTemporaryConversation(page);
+      // Ventana ANCHA: con los dos docks abiertos el chat de la ventana por defecto mide ~500 px, y ahi los
+      // selectores no caben al lado del texto ni vacio (bajan por el flex-wrap, que es el otro mecanismo).
+      const ventanaPrevia = page.viewportSize();
+      await page.setViewportSize({ width: 1800, height: 900 });
+      await page.waitForTimeout(CONFIG.settleMs * 2);
+      const tabId = await page.evaluate(() => window.__mageDev.store.getState().activeTabId);
+      const medir = () =>
+        page.evaluate(() => {
+          const host = document.querySelector('[data-prompt-editor="true"]');
+          const editor = host?.querySelector('.cm-editor');
+          const controles = document.querySelector('[data-prompt-controls="true"]');
+          if (!host || !editor || !controles) return null;
+          const e = editor.getBoundingClientRect();
+          const c = controles.getBoundingClientRect();
+          const fila = host.parentElement.getBoundingClientRect();
+          return { editorTop: e.top, editorBottom: e.bottom, controlesTop: c.top, anchoEditor: host.offsetWidth, anchoFila: fila.width, disposicion: host.getAttribute('data-prompt-layout') };
+        });
+      await page.evaluate((id) => window.__mageDev.store.getState().setDraft(id, { text: 'a'.repeat(400), attachments: [] }), tabId);
+      await page.waitForTimeout(CONFIG.settleMs * 3);
+      const largo = await medir();
+      await page.evaluate((id) => window.__mageDev.store.getState().setDraft(id, null), tabId);
+      await page.waitForTimeout(CONFIG.settleMs * 3);
+      const vacio = await medir();
+      if (ventanaPrevia !== null) await page.setViewportSize(ventanaPrevia);
+      await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
+      await page.waitForTimeout(CONFIG.settleMs);
+      const ok =
+        largo !== null &&
+        vacio !== null &&
+        largo.disposicion === 'stacked' &&
+        largo.controlesTop >= largo.editorBottom - 1 &&
+        largo.anchoEditor >= largo.anchoFila * 0.9 &&
+        vacio.disposicion === 'inline' &&
+        Math.abs(vacio.controlesTop - vacio.editorTop) <= 4;
+      return { ok, detail: JSON.stringify({ largo, vacio }) };
+    },
+  },
+  {
+    // P-026, 2.7 (D5): pulsar otra cuenta con una conversacion PARADA de la activa pregunta si migrarla.
+    // La pestaña lleva un `resumeSessionId` FALSO (nada se reanuda) y solo se pulsa «Solo cambiar de
+    // cuenta», que no mueve nada: la pestaña tiene que seguir ahi, en su cuenta. Se vuelve a la cuenta
+    // de partida al final. Si solo hay una cuenta, no hay a donde cambiar: se da por no aplicable.
+    name: 'Cambiar de cuenta con una conversación parada pregunta si migrarla',
+    async run(page) {
+      const previo = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return { tabs: s.tabs, activeTabId: s.activeTabId, splitLayout: s.splitLayout, activeAccountId: s.activeAccountId };
+      });
+      const otra = page.locator('[role="group"][aria-label="Cuentas"] button[aria-pressed="false"]');
+      if ((await otra.count()) === 0) return { ok: true, detail: 'una sola cuenta: no aplicable' };
+      await openTemporaryConversation(page);
+      const tabId = await page.evaluate(() => {
+        const store = window.__mageDev.store;
+        const { activeTabId, tabs } = store.getState();
+        store.setState({ tabs: tabs.map((t) => (t.id === activeTabId ? { ...t, resumeSessionId: 'vg-migrar' } : t)) });
+        return activeTabId;
+      });
+      await otra.first().click();
+      const dialogo = page.locator('[data-account-switch-dialog="true"]');
+      await dialogo.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      const botones = await dialogo.locator('button').evaluateAll((nodes) => nodes.map((n) => (n.textContent ?? '').trim()));
+      await dialogo.getByRole('button', { name: 'Solo cambiar de cuenta' }).click();
+      await dialogo.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+      const tras = await page.evaluate((id) => {
+        const s = window.__mageDev.store.getState();
+        return { pestanaSigue: s.tabs.some((t) => t.id === id && t.resumeSessionId === 'vg-migrar'), cuentaActiva: s.activeAccountId };
+      }, tabId);
+      await page.evaluate((estado) => {
+        window.__mageDev.store.getState().setActiveAccount(estado.activeAccountId);
+        window.__mageDev.store.setState({ tabs: estado.tabs, activeTabId: estado.activeTabId, splitLayout: estado.splitLayout });
+      }, previo);
+      await page.waitForTimeout(CONFIG.settleMs);
+      const ok =
+        botones.includes('Solo cambiar de cuenta') &&
+        botones.some((t) => t.startsWith('Migrar la conversación a')) &&
+        tras.pestanaSigue &&
+        tras.cuentaActiva !== previo.activeAccountId;
+      return { ok, detail: `botones=${JSON.stringify(botones)} tras «Solo cambiar»=${JSON.stringify({ pestanaSigue: tras.pestanaSigue, cambioDeCuenta: tras.cuentaActiva !== previo.activeAccountId })}` };
+    },
+  },
+  {
+    // P-026, 2.2 (D18): el modelo salia en tres sitios (selector del input, insignia de encima y barra
+    // de estado). Se cuenta cuantos elementos VISIBLES dicen la etiqueta del selector: uno.
+    name: 'Modelo: su etiqueta solo se ve una vez, en el selector del input',
+    async run(page) {
+      const previo = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return { tabs: s.tabs, activeTabId: s.activeTabId, splitLayout: s.splitLayout };
+      });
+      await openTemporaryConversation(page);
+      await page.waitForTimeout(CONFIG.settleMs);
+      const medido = await page.evaluate(() => {
+        const selector = document.querySelector('[aria-label="Modelo (aplica al siguiente turno)"]');
+        const etiqueta = (selector?.textContent ?? '').replace(/[▾⌄]/g, '').trim();
+        const visibles = [...document.querySelectorAll('body *')].filter(
+          (n) => n.children.length === 0 && (n.textContent ?? '').replace(/[▾⌄]/g, '').trim() === etiqueta && n.getClientRects().length > 0,
+        );
+        return { etiqueta, visibles: visibles.length };
+      });
+      await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
+      await page.waitForTimeout(CONFIG.settleMs);
+      const ok = medido.etiqueta.length > 0 && medido.visibles === 1;
+      return { ok, detail: JSON.stringify(medido) };
+    },
+  },
+  {
+    // P-026, 2.1: el menu ⋯ del prompt ya no ofrece «Adjuntar una imagen» (se pega con Ctrl+V) ni
+    // «Abrir carpeta» (la insignia de encima del input ya lo hace). Se abre y se cierra con Escape.
+    name: 'Menú ⋯ del prompt: sin «Adjuntar» ni «Abrir carpeta», con «Abrir terminal»',
+    async run(page) {
+      const previo = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return { tabs: s.tabs, activeTabId: s.activeTabId, splitLayout: s.splitLayout };
+      });
+      await openTemporaryConversation(page);
+      const boton = page.locator('[aria-haspopup="menu"][aria-label="Acciones"]').first();
+      await boton.click();
+      await page.locator('[role="menu"]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      const items = await page.evaluate(() => [...document.querySelectorAll('[role="menu"] [role="menuitem"]')].map((n) => (n.textContent ?? '').trim()));
+      await page.keyboard.press('Escape');
+      await page.locator('[role="menu"]').first().waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+      await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
+      await page.waitForTimeout(CONFIG.settleMs);
+      const ok = items.length >= 1 && !items.some((t) => /Adjuntar|Abrir carpeta/.test(t)) && items.some((t) => t.includes('Abrir terminal'));
+      return { ok, detail: `items=${JSON.stringify(items)}` };
+    },
+  },
+  {
+    // P-026, 1.7 (D19): la fila de una pestaña ABIERTA dice lo mismo que la de una cerrada —cuando y
+    // cuanto pesa—, no `claude · opus[1m]`. Pestaña propia con un `resumeSessionId` falso y su fila de
+    // historial inyectada; nada se spawnea.
+    name: 'Historial lateral: la fila de una pestaña abierta dice tiempo y peso, no proveedor y modelo',
+    async run(page) {
+      const previo = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return { tabs: s.tabs, activeTabId: s.activeTabId, splitLayout: s.splitLayout, conversationHistory: s.conversationHistory };
+      });
+      await openTemporaryConversation(page);
+      for (let intento = 0; intento < 3; intento += 1) {
+        await page.evaluate(() => {
+          const store = window.__mageDev.store;
+          const { activeTabId, tabs } = store.getState();
+          const tab = tabs.find((t) => t.id === activeTabId);
+          store.setState({
+            tabs: tabs.map((t) => (t.id === activeTabId ? { ...t, resumeSessionId: 'vg-fila' } : t)),
+            conversationHistory: [
+              { sessionId: 'vg-fila', title: tab.title, cwd: tab.cwd, privacy: tab.privacy, updatedAtMs: Date.now() - 3 * 60_000, configDir: '', sizeBytes: 2_200_000, isScheduled: false },
+            ],
+          });
+        });
+        await page.waitForTimeout(CONFIG.settleMs * 2);
+        const aguanta = await page.evaluate(() => window.__mageDev.store.getState().conversationHistory.some((c) => c.sessionId === 'vg-fila'));
+        if (aguanta) break;
+      }
+      const linea = await page.evaluate(() => document.querySelector('button[aria-current="true"] [data-row-meta]')?.textContent?.trim() ?? null);
+      await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
+      await page.waitForTimeout(CONFIG.settleMs);
+      const ok = linea !== null && /(hace|ahora).*(B|kB|MB)/.test(linea) && !/· (opus|sonnet|haiku)/.test(linea);
+      return { ok, detail: `segunda linea=${JSON.stringify(linea)}` };
+    },
+  },
+  {
+    // P-026, 1.6 (D20): los envoltorios de sistema que el CLI guarda como mensaje del usuario ya no se
+    // pintan como una burbuja con el XML crudo. Formas REALES del CLI 2.1.283.
+    name: 'Envoltorios de sistema: /rename es un chip, la tarea programada una tarjeta y el historial la marca',
+    async run(page) {
+      const previo = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return { blocksByChat: s.blocksByChat, conversationHistory: s.conversationHistory };
+      });
+      const rename = '<command-name>/rename</command-name>\n            <command-message>rename</command-message>\n            <command-args>REVISION-MAGE</command-args>';
+      const tarea = '<scheduled-task name="say-hello" file="C:\\Users\\x\\SKILL.md">\nThis is an automated run of a scheduled task.\n\nSay .\n</scheduled-task>';
+      await hydrateBlocks(page, [
+        { kind: 'user', id: 'vg-rename', text: rename, time: '12:00', attachments: [] },
+        { kind: 'user', id: 'vg-tarea', text: tarea, time: '12:01', attachments: [] },
+      ]);
+      // La carga del historial del arranque llega TARDE y pisaba la fila sintetica cuando esta
+      // comprobacion corria de las primeras (medido: 1 de 3 tandas con `--only`). Se reinyecta hasta que
+      // la fila aguanta en el store, con un tope.
+      for (let intento = 0; intento < 3; intento += 1) {
+        await page.evaluate(() =>
+          window.__mageDev.store.setState({
+            conversationHistory: [
+              { sessionId: 'vg-prog', title: 'say-hello', cwd: '', privacy: 'shared', updatedAtMs: Date.now(), configDir: '', sizeBytes: 1024, isScheduled: true },
+            ],
+          }),
+        );
+        await page.waitForTimeout(CONFIG.settleMs * 2);
+        const aguanta = await page.evaluate(() => window.__mageDev.store.getState().conversationHistory.some((c) => c.sessionId === 'vg-prog'));
+        if (aguanta) break;
+      }
+      const medido = await page.evaluate(() => {
+        const tarjeta = document.querySelector('[data-scheduled-task]');
+        return {
+          chips: [...document.querySelectorAll('[data-command-chip]')].map((n) => (n.textContent ?? '').trim()),
+          xmlEnElChat: [...document.querySelectorAll('[data-block="user"]')].some((n) => /<command-name>|<scheduled-task/.test(n.textContent ?? '')),
+          tarjeta: (tarjeta?.querySelector('summary')?.textContent ?? '').trim(),
+          plegada: tarjeta instanceof HTMLDetailsElement ? !tarjeta.open : null,
+          insignias: document.querySelectorAll('[data-scheduled-badge]').length,
+          filaDelHistorial: document.querySelector('button[aria-label="say-hello"]') !== null,
+        };
+      });
+      await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
+      await page.waitForTimeout(CONFIG.settleMs);
+      const ok =
+        medido.chips.length === 1 &&
+        medido.chips[0] === '/rename REVISION-MAGE' &&
+        !medido.xmlEnElChat &&
+        medido.tarjeta === 'Tarea programada: say-hello' &&
+        medido.plegada === true &&
+        medido.insignias === 1;
+      return { ok, detail: JSON.stringify(medido) };
+    },
+  },
+  {
     // 2.2: la cache en disco es lo que hace que el popover ofrezca los comandos REALES del usuario
     // ANTES del primer mensaje (`ensureSession` es perezoso, asi que una conversacion recien abierta no
     // tiene sesion de la que sacarlos). Se siembra en `main()`, antes de arrancar la app.
@@ -2122,21 +2483,25 @@ const CHECKS = [
     // imposible contestarla dos veces (contestar dos veces hace que main lance y la pestaña muera).
     // El permiso se inyecta por `__mageDev` con el input MEDIDO: no hay sesion, asi que no se pulsa
     // "Responder" (sin sesion viva `answerActivePermission` sale por su guard y se mediria el guard).
+    // P-026 3.3: la tarjeta ya no va en el hilo sino ANCLADA encima del input (`[data-question-dock]`).
     name: '2.3: un can_use_tool de AskUserQuestion se pinta como tarjeta y no como permiso',
     async run(page) {
       await injectPermissionRequest(page, ASK_USER_QUESTION_INPUT, 'vg-ask-1');
       const measured = await page.evaluate(() => {
-        const cards = [...document.querySelectorAll('[data-block="question"]')];
+        const cards = [...document.querySelectorAll('[data-question-dock]')];
         const first = cards[0] ?? null;
         return {
           tarjetas: cards.length,
-          header: first?.textContent?.includes('Preferencia de color') ?? false,
+          header: first?.textContent?.includes('¿Prefieres el color rojo o el azul?') ?? false,
           radios: first?.querySelectorAll('[role="radio"]').length ?? 0,
           casillas: first?.querySelectorAll('[role="checkbox"]').length ?? 0,
           responder: [...(first?.querySelectorAll('button') ?? [])].some((b) => b.textContent?.trim() === 'Responder'),
         };
       });
       const permiso = await measurePermissionPanel(page);
+      // Con la cola de permisos, una pregunta sin cancelar se queda DELANTE de las que inyecten los
+      // checks siguientes, y el dock sigue ensenando esta.
+      await cancelInjectedPermission(page, 'vg-ask-1');
       const ok =
         measured.tarjetas === 1 &&
         measured.header &&
@@ -2164,7 +2529,7 @@ const CHECKS = [
       };
       await injectPermissionRequest(page, multi, 'vg-ask-2');
       const measured = await page.evaluate(() => {
-        const cards = [...document.querySelectorAll('[data-block="question"]')];
+        const cards = [...document.querySelectorAll('[data-question-dock]')];
         const last = cards[cards.length - 1] ?? null;
         return {
           tarjetas: cards.length,
@@ -2172,6 +2537,7 @@ const CHECKS = [
           radios: last?.querySelectorAll('[role="radio"]').length ?? 0,
         };
       });
+      await cancelInjectedPermission(page, 'vg-ask-2');
       const ok = measured.casillas > 0 && measured.radios === 0;
       return { ok, detail: `multiSelect=${JSON.stringify(measured)}` };
     },
@@ -2213,103 +2579,69 @@ const CHECKS = [
   // --- Fase D: van DESPUES de 2.10/2.11 a proposito. Hidratan el chat con bloques sinteticos, o sea que
   // REEMPLAZAN lo que hubiera: cualquier comprobacion que mida burbujas reales tiene que ir antes.
   {
-    // 2.12.2: las cajas de tool arrancan COLAPSADAS (el defecto visible cambio en la Fase D). No basta
-    // con `aria-expanded`: se comprueba tambien que el cuerpo NO esta en el DOM, porque un atributo
-    // puede mentir y un cuerpo montado no.
-    name: '2.12.2: las cajas de tool arrancan colapsadas',
+    // P-026 3.4 (D21–D24): el chat se queda con lo que se DICE y lo que se HACE va al panel de Actividad.
+    // Todo entra por el reducer REAL (thinking, tool_use, tool_result, texto): se mide lo que la app hace
+    // con los eventos del CLI, no lo que el harness sabe construir. Sustituye a las comprobaciones de
+    // cajas colapsadas y rachas de la Fase D, que median un chat que ya no existe.
+    name: '3.4: el chat se queda con lo que se dice y los pasos van al panel de Actividad',
     async run(page) {
-      const total = await hydrateBlocks(page, [
-        toolBlock('t1', 'edit'),
-        toolBlock('t2', 'command'),
-        toolBlock('t3', 'edit'),
-        toolBlock('t4', 'command'),
-        toolBlock('t5', 'other'),
-        toolBlock('t6', 'edit'),
+      const previo = await captureTurnState(page);
+      await openTemporaryConversation(page);
+      await injectTurn(page, [
+        { kind: 'thinking_delta', text: 'a ver que hay' },
+        { kind: 'tool_use', tool: { toolUseId: 'v34-t1', toolName: 'Bash', input: { command: 'ls -la' } } },
+        { kind: 'tool_result', result: { toolUseId: 'v34-t1', isError: false, output: 'salida de v34-t1', durationMs: 12 } },
+        { kind: 'stream_delta', text: 'Reviso los ficheros.' },
+        { kind: 'tool_use', tool: { toolUseId: 'v34-t3', toolName: 'Bash', input: { command: 'false' } } },
+        { kind: 'tool_result', result: { toolUseId: 'v34-t3', isError: true, output: 'exit 1', durationMs: 5 } },
+        { kind: 'tool_use', tool: { toolUseId: 'v34-t2', toolName: 'Read', input: { file_path: 'src/a.ts' } } },
       ]);
-      // Desde el 2026-09-18 se pliega TODO lo que el agente hizo, asi que estas seis caen en una racha:
-      // hay que ABRIRLA para llegar a las cajas. Lo que se mide sigue siendo lo mismo — que cada caja
-      // nace colapsada y sin su cuerpo en el DOM.
-      await page.locator('[data-block="run"] button').first().click();
-      await page.waitForTimeout(CONFIG.settleMs);
-      const measured = await page.evaluate(() => {
-        const boxes = [...document.querySelectorAll('[data-block="tool"]')];
-        const buttons = boxes.map((box) => box.querySelector('button[aria-expanded]'));
-        return {
-          cajas: boxes.length,
-          colapsadas: buttons.filter((b) => b?.getAttribute('aria-expanded') === 'false').length,
-          desplegadas: buttons.filter((b) => b?.getAttribute('aria-expanded') === 'true').length,
-          cuerposEnElDom: boxes.filter((box) => box.textContent?.includes('salida de')).length,
-        };
-      });
-      const ok = measured.cajas === total && measured.colapsadas === total && measured.desplegadas === 0 && measured.cuerposEnElDom === 0;
-      return { ok, detail: `hidratadas=${total} ${JSON.stringify(measured)}` };
-    },
-  },
-  {
-    // 2.12.2: el diff con NUMEROS DE LINEA, con el hunk real medido. Un check de "hay digitos" pasaria
-    // con cualquier basura: se mide que la primera linea del cuerpo empieza por el `oldStart` real (13).
-    name: '2.12.2: el diff desplegado muestra numeros de linea',
-    async run(page) {
-      await hydrateBlocks(page, [
-        toolBlock('d1', 'edit', {
-          filePath: 'src/foo.ts',
-          output: [],
-          diff: [
-            { sign: ' ', text: 'import type { Foo } from "./foo";', oldLine: 13, newLine: 13 },
-            { sign: '-', text: 'const a = 1;', oldLine: 14, newLine: null },
-            { sign: '+', text: 'const a = 2;', oldLine: null, newLine: 14 },
-          ],
-        }),
-      ]);
-      await page.locator('[data-block="tool"] button[aria-expanded="false"]').first().click();
-      await page.waitForTimeout(CONFIG.settleMs);
-      const measured = await page.evaluate(() => {
-        const box = document.querySelector('[data-block="tool"]');
-        const rows = [...(box?.querySelectorAll('[data-diff="lines"] > div') ?? [])];
-        const first = rows.find((row) => row.textContent?.includes('const a = 1;'));
-        const numbers = [...(first?.querySelectorAll('span') ?? [])].map((s) => s.textContent?.trim() ?? '');
-        return {
-          desplegada: box?.querySelector('button[aria-expanded]')?.getAttribute('aria-expanded') ?? null,
-          filaDelBorrado: first?.textContent?.trim() ?? null,
-          columnas: numbers.slice(0, 2),
-        };
-      });
-      const ok =
-        measured.desplegada === 'true' &&
-        measured.columnas[0] === '14' &&
-        measured.columnas[1] === '' &&
-        (measured.filaDelBorrado?.startsWith('14') ?? false);
-      return { ok, detail: `diff=${JSON.stringify(measured)} (hunk real: oldStart=${REAL_HUNK.oldStart})` };
-    },
-  },
-  {
-    // 2026-09-18 (peticion del usuario): el PENSAMIENTO entra en la racha. Antes partia el turno en tres
-    // lineas ("Bash", "Pensó", "3 comandos") que son lo mismo: lo que el agente hizo. Se mide el
-    // resumen, que es lo unico que demuestra que el pensamiento se conto y no que se perdio.
-    name: '2026-09-18: un pensamiento entre comandos se pliega en la misma racha',
-    async run(page) {
-      await hydrateBlocks(page, [
-        toolBlock('g1', 'command'),
-        { kind: 'thinking', id: 'gt', runs: [{ code: false, text: 'a ver...' }], streaming: false, elapsedMs: 900 },
-        toolBlock('g2', 'command'),
-      ]);
-      const measured = await page.evaluate(() => ({
-        rachas: document.querySelectorAll('[data-block="run"]').length,
-        resumen: document.querySelector('[data-block="run"] button')?.textContent?.trim() ?? '',
-        sueltos: document.querySelectorAll('[data-block="thinking"], [data-block="tool"]').length,
+      const chat = await page.evaluate(() => ({
+        pasosEnElChat: document.querySelectorAll('[data-block="tool"], [data-block="thinking"], [data-block="subagent"], [data-block="run"]').length,
+        usuario: document.querySelectorAll('[data-block="user"]').length,
+        agente: document.querySelectorAll('[data-block="agent"]').length,
+        fallidas: document.querySelectorAll('[data-block="tool-failed"]').length,
+        estado: document.querySelector('[data-turn-status]')?.textContent?.trim() ?? null,
       }));
-      const ok = measured.rachas === 1 && /1 pensamiento, 2 comandos/.test(measured.resumen) && measured.sueltos === 0;
-      return { ok, detail: JSON.stringify(measured) };
+      await page.locator('[data-turn-status]').first().click();
+      await page.locator('[data-panel="activity"]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      const panel = await page.evaluate(() => ({
+        filas: document.querySelectorAll('[data-panel="activity"] [data-activity-row]').length,
+        conError: document.querySelectorAll('[data-panel="activity"] [data-activity-error="true"]').length,
+        turnos: [...document.querySelectorAll('[data-panel="activity"] [data-activity-turn]')].map((n) => n.textContent?.trim() ?? ''),
+        // Se muda aqui la mitad de glifos de «Iconos: …»: `›_` son dos caracteres y descuadraba la fila.
+        anchosDeGlifo: [...new Set([...document.querySelectorAll('[data-panel="activity"] [data-tool-glyph]')].map((n) => Math.round(n.getBoundingClientRect().width)))],
+      }));
+      await page.locator('[data-panel="activity"] [data-activity-row="tool"]').first().click();
+      await page.waitForTimeout(CONFIG.settleMs);
+      const detalle = await page.evaluate(() => document.querySelector('[data-activity-detail]')?.textContent ?? '');
+      await restoreTurnState(page, previo);
+      const ok =
+        chat.pasosEnElChat === 0 &&
+        chat.usuario === 1 &&
+        chat.agente === 1 &&
+        chat.fallidas === 1 &&
+        /Ejecutando Read/.test(chat.estado ?? '') &&
+        /4 pasos/.test(chat.estado ?? '') &&
+        /1 error/.test(chat.estado ?? '') &&
+        panel.filas === 4 &&
+        panel.conError === 1 &&
+        panel.anchosDeGlifo.length === 1 &&
+        detalle.includes('salida de v34-t1');
+      return { ok, detail: `chat=${JSON.stringify(chat)} panel=${JSON.stringify(panel)} detalle=${JSON.stringify(detalle.slice(0, 80))}` };
     },
   },
   {
-    // 2026-09-18: el diff se lee como el de Claude Code — FONDO por linea (insercion/borrado) y codigo
-    // RESALTADO. Las dos mitades se miden por separado y con el valor real: un fondo igual en las tres
-    // lineas, o un solo color de texto, significa que la funcionalidad esta muerta aunque el diff salga.
-    name: '2026-09-18: el diff pinta fondo de insercion/borrado y resalta la sintaxis',
+    // El diff de un Edit, ahora en el DETALLE del panel: numerado con el hunk real (la primera fila del
+    // borrado empieza por su linea antigua, 14), fondo distinto por insercion/borrado y codigo
+    // resaltado. Junta las dos comprobaciones de diff de la Fase D, que lo median en la caja del chat.
+    name: '3.4: el detalle de un Edit en Actividad pinta el diff numerado, con fondos y resaltado',
     async run(page) {
+      const previo = await captureTurnState(page);
+      await openTemporaryConversation(page);
       await hydrateBlocks(page, [
-        toolBlock('d2', 'edit', {
+        { kind: 'user', id: 'v34-u', text: 'cambia a', time: '12:00', attachments: [] },
+        toolBlock('d1', 'edit', {
           filePath: 'src/foo.ts',
           output: [],
           diff: [
@@ -2319,106 +2651,73 @@ const CHECKS = [
           ],
         }),
       ]);
-      await page.locator('[data-block="tool"] button[aria-expanded="false"]').first().click();
-      const measured = await waitForDiffPaint(page);
-      const ok =
-        measured !== null &&
-        measured.fondos.length === 3 && // contexto, borrado e insercion: tres fondos DISTINTOS
-        measured.colores > 1; // mas de un color de token => shiki tokenizo el codigo del diff
-      return { ok, detail: `fondos distintos=${JSON.stringify(measured?.fondos ?? null)} colores de token=${measured?.colores ?? 0}` };
+      await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        s.openActivity(s.activeTabId, null);
+      });
+      await page.locator('[data-panel="activity"] [data-activity-row="tool"]').first().click();
+      const pintado = await waitForDiffPaint(page);
+      const numeros = await page.evaluate(() => {
+        const rows = [...document.querySelectorAll('[data-activity-detail] [data-diff="lines"] > div')];
+        const first = rows.find((row) => row.textContent?.includes('const a: number = 1;'));
+        return [...(first?.querySelectorAll('span') ?? [])].slice(0, 2).map((s) => s.textContent?.trim() ?? '');
+      });
+      await restoreTurnState(page, previo);
+      const ok = numeros[0] === '14' && numeros[1] === '' && pintado !== null && pintado.fondos.length === 3 && pintado.colores > 1;
+      return { ok, detail: `columnas=${JSON.stringify(numeros)} fondos=${JSON.stringify(pintado?.fondos ?? null)} colores=${pintado?.colores ?? 0} (hunk real: oldStart=${REAL_HUNK.oldStart})` };
     },
   },
   {
-    // 2.12.2: una racha se pinta como UNA linea, y al desplegarla salen sus cajas COLAPSADAS. La
-    // edicion se queda FUERA de la racha: es la mitad que demuestra que no se esconde nada.
-    name: '2.12.2: una racha se pinta como una linea y al desplegarla salen sus cajas colapsadas',
+    // D21: los subagentes dejan UNA linea en el chat, se anclan encima del input mientras dura el turno
+    // y un clic en su fila filtra el panel a sus pasos (que llegan con `parentToolUseId`, medido).
+    name: '3.4: subagentes: una linea en el chat, el dock encima del input y su clic filtra Actividad',
     async run(page) {
-      await hydrateBlocks(page, [toolBlock('r1', 'read'), toolBlock('r2', 'read'), toolBlock('r3', 'search'), toolBlock('r4', 'edit')]);
-      const antes = await page.evaluate(() => ({
-        rachas: document.querySelectorAll('[data-block="run"]').length,
-        resumen: document.querySelector('[data-block="run"] button')?.textContent?.trim() ?? '',
-        cajasVisibles: document.querySelectorAll('[data-block="tool"]').length,
+      const previo = await captureTurnState(page);
+      await openTemporaryConversation(page);
+      await injectTurn(page, [
+        { kind: 'tool_use', tool: { toolUseId: 'v34-s1', toolName: 'Agent', input: { subagent_type: 'Explore', description: 'buscar el bug' } } },
+        { kind: 'tool_use', tool: { toolUseId: 'v34-s2', toolName: 'Agent', input: { subagent_type: 'Plan', description: 'planear' } } },
+        { kind: 'tool_use', tool: { toolUseId: 'v34-g1', toolName: 'Grep', input: { pattern: 'foo' }, parentToolUseId: 'v34-s1' } },
+        { kind: 'tool_result', result: { toolUseId: 'v34-s2', isError: false, output: '{"agentId":"abc123"}', durationMs: 5000 } },
+      ]);
+      const vivo = await page.evaluate(() => {
+        const dock = document.querySelector('[data-agents-dock]');
+        const input = document.querySelector('[data-prompt-editor="true"]');
+        return {
+          filas: [...document.querySelectorAll('[data-agents-dock-row]')].map((n) => `${n.getAttribute('data-agents-dock-row')}:${n.textContent?.trim() ?? ''}`),
+          encimaDelInput: dock !== null && input !== null && dock.getBoundingClientRect().bottom <= input.getBoundingClientRect().top + 1,
+          lineas: [...document.querySelectorAll('[data-block="subagents"]')].map((n) => n.textContent?.trim() ?? ''),
+          bloquesSubagente: document.querySelectorAll('[data-block="subagent"]').length,
+        };
+      });
+      await page.locator('[data-agents-dock-row="running"]').first().click();
+      await page.locator('[data-panel="activity"] [data-activity-filter]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      const filtrado = await page.evaluate(() => document.querySelectorAll('[data-panel="activity"] [data-activity-row]').length);
+      await page.evaluate(() => {
+        const dev = window.__mageDev;
+        const tabId = dev.store.getState().activeTabId;
+        dev.store.setState((s) => dev.reduceEvent(s, tabId, { kind: 'tool_result', result: { toolUseId: 'v34-s1', isError: true, output: 'fallo', durationMs: 9000 } }));
+        dev.store.setState((s) => ({ statusByChat: { ...s.statusByChat, [tabId]: 'idle' } }));
+      });
+      await page.waitForTimeout(CONFIG.settleMs * 2);
+      const final = await page.evaluate(() => ({
+        dock: document.querySelectorAll('[data-agents-dock-row]').length,
+        linea: document.querySelector('[data-block="subagents"]')?.textContent?.trim() ?? '',
       }));
-      await page.locator('[data-block="run"] button').first().click();
-      await page.waitForTimeout(CONFIG.settleMs);
-      const despues = await page.evaluate(() => {
-        const dentro = [...document.querySelectorAll('[data-block="run"] [data-block="tool"]')];
-        return {
-          cajasDentro: dentro.length,
-          colapsadas: dentro.filter((box) => box.querySelector('button[aria-expanded]')?.getAttribute('aria-expanded') === 'false').length,
-        };
-      });
+      await restoreTurnState(page, previo);
       const ok =
-        antes.rachas === 1 &&
-        /Leídos 2 ficheros, 1 búsqueda/.test(antes.resumen) &&
-        antes.cajasVisibles === 0 && // TODO plegado: desde el 2026-09-18 la edicion tambien entra
-        despues.cajasDentro === 4 &&
-        despues.colapsadas === 4;
-      return { ok, detail: `antes=${JSON.stringify(antes)} tras desplegar=${JSON.stringify(despues)}` };
-    },
-  },
-  {
-    // 2.12.2, la decision §0.1-a medida: una tool con error NO se esconde en una racha. Dos rachas de
-    // uno no son rachas, asi que las tres cajas quedan a la vista.
-    name: '2.12.2: una tool con error no se esconde en la racha',
-    async run(page) {
-      await hydrateBlocks(page, [
-        toolBlock('e1', 'read'),
-        toolBlock('e2', 'read', { isError: true, meta: 'exit 1 · 30 ms' }),
-        toolBlock('e3', 'read'),
-      ]);
-      const measured = await page.evaluate(() => {
-        const boxes = [...document.querySelectorAll('[data-block="tool"]')];
-        const metas = boxes.map((box) => box.querySelector('button span:last-child'));
-        return {
-          rachas: document.querySelectorAll('[data-block="run"]').length,
-          cajas: boxes.length,
-          conColorDeError: metas.filter((meta) => (meta?.className ?? '').includes('danger')).length,
-        };
-      });
-      const ok = measured.rachas === 0 && measured.cajas === 3 && measured.conColorDeError === 1;
-      return { ok, detail: `errorEnRacha=${JSON.stringify(measured)}` };
-    },
-  },
-  {
-    // 2.5: subagente y pensamiento, los dos PLEGADOS. El boton de la transcripcion del subagente esta
-    // deshabilitado sin `agentId` (no se puede abrir un fichero que no se sabe cual es), y el bloque de
-    // pensamiento sin texto dice por que esta vacio en vez de enseñar un hueco.
-    name: '2.5: el bloque de subagente y el de pensamiento se pintan plegados',
-    async run(page) {
-      await hydrateBlocks(page, [
-        { kind: 'subagent', id: 's1', toolUseId: 'u-s1', agentType: 'Explore', description: 'buscar el bug', agentId: null, status: null },
-        { kind: 'thinking', id: 'th1', runs: [], streaming: false, elapsedMs: 12000 },
-      ]);
-      const measured = await page.evaluate(() => {
-        const subagent = document.querySelector('[data-block="subagent"]');
-        const thinking = document.querySelector('[data-block="thinking"]');
-        const thinkingButton = thinking?.querySelector('button[aria-expanded]');
-        return {
-          subagentes: document.querySelectorAll('[data-block="subagent"]').length,
-          tipo: subagent?.textContent?.includes('Explore') ?? false,
-          botonDeshabilitado: subagent?.querySelector('button')?.disabled ?? null,
-          pensamientos: document.querySelectorAll('[data-block="thinking"]').length,
-          plegado: thinkingButton?.getAttribute('aria-expanded') ?? null,
-        };
-      });
-      await page.locator('[data-block="thinking"] button[aria-expanded]').first().click();
-      await page.waitForTimeout(CONFIG.settleMs);
-      // El mensaje cambio con el guardado de pensamientos (2026-09-06): Mage ya conserva el texto que
-      // el CLI persiste vacio, asi que el hueco sin cuerpo solo queda para conversaciones ANTERIORES a
-      // eso — y el mensaje ya no le echa la culpa al CLI, dice que ese pensamiento no se llego a
-      // guardar. Aqui el bloque se inyecta con `runs: []`, que es justo ese caso.
-      const nota = await page.evaluate(
-        () => document.querySelector('[data-block="thinking"]')?.textContent?.includes('no se guardó') ?? false,
-      );
-      const ok =
-        measured.subagentes === 1 &&
-        measured.tipo &&
-        measured.botonDeshabilitado === true &&
-        measured.pensamientos === 1 &&
-        measured.plegado === 'false' &&
-        nota;
-      return { ok, detail: `${JSON.stringify(measured)} notaAlDesplegar=${nota}` };
+        vivo.filas.length === 2 &&
+        /^running:Explore.*Ejecutando Grep/.test(vivo.filas[0] ?? '') &&
+        /^done:Plan.*Terminado/.test(vivo.filas[1] ?? '') &&
+        vivo.encimaDelInput &&
+        vivo.lineas.length === 1 &&
+        /Lanzó 2 subagentes/.test(vivo.lineas[0] ?? '') &&
+        vivo.bloquesSubagente === 0 &&
+        filtrado === 2 &&
+        final.dock === 0 &&
+        /2 terminados/.test(final.linea) &&
+        /1 con error/.test(final.linea);
+      return { ok, detail: `vivo=${JSON.stringify(vivo)} filtrado=${filtrado} final=${JSON.stringify(final)}` };
     },
   },
   {
@@ -2590,23 +2889,56 @@ const CHECKS = [
         ocultos: document.querySelectorAll('[data-prompt-editor="true"] .cm-mg-marker-hidden').length,
       }));
       // Se baja de linea con Shift+Enter (NO Enter: eso enviaria) para que la primera deje de ser la
-      // del cursor y su marcador se oculte.
+      // del cursor y su `- ` se sustituya por la viñeta pintada (P-026, 1.5: un `::before` con `•`).
       await page.keyboard.press('Shift+Enter');
       await page.waitForTimeout(CONFIG.settleMs);
-      const trasBajar = await page.evaluate(() => ({
-        ocultos: document.querySelectorAll('[data-prompt-editor="true"] .cm-mg-marker-hidden').length,
-      }));
+      const trasBajar = await page.evaluate(() => {
+        const pintadas = [...document.querySelectorAll('[data-prompt-editor="true"] .cm-mg-bullet-painted')];
+        return {
+          pintadas: pintadas.length,
+          vineta: pintadas[0] === undefined ? null : getComputedStyle(pintadas[0], '::before').content,
+        };
+      });
       const documento = await promptText(page);
       await clearPrompt(page);
       const ok =
         enLaLineaDelCursor.marcadorVisible === 1 &&
         enLaLineaDelCursor.ocultos === 0 &&
-        trasBajar.ocultos >= 1 &&
+        trasBajar.pintadas >= 1 &&
+        trasBajar.vineta === '"•"' &&
         (documento ?? '').includes('- uno');
       return {
         ok,
         detail: `linea del cursor=${JSON.stringify(enLaLineaDelCursor)} tras bajar=${JSON.stringify(trasBajar)} documento=${JSON.stringify(documento)}`,
       };
+    },
+  },
+  {
+    // P-026, 1.5: los numeros de una lista se ven en TODAS las lineas, no solo en la del cursor (la
+    // alpha ocultaba el resto con `font-size: 0` y solo quedaba el «6.» del parrafo activo). El borrador
+    // se fija por el store: teclear tres lineas exigiria Shift+Enter y la continuacion de lista.
+    name: 'Prompt: una lista numerada ensena los tres numeros, no solo el de la linea del cursor',
+    async run(page) {
+      const previoStore = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return { tabs: s.tabs, activeTabId: s.activeTabId, splitLayout: s.splitLayout };
+      });
+      await openTemporaryConversation(page);
+      const tabId = await page.evaluate(() => window.__mageDev.store.getState().activeTabId);
+      await page.evaluate((id) => window.__mageDev.store.getState().setDraft(id, { text: '1. uno\n2. dos\n3. tres', attachments: [] }), tabId);
+      await page.waitForTimeout(CONFIG.settleMs);
+      const numeros = await page.evaluate(() =>
+        [...document.querySelectorAll('[data-prompt-editor="true"] .cm-mg-ordinal')].map((node) => ({
+          texto: (node.textContent ?? '').trim(),
+          fontSize: parseFloat(getComputedStyle(node).fontSize),
+          ancho: node.getBoundingClientRect().width,
+        })),
+      );
+      await page.evaluate((id) => window.__mageDev.store.getState().setDraft(id, null), tabId);
+      await page.evaluate((estado) => window.__mageDev.store.setState(estado), previoStore);
+      await page.waitForTimeout(CONFIG.settleMs);
+      const ok = numeros.length === 3 && numeros.every((n) => n.fontSize > 0 && n.ancho > 0);
+      return { ok, detail: `numeros=${JSON.stringify(numeros)}` };
     },
   },
   {
@@ -2751,22 +3083,25 @@ const CHECKS = [
     // invalido (un .svg) da un error EXPLICITO con el tipo recibido y no adjunta nada. No se envia.
     name: '2.12.1: adjuntar una imagen valida deja miniatura y una invalida da error explicito',
     async run(page, ctx) {
-      const dir = ctx.runDir;
-      const pngPath = path.join(dir, 'adjunto-valido.png');
-      const svgPath = path.join(dir, 'adjunto-invalido.svg');
-      // PNG REAL de 1x1 (el mismo del fixture de la Fase A): asi `naturalWidth` puede ser > 0.
-      fs.writeFileSync(pngPath, Buffer.from(TINY_PNG_BASE64, 'base64'));
-      fs.writeFileSync(svgPath, '<svg xmlns="http://www.w3.org/2000/svg"/>', 'utf-8');
-
-      const input = page.locator('input[type="file"][aria-label="Adjuntar imágenes"]');
-      await input.setInputFiles(pngPath);
+      // Con dos pestañas PROPIAS (P-026, 1.2): el error de adjuntar vivia en estado local de la barra,
+      // que no se remonta, y se quedaba pintado en la pestaña siguiente para siempre.
+      const previoStore = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return { tabs: s.tabs, activeTabId: s.activeTabId, splitLayout: s.splitLayout };
+      });
+      await openTemporaryConversation(page);
+      const tabConError = await page.evaluate(() => window.__mageDev.store.getState().activeTabId);
+      // Por PEGADO sintetico (P-026, 2.1): el `<input type=file>` y su item del menu ya no existen, y el
+      // pegado es la unica via. PNG REAL de 1x1 (el del fixture de la Fase A): `naturalWidth` puede ser > 0.
+      await pasteFiles(page, [{ name: 'adjunto-valido.png', type: 'image/png', base64: TINY_PNG_BASE64 }]);
       await page.waitForTimeout(CONFIG.settleMs);
       const valido = await page.evaluate(() => {
         const thumbs = [...document.querySelectorAll('img[data-attachment="thumb"]')];
         return { miniaturas: thumbs.length, naturalWidth: thumbs[0]?.naturalWidth ?? 0 };
       });
 
-      await input.setInputFiles(svgPath);
+      const svg = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"/>', 'utf-8').toString('base64');
+      await pasteFiles(page, [{ name: 'adjunto-invalido.svg', type: 'image/svg+xml', base64: svg }]);
       await page.waitForTimeout(CONFIG.settleMs);
       const invalido = await page.evaluate(() => {
         const alerts = [...document.querySelectorAll('[role="alert"]')].map((n) => n.textContent ?? '');
@@ -2777,11 +3112,23 @@ const CHECKS = [
         };
       });
 
+      // El error NO viaja a otra pestaña, ni vuelve al regresar a la suya.
+      const erroresDeAdjuntar = () =>
+        page.evaluate(() => [...document.querySelectorAll('[role="alert"]')].filter((n) => /adjuntar/i.test(n.textContent ?? '')).length);
+      await openTemporaryConversation(page);
+      await page.waitForTimeout(CONFIG.settleMs);
+      const enOtraPestana = await erroresDeAdjuntar();
+      await page.evaluate((id) => window.__mageDev.store.getState().setActiveTab(id), tabConError);
+      await page.waitForTimeout(CONFIG.settleMs);
+      const alVolver = await erroresDeAdjuntar();
+
       // Se quita la miniatura: la comprobacion no deja adjuntos colgando para las siguientes.
       const quitar = page.getByRole('button', { name: /Quitar el adjunto/ });
       if ((await quitar.count()) > 0) await quitar.first().click();
       await page.waitForTimeout(CONFIG.settleMs);
       const limpio = await page.locator('img[data-attachment="thumb"]').count();
+      await page.evaluate((estado) => window.__mageDev.store.setState(estado), previoStore);
+      await page.waitForTimeout(CONFIG.settleMs);
 
       const ok =
         valido.miniaturas === 1 &&
@@ -2789,8 +3136,13 @@ const CHECKS = [
         invalido.errores === 1 &&
         invalido.conElTipo &&
         invalido.miniaturas === 1 && // el invalido NO se adjunta: sigue habiendo solo el valido
+        enOtraPestana === 0 &&
+        alVolver === 0 &&
         limpio === 0;
-      return { ok, detail: `valido=${JSON.stringify(valido)} invalido=${JSON.stringify(invalido)} tras quitar=${limpio}` };
+      return {
+        ok,
+        detail: `valido=${JSON.stringify(valido)} invalido=${JSON.stringify(invalido)} errores en otra pestaña=${enOtraPestana} al volver=${alVolver} tras quitar=${limpio}`,
+      };
     },
   },
   {
@@ -2867,6 +3219,7 @@ const CHECKS = [
       const trasCancelar = await page.evaluate(() => ({
         botones: document.querySelectorAll('button[aria-label="Permitir"]').length,
         tarjeta: document.querySelector('[data-permission-card]')?.getAttribute('data-permission-card') ?? null,
+        enActividad: [...document.querySelectorAll('[data-activity-row="permission"]')].some((n) => (n.textContent ?? '').includes('cancelado')),
       }));
       if (!abiertoAntes) {
         await icon.click(); // se deja el dock como estaba
@@ -2893,9 +3246,10 @@ const CHECKS = [
         measured.numeroEnElNombre === false &&
         measured.avisoDeEscritura &&
         measured.avisoDeAtencion === false &&
-        // Cancelado: nadie ofrece contestar, y la tarjeta se queda en el hilo diciendo que se cancelo.
+        // Cancelado: nadie ofrece contestar, y desde P-026 3.4 (D23) el permiso ya resuelto sale del hilo:
+        // su relato vive en el panel de Actividad (la fila solo se mide si el panel esta montado).
         trasCancelar.botones === 0 &&
-        trasCancelar.tarjeta === 'cancelled';
+        trasCancelar.tarjeta === null;
       return { ok, detail: `${JSON.stringify(measured)} tras cancelar=${JSON.stringify(trasCancelar)} (el panel estaba ${abiertoAntes ? 'abierto' : 'cerrado'})` };
     },
   },
@@ -2941,7 +3295,7 @@ const CHECKS = [
         return {
           tarjetasPendientes: document.querySelectorAll('[data-permission-card="pending"]').length,
           estado: s.statusByChat[tabId] ?? null,
-          panelConPeticion: s.permissionByChat[tabId] !== null && s.permissionByChat[tabId] !== undefined,
+          panelConPeticion: (s.pendingByChat[tabId] ?? []).length > 0,
         };
       });
       // Una tool DISTINTA sigue preguntando: la regla es por tool, no un "permitir todo".
@@ -3176,10 +3530,10 @@ const CHECKS = [
       // y los bloques de golpe, sin dejar residuo para las comprobaciones siguientes.
       //
       // SELECTIVO, y esto no es un detalle: `getState()` entero cruzando el puente de CDP se serializa,
-      // y `expandedTools`/`expandedRuns` son `Set`. Al restaurarlos volvian como objetos planos, y el
-      // primer `s.expandedRuns.has(...)` reventaba -> el ErrorBoundary se comia la app y TODO lo que
-      // corriera despues medía una pantalla de error. Se copia el mismo criterio que ya usaba la
-      // comprobacion de arrastre: solo las claves que esta prueba toca, y ninguna es un Set.
+      // y un `Set` del store vuelve como objeto plano (paso con `expandedRuns`, ya retirado: el primer
+      // `.has(...)` reventaba -> el ErrorBoundary se comia la app y TODO lo que corriera despues medía
+      // una pantalla de error). Se copia el mismo criterio que ya usaba la comprobacion de arrastre: solo
+      // las claves que esta prueba toca, y ninguna es un Set.
       const previo = await page.evaluate(() => {
         const s = window.__mageDev.store.getState();
         return { tabs: s.tabs, activeTabId: s.activeTabId, splitLayout: s.splitLayout, sessionIdByChat: s.sessionIdByChat, blocksByChat: s.blocksByChat };
@@ -3718,8 +4072,8 @@ const CHECKS = [
       const ok =
         todo.hayFila &&
         todo.encimaDelInput === true &&
-        // Carpeta + privacidad + modelo.
-        todo.etiquetas.length === 3 &&
+        // Carpeta + privacidad. El modelo ya NO va aqui (P-026 2.2, D18): solo en el selector del input.
+        todo.etiquetas.length === 2 &&
         // Solo la carpeta hace algo: un boton que no lleva a ningun sitio es una promesa rota.
         todo.pulsables === 1 &&
         todo.desborda === false &&
@@ -3728,6 +4082,81 @@ const CHECKS = [
         // `textContent` trae tambien el icono, asi que se compara por contenido y no por igualdad.
         (todo.etiquetaScratch ?? '').includes('Scratchpad');
       return { ok, detail: JSON.stringify(todo) };
+    },
+  },
+  {
+    // P-026 3.5 (D25–D28): git en la fila del chat. El SCRIPT (no la app) monta un repo temporal con un
+    // commit, una segunda rama, un fichero cambiado y otro sin seguir; la pestaña apunta ahi. La carpeta
+    // no es de confianza en el perfil aislado, asi que primero tiene que salir el dialogo de siempre
+    // (D28) y solo al confiar aparecen los chips. Nunca se envia nada y nunca se cambia de rama de verdad.
+    name: '3.5: git: la rama y +N −M salen al confiar, el cambio de rama se bloquea sucio y «Confirmar cambios» no envía',
+    async run(page) {
+      const repo = createTempGitRepo();
+      if (repo === null) return { ok: true, detail: 'saltada: no hay git en esta maquina' };
+      const previo = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return { tabs: s.tabs, activeTabId: s.activeTabId, splitLayout: s.splitLayout, draftByChat: s.draftByChat, gitByCwd: s.gitByCwd };
+      });
+      try {
+        await openTemporaryConversation(page);
+        await page.evaluate((cwd) => {
+          const dev = window.__mageDev;
+          const tabId = dev.store.getState().activeTabId;
+          dev.store.setState((s) => ({ tabs: s.tabs.map((t) => (t.id === tabId ? { ...t, cwd } : t)) }));
+        }, repo);
+        const dialogo = page.getByRole('button', { name: 'Confiar en esta carpeta' });
+        await dialogo.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const chipsAntesDeConfiar = await page.locator('[data-git-diff]').count();
+        await dialogo.click();
+        await page.locator('[data-git-diff]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const sucio = await page.evaluate(() => {
+          const rama = document.querySelector('[aria-label^="Cambiar de rama"]');
+          return {
+            rama: rama?.textContent?.trim() ?? null,
+            bloqueada: rama?.getAttribute('aria-disabled') === 'true',
+            motivo: rama?.getAttribute('aria-label') ?? '',
+            cambios: document.querySelector('[data-git-diff]')?.textContent?.trim() ?? null,
+            boton: document.querySelectorAll('[data-git-commit]').length,
+          };
+        });
+        await page.locator('[data-git-commit]').first().click();
+        await page.waitForTimeout(CONFIG.settleMs);
+        const trasConfirmar = await page.evaluate(() => {
+          const s = window.__mageDev.store.getState();
+          return {
+            borrador: s.draftByChat[s.activeTabId]?.text ?? '',
+            enElEditor: document.querySelector('[data-prompt-editor="true"] .cm-content')?.textContent ?? '',
+            estado: s.statusByChat[s.activeTabId] ?? 'idle',
+            mensajes: (s.blocksByChat[s.activeTabId] ?? []).filter((b) => b.kind === 'user').length,
+          };
+        });
+        // Arbol limpio: el cambio de rama se habilita y lista las dos ramas (sin elegir ninguna).
+        cleanTempGitRepo(repo);
+        await page.waitForTimeout(GIT_STATUS_FRESH_MS);
+        await page.evaluate(() => window.__mageDev.store.getState().refreshGit(window.__mageDev.store.getState().activeTabId));
+        await page.locator('button[aria-label="Cambiar de rama"]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        await page.locator('button[aria-label="Cambiar de rama"]').first().click();
+        const ramas = await page.evaluate(() => [...document.querySelectorAll('[role="listbox"][aria-label="Cambiar de rama"] [role="option"]')].map((n) => n.textContent?.trim() ?? ''));
+        await page.keyboard.press('Escape');
+        const ok =
+          chipsAntesDeConfiar === 0 &&
+          (sucio.rama ?? '').includes('main') &&
+          sucio.bloqueada &&
+          sucio.motivo.includes('sin confirmar') &&
+          sucio.cambios === '+2−0' &&
+          sucio.boton === 1 &&
+          trasConfirmar.borrador.startsWith('Haz commit de los cambios pendientes') &&
+          trasConfirmar.enElEditor.includes('Haz commit') &&
+          trasConfirmar.estado === 'idle' &&
+          trasConfirmar.mensajes === 0 &&
+          ramas.join(',') === 'main,otra';
+        return { ok, detail: `antes=${chipsAntesDeConfiar} sucio=${JSON.stringify(sucio)} confirmar=${JSON.stringify({ ...trasConfirmar, enElEditor: trasConfirmar.enElEditor.slice(0, 30) })} ramas=${JSON.stringify(ramas)}` };
+      } finally {
+        await page.evaluate((cwd) => window.__mageDev.store.getState().revokeTrustedFolder(cwd), repo);
+        await page.evaluate((state) => window.__mageDev.store.setState(state), previo);
+        await page.waitForTimeout(CONFIG.settleMs);
+        fs.rmSync(repo, { recursive: true, force: true });
+      }
     },
   },
   {
@@ -4211,6 +4640,10 @@ const CHECKS = [
             tools: ['Read', 'Bash', 'mcp__database__run_query', 'mcp__playwright__browser_click'],
             mcpServers: [],
             slashCommands: [],
+            // P-026 2.6: lo que cargo la sesion, con la forma medida en 2.1.283.
+            skills: ['obsidian:obsidian-cli', 'caveman'],
+            plugins: [{ name: 'obsidian', source: 'obsidian@obsidian-skills' }],
+            pluginErrors: [],
           }),
         );
       });
@@ -4236,7 +4669,9 @@ const CHECKS = [
           conBuscador: buscador !== null,
           // Las cabeceras de grupo, en el ORDEN en que se pintan: nativas primero y los servidores
           // en alfabetico. Es lo unico que distingue "agrupa" de "lista todo junto".
-          grupos: texto.split('\n').filter((line) => /^[A-Za-z-]+ \(\d+\)$/.test(line.trim())).map((line) => line.trim()),
+          grupos: texto.split('\n').filter((line) => /^[A-Za-z-]+ \(\d+\)$/.test(line.trim()) && !/^(plugins|skills) /i.test(line.trim())).map((line) => line.trim()),
+          // P-026 2.6: skills y plugins de la sesion, plegados con su recuento.
+          extensiones: [...(panel?.querySelectorAll('[data-session-extensions] summary') ?? [])].map((n) => (n.textContent ?? '').trim()),
           // El nombre completo tiene que seguir estando (es el que se copia para una regla de permisos),
           // aunque dentro de su grupo se pinte el corto.
           nombresCompletos: [...(panel?.querySelectorAll('[title^="mcp__"]') ?? [])].map((n) => n.getAttribute('title')),
@@ -4255,7 +4690,8 @@ const CHECKS = [
         // devuelve el texto YA transformado. Lo que se comprueba es el agrupamiento y el orden, no de
         // que color son las letras.
         medido.grupos.map((g) => g.toLowerCase()).join(' | ') === 'nativas (2) | database (1) | playwright (1)' &&
-        medido.nombresCompletos.length === 2;
+        medido.nombresCompletos.length === 2 &&
+        medido.extensiones.join(' | ') === 'Plugins (1) | Skills (2)';
       return { ok, detail: JSON.stringify({ enElInspector, abiertoSolo, ...medido }) };
     },
   },
@@ -4889,7 +5325,7 @@ async function separatorValue(handle) {
   return raw === null || !Number.isFinite(value) ? null : value;
 }
 
-// Modo de permiso que declara el chip de la PromptBar ("Manual", "Auto-editar", "Plan").
+// Modo de permiso que declara el chip de la PromptBar ("Manual", "Auto-editar", "Plan", "Auto", "Omitir permisos").
 async function permissionModeLabel(page) {
   const chip = page.locator('[aria-label^="Modo de permiso:"]').first();
   return ((await chip.getAttribute('aria-label')) ?? '').replace('Modo de permiso:', '').trim();
@@ -5180,6 +5616,18 @@ function seedOnboardingDone(userDataDir) {
   fs.writeFileSync(file, JSON.stringify({ version: 1, notificationRules: [], onboardingCompletedVersion: 9999 }, null, 2), 'utf-8');
 }
 
+// P-026 2.5: sin `mcp-common.json`, main lo IMPORTA al arrancar desde el `~/.claude/mcp-shared.json` y
+// los `.claude.json` REALES del usuario —con los `env` de sus servidores— y lo escribiria en este
+// perfil. Se siembra uno falso: la importacion no corre y la seccion tiene algo conocido que enseñar.
+const SEEDED_MCP_SERVERS = ['vg-comun-a', 'vg-comun-b'];
+
+function seedMcpCommon(userDataDir) {
+  const dir = path.join(userDataDir, 'shared-config');
+  fs.mkdirSync(dir, { recursive: true });
+  const mcpServers = Object.fromEntries(SEEDED_MCP_SERVERS.map((name) => [name, { type: 'stdio', command: 'npx', args: ['-y', name] }]));
+  fs.writeFileSync(path.join(dir, 'mcp-common.json'), JSON.stringify({ mcpServers }, null, 2), 'utf-8');
+}
+
 function seedCommandCatalog(userDataDir) {
   const home = os.homedir();
   const accounts = fs
@@ -5381,7 +5829,7 @@ function measureBlockHeights(page) {
     const heights = items.map((node) => node.offsetHeight);
     return {
       bloques: items.length,
-      tools: items.filter((node) => node.dataset.block === 'tool').length,
+      tools: items.filter((node) => node.dataset.block === 'tool' || node.dataset.block === 'tool-failed').length,
       minAltura: heights.length === 0 ? 0 : Math.min(...heights),
       pordebajode8: heights.filter((height) => height < 8).length,
       desborda: scroller.scrollHeight > scroller.clientHeight,
@@ -5489,7 +5937,7 @@ function measurePermissionPanel(page) {
     return {
       permitir: texts.filter((t) => t === 'Permitir').length,
       denegar: texts.filter((t) => t.startsWith('Denegar')).length,
-      avisoDePregunta: document.body.innerText.includes('se contesta en la tarjeta del chat'),
+      avisoDePregunta: document.body.innerText.includes('se contesta encima del input'),
     };
   });
 }
@@ -5538,6 +5986,87 @@ const REAL_HUNK = {
 
 // Hidrata el chat de la pestaña activa con bloques ya construidos (objetos planos, la misma forma que
 // produce el reducer). Devuelve cuantos se inyectaron.
+// Pega FICHEROS en el editor del prompt con un `ClipboardEvent` sintetico, que es lo que recibe
+// `PromptEditor` al hacer Ctrl+V con imagenes. `files` = [{ name, type, base64 }]. No envia nada.
+async function pasteFiles(page, files) {
+  await page.evaluate((payload) => {
+    const target = document.querySelector('[data-prompt-editor="true"] .cm-content');
+    if (target === null) throw new Error('no hay editor del prompt donde pegar');
+    const transfer = new DataTransfer();
+    for (const file of payload) {
+      const bytes = Uint8Array.from(atob(file.base64), (c) => c.charCodeAt(0));
+      transfer.items.add(new File([bytes], file.name, { type: file.type }));
+    }
+    target.dispatchEvent(new ClipboardEvent('paste', { clipboardData: transfer, bubbles: true, cancelable: true }));
+  }, files);
+}
+
+// --- Git (P-026 3.5): repo temporal que monta el SCRIPT, nunca la app ------------------------------
+
+// Lo que main guarda un estado de git leido (`STATUS_FRESH_MS` de gitService.ts), mas un margen.
+const GIT_STATUS_FRESH_MS = 1_700;
+
+function runGit(cwd, args) {
+  const result = spawnSync('git', args, { cwd, windowsHide: true, encoding: 'utf8' });
+  if (result.status !== 0) throw new Error(`git ${args.join(' ')} fallo en ${cwd}: ${result.stderr}`);
+}
+
+// Repo con un commit en `main`, una rama `otra`, un fichero cambiado (+2 −0) y otro sin seguir. null si
+// no hay git: la comprobacion se salta en vez de fallar.
+function createTempGitRepo() {
+  if (spawnSync('git', ['--version'], { windowsHide: true }).status !== 0) return null;
+  // Ruta LARGA: en Windows `os.tmpdir()` puede venir en 8.3 y la confianza compara la cadena guardada.
+  const repo = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'mage-verify-git-')));
+  const identity = ['-c', 'user.name=verify', '-c', 'user.email=verify@example.invalid', '-c', 'commit.gpgsign=false'];
+  runGit(repo, ['-c', 'init.defaultBranch=main', 'init']);
+  fs.writeFileSync(path.join(repo, 'a.txt'), 'uno\n');
+  runGit(repo, ['add', 'a.txt']);
+  runGit(repo, [...identity, 'commit', '-m', 'primero']);
+  runGit(repo, ['branch', 'otra']);
+  fs.writeFileSync(path.join(repo, 'a.txt'), 'uno\ndos\ntres\n');
+  fs.writeFileSync(path.join(repo, 'b.txt'), 'sin seguir\n');
+  return repo;
+}
+
+function cleanTempGitRepo(repo) {
+  runGit(repo, ['checkout', '--', 'a.txt']);
+  fs.rmSync(path.join(repo, 'b.txt'), { force: true });
+}
+
+// Claves del store que tocan las comprobaciones de un turno inyectado (P-026 3.4). Selectivo, como el
+// resto: ninguna es un Set, que no sobreviviria al viaje por CDP.
+async function captureTurnState(page) {
+  return page.evaluate(() => {
+    const s = window.__mageDev.store.getState();
+    return {
+      tabs: s.tabs,
+      activeTabId: s.activeTabId,
+      splitLayout: s.splitLayout,
+      blocksByChat: s.blocksByChat,
+      statusByChat: s.statusByChat,
+      streamingIdByChat: s.streamingIdByChat,
+      activitySubagentByChat: s.activitySubagentByChat,
+    };
+  });
+}
+
+async function restoreTurnState(page, previo) {
+  await page.evaluate((state) => window.__mageDev.store.setState(state), previo);
+  await page.waitForTimeout(CONFIG.settleMs);
+}
+
+// Un mensaje del usuario y detras los eventos del motor, por el reducer REAL, en la pestaña activa.
+async function injectTurn(page, events) {
+  await page.evaluate((payload) => {
+    const dev = window.__mageDev;
+    const tabId = dev.store.getState().activeTabId;
+    const user = { kind: 'user', id: 'v34-u', text: 'revisa esto', time: '12:00', attachments: [] };
+    dev.store.setState((s) => ({ blocksByChat: { ...s.blocksByChat, [tabId]: [user] } }));
+    for (const event of payload) dev.store.setState((s) => dev.reduceEvent(s, tabId, event));
+  }, events);
+  await page.waitForTimeout(CONFIG.settleMs);
+}
+
 async function hydrateBlocks(page, blocks) {
   const count = await page.evaluate((payload) => {
     const dev = window.__mageDev;
@@ -5567,6 +6096,7 @@ function toolBlock(id, toolClass, over = {}) {
     writtenContent: null,
     artifact: null,
     artifactDraft: null,
+    parentToolUseId: null,
     ...over,
   };
 }
@@ -5658,6 +6188,9 @@ function launchApp(userDataDir) {
   ];
   const child = spawn(process.execPath, args, {
     cwd: repoRoot,
+    // Sin el sondeo de modelos del arranque (P-026 2.4): lanzaria el CLI real por cada cuenta con
+    // sesion, y este harness no spawnea el CLI nunca.
+    env: { ...process.env, MAGE_SKIP_MODEL_PROBE: '1' },
     windowsHide: true,
     stdio: ['ignore', 'pipe', 'pipe'],
     // POSIX: grupo de procesos propio, para poder señalizar a TODO el arbol con kill(-pid). En
@@ -5756,7 +6289,10 @@ async function main() {
   // Filtro por SUBCADENA del nombre (`--only=ventana`): iterar sobre UNA comprobacion sin pagar las 84
   // de la suite. Sin el flag corren todas, que es lo que hace `pnpm verify:gui`.
   const only = process.argv.find((arg) => arg.startsWith('--only='))?.slice('--only='.length) ?? '';
-  const checks = only === '' ? CHECKS : CHECKS.filter((c) => c.name.toLowerCase().includes(only.toLowerCase()));
+  // Varias subcadenas con `|` (`--only=Ctrl+,|Config. compartida`): una comprobacion que llega con un
+  // dialogo abierto se puede probar junto a la que lo abre, en su orden de siempre.
+  const needles = only.toLowerCase().split('|').filter((needle) => needle.length > 0);
+  const checks = only === '' ? CHECKS : CHECKS.filter((c) => needles.some((needle) => c.name.toLowerCase().includes(needle)));
   if (checks.length === 0) throw new Error(`--only=${only} no casa con ninguna comprobacion`);
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
   const runDir = path.join(CONFIG.outDir, stamp);
@@ -5769,6 +6305,7 @@ async function main() {
   prunePreviousProfiles(userDataDir);
   seedCommandCatalog(userDataDir);
   seedOnboardingDone(userDataDir);
+  seedMcpCommon(userDataDir);
 
   console.log(`[verify:gui] perfil aislado: ${userDataDir}`);
   const { child, log } = launchApp(userDataDir);

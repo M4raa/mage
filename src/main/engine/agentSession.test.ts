@@ -1,8 +1,7 @@
-import { describe, expect, it, vi } from 'vitest';
-import type { MageEvent } from '@shared/events';
+import { describe, expect, it } from 'vitest';
 import { AgentSession, type SpawnFn } from './agentSession';
 import type { ProviderAdapter } from './providerAdapter';
-import { emitLine, fakeAdapter, FakeChild, harness, PERMISO_R1, POLICY, written } from './agentSession.harness';
+import { emitLine, fakeAdapter, FakeChild, harness, written } from './agentSession.harness';
 
 describe('AgentSession ciclo de vida', () => {
   it('start_twice_throws', () => {
@@ -93,7 +92,7 @@ describe('AgentSession protocolo de control (D2/D3)', () => {
     h.session.start();
 
     emitLine(h.children[0]!, [
-      { kind: 'result', result: { subtype: 'success', isError: false, costUsd: null, numTurns: 1 } },
+      { kind: 'result', result: { subtype: 'success', isError: false, numTurns: 1 } },
     ]);
 
     expect(written(h.children[0]!)).toContainEqual({
@@ -111,7 +110,7 @@ describe('AgentSession protocolo de control (D2/D3)', () => {
     const before = written(h.children[0]!).length;
 
     emitLine(h.children[0]!, [
-      { kind: 'result', result: { subtype: 'success', isError: false, costUsd: null, numTurns: 1 } },
+      { kind: 'result', result: { subtype: 'success', isError: false, numTurns: 1 } },
     ]);
 
     const afterResult = written(h.children[0]!).slice(before);
@@ -129,7 +128,7 @@ describe('AgentSession protocolo de control (D2/D3)', () => {
     h.session.start();
 
     emitLine(h.children[0]!, [
-      { kind: 'result', result: { subtype: 'success', isError: false, costUsd: null, numTurns: 1 } },
+      { kind: 'result', result: { subtype: 'success', isError: false, numTurns: 1 } },
     ]);
 
     expect(written(h.children[0]!)).not.toContainEqual({

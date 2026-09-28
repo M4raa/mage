@@ -61,14 +61,44 @@ export function providerFallbackModel(providerId: string, customProviders: reado
 // de desaparecer del selector — que se leeria como "se me ha cambiado el modelo solo".
 // Un proveedor desconocido (borrado de Configuracion, o de una version anterior) cae a los modelos de
 // Claude, el unico con soporte completo.
+//
+// `claudeCatalog` (P-026 2.4): los modelos que el CLI publico para la cuenta (sesion viva o cache del
+// sondeo). Si trae algo, manda sobre la lista fija de Claude, que queda de RESERVA.
 export function modelOptionsForProvider(
   providerId: string,
   modelId: string,
   customProviders: readonly CustomProvider[] = [],
+  claudeCatalog: readonly ModelOption[] = [],
 ): readonly ModelOption[] {
-  const models = providerModels(providerId, customProviders) ?? providerModels(FALLBACK_PROVIDER_ID, []) ?? [];
-  if (modelId.length === 0 || models.some((model) => model.id === modelId)) return models;
+  const fallback = providerModels(FALLBACK_PROVIDER_ID, []) ?? [];
+  const declared = providerModels(providerId, customProviders);
+  const models = providerId === FALLBACK_PROVIDER_ID && claudeCatalog.length > 0 ? claudeModelOptions(claudeCatalog) : (declared ?? fallback);
+  const shown = displayModelId(modelId, models);
+  if (shown.length === 0 || models.some((model) => model.id === shown)) return models;
   return [{ id: modelId, label: modelId }, ...models];
+}
+
+// Id que ENSEÑA el selector para el modelo de una pestaña. Un `X[1m]` guardado de antes (la semilla de
+// las cuentas hereda `model: opus[1m]` del settings.json de la principal) se enseña como su base `X`
+// si esta en la lista: el 1M es ya el de todos, y ofrecer los dos seria el duplicado que se quito. El id
+// guardado no se toca: el CLI lo sigue aceptando, y solo cambia si el usuario elige otro.
+export function displayModelId(modelId: string, options: readonly ModelOption[]): string {
+  if (!modelId.endsWith(ONE_MILLION_SUFFIX) || options.some((option) => option.id === modelId)) return modelId;
+  const base = modelId.slice(0, -ONE_MILLION_SUFFIX.length);
+  return options.some((option) => option.id === base) ? base : modelId;
+}
+
+// Id del CLI que no es un modelo sino «usa el por defecto» (`Default (recommended)`). Mage siempre
+// lanza con un `--model` concreto, y `--model default` no esta medido: no se ofrece.
+const CLI_DEFAULT_MODEL_ID = 'default';
+const ONE_MILLION_SUFFIX = '[1m]';
+
+// Selector de Claude con el catalogo del CLI tal cual (MEDIDO en 2.1.283: 11 entradas), menos `default`.
+// Ya no se le añaden variantes `[1m]`: el 1M es el contexto de todos los modelos y el sufijo dejo de
+// distinguir nada (usuario, 2026-09-26). Si un catalogo trae un id `[1m]` propio —el del perfil privado
+// trae `claude-fable-5[1m]`, medido—, se respeta como uno mas.
+export function claudeModelOptions(catalog: readonly ModelOption[]): readonly ModelOption[] {
+  return catalog.filter((model) => model.id !== CLI_DEFAULT_MODEL_ID);
 }
 
 // --- Formulario de "Proveedores" en Configuracion (E2) ---

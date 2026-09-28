@@ -15,12 +15,18 @@ export type KeybindingScope = 'prompt' | 'global';
 export interface GuardContext {
   readonly promptTextEmpty: boolean; // input del prompt vacio (tras trim)
   readonly permissionPending: boolean; // hay un permiso pendiente en la pestana activa
+  // La peticion pendiente es una PREGUNTA (AskUserQuestion): se contesta en su tarjeta, nunca con 1/2/3.
+  readonly questionPending: boolean;
   readonly turnRunning: boolean; // la pestana activa tiene un turno en marcha (streaming o necesita permiso)
   readonly dialogOrPopoverOpen: boolean; // algun dialogo/popover de la app esta abierto
   // El foco esta en CUALQUIER campo de texto editable (no solo el prompt): usado por
   // permission.cycleMode para no robarle Shift+Tab a la navegacion nativa de otros inputs.
   readonly focusInEditableText: boolean;
 }
+
+// Los atajos de permiso solo aplican a un permiso de verdad: con una pregunta pendiente, `1` la
+// contestaba vacia y `3` la denegaba sin que el usuario la hubiera leido (P-026, 1.4).
+const canAnswerPermission = (ctx: GuardContext): boolean => ctx.permissionPending && !ctx.questionPending;
 
 export interface KeybindingAction {
   readonly id: string; // "dominio.accion", estable (se persiste en los overrides)
@@ -117,7 +123,7 @@ export const KEYBINDING_ACTIONS: readonly KeybindingAction[] = [
     scope: 'global',
     defaultKeys: '1',
     rebindable: true,
-    guard: (ctx) => ctx.permissionPending,
+    guard: canAnswerPermission,
   },
   {
     id: 'permission.allowAlways',
@@ -126,7 +132,7 @@ export const KEYBINDING_ACTIONS: readonly KeybindingAction[] = [
     scope: 'global',
     defaultKeys: '2',
     rebindable: true,
-    guard: (ctx) => ctx.permissionPending,
+    guard: canAnswerPermission,
   },
   {
     id: 'permission.deny',
@@ -135,7 +141,7 @@ export const KEYBINDING_ACTIONS: readonly KeybindingAction[] = [
     scope: 'global',
     defaultKeys: '3',
     rebindable: true,
-    guard: (ctx) => ctx.permissionPending,
+    guard: canAnswerPermission,
   },
   {
     id: 'permission.cycleMode',

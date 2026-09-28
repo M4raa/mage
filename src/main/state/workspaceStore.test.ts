@@ -46,6 +46,24 @@ describe('WorkspaceStore.load', () => {
 
     expect(store.load()).toEqual(validState);
   });
+
+  it('load_pestanaEnModoAuto_parsea', () => {
+    // P-026 2.3: un modo nuevo del ciclo guardado por esta version se restaura tal cual.
+    const conAuto = { ...validState, tabs: [{ ...validState.tabs[0]!, permissionMode: 'auto' }] };
+    const store = new WorkspaceStore(buildDeps({ readFile: () => JSON.stringify(conAuto) }));
+
+    expect(store.load()?.tabs[0]?.permissionMode).toBe('auto');
+  });
+
+  it('load_pestanaConModoDesconocido_loDescartaSinPerderElWorkspace', () => {
+    const raro = { ...validState, tabs: [{ ...validState.tabs[0]!, permissionMode: 'dontAsk' }] };
+    const store = new WorkspaceStore(buildDeps({ readFile: () => JSON.stringify(raro) }));
+
+    const loaded = store.load();
+
+    expect(loaded?.tabs).toHaveLength(1);
+    expect(loaded?.tabs[0]?.permissionMode).toBeUndefined();
+  });
 });
 
 describe('WorkspaceStore.save', () => {

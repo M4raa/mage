@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { execFile, spawn, spawnSync } from 'node:child_process';
 import {
   appendFileSync,
@@ -7,6 +7,7 @@ import {
   closeSync,
   createReadStream,
   existsSync,
+  fstatSync,
   mkdirSync,
   openSync,
   readdirSync,
@@ -19,7 +20,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
-import { basename, dirname, join, resolve, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { isUnderCliScratchpad as isUnderCliScratchpadPure } from './files/cliScratchpad';
 import { fileURLToPath } from 'node:url';
 import {
@@ -40,6 +41,7 @@ import {
   EVENT_CHANNEL,
   IpcChannel,
   JUMP_LIST_OPEN_CHANNEL,
+  MODEL_CATALOG_CHANGED_CHANNEL,
   SETTINGS_CHANGED_CHANNEL,
   TRANSCRIPT_BATCH_CHANNEL,
   WIDGET_ENABLED_CHANGED_CHANNEL,
@@ -48,6 +50,7 @@ import {
 } from '@shared/ipc';
 import type {
   AnswerPermissionParams,
+  ModelCatalogChange,
   CreateSessionParams,
   CreateSessionResult,
   HandoffPromptParams,
@@ -90,10 +93,12 @@ import type { MenuItemConstructorOptions } from 'electron';
 import { DebugChannel } from '@shared/debug';
 import type { RendererLogInput } from '@shared/debug';
 import type { AccountInfo, CliLoginStart, EmbeddedLoginResult } from '@shared/accounts';
-import { ClaudeAdapter } from './engine/claudeAdapter';
+import { BASE_ARGS as CLAUDE_BASE_ARGS, ClaudeAdapter } from './engine/claudeAdapter';
+import { probeModelCatalogs, type ProbeProcess } from './engine/modelProbe';
+import type { ProviderModel } from '@shared/providers';
 import { GatewayAdapter } from './engine/gatewayAdapter';
 import { AgyAdapter } from './engine/agyAdapter';
-import { probeProvider } from './engine/providerProbe';
+import { defaultProbeDeps, probeProvider } from './engine/providerProbe';
 import { findAgyBinary } from './os/agyBinaryResolver';
 import { AGY_PROVIDER_ID } from '@shared/providers';
 import { setCustomProviderLoader, setGatewayLogger, startGateway, stopGateway } from './engine/proxy/gateway';
@@ -116,7 +121,6 @@ import { writeCredentials } from './accounts/credentialsStore';
 import { TokenRefreshService } from './accounts/tokenRefreshService';
 import { parseStoredOauth } from './accounts/oauthFlow';
 import { defaultLinkDeps, LinkService } from './os/linkService';
-import { TerminalLauncher } from './os/terminalLauncher';
 import { resolveClaudeBinary } from './os/claudeBinaryResolver';
 import { scrubAgentEnv } from './os/agentEnv';
 import { OpenWithService } from './os/openWithService';
@@ -141,6 +145,10 @@ import { SettingsStore } from './state/settingsStore';
 import { expiredScratchDirs, SWEEP_INTERVAL_MS } from './state/scratchRetention';
 import { ThinkingBuffer, ThinkingStore } from './state/thinkingStore';
 import { isTrusted, readCliTrustedFolders } from './os/workspaceTrust';
+import { findGitBinary } from './os/gitBinaryResolver';
+import { execCapturingStdout } from './os/execCapture';
+import { createGitService, findRepoRootWith, type GitService } from './git/gitService';
+import type { GitParams, GitSnapshot, GitSwitchParams } from '@shared/git';
 import { PanelLayoutStore } from './state/panelLayoutStore';
 import { PromptService } from './prompt/promptService';
 import { WidgetWindowController } from './widget/widgetWindow';
@@ -234,6 +242,33 @@ function settingsCommonPath(): string {
   return join(app.getPath('userData'), SHARED_CONFIG_DIR_NAME, SETTINGS_COMMON_FILE);
 }
 
+// Importacion inicial de mcp-common.json (P-026 2.5, D10): Mage pasa a ser la fuente de verdad de los
+// MCP compartidos. Solo si el fichero no existe: se crea con `~/.claude/mcp-shared.json` (el que
+// regeneraba el script del usuario) + los MCP de ambito usuario del `.claude.json` de cada cuenta. Las
+// notas (colisiones de nombre) se enseñan en Ajustes -> Config. compartida en esta ejecucion.
+const LEGACY_SHARED_MCP_FILE = 'mcp-shared.json';
+let mcpImportNotes: readonly string[] = [];
+
+function importSharedMcpOnce(): void {
+  const readIfExists = (path: string): string | null => (existsSync(path) ? readFileSync(path, 'utf8') : null);
+  const { mainDirName, stateFileName } = cliLogin.accounts;
+  try {
+    const accounts = accountService.listAccounts().map((account) => ({
+      label: account.name,
+      // La principal guarda su estado en HOME, no dentro de `~/.claude` (mismo criterio que AccountService).
+      text: readIfExists(account.isMain ? join(homedir(), stateFileName) : join(account.configDir, stateFileName)),
+    }));
+    const shared = { label: LEGACY_SHARED_MCP_FILE, text: readIfExists(join(homedir(), mainDirName, LEGACY_SHARED_MCP_FILE)) };
+    const notes = getSharedConfigService().importMcpCommonIfMissing(mcpCommonPath(), shared, accounts);
+    if (notes === null) return;
+    mcpImportNotes = notes;
+    mainLog('info', 'mcp-common.json creado con la importacion inicial', { colisiones: notes.length });
+  } catch (err) {
+    // No tumba el arranque: sin importacion, Mage sigue como antes (sin MCP comunes).
+    mainLog('warn', `No se pudo importar mcp-common.json: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
 // Se re-lee en CADA lanzamiento (nunca se cachea el resultado): son ficheros que el usuario puede
 // editar entre una sesion y la siguiente (editor propio en Configuracion, D1 Fase 2).
 function loadSharedConfigArgs(): readonly string[] {
@@ -307,8 +342,8 @@ const openWithService = new OpenWithService({
 });
 
 // Servicios de cuentas: LinkService (enlaces por SO), AccountService (descubre/crea cuentas en disco;
-// solo expone datos seguros) y TerminalLauncher (login interactivo en terminal externa). DI con FS
-// real y reloj del sistema. readJson tolera fichero ausente/JSON invalido (frontera segura).
+// solo expone datos seguros). DI con FS real y reloj del sistema. readJson tolera fichero ausente/JSON
+// invalido (frontera segura).
 // El log va al LogBus: una carpeta compartida que dejo de estar enlazada (p.ej. porque una sesion
 // del CLI la recreo como dir real) tiene que ser VISIBLE, no un no-op silencioso.
 const linkService = new LinkService(defaultLinkDeps(mainLog));
@@ -336,7 +371,6 @@ const accountService = new AccountService({
   linkService,
   log: mainLog,
 });
-const terminalLauncher = new TerminalLauncher();
 // Historial de conversaciones en disco (M2.6). Lee prefijos de los .jsonl bajo projects/ (comun) y
 // mage-private/projects/ (privado) de la cuenta. Solo FS de lectura.
 const conversationsService = new ConversationsService({
@@ -348,6 +382,7 @@ const conversationsService = new ConversationsService({
     return { mtimeMs: stat.mtimeMs, sizeBytes: stat.size };
   },
   readPrefix: (path, maxBytes) => readFilePrefix(path, maxBytes),
+  readSuffix: (path, maxBytes) => readFileSuffix(path, maxBytes),
 });
 
 // FS del fichero de credenciales, compartido por los DOS escritores del token: el login y la
@@ -382,6 +417,8 @@ const cliLogin =
     : (() => {
         throw new Error(`El proveedor de cuentas no autentica por CLI (auth: ${claudeAuth.kind})`);
       })();
+// Config dir del login en curso: al confirmarse, se sondean los modelos de esa cuenta (P-026 2.4).
+let loginConfigDir: string | null = null;
 const cliLoginService = new CliLoginService({
   log: (level, message) => mainLog(level, message),
   spawnLogin: (configDir, email) => spawnCliLogin(configDir, email),
@@ -601,6 +638,21 @@ function readFilePrefix(path: string, maxBytes: number): string {
   }
 }
 
+// Los ultimos `maxBytes` de un fichero (o el fichero entero si es mas pequeño). La primera linea suele
+// venir partida: el parser de metadatos la ignora por ser JSON invalido.
+function readFileSuffix(path: string, maxBytes: number): string {
+  const fd = openSync(path, 'r');
+  try {
+    const size = fstatSync(fd).size;
+    const length = Math.min(size, maxBytes);
+    const buffer = Buffer.alloc(length);
+    const bytesRead = readSync(fd, buffer, 0, length, size - length);
+    return buffer.toString('utf8', 0, bytesRead);
+  } finally {
+    closeSync(fd);
+  }
+}
+
 // Lee y parsea un JSON del FS; devuelve null si no existe o es invalido (la validacion de forma la
 // hace AccountService con guardas de campo). No lanza: es la lectura tolerante de config local.
 function tryReadJson(path: string): unknown {
@@ -705,6 +757,49 @@ function getCommandCatalogStore(): CommandCatalogStore {
 // Pensamientos del agente (peticion del usuario: "es Mage quien deberia guardar lo que no guarda el
 // CLI"). Un fichero por sesion bajo userData/thinking/: se escribe en cada turno y puede pesar, asi que
 // no entra en `conversation-index.json`, que esta pensado para lo que se escribe poco.
+// Git de la carpeta de cada conversacion (P-026 3.5). Perezoso: el binario se busca la primera vez que
+// una pestaña lo pide, y la confianza es la MISMA que decide si arranca un agente.
+const GIT_TIMEOUT_MS = 10_000;
+const GIT_MAX_BUFFER_BYTES = 8 * 1024 * 1024;
+let gitServiceSingleton: GitService | null = null;
+function getGitService(): GitService {
+  gitServiceSingleton ??= createGitService({
+    findBin: () => findGitBinary(),
+    run: (bin, args, options) => execCapturingStdout(bin, args, { ...options, timeoutMs: GIT_TIMEOUT_MS, maxBufferBytes: GIT_MAX_BUFFER_BYTES }),
+    isTrusted: isFolderTrusted,
+    findRepoRoot: (cwd) => findRepoRootWith(cwd, existsSync),
+    baseEnv: process.env,
+    now: Date.now,
+  });
+  return gitServiceSingleton;
+}
+
+// Frontera de los canales de git: una ruta absoluta y una cuenta gestionada, como el resto de canales
+// con ruta. La cuenta solo se usa para la confianza, pero sin validarla cualquiera podria señalar un
+// config dir ajeno que «autoriza» la carpeta.
+function assertGitParams(params: GitParams): void {
+  if (typeof params?.cwd !== 'string' || !isAbsolute(params.cwd)) throw new Error(`Carpeta no valida para git: ${String(params?.cwd)}`);
+  if (typeof params.accountDir !== 'string' || !isManagedAccountConfigDir(params.accountDir)) {
+    throw new Error(`Cuenta no valida para git: ${String(params.accountDir)}`);
+  }
+}
+
+function registerGitHandlers(): void {
+  ipcMain.handle(IpcChannel.GitStatus, (_e, params: GitParams): Promise<GitSnapshot> => {
+    assertGitParams(params);
+    return getGitService().status(params.cwd, params.accountDir);
+  });
+  ipcMain.handle(IpcChannel.GitBranches, (_e, params: GitParams): Promise<readonly string[]> => {
+    assertGitParams(params);
+    return getGitService().branches(params.cwd, params.accountDir);
+  });
+  ipcMain.handle(IpcChannel.GitSwitch, (_e, params: GitSwitchParams): Promise<void> => {
+    assertGitParams(params);
+    if (typeof params.name !== 'string') throw new Error(`Rama no valida: ${String(params.name)}`);
+    return getGitService().switchBranch(params.cwd, params.accountDir, params.name);
+  });
+}
+
 let thinkingStoreSingleton: ThinkingStore | null = null;
 function getThinkingStore(): ThinkingStore {
   if (thinkingStoreSingleton === null) {
@@ -788,6 +883,75 @@ function captureThinking(sessionId: string, event: MageEvent): void {
   // cierra el bloque), pero la ENTRADA del Map sigue ahi. Se suelta para que no crezca una entrada por
   // sesion durante toda la vida del proceso.
   if (event.kind === 'result') thinkingBuffers.delete(sessionId);
+}
+
+// Catalogo de modelos (P-026 2.4). Mismo criterio que el de comandos: solo se escribe si cambia (el
+// `initialize` se repite al final de cada turno), y ademas se AVISA a las ventanas, porque el sondeo de
+// arranque termina cuando el selector ya esta pintado.
+const lastModelCatalogJson = new Map<string, string>();
+
+function cacheModelCatalog(configDir: string, models: readonly ProviderModel[]): void {
+  const json = JSON.stringify(models);
+  if (lastModelCatalogJson.get(configDir) === json) return;
+  lastModelCatalogJson.set(configDir, json);
+  try {
+    getCommandCatalogStore().saveModels(configDir, models, Date.now());
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    mainLog('warn', `No se pudo cachear el catalogo de modelos de "${configDir}": ${detail}`);
+  }
+  const change: ModelCatalogChange = { configDir, models };
+  windowManager.broadcast(MODEL_CATALOG_CHANGED_CHANNEL, change);
+}
+
+// Sondeo del catalogo de modelos SIN turno (D7): al arrancar Mage y al añadir una cuenta. Un proceso por
+// cuenta, en serie. Tiempos MEDIDOS en S1 (2.1.283): 0,6–1,6 s hasta la respuesta.
+const MODEL_PROBE_START_DELAY_MS = 5_000; // tras abrir la ventana, para no competir con el arranque
+const MODEL_PROBE_TIMEOUT_MS = 5_000; // ~3× lo medido; si vence, se mata y se queda la cache anterior
+const MODEL_PROBE_EXIT_GRACE_MS = 3_000; // tras cerrar la entrada, antes de matar el arbol
+
+function spawnModelProbe(configDir: string): ProbeProcess {
+  const child = spawn(resolveClaudeBinary(), [...CLAUDE_BASE_ARGS], {
+    // HOME como cwd: el sondeo no es de ningun proyecto, y asi no lee la configuracion de una carpeta
+    // cualquiera (la del ejecutable de Mage).
+    cwd: homedir(),
+    env: { ...scrubAgentEnv(process.env), CLAUDE_CONFIG_DIR: configDir },
+    stdio: ['pipe', 'pipe', 'ignore'],
+    windowsHide: true,
+  });
+  child.stdout.setEncoding('utf8');
+  // Un EPIPE al escribir en un CLI que ya murio no puede tumbar main: la salida ya lo trata como fallo.
+  child.stdin.on('error', (err) => mainLog('debug', 'Sondeo de modelos: stdin cerrado', { error: err.message }));
+  return {
+    onStdout: (listener) => child.stdout.on('data', listener),
+    onExit: (listener) => {
+      child.on('exit', listener);
+      child.on('error', listener);
+    },
+    writeLine: (line) => child.stdin.write(`${line}\n`),
+    endInput: () => child.stdin.end(),
+    killTree: () => void killProcessTree(child, killTreeDeps),
+  };
+}
+
+// En segundo plano: un sondeo fallido no se enseña como error, se registra en el log de depuracion.
+function probeModelsInBackground(configDirs: readonly string[]): void {
+  const deps = { spawnProbe: spawnModelProbe, timeoutMs: MODEL_PROBE_TIMEOUT_MS, exitGraceMs: MODEL_PROBE_EXIT_GRACE_MS };
+  void probeModelCatalogs(deps, configDirs, (configDir, models) => {
+    if (models === null || models.length === 0) {
+      mainLog('debug', 'Sondeo de modelos sin resultado: se queda la cache anterior', { configDir });
+      return;
+    }
+    cacheModelCatalog(configDir, models);
+  });
+}
+
+function probeLoggedInAccounts(): void {
+  const dirs = accountService
+    .listAccounts()
+    .filter((account) => account.loginStatus === 'logged_in')
+    .map((account) => account.configDir);
+  probeModelsInBackground(dirs);
 }
 
 function cacheCommandCatalog(accountDir: string, commands: readonly SlashCommandInfo[]): void {
@@ -1092,6 +1256,10 @@ function registerIpcHandlers(): void {
       if (payload.event.kind === 'commands_available') {
         cacheCommandCatalog(configDir, payload.event.commands);
       }
+      // Y el de modelos (P-026 2.4), del mismo `initialize` y con el mismo config dir efectivo.
+      if (payload.event.kind === 'models_available') {
+        cacheModelCatalog(configDir, payload.event.models);
+      }
       // Pensamiento: el CLI lo emite en vivo y luego lo persiste VACIO en su transcripcion (medido), asi
       // que si no lo guarda Mage aqui, se pierde al reanudar. Se acumula por sesion y se cierra el
       // bloque en cuanto llega un evento que no es un delta de pensamiento.
@@ -1162,7 +1330,9 @@ function registerIpcHandlers(): void {
   // Sondeo de un proveedor para Configuracion (D2): ruta del binario detectada o URL del endpoint, y
   // los modelos que ofrece de verdad. Sin cache: se pide al abrir la seccion y al pulsar "Reintentar",
   // que es justo cuando el usuario acaba de cambiar algo (instalar el CLI, arrancar Ollama...).
-  ipcMain.handle(IpcChannel.ProviderProbe, (_e, params: ProviderProbeParams) => probeProvider(params));
+  ipcMain.handle(IpcChannel.ProviderProbe, (_e, params: ProviderProbeParams) =>
+    probeProvider(params, defaultProbeDeps(() => getCommandCatalogStore().loadModels(join(homedir(), cliLogin.accounts.mainDirName)))),
+  );
   // Abrir con: revelar en el gestor / guardar-como los archivos generados por las tools.
   ipcMain.handle(IpcChannel.FileReveal, (_e, path: string) => openWithService.reveal(path));
   ipcMain.handle(IpcChannel.FileSaveAs, (_e, path: string) => openWithService.saveAs(path));
@@ -1219,16 +1389,24 @@ function registerIpcHandlers(): void {
   );
   // Login por el CLI (Fase 9.2), en tres pasos porque el usuario pega el *code* en medio. El
   // whitelisting del configDir vive dentro del servicio (`validateConfigDir`), que es su frontera.
-  ipcMain.handle(IpcChannel.AccountsLoginStart, (_e, params: LoginStartParams): Promise<CliLoginStart> =>
-    cliLoginService.start(params.configDir, params.email),
-  );
-  ipcMain.handle(IpcChannel.AccountsLoginSubmitCode, (_e, code: string): Promise<EmbeddedLoginResult> =>
-    cliLoginService.submitCode(code),
-  );
+  ipcMain.handle(IpcChannel.AccountsLoginStart, (_e, params: LoginStartParams): Promise<CliLoginStart> => {
+    loginConfigDir = params.configDir;
+    return cliLoginService.start(params.configDir, params.email);
+  });
+  // Cuenta recien añadida (D7): se sondean sus modelos en cuanto tiene sesion, sin esperar al reinicio.
+  ipcMain.handle(IpcChannel.AccountsLoginSubmitCode, async (_e, code: string): Promise<EmbeddedLoginResult> => {
+    const result = await cliLoginService.submitCode(code);
+    if (result.status === 'ok' && loginConfigDir !== null) probeModelsInBackground([loginConfigDir]);
+    return result;
+  });
   ipcMain.handle(IpcChannel.AccountsLoginCancel, (): void => cliLoginService.cancel());
   // El whitelisting de las dos rutas lo hace AccountService.adoptLogin, que es su frontera.
-  ipcMain.handle(IpcChannel.AccountsAdoptLogin, (_e, params: AdoptLoginParams): void =>
-    accountService.adoptLogin(params.sourceConfigDir, params.targetConfigDir),
+  ipcMain.handle(IpcChannel.AccountsAdoptLogin, (_e, params: AdoptLoginParams): void => {
+    accountService.adoptLogin(params.sourceConfigDir, params.targetConfigDir);
+    probeModelsInBackground([params.targetConfigDir]);
+  });
+  ipcMain.handle(IpcChannel.ModelCatalogLoad, (_e, accountDir: string): readonly ProviderModel[] =>
+    getCommandCatalogStore().loadModels(accountDir),
   );
   ipcMain.handle(IpcChannel.AccountsDelete, (_e, configDir: string) =>
     accountService.deleteAccount(configDir),
@@ -1360,6 +1538,7 @@ function registerIpcHandlers(): void {
     removeDir: (p) => rmSync(p, { recursive: true, force: true }),
     ensureDir: (p) => mkdirSync(p, { recursive: true }),
     move: (from, to) => renameSync(from, to),
+    realpath: (p) => realpathSync(p),
     privateProfileDir: (dir) => join(dir, PRIVATE_PROFILE_SEGMENT),
     ensurePrivateProfile: (dir) => accountService.ensurePrivateProfile(dir),
   });
@@ -1446,6 +1625,7 @@ function registerIpcHandlers(): void {
   ipcMain.handle(IpcChannel.TrustIsFolderTrusted, (_e, params: { cwd: string; accountDir: string }): boolean =>
     isFolderTrusted(params.cwd, params.accountDir),
   );
+  registerGitHandlers();
 
   // Cache del catalogo "/" (2.2) e indice propio por conversacion (2.1). La cache solo se LEE por IPC:
   // la escribe main en el sink de la sesion, que es quien ve el catalogo real.
@@ -1556,6 +1736,7 @@ function registerIpcHandlers(): void {
       mcpCommonWarnings: mcpParsed.warnings,
       settingsCommonWarnings: settingsParsed.warnings,
       mcpCommonServerNames: mcpCommonServerNames(mcpParsed.value),
+      mcpCommonImportNotes: mcpImportNotes,
       // Base del compare-and-swap al guardar: los bytes reales, no el texto de arranque que devuelve
       // read*Text cuando el fichero no existe.
       mcpCommonBaseline: service.readBaseline(mcpCommonPath()),
@@ -1825,6 +2006,8 @@ app.whenReady().then(async () => {
   applyContentSecurityPolicy();
   Menu.setApplicationMenu(buildApplicationMenu());
   registerIpcHandlers();
+  // Antes de la primera ventana: la primera sesion ya tiene que recibir los MCP importados.
+  importSharedMcpOnce();
 
   // Iniciar local proxy gateway para multi-proveedor
   try {
@@ -1843,6 +2026,9 @@ app.whenReady().then(async () => {
 
   const mainWindow = windowManager.ensureMain();
   tray = createTray();
+  // Catalogo de modelos real de cada cuenta con sesion (P-026 2.4, D7), con la ventana ya abierta.
+  // `pnpm verify:gui` lo apaga: su contrato es no lanzar nunca el CLI.
+  if (process.env.MAGE_SKIP_MODEL_PROBE !== '1') setTimeout(probeLoggedInAccounts, MODEL_PROBE_START_DELAY_MS).unref();
   mainLog('info', 'Mage arrancado', { isDev, platform: process.platform });
 
   // Widget flotante (M3): reabrir al arrancar si la preferencia persistida estaba activa.

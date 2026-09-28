@@ -18,6 +18,7 @@ import { decorationRangesFor, type DecorationKind } from './promptDecorations';
 // conmute en claro/oscuro y en un tema importado como todo lo demas.
 const CLASS_BY_KIND: Readonly<Record<DecorationKind, string>> = {
   bullet: 'cm-mg-bullet',
+  'bullet-painted': 'cm-mg-bullet-painted',
   ordinal: 'cm-mg-ordinal',
   'marker-hidden': 'cm-mg-marker-hidden',
   'list-indent': 'cm-mg-list-indent',

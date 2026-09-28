@@ -2,6 +2,7 @@
 // El preload expone estos canales como `window.mage.*`; si cambia una firma, el compilador
 // rompe en ambos lados. El renderer NUNCA accede a Node/procesos: todo pasa por aqui.
 
+import type { GitParams, GitSnapshot, GitSwitchParams } from './git';
 import type { AccountInfo, CliLoginStart, EmbeddedLoginResult } from './accounts';
 import type { ProviderModel } from './providers';
 import type { MageEvent, PermissionDecision, SlashCommandInfo } from './events';
@@ -107,6 +108,10 @@ export const IpcChannel = {
   SettingsSave: 'settings:save',
   // Confianza por carpeta: solo CONSULTA. Conceder se hace guardando `trustedFolders` por SettingsSave.
   TrustIsFolderTrusted: 'trust:isFolderTrusted',
+  // Git de la carpeta de una conversacion (P-026 3.5): estado, ramas y cambio de rama.
+  GitStatus: 'git:status',
+  GitBranches: 'git:branches',
+  GitSwitch: 'git:switch',
   PromptImprove: 'prompt:improve',
   PromptHandoff: 'prompt:handoff',
   NotifyShow: 'notify:show',
@@ -127,6 +132,9 @@ export const IpcChannel = {
   // Cache del catalogo de comandos "/" por cuenta (2.2): se lee al abrir una pestaña, cuando todavia
   // no hay sesion viva de la que sacarlo. La ESCRIBE main al recibir el catalogo de una sesion.
   CommandCatalogLoad: 'commandCatalog:load',
+  // Catalogo de MODELOS cacheado de una cuenta (P-026 2.4). Lo escribe main con el sondeo de arranque y
+  // con el `initialize` de cada sesion.
+  ModelCatalogLoad: 'modelCatalog:load',
   // Indice propio de Mage por conversacion (2.1) y registro de artifacts (2.4, lo estrena la Fase G).
   ConversationPrefsLoad: 'conversationIndex:loadPrefs',
   ConversationPrefsSave: 'conversationIndex:savePrefs',
@@ -156,12 +164,21 @@ export type IpcChannel = (typeof IpcChannel)[keyof typeof IpcChannel];
 export const EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
 export type EffortLevel = (typeof EFFORT_LEVELS)[number];
 
-// Modos de permiso del CLI que Mage ofrece en el ciclo shift+tab (M2.6), confirmados contra el fuente
-// del CLI. Se EXCLUYE `bypassPermissions` (requiere lanzar con --dangerously-skip-permissions y el CLI
-// rechaza el cambio sin ese flag) y `dontAsk`. `default` = pide permiso; `acceptEdits` = auto-acepta
-// ediciones dentro del cwd; `plan` = modo planificacion (el modelo no ejecuta escrituras).
-export const PERMISSION_MODES = ['default', 'acceptEdits', 'plan'] as const;
+// Modos de permiso del CLI que Mage ofrece en el ciclo shift+tab (M2.6, ampliado en P-026 2.3 / D8),
+// en el ORDEN del ciclo. MEDIDO contra el CLI 2.1.283 (`spike/init-spike.mjs`): `auto` entra con
+// `set_permission_mode` en las cuentas del usuario, y `bypassPermissions` solo si la sesion se lanzo
+// con `--allow-dangerously-skip-permissions` (lo pone `claudeAdapter`; el flag solo HABILITA, la sesion
+// arranca en `default`). `dontAsk` NO se ofrece: con una UI delante solo deniega en silencio.
+// `default` = pide permiso; `acceptEdits` = acepta ediciones en el cwd; `plan` = no ejecuta escrituras;
+// `auto` = el CLI decide que pedir; `bypassPermissions` = ejecuta todo sin preguntar.
+export const PERMISSION_MODES = ['default', 'acceptEdits', 'plan', 'auto', 'bypassPermissions'] as const;
 export type PermissionMode = (typeof PERMISSION_MODES)[number];
+
+// El CLI puede reportar un modo que Mage no ofrece (`dontAsk`): la pestaña lo ENSEÑA, pero en las
+// fronteras (arranque de sesion, estado persistido) solo viajan los conocidos.
+export function isPermissionMode(value: string | undefined): value is PermissionMode {
+  return PERMISSION_MODES.some((mode) => mode === value);
+}
 
 // Parametros de arranque de una sesion (en el MVP: cuenta por CLAUDE_CONFIG_DIR + modelo + cwd).
 // `resumeSessionId` opcional (M2.5): reanuda una conversacion pasada con `claude --resume <id>` en
@@ -328,6 +345,9 @@ export interface SharedConfigSnapshot {
   readonly mcpCommonWarnings: readonly string[];
   readonly settingsCommonWarnings: readonly string[];
   readonly mcpCommonServerNames: readonly string[];
+  // Colisiones de la importacion inicial de mcp-common.json (P-026 2.5), solo en la ejecucion que la
+  // hizo. Vacio en las demas.
+  readonly mcpCommonImportNotes: readonly string[];
   // Bytes EXACTOS observados en disco cuando se leyo (null = el fichero no existia). Es la base del
   // compare-and-swap al guardar, y NO es lo mismo que `*Text`: ese sustituye el fichero ausente por un
   // JSON valido de arranque para que el editor no muestre un aviso antes de que el usuario toque nada.
@@ -510,6 +530,15 @@ export const SETTINGS_CHANGED_CHANNEL = 'settings:changed';
 // estado; esta la adopta.
 export const WINDOW_TAB_RECEIVED_CHANNEL = 'windows:tabReceived';
 
+// main -> TODAS las ventanas: el catalogo de modelos de un config dir cambio (P-026 2.4). Llega del
+// sondeo de arranque, que termina cuando la ventana ya esta pintada.
+export const MODEL_CATALOG_CHANGED_CHANNEL = 'modelCatalog:changed';
+
+export interface ModelCatalogChange {
+  readonly configDir: string;
+  readonly models: readonly ProviderModel[];
+}
+
 // Una ventana abierta, tal como la ve el renderer que pregunta. `isCurrent` es la ventana desde la
 // que se hizo la llamada (main lo resuelve por el `event.sender`, nunca se fia de un id del renderer).
 export interface MageWindowInfo {
@@ -595,6 +624,10 @@ export interface MageApi {
   // Confia el usuario en `cwd` para lanzar un agente? Suma lo autorizado en Mage y lo que el usuario ya
   // autorizo en el CLI de esa cuenta, subiendo por los directorios padre en las dos.
   isFolderTrusted(params: { cwd: string; accountDir: string }): Promise<boolean>;
+  // Git (P-026 3.5). Sin git, sin repo o sin confianza, el estado lo dice y no se ejecuta nada.
+  gitStatus(params: GitParams): Promise<GitSnapshot>;
+  gitBranches(params: GitParams): Promise<readonly string[]>;
+  gitSwitch(params: GitSwitchParams): Promise<void>;
   // Uso de una cuenta (por configDir). Devuelve datos agregados SEGUROS (sin token). Cacheado en main.
   getUsage(configDir: string): Promise<UsageInfo>;
   // Estado del servicio de Claude (global, no por cuenta). Cacheado en main.
@@ -627,6 +660,8 @@ export interface MageApi {
   // Catalogo "/" cacheado de una cuenta (2.2). Vacio si nunca se midio: entonces el popover ofrece los
   // comandos curados de siempre. La cache la ESCRIBE main cuando una sesion reporta su catalogo.
   loadCommandCatalog(accountDir: string): Promise<readonly SlashCommandInfo[]>;
+  // Modelos cacheados de una cuenta (P-026 2.4). Vacio si nunca se midio: el selector usa la reserva.
+  loadModelCatalog(accountDir: string): Promise<readonly ProviderModel[]>;
   // Indice propio de Mage por conversacion (2.1): modelo/esfuerzo/modo de permiso que el CLI no
   // persiste. null si esa conversacion no tiene nada guardado.
   loadConversationPrefs(sessionId: string): Promise<ConversationPrefs | null>;
@@ -720,6 +755,8 @@ export interface MageApi {
   // Un ajuste cambio en OTRA ventana: llega ya guardado en disco, listo para aplicar y reflejar.
   // Devuelve funcion para desuscribir.
   onSettingsChanged(listener: (settings: AppSettings) => void): () => void;
+  // El catalogo de modelos de una cuenta cambio (sondeo de arranque o sesion). Devuelve desuscribir.
+  onModelCatalogChanged(listener: (change: ModelCatalogChange) => void): () => void;
   // Llega una pestaña movida desde otra ventana. Devuelve funcion para desuscribir.
   onTabReceived(listener: (tab: PersistedTab) => void): () => void;
 }

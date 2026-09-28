@@ -5,8 +5,10 @@ import type { ConversationSummary } from '@shared/conversations';
 import type { ConversationPrivacy } from '@shared/state';
 import type { Tab } from './types';
 
+// Una pestaña abierta lleva el resumen de su transcripcion en disco, si ya la tiene (P-026, 1.7): sin
+// el, su fila decia `claude · opus[1m]` y la de una cerrada `hace 3 min · 2,1 MB`.
 export type ConversationRow =
-  | { readonly kind: 'tab'; readonly tab: Tab }
+  | { readonly kind: 'tab'; readonly tab: Tab; readonly history?: ConversationSummary }
   | { readonly kind: 'history'; readonly item: ConversationSummary };
 
 // Titulo de una fila (pestana abierta o entrada de historial), para buscar/mostrar.
@@ -35,35 +37,68 @@ export function mergeConversationRows(
   privacy: ConversationPrivacy,
 ): ConversationRow[] {
   const openTabs = tabs.filter((tab) => tab.accountId === accountId && tab.privacy === privacy);
-  // Indice sessionId -> mtime del historial (acceso O(1)): sirve para deduplicar Y para datar una
-  // pestana reabierta que aun no ha recibido mensajes en esta ejecucion.
-  const historyUpdatedAt = new Map(history.map((item) => [item.sessionId, item.updatedAtMs]));
+  // Indice sessionId -> resumen del historial (acceso O(1)): deduplica, data una pestaña reabierta que
+  // aun no ha recibido mensajes en esta ejecucion y le da su peso en disco.
+  const historyBySession = new Map(history.map((item) => [item.sessionId, item]));
   const openSessionIds = new Set(
     openTabs.map((tab) => sessionIdOf(tab, sessionIdByChat)).filter((id): id is string => id !== undefined),
   );
   const rows: ConversationRow[] = [
-    ...openTabs.map((tab): ConversationRow => ({ kind: 'tab', tab })),
+    ...openTabs.map((tab) => tabRow(tab, historyBySession.get(sessionIdOf(tab, sessionIdByChat) ?? ''))),
     ...history
       .filter((item) => item.privacy === privacy && !openSessionIds.has(item.sessionId))
       .map((item): ConversationRow => ({ kind: 'history', item })),
   ];
-  return rows.sort((a, b) => rowRecency(b, sessionIdByChat, historyUpdatedAt) - rowRecency(a, sessionIdByChat, historyUpdatedAt));
+  return rows.sort((a, b) => rowRecency(b) - rowRecency(a));
+}
+
+function tabRow(tab: Tab, history: ConversationSummary | undefined): ConversationRow {
+  return history === undefined ? { kind: 'tab', tab } : { kind: 'tab', tab, history };
 }
 
 // Instante (ms epoch) por el que se ordena una fila. Para una pestana: su ultimo mensaje enviado en
 // esta ejecucion, o el mtime de su transcripcion, o cuando se creo. 0 si no se sabe nada (pestanas
 // restauradas de un formato anterior sin marcas de tiempo) -> al final, pero nunca rompe el orden.
-export function rowRecency(
-  row: ConversationRow,
-  sessionIdByChat: Readonly<Record<string, string>>,
-  historyUpdatedAt: ReadonlyMap<string, number>,
-): number {
+export function rowRecency(row: ConversationRow): number {
   if (row.kind === 'history') return row.item.updatedAtMs;
-  const { tab } = row;
-  if (tab.lastMessageAtMs !== undefined) return tab.lastMessageAtMs;
-  const sessionId = sessionIdOf(tab, sessionIdByChat);
-  const fromHistory = sessionId === undefined ? undefined : historyUpdatedAt.get(sessionId);
-  return fromHistory ?? tab.createdAtMs ?? 0;
+  return row.tab.lastMessageAtMs ?? row.history?.updatedAtMs ?? row.tab.createdAtMs ?? 0;
+}
+
+// --- Formato de la segunda linea de una fila (antes dentro de ChatSidebar) -------------------------
+
+const BYTES_PER_KB = 1024;
+const ONE_DECIMAL_BELOW = 10;
+
+// Peso del fichero de la conversacion, compacto. Un decimal solo por debajo de 10 para que la columna
+// no baile: "9,4 kB" y "940 kB" ocupan casi lo mismo, pero "1024 kB" frente a "1 MB" no.
+export function formatSize(bytes: number): string {
+  if (!Number.isInteger(bytes) || bytes < 0) throw new Error(`Tamaño invalido: ${JSON.stringify(bytes)}`);
+  if (bytes < BYTES_PER_KB) return `${bytes} B`;
+  const kb = bytes / BYTES_PER_KB;
+  if (kb < BYTES_PER_KB) return withUnit(kb, 'kB');
+  return withUnit(kb / BYTES_PER_KB, 'MB');
+}
+
+function withUnit(value: number, unit: string): string {
+  return value < ONE_DECIMAL_BELOW ? `${value.toFixed(1).replace('.', ',')} ${unit}` : `${Math.round(value)} ${unit}`;
+}
+
+const MS_PER_MINUTE = 60_000;
+const MINUTES_PER_HOUR = 60;
+const HOURS_PER_DAY = 24;
+const DAYS_BEFORE_DATE = 30;
+
+// Tiempo relativo compacto (es). Sin libs: umbrales simples. `now` inyectable para los tests; un
+// instante futuro (reloj movido) cuenta como "ahora" en vez de dar un negativo.
+export function relativeTime(ms: number, now: number = Date.now()): string {
+  const min = Math.floor((now - ms) / MS_PER_MINUTE);
+  if (min < 1) return 'ahora';
+  if (min < MINUTES_PER_HOUR) return `hace ${min} min`;
+  const hours = Math.floor(min / MINUTES_PER_HOUR);
+  if (hours < HOURS_PER_DAY) return `hace ${hours} h`;
+  const days = Math.floor(hours / HOURS_PER_DAY);
+  if (days < DAYS_BEFORE_DATE) return `hace ${days} d`;
+  return new Date(ms).toISOString().slice(0, 10);
 }
 
 // Sesion asociada a una pestana: la viva si existe, o la que reanuda.

@@ -6,7 +6,6 @@ import { useWorkbenchStore } from '../workbenchStore';
 import { isArrowNavKey, nextIndexForArrow } from '../a11y/keyboardNav';
 import { TAB_INDICATOR_TRANSITION } from '../motionPresets';
 import { orderTabsForDisplay, TAB_DRAG_MIME, tabColorVar, tabsToCloseAll, tabsToCloseInactive } from '../tabActions';
-import { visibleTabIds } from '../splitLayout';
 import { TabContextMenu } from './TabContextMenu';
 import type { Tab as TabModel } from '../types';
 

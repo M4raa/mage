@@ -7,6 +7,14 @@ import type { SplitLayout } from '@shared/state';
 
 // Fixture de test (splitPane ya no existe: la produccion solo crea splits por arrastre, ver
 // splitLayout.test.ts). Aqui solo hace falta CONSTRUIR arboles para probar persistencia/migracion.
+// Una pestaña tal y como la guarda el workspace: por el MISMO mapeo que en produccion (desde P-026 2.3
+// la `Tab` admite modos que el fichero no, asi que ya no vale el spread directo).
+function asPersisted(t: Tab): PersistedWorkspace['tabs'][number] {
+  const persisted = toPersistedWorkspace([t], t.id, {}, singleLeaf(t.id)).tabs[0];
+  if (persisted === undefined) throw new Error(`toPersistedWorkspace no devolvio la pestaña ${t.id}`);
+  return persisted;
+}
+
 function split(a: SplitLayout, b: SplitLayout, direction: 'row' | 'col' = 'row'): SplitLayout {
   return { kind: 'split', direction, ratio: 0.5, a, b };
 }
@@ -98,7 +106,7 @@ describe('toPersistedWorkspace + restoreTabs — division del centro (item 13 / 
     const ws: PersistedWorkspace = {
       version: 1,
       activeTabId: 'tab1',
-      tabs: [{ ...twoTabs[0]!, privacy: 'shared' }],
+      tabs: [asPersisted(twoTabs[0]!)],
       splitLayout: { kind: 'leaf', tabIds: ['tab2'], activeTabId: 'tab2' }, // grupo de una pestaña de cuenta ya borrada
     };
 
@@ -110,7 +118,7 @@ describe('toPersistedWorkspace + restoreTabs — division del centro (item 13 / 
     const ws: PersistedWorkspace = {
       version: 1,
       activeTabId: 'tab1',
-      tabs: [{ ...twoTabs[0]!, privacy: 'shared' }],
+      tabs: [asPersisted(twoTabs[0]!)],
       splitLayout: split(singleLeaf('tab1'), singleLeaf('tab2')),
     };
 
@@ -118,7 +126,7 @@ describe('toPersistedWorkspace + restoreTabs — division del centro (item 13 / 
   });
 
   it('estadoDeUnaVersionAnterior_sinNingunCampoDeSplit_seRestauraSinDivision', () => {
-    const ws: PersistedWorkspace = { version: 1, activeTabId: 'tab1', tabs: [{ ...twoTabs[0]!, privacy: 'shared' }] };
+    const ws: PersistedWorkspace = { version: 1, activeTabId: 'tab1', tabs: [asPersisted(twoTabs[0]!)] };
 
     expect(restoreTabs(ws, new Set(['.claude'])).splitLayout).toEqual({ kind: 'leaf', tabIds: ['tab1'], activeTabId: 'tab1' });
   });
@@ -128,7 +136,7 @@ describe('toPersistedWorkspace + restoreTabs — division del centro (item 13 / 
     const ws: PersistedWorkspace = {
       version: 1,
       activeTabId: 'tab1',
-      tabs: [{ ...twoTabs[0]!, privacy: 'shared' }, { ...twoTabs[1]!, privacy: 'shared' }],
+      tabs: [asPersisted(twoTabs[0]!), asPersisted(twoTabs[1]!)],
       splitTabId: 'tab2',
       splitDirection: 'col',
     };

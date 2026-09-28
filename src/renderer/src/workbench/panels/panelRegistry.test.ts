@@ -5,10 +5,10 @@ import { findPanelDefinition, PANEL_REGISTRY } from './panelRegistry';
 // entorno de vitest.config.ts es 'node' (sin DOM ni renderer) — aqui solo se verifica la FORMA del
 // catalogo, no el contenido visual de cada panel.
 describe('PANEL_REGISTRY', () => {
-  it('panelRegistry_tieneExactamenteTrecePaneles', () => {
+  it('panelRegistry_tieneExactamenteCatorcePaneles', () => {
     // 7 + los tres de 2.9.b (instrucciones, comandos, subagentes) + "Herramientas" + "Artifacts" +
-    // "Ficheros" (2.10).
-    expect(PANEL_REGISTRY).toHaveLength(13);
+    // "Ficheros" (2.10) + "Actividad" (P-026 3.4).
+    expect(PANEL_REGISTRY).toHaveLength(14);
   });
 
   it('panelRegistry_catalogoV1_tieneIdsUnicos', () => {
@@ -17,11 +17,11 @@ describe('PANEL_REGISTRY', () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
-  it('panelRegistry_incluyeLosTreceIdsEsperados', () => {
+  it('panelRegistry_incluyeLosCatorceIdsEsperados', () => {
     const ids = PANEL_REGISTRY.map((p) => p.id);
 
     expect(ids.sort()).toEqual(
-      ['agents', 'artifacts', 'commands', 'conversations', 'context', 'files', 'instructions', 'logs', 'mcp', 'memory', 'permissions', 'tools', 'usage'].sort(),
+      ['activity', 'agents', 'artifacts', 'commands', 'conversations', 'context', 'files', 'instructions', 'logs', 'mcp', 'memory', 'permissions', 'tools', 'usage'].sort(),
     );
   });
 
@@ -62,7 +62,7 @@ describe('PANEL_REGISTRY', () => {
     const zoneA = PANEL_REGISTRY.filter((p) => p.defaultAnchor === 'right' && p.defaultZone === 'a').map((p) => p.id);
     const zoneB = PANEL_REGISTRY.filter((p) => p.defaultAnchor === 'right' && p.defaultZone === 'b').map((p) => p.id);
 
-    expect(zoneA.length).toBe(11);
+    expect(zoneA.length).toBe(12);
     expect(zoneB.length).toBe(0);
   });
 

@@ -128,3 +128,58 @@ describe('CommandCatalogStore.save', () => {
     expect(rename).toHaveBeenCalledWith(`${FILE}.suf.tmp`, FILE);
   });
 });
+
+// P-026 2.4: el catalogo de modelos va en la MISMA entrada por cuenta, y cada mitad se escribe sin pisar
+// la otra (los comandos llegan en cada turno; los modelos, tambien del sondeo de arranque).
+describe('CommandCatalogStore — modelos', () => {
+  const MODELS = [
+    { id: 'opus', label: 'Opus 5.5' },
+    { id: 'haiku', label: 'Haiku 4.5' },
+  ];
+
+  it('loadModels_sinEntrada_vacio', () => {
+    expect(memoryStore().store.loadModels(ACCOUNT)).toEqual([]);
+  });
+
+  it('saveModels_yLoadModels_cicloCompleto', () => {
+    const { store } = memoryStore();
+
+    store.saveModels(ACCOUNT, MODELS, 1);
+
+    expect(store.loadModels(ACCOUNT)).toEqual(MODELS);
+    expect(store.load(ACCOUNT)).toEqual([]);
+  });
+
+  it('save_deComandos_conservaLosModelos', () => {
+    const { store } = memoryStore();
+    store.saveModels(ACCOUNT, MODELS, 1);
+
+    store.save(ACCOUNT, COMMANDS, 2);
+
+    expect(store.loadModels(ACCOUNT)).toEqual(MODELS);
+    expect(store.load(ACCOUNT)).toEqual(COMMANDS);
+  });
+
+  it('saveModels_conservaLosComandosYLasOtrasCuentas', () => {
+    const { store } = memoryStore();
+    store.save(ACCOUNT, COMMANDS, 1);
+    store.saveModels(OTHER, [{ id: 'sonnet', label: 'Sonnet 5' }], 1);
+
+    store.saveModels(ACCOUNT, MODELS, 2);
+
+    expect(store.load(ACCOUNT)).toEqual(COMMANDS);
+    expect(store.loadModels(OTHER)).toEqual([{ id: 'sonnet', label: 'Sonnet 5' }]);
+  });
+
+  it('loadModels_ficheroDeAntesSinModelos_vacioSinDescartarLosComandos', () => {
+    const old = JSON.stringify({ version: 1, byAccount: { [ACCOUNT]: { measuredAtMs: 1, commands: COMMANDS } } });
+    const { store } = memoryStore(old);
+
+    expect(store.loadModels(ACCOUNT)).toEqual([]);
+    expect(store.load(ACCOUNT)).toEqual(COMMANDS);
+  });
+
+  it('saveModels_configDirVacio_lanzaConElValor', () => {
+    expect(() => memoryStore().store.saveModels('', MODELS, 1)).toThrow(/""/);
+  });
+});

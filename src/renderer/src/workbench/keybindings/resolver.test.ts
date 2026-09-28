@@ -1,12 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { resolveKeyEvent } from './resolver';
-import type { GuardContext, KeybindingAction } from './actionCatalog';
+import { KEYBINDING_ACTIONS, type GuardContext, type KeybindingAction } from './actionCatalog';
 import type { KeyEventLike } from './keyParser';
 
 const NO_MODS: Omit<KeyEventLike, 'code'> = { ctrlKey: false, metaKey: false, altKey: false, shiftKey: false };
 const NO_GUARD_CONTEXT: GuardContext = {
   promptTextEmpty: false,
   permissionPending: false,
+  questionPending: false,
   turnRunning: false,
   dialogOrPopoverOpen: false,
   focusInEditableText: false,
@@ -122,6 +123,22 @@ describe('resolveKeyEvent', () => {
       baseParams({ catalog, event: { ...NO_MODS, code: 'Digit1' }, guardContext: { ...NO_GUARD_CONTEXT, permissionPending: true } }),
     );
     expect(result).toBe('permission.allow');
+  });
+
+  it('resolver_permisoConPreguntaPendiente_devuelveNull', () => {
+    // Catalogo REAL: con una pregunta pendiente, 1/2/3 no pueden contestarla como si fuera un permiso.
+    const guardContext = { ...NO_GUARD_CONTEXT, permissionPending: true, questionPending: true };
+    const results = ['Digit1', 'Digit2', 'Digit3'].map((code) =>
+      resolveKeyEvent(baseParams({ catalog: KEYBINDING_ACTIONS, event: { ...NO_MODS, code }, guardContext })),
+    );
+    expect(results).toEqual([null, null, null]);
+  });
+
+  it('resolver_permisoSinPregunta_disparaPermitir', () => {
+    const guardContext = { ...NO_GUARD_CONTEXT, permissionPending: true };
+    expect(resolveKeyEvent(baseParams({ catalog: KEYBINDING_ACTIONS, event: { ...NO_MODS, code: 'Digit1' }, guardContext }))).toBe(
+      'permission.allow',
+    );
   });
 
   it('doAccionesMismoScopeMismaTecla_laGuardadaGanaSiSuGuardPasa', () => {

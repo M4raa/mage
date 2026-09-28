@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { folderChip, isInside, lastPathSegment, modelChip, privacyChip } from './chatInfoView';
+import { diffChip, folderChip, gitChip, isInside, lastPathSegment, privacyChip } from './chatInfoView';
+import type { GitRepoState } from '@shared/git';
 
 // Estas etiquetas las lee el usuario de un vistazo, asi que lo que importa es que NO mientan: una ruta
 // que se confunde con otra por prefijo, o un modelo que dice una version que la sesion no usa.
@@ -83,22 +84,6 @@ describe('folderChip', () => {
   });
 });
 
-describe('modelChip', () => {
-  it('modelChip_conModeloResuelto_loDiceEnElTooltip', () => {
-    // Los ids de Claude son alias: la unica version que no miente es la que reporta la sesion.
-    const chip = modelChip('Sonnet 5', 'claude-sonnet-5');
-
-    expect(chip.label).toBe('Sonnet 5');
-    expect(chip.title).toContain('claude-sonnet-5');
-  });
-
-  it('modelChip_sinSesionTodavia_noInventaVersion', () => {
-    const chip = modelChip('Sonnet 5', null);
-
-    expect(chip.title).toBe('Modelo Sonnet 5');
-  });
-});
-
 describe('privacyChip', () => {
   it('privacyChip_privada_loDice', () => {
     expect(privacyChip('private').label).toBe('Privado');
@@ -106,5 +91,50 @@ describe('privacyChip', () => {
 
   it('privacyChip_compartida_loDice', () => {
     expect(privacyChip('shared').label).toBe('Compartido');
+  });
+});
+
+const REPO: GitRepoState = {
+  kind: 'repo',
+  branch: 'feature/x',
+  detached: false,
+  headShort: '1a2b3c4',
+  upstream: 'origin/feature/x',
+  ahead: 2,
+  behind: 0,
+  dirty: true,
+  added: 3520,
+  removed: 231,
+  changedFiles: 4,
+  untracked: 1,
+};
+
+describe('gitChip', () => {
+  it('gitChip_repo_nombreDeLaRamaYSincronia', () => {
+    expect(gitChip(REPO)).toEqual({ icon: 'branch', label: 'feature/x', title: 'Rama feature/x · 2 por delante y 0 por detrás de origin/feature/x' });
+  });
+
+  it('gitChip_headSuelta_enseñaElCommit', () => {
+    expect(gitChip({ ...REPO, branch: null, detached: true, upstream: null })).toMatchObject({ label: '1a2b3c4', title: 'HEAD suelta en 1a2b3c4 · sin rama remota' });
+  });
+
+  it('gitChip_sinRepoOSinConfianza_null', () => {
+    expect(gitChip(undefined)).toBeNull();
+    expect(gitChip({ kind: 'no-repo' })).toBeNull();
+    expect(gitChip({ kind: 'untrusted', repoRoot: 'C:/r' })).toBeNull();
+  });
+});
+
+describe('diffChip', () => {
+  it('diffChip_sucio_masYMenos', () => {
+    expect(diffChip(REPO)).toEqual({ added: '+3520', removed: '−231', title: '4 ficheros cambiados y 1 sin seguir: +3520 líneas, −231' });
+  });
+
+  it('diffChip_limpio_null', () => {
+    expect(diffChip({ ...REPO, dirty: false })).toBeNull();
+  });
+
+  it('diffChip_soloNoSeguidos_ceroLineas', () => {
+    expect(diffChip({ ...REPO, added: 0, removed: 0, changedFiles: 0, untracked: 2 })).toMatchObject({ added: '+0', removed: '−0' });
   });
 });

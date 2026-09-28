@@ -3,12 +3,12 @@
 // @shared/accounts; ambos se mapean a estos tipos en la frontera (accountView.ts / engineBlocks.ts).
 
 import type { AskQuestion } from '@shared/askUserQuestion';
+import type { SessionPlugin } from '@shared/events';
 import type { ArtifactDraft, ArtifactPublication } from '@shared/artifacts';
 import type { DiffLine } from './diffLines';
 import type { ToolClass } from './toolClassify';
 import type { LoginStatus } from '@shared/accounts';
 import type { ConversationPrivacy } from '@shared/state';
-import type { PermissionMode } from '@shared/ipc';
 
 // Paleta acentual de una cuenta. El acento tine avatar, border de pestana, chips, punto del agente
 // y fill de sus barras de uso — nada mas (regla del handoff).
@@ -66,7 +66,9 @@ export interface Tab {
   // Tope de gasto (--max-budget-usd, M2.4) en CENTAVOS ENTEROS. undefined -> sin tope.
   readonly maxBudgetUsdCents?: number;
   // Modo de permiso (M2.6). undefined -> 'default'. Cambia con el ciclo shift+tab / chip del PromptBar.
-  readonly permissionMode?: PermissionMode;
+  // Un modo que Mage no ofrece (`dontAsk`) tambien se guarda aqui: la pestaña enseña el que reporte el
+  // CLI (P-026 2.3). En las fronteras (arranque, persistencia) solo viajan los de PERMISSION_MODES.
+  readonly permissionMode?: string;
   // Marcas de tiempo (ms epoch) que ORDENAN el sidebar por recencia: creacion de la conversacion y
   // ultimo mensaje enviado. Abrir una conversacion NO las toca (por eso no salta de sitio); escribir
   // en ella si (pasa al principio de su seccion).
@@ -82,6 +84,23 @@ export interface Tab {
   // asi que sobrevive al cierre de la pestaña y a reabrir la conversacion desde el historial.
   // Se ve y se revoca en el panel de Permisos.
   readonly alwaysAllowTools?: readonly string[];
+  // Nombre puesto en Mage que aun no llego al CLI (P-026, D3): la pestaña no tenia sesion, o estaba en
+  // mitad de un turno. Se manda como `/rename` al acabar el siguiente turno, y mientras exista, el
+  // `custom-title` de la transcripcion (el viejo) no pisa el titulo de la pestaña.
+  readonly pendingCliTitle?: string;
+}
+
+// Dialogo de «¿migrar la conversacion?» al cambiar de cuenta (P-026 2.7).
+export interface AccountSwitchPrompt {
+  readonly tabId: string;
+  readonly destAccountId: string;
+}
+
+// Skills y plugins cargados por una sesion (P-026 2.6), tal como los reporta su `system/init`.
+export interface SessionExtensions {
+  readonly skills: readonly string[];
+  readonly plugins: readonly SessionPlugin[];
+  readonly pluginErrors: readonly string[];
 }
 
 // --- Bloques del chat -------------------------------------------------------------------------
@@ -143,6 +162,8 @@ export type Block =
       // publicado, y entonces se pinta la caja de tool normal en vez de una tarjeta a medias.
       readonly artifact: ArtifactPublication | null;
       readonly artifactDraft: ArtifactDraft | null;
+      // Subagente que la lanzo (`tool_use_id` de su Task/Agent); null en el agente principal (P-026 3.4).
+      readonly parentToolUseId: string | null;
     }
   // Subagente (Task/Agent). `agentId` llega con el tool_result; hasta entonces no se puede abrir su
   // transcripcion. La anidacion no se modela (nivel 1), igual que en subagentView.ts.
@@ -154,6 +175,8 @@ export type Block =
       readonly description: string | null;
       readonly agentId: string | null;
       readonly status: string | null;
+      // Cuanto tardo, cuando termina (lo mide AgentSession). null en curso o al reanudar (P-026 3.4).
+      readonly elapsedMs: number | null;
     }
   // Pensamiento del agente. `runs` esta VACIO en una conversacion reanudada: el CLI persiste los
   // bloques `thinking` con texto "" (medido), asi que como mucho se puede decir "pensó".

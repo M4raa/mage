@@ -443,12 +443,23 @@ select:focus-visible,
    todos salen de tokens del tema para que conmuten en claro, oscuro y en un tema importado de Open
    VSX igual que el resto de la app.
 
-   `marker-hidden` es lo que hace el efecto Obsidian: el `- `, el `1. ` o las `##` desaparecen SALVO en
+   `marker-hidden` es lo que hace el efecto Obsidian: las `##` de un encabezado desaparecen SALVO en
    la linea donde esta el cursor (eso lo decide el modulo puro, no el CSS). Se usa `font-size: 0` y no
    `display: none` a proposito: el caracter sigue OCUPANDO su posicion en el documento, asi que el
    cursor y la seleccion siguen cayendo donde el usuario espera. */
 .cm-mg-marker-hidden {
   font-size: 0;
+}
+/* La viñeta fuera de la linea del cursor: el `- ` sigue ahi a `font-size: 0` (mismo motivo que arriba)
+   y un `::before` pinta el `•` que el usuario ve. Los numeros de lista NO pasan por aqui: se ven siempre. */
+.cm-mg-bullet-painted {
+  font-size: 0;
+}
+.cm-mg-bullet-painted::before {
+  content: '•';
+  font-size: 12.5px;
+  margin-right: 0.45em;
+  color: var(--color-mg-ter);
 }
 .cm-mg-bullet,
 .cm-mg-ordinal {

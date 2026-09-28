@@ -5,7 +5,7 @@ import { backgroundLabel, nextBackgroundState, shouldBackgroundOnClose } from '.
 // Evento minimo del tipo pedido (los campos que no mira `nextBackgroundState` van con lo justo).
 function event(kind: MageEvent['kind']): MageEvent {
   if (kind === 'result') {
-    return { kind: 'result', result: { isError: false, subtype: 'success', costUsd: null, numTurns: 1 } };
+    return { kind: 'result', result: { isError: false, subtype: 'success', numTurns: 1 } };
   }
   if (kind === 'error') return { kind: 'error', message: 'roto' };
   if (kind === 'permission_cancelled') return { kind: 'permission_cancelled', requestId: 'r1' };

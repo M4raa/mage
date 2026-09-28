@@ -12,6 +12,9 @@ import { deriveConversationMeta } from './conversationMeta';
 const PRIVATE_PROFILE_DIR = 'mage-private';
 const JSONL_EXT = '.jsonl';
 const PREFIX_BYTES = 64 * 1024; // prefijo por fichero para derivar cwd/titulo (cwd y 1er prompt van arriba)
+// Cola por fichero: el CLI re-añade `custom-title`/`ai-title` al final, y el que vale es el ULTIMO
+// (medido: en 60 de 267 transcripciones el `custom-title` estaba mas alla de la cabeza).
+const SUFFIX_BYTES = 64 * 1024;
 const MAX_CONVERSATIONS = 300; // tope del payload: las mas recientes (evita listas gigantes)
 
 export interface ConversationsDeps {
@@ -21,6 +24,8 @@ export interface ConversationsDeps {
   // UN solo stat para mtime y tamaño: eran dos llamadas al FS por cada conversacion del historial.
   readonly statFile: (path: string) => { readonly mtimeMs: number; readonly sizeBytes: number };
   readonly readPrefix: (path: string, maxBytes: number) => string;
+  // Los ULTIMOS `maxBytes` del fichero (todo el fichero si es mas pequeño).
+  readonly readSuffix: (path: string, maxBytes: number) => string;
 }
 
 interface Root {
@@ -62,13 +67,21 @@ export class ConversationsService {
     return result;
   }
 
-  // Describe un .jsonl; null si el fichero desaparece/es ilegible entre el listado y la lectura.
+  // Describe un .jsonl; null si el fichero desaparece/es ilegible entre el listado y la lectura, o si
+  // no tiene ningun mensaje real del usuario.
   private describeFile(path: string, file: string, root: Root): ConversationSummary | null {
     const sessionId = file.slice(0, -JSONL_EXT.length);
     try {
       // UN solo `stat` para las dos cosas que se leen del fichero: cuando se modifico y cuanto pesa.
       const stat = this.deps.statFile(path);
-      const meta = deriveConversationMeta(this.deps.readPrefix(path, PREFIX_BYTES).split(/\r?\n/));
+      const head = this.deps.readPrefix(path, PREFIX_BYTES).split(/\r?\n/);
+      // Un fichero que cabe entero en la cabeza no necesita cola (y leerla seria leerlo dos veces).
+      const tail = stat.sizeBytes > PREFIX_BYTES ? this.deps.readSuffix(path, SUFFIX_BYTES).split(/\r?\n/) : [];
+      const meta = deriveConversationMeta(head, tail);
+      // D4: sin ningun mensaje real del usuario, la conversacion no existe para el historial. Solo se
+      // decide si cabeza y cola cubren el fichero ENTERO: en uno mayor, el primer mensaje podria estar
+      // en medio y esconderlo borraria del historial una conversacion de verdad.
+      if (!meta.hasUserMessage && stat.sizeBytes <= PREFIX_BYTES + SUFFIX_BYTES) return null;
       return {
         sessionId,
         configDir: root.configDir,
@@ -77,6 +90,7 @@ export class ConversationsService {
         privacy: root.privacy,
         updatedAtMs: stat.mtimeMs,
         sizeBytes: stat.sizeBytes,
+        isScheduled: meta.isScheduled,
       };
     } catch {
       return null;

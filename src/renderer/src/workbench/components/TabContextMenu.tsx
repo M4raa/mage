@@ -1,5 +1,4 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { Icon } from './Icon';
 import { createPortal } from 'react-dom';
 import { motion } from 'motion/react';
 import { POPOVER_VARIANTS, TAB_COLOR_SWATCH_TRANSITION } from '../motionPresets';

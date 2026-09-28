@@ -1,37 +1,26 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { shortToolCommand } from '../toolSummary';
 import { Icon } from './Icon';
 import { NO_PERMISSION_CONTROL_WARNING, isAutoApprovedProvider } from '@shared/providers';
 import { useWorkbenchStore } from '../workbenchStore';
 import { SPARKLE_WAIST_RATIO } from '../brandMark';
 import { useThinkingStore } from '../thinkingStore';
 import { transcriptToBlocks } from '../transcriptToBlocks';
-import { computeThinkingStatus } from '../thinkingStatus';
+import { computeThinkingStatus, formatElapsed } from '../thinkingStatus';
 import { hasVisibleContent, pendingToolName } from '../engineBlocks';
 import { canChangeCwd, shortenPath } from '../cwdChange';
-import { Markdown, HighlightedLines } from './Markdown';
-import { useHighlightedCode } from '../highlighter';
-import { langFromPath } from '../codeHighlight';
-import { QuestionCard } from './QuestionCard';
+import { Markdown } from './Markdown';
 import { PermissionCard } from './PermissionCard';
-import { DiffView } from './DiffView';
 import { ArtifactCard } from './ArtifactCard';
 import { artifactCardFrom } from '../artifactView';
-import { ToolRunRow } from './ToolRunRow';
-import { SubagentBlock } from './SubagentBlock';
-import { ThinkingBlock } from './ThinkingBlock';
-import { groupChatRows, type ChatRow } from '../toolGrouping';
-import { TOOL_CLASS_GLYPH } from '../toolClassify';
+import { chatRows, currentTurnSummary, type ChatRow } from '../chatVisibility';
 import { usePaneTabId, usePaneTranscriptStore } from '../paneContext';
 import type { Block, ImageAttachment } from '../types';
+import { classifySystemWrapper } from '@shared/systemWrappers';
+import { useStickToBottom } from '../useStickToBottom';
 
 // Referencia ESTABLE para el caso "todavia no hay pensamientos de esta sesion": un `[]` nuevo en cada
 // render haria que el efecto de hidratacion se disparase en bucle.
 const EMPTY_THINKING: readonly string[] = [];
-
-// Margen (px) por debajo del cual se considera que el usuario esta "pegado" al final del chat: con
-// scroll dentro de ese margen, los mensajes nuevos siguen bajando solos; si ha subido a leer, no.
-const STICK_TO_BOTTOM_PX = 80;
 
 // Zona central de conversacion: pila de bloques (usuario, herramienta, agente).
 export function BlockChat(): React.JSX.Element {
@@ -47,28 +36,24 @@ export function BlockChat(): React.JSX.Element {
   // Guard de presentacion (A5): los bloques sin contenido no se pintan (antes dejaban rayas sueltas
   // que parecian separadores entre mensajes).
   const blocks = useMemo(() => allBlocks.filter(hasVisibleContent), [allBlocks]);
-  // Rachas de herramientas (2.12.2): una sola pasada O(n), dentro del mismo useMemo que ya envolvia el
-  // filtrado. Lo que se pinta son FILAS, no bloques: una fila puede ser un bloque o una racha.
-  // El turno VIVO cambia la agrupacion: con el agente trabajando, la ultima racha se queda abierta
-  // para ver cada accion aparecer; al terminar, se pliega.
-  const chatStatus = useWorkbenchStore((s) => s.statusByChat[activeTabId] ?? 'idle');
-  const turnActive = chatStatus === 'streaming';
-  const rows = useMemo(() => groupChatRows(blocks, turnActive), [blocks, turnActive]);
-  // "Pensando": el turno esta activo pero no hay texto en streaming visible (tras enviar, o
-  // mientras corre una tool). Damos feedback para que no parezca que se ha quedado colgado.
-  const status = chatStatus;
-  const streamingId = useWorkbenchStore((s) => s.streamingIdByChat[activeTabId] ?? null);
-  const thinking = status === 'streaming' && streamingId === null;
+  // Chat LIMPIO (P-026 3.4, D21–D24): lo que se dice y lo que pide respuesta. Herramientas, pensamiento,
+  // subagentes y permisos resueltos van al panel de Actividad; aqui queda, como mucho, una linea que
+  // lleva a el (una herramienta que fallo, los subagentes lanzados). Una pasada O(n).
+  const status = useWorkbenchStore((s) => s.statusByChat[activeTabId] ?? 'idle');
+  const rows = useMemo(() => chatRows(blocks), [blocks]);
+  // La linea de estado se ve TODO el turno (antes solo sin texto en curso): con las herramientas fuera
+  // del hilo, es lo unico que dice que el agente sigue trabajando.
+  const turnLive = status === 'streaming' || status === 'needs_permission';
+  const turnSummary = useMemo(() => currentTurnSummary(allBlocks), [allBlocks]);
   // Tool en curso: el indicador dice QUE esta haciendo ("Ejecutando Write…") en vez de un generico.
   const runningTool = useMemo(() => pendingToolName(allBlocks), [allBlocks]);
   // El texto en streaming crece DENTRO del ultimo bloque (no cambia el numero de bloques): el tamaño
   // de la cola es lo que hace que el auto-scroll siga el typing.
-  const tailSize = useMemo(() => tailContentSize(blocks), [blocks]);
-  // `rows.length` ademas de `blocks.length`: al agruparse una racha el numero de bloques puede crecer
-  // sin que crezca el de filas (y al reves al desplegarla), y el auto-scroll depende de lo que se pinta.
-  const { ref: scrollRef, onScroll } = useStickToBottom([blocks.length, rows.length, tailSize, thinking, activeTabId]);
+  const tailSize = useMemo(() => tailContentSize(rows), [rows]);
+  // Lo que cuenta es lo que se PINTA: las filas, no los bloques (casi todos van al panel de Actividad).
+  const { ref: scrollRef, onScroll } = useStickToBottom([rows.length, tailSize, turnLive, activeTabId]);
 
-  if (blocks.length === 0 && !thinking) {
+  if (blocks.length === 0 && !turnLive) {
     if (activeTabId.length === 0) return <NoConversationState />;
     return <EmptyConversation />;
   }
@@ -83,57 +68,22 @@ export function BlockChat(): React.JSX.Element {
       {rows.map((row) => (
         <ChatRowView key={rowKey(row)} row={row} accent={accent} />
       ))}
-      {thinking && <ThinkingIndicator accent={accent} tool={runningTool} />}
+      {turnLive && <ThinkingIndicator accent={accent} tool={runningTool} steps={turnSummary.steps} errors={turnSummary.errors} />}
     </div>
   );
 }
 
-// Tamaño del contenido del ULTIMO bloque (caracteres). Cambia con cada delta de streaming y con la
-// salida de una tool -> sirve como dependencia del auto-scroll.
-function tailContentSize(blocks: readonly Block[]): number {
-  const last = blocks[blocks.length - 1];
-  if (last === undefined) return 0;
-  if (last.kind === 'agent') return last.runs.reduce((total, run) => total + run.text.length, 0);
-  if (last.kind === 'tool') return last.output.reduce((total, run) => total + run.text.length, 0) + last.meta.length;
-  if (last.kind === 'user') return last.text.length;
-  if (last.kind === 'error') return last.message.length;
-  // Una tarjeta de pregunta no crece: su tamaño solo cambia al contestarla, y eso ya cambia el bloque.
-  if (last.kind === 'question') return last.state.length;
-  // Igual la de permiso: lo unico que cambia es su estado (pendiente -> permitido/denegado/cancelado).
-  if (last.kind === 'permission') return last.state.length;
-  if (last.kind === 'subagent') return (last.status ?? '').length;
-  if (last.kind === 'thinking') return last.runs.reduce((total, run) => total + run.text.length, 0);
-  return last.text.length;
-}
-
-// Mantiene el chat pegado al final cuando llega contenido nuevo, SALVO que el usuario haya subido a
-// leer (entonces no se le mueve el scroll bajo los pies). useLayoutEffect: mide y ajusta antes del
-// pintado, asi no se ve el salto. Devuelve la ref del contenedor scrollable.
-function useStickToBottom(deps: readonly unknown[]): {
-  readonly ref: React.RefObject<HTMLDivElement | null>;
-  readonly onScroll: () => void;
-} {
-  const ref = useRef<HTMLDivElement>(null);
-  const stuckRef = useRef(true);
-
-  // Cada scroll manual actualiza si seguimos "pegados" al final. Va como PROP de React y no como
-  // `addEventListener` dentro de un `useEffect([])`: al arrancar en frio, el chat vacio devuelve
-  // `<EmptyConversation/>` antes de pintar el div, asi que el efecto salia por `ref.current === null` y
-  // con deps vacias no volvia a correr JAMAS — `stuckRef` se quedaba en `true` de por vida y cada delta
-  // devolvia al usuario al fondo aunque hubiera subido a leer.
-  const onScroll = (): void => {
-    const element = ref.current;
-    if (element === null) return;
-    stuckRef.current = element.scrollHeight - element.scrollTop - element.clientHeight <= STICK_TO_BOTTOM_PX;
-  };
-
-  useLayoutEffect(() => {
-    const element = ref.current;
-    if (element === null || !stuckRef.current) return;
-    element.scrollTop = element.scrollHeight;
-  }, deps);
-
-  return { ref, onScroll };
+// Tamaño del contenido de la ULTIMA fila del hilo (caracteres). Cambia con cada delta de streaming ->
+// sirve como dependencia del auto-scroll. Un permiso, un artifact o una linea de fallo no crecen: cambian
+// de identidad, y eso ya cambia `rows`.
+function tailContentSize(rows: readonly ChatRow[]): number {
+  const last = rows[rows.length - 1];
+  if (last === undefined || last.kind !== 'block') return 0;
+  const block = last.block;
+  if (block.kind === 'agent') return block.runs.reduce((total, run) => total + run.text.length, 0);
+  if (block.kind === 'user' || block.kind === 'system') return block.text.length;
+  if (block.kind === 'error') return block.message.length;
+  return 0;
 }
 
 // Texto para la region aria-live segun el estado del turno de la pestana activa.
@@ -343,8 +293,19 @@ function NoConversationState(): React.JSX.Element {
 // Indicador de actividad mientras el agente trabaja sin emitir texto todavia (M2.6): palabra
 // cambiante + tiempo transcurrido del turno + aviso si el motor lleva rato sin dar señales (posible
 // cuelgue). Tictac local cada segundo; los tiempos base vienen del store (inicio/ultima actividad).
-function ThinkingIndicator({ accent, tool }: { readonly accent: string; readonly tool: string | null }): React.JSX.Element {
+function ThinkingIndicator({
+  accent,
+  tool,
+  steps,
+  errors,
+}: {
+  readonly accent: string;
+  readonly tool: string | null;
+  readonly steps: number;
+  readonly errors: number;
+}): React.JSX.Element {
   const paneTabId = usePaneTabId();
+  const openActivity = useWorkbenchStore((s) => s.openActivity);
   const turnStart = useWorkbenchStore((s) => s.turnStartByChat[paneTabId]);
   const lastActivity = useWorkbenchStore((s) => s.lastActivityByChat[paneTabId]);
   const [now, setNow] = useState(() => Date.now());
@@ -355,39 +316,80 @@ function ThinkingIndicator({ accent, tool }: { readonly accent: string; readonly
   const status = computeThinkingStatus(now - (turnStart ?? now), now - (lastActivity ?? now));
   // Con una tool en curso se dice QUE esta haciendo; si no, la palabra cambiante de "pensando".
   const label = tool === null ? status.label : `Ejecutando ${tool}`;
+  // Es un BOTON (P-026 3.4): lleva al panel de Actividad, donde esta cada paso de este turno.
   return (
-    <div className="flex items-center gap-[9px] px-[4px] py-[2px] text-[12px] text-mg-ter">
+    <button
+      onClick={() => openActivity(paneTabId, null)}
+      data-turn-status="true"
+      aria-label={`${label}, ${steps} pasos${errors > 0 ? `, ${errors} con error` : ''}: ver la actividad`}
+      className="flex w-fit items-center gap-[9px] rounded-[7px] px-[4px] py-[2px] text-left text-[12px] text-mg-ter hover:bg-mg-hover hover:text-mg-body2"
+    >
       <span className="h-[7px] w-[7px] flex-none rounded-full mg-pulse" style={{ background: accent }} />
       <span>{label}…</span>
+      <span className="text-[10.5px] text-mg-muted">· {steps} {steps === 1 ? 'paso' : 'pasos'}</span>
       <span className="font-mono text-[10.5px] text-mg-muted" style={{ fontVariantNumeric: 'tabular-nums' }}>
-        {status.elapsedText}
+        · {status.elapsedText}
       </span>
+      {errors > 0 && <span className="text-[10.5px] font-semibold text-mg-danger">· {errors} {errors === 1 ? 'error' : 'errores'}</span>}
       {status.stalled && (
         <span className="text-[10.5px] text-mg-warn-text">· sin respuesta hace {status.sinceActivityText}</span>
       )}
-    </div>
+      <span aria-hidden="true" className="text-mg-muted">›</span>
+    </button>
   );
 }
 
 const EMPTY: readonly Block[] = [];
 
 function rowKey(row: ChatRow): string {
-  return row.kind === 'run' ? row.id : row.block.id;
+  return row.kind === 'subagents' ? row.id : row.block.id;
 }
 
-// Una fila del hilo: o un bloque, o una RACHA de herramientas agrupadas (2.12.2). Al desplegar la
-// racha salen sus cajas, cada una colapsada: dos niveles, como se decidio.
+// Una fila del hilo (P-026 3.4): un bloque, la linea de una herramienta que fallo (D22) o la de los
+// subagentes de un turno (D21). Las dos lineas llevan al panel de Actividad.
 function ChatRowView({ row, accent }: { readonly row: ChatRow; readonly accent: string }): React.JSX.Element {
-  const expanded = useWorkbenchStore((s) => s.expandedRuns.has(row.kind === 'run' ? row.id : ''));
-  const toggleRun = useWorkbenchStore((s) => s.toggleRun);
   if (row.kind === 'block') return <BlockView block={row.block} accent={accent} />;
+  if (row.kind === 'tool-failed') return <ToolFailedLine block={row.block} />;
+  return <SubagentsLine blocks={row.blocks} />;
+}
+
+function ToolFailedLine({ block }: { readonly block: Extract<Block, { kind: 'tool' }> }): React.JSX.Element {
+  const paneTabId = usePaneTabId();
+  const openActivity = useWorkbenchStore((s) => s.openActivity);
   return (
-    <div className="shrink-0" data-block="run">
-      <ToolRunRow summary={row.summary} expanded={expanded} onToggle={() => toggleRun(row.id)}>
-        {row.blocks.map((block) => (
-          <BlockView key={block.id} block={block} accent={accent} />
-        ))}
-      </ToolRunRow>
+    <div className="shrink-0" data-block="tool-failed">
+      <button
+        onClick={() => openActivity(paneTabId, null)}
+        className="flex items-center gap-[6px] rounded-[7px] px-[4px] py-[2px] text-[11.5px] text-mg-danger hover:bg-mg-hover"
+      >
+        <Icon name="warning" size={12} /> {block.tool} falló · ver en Actividad
+      </button>
+    </div>
+  );
+}
+
+// «Lanzó 4 subagentes» mientras trabajan; «4 terminados · 2 m 31 s» al acabar todos (el tiempo del mas
+// lento: van en paralelo), con los que fallaron en rojo.
+function SubagentsLine({ blocks }: { readonly blocks: readonly Extract<Block, { kind: 'subagent' }>[] }): React.JSX.Element {
+  const paneTabId = usePaneTabId();
+  const openActivity = useWorkbenchStore((s) => s.openActivity);
+  const running = blocks.some((b) => b.status === null);
+  const failed = blocks.filter((b) => b.status === 'error').length;
+  const slowest = Math.max(0, ...blocks.map((b) => b.elapsedMs ?? 0));
+  const n = blocks.length;
+  const text = running
+    ? `Lanzó ${n} ${n === 1 ? 'subagente' : 'subagentes'}`
+    : `${n} ${n === 1 ? 'terminado' : 'terminados'}${slowest > 0 ? ` · ${formatElapsed(slowest)}` : ''}`;
+  return (
+    <div className="shrink-0" data-block="subagents">
+      <button
+        onClick={() => openActivity(paneTabId, null)}
+        className="flex items-center gap-[7px] rounded-[7px] px-[4px] py-[2px] text-[11.5px] text-mg-ter hover:bg-mg-hover hover:text-mg-body2"
+      >
+        <span aria-hidden="true">⇲</span>
+        <span>{text}</span>
+        {failed > 0 && <span className="font-semibold text-mg-danger">· {failed} con error</span>}
+      </button>
     </div>
   );
 }
@@ -413,30 +415,16 @@ const BlockView = memo(function BlockView({ block, accent }: { readonly block: B
   );
 });
 
-function BlockBody({ block, accent }: { readonly block: Block; readonly accent: string }): React.JSX.Element {
+function BlockBody({ block, accent }: { readonly block: Block; readonly accent: string }): React.JSX.Element | null {
   if (block.kind === 'user') return <UserBlock block={block} />;
+  if (block.kind === 'agent') return <AgentBlock block={block} accent={accent} />;
   if (block.kind === 'tool') return <ToolBlock block={block} />;
   if (block.kind === 'error') return <ErrorBlock block={block} />;
   if (block.kind === 'system') return <SystemBlock block={block} />;
-  if (block.kind === 'question') return <QuestionBlock block={block} />;
   if (block.kind === 'permission') return <PermissionCard block={block} />;
-  if (block.kind === 'subagent') return <SubagentBlock block={block} />;
-  if (block.kind === 'thinking') return <ThinkingBlock block={block} />;
-  return <AgentBlock block={block} accent={accent} />;
-}
-
-// Tarjeta de pregunta del agente (2.3). Contestar y "no contestar" son las DOS caras del mismo
-// can_use_tool: las dos responden la peticion, y por eso las dos pasan por `answerActivePermission`.
-function QuestionBlock({ block }: { readonly block: Extract<Block, { kind: 'question' }> }): React.JSX.Element {
-  const answerQuestion = useWorkbenchStore((s) => s.answerQuestion);
-  const answerActivePermission = useWorkbenchStore((s) => s.answerActivePermission);
-  return (
-    <QuestionCard
-      block={block}
-      onAnswer={(answers) => answerQuestion(block.requestId, answers)}
-      onDeny={() => answerActivePermission({ behavior: 'deny', message: 'El usuario no contesto la pregunta.' })}
-    />
-  );
+  // Pensamiento, subagentes y preguntas no llegan aqui: `chatRows` los manda al panel de Actividad o al
+  // dock de preguntas (P-026 3.3/3.4).
+  return null;
 }
 
 // Marcador de sistema (M2.4): linea tenue centrada (p.ej. "🗜 Contexto compactado (manual)").
@@ -464,6 +452,12 @@ function ErrorBlock({ block }: { readonly block: Extract<Block, { kind: 'error' 
 // Un prompt largo (un pegote de log, un fichero entero) se PLIEGA a una altura maxima con un boton de
 // desplegar: si no, un solo mensaje del usuario empuja toda la respuesta fuera de la pantalla.
 function UserBlock({ block }: { readonly block: Extract<Block, { kind: 'user' }> }): React.JSX.Element {
+  // Envoltorios de sistema que el CLI guarda como mensaje del usuario (P-026, D20): un comando local
+  // (`/rename X`) es un chip, y una tarea programada una tarjeta con el cuerpo plegado, en vez de la
+  // burbuja con el XML crudo. Los avisos que no se pintan ya los quito `transcriptToBlocks`.
+  const wrapper = useMemo(() => classifySystemWrapper(block.text), [block.text]);
+  if (wrapper.kind === 'command' && block.attachments.length === 0) return <CommandChip command={wrapper.command} />;
+  if (wrapper.kind === 'scheduled-task') return <ScheduledTaskCard name={wrapper.name} body={wrapper.body} />;
   return (
     <div className="flex justify-end">
       <div className="flex max-w-[80%] min-w-0 flex-col gap-[3px] rounded-[12px] rounded-br-[4px] border border-mg-border-emph bg-mg-sel p-[9px_13px] leading-[1.55]">
@@ -483,6 +477,34 @@ function UserBlock({ block }: { readonly block: Extract<Block, { kind: 'user' }>
         </Collapsible>
         {block.attachments.length > 0 && <UserAttachments attachments={block.attachments} />}
       </div>
+    </div>
+  );
+}
+
+function CommandChip({ command }: { readonly command: string }): React.JSX.Element {
+  return (
+    <div className="flex justify-end">
+      <span
+        data-command-chip="true"
+        className="max-w-[80%] truncate rounded-full border border-mg-border-subtle bg-mg-block px-[9px] py-[2px] font-mono text-[11px] text-mg-sec"
+      >
+        {command}
+      </span>
+    </div>
+  );
+}
+
+// `<details>` nativo: el cuerpo de una tarea programada es el prompt de la tarea, largo y repetido en
+// cada ejecucion, asi que va plegado.
+function ScheduledTaskCard({ name, body }: { readonly name: string; readonly body: string }): React.JSX.Element {
+  return (
+    <div className="flex justify-end">
+      <details data-scheduled-task="true" className="max-w-[80%] min-w-0 rounded-[9px] border border-mg-border-subtle bg-mg-block p-[6px_11px] text-[11.5px]">
+        <summary className="cursor-pointer text-mg-sec">
+          Tarea programada: <span className="font-semibold text-mg-text">{name.length > 0 ? name : 'sin nombre'}</span>
+        </summary>
+        <div className="mt-[6px] whitespace-pre-wrap break-words text-mg-muted">{body}</div>
+      </details>
     </div>
   );
 }
@@ -570,125 +592,11 @@ function Collapsible({
 // contenido que en realidad cabe justo.
 const OVERFLOW_TOLERANCE_PX = 4;
 
-function ToolBlock({ block }: { readonly block: Extract<Block, { kind: 'tool' }> }): React.JSX.Element {
-  // Un artifact YA PUBLICADO se pinta como tarjeta (2.4) en vez de como caja de tool: la caja enseñaba
-  // la ruta del scratchpad como encabezado, que no le dice nada a nadie.
+// Una herramienta solo llega al hilo si publico un artifact (P-026 3.4): se pinta como tarjeta (2.4).
+// El resto de herramientas vive en el panel de Actividad.
+function ToolBlock({ block }: { readonly block: Extract<Block, { kind: 'tool' }> }): React.JSX.Element | null {
   const card = artifactCardFrom(block);
-  if (card !== null) return <ArtifactCard card={card} />;
-  return <ToolBox block={block} />;
-}
-
-function ToolBox({ block }: { readonly block: Extract<Block, { kind: 'tool' }> }): React.JSX.Element {
-  // COLAPSADA por defecto (2.12.2): el defecto visible cambio, y por eso el estado del store se llama
-  // ahora `expandedTools` y no `collapsedTools`.
-  const expanded = useWorkbenchStore((s) => s.expandedTools.has(block.id));
-  const toggleTool = useWorkbenchStore((s) => s.toggleTool);
-  // PESO VISUAL de "Pensó", no de una respuesta (peticion del usuario, 2026-09-18). Una caja con
-  // borde, fondo propio y ancho completo competia con lo que dice el modelo, y en un turno con quince
-  // herramientas el hilo pasaba a ser una lista de cajas con la respuesta perdida entre ellas. Lo que
-  // el agente HACE es contexto; lo que DICE es el contenido.
-  //
-  // Solo cambia la presentacion: mismo plegado, mismo `aria-expanded`, mismo cuerpo montado solo al
-  // desplegar, mismo glifo por clase y mismo estado en el store. Y el cuerpo desplegado SI conserva su
-  // fondo y su borde izquierdo — ahi es justo donde hace falta leer, igual que en el pensamiento.
-  return (
-    <div className="flex flex-col gap-[5px]">
-      <button
-        onClick={() => toggleTool(block.id)}
-        aria-expanded={expanded}
-        aria-label={`${block.tool} ${block.command}`}
-        className="flex w-full items-center gap-[7px] rounded-[7px] px-[8px] py-[3px] text-left font-mono text-[11px] text-mg-ter hover:bg-mg-hover hover:text-mg-body2"
-      >
-        <span aria-hidden="true">{expanded ? '▾' : '▸'}</span>
-        {/* Glifo por CLASE de tool (lectura, busqueda, edicion, comando...): monocromo, como el resto
-            de iconografia de Mage, para que conmute con el tema. */}
-        <span data-tool-glyph className="inline-flex w-[14px] flex-none justify-center" aria-hidden="true">{TOOL_CLASS_GLYPH[block.toolClass]}</span>
-        <span className="flex-none font-semibold">{block.tool}</span>
-        {/* Solo el nombre del fichero cuando lo que lleva es una ruta. La ruta ENTERA sigue en el
-            `aria-label` de arriba, en el tooltip y en el pie del bloque desplegado. */}
-        <span className="truncate opacity-80" title={block.command}>{shortToolCommand(block.tool, block.command)}</span>
-        {/* El estado NO se atenua con el resto: un error tiene que seguir saltando a la vista aunque la
-            fila ahora pese poco. */}
-        <span className={`ml-auto flex-none ${block.isError ? 'font-semibold text-mg-danger' : 'opacity-70'}`}>{block.meta}</span>
-      </button>
-      {/* El cuerpo solo se MONTA al desplegar: en una conversacion larga, tener el diff de cada
-          edicion en el DOM cuesta, y ademas es lo que hace que `aria-expanded` no pueda mentir. */}
-      {expanded && (
-        <div className="ml-[10px] flex flex-col gap-[6px] overflow-hidden rounded-[7px] border-l border-mg-border-subtle pl-[10px]">
-          {block.output.length > 0 && <ToolOutput block={block} />}
-          {block.diff !== null && <DiffView lines={block.diff} path={block.filePath} />}
-          {block.diff === null && block.writtenContent !== null && (
-            <WrittenContent lines={block.writtenContent} path={block.filePath} />
-          )}
-          {block.filePath !== null && <FileActions path={block.filePath} />}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// Salida de una tool. Cuando lo que trae es el CONTENIDO DE UN FICHERO (una lectura con ruta conocida)
-// se resalta con el mismo shiki que el chat: leer 200 lineas de codigo en gris plano era lo que pedia
-// arreglar el usuario. Para todo lo demas —stdout de un Bash, confirmaciones— el texto plano es lo
-// correcto: no hay lenguaje que aplicar.
-function ToolOutput({ block }: { readonly block: Extract<Block, { kind: 'tool' }> }): React.JSX.Element {
-  const text = block.output.map((run) => run.text).join('');
-  const lang = block.toolClass === 'read' ? langFromPath(block.filePath) : null;
-  const lines = useHighlightedCode(text, lang);
-  return (
-    <div className="whitespace-pre-wrap bg-mg-code p-[9px_14px] font-mono text-[11px] leading-[1.65] text-mg-sec">
-      {lines === null ? text : <HighlightedLines lines={lines} />}
-    </div>
-  );
-}
-
-// Contenido completo de un fichero recien CREADO (un `Write`): no hay diff que enseñar porque no habia
-// nada antes, asi que se pinta el contenido sin signos ni numeros de linea antiguos — pero SI con
-// resaltado, que es lo que lo hace legible.
-function WrittenContent({ lines, path }: { readonly lines: readonly string[]; readonly path: string | null }): React.JSX.Element {
-  const text = useMemo(() => lines.join('\n'), [lines]);
-  const highlighted = useHighlightedCode(text, langFromPath(path));
-  return (
-    <div className="max-h-[260px] overflow-auto whitespace-pre-wrap border-t border-mg-border-subtle bg-mg-code p-[9px_14px] font-mono text-[11px] leading-[1.6] text-mg-sec">
-      {highlighted === null ? text : <HighlightedLines lines={highlighted} />}
-    </div>
-  );
-}
-
-
-
-// Botones para abrir la ubicacion del archivo en el gestor del SO y guardarlo (copiar) fuera.
-function FileActions({ path }: { readonly path: string }): React.JSX.Element {
-  const [saved, setSaved] = useState(false);
-
-  const reveal = (): void => {
-    void window.mage.revealFile(path).catch((err: unknown) => console.error('No se pudo abrir la ubicación', err));
-  };
-  const save = (): void => {
-    void window.mage
-      .saveFileAs(path)
-      .then((ok) => setSaved(ok))
-      .catch((err: unknown) => console.error('No se pudo guardar el archivo', err));
-  };
-
-  return (
-    <div className="flex items-center gap-[8px] border-t border-mg-border-subtle p-[8px_14px] text-[11px]">
-      <button
-        onClick={reveal}
-        className="rounded-[6px] border border-mg-border-ctrl px-[9px] py-[4px] text-mg-body2 hover:bg-mg-hover"
-      >
-        <Icon name="folderOpen" size={12} /> Abrir ubicación
-      </button>
-      <button
-        onClick={save}
-        className="rounded-[6px] border border-mg-border-ctrl px-[9px] py-[4px] text-mg-body2 hover:bg-mg-hover"
-      >
-        <Icon name="save" size={12} /> Guardar como…
-      </button>
-      {saved && <span className="text-mg-ter">✓ guardado</span>}
-      <span className="ml-auto truncate font-mono text-[10px] text-mg-muted">{path}</span>
-    </div>
-  );
+  return card === null ? null : <ArtifactCard card={card} />;
 }
 
 function AgentBlock({

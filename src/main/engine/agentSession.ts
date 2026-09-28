@@ -297,7 +297,7 @@ export class AgentSession {
     }
     this.pendingPermissions.clear();
     this.toolStartTimes.clear();
-    this.deps.emit({ kind: 'result', result: { isError: false, subtype: 'interrupted', costUsd: null, numTurns: null } });
+    this.deps.emit({ kind: 'result', result: { isError: false, subtype: 'interrupted', numTurns: null } });
   }
 
   // Cambia el modelo de la sesion en caliente (M2.4). El CLI lo aplica al SIGUIENTE turno.

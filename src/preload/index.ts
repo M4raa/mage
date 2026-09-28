@@ -8,10 +8,12 @@ import {
   WIDGET_FOCUS_TAB_CHANNEL,
   WIDGET_SNAPSHOT_CHANNEL,
   SETTINGS_CHANGED_CHANNEL,
+  MODEL_CATALOG_CHANGED_CHANNEL,
   WINDOW_TAB_RECEIVED_CHANNEL,
 } from '@shared/ipc';
 import type {
   AnswerPermissionParams,
+  ModelCatalogChange,
   CreateSessionParams,
   HandoffPromptParams,
   JumpListOpenPayload,
@@ -82,6 +84,9 @@ const api: MageApi = {
   deleteAccount: (configDir: string) => ipcRenderer.invoke(IpcChannel.AccountsDelete, configDir),
   pickDirectory: () => ipcRenderer.invoke(IpcChannel.DialogPickDirectory),
   isFolderTrusted: (params) => ipcRenderer.invoke(IpcChannel.TrustIsFolderTrusted, params),
+  gitStatus: (params) => ipcRenderer.invoke(IpcChannel.GitStatus, params),
+  gitBranches: (params) => ipcRenderer.invoke(IpcChannel.GitBranches, params),
+  gitSwitch: (params) => ipcRenderer.invoke(IpcChannel.GitSwitch, params),
   readThinking: (sessionId) => ipcRenderer.invoke(IpcChannel.ThinkingRead, sessionId),
   getUsage: (configDir: string) => ipcRenderer.invoke(IpcChannel.UsageGet, configDir),
   getStatus: () => ipcRenderer.invoke(IpcChannel.StatusGet),
@@ -114,6 +119,7 @@ const api: MageApi = {
   loadWorkspace: () => ipcRenderer.invoke(IpcChannel.StateLoad),
   saveWorkspace: (state: PersistedWorkspace) => ipcRenderer.invoke(IpcChannel.StateSave, state),
   loadCommandCatalog: (accountDir: string) => ipcRenderer.invoke(IpcChannel.CommandCatalogLoad, accountDir),
+  loadModelCatalog: (accountDir: string) => ipcRenderer.invoke(IpcChannel.ModelCatalogLoad, accountDir),
   loadConversationPrefs: (sessionId: string) => ipcRenderer.invoke(IpcChannel.ConversationPrefsLoad, sessionId),
   saveConversationPrefs: (params: SaveConversationPrefsParams) => ipcRenderer.invoke(IpcChannel.ConversationPrefsSave, params),
   recordArtifact: (params: RecordArtifactParams) => ipcRenderer.invoke(IpcChannel.ArtifactRecordSave, params),
@@ -166,6 +172,11 @@ const api: MageApi = {
     const handler = (_: unknown, settings: AppSettings) => listener(settings);
     ipcRenderer.on(SETTINGS_CHANGED_CHANNEL, handler);
     return () => ipcRenderer.removeListener(SETTINGS_CHANGED_CHANNEL, handler);
+  },
+  onModelCatalogChanged: (listener: (change: ModelCatalogChange) => void) => {
+    const handler = (_: unknown, change: ModelCatalogChange) => listener(change);
+    ipcRenderer.on(MODEL_CATALOG_CHANGED_CHANNEL, handler);
+    return () => ipcRenderer.removeListener(MODEL_CATALOG_CHANGED_CHANNEL, handler);
   },
   onTabReceived: (listener: (tab: PersistedTab) => void) => {
     const handler = (_: unknown, tab: PersistedTab) => listener(tab);

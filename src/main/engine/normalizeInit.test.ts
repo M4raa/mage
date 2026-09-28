@@ -16,7 +16,7 @@ describe('normalizeRawEvent: arranque y protocolo de control', () => {
     const events = normalizeRawEvent(raw);
 
     expect(events).toEqual([
-      { kind: 'session_init', sessionId: 's1', model: 'haiku', tools: ['Read', 'Bash', 'Task'], mcpServers: [], slashCommands: [] },
+      { kind: 'session_init', sessionId: 's1', model: 'haiku', tools: ['Read', 'Bash', 'Task'], mcpServers: [], slashCommands: [], skills: [], plugins: [], pluginErrors: [] },
     ]);
   });
 
@@ -59,6 +59,9 @@ describe('normalizeRawEvent: arranque y protocolo de control', () => {
         { name: 'chrome-devtools', status: 'pending' },
       ],
       slashCommands: ['caveman', 'find-skills'],
+      skills: [],
+      plugins: [],
+      pluginErrors: [],
     });
   });
 
@@ -239,5 +242,85 @@ describe('normalizeRawEvent: arranque y protocolo de control', () => {
     };
 
     expect(normalizeRawEvent(raw).map((e) => e.kind)).toEqual(['commands_available']);
+  });
+
+  // P-026 2.3: el modo real de la sesion llega en la respuesta al `initialize` (medido en 2.1.283) y en
+  // el `system/init`. La pestaña lo adopta: una conversacion nueva se lanza sin `--permission-mode`.
+  it('normalize_initializeConCurrentPermissionMode_emitePermissionMode', () => {
+    const raw = {
+      type: 'control_response',
+      response: { subtype: 'success', request_id: 'r1', response: { commands: [], agents: [], current_permission_mode: 'auto' } },
+    };
+
+    expect(normalizeRawEvent(raw)).toEqual([{ kind: 'permission_mode', mode: 'auto' }]);
+  });
+
+  it('normalize_initializeConModoRaro_loIgnoraSinRomper', () => {
+    const raw = {
+      type: 'control_response',
+      response: { subtype: 'success', request_id: 'r1', response: { commands: [{ name: 'x' }], current_permission_mode: 42 } },
+    };
+
+    expect(normalizeRawEvent(raw).map((e) => e.kind)).toEqual(['commands_available']);
+  });
+
+  it('normalize_systemInitConPermissionMode_loEmiteTrasElInit', () => {
+    const raw = { type: 'system', subtype: 'init', session_id: 's1', model: 'haiku', permissionMode: 'bypassPermissions' };
+
+    expect(normalizeRawEvent(raw).map((e) => e.kind)).toEqual(['session_init', 'permission_mode']);
+    expect(normalizeRawEvent(raw)[1]).toEqual({ kind: 'permission_mode', mode: 'bypassPermissions' });
+  });
+
+  // P-026 2.4: el catalogo de modelos llega en la misma respuesta (medido en 2.1.283).
+  it('normalize_initializeConModels_emiteModelsAvailable', () => {
+    const raw = {
+      type: 'control_response',
+      response: {
+        subtype: 'success',
+        request_id: 'r1',
+        response: { commands: [], models: [{ value: 'opus', displayName: 'Opus 5.5', resolvedModel: 'claude-opus-5-5' }, { value: 'x-sin-nombre' }] },
+      },
+    };
+
+    expect(normalizeRawEvent(raw)).toEqual([
+      { kind: 'models_available', models: [{ id: 'opus', label: 'Opus 5.5' }, { id: 'x-sin-nombre', label: 'x-sin-nombre' }] },
+    ]);
+  });
+
+  it('normalize_initializeConModelsRaros_losIgnoraSinTumbarLosComandos', () => {
+    const raw = {
+      type: 'control_response',
+      response: { subtype: 'success', request_id: 'r1', response: { commands: [{ name: 'compact' }], models: 'no es un array' } },
+    };
+
+    expect(normalizeRawEvent(raw).map((e) => e.kind)).toEqual(['commands_available']);
+  });
+
+  // P-026 2.6: skills y plugins cargados, con la forma MEDIDA en 2.1.283 (via `/rename`, sin coste).
+  it('normalize_systemInitConSkillsYPlugins_losExpone', () => {
+    const raw = {
+      type: 'system',
+      subtype: 'init',
+      session_id: 's1',
+      model: 'opus',
+      skills: ['obsidian:obsidian-cli', 'caveman'],
+      plugins: [{ name: 'obsidian', path: '/cache/obsidian', source: 'obsidian@obsidian-skills' }, { name: 'telemetry', path: 'builtin' }],
+      plugin_errors: ['figma: no se pudo cargar', { message: 'otro fallo' }, { raro: 1 }],
+    };
+
+    expect(normalizeRawEvent(raw)[0]).toMatchObject({
+      skills: ['obsidian:obsidian-cli', 'caveman'],
+      plugins: [
+        { name: 'obsidian', source: 'obsidian@obsidian-skills' },
+        { name: 'telemetry', source: null },
+      ],
+      pluginErrors: ['figma: no se pudo cargar', 'otro fallo', '{"raro":1}'],
+    });
+  });
+
+  it('normalize_systemInitConFormasRaras_vaciosSinTumbarElArranque', () => {
+    const raw = { type: 'system', subtype: 'init', session_id: 's1', model: 'opus', skills: 'no', plugins: [{ sinNombre: true }], plugin_errors: 7 };
+
+    expect(normalizeRawEvent(raw)[0]).toMatchObject({ kind: 'session_init', skills: [], plugins: [], pluginErrors: [] });
   });
 });

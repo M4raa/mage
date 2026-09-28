@@ -75,7 +75,7 @@ msi:
   createDesktopShortcut: true
   createStartMenuShortcut: true
   shortcutName: Mage
-  artifactName: mage-setup-beta-${version}.${ext}
+  artifactName: mage-setup-alpha-${version}.${ext}
 
 nsis:
   # Instalador con asistente (no one-click) para poder elegir carpeta, y POR USUARIO: asi no pide
@@ -86,7 +86,7 @@ nsis:
   createDesktopShortcut: true
   createStartMenuShortcut: true
   shortcutName: Mage
-  artifactName: mage-setup-beta-${version}.${ext}
+  artifactName: mage-setup-alpha-${version}.${ext}
 
 mac:
   target:
@@ -95,7 +95,7 @@ mac:
   category: public.app-category.developer-tools
   # Sin .icns en el repo: electron-builder lo deriva del PNG de 1024 al construir en macOS.
   icon: resources/brand/icon-1024.png
-  artifactName: mage-setup-beta-${version}-${arch}.${ext}
+  artifactName: mage-setup-alpha-${version}-${arch}.${ext}
 
 linux:
   target:
@@ -108,4 +108,4 @@ linux:
   category: Development
   icon: resources/brand/icon-1024.png
   synopsis: Wrapper multiagentico y multi-proveedor sobre agentes de codigo
-  artifactName: mage-setup-beta-${version}-${arch}.${ext}
+  artifactName: mage-setup-alpha-${version}-${arch}.${ext}

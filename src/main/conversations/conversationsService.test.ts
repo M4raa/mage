@@ -17,6 +17,7 @@ function deps(over: Partial<ConversationsDeps> = {}): ConversationsDeps {
     isDirectory: () => true,
     statFile: () => ({ mtimeMs: 0, sizeBytes: 0 }),
     readPrefix: () => '',
+    readSuffix: () => '',
     ...over,
   };
 }
@@ -99,15 +100,69 @@ describe('ConversationsService.listConversations', () => {
   });
 
   it('sinTitulo_caeAlSessionId', () => {
+    // Un mensaje de solo imagen es real pero no da titulo.
     const folder = join(SHARED, 'C--proj');
+    const image = JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'image', source: {} }] } });
     const service = new ConversationsService(
       deps({
         exists: (p) => p === SHARED,
         listDir: (p) => (p === SHARED ? ['C--proj'] : p === folder ? ['abc.jsonl'] : []),
-        readPrefix: () => '',
+        readPrefix: () => image,
       }),
     );
 
     expect(service.listConversations(ACC)[0]?.title).toBe('abc');
+  });
+
+  // Carpeta con un solo .jsonl, para las pruebas de cabeza/cola.
+  function singleFile(over: Partial<ConversationsDeps>): ConversationsService {
+    const folder = join(SHARED, 'C--proj');
+    return new ConversationsService(
+      deps({
+        exists: (p) => p === SHARED,
+        listDir: (p) => (p === SHARED ? ['C--proj'] : p === folder ? ['s1.jsonl'] : []),
+        ...over,
+      }),
+    );
+  }
+
+  it('listConversations_customTitleSoloEnLaCola_loUsa', () => {
+    const readSuffix = vi.fn(() => `{"partida\n${JSON.stringify({ type: 'custom-title', customTitle: 'Renombrada' })}`);
+    const service = singleFile({
+      statFile: () => ({ mtimeMs: 0, sizeBytes: 500_000 }),
+      readPrefix: () => userLine('prompt', 'C:\\proj'),
+      readSuffix,
+    });
+
+    expect(service.listConversations(ACC)[0]?.title).toBe('Renombrada');
+    expect(readSuffix).toHaveBeenCalledTimes(1);
+  });
+
+  it('listConversations_ficheroPequeno_noLeeLaCola', () => {
+    const readSuffix = vi.fn(() => '');
+    const service = singleFile({ statFile: () => ({ mtimeMs: 0, sizeBytes: 100 }), readPrefix: () => userLine('hola', 'C:\\p'), readSuffix });
+
+    service.listConversations(ACC);
+
+    expect(readSuffix).not.toHaveBeenCalled();
+  });
+
+  it('listConversations_sinMensajeDeUsuario_seExcluye', () => {
+    const service = singleFile({ readPrefix: () => JSON.stringify({ type: 'custom-title', customTitle: 'x' }) });
+
+    expect(service.listConversations(ACC)).toEqual([]);
+  });
+
+  it('listConversations_sinMensajeEnCabezaNiColaDeUnFicheroGrande_seConserva', () => {
+    // El primer mensaje podria estar en medio: esconderla borraria una conversacion de verdad.
+    const service = singleFile({ statFile: () => ({ mtimeMs: 0, sizeBytes: 10_000_000 }), readPrefix: () => '' });
+
+    expect(service.listConversations(ACC).map((c) => c.title)).toEqual(['s1']);
+  });
+
+  it('listConversations_tareaProgramada_marcaIsScheduled', () => {
+    const service = singleFile({ readPrefix: () => userLine('<scheduled-task name="say-hello" file="x">\nSay\n</scheduled-task>', 'C:\\p') });
+
+    expect(service.listConversations(ACC)[0]).toMatchObject({ title: 'say-hello', isScheduled: true });
   });
 });

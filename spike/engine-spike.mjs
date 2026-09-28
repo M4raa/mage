@@ -14,6 +14,7 @@ import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import zlib from 'node:zlib';
 
 // --- Configuracion (sin magic numbers dispersos) ---------------------------------------------
 
@@ -342,7 +343,202 @@ function describeRateLimit() {
   return `${seen.rateLimitEvents} eventos | campos: ${presentes.join(', ')} | ${JSON.stringify(info)}`;
 }
 
-main().catch((err) => {
+// --- S3 de P-026: imagenes intercaladas con el texto (un turno de haiku) ----------------------
+// Uso: node spike/engine-spike.mjs --images   (cuenta ~/.claude salvo MAGE_ACCOUNT_DIR)
+// Mide si el CLI respeta el orden [texto, img, texto, img, texto] de un mensaje de usuario: se le
+// pregunta por la segunda imagen y se lee el .jsonl para ver en que orden la guardo. El transcript es
+// de usar y tirar: se borra al acabar, para no dejar una conversacion de prueba en el historial.
+
+// PNG de color liso generado en memoria: firma + IHDR + IDAT (deflate) + IEND, cada chunk con su CRC.
+function solidPng(size, [r, g, b]) {
+  const chunk = (type, data) => {
+    const length = Buffer.alloc(4);
+    length.writeUInt32BE(data.length);
+    const body = Buffer.concat([Buffer.from(type, 'ascii'), data]);
+    const crc = Buffer.alloc(4);
+    crc.writeUInt32BE(zlib.crc32(body));
+    return Buffer.concat([length, body, crc]);
+  };
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(size, 0);
+  header.writeUInt32BE(size, 4);
+  header.set([8, 2, 0, 0, 0], 8); // 8 bits, RGB, sin entrelazado
+  const row = Buffer.concat([Buffer.from([0]), Buffer.from(Array.from({ length: size }, () => [r, g, b]).flat())]);
+  const pixels = zlib.deflateSync(Buffer.concat(Array.from({ length: size }, () => row)));
+  const signature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+  return Buffer.concat([signature, chunk('IHDR', header), chunk('IDAT', pixels), chunk('IEND', Buffer.alloc(0))]);
+}
+
+const IMAGE_SPIKE = {
+  accountDir: process.env.MAGE_ACCOUNT_DIR ?? path.join(os.homedir(), '.claude'),
+  pngSize: 8,
+  question: '¿De qué color es la Imagen 2? Responde una palabra.',
+};
+
+function imageBlock(rgb) {
+  return { type: 'image', source: { type: 'base64', media_type: 'image/png', data: solidPng(IMAGE_SPIKE.pngSize, rgb).toString('base64') } };
+}
+
+// Ruta del transcript: <config>/projects/<cwd con todo lo no alfanumerico como '-'>/<session>.jsonl.
+function transcriptPath(configDir, sessionId) {
+  const slug = process.cwd().replace(/[^A-Za-z0-9]/g, '-');
+  return path.join(configDir, 'projects', slug, `${sessionId}.jsonl`);
+}
+
+// Orden de los bloques del primer mensaje de usuario del transcript, p. ej. ['text:Imagen 1:', 'image', ...].
+function userBlockOrder(file) {
+  if (!fs.existsSync(file)) return null;
+  for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
+    if (line.trim().length === 0) continue;
+    const entry = JSON.parse(line);
+    const content = entry.type === 'user' ? entry.message?.content : null;
+    if (!Array.isArray(content)) continue;
+    return content.map((block) => (block.type === 'text' ? `text:${block.text}` : block.type));
+  }
+  return [];
+}
+
+async function imageOrderSpike() {
+  const sessionId = randomUUID();
+  const env = { ...process.env, CLAUDE_CONFIG_DIR: IMAGE_SPIKE.accountDir };
+  for (const name of ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL']) delete env[name];
+  const args = ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose',
+    '--permission-prompt-tool', 'stdio', '--session-id', sessionId, '--model', 'haiku'];
+  const child = spawn(CONFIG.claudeBin, args, { env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+  let answer = '';
+  let result = null;
+  const done = new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`sin result en ${CONFIG.turnTimeoutMs} ms`)), CONFIG.turnTimeoutMs);
+    child.stdout.setEncoding('utf8');
+    child.stdout.on('data', makeLineParser((event) => {
+      if (event.type === 'assistant') {
+        for (const block of event.message?.content ?? []) if (block.type === 'text') answer += block.text;
+      }
+      if (event.type === 'result') {
+        result = event;
+        clearTimeout(timer);
+        resolve();
+      }
+    }));
+    child.on('exit', () => { clearTimeout(timer); resolve(); });
+  });
+  child.stderr.setEncoding('utf8');
+  child.stderr.on('data', (d) => process.stderr.write(`[cli-stderr] ${d}`));
+  const content = [
+    { type: 'text', text: 'Imagen 1:' }, imageBlock([255, 0, 0]),
+    { type: 'text', text: 'Imagen 2:' }, imageBlock([0, 0, 255]),
+    { type: 'text', text: IMAGE_SPIKE.question },
+  ];
+  writeLine(child, { type: 'user', message: { role: 'user', content }, parent_tool_use_id: null });
+  try {
+    await done;
+  } finally {
+    child.stdin.end();
+    child.kill();
+  }
+  const file = transcriptPath(IMAGE_SPIKE.accountDir, sessionId);
+  console.log(`[S3] result=${result?.subtype ?? 'ninguno'} respuesta=${JSON.stringify(answer.trim())}`);
+  console.log(`[S3] dice azul: ${/azul|blue/i.test(answer) ? 'SI' : 'NO'}`);
+  console.log(`[S3] orden en el transcript: ${JSON.stringify(userBlockOrder(file))}`);
+  if (fs.existsSync(file)) fs.rmSync(file);
+  console.log(`[S3] transcript de prueba borrado: ${!fs.existsSync(file)}`);
+}
+
+// --- P-026 1.6: que emite `/rename` en headless (sin turno) ------------------------------------
+// Uso: node spike/engine-spike.mjs --rename. Manda SOLO "/rename <titulo>" a una sesion nueva e
+// imprime el tipo de cada evento de stdout, y luego que dejo en el .jsonl. Borra el transcript.
+async function renameSpike() {
+  const sessionId = randomUUID();
+  const title = 'mage-rename-spike';
+  const env = { ...process.env, CLAUDE_CONFIG_DIR: IMAGE_SPIKE.accountDir };
+  for (const name of ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL']) delete env[name];
+  const args = ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose',
+    '--permission-prompt-tool', 'stdio', '--session-id', sessionId, '--model', 'haiku'];
+  const child = spawn(CONFIG.claudeBin, args, { env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+  const events = [];
+  const done = new Promise((resolve) => {
+    const timer = setTimeout(resolve, 20_000);
+    child.stdout.setEncoding('utf8');
+    child.stdout.on('data', makeLineParser((event) => {
+      const content = event.message?.content;
+      const text = typeof content === 'string' ? content : Array.isArray(content) ? content.map((b) => b.text ?? b.type).join('|') : '';
+      events.push(`${event.type}/${event.subtype ?? ''}${text ? ` ${JSON.stringify(text.slice(0, 120))}` : ''}${event.type === 'result' ? ` cost=${event.total_cost_usd} turns=${event.num_turns} usage=${JSON.stringify(event.usage ?? null).slice(0, 80)}` : ''}`);
+      // P-026 2.6: la FORMA de `skills`, `plugins` y `plugin_errors` del init (llega sin coste con `/rename`).
+      if (event.type === 'system' && event.subtype === 'init') {
+        const shape = (value) => (Array.isArray(value) ? `array(${value.length}) ${JSON.stringify(value.slice(0, 2)).slice(0, 200)}` : typeof value);
+        console.log(`[init] claves=${JSON.stringify(Object.keys(event))}`);
+        for (const key of ['skills', 'plugins', 'plugin_errors', 'permissionMode']) console.log(`[init] ${key}: ${shape(event[key])}${typeof event[key] === 'string' ? ` ${event[key]}` : ''}`);
+      }
+      if (event.type === 'result') { clearTimeout(timer); resolve(); }
+    }));
+  });
+  writeLine(child, { type: 'user', message: { role: 'user', content: `/rename ${title}` }, parent_tool_use_id: null });
+  await done;
+  child.stdin.end();
+  child.kill();
+  console.log(`[rename] eventos de stdout:\n  ${events.join('\n  ')}`);
+  const file = transcriptPath(IMAGE_SPIKE.accountDir, sessionId);
+  if (!fs.existsSync(file)) {
+    console.log('[rename] sin transcript');
+    return;
+  }
+  const lines = fs.readFileSync(file, 'utf8').split('\n').filter((l) => l.trim().length > 0).map((l) => JSON.parse(l));
+  console.log(`[rename] transcript:\n  ${lines.map((o) => `${o.type}/${o.subtype ?? ''} meta=${o.isMeta === true} ${JSON.stringify(String(o.message?.content ?? o.content ?? o.customTitle ?? o.agentName ?? '').slice(0, 100))}`).join('\n  ')}`);
+  fs.rmSync(file);
+}
+
+// --- P-026 3.4: los pasos de un SUBAGENTE en el stream (un turno de haiku) -----------------------
+// Uso: node spike/engine-spike.mjs --subagent. Pide al agente que lance UN subagente que haga una sola
+// herramienta, auto-permite y cuenta, por evento, su `parent_tool_use_id`: es lo que permitiria atribuir
+// cada paso a su subagente. Borra el transcript al acabar.
+async function subagentSpike() {
+  const sessionId = randomUUID();
+  const env = { ...process.env, CLAUDE_CONFIG_DIR: IMAGE_SPIKE.accountDir };
+  for (const name of ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL']) delete env[name];
+  const args = ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose',
+    '--permission-prompt-tool', 'stdio', '--include-partial-messages', '--session-id', sessionId, '--model', 'haiku'];
+  const child = spawn(CONFIG.claudeBin, args, { env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+  const rows = [];
+  const streamCounts = new Map();
+  const done = new Promise((resolve) => {
+    const timer = setTimeout(resolve, CONFIG.turnTimeoutMs);
+    child.stdout.setEncoding('utf8');
+    child.stdout.on('data', makeLineParser((event) => {
+      if (event.type === 'control_request' && event.request?.subtype === 'can_use_tool') {
+        answerAllow(child, event.request_id, event.request.tool_use_id);
+        rows.push(`permiso ${event.request.tool_name} parent=${event.request.parent_tool_use_id ?? '-'}`);
+        return;
+      }
+      if (event.type === 'stream_event') {
+        // Deltas: solo se cuentan, por `parent_tool_use_id` (¿llega el texto del subagente al stream?).
+        const key = `stream_event parent=${event.parent_tool_use_id ?? '-'} ${event.event?.type ?? ''}`;
+        streamCounts.set(key, (streamCounts.get(key) ?? 0) + 1);
+        return;
+      }
+      const content = Array.isArray(event.message?.content) ? event.message.content : [];
+      const kinds = content.map((b) => (b.type === 'tool_use' ? `tool_use:${b.name}` : b.type)).join(',');
+      rows.push(`${event.type}/${event.subtype ?? ''} parent=${event.parent_tool_use_id ?? '-'} ${kinds}`);
+      if (event.type === 'result') { clearTimeout(timer); resolve(); }
+    }));
+  });
+  const prompt = 'Usa la herramienta Agent (o Task) con subagent_type "general-purpose" y este encargo: ' +
+    '"Usa la herramienta Glob con el patron *.json en el directorio actual y contesta solo con el numero de ficheros". ' +
+    'Luego dime ese numero en una palabra. No hagas nada mas.';
+  writeLine(child, { type: 'user', message: { role: 'user', content: prompt }, parent_tool_use_id: null });
+  await done;
+  child.stdin.end();
+  child.kill();
+  console.log(`[subagent] eventos (sin deltas):\n  ${rows.join('\n  ')}`);
+  console.log(`[subagent] deltas por padre:\n  ${[...streamCounts].map(([key, count]) => `${count}x ${key}`).join('\n  ')}`);
+  const file = transcriptPath(IMAGE_SPIKE.accountDir, sessionId);
+  if (fs.existsSync(file)) fs.rmSync(file);
+  const sub = path.join(path.dirname(file), sessionId);
+  if (fs.existsSync(sub)) fs.rmSync(sub, { recursive: true, force: true });
+}
+
+const MODES = { '--images': imageOrderSpike, '--rename': renameSpike, '--subagent': subagentSpike };
+const entry = MODES[process.argv.find((arg) => arg in MODES)] ?? main;
+entry().catch((err) => {
   console.error(`\n[spike] ERROR: ${err.message}`);
   process.exit(1);
 });

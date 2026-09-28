@@ -49,7 +49,7 @@ function fakePerTurnAdapter(): {
 
 const RESULT_OK: MageEvent = {
   kind: 'result',
-  result: { isError: false, subtype: 'success', costUsd: null, numTurns: 1 },
+  result: { isError: false, subtype: 'success', numTurns: 1 },
 };
 
 describe('AgentSession en modo perTurn', () => {
@@ -112,7 +112,7 @@ describe('AgentSession en modo perTurn', () => {
     h.session.start();
     h.session.sendUserMessage('turno 1');
     emitLine(h.children[0]!, [
-      { kind: 'session_init', sessionId: 'agy-conv-9', model: 'gemini', tools: ['read_file'], mcpServers: [], slashCommands: [] },
+      { kind: 'session_init', sessionId: 'agy-conv-9', model: 'gemini', tools: ['read_file'], mcpServers: [], slashCommands: [], skills: [], plugins: [], pluginErrors: [] },
       RESULT_OK,
     ]);
     h.children[0]!.exit(0, null);
@@ -162,7 +162,7 @@ describe('AgentSession en modo perTurn', () => {
     expect(h.events.some((e) => e.kind === 'error')).toBe(false);
     expect(h.events.at(-1)).toEqual({
       kind: 'result',
-      result: { isError: false, subtype: 'interrupted', costUsd: null, numTurns: null },
+      result: { isError: false, subtype: 'interrupted', numTurns: null },
     });
   });
 

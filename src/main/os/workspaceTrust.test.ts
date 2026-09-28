@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ancestorKeys, isTrusted, readCliTrustedFolders, trustKey, trustedProjectKeys, withTrusted } from './workspaceTrust';
+import { ancestorKeys, isTrusted, readCliTrustedFolders, trustKey, trustedProjectKeys } from './workspaceTrust';
 
 // Frontera de seguridad: decide si se lanza un agente dentro de una carpeta, y lanzarlo ejecuta lo que
 // esa carpeta traiga. Los casos que importan aqui no son el happy path sino los bordes por donde se
@@ -81,19 +81,6 @@ describe('isTrusted', () => {
   it('isTrusted_entradaVacia_noAutorizaNada', () => {
     // Una cadena vacia en el fichero no puede convertirse en "confia en todo".
     expect(isTrusted('C:/sourcecode/mage', ['', '   '])).toBe(false);
-  });
-});
-
-describe('withTrusted', () => {
-  it('withTrusted_carpetaNueva_laAnadeNormalizada', () => {
-    expect(withTrusted('C:\\repos\\api', ['C:/sourcecode'])).toEqual(['C:/sourcecode', 'C:/repos/api']);
-  });
-
-  it('withTrusted_yaCubiertaPorUnPadre_devuelveLaMismaReferencia', () => {
-    // Quien llama usa la identidad para no reescribir el fichero de ajustes por nada.
-    const trusted = ['C:/sourcecode'];
-
-    expect(withTrusted('C:/sourcecode/mage', trusted)).toBe(trusted);
   });
 });
 

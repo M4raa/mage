@@ -148,6 +148,18 @@ describe('parseInline', () => {
     expect(runs).toEqual([{ type: 'text', text: 'literal *asterisco*' }]);
   });
 
+  it('parseInline_barraAntesDeLetra_seConserva', () => {
+    expect(parseInline('C:\\Users\\usuario\\x')).toEqual([{ type: 'text', text: 'C:\\Users\\usuario\\x' }]);
+  });
+
+  it('parseInline_barraAntesDePuntuacion_escapa', () => {
+    expect(parseInline('\\* y \\\\ y \\_')).toEqual([{ type: 'text', text: '* y \\ y _' }]);
+  });
+
+  it('parseInline_barraAlFinal_seConserva', () => {
+    expect(parseInline('fin\\')).toEqual([{ type: 'text', text: 'fin\\' }]);
+  });
+
   it('parseInline_negritaYCursivaHermanas_ambasSeParsean', () => {
     const runs = parseInline('**fuerte** y *suave*');
     expect(runs.some((r) => r.type === 'strong')).toBe(true);

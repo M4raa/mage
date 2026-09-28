@@ -121,22 +121,20 @@ export const BUILT_IN_PROVIDERS: readonly BuiltInProvider[] = [
     // VERSION si va en la etiqueta, que era lo unico que faltaba (reporte del usuario: "la lista de
     // modelos no muestra la version"): el resto de proveedores ya la llevaban y solo Claude no.
     //
-    // Al actualizarse la familia hay que tocar ESTA etiqueta y nada mas: el id sigue resolviendo solo.
-    // Lista CURADA a mano, y conviene saberlo: el CLI no publica su catalogo de modelos por ningun
-    // sitio que Mage pueda leer (el `session_init` dice con cual arranco, no cuales hay), asi que no
-    // se puede descubrir — se mantiene aqui. Añadir uno es añadir una linea.
+    // Esta lista es la RESERVA (P-026 2.4). Era falso que el CLI no publicara su catalogo: lo manda en la
+    // respuesta a `initialize` (medido en 2.1.283, 11 modelos por cuenta), y Mage lo sondea al arrancar
+    // y lo cachea por cuenta. Esto solo se ve antes del primer sondeo, o si el CLI no contesta. Sin
+    // variantes `[1m]`: el 1M es ya el contexto de todos (usuario, 2026-09-26).
     //
     // No hace falta que este todo: `modelOptionsForProvider` conserva SIEMPRE el modelo actual de la
     // pestaña aunque no figure, asi que un id escrito a mano o arrastrado de otra version sigue
     // funcionando y no desaparece del selector.
     models: [
       { id: 'sonnet', label: 'Sonnet 5' },
-      { id: 'opus', label: 'Opus 5' },
+      { id: 'opus', label: 'Opus 5.5' },
       { id: 'haiku', label: 'Haiku 4.5' },
       // Fable va con su id COMPLETO porque no tiene alias corto, al contrario que los tres de arriba.
       { id: 'claude-fable-5-1', label: 'Fable 5.1' },
-      { id: 'opus[1m]', label: 'Opus 5 · 1M contexto' },
-      { id: 'sonnet[1m]', label: 'Sonnet 5 · 1M contexto' },
     ],
   },
   {

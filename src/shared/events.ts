@@ -4,6 +4,7 @@
 // src/main/engine/normalize.ts). Es la costura que hace el nucleo provider-agnostic.
 
 import type { UsageWindowInfo } from './usage';
+import type { ProviderModel } from './providers';
 
 // Estado del worker de una sesion (espejo neutral de session_state_changed del CLI).
 export type SessionState = 'idle' | 'running' | 'requires_action';
@@ -24,7 +25,6 @@ export interface TurnUsage {
 export interface ResultInfo {
   readonly isError: boolean;
   readonly subtype: string; // 'success' | 'error_during_execution' | 'error_max_turns' | ...
-  readonly costUsd: number | null; // notacional; nunca se usa para dinero real (tokens/uso aparte)
   readonly numTurns: number | null;
   // Uso del turno cuando el proveedor lo reporta (E3, `agy`). Ausente = no lo reporta.
   readonly usage?: TurnUsage;
@@ -49,6 +49,10 @@ export interface ToolUse {
   readonly toolUseId: string;
   readonly toolName: string;
   readonly input: Readonly<Record<string, unknown>>;
+  // `tool_use_id` del subagente (Task/Agent) que la lanzo; AUSENTE en el agente principal. MEDIDO (P-026
+  // 3.4, CLI 2.1.283, `engine-spike --subagent`): los pasos de un subagente llegan como `assistant`
+  // completos con `parent_tool_use_id`, sin deltas; es lo que permite atribuirle cada paso.
+  readonly parentToolUseId?: string;
 }
 
 // Info del archivo afectado por una tool de fichero (Write/Edit), extraida del `tool_use_result`
@@ -122,6 +126,12 @@ export interface McpServerStatus {
   readonly status: string;
 }
 
+// Plugin cargado por la sesion (`system/init.plugins`): `source` es `nombre@marketplace`.
+export interface SessionPlugin {
+  readonly name: string;
+  readonly source: string | null;
+}
+
 // Union discriminada por `kind`. Cada variante es inmutable.
 export type MageEvent =
   // Arranque de sesion. `mcpServers` y `slashCommands` son lo que la sesion cargo DE VERDAD (unica
@@ -136,6 +146,12 @@ export type MageEvent =
       readonly tools: readonly string[];
       readonly mcpServers: readonly McpServerStatus[];
       readonly slashCommands: readonly string[];
+      // Lo que la sesion cargo de verdad (P-026 2.6). MEDIDO en 2.1.283 (`/rename`, sin coste): `skills` es
+      // una lista de nombres y `plugins` de `{name, path, source}`; `plugin_errors` no llega si no hay.
+      // Vacios si el CLI no los reporta (agy, versiones viejas).
+      readonly skills: readonly string[];
+      readonly plugins: readonly SessionPlugin[];
+      readonly pluginErrors: readonly string[];
     }
   | { readonly kind: 'stream_delta'; readonly text: string }
   // Mensaje COMPLETO del asistente, una vez por mensaje (no por delta). El reducer del chat lo IGNORA a
@@ -149,6 +165,9 @@ export type MageEvent =
   // `commands_available` para no tocar su reducer ni sus tests, aunque los dos salgan del mismo
   // control_response.
   | { readonly kind: 'subagents_available'; readonly subagents: readonly SubagentInfo[] }
+  // Catalogo de modelos de la CUENTA (P-026 2.4), del mismo control_response. MEDIDO en 2.1.283: 11
+  // entradas en las cuentas del usuario y 5 en el perfil privado, asi que es por config dir.
+  | { readonly kind: 'models_available'; readonly models: readonly ProviderModel[] }
   | { readonly kind: 'tool_use'; readonly tool: ToolUse }
   | { readonly kind: 'tool_result'; readonly result: ToolResult }
   | { readonly kind: 'permission_request'; readonly request: PermissionRequest }

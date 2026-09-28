@@ -52,10 +52,12 @@ export function resolveLaunchParams(
   };
 }
 
-// Valida el modo de permiso en la frontera (M2.6): undefined/'default' -> sin flag; cualquier otro
-// valor DEBE ser un PERMISSION_MODES conocido (si no, lanza: nunca un flag invalido al hijo).
+// Valida el modo de permiso en la frontera (M2.6): undefined -> sin flag, y el CLI arranca en el modo
+// que tenga configurado la cuenta (P-026 2.3: Mage lo adopta de su `initialize`). Cualquier valor DEBE
+// ser un PERMISSION_MODES conocido (si no, lanza: nunca un flag invalido al hijo). `default` SI se
+// pasa: si el usuario eligio Manual, el `defaultMode` de la cuenta no puede cambiarselo por detras.
 function resolvePermissionMode(mode: string | undefined): string | undefined {
-  if (mode === undefined || mode.length === 0 || mode === 'default') return undefined;
+  if (mode === undefined || mode.length === 0) return undefined;
   if (!(PERMISSION_MODES as readonly string[]).includes(mode)) {
     throw new Error(`Modo de permiso invalido: ${JSON.stringify(mode)} (validos: ${PERMISSION_MODES.join(', ')})`);
   }

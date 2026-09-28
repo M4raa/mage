@@ -1,6 +1,6 @@
 import { useEffect, useImperativeHandle, useRef, type Ref } from 'react';
 import { EditorView, keymap, placeholder as cmPlaceholder } from '@codemirror/view';
-import { EditorState, Prec, type Extension } from '@codemirror/state';
+import { EditorState, Prec } from '@codemirror/state';
 import { history, historyKeymap, standardKeymap } from '@codemirror/commands';
 import { promptExtensions } from '../promptExtensions';
 import type { TextState } from '../promptEditing';
@@ -32,8 +32,16 @@ export interface PromptEditorProps {
   // Devuelve `true` si la tecla se ha consumido (entonces CodeMirror no la ve).
   readonly onKeyDown: (event: KeyboardEvent) => boolean;
   readonly onPasteImages: (files: readonly File[]) => void;
+  // El contenido pasa a ocupar mas (o menos) de una linea visual (P-026 3.1). Solo se llama al CAMBIAR.
+  readonly onWrapChange: (wraps: boolean) => void;
+  // Selectores en su propia fila: el editor se queda con todo el ancho de la suya.
+  readonly stacked: boolean;
   readonly handleRef: Ref<PromptEditorHandle>;
 }
+
+// Mas de una linea visual: la altura del contenido pasa de 1,5 lineas. Lo mide CodeMirror (valores ya
+// calculados, O(1)): nada de medir el DOM a mano en cada tecla.
+const WRAP_LINE_FACTOR = 1.5;
 
 export function PromptEditor({
   value,
@@ -43,14 +51,17 @@ export function PromptEditor({
   onChange,
   onKeyDown,
   onPasteImages,
+  onWrapChange,
+  stacked,
   handleRef,
 }: PromptEditorProps): React.JSX.Element {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   // Los callbacks viven en una ref para que el editor se cree UNA vez: recrearlo en cada render
   // perderia el foco, el historial y el cursor a cada tecla.
-  const handlersRef = useRef({ onChange, onKeyDown, onPasteImages });
-  handlersRef.current = { onChange, onKeyDown, onPasteImages };
+  const handlersRef = useRef({ onChange, onKeyDown, onPasteImages, onWrapChange });
+  handlersRef.current = { onChange, onKeyDown, onPasteImages, onWrapChange };
+  const wrapsRef = useRef(false);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -78,6 +89,11 @@ export function PromptEditor({
           ),
           EditorView.updateListener.of((update) => {
             if (update.docChanged) handlersRef.current.onChange(update.state.doc.toString());
+            if (!update.docChanged && !update.geometryChanged) return;
+            const wraps = update.view.contentHeight > update.view.defaultLineHeight * WRAP_LINE_FACTOR;
+            if (wraps === wrapsRef.current) return;
+            wrapsRef.current = wraps;
+            handlersRef.current.onWrapChange(wraps);
           }),
         ],
       }),
@@ -139,5 +155,16 @@ export function PromptEditor({
   // modo ventana mira como se ve el input"). Con 160 px de base, la fila —que ahora es `flex-wrap`—
   // baja los controles a la linea siguiente antes de estrujar el editor. `min-w-0` se queda: si ni eso
   // cabe, que encoja en vez de desbordar la barra.
-  return <div ref={hostRef} className="min-w-0 flex-[1_1_160px]" data-prompt-editor="true" />;
+  //
+  // Apilado (P-026 3.1): la base es casi toda la fila (menos el `›` y el hueco), asi que los selectores
+  // no caben detras y bajan a la siguiente. Sigue siendo HIJO DIRECTO de la fila: la comprobacion de
+  // ventana pequena de `verify:gui` mide `host.parentElement`.
+  return (
+    <div
+      ref={hostRef}
+      className={`min-w-0 ${stacked ? 'flex-[1_1_calc(100%-2rem)]' : 'flex-[1_1_160px]'}`}
+      data-prompt-editor="true"
+      data-prompt-layout={stacked ? 'stacked' : 'inline'}
+    />
+  );
 }

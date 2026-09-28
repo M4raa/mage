@@ -116,6 +116,9 @@ function normalizeInit(raw: Record<string, unknown>): MageEvent[] {
       tools: toolNames(parsed.init.tools),
       mcpServers: [],
       slashCommands: [],
+      skills: [],
+      plugins: [],
+      pluginErrors: [],
     },
   ];
 }
@@ -182,7 +185,6 @@ function normalizeResult(raw: Record<string, unknown>): MageEvent[] {
     result: {
       isError,
       subtype: result.status.toLowerCase(),
-      costUsd: null, // `agy` no reporta coste: va sobre suscripcion, no sobre API de pago
       numTurns: result.num_turns ?? null,
       ...(usage === null ? {} : { usage }),
     },

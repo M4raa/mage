@@ -9,11 +9,6 @@ const REAL_INPUT = {
   description: 'Análisis previo (Pasos 0–1) de la normalización de la entidad #2 Packaging.',
 };
 
-const REAL_RESULT =
-  'Published C:\\Users\\USUARIO\\AppData\\Local\\Temp\\claude\\proyecto\\scratchpad\\packaging-informe.html at ' +
-  'https://claude.ai/code/artifact/477497ff-717a-4375-a39e-a47e383648a8\n\n' +
-  'Warning: The document\'s own <title> ("Análisis previo — Packaging") names this artifact; the `title` parameter was not applied';
-
 describe('parseArtifactDraft', () => {
   it('parseArtifactDraft_inputSinTitle_tituloCaeAlNombreDelFichero', () => {
     // En la tarjeta hay que ver ALGO, y la ruta entera del scratchpad no es un titulo.
