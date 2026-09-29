@@ -225,6 +225,22 @@ export const ResultSchema = z.object({
   num_turns: z.number().nullish(),
 });
 
+// Comando LOCAL del CLI (P-028, grupo C). MEDIDO contra 2.1.284 (`/rename`, `/context`, `/mcp`...): no
+// hay deltas; llega UN `assistant` con `message.model: "<synthetic>"`, el texto en `content` y
+// `local_command_run: {command, args}`. Tolerante: es render, nunca tumba la conversacion.
+export const LocalCommandRunSchema = z
+  .object({ command: z.string().catch(''), args: z.string().catch('') })
+  .passthrough()
+  .catch({ command: '', args: '' });
+
+// `conversation_reset` (P-028, `/clear`). MEDIDO contra 2.1.284 con `spike/engine-spike.mjs --clear`:
+// `{type, new_conversation_id, trigger: "clear", user_message_uuid, timestamp, uuid, session_id}`, con
+// `session_id` todavia el VIEJO; despues llegan un `system/init` y un `result` con el id nuevo, y el CLI
+// escribe un `.jsonl` nuevo. Estricto en el id: sin el, Mage seguiria leyendo la transcripcion vieja.
+export const ConversationResetSchema = z
+  .object({ type: z.literal('conversation_reset'), new_conversation_id: z.string().min(1) })
+  .passthrough();
+
 export type InitEvent = z.infer<typeof InitSchema>;
 export type CanUseToolEvent = z.infer<typeof CanUseToolSchema>;
 export type ResultEvent = z.infer<typeof ResultSchema>;

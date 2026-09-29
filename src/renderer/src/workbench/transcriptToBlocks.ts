@@ -6,7 +6,9 @@ import { classifyTool } from './toolClassify';
 import { completeArtifactPublication, parseArtifactDraft } from '@shared/artifacts';
 import { SUBAGENT_TOOL_NAMES } from './toolSummary';
 import { noticeTextFor } from './cliNotices';
+import { RATE_LIMIT_LINE } from './rateLimit';
 import { classifySystemWrapper } from '@shared/systemWrappers';
+import { EMPTY_SUBAGENT_RUN, withSubagentRun, withSubagentUpdate } from './engineBlocks';
 
 // Reconstruye los bloques del chat (M2.5b) a partir de una transcripcion persistida ya cargada, para
 // que una conversacion REANUDADA no arranque con el panel principal vacio. PURO (datos -> datos,
@@ -35,6 +37,8 @@ export function transcriptToBlocks(entries: readonly TranscriptEntry[], thinking
       // Las lineas `system` del CLI se tiraban enteras, asi que un `/compact` DESAPARECIA al reanudar
       // la conversacion. Ahora las que son avisos vuelven al hilo como linea de sistema (2.5).
       appendSystemNotice(entry, blocks);
+    } else if (entry.kind === 'attachment') {
+      closeSubagentFromQueuedNotice(entry.raw, blocks, toolIndexById);
     }
     // metadata/unknown: no aportan al hilo de conversacion -> se ignoran.
   }
@@ -51,7 +55,8 @@ function appendUserOrResult(entry: TranscriptEntry, blocks: Block[], toolIndexBy
     const current = blocks[index];
     if (current === undefined) return;
     if (current.kind === 'subagent') {
-      blocks[index] = { ...current, agentId: result.agentId ?? current.agentId, status: result.isError ? 'error' : 'completado' };
+      // Sin `durationMs`: la transcripcion no dice cuanto tardo la llamada (el CLI si, en el resultado).
+      blocks[index] = withSubagentRun({ ...current, agentId: result.agentId ?? current.agentId }, result.subagent, { isError: result.isError, durationMs: null });
       return;
     }
     if (current.kind !== 'tool') return;
@@ -72,7 +77,7 @@ function appendUserOrResult(entry: TranscriptEntry, blocks: Block[], toolIndexBy
   // Un mensaje que era SOLO una imagen tambien es un mensaje: con la condicion antigua (solo texto)
   // desaparecia del hilo.
   if (text.length === 0 && attachments.length === 0) return;
-  if (attachments.length === 0 && appendWrapperNotice(entry, text, blocks)) return;
+  if (attachments.length === 0 && appendWrapperNotice(entry, text, blocks, toolIndexById)) return;
   blocks.push({ kind: 'user', id: blockId(entry.index, 0), text, time: formatTime(entry.timestampMs), attachments });
 }
 
@@ -80,21 +85,60 @@ function appendUserOrResult(entry: TranscriptEntry, blocks: Block[], toolIndexBy
 // recordatorios no se pintan, y la salida de un comando o el aviso de una tarea en segundo plano son una
 // linea de sistema. Devuelve true si la entrada ya esta resuelta. Un COMANDO y una TAREA PROGRAMADA
 // siguen siendo del usuario: se quedan como bloque `user` y `BlockChat` los pinta como chip y tarjeta.
-function appendWrapperNotice(entry: TranscriptEntry, text: string, blocks: Block[]): boolean {
+function appendWrapperNotice(entry: TranscriptEntry, text: string, blocks: Block[], toolIndexById: ReadonlyMap<string, number> = NO_TOOL_INDEX): boolean {
   const wrapper = classifySystemWrapper(text);
   switch (wrapper.kind) {
     case 'caveat':
     case 'reminder':
       return true;
+    // El MISMO bloque que en directo (P-028): al reabrir, `/context` se lee igual que cuando se lanzo.
     case 'command-output':
-      if (wrapper.output.length > 0) blocks.push({ kind: 'system', id: blockId(entry.index, 0), text: wrapper.output });
+      if (wrapper.output.length > 0) {
+        blocks.push({ kind: 'command-output', id: blockId(entry.index, 0), command: precedingCommandName(blocks), text: wrapper.output });
+      }
       return true;
     case 'task-notification':
+      closeSubagent(wrapper, blocks, toolIndexById);
       blocks.push({ kind: 'system', id: blockId(entry.index, 0), text: taskNotificationText(wrapper.summary) });
       return true;
     default:
       return false;
   }
+}
+
+// El aviso de fin de un subagente en segundo plano CIERRA su bloque (P-028 37a). Si llego con el turno
+// principal en marcha, el CLI no lo guarda como mensaje sino como adjunto `queued_command` (medido en
+// la sesion 206a3694): se lee de ahi tambien, sin pintar linea (no la hubo en vivo).
+const NO_TOOL_INDEX: ReadonlyMap<string, number> = new Map();
+type TaskNotice = Extract<ReturnType<typeof classifySystemWrapper>, { kind: 'task-notification' }>;
+
+function closeSubagent(notice: TaskNotice, blocks: Block[], toolIndexById: ReadonlyMap<string, number>): void {
+  if (notice.toolUseId === null) return;
+  const index = toolIndexById.get(notice.toolUseId);
+  const current = index === undefined ? undefined : blocks[index];
+  if (index === undefined || current === undefined || current.kind !== 'subagent') return;
+  const { toolUseId, tokens, toolUses, durationMs } = notice;
+  blocks[index] = withSubagentUpdate(current, { toolUseId, status: notice.status ?? 'completed', tokens, toolUses, durationMs });
+}
+
+function closeSubagentFromQueuedNotice(raw: unknown, blocks: Block[], toolIndexById: ReadonlyMap<string, number>): void {
+  if (typeof raw !== 'object' || raw === null) return;
+  const attachment = (raw as { attachment?: unknown }).attachment;
+  if (typeof attachment !== 'object' || attachment === null) return;
+  const { type, prompt } = attachment as { type?: unknown; prompt?: unknown };
+  if (type !== 'queued_command' || typeof prompt !== 'string') return;
+  const wrapper = classifySystemWrapper(prompt);
+  if (wrapper.kind === 'task-notification') closeSubagent(wrapper, blocks, toolIndexById);
+}
+
+// Nombre (sin barra) del comando cuya salida es esta: el CLI escribe el `<command-name>` justo antes.
+function precedingCommandName(blocks: readonly Block[]): string | null {
+  const last = blocks[blocks.length - 1];
+  if (last === undefined || last.kind !== 'user') return null;
+  const wrapper = classifySystemWrapper(last.text);
+  if (wrapper.kind !== 'command') return null;
+  const name = wrapper.command.split(/\s/)[0]?.replace(/^\//, '') ?? '';
+  return name.length > 0 ? name : null;
 }
 
 function taskNotificationText(summary: string): string {
@@ -112,6 +156,13 @@ interface ThinkingCursor {
 }
 
 function appendAssistant(entry: TranscriptEntry, blocks: Block[], toolIndexById: Map<string, number>, thinking: ThinkingCursor): void {
+  // El aviso de limite que el CLI persiste como `assistant` con `error: "rate_limit"` no es una respuesta
+  // del agente: se pinta como la misma linea de sistema que en vivo, con su texto en el tooltip (P-028, 20).
+  if (isRecord(entry.raw) && entry.raw.error === 'rate_limit') {
+    const tip = assistantText(entry.raw).trim();
+    blocks.push({ kind: 'system', id: blockId(entry.index, 0), text: RATE_LIMIT_LINE, ...(tip.length === 0 ? {} : { tip }) });
+    return;
+  }
   let slot = 0;
   // Pensamiento (2.5). MEDIDO: el CLI persiste los bloques `thinking` con texto VACIO (solo su firma),
   // asi que al reanudar se puede decir "pensó" pero no QUE penso. Se pinta igualmente: esconderlo
@@ -142,9 +193,7 @@ function appendAssistant(entry: TranscriptEntry, blocks: Block[], toolIndexById:
         toolUseId: use.toolUseId,
         agentType: stringOrNull(use.input.subagent_type),
         description: stringOrNull(use.input.description),
-        agentId: null,
-        status: null,
-        elapsedMs: null,
+        ...EMPTY_SUBAGENT_RUN,
       });
       toolIndexById.set(use.toolUseId, blocks.length - 1);
       continue;

@@ -36,12 +36,14 @@ import {
   dialog,
   Notification,
   nativeTheme,
+  screen,
 } from 'electron';
 import {
   EVENT_CHANNEL,
   IpcChannel,
   JUMP_LIST_OPEN_CHANNEL,
   MODEL_CATALOG_CHANGED_CHANNEL,
+  NOTIFICATION_CLICKED_CHANNEL,
   SETTINGS_CHANGED_CHANNEL,
   TRANSCRIPT_BATCH_CHANNEL,
   WIDGET_ENABLED_CHANGED_CHANNEL,
@@ -74,6 +76,7 @@ import type {
   SendMessageParams,
   SetModelParams,
   SetPermissionModeParams,
+  StopTaskParams,
   SharedConfigSnapshot,
   MageWindowInfo,
   MoveTabToWindowParams,
@@ -95,12 +98,18 @@ import type { RendererLogInput } from '@shared/debug';
 import type { AccountInfo, CliLoginStart, EmbeddedLoginResult } from '@shared/accounts';
 import { BASE_ARGS as CLAUDE_BASE_ARGS, ClaudeAdapter } from './engine/claudeAdapter';
 import { probeModelCatalogs, type ProbeProcess } from './engine/modelProbe';
-import type { ProviderModel } from '@shared/providers';
+import { registerMcpIpc } from './config/mcpIpc';
+import { resolveClaudeDesktopDirs, type McpAccountLocation } from './config/mcpInventory';
+import { probeMcpStatuses } from './config/mcpStatusProbe';
+import { authenticateMcp } from './config/mcpAuthFlow';
+import { FAKE_AUTH_URL, spawnFakeMcpCli } from './config/mcpFakeCli';
+import type { ProviderAuthSummary, ProviderModel } from '@shared/providers';
 import { GatewayAdapter } from './engine/gatewayAdapter';
 import { AgyAdapter } from './engine/agyAdapter';
 import { defaultProbeDeps, probeProvider } from './engine/providerProbe';
 import { findAgyBinary } from './os/agyBinaryResolver';
-import { AGY_PROVIDER_ID } from '@shared/providers';
+import { AGY_PROVIDER_ID, BUILT_IN_PROVIDERS, hasAdapter } from '@shared/providers';
+import { providerAuthSummary } from './engine/providerAuth';
 import { setCustomProviderLoader, setGatewayLogger, startGateway, stopGateway } from './engine/proxy/gateway';
 import { defaultKillTreeDeps, killProcessTree } from './os/processTree';
 import { SessionManager } from './engine/sessionManager';
@@ -139,7 +148,7 @@ import { openArtifactWindow } from './artifacts/artifactWindow';
 import { InstructionsService } from './instructions/instructionsService';
 import { EffectiveSettingsService } from './config/effectiveSettingsService';
 import { ConversationIndexStore } from './state/conversationIndexStore';
-import { ProjectFileService } from './files/projectFileService';
+import { ProjectFileService, resolveProjectFilePath } from './files/projectFileService';
 import { writeAtomic, type AtomicWriteDeps } from './os/atomicFile';
 import { SettingsStore } from './state/settingsStore';
 import { expiredScratchDirs, SWEEP_INTERVAL_MS } from './state/scratchRetention';
@@ -157,7 +166,15 @@ import { ThemeMarketService } from './theme/themeMarketService';
 import type { FetchThemeParams } from '@shared/themeMarket';
 import { startAutoUpdate } from './update/autoUpdate';
 import { pathEquals } from './os/pathUtils';
-import { isWindowId, MAIN_WINDOW_ID, WindowManager } from './windows/windowManager';
+import { isWindowId, MAIN_WINDOW_ID, WindowManager, type WindowPlacement } from './windows/windowManager';
+import { resolveDropTarget } from './windows/dropTarget';
+import { PERSISTED_TAB_SCHEMA } from '@shared/stateSchema';
+import type { PersistedTab } from '@shared/state';
+import type { DropTabOutcome } from '@shared/ipc';
+import { CLOSE_DIALOG_BUTTONS, CLOSE_DIALOG_CANCEL_INDEX, interpretCloseDialog, resolveCloseAction } from './windows/closePolicy';
+import type { CloseBehavior } from '@shared/settings';
+import { fitSavedBounds, WindowBoundsStore, type SavedWindowBounds } from './windows/windowBounds';
+import { NotificationCenter } from './notifications/notificationCenter';
 
 // __dirname no existe en modulos ESM: lo derivamos de import.meta.url.
 const currentDir = dirname(fileURLToPath(import.meta.url));
@@ -190,10 +207,20 @@ const WINDOW = { width: 1200, height: 800, minWidth: 900, minHeight: 600 } as co
 // mismo objeto para todas, asi que no puede haber discrepancia de configuracion. Lo que cambia por
 // ventana es el workspace del renderer (pestañas, paneles, cuenta activa y conversaciones abiertas).
 // La configuracion de la ventana (webPreferences incluidas) vive SOLO en `createWorkbenchWindow`.
-const windowManager = new WindowManager<BrowserWindow>({ createWindow: () => createWorkbenchWindow() });
+const windowManager = new WindowManager<BrowserWindow, PersistedTab>({
+  createWindow: (windowId, placement) => createWorkbenchWindow(windowId, placement),
+  discardState: (windowId) => discardWindowState(windowId),
+});
 
-// La ventana principal SOLO si sigue viva. Cerrarla con la X del SO la DESTRUYE (no hay `close`
-// interceptado) y Mage sigue en el tray. Quien quiera ENSEÑARLA usa `focusMainWindow()`, que ademas
+// La app esta saliendo (`before-quit`). Lo lee el `close` de cada ventana para no interponer el dialogo
+// de cierre en una salida ya decidida: «Salir» de la bandeja, Cmd+Q y, sobre todo, `quitAndInstall`
+// del autoupdater, que se quedaria sin instalar si una ventana cancelara la salida.
+let isQuitting = false;
+// Un solo dialogo de cierre a la vez (dos clics seguidos en la X no abren dos).
+let closePromptOpen = false;
+
+// La ventana principal SOLO si sigue viva. Su X puede ocultarla (segundo plano) o destruirla (ver
+// `onWorkbenchClose`) y Mage sigue en el tray. Quien quiera ENSEÑARLA usa `focusMainWindow()`, que ademas
 // la recrea; esto es para los que solo la usan si esta.
 function liveMainWindow(): BrowserWindow | null {
   return windowManager.get(MAIN_WINDOW_ID);
@@ -204,6 +231,25 @@ function liveMainWindow(): BrowserWindow | null {
 function senderWindowId(event: Electron.IpcMainInvokeEvent | Electron.IpcMainEvent): string {
   return windowManager.windowIdOf(event.sender.id) ?? MAIN_WINDOW_ID;
 }
+// Notificaciones del SO con clic que lleva a la conversacion (P-028 40).
+const notificationCenter = new NotificationCenter({
+  isSupported: () => Notification.isSupported(),
+  create: (options) => new Notification(options),
+  isWindowFocused: (windowId) => windowManager.get(windowId)?.isFocused() === true,
+  focusWindow: (windowId) => {
+    if (windowManager.focus(windowId)) return windowId;
+    focusMainWindow();
+    return MAIN_WINDOW_ID;
+  },
+  sendClicked: (windowId, target) => windowManager.get(windowId)?.webContents.send(NOTIFICATION_CLICKED_CHANNEL, target),
+});
+
+// AppUserModelID de Windows: sin el, las notificaciones salen como «electron.app.Mage» y el Centro de
+// actividades no las asocia a la app. Es el `appId` de electron-builder.yml (el acceso directo del
+// instalador lo lleva). En desarrollo no hay acceso directo con ese id: se usa el del ejecutable, que es
+// lo que Electron recomienda para que se vean.
+const WINDOWS_APP_USER_MODEL_ID = 'com.m4raa.mage';
+
 let tray: Tray | null = null;
 // Controlador del widget flotante (M3): lazy (necesita app.whenReady para userData/preload).
 let widgetWindow: WidgetWindowController | null = null;
@@ -245,7 +291,7 @@ function settingsCommonPath(): string {
 // Importacion inicial de mcp-common.json (P-026 2.5, D10): Mage pasa a ser la fuente de verdad de los
 // MCP compartidos. Solo si el fichero no existe: se crea con `~/.claude/mcp-shared.json` (el que
 // regeneraba el script del usuario) + los MCP de ambito usuario del `.claude.json` de cada cuenta. Las
-// notas (colisiones de nombre) se enseñan en Ajustes -> Config. compartida en esta ejecucion.
+// notas (colisiones de nombre) se enseñan en Ajustes -> MCP y conectores en esta ejecucion.
 const LEGACY_SHARED_MCP_FILE = 'mcp-shared.json';
 let mcpImportNotes: readonly string[] = [];
 
@@ -267,6 +313,50 @@ function importSharedMcpOnce(): void {
     // No tumba el arranque: sin importacion, Mage sigue como antes (sin MCP comunes).
     mainLog('warn', `No se pudo importar mcp-common.json: ${err instanceof Error ? err.message : String(err)}`);
   }
+}
+
+// Fuentes FALSAS para `verify:gui` (P-028): con MAGE_MCP_FAKE_SOURCES=<dir>, el inventario lee el
+// `.claude.json` de cada cuenta como `<dir>/<nombre de la cuenta>.json`, Claude Desktop como `<dir>/Claude`
+// y el legado como `<dir>/mcp-shared.json`. Nunca se lee lo real de la maquina en una verificacion.
+function mcpFakeSourcesPath(name: string): string | null {
+  const dir = process.env.MAGE_MCP_FAKE_SOURCES;
+  return dir === undefined || dir.length === 0 ? null : join(dir, name);
+}
+
+// `.claude.json` de cada cuenta de Claude (la principal lo guarda en HOME, como en importSharedMcpOnce).
+function mcpAccountLocations(): readonly McpAccountLocation[] {
+  const { stateFileName } = cliLogin.accounts;
+  return accountService.listAccounts().map((account) => ({
+    configDir: account.configDir,
+    label: account.name.replace(/^\./, ''),
+    stateFile:
+      mcpFakeSourcesPath(`${account.name}.json`) ?? (account.isMain ? join(homedir(), stateFileName) : join(account.configDir, stateFileName)),
+  }));
+}
+
+// Sondeo de estado de MCP (mcp_status, sin turno): como el de modelos, pero CON la config comun, que es
+// lo que carga una sesion real de Mage. Plazo holgado: los MCP tardan en pasar de `pending`.
+const MCP_STATUS_TIMEOUT_MS = 20_000;
+const MCP_STATUS_POLL_MS = 1_000;
+// «Autenticar» (punto 18): el CLI tiene que seguir vivo hasta que el usuario acabe en el navegador.
+const MCP_AUTH_TIMEOUT_MS = 5 * 60_000;
+const MCP_AUTH_POLL_MS = 2_000;
+// verify:gui: CLI falso en proceso (config/mcpFakeCli.ts). Nunca se spawnea nada ni se abre el navegador.
+const MCP_FAKE_CLI = process.env.MAGE_MCP_FAKE_CLI === '1';
+
+// Mismo proceso que el sondeo de modelos, pero con --mcp-config/--settings: es lo que carga una sesion.
+function spawnMcpStatusProbe(configDir: string): ProbeProcess {
+  if (MCP_FAKE_CLI) return spawnFakeMcpCli(configDir);
+  return spawnModelProbe(configDir, loadSharedConfigArgs());
+}
+
+// La URL de autorizacion va al navegador del sistema por OpenWithService (solo https, multiplataforma).
+function openMcpAuthUrl(url: string): Promise<void> {
+  if (MCP_FAKE_CLI) {
+    mainLog('info', 'MCP falso: no se abre el navegador', { esLaFalsa: url === FAKE_AUTH_URL });
+    return Promise.resolve();
+  }
+  return openWithService.openExternal(url);
 }
 
 // Se re-lee en CADA lanzamiento (nunca se cachea el resultado): son ficheros que el usuario puede
@@ -354,6 +444,7 @@ const accountService = new AccountService({
   layout: accountLayoutOf(new ClaudeAdapter()),
   homedir: homedir(),
   listHome: () => readdirSync(homedir()),
+  listDir: (path) => (existsSync(path) ? readdirSync(path) : []),
   isDirectory: (path) => tryIsDirectory(path),
   exists: existsSync,
   readJson: (path) => tryReadJson(path),
@@ -574,12 +665,72 @@ function isUnderManagedProjects(targetPath: string): boolean {
 // SOLO `plans`, nunca el config dir entero: ahi tambien vive `.credentials.json`, y abrir un canal de
 // lectura de fichero arbitrario sobre el directorio de la cuenta seria regalar las credenciales.
 function isUnderManagedPlans(targetPath: string): boolean {
+  const rest = segmentsInsideManagedConfigDir(targetPath);
+  return rest !== null && rest[0] === 'plans' && rest.length >= 2;
+}
+
+// Tercera raiz (P-028, 15): la MEMORIA del CLI, `<cuenta>/projects/<slug>/memory/…` (y la del perfil
+// privado). Un tercio de los ficheros que el panel no abria eran estos `.md`. Anclada por estructura
+// como `plans`: solo el subdirectorio `memory` de un proyecto, nunca `projects` entero (ahi viven las
+// transcripciones de todas las conversaciones).
+function isUnderManagedMemory(targetPath: string): boolean {
+  const rest = segmentsInsideManagedConfigDir(targetPath);
+  return rest !== null && rest[0] === 'projects' && rest[2] === 'memory' && rest.length >= 4;
+}
+
+// Segmentos de la ruta DENTRO del config dir de una cuenta gestionada (saltando `mage-private` si
+// esta), o null si no cuelga de ninguna. Es la base comun de las raices ancladas por estructura.
+function segmentsInsideManagedConfigDir(targetPath: string): readonly string[] | null {
   const resolved = resolve(targetPath);
-  if (!isInsideHome(resolved)) return false;
+  if (!isInsideHome(resolved)) return null;
   const segments = resolved.slice(homedir().length).split(sep).filter(Boolean);
-  if (segments.length < 3 || !ACCOUNT_DIR_PATTERN.test(segments[0] ?? '')) return false;
-  if (segments[1] === 'plans') return true;
-  return segments[1] === PRIVATE_PROFILE_SEGMENT && segments[2] === 'plans' && segments.length >= 4;
+  if (!ACCOUNT_DIR_PATTERN.test(segments[0] ?? '')) return null;
+  return segments[1] === PRIVATE_PROFILE_SEGMENT ? segments.slice(2) : segments.slice(1);
+}
+
+// Ficheros de fuera del cwd que el usuario aprobo abrir EN ESTA EJECUCION (P-028, 15). En memoria a
+// proposito: la aprobacion es por fichero y por ejecucion. Clave canonica (8.3 resuelto y, en win32,
+// sin mayusculas), la misma que se consulta al leer.
+const approvedOutsidePaths = new Set<string>();
+
+// Nombres que nunca se aprueban, se pregunte lo que se pregunte: son las credenciales y el estado
+// (`oauthAccount`, `userID`) de una cuenta del CLI. Un clic de mas en el dialogo no puede sacarlos.
+const NEVER_APPROVED_FILE_NAMES: ReadonlySet<string> = new Set(['.credentials.json', '.claude.json']);
+
+function approvalKey(targetPath: string): string {
+  const canonical = canonicalPath(targetPath);
+  return process.platform === 'win32' ? canonical.toLowerCase() : canonical;
+}
+
+function isApprovedOutside(targetPath: string): boolean {
+  return approvedOutsidePaths.has(approvalKey(targetPath));
+}
+
+// Pregunta con un dialogo nativo si abrir un fichero de fuera de la carpeta de la conversacion. La
+// ruta que se ENSEÑA y la que se APRUEBA es la que resuelve main, nunca un texto del renderer.
+async function approveOutsideFile(event: Electron.IpcMainInvokeEvent, params: ReadProjectFileParams): Promise<boolean> {
+  if (params.cwd.trim().length === 0 || params.path.trim().length === 0) {
+    throw new Error(`Carpeta o ruta vacia al aprobar un fichero: ${JSON.stringify(params)}`);
+  }
+  const path = resolveProjectFilePath(params);
+  if (NEVER_APPROVED_FILE_NAMES.has(basename(path).toLowerCase())) {
+    throw new Error(`Mage no abre ficheros de credenciales del CLI: ${path}`);
+  }
+  if (isApprovedOutside(path)) return true;
+  const options: Electron.MessageBoxOptions = {
+    type: 'warning',
+    message: 'Este fichero está fuera de la carpeta de la conversación',
+    detail: `${path}\n\nSi lo abres, podrás leerlo y editarlo desde Mage hasta que cierres la aplicación.`,
+    buttons: ['Abrir', 'Cancelar'],
+    defaultId: 1,
+    cancelId: 1,
+    noLink: true,
+  };
+  const parent = BrowserWindow.fromWebContents(event.sender);
+  const { response } = parent === null ? await dialog.showMessageBox(options) : await dialog.showMessageBox(parent, options);
+  if (response !== 0) return false;
+  approvedOutsidePaths.add(approvalKey(path));
+  return true;
 }
 
 // Lleva una ruta a su forma CANONICA del sistema de ficheros. En Windows la misma carpeta se escribe
@@ -910,8 +1061,8 @@ const MODEL_PROBE_START_DELAY_MS = 5_000; // tras abrir la ventana, para no comp
 const MODEL_PROBE_TIMEOUT_MS = 5_000; // ~3× lo medido; si vence, se mata y se queda la cache anterior
 const MODEL_PROBE_EXIT_GRACE_MS = 3_000; // tras cerrar la entrada, antes de matar el arbol
 
-function spawnModelProbe(configDir: string): ProbeProcess {
-  const child = spawn(resolveClaudeBinary(), [...CLAUDE_BASE_ARGS], {
+function spawnModelProbe(configDir: string, extraArgs: readonly string[] = []): ProbeProcess {
+  const child = spawn(resolveClaudeBinary(), [...CLAUDE_BASE_ARGS, ...extraArgs], {
     // HOME como cwd: el sondeo no es de ningun proyecto, y asi no lee la configuracion de una carpeta
     // cualquiera (la del ejecutable de Mage).
     cwd: homedir(),
@@ -921,7 +1072,7 @@ function spawnModelProbe(configDir: string): ProbeProcess {
   });
   child.stdout.setEncoding('utf8');
   // Un EPIPE al escribir en un CLI que ya murio no puede tumbar main: la salida ya lo trata como fallo.
-  child.stdin.on('error', (err) => mainLog('debug', 'Sondeo de modelos: stdin cerrado', { error: err.message }));
+  child.stdin.on('error', (err) => mainLog('debug', 'Sondeo del CLI: stdin cerrado', { error: err.message }));
   return {
     onStdout: (listener) => child.stdout.on('data', listener),
     onExit: (listener) => {
@@ -985,6 +1136,59 @@ function workspaceFilePath(windowId: string): string {
   const name = safeId === MAIN_WINDOW_ID ? 'workspace-state.json' : `workspace-state-${safeId}.json`;
   return join(app.getPath('userData'), name);
 }
+// Tamaño y posicion de cada ventana (P-028, 29 bug 3): un solo fichero con una entrada por id.
+let windowBoundsStoreSingleton: WindowBoundsStore | null = null;
+function getWindowBoundsStore(): WindowBoundsStore {
+  windowBoundsStoreSingleton ??= new WindowBoundsStore({
+    filePath: join(app.getPath('userData'), 'window-bounds.json'),
+    exists: existsSync,
+    readFile: (path) => readFileSync(path, 'utf8'),
+    writeFile: (path, data) => writeFileSync(path, data, 'utf8'),
+    rename: renameSync,
+    tempSuffix: () => randomUUID(),
+  });
+  return windowBoundsStoreSingleton;
+}
+
+// Bounds guardados de esa ventana si siguen cayendo en una pantalla conectada; null = por defecto.
+// Un fallo de lectura no puede impedir abrir la ventana: se traza y se abre con el tamaño de siempre.
+function restoredWindowBounds(windowId: string): SavedWindowBounds | null {
+  try {
+    const workAreas = screen.getAllDisplays().map((display) => display.workArea);
+    return fitSavedBounds(getWindowBoundsStore().load(windowId), workAreas, { width: WINDOW.minWidth, height: WINDOW.minHeight });
+  } catch (err) {
+    mainLog('warn', 'No se pudieron leer los bounds de la ventana', { windowId, error: err instanceof Error ? err.message : String(err) });
+    return null;
+  }
+}
+
+// Se guarda al CERRAR (tambien al salir: `app.quit()` cierra cada ventana, oculta o no). Con la
+// ventana maximizada se guardan sus bounds NORMALES, que son a los que vuelve al desmaximizar.
+function saveWindowBounds(window: BrowserWindow, windowId: string): void {
+  if (window.isDestroyed()) return;
+  const normal = window.getNormalBounds();
+  const bounds: SavedWindowBounds = {
+    x: Math.round(normal.x),
+    y: Math.round(normal.y),
+    width: Math.round(normal.width),
+    height: Math.round(normal.height),
+    maximized: window.isMaximized(),
+  };
+  try {
+    getWindowBoundsStore().save(windowId, bounds);
+  } catch (err) {
+    mainLog('warn', 'No se pudieron guardar los bounds de la ventana', { windowId, error: err instanceof Error ? err.message : String(err) });
+  }
+}
+
+// Olvida pestañas y disposicion de paneles guardadas de una ventana (ver `WindowManagerDeps.discardState`).
+// `force` = no lanza si no existian; cualquier otro fallo (EBUSY...) si, y sube al llamador.
+function discardWindowState(windowId: string): void {
+  const safeId = isWindowId(windowId) ? windowId : MAIN_WINDOW_ID;
+  const suffix = safeId === MAIN_WINDOW_ID ? '' : `-${safeId}`;
+  for (const base of ['workspace-state', 'panels-layout']) rmSync(join(app.getPath('userData'), `${base}${suffix}.json`), { force: true });
+}
+
 function getWorkspaceStore(windowId: string = MAIN_WINDOW_ID): WorkspaceStore {
   const cached = workspaceStoresByWindow.get(windowId);
   if (cached !== undefined) return cached;
@@ -1062,10 +1266,12 @@ function titleBarOverlayFromTheme(): { color: string; symbolColor: string; heigh
 // activado y sin nodeIntegration -> el renderer no toca Node/procesos. Es la UNICA fabrica de
 // ventanas del workbench: la principal y las secundarias salen de aqui, asi que comparten
 // literalmente las mismas `webPreferences` (no hay forma de abrir una ventana menos aislada).
-function createWorkbenchWindow(): BrowserWindow {
+function createWorkbenchWindow(windowId: string, placement?: WindowPlacement): BrowserWindow {
+  // Una ventana abierta al soltar una pestaña nace bajo el cursor con el tamaño por defecto; las demas
+  // recuperan sus bounds guardados.
+  const saved = placement === undefined ? restoredWindowBounds(windowId) : null;
   const window = new BrowserWindow({
-    width: WINDOW.width,
-    height: WINDOW.height,
+    ...windowGeometry(saved, placement),
     minWidth: WINDOW.minWidth,
     minHeight: WINDOW.minHeight,
     show: false,
@@ -1096,7 +1302,11 @@ function createWorkbenchWindow(): BrowserWindow {
     },
   });
 
-  window.on('ready-to-show', () => window.show());
+  window.on('ready-to-show', () => {
+    if (saved?.maximized === true) window.maximize();
+    window.show();
+  });
+  window.on('close', (event) => onWorkbenchClose(window, windowId, event));
   // La jump list muestra conversaciones recientes: se refresca cuando CUALQUIER ventana recupera el
   // foco, no solo la principal (el propio `refreshJumpList` ya se limita con su intervalo minimo).
   window.on('focus', refreshJumpList);
@@ -1108,6 +1318,109 @@ function createWorkbenchWindow(): BrowserWindow {
     void window.loadFile(join(currentDir, '../renderer/index.html'));
   }
   return window;
+}
+
+// Geometria inicial: bajo el cursor (arrastre), la guardada, o el tamaño por defecto centrado.
+function windowGeometry(saved: SavedWindowBounds | null, placement: WindowPlacement | undefined): Electron.Rectangle | { width: number; height: number } {
+  if (placement !== undefined) return { x: placement.x, y: placement.y, width: WINDOW.width, height: WINDOW.height };
+  if (saved !== null) return { x: saved.x, y: saved.y, width: saved.width, height: saved.height };
+  return { width: WINDOW.width, height: WINDOW.height };
+}
+
+// Una pestaña que llega por IPC se valida con el MISMO esquema con que se lee el workspace: lo que
+// cruza a otra ventana acaba persistido en su fichero.
+function parsePersistedTab(value: unknown): PersistedTab {
+  const result = PERSISTED_TAB_SCHEMA.safeParse(value);
+  if (!result.success) throw new Error(`Pestaña no valida para otra ventana: ${result.error.message}`);
+  return result.data as PersistedTab;
+}
+
+// Cuanto se desplaza la ventana nueva respecto al cursor: que el puntero caiga sobre su barra de
+// pestañas y no en la esquina exacta, donde el SO pone el tirador de redimension.
+const DROP_WINDOW_OFFSET_PX = { x: 60, y: 16 } as const;
+
+// Se solto una pestaña fuera de su ventana (P-028, 36). Sobre otra ventana visible de Mage -> se le
+// entrega; fuera de todas -> ventana nueva bajo el cursor; dentro de la propia -> nada. En Wayland no
+// hay posicion global del cursor fiable fuera de la app: se deja el menu contextual (D36-5).
+function dropTabOutside(senderId: string, tab: PersistedTab): DropTabOutcome {
+  if (process.platform === 'linux' && process.env['XDG_SESSION_TYPE'] === 'wayland') return 'none';
+  const cursor = screen.getCursorScreenPoint();
+  const windows = windowManager
+    .list()
+    .map((windowId) => ({ windowId, window: windowManager.get(windowId) }))
+    .filter((entry) => entry.window?.isVisible() === true)
+    .map((entry) => ({ windowId: entry.windowId, bounds: (entry.window as BrowserWindow).getBounds() }));
+  const target = resolveDropTarget(cursor, windows, senderId);
+  if (target.kind === 'self') return 'none';
+  if (target.kind === 'window') {
+    windowManager.sendTo(target.windowId, WINDOW_TAB_RECEIVED_CHANNEL, tab);
+    windowManager.focus(target.windowId);
+    return 'moved';
+  }
+  windowManager.openWith(tab, { x: cursor.x - DROP_WINDOW_OFFSET_PX.x, y: cursor.y - DROP_WINDOW_OFFSET_PX.y });
+  return 'moved';
+}
+
+// Ventanas del workbench a la vista (una oculta en segundo plano no cuenta; una minimizada si).
+function visibleWorkbenchWindowCount(): number {
+  return windowManager.list().filter((windowId) => windowManager.get(windowId)?.isVisible() === true).length;
+}
+
+// La X de una ventana (P-028, 17). La decision es pura (`resolveCloseAction`); aqui solo se ejecuta.
+function onWorkbenchClose(window: BrowserWindow, windowId: string, event: Electron.Event): void {
+  saveWindowBounds(window, windowId);
+  const action = resolveCloseAction({
+    behavior: getSettingsStore().load().closeBehavior,
+    isQuitting,
+    isMainWindow: windowId === MAIN_WINDOW_ID,
+    visibleWindowCount: visibleWorkbenchWindowCount(),
+    platform: process.platform,
+  });
+  if (action === 'close') return;
+  event.preventDefault();
+  if (action === 'hide') {
+    window.hide();
+    return;
+  }
+  if (action === 'quit') {
+    app.quit();
+    return;
+  }
+  void askCloseBehavior(window);
+}
+
+// Dialogo nativo de cierre. «Recordar mi decisión» lo guarda main (es el unico que lo sabe) y lo
+// difunde a TODAS las ventanas, la que pregunto incluida: ninguna lo tiene aplicado todavia.
+async function askCloseBehavior(window: BrowserWindow): Promise<void> {
+  if (closePromptOpen) return;
+  closePromptOpen = true;
+  try {
+    const answer = await dialog.showMessageBox(window, {
+      type: 'question',
+      message: '¿Cerrar Mage?',
+      detail:
+        'En segundo plano, Mage sigue en la bandeja del sistema y los agentes siguen trabajando. ' +
+        'Cerrar Mage los para. Puedes cambiarlo después en Configuración › Almacenamiento.',
+      buttons: [...CLOSE_DIALOG_BUTTONS],
+      defaultId: 0,
+      cancelId: CLOSE_DIALOG_CANCEL_INDEX,
+      checkboxLabel: 'Recordar mi decisión',
+      noLink: true,
+    });
+    const outcome = interpretCloseDialog(answer);
+    if (outcome.remember !== null) rememberCloseBehavior(outcome.remember);
+    if (outcome.action === 'hide' && !window.isDestroyed()) window.hide();
+    if (outcome.action === 'quit') app.quit();
+  } finally {
+    closePromptOpen = false;
+  }
+}
+
+function rememberCloseBehavior(closeBehavior: CloseBehavior): void {
+  const store = getSettingsStore();
+  const next: AppSettings = { ...store.load(), closeBehavior };
+  store.save(next);
+  windowManager.broadcast(SETTINGS_CHANGED_CHANNEL, next);
 }
 
 // Menu de aplicacion MINIMO propio (D5 §6, prerrequisito): sustituye el menu POR DEFECTO de Electron,
@@ -1184,6 +1497,19 @@ function isFolderTrusted(cwd: string, accountDir: string): boolean {
   return isTrusted(cwd, fromCli);
 }
 
+// Cuantas rutas acepta `existsDirs` de una vez: el renderer pide las tarjetas de proyectos recientes
+// (6) y el ultimo proyecto (1). Un tope holgado impide que un mensaje IPC ponga a main a hacer stat
+// de miles de rutas.
+const EXISTS_DIRS_MAX = 64;
+
+// ¿Existe cada carpeta? Solo dice si/no (ni contenido ni metadatos) y solo de rutas ABSOLUTAS.
+function existsDirs(paths: unknown): readonly boolean[] {
+  if (!Array.isArray(paths) || paths.length > EXISTS_DIRS_MAX || !paths.every((p) => typeof p === 'string')) {
+    throw new Error(`existsDirs espera hasta ${EXISTS_DIRS_MAX} rutas de texto: ${JSON.stringify(paths)?.slice(0, 200)}`);
+  }
+  return (paths as readonly string[]).map((path) => isAbsolute(path) && existsSync(path) && statSync(path).isDirectory());
+}
+
 // Raiz de los directorios de borrador. Un solo sitio: si la calculan dos, un dia divergen y la fila de
 // informacion deja de reconocer el scratchpad sin que nada falle.
 function scratchRoot(): string {
@@ -1220,6 +1546,23 @@ function sweepScratchDirs(): void {
   } catch (err) {
     mainLog('warn', 'No se pudieron barrer los scratchpads', { error: err instanceof Error ? err.message : String(err) });
   }
+}
+
+// webContents a los que ya se engancho el `destroyed` (uno por ventana, no uno por sesion).
+const sessionOwnersWatched = new Set<number>();
+
+// Las sesiones mueren con la ventana que las creo (P-028, raiz de 17 y 36). Sin esto, cerrar una
+// ventana dejaba sus CLI vivos y mudos: los eventos se tiraban (`sender.isDestroyed()`), un permiso
+// pendiente se quedaba colgado y reabrir la pestaña chocaba con "ya esta abierta en otra pestaña".
+function stopSessionsWhenDestroyed(sender: Electron.WebContents): void {
+  if (sessionOwnersWatched.has(sender.id)) return;
+  sessionOwnersWatched.add(sender.id);
+  const ownerId = sender.id;
+  sender.once('destroyed', () => {
+    sessionOwnersWatched.delete(ownerId);
+    const stopped = sessionManager.stopOwnedBy(ownerId);
+    if (stopped > 0) mainLog('info', 'Sesiones paradas al cerrarse su ventana', { stopped });
+  });
 }
 
 // Registro de handlers IPC: puentean el renderer con el SessionManager. Los eventos del motor se
@@ -1277,7 +1620,8 @@ function registerIpcHandlers(): void {
         });
       }
       if (!sender.isDestroyed()) sender.send(EVENT_CHANNEL, payload);
-    });
+    }, sender.id);
+    stopSessionsWhenDestroyed(sender);
     return { sessionId, configDir };
   });
   ipcMain.handle(IpcChannel.SessionSendMessage, (_e, params: SendMessageParams) =>
@@ -1298,6 +1642,7 @@ function registerIpcHandlers(): void {
   ipcMain.handle(IpcChannel.SessionSetModel, (_e, params: SetModelParams) =>
     sessionManager.setModel(params.sessionId, params.model),
   );
+  ipcMain.handle(IpcChannel.SessionStopTask, (_e, params: StopTaskParams) => sessionManager.stopTask(params.sessionId, params.taskId));
   ipcMain.handle(IpcChannel.SessionStop, (_e, sessionId: string) => sessionManager.stop(sessionId));
   // Carpeta scratch AISLADA por conversacion (subdir unico y vacio): asi crear un archivo nuevo
   // funciona a la primera, sin el "read first" de Claude Code por ficheros preexistentes. Fase B;
@@ -1312,6 +1657,7 @@ function registerIpcHandlers(): void {
   // hermano del que se buscaba —y de paso dejaba una carpeta vacia por cada arranque—. La usa la fila
   // de informacion del chat para saber si la conversacion vive en el scratchpad.
   ipcMain.handle(IpcChannel.SessionGetScratchRoot, () => scratchRoot());
+  ipcMain.handle(IpcChannel.FsExistsDirs, (_e, paths: unknown): readonly boolean[] => existsDirs(paths));
   // ¿Esta instalado el CLI de Antigravity (E3)? Se resuelve en cada consulta (el usuario puede
   // instalarlo con Mage abierto) y solo viaja el booleano: la ruta del binario no le hace falta al
   // renderer.
@@ -1320,6 +1666,13 @@ function registerIpcHandlers(): void {
   // instalacion hecha con Mage abierto (que es la razon de no cachearlo de por vida), pero deja de
   // pagarse el proceso en cada apertura del dialogo.
   let agyProbe: { atMs: number; installed: boolean } | null = null;
+  // «Añadir cuenta» por proveedor (P-028, 41). Los integrados con adapter y los del usuario; de estos
+  // solo viajan id y nombre (su `apiKey` no sale de main).
+  ipcMain.handle(IpcChannel.ProvidersAuthList, (): readonly ProviderAuthSummary[] => {
+    const custom = getSettingsStore().load().customProviders.map(({ id, label }) => ({ id, label }));
+    const builtIn = BUILT_IN_PROVIDERS.filter((p) => hasAdapter(p.id)).map(({ id, label }) => ({ id, label }));
+    return providerAuthSummary([...builtIn, ...custom], buildAdapter);
+  });
   ipcMain.handle(IpcChannel.AgyInstalled, () => {
     const nowMs = Date.now();
     if (agyProbe === null || nowMs - agyProbe.atMs > AGY_PROBE_TTL_MS) {
@@ -1408,9 +1761,23 @@ function registerIpcHandlers(): void {
   ipcMain.handle(IpcChannel.ModelCatalogLoad, (_e, accountDir: string): readonly ProviderModel[] =>
     getCommandCatalogStore().loadModels(accountDir),
   );
-  ipcMain.handle(IpcChannel.AccountsDelete, (_e, configDir: string) =>
-    accountService.deleteAccount(configDir),
-  );
+  // Borrar una cuenta (P-028, punto 30). Antes del borrado se paran sus sesiones en TODAS las ventanas
+  // (un CLI vivo recrearia el dir o escribiria en uno borrado). NO se hace `claude auth logout`: las
+  // cuentas que adoptaron el login comparten refresh token y revocarlo cerraria las demas.
+  // Las guardas de datos (principal, carpeta compartida real con datos, enlace que no se quita) viven
+  // en `AccountService.deleteAccount`, que es la frontera.
+  ipcMain.handle(IpcChannel.AccountsDelete, (_e, configDir: string) => {
+    if (!isManagedAccountConfigDir(configDir)) {
+      throw new Error(`Cuenta no valida para borrar: ${configDir}`);
+    }
+    const stopped = sessionManager.stopByConfigDir(configDir);
+    if (stopped > 0) mainLog('info', `Paradas ${stopped} sesiones antes de borrar la cuenta "${configDir}"`);
+    accountService.deleteAccount(configDir);
+    getCommandCatalogStore().forgetAccount(
+      configDir,
+      (key) => pathEquals(key, configDir) || pathEquals(dirname(key), configDir),
+    );
+  });
   // Selector de carpeta de proyecto (cwd de una pestana). Devuelve null si el usuario cancela.
   ipcMain.handle(IpcChannel.DialogPickDirectory, async (): Promise<string | null> => {
     const options = { properties: ['openDirectory' as const] };
@@ -1614,6 +1981,13 @@ function registerIpcHandlers(): void {
     windowManager.sendTo(params.targetWindowId, WINDOW_TAB_RECEIVED_CHANNEL, params.tab);
     windowManager.focus(params.targetWindowId);
   });
+  // P-028, 36: la ventana NUEVA no recibe la pestaña empujada (su renderer aun no escucha): la espera
+  // en main y la recoge ella con WindowsTakePendingTabs.
+  ipcMain.handle(IpcChannel.WindowsOpenWithTab, (_e, tab: unknown): string => windowManager.openWith(parsePersistedTab(tab)));
+  ipcMain.handle(IpcChannel.WindowsTakePendingTabs, (event): readonly PersistedTab[] => windowManager.takePending(senderWindowId(event)));
+  ipcMain.handle(IpcChannel.WindowsDropTab, (event, tab: unknown): DropTabOutcome =>
+    dropTabOutside(senderWindowId(event), parsePersistedTab(tab)),
+  );
 
   ipcMain.handle(IpcChannel.ThinkingRead, (_e, sessionId: string): readonly string[] => {
     if (sessionId.length === 0) return [];
@@ -1699,15 +2073,20 @@ function registerIpcHandlers(): void {
     writeFile: (path, content) => writeFileSync(path, content, 'utf8'),
     mtimeMs: (path) => (existsSync(path) ? statSync(path).mtimeMs : null),
     byteLength: (path) => statSync(path).size,
-    // DOS raices fuera del cwd, y solo dos: los planes del CLI y su scratchpad. Las dos ancladas por
-    // estructura, nunca por prefijo — ver el comentario de cada una.
-    isAllowedOutsideCwd: (path: string) => isUnderManagedPlans(path) || isUnderCliScratchpad(path),
+    // TRES raices fuera del cwd sin pregunta: los planes del CLI, su memoria y su scratchpad. Las tres
+    // ancladas por estructura, nunca por prefijo — ver el comentario de cada una. El resto de fuera
+    // solo con aprobacion del usuario (dialogo nativo de `approveOutsideFile`).
+    isAllowedOutsideCwd: (path: string) => isUnderManagedPlans(path) || isUnderManagedMemory(path) || isUnderCliScratchpad(path),
+    isApprovedOutside,
   });
   ipcMain.handle(IpcChannel.ProjectFileRead, (_e, params: ReadProjectFileParams): ProjectFileContent =>
     projectFileService.read(params),
   );
   ipcMain.handle(IpcChannel.ProjectFileWrite, (_e, params: WriteProjectFileParams): ProjectFileContent =>
     projectFileService.write(params),
+  );
+  ipcMain.handle(IpcChannel.ProjectFileApproveOutside, (event, params: ReadProjectFileParams): Promise<boolean> =>
+    approveOutsideFile(event, params),
   );
 
   // Layout de paneles acoplables (F6 Fase 2): userData/panels-layout.json, global (§5.3). El
@@ -1726,12 +2105,11 @@ function registerIpcHandlers(): void {
   // loadMcpCommon/loadSettingsCommon (esos van al LogBus en cada lanzamiento real, no a la UI).
   ipcMain.handle(IpcChannel.SharedConfigLoad, (): SharedConfigSnapshot => {
     const service = getSharedConfigService();
-    const mcpCommonText = service.readMcpCommonText(mcpCommonPath());
+    // El TEXTO de mcp-common.json no sale de main (P-028): lleva los `env` de los servidores.
+    const mcpParsed = parseMcpCommonJson(service.readMcpCommonText(mcpCommonPath()));
     const settingsCommonText = service.readSettingsCommonText(settingsCommonPath());
-    const mcpParsed = parseMcpCommonJson(mcpCommonText);
     const settingsParsed = parseSettingsCommonJson(settingsCommonText);
     return {
-      mcpCommonText,
       settingsCommonText,
       mcpCommonWarnings: mcpParsed.warnings,
       settingsCommonWarnings: settingsParsed.warnings,
@@ -1739,15 +2117,35 @@ function registerIpcHandlers(): void {
       mcpCommonImportNotes: mcpImportNotes,
       // Base del compare-and-swap al guardar: los bytes reales, no el texto de arranque que devuelve
       // read*Text cuando el fichero no existe.
-      mcpCommonBaseline: service.readBaseline(mcpCommonPath()),
       settingsCommonBaseline: service.readBaseline(settingsCommonPath()),
     };
   });
   ipcMain.handle(IpcChannel.SharedConfigSave, (_e, params: SaveSharedConfigParams): SaveSharedConfigResult => {
-    const service = getSharedConfigService();
-    return params.file === 'mcp-common'
-      ? service.saveMcpCommonText(mcpCommonPath(), params.text, params.expected)
-      : service.saveSettingsCommonText(settingsCommonPath(), params.text, params.expected);
+    if (params.file !== 'settings-common') throw new Error(`Fichero de config compartida desconocido: ${String(params.file)}`);
+    return getSharedConfigService().saveSettingsCommonText(settingsCommonPath(), params.text, params.expected);
+  });
+
+  // MCP y conectores (P-028 puntos 5 y 34).
+  registerMcpIpc({
+    handle: (channel, listener) => ipcMain.handle(channel, listener as Parameters<typeof ipcMain.handle>[1]),
+    service: getSharedConfigService(),
+    fs: { exists: existsSync, readFile: (path) => readFileSync(path, 'utf8'), listDir: (path) => readdirSync(path) },
+    commonPath: mcpCommonPath,
+    accounts: mcpAccountLocations,
+    legacySharedPath: () => mcpFakeSourcesPath(LEGACY_SHARED_MCP_FILE) ?? join(homedir(), cliLogin.accounts.mainDirName, LEGACY_SHARED_MCP_FILE),
+    desktopDirs: () => {
+      const fake = mcpFakeSourcesPath('Claude');
+      if (fake !== null) return existsSync(fake) ? [fake] : [];
+      return resolveClaudeDesktopDirs({ platform: process.platform, env: process.env, homedir: homedir(), exists: existsSync, listDir: (path) => readdirSync(path) });
+    },
+    homedir: homedir(),
+    pathSeparator: sep,
+    probeStatuses: () => {
+      const dirs = accountService.listAccounts().filter((a) => a.loginStatus === 'logged_in').map((a) => a.configDir);
+      return probeMcpStatuses({ spawnProbe: spawnMcpStatusProbe, timeoutMs: MCP_STATUS_TIMEOUT_MS, pollMs: MCP_STATUS_POLL_MS, exitGraceMs: MODEL_PROBE_EXIT_GRACE_MS }, dirs);
+    },
+    authenticate: (accountDir, serverName) =>
+      authenticateMcp({ spawnProbe: spawnMcpStatusProbe, openUrl: openMcpAuthUrl, timeoutMs: MCP_AUTH_TIMEOUT_MS, pollMs: MCP_AUTH_POLL_MS, exitGraceMs: MODEL_PROBE_EXIT_GRACE_MS }, accountDir, serverName),
   });
 
   // Mejora de prompt (M2.3): `claude -p` puntual con modelo barato. execFile (sin shell) captura el
@@ -1798,9 +2196,9 @@ function registerIpcHandlers(): void {
 
   // Notificacion del SO (M2.3): solo si la ventana NO tiene el foco (si el usuario ya esta mirando,
   // seria ruido). Requiere soporte del SO (Notification.isSupported).
-  ipcMain.handle(IpcChannel.NotifyShow, (_e, params: NotifyParams) => {
-    if (liveMainWindow()?.isFocused() === true || !Notification.isSupported()) return;
-    new Notification({ title: params.title, body: params.body }).show();
+  // P-028 40: el foco que cuenta es el de la ventana QUE LA PIDIO, y el clic lleva a su conversacion.
+  ipcMain.handle(IpcChannel.NotifyShow, (e, params: NotifyParams) => {
+    notificationCenter.show(params, senderWindowId(e));
   });
 
   // Widget flotante (M3). SetEnabled abre/cierra la ventana (la preferencia la persiste el renderer).
@@ -2003,6 +2401,7 @@ app.whenReady().then(async () => {
   // el gateway desde una instancia que se esta cerrando solo crea efectos a medias).
   if (!gotSingleInstanceLock) return;
 
+  if (process.platform === 'win32') app.setAppUserModelId(app.isPackaged ? WINDOWS_APP_USER_MODEL_ID : process.execPath);
   applyContentSecurityPolicy();
   Menu.setApplicationMenu(buildApplicationMenu());
   registerIpcHandlers();
@@ -2058,9 +2457,10 @@ app.whenReady().then(async () => {
   // El refresco al recuperar el foco lo engancha `createWorkbenchWindow` para CADA ventana.
 
   app.on('activate', () => {
-    // macOS: la app sigue viva sin ventanas (el dock la reabre). Solo se recrea la principal si no
-    // queda ninguna; con varias abiertas esto no toca nada.
-    if (BrowserWindow.getAllWindows().length === 0) windowManager.ensureMain();
+    // macOS: la app sigue viva sin ventanas (el dock la reabre). Solo se trae la principal si no
+    // queda ninguna A LA VISTA —el boton rojo la oculta, no la destruye—; con varias abiertas esto no
+    // toca nada.
+    if (visibleWorkbenchWindowCount() === 0) focusMainWindow();
   });
 });
 
@@ -2073,6 +2473,8 @@ app.on('window-all-closed', () => {
 
 // Al salir, matar todos los procesos hijo del motor (no dejar agentes huerfanos) y limpiar dev.
 app.on('before-quit', () => {
+  // Lo primero: a partir de aqui ninguna ventana pregunta al cerrarse (ver `resolveCloseAction`).
+  isQuitting = true;
   sessionManager.stopAll();
   // Incognito ('session'): las carpetas de trabajo no sobreviven a la ejecucion. Se barre aqui ADEMAS
   // de al arrancar, porque si no quedarian en el temp todo el tiempo que la app este cerrada — que es

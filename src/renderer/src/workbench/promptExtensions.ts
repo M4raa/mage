@@ -1,5 +1,6 @@
 import { EditorView, Decoration, ViewPlugin, type DecorationSet, type ViewUpdate } from '@codemirror/view';
 import { EditorState, type Extension } from '@codemirror/state';
+import { findImageTokens } from '@shared/imageRefs';
 import { decorationRangesFor, type DecorationKind } from './promptDecorations';
 
 // Todo lo especifico de CodeMirror 6 vive AQUI y en `PromptEditor.tsx`, en ningun otro sitio: la logica
@@ -63,6 +64,33 @@ const decorationsPlugin = ViewPlugin.fromClass(
   { decorations: (value) => value.decorations },
 );
 
+// `[Imagen N]` como BLOQUE (P-028 19b): una marca `cm-mg-imgref` y rango atomico, para que el cursor lo
+// salte y Backspace/Supr lo borren entero. Quitar ademas el adjunto lo hace la barra al ver un borrado.
+const imageRefMark = Decoration.mark({ class: 'cm-mg-imgref' });
+
+function buildImageRefDecorations(view: EditorView): DecorationSet {
+  const marks = findImageTokens(view.state.doc.toString()).map((token) => imageRefMark.range(token.from, token.to));
+  return Decoration.set(marks);
+}
+
+const imageRefPlugin = ViewPlugin.fromClass(
+  class {
+    decorations: DecorationSet;
+
+    constructor(view: EditorView) {
+      this.decorations = buildImageRefDecorations(view);
+    }
+
+    update(update: ViewUpdate): void {
+      if (update.docChanged) this.decorations = buildImageRefDecorations(update.view);
+    }
+  },
+  {
+    decorations: (value) => value.decorations,
+    provide: (plugin) => EditorView.atomicRanges.of((view) => view.plugin(plugin)?.decorations ?? Decoration.none),
+  },
+);
+
 // Tema del editor. El alto maximo es UNA regla CSS, no un efecto de JS: con el `<textarea>` habia un
 // efecto que medía `scrollHeight` en cada tecla Y un `max-h-[200px]` en la clase, o sea el mismo numero
 // escrito dos veces.
@@ -78,5 +106,5 @@ const promptTheme = EditorView.theme({
 });
 
 export function promptExtensions(): readonly Extension[] {
-  return [decorationsPlugin, promptTheme, EditorView.lineWrapping, EditorState.allowMultipleSelections.of(false)];
+  return [decorationsPlugin, imageRefPlugin, promptTheme, EditorView.lineWrapping, EditorState.allowMultipleSelections.of(false)];
 }

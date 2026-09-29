@@ -6,7 +6,10 @@ import type { ChatStatus } from './types';
 //   - 'switch-and-new-chat': la conversacion tiene un turno EN MARCHA (D5: «activo» = eso). Sigue
 //     trabajando en su cuenta, y en la destino se abre un chat nuevo.
 //   - 'ask': conversacion parada con algo que migrar: se pregunta si llevarsela (sin «recordar», D6).
-export type AccountSwitchPlan = 'switch' | 'switch-and-new-chat' | 'ask';
+//   - 'reassign': chat NUEVO (sin sesion, sin `resumeSessionId` y sin bloques): la pestaña se pasa a la
+//     cuenta destino sin preguntar (P-028, punto 31). Antes era 'switch' y el primer mensaje salia por
+//     la cuenta vieja, que es la que seguia en `tab.accountId`.
+export type AccountSwitchPlan = 'switch' | 'switch-and-new-chat' | 'ask' | 'reassign';
 
 export interface AccountSwitchContext {
   // La pestaña que se esta mirando; undefined si no hay ninguna.
@@ -16,6 +19,8 @@ export interface AccountSwitchContext {
   readonly destAccountId: string;
   // Una cuenta sin sesion no puede ni abrir un chat ni reanudar uno: solo se cambia (y avisa su panel).
   readonly destLoggedIn: boolean;
+  // La pestaña ya tiene algo en pantalla (bloques del stream o hidratados): ya no es un chat nuevo.
+  readonly hasBlocks: boolean;
 }
 
 export function planAccountSwitch(ctx: AccountSwitchContext): AccountSwitchPlan {
@@ -23,5 +28,18 @@ export function planAccountSwitch(ctx: AccountSwitchContext): AccountSwitchPlan 
   if (tab === undefined || tab.accountId === ctx.destAccountId || !ctx.destLoggedIn) return 'switch';
   if (ctx.status === 'streaming' || ctx.status === 'needs_permission') return 'switch-and-new-chat';
   const migratable = ctx.liveSessionId !== undefined || tab.resumeSessionId !== undefined;
-  return migratable ? 'ask' : 'switch';
+  if (migratable) return 'ask';
+  return ctx.hasBlocks ? 'switch' : 'reassign';
+}
+
+// Modelo de un chat nuevo que cambia de cuenta (punto 31): se conserva si la cuenta destino lo ofrece
+// —o si aun no se conoce su catalogo, porque el selector conserva siempre el modelo actual— y si no se
+// re-resuelve para ella.
+export function modelForReassignedTab(
+  currentModel: string,
+  destCatalogIds: readonly string[] | undefined,
+  resolveForDest: () => string,
+): string {
+  if (destCatalogIds === undefined || destCatalogIds.includes(currentModel)) return currentModel;
+  return resolveForDest();
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { deriveTitleFromPrompt, isPlaceholderTitle, latestCustomTitle, NEW_CONVERSATION_TITLE } from './conversationTitle';
+import { deriveTitleFromPrompt, isPlaceholderTitle, isSlashCommandText, latestCustomTitle, NEW_CONVERSATION_TITLE, renamedTitleFrom } from './conversationTitle';
 import { makeEntry } from '@testing/transcriptEntry';
 
 describe('deriveTitleFromPrompt', () => {
@@ -57,5 +57,36 @@ describe('latestCustomTitle', () => {
 
   it('latestCustomTitle_ultimaVaciaOMalFormada_usaLaAnterior', () => {
     expect(latestCustomTitle([titleEntry('Bueno', 0), titleEntry('  ', 1), titleEntry(42, 2)])).toBe('Bueno');
+  });
+});
+
+// P-028 (grupo C).
+describe('isSlashCommandText', () => {
+  it('isSlashCommandText_comandoConYSinArgs_true', () => {
+    expect(isSlashCommandText('/context')).toBe(true);
+    expect(isSlashCommandText('  /rename Mi nombre ')).toBe(true);
+    expect(isSlashCommandText('/itb-skills:itb-core algo')).toBe(true);
+  });
+
+  it('isSlashCommandText_rutaOTextoNormal_false', () => {
+    expect(isSlashCommandText('/src/app.ts falla')).toBe(false);
+    expect(isSlashCommandText('mira /context')).toBe(false);
+    expect(isSlashCommandText('/')).toBe(false);
+    expect(isSlashCommandText('')).toBe(false);
+  });
+});
+
+describe('renamedTitleFrom', () => {
+  it('renamedTitleFrom_salidaMedida_usaElNombreDeLaSalida', () => {
+    expect(renamedTitleFrom({ args: 'x', text: 'Session renamed to: probe-2' })).toBe('probe-2');
+  });
+
+  it('renamedTitleFrom_sinSalida_usaLosArgs', () => {
+    expect(renamedTitleFrom({ args: '  Nombre ', text: '' })).toBe('Nombre');
+  });
+
+  it('renamedTitleFrom_salidaDeError_null', () => {
+    expect(renamedTitleFrom({ args: 'x', text: 'Name too long' })).toBeNull();
+    expect(renamedTitleFrom({ args: '', text: '' })).toBeNull();
   });
 });

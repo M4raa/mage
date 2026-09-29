@@ -52,6 +52,7 @@ function harness(): Harness {
       interrupt: vi.fn(),
       setModel: vi.fn(),
       setPermissionMode: vi.fn(),
+      stopTask: vi.fn(),
       stop: vi.fn(),
     };
     created.push({ deps, session });
@@ -252,5 +253,123 @@ describe('SessionManager delegacion y ciclo de vida', () => {
     const h = harness();
 
     expect(() => h.manager.stopAll()).not.toThrow();
+  });
+
+  it('stopOwnedBy_dueñoConSesiones_paraSoloLasSuyas', () => {
+    const h = harness();
+    const mine = h.manager.create(params(), h.sink, 7);
+    const other = h.manager.create(params(), h.sink, 8);
+
+    const stopped = h.manager.stopOwnedBy(7);
+
+    expect(stopped).toBe(1);
+    expect(h.created[0]?.session.stop).toHaveBeenCalledTimes(1);
+    expect(h.created[1]?.session.stop).not.toHaveBeenCalled();
+    expect(() => h.manager.sendMessage(mine, 'x')).toThrow(/inexistente/i);
+    expect(() => h.manager.sendMessage(other, 'x')).not.toThrow();
+  });
+
+  it('stopOwnedBy_sesionYaParadaPorElRenderer_noLaParaDosVeces', () => {
+    const h = harness();
+    const sessionId = h.manager.create(params(), h.sink, 7);
+    h.manager.stop(sessionId);
+
+    expect(h.manager.stopOwnedBy(7)).toBe(0);
+    expect(h.created[0]?.session.stop).toHaveBeenCalledTimes(1);
+  });
+
+  it('stopOwnedBy_sesionSinDueño_noSeToca', () => {
+    const h = harness();
+    h.manager.create(params(), h.sink);
+
+    expect(h.manager.stopOwnedBy(7)).toBe(0);
+    expect(h.created[0]?.session.stop).not.toHaveBeenCalled();
+  });
+
+  it('stopByConfigDir_paraLaCuentaYSuPerfilPrivado_yNoLasDeOtras', () => {
+    // Arrange: dos de la cuenta p (compartida y privada) y una de la principal.
+    const h = harness();
+    const account = `${HOME}/.claude-p`;
+    const shared = h.manager.create(params({ accountDir: account }), h.sink);
+    const priv = h.manager.create(params({ accountDir: `${account}/mage-private` }), h.sink);
+    const other = h.manager.create(params(), h.sink);
+
+    // Act
+    const stopped = h.manager.stopByConfigDir(account);
+
+    // Assert
+    expect(stopped).toBe(2);
+    expect(() => h.manager.sendMessage(shared, 'x')).toThrow(/inexistente/i);
+    expect(() => h.manager.sendMessage(priv, 'x')).toThrow(/inexistente/i);
+    expect(() => h.manager.sendMessage(other, 'x')).not.toThrow();
+  });
+
+  it('stopByConfigDir_sinSesionesDeEsaCuenta_devuelveCero', () => {
+    const h = harness();
+    h.manager.create(params(), h.sink);
+
+    expect(h.manager.stopByConfigDir(`${HOME}/.claude-z`)).toBe(0);
+  });
+});
+
+// P-028: `/clear` abre otra conversacion en el mismo proceso y la sesion pasa a llamarse como ella.
+describe('SessionManager tras conversation_reset', () => {
+  const reset = (newSessionId: string): MageEvent => ({ kind: 'conversation_reset', newSessionId });
+
+  it('conversationReset_elResetSaleConElIdViejoYLoSiguienteConElNuevo', () => {
+    const h = harness();
+    const oldId = h.manager.create(params(), h.sink);
+    const event: MageEvent = { kind: 'assistant_text', text: 'hola' };
+
+    h.created[0]?.deps.emit(reset('nuevo'));
+    h.created[0]?.deps.emit(event);
+
+    expect(h.payloads).toEqual([{ sessionId: oldId, event: reset('nuevo') }, { sessionId: 'nuevo', event }]);
+  });
+
+  it('conversationReset_laSesionSeManejaConElIdNuevo', () => {
+    const h = harness();
+    const oldId = h.manager.create(params(), h.sink);
+    h.created[0]?.deps.emit(reset('nuevo'));
+
+    h.manager.sendMessage('nuevo', 'hola');
+
+    expect(h.created[0]?.session.sendUserMessage).toHaveBeenCalledWith('hola', []);
+    expect(() => h.manager.sendMessage(oldId, 'hola')).toThrow(/inexistente/i);
+    h.manager.stop('nuevo');
+    expect(h.created[0]?.session.stop).toHaveBeenCalledTimes(1);
+  });
+
+  it('conversationReset_stopByConfigDir_paraLaSesionReEtiquetada', () => {
+    // P-028 30 + /clear: el config dir viaja con la sesion al cambiar de id.
+    const h = harness();
+    const account = `${HOME}/.claude-p`;
+    h.manager.create(params({ accountDir: account }), h.sink);
+    h.created[0]?.deps.emit(reset('nuevo'));
+
+    expect(h.manager.stopByConfigDir(account)).toBe(1);
+    expect(h.created[0]?.session.stop).toHaveBeenCalledTimes(1);
+  });
+
+  it('conversationReset_idOcupadoPorOtraSesion_conservaElViejo', () => {
+    const h = harness();
+    const first = h.manager.create(params(), h.sink);
+    const second = h.manager.create(params(), h.sink);
+
+    h.created[0]?.deps.emit(reset(second));
+
+    expect(() => h.manager.sendMessage(first, 'hola')).not.toThrow();
+    expect(h.created[0]?.session.sendUserMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it('stopOwnedBy_trasUnClear_sigueParandoLaSesionReEtiquetada', () => {
+    const h = harness();
+    const sessionId = h.manager.create(params(), h.sink, 7);
+
+    h.created[0]?.deps.emit(reset('id-nuevo'));
+
+    expect(h.manager.stopOwnedBy(7)).toBe(1);
+    expect(h.created[0]?.session.stop).toHaveBeenCalledTimes(1);
+    expect(sessionId).not.toBe('id-nuevo');
   });
 });

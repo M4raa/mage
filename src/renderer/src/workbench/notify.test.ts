@@ -4,9 +4,16 @@ import { notificationForEvent } from './notify';
 
 describe('notificationForEvent', () => {
   it('result_avisaDeTurnoCompletadoConElTitulo', () => {
-    const content = notificationForEvent({ kind: 'result' } as MageEvent, { tabTitle: 'mi-proyecto' });
+    const content = notificationForEvent({ kind: 'result', result: { isError: false, subtype: 'success', numTurns: 1 } }, { tabTitle: 'mi-proyecto' });
 
     expect(content).toEqual({ title: 'Turno completado', body: 'mi-proyecto' });
+  });
+
+  it('result_turnoAbiertoPorNotificacionDeTarea_noAvisa', () => {
+    // `origin.kind` medido en 2.1.284: el turno lo abrio el CLI al terminar un subagente en segundo plano.
+    const event: MageEvent = { kind: 'result', result: { isError: false, subtype: 'success', numTurns: 1, origin: 'task-notification' } };
+
+    expect(notificationForEvent(event, { tabTitle: 'mi-proyecto' })).toBeNull();
   });
 
   it('permissionRequest_incluyeElNombreDeLaTool', () => {
@@ -72,7 +79,7 @@ describe('notificationForEvent', () => {
   it('hookSubagentStop_avisaDelSubagente', () => {
     const event: MageEvent = { kind: 'hook_fired', requestId: 'r1', event: 'SubagentStop', detail: null };
 
-    expect(notificationForEvent(event, { tabTitle: 'proj' })).toEqual({ title: 'Subagente terminado', body: 'proj' });
+    expect(notificationForEvent(event, { tabTitle: 'proj' })).toEqual({ title: 'Subagente terminado', body: 'proj', opensActivity: true });
   });
 
   it('hookStop_noNotifica_paraNoDuplicarElResult', () => {

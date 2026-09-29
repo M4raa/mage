@@ -6,17 +6,20 @@ import {
   TRANSCRIPT_BATCH_CHANNEL,
   WIDGET_ENABLED_CHANGED_CHANNEL,
   WIDGET_FOCUS_TAB_CHANNEL,
+  NOTIFICATION_CLICKED_CHANNEL,
   WIDGET_SNAPSHOT_CHANNEL,
   SETTINGS_CHANGED_CHANNEL,
   MODEL_CATALOG_CHANGED_CHANNEL,
   WINDOW_TAB_RECEIVED_CHANNEL,
 } from '@shared/ipc';
+import type { McpAuthParams, McpCommonMutateParams, McpImportApplyParams, McpInventoryParams } from '@shared/mcp';
 import type {
   AnswerPermissionParams,
   ModelCatalogChange,
   CreateSessionParams,
   HandoffPromptParams,
   JumpListOpenPayload,
+  NotificationTarget,
   EditCommandName,
   TitleBarOverlayColors,
   ImprovePromptParams,
@@ -37,6 +40,7 @@ import type {
   SendMessageParams,
   SessionEventPayload,
   SetModelParams,
+  StopTaskParams,
   SetPermissionModeParams,
   TranscriptBatchPayload,
   MoveTabToWindowParams,
@@ -61,9 +65,11 @@ const api: MageApi = {
   setModel: (params: SetModelParams) => ipcRenderer.invoke(IpcChannel.SessionSetModel, params),
   setPermissionMode: (params: SetPermissionModeParams) =>
     ipcRenderer.invoke(IpcChannel.SessionSetPermissionMode, params),
+  stopTask: (params: StopTaskParams) => ipcRenderer.invoke(IpcChannel.SessionStopTask, params),
   stop: (sessionId: string) => ipcRenderer.invoke(IpcChannel.SessionStop, sessionId),
   getScratchDir: () => ipcRenderer.invoke(IpcChannel.SessionGetScratchDir),
   getScratchRoot: () => ipcRenderer.invoke(IpcChannel.SessionGetScratchRoot),
+  existsDirs: (paths: readonly string[]) => ipcRenderer.invoke(IpcChannel.FsExistsDirs, paths),
   isAgyInstalled: () => ipcRenderer.invoke(IpcChannel.AgyInstalled),
   probeProvider: (params: ProviderProbeParams) => ipcRenderer.invoke(IpcChannel.ProviderProbe, params),
   revealFile: (path: string) => ipcRenderer.invoke(IpcChannel.FileReveal, path),
@@ -82,6 +88,7 @@ const api: MageApi = {
   cancelLogin: () => ipcRenderer.invoke(IpcChannel.AccountsLoginCancel),
   adoptLogin: (params) => ipcRenderer.invoke(IpcChannel.AccountsAdoptLogin, params),
   deleteAccount: (configDir: string) => ipcRenderer.invoke(IpcChannel.AccountsDelete, configDir),
+  listProviderAuth: () => ipcRenderer.invoke(IpcChannel.ProvidersAuthList),
   pickDirectory: () => ipcRenderer.invoke(IpcChannel.DialogPickDirectory),
   isFolderTrusted: (params) => ipcRenderer.invoke(IpcChannel.TrustIsFolderTrusted, params),
   gitStatus: (params) => ipcRenderer.invoke(IpcChannel.GitStatus, params),
@@ -128,6 +135,7 @@ const api: MageApi = {
   readInstructions: (params: ReadInstructionsParams) => ipcRenderer.invoke(IpcChannel.InstructionsRead, params),
   readProjectFile: (params: ReadProjectFileParams) => ipcRenderer.invoke(IpcChannel.ProjectFileRead, params),
   writeProjectFile: (params: WriteProjectFileParams) => ipcRenderer.invoke(IpcChannel.ProjectFileWrite, params),
+  approveProjectFileOutside: (params: ReadProjectFileParams) => ipcRenderer.invoke(IpcChannel.ProjectFileApproveOutside, params),
   readEffectiveSettings: (params: ReadInstructionsParams) => ipcRenderer.invoke(IpcChannel.EffectiveSettingsRead, params),
   loadSettings: () => ipcRenderer.invoke(IpcChannel.SettingsLoad),
   saveSettings: (settings: AppSettings) => ipcRenderer.invoke(IpcChannel.SettingsSave, settings),
@@ -147,6 +155,11 @@ const api: MageApi = {
     ipcRenderer.on(WIDGET_FOCUS_TAB_CHANNEL, handler);
     return () => ipcRenderer.removeListener(WIDGET_FOCUS_TAB_CHANNEL, handler);
   },
+  onNotificationClicked: (listener: (target: NotificationTarget) => void) => {
+    const handler = (_: unknown, target: NotificationTarget) => listener(target);
+    ipcRenderer.on(NOTIFICATION_CLICKED_CHANNEL, handler);
+    return () => ipcRenderer.removeListener(NOTIFICATION_CLICKED_CHANNEL, handler);
+  },
   onJumpListOpen: (listener: (payload: JumpListOpenPayload) => void) => {
     const handler = (_: unknown, payload: JumpListOpenPayload) => listener(payload);
     ipcRenderer.on(JUMP_LIST_OPEN_CHANNEL, handler);
@@ -161,6 +174,13 @@ const api: MageApi = {
   fetchTheme: (params: FetchThemeParams) => ipcRenderer.invoke(IpcChannel.ThemeMarketFetch, params),
   loadSharedConfig: () => ipcRenderer.invoke(IpcChannel.SharedConfigLoad),
   saveSharedConfig: (params: SaveSharedConfigParams) => ipcRenderer.invoke(IpcChannel.SharedConfigSave, params),
+  loadMcpInventory: (params: McpInventoryParams) => ipcRenderer.invoke(IpcChannel.McpInventoryLoad, params),
+  mutateMcpCommon: (params: McpCommonMutateParams) => ipcRenderer.invoke(IpcChannel.McpCommonMutate, params),
+  revealMcpCommon: (name: string) => ipcRenderer.invoke(IpcChannel.McpCommonReveal, name),
+  previewMcpImport: (params: McpInventoryParams) => ipcRenderer.invoke(IpcChannel.McpImportPreview, params),
+  applyMcpImport: (params: McpImportApplyParams) => ipcRenderer.invoke(IpcChannel.McpImportApply, params),
+  probeMcpStatus: () => ipcRenderer.invoke(IpcChannel.McpStatusProbe),
+  authenticateMcp: (params: McpAuthParams) => ipcRenderer.invoke(IpcChannel.McpAuthenticate, params),
   loadPanelLayout: (params: LoadPanelLayoutParams) => ipcRenderer.invoke(IpcChannel.PanelsLoad, params),
   savePanelLayout: (state: PanelLayoutState) => ipcRenderer.invoke(IpcChannel.PanelsSave, state),
   // Varias ventanas del workbench. `loadWorkspace`/`saveWorkspace` NO cambian de firma: main resuelve
@@ -168,6 +188,9 @@ const api: MageApi = {
   openWindow: () => ipcRenderer.invoke(IpcChannel.WindowsOpen),
   listWindows: () => ipcRenderer.invoke(IpcChannel.WindowsList),
   moveTabToWindow: (params: MoveTabToWindowParams) => ipcRenderer.invoke(IpcChannel.WindowsMoveTab, params),
+  openWindowWithTab: (tab: PersistedTab) => ipcRenderer.invoke(IpcChannel.WindowsOpenWithTab, tab),
+  takePendingTabs: () => ipcRenderer.invoke(IpcChannel.WindowsTakePendingTabs),
+  dropTabOutside: (tab: PersistedTab) => ipcRenderer.invoke(IpcChannel.WindowsDropTab, tab),
   onSettingsChanged: (listener: (settings: AppSettings) => void) => {
     const handler = (_: unknown, settings: AppSettings) => listener(settings);
     ipcRenderer.on(SETTINGS_CHANGED_CHANNEL, handler);

@@ -148,6 +148,15 @@ export class ClaudeAdapter implements ProviderAdapter {
     return { type: 'control_request', request_id: randomUUID(), request: { subtype: 'set_permission_mode', mode } };
   }
 
+  // Para UN subagente (0.1.1 R2, punto 29). MEDIDO en 2.1.285 (`engine-spike --subagent-bg --stop-task`):
+  // `stop_task {task_id}` con el `agentId` del lanzamiento (es el `task_id` de `system/task_started`)
+  // contesta success {} y el CLI emite `task_updated killed` + `task_notification stopped` de ESE; los
+  // demas siguen y terminan, y el hilo principal no se corta.
+  encodeStopTask(taskId: string): unknown {
+    if (taskId.trim().length === 0) throw new Error(`task_id vacio para stop_task: ${JSON.stringify(taskId)}`);
+    return { type: 'control_request', request_id: randomUUID(), request: { subtype: 'stop_task', task_id: taskId } };
+  }
+
   // Desglose de la ventana de contexto (D3). Protocolo verificado EN VIVO contra el CLI 2.1.220: el
   // request no lleva campos y el CLI contesta control_response success con {categories, totalTokens,
   // maxTokens, percentage, ...}. Se puede pedir sin haber mandado ningun turno (no gasta suscripcion).

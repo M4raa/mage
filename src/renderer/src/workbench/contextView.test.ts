@@ -6,10 +6,10 @@ import {
   contextUsageAdvice,
   contextWindowForModel,
   currentContextTokens,
-  formatContextShort,
   formatTokensShort,
   markCompactions,
   occupiedCategories,
+  resolveContext,
   toContextInfo,
   toTokenCategoryShares,
   type ContextSizePoint,
@@ -305,32 +305,6 @@ describe('contextInfoFromUsage / occupiedCategories (D3)', () => {
 
 });
 
-describe('formatContextShort (2.8, indicador de la barra de estado)', () => {
-  it('formatContextShort_45porciento_devuelveCtx45', () => {
-    expect(formatContextShort(45)).toBe('ctx 45 %');
-  });
-
-  it('formatContextShort_cero_devuelveCtx0', () => {
-    expect(formatContextShort(0)).toBe('ctx 0 %');
-  });
-
-  it('formatContextShort_masDe100_seClampeaA100', () => {
-    // El CLI puede reportar por encima de 100 con la autocompactacion pendiente.
-    expect(formatContextShort(137)).toBe('ctx 100 %');
-    expect(formatContextShort(-3)).toBe('ctx 0 %');
-  });
-
-  it('formatContextShort_noFinito_devuelveNull', () => {
-    // El llamador NO monta el indicador: un `ctx NaN %` es peor que no tener indicador.
-    expect(formatContextShort(Number.NaN)).toBeNull();
-    expect(formatContextShort(Number.POSITIVE_INFINITY)).toBeNull();
-  });
-
-  it('formatContextShort_decimal_redondea', () => {
-    expect(formatContextShort(44.6)).toBe('ctx 45 %');
-  });
-});
-
 describe('toContextInfo', () => {
   it('modelo1m_usaVentana1MyCalculaPct', () => {
     const info = toContextInfo(500_000, 42_000, 'opus[1m]');
@@ -364,5 +338,37 @@ describe('currentContextTokens', () => {
       assistantEntry(1, { inputTokens: 42 }),
     ]);
     expect(currentContextTokens(series)).toBe(42);
+  });
+});
+
+// P-028, punto 7: lo que enseña el panel de Contexto.
+describe('resolveContext', () => {
+  const usage: ContextUsage = { totalTokens: 140_000, maxTokens: 1_000_000, percentage: 14, categories: [] };
+
+  it('resolveContext_conDesgloseDelCli_noEsEstimadoYAvisaConSuPorcentaje', () => {
+    const resolved = resolveContext(usage, { contextTokens: 150_000, tokensOut: 10, model: 'opus' });
+
+    expect(resolved.estimated).toBe(false);
+    expect(resolved.info.usedPct).toBe(14);
+    // Antes: 140k sobre 200k fijos = 70 % y aviso ambar con un 14 % real.
+    expect(resolved.advice).toEqual({ pct: 14, level: 'ok' });
+  });
+
+  it('resolveContext_sinDesglose_estimaConLaVentanaDelModelo', () => {
+    const resolved = resolveContext(undefined, { contextTokens: 150_000, tokensOut: 0, model: 'claude-opus-4-8' });
+
+    expect(resolved.estimated).toBe(true);
+    expect(resolved.advice).toEqual({ pct: 15, level: 'ok' });
+  });
+
+  it('resolveContext_sinDesgloseModeloDe200k_avisa', () => {
+    expect(resolveContext(undefined, { contextTokens: 190_000, tokensOut: 0, model: 'haiku' }).advice.level).toBe('high');
+  });
+
+  it('resolveContext_desgloseConVentanaCero_caeALaEstimacion', () => {
+    const resolved = resolveContext({ ...usage, maxTokens: 0 }, { contextTokens: 0, tokensOut: 0, model: 'haiku' });
+
+    expect(resolved.estimated).toBe(true);
+    expect(resolved.advice).toEqual({ pct: 0, level: 'ok' });
   });
 });

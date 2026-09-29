@@ -20,7 +20,17 @@ export type SystemWrapper =
   | { readonly kind: 'caveat' }
   | { readonly kind: 'reminder' }
   | { readonly kind: 'scheduled-task'; readonly name: string; readonly body: string }
-  | { readonly kind: 'task-notification'; readonly summary: string };
+  | {
+      readonly kind: 'task-notification';
+      readonly summary: string;
+      // P-028 37a, MEDIDO en 2.1.284: el aviso trae el `tool_use_id` del Agent que lo lanzo, su estado y
+      // `<usage><subagent_tokens>…<tool_uses>…<duration_ms>…</usage>`. null si no viene.
+      readonly toolUseId: string | null;
+      readonly status: string | null;
+      readonly tokens: number | null;
+      readonly toolUses: number | null;
+      readonly durationMs: number | null;
+    };
 
 const PLAIN: SystemWrapper = { kind: 'plain' };
 
@@ -33,10 +43,29 @@ export function classifySystemWrapper(text: string): SystemWrapper {
   if (output !== null) return { kind: 'command-output', output: output.trim() };
   if (trimmed.startsWith('<command-name>') || trimmed.startsWith('<command-message>')) return commandFrom(trimmed);
   if (trimmed.startsWith('<scheduled-task')) return scheduledTaskFrom(trimmed);
-  if (isWrapped(trimmed, 'task-notification')) {
-    return { kind: 'task-notification', summary: (firstTag(trimmed, 'summary') ?? '').trim() };
-  }
+  if (isWrapped(trimmed, 'task-notification')) return taskNotificationFrom(trimmed);
   return PLAIN;
+}
+
+function taskNotificationFrom(text: string): SystemWrapper {
+  const tag = (name: string): string | null => {
+    const value = firstTag(text, name)?.trim() ?? '';
+    return value.length === 0 ? null : value;
+  };
+  return {
+    kind: 'task-notification',
+    summary: tag('summary') ?? '',
+    toolUseId: tag('tool-use-id'),
+    status: tag('status'),
+    tokens: countOf(tag('subagent_tokens')),
+    toolUses: countOf(tag('tool_uses')),
+    durationMs: countOf(tag('duration_ms')),
+  };
+}
+
+// Entero no negativo escrito en decimal, o null: el texto viene de fuera y no se inventa un numero.
+function countOf(text: string | null): number | null {
+  return text !== null && /^\d+$/.test(text) ? Number(text) : null;
 }
 
 // `/x` o `/x args`. Sin `<command-name>` bien cerrado no es un comando: se pinta tal cual.

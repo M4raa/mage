@@ -58,7 +58,9 @@ export function useTranscriptLifecycle(tabId: string): void {
   useEffect(() => {
     if (cliTitle === null) return;
     const tab = useWorkbenchStore.getState().tabs.find((t) => t.id === tabId);
-    // Un nombre puesto en Mage que aun no llego al CLI gana (D3): la transcripcion trae el viejo.
+    // Respaldo (P-028): el camino normal es la salida del `/rename` en `handleEvent`, que llega aunque
+    // haya un turno en marcha. Un nombre puesto en Mage que aun no llego al CLI gana (D3): la
+    // transcripcion trae el viejo. Un `/rename` tecleado despues borra ese pendiente al enviarse.
     if (tab === undefined || tab.pendingCliTitle !== undefined || tab.title === cliTitle) return;
     renameTab(tabId, cliTitle);
   }, [tabId, cliTitle, renameTab]);

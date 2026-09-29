@@ -49,6 +49,7 @@ export interface AccountDeps {
   readonly layout: AccountLayout;
   readonly homedir: string;
   readonly listHome: () => string[]; // nombres de entradas en HOME
+  readonly listDir: (path: string) => string[]; // entradas de un dir (vacio si no existe)
   readonly isDirectory: (path: string) => boolean;
   readonly exists: (path: string) => boolean;
   readonly readJson: (path: string) => unknown; // null si no existe/ilegible/JSON invalido
@@ -108,8 +109,13 @@ export class AccountService {
   }
 
   // Elimina una cuenta: desenlaza las carpetas compartidas (SIN tocar los datos comunes) y borra su
-  // directorio. Guardas de seguridad: nunca la principal, debe existir y ser un dir de cuenta gestionado
-  // bajo HOME. Si algun enlace compartido no se pudo quitar, ABORTA (no arriesga los datos comunes).
+  // directorio ENTERO: login, ajustes y conversaciones privadas (`mage-private/projects`, que es suyo).
+  // Guardas de seguridad: nunca la principal, debe existir y ser un dir de cuenta bajo HOME.
+  // Dos guardas contra perder datos COMUNES (P-028, punto 30):
+  //  - ANTES de tocar nada: si alguna carpeta compartida es un dir REAL con contenido (el CLI puede
+  //    convertir un enlace en carpeta real, y las cuentas previas a P-026 tienen `commands`/`agents`
+  //    reales), aborta con la ruta. El rmrf se llevaria por delante lo que deberia estar en el comun.
+  //  - Si algun enlace compartido no se pudo quitar, ABORTA.
   // Incluye los enlaces del PERFIL PRIVADO (mage-private/<compartida>), que tambien apuntan al comun.
   deleteAccount(configDir: string): void {
     if (this.isMainDir(configDir)) {
@@ -120,12 +126,11 @@ export class AccountService {
       throw new Error(`Ruta de cuenta no valida (debe ser ${this.mainDir}-* bajo HOME): ${configDir}`);
     }
 
-    // Enlaces compartidos a limpiar: los de la cuenta y los del perfil privado (todos apuntan al
-    // comun; un rmrf a ciegas sobre ellos arriesgaria los datos compartidos).
     const linkPaths = [
       ...SHARED_FOLDERS.map((folder) => join(configDir, folder)),
       ...PRIVATE_SHARED_FOLDERS.map((folder) => join(configDir, PRIVATE_PROFILE_DIR, folder)),
     ];
+    this.assertNoPopulatedRealSharedFolder(linkPaths);
     for (const linkPath of linkPaths) {
       this.deps.linkService.removeDirLink(linkPath);
     }
@@ -135,6 +140,19 @@ export class AccountService {
       }
     }
     this.deps.rmrf(configDir);
+  }
+
+  // Una carpeta que deberia ser un enlace al comun y es un dir real CON contenido: sus datos no estan
+  // en el comun, asi que borrarla es perderlos. Vacia se deja pasar (no hay nada que perder).
+  private assertNoPopulatedRealSharedFolder(linkPaths: readonly string[]): void {
+    for (const path of linkPaths) {
+      if (this.deps.linkService.classifyLink(path) !== 'private') continue;
+      if (this.deps.listDir(path).length === 0) continue;
+      throw new Error(
+        `"${path}" es una carpeta real con datos, no un enlace a la compartida; se aborta el borrado. ` +
+          'Mueve su contenido a la carpeta comun o borrala a mano.',
+      );
+    }
   }
 
   // Asegura (idempotente) el PERFIL PRIVADO de una cuenta y devuelve su config dir (M2.6). El perfil

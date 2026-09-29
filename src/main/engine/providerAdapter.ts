@@ -113,6 +113,9 @@ export interface ProviderAdapter {
   // solo Claude lo soporta, y asi los adapters por gateway no tienen que declarar un metodo que
   // lanzaria. Si no esta, AgentSession simplemente no lo pide.
   encodeGetContextUsage?(): unknown;
+  // Parar UN subagente en segundo plano (0.1.1 R2, punto 29): control_request stop_task. OPCIONAL como
+  // el anterior: solo Claude lo tiene.
+  encodeStopTask?(taskId: string): unknown;
   // Registro de hooks al arrancar (D2): control_request initialize. OPCIONAL, como el anterior.
   encodeInitialize?(): unknown;
   // Respuesta a un control_request hook_callback del CLI (D2). Obligatoria si se registran hooks: el

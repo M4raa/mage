@@ -8,9 +8,10 @@
 // y como fallback mientras la sesion no ha arrancado.
 //
 // Por que manda la sesion: al comparar la lista curada con la real se vio que 6 de los 18 curados
-// (`cost`, `help`, `hooks`, `memory`, `permissions`, `status`) NO existen en el CLI headless — son de
+// (`cost`, `help`, `hooks`, `memory`, `permissions`, `status`) NO existian en el CLI headless — son de
 // la TUI. Ofrecerlos era enganar al usuario: al enviarlos, el CLI los trata como texto normal y el
-// modelo responde a un prompt que dice "/status".
+// modelo responde a un prompt que dice "/status". Revisado contra 2.1.284 (P-028, grupo C): `cost` ya
+// existe, como alias de `usage`; `review` ya no existe y `agents` solo contesta «wizard removed».
 
 export interface SlashCommand {
   readonly name: string; // sin la barra (p.ej. 'compact')
@@ -27,28 +28,27 @@ export interface SlashCommand {
 export const SLASH_SUGGESTION_LIMIT = 8;
 
 export const SLASH_COMMANDS: readonly SlashCommand[] = [
-  { name: 'agents', description: 'Gestiona los subagentes disponibles' },
   { name: 'clear', description: 'Empieza de cero (limpia el contexto)' },
   { name: 'compact', description: 'Compacta el contexto de la conversación' },
   { name: 'config', description: 'Configuración del CLI' },
   { name: 'context', description: 'Muestra en qué se gasta la ventana de contexto' },
   { name: 'doctor', description: 'Diagnostica la instalación de Claude Code' },
+  { name: 'effort', description: 'Nivel de esfuerzo de la sesión' },
   { name: 'init', description: 'Genera/actualiza CLAUDE.md del proyecto' },
   { name: 'mcp', description: 'Servidores MCP conectados' },
   { name: 'model', description: 'Cambia el modelo de la sesión' },
-  { name: 'review', description: 'Revisa los cambios pendientes' },
+  { name: 'rename', description: 'Renombra la conversación' },
   { name: 'security-review', description: 'Revisión de seguridad de los cambios' },
-  { name: 'usage', description: 'Uso de la suscripción (ventanas 5 h / semanal)' },
+  { name: 'usage', description: 'Uso de la suscripción (ventanas 5 h / semanal)', aliases: ['cost', 'stats'] },
 ];
 
-// Los 6 que D4 midio que NO existen en el CLI headless (son de la TUI). FUERA de `SLASH_COMMANDS` a
+// Los que D4 midio que NO existen en el CLI headless (son de la TUI). FUERA de `SLASH_COMMANDS` a
 // proposito, porque esa lista es la que se OFRECE cuando la sesion aun no ha reportado los suyos — y
 // como `ensureSession` es perezoso, ese es justo el estado de cualquier conversacion recien abierta:
 // ofrecerlos ahi era engañar exactamente igual que ofrecerlos con la sesion viva (`pnpm verify:gui` lo
 // encontro el 2026-08-12). Sus descripciones se conservan por si una version futura del CLI headless
 // los declara: entonces vendran de la sesion, que es quien manda, y el texto en castellano seguira ahi.
 const TUI_ONLY_DESCRIPTIONS: readonly SlashCommand[] = [
-  { name: 'cost', description: 'Coste y tokens de la sesión actual' },
   { name: 'help', description: 'Ayuda de Claude Code' },
   { name: 'hooks', description: 'Gestiona los hooks del proyecto' },
   { name: 'memory', description: 'Edita los ficheros de memoria (CLAUDE.md)' },
@@ -112,7 +112,7 @@ function emptyToNull(value: string | null | undefined): string | null {
 // Solo aplica cuando el texto es un unico token que empieza por '/' (sin espacios): "/co" -> filtra;
 // "/compact algo" (ya hay argumento) o texto normal -> [].
 // Ranking: primero los que EMPIEZAN por lo escrito, luego los que lo CONTIENEN (asi "/m" ofrece
-// model/mcp/memory y "/rev" ofrece review y security-review). Tope SLASH_SUGGESTION_LIMIT.
+// model/mcp/memory y "/re" ofrece rename y security-review). Tope SLASH_SUGGESTION_LIMIT.
 // `catalog` es el catalogo efectivo de la sesion (ver buildSlashCatalog); por defecto, el curado.
 export function filterSlashCommands(
   text: string,

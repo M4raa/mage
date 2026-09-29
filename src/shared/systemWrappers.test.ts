@@ -68,7 +68,33 @@ describe('classifySystemWrapper', () => {
 
   it('classifySystemWrapper_taskNotification_usaElResumen', () => {
     const text = '<task-notification>\n<task-id>k1</task-id>\n<status>failed</status>\n<summary>MCP task k1 failed.</summary>\n</task-notification>';
-    expect(classifySystemWrapper(text)).toEqual({ kind: 'task-notification', summary: 'MCP task k1 failed.' });
+    expect(classifySystemWrapper(text)).toEqual({
+      kind: 'task-notification',
+      summary: 'MCP task k1 failed.',
+      toolUseId: null,
+      status: 'failed',
+      tokens: null,
+      toolUses: null,
+      durationMs: null,
+    });
+  });
+
+  it('parseTaskNotification_textoMedido_extraeToolUseIdStatusUsage', () => {
+    // Texto real del CLI 2.1.284 (spike --subagent-bg), con la ruta del output recortada.
+    const text =
+      '<task-notification>\n<task-id>ab255314fd2da405f</task-id>\n<tool-use-id>toolu_01M2</tool-use-id>\n' +
+      '<output-file>C:\\tmp\\ab25.output</output-file>\n<status>completed</status>\n' +
+      '<summary>Agent "spike A" finished</summary>\n<note>A task-notification fires each time…</note>\n<result>A</result>\n' +
+      '<usage><subagent_tokens>19906</subagent_tokens><tool_uses>0</tool_uses><duration_ms>1422</duration_ms></usage>\n</task-notification>';
+    expect(classifySystemWrapper(text)).toEqual({
+      kind: 'task-notification',
+      summary: 'Agent "spike A" finished',
+      toolUseId: 'toolu_01M2',
+      status: 'completed',
+      tokens: 19906,
+      toolUses: 0,
+      durationMs: 1422,
+    });
   });
 
   it('classifySystemWrapper_etiquetaDesconocida_plain', () => {

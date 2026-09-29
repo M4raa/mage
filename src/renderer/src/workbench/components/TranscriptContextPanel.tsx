@@ -6,14 +6,15 @@ import { useActiveTranscriptSessionId } from '../useActiveTranscript';
 import {
   aggregateTokenUsage,
   buildContextSizeSeries,
-  contextUsageAdvice,
   currentContextTokens,
+  resolveContext,
   toTokenCategoryShares,
   type ContextUsageAdvice,
   type TokenCategoryKey,
   type TokenCategoryShare,
 } from '../contextView';
 import { ContextEvolutionChart } from './ContextEvolutionChart';
+import { ContextBreakdown } from './ContextBreakdown';
 import { Hint } from './TranscriptHint';
 
 // Color fijo por categoria (orden fijo, nunca por rango). Tokens `dataviz` slots 1-4 como variables
@@ -48,23 +49,25 @@ export function TranscriptContextPanel(): React.JSX.Element {
   const isFinal = useTranscriptStore((s) => s.isFinal);
   const refresh = useTranscriptStore((s) => s.refresh);
 
+  // La OCUPACION de la ventana (P-028, punto 7): el desglose que reporta el CLI, el mismo de la barra de
+  // estado; sin sesion viva, la estimacion de la transcripcion marcada como tal.
+  const usage = useWorkbenchStore((s) => s.contextUsageByChat[s.activeTabId]);
+  const model = useWorkbenchStore((s) => s.tabs.find((t) => t.id === s.activeTabId)?.model ?? '');
   const totals = useMemo(() => aggregateTokenUsage(entries), [entries]);
   const shares = useMemo(() => toTokenCategoryShares(totals), [totals]);
   const series = useMemo(() => buildContextSizeSeries(entries), [entries]);
-  const advice = useMemo(() => contextUsageAdvice(currentContextTokens(series)), [series]);
+  const context = useMemo(
+    () => resolveContext(usage, { contextTokens: currentContextTokens(series), tokensOut: totals.outputTokens, model }),
+    [usage, series, totals.outputTokens, model],
+  );
 
   if (!hasSession) return <Hint text="Abre una conversación para ver su contexto." />;
-  if (errorMessage !== null) return <Hint text={`No se pudo leer la transcripción: ${errorMessage}`} onRetry={refresh} />;
-  if (entries.length === 0) return <Hint text={isFinal ? 'Transcripción vacía.' : 'Cargando transcripción…'} onRetry={refresh} />;
-  if (totals.totalTokens === 0) {
-    return <Hint text={isFinal ? 'Sin datos de uso de tokens en esta transcripción.' : 'Cargando transcripción…'} onRetry={refresh} />;
-  }
 
   return (
     <div className="flex flex-col gap-[16px] p-[14px] text-[11px]">
-      {advice.level !== 'ok' && (
+      {context.advice.level !== 'ok' && (
         <ContextAdvisor
-          advice={advice}
+          advice={context.advice}
           // Compactar y el handoff actuan sobre el PROCESO del CLI, no sobre el fichero: sin sesion
           // viva no hay a quien mandarselo. Antes daba igual porque el panel entero se escondia sin
           // sesion; ahora que se muestra con la transcripcion en disco, los botones se van solos.
@@ -73,34 +76,74 @@ export function TranscriptContextPanel(): React.JSX.Element {
           onCompact={() => void compactActiveSession()}
         />
       )}
-      <section className="flex flex-col gap-[10px]">
-        <div className="flex items-center justify-between">
-          <span className="text-[9.5px] font-bold tracking-[.08em] text-mg-ter">TOKENS POR CATEGORÍA</span>
-          <div className="flex items-center gap-[8px]">
-            <span className="text-[10px] text-mg-body" style={{ fontVariantNumeric: 'tabular-nums' }}>
-              {totals.totalTokens.toLocaleString('es')} tok
-            </span>
-            <button
-              onClick={refresh}
-              data-tip="Releer transcripción"
-              className="flex h-5 w-5 items-center justify-center rounded-[5px] text-mg-muted hover:bg-mg-hover hover:text-mg-body"
-            >
-              ⟳
-            </button>
-          </div>
-        </div>
+      <section data-context-window="true" className="flex flex-col gap-[8px]">
+        <div className="text-[9.5px] font-bold tracking-[.08em] text-mg-ter">VENTANA DE CONTEXTO</div>
+        <ContextBreakdown usage={context.estimated ? undefined : usage} context={context.info} estimated={context.estimated} />
+      </section>
+      <ConsumedTokens entries={entries.length} isFinal={isFinal} errorMessage={errorMessage} refresh={refresh} totalTokens={totals.totalTokens}>
         {shares.map((share) => (
           <CategoryBar key={share.key} share={share} />
         ))}
-      </section>
-
-      <section className="flex flex-col gap-[8px] border-t border-mg-border-subtle pt-[12px]">
-        <div className="text-[9.5px] font-bold tracking-[.08em] text-mg-ter">EVOLUCIÓN DEL CONTEXTO</div>
-        <ContextEvolutionChart points={series} />
-        <CompactionNote count={series.filter((p) => p.isCompaction).length} />
-      </section>
+      </ConsumedTokens>
+      {totals.totalTokens > 0 && (
+        <section className="flex flex-col gap-[8px] border-t border-mg-border-subtle pt-[12px]">
+          <div className="text-[9.5px] font-bold tracking-[.08em] text-mg-ter">EVOLUCIÓN DEL CONTEXTO</div>
+          <ContextEvolutionChart points={series} />
+          <CompactionNote count={series.filter((p) => p.isCompaction).length} />
+        </section>
+      )}
     </div>
   );
+}
+
+// Lo FACTURADO en toda la conversacion, que no es la ocupacion (P-028): antes era lo unico del panel, con
+// el rotulo «TOKENS POR CATEGORÍA». Sus estados de lectura ya no ocultan la ventana de arriba.
+function ConsumedTokens({
+  entries,
+  isFinal,
+  errorMessage,
+  refresh,
+  totalTokens,
+  children,
+}: {
+  readonly entries: number;
+  readonly isFinal: boolean;
+  readonly errorMessage: string | null;
+  readonly refresh: () => void;
+  readonly totalTokens: number;
+  readonly children: React.ReactNode;
+}): React.JSX.Element {
+  const hint = consumedTokensHint({ entries, isFinal, errorMessage, totalTokens });
+  return (
+    <section className="flex flex-col gap-[10px] border-t border-mg-border-subtle pt-[12px]">
+      <div className="flex items-center justify-between">
+        <span className="text-[9.5px] font-bold tracking-[.08em] text-mg-ter">TOKENS CONSUMIDOS (acumulado)</span>
+        <div className="flex items-center gap-[8px]">
+          {hint === null && (
+            <span className="text-[10px] text-mg-body" style={{ fontVariantNumeric: 'tabular-nums' }}>
+              {totalTokens.toLocaleString('es')} tok
+            </span>
+          )}
+          <button
+            onClick={refresh}
+            data-tip="Releer transcripción"
+            className="flex h-5 w-5 items-center justify-center rounded-[5px] text-mg-muted hover:bg-mg-hover hover:text-mg-body"
+          >
+            ⟳
+          </button>
+        </div>
+      </div>
+      {hint === null ? children : <div className="text-[10.5px] text-mg-ter">{hint}</div>}
+    </section>
+  );
+}
+
+function consumedTokensHint(state: { readonly entries: number; readonly isFinal: boolean; readonly errorMessage: string | null; readonly totalTokens: number }): string | null {
+  if (state.errorMessage !== null) return `No se pudo leer la transcripción: ${state.errorMessage}`;
+  if (!state.isFinal && state.totalTokens === 0) return 'Cargando transcripción…';
+  if (state.entries === 0) return 'Transcripción vacía.';
+  if (state.totalTokens === 0) return 'Sin datos de uso de tokens en esta transcripción.';
+  return null;
 }
 
 // Aviso de ocupacion de la ventana de contexto (M2.4). No invasivo: informa del % y ofrece

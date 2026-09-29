@@ -1,10 +1,10 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
-import { EFFORT_LEVELS, isPermissionMode, PERMISSION_MODES } from '@shared/ipc';
+import { isPermissionMode } from '@shared/ipc';
 import type { EditorInfo } from '@shared/ipc';
 import { NO_PERMISSION_CONTROL_WARNING, isAutoApprovedProvider } from '@shared/providers';
 import { useWorkbenchStore } from '../workbenchStore';
 import { displayModelId, modelOptionsForProvider } from '../models';
-import { insertImageTokens, removeImageToken } from '@shared/imageRefs';
+import { describeAttachment, insertImageTokens, reconcileImageTokens, removeImageToken } from '@shared/imageRefs';
 import { motion } from 'motion/react';
 import { COMPOSER_LAYOUT_TRANSITION } from '../motionPresets';
 import { composerLayout, type ComposerLayout } from '../composerLayout';
@@ -21,6 +21,8 @@ import { resolveKeyEvent } from '../keybindings/resolver';
 import { isMacPlatform } from '../keybindings/platform';
 import { effortChangeAdvice, modelChangeAdvice, type CostAdvice } from '../costAdvice';
 import { Dropdown } from './Dropdown';
+import { StepSlider } from './StepSlider';
+import { EFFORT_STEP_LABEL, effortSteps, permissionModeLabel, permissionSteps } from '../stepSliderModel';
 import { usePaneTabId } from '../paneContext';
 import type { PermissionMode } from '@shared/ipc';
 
@@ -35,27 +37,10 @@ const PromptEditor = lazy(() => import('./PromptEditor').then((m) => ({ default:
 // render haria que el selector de Zustand viera un valor nuevo siempre y re-renderizara sin parar.
 const EMPTY_COMMANDS: readonly SlashCommand[] = [];
 
-// Etiqueta corta del chip de esfuerzo (M2.4). '' = sin fijar -> default del CLI.
-const EFFORT_LABEL: Readonly<Record<string, string>> = {
-  '': 'Esfuerzo auto',
-  low: 'Esfuerzo bajo',
-  medium: 'Esfuerzo medio',
-  high: 'Esfuerzo alto',
-  xhigh: 'Esfuerzo muy alto',
-  max: 'Esfuerzo máximo',
-};
-
 // Cuanto se deja en pantalla un aviso de coste antes de desaparecer solo (ms).
 const ADVICE_TIMEOUT_MS = 8000;
 
-// Etiqueta corta de cada modo de permiso para el chip (M2.6).
-const PERMISSION_MODE_LABEL: Readonly<Record<PermissionMode, string>> = {
-  default: 'Manual',
-  acceptEdits: 'Auto-editar',
-  plan: 'Plan',
-  auto: 'Auto',
-  bypassPermissions: 'Omitir permisos',
-};
+const BYPASS_PERMISSIONS_ADVICE = 'Omitir permisos: el agente ejecuta todo sin preguntar';
 
 const PERMISSION_MODE_ICON: Readonly<Partial<Record<PermissionMode, IconName>>> = {
   acceptEdits: 'pencil',
@@ -64,11 +49,6 @@ const PERMISSION_MODE_ICON: Readonly<Partial<Record<PermissionMode, IconName>>> 
   bypassPermissions: 'warning',
 };
 
-// Un modo que Mage no ofrece (el CLI puede estar en `dontAsk`) se enseña con su nombre crudo.
-function permissionModeLabel(mode: string): string {
-  return isPermissionMode(mode) ? PERMISSION_MODE_LABEL[mode] : mode;
-}
-
 // Neutro en Manual, ambar en los que relajan permisos y rojo en «Omitir permisos» (D9: mismo ciclo, con su aviso).
 function permissionChipSkin(mode: string): string {
   if (mode === 'default') return 'border-mg-border-ctrl text-mg-sec hover:text-mg-body';
@@ -76,7 +56,8 @@ function permissionChipSkin(mode: string): string {
   return 'border-mg-warn-border bg-mg-warn-bg text-mg-warn-text';
 }
 
-const PERMISSION_CYCLE_TIP = `Modo de permiso (click o Shift+Tab con el input vacío): ${PERMISSION_MODES.map((mode) => PERMISSION_MODE_LABEL[mode]).join(' → ')}`;
+const PERMISSION_MODE_TIP = 'Modo de permiso (desliza, o Shift+Tab con el input vacío para pasar al siguiente)';
+const EFFORT_TIP = 'Nivel de esfuerzo del modelo (--effort). Se aplica al arrancar o reabrir la conversación.';
 
 // Caja de prompt. Enter (sin shift) envia al motor real del chat activo; Shift+Enter salto de linea.
 // Input rico (M3): Shift+Enter continua listas (- / * / + / 1.) y Tab/Shift+Tab indenta/desindenta
@@ -105,6 +86,20 @@ function draftOf(tabId: string): PromptDraft {
   return useWorkbenchStore.getState().draftByChat[tabId] ?? EMPTY_DRAFT;
 }
 
+// Constantes de la fila del composer (deben casar con las clases de abajo: `gap-[10px]`, `p-[10px_14px]`).
+const COMPOSER_GAP_PX = 10;
+const COMPOSER_PROMPT_CHEVRON_PX = 8;
+
+// Ancho que tendria el editor con los selectores EN LINEA: el interior de la fila menos el `›` y los
+// controles, con un hueco entre cada par. null si aun no se puede medir (primer render).
+function measureInlineEditorWidth(row: HTMLElement | null, controls: HTMLElement | null): number | null {
+  if (row === null || controls === null) return null;
+  const style = getComputedStyle(row);
+  const inner = row.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+  const width = inner - COMPOSER_PROMPT_CHEVRON_PX - controls.offsetWidth - 2 * COMPOSER_GAP_PX;
+  return Number.isFinite(width) ? width : null;
+}
+
 export function PromptBar(): React.JSX.Element {
   // La pestaña de ESTE panel (item 13). Las acciones del store siguen operando sobre la pestaña
   // ACTIVA, no sobre esta: es correcto porque el panel se enfoca (focusPane) en cuanto se interactua
@@ -124,6 +119,7 @@ export function PromptBar(): React.JSX.Element {
   const openHandoff = useWorkbenchStore((s) => s.openHandoff);
   const setActiveModel = useWorkbenchStore((s) => s.setActiveModel);
   const cyclePermissionMode = useWorkbenchStore((s) => s.cyclePermissionMode);
+  const setActivePermissionMode = useWorkbenchStore((s) => s.setActivePermissionMode);
   const compactActiveSession = useWorkbenchStore((s) => s.compactActiveSession);
   const setActiveEffort = useWorkbenchStore((s) => s.setActiveEffort);
   const interruptActiveSession = useWorkbenchStore((s) => s.interruptActiveSession);
@@ -155,8 +151,16 @@ export function PromptBar(): React.JSX.Element {
   // `composerLayout` (apilado solo vuelve con el input vacio).
   const [wraps, setWraps] = useState(false);
   const [layout, setLayout] = useState<ComposerLayout>('inline');
+  // Ancho del texto cuando cabe en una linea (P-028 10): con el, apilado vuelve a en-linea en cuanto el
+  // texto cabe en el ancho en-linea, no solo con el input vacio.
+  const [textWidth, setTextWidth] = useState<number | null>(null);
+  const rowRef = useRef<HTMLDivElement>(null);
+  const controlsRef = useRef<HTMLDivElement>(null);
   const promptEmpty = text.trim().length === 0;
-  useEffect(() => setLayout((current) => composerLayout(current, { wraps, empty: promptEmpty })), [wraps, promptEmpty]);
+  useEffect(() => {
+    const inlineWidth = measureInlineEditorWidth(rowRef.current, controlsRef.current);
+    setLayout((current) => composerLayout(current, { wraps, empty: promptEmpty, textWidth, inlineWidth }));
+  }, [wraps, promptEmpty, textWidth]);
   // La barra no se remonta al cambiar de pestaña (ver el borrador, arriba): sin esto, un error de la
   // pestaña A (p. ej. «mas de 10 imagenes») se quedaba pintado en B para siempre.
   useEffect(() => setError(null), [activeTabId]);
@@ -228,6 +232,15 @@ export function PromptBar(): React.JSX.Element {
     const id = requestAnimationFrame(() => editorRef.current?.focus());
     return () => cancelAnimationFrame(id);
   }, [promptFocusToken, disabled]);
+
+  // «Omitir permisos» (P-028 14, revoca la franja fija de D9): un aviso TEMPORAL (el mismo mecanismo y
+  // los mismos 8 s que el de coste) cada vez que el modo pasa a `bypassPermissions` —por el chip, Shift+Tab,
+  // el atajo global, el evento del CLI o al reabrir una conversacion que ya estaba en ese modo—. La señal
+  // permanente es solo el control en rojo.
+  const bypassActive = isClaude && permissionMode === 'bypassPermissions';
+  useEffect(() => {
+    if (bypassActive) setAdvice({ severity: 'warn', message: BYPASS_PERMISSIONS_ADVICE });
+  }, [bypassActive, activeTabId]);
 
   // El aviso de coste desaparece solo (no es un error que haya que atender).
   useEffect(() => {
@@ -312,10 +325,25 @@ export function PromptBar(): React.JSX.Element {
     editorRef.current?.getTextState() ?? { value: text, selectionStart: text.length, selectionEnd: text.length };
 
   // Cambio del texto: ademas resetea el estado del autocompletado "/" (reabrir + primera sugerencia).
-  const onChangeText = (value: string): void => {
-    setText(value);
+  const onChangeText = (value: string, userDeleted: boolean): void => {
+    if (userDeleted) removeDeletedImageAttachments(value);
+    else setText(value);
     setSlashDismissed(false);
     setSlashIndex(0);
+  };
+
+  // Backspace/Supr sobre un `[Imagen N]` lo borra entero (es atomico) y, con el, su adjunto; los tokens de
+  // detras se renumeran (P-028 19b). Se lee el borrador del store, no del cierre: el evento llega desde el
+  // editor, que ya ha avanzado. Si hubo renumerado, el editor aun tiene el texto sin renumerar: se le
+  // aplica el bueno FUERA de su actualizacion en curso (CodeMirror no admite `dispatch` dentro de ella).
+  const removeDeletedImageAttachments = (value: string): void => {
+    const latest = draftOf(activeTabId);
+    const result = reconcileImageTokens(latest.text, value, latest.attachments);
+    setDraft(activeTabId, { text: result.text, attachments: result.attachments });
+    const editor = editorRef.current;
+    if (result.text === value || editor === null) return;
+    const caret = Math.min(editor.getTextState().selectionStart, result.text.length);
+    queueMicrotask(() => editor.applyTextState({ value: result.text, selectionStart: caret, selectionEnd: caret }));
   };
 
   // Inserta el comando elegido ("/name ") y cierra el popover; el cursor queda al final para el argumento.
@@ -493,18 +521,6 @@ export function PromptBar(): React.JSX.Element {
 
       {advice !== null && <CostAdviceBanner advice={advice} onDismiss={() => setAdvice(null)} />}
 
-      {/* «Omitir permisos» (D9): va en el mismo ciclo que los demas modos, pero mientras esta activo lo
-          dice una franja FIJA encima del input, no solo el color del chip. */}
-      {isClaude && permissionMode === 'bypassPermissions' && (
-        <div
-          role="status"
-          data-bypass-warning="true"
-          className="mb-[6px] flex items-center gap-[6px] rounded-[7px] border border-mg-danger-border bg-mg-danger-bg p-[5px_10px] text-[10.5px] font-semibold text-mg-danger"
-        >
-          <Icon name="warning" size={12} /> Omitir permisos: el agente ejecuta todo sin preguntar
-        </div>
-      )}
-
       {/* Tira de adjuntos (2.12.1): las imagenes que se van a enviar con este mensaje. */}
       {attachments.length > 0 && (
         <div className="mb-[8px] flex flex-wrap gap-[6px]">
@@ -513,9 +529,18 @@ export function PromptBar(): React.JSX.Element {
               <img
                 src={`data:${item.attachment.mediaType};base64,${item.attachment.data}`}
                 alt={`Adjunto ${index + 1}`}
+                title={describeAttachment(index + 1, item.attachment.mediaType, item.byteLength)}
                 data-attachment="thumb"
                 className="h-[56px] w-auto rounded-[6px] border border-mg-border-ctrl"
               />
+              {/* Insignia fija con el numero: el mismo que lleva su `[Imagen N]` en el texto. */}
+              <span
+                data-attachment-badge="true"
+                aria-hidden="true"
+                className="pointer-events-none absolute bottom-[3px] left-[3px] rounded-[4px] bg-mg-panel px-[4px] text-[9.5px] font-semibold leading-[14px] text-mg-body2"
+              >
+                {index + 1}
+              </span>
               <button
                 onClick={() => removeAttachment(index)}
                 aria-label={`Quitar el adjunto ${index + 1}`}
@@ -530,7 +555,7 @@ export function PromptBar(): React.JSX.Element {
 
       {/* `flex-wrap`: los controles (todos `shrink-0`) bajan a la linea siguiente cuando no caben junto al
           editor, en vez de estrujarlo a 0 px de ancho — ver el comentario del host en PromptEditor.tsx. */}
-      <div className="relative flex flex-wrap items-end gap-[10px] rounded-[9px] border border-mg-border-ctrl bg-mg-panel p-[10px_14px]">
+      <div ref={rowRef} className="relative flex flex-wrap items-end gap-[10px] rounded-[9px] border border-mg-border-ctrl bg-mg-panel p-[10px_14px]">
         {slashOpen && (
           // Popover de comandos "/" (M2.6): navegable con flechas/Enter/Tab; click completa.
           <div
@@ -573,12 +598,14 @@ export function PromptBar(): React.JSX.Element {
             onKeyDown={onKeyDown}
             onPasteImages={addFiles}
             onWrapChange={setWraps}
+            onTextWidthChange={setTextWidth}
             stacked={layout === 'stacked'}
           />
         </Suspense>
         {/* Los selectores van JUNTOS (P-026 3.1): en linea con el texto mientras cabe, y en su propia fila,
             a la derecha, cuando el texto salta de linea. `layout="position"` anima el salto (FLIP). */}
         <motion.div
+          ref={controlsRef}
           layout="position"
           transition={COMPOSER_LAYOUT_TRANSITION}
           data-prompt-controls="true"
@@ -646,31 +673,41 @@ export function PromptBar(): React.JSX.Element {
             </span>
           )}
           {isClaude && (
-            // Chip de modo de permiso (M2.6, solo Claude): click cicla los cinco modos de PERMISSION_MODES;
-            // tambien con Shift+Tab si el input esta vacio.
-            <button
-              onClick={() => cyclePermissionMode()}
-              data-tip={PERMISSION_CYCLE_TIP}
-              aria-label={`Modo de permiso: ${permissionModeLabel(permissionMode)}`}
-              className={`shrink-0 cursor-pointer self-center rounded-full border px-[8px] py-[2px] text-[10.5px] ${permissionChipSkin(permissionMode)}`}
-            >
-              {isPermissionMode(permissionMode) && PERMISSION_MODE_ICON[permissionMode] !== undefined && (
-                <Icon name={PERMISSION_MODE_ICON[permissionMode]} size={11} />
-              )}
-              {permissionModeLabel(permissionMode)}
-            </button>
+            // Modo de permiso (M2.6, solo Claude; P-028 32/33: deslizador de cinco pasos). Shift+Tab con el
+            // input vacio y el atajo global siguen ciclando (`cyclePermissionMode`). El chip conserva su
+            // color por modo. Un modo que el CLI reporta y Mage no ofrece (`dontAsk`) sale como etiqueta.
+            <StepSlider
+              steps={permissionSteps}
+              value={permissionMode}
+              onChange={(mode) => isPermissionMode(mode) && setActivePermissionMode(mode)}
+              ariaLabel={`Modo de permiso: ${permissionModeLabel(permissionMode)}`}
+              chipLabel={permissionModeLabel(permissionMode)}
+              chipSizers={permissionSteps.map((step) => step.label)}
+              heading={`Modo ${permissionModeLabel(permissionMode)}`}
+              endLabels={['Más control', 'Más autonomía']}
+              tip={PERMISSION_MODE_TIP}
+              triggerClassName={permissionChipSkin(permissionMode)}
+              leading={
+                isPermissionMode(permissionMode) && PERMISSION_MODE_ICON[permissionMode] !== undefined ? (
+                  <Icon name={PERMISSION_MODE_ICON[permissionMode]} size={11} />
+                ) : undefined
+              }
+            />
           )}
           {isClaude && (
-            // Selector de esfuerzo (--effort, M2.4 / B4): flag de ARRANQUE del CLI, no hay cambio en
-            // caliente; el aviso lo aclara al elegir. Dropdown propio (F6, feedback del usuario): el
-            // `<select>` nativo se veia inconsistente con el resto de la app y su popup, al ser del propio
-            // navegador, tapaba cualquier tooltip mientras estaba abierto.
-            <Dropdown
+            // Esfuerzo (--effort, M2.4 / B4; P-028 33: deslizador de seis pasos con Auto a la izquierda).
+            // Flag de ARRANQUE del CLI, no hay cambio en caliente: el aviso y la nota lo aclaran.
+            <StepSlider
+              steps={effortSteps()}
               value={effort}
               onChange={changeEffort}
-              options={[{ value: '', label: EFFORT_LABEL[''] ?? '' }, ...EFFORT_LEVELS.map((level) => ({ value: level, label: EFFORT_LABEL[level] ?? level }))]}
-              tip="Nivel de esfuerzo del modelo (--effort). Se aplica al arrancar o reabrir la conversación."
               ariaLabel="Nivel de esfuerzo"
+              chipLabel={`Esfuerzo ${(EFFORT_STEP_LABEL[effort] ?? effort).toLowerCase()}`}
+              chipSizers={effortSteps().map((step) => `Esfuerzo ${step.label.toLowerCase()}`)}
+              heading={`Esfuerzo ${EFFORT_STEP_LABEL[effort] ?? effort}`}
+              endLabels={['Más rápido', 'Más inteligente']}
+              tip={EFFORT_TIP}
+              note="Se aplica al arrancar o reabrir la conversación."
             />
           )}
           {activeModel.length > 0 && isClaude && (

@@ -4,6 +4,7 @@
 import type { ConversationSummary } from '@shared/conversations';
 import type { ConversationPrivacy } from '@shared/state';
 import type { Tab } from './types';
+import type { ReopenedTabPrefs } from './conversationPrefs';
 
 // Una pestaña abierta lleva el resumen de su transcripcion en disco, si ya la tiene (P-026, 1.7): sin
 // el, su fila decia `claude · opus[1m]` y la de una cerrada `hace 3 min · 2,1 MB`.
@@ -107,6 +108,36 @@ function sessionIdOf(tab: Tab, sessionIdByChat: Readonly<Record<string, string>>
 }
 
 // --- Apertura de una conversacion del historial --------------------------------------------------
+
+export interface ConversationTabContext {
+  readonly id: string;
+  readonly item: ConversationSummary;
+  readonly accountId: string;
+  readonly accountAlias: string;
+  readonly prefs: ReopenedTabPrefs;
+}
+
+// La pestaña con la que se reanuda una conversacion del historial (`--resume` perezoso al primer
+// mensaje). PURA y compartida por abrirla AQUI y abrirla en una ventana nueva (P-028, 36): las dos
+// tienen que reanudar exactamente lo mismo. Sin createdAtMs/lastMessageAtMs a proposito: la fila
+// conserva su sitio en el sidebar (el mtime de su transcripcion) hasta que se escriba en ella (A6).
+export function tabFromConversation(context: ConversationTabContext): Tab {
+  const { item, prefs } = context;
+  return {
+    id: context.id,
+    accountId: context.accountId,
+    accountAlias: context.accountAlias,
+    cwd: item.cwd,
+    model: prefs.model,
+    provider: 'claude',
+    title: item.title,
+    privacy: item.privacy,
+    resolvedConfigDir: item.configDir,
+    resumeSessionId: item.sessionId,
+    ...(prefs.effort === undefined ? {} : { effort: prefs.effort }),
+    ...(prefs.permissionMode === undefined ? {} : { permissionMode: prefs.permissionMode }),
+  };
+}
 
 // Que hacer al pulsar una fila del historial.
 //  - 'activate': ya esta abierta en la cuenta activa -> solo enfocar su pestana.

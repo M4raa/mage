@@ -27,6 +27,26 @@ export function isPlaceholderTitle(title: string): boolean {
   return title.trim().length === 0 || title === NEW_CONVERSATION_TITLE || title === LEGACY_NEW_CONVERSATION_TITLE;
 }
 
+// ¿Es un comando "/" tecleado (`/rename x`, `/context`)? P-028: no titula la pestaña y se pinta como
+// chip. El nombre no admite otra `/`, asi que una ruta (`/src/app.ts falla`) sigue siendo un prompt.
+const SLASH_COMMAND_TEXT = /^\/[A-Za-z][\w:.-]*(?:\s|$)/;
+
+export function isSlashCommandText(text: string): boolean {
+  return SLASH_COMMAND_TEXT.test(text.trim());
+}
+
+// Nombre que dejo un `/rename` (P-028). Manda su salida, medida en 2.1.284 («Session renamed to: X»),
+// porque es lo que el CLI aplico de verdad (y lo unico que hay sin argumentos, cuando lo genera el).
+// Los argumentos solo cuentan si no hubo salida: una salida que no es esa (un error) no renombra.
+const RENAMED_TO = /^Session renamed to: (.+)$/m;
+
+export function renamedTitleFrom(output: { readonly args: string; readonly text: string }): string | null {
+  const fromText = RENAMED_TO.exec(output.text)?.[1]?.trim() ?? '';
+  if (fromText.length > 0) return fromText;
+  const args = output.args.trim();
+  return output.text.trim().length === 0 && args.length > 0 ? args : null;
+}
+
 // El ULTIMO `custom-title` de la transcripcion (P-026, 1.6): el nombre que el usuario le dio con
 // `/rename`, en Mage o en el CLI. El CLI re-añade la linea y la que vale es la ultima, asi que se
 // recorre hacia atras. null si no hay ninguna.

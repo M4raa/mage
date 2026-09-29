@@ -5,6 +5,8 @@ import {
   appendSubagentBlock,
   appendThinkingDelta,
   applySubagentResult,
+  applySubagentUpdate,
+  isSubagentRunning,
   closeThinking,
   appendErrorBlock,
   appendSystemBlock,
@@ -13,6 +15,7 @@ import {
   appendUserBlock,
   applyToolResult,
   closeStreaming,
+  commandOutputLayout,
   hasPermissionBlock,
   hasVisibleContent,
   mapPermissionToView,
@@ -450,7 +453,65 @@ describe('subagentes y pensamiento (2.5)', () => {
       agentId: null,
       status: null,
       elapsedMs: null,
+      tokens: null,
+      toolUses: null,
+      model: null,
     });
+  });
+
+  it('applySubagentResult_asyncLaunched_sigueEnMarcha', () => {
+    // Forma medida en 2.1.284: el resultado de un Agent en segundo plano solo dice que se lanzo.
+    const blocks = appendSubagentBlock([], task, 's1');
+    const subagent = { status: 'async_launched', agentId: 'ab25', model: 'claude-haiku-4-5', totalTokens: null, totalDurationMs: null, totalToolUseCount: null };
+
+    const next = applySubagentResult(blocks, { toolUseId: 'tu1', isError: false, output: 'Async agent launched successfully.', durationMs: 4, subagent });
+
+    expect(next[0]).toMatchObject({ status: 'en segundo plano', agentId: 'ab25', model: 'claude-haiku-4-5', elapsedMs: null });
+    expect(isSubagentRunning(next[0] as Extract<Block, { kind: 'subagent' }>)).toBe(true);
+  });
+
+  it('applySubagentResult_primerPlano_guardaTokensHerramientasYDuracionDelCli', () => {
+    const blocks = appendSubagentBlock([], task, 's1');
+    const subagent = { status: 'completed', agentId: 'a1', model: null, totalTokens: 1200, totalDurationMs: 8000, totalToolUseCount: 3 };
+
+    const next = applySubagentResult(blocks, { toolUseId: 'tu1', isError: false, output: '', durationMs: 8100, subagent });
+
+    expect(next[0]).toMatchObject({ status: 'completado', tokens: 1200, toolUses: 3, elapsedMs: 8000 });
+  });
+
+  it('applySubagentResult_textoMedidoSinComillas_extraeElAgentId', () => {
+    // Texto real del resultado (2.1.284): `agentId: <id> (internal ID…`, sin comillas.
+    const blocks = appendSubagentBlock([], task, 's1');
+
+    const next = applySubagentResult(blocks, { toolUseId: 'tu1', isError: false, output: 'Done.\nagentId: af3b49b855c7f949e (internal ID - do not mention)', durationMs: null });
+
+    expect(next[0]).toMatchObject({ agentId: 'af3b49b855c7f949e', status: 'completado' });
+  });
+
+  it('applySubagentUpdate_progreso_sigueEnMarchaConContadores', () => {
+    const blocks = applySubagentResult(appendSubagentBlock([], task, 's1'), { toolUseId: 'tu1', isError: false, output: '', durationMs: 1, subagent: { status: 'async_launched', agentId: 'b', model: null, totalTokens: null, totalDurationMs: null, totalToolUseCount: null } });
+
+    const next = applySubagentUpdate(blocks, { toolUseId: 'tu1', status: 'running', tokens: 19954, toolUses: 1, durationMs: 5228 });
+
+    expect(next[0]).toMatchObject({ status: 'en segundo plano', tokens: 19954, toolUses: 1, elapsedMs: null });
+  });
+
+  it.each([
+    ['completed', 'completado'],
+    ['stopped', 'detenido'],
+    ['failed', 'error'],
+  ])('applySubagentUpdate_notificacion_%s_cierraComo_%s', (status, expected) => {
+    const blocks = appendSubagentBlock([], task, 's1');
+
+    const next = applySubagentUpdate(blocks, { toolUseId: 'tu1', status, tokens: 19906, toolUses: 0, durationMs: 1422 });
+
+    expect(next[0]).toMatchObject({ status: expected, tokens: 19906, toolUses: 0, elapsedMs: 1422 });
+  });
+
+  it('applySubagentUpdate_sinCoincidencia_noCambiaNada', () => {
+    const blocks = appendSubagentBlock([], task, 's1');
+
+    expect(applySubagentUpdate(blocks, { toolUseId: 'otro', status: 'completed', tokens: null, toolUses: null, durationMs: null })).toBe(blocks);
   });
 
   it('applySubagentResult_conAgentId_loGuardaYMarcaCompletado', () => {
@@ -515,7 +576,7 @@ describe('subagentes y pensamiento (2.5)', () => {
   });
 
   it('hasVisibleContent_subagente_seMuestra', () => {
-    const block: Block = { kind: 'subagent', id: 's', toolUseId: 'u', agentType: null, description: null, agentId: null, status: null, elapsedMs: null };
+    const block: Block = { kind: 'subagent', id: 's', toolUseId: 'u', agentType: null, description: null, agentId: null, status: null, elapsedMs: null, tokens: null, toolUses: null, model: null };
 
     expect(hasVisibleContent(block)).toBe(true);
   });
@@ -558,5 +619,22 @@ describe('tarjeta de permiso en el chat (2.3b)', () => {
     // La tarjeta es contenido del hilo aunque nadie la contestara: es la traza de que se pidio permiso.
     const cancelada = resolvePermissionBlock(appendPermissionBlock([], carta), 'r1', 'cancelled')[0] as Block;
     expect(hasVisibleContent(cancelada)).toBe(true);
+  });
+});
+
+// P-028: como se pinta la salida de un comando local.
+describe('commandOutputLayout', () => {
+  it('commandOutputLayout_unaLinea_line', () => {
+    expect(commandOutputLayout('Session renamed to: X')).toBe('line');
+    expect(commandOutputLayout('  hola \n')).toBe('line');
+  });
+
+  it('commandOutputLayout_tablaOTitulo_markdown', () => {
+    expect(commandOutputLayout('## Context Usage\n| a | b |\n|---|---|\n| 1 | 2 |')).toBe('markdown');
+    expect(commandOutputLayout('texto\n# Titulo')).toBe('markdown');
+  });
+
+  it('commandOutputLayout_columnasConEspacios_pre', () => {
+    expect(commandOutputLayout('Skill      Tokens\ncaveman    1200')).toBe('pre');
   });
 });

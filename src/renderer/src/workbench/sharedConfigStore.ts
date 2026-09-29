@@ -13,11 +13,11 @@ interface SharedConfigStoreState {
   save: (file: SharedConfigFile, text: string, expected: string | null) => Promise<boolean>;
 }
 
-const NOT_SAVING: Readonly<Record<SharedConfigFile, boolean>> = { 'mcp-common': false, 'settings-common': false };
-const NO_SAVE_ERRORS: Readonly<Record<SharedConfigFile, string | null>> = { 'mcp-common': null, 'settings-common': null };
+const NOT_SAVING: Readonly<Record<SharedConfigFile, boolean>> = { 'settings-common': false };
+const NO_SAVE_ERRORS: Readonly<Record<SharedConfigFile, string | null>> = { 'settings-common': null };
 
-// Store dedicado a la config compartida entre cuentas (D1 Fase 2: mcp-common.json/
-// settings-common.json). Dominio propio (no engorda workbenchStore), mismo patron que memoryStore:
+// Store dedicado a la config compartida entre cuentas (D1 Fase 2: settings-common.json, y
+// los avisos/nombres de mcp-common.json). Dominio propio (no engorda workbenchStore), mismo patron que memoryStore:
 // sin streaming, los ficheros son pequenos y se leen/escriben de una vez por invoke.
 export const useSharedConfigStore = create<SharedConfigStoreState>((set, get) => ({
   snapshot: null,
@@ -36,8 +36,8 @@ export const useSharedConfigStore = create<SharedConfigStoreState>((set, get) =>
     }
   },
 
-  // Guarda un fichero y recarga el snapshot ENTERO (no solo ese fichero): el guardado de mcp-common
-  // cambia tambien mcpCommonServerNames, que el Inspector necesita al dia. Un fallo (JSON invalido)
+  // Guarda settings-common.json y recarga el snapshot ENTERO (mcp-common.json se edita por su propio
+  // store, `mcpStore`, que tambien recarga este al guardar para que el Inspector siga al dia). Un fallo (JSON invalido)
   // se queda en saveErrorByFile, sin tocar el snapshot ya cargado.
   //
   // `stale` (el fichero cambio fuera de Mage) NO es una excepcion: se recarga el snapshot igualmente

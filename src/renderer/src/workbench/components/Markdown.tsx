@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { ThemedToken } from 'shiki/types';
 import { parseMarkdown, type MdBlock, type MdInline } from '../markdown';
 import { useHighlightedCode } from '../highlighter';
+import { CopyButton } from './CopyButton';
 
 // Render de Markdown a React (bloques + inline). El parseo vive en el modulo PURO markdown.ts; aqui
 // solo se mapea AST -> elementos con los tokens de tema `mg-*`. Todo el texto se rende como texto
@@ -97,9 +98,19 @@ const HEADING_SIZE: Readonly<Record<number, string>> = {
 function CodeBlock({ lang, text }: { readonly lang: string | null; readonly text: string }): React.JSX.Element {
   const lines = useHighlightedCode(text, lang);
   return (
-    <div className="overflow-hidden rounded-[7px] border border-mg-border-subtle bg-mg-code">
-      {lang !== null && (
-        <div className="border-b border-mg-border-subtle px-[10px] py-[3px] font-mono text-[10px] text-mg-muted">{lang}</div>
+    <div className="group/code relative overflow-hidden rounded-[7px] border border-mg-border-subtle bg-mg-code">
+      {/* Con `lang` el boton va en la cabecera; sin ella, flotante en hover/foco (punto 8). */}
+      {lang === null ? (
+        <CopyButton
+          text={text}
+          label="Copiar código"
+          className="absolute right-[6px] top-[6px] bg-mg-code opacity-0 focus-visible:opacity-100 group-hover/code:opacity-100"
+        />
+      ) : (
+        <div className="flex items-center justify-between border-b border-mg-border-subtle px-[10px] py-[3px] font-mono text-[10px] text-mg-muted">
+          <span>{lang}</span>
+          <CopyButton text={text} label="Copiar código" />
+        </div>
       )}
       <pre className="overflow-x-auto p-[10px] font-mono text-[11.5px] leading-[1.55] text-mg-body">
         <code>{lines === null ? text : <HighlightedLines lines={lines} />}</code>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { activityStepLabel, activityTurns, chatRows, currentTurnSummary, isChatBlock } from './chatVisibility';
+import { activityStepLabel, activityTurns, chatRows, currentTurnSummary, isChatBlock, runningStepId, stickResetKey } from './chatVisibility';
 import type { Block } from './types';
 
 type ToolBlock = Extract<Block, { kind: 'tool' }>;
@@ -42,6 +42,9 @@ const subagent = (id: string, status: string | null = null): Block => ({
   agentType: 'general-purpose',
   description: 'buscar',
   agentId: null,
+  tokens: null,
+  toolUses: null,
+  model: null,
   status,
   elapsedMs: null,
 });
@@ -142,5 +145,59 @@ describe('activityStepLabel', () => {
 
   it('activityStepLabel_thinkingSinTexto_detalleVacio', () => {
     expect(activityStepLabel(thinking('k'))).toMatchObject({ name: 'Pensamiento', detail: '', meta: '' });
+  });
+});
+
+describe('stickResetKey', () => {
+  it('mensajeNuevoDelUsuario_cambiaLaClave', () => {
+    const before = stickResetKey('t1', [user('u1'), agent('a1')]);
+
+    expect(stickResetKey('t1', [user('u1'), agent('a1'), user('u2')])).not.toBe(before);
+  });
+
+  it('respuestaDelAgente_noCambiaLaClave', () => {
+    expect(stickResetKey('t1', [user('u1')])).toBe(stickResetKey('t1', [user('u1'), agent('a1')]));
+  });
+
+  it('chatVacioVsHidratado_cambiaLaClave', () => {
+    expect(stickResetKey('t1', [])).not.toBe(stickResetKey('t1', [agent('a1')]));
+  });
+
+  it('otraPestana_cambiaLaClave', () => {
+    expect(stickResetKey('t1', [user('u1')])).not.toBe(stickResetKey('t2', [user('u1')]));
+  });
+});
+
+describe('runningStepId', () => {
+  const turnOf = (...steps: Block[]) => ({ turnIndex: 1, userPreview: '', steps });
+
+  it('runningStepId_herramientaSinResultadoConTurnoVivo_esEsa', () => {
+    expect(runningStepId(turnOf(tool('a'), tool('b', { meta: '' })), true)).toBe('b');
+  });
+
+  it('runningStepId_turnoNoVivo_esNull', () => {
+    // Un turno interrumpido deja tools con meta vacio: no hay nada corriendo.
+    expect(runningStepId(turnOf(tool('a', { meta: '' })), false)).toBeNull();
+  });
+
+  it('runningStepId_pensamientoSinDuracion_estaEnMarcha', () => {
+    expect(runningStepId(turnOf(thinking('k')), true)).toBe('k');
+  });
+
+  it('runningStepId_subagentePendienteOAsincrono_estaEnMarcha', () => {
+    expect(runningStepId(turnOf(subagent('s1', null)), true)).toBe('s1');
+    expect(runningStepId(turnOf(subagent('s2', 'en segundo plano')), true)).toBe('s2');
+  });
+
+  it('runningStepId_subagenteTerminado_noCuenta', () => {
+    expect(runningStepId(turnOf(subagent('s', 'completado')), true)).toBeNull();
+  });
+
+  it('runningStepId_variosEnMarcha_devuelveElUltimo', () => {
+    expect(runningStepId(turnOf(tool('a', { meta: '' }), tool('b', { meta: '' })), true)).toBe('b');
+  });
+
+  it('runningStepId_turnoSinPasos_esNull', () => {
+    expect(runningStepId(turnOf(), true)).toBeNull();
   });
 });

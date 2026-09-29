@@ -1,15 +1,28 @@
 import type { MageEvent } from '@shared/events';
 import type { NotificationRule } from '@shared/settings';
+import type { NotificationTarget, NotifyParams } from '@shared/ipc';
 
 // Contenido de una notificacion del SO derivado de un evento del motor (M2.3). PURO y testeable: la
 // decision de MOSTRARLA (solo si la ventana no tiene el foco) vive en main; aqui solo el "que decir".
 export interface NotificationContent {
   readonly title: string;
   readonly body: string;
+  // «Subagente terminado»: el clic abre ademas el panel de Actividad (P-028 40).
+  readonly opensActivity?: boolean;
 }
+
+// Lo que viaja a main: el contenido y a donde lleva el clic (la conversacion que la disparo).
+export function toNotifyParams(content: NotificationContent, target: Omit<NotificationTarget, 'opensActivity'>): NotifyParams {
+  return { title: content.title, body: content.body, target: { ...target, ...(content.opensActivity === true ? { opensActivity: true } : {}) } };
+}
+
+// `origin.kind` del `result` de un turno abierto por la notificacion de una tarea (medido en 2.1.284).
+const TASK_NOTIFICATION_ORIGIN = 'task-notification';
 
 // Longitud maxima del extracto del texto que caso con una regla (cuerpo de la notificacion).
 const MATCH_EXCERPT_MAX_CHARS = 120;
+
+const SUBAGENT_STOP_HOOK = 'SubagentStop';
 
 // Hooks del CLI que merecen avisar al usuario, con el titulo de su notificacion (D2). Fuente FIABLE:
 // el CLI dice cuando necesita atencion, en vez de deducirlo de su texto con una regex.
@@ -17,7 +30,7 @@ const MATCH_EXCERPT_MAX_CHARS = 120;
 // `UserPromptSubmit` (lo acaba de hacer el usuario) y `PreCompact`/`SessionEnd` (ruido).
 const NOTIFIABLE_HOOKS: ReadonlyMap<string, string> = new Map([
   ['Notification', 'Claude necesita tu atención'],
-  ['SubagentStop', 'Subagente terminado'],
+  [SUBAGENT_STOP_HOOK, 'Subagente terminado'],
 ]);
 
 // Eventos que merecen avisar al usuario cuando no esta mirando: fin de turno, permiso pendiente
@@ -35,7 +48,9 @@ export function notificationForEvent(event: MageEvent, context: NotificationCont
   const { tabTitle, rules = [], autoAllowed = false } = context;
   switch (event.kind) {
     case 'result':
-      return { title: 'Turno completado', body: tabTitle };
+      // Un turno que abrio el CLI solo al terminar un subagente en segundo plano (P-028 37a): con nueve
+      // agentes serian nueve «Turno completado» que el usuario no pidio. Ya avisa `SubagentStop`.
+      return event.result.origin === TASK_NOTIFICATION_ORIGIN ? null : { title: 'Turno completado', body: tabTitle };
     case 'permission_request':
       return autoAllowed ? null : { title: 'Permiso requerido', body: `${tabTitle}: ${event.request.toolName}` };
     case 'error':
@@ -55,7 +70,7 @@ function notificationForHook(hookEvent: string, detail: string | null, tabTitle:
   const title = NOTIFIABLE_HOOKS.get(hookEvent);
   if (title === undefined) return null;
   const body = detail === null || detail.trim().length === 0 ? tabTitle : `${tabTitle}: ${excerpt(detail)}`;
-  return { title, body };
+  return hookEvent === SUBAGENT_STOP_HOOK ? { title, body, opensActivity: true } : { title, body };
 }
 
 // Prueba el texto contra las reglas activas. La compilacion del patron va con try/catch: una regex

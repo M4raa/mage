@@ -174,9 +174,16 @@ export type Block =
       readonly agentType: string | null;
       readonly description: string | null;
       readonly agentId: string | null;
+      // null = lanzandose; `SUBAGENT_STATUS` (engineBlocks.ts) para el resto. Un Agent en segundo plano
+      // sigue en marcha con 'en segundo plano' hasta que llega su notificacion (P-028 37a).
       readonly status: string | null;
-      // Cuanto tardo, cuando termina (lo mide AgentSession). null en curso o al reanudar (P-026 3.4).
+      // Cuanto tardo, cuando termina (del CLI o de AgentSession). null en curso o si no se sabe.
       readonly elapsedMs: number | null;
+      // Lo que cuenta el CLI del subagente (P-028 38): tokens y herramientas (en vivo con
+      // `task_progress`, o al terminar) y el modelo resuelto. null si no llega.
+      readonly tokens: number | null;
+      readonly toolUses: number | null;
+      readonly model: string | null;
     }
   // Pensamiento del agente. `runs` esta VACIO en una conversacion reanudada: el CLI persiste los
   // bloques `thinking` con texto "" (medido), asi que como mucho se puede decir "pensó".
@@ -222,7 +229,12 @@ export type Block =
   | { readonly kind: 'error'; readonly id: string; readonly message: string }
   // Marcador de sistema (M2.4): eventos de la sesion que no son conversacion (p.ej. "contexto
   // compactado"). Se renderiza como una linea tenue centrada.
-  | { readonly kind: 'system'; readonly id: string; readonly text: string };
+  // `tip`: texto secundario en el tooltip (P-028, 20: el aviso del CLI en ingles tras la linea de Mage).
+  | { readonly kind: 'system'; readonly id: string; readonly text: string; readonly tip?: string }
+  // Salida de un comando local del CLI (`/context`, `/mcp`...), P-028 grupo C. `command` sin barra, o
+  // null si no se sabe (un sintetico que no es comando, o una salida reabierta sin su comando delante).
+  // El texto es el del CLI tal cual; `BlockChat` decide si es una linea, markdown o `<pre>`.
+  | { readonly kind: 'command-output'; readonly id: string; readonly command: string | null; readonly text: string };
 
 // --- Inspector: permiso -----------------------------------------------------------------------
 
@@ -249,6 +261,9 @@ export interface ContextInfo {
 export interface RateLimitNotice {
   readonly summary: string;
   readonly resetsAtMs: number | null;
+  // Continuar automatico al restablecerse (P-028, 20): opt-in por limite desde el banner. No se
+  // persiste: no sobrevive a reiniciar Mage (decision del usuario).
+  readonly autoContinue?: boolean;
 }
 
 // Un adjunto ya validado y leido a base64, listo para enviar. Se guarda tambien su tamaño en bytes

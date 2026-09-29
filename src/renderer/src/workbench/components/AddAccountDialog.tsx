@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import type { AccountInfo } from '@shared/accounts';
+import { AGY_PROVIDER_ID, type ProviderAuthSummary } from '@shared/providers';
 import { useWorkbenchStore } from '../workbenchStore';
 import { useDialogA11y } from '../a11y/useDialogA11y';
 import { MODAL_PANEL_VARIANTS, MODAL_SCRIM_VARIANTS } from '../motionPresets';
@@ -16,6 +17,12 @@ import { CliLoginPanel, useCliLogin } from './CliLoginPanel';
 //
 // Crear siempre implica intentar login -> no quedan cuentas "a medias". Si el login no cuaja, se
 // puede reintentar o eliminar la cuenta ahi mismo (evita huerfanas).
+//
+// P-028, punto 41: arriba se elige el PROVEEDOR (Claude preseleccionado) y el cuerpo sale del tipo de
+// alta que declara su adapter: `cli-oauth` es el flujo de siempre; `external` (agy) explica que su
+// sesion vive fuera de Mage; `api-key` (gateway) lleva a Ajustes › Proveedores y modelos, que es donde
+// esta su alta. El dialogo nunca pide ni muestra una clave.
+const CLAUDE_FALLBACK: ProviderAuthSummary = { providerId: 'claude', label: 'Claude', kind: 'cli-oauth', reason: '' };
 
 export function AddAccountDialog(): React.JSX.Element {
   const open = useWorkbenchStore((s) => s.addAccountOpen);
@@ -56,6 +63,10 @@ function DialogBody({
   const [created, setCreated] = useState<AccountInfo | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null); // errores de crear/borrar (no los del login)
+  const providers = useProviderAuthList(setError);
+  const [providerId, setProviderId] = useState(CLAUDE_FALLBACK.providerId);
+  const provider = providers.find((p) => p.providerId === providerId) ?? CLAUDE_FALLBACK;
+  const openSettings = useWorkbenchStore((s) => s.openSettings);
 
   // Login confirmado por el CLI: se refrescan las cuentas y se cierra.
   const login = useCliLogin(() => {
@@ -147,12 +158,15 @@ function DialogBody({
           Añadir cuenta
         </div>
 
-        {login.phase === 'idle' && (
+        {login.phase === 'idle' && <ProviderPicker providers={providers} selected={provider.providerId} onSelect={setProviderId} />}
+        {login.phase === 'idle' && provider.kind === 'cli-oauth' && (
           <>
             <FormPhase name={name} onName={setName} email={email} onEmail={setEmail} onSubmit={createAndLogin} />
             <AdoptSection accounts={loggedIn} disabled={name.trim().length === 0 || busy} onAdopt={createAndAdopt} />
           </>
         )}
+        {provider.kind === 'external' && <ExternalProviderPanel provider={provider} />}
+        {provider.kind === 'api-key' && <ApiKeyProviderPanel provider={provider} />}
         <CliLoginPanel login={login} />
 
         {error !== null && (
@@ -162,14 +176,29 @@ function DialogBody({
         )}
 
         <div className="mt-[2px] flex justify-end gap-[8px]">
-          {login.phase === 'idle' ? (
+          {login.phase === 'idle' && provider.kind === 'external' && <SecondaryButton onClick={closeAll}>Cerrar</SecondaryButton>}
+          {login.phase === 'idle' && provider.kind === 'api-key' && (
+            <>
+              <SecondaryButton onClick={closeAll}>Cancelar</SecondaryButton>
+              <PrimaryButton
+                onClick={() => {
+                  closeAll();
+                  openSettings('providers');
+                }}
+              >
+                Abrir Proveedores y modelos
+              </PrimaryButton>
+            </>
+          )}
+          {login.phase === 'idle' && provider.kind === 'cli-oauth' && (
             <>
               <SecondaryButton onClick={closeAll}>Cancelar</SecondaryButton>
               <PrimaryButton onClick={createAndLogin} disabled={name.trim().length === 0 || busy}>
                 {busy ? 'Creando…' : 'Crear e iniciar sesión'}
               </PrimaryButton>
             </>
-          ) : (
+          )}
+          {login.phase !== 'idle' && (
             <>
               <SecondaryButton onClick={deleteOrphan}>
                 {created === null ? 'Cancelar' : 'Eliminar cuenta'}
@@ -184,6 +213,99 @@ function DialogBody({
         </div>
       </motion.div>
     </motion.div>
+  );
+}
+
+// Lista de proveedores y su tipo de alta, de main. Si falla, el error se ve y queda Claude (el flujo
+// de siempre), que no depende de esta lista.
+function useProviderAuthList(onError: (message: string) => void): readonly ProviderAuthSummary[] {
+  const [providers, setProviders] = useState<readonly ProviderAuthSummary[]>([CLAUDE_FALLBACK]);
+  useEffect(() => {
+    let alive = true;
+    window.mage
+      .listProviderAuth()
+      .then((list) => alive && list.length > 0 && setProviders(list))
+      .catch((err: unknown) => alive && onError(`No se pudo leer la lista de proveedores: ${describe(err)}`));
+    return () => {
+      alive = false;
+    };
+  }, [onError]);
+  return providers;
+}
+
+// Botones y no radios a proposito: el formulario de Claude sigue teniendo exactamente sus dos campos
+// de texto (lo mide la comprobacion 9.2 de verify:gui).
+function ProviderPicker({
+  providers,
+  selected,
+  onSelect,
+}: {
+  readonly providers: readonly ProviderAuthSummary[];
+  readonly selected: string;
+  readonly onSelect: (providerId: string) => void;
+}): React.JSX.Element {
+  return (
+    <div className="flex flex-col gap-[6px]">
+      <span className="text-[10.5px] font-bold tracking-[.06em] text-mg-ter">PROVEEDOR</span>
+      <div role="group" aria-label="Proveedor de la cuenta" className="flex flex-wrap gap-[6px]">
+        {providers.map((p) => (
+          <button
+            key={p.providerId}
+            aria-pressed={p.providerId === selected}
+            data-provider-kind={p.kind}
+            onClick={() => onSelect(p.providerId)}
+            className={`rounded-[6px] border px-[8px] py-[3px] text-[10.5px] transition-colors duration-150 ease-out hover:bg-mg-hover ${
+              p.providerId === selected ? 'border-mg-focus text-mg-text' : 'border-mg-border-ctrl text-mg-body2'
+            }`}
+          >
+            {p.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ExternalProviderPanel({ provider }: { readonly provider: ProviderAuthSummary }): React.JSX.Element {
+  const installed = useAgyInstalledFor(provider.providerId);
+  return (
+    <div data-add-account-external="true" className="flex flex-col gap-[7px] rounded-[8px] border border-mg-border-ctrl bg-mg-block p-[10px_12px] text-[11.5px] leading-[1.55] text-mg-body2">
+      <div>
+        <b>{provider.label}</b> gestiona su sesión fuera de Mage: no hay cuenta que crear aquí. Inicia sesión con su
+        propio CLI y Mage la usará en las pestañas de ese proveedor.
+      </div>
+      {provider.reason.length > 0 && <div className="text-[10.5px] text-mg-ter">{provider.reason}</div>}
+      {installed !== null && (
+        <div className="text-[10.5px]">{installed ? 'Instalado en este equipo.' : 'No está instalado en este equipo.'}</div>
+      )}
+    </div>
+  );
+}
+
+// Estado de instalacion: solo se sabe preguntar por agy (es el unico `external` hoy). null = no aplica
+// o aun no se sabe.
+function useAgyInstalledFor(providerId: string): boolean | null {
+  const [installed, setInstalled] = useState<boolean | null>(null);
+  useEffect(() => {
+    if (providerId !== AGY_PROVIDER_ID) return;
+    let alive = true;
+    window.mage
+      .isAgyInstalled()
+      .then((value) => alive && setInstalled(value))
+      .catch((err: unknown) => console.warn('No se pudo comprobar si agy esta instalado:', describe(err)));
+    return () => {
+      alive = false;
+    };
+  }, [providerId]);
+  return providerId === AGY_PROVIDER_ID ? installed : null;
+}
+
+function ApiKeyProviderPanel({ provider }: { readonly provider: ProviderAuthSummary }): React.JSX.Element {
+  return (
+    <div data-add-account-apikey="true" className="rounded-[8px] border border-mg-border-ctrl bg-mg-block p-[10px_12px] text-[11.5px] leading-[1.55] text-mg-body2">
+      El alta de <b>{provider.label}</b> es su configuración: la dirección y la clave se guardan en Ajustes ›
+      Proveedores y modelos. Sus pestañas corren sobre una de tus cuentas de Claude.
+    </div>
   );
 }
 

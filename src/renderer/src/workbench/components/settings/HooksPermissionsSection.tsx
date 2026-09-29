@@ -30,7 +30,7 @@ export function HooksPermissionsSection(): React.JSX.Element {
   const [error, setError] = useState<string | null>(null);
 
   // El editor de abajo trabaja sobre el fichero comun, que vive en otro store: se carga aqui para que
-  // la seccion sirva tambien sin haber pasado antes por "Config. compartida".
+  // la seccion sirva tambien sin haber pasado antes por otra que lo cargue.
   useEffect(() => {
     void loadSharedConfig();
   }, []);

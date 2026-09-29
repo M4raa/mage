@@ -1,6 +1,8 @@
 import { artifactCardFrom } from './artifactView';
+import { isSubagentRunning } from './engineBlocks';
 import { formatElapsed } from './thinkingStatus';
-import { TOOL_CLASS_GLYPH } from './toolClassify';
+import type { IconName } from './components/Icon';
+import { iconForTool } from './toolIcons';
 import { shortToolCommand } from './toolSummary';
 import type { Block } from './types';
 
@@ -18,6 +20,7 @@ export function isChatBlock(block: Block): boolean {
     case 'agent':
     case 'error':
     case 'system':
+    case 'command-output':
       return true;
     case 'permission':
       return block.state === 'pending';
@@ -119,7 +122,7 @@ export function currentTurnSummary(blocks: readonly Block[]): { readonly steps: 
 
 // Lo que dice una fila del panel. Una herramienta de subagente va sangrada (`nested`).
 export interface ActivityStepLabel {
-  readonly glyph: string;
+  readonly icon: IconName;
   readonly name: string;
   readonly detail: string;
   readonly meta: string;
@@ -141,25 +144,58 @@ export function activityStepLabel(block: Block): ActivityStepLabel {
     case 'tool':
       return {
         ...base,
-        glyph: TOOL_CLASS_GLYPH[block.toolClass],
+        icon: iconForTool(block.tool),
         name: block.tool,
         detail: shortToolCommand(block.tool, block.command),
         meta: block.meta.length > 0 ? block.meta : '…',
         nested: block.parentToolUseId !== null,
       };
     case 'thinking':
-      return { ...base, glyph: '∴', name: 'Pensamiento', detail: previewOf(runsText(block.runs)), meta: block.elapsedMs === null ? '' : formatElapsed(block.elapsedMs) };
+      return { ...base, icon: 'brain', name: 'Pensamiento', detail: previewOf(runsText(block.runs)), meta: block.elapsedMs === null ? '' : formatElapsed(block.elapsedMs) };
     case 'subagent':
-      return { ...base, glyph: TOOL_CLASS_GLYPH.subagent, name: block.agentType ?? 'Subagente', detail: block.description ?? '', meta: block.status ?? 'en marcha' };
+      return { ...base, icon: 'toolAgent', name: block.agentType ?? 'Subagente', detail: block.description ?? '', meta: block.status ?? 'en marcha' };
     case 'permission':
-      return { ...base, glyph: '◈', name: `Permiso · ${block.toolName}`, detail: block.target, meta: DECISION_LABEL[block.state] ?? block.state };
+      return { ...base, icon: 'shield', name: `Permiso · ${block.toolName}`, detail: block.target, meta: DECISION_LABEL[block.state] ?? block.state };
     case 'question':
-      return { ...base, glyph: '?', name: 'Pregunta', detail: previewOf(block.questions[0]?.question ?? ''), meta: DECISION_LABEL[block.state] ?? block.state };
+      return { ...base, icon: 'question', name: 'Pregunta', detail: previewOf(block.questions[0]?.question ?? ''), meta: DECISION_LABEL[block.state] ?? block.state };
     default:
-      return { ...base, glyph: '·', name: block.kind, detail: '', meta: '' };
+      return { ...base, icon: 'diamond', name: block.kind, detail: '', meta: '' };
   }
+}
+
+function isStepRunning(block: Block): boolean {
+  switch (block.kind) {
+    case 'tool':
+      return block.meta === ''; // igual que `activityStepLabel`, que lo pinta como '…'
+    case 'thinking':
+      return block.elapsedMs === null;
+    case 'subagent':
+      // Sin resultado, o lanzado en segundo plano y sin notificacion (W-J, P-028 37a: el bloque guarda
+      // 'en segundo plano', no el `async_launched` crudo del CLI).
+      return isSubagentRunning(block);
+    default:
+      return false;
+  }
+}
+
+// Id del paso EN MARCHA de un turno (el ultimo que lo este), o null. Solo con `turnLive`: un turno
+// interrumpido deja herramientas con `meta` vacio para siempre y no hay nada corriendo. PURO.
+export function runningStepId(turn: ActivityTurn, turnLive: boolean): string | null {
+  if (!turnLive) return null;
+  for (let i = turn.steps.length - 1; i >= 0; i -= 1) {
+    const step = turn.steps[i];
+    if (step !== undefined && isStepRunning(step)) return step.id;
+  }
+  return null;
 }
 
 export function runsText(runs: readonly { readonly text: string }[]): string {
   return runs.map((r) => r.text).join('');
+}
+
+// Clave de reinicio del pegado al fondo (puntos 13 y 25): cambia al cambiar de pestana, al pasar de
+// chat vacio a con contenido (hidratacion tras reanudar) y al llegar un mensaje nuevo del usuario.
+export function stickResetKey(tabId: string, blocks: readonly Block[]): string {
+  const lastUser = blocks.findLast((block) => block.kind === 'user');
+  return `${tabId}:${blocks.length > 0}:${lastUser?.id ?? ''}`;
 }

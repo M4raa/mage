@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { MageApi } from '@shared/ipc';
+import type { ConversationSummary } from '@shared/conversations';
 import { createWorkbenchStore } from './workbenchStore';
 import { findLeafPath, singleLeaf } from './splitLayout';
 import type { Account, Tab } from './types';
@@ -508,6 +509,65 @@ describe('persistencia con debounce', () => {
   });
 });
 
+// P-028, 36: mover una pestaña a una ventana NUEVA por el transporte "pull", y lo que no se mueve.
+describe('pestaña a otra ventana', () => {
+  const ACCOUNT = 'C:\\Users\\u\\.claude';
+  const account = { id: ACCOUNT, alias: 'principal' } as Account;
+
+  it('openInNewWindow_pestañaOciosa_laEntregaAMainYLaCierraAqui', async () => {
+    const openWindowWithTab = vi.fn().mockResolvedValue('w2');
+    const store = createWorkbenchStore(fakeMage({ openWindowWithTab, saveWorkspace: vi.fn().mockResolvedValue(undefined) }));
+    store.setState({ tabs: [tab('a'), tab('b')], activeTabId: 'a', splitLayout: singleLeaf('a') });
+
+    await store.getState().openInNewWindow('b');
+
+    expect(openWindowWithTab).toHaveBeenCalledWith(expect.objectContaining({ id: 'b', cwd: 'C:\\proyecto' }));
+    expect(store.getState().tabs.map((t) => t.id)).toEqual(['a']);
+  });
+
+  it('openInNewWindow_turnoEnMarcha_lanzaConElMotivoYNoLaMueve', async () => {
+    const openWindowWithTab = vi.fn();
+    const store = createWorkbenchStore(fakeMage({ openWindowWithTab }));
+    store.setState({ tabs: [tab('a')], activeTabId: 'a', statusByChat: { a: 'streaming' } });
+
+    await expect(store.getState().openInNewWindow('a')).rejects.toThrow(/turno en marcha/);
+    expect(openWindowWithTab).not.toHaveBeenCalled();
+    expect(store.getState().tabs).toHaveLength(1);
+  });
+
+  it('dropTabOutside_mainNoLaMueve_laPestañaSeQuedaAqui', async () => {
+    const store = createWorkbenchStore(fakeMage({ dropTabOutside: vi.fn().mockResolvedValue('none') }));
+    store.setState({ tabs: [tab('a')], activeTabId: 'a' });
+
+    await store.getState().dropTabOutside('a');
+
+    expect(store.getState().tabs).toHaveLength(1);
+  });
+
+  it('adoptTab_idYaOcupadoEnEstaVentana_leDaUnoNuevo', () => {
+    const store = createWorkbenchStore(fakeMage({ saveWorkspace: vi.fn().mockResolvedValue(undefined) }));
+    store.setState({ accounts: [account], tabs: [tab('tab1')], activeTabId: 'tab1', splitLayout: singleLeaf('tab1') });
+
+    store.getState().adoptTab({ ...tab('tab1', { title: 'llegada' }) } as never);
+
+    const ids = store.getState().tabs.map((t) => t.id);
+    expect(new Set(ids).size).toBe(2);
+    expect(store.getState().tabs[1]?.title).toBe('llegada');
+    expect(store.getState().activeTabId).toBe(ids[1]);
+  });
+
+  it('adoptPendingTabs_adoptaLoQueEsperabaAEstaVentana', async () => {
+    const store = createWorkbenchStore(
+      fakeMage({ takePendingTabs: vi.fn().mockResolvedValue([tab('x', { title: 'movida' })]), saveWorkspace: vi.fn().mockResolvedValue(undefined) }),
+    );
+    store.setState({ accounts: [account], tabs: [], activeTabId: '' });
+
+    await store.getState().adoptPendingTabs();
+
+    expect(store.getState().tabs.map((t) => t.title)).toEqual(['movida']);
+  });
+});
+
 // El `＋` de una barra ya NO abre el formulario de "Nueva conversacion" (peticion del usuario): crea la
 // pestaña directamente, en carpeta temporal y con los valores por defecto. El dialogo sigue existiendo
 // como accion secundaria (`openNewTabDialog`), que es lo unico que debe encender `newTabOpen`.
@@ -552,6 +612,46 @@ describe('pestaña nueva sin formulario', () => {
     expect(state.tabs).toHaveLength(3);
     expect(state.tabs[2]?.cwd).toBe('C:\\tmp\\scratch');
     expect(findLeafPath(state.splitLayout, state.activeTabId)).toEqual(['b']);
+  });
+
+  // P-028 16: «Nuevo chat» con el ajuste 'lastProject' nace en la carpeta del proyecto mas reciente.
+  function historyItem(cwd: string, updatedAtMs: number): ConversationSummary {
+    return { sessionId: `s-${updatedAtMs}`, configDir: 'C:\\Users\\u\\.claude', cwd, title: 't', privacy: 'shared', updatedAtMs, sizeBytes: 1, isScheduled: false };
+  }
+
+  async function createWithLastProject(existsDirs: MageApi['existsDirs']): Promise<string | undefined> {
+    const store = createWorkbenchStore(
+      fakeMage({ getScratchDir: vi.fn().mockResolvedValue('C:\\tmp\\scratch'), saveWorkspace: vi.fn().mockResolvedValue(undefined), existsDirs }),
+    );
+    store.setState((s) => ({
+      accounts: accountsState(),
+      activeAccountId: 'C:\\Users\\u\\.claude',
+      settings: { ...s.settings, newConversationFolder: 'lastProject' },
+      conversationHistory: [historyItem('C:\\src\\viejo', 1), historyItem('C:\\src\\borrado', 3), historyItem('C:\\src\\nuevo', 2)],
+    }));
+    await store.getState().createConversation('shared');
+    return store.getState().tabs.at(-1)?.cwd;
+  }
+
+  it('createConversation_ultimoProyecto_usaElMasRecienteQueExiste', async () => {
+    const cwd = await createWithLastProject(vi.fn().mockResolvedValue([false, true, true]));
+
+    expect(cwd).toBe('C:\\src\\nuevo');
+  });
+
+  it('createConversation_ultimoProyectoNingunoExiste_caeALaTemporal', async () => {
+    const cwd = await createWithLastProject(vi.fn().mockResolvedValue([false, false, false]));
+
+    expect(cwd).toBe('C:\\tmp\\scratch');
+  });
+
+  it('createConversation_ultimoProyectoFallaLaConsulta_caeALaTemporal', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const cwd = await createWithLastProject(vi.fn().mockRejectedValue(new Error('EPERM')));
+
+    expect(cwd).toBe('C:\\tmp\\scratch');
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
   });
 
   it('openNewTabDialog_conCamino_abreElDialogoAncladoAEsePanel', () => {
@@ -649,6 +749,58 @@ describe('renameConversation', () => {
     expect(sendMessage).not.toHaveBeenCalled();
     expect(store.getState().tabs[0]).toMatchObject({ title: 'Nuevo' });
     expect(store.getState().tabs[0]?.pendingCliTitle).toBeUndefined();
+  });
+
+  // P-028, punto 3: la salida del `/rename` renombra la pestaña al llegar, sin esperar a releer.
+  const renameOutput = (args: string, text: string) => ({ kind: 'local_command_output' as const, command: 'rename', args, text });
+
+  it('handleEvent_localRenameConArgs_renombraPestaña', () => {
+    const { store } = mounted('idle');
+
+    store.getState().handleEvent('s-a', renameOutput('Mi nombre', 'Session renamed to: Mi nombre'));
+
+    expect(store.getState().tabs[0]?.title).toBe('Mi nombre');
+    expect(store.getState().blocksByChat.a).toEqual([expect.objectContaining({ kind: 'command-output', command: 'rename' })]);
+  });
+
+  it('handleEvent_renameSinArgs_tomaElNombreDeLaSalida', () => {
+    const { store } = mounted('idle');
+
+    store.getState().handleEvent('s-a', renameOutput('', 'Session renamed to: generado-por-el-cli'));
+
+    expect(store.getState().tabs[0]?.title).toBe('generado-por-el-cli');
+  });
+
+  it('handleEvent_renameDuranteTurno_renombraAlLlegar', () => {
+    const { store } = mounted('streaming');
+
+    store.getState().handleEvent('s-a', renameOutput('Durante', 'Session renamed to: Durante'));
+
+    expect(store.getState().tabs[0]?.title).toBe('Durante');
+  });
+
+  it('handleEvent_conPendingCliTitle_ganaElDelUsuario', async () => {
+    const { store, sendMessage } = mounted('streaming');
+    store.getState().renameConversation('a', 'Desde la UI');
+
+    await store.getState().sendActiveMessage('/rename Tecleado');
+    store.getState().handleEvent('s-a', renameOutput('Tecleado', 'Session renamed to: Tecleado'));
+    store.getState().handleEvent('s-a', RESULT(3));
+
+    expect(store.getState().tabs[0]?.title).toBe('Tecleado');
+    expect(sendMessage).not.toHaveBeenCalledWith({ sessionId: 's-a', text: '/rename Desde la UI' });
+  });
+
+  it('sendActiveMessage_primerMensajeComando_noAutotitula', async () => {
+    const { store } = mounted('idle');
+    store.setState({ tabs: [tab('a', { title: 'Nuevo chat' })] });
+
+    await store.getState().sendActiveMessage('/context');
+    expect(store.getState().tabs[0]?.title).toBe('Nuevo chat');
+    store.getState().handleEvent('s-a', RESULT(0));
+
+    await store.getState().sendActiveMessage('Arregla el login');
+    expect(store.getState().tabs[0]?.title).toBe('Arregla el login');
   });
 });
 
@@ -754,7 +906,7 @@ describe('permiso auto-permitido', () => {
 
     store.getState().handleEvent('s-a', REQUEST('Write'));
 
-    expect(notify).toHaveBeenCalledWith({ title: 'Permiso requerido', body: 'Conversacion a: Write' });
+    expect(notify).toHaveBeenCalledWith({ title: 'Permiso requerido', body: 'Conversacion a: Write', target: { tabId: 'a', sessionId: 's-a' } });
   });
 
   it('handleEvent_segundoPlanoConReglaSiempre_contestaSinPedirAccion', () => {
@@ -877,6 +1029,83 @@ describe('requestAccountSwitch y continueInAccount', () => {
     expect(store.getState().activeAccountId).toBe(B);
   });
 
+  it('requestAccountSwitch_reassign_cambiaAccountIdDeLaPestana', () => {
+    // Arrange: chat nuevo (sin resume, sin sesion, sin bloques) de la principal, con cwd y borrador.
+    const store = mounted();
+    store.setState({
+      tabs: [tab('a', { model: 'opus', resolvedConfigDir: 'C:/viejo/mage-private' })],
+      modelCatalogByAccount: { [B]: [{ id: 'opus', label: 'Opus' }] },
+    });
+
+    // Act
+    store.getState().requestAccountSwitch(B);
+
+    // Assert: sin dialogo, la pestaña pasa a B con su modelo y sin el config dir de la vieja.
+    const moved = store.getState().tabs[0]!;
+    expect(store.getState().accountSwitchPrompt).toBeNull();
+    expect(store.getState().activeAccountId).toBe(B);
+    expect(moved.accountId).toBe(B);
+    expect(moved.accountAlias).toBe('otra');
+    expect(moved.model).toBe('opus');
+    expect(moved.resolvedConfigDir).toBeUndefined();
+  });
+
+  it('setAccountAccent_fijaYQuitaElColorDeLaCuenta', () => {
+    // Funcion plana y no vi.fn: el guardado va con debounce y dispara DESPUES del test, cuando vitest ya
+    // ha reseteado los mocks (un vi.fn devolveria undefined y el `.catch` reventaria fuera del test).
+    const store = mounted({ saveSettings: () => Promise.resolve() });
+    store.setState({ accounts: accounts.map((a, i) => ({ ...a, accent: { base: `var(--mg-accent-${i}-base)` } })) as Account[] });
+
+    store.getState().setAccountAccent(B, 4);
+    const conColor = store.getState().accounts.find((a) => a.id === B)?.accent.base;
+    store.getState().setAccountAccent(B, undefined);
+
+    expect(conColor).toBe('var(--mg-accent-4-base)');
+    expect(store.getState().settings.accentByAccount).toEqual({});
+    expect(store.getState().accounts.find((a) => a.id === B)?.accent.base).toBe('var(--mg-accent-1-base)');
+  });
+
+  it('setActiveTab_pestanaDeOtraCuenta_cambiaCuentaActiva', () => {
+    // Arrange: dos pestañas visibles, una de cada cuenta; enfocada la de la principal.
+    const store = mounted();
+    store.setState({ tabs: [tab('a'), tab('b', { accountId: B })], splitLayout: singleLeaf('a') });
+
+    // Act
+    store.getState().setActiveTab('b');
+
+    // Assert
+    expect(store.getState().activeAccountId).toBe(B);
+  });
+
+  it('closeTab_laSiguienteEsDeOtraCuenta_cambiaCuentaActiva', async () => {
+    const store = mounted({ stop: vi.fn().mockResolvedValue(undefined) });
+    store.setState({ tabs: [tab('a'), tab('b', { accountId: B })] });
+
+    await store.getState().closeTab('a');
+
+    expect(store.getState().activeTabId).toBe('b');
+    expect(store.getState().activeAccountId).toBe(B);
+  });
+
+  it('setActiveTab_cuentaDesconocida_noCambiaLaActiva', () => {
+    const store = mounted();
+    store.setState({ tabs: [tab('a'), tab('b', { accountId: 'C:/Users/u/.claude-borrada' })] });
+
+    store.getState().setActiveTab('b');
+
+    expect(store.getState().activeAccountId).toBe(accounts[0]!.id);
+  });
+
+  it('requestAccountSwitch_chatConBloques_soloCambiaDeCuenta', () => {
+    const store = mounted();
+    store.setState({ tabs: [tab('a')], blocksByChat: { a: [{ id: 'b1', kind: 'system', text: 'x' }] as never } });
+
+    store.getState().requestAccountSwitch(B);
+
+    expect(store.getState().tabs[0]!.accountId).toBe(accounts[0]!.id);
+    expect(store.getState().activeAccountId).toBe(B);
+  });
+
   it('continueInAccount_soloResumeSessionId_mueve', async () => {
     const moveConversation = vi.fn().mockResolvedValue({ configDir: B });
     const store = mounted({ moveConversation });
@@ -891,5 +1120,190 @@ describe('requestAccountSwitch y continueInAccount', () => {
 
     await expect(store.getState().continueInAccount('a', B)).rejects.toThrow(/destino ya existe/);
     expect(store.getState().activeAccountId).toBe(accounts[0]!.id);
+  });
+});
+
+// P-028 6: modo de permiso por defecto de las conversaciones nuevas.
+describe('createConversation y el modo de permiso por defecto', () => {
+  const account = { id: tab('x').accountId, alias: 'principal', loginStatus: 'logged_in' } as unknown as Account;
+
+  function fresh(defaultPermissionMode: 'plan' | 'bypassPermissions' | ''): ReturnType<typeof createWorkbenchStore> {
+    const store = createWorkbenchStore(
+      fakeMage({ saveWorkspace: vi.fn().mockResolvedValue(undefined), getScratchDir: vi.fn().mockResolvedValue('C:/scratch') }),
+    );
+    store.setState({
+      accounts: [account],
+      activeAccountId: account.id,
+      settings: { ...store.getState().settings, defaultPermissionMode },
+    });
+    return store;
+  }
+
+  it('createConversation_conModoPorDefecto_pasaPermissionModeALaTab', async () => {
+    const store = fresh('plan');
+
+    await store.getState().createConversation('shared');
+
+    expect(store.getState().tabs[0]?.permissionMode).toBe('plan');
+  });
+
+  it('createConversation_conOmitirPermisosPorDefecto_loPasaALaTab', async () => {
+    const store = fresh('bypassPermissions');
+
+    await store.getState().createConversation('shared');
+
+    expect(store.getState().tabs[0]?.permissionMode).toBe('bypassPermissions');
+  });
+
+  it('createConversation_sinModoPorDefecto_dejaQueLoAdopteDelCli', async () => {
+    const store = fresh('');
+
+    await store.getState().createConversation('shared');
+
+    expect(store.getState().tabs[0]?.permissionMode).toBeUndefined();
+  });
+
+  it('newTab_proveedorNoClaude_noAplicaElModoPorDefecto', async () => {
+    const store = fresh('plan');
+
+    await store.getState().newTab({ accountId: account.id, cwd: 'C:/p', model: 'gpt', provider: 'openai' });
+
+    expect(store.getState().tabs[0]?.permissionMode).toBeUndefined();
+  });
+});
+
+// 0.1.1 R2, punto 29: parar UN subagente manda `stopTask` con la sesion de SU pestaña.
+describe('stopSubagent', () => {
+  it('stopSubagent_conSesion_mandaStopTaskConSuSesion', () => {
+    const stopTask = vi.fn().mockResolvedValue(undefined);
+    const store = createWorkbenchStore(fakeMage({ stopTask }));
+    store.setState({ sessionIdByChat: { t1: 's1' } });
+
+    store.getState().stopSubagent('t1', 'a19e');
+
+    expect(stopTask).toHaveBeenCalledWith({ sessionId: 's1', taskId: 'a19e' });
+  });
+
+  it('stopSubagent_sinSesionOTaskIdVacio_noMandaNada', () => {
+    const stopTask = vi.fn().mockResolvedValue(undefined);
+    const store = createWorkbenchStore(fakeMage({ stopTask }));
+    store.setState({ sessionIdByChat: { t1: 's1' } });
+
+    store.getState().stopSubagent('otra', 'a19e');
+    store.getState().stopSubagent('t1', '');
+
+    expect(stopTask).not.toHaveBeenCalled();
+  });
+});
+
+// 0.1.1 R2, punto 30: con un turno en marcha la cola es de Mage. Nada va al stdin hasta que acaba.
+describe('cola de mensajes', () => {
+  const RESULT = { kind: 'result', result: { isError: false, subtype: 'success', numTurns: 1 } } as const;
+  const IMG = { mediaType: 'image/png', data: 'AAAA' } as const;
+
+  function mounted(status: 'idle' | 'streaming') {
+    const sendMessage = vi.fn().mockResolvedValue(undefined);
+    const interrupt = vi.fn().mockResolvedValue(undefined);
+    const store = createWorkbenchStore(
+      fakeMage({ sendMessage, interrupt, notify: vi.fn().mockResolvedValue(undefined), saveWorkspace: vi.fn().mockResolvedValue(undefined), getUsage: vi.fn().mockResolvedValue(null) }),
+    );
+    store.setState({
+      tabs: [tab('a')],
+      activeTabId: 'a',
+      splitLayout: singleLeaf('a'),
+      sessionIdByChat: { a: 's-a' },
+      statusByChat: { a: status },
+      turnStartByChat: { a: 1000 },
+    });
+    return { store, sendMessage, interrupt };
+  }
+
+  it('sendMessageToTab_turnoEnMarcha_encolaSinBurbujaNiStdinNiReloj', async () => {
+    const { store, sendMessage } = mounted('streaming');
+
+    await store.getState().sendMessageToTab('a', ' segundo ', [IMG]);
+
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(store.getState().blocksByChat.a ?? []).toEqual([]);
+    expect(store.getState().queuedByChat.a?.map((m) => [m.text, m.attachments])).toEqual([['segundo', [IMG]]]);
+    expect(store.getState().turnStartByChat.a).toBe(1000);
+  });
+
+  it('sendMessageToTab_comandoConTurnoEnMarcha_tambienEspera', async () => {
+    const { store, sendMessage } = mounted('streaming');
+
+    await store.getState().sendMessageToTab('a', '/context');
+
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(store.getState().queuedByChat.a).toHaveLength(1);
+  });
+
+  it('result_conCola_enviaSoloElPrimeroYElSiguienteEsperaASuTurno', async () => {
+    const { store, sendMessage } = mounted('streaming');
+    await store.getState().sendMessageToTab('a', 'uno');
+    await store.getState().sendMessageToTab('a', 'dos', [IMG]);
+
+    store.getState().handleEvent('s-a', RESULT);
+    await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
+
+    expect(sendMessage).toHaveBeenLastCalledWith({ sessionId: 's-a', text: 'uno' });
+    expect(store.getState().statusByChat.a).toBe('streaming');
+    expect(store.getState().blocksByChat.a?.filter((b) => b.kind === 'user').map((b) => b.kind === 'user' && b.text)).toEqual(['uno']);
+    expect(store.getState().queuedByChat.a?.map((m) => m.text)).toEqual(['dos']);
+
+    store.getState().handleEvent('s-a', RESULT);
+    await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(2));
+
+    expect(sendMessage).toHaveBeenLastCalledWith({ sessionId: 's-a', text: 'dos', attachments: [IMG] });
+    expect(store.getState().queuedByChat.a).toBeUndefined();
+  });
+
+  it('interrupt_conCola_laDevuelveAlInputYNoLaEnviaAlAcabar', async () => {
+    const { store, sendMessage, interrupt } = mounted('streaming');
+    store.getState().setDraft('a', { text: 'borrador', attachments: [] });
+    await store.getState().sendMessageToTab('a', 'uno');
+    await store.getState().sendMessageToTab('a', 'mira [Imagen 1]', [IMG]);
+
+    store.getState().interruptActiveSession();
+    store.getState().handleEvent('s-a', RESULT);
+
+    expect(interrupt).toHaveBeenCalledWith('s-a');
+    expect(store.getState().queuedByChat.a).toBeUndefined();
+    expect(store.getState().draftByChat.a?.text).toBe('uno\n\nmira [Imagen 1]\n\nborrador');
+    expect(store.getState().draftByChat.a?.attachments.map((a) => a.attachment)).toEqual([IMG]);
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('turnoQueAbreElCli_cuentaComoEnMarchaYLaColaEsperaASuResult', async () => {
+    const { store, sendMessage } = mounted('idle');
+    store.getState().handleEvent('s-a', { kind: 'request_started' });
+
+    await store.getState().sendMessageToTab('a', 'uno');
+    expect(sendMessage).not.toHaveBeenCalled();
+
+    store.getState().handleEvent('s-a', RESULT);
+    await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledWith({ sessionId: 's-a', text: 'uno' }));
+  });
+
+  it('editQueuedMessage_loDevuelveAlInputYLoQuitaDeLaCola', async () => {
+    const { store } = mounted('streaming');
+    await store.getState().sendMessageToTab('a', 'uno');
+    await store.getState().sendMessageToTab('a', 'dos');
+    const [first] = store.getState().queuedByChat.a ?? [];
+
+    store.getState().editQueuedMessage('a', first?.id ?? '');
+
+    expect(store.getState().draftByChat.a?.text).toBe('uno');
+    expect(store.getState().queuedByChat.a?.map((m) => m.text)).toEqual(['dos']);
+  });
+
+  it('removeQueuedMessage_elUltimo_vaciaLaEntrada', async () => {
+    const { store } = mounted('streaming');
+    await store.getState().sendMessageToTab('a', 'uno');
+    const [first] = store.getState().queuedByChat.a ?? [];
+
+    store.getState().removeQueuedMessage('a', first?.id ?? '');
+
+    expect(store.getState().queuedByChat.a).toBeUndefined();
   });
 });

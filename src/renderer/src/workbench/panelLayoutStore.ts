@@ -8,6 +8,8 @@ import {
   movePanelToZone,
   placePanelInZone,
   removePanelFromLayout,
+  reorderPanelInZone,
+  stepPanelInZone,
   resizeSplit as resizeSplitOp,
   resizeZone as resizeZoneOp,
   toggleZonePanel,
@@ -54,7 +56,13 @@ export interface PanelLayoutStoreState {
   // información") y el aviso de fichero nuevo: con `togglePanelById`, si el panel ya estaba abierto el
   // boton lo CERRABA — justo lo contrario de lo que promete.
   revealPanelById: (panelId: PanelId) => void;
-  movePanel: (panelId: PanelId, toAnchor: Anchor, toZone: ZoneKey) => void;
+  // `beforeId`: el icono ante el que se suelta (null = al final). Si el destino es la zona en la que ya
+  // esta, solo se REORDENA (no abre nada ni roba el foco); si no, se mueve o se coloca.
+  movePanel: (panelId: PanelId, toAnchor: Anchor, toZone: ZoneKey, beforeId?: PanelId | null) => void;
+  // Sube (-1) o baja (+1) un icono dentro de su zona (teclado). No-op en los extremos.
+  stepPanel: (panelId: PanelId, direction: -1 | 1) => void;
+  // Si `panelId` puede subir/bajar dentro de su zona (para deshabilitar «Subir/Bajar» en los extremos).
+  stepOptions: (panelId: PanelId) => { readonly up: boolean; readonly down: boolean };
   // Saca el icono de `panelId` de la barra sin ponerlo en ningun otro sitio (Ronda 3, item 11). No
   // destruye nada: reaparece en el menu "Añadir panel" de cualquier borde.
   hidePanel: (panelId: PanelId) => void;
@@ -121,18 +129,40 @@ export const usePanelLayoutStore = create<PanelLayoutStoreState>((set, get) => (
     get().togglePanel(loc.anchor, loc.zone, panelId);
   },
 
-  movePanel: (panelId, toAnchor, toZone) => {
-    // Dos operaciones distintas detras del mismo gesto: si el panel esta en alguna zona se MUEVE; si no
-    // esta en ninguna (viene del menu "Añadir panel", que solo ofrece los escondidos) se COLOCA. Antes
-    // se llamaba siempre a `movePanelToZone`, que en ese segundo caso lanza por precondicion — o sea
-    // que añadir un panel escondido no funcionaba.
+  movePanel: (panelId, toAnchor, toZone, beforeId = null) => {
     const current = get().layout;
+    const from = locatePanel(current, panelId);
+    // Soltar un icono en su PROPIA zona es reordenar: `movePanelToZone` lo rechaza (y antes lanzaba al
+    // soltar). No abre la zona ni roba el foco: no hay nada nuevo que ver.
+    if (from !== undefined && from.anchor === toAnchor && from.zone === toZone) {
+      const reordered = reorderPanelInZone(current, panelId, from, beforeId);
+      if (reordered === current) return;
+      set({ layout: reordered });
+      persist(reordered);
+      return;
+    }
+    // Dos operaciones distintas detras del mismo gesto: si el panel esta en alguna zona se MUEVE; si no
+    // esta en ninguna (viene del menu "Añadir panel", que solo ofrece los escondidos) se COLOCA.
     const layout =
-      locatePanel(current, panelId) === undefined
-        ? placePanelInZone(current, panelId, toAnchor, toZone)
-        : movePanelToZone(current, panelId, toAnchor, toZone);
+      from === undefined ? placePanelInZone(current, panelId, toAnchor, toZone) : movePanelToZone(current, panelId, toAnchor, toZone, beforeId);
     set({ layout, pendingFocusPanelId: panelId }); // mover es siempre una accion explicita: roba el foco
     persist(layout);
+  },
+
+  stepPanel: (panelId, direction) => {
+    const current = get().layout;
+    const layout = stepPanelInZone(current, panelId, direction);
+    if (layout === current) return;
+    set({ layout });
+    persist(layout);
+  },
+
+  stepOptions: (panelId) => {
+    const at = locatePanel(get().layout, panelId);
+    if (at === undefined) return { up: false, down: false };
+    const ids = get().layout.stripes[at.anchor][at.zone].panelIds;
+    const index = ids.indexOf(panelId);
+    return { up: index > 0, down: index < ids.length - 1 };
   },
 
   hidePanel: (panelId) => {

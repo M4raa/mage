@@ -4,6 +4,8 @@
 // Modulo PURO y minusculo a proposito: la regla de agrupacion es una decision de producto y tiene que
 // poder leerse (y testearse) de un vistazo, sin abrir un componente de React.
 
+import type { IconName } from './components/Icon';
+
 export type ToolClass = 'read' | 'search' | 'edit' | 'command' | 'subagent' | 'other';
 
 // Catalogo por nombre exacto. Lo que no este aqui cae en 'other' y por tanto NO agrupa: esconder algo
@@ -31,13 +33,13 @@ export function classifyTool(toolName: string): ToolClass {
   return TOOL_CLASSES.get(toolName.trim()) ?? 'other';
 }
 
-// Glifo por clase. MONOCROMO a proposito (misma regla que el registro de paneles): un emoji de color
-// se sale de la paleta del tema y no conmuta con el.
-export const TOOL_CLASS_GLYPH: Readonly<Record<ToolClass, string>> = {
-  read: '◇',
-  search: '⌕',
-  edit: '✎',
-  command: '›_',
-  subagent: '⇲',
-  other: '▣',
+// Icono de la suite por clase (solo forma, monocroma: la misma regla que el registro de paneles). Es el
+// respaldo de `iconForTool` cuando la herramienta concreta no tiene icono propio.
+export const TOOL_CLASS_ICON: Readonly<Record<ToolClass, IconName>> = {
+  read: 'toolRead',
+  search: 'toolGrep',
+  edit: 'toolEdit',
+  command: 'toolBash',
+  subagent: 'toolAgent',
+  other: 'toolGeneric',
 };

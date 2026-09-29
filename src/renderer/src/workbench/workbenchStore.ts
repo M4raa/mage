@@ -1,14 +1,14 @@
 import { create } from 'zustand';
 import { defaultEffortForProvider, effortSettingKey } from './models';
 import type { PersistedTab } from '@shared/state';
-import { disposeTranscriptStore } from './transcriptStore';
+import { disposeTranscriptStore, transcriptStoreForTab } from './transcriptStore';
 import type { ContextUsage, MageEvent, McpServerStatus, PermissionDecision, PermissionRequest, SlashCommandInfo, SubagentInfo } from '@shared/events';
 import { buildUpdatedInput, parseAskUserQuestion } from '@shared/askUserQuestion';
-import type { PermissionMode, SessionEventPayload } from '@shared/ipc';
+import type { NotificationTarget, PermissionMode, SessionEventPayload } from '@shared/ipc';
 import { isPermissionMode, PERMISSION_MODES } from '@shared/ipc';
 import type { UsageInfo } from '@shared/usage';
 import type { StatusInfo } from '@shared/status';
-import { toAccountView } from './accountView';
+import { applyAccentOverrides, toAccountView } from './accountView';
 import { nextIndexForArrow } from './a11y/keyboardNav';
 import { canChangeCwd } from './cwdChange';
 import { toUsageWindows } from './usageView';
@@ -17,11 +17,13 @@ import {
   appendSubagentBlock,
   appendThinkingDelta,
   applySubagentResult,
+  applySubagentUpdate,
   closeThinking,
   appendDelta,
   appendErrorBlock,
   appendQuestionBlock,
   appendSystemBlock,
+  appendCommandOutputBlock,
   appendToolUse,
   appendUserBlock,
   applyToolResult,
@@ -37,17 +39,29 @@ import {
 } from './engineBlocks';
 import { addAlwaysAllow, isAlwaysAllowed, removeAlwaysAllow } from './permissionRules';
 import { createdFileFrom } from './createdFilesView';
+import { enqueueMessage, mergeIntoDraft, removeQueuedMessage as withoutQueuedMessage, takeNextMessage, type QueuedMessage } from './messageQueue';
 import type { Account, AccountSwitchPrompt, Block, ChatStatus, ContextInfo, ImageAttachment, PermissionView, PromptDraft, RateLimitNotice, SessionExtensions, Tab } from './types';
 import type { ConversationPrivacy } from '@shared/state';
 import type { ConversationSummary } from '@shared/conversations';
-import { planOpenConversation } from './conversationList';
-import { planAccountSwitch } from './accountSwitch';
+import { planOpenConversation, tabFromConversation } from './conversationList';
+import { modelForReassignedTab, planAccountSwitch } from './accountSwitch';
+import {
+  AUTO_CONTINUE_POLL_MS,
+  AUTO_CONTINUE_TEXT,
+  effectiveResetMs,
+  mergeRateLimitNotice,
+  RATE_LIMIT_LINE,
+  rateLimitLineText,
+  shouldAutoContinue,
+} from './rateLimit';
 import { restoreTabs, toPersistedWorkspace } from './workspaceView';
 import { tabsToCloseAll, tabsToCloseInactive } from './tabActions';
 import {
   BACKGROUND_TTL_MS,
+  backgroundMoveBlockedReason,
   nextBackgroundState,
   shouldBackgroundOnClose,
+  tabMoveBlockedReason,
   type BackgroundSession,
 } from './backgroundWork';
 import type { DropZone, SplitPath } from './splitLayout';
@@ -63,21 +77,34 @@ import {
   singleLeaf,
 } from './splitLayout';
 import type { SplitLayout } from '@shared/state';
-import { notificationForEvent } from './notify';
+import { notificationForEvent, toNotifyParams } from './notify';
+import { resolveNotificationTarget } from './notificationTarget';
 import { noticeTextFor } from './cliNotices';
 import { SUBAGENT_TOOL_NAMES } from './toolSummary';
-import type { AppSettings, ImportedTheme, NotificationRule, ScratchRetention, ThemePreference } from '@shared/settings';
-import { clampUiScale, DEFAULT_APP_SETTINGS, ONBOARDING_VERSION } from '@shared/settings';
+import { classifySystemWrapper } from '@shared/systemWrappers';
+import type {
+  AppSettings,
+  CloseBehavior,
+  DefaultPermissionMode,
+  ImportedTheme,
+  NewConversationFolder,
+  NotificationRule,
+  ScratchRetention,
+  ThemePreference,
+} from '@shared/settings';
+import { clampUiScale, DEFAULT_APP_SETTINGS, DEFAULT_PERMISSION_MODES, ONBOARDING_VERSION } from '@shared/settings';
 import { writesClaudeTranscript, type CustomProvider, type ProviderModel } from '@shared/providers';
 import { applyBackgroundOpacity, applyThemeFromSettings, findActiveImportedTheme, resolveTheme, systemPrefersDark } from './theme';
 import { toWidgetSnapshot } from './widgetView';
-import { deriveTitleFromPrompt, isPlaceholderTitle, NEW_CONVERSATION_TITLE } from './conversationTitle';
+import { deriveTitleFromPrompt, isPlaceholderTitle, isSlashCommandText, NEW_CONVERSATION_TITLE, renamedTitleFrom } from './conversationTitle';
 import { resolveDefaultModel } from './modelDefaults';
 import { resolveReopenedTabPrefs, toConversationPrefs } from './conversationPrefs';
 import type { ConversationPrefs } from '@shared/conversationIndex';
 import type { MageApi } from '@shared/ipc';
 import type { GitSnapshot } from '@shared/git';
 import { canSwitchBranch } from './canSwitchBranch';
+import { recentProjects, RECENT_PROJECTS_LIMIT } from './recentProjects';
+import { isWindowsPlatform } from './keybindings/platform';
 
 // Contexto en placeholder hasta M1.3 (el uso/contexto real llega con UsageService).
 const CONTEXT_PLACEHOLDER: ContextInfo = { usedTokens: '—', maxTokens: '200k', usedPct: 0, tokensOut: '—' };
@@ -101,6 +128,9 @@ export interface WorkbenchState {
   addAccountOpen: boolean; // dialogo de alta de cuenta (crear + login) abierto
   handoffOpen: boolean; // modal de prompt handoff (preview + copiar / nuevo chat) abierto
   settingsOpen: boolean; // pantalla de Configuracion de la app (M2.3) abierta
+  // Seccion con la que se abre Configuracion (P-028, 41: «Añadir cuenta» del gateway lleva a
+  // «Proveedores y modelos»). null = la de siempre. La valida SettingsView contra su lista.
+  settingsSection: string | null;
   // Configuracion de la app (M2.3): se carga en init(); defaults hasta entonces.
   readonly settings: AppSettings;
   // Contador que pide FOCO para el input del prompt (extras): cada incremento hace que el PromptBar se
@@ -158,6 +188,11 @@ export interface WorkbenchState {
   readonly activitySubagentByChat: Readonly<Record<string, string>>;
   // Abre el panel de Actividad, filtrado a un subagente o sin filtro (null).
   openActivity: (tabId: string, subagentToolUseId: string | null) => void;
+  // Subagentes que el usuario quito del dock (P-028 37c), por su `tool_use_id`. Solo del DOCK: siguen en
+  // el panel y en Actividad. Sin persistir, y vuelven en cuanto el CLI cuenta algo nuevo de ellos (se
+  // pueden reanudar con SendMessage, asi que «no va a volver» nunca es seguro).
+  readonly dismissedSubagentsByChat: Readonly<Record<string, readonly string[]>>;
+  dismissSubagents: (tabId: string, toolUseIds: readonly string[]) => void;
   // Git de la carpeta de cada conversacion (P-026 3.5), por CARPETA: dos pestañas del mismo repo ven lo
   // mismo. Se refresca por eventos (activar, acabar un turno, volver el foco, cambiar de rama).
   readonly gitByCwd: Readonly<Record<string, GitView>>;
@@ -171,6 +206,9 @@ export interface WorkbenchState {
   // ellas, que es justo el caso de uso de Mage. NO se persiste entre arranques: los adjuntos son
   // imagenes en base64 y engordarian el estado del workspace sin que nadie lo haya pedido.
   readonly draftByChat: Readonly<Record<string, PromptDraft>>;
+  // Mensajes enviados con un turno en marcha, POR PESTAÑA (0.1.1 R2, punto 30): esperan aqui, no en el
+  // stdin del CLI, y salen de uno en uno al acabar cada turno. No se persisten, como el borrador.
+  readonly queuedByChat: Readonly<Record<string, readonly QueuedMessage[]>>;
   // Modelo REAL con el que arranco la sesion (`session_init.model`, p.ej. `claude-sonnet-5`), por
   // pestana. Los ids de Claude son ALIAS que apuntan a la ultima version de su familia, asi que esto es
   // lo unico que dice la version de verdad. Ausente hasta que hay sesion.
@@ -251,6 +289,10 @@ export interface WorkbenchState {
   toggleInspector: () => void;
   // Pide foco para el input del prompt (nueva conversacion, cambio de pestana…).
   focusPrompt: () => void;
+  // Clic en una notificacion del SO (P-028 40): lleva a su pestaña y al prompt o, si la pestaña ya no
+  // esta, RESALTA su fila del historial (reabrirla cortaria la sesion viva en segundo plano).
+  focusNotificationTarget: (target: NotificationTarget) => void;
+  readonly highlightedSessionId: string | null;
 
   // --- Shell (cuentas y pestanas reales) ---
   init: () => void;
@@ -263,6 +305,14 @@ export interface WorkbenchState {
   openInNewWindow: (tabId: string) => Promise<void>;
   moveTabToWindow: (tabId: string, targetWindowId: string) => Promise<void>;
   adoptTab: (persisted: PersistedTab) => void;
+  // P-028, 36. Se solto la pestaña fuera de su ventana: main decide por el cursor (otra ventana, una
+  // nueva o nada) y, si se movio, se cierra aqui.
+  dropTabOutside: (tabId: string) => Promise<void>;
+  // Una fila del HISTORIAL en otra ventana (menu y arrastre). Si ya tiene pestaña aqui, se mueve esa.
+  openConversationInNewWindow: (item: ConversationSummary) => Promise<void>;
+  dropConversationOutside: (item: ConversationSummary) => Promise<void>;
+  // Recoge lo que esperaba a esta ventana al abrirse (transporte "pull"). Tras restaurar el workspace.
+  adoptPendingTabs: () => Promise<void>;
   // Pestaña nueva POR DEFECTO: carpeta temporal + valores por defecto, sin dialogo.
   openNewTab: () => void;
   // Camino secundario: el dialogo de nueva conversacion (elegir cuenta/carpeta/proveedor/modelo). Con
@@ -277,7 +327,7 @@ export interface WorkbenchState {
   closeAddAccount: () => void;
   openHandoff: () => void;
   closeHandoff: () => void;
-  openSettings: () => void;
+  openSettings: (section?: string) => void;
   closeSettings: () => void;
   // Sustituye las reglas de notificacion y persiste (debounce, mismo patron que el workspace).
   saveNotificationRules: (rules: readonly NotificationRule[]) => void;
@@ -289,10 +339,17 @@ export interface WorkbenchState {
   // Retencion de los scratchpads (auditoria B.4.2). Solo persiste: quien barre es el main, al arrancar,
   // cada 24 h y al salir.
   setScratchRetention: (retention: ScratchRetention) => void;
+  // Que hace la X de la ventana principal (P-028, 17). Tambien lo escribe main desde su dialogo.
+  setCloseBehavior: (behavior: CloseBehavior) => void;
+  // Carpeta con la que nace «Nuevo chat» (P-028, 16).
+  setNewConversationFolder: (folder: NewConversationFolder) => void;
   // Escala de la interfaz (80..150 %). Se aplica al frame al instante y se persiste con debounce.
   setUiScale: (percent: number) => void;
   // Proveedor con el que se abre "Nueva conversacion".
   setDefaultProvider: (providerId: string) => void;
+  setAccountAccent: (accountId: string, colorIndex: number | undefined) => void;
+  // Modo de permiso con el que arrancan las conversaciones nuevas de Claude (P-028 6); '' = el de la cuenta.
+  setDefaultPermissionMode: (mode: DefaultPermissionMode) => void;
   // Da por visto el asistente de primer arranque (o lo vuelve a abrir, con `completed=false`).
   setOnboardingCompleted: (completed: boolean) => void;
   // Activa/desactiva el widget flotante (M3): abre/cierra su ventana (main) y persiste la preferencia.
@@ -327,6 +384,9 @@ export interface WorkbenchState {
   renameConversation: (tabId: string, title: string) => void;
   // Guarda el borrador de UNA pestaña (auditoria B.1.2). `null` lo borra: es lo que hace el envio.
   setDraft: (tabId: string, draft: PromptDraft | null) => void;
+  // Cola de mensajes (0.1.1 R2, punto 30): editar lo devuelve al input; quitar lo descarta.
+  editQueuedMessage: (tabId: string, id: string) => void;
+  removeQueuedMessage: (tabId: string, id: string) => void;
   // Carga el historial de conversaciones en disco de la cuenta activa (M2.6, sidebar = historial).
   loadConversationHistory: () => Promise<void>;
   // Abre (reanuda) una conversacion del historial: activa su pestana si ya esta abierta, o crea una.
@@ -375,6 +435,11 @@ export interface WorkbenchState {
   // `attachments` (2.12.1): imagenes del mensaje. Vacio o ausente = mensaje de solo texto, y
   // entonces el adapter manda EXACTAMENTE el payload de siempre.
   sendActiveMessage: (text: string, attachments?: readonly ImageAttachment[]) => Promise<void>;
+  // Lo mismo contra una pestaña concreta (la activa o no): el continuar automatico (P-028, 20) escribe
+  // en pestañas que pueden no estar a la vista.
+  sendMessageToTab: (tabId: string, text: string, attachments?: readonly ImageAttachment[]) => Promise<void>;
+  // Continuar automatico al restablecerse el limite de esa pestaña (opt-in desde el banner).
+  setRateLimitAutoContinue: (tabId: string, enabled: boolean) => void;
   // Cambio de modelo de la pestana activa (M2.4, solo Claude). Si hay sesion viva envia set_model
   // (aplica al siguiente turno); si no, solo actualiza la Tab (--model aplicara al arrancar).
   setActiveModel: (model: string) => void;
@@ -387,9 +452,14 @@ export interface WorkbenchState {
   setActiveEffort: (effort: string) => void;
   // Cambia la carpeta (cwd) de la pestana activa (F2). Solo tiene sentido ANTES de que arranque la
   // sesion: la regla vive en canChangeCwd (modulo puro), que comparten la UI y esta accion.
-  setActiveCwd: (cwd: string) => void;
+  // `tabId` = la pestaña del panel que lo pide (con el workspace dividido no tiene por que ser la
+  // activa); sin el, la activa.
+  setActiveCwd: (cwd: string, tabId?: string) => void;
   // Interrumpe el turno en curso de la pestana activa (boton "Parar"): control_request interrupt.
   interruptActiveSession: () => void;
+  // Para UN subagente en segundo plano (0.1.1 R2, punto 29): `taskId` es su `agentId`. El «Detenido»
+  // llega con el `task_notification stopped` del CLI, no se pinta aqui.
+  stopSubagent: (tabId: string, taskId: string) => void;
   // Compactacion del contexto de la sesion activa (M2.4, solo Claude): envia /compact.
   compactActiveSession: () => Promise<void>;
   answerActivePermission: (decision: PermissionDecision) => void;
@@ -419,6 +489,8 @@ export interface NewTabParams {
   readonly effort?: string; // nivel --effort (M2.4); undefined -> default del CLI
   readonly maxBudgetUsdCents?: number; // tope --max-budget-usd (M2.4) en centavos enteros
   readonly privacy?: ConversationPrivacy; // M2.6; ausente -> 'shared'
+  // Modo de permiso inicial; ausente -> el `defaultPermissionMode` de Ajustes (solo Claude), y '' = el de la cuenta.
+  readonly permissionMode?: PermissionMode;
 }
 
 // Contadores monotonos (no usamos Date.now/random para ids de bloque ni de pestana).
@@ -500,7 +572,7 @@ function applyBackgroundEvent(
   // Calculandola detras, la unica conversacion que el usuario no esta mirando era justo la unica que no
   // avisaba. Main solo la enseña con la ventana sin foco; el titulo es el que tenia la pestaña al cerrar.
   const content = notificationForEvent(event, { tabTitle: entry.title, rules: get().settings.notificationRules });
-  if (content !== null) void mage.notify(content).catch(() => undefined);
+  if (content !== null) void mage.notify(toNotifyParams(content, { sessionId })).catch(() => undefined);
   const state = nextBackgroundState(entry.state, event);
   if (state === entry.state) return;
   set((s) => ({ backgroundSessions: { ...s.backgroundSessions, [sessionId]: { ...entry, state } } }));
@@ -587,6 +659,72 @@ function scheduleSettingsPersist(mage: MageClient, getState: () => WorkbenchStat
   }, PERSIST_DEBOUNCE_MS);
 }
 
+// Carpeta de «Nuevo chat» (P-028, 16). Con 'lastProject', la del proyecto mas reciente del historial
+// que siga existiendo; si no hay ninguno (o el historial aun no ha cargado tras arrancar, o falla la
+// consulta), la temporal de siempre. Un proyecto sin confianza se abre igual: la pregunta llega al
+// primer envio, como con cualquier carpeta elegida a mano.
+async function newConversationCwd(mage: MageClient, state: WorkbenchState): Promise<string> {
+  if (state.settings.newConversationFolder !== 'lastProject') return mage.getScratchDir();
+  const candidates = recentProjects({
+    history: state.conversationHistory,
+    scratchRoot: state.scratchDir,
+    limit: RECENT_PROJECTS_LIMIT,
+    caseInsensitive: isWindowsPlatform(),
+  });
+  if (candidates.length === 0) return mage.getScratchDir();
+  try {
+    const exists = await mage.existsDirs(candidates.map((p) => p.cwd));
+    const found = candidates.find((_, index) => exists[index] === true);
+    if (found !== undefined) return found.cwd;
+  } catch (err) {
+    console.warn('No se pudo comprobar el ultimo proyecto; se usa una carpeta temporal:', describeError(err));
+  }
+  return mage.getScratchDir();
+}
+
+// La forma persistida de una pestaña que se va a otra ventana, o lanza con el motivo si no puede irse
+// (P-028, 36): con un turno en marcha, moverla la dejaria en segundo plano aqui con el CLI vivo y la
+// otra ventana no podria reanudarla. La UI ya desactiva mover y arrastrar con ese motivo.
+function movableTab(state: WorkbenchState, tabId: string): PersistedTab {
+  const tab = state.tabs.find((t) => t.id === tabId);
+  if (tab === undefined) throw new Error(`No hay ninguna pestaña con id ${JSON.stringify(tabId)} que mover`);
+  const blocked = tabMoveBlockedReason(state.statusByChat[tabId]);
+  if (blocked !== null) throw new Error(blocked);
+  // Se manda la forma PERSISTIDA, que es el contrato del IPC y lo unico que la otra ventana sabe leer.
+  const [persisted] = toPersistedWorkspace([tab], tab.id, state.sessionIdByChat).tabs;
+  if (persisted === undefined) throw new Error(`No se pudo serializar la pestaña ${JSON.stringify(tabId)}`);
+  return persisted;
+}
+
+// La pestaña abierta de una conversacion (viva o por reanudar), si la hay.
+function tabOfConversation(state: WorkbenchState, sessionId: string): Tab | undefined {
+  return state.tabs.find((t) => (state.sessionIdByChat[t.id] ?? t.resumeSessionId) === sessionId);
+}
+
+// Una fila del historial como pestaña para OTRA ventana: la misma que abriria `openConversation`
+// aqui. Si seguia en segundo plano ya terminada, su sesion se corta antes (dos CLI no pueden escribir
+// la misma transcripcion); trabajando todavia, no se mueve.
+async function conversationForOtherWindow(
+  mage: MageClient,
+  get: () => WorkbenchState,
+  item: ConversationSummary,
+): Promise<PersistedTab> {
+  const blocked = backgroundMoveBlockedReason(get().backgroundSessions[item.sessionId]);
+  if (blocked !== null) throw new Error(blocked);
+  await get().discardBackgroundSession(item.sessionId);
+  const state = get();
+  const account = state.accounts.find((a) => a.id === state.activeAccountId);
+  const prefs = resolveReopenedTabPrefs({
+    indexPrefs: await loadConversationPrefsSafely(mage, item.sessionId),
+    accountDefaultModel: account?.defaultModel ?? null,
+    providerDefaultModel: state.settings.defaultModelByProvider.claude ?? null,
+  });
+  const tab = tabFromConversation({ id: nextTabId(), item, accountId: state.activeAccountId, accountAlias: account?.alias ?? state.activeAccountId, prefs });
+  const [persisted] = toPersistedWorkspace([tab], tab.id, {}).tabs;
+  if (persisted === undefined) throw new Error(`No se pudo serializar la conversacion ${JSON.stringify(item.sessionId)}`);
+  return persisted;
+}
+
 // Empuje del snapshot al WIDGET FLOTANTE (M3). El renderer principal es la fuente de verdad: calcula
 // un snapshot compacto y lo envia a main, que lo reenvia a la ventana del widget. Con debounce corto
 // (agrupa rafagas de deltas del stream) y guard unica de suscripcion (evita listeners duplicados en HMR).
@@ -645,6 +783,71 @@ function armBackgroundTtl(get: () => WorkbenchState, sessionId: string): void {
     sessionId,
     setTimeout(() => void get().discardBackgroundSession(sessionId), BACKGROUND_TTL_MS),
   );
+}
+
+// Chat NUEVO que sigue a la cuenta pulsada (P-028, punto 31): reescribe cuenta, alias y modelo de la
+// pestaña y olvida su config dir resuelto (el de la cuenta vieja). Conserva cwd, privacidad y borrador.
+// Solo se llama con el plan 'reassign', que ya garantiza que no hay sesion ni nada que migrar.
+function reassignNewChat(
+  mage: MageClient,
+  get: () => WorkbenchState,
+  set: SetFn,
+  target: { readonly tabId: string; readonly destAccountId: string },
+): void {
+  const state = get();
+  const dest = state.accounts.find((a) => a.id === target.destAccountId);
+  if (dest === undefined) throw new Error(`Cuenta destino inexistente al reasignar el chat: ${target.destAccountId}`);
+  const catalog = state.modelCatalogByAccount[dest.id]?.map((m) => m.id);
+  const reresolve = (): string =>
+    resolveDefaultModel({
+      lastUsedModel: null,
+      accountDefaultModel: dest.defaultModel,
+      providerDefaultModel: state.settings.defaultModelByProvider.claude ?? null,
+    });
+  set((s) => ({
+    tabs: s.tabs.map((t) => {
+      if (t.id !== target.tabId) return t;
+      const model = t.provider === 'claude' ? modelForReassignedTab(t.model, catalog, reresolve) : t.model;
+      const { resolvedConfigDir: _olvidado, ...rest } = t;
+      return { ...rest, accountId: dest.id, accountAlias: dest.alias, model };
+    }),
+  }));
+  schedulePersist(mage, get);
+}
+
+// Continuar automatico (P-028, 20). UN intervalo para todas las pestañas y solo mientras alguna lo
+// tenga activado: un setTimeout de horas no sobrevive a suspender el equipo, un sondeo corto si. No se
+// persiste nada: al reiniciar Mage no se continua solo (decision del usuario).
+let autoContinueTimer: ReturnType<typeof setInterval> | null = null;
+
+function clearAutoContinueTimer(): void {
+  if (autoContinueTimer === null) return;
+  clearInterval(autoContinueTimer);
+  autoContinueTimer = null;
+}
+
+function syncAutoContinueTimer(get: () => WorkbenchState): void {
+  const pending = Object.values(get().rateLimitByChat).some((notice) => notice.autoContinue === true);
+  if (!pending) {
+    clearAutoContinueTimer();
+    return;
+  }
+  if (autoContinueTimer === null) autoContinueTimer = setInterval(() => runAutoContinue(get), AUTO_CONTINUE_POLL_MS);
+}
+
+// Envia «Continúa» a cada pestaña marcada cuyo limite ya se restablecio. `sendMessageToTab` retira la
+// marca, asi que cada limite dispara una sola vez y el intervalo se apaga solo al quedar ninguna.
+function runAutoContinue(get: () => WorkbenchState): void {
+  const state = get();
+  const now = Date.now();
+  for (const [tabId, notice] of Object.entries(state.rateLimitByChat)) {
+    const tab = state.tabs.find((t) => t.id === tabId);
+    if (tab === undefined) continue;
+    const resetsAtMs = effectiveResetMs(notice, state.usageByAccount[tab.accountId]);
+    if (!shouldAutoContinue({ now, notice, status: state.statusByChat[tabId], resetsAtMs })) continue;
+    void state.sendMessageToTab(tabId, AUTO_CONTINUE_TEXT);
+  }
+  syncAutoContinueTimer(get);
 }
 
 function clearBackgroundTtl(sessionId: string): void {
@@ -792,6 +995,25 @@ function flushPendingCliTitle(
   });
 }
 
+// Auto-titulo (M2.6): el primer PROMPT de una pestaña sin titulo elegido. Ni un comando "/" ni un
+// mensaje posterior a otro prompt real titulan (P-028).
+function shouldAutoTitle(tab: Tab, blocks: readonly Block[], text: string): boolean {
+  if (!isPlaceholderTitle(tab.title) || isSlashCommandText(text)) return false;
+  return !blocks.some((b) => b.kind === 'user' && !isSlashCommandText(b.text) && classifySystemWrapper(b.text).kind !== 'command');
+}
+
+// `/rename` resuelto por el CLI (P-028): la pestaña toma el nombre en cuanto llega su salida, este o no
+// en marcha un turno. Sin nombre legible en la salida se relee la transcripcion, que trae el
+// `custom-title` y lo aplica `useTranscriptLifecycle`.
+function applyCliRename(get: () => WorkbenchState, tabId: string, output: { readonly args: string; readonly text: string }): void {
+  const title = renamedTitleFrom(output);
+  if (title === null) {
+    transcriptStoreForTab(tabId).getState().refresh();
+    return;
+  }
+  get().renameTab(tabId, title);
+}
+
 function withoutPendingCliTitle(tab: Tab): Tab {
   const { pendingCliTitle: _sent, ...rest } = tab;
   return rest;
@@ -802,6 +1024,8 @@ export function createWorkbenchStore(mage: MageClient) {
   // del store viejo y a SU cliente, asi que dispararlo ahora escribiria estado muerto (o llamaria a un
   // doble de test que ya nadie vigila). Es la unica puerta por la que pasan todos los stores.
   cancelPendingPersist();
+  // Mismo motivo: el intervalo del continuar automatico lee el `get` del store anterior.
+  clearAutoContinueTimer();
   // Lo mismo con los `/rename` silenciosos: los recuentos son de las sesiones del store anterior.
   silentRenamesBySession.clear();
   gitTrustAsked.clear();
@@ -809,7 +1033,7 @@ export function createWorkbenchStore(mage: MageClient) {
   // `useWorkbenchStore.subscribe` (el singleton global) un store creado con un cliente de pruebas
   // cableaba el espejo del widget contra el store real de la app — justo el acoplamiento que la
   // decision A1 (inyectar el cliente) venia a quitar.
-  return create<WorkbenchState>((set, get, api) => ({
+  const store = create<WorkbenchState>((set, get, api) => ({
     accounts: [],
     tabs: [],
     activeAccountId: '',
@@ -822,6 +1046,7 @@ export function createWorkbenchStore(mage: MageClient) {
     handoffOpen: false,
     accountSwitchPrompt: null,
     settingsOpen: false,
+    settingsSection: null,
     settings: DEFAULT_APP_SETTINGS,
     promptFocusToken: 0,
 
@@ -843,8 +1068,11 @@ export function createWorkbenchStore(mage: MageClient) {
     toolsByChat: {},
     extensionsByChat: {},
     activitySubagentByChat: {},
+    dismissedSubagentsByChat: {},
+    highlightedSessionId: null,
     gitByCwd: {},
     draftByChat: {},
+    queuedByChat: {},
     resolvedModelByChat: {},
     scratchDir: null,
     rateLimitByChat: {},
@@ -869,17 +1097,27 @@ export function createWorkbenchStore(mage: MageClient) {
         liveSessionId: state.sessionIdByChat[state.activeTabId],
         destAccountId,
         destLoggedIn: state.accounts.find((a) => a.id === destAccountId)?.loginStatus === 'logged_in',
+        hasBlocks: (state.blocksByChat[state.activeTabId]?.length ?? 0) > 0,
       });
       if (plan === 'ask' && tab !== undefined) {
         set({ accountSwitchPrompt: { tabId: tab.id, destAccountId } });
         return;
       }
+      if (plan === 'reassign' && tab !== undefined) reassignNewChat(mage, get, set, { tabId: tab.id, destAccountId });
       get().setActiveAccount(destAccountId);
       // El turno sigue en su cuenta; en la destino se empieza de cero (D5).
       if (plan === 'switch-and-new-chat') void get().createConversation('shared');
     },
 
     closeAccountSwitchPrompt: () => set({ accountSwitchPrompt: null }),
+
+    dismissSubagents: (tabId, toolUseIds) => {
+      if (toolUseIds.length === 0) return;
+      set((s) => {
+        const current = s.dismissedSubagentsByChat[tabId] ?? [];
+        return { dismissedSubagentsByChat: { ...s.dismissedSubagentsByChat, [tabId]: [...new Set([...current, ...toolUseIds])] } };
+      });
+    },
 
     openActivity: (tabId, subagentToolUseId) => {
       set((s) => ({
@@ -1015,7 +1253,9 @@ export function createWorkbenchStore(mage: MageClient) {
           toolsByChat: without(s.toolsByChat, tabId),
           extensionsByChat: without(s.extensionsByChat, tabId),
           activitySubagentByChat: without(s.activitySubagentByChat, tabId),
+          dismissedSubagentsByChat: without(s.dismissedSubagentsByChat, tabId),
           draftByChat: without(s.draftByChat, tabId),
+          queuedByChat: without(s.queuedByChat, tabId),
           resolvedModelByChat: without(s.resolvedModelByChat, tabId),
           // B12: estos dos faltaban. Se escriben por evento y se quedaban para siempre al cerrar la
           // pestaña — fuga pequeña, pero que crece con cada conversacion que se cierra.
@@ -1109,6 +1349,26 @@ export function createWorkbenchStore(mage: MageClient) {
     toggleInspector: () => void import('./panelLayoutStore').then((m) => m.usePanelLayoutStore.getState().togglePanelById('permissions')),
     focusPrompt: () => set((s) => ({ promptFocusToken: s.promptFocusToken + 1 })),
 
+    focusNotificationTarget: (target) => {
+      const s = get();
+      const destination = resolveNotificationTarget(target, {
+        tabs: s.tabs,
+        sessionIdByChat: s.sessionIdByChat,
+        backgroundAccountBySession: Object.fromEntries(Object.values(s.backgroundSessions).map((b) => [b.sessionId, b.accountId])),
+        historySessionIds: new Set(s.conversationHistory.map((c) => c.sessionId)),
+      });
+      if (destination.kind === 'none') return;
+      if (destination.kind === 'history') {
+        if (destination.accountId !== null) s.setActiveAccount(destination.accountId);
+        set({ highlightedSessionId: destination.sessionId });
+        return;
+      }
+      s.setActiveAccount(destination.accountId);
+      s.setActiveTab(destination.tabId);
+      s.focusPrompt();
+      if (target.opensActivity === true) s.openActivity(destination.tabId, null);
+    },
+
     // Arranque del shell: suscribe UNA vez el stream del motor y carga las cuentas reales.
     init: () => {
       if (!engineSubscribed) {
@@ -1130,6 +1390,7 @@ export function createWorkbenchStore(mage: MageClient) {
           get().setActiveAccount(tab.accountId);
           get().setActiveTab(tabId);
         });
+        mage.onNotificationClicked((target) => get().focusNotificationTarget(target));
         mage.onWidgetEnabledChanged((enabled) => {
           set((s) => ({ settings: { ...s.settings, widgetEnabled: enabled } }));
           scheduleSettingsPersist(mage, get);
@@ -1148,6 +1409,9 @@ export function createWorkbenchStore(mage: MageClient) {
       void get()
         .refreshAccounts()
         .then(() => get().restoreWorkspace()) // reabre las pestanas guardadas (tras conocer las cuentas)
+        // Y DESPUES lo que otra ventana le mando al abrirla (P-028, 36): con las cuentas ya cargadas,
+        // que es lo que `adoptTab` necesita para no descartarla.
+        .then(() => get().adoptPendingTabs())
         .then(() => get().refreshActiveUsage())
         .then(() => get().loadConversationHistory()); // historial de la cuenta activa (M2.6)
       void get().refreshStatus();
@@ -1159,7 +1423,7 @@ export function createWorkbenchStore(mage: MageClient) {
         .then((settings) => {
           applyThemeFromSettings(settings, systemPrefersDark());
           mage.setUiScale(settings.uiScale);
-          set({ settings });
+          set((s) => ({ settings, accounts: applyAccentOverrides(s.accounts, settings.accentByAccount) }));
         })
         .catch((err: unknown) => console.warn('No se pudo cargar la configuracion:', describeError(err)));
 
@@ -1170,7 +1434,7 @@ export function createWorkbenchStore(mage: MageClient) {
       mage.onSettingsChanged((settings) => {
         applyThemeFromSettings(settings, systemPrefersDark());
         mage.setUiScale(settings.uiScale);
-        set({ settings });
+        set((s) => ({ settings, accounts: applyAccentOverrides(s.accounts, settings.accentByAccount) }));
       });
 
       // Una pestaña que llega de otra ventana (la arrastraste fuera, o la mandaste por el menu). Se
@@ -1185,36 +1449,58 @@ export function createWorkbenchStore(mage: MageClient) {
       });
     },
 
+    // A una ventana NUEVA por el transporte "pull" (P-028, 36): antes se abria la ventana y se le
+    // empujaba la pestaña antes de que su renderer escuchara, asi que se perdia en las dos.
     openInNewWindow: async (tabId) => {
-      const { tabs } = get();
-      const tab = tabs.find((t) => t.id === tabId);
-      if (tab === undefined) throw new Error(`No hay ninguna pestaña con id ${JSON.stringify(tabId)} que mover a otra ventana`);
-      const targetWindowId = await mage.openWindow();
-      await get().moveTabToWindow(tabId, targetWindowId);
+      const persisted = movableTab(get(), tabId);
+      await mage.openWindowWithTab(persisted);
+      await get().closeTab(tabId);
     },
 
     moveTabToWindow: async (tabId, targetWindowId) => {
-      const { tabs, sessionIdByChat } = get();
-      const tab = tabs.find((t) => t.id === tabId);
-      if (tab === undefined) throw new Error(`No hay ninguna pestaña con id ${JSON.stringify(tabId)} que mover`);
-      // Se manda la forma PERSISTIDA, que es el contrato del IPC y lo unico que la otra ventana sabe leer.
-      const [persisted] = toPersistedWorkspace([tab], tab.id, sessionIdByChat).tabs;
-      if (persisted === undefined) throw new Error(`No se pudo serializar la pestaña ${JSON.stringify(tabId)}`);
+      const persisted = movableTab(get(), tabId);
       // La pestaña se cierra AQUI solo si la otra ventana la acepto: si la ventana destino ya no existe
       // el IPC lanza, y cerrarla antes habria perdido la conversacion de la vista sin ganar nada.
       await mage.moveTabToWindow({ targetWindowId, tab: persisted });
       await get().closeTab(tabId);
     },
 
+    dropTabOutside: async (tabId) => {
+      const persisted = movableTab(get(), tabId);
+      const outcome = await mage.dropTabOutside(persisted);
+      if (outcome === 'moved') await get().closeTab(tabId);
+    },
+
+    openConversationInNewWindow: async (item) => {
+      const openTab = tabOfConversation(get(), item.sessionId);
+      if (openTab !== undefined) return get().openInNewWindow(openTab.id);
+      await mage.openWindowWithTab(await conversationForOtherWindow(mage, get, item));
+    },
+
+    dropConversationOutside: async (item) => {
+      const openTab = tabOfConversation(get(), item.sessionId);
+      if (openTab !== undefined) return get().dropTabOutside(openTab.id);
+      await mage.dropTabOutside(await conversationForOtherWindow(mage, get, item));
+    },
+
+    adoptPendingTabs: async () => {
+      const pending = await mage.takePendingTabs();
+      for (const persisted of pending) get().adoptTab(persisted);
+    },
+
     adoptTab: (persisted) => {
       const { accounts } = get();
       const restored = restoreTabs({ version: 1, activeTabId: persisted.id, tabs: [persisted] }, new Set(accounts.map((a) => a.id)));
-      const [tab] = restored.tabs;
+      const [received] = restored.tabs;
       // Una pestaña de una cuenta que esta ventana no conoce no se puede abrir: se dice, no se traga.
-      if (tab === undefined) {
+      if (received === undefined) {
         console.warn('Llego una pestaña de otra ventana para una cuenta que no existe aqui:', persisted.accountId);
         return;
       }
+      // Id LOCAL nuevo: cada ventana cuenta sus `tabN` desde 1, asi que el id de origen puede estar ya
+      // ocupado aqui (dos pestañas con el mismo id comparten bloques, estado y panel).
+      advanceTabSeqPast(get().tabs);
+      const tab: Tab = { ...received, id: nextTabId() };
       set((s) => ({
         tabs: [...s.tabs, tab],
         activeTabId: tab.id,
@@ -1262,7 +1548,7 @@ export function createWorkbenchStore(mage: MageClient) {
         // toAccountView repone el placeholder de uso; re-fusionamos el uso real ya conocido para no
         // parpadear a 0% mientras se re-descubren las cuentas (el placeholder solo queda si no hay dato).
         const accounts = infos.map((infoItem, index) => {
-          const view = toAccountView(infoItem, index);
+          const view = toAccountView(infoItem, index, s.settings.accentByAccount[infoItem.configDir]);
           const info = s.usageByAccount[view.id];
           return info === null || info === undefined ? view : { ...view, usage: toUsageWindows(info, Date.now()) };
         });
@@ -1277,11 +1563,14 @@ export function createWorkbenchStore(mage: MageClient) {
 
     // Abre una pestana real ligada a {cuenta, proyecto, modelo}. La sesion del motor se crea perezosa
     // al primer mensaje (ensureSession) para no lanzar procesos hasta que se use.
-    newTab: async ({ accountId, cwd, model, provider, title, effort, maxBudgetUsdCents, privacy }) => {
+    newTab: async ({ accountId, cwd, model, provider, title, effort, maxBudgetUsdCents, privacy, permissionMode }) => {
       if (accountId.length === 0 || cwd.length === 0 || model.length === 0 || provider.length === 0) {
         throw new Error(`Parametros de pestana invalidos: cuenta="${accountId}" cwd="${cwd}" modelo="${model}" proveedor="${provider}"`);
       }
       const alias = get().accounts.find((a) => a.id === accountId)?.alias ?? accountId;
+      // TODAS las rutas que crean pestañas pasan por aqui (nueva conversacion, dialogo, clon): el modo por
+      // defecto de Ajustes (P-028 6) se aplica en un solo sitio. Solo Claude tiene modos de permiso.
+      const initialMode = permissionMode ?? (provider === 'claude' ? get().settings.defaultPermissionMode : '');
       const tab: Tab = {
         id: nextTabId(),
         accountId,
@@ -1289,6 +1578,7 @@ export function createWorkbenchStore(mage: MageClient) {
         cwd,
         model,
         provider,
+        ...(initialMode.length === 0 ? {} : { permissionMode: initialMode }),
         title: title ?? deriveTitle(cwd),
         privacy: privacy ?? 'shared',
         // Una conversacion recien creada es la mas reciente de su seccion hasta que se escriba en otra.
@@ -1317,7 +1607,7 @@ export function createWorkbenchStore(mage: MageClient) {
       if (accountId.length === 0) return;
       const account = get().accounts.find((a) => a.id === accountId);
       if (account === undefined) return;
-      const cwd = await mage.getScratchDir();
+      const cwd = await newConversationCwd(mage, get());
       // Ultima conversacion Claude de la cuenta (las pestanas se anaden al final -> la ultima es la mas
       // reciente); su modelo es el "ultimo usado". Sobrevive reinicios porque las pestanas se restauran.
       const lastTab = [...get().tabs].reverse().find((t) => t.accountId === accountId && t.provider === 'claude');
@@ -1348,6 +1638,20 @@ export function createWorkbenchStore(mage: MageClient) {
       // dejaria una entrada muerta en el mapa.
       const vacio = draft === null || (draft.text.length === 0 && draft.attachments.length === 0);
       set((s) => ({ draftByChat: vacio ? without(s.draftByChat, tabId) : { ...s.draftByChat, [tabId]: draft } }));
+    },
+
+    editQueuedMessage: (tabId, id) => {
+      const message = (get().queuedByChat[tabId] ?? []).find((m) => m.id === id);
+      if (message === undefined) return;
+      get().removeQueuedMessage(tabId, id);
+      get().setDraft(tabId, mergeIntoDraft([message], get().draftByChat[tabId] ?? NO_DRAFT));
+    },
+
+    removeQueuedMessage: (tabId, id) => {
+      set((s) => {
+        const rest = withoutQueuedMessage(s.queuedByChat[tabId] ?? [], id);
+        return { queuedByChat: rest.length === 0 ? without(s.queuedByChat, tabId) : { ...s.queuedByChat, [tabId]: rest } };
+      });
     },
 
     renameTab: (tabId, title) => {
@@ -1449,22 +1753,7 @@ export function createWorkbenchStore(mage: MageClient) {
         // que `createConversation` si respeta.
         providerDefaultModel: get().settings.defaultModelByProvider.claude ?? null,
       });
-      const tab: Tab = {
-        id: nextTabId(),
-        accountId,
-        accountAlias: account?.alias ?? accountId,
-        cwd: item.cwd,
-        model: prefs.model,
-        provider: 'claude',
-        title: item.title,
-        privacy: item.privacy,
-        resolvedConfigDir: item.configDir,
-        resumeSessionId: item.sessionId,
-        ...(prefs.effort === undefined ? {} : { effort: prefs.effort }),
-        ...(prefs.permissionMode === undefined ? {} : { permissionMode: prefs.permissionMode }),
-        // NO se fija createdAtMs/lastMessageAtMs: la fila conserva su sitio en el sidebar (lo da el mtime
-        // de su transcripcion) hasta que el usuario escriba en ella (A6).
-      };
+      const tab = tabFromConversation({ id: nextTabId(), item, accountId, accountAlias: account?.alias ?? accountId, prefs });
       set((s) => ({
         tabs: [...s.tabs, tab],
         activeTabId: tab.id,
@@ -1642,7 +1931,7 @@ export function createWorkbenchStore(mage: MageClient) {
     closeAddAccount: () => set({ addAccountOpen: false }),
     openHandoff: () => set({ handoffOpen: true }),
     closeHandoff: () => set({ handoffOpen: false }),
-    openSettings: () => set({ settingsOpen: true }),
+    openSettings: (section) => set({ settingsOpen: true, settingsSection: section ?? null }),
     closeSettings: () => set({ settingsOpen: false }),
 
     // Sustituye las reglas de notificacion (edicion completa desde SettingsView) y persiste.
@@ -1668,8 +1957,24 @@ export function createWorkbenchStore(mage: MageClient) {
       scheduleSettingsPersist(mage, get);
     },
 
+    // PERS-3 (P-028, 2): color de una cuenta. `undefined` vuelve al de su posicion.
+    setAccountAccent: (accountId, colorIndex) => {
+      set((s) => {
+        const { [accountId]: _previo, ...rest } = s.settings.accentByAccount;
+        const accentByAccount = colorIndex === undefined ? rest : { ...rest, [accountId]: colorIndex };
+        return { settings: { ...s.settings, accentByAccount }, accounts: applyAccentOverrides(s.accounts, accentByAccount) };
+      });
+      scheduleSettingsPersist(mage, get);
+    },
+
     setDefaultProvider: (providerId) => {
       set((s) => ({ settings: { ...s.settings, defaultProvider: providerId } }));
+      scheduleSettingsPersist(mage, get);
+    },
+
+    setDefaultPermissionMode: (mode) => {
+      if (!DEFAULT_PERMISSION_MODES.includes(mode)) throw new Error(`Modo de permiso por defecto invalido: ${JSON.stringify(mode)}`);
+      set((s) => ({ settings: { ...s.settings, defaultPermissionMode: mode } }));
       scheduleSettingsPersist(mage, get);
     },
 
@@ -1680,6 +1985,16 @@ export function createWorkbenchStore(mage: MageClient) {
 
     setScratchRetention: (retention) => {
       set((s) => ({ settings: { ...s.settings, scratchRetention: retention } }));
+      scheduleSettingsPersist(mage, get);
+    },
+
+    setCloseBehavior: (behavior) => {
+      set((s) => ({ settings: { ...s.settings, closeBehavior: behavior } }));
+      scheduleSettingsPersist(mage, get);
+    },
+
+    setNewConversationFolder: (folder) => {
+      set((s) => ({ settings: { ...s.settings, newConversationFolder: folder } }));
       scheduleSettingsPersist(mage, get);
     },
 
@@ -1874,22 +2189,41 @@ export function createWorkbenchStore(mage: MageClient) {
     },
 
     // Envia un mensaje del usuario en la pestana activa: bloque optimista + sesion + envio al motor.
-    sendActiveMessage: async (text, attachments = []) => {
+    sendActiveMessage: (text, attachments = []) => get().sendMessageToTab(get().activeTabId, text, attachments),
+
+    setRateLimitAutoContinue: (tabId, enabled) => {
+      const notice = get().rateLimitByChat[tabId];
+      if (notice === undefined) return;
+      const { autoContinue: _previo, ...rest } = notice;
+      set((s) => ({ rateLimitByChat: { ...s.rateLimitByChat, [tabId]: enabled ? { ...rest, autoContinue: true } : rest } }));
+      syncAutoContinueTimer(get);
+    },
+
+    sendMessageToTab: async (tabId, text, attachments = []) => {
       const trimmed = text.trim();
-      const tabId = get().activeTabId;
       // Un mensaje SIN texto pero CON imagen es valido (mandar solo un pantallazo es un caso real).
       if ((trimmed.length === 0 && attachments.length === 0) || tabId.length === 0) return;
+      // Un `/rename` tecleado es el nombre mas nuevo: el pendiente de la UI ya no debe pisarlo al
+      // acabar el turno (gana el ultimo, D3). Tambien si espera en la cola: saldria detras del pendiente.
+      if (get().tabs.find((t) => t.id === tabId)?.pendingCliTitle !== undefined && /^\/rename\b/.test(trimmed)) {
+        set((s) => ({ tabs: s.tabs.map((t) => (t.id === tabId ? withoutPendingCliTitle(t) : t)) }));
+      }
+      // Con un turno en marcha el mensaje espera en la cola de Mage (0.1.1 R2, punto 30), tambien un
+      // comando `/`: ni burbuja, ni stdin, ni reloj nuevo. Sale como turno propio al acabar este.
+      if (isTurnRunning(get().statusByChat[tabId])) {
+        const message = { id: nextBlockId(), text: trimmed, attachments };
+        set((s) => ({ queuedByChat: { ...s.queuedByChat, [tabId]: enqueueMessage(s.queuedByChat[tabId] ?? [], message) } }));
+        return;
+      }
       // Auto-titulo (M2.6): el primer mensaje de una conversacion aun sin titulo lo fija desde el prompt.
-      // Guard por "primer mensaje" (sin bloques) -> /compact u otros mensajes posteriores no lo tocan.
+      // Un comando "/" no titula (P-028): la pestaña sigue «Nuevo chat» hasta el primer prompt real.
       const activeTab = get().tabs.find((t) => t.id === tabId);
-      if (activeTab !== undefined && isPlaceholderTitle(activeTab.title) && (get().blocksByChat[tabId]?.length ?? 0) === 0) {
+      if (activeTab !== undefined && shouldAutoTitle(activeTab, get().blocksByChat[tabId] ?? EMPTY_BLOCKS, trimmed)) {
         get().renameTab(tabId, deriveTitleFromPrompt(trimmed));
       }
       // El bloque optimista lleva ya los adjuntos, asi que la miniatura se ve al instante, sin esperar a
       // que la transcripcion se relea.
-      patchBlocks(set, tabId, (blocks) =>
-        appendUserBlock(blocks, { id: nextBlockId(), text: trimmed, time: currentTime(), attachments }),
-      );
+      patchBlocks(set, tabId, (blocks) => appendUserBlock(blocks, { id: nextBlockId(), text: trimmed, time: currentTime(), attachments }));
       setStatus(set, tabId, 'streaming');
       // El aviso de limite se retira al escribir: o la ventana ya se restablecio, o el CLI lo volvera a
       // mandar en este mismo turno. Dejarlo puesto ofreceria mudarse de cuenta por un limite caducado.
@@ -1923,10 +2257,10 @@ export function createWorkbenchStore(mage: MageClient) {
     // Cambia el modelo de la pestana activa (M2.4, solo Claude). Guard clauses: modelo no vacio,
     // pestana Claude existente. La Tab se actualiza siempre (el modelo ya se persiste con el
     // workspace); el set_model solo se envia si hay sesion viva.
-    setActiveCwd: (cwd) => {
+    setActiveCwd: (cwd, targetTabId) => {
       const trimmed = cwd.trim();
       if (trimmed.length === 0) throw new Error(`cwd vacio al cambiar la carpeta: ${JSON.stringify(cwd)}`);
-      const tabId = get().activeTabId;
+      const tabId = targetTabId ?? get().activeTabId;
       const tab = get().tabs.find((t) => t.id === tabId);
       if (tab === undefined) throw new Error(`No hay pestana activa al cambiar la carpeta (id=${JSON.stringify(tabId)})`);
       // No se confia en que la UI haya deshabilitado el boton: entre el clic y el dialogo del SO puede
@@ -2012,11 +2346,20 @@ export function createWorkbenchStore(mage: MageClient) {
     // parar. El CLI cierra el turno y emite su `result`, que devuelve el chat a 'idle'.
     interruptActiveSession: () => {
       const tabId = get().activeTabId;
+      // Un Stop no envia la cola (0.1.1 R2, punto 30): sus mensajes vuelven al input para que el usuario
+      // decida. Antes de pedir el interrupt: su `result` ya no debe encontrar nada que mandar.
+      returnQueueToDraft(get, set, tabId);
       const sessionId = get().sessionIdByChat[tabId];
       if (sessionId === undefined) return;
       void mage
         .interrupt(sessionId)
         .catch((err: unknown) => failChat(set, tabId, describeError(err)));
+    },
+
+    stopSubagent: (tabId, taskId) => {
+      const sessionId = get().sessionIdByChat[tabId];
+      if (sessionId === undefined || taskId.length === 0) return;
+      void mage.stopTask({ sessionId, taskId }).catch((err: unknown) => failChat(set, tabId, describeError(err)));
     },
 
     // Responde al permiso pendiente de la pestana activa y limpia el panel.
@@ -2096,7 +2439,13 @@ export function createWorkbenchStore(mage: MageClient) {
       // viaja en el mismo parche que el reducer.
       const activeAt = Date.now();
       const blocksBefore = get().blocksByChat[tabId] ?? EMPTY_BLOCKS;
-      set((s) => ({ ...reduceEvent(s, tabId, event), lastActivityByChat: { ...s.lastActivityByChat, [tabId]: activeAt } }));
+      // Un turno que abre el CLI solo (sin mensaje del usuario) arranca su reloj aqui (P-028 37d).
+      const opensTurn = event.kind === 'request_started' && (get().statusByChat[tabId] ?? 'idle') === 'idle';
+      set((s) => ({
+        ...reduceEvent(s, tabId, event),
+        lastActivityByChat: { ...s.lastActivityByChat, [tabId]: activeAt },
+        ...(opensTurn ? { turnStartByChat: { ...s.turnStartByChat, [tabId]: activeAt } } : {}),
+      }));
       // El registro de artifacts vive AQUI y no dentro de `reduceEvent` (3.8): el reducer esta
       // documentado y testeado como PURO, y llamar al IPC desde dentro lo hacia mentir — ademas de
       // reventar en Vitest, donde no hay `window`. Se compara antes/despues para no reescribir en
@@ -2130,15 +2479,39 @@ export function createWorkbenchStore(mage: MageClient) {
       if (event.kind === 'result' && tab !== undefined) void get().refreshGit(tab.id);
       // Y es el momento de mandar un nombre que el usuario puso con el turno en marcha (D3).
       if (event.kind === 'result') flushPendingCliTitle(mage, get, set, tabId);
+      // Y el primer mensaje de la cola sale como turno propio (0.1.1 R2, punto 30).
+      if (event.kind === 'result') sendNextQueuedMessage(get, tabId, set);
+      // Comandos locales con efecto en la pestaña (P-028): `/rename` la renombra al instante y `/clear`
+      // deja persistido el id nuevo, para que reabrir Mage reanude la conversacion de despues.
+      if (event.kind === 'local_command_output' && event.command === 'rename') applyCliRename(get, tabId, event);
+      if (event.kind === 'conversation_reset') {
+        schedulePersist(mage, get);
+        persistConversationPrefs(mage, get(), tabId);
+      }
       // Notificacion del SO (M2.3): main solo la muestra si la ventana no tiene el foco. Se pasa el
       // titulo de la pestana como cuerpo; los eventos de ruido devuelven null (no se notifica).
       // Un permiso que Mage contesto sola («Permitir siempre aqui») no pide nada al usuario (P-026, 1.8).
       if (tab !== undefined) {
         const content = notificationForEvent(event, { tabTitle: tab.title, rules: get().settings.notificationRules, autoAllowed });
-        if (content !== null) void mage.notify(content).catch(() => undefined);
+        if (content !== null) void mage.notify(toNotifyParams(content, { tabId, sessionId })).catch(() => undefined);
       }
     },
   }));
+  followFocusedTabAccount(store);
+  return store;
+}
+
+// La cuenta activa sigue a la conversacion enfocada (P-028, punto 26). Suscripcion y no un cambio en
+// `setActiveTab`: el foco cambia por muchos caminos (cerrar, mover, adoptar, restaurar) y todos pasan
+// por `activeTabId`. `setActiveAccount` refresca uso e historial de la cuenta nueva.
+function followFocusedTabAccount(store: { subscribe: (fn: (s: WorkbenchState, prev: WorkbenchState) => void) => unknown }): void {
+  store.subscribe((state, prev) => {
+    if (state.activeTabId === prev.activeTabId) return;
+    const tab = state.tabs.find((t) => t.id === state.activeTabId);
+    if (tab === undefined || tab.accountId === state.activeAccountId) return;
+    if (!state.accounts.some((a) => a.id === tab.accountId)) return; // cuenta borrada o aun sin descubrir
+    state.setActiveAccount(tab.accountId);
+  });
 }
 
 // `window.mage` se resuelve EN CADA LLAMADA, no al importar el modulo. Es lo que permite que un test
@@ -2229,6 +2602,18 @@ export function reduceEvent(state: WorkbenchState, tabId: string, event: MageEve
       // habra que reabrirlo — aunque la conversacion se mire luego desde otra. Es aqui y no en `main`
       // porque el reconocimiento del artifact vive en un solo sitio (el modulo puro compartido).
       return withBlocks(state, tabId, next);
+    }
+    // Nueva peticion al modelo con la pestaña parada: el CLI abre un turno solo (el de la notificacion de
+    // una tarea en segundo plano, P-028 37d). Cuenta como turno en marcha: la cola de Mage espera.
+    case 'request_started': {
+      const idle = (state.statusByChat[tabId] ?? 'idle') === 'idle';
+      return idle ? { statusByChat: { ...state.statusByChat, [tabId]: 'streaming' } } : {};
+    }
+    // Progreso o fin de un subagente en segundo plano (P-028 37a): llega aunque la pestaña este `idle`.
+    case 'subagent_update': {
+      const next = applySubagentUpdate(blocks, event);
+      if (next === blocks) return {};
+      return { ...withBlocks(state, tabId, next), ...undismissSubagent(state, tabId, event.toolUseId) };
     }
     // Pensamiento EN VIVO (2.5). Solo existe mientras el turno corre: al reanudar la conversacion, el
     // CLI persiste los bloques `thinking` vacios (medido), asi que alli queda el "▸ Pensó" sin cuerpo.
@@ -2365,17 +2750,37 @@ export function reduceEvent(state: WorkbenchState, tabId: string, event: MageEve
       const configDir = tab.resolvedConfigDir ?? tab.accountId;
       return { modelCatalogByAccount: { ...state.modelCatalogByAccount, [configDir]: event.models } };
     }
+    // Salida de un comando local (P-028, grupo C): sin esto el chat se quedaba vacio, porque el CLI no
+    // manda deltas para un comando local, solo un `assistant` sintetico.
+    case 'local_command_output':
+      return withBlocks(state, tabId, appendCommandOutputBlock(blocks, event, nextBlockId()));
+    // `/clear` (P-028): conversacion nueva en el mismo proceso. El chat se vacia y la pestaña adopta el
+    // id nuevo, que es el que leen la transcripcion, la persistencia y el `--resume`. La anterior sigue
+    // en el historial. El desglose de contexto era de la vieja: fuera hasta el siguiente.
+    case 'conversation_reset':
+      return {
+        blocksByChat: { ...state.blocksByChat, [tabId]: appendSystemBlock(EMPTY_BLOCKS, CONVERSATION_RESET_TEXT, nextBlockId()) },
+        streamingIdByChat: { ...state.streamingIdByChat, [tabId]: null },
+        sessionIdByChat: { ...state.sessionIdByChat, [tabId]: event.newSessionId },
+        contextUsageByChat: without(state.contextUsageByChat, tabId),
+        tabs: state.tabs.map((t) => (t.id === tabId && t.resumeSessionId !== undefined ? { ...t, resumeSessionId: event.newSessionId } : t)),
+      };
     // Desglose de contexto del propio CLI (D3): no toca la conversacion, alimenta el Inspector.
     case 'context_usage':
       return { contextUsageByChat: { ...state.contextUsageByChat, [tabId]: event.usage } };
     // Limite de uso (H4). Ademas de la linea tenue en el hilo —que sigue yendo, porque es parte del
     // relato— queda MARCADO en `rateLimitByChat`, y eso es lo que enciende la oferta de continuar en
     // otra cuenta. La linea sola no servia: contaba el problema y dejaba al usuario sin salida.
+    // P-028, 20: el CLI avisa dos veces del mismo limite; la segunda funde la marca y reescribe la
+    // linea que ya hay en vez de añadir otra. El texto del CLI va al tooltip.
     case 'rate_limit': {
-      const notice = noticeTextFor(event);
-      const marked = { rateLimitByChat: { ...state.rateLimitByChat, [tabId]: { summary: event.summary, resetsAtMs: event.resetsAtMs } } };
-      if (notice === null) return marked;
-      return { ...marked, ...withBlocks(state, tabId, appendSystemBlock(blocks, notice, nextBlockId())) };
+      const previous = state.rateLimitByChat[tabId];
+      const merged = mergeRateLimitNotice(previous, event);
+      const marked = { rateLimitByChat: { ...state.rateLimitByChat, [tabId]: merged } };
+      const line = { text: rateLimitLineText(merged.resetsAtMs), ...(merged.summary.length === 0 ? {} : { tip: merged.summary }) };
+      const lastIndex = previous === undefined ? -1 : lastRateLimitLineIndex(blocks);
+      if (lastIndex < 0) return { ...marked, ...withBlocks(state, tabId, [...blocks, { kind: 'system', id: nextBlockId(), ...line }]) };
+      return { ...marked, ...withBlocks(state, tabId, blocks.map((b, i) => (i === lastIndex && b.kind === 'system' ? { ...b, ...line } : b))) };
     }
     default: {
       // Avisos del CLI que SI van al hilo como linea de sistema (2.5): limite de uso, cambio de modo de
@@ -2386,6 +2791,22 @@ export function reduceEvent(state: WorkbenchState, tabId: string, event: MageEve
       return withBlocks(state, tabId, appendSystemBlock(blocks, notice, nextBlockId()));
     }
   }
+}
+
+// Ultima linea de limite de uso del hilo (para fundir el segundo aviso en ella), o -1.
+function lastRateLimitLineIndex(blocks: readonly Block[]): number {
+  for (let i = blocks.length - 1; i >= 0; i--) {
+    const block = blocks[i];
+    if (block?.kind === 'system' && block.text.startsWith(RATE_LIMIT_LINE)) return i;
+  }
+  return -1;
+}
+
+// Un subagente oculto del dock vuelve en cuanto el CLI cuenta algo nuevo de el (P-028 37c).
+function undismissSubagent(state: WorkbenchState, tabId: string, toolUseId: string): Partial<WorkbenchState> {
+  const dismissed = state.dismissedSubagentsByChat[tabId];
+  if (dismissed === undefined || !dismissed.includes(toolUseId)) return {};
+  return { dismissedSubagentsByChat: { ...state.dismissedSubagentsByChat, [tabId]: dismissed.filter((id) => id !== toolUseId) } };
 }
 
 function clearPermissionIfMatches(
@@ -2411,6 +2832,30 @@ function mapSessionState(sessionState: 'idle' | 'running' | 'requires_action'): 
 // --- Helpers de mutacion (reducen la repeticion de spreads) -------------------------------------
 
 type SetFn = (fn: (s: WorkbenchState) => Partial<WorkbenchState>) => void;
+
+// Generando o esperando permiso: un mensaje nuevo espera en la cola (0.1.1 R2, punto 30).
+function isTurnRunning(status: ChatStatus | undefined): boolean {
+  return status === 'streaming' || status === 'needs_permission';
+}
+
+const NO_DRAFT: PromptDraft = { text: '', attachments: [] };
+
+// Al acabar un turno sale el PRIMERO de la cola; el siguiente espera a que acabe ese.
+function sendNextQueuedMessage(get: () => WorkbenchState, tabId: string, set: SetFn): void {
+  if (isTurnRunning(get().statusByChat[tabId])) return;
+  const { next, rest } = takeNextMessage(get().queuedByChat[tabId] ?? []);
+  if (next === null) return;
+  set((s) => ({ queuedByChat: rest.length === 0 ? without(s.queuedByChat, tabId) : { ...s.queuedByChat, [tabId]: rest } }));
+  void get().sendMessageToTab(tabId, next.text, next.attachments);
+}
+
+// Vacia la cola en el input, en orden y delante de lo que ya hubiera escrito.
+function returnQueueToDraft(get: () => WorkbenchState, set: SetFn, tabId: string): void {
+  const queue = get().queuedByChat[tabId] ?? [];
+  if (queue.length === 0) return;
+  set((s) => ({ queuedByChat: without(s.queuedByChat, tabId) }));
+  get().setDraft(tabId, mergeIntoDraft(queue, get().draftByChat[tabId] ?? NO_DRAFT));
+}
 
 function patchBlocks(set: SetFn, tabId: string, fn: (blocks: readonly Block[]) => readonly Block[]): void {
   set((s) => withBlocks(s, tabId, fn(blocksOf(s, tabId))));
@@ -2479,6 +2924,9 @@ function describeError(err: unknown): string {
 }
 
 const EMPTY_BLOCKS: readonly Block[] = [];
+
+// Linea que deja `/clear` en el chat vaciado (P-028).
+export const CONVERSATION_RESET_TEXT = 'Conversación reiniciada';
 
 export function selectAccount(state: WorkbenchState, accountId: string): Account | undefined {
   return state.accounts.find((a) => a.id === accountId);

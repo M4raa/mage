@@ -15,7 +15,16 @@ import {
   type ModelOption,
   type ProviderEntry,
 } from '../../models';
+import type { DefaultPermissionMode } from '@shared/settings';
+import {
+  DEFAULT_PERMISSION_MODE_ACCOUNT_LABEL,
+  EFFORT_STEP_LABEL,
+  defaultPermissionSteps,
+  effortSteps,
+  permissionModeLabel,
+} from '../../stepSliderModel';
 import { Dropdown } from '../Dropdown';
+import { StepSlider } from '../StepSlider';
 import { Icon } from '../Icon';
 
 // Seccion UNICA "Proveedores y modelos" (D2). Antes eran dos: "Proveedores" (alta de endpoints
@@ -287,15 +296,72 @@ function ProviderCard({
           onChange={onChangeModel}
         />
         {entry.effortLevels.length > 0 && (
-          <DefaultPicker
-            label="Esfuerzo"
-            value={defaultEffort}
-            options={entry.effortLevels.map((level) => ({ value: level, label: level }))}
-            ariaLabel={`Esfuerzo por defecto de ${entry.label}`}
-            onChange={onChangeEffort}
-          />
+          <div className="flex items-center gap-[6px] text-[11px] text-mg-sec">
+            <span>Esfuerzo</span>
+            <StepSlider
+              steps={effortSteps(entry.effortLevels)}
+              value={defaultEffort}
+              onChange={onChangeEffort}
+              ariaLabel={`Esfuerzo por defecto de ${entry.label}`}
+              chipLabel={EFFORT_STEP_LABEL[defaultEffort] ?? defaultEffort}
+              chipSizers={effortSteps(entry.effortLevels).map((step) => step.label)}
+              heading={`Esfuerzo ${EFFORT_STEP_LABEL[defaultEffort] ?? defaultEffort}`}
+              endLabels={['Más rápido', 'Más inteligente']}
+              tip="Esfuerzo con el que arrancan las conversaciones nuevas. Auto = el último usado o el del CLI."
+            />
+          </div>
         )}
+        {entry.id === 'claude' && <DefaultPermissionModePicker />}
       </div>
+    </div>
+  );
+}
+
+// Linea fija mientras «Omitir permisos» es el defecto (0.1.1 R2, punto 6).
+export const DEFAULT_BYPASS_WARNING = 'Las conversaciones nuevas ejecutarán todo sin preguntar';
+
+// Modo de permiso con el que arrancan las conversaciones nuevas de Claude (P-028 6). El deslizador del chat
+// con una posicion delante: «De la cuenta» (adopta el del CLI). «Omitir permisos» se ofrece desde la 0.1.1
+// R2 (punto 6) con una linea de aviso fija mientras este elegido.
+function DefaultPermissionModePicker(): React.JSX.Element {
+  const mode = useWorkbenchStore((s) => s.settings.defaultPermissionMode);
+  const setMode = useWorkbenchStore((s) => s.setDefaultPermissionMode);
+  const label = mode === '' ? DEFAULT_PERMISSION_MODE_ACCOUNT_LABEL : permissionModeLabel(mode);
+  return (
+    <div className="flex flex-col gap-[4px]">
+      <DefaultPermissionModeSlider mode={mode} label={label} onChange={setMode} />
+      {mode === 'bypassPermissions' && (
+        <div role="note" data-testid="default-bypass-warning" className="text-[10.5px] font-semibold text-mg-danger">
+          {DEFAULT_BYPASS_WARNING}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DefaultPermissionModeSlider({
+  mode,
+  label,
+  onChange,
+}: {
+  readonly mode: DefaultPermissionMode;
+  readonly label: string;
+  readonly onChange: (mode: DefaultPermissionMode) => void;
+}): React.JSX.Element {
+  return (
+    <div className="flex items-center gap-[6px] text-[11px] text-mg-sec">
+      <span>Modo de permiso</span>
+      <StepSlider
+        steps={defaultPermissionSteps}
+        value={mode}
+        onChange={(next) => onChange(next as DefaultPermissionMode)}
+        ariaLabel="Modo de permiso por defecto"
+        chipLabel={label}
+        chipSizers={defaultPermissionSteps.map((step) => step.label)}
+        heading={`Modo ${label}`}
+        endLabels={['Más control', 'Más autonomía']}
+        tip="Modo con el que arrancan las conversaciones nuevas. «De la cuenta» adopta el del CLI."
+      />
     </div>
   );
 }

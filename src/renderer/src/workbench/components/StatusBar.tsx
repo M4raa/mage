@@ -1,19 +1,10 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Icon } from './Icon';
 import { selectAccount, useWorkbenchStore } from '../workbenchStore';
-import { usePaneTranscriptStore } from '../paneContext';
-import {
-  aggregateTokenUsage,
-  buildContextSizeSeries,
-  contextInfoFromUsage,
-  currentContextTokens,
-  formatContextShort,
-  toContextInfo,
-} from '../contextView';
 import { severityForPct, type UsageSeverity } from '../usageView';
 import { UsagePopover } from './UsagePopover';
-import { ContextPopover } from './ContextPopover';
-import type { Account, ContextInfo } from '../types';
+import { providerLabel } from '../accountView';
+import type { Account } from '../types';
 import type { StatusIndicator, StatusInfo } from '@shared/status';
 
 // Presentacion de cada indicador de estado de Claude: color del punto + texto corto.
@@ -43,12 +34,12 @@ const SEVERITY_COLOR: Record<UsageSeverity, string> = {
 export function StatusBar(): React.JSX.Element {
   const account = useWorkbenchStore((s) => selectAccount(s, s.activeAccountId));
   const status = useWorkbenchStore((s) => s.status);
+  // P-028, 2: el proveedor es de la PESTAÑA enfocada (agy o el gateway corren bajo una cuenta de Claude).
+  const focusedProvider = useWorkbenchStore((s) => providerLabel(s.tabs.find((t) => t.id === s.activeTabId)?.provider ?? 'claude'));
 
   return (
     <div className="flex h-[26px] items-center gap-[14px] border-t border-mg-border bg-mg-rail px-[12px] text-[10.5px] text-mg-ter">
-      {account !== undefined && <AccountStatus account={account} />}
-      {/* Antes de ServiceStatus a proposito: ese lleva `ml-auto` y empuja al final de la barra. */}
-      <ContextIndicator />
+      {account !== undefined && <AccountStatus account={account} provider={focusedProvider} />}
       <ServiceStatus status={status} />
       <AppVersion />
     </div>
@@ -90,59 +81,20 @@ function AppVersion(): React.JSX.Element | null {
   );
 }
 
-// Indicador de contexto de la conversacion activa (2.8): `ctx 45 %` + barrita, con el desglose por
-// categorias en un popover al pasar el raton O al enfocar con el teclado. Vivia en el pie del borde
-// derecho, donde solo se veia con algun panel abierto — y el contexto es de la CONVERSACION, no del
-// dock.
-//
-// De los cuatro numeros, solo `Tokens out` sale de la transcripcion; el resto viene de
-// `contextUsageByChat`, que es lo que reporta el CLI: el indicador funciona aunque la transcripcion no
-// se haya leido todavia.
-function ContextIndicator(): React.JSX.Element | null {
-  // 4.1: el store de la pestaña ACTIVA (este panel vive fuera del centro, asi que `usePaneTabId`
-  // devuelve la activa). Decision del usuario: los paneles globales siguen a la pestaña activa.
-  const useTranscriptStore = usePaneTranscriptStore();
-  const entries = useTranscriptStore((s) => s.entries);
-  const activeModel = useWorkbenchStore((s) => s.tabs.find((t) => t.id === s.activeTabId)?.model ?? '');
-  const usage = useWorkbenchStore((s) => s.contextUsageByChat[s.activeTabId]);
-  const hasConversation = useWorkbenchStore((s) => s.activeTabId.length > 0);
-  const context = useMemo<ContextInfo>(() => {
-    const totals = aggregateTokenUsage(entries);
-    if (usage !== undefined) return contextInfoFromUsage(usage, totals.outputTokens);
-    return toContextInfo(currentContextTokens(buildContextSizeSeries(entries)), totals.outputTokens, activeModel);
-  }, [entries, activeModel, usage]);
-
-  const label = formatContextShort(context.usedPct);
-  // Sin conversacion abierta o sin un porcentaje utilizable no se monta nada: un `ctx NaN %` o un
-  // `ctx 0 %` permanente en una app recien abierta es ruido, no informacion.
-  if (!hasConversation || label === null) return null;
-
-  return (
-    <div className="group relative">
-      {/* `tabIndex` sobre un elemento no interactivo es lo que hace que `group-focus-within` dispare:
-          sin el, el popover no abre por teclado (mismo patron que el indicador de uso de arriba). */}
-      <span tabIndex={0} className="flex cursor-default items-center gap-[6px] border-b border-dotted border-mg-idle">
-        {label}
-        <span className="h-[3px] w-[36px] rounded-[2px] bg-mg-track" aria-hidden="true">
-          <span className="block h-full rounded-[2px] bg-mg-fill" style={{ width: `${context.usedPct}%` }} />
-        </span>
-      </span>
-      <div className="pointer-events-none absolute bottom-[calc(100%_+_8px)] left-0 opacity-0 transition-opacity duration-150 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100">
-        <ContextPopover usage={usage} context={context} />
-      </div>
-    </div>
-  );
-}
-
-function AccountStatus({ account }: { readonly account: Account }): React.JSX.Element {
+function AccountStatus({ account, provider }: { readonly account: Account; readonly provider: string }): React.JSX.Element {
   const { fiveHour, weekly } = account.usage;
   // Severidad global de la cuenta: la peor de sus ventanas (para el aviso ⚠/⛔ en la barra).
   const severity = worst(severityForPct(fiveHour.pct), severityForPct(weekly.pct));
+  const refreshUsage = useWorkbenchStore((s) => s.refreshUsage);
+  const accounts = useWorkbenchStore((s) => s.accounts);
+  const refreshAll = (): void => {
+    for (const a of accounts) if (a.loginStatus === 'logged_in') void refreshUsage(a.id);
+  };
   return (
     <>
       <span className="flex items-center gap-[6px]" style={{ color: account.accent.tint }}>
         <span className="h-[7px] w-[7px] rounded-[2px]" style={{ background: account.accent.base }} />
-        {account.alias} · {account.provider} ▾
+        {account.alias} · <span data-status-provider="true">{provider}</span> ▾
       </span>
       {/* Sin el modelo por defecto de la cuenta (P-026, D18): no era el del chat, su ▾ no abria nada y
           el modelo ya se ve —y se cambia— en el selector del input. */}
@@ -152,7 +104,10 @@ function AccountStatus({ account }: { readonly account: Account }): React.JSX.El
           lo mismo) — en su lugar, en hover/foco muestra el mismo popover de resumen que antes vivia
           (duplicado) en el pie del sidebar. tabIndex hace el disparador enfocable para que el popover
           tambien se abra por teclado (mismo patron que ServiceStatus, mas abajo). */}
-      <div className="group relative">
+      {/* Al abrir el popover se consulta el uso de TODAS las cuentas con login (P-028, 22): solo se
+          consultaba la activa y las demas enseñaban un 0 % que no era verdad. main cachea 180 s y
+          tiene lockout, asi que pasar el raton varias veces no dispara peticiones de mas. */}
+      <div className="group relative" onMouseEnter={refreshAll} onFocus={refreshAll}>
         <span
           tabIndex={0}
           className="cursor-default border-b border-dotted border-mg-idle"

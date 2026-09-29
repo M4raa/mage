@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Icon } from './Icon';
 import { useWorkbenchStore } from '../workbenchStore';
 import { usePaneTabId } from '../paneContext';
-import { formatResetTime } from '../usageView';
+import { autoContinueBlockedReason, effectiveResetMs, rateLimitLineText } from '../rateLimit';
 
 // Salida cuando se agota el uso (H4, punto del usuario: "al acabarse el uso en un chat activo tiene
 // que aparecer una opcion de continuar el chat en otra cuenta").
@@ -16,9 +16,13 @@ export function RateLimitBanner(): React.JSX.Element | null {
   const tab = useWorkbenchStore((s) => s.tabs.find((t) => t.id === tabId));
   const accounts = useWorkbenchStore((s) => s.accounts);
   const continueInAccount = useWorkbenchStore((s) => s.continueInAccount);
+  const setAutoContinue = useWorkbenchStore((s) => s.setRateLimitAutoContinue);
+  const usage = useWorkbenchStore((s) => s.usageByAccount[s.tabs.find((t) => t.id === tabId)?.accountId ?? '']);
   const [moving, setMoving] = useState(false);
 
   if (notice === undefined || tab === undefined) return null;
+  const resetsAtMs = effectiveResetMs(notice, usage);
+  const autoBlockedReason = autoContinueBlockedReason(resetsAtMs, Date.now());
   // Solo cuentas CON login: mudarse a una desconectada cambia "no puedes escribir" por "no puedes
   // escribir, y ademas ahora estas en otro sitio".
   const targets = accounts.filter((a) => a.id !== tab.accountId && a.loginStatus === 'logged_in');
@@ -28,15 +32,22 @@ export function RateLimitBanner(): React.JSX.Element | null {
       role="status"
       className="mx-[10px] mb-[6px] flex flex-wrap items-center gap-[8px] rounded-[9px] border border-mg-warn-border bg-mg-warn-bg p-[8px_11px] text-[11.5px] text-mg-body"
     >
-      <span className="min-w-0 flex-1">
-        <Icon name="hourglass" size={12} /> {notice.summary.trim().length === 0 ? 'Se agotó el uso de esta cuenta.' : notice.summary.trim()}
-        {/* El texto del CLI YA suele decir cuando se restablece ("resets 3pm"), asi que la cuenta atras
-            solo se anade cuando NO hay texto: si no, se diria dos veces y con dos formatos distintos.
-            El `resetsAt` viene del stream (9.3, medido en S3); antes siempre era null. */}
-        {notice.summary.trim().length === 0 && notice.resetsAtMs !== null && (
-          <span className="text-mg-muted"> Se restablece a las {formatResetTime(notice.resetsAtMs)}.</span>
-        )}
+      {/* El mismo texto de Mage que la linea del hilo; el del CLI, en ingles, en el tooltip (P-028, 20). */}
+      <span className="min-w-0 flex-1" {...(notice.summary.length === 0 ? {} : { 'data-tip': notice.summary })}>
+        <Icon name="hourglass" size={12} /> {rateLimitLineText(resetsAtMs)}
       </span>
+      <label
+        className={`inline-flex items-center gap-[5px] text-mg-body2 ${autoBlockedReason === null ? '' : 'opacity-50'}`}
+        {...(autoBlockedReason === null ? {} : { 'data-tip': autoBlockedReason })}
+      >
+        <input
+          type="checkbox"
+          checked={notice.autoContinue === true}
+          disabled={autoBlockedReason !== null}
+          onChange={(e) => setAutoContinue(tabId, e.target.checked)}
+        />
+        Continuar al restablecerse
+      </label>
       {targets.length === 0 ? (
         // Sin destino no se ofrece un boton muerto: se dice por que no lo hay.
         <span className="text-mg-muted">No hay otra cuenta con sesión iniciada.</span>

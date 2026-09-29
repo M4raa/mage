@@ -13,8 +13,8 @@ import {
 // textarea de JSON crudo: aqui se añade, edita y quita una regla con campos, y el fichero en disco
 // sigue siendo el mismo JSON que lee el CLI (lo serializa `sharedConfigModel`).
 //
-// Se monta en DOS sitios a proposito —"Config. compartida" y "Hooks y permisos"— porque es el mismo
-// fichero: la segunda pantalla enseña ademas la union con las fuentes que Mage no puede tocar.
+// Se monta solo en "Hooks y permisos" (P-028: salio de la antigua "Config. compartida", donde estaba
+// duplicado), que enseña ademas la union con las fuentes que Mage no puede tocar.
 
 // Eventos del CLI, para el desplegable de sugerencias. NO es una lista cerrada (el campo es libre):
 // si el CLI añade uno nuevo, escribirlo a mano tiene que seguir funcionando.

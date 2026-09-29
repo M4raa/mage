@@ -9,9 +9,11 @@ import {
   STRIPE_SCROLL_CLASS,
   STRIPE_WIDTH_CLASS,
   StripeSeparator,
+  PANEL_ICON_PX,
   StripeZoneButtons,
 } from './dock/Stripe';
 import { PanelMoveMenu } from './dock/PanelMoveMenu';
+import { Icon } from './Icon';
 import { AddPanelMenu } from './dock/AddPanelMenu';
 import type { Anchor, PanelId } from '@shared/panelLayout';
 
@@ -37,6 +39,8 @@ export function AccountRail(): React.JSX.Element {
   const movePanel = usePanelLayoutStore((s) => s.movePanel);
   const hidePanel = usePanelLayoutStore((s) => s.hidePanel);
   const destinationsFor = usePanelLayoutStore((s) => s.destinationsFor);
+  const stepPanel = usePanelLayoutStore((s) => s.stepPanel);
+  const stepOptions = usePanelLayoutStore((s) => s.stepOptions);
   const [moveMenu, setMoveMenu] = useState<{ readonly panelId: PanelId; readonly x: number; readonly y: number } | null>(null);
   const [addMenu, setAddMenu] = useState<{ readonly x: number; readonly y: number } | null>(null);
 
@@ -77,7 +81,7 @@ export function AccountRail(): React.JSX.Element {
           activeId={stripe.a.activePanelId}
           onClick={(id) => togglePanel(LEFT_ANCHOR, 'a', id)}
           onRequestMove={(id, x, y) => setMoveMenu({ panelId: id, x, y })}
-          onDrop={(id) => movePanel(id, LEFT_ANCHOR, 'a')}
+          onDrop={(id, beforeId) => movePanel(id, LEFT_ANCHOR, 'a', beforeId)}
         />
       </DockZoneToolbar>
 
@@ -91,7 +95,7 @@ export function AccountRail(): React.JSX.Element {
           activeId={stripe.b.activePanelId}
           onClick={(id) => togglePanel(LEFT_ANCHOR, 'b', id)}
           onRequestMove={(id, x, y) => setMoveMenu({ panelId: id, x, y })}
-          onDrop={(id) => movePanel(id, LEFT_ANCHOR, 'b')}
+          onDrop={(id, beforeId) => movePanel(id, LEFT_ANCHOR, 'b', beforeId)}
         />
       </DockZoneToolbar>
 
@@ -115,7 +119,7 @@ export function AccountRail(): React.JSX.Element {
           activeId={bottomStripe.a.activePanelId}
           onClick={(id) => togglePanel(BOTTOM_ANCHOR, 'a', id)}
           onRequestMove={(id, x, y) => setMoveMenu({ panelId: id, x, y })}
-          onDrop={(id) => movePanel(id, BOTTOM_ANCHOR, 'a')}
+          onDrop={(id, beforeId) => movePanel(id, BOTTOM_ANCHOR, 'a', beforeId)}
         />
       </DockZoneToolbar>
       </div>
@@ -127,7 +131,7 @@ export function AccountRail(): React.JSX.Element {
           data-tip="Añadir panel al borde izquierdo"
           className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[6px] text-[13px] text-mg-muted hover:bg-mg-hover hover:text-mg-body"
         >
-          ⋮
+          <Icon name="ellipsis" size={PANEL_ICON_PX} />
         </button>
       )}
 
@@ -142,6 +146,8 @@ export function AccountRail(): React.JSX.Element {
             onClose={() => setMoveMenu(null)}
             onSelect={onSelectDestination}
             onHide={() => hidePanel(moveMenu.panelId)}
+            stepOptions={stepOptions(moveMenu.panelId)}
+            onStep={(direction) => stepPanel(moveMenu.panelId, direction)}
           />
         )}
       </AnimatePresence>

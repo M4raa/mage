@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { planAccountSwitch, type AccountSwitchContext } from './accountSwitch';
+import { modelForReassignedTab, planAccountSwitch, type AccountSwitchContext } from './accountSwitch';
 
 const A = 'C:/Users/u/.claude';
 const B = 'C:/Users/u/.claude-p';
@@ -11,6 +11,7 @@ function ctx(over: Partial<AccountSwitchContext> = {}): AccountSwitchContext {
     liveSessionId: undefined,
     destAccountId: B,
     destLoggedIn: true,
+    hasBlocks: false,
     ...over,
   };
 }
@@ -39,12 +40,38 @@ describe('planAccountSwitch', () => {
     expect(planAccountSwitch(ctx({ activeTab: { accountId: A }, liveSessionId: 'live' }))).toBe('ask');
   });
 
-  it('planAccountSwitch_pestanaSinNadaQueMigrar_switch', () => {
-    expect(planAccountSwitch(ctx({ activeTab: { accountId: A } }))).toBe('switch');
+  it('planAccountSwitch_chatNuevoSinBloques_reassign', () => {
+    expect(planAccountSwitch(ctx({ activeTab: { accountId: A } }))).toBe('reassign');
+  });
+
+  it('planAccountSwitch_conBloquesSinSesion_switch', () => {
+    expect(planAccountSwitch(ctx({ activeTab: { accountId: A }, hasBlocks: true }))).toBe('switch');
+  });
+
+  it('planAccountSwitch_chatNuevoDestinoSinLogin_switch', () => {
+    expect(planAccountSwitch(ctx({ activeTab: { accountId: A }, destLoggedIn: false }))).toBe('switch');
   });
 
   it('planAccountSwitch_pestanaConError_ask', () => {
     // Un turno que fallo ya no esta en marcha: la conversacion se puede llevar.
     expect(planAccountSwitch(ctx({ status: 'error' }))).toBe('ask');
+  });
+});
+
+describe('modelForReassignedTab', () => {
+  it('modelForReassignedTab_estaEnElCatalogoDestino_seConserva', () => {
+    expect(modelForReassignedTab('opus', ['sonnet', 'opus'], () => 'sonnet')).toBe('opus');
+  });
+
+  it('modelForReassignedTab_noEstaEnElCatalogo_seReResuelve', () => {
+    expect(modelForReassignedTab('claude-fable-5-1', ['sonnet', 'opus'], () => 'sonnet')).toBe('sonnet');
+  });
+
+  it('modelForReassignedTab_catalogoDesconocido_seConserva', () => {
+    expect(modelForReassignedTab('opus', undefined, () => 'sonnet')).toBe('opus');
+  });
+
+  it('modelForReassignedTab_catalogoVacio_seReResuelve', () => {
+    expect(modelForReassignedTab('opus', [], () => 'sonnet')).toBe('sonnet');
   });
 });

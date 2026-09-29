@@ -2,6 +2,7 @@ import type { TranscriptEntry } from '@shared/transcripts';
 import type { DiffLine } from './diffLines';
 import { parseStructuredPatch } from './diffLines';
 import { summarizeToolInput, SUBAGENT_TOOL_NAMES } from './toolSummary';
+import { parseSubagentRunInfo, type SubagentRunInfo } from '@shared/subagentRun';
 
 // Derivacion PURA (en el renderer) de las llamadas a herramientas y sus resultados desde el
 // `raw` de una entrada de transcripcion ya cargada. No toca el parser/IPC (el detalle de una tool
@@ -26,6 +27,8 @@ export interface ToolResultView {
   // Id del subagente que lanzo esta llamada (`Task`/`Agent`): con el se abre su transcripcion. null
   // cuando el resultado no lo trae — entonces el bloque se queda sin boton, nunca con uno roto.
   readonly agentId: string | null;
+  // Lo que el `toolUseResult` cuenta de un subagente (P-028 37a); null en el resto de tools.
+  readonly subagent: SubagentRunInfo | null;
 }
 
 // Vive ahora en `toolSummary` (el modulo que decide como se resume una tool); se re-exporta para no
@@ -66,6 +69,7 @@ export function extractToolResult(entry: TranscriptEntry): ToolResultView | null
     diff: structured !== null ? parseStructuredPatch(structured.structuredPatch) : null,
     writtenContent: structured !== null && typeof structured.content === 'string' ? structured.content : null,
     agentId: extractAgentId(structured),
+    subagent: parseSubagentRunInfo(structured),
   };
 }
 

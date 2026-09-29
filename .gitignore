@@ -33,3 +33,4 @@ coverage/
 
 # Grafo de conocimiento generado por graphify (regenerable con `graphify update .`)
 graphify-out/
+.claude/worktrees/

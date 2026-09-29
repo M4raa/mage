@@ -1,11 +1,11 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Icon } from './Icon';
 import { AnimatePresence } from 'motion/react';
 import { selectAccount, useWorkbenchStore } from '../workbenchStore';
 import type { Account, ChatStatus, Tab } from '../types';
 import type { ConversationSummary } from '@shared/conversations';
 import { filterConversationRows, formatSize, mergeConversationRows, relativeTime, rowRecency, type ConversationRow } from '../conversationList';
-import { backgroundLabel, type BackgroundSession } from '../backgroundWork';
+import { backgroundLabel, backgroundMoveBlockedReason, type BackgroundSession } from '../backgroundWork';
 import { ConversationContextMenu, type ConversationTarget } from './ConversationContextMenu';
 import type { ConversationPrivacy } from '@shared/state';
 
@@ -50,6 +50,8 @@ export function ChatSidebar(): React.JSX.Element {
   const accounts = useWorkbenchStore((s) => s.accounts);
   const deleteConversation = useWorkbenchStore((s) => s.deleteConversation);
   const moveConversation = useWorkbenchStore((s) => s.moveConversation);
+  const openConversationInNewWindow = useWorkbenchStore((s) => s.openConversationInNewWindow);
+  const dropConversationOutside = useWorkbenchStore((s) => s.dropConversationOutside);
   // Menu contextual (clic derecho, #2). Objetivo + posicion; null cuando esta cerrado.
   const [menu, setMenu] = useState<MenuState | null>(null);
   const openMenu = (target: ConversationTarget, x: number, y: number, item?: ConversationSummary): void =>
@@ -134,6 +136,7 @@ export function ChatSidebar(): React.JSX.Element {
           backgroundSessions={backgroundSessions}
           onSelect={setActiveTab}
           onOpen={openConversation}
+          onDragOutside={(item) => void dropConversationOutside(item).catch(reportNewWindowError)}
           onRename={renameConversation}
           onContextMenu={openMenu}
           onCreate={() => void createConversation('shared')}
@@ -152,6 +155,7 @@ export function ChatSidebar(): React.JSX.Element {
           backgroundSessions={backgroundSessions}
           onSelect={setActiveTab}
           onOpen={openConversation}
+          onDragOutside={(item) => void dropConversationOutside(item).catch(reportNewWindowError)}
           onRename={renameConversation}
           onContextMenu={openMenu}
           onCreate={() => void createConversation('private')}
@@ -179,6 +183,16 @@ export function ChatSidebar(): React.JSX.Element {
                     setMenu(null);
                   }
             }
+            onOpenInNewWindow={
+              menu.item === undefined
+                ? undefined
+                : () => {
+                    const item = menu.item;
+                    if (item !== undefined) void openConversationInNewWindow(item).catch(reportNewWindowError);
+                    setMenu(null);
+                  }
+            }
+            newWindowBlockedReason={menu.item === undefined ? null : backgroundMoveBlockedReason(backgroundSessions[menu.item.sessionId])}
             onDelete={() => {
               void deleteConversation(menu.target.sessionId ?? '', menu.target.cwd, menu.target.privacy);
               setMenu(null);
@@ -194,6 +208,12 @@ export function ChatSidebar(): React.JSX.Element {
       </AnimatePresence>
     </div>
   );
+}
+
+// Abrir en otra ventana puede fallar (main rechaza la pestaña, sigue trabajando en segundo plano): se
+// traza en vez de tragarse; la conversacion sigue aqui.
+function reportNewWindowError(err: unknown): void {
+  console.warn('No se pudo abrir la conversacion en otra ventana:', err instanceof Error ? err.message : String(err));
 }
 
 // Aviso de cuenta huérfana (sin login) con confirmación EN LA APP (no dialogo nativo del SO).
@@ -223,8 +243,8 @@ function OrphanBanner({
   return (
     <div className="flex flex-col gap-[7px] border-b border-mg-border-subtle bg-mg-danger-bg p-[8px_12px] text-[10.5px] text-mg-danger">
       <span>
-        ¿Eliminar <b>{account.alias}</b>? Se borra su carpeta de config; los datos compartidos NO se
-        tocan.
+        ¿Eliminar <b>{account.alias}</b>? Se borra su carpeta entera, incluidas sus conversaciones
+        privadas; las compartidas NO se tocan.
       </span>
       <div className="flex justify-end gap-[6px]">
         <button
@@ -276,6 +296,7 @@ function ConversationSection({
   backgroundSessions,
   onSelect,
   onOpen,
+  onDragOutside,
   onRename,
   onContextMenu,
   onCreate,
@@ -293,6 +314,8 @@ function ConversationSection({
   readonly backgroundSessions: Readonly<Record<string, BackgroundSession>>;
   readonly onSelect: (tabId: string) => void;
   readonly onOpen: (item: ConversationSummary) => void;
+  // Se solto la fila fuera de la ventana (P-028, 36): a otra ventana de Mage o a una nueva.
+  readonly onDragOutside: (item: ConversationSummary) => void;
   readonly onRename: (tabId: string, title: string) => void;
   readonly onContextMenu: (target: ConversationTarget, x: number, y: number, item?: ConversationSummary) => void;
   readonly onCreate: () => void;
@@ -338,6 +361,7 @@ function ConversationSection({
             account={account}
             background={backgroundSessions[row.item.sessionId]}
             onOpen={() => onOpen(row.item)}
+            onDragOutside={() => onDragOutside(row.item)}
             onContextMenu={(e) => {
               e.preventDefault();
               onContextMenu(
@@ -385,12 +409,29 @@ function ConversationSection({
   );
 }
 
+// La fila de la conversacion a la que llevo el clic en una notificacion (P-028 40): se trae a la vista y
+// se resalta un momento. No se reabre: cortaria la sesion viva en segundo plano.
+const HIGHLIGHT_MS = 4000;
+
+function useHighlight(sessionId: string): { readonly on: boolean; readonly ref: React.RefObject<HTMLButtonElement | null> } {
+  const on = useWorkbenchStore((s) => s.highlightedSessionId === sessionId);
+  const ref = useRef<HTMLButtonElement | null>(null);
+  useEffect(() => {
+    if (!on) return;
+    ref.current?.scrollIntoView({ block: 'nearest' });
+    const id = setTimeout(() => useWorkbenchStore.setState({ highlightedSessionId: null }), HIGHLIGHT_MS);
+    return () => clearTimeout(id);
+  }, [on]);
+  return { on, ref };
+}
+
 // Entrada de HISTORIAL (conversacion en disco no abierta): al pulsar, la reanuda (abre pestana).
 function HistoryItem({
   item,
   account,
   background,
   onOpen,
+  onDragOutside,
   onContextMenu,
 }: {
   readonly item: ConversationSummary;
@@ -398,16 +439,32 @@ function HistoryItem({
   // Presente = esta conversacion se cerro con trabajo en vuelo y su CLI sigue vivo.
   readonly background: BackgroundSession | undefined;
   readonly onOpen: () => void;
+  readonly onDragOutside: () => void;
   readonly onContextMenu: (e: React.MouseEvent) => void;
 }): React.JSX.Element {
   const state = background?.state;
+  // Arrastrarla fuera de Mage la abre en otra ventana (P-028, 36); trabajando en segundo plano, no.
+  const draggableOut = backgroundMoveBlockedReason(background) === null;
+  const highlighted = useHighlight(item.sessionId);
   return (
     <button
+      ref={highlighted.ref}
       onClick={onOpen}
       onContextMenu={onContextMenu}
+      draggable={draggableOut}
+      data-history-session={item.sessionId}
+      onDragStart={(e) => {
+        // Tipo propio: que ningun campo de texto (el prompt) acepte la fila como texto soltado.
+        e.dataTransfer.setData('application/x-mage-conversation', item.sessionId);
+        e.dataTransfer.effectAllowed = 'move';
+      }}
+      onDragEnd={(e) => {
+        if (e.dataTransfer.dropEffect === 'none') onDragOutside();
+      }}
+      data-history-highlighted={highlighted.on ? 'true' : undefined}
       data-tip={background === undefined ? item.title : `${item.title} · ${backgroundLabel(background.state)} (se corta y se reanuda al abrirla)`}
       aria-label={background === undefined ? item.title : `${item.title}, ${backgroundLabel(background.state)}`}
-      className="flex items-center gap-2 rounded-[6px] p-[7px_9px] text-left transition-colors duration-150 ease-out hover:bg-mg-hover"
+      className={`flex items-center gap-2 rounded-[6px] p-[7px_9px] text-left transition-colors duration-150 ease-out hover:bg-mg-hover ${highlighted.on ? 'bg-mg-sel ring-1 ring-mg-border-emph' : ''}`}
     >
       <span
         aria-hidden="true"

@@ -14,6 +14,13 @@ export const TAB_COLOR_COUNT = 6;
 // para que un arrastre de fuera de la app (un fichero, un enlace) nunca cuente como pestaña soltada.
 export const TAB_DRAG_MIME = 'application/x-mage-tab-id';
 
+// Tipo de ORIGEN del arrastre, unico por ventana (P-028, 36). El arrastre HTML5 cruza ventanas de
+// Electron con sus tipos, asi que otra ventana de Mage aceptaria el `TAB_DRAG_MIME` y el soltado
+// acabaria en su store, donde ese id no existe. Con esto, cada ventana solo acepta SUS pestañas; sobre
+// otra, el arrastre termina con `dropEffect === 'none'` y main la mueve alli por el cursor. Los tipos
+// del `dataTransfer` van en minusculas: un UUID ya lo esta.
+export const TAB_DRAG_ORIGIN_MIME = `application/x-mage-origin-${crypto.randomUUID()}`;
+
 // Color del punto/indicador de una pestaña: su override manual si lo tiene, si no el acento de su
 // cuenta. Devuelve una referencia a variable CSS, asi conmuta con el tema sin recolorear en JS.
 // Tolera indices fuera de rango (estado persistido manipulado a mano) en vez de pintar `undefined`.

@@ -3,22 +3,32 @@
 // calculados y lo re-renderiza cada segundo. Da feedback de que el turno sigue vivo (antes solo habia
 // un "pensando…" fijo que parecia colgado).
 
-const WORDS = ['pensando', 'analizando', 'trabajando', 'procesando', 'razonando'] as const;
-const WORD_INTERVAL_MS = 4000; // cada cuanto cambia la palabra
+import { CLI_SPINNER_VERBS } from './spinnerVerbs.generated';
+
+// Verbos propios de Mage, con el mismo tono que los del CLI (ingles, gerundio); van APARTE de los
+// generados para que regenerar la lista no los pise.
+const MAGE_SPINNER_VERBS = ['Spellcasting', 'Conjuring', 'Wizarding'] as const;
+export const SPINNER_VERBS: readonly string[] = [...CLI_SPINNER_VERBS, ...MAGE_SPINNER_VERBS];
+const KNUTH_MULTIPLIER = 2_654_435_761; // hash multiplicativo: dispersa marcas de tiempo cercanas
 const STALL_THRESHOLD_MS = 25_000; // sin actividad del motor -> se avisa de posible cuelgue
 
 export interface ThinkingStatus {
-  readonly label: string; // palabra actual (cambia con el tiempo)
+  readonly label: string; // verbo del turno (fijo mientras dura, elegido por la semilla)
   readonly elapsedText: string; // "12 s" / "1 m 05 s"
   readonly stalled: boolean; // sin actividad reciente del motor (posible cuelgue)
   readonly sinceActivityText: string; // tiempo desde la ultima actividad (para mostrar cuando stalled)
 }
 
-export function computeThinkingStatus(elapsedMs: number, sinceActivityMs: number): ThinkingStatus {
+// Un verbo por turno, estable con la misma semilla (el `turnStart`): no rota, como en el CLI.
+export function pickSpinnerVerb(seed: number): string {
+  const index = (Math.imul(Math.trunc(seed), KNUTH_MULTIPLIER) >>> 0) % SPINNER_VERBS.length;
+  return SPINNER_VERBS[index] ?? 'Working';
+}
+
+export function computeThinkingStatus(elapsedMs: number, sinceActivityMs: number, seed: number): ThinkingStatus {
   const safeElapsed = Math.max(0, elapsedMs);
-  const wordIndex = Math.floor(safeElapsed / WORD_INTERVAL_MS) % WORDS.length;
   return {
-    label: WORDS[wordIndex] ?? WORDS[0],
+    label: pickSpinnerVerb(seed),
     elapsedText: formatElapsed(safeElapsed),
     stalled: sinceActivityMs >= STALL_THRESHOLD_MS,
     sinceActivityText: formatElapsed(sinceActivityMs),

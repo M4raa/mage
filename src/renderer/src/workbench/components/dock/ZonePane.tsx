@@ -6,6 +6,8 @@ import { focusFirst, useDialogA11y } from '../../a11y/useDialogA11y';
 import { usePanelLayoutStore } from '../../panelLayoutStore';
 import { PANEL_CONTENT_VARIANTS } from '../../motionPresets';
 import { DOCK_ZONE_SIZE_VAR } from './ZoneResizeHandle';
+import { Icon } from '../Icon';
+import { PANEL_ICON_PX } from './Stripe';
 
 export interface ZonePaneProps {
   readonly zoneRef: React.RefObject<HTMLDivElement | null>;
@@ -67,7 +69,7 @@ export function ZonePane({ zoneRef, anchor, zone, panels, activePanelId, sizePx,
           cabecera de ChatSidebar con la cuenta) ya dice de que va — una cabecera aqui seria redundante. */}
       {panels.length > 1 && activeDef !== undefined && (
         <div className="flex shrink-0 items-center gap-[6px] border-b border-mg-border px-[10px] py-[7px] text-[10.5px] font-bold tracking-[.03em] text-mg-ter">
-          <span aria-hidden="true">{activeDef.icon}</span>
+          <Icon name={activeDef.icon} size={PANEL_ICON_PX} />
           {activeDef.title.toUpperCase()}
         </div>
       )}

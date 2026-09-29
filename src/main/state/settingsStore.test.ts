@@ -12,15 +12,19 @@ const VALID: AppSettings = {
   importedThemes: [{ id: 'ovsx:acme.dark', label: 'Acme Dark', type: 'dark', tokens: { '--color-mg-window': '#101010' } }],
   activeThemeId: 'ovsx:acme.dark',
   defaultModelByProvider: { claude: 'opus', gemini: 'gemini-2.5-pro' },
+  defaultPermissionMode: 'auto',
   keybindingOverrides: [{ actionId: 'app.toggleSidebar', keys: 'CmdOrCtrl+Shift+B' }],
   customProviders: [
     { id: 'custom:ollama', label: 'Ollama', baseUrl: 'http://localhost:11434/v1', apiKey: '', models: [{ id: 'llama3', label: 'llama3' }] },
   ],
   trustedFolders: ['C:/sourcecode/mage'],
   scratchRetention: '30d',
+  closeBehavior: 'background',
+  newConversationFolder: 'lastProject',
   onboardingCompletedVersion: 1,
   uiScale: 110,
   defaultProvider: 'claude',
+  accentByAccount: { 'C:/Users/u/.claude-p': 3 },
 };
 
 function deps(overrides: Partial<SettingsStoreDeps> = {}): SettingsStoreDeps {
@@ -36,6 +40,19 @@ function deps(overrides: Partial<SettingsStoreDeps> = {}): SettingsStoreDeps {
 }
 
 describe('SettingsStore.load', () => {
+  it('load_accentByAccountFueraDeRango_caeAVacio', () => {
+    // PERS-3: un indice que no es un acento del tema no se pinta; la cuenta vuelve al de su posicion.
+    const file = JSON.stringify({ ...VALID, accentByAccount: { 'C:/Users/u/.claude-p': 9 } });
+
+    expect(new SettingsStore(deps({ readFile: () => file })).load().accentByAccount).toEqual({});
+  });
+
+  it('load_sinAccentByAccount_caeAVacio', () => {
+    const { accentByAccount: _ausente, ...previo } = VALID;
+
+    expect(new SettingsStore(deps({ readFile: () => JSON.stringify(previo) })).load().accentByAccount).toEqual({});
+  });
+
   it('load_ficheroValido_devuelveLaConfiguracion', () => {
     expect(new SettingsStore(deps()).load()).toEqual(VALID);
   });
@@ -82,6 +99,28 @@ describe('SettingsStore.load', () => {
     const store = new SettingsStore(deps({ readFile: () => JSON.stringify({ version: 1, notificationRules: [], theme: 'system' }) }));
 
     expect(store.load().theme).toBe('system');
+  });
+
+  it('load_modoPorDefectoValido_seConserva', () => {
+    const store = new SettingsStore(deps({ readFile: () => JSON.stringify({ ...VALID, defaultPermissionMode: 'plan' }) }));
+
+    expect(store.load().defaultPermissionMode).toBe('plan');
+  });
+
+  it('load_modoPorDefectoOmitirPermisos_seConserva', () => {
+    const store = new SettingsStore(deps({ readFile: () => JSON.stringify({ ...VALID, defaultPermissionMode: 'bypassPermissions' }) }));
+
+    expect(store.load().defaultPermissionMode).toBe('bypassPermissions');
+  });
+
+  it('load_modoPorDefectoInvalidoOAusente_caeAVacio', () => {
+    for (const bad of ['dontAsk', 7, null]) {
+      const store = new SettingsStore(deps({ readFile: () => JSON.stringify({ ...VALID, defaultPermissionMode: bad }) }));
+
+      expect(store.load().defaultPermissionMode).toBe('');
+    }
+    const { defaultPermissionMode: _omitted, ...withoutMode } = VALID;
+    expect(new SettingsStore(deps({ readFile: () => JSON.stringify(withoutMode) })).load().defaultPermissionMode).toBe('');
   });
 
   it('load_sinWidgetEnabled_caeAFalse', () => {

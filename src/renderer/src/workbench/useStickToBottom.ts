@@ -9,12 +9,15 @@ const STICK_TO_BOTTOM_PX = 80;
 // Mantiene el chat pegado al final cuando llega contenido nuevo, SALVO que el usuario haya subido a
 // leer (entonces no se le mueve el scroll bajo los pies). useLayoutEffect: mide y ajusta antes del
 // pintado, asi no se ve el salto. Devuelve la ref del contenedor scrollable.
-export function useStickToBottom(deps: readonly unknown[]): {
+// `resetKey`: al cambiar, se vuelve a pegar al fondo (salto instantaneo) aunque el usuario hubiera
+// subido: volver a una pestana o enviar un mensaje aterriza siempre abajo (puntos 13 y 25).
+export function useStickToBottom(deps: readonly unknown[], resetKey?: string): {
   readonly ref: React.RefObject<HTMLDivElement | null>;
   readonly onScroll: () => void;
 } {
   const ref = useRef<HTMLDivElement>(null);
   const stuckRef = useRef(true);
+  const lastResetKey = useRef(resetKey);
 
   // Cada scroll manual actualiza si seguimos "pegados" al final. Va como PROP de React y no como
   // `addEventListener` dentro de un `useEffect([])`: al arrancar en frio, el chat vacio devuelve
@@ -28,10 +31,14 @@ export function useStickToBottom(deps: readonly unknown[]): {
   };
 
   useLayoutEffect(() => {
+    if (lastResetKey.current !== resetKey) {
+      lastResetKey.current = resetKey;
+      stuckRef.current = true;
+    }
     const element = ref.current;
     if (element === null || !stuckRef.current) return;
     element.scrollTop = element.scrollHeight;
-  }, deps);
+  }, [...deps, resetKey]);
 
   return { ref, onScroll };
 }

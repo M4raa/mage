@@ -15,9 +15,11 @@ function state(overrides: Partial<WorkbenchState> = {}): WorkbenchState {
     pendingByChat: {},
     slashCommandsByChat: {},
     contextUsageByChat: {},
+    rateLimitByChat: {},
     // `tabs` hace falta desde 2.3b: el reducer consulta las reglas "Permitir siempre aqui" de la
     // conversacion para decidir si la peticion lleva tarjeta o se auto-aprueba.
     tabs: [],
+    dismissedSubagentsByChat: {},
     ...overrides,
   } as WorkbenchState;
 }
@@ -430,7 +432,25 @@ describe('reduceEvent — limite de uso (H4)', () => {
     // su propio texto). Marcar solo cuando hay texto seria perder el caso justo por el borde.
     const patch = reduceEvent(state(), TAB, { kind: 'rate_limit', summary: '   ', resetsAtMs: null });
 
-    expect(patch.rateLimitByChat?.[TAB]).toEqual({ summary: '   ', resetsAtMs: null });
+    expect(patch.rateLimitByChat?.[TAB]).toEqual({ summary: '', resetsAtMs: null });
+  });
+
+  it('reduceEvent_dosRateLimitMismoTurno_unaSolaLinea', () => {
+    // Arrange: el `rate_limit_event` rechazado (hora, sin texto) y luego el `assistant` con error
+    // (texto, sin hora) del MISMO limite (P-028, 20).
+    const resetsAtMs = new Date(2026, 8, 29, 15, 0).getTime();
+    const first = reduceEvent(state(), TAB, { kind: 'rate_limit', summary: '', resetsAtMs });
+    const between = state({ rateLimitByChat: first.rateLimitByChat, blocksByChat: first.blocksByChat });
+
+    // Act
+    const second = reduceEvent(between, TAB, { kind: 'rate_limit', summary: "You've hit your session limit · resets 3pm", resetsAtMs: null });
+
+    // Assert: una sola linea, en castellano con la hora, y el texto del CLI en el tooltip.
+    const blocks = blocksOf(second);
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0]).toMatchObject({ kind: 'system', tip: "You've hit your session limit · resets 3pm" });
+    expect((blocks[0] as { text: string }).text).toMatch(/^Límite de uso alcanzado · se restablece a las /);
+    expect(second.rateLimitByChat?.[TAB]).toEqual({ summary: "You've hit your session limit · resets 3pm", resetsAtMs });
   });
 
   it('reduceEvent_rateLimit_noPisaLaMarcaDeOtraPestana', () => {
@@ -461,5 +481,80 @@ describe('reduceEvent — catalogo de modelos', () => {
     expect(Object.keys(reduceEvent(current, TAB, { kind: 'models_available', models: MODELS }).modelCatalogByAccount ?? {})).toEqual([
       '/home/u/.claude/mage-private',
     ]);
+  });
+});
+
+describe('reduceEvent — subagentes en segundo plano (P-028 37a/37c)', () => {
+  const sub: Block = { kind: 'subagent', id: 's', toolUseId: 'tu1', agentType: 'general-purpose', description: 'A', agentId: 'ab25', status: 'completado', elapsedMs: 10, tokens: 5, toolUses: 0, model: null };
+
+  it('reduceEvent_subagentUpdate_actualizaElBloque', () => {
+    const patch = reduceEvent(state({ blocksByChat: { [TAB]: [sub] } }), TAB, { kind: 'subagent_update', toolUseId: 'tu1', status: 'running', tokens: 99, toolUses: 1, durationMs: 3 });
+
+    expect(blocksOf(patch)[0]).toMatchObject({ status: 'en segundo plano', tokens: 99, toolUses: 1 });
+  });
+
+  it('reduceEvent_subagentOcultoQueSeReanuda_vuelveAlDock', () => {
+    const base = state({ blocksByChat: { [TAB]: [sub] }, dismissedSubagentsByChat: { [TAB]: ['tu1', 'otro'] } });
+
+    const patch = reduceEvent(base, TAB, { kind: 'subagent_update', toolUseId: 'tu1', status: 'running', tokens: null, toolUses: null, durationMs: null });
+
+    expect(patch.dismissedSubagentsByChat?.[TAB]).toEqual(['otro']);
+  });
+
+  it('reduceEvent_requestStartedConElTurnoEnMarcha_noCambiaNada', () => {
+    const patch = reduceEvent(state({ statusByChat: { [TAB]: 'streaming' } }), TAB, { kind: 'request_started' });
+
+    expect(patch).toEqual({});
+  });
+
+  it('reduceEvent_requestStartedConLaPestanaParada_abreTurno', () => {
+    // El turno que abre el CLI solo al terminar un subagente en segundo plano.
+    const patch = reduceEvent(state({ statusByChat: { [TAB]: 'idle' } }), TAB, { kind: 'request_started' });
+
+    expect(patch.statusByChat?.[TAB]).toBe('streaming');
+    expect(patch.blocksByChat).toBeUndefined();
+  });
+
+  it('reduceEvent_subagentUpdateSinBloque_noCambiaNada', () => {
+    const patch = reduceEvent(state({ blocksByChat: { [TAB]: [sub] } }), TAB, { kind: 'subagent_update', toolUseId: 'nadie', status: 'completed', tokens: null, toolUses: null, durationMs: null });
+
+    expect(patch).toEqual({});
+  });
+});
+
+// P-028 (grupo C): comandos locales y `/clear`.
+describe('reduceEvent — comandos locales', () => {
+  it('reduceEvent_localCommandOutput_añadeBloque', () => {
+    const patch = reduceEvent(state(), TAB, { kind: 'local_command_output', command: 'context', args: '', text: '| a |\n|---|' });
+
+    expect(blocksOf(patch)).toEqual([expect.objectContaining({ kind: 'command-output', command: 'context', text: '| a |\n|---|' })]);
+  });
+
+  it('reduceEvent_localCommandOutputVacio_noAñadeNada', () => {
+    const patch = reduceEvent(state(), TAB, { kind: 'local_command_output', command: 'clear', args: '', text: '  ' });
+
+    expect(blocksOf(patch)).toEqual([]);
+  });
+
+  it('reduceEvent_conversationReset_vaciaElChatYAdoptaElIdNuevo', () => {
+    const current = state({
+      blocksByChat: { [TAB]: [{ kind: 'system', id: 'viejo', text: 'antes' }] },
+      sessionIdByChat: { [TAB]: 'viejo-id' },
+      contextUsageByChat: { [TAB]: { totalTokens: 1, maxTokens: 2, percentage: 50, categories: [] } },
+      tabs: [tab({ resumeSessionId: 'viejo-id' })],
+    });
+
+    const patch = reduceEvent(current, TAB, { kind: 'conversation_reset', newSessionId: 'nuevo-id' });
+
+    expect(blocksOf(patch)).toEqual([expect.objectContaining({ kind: 'system', text: 'Conversación reiniciada' })]);
+    expect(patch.sessionIdByChat?.[TAB]).toBe('nuevo-id');
+    expect(patch.contextUsageByChat?.[TAB]).toBeUndefined();
+    expect(patch.tabs?.[0]?.resumeSessionId).toBe('nuevo-id');
+  });
+
+  it('reduceEvent_conversationResetSinResume_noInventaResumeSessionId', () => {
+    const patch = reduceEvent(state({ sessionIdByChat: { [TAB]: 'a' }, tabs: [tab()] }), TAB, { kind: 'conversation_reset', newSessionId: 'b' });
+
+    expect(patch.tabs?.[0]?.resumeSessionId).toBeUndefined();
   });
 });

@@ -1,6 +1,6 @@
 {
   "name": "mage",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Wrapper multiagentico y multi-proveedor sobre agentes de codigo tipo Claude Code",
   "type": "module",
   "main": "./out/main/index.js",

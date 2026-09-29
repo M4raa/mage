@@ -111,7 +111,9 @@ const WORKBENCH_MOUNTED_MARK = "mage:workbench-mounted";
 // conversacion (el reporte era justo ese, "se come media pantalla") y ancho minimo del editor, que es lo
 // que de verdad se rompio — con los controles a `shrink-0` y el editor a basis 0, el editor se quedaba en
 // 0 px y el placeholder envolvia letra a letra hasta el `max-height`.
-const PROMPT_ROW_MAX_SHARE = 0.25;
+// 0.3 (era 0.25): los chips de modo y esfuerzo reservan el ancho de su etiqueta mas larga (0.1.1, punto 5)
+// y en el panel minimo (260 px) envuelven una linea mas: 131 px de 486. Con el editor estirado serian ~223.
+const PROMPT_ROW_MAX_SHARE = 0.3;
 const PROMPT_EDITOR_MIN_PX = 120;
 // Tamano de "modo ventana" que se mide. Es EL SUELO REAL de la ventana (`WINDOW.minWidth/minHeight` en
 // src/main/index.ts): mas pequena no se puede poner arrastrando y la app no tiene zoom de renderer, asi
@@ -447,6 +449,28 @@ const CHECKS = [
     },
   },
   {
+    // 0.1.1 R2, punto 6: «Omitir permisos» como modo por defecto, con su linea fija en Ajustes. Se elige
+    // por la accion del store (no abre ninguna conversacion) y se restaura el que habia.
+    name: 'Proveedores y modelos: «Omitir permisos» por defecto enseña su aviso fijo (R2 6)',
+    async run(page) {
+      await openSection(page, /Proveedores y modelos/);
+      const aviso = page.locator('[data-testid="default-bypass-warning"]');
+      const previo = await page.evaluate(() => window.__mageDev?.store.getState().settings.defaultPermissionMode ?? '');
+      try {
+        await page.evaluate(() => window.__mageDev?.store.getState().setDefaultPermissionMode('bypassPermissions'));
+        await aviso.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const conBypass = await aviso.count();
+        const texto = (await aviso.textContent()) ?? '';
+        await page.evaluate(() => window.__mageDev?.store.getState().setDefaultPermissionMode(''));
+        await aviso.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+        const ok = conBypass === 1 && texto.includes('sin preguntar');
+        return { ok, detail: `avisos con bypass=${conBypass} texto=${JSON.stringify(texto)} sin bypass=${await aviso.count()}` };
+      } finally {
+        await page.evaluate((modo) => window.__mageDev?.store.getState().setDefaultPermissionMode(modo), previo);
+      }
+    },
+  },
+  {
     // D5: la seccion existe, lista atajos y el buscador FILTRA de verdad (no solo pinta la caja).
     name: 'Seccion Atajos: lista y el buscador filtra (D5)',
     async run(page) {
@@ -542,24 +566,114 @@ const CHECKS = [
     },
   },
   {
-    name: 'La seccion "Config. compartida" carga sus editores por bloques',
+    // P-028 punto 5: «Config. compartida» pasa a «MCP y conectores», un inventario de TODAS las fuentes.
+    // Las fuentes son FALSAS (sembradas en `main()`: mcp-common.json del perfil aislado y, por
+    // MAGE_MCP_FAKE_SOURCES, un .claude.json de la cuenta principal y un claude_desktop_config.json):
+    // una verificacion no enseña nunca lo real de la maquina. Se mide que salen las cuatro filas, que
+    // ningun valor de env/headers llega al DOM y que el editor de hooks ya no esta aqui.
+    name: 'MCP y conectores: inventario de las fuentes sembradas sin valores de env en el DOM',
     async run(page) {
-      // Antes eran dos <textarea> con el JSON crudo de mcp-common.json y settings-common.json. Desde el
-      // 2026-09-18 se edita por bloques (un servidor MCP, una regla, un hook), asi que lo que demuestra
-      // que la seccion CARGA ya no es un textarea sino sus tres botones de alta — y de paso se
-      // comprueba que el editor de JSON crudo ya no esta.
-      await openSection(page, /Config\. compartida/);
-      const altas = page.getByRole('button', { name: /Añadir (servidor|regla|hook)/ });
-      await altas.first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
-      const etiquetas = await altas.evaluateAll((nodes) => nodes.map((n) => (n.textContent ?? '').trim()));
-      const sinJsonCrudo = await page.locator('textarea[aria-label^="Editor de"]').count();
-      // P-026 2.5: los servidores de mcp-common.json (sembrados en `main()`) se listan.
-      const servidores = await page.evaluate((nombres) => {
-        const valores = [...document.querySelectorAll('input')].map((input) => input.value);
-        return { cabecera: (document.body.textContent ?? '').includes(`Servidores MCP comunes (${nombres.length})`), listados: nombres.filter((n) => valores.includes(n)) };
-      }, SEEDED_MCP_SERVERS);
-      const ok = etiquetas.length === 3 && sinJsonCrudo === 0 && servidores.cabecera && servidores.listados.length === SEEDED_MCP_SERVERS.length;
-      return { ok, detail: `altas=${JSON.stringify(etiquetas)} textareas de JSON crudo=${sinJsonCrudo} servidores=${JSON.stringify(servidores)}` };
+      await openSection(page, /MCP y conectores/);
+      await page.locator('[data-mcp-row]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      const medida = await page.evaluate((secreto) => {
+        const seccion = document.querySelector('[data-mcp-section]');
+        const filas = [...document.querySelectorAll('[data-mcp-row]')].map((fila) => fila.getAttribute('data-mcp-row'));
+        const valores = [...document.querySelectorAll('input, textarea')].map((input) => input.value);
+        const botones = [...(seccion?.querySelectorAll('button') ?? [])].map((b) => (b.textContent ?? '').trim());
+        return {
+          filas,
+          secretoEnDom: document.documentElement.outerHTML.includes(secreto) || valores.some((v) => v.includes(secreto)),
+          editorDeHooks: botones.some((t) => /Añadir (regla|hook)/.test(t)),
+        };
+      }, SEEDED_MCP_SECRET);
+      const esperadas = [...SEEDED_MCP_SERVERS, SEEDED_MCP_ACCOUNT_SERVER, SEEDED_MCP_DESKTOP_SERVER];
+      const faltan = esperadas.filter((nombre) => !medida.filas.includes(nombre));
+      const ok = faltan.length === 0 && !medida.secretoEnDom && !medida.editorDeHooks;
+      return { ok, detail: `filas=${JSON.stringify(medida.filas)} faltan=${JSON.stringify(faltan)} secretoEnDom=${medida.secretoEnDom} editorDeHooks=${medida.editorDeHooks}` };
+    },
+  },
+  {
+    // P-028 bug HTTP/SSE: el editor antiguo no podia guardar un remoto (exigia `command`). Se abre el
+    // HTTP sembrado, se comprueba que la cabecera sale ENMASCARADA, que Escape cierra solo el dialogo
+    // (Configuracion sigue abierta: es una capa dentro de otra) y que «Guardar» sin tocar nada deja en
+    // DISCO el remoto intacto: con su URL, sin `command` y con el valor de la cabecera conservado.
+    name: 'MCP y conectores: un comun HTTP se edita y se guarda sin comando y sin perder su cabecera',
+    async run(page, { userDataDir }) {
+      const dialogo = page.locator('[data-mcp-server-dialog]');
+      await page.getByRole('button', { name: `Editar ${SEEDED_MCP_HTTP}`, exact: true }).click();
+      await dialogo.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      const enmascarado = await page.evaluate(
+        (secreto) => !document.documentElement.outerHTML.includes(secreto) && [...document.querySelectorAll('input')].every((i) => !i.value.includes(secreto)),
+        SEEDED_MCP_SECRET,
+      );
+      await page.keyboard.press('Escape');
+      await dialogo.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+      const configuracionAbierta = (await page.locator('[data-mcp-section]').count()) === 1;
+      await page.getByRole('button', { name: `Editar ${SEEDED_MCP_HTTP}`, exact: true }).click();
+      await dialogo.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      await dialogo.getByRole('button', { name: 'Guardar', exact: true }).click();
+      await dialogo.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+      const enDisco = JSON.parse(fs.readFileSync(path.join(userDataDir, 'shared-config', 'mcp-common.json'), 'utf-8')).mcpServers[SEEDED_MCP_HTTP];
+      const remotoIntacto =
+        enDisco?.type === 'http' && typeof enDisco.url === 'string' && enDisco.command === undefined && enDisco.headers?.Authorization === SEEDED_MCP_SECRET;
+      const ok = enmascarado && configuracionAbierta && remotoIntacto;
+      // Solo se mide la FORMA de lo guardado: el valor de la cabecera no sale al informe.
+      return { ok, detail: `enmascarado=${enmascarado} escapeSoloDialogo=${configuracionAbierta} remotoIntacto=${remotoIntacto} claves=${JSON.stringify(Object.keys(enDisco ?? {}))}` };
+    },
+  },
+  {
+    // P-028 punto 34: «Importar…» con vista previa. Se abre, se comprueba que ofrece las dos fuentes
+    // falsas (la cuenta y Claude Desktop) sin valores en el DOM, y se CANCELA: la comprobacion no
+    // cambia mcp-common.json para las que vienen detras. Configuracion se deja abierta, como llego.
+    name: 'MCP y conectores: Importar… enseña la vista previa de las fuentes y se cancela sin escribir',
+    async run(page, { userDataDir }) {
+      const fichero = path.join(userDataDir, 'shared-config', 'mcp-common.json');
+      const antes = fs.readFileSync(fichero, 'utf-8');
+      const dialogo = page.locator('[data-mcp-import-dialog]');
+      await page.locator('[data-mcp-section]').getByRole('button', { name: 'Importar…', exact: true }).first().click();
+      await dialogo.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      await dialogo.locator('[data-mcp-candidate]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      const candidatos = await dialogo.locator('[data-mcp-candidate]').evaluateAll((nodos) => nodos.map((n) => n.getAttribute('data-mcp-candidate')));
+      const secretoEnDom = await page.evaluate((secreto) => document.documentElement.outerHTML.includes(secreto), SEEDED_MCP_SECRET);
+      await dialogo.getByRole('button', { name: 'Cancelar', exact: true }).click();
+      await dialogo.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+      const sinCambios = fs.readFileSync(fichero, 'utf-8') === antes;
+      const ok = candidatos.includes(SEEDED_MCP_ACCOUNT_SERVER) && candidatos.includes(SEEDED_MCP_DESKTOP_SERVER) && !secretoEnDom && sinCambios;
+      return { ok, detail: `candidatos=${JSON.stringify(candidatos)} secretoEnDom=${secretoEnDom} sinCambios=${sinCambios}` };
+    },
+  },
+  {
+    // 0.1.1 R2, punto 18: «Autenticar» en un MCP que pide OAuth. Con MAGE_MCP_FAKE_CLI=1 main contesta con
+    // un CLI FALSO en proceso (config/mcpFakeCli.ts): `vg-auth` sale en `needs-auth` en cada cuenta con
+    // login, `mcp_authenticate` da una URL falsa que NO se abre y el «callback» llega a los 1,5 s. Se mide
+    // la secuencia visible: boton → «Autenticando…» → mensaje de conectado y el boton de esa cuenta fuera.
+    // Nunca hay OAuth real ni se spawnea el CLI. Configuracion se deja abierta, como llego.
+    name: '18: «Autenticar» un MCP que pide OAuth pasa por «Autenticando…» y acaba conectado (CLI falso)',
+    async run(page) {
+      const seccion = page.locator('[data-mcp-section]');
+      await seccion.getByRole('button', { name: 'Comprobar estado', exact: true }).click();
+      const fila = page.locator(`[data-mcp-row="${FAKE_MCP_AUTH_SERVER}"]`);
+      try {
+        await fila.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      } catch {
+        const cuentas = await page.evaluate(() => (window.__mageDev?.store.getState().accounts ?? []).filter((a) => a.loginStatus === 'logged_in').length);
+        if (cuentas === 0) return { ok: true, detail: 'ninguna cuenta con login: no hay CLI (falso) que sondear, no aplicable' };
+        return { ok: false, detail: `con ${cuentas} cuentas con login no aparece la fila ${FAKE_MCP_AUTH_SERVER}` };
+      }
+      const estadoAntes = await fila.locator('[data-mcp-status]').innerText();
+      const botones = fila.getByRole('button', { name: new RegExp(`^Autenticar ${FAKE_MCP_AUTH_SERVER} en `) });
+      const antes = await botones.count();
+      const boton = botones.first();
+      const etiqueta = await boton.getAttribute('aria-label');
+      await boton.click();
+      const vioAutenticando = await fila.getByText('Autenticando…').waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs }).then(() => true, () => false);
+      const mensaje = fila.locator('[data-mcp-auth-message]');
+      await mensaje.first().waitFor({ state: 'visible', timeout: 15_000 });
+      const texto = await mensaje.first().innerText();
+      const despues = await botones.count();
+      const sigueSuBoton = (await fila.getByRole('button', { name: etiqueta, exact: true }).count()) > 0;
+      const ok = estadoAntes.includes('Requiere autenticación') && antes >= 1 && vioAutenticando && /Autenticado/.test(texto) && despues === antes - 1 && !sigueSuBoton;
+      return { ok, detail: `estadoAntes=«${estadoAntes}» botones ${antes}→${despues} autenticando=${vioAutenticando} mensaje=«${texto}»` };
     },
   },
   {
@@ -965,142 +1079,71 @@ const CHECKS = [
   },
   {
     // F2: la conversacion vacia dice EN QUE carpeta va a trabajar el agente y deja cambiarla.
+    // P-028 16: el boton es ahora el primario «Elegir proyecto…» y la ruta va debajo, con su ancla.
     name: 'F2: la conversacion vacia muestra la carpeta y deja cambiarla',
     async run(page) {
-      const change = page.getByRole('button', { name: 'Cambiar carpeta de trabajo' });
+      const change = page.getByRole('button', { name: 'Elegir proyecto' });
       await change.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
       const enabled = await change.isEnabled();
       // La ruta completa viaja en el title del elemento (lo pintado va acortado).
-      // Se ancla al boton y se sube a su contenedor: un `span[title]` suelto casaria con cualquier
-      // tooltip de la app.
-      const shown = await page.evaluate(() => {
-        const button = document.querySelector('[aria-label="Cambiar carpeta de trabajo"]');
-        return button?.parentElement?.querySelector('span[title]')?.getAttribute('title') ?? null;
-      });
+      const shown = await page.evaluate(
+        () => document.querySelector('[data-working-folder="true"]')?.getAttribute('title') ?? null,
+      );
       const ok = enabled && typeof shown === 'string' && shown.length > 0;
       return { ok, detail: `boton habilitado=${enabled} carpeta=${JSON.stringify(shown)}` };
     },
   },
   {
-    // 2.8: el resumen de contexto vivia en el PIE del borde derecho, donde solo se veia con algun panel
-    // abierto. Ahora es un indicador de la StatusBar con su popover. Va aqui y no en la fase 0 (que es
-    // donde lo situaba el plan) por una razon medida: sin conversacion abierta el indicador NO se monta
-    // a proposito — un `ctx 0 %` permanente en una app recien abierta es ruido, no informacion — y en
-    // la fase 0 del harness todavia no hay ninguna pestaña. No abre dialogos ni crea nada.
-    name: '2.8: la StatusBar tiene el indicador de contexto y su popover abre por teclado',
+    // P-028 16: el estado vacio ofrece los proyectos recientes como tarjetas, derivadas del historial y
+    // filtrando las carpetas que ya no existen (IPC `existsDirs`). Se SIEMBRA el historial en el store
+    // (nunca el real): dos carpetas que existen, una borrada y una del scratch. Pulsar una tarjeta solo
+    // cambia la carpeta de la pestaña: no se envia nada ni se arranca ninguna sesion.
+    name: 'P-028 16: el estado vacio ofrece los proyectos recientes y fija la carpeta al pulsar',
     async run(page) {
-      // H1: esta comprobacion era INTERMITENTE, y la causa no era el foco sino el raton. El popover abre
-      // con `group-hover` **O** `group-focus-within`, y aqui solo se controlaba el foco: si el puntero se
-      // quedaba encima del indicador —donde lo dejase la comprobacion anterior—, el `group-hover` lo
-      // mantenia en opacidad 1 y el `sinFoco` medido salia "1" en vez de "0". Se aparta el raton a una
-      // esquina neutra ANTES de medir, y ademas se reporta `hover` para que un fallo futuro diga cual de
-      // las dos condiciones lo abrio en vez de dejarlo en un intermitente sin explicacion.
-      //
-      // Se aparta al CENTRO de la ventana, no a una esquina: (2,2) cae dentro del borde de redimension
-      // y encima de la region de arrastre de la cabecera, y el puntero se queda ahi para todo lo que
-      // venga despues — con esa posicion, el `click()` del input rico se quedaba colgado 30 s. El centro
-      // es area de transcripcion: inerte, sin arrastre y sin controles.
-      const centro = await page.evaluate(() => ({ x: Math.round(window.innerWidth / 2), y: Math.round(window.innerHeight / 2) }));
-      await page.mouse.move(centro.x, centro.y);
-      // Y la ventana tiene que tener el foco del SO. `:focus-within` NO casa si el documento no lo
-      // tiene, por mucho que `document.activeElement` apunte al sitio correcto: por eso esta
-      // comprobacion fallaba en las DOS direcciones —unas veces no abria, otras no cerraba— segun lo
-      // que estuviera pasando en el escritorio. Se pide el foco y se espera a tenerlo; si no llega, se
-      // dice en la medida en vez de fallar sin explicacion.
-      await page.bringToFront().catch(() => undefined);
-      await page.evaluate(async () => {
-        for (let i = 0; i < 40 && !document.hasFocus(); i += 1) {
-          window.focus();
-          await new Promise((resolve) => setTimeout(resolve, 50));
-        }
+      const previo = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return { conversationHistory: s.conversationHistory, tabs: s.tabs };
       });
-      const measured = await page.evaluate(async () => {
-        const bar = document.querySelector('[role="status"][aria-label^="Estado del servicio"]')?.closest('div')?.parentElement;
-        if (!bar) return null;
-        const triggers = [...bar.querySelectorAll('span[tabindex="0"]')].filter((span) => /^ctx \d+ ?%$/.test(span.textContent?.trim() ?? ''));
-        const trigger = triggers[0];
-        if (trigger === undefined) return { indicadores: 0, texto: bar.textContent ?? '' };
-        const popover = trigger.parentElement?.querySelector(':scope > div');
-        if (!popover) return { indicadores: triggers.length, popover: false };
-        // La opacidad CALCULADA, no la clase CSS: con la regla `group-focus-within` borrada, un check de
-        // clases pasaria en verde con el popover muerto. La transicion dura 150 ms -> se espera mas.
-        // Se SONDEA hasta que la opacidad llegue al valor esperado (o se agote el plazo) en vez de
-        // esperar un tiempo fijo: una espera ciega da medidas distintas segun lo cargado que este el
-        // hilo de render, y un intermitente en el harness es peor que una comprobacion de menos.
-        //
-        // H2 (2026-09-21): seguia siendo intermitente —2 de 4 tandas— y la causa estaba en el PLAZO, no
-        // en el instante. `document.hasFocus()` se comprobaba ANTES de sondear, pero el sondeo dura
-        // hasta 1,5 s: si la ventana pierde el foco del SO a mitad (otra ventana de Electron, el
-        // escritorio), `:focus-within` deja de casar aunque `activeElement` siga siendo el correcto, y
-        // la medida salia `enfocado: true` con opacidad "0" — un fallo que no se parecia a su causa.
-        // Ahora el foco se REASEGURA dentro del bucle, cada vuelta que lo encuentre perdido.
-        const until = async (wanted, reasegurar) => {
-          for (let i = 0; i < 30; i += 1) {
-            if (getComputedStyle(popover).opacity === wanted) break;
-            if (reasegurar !== undefined && !document.hasFocus()) {
-              window.focus();
-              reasegurar();
-            }
-            await new Promise((resolve) => setTimeout(resolve, 50));
-          }
-          return getComputedStyle(popover).opacity;
-        };
-        const grupo = trigger.parentElement;
-        const documentoConFoco = document.hasFocus();
-        const inicial = getComputedStyle(popover).opacity;
-        trigger.focus();
-        const conFoco = await until('1', () => trigger.focus());
-        const enfocado = document.activeElement === trigger;
-        // H3 (2026-09-21): con `enfocado` y `documentoConFocoAlFinal` en true y la opacidad clavada en
-        // "0", el foco YA no explica el fallo. Lo que falta por saber es si el selector llega a casar:
-        // si `focusWithinCasa` sale false con el foco puesto, el problema es que el grupo esta en un
-        // subarbol inerte (un dialogo modal por encima) y no que la regla CSS este mal.
-        const focusWithinCasa = grupo !== null && grupo.matches(':focus-within');
-        const modalesAbiertos = document.querySelectorAll('dialog[open], [role="dialog"]').length;
-        // Se mueve el foco a OTRO elemento en vez de `blur()`: soltar el foco lo deja en `body`, y si
-        // algo de la app lo devuelve (un efecto de restauracion, el popover que se enfoca solo) el
-        // `focus-within` del grupo sigue puesto y el popover no cierra. Enfocar algo concreto es una
-        // instruccion mas fuerte y no depende de que nadie mas opine.
-        const otro = document.querySelector('[data-prompt-editor="true"], button');
-        if (otro instanceof HTMLElement) otro.focus();
-        else trigger.blur();
-        const sinFoco = await until('0');
-        // Quien tiene el foco DESPUES: si `sinFoco` vuelve a salir "1", esto dice si es porque el foco
-        // se quedo dentro del grupo (y entonces el fallo es de la app) o por otra cosa.
-        const focoDentroDelGrupo = grupo !== null && grupo.contains(document.activeElement);
-        return {
-          indicadores: triggers.length,
-          texto: trigger.textContent?.trim() ?? '',
-          tabIndex: trigger.tabIndex,
-          popover: true,
-          enfocado,
-          // La otra mitad de la condicion de apertura. Si algun dia `sinFoco` vuelve a salir "1", esto
-          // dice en el acto si fue el raton o si de verdad se rompio el `focus-within`.
-          hover: grupo !== null && grupo.matches(':hover'),
-          focoDentroDelGrupo,
-          documentoConFoco,
-          // El foco del SO al TERMINAR, no solo al empezar: si un fallo futuro trae esto en false, la
-          // causa es el entorno (otra ventana robo el foco) y no el `focus-within` de la app.
-          documentoConFocoAlFinal: document.hasFocus(),
-          focusWithinCasa,
-          modalesAbiertos,
-          opacidad: { inicial, conFoco, sinFoco },
-          categorias: popover.textContent?.includes('CONTEXTO') ?? false,
-        };
-      });
+      const existenteA = fs.mkdtempSync(path.join(os.tmpdir(), 'mage-verify-proyecto-a-'));
+      const existenteB = fs.mkdtempSync(path.join(os.tmpdir(), 'mage-verify-proyecto-b-'));
+      const borrada = path.join(os.tmpdir(), `mage-verify-no-existe-${Date.now()}`);
+      let medido = null;
+      try {
+        await page.evaluate(({ a, b, gone }) => {
+          const s = window.__mageDev.store.getState();
+          const scratch = s.tabs.find((t) => t.id === s.activeTabId)?.cwd ?? '';
+          const base = { configDir: '', title: 't', privacy: 'shared', sizeBytes: 1, isScheduled: false };
+          window.__mageDev.store.setState({
+            conversationHistory: [
+              { ...base, sessionId: 'v-a', cwd: a, updatedAtMs: 3 },
+              { ...base, sessionId: 'v-b', cwd: b, updatedAtMs: 2 },
+              { ...base, sessionId: 'v-gone', cwd: gone, updatedAtMs: 4 },
+              { ...base, sessionId: 'v-scratch', cwd: scratch, updatedAtMs: 5 },
+            ],
+          });
+        }, { a: existenteA, b: existenteB, gone: borrada });
+        await page.locator('[data-recent-project]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const tarjetas = await page.evaluate(() => [...document.querySelectorAll('[data-recent-project]')].map((n) => n.getAttribute('data-recent-project')));
+        await page.locator(`[data-recent-project="${existenteB.replace(/\\/g, '\\\\')}"]`).click();
+        await page.waitForTimeout(CONFIG.settleMs);
+        const cwd = await page.evaluate(() => {
+          const s = window.__mageDev.store.getState();
+          return s.tabs.find((t) => t.id === s.activeTabId)?.cwd ?? null;
+        });
+        medido = { tarjetas, cwd };
+      } finally {
+        await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
+        fs.rmSync(existenteA, { recursive: true, force: true });
+        fs.rmSync(existenteB, { recursive: true, force: true });
+        await page.waitForTimeout(CONFIG.settleMs);
+      }
       const ok =
-        measured !== null &&
-        measured.indicadores === 1 &&
-        measured.tabIndex === 0 &&
-        measured.enfocado === true &&
-        measured.categorias === true &&
-        measured.hover === false &&
-        measured.focoDentroDelGrupo === false &&
-        measured.documentoConFoco === true &&
-        measured.opacidad?.inicial === '0' &&
-        measured.opacidad?.conFoco === '1' &&
-        measured.opacidad?.sinFoco === '0';
-      return { ok, detail: `indicador=${JSON.stringify(measured)}` };
+        medido !== null &&
+        medido.tarjetas.length === 2 &&
+        medido.tarjetas[0] === existenteA &&
+        medido.tarjetas[1] === existenteB &&
+        medido.cwd === existenteB;
+      return { ok, detail: JSON.stringify(medido) };
     },
   },
   {
@@ -1193,6 +1236,40 @@ const CHECKS = [
     },
   },
   {
+    // P-028, punto 41: «Añadir cuenta» deja elegir proveedor. Claude va preseleccionado (el flujo de
+    // la 9.2); agy (`external`) no pide nada; uno de API (`api-key`) lleva a Ajustes › Proveedores y
+    // modelos. No se crea nada: solo se pulsan los botones de proveedor y el de ir a Ajustes.
+    name: '41: el alta de cuenta elige proveedor (Claude, agy sin campos, API a Ajustes)',
+    async run(page) {
+      await page.getByRole('button', { name: 'Añadir cuenta' }).first().click();
+      const dialog = page.locator(MODAL).first();
+      await dialog.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      await page.waitForTimeout(CONFIG.settleMs);
+      const grupo = dialog.locator('[role="group"][aria-label="Proveedor de la cuenta"]');
+      const tipos = await grupo.locator('button').evaluateAll((nodes) =>
+        nodes.map((n) => ({ kind: n.getAttribute('data-provider-kind'), pressed: n.getAttribute('aria-pressed') === 'true', label: (n.textContent ?? '').trim() })),
+      );
+      const claudePreseleccionado = tipos.some((t) => t.kind === 'cli-oauth' && t.pressed);
+      let agyCampos = null;
+      if (tipos.some((t) => t.kind === 'external')) {
+        await grupo.locator('button[data-provider-kind="external"]').first().click();
+        agyCampos = await dialog.locator('input').count();
+      }
+      await grupo.locator('button[data-provider-kind="api-key"]').first().click();
+      await dialog.getByRole('button', { name: 'Abrir Proveedores y modelos' }).click();
+      await page.waitForTimeout(CONFIG.settleMs);
+      const seccion = await page.evaluate(() => document.querySelector('[aria-labelledby="settings-title"] [role="tab"][aria-selected="true"]')?.textContent?.trim() ?? null);
+      const closed = await closeDialog(page);
+      const ok =
+        claudePreseleccionado &&
+        tipos.some((t) => t.kind === 'api-key') &&
+        (agyCampos === null || agyCampos === 0) &&
+        /Proveedores y modelos/.test(seccion ?? '') &&
+        closed === 0;
+      return { ok, detail: JSON.stringify({ tipos: tipos.map((t) => t.kind), claudePreseleccionado, agyCampos, seccion, cerrado: closed === 0 }) };
+    },
+  },
+  {
     // G5: `app.requestSingleInstanceLock()`. Estaba como "⚠ pendiente de verificacion GUI" desde que se
     // implemento. Se lanza un SEGUNDO Electron contra el MISMO perfil: debe rendirse enseguida y no
     // abrir otra ventana; la primera instancia recibe 'second-instance' y se enfoca.
@@ -1212,6 +1289,55 @@ const CHECKS = [
       const surrendered = result.signal === null;
       const ok = surrendered && after === before && before === 1;
       return { ok, detail: `ventanas principales antes=${before} despues=${after} segunda instancia se rindio=${surrendered} (code=${result.status} signal=${result.signal})` };
+    },
+  },
+  {
+    // P-028, punto 36: «Mover a una ventana nueva» perdia la pestaña en las DOS ventanas (se le
+    // empujaba a la nueva antes de que su renderer escuchara). Ahora va por el transporte "pull": main
+    // la guarda y el renderer nuevo la recoge al acabar de restaurar. Se mide en la ventana NUEVA por
+    // CDP que la pestaña esta alli con su titulo, y en la de origen que ya no. No se envia nada ni se
+    // arranca ninguna sesion; la ventana nueva se cierra al final (una secundaria no pregunta).
+    name: 'P-028 36: mover una pestaña a una ventana nueva la entrega alli y la quita de aqui',
+    async run(page) {
+      const before = countMainPages(page);
+      await openTemporaryConversation(page);
+      const title = `verify-mover-${Date.now()}`;
+      const tabId = await page.evaluate((nuevo) => {
+        const s = window.__mageDev.store.getState();
+        s.renameTab(s.activeTabId, nuevo);
+        return s.activeTabId;
+      }, title);
+      const browser = page.context().browser();
+      const knownPages = new Set(browser.contexts().flatMap((context) => context.pages()));
+      let medido = { antes: before };
+      let nueva = null;
+      try {
+        await page.locator(`[data-tab-id="${tabId}"]`).click({ button: 'right' });
+        await page.getByRole('menuitem', { name: 'Mover a una ventana nueva' }).click();
+        const deadline = Date.now() + CONFIG.actionTimeoutMs;
+        while (nueva === null && Date.now() < deadline) {
+          nueva =
+            browser
+              .contexts()
+              .flatMap((context) => context.pages())
+              .find((candidate) => !knownPages.has(candidate) && !candidate.url().includes('widget.html') && !candidate.url().includes('debug.html') && !candidate.url().startsWith('devtools://')) ?? null;
+          if (nueva === null) await page.waitForTimeout(200);
+        }
+        if (nueva !== null) {
+          await nueva.locator('[data-tab-id]').filter({ hasText: title }).first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs }).catch(() => {});
+          medido.enLaNueva = await nueva.locator('[data-tab-id]').filter({ hasText: title }).count();
+        }
+        medido.enElOrigen = await page.evaluate((id) => window.__mageDev.store.getState().tabs.some((t) => t.id === id), tabId);
+      } catch (error) {
+        medido.fallo = error.message;
+      } finally {
+        if (nueva !== null) await nueva.close().catch(() => {});
+        const deadline = Date.now() + CONFIG.actionTimeoutMs;
+        while (countMainPages(page) > before && Date.now() < deadline) await page.waitForTimeout(200);
+        medido.alFinal = countMainPages(page);
+      }
+      const ok = nueva !== null && medido.enLaNueva === 1 && medido.enElOrigen === false && medido.alFinal === before;
+      return { ok, detail: JSON.stringify(medido) };
     },
   },
   {
@@ -1276,26 +1402,34 @@ const CHECKS = [
       await chip.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
       const prompt = page.getByRole('textbox', { name: 'Escribe una instrucción para el agente' });
       await clearPrompt(page);
-      // P-026 2.3 (D8/D9): CINCO modos, y con «Omitir permisos» una franja fija encima del input.
+      // P-026 2.3 (D8/D9): CINCO modos. P-028 14: «Omitir permisos» ya no lleva franja fija: sale un aviso
+      // TEMPORAL (8 s, con X) y la señal permanente es solo el chip en rojo.
       const MODES = 5;
+      const AVISO = 'Omitir permisos: el agente ejecuta todo sin preguntar';
       const seen = [await permissionModeLabel(page)];
-      let franjaEnOmitir = null;
-      let franjaFuera = 0;
+      let avisoAlEntrar = null;
+      let avisoTras9s = null;
+      let chipRojo = null;
+      let franjaFija = 0;
       for (let step = 0; step < MODES; step += 1) {
         await prompt.press('Shift+Tab');
         await page.waitForTimeout(CONFIG.settleMs);
         const label = await permissionModeLabel(page);
         seen.push(label);
-        const franjas = await page.locator('[data-bypass-warning="true"]').count();
-        if (label === 'Omitir permisos') franjaEnOmitir = franjas;
-        else franjaFuera += franjas;
+        franjaFija += await page.locator('[data-bypass-warning="true"]').count();
+        if (label !== 'Omitir permisos') continue;
+        avisoAlEntrar = await countBypassAdvice(page, AVISO);
+        await page.waitForTimeout(8600);
+        avisoTras9s = await countBypassAdvice(page, AVISO);
+        chipRojo = await chip.evaluate((el) => el.className.includes('text-mg-danger'));
       }
       if (propia) await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
       const distinct = new Set(seen.slice(0, MODES)).size;
-      const ok = distinct === MODES && seen[MODES] === seen[0] && seen.includes('Auto') && franjaEnOmitir === 1 && franjaFuera === 0;
+      const ok =
+        distinct === MODES && seen[MODES] === seen[0] && seen.includes('Auto') && avisoAlEntrar === 1 && avisoTras9s === 0 && chipRojo === true && franjaFija === 0;
       return {
         ok,
-        detail: `modos=${JSON.stringify(seen)} distintos=${distinct} vuelve al inicio=${seen[MODES] === seen[0]} franja con Omitir=${franjaEnOmitir} fuera=${franjaFuera}`,
+        detail: `modos=${JSON.stringify(seen)} distintos=${distinct} vuelve al inicio=${seen[MODES] === seen[0]} aviso al entrar=${avisoAlEntrar} tras 8,6 s=${avisoTras9s} chip rojo=${chipRojo} franja fija=${franjaFija}`,
       };
     },
   },
@@ -1405,37 +1539,45 @@ const CHECKS = [
     // menu aparecia muy por encima, desconectado. Se mide la separacion REAL entre las dos cajas: da
     // igual si vuelca hacia arriba o hacia abajo, pero tiene que estar PEGADO a una de las dos caras.
     // Solo se ABRE el menu (Escape para cerrarlo): elegir una opcion cambiaria el esfuerzo de verdad.
-    name: 'El menu de esfuerzo nace pegado a su boton (Dropdown)',
+    name: 'Esfuerzo y modo: el popover del deslizador nace pegado a su chip y trae sus pasos (StepSlider)',
     async run(page) {
-      const trigger = page.getByRole('button', { name: 'Nivel de esfuerzo' });
-      await trigger.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
-      await trigger.click();
-      const listbox = page.getByRole('listbox', { name: 'Nivel de esfuerzo' });
-      await listbox.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
-      await page.waitForTimeout(300); // la animacion de entrada del popover (150 ms) debe haber acabado
-      const triggerBox = await trigger.boundingBox();
-      const listBox = await listbox.boundingBox();
-      await page.keyboard.press('Escape');
-      await page.waitForTimeout(200);
-      const gapBelow = Math.abs(listBox.y - (triggerBox.y + triggerBox.height));
-      const gapAbove = Math.abs(triggerBox.y - (listBox.y + listBox.height));
-      const gap = Math.min(gapBelow, gapAbove);
-      // Tolerancia de 16px, no de 4: al volcar hacia arriba el `top` se calcula ANTES de montar el
-      // menu, con una ESTIMACION de su alto (nº de opciones x alto de fila) — el alto real difiere unos
-      // pocos px. Lo que esta comprobacion protege es el bug reportado (el menu aparecia a cientos de px
-      // del boton, clampado contra el borde de la ventana), no el pixel exacto.
-      const ok = gap <= 16;
-      return {
-        ok,
-        detail: `boton=[${triggerBox.y.toFixed(0)}, ${(triggerBox.y + triggerBox.height).toFixed(0)}] menu=[${listBox.y.toFixed(0)}, ${(listBox.y + listBox.height).toFixed(0)}] separacion minima=${gap.toFixed(1)}px`,
-      };
+      // P-028 32/33: modo y esfuerzo son deslizadores de pasos. Solo se ABREN (Escape para cerrar): mover
+      // el pulgar cambiaria el esfuerzo o el modo de verdad.
+      const casos = [
+        { chip: 'button[aria-label="Nivel de esfuerzo"]', pasos: 6 },
+        { chip: 'button[aria-label^="Modo de permiso:"]', pasos: 5 },
+      ];
+      const medidas = [];
+      for (const caso of casos) {
+        const trigger = page.locator(caso.chip).first();
+        await trigger.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        await trigger.click();
+        const popover = page.locator('[data-step-slider-popover="true"]');
+        await popover.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        await page.waitForTimeout(300); // la animacion de entrada del popover (150 ms) debe haber acabado
+        const triggerBox = await trigger.boundingBox();
+        const popBox = await popover.boundingBox();
+        // Punto 5 (ronda 2): el chip mide lo que su etiqueta MAS LARGA (las invisibles del `inline-grid`),
+        // asi que ni el ni el popover se mueven al cambiar de paso. Se mide sin cambiar de paso: el
+        // contenido visible nunca puede ser mas ancho que el mayor de los reservados.
+        const ancho = await trigger.evaluate((el) => {
+          const cajas = [...el.querySelectorAll('.inline-grid > span')];
+          const anchos = cajas.map((n) => n.getBoundingClientRect().width);
+          return { reservados: cajas.filter((n) => n.getAttribute('aria-hidden') === 'true').length, maxReservado: Math.max(...anchos), rejilla: el.querySelector('.inline-grid')?.getBoundingClientRect().width ?? 0 };
+        });
+        const range = popover.locator('input[type="range"]');
+        const info = await range.evaluate((el) => ({ max: Number(el.max), valuetext: el.getAttribute('aria-valuetext') }));
+        await page.keyboard.press('Escape');
+        await page.waitForTimeout(200);
+        const gapBelow = Math.abs(popBox.y - (triggerBox.y + triggerBox.height));
+        const gapAbove = Math.abs(triggerBox.y - (popBox.y + popBox.height));
+        medidas.push({ ancho, gap: Math.min(gapBelow, gapAbove), pasos: info.max + 1, esperados: caso.pasos, valuetext: info.valuetext });
+      }
+      // Tolerancia de 24 px: el `top` se calcula ANTES de montar el popover con una estimacion de su alto.
+      const ok = medidas.every((m) => m.gap <= 24 && m.pasos === m.esperados && m.ancho.reservados >= m.esperados - 1 && Math.abs(m.ancho.rejilla - m.ancho.maxReservado) < 1 && (m.valuetext ?? '').length > 0);
+      return { ok, detail: JSON.stringify(medidas) };
     },
   },
-  // --- F4: resaltado de sintaxis (shiki) ----------------------------------------------------------
-  //
-  // Se mide en la VISTA PREVIA del markdown del prompt (E5), que monta el MISMO componente `Markdown`
-  // que el chat: el chat exigiria un turno real del agente (suscripcion + transcripcion de verdad).
-  // Aqui no se pulsa Enter en ningun momento; solo se escribe y se abre la vista previa.
   {
     // La medida es el numero de colores DISTINTOS entre los <span> de token. Si el resaltado muriera
     // (gramatica que no carga, tema importado sin reglas, shiki que lanza), `useHighlightedCode`
@@ -1467,6 +1609,60 @@ const CHECKS = [
         ok,
         detail: `lenguaje=${JSON.stringify(measured?.lang ?? null)} spans=${measured?.spans ?? 0} texto=${JSON.stringify((measured?.text ?? '').slice(0, 40))}`,
       };
+    },
+  },
+  {
+    // Extra de la ronda 2 (0.1.1): el usuario veia «fondos de color» junto a los bloques del chat. Se
+    // recorren los ANTEPASADOS de un bloque y los hermanos del hilo mirando fondo, degradado, sombra,
+    // filtro y pseudo-elementos, y se lista todo lo que pinte algo distinto de transparente.
+    name: 'Extra: el hilo del chat no pinta fondos, sombras ni degradados fuera de sus burbujas',
+    async run(page) {
+      const previo = await page.evaluate(() => (({ tabs, activeTabId, splitLayout, blocksByChat }) => ({ tabs, activeTabId, splitLayout, blocksByChat }))(window.__mageDev.store.getState()));
+      await openTemporaryConversation(page);
+      await hydrateBlocks(page, [
+        { kind: 'user', id: 'bg-u', text: 'hola', time: '10:00', attachments: [] },
+        { kind: 'agent', id: 'bg-a', runs: [{ code: false, text: 'respuesta' }], streaming: false },
+      ]);
+      const medido = await page.evaluate(() => {
+        const pintado = (el, pseudo) => {
+          const c = getComputedStyle(el, pseudo ?? null);
+          const out = {};
+          if (c.backgroundColor !== 'rgba(0, 0, 0, 0)' && c.backgroundColor !== 'transparent') out.bg = c.backgroundColor;
+          if (c.backgroundImage !== 'none') out.img = c.backgroundImage.slice(0, 80);
+          if (c.boxShadow !== 'none') out.sombra = c.boxShadow.slice(0, 80);
+          if (c.filter !== 'none') out.filtro = c.filter;
+          if (c.backdropFilter !== 'none') out.backdrop = c.backdropFilter;
+          if (pseudo !== undefined && c.content === 'none') return {};
+          return out;
+        };
+        const nombre = (el) => `${el.tagName.toLowerCase()}${el.dataset?.block ? `[data-block=${el.dataset.block}]` : ''}${el.className && typeof el.className === 'string' ? `.${el.className.split(/\s+/).slice(0, 3).join('.')}` : ''}`;
+        const bloque = document.querySelector('[data-block]');
+        if (bloque === null) return { sinBloque: true };
+        const hilo = bloque.parentElement;
+        const cadena = [];
+        for (let el = bloque.parentElement; el !== null && el !== document.documentElement; el = el.parentElement) {
+          const p = [pintado(el), pintado(el, '::before'), pintado(el, '::after')];
+          if (p.some((x) => Object.keys(x).length > 0)) cadena.push({ el: nombre(el), p });
+        }
+        // Lo que cuelga del hilo y no es un bloque (relleno, indicadores, sentinelas).
+        const sueltos = [...(hilo?.querySelectorAll(':scope > :not([data-block])') ?? [])]
+          .map((el) => ({ el: nombre(el), p: pintado(el) }))
+          .filter((x) => Object.keys(x.p).length > 0);
+        // Dentro de cada bloque: solo los elementos de nivel 1-2 (la burbuja y su envoltorio).
+        const burbujas = [...document.querySelectorAll('[data-block]')].map((b) => ({
+          bloque: b.dataset.block,
+          nivel1: [...b.children].map((el) => ({ el: nombre(el), p: pintado(el), hijos: [...el.children].map((h) => ({ el: nombre(h), p: pintado(h) })).filter((x) => Object.keys(x.p).length > 0) })),
+        }));
+        return { cadena, sueltos, burbujas };
+      });
+      await page.evaluate((p) => window.__mageDev.store.setState(p), previo);
+      await page.waitForTimeout(CONFIG.settleMs);
+      // Contrato: todos los antepasados del hilo pintan el MISMO fondo (sin bandas de otro tono junto a las
+      // burbujas), ninguno lleva degradado, sombra ni filtro, y el hilo no tiene hijos sueltos pintados.
+      const fondos = new Set((medido.cadena ?? []).map((n) => n.p[0].bg));
+      const decorado = (medido.cadena ?? []).some((n) => n.p.some((x) => x.img !== undefined || x.sombra !== undefined || x.filtro !== undefined || x.backdrop !== undefined));
+      const ok = medido.sinBloque !== true && fondos.size === 1 && !decorado && medido.sueltos.length === 0;
+      return { ok, detail: JSON.stringify({ fondos: [...fondos], decorado, sueltos: medido.sueltos }) };
     },
   },
   {
@@ -2135,6 +2331,100 @@ const CHECKS = [
     },
   },
   {
+    // P-028, 8 + 12: «Copiar» en el bloque de codigo (con y sin `lang`), en la burbuja del agente y en la
+    // del usuario. `writeText` va MOCKEADO: el portapapeles real del SO falla en silencio (ver 2.9.b).
+    // Cada boton copia el markdown CRUDO (el texto exacto del bloque, no el renderizado).
+    name: 'P-028 8/12: los botones Copiar entregan el markdown crudo de su bloque',
+    async run(page) {
+      const previo = await page.evaluate(() => window.__mageDev.store.getState().blocksByChat);
+      const crudo = 'Mira **esto**:\n\n```ts\nconst a = 1;\n```\n\n```\nsin lenguaje\n```';
+      await hydrateBlocks(page, [
+        { kind: 'user', id: 'vg-cp-u', text: 'Pregunta con **negrita**', time: '12:00', attachments: [] },
+        { kind: 'agent', id: 'vg-cp-a', runs: [{ code: false, text: crudo }], streaming: false },
+      ]);
+      const medido = await page.evaluate(async () => {
+        const copiados = [];
+        Object.defineProperty(navigator, 'clipboard', {
+          configurable: true,
+          value: { writeText: async (t) => void copiados.push(t) },
+        });
+        try {
+          const botones = [...document.querySelectorAll('[data-copy-button="true"]')];
+          for (const boton of botones) {
+            boton.click();
+            await new Promise((r) => setTimeout(r, 30));
+          }
+          return { botones: botones.length, copiados, etiquetas: botones.map((b) => b.getAttribute('aria-label')) };
+        } finally {
+          // El mock es una propiedad PROPIA de `navigator` que tapa el getter del prototipo: borrarla
+          // devuelve el portapapeles real. Sin esto, Artifacts (mas abajo) moria con `readText is not
+          // a function`.
+          delete navigator.clipboard;
+        }
+      });
+      await page.evaluate((estado) => window.__mageDev.store.setState({ blocksByChat: estado }), previo);
+      const ok =
+        medido.botones === 4 && // usuario, agente, codigo con lang, codigo sin lang
+        medido.copiados.includes('Pregunta con **negrita**') &&
+        medido.copiados.includes(crudo) &&
+        medido.copiados.includes('const a = 1;') &&
+        medido.copiados.includes('sin lenguaje');
+      return { ok, detail: JSON.stringify(medido) };
+    },
+  },
+  {
+    // P-028, 25 (+13): un mensaje nuevo del usuario lleva al final aunque el chat estuviera arriba del
+    // todo. Se anade el bloque por el store (lo mismo que hace `sendActiveMessage`); NUNCA Enter.
+    name: 'P-028 25: un mensaje nuevo del usuario aterriza al fondo aunque se hubiera subido',
+    async run(page) {
+      const previo = await page.evaluate(() => window.__mageDev.store.getState().blocksByChat);
+      const hilo = Array.from({ length: 40 }, (_, i) =>
+        i % 2 === 0
+          ? { kind: 'user', id: `vg-sb-u${i}`, text: `Pregunta ${i}\n\n${'linea\n\n'.repeat(4)}`, time: '12:00', attachments: [] }
+          : { kind: 'agent', id: `vg-sb-a${i}`, runs: [{ code: false, text: `Respuesta ${i}\n\n${'texto\n\n'.repeat(4)}` }], streaming: false },
+      );
+      await hydrateBlocks(page, hilo);
+      const arriba = await page.evaluate(() => {
+        const cont = document.querySelector('[data-block]')?.closest('.overflow-y-auto');
+        if (cont === null || cont === undefined) return null;
+        cont.scrollTop = 0;
+        cont.dispatchEvent(new Event('scroll', { bubbles: true }));
+        return { scrollable: cont.scrollHeight - cont.clientHeight };
+      });
+      await hydrateBlocks(page, [
+        ...hilo,
+        { kind: 'user', id: 'vg-sb-nuevo', text: 'Mensaje nuevo', time: '12:01', attachments: [] },
+      ]);
+      const distancia = await page.evaluate(() => {
+        const cont = document.querySelector('[data-block]')?.closest('.overflow-y-auto');
+        return cont === null || cont === undefined ? null : cont.scrollHeight - cont.scrollTop - cont.clientHeight;
+      });
+      await page.evaluate((estado) => window.__mageDev.store.setState({ blocksByChat: estado }), previo);
+      const ok = arriba !== null && arriba.scrollable > 200 && distancia !== null && distancia < 2;
+      return { ok, detail: `arriba=${JSON.stringify(arriba)} distanciaAlFondo=${distancia}` };
+    },
+  },
+  {
+    // P-028, 28: la tarjeta de tarea programada dice quien la lanza.
+    name: 'P-028 28: la tarea programada avisa de que la lanza la app de escritorio de Claude',
+    async run(page) {
+      const previo = await page.evaluate(() => window.__mageDev.store.getState().blocksByChat);
+      await hydrateBlocks(page, [
+        {
+          kind: 'user',
+          id: 'vg-sch',
+          text: '<scheduled-task name="revisar" file="x">\nHaz algo\n</scheduled-task>',
+          time: '12:00',
+          attachments: [],
+        },
+      ]);
+      const texto = await page.evaluate(() => document.querySelector('[data-scheduled-task="true"]')?.textContent ?? null);
+      await page.evaluate((estado) => window.__mageDev.store.setState({ blocksByChat: estado }), previo);
+      const ok = texto !== null && texto.includes('las lanza la app de escritorio de Claude');
+      return { ok, detail: `texto=${JSON.stringify(texto)}` };
+    },
+  },
+  {
     // P-026, 3.3 (D14-D16): una pregunta de TRES pasos queda anclada encima del input, fuera del hilo, y se
     // maneja con el teclado sin tocar el input. Se inyecta por el reducer real y se cancela al final por
     // el mismo camino que el CLI. Nunca se pulsa Enter (contestaria).
@@ -2277,9 +2567,10 @@ const CHECKS = [
   },
   {
     // P-026, 2.7 (D5): pulsar otra cuenta con una conversacion PARADA de la activa pregunta si migrarla.
-    // La pestaña lleva un `resumeSessionId` FALSO (nada se reanuda) y solo se pulsa «Solo cambiar de
-    // cuenta», que no mueve nada: la pestaña tiene que seguir ahi, en su cuenta. Se vuelve a la cuenta
-    // de partida al final. Si solo hay una cuenta, no hay a donde cambiar: se da por no aplicable.
+    // La pestaña lleva un `resumeSessionId` FALSO (nada se reanuda) y solo se pulsa «Abrir un chat nuevo
+    // en <B>» (P-028, 26: sustituye a «Solo cambiar de cuenta»), que no mueve nada: la pestaña tiene que
+    // seguir ahi, en su cuenta, y la activa pasa a B con un chat nuevo. Se restaura todo al final. Si
+    // solo hay una cuenta, no hay a donde cambiar: se da por no aplicable.
     name: 'Cambiar de cuenta con una conversación parada pregunta si migrarla',
     async run(page) {
       const previo = await page.evaluate(() => {
@@ -2299,7 +2590,8 @@ const CHECKS = [
       const dialogo = page.locator('[data-account-switch-dialog="true"]');
       await dialogo.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
       const botones = await dialogo.locator('button').evaluateAll((nodes) => nodes.map((n) => (n.textContent ?? '').trim()));
-      await dialogo.getByRole('button', { name: 'Solo cambiar de cuenta' }).click();
+      const lineaMigrar = /Compartida: se reanuda con .+\. Privada: se mueve a /.test((await dialogo.textContent()) ?? '');
+      await dialogo.getByRole('button', { name: /^Abrir un chat nuevo en / }).click();
       await dialogo.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
       const tras = await page.evaluate((id) => {
         const s = window.__mageDev.store.getState();
@@ -2311,11 +2603,136 @@ const CHECKS = [
       }, previo);
       await page.waitForTimeout(CONFIG.settleMs);
       const ok =
-        botones.includes('Solo cambiar de cuenta') &&
+        botones.some((t) => t.startsWith('Abrir un chat nuevo en')) &&
+        lineaMigrar &&
         botones.some((t) => t.startsWith('Migrar la conversación a')) &&
         tras.pestanaSigue &&
         tras.cuentaActiva !== previo.activeAccountId;
-      return { ok, detail: `botones=${JSON.stringify(botones)} tras «Solo cambiar»=${JSON.stringify({ pestanaSigue: tras.pestanaSigue, cambioDeCuenta: tras.cuentaActiva !== previo.activeAccountId })}` };
+      return { ok, detail: `botones=${JSON.stringify(botones)} lineaMigrar=${lineaMigrar} tras «Chat nuevo»=${JSON.stringify({ pestanaSigue: tras.pestanaSigue, cambioDeCuenta: tras.cuentaActiva !== previo.activeAccountId })}` };
+    },
+  },
+  {
+    // P-028, punto 2: cada pestaña lleva el MONOGRAMA de su cuenta y, si no es de Claude, una marca
+    // corta del proveedor; la barra de estado dice el proveedor de la pestaña ENFOCADA. Se simula una
+    // pestaña de agy cambiando solo su `provider` en el store (no se lanza nada) y se restaura.
+    name: '2: monograma de la cuenta en la pestaña y marca «agy» también en la barra de estado',
+    async run(page) {
+      const previo = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return { tabs: s.tabs, activeTabId: s.activeTabId, splitLayout: s.splitLayout };
+      });
+      await openTemporaryConversation(page);
+      const medido = await page.evaluate(async () => {
+        const store = window.__mageDev.store;
+        const { activeTabId, tabs, accounts } = store.getState();
+        const cuenta = accounts.find((a) => a.id === tabs.find((t) => t.id === activeTabId)?.accountId);
+        const pestana = () => document.querySelector(`[data-tab-id="${activeTabId}"]`);
+        const monograma = pestana()?.querySelector('[data-tab-monogram]')?.textContent ?? null;
+        const proveedorAntes = document.querySelector('[data-status-provider]')?.textContent ?? null;
+        store.setState({ tabs: tabs.map((t) => (t.id === activeTabId ? { ...t, provider: 'agy' } : t)) });
+        await new Promise((resolve) => requestAnimationFrame(resolve));
+        return {
+          monograma,
+          esperado: cuenta?.monogram ?? null,
+          marcaClaude: proveedorAntes,
+          marcaAgy: pestana()?.querySelector('[data-tab-provider]')?.textContent ?? null,
+          barraAgy: document.querySelector('[data-status-provider]')?.textContent ?? null,
+        };
+      });
+      await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
+      await page.waitForTimeout(CONFIG.settleMs);
+      const ok =
+        medido.monograma !== null &&
+        medido.monograma === medido.esperado &&
+        medido.marcaClaude === 'Claude' &&
+        medido.marcaAgy === 'agy' &&
+        medido.barraAgy === 'agy';
+      return { ok, detail: JSON.stringify(medido) };
+    },
+  },
+  {
+    // P-028, punto 22: el popover de uso se titula «Uso general» y, por cuenta, o bien dice «sin dato»
+    // o bien trae las DOS ventanas con su reset (5 h y 7 d). Nunca un 0 % de relleno.
+    name: '22: popover «Uso general» con 5 h y 7 d y su reset por cuenta',
+    async run(page) {
+      const disparador = page.locator('span[tabindex="0"]', { hasText: /5h \d+% · sem/ }).first();
+      if ((await disparador.count()) === 0) return { ok: false, detail: 'sin indicador de uso en la barra' };
+      await disparador.hover();
+      await page.waitForTimeout(CONFIG.settleMs);
+      const medido = await page.evaluate(() => {
+        const pop = document.querySelector('[data-usage-popover="true"]');
+        const filas = [...(pop?.querySelectorAll('[data-usage-account]') ?? [])].map((f) => ({
+          sinDato: /sin dato/.test(f.textContent ?? ''),
+          ventanas: [...f.querySelectorAll('[data-usage-window]')].map((w) => (w.textContent ?? '').trim()),
+        }));
+        return { titulo: /USO GENERAL/.test(pop?.textContent ?? ''), filas };
+      });
+      await page.mouse.move(0, 0);
+      const filasOk = medido.filas.every((f) => f.sinDato || (f.ventanas.length === 2 && f.ventanas.every((t) => /% · reset /.test(t))));
+      return { ok: medido.titulo && medido.filas.length > 0 && filasOk, detail: JSON.stringify(medido) };
+    },
+  },
+  {
+    // P-028, punto 31: con un chat NUEVO (sin mensajes ni sesion), pulsar otra cuenta se lo lleva sin
+    // preguntar. No se envia nada: solo se mira el `accountId` de la pestaña. Se restaura al final.
+    name: '31: un chat nuevo sigue a la cuenta pulsada sin diálogo',
+    async run(page) {
+      const previo = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return { tabs: s.tabs, activeTabId: s.activeTabId, splitLayout: s.splitLayout, activeAccountId: s.activeAccountId };
+      });
+      const destino = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return s.accounts.find((a) => a.id !== s.activeAccountId && a.loginStatus === 'logged_in')?.id ?? null;
+      });
+      if (destino === null) return { ok: true, detail: 'sin otra cuenta con login: no aplicable' };
+      await openTemporaryConversation(page);
+      const tabId = await page.evaluate(() => window.__mageDev.store.getState().activeTabId);
+      const indice = await page.evaluate((id) => window.__mageDev.store.getState().accounts.findIndex((a) => a.id === id), destino);
+      await page.locator('[role="group"][aria-label="Cuentas"] button[aria-pressed]').nth(indice).click();
+      await page.waitForTimeout(CONFIG.settleMs);
+      const tras = await page.evaluate((id) => {
+        const s = window.__mageDev.store.getState();
+        return { dialogo: s.accountSwitchPrompt !== null, cuentaPestana: s.tabs.find((t) => t.id === id)?.accountId ?? null };
+      }, tabId);
+      await page.evaluate((estado) => {
+        window.__mageDev.store.getState().setActiveAccount(estado.activeAccountId);
+        window.__mageDev.store.setState({ tabs: estado.tabs, activeTabId: estado.activeTabId, splitLayout: estado.splitLayout });
+      }, previo);
+      await page.waitForTimeout(CONFIG.settleMs);
+      return { ok: !tras.dialogo && tras.cuentaPestana === destino, detail: JSON.stringify(tras) };
+    },
+  },
+  {
+    // P-028, punto 30: el menu contextual del avatar ofrece «Eliminar cuenta…» en las cuentas que no
+    // son la principal, y NUNCA en la principal. Se abre la confirmacion y se CANCELA: pulsar
+    // «Eliminar la cuenta» borraria de verdad un dir del HOME real (el harness no aisla el HOME).
+    name: '30: el menú del avatar ofrece eliminar cuenta (salvo la principal) y la confirmación se cancela',
+    async run(page) {
+      const avatares = page.locator('[role="group"][aria-label="Cuentas"] button[aria-pressed]');
+      const cuentas = await page.evaluate(() => window.__mageDev.store.getState().accounts.map((a) => ({ id: a.id, isMain: a.isMain })));
+      const menuTiene = async (index) => {
+        await avatares.nth(index).click({ button: 'right' });
+        const menu = page.locator('[data-account-menu="true"]');
+        await menu.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        return (await menu.getByRole('menuitem', { name: 'Eliminar cuenta…' }).count()) > 0;
+      };
+      const principal = cuentas.findIndex((c) => c.isMain);
+      const principalOfrece = principal >= 0 ? await menuTiene(principal) : false;
+      await page.keyboard.press('Escape');
+      const otra = cuentas.findIndex((c) => !c.isMain);
+      if (otra < 0) return { ok: !principalOfrece, detail: `solo la principal: ofrece borrar=${principalOfrece}` };
+      const otraOfrece = await menuTiene(otra);
+      await page.locator('[data-account-menu="true"]').getByRole('menuitem', { name: 'Eliminar cuenta…' }).click();
+      const dialogo = page.locator('[data-delete-account-dialog="true"]');
+      await dialogo.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      const texto = (await dialogo.textContent()) ?? '';
+      await dialogo.getByRole('button', { name: 'Cancelar' }).click();
+      await dialogo.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+      const siguen = await page.evaluate(() => window.__mageDev.store.getState().accounts.length);
+      const ok =
+        !principalOfrece && otraOfrece && /privad/.test(texto) && /compartidas no se tocan/.test(texto) && siguen === cuentas.length;
+      return { ok, detail: JSON.stringify({ principalOfrece, otraOfrece, dicePrivadas: /privad/.test(texto), siguen }) };
     },
   },
   {
@@ -2548,6 +2965,11 @@ const CHECKS = [
     // cerrado, como lo encontro.
     name: '2.10 / 2.11: sin cabecera «Tú» y menu de pestaña sin subtitulos',
     async run(page) {
+      // Autosuficiente: antes medía la burbuja que dejara en el chat activo alguna comprobacion anterior,
+      // y desde que W-E añadio comprobaciones que abren chats nuevos delante, el chat activo llegaba
+      // vacio (burbujas=0). Se hidrata una burbuja propia CON hora, para exigir que no se pinte.
+      const previo = await page.evaluate(() => window.__mageDev.store.getState().blocksByChat);
+      await hydrateBlocks(page, [{ kind: 'user', id: 'vg-210', text: 'Hola desde verify', time: '12:00', attachments: [] }]);
       const burbuja = await page.evaluate(() => {
         const bubbles = [...document.querySelectorAll('[data-block="user"]')];
         const texts = bubbles.map((node) => (node.textContent ?? '').trim());
@@ -2558,6 +2980,7 @@ const CHECKS = [
           conHora: texts.filter((text) => /\d{2}:\d{2}/.test(text)).length,
         };
       });
+      await page.evaluate((estado) => window.__mageDev.store.setState({ blocksByChat: estado }), previo);
       const menu = await measureTabContextMenu(page);
       const clamp = await measureTabContextMenuClamp(page);
       const ok =
@@ -2611,6 +3034,9 @@ const CHECKS = [
         turnos: [...document.querySelectorAll('[data-panel="activity"] [data-activity-turn]')].map((n) => n.textContent?.trim() ?? ''),
         // Se muda aqui la mitad de glifos de «Iconos: …»: `›_` son dos caracteres y descuadraba la fila.
         anchosDeGlifo: [...new Set([...document.querySelectorAll('[data-panel="activity"] [data-tool-glyph]')].map((n) => Math.round(n.getBoundingClientRect().width)))],
+        // Punto 18: el turno en curso y SU paso sin resultado (el Read) se marcan; solo una fila.
+        cabecerasVivas: document.querySelectorAll('[data-panel="activity"] [data-activity-turn][data-activity-live]').length,
+        filasVivas: [...document.querySelectorAll('[data-panel="activity"] [data-activity-row][data-activity-live]')].map((n) => n.textContent?.slice(0, 12) ?? ''),
       }));
       await page.locator('[data-panel="activity"] [data-activity-row="tool"]').first().click();
       await page.waitForTimeout(CONFIG.settleMs);
@@ -2627,6 +3053,9 @@ const CHECKS = [
         panel.filas === 4 &&
         panel.conError === 1 &&
         panel.anchosDeGlifo.length === 1 &&
+        panel.cabecerasVivas === 1 &&
+        panel.filasVivas.length === 1 &&
+        panel.filasVivas[0].includes('Read') &&
         detalle.includes('salida de v34-t1');
       return { ok, detail: `chat=${JSON.stringify(chat)} panel=${JSON.stringify(panel)} detalle=${JSON.stringify(detalle.slice(0, 80))}` };
     },
@@ -2680,6 +3109,10 @@ const CHECKS = [
         { kind: 'tool_use', tool: { toolUseId: 'v34-g1', toolName: 'Grep', input: { pattern: 'foo' }, parentToolUseId: 'v34-s1' } },
         { kind: 'tool_result', result: { toolUseId: 'v34-s2', isError: false, output: '{"agentId":"abc123"}', durationMs: 5000 } },
       ]);
+      // P-028 38: el dock es UNA linea agregada; las filas se ven al desplegarla.
+      const resumen = await page.evaluate(() => document.querySelector('[data-agents-dock-summary]')?.textContent?.trim() ?? '');
+      await page.locator('[data-agents-dock-summary]').first().click();
+      await page.waitForTimeout(CONFIG.settleMs);
       const vivo = await page.evaluate(() => {
         const dock = document.querySelector('[data-agents-dock]');
         const input = document.querySelector('[data-prompt-editor="true"]');
@@ -2706,9 +3139,10 @@ const CHECKS = [
       }));
       await restoreTurnState(page, previo);
       const ok =
+        resumen === '1 en ejecución · 1 terminado' &&
         vivo.filas.length === 2 &&
-        /^running:Explore.*Ejecutando Grep/.test(vivo.filas[0] ?? '') &&
-        /^done:Plan.*Terminado/.test(vivo.filas[1] ?? '') &&
+        /^running:buscar el bug.*Explore.*Ejecutando Grep/.test(vivo.filas[0] ?? '') &&
+        /^done:planear.*Plan.*Terminado/.test(vivo.filas[1] ?? '') &&
         vivo.encimaDelInput &&
         vivo.lineas.length === 1 &&
         /Lanzó 2 subagentes/.test(vivo.lineas[0] ?? '') &&
@@ -2717,7 +3151,243 @@ const CHECKS = [
         final.dock === 0 &&
         /2 terminados/.test(final.linea) &&
         /1 con error/.test(final.linea);
-      return { ok, detail: `vivo=${JSON.stringify(vivo)} filtrado=${filtrado} final=${JSON.stringify(final)}` };
+      return { ok, detail: `resumen=${JSON.stringify(resumen)} vivo=${JSON.stringify(vivo)} filtrado=${filtrado} final=${JSON.stringify(final)}` };
+    },
+  },
+  {
+    // P-028 37a/37c/38: un Agent en SEGUNDO PLANO (forma medida en 2.1.284: `async_launched` en el
+    // `tool_use_result`, luego `task_notification`) sigue en marcha con la pestaña parada, la linea dice
+    // «N en ejecución», «Ver más» abre el panel de agentes con la lista en vivo, la notificacion lo cierra
+    // y su X lo quita solo del dock.
+    name: 'P-028 37-38: subagentes en segundo plano: en marcha hasta la notificacion, linea agregada y panel en vivo',
+    async run(page) {
+      const previo = await captureTurnState(page);
+      const layout = await page.evaluate(() => window.__mageDev.panelStore.getState().layout);
+      await openTemporaryConversation(page);
+      const launched = (id, description) => [
+        { kind: 'tool_use', tool: { toolUseId: id, toolName: 'Agent', input: { subagent_type: 'general-purpose', description, run_in_background: true } } },
+        {
+          kind: 'tool_result',
+          result: {
+            toolUseId: id,
+            isError: false,
+            output: `Async agent launched successfully.\nagentId: ag-${id} (internal ID)`,
+            durationMs: 4,
+            subagent: { status: 'async_launched', agentId: `ag-${id}`, model: 'claude-haiku-4-5', totalTokens: null, totalDurationMs: null, totalToolUseCount: null },
+          },
+        },
+      ];
+      await injectTurn(page, [...launched('v37-a', 'Plan a'), ...launched('v37-b', 'Plan b'), { kind: 'result', result: { isError: false, subtype: 'success', numTurns: 1 } }]);
+      const lanzados = await page.evaluate(() => ({
+        estado: window.__mageDev.store.getState().statusByChat[window.__mageDev.store.getState().activeTabId] ?? 'idle',
+        resumen: document.querySelector('[data-agents-dock-summary]')?.textContent?.trim() ?? null,
+      }));
+      await page.locator('[data-agents-dock-more]').first().click();
+      await page.locator('[data-active-panel="agents"] [data-agents-panel-row]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      const panel = await page.evaluate(() => [...document.querySelectorAll('[data-active-panel="agents"] [data-agents-panel-row]')].map((n) => `${n.getAttribute('data-agents-panel-row')}:${n.textContent?.trim() ?? ''}`));
+      await page.evaluate(() => {
+        const dev = window.__mageDev;
+        const tabId = dev.store.getState().activeTabId;
+        dev.store.setState((s) => dev.reduceEvent(s, tabId, { kind: 'subagent_update', toolUseId: 'v37-a', status: 'completed', tokens: 19906, toolUses: 2, durationMs: 1422 }));
+      });
+      await page.waitForTimeout(CONFIG.settleMs);
+      await page.locator('[data-agents-dock-summary]').first().click();
+      await page.waitForTimeout(CONFIG.settleMs);
+      const trasUno = await page.evaluate(() => ({
+        resumen: document.querySelector('[data-agents-dock-summary]')?.textContent?.trim() ?? null,
+        filas: [...document.querySelectorAll('[data-agents-dock-row]')].map((n) => n.getAttribute('data-agents-dock-row')),
+        equis: document.querySelectorAll('[data-agents-dock-dismiss]').length,
+        panelA: document.querySelector('[data-active-panel="agents"] [data-agents-panel-row="done"]')?.textContent?.trim() ?? null,
+        // 0.1.1 R2, punto 29: «Parar» solo en el que sigue en marcha, en el dock y en el panel.
+        pararDock: document.querySelectorAll('[data-agents-dock] [data-agents-stop]').length,
+        pararPanel: document.querySelectorAll('[data-active-panel="agents"] [data-agents-stop]').length,
+      }));
+      // El clic manda `stopSubagent` con SU agentId. Se sustituye la accion un momento para no llamar al
+      // CLI (la sesion de esta conversacion es de mentira) y se restaura.
+      const parado = await page.evaluate(async () => {
+        const dev = window.__mageDev;
+        const original = dev.store.getState().stopSubagent;
+        const llamadas = [];
+        dev.store.setState({ stopSubagent: (tabId, taskId) => llamadas.push(taskId) });
+        // Dos frames: el boton lee la accion por selector y tiene que volver a pintarse con la sustituta.
+        await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+        document.querySelector('[data-agents-dock] [data-agents-stop]')?.click();
+        dev.store.setState({ stopSubagent: original });
+        return llamadas;
+      });
+      await page.locator('[data-agents-dock-dismiss]').first().click();
+      await page.waitForTimeout(CONFIG.settleMs);
+      const trasQuitar = await page.evaluate(() => ({
+        filas: document.querySelectorAll('[data-agents-dock-row]').length,
+        enElPanel: document.querySelectorAll('[data-active-panel="agents"] [data-agents-panel-row]').length,
+      }));
+      await page.evaluate(() => {
+        const dev = window.__mageDev;
+        const tabId = dev.store.getState().activeTabId;
+        dev.store.setState((s) => dev.reduceEvent(s, tabId, { kind: 'subagent_update', toolUseId: 'v37-b', status: 'stopped', tokens: null, toolUses: null, durationMs: null }));
+      });
+      await page.waitForTimeout(CONFIG.settleMs * 2);
+      const final = await page.evaluate(() => document.querySelectorAll('[data-agents-dock]').length);
+      await page.evaluate((l) => window.__mageDev.panelStore.setState({ layout: l }), layout);
+      await restoreTurnState(page, previo);
+      const ok =
+        lanzados.estado === 'idle' &&
+        lanzados.resumen === '2 en ejecución' &&
+        panel.length === 2 &&
+        panel.every((fila) => fila.startsWith('running:') && fila.includes('claude-haiku-4-5')) &&
+        trasUno.resumen === '1 en ejecución · 1 terminado' &&
+        JSON.stringify(trasUno.filas) === JSON.stringify(['done', 'running']) &&
+        trasUno.equis === 1 &&
+        trasUno.pararDock === 1 &&
+        trasUno.pararPanel === 1 &&
+        JSON.stringify(parado) === JSON.stringify(['ag-v37-b']) &&
+        /19\.906 tokens/.test(trasUno.panelA ?? '') &&
+        /2 herramientas/.test(trasUno.panelA ?? '') &&
+        trasQuitar.filas === 1 &&
+        trasQuitar.enElPanel === 2 &&
+        final === 0;
+      return { ok, detail: `lanzados=${JSON.stringify(lanzados)} panel=${JSON.stringify(panel)} trasUno=${JSON.stringify(trasUno)} parado=${JSON.stringify(parado)} trasQuitar=${JSON.stringify(trasQuitar)} dockFinal=${final}` };
+    },
+  },
+  {
+    // 0.1.1 R2, punto 30: con un turno en marcha la cola es de Mage. Se encola por la ACCION del store
+    // (nunca Enter con texto), y el `result` se inyecta por `handleEvent` con una sesion de mentira; el
+    // envio que sale de la cola se intercepta sustituyendo `sendMessageToTab`, asi no arranca ningun CLI.
+    name: 'R2 30: cola de Mage: «En cola» encima del input, sin burbuja ni reloj nuevo, y sale de uno en uno',
+    async run(page) {
+      const previo = await captureTurnState(page);
+      await openTemporaryConversation(page);
+      const antes = await page.evaluate(async () => {
+        const dev = window.__mageDev;
+        const tabId = dev.store.getState().activeTabId;
+        const previos = { sessionIdByChat: dev.store.getState().sessionIdByChat, turnStartByChat: dev.store.getState().turnStartByChat };
+        dev.store.setState((s) => ({
+          sessionIdByChat: { ...s.sessionIdByChat, [tabId]: 'verify-queue-session' },
+          statusByChat: { ...s.statusByChat, [tabId]: 'streaming' },
+          turnStartByChat: { ...s.turnStartByChat, [tabId]: 1234 },
+        }));
+        await dev.store.getState().sendMessageToTab(tabId, 'primero en cola');
+        await dev.store.getState().sendMessageToTab(tabId, 'segundo en cola');
+        await dev.store.getState().sendMessageToTab(tabId, 'tercero en cola');
+        return { tabId, previos };
+      });
+      await page.locator('[data-queued-messages]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      // Que termine la animacion de entrada (crece de alto): a mitad, el input aun no se ha desplazado.
+      await page.waitForTimeout(CONFIG.settleMs * 2);
+      const encolado = await page.evaluate((tabId) => {
+        const s = window.__mageDev.store.getState();
+        const dock = document.querySelector('[data-queued-messages]');
+        const input = document.querySelector('[data-prompt-editor="true"]');
+        return {
+          filas: [...document.querySelectorAll('[data-queued-message]')].map((n) => n.textContent?.trim() ?? ''),
+          burbujas: (s.blocksByChat[tabId] ?? []).filter((b) => b.kind === 'user').length,
+          reloj: s.turnStartByChat[tabId],
+          encimaDelInput: dock !== null && input !== null && dock.getBoundingClientRect().bottom <= input.getBoundingClientRect().top + 1,
+          y: [dock?.getBoundingClientRect().top, dock?.getBoundingClientRect().bottom, input?.getBoundingClientRect().top, document.querySelectorAll('[data-prompt-editor="true"]').length],
+        };
+      }, antes.tabId);
+      // Quitar el tercero y editar el segundo (vuelve al input).
+      await page.locator('[data-queued-message]').nth(2).locator('[data-queued-remove]').click();
+      await page.locator('[data-queued-message]').nth(1).locator('[data-queued-edit]').click();
+      await page.waitForTimeout(CONFIG.settleMs);
+      const trasEditar = await page.evaluate((tabId) => ({
+        filas: document.querySelectorAll('[data-queued-message]').length,
+        borrador: window.__mageDev.store.getState().draftByChat[tabId]?.text ?? null,
+      }), antes.tabId);
+      // Fin del turno: sale SOLO el primero.
+      const enviados = await page.evaluate((tabId) => {
+        const dev = window.__mageDev;
+        const original = dev.store.getState().sendMessageToTab;
+        const llamadas = [];
+        dev.store.setState({ sendMessageToTab: async (id, text) => { llamadas.push([id === tabId, text]); } });
+        dev.store.getState().handleEvent('verify-queue-session', { kind: 'result', result: { isError: false, subtype: 'success', numTurns: 1 } });
+        dev.store.setState({ sendMessageToTab: original });
+        return { llamadas, cola: dev.store.getState().queuedByChat[tabId]?.length ?? 0 };
+      }, antes.tabId);
+      await page.locator('[data-queued-messages]').first().waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+      await page.evaluate(({ tabId, previos }) => {
+        const dev = window.__mageDev;
+        dev.store.getState().setDraft(tabId, null);
+        dev.store.setState(previos);
+      }, antes);
+      await restoreTurnState(page, previo);
+      const ok =
+        encolado.filas.length === 3 &&
+        encolado.filas[0]?.startsWith('primero en cola') === true &&
+        encolado.burbujas === 0 &&
+        encolado.reloj === 1234 &&
+        encolado.encimaDelInput &&
+        trasEditar.filas === 1 &&
+        trasEditar.borrador === 'segundo en cola' &&
+        JSON.stringify(enviados.llamadas) === JSON.stringify([[true, 'primero en cola']]) &&
+        enviados.cola === 0;
+      return { ok, detail: `encolado=${JSON.stringify(encolado)} trasEditar=${JSON.stringify(trasEditar)} enviados=${JSON.stringify(enviados)}` };
+    },
+  },
+  {
+    // P-028 39: al abrir un subagente, su transcripcion se pinta SOLA en el panel (la lista no queda
+    // debajo) y la capa no se sale del panel. Sin fichero en disco el cuerpo es el aviso de error: lo que
+    // se mide es la caja, que era lo roto.
+    name: 'P-028 39: abrir un subagente en el panel pinta solo su transcripcion, dentro del panel',
+    async run(page) {
+      const previo = await captureTurnState(page);
+      const layout = await page.evaluate(() => window.__mageDev.panelStore.getState().layout);
+      await openTemporaryConversation(page);
+      await injectTurn(page, [
+        { kind: 'tool_use', tool: { toolUseId: 'v39-a', toolName: 'Agent', input: { subagent_type: 'Explore', description: 'Plan c' } } },
+        { kind: 'tool_result', result: { toolUseId: 'v39-a', isError: false, output: 'agentId: v39agent (internal ID)', durationMs: 900 } },
+      ]);
+      await page.evaluate(() => {
+        const dev = window.__mageDev;
+        const tabId = dev.store.getState().activeTabId;
+        dev.store.setState((s) => ({ sessionIdByChat: { ...s.sessionIdByChat, [tabId]: 'v39-session' } }));
+      });
+      await page.evaluate(() => window.__mageDev.panelStore.getState().revealPanelById('agents'));
+      await page.locator('[data-active-panel="agents"] [data-agents-panel-row] button, [data-active-panel="agents"] button[data-tip="Ver la transcripción de este subagente"]').first().click();
+      await page.locator('[data-subagent-transcript]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      const medido = await page.evaluate(() => {
+        const pane = document.querySelector('[data-active-panel="agents"]');
+        const layer = document.querySelector('[data-subagent-transcript]');
+        const p = pane?.getBoundingClientRect();
+        const l = layer?.getBoundingClientRect();
+        return {
+          listaVisible: document.querySelectorAll('[data-agents-panel]').length,
+          overflow: layer === null ? null : getComputedStyle(layer).overflow,
+          dentro: p !== undefined && l !== undefined && l.top >= p.top - 1 && l.bottom <= p.bottom + 1,
+        };
+      });
+      await page.keyboard.press('Escape');
+      await page.evaluate((l) => window.__mageDev.panelStore.setState({ layout: l }), layout);
+      await restoreTurnState(page, previo);
+      const ok = medido.listaVisible === 0 && medido.overflow === 'hidden' && medido.dentro;
+      return { ok, detail: JSON.stringify(medido) };
+    },
+  },
+  {
+    // P-028 40: el clic en una notificacion llega al renderer como `NotificationTarget` y lleva a SU
+    // pestaña (y a Actividad si es «Subagente terminado»); una conversacion que ya no tiene pestaña solo
+    // resalta su fila. El clic real en el SO no se puede provocar desde aqui: se entra por la accion que
+    // llama el canal `notification:clicked`.
+    name: 'P-028 40: el destino de una notificacion activa su pestaña, abre Actividad y resalta el historial',
+    async run(page) {
+      const previo = await captureTurnState(page);
+      const layout = await page.evaluate(() => window.__mageDev.panelStore.getState().layout);
+      await openTemporaryConversation(page);
+      const origen = await page.evaluate(() => window.__mageDev.store.getState().activeTabId);
+      await openTemporaryConversation(page);
+      const resultado = await page.evaluate((tabId) => {
+        const dev = window.__mageDev;
+        dev.store.getState().focusNotificationTarget({ tabId, sessionId: 'v40-sin-sesion', opensActivity: true });
+        const activa = dev.store.getState().activeTabId;
+        dev.store.getState().focusNotificationTarget({ sessionId: 'v40-nada' });
+        return { activa, trasNada: dev.store.getState().activeTabId };
+      }, origen);
+      await page.waitForTimeout(CONFIG.settleMs);
+      const actividad = await page.evaluate(() => document.querySelectorAll('[data-active-panel="activity"]').length);
+      await page.evaluate((l) => window.__mageDev.panelStore.setState({ layout: l }), layout);
+      await restoreTurnState(page, previo);
+      const ok = resultado.activa === origen && resultado.trasNada === origen && actividad === 1;
+      return { ok, detail: `origen=${origen} ${JSON.stringify(resultado)} actividad=${actividad}` };
     },
   },
   {
@@ -3512,6 +4182,207 @@ const CHECKS = [
       return { ok, detail: JSON.stringify(medido) };
     },
   },
+  {
+    // P-028, punto 15: un fichero que el agente escribio FUERA de la carpeta de la conversacion ya no
+    // da un error: el panel lo lista y ofrece «Abrir de todos modos…» (la pregunta la hace main con un
+    // dialogo NATIVO). Esta comprobacion NO pulsa nada: el dialogo nativo no se puede contestar por CDP
+    // y bloquearia el arnes. Se mide solo el aviso del fichero que el panel abre por defecto (ese no
+    // pregunta solo: el dialogo sale unicamente cuando el usuario elige el fichero).
+    name: 'P-028 15: un fichero fuera de la carpeta se ofrece abrir en vez de dar error',
+    async run(page) {
+      const previoStore = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return { tabs: s.tabs, activeTabId: s.activeTabId, splitLayout: s.splitLayout, sessionIdByChat: s.sessionIdByChat };
+      });
+      await openTemporaryConversation(page);
+      const cwd = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return s.tabs.find((t) => t.id === s.activeTabId)?.cwd ?? null;
+      });
+      if (cwd === null) throw new Error('la conversacion temporal no tiene cwd');
+      // Hermana del cwd: fuera de el y fuera de las tres raices sin pregunta (planes, memoria, scratchpad).
+      const outsideDir = path.join(path.dirname(cwd), `mage-verify-fuera-${Date.now()}`);
+      const outsidePath = path.join(outsideDir, 'nota.md');
+      fs.mkdirSync(outsideDir, { recursive: true });
+      fs.writeFileSync(outsidePath, '# Nota de fuera\n', 'utf-8');
+      let medido = null;
+      try {
+        await page.evaluate((ruta) => {
+          const dev = window.__mageDev;
+          const tabId = dev.store.getState().activeTabId;
+          const sessionId = 'verify-outside-session';
+          dev.store.setState((state) => ({ sessionIdByChat: { ...state.sessionIdByChat, [tabId]: sessionId } }));
+          const handle = (event) => dev.store.getState().handleEvent(sessionId, event);
+          handle({ kind: 'tool_use', tool: { toolUseId: 'tu-write-fuera', toolName: 'Write', input: { file_path: ruta } } });
+          handle({
+            kind: 'tool_result',
+            result: { toolUseId: 'tu-write-fuera', isError: false, output: 'File created successfully', durationMs: 3, file: { path: ruta, content: '# Nota' } },
+          });
+        }, outsidePath);
+        await page.waitForTimeout(CONFIG.settleMs * 5);
+        medido = await page.evaluate(() => {
+          const panel = document.querySelector('[data-files-panel="true"]');
+          const aviso = panel?.querySelector('[data-outside-cwd="true"]') ?? null;
+          return {
+            aviso: aviso !== null,
+            boton: [...(aviso?.querySelectorAll('button') ?? [])].some((b) => (b.textContent ?? '').includes('Abrir de todos modos')),
+            errores: [...(panel?.querySelectorAll('[role="alert"]') ?? [])].map((n) => n.textContent ?? ''),
+            contenidoFiltrado: (panel?.textContent ?? '').includes('Nota de fuera'),
+          };
+        });
+      } finally {
+        fs.rmSync(outsideDir, { recursive: true, force: true });
+        await page.evaluate((estado) => window.__mageDev.store.setState(estado), previoStore);
+        await page.waitForTimeout(CONFIG.settleMs);
+      }
+      const ok = medido?.aviso === true && medido.boton === true && medido.errores.length === 0 && medido.contenidoFiltrado === false;
+      return { ok, detail: JSON.stringify(medido) };
+    },
+  },
+  {
+    // P-028 grupo C (puntos 3, 35 y `/clear`): la salida de un comando local se VE en el chat. Se
+    // inyecta por `handleEvent` lo que normalize.ts saca de los payloads medidos en 2.1.284 (un
+    // `assistant` sintetico con `local_command_run`, y `conversation_reset`). Ningun turno: el sessionId
+    // es inventado y ningun evento de estos llama al CLI.
+    name: 'P-028 C: comandos locales en el chat (rename, context, usage, clear)',
+    async run(page) {
+      const previoStore = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return { tabs: s.tabs, activeTabId: s.activeTabId, splitLayout: s.splitLayout, sessionIdByChat: s.sessionIdByChat, blocksByChat: s.blocksByChat };
+      });
+      await openTemporaryConversation(page);
+      const context = '## Context Usage\n| Category | Tokens |\n|---|---|\n| System prompt | 3.1k |\n| Messages | 120 |';
+      const usage = 'Current session   12%\nCurrent week      40%';
+      await page.evaluate(({ context, usage }) => {
+        const dev = window.__mageDev;
+        const tabId = dev.store.getState().activeTabId;
+        const sessionId = 'verify-local-commands';
+        dev.store.setState((state) => ({ sessionIdByChat: { ...state.sessionIdByChat, [tabId]: sessionId } }));
+        const handle = (event) => dev.store.getState().handleEvent(sessionId, event);
+        handle({ kind: 'local_command_output', command: 'rename', args: 'verify-renombrada', text: 'Session renamed to: verify-renombrada' });
+        handle({ kind: 'local_command_output', command: 'context', args: '', text: context });
+        handle({ kind: 'local_command_output', command: 'usage', args: '', text: usage });
+      }, { context, usage });
+      await page.waitForTimeout(CONFIG.settleMs * 2);
+      const antes = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        const tab = s.tabs.find((t) => t.id === s.activeTabId);
+        const md = document.querySelector('[data-command-output="markdown"]');
+        return {
+          titulo: tab?.title ?? null,
+          lineas: document.querySelectorAll('[data-command-output="line"]').length,
+          conTabla: md?.querySelector('table') !== null && md !== null,
+          categoria: (md?.textContent ?? '').includes('System prompt'),
+          cabecera: (md?.textContent ?? '').includes('/context'),
+          pre: document.querySelector('[data-command-output="pre"] pre')?.textContent ?? null,
+        };
+      });
+      await page.evaluate(() => {
+        const dev = window.__mageDev;
+        dev.store.getState().handleEvent('verify-local-commands', { kind: 'conversation_reset', newSessionId: 'verify-local-commands-2' });
+      });
+      await page.waitForTimeout(CONFIG.settleMs * 2);
+      const trasClear = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return {
+          sesion: s.sessionIdByChat[s.activeTabId] ?? null,
+          bloques: (s.blocksByChat[s.activeTabId] ?? []).map((b) => b.kind),
+          linea: [...document.querySelectorAll('[data-block="system"]')].some((n) => (n.textContent ?? '').includes('Conversación reiniciada')),
+          salidasFuera: document.querySelectorAll('[data-command-output]').length === 0,
+        };
+      });
+      await page.evaluate((estado) => window.__mageDev.store.setState(estado), previoStore);
+      await page.waitForTimeout(CONFIG.settleMs);
+      const ok =
+        antes.titulo === 'verify-renombrada' &&
+        antes.lineas === 1 &&
+        antes.conTabla === true &&
+        antes.categoria === true &&
+        antes.cabecera === true &&
+        antes.pre === usage &&
+        trasClear.sesion === 'verify-local-commands-2' &&
+        trasClear.bloques.length === 1 &&
+        trasClear.linea === true &&
+        trasClear.salidasFuera === true;
+      return { ok, detail: JSON.stringify({ antes, trasClear }) };
+    },
+  },
+  {
+    // P-028 C, punto 7: el panel «Contexto» enseña la OCUPACION de la ventana (el desglose del CLI, el
+    // mismo de la barra de estado) y no solo lo facturado. Se inyecta un `context_usage` con la forma de
+    // `get_context_usage` medida en 2.1.284; ningun IPC.
+    name: 'P-028 C: el panel Contexto enseña la ventana de contexto del CLI',
+    async run(page) {
+      const previo = await page.evaluate(() => ({
+        store: (({ tabs, activeTabId, splitLayout, contextUsageByChat }) => ({ tabs, activeTabId, splitLayout, contextUsageByChat }))(window.__mageDev.store.getState()),
+        layout: window.__mageDev.panelStore.getState().layout,
+      }));
+      await openTemporaryConversation(page);
+      await page.evaluate(() => {
+        const dev = window.__mageDev;
+        const tabId = dev.store.getState().activeTabId;
+        const usage = {
+          totalTokens: 41_000,
+          maxTokens: 1_000_000,
+          percentage: 4,
+          categories: [
+            { name: 'System prompt', tokens: 3_100, isDeferred: false },
+            { name: 'Messages', tokens: 37_900, isDeferred: false },
+            { name: 'Free space', tokens: 959_000, isDeferred: false },
+          ],
+        };
+        // El desglose del CLI solo existe con sesion (el CLI arranca perezoso al primer mensaje), y sin
+        // ella el panel dice «Abre una conversación…» a proposito. Se le da un `resumeSessionId` de
+        // mentira —el mismo truco que «Cambiar de cuenta»—, que no arranca nada.
+        dev.store.setState((s) => ({
+          contextUsageByChat: { ...s.contextUsageByChat, [tabId]: usage },
+          tabs: s.tabs.map((t) => (t.id === tabId ? { ...t, resumeSessionId: 'vg-contexto' } : t)),
+        }));
+      });
+      await page.waitForTimeout(CONFIG.settleMs * 2);
+      const medido = {};
+      const boton = page.getByRole('button', { name: 'Contexto', exact: true }).first();
+      if (await boton.isVisible().catch(() => false)) {
+        await boton.click();
+        await page.waitForTimeout(CONFIG.settleMs * 2);
+        Object.assign(
+          medido,
+          await page.evaluate(() => {
+            const pane = document.querySelector('[data-active-panel="context"]');
+            const ventana = pane?.querySelector('[data-context-window="true"]');
+            return {
+              ventana: ventana !== null && ventana !== undefined,
+              origen: ventana?.querySelector('[data-context-breakdown]')?.getAttribute('data-context-breakdown') ?? null,
+              categorias: [...(ventana?.querySelectorAll('[data-context-category]') ?? [])].map((n) => n.getAttribute('data-context-category')),
+              pctPanel: /· (\d+)%/.exec(ventana?.textContent ?? '')?.[1] ?? null,
+              // El dato del store (lo que reporta el CLI), no otro elemento de la UI: la barra de estado ya no lo pinta.
+              pctStore: String(window.__mageDev.store.getState().contextUsageByChat[window.__mageDev.store.getState().activeTabId]?.percentage ?? ''),
+              acumulado: (pane?.textContent ?? '').includes('TOKENS CONSUMIDOS (acumulado)'),
+            };
+          }),
+        );
+        await boton.click();
+        await page.waitForTimeout(CONFIG.settleMs);
+      } else {
+        medido.fallo = 'sin icono de Contexto';
+      }
+      await page.evaluate((p) => {
+        window.__mageDev.store.setState(p.store);
+        window.__mageDev.panelStore.setState({ layout: p.layout });
+      }, previo);
+      await page.waitForTimeout(CONFIG.settleMs);
+      const ok =
+        medido.ventana === true &&
+        medido.origen === 'cli' &&
+        medido.categorias?.includes('System prompt') === true &&
+        medido.categorias?.includes('Messages') === true &&
+        medido.categorias?.includes('Free space') === false &&
+        medido.pctPanel === '4' &&
+        medido.pctStore === medido.pctPanel &&
+        medido.acumulado === true;
+      return { ok, detail: JSON.stringify(medido) };
+    },
+  },
   // --- Fase 0 de la auditoria: MEDIR, no solo comprobar -------------------------------------------
   // Las tres de abajo no miran si el DOM es correcto: miran cuanto CUESTA. Existen porque el resto del
   // plan cambia rendimiento y, sin un numero previo, "mejorado" no seria mas que una impresion. Los
@@ -3808,19 +4679,27 @@ const CHECKS = [
         await new Promise((resolve) => requestAnimationFrame(resolve));
         const antes = document.querySelectorAll('[role="status"]').length;
 
+        // P-028, 20: el CLI manda DOS avisos del mismo limite (el rechazado con hora y el `assistant` con
+        // texto). Tienen que quedar en UNA linea, en castellano, con el texto del CLI en el tooltip.
+        const LINEA = 'Límite de uso alcanzado';
+        dev.store.setState((s) => dev.reduceEvent(s, tabId, { kind: 'rate_limit', summary: '', resetsAtMs: Date.now() + 60 * 60 * 1000 }));
         dev.store.setState((s) => dev.reduceEvent(s, tabId, { kind: 'rate_limit', summary: resumen, resetsAtMs: null }));
         await new Promise((resolve) => requestAnimationFrame(resolve));
-        const banner = [...document.querySelectorAll('[role="status"]')].find((n) => (n.textContent ?? '').includes(resumen)) ?? null;
+        const banner = [...document.querySelectorAll('[role="status"]')].find((n) => (n.textContent ?? '').includes(LINEA)) ?? null;
+        const lineas = (dev.store.getState().blocksByChat[tabId] ?? []).filter((b) => b.kind === 'system' && b.text.startsWith(LINEA));
         const conBanner = {
           existe: banner !== null,
           // La linea del hilo TAMBIEN tiene que estar: el banner es la accion, no el relato.
-          lineaEnElHilo: (document.body.innerText ?? '').includes(resumen),
+          lineasEnElHilo: lineas.length,
+          conHora: /se restablece a las/.test(lineas[0]?.text ?? ''),
+          tooltipCli: document.querySelector(`[data-tip="${CSS.escape(resumen)}"]`) !== null,
+          casillaContinuar: banner?.querySelector('input[type="checkbox"]') !== null && banner !== null,
           destinos: banner === null ? [] : [...banner.querySelectorAll('button')].map((b) => (b.textContent ?? '').trim()),
         };
 
         dev.store.setState((s) => ({ rateLimitByChat: Object.fromEntries(Object.entries(s.rateLimitByChat).filter(([k]) => k !== tabId)) }));
         await new Promise((resolve) => requestAnimationFrame(resolve));
-        const trasLimpiar = [...document.querySelectorAll('[role="status"]')].filter((n) => (n.textContent ?? '').includes(resumen)).length;
+        const trasLimpiar = [...document.querySelectorAll('[role="status"]')].filter((n) => (n.textContent ?? '').includes(LINEA)).length;
         return { statusAntes: antes, ...conBanner, trasLimpiar };
       }, RATE_LIMIT_SUMMARY);
 
@@ -3829,7 +4708,10 @@ const CHECKS = [
 
       const ok =
         medido.existe &&
-        medido.lineaEnElHilo &&
+        medido.lineasEnElHilo === 1 &&
+        medido.conHora &&
+        medido.tooltipCli &&
+        medido.casillaContinuar &&
         medido.destinos.length === 1 &&
         medido.destinos[0] === 'suplente' &&
         medido.trasLimpiar === 0;
@@ -4786,6 +5668,82 @@ const CHECKS = [
     },
   },
   {
+    // Punto 21: reordenar iconos dentro de su propia zona. Antes soltar un icono en su propio grupo lanzaba
+    // una excepcion (`ya esta en ...`). Con `DragEvent` sintetico se suelta el ultimo icono de una zona
+    // sobre la mitad de arriba del primero: el orden cambia, no hay error de pagina, y se vuelve a soltar
+    // al final para dejar el layout como estaba. El gesto real con el raton sigue siendo manual.
+    name: 'Stripe: soltar un icono sobre otro de su zona lo reordena sin error',
+    async run(page) {
+      const medido = await page.evaluate(async () => {
+        const errores = [];
+        const onError = (e) => errores.push(String(e.message ?? e));
+        window.addEventListener('error', onError);
+        const MIME = 'application/x-mage-panel-id';
+        const zonas = [...document.querySelectorAll('[role="toolbar"]')]
+          .flatMap((t) => [...t.querySelectorAll('div')])
+          .filter((d) => [...d.children].filter((c) => c.matches('button[data-stripe-btn="true"]')).length >= 2);
+        const zona = zonas[0];
+        if (zona === undefined) return { saltado: true };
+        const orden = () => [...zona.children].filter((c) => c.matches('button[data-stripe-btn="true"]')).map((b) => b.getAttribute('aria-label'));
+        const soltar = (origen, destino, arriba) => {
+          const dt = new DataTransfer();
+          dt.setData(MIME, origen.dataset.panelId ?? '');
+          const rect = destino.getBoundingClientRect();
+          const init = { bubbles: true, cancelable: true, dataTransfer: dt, clientY: arriba ? rect.top + 2 : rect.bottom - 2 };
+          destino.dispatchEvent(new DragEvent('dragover', init));
+          destino.dispatchEvent(new DragEvent('drop', init));
+          // React 19 pinta lo que cambia el drop en una microtarea/frame, no dentro del dispatch: leer el
+          // orden en la misma pila daba siempre el de antes.
+          return new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+        };
+        const botones = [...zona.children].filter((c) => c.matches('button[data-stripe-btn="true"]'));
+        const antes = orden();
+        const ultimo = botones[botones.length - 1];
+        const primero = botones[0];
+        await soltar(ultimo, primero, true);
+        const despues = orden();
+        const ultimoAhora = [...zona.children].filter((c) => c.matches('button[data-stripe-btn="true"]')).at(-1);
+        await soltar(ultimo, ultimoAhora, false); // restaurar: al final
+        window.removeEventListener('error', onError);
+        return { saltado: false, antes, despues, restaurado: orden(), errores };
+      });
+      const ok =
+        medido.saltado === true ||
+        (medido.despues[0] === medido.antes[medido.antes.length - 1] && JSON.stringify(medido.restaurado) === JSON.stringify(medido.antes) && medido.errores.length === 0);
+      return { ok, detail: JSON.stringify(medido) };
+    },
+  },
+  {
+    // Cursor de mano sobre lo clicable (revision 0.1.1, punto 4): Tailwind v4 quito `cursor: pointer` del
+    // preflight y la regla global vive en `@layer base`. Se mide el cursor CALCULADO: un boton habilitado
+    // y un icono de la stripe dicen `pointer`; uno deshabilitado NO; y una utilidad `cursor-not-allowed`
+    // sigue mandando sobre la regla global (si la regla estuviera fuera de capa, la aplastaria).
+    name: 'Cursor: pointer sobre lo clicable, y las utilidades siguen mandando',
+    async run(page) {
+      const medido = await page.evaluate(() => {
+        const cursorDe = (el) => getComputedStyle(el).cursor;
+        const probe = document.createElement('div');
+        probe.innerHTML =
+          '<button id="mg-probe-on">a</button><button id="mg-probe-off" disabled>b</button>' +
+          '<button id="mg-probe-util" class="cursor-not-allowed">c</button>';
+        document.body.appendChild(probe);
+        const r = {
+          habilitado: cursorDe(probe.querySelector('#mg-probe-on')),
+          deshabilitado: cursorDe(probe.querySelector('#mg-probe-off')),
+          utilidad: cursorDe(probe.querySelector('#mg-probe-util')),
+          stripe: (() => {
+            const b = document.querySelector('button[data-stripe-btn="true"]');
+            return b === null ? null : cursorDe(b);
+          })(),
+        };
+        probe.remove();
+        return r;
+      });
+      const ok = medido.habilitado === 'pointer' && medido.deshabilitado !== 'pointer' && medido.utilidad === 'not-allowed' && (medido.stripe === null || medido.stripe === 'pointer');
+      return { ok, detail: JSON.stringify(medido) };
+    },
+  },
+  {
     // Iconografia: NINGUN emoji de color en la interfaz. El repo ya declaraba la regla por escrito en
     // `panelRegistry.ts` y en `toolClassify.ts` ("MONOCROMO a proposito… un emoji de color se sale de
     // la paleta del tema y no conmuta con el"), y estaba incumplida en ~70 sitios del renderer.
@@ -4804,7 +5762,7 @@ const CHECKS = [
         // `panelRegistry.ts` y `toolClassify.ts` declaran por escrito como el estilo de la casa.
         // Unicode clasifica varios de ellos como pictograficos, asi que sin esta lista la comprobacion
         // marcaria como defecto justo lo que la regla del repo manda usar.
-        const VOCABULARIO = new Set([...'☰⚒◇◔⚙«»⌕✎⇲▣⫿▸▾']);
+        const VOCABULARIO = new Set([...'☰◇◔«»⌕⇲▸▾']);
         // Zonas cuyo texto NO es iconografia de Mage: lo escribe el usuario o lo devuelve el agente.
         const AJENO = ['[data-transcript]', '[role="log"]', '.mg-markdown', '[data-artifact-favicon]', '[contenteditable="true"]'];
         const esAjeno = (nodo) => {
@@ -5325,7 +6283,7 @@ async function separatorValue(handle) {
   return raw === null || !Number.isFinite(value) ? null : value;
 }
 
-// Modo de permiso que declara el chip de la PromptBar ("Manual", "Auto-editar", "Plan", "Auto", "Omitir permisos").
+// Modo de permiso que declara el chip de la PromptBar ("Manual", "Aceptar ediciones", "Plan", "Auto", "Omitir permisos").
 async function permissionModeLabel(page) {
   const chip = page.locator('[aria-label^="Modo de permiso:"]').first();
   return ((await chip.getAttribute('aria-label')) ?? '').replace('Modo de permiso:', '').trim();
@@ -5570,7 +6528,9 @@ function readChatCode(page) {
     if (pre === null) return null;
     const spans = [...pre.querySelectorAll('span[style]')];
     const colors = [...new Set(spans.map((span) => span.style.color).filter((color) => color.length > 0))];
-    return { lang: pre.previousElementSibling?.textContent?.trim() ?? null, text: pre.textContent ?? '', spans: spans.length, colors };
+    // La cabecera del bloque lleva la etiqueta del lenguaje Y el boton Copiar (W-B, punto 8): se lee
+    // solo su primer hijo, que es la etiqueta; el texto entero de la cabecera saldria `tsCopiar`.
+    return { lang: pre.previousElementSibling?.firstElementChild?.textContent?.trim() ?? null, text: pre.textContent ?? '', spans: spans.length, colors };
   });
 }
 
@@ -5619,13 +6579,35 @@ function seedOnboardingDone(userDataDir) {
 // P-026 2.5: sin `mcp-common.json`, main lo IMPORTA al arrancar desde el `~/.claude/mcp-shared.json` y
 // los `.claude.json` REALES del usuario —con los `env` de sus servidores— y lo escribiria en este
 // perfil. Se siembra uno falso: la importacion no corre y la seccion tiene algo conocido que enseñar.
-const SEEDED_MCP_SERVERS = ['vg-comun-a', 'vg-comun-b'];
+// P-028: un local con `env` y un HTTP con cabecera, los dos con un valor centinela que NO puede llegar
+// al DOM; mas fuentes falsas de cuenta y de Claude Desktop (MAGE_MCP_FAKE_SOURCES, ver main).
+const SEEDED_MCP_LOCAL = 'vg-comun-local';
+const SEEDED_MCP_HTTP = 'vg-comun-http';
+const SEEDED_MCP_SERVERS = [SEEDED_MCP_LOCAL, SEEDED_MCP_HTTP];
+const SEEDED_MCP_ACCOUNT_SERVER = 'vg-cuenta';
+const SEEDED_MCP_DESKTOP_SERVER = 'vg-escritorio';
+const SEEDED_MCP_SECRET = 'vg-valor-que-no-debe-verse';
+// El servidor que reporta el CLI falso de main con MAGE_MCP_FAKE_CLI=1 (src/main/config/mcpFakeCli.ts).
+const FAKE_MCP_AUTH_SERVER = 'vg-auth';
+
+function mcpFakeSourcesDir(userDataDir) {
+  return path.join(userDataDir, 'mcp-fake-sources');
+}
 
 function seedMcpCommon(userDataDir) {
   const dir = path.join(userDataDir, 'shared-config');
   fs.mkdirSync(dir, { recursive: true });
-  const mcpServers = Object.fromEntries(SEEDED_MCP_SERVERS.map((name) => [name, { type: 'stdio', command: 'npx', args: ['-y', name] }]));
+  const mcpServers = {
+    [SEEDED_MCP_LOCAL]: { type: 'stdio', command: 'npx', args: ['-y', SEEDED_MCP_LOCAL], env: { VG_TOKEN: SEEDED_MCP_SECRET } },
+    [SEEDED_MCP_HTTP]: { type: 'http', url: 'https://vg.invalid/mcp', headers: { Authorization: SEEDED_MCP_SECRET } },
+  };
   fs.writeFileSync(path.join(dir, 'mcp-common.json'), JSON.stringify({ mcpServers }, null, 2), 'utf-8');
+  // Fuentes ajenas FALSAS: el `.claude.json` de la cuenta principal (`.claude`) y Claude Desktop.
+  const fake = mcpFakeSourcesDir(userDataDir);
+  fs.mkdirSync(path.join(fake, 'Claude'), { recursive: true });
+  const local = { type: 'stdio', command: 'npx', args: ['-y', 'vg'], env: { VG_TOKEN: SEEDED_MCP_SECRET } };
+  fs.writeFileSync(path.join(fake, '.claude.json'), JSON.stringify({ mcpServers: { [SEEDED_MCP_ACCOUNT_SERVER]: local } }), 'utf-8');
+  fs.writeFileSync(path.join(fake, 'Claude', 'claude_desktop_config.json'), JSON.stringify({ mcpServers: { [SEEDED_MCP_DESKTOP_SERVER]: local } }), 'utf-8');
 }
 
 function seedCommandCatalog(userDataDir) {
@@ -5774,6 +6756,16 @@ function medirDesborde(page) {
 
 // Abre una conversacion nueva con "Carpeta temporal" (sin enviar nada: `ensureSession` es perezoso, asi
 // que no spawnea el CLI). Mismo camino que la comprobacion de Ctrl+N, extraido para el grupo final.
+// Avisos TEMPORALES de «Omitir permisos» (el del prompt). El panel Permiso describe el modo actual con
+// la MISMA frase, y es permanente a proposito: contarlo daba 2 al entrar y 1 tras los 8 s cuando el
+// panel estaba abierto. Se excluye todo lo que vive dentro de un panel del dock.
+function countBypassAdvice(page, text) {
+  return page.evaluate(
+    (t) => [...document.querySelectorAll('body *')].filter((n) => n.childElementCount === 0 && (n.textContent ?? '').trim() === t && n.closest('[data-active-panel]') === null).length,
+    text,
+  );
+}
+
 async function openTemporaryConversation(page) {
   // CAMBIO DEL 2026-09-18: `Ctrl+N` ya NO abre el formulario de "Nueva conversacion" — abre la
   // conversacion directamente, en carpeta temporal y con los valores por defecto, que es lo que el
@@ -5870,7 +6862,7 @@ async function waitForUserBubbles(page, predicate) {
 }
 
 // Texto del CLI para el limite de uso. Literal del que se ve de verdad ("You've hit your session limit
-// · resets 3pm"): el banner lo pasa TAL CUAL, y la comprobacion lo busca por ese texto.
+// · resets 3pm"). Desde P-028 (20) va al tooltip de la linea, no al texto visible.
 const RATE_LIMIT_SUMMARY = "You've hit your session limit · resets 3pm";
 
 
@@ -6190,7 +7182,9 @@ function launchApp(userDataDir) {
     cwd: repoRoot,
     // Sin el sondeo de modelos del arranque (P-026 2.4): lanzaria el CLI real por cada cuenta con
     // sesion, y este harness no spawnea el CLI nunca.
-    env: { ...process.env, MAGE_SKIP_MODEL_PROBE: '1' },
+    // MAGE_MCP_FAKE_SOURCES: el inventario de MCP lee las fuentes falsas sembradas, nunca las reales.
+    // MAGE_MCP_FAKE_CLI: «Comprobar estado» y «Autenticar» hablan con un CLI falso en proceso, nunca el real.
+    env: { ...process.env, MAGE_SKIP_MODEL_PROBE: '1', MAGE_MCP_FAKE_SOURCES: mcpFakeSourcesDir(userDataDir), MAGE_MCP_FAKE_CLI: '1' },
     windowsHide: true,
     stdio: ['ignore', 'pipe', 'pipe'],
     // POSIX: grupo de procesos propio, para poder señalizar a TODO el arbol con kill(-pid). En
@@ -6289,7 +7283,7 @@ async function main() {
   // Filtro por SUBCADENA del nombre (`--only=ventana`): iterar sobre UNA comprobacion sin pagar las 84
   // de la suite. Sin el flag corren todas, que es lo que hace `pnpm verify:gui`.
   const only = process.argv.find((arg) => arg.startsWith('--only='))?.slice('--only='.length) ?? '';
-  // Varias subcadenas con `|` (`--only=Ctrl+,|Config. compartida`): una comprobacion que llega con un
+  // Varias subcadenas con `|` (`--only=Ctrl+,|MCP y conectores`): una comprobacion que llega con un
   // dialogo abierto se puede probar junto a la que lo abre, en su orden de siempre.
   const needles = only.toLowerCase().split('|').filter((needle) => needle.length > 0);
   const checks = only === '' ? CHECKS : CHECKS.filter((c) => needles.some((needle) => c.name.toLowerCase().includes(needle)));

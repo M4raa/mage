@@ -3,14 +3,16 @@ import type { SplitPath } from '../splitLayout';
 import { useWorkbenchStore } from '../workbenchStore';
 import { PaneTabProvider } from '../paneContext';
 import { useTranscriptLifecycle } from '../useTranscriptLifecycle';
-import { TAB_DRAG_MIME } from '../tabActions';
+import { TAB_DRAG_MIME, TAB_DRAG_ORIGIN_MIME } from '../tabActions';
 import { zoneFromPoint, type DropZone } from '../splitLayout';
+import { shouldFocusPromptOnClick } from '../promptFocus';
 import { BlockChat } from './BlockChat';
 import { PromptBar } from './PromptBar';
 import { RateLimitBanner } from './RateLimitBanner';
 import { ChatInfoBar } from './ChatInfoBar';
 import { QuestionDock } from './QuestionDock';
 import { AgentsDock } from './AgentsDock';
+import { QueuedMessagesDock } from './QueuedMessagesDock';
 
 // Resaltado visual de la zona bajo el puntero mientras se arrastra una pestaña (I11-drag, estilo VS
 // Code/IntelliJ): un rectangulo semitransparente que ocupa la MITAD del panel hacia ese borde, o un
@@ -56,6 +58,25 @@ export function ChatPane({
     if (!focused) setActiveTab(tabId);
   };
 
+  // P-028 23: clic en una zona sin nada enfocable del panel -> foco al input. `onClick` y no `mousedown`,
+  // para no romper la seleccion por arrastre; `take` (mousedown en captura) ya dejo activa esta pestaña.
+  const focusPrompt = useWorkbenchStore((s) => s.focusPrompt);
+  const onPaneClick = (e: React.MouseEvent<HTMLDivElement>): void => {
+    const target = e.target;
+    if (!(target instanceof Element)) return;
+    const focus = shouldFocusPromptOnClick({
+      button: e.button,
+      ctrlKey: e.ctrlKey,
+      shiftKey: e.shiftKey,
+      altKey: e.altKey,
+      metaKey: e.metaKey,
+      target,
+      currentTarget: e.currentTarget,
+      selectionCollapsed: window.getSelection()?.isCollapsed ?? true,
+    });
+    if (focus) focusPrompt();
+  };
+
   // I11-drag: arrastrar una pestaña sobre este panel (arrastre nativo, mismo patron que F6 en
   // dock/Stripe.tsx). `dragover` no deja leer `dataTransfer` — solo `types` — asi que la zona se
   // recalcula en cada evento a partir de la posicion del puntero, sin depender de un payload que
@@ -64,7 +85,9 @@ export function ChatPane({
   const [dropZone, setDropZone] = useState<DropZone | null>(null);
 
   const onDragOver = (e: React.DragEvent<HTMLDivElement>): void => {
-    if (!e.dataTransfer.types.includes(TAB_DRAG_MIME)) return;
+    // Solo pestañas de ESTA ventana (P-028, 36): una de otra ventana de Mage se deja pasar sin aceptar,
+    // y su origen la mueve aqui por el cursor.
+    if (!e.dataTransfer.types.includes(TAB_DRAG_MIME) || !e.dataTransfer.types.includes(TAB_DRAG_ORIGIN_MIME)) return;
     e.preventDefault();
     const rect = containerRef.current?.getBoundingClientRect();
     if (rect === undefined) return;
@@ -95,6 +118,7 @@ export function ChatPane({
         // control pulsado dispare su accion, o esa accion iria a la pestaña del otro panel.
         onMouseDownCapture={take}
         onFocusCapture={take}
+        onClick={onPaneClick}
         onDragOver={onDragOver}
         onDragLeave={() => setDropZone(null)}
         onDrop={onDrop}
@@ -110,6 +134,8 @@ export function ChatPane({
         {/* La pregunta pendiente del agente, anclada encima del input (P-026 3.3). */}
         <QuestionDock />
         <AgentsDock />
+        {/* Lo enviado con el turno en marcha espera aqui, no en el hilo (0.1.1 R2, punto 30). */}
+        <QueuedMessagesDock />
         <PromptBar />
         {dropZone !== null && (
           <div aria-hidden="true" className="pointer-events-none absolute inset-0 z-10">

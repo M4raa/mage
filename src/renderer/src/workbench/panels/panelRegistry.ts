@@ -11,6 +11,7 @@
 
 import { createElement } from 'react';
 import type { Anchor, PanelId, ZoneKey } from '@shared/panelLayout';
+import type { IconName } from '../components/Icon';
 import { ChatSidebar } from '../components/ChatSidebar';
 import { PermissionPanel } from '../components/PermissionPanel';
 import { TranscriptContextPanel } from '../components/TranscriptContextPanel';
@@ -29,7 +30,7 @@ import { ActivityPanel } from '../components/ActivityPanel';
 export interface PanelDefinition {
   readonly id: PanelId;
   readonly title: string;
-  readonly icon: string; // un glifo, mismo estilo que ya usa la app (◔ ⚙ « » ◇ ☰), no emoji de color
+  readonly icon: IconName; // forma propia de la suite (`panel*`), monocroma y sin emoji
   readonly defaultAnchor: Anchor;
   readonly defaultZone: ZoneKey;
   readonly render: () => React.JSX.Element;
@@ -49,37 +50,37 @@ export interface PanelDefinition {
 // panel activo a la vez, switch por icono, sin pestañas — ver ZonePane.tsx) y dejar 'b' libre para lo
 // que el usuario decida mover ahi a mano.
 export const PANEL_REGISTRY: readonly PanelDefinition[] = [
-  { id: 'conversations', title: 'Conversaciones', icon: '☰', defaultAnchor: 'left', defaultZone: 'a', render: () => createElement(ChatSidebar) },
-  { id: 'usage', title: 'Uso', icon: '◔', defaultAnchor: 'left', defaultZone: 'b', render: () => createElement(UsagePanel) },
-  { id: 'permissions', title: 'Permiso', icon: '◈', defaultAnchor: 'right', defaultZone: 'a', render: () => createElement(PermissionPanel) },
-  { id: 'context', title: 'Contexto', icon: '▥', defaultAnchor: 'right', defaultZone: 'a', render: () => createElement(TranscriptContextPanel) },
-  { id: 'logs', title: 'Logs', icon: '▦', defaultAnchor: 'right', defaultZone: 'a', render: () => createElement(TranscriptLogPanel) },
-  { id: 'memory', title: 'Memoria', icon: '◫', defaultAnchor: 'right', defaultZone: 'a', render: () => createElement(MemoryPanel) },
-  { id: 'mcp', title: 'MCP', icon: '⧉', defaultAnchor: 'right', defaultZone: 'a', render: () => createElement(McpPanel) },
+  { id: 'conversations', title: 'Conversaciones', icon: 'panelConversations', defaultAnchor: 'left', defaultZone: 'a', render: () => createElement(ChatSidebar) },
+  { id: 'usage', title: 'Uso', icon: 'panelUsage', defaultAnchor: 'left', defaultZone: 'b', render: () => createElement(UsagePanel) },
+  { id: 'permissions', title: 'Permiso', icon: 'panelPermissions', defaultAnchor: 'right', defaultZone: 'a', render: () => createElement(PermissionPanel) },
+  { id: 'context', title: 'Contexto', icon: 'panelContext', defaultAnchor: 'right', defaultZone: 'a', render: () => createElement(TranscriptContextPanel) },
+  { id: 'logs', title: 'Logs', icon: 'panelLogs', defaultAnchor: 'right', defaultZone: 'a', render: () => createElement(TranscriptLogPanel) },
+  { id: 'memory', title: 'Memoria', icon: 'panelMemory', defaultAnchor: 'right', defaultZone: 'a', render: () => createElement(MemoryPanel) },
+  { id: 'mcp', title: 'MCP', icon: 'panelMcp', defaultAnchor: 'right', defaultZone: 'a', render: () => createElement(McpPanel) },
   // 2.9.b. Van a la MISMA zona que las cinco anteriores (tablist unico del Inspector). Anadir ids
   // nuevos NO obliga a borrar `panels-layout.json`: `reconcileLayoutWithRegistry` los añade al final y
   // solo abre uno si la zona estaba vacia — en una instalacion existente aparecen tres iconos nuevos y
   // ninguno se abre solo. Lo que si obligaria a borrarlo es cambiar el `defaultZone` de uno que YA
   // existia, y aqui no se cambia ninguno.
-  { id: 'instructions', title: 'Instrucciones', icon: '▤', defaultAnchor: 'right', defaultZone: 'a', render: () => createElement(InstructionsPanel) },
-  { id: 'commands', title: 'Comandos y skills', icon: '›_', defaultAnchor: 'right', defaultZone: 'a', render: () => createElement(CommandsPanel) },
-  { id: 'agents', title: 'Subagentes', icon: '⇲', defaultAnchor: 'right', defaultZone: 'a', render: () => createElement(AgentsPanel) },
+  { id: 'instructions', title: 'Instrucciones', icon: 'panelInstructions', defaultAnchor: 'right', defaultZone: 'a', render: () => createElement(InstructionsPanel) },
+  { id: 'commands', title: 'Comandos y skills', icon: 'panelCommands', defaultAnchor: 'right', defaultZone: 'a', render: () => createElement(CommandsPanel) },
+  { id: 'agents', title: 'Subagentes', icon: 'panelAgents', defaultAnchor: 'right', defaultZone: 'a', render: () => createElement(AgentsPanel) },
   // Herramientas que la sesion cargo de verdad. Mismo criterio que las de arriba: id NUEVO en la misma
   // zona, asi que `reconcileLayoutWithRegistry` lo añade al final sin abrirlo solo y sin obligar a
   // borrar `panels-layout.json`.
-  { id: 'tools', title: 'Herramientas', icon: '⚒', defaultAnchor: 'right', defaultZone: 'a', render: () => createElement(ToolsPanel) },
+  { id: 'tools', title: 'Herramientas', icon: 'panelTools', defaultAnchor: 'right', defaultZone: 'a', render: () => createElement(ToolsPanel) },
   // Artifacts publicados por la conversacion activa (peticion del usuario). Mismo criterio que los de
   // arriba: id nuevo en la misma zona, asi que aparece sin abrirse solo ni obligar a borrar el layout.
-  { id: 'artifacts', title: 'Artifacts', icon: '◳', defaultAnchor: 'right', defaultZone: 'a', render: () => createElement(ArtifactsPanel) },
+  { id: 'artifacts', title: 'Artifacts', icon: 'panelArtifacts', defaultAnchor: 'right', defaultZone: 'a', render: () => createElement(ArtifactsPanel) },
   // Ficheros que la conversacion ha CREADO (2.10, peticion del usuario: "que aparezca a la derecha como
   // un artifact y asi poder ver el plan, poder editarlo"). Mismo criterio que los de arriba: id NUEVO en
   // la misma zona, asi que `reconcileLayoutWithRegistry` lo añade al final sin abrirlo solo y sin
   // obligar a borrar `panels-layout.json`. Lo que SI lo abre solo es que el agente cree un fichero
   // (`revealPanelById('files')` desde el store) — es justo lo que se pidio.
-  { id: 'files', title: 'Ficheros', icon: '◰', defaultAnchor: 'right', defaultZone: 'a', render: () => createElement(FilesPanel) },
+  { id: 'files', title: 'Ficheros', icon: 'panelFiles', defaultAnchor: 'right', defaultZone: 'a', render: () => createElement(FilesPanel) },
   // Lo que el agente HACE, paso a paso (P-026 3.4): las herramientas salieron del chat. Id nuevo en la
   // misma zona: aparece sin abrirse solo; lo abre la linea de estado del chat (`revealPanelById`).
-  { id: 'activity', title: 'Actividad', icon: '≡', defaultAnchor: 'right', defaultZone: 'a', render: () => createElement(ActivityPanel) },
+  { id: 'activity', title: 'Actividad', icon: 'panelActivity', defaultAnchor: 'right', defaultZone: 'a', render: () => createElement(ActivityPanel) },
 ];
 
 export function findPanelDefinition(id: PanelId): PanelDefinition | undefined {

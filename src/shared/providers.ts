@@ -255,6 +255,17 @@ export const PROVIDER_TEMPLATES: readonly ProviderTemplate[] = [
 // de serie (que no lo lleva) sin tener que validar contra la lista.
 export const CUSTOM_PROVIDER_ID_PREFIX = 'custom:';
 
+// Como se da de alta un proveedor (P-028, punto 41), tal como lo ve el renderer. Solo cadenas
+// descriptivas: el dialogo «Añadir cuenta» nunca pide ni muestra claves.
+export type ProviderAuthKind = 'cli-oauth' | 'api-key' | 'external';
+
+export interface ProviderAuthSummary {
+  readonly providerId: string;
+  readonly label: string;
+  readonly kind: ProviderAuthKind;
+  readonly reason: string;
+}
+
 const CHAT_COMPLETIONS_PATH = '/chat/completions';
 const MODELS_PATH = '/models';
 const DEFAULT_VERSION_PATH = '/v1';

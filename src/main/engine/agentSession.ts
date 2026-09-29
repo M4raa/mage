@@ -88,6 +88,9 @@ export class AgentSession {
   // Modelo con el que se lanzara el PROXIMO turno. En perTurn un cambio de modelo no manda nada al
   // CLI: se guarda aqui y se aplica al siguiente `--model`.
   private nextModel: string;
+  // Id de la conversacion del CLI tras un `/clear` (P-028): el relanzado reanuda ESA y no la de antes
+  // del clear. null = la del arranque (`params.sessionId`).
+  private resetConversationId: string | null = null;
 
   constructor(private readonly deps: AgentSessionDeps) {
     this.perTurn = deps.adapter.turnMode === 'perTurn';
@@ -166,6 +169,9 @@ export class AgentSession {
     this.child = child;
     this.startedAtMs = this.now();
     this.sendInitialize();
+    // El desglose de contexto tambien ANTES del primer turno (P-028, punto 7): medido en 2.1.284, el CLI
+    // lo contesta sin turno, y sin esto el panel de Contexto solo tenia una estimacion hasta el primero.
+    this.requestContextUsage();
   }
 
   // Registra los hooks de la sesion (D2). Se manda nada mas arrancar: el CLI no emite su `init` hasta
@@ -320,6 +326,15 @@ export class AgentSession {
     this.writeLine(this.deps.adapter.encodeSetPermissionMode(mode));
   }
 
+  // Para UN subagente en segundo plano (0.1.1 R2, punto 29). Sin `encodeStopTask` el proveedor no puede
+  // (la UI solo lo ofrece en Claude). Un error del CLI (tarea que ya acabo) llega como `control_error`.
+  stopTask(taskId: string): void {
+    const encode = this.deps.adapter.encodeStopTask;
+    if (encode === undefined) throw new Error(`El proveedor de la sesion ${this.deps.params.sessionId} no puede parar un subagente (task_id=${JSON.stringify(taskId)})`);
+    this.log('info', 'Parar subagente', { sessionId: this.deps.params.sessionId, taskId });
+    this.writeLine(encode.call(this.deps.adapter, taskId));
+  }
+
   // Detiene el proceso de forma intencionada (no se reporta como crash). Marca `stopping` ANTES de
   // matar al hijo para que su 'exit' no dispare el reinicio automatico, y cancela un reinicio ya
   // programado (si el usuario cierra la pestana mientras esperabamos el backoff, no hay que relanzar).
@@ -455,6 +470,8 @@ export class AgentSession {
       // mitad de sesion aparece SIN reiniciar nada. Medido: un segundo `initialize` responde con los
       // 159 comandos y NO duplica los hooks (un turno de prueba recibio un solo hook_callback de Stop).
       this.requestCommandCatalog();
+    } else if (event.kind === 'conversation_reset') {
+      this.resetConversationId = event.newSessionId;
     } else if (event.kind === 'hook_fired') {
       this.answerHook(event.requestId); // el CLI espera respuesta: contestar antes de seguir (D2)
     } else if (event.kind === 'control_error') {
@@ -586,7 +603,7 @@ export class AgentSession {
   private restartNow(): void {
     if (this.stopping || this.child !== null) return; // pararon la sesion (o ya revivio) mientras esperabamos
     try {
-      this.launch(this.handshaked ? { ...this.deps.params, resume: true } : this.deps.params);
+      this.launch(this.handshaked ? { ...this.deps.params, sessionId: this.resetConversationId ?? this.deps.params.sessionId, resume: true } : this.deps.params);
     } catch (err) {
       // Si ni siquiera se puede construir el plan o lanzar el proceso, se reporta y se deja de
       // insistir: no hay nada que un reintento inmediato vaya a mejorar.

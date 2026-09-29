@@ -183,3 +183,29 @@ describe('CommandCatalogStore — modelos', () => {
     expect(() => memoryStore().store.saveModels('', MODELS, 1)).toThrow(/""/);
   });
 });
+
+describe('CommandCatalogStore.forgetAccount', () => {
+  it('forgetAccount_quitaLasEntradasDeLaCuentaYConservaLasDemas', () => {
+    const { store } = memoryStore();
+    store.save(ACCOUNT, COMMANDS, 1);
+    store.save(OTHER, COMMANDS, 1);
+
+    store.forgetAccount(OTHER, (key) => key === OTHER);
+
+    expect(store.load(OTHER)).toEqual([]);
+    expect(store.load(ACCOUNT)).toEqual(COMMANDS);
+  });
+
+  it('forgetAccount_sinFichero_noEscribe', () => {
+    const writeFile = vi.fn();
+    const store = new CommandCatalogStore(buildDeps({ exists: () => false, writeFile }));
+
+    store.forgetAccount(OTHER, () => true);
+
+    expect(writeFile).not.toHaveBeenCalled();
+  });
+
+  it('forgetAccount_configDirVacio_lanza', () => {
+    expect(() => memoryStore().store.forgetAccount('', () => true)).toThrow(/""/);
+  });
+});

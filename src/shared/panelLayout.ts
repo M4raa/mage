@@ -57,8 +57,9 @@ export type StripeState = Readonly<Omit<z.infer<typeof Schema.STRIPE_STATE_SCHEM
 // Las claves de `stripes` salen del propio esquema (son las tres de `Anchor`), no de un Record suelto.
 type SchemaStripes = z.infer<typeof Schema.PANEL_LAYOUT_SCHEMA>['stripes'];
 
-export type PanelLayoutState = Readonly<Omit<z.infer<typeof Schema.PANEL_LAYOUT_SCHEMA>, 'stripes'>> & {
+export type PanelLayoutState = Readonly<Omit<z.infer<typeof Schema.PANEL_LAYOUT_SCHEMA>, 'stripes' | 'hiddenPanelIds'>> & {
   readonly stripes: Readonly<{ [K in keyof SchemaStripes]: StripeState }>;
+  readonly hiddenPanelIds: readonly PanelId[]; // paneles escondidos a proposito: la reconciliacion no los repone
 };
 
 // Version de esquema que produce SIEMPRE reconcileLayoutWithRegistry, sea cual sea la del fichero
@@ -114,7 +115,7 @@ function buildFreshLayout(registry: readonly PanelPlacement[]): PanelLayoutState
   for (const anchor of ANCHORS) {
     stripes[anchor] = { a: buildFreshZone(registry, anchor, 'a'), b: buildFreshZone(registry, anchor, 'b'), splitPx: DEFAULT_SPLIT_SIZE_PX[anchor] };
   }
-  return { version: PANEL_LAYOUT_VERSION, stripes };
+  return { version: PANEL_LAYOUT_VERSION, stripes, hiddenPanelIds: [] };
 }
 
 // ¿Tiene `loaded` la forma minima para intentar reconciliarlo campo a campo? Un fichero ausente, no
@@ -199,50 +200,73 @@ function claim(candidates: readonly PanelId[], claimed: Set<PanelId>): readonly 
   return accepted;
 }
 
-// Reconcilia UNA zona (§3.3): conserva los paneles existentes validos, anade al final los nuevos del
-// registro que faltaban, y decide el activePanelId resultante — si la zona estaba vacia, se ABRE con
-// el primer panel nuevo (no hay nada que proteger); si ya tenia contenido, se conserva su estado tal
-// cual (abierta o cerrada), sin forzar el panel nuevo delante del usuario.
-function reconcileZone(
-  rawZone: RawZone | undefined,
-  anchor: Anchor,
-  zoneKey: ZoneKey,
+// Primera pasada, UNA zona (§3.3): lo que el usuario dejo guardado en ella (ids validos, sin duplicados,
+// en su orden) y su panel activo. Reclama sobre la marcha (`claim`), asi que un mismo id dos veces dentro
+// de una zona tambien se colapsa.
+function reconcileSavedZone(rawZone: RawZone | undefined, anchor: Anchor, registry: readonly PanelPlacement[], claimed: Set<PanelId>): ZoneState {
+  const panelIds = claim(sanitizePanelIds(rawZone?.panelIds, registry), claimed);
+  return {
+    panelIds,
+    activePanelId: resolveExistingActiveId(rawZone?.activePanelId, panelIds),
+    sizePx: sanitizeSizePx(rawZone?.sizePx, DEFAULT_ZONE_SIZE_PX[anchor]),
+  };
+}
+
+// Segunda pasada, UNA zona: añade al final los paneles del registro cuya zona por defecto es esta y que ni
+// el usuario colocó en otra parte (`claimed`) ni escondio (`hidden`). Si la zona estaba vacia se ABRE con
+// el primero (no hay nada que proteger); si ya tenia contenido conserva su estado, abierta o cerrada, sin
+// forzar el panel nuevo delante del usuario.
+function addRegistryPanels(
+  zone: ZoneState,
+  where: { readonly anchor: Anchor; readonly zoneKey: ZoneKey },
   registry: readonly PanelPlacement[],
-  claimed: Set<PanelId>,
+  taken: { readonly claimed: Set<PanelId>; readonly hidden: ReadonlySet<PanelId> },
 ): ZoneState {
-  // Se reclama SOBRE LA MARCHA, no en dos pasadas: con un `filter` seguido de un `for` que añade, un
-  // fichero con el mismo id dos veces DENTRO de la misma zona pasaba entero (al filtrar, ninguno de los
-  // dos estaba reclamado todavia). Reclamar segun se acepta colapsa tambien ese caso.
-  const existingIds = claim(sanitizePanelIds(rawZone?.panelIds, registry), claimed);
-  const newIds = claim(registryIdsForZone(registry, anchor, zoneKey), claimed);
-  const panelIds = [...existingIds, ...newIds];
+  const candidates = registryIdsForZone(registry, where.anchor, where.zoneKey).filter((id) => !taken.hidden.has(id));
+  const newIds = claim(candidates, taken.claimed);
+  if (newIds.length === 0) return zone;
+  const activePanelId = zone.panelIds.length === 0 ? (newIds[0] ?? null) : zone.activePanelId;
+  return { ...zone, panelIds: [...zone.panelIds, ...newIds], activePanelId };
+}
 
-  const activePanelId = existingIds.length === 0 ? newIds[0] ?? null : resolveExistingActiveId(rawZone?.activePanelId, existingIds);
-
-  return { panelIds, activePanelId, sizePx: sanitizeSizePx(rawZone?.sizePx, DEFAULT_ZONE_SIZE_PX[anchor]) };
+// Ids escondidos por el usuario que siguen existiendo en el registro (un id que ya no existe se purga).
+// Un id que ademas aparece colocado en alguna zona del fichero (estado incoherente) gana la zona.
+function sanitizeHiddenIds(rawHidden: unknown, registry: readonly PanelPlacement[], claimed: ReadonlySet<PanelId>): readonly PanelId[] {
+  return [...new Set(sanitizePanelIds(rawHidden, registry))].filter((id) => !claimed.has(id));
 }
 
 // Reconcilia el layout persistido contra el registro de paneles ACTUAL (§3.3): tolera un `loaded`
 // ausente/vacio/corrupto (cae al layout desde cero a partir del registro), añade sin robar el foco
 // los paneles nuevos de una version posterior, y descarta sin lanzar los que ya no existen. Nunca
 // deja una stripe con un icono roto ni una zona con un tamaño ilegible.
+//
+// DOS pasadas, no una: en una sola, la zona por defecto de un panel que el usuario movio a una zona
+// POSTERIOR en el recorrido lo reponia antes de que esa zona lo reclamara (bug 1 del punto 29: movido a
+// otro borde, volvia a su sitio). Primero se reclama todo lo guardado en las seis zonas; despues se
+// completa con el registro, saltando lo reclamado y lo escondido (bug 2: escondido, reaparecia).
 export function reconcileLayoutWithRegistry(loaded: PanelLayoutState | null, registry: readonly PanelPlacement[]): PanelLayoutState {
   if (!hasStripesShape(loaded)) return buildFreshLayout(registry);
 
-  const stripes = {} as Record<Anchor, StripeState>;
-  // Un solo conjunto para las SEIS zonas: la unicidad de un icono es global al layout, no de su zona.
-  // Se recorre en el orden fijo de ANCHORS x ZONE_KEYS, asi que ante un duplicado gana siempre la misma
-  // aparicion y el resultado es estable entre arranques.
+  // Un solo conjunto para las SEIS zonas: la unicidad de un icono es global al layout. Ante un duplicado
+  // en el fichero gana la primera aparicion en el orden fijo de ANCHORS x ZONE_KEYS (estable entre arranques).
   const claimed = new Set<PanelId>();
+  const saved = {} as Record<Anchor, { a: ZoneState; b: ZoneState }>;
+  for (const anchor of ANCHORS) {
+    saved[anchor] = {
+      a: reconcileSavedZone(readRawZone(loaded.stripes, anchor, 'a'), anchor, registry, claimed),
+      b: reconcileSavedZone(readRawZone(loaded.stripes, anchor, 'b'), anchor, registry, claimed),
+    };
+  }
+  const hiddenPanelIds = sanitizeHiddenIds((loaded as { hiddenPanelIds?: unknown }).hiddenPanelIds, registry, claimed);
+  const taken = { claimed, hidden: new Set(hiddenPanelIds) };
+
+  const stripes = {} as Record<Anchor, StripeState>;
   for (const anchor of ANCHORS) {
     const zones = {} as { a: ZoneState; b: ZoneState };
-    for (const zoneKey of ZONE_KEYS) {
-      zones[zoneKey] = reconcileZone(readRawZone(loaded.stripes, anchor, zoneKey), anchor, zoneKey, registry, claimed);
-    }
-    const splitPx = sanitizeSizePx(readRawSplitPx(loaded.stripes, anchor), DEFAULT_SPLIT_SIZE_PX[anchor]);
-    stripes[anchor] = { ...zones, splitPx };
+    for (const zoneKey of ZONE_KEYS) zones[zoneKey] = addRegistryPanels(saved[anchor][zoneKey], { anchor, zoneKey }, registry, taken);
+    stripes[anchor] = { ...zones, splitPx: sanitizeSizePx(readRawSplitPx(loaded.stripes, anchor), DEFAULT_SPLIT_SIZE_PX[anchor]) };
   }
-  return { version: PANEL_LAYOUT_VERSION, stripes };
+  return { version: PANEL_LAYOUT_VERSION, stripes, hiddenPanelIds };
 }
 
 // Nueva posicion en px de un divisor de resize (role="separator", §6) dado el tamaño actual y la tecla

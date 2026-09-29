@@ -48,7 +48,7 @@ export function SubagentTranscriptView({ accountDir, cwd, sessionId, subagent, o
   }, [onClose]);
 
   return (
-    <div className="absolute inset-0 z-20 flex flex-col bg-mg-panel">
+    <div data-subagent-transcript="true" className="absolute inset-0 z-20 flex flex-col overflow-hidden bg-mg-panel">
       <div className="flex shrink-0 items-center gap-[8px] border-b border-mg-border-subtle px-[10px] py-[6px]">
         <button onClick={onClose} className="shrink-0 rounded-[4px] px-[6px] py-[2px] text-[11px] text-mg-body2 hover:bg-mg-hover" data-tip="Volver a la conversación principal">
           ◂ Volver
@@ -56,7 +56,8 @@ export function SubagentTranscriptView({ accountDir, cwd, sessionId, subagent, o
         <span className="shrink-0 rounded-[4px] bg-mg-sel px-[5px] py-[1px] text-[9px] text-mg-body">{subagent.agentType ?? 'agente'}</span>
         <span className="truncate text-[10.5px] text-mg-sec">{subagent.description ?? '(sin descripción)'}</span>
       </div>
-      <div className="flex-1">
+      {/* `min-h-0`: sin el, la lista (height:100%) crece al total de filas y se sale de la capa (punto 39). */}
+      <div className="min-h-0 flex-1">
         <Body entries={entries} errorMessage={errorMessage} isFinal={isFinal} onRetry={refresh} />
       </div>
       <div className="flex shrink-0 items-center justify-between border-t border-mg-border-subtle px-[10px] py-[5px] text-[10px] text-mg-ter">

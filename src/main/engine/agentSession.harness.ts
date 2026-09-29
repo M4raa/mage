@@ -56,6 +56,7 @@ export function fakeAdapter(): { adapter: ProviderAdapter; plans: LaunchParams[]
     encodeInterrupt: () => ({ interrupt: true }),
     encodeSetModel: (model) => ({ model }),
     encodeSetPermissionMode: (mode) => ({ mode }),
+    encodeStopTask: (taskId) => ({ stopTask: taskId }),
     // Con `request_id` en la raiz, como los control_request de verdad: AgentSession lo lee de ahi para
     // saber que respuestas de error son suyas.
     encodeGetContextUsage: () => ({

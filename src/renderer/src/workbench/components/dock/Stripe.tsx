@@ -3,6 +3,8 @@ import { isArrowNavKey, nextIndexForArrow } from '../../a11y/keyboardNav';
 import type { PanelDefinition } from '../../panels/panelRegistry';
 import type { PanelId, ZoneKey } from '@shared/panelLayout';
 import { usePanelDragStore } from '../../panels/dragState';
+import { resolveDropBeforeId } from '../../panels/panelLayoutOps';
+import { Icon } from '../Icon';
 
 // Mime propio para el arrastre de iconos entre zonas/bordes (F6, feedback del usuario: arrastrar Y
 // PUNTO, sin un boton "⋮" dedicado por icono — el menu "Mover a..." de un icono existente solo se abre
@@ -29,7 +31,8 @@ export interface StripeProps {
   readonly onRequestMove: (zone: ZoneKey, panelId: PanelId, x: number, y: number) => void;
   // Soltar un icono arrastrado sobre esta zona (F6, arrastre nativo — alternativa a "Mover a..." sin
   // pasar por ningun menu). El caller resuelve a que anchor/zone corresponde igual que con onToggle.
-  readonly onDropPanel: (zone: ZoneKey, panelId: PanelId) => void;
+  // `beforeId`: icono ante el que cae (null = al final), para poder reordenar dentro de la misma zona.
+  readonly onDropPanel: (zone: ZoneKey, panelId: PanelId, beforeId: PanelId | null) => void;
   // Paneles que HOY no viven en ningun icono de este borde y se podrian añadir (feedback del usuario:
   // boton "⋮" al final de la stripe, como el "+"/"⋮" de la stripe de JetBrains). Vacio => sin boton.
   readonly addablePanels: readonly PanelDefinition[];
@@ -47,8 +50,11 @@ export interface StripeProps {
   readonly thirdActiveId?: PanelId | null;
   readonly onToggleThird?: (panelId: PanelId) => void;
   readonly onRequestMoveThird?: (panelId: PanelId, x: number, y: number) => void;
-  readonly onDropThird?: (panelId: PanelId) => void;
+  readonly onDropThird?: (panelId: PanelId, beforeId: PanelId | null) => void;
 }
+
+// Caja fija del icono de un panel (16 px, rejilla de la suite): mismo tamaño en todos, sin depender del glifo.
+export const PANEL_ICON_PX = 16;
 
 const STRIPE_BUTTON_SELECTOR = 'button[data-stripe-btn="true"]';
 
@@ -185,7 +191,7 @@ export function Stripe({
         badgedPanelIds={badgedPanelIds}
         onClick={(id) => onToggle('a', id)}
         onRequestMove={(id, x, y) => onRequestMove('a', id, x, y)}
-        onDrop={(id) => onDropPanel('a', id)}
+        onDrop={(id, beforeId) => onDropPanel('a', id, beforeId)}
       />
       {/* Separador entre "arriba" y "medio" (feedback del usuario, 2026-08-06: en JetBrains van
           pegadas arriba, separadas por una linea — no "medio" empujada al fondo por el hueco
@@ -197,7 +203,7 @@ export function Stripe({
         badgedPanelIds={badgedPanelIds}
         onClick={(id) => onToggle('b', id)}
         onRequestMove={(id, x, y) => onRequestMove('b', id, x, y)}
-        onDrop={(id) => onDropPanel('b', id)}
+        onDrop={(id, beforeId) => onDropPanel('b', id, beforeId)}
       />
       <div className="flex-1" />
       {/* Se monta SIEMPRE que el caller soporte la tercera posicion, aunque hoy este vacia (Ronda 3,
@@ -226,7 +232,7 @@ export function Stripe({
           data-tip="Añadir panel a este borde"
           className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[6px] text-[13px] text-mg-muted hover:bg-mg-hover hover:text-mg-body"
         >
-          ⋮
+          <Icon name="ellipsis" size={PANEL_ICON_PX} />
         </button>
       )}
     </div>
@@ -245,13 +251,16 @@ export function StripeZoneButtons({
   readonly activeId: PanelId | null;
   readonly onClick: (panelId: PanelId) => void;
   readonly onRequestMove: (panelId: PanelId, x: number, y: number) => void;
-  readonly onDrop: (panelId: PanelId) => void;
+  readonly onDrop: (panelId: PanelId, beforeId: PanelId | null) => void;
   readonly badgedPanelIds?: ReadonlySet<PanelId>;
 }): React.JSX.Element {
   // Roving tabindex: el boton activo es el foco por defecto de esta zona; si ninguno lo esta (zona
   // cerrada), cae al primero — nunca deja la zona sin ningun boton alcanzable con Tab.
   const hasActive = panels.some((p) => p.id === activeId);
   const [dragOver, setDragOver] = useState(false);
+  // Donde caeria el icono dentro de ESTA zona: sobre que icono esta el puntero y si en su mitad de arriba.
+  // Solo alimenta la linea de insercion (superpuesta, no cambia tamaños) y el `beforeId` de la suelta.
+  const [target, setTarget] = useState<{ readonly id: PanelId; readonly before: boolean } | null>(null);
 
   // Zona de SUELTA (F6, arrastre nativo): soltar aqui un icono arrastrado desde OTRA zona lo mueve. El
   // borde con feedback visual solo mientras dura el "dragover" (nunca queda pegado tras soltar/salir).
@@ -259,15 +268,27 @@ export function StripeZoneButtons({
     if (!e.dataTransfer.types.includes(DRAG_MIME)) return;
     e.preventDefault();
     setDragOver(true);
+    if (e.target === e.currentTarget) setTarget(null); // hueco entre iconos o zona vacia: al final
+  };
+  const onDragOverIcon = (e: React.DragEvent<HTMLButtonElement>, id: PanelId): void => {
+    if (!e.dataTransfer.types.includes(DRAG_MIME)) return;
+    const before = isUpperHalf(e.currentTarget, e.clientY);
+    setTarget((t) => (t !== null && t.id === id && t.before === before ? t : { id, before }));
   };
   const endDrag = usePanelDragStore((s) => s.end);
   const onDropZone = (e: React.DragEvent<HTMLDivElement>): void => {
     const panelId = e.dataTransfer.getData(DRAG_MIME);
+    // El destino sale de la PROPIA suelta, no del `target` del ultimo render: si el `dragover` final no
+    // llego a pintarse (arrastre rapido, o un drop sintetico), el estado aun dice null y el icono se iba
+    // al final en vez de a su sitio (medido con verify:gui: el orden no cambiaba).
+    const dropped = dropTargetOf(e);
+    const beforeId = dropped === null ? null : resolveDropBeforeId(panels.map((p) => p.id), dropped.id, dropped.before);
     setDragOver(false);
+    setTarget(null);
     endDrag();
     if (panelId.length === 0) return;
     e.preventDefault();
-    onDrop(panelId);
+    onDrop(panelId, beforeId);
   };
 
   // Hueco fantasma en la posicion EXACTA que ocuparia el icono al soltarlo: al final del grupo, que es
@@ -295,7 +316,10 @@ export function StripeZoneButtons({
   return (
     <div
       onDragOver={onDragOver}
-      onDragLeave={() => setDragOver(false)}
+      onDragLeave={() => {
+        setDragOver(false);
+        setTarget(null);
+      }}
       onDrop={onDropZone}
       // En columna, como la stripe (todas son verticales: la horizontal no llego a usarse y se quito).
       // min-h de un icono (feedback del usuario: "no deja arrastrar a una zona vacia") — sin paneles, este
@@ -317,6 +341,8 @@ export function StripeZoneButtons({
           tabIndex={p.id === activeId || (!hasActive && i === 0) ? 0 : -1}
           onClick={() => onClick(p.id)}
           onRequestMove={(x, y) => onRequestMove(p.id, x, y)}
+          onDragOverIcon={(e) => onDragOverIcon(e, p.id)}
+          dropLine={target !== null && target.id === p.id && dragging?.id !== p.id ? (target.before ? 'top' : 'bottom') : null}
         />
       ))}
       {incoming !== null && (
@@ -329,7 +355,7 @@ export function StripeZoneButtons({
             dragOver ? 'opacity-100' : 'opacity-45'
           }`}
         >
-          {incoming.icon}
+          <Icon name={incoming.icon} size={PANEL_ICON_PX} />
         </span>
       )}
     </div>
@@ -347,6 +373,8 @@ function StripeIconButton({
   tabIndex,
   onClick,
   onRequestMove,
+  onDragOverIcon,
+  dropLine,
 }: {
   readonly panel: PanelDefinition;
   readonly active: boolean;
@@ -354,6 +382,9 @@ function StripeIconButton({
   readonly tabIndex: 0 | -1;
   readonly onClick: () => void;
   readonly onRequestMove: (x: number, y: number) => void;
+  readonly onDragOverIcon: (e: React.DragEvent<HTMLButtonElement>) => void;
+  // Linea de insercion pintada en el borde de arriba/abajo de ESTE icono (superpuesta: no mueve nada).
+  readonly dropLine: 'top' | 'bottom' | null;
 }): React.JSX.Element {
   const onContextMenu = (e: React.MouseEvent<HTMLButtonElement>): void => {
     e.preventDefault();
@@ -392,6 +423,7 @@ function StripeIconButton({
   return (
     <button
       data-stripe-btn="true"
+      data-panel-id={panel.id}
       draggable
       tabIndex={tabIndex}
       onClick={onClick}
@@ -399,6 +431,7 @@ function StripeIconButton({
       onKeyDown={onKeyDown}
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
+      onDragOver={onDragOverIcon}
       aria-pressed={active}
       aria-label={panel.title}
       data-tip={panel.title}
@@ -406,8 +439,31 @@ function StripeIconButton({
         active ? 'bg-mg-sel text-mg-body' : 'text-mg-icon'
       } ${dragging ? 'opacity-40' : ''}`}
     >
-      {panel.icon}
+      <Icon name={panel.icon} size={PANEL_ICON_PX} />
+      {dropLine !== null && (
+        <span
+          aria-hidden="true"
+          data-drop-line={dropLine}
+          className={`pointer-events-none absolute left-[2px] right-[2px] h-[2px] rounded-full bg-mg-focus ${dropLine === 'top' ? 'top-0' : 'bottom-0'}`}
+        />
+      )}
       {badged && <span aria-hidden="true" className="absolute right-[3px] top-[3px] h-[5px] w-[5px] rounded-full bg-mg-focus" />}
     </button>
   );
+}
+
+// ¿Cae el puntero en la mitad de arriba del icono? Decide si la suelta va antes o despues de el.
+function isUpperHalf(icon: Element, clientY: number): boolean {
+  const rect = icon.getBoundingClientRect();
+  return clientY < rect.top + rect.height / 2;
+}
+
+// Icono sobre el que se suelta (dentro de la zona que atiende la suelta) y en que mitad; null si se
+// suelta en un hueco, que significa «al final».
+function dropTargetOf(e: React.DragEvent<HTMLElement>): { readonly id: PanelId; readonly before: boolean } | null {
+  const icon = (e.target as Element).closest<HTMLElement>('[data-panel-id]');
+  if (icon === null || !e.currentTarget.contains(icon)) return null;
+  const id = icon.dataset.panelId as PanelId | undefined;
+  if (id === undefined) return null;
+  return { id, before: isUpperHalf(icon, e.clientY) };
 }

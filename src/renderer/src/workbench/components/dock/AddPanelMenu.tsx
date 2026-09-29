@@ -4,6 +4,8 @@ import { motion } from 'motion/react';
 import type { PanelDefinition } from '../../panels/panelRegistry';
 import type { PanelId } from '@shared/panelLayout';
 import { POPOVER_VARIANTS } from '../../motionPresets';
+import { Icon } from '../Icon';
+import { PANEL_ICON_PX } from './Stripe';
 
 // Menu "Añadir panel" del boton "⋮" al final de una stripe (F6, feedback del usuario tras ver la
 // stripe en vivo: JetBrains deja añadir tool windows a una stripe desde un boton asi). MISMO patron que
@@ -62,7 +64,7 @@ export function AddPanelMenu({
             }}
             className="flex w-full items-center gap-[8px] px-[10px] py-[5px] text-left transition-colors duration-150 ease-out hover:bg-mg-hover"
           >
-            <span aria-hidden="true" className="w-[14px] text-center">{p.icon}</span>
+            <Icon name={p.icon} size={PANEL_ICON_PX} />
             {p.title}
           </button>
         ))}

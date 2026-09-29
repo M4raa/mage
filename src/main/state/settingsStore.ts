@@ -1,6 +1,16 @@
 import { z } from 'zod';
 import type { AppSettings } from '@shared/settings';
-import { DEFAULT_APP_SETTINGS, SCRATCH_RETENTIONS, THEME_PREFERENCES, UI_SCALE_MAX, UI_SCALE_MIN } from '@shared/settings';
+import {
+  ACCOUNT_ACCENT_COUNT,
+  CLOSE_BEHAVIORS,
+  DEFAULT_APP_SETTINGS,
+  DEFAULT_PERMISSION_MODES,
+  NEW_CONVERSATION_FOLDERS,
+  SCRATCH_RETENTIONS,
+  THEME_PREFERENCES,
+  UI_SCALE_MAX,
+  UI_SCALE_MIN,
+} from '@shared/settings';
 import { writeAtomic, type AtomicWriteDeps } from '../os/atomicFile';
 
 // Persistencia de la configuracion de la app (M2.3) en userData/app-settings.json. Mismo patron que
@@ -84,6 +94,8 @@ const APP_SETTINGS_SCHEMA = z.object({
   // preferencia), que es como se comportaba antes de existir el campo: los ficheros de versiones
   // anteriores siguen cargando igual.
   defaultModelByProvider: z.record(z.string(), z.string()).catch({}),
+  // Modo de permiso por defecto (P-028 6). Ausente o basura -> '' = el de la cuenta, el lado que no relaja nada.
+  defaultPermissionMode: z.enum(DEFAULT_PERMISSION_MODES).catch(''),
   // Overrides de atajos (D5): si el array es invalido, se descarta a [] (no critico, mismo patron que
   // importedThemes). Entradas individuales con forma valida pero actionId/keys que ya no aplican se
   // conservan (no fallan el esquema) y se ignoran en la resolucion, nunca en el guardado.
@@ -98,6 +110,10 @@ const APP_SETTINGS_SCHEMA = z.object({
   // Retencion de scratchpads (B.4.2). Ausente o basura -> 'never', que es el lado que NO borra nada:
   // equivocarse hacia el borrado seria destruir trabajo por un fichero corrupto.
   scratchRetention: z.enum(SCRATCH_RETENTIONS).catch('never'),
+  // Cerrar la ventana (P-028, 17). Ausente o basura -> 'ask': el lado que vuelve a preguntar.
+  closeBehavior: z.enum(CLOSE_BEHAVIORS).catch('ask'),
+  // Carpeta de «Nuevo chat» (P-028, 16). Ausente o basura -> 'scratch', lo de siempre.
+  newConversationFolder: z.enum(NEW_CONVERSATION_FOLDERS).catch('scratch'),
   // Asistente de primer arranque ya completado (y con que version). Ausente o basura -> 0, o sea
   // "no lo ha visto": equivocarse hacia enseñarlo de mas es molesto; hacia no enseñarlo nunca deja al
   // usuario sin el unico sitio donde se le explica como instalar el motor.
@@ -108,6 +124,9 @@ const APP_SETTINGS_SCHEMA = z.object({
   // Proveedor por defecto de "Nueva conversacion". No se valida contra la lista: los proveedores del
   // usuario son dinamicos, y el dialogo ya cae al primero disponible si el id no existe.
   defaultProvider: z.string().min(1).catch('claude'),
+  // Color por cuenta (PERS-3). Ausente o invalido -> {}: las cuentas vuelven al color de su posicion,
+  // que es lo de antes de existir el campo.
+  accentByAccount: z.record(z.string(), z.number().int().min(0).max(ACCOUNT_ACCENT_COUNT - 1)).catch({}),
 });
 
 export class SettingsStore {

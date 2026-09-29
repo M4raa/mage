@@ -1,6 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import type { ImageAttachment } from './ipc';
-import { buildUserContentBlocks, imageToken, insertImageTokens, removeImageToken } from './imageRefs';
+import {
+  shiftImageTokens,
+  buildUserContentBlocks,
+  describeAttachment,
+  findImageTokens,
+  imageToken,
+  insertImageTokens,
+  reconcileImageTokens,
+  removeImageToken,
+} from './imageRefs';
 
 const img = (data: string): ImageAttachment => ({ mediaType: 'image/png', data });
 const at = (value: string, caret = value.length) => ({ value, selectionStart: caret, selectionEnd: caret });
@@ -105,5 +114,104 @@ describe('buildUserContentBlocks', () => {
     const blocks = buildUserContentBlocks('[Imagen 1]', [img('A')]);
 
     expect(blocks.every((b) => b.type !== 'text' || b.text.length > 0)).toBe(true);
+  });
+});
+
+describe('findImageTokens', () => {
+  it('findImageTokens_variosYDuplicados_devuelveCadaUnoConSuPosicion', () => {
+    expect(findImageTokens('a [Imagen 1] b [Imagen 2] [Imagen 1]')).toEqual([
+      { from: 2, to: 12, n: 1 },
+      { from: 15, to: 25, n: 2 },
+      { from: 26, to: 36, n: 1 },
+    ]);
+  });
+
+  it('findImageTokens_sinTokensOVacio_devuelveVacio', () => {
+    expect(findImageTokens('')).toEqual([]);
+    expect(findImageTokens('[Imagen]')).toEqual([]);
+  });
+});
+
+describe('reconcileImageTokens', () => {
+  const three = ['A', 'B', 'C'];
+
+  it('reconcileImageTokens_borrarUnoDeTres_quitaSuAdjuntoYRenumera', () => {
+    const result = reconcileImageTokens('[Imagen 1] [Imagen 2] [Imagen 3]', '[Imagen 1]  [Imagen 3]', three);
+
+    expect(result.attachments).toEqual(['A', 'C']);
+    expect(result.text).toBe('[Imagen 1]  [Imagen 2]');
+  });
+
+  it('reconcileImageTokens_borrarElUltimo_quitaSoloElUltimo', () => {
+    const result = reconcileImageTokens('[Imagen 1] [Imagen 2]', '[Imagen 1] ', ['A', 'B']);
+
+    expect(result.attachments).toEqual(['A']);
+    expect(result.text).toBe('[Imagen 1] ');
+  });
+
+  it('reconcileImageTokens_borrarVarios_renumeraSinDescuadrarse', () => {
+    const result = reconcileImageTokens('[Imagen 1] [Imagen 2] [Imagen 3]', '[Imagen 2]', three);
+
+    expect(result.attachments).toEqual(['B']);
+    expect(result.text).toBe('[Imagen 1]');
+  });
+
+  it('reconcileImageTokens_tokenDuplicadoBorraUnaCopia_conservaElAdjunto', () => {
+    const result = reconcileImageTokens('[Imagen 1] [Imagen 1]', '[Imagen 1]', ['A']);
+
+    expect(result.attachments).toEqual(['A']);
+    expect(result.text).toBe('[Imagen 1]');
+  });
+
+  it('reconcileImageTokens_sinAdjuntos_dejaElTextoIgual', () => {
+    const result = reconcileImageTokens('[Imagen 1] hola', 'hola', []);
+
+    expect(result).toEqual({ text: 'hola', attachments: [] });
+  });
+
+  it('reconcileImageTokens_sinCambiosEnLosTokens_noTocaNada', () => {
+    const result = reconcileImageTokens('a [Imagen 1]', 'ab [Imagen 1]', ['A']);
+
+    expect(result).toEqual({ text: 'ab [Imagen 1]', attachments: ['A'] });
+  });
+
+  it('reconcileImageTokens_tokenSinAdjuntoTodavia_noSeTrata', () => {
+    // La imagen 2 aun se esta leyendo: su token puede desaparecer sin que haya nada que quitar.
+    const result = reconcileImageTokens('[Imagen 1] [Imagen 2]', '[Imagen 1]', ['A']);
+
+    expect(result.attachments).toEqual(['A']);
+  });
+
+  it('reconcileImageTokens_tokenYaAusenteAntes_noQuitaAdjunto', () => {
+    // El token se cortó antes (el adjunto viaja al final): borrar otra cosa no lo toca.
+    const result = reconcileImageTokens('hola', 'hol', ['A']);
+
+    expect(result).toEqual({ text: 'hol', attachments: ['A'] });
+  });
+});
+
+describe('describeAttachment', () => {
+  it('describeAttachment_pngDe245KiB_devuelveNTipoYTamano', () => {
+    expect(describeAttachment(2, 'image/png', 245 * 1024)).toBe('Imagen 2 · png · 245 KiB');
+  });
+
+  it('describeAttachment_tipoInvalido_lanzaConElValor', () => {
+    expect(() => describeAttachment(1, 'png', 10)).toThrow(/png/);
+  });
+});
+
+describe('shiftImageTokens', () => {
+  it('shiftImageTokens_conDesplazamiento_sumaACadaToken', () => {
+    expect(shiftImageTokens('mira [Imagen 1] y [Imagen 2]', 3)).toBe('mira [Imagen 4] y [Imagen 5]');
+  });
+
+  it('shiftImageTokens_ceroOSinTokens_devuelveElMismoTexto', () => {
+    expect(shiftImageTokens('[Imagen 1]', 0)).toBe('[Imagen 1]');
+    expect(shiftImageTokens('', 2)).toBe('');
+  });
+
+  it('shiftImageTokens_negativoOFraccion_lanza', () => {
+    expect(() => shiftImageTokens('x', -1)).toThrow(/-1/);
+    expect(() => shiftImageTokens('x', 1.5)).toThrow(/1.5/);
   });
 });

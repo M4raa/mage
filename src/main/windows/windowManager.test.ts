@@ -289,3 +289,82 @@ describe('WindowManager', () => {
     expect(manager.get(MAIN_WINDOW_ID)).toBe(recreated);
   });
 });
+
+// P-028, 36: la pestaña movida a una ventana NUEVA espera a que su renderer la recoja.
+describe('WindowManager pendientes', () => {
+  it('openWith_encolaYTakePendingLoEntregaUnaSolaVez', () => {
+    const { manager } = makeManager();
+    manager.ensureMain();
+
+    const windowId = manager.openWith({ id: 'tab-1' });
+
+    expect(windowId).toBe('w2');
+    expect(manager.takePending(windowId)).toEqual([{ id: 'tab-1' }]);
+    expect(manager.takePending(windowId)).toEqual([]);
+  });
+
+  it('takePending_ventanaSinNadaQueEsperar_devuelveVacio', () => {
+    const { manager } = makeManager();
+
+    expect(manager.takePending(MAIN_WINDOW_ID)).toEqual([]);
+  });
+
+  it('openWith_descartaElEstadoDelIdAntesDeCrearLaVentana', () => {
+    const order: string[] = [];
+    const manager = new WindowManager<FakeWindow>({
+      createWindow: (id) => {
+        order.push(`create:${id}`);
+        return makeFakeWindow(order.length);
+      },
+      discardState: (id) => order.push(`discard:${id}`),
+    });
+    manager.ensureMain();
+
+    manager.openWith('x');
+
+    expect(order).toEqual(['create:main', 'discard:w2', 'create:w2']);
+  });
+
+  it('open_sinPestaña_noDescartaElEstadoDelId', () => {
+    const discarded: string[] = [];
+    const manager = new WindowManager<FakeWindow>({ createWindow: (_id) => makeFakeWindow(1), discardState: (id) => discarded.push(id) });
+
+    manager.open();
+
+    expect(discarded).toEqual([]);
+  });
+
+  it('openWith_pasaLaPosicionALaFabrica', () => {
+    const placements: unknown[] = [];
+    const manager = new WindowManager<FakeWindow>({
+      createWindow: (_id, placement) => {
+        placements.push(placement);
+        return makeFakeWindow(placements.length);
+      },
+    });
+
+    manager.openWith('x', { x: 10, y: 20 });
+
+    expect(placements).toEqual([{ x: 10, y: 20 }]);
+  });
+
+  it('openWith_laVentanaSeCierraSinRecogerlo_seOlvida', () => {
+    const { manager, created } = makeManager();
+    const windowId = manager.openWith('x');
+
+    created[0]?.close();
+
+    expect(manager.takePending(windowId)).toEqual([]);
+  });
+
+  it('openWith_laFabricaFalla_noDejaNadaEncolado', () => {
+    const manager = new WindowManager<FakeWindow>({
+      createWindow: () => {
+        throw new Error('sin pantalla');
+      },
+    });
+
+    expect(() => manager.openWith('x')).toThrow(/sin pantalla/);
+    expect(manager.takePending(MAIN_WINDOW_ID)).toEqual([]);
+  });
+});

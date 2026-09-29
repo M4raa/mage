@@ -1,5 +1,5 @@
 import { useEffect, useImperativeHandle, useRef, type Ref } from 'react';
-import { EditorView, keymap, placeholder as cmPlaceholder } from '@codemirror/view';
+import { EditorView, keymap, placeholder as cmPlaceholder, type ViewUpdate } from '@codemirror/view';
 import { EditorState, Prec } from '@codemirror/state';
 import { history, historyKeymap, standardKeymap } from '@codemirror/commands';
 import { promptExtensions } from '../promptExtensions';
@@ -28,12 +28,17 @@ export interface PromptEditorProps {
   readonly placeholder: string;
   readonly disabled: boolean;
   readonly ariaLabel: string;
-  readonly onChange: (value: string) => void;
+  // `userDeleted`: el cambio es un borrado del usuario (Backspace/Supr/borrar palabra), no un cortar ni un
+  // cambio por programa. Con el la barra quita el adjunto de un `[Imagen N]` borrado (P-028 19b).
+  readonly onChange: (value: string, userDeleted: boolean) => void;
   // Devuelve `true` si la tecla se ha consumido (entonces CodeMirror no la ve).
   readonly onKeyDown: (event: KeyboardEvent) => boolean;
   readonly onPasteImages: (files: readonly File[]) => void;
   // El contenido pasa a ocupar mas (o menos) de una linea visual (P-026 3.1). Solo se llama al CAMBIAR.
   readonly onWrapChange: (wraps: boolean) => void;
+  // Ancho en px del texto cuando cabe en UNA linea visual (sin saltos), o null si envuelve/esta vacio. Con
+  // el decide la barra si puede volver a poner los selectores en linea (P-028 10). Solo se llama al CAMBIAR.
+  readonly onTextWidthChange: (width: number | null) => void;
   // Selectores en su propia fila: el editor se queda con todo el ancho de la suya.
   readonly stacked: boolean;
   readonly handleRef: Ref<PromptEditorHandle>;
@@ -42,6 +47,22 @@ export interface PromptEditorProps {
 // Mas de una linea visual: la altura del contenido pasa de 1,5 lineas. Lo mide CodeMirror (valores ya
 // calculados, O(1)): nada de medir el DOM a mano en cada tecla.
 const WRAP_LINE_FACTOR = 1.5;
+
+// `cut` tambien es un evento `delete.*`, pero NO borra el adjunto (el usuario puede pegar el token en otro
+// sitio): se excluye.
+function isUserDelete(update: ViewUpdate): boolean {
+  return update.transactions.some((tr) => tr.isUserEvent('delete') && !tr.isUserEvent('delete.cut'));
+}
+
+// Ancho del texto si ocupa una sola linea logica y visual; null si esta vacio o tiene saltos de linea.
+// `coordsAtPos` da la posicion en pantalla del final del documento (null si aun no esta pintado).
+function singleLineTextWidth(view: EditorView): number | null {
+  const doc = view.state.doc;
+  if (doc.length === 0 || doc.lines > 1) return null;
+  const end = view.coordsAtPos(doc.length);
+  if (end === null) return null;
+  return Math.ceil(end.right - view.contentDOM.getBoundingClientRect().left);
+}
 
 export function PromptEditor({
   value,
@@ -52,6 +73,7 @@ export function PromptEditor({
   onKeyDown,
   onPasteImages,
   onWrapChange,
+  onTextWidthChange,
   stacked,
   handleRef,
 }: PromptEditorProps): React.JSX.Element {
@@ -59,9 +81,10 @@ export function PromptEditor({
   const viewRef = useRef<EditorView | null>(null);
   // Los callbacks viven en una ref para que el editor se cree UNA vez: recrearlo en cada render
   // perderia el foco, el historial y el cursor a cada tecla.
-  const handlersRef = useRef({ onChange, onKeyDown, onPasteImages, onWrapChange });
-  handlersRef.current = { onChange, onKeyDown, onPasteImages, onWrapChange };
+  const handlersRef = useRef({ onChange, onKeyDown, onPasteImages, onWrapChange, onTextWidthChange });
+  handlersRef.current = { onChange, onKeyDown, onPasteImages, onWrapChange, onTextWidthChange };
   const wrapsRef = useRef(false);
+  const textWidthRef = useRef<number | null>(null);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -88,12 +111,18 @@ export function PromptEditor({
             }),
           ),
           EditorView.updateListener.of((update) => {
-            if (update.docChanged) handlersRef.current.onChange(update.state.doc.toString());
+            if (update.docChanged) handlersRef.current.onChange(update.state.doc.toString(), isUserDelete(update));
             if (!update.docChanged && !update.geometryChanged) return;
-            const wraps = update.view.contentHeight > update.view.defaultLineHeight * WRAP_LINE_FACTOR;
-            if (wraps === wrapsRef.current) return;
-            wrapsRef.current = wraps;
-            handlersRef.current.onWrapChange(wraps);
+            // Con el documento vacio el que puede envolver es el PLACEHOLDER, no el texto del usuario: no cuenta.
+            const wraps = update.state.doc.length > 0 && update.view.contentHeight > update.view.defaultLineHeight * WRAP_LINE_FACTOR;
+            if (wraps !== wrapsRef.current) {
+              wrapsRef.current = wraps;
+              handlersRef.current.onWrapChange(wraps);
+            }
+            const width = wraps ? null : singleLineTextWidth(update.view);
+            if (width === textWidthRef.current) return;
+            textWidthRef.current = width;
+            handlersRef.current.onTextWidthChange(width);
           }),
         ],
       }),
@@ -115,6 +144,8 @@ export function PromptEditor({
     view.dispatch({
       changes: { from: 0, to: view.state.doc.length, insert: value },
       selection: { anchor: value.length },
+      // Al volver a una pestaña el cursor (al final del borrador) tiene que quedar a la vista (P-028 9/13).
+      scrollIntoView: true,
     });
   }, [value]);
 
@@ -141,6 +172,8 @@ export function PromptEditor({
         view.dispatch({
           changes: { from: 0, to: view.state.doc.length, insert: next.value },
           selection: { anchor: next.selectionStart, head: next.selectionEnd },
+          // Sin esto, el Enter que continua una lista en el tope de altura deja el cursor fuera de vista (P-028 9).
+          scrollIntoView: true,
         });
         view.focus();
       },

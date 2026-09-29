@@ -35,6 +35,9 @@ export interface ProjectFileDeps {
   // Rutas de FUERA del cwd que aun asi se abren (hoy: los planes del CLI en `<configDir>/plans`). Se
   // inyecta porque el whitelisting por patron vive en main, junto al resto de fronteras de IPC.
   readonly isAllowedOutsideCwd: (path: string) => boolean;
+  // Rutas de fuera que el usuario APROBO en esta ejecucion (P-028, 15): la pregunta la hace main con
+  // un dialogo nativo sobre la ruta que resolvio el mismo, nunca un flag que mande el renderer.
+  readonly isApprovedOutside: (path: string) => boolean;
 }
 
 export interface ProjectFileTarget {
@@ -50,11 +53,20 @@ function isInside(dir: string, path: string): boolean {
   return rel.length > 0 && !rel.startsWith('..') && !isAbsolute(rel);
 }
 
+// La ruta absoluta de un fichero del panel, relativa al cwd de la conversacion. Exportada porque el
+// dialogo de aprobacion (main) tiene que ensenar y guardar EXACTAMENTE la misma ruta que luego se lee.
+export function resolveProjectFilePath(target: ProjectFileTarget): string {
+  return resolve(resolve(target.cwd), target.path);
+}
+
 export class ProjectFileService {
   constructor(private readonly deps: ProjectFileDeps) {}
 
   read(target: ProjectFileTarget): ProjectFileContent {
-    const path = this.resolveAllowed(target);
+    const { path, allowed } = this.classify(target);
+    // Fuera de las raices y sin aprobar: no es un error, es una PREGUNTA pendiente. El panel la ve por
+    // `outsideCwd` y ofrece abrirlo (dialogo en main); el contenido no sale hasta entonces.
+    if (!allowed) return { path, content: null, mtimeMs: null, tooLarge: false, outsideCwd: true };
     if (!this.deps.exists(path)) {
       // No es un caso raro: el agente pudo crear el fichero y borrarlo despues, o la conversacion se
       // reabrio en otra maquina. Se dice claro en vez de devolver un contenido vacio que se veria como
@@ -71,7 +83,12 @@ export class ProjectFileService {
   // `expectedMtimeMs` es el mtime que el panel leyo (null = "no existia cuando lo lei"). Devuelve el
   // nuevo mtime para que el panel siga teniendo un testigo valido tras guardar.
   write(target: ProjectFileTarget & { readonly content: string; readonly expectedMtimeMs: number | null }): ProjectFileContent {
-    const path = this.resolveAllowed(target);
+    const { path, allowed } = this.classify(target);
+    if (!allowed) {
+      throw new Error(
+        `El fichero no está en la carpeta de la conversación y no has aprobado abrirlo, así que Mage no lo guarda: ${target.path}`,
+      );
+    }
     const current = this.deps.mtimeMs(path);
     if (current !== target.expectedMtimeMs) {
       throw new Error(
@@ -83,16 +100,13 @@ export class ProjectFileService {
     return { path, content: target.content, mtimeMs: this.deps.mtimeMs(path), tooLarge: false };
   }
 
-  // Precondicion compartida por las dos operaciones: ruta dentro del cwd de la conversacion o en una
-  // de las raices permitidas de fuera (los planes del CLI).
-  private resolveAllowed(target: ProjectFileTarget): string {
+  // Precondicion compartida por las dos operaciones: ruta dentro del cwd de la conversacion, en una de
+  // las raices permitidas de fuera (planes, memoria y scratchpad del CLI) o aprobada por el usuario.
+  private classify(target: ProjectFileTarget): { readonly path: string; readonly allowed: boolean } {
     if (target.cwd.trim().length === 0) throw new Error('Carpeta de la conversación vacía al abrir un fichero');
     if (target.path.trim().length === 0) throw new Error('Ruta de fichero vacía');
-    const cwd = resolve(target.cwd);
-    const path = resolve(cwd, target.path);
-    if (isInside(cwd, path) || this.deps.isAllowedOutsideCwd(path)) return path;
-    throw new Error(
-      `El fichero no está en la carpeta de la conversación ni en los planes del CLI, así que Mage no lo abre: ${target.path}`,
-    );
+    const path = resolveProjectFilePath(target);
+    const allowed = isInside(resolve(target.cwd), path) || this.deps.isAllowedOutsideCwd(path) || this.deps.isApprovedOutside(path);
+    return { path, allowed };
   }
 }

@@ -5,6 +5,7 @@
 
 import type { UsageWindowInfo } from './usage';
 import type { ProviderModel } from './providers';
+import type { SubagentRunInfo } from './subagentRun';
 
 // Estado del worker de una sesion (espejo neutral de session_state_changed del CLI).
 export type SessionState = 'idle' | 'running' | 'requires_action';
@@ -28,6 +29,9 @@ export interface ResultInfo {
   readonly numTurns: number | null;
   // Uso del turno cuando el proveedor lo reporta (E3, `agy`). Ausente = no lo reporta.
   readonly usage?: TurnUsage;
+  // Quien abrio el turno (`origin.kind` del `result`). MEDIDO en 2.1.284: `'task-notification'` cuando
+  // lo abrio el CLI solo, al terminar un subagente en segundo plano. Ausente en un turno del usuario.
+  readonly origin?: string;
 }
 
 // Peticion de permiso normalizada (desde control_request{can_use_tool}).
@@ -77,6 +81,8 @@ export interface ToolResult {
   readonly output: string;
   readonly durationMs: number | null;
   readonly file?: ToolFileInfo;
+  // Lo que cuenta el `tool_use_result` de un `Agent`/`Task` (P-028 37a). Ausente en el resto.
+  readonly subagent?: SubagentRunInfo;
 }
 
 // Una categoria del desglose de la ventana de contexto que reporta el CLI (system prompt, tools,
@@ -222,6 +228,30 @@ export type MageEvent =
       readonly fiveHour: UsageWindowInfo | null;
       readonly sevenDay: UsageWindowInfo | null;
     }
+  // Progreso o fin de un subagente EN SEGUNDO PLANO (P-028 37a). MEDIDO en 2.1.284: el CLI emite
+  // `system/task_progress` (`status` 'running', con `usage` y `last_tool_name`) mientras trabaja y
+  // `system/task_notification` (`status` 'completed' | 'stopped' | …) al parar, los dos con el
+  // `tool_use_id` del Agent que lo lanzo. Un interrupt del turno los mata (`stopped`).
+  | {
+      readonly kind: 'subagent_update';
+      readonly toolUseId: string;
+      readonly status: string;
+      readonly tokens: number | null;
+      readonly toolUses: number | null;
+      readonly durationMs: number | null;
+    }
+  // El CLI empieza una peticion al modelo (`system/status` con `status: 'requesting'`, medido en
+  // 2.1.284). Con la pestaña parada es el CLI abriendo un turno solo (la notificacion de una tarea en
+  // segundo plano): cuenta como turno en marcha y la cola de Mage espera (0.1.1 R2, punto 30).
+  | { readonly kind: 'request_started' }
+  // Salida de un comando LOCAL del CLI (`/context`, `/mcp`, `/rename x`...), P-028 grupo C. MEDIDO en
+  // 2.1.284: no manda deltas, solo un `assistant` sintetico, asi que sin este evento el chat se quedaba
+  // vacio. `command` es el nombre sin barra (`rename`), o null si el sintetico no es un comando (un
+  // error de API redactado por el CLI). `text` es el texto del CLI TAL CUAL.
+  | { readonly kind: 'local_command_output'; readonly command: string | null; readonly args: string; readonly text: string }
+  // `/clear` (P-028): el CLI empieza una conversacion NUEVA en el mismo proceso, con otro id y otro
+  // `.jsonl`; la anterior sigue en disco. A partir de aqui main etiqueta la sesion con `newSessionId`.
+  | { readonly kind: 'conversation_reset'; readonly newSessionId: string }
   | { readonly kind: 'result'; readonly result: ResultInfo }
   | { readonly kind: 'error'; readonly message: string };
 
