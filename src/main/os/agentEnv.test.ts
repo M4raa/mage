@@ -12,11 +12,21 @@ describe('scrubAgentEnv', () => {
       CLAUDE_CODE_USE_VERTEX: '1',
       GEMINI_API_KEY: 'g',
       GOOGLE_API_KEY: 'gg',
+      OPENAI_API_KEY: 'sk-openai',
+      CODEX_API_KEY: 'sk-codex',
     };
 
     const env = scrubAgentEnv(base);
 
     for (const name of BLOCKED_AGENT_ENV_VARS) expect(env[name]).toBeUndefined();
+  });
+
+  it('scrubAgentEnv_clavesDeOpenAi_estanEnLaListaYNoLleganAlHijo', () => {
+    // `codex` factura la API con cualquiera de las dos: no puede heredarlas ningun hijo.
+    const env = scrubAgentEnv({ OPENAI_API_KEY: 'sk-openai', CODEX_API_KEY: 'sk-codex', PATH: '/usr/bin' });
+
+    expect(BLOCKED_AGENT_ENV_VARS).toEqual(expect.arrayContaining(['OPENAI_API_KEY', 'CODEX_API_KEY']));
+    expect(env).toEqual({ PATH: '/usr/bin' });
   });
 
   it('scrubAgentEnv_conVariablesInocentes_lasConserva', () => {

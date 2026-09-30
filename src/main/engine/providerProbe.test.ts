@@ -12,6 +12,7 @@ function deps(overrides: Partial<ProbeDeps> = {}): ProbeDeps {
     fetchJson: () => Promise.reject(new Error('fetchJson no esperado')),
     env: {},
     loadClaudeModels: () => [],
+    readCustomApiKey: () => '',
     ...overrides,
   };
 }
@@ -64,14 +65,14 @@ describe('parseOpenAiModels', () => {
 
 describe('probeProvider', () => {
   it('probeProvider_idVacio_lanzaConElValorRecibido', async () => {
-    await expect(probeProvider({ providerId: '  ', baseUrl: null, apiKey: null }, deps())).rejects.toThrow(/"  "/);
+    await expect(probeProvider({ providerId: '  ', baseUrl: null }, deps())).rejects.toThrow(/"  "/);
   });
 
   it('probeProvider_claudeConCatalogoSondeado_devuelveSusModelos', async () => {
     // P-026 2.4: el catalogo sale del `initialize` del CLI, que main cachea por cuenta.
     const models = [{ id: 'opus', label: 'Opus 5.5' }];
     const result = await probeProvider(
-      { providerId: 'claude', baseUrl: null, apiKey: null },
+      { providerId: 'claude', baseUrl: null },
       deps({ findClaudeBinary: () => '/home/u/.local/bin/claude', loadClaudeModels: () => models }),
     );
 
@@ -80,7 +81,7 @@ describe('probeProvider', () => {
 
   it('probeProvider_claudeInstalado_devuelveLaRutaYLaListaCurada', async () => {
     const result = await probeProvider(
-      { providerId: 'claude', baseUrl: null, apiKey: null },
+      { providerId: 'claude', baseUrl: null },
       deps({ findClaudeBinary: () => '/home/u/.local/bin/claude' }),
     );
 
@@ -92,7 +93,7 @@ describe('probeProvider', () => {
 
   it('probeProvider_agyInstalado_listaLosModelosQueDiceElCli', async () => {
     const result = await probeProvider(
-      { providerId: 'agy', baseUrl: null, apiKey: null },
+      { providerId: 'agy', baseUrl: null },
       deps({
         findAgyBinary: () => 'C:/agy.exe',
         runCli: (bin, args) =>
@@ -107,7 +108,7 @@ describe('probeProvider', () => {
   });
 
   it('probeProvider_agyNoInstalado_noLanzaYExplicaComoInstalarlo', async () => {
-    const result = await probeProvider({ providerId: 'agy', baseUrl: null, apiKey: null }, deps());
+    const result = await probeProvider({ providerId: 'agy', baseUrl: null }, deps());
 
     expect(result.endpoint).toBeNull();
     expect(result.models).toBeNull();
@@ -116,7 +117,7 @@ describe('probeProvider', () => {
 
   it('probeProvider_agyFallaElCli_devuelveElMotivoEnVezDeInventarLista', async () => {
     const result = await probeProvider(
-      { providerId: 'agy', baseUrl: null, apiKey: null },
+      { providerId: 'agy', baseUrl: null },
       deps({ findAgyBinary: () => 'agy', runCli: () => Promise.reject(new Error('sin login')) }),
     );
 
@@ -127,7 +128,7 @@ describe('probeProvider', () => {
   it('probeProvider_proveedorDelUsuario_consultaSuEndpointDeModelos', async () => {
     const seen: string[] = [];
     const result = await probeProvider(
-      { providerId: 'custom:ollama', baseUrl: 'http://localhost:11434/v1', apiKey: '' },
+      { providerId: 'custom:ollama', baseUrl: 'http://localhost:11434/v1' },
       deps({
         fetchJson: (url) => {
           seen.push(url);
@@ -142,7 +143,7 @@ describe('probeProvider', () => {
   });
 
   it('probeProvider_builtInSinVariableDeEntorno_diceQueFaltaLaKey', async () => {
-    const result = await probeProvider({ providerId: 'openai', baseUrl: null, apiKey: null }, deps());
+    const result = await probeProvider({ providerId: 'openai', baseUrl: null }, deps());
 
     expect(result.models).toBeNull();
     expect(result.error).toMatch(/OPENAI_API_KEY/);
@@ -151,7 +152,7 @@ describe('probeProvider', () => {
   it('probeProvider_builtInConKeyEnElEntorno_laUsaSinQueViajePorIpc', async () => {
     let usedKey = '';
     const result = await probeProvider(
-      { providerId: 'openai', baseUrl: null, apiKey: null },
+      { providerId: 'openai', baseUrl: null },
       deps({
         env: { OPENAI_API_KEY: 'sk-real' },
         fetchJson: (_url, apiKey) => {
@@ -165,9 +166,31 @@ describe('probeProvider', () => {
     expect(result.models).toEqual([{ id: 'gpt-4o', label: 'gpt-4o' }]);
   });
 
+  it('probeProvider_proveedorDelUsuarioConClave_laSacaDeLaBovedaPorSuId', async () => {
+    // La clave ya no viaja en la peticion: main la lee de la boveda con el id del proveedor.
+    const asked: string[] = [];
+    let usedKey = '';
+    await probeProvider(
+      { providerId: 'custom:remoto', baseUrl: 'https://remoto.example/v1' },
+      deps({
+        readCustomApiKey: (id) => {
+          asked.push(id);
+          return ' sk-boveda ';
+        },
+        fetchJson: (_url, apiKey) => {
+          usedKey = apiKey;
+          return Promise.resolve({ data: [] });
+        },
+      }),
+    );
+
+    expect(asked).toEqual(['custom:remoto']);
+    expect(usedKey).toBe('sk-boveda');
+  });
+
   it('probeProvider_endpointCaido_devuelveElMotivoYLaUrlSondeada', async () => {
     const result = await probeProvider(
-      { providerId: 'custom:ollama', baseUrl: 'http://localhost:11434/v1', apiKey: null },
+      { providerId: 'custom:ollama', baseUrl: 'http://localhost:11434/v1' },
       deps({ fetchJson: () => Promise.reject(new Error('fetch failed')) }),
     );
 
@@ -201,7 +224,7 @@ describe('probeProvider — codex', () => {
   it('codexInstalado_devuelveSuRutaYElMotivoDeQueAunNoSePuedaUsar', async () => {
     const bin = 'C:\Users\quien\AppData\Local\Programs\OpenAI\Codex\bin\codex.exe';
 
-    const result = await probeProvider({ providerId: 'codex', baseUrl: null, apiKey: '' }, deps({ findCodexBinary: () => bin }));
+    const result = await probeProvider({ providerId: 'codex', baseUrl: null }, deps({ findCodexBinary: () => bin }));
 
     expect(result.kind).toBe('cli');
     expect(result.endpoint).toBe(bin);
@@ -213,7 +236,7 @@ describe('probeProvider — codex', () => {
   });
 
   it('codexNoInstalado_endpointNuloParaQueAjustesNoLoListe', async () => {
-    const result = await probeProvider({ providerId: 'codex', baseUrl: null, apiKey: '' }, deps());
+    const result = await probeProvider({ providerId: 'codex', baseUrl: null }, deps());
 
     // `endpoint === null` es la senal UNICA con la que Proveedores decide no mostrar un proveedor.
     expect(result.endpoint).toBeNull();

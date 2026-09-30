@@ -31,14 +31,14 @@ function customProvider(overrides: Partial<CustomProvider> = {}): CustomProvider
     id: 'custom:ollama',
     label: 'Ollama',
     baseUrl: 'http://localhost:11434/v1',
-    apiKey: '',
+    hasApiKey: false,
     models: [{ id: 'llama3', label: 'llama3' }],
     ...overrides,
   };
 }
 
 function draft(overrides: Partial<CustomProviderDraft> = {}): CustomProviderDraft {
-  return { label: 'Ollama', baseUrl: 'http://localhost:11434/v1', apiKey: '', models: 'llama3, mistral', ...overrides };
+  return { label: 'Ollama', baseUrl: 'http://localhost:11434/v1', apiKey: '', forgetApiKey: false, models: 'llama3, mistral', ...overrides };
 }
 
 describe('modelOptionsForProvider', () => {
@@ -193,13 +193,42 @@ describe('validateCustomProviderDraft', () => {
         id: `${CUSTOM_PROVIDER_ID_PREFIX}ollama`,
         label: 'Ollama',
         baseUrl: 'http://localhost:11434/v1',
-        apiKey: 'k',
+        hasApiKey: true,
         models: [
           { id: 'llama3', label: 'llama3' },
           { id: 'mistral', label: 'mistral' },
         ],
       },
+      apiKeyUpdate: { kind: 'set', value: 'k' },
     });
+  });
+
+  it('validateCustomProviderDraft_editandoSinTeclearClave_conservaLaGuardada', () => {
+    // La clave guardada nunca vuelve al renderer: un campo vacio al editar significa «no tocarla».
+    const result = validateCustomProviderDraft(draft(), [customProvider({ hasApiKey: true })], 'custom:ollama');
+
+    expect(result.ok && result.apiKeyUpdate).toEqual({ kind: 'keep' });
+    expect(result.ok && result.provider.hasApiKey).toBe(true);
+  });
+
+  it('validateCustomProviderDraft_quitarClave_pideBorrarlaYQuedaSinClave', () => {
+    const result = validateCustomProviderDraft(draft({ forgetApiKey: true }), [customProvider({ hasApiKey: true })], 'custom:ollama');
+
+    expect(result.ok && result.apiKeyUpdate).toEqual({ kind: 'delete' });
+    expect(result.ok && result.provider.hasApiKey).toBe(false);
+  });
+
+  it('validateCustomProviderDraft_quitarYTeclearOtra_ganaLaTecleada', () => {
+    const result = validateCustomProviderDraft(draft({ forgetApiKey: true, apiKey: 'nueva' }), [customProvider({ hasApiKey: true })], 'custom:ollama');
+
+    expect(result.ok && result.apiKeyUpdate).toEqual({ kind: 'set', value: 'nueva' });
+  });
+
+  it('validateCustomProviderDraft_altaSinClave_noTieneClave', () => {
+    const result = validateCustomProviderDraft(draft(), [], null);
+
+    expect(result.ok && result.apiKeyUpdate).toEqual({ kind: 'keep' });
+    expect(result.ok && result.provider.hasApiKey).toBe(false);
   });
 
   it('validateCustomProviderDraft_sinNombre_rechazaConElMotivo', () => {

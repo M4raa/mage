@@ -192,7 +192,7 @@ function useProviderProbe(providerId: string): { readonly probe: ProviderProbeRe
     let cancelled = false;
     setResult(null);
     void window.mage
-      .probeProvider({ providerId, baseUrl: null, apiKey: null })
+      .probeProvider({ providerId, baseUrl: null })
       .then((probe) => {
         if (!cancelled) setResult(probe);
       })

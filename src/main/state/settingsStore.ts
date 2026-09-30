@@ -64,12 +64,15 @@ const KEYBINDING_OVERRIDE_SCHEMA = z.object({
 
 // Proveedor del usuario (E2): endpoint compatible con la API de OpenAI. `baseUrl` se exige NO vacia
 // aqui y se valida a fondo (parseable, http/https) en la frontera de la UI y del gateway con
-// `chatCompletionsUrl` — el mismo parser en los dos sitios. `apiKey` puede ser '' (runtime local).
+// `chatCompletionsUrl` — el mismo parser en los dos sitios. La api key NO se persiste aqui (vive en la
+// boveda de main): el esquema ya no la conserva, asi que un fichero de la 0.1.1 sale sin ella al primer
+// guardado, despues de que `migrateLegacyProviderKeys` la haya pasado a la boveda. `hasApiKey` es solo
+// un reflejo; al cargar para el renderer manda lo que diga la boveda.
 const CUSTOM_PROVIDER_SCHEMA = z.object({
   id: z.string().min(1),
   label: z.string().min(1),
   baseUrl: z.string().min(1),
-  apiKey: z.string(),
+  hasApiKey: z.boolean().catch(false),
   models: z.array(z.object({ id: z.string().min(1), label: z.string() })),
 });
 

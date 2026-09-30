@@ -52,7 +52,11 @@ modo plan para diseñar cada milestone; verifica end-to-end (arranca lo construi
 - **`pnpm check`** = typecheck (node+web) + tests. **`pnpm build`** además atrapa fallos de bundle.
 - **`pnpm verify:gui`** — arranca la app real con **perfil aislado**, mide el DOM por CDP y deja informe
   + capturas en `.verify-out/`. **No escribas un driver CDP desechable: añade una comprobación aquí.**
-  Nunca pulsa `Enter` en el prompt (dispararía un turno real) y no spawnea el CLI.
+  Envía **un solo turno real por ejecución**: la última comprobación, contra Claude con el modelo y el
+  esfuerzo más bajos, tras afirmar el proveedor de la pestaña. Antes mira el uso de la cuenta: con más
+  del 70 % gastado avisa y deja elegir real o local (servidor falso); sin terminal interactiva elige
+  local y lo dice en el informe (`--turn=local|real` fuerza uno). Ninguna otra comprobación pulsa
+  `Enter` en el prompt ni spawnea el CLI.
 - **`spike/`** — spikes reproducibles contra los CLI reales (`engine-spike.mjs`, `agy-spike.mjs`).
   Un CLI nuevo se **mide**, no se deduce de su `--help` (que ya mintió una vez).
 - **`.claude/skills/`** — `tocar-main` (el HMR no recarga `main`; borrar el estado al reordenar un

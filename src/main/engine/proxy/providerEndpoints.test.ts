@@ -1,17 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import { chatCompletionsUrl } from '@shared/providers';
-import type { CustomProvider } from '@shared/providers';
-import { resolveUpstream } from './providerEndpoints';
+import { resolveUpstream, type KeyedCustomProvider } from './providerEndpoints';
 
 // Registro y entorno se pasan como DATOS (modulo puro): ni FS ni process.env de verdad.
-const NO_PROVIDERS: readonly CustomProvider[] = [];
+const NO_PROVIDERS: readonly KeyedCustomProvider[] = [];
 const NO_ENV: Readonly<Record<string, string | undefined>> = {};
 
-function ollama(overrides: Partial<CustomProvider> = {}): CustomProvider {
+function ollama(overrides: Partial<KeyedCustomProvider> = {}): KeyedCustomProvider {
   return {
     id: 'custom:ollama',
     label: 'Ollama',
     baseUrl: 'http://localhost:11434/v1',
+    hasApiKey: false,
     apiKey: '',
     models: [{ id: 'llama3', label: 'llama3' }],
     ...overrides,

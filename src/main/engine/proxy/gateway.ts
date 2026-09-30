@@ -4,9 +4,8 @@ import { request as httpsRequest } from 'node:https';
 import { request as httpRequest } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { URL } from 'node:url';
-import type { CustomProvider } from '@shared/providers';
 import { AnthropicStreamTranslator, translateOpenAiResponse } from './streamTranslator';
-import { resolveUpstream, type UpstreamTarget } from './providerEndpoints';
+import { resolveUpstream, type KeyedCustomProvider, type UpstreamTarget } from './providerEndpoints';
 
 // Registry to keep track of active sessions
 export interface SessionConfig {
@@ -32,7 +31,7 @@ export function setGatewayLogger(log: GatewayLogFn): void {
 // peticion para que un proveedor recien anadido o editado en Configuracion aplique sin reiniciar (mismo
 // criterio que `loadSharedConfigArgs`, que tampoco cachea el resultado de arranque). Por defecto vacio:
 // el gateway no depende de que alguien lo haya cableado (tests, arranque temprano).
-export type CustomProviderLoader = () => readonly CustomProvider[];
+export type CustomProviderLoader = () => readonly KeyedCustomProvider[];
 let loadCustomProviders: CustomProviderLoader = () => [];
 
 export function setCustomProviderLoader(load: CustomProviderLoader): void {

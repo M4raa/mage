@@ -15,7 +15,7 @@ const VALID: AppSettings = {
   defaultPermissionMode: 'auto',
   keybindingOverrides: [{ actionId: 'app.toggleSidebar', keys: 'CmdOrCtrl+Shift+B' }],
   customProviders: [
-    { id: 'custom:ollama', label: 'Ollama', baseUrl: 'http://localhost:11434/v1', apiKey: '', models: [{ id: 'llama3', label: 'llama3' }] },
+    { id: 'custom:ollama', label: 'Ollama', baseUrl: 'http://localhost:11434/v1', hasApiKey: false, models: [{ id: 'llama3', label: 'llama3' }] },
   ],
   trustedFolders: ['C:/sourcecode/mage'],
   scratchRetention: '30d',
@@ -234,7 +234,7 @@ describe('SettingsStore.load', () => {
       id: 'custom:lm-studio',
       label: 'LM Studio',
       baseUrl: 'http://192.168.1.9:1234/v1',
-      apiKey: 'lm-key',
+      hasApiKey: true,
       models: [{ id: 'local-model', label: 'Local' }],
     };
     const store = new SettingsStore(

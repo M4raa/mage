@@ -12,7 +12,9 @@ export default defineConfig({
     // `.tsx` TAMBIEN (7.3). Hoy no hay ninguno, y ese es justo el problema: con el patron anterior
     // (`*.test.ts` a secas) el dia que alguien escriba `Foo.test.tsx` no se ejecutaria y NO fallaria
     // — simplemente no aparecería, que es la peor forma de perder una comprobacion.
-    include: ['src/**/*.test.{ts,tsx}'],
+    // Y los modulos PUROS de los scripts del repo (p. ej. la guarda de uso de `verify:gui`), que son .mjs
+    // porque el harness corre en node sin el pipeline de TS.
+    include: ['src/**/*.test.{ts,tsx}', 'scripts/**/*.test.mjs'],
     // `threads` en vez del default `forks` (7.1). Medido sobre la suite completa: 4,99 s -> 4,14 s
     // sin tocar el aislamiento por fichero, que se mantiene. El coste de la suite NO esta en los tests
     // (2,7 s) sino en arrancar workers: `prepare` era 16,5 s de los 5 s de reloj de pared.

@@ -30,6 +30,11 @@ const BLOCKED_ENV_VARS = [
   // Otros proveedores, para los adapters que no son Claude (agy usa Gemini).
   'GEMINI_API_KEY',
   'GOOGLE_API_KEY',
+  // OpenAI: `codex` lee las dos del entorno y con cualquiera factura la API en vez de la cuenta.
+  // `OPENAI_API_KEY` sigue sirviendo al proveedor de serie `openai` del gateway, que la lee del entorno
+  // de MAIN (process.env), no del hijo: borrarla aqui no le quita nada.
+  'OPENAI_API_KEY',
+  'CODEX_API_KEY',
 ] as const;
 
 // Devuelve una copia de `baseEnv` sin las variables prohibidas. No muta la entrada: quien llama suele

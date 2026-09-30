@@ -36,6 +36,7 @@ import {
   dialog,
   Notification,
   nativeTheme,
+  safeStorage,
   screen,
 } from 'electron';
 import {
@@ -151,6 +152,15 @@ import { ConversationIndexStore } from './state/conversationIndexStore';
 import { ProjectFileService, resolveProjectFilePath } from './files/projectFileService';
 import { writeAtomic, type AtomicWriteDeps } from './os/atomicFile';
 import { SettingsStore } from './state/settingsStore';
+import { SecretStore } from './secrets/secretStore';
+import {
+  migrateLegacyProviderKeys,
+  parseApiKeySetParams,
+  parseProviderId,
+  providerApiKeySecretId,
+  withApiKeyFlags,
+  withApiKeys,
+} from './secrets/providerSecrets';
 import { expiredScratchDirs, SWEEP_INTERVAL_MS } from './state/scratchRetention';
 import { ThinkingBuffer, ThinkingStore } from './state/thinkingStore';
 import { isTrusted, readCliTrustedFolders } from './os/workspaceTrust';
@@ -890,6 +900,45 @@ function getSettingsStore(): SettingsStore {
     });
   }
   return settingsStoreSingleton;
+}
+
+// Boveda de secretos (claves de API de proveedores): cifrada con `safeStorage` (DPAPI en Windows).
+// Lazy por el mismo motivo que SettingsStore, y ademas porque `safeStorage` no cifra antes de `ready`.
+let secretStoreSingleton: SecretStore | null = null;
+function getSecretStore(): SecretStore {
+  if (secretStoreSingleton === null) {
+    secretStoreSingleton = new SecretStore({
+      filePath: join(app.getPath('userData'), 'secrets.json'),
+      cipher: safeStorage,
+      exists: existsSync,
+      readFile: (path) => readFileSync(path, 'utf8'),
+      writeFile: (path, data) => writeFileSync(path, data, 'utf8'),
+      rename: renameSync,
+      tempSuffix: () => randomUUID(),
+    });
+  }
+  return secretStoreSingleton;
+}
+
+function readCustomProviderApiKey(providerId: string): string {
+  return getSecretStore().get(providerApiKeySecretId(providerId)) ?? '';
+}
+
+// La 0.1.1 guardaba la api key de los proveedores del usuario EN CLARO en `app-settings.json`. Al
+// arrancar, antes de que exista ningun renderer, se pasan a la boveda y se reescribe el fichero sin
+// ellas (el esquema ya no las conserva). Si la boveda falla no se reescribe nada: las claves siguen
+// donde estaban y se vuelve a intentar en el proximo arranque.
+function migrateLegacyProviderKeysOnce(): void {
+  const filePath = join(app.getPath('userData'), 'app-settings.json');
+  try {
+    const moved = migrateLegacyProviderKeys(existsSync(filePath) ? readFileSync(filePath, 'utf8') : null, getSecretStore());
+    if (moved === 0) return;
+    const store = getSettingsStore();
+    store.save(store.load());
+    mainLog('info', 'Claves de proveedor movidas a la boveda cifrada', { count: moved });
+  } catch (err) {
+    mainLog('error', 'No se pudieron mover las claves de proveedor a la boveda', { error: err instanceof Error ? err.message : String(err) });
+  }
 }
 
 // Cache del catalogo de comandos "/" (2.2) e indice propio por conversacion (2.1). Lazy por el mismo
@@ -1684,8 +1733,20 @@ function registerIpcHandlers(): void {
   // los modelos que ofrece de verdad. Sin cache: se pide al abrir la seccion y al pulsar "Reintentar",
   // que es justo cuando el usuario acaba de cambiar algo (instalar el CLI, arrancar Ollama...).
   ipcMain.handle(IpcChannel.ProviderProbe, (_e, params: ProviderProbeParams) =>
-    probeProvider(params, defaultProbeDeps(() => getCommandCatalogStore().loadModels(join(homedir(), cliLogin.accounts.mainDirName)))),
+    probeProvider(
+      params,
+      defaultProbeDeps(() => getCommandCatalogStore().loadModels(join(homedir(), cliLogin.accounts.mainDirName)), readCustomProviderApiKey),
+    ),
   );
+  // Clave de un proveedor del usuario: sube UNA vez, al guardarla, y se cifra en main. No hay canal para
+  // leerla de vuelta: el renderer solo ve `hasApiKey` en los ajustes.
+  ipcMain.handle(IpcChannel.ProviderApiKeySet, (_e, raw: unknown): void => {
+    const { providerId, apiKey } = parseApiKeySetParams(raw);
+    getSecretStore().set(providerApiKeySecretId(providerId), apiKey);
+  });
+  ipcMain.handle(IpcChannel.ProviderApiKeyDelete, (_e, raw: unknown): void => {
+    getSecretStore().delete(providerApiKeySecretId(parseProviderId(raw)));
+  });
   // Abrir con: revelar en el gestor / guardar-como los archivos generados por las tools.
   ipcMain.handle(IpcChannel.FileReveal, (_e, path: string) => openWithService.reveal(path));
   ipcMain.handle(IpcChannel.FileSaveAs, (_e, path: string) => openWithService.saveAs(path));
@@ -1956,7 +2017,8 @@ function registerIpcHandlers(): void {
   // Configuracion de la app (M2.3): mismo patron que el workspace (atomico, tolerante), fichero
   // separado (settings = preferencias globales; workspace = sesiones).
   const settingsStore = getSettingsStore();
-  ipcMain.handle(IpcChannel.SettingsLoad, (): AppSettings => settingsStore.load());
+  // Las claves de los proveedores no viajan: solo `hasApiKey`, que dice la boveda.
+  ipcMain.handle(IpcChannel.SettingsLoad, (): AppSettings => withApiKeyFlags(settingsStore.load(), getSecretStore()));
   // Los ajustes son COMPARTIDOS entre ventanas (ajustes, temas, permisos y carpetas de confianza viven
   // todos en `app-settings.json`): tras guardar, se avisa a TODAS las demas para que apliquen lo mismo.
   // Se excluye a la que lo origino —ya lo tiene aplicado— para no devolverle un eco que pisaria una
@@ -2404,6 +2466,7 @@ app.whenReady().then(async () => {
   if (process.platform === 'win32') app.setAppUserModelId(app.isPackaged ? WINDOWS_APP_USER_MODEL_ID : process.execPath);
   applyContentSecurityPolicy();
   Menu.setApplicationMenu(buildApplicationMenu());
+  migrateLegacyProviderKeysOnce();
   registerIpcHandlers();
   // Antes de la primera ventana: la primera sesion ya tiene que recibir los MCP importados.
   importSharedMcpOnce();
@@ -2416,7 +2479,8 @@ app.whenReady().then(async () => {
     // Proveedores del usuario (E2): se LEEN DEL DISCO en cada peticion, no se cachea un registro de
     // arranque, asi anadir o editar un proveedor en Configuracion aplica al siguiente turno sin
     // reiniciar (mismo criterio que loadSharedConfigArgs).
-    setCustomProviderLoader(() => getSettingsStore().load().customProviders);
+    // La clave de cada uno sale de la boveda aqui mismo, en main: nunca del fichero de ajustes.
+    setCustomProviderLoader(() => withApiKeys(getSettingsStore().load().customProviders, getSecretStore()));
     const port = await startGateway();
     mainLog('info', 'Local proxy gateway arrancado', { port });
   } catch (err) {

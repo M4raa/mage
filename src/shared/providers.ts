@@ -19,17 +19,15 @@ export interface ProviderModel {
 }
 
 // Proveedor configurado por el usuario. `id` lo genera Mage (prefijo CUSTOM_PROVIDER_ID_PREFIX) para
-// que nunca colisione con uno de serie; el usuario no lo escribe. `apiKey` vacia = sin autenticacion
-// (lo normal en runtimes locales): no se manda cabecera Authorization.
-// El campo se llama `apiKey` a proposito: `debug/redact.ts` enmascara por NOMBRE de campo, asi que si
-// alguna vez un ajuste entero acabara en el LogBus, la key sale ya como [REDACTED].
-// ponytail: la key se guarda en claro en app-settings.json, como el resto de la config. Techo: no
-// protege de otro proceso del mismo usuario; se sube cifrandola con electron `safeStorage`.
+// que nunca colisione con uno de serie; el usuario no lo escribe.
+// Su api key NO vive aqui: esta cifrada en la boveda de main (`SecretStore`) y el renderer solo sabe si
+// existe (`hasApiKey`). Sin clave = sin autenticacion (lo normal en runtimes locales): no se manda
+// cabecera Authorization.
 export interface CustomProvider {
   readonly id: string;
   readonly label: string;
   readonly baseUrl: string;
-  readonly apiKey: string;
+  readonly hasApiKey: boolean;
   readonly models: readonly ProviderModel[];
 }
 

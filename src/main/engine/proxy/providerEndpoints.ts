@@ -12,10 +12,16 @@ export interface UpstreamTarget {
   readonly model: string; // modelo YA resuelto (alias de los built-in aplicados)
 }
 
+// Proveedor del usuario con su clave YA descifrada de la boveda. Tipo solo de main: el `CustomProvider`
+// compartido no lleva clave, porque viaja al renderer.
+export interface KeyedCustomProvider extends CustomProvider {
+  readonly apiKey: string; // '' = sin clave
+}
+
 export interface UpstreamResolutionInput {
   readonly providerId: string;
   readonly model: string;
-  readonly customProviders: readonly CustomProvider[];
+  readonly customProviders: readonly KeyedCustomProvider[];
   readonly env: Readonly<Record<string, string | undefined>>;
 }
 
@@ -69,6 +75,6 @@ function readEnvApiKey(provider: BuiltInProvider, env: Readonly<Record<string, s
 // ponytail: los proveedores del usuario NO traducen alias de modelo (el id viaja tal cual). El selector
 // ya ofrece solo los modelos declarados por el proveedor, asi que un 'sonnet' aqui seria un id escrito a
 // mano. Techo: no auto-mapea; se sube declarando alias por proveedor en su formulario.
-function resolveCustom(provider: CustomProvider, model: string): UpstreamTarget {
+function resolveCustom(provider: KeyedCustomProvider, model: string): UpstreamTarget {
   return { url: chatCompletionsUrl(provider.baseUrl), apiKey: provider.apiKey.trim(), model };
 }

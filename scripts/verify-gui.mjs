@@ -5,7 +5,8 @@
 // versionado y repetible, con tres cosas que los drivers de usar y tirar no tenian:
 //
 //   1. `--user-data-dir` AISLADO: la verificacion no toca el %APPDATA%/Mage real del usuario. De paso
-//      arranca sin pestañas persistidas, asi que NO spawnea ninguna sesion del CLI (coste cero) y no
+//      arranca sin pestañas persistidas, asi que ninguna comprobacion spawnea el CLI salvo la ULTIMA (el
+//      turno minimo de verdad, con su guarda de uso), y no
 //      hereda el "residuo de maquina" (panels-layout.json viejo) que ya disfrazo un bug dos veces.
 //   2. Un ARTEFACTO revisable por ejecucion (`session.md` + capturas), en vez de un parrafo de ROADMAP
 //      que nadie puede volver a comprobar. Idea tomada de playwright-core/src/tools/backend/sessionLog.
@@ -17,6 +18,12 @@
 //   pnpm verify:gui             # arranca, comprueba y limpia
 //   pnpm verify:gui --keep      # deja la app abierta al terminar (para mirar a ojo)
 //   pnpm verify:gui --only=texto # solo las comprobaciones cuyo nombre contenga `texto`
+//   pnpm verify:gui --turn=local # el turno minimo contra el servidor falso, sin gastar cuota
+//   pnpm verify:gui --turn=real  # el turno minimo contra Claude aunque la guarda de uso avise
+//
+// UN TURNO REAL POR EJECUCION: la ultima comprobacion envia un mensaje minimo a Claude (modelo y
+// esfuerzo mas bajos). Antes mira el uso de la cuenta; con mas del 70 % gastado avisa y deja elegir
+// real o local (servidor falso), y sin terminal interactiva elige local y lo dice en el informe.
 //
 // LIMITE, dicho en voz alta: esto MIDE el DOM real; no juzga si el resultado se ve bien. El vistazo
 // humano sigue siendo del usuario (ver .claude/skills/verificacion-gui).
@@ -26,8 +33,11 @@ import { createRequire } from 'node:module';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import readline from 'node:readline/promises';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
+import { FAKE_OPENAI_MODEL, FAKE_OPENAI_REPLY, startFakeOpenAiServer } from './fake-openai-server.mjs';
+import { decideTurnTarget, parseTurnAnswer, spentPercent } from './lib/usageGuard.mjs';
 
 const repoRoot = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 // El paquete `electron` exporta la RUTA a su binario cuando se carga desde node (no desde Electron).
@@ -1047,6 +1057,69 @@ const CHECKS = [
         ok,
         detail: `botones de borrado=${targets} filas tras borrar=${rows} sigue en Modelos=${inModels} sigue en Nueva conversacion=${inNewTab} opciones=${JSON.stringify(options)}`,
       };
+    },
+  },
+  {
+    // Grupo 0 (0.1.2): la api key de un proveedor del usuario sube UNA vez a main, se cifra en la boveda
+    // (`secrets.json`, safeStorage) y no vuelve: ni en el estado del renderer, ni en `SettingsLoad`, ni
+    // en `app-settings.json`. Se mide con un centinela en los cuatro sitios, que al editar el campo sale
+    // vacio con el aviso de «clave guardada», y que borrar el proveedor borra tambien su secreto.
+    // Autosuficiente: añade su proveedor y lo borra; llega y se va sin dialogo abierto.
+    name: 'Grupo 0: la clave del proveedor se cifra en main y no vuelve al renderer',
+    async run(page, { userDataDir }) {
+      await openSettingsDialog(page);
+      await openSection(page, /Proveedores/);
+      await page.getByRole('button', { name: /Añadir proveedor/ }).click();
+      await page.getByRole('textbox', { name: 'Nombre del proveedor' }).fill(SECRET_PROVIDER.label);
+      await page.getByRole('textbox', { name: 'URL base del endpoint compatible con la API de OpenAI' }).fill(SECRET_PROVIDER.baseUrl);
+      await page.getByRole('textbox', { name: 'Modelos del proveedor, separados por comas' }).fill('vg');
+      await page.getByLabel('API key del proveedor (opcional)').fill(SECRET_PROVIDER.key);
+      await page.getByRole('button', { name: 'Añadir', exact: true }).click();
+      await page.getByRole('button', { name: `Eliminar el proveedor ${SECRET_PROVIDER.label}` }).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      const settingsFile = path.join(userDataDir, 'app-settings.json');
+      const secretsFile = path.join(userDataDir, 'secrets.json');
+      // Los ajustes se guardan con debounce: `SettingsLoad` solo sabe del proveedor cuando ha llegado a disco.
+      const persisted = await waitForFile(settingsFile, (text) => text.includes(SECRET_PROVIDER.baseUrl));
+      const renderer = await page.evaluate(async (label) => {
+        const own = window.__mageDev.store.getState().settings.customProviders.find((p) => p.label === label) ?? null;
+        const loaded = await window.mage.loadSettings();
+        return { own, loaded: JSON.stringify(loaded), loadedFlag: loaded.customProviders.find((p) => p.label === label)?.hasApiKey ?? null };
+      }, SECRET_PROVIDER.label);
+      const secretId = `provider-api-key:${renderer.own?.id ?? '?'}`;
+      const vault = readIfExists(secretsFile);
+      const modal = page.locator(MODAL).first();
+      await modal.getByRole('button', { name: 'Editar', exact: true }).click();
+      const keyField = modal.getByLabel('API key del proveedor (opcional)');
+      const editField = { value: await keyField.inputValue(), placeholder: await keyField.getAttribute('placeholder') };
+      await modal.getByRole('button', { name: 'Cancelar', exact: true }).click();
+      await page.getByRole('button', { name: `Eliminar el proveedor ${SECRET_PROVIDER.label}` }).click();
+      const vaultAfter = await waitForFile(secretsFile, (text) => !text.includes(secretId));
+      const closed = await closeDialog(page);
+      const measured = {
+        hasApiKeyEnElStore: renderer.own?.hasApiKey ?? null,
+        campoApiKeyEnElStore: renderer.own !== null && 'apiKey' in renderer.own,
+        hasApiKeyEnSettingsLoad: renderer.loadedFlag,
+        centinelaEnSettingsLoad: renderer.loaded.includes(SECRET_PROVIDER.key),
+        centinelaEnAppSettings: persisted?.includes(SECRET_PROVIDER.key) ?? null,
+        secretoEnBoveda: vault?.includes(secretId) ?? false,
+        centinelaEnClaroEnBoveda: vault?.includes(SECRET_PROVIDER.key) ?? null,
+        campoAlEditar: editField,
+        secretoTrasBorrar: vaultAfter?.includes(secretId) ?? null,
+        dialogosAlCerrar: closed,
+      };
+      const ok =
+        measured.hasApiKeyEnElStore === true &&
+        !measured.campoApiKeyEnElStore &&
+        measured.hasApiKeyEnSettingsLoad === true &&
+        !measured.centinelaEnSettingsLoad &&
+        measured.centinelaEnAppSettings === false &&
+        measured.secretoEnBoveda &&
+        measured.centinelaEnClaroEnBoveda === false &&
+        editField.value === '' &&
+        editField.placeholder === SAVED_API_KEY_PLACEHOLDER &&
+        measured.secretoTrasBorrar === false &&
+        closed === 0;
+      return { ok, detail: JSON.stringify(measured) };
     },
   },
   {
@@ -6122,6 +6195,46 @@ const CHECKS = [
       };
     },
   },
+  {
+    // Grupo 0 (0.1.2, ficha D11 de P-032): UN turno minimo de verdad, de punta a punta — teclear, Enter,
+    // proceso del CLI, respuesta pintada. Es la unica comprobacion que envia: todas las demas miden sin
+    // gastar. Contra Claude con el modelo y el esfuerzo mas bajos; si la cuenta lleva gastado mas del
+    // 70 %, la guarda de uso pregunta (o, sin terminal, elige el servidor falso y lo dice aqui).
+    // Antes de pulsar Enter se AFIRMA el proveedor y el modelo de la pestaña activa: si no son los
+    // esperados, no se envia nada. La ULTIMA de la lista a proposito: deja un proceso y una transcripcion
+    // que no deben medir las demas; cierra su pestaña y, en local, borra su proveedor.
+    name: 'Grupo 0: turno mínimo de verdad (Claude, o servidor falso si la guarda de uso lo pide)',
+    async run(page, { userDataDir }) {
+      const decision = await chooseTurnTarget(page);
+      const fake = decision.target === 'local' ? await startFakeOpenAiServer() : null;
+      try {
+        const expected = await openTurnTab(page, { target: decision.target, fake, userDataDir });
+        const outcome = await sendMinimalTurn(page, expected);
+        if (outcome.tab !== null) await page.evaluate((tabId) => window.__mageDev.store.getState().closeTab(tabId), outcome.tab.id);
+        const viaFake = fake === null || (fake.stats.completions >= 1 && outcome.agentText.includes(FAKE_OPENAI_REPLY));
+        const ok = outcome.sent && outcome.status === 'idle' && outcome.agentText.trim().length > 0 && outcome.errors.length === 0 && viaFake;
+        const detail = {
+          modo: decision.target,
+          motivo: decision.reason,
+          ...(decision.usageError === null ? {} : { errorDeUso: decision.usageError }),
+          pestaña: outcome.tab,
+          enviado: outcome.sent,
+          estado: outcome.status,
+          respuesta: outcome.agentText.slice(0, 120),
+          errores: outcome.errors,
+          bloques: outcome.kinds,
+          ms: outcome.ms,
+          ...(fake === null ? {} : { peticionesAlFalso: fake.stats.completions, conStream: fake.stats.streamed }),
+        };
+        return { ok, detail: JSON.stringify(detail) };
+      } finally {
+        if (fake !== null) {
+          await page.evaluate((id) => window.__mageDev.store.getState().removeCustomProvider(id), FAKE_TURN_PROVIDER.id);
+          await fake.close();
+        }
+      }
+    },
+  },
 ];
 
 // Ventanas PRINCIPALES abiertas ahora mismo (ni widget ni debug).
@@ -6417,6 +6530,29 @@ async function waitForModalsGone(page) {
 }
 
 // --- E2: seccion "Proveedores" -------------------------------------------------------------------
+
+// Proveedor de la comprobacion de la boveda (grupo 0). La clave es un CENTINELA: si aparece en el
+// renderer o en claro en disco, la comprobacion lo canta. La URL no se consulta de verdad (el sondeo
+// falla y la ficha lo dice, que aqui da igual). El texto del aviso repite SAVED_API_KEY_PLACEHOLDER de
+// ProvidersSection.tsx, como el resto de anclas de este fichero.
+const SECRET_PROVIDER = { label: 'VG boveda', baseUrl: 'http://127.0.0.1:9/v1', key: 'sk-vg-centinela-que-no-debe-verse' };
+const SAVED_API_KEY_PLACEHOLDER = 'Clave guardada y cifrada · escribe otra para sustituirla';
+
+function readIfExists(file) {
+  return fs.existsSync(file) ? fs.readFileSync(file, 'utf-8') : null;
+}
+
+// Espera a que un fichero del perfil cumpla `predicate` (los ajustes se guardan con debounce, la boveda
+// al momento) y devuelve su texto, o el ultimo leido si no llega a cumplirlo.
+async function waitForFile(file, predicate) {
+  const deadline = Date.now() + CONFIG.actionTimeoutMs;
+  let text = readIfExists(file);
+  while (Date.now() < deadline && (text === null || !predicate(text))) {
+    await new Promise((resolve) => setTimeout(resolve, CONFIG.pollIntervalMs));
+    text = readIfExists(file);
+  }
+  return text;
+}
 
 // Filas de proveedor GUARDADAS. Se ancla al boton de borrar (`aria-label` explicito): un contador de
 // divs de la seccion incluiria el formulario y los textos de ayuda.
@@ -7162,6 +7298,126 @@ async function measureTabContextMenuClamp(page) {
   return measured;
 }
 
+// --- Grupo 0: el turno minimo de verdad -----------------------------------------------------------
+
+// Lo mas barato que acepta el CLI: el modelo pequeño, el esfuerzo minimo y una respuesta de una palabra.
+const MINIMAL_TURN = {
+  model: 'haiku',
+  effort: 'low',
+  prompt: 'Contesta solo con la palabra ok. No uses herramientas.',
+  timeoutMs: 180_000,
+};
+// Proveedor del usuario que apunta al servidor falso (modo local). Id con el prefijo de los del usuario.
+const FAKE_TURN_PROVIDER = { id: 'custom:vg-servidor-falso', label: 'VG servidor falso' };
+const TRUST_DIALOG = '[role="dialog"][aria-labelledby="trust-title"]';
+
+function forcedTurnTarget() {
+  return process.argv.find((arg) => arg.startsWith('--turn='))?.slice('--turn='.length) ?? null;
+}
+
+// La guarda de uso: lee el uso de la cuenta activa por el mismo IPC que el panel de Uso (no gasta nada)
+// y decide. Si hay que preguntar y hay alguien delante, pregunta en la terminal.
+async function chooseTurnTarget(page) {
+  const read = await page.evaluate(async () => {
+    const accountId = window.__mageDev.store.getState().activeAccountId;
+    try {
+      return { usage: await window.mage.getUsage(accountId), error: null };
+    } catch (error) {
+      return { usage: null, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+  const spent = spentPercent(read.usage);
+  const decision = decideTurnTarget({ spent, forced: forcedTurnTarget(), interactive: process.stdin.isTTY === true });
+  if (decision.target !== 'ask') return { ...decision, usageError: read.error };
+  console.log(`[verify:gui] AVISO: ${decision.reason}.`);
+  const terminal = readline.createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    const target = parseTurnAnswer(await terminal.question('¿Turno real (gasta cuota) o local (servidor falso)? [r/L] '));
+    return { target, reason: `${decision.reason}; elegido en la terminal: ${target}`, usageError: read.error };
+  } finally {
+    terminal.close();
+  }
+}
+
+// Abre la pestaña del turno y devuelve lo que TIENE que tener antes de enviar. Real: Ctrl+N (el camino
+// de siempre) con modelo y esfuerzo minimos. Local: un proveedor del usuario apuntando al servidor
+// falso; el gateway lee los proveedores del DISCO, asi que se espera a que el guardado llegue.
+async function openTurnTab(page, { target, fake, userDataDir }) {
+  if (target === 'real') {
+    await openTemporaryConversation(page);
+    await page.evaluate(({ model, effort }) => {
+      const state = window.__mageDev.store.getState();
+      state.setActiveModel(model);
+      state.setActiveEffort(effort);
+    }, MINIMAL_TURN);
+    return { provider: 'claude', model: MINIMAL_TURN.model };
+  }
+  await page.evaluate(
+    async ({ provider, baseUrl, model }) => {
+      const state = window.__mageDev.store.getState();
+      await state.saveCustomProvider({ id: provider.id, label: provider.label, baseUrl, hasApiKey: false, models: [{ id: model, label: model }] });
+      const cwd = await window.mage.getScratchDir();
+      await state.newTab({ accountId: state.activeAccountId, cwd, model, provider: provider.id, title: 'VG turno local', privacy: 'shared' });
+    },
+    { provider: FAKE_TURN_PROVIDER, baseUrl: fake.baseUrl, model: FAKE_OPENAI_MODEL },
+  );
+  await waitForFile(path.join(userDataDir, 'app-settings.json'), (text) => text.includes(FAKE_TURN_PROVIDER.id));
+  return { provider: FAKE_TURN_PROVIDER.id, model: FAKE_OPENAI_MODEL };
+}
+
+// La pestaña activa, lo justo para la guarda y el informe.
+function activeTurnTab(page) {
+  return page.evaluate(() => {
+    const state = window.__mageDev.store.getState();
+    const tab = state.tabs.find((t) => t.id === state.activeTabId);
+    return tab === undefined ? null : { id: tab.id, provider: tab.provider, model: tab.model, effort: tab.effort ?? null, cwd: tab.cwd };
+  });
+}
+
+// GUARDA: se afirma proveedor y modelo de la pestaña activa ANTES de pulsar Enter. Si no casan, no se
+// envia nada (un Enter en la pestaña equivocada es un turno en una conversacion de verdad).
+async function sendMinimalTurn(page, expected) {
+  const tab = await activeTurnTab(page);
+  const matches = tab !== null && tab.provider === expected.provider && tab.model === expected.model;
+  if (!matches) return { sent: false, tab, status: null, agentText: '', errors: [`pestaña activa inesperada; se esperaba ${JSON.stringify(expected)}`], kinds: [], ms: 0 };
+  await typeInPrompt(page, MINIMAL_TURN.prompt);
+  const startedAt = Date.now();
+  await page.keyboard.press('Enter');
+  const outcome = await waitForTurnEnd(page, tab);
+  return { sent: true, tab, ...outcome, ms: Date.now() - startedAt };
+}
+
+// Espera a que el turno termine (idle o error) o se pare pidiendo permiso. La carpeta temporal del
+// perfil aislado no es de confianza: si la app pregunta por ESA carpeta, se confia (queda en los
+// ajustes del perfil aislado, que se tira al acabar).
+async function waitForTurnEnd(page, tab) {
+  const deadline = Date.now() + MINIMAL_TURN.timeoutMs;
+  let last = null;
+  while (Date.now() < deadline) {
+    last = await readTurnState(page, tab);
+    if (last.askingTrust && (await page.locator(TRUST_DIALOG).count()) === 1) {
+      await page.locator(TRUST_DIALOG).getByRole('button', { name: 'Confiar en esta carpeta', exact: true }).click();
+    }
+    if (last.status === 'idle' || last.status === 'error' || last.status === 'needs_permission') break;
+    await page.waitForTimeout(CONFIG.pollIntervalMs);
+  }
+  return { status: last?.status ?? null, agentText: last?.agentText ?? '', errors: last?.errors ?? ['sin estado'], kinds: last?.kinds ?? [] };
+}
+
+function readTurnState(page, tab) {
+  return page.evaluate(({ id, cwd }) => {
+    const state = window.__mageDev.store.getState();
+    const blocks = state.blocksByChat[id] ?? [];
+    const agentText = blocks
+      .filter((block) => block.kind === 'agent' && !block.streaming)
+      .map((block) => block.runs.map((run) => run.text).join(''))
+      .join('\n');
+    const errors = blocks.filter((block) => block.kind === 'error').map((block) => block.message);
+    const kinds = blocks.map((block) => `${block.kind}${block.streaming === true ? '*' : ''}`);
+    return { status: state.statusByChat[id] ?? 'idle', agentText, errors, kinds, askingTrust: state.trustRequests.includes(cwd) };
+  }, tab);
+}
+
 // --- Arranque y conexion -------------------------------------------------------------------------
 
 function launchApp(userDataDir) {
@@ -7181,7 +7437,7 @@ function launchApp(userDataDir) {
   const child = spawn(process.execPath, args, {
     cwd: repoRoot,
     // Sin el sondeo de modelos del arranque (P-026 2.4): lanzaria el CLI real por cada cuenta con
-    // sesion, y este harness no spawnea el CLI nunca.
+    // sesion, y aqui el CLI solo lo lanza el turno minimo, a proposito.
     // MAGE_MCP_FAKE_SOURCES: el inventario de MCP lee las fuentes falsas sembradas, nunca las reales.
     // MAGE_MCP_FAKE_CLI: «Comprobar estado» y «Autenticar» hablan con un CLI falso en proceso, nunca el real.
     env: { ...process.env, MAGE_SKIP_MODEL_PROBE: '1', MAGE_MCP_FAKE_SOURCES: mcpFakeSourcesDir(userDataDir), MAGE_MCP_FAKE_CLI: '1' },

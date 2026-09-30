@@ -11,6 +11,7 @@ import {
   modelsToDraftText,
   providerEntries,
   validateCustomProviderDraft,
+  type ApiKeyUpdate,
   type CustomProviderDraft,
   type ModelOption,
   type ProviderEntry,
@@ -49,9 +50,12 @@ export function ProvidersSection(): React.JSX.Element {
       setNewError(result.message);
       return;
     }
-    saveProvider(result.provider);
-    setNewDraft(null);
-    setNewError(null);
+    saveProvider(result.provider, result.apiKeyUpdate)
+      .then(() => {
+        setNewDraft(null);
+        setNewError(null);
+      })
+      .catch((err: unknown) => setNewError(describeError(err)));
   };
 
   return (
@@ -80,6 +84,7 @@ export function ProvidersSection(): React.JSX.Element {
         <ProviderForm
           idSuffix="nuevo"
           draft={newDraft}
+          savedApiKey={false}
           error={newError}
           submitLabel="Añadir"
           onChange={(changes) => {
@@ -102,7 +107,7 @@ export function ProvidersSection(): React.JSX.Element {
           }}
           onTemplate={(label, baseUrl, modelIds) => {
             setNewError(null);
-            setNewDraft({ label, baseUrl, apiKey: '', models: modelIds.join(', ') });
+            setNewDraft({ ...EMPTY_CUSTOM_PROVIDER_DRAFT, label, baseUrl, models: modelIds.join(', ') });
           }}
         />
       )}
@@ -167,7 +172,7 @@ function ProviderCard({
   readonly defaultEffort: string;
   readonly onChangeModel: (model: string) => void;
   readonly onChangeEffort: (effort: string) => void;
-  readonly onSaveEdit: (provider: CustomProvider) => void;
+  readonly onSaveEdit: (provider: CustomProvider, apiKeyUpdate: ApiKeyUpdate) => Promise<void>;
   readonly onRemove: () => void;
   readonly customProviders: readonly CustomProvider[];
 }): React.JSX.Element | null {
@@ -178,7 +183,7 @@ function ProviderCard({
   const runProbe = (): void => {
     setProbe({ loading: true, result: null, failure: null });
     window.mage
-      .probeProvider({ providerId: entry.id, baseUrl: entry.baseUrl, apiKey: apiKeyOf(entry, customProviders) })
+      .probeProvider({ providerId: entry.id, baseUrl: entry.baseUrl })
       .then((result) => setProbe({ loading: false, result, failure: null }))
       .catch((err: unknown) => setProbe({ loading: false, result: null, failure: describeError(err) }));
   };
@@ -208,16 +213,21 @@ function ProviderCard({
       setEditError(result.message);
       return;
     }
-    onSaveEdit(result.provider);
-    setDraft(null);
-    setEditError(null);
+    onSaveEdit(result.provider, result.apiKeyUpdate)
+      .then(() => {
+        setDraft(null);
+        setEditError(null);
+      })
+      .catch((err: unknown) => setEditError(describeError(err)));
   };
+  const savedApiKey = hasSavedApiKey(entry, customProviders);
 
   if (draft !== null) {
     return (
       <ProviderForm
         idSuffix={entry.id}
         draft={draft}
+        savedApiKey={savedApiKey}
         error={editError}
         submitLabel="Guardar"
         onChange={(changes) => {
@@ -259,9 +269,9 @@ function ProviderCard({
             <button
               onClick={() =>
                 setDraft({
+                  ...EMPTY_CUSTOM_PROVIDER_DRAFT,
                   label: entry.label,
                   baseUrl: entry.baseUrl ?? '',
-                  apiKey: apiKeyOf(entry, customProviders) ?? '',
                   models: modelsToDraftText(entry.models),
                 })
               }
@@ -429,11 +439,13 @@ function ModelsLine({ count, probe }: { readonly count: number; readonly probe: 
   );
 }
 
-// Formulario de alta/edicion de un proveedor del usuario. La API key va en type="password": ni se
-// muestra en claro ni acaba en ningun log (el gateway la usa solo al reenviar).
+// Formulario de alta/edicion de un proveedor del usuario. La API key va en type="password" y sube a la
+// boveda cifrada de main al guardar; la guardada NO vuelve nunca, asi que al editar el campo sale vacio
+// y solo se dice que hay una (escribir otra la sustituye; la casilla la quita).
 function ProviderForm({
   idSuffix,
   draft,
+  savedApiKey,
   error,
   submitLabel,
   onChange,
@@ -442,6 +454,7 @@ function ProviderForm({
 }: {
   readonly idSuffix: string;
   readonly draft: CustomProviderDraft;
+  readonly savedApiKey: boolean;
   readonly error: string | null;
   readonly submitLabel: string;
   readonly onChange: (changes: Partial<CustomProviderDraft>) => void;
@@ -481,11 +494,17 @@ function ProviderForm({
         type="password"
         value={draft.apiKey}
         onChange={(e) => onChange({ apiKey: e.target.value })}
-        placeholder="API key (opcional; los runtimes locales no la piden)"
+        placeholder={savedApiKey ? SAVED_API_KEY_PLACEHOLDER : 'API key (opcional; los runtimes locales no la piden)'}
         aria-label="API key del proveedor (opcional)"
         autoComplete="off"
         className={inputClass}
       />
+      {savedApiKey && (
+        <label className="flex items-center gap-[6px] text-[11px] text-mg-sec">
+          <input type="checkbox" checked={draft.forgetApiKey} onChange={(e) => onChange({ forgetApiKey: e.target.checked })} />
+          Quitar la clave guardada
+        </label>
+      )}
       {error !== null && (
         <div id={errorId} role="alert" className="text-[10.5px] text-mg-danger">
           {error}
@@ -514,10 +533,12 @@ function offeredModels(entry: ProviderEntry, result: ProviderProbeResult | null)
   return probed === null || probed.length === 0 ? entry.models : probed;
 }
 
-// La key de un proveedor del usuario (los de serie la leen del entorno en el main, y por eso no viaja).
-function apiKeyOf(entry: ProviderEntry, customProviders: readonly CustomProvider[]): string | null {
-  if (!entry.custom) return null;
-  return customProviders.find((provider) => provider.id === entry.id)?.apiKey ?? null;
+export const SAVED_API_KEY_PLACEHOLDER = 'Clave guardada y cifrada · escribe otra para sustituirla';
+
+// ¿Tiene clave en la boveda? Solo los del usuario: los de serie la leen del entorno de main.
+function hasSavedApiKey(entry: ProviderEntry, customProviders: readonly CustomProvider[]): boolean {
+  if (!entry.custom) return false;
+  return customProviders.find((provider) => provider.id === entry.id)?.hasApiKey ?? false;
 }
 
 function describeError(err: unknown): string {

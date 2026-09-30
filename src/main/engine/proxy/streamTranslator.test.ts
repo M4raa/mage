@@ -11,9 +11,17 @@ function chunk(body: unknown): string {
   return `data: ${JSON.stringify(body)}`;
 }
 
-// Recoge los eventos Anthropic ya deserializados de las lineas que devuelve el traductor.
+// Recoge los eventos Anthropic ya deserializados de las lineas que devuelve el traductor. Cada linea es
+// `event: <tipo>` + `data: <json>` + linea en blanco, y el tipo de la linea `event:` tiene que casar con
+// el del JSON: el SDK del CLI despacha por el primero.
 function events(lines: readonly string[]): Record<string, any>[] {
-  return lines.map((line) => JSON.parse(line.replace(/^data: /, '').trim()));
+  return lines.map((line) => {
+    const match = /^event: (\S+)\ndata: (.+)\n\n$/s.exec(line);
+    if (match === null) throw new Error(`Linea SSE sin la forma event+data: ${JSON.stringify(line)}`);
+    const event = JSON.parse(match[2] ?? '');
+    if (event.type !== match[1]) throw new Error(`event: ${match[1]} no casa con type ${event.type}`);
+    return event;
+  });
 }
 
 function drain(translator: AnthropicStreamTranslator, rawLines: string[]): Record<string, any>[] {

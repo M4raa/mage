@@ -271,9 +271,12 @@ function readFirstChoice(choices: unknown): Record<string, unknown> | null {
   return first as Record<string, unknown>;
 }
 
-// Serializa un evento como linea SSE (el doble salto de linea es parte del formato).
-function sse(event: unknown): string {
-  return `data: ${JSON.stringify(event)}\n\n`;
+// Serializa un evento como linea SSE (el doble salto de linea es parte del formato), con su linea
+// `event:`, que NO es decorativa: el SDK del CLI despacha el SSE de la Messages API por el NOMBRE del
+// evento y descarta los que no lo traen. Sin ella el turno llegaba vacio (medido con
+// `verify:gui --turn=local`, CLI 2.1.286: solo el bloque del usuario, ningun texto del asistente).
+function sse(event: { readonly type: string; readonly [field: string]: unknown }): string {
+  return `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`;
 }
 
 // --- Respuesta NO streaming ------------------------------------------------------------------------

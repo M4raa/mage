@@ -106,18 +106,27 @@ export function claudeModelOptions(catalog: readonly ModelOption[]): readonly Mo
 // Lo que el usuario teclea. Los modelos van como texto (ids separados por comas o saltos de linea):
 // ponytail: sin descubrimiento automatico de modelos y sin etiqueta propia por modelo (label = id).
 // Techo: hay que teclear los ids que expone el runtime. Se sube consultando /v1/models del proveedor.
+// `apiKey` es una clave NUEVA ('' = no tocar la guardada): la guardada nunca vuelve al renderer, asi
+// que el formulario no puede precargarla. `forgetApiKey` borra la guardada.
 export interface CustomProviderDraft {
   readonly label: string;
   readonly baseUrl: string;
   readonly apiKey: string;
+  readonly forgetApiKey: boolean;
   readonly models: string;
 }
 
+// Que hacer con la clave en la boveda de main al guardar el proveedor.
+export type ApiKeyUpdate =
+  | { readonly kind: 'keep' }
+  | { readonly kind: 'set'; readonly value: string }
+  | { readonly kind: 'delete' };
+
 export type CustomProviderValidation =
-  | { readonly ok: true; readonly provider: CustomProvider }
+  | { readonly ok: true; readonly provider: CustomProvider; readonly apiKeyUpdate: ApiKeyUpdate }
   | { readonly ok: false; readonly message: string };
 
-export const EMPTY_CUSTOM_PROVIDER_DRAFT: CustomProviderDraft = { label: '', baseUrl: '', apiKey: '', models: '' };
+export const EMPTY_CUSTOM_PROVIDER_DRAFT: CustomProviderDraft = { label: '', baseUrl: '', apiKey: '', forgetApiKey: false, models: '' };
 
 // Ids de modelo de un texto libre, sin duplicados y sin huecos.
 export function parseModelIds(text: string): readonly string[] {
@@ -169,16 +178,26 @@ export function validateCustomProviderDraft(
     (id) => id !== editingId,
   );
 
+  const apiKeyUpdate = resolveApiKeyUpdate(draft);
+  const hadApiKey = existing.find((provider) => provider.id === editingId)?.hasApiKey ?? false;
   return {
     ok: true,
     provider: {
       id: editingId ?? nextCustomProviderId(label, taken),
       label,
       baseUrl: draft.baseUrl.trim(),
-      apiKey: draft.apiKey.trim(),
+      hasApiKey: apiKeyUpdate.kind === 'keep' ? hadApiKey : apiKeyUpdate.kind === 'set',
       models: modelIds.map((id) => ({ id, label: id })),
     },
+    apiKeyUpdate,
   };
+}
+
+// Una clave tecleada gana a «quitar la guardada»: es lo ultimo que el usuario quiso decir.
+function resolveApiKeyUpdate(draft: CustomProviderDraft): ApiKeyUpdate {
+  const typed = draft.apiKey.trim();
+  if (typed.length > 0) return { kind: 'set', value: typed };
+  return draft.forgetApiKey ? { kind: 'delete' } : { kind: 'keep' };
 }
 
 // Motivo por el que la URL base no sirve, o null si sirve. Reutiliza el parser del gateway: su Error ya

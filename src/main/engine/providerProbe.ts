@@ -55,6 +55,8 @@ export interface ProbeDeps {
   readonly runCli: (bin: string, args: readonly string[]) => Promise<string>;
   readonly fetchJson: (url: string, apiKey: string) => Promise<unknown>;
   readonly env: Readonly<Record<string, string | undefined>>;
+  // Clave de un proveedor DEL USUARIO, de la boveda de main ('' = no tiene). Nunca viaja por IPC.
+  readonly readCustomApiKey: (providerId: string) => string;
   // Catalogo de Claude cacheado de la cuenta principal (P-026 2.4); vacio si aun no se sondeo.
   readonly loadClaudeModels: () => readonly ProviderModel[];
 }
@@ -137,7 +139,7 @@ async function probeHttp(
   params: ProviderProbeParams,
   deps: ProbeDeps,
 ): Promise<ProviderProbeResult> {
-  const target = resolveHttpTarget(providerId, params, deps.env);
+  const target = resolveHttpTarget(providerId, params, deps);
   if (typeof target === 'string') return { kind: 'http', endpoint: null, models: null, error: target };
   try {
     const url = modelsUrl(target.baseUrl);
@@ -153,13 +155,11 @@ interface HttpTarget {
 }
 
 // URL y credencial con las que sondear. Un proveedor de serie las saca de su ficha y del entorno del
-// main (la key nunca viaja por IPC); uno del usuario las trae en la peticion. Devuelve el MOTIVO (una
-// cadena) cuando no hay con que sondear, que es informacion para la UI y no un fallo del programa.
-function resolveHttpTarget(
-  providerId: string,
-  params: ProviderProbeParams,
-  env: Readonly<Record<string, string | undefined>>,
-): HttpTarget | string {
+// main; uno del usuario trae la URL en la peticion y su clave sale de la boveda (la key nunca viaja por
+// IPC). Devuelve el MOTIVO (una cadena) cuando no hay con que sondear, que es informacion para la UI y
+// no un fallo del programa.
+function resolveHttpTarget(providerId: string, params: ProviderProbeParams, deps: ProbeDeps): HttpTarget | string {
+  const env = deps.env;
   const builtIn = BUILT_IN_PROVIDERS.find((provider) => provider.id === providerId);
   if (builtIn !== undefined) {
     if (builtIn.baseUrl === null) return `El proveedor ${JSON.stringify(providerId)} es nativo y no tiene endpoint HTTP`;
@@ -171,7 +171,7 @@ function resolveHttpTarget(
   }
   const baseUrl = (params.baseUrl ?? '').trim();
   if (baseUrl.length === 0) return `El proveedor ${JSON.stringify(providerId)} no declara URL base.`;
-  return { baseUrl, apiKey: (params.apiKey ?? '').trim() };
+  return { baseUrl, apiKey: deps.readCustomApiKey(providerId).trim() };
 }
 
 // Salida de `agy models`: una linea por modelo, `id<TAB>etiqueta`. Las lineas sin tabulador (la
@@ -212,9 +212,13 @@ function describe(err: unknown): string {
 }
 
 // Los reales, salvo el catalogo de Claude: vive en un store de main que este modulo no conoce.
-export function defaultProbeDeps(loadClaudeModels: () => readonly ProviderModel[]): ProbeDeps {
+export function defaultProbeDeps(
+  loadClaudeModels: () => readonly ProviderModel[],
+  readCustomApiKey: (providerId: string) => string,
+): ProbeDeps {
   return {
     loadClaudeModels,
+    readCustomApiKey,
     findClaudeBinary: findInstalledClaudeBinary,
     findAgyBinary: () => findAgyBinary(),
     findCodexBinary: () => findCodexBinary(),

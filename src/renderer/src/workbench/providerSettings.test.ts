@@ -14,7 +14,7 @@ const OLLAMA: CustomProvider = {
   id: 'custom:ollama',
   label: 'Ollama',
   baseUrl: 'http://localhost:11434/v1',
-  apiKey: '',
+  hasApiKey: false,
   models: [{ id: 'llama3', label: 'llama3' }],
 };
 

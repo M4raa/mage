@@ -5,7 +5,7 @@ description: Cómo verificar cambios de UI de Mage contra la app real por CDP/Pl
 
 # Verificación GUI de Mage (por CDP)
 
-> **Antes que nada: `pnpm verify:gui`.** El harness versionado ya cubre 71 comprobaciones y es el
+> **Antes que nada: `pnpm verify:gui`.** El harness versionado ya cubre más de cien comprobaciones y es el
 > arranque por defecto — `CLAUDE.md` prohíbe expresamente escribir un driver CDP desechable. Lo que
 > sigue describe cómo conducir la app a mano, que es la EXCEPCIÓN: sirve para diagnosticar algo que el
 > harness aún no mide, y lo que se aprenda ahí termina siendo una comprobación nueva dentro de
@@ -42,11 +42,23 @@ accidente la pestaña de otra cuenta. Se revirtió, pero es un incidente real co
 - Verifica el **conteo** que esperas antes de clicar: si esperas 1 y hay 31, no clices.
 - Antes de tocar nada, guarda cuál es la cuenta/pestaña activa para poder volver.
 
-### 3. Nunca pulses `Enter` con texto en el prompt
+### 3. Un solo `Enter` que envía, y es el del turno mínimo
 
-Dispara un **turno real** del agente: gasta suscripción y escribe en una transcripción de verdad.
-Para probar el input, usa teclas que no envían (`Tab`, `Shift+Tab`, `Escape`) y comprueba el valor del
-textarea, no el envío.
+Pulsar `Enter` con texto en el prompt dispara un **turno real** del agente: gasta suscripción y escribe
+en una transcripción de verdad. Por eso `verify:gui` envía **uno y solo uno** por ejecución, en su
+última comprobación («turno mínimo de verdad»), con estas guardas:
+
+- Claude con el modelo y el esfuerzo más bajos (`haiku`, `low`) y una respuesta de una palabra.
+- Antes de nada lee el uso de la cuenta: con **más del 70 % gastado** avisa y deja elegir entre real y
+  local (un servidor falso OpenAI-compatible, `scripts/fake-openai-server.mjs`, por el gateway). Sin
+  terminal interactiva elige local y lo dice en el informe; un uso que no se puede leer cuenta como
+  «por encima». `--turn=local` o `--turn=real` fuerzan uno.
+- Antes de pulsar `Enter` **afirma el proveedor y el modelo de la pestaña activa**; si no son los
+  esperados, no envía.
+
+Fuera de esa comprobación la regla sigue igual: para probar el input, usa teclas que no envían (`Tab`,
+`Shift+Tab`, `Escape`) y comprueba el valor del editor, no el envío. Y a mano, contra tu perfil real,
+nunca.
 
 ### 4. Residuo de máquina disfrazado de bug
 

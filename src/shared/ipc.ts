@@ -32,13 +32,18 @@ import type {
 // Varias ventanas (multi-ventana): mover una pestaña de una ventana a otra viaja su estado persistido.
 import type { PersistedTab } from './state';
 
-// Peticion de sondeo de un proveedor (D2). `baseUrl`/`apiKey` solo los mandan los proveedores DEL
-// USUARIO: los de serie los resuelve main desde su ficha y su variable de entorno, asi que ninguna
-// credencial de un proveedor de serie viaja por IPC.
+// Peticion de sondeo de un proveedor (D2). `baseUrl` solo la mandan los proveedores DEL USUARIO (la del
+// formulario, que puede ir por delante de lo guardado); los de serie los resuelve main desde su ficha.
+// Ninguna credencial viaja por IPC: la clave de un proveedor del usuario la saca main de su boveda.
 export interface ProviderProbeParams {
   readonly providerId: string;
   readonly baseUrl: string | null;
-  readonly apiKey: string | null;
+}
+
+// Guardar la api key de un proveedor DEL USUARIO en la boveda de main. Sube una vez y no vuelve.
+export interface ProviderApiKeySetParams {
+  readonly providerId: string;
+  readonly apiKey: string;
 }
 
 // Resultado del sondeo. `kind` dice a que apunta el proveedor: 'cli' = un ejecutable local (su ruta va
@@ -72,6 +77,10 @@ export const IpcChannel = {
   // Sondeo de un proveedor (D2): a donde apunta y que modelos ofrece DE VERDAD. Solo main puede mirar
   // el disco/PATH y salir a la red.
   ProviderProbe: 'engine:providerProbe',
+  // Clave de un proveedor del usuario: guardarla o borrarla en la boveda de main. No hay canal para
+  // LEERLA: el renderer solo sabe si existe (`CustomProvider.hasApiKey`).
+  ProviderApiKeySet: 'secrets:providerApiKeySet',
+  ProviderApiKeyDelete: 'secrets:providerApiKeyDelete',
   FileReveal: 'file:reveal',
   FileSaveAs: 'file:saveAs',
   OpenPath: 'openWith:path',
@@ -642,6 +651,10 @@ export interface MageApi {
   // Sondea un proveedor para la seccion "Proveedores y modelos" (D2). Nunca rechaza por un fallo DEL
   // PROVEEDOR: eso viaja en `error` para que la UI lo pueda decir en vez de inventarse una lista.
   probeProvider(params: ProviderProbeParams): Promise<ProviderProbeResult>;
+  // Guarda (cifrada, en main) o borra la api key de un proveedor del usuario. Rechaza si el cifrado del
+  // sistema no esta disponible: nunca se guarda en claro.
+  setProviderApiKey(params: ProviderApiKeySetParams): Promise<void>;
+  deleteProviderApiKey(providerId: string): Promise<void>;
   // Escala de la interfaz (80..150 %) via zoom de Chromium en ESTE frame. Sincrono: no hay IPC.
   setUiScale(percent: number): void;
   // Datos de «Acerca de» (versiones + avisos de terceros). Se pide al abrir la seccion, no al arrancar.

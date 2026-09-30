@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { defaultEffortForProvider, effortSettingKey } from './models';
+import { defaultEffortForProvider, effortSettingKey, type ApiKeyUpdate } from './models';
 import type { PersistedTab } from '@shared/state';
 import { disposeTranscriptStore, transcriptStoreForTab } from './transcriptStore';
 import type { ContextUsage, MageEvent, McpServerStatus, PermissionDecision, PermissionRequest, SlashCommandInfo, SubagentInfo } from '@shared/events';
@@ -363,8 +363,10 @@ export interface WorkbenchState {
   // Borra TODOS los overrides de atajos (D5, boton "Restablecer todo"): vuelve al catalogo por defecto.
   resetAllKeybindings: () => void;
   // Proveedores del usuario (E2): guarda uno (sustituye el que tenga el MISMO id, si no lo anade) o lo
-  // elimina. Ya validados por validateCustomProviderDraft: el store no vuelve a validar.
-  saveCustomProvider: (provider: CustomProvider) => void;
+  // elimina. Ya validados por validateCustomProviderDraft: el store no vuelve a validar. La clave va
+  // aparte, a la boveda de main, ANTES de tocar el estado: si main la rechaza (sin cifrado), la promesa
+  // rechaza y el proveedor no se guarda como si la tuviera.
+  saveCustomProvider: (provider: CustomProvider, apiKeyUpdate?: ApiKeyUpdate) => Promise<void>;
   removeCustomProvider: (id: string) => void;
   // Temas Open VSX (M3): añade y activa un tema YA descargado y mapeado por la UI (que necesita los
   // colores para pintar la miniatura, asi que no hace falta volver a bajar el .vsix). Eliminar o
@@ -2091,7 +2093,9 @@ export function createWorkbenchStore(mage: MageClient) {
 
     // Anade o actualiza un proveedor del usuario (E2). Upsert por id EN SU SITIO (map en vez de
     // filter+push) para que editar uno no lo mande al final de la lista de Configuracion.
-    saveCustomProvider: (provider) => {
+    saveCustomProvider: async (provider, apiKeyUpdate = { kind: 'keep' }) => {
+      if (apiKeyUpdate.kind === 'set') await mage.setProviderApiKey({ providerId: provider.id, apiKey: apiKeyUpdate.value });
+      if (apiKeyUpdate.kind === 'delete') await mage.deleteProviderApiKey(provider.id);
       set((s) => {
         const known = s.settings.customProviders.some((p) => p.id === provider.id);
         const customProviders = known
@@ -2105,6 +2109,10 @@ export function createWorkbenchStore(mage: MageClient) {
     // Elimina un proveedor y, con el, su modelo por defecto (F3): dejar la clave huerfana en
     // defaultModelByProvider haria que volver a crear un proveedor con el mismo id heredara ese modelo.
     removeCustomProvider: (id) => {
+      // Y su clave, de la boveda de main: un proveedor recreado con el mismo id no hereda la del viejo.
+      if (get().settings.customProviders.find((p) => p.id === id)?.hasApiKey === true) {
+        void mage.deleteProviderApiKey(id).catch((err: unknown) => console.error(`No se pudo borrar la clave de ${id}:`, describeError(err)));
+      }
       set((s) => {
         const defaultModelByProvider = { ...s.settings.defaultModelByProvider };
         delete defaultModelByProvider[id];
