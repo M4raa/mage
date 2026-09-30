@@ -31,10 +31,16 @@ jobs:
       - run: pnpm install --frozen-lockfile
       # Las mismas puertas que `check.yml`: un instalador que no pasa los tests no se publica.
       - run: pnpm check
+      # El cuerpo de la release es la seccion de CHANGELOG.md de la version de package.json (el tag es
+      # `v<esa version>`). Falla si la seccion no existe, igual que la puerta de `pnpm check`. Va ANTES
+      # de construir: el mismo texto entra en `latest.yml` (`releaseNotesFile`), que es de donde el
+      # dialogo de «lista para instalar» de Mage saca las notas de la version que llega.
+      - name: Notas de la version desde CHANGELOG.md
+        run: node scripts/release-notes.mjs
       # `--publish never` a proposito: con un tag en CI, electron-builder publica SOLO ("Implicit
       # publishing triggered by git tag") y, sin GH_TOKEN en el entorno, revienta con "GitHub Personal
       # Access Token is not set". La subida la hace el paso de release de abajo.
-      - run: pnpm dist:win --publish never
+      - run: pnpm dist:win --publish never -c.releaseInfo.releaseNotesFile=release/NOTES.md
       # El humo del EMPAQUETADO, que es lo unico que prueba que el .exe arranca de verdad. Necesita
       # una sesion con escritorio: `windows-latest` la tiene, a diferencia de los runners de Linux.
       - run: pnpm smoke:packaged
@@ -45,11 +51,6 @@ jobs:
             release/*.exe
             release/*.msi
             release/latest.yml
-      # El cuerpo de la release es la seccion de CHANGELOG.md de la version de package.json (el tag es
-      # `v<esa version>`). Falla si la seccion no existe, igual que la puerta de `pnpm check`.
-      - name: Notas de la version desde CHANGELOG.md
-        if: startsWith(github.ref, 'refs/tags/')
-        run: node scripts/release-notes.mjs
       - name: Crear/actualizar la release en borrador
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2

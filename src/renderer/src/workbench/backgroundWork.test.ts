@@ -3,6 +3,7 @@ import type { MageEvent } from '@shared/events';
 import {
   backgroundLabel,
   backgroundMoveBlockedReason,
+  countWorkingConversations,
   nextBackgroundState,
   shouldBackgroundOnClose,
   tabMoveBlockedReason,
@@ -114,5 +115,27 @@ describe('backgroundMoveBlockedReason', () => {
   it('backgroundMoveBlockedReason_terminadaOSinSesion_null', () => {
     expect(backgroundMoveBlockedReason(session('done'))).toBeNull();
     expect(backgroundMoveBlockedReason(undefined)).toBeNull();
+  });
+});
+
+describe('countWorkingConversations', () => {
+  const session = (state: BackgroundSession['state']): BackgroundSession => ({
+    sessionId: state,
+    title: 't',
+    accountId: 'a',
+    state,
+    sinceMs: 0,
+    alwaysAllowTools: [],
+  });
+
+  it('countWorkingConversations_turnosEnMarchaYSegundoPlanoVivo_losSuma', () => {
+    const total = countWorkingConversations(['streaming', 'needs_permission', 'idle', 'error', undefined], [session('working'), session('needs_action'), session('done')]);
+
+    expect(total).toBe(4);
+  });
+
+  it('countWorkingConversations_nadaTrabajando_cero', () => {
+    expect(countWorkingConversations([], [])).toBe(0);
+    expect(countWorkingConversations(['idle'], [session('done')])).toBe(0);
   });
 });

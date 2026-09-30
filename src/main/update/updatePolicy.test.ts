@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { decideCheck, describeEvent, MIN_CHECK_INTERVAL_MS, summarizeUpdaterMessage } from './updatePolicy';
+import { IDLE_UPDATE_STATE, type UpdateState } from '@shared/update';
+import {
+  assertInstallable,
+  decideCheck,
+  describeEvent,
+  MIN_CHECK_INTERVAL_MS,
+  nextUpdateState,
+  normalizeReleaseNotes,
+  summarizeUpdaterMessage,
+} from './updatePolicy';
 
 // Contexto base valido; cada test cambia solo lo que mide (AAA sin ruido).
 const baseContext = {
@@ -66,49 +75,27 @@ describe('decideCheck', () => {
 });
 
 describe('describeEvent', () => {
-  it('describeEvent_comprobando_infoSinAvisoAlUsuario', () => {
-    const notice = describeEvent({ kind: 'checking' });
-
-    expect(notice.level).toBe('info');
-    expect(notice.prompt).toBeNull();
+  it('describeEvent_comprobando_info', () => {
+    expect(describeEvent({ kind: 'checking' }).level).toBe('info');
   });
 
-  it('describeEvent_actualizacionDisponible_infoConLaVersionYSinAviso', () => {
-    const notice = describeEvent({ kind: 'available', version: '0.2.0' });
+  it('describeEvent_actualizacionDisponible_infoConLaVersion', () => {
+    expect(describeEvent({ kind: 'available', version: '0.2.0' }).message).toContain('0.2.0');
+  });
 
+  it('describeEvent_descargada_infoConLaVersion', () => {
+    const notice = describeEvent({ kind: 'downloaded', version: '0.2.0', releaseNotes: null });
+
+    expect(notice.level).toBe('info');
     expect(notice.message).toContain('0.2.0');
-    expect(notice.prompt).toBeNull();
   });
 
-  it('describeEvent_sinActualizacion_infoSinAviso', () => {
-    const notice = describeEvent({ kind: 'notAvailable', version: '0.1.0' });
-
-    expect(notice.level).toBe('info');
-    expect(notice.prompt).toBeNull();
-  });
-
-  it('describeEvent_descargada_ofreceReiniciarConDosBotones', () => {
-    const notice = describeEvent({ kind: 'downloaded', version: '0.2.0' });
-
-    expect(notice.prompt).not.toBeNull();
-    expect(notice.prompt?.message).toContain('0.2.0');
-    expect(notice.prompt?.buttons).toHaveLength(2);
-    // El boton que reinicia y el de "mas tarde" NO pueden ser el mismo indice.
-    expect(notice.prompt?.restartIndex).not.toBe(notice.prompt?.cancelIndex);
-  });
-
-  // Un fallo del updater no rompe nada de lo que el usuario esta haciendo: 'warn', nunca 'error'
-  // (y nunca aviso modal).
-  it('describeEvent_error_avisaEnWarnYNoMolestaAlUsuario', () => {
+  // Un fallo del updater no rompe nada de lo que el usuario esta haciendo: 'warn', nunca 'error'.
+  it('describeEvent_error_avisaEnWarn', () => {
     const notice = describeEvent({ kind: 'error', message: 'ENOTFOUND github.com' });
 
     expect(notice.level).toBe('warn');
     expect(notice.message).toContain('ENOTFOUND github.com');
-    expect(notice.prompt).toBeNull();
-  });
-
-  it('describeEvent_descargadaSinVersion_lanza', () => {
-    expect(() => describeEvent({ kind: 'downloaded', version: '' })).toThrow(/[Vv]ersion/);
   });
 
   // Regresion del 404 real de GitHub medido en la app empaquetada: el mensaje traia pegada la
@@ -121,6 +108,79 @@ describe('describeEvent', () => {
     expect(notice.message).toContain('404');
     expect(notice.message).not.toContain('SECRETO');
     expect(notice.message).not.toContain('\n');
+  });
+});
+
+const READY: UpdateState = { kind: 'ready', version: '0.1.3', releaseNotes: '### Añadido' };
+
+describe('nextUpdateState', () => {
+  it('nextUpdateState_disponibleDesdeIdle_pasaADescargando', () => {
+    expect(nextUpdateState(IDLE_UPDATE_STATE, { kind: 'available', version: '0.1.3' })).toEqual({ kind: 'downloading', version: '0.1.3' });
+  });
+
+  it('nextUpdateState_descargada_pasaAReadyConSusNotas', () => {
+    const state = nextUpdateState({ kind: 'downloading', version: '0.1.3' }, { kind: 'downloaded', version: '0.1.3', releaseNotes: '### Añadido' });
+
+    expect(state).toEqual(READY);
+  });
+
+  it('nextUpdateState_errorDuranteDescarga_vuelveAIdle', () => {
+    expect(nextUpdateState({ kind: 'downloading', version: '0.1.3' }, { kind: 'error', message: 'ECONNRESET' })).toEqual(IDLE_UPDATE_STATE);
+  });
+
+  // Mage es residente: 6 h despues vuelve a comprobar. Ni un error de red, ni «al dia», ni volver a
+  // ver la misma version pueden esconder lo que ya esta descargado.
+  it('nextUpdateState_lista_seQuedaListaAnteComprobacionesPosteriores', () => {
+    expect(nextUpdateState(READY, { kind: 'checking' })).toBe(READY);
+    expect(nextUpdateState(READY, { kind: 'error', message: 'ENOTFOUND' })).toBe(READY);
+    expect(nextUpdateState(READY, { kind: 'notAvailable', version: '0.1.3' })).toBe(READY);
+    expect(nextUpdateState(READY, { kind: 'available', version: '0.1.3' })).toBe(READY);
+  });
+
+  it('nextUpdateState_listaYLlegaOtraVersion_descargaLaNueva', () => {
+    expect(nextUpdateState(READY, { kind: 'available', version: '0.1.4' })).toEqual({ kind: 'downloading', version: '0.1.4' });
+  });
+
+  it('nextUpdateState_alDiaDesdeIdle_sigueIdle', () => {
+    expect(nextUpdateState(IDLE_UPDATE_STATE, { kind: 'notAvailable', version: '0.1.2' })).toEqual(IDLE_UPDATE_STATE);
+  });
+
+  it('nextUpdateState_errorEnReposo_noCambiaNada', () => {
+    expect(nextUpdateState(IDLE_UPDATE_STATE, { kind: 'error', message: 'ENOTFOUND' })).toBe(IDLE_UPDATE_STATE);
+  });
+
+  it('nextUpdateState_versionVacia_lanzaConElEvento', () => {
+    expect(() => nextUpdateState(IDLE_UPDATE_STATE, { kind: 'downloaded', version: '', releaseNotes: null })).toThrow(/downloaded/);
+    expect(() => nextUpdateState(IDLE_UPDATE_STATE, { kind: 'available', version: '' })).toThrow(/available/);
+  });
+});
+
+describe('normalizeReleaseNotes', () => {
+  it('normalizeReleaseNotes_markdownDelYml_loDevuelveRecortado', () => {
+    expect(normalizeReleaseNotes('\n### Añadido\n- Algo\n')).toBe('### Añadido\n- Algo');
+  });
+
+  // Sin notas en el yml, electron-updater cae al HTML del feed de GitHub: no se pinta.
+  it('normalizeReleaseNotes_htmlDelFeed_null', () => {
+    expect(normalizeReleaseNotes('<h3>Añadido</h3><ul><li>Algo</li></ul>')).toBeNull();
+  });
+
+  it('normalizeReleaseNotes_vacioNullOLista_null', () => {
+    expect(normalizeReleaseNotes('   ')).toBeNull();
+    expect(normalizeReleaseNotes(null)).toBeNull();
+    expect(normalizeReleaseNotes(undefined)).toBeNull();
+    expect(normalizeReleaseNotes([{ version: '0.1.3', note: 'x' }])).toBeNull();
+  });
+});
+
+describe('assertInstallable', () => {
+  it('assertInstallable_lista_noLanza', () => {
+    expect(() => assertInstallable(READY)).not.toThrow();
+  });
+
+  it('assertInstallable_sinActualizacionLista_lanzaConElEstado', () => {
+    expect(() => assertInstallable(IDLE_UPDATE_STATE)).toThrow(/idle/);
+    expect(() => assertInstallable({ kind: 'downloading', version: '0.1.3' })).toThrow(/downloading/);
   });
 });
 

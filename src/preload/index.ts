@@ -11,7 +11,12 @@ import {
   SETTINGS_CHANGED_CHANNEL,
   MODEL_CATALOG_CHANGED_CHANNEL,
   WINDOW_TAB_RECEIVED_CHANNEL,
+  CLOSE_PROMPT_CHANNEL,
+  UPDATE_PROMPT_CHANNEL,
+  UPDATE_STATE_CHANNEL,
+  type CloseAnswer,
 } from '@shared/ipc';
+import type { UpdateState } from '@shared/update';
 import type { McpAuthParams, McpCommonMutateParams, McpImportApplyParams, McpInventoryParams } from '@shared/mcp';
 import type {
   AnswerPermissionParams,
@@ -209,6 +214,24 @@ const api: MageApi = {
     ipcRenderer.on(WINDOW_TAB_RECEIVED_CHANNEL, handler);
     return () => ipcRenderer.removeListener(WINDOW_TAB_RECEIVED_CHANNEL, handler);
   },
+  onClosePrompt: (listener: () => void) => {
+    const handler = () => listener();
+    ipcRenderer.on(CLOSE_PROMPT_CHANNEL, handler);
+    return () => ipcRenderer.removeListener(CLOSE_PROMPT_CHANNEL, handler);
+  },
+  answerClose: (answer: CloseAnswer) => ipcRenderer.invoke(IpcChannel.CloseAnswer, answer),
+  getUpdateState: () => ipcRenderer.invoke(IpcChannel.UpdateGetState),
+  onUpdateState: (listener: (state: UpdateState) => void) => {
+    const handler = (_: unknown, state: UpdateState) => listener(state);
+    ipcRenderer.on(UPDATE_STATE_CHANNEL, handler);
+    return () => ipcRenderer.removeListener(UPDATE_STATE_CHANNEL, handler);
+  },
+  onUpdatePrompt: (listener: (version: string) => void) => {
+    const handler = (_: unknown, version: string) => listener(version);
+    ipcRenderer.on(UPDATE_PROMPT_CHANNEL, handler);
+    return () => ipcRenderer.removeListener(UPDATE_PROMPT_CHANNEL, handler);
+  },
+  installUpdate: () => ipcRenderer.invoke(IpcChannel.UpdateInstall),
 };
 
 contextBridge.exposeInMainWorld('mage', api);

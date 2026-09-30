@@ -1399,3 +1399,61 @@ describe('closeTab (novedades)', () => {
     expect(store.getState().splitLayout).toEqual(singleLeaf('mage:novedades'));
   });
 });
+
+// Grupo B: los dialogos propios de cierre y de actualizacion. Main decide; el store solo contesta.
+describe('dialogos de cierre y actualizacion', () => {
+  const READY = { kind: 'ready', version: '0.1.3', releaseNotes: null } as const;
+
+  it('answerClosePrompt_contesta_cierraElDialogoYMandaLaRespuestaAMain', () => {
+    // Arrange
+    const answerClose = vi.fn().mockResolvedValue(undefined);
+    const store = createWorkbenchStore(fakeMage({ answerClose }));
+    store.setState({ closePromptOpen: true });
+
+    // Act
+    store.getState().answerClosePrompt({ action: 'hide', remember: true });
+
+    // Assert
+    expect(store.getState().closePromptOpen).toBe(false);
+    expect(answerClose).toHaveBeenCalledWith({ action: 'hide', remember: true });
+  });
+
+  it('openUpdatePrompt_conActualizacionLista_abreSuVersion', () => {
+    const store = createWorkbenchStore(fakeMage());
+    store.setState({ updateState: READY });
+
+    store.getState().openUpdatePrompt();
+
+    expect(store.getState().updatePromptVersion).toBe('0.1.3');
+  });
+
+  it('openUpdatePrompt_sinActualizacionLista_noAbreNada', () => {
+    const store = createWorkbenchStore(fakeMage());
+    store.setState({ updateState: { kind: 'downloading', version: '0.1.3' } });
+
+    store.getState().openUpdatePrompt();
+
+    expect(store.getState().updatePromptVersion).toBeNull();
+  });
+
+  it('dismissUpdatePrompt_masTarde_cierraElDialogoYConservaElEstado', () => {
+    const store = createWorkbenchStore(fakeMage());
+    store.setState({ updateState: READY, updatePromptVersion: '0.1.3' });
+
+    store.getState().dismissUpdatePrompt();
+
+    expect(store.getState().updatePromptVersion).toBeNull();
+    expect(store.getState().updateState).toEqual(READY);
+  });
+
+  it('installUpdate_reiniciarAhora_loPideAMain', () => {
+    const installUpdate = vi.fn().mockResolvedValue(undefined);
+    const store = createWorkbenchStore(fakeMage({ installUpdate }));
+    store.setState({ updateState: READY, updatePromptVersion: '0.1.3' });
+
+    store.getState().installUpdate();
+
+    expect(installUpdate).toHaveBeenCalledTimes(1);
+    expect(store.getState().updatePromptVersion).toBeNull();
+  });
+});

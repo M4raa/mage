@@ -1,11 +1,13 @@
 // Politica de auto-update (B2). Modulo PURO: ni electron, ni red, ni timers, ni reloj propio.
-// Solo dos decisiones, que son las unicas que tienen ramas dignas de test:
+// Tres decisiones, que son las unicas que tienen ramas dignas de test:
 //   1. SI toca comprobar (empaquetado, comprobacion en vuelo, intervalo minimo con reloj inyectado).
-//   2. QUE se le dice al usuario / al log para cada evento del autoUpdater.
-// La maquina de estados (descarga, reintentos, quitAndInstall) ya la trae electron-updater: aqui no
-// se envuelve, solo se traduce.
+//   2. QUE se escribe en el log para cada evento del autoUpdater.
+//   3. QUE estado ve el usuario (`nextUpdateState`): lo que main difunde a las ventanas.
+// La descarga, los reintentos y quitAndInstall ya los trae electron-updater: aqui no se envuelven,
+// solo se traducen.
 
 import type { LogLevel } from '@shared/debug';
+import { IDLE_UPDATE_STATE, type UpdateState } from '@shared/update';
 
 // Intervalo minimo entre comprobaciones. La app es residente en el tray (puede estar dias abierta),
 // asi que la comprobacion de arranque no basta; pero tampoco hace falta molestar a GitHub mas de
@@ -70,56 +72,73 @@ export type UpdateEvent =
   | { readonly kind: 'checking' }
   | { readonly kind: 'available'; readonly version: string }
   | { readonly kind: 'notAvailable'; readonly version: string }
-  | { readonly kind: 'downloaded'; readonly version: string }
+  | { readonly kind: 'downloaded'; readonly version: string; readonly releaseNotes: string | null }
   | { readonly kind: 'error'; readonly message: string };
 
-// Aviso nativo al usuario (dialog.showMessageBox). `restartIndex` es el boton que reinicia; cualquier
-// otra respuesta = "luego". NUNCA se reinicia sin eleccion explicita.
-export interface RestartPrompt {
-  readonly message: string;
-  readonly detail: string;
-  readonly buttons: readonly string[];
-  readonly restartIndex: number;
-  readonly cancelIndex: number;
-}
-
-// Lo que provoca cada evento: una entrada de log SIEMPRE (nada en silencio) y, solo cuando la
-// actualizacion ya esta en disco, un aviso al usuario.
+// Lo que provoca cada evento en el log: una entrada SIEMPRE (nada en silencio). Lo que ve el usuario
+// sale de `nextUpdateState`, no de aqui.
 export interface UpdateNotice {
   readonly level: LogLevel;
   readonly message: string;
-  readonly prompt: RestartPrompt | null;
 }
 
 export function describeEvent(event: UpdateEvent): UpdateNotice {
   switch (event.kind) {
     case 'checking':
-      return { level: 'info', message: 'Comprobando actualizaciones de Mage', prompt: null };
+      return { level: 'info', message: 'Comprobando actualizaciones de Mage' };
     case 'available':
-      return { level: 'info', message: `Actualizacion ${event.version} disponible; descargando en segundo plano`, prompt: null };
+      return { level: 'info', message: `Actualizacion ${event.version} disponible; descargando en segundo plano` };
     case 'notAvailable':
-      return { level: 'info', message: `Mage esta al dia (version ${event.version})`, prompt: null };
+      return { level: 'info', message: `Mage esta al dia (version ${event.version})` };
     case 'downloaded':
-      return {
-        level: 'info',
-        message: `Actualizacion ${event.version} descargada; esperando al usuario para reiniciar`,
-        prompt: buildRestartPrompt(event.version),
-      };
+      return { level: 'info', message: `Actualizacion ${event.version} descargada; esperando al usuario para reiniciar` };
     // El fallo del updater es un 'warn', no un 'error': no poder mirar si hay version nueva (sin red,
     // GitHub caido, release sin metadatos) no rompe nada de lo que el usuario esta haciendo. Pero se
     // registra: nunca en silencio.
     case 'error':
-      return { level: 'warn', message: `No se pudo actualizar Mage: ${summarizeUpdaterMessage(event.message)}`, prompt: null };
+      return { level: 'warn', message: `No se pudo actualizar Mage: ${summarizeUpdaterMessage(event.message)}` };
   }
 }
 
-function buildRestartPrompt(version: string): RestartPrompt {
-  if (version.length === 0) throw new Error('Version vacia en la actualizacion descargada');
-  return {
-    message: `Mage ${version} esta listo para instalarse`,
-    detail: 'La actualizacion se aplica al reiniciar. Puedes seguir trabajando y reiniciar cuando quieras.',
-    buttons: ['Reiniciar ahora', 'Mas tarde'],
-    restartIndex: 0,
-    cancelIndex: 1,
-  };
+function requireVersion(version: string, kind: UpdateEvent['kind']): string {
+  if (version.length === 0) throw new Error(`Version vacia en el evento de actualizacion ${JSON.stringify(kind)}`);
+  return version;
+}
+
+// Estado que ve el usuario tras un evento. Una vez `ready`, solo lo cambia OTRA version: las
+// comprobaciones periodicas siguientes (cada 6 h) no pueden esconder una actualizacion que ya esta en
+// disco y se instalara al salir. Un error solo corta una descarga en curso.
+export function nextUpdateState(state: UpdateState, event: UpdateEvent): UpdateState {
+  switch (event.kind) {
+    case 'checking':
+      return state;
+    case 'available': {
+      const version = requireVersion(event.version, event.kind);
+      if (state.kind !== 'idle' && state.version === version) return state;
+      return { kind: 'downloading', version };
+    }
+    case 'notAvailable':
+      return state.kind === 'ready' ? state : IDLE_UPDATE_STATE;
+    case 'downloaded':
+      return { kind: 'ready', version: requireVersion(event.version, event.kind), releaseNotes: event.releaseNotes };
+    case 'error':
+      return state.kind === 'downloading' ? IDLE_UPDATE_STATE : state;
+  }
+}
+
+// `info.releaseNotes` de electron-updater, reducido a lo que el dialogo sabe pintar: Markdown. Llega
+// como texto del `latest.yml` (el Markdown del changelog que mete el workflow de release) o, si el
+// yml no lo trae, como el HTML del feed de GitHub: ese se descarta a proposito, porque pintar HTML de
+// la red en el renderer es abrirle la puerta a lo que traiga. La lista por versiones (`fullChangelog`)
+// no se usa en Mage.
+export function normalizeReleaseNotes(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const text = raw.trim();
+  if (text.length === 0 || text.startsWith('<')) return null;
+  return text;
+}
+
+// Guarda de `UpdateInstall`: el renderer solo puede pedir instalar lo que ya esta descargado.
+export function assertInstallable(state: UpdateState): void {
+  if (state.kind !== 'ready') throw new Error(`No hay ninguna actualizacion lista para instalar: ${JSON.stringify(state)}`);
 }

@@ -40,6 +40,7 @@ import {
   screen,
 } from 'electron';
 import {
+  CLOSE_PROMPT_CHANNEL,
   EVENT_CHANNEL,
   IpcChannel,
   JUMP_LIST_OPEN_CHANNEL,
@@ -50,6 +51,8 @@ import {
   WIDGET_ENABLED_CHANGED_CHANNEL,
   WIDGET_FOCUS_TAB_CHANNEL,
   WINDOW_TAB_RECEIVED_CHANNEL,
+  UPDATE_PROMPT_CHANNEL,
+  UPDATE_STATE_CHANNEL,
 } from '@shared/ipc';
 import type {
   AnswerPermissionParams,
@@ -174,7 +177,7 @@ import { WidgetWindowController } from './widget/widgetWindow';
 import type { WidgetSnapshot } from '@shared/widget';
 import { ThemeMarketService } from './theme/themeMarketService';
 import type { FetchThemeParams } from '@shared/themeMarket';
-import { startAutoUpdate } from './update/autoUpdate';
+import { flushPendingUpdatePrompt, getUpdateState, installUpdate, startAutoUpdate } from './update/autoUpdate';
 import { pathEquals } from './os/pathUtils';
 import { isWindowId, MAIN_WINDOW_ID, WindowManager, type WindowPlacement } from './windows/windowManager';
 import { installExternalLinkHandler, type ExternalLinkDeps } from './windows/externalLinks';
@@ -182,7 +185,15 @@ import { resolveDropTarget } from './windows/dropTarget';
 import { PERSISTED_TAB_SCHEMA } from '@shared/stateSchema';
 import type { PersistedTab } from '@shared/state';
 import type { DropTabOutcome } from '@shared/ipc';
-import { CLOSE_DIALOG_BUTTONS, CLOSE_DIALOG_CANCEL_INDEX, interpretCloseDialog, resolveCloseAction } from './windows/closePolicy';
+import {
+  CLOSE_DIALOG_BUTTONS,
+  CLOSE_DIALOG_CANCEL_INDEX,
+  closeAnswerFromNative,
+  interpretCloseAnswer,
+  parseCloseAnswer,
+  resolveCloseAction,
+  type CloseDialogOutcome,
+} from './windows/closePolicy';
 import type { CloseBehavior } from '@shared/settings';
 import { fitSavedBounds, WindowBoundsStore, type SavedWindowBounds } from './windows/windowBounds';
 import { NotificationCenter } from './notifications/notificationCenter';
@@ -227,8 +238,10 @@ const windowManager = new WindowManager<BrowserWindow, PersistedTab>({
 // de cierre en una salida ya decidida: «Salir» de la bandeja, Cmd+Q y, sobre todo, `quitAndInstall`
 // del autoupdater, que se quedaria sin instalar si una ventana cancelara la salida.
 let isQuitting = false;
-// Un solo dialogo de cierre a la vez (dos clics seguidos en la X no abren dos).
-let closePromptOpen = false;
+// Ventana con el dialogo de cierre abierto, o null. Uno solo a la vez: dos clics seguidos en la X no abren
+// dos. Se libera al contestar y tambien si esa ventana recarga o su renderer cae (ver
+// `createWorkbenchWindow`): si no, una recarga con el dialogo abierto dejaria la X muerta para siempre.
+let closePromptWindow: BrowserWindow | null = null;
 
 // La ventana principal SOLO si sigue viva. Su X puede ocultarla (segundo plano) o destruirla (ver
 // `onWorkbenchClose`) y Mage sigue en el tray. Quien quiera ENSEÑARLA usa `focusMainWindow()`, que ademas
@@ -1363,6 +1376,11 @@ function createWorkbenchWindow(windowId: string, placement?: WindowPlacement): B
     window.show();
   });
   window.on('close', (event) => onWorkbenchClose(window, windowId, event));
+  // El renderer que tenia que contestar el dialogo de cierre ya no existe (recarga, HMR, caida).
+  window.webContents.on('did-start-loading', () => releaseClosePrompt(window));
+  window.webContents.on('render-process-gone', () => releaseClosePrompt(window));
+  // Una actualizacion lista espera a que alguna ventana tenga el foco para enseñar su dialogo.
+  window.on('focus', flushPendingUpdatePrompt);
   // La jump list muestra conversaciones recientes: se refresca cuando CUALQUIER ventana recupera el
   // foco, no solo la principal (el propio `refreshJumpList` ya se limita con su intervalo minimo).
   window.on('focus', refreshJumpList);
@@ -1417,6 +1435,15 @@ function dropTabOutside(senderId: string, tab: PersistedTab): DropTabOutcome {
   return 'moved';
 }
 
+// Manda un mensaje a la ventana del workbench con el foco. false = ninguna lo tiene (Mage en el tray, o
+// el usuario en otra aplicacion).
+function sendToFocusedWindow(channel: string, payload: unknown): boolean {
+  const focused = windowManager.list().find((windowId) => windowManager.get(windowId)?.isFocused() === true);
+  if (focused === undefined) return false;
+  windowManager.sendTo(focused, channel, payload);
+  return true;
+}
+
 // Ventanas del workbench a la vista (una oculta en segundo plano no cuenta; una minimizada si).
 function visibleWorkbenchWindowCount(): number {
   return windowManager.list().filter((windowId) => windowManager.get(windowId)?.isVisible() === true).length;
@@ -1442,14 +1469,37 @@ function onWorkbenchClose(window: BrowserWindow, windowId: string, event: Electr
     app.quit();
     return;
   }
-  void askCloseBehavior(window);
+  askCloseBehavior(window);
 }
 
-// Dialogo nativo de cierre. «Recordar mi decisión» lo guarda main (es el unico que lo sabe) y lo
-// difunde a TODAS las ventanas, la que pregunto incluida: ninguna lo tiene aplicado todavia.
-async function askCloseBehavior(window: BrowserWindow): Promise<void> {
-  if (closePromptOpen) return;
-  closePromptOpen = true;
+// «¿Cerrar Mage?». Lo pinta el renderer de la ventana (dialogo propio, sabe cuantas conversaciones
+// trabajan) y contesta por `IpcChannel.CloseAnswer`. Si ese renderer no puede pintarlo —caido o a
+// medio cargar—, el nativo de siempre: la X nunca se queda sin respuesta.
+function askCloseBehavior(window: BrowserWindow): void {
+  if (closePromptWindow !== null) return;
+  closePromptWindow = window;
+  if (window.webContents.isCrashed() || window.webContents.isLoading()) {
+    void askCloseBehaviorNatively(window);
+    return;
+  }
+  window.webContents.send(CLOSE_PROMPT_CHANNEL);
+}
+
+// Respuesta del dialogo propio. Solo la acepta de la ventana a la que se le pregunto.
+function answerClosePrompt(event: Electron.IpcMainInvokeEvent, value: unknown): void {
+  const window = closePromptWindow;
+  if (window === null || window.isDestroyed() || window.webContents.id !== event.sender.id) {
+    throw new Error(`Respuesta de cierre sin pregunta pendiente en esta ventana: ${JSON.stringify(value)}`);
+  }
+  closePromptWindow = null;
+  applyCloseOutcome(window, interpretCloseAnswer(parseCloseAnswer(value)));
+}
+
+function releaseClosePrompt(window: BrowserWindow): void {
+  if (closePromptWindow === window) closePromptWindow = null;
+}
+
+async function askCloseBehaviorNatively(window: BrowserWindow): Promise<void> {
   try {
     const answer = await dialog.showMessageBox(window, {
       type: 'question',
@@ -1463,13 +1513,18 @@ async function askCloseBehavior(window: BrowserWindow): Promise<void> {
       checkboxLabel: 'Recordar mi decisión',
       noLink: true,
     });
-    const outcome = interpretCloseDialog(answer);
-    if (outcome.remember !== null) rememberCloseBehavior(outcome.remember);
-    if (outcome.action === 'hide' && !window.isDestroyed()) window.hide();
-    if (outcome.action === 'quit') app.quit();
+    applyCloseOutcome(window, interpretCloseAnswer(closeAnswerFromNative(answer)));
   } finally {
-    closePromptOpen = false;
+    releaseClosePrompt(window);
   }
+}
+
+// «Recordar mi decisión» lo guarda main (es el unico que lo sabe) y lo difunde a TODAS las ventanas,
+// la que pregunto incluida: ninguna lo tiene aplicado todavia.
+function applyCloseOutcome(window: BrowserWindow, outcome: CloseDialogOutcome): void {
+  if (outcome.remember !== null) rememberCloseBehavior(outcome.remember);
+  if (outcome.action === 'hide' && !window.isDestroyed()) window.hide();
+  if (outcome.action === 'quit') app.quit();
 }
 
 function rememberCloseBehavior(closeBehavior: CloseBehavior): void {
@@ -1868,6 +1923,10 @@ function registerIpcHandlers(): void {
   // `app.getVersion()` lee el package.json de la app EMPAQUETADA, que es la version que el usuario
   // tiene instalada — no la del arbol de fuentes.
   ipcMain.handle(IpcChannel.AppVersionGet, () => app.getVersion());
+  // Grupo B: dialogos propios de cierre y de actualizacion.
+  ipcMain.handle(IpcChannel.CloseAnswer, (event, answer: unknown) => answerClosePrompt(event, answer));
+  ipcMain.handle(IpcChannel.UpdateGetState, () => getUpdateState());
+  ipcMain.handle(IpcChannel.UpdateInstall, () => installUpdate());
   // «Acerca de» (B.2/B.3): versiones del runtime y los avisos de terceros. Las rutas se calculan aqui
   // —es lo unico que sabe de Electron— y el servicio decide que existe y que se puede enseñar.
   ipcMain.handle(IpcChannel.AboutGet, () =>
@@ -2519,9 +2578,12 @@ app.whenReady().then(async () => {
   setInterval(sweepScratchDirs, SWEEP_INTERVAL_MS).unref();
 
   // Auto-update (B2): no-op si la app no esta empaquetada. Comprueba con margen tras el arranque,
-  // descarga en segundo plano y solo entonces pregunta al usuario con un dialogo nativo. Sus fallos
-  // van al LogBus (nunca rompen el arranque ni pintan nada en la UI).
-  startAutoUpdate(mainLog, () => liveMainWindow());
+  // descarga en segundo plano y solo entonces avisa: indicador en todas las ventanas y dialogo propio
+  // en la enfocada. Sus fallos van al LogBus (nunca rompen el arranque ni pintan nada en la UI).
+  startAutoUpdate(mainLog, {
+    broadcast: (state) => windowManager.broadcast(UPDATE_STATE_CHANNEL, state),
+    promptFocused: (version) => sendToFocusedWindow(UPDATE_PROMPT_CHANNEL, version),
+  });
 
   // Jump list (Ronda 3, item 10): al arrancar, y de nuevo cada vez que la ventana recupera el foco
   // (las conversaciones recientes cambian mientras el usuario trabaja). El clic que abrio ESTA

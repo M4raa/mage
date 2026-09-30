@@ -6393,6 +6393,117 @@ const CHECKS = [
     },
   },
   {
+    // Grupo B (0.1.2, respuesta 21): la X de la ultima ventana, con «Preguntar», pinta el dialogo PROPIO
+    // (no el de Windows) y dice cuantas conversaciones trabajan. Se provoca con `window.close()` (entra
+    // por el mismo `close` que la X) y se contesta SIEMPRE Cancelar o Escape: «Cerrar Mage» mataria la
+    // instancia medida. Tres rondas: con una conversacion marcada como trabajando (cuenta 1 mas), con
+    // Escape, y tras RECARGAR el renderer con el dialogo abierto —la trampa del informe: si main no
+    // libera la pregunta pendiente, la X queda muerta para siempre—. Sin dos ventanas: con otra visible,
+    // `window.close()` cerraria de verdad esta.
+    name: 'Grupo B: la X pregunta con el diálogo propio, cuenta las que trabajan y sobrevive a una recarga',
+    async run(page) {
+      const previo = await page.evaluate(() => window.__mageDev.store.getState().settings.closeBehavior);
+      const ventanas = countMainPages(page);
+      if (previo !== 'ask' || ventanas !== 1) {
+        return { ok: false, detail: `No se provoca el cierre (cerraria de verdad): closeBehavior=${previo}, ventanas=${ventanas}` };
+      }
+      await openTemporaryConversation(page);
+      const esperado = await page.evaluate(() => {
+        const store = window.__mageDev.store;
+        const tabId = store.getState().activeTabId;
+        store.setState((s) => ({ statusByChat: { ...s.statusByChat, [tabId]: 'streaming' } }));
+        const s = store.getState();
+        const pestañas = s.tabs.filter((t) => ['streaming', 'needs_permission'].includes(s.statusByChat[t.id])).length;
+        return pestañas + Object.values(s.backgroundSessions).filter((b) => b.state !== 'done').length;
+      });
+      const conTrabajo = await askCloseAndAnswer(page, 'Cancelar');
+      await page.evaluate(() => {
+        const store = window.__mageDev.store;
+        const tabId = store.getState().activeTabId;
+        store.setState((s) => ({ statusByChat: { ...s.statusByChat, [tabId]: 'idle' } }));
+        return store.getState().closeTab(tabId);
+      });
+      const conEscape = await askCloseAndAnswer(page, 'Escape');
+      // Recarga con el dialogo abierto: el renderer que tenia que contestar desaparece.
+      await page.evaluate(() => window.close());
+      await page.locator(CLOSE_DIALOG).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      await page.reload();
+      await page.locator('[role="toolbar"]').first().waitFor({ state: 'attached', timeout: CONFIG.bootTimeoutMs });
+      const trasRecargar = await askCloseAndAnswer(page, 'Cancelar');
+      const viva = !page.isClosed() && countMainPages(page) === 1;
+      const ok =
+        esperado >= 1 &&
+        conTrabajo.aparecio &&
+        conTrabajo.trabajando === esperado &&
+        conTrabajo.botones.join('|') === 'Cancelar|Cerrar Mage|Mantener en segundo plano' &&
+        conTrabajo.enfocado === 'Mantener en segundo plano' &&
+        conTrabajo.recordar &&
+        conTrabajo.cerrado &&
+        conEscape.aparecio &&
+        conEscape.trabajando === esperado - 1 &&
+        conEscape.cerrado &&
+        trasRecargar.aparecio &&
+        trasRecargar.cerrado &&
+        viva;
+      return { ok, detail: JSON.stringify({ esperado, conTrabajo, conEscape, trasRecargar, viva }) };
+    },
+  },
+  {
+    // Grupo B: actualizacion lista. En dev no hay updater (no esta empaquetada), asi que se inyecta en el
+    // store el estado que difundiria main y se mide lo que ve el usuario: dialogo con las notas de la
+    // version que llega, indicador en la barra de estado, «Más tarde» cierra el dialogo y el indicador
+    // SE QUEDA, y pulsarlo lo reabre. Se comprueba ademas la guarda de main: sin actualizacion descargada,
+    // `installUpdate` rechaza (en dev el estado de main es idle) — no reinicia nada. Nunca se pulsa
+    // «Reiniciar ahora». El camino real (servidor `generic` local) lo documenta scripts/update-test.mjs.
+    name: 'Grupo B: actualización lista: diálogo con sus notas, «Más tarde» y el indicador se queda',
+    async run(page) {
+      const principal = await page.evaluate(() => window.mage.getUpdateState());
+      const guarda = await page.evaluate(() =>
+        window.mage.installUpdate().then(
+          () => 'instalo',
+          (err) => String(err?.message ?? err),
+        ),
+      );
+      await page.evaluate((notes) => {
+        window.__mageDev.store.setState({
+          updateState: { kind: 'ready', version: '9.9.9', releaseNotes: notes },
+          updatePromptVersion: '9.9.9',
+        });
+      }, UPDATE_PROBE_NOTES);
+      const dialogo = page.locator(UPDATE_DIALOG);
+      await dialogo.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      const alAbrir = await dialogo.evaluate((node) => ({
+        titulo: node.querySelector('#update-ready-title')?.textContent ?? null,
+        notas: [...node.querySelectorAll('[data-update-notes] li')].map((li) => li.textContent),
+        enfocado: node.ownerDocument.activeElement?.textContent ?? null,
+      }));
+      // La captura, con la animacion de entrada ya terminada (es para el vistazo humano).
+      await page.waitForTimeout(MODAL_ENTER_MS);
+      await page.screenshot({ path: path.join(CONFIG.outDir, 'grupo-b-actualizacion.png') });
+      await dialogo.getByRole('button', { name: 'Más tarde', exact: true }).click();
+      await dialogo.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+      const indicador = page.locator(UPDATE_INDICATOR);
+      const trasMasTarde = { indicador: await indicador.count(), texto: (await indicador.textContent().catch(() => null))?.trim() ?? null };
+      await indicador.click();
+      const reabre = await dialogo.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs }).then(() => true, () => false);
+      await page.keyboard.press('Escape');
+      await dialogo.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+      await page.evaluate(() => window.__mageDev.store.setState({ updateState: { kind: 'idle' }, updatePromptVersion: null }));
+      const alLimpiar = await indicador.count();
+      const ok =
+        principal.kind === 'idle' &&
+        /idle/.test(guarda) &&
+        alAbrir.titulo === 'Mage 9.9.9 está lista para instalarse' &&
+        alAbrir.notas.includes('Nota de prueba de verify:gui') &&
+        alAbrir.enfocado === 'Reiniciar ahora' &&
+        trasMasTarde.indicador === 1 &&
+        trasMasTarde.texto === '9.9.9 lista · Reiniciar' &&
+        reabre &&
+        alLimpiar === 0;
+      return { ok, detail: JSON.stringify({ principal, guarda, alAbrir, trasMasTarde, reabre, alLimpiar }) };
+    },
+  },
+  {
     // Grupo 0 (0.1.2, ficha D11 de P-032): UN turno minimo de verdad, de punta a punta — teclear, Enter,
     // proceso del CLI, respuesta pintada. Es la unica comprobacion que envia: todas las demas miden sin
     // gastar. Contra Claude con el modelo y el esfuerzo mas bajos; si la cuenta lleva gastado mas del
@@ -6445,6 +6556,44 @@ function countMainPages(page) {
       const url = candidate.url();
       return !url.includes('widget.html') && !url.includes('debug.html') && !url.startsWith('devtools://');
     }).length;
+}
+
+// --- Grupo B: dialogos propios de cierre y de actualizacion ----------------------------------------
+
+// Anclas `data-*` de CloseMageDialog.tsx, UpdateReadyDialog.tsx y StatusBar.tsx.
+const CLOSE_DIALOG = '[data-close-mage-dialog="true"]';
+const UPDATE_DIALOG = '[data-update-ready-dialog="true"]';
+const UPDATE_INDICATOR = '[data-update-indicator="true"]';
+// Notas de la actualizacion inyectada: Markdown como el que trae `latest.yml`.
+// Lo que dura la entrada de un modal (MODAL_PANEL_VARIANTS de motionPresets.ts: 200 ms) con margen.
+const MODAL_ENTER_MS = 300;
+const UPDATE_PROBE_NOTES = '### Añadido\n- Nota de prueba de verify:gui\n- Otra nota';
+
+// Provoca el cierre de la ventana (el mismo `close` que la X), mide el dialogo propio y lo contesta con
+// `how` ('Cancelar' o 'Escape': nunca «Cerrar Mage»). Espera al DESMONTAJE (error n.º 6 de la skill).
+async function askCloseAndAnswer(page, how) {
+  await page.evaluate(() => window.close());
+  const dialogo = page.locator(CLOSE_DIALOG);
+  const aparecio = await dialogo.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs }).then(
+    () => true,
+    () => false,
+  );
+  if (!aparecio) return { aparecio };
+  await page.waitForTimeout(MODAL_ENTER_MS);
+  const medido = await dialogo.evaluate((node) => ({
+    trabajando: Number(node.querySelector('[data-close-working]')?.getAttribute('data-close-working') ?? 0),
+    botones: [...node.querySelectorAll('button')].map((button) => (button.textContent ?? '').trim()),
+    enfocado: (node.ownerDocument.activeElement?.textContent ?? '').trim() || null,
+    recordar: node.querySelector('input[type="checkbox"]') !== null,
+  }));
+  await page.screenshot({ path: path.join(CONFIG.outDir, `grupo-b-cierre-${how.toLowerCase()}.png`) });
+  if (how === 'Escape') await page.keyboard.press('Escape');
+  else await dialogo.getByRole('button', { name: how, exact: true }).click();
+  const cerrado = await dialogo.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs }).then(
+    () => true,
+    () => false,
+  );
+  return { aparecio, ...medido, cerrado };
 }
 
 // Panel de la pseudo-pestaña de novedades (ancla `data-release-notes` de ReleaseNotesPane.tsx).

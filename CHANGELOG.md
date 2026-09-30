@@ -17,6 +17,13 @@ versión.
 - El deslizador de modo ya no cambia de ancho entre pasos: **Manual** tiene icono propio, el pulgar se
   desliza de un paso a otro y el menú se queda en su sitio.
 - Mage funciona ahora sobre Electron 44 (Node 24), con los parches de seguridad al día.
+- Al cerrar la ventana, la pregunta es un diálogo de Mage y dice cuántas conversaciones siguen
+  trabajando.
+- Cuando una actualización termina de descargarse, Mage lo avisa con su propio diálogo y las novedades
+  de la versión que llega, en la ventana que estés usando; si eliges **Más tarde**, queda a la vista en
+  la barra de estado hasta que reinicies. Con Mage en la bandeja no aparece nada hasta que vuelves.
+- El instalador tiene el aspecto de Mage y va en castellano; al actualizar solo enseña el progreso y el
+  final.
 
 ### Corregido
 - Los enlaces del chat se abren en el navegador del sistema, no en otra ventana de Mage.
@@ -31,8 +38,6 @@ versión.
 - Las variables `OPENAI_API_KEY` y `CODEX_API_KEY` ya no llegan a los agentes que lanza Mage.
 
 ### Por completar antes de publicar
-- Por completar: diálogos propios al cerrar Mage y al instalar una actualización, e instalador con el
-  aspecto de Mage.
 - Por completar: conectores y extensiones, y servidores MCP compartidos con todos los proveedores.
 - Por completar: cuentas por proveedor y forma de pago (Claude por API, agy y Codex), agy en sesión
   persistente y con su uso en el panel.

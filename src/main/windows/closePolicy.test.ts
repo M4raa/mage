@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { interpretCloseDialog, resolveCloseAction, type CloseContext } from './closePolicy';
+import { closeAnswerFromNative, interpretCloseAnswer, parseCloseAnswer, resolveCloseAction, type CloseContext } from './closePolicy';
 
 function context(overrides: Partial<CloseContext> = {}): CloseContext {
   return { behavior: 'ask', isQuitting: false, isMainWindow: true, visibleWindowCount: 1, platform: 'win32', ...overrides };
@@ -49,24 +49,49 @@ describe('resolveCloseAction', () => {
   });
 });
 
-describe('interpretCloseDialog', () => {
-  it('interpretCloseDialog_segundoPlanoSinRecordar_ocultaYNoGuarda', () => {
-    expect(interpretCloseDialog({ response: 0, checkboxChecked: false })).toEqual({ action: 'hide', remember: null });
+describe('interpretCloseAnswer', () => {
+  it('interpretCloseAnswer_segundoPlanoSinRecordar_ocultaYNoGuarda', () => {
+    expect(interpretCloseAnswer({ action: 'hide', remember: false })).toEqual({ action: 'hide', remember: null });
   });
 
-  it('interpretCloseDialog_segundoPlanoRecordado_guardaBackground', () => {
-    expect(interpretCloseDialog({ response: 0, checkboxChecked: true })).toEqual({ action: 'hide', remember: 'background' });
+  it('interpretCloseAnswer_segundoPlanoRecordado_guardaBackground', () => {
+    expect(interpretCloseAnswer({ action: 'hide', remember: true })).toEqual({ action: 'hide', remember: 'background' });
   });
 
-  it('interpretCloseDialog_cerrarRecordado_guardaQuit', () => {
-    expect(interpretCloseDialog({ response: 1, checkboxChecked: true })).toEqual({ action: 'quit', remember: 'quit' });
+  it('interpretCloseAnswer_cerrarRecordado_guardaQuit', () => {
+    expect(interpretCloseAnswer({ action: 'quit', remember: true })).toEqual({ action: 'quit', remember: 'quit' });
   });
 
-  it('interpretCloseDialog_cancelarConRecordar_noGuardaNada', () => {
-    expect(interpretCloseDialog({ response: 2, checkboxChecked: true })).toEqual({ action: 'cancel', remember: null });
+  it('interpretCloseAnswer_cancelarConRecordar_noGuardaNada', () => {
+    expect(interpretCloseAnswer({ action: 'cancel', remember: true })).toEqual({ action: 'cancel', remember: null });
+  });
+});
+
+describe('closeAnswerFromNative', () => {
+  it('closeAnswerFromNative_cadaBoton_suAccionEnElOrdenDeLosBotones', () => {
+    expect(closeAnswerFromNative({ response: 0, checkboxChecked: true })).toEqual({ action: 'hide', remember: true });
+    expect(closeAnswerFromNative({ response: 1, checkboxChecked: false })).toEqual({ action: 'quit', remember: false });
+    expect(closeAnswerFromNative({ response: 2, checkboxChecked: true })).toEqual({ action: 'cancel', remember: true });
   });
 
-  it('interpretCloseDialog_respuestaDesconocida_cancela', () => {
-    expect(interpretCloseDialog({ response: -1, checkboxChecked: false }).action).toBe('cancel');
+  it('closeAnswerFromNative_respuestaDesconocida_cancela', () => {
+    expect(closeAnswerFromNative({ response: -1, checkboxChecked: false }).action).toBe('cancel');
+    expect(closeAnswerFromNative({ response: 7, checkboxChecked: false }).action).toBe('cancel');
+  });
+});
+
+describe('parseCloseAnswer', () => {
+  it('parseCloseAnswer_respuestaValida_laDevuelve', () => {
+    expect(parseCloseAnswer({ action: 'quit', remember: true })).toEqual({ action: 'quit', remember: true });
+  });
+
+  it('parseCloseAnswer_accionDesconocida_lanzaConElValorRecibido', () => {
+    expect(() => parseCloseAnswer({ action: 'destroy', remember: false })).toThrow(/destroy/);
+  });
+
+  it('parseCloseAnswer_camposDeMasOFaltan_lanza', () => {
+    expect(() => parseCloseAnswer({ action: 'hide', remember: false, extra: 1 })).toThrow(/extra/);
+    expect(() => parseCloseAnswer({ action: 'hide' })).toThrow(/hide/);
+    expect(() => parseCloseAnswer(null)).toThrow(/null/);
   });
 });

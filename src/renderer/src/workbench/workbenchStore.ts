@@ -4,7 +4,8 @@ import type { PersistedTab } from '@shared/state';
 import { disposeTranscriptStore, transcriptStoreForTab } from './transcriptStore';
 import type { ContextUsage, MageEvent, McpServerStatus, PermissionDecision, PermissionRequest, SlashCommandInfo, SubagentInfo } from '@shared/events';
 import { buildUpdatedInput, parseAskUserQuestion } from '@shared/askUserQuestion';
-import type { NotificationTarget, PermissionMode, SessionEventPayload } from '@shared/ipc';
+import type { CloseAnswer, NotificationTarget, PermissionMode, SessionEventPayload } from '@shared/ipc';
+import { IDLE_UPDATE_STATE, type UpdateState } from '@shared/update';
 import { isPermissionMode, MAIN_WINDOW_ID, PERMISSION_MODES } from '@shared/ipc';
 import { RELEASE_NOTES_TAB_ID, releaseNotesDecision } from './releaseNotes';
 import type { UsageInfo } from '@shared/usage';
@@ -240,6 +241,13 @@ export interface WorkbenchState {
   // restaurado del arranque anterior solo prometeria procesos que ya no existen.
   readonly backgroundSessions: Readonly<Record<string, BackgroundSession>>;
 
+  // Grupo B: main pidio a esta ventana el dialogo «¿Cerrar Mage?» y espera la respuesta.
+  closePromptOpen: boolean;
+  // Estado de la actualizacion que difunde main (el indicador de la barra de estado lo pinta).
+  updateState: UpdateState;
+  // Version cuyo dialogo de «lista para instalar» esta abierto en esta ventana; null = cerrado.
+  updatePromptVersion: string | null;
+
   // --- Acciones de UI ---
   setActiveAccount: (accountId: string) => void;
   // Clic en otra cuenta de la cabecera (P-026 2.7, D5): decide con `planAccountSwitch` si solo cambia,
@@ -336,6 +344,14 @@ export interface WorkbenchState {
   closeSettings: () => void;
   // Abre (o enfoca) la pseudo-pestaña de novedades en `version`, o en la instalada sin argumento.
   openReleaseNotes: (version?: string) => void;
+  // Contesta el dialogo de cierre a main (que es quien oculta, sale o guarda «recordar»).
+  answerClosePrompt: (answer: CloseAnswer) => void;
+  // Abre el dialogo de «lista para instalar» de la actualizacion descargada (desde el indicador).
+  openUpdatePrompt: () => void;
+  // «Más tarde»: cierra el dialogo; el indicador sigue y se instala al cerrar Mage.
+  dismissUpdatePrompt: () => void;
+  // «Reiniciar ahora»: main cierra Mage e instala.
+  installUpdate: () => void;
   // Arranque: si Mage se ha actualizado desde la ultima vez, abre las novedades (ver releaseNotes.ts).
   // `isDev` se inyecta para poder probar la regla (en Vitest `import.meta.env.DEV` siempre es true).
   showReleaseNotesIfUpdated: (isDev: boolean) => Promise<void>;
@@ -1108,6 +1124,9 @@ export function createWorkbenchStore(mage: MageClient) {
     mcpServersByChat: {},
     conversationHistory: [],
     backgroundSessions: {},
+    closePromptOpen: false,
+    updateState: IDLE_UPDATE_STATE,
+    updatePromptVersion: null,
 
     // Cambiar de cuenta refresca su uso (cacheado en main; barato) para reflejarlo al instante.
     setActiveAccount: (accountId) => {
@@ -1477,6 +1496,17 @@ export function createWorkbenchStore(mage: MageClient) {
       mage.onTabReceived((persisted) => {
         get().adoptTab(persisted);
       });
+
+      // Grupo B: los dialogos propios de cierre y de actualizacion los pide main. El estado de la
+      // actualizacion se pide ademas al arrancar: una ventana que carga tarde (o se recarga) no ha
+      // recibido la difusion.
+      mage.onClosePrompt(() => set({ closePromptOpen: true }));
+      mage.onUpdateState((updateState) => set({ updateState }));
+      mage.onUpdatePrompt((version) => set({ updatePromptVersion: version }));
+      void mage
+        .getUpdateState()
+        .then((updateState) => set({ updateState }))
+        .catch((err: unknown) => console.warn('No se pudo leer el estado de la actualización:', describeError(err)));
 
       // El sondeo de modelos de arranque (P-026 2.4) termina cuando el selector ya esta pintado.
       mage.onModelCatalogChanged(({ configDir, models }) => {
@@ -1972,6 +2002,21 @@ export function createWorkbenchStore(mage: MageClient) {
     openReleaseNotes: (version) => {
       set({ releaseNotesVersion: version ?? null });
       get().setActiveTab(RELEASE_NOTES_TAB_ID);
+    },
+
+    answerClosePrompt: (answer) => {
+      set({ closePromptOpen: false });
+      void mage.answerClose(answer).catch((err: unknown) => console.warn('No se pudo contestar el cierre:', describeError(err)));
+    },
+
+    openUpdatePrompt: () => {
+      const state = get().updateState;
+      if (state.kind === 'ready') set({ updatePromptVersion: state.version });
+    },
+    dismissUpdatePrompt: () => set({ updatePromptVersion: null }),
+    installUpdate: () => {
+      set({ updatePromptVersion: null });
+      void mage.installUpdate().catch((err: unknown) => console.warn('No se pudo instalar la actualización:', describeError(err)));
     },
 
     showReleaseNotesIfUpdated: async (isDev) => {

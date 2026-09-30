@@ -42,7 +42,28 @@ export function StatusBar(): React.JSX.Element {
       {account !== undefined && <AccountStatus account={account} provider={focusedProvider} />}
       <ServiceStatus status={status} />
       <AppVersion />
+      <UpdateIndicator />
     </div>
+  );
+}
+
+// Actualizacion descargada (grupo B): se queda aqui mientras no se instale, para que «Más tarde» no la
+// haga desaparecer. Pulsarla reabre su dialogo (con las notas), no reinicia a ciegas. A la derecha de la
+// version: entre el estado del servicio y la version no se mete nada.
+function UpdateIndicator(): React.JSX.Element | null {
+  const state = useWorkbenchStore((s) => s.updateState);
+  const openUpdatePrompt = useWorkbenchStore((s) => s.openUpdatePrompt);
+  if (state.kind !== 'ready') return null;
+  return (
+    <button
+      data-update-indicator="true"
+      onClick={openUpdatePrompt}
+      aria-label={`Mage ${state.version} está lista para instalarse. Ver y reiniciar`}
+      className="flex cursor-pointer items-center gap-[5px] rounded-[5px] px-[6px] py-[1px] text-mg-body hover:bg-mg-hover"
+    >
+      <span className="h-[6px] w-[6px] rounded-full bg-mg-activity" aria-hidden="true" />
+      {state.version} lista · Reiniciar
+    </button>
   );
 }
 

@@ -15,6 +15,9 @@ import { TooltipLayer } from './workbench/components/TooltipLayer';
 // una carpeta y ejecutar su codigo, y bloquea el arranque de la sesion. Cargarlo bajo demanda pondria
 // una descarga de chunk en el camino critico de una frontera de seguridad.
 import { TrustFolderDialog } from './workbench/components/TrustFolderDialog';
+// El de cierre tampoco: main espera su respuesta para cerrar, y un chunk que no cargara dejaria la X
+// sin efecto hasta recargar.
+import { CloseMageDialog } from './workbench/components/CloseMageDialog';
 
 // Los cuatro dialogos van en DIFERIDO (P15). Ya devolvian `null` cerrados, asi que la puerta de
 // RENDER estaba bien; lo que faltaba era la de BUNDLE: `SettingsView` pasa de 1.400 lineas y arrastra
@@ -30,6 +33,8 @@ import { OnboardingWizard } from './workbench/components/OnboardingWizard';
 
 const SettingsView = lazy(() => import('./workbench/components/SettingsView').then((m) => ({ default: m.SettingsView })));
 // Novedades, tambien en diferido: arrastra el changelog entero y casi nunca se abre.
+// El de «actualización lista», en diferido: sale una vez por version.
+const UpdateReadyDialog = lazy(() => import('./workbench/components/UpdateReadyDialog').then((m) => ({ default: m.UpdateReadyDialog })));
 const ReleaseNotesPane = lazy(() => import('./workbench/components/ReleaseNotesPane').then((m) => ({ default: m.ReleaseNotesPane })));
 
 import { useWorkbenchStore } from './workbench/workbenchStore';
@@ -269,12 +274,14 @@ export function App(): React.JSX.Element {
         <HandoffModal />
         <AccountSwitchDialog />
         <SettingsView />
+        <UpdateReadyDialog />
       </Suspense>
       <TrustFolderDialog />
       {/* Asistente de primer arranque: se monta SIEMPRE y el decide si hay algo que enseñar (solo
           mientras `onboardingCompletedVersion` este por detras de la version del asistente). Va por
           encima del resto de dialogos: es lo primero que ve alguien con una instalacion limpia. */}
       <OnboardingWizard />
+      <CloseMageDialog />
       <TooltipLayer />
     </div>
   );

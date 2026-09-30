@@ -14,6 +14,7 @@ import type { MemoryFile } from './memory';
 import type { ConversationSummary, DeleteConversationParams, MoveConversationParams, MoveConversationResult } from './conversations';
 import type { ConversationPrivacy, PersistedWorkspace } from './state';
 import type { AppSettings } from './settings';
+import type { UpdateState } from './update';
 import type { WidgetSnapshot } from './widget';
 import type { FetchThemeParams, FetchedVscodeTheme, ThemeSearchItem } from './themeMarket';
 import type { PanelLayoutState, PanelPlacement } from './panelLayout';
@@ -198,6 +199,11 @@ export const IpcChannel = {
   WindowsTakePendingTabs: 'windows:takePendingTabs',
   // Se solto una pestaña (o una fila del historial) fuera de su ventana: main mira el cursor.
   WindowsDropTab: 'windows:dropTab',
+  // Grupo B: la respuesta del dialogo propio de cierre (lo pide main por CLOSE_PROMPT_CHANNEL).
+  CloseAnswer: 'close:answer',
+  // Estado de la actualizacion (para una ventana que carga tarde) e instalarla ya descargada.
+  UpdateGetState: 'update:getState',
+  UpdateInstall: 'update:install',
 } as const;
 
 export type IpcChannel = (typeof IpcChannel)[keyof typeof IpcChannel];
@@ -599,6 +605,23 @@ export const WINDOW_TAB_RECEIVED_CHANNEL = 'windows:tabReceived';
 // sondeo de arranque, que termina cuando la ventana ya esta pintada.
 export const MODEL_CATALOG_CHANGED_CHANNEL = 'modelCatalog:changed';
 
+// --- Dialogos propios de cierre y de actualizacion (grupo B) ----------------------------------
+
+// main -> UNA ventana (la que se cierra): pinta el dialogo «¿Cerrar Mage?». La decision la sigue
+// tomando main; el renderer solo pregunta y contesta por `IpcChannel.CloseAnswer`.
+export const CLOSE_PROMPT_CHANNEL = 'close:prompt';
+
+// Lo que contesta el dialogo de cierre. `remember` = «Recordar mi decisión» (con `cancel` no se guarda).
+export interface CloseAnswer {
+  readonly action: 'hide' | 'quit' | 'cancel';
+  readonly remember: boolean;
+}
+
+// main -> TODAS las ventanas: cambio el estado de la actualizacion (indicador de la barra de estado).
+export const UPDATE_STATE_CHANNEL = 'update:state';
+// main -> UNA ventana (la enfocada): enseña el dialogo de «lista para instalar» de esa version.
+export const UPDATE_PROMPT_CHANNEL = 'update:prompt';
+
 export interface ModelCatalogChange {
   readonly configDir: string;
   readonly models: readonly ProviderModel[];
@@ -869,4 +892,16 @@ export interface MageApi {
   onModelCatalogChanged(listener: (change: ModelCatalogChange) => void): () => void;
   // Llega una pestaña movida desde otra ventana. Devuelve funcion para desuscribir.
   onTabReceived(listener: (tab: PersistedTab) => void): () => void;
+
+  // --- Dialogos propios de cierre y de actualizacion (grupo B) ---------------------------------
+  // main pide el dialogo de cierre a ESTA ventana. Devuelve funcion para desuscribir.
+  onClosePrompt(listener: () => void): () => void;
+  // Respuesta al dialogo de cierre. Lanza si esta ventana no tenia una pregunta pendiente.
+  answerClose(answer: CloseAnswer): Promise<void>;
+  getUpdateState(): Promise<UpdateState>;
+  onUpdateState(listener: (state: UpdateState) => void): () => void;
+  // main pide a ESTA ventana el dialogo de «lista para instalar» de la version dada.
+  onUpdatePrompt(listener: (version: string) => void): () => void;
+  // Reinicia e instala la actualizacion descargada. Lanza si no hay ninguna lista.
+  installUpdate(): Promise<void>;
 }

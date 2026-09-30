@@ -87,6 +87,11 @@ nsis:
   createStartMenuShortcut: true
   shortcutName: Mage
   artifactName: mage-setup-alpha-${version}.${ext}
+  # Aspecto de Mage (grupo B de la 0.1.2): `installerSidebar.bmp`, `installerHeader.bmp` (los genera
+  # `pnpm icons`) e `installer.nsh` (colores y textos propios) se recogen solos de resources/brand por su
+  # nombre. Solo en castellano, como la app: sin esto el asistente sigue al idioma de Windows. Ojo, NO
+  # `multiLanguageInstaller: false`: electron-builder 26 lo traduce a «solo en_US» e ignora la lista.
+  installerLanguages: [es_ES]
 
 mac:
   target:

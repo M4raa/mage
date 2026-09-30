@@ -2,12 +2,14 @@
 // toca Electron, la ejecuta `index.ts`. Asi se prueba lo que no se puede romper —que la salida de la
 // app, la del autoupdater incluida, nunca se quede bloqueada por el dialogo— sin arrancar nada.
 
+import { z } from 'zod';
+import type { CloseAnswer } from '@shared/ipc';
 import type { CloseBehavior } from '@shared/settings';
 
 //   'close' — dejar que la ventana se destruya (y con ella sus sesiones).
 //   'hide'  — mandarla a segundo plano: se oculta, su renderer y sus agentes siguen vivos.
 //   'quit'  — salir de Mage.
-//   'ask'   — preguntar con el dialogo nativo.
+//   'ask'   — preguntar: con el dialogo propio del renderer, o el nativo si el renderer no puede pintarlo.
 export type CloseAction = 'close' | 'hide' | 'quit' | 'ask';
 
 export interface CloseContext {
@@ -35,11 +37,12 @@ export function resolveCloseAction(context: CloseContext): CloseAction {
   return 'ask';
 }
 
-// Botones del dialogo, en este orden. El indice de cada uno es lo que devuelve `showMessageBox`.
+// Botones del dialogo NATIVO (la reserva cuando el renderer esta caido o cargando), en este orden. El
+// indice de cada uno es lo que devuelve `showMessageBox`.
 export const CLOSE_DIALOG_BUTTONS = ['Mantener en segundo plano', 'Cerrar Mage', 'Cancelar'] as const;
 export const CLOSE_DIALOG_CANCEL_INDEX = 2;
 
-export interface CloseDialogAnswer {
+export interface NativeCloseDialogAnswer {
   readonly response: number;
   readonly checkboxChecked: boolean;
 }
@@ -50,10 +53,27 @@ export interface CloseDialogOutcome {
   readonly remember: Exclude<CloseBehavior, 'ask'> | null;
 }
 
+// La respuesta del dialogo propio llega del renderer: frontera, se valida entera.
+const CLOSE_ANSWER_SCHEMA = z.object({ action: z.enum(['hide', 'quit', 'cancel']), remember: z.boolean() }).strict();
+
+export function parseCloseAnswer(value: unknown): CloseAnswer {
+  const result = CLOSE_ANSWER_SCHEMA.safeParse(value);
+  if (!result.success) throw new Error(`Respuesta de cierre no valida: ${JSON.stringify(value)}`);
+  return result.data;
+}
+
+// El boton del dialogo nativo, en la misma forma que la respuesta del propio. Un indice desconocido
+// (cerrarlo con Esc da `cancelId`, pero por si acaso) es cancelar.
+const NATIVE_BUTTON_ACTIONS: readonly CloseAnswer['action'][] = ['hide', 'quit', 'cancel'];
+
+export function closeAnswerFromNative(answer: NativeCloseDialogAnswer): CloseAnswer {
+  return { action: NATIVE_BUTTON_ACTIONS[answer.response] ?? 'cancel', remember: answer.checkboxChecked };
+}
+
 // Traduce la respuesta del dialogo. «Cancelar» (o cerrarlo con Esc) nunca se recuerda: recordar
 // "no cerrar" dejaria la X sin efecto para siempre.
-export function interpretCloseDialog(answer: CloseDialogAnswer): CloseDialogOutcome {
-  if (answer.response === 0) return { action: 'hide', remember: answer.checkboxChecked ? 'background' : null };
-  if (answer.response === 1) return { action: 'quit', remember: answer.checkboxChecked ? 'quit' : null };
+export function interpretCloseAnswer(answer: CloseAnswer): CloseDialogOutcome {
+  if (answer.action === 'hide') return { action: 'hide', remember: answer.remember ? 'background' : null };
+  if (answer.action === 'quit') return { action: 'quit', remember: answer.remember ? 'quit' : null };
   return { action: 'cancel', remember: null };
 }

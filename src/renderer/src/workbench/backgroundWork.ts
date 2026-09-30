@@ -66,3 +66,13 @@ export function backgroundLabel(state: BackgroundState): string {
   if (state === 'working') return 'en segundo plano';
   return state === 'needs_action' ? 'pendiente de acción' : 'pendiente de revisión';
 }
+
+// Conversaciones que un «Cerrar Mage» cortaria: las pestañas con un turno en marcha (o esperando un
+// permiso) y las que siguen vivas en segundo plano sin haber terminado. Lo dice el dialogo de cierre.
+export function countWorkingConversations(
+  tabStatuses: readonly (ChatStatus | undefined)[],
+  background: readonly BackgroundSession[],
+): number {
+  const busyTabs = tabStatuses.filter(shouldBackgroundOnClose).length;
+  return busyTabs + background.filter((session) => session.state !== 'done').length;
+}
