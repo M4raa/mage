@@ -34,3 +34,23 @@ coverage/
 # Grafo de conocimiento generado por graphify (regenerable con `graphify update .`)
 graphify-out/
 .claude/worktrees/
+
+# >>> privado ---------------------------------------------------------------------------------------
+# No se publica. Lo versiona SOLO el repositorio privado: scripts/sync-private.sh lee esta seccion
+# (entre los dos marcadores, una ruta por linea) y la fuerza en cada push.
+/notes/
+/reference/
+/CLAUDE.local.md
+/scripts/sync-private.sh
+/design/BRANDBOOK.md
+/design/mage-icon.png
+/design/new_mage_icon.png
+/resources/brandbook/
+/resources/screenshots/
+/resources/uploads/
+/resources/.thumbnail
+/resources/Mage Brandbook.dc.html
+/resources/Mage Empty State.dc.html
+/resources/support.js
+/resources/tray-icon.png
+# <<< privado ---------------------------------------------------------------------------------------
