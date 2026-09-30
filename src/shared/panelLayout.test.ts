@@ -282,22 +282,59 @@ describe('reconcileLayoutWithRegistry — un icono, un sitio', () => {
     expect(segunda).toEqual(primera);
   });
 
-  it('reconcile_panelEscondidoPorElUsuario_sigueSinReponerse', () => {
-    // "Esconder icono" lo saca de TODAS las zonas. Reponerlo aqui desharia la decision del usuario en
-    // el siguiente arranque... pero solo si su zona por defecto lo reclama, que es lo que se comprueba:
-    // `beta` no esta en el guardado y SI vuelve, porque el guardado no dice nada de el.
+  it('reconcile_panelSinRastroYSinEscondido_seAñadeComoNuevo', () => {
+    // `beta` no esta en el guardado NI en `hiddenPanelIds`: es un panel nuevo de una version posterior.
     const guardado = buildLayout({ right: { a: [] } });
 
     expect(idsOf(reconcileLayoutWithRegistry(guardado, registry))).toContain('beta');
   });
+
+  it('reconcile_panelEscondido_noVuelve', () => {
+    const guardado = buildLayout({ right: { a: ['alfa'] } }, ['beta']);
+
+    const result = reconcileLayoutWithRegistry(guardado, registry);
+
+    expect(idsOf(result)).not.toContain('beta');
+    expect(result.hiddenPanelIds).toEqual(['beta']);
+  });
+
+  it('reconcile_panelMovidoAZonaPosterior_noSeRepone', () => {
+    // Bug 1 del punto 29: `alfa` (right/a por defecto) movido a bottom/b, una zona POSTERIOR en el
+    // recorrido. Con una sola pasada, right/a lo reponia antes de que bottom/b lo reclamara.
+    const guardado = buildLayout({ bottom: { b: ['alfa'] } });
+
+    const result = reconcileLayoutWithRegistry(guardado, registry);
+
+    expect(result.stripes.bottom.b.panelIds).toEqual(['alfa']);
+    expect(idsOf(result).filter((id) => id === 'alfa')).toHaveLength(1);
+  });
+
+  it('reconcile_escondidoQueTambienEstaEnUnaZona_ganaLaZona', () => {
+    const guardado = buildLayout({ right: { a: ['alfa'] } }, ['alfa']);
+
+    const result = reconcileLayoutWithRegistry(guardado, registry);
+
+    expect(result.stripes.right.a.panelIds).toContain('alfa');
+    expect(result.hiddenPanelIds).toEqual([]);
+  });
+
+  it('reconcile_escondidoQueYaNoExiste_sePurga', () => {
+    const guardado = buildLayout({}, ['fantasma', 'beta', 'beta']);
+
+    expect(reconcileLayoutWithRegistry(guardado, registry).hiddenPanelIds).toEqual(['beta']);
+  });
+
+  it('reconcile_ficheroSinHiddenPanelIds_loTrataComoVacio', () => {
+    expect(reconcileLayoutWithRegistry(buildLayout({}), registry).hiddenPanelIds).toEqual([]);
+  });
 });
 
 // Layout persistido minimo: solo las zonas que se nombran traen paneles, el resto van vacias.
-function buildLayout(zones: Partial<Record<'left' | 'right' | 'bottom', Partial<Record<'a' | 'b', readonly string[]>>>>): never {
+function buildLayout(zones: Partial<Record<'left' | 'right' | 'bottom', Partial<Record<'a' | 'b', readonly string[]>>>>, hidden?: readonly string[]): never {
   const stripe = (anchor: 'left' | 'right' | 'bottom') => ({
     a: { panelIds: zones[anchor]?.a ?? [], activePanelId: null, sizePx: 300 },
     b: { panelIds: zones[anchor]?.b ?? [], activePanelId: null, sizePx: 300 },
     splitPx: 200,
   });
-  return { version: 1, stripes: { left: stripe('left'), right: stripe('right'), bottom: stripe('bottom') } } as never;
+  return { version: 1, stripes: { left: stripe('left'), right: stripe('right'), bottom: stripe('bottom') }, hiddenPanelIds: hidden } as never;
 }

@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import type { MageEvent } from '@shared/events';
-import { backgroundLabel, nextBackgroundState, shouldBackgroundOnClose } from './backgroundWork';
+import {
+  backgroundLabel,
+  backgroundMoveBlockedReason,
+  nextBackgroundState,
+  shouldBackgroundOnClose,
+  tabMoveBlockedReason,
+  type BackgroundSession,
+} from './backgroundWork';
 
 // Evento minimo del tipo pedido (los campos que no mira `nextBackgroundState` van con lo justo).
 function event(kind: MageEvent['kind']): MageEvent {
@@ -74,5 +81,38 @@ describe('backgroundLabel', () => {
     expect(backgroundLabel('working')).toBe('en segundo plano');
     expect(backgroundLabel('needs_action')).toBe('pendiente de acción');
     expect(backgroundLabel('done')).toBe('pendiente de revisión');
+  });
+});
+
+describe('tabMoveBlockedReason', () => {
+  it('tabMoveBlockedReason_turnoEnMarcha_daElMotivo', () => {
+    expect(tabMoveBlockedReason('streaming')).toMatch(/turno en marcha/);
+    expect(tabMoveBlockedReason('needs_permission')).toMatch(/turno en marcha/);
+  });
+
+  it('tabMoveBlockedReason_ociosaOSinEstado_null', () => {
+    expect(tabMoveBlockedReason('idle')).toBeNull();
+    expect(tabMoveBlockedReason(undefined)).toBeNull();
+  });
+});
+
+describe('backgroundMoveBlockedReason', () => {
+  const session = (state: BackgroundSession['state']): BackgroundSession => ({
+    sessionId: 's',
+    title: 't',
+    accountId: 'a',
+    state,
+    sinceMs: 0,
+    alwaysAllowTools: [],
+  });
+
+  it('backgroundMoveBlockedReason_trabajandoOPendiente_daElMotivo', () => {
+    expect(backgroundMoveBlockedReason(session('working'))).toMatch(/segundo plano/);
+    expect(backgroundMoveBlockedReason(session('needs_action'))).toMatch(/segundo plano/);
+  });
+
+  it('backgroundMoveBlockedReason_terminadaOSinSesion_null', () => {
+    expect(backgroundMoveBlockedReason(session('done'))).toBeNull();
+    expect(backgroundMoveBlockedReason(undefined)).toBeNull();
   });
 });

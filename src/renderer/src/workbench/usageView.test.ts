@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { UsageInfo } from '@shared/usage';
 import {
+  formatResetAbsolute,
   FIVE_HOUR_WINDOW_MS,
   SEVEN_DAY_WINDOW_MS,
   formatApiCredits,
@@ -177,5 +178,39 @@ describe('projectWindowExhaustion', () => {
 
   it('project_valorNoFinito_esDesconocido', () => {
     expect(projectWindowExhaustion(Number.NaN, NOW + 1 * H, FIVE_HOUR_WINDOW_MS, NOW)).toEqual({ kind: 'unknown' });
+  });
+});
+
+describe('formatResetAbsolute', () => {
+  // Lunes 2026-09-28 10:00 hora local (los tests no dependen de la zona: todo es hora local).
+  const MONDAY_10 = new Date(2026, 8, 28, 10, 0).getTime();
+
+  it('formatResetAbsolute_null_guion', () => {
+    expect(formatResetAbsolute(null, MONDAY_10, false)).toBe('—');
+  });
+
+  it('formatResetAbsolute_yaPasado_ya', () => {
+    expect(formatResetAbsolute(MONDAY_10 - 1, MONDAY_10, false)).toBe('ya');
+    expect(formatResetAbsolute(MONDAY_10, MONDAY_10, true)).toBe('ya');
+  });
+
+  it('formatResetAbsolute_mismoDia_soloHora', () => {
+    expect(formatResetAbsolute(new Date(2026, 8, 28, 15, 5).getTime(), MONDAY_10, false)).toBe('15:05');
+  });
+
+  it('formatResetAbsolute_mismoDiaConDia_diaYHora', () => {
+    expect(formatResetAbsolute(new Date(2026, 8, 28, 15, 5).getTime(), MONDAY_10, true)).toBe('lun 15:05');
+  });
+
+  it('formatResetAbsolute_otroDiaDeLaSemana_diaYHora', () => {
+    expect(formatResetAbsolute(new Date(2026, 8, 30, 9, 0).getTime(), MONDAY_10, false)).toBe('mié 09:00');
+  });
+
+  it('formatResetAbsolute_masDeSeisDias_fecha', () => {
+    expect(formatResetAbsolute(new Date(2026, 9, 5, 9, 0).getTime(), MONDAY_10, true)).toBe('05/10 09:00');
+  });
+
+  it('formatResetAbsolute_noFinito_lanza', () => {
+    expect(() => formatResetAbsolute(Number.NaN, MONDAY_10, false)).toThrow(/NaN/);
   });
 });

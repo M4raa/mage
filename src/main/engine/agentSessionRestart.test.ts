@@ -24,6 +24,19 @@ describe('AgentSession reinicio automatico (C1)', () => {
     expect(h.plans[1]).toMatchObject({ sessionId: 's1', resume: true }); // reanudando el hilo
   });
 
+  it('onExit_trasConversationReset_reanudaLaConversacionDeDespuesDelClear', () => {
+    // P-028: tras `/clear` el CLI escribe en OTRO .jsonl; reanudar el id del arranque volveria a antes.
+    const h = harness();
+    h.session.start();
+    emitLine(h.children[0]!, [{ kind: 'session_init', sessionId: 's1', model: 'sonnet', tools: [], mcpServers: [], slashCommands: [], skills: [], plugins: [], pluginErrors: [] }]);
+    emitLine(h.children[0]!, [{ kind: 'conversation_reset', newSessionId: 's2' }]);
+
+    h.children[0]!.exit(1, null);
+    h.runPendingTimer();
+
+    expect(h.plans[1]).toMatchObject({ sessionId: 's2', resume: true });
+  });
+
   it('spawnFallido_emiteErrorYPasaPorElCierreComun_reintenta', () => {
     // Node emite `error` (y `close`), NUNCA `exit`, cuando el binario no existe. Sin pasar por el cierre
     // comun la sesion se quedaba con un `child` muerto: en persistente los mensajes se escribian al

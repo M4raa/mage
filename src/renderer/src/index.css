@@ -260,6 +260,29 @@ body {
   box-shadow: var(--mg-shadow-pop);
 }
 
+/* Cursor de mano sobre lo clicable. Tailwind v4 quito `cursor: pointer` de su preflight, asi que ningun
+   boton lo tenia salvo los que lo pedian a mano. Va DENTRO de `@layer base` a proposito: sin capa ganaria
+   a las utilidades (`@layer utilities`) y aplastaria `cursor-not-allowed`/`cursor-default`/`cursor-help`,
+   los divisores `cursor-col-resize` y demas — dentro de `base` cualquier utilidad la supera. Lo
+   deshabilitado queda fuera por el `:not(:disabled)`/`aria-disabled`; la barra de titulo (`app-region:
+   drag`) no es un boton y no se toca. */
+@layer base {
+  button:not(:disabled),
+  [role='button']:not([aria-disabled='true']),
+  [role='tab'],
+  [role='menuitem'],
+  [role='option'],
+  summary,
+  select,
+  a[href],
+  label[for],
+  input[type='checkbox'],
+  input[type='radio'],
+  input[type='range'] {
+    cursor: pointer;
+  }
+}
+
 /* Isla de la interfaz: una superficie de primer nivel del workbench. Solo el radio; el recorte del
    contenido NO se fuerza aqui porque hay islas (la barra de estado) que sacan popovers por encima de
    su propio borde y `overflow: hidden` se los comeria. La isla que pinte fondos hasta el borde
@@ -472,6 +495,13 @@ select:focus-visible,
 .cm-mg-em {
   font-style: italic;
 }
+/* `[Imagen N]` del prompt (P-028 19b): un bloque atomico, se ve como una etiqueta. */
+.cm-mg-imgref {
+  background: var(--color-mg-hover);
+  border-radius: 4px;
+  padding: 0 3px;
+  color: var(--color-mg-body);
+}
 .cm-mg-code {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   background: var(--color-mg-code);
@@ -499,4 +529,41 @@ select:focus-visible,
 }
 .cm-mg-h3 {
   font-size: 1.07em;
+}
+
+/* Deslizador de pasos (P-028 32/33): el `<input type="range">` nativo, con los tokens del tema. El pulgar
+   mide 14 px (su mitad, 7 px, es el margen de los puntos de `StepSlider`). */
+.mg-step-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 16px;
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+}
+.mg-step-slider::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 999px;
+  background: var(--color-mg-border-emph);
+}
+.mg-step-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  margin-top: -5px;
+  border-radius: 50%;
+  border: 2px solid var(--color-mg-popover);
+  background: var(--color-mg-focus);
+}
+.mg-step-slider:focus-visible {
+  outline: none;
+}
+.mg-step-slider:focus-visible::-webkit-slider-thumb {
+  outline: 2px solid var(--color-mg-focus);
+  outline-offset: 2px;
+}
+/* Valor fuera de la escala (un modo que reporta el CLI y Mage no ofrece): sin pulgar, no finge posicion. */
+.mg-step-slider[data-unset='true']::-webkit-slider-thumb {
+  opacity: 0;
 }

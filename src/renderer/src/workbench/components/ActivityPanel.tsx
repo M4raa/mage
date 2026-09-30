@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useWorkbenchStore } from '../workbenchStore';
 import { usePaneTabId } from '../paneContext';
 import { useStickToBottom } from '../useStickToBottom';
-import { activityStepLabel, activityTurns, runsText, type ActivityTurn } from '../chatVisibility';
+import { activityStepLabel, activityTurns, runningStepId, runsText, type ActivityTurn } from '../chatVisibility';
 import { formatElapsed } from '../thinkingStatus';
 import { Hint } from './TranscriptHint';
 import { Icon } from './Icon';
@@ -20,6 +20,11 @@ type SubagentBlock = Extract<Block, { kind: 'subagent' }>;
 
 const EMPTY: readonly Block[] = [];
 
+// Fondo del paso en marcha: el acento de la cuenta muy diluido (la unica familia cromatica permitida) sobre
+// el panel, de modo que sirve igual en tema claro y oscuro.
+const LIVE_ROW_BG_PERCENT = 14;
+const LIVE_ICON_BOX_PX = 16;
+
 export function ActivityPanel(): React.JSX.Element {
   const tabId = usePaneTabId();
   const tab = useWorkbenchStore((s) => s.tabs.find((t) => t.id === tabId));
@@ -28,9 +33,13 @@ export function ActivityPanel(): React.JSX.Element {
   const status = useWorkbenchStore((s) => s.statusByChat[tabId] ?? 'idle');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const turnLive = status === 'streaming' || status === 'needs_permission';
+  // Acento de la cuenta de ESTA pestaña, como el chat (BlockChat): el turno activo y su paso en marcha lo llevan.
+  const accent = useWorkbenchStore((s) => s.accounts.find((a) => a.id === tab?.accountId)?.accent.base ?? 'var(--color-mg-fill)');
 
   const subagent = useMemo(() => findSubagent(blocks, filter), [blocks, filter]);
   const turns = useMemo(() => activityTurns(filter === null ? blocks : blocksOfSubagent(blocks, filter)), [blocks, filter]);
+  const activeTurn = turns.length > 0 ? turns[turns.length - 1] : undefined;
+  const activeRunningId = activeTurn === undefined ? null : runningStepId(activeTurn, turnLive);
   const stepCount = turns.reduce((n, t) => n + t.steps.length, 0);
   const { ref, onScroll } = useStickToBottom([stepCount, turnLive, tabId, filter]);
 
@@ -45,7 +54,15 @@ export function ActivityPanel(): React.JSX.Element {
       <div ref={ref} onScroll={onScroll} className="min-h-0 flex-1 overflow-auto py-[4px]">
         {stepCount === 0 && <Hint text={turnLive ? 'Esperando el primer paso…' : 'Sin actividad todavía.'} />}
         {turns.map((turn) => (
-          <TurnSection key={turn.turnIndex} turn={turn} selectedId={selectedId} onSelect={(id) => setSelectedId((cur) => (cur === id ? null : id))} />
+          <TurnSection
+            key={turn.turnIndex}
+            turn={turn}
+            selectedId={selectedId}
+            onSelect={(id) => setSelectedId((cur) => (cur === id ? null : id))}
+            live={turnLive && turn === activeTurn}
+            runningId={turn === activeTurn ? activeRunningId : null}
+            accent={accent}
+          />
         ))}
       </div>
       {selected !== undefined && <StepDetail block={selected} onClose={() => setSelectedId(null)} />}
@@ -79,7 +96,7 @@ function ActivityHeader({ tabId, title, subagent }: { readonly tabId: string; re
           data-tip="Ver todos los pasos"
           className="ml-auto flex shrink-0 items-center gap-[4px] rounded-[4px] bg-mg-sel px-[5px] py-[1px] text-[9.5px] text-mg-body hover:bg-mg-hover"
         >
-          ⇲ {subagent.agentType ?? 'Subagente'} <span aria-hidden="true">✕</span>
+          <Icon name="toolAgent" size={12} /> {subagent.agentType ?? 'Subagente'} <Icon name="close" size={10} />
         </button>
       )}
     </div>
@@ -90,36 +107,68 @@ function TurnSection({
   turn,
   selectedId,
   onSelect,
+  live,
+  runningId,
+  accent,
 }: {
   readonly turn: ActivityTurn;
   readonly selectedId: string | null;
   readonly onSelect: (id: string) => void;
+  // Es el turno que el agente esta ejecutando ahora; `runningId` el paso en marcha dentro de el.
+  readonly live: boolean;
+  readonly runningId: string | null;
+  readonly accent: string;
 }): React.JSX.Element {
   const n = turn.steps.length;
   return (
     <div>
-      <div className="sticky top-0 z-10 truncate bg-mg-panel px-[10px] py-[3px] text-[9.5px] font-semibold uppercase tracking-[0.04em] text-mg-ter" data-activity-turn>
+      <div
+        className={`sticky top-0 z-10 truncate bg-mg-panel px-[10px] py-[3px] text-[9.5px] font-semibold uppercase tracking-[0.04em] ${live ? '' : 'text-mg-ter'}`}
+        style={live ? { color: accent } : undefined}
+        data-activity-turn
+        data-activity-live={live ? 'true' : undefined}
+      >
         Turno {turn.turnIndex} · {n} {n === 1 ? 'paso' : 'pasos'}
         {turn.userPreview.length > 0 && <span className="ml-[6px] font-normal normal-case tracking-normal text-mg-muted">{turn.userPreview}</span>}
       </div>
       {turn.steps.map((step) => (
-        <StepRow key={step.id} block={step} selected={step.id === selectedId} onSelect={onSelect} />
+        <StepRow key={step.id} block={step} selected={step.id === selectedId} onSelect={onSelect} running={step.id === runningId} accent={accent} />
       ))}
     </div>
   );
 }
 
-function StepRow({ block, selected, onSelect }: { readonly block: Block; readonly selected: boolean; readonly onSelect: (id: string) => void }): React.JSX.Element {
+function StepRow({
+  block,
+  selected,
+  onSelect,
+  running,
+  accent,
+}: {
+  readonly block: Block;
+  readonly selected: boolean;
+  readonly onSelect: (id: string) => void;
+  readonly running: boolean;
+  readonly accent: string;
+}): React.JSX.Element {
   const label = activityStepLabel(block);
   return (
     <button
       onClick={() => onSelect(block.id)}
       data-activity-row={block.kind}
       data-activity-error={label.isError ? 'true' : undefined}
+      data-activity-live={running ? 'true' : undefined}
       aria-pressed={selected}
-      className={`flex h-[24px] w-full items-center gap-[7px] px-[10px] text-left font-mono text-[10.5px] ${selected ? 'bg-mg-sel' : 'hover:bg-mg-hover'} ${label.nested ? 'pl-[24px]' : ''}`}
+      style={running ? { borderLeft: `2px solid ${accent}`, backgroundColor: `color-mix(in srgb, ${accent} ${LIVE_ROW_BG_PERCENT}%, transparent)` } : undefined}
+      className={`flex h-[24px] w-full items-center gap-[7px] px-[10px] text-left font-mono text-[10.5px] ${running || selected ? (selected ? 'bg-mg-sel' : '') : 'hover:bg-mg-hover'} ${label.nested ? 'pl-[24px]' : ''}`}
     >
-      <span data-tool-glyph className="inline-flex w-[14px] flex-none justify-center text-mg-ter" aria-hidden="true">{label.glyph}</span>
+      <span
+        data-tool-glyph
+        className={`inline-flex flex-none items-center justify-center text-mg-ter ${running ? 'mg-pulse' : ''}`}
+        style={{ width: LIVE_ICON_BOX_PX, height: LIVE_ICON_BOX_PX }}
+      >
+        <Icon name={label.icon} />
+      </span>
       <span className="flex-none text-mg-body2">{label.name}</span>
       <span className="min-w-0 flex-1 truncate text-mg-sec" title={label.detail}>{label.detail}</span>
       <span className={`flex flex-none items-center gap-[3px] text-[9.5px] ${label.isError ? 'font-semibold text-mg-danger' : 'text-mg-muted'}`}>
@@ -144,7 +193,7 @@ function StepDetail({ block, onClose }: { readonly block: Block; readonly onClos
           data-tip="Cerrar el detalle"
           className="flex h-4 w-4 shrink-0 items-center justify-center rounded-[4px] text-mg-muted hover:text-mg-body"
         >
-          ✕
+          <Icon name="close" size={10} />
         </button>
       </div>
       <div className="min-h-0 flex-1 overflow-auto p-[8px] text-[11px] text-mg-sec">

@@ -42,6 +42,8 @@ export interface PanelLayoutStoreDeps extends AtomicWriteDeps {
 const PANEL_LAYOUT_ENVELOPE_SCHEMA = z.object({
   version: z.number().catch(PANEL_LAYOUT_VERSION),
   stripes: z.record(z.string(), z.unknown()),
+  // Sin declararlo, Zod lo descarta al leer y los paneles escondidos reaparecerian en cada arranque.
+  hiddenPanelIds: z.unknown().optional(),
 });
 
 type PanelLayoutEnvelope = z.infer<typeof PANEL_LAYOUT_ENVELOPE_SCHEMA>;

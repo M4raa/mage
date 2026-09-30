@@ -186,16 +186,6 @@ export function occupiedCategories(usage: ContextUsage): readonly ContextCategor
     .sort((a, b) => b.tokens - a.tokens);
 }
 
-// Etiqueta corta del indicador de contexto de la barra de estado (2.8): `ctx 45 %`. Devuelve `null`
-// cuando el porcentaje no es un numero utilizable (el CLI aun no ha reportado contexto): el llamador
-// NO monta el indicador, porque un `ctx NaN %` es peor que no tener indicador. Se acota a [0,100]: el
-// CLI puede reportar por encima de 100 con la autocompactacion pendiente.
-export function formatContextShort(usedPct: number): string | null {
-  if (!Number.isFinite(usedPct)) return null;
-  const clamped = Math.min(100, Math.max(0, Math.round(usedPct)));
-  return `ctx ${clamped} %`;
-}
-
 // Umbrales de aviso (% de la ventana): a partir de warn se sugiere handoff pronto; a partir de high,
 // ya. Constantes con nombre (sin magic numbers).
 export const CONTEXT_WARN_PCT = 70;
@@ -216,10 +206,40 @@ export function contextUsageAdvice(
   windowTokens: number = DEFAULT_CONTEXT_WINDOW_TOKENS,
 ): ContextUsageAdvice {
   if (windowTokens <= 0) return { pct: 0, level: 'ok' };
-  const raw = Math.round((contextTokens / windowTokens) * 100);
-  const pct = Math.min(100, Math.max(0, raw));
-  const level: ContextUsageLevel = pct >= CONTEXT_HIGH_PCT ? 'high' : pct >= CONTEXT_WARN_PCT ? 'warn' : 'ok';
-  return { pct, level };
+  return adviceFromPct((contextTokens / windowTokens) * 100);
+}
+
+function adviceFromPct(rawPct: number): ContextUsageAdvice {
+  const pct = Math.min(100, Math.max(0, Math.round(rawPct)));
+  if (pct >= CONTEXT_HIGH_PCT) return { pct, level: 'high' };
+  return { pct, level: pct >= CONTEXT_WARN_PCT ? 'warn' : 'ok' };
+}
+
+// Lo que ENSEÑA el panel de Contexto y la barra de estado (P-028, punto 7): el desglose real del CLI
+// si lo hay; si no (conversacion reabierta sin proceso), la estimacion desde la transcripcion con la
+// ventana del modelo, MARCADA como estimada. El aviso sale del mismo sitio: el `percentage` del CLI o
+// la ventana del modelo — nunca 200k fijo, que con Opus 1M avisaba al 70 % con un 14 % real.
+export interface ContextEstimate {
+  readonly contextTokens: number;
+  readonly tokensOut: number;
+  readonly model: string;
+}
+
+export interface ResolvedContext {
+  readonly info: ContextInfo;
+  readonly estimated: boolean;
+  readonly advice: ContextUsageAdvice;
+}
+
+export function resolveContext(usage: ContextUsage | undefined, estimate: ContextEstimate): ResolvedContext {
+  if (usage !== undefined && usage.maxTokens > 0) {
+    return { info: contextInfoFromUsage(usage, estimate.tokensOut), estimated: false, advice: adviceFromPct(usage.percentage) };
+  }
+  return {
+    info: toContextInfo(estimate.contextTokens, estimate.tokensOut, estimate.model),
+    estimated: true,
+    advice: contextUsageAdvice(estimate.contextTokens, contextWindowForModel(estimate.model)),
+  };
 }
 
 // Tamano de contexto vivo actual = contextTokens del ultimo punto de la serie (0 si no hay puntos).

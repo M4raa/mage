@@ -68,6 +68,21 @@ describe('transcriptToBlocks', () => {
     expect(blocks).toEqual([{ kind: 'user', id: 'tb-0-0', text: 'hola', time: '', attachments: [] }]);
   });
 
+  it('transcriptToBlocks_assistantErrorRateLimit_lineaDeSistema', () => {
+    // P-028, 20: al reabrir, el aviso persistido del CLI no es una burbuja del agente.
+    const raw = {
+      type: 'assistant',
+      error: 'rate_limit',
+      message: { role: 'assistant', content: [{ type: 'text', text: "You've hit your session limit · resets 3pm" }] },
+    };
+
+    const blocks = transcriptToBlocks([entry('assistant', raw, 4)]);
+
+    expect(blocks).toEqual([
+      { kind: 'system', id: 'tb-4-0', text: 'Límite de uso alcanzado', tip: "You've hit your session limit · resets 3pm" },
+    ]);
+  });
+
   it('textoAsistente_generaBloqueAgentNoStreaming', () => {
     const blocks = transcriptToBlocks([assistantText('respuesta', 1)]);
 
@@ -260,6 +275,48 @@ describe('transcriptToBlocks — subagentes, pensamiento y lineas de sistema', (
     });
   });
 
+  // P-028 37a: forma medida en 2.1.284 (sesion 206a3694 y spike --subagent-bg).
+  const launched = (index: number): TranscriptEntry =>
+    entry(
+      'user',
+      {
+        type: 'user',
+        message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'tu1', content: [{ type: 'text', text: 'Async agent launched successfully.\nagentId: ab25 (internal ID)' }] }] },
+        toolUseResult: { isAsync: true, status: 'async_launched', agentId: 'ab25', resolvedModel: 'claude-haiku-4-5' },
+      },
+      index,
+    );
+  const notice =
+    '<task-notification>\n<task-id>ab25</task-id>\n<tool-use-id>tu1</tool-use-id>\n<status>completed</status>\n<summary>Agent "A" finished</summary>\n' +
+    '<usage><subagent_tokens>19906</subagent_tokens><tool_uses>2</tool_uses><duration_ms>1422</duration_ms></usage>\n</task-notification>';
+
+  it('transcriptToBlocks_asyncLaunchedSinNotificacion_sigueEnSegundoPlano', () => {
+    const blocks = transcriptToBlocks([assistantToolUse('tu1', 'Agent', { subagent_type: 'general-purpose', description: 'A' }, 0), launched(1)]);
+
+    expect(blocks[0]).toMatchObject({ kind: 'subagent', agentId: 'ab25', status: 'en segundo plano', model: 'claude-haiku-4-5' });
+  });
+
+  it('transcriptToBlocks_notificacionTarea_cierraSubagente', () => {
+    const blocks = transcriptToBlocks([
+      assistantToolUse('tu1', 'Agent', { subagent_type: 'general-purpose', description: 'A' }, 0),
+      launched(1),
+      userMsg(notice, 2),
+    ]);
+
+    expect(blocks[0]).toMatchObject({ status: 'completado', tokens: 19906, toolUses: 2, elapsedMs: 1422 });
+    expect(blocks[1]).toMatchObject({ kind: 'system', text: 'Tarea en segundo plano: Agent "A" finished' });
+  });
+
+  it('transcriptToBlocks_notificacionComoAdjuntoEnCola_cierraSubagenteSinLinea', () => {
+    // Con el turno principal en marcha, el CLI guarda el aviso como adjunto `queued_command`.
+    const queued = entry('attachment', { type: 'attachment', attachment: { type: 'queued_command', prompt: notice } }, 2);
+
+    const blocks = transcriptToBlocks([assistantToolUse('tu1', 'Agent', { description: 'A' }, 0), launched(1), queued]);
+
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0]).toMatchObject({ status: 'completado', tokens: 19906 });
+  });
+
   it('transcriptToBlocks_bloqueThinkingVacio_generaBloqueThinkingSinTexto', () => {
     // MEDIDO: el CLI persiste los bloques `thinking` con texto vacio (solo su firma).
     const raw = {
@@ -350,10 +407,21 @@ describe('transcriptToBlocks — envoltorios de sistema', () => {
     expect(blocks.map((b) => b.kind)).toEqual(['user']);
   });
 
-  it('transcriptToBlocks_salidaDeComando_esLineaDeSistema', () => {
+  it('transcriptToBlocks_salidaDeComandoSinComando_commandOutputSinNombre', () => {
     const blocks = transcriptToBlocks([userMsg('<local-command-stdout>Login successful</local-command-stdout>', 0)]);
 
-    expect(blocks).toEqual([{ kind: 'system', id: 'tb-0-0', text: 'Login successful' }]);
+    expect(blocks).toEqual([{ kind: 'command-output', id: 'tb-0-0', command: null, text: 'Login successful' }]);
+  });
+
+  // P-028: el mismo bloque que en directo, con el nombre del comando que la precede.
+  it('transcriptToBlocks_localCommandMultilinea_commandOutput', () => {
+    const table = '## Context Usage\n| Category | Tokens |\n|---|---|\n| Messages | 12 |';
+    const blocks = transcriptToBlocks([
+      localCommand('<command-name>/context</command-name>\n<command-message>context</command-message>\n<command-args></command-args>', 0),
+      localCommand(`<local-command-stdout>${table}</local-command-stdout>`, 1),
+    ]);
+
+    expect(blocks[1]).toEqual({ kind: 'command-output', id: 'tb-1-0', command: 'context', text: table });
   });
 
   it('transcriptToBlocks_salidaVacia_noPintaNada', () => {
@@ -366,8 +434,8 @@ describe('transcriptToBlocks — envoltorios de sistema', () => {
       localCommand('<local-command-stdout>Session renamed to: REVISION-MAGE</local-command-stdout>', 1),
     ]);
 
-    expect(blocks.map((b) => b.kind)).toEqual(['user', 'system']);
-    expect(blocks[1]).toMatchObject({ text: 'Session renamed to: REVISION-MAGE' });
+    expect(blocks.map((b) => b.kind)).toEqual(['user', 'command-output']);
+    expect(blocks[1]).toMatchObject({ command: 'rename', text: 'Session renamed to: REVISION-MAGE' });
   });
 
   it('transcriptToBlocks_notificacionDeTarea_esLineaConSuResumen', () => {

@@ -40,6 +40,7 @@ export function TabContextMenu({
   onPickColor,
   onSplit,
   windows,
+  moveBlockedReason,
   onMoveToNewWindow,
   onMoveToWindow,
 }: {
@@ -66,6 +67,8 @@ export function TabContextMenu({
   // MULTIVENTANA: sacar la pestaña a una ventana nueva, o mandarla a una ya abierta. `windows` son las
   // OTRAS ventanas (main ya excluye la actual); vacia = solo se ofrece "ventana nueva".
   readonly windows: readonly { readonly windowId: string }[];
+  // Con un turno en marcha no se mueve (P-028, 36): los items se desactivan con este motivo.
+  readonly moveBlockedReason: string | null;
   readonly onMoveToNewWindow: () => void;
   readonly onMoveToWindow: (windowId: string) => void;
 }): React.JSX.Element {
@@ -125,9 +128,16 @@ export function TabContextMenu({
         ))}
 
         <div className="my-[3px] h-px bg-mg-border-subtle" />
-        <MenuItem onClick={() => { onMoveToNewWindow(); onClose(); }}>Mover a una ventana nueva</MenuItem>
+        <MenuItem disabled={moveBlockedReason !== null} tip={moveBlockedReason} onClick={() => { onMoveToNewWindow(); onClose(); }}>
+          Mover a una ventana nueva
+        </MenuItem>
         {windows.map((w, index) => (
-          <MenuItem key={w.windowId} onClick={() => { onMoveToWindow(w.windowId); onClose(); }}>
+          <MenuItem
+            key={w.windowId}
+            disabled={moveBlockedReason !== null}
+            tip={moveBlockedReason}
+            onClick={() => { onMoveToWindow(w.windowId); onClose(); }}
+          >
             {`Mover a la ventana ${index + 2}`}
           </MenuItem>
         ))}
@@ -162,15 +172,20 @@ const MENU_MARGIN_PX = 10;
 
 // Fila de muestras de color: los MISMOS acentos del tema que usan las cuentas (no una paleta nueva) +
 // "sin color" para volver a heredar el de la cuenta.
-function ColorSwatches({
+// Exportada: el menu del avatar de una cuenta (PERS-3) la reutiliza con su propia etiqueta.
+export function ColorSwatches({
   selected,
   onPick,
+  label = 'Color de la pestaña',
+  autoTip = 'Usar el color de la cuenta',
 }: {
   readonly selected: number | undefined;
   readonly onPick: (colorIndex: number | undefined) => void;
+  readonly label?: string;
+  readonly autoTip?: string;
 }): React.JSX.Element {
   return (
-    <div role="group" aria-label="Color de la pestaña" className="flex flex-wrap items-center gap-[6px] px-[10px] py-[6px]">
+    <div role="group" aria-label={label} className="flex flex-wrap items-center gap-[6px] px-[10px] py-[6px]">
       {Array.from({ length: TAB_COLOR_COUNT }, (_, index) => (
         <motion.button
           key={index}
@@ -185,9 +200,9 @@ function ColorSwatches({
       ))}
       <button
         onClick={() => onPick(undefined)}
-        aria-label="Sin color propio, usar el de la cuenta"
+        aria-label={autoTip}
         aria-pressed={selected === undefined}
-        data-tip="Usar el color de la cuenta"
+        data-tip={autoTip}
         className={`h-[16px] rounded-[5px] border border-dashed px-[5px] text-[9px] leading-[14px] text-mg-muted ${
           selected === undefined ? 'border-mg-focus text-mg-body' : 'border-mg-border-ctrl'
         }`}
@@ -198,22 +213,26 @@ function ColorSwatches({
   );
 }
 
-function MenuItem({
+export function MenuItem({
   children,
   onClick,
   disabled = false,
   danger = false,
+  tip = null,
 }: {
   readonly children: React.ReactNode;
   readonly onClick: () => void;
   readonly disabled?: boolean;
   readonly danger?: boolean;
+  // Motivo en el tooltip de un item desactivado (P-028, 36: mover con un turno en marcha).
+  readonly tip?: string | null;
 }): React.JSX.Element {
   return (
     <button
       role="menuitem"
       disabled={disabled}
       onClick={onClick}
+      data-tip={tip ?? undefined}
       className={`block w-full px-[10px] py-[5px] text-left transition-colors duration-150 ease-out disabled:opacity-40 ${
         danger ? 'text-mg-danger hover:bg-mg-danger-bg' : 'hover:bg-mg-hover'
       }`}

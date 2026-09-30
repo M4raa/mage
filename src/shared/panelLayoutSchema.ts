@@ -28,4 +28,7 @@ export const STRIPE_STATE_SCHEMA = z.object({
 export const PANEL_LAYOUT_SCHEMA = z.object({
   version: z.number(),
   stripes: z.object({ left: STRIPE_STATE_SCHEMA, right: STRIPE_STATE_SCHEMA, bottom: STRIPE_STATE_SCHEMA }),
+  // Paneles que el usuario escondio a proposito: sin esta lista, la reconciliacion los tomaba por
+  // "panel nuevo" y los reponia en su zona por defecto. `.default([])` para leer ficheros anteriores.
+  hiddenPanelIds: z.array(z.string()).default([]),
 });

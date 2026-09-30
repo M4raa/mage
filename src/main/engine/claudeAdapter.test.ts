@@ -157,6 +157,20 @@ describe('ClaudeAdapter', () => {
     });
   });
 
+  describe('encodeStopTask', () => {
+    it('encodeStopTask_taskId_devuelveControlRequestStopTask', () => {
+      const result = adapter.encodeStopTask('a19e1df9495a401ae') as { type: string; request_id: string; request: unknown };
+
+      expect(result.type).toBe('control_request');
+      expect(result.request_id.length).toBeGreaterThan(0);
+      expect(result.request).toEqual({ subtype: 'stop_task', task_id: 'a19e1df9495a401ae' });
+    });
+
+    it('encodeStopTask_taskIdVacio_lanza', () => {
+      expect(() => adapter.encodeStopTask(' ')).toThrow(/vacio/i);
+    });
+  });
+
   describe('buildSpawnPlan', () => {
     const original = process.env.ANTHROPIC_API_KEY;
     beforeEach(() => {

@@ -4,6 +4,7 @@ import {
   formatSize,
   mergeConversationRows,
   planOpenConversation,
+  tabFromConversation,
   relativeTime,
   rowTitle,
   type ConversationRow,
@@ -266,5 +267,42 @@ describe('relativeTime', () => {
 
   it('relativeTime_instanteFuturo_ahora', () => {
     expect(relativeTime(NOW + 5_000, NOW)).toBe('ahora');
+  });
+});
+
+describe('tabFromConversation', () => {
+  const item: ConversationSummary = {
+    sessionId: 'sess-1',
+    configDir: 'C:/Users/u/.claude',
+    cwd: 'C:/src/mage',
+    title: 'Arreglar el cierre',
+    privacy: 'shared',
+    updatedAtMs: 5,
+    sizeBytes: 10,
+    isScheduled: false,
+  };
+
+  it('tabFromConversation_reanudaEsaSesionConLaCuentaDada', () => {
+    const tab = tabFromConversation({ id: 't1', item, accountId: 'acc', accountAlias: 'principal', prefs: { model: 'opus' } });
+
+    expect(tab).toEqual({
+      id: 't1',
+      accountId: 'acc',
+      accountAlias: 'principal',
+      cwd: 'C:/src/mage',
+      model: 'opus',
+      provider: 'claude',
+      title: 'Arreglar el cierre',
+      privacy: 'shared',
+      resolvedConfigDir: 'C:/Users/u/.claude',
+      resumeSessionId: 'sess-1',
+    });
+  });
+
+  it('tabFromConversation_conEsfuerzoYModo_losConserva', () => {
+    const tab = tabFromConversation({ id: 't1', item, accountId: 'acc', accountAlias: 'a', prefs: { model: 'opus', effort: 'high', permissionMode: 'plan' } });
+
+    expect(tab.effort).toBe('high');
+    expect(tab.permissionMode).toBe('plan');
   });
 });

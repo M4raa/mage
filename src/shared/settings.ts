@@ -17,6 +17,13 @@ export interface NotificationRule {
 
 export const APP_SETTINGS_VERSION = 1;
 
+// Modo de permiso con el que arrancan las conversaciones nuevas de Claude (P-028 6). '' = el de la cuenta
+// (Mage adopta el que reporta el CLI). «Omitir permisos» se ofrece desde la 0.1.1 R2 (punto 6): medido en el
+// CLI 2.1.285 que arranca en `bypassPermissions` con `--permission-mode` + el flag de `claudeAdapter`. Ajustes
+// lo avisa con una linea fija y cada conversacion nueva con el aviso temporal de PromptBar.
+export const DEFAULT_PERMISSION_MODES = ['', 'plan', 'default', 'acceptEdits', 'auto', 'bypassPermissions'] as const;
+export type DefaultPermissionMode = (typeof DEFAULT_PERMISSION_MODES)[number];
+
 // Preferencia de tema (M3): 'system' sigue al SO (prefers-color-scheme), 'light'/'dark' lo fuerzan.
 // El tema RESUELTO (siempre 'light'|'dark') se calcula en el renderer con resolveTheme(pref, prefersDark).
 export const THEME_PREFERENCES = ['system', 'light', 'dark'] as const;
@@ -47,6 +54,20 @@ export interface ImportedTheme {
 export const SCRATCH_RETENTIONS = ['never', 'session', '7d', '30d'] as const;
 export type ScratchRetention = (typeof SCRATCH_RETENTIONS)[number];
 
+// Que hace la X de la ventana principal cuando es la ultima a la vista (P-028, punto 17).
+//   'ask'        — pregunta con un dialogo nativo (DEFAULT) hasta que el usuario marque «Recordar».
+//   'background' — la oculta: Mage sigue en la bandeja con sus agentes trabajando.
+//   'quit'       — sale de Mage (para los agentes).
+export const CLOSE_BEHAVIORS = ['ask', 'background', 'quit'] as const;
+export type CloseBehavior = (typeof CLOSE_BEHAVIORS)[number];
+
+// Carpeta con la que nace «Nuevo chat» (P-028, punto 16).
+//   'scratch'     — una carpeta temporal propia (DEFAULT, lo de siempre).
+//   'lastProject' — la carpeta de la conversacion compartida mas reciente del historial; si no hay
+//                   ninguna (o ya no existe), la temporal.
+export const NEW_CONVERSATION_FOLDERS = ['scratch', 'lastProject'] as const;
+export type NewConversationFolder = (typeof NEW_CONVERSATION_FOLDERS)[number];
+
 export interface AppSettings {
   readonly version: number;
   readonly notificationRules: readonly NotificationRule[];
@@ -68,6 +89,8 @@ export interface AppSettings {
   // ese proveedor arranca con ese modelo. Un proveedor ausente del mapa = sin preferencia (se resuelve
   // por el ultimo usado o el fallback del proveedor; ver modelDefaults.ts). Default {}.
   readonly defaultModelByProvider: Readonly<Record<string, string>>;
+  // Modo de permiso por defecto de las conversaciones nuevas de Claude (P-028 6). Default ''.
+  readonly defaultPermissionMode: DefaultPermissionMode;
   // Overrides de atajos de teclado (D5): solo lo que el usuario CAMBIO respecto al catalogo por
   // defecto (actionCatalog.ts) — nunca una copia completa, asi los defaults nuevos de futuras versiones
   // llegan solos. Una entrada con actionId que ya no existe en el catalogo se conserva en el fichero
@@ -91,6 +114,11 @@ export interface AppSettings {
   // Retencion de los scratchpads (auditoria B.4.2). Default 'never': borrar ficheros del disco es una
   // decision del usuario, no un defecto.
   readonly scratchRetention: ScratchRetention;
+  // Cerrar la ventana principal (P-028, 17). Lo escribe tambien MAIN (el «Recordar mi decisión» del
+  // dialogo nativo) y lo difunde a todas las ventanas. Default 'ask'.
+  readonly closeBehavior: CloseBehavior;
+  // Carpeta de «Nuevo chat» (P-028, 16). Default 'scratch'.
+  readonly newConversationFolder: NewConversationFolder;
   // Asistente de primer arranque: version del asistente que el usuario ya COMPLETO. 0 = nunca lo vio,
   // que es el default y lo que hace que salga en la primera apertura. Es un NUMERO y no un booleano a
   // proposito: el dia que el asistente gane un paso que haya que enseñar a quien ya lo hizo, basta
@@ -104,7 +132,13 @@ export interface AppSettings {
   // Proveedor con el que se abre "Nueva conversacion" (lo elige el asistente, y se puede cambiar en
   // Configuracion). Default 'claude', que es lo que estaba escrito a mano en el dialogo.
   readonly defaultProvider: string;
+  // Color de cada cuenta elegido por el usuario (PERS-3, P-028 punto 2): config dir -> indice de acento
+  // (0..ACCOUNT_ACCENT_COUNT-1). Una cuenta ausente usa el de su posicion, como siempre. Default {}.
+  readonly accentByAccount: Readonly<Record<string, number>>;
 }
+
+// Nº de acentos del tema (--mg-accent-<i>-* en index.css); lo comparten cuentas y pestañas.
+export const ACCOUNT_ACCENT_COUNT = 6;
 
 // Version del asistente de primer arranque. Subirla hace que vuelva a salir UNA vez a quien ya lo
 // completo con una version anterior.
@@ -141,11 +175,15 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   importedThemes: [],
   activeThemeId: null,
   defaultModelByProvider: {},
+  defaultPermissionMode: '',
   keybindingOverrides: [],
   customProviders: [],
   trustedFolders: [],
   scratchRetention: 'never',
+  closeBehavior: 'ask',
+  newConversationFolder: 'scratch',
   onboardingCompletedVersion: 0,
   uiScale: 100,
   defaultProvider: 'claude',
+  accentByAccount: {},
 };

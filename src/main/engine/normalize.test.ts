@@ -238,3 +238,111 @@ describe('normalizeRawEvent: el turno', () => {
     expect(normalizeRawEvent(raw)[0]).toEqual({ kind: 'tool_use', tool: { toolUseId: 't3', toolName: 'Read', input: {} } });
   });
 });
+
+// P-028 37a/37d: formas MEDIDAS contra el CLI 2.1.284 (`spike/engine-spike.mjs --subagent-bg`).
+describe('normalizeRawEvent: subagentes en segundo plano', () => {
+  it('normalizeRawEvent_toolResultAsyncLaunched_adjuntaElSubagente', () => {
+    const raw = {
+      type: 'user',
+      message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_A', content: [{ type: 'text', text: 'Async agent launched successfully.' }] }] },
+      tool_use_result: { isAsync: true, status: 'async_launched', agentId: 'ab25', description: 'spike A', resolvedModel: 'claude-haiku-4-5-20251001', prompt: 'x', outputFile: 'f', canReadOutputFile: true },
+    };
+
+    const [event] = normalizeRawEvent(raw);
+
+    expect(event).toMatchObject({ kind: 'tool_result', result: { toolUseId: 'toolu_A', subagent: { status: 'async_launched', agentId: 'ab25', model: 'claude-haiku-4-5-20251001', totalTokens: null } } });
+  });
+
+  it('normalizeRawEvent_taskProgress_emiteSubagentUpdateEnMarcha', () => {
+    const raw = { type: 'system', subtype: 'task_progress', task_id: 'aaf2', tool_use_id: 'toolu_B', description: 'Running Sleep', usage: { total_tokens: 19954, tool_uses: 1, duration_ms: 5228 }, last_tool_name: 'Bash' };
+
+    expect(normalizeRawEvent(raw)).toEqual([{ kind: 'subagent_update', toolUseId: 'toolu_B', status: 'running', tokens: 19954, toolUses: 1, durationMs: 5228 }]);
+  });
+
+  it('normalizeRawEvent_taskNotificationCompletada_emiteSuEstadoYUso', () => {
+    const raw = { type: 'system', subtype: 'task_notification', task_id: 'ab25', tool_use_id: 'toolu_A', status: 'completed', output_file: 'f', summary: 'A', usage: { total_tokens: 19906, tool_uses: 0, duration_ms: 1422 } };
+
+    expect(normalizeRawEvent(raw)).toEqual([{ kind: 'subagent_update', toolUseId: 'toolu_A', status: 'completed', tokens: 19906, toolUses: 0, durationMs: 1422 }]);
+  });
+
+  it('normalizeRawEvent_taskNotificationDetenidaSinUso_contadoresNull', () => {
+    // El interrupt mata a los de segundo plano: llega `stopped` y sin `usage`.
+    const raw = { type: 'system', subtype: 'task_notification', task_id: 'aaf2', tool_use_id: 'toolu_B', status: 'stopped', summary: 'spike B' };
+
+    expect(normalizeRawEvent(raw)).toEqual([{ kind: 'subagent_update', toolUseId: 'toolu_B', status: 'stopped', tokens: null, toolUses: null, durationMs: null }]);
+  });
+
+  it('normalizeRawEvent_taskSinToolUseId_seIgnora', () => {
+    expect(normalizeRawEvent({ type: 'system', subtype: 'task_notification', task_id: 'k1', status: 'failed' })).toEqual([]);
+  });
+
+  it('normalizeRawEvent_statusRequesting_emiteRequestStarted', () => {
+    expect(normalizeRawEvent({ type: 'system', subtype: 'status', status: 'requesting', session_id: 's' })).toEqual([{ kind: 'request_started' }]);
+  });
+
+  it('normalizeRawEvent_resultConOrigenDeTarea_loPropaga', () => {
+    const raw = { type: 'result', subtype: 'error_during_execution', is_error: true, num_turns: 1, origin: { kind: 'task-notification', producer: 'session-task' } };
+
+    expect(normalizeRawEvent(raw)).toEqual([{ kind: 'result', result: { isError: true, subtype: 'error_during_execution', numTurns: 1, origin: 'task-notification' } }]);
+  });
+});
+
+// P-028 (grupo C): comandos locales y `/clear`. Payloads MEDIDOS contra el CLI 2.1.284
+// (`spike/engine-spike.mjs --clear`), recortados a los campos que se leen.
+describe('normalizeRawEvent: comandos locales', () => {
+  const synthetic = (text: string, extra: Record<string, unknown> = {}) => ({
+    type: 'assistant',
+    parent_tool_use_id: null,
+    message: { model: '<synthetic>', role: 'assistant', content: [{ type: 'text', text }] },
+    ...extra,
+  });
+
+  it('normalizeRawEvent_assistantSintetico_emiteLocalCommandOutput', () => {
+    const raw = synthetic('Session renamed to: probe-2', {
+      local_command_run: { command: 'rename', args: 'probe-2' },
+      local_command_source: '<local-command-stdout>Session renamed to: probe-2</local-command-stdout>',
+    });
+
+    expect(normalizeRawEvent(raw)).toEqual([
+      { kind: 'assistant_text', text: 'Session renamed to: probe-2' },
+      { kind: 'local_command_output', command: 'rename', args: 'probe-2', text: 'Session renamed to: probe-2' },
+    ]);
+  });
+
+  it('normalizeRawEvent_sinLocalCommandRun_modelSynthetic_commandNull', () => {
+    expect(normalizeRawEvent(synthetic('API Error: 500'))).toContainEqual({ kind: 'local_command_output', command: null, args: '', text: 'API Error: 500' });
+  });
+
+  it('normalizeRawEvent_localCommandRunConFormaRara_noLanza', () => {
+    const raw = synthetic('ok', { local_command_run: { command: 7 } });
+
+    expect(normalizeRawEvent(raw)).toContainEqual({ kind: 'local_command_output', command: null, args: '', text: 'ok' });
+  });
+
+  it('normalizeRawEvent_assistantNormal_sinLocalCommandOutput', () => {
+    const raw = { type: 'assistant', message: { model: 'claude-haiku-4-5', content: [{ type: 'text', text: 'hola' }] } };
+
+    expect(normalizeRawEvent(raw).map((e) => e.kind)).toEqual(['assistant_text']);
+  });
+
+  it('normalizeRawEvent_rateLimitSintetico_sigueSiendoRateLimit', () => {
+    const raw = synthetic('You have hit your limit', { error: 'rate_limit' });
+
+    expect(normalizeRawEvent(raw).map((e) => e.kind)).toEqual(['rate_limit']);
+  });
+
+  it('normalizeRawEvent_conversationReset_emiteElIdNuevo', () => {
+    const raw = {
+      type: 'conversation_reset',
+      new_conversation_id: '831b74b4-8ca9-416f-aefe-1f5f1b6842a3',
+      trigger: 'clear',
+      session_id: 'ca1e0e40-8494-4e45-9b3a-e828c733a87c',
+    };
+
+    expect(normalizeRawEvent(raw)).toEqual([{ kind: 'conversation_reset', newSessionId: '831b74b4-8ca9-416f-aefe-1f5f1b6842a3' }]);
+  });
+
+  it('normalizeRawEvent_conversationResetSinId_lanza', () => {
+    expect(() => normalizeRawEvent({ type: 'conversation_reset', trigger: 'clear' })).toThrow();
+  });
+});

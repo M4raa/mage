@@ -141,6 +141,30 @@ export function formatResetTime(resetsAt: number): string {
   return new Date(resetsAt).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
 }
 
+// Hora ABSOLUTA del reset para el popover «Uso general» (P-028, punto 22), que esta siempre montado:
+// una cuenta atras se quedaba congelada. Hoy -> «15:00»; en los proximos 6 dias (o siempre que se
+// pida el dia, como en la ventana de 7 d) -> «lun 09:00»; mas lejos, la fecha «12/10 09:00» (un dia
+// de la semana seria ambiguo). Sin dato -> «—»; ya pasado -> «ya». Hora local; `now` inyectado.
+const WEEKDAYS_ES = ['dom', 'lun', 'mar', 'mié', 'jue', 'vie', 'sáb'] as const;
+const WEEKDAY_HORIZON_DAYS = 6;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+export function formatResetAbsolute(resetsAt: number | null, now: number, withWeekday: boolean): string {
+  if (resetsAt === null) return '—';
+  if (!Number.isFinite(resetsAt)) throw new Error(`resetsAt invalido al formatear el reset: ${resetsAt}`);
+  if (resetsAt <= now) return 'ya';
+  const date = new Date(resetsAt);
+  const time = `${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
+  const sameDay = new Date(now).toDateString() === date.toDateString();
+  if (sameDay && !withWeekday) return time;
+  if (resetsAt - now <= WEEKDAY_HORIZON_DAYS * DAY_MS) return `${WEEKDAYS_ES[date.getDay()]} ${time}`;
+  return `${pad2(date.getDate())}/${pad2(date.getMonth() + 1)} ${time}`;
+}
+
+function pad2(value: number): string {
+  return String(value).padStart(2, '0');
+}
+
 // Cuenta atras legible desde un epoch ms de reset. null => "—"; <=0 => "ahora"; si no, la unidad
 // mas gruesa relevante ("2 d 3 h", "1 h 24 m", "24 m").
 export function formatCountdown(resetsAt: number | null, now: number): string {

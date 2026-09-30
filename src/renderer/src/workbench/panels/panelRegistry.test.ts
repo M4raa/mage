@@ -1,3 +1,4 @@
+import { ICON_PATHS } from '../components/Icon';
 import { describe, expect, it } from 'vitest';
 import { findPanelDefinition, PANEL_REGISTRY } from './panelRegistry';
 
@@ -35,9 +36,10 @@ describe('PANEL_REGISTRY', () => {
     }
   });
 
-  it('panelRegistry_cadaPanel_tieneIconoNoVacioYRenderFuncion', () => {
+  it('panelRegistry_cadaPanel_tieneIconoDeLaSuiteYRenderFuncion', () => {
     for (const p of PANEL_REGISTRY) {
-      expect(p.icon.length).toBeGreaterThan(0);
+      expect(Object.keys(ICON_PATHS)).toContain(p.icon);
+      expect(p.icon.startsWith('panel')).toBe(true);
       expect(typeof p.render).toBe('function');
     }
   });

@@ -15,6 +15,7 @@ function deps(overrides: Partial<AccountDeps>): AccountDeps {
     layout: LAYOUT,
     homedir: HOME,
     listHome: () => [],
+    listDir: () => [],
     isDirectory: () => true,
     exists: () => false,
     readJson: () => null,
@@ -603,6 +604,58 @@ describe('AccountService.deleteAccount', () => {
 
     expect(() => service.deleteAccount(dir)).toThrow(/desenlazar/i);
     expect(rmrf).not.toHaveBeenCalled();
+  });
+
+  it('deleteAccount_carpetaCompartidaRealNoVacia_abortaConLaRutaSinTocarNada', () => {
+    // Arrange: `projects` dejo de ser enlace (el CLI lo recreo como dir real) y tiene datos.
+    const dir = join(HOME, '.claude-p');
+    const projects = join(dir, 'projects');
+    const rmrf = vi.fn();
+    const removeDirLink = vi.fn();
+    const service = new AccountService(
+      deps({
+        exists: () => true,
+        rmrf,
+        listDir: (p) => (p === projects ? ['conv.jsonl'] : []),
+        linkService: {
+          removeDirLink,
+          classifyLink: (p: string) => (p === projects ? 'private' : 'link'),
+        } as unknown as LinkService,
+      }),
+    );
+
+    // Act + Assert: aborta ANTES de desenlazar nada, con la ruta en el mensaje.
+    expect(() => service.deleteAccount(dir)).toThrow(projects);
+    expect(removeDirLink).not.toHaveBeenCalled();
+    expect(rmrf).not.toHaveBeenCalled();
+  });
+
+  it('deleteAccount_carpetaCompartidaRealVacia_borra', () => {
+    const dir = join(HOME, '.claude-p');
+    const rmrf = vi.fn();
+    const service = new AccountService(
+      deps({
+        exists: () => true,
+        rmrf,
+        listDir: () => [],
+        linkService: { removeDirLink: vi.fn(), classifyLink: () => 'private' } as unknown as LinkService,
+      }),
+    );
+
+    service.deleteAccount(dir);
+
+    expect(rmrf).toHaveBeenCalledWith(dir);
+  });
+
+  it('deleteAccount_cuentaNoCreadaPorMage_seBorraIgual', () => {
+    // Cualquier dir `.claude<N>` / `.claude-*` que Mage descubre se puede borrar (rectificacion del 30).
+    const dir = join(HOME, '.claude2');
+    const rmrf = vi.fn();
+    const service = new AccountService(deps({ exists: () => true, rmrf }));
+
+    service.deleteAccount(dir);
+
+    expect(rmrf).toHaveBeenCalledWith(dir);
   });
 });
 

@@ -20,6 +20,7 @@ function service(files: Record<string, { readonly content: string; readonly mtim
     byteLength: (path) => Buffer.byteLength(files[path]?.content ?? '', 'utf8'),
     // Por defecto NADA de fuera del cwd: cada test que quiera la segunda raiz la declara.
     isAllowedOutsideCwd: () => false,
+    isApprovedOutside: () => false,
     ...overrides,
   });
   return { svc, writeFile, files };
@@ -52,31 +53,31 @@ describe('ProjectFileService.read', () => {
     expect(svc.read({ cwd: CWD, path: FILE })).toMatchObject({ content: null, tooLarge: true });
   });
 
-  it('read_ficheroFueraDelCwd_lanza', () => {
+  it('read_fueraDelCwdSinAprobar_devuelveOutsideCwd', () => {
     const { svc } = service({ [OUTSIDE]: { content: 'secreto', mtimeMs: 1 } });
 
-    expect(() => svc.read({ cwd: CWD, path: OUTSIDE })).toThrow(/no está en la carpeta de la conversación/);
+    expect(svc.read({ cwd: CWD, path: OUTSIDE })).toMatchObject({ content: null, outsideCwd: true });
   });
 
-  it('read_rutaConSaltoHaciaArriba_lanza', () => {
+  it('read_rutaConSaltoHaciaArriba_quedaFueraSinContenido', () => {
     // El caso que un `startsWith` de cadenas no detecta.
     const { svc } = service({});
 
-    expect(() => svc.read({ cwd: CWD, path: '../otro/secreto.md' })).toThrow(/no está en la carpeta de la conversación/);
+    expect(svc.read({ cwd: CWD, path: '../otro/secreto.md' })).toMatchObject({ content: null, outsideCwd: true });
   });
 
-  it('read_rutaHermanaConElMismoPrefijo_lanza', () => {
+  it('read_rutaHermanaConElMismoPrefijo_quedaFueraSinContenido', () => {
     // "C:\proj-otro" empieza por "C:\proj" y NO esta dentro: es el otro caso que mata al `startsWith`.
     const { svc } = service({});
     const hermana = process.platform === 'win32' ? 'C:\\proj-otro\\x.md' : '/proj-otro/x.md';
 
-    expect(() => svc.read({ cwd: CWD, path: hermana })).toThrow(/no está en la carpeta de la conversación/);
+    expect(svc.read({ cwd: CWD, path: hermana })).toMatchObject({ content: null, outsideCwd: true });
   });
 
-  it('read_elPropioCwd_lanza', () => {
+  it('read_elPropioCwd_quedaFueraSinContenido', () => {
     const { svc } = service({});
 
-    expect(() => svc.read({ cwd: CWD, path: CWD })).toThrow(/no está en la carpeta de la conversación/);
+    expect(svc.read({ cwd: CWD, path: CWD })).toMatchObject({ content: null, outsideCwd: true });
   });
 
   it('read_cwdVacio_lanzaConElValorRecibido', () => {
@@ -132,7 +133,7 @@ describe('ProjectFileService.write', () => {
     expect(writeFile).not.toHaveBeenCalled();
   });
 
-  it('write_ficheroFueraDelCwd_lanzaAntesDeTocarNada', () => {
+  it('write_fueraDelCwdSinAprobar_lanza', () => {
     const { svc, writeFile } = service({});
 
     expect(() => svc.write({ cwd: CWD, path: OUTSIDE, content: 'x', expectedMtimeMs: null })).toThrow(/no está en la carpeta de la conversación/);
@@ -166,10 +167,42 @@ describe('ProjectFileService — planes del CLI (fuera del cwd)', () => {
     expect(writeFile).not.toHaveBeenCalled();
   });
 
-  it('read_rutaDeFueraQueElWhitelistNoReconoce_sigueLanzando', () => {
+  it('read_rutaDeFueraQueElWhitelistNoReconoce_sigueSinAbrirse', () => {
     // La segunda raiz no abre la mano a cualquier ruta de fuera: solo a la que main reconoce.
     const { svc } = service({ [OUTSIDE]: { content: 'secreto', mtimeMs: 1 } }, permitirPlanes);
 
-    expect(() => svc.read({ cwd: CWD, path: OUTSIDE })).toThrow(/no está en la carpeta de la conversación/);
+    expect(svc.read({ cwd: CWD, path: OUTSIDE })).toMatchObject({ content: null, outsideCwd: true });
+  });
+});
+
+describe('ProjectFileService — fuera del cwd aprobado por el usuario (P-028, 15)', () => {
+  const aprobado = { isApprovedOutside: (p: string) => p === OUTSIDE };
+
+  it('read_fueraAprobado_devuelveElContenido', () => {
+    const { svc } = service({ [OUTSIDE]: { content: 'nota', mtimeMs: 5 } }, aprobado);
+
+    expect(svc.read({ cwd: CWD, path: OUTSIDE })).toEqual({ path: OUTSIDE, content: 'nota', mtimeMs: 5, tooLarge: false });
+  });
+
+  it('write_fueraAprobado_escribe', () => {
+    const { svc, writeFile } = service({ [OUTSIDE]: { content: 'viejo', mtimeMs: 5 } }, aprobado);
+
+    svc.write({ cwd: CWD, path: OUTSIDE, content: 'nuevo', expectedMtimeMs: 5 });
+
+    expect(writeFile).toHaveBeenCalledWith(OUTSIDE, 'nuevo');
+  });
+
+  it('write_fueraAprobadoCambiadoEnDisco_lanzaIgual', () => {
+    const { svc, writeFile } = service({ [OUTSIDE]: { content: 'otro', mtimeMs: 9 } }, aprobado);
+
+    expect(() => svc.write({ cwd: CWD, path: OUTSIDE, content: 'x', expectedMtimeMs: 5 })).toThrow(/cambió en disco/);
+    expect(writeFile).not.toHaveBeenCalled();
+  });
+
+  it('read_aprobarUnFichero_noApruebaSusVecinos', () => {
+    const vecino = process.platform === 'win32' ? 'C:\\otro\\vecino.md' : '/otro/vecino.md';
+    const { svc } = service({ [vecino]: { content: 'x', mtimeMs: 1 } }, aprobado);
+
+    expect(svc.read({ cwd: CWD, path: vecino })).toMatchObject({ content: null, outsideCwd: true });
   });
 });

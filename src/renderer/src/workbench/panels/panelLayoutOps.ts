@@ -80,7 +80,13 @@ export function didZoneJustOpen(before: ZoneState, after: ZoneState): boolean {
 // ninguno) y entra al FINAL de `panelIds` del destino, activo alli (mover implica ver el panel en su
 // nuevo sitio). Si el destino estaba vacio, hereda el tamaño por defecto de su borde; si ya tenia
 // contenido, conserva el sizePx existente de esa zona (no saltar de tamaño por la llegada de un panel).
-export function movePanelToZone(layout: PanelLayoutState, panelId: PanelId, toAnchor: Anchor, toZone: ZoneKey): PanelLayoutState {
+export function movePanelToZone(
+  layout: PanelLayoutState,
+  panelId: PanelId,
+  toAnchor: Anchor,
+  toZone: ZoneKey,
+  beforeId: PanelId | null = null,
+): PanelLayoutState {
   const from = locatePanel(layout, panelId);
   if (from === undefined) {
     throw new Error(`movePanelToZone: el panel "${panelId}" no esta en ninguna zona del layout actual`);
@@ -96,7 +102,58 @@ export function movePanelToZone(layout: PanelLayoutState, panelId: PanelId, toAn
 
   const toZoneState = afterLeaving.stripes[toAnchor][toZone];
   const toSizePx = toZoneState.panelIds.length === 0 ? DEFAULT_ZONE_SIZE_PX[toAnchor] : toZoneState.sizePx;
-  return withZone(afterLeaving, toAnchor, toZone, { panelIds: [...toZoneState.panelIds, panelId], activePanelId: panelId, sizePx: toSizePx });
+  const panelIds = insertBefore(toZoneState.panelIds, panelId, beforeId);
+  return withZone(afterLeaving, toAnchor, toZone, { panelIds, activePanelId: panelId, sizePx: toSizePx });
+}
+
+// Inserta `panelId` justo antes de `beforeId`; al final si `beforeId` es null o no esta en la lista.
+function insertBefore(ids: readonly PanelId[], panelId: PanelId, beforeId: PanelId | null): readonly PanelId[] {
+  const at = beforeId === null ? -1 : ids.indexOf(beforeId);
+  if (at === -1) return [...ids, panelId];
+  return [...ids.slice(0, at), panelId, ...ids.slice(at)];
+}
+
+// A que icono se suelta: `beforeId` para `movePanelToZone`/`reorderPanelInZone` dado el icono sobre el que
+// esta el puntero (`targetId`) y si cae en su mitad de arriba (`placeBefore`). null = al final (mitad de
+// abajo del ultimo, o `targetId` que no esta en la lista).
+export function resolveDropBeforeId(ids: readonly PanelId[], targetId: PanelId, placeBefore: boolean): PanelId | null {
+  const at = ids.indexOf(targetId);
+  if (at === -1) return null;
+  return placeBefore ? targetId : (ids[at + 1] ?? null);
+}
+
+// Cambia el ORDEN de `panelId` dentro de su misma zona, justo antes de `beforeId` (al final si es null).
+// No abre nada ni cambia el panel activo ni los tamaños: es solo reordenar iconos (punto 21). Si el panel
+// no esta en {anchor, zone} lanza con los valores recibidos; soltarlo donde ya esta es un no-op.
+export function reorderPanelInZone(
+  layout: PanelLayoutState,
+  panelId: PanelId,
+  target: ZoneLocation,
+  beforeId: PanelId | null,
+): PanelLayoutState {
+  const zone = layout.stripes[target.anchor][target.zone];
+  if (!zone.panelIds.includes(panelId)) {
+    throw new Error(`reorderPanelInZone: el panel "${panelId}" no esta en la zona ${target.anchor}/${target.zone}`);
+  }
+  if (beforeId === panelId) return layout;
+  const without = zone.panelIds.filter((id) => id !== panelId);
+  const panelIds = insertBefore(without, panelId, beforeId);
+  const unchanged = panelIds.every((id, i) => id === zone.panelIds[i]);
+  return unchanged ? layout : withZone(layout, target.anchor, target.zone, { ...zone, panelIds });
+}
+
+// Sube (-1) o baja (+1) un panel una posicion dentro de su zona (teclado: «Subir/Bajar» del menu de mover).
+// En el borde de la lista es un no-op.
+export function stepPanelInZone(layout: PanelLayoutState, panelId: PanelId, direction: -1 | 1): PanelLayoutState {
+  const at = locatePanel(layout, panelId);
+  if (at === undefined) throw new Error(`stepPanelInZone: el panel "${panelId}" no esta en ninguna zona del layout actual`);
+  const ids = layout.stripes[at.anchor][at.zone].panelIds;
+  const from = ids.indexOf(panelId);
+  const to = from + direction;
+  if (to < 0 || to >= ids.length) return layout;
+  // Subir = colocarse antes del vecino anterior; bajar = antes del que esta dos puestos mas alla.
+  const beforeId = direction === -1 ? (ids[to] ?? null) : (ids[to + 1] ?? null);
+  return reorderPanelInZone(layout, panelId, at, beforeId);
 }
 
 // Coloca en {toAnchor, toZone} un panel que HOY no esta en ninguna zona: es la mitad "entrar" de
@@ -112,7 +169,8 @@ export function placePanelInZone(layout: PanelLayoutState, panelId: PanelId, toA
   }
   const zone = layout.stripes[toAnchor][toZone];
   const sizePx = zone.panelIds.length === 0 ? DEFAULT_ZONE_SIZE_PX[toAnchor] : zone.sizePx;
-  return withZone(layout, toAnchor, toZone, { panelIds: [...zone.panelIds, panelId], activePanelId: panelId, sizePx });
+  const shown = withZone(layout, toAnchor, toZone, { panelIds: [...zone.panelIds, panelId], activePanelId: panelId, sizePx });
+  return { ...shown, hiddenPanelIds: shown.hiddenPanelIds.filter((id) => id !== panelId) };
 }
 
 // Quita `panelId` de su zona SIN ponerlo en ninguna otra (Ronda 3, item 11, "Esconder icono"): hasta
@@ -127,7 +185,8 @@ export function removePanelFromLayout(layout: PanelLayoutState, panelId: PanelId
   const fromZone = layout.stripes[from.anchor][from.zone];
   const remainingIds = fromZone.panelIds.filter((id) => id !== panelId);
   const activePanelId = fromZone.activePanelId === panelId ? (remainingIds[0] ?? null) : fromZone.activePanelId;
-  return withZone(layout, from.anchor, from.zone, { ...fromZone, panelIds: remainingIds, activePanelId });
+  const removed = withZone(layout, from.anchor, from.zone, { ...fromZone, panelIds: remainingIds, activePanelId });
+  return { ...removed, hiddenPanelIds: [...removed.hiddenPanelIds, panelId] };
 }
 
 // Fija el tamaño de una zona (confirmado por el caller: al soltar el raton, o al momento en teclado —

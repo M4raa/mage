@@ -16,6 +16,7 @@ function AccountSwitchBody({ prompt }: { readonly prompt: AccountSwitchPrompt })
   const close = useWorkbenchStore((s) => s.closeAccountSwitchPrompt);
   const setActiveAccount = useWorkbenchStore((s) => s.setActiveAccount);
   const continueInAccount = useWorkbenchStore((s) => s.continueInAccount);
+  const createConversation = useWorkbenchStore((s) => s.createConversation);
   const dest = useWorkbenchStore((s) => s.accounts.find((a) => a.id === prompt.destAccountId));
   const title = useWorkbenchStore((s) => s.tabs.find((t) => t.id === prompt.tabId)?.title ?? 'esta conversación');
   const [busy, setBusy] = useState(false);
@@ -23,9 +24,12 @@ function AccountSwitchBody({ prompt }: { readonly prompt: AccountSwitchPrompt })
   const dialogRef = useDialogA11y({ onClose: close });
   const alias = dest?.alias ?? prompt.destAccountId;
 
-  const onlySwitch = (): void => {
+  // Antes era «Solo cambiar de cuenta», pero desde que la cuenta activa sigue a la pestaña enfocada
+  // (P-028, 26) ese cambio se deshacia al siguiente clic. Lo coherente es un chat nuevo en la destino.
+  const newChatInDest = (): void => {
     close();
     setActiveAccount(prompt.destAccountId);
+    void createConversation('shared');
   };
   const migrate = (): void => {
     setBusy(true);
@@ -62,6 +66,10 @@ function AccountSwitchBody({ prompt }: { readonly prompt: AccountSwitchPrompt })
           «{title}» es de otra cuenta. ¿Te la llevas a <strong>{alias}</strong> para seguirla allí, o solo cambias de cuenta y
           la dejas donde está?
         </p>
+        {/* P-028, 27: migrar no es lo mismo segun donde viva la conversacion. */}
+        <p className="text-[11px] leading-[1.5] text-mg-muted">
+          Compartida: se reanuda con {alias}. Privada: se mueve a {alias}.
+        </p>
         {error !== null && (
           <div role="alert" className="text-[11px] text-mg-danger">
             No se pudo migrar: {error}
@@ -69,11 +77,11 @@ function AccountSwitchBody({ prompt }: { readonly prompt: AccountSwitchPrompt })
         )}
         <div className="mt-[2px] flex justify-end gap-[8px]">
           <button
-            onClick={onlySwitch}
+            onClick={newChatInDest}
             disabled={busy}
             className="rounded-[7px] border border-mg-border-emph px-[12px] py-[6px] text-mg-body2 hover:bg-mg-hover disabled:opacity-50"
           >
-            Solo cambiar de cuenta
+            Abrir un chat nuevo en {alias}
           </button>
           <button
             onClick={migrate}

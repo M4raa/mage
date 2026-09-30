@@ -1,3 +1,4 @@
+import { formatBytes } from './attachments';
 import type { ImageAttachment } from './ipc';
 
 // Referencias a las imagenes pegadas en el prompt (P-026 3.2, D13). Con cinco imagenes y «fijate en
@@ -51,6 +52,14 @@ export function removeImageToken(text: string, n: number): string {
   });
 }
 
+// Suma `offset` a cada token (la imagen n pasa a ser la n+offset): al juntar mensajes en un solo borrador,
+// las imagenes del segundo van detras de las del primero (0.1.1 R2, punto 30).
+export function shiftImageTokens(text: string, offset: number): string {
+  if (!Number.isInteger(offset) || offset < 0) throw new Error(`Desplazamiento de imagen invalido: ${JSON.stringify(offset)}`);
+  if (offset === 0) return text;
+  return text.replace(TOKEN_PATTERN, (_token, digits: string) => imageToken(Number(digits) + offset));
+}
+
 export type UserContentBlock =
   | { readonly type: 'text'; readonly text: string }
   | { readonly type: 'image'; readonly source: { readonly type: 'base64'; readonly media_type: string; readonly data: string } };
@@ -89,4 +98,42 @@ function pushText(blocks: UserContentBlock[], text: string): void {
 
 function imageBlock(attachment: ImageAttachment): UserContentBlock {
   return { type: 'image', source: { type: 'base64', media_type: attachment.mediaType, data: attachment.data } };
+}
+
+export interface ImageTokenSpan {
+  readonly from: number;
+  readonly to: number;
+  readonly n: number;
+}
+
+// Todos los tokens `[Imagen N]` del texto con su posicion (para que el editor los trate como un bloque).
+export function findImageTokens(text: string): readonly ImageTokenSpan[] {
+  return [...text.matchAll(TOKEN_PATTERN)].map((match) => {
+    const from = match.index ?? 0;
+    return { from, to: from + match[0].length, n: Number(match[1]) };
+  });
+}
+
+// Tras BORRAR texto a mano (Backspace/Supr sobre un token): quita los adjuntos cuyo token ha desaparecido
+// del texto y renumera los de detras, igual que quitar su miniatura. Solo cuenta lo que desaparece ahora
+// (estaba en `prevText` y ya no esta en `nextText`) y solo los numeros que tienen adjunto: un token cuyo
+// base64 aun se esta leyendo no se toca. Con el token duplicado, borrar una copia no quita el adjunto.
+export function reconcileImageTokens<T>(
+  prevText: string,
+  nextText: string,
+  attachments: readonly T[],
+): { readonly text: string; readonly attachments: readonly T[] } {
+  const present = new Set(findImageTokens(nextText).map((token) => token.n));
+  const gone = new Set(findImageTokens(prevText).map((token) => token.n).filter((n) => !present.has(n) && n <= attachments.length));
+  // De mayor a menor: quitar la n no cambia el numero de las anteriores.
+  const descending = [...gone].sort((a, b) => b - a);
+  const text = descending.reduce((current, n) => removeImageToken(current, n), nextText);
+  return { text, attachments: attachments.filter((_, index) => !gone.has(index + 1)) };
+}
+
+// «Imagen 2 · png · 245 KiB»: lo que dice el tooltip de una miniatura (sin nombre de fichero ni dimensiones).
+export function describeAttachment(n: number, mediaType: string, byteLength: number): string {
+  const subtype = mediaType.split('/')[1];
+  if (subtype === undefined || subtype.length === 0) throw new Error(`Tipo de imagen invalido: ${JSON.stringify(mediaType)}`);
+  return `${imageToken(n).slice(1, -1)} · ${subtype} · ${formatBytes(byteLength)}`;
 }

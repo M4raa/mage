@@ -84,6 +84,18 @@ export class CommandCatalogStore {
     this.writeEntry(accountDir, measuredAtMs, (entry) => ({ ...entry, models }));
   }
 
+  // Olvida las entradas de una cuenta borrada: la suya y la de su perfil privado (P-028, punto 30).
+  // Sin fichero o sin entradas de esa cuenta, no escribe nada.
+  forgetAccount(configDir: string, isOwnedBy: (key: string) => boolean): void {
+    if (configDir.length === 0) throw new Error(`Config dir vacio al olvidar el catalogo: ${JSON.stringify(configDir)}`);
+    const current = this.readFileOrNull();
+    if (current === null) return;
+    const kept = Object.entries(current.byAccount).filter(([key]) => !isOwnedBy(key));
+    if (kept.length === Object.keys(current.byAccount).length) return;
+    const next: CommandCatalogFile = { version: COMMAND_CATALOG_VERSION, byAccount: Object.fromEntries(kept) };
+    writeAtomic(this.deps, this.deps.filePath, JSON.stringify(next, null, 2));
+  }
+
   private writeEntry(accountDir: string, measuredAtMs: number, update: (entry: CommandCatalogEntry) => CommandCatalogEntry): void {
     if (accountDir.length === 0) {
       throw new Error(`Config dir vacio al guardar el catalogo de comandos: ${JSON.stringify(accountDir)}`);

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { reconcileLayoutWithRegistry, type Anchor, type PanelLayoutState, type PanelPlacement, type ZoneKey } from '@shared/panelLayout';
-import { allAssignedPanelIds, didZoneJustOpen, locatePanel, moveDestinations, movePanelToZone, removePanelFromLayout, resizeSplit, resizeZone, toggleZonePanel } from './panelLayoutOps';
+import { allAssignedPanelIds, didZoneJustOpen, locatePanel, moveDestinations, movePanelToZone, placePanelInZone, removePanelFromLayout, reorderPanelInZone, resolveDropBeforeId, stepPanelInZone, resizeSplit, resizeZone, toggleZonePanel } from './panelLayoutOps';
 
 function panel(id: string, defaultAnchor: Anchor, defaultZone: ZoneKey): PanelPlacement {
   return { id, defaultAnchor, defaultZone };
@@ -258,5 +258,133 @@ describe('moveDestinations', () => {
 
     expect(result).toHaveLength(5);
     expect(result.some((d) => d.anchor === 'bottom' && d.zone === 'b')).toBe(false);
+  });
+});
+
+// Layout con cuatro paneles en right/a para probar el orden: ['p2','p3','p4','p5'], activo p2.
+function orderedLayout(): PanelLayoutState {
+  const registry = [panel('p2', 'right', 'a'), panel('p3', 'right', 'a'), panel('p4', 'right', 'a'), panel('p5', 'right', 'a'), panel('p1', 'left', 'a')];
+  return reconcileLayoutWithRegistry(null, registry);
+}
+const RIGHT_A = { anchor: 'right', zone: 'a' } as const;
+
+describe('reorderPanelInZone', () => {
+  it('reorderPanelInZone_alPrincipio_ponePrimero', () => {
+    const result = reorderPanelInZone(orderedLayout(), 'p4', RIGHT_A, 'p2');
+
+    expect(result.stripes.right.a.panelIds).toEqual(['p4', 'p2', 'p3', 'p5']);
+  });
+
+  it('reorderPanelInZone_enElMedio_seInsertaAntesDelDestino', () => {
+    const result = reorderPanelInZone(orderedLayout(), 'p2', RIGHT_A, 'p5');
+
+    expect(result.stripes.right.a.panelIds).toEqual(['p3', 'p4', 'p2', 'p5']);
+  });
+
+  it('reorderPanelInZone_beforeNull_vaAlFinal', () => {
+    const result = reorderPanelInZone(orderedLayout(), 'p2', RIGHT_A, null);
+
+    expect(result.stripes.right.a.panelIds).toEqual(['p3', 'p4', 'p5', 'p2']);
+  });
+
+  it('reorderPanelInZone_mismoSitio_devuelveElMismoLayout', () => {
+    const layout = orderedLayout();
+
+    expect(reorderPanelInZone(layout, 'p3', RIGHT_A, 'p4')).toBe(layout); // ya esta justo antes de p4
+    expect(reorderPanelInZone(layout, 'p3', RIGHT_A, 'p3')).toBe(layout);
+    expect(reorderPanelInZone(layout, 'p5', RIGHT_A, null)).toBe(layout);
+  });
+
+  it('reorderPanelInZone_noCambiaActivoNiTamaños', () => {
+    const layout = orderedLayout();
+
+    const result = reorderPanelInZone(layout, 'p4', RIGHT_A, 'p2');
+
+    expect(result.stripes.right.a.activePanelId).toBe(layout.stripes.right.a.activePanelId);
+    expect(result.stripes.right.a.sizePx).toBe(layout.stripes.right.a.sizePx);
+    expect(result.stripes.left).toBe(layout.stripes.left);
+  });
+
+  it('reorderPanelInZone_panelDeOtraZona_lanzaConElId', () => {
+    expect(() => reorderPanelInZone(orderedLayout(), 'p1', RIGHT_A, null)).toThrow('"p1"');
+  });
+});
+
+describe('stepPanelInZone', () => {
+  it('stepPanelInZone_subir_intercambiaConElAnterior', () => {
+    expect(stepPanelInZone(orderedLayout(), 'p4', -1).stripes.right.a.panelIds).toEqual(['p2', 'p4', 'p3', 'p5']);
+  });
+
+  it('stepPanelInZone_bajar_intercambiaConElSiguiente', () => {
+    expect(stepPanelInZone(orderedLayout(), 'p3', 1).stripes.right.a.panelIds).toEqual(['p2', 'p4', 'p3', 'p5']);
+  });
+
+  it('stepPanelInZone_enLosExtremos_esNoOp', () => {
+    const layout = orderedLayout();
+
+    expect(stepPanelInZone(layout, 'p2', -1)).toBe(layout);
+    expect(stepPanelInZone(layout, 'p5', 1)).toBe(layout);
+  });
+
+  it('stepPanelInZone_panelSinZona_lanzaConElId', () => {
+    expect(() => stepPanelInZone(orderedLayout(), 'nada', 1)).toThrow('"nada"');
+  });
+});
+
+describe('resolveDropBeforeId', () => {
+  const ids = ['p2', 'p3', 'p4'];
+
+  it('resolveDropBeforeId_mitadSuperior_esElPropioIcono', () => {
+    expect(resolveDropBeforeId(ids, 'p3', true)).toBe('p3');
+  });
+
+  it('resolveDropBeforeId_mitadInferior_esElSiguiente', () => {
+    expect(resolveDropBeforeId(ids, 'p3', false)).toBe('p4');
+  });
+
+  it('resolveDropBeforeId_mitadInferiorDelUltimo_esNull', () => {
+    expect(resolveDropBeforeId(ids, 'p4', false)).toBeNull();
+  });
+
+  it('resolveDropBeforeId_idDesconocido_esNull', () => {
+    expect(resolveDropBeforeId(ids, 'x', true)).toBeNull();
+  });
+});
+
+describe('movePanelToZone con beforeId', () => {
+  it('movePanelToZone_conBeforeId_entraEnEsaPosicionDelDestino', () => {
+    const result = movePanelToZone(orderedLayout(), 'p1', 'right', 'a', 'p3');
+
+    expect(result.stripes.right.a.panelIds).toEqual(['p2', 'p1', 'p3', 'p4', 'p5']);
+    expect(result.stripes.right.a.activePanelId).toBe('p1');
+  });
+
+  it('movePanelToZone_sinBeforeId_entraAlFinal', () => {
+    expect(movePanelToZone(orderedLayout(), 'p1', 'right', 'a').stripes.right.a.panelIds).toEqual(['p2', 'p3', 'p4', 'p5', 'p1']);
+  });
+
+  it('movePanelToZone_beforeIdQueNoEstaEnElDestino_entraAlFinal', () => {
+    expect(movePanelToZone(orderedLayout(), 'p1', 'right', 'a', 'zzz').stripes.right.a.panelIds.at(-1)).toBe('p1');
+  });
+});
+
+describe('hiddenPanelIds', () => {
+  it('removePanelFromLayout_panel_loAñadeAEscondidos', () => {
+    expect(removePanelFromLayout(orderedLayout(), 'p3').hiddenPanelIds).toEqual(['p3']);
+  });
+
+  it('removePanelFromLayout_panelYaSinZona_noDuplicaElEscondido', () => {
+    const once = removePanelFromLayout(orderedLayout(), 'p3');
+
+    expect(removePanelFromLayout(once, 'p3').hiddenPanelIds).toEqual(['p3']);
+  });
+
+  it('placePanelInZone_panelEscondido_loQuitaDeEscondidos', () => {
+    const hidden = removePanelFromLayout(orderedLayout(), 'p3');
+
+    const result = placePanelInZone(hidden, 'p3', 'left', 'a');
+
+    expect(result.hiddenPanelIds).toEqual([]);
+    expect(result.stripes.left.a.panelIds).toContain('p3');
   });
 });

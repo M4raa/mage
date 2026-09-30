@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { classifyTool, TOOL_CLASS_GLYPH } from './toolClassify';
+import { classifyTool, TOOL_CLASS_ICON } from './toolClassify';
 
 describe('classifyTool', () => {
   it('classifyTool_read_devuelveRead', () => {
@@ -47,10 +47,10 @@ describe('classifyTool', () => {
   });
 });
 
-describe('TOOL_CLASS_GLYPH', () => {
-  it('TOOL_CLASS_GLYPH_tieneGlifoParaTodasLasClases', () => {
+describe('TOOL_CLASS_ICON', () => {
+  it('TOOL_CLASS_ICON_tieneIconoParaTodasLasClases', () => {
     for (const toolClass of ['read', 'search', 'edit', 'command', 'subagent', 'other'] as const) {
-      expect(TOOL_CLASS_GLYPH[toolClass].length).toBeGreaterThan(0);
+      expect(TOOL_CLASS_ICON[toolClass].startsWith('tool')).toBe(true);
     }
   });
 });

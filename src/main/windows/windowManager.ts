@@ -34,10 +34,21 @@ export interface ManagedWindow {
   };
 }
 
+// Donde abrir una ventana nueva (esquina superior izquierda, en coordenadas de pantalla). Lo usa el
+// arrastre de una pestaña fuera de Mage: la ventana nace bajo el cursor.
+export interface WindowPlacement {
+  readonly x: number;
+  readonly y: number;
+}
+
 export interface WindowManagerDeps<W extends ManagedWindow> {
   // Crea la ventana REAL del workbench. Recibe el id ya asignado por si la fabrica quiere usarlo
   // (titulo, estado inicial); nunca lo elige ella.
-  readonly createWindow: (windowId: string) => W;
+  readonly createWindow: (windowId: string, placement?: WindowPlacement) => W;
+  // Borra el estado persistido de ese id (pestañas, paneles). `openWith` lo llama ANTES de crear: los ids
+  // se reasignan, y sin esto la ventana nueva restauraba lo que tenia la anterior con ese id y ADEMAS
+  // adoptaba la pestaña movida (P-028 26: «se abre con mas cosas que la conversacion arrastrada»).
+  readonly discardState?: (windowId: string) => void;
 }
 
 // Primer id libre: 'main' si nadie lo ocupa, y si no w2, w3, ... Se reutiliza el hueco mas bajo para
@@ -58,10 +69,15 @@ export function isWindowId(value: string): boolean {
   return value === MAIN_WINDOW_ID || /^w[1-9]\d*$/.test(value);
 }
 
-export class WindowManager<W extends ManagedWindow> {
+export class WindowManager<W extends ManagedWindow, P = unknown> {
   // Insercion ordenada: `list()` devuelve las ventanas en el orden en que se abrieron, que es el que
   // el usuario reconoce en un selector de "mover a la ventana...".
   private readonly windows = new Map<string, W>();
+  // Lo que espera a una ventana RECIEN abierta hasta que su renderer lo pida (P-028, 36). Empujarlo
+  // con `send` nada mas crearla lo perdia: su renderer aun no habia registrado el listener, y la
+  // pestaña movida desaparecia de las dos ventanas. Ahora el renderer nuevo lo RECOGE (`takePending`)
+  // cuando ya ha cargado sus cuentas.
+  private readonly pending = new Map<string, P[]>();
 
   constructor(private readonly deps: WindowManagerDeps<W>) {}
 
@@ -74,9 +90,31 @@ export class WindowManager<W extends ManagedWindow> {
   }
 
   // Abre una ventana NUEVA y devuelve su id (lo necesita el renderer para dirigirle una pestaña).
-  open(): { readonly windowId: string; readonly window: W } {
+  open(placement?: WindowPlacement): { readonly windowId: string; readonly window: W } {
     const windowId = nextWindowId(this.list());
-    return { windowId, window: this.create(windowId) };
+    return { windowId, window: this.create(windowId, placement) };
+  }
+
+  // Abre una ventana nueva con algo esperandola (una pestaña movida). Se encola ANTES de crearla: la
+  // fabrica empieza a cargar el renderer y nada garantiza que no pida lo suyo enseguida.
+  openWith(payload: P, placement?: WindowPlacement): string {
+    const windowId = nextWindowId(this.list());
+    this.pending.set(windowId, [payload]);
+    try {
+      this.deps.discardState?.(windowId);
+      this.create(windowId, placement);
+    } catch (err) {
+      this.pending.delete(windowId);
+      throw err;
+    }
+    return windowId;
+  }
+
+  // Lo que esperaba a esa ventana, UNA sola vez (una segunda llamada devuelve []).
+  takePending(windowId: string): readonly P[] {
+    const queued = this.pending.get(windowId) ?? [];
+    this.pending.delete(windowId);
+    return queued;
   }
 
   // La ventana viva con ese id, o null. Una ventana destruida se OLVIDA aqui: su evento `closed`
@@ -150,13 +188,15 @@ export class WindowManager<W extends ManagedWindow> {
   }
 
   // Crea, registra y engancha el olvido al cerrarse.
-  private create(windowId: string): W {
-    const window = this.deps.createWindow(windowId);
+  private create(windowId: string, placement?: WindowPlacement): W {
+    const window = this.deps.createWindow(windowId, placement);
     this.windows.set(windowId, window);
     window.on('closed', () => {
       // Solo si sigue siendo LA de este id: si se recreo (focusMainWindow tras cerrar la principal),
       // el `closed` tardio de la vieja no puede borrar la nueva.
-      if (this.windows.get(windowId) === window) this.windows.delete(windowId);
+      if (this.windows.get(windowId) !== window) return;
+      this.windows.delete(windowId);
+      this.pending.delete(windowId);
     });
     return window;
   }

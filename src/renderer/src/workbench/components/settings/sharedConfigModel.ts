@@ -1,96 +1,11 @@
-// Modelo PURO (sin React, sin IPC) del contenido de los dos ficheros de configuracion compartida.
-// Existe para que la UI por bloques (servidores MCP, hooks y reglas de permisos) no tenga que
+// Modelo PURO (sin React, sin IPC) del contenido de settings-common.json (los servidores MCP tienen el
+// suyo en `@shared/mcp`, P-028: su texto ya no llega al renderer).
+// Existe para que la UI por bloques (hooks y reglas de permisos) no tenga que
 // manipular JSON a mano en medio de un componente: aqui se entra desde el TEXTO crudo que devuelve
 // `loadSharedConfig` y se sale con el TEXTO crudo que espera `saveSharedConfig`.
 //
 // El fichero en disco sigue siendo el MISMO JSON que lee el CLI: lo que cambia es como se edita. Por
-// eso todo serializador parte del texto actual y solo SUSTITUYE su clave, preservando cualquier otra
-// (y, en los servidores MCP, los campos que esta UI no ofrece: `url`, `type`, `cwd`...).
-
-// --- Servidores MCP (mcp-common.json) -----------------------------------------------------------
-
-export interface McpServerDraft {
-  readonly name: string;
-  readonly command: string;
-  // Una linea por argumento / una linea `CLAVE=valor` por variable: es lo unico que aguanta rutas y
-  // valores con espacios sin inventar reglas de escapado propias.
-  readonly argsText: string;
-  readonly envText: string;
-  // Campos que esta UI no edita (`type`, `url`, `cwd`, lo que traiga el usuario). Se conservan tal
-  // cual al guardar: un editor por bloques que borra lo que no entiende destruye configuracion.
-  readonly rest: Readonly<Record<string, unknown>>;
-}
-
-export interface McpServersParse {
-  readonly servers: readonly McpServerDraft[];
-  readonly error: string | null;
-}
-
-const EDITED_SERVER_KEYS: readonly string[] = ['command', 'args', 'env'];
-
-// Lee el texto crudo y devuelve un borrador por servidor. Texto inservible -> lista vacia + `error`
-// con el motivo (la UI lo enseña); nunca se traga el fallo en silencio.
-export function parseMcpServers(text: string): McpServersParse {
-  const root = parseJsonObject(text);
-  if (root.value === null) return { servers: [], error: root.error };
-  const servers = root.value.mcpServers;
-  if (servers === undefined) return { servers: [], error: null };
-  if (!isRecord(servers)) return { servers: [], error: `"mcpServers" no es un objeto: ${describeType(servers)}` };
-
-  return { servers: Object.entries(servers).map(([name, raw]) => toServerDraft(name, raw)), error: null };
-}
-
-function toServerDraft(name: string, raw: unknown): McpServerDraft {
-  if (!isRecord(raw)) return { name, command: '', argsText: '', envText: '', rest: {} };
-  const rest = Object.fromEntries(Object.entries(raw).filter(([key]) => !EDITED_SERVER_KEYS.includes(key)));
-  return {
-    name,
-    command: typeof raw.command === 'string' ? raw.command : '',
-    argsText: Array.isArray(raw.args) ? raw.args.map((arg) => String(arg)).join('\n') : '',
-    envText: isRecord(raw.env)
-      ? Object.entries(raw.env)
-          .map(([key, value]) => `${key}=${String(value)}`)
-          .join('\n')
-      : '',
-    rest,
-  };
-}
-
-// Vuelca la lista completa de servidores sobre el texto actual. Lanza si el texto de partida no es
-// JSON valido: esta funcion la llama "Guardar", y guardar sobre una base que no se entiende es
-// exactamente como se pierde la configuracion ajena.
-export function serializeMcpServers(text: string, servers: readonly McpServerDraft[]): string {
-  const root = requireJsonObject(text, 'mcp-common.json');
-  const mcpServers: Record<string, unknown> = {};
-  for (const server of servers) mcpServers[server.name] = toServerObject(server);
-  return stringify({ ...root, mcpServers });
-}
-
-function toServerObject(server: McpServerDraft): Record<string, unknown> {
-  const object: Record<string, unknown> = { ...server.rest, command: server.command };
-  const args = splitLines(server.argsText);
-  if (args.length > 0) object.args = args;
-  const env = parseEnvText(server.envText);
-  if (env.error !== null) throw new Error(`Variables de entorno de "${server.name}" inválidas: ${env.error}`);
-  if (Object.keys(env.value).length > 0) object.env = env.value;
-  return object;
-}
-
-export interface EnvParse {
-  readonly value: Readonly<Record<string, string>>;
-  readonly error: string | null;
-}
-
-// `CLAVE=valor` por linea. El primer `=` separa: los valores llevan rutas, URLs y tokens con `=`.
-export function parseEnvText(text: string): EnvParse {
-  const value: Record<string, string> = {};
-  for (const line of splitLines(text)) {
-    const separator = line.indexOf('=');
-    if (separator <= 0) return { value: {}, error: `la línea "${line}" no tiene la forma CLAVE=valor` };
-    value[line.slice(0, separator).trim()] = line.slice(separator + 1);
-  }
-  return { value, error: null };
-}
+// eso todo serializador parte del texto actual y solo SUSTITUYE su clave, preservando cualquier otra.
 
 // --- Hooks y permisos (settings-common.json) ----------------------------------------------------
 
@@ -228,13 +143,6 @@ function requireJsonObject(text: string, label: string): Record<string, unknown>
 
 function stringify(value: Record<string, unknown>): string {
   return `${JSON.stringify(value, null, 2)}\n`;
-}
-
-function splitLines(text: string): string[] {
-  return text
-    .split('\n')
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

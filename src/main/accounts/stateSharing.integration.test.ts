@@ -4,7 +4,7 @@
 // convertidos en directorios), y con mocks se puede demostrar cualquier cosa.
 // Montan un HOME de mentira bajo el temp del SO (mkdtemp, se borra en cada afterEach), fuerzan la
 // divergencia a mano en cada direccion y comprueban EN DISCO con que token queda cada lado.
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -43,6 +43,7 @@ function realDeps(): AccountDeps {
     layout: LAYOUT,
     homedir: home,
     listHome: () => [],
+    listDir: (p) => (existsSync(p) ? readdirSync(p) : []),
     isDirectory: (p) => existsSync(p) && statSync(p).isDirectory(),
     exists: existsSync,
     readJson: (p) => {
@@ -151,5 +152,57 @@ describe('VERIFICACION G3 sobre FS real', () => {
     expect(warning?.message).toContain('directorio real');
     // Y no se destruye lo que la sesion habia escrito dentro.
     expect(existsSync(join(shared, 'sesion-viva.jsonl'))).toBe(true);
+  });
+});
+
+// Punto 30 (P-028): borrar una cuenta con enlaces REALES (junction en Windows, symlink en POSIX).
+describe('deleteAccount sobre FS real', () => {
+  function accountWithSharedData(): { service: AccountService; account: string; commonFile: string } {
+    const service = new AccountService(realDeps());
+    const commonFile = join(home, '.claude', 'projects', 'p1', 'compartida.jsonl');
+    mkdirSync(join(home, '.claude', 'projects', 'p1'), { recursive: true });
+    writeFileSync(commonFile, '{}');
+    const account = service.createAccount('p').configDir;
+    const profile = service.ensurePrivateProfile(account);
+    writeFileSync(join(profile, 'projects', 'privada.jsonl'), '{}');
+    return { service, account, commonFile };
+  }
+
+  it('deleteAccount_conJunctionsReales_borraLaCuentaYSusPrivadasSinTocarLoComun', () => {
+    const { service, account, commonFile } = accountWithSharedData();
+
+    service.deleteAccount(account);
+
+    expect(existsSync(account)).toBe(false);
+    expect(existsSync(commonFile)).toBe(true);
+  });
+
+  it('deleteAccount_enlaceAjenoFueraDeSharedFolders_rmSyncNoEntraEnElDestino', () => {
+    // MEDICION: un enlace de directorio que no es de Mage (p.ej. de un script del usuario) dentro de la
+    // cuenta. `rmSync` recursivo tiene que quitar el enlace sin borrar lo que hay al otro lado.
+    const { service, account } = accountWithSharedData();
+    const outside = join(home, 'fuera');
+    mkdirSync(outside, { recursive: true });
+    writeFileSync(join(outside, 'dato.txt'), 'x');
+    new LinkService(defaultLinkDeps(() => undefined)).createDirLink(outside, join(account, 'ajeno'));
+
+    service.deleteAccount(account);
+
+    expect(existsSync(account)).toBe(false);
+    expect(existsSync(join(outside, 'dato.txt'))).toBe(true);
+  });
+
+  it('deleteAccount_compartidaConvertidaEnDirRealConDatos_abortaYNoBorraNada', () => {
+    const { service, account, commonFile } = accountWithSharedData();
+    const projects = join(account, 'projects');
+    // Se quita el enlace con el LinkService (nunca con rmSync: es justo lo que no esta medido aun).
+    new LinkService(defaultLinkDeps(() => undefined)).removeDirLink(projects);
+    mkdirSync(projects, { recursive: true });
+    writeFileSync(join(projects, 'solo-aqui.jsonl'), '{}');
+
+    expect(() => service.deleteAccount(account)).toThrow(projects);
+    expect(existsSync(join(projects, 'solo-aqui.jsonl'))).toBe(true);
+    expect(existsSync(join(account, 'sessions'))).toBe(true); // ni siquiera se desenlazo nada
+    expect(existsSync(commonFile)).toBe(true);
   });
 });

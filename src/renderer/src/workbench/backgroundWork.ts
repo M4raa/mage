@@ -33,6 +33,21 @@ export function shouldBackgroundOnClose(status: ChatStatus | undefined): boolean
   return status === 'streaming' || status === 'needs_permission';
 }
 
+// Motivo por el que una pestaña NO se puede mover a otra ventana (ni arrastrar fuera), o null si se
+// puede (P-028, 36, D36-2a). Con un turno en marcha, moverla es cerrarla aqui —la mandaria a segundo
+// plano con el CLI vivo— y la otra ventana no podria reanudarla. No hay traspaso en vivo de la sesion.
+export function tabMoveBlockedReason(status: ChatStatus | undefined): string | null {
+  if (!shouldBackgroundOnClose(status)) return null;
+  return 'Tiene un turno en marcha: espera a que termine para moverla a otra ventana.';
+}
+
+// Lo mismo para una fila del historial que sigue viva en segundo plano. Terminada ('done') si se puede:
+// solo queda revisarla, y abrirla en otra ventana corta su sesion como abrirla aqui.
+export function backgroundMoveBlockedReason(background: BackgroundSession | undefined): string | null {
+  if (background === undefined || background.state === 'done') return null;
+  return 'Sigue trabajando en segundo plano: espera a que termine para abrirla en otra ventana.';
+}
+
 // Transicion de estado al llegar un evento de una sesion SIN pestaña. Devuelve el estado actual si el
 // evento no cambia nada (la inmensa mayoria: deltas de texto, herramientas...), para que quien llama
 // pueda no tocar el store.

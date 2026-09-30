@@ -23,15 +23,17 @@ describe('noticeTextFor', () => {
     expect(noticeTextFor({ kind: 'permission_mode', mode: 'modoNuevo' })).toBe('Modo de permiso: modoNuevo');
   });
 
-  it('noticeTextFor_rateLimit_usaElTextoDelCli', () => {
-    // MEDIDO en una transcripcion real: el CLI ya redacta el aviso, con su hora y su zona horaria.
+  it('noticeTextFor_rateLimit_textoDeMageSinElDelCli', () => {
+    // P-028, 20: el texto del CLI (en ingles) va al tooltip, no a la linea.
     const summary = "You've hit your session limit · resets 3pm (Europe/Madrid)";
 
-    expect(noticeTextFor({ kind: 'rate_limit', summary, resetsAtMs: null })).toBe(`${summary}`);
+    expect(noticeTextFor({ kind: 'rate_limit', summary, resetsAtMs: null })).toBe('Límite de uso alcanzado');
   });
 
-  it('noticeTextFor_rateLimitSinTexto_poneUnoGenerico', () => {
-    expect(noticeTextFor({ kind: 'rate_limit', summary: '   ', resetsAtMs: null })).toBe('Límite de uso alcanzado');
+  it('noticeTextFor_rateLimitConHora_diceCuandoSeRestablece', () => {
+    const resetsAtMs = new Date(2026, 8, 29, 15, 0).getTime();
+
+    expect(noticeTextFor({ kind: 'rate_limit', summary: '', resetsAtMs })).toMatch(/^Límite de uso alcanzado · se restablece a las .*15.*00/);
   });
 
   it('noticeTextFor_hookNotification_noVaAlHilo', () => {

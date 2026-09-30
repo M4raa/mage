@@ -4,14 +4,17 @@ import type { UsageWindowInfo } from '@shared/usage';
 // segundos de epoch en ms) en vez de escribir aqui un segundo: el `resetsAt` del stream viene en
 // SEGUNDOS y ese es justo el caso que ya resuelve.
 import { parseEpochMs } from '../usage/schemas';
+import { countOrNull, parseSubagentRunInfo } from '@shared/subagentRun';
 import {
   CanUseToolSchema,
   CancelSchema,
   CompactBoundarySchema,
   ContextUsageSchema,
+  ConversationResetSchema,
   HookCallbackSchema,
   InitializeResponseSchema,
   InitSchema,
+  LocalCommandRunSchema,
   RateLimitEventSchema,
   ResultSchema,
   SessionStateSchema,
@@ -47,6 +50,8 @@ export function normalizeRawEvent(raw: unknown): MageEvent[] {
       return normalizeRateLimitEvent(raw);
     case 'result':
       return normalizeResult(raw);
+    case 'conversation_reset':
+      return [{ kind: 'conversation_reset', newSessionId: ConversationResetSchema.parse(raw).new_conversation_id }];
     default:
       return [];
   }
@@ -115,11 +120,36 @@ function normalizeSystem(raw: Record<string, unknown>): MageEvent[] {
     const parsed = CompactBoundarySchema.parse(raw);
     return [{ kind: 'compacted', trigger: parsed.compact_metadata?.trigger ?? 'manual' }];
   }
-  if (raw.subtype === 'status' && typeof raw.permissionMode === 'string') {
-    // Modo de permiso (M2.6): el CLI emite system/status con permissionMode ante CUALQUIER cambio.
-    return [{ kind: 'permission_mode', mode: raw.permissionMode }];
-  }
+  if (raw.subtype === 'status') return normalizeStatus(raw);
+  if (raw.subtype === 'task_progress' || raw.subtype === 'task_notification') return normalizeTaskUpdate(raw);
   return [];
+}
+
+function normalizeStatus(raw: Record<string, unknown>): MageEvent[] {
+  const events: MageEvent[] = [];
+  // Modo de permiso (M2.6): el CLI emite system/status con permissionMode ante CUALQUIER cambio.
+  if (typeof raw.permissionMode === 'string') events.push({ kind: 'permission_mode', mode: raw.permissionMode });
+  if (raw.status === 'requesting') events.push({ kind: 'request_started' });
+  return events;
+}
+
+// `system/task_progress` y `system/task_notification` de un subagente en segundo plano (medido en
+// 2.1.284, ver `subagent_update`). Sin `tool_use_id` no hay a que bloque atribuirlo: se ignora.
+function normalizeTaskUpdate(raw: Record<string, unknown>): MageEvent[] {
+  const toolUseId = typeof raw.tool_use_id === 'string' && raw.tool_use_id.length > 0 ? raw.tool_use_id : null;
+  if (toolUseId === null) return [];
+  const status = raw.subtype === 'task_progress' ? 'running' : typeof raw.status === 'string' ? raw.status : 'completed';
+  const usage = isRecord(raw.usage) ? raw.usage : {};
+  return [
+    {
+      kind: 'subagent_update',
+      toolUseId,
+      status,
+      tokens: countOrNull(usage.total_tokens),
+      toolUses: countOrNull(usage.tool_uses),
+      durationMs: countOrNull(usage.duration_ms),
+    },
+  ];
 }
 
 // control_response: la respuesta del CLI a un control_request nuestro. NO lleva el subtype de la
@@ -233,12 +263,28 @@ function normalizeAssistant(raw: Record<string, unknown>): MageEvent[] {
   const events: MageEvent[] = [];
   const text = assistantTextOf(message.content);
   if (text.length > 0) events.push({ kind: 'assistant_text', text });
+  const local = localCommandOutput(raw, message, text);
+  if (local !== null) events.push(local);
   const parent = typeof raw.parent_tool_use_id === 'string' && raw.parent_tool_use_id.length > 0 ? raw.parent_tool_use_id : null;
   for (const block of message.content) {
     const tool = toToolUse(block, parent);
     if (tool !== null) events.push({ kind: 'tool_use', tool });
   }
   return events;
+}
+
+// Comando local (P-028, grupo C): `local_command_run` es la marca medida; `model: "<synthetic>"` el
+// respaldo, con `command: null`, para un sintetico que no sea comando. Va ADEMAS de `assistant_text`,
+// que siguen necesitando las reglas de notificacion.
+const SYNTHETIC_MODEL = '<synthetic>';
+
+function localCommandOutput(raw: Record<string, unknown>, message: Record<string, unknown>, text: string): MageEvent | null {
+  if (isRecord(raw.local_command_run)) {
+    const run = LocalCommandRunSchema.parse(raw.local_command_run);
+    return { kind: 'local_command_output', command: run.command.length > 0 ? run.command : null, args: run.args, text };
+  }
+  if (message.model !== SYNTHETIC_MODEL || text.length === 0) return null;
+  return { kind: 'local_command_output', command: null, args: '', text };
 }
 
 // Concatena los bloques `text` de un mensaje del asistente (se ignoran `thinking` y `tool_use`).
@@ -269,6 +315,7 @@ function normalizeUserToolResults(raw: Record<string, unknown>): MageEvent[] {
   // de uno tampoco — este CLI reparte las tools en mensajes distintos en vez de agruparlas. El dia que
   // eso cambie, lo que hay que hacer es emparejar por `tool_use_id` en vez de adjuntar a todos.
   const file = extractFileInfo(raw);
+  const subagent = parseSubagentRunInfo(raw.tool_use_result);
   const events: MageEvent[] = [];
   for (const block of content) {
     const result = ToolResultBlockSchema.safeParse(block);
@@ -282,6 +329,7 @@ function normalizeUserToolResults(raw: Record<string, unknown>): MageEvent[] {
         output: flattenToolContent(blockContent),
         durationMs: null,
         ...(file === undefined ? {} : { file }),
+        ...(subagent === null ? {} : { subagent }),
       },
     });
   }
@@ -416,6 +464,7 @@ function toStreamWindow(window: { utilization?: number | null; resetsAt?: number
 function normalizeResult(raw: Record<string, unknown>): MageEvent[] {
   const parsed = ResultSchema.parse(raw);
   const isError = parsed.is_error ?? parsed.subtype !== 'success';
+  const origin = isRecord(raw.origin) && typeof raw.origin.kind === 'string' ? raw.origin.kind : undefined;
   return [
     {
       kind: 'result',
@@ -423,6 +472,7 @@ function normalizeResult(raw: Record<string, unknown>): MageEvent[] {
         isError,
         subtype: parsed.subtype,
         numTurns: parsed.num_turns ?? null,
+        ...(origin === undefined ? {} : { origin }),
       },
     },
   ];

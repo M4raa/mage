@@ -1,12 +1,19 @@
 import { Fragment, useEffect, useRef, useState } from 'react';
-import type { ImportedTheme, NotificationRule, ScratchRetention, ThemePreference } from '@shared/settings';
+import type {
+  CloseBehavior,
+  ImportedTheme,
+  NewConversationFolder,
+  NotificationRule,
+  ScratchRetention,
+  ThemePreference,
+} from '@shared/settings';
 import { UI_SCALE_MAX, UI_SCALE_MIN, UI_SCALE_STEP } from '@shared/settings';
 import type { KeybindingOverride } from '@shared/settings';
 import type { AboutInfo } from '@shared/ipc';
 import { useWorkbenchStore } from '../workbenchStore';
 import { usePanelLayoutStore } from '../panelLayoutStore';
 import { HooksPermissionsSection } from './settings/HooksPermissionsSection';
-import { SharedConfigSection } from './settings/SharedConfigSection';
+import { McpSection } from './settings/McpSection';
 import { ProvidersSection } from './settings/ProvidersSection';
 import { ThemeMarketSection } from './settings/ThemeMarketSection';
 import { useDialogA11y } from '../a11y/useDialogA11y';
@@ -25,7 +32,7 @@ type SectionKey =
   | 'providers'
   | 'appearance'
   | 'widget'
-  | 'sharedConfig'
+  | 'mcp'
   | 'hooksPermissions'
   | 'trustedFolders'
   | 'keybindings'
@@ -49,7 +56,7 @@ const SECTIONS: readonly {
   { key: 'widget', group: 'Apariencia', icon: 'wand', nav: 'Widget flotante', title: 'Widget flotante' },
   { key: 'keybindings', group: 'Apariencia', icon: 'keyboard', nav: 'Atajos de teclado', title: 'Atajos de teclado' },
   { key: 'providers', group: 'Agentes', icon: 'plug', nav: 'Proveedores y modelos', title: 'Proveedores y modelos' },
-  { key: 'sharedConfig', group: 'Agentes', icon: 'link', nav: 'Config. compartida', title: 'Configuración compartida entre cuentas' },
+  { key: 'mcp', group: 'Agentes', icon: 'puzzle', nav: 'MCP y conectores', title: 'MCP y conectores' },
   { key: 'hooksPermissions', group: 'Seguridad', icon: 'hook', nav: 'Hooks y permisos', title: 'Hooks y reglas de permisos' },
   { key: 'trustedFolders', group: 'Seguridad', icon: 'shield', nav: 'Carpetas de confianza', title: 'Carpetas donde se puede lanzar un agente' },
   // «Acerca de» va la ULTIMA y en su propio grupo: no es un ajuste, es donde viven los avisos de
@@ -89,7 +96,10 @@ function SettingsDialog(): React.JSX.Element {
   const scratchRetention = useWorkbenchStore((s) => s.settings.scratchRetention);
   const setScratchRetention = useWorkbenchStore((s) => s.setScratchRetention);
   const resetPanelLayout = usePanelLayoutStore((s) => s.resetLayout);
-  const [section, setSection] = useState<SectionKey>('notifications');
+  const requestedSection = useWorkbenchStore((s) => s.settingsSection);
+  const [section, setSection] = useState<SectionKey>(
+    () => SECTIONS.find((s) => s.key === requestedSection)?.key ?? 'notifications',
+  );
   const dialogRef = useDialogA11y({ onClose: closeSettings });
   const navRef = useRef<HTMLElement | null>(null);
 
@@ -187,7 +197,7 @@ function SettingsDialog(): React.JSX.Element {
             )}
             {section === 'providers' && <ProvidersSection />}
             {section === 'widget' && <WidgetSection enabled={widgetEnabled} onChange={setWidgetEnabled} />}
-            {section === 'sharedConfig' && <SharedConfigSection />}
+            {section === 'mcp' && <McpSection />}
             {section === 'hooksPermissions' && <HooksPermissionsSection />}
             {section === 'trustedFolders' && <TrustedFoldersSection />}
             {section === 'storage' && <StorageSection retention={scratchRetention} onChange={setScratchRetention} />}
@@ -482,6 +492,85 @@ function StorageSection({
             className="mt-[3px]"
             checked={retention === option.value}
             onChange={() => onChange(option.value)}
+          />
+          <span>
+            <span className="font-semibold">{option.label}</span>
+            <span className="block text-[10.5px] leading-[1.45] text-mg-ter">{option.hint}</span>
+          </span>
+        </label>
+      ))}
+      <NewConversationFolderControl />
+      <CloseBehaviorControl />
+    </div>
+  );
+}
+
+const NEW_CONVERSATION_FOLDER_OPTIONS: readonly {
+  readonly value: NewConversationFolder;
+  readonly label: string;
+  readonly hint: string;
+}[] = [
+  { value: 'scratch', label: 'Una carpeta temporal', hint: 'Cada chat nuevo trabaja en su propia carpeta temporal.' },
+  {
+    value: 'lastProject',
+    label: 'El último proyecto',
+    hint: 'La carpeta de la conversación más reciente del historial. Si ya no existe, una temporal.',
+  },
+];
+
+// Carpeta con la que nace «Nuevo chat» (P-028, 16). Mismo patron que CloseBehaviorControl.
+function NewConversationFolderControl(): React.JSX.Element {
+  const folder = useWorkbenchStore((s) => s.settings.newConversationFolder);
+  const setFolder = useWorkbenchStore((s) => s.setNewConversationFolder);
+  return (
+    <div data-setting="new-conversation-folder" className="mt-[8px] flex flex-col gap-[8px] border-t border-mg-border pt-[12px]">
+      <span className="text-[10.5px] font-bold tracking-[.06em] text-mg-ter">CARPETA DE UN CHAT NUEVO</span>
+      {NEW_CONVERSATION_FOLDER_OPTIONS.map((option) => (
+        <label key={option.value} className="flex items-start gap-[8px] text-[11.5px] text-mg-body">
+          <input
+            type="radio"
+            name="new-conversation-folder"
+            className="mt-[3px]"
+            checked={folder === option.value}
+            onChange={() => setFolder(option.value)}
+          />
+          <span>
+            <span className="font-semibold">{option.label}</span>
+            <span className="block text-[10.5px] leading-[1.45] text-mg-ter">{option.hint}</span>
+          </span>
+        </label>
+      ))}
+    </div>
+  );
+}
+
+const CLOSE_BEHAVIOR_OPTIONS: readonly { readonly value: CloseBehavior; readonly label: string; readonly hint: string }[] = [
+  { value: 'ask', label: 'Preguntar', hint: 'Al cerrar la ventana, Mage pregunta qué hacer.' },
+  {
+    value: 'background',
+    label: 'Mantener en segundo plano',
+    hint: 'La ventana se oculta y Mage sigue en la bandeja con los agentes trabajando.',
+  },
+  { value: 'quit', label: 'Cerrar Mage', hint: 'Cerrar la ventana sale de Mage y para los agentes.' },
+];
+
+// Que hace la X de la ventana (P-028, 17). Es el sitio para deshacer el «Recordar mi decisión» del
+// dialogo de cierre. Lee y escribe del store, como UiScaleControl. En macOS no aplica: alli el boton
+// rojo siempre oculta y Cmd+Q sale.
+function CloseBehaviorControl(): React.JSX.Element {
+  const behavior = useWorkbenchStore((s) => s.settings.closeBehavior);
+  const setCloseBehavior = useWorkbenchStore((s) => s.setCloseBehavior);
+  return (
+    <div data-setting="close-behavior" className="mt-[8px] flex flex-col gap-[8px] border-t border-mg-border pt-[12px]">
+      <span className="text-[10.5px] font-bold tracking-[.06em] text-mg-ter">AL CERRAR LA VENTANA</span>
+      {CLOSE_BEHAVIOR_OPTIONS.map((option) => (
+        <label key={option.value} className="flex items-start gap-[8px] text-[11.5px] text-mg-body">
+          <input
+            type="radio"
+            name="close-behavior"
+            className="mt-[3px]"
+            checked={behavior === option.value}
+            onChange={() => setCloseBehavior(option.value)}
           />
           <span>
             <span className="font-semibold">{option.label}</span>

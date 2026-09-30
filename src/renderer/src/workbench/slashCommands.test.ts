@@ -39,16 +39,16 @@ describe('filterSlashCommands', () => {
     const names = filterSlashCommands('/').map((c) => c.name);
     const everything = SLASH_COMMANDS.map((c) => c.name);
 
-    for (const tuiOnly of ['cost', 'help', 'hooks', 'memory', 'permissions', 'status']) {
+    for (const tuiOnly of ['help', 'hooks', 'memory', 'permissions', 'status']) {
       expect(everything).not.toContain(tuiOnly);
       expect(names).not.toContain(tuiOnly);
     }
   });
 
   it('coincidenciaPorDentro_vaDespuesDeLosPrefijos', () => {
-    const names = filterSlashCommands('/review').map((c) => c.name);
+    const names = filterSlashCommands('/re').map((c) => c.name);
 
-    expect(names).toEqual(['review', 'security-review']);
+    expect(names).toEqual(['rename', 'security-review']);
   });
 
   it('insensibleAMayusculas', () => {

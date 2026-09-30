@@ -57,7 +57,7 @@ export function TitleBar(): React.JSX.Element {
           engranaje del rail izquierdo desaparecio y esta es su unica puerta junto al menu y Ctrl+,.
           Por eso pasa de imagen decorativa a boton, con su nombre accesible y su atajo en el tooltip. */}
       <button
-        onClick={openSettings}
+        onClick={() => openSettings()}
         style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
         data-tip="Mage · Configuración (Ctrl+,)"
         // El nombre lleva "Mage" a proposito: este control es el UNICO sitio de la ventana donde

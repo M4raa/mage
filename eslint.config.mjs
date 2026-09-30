@@ -15,7 +15,7 @@ import tseslint from 'typescript-eslint';
 // El parser de TypeScript va SIN informacion de tipos (`projectService`/`project` no se activan): estas
 // dos reglas no la necesitan y pedirla multiplicaria el tiempo de la puerta por diez.
 export default [
-  { ignores: ['out/**', 'dist/**', 'node_modules/**', '.verify-out/**', 'release/**', 'coverage/**'] },
+  { ignores: ['out/**', 'dist/**', 'node_modules/**', '.verify-out/**', 'release/**', 'coverage/**', '.claude/**'] },
   {
     files: ['src/**/*.{ts,tsx}'],
     languageOptions: {

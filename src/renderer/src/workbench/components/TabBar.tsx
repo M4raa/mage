@@ -5,8 +5,10 @@ import { AnimatePresence, motion } from 'motion/react';
 import { useWorkbenchStore } from '../workbenchStore';
 import { isArrowNavKey, nextIndexForArrow } from '../a11y/keyboardNav';
 import { TAB_INDICATOR_TRANSITION } from '../motionPresets';
-import { orderTabsForDisplay, TAB_DRAG_MIME, tabColorVar, tabsToCloseAll, tabsToCloseInactive } from '../tabActions';
+import { orderTabsForDisplay, TAB_DRAG_MIME, TAB_DRAG_ORIGIN_MIME, tabColorVar, tabsToCloseAll, tabsToCloseInactive } from '../tabActions';
+import { tabMoveBlockedReason } from '../backgroundWork';
 import { TabContextMenu } from './TabContextMenu';
+import { providerBadge } from '../accountView';
 import type { Tab as TabModel } from '../types';
 
 // Id compartido del indicador de pestaña activa (Type 4 del catalogo de motion: shared-element). Solo
@@ -40,6 +42,7 @@ export function TabBar({
   const openNewTabDialog = useWorkbenchStore((s) => s.openNewTabDialog);
   const openInNewWindow = useWorkbenchStore((s) => s.openInNewWindow);
   const moveTabToWindow = useWorkbenchStore((s) => s.moveTabToWindow);
+  const dropTabOutside = useWorkbenchStore((s) => s.dropTabOutside);
   // Otras ventanas abiertas. Se piden al ABRIR el menu y no en cada render: es IPC, y entre que se
   // abre el menu y se elige no da tiempo a que la lista cambie de forma que importe.
   const [otherWindows, setOtherWindows] = useState<readonly { readonly windowId: string }[]>([]);
@@ -70,6 +73,7 @@ export function TabBar({
 
   const accentOf = (accountId: string): string =>
     accounts.find((a) => a.id === accountId)?.accent.base ?? 'transparent';
+  const monogramOf = (accountId: string): string => accounts.find((a) => a.id === accountId)?.monogram ?? '?';
 
   // Navegacion roving: flechas/Home/End mueven la seleccion y el foco a la pestana correspondiente.
   const onListKeyDown = (e: React.KeyboardEvent<HTMLDivElement>): void => {
@@ -128,6 +132,7 @@ export function TabBar({
             key={tab.id}
             tab={tab}
             accent={tabColorVar(tab.colorIndex, accentOf(tab.accountId))}
+            monogram={monogramOf(tab.accountId)}
             active={tab.id === paneActiveTabId}
             // Activa de un panel que NO tiene el foco: encendida pero atenuada. Con el workspace dividido
             // hay N activas a la vez y solo una manda; sin esto las dos barras mienten igual.
@@ -139,7 +144,8 @@ export function TabBar({
               focusPrompt();
             }}
             onClose={() => closeTab(tab.id)}
-            onDragOutOfWindow={() => void openInNewWindow(tab.id)}
+            moveBlockedReason={tabMoveBlockedReason(statusByChat[tab.id])}
+            onDragOutOfWindow={() => void dropTabOutside(tab.id).catch(reportMoveError)}
             onContextMenu={(x, y) => {
               setMenu({ tab, x, y });
               void window.mage
@@ -190,8 +196,9 @@ export function TabBar({
             onPickColor={(colorIndex) => setTabColor(menu.tab.id, colorIndex)}
             onSplit={(zone) => movePaneTab(menu.tab.id, path, zone)}
             windows={otherWindows}
-            onMoveToNewWindow={() => void openInNewWindow(menu.tab.id)}
-            onMoveToWindow={(windowId) => void moveTabToWindow(menu.tab.id, windowId)}
+            moveBlockedReason={tabMoveBlockedReason(statusByChat[menu.tab.id])}
+            onMoveToNewWindow={() => void openInNewWindow(menu.tab.id).catch(reportMoveError)}
+            onMoveToWindow={(windowId) => void moveTabToWindow(menu.tab.id, windowId).catch(reportMoveError)}
           />
         )}
       </AnimatePresence>
@@ -199,21 +206,35 @@ export function TabBar({
   );
 }
 
+// Un movimiento a otra ventana que falla (la ventana destino se cerro, main rechazo la pestaña) se
+// traza: la pestaña sigue aqui, que es el lado seguro, pero no en silencio.
+function reportMoveError(err: unknown): void {
+  console.warn('No se pudo mover la pestaña a otra ventana:', err instanceof Error ? err.message : String(err));
+}
+
 function Tab({
   tab,
   accent,
+  monogram,
   active,
   unfocusedPane,
+  moveBlockedReason,
   onSelect,
   onClose,
   onContextMenu,
+  onDragOutOfWindow,
 }: {
   readonly tab: TabModel;
   readonly accent: string;
+  // Letra de la cuenta sobre su acento (P-028, 2): distinguir cuentas no puede depender solo del color.
+  readonly monogram: string;
   readonly active: boolean;
   // Se esta viendo en el SEGUNDO panel del centro (item 13): tambien esta a la vista, aunque el foco
   // no este en el, y conviene que la barra lo diga.
   readonly unfocusedPane: boolean;
+  // Motivo por el que no se puede sacar a otra ventana (turno en marcha), o null. Con motivo, el
+  // arrastre sigue sirviendo para dividir DENTRO de la ventana, pero soltarla fuera no hace nada.
+  readonly moveBlockedReason: string | null;
   readonly onSelect: () => void;
   readonly onClose: () => void;
   readonly onContextMenu: (x: number, y: number) => void;
@@ -221,6 +242,7 @@ function Tab({
   readonly onDragOutOfWindow: () => void;
 }): React.JSX.Element {
   const accountAlias = tab.accountAlias;
+  const badge = providerBadge(tab.provider);
   // role="tab" sobre un div (no <button>) para poder anidar el boton ✕ sin HTML invalido. Enter/Espacio
   // activan; el roving (tabIndex 0 en la activa, -1 en el resto) y las flechas los gestiona el tablist.
   // Shift+F10 / tecla de menu abren el contextual sin raton (mismo contrato que los iconos del dock).
@@ -262,8 +284,16 @@ function Tab({
       draggable
       onDragStart={(e) => {
         e.dataTransfer.setData(TAB_DRAG_MIME, tab.id);
+        e.dataTransfer.setData(TAB_DRAG_ORIGIN_MIME, tab.id);
         e.dataTransfer.effectAllowed = 'move';
       }}
+      // P-028, 36: soltada donde nadie la acepto (fuera de la ventana, o sobre otra ventana de Mage).
+      // Esc con el cursor fuera tambien da 'none': main mira el cursor y, dentro, no hace nada.
+      onDragEnd={(e) => {
+        if (e.dataTransfer.dropEffect !== 'none' || moveBlockedReason !== null) return;
+        onDragOutOfWindow();
+      }}
+      data-tip={moveBlockedReason ?? undefined}
       className={`relative flex flex-none cursor-pointer items-center gap-[7px] border-r border-mg-border p-[8px_14px] transition-colors duration-150 ease-out ${
         active && !unfocusedPane
           ? 'bg-mg-window text-mg-text'
@@ -280,9 +310,26 @@ function Tab({
           style={{ background: accent }}
         />
       )}
-      {/* Punto con el color de la pestaña: el de su cuenta de origen, o el elegido a mano en el menu
-          contextual (item 12). Sin el alias textual: basta el color. */}
-      <span className="h-[7px] w-[7px] flex-none rounded-[2px]" style={{ background: accent }} />
+      {/* Monograma de la cuenta sobre el color de la pestaña (el de su cuenta, o el elegido a mano en el
+          menu contextual, item 12). P-028, 2: antes era un punto de color y nada mas, y dos cuentas de
+          acento parecido no se distinguian. El alias va en el tooltip. */}
+      <span
+        aria-hidden="true"
+        data-tab-monogram={monogram}
+        data-tip={accountAlias}
+        className="flex h-[14px] w-[14px] flex-none items-center justify-center rounded-[4px] text-[9px] font-bold leading-none text-mg-window"
+        style={{ background: accent }}
+      >
+        {monogram}
+      </span>
+      {badge !== null && (
+        <span
+          data-tab-provider={badge}
+          className="flex-none rounded-[4px] border border-mg-border-emph px-[4px] text-[9px] leading-[13px] text-mg-muted"
+        >
+          {badge}
+        </span>
+      )}
       {tab.pinned === true && <Icon name="pin" size={10} className="flex-none text-mg-ter" />}
 
       <span className="max-w-[220px] truncate">{tab.title}</span>

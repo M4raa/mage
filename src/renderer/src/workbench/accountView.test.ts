@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { AccountInfo } from '@shared/accounts';
-import { toAccountView } from './accountView';
+import { applyAccentOverrides, providerBadge, providerLabel, toAccountView } from './accountView';
 
 function info(overrides: Partial<AccountInfo>): AccountInfo {
   return {
@@ -73,5 +73,42 @@ describe('toAccountView', () => {
 
     expect(account.usage.fiveHour.pct).toBe(0);
     expect(account.usage.fiveHour.label).toBe('—');
+  });
+});
+
+describe('accentos elegidos por el usuario (PERS-3) y marca de proveedor (P-028, 2)', () => {
+  it('toAccountView_conOverride_usaElAcentoElegido', () => {
+    expect(toAccountView(info({}), 0, 4).accent.base).toBe('var(--mg-accent-4-base)');
+  });
+
+  it('applyAccentOverrides_soloCambiaLasCuentasConColorPropio', () => {
+    const accounts = [toAccountView(info({ configDir: '/h/.claude' }), 0), toAccountView(info({ configDir: '/h/.claude-p' }), 1)];
+
+    const result = applyAccentOverrides(accounts, { '/h/.claude-p': 5 });
+
+    expect(result.map((a) => a.accent.base)).toEqual(['var(--mg-accent-0-base)', 'var(--mg-accent-5-base)']);
+  });
+
+  it('applyAccentOverrides_sinOverrides_vuelveAlDeSuPosicion', () => {
+    const accounts = [toAccountView(info({ configDir: '/h/.claude-p' }), 1, 3)];
+
+    expect(applyAccentOverrides(accounts, {})[0]?.accent.base).toBe('var(--mg-accent-0-base)');
+  });
+
+  it('providerBadge_claude_null', () => {
+    expect(providerBadge('claude')).toBeNull();
+    expect(providerBadge('')).toBeNull();
+  });
+
+  it('providerBadge_otrosProveedores_idCortoSinPrefijo', () => {
+    expect(providerBadge('agy')).toBe('agy');
+    expect(providerBadge('openai')).toBe('openai');
+    expect(providerBadge('custom:ollama')).toBe('ollama');
+    expect(providerBadge('custom:un-nombre-muy-largo')).toBe('un-nombr');
+  });
+
+  it('providerLabel_claudeYOtros', () => {
+    expect(providerLabel('claude')).toBe('Claude');
+    expect(providerLabel('agy')).toBe('agy');
   });
 });

@@ -1,4 +1,5 @@
 import type { MageEvent } from '@shared/events';
+import { rateLimitLineText } from './rateLimit';
 
 // Avisos del propio CLI que van al HILO como linea de sistema tenue (2.5), con su texto en castellano.
 //
@@ -30,9 +31,9 @@ export function noticeTextFor(event: MageEvent): string | null {
     case 'permission_mode':
       return `Modo de permiso: ${permissionModeLabel(event.mode)}`;
     case 'rate_limit':
-      // El texto lo redacta el CLI ("You've hit your session limit · resets 3pm"): se pasa tal cual
-      // porque es el unico que sabe cuando se restablece y en que zona horaria.
-      return event.summary.trim().length === 0 ? 'Límite de uso alcanzado' : `${event.summary.trim()}`;
+      // Texto de Mage en castellano, con la hora si la trae el stream (P-028, 20). El del CLI ("You've
+      // hit your session limit · resets 3pm") ya no va al hilo: el reductor lo pone en el tooltip.
+      return rateLimitLineText(event.resetsAtMs);
     case 'hook_fired': {
       const label = NOTICEABLE_HOOKS.get(event.event);
       if (label === undefined) return null;

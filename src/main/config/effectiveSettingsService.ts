@@ -18,7 +18,7 @@ import type { EffectiveSettings, HookEntry, PermissionRule, SettingsOrigin } fro
 // nunca finge una precedencia que el CLI no aplica.
 //
 // Solo `mageCommon` es EDITABLE desde Mage: los otros dos ficheros son del usuario y del proyecto, y
-// Mage no los reescribe (misma politica que ya declara la seccion de Config. compartida).
+// Mage no los reescribe (misma politica que ya declara la seccion MCP y conectores).
 
 export interface EffectiveSettingsDeps {
   readonly exists: (path: string) => boolean;

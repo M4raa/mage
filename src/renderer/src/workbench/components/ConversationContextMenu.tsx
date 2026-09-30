@@ -28,6 +28,8 @@ export function ConversationContextMenu({
   onDelete,
   onMove,
   onOpenInNewTab,
+  onOpenInNewWindow,
+  newWindowBlockedReason = null,
 }: {
   readonly target: ConversationTarget;
   readonly x: number;
@@ -41,6 +43,10 @@ export function ConversationContextMenu({
   // pestaña abierta no se puede "abrir en una nueva" (dos procesos del CLI sobre la misma transcripcion
   // la corromperian), asi que ahi la opcion no existe en vez de existir deshabilitada.
   readonly onOpenInNewTab?: (() => void) | undefined;
+  // Reanudarla en una ventana NUEVA (P-028, 36). Tambien solo desde el historial.
+  readonly onOpenInNewWindow?: (() => void) | undefined;
+  // Sigue trabajando en segundo plano: el item se desactiva con este motivo.
+  readonly newWindowBlockedReason?: string | null;
 }): React.JSX.Element {
   const [confirmingDelete, setConfirmingDelete] = useState(false);
 
@@ -82,6 +88,11 @@ export function ConversationContextMenu({
             <MenuItem disabled={!hasSession} onClick={onOpenInNewTab}>
               Abrir en una pestaña nueva
             </MenuItem>
+            {onOpenInNewWindow !== undefined && (
+              <MenuItem disabled={!hasSession || newWindowBlockedReason !== null} tip={newWindowBlockedReason} onClick={onOpenInNewWindow}>
+                Abrir en una ventana nueva
+              </MenuItem>
+            )}
             <div className="my-[3px] h-px bg-mg-border-subtle" />
           </>
         )}
@@ -146,17 +157,20 @@ function MenuItem({
   onClick,
   disabled = false,
   danger = false,
+  tip = null,
 }: {
   readonly children: React.ReactNode;
   readonly onClick: () => void;
   readonly disabled?: boolean;
   readonly danger?: boolean;
+  readonly tip?: string | null;
 }): React.JSX.Element {
   return (
     <button
       role="menuitem"
       disabled={disabled}
       onClick={onClick}
+      data-tip={tip ?? undefined}
       className={`block w-full px-[10px] py-[5px] text-left transition-colors duration-150 ease-out disabled:opacity-40 ${
         danger ? 'text-mg-danger hover:bg-mg-danger-bg' : 'hover:bg-mg-hover'
       }`}

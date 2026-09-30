@@ -43,6 +43,9 @@ descartado.
 6. **Directorio de trabajo**: ¿respeta el `cwd`? `agy` **no**: sin `--add-dir` escribe en su propio
    scratch aunque reporte el cwd correcto en su evento `init`. Comprueba siempre dónde acaba un
    fichero escrito, no dónde dice que lo escribió.
+- **Git Bash convierte `/comando` en una ruta** (2026-09-29): midiendo `/context`, MSYS lo pasó como
+  `C:/Program Files/Git/context`, el CLI lo tomó por un prompt y lanzó **un turno real de modelo**.
+  Delante de cualquier comando con un argumento que empiece por `/`: `MSYS_NO_PATHCONV=1`.
 
 ## Invariantes que no se negocian al añadir un proveedor
 

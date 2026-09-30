@@ -1,4 +1,5 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { CopyButton } from './CopyButton';
 import { Icon } from './Icon';
 import { NO_PERMISSION_CONTROL_WARNING, isAutoApprovedProvider } from '@shared/providers';
 import { useWorkbenchStore } from '../workbenchStore';
@@ -6,17 +7,19 @@ import { SPARKLE_WAIST_RATIO } from '../brandMark';
 import { useThinkingStore } from '../thinkingStore';
 import { transcriptToBlocks } from '../transcriptToBlocks';
 import { computeThinkingStatus, formatElapsed } from '../thinkingStatus';
-import { hasVisibleContent, pendingToolName } from '../engineBlocks';
+import { commandOutputLayout, hasVisibleContent, isSubagentRunning, pendingToolName } from '../engineBlocks';
+import { isSlashCommandText } from '../conversationTitle';
 import { canChangeCwd, shortenPath } from '../cwdChange';
 import { Markdown } from './Markdown';
 import { PermissionCard } from './PermissionCard';
 import { ArtifactCard } from './ArtifactCard';
 import { artifactCardFrom } from '../artifactView';
-import { chatRows, currentTurnSummary, type ChatRow } from '../chatVisibility';
+import { chatRows, currentTurnSummary, stickResetKey, type ChatRow } from '../chatVisibility';
 import { usePaneTabId, usePaneTranscriptStore } from '../paneContext';
 import type { Block, ImageAttachment } from '../types';
 import { classifySystemWrapper } from '@shared/systemWrappers';
 import { useStickToBottom } from '../useStickToBottom';
+import { RecentProjects } from './RecentProjects';
 
 // Referencia ESTABLE para el caso "todavia no hay pensamientos de esta sesion": un `[]` nuevo en cada
 // render haria que el efecto de hidratacion se disparase en bucle.
@@ -51,7 +54,10 @@ export function BlockChat(): React.JSX.Element {
   // de la cola es lo que hace que el auto-scroll siga el typing.
   const tailSize = useMemo(() => tailContentSize(rows), [rows]);
   // Lo que cuenta es lo que se PINTA: las filas, no los bloques (casi todos van al panel de Actividad).
-  const { ref: scrollRef, onScroll } = useStickToBottom([rows.length, tailSize, turnLive, activeTabId]);
+  const { ref: scrollRef, onScroll } = useStickToBottom(
+    [rows.length, tailSize, turnLive, activeTabId],
+    stickResetKey(activeTabId, blocks),
+  );
 
   if (blocks.length === 0 && !turnLive) {
     if (activeTabId.length === 0) return <NoConversationState />;
@@ -81,7 +87,7 @@ function tailContentSize(rows: readonly ChatRow[]): number {
   if (last === undefined || last.kind !== 'block') return 0;
   const block = last.block;
   if (block.kind === 'agent') return block.runs.reduce((total, run) => total + run.text.length, 0);
-  if (block.kind === 'user' || block.kind === 'system') return block.text.length;
+  if (block.kind === 'user' || block.kind === 'system' || block.kind === 'command-output') return block.text.length;
   if (block.kind === 'error') return block.message.length;
   return 0;
 }
@@ -214,6 +220,9 @@ function EmptyConversation(): React.JSX.Element {
 //
 // El boton se deshabilita (con el motivo en el tooltip) cuando cambiarlo ya no es seguro: la regla la
 // decide canChangeCwd, el mismo modulo puro que guarda la accion del store.
+// P-028, 16: el boton pasa a ser el primario «Elegir proyecto…», con la ruta debajo y, mientras la
+// carpeta se pueda cambiar, las tarjetas de proyectos recientes. Todo actua sobre la pestaña de ESTE
+// panel (con el workspace dividido no es por fuerza la activa).
 function WorkingFolder(): React.JSX.Element | null {
   const activeTabId = usePaneTabId();
   const tab = useWorkbenchStore((s) => s.tabs.find((t) => t.id === activeTabId));
@@ -228,27 +237,31 @@ function WorkingFolder(): React.JSX.Element | null {
       .pickDirectory()
       .then((picked) => {
         if (picked === null) return; // el usuario cancelo el dialogo del SO
-        setActiveCwd(picked);
+        setActiveCwd(picked, activeTabId);
       })
       .catch(() => undefined);
   };
 
   return (
-    <div className="flex max-w-[420px] items-center gap-[8px] text-[10.5px] text-mg-muted">
-      <Icon name="folder" />
-      {/* La ruta completa en el title: lo que se pinta va acortado para no romper el centrado. */}
-      <span className="truncate font-mono text-mg-sec" title={tab.cwd}>
-        {shortenPath(tab.cwd)}
-      </span>
-      <button
-        onClick={pickFolder}
-        disabled={!verdict.allowed}
-        data-tip={verdict.allowed ? 'Elegir otra carpeta de trabajo' : verdict.reason}
-        aria-label="Cambiar carpeta de trabajo"
-        className="shrink-0 rounded-[6px] border border-mg-border-emph px-[7px] py-[2px] text-[10px] text-mg-body2 hover:bg-mg-hover disabled:cursor-default disabled:opacity-40"
-      >
-        Cambiar
-      </button>
+    <div className="flex w-full flex-col items-center gap-[16px]">
+      <div className="flex max-w-[420px] flex-col items-center gap-[6px]">
+        <button
+          onClick={pickFolder}
+          disabled={!verdict.allowed}
+          data-tip={verdict.allowed ? 'Elegir la carpeta de trabajo' : verdict.reason}
+          aria-label="Elegir proyecto"
+          className="flex items-center gap-[7px] rounded-[8px] bg-mg-primary px-[16px] py-[8px] text-[12px] font-semibold text-mg-primary-ink disabled:cursor-default disabled:opacity-40"
+        >
+          <Icon name="folderOpen" />
+          Elegir proyecto…
+        </button>
+        {/* La ruta completa en el title: lo que se pinta va acortado para no romper el centrado. */}
+        <span data-working-folder="true" className="flex max-w-full items-center gap-[6px] text-[10.5px] text-mg-muted" title={tab.cwd}>
+          <Icon name="folder" />
+          <span className="truncate font-mono text-mg-sec">{shortenPath(tab.cwd)}</span>
+        </span>
+      </div>
+      {verdict.allowed && <RecentProjects currentCwd={tab.cwd} onPick={(cwd) => setActiveCwd(cwd, activeTabId)} />}
     </div>
   );
 }
@@ -313,8 +326,8 @@ function ThinkingIndicator({
     const id = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(id);
   }, []);
-  const status = computeThinkingStatus(now - (turnStart ?? now), now - (lastActivity ?? now));
-  // Con una tool en curso se dice QUE esta haciendo; si no, la palabra cambiante de "pensando".
+  const status = computeThinkingStatus(now - (turnStart ?? now), now - (lastActivity ?? now), turnStart ?? 0);
+  // Con una tool en curso se dice QUE esta haciendo; si no, el verbo del turno (uno fijo, como el CLI).
   const label = tool === null ? status.label : `Ejecutando ${tool}`;
   // Es un BOTON (P-026 3.4): lleva al panel de Actividad, donde esta cada paso de este turno.
   return (
@@ -373,7 +386,7 @@ function ToolFailedLine({ block }: { readonly block: Extract<Block, { kind: 'too
 function SubagentsLine({ blocks }: { readonly blocks: readonly Extract<Block, { kind: 'subagent' }>[] }): React.JSX.Element {
   const paneTabId = usePaneTabId();
   const openActivity = useWorkbenchStore((s) => s.openActivity);
-  const running = blocks.some((b) => b.status === null);
+  const running = blocks.some(isSubagentRunning);
   const failed = blocks.filter((b) => b.status === 'error').length;
   const slowest = Math.max(0, ...blocks.map((b) => b.elapsedMs ?? 0));
   const n = blocks.length;
@@ -421,6 +434,7 @@ function BlockBody({ block, accent }: { readonly block: Block; readonly accent: 
   if (block.kind === 'tool') return <ToolBlock block={block} />;
   if (block.kind === 'error') return <ErrorBlock block={block} />;
   if (block.kind === 'system') return <SystemBlock block={block} />;
+  if (block.kind === 'command-output') return <CommandOutputBlock block={block} />;
   if (block.kind === 'permission') return <PermissionCard block={block} />;
   // Pensamiento, subagentes y preguntas no llegan aqui: `chatRows` los manda al panel de Actividad o al
   // dock de preguntas (P-026 3.3/3.4).
@@ -429,11 +443,41 @@ function BlockBody({ block, accent }: { readonly block: Block; readonly accent: 
 
 // Marcador de sistema (M2.4): linea tenue centrada (p.ej. "🗜 Contexto compactado (manual)").
 function SystemBlock({ block }: { readonly block: Extract<Block, { kind: 'system' }> }): React.JSX.Element {
+  return <SystemLine text={block.text} {...(block.tip === undefined ? {} : { tip: block.tip })} />;
+}
+
+// `tip`: texto secundario en el tooltip (P-028, 20: el aviso del CLI tras la linea de limite de Mage).
+function SystemLine({ text, tip }: { readonly text: string; readonly tip?: string }): React.JSX.Element {
   return (
     <div className="flex items-center gap-[10px] px-[4px] text-[10.5px] text-mg-muted">
       <span className="h-px flex-1 bg-mg-border-subtle" />
-      <span className="flex-none">{block.text}</span>
+      <span className="flex-none" {...(tip === undefined ? {} : { 'data-tip': tip })}>
+        {text}
+      </span>
       <span className="h-px flex-1 bg-mg-border-subtle" />
+    </div>
+  );
+}
+
+// Salida de un comando local (P-028): una linea es la linea de sistema de siempre («Session renamed
+// to: X»); varias van en tarjeta con el comando en la cabecera, plegada si es larga.
+const COMMAND_OUTPUT_MAX_HEIGHT_PX = 320;
+
+function CommandOutputBlock({ block }: { readonly block: Extract<Block, { kind: 'command-output' }> }): React.JSX.Element {
+  const layout = useMemo(() => commandOutputLayout(block.text), [block.text]);
+  if (layout === 'line') return <div data-command-output="line"><SystemLine text={block.text} /></div>;
+  return (
+    <div data-command-output={layout} className="min-w-0 rounded-[9px] border border-mg-border-subtle bg-mg-block p-[8px_12px] text-[12px]">
+      {block.command !== null && <div className="mb-[6px] font-mono text-[11px] text-mg-sec">/{block.command}</div>}
+      <Collapsible maxHeightPx={COMMAND_OUTPUT_MAX_HEIGHT_PX} label="resultado">
+        {layout === 'markdown' ? (
+          <div className="min-w-0 text-mg-text">
+            <Markdown text={block.text} />
+          </div>
+        ) : (
+          <pre className="overflow-x-auto whitespace-pre font-mono text-[11.5px] leading-[1.5] text-mg-text">{block.text}</pre>
+        )}
+      </Collapsible>
     </div>
   );
 }
@@ -457,10 +501,17 @@ function UserBlock({ block }: { readonly block: Extract<Block, { kind: 'user' }>
   // burbuja con el XML crudo. Los avisos que no se pintan ya los quito `transcriptToBlocks`.
   const wrapper = useMemo(() => classifySystemWrapper(block.text), [block.text]);
   if (wrapper.kind === 'command' && block.attachments.length === 0) return <CommandChip command={wrapper.command} />;
+  // En directo el comando llega tal cual se tecleo (P-028): mismo chip que al reabrir.
+  if (block.attachments.length === 0 && isSlashCommandText(block.text)) return <CommandChip command={block.text.trim()} />;
   if (wrapper.kind === 'scheduled-task') return <ScheduledTaskCard name={wrapper.name} body={wrapper.body} />;
   return (
     <div className="flex justify-end">
-      <div className="flex max-w-[80%] min-w-0 flex-col gap-[3px] rounded-[12px] rounded-br-[4px] border border-mg-border-emph bg-mg-sel p-[9px_13px] leading-[1.55]">
+      <div className="group relative flex max-w-[80%] min-w-0 flex-col gap-[3px] rounded-[12px] rounded-br-[4px] border border-mg-border-emph bg-mg-sel p-[9px_13px] leading-[1.55]">
+        <CopyButton
+          text={block.text}
+          label="Copiar mensaje"
+          className="absolute right-[4px] top-[-10px] z-[1] border border-mg-border-subtle bg-mg-block opacity-0 focus-visible:opacity-100 group-hover:opacity-100"
+        />
         {/* Sin cabecera "TU" y SIN HORA (buzon del usuario, punto 1): el lado, el ancho y el fondo ya
             dicen de quien es la burbuja, y una hora por mensaje es ruido en una conversacion que se lee
             de arriba abajo — esto no es una app de mensajeria. `block.time` se conserva en el modelo:
@@ -503,6 +554,9 @@ function ScheduledTaskCard({ name, body }: { readonly name: string; readonly bod
         <summary className="cursor-pointer text-mg-sec">
           Tarea programada: <span className="font-semibold text-mg-text">{name.length > 0 ? name : 'sin nombre'}</span>
         </summary>
+        <p className="mt-[6px] text-mg-sec">
+          Las tareas programadas las lanza la app de escritorio de Claude; Mage solo las muestra.
+        </p>
         <div className="mt-[6px] whitespace-pre-wrap break-words text-mg-muted">{body}</div>
       </details>
     </div>
@@ -614,7 +668,12 @@ function AgentBlock({
   // izquierda/derecha + los dos fondos distintos es lo que separa visualmente los turnos.
   return (
     <div className="flex justify-start">
-      <div className="flex min-w-0 max-w-[92%] gap-[10px] rounded-[12px] rounded-bl-[4px] border border-mg-sel bg-mg-block p-[10px_14px]">
+      <div className="group relative flex min-w-0 max-w-[92%] gap-[10px] rounded-[12px] rounded-bl-[4px] border border-mg-sel bg-mg-block p-[10px_14px]">
+        <CopyButton
+          text={text}
+          label="Copiar respuesta"
+          className="absolute right-[4px] top-[-10px] z-[1] border border-mg-border-subtle bg-mg-block opacity-0 focus-visible:opacity-100 group-hover:opacity-100"
+        />
         <span
           className={`mt-[5px] h-[8px] w-[8px] flex-none rounded-full ${block.streaming ? 'mg-pulse' : ''}`}
           style={{ background: accent }}

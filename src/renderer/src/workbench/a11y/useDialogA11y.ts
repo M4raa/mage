@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { resolveTrapTarget } from './focusTrap';
+import { resolveTrapTarget, shouldRestoreFocus } from './focusTrap';
 
 // Selector de elementos focusables dentro de un panel de dialogo (subconjunto habitual, sin los que
 // estan deshabilitados o con tabindex negativo).
@@ -59,8 +59,11 @@ export function useDialogA11y({
     doc.addEventListener('keydown', onKeyDown);
     return () => {
       doc.removeEventListener('keydown', onKeyDown);
-      // Restaura el foco al elemento que lo tenia antes de abrir (si sigue en el DOM).
-      if (previouslyFocused !== null && doc.contains(previouslyFocused)) previouslyFocused.focus();
+      // Restaura el foco al elemento que lo tenia antes de abrir (si sigue en el DOM), salvo que otro
+      // dialogo lo haya tomado ya (ver shouldRestoreFocus).
+      if (previouslyFocused === null || !doc.contains(previouslyFocused)) return;
+      if (!shouldRestoreFocus<Node>(doc.activeElement, [doc.body, doc.documentElement], (node) => panel.contains(node))) return;
+      previouslyFocused.focus();
     };
   }, [stealFocusOnMount, trapTab]);
 

@@ -4,7 +4,7 @@
 
 import type { GitParams, GitSnapshot, GitSwitchParams } from './git';
 import type { AccountInfo, CliLoginStart, EmbeddedLoginResult } from './accounts';
-import type { ProviderModel } from './providers';
+import type { ProviderAuthSummary, ProviderModel } from './providers';
 import type { MageEvent, PermissionDecision, SlashCommandInfo } from './events';
 import type { ArtifactRecord, ConversationPrefs } from './conversationIndex';
 import type { UsageInfo } from './usage';
@@ -17,6 +17,18 @@ import type { AppSettings } from './settings';
 import type { WidgetSnapshot } from './widget';
 import type { FetchThemeParams, FetchedVscodeTheme, ThemeSearchItem } from './themeMarket';
 import type { PanelLayoutState, PanelPlacement } from './panelLayout';
+import type {
+  McpCommonMutateParams,
+  McpImportApplyParams,
+  McpImportPreview,
+  McpInventory,
+  McpInventoryParams,
+  McpRevealedSecrets,
+  McpStatusByAccount,
+  McpAuthParams,
+  McpAuthResult,
+  McpWriteResult,
+} from './mcp';
 // Varias ventanas (multi-ventana): mover una pestaña de una ventana a otra viaja su estado persistido.
 import type { PersistedTab } from './state';
 
@@ -48,10 +60,13 @@ export const IpcChannel = {
   SessionInterrupt: 'session:interrupt',
   SessionSetModel: 'session:setModel',
   SessionSetPermissionMode: 'session:setPermissionMode',
+  // Parar UN subagente en segundo plano (0.1.1 R2, punto 29, solo Claude).
+  SessionStopTask: 'session:stopTask',
   SessionStop: 'session:stop',
   SessionGetScratchDir: 'session:getScratchDir',
   // La RAIZ de los borradores, sin crear nada (a diferencia de la de arriba, que acuña una carpeta).
   SessionGetScratchRoot: 'session:getScratchRoot',
+  FsExistsDirs: 'fs:existsDirs',
   // ¿Esta instalado el CLI de Antigravity (E3)? Solo main puede mirar el disco/PATH.
   AgyInstalled: 'engine:agyInstalled',
   // Sondeo de un proveedor (D2): a donde apunta y que modelos ofrece DE VERDAD. Solo main puede mirar
@@ -79,6 +94,8 @@ export const IpcChannel = {
   AccountsLoginCancel: 'accounts:login:cancel',
   AccountsAdoptLogin: 'accounts:adopt-login',
   AccountsDelete: 'accounts:delete',
+  // Como se da de alta cada proveedor (P-028, 41): solo {providerId, label, kind, reason}.
+  ProvidersAuthList: 'providers:authList',
   DialogPickDirectory: 'dialog:pickDirectory',
   UsageGet: 'usage:get',
   StatusGet: 'status:get',
@@ -97,6 +114,7 @@ export const IpcChannel = {
   // renderer puede escribir un fichero del proyecto.
   ProjectFileRead: 'projectFile:read',
   ProjectFileWrite: 'projectFile:write',
+  ProjectFileApproveOutside: 'projectFile:approveOutside',
   // Historial de conversaciones en disco de una cuenta (M2.6, sidebar = historial).
   ConversationsList: 'conversations:list',
   // Administracion de conversaciones (#2 de AJUSTES): borrar y mover entre secciones/cuentas.
@@ -125,6 +143,16 @@ export const IpcChannel = {
   // Config compartida entre cuentas (D1 Fase 2): editor de mcp-common.json/settings-common.json.
   SharedConfigLoad: 'sharedConfig:load',
   SharedConfigSave: 'sharedConfig:save',
+  // MCP y conectores (P-028 puntos 5 y 34): inventario de todas las fuentes, edicion de los comunes
+  // (sin valores de env/headers hacia el renderer salvo «mostrar»), importacion con vista previa y
+  // estado sin mensaje (`mcp_status`).
+  McpInventoryLoad: 'mcp:inventory',
+  McpCommonMutate: 'mcp:commonMutate',
+  McpCommonReveal: 'mcp:commonReveal',
+  McpImportPreview: 'mcp:importPreview',
+  McpImportApply: 'mcp:importApply',
+  McpStatusProbe: 'mcp:statusProbe',
+  McpAuthenticate: 'mcp:authenticate',
   // Layout de paneles acoplables (F6 Fase 2): userData/panels-layout.json, global (no por
   // cuenta/conversacion, §5.3 del plan).
   PanelsLoad: 'panels:load',
@@ -155,6 +183,12 @@ export const IpcChannel = {
   WindowsList: 'windows:list',
   // Mover una pestaña a otra ventana. El ARRASTRE es del renderer (DOM); esto es solo el transporte.
   WindowsMoveTab: 'windows:moveTab',
+  // P-028, 36: abrir una ventana NUEVA con una pestaña esperandola (transporte "pull": el renderer
+  // nuevo la recoge con WindowsTakePendingTabs cuando ya ha cargado sus cuentas).
+  WindowsOpenWithTab: 'windows:openWithTab',
+  WindowsTakePendingTabs: 'windows:takePendingTabs',
+  // Se solto una pestaña (o una fila del historial) fuera de su ventana: main mira el cursor.
+  WindowsDropTab: 'windows:dropTab',
 } as const;
 
 export type IpcChannel = (typeof IpcChannel)[keyof typeof IpcChannel];
@@ -236,6 +270,12 @@ export interface SetModelParams {
 export interface SetPermissionModeParams {
   readonly sessionId: string;
   readonly mode: PermissionMode;
+}
+
+// Parar un subagente (0.1.1 R2, punto 29): `taskId` es el `agentId` del bloque del subagente.
+export interface StopTaskParams {
+  readonly sessionId: string;
+  readonly taskId: string;
 }
 
 export interface AnswerPermissionParams {
@@ -333,14 +373,25 @@ export interface OpenEditorParams {
 export interface NotifyParams {
   readonly title: string;
   readonly body: string;
+  // A donde lleva el clic (P-028 40). Ausente = solo enfoca la ventana.
+  readonly target?: NotificationTarget;
+}
+
+// Conversacion que disparo la notificacion. `tabId` solo vale en la ventana que la pidio; `sessionId`
+// la encuentra en cualquier otra (o en el historial, si la pestaña se cerro).
+export interface NotificationTarget {
+  readonly tabId?: string;
+  readonly sessionId: string;
+  // «Subagente terminado»: ademas de la pestaña, abre el panel de Actividad (decision b de 40).
+  readonly opensActivity?: boolean;
 }
 
 // Config compartida entre cuentas (D1 Fase 2): los dos ficheros propios de Mage (fuera de cualquier
 // CLAUDE_CONFIG_DIR) que se inyectan por flag al lanzar (--mcp-config/--settings, ver D1 Fase 1).
-// El snapshot trae el TEXTO crudo (para el editor) + los avisos de validacion YA calculados (formas
-// descartadas) + los nombres de servidor comunes (para que el Inspector marque "comun" vs "propio").
+// De mcp-common.json NO viaja el texto (P-028: lleva los `env` de los servidores): solo sus avisos y
+// nombres. Lo edita la seccion «MCP y conectores» por los canales `Mcp*`. De settings-common.json si
+// viaja el texto crudo (hooks y reglas de permisos) para su editor.
 export interface SharedConfigSnapshot {
-  readonly mcpCommonText: string;
   readonly settingsCommonText: string;
   readonly mcpCommonWarnings: readonly string[];
   readonly settingsCommonWarnings: readonly string[];
@@ -351,11 +402,11 @@ export interface SharedConfigSnapshot {
   // Bytes EXACTOS observados en disco cuando se leyo (null = el fichero no existia). Es la base del
   // compare-and-swap al guardar, y NO es lo mismo que `*Text`: ese sustituye el fichero ausente por un
   // JSON valido de arranque para que el editor no muestre un aviso antes de que el usuario toque nada.
-  readonly mcpCommonBaseline: string | null;
   readonly settingsCommonBaseline: string | null;
 }
 
-export type SharedConfigFile = 'mcp-common' | 'settings-common';
+// Solo settings-common.json se guarda como texto; mcp-common.json va por `mutateMcpCommon`.
+export type SharedConfigFile = 'settings-common';
 
 export interface SaveSharedConfigParams {
   readonly file: SharedConfigFile;
@@ -398,6 +449,8 @@ export const TRANSCRIPT_BATCH_CHANNEL = 'transcript:batch';
 // pintar). WIDGET_FOCUS_TAB: main -> renderer principal (activar la pestana clicada en el widget).
 export const WIDGET_SNAPSHOT_CHANNEL = 'widget:snapshot';
 export const WIDGET_FOCUS_TAB_CHANNEL = 'widget:focusTab';
+// main -> renderer: el usuario pulso una notificacion de Mage; payload `NotificationTarget` (P-028 40).
+export const NOTIFICATION_CLICKED_CHANNEL = 'notification:clicked';
 // main -> renderer principal: la preferencia del widget cambio FUERA del renderer (toggle del tray o
 // cierre inesperado de la ventana). El renderer (unico escritor de settings) actualiza y persiste.
 export const WIDGET_ENABLED_CHANGED_CHANNEL = 'widget:enabledChanged';
@@ -445,6 +498,9 @@ export interface ProjectFileContent {
   readonly content: string | null;
   readonly mtimeMs: number | null;
   readonly tooLarge: boolean;
+  // Fuera de la carpeta de la conversacion y sin aprobar (P-028, 15): `content` es null y el panel
+  // ofrece abrirlo con `approveProjectFileOutside`. Ausente = dentro o ya aprobado.
+  readonly outsideCwd?: boolean;
 }
 
 export interface ReadProjectFileParams {
@@ -493,7 +549,7 @@ export interface EffectiveSettings {
   readonly hooks: readonly HookEntry[];
   readonly rules: readonly PermissionRule[];
   // Solo `mageCommon` es editable desde Mage: los otros dos ficheros son del usuario/proyecto y Mage no
-  // los reescribe (misma politica que ya declara la seccion de Config. compartida).
+  // los reescribe (misma politica que ya declara la seccion MCP y conectores).
   readonly editableOrigin: SettingsOrigin;
 }
 
@@ -553,6 +609,11 @@ export interface MoveTabToWindowParams {
   readonly tab: PersistedTab;
 }
 
+// Que hizo main con una pestaña soltada fuera de su ventana (P-028, 36). 'moved' = ya esta en otra
+// ventana (nueva o existente) y el ORIGEN tiene que cerrarla; 'none' = no se hizo nada (se solto
+// dentro de la propia ventana, o el sistema no deja saber donde esta el cursor: Wayland).
+export type DropTabOutcome = 'moved' | 'none';
+
 // --- API tipada que el preload expone en window.mage ------------------------------------------
 
 export interface MageApi {
@@ -564,12 +625,16 @@ export interface MageApi {
   setModel(params: SetModelParams): Promise<void>;
   // Cambia el modo de permiso de una sesion viva (M2.6, solo Claude): default/acceptEdits/plan.
   setPermissionMode(params: SetPermissionModeParams): Promise<void>;
+  // Para UN subagente en segundo plano (0.1.1 R2, punto 29, solo Claude).
+  stopTask(params: StopTaskParams): Promise<void>;
   stop(sessionId: string): Promise<void>;
   // Carpeta scratch temporal (cross-platform) para el cwd de la sesion de prueba (Fase B).
   getScratchDir(): Promise<string>;
   // Raiz de los directorios de borrador. NO crea nada: `getScratchDir` acuña una carpeta nueva en cada
   // llamada, asi que no vale para averiguar la raiz — devolveria un hermano, no el padre.
   getScratchRoot(): Promise<string>;
+  // ¿Existe cada carpeta, en el mismo orden? Para no ofrecer proyectos recientes borrados (P-028, 16).
+  existsDirs(paths: readonly string[]): Promise<readonly boolean[]>;
   // ¿Esta instalado el CLI `agy` (E3)? El renderer no puede mirar el PATH ni el disco, y ofrecer un
   // proveedor que no puede funcionar seria mentirle al usuario. ponytail: una sola pregunta para el
   // unico proveedor nativo que Mage no instala; techo: si hubiera mas, pasa a devolver un mapa por id.
@@ -619,6 +684,7 @@ export interface MageApi {
   adoptLogin(params: AdoptLoginParams): Promise<void>;
   // Elimina una cuenta (desenlaza compartidas + borra su dir). Nunca la principal.
   deleteAccount(configDir: string): Promise<void>;
+  listProviderAuth(): Promise<readonly ProviderAuthSummary[]>;
   // Selector de carpeta de proyecto (cwd de una pestana); null si el usuario cancela.
   pickDirectory(): Promise<string | null>;
   // Confia el usuario en `cwd` para lanzar un agente? Suma lo autorizado en Mage y lo que el usuario ya
@@ -681,6 +747,9 @@ export interface MageApi {
   // la carpeta de la conversacion.
   readProjectFile(params: ReadProjectFileParams): Promise<ProjectFileContent>;
   writeProjectFile(params: WriteProjectFileParams): Promise<ProjectFileContent>;
+  // Pregunta con un dialogo nativo si abrir un fichero de fuera de la carpeta de la conversacion (la
+  // ruta la resuelve y la ensena main). true = aprobado para leer y editar hasta cerrar Mage.
+  approveProjectFileOutside(params: ReadProjectFileParams): Promise<boolean>;
   // Texto de los bloques de pensamiento de una conversacion, EN ORDEN. El CLI persiste sus bloques
   // `thinking` vacios, asi que este es el unico sitio donde existe el cuerpo al reanudar. Vacio para
   // una conversacion anterior a esto o sin pensamiento ninguno.
@@ -711,6 +780,8 @@ export interface MageApi {
   onWidgetSnapshot(listener: (snapshot: WidgetSnapshot) => void): () => void;
   // Suscripcion al "activar pestana" (la usa el renderer PRINCIPAL). Devuelve funcion para desuscribir.
   onWidgetFocusTab(listener: (tabId: string) => void): () => void;
+  // El usuario pulso una notificacion de Mage de ESTA ventana (P-028 40).
+  onNotificationClicked(listener: (target: NotificationTarget) => void): () => void;
   // Jump list de Windows (Ronda 3, item 10). En el resto de plataformas nunca se emite.
   onJumpListOpen(listener: (payload: JumpListOpenPayload) => void): () => void;
   // Suscripcion al cambio de preferencia hecho fuera del renderer (toggle del tray / cierre de la
@@ -735,6 +806,21 @@ export interface MageApi {
   // asi que pisar en silencio una edicion externa es la peor de las opciones.
   saveSharedConfig(params: SaveSharedConfigParams): Promise<SaveSharedConfigResult>;
 
+  // --- MCP y conectores (P-028 puntos 5 y 34) --------------------------------------------------
+  // Todas las fuentes que conoce la maquina, con NOMBRES de clave y nunca valores.
+  loadMcpInventory(params: McpInventoryParams): Promise<McpInventory>;
+  // Añade/edita/quita/desactiva un comun. `expected` es el `commonVersion` que se leyo: si el fichero
+  // cambio desde entonces devuelve `stale` sin escribir. Lanza si el borrador no es valido.
+  mutateMcpCommon(params: McpCommonMutateParams): Promise<McpWriteResult>;
+  // «Mostrar»: los valores de env/headers de UN comun. Unica via por la que un valor llega aqui.
+  revealMcpCommon(name: string): Promise<McpRevealedSecrets>;
+  previewMcpImport(params: McpInventoryParams): Promise<McpImportPreview>;
+  applyMcpImport(params: McpImportApplyParams): Promise<McpWriteResult>;
+  // Estado de los MCP de cada cuenta con login, sin turno (un CLI por cuenta, en serie).
+  probeMcpStatus(): Promise<McpStatusByAccount>;
+  // OAuth de un MCP con el CLI de esa cuenta: abre el navegador y espera el callback (tope 5 min).
+  authenticateMcp(params: McpAuthParams): Promise<McpAuthResult>;
+
   // --- Layout de paneles acoplables (F6 Fase 2) ------------------------------------------------
   // Carga el layout persistido ya reconciliado contra `params.registry` (el catalogo real del
   // renderer, sin `render`). Nunca lanza ni devuelve null: fichero ausente/corrupto -> el layout por
@@ -752,6 +838,12 @@ export interface MageApi {
   // Entrega una pestaña a otra ventana. LANZA si esa ventana ya no existe (no se pierde en silencio).
   // El renderer de ORIGEN es quien la quita de su workspace tras resolverse la promesa.
   moveTabToWindow(params: MoveTabToWindowParams): Promise<void>;
+  // Abre una ventana nueva con esta pestaña (P-028, 36). Devuelve su id.
+  openWindowWithTab(tab: PersistedTab): Promise<string>;
+  // Pestañas que esperaban a ESTA ventana al abrirse. Una sola vez: una segunda llamada da [].
+  takePendingTabs(): Promise<readonly PersistedTab[]>;
+  // Una pestaña se solto fuera de su ventana: main decide por el cursor (otra ventana, nueva o nada).
+  dropTabOutside(tab: PersistedTab): Promise<DropTabOutcome>;
   // Un ajuste cambio en OTRA ventana: llega ya guardado en disco, listo para aplicar y reflejar.
   // Devuelve funcion para desuscribir.
   onSettingsChanged(listener: (settings: AppSettings) => void): () => void;

@@ -33,7 +33,7 @@ const EFFECT_SKIN: Readonly<Record<PermissionRule['effect'], { readonly label: s
 
 const MODE_LABEL: Readonly<Record<string, string>> = {
   default: 'Manual: pide permiso para cada acción',
-  acceptEdits: 'Auto-editar: acepta ediciones dentro de la carpeta',
+  acceptEdits: 'Aceptar ediciones: acepta ediciones dentro de la carpeta',
   plan: 'Plan: el agente no ejecuta escrituras',
   auto: 'Auto: el CLI decide qué acciones necesitan permiso',
   bypassPermissions: 'Omitir permisos: el agente ejecuta todo sin preguntar',

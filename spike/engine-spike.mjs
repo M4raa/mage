@@ -536,7 +536,190 @@ async function subagentSpike() {
   if (fs.existsSync(sub)) fs.rmSync(sub, { recursive: true, force: true });
 }
 
-const MODES = { '--images': imageOrderSpike, '--rename': renameSpike, '--subagent': subagentSpike };
+// --- P-028 37a/37d: subagentes EN SEGUNDO PLANO (un turno de haiku) -------------------------------
+// Uso: node spike/engine-spike.mjs --subagent-bg [--stop-task]. Lanza DOS subagentes con `run_in_background: true`:
+// A contesta al momento y B hace `sleep` antes de contestar. Mide, con el proceso vivo tras el primer
+// `result`: (1) que llega por stdout cuando acaba cada uno (¿`system/task_*`? ¿un `user` de
+// notificacion?), (2) si sus pasos llevan `parent_tool_use_id`, (3) que emite stdout cuando el CLI
+// consume un mensaje ENCOLADO a mitad de turno y (4) si un interrupt durante el turno que abre la
+// notificacion de A mata a B. Corre en un directorio temporal; stdout completo a `<tmp>/stdout.ndjson`
+// (no trae credenciales: el `init` no las lleva), y borra el transcript al acabar.
+const BG_SPIKE = { maxMs: 300_000, afterInterruptMs: 90_000, sleepSeconds: 25, stopDelayMs: 3_000, afterStopMs: 60_000 };
+// 0.1.1 R2, punto 29: con `--stop-task` no se encola nada ni se interrumpe; a los `stopDelayMs` del
+// `task_started` de B se manda `stop_task {task_id}` (lo que Mage mandaria desde el boton «Parar»). Mide
+// si solo muere B: A sigue y termina, y el turno principal no se corta.
+const STOP_TASK_MODE = process.argv.includes('--stop-task');
+
+function describeBgEvent(event) {
+  const content = Array.isArray(event.message?.content) ? event.message.content : [];
+  const kinds = content.map((b) => {
+    if (b.type === 'tool_use') return `tool_use:${b.name}${b.input?.run_in_background === true ? '(bg)' : ''}`;
+    if (b.type === 'text') return `text:${JSON.stringify(b.text.slice(0, 160))}`;
+    if (b.type === 'tool_result') return `tool_result:${JSON.stringify(String(typeof b.content === 'string' ? b.content : JSON.stringify(b.content)).slice(0, 160))}`;
+    return b.type;
+  }).join(',');
+  const plain = typeof event.message?.content === 'string' ? `text:${JSON.stringify(event.message.content.slice(0, 200))}` : '';
+  const extra = event.tool_use_result !== undefined ? ` tool_use_result=${JSON.stringify(event.tool_use_result).slice(0, 400)}` : '';
+  const sys = event.type === 'system' && event.subtype !== 'init' ? ` ${JSON.stringify(event).slice(0, 400)}` : '';
+  return `${event.type}/${event.subtype ?? ''} parent=${event.parent_tool_use_id ?? '-'} ${kinds}${plain}${extra}${sys}`;
+}
+
+function findTranscript(configDir, sessionId) {
+  const projects = path.join(configDir, 'projects');
+  for (const dir of fs.existsSync(projects) ? fs.readdirSync(projects) : []) {
+    const file = path.join(projects, dir, `${sessionId}.jsonl`);
+    if (fs.existsSync(file)) return file;
+  }
+  return null;
+}
+
+// A y B hacen varias llamadas a Bash (el CLI bloqueo `sleep` en el spike anterior): B muchas mas, para
+// que siga vivo cuando llega el `stop_task`.
+const STOP_TASK_PROMPT = 'Lanza DOS subagentes con la herramienta Agent, los dos con subagent_type "general-purpose" y ' +
+  'run_in_background: true, en el mismo mensaje. Subagente A (description "spike A"): "Ejecuta con Bash, en cinco llamadas ' +
+  'separadas y una detras de otra, echo 1, echo 2, echo 3, echo 4 y echo 5; luego contesta solo con la letra A." ' +
+  'Subagente B (description "spike B"): "Ejecuta con Bash, en llamadas separadas y una detras de otra, echo 1, echo 2 ... hasta echo 40; ' +
+  'luego contesta solo con la letra B." Después de lanzarlos contesta solo "lanzados". Cuando te llegue el resultado de cada uno, contesta solo con su letra.';
+
+function watchStopTask(child, event, state, mark) {
+  if (event.type === 'control_response') mark(`control_response ${JSON.stringify(event.response).slice(0, 300)}`);
+  if (state.stopAt > 0 || event.type !== 'system' || event.subtype !== 'task_started' || event.description !== 'spike B') return;
+  setTimeout(() => {
+    state.stopAt = Date.now();
+    mark(`>>> ENVIADO stop_task ${event.task_id}`);
+    writeLine(child, { type: 'control_request', request_id: 'stop-b', request: { subtype: 'stop_task', task_id: event.task_id } });
+  }, BG_SPIKE.stopDelayMs);
+}
+
+async function backgroundSubagentSpike() {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mage-bg-spike-'));
+  const sessionId = randomUUID();
+  const env = { ...process.env, CLAUDE_CONFIG_DIR: IMAGE_SPIKE.accountDir };
+  for (const name of ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL']) delete env[name];
+  const args = ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose',
+    '--permission-prompt-tool', 'stdio', '--include-partial-messages', '--session-id', sessionId, '--model', 'haiku'];
+  const child = spawn(CONFIG.claudeBin, args, { cwd: tmp, env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+  const raw = fs.createWriteStream(path.join(tmp, 'stdout.ndjson'));
+  const t0 = Date.now();
+  const rows = [];
+  const mark = (text) => rows.push(`+${String(Date.now() - t0).padStart(6)}ms ${text}`);
+  const state = { results: 0, queuedSent: false, interruptSent: false, interruptAt: 0, launched: 0, stopAt: 0 };
+  const done = new Promise((resolve) => {
+    const hardStop = setTimeout(resolve, BG_SPIKE.maxMs);
+    const tick = setInterval(() => {
+      if (state.stopAt > 0 && Date.now() - state.stopAt > BG_SPIKE.afterStopMs) { clearTimeout(hardStop); clearInterval(tick); resolve(); }
+      if (state.interruptSent && Date.now() - state.interruptAt > BG_SPIKE.afterInterruptMs) { clearTimeout(hardStop); clearInterval(tick); resolve(); }
+    }, 1000);
+    child.stdout.setEncoding('utf8');
+    child.stdout.on('data', (chunk) => raw.write(chunk));
+    child.stdout.on('data', makeLineParser((event) => {
+      if (event.type === 'stream_event') return; // deltas: ya medidos en --subagent
+      if (event.type === 'control_request' && event.request?.subtype === 'can_use_tool') {
+        answerAllow(child, event.request_id, event.request.tool_use_id);
+        mark(`permiso ${event.request.tool_name} parent=${event.request.parent_tool_use_id ?? '-'} agent=${event.request.agent_id ?? '-'}`);
+        return;
+      }
+      mark(describeBgEvent(event));
+      if (STOP_TASK_MODE) {
+        watchStopTask(child, event, state, mark);
+        return;
+      }
+      const content = Array.isArray(event.message?.content) ? event.message.content : [];
+      // (3) Mensaje ENCOLADO: en cuanto el principal pide el primer Agent, a mitad de turno.
+      if (!state.queuedSent && event.type === 'assistant' && event.parent_tool_use_id == null && content.some((b) => b.type === 'tool_use')) {
+        state.queuedSent = true;
+        mark('>>> ENVIADO mensaje encolado');
+        writeLine(child, { type: 'user', message: { role: 'user', content: 'Además, al final añade la palabra COLA.' }, parent_tool_use_id: null });
+      }
+      if (event.type === 'result') state.results += 1;
+      // (4) Interrupt durante el turno que abre la notificacion de A: el primer assistant principal
+      // despues del primer `result`.
+      if (!state.interruptSent && state.results >= 1 && event.type === 'assistant' && event.parent_tool_use_id == null) {
+        state.interruptSent = true;
+        state.interruptAt = Date.now();
+        mark('>>> ENVIADO interrupt');
+        writeLine(child, { type: 'control_request', request_id: randomUUID(), request: { subtype: 'interrupt' } });
+      }
+    }));
+    child.on('exit', (code) => { mark(`exit ${code}`); clearTimeout(hardStop); clearInterval(tick); resolve(); });
+  });
+  const prompt = STOP_TASK_MODE ? STOP_TASK_PROMPT : 'Lanza DOS subagentes con la herramienta Agent, los dos con subagent_type "general-purpose" y ' +
+    'run_in_background: true, en el mismo mensaje. Subagente A (description "spike A"): "Contesta solo con la letra A, sin herramientas." ' +
+    `Subagente B (description "spike B"): "Usa la herramienta Bash con el comando sleep ${BG_SPIKE.sleepSeconds} y luego contesta solo con la letra B." ` +
+    'Después de lanzarlos contesta solo "lanzados". Cuando te llegue el resultado de cada uno, contesta solo con su letra.';
+  writeLine(child, { type: 'user', message: { role: 'user', content: prompt }, parent_tool_use_id: null });
+  await done;
+  child.stdin.end();
+  child.kill();
+  raw.end();
+  console.log(`[subagent-bg] CLI ${CONFIG.claudeBin} · stdout completo en ${path.join(tmp, 'stdout.ndjson')}`);
+  console.log(`[subagent-bg] eventos (sin deltas):\n  ${rows.join('\n  ')}`);
+  const file = findTranscript(IMAGE_SPIKE.accountDir, sessionId);
+  if (file === null) return;
+  fs.copyFileSync(file, path.join(tmp, 'transcript.jsonl'));
+  fs.rmSync(file);
+  const sub = path.join(path.dirname(file), sessionId);
+  if (fs.existsSync(sub)) fs.rmSync(sub, { recursive: true, force: true });
+  console.log(`[subagent-bg] transcript copiado a ${path.join(tmp, 'transcript.jsonl')} y borrado del config dir`);
+}
+
+
+// --- P-028 (grupo C): que emite `/clear` en headless (sin turno) --------------------------------
+// Uso: node spike/engine-spike.mjs --clear. En un directorio TEMPORAL manda tres comandos locales en
+// el mismo proceso —`/rename antes`, `/clear`, `/rename despues`— y registra cada evento de stdout
+// (claves y campos de sesion, nunca la cuenta) y que .jsonl quedan en la carpeta del proyecto. Ninguno
+// va al modelo. Borra el directorio temporal y la carpeta del proyecto al acabar.
+async function clearSpike() {
+  const workDir = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'mage-clear-spike-')));
+  const projectDir = path.join(IMAGE_SPIKE.accountDir, 'projects', workDir.replace(/[^A-Za-z0-9]/g, '-'));
+  const sessionId = randomUUID();
+  const env = { ...process.env, CLAUDE_CONFIG_DIR: IMAGE_SPIKE.accountDir };
+  for (const name of ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL']) delete env[name];
+  const args = ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose',
+    '--permission-prompt-tool', 'stdio', '--include-partial-messages', '--session-id', sessionId, '--model', 'haiku'];
+  const child = spawn(CONFIG.claudeBin, args, { cwd: workDir, env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+  const rows = [];
+  let onResult = () => undefined;
+  child.stdout.setEncoding('utf8');
+  child.stdout.on('data', makeLineParser((event) => {
+    const content = event.message?.content;
+    const text = typeof content === 'string' ? content : Array.isArray(content) ? content.map((b) => b.text ?? b.type).join('|') : '';
+    const session = event.session_id ?? '-';
+    const extra = event.type === 'system' && event.subtype === 'init' ? ` model=${event.model}` : '';
+    const reset = event.type === 'conversation_reset' ? ` ${JSON.stringify(event).slice(0, 300)}` : '';
+    const local = event.local_command_run === undefined ? '' : ` local_command_run=${JSON.stringify(event.local_command_run)} model=${event.message?.model}`;
+    const result = event.type === 'result' ? ` turns=${event.num_turns} cost=${event.total_cost_usd} result=${JSON.stringify(String(event.result ?? '').slice(0, 80))}` : '';
+    rows.push(`${event.type}/${event.subtype ?? ''} session=${session} claves=${JSON.stringify(Object.keys(event))}${extra}${reset}${local}${result}${text ? ` ${JSON.stringify(text.slice(0, 100))}` : ''}`);
+    if (event.type === 'result') onResult();
+  }));
+  const send = (text) => new Promise((resolve) => {
+    const timer = setTimeout(() => { rows.push(`(sin result para ${text})`); resolve(); }, 20_000);
+    onResult = () => { clearTimeout(timer); resolve(); };
+    rows.push(`>>> ${text}`);
+    writeLine(child, { type: 'user', message: { role: 'user', content: text }, parent_tool_use_id: null });
+  });
+  try {
+    await send('/rename mage-antes-del-clear');
+    await send('/clear');
+    await send('/rename mage-despues-del-clear');
+  } finally {
+    child.stdin.end();
+    child.kill();
+  }
+  console.log(`[clear] session-id inicial=${sessionId}\n[clear] eventos (sin deltas):\n  ${rows.filter((r) => !r.startsWith('stream_event')).join('\n  ')}`);
+  const files = fs.existsSync(projectDir) ? fs.readdirSync(projectDir).filter((f) => f.endsWith('.jsonl')) : [];
+  for (const file of files) {
+    const lines = fs.readFileSync(path.join(projectDir, file), 'utf8').split('\n').filter((l) => l.trim().length > 0).map((l) => JSON.parse(l));
+    console.log(`[clear] ${file}:\n  ${lines.map((o) => `${o.type}/${o.subtype ?? ''} meta=${o.isMeta === true} session=${o.sessionId ?? '-'} ${JSON.stringify(String(o.message?.content ?? o.content ?? o.customTitle ?? '').slice(0, 90))}`).join('\n  ')}`);
+  }
+  // El proceso ya murio: se espera un poco a que suelte los ficheros antes de borrar (Windows).
+  await new Promise((resolve) => setTimeout(resolve, 1_000));
+  fs.rmSync(projectDir, { recursive: true, force: true });
+  fs.rmSync(workDir, { recursive: true, force: true });
+  console.log(`[clear] limpieza: proyecto=${!fs.existsSync(projectDir)} temporal=${!fs.existsSync(workDir)}`);
+}
+
+const MODES = { '--images': imageOrderSpike, '--rename': renameSpike, '--subagent': subagentSpike, '--subagent-bg': backgroundSubagentSpike, '--clear': clearSpike };
 const entry = MODES[process.argv.find((arg) => arg in MODES)] ?? main;
 entry().catch((err) => {
   console.error(`\n[spike] ERROR: ${err.message}`);

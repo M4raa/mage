@@ -110,6 +110,28 @@ describe('PanelLayoutStore.load', () => {
     expect(result.stripes.right.a.activePanelId).toBe('permissions'); // no roba el foco (§3.3)
   });
 
+  it('load_conPanelEscondido_loRespetaYNoLoRepone', () => {
+    // Sin `hiddenPanelIds` en el envelope de lectura, Zod lo descartaba y el panel volvia en cada arranque.
+    const saved = reconcileLayoutWithRegistry(null, CATALOG_V1);
+    const withoutMcp = JSON.stringify({ ...saved, hiddenPanelIds: ['mcp'], stripes: { ...saved.stripes, right: { ...saved.stripes.right, a: { ...saved.stripes.right.a, panelIds: ['permissions', 'context', 'logs', 'memory'] } } } });
+    const store = new PanelLayoutStore(buildDeps({ readFile: () => withoutMcp }));
+
+    const result = store.load(CATALOG_V1);
+
+    expect(result.stripes.right.a.panelIds).not.toContain('mcp');
+    expect(result.hiddenPanelIds).toEqual(['mcp']);
+  });
+
+  it('save_conPanelEscondido_loEscribeEnElFichero', () => {
+    const writeFile = vi.fn();
+    const store = new PanelLayoutStore(buildDeps({ writeFile }));
+    const state: PanelLayoutState = { ...reconcileLayoutWithRegistry(null, CATALOG_V1), hiddenPanelIds: ['mcp'] };
+
+    store.save(state);
+
+    expect(JSON.parse(String(writeFile.mock.calls[0]?.[1])).hiddenPanelIds).toEqual(['mcp']);
+  });
+
   it('load_sinPanelesDesconocidos_noLlamaAlLog', () => {
     const log = vi.fn();
     const store = new PanelLayoutStore(buildDeps({ exists: () => false, log }));

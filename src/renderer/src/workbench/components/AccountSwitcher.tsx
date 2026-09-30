@@ -1,6 +1,9 @@
+import { useState } from 'react';
+import { AnimatePresence } from 'motion/react';
 import { useWorkbenchStore } from '../workbenchStore';
 import type { Account } from '../types';
 import { loginDot, loginLabel } from './accountBadge';
+import { AccountMenu, DeleteAccountDialog } from './AccountMenu';
 
 // Selector de cuenta de la CABECERA (peticion del usuario). Antes vivia en la columna izquierda a
 // 36 px por cuenta, apilado en vertical, y ahi crecia sin techo con el numero de cuentas.
@@ -19,6 +22,9 @@ export function AccountSwitcher(): React.JSX.Element | null {
   // Con una conversacion abierta de otra cuenta no basta con cambiar la activa (P-026 2.7).
   const requestAccountSwitch = useWorkbenchStore((s) => s.requestAccountSwitch);
   const openAddAccount = useWorkbenchStore((s) => s.openAddAccount);
+  // Menu contextual del avatar (P-028, 2 y 30) y la confirmacion de borrado que abre.
+  const [menu, setMenu] = useState<{ readonly account: Account; readonly x: number; readonly y: number } | null>(null);
+  const [deleting, setDeleting] = useState<Account | null>(null);
 
   // Sin cuentas descubiertas todavia no se pinta nada: un grupo con solo "＋" en la cabecera es ruido
   // durante el arranque, que dura milisegundos.
@@ -48,8 +54,24 @@ export function AccountSwitcher(): React.JSX.Element | null {
           account={account}
           active={account.id === activeAccountId}
           onClick={() => requestAccountSwitch(account.id)}
+          onContextMenu={(x, y) => setMenu({ account, x, y })}
         />
       ))}
+      <AnimatePresence>
+        {menu !== null && (
+          <AccountMenu
+            key="account-menu"
+            account={menu.account}
+            x={menu.x}
+            y={menu.y}
+            onClose={() => setMenu(null)}
+            onRequestDelete={() => setDeleting(menu.account)}
+          />
+        )}
+      </AnimatePresence>
+      <AnimatePresence>
+        {deleting !== null && <DeleteAccountDialog key="delete-account" account={deleting} onClose={() => setDeleting(null)} />}
+      </AnimatePresence>
     </div>
   );
 }
@@ -67,10 +89,12 @@ function CompactAccount({
   account,
   active,
   onClick,
+  onContextMenu,
 }: {
   readonly account: Account;
   readonly active: boolean;
   readonly onClick: () => void;
+  readonly onContextMenu: (x: number, y: number) => void;
 }): React.JSX.Element {
   const { accent } = account;
   const style: React.CSSProperties = active
@@ -81,6 +105,17 @@ function CompactAccount({
   return (
     <button
       onClick={onClick}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        onContextMenu(e.clientX, e.clientY);
+      }}
+      // Shift+F10 / tecla de menu: el mismo menu sin raton (contrato de pestañas e iconos del dock).
+      onKeyDown={(e) => {
+        if (e.key !== 'ContextMenu' && !(e.key === 'F10' && e.shiftKey)) return;
+        e.preventDefault();
+        const rect = e.currentTarget.getBoundingClientRect();
+        onContextMenu(rect.left, rect.bottom);
+      }}
       style={style}
       aria-pressed={active}
       // El hover faltaba (reporte del usuario). No puede ser `hover:bg-*`: el fondo lo fija el acento

@@ -17,3 +17,13 @@ export function resolveTrapTarget(count: number, activeIndex: number, shiftKey: 
   // En medio: dejar que el navegador mueva el foco normalmente.
   return null;
 }
+
+// ¿Debe un panel que se cierra devolver el foco a quien lo abrio? Solo si el foco sigue siendo "suyo":
+// dentro del panel o perdido (null, <body>, <html>: lo normal cuando se desmonta el control enfocado).
+// Si otro dialogo ya lo ha tomado —«Añadir cuenta › Abrir Proveedores y modelos» cierra un modal y abre
+// Configuracion en el mismo gesto, y el montaje de Configuracion enfoca antes de que corra la limpieza
+// del alta—, devolverlo lo SACA del modal nuevo, que se queda sin Escape (medido con verify:gui, punto 41).
+export function shouldRestoreFocus<T>(focused: T | null, lostTargets: readonly T[], isInsidePanel: (node: T) => boolean): boolean {
+  if (focused === null || lostTargets.includes(focused)) return true;
+  return isInsidePanel(focused);
+}

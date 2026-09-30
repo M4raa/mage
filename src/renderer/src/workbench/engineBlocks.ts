@@ -1,4 +1,5 @@
 import type { PermissionRequest, ToolResult, ToolUse, TurnUsage } from '@shared/events';
+import { SUBAGENT_ASYNC_LAUNCHED, type SubagentRunInfo } from '@shared/subagentRun';
 import type { AskQuestion } from '@shared/askUserQuestion';
 import type { Block, ImageAttachment, PermissionView, TextRun } from './types';
 import type { DiffLine } from './diffLines';
@@ -199,31 +200,93 @@ export function appendSubagentBlock(blocks: readonly Block[], tool: ToolUse, id:
       toolUseId: tool.toolUseId,
       agentType: stringOrNull(tool.input.subagent_type),
       description: stringOrNull(tool.input.description),
-      agentId: null,
-      status: null,
-      elapsedMs: null,
+      ...EMPTY_SUBAGENT_RUN,
     },
   ];
 }
 
-// Rellena el bloque de subagente con lo que trae su tool_result (`agentId` y estado). Sin coincidencia
-// devuelve los MISMOS bloques, para que el caller pueda distinguir "no habia nada que rellenar".
-export function applySubagentResult(blocks: readonly Block[], result: ToolResult): readonly Block[] {
-  if (!blocks.some((b) => b.kind === 'subagent' && b.toolUseId === result.toolUseId)) return blocks;
-  const agentId = extractAgentId(result.output);
-  return blocks.map((block) =>
-    block.kind === 'subagent' && block.toolUseId === result.toolUseId
-      ? { ...block, agentId: agentId ?? block.agentId, status: result.isError ? 'error' : 'completado', elapsedMs: result.durationMs }
-      : block,
-  );
+// Estados de un bloque de subagente (ademas de null = lanzandose). Texto en castellano porque es lo que
+// se pinta en Actividad y en el panel.
+export const SUBAGENT_STATUS = {
+  background: 'en segundo plano',
+  completed: 'completado',
+  error: 'error',
+  stopped: 'detenido',
+} as const;
+
+type SubagentBlock = Extract<Block, { kind: 'subagent' }>;
+
+export const EMPTY_SUBAGENT_RUN = { agentId: null, status: null, elapsedMs: null, tokens: null, toolUses: null, model: null } as const;
+
+// ¿Sigue trabajando? Lanzandose (sin resultado) o lanzado en segundo plano y sin notificacion todavia.
+export function isSubagentRunning(block: SubagentBlock): boolean {
+  return block.status === null || block.status === SUBAGENT_STATUS.background;
 }
 
-// El id del subagente viaja dentro del texto del tool_result. Se busca con una expresion acotada en vez
-// de parsear el JSON entero: el contenido varia por version del CLI, y aqui lo unico que hace falta es
-// el id con el que abrir su transcripcion. Sin id, el bloque se queda sin boton (no se inventa uno).
-function extractAgentId(output: string): string | null {
-  const match = /"agent_?[Ii]d"\s*:\s*"([^"]+)"/.exec(output);
-  return match?.[1] ?? null;
+// Lo que el resultado del Agent dice del subagente, aplicado a su bloque (vivo e hidratacion). Un
+// `async_launched` NO lo termina: solo dice que se lanzo, y el tiempo del lanzamiento no es el suyo.
+export function withSubagentRun(block: SubagentBlock, run: SubagentRunInfo | null, fallback: { readonly isError: boolean; readonly durationMs: number | null }): SubagentBlock {
+  const agentId = run?.agentId ?? block.agentId;
+  const model = run?.model ?? block.model;
+  if (run?.status === SUBAGENT_ASYNC_LAUNCHED && !fallback.isError) {
+    return { ...block, agentId, model, status: SUBAGENT_STATUS.background, elapsedMs: null };
+  }
+  return {
+    ...block,
+    agentId,
+    model,
+    status: fallback.isError ? SUBAGENT_STATUS.error : SUBAGENT_STATUS.completed,
+    elapsedMs: run?.totalDurationMs ?? fallback.durationMs,
+    tokens: run?.totalTokens ?? block.tokens,
+    toolUses: run?.totalToolUseCount ?? block.toolUses,
+  };
+}
+
+// Rellena el bloque de subagente con lo que trae su tool_result. Sin coincidencia devuelve los MISMOS
+// bloques, para que el caller pueda distinguir "no habia nada que rellenar".
+export function applySubagentResult(blocks: readonly Block[], result: ToolResult): readonly Block[] {
+  if (!blocks.some((b) => b.kind === 'subagent' && b.toolUseId === result.toolUseId)) return blocks;
+  // Respaldo por texto para un CLI que no mande el `tool_use_result`: el medido es `agentId: <id>`.
+  const run = result.subagent ?? textualRun(result.output);
+  return blocks.map((block) => (block.kind === 'subagent' && block.toolUseId === result.toolUseId ? withSubagentRun(block, run, result) : block));
+}
+
+// Progreso o fin de un subagente en segundo plano (`task_progress`/`task_notification`, o el aviso
+// persistido al hidratar). Mismo contrato: sin bloque que casar, los MISMOS bloques.
+export interface SubagentUpdate {
+  readonly toolUseId: string;
+  readonly status: string; // 'running' | 'completed' | 'stopped' | 'failed' | …
+  readonly tokens: number | null;
+  readonly toolUses: number | null;
+  readonly durationMs: number | null;
+}
+
+export function applySubagentUpdate(blocks: readonly Block[], update: SubagentUpdate): readonly Block[] {
+  if (!blocks.some((b) => b.kind === 'subagent' && b.toolUseId === update.toolUseId)) return blocks;
+  return blocks.map((block) => (block.kind === 'subagent' && block.toolUseId === update.toolUseId ? withSubagentUpdate(block, update) : block));
+}
+
+export function withSubagentUpdate(block: SubagentBlock, update: SubagentUpdate): SubagentBlock {
+  const counters = { tokens: update.tokens ?? block.tokens, toolUses: update.toolUses ?? block.toolUses };
+  if (update.status === 'running') return { ...block, ...counters, status: SUBAGENT_STATUS.background };
+  return { ...block, ...counters, status: statusFromNotification(update.status), elapsedMs: update.durationMs ?? block.elapsedMs };
+}
+
+// Medido: 'completed' y 'stopped' (lo mato un interrupt). 'failed' lo usa el CLI para las tareas MCP.
+function statusFromNotification(status: string): string {
+  if (status === 'completed') return SUBAGENT_STATUS.completed;
+  if (status === 'stopped' || status === 'killed') return SUBAGENT_STATUS.stopped;
+  return SUBAGENT_STATUS.error;
+}
+
+// El id viaja tambien en el TEXTO del resultado: `agentId: af3b… (internal ID…` (medido en 2.1.284, sin
+// comillas). Solo se usa si no llego el `tool_use_result`; entonces no se sabe si fue en segundo plano.
+const AGENT_ID_IN_TEXT = /\bagent_?[Ii]d"?\s*:\s*"?([A-Za-z0-9_-]+)/;
+
+function textualRun(output: string): SubagentRunInfo | null {
+  const agentId = AGENT_ID_IN_TEXT.exec(output)?.[1] ?? null;
+  if (agentId === null) return null;
+  return { status: 'completed', agentId, model: null, totalTokens: null, totalDurationMs: null, totalToolUseCount: null };
 }
 
 // Acumula un delta de PENSAMIENTO (2.5) en el bloque en curso, o lo abre. Mismo patron anti-fantasma
@@ -281,6 +344,30 @@ export function appendSystemBlock(blocks: readonly Block[], text: string, id: st
   return [...blocks, { kind: 'system', id, text }];
 }
 
+// Salida de un comando local (P-028, grupo C). Una salida vacia (`/clear`) no deja bloque.
+export function appendCommandOutputBlock(
+  blocks: readonly Block[],
+  output: { readonly command: string | null; readonly text: string },
+  id: string,
+): readonly Block[] {
+  const text = output.text.trim();
+  if (text.length === 0) return blocks;
+  return [...blocks, { kind: 'command-output', id, command: output.command, text }];
+}
+
+// Como se pinta una salida de comando (P-028): una linea va como la linea centrada de sistema; con
+// forma de markdown (`/context` trae tablas `|---|`, medido en 2.1.284) se renderiza; el resto
+// (`/usage`, `/skill-doctor`: columnas alineadas con espacios) va en `<pre>` para no perder la alineacion.
+export type CommandOutputLayout = 'line' | 'markdown' | 'pre';
+
+const MARKDOWN_SIGNS: readonly RegExp[] = [/^\s*\|?\s*:?-{3,}:?\s*\|/m, /^#{1,6}\s/m, /^```/m];
+
+export function commandOutputLayout(text: string): CommandOutputLayout {
+  const trimmed = text.trim();
+  if (!trimmed.includes('\n')) return 'line';
+  return MARKDOWN_SIGNS.some((sign) => sign.test(trimmed)) ? 'markdown' : 'pre';
+}
+
 // ¿El bloque tiene algo que ENSEÑAR? Guard de presentacion (feedback GUI A5): un bloque sin contenido
 // se renderizaba como una raya suelta y la conversacion aparecia "cortada" por lineas fantasma. Un
 // bloque de agente EN STREAMING si se pinta aunque este vacio (es el hueco donde va a caer el texto).
@@ -297,6 +384,7 @@ export function hasVisibleContent(block: Block): boolean {
     case 'error':
       return block.message.trim().length > 0;
     case 'system':
+    case 'command-output':
       return block.text.trim().length > 0;
     case 'question':
       // Una tarjeta SIEMPRE se pinta, incluso cancelada: es la traza de que el agente pregunto.

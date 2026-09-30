@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { HighlightedLines } from './Markdown';
 import { useWorkbenchStore } from '../workbenchStore';
@@ -121,7 +121,9 @@ export function FilesPanel(): React.JSX.Element {
                   className="overflow-hidden"
                 >
                   <div className="mt-[4px] min-w-0 rounded-[6px] border border-mg-border-subtle">
-                    <FileViewer key={file.path} file={file} cwd={cwd} />
+                    {/* Solo pregunta por un fichero de fuera si lo eligio el usuario: el que se abre solo
+                        (el ultimo creado, al abrir el panel) no puede saltar con un dialogo. */}
+                    <FileViewer key={file.path} file={file} cwd={cwd} askOutside={selectedPath === file.path} />
                   </div>
                 </motion.div>
               )}
@@ -135,7 +137,15 @@ export function FilesPanel(): React.JSX.Element {
 
 // Visor/editor de UN fichero. `key={path}` en el caller: al cambiar de fichero se monta uno nuevo, asi
 // que no hace falta reiniciar a mano el borrador, el modo de edicion ni el error.
-function FileViewer({ file, cwd }: { readonly file: CreatedFile; readonly cwd: string }): React.JSX.Element {
+function FileViewer({
+  file,
+  cwd,
+  askOutside,
+}: {
+  readonly file: CreatedFile;
+  readonly cwd: string;
+  readonly askOutside: boolean;
+}): React.JSX.Element {
   const [loaded, setLoaded] = useState<ProjectFileContent | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [draft, setDraft] = useState<string | null>(null); // null = no se esta editando
@@ -156,6 +166,25 @@ function FileViewer({ file, cwd }: { readonly file: CreatedFile; readonly cwd: s
   }, [cwd, file.path]);
 
   useEffect(load, [load]);
+
+  // Fuera de la carpeta de la conversacion (P-028, 15): la pregunta la hace main con un dialogo nativo
+  // y, si se aprueba, se vuelve a leer. Cancelar deja el aviso con «Abrir de todos modos…».
+  const approveOutside = useCallback(() => {
+    void window.mage
+      .approveProjectFileOutside({ cwd, path: file.path })
+      .then((approved) => {
+        if (approved) load();
+      })
+      .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)));
+  }, [cwd, file.path, load]);
+
+  // Se pregunta UNA vez al abrirlo; despues, solo si el usuario pulsa el boton del aviso.
+  const askedRef = useRef(false);
+  useEffect(() => {
+    if (loaded?.outsideCwd !== true || !askOutside || askedRef.current) return;
+    askedRef.current = true;
+    approveOutside();
+  }, [loaded, askOutside, approveOutside]);
 
   const save = (): void => {
     if (draft === null || loaded === null) return;
@@ -189,7 +218,7 @@ function FileViewer({ file, cwd }: { readonly file: CreatedFile; readonly cwd: s
             <PanelButton
               onClick={() => setDraft(loaded?.content ?? '')}
               label={`Editar ${file.name}`}
-              disabled={loaded === null || loaded.tooLarge}
+              disabled={loaded === null || loaded.tooLarge || loaded.outsideCwd === true}
             >
               Editar
             </PanelButton>
@@ -218,7 +247,7 @@ function FileViewer({ file, cwd }: { readonly file: CreatedFile; readonly cwd: s
         </div>
       )}
 
-      <FileBody file={file} loaded={loaded} draft={draft} error={error} onDraftChange={setDraft} />
+      <FileBody file={file} loaded={loaded} draft={draft} error={error} onDraftChange={setDraft} onApproveOutside={approveOutside} />
     </div>
   );
 }
@@ -232,12 +261,14 @@ function FileBody({
   draft,
   error,
   onDraftChange,
+  onApproveOutside,
 }: {
   readonly file: CreatedFile;
   readonly loaded: ProjectFileContent | null;
   readonly draft: string | null;
   readonly error: string | null;
   readonly onDraftChange: (value: string) => void;
+  readonly onApproveOutside: () => void;
 }): React.JSX.Element {
   if (draft !== null) {
     return (
@@ -252,6 +283,7 @@ function FileBody({
   }
   if (error !== null && loaded === null) return <div className="flex-1" />;
   if (loaded === null) return <Hint text="Cargando…" />;
+  if (loaded.outsideCwd === true) return <OutsideCwdHint path={loaded.path} onApprove={onApproveOutside} />;
   if (loaded.tooLarge) {
     return <Hint text="El fichero es demasiado grande para verlo aquí. Ábrelo en tu editor." />;
   }
@@ -266,6 +298,22 @@ function FileBody({
       ) : (
         <HighlightedFile name={file.name} content={loaded.content} />
       )}
+    </div>
+  );
+}
+
+// Aviso de un fichero de fuera de la carpeta de la conversacion que el usuario aun no ha aprobado.
+function OutsideCwdHint({ path, onApprove }: { readonly path: string; readonly onApprove: () => void }): React.JSX.Element {
+  return (
+    <div data-outside-cwd="true" className="flex flex-col items-start gap-[8px] p-[14px] text-[11px] text-mg-muted">
+      <span>Este fichero está fuera de la carpeta de la conversación:</span>
+      <span className="break-all font-mono text-[10.5px] text-mg-sec">{path}</span>
+      <button
+        onClick={onApprove}
+        className="rounded-[6px] border border-mg-border-emph px-[10px] py-[4px] text-[10.5px] text-mg-body2 hover:bg-mg-hover"
+      >
+        Abrir de todos modos…
+      </button>
     </div>
   );
 }

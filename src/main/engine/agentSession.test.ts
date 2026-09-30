@@ -65,13 +65,15 @@ describe('AgentSession ciclo de vida', () => {
 });
 
 describe('AgentSession protocolo de control (D2/D3)', () => {
-  it('start_registraLosHooksAlArrancar', () => {
+  it('start_registraLosHooksAlArrancarYPideElContexto', () => {
     // El CLI no emite su init hasta recibir algo por stdin: el initialize es lo primero que se manda.
+    // Detras, el desglose de contexto (P-028, punto 7): el CLI 2.1.284 lo contesta sin turno.
     const h = harness();
     h.session.start();
 
     expect(written(h.children[0]!)).toEqual([
       { type: 'control_request', request_id: 'own-init', request: { subtype: 'initialize' } },
+      { type: 'control_request', request_id: 'own-ctx', request: { subtype: 'get_context_usage' } },
     ]);
   });
 
@@ -187,6 +189,29 @@ describe('AgentSession protocolo de control (D2/D3)', () => {
     h.children[1]!.exit(1, null);
 
     expect(h.events.some((e) => e.kind === 'session_restarting')).toBe(true);
+  });
+
+  it('stopTask_conSoporte_escribeLaPeticionDeEseSubagente', () => {
+    const h = harness();
+    h.session.start();
+
+    h.session.stopTask('a19e');
+
+    expect(written(h.children[0]!)).toContainEqual({ stopTask: 'a19e' });
+  });
+
+  it('stopTask_adapterSinSoporte_lanzaConElTaskId', () => {
+    const { adapter } = fakeAdapter();
+    const { encodeStopTask: _sin, ...sinStopTask } = adapter;
+    const session = new AgentSession({
+      adapter: sinStopTask,
+      params: { sessionId: 's1', accountDir: '/home/u/.claude', model: 'sonnet', cwd: '/proj' },
+      emit: () => undefined,
+      spawn: () => new FakeChild() as unknown as ReturnType<SpawnFn>,
+    });
+    session.start();
+
+    expect(() => session.stopTask('a19e')).toThrow(/a19e/);
   });
 
   it('adapterSinSoporteDeControl_noMandaNada', () => {

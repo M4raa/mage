@@ -54,6 +54,8 @@ export function RightDock(): React.JSX.Element {
   const movePanel = usePanelLayoutStore((s) => s.movePanel);
   const hidePanel = usePanelLayoutStore((s) => s.hidePanel);
   const destinationsFor = usePanelLayoutStore((s) => s.destinationsFor);
+  const stepPanel = usePanelLayoutStore((s) => s.stepPanel);
+  const stepOptions = usePanelLayoutStore((s) => s.stepOptions);
   const permissionPending = useWorkbenchStore((s) => headPermission(s, s.activeTabId) !== null);
   const [moveMenu, setMoveMenu] = useState<{ readonly panelId: PanelId; readonly x: number; readonly y: number } | null>(null);
   const [addMenu, setAddMenu] = useState<{ readonly x: number; readonly y: number } | null>(null);
@@ -80,7 +82,7 @@ export function RightDock(): React.JSX.Element {
         zoneBActiveId={stripe.b.activePanelId}
         onToggle={(zone, panelId) => togglePanel('right', zone, panelId)}
         onRequestMove={onRequestMove}
-        onDropPanel={(zone, panelId) => movePanel(panelId, 'right', zone)}
+        onDropPanel={(zone, panelId, beforeId) => movePanel(panelId, 'right', zone, beforeId)}
         addablePanels={addablePanels}
         onRequestAdd={(x, y) => setAddMenu({ x, y })}
         badgedPanelIds={badgedPanelIds}
@@ -89,7 +91,7 @@ export function RightDock(): React.JSX.Element {
         thirdActiveId={bottomStripe.b.activePanelId}
         onToggleThird={(panelId) => togglePanel(BOTTOM_ANCHOR, 'b', panelId)}
         onRequestMoveThird={(panelId, x, y) => setMoveMenu({ panelId, x, y })}
-        onDropThird={(panelId) => movePanel(panelId, BOTTOM_ANCHOR, 'b')}
+        onDropThird={(panelId, beforeId) => movePanel(panelId, BOTTOM_ANCHOR, 'b', beforeId)}
       />
       <AnimatePresence>
         {moveMenu !== null && (
@@ -102,6 +104,8 @@ export function RightDock(): React.JSX.Element {
             onClose={() => setMoveMenu(null)}
             onSelect={onSelectDestination}
             onHide={() => hidePanel(moveMenu.panelId)}
+            stepOptions={stepOptions(moveMenu.panelId)}
+            onStep={(direction) => stepPanel(moveMenu.panelId, direction)}
           />
         )}
       </AnimatePresence>
