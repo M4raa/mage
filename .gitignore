@@ -42,6 +42,7 @@ graphify-out/
 /reference/
 /CLAUDE.local.md
 /scripts/sync-private.sh
+/scripts/sync-private.test.sh
 /design/BRANDBOOK.md
 /design/mage-icon.png
 /design/new_mage_icon.png
