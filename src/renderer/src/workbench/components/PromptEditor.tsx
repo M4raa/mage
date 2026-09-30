@@ -1,6 +1,6 @@
 import { useEffect, useImperativeHandle, useRef, type Ref } from 'react';
 import { EditorView, keymap, placeholder as cmPlaceholder, type ViewUpdate } from '@codemirror/view';
-import { EditorState, Prec } from '@codemirror/state';
+import { Compartment, EditorState, Prec } from '@codemirror/state';
 import { history, historyKeymap, standardKeymap } from '@codemirror/commands';
 import { promptExtensions } from '../promptExtensions';
 import type { TextState } from '../promptEditing';
@@ -85,6 +85,9 @@ export function PromptEditor({
   handlersRef.current = { onChange, onKeyDown, onPasteImages, onWrapChange, onTextWidthChange };
   const wrapsRef = useRef(false);
   const textWidthRef = useRef<number | null>(null);
+  // El placeholder SI cambia (depende de `disabled`: «Abre una pestaña…» sin pestaña): va en su propio
+  // compartimento para reconfigurarlo sin recrear el editor.
+  const placeholderRef = useRef(new Compartment());
 
   useEffect(() => {
     const host = hostRef.current;
@@ -95,7 +98,7 @@ export function PromptEditor({
         doc: value,
         extensions: [
           ...promptExtensions(),
-          cmPlaceholder(placeholder),
+          placeholderRef.current.of(cmPlaceholder(placeholder)),
           history(),
           keymap.of([...standardKeymap, ...historyKeymap]),
           Prec.highest(
@@ -132,7 +135,7 @@ export function PromptEditor({
       view.destroy();
       viewRef.current = null;
     };
-    // Se monta una sola vez: el `value` se sincroniza en el efecto de abajo y el placeholder no cambia.
+    // Se monta una sola vez: el `value` y el placeholder se sincronizan en los efectos de abajo.
   }, []);
 
   // Sincroniza el documento cuando el `value` controlado cambia POR FUERA (limpiar al enviar, aceptar
@@ -148,6 +151,10 @@ export function PromptEditor({
       scrollIntoView: true,
     });
   }, [value]);
+
+  useEffect(() => {
+    viewRef.current?.dispatch({ effects: placeholderRef.current.reconfigure(cmPlaceholder(placeholder)) });
+  }, [placeholder]);
 
   useEffect(() => {
     viewRef.current?.contentDOM.setAttribute('aria-label', ariaLabel);

@@ -6,7 +6,9 @@ import {
   permissionModeLabel,
   permissionSteps,
   stepIndexOf,
+  stepFraction,
   stepSliderAnchor,
+  stepSliderPlacement,
   stepValueAt,
 } from './stepSliderModel';
 
@@ -82,5 +84,52 @@ describe('stepSliderAnchor', () => {
 
   it('stepSliderAnchor_justoEnElLimite_vaDebajo', () => {
     expect(stepSliderAnchor({ top: 726, bottom: 746 }, 150, 900, 4)).toEqual({ top: 750 });
+  });
+});
+
+describe('stepSliderPlacement', () => {
+  const viewport = { width: 1400, height: 900 };
+
+  it('stepSliderPlacement_chipAbajo_seAbreEncimaAlineadoASuIzquierda', () => {
+    const placement = stepSliderPlacement({ top: 820, bottom: 840, left: 708 }, viewport);
+
+    expect(placement).toEqual({ left: 708, anchor: { bottom: 84 } });
+  });
+
+  it('stepSliderPlacement_chipArriba_seAbreDebajo', () => {
+    const placement = stepSliderPlacement({ top: 10, bottom: 30, left: 100 }, viewport);
+
+    expect(placement.anchor).toEqual({ top: 34 });
+  });
+
+  it('stepSliderPlacement_chipPegadoALaDerecha_noSeSaleDeLaVentana', () => {
+    const placement = stepSliderPlacement({ top: 10, bottom: 30, left: 1350 }, viewport);
+
+    expect(placement.left).toBe(1400 - 264 - 8);
+  });
+
+  it('stepSliderPlacement_chipFueraPorLaIzquierda_respetaElMargen', () => {
+    const placement = stepSliderPlacement({ top: 10, bottom: 30, left: -40 }, viewport);
+
+    expect(placement.left).toBe(8);
+  });
+});
+
+describe('stepFraction', () => {
+  it('stepFraction_extremosYMitad_repartenElRecorrido', () => {
+    expect([0, 2, 4].map((index) => stepFraction(index, 5))).toEqual([0, 0.5, 1]);
+  });
+
+  it('stepFraction_valorFueraDeLosPasos_quedaALaIzquierda', () => {
+    expect(stepFraction(-1, 5)).toBe(0);
+  });
+
+  it('stepFraction_unSoloPasoOCero_noDivideEntreCero', () => {
+    expect(stepFraction(0, 1)).toBe(0);
+    expect(stepFraction(0, 0)).toBe(0);
+  });
+
+  it('stepFraction_indicePasadoDelFinal_seQuedaEnElExtremo', () => {
+    expect(stepFraction(9, 5)).toBe(1);
   });
 });

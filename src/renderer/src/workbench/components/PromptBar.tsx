@@ -42,7 +42,10 @@ const ADVICE_TIMEOUT_MS = 8000;
 
 const BYPASS_PERMISSIONS_ADVICE = 'Omitir permisos: el agente ejecuta todo sin preguntar';
 
-const PERMISSION_MODE_ICON: Readonly<Partial<Record<PermissionMode, IconName>>> = {
+// Los cinco llevan icono: uno sin el hacia que el chip encogiera 16 px al pasar por el y la fila, alineada
+// a la derecha, lo desplazaba.
+const PERMISSION_MODE_ICON: Readonly<Record<PermissionMode, IconName>> = {
+  default: 'hand',
   acceptEdits: 'pencil',
   plan: 'clipboard',
   auto: 'sparkles',
@@ -52,7 +55,8 @@ const PERMISSION_MODE_ICON: Readonly<Partial<Record<PermissionMode, IconName>>> 
 // Neutro en Manual, ambar en los que relajan permisos y rojo en «Omitir permisos» (D9: mismo ciclo, con su aviso).
 function permissionChipSkin(mode: string): string {
   if (mode === 'default') return 'border-mg-border-ctrl text-mg-sec hover:text-mg-body';
-  if (mode === 'bypassPermissions') return 'border-mg-danger-border bg-mg-danger-bg font-semibold text-mg-danger';
+  // Sin negrita: el rojo y el icono ya lo distinguen, y la negrita ensanchaba el chip (y sus etiquetas reservadas).
+  if (mode === 'bypassPermissions') return 'border-mg-danger-border bg-mg-danger-bg text-mg-danger';
   return 'border-mg-warn-border bg-mg-warn-bg text-mg-warn-text';
 }
 
@@ -687,11 +691,7 @@ export function PromptBar(): React.JSX.Element {
               endLabels={['Más control', 'Más autonomía']}
               tip={PERMISSION_MODE_TIP}
               triggerClassName={permissionChipSkin(permissionMode)}
-              leading={
-                isPermissionMode(permissionMode) && PERMISSION_MODE_ICON[permissionMode] !== undefined ? (
-                  <Icon name={PERMISSION_MODE_ICON[permissionMode]} size={11} />
-                ) : undefined
-              }
+              leading={isPermissionMode(permissionMode) ? <Icon name={PERMISSION_MODE_ICON[permissionMode]} size={11} /> : undefined}
             />
           )}
           {isClaude && (

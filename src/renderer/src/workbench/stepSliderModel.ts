@@ -85,3 +85,34 @@ export function stepSliderAnchor(
   if (trigger.bottom + estimatedHeight + gap <= viewportHeight) return { top: trigger.bottom + gap };
   return { bottom: viewportHeight - trigger.top + gap };
 }
+
+// Geometria del popover: ancho fijo, alto ESTIMADO (solo decide el lado), hueco con el chip y margen
+// minimo con los bordes de la ventana.
+export const STEP_SLIDER_POPOVER = { widthPx: 264, estimatedHeightPx: 150, gapPx: 4, viewportMarginPx: 8 } as const;
+
+export interface StepSliderPlacement {
+  readonly left: number;
+  readonly anchor: { readonly top: number } | { readonly bottom: number };
+}
+
+// Donde se pinta el popover. Se calcula UNA vez, al abrirlo, con la caja del chip de ese momento: medirlo
+// en cada render lo dejaba un paso por detras del chip (la caja era la del render anterior) y, mientras
+// esta abierto, cambiar de paso no debe moverlo aunque el chip cambie de ancho.
+export function stepSliderPlacement(
+  trigger: { readonly top: number; readonly bottom: number; readonly left: number },
+  viewport: { readonly width: number; readonly height: number },
+): StepSliderPlacement {
+  const { widthPx, estimatedHeightPx, gapPx, viewportMarginPx } = STEP_SLIDER_POPOVER;
+  const maxLeft = viewport.width - widthPx - viewportMarginPx;
+  return {
+    left: Math.max(viewportMarginPx, Math.min(trigger.left, maxLeft)),
+    anchor: stepSliderAnchor(trigger, estimatedHeightPx, viewport.height, gapPx),
+  };
+}
+
+// Fraccion del recorrido (0..1) en la que va el pulgar dibujado. Un valor fuera de los pasos (-1) o una
+// escala de un solo paso lo dejan a la izquierda: no hay recorrido que repartir.
+export function stepFraction(index: number, stepCount: number): number {
+  if (index < 0 || stepCount <= 1) return 0;
+  return Math.min(index, stepCount - 1) / (stepCount - 1);
+}

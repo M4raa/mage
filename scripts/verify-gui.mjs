@@ -1123,6 +1123,95 @@ const CHECKS = [
     },
   },
   {
+    // Grupo A (0.1.2, punto 1): sin pestañas sale la MISMA pantalla que la de un chat nuevo (constelacion y
+    // selector de proyecto con sus recientes), y elegir un proyecto CREA la conversacion en esa carpeta.
+    // Su «＋ Nuevo chat» crea SIEMPRE en carpeta temporal, aunque el ajuste diga «ultimo proyecto» (se
+    // siembra asi para que la medida distinga). Y el placeholder del prompt deja de decir «Abre una
+    // pestaña…» en cuanto la hay. Nada se envia: la sesion es perezosa. Deja el estado como lo encontro.
+    name: 'Grupo A: sin pestañas sale la pantalla de nuevo chat y elegir proyecto crea la conversacion',
+    async run(page) {
+      const previo = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return { tabs: s.tabs, activeTabId: s.activeTabId, splitLayout: s.splitLayout, conversationHistory: s.conversationHistory, settings: s.settings };
+      });
+      const proyecto = fs.mkdtempSync(path.join(os.tmpdir(), 'mage-verify-sin-pestanas-'));
+      const pantalla = page.locator('[data-no-conversation="true"]');
+      const prompt = page.getByRole('textbox', { name: 'Escribe una instrucción para el agente' });
+      const vaciar = (history) =>
+        page.evaluate(
+          ({ cwd, conHistorial }) => {
+            const s = window.__mageDev.store.getState();
+            const base = { configDir: '', title: 't', privacy: 'shared', sizeBytes: 1, isScheduled: false };
+            window.__mageDev.store.setState({
+              tabs: [],
+              activeTabId: '',
+              splitLayout: { kind: 'leaf', tabIds: [''], activeTabId: '' },
+              settings: { ...s.settings, newConversationFolder: 'lastProject' },
+              ...(conHistorial ? { conversationHistory: [{ ...base, sessionId: 'v-sin-pestanas', cwd, updatedAtMs: Date.now() }] } : {}),
+            });
+          },
+          { cwd: proyecto, conHistorial: history },
+        );
+      const pestañaActiva = () =>
+        page.evaluate(() => {
+          const s = window.__mageDev.store.getState();
+          return { total: s.tabs.length, cwd: s.tabs.find((t) => t.id === s.activeTabId)?.cwd ?? null };
+        });
+      const esperarPestaña = () => page.waitForFunction(() => window.__mageDev.store.getState().tabs.length === 1, null, { timeout: CONFIG.actionTimeoutMs });
+      let medido = null;
+      try {
+        // El sondeo periodico del historial (App.tsx) lo recargaba del disco a mitad de la comprobacion y
+        // se llevaba la tarjeta sembrada (medido: 3 de 4 tandas). Se desactiva mientras dura, tras una
+        // ultima carga real que vacie la que pudiera estar en vuelo; el `finally` lo repone.
+        await page.evaluate(async () => {
+          const store = window.__mageDev.store;
+          window.__mageVerifyLoadHistory = store.getState().loadConversationHistory;
+          store.setState({ loadConversationHistory: async () => undefined });
+          await window.__mageVerifyLoadHistory();
+        });
+        await vaciar(true);
+        await pantalla.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const tarjeta = pantalla.locator(`[data-recent-project="${proyecto.replace(/\\/g, '\\\\')}"]`);
+        await tarjeta.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const vacia = {
+          chispas: await pantalla.locator('.mg-sparkle').count(),
+          elegir: await pantalla.getByRole('button', { name: 'Elegir proyecto' }).count(),
+          recientes: await pantalla.locator('[data-recent-projects]').count(),
+          placeholder: await prompt.getAttribute('aria-placeholder'),
+        };
+        await tarjeta.click();
+        await esperarPestaña();
+        await pantalla.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+        const trasTarjeta = { ...(await pestañaActiva()), placeholder: await prompt.getAttribute('aria-placeholder') };
+        await vaciar(false);
+        await pantalla.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        await pantalla.getByRole('button', { name: '＋ Nuevo chat', exact: true }).click();
+        await esperarPestaña();
+        medido = { vacia, trasTarjeta, trasNuevoChat: await pestañaActiva() };
+      } finally {
+        await page.evaluate((estado) => {
+          const loadConversationHistory = window.__mageVerifyLoadHistory;
+          delete window.__mageVerifyLoadHistory;
+          window.__mageDev.store.setState(loadConversationHistory === undefined ? estado : { ...estado, loadConversationHistory });
+        }, previo);
+        fs.rmSync(proyecto, { recursive: true, force: true });
+        await page.waitForTimeout(CONFIG.settleMs);
+      }
+      const ok =
+        medido !== null &&
+        medido.vacia.chispas === 5 &&
+        medido.vacia.elegir === 1 &&
+        medido.vacia.recientes === 1 &&
+        medido.vacia.placeholder === 'Abre una pestaña para escribir…' &&
+        medido.trasTarjeta.total === 1 &&
+        medido.trasTarjeta.cwd === proyecto &&
+        medido.trasTarjeta.placeholder === 'Escribe una instrucción…' &&
+        medido.trasNuevoChat.total === 1 &&
+        /mage-scratch/i.test(medido.trasNuevoChat.cwd ?? '');
+      return { ok, detail: JSON.stringify(medido) };
+    },
+  },
+  {
     // A partir de aqui hace falta una CONVERSACION abierta. Se usa "Carpeta temporal" (no el dialogo
     // del SO, que un driver no puede pilotar) y NO se envia ningun mensaje: `ensureSession` es
     // perezoso, asi que abrir la pestaña no spawnea el CLI y la comprobacion no gasta suscripcion.
@@ -1614,40 +1703,40 @@ const CHECKS = [
     // Solo se ABRE el menu (Escape para cerrarlo): elegir una opcion cambiaria el esfuerzo de verdad.
     name: 'Esfuerzo y modo: el popover del deslizador nace pegado a su chip y trae sus pasos (StepSlider)',
     async run(page) {
-      // P-028 32/33: modo y esfuerzo son deslizadores de pasos. Solo se ABREN (Escape para cerrar): mover
-      // el pulgar cambiaria el esfuerzo o el modo de verdad.
+      // P-028 32/33: modo y esfuerzo son deslizadores de pasos. Grupo A (0.1.2, punto 4): se RECORREN todos
+      // los pasos con el teclado midiendo que ni el chip ni el popover se mueven (el de modo saltaba 16 px
+      // y el popover iba un paso por detras) y que el pulgar dibujado llega a su sitio con transicion. Al
+      // terminar se vuelve al paso de partida: el modo o el esfuerzo cambiado romperia las siguientes.
+      const previo = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return { tabs: s.tabs, activeTabId: s.activeTabId, splitLayout: s.splitLayout };
+      });
+      const propia = (await page.locator('button[aria-label^="Modo de permiso:"]').count()) === 0;
+      if (propia) await openTemporaryConversation(page);
       const casos = [
         { chip: 'button[aria-label="Nivel de esfuerzo"]', pasos: 6 },
         { chip: 'button[aria-label^="Modo de permiso:"]', pasos: 5 },
       ];
       const medidas = [];
-      for (const caso of casos) {
-        const trigger = page.locator(caso.chip).first();
-        await trigger.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
-        await trigger.click();
-        const popover = page.locator('[data-step-slider-popover="true"]');
-        await popover.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
-        await page.waitForTimeout(300); // la animacion de entrada del popover (150 ms) debe haber acabado
-        const triggerBox = await trigger.boundingBox();
-        const popBox = await popover.boundingBox();
-        // Punto 5 (ronda 2): el chip mide lo que su etiqueta MAS LARGA (las invisibles del `inline-grid`),
-        // asi que ni el ni el popover se mueven al cambiar de paso. Se mide sin cambiar de paso: el
-        // contenido visible nunca puede ser mas ancho que el mayor de los reservados.
-        const ancho = await trigger.evaluate((el) => {
-          const cajas = [...el.querySelectorAll('.inline-grid > span')];
-          const anchos = cajas.map((n) => n.getBoundingClientRect().width);
-          return { reservados: cajas.filter((n) => n.getAttribute('aria-hidden') === 'true').length, maxReservado: Math.max(...anchos), rejilla: el.querySelector('.inline-grid')?.getBoundingClientRect().width ?? 0 };
-        });
-        const range = popover.locator('input[type="range"]');
-        const info = await range.evaluate((el) => ({ max: Number(el.max), valuetext: el.getAttribute('aria-valuetext') }));
-        await page.keyboard.press('Escape');
-        await page.waitForTimeout(200);
-        const gapBelow = Math.abs(popBox.y - (triggerBox.y + triggerBox.height));
-        const gapAbove = Math.abs(triggerBox.y - (popBox.y + popBox.height));
-        medidas.push({ ancho, gap: Math.min(gapBelow, gapAbove), pasos: info.max + 1, esperados: caso.pasos, valuetext: info.valuetext });
+      try {
+        for (const caso of casos) medidas.push(await walkStepSlider(page, caso));
+      } finally {
+        if (propia) await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
       }
-      // Tolerancia de 24 px: el `top` se calcula ANTES de montar el popover con una estimacion de su alto.
-      const ok = medidas.every((m) => m.gap <= 24 && m.pasos === m.esperados && m.ancho.reservados >= m.esperados - 1 && Math.abs(m.ancho.rejilla - m.ancho.maxReservado) < 1 && (m.valuetext ?? '').length > 0);
+      // Tolerancia de 24 px en el hueco: el `top` se calcula con una estimacion del alto del popover.
+      const ok = medidas.every(
+        (m) =>
+          m.gap <= 24 &&
+          m.pasos === m.esperados &&
+          m.recorridos === m.esperados &&
+          m.desplazamientoChip <= SLIDER_STILL_TOLERANCE_PX &&
+          m.desplazamientoPopover <= SLIDER_STILL_TOLERANCE_PX &&
+          Math.max(...Object.values(m.filaDeriva)) <= SLIDER_STILL_TOLERANCE_PX &&
+          m.errorPulgar <= 1 &&
+          m.transicion !== '0s' &&
+          m.vuelveAlInicio &&
+          m.valuetext.length > 0,
+      );
       return { ok, detail: JSON.stringify(medidas) };
     },
   },
@@ -6900,6 +6989,85 @@ function countBypassAdvice(page, text) {
     (t) => [...document.querySelectorAll('body *')].filter((n) => n.childElementCount === 0 && (n.textContent ?? '').trim() === t && n.closest('[data-active-panel]') === null).length,
     text,
   );
+}
+
+// Tolerancia de «no se ha movido» del chip y del popover de un StepSlider entre pasos (subpixel).
+const SLIDER_STILL_TOLERANCE_PX = 0.5;
+
+// Abre el deslizador de `caso.chip`, lo lleva al primer paso con Home y lo recorre con ArrowRight hasta el
+// ultimo. En CADA paso mide la caja del chip y la del popover (su mayor desviacion respecto a la de
+// apertura) y, pasada la transicion, donde esta el pulgar dibujado respecto a la fraccion que le toca.
+// Deja el valor como lo encontro (Home + tantos ArrowRight como su posicion inicial) y cierra con Escape.
+async function walkStepSlider(page, caso) {
+  const trigger = page.locator(caso.chip).first();
+  await trigger.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+  await trigger.click();
+  const popover = page.locator('[data-step-slider-popover="true"]');
+  await popover.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+  await page.waitForTimeout(300); // la animacion de entrada del popover (150 ms) debe haber acabado
+  const range = popover.locator('input[type="range"]');
+  const inicio = await range.evaluate((el) => ({ value: Number(el.value), max: Number(el.max), valuetext: el.getAttribute('aria-valuetext') ?? '' }));
+  const fila = page.locator('[data-prompt-controls="true"]').first();
+  // El chip se mide RELATIVO a su fila de controles y la fila, aparte: son dos fallos distintos. El chip
+  // cambiaba de ancho (Manual sin icono); la fila bajaba 5,5 px cuando el aviso de coste de «Muy alto»
+  // pasaba a dos lineas y la columna, con el estado vacio sin encoger, desbordaba.
+  const chipEnFila = async () => {
+    const [chip, row] = [await trigger.boundingBox(), await fila.boundingBox()];
+    return { x: chip.x - row.x, y: chip.y - row.y, width: chip.width, height: chip.height };
+  };
+  const chipAbs = await trigger.boundingBox();
+  const chip0 = await chipEnFila();
+  const fila0 = await fila.boundingBox();
+  const pop0 = await popover.boundingBox();
+  // Mayor desviacion por eje ({x, y, width, height}) de una caja respecto a la de apertura.
+  const chipDeriva = { x: 0, y: 0, width: 0, height: 0 };
+  const popDeriva = { x: 0, y: 0, width: 0, height: 0 };
+  const filaDeriva = { x: 0, y: 0, width: 0, height: 0 };
+  const acumular = (acc, box, base) => {
+    for (const eje of Object.keys(acc)) acc[eje] = Math.max(acc[eje], Number(Math.abs(box[eje] - base[eje]).toFixed(2)));
+  };
+  let errorPulgar = 0;
+  let recorridos = 0;
+  await range.press('Home');
+  for (let paso = 0; paso <= inicio.max; paso += 1) {
+    if (paso > 0) await range.press('ArrowRight');
+    await page.waitForTimeout(250); // la transicion del pulgar (160 ms) debe haber acabado
+    const pulgar = await popover.evaluate((el) => {
+      const pista = el.querySelector('.mg-step-thumb-track').getBoundingClientRect();
+      const punto = el.querySelector('.mg-step-thumb-dot').getBoundingClientRect();
+      return { offset: punto.left - pista.left, recorrido: pista.width, value: Number(el.querySelector('input[type="range"]').value) };
+    });
+    if (pulgar.value === paso) recorridos += 1;
+    const esperado = inicio.max === 0 ? 0 : (paso / inicio.max) * pulgar.recorrido;
+    errorPulgar = Math.max(errorPulgar, Math.abs(pulgar.offset - esperado));
+    acumular(chipDeriva, await chipEnFila(), chip0);
+    acumular(filaDeriva, await fila.boundingBox(), fila0);
+    acumular(popDeriva, await popover.boundingBox(), pop0);
+  }
+  const transicion = await popover.locator('.mg-step-thumb').evaluate((el) => getComputedStyle(el).transitionDuration);
+  await range.press('Home');
+  for (let paso = 0; paso < inicio.value; paso += 1) await range.press('ArrowRight');
+  const final = await range.evaluate((el) => Number(el.value));
+  await page.keyboard.press('Escape');
+  await popover.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+  const gapBelow = Math.abs(pop0.y - (chipAbs.y + chipAbs.height));
+  const gapAbove = Math.abs(chipAbs.y - (pop0.y + pop0.height));
+  return {
+    chip: caso.chip,
+    gap: Math.min(gapBelow, gapAbove),
+    pasos: inicio.max + 1,
+    esperados: caso.pasos,
+    recorridos,
+    desplazamientoChip: Math.max(...Object.values(chipDeriva)),
+    desplazamientoPopover: Math.max(...Object.values(popDeriva)),
+    chipDeriva,
+    popDeriva,
+    filaDeriva,
+    errorPulgar: Number(errorPulgar.toFixed(2)),
+    transicion,
+    vuelveAlInicio: final === inicio.value,
+    valuetext: inicio.valuetext,
+  };
 }
 
 async function openTemporaryConversation(page) {

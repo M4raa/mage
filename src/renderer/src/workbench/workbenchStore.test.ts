@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { MageApi } from '@shared/ipc';
 import type { ConversationSummary } from '@shared/conversations';
-import { createWorkbenchStore } from './workbenchStore';
+import { createWorkbenchStore, type ConversationFolderChoice } from './workbenchStore';
 import { findLeafPath, singleLeaf } from './splitLayout';
 import type { Account, Tab } from './types';
 
@@ -619,7 +619,7 @@ describe('pestaña nueva sin formulario', () => {
     return { sessionId: `s-${updatedAtMs}`, configDir: 'C:\\Users\\u\\.claude', cwd, title: 't', privacy: 'shared', updatedAtMs, sizeBytes: 1, isScheduled: false };
   }
 
-  async function createWithLastProject(existsDirs: MageApi['existsDirs']): Promise<string | undefined> {
+  async function createWithLastProject(existsDirs: MageApi['existsDirs'], folder?: ConversationFolderChoice): Promise<string | undefined> {
     const store = createWorkbenchStore(
       fakeMage({ getScratchDir: vi.fn().mockResolvedValue('C:\\tmp\\scratch'), saveWorkspace: vi.fn().mockResolvedValue(undefined), existsDirs }),
     );
@@ -629,9 +629,35 @@ describe('pestaña nueva sin formulario', () => {
       settings: { ...s.settings, newConversationFolder: 'lastProject' },
       conversationHistory: [historyItem('C:\\src\\viejo', 1), historyItem('C:\\src\\borrado', 3), historyItem('C:\\src\\nuevo', 2)],
     }));
-    await store.getState().createConversation('shared');
+    await store.getState().createConversation('shared', folder);
     return store.getState().tabs.at(-1)?.cwd;
   }
+
+  // Grupo A (0.1.2): la pantalla sin pestañas crea en el proyecto elegido, y su «＋ Nuevo chat», siempre
+  // en la temporal, diga lo que diga el ajuste.
+  it('createConversation_conCwd_usaEsaCarpetaSinMirarElAjuste', async () => {
+    const existsDirs = vi.fn().mockResolvedValue([true, true, true]);
+
+    const cwd = await createWithLastProject(existsDirs, { cwd: 'C:\\src\\elegido' });
+
+    expect(cwd).toBe('C:\\src\\elegido');
+    expect(existsDirs).not.toHaveBeenCalled();
+  });
+
+  it('createConversation_conScratch_usaLaTemporalAunqueElAjusteDigaUltimoProyecto', async () => {
+    const existsDirs = vi.fn().mockResolvedValue([true, true, true]);
+
+    const cwd = await createWithLastProject(existsDirs, { scratch: true });
+
+    expect(cwd).toBe('C:\\tmp\\scratch');
+    expect(existsDirs).not.toHaveBeenCalled();
+  });
+
+  it('createConversation_carpetaVacia_sigueElAjuste', async () => {
+    const cwd = await createWithLastProject(vi.fn().mockResolvedValue([false, true, true]), {});
+
+    expect(cwd).toBe('C:\\src\\nuevo');
+  });
 
   it('createConversation_ultimoProyecto_usaElMasRecienteQueExiste', async () => {
     const cwd = await createWithLastProject(vi.fn().mockResolvedValue([false, true, true]));

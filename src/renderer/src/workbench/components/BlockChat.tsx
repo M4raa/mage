@@ -161,6 +161,32 @@ const EMPTY_SPARKLES = [
   { cx: 25, cy: 21, r: 3.5, delayS: 2 },
 ] as const;
 
+// Caja de las dos pantallas vacias. `min-h-0` + scroll propio: con el `min-height: auto` de flex no
+// encogia por debajo de su contenido y, cuando la barra del prompt crecia (el aviso de coste pasando a dos
+// lineas), la columna desbordaba y empujaba la fila de controles hacia abajo (medido: 5,5 px). `safe
+// center` para que, si no cabe, se corte por abajo y se pueda desplazar, no por arriba.
+const EMPTY_STATE_CLASS = 'flex min-h-0 flex-1 flex-col items-center gap-[20px] overflow-y-auto text-center [justify-content:safe_center]';
+
+// Constelacion de chispas: la MISMA estrella de cuatro puntas del simbolo de marca
+// (resources/brand/symbol.svg), en cinco tamanos que titilan desfasados. Monocromo via currentColor
+// (hereda el color del contenedor), asi conmuta con el tema. La comparten las dos pantallas vacias.
+function BrandConstellation(): React.JSX.Element {
+  return (
+    <div aria-hidden="true" className="h-[80px] w-[80px] text-mg-sec">
+      <svg width="80" height="80" viewBox="0 0 80 80" fill="currentColor">
+        {EMPTY_SPARKLES.map((sparkle) => (
+          <path
+            key={`${sparkle.cx}-${sparkle.cy}`}
+            className="mg-sparkle"
+            style={{ '--mg-twinkle-delay': `${sparkle.delayS}s` } as React.CSSProperties}
+            d={sparklePath(sparkle.cx, sparkle.cy, sparkle.r)}
+          />
+        ))}
+      </svg>
+    </div>
+  );
+}
+
 // Estado vacio de una conversacion ya abierta (M2.6): una constelacion de chispas de la marca que
 // titilan. Monocromo, y con prefers-reduced-motion pierde la escala y se queda en el latido de
 // opacidad. Reemplaza el texto plano "Sin mensajes todavia en este chat.".
@@ -173,22 +199,8 @@ function EmptyConversation(): React.JSX.Element {
     return provider !== undefined && isAutoApprovedProvider(provider);
   });
   return (
-    <div className="flex flex-1 flex-col items-center justify-center gap-[20px] text-center">
-      {/* Constelacion de chispas: la MISMA estrella de cuatro puntas del simbolo de marca
-          (resources/brand/symbol.svg), en cinco tamanos que titilan desfasados. Monocromo via
-          currentColor (hereda el color del contenedor), asi conmuta con el tema. */}
-      <div aria-hidden="true" className="h-[80px] w-[80px] text-mg-sec">
-        <svg width="80" height="80" viewBox="0 0 80 80" fill="currentColor">
-          {EMPTY_SPARKLES.map((sparkle) => (
-            <path
-              key={`${sparkle.cx}-${sparkle.cy}`}
-              className="mg-sparkle"
-              style={{ '--mg-twinkle-delay': `${sparkle.delayS}s` } as React.CSSProperties}
-              d={sparklePath(sparkle.cx, sparkle.cy, sparkle.r)}
-            />
-          ))}
-        </svg>
-      </div>
+    <div className={EMPTY_STATE_CLASS}>
+      <BrandConstellation />
       <div className="flex flex-col items-center gap-[12px]">
         <div className="text-[13px] font-medium text-mg-text">Escribe una instrucción para empezar</div>
         <WorkingFolder />
@@ -231,15 +243,33 @@ function WorkingFolder(): React.JSX.Element | null {
 
   if (activeTabId.length === 0 || tab === undefined) return null;
   const verdict = canChangeCwd({ hasLiveSession, hasResumeTarget: tab.resumeSessionId !== undefined });
+  return (
+    <ProjectPicker cwd={tab.cwd} allowed={verdict.allowed} reason={verdict.allowed ? undefined : verdict.reason} onPick={(cwd) => setActiveCwd(cwd, activeTabId)} />
+  );
+}
 
+// Lo visual de elegir proyecto (Grupo A, 0.1.2): el primario «Elegir proyecto…», la ruta actual (si la
+// hay) y, mientras se pueda elegir, las tarjetas de recientes. QUE se hace con la carpeta lo decide quien
+// lo usa: la conversacion vacia cambia su cwd; la pantalla sin pestañas crea una conversacion en ella.
+function ProjectPicker({
+  cwd,
+  allowed,
+  reason,
+  onPick,
+}: {
+  readonly cwd?: string;
+  readonly allowed: boolean;
+  readonly reason?: string;
+  readonly onPick: (cwd: string) => void;
+}): React.JSX.Element {
   const pickFolder = (): void => {
     void window.mage
       .pickDirectory()
       .then((picked) => {
         if (picked === null) return; // el usuario cancelo el dialogo del SO
-        setActiveCwd(picked, activeTabId);
+        onPick(picked);
       })
-      .catch(() => undefined);
+      .catch((err: unknown) => console.warn('No se pudo abrir el selector de carpeta:', err));
   };
 
   return (
@@ -247,8 +277,8 @@ function WorkingFolder(): React.JSX.Element | null {
       <div className="flex max-w-[420px] flex-col items-center gap-[6px]">
         <button
           onClick={pickFolder}
-          disabled={!verdict.allowed}
-          data-tip={verdict.allowed ? 'Elegir la carpeta de trabajo' : verdict.reason}
+          disabled={!allowed}
+          data-tip={allowed ? 'Elegir la carpeta de trabajo' : reason}
           aria-label="Elegir proyecto"
           className="flex items-center gap-[7px] rounded-[8px] bg-mg-primary px-[16px] py-[8px] text-[12px] font-semibold text-mg-primary-ink disabled:cursor-default disabled:opacity-40"
         >
@@ -256,12 +286,14 @@ function WorkingFolder(): React.JSX.Element | null {
           Elegir proyecto…
         </button>
         {/* La ruta completa en el title: lo que se pinta va acortado para no romper el centrado. */}
-        <span data-working-folder="true" className="flex max-w-full items-center gap-[6px] text-[10.5px] text-mg-muted" title={tab.cwd}>
-          <Icon name="folder" />
-          <span className="truncate font-mono text-mg-sec">{shortenPath(tab.cwd)}</span>
-        </span>
+        {cwd !== undefined && (
+          <span data-working-folder="true" className="flex max-w-full items-center gap-[6px] text-[10.5px] text-mg-muted" title={cwd}>
+            <Icon name="folder" />
+            <span className="truncate font-mono text-mg-sec">{shortenPath(cwd)}</span>
+          </span>
+        )}
       </div>
-      {verdict.allowed && <RecentProjects currentCwd={tab.cwd} onPick={(cwd) => setActiveCwd(cwd, activeTabId)} />}
+      {allowed && <RecentProjects currentCwd={cwd ?? ''} onPick={onPick} />}
     </div>
   );
 }
@@ -275,29 +307,37 @@ function Kbd({ children }: { readonly children: React.ReactNode }): React.JSX.El
   );
 }
 
-// Estado sin ninguna conversacion abierta: botones centrales para crear una (compartida o privada),
-// sin pasar por el sidebar ni un dialogo. La cuenta es la activa del rail.
+// Estado sin ninguna conversacion abierta (Grupo A, 0.1.2): la MISMA pantalla que la de un chat nuevo
+// —constelacion y selector de proyecto—, pero elegir un proyecto CREA la conversacion en esa carpeta.
+// Debajo, los dos botones de siempre para quien no quiera elegir: esos crean SIEMPRE en una carpeta
+// temporal, diga lo que diga el ajuste «carpeta de los chats nuevos». La cuenta es la activa del rail.
+const NO_ACCOUNT_REASON = 'Añade una cuenta para empezar';
+
 function NoConversationState(): React.JSX.Element {
   const createConversation = useWorkbenchStore((s) => s.createConversation);
   const hasAccount = useWorkbenchStore((s) => s.activeAccountId.length > 0);
   return (
-    <div className="flex flex-1 flex-col items-center justify-center gap-[14px] text-center">
-      <div className="text-[13px] text-mg-muted">No hay ninguna conversación abierta.</div>
-      <div className="flex gap-[10px]">
-        <button
-          onClick={() => void createConversation('shared')}
-          disabled={!hasAccount}
-          className="rounded-[8px] border border-mg-border-emph px-[16px] py-[9px] text-[12px] text-mg-body2 hover:bg-mg-hover disabled:opacity-40"
-        >
-          ＋ Nuevo chat
-        </button>
-        <button
-          onClick={() => void createConversation('private')}
-          disabled={!hasAccount}
-          className="rounded-[8px] border border-mg-border-emph px-[16px] py-[9px] text-[12px] text-mg-body2 hover:bg-mg-hover disabled:opacity-40"
-        >
-          <Icon name="lock" size={12} /> Nuevo chat privado
-        </button>
+    <div data-no-conversation="true" className={EMPTY_STATE_CLASS}>
+      <BrandConstellation />
+      <div className="flex w-full flex-col items-center gap-[12px]">
+        <div className="text-[13px] font-medium text-mg-text">Elige un proyecto para empezar</div>
+        <ProjectPicker allowed={hasAccount} reason={NO_ACCOUNT_REASON} onPick={(cwd) => void createConversation('shared', { cwd })} />
+        <div className="flex gap-[10px]">
+          <button
+            onClick={() => void createConversation('shared', { scratch: true })}
+            disabled={!hasAccount}
+            className="rounded-[8px] border border-mg-border-emph px-[16px] py-[9px] text-[12px] text-mg-body2 hover:bg-mg-hover disabled:opacity-40"
+          >
+            ＋ Nuevo chat
+          </button>
+          <button
+            onClick={() => void createConversation('private', { scratch: true })}
+            disabled={!hasAccount}
+            className="rounded-[8px] border border-mg-border-emph px-[16px] py-[9px] text-[12px] text-mg-body2 hover:bg-mg-hover disabled:opacity-40"
+          >
+            <Icon name="lock" size={12} /> Nuevo chat privado
+          </button>
+        </div>
       </div>
     </div>
   );

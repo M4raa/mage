@@ -378,7 +378,9 @@ export interface WorkbenchState {
   newTab: (params: NewTabParams) => Promise<void>;
   // Crea una conversacion SIN friccion (M2.6): cuenta activa implicita, cwd temporal, modelo
   // auto-resuelto, titulo pendiente del primer prompt, con la privacidad de la seccion (comun/privada).
-  createConversation: (privacy: ConversationPrivacy) => Promise<void>;
+  // Carpeta: `cwd` la fija (un proyecto elegido en la pantalla sin pestañas); `scratch` fuerza la temporal;
+  // sin ninguna de las dos, la que diga el ajuste `newConversationFolder`.
+  createConversation: (privacy: ConversationPrivacy, folder?: ConversationFolderChoice) => Promise<void>;
   // Renombra una pestana (M2.6): titulo editable a mano; ignora un titulo vacio. Persiste.
   renameTab: (tabId: string, title: string) => void;
   // Renombrado hecho por el USUARIO: titulo local + `/rename` al CLI (D3). `renameTab` es el de siempre,
@@ -659,6 +661,18 @@ function scheduleSettingsPersist(mage: MageClient, getState: () => WorkbenchStat
       .saveSettings(getState().settings)
       .catch((err: unknown) => console.warn('No se pudo guardar la configuracion:', describeError(err)));
   }, PERSIST_DEBOUNCE_MS);
+}
+
+// De donde sale la carpeta de una conversacion nueva (ver `createConversation`).
+export interface ConversationFolderChoice {
+  readonly cwd?: string;
+  readonly scratch?: boolean;
+}
+
+function resolveNewConversationCwd(mage: MageClient, state: WorkbenchState, folder: ConversationFolderChoice): Promise<string> {
+  if (folder.cwd !== undefined) return Promise.resolve(folder.cwd);
+  if (folder.scratch === true) return mage.getScratchDir();
+  return newConversationCwd(mage, state);
 }
 
 // Carpeta de «Nuevo chat» (P-028, 16). Con 'lastProject', la del proyecto mas reciente del historial
@@ -1604,12 +1618,12 @@ export function createWorkbenchStore(mage: MageClient) {
     // Crea una conversacion sin friccion (M2.6): la cuenta activa, una carpeta temporal (scratch), el
     // modelo auto-resuelto (ultimo usado en la cuenta -> configurado -> sonnet) y el titulo placeholder
     // (el primer prompt lo fija). `privacy` viene de la seccion del sidebar (compartida/privada).
-    createConversation: async (privacy) => {
+    createConversation: async (privacy, folder = {}) => {
       const accountId = get().activeAccountId;
       if (accountId.length === 0) return;
       const account = get().accounts.find((a) => a.id === accountId);
       if (account === undefined) return;
-      const cwd = await newConversationCwd(mage, get());
+      const cwd = await resolveNewConversationCwd(mage, get(), folder);
       // Ultima conversacion Claude de la cuenta (las pestanas se anaden al final -> la ultima es la mas
       // reciente); su modelo es el "ultimo usado". Sobrevive reinicios porque las pestanas se restauran.
       const lastTab = [...get().tabs].reverse().find((t) => t.accountId === accountId && t.provider === 'claude');

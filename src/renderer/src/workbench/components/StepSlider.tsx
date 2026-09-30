@@ -2,17 +2,19 @@ import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { AnimatePresence, motion } from 'motion/react';
 import { POPOVER_VARIANTS } from '../motionPresets';
-import { stepIndexOf, stepSliderAnchor, stepValueAt, type SliderStep } from '../stepSliderModel';
+import {
+  STEP_SLIDER_POPOVER,
+  stepFraction,
+  stepIndexOf,
+  stepSliderPlacement,
+  stepValueAt,
+  type SliderStep,
+  type StepSliderPlacement,
+} from '../stepSliderModel';
 
 // Selector de pasos (P-028 32/33): un chip con la etiqueta actual que abre un popover con un deslizador
 // de pasos —titulo, extremos y un punto por paso—. UN componente para modo de permiso y esfuerzo (en el
 // chat y en Ajustes). Misma estructura de popover que `Dropdown`: portal a body, Escape/clic fuera.
-
-const POPOVER_WIDTH_PX = 264;
-// Alto estimado del popover (titulo, deslizador, extremos y nota): solo decide si va debajo o encima.
-const POPOVER_ESTIMATED_HEIGHT_PX = 150;
-const POPOVER_GAP_PX = 4;
-const VIEWPORT_MARGIN_PX = 8;
 
 export interface StepSliderProps {
   readonly steps: readonly SliderStep[];
@@ -50,15 +52,26 @@ export function StepSlider({
   triggerClassName = '',
   leading,
 }: StepSliderProps): React.JSX.Element {
-  const [open, setOpen] = useState(false);
+  // Posicion del popover, fijada al abrir (null = cerrado): ver `stepSliderPlacement`.
+  const [placement, setPlacement] = useState<StepSliderPlacement | null>(null);
+  const open = placement !== null;
   const triggerRef = useRef<HTMLButtonElement>(null);
   const rangeRef = useRef<HTMLInputElement>(null);
   const index = stepIndexOf(steps, value);
   const known = index >= 0;
 
   const close = (): void => {
-    setOpen(false);
+    setPlacement(null);
     triggerRef.current?.focus();
+  };
+
+  const toggle = (): void => {
+    const rect = triggerRef.current?.getBoundingClientRect();
+    if (open || rect === undefined) {
+      setPlacement(null);
+      return;
+    }
+    setPlacement(stepSliderPlacement(rect, { width: window.innerWidth, height: window.innerHeight }));
   };
 
   useEffect(() => {
@@ -71,9 +84,6 @@ export function StepSlider({
     return () => document.removeEventListener('keydown', onKey);
   }, [open]);
 
-  const rect = triggerRef.current?.getBoundingClientRect();
-  const anchor = rect === undefined ? { top: 0 } : stepSliderAnchor(rect, POPOVER_ESTIMATED_HEIGHT_PX, window.innerHeight, POPOVER_GAP_PX);
-  const left = Math.max(VIEWPORT_MARGIN_PX, Math.min(rect?.left ?? 0, window.innerWidth - POPOVER_WIDTH_PX - VIEWPORT_MARGIN_PX));
   const current = steps[index];
   // Celda unica de `inline-grid`: las etiquetas invisibles fijan el ancho, la actual es la unica visible.
   const label = (
@@ -92,7 +102,7 @@ export function StepSlider({
       <button
         ref={triggerRef}
         type="button"
-        onClick={() => setOpen((v) => !v)}
+        onClick={toggle}
         aria-haspopup="dialog"
         aria-expanded={open}
         aria-label={ariaLabel}
@@ -111,7 +121,7 @@ export function StepSlider({
       {createPortal(
         // AnimatePresence DENTRO del portal (mismo motivo que en `Dropdown`).
         <AnimatePresence>
-          {open && (
+          {placement !== null && (
             <>
               <div className="fixed inset-0 z-[9998]" onClick={close} />
               <motion.div
@@ -122,7 +132,7 @@ export function StepSlider({
                 role="dialog"
                 aria-label={heading}
                 data-step-slider-popover="true"
-                style={{ position: 'fixed', left, ...anchor, zIndex: 9999, width: POPOVER_WIDTH_PX }}
+                style={{ position: 'fixed', left: placement.left, ...placement.anchor, zIndex: 9999, width: STEP_SLIDER_POPOVER.widthPx }}
                 className="rounded-[8px] border border-mg-border-pop bg-mg-popover p-[12px_14px] text-[11.5px] text-mg-body mg-shadow-pop"
               >
                 <div className="mb-[10px] text-[12px] font-semibold">{heading}</div>
@@ -140,6 +150,14 @@ export function StepSlider({
                     onChange={(e) => onChange(stepValueAt(steps, Number(e.target.value)))}
                     className="mg-step-slider"
                   />
+                  {/* El pulgar que se VE (el nativo es transparente y solo recoge el arrastre): el nativo salta
+                      de paso a paso, este se desliza. Su caja mide el RECORRIDO (ancho menos un pulgar), asi que
+                      `translateX(fraccion * 100%)` lo lleva exactamente donde esta el nativo. */}
+                  <div aria-hidden="true" data-unset={known ? undefined : 'true'} className="mg-step-thumb-track">
+                    <div className="mg-step-thumb" style={{ transform: `translateX(${stepFraction(index, steps.length) * 100}%)` }}>
+                      <span className="mg-step-thumb-dot" />
+                    </div>
+                  </div>
                   {/* Un punto por paso, alineado con el recorrido del pulgar (su mitad de ancho de margen). */}
                   <div aria-hidden="true" className="pointer-events-none flex justify-between px-[7px] pt-[2px]">
                     {steps.map((step, i) => (
