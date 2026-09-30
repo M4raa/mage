@@ -138,7 +138,7 @@ function clampPct(value: number): number {
 // se quedaba congelado mintiendo durante horas. Una hora absoluta no caduca.
 export function formatResetTime(resetsAt: number): string {
   if (!Number.isFinite(resetsAt)) throw new Error(`resetsAt invalido al formatear la hora de reset: ${resetsAt}`);
-  return new Date(resetsAt).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  return new Date(resetsAt).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
 }
 
 // Hora ABSOLUTA del reset para el popover «Uso general» (P-028, punto 22), que esta siempre montado:
