@@ -124,6 +124,10 @@ export interface AppSettings {
   // proposito: el dia que el asistente gane un paso que haya que enseñar a quien ya lo hizo, basta
   // subir ONBOARDING_VERSION y vuelve a salir una sola vez.
   readonly onboardingCompletedVersion: number;
+  // Ultima version de Mage cuyas notas ya se enseñaron (o se dieron por vistas en una instalacion
+  // nueva). '' = nunca se guardo: una instalacion nueva, o una 0.1.0/0.1.1, que no tenian el campo. Con
+  // el se decide si al arrancar se abre la pestaña de novedades (ver releaseNotes.ts). Default ''.
+  readonly lastSeenReleaseNotesVersion: string;
   // Escala de la interfaz en % (80..150). Se aplica con el zoom del propio Chromium (`webFrame`), asi
   // que escala TODO —texto, iconos, separaciones— sin que ningun componente tenga que saberlo.
   // Default 100. El suelo y el techo estan medidos por legibilidad: por debajo de 80 el texto de 10 px
@@ -183,6 +187,7 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   closeBehavior: 'ask',
   newConversationFolder: 'scratch',
   onboardingCompletedVersion: 0,
+  lastSeenReleaseNotesVersion: '',
   uiScale: 100,
   defaultProvider: 'claude',
   accentByAccount: {},

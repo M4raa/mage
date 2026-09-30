@@ -1333,3 +1333,69 @@ describe('cola de mensajes', () => {
     expect(store.getState().queuedByChat.a).toBeUndefined();
   });
 });
+
+// Grupo F: la pseudo-pestaña de novedades (id reservado en el arbol, fuera de `tabs`).
+describe('showReleaseNotesIfUpdated', () => {
+  const windows = (id: string) => vi.fn().mockResolvedValue([{ windowId: id, isCurrent: true }]);
+  const settingsWith = (lastSeen: string) => ({ ...createWorkbenchStore(fakeMage()).getState().settings, onboardingCompletedVersion: 1, lastSeenReleaseNotesVersion: lastSeen });
+
+  it('showReleaseNotesIfUpdated_subidaEnLaPrincipal_abreLaPestanaYGuardaLaVersion', async () => {
+    // Arrange
+    const store = createWorkbenchStore(fakeMage({ getAppVersion: vi.fn().mockResolvedValue('0.1.2'), listWindows: windows('main'), saveWorkspace: vi.fn().mockResolvedValue(undefined) }));
+    store.setState({ tabs: [tab('a')], activeTabId: 'a', splitLayout: singleLeaf('a'), settings: settingsWith('0.1.1') });
+
+    // Act
+    await store.getState().showReleaseNotesIfUpdated(false);
+
+    // Assert
+    const s = store.getState();
+    expect(s.activeTabId).toBe('mage:novedades');
+    expect(findLeafPath(s.splitLayout, 'mage:novedades')).not.toBeNull();
+    expect(s.tabs.map((t) => t.id)).toEqual(['a']);
+    expect(s.settings.lastSeenReleaseNotesVersion).toBe('0.1.2');
+    expect(s.appVersion).toBe('0.1.2');
+  });
+
+  it('showReleaseNotesIfUpdated_ventanaSecundaria_noAbreNiGuarda', async () => {
+    // Arrange
+    const store = createWorkbenchStore(fakeMage({ getAppVersion: vi.fn().mockResolvedValue('0.1.2'), listWindows: windows('w2') }));
+    store.setState({ settings: settingsWith('0.1.1') });
+
+    // Act
+    await store.getState().showReleaseNotesIfUpdated(false);
+
+    // Assert
+    expect(store.getState().activeTabId).toBe('');
+    expect(store.getState().settings.lastSeenReleaseNotesVersion).toBe('0.1.1');
+  });
+});
+
+describe('closeTab (novedades)', () => {
+  const closingMage = () => fakeMage({ saveWorkspace: vi.fn().mockResolvedValue(undefined), listConversations: vi.fn().mockResolvedValue([]) });
+
+  it('closeTab_novedadesActiva_laQuitaDelArbolYActivaLaConversacion', async () => {
+    // Arrange
+    const store = createWorkbenchStore(closingMage());
+    store.setState({ tabs: [tab('a')], activeTabId: 'mage:novedades', splitLayout: { kind: 'leaf', tabIds: ['a', 'mage:novedades'], activeTabId: 'mage:novedades' } });
+
+    // Act
+    await store.getState().closeTab('mage:novedades');
+
+    // Assert
+    expect(store.getState().activeTabId).toBe('a');
+    expect(store.getState().splitLayout).toEqual(singleLeaf('a'));
+  });
+
+  it('closeTab_ultimaConversacionConNovedadesAbierta_elFocoPasaANovedades', async () => {
+    // Arrange
+    const store = createWorkbenchStore(closingMage());
+    store.setState({ tabs: [tab('a')], activeTabId: 'a', splitLayout: { kind: 'leaf', tabIds: ['a', 'mage:novedades'], activeTabId: 'a' } });
+
+    // Act
+    await store.getState().closeTab('a');
+
+    // Assert
+    expect(store.getState().activeTabId).toBe('mage:novedades');
+    expect(store.getState().splitLayout).toEqual(singleLeaf('mage:novedades'));
+  });
+});

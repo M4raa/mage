@@ -22,6 +22,7 @@ const VALID: AppSettings = {
   closeBehavior: 'background',
   newConversationFolder: 'lastProject',
   onboardingCompletedVersion: 1,
+  lastSeenReleaseNotesVersion: '0.1.1',
   uiScale: 110,
   defaultProvider: 'claude',
   accentByAccount: { 'C:/Users/u/.claude-p': 3 },
@@ -45,6 +46,19 @@ describe('SettingsStore.load', () => {
     const file = JSON.stringify({ ...VALID, accentByAccount: { 'C:/Users/u/.claude-p': 9 } });
 
     expect(new SettingsStore(deps({ readFile: () => file })).load().accentByAccount).toEqual({});
+  });
+
+  it('load_sinLastSeenReleaseNotesVersion_caeAVacio', () => {
+    // Un fichero de la 0.1.0/0.1.1 no trae el campo: '' es «nunca se guardo».
+    const { lastSeenReleaseNotesVersion: _ausente, ...previo } = VALID;
+
+    expect(new SettingsStore(deps({ readFile: () => JSON.stringify(previo) })).load().lastSeenReleaseNotesVersion).toBe('');
+  });
+
+  it('load_lastSeenReleaseNotesVersionNoTexto_caeAVacio', () => {
+    const file = JSON.stringify({ ...VALID, lastSeenReleaseNotesVersion: 12 });
+
+    expect(new SettingsStore(deps({ readFile: () => file })).load().lastSeenReleaseNotesVersion).toBe('');
   });
 
   it('load_sinAccentByAccount_caeAVacio', () => {

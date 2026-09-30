@@ -10,6 +10,7 @@ import { tabMoveBlockedReason } from '../backgroundWork';
 import { TabContextMenu } from './TabContextMenu';
 import { providerBadge } from '../accountView';
 import type { Tab as TabModel } from '../types';
+import { RELEASE_NOTES_TAB_ID } from '../releaseNotes';
 
 // Id compartido del indicador de pestaña activa (Type 4 del catalogo de motion: shared-element). Solo
 // la pestaña activa lo renderiza; motion detecta que "el mismo" elemento cambio de padre entre renders
@@ -155,6 +156,14 @@ export function TabBar({
             }}
           />
         ))}
+        {tabIds.includes(RELEASE_NOTES_TAB_ID) && (
+          <ReleaseNotesTab
+            active={paneActiveTabId === RELEASE_NOTES_TAB_ID}
+            unfocusedPane={paneActiveTabId === RELEASE_NOTES_TAB_ID && activeTabId !== RELEASE_NOTES_TAB_ID}
+            onSelect={() => setActiveTab(RELEASE_NOTES_TAB_ID)}
+            onClose={() => void closeTab(RELEASE_NOTES_TAB_ID)}
+          />
+        )}
       </div>
       <button
         onClick={() => void addTabToPane(path)}
@@ -210,6 +219,65 @@ export function TabBar({
 // traza: la pestaña sigue aqui, que es el lado seguro, pero no en silencio.
 function reportMoveError(err: unknown): void {
   console.warn('No se pudo mover la pestaña a otra ventana:', err instanceof Error ? err.message : String(err));
+}
+
+// La pseudo-pestaña de novedades (no es una conversacion, no esta en `tabs`). Va siempre al final de su
+// barra y es mas simple que `Tab`: sin cuenta, sin menu contextual y sin arrastre (moverla a otra
+// ventana necesitaria una `PersistedTab`, y no la tiene).
+function ReleaseNotesTab({
+  active,
+  unfocusedPane,
+  onSelect,
+  onClose,
+}: {
+  readonly active: boolean;
+  readonly unfocusedPane: boolean;
+  readonly onSelect: () => void;
+  readonly onClose: () => void;
+}): React.JSX.Element {
+  return (
+    <div
+      role="tab"
+      aria-selected={active}
+      data-tab-id={RELEASE_NOTES_TAB_ID}
+      tabIndex={active ? 0 : -1}
+      onClick={onSelect}
+      onKeyDown={(e) => {
+        if (e.key !== 'Enter' && e.key !== ' ') return;
+        e.preventDefault();
+        onSelect();
+      }}
+      onAuxClick={(e) => {
+        if (e.button === 1) onClose();
+      }}
+      className={`relative flex flex-none cursor-pointer items-center gap-[7px] border-r border-mg-border p-[8px_14px] transition-colors duration-150 ease-out ${
+        active && !unfocusedPane ? 'bg-mg-window text-mg-text' : unfocusedPane ? 'bg-mg-window/60 text-mg-body2' : 'text-mg-sec hover:bg-mg-hover'
+      }`}
+    >
+      {active && (
+        <motion.span
+          layoutId={ACTIVE_TAB_INDICATOR_ID}
+          transition={TAB_INDICATOR_TRANSITION}
+          className="absolute inset-x-0 top-0 h-[2px] bg-mg-focus"
+        />
+      )}
+      <Icon name="sparkles" size={12} className="flex-none text-mg-focus" />
+      <span className="max-w-[220px] truncate">Novedades</span>
+      {active && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onClose();
+          }}
+          className="text-mg-muted transition-colors duration-150 ease-out hover:text-mg-body"
+          data-tip="Cerrar pestaña"
+          aria-label="Cerrar pestaña Novedades"
+        >
+          ✕
+        </button>
+      )}
+    </div>
+  );
 }
 
 function Tab({

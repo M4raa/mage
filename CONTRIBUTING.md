@@ -26,7 +26,10 @@ sesión iniciada. Mage no trae el agente dentro: lanza el que tengas tú.
 2. **Si el cambio se ve, `pnpm verify:gui`.** Arranca la app real con un perfil aislado y mide el DOM
    por CDP. No escribas un driver de usar y tirar: **añade una comprobación al harness**. Nunca pulsa
    `Enter` en el prompt, porque eso dispararía un turno real contra tu suscripción.
-3. **Deja una prueba que falle si tu lógica se rompe.** La lógica de negocio vive en módulos puros
+3. **Si el cambio se nota al usar la app, añade su línea a [`CHANGELOG.md`](CHANGELOG.md)**, en la
+   sección de la versión en curso. `pnpm check` falla si esa versión no tiene sección, y su texto es el
+   que Mage enseña al actualizarse y el que lleva la release de GitHub.
+4. **Deja una prueba que falle si tu lógica se rompe.** La lógica de negocio vive en módulos puros
    (parser, cálculo de uso, `AccountService`, los adapters) justo para que se pueda probar sin FS, sin
    red y sin procesos.
 

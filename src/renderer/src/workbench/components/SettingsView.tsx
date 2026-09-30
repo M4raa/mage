@@ -24,6 +24,7 @@ import { findConflict } from '../keybindings/conflicts';
 import { comboFromEvent, displayKeyCombo, formatKeyCombo, parseKeyCombo } from '../keybindings/keyParser';
 import { isArrowNavKey, nextIndexForArrow } from '../a11y/keyboardNav';
 import { isMacPlatform } from '../keybindings/platform';
+import { CHANGELOG_ENTRIES } from '../releaseNotesContent';
 
 // Secciones de Configuracion (crece por secciones). Cada una tiene su glifo+etiqueta en la nav y su
 // titulo de cabecera.
@@ -37,6 +38,7 @@ type SectionKey =
   | 'trustedFolders'
   | 'keybindings'
   | 'storage'
+  | 'releaseNotes'
   | 'about';
 // Grupos de la navegacion. NO se fusiona ni se mueve ninguna seccion: solo se agrupan, que es lo que
 // convierte una lista plana de diez en algo escaneable. El orden de `SECTIONS` sigue siendo el orden
@@ -62,6 +64,7 @@ const SECTIONS: readonly {
   // «Acerca de» va la ULTIMA y en su propio grupo: no es un ajuste, es donde viven los avisos de
   // terceros (B.2 de la revision de licencias de terceros — las 85 dependencias exigen conservar su copyright y el
   // bundle los borra, asi que este es el sitio donde la app los enseña).
+  { key: 'releaseNotes', group: 'Acerca de', icon: 'sparkles', nav: 'Notas de versión', title: 'Notas de versión' },
   { key: 'about', group: 'Acerca de', icon: 'info', nav: 'Acerca de Mage', title: 'Acerca de Mage' },
 ];
 
@@ -201,6 +204,7 @@ function SettingsDialog(): React.JSX.Element {
             {section === 'hooksPermissions' && <HooksPermissionsSection />}
             {section === 'trustedFolders' && <TrustedFoldersSection />}
             {section === 'storage' && <StorageSection retention={scratchRetention} onChange={setScratchRetention} />}
+            {section === 'releaseNotes' && <ReleaseNotesSection />}
             {section === 'about' && <AboutSection />}
             {section === 'keybindings' && (
               <KeybindingsSection
@@ -385,6 +389,46 @@ function WidgetSection({
 // copyright al redistribuir—, porque el bundle minificado los borra. El texto viene de
 // `THIRD-PARTY-NOTICES.txt` (generado con `pnpm notices`, empaquetado dentro del asar) y los de
 // Chromium se abren desde su propio fichero, que instala Electron junto al ejecutable.
+// Notas de version: el historial entero del changelog. Cada version abre la MISMA pestaña de novedades
+// que sale sola al actualizar, ya en esa version; Configuracion se cierra para dejarla a la vista.
+function ReleaseNotesSection(): React.JSX.Element {
+  const closeSettings = useWorkbenchStore((s) => s.closeSettings);
+  const openReleaseNotes = useWorkbenchStore((s) => s.openReleaseNotes);
+  const installed = useWorkbenchStore((s) => s.appVersion);
+  const open = (version?: string): void => {
+    closeSettings();
+    openReleaseNotes(version);
+  };
+  return (
+    <div className="flex min-h-0 flex-1 flex-col gap-[12px] overflow-y-auto p-[14px_16px]">
+      <p className="text-[11px] leading-[1.5] text-mg-sec">
+        Lo que cambia en cada versión de Mage. Al actualizar se abre solo en una pestaña de novedades; desde
+        aquí puedes volver a abrirla en cualquier versión.
+      </p>
+      <button
+        onClick={() => open()}
+        className="self-start rounded-[7px] border border-mg-border-emph px-[12px] py-[6px] text-[11.5px] text-mg-body transition-colors duration-150 ease-out hover:bg-mg-hover"
+      >
+        Abrir las notas de versión
+      </button>
+      <ul className="flex flex-col gap-[1px]" aria-label="Versiones de Mage">
+        {CHANGELOG_ENTRIES.map((entry) => (
+          <li key={entry.version}>
+            <button
+              onClick={() => open(entry.version)}
+              className="flex w-full items-baseline gap-[10px] rounded-[7px] px-[10px] py-[6px] text-left text-[11.5px] text-mg-body2 transition-colors duration-150 ease-out hover:bg-mg-hover"
+            >
+              <span className="font-mono text-mg-body">{entry.version}</span>
+              <span className="text-mg-ter">{entry.label}</span>
+              {entry.version === installed && <span className="text-[9.5px] text-mg-ter">instalada</span>}
+            </button>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 function AboutSection(): React.JSX.Element {
   const closeSettings = useWorkbenchStore((s) => s.closeSettings);
   const setOnboardingCompleted = useWorkbenchStore((s) => s.setOnboardingCompleted);

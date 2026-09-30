@@ -1,0 +1,112 @@
+# Novedades de Mage
+
+Lo que cambia de una versión a otra, contado para quien usa la app. La más reciente va arriba. Mage
+enseña estas mismas notas en su pestaña de novedades al actualizarse, y en Configuración › Notas de
+versión.
+
+## 0.1.2 — en desarrollo
+
+### Añadido
+- Pestaña de **novedades**: al actualizar Mage se abre sola con las notas de la versión instalada, y
+  en su menú lateral están todas las anteriores. También se abre desde Configuración › Notas de versión.
+
+### Cambiado
+- Sin pestañas abiertas se ve la misma pantalla que en un chat nuevo, con sus proyectos recientes:
+  elegir un proyecto abre la conversación en esa carpeta, y **＋ Nuevo chat** la abre siempre en una
+  carpeta temporal.
+- El deslizador de modo ya no cambia de ancho entre pasos: **Manual** tiene icono propio, el pulgar se
+  desliza de un paso a otro y el menú se queda en su sitio.
+- Mage funciona ahora sobre Electron 44 (Node 24), con los parches de seguridad al día.
+
+### Corregido
+- Los enlaces del chat se abren en el navegador del sistema, no en otra ventana de Mage.
+- Los proveedores compatibles con OpenAI (Ollama, LM Studio…) ya pintan su respuesta: antes el turno
+  terminaba vacío.
+- El aviso «Abre una pestaña…» ya no se queda en el prompt después de abrir un chat.
+- La fila de controles del prompt ya no baja unos píxeles al elegir un esfuerzo alto.
+
+### Seguridad
+- Las claves de API de los proveedores se guardan cifradas con el almacén del sistema y la interfaz ya
+  no las ve; las de la 0.1.1 se cifran solas al arrancar.
+- Las variables `OPENAI_API_KEY` y `CODEX_API_KEY` ya no llegan a los agentes que lanza Mage.
+
+### Por completar antes de publicar
+- Por completar: diálogos propios al cerrar Mage y al instalar una actualización, e instalador con el
+  aspecto de Mage.
+- Por completar: conectores y extensiones, y servidores MCP compartidos con todos los proveedores.
+- Por completar: cuentas por proveedor y forma de pago (Claude por API, agy y Codex), agy en sesión
+  persistente y con su uso en el panel.
+- Por completar: seguimiento de PR y CI desde la conversación, y worktrees.
+- Por completar: runtime propio para los modelos locales, en lugar del gateway.
+
+## 0.1.1 — 2026-09-30
+
+### Añadido
+- Botón **Copiar** en los bloques de código y en cada mensaje del chat.
+- Al pasar por encima de una imagen pegada se ve su nombre, y borrar `[Imagen N]` quita la imagen.
+- Clic en cualquier hueco del chat para escribir en el prompt.
+- **Modo y esfuerzo como deslizadores**, y modo de permiso por defecto en Configuración.
+- Tarjetas de **proyectos recientes** al abrir un chat, y un ajuste para que un chat nuevo empiece en
+  una carpeta temporal o en el último proyecto.
+- Al cerrar la ventana, Mage pregunta si salir del todo o seguir en **segundo plano** (con «recordar
+  mi decisión»).
+- Arrastra una pestaña o una conversación **fuera de Mage** para abrirla en una ventana nueva, o
+  suéltala sobre otra ventana para moverla allí.
+- **Borrar cuentas** desde el menú de la cuenta (la cuenta por defecto no se puede borrar).
+- Al añadir una cuenta se elige primero el **proveedor**.
+- Monograma de la cuenta en cada pestaña, y color de cuenta a elección.
+- Ventana **Uso general** con la hora de reinicio de 5 h y de 7 días de todas las cuentas.
+- El límite de uso se explica en castellano, con la opción de **continuar automáticamente** cuando se
+  reinicie.
+- **MCP y conectores** rehechos: servidores comunes, de cada cuenta y de proyecto; importación desde
+  Claude Desktop y desde el CLI de Claude Code; comprobación de su estado.
+- `/context`, `/mcp`, `/rename` y `/clear` muestran su resultado en el chat.
+- Los mensajes que envías con un turno en marcha esperan **en cola** y salen al terminar.
+- Los subagentes en segundo plano se agrupan encima del prompt («N en ejecución»), con su tarea y un
+  botón «Ver más».
+- Clic en una notificación para ir a la conversación que la lanzó.
+- Abrir y editar ficheros de fuera de la carpeta de la conversación, pidiendo permiso antes.
+- Las palabras del indicador de trabajo son las mismas que las del CLI de Claude Code.
+- Iconos propios en los paneles y en las herramientas.
+- Reordenar los iconos del dock arrastrando o con Subir/Bajar.
+
+### Corregido
+- La caja del prompt vuelve a una línea al borrar texto, y ya no salta hacia arriba al crecer.
+- Al volver a una pestaña, el chat y el prompt quedan al final, no arriba del todo.
+- `/rename` cambia el nombre de la pestaña al momento.
+- El panel Contexto muestra el contexto real, también con Opus 1M.
+- El cursor de mano en todo lo que se puede pulsar.
+- Los paneles movidos o escondidos y el tamaño de la ventana se conservan al reiniciar.
+- Cerrar la ventana ya no deja procesos `claude` huérfanos.
+- «Mover a ventana nueva» ya no pierde la pestaña.
+- Un mensaje enviado al cambiar de cuenta en un chat nuevo sale por la cuenta correcta.
+- El uso de las cuentas no activas ya no marca un 0 % falso.
+- Los subagentes en segundo plano ya no salen como «Terminado · 0 s».
+- La hora de reinicio del uso sale siempre en formato español.
+
+## 0.1.0 — 2026-09-28
+
+Primera versión pública (alpha).
+
+### Añadido
+- Varias conversaciones con el CLI real de Claude Code en pestañas, con **varias cuentas**, cada una
+  con su propia suscripción.
+- Paneles divisibles, varias ventanas, dock de herramientas acoplables y temas (también los de VS Code).
+- Panel de **Actividad**: el chat queda limpio y cada paso del agente (pensamiento, herramientas) se
+  consulta aparte.
+- Las preguntas del agente aparecen ancladas encima del prompt.
+- Los cinco modos de permiso del CLI: Plan, Manual, Aceptar ediciones, Auto y Omitir permisos.
+- Los modelos reales que ofrece tu cuenta.
+- **Git**: rama, cambios, cambio de rama y un botón que deja preparado el prompt para que el agente
+  haga el commit.
+- Referencias `[Imagen N]` a las imágenes pegadas.
+- Los selectores bajan debajo del texto cuando el prompt crece.
+- Servidores MCP compartidos entre cuentas.
+- Análisis de uso por cuenta, historial de conversaciones y widget flotante.
+
+### Corregido
+- Alta de cuenta: el código de inicio de sesión ya no se da por «ya usado».
+- Nombres de conversación: `/rename` y los mensajes de sistema ya no salen como título.
+- La lista numerada del prompt enseña todos los números.
+- El aviso de «más de 10 imágenes» desaparece.
+- Ya no salta «Permiso requerido» con el permiso ya concedido.

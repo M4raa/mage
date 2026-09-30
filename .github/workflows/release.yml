@@ -45,11 +45,17 @@ jobs:
             release/*.exe
             release/*.msi
             release/latest.yml
+      # El cuerpo de la release es la seccion de CHANGELOG.md de la version de package.json (el tag es
+      # `v<esa version>`). Falla si la seccion no existe, igual que la puerta de `pnpm check`.
+      - name: Notas de la version desde CHANGELOG.md
+        if: startsWith(github.ref, 'refs/tags/')
+        run: node scripts/release-notes.mjs
       - name: Crear/actualizar la release en borrador
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           draft: true
+          body_path: release/NOTES.md
           files: |
             release/*.exe
             release/*.msi

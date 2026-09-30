@@ -177,6 +177,7 @@ import type { FetchThemeParams } from '@shared/themeMarket';
 import { startAutoUpdate } from './update/autoUpdate';
 import { pathEquals } from './os/pathUtils';
 import { isWindowId, MAIN_WINDOW_ID, WindowManager, type WindowPlacement } from './windows/windowManager';
+import { installExternalLinkHandler, type ExternalLinkDeps } from './windows/externalLinks';
 import { resolveDropTarget } from './windows/dropTarget';
 import { PERSISTED_TAB_SCHEMA } from '@shared/stateSchema';
 import type { PersistedTab } from '@shared/state';
@@ -359,6 +360,12 @@ function spawnMcpStatusProbe(configDir: string): ProbeProcess {
   if (MCP_FAKE_CLI) return spawnFakeMcpCli(configDir);
   return spawnModelProbe(configDir, loadSharedConfigArgs());
 }
+
+// Enlaces que un renderer abre en ventana nueva: al navegador por OpenWithService (solo https).
+const externalLinkDeps: ExternalLinkDeps = {
+  openExternal: (url) => openWithService.openExternal(url),
+  logError: (message) => mainLog('warn', 'No se abrio un enlace externo', { message }),
+};
 
 // La URL de autorizacion va al navegador del sistema por OpenWithService (solo https, multiplataforma).
 function openMcpAuthUrl(url: string): Promise<void> {
@@ -2465,6 +2472,9 @@ app.whenReady().then(async () => {
 
   if (process.platform === 'win32') app.setAppUserModelId(app.isPackaged ? WINDOWS_APP_USER_MODEL_ID : process.execPath);
   applyContentSecurityPolicy();
+  // TODAS las ventanas (workbench, widget, debug y las que vengan): un enlace `target="_blank"` va al
+  // navegador del sistema y nunca crea otra ventana. El artifact pone despues su propio `deny` y manda.
+  app.on('web-contents-created', (_event, contents) => installExternalLinkHandler(contents, externalLinkDeps));
   Menu.setApplicationMenu(buildApplicationMenu());
   migrateLegacyProviderKeysOnce();
   registerIpcHandlers();

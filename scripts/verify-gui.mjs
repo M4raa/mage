@@ -40,6 +40,8 @@ import { FAKE_OPENAI_MODEL, FAKE_OPENAI_REPLY, startFakeOpenAiServer } from './f
 import { decideTurnTarget, parseTurnAnswer, spentPercent } from './lib/usageGuard.mjs';
 
 const repoRoot = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+// Version de Mage que corre (la de package.json): la usan el seed de ajustes y las notas de version.
+const APP_VERSION = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf-8')).version;
 // El paquete `electron` exporta la RUTA a su binario cuando se carga desde node (no desde Electron).
 const requireFromHere = createRequire(import.meta.url);
 
@@ -6285,6 +6287,112 @@ const CHECKS = [
     },
   },
   {
+    // Grupo F (0.1.2, respuesta 19): Configuracion › Notas de version abre la pseudo-pestaña de novedades
+    // en la version instalada, sin prompt, con el menu lateral de versiones; elegir otra la cambia, y al
+    // cerrarla se DESMONTA (error n.º 6 de la skill). Llega y se va sin dialogo ni pestaña de mas.
+    name: 'Grupo F: Ajustes › Notas de versión abre la pestaña de novedades sin prompt',
+    async run(page) {
+      await openSettingsDialog(page);
+      await openSection(page, /Notas de versión/);
+      await page.getByRole('button', { name: 'Abrir las notas de versión', exact: true }).click();
+      const modales = await waitForModalsGone(page);
+      await page.locator(RELEASE_NOTES_PANE).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      const alAbrir = await measureReleaseNotes(page);
+      const otra = alAbrir.versiones.find((version) => version !== APP_VERSION) ?? null;
+      if (otra !== null) await page.locator(`${RELEASE_NOTES_PANE} nav button`).filter({ hasText: otra }).first().click();
+      await page.waitForTimeout(CONFIG.settleMs);
+      const trasElegir = await measureReleaseNotes(page);
+      const cerrado = await closeReleaseNotesTab(page);
+      const ok =
+        modales === 0 &&
+        alAbrir.pestañas === 1 &&
+        alAbrir.activa &&
+        alAbrir.prompts === 0 &&
+        alAbrir.titulo === `Mage ${APP_VERSION}` &&
+        alAbrir.versiones.length >= 3 &&
+        alAbrir.marcada === APP_VERSION &&
+        otra !== null &&
+        trasElegir.titulo === `Mage ${otra}` &&
+        cerrado.paneles === 0 &&
+        cerrado.pestañas === 0;
+      return { ok, detail: JSON.stringify({ modales, alAbrir, otra, trasElegir: trasElegir.titulo, cerrado }) };
+    },
+  },
+  {
+    // Grupo F: la apertura AUTOMATICA, que es el camino real. Se simula una actualizacion desde la 0.1.0
+    // guardando esa version como la ultima vista y recargando el renderer (el arranque vuelve a decidir).
+    // Se exige que la pestaña este abierta al montar, sin prompt, en la version instalada, y que EN DISCO
+    // (no en la UI) ya diga la version actual. La cierra al acabar.
+    name: 'Grupo F: tras actualizar desde 0.1.0 se abren solas las novedades y se guarda la versión',
+    async run(page, { userDataDir }) {
+      await page.evaluate(async () => {
+        const { settings } = window.__mageDev.store.getState();
+        await window.mage.saveSettings({ ...settings, lastSeenReleaseNotesVersion: '0.1.0' });
+      });
+      await page.reload();
+      await page.locator('[role="toolbar"]').first().waitFor({ state: 'attached', timeout: CONFIG.bootTimeoutMs });
+      const aparecio = await page
+        .locator(RELEASE_NOTES_PANE)
+        .waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs })
+        .then(() => true)
+        .catch(() => false);
+      const medido = await measureReleaseNotes(page);
+      const file = path.join(userDataDir, 'app-settings.json');
+      const enDisco = await waitForFile(file, (text) => JSON.parse(text).lastSeenReleaseNotesVersion === APP_VERSION);
+      const guardada = enDisco === null ? null : JSON.parse(enDisco).lastSeenReleaseNotesVersion;
+      const cerrado = await closeReleaseNotesTab(page);
+      const ok =
+        aparecio &&
+        medido.pestañas === 1 &&
+        medido.activa &&
+        medido.prompts === 0 &&
+        medido.titulo === `Mage ${APP_VERSION}` &&
+        guardada === APP_VERSION &&
+        cerrado.paneles === 0;
+      return { ok, detail: JSON.stringify({ aparecio, ...medido, guardadaEnDisco: guardada, cerrado }) };
+    },
+  },
+  {
+    // Grupo F (0.1.2): un enlace del chat (o de las notas de version) tiene `target="_blank"`, y sin
+    // `setWindowOpenHandler` Electron abria con el una BrowserWindow propia en vez del navegador. Se
+    // clica un enlace `http://` a un puerto cerrado: main solo abre https en el navegador, asi que la
+    // medida es limpia (no abre nada fuera) y lo que se afirma es que NO nace otra ventana. El camino
+    // https -> navegador lo cubre el test de `externalLinks`. Autosuficiente: abre su pestaña y la cierra.
+    name: 'Grupo F: clic en un enlace externo no abre otra ventana de Mage',
+    async run(page) {
+      await openTemporaryConversation(page);
+      const bloques = await hydrateFromEntries(page, [
+        {
+          index: 0,
+          uuid: 'vg-enlace-0',
+          parentUuid: null,
+          isSidechain: false,
+          isMeta: false,
+          timestampMs: Date.now(),
+          category: 'turn',
+          kind: 'user',
+          summary: '',
+          tokenUsage: null,
+          raw: { message: { content: `Mira [el enlace de prueba](${EXTERNAL_LINK_PROBE_URL}).` } },
+        },
+      ]);
+      const enlace = page.locator(`[data-block="user"] a[href="${EXTERNAL_LINK_PROBE_URL}"]`);
+      const enlaces = await enlace.count();
+      const antes = countMainPages(page);
+      const paginasAntes = new Set(allPages(page));
+      if (enlaces === 1) await enlace.click();
+      await page.waitForTimeout(EXTERNAL_LINK_WAIT_MS);
+      const despues = countMainPages(page);
+      const nuevas = await closeNewPages(page, paginasAntes);
+      await page.evaluate(() => {
+        const state = window.__mageDev.store.getState();
+        return state.closeTab(state.activeTabId);
+      });
+      const ok = bloques === 1 && enlaces === 1 && despues === antes && nuevas.length === 0;
+      return { ok, detail: JSON.stringify({ bloques, enlaces, ventanasAntes: antes, ventanasDespues: despues, ventanasNuevas: nuevas }) };
+    },
+  },
+  {
     // Grupo 0 (0.1.2, ficha D11 de P-032): UN turno minimo de verdad, de punta a punta — teclear, Enter,
     // proceso del CLI, respuesta pintada. Es la unica comprobacion que envia: todas las demas miden sin
     // gastar. Contra Claude con el modelo y el esfuerzo mas bajos; si la cuenta lleva gastado mas del
@@ -6337,6 +6445,65 @@ function countMainPages(page) {
       const url = candidate.url();
       return !url.includes('widget.html') && !url.includes('debug.html') && !url.startsWith('devtools://');
     }).length;
+}
+
+// Panel de la pseudo-pestaña de novedades (ancla `data-release-notes` de ReleaseNotesPane.tsx).
+const RELEASE_NOTES_PANE = '[data-release-notes]';
+const RELEASE_NOTES_TAB = '[role="tab"][data-tab-id="mage:novedades"]';
+
+// Lo que enseña la pestaña de novedades: cuantas hay, si es la seleccionada, prompts montados en su
+// panel (0: no es una conversacion), el titulo de la version y el menu lateral.
+function measureReleaseNotes(page) {
+  return page.evaluate(
+    ({ pane, tab }) => {
+      const panel = document.querySelector(pane);
+      const island = panel?.closest('[data-workspace="pane"]') ?? null;
+      const nav = panel?.querySelector('nav[aria-label="Versiones de Mage"]') ?? null;
+      const buttons = nav === null ? [] : [...nav.querySelectorAll('button')];
+      const versionOf = (button) => button.querySelector('span')?.textContent?.trim() ?? '';
+      return {
+        pestañas: document.querySelectorAll(tab).length,
+        activa: document.querySelector(tab)?.getAttribute('aria-selected') === 'true',
+        prompts: island === null ? -1 : island.querySelectorAll('.cm-editor, textarea').length,
+        titulo: panel?.querySelector('h2')?.textContent?.trim() ?? null,
+        versiones: buttons.map(versionOf),
+        marcada: buttons.filter((button) => button.getAttribute('aria-current') === 'page').map(versionOf)[0] ?? null,
+      };
+    },
+    { pane: RELEASE_NOTES_PANE, tab: RELEASE_NOTES_TAB },
+  );
+}
+
+// Cierra la pestaña de novedades con su ✕ y espera al DESMONTAJE del panel.
+async function closeReleaseNotesTab(page) {
+  const close = page.getByRole('button', { name: 'Cerrar pestaña Novedades', exact: true });
+  if ((await close.count()) === 1) await close.click();
+  await page.locator(RELEASE_NOTES_PANE).waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs }).catch(() => undefined);
+  return { paneles: await page.locator(RELEASE_NOTES_PANE).count(), pestañas: await page.locator(RELEASE_NOTES_TAB).count() };
+}
+
+// Enlace de la comprobacion de enlaces externos: http (no https) a un puerto cerrado, para que ni la
+// app arreglada abra nada fuera ni la rota cargue nada dentro.
+const EXTERNAL_LINK_PROBE_URL = 'http://127.0.0.1:9/vg-enlace';
+// Lo que se deja a Electron para crear la ventana del `window.open` antes de contar.
+const EXTERNAL_LINK_WAIT_MS = 1500;
+
+// Todas las paginas que ve CDP ahora mismo.
+function allPages(page) {
+  return page
+    .context()
+    .browser()
+    .contexts()
+    .flatMap((context) => context.pages());
+}
+
+// Cierra las paginas que no estaban en `before` (la que crearia un `target="_blank"` sin manejador) y
+// devuelve sus URL. Es limpieza de la comprobacion: con el fallo presente no puede quedarse la ventana.
+async function closeNewPages(page, before) {
+  const fresh = allPages(page).filter((candidate) => !before.has(candidate));
+  const urls = fresh.map((candidate) => candidate.url());
+  for (const candidate of fresh) await candidate.close().catch(() => undefined);
+  return urls;
 }
 
 // Ventanas del widget abiertas ahora mismo (widget.html es su propia entrada del build).
@@ -6798,7 +6965,14 @@ function seedOnboardingDone(userDataDir) {
   // importar): cualquier version futura del asistente sigue quedando por debajo, asi que subirla no
   // vuelve a tapar la tanda entera. La comprobacion del asistente no depende de esto — lo reabre
   // llamando al store.
-  fs.writeFileSync(file, JSON.stringify({ version: 1, notificationRules: [], onboardingCompletedVersion: 9999 }, null, 2), 'utf-8');
+  // Grupo F: las notas de version, dadas por vistas en la version actual. Sin esto, con el asistente
+  // completado y el campo vacio, la app lo tomaria por una actualizacion desde la 0.1.1 y abriria la
+  // pestaña de novedades en cada tanda (el harness levanta la condicion de dev, ver `launchApp`).
+  fs.writeFileSync(
+    file,
+    JSON.stringify({ version: 1, notificationRules: [], onboardingCompletedVersion: 9999, lastSeenReleaseNotesVersion: APP_VERSION }, null, 2),
+    'utf-8',
+  );
 }
 
 // P-026 2.5: sin `mcp-common.json`, main lo IMPORTA al arrancar desde el `~/.claude/mcp-shared.json` y
@@ -7608,7 +7782,15 @@ function launchApp(userDataDir) {
     // sesion, y aqui el CLI solo lo lanza el turno minimo, a proposito.
     // MAGE_MCP_FAKE_SOURCES: el inventario de MCP lee las fuentes falsas sembradas, nunca las reales.
     // MAGE_MCP_FAKE_CLI: «Comprobar estado» y «Autenticar» hablan con un CLI falso en proceso, nunca el real.
-    env: { ...process.env, MAGE_SKIP_MODEL_PROBE: '1', MAGE_MCP_FAKE_SOURCES: mcpFakeSourcesDir(userDataDir), MAGE_MCP_FAKE_CLI: '1' },
+    // VITE_MAGE_RELEASE_NOTES_IN_DEV: la apertura automatica de novedades corre tambien en dev, para
+    // poder medirla; el seed de `seedOnboardingDone` la deja sin nada que abrir salvo en su comprobacion.
+    env: {
+      ...process.env,
+      MAGE_SKIP_MODEL_PROBE: '1',
+      MAGE_MCP_FAKE_SOURCES: mcpFakeSourcesDir(userDataDir),
+      MAGE_MCP_FAKE_CLI: '1',
+      VITE_MAGE_RELEASE_NOTES_IN_DEV: '1',
+    },
     windowsHide: true,
     stdio: ['ignore', 'pipe', 'pipe'],
     // POSIX: grupo de procesos propio, para poder señalizar a TODO el arbol con kill(-pid). En

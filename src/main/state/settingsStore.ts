@@ -121,6 +121,9 @@ const APP_SETTINGS_SCHEMA = z.object({
   // "no lo ha visto": equivocarse hacia enseñarlo de mas es molesto; hacia no enseñarlo nunca deja al
   // usuario sin el unico sitio donde se le explica como instalar el motor.
   onboardingCompletedVersion: z.number().int().min(0).catch(0),
+  // Ultimas notas de version vistas. Ausente (0.1.0/0.1.1) o basura -> '': el renderer lo trata como
+  // «actualizacion desde una version sin el campo» si el asistente ya se completo, y las enseña.
+  lastSeenReleaseNotesVersion: z.string().catch(''),
   // Escala de la UI. Se acota aqui tambien (no solo en la UI): el fichero es editable a mano y un 500
   // dejaria la app inservible sin forma de volver atras desde dentro.
   uiScale: z.number().min(UI_SCALE_MIN).max(UI_SCALE_MAX).catch(100),

@@ -29,8 +29,11 @@ const HandoffModal = lazy(() => import('./workbench/components/HandoffModal').th
 import { OnboardingWizard } from './workbench/components/OnboardingWizard';
 
 const SettingsView = lazy(() => import('./workbench/components/SettingsView').then((m) => ({ default: m.SettingsView })));
+// Novedades, tambien en diferido: arrastra el changelog entero y casi nunca se abre.
+const ReleaseNotesPane = lazy(() => import('./workbench/components/ReleaseNotesPane').then((m) => ({ default: m.ReleaseNotesPane })));
 
 import { useWorkbenchStore } from './workbench/workbenchStore';
+import { RELEASE_NOTES_TAB_ID } from './workbench/releaseNotes';
 import { usePanelLayoutStore } from './workbench/panelLayoutStore';
 import { useGlobalKeybindings } from './workbench/keybindings/useGlobalKeybindings';
 
@@ -112,7 +115,14 @@ function SplitLayoutView({
         className="mg-island flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden border border-mg-border bg-mg-window"
       >
         <TabBar tabIds={layout.tabIds} paneActiveTabId={layout.activeTabId} path={path} />
-        <ChatPane tabId={layout.activeTabId} focused={layout.activeTabId === activeTabId} split={hasSplit} path={path} />
+        {/* La pseudo-pestaña de novedades no es una conversacion: su panel no lleva chat ni prompt. */}
+        {layout.activeTabId === RELEASE_NOTES_TAB_ID ? (
+          <Suspense fallback={null}>
+            <ReleaseNotesPane focused={layout.activeTabId === activeTabId} split={hasSplit} />
+          </Suspense>
+        ) : (
+          <ChatPane tabId={layout.activeTabId} focused={layout.activeTabId === activeTabId} split={hasSplit} path={path} />
+        )}
       </div>
     );
   }

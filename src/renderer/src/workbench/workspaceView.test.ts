@@ -168,6 +168,16 @@ describe('restoreTabs', () => {
     expect(activeTabId).toBe('');
   });
 
+  it('restoreTabs_novedadesActivaEnElArbol_sePodaYLaActivaVuelveALaPrimera', () => {
+    // La pseudo-pestaña de novedades no esta en `tabs`: no sobrevive a un reinicio.
+    const ws = persisted({ activeTabId: 'mage:novedades', splitLayout: { kind: 'leaf', tabIds: ['tab1', 'mage:novedades'], activeTabId: 'mage:novedades' } });
+
+    const restored = restoreTabs(ws, new Set(['.claude']));
+
+    expect(restored.activeTabId).toBe('tab1');
+    expect(restored.splitLayout).toEqual(singleLeaf('tab1'));
+  });
+
   it('activaYaNoPresente_caeALaPrimera', () => {
     const ws = persisted({ activeTabId: 'no-existe' });
 

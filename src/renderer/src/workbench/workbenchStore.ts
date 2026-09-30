@@ -5,7 +5,8 @@ import { disposeTranscriptStore, transcriptStoreForTab } from './transcriptStore
 import type { ContextUsage, MageEvent, McpServerStatus, PermissionDecision, PermissionRequest, SlashCommandInfo, SubagentInfo } from '@shared/events';
 import { buildUpdatedInput, parseAskUserQuestion } from '@shared/askUserQuestion';
 import type { NotificationTarget, PermissionMode, SessionEventPayload } from '@shared/ipc';
-import { isPermissionMode, PERMISSION_MODES } from '@shared/ipc';
+import { isPermissionMode, MAIN_WINDOW_ID, PERMISSION_MODES } from '@shared/ipc';
+import { RELEASE_NOTES_TAB_ID, releaseNotesDecision } from './releaseNotes';
 import type { UsageInfo } from '@shared/usage';
 import type { StatusInfo } from '@shared/status';
 import { applyAccentOverrides, toAccountView } from './accountView';
@@ -131,6 +132,10 @@ export interface WorkbenchState {
   // Seccion con la que se abre Configuracion (P-028, 41: «Añadir cuenta» del gateway lleva a
   // «Proveedores y modelos»). null = la de siempre. La valida SettingsView contra su lista.
   settingsSection: string | null;
+  // Version que enseña la pestaña de novedades; null = la instalada (el caso del arranque).
+  releaseNotesVersion: string | null;
+  // Version de Mage instalada ('' hasta que el arranque la pregunta a main).
+  appVersion: string;
   // Configuracion de la app (M2.3): se carga en init(); defaults hasta entonces.
   readonly settings: AppSettings;
   // Contador que pide FOCO para el input del prompt (extras): cada incremento hace que el PromptBar se
@@ -329,6 +334,11 @@ export interface WorkbenchState {
   closeHandoff: () => void;
   openSettings: (section?: string) => void;
   closeSettings: () => void;
+  // Abre (o enfoca) la pseudo-pestaña de novedades en `version`, o en la instalada sin argumento.
+  openReleaseNotes: (version?: string) => void;
+  // Arranque: si Mage se ha actualizado desde la ultima vez, abre las novedades (ver releaseNotes.ts).
+  // `isDev` se inyecta para poder probar la regla (en Vitest `import.meta.env.DEV` siempre es true).
+  showReleaseNotesIfUpdated: (isDev: boolean) => Promise<void>;
   // Sustituye las reglas de notificacion y persiste (debounce, mismo patron que el workspace).
   saveNotificationRules: (rules: readonly NotificationRule[]) => void;
   // Cambia la preferencia de tema: aplica al DOM al instante, recalcula resolvedTheme y persiste.
@@ -1063,6 +1073,8 @@ export function createWorkbenchStore(mage: MageClient) {
     accountSwitchPrompt: null,
     settingsOpen: false,
     settingsSection: null,
+    releaseNotesVersion: null,
+    appVersion: '',
     settings: DEFAULT_APP_SETTINGS,
     promptFocusToken: 0,
 
@@ -1248,7 +1260,7 @@ export function createWorkbenchStore(mage: MageClient) {
       disposeTranscriptStore(tabId);
       set((s) => {
         const tabs = s.tabs.filter((t) => t.id !== tabId);
-        const activeTabId = s.activeTabId === tabId ? (tabs[0]?.id ?? '') : s.activeTabId;
+        const activeTabId = s.activeTabId === tabId ? nextActiveAfterClose(tabs, s.splitLayout, tabId) : s.activeTabId;
         // El panel de la pestaña cerrada colapsa al hermano (o, si era el panel enfocado, la nueva
         // activa ocupa su sitio exacto) — ver `reconcileSplitLayoutAfterClose` (I11).
         const splitLayout = reconcileSplitLayoutAfterClose(s.splitLayout, tabId, activeTabId);
@@ -1298,6 +1310,8 @@ export function createWorkbenchStore(mage: MageClient) {
 
     closeAllTabs: () => {
       for (const tab of tabsToCloseAll(get().tabs)) void get().closeTab(tab.id);
+      // La de novedades no esta en `tabs`: «cerrar todas» tambien se la lleva.
+      if (findLeafPath(get().splitLayout, RELEASE_NOTES_TAB_ID) !== null) void get().closeTab(RELEASE_NOTES_TAB_ID);
     },
 
     closeInactiveTabs: () => {
@@ -1422,26 +1436,31 @@ export function createWorkbenchStore(mage: MageClient) {
           else get().openConversation(conversation);
         });
       }
-      void get()
+      const workspaceRestored = get()
         .refreshAccounts()
         .then(() => get().restoreWorkspace()) // reabre las pestanas guardadas (tras conocer las cuentas)
         // Y DESPUES lo que otra ventana le mando al abrirla (P-028, 36): con las cuentas ya cargadas,
         // que es lo que `adoptTab` necesita para no descartarla.
-        .then(() => get().adoptPendingTabs())
+        .then(() => get().adoptPendingTabs());
+      void workspaceRestored
         .then(() => get().refreshActiveUsage())
         .then(() => get().loadConversationHistory()); // historial de la cuenta activa (M2.6)
       void get().refreshStatus();
       // Configuracion de la app (M2.3): carga tolerante (main devuelve defaults si no hay fichero). Al
       // llegar, reconcilia el tema (el hint de localStorage se aplico antes de montar) con la preferencia
       // real del fichero y lo aplica al DOM.
-      void mage
-        .loadSettings()
-        .then((settings) => {
-          applyThemeFromSettings(settings, systemPrefersDark());
-          mage.setUiScale(settings.uiScale);
-          set((s) => ({ settings, accounts: applyAccentOverrides(s.accounts, settings.accentByAccount) }));
-        })
-        .catch((err: unknown) => console.warn('No se pudo cargar la configuracion:', describeError(err)));
+      const settingsLoaded = mage.loadSettings().then((settings) => {
+        applyThemeFromSettings(settings, systemPrefersDark());
+        mage.setUiScale(settings.uiScale);
+        set((s) => ({ settings, accounts: applyAccentOverrides(s.accounts, settings.accentByAccount) }));
+      });
+      settingsLoaded.catch((err: unknown) => console.warn('No se pudo cargar la configuracion:', describeError(err)));
+      // Novedades: DESPUES de restaurar el workspace (si no, restaurar reescribe `splitLayout` y se come
+      // la pestaña) y con los ajustes reales. Si alguno falla no se decide nada: con los ajustes por
+      // defecto esto parece una instalacion nueva y guardaria encima de los del usuario.
+      void Promise.all([workspaceRestored, settingsLoaded])
+        .then(() => get().showReleaseNotesIfUpdated(isReleaseNotesDevRun()))
+        .catch((err: unknown) => console.warn('No se pudieron comprobar las novedades:', describeError(err)));
 
       // MULTIVENTANA: los ajustes son COMPARTIDOS entre ventanas, asi que un cambio hecho en otra tiene
       // que llegar aqui. main ya lo ha guardado en disco y NUNCA se lo reenvia a la ventana que lo
@@ -1949,6 +1968,30 @@ export function createWorkbenchStore(mage: MageClient) {
     closeHandoff: () => set({ handoffOpen: false }),
     openSettings: (section) => set({ settingsOpen: true, settingsSection: section ?? null }),
     closeSettings: () => set({ settingsOpen: false }),
+
+    openReleaseNotes: (version) => {
+      set({ releaseNotesVersion: version ?? null });
+      get().setActiveTab(RELEASE_NOTES_TAB_ID);
+    },
+
+    showReleaseNotesIfUpdated: async (isDev) => {
+      const [current, windows] = await Promise.all([mage.getAppVersion(), mage.listWindows()]);
+      set({ appVersion: current });
+      const { settings } = get();
+      const decision = releaseNotesDecision({
+        lastSeen: settings.lastSeenReleaseNotesVersion,
+        current,
+        onboardingDone: settings.onboardingCompletedVersion > 0,
+        isDev,
+        isMainWindow: windows.find((w) => w.isCurrent)?.windowId === MAIN_WINDOW_ID,
+      });
+      const { remember } = decision;
+      if (remember !== null) {
+        set((s) => ({ settings: { ...s.settings, lastSeenReleaseNotesVersion: remember } }));
+        scheduleSettingsPersist(mage, get);
+      }
+      if (decision.open) get().openReleaseNotes();
+    },
 
     // Sustituye las reglas de notificacion (edicion completa desde SettingsView) y persiste.
     saveNotificationRules: (rules) => {
@@ -2957,6 +3000,22 @@ export function selectAccount(state: WorkbenchState, accountId: string): Account
 // Panel (camino) donde debe aterrizar una pestaña nueva: el que la pidio por su ancla, y si esa
 // pestaña ya no existe —se cerro con el dialogo abierto—, el panel enfocado. Nunca lanza: 'firstLeafPath'
 // siempre devuelve una hoja porque el arbol nunca esta vacio.
+// A quien pasa el foco al cerrar la pestaña ACTIVA: la primera conversacion; sin ninguna, la de
+// novedades si sigue abierta en algun panel (si no, el panel mostraria la pantalla vacia con la pestaña
+// de novedades al lado sin seleccionar); y si no, nadie.
+function nextActiveAfterClose(tabs: readonly Tab[], layout: SplitLayout, closedTabId: string): string {
+  const first = tabs[0]?.id;
+  if (first !== undefined) return first;
+  const notesStayOpen = closedTabId !== RELEASE_NOTES_TAB_ID && findLeafPath(layout, RELEASE_NOTES_TAB_ID) !== null;
+  return notesStayOpen ? RELEASE_NOTES_TAB_ID : '';
+}
+
+// En dev la regla de novedades dice «no abrir» (el dev comparte `userData` con la instalada). El harness
+// de `verify:gui` la quiere medir, asi que puede levantar esa condicion con una variable de Vite.
+function isReleaseNotesDevRun(): boolean {
+  return import.meta.env.DEV && import.meta.env.VITE_MAGE_RELEASE_NOTES_IN_DEV !== '1';
+}
+
 function paneForNewTab(s: { readonly splitLayout: SplitLayout; readonly activeTabId: string; readonly newTabAnchorTabId: string | null }): SplitPath {
   const porAncla = s.newTabAnchorTabId === null ? null : findLeafPath(s.splitLayout, s.newTabAnchorTabId);
   return porAncla ?? findLeafPath(s.splitLayout, s.activeTabId) ?? firstLeafPath(s.splitLayout);

@@ -9,9 +9,10 @@
 // test corre sin Electron, y la CONFIGURACION de la ventana (webPreferences incluidas) sigue viviendo
 // en un solo sitio: la fabrica que pasa `index.ts`.
 
-// Id de la ventana principal. Es una constante y no un id generado porque es la unica que existe
-// desde el arranque y la que conserva el estado persistido de siempre (workspace-state.json).
-export const MAIN_WINDOW_ID = 'main';
+import { MAIN_WINDOW_ID } from '@shared/ipc';
+
+// El id de la ventana principal se define en shared (el renderer tambien lo necesita).
+export { MAIN_WINDOW_ID };
 
 // Prefijo de las ventanas secundarias: w2, w3, ... El id es ESTABLE entre arranques (se reasigna el
 // hueco libre mas bajo), asi la segunda ventana recupera el workspace que tenia la segunda ventana la

@@ -606,6 +606,11 @@ export interface ModelCatalogChange {
 
 // Una ventana abierta, tal como la ve el renderer que pregunta. `isCurrent` es la ventana desde la
 // que se hizo la llamada (main lo resuelve por el `event.sender`, nunca se fia de un id del renderer).
+// Id de la ventana principal. Es una constante y no un id generado porque es la unica que existe
+// desde el arranque y la que conserva el estado persistido de siempre (workspace-state.json). Vive en
+// shared porque el renderer tambien necesita saber si es la principal (las notas de version).
+export const MAIN_WINDOW_ID = 'main';
+
 export interface MageWindowInfo {
   readonly windowId: string;
   readonly isCurrent: boolean;
