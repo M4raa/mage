@@ -4,7 +4,7 @@ Mage incorpora software de terceros. Abajo va, para cada paquete que viaja en el
 licencia completa con su aviso de copyright. Este fichero se genera con `pnpm notices` a partir
 de las dependencias de produccion realmente instaladas; no se edita a mano.
 
-Paquetes: 85 · Licencias: MIT (79) · ISC (3) · Python-2.0 (1) · BlueOak-1.0.0 (1) · 0BSD (1)
+Paquetes: 86 · Licencias: MIT (80) · ISC (3) · Python-2.0 (1) · BlueOak-1.0.0 (1) · 0BSD (1)
 
 Electron y Chromium: sus avisos viajan aparte, en el fichero LICENSES.chromium.html que se
 instala junto a la aplicacion. ffmpeg se enlaza dinamicamente bajo LGPL-2.1-or-later; su
@@ -1141,6 +1141,34 @@ Autor: Vladimir Krivosheev
 The MIT License (MIT)
 
 Copyright (c) 2015 Loopline Systems
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+
+====================================================================================================
+fflate 0.8.3 — MIT
+Autor: Arjun Barrett
+====================================================================================================
+
+MIT License
+
+Copyright (c) 2026 Arjun Barrett
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

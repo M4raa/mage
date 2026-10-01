@@ -1,5 +1,17 @@
 import type { McpServerStatus } from '@shared/events';
-import type { McpAuthResult, McpInventory, McpInventoryRow, McpLiveStatus, McpOriginKind, McpStatusByAccount, McpTransport } from '@shared/mcp';
+import { isInMcpScope } from '@shared/mcp';
+import type {
+  McpAuthResult,
+  McpExtensionView,
+  McpInventory,
+  McpInventoryRow,
+  McpLiveStatus,
+  McpOriginKind,
+  McpProviderFamily,
+  McpStatusByAccount,
+  McpStatusCache,
+  McpTransport,
+} from '@shared/mcp';
 
 // Vista PURA de «MCP y conectores» (P-028 punto 5) y del Inspector › MCP: une el inventario de main
 // (ficheros) con lo que reportan las sesiones (`mcp_status` o el `session_init`), traduce estados y
@@ -49,7 +61,13 @@ export interface McpTableRow {
   readonly cliName: string;
   // Cuentas (configDir) cuyo CLI dijo `needs-auth`: una accion «Autenticar» por cada una.
   readonly needsAuth: readonly string[];
+  // Pastillas «Proveedores» y la insignia «Solo X» (null = de Mage o de nadie).
+  readonly providers: readonly McpProviderFamily[];
+  readonly ownedBy: McpProviderFamily | null;
 }
+
+// Lo que solo conoce el CLI de Claude (conectores, plugins, lo de otra carpeta) es suyo.
+const CLAUDE_ONLY = { providers: ['claude'] as const, ownedBy: 'claude' as const };
 
 const TRANSPORT_LABELS: Readonly<Record<McpTransport, string>> = { stdio: 'Local', http: 'Remoto (HTTP)', sse: 'Remoto (SSE)' };
 
@@ -106,13 +124,15 @@ function serverRow(row: McpInventoryRow, reports: readonly StatusReport[]): McpT
     inventory: row,
     cliName: row.name,
     needsAuth: row.disabled ? [] : accountsNeedingAuth(reports),
+    providers: row.providers,
+    ownedBy: row.ownedBy,
   };
 }
 
 function sessionOnlyRow(name: string, reports: readonly StatusReport[]): McpTableRow | null {
   const accounts = [...new Set(reports.map((report) => report.accountId))];
   const statusLabel = summarizeStatus(reports);
-  const live = { cliName: name, needsAuth: accountsNeedingAuth(reports) };
+  const live = { cliName: name, needsAuth: accountsNeedingAuth(reports), ...CLAUDE_ONLY };
   const isConnector = name.startsWith(CONNECTOR_PREFIX) || reports.some((report) => report.status.scope === CONNECTOR_SCOPE);
   if (isConnector) {
     const display = name.startsWith(CONNECTOR_PREFIX) ? name.slice(CONNECTOR_PREFIX.length) : name;
@@ -151,6 +171,11 @@ export function summarizeStatus(reports: readonly { readonly status: McpLiveStat
   }
   if (counts.size === 1) return [...counts.keys()][0]!;
   return [...counts.entries()].map(([label, count]) => `${label} (${count})`).join(' · ');
+}
+
+// Pestaña «Servidores»: todo menos los conectores de claude.ai, que tienen la suya.
+export function buildServersTable(inventory: McpInventory | null, statuses: McpStatusByAccount): readonly McpTableRow[] {
+  return buildMcpTable(inventory, statuses).filter((row) => row.kind !== 'connector');
 }
 
 // Busqueda por nombre, tipo o insignia, sin distinguir mayusculas.
@@ -206,3 +231,99 @@ export function mcpAuthMessage(result: McpAuthResult): McpAuthMessage {
 
 export const mcpAuthKey = (accountDir: string, serverName: string): string => `${accountDir}
 ${serverName}`;
+
+// --- Pestaña «Conectores» (por proveedor y cuenta) ----------------------------------------------
+
+export type McpConnectorKind = 'web' | 'plugin' | 'extension' | 'desktopOnly';
+
+export interface McpConnectorRow {
+  readonly key: string;
+  readonly name: string;
+  readonly kind: McpConnectorKind;
+  readonly typeLabel: string; // Web · Complemento · Escritorio (como Claude Desktop)
+  readonly statusLabel: string;
+  readonly cliName: string | null; // para «Conectar» (mcp_authenticate); null = sin acciones
+  readonly needsAuth: boolean;
+}
+
+export interface McpConnectorGroup {
+  readonly accountId: string;
+  readonly checkedAt: string | null;
+  readonly claudeAiEnabled: boolean;
+  readonly rows: readonly McpConnectorRow[];
+}
+
+export const CLAUDE_IN_CHROME = 'Claude in Chrome';
+const DESKTOP_ONLY_LABEL = 'Solo disponible en Claude Desktop';
+const CONNECTORS_OFF_LABEL = 'Apagados en esta cuenta';
+
+export interface ConnectorGroupInput {
+  readonly accountIds: readonly string[];
+  readonly statuses: McpStatusByAccount; // lo sondeado/guardado y, si no, lo de las sesiones
+  readonly cache: McpStatusCache;
+  readonly extensions: readonly McpExtensionView[];
+  readonly claudeAiOff: readonly string[];
+}
+
+// Un grupo por cuenta de Claude: sus conectores de claude.ai (Web), los de sus plugins (Complemento),
+// las extensiones de Mage que carga (Escritorio) y «Claude in Chrome», que solo existe en Desktop.
+export function buildClaudeConnectorGroups(input: ConnectorGroupInput): readonly McpConnectorGroup[] {
+  return input.accountIds.map((accountId) => {
+    const claudeAiEnabled = !input.claudeAiOff.includes(accountId);
+    const reported = input.statuses[accountId] ?? [];
+    const web = reported.filter(isConnectorStatus).map((status) => webRow(status, claudeAiEnabled));
+    const plugins = reported.flatMap((status) => pluginRow(status) ?? []);
+    const extensions = input.extensions
+      .filter((ext) => ext.enabled && isInMcpScope(ext.onlyIn, { family: 'claude', accountId }))
+      .map((ext) => extensionRow(ext, reported));
+    const chrome: McpConnectorRow = { key: 'desktop:chrome', name: CLAUDE_IN_CHROME, kind: 'desktopOnly', typeLabel: 'Escritorio', statusLabel: DESKTOP_ONLY_LABEL, cliName: null, needsAuth: false };
+    return { accountId, checkedAt: input.cache[accountId]?.checkedAt ?? null, claudeAiEnabled, rows: [...web, ...plugins, ...extensions, chrome] };
+  });
+}
+
+function isConnectorStatus(status: McpLiveStatus): boolean {
+  return status.name.startsWith(CONNECTOR_PREFIX) || status.scope === CONNECTOR_SCOPE;
+}
+
+function webRow(status: McpLiveStatus, enabled: boolean): McpConnectorRow {
+  const name = status.name.startsWith(CONNECTOR_PREFIX) ? status.name.slice(CONNECTOR_PREFIX.length) : status.name;
+  const needsAuth = enabled && status.status === NEEDS_AUTH;
+  return { key: `web:${status.name}`, name, kind: 'web', typeLabel: 'Web', statusLabel: enabled ? mcpStatusLabel(status.status) : CONNECTORS_OFF_LABEL, cliName: status.name, needsAuth };
+}
+
+function pluginRow(status: McpLiveStatus): McpConnectorRow | null {
+  const plugin = parsePluginServer(status.name);
+  if (plugin === null) return null;
+  return {
+    key: `plugin:${status.name}`,
+    name: `${plugin.server} (plugin ${plugin.plugin})`,
+    kind: 'plugin',
+    typeLabel: 'Complemento',
+    statusLabel: mcpStatusLabel(status.status),
+    cliName: status.name,
+    needsAuth: status.status === NEEDS_AUTH,
+  };
+}
+
+function extensionRow(ext: McpExtensionView, reported: readonly McpLiveStatus[]): McpConnectorRow {
+  const live = reported.find((status) => status.name === ext.id);
+  const liveLabel = live === undefined ? 'Activa' : mcpStatusLabel(live.status);
+  const statusLabel = ext.problem ?? liveLabel;
+  return { key: `ext:${ext.id}`, name: ext.displayName, kind: 'extension', typeLabel: 'Escritorio', statusLabel, cliName: null, needsAuth: false };
+}
+
+const MINUTE_MS = 60_000;
+const HOUR_MS = 60 * MINUTE_MS;
+const DAY_MS = 24 * HOUR_MS;
+
+// «Última comprobación: hace 5 min». Una fecha que no se entiende se dice tal cual (no se inventa).
+export function describeCheckedAt(iso: string | null, now: Date): string {
+  if (iso === null) return 'Sin comprobar todavía';
+  const time = Date.parse(iso);
+  if (Number.isNaN(time)) return `Última comprobación: ${iso}`;
+  const elapsed = Math.max(0, now.getTime() - time);
+  if (elapsed < MINUTE_MS) return 'Última comprobación: hace un momento';
+  if (elapsed < HOUR_MS) return `Última comprobación: hace ${Math.floor(elapsed / MINUTE_MS)} min`;
+  if (elapsed < DAY_MS) return `Última comprobación: hace ${Math.floor(elapsed / HOUR_MS)} h`;
+  return `Última comprobación: hace ${Math.floor(elapsed / DAY_MS)} días`;
+}

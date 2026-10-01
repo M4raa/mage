@@ -1,13 +1,16 @@
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { resolveLaunchParams, type DefaultsDeps } from './sessionDefaults';
+import type { SharedLaunchConfig } from './providerAdapter';
+
+const NO_SHARED: SharedLaunchConfig = { mcpServers: [], settingsFragment: null, claudeAiConnectors: true };
 
 function deps(overrides: Partial<DefaultsDeps>): DefaultsDeps {
   return {
     homedir: '/home/u',
     fileExists: () => true,
     listHome: () => [],
-    resolveSharedConfigArgs: () => [],
+    resolveShared: () => NO_SHARED,
     ...overrides,
   };
 }
@@ -114,17 +117,18 @@ describe('resolveLaunchParams', () => {
     expect(() => resolveLaunchParams('s1', { ...params, maxBudgetUsdCents: 0 }, deps({}))).toThrow(/presupuesto/i);
   });
 
-  it('resolve_sharedConfigArgs_seTomanDelDeps', () => {
-    const args = ['--mcp-config', '/x/mcp-common.json'];
-    const result = resolveLaunchParams('s1', params, deps({ resolveSharedConfigArgs: () => args }));
+  it('resolve_compartido_seResuelvePorProveedorYCuenta', () => {
+    const calls: [string, string][] = [];
+    const shared: SharedLaunchConfig = { ...NO_SHARED, claudeAiConnectors: false };
+    const resolveShared = (provider: string, accountDir: string): SharedLaunchConfig => {
+      calls.push([provider, accountDir]);
+      return shared;
+    };
 
-    expect(result.sharedConfigArgs).toEqual(args);
-  });
+    const result = resolveLaunchParams('s1', { ...params, accountDir: '/home/u/.claude-p' }, deps({ resolveShared }));
 
-  it('resolve_sinConfiguracionComun_sharedConfigArgsEsArrayVacio', () => {
-    const result = resolveLaunchParams('s1', params, deps({}));
-
-    expect(result.sharedConfigArgs).toEqual([]);
+    expect(result.shared).toBe(shared);
+    expect(calls).toEqual([['claude', '/home/u/.claude-p']]);
   });
 
   it('resolve_nonClaudeProviderWithoutCreds_succeeds', () => {

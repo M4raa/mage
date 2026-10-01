@@ -8,6 +8,9 @@ import {
   type AtomicWriteDeps,
   type FileSnapshot,
 } from '../os/atomicFile';
+import type { McpScope } from '@shared/mcp';
+import { ONLY_IN_SERVERS_KEY, scopeOf } from './mcpInventory';
+import { mergeServerLists, resolveCommonServers, type ResolvedMcpList } from './mcpResolved';
 
 // Configuracion COMUN a todas las cuentas (D1 Fase 1): dos ficheros propiedad exclusiva de Mage,
 // FUERA de cualquier CLAUDE_CONFIG_DIR (viven en app.getPath('userData')/shared-config/). El CLI
@@ -21,6 +24,8 @@ import {
 export interface McpCommonConfig {
   readonly path: string;
   readonly mcpServers: Record<string, unknown>;
+  // «Solo en…» de cada comun (clave propia de Mage `mageOnlyIn`). Ausente = en todos.
+  readonly onlyIn: Readonly<Record<string, McpScope>>;
 }
 
 // settings-common.json: restringido POR FORMA a solo hooks y permissions.allow/deny (validado aqui,
@@ -65,7 +70,7 @@ const EMPTY_MCP_COMMON_TEXT = '{"mcpServers": {}}';
 // --- Parseo puro (sin FS): reutilizado por los loaders de disco Y por el editor de Configuracion --
 
 export interface McpCommonParseResult {
-  readonly value: { readonly mcpServers: Record<string, unknown> } | null;
+  readonly value: { readonly mcpServers: Record<string, unknown>; readonly onlyIn: Readonly<Record<string, McpScope>> } | null;
   readonly warnings: readonly string[];
 }
 
@@ -81,7 +86,8 @@ export function parseMcpCommonJson(raw: string): McpCommonParseResult {
   if (!isRecord(parsed) || !isRecord(parsed.mcpServers)) {
     return { value: null, warnings: ['No tiene la forma {"mcpServers": {...}}; se ignora entero'] };
   }
-  return { value: { mcpServers: parsed.mcpServers }, warnings: [] };
+  const onlyIn = isRecord(parsed[ONLY_IN_SERVERS_KEY]) ? parsed[ONLY_IN_SERVERS_KEY] : {};
+  return { value: { mcpServers: parsed.mcpServers, onlyIn: Object.fromEntries(Object.entries(onlyIn).map(([name, raw]) => [name, scopeOf(raw)])) }, warnings: [] };
 }
 
 export interface SettingsCommonParseResult {
@@ -232,7 +238,7 @@ export class SharedConfigService {
 
     const { value, warnings } = parseMcpCommonJson(raw);
     for (const warning of warnings) this.deps.log('warn', `mcp-common.json en "${path}": ${warning}`);
-    return value === null ? null : { path, mcpServers: value.mcpServers };
+    return value === null ? null : { path, ...value };
   }
 
   // Zod acepta SOLO hooks/permissions.allow/permissions.deny; cualquier otra clave (top-level o
@@ -369,23 +375,16 @@ export class SharedConfigService {
   }
 }
 
-// Decide que flags anadir al spawn del CLI. PURA (sin FS): ambos loaders ya hicieron la lectura y
-// validacion; esta funcion solo mira el resultado. `--mcp-config` solo si sobrevive >=1 servidor;
-// `--settings` (JSON inline, sin fichero intermedio de Mage) solo si sobrevive >=1 clave.
-export function resolveSharedConfigArgs(
-  mcpCommon: McpCommonConfig | null,
-  settingsCommon: SettingsCommonConfig | null,
-): string[] {
-  const args: string[] = [];
-  if (mcpCommon !== null && Object.keys(mcpCommon.mcpServers).length > 0) {
-    args.push('--mcp-config', mcpCommon.path);
-  }
-  const fragment = buildSettingsFragment(settingsCommon);
-  if (fragment !== null) args.push('--settings', JSON.stringify(fragment));
-  return args;
+// Lo compartido de MCP en formato neutro (lo traduce cada adapter): los comunes activos con su «Solo
+// en…» mas las extensiones activas. PURA (los loaders ya leyeron y validaron).
+export function resolveSharedMcp(mcpCommon: McpCommonConfig | null, extensions: ResolvedMcpList): ResolvedMcpList {
+  const common = mcpCommon === null ? { servers: [], warnings: [] } : resolveCommonServers(mcpCommon.mcpServers, mcpCommon.onlyIn);
+  return mergeServerLists(common, extensions);
 }
 
-function buildSettingsFragment(settingsCommon: SettingsCommonConfig | null): Record<string, unknown> | null {
+// Fragmento de `--settings` (hooks y permisos comunes) solo si sobrevive >=1 clave. Es de Claude: los
+// demas CLI no tienen un equivalente medido.
+export function buildSettingsFragment(settingsCommon: SettingsCommonConfig | null): Record<string, unknown> | null {
   if (settingsCommon === null) return null;
   const fragment: Record<string, unknown> = {};
   if (settingsCommon.hooks !== undefined && Object.keys(settingsCommon.hooks).length > 0) {

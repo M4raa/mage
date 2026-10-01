@@ -1,15 +1,15 @@
 import { join } from 'node:path';
 import { EFFORT_LEVELS, PERMISSION_MODES, type CreateSessionParams } from '@shared/ipc';
-import type { LaunchParams } from './providerAdapter';
+import type { LaunchParams, SharedLaunchConfig } from './providerAdapter';
 
 // Dependencias inyectables (FS/HOME) -> testable.
 export interface DefaultsDeps {
   readonly homedir: string;
   readonly fileExists: (path: string) => boolean;
   readonly listHome: () => string[];
-  // Resuelve los flags de configuracion comun (D1 Fase 1: mcp-common.json/settings-common.json) para
-  // ESTE lanzamiento; se llama en cada sesion nueva para leerlos frescos (nunca se cachean).
-  readonly resolveSharedConfigArgs: () => readonly string[];
+  // Resuelve lo comun (MCP de mcp-common.json y extensiones, settings-common.json) para ESTE proveedor y
+  // cuenta; se llama en cada sesion nueva para leerlo fresco (nunca se cachea).
+  readonly resolveShared: (provider: string, accountDir: string) => SharedLaunchConfig;
 }
 
 // Un CLAUDE_CONFIG_DIR es una cuenta valida si tiene credenciales OAuth.
@@ -45,7 +45,7 @@ export function resolveLaunchParams(
     model,
     cwd,
     resume,
-    sharedConfigArgs: deps.resolveSharedConfigArgs(),
+    shared: deps.resolveShared(params.provider, accountDir),
     ...(effort === undefined ? {} : { effort }),
     ...(maxBudgetUsdCents === undefined ? {} : { maxBudgetUsdCents }),
     ...(permissionMode === undefined ? {} : { permissionMode }),

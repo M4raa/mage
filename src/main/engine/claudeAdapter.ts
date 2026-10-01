@@ -7,6 +7,7 @@ import { resolveClaudeBinary } from '../os/claudeBinaryResolver';
 import { normalizeRawEvent } from './normalize';
 import type { AuthModel, LaunchParams, PermissionRef, ProviderAdapter, SpawnPlan } from './providerAdapter';
 import { scrubAgentEnv } from '../os/agentEnv';
+import { claudeSharedLaunch, refuseClaudeMcpConfig, type ClaudeMcpConfigWriter } from '../config/mcpProviderTranslate';
 
 // Argumentos fijos del CLI headless stream-json (confirmados en el spike M1.0).
 // --output-format stream-json EXIGE --verbose. --permission-prompt-tool stdio activa el
@@ -68,8 +69,12 @@ export class ClaudeAdapter implements ProviderAdapter {
     },
   };
 
-  // Resolver inyectable para testear el plan de spawn sin tocar el FS.
-  constructor(private readonly resolveBinary: () => string = resolveClaudeBinary) {}
+  // Resolver inyectable para testear el plan de spawn sin tocar el FS. `writeMcpConfig` escribe el
+  // fichero de `--mcp-config` de la cuenta (con los secretos, en la carpeta de Mage): lo pone main.
+  constructor(
+    private readonly resolveBinary: () => string = resolveClaudeBinary,
+    private readonly writeMcpConfig: ClaudeMcpConfigWriter = refuseClaudeMcpConfig,
+  ) {}
 
   buildSpawnPlan(params: LaunchParams): SpawnPlan {
     // Reanudar (`--resume <id>`) continua la conversacion existente y sigue escribiendo en su misma
@@ -88,11 +93,12 @@ export class ClaudeAdapter implements ProviderAdapter {
     if (params.permissionMode !== undefined && params.permissionMode.length > 0) {
       args.push('--permission-mode', params.permissionMode);
     }
-    // Config comun (D1 Fase 1): --mcp-config/--settings ya resueltos por SharedConfigService.
-    args.push(...(params.sharedConfigArgs ?? []));
+    // Lo comun (MCP compartidos y extensiones, hooks y permisos) traducido a flags de Claude.
+    const shared = claudeSharedLaunch(params.shared, params.accountDir, this.writeMcpConfig);
+    args.push(...shared.args);
     // Env del hijo: se fija la cuenta y se SANEA (scrubAgentEnv). El invariante de facturacion vive
     // ahora en un solo sitio: ver src/main/os/agentEnv.ts.
-    const env: NodeJS.ProcessEnv = { ...scrubAgentEnv(process.env), CLAUDE_CONFIG_DIR: params.accountDir };
+    const env: NodeJS.ProcessEnv = { ...scrubAgentEnv(process.env), CLAUDE_CONFIG_DIR: params.accountDir, ...shared.env };
     return { command: this.resolveBinary(), args, env };
   }
 

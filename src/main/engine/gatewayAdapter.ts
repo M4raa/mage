@@ -6,6 +6,7 @@ import { normalizeRawEvent } from './normalize';
 import type { AuthModel, LaunchParams, PermissionRef, ProviderAdapter, SpawnPlan } from './providerAdapter';
 import { getGatewayPort, registerSession } from './proxy/gateway';
 import { scrubAgentEnv } from '../os/agentEnv';
+import { claudeSharedLaunch, refuseClaudeMcpConfig, type ClaudeMcpConfigWriter } from '../config/mcpProviderTranslate';
 
 // Adapter UNICO de todos los proveedores que no son Claude (E2). El motor sigue siendo el CLI real de
 // Claude Code: lo que cambia es que `ANTHROPIC_BASE_URL` apunta al gateway local, que traduce
@@ -41,6 +42,8 @@ export class GatewayAdapter implements ProviderAdapter {
     // Inyectado como el resolutor de binario (y por lo mismo): el plan de arranque se puede probar sin
     // levantar un servidor de verdad. Por defecto, el puerto del gateway real.
     private readonly getPort: () => number = getGatewayPort,
+    // Como en ClaudeAdapter: debajo corre el mismo CLI y recibe el mismo `--mcp-config` de la cuenta.
+    private readonly writeMcpConfig: ClaudeMcpConfigWriter = refuseClaudeMcpConfig,
   ) {
     if (providerId.trim().length === 0) {
       throw new Error(`GatewayAdapter necesita un id de proveedor (recibido: ${JSON.stringify(providerId)})`);
@@ -63,14 +66,9 @@ export class GatewayAdapter implements ProviderAdapter {
     // Mismo criterio que `claudeAdapter`: reanudar es `--resume <id>`. Debajo corre el mismo CLI, que
     // RECHAZA un `--session-id` ya usado, asi que un reinicio (C1) con `--session-id` moria siempre.
     const sessionArgs = params.resume === true ? ['--resume', params.sessionId] : ['--session-id', params.sessionId];
-    const args = [
-      ...BASE_ARGS,
-      ...sessionArgs,
-      '--model',
-      params.model,
-      // Config comun (D1 Fase 1): --mcp-config/--settings ya resueltos por SharedConfigService.
-      ...(params.sharedConfigArgs ?? []),
-    ];
+    // Lo comun, traducido igual que en el nativo (es el mismo CLI).
+    const shared = claudeSharedLaunch(params.shared, params.accountDir, this.writeMcpConfig);
+    const args = [...BASE_ARGS, ...sessionArgs, '--model', params.model, ...shared.args];
 
     // La api key del hijo es el TICKET de la sesion (sk-mage-<sessionId>), no la credencial del
     // proveedor: esa vive solo en el main (entorno o app-settings.json) y el gateway la pone al
@@ -79,6 +77,7 @@ export class GatewayAdapter implements ProviderAdapter {
       // Saneado ANTES de poner las suyas: las dos de abajo son a proposito (ver agentEnv.ts).
       ...scrubAgentEnv(process.env),
       CLAUDE_CONFIG_DIR: params.accountDir,
+      ...shared.env,
       ANTHROPIC_BASE_URL: `http://127.0.0.1:${port}/v1`,
       ANTHROPIC_API_KEY: `sk-mage-${params.sessionId}`,
     };

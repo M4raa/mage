@@ -17,7 +17,14 @@ import {
   type CloseAnswer,
 } from '@shared/ipc';
 import type { UpdateState } from '@shared/update';
-import type { McpAuthParams, McpCommonMutateParams, McpImportApplyParams, McpInventoryParams } from '@shared/mcp';
+import type {
+  McpAuthParams,
+  McpCommonMutateParams,
+  McpExtensionConfigParams,
+  McpImportApplyParams,
+  McpInventoryParams,
+  McpScope,
+} from '@shared/mcp';
 import type {
   AnswerPermissionParams,
   ModelCatalogChange,
@@ -189,6 +196,21 @@ const api: MageApi = {
   applyMcpImport: (params: McpImportApplyParams) => ipcRenderer.invoke(IpcChannel.McpImportApply, params),
   probeMcpStatus: () => ipcRenderer.invoke(IpcChannel.McpStatusProbe),
   authenticateMcp: (params: McpAuthParams) => ipcRenderer.invoke(IpcChannel.McpAuthenticate, params),
+  loadMcpStatusCache: () => ipcRenderer.invoke(IpcChannel.McpStatusCacheLoad),
+  listMcpExtensions: () => ipcRenderer.invoke(IpcChannel.McpExtensionsList),
+  pickMcpExtension: () => ipcRenderer.invoke(IpcChannel.McpExtensionPick),
+  installMcpExtension: (token: string) => ipcRenderer.invoke(IpcChannel.McpExtensionInstall, token),
+  importDesktopMcpExtension: (dirName: string) => ipcRenderer.invoke(IpcChannel.McpExtensionImportDesktop, dirName),
+  setMcpExtensionEnabled: (id: string, enabled: boolean) => ipcRenderer.invoke(IpcChannel.McpExtensionSetEnabled, { id, enabled }),
+  setMcpExtensionOnlyIn: (id: string, onlyIn: McpScope) => ipcRenderer.invoke(IpcChannel.McpExtensionSetOnlyIn, { id, onlyIn }),
+  saveMcpExtensionConfig: (params: McpExtensionConfigParams) => ipcRenderer.invoke(IpcChannel.McpExtensionSaveConfig, params),
+  removeMcpExtension: (id: string) => ipcRenderer.invoke(IpcChannel.McpExtensionRemove, id),
+  pickMcpFile: () => ipcRenderer.invoke(IpcChannel.McpPickFile),
+  loadMcpAgySync: () => ipcRenderer.invoke(IpcChannel.McpAgySyncState),
+  previewMcpAgySync: (secretsConfirmed?: readonly string[]) => ipcRenderer.invoke(IpcChannel.McpAgySyncPreview, secretsConfirmed),
+  applyMcpAgySync: (expected: string | null, secretsConfirmed: readonly string[]) =>
+    ipcRenderer.invoke(IpcChannel.McpAgySyncApply, { expected, secretsConfirmed }),
+  setMcpAgyAutoSync: (auto: boolean) => ipcRenderer.invoke(IpcChannel.McpAgySyncSetAuto, auto),
   loadPanelLayout: (params: LoadPanelLayoutParams) => ipcRenderer.invoke(IpcChannel.PanelsLoad, params),
   savePanelLayout: (state: PanelLayoutState) => ipcRenderer.invoke(IpcChannel.PanelsSave, state),
   // Varias ventanas del workbench. `loadWorkspace`/`saveWorkspace` NO cambian de firma: main resuelve

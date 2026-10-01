@@ -117,15 +117,19 @@ import { providerAuthSummary } from './engine/providerAuth';
 import { setCustomProviderLoader, setGatewayLogger, startGateway, stopGateway } from './engine/proxy/gateway';
 import { defaultKillTreeDeps, killProcessTree } from './os/processTree';
 import { SessionManager } from './engine/sessionManager';
-import type { AccountLayout, ProviderAdapter } from './engine/providerAdapter';
+import type { AccountLayout, ProviderAdapter, SharedLaunchConfig } from './engine/providerAdapter';
 import {
+  buildSettingsFragment,
   defaultSharedConfigDeps,
   mcpCommonServerNames,
   parseMcpCommonJson,
   parseSettingsCommonJson,
-  resolveSharedConfigArgs,
   SharedConfigService,
 } from './config/sharedConfigService';
+import { createMcpServices, type McpServices } from './config/mcpServices';
+import { claudeSharedLaunch } from './config/mcpProviderTranslate';
+import { selectForTarget } from './config/mcpResolved';
+import { mcpFamilyOf } from '@shared/mcp';
 import { AccountService } from './accounts/accountService';
 import { ConversationsService } from './conversations/conversationsService';
 import { ConversationAdminService } from './conversations/conversationAdminService';
@@ -368,10 +372,12 @@ const MCP_AUTH_POLL_MS = 2_000;
 // verify:gui: CLI falso en proceso (config/mcpFakeCli.ts). Nunca se spawnea nada ni se abre el navegador.
 const MCP_FAKE_CLI = process.env.MAGE_MCP_FAKE_CLI === '1';
 
-// Mismo proceso que el sondeo de modelos, pero con --mcp-config/--settings: es lo que carga una sesion.
+// Mismo proceso que el sondeo de modelos, pero con lo compartido de esa cuenta (--mcp-config,
+// --settings y el interruptor de conectores): es lo que carga una sesion.
 function spawnMcpStatusProbe(configDir: string): ProbeProcess {
   if (MCP_FAKE_CLI) return spawnFakeMcpCli(configDir);
-  return spawnModelProbe(configDir, loadSharedConfigArgs());
+  const shared = claudeSharedLaunch(loadSharedLaunch('claude', configDir), configDir, getMcpServices().writeClaudeMcpConfig);
+  return spawnModelProbe(configDir, shared.args, shared.env);
 }
 
 // Enlaces que un renderer abre en ventana nueva: al navegador por OpenWithService (solo https).
@@ -389,13 +395,65 @@ function openMcpAuthUrl(url: string): Promise<void> {
   return openWithService.openExternal(url);
 }
 
-// Se re-lee en CADA lanzamiento (nunca se cachea el resultado): son ficheros que el usuario puede
-// editar entre una sesion y la siguiente (editor propio en Configuracion, D1 Fase 2).
-function loadSharedConfigArgs(): readonly string[] {
-  const service = getSharedConfigService();
-  const mcpCommon = service.loadMcpCommon(mcpCommonPath());
-  const settingsCommon = service.loadSettingsCommon(settingsCommonPath());
-  return resolveSharedConfigArgs(mcpCommon, settingsCommon);
+// MCP de Mage (extensiones, sincronizacion con agy, cache de estado, --mcp-config generados). Lazy:
+// depende de app.getPath('userData').
+let mcpServicesSingleton: McpServices | null = null;
+function getMcpServices(): McpServices {
+  if (mcpServicesSingleton === null) {
+    mcpServicesSingleton = createMcpServices({
+      userDataDir: app.getPath('userData'),
+      homedir: homedir(),
+      platform: process.platform,
+      pathSeparator: sep,
+      vault: getSecretStore(),
+      isCommandAvailable: isCommandOnPath,
+      desktopDirs: mcpDesktopDirs,
+      agyConfigPath: agyMcpConfigPath(),
+      loadCommon: () => getSharedConfigService().loadMcpCommon(mcpCommonPath()),
+      accountDirs: () => accountService.listAccounts().map((account) => account.configDir),
+      warn: (message) => mainLog('warn', message),
+    });
+  }
+  return mcpServicesSingleton;
+}
+
+// mcp_config.json de agy: su raiz sigue al perfil del usuario (medido en 1.2.14, no hay variable para
+// moverla). En verify:gui, el falso de MAGE_MCP_FAKE_SOURCES.
+function agyMcpConfigPath(): string {
+  return mcpFakeSourcesPath(join('agy', 'mcp_config.json')) ?? join(homedir(), '.gemini', 'config', 'mcp_config.json');
+}
+
+function mcpDesktopDirs(): readonly string[] {
+  const fake = mcpFakeSourcesPath('Claude');
+  if (fake !== null) return existsSync(fake) ? [fake] : [];
+  return resolveClaudeDesktopDirs({ platform: process.platform, env: process.env, homedir: homedir(), exists: existsSync, listDir: (path) => readdirSync(path) });
+}
+
+// Tras cambiar lo que Mage comparte: sincronizacion automatica con agy (si el usuario la activo). Un
+// fallo no tumba el guardado que la disparo: queda en el estado de la sincronizacion y en el LogBus.
+function onSharedMcpChanged(): void {
+  const result = getMcpServices().agySync.autoSync();
+  if (result === null) return;
+  if (result.status === 'stale') mainLog('warn', 'Sincronizacion automatica con agy no aplicada', { motivo: result.message });
+  else mainLog('info', 'Sincronizado con agy', { cambios: result.changes.length });
+}
+
+// Perfil privado de una cuenta (AccountService): cuenta como su cuenta (mismo login, mismo «Solo en…»).
+const PRIVATE_PROFILE_DIR_NAME = 'mage-private';
+
+// Lo comun de UN lanzamiento (proveedor + cuenta). Se re-lee en CADA lanzamiento (nunca se cachea):
+// son ficheros que el usuario puede editar entre una sesion y la siguiente.
+function loadSharedLaunch(provider: string, accountDir: string): SharedLaunchConfig {
+  const family = mcpFamilyOf(provider);
+  const account = basename(accountDir) === PRIVATE_PROFILE_DIR_NAME ? dirname(accountDir) : accountDir;
+  const shared = getMcpServices().sharedMcp();
+  for (const warning of shared.warnings) mainLog('warn', warning);
+  const settingsCommon = getSharedConfigService().loadSettingsCommon(settingsCommonPath());
+  return {
+    mcpServers: selectForTarget(shared.servers, { family, accountId: family === 'claude' ? account : null }),
+    settingsFragment: buildSettingsFragment(settingsCommon),
+    claudeAiConnectors: !getSettingsStore().load().claudeAiConnectorsOff.includes(account),
+  };
 }
 
 // Gestor de sesiones del motor. adapterFactory: hay dos motores NATIVOS (Claude y `agy`, E3, cada uno
@@ -409,7 +467,7 @@ const sessionManager = new SessionManager(
     homedir: homedir(),
     fileExists: existsSync,
     listHome: () => readdirSync(homedir()),
-    resolveSharedConfigArgs: loadSharedConfigArgs,
+    resolveShared: loadSharedLaunch,
   },
   logBus.loggerFor('engine'),
 );
@@ -425,9 +483,10 @@ function accountLayoutOf(adapter: ProviderAdapter): AccountLayout {
 }
 
 function buildAdapter(provider: string): ProviderAdapter {
-  if (provider === 'claude') return new ClaudeAdapter();
+  const writeMcpConfig = getMcpServices().writeClaudeMcpConfig;
+  if (provider === 'claude') return new ClaudeAdapter(undefined, writeMcpConfig);
   if (provider === AGY_PROVIDER_ID) return new AgyAdapter();
-  return new GatewayAdapter(provider);
+  return new GatewayAdapter(provider, undefined, undefined, writeMcpConfig);
 }
 
 // Servicio "abrir con": revelar en el gestor de archivos y guardar-como (copiar) los ficheros que
@@ -452,14 +511,24 @@ const openWithService = new OpenWithService({
     const child = spawn(command, [...args], { detached: true, stdio: 'ignore', cwd });
     child.unref();
   },
-  // Detecta si un comando existe en el PATH con where (Windows) / which (POSIX). Sincrona y rapida;
-  // solo se consulta al listar editores (accion puntual del usuario, no en caliente).
-  isCommandAvailable: (bin) => {
-    const finder = process.platform === 'win32' ? 'where' : 'which';
-    const result = spawnSync(finder, [bin], { stdio: 'ignore', windowsHide: true, timeout: 5_000 });
-    return result.status === 0;
-  },
+  isCommandAvailable: isCommandOnPath,
 });
+
+// Detecta si un comando existe en el PATH con where (Windows) / which (POSIX). Sincrona y rapida; solo
+// se consulta en acciones puntuales del usuario (listar editores, listar extensiones), no en caliente.
+function isCommandOnPath(bin: string): boolean {
+  const finder = process.platform === 'win32' ? 'where' : 'which';
+  const result = spawnSync(finder, [bin], { stdio: 'ignore', windowsHide: true, timeout: 5_000 });
+  return result.status === 0;
+}
+
+// Dialogo nativo de abrir fichero (la ruta la elige main, nunca el renderer). null = cancelado.
+async function pickNativeFile(filters: Electron.FileFilter[]): Promise<string | null> {
+  const options = { properties: ['openFile' as const], filters };
+  const parent = liveMainWindow();
+  const result = parent !== null ? await dialog.showOpenDialog(parent, options) : await dialog.showOpenDialog(options);
+  return result.canceled || result.filePaths.length === 0 ? null : (result.filePaths[0] ?? null);
+}
 
 // Servicios de cuentas: LinkService (enlaces por SO), AccountService (descubre/crea cuentas en disco;
 // solo expone datos seguros). DI con FS real y reloj del sistema. readJson tolera fichero ausente/JSON
@@ -1130,12 +1199,12 @@ const MODEL_PROBE_START_DELAY_MS = 5_000; // tras abrir la ventana, para no comp
 const MODEL_PROBE_TIMEOUT_MS = 5_000; // ~3× lo medido; si vence, se mata y se queda la cache anterior
 const MODEL_PROBE_EXIT_GRACE_MS = 3_000; // tras cerrar la entrada, antes de matar el arbol
 
-function spawnModelProbe(configDir: string, extraArgs: readonly string[] = []): ProbeProcess {
+function spawnModelProbe(configDir: string, extraArgs: readonly string[] = [], extraEnv: Readonly<Record<string, string>> = {}): ProbeProcess {
   const child = spawn(resolveClaudeBinary(), [...CLAUDE_BASE_ARGS, ...extraArgs], {
     // HOME como cwd: el sondeo no es de ningun proyecto, y asi no lee la configuracion de una carpeta
     // cualquiera (la del ejecutable de Mage).
     cwd: homedir(),
-    env: { ...scrubAgentEnv(process.env), CLAUDE_CONFIG_DIR: configDir },
+    env: { ...scrubAgentEnv(process.env), CLAUDE_CONFIG_DIR: configDir, ...extraEnv },
     stdio: ['pipe', 'pipe', 'ignore'],
     windowsHide: true,
   });
@@ -2261,13 +2330,15 @@ function registerIpcHandlers(): void {
     commonPath: mcpCommonPath,
     accounts: mcpAccountLocations,
     legacySharedPath: () => mcpFakeSourcesPath(LEGACY_SHARED_MCP_FILE) ?? join(homedir(), cliLogin.accounts.mainDirName, LEGACY_SHARED_MCP_FILE),
-    desktopDirs: () => {
-      const fake = mcpFakeSourcesPath('Claude');
-      if (fake !== null) return existsSync(fake) ? [fake] : [];
-      return resolveClaudeDesktopDirs({ platform: process.platform, env: process.env, homedir: homedir(), exists: existsSync, listDir: (path) => readdirSync(path) });
-    },
-    homedir: homedir(),
-    pathSeparator: sep,
+    desktopDirs: mcpDesktopDirs,
+    agyConfigPath: agyMcpConfigPath,
+    extensions: getMcpServices().extensions,
+    agySync: getMcpServices().agySync,
+    loadStatusCache: () => getMcpServices().loadStatusCache(),
+    saveStatuses: (fresh) => getMcpServices().saveStatuses(fresh),
+    pickArchive: () => pickNativeFile([{ name: 'Extensión MCP', extensions: ['mcpb', 'dxt'] }]),
+    pickFile: () => pickNativeFile([]),
+    onSharedChanged: onSharedMcpChanged,
     probeStatuses: () => {
       const dirs = accountService.listAccounts().filter((a) => a.loginStatus === 'logged_in').map((a) => a.configDir);
       return probeMcpStatuses({ spawnProbe: spawnMcpStatusProbe, timeoutMs: MCP_STATUS_TIMEOUT_MS, pollMs: MCP_STATUS_POLL_MS, exitGraceMs: MODEL_PROBE_EXIT_GRACE_MS }, dirs);
@@ -2539,6 +2610,8 @@ app.whenReady().then(async () => {
   registerIpcHandlers();
   // Antes de la primera ventana: la primera sesion ya tiene que recibir los MCP importados.
   importSharedMcpOnce();
+  // Y a agy, lo que haya cambiado mientras Mage estaba cerrado (si la sincronizacion automatica esta activa).
+  onSharedMcpChanged();
 
   // Iniciar local proxy gateway para multi-proveedor
   try {
@@ -2547,7 +2620,7 @@ app.whenReady().then(async () => {
     setGatewayLogger((level, message, data) => logBus.publish('engine', level, message, data));
     // Proveedores del usuario (E2): se LEEN DEL DISCO en cada peticion, no se cachea un registro de
     // arranque, asi anadir o editar un proveedor en Configuracion aplica al siguiente turno sin
-    // reiniciar (mismo criterio que loadSharedConfigArgs).
+    // reiniciar (mismo criterio que loadSharedLaunch).
     // La clave de cada uno sale de la boveda aqui mismo, en main: nunca del fichero de ajustes.
     setCustomProviderLoader(() => withApiKeys(getSettingsStore().load().customProviders, getSecretStore()));
     const port = await startGateway();

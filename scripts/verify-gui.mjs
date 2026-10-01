@@ -585,6 +585,8 @@ const CHECKS = [
     // ningun valor de env/headers llega al DOM y que el editor de hooks ya no esta aqui.
     name: 'MCP y conectores: inventario de las fuentes sembradas sin valores de env en el DOM',
     async run(page) {
+      // Autosuficiente con `--only=MCP`: en la tanda completa Configuracion ya llega abierta.
+      if ((await page.locator(MODAL).count()) === 0) await openSettingsDialog(page);
       await openSection(page, /MCP y conectores/);
       await page.locator('[data-mcp-row]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
       const medida = await page.evaluate((secreto) => {
@@ -686,6 +688,163 @@ const CHECKS = [
       const sigueSuBoton = (await fila.getByRole('button', { name: etiqueta, exact: true }).count()) > 0;
       const ok = estadoAntes.includes('Requiere autenticación') && antes >= 1 && vioAutenticando && /Autenticado/.test(texto) && despues === antes - 1 && !sigueSuBoton;
       return { ok, detail: `estadoAntes=«${estadoAntes}» botones ${antes}→${despues} autenticando=${vioAutenticando} mensaje=«${texto}»` };
+    },
+  },
+  {
+    // 0.1.2 grupo C: «MCP y conectores» con tres pestañas, como Claude Desktop. En Servidores, la columna
+    // «Proveedores» (un comun local llega a Claude, Codex y locales; a agy solo si se sincroniza) y lo
+    // propio de agy con su insignia «Solo agy» (mcp_config.json FALSO de MAGE_MCP_FAKE_SOURCES). Los
+    // conectores de claude.ai ya no salen aqui. Se deja en Servidores, como llego.
+    name: 'MCP y conectores: tres pestañas, columna Proveedores y «Solo agy» en Servidores',
+    async run(page) {
+      if ((await page.locator(MODAL).count()) === 0) await openSettingsDialog(page);
+      if ((await page.locator('[data-mcp-section]').count()) === 0) await openSection(page, /MCP y conectores/);
+      await page.locator('[data-mcp-tab="servers"]').click();
+      await page.locator(`[data-mcp-row="${SEEDED_AGY_SERVER}"]`).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      const medida = await page.evaluate(
+        ({ local, agy, conector }) => ({
+          pestañas: [...document.querySelectorAll('[data-mcp-tab]')].map((t) => t.getAttribute('data-mcp-tab')),
+          pastillasLocal: document.querySelector(`[data-mcp-providers="${local}"]`)?.textContent ?? null,
+          filaAgy: document.querySelector(`[data-mcp-row="${agy}"]`)?.textContent ?? '',
+          conectorEnServidores: document.querySelector(`[data-mcp-row="${conector}"]`) !== null,
+        }),
+        { local: SEEDED_MCP_LOCAL, agy: SEEDED_AGY_SERVER, conector: FAKE_MCP_CONNECTOR },
+      );
+      const ok =
+        JSON.stringify(medida.pestañas) === JSON.stringify(['servers', 'connectors', 'extensions']) &&
+        medida.pastillasLocal === 'ClaudeCodexLocales' &&
+        medida.filaAgy.includes('Solo agy') &&
+        !medida.conectorEnServidores;
+      return { ok, detail: JSON.stringify(medida) };
+    },
+  },
+  {
+    // C3-e…h: Conectores por cuenta con el ULTIMO estado guardado (lo dejo la comprobacion anterior de
+    // «Autenticar» con el CLI falso) y su fecha, «Conectar» en el que pide autorizacion, «Claude in
+    // Chrome» como solo de Desktop, Codex «sin verificar» y el interruptor de claude.ai, que se guarda
+    // en los ajustes del perfil aislado y se repone. Se deja en Servidores.
+    name: 'MCP y conectores: Conectores con último estado y fecha, «Conectar», Claude in Chrome y el interruptor de claude.ai',
+    async run(page, { userDataDir }) {
+      await page.locator('[data-mcp-tab="connectors"]').click();
+      // Autosuficiente: sondea con el CLI falso (el ultimo estado queda guardado con su fecha).
+      const sondear = page.locator('[data-mcp-connectors]').getByRole('button', { name: /Comprobar estado|Comprobando/ });
+      await sondear.click();
+      // Hecho cuando alguna cuenta con login tiene fecha de «hace un momento». Sin cuentas con login el
+      // CLI falso no se sondea: no hay grupo con fecha y se mide el primero.
+      const conLogin = await page.evaluate(() => (window.__mageDev?.store.getState().accounts ?? []).filter((a) => a.loginStatus === 'logged_in').length);
+      if (conLogin > 0) {
+        await page.waitForFunction(
+          () => [...document.querySelectorAll('[data-mcp-connector-group] [data-mcp-checked-at]')].some((f) => (f.textContent ?? '').includes('hace un momento')),
+          null,
+          { timeout: 30_000 },
+        );
+      }
+      const recien = page.locator('[data-mcp-connector-group]').filter({ has: page.locator('[data-mcp-checked-at]', { hasText: 'hace un momento' }) });
+      const grupo = (await recien.count()) > 0 ? recien.first() : page.locator('[data-mcp-connector-group]').first();
+      if ((await grupo.count()) === 0) {
+        await page.locator('[data-mcp-tab="servers"]').click();
+        return { ok: true, detail: 'sin cuentas de Claude: no hay grupos de conectores, no aplicable' };
+      }
+      const cuenta = await grupo.getAttribute('data-mcp-connector-group');
+      const conector = grupo.locator(`[data-mcp-connector="${FAKE_MCP_CONNECTOR_NAME}"]`);
+      const hayConector = (await conector.count()) === 1;
+      const conectar = hayConector ? await conector.getByRole('button', { name: /^Autenticar / }).count() : 0;
+      const fecha = await grupo.locator('[data-mcp-checked-at]').innerText();
+      const chrome = await grupo.locator('[data-mcp-connector="Claude in Chrome"]').innerText();
+      const codex = await page.locator('[data-mcp-codex-apps]').innerText();
+      const interruptor = grupo.getByRole('checkbox', { name: /^Usar los conectores de claude\.ai en / });
+      await interruptor.uncheck();
+      const ajustes = path.join(userDataDir, 'app-settings.json');
+      const apagado = await waitForFile(ajustes, (t) => (JSON.parse(t).claudeAiConnectorsOff ?? []).includes(cuenta));
+      const guardado = apagado !== null && (JSON.parse(apagado).claudeAiConnectorsOff ?? []).includes(cuenta);
+      const etiquetaApagado = hayConector ? await conector.locator('[data-mcp-status]').innerText() : '';
+      await interruptor.check();
+      const repuesto = await waitForFile(ajustes, (t) => !(JSON.parse(t).claudeAiConnectorsOff ?? []).includes(cuenta));
+      await page.locator('[data-mcp-tab="servers"]').click();
+      const ok =
+        (!hayConector || (conectar === 1 && etiquetaApagado === 'Apagados en esta cuenta')) &&
+        /Última comprobación/.test(fecha) === hayConector &&
+        chrome.includes('Solo disponible en Claude Desktop') &&
+        codex.includes('sin verificar') &&
+        guardado &&
+        repuesto !== null &&
+        !(JSON.parse(repuesto).claudeAiConnectorsOff ?? []).includes(cuenta);
+      return { ok, detail: `conector=${hayConector} conectar=${conectar} fecha=«${fecha}» apagado=«${etiquetaApagado}» guardado=${guardado} chrome=${chrome.includes('Solo disponible')} codex=${codex.includes('sin verificar')}` };
+    },
+  },
+  {
+    // C3-a…d: la extension sembrada pide configurar; el valor sensible sube UNA vez a la boveda (cifrado)
+    // y no vuelve al DOM ni queda en extensions-settings/; «Importar de Claude Desktop» COPIA la de la
+    // carpeta falsa a la de Mage, y se desinstala para dejarlo como estaba. Se deja en Servidores.
+    name: 'MCP y conectores: Extensiones, el secreto va a la bóveda y no vuelve; importar de Desktop copia y se desinstala',
+    async run(page, { userDataDir }) {
+      await page.locator('[data-mcp-tab="extensions"]').click();
+      const tarjeta = page.locator(`[data-mcp-extension="${SEEDED_EXTENSION}"]`);
+      await tarjeta.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      const pideConfigurar = (await tarjeta.locator('[data-mcp-extension-problem]').innerText()).includes('Falta configurar');
+      const dialogo = page.locator('[data-mcp-extension-config]');
+      await tarjeta.getByRole('button', { name: 'Ajustes', exact: true }).click();
+      await dialogo.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      await dialogo.getByLabel('Clave API').fill(SEEDED_EXTENSION_SECRET);
+      await dialogo.getByRole('button', { name: 'Guardar', exact: true }).click();
+      await dialogo.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+      await tarjeta.locator('[data-mcp-extension-problem]').waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs }).catch(() => undefined);
+      const configurada = (await tarjeta.locator('[data-mcp-extension-problem]').count()) === 0;
+      await tarjeta.getByRole('button', { name: 'Ajustes', exact: true }).click();
+      await dialogo.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      const reabierto = await page.evaluate((secreto) => ({
+        enDom: document.documentElement.outerHTML.includes(secreto) || [...document.querySelectorAll('input')].some((i) => i.value.includes(secreto)),
+        guardado: document.querySelector('[data-mcp-extension-config] input[type="password"]')?.getAttribute('placeholder') ?? '',
+      }), SEEDED_EXTENSION_SECRET);
+      await dialogo.getByRole('button', { name: 'Cancelar', exact: true }).click();
+      await dialogo.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+      const enAjustes = (readIfExists(path.join(userDataDir, 'extensions-settings', `${SEEDED_EXTENSION}.json`)) ?? '').includes(SEEDED_EXTENSION_SECRET);
+      const enBoveda = (readIfExists(path.join(userDataDir, 'secrets.json')) ?? '').includes(SEEDED_EXTENSION_SECRET);
+      const candidato = page.locator(`[data-mcp-desktop-candidate="${SEEDED_DESKTOP_EXTENSION_DIR}"]`);
+      await candidato.getByRole('button', { name: 'Importar', exact: true }).click();
+      const importada = page.locator(`[data-mcp-extension="${SEEDED_DESKTOP_EXTENSION}"]`);
+      await importada.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      const copiada = fs.existsSync(path.join(userDataDir, 'extensions', SEEDED_DESKTOP_EXTENSION, 'manifest.json'));
+      await importada.getByRole('button', { name: /^Desinstalar / }).click();
+      await importada.getByRole('button', { name: '¿Desinstalar?', exact: true }).click();
+      await importada.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+      const limpia = !fs.existsSync(path.join(userDataDir, 'extensions', SEEDED_DESKTOP_EXTENSION));
+      await page.locator('[data-mcp-tab="servers"]').click();
+      const ok = pideConfigurar && configurada && !reabierto.enDom && reabierto.guardado.includes('guardado') && !enAjustes && !enBoveda && copiada && limpia;
+      return { ok, detail: `pideConfigurar=${pideConfigurar} configurada=${configurada} secretoEnDom=${reabierto.enDom} placeholder=«${reabierto.guardado}» enAjustes=${enAjustes} enClaroEnBoveda=${enBoveda} copiada=${copiada} desinstalada=${limpia}` };
+    },
+  },
+  {
+    // C3-j: «Sincronizar con agy» enseña el cambio ANTES de escribir, y al aplicar escribe en el
+    // mcp_config.json FALSO solo lo de Mage (lo del usuario se queda), con copia previa en la carpeta de
+    // Mage. Despues, los comunes llevan la pastilla agy con su nota de copia. Va la ultima de las de MCP:
+    // deja el fichero falso de agy sincronizado.
+    name: 'MCP y conectores: «Sincronizar con agy» enseña el cambio y escribe solo lo de Mage, con copia previa',
+    async run(page, { userDataDir }) {
+      const fichero = path.join(mcpFakeSourcesDir(userDataDir), 'agy', 'mcp_config.json');
+      const dialogo = page.locator('[data-mcp-agy-dialog]');
+      await page.locator('[data-mcp-agy-sync]').getByRole('button', { name: 'Sincronizar con agy', exact: true }).click();
+      await dialogo.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      const cambios = await dialogo.locator('[data-mcp-agy-change="add"]').allInnerTexts();
+      const antes = fs.readFileSync(fichero, 'utf-8');
+      await dialogo.getByRole('button', { name: 'Aplicar', exact: true }).click();
+      await dialogo.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+      const texto = fs.readFileSync(fichero, 'utf-8');
+      const despues = JSON.parse(texto).mcpServers ?? {};
+      // El valor de la boveda de la extension (comprobacion anterior) no se copia sin confirmarlo.
+      const secretoEnAgy = texto.includes(SEEDED_EXTENSION_SECRET);
+      const copias = fs.existsSync(path.join(userDataDir, 'agy-backups')) ? fs.readdirSync(path.join(userDataDir, 'agy-backups')).length : 0;
+      await page.locator(`[data-mcp-providers="${SEEDED_MCP_LOCAL}"]`).getByText('agy').waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs }).catch(() => undefined);
+      const pastillas = (await page.locator(`[data-mcp-providers="${SEEDED_MCP_LOCAL}"]`).innerText()).replace(/\s+/g, '');
+      const ok =
+        cambios.some((t) => t.includes(SEEDED_MCP_LOCAL)) &&
+        antes.includes(SEEDED_AGY_SERVER) &&
+        Object.hasOwn(despues, SEEDED_AGY_SERVER) &&
+        Object.hasOwn(despues, SEEDED_MCP_LOCAL) &&
+        copias === 1 &&
+        !secretoEnAgy &&
+        pastillas.includes('agy');
+      return { ok, detail: `añade=${JSON.stringify(cambios)} enAgy=${JSON.stringify(Object.keys(despues))} copias=${copias} secretoEnAgy=${secretoEnAgy} pastillas=${pastillas}` };
     },
   },
   {
@@ -7137,6 +7296,16 @@ const SEEDED_MCP_DESKTOP_SERVER = 'vg-escritorio';
 const SEEDED_MCP_SECRET = 'vg-valor-que-no-debe-verse';
 // El servidor que reporta el CLI falso de main con MAGE_MCP_FAKE_CLI=1 (src/main/config/mcpFakeCli.ts).
 const FAKE_MCP_AUTH_SERVER = 'vg-auth';
+// Y su conector de claude.ai (nombre del CLI y como se enseña en Conectores, sin el prefijo).
+const FAKE_MCP_CONNECTOR = 'claude.ai VG Conector';
+const FAKE_MCP_CONNECTOR_NAME = 'VG Conector';
+// 0.1.2 grupo C: lo propio de agy (su mcp_config.json falso), una extension de Mage con un user_config
+// sensible y una extension de Claude Desktop para importar.
+const SEEDED_AGY_SERVER = 'vg-agy-suyo';
+const SEEDED_EXTENSION = 'vg-ext';
+const SEEDED_EXTENSION_SECRET = 'vg-secreto-de-extension';
+const SEEDED_DESKTOP_EXTENSION = 'vg-desk';
+const SEEDED_DESKTOP_EXTENSION_DIR = 'local.mcpb.vg.desk';
 
 function mcpFakeSourcesDir(userDataDir) {
   return path.join(userDataDir, 'mcp-fake-sources');
@@ -7156,6 +7325,29 @@ function seedMcpCommon(userDataDir) {
   const local = { type: 'stdio', command: 'npx', args: ['-y', 'vg'], env: { VG_TOKEN: SEEDED_MCP_SECRET } };
   fs.writeFileSync(path.join(fake, '.claude.json'), JSON.stringify({ mcpServers: { [SEEDED_MCP_ACCOUNT_SERVER]: local } }), 'utf-8');
   fs.writeFileSync(path.join(fake, 'Claude', 'claude_desktop_config.json'), JSON.stringify({ mcpServers: { [SEEDED_MCP_DESKTOP_SERVER]: local } }), 'utf-8');
+  seedMcpExtensions(userDataDir, fake);
+}
+
+// Grupo C: el mcp_config.json de agy (falso), una extension .mcpb de Mage ya descomprimida y otra de
+// Claude Desktop. Ninguna se lanza: la verificacion no abre conversaciones con ellas.
+function seedMcpExtensions(userDataDir, fake) {
+  fs.mkdirSync(path.join(fake, 'agy'), { recursive: true });
+  const agy = { mcpServers: { [SEEDED_AGY_SERVER]: { command: 'suyo', args: [], env: {}, disabled: false } } };
+  fs.writeFileSync(path.join(fake, 'agy', 'mcp_config.json'), JSON.stringify(agy, null, 2), 'utf-8');
+  const manifest = (name) => ({
+    manifest_version: '0.3',
+    name,
+    version: '1.0.0',
+    author: { name: 'verify:gui' },
+    server: { type: 'binary', mcp_config: { command: '${__dirname}${/}server${/}vg.exe', args: [], env: { VG_KEY: '${user_config.api_key}' } } },
+    user_config: { api_key: { type: 'string', title: 'Clave API', sensitive: true, required: true } },
+  });
+  const ext = path.join(userDataDir, 'extensions', SEEDED_EXTENSION);
+  fs.mkdirSync(ext, { recursive: true });
+  fs.writeFileSync(path.join(ext, 'manifest.json'), JSON.stringify(manifest(SEEDED_EXTENSION)), 'utf-8');
+  const desk = path.join(fake, 'Claude', 'Claude Extensions', SEEDED_DESKTOP_EXTENSION_DIR);
+  fs.mkdirSync(desk, { recursive: true });
+  fs.writeFileSync(path.join(desk, 'manifest.json'), JSON.stringify({ ...manifest(SEEDED_DESKTOP_EXTENSION), user_config: {}, server: { type: 'binary', mcp_config: { command: 'vg' } } }), 'utf-8');
 }
 
 function seedCommandCatalog(userDataDir) {

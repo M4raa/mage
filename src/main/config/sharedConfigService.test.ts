@@ -3,7 +3,8 @@ import {
   mcpCommonServerNames,
   parseMcpCommonJson,
   parseSettingsCommonJson,
-  resolveSharedConfigArgs,
+  buildSettingsFragment,
+  resolveSharedMcp,
   SharedConfigService,
   type SharedConfigDeps,
 } from './sharedConfigService';
@@ -57,7 +58,7 @@ describe('SharedConfigService.loadMcpCommon', () => {
     const raw = { mcpServers: { database: { command: 'database-mcp' } } };
     const service = new SharedConfigService(deps({ readFile: () => JSON.stringify(raw) }));
 
-    expect(service.loadMcpCommon(MCP_PATH)).toEqual({ path: MCP_PATH, mcpServers: raw.mcpServers });
+    expect(service.loadMcpCommon(MCP_PATH)).toEqual({ path: MCP_PATH, mcpServers: raw.mcpServers, onlyIn: {} });
   });
 });
 
@@ -141,48 +142,50 @@ describe('SharedConfigService.loadSettingsCommon', () => {
   });
 });
 
-describe('resolveSharedConfigArgs', () => {
-  it('resolveSharedConfigArgs_ambosNulos_sinFlags', () => {
-    expect(resolveSharedConfigArgs(null, null)).toEqual([]);
+describe('buildSettingsFragment', () => {
+  it('buildSettingsFragment_nulo_devuelveNull', () => {
+    expect(buildSettingsFragment(null)).toBeNull();
   });
 
-  it('resolveSharedConfigArgs_mcpConServidores_anadeFlagConLaRuta', () => {
-    const args = resolveSharedConfigArgs({ path: MCP_PATH, mcpServers: { database: {} } }, null);
-
-    expect(args).toEqual(['--mcp-config', MCP_PATH]);
+  it('buildSettingsFragment_hooksNoVacios_losLleva', () => {
+    expect(buildSettingsFragment({ hooks: { Stop: [{ hookCallbackIds: ['x'] }] } })).toEqual({ hooks: { Stop: [{ hookCallbackIds: ['x'] }] } });
   });
 
-  it('resolveSharedConfigArgs_mcpSinServidores_noAnadeFlag', () => {
-    expect(resolveSharedConfigArgs({ path: MCP_PATH, mcpServers: {} }, null)).toEqual([]);
+  it('buildSettingsFragment_hooksVacios_devuelveNull', () => {
+    expect(buildSettingsFragment({ hooks: {} })).toBeNull();
   });
 
-  it('resolveSharedConfigArgs_hooksNoVacios_anadeSettingsConHooks', () => {
-    const args = resolveSharedConfigArgs(null, { hooks: { Stop: [{ hookCallbackIds: ['x'] }] } });
-
-    expect(args).toEqual(['--settings', JSON.stringify({ hooks: { Stop: [{ hookCallbackIds: ['x'] }] } })]);
+  it('buildSettingsFragment_permissionsConReglas_lasLleva', () => {
+    expect(buildSettingsFragment({ permissions: { allow: ['a'], deny: ['b'] } })).toEqual({ permissions: { allow: ['a'], deny: ['b'] } });
   });
 
-  it('resolveSharedConfigArgs_hooksVacios_noAnadeFlag', () => {
-    expect(resolveSharedConfigArgs(null, { hooks: {} })).toEqual([]);
+  it('buildSettingsFragment_permissionsArraysVacios_devuelveNull', () => {
+    expect(buildSettingsFragment({ permissions: { allow: [], deny: [] } })).toBeNull();
+  });
+});
+
+describe('resolveSharedMcp', () => {
+  const extension = { servers: [{ name: 'ext', source: 'extension', onlyIn: null, extra: {}, secrets: {}, transport: 'stdio', command: 'x', args: [], env: {}, cwd: null } as const], warnings: [] };
+
+  it('resolveSharedMcp_sinComunes_soloLasExtensiones', () => {
+    expect(resolveSharedMcp(null, extension).servers.map((s) => s.name)).toEqual(['ext']);
   });
 
-  it('resolveSharedConfigArgs_permissionsConReglas_anadeSettingsConPermissions', () => {
-    const args = resolveSharedConfigArgs(null, { permissions: { allow: ['a'], deny: ['b'] } });
+  it('resolveSharedMcp_comunesConSoloEn_llevanSuAlcance', () => {
+    const common = { path: MCP_PATH, mcpServers: { database: { command: 'db' } }, onlyIn: { database: ['codex'] } };
 
-    expect(args).toEqual(['--settings', JSON.stringify({ permissions: { allow: ['a'], deny: ['b'] } })]);
+    const result = resolveSharedMcp(common, { servers: [], warnings: [] });
+
+    expect(result.servers).toMatchObject([{ name: 'database', source: 'common', onlyIn: ['codex'], command: 'db' }]);
   });
 
-  it('resolveSharedConfigArgs_permissionsArraysVacios_noAnadeFlag', () => {
-    expect(resolveSharedConfigArgs(null, { permissions: { allow: [], deny: [] } })).toEqual([]);
-  });
+  it('resolveSharedMcp_comunMalDeclarado_seOmiteConAvisoYSigue', () => {
+    const common = { path: MCP_PATH, mcpServers: { roto: { type: 'stdio' }, bien: { command: 'db' } }, onlyIn: {} };
 
-  it('resolveSharedConfigArgs_mcpYSettingsPresentes_anadeAmbosFlags', () => {
-    const args = resolveSharedConfigArgs(
-      { path: MCP_PATH, mcpServers: { database: {} } },
-      { hooks: { Stop: [] } },
-    );
+    const result = resolveSharedMcp(common, { servers: [], warnings: [] });
 
-    expect(args).toEqual(['--mcp-config', MCP_PATH, '--settings', JSON.stringify({ hooks: { Stop: [] } })]);
+    expect(result.servers.map((s) => s.name)).toEqual(['bien']);
+    expect(result.warnings[0]).toContain('roto');
   });
 });
 
@@ -192,7 +195,7 @@ describe('mcpCommonServerNames', () => {
   });
 
   it('mcpCommonServerNames_conServidores_devuelveSusNombres', () => {
-    const mcpCommon = { path: MCP_PATH, mcpServers: { database: {}, 'chrome-devtools': {} } };
+    const mcpCommon = { path: MCP_PATH, mcpServers: { database: {}, 'chrome-devtools': {} }, onlyIn: {} };
 
     expect(mcpCommonServerNames(mcpCommon)).toEqual(['database', 'chrome-devtools']);
   });
@@ -209,7 +212,13 @@ describe('parseMcpCommonJson (puro)', () => {
   it('parseMcpCommonJson_valido_devuelveMcpServersSinWarnings', () => {
     const result = parseMcpCommonJson('{"mcpServers":{"database":{}}}');
 
-    expect(result).toEqual({ value: { mcpServers: { database: {} } }, warnings: [] });
+    expect(result).toEqual({ value: { mcpServers: { database: {} }, onlyIn: {} }, warnings: [] });
+  });
+
+  it('parseMcpCommonJson_conSoloEn_loDevuelvePorServidorYDescartaLoQueNoEsLista', () => {
+    const result = parseMcpCommonJson('{"mcpServers":{"a":{},"b":{}},"mageOnlyIn":{"a":["claude","codex|/h"],"b":"todo"}}');
+
+    expect(result.value?.onlyIn).toEqual({ a: ['claude', 'codex|/h'], b: null });
   });
 });
 

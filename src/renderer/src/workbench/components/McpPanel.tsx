@@ -5,6 +5,7 @@ import { useSharedConfigStore } from '../sharedConfigStore';
 import { NEEDS_AUTH, tagSessionServers } from '../mcpView';
 import { McpAuthActions, OriginBadge } from './settings/McpSection';
 import { Hint } from './TranscriptHint';
+import { AGY_PROVIDER_ID } from '@shared/providers';
 
 // Referencia ESTABLE para el fallback del selector: un array NUEVO en cada render (`?? []`) rompe la
 // igualdad referencial que espera Zustand y provoca un bucle infinito de renders (mismo patron que
@@ -22,6 +23,7 @@ export function McpPanel(): React.JSX.Element {
   const mcpServers = useWorkbenchStore((s) => s.mcpServersByChat[s.activeTabId] ?? EMPTY_MCP_SERVERS);
   const hasLiveSession = useWorkbenchStore((s) => s.sessionIdByChat[s.activeTabId] !== undefined);
   const accountId = useWorkbenchStore((s) => s.tabs.find((t) => t.id === s.activeTabId)?.accountId);
+  const provider = useWorkbenchStore((s) => s.tabs.find((t) => t.id === s.activeTabId)?.provider);
   const snapshot = useSharedConfigStore((s) => s.snapshot);
   const loadSharedConfig = useSharedConfigStore((s) => s.load);
 
@@ -30,6 +32,11 @@ export function McpPanel(): React.JSX.Element {
   useEffect(() => {
     if (snapshot === null) void loadSharedConfig();
   }, [snapshot]);
+
+  // agy no reporta sus MCP en el stream (medido en 1.2.14: su `init` no trae `mcpServers`).
+  if (provider === AGY_PROVIDER_ID) {
+    return <Hint text="agy no informa del estado de sus MCP. Los que tiene (incluidos los que le sincroniza Mage) se ven en Configuración › MCP y conectores." />;
+  }
 
   if (mcpServers.length === 0) {
     // Distinguir "no cargo ninguno" de "todavia no hay a quien preguntar". Los servidores MCP los

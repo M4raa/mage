@@ -25,10 +25,17 @@ import type {
   McpInventory,
   McpInventoryParams,
   McpRevealedSecrets,
-  McpStatusByAccount,
   McpAuthParams,
   McpAuthResult,
   McpWriteResult,
+  McpAgySyncPreview,
+  McpAgySyncResult,
+  McpAgySyncState,
+  McpExtensionConfigParams,
+  McpExtensionInstallPreview,
+  McpExtensionList,
+  McpScope,
+  McpStatusCache,
 } from './mcp';
 // Varias ventanas (multi-ventana): mover una pestaña de una ventana a otra viaja su estado persistido.
 import type { PersistedTab } from './state';
@@ -163,6 +170,23 @@ export const IpcChannel = {
   McpImportApply: 'mcp:importApply',
   McpStatusProbe: 'mcp:statusProbe',
   McpAuthenticate: 'mcp:authenticate',
+  McpStatusCacheLoad: 'mcp:statusCache',
+  // Extensiones .mcpb de Mage. La ruta del paquete la elige el dialogo nativo EN MAIN: el renderer solo
+  // devuelve el token de la vista previa.
+  McpExtensionsList: 'mcp:extensions',
+  McpExtensionPick: 'mcp:extensionPick',
+  McpExtensionInstall: 'mcp:extensionInstall',
+  McpExtensionImportDesktop: 'mcp:extensionImportDesktop',
+  McpExtensionSetEnabled: 'mcp:extensionSetEnabled',
+  McpExtensionSetOnlyIn: 'mcp:extensionSetOnlyIn',
+  McpExtensionSaveConfig: 'mcp:extensionSaveConfig',
+  McpExtensionRemove: 'mcp:extensionRemove',
+  McpPickFile: 'mcp:pickFile',
+  // «Sincronizar con agy».
+  McpAgySyncState: 'mcp:agyState',
+  McpAgySyncPreview: 'mcp:agyPreview',
+  McpAgySyncApply: 'mcp:agyApply',
+  McpAgySyncSetAuto: 'mcp:agySetAuto',
   // Layout de paneles acoplables (F6 Fase 2): userData/panels-layout.json, global (no por
   // cuenta/conversacion, §5.3 del plan).
   PanelsLoad: 'panels:load',
@@ -857,8 +881,30 @@ export interface MageApi {
   revealMcpCommon(name: string): Promise<McpRevealedSecrets>;
   previewMcpImport(params: McpInventoryParams): Promise<McpImportPreview>;
   applyMcpImport(params: McpImportApplyParams): Promise<McpWriteResult>;
-  // Estado de los MCP de cada cuenta con login, sin turno (un CLI por cuenta, en serie).
-  probeMcpStatus(): Promise<McpStatusByAccount>;
+  // Estado de los MCP de cada cuenta con login, sin turno (un CLI por cuenta, en serie). Devuelve la
+  // cache entera ya actualizada (lo sondeado sustituye a lo guardado de esas cuentas).
+  probeMcpStatus(): Promise<McpStatusCache>;
+  // Ultimo estado guardado de cada cuenta, con su fecha (sin sondear).
+  loadMcpStatusCache(): Promise<McpStatusCache>;
+  // --- Extensiones .mcpb ---
+  listMcpExtensions(): Promise<McpExtensionList>;
+  // Abre el dialogo nativo y valida el paquete elegido. null = cancelado. Lanza si no es instalable.
+  pickMcpExtension(): Promise<McpExtensionInstallPreview | null>;
+  installMcpExtension(token: string): Promise<void>;
+  importDesktopMcpExtension(dirName: string): Promise<void>;
+  setMcpExtensionEnabled(id: string, enabled: boolean): Promise<void>;
+  setMcpExtensionOnlyIn(id: string, onlyIn: McpScope): Promise<void>;
+  // Los sensibles suben una vez y nunca vuelven: el formulario solo sabe si hay valor.
+  saveMcpExtensionConfig(params: McpExtensionConfigParams): Promise<void>;
+  removeMcpExtension(id: string): Promise<void>;
+  // Dialogo nativo de fichero para un campo `file` de user_config. null = cancelado.
+  pickMcpFile(): Promise<string | null>;
+  // --- Sincronizar con agy ---
+  loadMcpAgySync(): Promise<McpAgySyncState>;
+  // `secretsConfirmed`: servidores con valores de la boveda que se aceptan copiar en claro a agy.
+  previewMcpAgySync(secretsConfirmed?: readonly string[]): Promise<McpAgySyncPreview>;
+  applyMcpAgySync(expected: string | null, secretsConfirmed: readonly string[]): Promise<McpAgySyncResult>;
+  setMcpAgyAutoSync(auto: boolean): Promise<McpAgySyncState>;
   // OAuth de un MCP con el CLI de esa cuenta: abre el navegador y espera el callback (tope 5 min).
   authenticateMcp(params: McpAuthParams): Promise<McpAuthResult>;
 

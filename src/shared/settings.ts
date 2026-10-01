@@ -139,6 +139,10 @@ export interface AppSettings {
   // Color de cada cuenta elegido por el usuario (PERS-3, P-028 punto 2): config dir -> indice de acento
   // (0..ACCOUNT_ACCENT_COUNT-1). Una cuenta ausente usa el de su posicion, como siempre. Default {}.
   readonly accentByAccount: Readonly<Record<string, number>>;
+  // Cuentas de Claude (config dir) con los conectores de claude.ai APAGADOS: sus sesiones se lanzan con
+  // `ENABLE_CLAUDEAI_MCP_SERVERS=false` (medido en 2.1.285: 0 conectores). No se escribe nada en su
+  // config dir. Default []: todas los usan, como siempre.
+  readonly claudeAiConnectorsOff: readonly string[];
 }
 
 // Nº de acentos del tema (--mg-accent-<i>-* en index.css); lo comparten cuentas y pestañas.
@@ -191,4 +195,5 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   uiScale: 100,
   defaultProvider: 'claude',
   accentByAccount: {},
+  claudeAiConnectorsOff: [],
 };

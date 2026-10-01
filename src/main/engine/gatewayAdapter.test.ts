@@ -36,12 +36,14 @@ describe('GatewayAdapter', () => {
 
   const adapter = new GatewayAdapter('custom:ollama', () => 'claude', PORT);
 
-  it('buildSpawnPlan_conSharedConfigArgs_seAnadenAlFinal', () => {
-    const sharedConfigArgs = ['--mcp-config', '/shared/mcp-common.json', '--settings', '{"hooks":{}}'];
+  it('buildSpawnPlan_conCompartido_mismoMcpConfigQueElNativoAlFinal', () => {
+    const withWriter = new GatewayAdapter('custom:ollama', () => 'claude', PORT, () => '/gen/claude.mcp.json');
+    const server = { name: 'db', source: 'common', onlyIn: null, extra: {}, secrets: {}, transport: 'stdio', command: 'db', args: [], env: {}, cwd: null } as const;
 
-    const plan = adapter.buildSpawnPlan({ ...launch, sharedConfigArgs });
+    const plan = withWriter.buildSpawnPlan({ ...launch, shared: { mcpServers: [server], settingsFragment: { hooks: {} }, claudeAiConnectors: false } });
 
-    expect(plan.args.slice(-sharedConfigArgs.length)).toEqual(sharedConfigArgs);
+    expect(plan.args.slice(-4)).toEqual(['--mcp-config', '/gen/claude.mcp.json', '--settings', '{"hooks":{}}']);
+    expect(plan.env.ENABLE_CLAUDEAI_MCP_SERVERS).toBe('false');
   });
 
   it('buildSpawnPlan_sinSharedConfigArgs_noAnadeNiMcpConfigNiSettings', () => {

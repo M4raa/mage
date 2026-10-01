@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto';
 import { basename, join } from 'node:path';
 import {
+  familiesForTransport,
+  familiesInScope,
   keysOf,
   transportOf,
   type McpCommonView,
@@ -10,8 +12,11 @@ import {
   type McpInventoryRow,
   type McpOrigin,
   type McpOriginKind,
+  type McpProviderFamily,
+  type McpScope,
   type McpUnsharedAccount,
 } from '@shared/mcp';
+import type { CodexMcpServer } from './codexMcp';
 
 // Inventario de TODAS las fuentes de servidores MCP que conoce la maquina (P-028, punto 5) y la
 // importacion bajo demanda a mcp-common.json (punto 34). Modulo PURO: el FS llega inyectado.
@@ -39,8 +44,19 @@ export interface McpSourceLocations {
   readonly accounts: readonly McpAccountLocation[];
   readonly projectDirs: readonly string[];
   readonly desktopDirs: readonly string[];
-  readonly homedir: string;
-  readonly pathSeparator: string;
+  // mcp_config.json de agy (null = no se lee) y los nombres que exporto Mage alli (se enseñan en su
+  // comun, no como algo de agy).
+  readonly agyConfigPath: string | null;
+  readonly agyExported: readonly string[];
+  // Lo que devolvio `codex mcp list --json` por cuenta de codex (lo rellena el adapter de codex).
+  readonly codex: readonly CodexInventorySource[];
+}
+
+export interface CodexInventorySource {
+  readonly label: string; // «config.toml de codex»
+  readonly path: string; // su config.toml
+  readonly accountDir: string | null; // CODEX_HOME de la cuenta
+  readonly servers: readonly CodexMcpServer[];
 }
 
 // Una declaracion concreta en una fuente concreta. `config` es CRUDO: no sale de main.
@@ -49,7 +65,8 @@ export interface McpSourceEntry {
   readonly config: Readonly<Record<string, unknown>>;
   readonly origin: McpOrigin;
   readonly disabled: boolean;
-  readonly blockedReason: string | null;
+  // Solo comunes: «Solo en…».
+  readonly onlyIn: McpScope;
 }
 
 export interface McpSourceRead {
@@ -61,16 +78,14 @@ export interface McpSourceRead {
 // el CLI no los carga, pero siguen en el fichero. MEDIDO en 2.1.284 (`spike/init-spike.mjs --mcp`): el
 // `--mcp-config` acepta una clave de nivel superior desconocida y carga el resto sin quejarse.
 export const DISABLED_SERVERS_KEY = 'mageDisabledServers';
+// Clave propia de Mage con el «Solo en…» de cada comun (`{<nombre>: ["claude", "codex|<cuenta>"…]}`).
+// Mismo mecanismo que la anterior; ademas Claude ya no recibe este fichero tal cual, sino uno generado
+// por destino.
+export const ONLY_IN_SERVERS_KEY = 'mageOnlyIn';
 
 const UTF8_BOM = /^﻿/;
 const DESKTOP_CONFIG_FILE = 'claude_desktop_config.json';
 const PROJECT_MCP_FILE = '.mcp.json';
-const EXTENSIONS_DIR = 'Claude Extensions';
-const EXTENSIONS_SETTINGS_DIR = 'Claude Extensions Settings';
-const EXTENSION_MANIFEST = 'manifest.json';
-const DESKTOP_EXTENSION_NOTE = 'Depende de que Claude Desktop siga instalado.';
-const USER_CONFIG_PLACEHOLDER = '${user_config.';
-const PLACEHOLDER_PATTERN = /\$\{[^}]*\}/;
 
 // --- Rutas de Claude Desktop por SO -------------------------------------------------------------
 
@@ -106,17 +121,17 @@ function desktopDirCandidates(ctx: DesktopDirContext): readonly string[] {
 // --- Lectura de fuentes -------------------------------------------------------------------------
 
 // Lee todas las fuentes. El comun va PRIMERO (manda en las filas y en «gana lo que existe»), luego las
-// cuentas en su orden (la principal delante), los proyectos, el legado y Claude Desktop.
+// cuentas en su orden (la principal delante), los proyectos, el legado, Claude Desktop, agy y codex.
+// Las extensiones de Claude Desktop ya no son filas: se importan COPIANDOLAS (pestaña Extensiones).
 export function readMcpSources(deps: McpInventoryDeps, locations: McpSourceLocations): McpSourceRead {
   const reader = new SourceReader(deps);
   reader.readCommon(locations.commonPath);
   for (const account of locations.accounts) reader.readAccount(account);
   for (const dir of locations.projectDirs) reader.readProjectFile(dir);
   if (locations.legacySharedPath !== null) reader.readLegacy(locations.legacySharedPath);
-  for (const dir of locations.desktopDirs) {
-    reader.readDesktopConfig(dir);
-    reader.readDesktopExtensions(dir, locations);
-  }
+  for (const dir of locations.desktopDirs) reader.readDesktopConfig(dir);
+  if (locations.agyConfigPath !== null) reader.readAgy(locations.agyConfigPath, new Set(locations.agyExported));
+  for (const source of locations.codex) reader.addCodex(source);
   return { entries: reader.entries, warnings: reader.warnings };
 }
 
@@ -130,8 +145,9 @@ class SourceReader {
     const root = this.readJson(path, 'mcp-common.json');
     if (root === null) return;
     const origin = (name: string): McpOrigin => makeOrigin('common', name, { label: 'Mage', path });
-    this.addServers(root.mcpServers, origin, false);
-    this.addServers(root[DISABLED_SERVERS_KEY], origin, true);
+    const onlyIn = isRecord(root[ONLY_IN_SERVERS_KEY]) ? root[ONLY_IN_SERVERS_KEY] : {};
+    this.addServers(root.mcpServers, origin, false, onlyIn);
+    this.addServers(root[DISABLED_SERVERS_KEY], origin, true, onlyIn);
   }
 
   readAccount(account: McpAccountLocation): void {
@@ -168,34 +184,30 @@ class SourceReader {
     this.addServers(root.mcpServers, (name) => makeOrigin('desktop', name, { label: 'Claude Desktop', path }), false);
   }
 
-  readDesktopExtensions(dir: string, locations: McpSourceLocations): void {
-    const extensionsDir = join(dir, EXTENSIONS_DIR);
-    if (!this.deps.exists(extensionsDir)) return;
-    for (const id of this.deps.listDir(extensionsDir)) {
-      const extensionDir = join(extensionsDir, id);
-      const manifestPath = join(extensionDir, EXTENSION_MANIFEST);
-      const manifest = this.readJson(manifestPath, `la extension ${id}`);
-      if (manifest === null || !isRecord(manifest.server) || !isRecord(manifest.server.mcp_config)) continue;
-      const name = typeof manifest.name === 'string' && manifest.name.length > 0 ? manifest.name : id;
-      const resolved = resolveExtensionConfig(manifest.server.mcp_config, extensionDir, locations);
-      const origin = makeOrigin('desktopExtension', name, { label: 'Extensión de Claude Desktop', path: manifestPath });
-      this.entries.push({ name, config: resolved.config, origin, disabled: !this.isExtensionEnabled(dir, id), blockedReason: resolved.blockedReason });
+  // mcp_config.json de agy: `serverUrl`/`httpUrl` en los remotos (medido en 1.2.14). Lo que exporto Mage
+  // no es de agy: se salta.
+  readAgy(path: string, exported: ReadonlySet<string>): void {
+    const root = this.readJson(path, 'mcp_config.json de agy');
+    if (root === null || !isRecord(root.mcpServers)) return;
+    const origin = (name: string): McpOrigin => makeOrigin('agy', name, { label: 'mcp_config.json de agy', path });
+    for (const [name, raw] of Object.entries(root.mcpServers)) {
+      if (!isRecord(raw) || exported.has(name)) continue;
+      this.entries.push({ name, config: fromAgyEntry(raw), origin: origin(name), disabled: raw.disabled === true, onlyIn: null });
     }
   }
 
-  // `Claude Extensions Settings/<id>.json` trae `isEnabled` (medido; es su unica clave aqui). Ausente o
-  // ilegible -> se da por activa: es solo una etiqueta, no decide nada.
-  private isExtensionEnabled(dir: string, id: string): boolean {
-    const path = join(dir, EXTENSIONS_SETTINGS_DIR, `${id}.json`);
-    const settings = this.readJson(path, `los ajustes de la extension ${id}`);
-    return settings === null || settings.isEnabled !== false;
+  addCodex(source: CodexInventorySource): void {
+    for (const server of source.servers) {
+      const fields = { label: source.label, path: source.path, ...(source.accountDir === null ? {} : { accountDir: source.accountDir }) };
+      this.entries.push({ name: server.name, config: server.config ?? {}, origin: makeOrigin('codex', server.name, fields), disabled: !server.enabled, onlyIn: null });
+    }
   }
 
-  private addServers(raw: unknown, originFor: (name: string) => McpOrigin, disabled: boolean): void {
+  private addServers(raw: unknown, originFor: (name: string) => McpOrigin, disabled: boolean, onlyIn: Record<string, unknown> = {}): void {
     if (!isRecord(raw)) return;
     for (const [name, config] of Object.entries(raw)) {
       if (!isRecord(config)) continue;
-      this.entries.push({ name, config, origin: originFor(name), disabled, blockedReason: null });
+      this.entries.push({ name, config, origin: originFor(name), disabled, onlyIn: scopeOf(onlyIn[name]) });
     }
   }
 
@@ -241,28 +253,15 @@ function projectName(dir: string): string {
   return name.length > 0 ? name : dir;
 }
 
-// Sustituye las variables de una MCPB que Mage sabe resolver (`${__dirname}` -> carpeta de la
-// extension, `${/}`/`${pathSeparator}` y `${HOME}`, medidas en la extension real). Si queda alguna —
-// sobre todo `${user_config.*}`, que vive en Claude Desktop— no se puede copiar tal cual.
-function resolveExtensionConfig(
-  raw: Record<string, unknown>,
-  extensionDir: string,
-  locations: McpSourceLocations,
-): { readonly config: Record<string, unknown>; readonly blockedReason: string | null } {
-  const replacements: Readonly<Record<string, string>> = {
-    '${__dirname}': extensionDir,
-    '${/}': locations.pathSeparator,
-    '${pathSeparator}': locations.pathSeparator,
-    '${HOME}': locations.homedir,
-  };
-  const text = JSON.stringify(raw).replace(/\$\{[^}]*\}/g, (token) => JSON.stringify(replacements[token] ?? token).slice(1, -1));
-  const config = JSON.parse(text) as Record<string, unknown>;
-  if (text.includes(USER_CONFIG_PLACEHOLDER)) {
-    return { config, blockedReason: 'Necesita datos que se configuran en Claude Desktop (user_config).' };
-  }
-  const leftover = PLACEHOLDER_PATTERN.exec(text);
-  if (leftover !== null) return { config, blockedReason: `Usa ${leftover[0]}, que solo resuelve Claude Desktop.` };
-  return { config, blockedReason: null };
+// Forma de .mcp.json a partir de una entrada de agy (para el transporte y las claves de la fila).
+function fromAgyEntry(raw: Record<string, unknown>): Record<string, unknown> {
+  const url = [raw.serverUrl, raw.httpUrl].find((value): value is string => typeof value === 'string') ?? null;
+  if (url === null) return { type: 'stdio', command: raw.command, args: raw.args, env: raw.env };
+  return { type: 'http', url, headers: raw.headers };
+}
+
+export function scopeOf(raw: unknown): McpScope {
+  return Array.isArray(raw) && raw.every((item) => typeof item === 'string') ? raw : null;
 }
 
 // --- Filas del inventario (sin valores) ---------------------------------------------------------
@@ -270,7 +269,11 @@ function resolveExtensionConfig(
 // Una fila por NOMBRE, con todas las fuentes que lo declaran. Transporte y claves salen de la primera
 // fuente (el comun si lo hay: es el que gana en una sesion de Mage). Legado no entra: ninguna sesion lo
 // carga.
-export function buildInventoryRows(entries: readonly McpSourceEntry[], accountDirs: readonly string[]): readonly McpInventoryRow[] {
+export function buildInventoryRows(
+  entries: readonly McpSourceEntry[],
+  accountDirs: readonly string[],
+  agyExported: ReadonlySet<string> = new Set(),
+): readonly McpInventoryRow[] {
   const byName = new Map<string, McpSourceEntry[]>();
   for (const entry of entries) {
     if (entry.origin.kind === 'legacy') continue;
@@ -278,10 +281,10 @@ export function buildInventoryRows(entries: readonly McpSourceEntry[], accountDi
     list.push(entry);
     byName.set(entry.name, list);
   }
-  return [...byName.entries()].map(([name, list]) => buildRow(name, list, accountDirs));
+  return [...byName.entries()].map(([name, list]) => buildRow(name, list, accountDirs, agyExported.has(name)));
 }
 
-function buildRow(name: string, list: readonly McpSourceEntry[], accountDirs: readonly string[]): McpInventoryRow {
+function buildRow(name: string, list: readonly McpSourceEntry[], accountDirs: readonly string[], exportedToAgy: boolean): McpInventoryRow {
   const first = list[0]!;
   const common = list.find((entry) => entry.origin.kind === 'common') ?? null;
   const accounts = new Set<string>();
@@ -298,8 +301,33 @@ function buildRow(name: string, list: readonly McpSourceEntry[], accountDirs: re
     headerKeys: keysOf(first.config.headers),
     disabled: common?.disabled ?? false,
     common: common === null ? null : commonViewOf(common.config),
-    blockedReason: first.blockedReason,
+    ...providersOf(common, list, exportedToAgy),
   };
+}
+
+// Quien carga la fila. Un comun: las familias de su «Solo en…» que admiten su transporte (agy solo si
+// se exporto, porque a agy le llega una copia). Lo demas es de un CLI concreto («Solo X») o de nadie
+// (Claude Desktop).
+function providersOf(
+  common: McpSourceEntry | null,
+  list: readonly McpSourceEntry[],
+  exportedToAgy: boolean,
+): Pick<McpInventoryRow, 'providers' | 'ownedBy' | 'onlyIn' | 'exportedToAgy'> {
+  if (common !== null) {
+    const compatible = familiesForTransport(transportOf(common.config));
+    const providers = common.disabled
+      ? []
+      : familiesInScope(common.onlyIn).filter((family) => compatible.includes(family) && (family !== 'agy' || exportedToAgy));
+    return { providers, ownedBy: null, onlyIn: common.onlyIn, exportedToAgy };
+  }
+  const owners = [...new Set(list.flatMap((entry) => ownerOf(entry.origin.kind) ?? []))];
+  return { providers: owners, ownedBy: owners.length === 1 ? owners[0]! : null, onlyIn: null, exportedToAgy: false };
+}
+
+function ownerOf(kind: McpOriginKind): McpProviderFamily | null {
+  if (kind === 'account' || kind === 'projectLocal' || kind === 'project') return 'claude';
+  if (kind === 'agy' || kind === 'codex') return kind;
+  return null;
 }
 
 // Que cuentas cargan una declaracion: los comunes y los `.mcp.json`, todas; lo de una cuenta, esa;
@@ -332,9 +360,14 @@ export function findUnsharedAccountServers(entries: readonly McpSourceEntry[]): 
   return [...byAccount.entries()].map(([accountDir, names]) => ({ accountDir, names }));
 }
 
-export function buildInventory(read: McpSourceRead, accountDirs: readonly string[], commonVersion: string | null): McpInventory {
+export function buildInventory(
+  read: McpSourceRead,
+  accountDirs: readonly string[],
+  commonVersion: string | null,
+  agyExported: readonly string[] = [],
+): McpInventory {
   return {
-    rows: buildInventoryRows(read.entries, accountDirs),
+    rows: buildInventoryRows(read.entries, accountDirs, new Set(agyExported)),
     unshared: findUnsharedAccountServers(read.entries),
     commonVersion,
     warnings: read.warnings,
@@ -366,8 +399,7 @@ export function buildImportCandidates(entries: readonly McpSourceEntry[]): reado
         originLabel: entry.origin.label,
         transport: transportOf(entry.config),
         status,
-        checkedByDefault: status === 'new' && entry.blockedReason === null && entry.origin.kind !== 'projectLocal',
-        blockedReason: entry.blockedReason,
+        checkedByDefault: status === 'new' && entry.origin.kind !== 'projectLocal',
         note: candidateNote(entry),
       };
     });
@@ -375,12 +407,11 @@ export function buildImportCandidates(entries: readonly McpSourceEntry[]): reado
 
 function candidateNote(entry: McpSourceEntry): string | null {
   if (entry.origin.kind === 'projectLocal') return `Era de proyecto ${entry.origin.projectDir ?? ''}`;
-  if (entry.origin.kind === 'desktopExtension') return DESKTOP_EXTENSION_NOTE;
   return null;
 }
 
 function isDesktopOrigin(kind: McpOriginKind): boolean {
-  return kind === 'desktop' || kind === 'desktopExtension';
+  return kind === 'desktop';
 }
 
 export interface McpImportApplied {
@@ -390,7 +421,7 @@ export interface McpImportApplied {
 
 // Aplica lo elegido sobre el texto ACTUAL de mcp-common.json. Gana lo que existe salvo que la fila pida
 // sustituir; un desactivado sustituido sigue desactivado. Dos elegidos con el mismo nombre: el primero
-// (y una nota). El resto del fichero se conserva. Lanza con un id que ya no existe o una MCPB bloqueada:
+// (y una nota). El resto del fichero se conserva. Lanza con un id que ya no existe:
 // la vista previa esta desfasada y no se escribe nada a medias.
 export function applyImportPicks(commonText: string, entries: readonly McpSourceEntry[], picks: readonly McpImportPick[]): McpImportApplied {
   const root = parseCommonRoot(commonText);
@@ -402,7 +433,6 @@ export function applyImportPicks(commonText: string, entries: readonly McpSource
   for (const pick of picks) {
     const entry = byId.get(pick.id);
     if (entry === undefined) throw new Error(`El servidor a importar ya no está en su origen: ${pick.id}`);
-    if (entry.blockedReason !== null) throw new Error(`«${entry.name}» no se puede importar: ${entry.blockedReason}`);
     if (taken.has(entry.name)) {
       notes.push(`«${entry.name}» venía de dos sitios: se queda el primero elegido.`);
       continue;

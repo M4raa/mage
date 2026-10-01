@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { toServerDraft, toServerObject, transportOf, validateServerDraft, validateServers, type McpServerDraft } from './mcp';
+import { familiesInScope, isInMcpScope, mcpFamilyOf, toServerDraft, toServerObject, transportOf, validateServerDraft, validateServers, type McpServerDraft } from './mcp';
 
 // P-028 punto 5, bug HTTP/SSE: el editor antiguo exigia `command` a todos y lo escribia siempre, asi
 // que un servidor remoto no se podia guardar. Y `env` viajaba en claro al renderer.
@@ -131,5 +131,29 @@ describe('validateServers', () => {
 
   it('validateServers_listaVacia_esValida', () => {
     expect(validateServers([])).toBeNull();
+  });
+});
+
+describe('«Solo en…»', () => {
+  it('mcpFamilyOf_idsDeMage_suFamilia', () => {
+    expect(['claude', 'agy', 'codex', 'custom:ollama', 'openai'].map(mcpFamilyOf)).toEqual(['claude', 'agy', 'codex', 'local', 'local']);
+  });
+
+  it('isInMcpScope_null_todos', () => {
+    expect(isInMcpScope(null, { family: 'agy', accountId: null })).toBe(true);
+  });
+
+  it('isInMcpScope_familiaOCuenta', () => {
+    const scope = ['codex', 'claude|/h/.claude-p'];
+
+    expect(isInMcpScope(scope, { family: 'codex', accountId: '/x' })).toBe(true);
+    expect(isInMcpScope(scope, { family: 'claude', accountId: '/h/.claude-p' })).toBe(true);
+    expect(isInMcpScope(scope, { family: 'claude', accountId: '/h/.claude' })).toBe(false);
+    expect(isInMcpScope(scope, { family: 'claude', accountId: null })).toBe(false);
+  });
+
+  it('familiesInScope_cuentaSuelta_cuentaComoSuFamilia', () => {
+    expect(familiesInScope(['claude|/h', 'local'])).toEqual(['claude', 'local']);
+    expect(familiesInScope(null)).toEqual(['claude', 'codex', 'agy', 'local']);
   });
 });

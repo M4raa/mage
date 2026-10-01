@@ -1,13 +1,17 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { McpServerStatus } from '@shared/events';
-import type { McpInventoryRow } from '@shared/mcp';
+import type { McpInventoryRow, McpScope } from '@shared/mcp';
 import { useWorkbenchStore } from '../../workbenchStore';
 import { useSharedConfigStore } from '../../sharedConfigStore';
 import { useMcpStore } from '../../mcpStore';
-import { buildMcpTable, CLAUDE_AI_CONNECTORS_URL, filterMcpTable, mcpAuthKey, mergeLiveStatuses, type McpBadge, type McpTableRow } from '../../mcpView';
+import { buildServersTable, filterMcpTable, mcpAuthKey, mergeLiveStatuses, type McpBadge, type McpTableRow } from '../../mcpView';
 import { Icon } from '../Icon';
 import { McpServerDialog } from './McpServerDialog';
 import { McpImportDialog } from './McpImportDialog';
+import { McpAgySyncPanel } from './McpAgySync';
+import { McpConnectorsTab } from './McpConnectorsTab';
+import { McpExtensionsTab } from './McpExtensionsTab';
+import { McpScopeDialog, OwnedByBadge, ProviderPills } from './McpScopeDialog';
 import { MCP_BUTTON_CLASS as BUTTON_CLASS } from './mcpStyles';
 
 // Seccion «MCP y conectores» (P-028 punto 5). Antes era «Config. compartida»: solo enseñaba y editaba
@@ -16,38 +20,106 @@ import { MCP_BUTTON_CLASS as BUTTON_CLASS } from './mcpStyles';
 // claude.ai— y de lo que hay en Claude Desktop, con el estado de cada uno.
 //
 // Mage solo escribe sus comunes. De lo demas ofrece «Copiar a comunes» y «Ver ubicación».
+//
+// 0.1.2 (grupo C): tres pestañas como Claude Desktop — Servidores (los MCP, con quien los carga),
+// Conectores (lo de cada proveedor y cuenta) y Extensiones (.mcpb de Mage).
 
 const ICON_BUTTON_CLASS = 'rounded-[5px] p-[3px] text-mg-muted hover:bg-mg-hover hover:text-mg-body disabled:opacity-40';
 
-type DialogState = { readonly kind: 'none' } | { readonly kind: 'edit'; readonly row: McpInventoryRow | null } | { readonly kind: 'import' };
+type DialogState =
+  | { readonly kind: 'none' }
+  | { readonly kind: 'edit'; readonly row: McpInventoryRow | null }
+  | { readonly kind: 'import' }
+  | { readonly kind: 'scope'; readonly row: McpInventoryRow };
+
+const TABS = [
+  { id: 'servers', label: 'Servidores' },
+  { id: 'connectors', label: 'Conectores' },
+  { id: 'extensions', label: 'Extensiones' },
+] as const;
+type TabId = (typeof TABS)[number]['id'];
 
 const EMPTY_SERVERS: readonly McpServerStatus[] = [];
 
 export function McpSection(): React.JSX.Element {
   const activeCwd = useWorkbenchStore((s) => s.tabs.find((t) => t.id === s.activeTabId)?.cwd);
-  const inventory = useMcpStore((s) => s.inventory);
-  const loadError = useMcpStore((s) => s.loadError);
   const load = useMcpStore((s) => s.load);
+  const loadCache = useMcpStore((s) => s.loadCache);
+  const loadExtensions = useMcpStore((s) => s.loadExtensions);
   const loadShared = useSharedConfigStore((s) => s.load);
   const statuses = useLiveStatuses();
-  const [query, setQuery] = useState('');
-  const [dialog, setDialog] = useState<DialogState>({ kind: 'none' });
+  const [tab, setTab] = useState<TabId>('servers');
 
-  // Se relee al abrir: el usuario puede haber tocado cualquiera de los ficheros por fuera.
+  // Se relee al abrir: el usuario puede haber tocado cualquiera de los ficheros por fuera. La cache de
+  // estado trae lo ultimo comprobado de cada cuenta, con su fecha, sin sondear.
   useEffect(() => {
     void load(activeCwd === undefined ? [] : [activeCwd]);
     void loadShared();
-  }, [activeCwd]);
-
-  const rows = useMemo(() => filterMcpTable(buildMcpTable(inventory, statuses), query), [inventory, statuses, query]);
-  const close = (): void => setDialog({ kind: 'none' });
+    void loadCache();
+    void loadExtensions();
+  }, [activeCwd, load, loadShared, loadCache, loadExtensions]);
 
   return (
     <div data-mcp-section="true" className="relative flex min-h-0 flex-1 flex-col gap-[12px] overflow-y-auto p-[14px_16px]">
+      <div role="tablist" aria-label="MCP y conectores" onKeyDown={(e) => moveTab(e, tab, setTab)} className="flex gap-[4px] border-b border-mg-border-subtle">
+        {TABS.map((item) => (
+          <button
+            key={item.id}
+            role="tab"
+            aria-selected={tab === item.id}
+            tabIndex={tab === item.id ? 0 : -1}
+            data-mcp-tab={item.id}
+            onClick={() => setTab(item.id)}
+            className={`-mb-px border-b-2 px-[10px] py-[5px] text-[11px] ${tab === item.id ? 'border-mg-focus font-semibold text-mg-body' : 'border-transparent text-mg-sec hover:text-mg-body'}`}
+          >
+            {item.label}
+          </button>
+        ))}
+      </div>
+      <div role="tabpanel" aria-label={TABS.find((item) => item.id === tab)?.label} className="flex flex-col gap-[12px]">
+        {tab === 'servers' && <ServersTab statuses={statuses} />}
+        {tab === 'connectors' && <McpConnectorsTab statuses={statuses} />}
+        {tab === 'extensions' && <McpExtensionsTab />}
+      </div>
+    </div>
+  );
+}
+
+// Flechas izquierda/derecha entre pestañas (patron de tablist con roving tabindex). Se para el evento:
+// el tablist de Configuracion, que envuelve a este, tambien escucha flechas.
+const ARROW_STEPS: Readonly<Record<string, number>> = { ArrowRight: 1, ArrowLeft: -1 };
+
+function moveTab(e: React.KeyboardEvent<HTMLDivElement>, current: TabId, setTab: (id: TabId) => void): void {
+  const step = ARROW_STEPS[e.key];
+  if (step === undefined) return;
+  e.preventDefault();
+  e.stopPropagation();
+  const index = (TABS.findIndex((item) => item.id === current) + step + TABS.length) % TABS.length;
+  const next = TABS[index]!.id;
+  setTab(next);
+  e.currentTarget.querySelector<HTMLElement>(`[data-mcp-tab="${next}"]`)?.focus();
+}
+
+function ServersTab({ statuses }: { readonly statuses: ReturnType<typeof mergeLiveStatuses> }): React.JSX.Element {
+  const inventory = useMcpStore((s) => s.inventory);
+  const loadError = useMcpStore((s) => s.loadError);
+  const mutate = useMcpStore((s) => s.mutate);
+  const [query, setQuery] = useState('');
+  const [dialog, setDialog] = useState<DialogState>({ kind: 'none' });
+  const rows = useMemo(() => filterMcpTable(buildServersTable(inventory, statuses), query), [inventory, statuses, query]);
+  const close = (): void => setDialog({ kind: 'none' });
+  const saveScope = async (row: McpInventoryRow, onlyIn: McpScope): Promise<void> => {
+    const result = await mutate({ op: 'setOnlyIn', name: row.name, onlyIn });
+    if (result.status === 'stale') throw new Error(result.message);
+  };
+
+  return (
+    <>
       <p className="text-[11px] leading-[1.5] text-mg-sec">
         Todo lo que carga una conversación, venga de donde venga. Los <strong>comunes de Mage</strong> se suman a{' '}
-        <strong>todas</strong> tus cuentas sin sustituir los suyos; el resto se enseña donde está declarado y se puede
-        copiar a comunes. Mage nunca escribe fuera de su carpeta.
+        <strong>todos</strong> los proveedores y cuentas compatibles sin sustituir los suyos (o solo a los que elijas en
+        «Solo en…»); lo propio de cada CLI se enseña donde está declarado y se puede copiar a comunes. Fuera de su
+        carpeta, Mage solo escribe en agy cuando lo sincronizas.
       </p>
       <McpToolbar query={query} onQuery={setQuery} onAdd={() => setDialog({ kind: 'edit', row: null })} onImport={() => setDialog({ kind: 'import' })} />
       <McpNotices onImport={() => setDialog({ kind: 'import' })} />
@@ -56,10 +128,14 @@ export function McpSection(): React.JSX.Element {
           No se pudo leer el inventario: {loadError}
         </div>
       )}
-      <McpTable rows={rows} onEdit={(row) => setDialog({ kind: 'edit', row })} />
+      <McpTable rows={rows} onEdit={(row) => setDialog({ kind: 'edit', row })} onScope={(row) => setDialog({ kind: 'scope', row })} />
+      <McpAgySyncPanel />
       {dialog.kind === 'edit' && <McpServerDialog row={dialog.row} onClose={close} />}
       {dialog.kind === 'import' && <McpImportDialog onClose={close} />}
-    </div>
+      {dialog.kind === 'scope' && (
+        <McpScopeDialog title={`Solo en… · ${dialog.row.name}`} scope={dialog.row.onlyIn} onSave={(scope) => saveScope(dialog.row, scope)} onClose={close} />
+      )}
+    </>
   );
 }
 
@@ -188,7 +264,12 @@ function useAliasOf(): (accountDir: string) => string {
   return (accountDir) => accounts.find((account) => account.id === accountDir)?.alias ?? accountDir;
 }
 
-function McpTable({ rows, onEdit }: { readonly rows: readonly McpTableRow[]; readonly onEdit: (row: McpInventoryRow) => void }): React.JSX.Element {
+interface RowHandlers {
+  readonly onEdit: (row: McpInventoryRow) => void;
+  readonly onScope: (row: McpInventoryRow) => void;
+}
+
+function McpTable({ rows, onEdit, onScope }: { readonly rows: readonly McpTableRow[] } & RowHandlers): React.JSX.Element {
   const inventory = useMcpStore((s) => s.inventory);
   if (inventory === null) return <p className="text-[11px] text-mg-muted">Cargando…</p>;
   if (rows.length === 0) return <p className="text-[11px] text-mg-muted">No hay ningún servidor MCP.</p>;
@@ -198,6 +279,7 @@ function McpTable({ rows, onEdit }: { readonly rows: readonly McpTableRow[]; rea
         <tr className="border-b border-mg-border-subtle text-[9.5px] uppercase tracking-[.06em] text-mg-ter">
           <th className="py-[5px] pr-[8px] font-semibold">Nombre</th>
           <th className="py-[5px] pr-[8px] font-semibold">Tipo</th>
+          <th className="py-[5px] pr-[8px] font-semibold">Proveedores</th>
           <th className="py-[5px] pr-[8px] font-semibold">Cuentas</th>
           <th className="py-[5px] pr-[8px] font-semibold">Estado</th>
           <th className="py-[5px] font-semibold">
@@ -207,14 +289,14 @@ function McpTable({ rows, onEdit }: { readonly rows: readonly McpTableRow[]; rea
       </thead>
       <tbody>
         {rows.map((row) => (
-          <McpTableRowView key={row.key} row={row} onEdit={onEdit} />
+          <McpTableRowView key={row.key} row={row} onEdit={onEdit} onScope={onScope} />
         ))}
       </tbody>
     </table>
   );
 }
 
-function McpTableRowView({ row, onEdit }: { readonly row: McpTableRow; readonly onEdit: (row: McpInventoryRow) => void }): React.JSX.Element {
+function McpTableRowView({ row, onEdit, onScope }: { readonly row: McpTableRow } & RowHandlers): React.JSX.Element {
   const accountsLabel = useAccountsLabel(row.accounts);
   return (
     <tr data-mcp-row={row.name} className="border-b border-mg-border-subtle align-top">
@@ -225,7 +307,13 @@ function McpTableRowView({ row, onEdit }: { readonly row: McpTableRow; readonly 
           {row.badges.map((badge) => (
             <OriginBadge key={`${badge.kind}:${badge.label}`} badge={badge} />
           ))}
+          {row.ownedBy !== null && <OwnedByBadge family={row.ownedBy} />}
         </div>
+      </td>
+      <td className="py-[6px] pr-[8px]">
+        <ProviderPills providers={row.providers} testId={row.name} />
+        {row.inventory?.exportedToAgy === true && <span className="block text-[9.5px] text-mg-muted">agy: copia, puede estar desfasada</span>}
+        {row.inventory?.onlyIn != null && <span className="block text-[9.5px] text-mg-muted">Solo en lo elegido</span>}
       </td>
       <td className="py-[6px] pr-[8px] text-mg-sec">{accountsLabel}</td>
       <td className="py-[6px] pr-[8px] text-mg-sec">
@@ -233,7 +321,7 @@ function McpTableRowView({ row, onEdit }: { readonly row: McpTableRow; readonly 
         <McpAuthActions serverName={row.cliName} accountDirs={row.needsAuth} />
       </td>
       <td className="py-[6px]">
-        <RowActions row={row} onEdit={onEdit} />
+        <RowActions row={row} onEdit={onEdit} onScope={onScope} />
       </td>
     </tr>
   );
@@ -250,7 +338,15 @@ function useAccountsLabel(accountDirs: readonly string[]): string {
 // cuenta, que guarda el token en su config dir. Un boton por cuenta que lo pide: el token es por cuenta,
 // asi que no hay una eleccion que adivinar. Uno a la vez: mientras uno espera al navegador, los demas
 // se deshabilitan. Tambien lo usa el Inspector › MCP.
-export function McpAuthActions({ serverName, accountDirs }: { readonly serverName: string; readonly accountDirs: readonly string[] }): React.JSX.Element | null {
+export function McpAuthActions({
+  serverName,
+  accountDirs,
+  label = 'Autenticar',
+}: {
+  readonly serverName: string;
+  readonly accountDirs: readonly string[];
+  readonly label?: string;
+}): React.JSX.Element | null {
   const authenticating = useMcpStore((s) => s.authenticating);
   const messages = useMcpStore((s) => s.authMessages);
   const authenticate = useMcpStore((s) => s.authenticate);
@@ -273,7 +369,7 @@ ${serverName}`));
             className={BUTTON_CLASS}
           >
             <Icon name="external" />
-            {running ? 'Autenticando…' : accountDirs.length > 1 ? `Autenticar en ${alias}` : 'Autenticar'}
+            {running ? 'Autenticando…' : buttonText(label, alias, accountDirs.length)}
           </button>
         );
       })}
@@ -286,27 +382,23 @@ ${serverName}`));
   );
 }
 
+function buttonText(label: string, alias: string, accounts: number): string {
+  return accounts > 1 ? `${label} en ${alias}` : label;
+}
+
 export function OriginBadge({ badge }: { readonly badge: McpBadge }): React.JSX.Element {
   const skin = badge.kind === 'common' ? 'bg-mg-sel text-mg-focus' : 'bg-mg-hover text-mg-body2';
   return <span className={`rounded-[4px] px-[5px] py-[1px] text-[9px] font-semibold ${skin}`}>{badge.label}</span>;
 }
 
-function RowActions({ row, onEdit }: { readonly row: McpTableRow; readonly onEdit: (row: McpInventoryRow) => void }): React.JSX.Element | null {
-  if (row.kind === 'connector') {
-    return (
-      <button onClick={() => void window.mage.openExternal(CLAUDE_AI_CONNECTORS_URL)} className={BUTTON_CLASS} data-tip="Los conectores de claude.ai se gestionan en tu cuenta de claude.ai">
-        <Icon name="external" />
-        claude.ai
-      </button>
-    );
-  }
+function RowActions({ row, onEdit, onScope }: { readonly row: McpTableRow } & RowHandlers): React.JSX.Element | null {
   const inventoryRow = row.inventory;
   if (inventoryRow === null) return null;
-  if (inventoryRow.common !== null) return <CommonActions row={inventoryRow} onEdit={() => onEdit(inventoryRow)} />;
+  if (inventoryRow.common !== null) return <CommonActions row={inventoryRow} onEdit={() => onEdit(inventoryRow)} onScope={() => onScope(inventoryRow)} />;
   return <ForeignActions row={inventoryRow} />;
 }
 
-function CommonActions({ row, onEdit }: { readonly row: McpInventoryRow; readonly onEdit: () => void }): React.JSX.Element {
+function CommonActions({ row, onEdit, onScope }: { readonly row: McpInventoryRow; readonly onEdit: () => void; readonly onScope: () => void }): React.JSX.Element {
   const mutate = useMcpStore((s) => s.mutate);
   const [confirmRemove, setConfirmRemove] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -321,6 +413,9 @@ function CommonActions({ row, onEdit }: { readonly row: McpInventoryRow; readonl
       <div className="flex items-center justify-end gap-[2px]">
         <button onClick={onEdit} aria-label={`Editar ${row.name}`} data-tip="Editar" className={ICON_BUTTON_CLASS}>
           <Icon name="pencil" />
+        </button>
+        <button onClick={onScope} aria-label={`Solo en… ${row.name}`} data-tip="Solo en…: elegir qué proveedores y cuentas lo cargan" className={ICON_BUTTON_CLASS}>
+          <Icon name="user" />
         </button>
         <button
           onClick={() => run({ op: 'setDisabled', name: row.name, disabled: !row.disabled })}
@@ -365,9 +460,8 @@ function ForeignActions({ row }: { readonly row: McpInventoryRow }): React.JSX.E
       <div className="flex items-center justify-end gap-[2px]">
         <button
           onClick={copy}
-          disabled={row.blockedReason !== null}
           aria-label={`Copiar ${row.name} a comunes`}
-          data-tip={row.blockedReason ?? 'Copiar a comunes: lo verán todas las cuentas. El original no se toca.'}
+          data-tip="Copiar a comunes: lo verán todas las cuentas. El original no se toca."
           className={ICON_BUTTON_CLASS}
         >
           <Icon name="copy" />

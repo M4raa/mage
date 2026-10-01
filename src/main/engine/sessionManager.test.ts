@@ -11,7 +11,7 @@ const HOME = '/home/u';
 // Defaults con "login" en todas las cuentas: lo que se prueba aqui es el manager, no la resolucion de
 // cuenta por defecto (eso ya lo cubre sessionDefaults.test.ts).
 function defaults(): DefaultsDeps {
-  return { homedir: HOME, fileExists: () => true, listHome: () => ['.claude'], resolveSharedConfigArgs: () => [] };
+  return { homedir: HOME, fileExists: () => true, listHome: () => ['.claude'], resolveShared: () => ({ mcpServers: [], settingsFragment: null, claudeAiConnectors: true }) };
 }
 
 function params(overrides: Partial<CreateSessionParams> = {}): CreateSessionParams {

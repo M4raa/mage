@@ -374,6 +374,8 @@ export interface WorkbenchState {
   // Proveedor con el que se abre "Nueva conversacion".
   setDefaultProvider: (providerId: string) => void;
   setAccountAccent: (accountId: string, colorIndex: number | undefined) => void;
+  // Conectores de claude.ai de una cuenta (C3-f): aplica a las sesiones que se abran despues.
+  setClaudeAiConnectorsEnabled: (accountId: string, enabled: boolean) => void;
   // Modo de permiso con el que arrancan las conversaciones nuevas de Claude (P-028 6); '' = el de la cuenta.
   setDefaultPermissionMode: (mode: DefaultPermissionMode) => void;
   // Da por visto el asistente de primer arranque (o lo vuelve a abrir, con `completed=false`).
@@ -2067,6 +2069,14 @@ export function createWorkbenchStore(mage: MageClient) {
         const { [accountId]: _previo, ...rest } = s.settings.accentByAccount;
         const accentByAccount = colorIndex === undefined ? rest : { ...rest, [accountId]: colorIndex };
         return { settings: { ...s.settings, accentByAccount }, accounts: applyAccentOverrides(s.accounts, accentByAccount) };
+      });
+      scheduleSettingsPersist(mage, get);
+    },
+
+    setClaudeAiConnectorsEnabled: (accountId, enabled) => {
+      set((s) => {
+        const rest = s.settings.claudeAiConnectorsOff.filter((id) => id !== accountId);
+        return { settings: { ...s.settings, claudeAiConnectorsOff: enabled ? rest : [...rest, accountId] } };
       });
       scheduleSettingsPersist(mage, get);
     },

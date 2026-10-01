@@ -17,7 +17,8 @@ export type McpOriginKind =
   | 'project' // <carpeta>/.mcp.json (ambito proyecto, versionado)
   | 'legacy' // ~/.claude/mcp-shared.json del script de PowerShell (solo importacion)
   | 'desktop' // mcpServers de claude_desktop_config.json (Claude Desktop)
-  | 'desktopExtension'; // extension MCPB instalada en Claude Desktop
+  | 'agy' // mcp_config.json de agy (lo suyo; lo que exporto Mage se marca aparte)
+  | 'codex'; // config.toml de codex, leido con `codex mcp list --json`
 
 export interface McpOrigin {
   readonly kind: McpOriginKind;
@@ -53,8 +54,15 @@ export interface McpInventoryRow {
   // Solo comunes: desactivado = fuera del --mcp-config sin borrarlo.
   readonly disabled: boolean;
   readonly common: McpCommonView | null;
-  // Extension MCPB que no se puede copiar tal cual (necesita `user_config`…). null = se puede.
-  readonly blockedReason: string | null;
+  // Familias de proveedor que lo cargan (pastillas de la columna «Proveedores»).
+  readonly providers: readonly McpProviderFamily[];
+  // Solo lo carga el CLI de esa familia (insignia «Solo Claude / Codex / agy»). null = es de Mage o de
+  // ninguno (Claude Desktop).
+  readonly ownedBy: McpProviderFamily | null;
+  // Solo comunes: «Solo en…» (null = todos los compatibles).
+  readonly onlyIn: McpScope;
+  // Solo comunes: exportado a agy por «Sincronizar con agy» (copia, puede estar desfasada).
+  readonly exportedToAgy: boolean;
 }
 
 // Cuentas con MCP de ambito usuario que no estan en los comunes (aviso de Ajustes, punto 34).
@@ -91,7 +99,6 @@ export interface McpImportCandidate {
   readonly transport: McpTransport;
   readonly status: McpImportStatus;
   readonly checkedByDefault: boolean;
-  readonly blockedReason: string | null;
   readonly note: string | null;
 }
 
@@ -134,7 +141,8 @@ export interface McpServerDraft {
 export type McpCommonMutation =
   | { readonly op: 'upsert'; readonly originalName: string | null; readonly draft: McpServerDraft }
   | { readonly op: 'remove'; readonly name: string }
-  | { readonly op: 'setDisabled'; readonly name: string; readonly disabled: boolean };
+  | { readonly op: 'setDisabled'; readonly name: string; readonly disabled: boolean }
+  | { readonly op: 'setOnlyIn'; readonly name: string; readonly onlyIn: McpScope };
 
 export interface McpCommonMutateParams {
   readonly mutation: McpCommonMutation;
@@ -175,6 +183,183 @@ export interface McpAuthParams {
 export type McpAuthResult =
   | { readonly kind: 'connected' | 'opened' | 'timeout'; readonly statuses: readonly McpLiveStatus[] | null }
   | { readonly kind: 'error'; readonly message: string };
+
+// --- Proveedores: quien carga que («Solo en…») --------------------------------------------------
+
+// Familia de proveedor a efectos de MCP. `local` = los modelos sin CLI de fabricante (el gateway hoy,
+// el runtime propio despues).
+export const MCP_PROVIDER_FAMILIES = ['claude', 'codex', 'agy', 'local'] as const;
+export type McpProviderFamily = (typeof MCP_PROVIDER_FAMILIES)[number];
+
+export const MCP_FAMILY_LABELS: Readonly<Record<McpProviderFamily, string>> = {
+  claude: 'Claude',
+  codex: 'Codex',
+  agy: 'agy',
+  local: 'Locales',
+};
+
+// Familia de un id de proveedor de Mage ('claude', 'agy', 'codex', de serie o `custom:`).
+export function mcpFamilyOf(providerId: string): McpProviderFamily {
+  if (providerId === 'claude' || providerId === 'agy' || providerId === 'codex') return providerId;
+  return 'local';
+}
+
+// «Solo en…»: lista de destinos, cada uno `familia` (todas sus cuentas) o `familia|cuenta`. null = en
+// todos los compatibles, que es el valor por defecto.
+export type McpScope = readonly string[] | null;
+
+export interface McpTarget {
+  readonly family: McpProviderFamily;
+  // Id de la cuenta en su proveedor (configDir en Claude). null = el proveedor no tiene cuentas.
+  readonly accountId: string | null;
+}
+
+export function mcpScopeKey(family: McpProviderFamily, accountId: string | null = null): string {
+  return accountId === null ? family : `${family}|${accountId}`;
+}
+
+export function isInMcpScope(scope: McpScope, target: McpTarget): boolean {
+  if (scope === null) return true;
+  if (scope.includes(target.family)) return true;
+  return target.accountId !== null && scope.includes(mcpScopeKey(target.family, target.accountId));
+}
+
+// Familias que ALGUNA vez cargan algo con ese «Solo en…» (para las pastillas).
+export function familiesInScope(scope: McpScope): readonly McpProviderFamily[] {
+  if (scope === null) return MCP_PROVIDER_FAMILIES;
+  return MCP_PROVIDER_FAMILIES.filter((family) => scope.some((key) => key === family || key.startsWith(`${family}|`)));
+}
+
+// Que familias pueden cargar un transporte. Medido (`spike/mcp-providers-spike.mjs`): codex solo tiene
+// stdio y `streamable_http`; agy, stdio y http. SSE solo lo habla Claude (y el gateway, que es Claude).
+export function familiesForTransport(transport: McpTransport): readonly McpProviderFamily[] {
+  return transport === 'sse' ? ['claude', 'local'] : MCP_PROVIDER_FAMILIES;
+}
+
+// --- Extensiones .mcpb de Mage ------------------------------------------------------------------
+
+export type McpUserConfigType = 'string' | 'number' | 'boolean' | 'directory' | 'file';
+export type McpUserConfigValue = string | number | boolean | readonly string[] | null;
+
+// Un campo de `user_config` para el formulario. Los `sensitive` nunca traen valor: solo `hasValue`.
+export interface McpUserConfigField {
+  readonly key: string;
+  readonly type: McpUserConfigType;
+  readonly title: string;
+  readonly description: string;
+  readonly required: boolean;
+  readonly sensitive: boolean;
+  readonly multiple: boolean;
+  // Valor actual NO sensible (o el `default` del manifest si no hay). null en los sensibles.
+  readonly value: McpUserConfigValue;
+  readonly hasValue: boolean;
+}
+
+export interface McpExtensionView {
+  readonly id: string;
+  readonly displayName: string;
+  readonly version: string;
+  readonly description: string;
+  readonly author: string;
+  readonly platforms: readonly string[];
+  readonly serverType: string; // node | python | binary | uv…
+  readonly enabled: boolean;
+  readonly onlyIn: McpScope;
+  readonly fields: readonly McpUserConfigField[];
+  readonly missingRequired: readonly string[];
+  // Lo que impide cargarla (runtime ausente, plataforma, colision con un comun…). null = carga.
+  readonly problem: string | null;
+  readonly providers: readonly McpProviderFamily[];
+  readonly dir: string;
+}
+
+// Extension de Claude Desktop que se puede importar (copiandola).
+export interface McpDesktopExtensionCandidate {
+  readonly dirName: string;
+  readonly displayName: string;
+  readonly version: string;
+  readonly installed: boolean; // ya hay una de Mage con ese id
+}
+
+export interface McpExtensionList {
+  readonly extensions: readonly McpExtensionView[];
+  readonly desktop: readonly McpDesktopExtensionCandidate[];
+  readonly warnings: readonly string[];
+}
+
+// Vista previa de una instalacion desde archivo, para que el usuario confirme con autor y firma.
+// null = el usuario cancelo el dialogo de archivo.
+export interface McpExtensionInstallPreview {
+  readonly token: string;
+  readonly id: string;
+  readonly displayName: string;
+  readonly version: string;
+  readonly author: string;
+  readonly serverType: string;
+  readonly platforms: readonly string[];
+  readonly replacesVersion: string | null;
+  readonly fileCount: number;
+  readonly unpackedBytes: number;
+}
+
+export interface McpExtensionConfigParams {
+  readonly id: string;
+  // Clave -> valor nuevo. Ausente = sin cambios (un sensible que no se ha tocado); null = borrarlo.
+  readonly values: Readonly<Record<string, McpUserConfigValue>>;
+}
+
+// --- Conectores ---------------------------------------------------------------------------------
+
+// Ultimo estado conocido de una cuenta, con su fecha (ISO, UTC). Nunca lleva `config`.
+export interface McpAccountSnapshot {
+  readonly checkedAt: string;
+  readonly servers: readonly McpLiveStatus[];
+}
+
+export type McpStatusCache = Readonly<Record<string, McpAccountSnapshot>>;
+
+// Apps de ChatGPT (conectores de Codex) segun el esquema de `codex app-server` 0.144.4. SIN VERIFICAR:
+// sin una sesion de ChatGPT `app/list` devuelve la lista vacia.
+export interface CodexAppView {
+  readonly id: string;
+  readonly name: string;
+  readonly description: string;
+  readonly enabled: boolean;
+  readonly accessible: boolean;
+  readonly installUrl: string | null;
+}
+
+// --- Sincronizar con agy ------------------------------------------------------------------------
+
+export type McpAgyChangeAction = 'add' | 'update' | 'remove' | 'skip';
+
+export interface McpAgyChange {
+  readonly name: string;
+  readonly action: McpAgyChangeAction;
+  readonly reason: string | null; // solo en `skip`
+}
+
+export interface McpAgySyncPreview {
+  readonly path: string;
+  readonly changes: readonly McpAgyChange[];
+  // Huella del fichero de agy leido: el aplicar la devuelve (compare-and-swap).
+  readonly expected: string | null;
+  // Servidores con valores de la boveda: solo se copian (en claro) si el usuario lo confirma.
+  readonly secretServers: readonly string[];
+  readonly secretsConfirmed: readonly string[];
+}
+
+export interface McpAgySyncState {
+  readonly auto: boolean;
+  readonly exported: readonly string[];
+  readonly secretsConfirmed: readonly string[];
+  readonly lastSyncAt: string | null;
+  readonly lastError: string | null;
+}
+
+export type McpAgySyncResult =
+  | { readonly status: 'saved'; readonly changes: readonly McpAgyChange[]; readonly backupPath: string | null }
+  | { readonly status: 'stale'; readonly message: string };
 
 // --- Modelo puro del borrador (lo usan el editor del renderer y el guardado de main) -----------
 

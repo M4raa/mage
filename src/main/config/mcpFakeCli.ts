@@ -7,6 +7,8 @@ import type { ProbeProcess } from '../engine/modelProbe';
 
 export const FAKE_AUTH_SERVER = 'vg-auth';
 export const FAKE_AUTH_URL = 'https://vg.invalid/oauth/mcp';
+// Un conector de claude.ai falso en `needs-auth` (pestaña Conectores), con el nombre y el scope medidos.
+export const FAKE_CONNECTOR = 'claude.ai VG Conector';
 const FAKE_CALLBACK_MS = 1_500;
 
 // Cuentas (configDir) que ya «completaron» el OAuth, para que un «Comprobar estado» posterior lo vea.
@@ -20,7 +22,12 @@ export function spawnFakeMcpCli(configDir: string): ProbeProcess {
   const answer = (requestId: string, subtype: string): void => {
     if (subtype === 'mcp_status') {
       const status = authenticated.has(configDir) ? 'connected' : 'needs-auth';
-      return reply(requestId, { mcpServers: [{ name: FAKE_AUTH_SERVER, status, scope: 'user' }] });
+      return reply(requestId, {
+        mcpServers: [
+          { name: FAKE_AUTH_SERVER, status, scope: 'user' },
+          { name: FAKE_CONNECTOR, status: 'needs-auth', scope: 'claudeai' },
+        ],
+      });
     }
     if (subtype === 'mcp_authenticate') {
       setTimeout(() => authenticated.add(configDir), FAKE_CALLBACK_MS);

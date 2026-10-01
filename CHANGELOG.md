@@ -9,6 +9,21 @@ versión.
 ### Añadido
 - Pestaña de **novedades**: al actualizar Mage se abre sola con las notas de la versión instalada, y
   en su menú lateral están todas las anteriores. También se abre desde Configuración › Notas de versión.
+- **MCP y conectores** se divide en tres pestañas, como en Claude Desktop: **Servidores**, **Conectores**
+  y **Extensiones**.
+- Los servidores MCP comunes se comparten con **todos los proveedores**: Claude y Codex los cargan al
+  abrir cada sesión, y a agy se le copian con **Sincronizar con agy** (o solos, si activas la
+  sincronización automática), sin tocar lo que agy ya tenía y con una copia previa de su fichero. Una
+  columna dice qué proveedores carga cada uno, lo propio de cada CLI lleva su insignia («Solo Claude»,
+  «Solo agy»…) y **Solo en…** elige en qué proveedores y cuentas se carga.
+- **Conectores** por cuenta con su último estado y la fecha en que se comprobó, **Conectar** en los que
+  piden autorización y un interruptor para no usar los de claude.ai en una cuenta. «Claude in Chrome»
+  aparece como solo disponible en Claude Desktop, y las Apps de ChatGPT de Codex, como pendientes de
+  verificar con una cuenta.
+- **Extensiones** `.mcpb` propias de Mage: instalar desde archivo, importar las de Claude Desktop
+  copiándolas (ya no dependen de que Desktop siga instalado), activarlas, configurarlas y
+  desinstalarlas. Los valores sensibles de su configuración se guardan cifrados. Mage avisa si a una le
+  falta configurar algo o necesita `node`/`python` en el PATH.
 
 ### Cambiado
 - Sin pestañas abiertas se ve la misma pantalla que en un chat nuevo, con sus proyectos recientes:
@@ -38,7 +53,6 @@ versión.
 - Las variables `OPENAI_API_KEY` y `CODEX_API_KEY` ya no llegan a los agentes que lanza Mage.
 
 ### Por completar antes de publicar
-- Por completar: conectores y extensiones, y servidores MCP compartidos con todos los proveedores.
 - Por completar: cuentas por proveedor y forma de pago (Claude por API, agy y Codex), agy en sesión
   persistente y con su uso en el panel.
 - Por completar: seguimiento de PR y CI desde la conversación, y worktrees.

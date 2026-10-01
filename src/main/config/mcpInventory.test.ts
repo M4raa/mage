@@ -34,6 +34,7 @@ const LEGACY = join(MAIN_DIR, 'mcp-shared.json');
 const PROJECT = join(ROOT, 'src', 'mage');
 const DESKTOP = join(ROOT, 'Claude');
 const EXT_DIR = join(DESKTOP, 'Claude Extensions', 'local.mcpb.x.db');
+const AGY = join(HOME, '.gemini', 'config', 'mcp_config.json');
 
 const LOCAL = { type: 'stdio', command: 'npx', args: ['-y', 'a'], env: { A_TOKEN: 'secreto-a' } };
 const REMOTE = { type: 'http', url: 'https://r.dev/mcp', headers: { Authorization: 'Bearer secreto-r' } };
@@ -47,8 +48,9 @@ const locations = (patch: Partial<McpSourceLocations> = {}): McpSourceLocations 
   ],
   projectDirs: [PROJECT],
   desktopDirs: [DESKTOP],
-  homedir: HOME,
-  pathSeparator: sep,
+  agyConfigPath: AGY,
+  agyExported: [],
+  codex: [],
   ...patch,
 });
 
@@ -78,7 +80,7 @@ describe('readMcpSources + buildInventory', () => {
     const inventory = inventoryOf(fullMachine());
 
     const byName = Object.fromEntries(inventory.rows.map((row) => [row.name, row]));
-    expect(Object.keys(byName).sort()).toEqual(['apagado', 'comun', 'db', 'escritorio', 'local', 'proyecto', 'solo']);
+    expect(Object.keys(byName).sort()).toEqual(['apagado', 'comun', 'escritorio', 'local', 'proyecto', 'solo']);
     expect(byName.comun!.origins.map((o) => o.kind)).toEqual(['common', 'account']);
     expect(byName.local!.origins[0]).toMatchObject({ kind: 'projectLocal', projectDir: PROJECT, label: 'Local de mage' });
     expect(byName.proyecto!.transport).toBe('http');
@@ -118,20 +120,52 @@ describe('readMcpSources + buildInventory', () => {
     expect(inventoryOf(fullMachine(), { legacySharedPath: LEGACY }).rows.map((r) => r.name)).not.toContain('viejo');
   });
 
-  it('buildInventory_mcpbConDirname_seResuelveALaCarpetaDeLaExtension', () => {
-    const read = readMcpSources(memoryFs(fullMachine()), locations());
-
-    const ext = read.entries.find((e) => e.origin.kind === 'desktopExtension')!;
-    expect(ext.config.command).toBe(join(EXT_DIR, 'bin', 'db.exe'));
-    expect(ext.blockedReason).toBeNull();
+  it('buildInventory_extensionDeDesktop_noEsFila', () => {
+    expect(inventoryOf(fullMachine()).rows.map((row) => row.name)).not.toContain('db');
   });
 
-  it('buildInventory_mcpbConUserConfig_quedaBloqueada', () => {
+  it('buildInventory_proveedores_comunEnTodosMenosAgyYLoDeUnaCuentaSoloClaude', () => {
+    const byName = Object.fromEntries(inventoryOf(fullMachine()).rows.map((row) => [row.name, row]));
+
+    expect(byName.comun).toMatchObject({ providers: ['claude', 'codex', 'local'], ownedBy: null, onlyIn: null, exportedToAgy: false });
+    expect(byName.solo).toMatchObject({ providers: ['claude'], ownedBy: 'claude' });
+    expect(byName.escritorio).toMatchObject({ providers: [], ownedBy: null });
+    expect(byName.apagado!.providers).toEqual([]);
+  });
+
+  it('buildInventory_comunConSoloEnYExportadoAAgy_pastillasDeEseAlcance', () => {
+    const files = { [COMMON]: JSON.stringify({ mcpServers: { a: LOCAL }, mageOnlyIn: { a: ['agy', 'claude|' + MAIN_DIR] } }) };
+
+    const [row] = buildInventory(readMcpSources(memoryFs(files), locations()), [MAIN_DIR], null, ['a']).rows;
+
+    expect(row).toMatchObject({ providers: ['claude', 'agy'], onlyIn: ['agy', 'claude|' + MAIN_DIR], exportedToAgy: true });
+  });
+
+  it('buildInventory_comunSse_noLlegaACodexNiAgy', () => {
+    const files = { [COMMON]: JSON.stringify({ mcpServers: { s: { type: 'sse', url: 'https://s.dev' } } }) };
+
+    expect(inventoryOf(files).rows[0]!.providers).toEqual(['claude', 'local']);
+  });
+
+  it('buildInventory_mcpConfigDeAgy_filaSoloAgySinLoQueExportoMage', () => {
     const files = {
-      [join(EXT_DIR, 'manifest.json')]: JSON.stringify({ name: 'db', server: { mcp_config: { command: 'x', env: { K: '${user_config.key}' } } } }),
+      [AGY]: JSON.stringify({ mcpServers: { suyo: { serverUrl: 'https://a.dev', headers: { K: 'secreto-agy' } }, mio: { command: 'x' } } }),
     };
 
-    expect(inventoryOf(files).rows[0]!.blockedReason).toContain('user_config');
+    const rows = inventoryOf(files, { agyExported: ['mio'] }).rows;
+
+    expect(rows.map((row) => row.name)).toEqual(['suyo']);
+    expect(rows[0]).toMatchObject({ transport: 'http', ownedBy: 'agy', headerKeys: ['K'] });
+    expect(JSON.stringify(rows)).not.toContain('secreto');
+  });
+
+  it('buildInventory_codex_filaSoloCodexConSuCuenta', () => {
+    const codex = [{ label: 'config.toml de codex', path: '/c/config.toml', accountDir: '/c', servers: [{ name: 'cx', enabled: false, authStatus: null, config: { type: 'stdio', command: 'node' } }] }];
+
+    const [row] = inventoryOf({}, { codex }).rows;
+
+    expect(row).toMatchObject({ name: 'cx', ownedBy: 'codex', providers: ['codex'] });
+    expect(row!.origins[0]).toMatchObject({ kind: 'codex', accountDir: '/c' });
   });
 
   it('buildInventory_ficheroInvalido_avisaSinContenidoYSigue', () => {
@@ -228,11 +262,8 @@ describe('buildImportCandidates', () => {
   it('buildImportCandidates_grupos_desktopYCli', () => {
     const groups = Object.fromEntries(candidatesOf(fullMachine()).map((c) => [c.name, c.group]));
 
-    expect(groups).toMatchObject({ escritorio: 'desktop', db: 'desktop', viejo: 'cli', solo: 'cli', proyecto: 'cli' });
-  });
-
-  it('buildImportCandidates_mcpb_avisaDeQueDependeDeDesktop', () => {
-    expect(candidatesOf(fullMachine()).find((c) => c.name === 'db')!.note).toContain('Claude Desktop');
+    expect(groups).toMatchObject({ escritorio: 'desktop', viejo: 'cli', solo: 'cli', proyecto: 'cli' });
+    expect(groups.db).toBeUndefined();
   });
 
   it('buildImportCandidates_sinValores', () => {
@@ -295,13 +326,6 @@ describe('applyImportPicks', () => {
     const { entries, text } = setup();
 
     expect(() => applyImportPicks(text, entries, [{ id: 'no-existe', replace: false }])).toThrow('no-existe');
-  });
-
-  it('applyImportPicks_mcpbBloqueada_lanza', () => {
-    const { entries, text } = setup();
-    const blocked = { ...entries[0]!, blockedReason: 'Necesita user_config', origin: { ...entries[0]!.origin, importId: 'bloq' } };
-
-    expect(() => applyImportPicks(text, [...entries, blocked], [{ id: 'bloq', replace: false }])).toThrow('user_config');
   });
 
   it('applyImportPicks_sinComunPrevio_creaElFichero', () => {

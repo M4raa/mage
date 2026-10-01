@@ -1,5 +1,16 @@
 import type { ImageAttachment } from '@shared/ipc';
 import type { MageEvent, PermissionDecision } from '@shared/events';
+import type { ResolvedMcpServer } from '../config/mcpResolved';
+
+// Configuracion compartida de un lanzamiento. Lleva los valores de env/cabeceras de los MCP: solo
+// existe en main y nunca se loguea.
+export interface SharedLaunchConfig {
+  readonly mcpServers: readonly ResolvedMcpServer[];
+  // Fragmento de `--settings` de settings-common.json (hooks y permisos). Solo lo entiende Claude.
+  readonly settingsFragment: Readonly<Record<string, unknown>> | null;
+  // Conectores de claude.ai de la cuenta (C3-f). false -> `ENABLE_CLAUDEAI_MCP_SERVERS=false`.
+  readonly claudeAiConnectors: boolean;
+}
 
 // Parametros para arrancar una sesion de agente (neutros de proveedor).
 // `resume` (M2.5): si true, se reanuda la conversacion `sessionId` (`--resume`) en vez de crear una
@@ -13,9 +24,9 @@ export interface LaunchParams {
   readonly effort?: string; // nivel --effort (M2.4); ya validado en la frontera. undefined -> sin flag
   readonly maxBudgetUsdCents?: number; // tope --max-budget-usd en centavos enteros (M2.4); undefined -> sin tope
   readonly permissionMode?: string; // modo de permiso inicial (--permission-mode, M2.6); undefined/'default' -> sin flag
-  // Flags de configuracion COMUN a inyectar (D1 Fase 1: --mcp-config/--settings de mcp-common.json/
-  // settings-common.json), ya resueltos por SharedConfigService. undefined/[] -> ningun flag.
-  readonly sharedConfigArgs?: readonly string[];
+  // Lo COMUN a todas las cuentas para ESTE proveedor y cuenta, ya filtrado por «Solo en…». Neutro de
+  // proveedor: cada adapter lo traduce a su CLI (mcpProviderTranslate.ts). undefined -> nada.
+  readonly shared?: SharedLaunchConfig;
   // Id de conversacion que asigna el PROVEEDOR, no Mage (E3). Solo lo usa el modo 'perTurn': ahi el
   // proceso muere al cerrar cada turno, asi que este id es lo UNICO que enlaza el contexto entre un
   // turno y el siguiente. Ausente en el primer turno (aun no existe). Medido en `agy` 1.1.11: un id

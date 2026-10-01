@@ -35,7 +35,7 @@ const toggle = (set: ReadonlySet<string>, id: string): ReadonlySet<string> => {
 };
 
 // Una fila se puede marcar si no esta bloqueada y aporta algo (igual = nada que importar).
-const isSelectable = (candidate: McpImportCandidate): boolean => candidate.blockedReason === null && candidate.status !== 'same';
+const isSelectable = (candidate: McpImportCandidate): boolean => candidate.status !== 'same';
 
 export function McpImportDialog({ onClose }: { readonly onClose: () => void }): React.JSX.Element {
   const previewImport = useMcpStore((s) => s.previewImport);
@@ -165,8 +165,8 @@ function CandidateRow({
           Sustituir el común actual (si no, se queda el que hay)
         </label>
       )}
-      {(candidate.blockedReason ?? candidate.note) !== null && (
-        <span className="ml-[22px] text-[10px] text-mg-sec">{candidate.blockedReason ?? candidate.note}</span>
+      {candidate.note !== null && (
+        <span className="ml-[22px] text-[10px] text-mg-sec">{candidate.note}</span>
       )}
     </li>
   );

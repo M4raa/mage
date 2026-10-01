@@ -1,17 +1,26 @@
+import { z } from 'zod';
 import { IpcChannel } from '@shared/ipc';
 import type {
+  McpAgySyncPreview,
+  McpAgySyncResult,
+  McpAgySyncState,
   McpAuthParams,
   McpAuthResult,
   McpCommonMutateParams,
+  McpExtensionInstallPreview,
+  McpExtensionList,
   McpImportApplyParams,
   McpImportPreview,
   McpInventory,
   McpInventoryParams,
   McpRevealedSecrets,
   McpStatusByAccount,
+  McpStatusCache,
   McpWriteResult,
 } from '@shared/mcp';
+import type { AgySyncService } from './mcpAgySync';
 import { applyMcpCommonMutation, revealMcpCommonSecrets } from './mcpCommonEdit';
+import type { McpExtensionService } from './mcpExtensionService';
 import {
   applyImportPicks,
   buildImportCandidates,
@@ -24,8 +33,8 @@ import {
 } from './mcpInventory';
 import type { SharedConfigService } from './sharedConfigService';
 
-// Canales IPC de «MCP y conectores» (P-028 puntos 5 y 34). Aqui solo hay cableado: la logica vive en
-// los modulos puros (mcpInventory, mcpCommonEdit, mcpStatusProbe) y el FS/Electron llegan inyectados.
+// Canales IPC de «MCP y conectores» (P-028 puntos 5 y 34; 0.1.2 grupo C). Aqui solo hay cableado y
+// validacion de la frontera: la logica vive en los modulos puros y el FS/Electron llegan inyectados.
 
 export interface McpIpcDeps {
   readonly handle: (channel: string, listener: (event: unknown, ...args: never[]) => unknown) => void;
@@ -33,42 +42,66 @@ export interface McpIpcDeps {
   readonly fs: McpInventoryDeps;
   readonly commonPath: () => string;
   readonly accounts: () => readonly McpAccountLocation[];
-  // Rutas de fuentes que no son de Mage (legado y Claude Desktop), ya resueltas por SO.
+  // Rutas de fuentes que no son de Mage (legado, Claude Desktop, agy), ya resueltas por SO.
   readonly legacySharedPath: () => string;
   readonly desktopDirs: () => readonly string[];
-  readonly homedir: string;
-  readonly pathSeparator: string;
+  readonly agyConfigPath: () => string;
   readonly probeStatuses: () => Promise<McpStatusByAccount>;
   readonly authenticate: (accountDir: string, serverName: string) => Promise<McpAuthResult>;
+  readonly extensions: McpExtensionService;
+  readonly agySync: AgySyncService;
+  readonly loadStatusCache: () => McpStatusCache;
+  readonly saveStatuses: (fresh: McpStatusByAccount) => McpStatusCache;
+  // Dialogos nativos de main (null = cancelado).
+  readonly pickArchive: () => Promise<string | null>;
+  readonly pickFile: () => Promise<string | null>;
+  // Tras cualquier cambio de lo que Mage comparte (comunes, extensiones): la sincronizacion automatica
+  // con agy, si esta activada.
+  readonly onSharedChanged: () => void;
 }
 
 const EMPTY_COMMON_TEXT = '{"mcpServers": {}}';
+const ID = z.string().min(1);
+const SCOPE = z.array(z.string().min(1)).min(1).nullable();
+const USER_VALUE = z.union([z.string(), z.number(), z.boolean(), z.array(z.string()), z.null()]);
 
 export function registerMcpIpc(deps: McpIpcDeps): void {
-  const locations = (projectDirs: readonly string[], withLegacy: boolean): McpSourceLocations => ({
+  registerInventory(deps);
+  registerStatus(deps);
+  registerExtensions(deps);
+  registerAgySync(deps);
+}
+
+function sourceLocations(deps: McpIpcDeps, projectDirs: readonly string[], withLegacy: boolean): McpSourceLocations {
+  return {
     commonPath: deps.commonPath(),
     legacySharedPath: withLegacy ? deps.legacySharedPath() : null,
     accounts: deps.accounts(),
     projectDirs,
     desktopDirs: deps.desktopDirs(),
-    homedir: deps.homedir,
-    pathSeparator: deps.pathSeparator,
-  });
+    agyConfigPath: deps.agyConfigPath(),
+    agyExported: deps.agySync.state().exported,
+    // Codex: lo rellena su adapter (grupo E) con `codex mcp list --json` por cuenta.
+    codex: [],
+  };
+}
+
+function registerInventory(deps: McpIpcDeps): void {
   // `.mcp.json` que se leen al importar: los de las carpetas abiertas y los de cada proyecto que el CLI
   // conoce (las claves `projects` de los .claude.json, que ya lee el inventario como ambito local).
   const importDirs = (projectDirs: readonly string[]): readonly string[] => {
-    const known = readMcpSources(deps.fs, locations([], false)).entries.flatMap((entry) => entry.origin.projectDir ?? []);
+    const known = readMcpSources(deps.fs, sourceLocations(deps, [], false)).entries.flatMap((entry) => entry.origin.projectDir ?? []);
     return [...new Set([...projectDirs, ...known])];
   };
   const version = (): string | null => mcpCommonVersion(deps.service.readBaseline(deps.commonPath()));
 
   deps.handle(IpcChannel.McpInventoryLoad, (_e, params: McpInventoryParams): McpInventory => {
     const accountDirs = deps.accounts().map((account) => account.configDir);
-    return buildInventory(readMcpSources(deps.fs, locations(params.projectDirs, false)), accountDirs, version());
+    return buildInventory(readMcpSources(deps.fs, sourceLocations(deps, params.projectDirs, false)), accountDirs, version(), deps.agySync.state().exported);
   });
 
   deps.handle(IpcChannel.McpCommonMutate, (_e, params: McpCommonMutateParams): McpWriteResult =>
-    writeCommon(deps, params.expected, (text) => ({ text: applyMcpCommonMutation(text, params.mutation), notes: [] })),
+    afterWrite(deps, writeCommon(deps, params.expected, (text) => ({ text: applyMcpCommonMutation(text, params.mutation), notes: [] }))),
   );
 
   deps.handle(IpcChannel.McpCommonReveal, (_e, name: string): McpRevealedSecrets => {
@@ -77,28 +110,95 @@ export function registerMcpIpc(deps: McpIpcDeps): void {
   });
 
   deps.handle(IpcChannel.McpImportPreview, (_e, params: McpInventoryParams): McpImportPreview => {
-    const read = readMcpSources(deps.fs, locations(importDirs(params.projectDirs), true));
+    const read = readMcpSources(deps.fs, sourceLocations(deps, importDirs(params.projectDirs), true));
     return { candidates: buildImportCandidates(read.entries), commonVersion: version() };
   });
 
   // El renderer solo manda ids: main RELEE las fuentes y escribe con el mismo CAS que el editor.
   deps.handle(IpcChannel.McpImportApply, (_e, params: McpImportApplyParams): McpWriteResult => {
-    const read = readMcpSources(deps.fs, locations(importDirs(params.projectDirs), true));
-    return writeCommon(deps, params.expected, (text) => applyImportPicks(text, read.entries, params.picks));
+    const read = readMcpSources(deps.fs, sourceLocations(deps, importDirs(params.projectDirs), true));
+    return afterWrite(deps, writeCommon(deps, params.expected, (text) => applyImportPicks(text, read.entries, params.picks)));
   });
+}
 
-  deps.handle(IpcChannel.McpStatusProbe, (): Promise<McpStatusByAccount> => deps.probeStatuses());
+function registerStatus(deps: McpIpcDeps): void {
+  deps.handle(IpcChannel.McpStatusProbe, async (): Promise<McpStatusCache> => deps.saveStatuses(await deps.probeStatuses()));
+  deps.handle(IpcChannel.McpStatusCacheLoad, (): McpStatusCache => deps.loadStatusCache());
 
   // Frontera: el renderer solo puede pedirlo para una cuenta que Mage conoce (su configDir decide donde
-  // guarda el CLI el token).
-  deps.handle(IpcChannel.McpAuthenticate, (_e, params: McpAuthParams): Promise<McpAuthResult> => {
+  // guarda el CLI el token). El ultimo estado que devuelva se guarda en la cache.
+  deps.handle(IpcChannel.McpAuthenticate, async (_e, params: McpAuthParams): Promise<McpAuthResult> => {
     const { accountDir, serverName } = params ?? {};
     if (typeof accountDir !== 'string' || !deps.accounts().some((account) => account.configDir === accountDir)) {
       throw new Error(`McpAuthenticate: cuenta desconocida (${JSON.stringify(accountDir)})`);
     }
     if (typeof serverName !== 'string') throw new Error(`McpAuthenticate: serverName no es texto (${JSON.stringify(serverName)})`);
-    return deps.authenticate(accountDir, serverName);
+    const result = await deps.authenticate(accountDir, serverName);
+    if (result.kind !== 'error' && result.statuses !== null) deps.saveStatuses({ [accountDir]: result.statuses });
+    return result;
   });
+}
+
+function registerExtensions(deps: McpIpcDeps): void {
+  const ext = deps.extensions;
+  const changed = (action: () => void): void => {
+    action();
+    deps.onSharedChanged();
+  };
+  deps.handle(IpcChannel.McpExtensionsList, (): McpExtensionList => {
+    const common = new Set(Object.keys(deps.service.loadMcpCommon(deps.commonPath())?.mcpServers ?? {}));
+    return ext.list(common, new Set(deps.agySync.state().exported));
+  });
+  deps.handle(IpcChannel.McpExtensionPick, async (): Promise<McpExtensionInstallPreview | null> => {
+    const path = await deps.pickArchive();
+    return path === null ? null : ext.previewInstall(path);
+  });
+  deps.handle(IpcChannel.McpExtensionInstall, (_e, token: unknown) => changed(() => void ext.install(parseWith(ID, token, 'token'))));
+  deps.handle(IpcChannel.McpExtensionImportDesktop, (_e, dirName: unknown) => changed(() => void ext.importFromDesktop(parseWith(ID, dirName, 'dirName'))));
+  deps.handle(IpcChannel.McpExtensionSetEnabled, (_e, raw: unknown) => {
+    const { id, enabled } = parseWith(z.object({ id: ID, enabled: z.boolean() }), raw, 'setEnabled');
+    changed(() => ext.setEnabled(id, enabled));
+  });
+  deps.handle(IpcChannel.McpExtensionSetOnlyIn, (_e, raw: unknown) => {
+    const { id, onlyIn } = parseWith(z.object({ id: ID, onlyIn: SCOPE }), raw, 'setOnlyIn');
+    changed(() => ext.setOnlyIn(id, onlyIn));
+  });
+  deps.handle(IpcChannel.McpExtensionSaveConfig, (_e, raw: unknown) => {
+    // El mensaje de error nunca cita los valores: pueden ser la propia clave.
+    const result = z.object({ id: ID, values: z.record(z.string(), USER_VALUE) }).safeParse(raw);
+    if (!result.success) throw new Error(`Ajustes de extensión inválidos: ${result.error.issues.map((issue) => issue.path.join('.')).join(', ')}`);
+    changed(() => ext.saveConfig(result.data.id, result.data.values));
+  });
+  deps.handle(IpcChannel.McpExtensionRemove, (_e, id: unknown) => changed(() => ext.remove(parseWith(ID, id, 'id'))));
+  deps.handle(IpcChannel.McpPickFile, (): Promise<string | null> => deps.pickFile());
+}
+
+function registerAgySync(deps: McpIpcDeps): void {
+  deps.handle(IpcChannel.McpAgySyncState, (): McpAgySyncState => deps.agySync.state());
+  const confirmed = z.array(z.string().min(1)).optional();
+  deps.handle(IpcChannel.McpAgySyncPreview, (_e, secretsConfirmed: unknown): McpAgySyncPreview =>
+    deps.agySync.preview(parseWith(confirmed, secretsConfirmed, 'secretsConfirmed')),
+  );
+  deps.handle(IpcChannel.McpAgySyncApply, (_e, raw: unknown): McpAgySyncResult => {
+    const params = parseWith(z.object({ expected: z.string().nullable(), secretsConfirmed: z.array(z.string().min(1)) }), raw, 'apply');
+    return deps.agySync.apply(params.expected, params.secretsConfirmed);
+  });
+  deps.handle(IpcChannel.McpAgySyncSetAuto, (_e, auto: unknown): McpAgySyncState => {
+    const state = deps.agySync.setAuto(parseWith(z.boolean(), auto, 'auto'));
+    if (state.auto) deps.onSharedChanged();
+    return deps.agySync.state();
+  });
+}
+
+function afterWrite(deps: McpIpcDeps, result: McpWriteResult): McpWriteResult {
+  if (result.status === 'saved') deps.onSharedChanged();
+  return result;
+}
+
+function parseWith<T>(schema: z.ZodType<T>, raw: unknown, what: string): T {
+  const result = schema.safeParse(raw);
+  if (!result.success) throw new Error(`Parámetro ${what} inválido: ${JSON.stringify(raw)}`);
+  return result.data;
 }
 
 // Escritura de mcp-common.json con compare-and-swap en dos niveles: la huella que tenia el renderer

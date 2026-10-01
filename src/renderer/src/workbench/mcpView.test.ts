@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { McpInventory, McpInventoryRow } from '@shared/mcp';
-import { mcpAuthMessage, buildMcpTable, filterMcpTable, mcpStatusLabel, mergeLiveStatuses, summarizeStatus, tagSessionServers } from './mcpView';
+import type { McpExtensionView, McpInventory, McpInventoryRow } from '@shared/mcp';
+import { mcpAuthMessage, buildClaudeConnectorGroups, buildMcpTable, buildServersTable, describeCheckedAt, filterMcpTable, mcpStatusLabel, mergeLiveStatuses, summarizeStatus, tagSessionServers } from './mcpView';
 
 const row = (patch: Partial<McpInventoryRow>): McpInventoryRow => ({
   name: 'a',
@@ -11,10 +11,14 @@ const row = (patch: Partial<McpInventoryRow>): McpInventoryRow => ({
   headerKeys: [],
   disabled: false,
   common: { transport: 'stdio', command: 'npx', args: [], url: '' },
-  blockedReason: null,
+  providers: ['claude', 'codex', 'local'],
+  ownedBy: null,
+  onlyIn: null,
+  exportedToAgy: false,
   ...patch,
 });
 const inventory = (rows: McpInventoryRow[]): McpInventory => ({ rows, unshared: [], commonVersion: null, warnings: [] });
+const reported = (name: string, status: string) => ({ name, status, scope: name.startsWith('claude.ai ') ? 'claudeai' : 'dynamic' });
 
 describe('mcpStatusLabel', () => {
   it('mcpStatusLabel_estadosMedidos_enCastellano', () => {
@@ -164,5 +168,91 @@ describe('mcpAuthMessage', () => {
     expect(mcpAuthMessage({ kind: 'opened', statuses: null }).text).toMatch(/Comprobar estado/);
     expect(mcpAuthMessage({ kind: 'timeout', statuses: null })).toMatchObject({ ok: false });
     expect(mcpAuthMessage({ kind: 'error', message: 'Server not found: x' })).toEqual({ ok: false, text: 'Server not found: x' });
+  });
+});
+
+describe('pestaña Servidores', () => {
+  it('buildServersTable_sinConectoresDeClaudeAi_peroConPluginsYSoloClaude', () => {
+    const rows = buildServersTable(inventory([row({})]), { '/c1': [reported('claude.ai Miro', 'needs-auth'), reported('plugin:figma:figma', 'connected')] });
+
+    expect(rows.map((r) => [r.kind, r.name, r.ownedBy])).toEqual([
+      ['server', 'a', null],
+      ['plugin', 'figma', 'claude'],
+    ]);
+    expect(rows[0]!.providers).toEqual(['claude', 'codex', 'local']);
+  });
+});
+
+describe('pestaña Conectores', () => {
+  const ext = (patch: Partial<McpExtensionView>): McpExtensionView => ({
+    id: 'db',
+    displayName: 'Base de datos',
+    version: '1',
+    description: '',
+    author: '',
+    platforms: [],
+    serverType: 'node',
+    enabled: true,
+    onlyIn: null,
+    fields: [],
+    missingRequired: [],
+    problem: null,
+    providers: ['claude'],
+    dir: '/e/db',
+    ...patch,
+  });
+  const input = (patch = {}) => ({
+    accountIds: ['/c1', '/c2'],
+    statuses: { '/c1': [reported('claude.ai Miro', 'needs-auth'), reported('plugin:figma:figma', 'connected'), reported('db', 'connected')] },
+    cache: { '/c1': { checkedAt: '2026-10-01T09:00:00.000Z', servers: [] } },
+    extensions: [ext({}), ext({ id: 'solo-c2', displayName: 'Solo c2', onlyIn: ['claude|/c2'] })],
+    claudeAiOff: [] as string[],
+    ...patch,
+  });
+
+  it('buildClaudeConnectorGroups_porCuenta_webComplementoEscritorioYChrome', () => {
+    const [c1, c2] = buildClaudeConnectorGroups(input());
+
+    expect(c1!.rows.map((r) => [r.name, r.typeLabel, r.statusLabel, r.needsAuth])).toEqual([
+      ['Miro', 'Web', 'Requiere autenticación', true],
+      ['figma (plugin figma)', 'Complemento', 'Conectado', false],
+      ['Base de datos', 'Escritorio', 'Conectado', false],
+      ['Claude in Chrome', 'Escritorio', 'Solo disponible en Claude Desktop', false],
+    ]);
+    expect(c1!.checkedAt).toBe('2026-10-01T09:00:00.000Z');
+    expect(c2!.rows.map((r) => r.name)).toEqual(['Base de datos', 'Solo c2', 'Claude in Chrome']);
+    expect(c2!.checkedAt).toBeNull();
+  });
+
+  it('buildClaudeConnectorGroups_conectoresApagados_sinConectarYDicho', () => {
+    const [c1] = buildClaudeConnectorGroups(input({ claudeAiOff: ['/c1'] }));
+
+    expect(c1).toMatchObject({ claudeAiEnabled: false });
+    expect(c1!.rows[0]).toMatchObject({ name: 'Miro', statusLabel: 'Apagados en esta cuenta', needsAuth: false });
+  });
+
+  it('buildClaudeConnectorGroups_extensionConProblema_loEnseña', () => {
+    const [c1] = buildClaudeConnectorGroups(input({ extensions: [ext({ problem: 'Falta configurar' })] }));
+
+    expect(c1!.rows.find((r) => r.kind === 'extension')!.statusLabel).toBe('Falta configurar');
+  });
+
+  it('buildClaudeConnectorGroups_sinCuentas_vacio', () => {
+    expect(buildClaudeConnectorGroups(input({ accountIds: [] }))).toEqual([]);
+  });
+});
+
+describe('describeCheckedAt', () => {
+  const now = new Date('2026-10-01T10:00:00.000Z');
+
+  it.each([
+    [null, 'Sin comprobar todavía'],
+    ['2026-10-01T09:59:30.000Z', 'Última comprobación: hace un momento'],
+    ['2026-10-01T09:55:00.000Z', 'Última comprobación: hace 5 min'],
+    ['2026-10-01T07:00:00.000Z', 'Última comprobación: hace 3 h'],
+    ['2026-09-28T10:00:00.000Z', 'Última comprobación: hace 3 días'],
+    ['basura', 'Última comprobación: basura'],
+  ])('describeCheckedAt_%s', (iso, text) => {
+    expect(describeCheckedAt(iso, now)).toBe(text);
   });
 });

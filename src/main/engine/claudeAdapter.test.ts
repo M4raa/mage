@@ -245,11 +245,41 @@ describe('ClaudeAdapter', () => {
       expect(adapter.buildSpawnPlan(launch).args).not.toContain('--max-budget-usd');
     });
 
-    it('buildSpawnPlan_conSharedConfigArgs_seAnadenAlFinal', () => {
-      const sharedConfigArgs = ['--mcp-config', '/shared/mcp-common.json', '--settings', '{"hooks":{}}'];
-      const plan = adapter.buildSpawnPlan({ ...launch, sharedConfigArgs });
+    it('buildSpawnPlan_conCompartido_escribeElMcpConfigDeLaCuentaYLoAnadeAlFinal', () => {
+      const written: [string, string][] = [];
+      const withWriter = new ClaudeAdapter(
+        () => 'claude',
+        (accountDir, text) => {
+          written.push([accountDir, text]);
+          return '/gen/claude-p.mcp.json';
+        },
+      );
+      const server = { name: 'db', source: 'common', onlyIn: null, extra: {}, secrets: {}, transport: 'stdio', command: 'db', args: [], env: { K: 'secreto' }, cwd: null } as const;
+      const shared = { mcpServers: [server], settingsFragment: { hooks: {} }, claudeAiConnectors: true };
 
-      expect(plan.args.slice(-sharedConfigArgs.length)).toEqual(sharedConfigArgs);
+      const plan = withWriter.buildSpawnPlan({ ...launch, shared });
+
+      expect(plan.args.slice(-4)).toEqual(['--mcp-config', '/gen/claude-p.mcp.json', '--settings', '{"hooks":{}}']);
+      expect(written[0]![0]).toBe(launch.accountDir);
+      // Ni en el fichero ni en la linea de comandos: el valor viaja en el entorno del hijo y el CLI
+      // expande la referencia (medido en 2.1.286).
+      expect(JSON.parse(written[0]![1]).mcpServers.db.env.K).toBe('${MAGE_MCP_SECRET_DB_ENV_K}');
+      expect(written[0]![1]).not.toContain('secreto');
+      expect(plan.args.join(' ')).not.toContain('secreto');
+      expect(plan.env.MAGE_MCP_SECRET_DB_ENV_K).toBe('secreto');
+      expect(plan.env.ENABLE_CLAUDEAI_MCP_SERVERS).toBeUndefined();
+    });
+
+    it('buildSpawnPlan_conectoresDeClaudeAiApagados_ponLaVariableEnFalse', () => {
+      const shared = { mcpServers: [], settingsFragment: null, claudeAiConnectors: false };
+
+      expect(adapter.buildSpawnPlan({ ...launch, shared }).env.ENABLE_CLAUDEAI_MCP_SERVERS).toBe('false');
+    });
+
+    it('buildSpawnPlan_conServidoresSinEscritor_lanza', () => {
+      const server = { name: 'db', source: 'common', onlyIn: null, extra: {}, secrets: {}, transport: 'stdio', command: 'db', args: [], env: {}, cwd: null } as const;
+
+      expect(() => adapter.buildSpawnPlan({ ...launch, shared: { mcpServers: [server], settingsFragment: null, claudeAiConnectors: true } })).toThrow(/mcp-config/);
     });
 
     it('buildSpawnPlan_sinSharedConfigArgs_noAnadeNiMcpConfigNiSettings', () => {

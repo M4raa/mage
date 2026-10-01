@@ -26,6 +26,7 @@ const VALID: AppSettings = {
   uiScale: 110,
   defaultProvider: 'claude',
   accentByAccount: { 'C:/Users/u/.claude-p': 3 },
+  claudeAiConnectorsOff: ['C:/Users/u/.claude-p'],
 };
 
 function deps(overrides: Partial<SettingsStoreDeps> = {}): SettingsStoreDeps {

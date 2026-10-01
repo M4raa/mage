@@ -133,6 +133,8 @@ const APP_SETTINGS_SCHEMA = z.object({
   // Color por cuenta (PERS-3). Ausente o invalido -> {}: las cuentas vuelven al color de su posicion,
   // que es lo de antes de existir el campo.
   accentByAccount: z.record(z.string(), z.number().int().min(0).max(ACCOUNT_ACCENT_COUNT - 1)).catch({}),
+  // Conectores de claude.ai apagados por cuenta. Ausente o basura -> [] (encendidos, como antes de existir).
+  claudeAiConnectorsOff: z.array(z.string().min(1)).catch([]),
 });
 
 export class SettingsStore {

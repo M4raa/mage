@@ -76,6 +76,43 @@ describe('applyMcpCommonMutation', () => {
   });
 });
 
+describe('applyMcpCommonMutation · «Solo en…»', () => {
+  it('setOnlyIn_lista_seGuardaEnMageOnlyIn', () => {
+    const result = parse(applyMcpCommonMutation(text({ mcpServers: { a: LOCAL } }), { op: 'setOnlyIn', name: 'a', onlyIn: ['claude', 'codex|/h'] }));
+
+    expect(result.mageOnlyIn).toEqual({ a: ['claude', 'codex|/h'] });
+    expect(result.mcpServers).toEqual({ a: LOCAL });
+  });
+
+  it('setOnlyIn_null_quitaLaEntradaYLaClaveSiQuedaVacia', () => {
+    const result = parse(applyMcpCommonMutation(text({ mcpServers: { a: LOCAL }, mageOnlyIn: { a: ['agy'] } }), { op: 'setOnlyIn', name: 'a', onlyIn: null }));
+
+    expect(result.mageOnlyIn).toBeUndefined();
+  });
+
+  it('setOnlyIn_listaVacia_lanza', () => {
+    expect(() => applyMcpCommonMutation(text({ mcpServers: { a: LOCAL } }), { op: 'setOnlyIn', name: 'a', onlyIn: [] })).toThrow(/vacío/);
+  });
+
+  it('setOnlyIn_noEsComun_lanza', () => {
+    expect(() => applyMcpCommonMutation(text({ mcpServers: {} }), { op: 'setOnlyIn', name: 'a', onlyIn: ['claude'] })).toThrow(/ya no está/);
+  });
+
+  it('renombrar_seLlevaSuSoloEn', () => {
+    const draft = { ...toServerDraft('a', LOCAL), name: 'b' };
+
+    const result = parse(applyMcpCommonMutation(text({ mcpServers: { a: LOCAL }, mageOnlyIn: { a: ['codex'] } }), { op: 'upsert', originalName: 'a', draft }));
+
+    expect(result.mageOnlyIn).toEqual({ b: ['codex'] });
+  });
+
+  it('quitar_borraSuSoloEn', () => {
+    const result = parse(applyMcpCommonMutation(text({ mcpServers: { a: LOCAL }, mageOnlyIn: { a: ['codex'] } }), { op: 'remove', name: 'a' }));
+
+    expect(result.mageOnlyIn).toBeUndefined();
+  });
+});
+
 describe('revealMcpCommonSecrets', () => {
   it('revealMcpCommonSecrets_comun_devuelveEnvYHeaders', () => {
     expect(revealMcpCommonSecrets(text({ mcpServers: { r: REMOTE } }), 'r')).toEqual({ env: {}, headers: REMOTE.headers });

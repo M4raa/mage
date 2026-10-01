@@ -103,6 +103,8 @@ export class AgyAdapter implements ProviderAdapter {
     // Env del hijo: `agy` usa su propio login OAuth (no el CLAUDE_CONFIG_DIR de la cuenta de Mage, que
     // aqui no aplica). Se BORRAN las api keys de pago que pudiera haber en el entorno del usuario:
     // invariante nº 1 (suscripcion, nunca API facturada) y ninguna key entra en el proceso hijo.
+    // `params.shared` no se traduce aqui: agy no tiene flag de sesion para MCP (medido en 1.2.14). Lo que
+    // Mage comparte con agy se EXPORTA a su mcp_config.json («Sincronizar con agy», mcpAgySync.ts).
     const env: NodeJS.ProcessEnv = scrubAgentEnv(process.env);
     return { command: this.resolveBinary(), args, env };
   }
