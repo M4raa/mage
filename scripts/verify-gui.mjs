@@ -81,6 +81,7 @@ const AGY_PERMISSION_CHIP = 'Sin permisos';
 // Grupo E, fase 2: comando y carpeta de prueba (nunca se lanza agy con ellos).
 const AGY_VG_COMMAND = 'vg-comando --exacto > vg.txt';
 const AGY_VG_DENIED = 'vg-denegado > vg.txt';
+const AGY_VG_DENIED_MCP = 'mcp(vg-agy-suyo/vg_tool)';
 const AGY_VG_LINK = '.vg-carpeta';
 // Vallas de codigo para medir el resaltado (F4): `ts` esta en HIGHLIGHT_LANGS (debe tokenizar) y `rust`
 // no lo esta (debe caer a texto plano, que NO es lo mismo que quedarse en blanco).
@@ -2241,13 +2242,15 @@ const CHECKS = [
         const dialogo = page.locator('[data-agy-commands-dialog="true"]');
         await dialogo.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
         const campo = dialogo.getByRole('textbox', { name: 'Comando exacto' });
+        // Fase 3: el dialogo trae otra lista (MCP) con sus propios Permitir/Denegar.
+        const comandos = dialogo.locator('[data-agy-command-rules="true"]');
         await campo.fill('regex:.*');
-        await dialogo.getByRole('button', { name: 'Permitir', exact: true }).click();
-        medido.errorRegex = await dialogo.getByRole('alert').count();
+        await comandos.getByRole('button', { name: 'Permitir', exact: true }).click();
+        medido.errorRegex = await comandos.getByRole('alert').count();
         await campo.fill(AGY_VG_COMMAND);
-        await dialogo.getByRole('button', { name: 'Permitir', exact: true }).click();
+        await comandos.getByRole('button', { name: 'Permitir', exact: true }).click();
         medido.permitido = (await waitForFile(ajustes, (t) => reglas(t).allow.includes(AGY_VG_COMMAND))) !== null;
-        await dialogo.getByRole('button', { name: 'Permitido', exact: true }).click();
+        await comandos.getByRole('button', { name: 'Permitido', exact: true }).click();
         medido.denegado = (await waitForFile(ajustes, (t) => reglas(t).deny.includes(AGY_VG_COMMAND) && !reglas(t).allow.includes(AGY_VG_COMMAND))) !== null;
         await dialogo.getByRole('button', { name: `Quitar ${AGY_VG_COMMAND}`, exact: true }).click();
         medido.quitado = (await waitForFile(ajustes, (t) => !reglas(t).deny.includes(AGY_VG_COMMAND))) !== null;
@@ -2264,6 +2267,68 @@ const CHECKS = [
       }
       const ok = medido.errorRegex === 1 && medido.permitido && medido.denegado && medido.quitado && medido.desdeElAviso;
       return { ok, detail: JSON.stringify(medido) };
+    },
+  },
+  {
+    // Grupo E, fase 3: el mismo dialogo concede herramientas MCP (`mcp(<servidor>/<tool>)`, medido con
+    // `agy-spike --mcp-rules`), eligiendo el servidor entre los que carga agy (su mcp_config.json, aqui el
+    // falso sembrado), con `*` para todas; y el aviso de una tool MCP denegada ofrece permitirla.
+    name: 'E fase 3: herramientas MCP de agy en el dialogo de comandos y «permitir» desde el aviso',
+    async run(page, { userDataDir }) {
+      const previo = await page.evaluate(() => (({ tabs, activeTabId, splitLayout, blocksByChat }) => ({ tabs, activeTabId, splitLayout, blocksByChat }))(window.__mageDev.store.getState()));
+      const ajustes = path.join(userDataDir, 'app-settings.json');
+      const reglas = (t) => JSON.parse(t).agyCommandRules ?? { allow: [], deny: [] };
+      const todas = `mcp(${SEEDED_AGY_SERVER}/*)`;
+      const medido = {};
+      try {
+        await openTemporaryConversation(page);
+        await page.evaluate(() => {
+          const s = window.__mageDev.store.getState();
+          window.__mageDev.store.setState({ tabs: s.tabs.map((t) => (t.id === s.activeTabId ? { ...t, provider: 'agy' } : t)) });
+        });
+        await page.locator('[data-agy-commands-open="true"]').click();
+        const mcp = page.locator('[data-agy-commands-dialog="true"] [data-agy-mcp-rules="true"]');
+        await mcp.getByRole('button', { name: 'Servidor MCP' }).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        await mcp.getByRole('button', { name: 'Servidor MCP' }).click();
+        const lista = page.getByRole('listbox', { name: 'Servidor MCP' });
+        await lista.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        medido.servidores = await lista.getByRole('option').evaluateAll((nodes) => nodes.map((n) => n.textContent?.trim() ?? ''));
+        await lista.getByRole('option', { name: SEEDED_AGY_SERVER, exact: true }).click();
+        const campo = mcp.getByRole('textbox', { name: 'Herramienta MCP exacta' });
+        await campo.fill('con espacio');
+        await mcp.getByRole('button', { name: 'Permitir', exact: true }).click();
+        medido.errorInvalida = await mcp.getByRole('alert').count();
+        await campo.fill('*');
+        await mcp.getByRole('button', { name: 'Permitir', exact: true }).click();
+        medido.permitida = (await waitForFile(ajustes, (t) => reglas(t).allow.includes(todas))) !== null;
+        medido.fila = (await mcp.locator('[data-agy-command-list="true"] li').first().innerText()).replace(/\s+/g, ' ').trim();
+        await mcp.getByRole('button', { name: 'Permitido', exact: true }).click();
+        medido.denegada = (await waitForFile(ajustes, (t) => reglas(t).deny.includes(todas) && !reglas(t).allow.includes(todas))) !== null;
+        await mcp.getByRole('button', { name: `Quitar ${SEEDED_AGY_SERVER} · todas`, exact: true }).click();
+        medido.quitada = (await waitForFile(ajustes, (t) => !reglas(t).deny.includes(todas))) !== null;
+        await page.locator('[data-agy-commands-dialog="true"]').getByRole('button', { name: 'Listo', exact: true }).click();
+        await page.locator('[data-agy-commands-dialog="true"]').waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+        await hydrateBlocks(page, [{ kind: 'error', id: 'vg-mcp-denied', message: `agy denegó la herramienta MCP «${SEEDED_AGY_SERVER}/vg_tool»`, deniedCommand: AGY_VG_DENIED_MCP }]);
+        const boton = page.locator('[data-agy-allow-command="true"]');
+        medido.textoAviso = (await boton.innerText()).trim();
+        await boton.click();
+        await page.locator('[data-agy-command-allowed="true"]').waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        medido.desdeElAviso = (await waitForFile(ajustes, (t) => reglas(t).allow.includes(AGY_VG_DENIED_MCP))) !== null;
+      } finally {
+        await page.evaluate((reglasVg) => reglasVg.forEach((r) => window.__mageDev.store.getState().setAgyCommandVerdict(r, null)), [AGY_VG_DENIED_MCP, todas]);
+        await page.evaluate((p) => window.__mageDev.store.setState(p), previo);
+        await page.waitForTimeout(CONFIG.settleMs);
+      }
+      const ok =
+        (medido.servidores ?? []).includes(SEEDED_AGY_SERVER) &&
+        medido.errorInvalida === 1 &&
+        medido.permitida &&
+        medido.fila?.startsWith(`${SEEDED_AGY_SERVER} · todas`) &&
+        medido.denegada &&
+        medido.quitada &&
+        /esta herramienta/.test(medido.textoAviso ?? '') &&
+        medido.desdeElAviso;
+      return { ok: ok === true, detail: JSON.stringify(medido) };
     },
   },
   {

@@ -16,7 +16,8 @@ import { EMPTY_AGY_COMMAND_RULES, type AgyCommandRules } from '@shared/agyRules'
 //     actua como prefijo de ruta. OJO: la regla tiene que llevar la ruta LARGA: con la forma 8.3 de
 //     Windows (`DMARAT~1`) no casa. Quien llama pasa rutas ya resueltas con `realpathSync.native`;
 //   - para llamar a una tool MCP agy lee antes su esquema en `<perfil>/.gemini/antigravity-cli/mcp/` con
-//     view_file: sin `read_file(<esa carpeta>)` se deniega (y la llamada en si pide `mcp(<srv>/<tool>)`);
+//     view_file: sin `read_file(<esa carpeta>)` se deniega (y la llamada en si pide `mcp(<srv>/<tool>)`,
+//     que llega en `extra` desde el dialogo de comandos; `mcp(<srv>/*)` vale para todas, `--mcp-rules`);
 //   - las reglas se leen SOLO al lanzar: que dos pestañas compartan el fichero no les cambia nada a mitad.
 // Lo que se enlaza en el perfil (`.gemini/config`, `.ssh`…) lo hace agyProfileLinks.ts.
 
@@ -25,7 +26,8 @@ const SETTINGS_FILE = 'settings.json';
 const MCP_SCHEMAS_DIR = 'mcp';
 const GEMINI_PROVIDER = 'gemini';
 
-// Reglas que se suman a las imprescindibles, ya en el formato de agy (`command(<linea exacta>)`).
+// Reglas que se suman a las imprescindibles, ya en el formato de agy (`command(<linea exacta>)` y
+// `mcp(<servidor>/<tool>)`).
 export type AgyProfileRules = AgyCommandRules;
 
 export const NO_EXTRA_RULES: AgyProfileRules = EMPTY_AGY_COMMAND_RULES;

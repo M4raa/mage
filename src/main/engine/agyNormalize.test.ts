@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { normalizeAgyEvent } from './agyNormalize';
+import { AgyTurnTracker, normalizeAgyEvent, silentMcpCall } from './agyNormalize';
 
 // Las lineas de estos tests son COPIA de lo que emitio `agy` 1.1.11 el 2026-08-11 (4 turnos reales en
 // un workspace temporal), no una forma inventada: es lo que hace que el traductor valga algo.
@@ -266,5 +266,64 @@ describe('normalizeAgyEvent: comandos denegados', () => {
     const events = normalizeAgyEvent({ event: 'result', result: { status: 'SUCCESS', denied_actions: [{ action: 'command' }] } }, true);
 
     expect(events.map((event) => event.kind)).toEqual(['result']);
+  });
+});
+
+// Tools MCP denegadas: pasos COPIADOS de lo que emitio agy 1.2.14 el 2026-10-01 (`agy-spike --mcp-rules`).
+describe('normalizeAgyEvent: herramientas MCP denegadas', () => {
+  const parameters = { Arguments: {}, ServerName: 'magespike', ToolName: 'mage_echo' };
+  const mcpStep = (state: string, extra: Record<string, unknown> = {}): unknown => ({
+    event: 'step_update',
+    step_update: { step_index: 6, state, step_type: 'tool', tool_name: 'call_mcp_tool', tool_info: { name: 'call_mcp_tool', parameters, ...extra } },
+  });
+  const deniedResult = { event: 'result', result: { status: 'SUCCESS', denied_actions: [{ action: 'mcp', display_name: 'CallMcpTool' }] } };
+  const denyRule = 'permission check failed for mcp "magespike/mage_echo": Permission denied for mcp(magespike/mage_echo). Matches user-configured deny rule.';
+
+  it('normalizeAgyEvent_mcpConReglaDeny_ofrecePermitirLaReglaMcp', () => {
+    const events = normalizeAgyEvent(mcpStep('ERROR', { error: { type: 'TOOL_ERROR', message: denyRule } }));
+
+    expect(events[0]).toMatchObject({ kind: 'tool_result', result: { isError: true } });
+    expect(events[1]).toMatchObject({ kind: 'error', message: expect.stringContaining('«magespike/mage_echo»: lo prohíbe una regla deny') as unknown as string });
+    expect(events[1]).toMatchObject({ deniedCommand: 'mcp(magespike/mage_echo)' });
+  });
+
+  it('silentMcpCall_doneSinSalidaNiError_devuelveServidorYTool', () => {
+    expect(silentMcpCall(mcpStep('DONE'))).toBe('magespike/mage_echo');
+  });
+
+  it.each([
+    ['activo', mcpStep('ACTIVE')],
+    ['con salida', mcpStep('DONE', { output: 'TANGERINE' })],
+    ['con error', mcpStep('ERROR', { error: { message: denyRule } })],
+    ['otra tool', { event: 'step_update', step_update: { step_index: 1, state: 'DONE', step_type: 'tool', tool_name: 'view_file', tool_info: {} } }],
+    ['no es step', { event: 'result', result: { status: 'SUCCESS' } }],
+  ])('silentMcpCall_%s_null', (_label, raw) => {
+    expect(silentMcpCall(raw)).toBeNull();
+  });
+
+  it('normalizeAgyEvent_resultMcpConToolSilenciosa_nombraLaToolYNoDaElAvisoGenerico', () => {
+    const events = normalizeAgyEvent(deniedResult, false, ['magespike/mage_echo']);
+
+    expect(events.map((event) => event.kind)).toEqual(['error', 'result']);
+    expect(events[0]).toMatchObject({ message: expect.stringContaining('«magespike/mage_echo»') as unknown as string, deniedCommand: 'mcp(magespike/mage_echo)' });
+  });
+
+  it('normalizeAgyEvent_resultMcpSinToolConocida_caeAlAvisoGenerico', () => {
+    const events = normalizeAgyEvent(deniedResult);
+
+    expect(events[0]).toMatchObject({ kind: 'error', message: expect.stringContaining('CallMcpTool') as unknown as string });
+    expect(events[0]).not.toHaveProperty('deniedCommand');
+  });
+
+  it('AgyTurnTracker_turnoConMcpSilenciosa_avisaUnaVezYOlvidaAlAcabar', () => {
+    const tracker = new AgyTurnTracker();
+    tracker.normalize(mcpStep('ACTIVE'));
+    tracker.normalize(mcpStep('DONE'));
+
+    const first = tracker.normalize(deniedResult);
+    const second = tracker.normalize(deniedResult);
+
+    expect(first.filter((event) => event.kind === 'error')).toEqual([expect.objectContaining({ deniedCommand: 'mcp(magespike/mage_echo)' })]);
+    expect(second.filter((event) => event.kind === 'error')).toEqual([expect.not.objectContaining({ deniedCommand: expect.anything() as unknown })]);
   });
 });

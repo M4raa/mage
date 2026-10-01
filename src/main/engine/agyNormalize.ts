@@ -58,6 +58,9 @@ const AgyStepUpdateSchema = z.object({
           // Por que fallo la herramienta. MEDIDO en 1.2.14: en una denegacion trae el COMANDO exacto
           // (`permission check failed for command "…"` o `Permission denied for command(…)`).
           error: z.object({ message: z.string().optional() }).passthrough().optional(),
+          // Salida de la tool (medido en 1.2.14 en `call_mcp_tool`). Una tool MCP denegada SIN regla sale
+          // DONE sin `output` ni `error`: es la unica pista de cual fue (ver `silentMcpCall`).
+          output: z.unknown().optional(),
         })
         .passthrough()
         .optional(),
@@ -101,8 +104,9 @@ const TOOL_ID_PREFIX = 'agy-step-';
 // Contrato (igual que normalizeRawEvent de Claude): [] para lo que no nos interesa; LANZA Error si un
 // evento que SI reconocemos llega con forma invalida (AgentSession lo convierte en evento 'error').
 // `deniedReported`: el turno ya dijo QUE comando se denego (paso a paso), asi que el resumen generico
-// del `result` sobra.
-export function normalizeAgyEvent(raw: unknown, deniedReported = false): MageEvent[] {
+// del `result` sobra. `silentMcpCalls`: las tools MCP del turno que acabaron sin salida ni error
+// (`<servidor>/<tool>`), para nombrar la denegacion `mcp` del `result`.
+export function normalizeAgyEvent(raw: unknown, deniedReported = false, silentMcpCalls: readonly string[] = []): MageEvent[] {
   if (!isRecord(raw) || typeof raw.event !== 'string') return [];
   switch (raw.event) {
     case 'init':
@@ -110,7 +114,7 @@ export function normalizeAgyEvent(raw: unknown, deniedReported = false): MageEve
     case 'step_update':
       return normalizeStepUpdate(raw);
     case 'result':
-      return normalizeResult(raw, deniedReported);
+      return normalizeResult(raw, deniedReported, silentMcpCalls);
     default:
       return [];
   }
@@ -123,15 +127,19 @@ export function normalizeAgyEvent(raw: unknown, deniedReported = false): MageEve
 export class AgyTurnTracker {
   private previous: TurnUsage | null = null;
   private deniedReported = false;
+  private silentMcpCalls: string[] = [];
 
   // Proceso nuevo (arranque o relanzado tras un corte): su contador empieza en cero (medido).
   resetProcess(): void {
     this.previous = null;
     this.deniedReported = false;
+    this.silentMcpCalls = [];
   }
 
   normalize(raw: unknown): MageEvent[] {
-    const events = normalizeAgyEvent(raw, this.deniedReported);
+    const silent = silentMcpCall(raw);
+    if (silent !== null) this.silentMcpCalls.push(silent);
+    const events = normalizeAgyEvent(raw, this.deniedReported, this.silentMcpCalls);
     return events.map((event) => this.track(event));
   }
 
@@ -139,6 +147,7 @@ export class AgyTurnTracker {
     if (event.kind === 'error' && event.message.startsWith(DENIED_PREFIX)) this.deniedReported = true;
     if (event.kind !== 'result') return event;
     this.deniedReported = false;
+    this.silentMcpCalls = [];
     const cumulative = event.result.usage;
     if (cumulative === undefined) return event;
     const delta = subtractUsage(cumulative, this.previous);
@@ -211,18 +220,53 @@ const DENIED_PREFIX = 'agy denegó';
 // Las dos formas medidas en 1.2.14: `permission check failed for command "<cmd>": …` (sin regla) y
 // `Permission denied for command(<cmd>). Matches user-configured deny rule.` (regla deny).
 const DENIED_COMMAND_PATTERNS: readonly RegExp[] = [/for command "((?:[^"\\]|\\.)*)"/, /for command\((.*)\)\./];
+// Tool MCP con regla deny (medido en 1.2.14, `--mcp-rules`): `permission check failed for mcp
+// "<srv>/<tool>": Permission denied for mcp(<srv>/<tool>). Matches user-configured deny rule.`
+const DENIED_MCP_PATTERN = /for mcp "([^"\s/()]+\/[^"\s/()]+)"/;
 const DENY_RULE_HINT = 'deny rule';
+const MCP_TOOL_NAME = 'call_mcp_tool';
+const DENIED_ACTION_MCP = 'mcp';
+
+interface Denial {
+  readonly message: string;
+  // La regla que lo permitiria tal como la guarda Mage: el comando exacto o `mcp(<srv>/<tool>)`.
+  readonly command?: string;
+}
 
 // Aviso para el usuario a partir del error del paso, con el comando EXACTO (que la UI ofrece permitir en
 // la conversacion siguiente: agy lee sus reglas al lanzar, medido). null = no es una denegacion.
-function deniedCommandMessage(errorMessage: string | undefined): { readonly message: string; readonly command?: string } | null {
+function deniedCommandMessage(errorMessage: string | undefined): Denial | null {
   if (errorMessage === undefined || !/permission/i.test(errorMessage)) return null;
+  const byRule = errorMessage.includes(DENY_RULE_HINT);
+  const mcpTool = DENIED_MCP_PATTERN.exec(errorMessage)?.[1];
+  if (mcpTool !== undefined) return deniedMcpTool(mcpTool, byRule);
   const command = DENIED_COMMAND_PATTERNS.map((pattern) => pattern.exec(errorMessage)?.[1]).find((match) => match !== undefined);
   const what = command === undefined ? 'una acción' : `el comando «${command}»`;
-  const message = errorMessage.includes(DENY_RULE_HINT)
+  const message = byRule
     ? `${DENIED_PREFIX} ${what}: lo prohíbe una regla deny.`
     : `${DENIED_PREFIX} ${what}: sin pantalla no tiene a quién pedir permiso y lo deniega.`;
   return command === undefined ? { message } : { message, command };
+}
+
+function deniedMcpTool(tool: string, byRule: boolean): Denial {
+  const why = byRule ? 'lo prohíbe una regla deny.' : 'no está entre las permitidas.';
+  return { message: `${DENIED_PREFIX} la herramienta MCP «${tool}»: ${why}`, command: `mcp(${tool})` };
+}
+
+// `<servidor>/<tool>` de un paso `call_mcp_tool` terminado SIN salida ni error, o null. Medido en 1.2.14:
+// asi acaba una tool MCP denegada por no tener regla, y solo el `result` (`denied_actions: mcp`) lo
+// confirma. ponytail: una tool permitida que devolviera la salida vacia se tomaria por candidata si en
+// el mismo turno se denego otra; se afina cuando agy diga cual en `denied_actions`.
+export function silentMcpCall(raw: unknown): string | null {
+  const parsed = AgyStepUpdateSchema.safeParse(raw);
+  if (!parsed.success) return null;
+  const step = parsed.data.step_update;
+  const info = step.tool_info;
+  if (step.tool_name !== MCP_TOOL_NAME || step.state === STATE_ACTIVE || info === undefined) return null;
+  if (info.output !== undefined || info.error !== undefined) return null;
+  const server = info.parameters?.ServerName;
+  const tool = info.parameters?.ToolName;
+  return typeof server === 'string' && typeof tool === 'string' ? `${server}/${tool}` : null;
 }
 
 // ACTIVE -> tool_use (con sus parametros); DONE/ERROR -> tool_result. `output` vacio: `agy` no publica
@@ -241,7 +285,7 @@ function toolEvents(step: z.infer<typeof AgyStepUpdateSchema>['step_update'], de
 
 // `result` -> result (con el uso del proceso, que el tracker convierte en el del turno) y, si `agy`
 // reporta un fallo o denego acciones sin decir cuales, un aviso visible antes.
-function normalizeResult(raw: Record<string, unknown>, deniedReported: boolean): MageEvent[] {
+function normalizeResult(raw: Record<string, unknown>, deniedReported: boolean, silentMcpCalls: readonly string[]): MageEvent[] {
   const result = AgyResultSchema.parse(raw).result;
   const isError = result.status !== RESULT_SUCCESS;
   const events: MageEvent[] = [];
@@ -249,7 +293,14 @@ function normalizeResult(raw: Record<string, unknown>, deniedReported: boolean):
     const detail = result.error ?? `estado ${result.status}`;
     events.push({ kind: 'error', message: `agy termino el turno con error: ${detail}` });
   }
-  const denied = result.denied_actions ?? [];
+  const allDenied = result.denied_actions ?? [];
+  // La denegacion `mcp` no dice que tool: se nombran las que acabaron sin salida en este turno.
+  const mcpTools = allDenied.some((action) => action.action === DENIED_ACTION_MCP) ? [...new Set(silentMcpCalls)] : [];
+  for (const tool of mcpTools) {
+    const denial = deniedMcpTool(tool, false);
+    events.push({ kind: 'error', message: denial.message, ...(denial.command === undefined ? {} : { deniedCommand: denial.command }) });
+  }
+  const denied = mcpTools.length > 0 ? allDenied.filter((action) => action.action !== DENIED_ACTION_MCP) : allDenied;
   if (denied.length > 0 && !deniedReported) {
     const names = [...new Set(denied.map((action) => action.display_name ?? action.action ?? '?'))].join(', ');
     events.push({ kind: 'error', message: `${DENIED_PREFIX} ${denied.length} acción(es) (${names}): sin pantalla no tiene a quién pedir permiso.` });

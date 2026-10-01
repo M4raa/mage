@@ -4,7 +4,7 @@ import { AnimatePresence } from 'motion/react';
 import { CopyButton } from './CopyButton';
 import { Icon } from './Icon';
 import { AgyCommandsDialog } from './AgyCommandsDialog';
-import { validateAgyCommand } from '@shared/agyRules';
+import { isValidAgyRule, parseAgyMcpRule } from '@shared/agyRules';
 import { NO_PERMISSION_CONTROL_WARNING, isAutoApprovedProvider } from '@shared/providers';
 import { useWorkbenchStore } from '../workbenchStore';
 import { SPARKLE_WAIST_RATIO } from '../brandMark';
@@ -554,11 +554,13 @@ function ErrorBlock({ block }: { readonly block: Extract<Block, { kind: 'error' 
   );
 }
 
-// Comando que agy denego: permitirlo vale para la conversacion siguiente (agy lee sus reglas al lanzar).
+// Comando (o herramienta MCP, fase 3: `mcp(<srv>/<tool>)`) que agy denego: permitirlo vale para la
+// conversacion siguiente (agy lee sus reglas al lanzar).
 function AllowDeniedCommand({ command }: { readonly command: string }): React.JSX.Element | null {
   const allowed = useWorkbenchStore((s) => s.settings.agyCommandRules.allow.includes(command));
   const setVerdict = useWorkbenchStore((s) => s.setAgyCommandVerdict);
-  if (!validateAgyCommand(command).ok) return null;
+  if (!isValidAgyRule(command)) return null;
+  const what = parseAgyMcpRule(command) === null ? 'este comando' : 'esta herramienta';
   if (allowed) {
     return (
       <div data-agy-command-allowed="true" className="mt-[6px] text-[11px] text-mg-sec">
@@ -572,7 +574,7 @@ function AllowDeniedCommand({ command }: { readonly command: string }): React.JS
       data-agy-allow-command="true"
       className="mt-[6px] block rounded-[6px] border border-mg-danger-border px-[8px] py-[2px] text-[11px] font-semibold hover:bg-mg-hover"
     >
-      Permitir este comando para la próxima conversación
+      Permitir {what} para la próxima conversación
     </button>
   );
 }

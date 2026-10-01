@@ -31,6 +31,7 @@
 //                                            # bloques admite `content` (gratis) y ~3 turnos cortos
 //   node spike/agy-spike.mjs --profile      # perfil propio para la suscripcion, MCP por junction de
 //                                            # .gemini/config y relectura de settings (~3 turnos)
+//   node spike/agy-spike.mjs --mcp-rules    # reglas mcp(<srv>/<tool>): denegada, comodin y deny (~3 turnos)
 
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -766,6 +767,55 @@ async function probeProfile() {
   console.log(`\n  config real de agy intacta: ${before === realConfigFingerprint() ? 'SI' : 'NO — revisa'}`);
 }
 
+// ================================================================================================
+// Modo --mcp-rules (grupo E, fase 3; 2026-10-01, agy 1.2.14): reglas `mcp(<servidor>/<tool>)` en el perfil
+// de Mage. Mismo servidor MCP falso que --profile, por junction de `.gemini/config` a un temporal (la
+// config real no se toca: se compara su huella antes y despues). Mide, un turno por caso (las reglas se
+// leen al lanzar):
+//   (1) sin regla mcp: que error trae el paso y que `denied_actions` (para el aviso de Mage);
+//   (2) `mcp(<srv>/*)`: ¿vale el comodin de servidor?;
+//   (3) `deny mcp(<srv>/<tool>)` frente a `allow mcp(<srv>/*)`: mensaje de un deny explicito.
+// CONSUME SUSCRIPCION: 3 turnos cortos.
+// ================================================================================================
+const MCP_RULE_CASES = [
+  { label: 'sin regla mcp', allow: [], deny: [] },
+  { label: 'allow mcp(magespike/*)', allow: ['mcp(magespike/*)'], deny: [] },
+  { label: 'deny exacta + allow *', allow: ['mcp(magespike/*)'], deny: ['mcp(magespike/mage_echo)'] },
+];
+
+async function probeMcpRules() {
+  const before = realConfigFingerprint();
+  await withWorkspace('mage-agy-mcpr-', async (workspace) => {
+    await withWorkspace('mage-agy-mcpr-profile-', async (profile) => {
+      await withWorkspace('mage-agy-mcpr-cfg-', async (fakeConfig) => {
+        const server = path.join(fakeConfig, 'server.cjs');
+        fs.writeFileSync(server, MCP_SERVER_SOURCE);
+        fs.writeFileSync(path.join(fakeConfig, 'mcp_config.json'), JSON.stringify({ mcpServers: { magespike: { command: process.execPath, args: [server] } } }));
+        linkDir(fakeConfig, path.join(profile, '.gemini', 'config'));
+        const mcpDir = path.join(fs.realpathSync.native(profile), '.gemini', 'antigravity-cli', 'mcp');
+        const baseAllow = [`write_file(${workspace})`, `read_file(${mcpDir})`];
+        for (const testCase of MCP_RULE_CASES) {
+          const env = isolatedProfileEnv(profile, { allow: [...baseAllow, ...testCase.allow], deny: testCase.deny });
+          console.log(`
+=== [mcp-rules] ${testCase.label} ===`);
+          const loaded = runWithEnv(['--output-format', 'json', '--print', '/permissions'], env);
+          console.log(`  /permissions (gratis): ${loaded.stdout.replace(/\s+/g, ' ').trim().slice(0, 400)}`);
+          const call = await singleTurnWithEnv(workspace, 'Call the mage_echo tool of the magespike MCP server and reply with ONLY the word it returns.', env);
+          const response = call.events.find((event) => event.event === 'result')?.result?.response ?? '';
+          console.log(`  respuesta: ${JSON.stringify(response.trim().slice(0, 120))} -> tool MCP ejecutada: ${/TANGERINE/i.test(response) ? 'SI' : 'NO'}`);
+          for (const event of call.events) {
+            const update = event.step_update;
+            if (update?.tool_name) console.log(`    paso tool=${update.tool_name} state=${update.state} tool_info=${JSON.stringify(update.tool_info ?? null).slice(0, 400)}`);
+          }
+          reportCases(workspace, { events: call.events, stderr: call.stderr }, []);
+        }
+      });
+    });
+  });
+  console.log(`
+  config real de agy intacta: ${before === realConfigFingerprint() ? 'SI' : 'NO — revisa'}`);
+}
+
 async function singleTurnWithEnv(workspace, text, env) {
   const session = startPersistent(workspace, ['--mode', 'accept-edits'], env);
   session.send(text);
@@ -789,7 +839,8 @@ async function main() {
   if (process.argv.includes('--permissions')) await probePermissionRules();
   if (process.argv.includes('--images')) await probeImages();
   if (process.argv.includes('--profile')) await probeProfile();
-  if (!['--live', '--persistent', '--permissions', '--images', '--profile'].some((flag) => process.argv.includes(flag))) {
+  if (process.argv.includes('--mcp-rules')) await probeMcpRules();
+  if (!['--live', '--persistent', '--permissions', '--images', '--profile', '--mcp-rules'].some((flag) => process.argv.includes(flag))) {
     console.log('\n(--live: 2 turnos reales por proceso; --persistent: sesion persistente, ~12 turnos; --permissions: reglas de comandos, ~14 turnos; --images: imagenes, ~3 turnos. Consumen suscripción)');
   }
 }

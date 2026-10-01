@@ -1,5 +1,6 @@
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { toAgyPermissionRules } from '@shared/agyRules';
 import { agyAttachmentPath, agyProfileSettings, writeAgyProfileSettings } from './agyProfile';
 
 describe('agyProfileSettings', () => {
@@ -19,6 +20,15 @@ describe('agyProfileSettings', () => {
     const settings = agyProfileSettings({ ...base, mode: 'subscription', extra: { allow: ['command(git status)'], deny: ['command(rm -rf build)'] } });
 
     expect(settings.permissions).toEqual({ allow: [...essentials, 'command(git status)'], deny: ['command(rm -rf build)'] });
+  });
+
+  // Fase 3: las reglas MCP del dialogo llegan tal cual (`mcp(<srv>/<tool>)`), los comandos envueltos.
+  it('agyProfileSettings_conReglasMcp_lasEscribeTalCual', () => {
+    const extra = toAgyPermissionRules({ allow: ['git status', 'mcp(magespike/*)'], deny: ['mcp(magespike/mage_echo)'] });
+
+    const settings = agyProfileSettings({ ...base, mode: 'subscription', extra });
+
+    expect(settings.permissions).toEqual({ allow: [...essentials, 'command(git status)', 'mcp(magespike/*)'], deny: ['mcp(magespike/mage_echo)'] });
   });
 
   it.each(['', '  '])('agyProfileSettings_cwdVacio_lanza_%#', (cwd) => {

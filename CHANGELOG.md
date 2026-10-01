@@ -48,7 +48,9 @@ versión.
 - **Uso de agy** en el panel de Uso: las ventanas de 5 h y semanal de cada grupo de modelos.
 - **Comandos de agy**: al empezar una conversación de agy eliges qué comandos de terminal puede
   ejecutar, escritos exactamente como los lanzará (o los deniegas). Cuando agy deniega uno, el aviso
-  ofrece **permitirlo para la próxima conversación**.
+  ofrece **permitirlo para la próxima conversación**. Lo mismo con sus **herramientas MCP**: eliges el
+  servidor entre los que carga agy y la herramienta exacta, o todas las del servidor; si agy deniega una,
+  el aviso dice cuál y ofrece permitirla.
 - agy ve tus carpetas `~/.gemini/config` (sus MCP, skills y plugins) y `~/.ssh`, y en Configuración ›
   Proveedores y modelos puedes añadirle las de tus herramientas (`.aws`, `.kube`…).
 - Los modos de permiso salen del propio CLI: si Claude o Codex estrenan uno, Mage lo ofrece.

@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { agyLinkedPaths, setAgyCommandVerdict, toAgyPermissionRules, validateAgyCommand, validateAgyLinkPath } from './agyRules';
+import {
+  agyLinkedPaths,
+  agyMcpServerNames,
+  isValidAgyRule,
+  parseAgyMcpRule,
+  setAgyCommandVerdict,
+  toAgyPermissionRules,
+  validateAgyCommand,
+  validateAgyLinkPath,
+  validateAgyMcpTool,
+} from './agyRules';
 
 describe('validateAgyCommand', () => {
   it('validateAgyCommand_conEspacios_recortaYConservaLaLineaExacta', () => {
@@ -73,5 +83,61 @@ describe('agyLinkedPaths', () => {
 
   it('agyLinkedPaths_sensibleAMayusculas_conservaLasDistintas', () => {
     expect(agyLinkedPaths(['.SSH'], false)).toEqual(['.gemini/config', '.ssh', '.SSH']);
+  });
+});
+
+describe('reglas MCP (fase 3)', () => {
+  it('validateAgyMcpTool_servidorYHerramienta_devuelveLaReglaDeAgy', () => {
+    expect(validateAgyMcpTool(' github ', ' create_issue ')).toEqual({ ok: true, rule: 'mcp(github/create_issue)' });
+  });
+
+  it('validateAgyMcpTool_comodin_valeParaTodasLasDelServidor', () => {
+    expect(validateAgyMcpTool('github', '*')).toEqual({ ok: true, rule: 'mcp(github/*)' });
+  });
+
+  it.each([
+    ['', 'tool'],
+    ['srv', ''],
+    ['*', 'tool'],
+    ['a/b', 'tool'],
+    ['srv', 'con espacio'],
+    ['srv', 'x)'],
+  ])('validateAgyMcpTool_invalido_%s_%s_loRechazaConMotivo', (server, tool) => {
+    expect(validateAgyMcpTool(server, tool)).toMatchObject({ ok: false, message: expect.any(String) as unknown as string });
+  });
+
+  it('parseAgyMcpRule_reglaMcp_devuelveServidorYHerramienta', () => {
+    expect(parseAgyMcpRule('mcp(magespike/mage_echo)')).toEqual({ server: 'magespike', tool: 'mage_echo' });
+  });
+
+  it.each(['git status', 'mcp(sin-barra)', 'mcp(a/b) extra', ''])('parseAgyMcpRule_noEsMcp_%#_null', (rule) => {
+    expect(parseAgyMcpRule(rule)).toBeNull();
+  });
+
+  it('isValidAgyRule_comandoYMcp_validos_yRegexNo', () => {
+    expect([isValidAgyRule('git status'), isValidAgyRule('mcp(s/t)'), isValidAgyRule('regex:.*')]).toEqual([true, true, false]);
+  });
+
+  it('setAgyCommandVerdict_reglaMcp_laGuardaTalCual', () => {
+    expect(setAgyCommandVerdict({ allow: [], deny: ['mcp(s/t)'] }, 'mcp(s/t)', 'allow')).toEqual({ allow: ['mcp(s/t)'], deny: [] });
+  });
+
+  it('toAgyPermissionRules_mezcla_soloEnvuelveLosComandos', () => {
+    expect(toAgyPermissionRules({ allow: ['git status', 'mcp(s/*)'], deny: ['mcp(s/t)'] })).toEqual({ allow: ['command(git status)', 'mcp(s/*)'], deny: ['mcp(s/t)'] });
+  });
+
+  it('agyMcpServerNames_soloLosQueCargaAgy_ordenadosYSinRepetir', () => {
+    const rows = [
+      { name: 'zeta', providers: ['agy'] },
+      { name: 'solo-claude', providers: ['claude'] },
+      { name: 'alfa', providers: ['claude', 'agy'] },
+      { name: 'alfa', providers: ['agy'] },
+      { name: 'con espacio', providers: ['agy'] },
+    ];
+    expect(agyMcpServerNames(rows)).toEqual(['alfa', 'zeta']);
+  });
+
+  it('agyMcpServerNames_vacio_vacio', () => {
+    expect(agyMcpServerNames([])).toEqual([]);
   });
 });
