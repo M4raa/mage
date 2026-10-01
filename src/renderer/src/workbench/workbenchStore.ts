@@ -256,6 +256,8 @@ export interface WorkbenchState extends PrState, PrActions {
   updateState: UpdateState;
   // Version cuyo dialogo de «lista para instalar» esta abierto en esta ventana; null = cerrado.
   updatePromptVersion: string | null;
+  // Worktree que se conservo al cerrar su pestaña (la barra de estado lo avisa); null = nada que avisar.
+  keptWorktreeNotice: KeptWorktreeNotice | null;
 
   // --- Acciones de UI ---
   setActiveAccount: (accountId: string) => void;
@@ -360,6 +362,7 @@ export interface WorkbenchState extends PrState, PrActions {
   openUpdatePrompt: () => void;
   // «Más tarde»: cierra el dialogo; el indicador sigue y se instala al cerrar Mage.
   dismissUpdatePrompt: () => void;
+  dismissKeptWorktreeNotice: () => void;
   // «Reiniciar ahora»: main cierra Mage e instala.
   installUpdate: () => void;
   // Arranque: si Mage se ha actualizado desde la ultima vez, abre las novedades (ver releaseNotes.ts).
@@ -700,6 +703,11 @@ function scheduleSettingsPersist(mage: MageClient, getState: () => WorkbenchStat
       .saveSettings(getState().settings)
       .catch((err: unknown) => console.warn('No se pudo guardar la configuracion:', describeError(err)));
   }, PERSIST_DEBOUNCE_MS);
+}
+
+export interface KeptWorktreeNotice {
+  readonly path: string;
+  readonly reason: 'dirty' | 'unknown';
 }
 
 // De donde sale la carpeta de una conversacion nueva (ver `createConversation`).
@@ -1157,6 +1165,7 @@ export function createWorkbenchStore(mage: MageClient) {
     closePromptOpen: false,
     updateState: IDLE_UPDATE_STATE,
     updatePromptVersion: null,
+    keptWorktreeNotice: null,
 
     // Cambiar de cuenta refresca su uso (cacheado en main; barato) para reflejarlo al instante.
     setActiveAccount: (accountId) => {
@@ -1365,7 +1374,7 @@ export function createWorkbenchStore(mage: MageClient) {
       });
       // Archivar (grupo D): su worktree se borra si esta limpio; con cambios se queda y se reabre con la
       // conversacion. La rama se queda siempre. En segundo plano el CLI sigue trabajando ahi: no se toca.
-      if (tab !== undefined && !background && options?.moved !== true) archiveWorktree(mage, tab);
+      if (tab !== undefined && !background && options?.moved !== true) archiveWorktree(mage, set, tab);
       // Su PR deja de vigilarse aqui; si la pestaña se fue a otra ventana, alli se vuelve a pedir.
       if (tab?.prNumber !== undefined) void mage.ghUnwatch(tabId).catch((err: unknown) => console.warn('No se pudo dejar de vigilar el PR:', describeError(err)));
       schedulePersist(mage, get);
@@ -2094,6 +2103,7 @@ export function createWorkbenchStore(mage: MageClient) {
       if (state.kind === 'ready') set({ updatePromptVersion: state.version });
     },
     dismissUpdatePrompt: () => set({ updatePromptVersion: null }),
+    dismissKeptWorktreeNotice: () => set({ keptWorktreeNotice: null }),
     installUpdate: () => {
       set({ updatePromptVersion: null });
       void mage.installUpdate().catch((err: unknown) => console.warn('No se pudo instalar la actualización:', describeError(err)));
@@ -2173,6 +2183,11 @@ export function createWorkbenchStore(mage: MageClient) {
     setOnboardingCompleted: (completed) => {
       set((s) => ({ settings: { ...s.settings, onboardingCompletedVersion: completed ? ONBOARDING_VERSION : 0 } }));
       scheduleSettingsPersist(mage, get);
+      // Una actualizacion que llego con el asistente a medias se enseña ahora, no debajo de el.
+      if (!completed) return;
+      void get()
+        .showReleaseNotesIfUpdated(isReleaseNotesDevRun())
+        .catch((err: unknown) => console.warn('No se pudieron comprobar las novedades:', describeError(err)));
     },
 
     setScratchRetention: (retention) => {
@@ -3089,12 +3104,16 @@ function wantsNewWorktree(tab: Tab, snapshot: GitSnapshot | undefined): snapshot
   return tab.resumeSessionId === undefined && tab.worktreeOff !== true && snapshot?.kind === 'repo' && snapshot.branch !== null;
 }
 
-function archiveWorktree(mage: MageClient, tab: Tab): void {
+// Con cambios (o sin poder comprobarlo) el worktree se queda, y se avisa en la barra de estado: la
+// pestaña que lo explicaria ya no existe.
+function archiveWorktree(mage: MageClient, set: SetFn, tab: Tab): void {
   if (worktreeOfCwd(tab.cwd) === null) return;
   void mage
     .worktreeRemove({ cwd: tab.cwd, accountDir: tab.accountId })
     .then((result) => {
-      if (!result.removed) console.warn(`Worktree conservado (${result.reason === 'dirty' ? 'tiene cambios sin confirmar' : 'no se pudo comprobar'}): ${tab.cwd}`);
+      if (result.removed) return;
+      console.warn(`Worktree conservado (${result.reason === 'dirty' ? 'tiene cambios sin confirmar' : 'no se pudo comprobar'}): ${tab.cwd}`);
+      set(() => ({ keptWorktreeNotice: { path: tab.cwd, reason: result.reason } }));
     })
     .catch((err: unknown) => console.warn('No se pudo archivar el worktree:', describeError(err)));
 }

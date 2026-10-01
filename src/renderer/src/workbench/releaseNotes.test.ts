@@ -94,6 +94,10 @@ describe('releaseNotesDecision', () => {
     expect(releaseNotesDecision({ ...UPGRADE, lastSeen: '' })).toEqual({ open: true, remember: '0.1.2' });
   });
 
+  it('releaseNotesDecision_subidaConAsistentePendiente_esperaSinGuardar', () => {
+    expect(releaseNotesDecision({ ...UPGRADE, onboardingDone: false })).toEqual({ open: false, remember: null });
+  });
+
   it('releaseNotesDecision_mismaVersion_noHaceNada', () => {
     expect(releaseNotesDecision({ ...UPGRADE, lastSeen: '0.1.2' })).toEqual({ open: false, remember: null });
   });

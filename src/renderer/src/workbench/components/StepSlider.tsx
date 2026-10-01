@@ -112,7 +112,9 @@ export function StepSlider({
         {leading === undefined ? (
           label
         ) : (
-          <span className="inline-flex items-center gap-[5px]">
+          // `flex` y no `inline-flex`: en la linea del boton se alineaba por la base del icono (su borde
+          // inferior) y el chip media 24,1 px frente a 21,8 de los demas, descuadrando la fila del prompt.
+          <span className="flex items-center gap-[5px]">
             {leading}
             <span className="truncate">{label}</span>
           </span>

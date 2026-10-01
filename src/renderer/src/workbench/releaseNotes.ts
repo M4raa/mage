@@ -76,10 +76,14 @@ const NOTHING: ReleaseNotesDecision = { open: false, remember: null };
 // solo publica 0.1.x), solo en la ventana principal, nunca en dev (comparte `userData` con la instalada y
 // se pelearian escribiendo) y nunca en una instalacion nueva (encima esta el asistente). Se guarda la
 // version al decidir abrir, no al cerrar la pestaña: quien cierre Mage con ella abierta no la vuelve a ver.
+// Una subida con el asistente sin completar espera a que se complete.
 export function releaseNotesDecision(context: ReleaseNotesContext): ReleaseNotesDecision {
   if (!context.isMainWindow || context.isDev) return NOTHING;
   // Sin el campo: instalacion nueva (asistente pendiente) o una 0.1.0/0.1.1 que actualiza (asistente hecho).
   if (context.lastSeen === '') return { open: context.onboardingDone, remember: context.current };
+  // Con el asistente pendiente se espera: sin guardar nada, para que al completarlo (que vuelve a
+  // decidir) la subida siga ahi y la pestaña no quede debajo del asistente.
+  if (!context.onboardingDone) return NOTHING;
   // Misma version o una BAJADA: nada, y sin bajar el valor guardado (al volver a subir se repetirian).
   if (compareVersions(context.current, context.lastSeen) <= 0) return NOTHING;
   return { open: true, remember: context.current };

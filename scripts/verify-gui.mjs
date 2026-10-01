@@ -2602,9 +2602,13 @@ const CHECKS = [
         return { estado: entry?.state ?? null, cwd, title, privacy, sigueAbierta: store.getState().tabs.some((t) => t.id === tabId) };
       });
       // Turno terminado: se pone a mano (inyectar el evento dispararia una recarga del historial por IPC
-      // que borraria la fila sintetica de abajo a mitad de la medida).
+      // que borraria la fila sintetica de abajo a mitad de la medida). Por lo mismo, mientras se mide no
+      // recarga nadie: ni el sondeo de App.tsx (30 s) ni el fin de turno de otra sesion en segundo plano
+      // de una comprobacion anterior. `closeTab` ya ha esperado la suya; el final lo repone.
       await page.evaluate((info) => {
         const store = window.__mageDev.store;
+        window.__mageVerifyLoadHistory = store.getState().loadConversationHistory;
+        store.setState({ loadConversationHistory: async () => undefined });
         const entry = store.getState().backgroundSessions['vg-fondo'];
         store.setState({
           backgroundSessions: { ...store.getState().backgroundSessions, 'vg-fondo': { ...entry, state: 'done' } },
@@ -2624,7 +2628,7 @@ const CHECKS = [
         };
       });
 
-      await page.evaluate((state) => window.__mageDev.store.setState(state), originalState);
+      await page.evaluate((state) => window.__mageDev.store.setState({ ...state, loadConversationHistory: window.__mageVerifyLoadHistory }), originalState);
       await page.waitForTimeout(CONFIG.settleMs);
       const ok =
         cerrado.estado === 'working' &&
@@ -2949,9 +2953,11 @@ const CHECKS = [
         });
       await page.evaluate((id) => window.__mageDev.store.getState().setDraft(id, { text: 'a'.repeat(400), attachments: [] }), tabId);
       await page.waitForTimeout(CONFIG.settleMs * 3);
+      await waitForStillBox(page, '[data-prompt-controls="true"]');
       const largo = await medir();
       await page.evaluate((id) => window.__mageDev.store.getState().setDraft(id, null), tabId);
       await page.waitForTimeout(CONFIG.settleMs * 3);
+      await waitForStillBox(page, '[data-prompt-controls="true"]');
       const vacio = await medir();
       if (ventanaPrevia !== null) await page.setViewportSize(ventanaPrevia);
       await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
@@ -6926,6 +6932,35 @@ const CHECKS = [
     },
   },
   {
+    // Integracion 0.1.2: cerrar la pestaña de un worktree con cambios lo conserva, y antes no se veia en
+    // ningun sitio (solo el log). El aviso va a la barra de estado: no bloquea, dice el motivo y la ruta,
+    // y cabe sin estirar la barra aunque la ruta sea larga. Se inyecta el estado que deja `closeTab` (el
+    // cableado lo cubre el test del store) y se descarta con su ✕.
+    name: 'Worktree conservado al cerrar: aviso en la barra de estado con la ruta, descartable',
+    async run(page) {
+      const ruta = 'C:\\proyectos\\un-repo-con-un-nombre-largo\\.claude\\worktrees\\arreglar-el-cierre-de-pestanas-con-cambios';
+      await page.evaluate((path) => window.__mageDev.store.setState({ keptWorktreeNotice: { path, reason: 'dirty' } }), ruta);
+      const aviso = page.locator('[data-kept-worktree-notice="true"]');
+      await aviso.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      const medido = await aviso.evaluate((node) => {
+        const barra = node.parentElement.getBoundingClientRect();
+        const caja = node.getBoundingClientRect();
+        return { texto: node.textContent, rol: node.getAttribute('role'), altoBarra: barra.height, dentro: caja.right <= barra.right + 0.5 && caja.bottom <= barra.bottom + 0.5, titulo: node.querySelector('[title]')?.getAttribute('title') ?? null };
+      });
+      await aviso.getByRole('button', { name: 'Descartar el aviso del worktree conservado' }).click();
+      await aviso.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+      const trasDescartar = await page.evaluate(() => window.__mageDev.store.getState().keptWorktreeNotice);
+      const ok =
+        medido.rol === 'status' &&
+        medido.texto.includes('Worktree conservado (tiene cambios sin confirmar)') &&
+        medido.titulo === ruta &&
+        medido.altoBarra === 26 &&
+        medido.dentro &&
+        trasDescartar === null;
+      return { ok, detail: JSON.stringify({ ...medido, trasDescartar }) };
+    },
+  },
+  {
     // Grupo 0 (0.1.2, ficha D11 de P-032): UN turno minimo de verdad, de punta a punta — teclear, Enter,
     // proceso del CLI, respuesta pintada. Es la unica comprobacion que envia: todas las demas miden sin
     // gastar. Contra Claude con el modelo y el esfuerzo mas bajos; si la cuenta lleva gastado mas del
@@ -7772,6 +7807,55 @@ function countBypassAdvice(page, text) {
 // Tolerancia de «no se ha movido» del chip y del popover de un StepSlider entre pasos (subpixel).
 const SLIDER_STILL_TOLERANCE_PX = 0.5;
 
+// Espera a que TERMINEN las animaciones finitas del documento (WAAPI de motion y transiciones CSS; las
+// infinitas, como la constelacion, no). No vale un tiempo fijo: con la ventana tapada por otras (el usuario
+// trabajando mientras corre el harness), Windows deja de consumir frames y una animacion compuesta se
+// queda en `currentTime` 0 hasta un segundo. Medido: el popover a escala 0,97 (264 -> 256,08 px, la deriva
+// de 7,92 px) y el pulgar a medio camino tras los 300/250 ms que se esperaban antes.
+async function waitForFiniteAnimations(page) {
+  await page.evaluate(async (timeoutMs) => {
+    const finite = document.getAnimations().filter((a) => a.effect?.getComputedTiming().endTime !== Infinity);
+    // Una cancelada (el componente se desmonta) tambien cuenta como terminada.
+    const settled = Promise.all(finite.map((a) => a.finished.catch(() => undefined))).then(() => true);
+    let timer;
+    const expired = new Promise((resolve) => (timer = setTimeout(() => resolve(false), timeoutMs)));
+    const done = await Promise.race([settled, expired]);
+    clearTimeout(timer);
+    if (!done) throw new Error(`${finite.length} animaciones sin terminar tras ${timeoutMs} ms`);
+  }, CONFIG.actionTimeoutMs);
+}
+
+const STEP_SLIDER_POPOVER = '[data-step-slider-popover="true"]';
+
+// Frames seguidos con la caja quieta para darla por asentada.
+const STILL_FRAMES = 3;
+
+// Espera a que la caja de `selector` deje de moverse: STILL_FRAMES frames seguidos sin cambiar, y las
+// animaciones finitas terminadas. Para lo que mueve motion con `layout` (FLIP por rAF, invisible para
+// `getAnimations()`): con un tiempo fijo, si los frames van lentos se mide a mitad del recorrido.
+async function waitForStillBox(page, selector) {
+  await waitForFiniteAnimations(page);
+  await page.evaluate(
+    ({ selector, frames, timeoutMs }) =>
+      new Promise((resolve, reject) => {
+        const started = performance.now();
+        let last = '';
+        let still = 0;
+        const tick = () => {
+          const box = document.querySelector(selector)?.getBoundingClientRect();
+          const key = box === undefined ? 'ausente' : `${box.x},${box.y},${box.width},${box.height}`;
+          still = key === last ? still + 1 : 0;
+          last = key;
+          if (still >= frames) return resolve();
+          if (performance.now() - started > timeoutMs) return reject(new Error(`${selector} sigue moviendose tras ${timeoutMs} ms`));
+          requestAnimationFrame(tick);
+        };
+        requestAnimationFrame(tick);
+      }),
+    { selector, frames: STILL_FRAMES, timeoutMs: CONFIG.actionTimeoutMs },
+  );
+}
+
 // Abre el deslizador de `caso.chip`, lo lleva al primer paso con Home y lo recorre con ArrowRight hasta el
 // ultimo. En CADA paso mide la caja del chip y la del popover (su mayor desviacion respecto a la de
 // apertura) y, pasada la transicion, donde esta el pulgar dibujado respecto a la fraccion que le toca.
@@ -7782,7 +7866,8 @@ async function walkStepSlider(page, caso) {
   await trigger.click();
   const popover = page.locator('[data-step-slider-popover="true"]');
   await popover.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
-  await page.waitForTimeout(300); // la animacion de entrada del popover (150 ms) debe haber acabado
+  // La entrada del popover: opacidad por WAAPI y escala 0,97 -> 1 por el bucle de motion.
+  await waitForStillBox(page, STEP_SLIDER_POPOVER);
   const range = popover.locator('input[type="range"]');
   const inicio = await range.evaluate((el) => ({ value: Number(el.value), max: Number(el.max), valuetext: el.getAttribute('aria-valuetext') ?? '' }));
   const fila = page.locator('[data-prompt-controls="true"]').first();
@@ -7809,7 +7894,7 @@ async function walkStepSlider(page, caso) {
   await range.press('Home');
   for (let paso = 0; paso <= inicio.max; paso += 1) {
     if (paso > 0) await range.press('ArrowRight');
-    await page.waitForTimeout(250); // la transicion del pulgar (160 ms) debe haber acabado
+    await waitForStillBox(page, STEP_SLIDER_POPOVER); // la transicion del pulgar y lo que mueva el cambio de paso
     const pulgar = await popover.evaluate((el) => {
       const pista = el.querySelector('.mg-step-thumb-track').getBoundingClientRect();
       const punto = el.querySelector('.mg-step-thumb-dot').getBoundingClientRect();

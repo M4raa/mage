@@ -1338,12 +1338,14 @@ describe('cola de mensajes', () => {
 
 // Grupo F: la pseudo-pestaña de novedades (id reservado en el arbol, fuera de `tabs`).
 describe('showReleaseNotesIfUpdated', () => {
+  // `saveSettings` como funcion plana: el guardado va con debounce y dispara despues del test, cuando un
+  // vi.fn ya reseteado devolveria undefined (mismo caso que `setAccountAccent`).
   const windows = (id: string) => vi.fn().mockResolvedValue([{ windowId: id, isCurrent: true }]);
   const settingsWith = (lastSeen: string) => ({ ...createWorkbenchStore(fakeMage()).getState().settings, onboardingCompletedVersion: 1, lastSeenReleaseNotesVersion: lastSeen });
 
   it('showReleaseNotesIfUpdated_subidaEnLaPrincipal_abreLaPestanaYGuardaLaVersion', async () => {
     // Arrange
-    const store = createWorkbenchStore(fakeMage({ getAppVersion: vi.fn().mockResolvedValue('0.1.2'), listWindows: windows('main'), saveWorkspace: vi.fn().mockResolvedValue(undefined) }));
+    const store = createWorkbenchStore(fakeMage({ getAppVersion: vi.fn().mockResolvedValue('0.1.2'), listWindows: windows('main'), saveWorkspace: vi.fn().mockResolvedValue(undefined), saveSettings: () => Promise.resolve() }));
     store.setState({ tabs: [tab('a')], activeTabId: 'a', splitLayout: singleLeaf('a'), settings: settingsWith('0.1.1') });
 
     // Act
@@ -1356,6 +1358,25 @@ describe('showReleaseNotesIfUpdated', () => {
     expect(s.tabs.map((t) => t.id)).toEqual(['a']);
     expect(s.settings.lastSeenReleaseNotesVersion).toBe('0.1.2');
     expect(s.appVersion).toBe('0.1.2');
+  });
+
+  it('setOnboardingCompleted_subidaQueEsperabaAlAsistente_abreLasNovedades', async () => {
+    // Arrange
+    const store = createWorkbenchStore(fakeMage({ getAppVersion: vi.fn().mockResolvedValue('0.1.2'), listWindows: windows('main'), saveWorkspace: vi.fn().mockResolvedValue(undefined), saveSettings: () => Promise.resolve() }));
+    store.setState({ tabs: [tab('a')], activeTabId: 'a', splitLayout: singleLeaf('a'), settings: { ...settingsWith('0.1.1'), onboardingCompletedVersion: 0 } });
+    await store.getState().showReleaseNotesIfUpdated(false);
+    const whilePending = store.getState().activeTabId;
+    // En vitest `import.meta.env.DEV` es true: la misma bandera que usa el harness para decidir como fuera de dev.
+    vi.stubEnv('VITE_MAGE_RELEASE_NOTES_IN_DEV', '1');
+
+    // Act
+    store.getState().setOnboardingCompleted(true);
+    await vi.waitFor(() => expect(store.getState().activeTabId).toBe('mage:novedades'));
+
+    // Assert
+    expect(whilePending).toBe('a');
+    expect(store.getState().settings.lastSeenReleaseNotesVersion).toBe('0.1.2');
+    vi.unstubAllEnvs();
   });
 
   it('showReleaseNotesIfUpdated_ventanaSecundaria_noAbreNiGuarda', async () => {
@@ -1650,6 +1671,35 @@ describe('worktree de la pestaña (grupo D)', () => {
     await store.getState().closeTab('a');
 
     expect(worktreeRemove).toHaveBeenCalledWith({ cwd: WT, accountDir: 'C:\\Users\\u\\.claude' });
+  });
+
+  it('closeTab_worktreeConCambios_avisaDeQueSeConservaYDonde', async () => {
+    // Arrange
+    const worktreeRemove = vi.fn().mockResolvedValue({ removed: false, reason: 'dirty' });
+    const store = createWorkbenchStore(fakeMage({ worktreeRemove, saveWorkspace: vi.fn().mockResolvedValue(undefined), listConversations: vi.fn().mockResolvedValue([]) }));
+    store.setState({ tabs: [tab('a', { cwd: WT })], activeTabId: 'a', splitLayout: singleLeaf('a') });
+
+    // Act
+    await store.getState().closeTab('a');
+
+    // Assert
+    await vi.waitFor(() => expect(store.getState().keptWorktreeNotice).toEqual({ path: WT, reason: 'dirty' }));
+    store.getState().dismissKeptWorktreeNotice();
+    expect(store.getState().keptWorktreeNotice).toBeNull();
+  });
+
+  it('closeTab_worktreeLimpio_noAvisa', async () => {
+    // Arrange
+    const worktreeRemove = vi.fn().mockResolvedValue({ removed: true });
+    const store = createWorkbenchStore(fakeMage({ worktreeRemove, saveWorkspace: vi.fn().mockResolvedValue(undefined), listConversations: vi.fn().mockResolvedValue([]) }));
+    store.setState({ tabs: [tab('a', { cwd: WT })], activeTabId: 'a', splitLayout: singleLeaf('a') });
+
+    // Act
+    await store.getState().closeTab('a');
+    await vi.waitFor(() => expect(worktreeRemove).toHaveBeenCalled());
+
+    // Assert
+    expect(store.getState().keptWorktreeNotice).toBeNull();
   });
 
   it('applyGhPrUpdate_prFusionadoConAutoArchivo_cierraLaPestañaParada', async () => {

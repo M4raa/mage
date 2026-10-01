@@ -43,6 +43,35 @@ export function StatusBar(): React.JSX.Element {
       <ServiceStatus status={status} />
       <AppVersion />
       <UpdateIndicator />
+      <KeptWorktreeNotice />
+    </div>
+  );
+}
+
+const KEPT_WORKTREE_REASON: Record<'dirty' | 'unknown', string> = {
+  dirty: 'tiene cambios sin confirmar',
+  unknown: 'no se pudo comprobar si tenía cambios',
+};
+
+// Grupo D: cerrar la pestaña de un worktree con cambios lo conserva (vuelve al reabrir la conversacion).
+// No bloquea nada: se queda aqui, con la ruta, hasta que se descarta.
+function KeptWorktreeNotice(): React.JSX.Element | null {
+  const notice = useWorkbenchStore((s) => s.keptWorktreeNotice);
+  const dismiss = useWorkbenchStore((s) => s.dismissKeptWorktreeNotice);
+  if (notice === null) return null;
+  return (
+    <div role="status" data-kept-worktree-notice="true" className="flex min-w-0 items-center gap-[6px] text-mg-body">
+      <span className="h-[6px] w-[6px] shrink-0 rounded-full bg-[var(--mg-warn)]" aria-hidden="true" />
+      <span className="truncate" title={notice.path}>
+        Worktree conservado ({KEPT_WORKTREE_REASON[notice.reason]}): {notice.path}
+      </span>
+      <button
+        onClick={dismiss}
+        aria-label="Descartar el aviso del worktree conservado"
+        className="shrink-0 cursor-pointer rounded-[4px] px-[4px] text-mg-ter hover:bg-mg-hover hover:text-mg-body"
+      >
+        ✕
+      </button>
     </div>
   );
 }
