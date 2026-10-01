@@ -6,6 +6,7 @@ import {
   DEFAULT_APP_SETTINGS,
   DEFAULT_PERMISSION_MODES,
   NEW_CONVERSATION_FOLDERS,
+  RUNTIME_SHELLS,
   SCRATCH_RETENTIONS,
   THEME_PREFERENCES,
   UI_SCALE_MAX,
@@ -143,6 +144,7 @@ const APP_SETTINGS_SCHEMA = z.object({
   agyCommandRules: z.object({ allow: z.array(z.string().min(1)), deny: z.array(z.string().min(1)) }).catch({ allow: [], deny: [] }),
   // Carpetas extra del perfil de agy. Ausente o basura -> [] (solo las de serie).
   agyLinkedPaths: z.array(z.string().min(1)).catch([]),
+  runtimeShell: z.enum(RUNTIME_SHELLS).catch('auto'),
 });
 
 export class SettingsStore {

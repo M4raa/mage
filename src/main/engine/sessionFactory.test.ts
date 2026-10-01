@@ -7,16 +7,16 @@ const BASE = { params: { sessionId: 's', accountDir: '/a', model: 'm', cwd: '/p'
 const RUNTIME = { kind: 'runtime' } as unknown as ManagedSession;
 const AGENT = { kind: 'agent' } as unknown as ManagedSession;
 
-function deps(runtimeEnabled: boolean) {
+function deps() {
   const buildAdapter = vi.fn((_provider: string) => ({}) as ProviderAdapter);
   const buildRuntime = vi.fn(() => RUNTIME);
-  const factory: SessionFactoryDeps = { buildAdapter, buildRuntime, runtimeEnabled, createAgentSession: () => AGENT };
+  const factory: SessionFactoryDeps = { buildAdapter, buildRuntime, createAgentSession: () => AGENT };
   return { factory, buildAdapter, buildRuntime };
 }
 
 describe('createSessionFor', () => {
   it('create_cliProviders_neverUseRuntime', () => {
-    const { factory, buildRuntime, buildAdapter } = deps(true);
+    const { factory, buildRuntime, buildAdapter } = deps();
 
     const sessions = ['claude', 'agy', 'codex'].map((provider) => createSessionFor(provider, BASE, factory));
 
@@ -25,21 +25,21 @@ describe('createSessionFor', () => {
     expect(buildAdapter.mock.calls.map(([provider]) => provider)).toEqual(['claude', 'agy', 'codex']);
   });
 
-  it('create_customWithSwitch_usesRuntime', () => {
-    const { factory } = deps(true);
+  it('create_custom_usesRuntime', () => {
+    const { factory } = deps();
 
     expect(createSessionFor('custom:ollama', BASE, factory)).toBe(RUNTIME);
   });
 
-  it('create_customWithoutSwitch_staysOnGateway', () => {
-    const { factory, buildRuntime } = deps(false);
+  it('create_builtInCloud_staysOnGatewayUntilR6', () => {
+    const { factory, buildRuntime } = deps();
 
-    expect(createSessionFor('custom:ollama', BASE, factory)).toBe(AGENT);
+    expect(createSessionFor('openai', BASE, factory)).toBe(AGENT);
     expect(buildRuntime).not.toHaveBeenCalled();
   });
 
   it('create_unknownProvider_throwsWithProvider', () => {
-    const { factory } = deps(true);
+    const { factory } = deps();
 
     expect(() => createSessionFor('desconocido', BASE, factory)).toThrow(/desconocido/);
   });

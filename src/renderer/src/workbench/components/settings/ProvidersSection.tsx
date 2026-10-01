@@ -17,7 +17,7 @@ import {
   type ModelOption,
   type ProviderEntry,
 } from '../../models';
-import type { DefaultPermissionMode } from '@shared/settings';
+import type { DefaultPermissionMode, RuntimeShell } from '@shared/settings';
 import {
   DEFAULT_PERMISSION_MODE_ACCOUNT_LABEL,
   EFFORT_STEP_LABEL,
@@ -99,6 +99,8 @@ export function ProvidersSection(): React.JSX.Element {
           }}
         />
       )}
+
+      <RuntimeShellPicker />
 
       {newDraft === null && (
         <AddProviderBar
@@ -325,6 +327,31 @@ function ProviderCard({
         )}
         {entry.id === 'claude' && <DefaultPermissionModePicker />}
       </div>
+    </div>
+  );
+}
+
+// Shell con la que los proveedores del usuario (runtime propio de Mage, P-032) ejecutan comandos.
+const RUNTIME_SHELL_OPTIONS = [
+  { value: 'auto', label: 'Automática (Git Bash si existe)' },
+  { value: 'bash', label: 'Bash' },
+  { value: 'powershell', label: 'PowerShell' },
+] as const;
+
+function RuntimeShellPicker(): React.JSX.Element {
+  const shell = useWorkbenchStore((s) => s.settings.runtimeShell);
+  const setShell = useWorkbenchStore((s) => s.setRuntimeShell);
+  return (
+    <div className="flex items-center gap-[6px] text-[11px] text-mg-sec" data-testid="runtime-shell">
+      <span>Comandos de los modelos sin CLI</span>
+      <Dropdown
+        value={shell}
+        options={RUNTIME_SHELL_OPTIONS}
+        onChange={(value) => setShell(value as RuntimeShell)}
+        ariaLabel="Shell de los comandos de los modelos sin CLI"
+        tip="Con qué shell ejecutan Bash los proveedores que añades tú (Ollama, LM Studio…). Aplica a las conversaciones nuevas."
+        triggerClassName="w-[210px]"
+      />
     </div>
   );
 }

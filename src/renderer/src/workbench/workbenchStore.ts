@@ -5,7 +5,7 @@ import { disposeTranscriptStore, transcriptStoreForTab } from './transcriptStore
 import type { ContextUsage, MageEvent, McpServerStatus, PermissionDecision, PermissionRequest, SlashCommandInfo, SubagentInfo } from '@shared/events';
 import { buildUpdatedInput, parseAskUserQuestion } from '@shared/askUserQuestion';
 import type { CloseAnswer, NotificationTarget, PermissionMode, PermissionModesByProviderView, SessionEventPayload } from '@shared/ipc';
-import { PERMISSION_MODE_PROVIDERS, permissionCycleFor } from './stepSliderModel';
+import { hasPermissionModes, permissionCycleForProvider } from './stepSliderModel';
 import { IDLE_UPDATE_STATE, type UpdateState } from '@shared/update';
 import { isPermissionMode, MAIN_WINDOW_ID, PERMISSION_MODES } from '@shared/ipc';
 import { RELEASE_NOTES_TAB_ID, releaseNotesDecision } from './releaseNotes';
@@ -98,7 +98,7 @@ import type {
   ScratchRetention,
   ThemePreference,
 } from '@shared/settings';
-import { clampUiScale, DEFAULT_APP_SETTINGS, DEFAULT_PERMISSION_MODES, ONBOARDING_VERSION } from '@shared/settings';
+import { clampUiScale, DEFAULT_APP_SETTINGS, DEFAULT_PERMISSION_MODES, ONBOARDING_VERSION, RUNTIME_SHELLS, type RuntimeShell } from '@shared/settings';
 import { setAgyCommandVerdict, type AgyCommandVerdict } from '@shared/agyRules';
 import { AGY_PROVIDER_ID, CODEX_PROVIDER_ID, writesClaudeTranscript, type CustomProvider, type ProviderModel } from '@shared/providers';
 import { applyBackgroundOpacity, applyThemeFromSettings, findActiveImportedTheme, resolveTheme, systemPrefersDark } from './theme';
@@ -396,6 +396,8 @@ export interface WorkbenchState extends PrState, PrActions {
   setAgyLinkedPaths: (paths: readonly string[]) => void;
   // Modo de permiso con el que arrancan las conversaciones nuevas de Claude (P-028 6); '' = el de la cuenta.
   setDefaultPermissionMode: (mode: DefaultPermissionMode) => void;
+  // Shell de `Bash` en los proveedores del runtime propio (P-032, ficha D4). Aplica a sesiones nuevas.
+  setRuntimeShell: (shell: RuntimeShell) => void;
   // Da por visto el asistente de primer arranque (o lo vuelve a abrir, con `completed=false`).
   setOnboardingCompleted: (completed: boolean) => void;
   // Activa/desactiva el widget flotante (M3): abre/cierra su ventana (main) y persiste la preferencia.
@@ -2205,6 +2207,12 @@ export function createWorkbenchStore(mage: MageClient) {
       scheduleSettingsPersist(mage, get);
     },
 
+    setRuntimeShell: (shell) => {
+      if (!RUNTIME_SHELLS.includes(shell)) throw new Error(`Shell del runtime invalida: ${JSON.stringify(shell)}`);
+      set((s) => ({ settings: { ...s.settings, runtimeShell: shell } }));
+      scheduleSettingsPersist(mage, get);
+    },
+
     setOnboardingCompleted: (completed) => {
       set((s) => ({ settings: { ...s.settings, onboardingCompletedVersion: completed ? ONBOARDING_VERSION : 0 } }));
       scheduleSettingsPersist(mage, get);
@@ -2540,7 +2548,7 @@ export function createWorkbenchStore(mage: MageClient) {
     setActivePermissionMode: (mode) => {
       const tabId = get().activeTabId;
       const tab = get().tabs.find((t) => t.id === tabId);
-      if (tab === undefined || !PERMISSION_MODE_PROVIDERS.includes(tab.provider) || (tab.permissionMode ?? 'default') === mode) return;
+      if (tab === undefined || !hasPermissionModes(tab.provider) || (tab.permissionMode ?? 'default') === mode) return;
       set((s) => ({ tabs: s.tabs.map((t) => (t.id === tabId ? { ...t, permissionMode: mode } : t)) }));
       persistConversationPrefs(mage, get(), tabId);
       const sessionId = get().sessionIdByChat[tabId];
@@ -2555,11 +2563,12 @@ export function createWorkbenchStore(mage: MageClient) {
     // Rota el modo de permiso de la pestana activa por PERMISSION_MODES (Manual -> Auto-editar -> Plan -> Auto -> Omitir permisos).
     cyclePermissionMode: () => {
       const tab = get().tabs.find((t) => t.id === get().activeTabId);
-      if (tab === undefined || tab.provider !== 'claude') return;
+      if (tab === undefined) return;
       const current = tab.permissionMode ?? 'default';
-      // El ciclo sigue el orden de siempre con los modos que de verdad expone el CLI. Un modo desconocido
-      // (`dontAsk`) no esta en el ciclo: -1, y el siguiente es el primero.
-      const cycle = permissionCycleFor(get().permissionModes?.claude ?? null);
+      // El ciclo sigue el orden de siempre con los modos que de verdad expone el CLI (en el runtime propio,
+      // los cinco de Mage). Un modo desconocido (`dontAsk`) no esta en el ciclo: -1, y el siguiente es el primero.
+      const cycle = permissionCycleForProvider(tab.provider, get().permissionModes?.claude ?? null);
+      if (cycle.length === 0) return;
       const index = cycle.findIndex((mode) => mode === current);
       const next = cycle[(index + 1) % cycle.length] ?? 'default';
       get().setActivePermissionMode(next);

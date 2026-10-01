@@ -89,6 +89,17 @@ export const NO_PERMISSION_CONTROL_WARNING =
 // usan su adapter (main) y los selectores (renderer).
 export const AGY_EFFORT_LEVELS: readonly string[] = ['low', 'medium', 'high', 'max'];
 
+// ¿Corre este proveedor en el runtime propio de Mage (P-032)? Los del usuario (endpoints
+// OpenAI-compatibles, locales o remotos): no tienen CLI. Los de serie con CLI nunca.
+export function runsOnMageRuntime(providerId: string): boolean {
+  return providerId.startsWith(CUSTOM_PROVIDER_ID_PREFIX);
+}
+
+// Modos de permiso del runtime propio (§8.1 D9 de P-032): los cinco, con un Auto propio como el preset de
+// Codex (escribir y ejecutar dentro del workspace sin preguntar; preguntar fuera y para red).
+export const RUNTIME_PERMISSION_MODES = ['default', 'acceptEdits', 'plan', 'auto', 'bypassPermissions'] as const;
+export type RuntimePermissionMode = (typeof RUNTIME_PERMISSION_MODES)[number];
+
 // ¿Las sesiones de este proveedor auto-aprueban las tools? Lo consultan la barra de prompt, el estado
 // vacio de la conversacion y el dialogo de nueva pestana.
 export function isAutoApprovedProvider(providerId: string): boolean {

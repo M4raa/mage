@@ -7029,6 +7029,45 @@ const CHECKS = [
     },
   },
   {
+    // P-032 R3: una pestaña de un proveedor del usuario va por el RUNTIME PROPIO, que ofrece los cinco
+    // modos de Mage (con su Auto a lo Codex) y los rota con Shift+Tab. Sin Enter: no envia nada (el unico
+    // turno de la ejecucion es la ultima comprobacion). Abre su pestaña y la cierra, y borra su proveedor.
+    name: 'Runtime propio: una pestaña de un proveedor del usuario ofrece los 5 modos y Shift+Tab los rota',
+    async run(page) {
+      const previo = await page.evaluate(() => window.__mageDev.store.getState().activeTabId);
+      await page.evaluate(async ({ provider }) => {
+        const state = window.__mageDev.store.getState();
+        await state.saveCustomProvider({ id: provider.id, label: provider.label, baseUrl: 'http://127.0.0.1:9/v1', hasApiKey: false, models: [{ id: 'fake:eco', label: 'fake:eco' }] });
+        const cwd = await window.mage.getScratchDir();
+        await state.newTab({ accountId: state.activeAccountId, cwd, model: 'fake:eco', provider: provider.id, title: 'VG runtime modos', privacy: 'shared' });
+      }, { provider: RUNTIME_MODES_PROVIDER });
+      const tab = await activeTurnTab(page);
+      try {
+        if (tab === null || tab.provider !== RUNTIME_MODES_PROVIDER.id) return { ok: false, detail: `pestaña activa inesperada: ${JSON.stringify(tab)}` };
+        const chip = page.locator('button[aria-label^="Modo de permiso:"]').first();
+        await chip.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        await chip.click();
+        const popover = page.locator('[data-step-slider-popover="true"]');
+        await popover.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const pasos = await popover.locator('input[type="range"]').evaluate((el) => Number(el.max) + 1);
+        await page.keyboard.press('Escape');
+        await popover.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+        const antes = await permissionModeLabel(page);
+        await clearPrompt(page);
+        await page.getByRole('textbox', { name: 'Escribe una instrucción para el agente' }).press('Shift+Tab');
+        await page.waitForFunction((label) => !(document.querySelector('button[aria-label^="Modo de permiso:"]')?.getAttribute('aria-label') ?? '').endsWith(label), antes, { timeout: CONFIG.actionTimeoutMs });
+        const despues = await permissionModeLabel(page);
+        const modo = await page.evaluate((id) => window.__mageDev.store.getState().tabs.find((t) => t.id === id)?.permissionMode ?? null, tab.id);
+        const ok = pasos === 5 && antes === 'Manual' && despues !== antes && modo === 'acceptEdits';
+        return { ok, detail: JSON.stringify({ pasos, antes, despues, modo }) };
+      } finally {
+        if (tab !== null) await page.evaluate((id) => window.__mageDev.store.getState().closeTab(id), tab.id);
+        await page.evaluate((id) => window.__mageDev.store.getState().removeCustomProvider(id), RUNTIME_MODES_PROVIDER.id);
+        if (previo !== '') await page.evaluate((id) => window.__mageDev.store.getState().setActiveTab(id), previo);
+      }
+    },
+  },
+  {
     // Grupo 0 (0.1.2, ficha D11 de P-032): UN turno minimo de verdad, de punta a punta — teclear, Enter,
     // proceso del CLI, respuesta pintada. Es la unica comprobacion que envia: todas las demas miden sin
     // gastar. Contra Claude con el modelo y el esfuerzo mas bajos; si la cuenta lleva gastado mas del
@@ -7044,7 +7083,8 @@ const CHECKS = [
         const expected = await openTurnTab(page, { target: decision.target, fake, userDataDir });
         const outcome = await sendMinimalTurn(page, expected);
         if (outcome.tab !== null) await page.evaluate((tabId) => window.__mageDev.store.getState().closeTab(tabId), outcome.tab.id);
-        const viaFake = fake === null || (fake.stats.completions >= 1 && outcome.agentText.includes(FAKE_OPENAI_REPLY));
+        const viaFake =
+          fake === null || (fake.stats.completions === 2 && outcome.tools.includes('Read') && outcome.agentText.includes(FAKE_TURN_FINAL_TEXT));
         const ok = outcome.sent && outcome.status === 'idle' && outcome.agentText.trim().length > 0 && outcome.errors.length === 0 && viaFake;
         const detail = {
           modo: decision.target,
@@ -7057,7 +7097,7 @@ const CHECKS = [
           errores: outcome.errors,
           bloques: outcome.kinds,
           ms: outcome.ms,
-          ...(fake === null ? {} : { peticionesAlFalso: fake.stats.completions, conStream: fake.stats.streamed }),
+          ...(fake === null ? {} : { peticionesAlFalso: fake.stats.completions, conStream: fake.stats.streamed, herramientas: outcome.tools }),
         };
         return { ok, detail: JSON.stringify(detail) };
       } finally {
@@ -8484,6 +8524,11 @@ const MINIMAL_TURN = {
 };
 // Proveedor del usuario que apunta al servidor falso (modo local). Id con el prefijo de los del usuario.
 const FAKE_TURN_PROVIDER = { id: 'custom:vg-servidor-falso', label: 'VG servidor falso' };
+// El turno local va por el RUNTIME PROPIO (P-032 R3) con el escenario que llama a Read y Glob en
+// paralelo: dos peticiones al falso, un bloque Read en el hilo y el texto final.
+const FAKE_TURN_MODEL = 'fake:openai-troceado';
+const FAKE_TURN_FINAL_TEXT = 'Leído: el fichero dice hola.';
+const RUNTIME_MODES_PROVIDER = { id: 'custom:vg-runtime-modos', label: 'VG runtime modos' };
 const TRUST_DIALOG = '[role="dialog"][aria-labelledby="trust-title"]';
 
 function forcedTurnTarget() {
@@ -8534,10 +8579,10 @@ async function openTurnTab(page, { target, fake, userDataDir }) {
       const cwd = await window.mage.getScratchDir();
       await state.newTab({ accountId: state.activeAccountId, cwd, model, provider: provider.id, title: 'VG turno local', privacy: 'shared' });
     },
-    { provider: FAKE_TURN_PROVIDER, baseUrl: fake.baseUrl, model: FAKE_OPENAI_MODEL },
+    { provider: FAKE_TURN_PROVIDER, baseUrl: fake.baseUrl, model: FAKE_TURN_MODEL },
   );
   await waitForFile(path.join(userDataDir, 'app-settings.json'), (text) => text.includes(FAKE_TURN_PROVIDER.id));
-  return { provider: FAKE_TURN_PROVIDER.id, model: FAKE_OPENAI_MODEL };
+  return { provider: FAKE_TURN_PROVIDER.id, model: FAKE_TURN_MODEL };
 }
 
 // La pestaña activa, lo justo para la guarda y el informe.
@@ -8554,7 +8599,7 @@ function activeTurnTab(page) {
 async function sendMinimalTurn(page, expected) {
   const tab = await activeTurnTab(page);
   const matches = tab !== null && tab.provider === expected.provider && tab.model === expected.model;
-  if (!matches) return { sent: false, tab, status: null, agentText: '', errors: [`pestaña activa inesperada; se esperaba ${JSON.stringify(expected)}`], kinds: [], ms: 0 };
+  if (!matches) return { sent: false, tab, status: null, agentText: '', errors: [`pestaña activa inesperada; se esperaba ${JSON.stringify(expected)}`], kinds: [], tools: [], ms: 0 };
   await typeInPrompt(page, MINIMAL_TURN.prompt);
   const startedAt = Date.now();
   await page.keyboard.press('Enter');
@@ -8576,7 +8621,7 @@ async function waitForTurnEnd(page, tab) {
     if (last.status === 'idle' || last.status === 'error' || last.status === 'needs_permission') break;
     await page.waitForTimeout(CONFIG.pollIntervalMs);
   }
-  return { status: last?.status ?? null, agentText: last?.agentText ?? '', errors: last?.errors ?? ['sin estado'], kinds: last?.kinds ?? [] };
+  return { status: last?.status ?? null, agentText: last?.agentText ?? '', errors: last?.errors ?? ['sin estado'], kinds: last?.kinds ?? [], tools: last?.tools ?? [] };
 }
 
 function readTurnState(page, tab) {
@@ -8589,7 +8634,8 @@ function readTurnState(page, tab) {
       .join('\n');
     const errors = blocks.filter((block) => block.kind === 'error').map((block) => block.message);
     const kinds = blocks.map((block) => `${block.kind}${block.streaming === true ? '*' : ''}`);
-    return { status: state.statusByChat[id] ?? 'idle', agentText, errors, kinds, askingTrust: state.trustRequests.includes(cwd) };
+    const tools = blocks.filter((block) => block.kind === 'tool').map((block) => block.tool);
+    return { status: state.statusByChat[id] ?? 'idle', agentText, errors, kinds, tools, askingTrust: state.trustRequests.includes(cwd) };
   }, tab);
 }
 

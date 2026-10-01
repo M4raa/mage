@@ -1,4 +1,5 @@
 import { PERMISSION_MODES, type PermissionModesByProviderView } from '@shared/ipc';
+import { RUNTIME_PERMISSION_MODES, runsOnMageRuntime } from '@shared/providers';
 
 // Modos de permiso LEIDOS DEL CLI (respuesta 18 del usuario: si mañana un CLI añade un modo, Mage lo
 // refleja). Medido el 2026-10-01 (`node spike/permission-modes-spike.mjs`, gratis, sin turno):
@@ -50,6 +51,8 @@ export function parseCodexPermissionProfiles(result: unknown): readonly string[]
 export function isKnownPermissionModeFor(provider: string, mode: string, probed: PermissionModesByProvider | null): boolean {
   if (provider === 'claude') return (PERMISSION_MODES as readonly string[]).includes(mode) || (probed?.claude ?? []).includes(mode);
   if (provider === 'codex') return probed?.codex?.includes(mode) ?? CODEX_PROFILE_PATTERN.test(mode);
+  // El runtime propio (P-032) no tiene CLI que sondear: sus modos son los de Mage.
+  if (runsOnMageRuntime(provider)) return (RUNTIME_PERMISSION_MODES as readonly string[]).includes(mode);
   return false;
 }
 

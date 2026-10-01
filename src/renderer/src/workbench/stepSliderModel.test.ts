@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { PERMISSION_MODES } from '@shared/ipc';
 import {
+  hasPermissionModes,
+  permissionCycleForProvider,
   codexPermissionSteps,
   permissionCycleFor,
   permissionStepsFor,
@@ -166,5 +168,20 @@ describe('modos leidos del CLI (respuesta 18)', () => {
   it('codexPermissionSteps_perfilesMedidos_conSuEtiqueta', () => {
     expect(codexPermissionSteps([':read-only', ':workspace', ':danger-full-access']).map((step) => step.label)).toEqual(['Solo lectura', 'Espacio de trabajo', 'Acceso total']);
     expect(codexPermissionSteps(null)).toEqual([]);
+  });
+});
+
+describe('modos por proveedor', () => {
+  it('hasPermissionModes_claudeCodexYRuntime_siAgyNo', () => {
+    expect(['claude', 'codex', 'custom:ollama', 'agy'].map(hasPermissionModes)).toEqual([true, true, true, false]);
+  });
+
+  it('permissionCycleForProvider_runtime_losCincoAunqueElCliDigaOtraCosa', () => {
+    expect(permissionCycleForProvider('custom:lm', ['default', 'plan'])).toEqual(PERMISSION_MODES);
+  });
+
+  it('permissionCycleForProvider_claudeSigueAlCliYAgyNada', () => {
+    expect(permissionCycleForProvider('claude', ['default', 'plan'])).toEqual(['default', 'plan']);
+    expect(permissionCycleForProvider('agy', null)).toEqual([]);
   });
 });

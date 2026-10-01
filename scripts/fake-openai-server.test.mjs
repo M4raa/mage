@@ -1,5 +1,7 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { glob, readFile, stat } from 'node:fs/promises';
+import { spawn } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+import { glob, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -36,6 +38,14 @@ function envFor(baseUrl, overrides = {}) {
     newId: () => `id-${++id}`,
     platform: process.platform,
     fs: { stat, readFile, glob },
+    editFs: { readFile, writeFile, mkdir },
+    shell: () => ({ name: 'node', command: process.execPath, argsFor: (script) => ['-e', script] }),
+    spawn: (command, args, options) => spawn(command, [...args], options),
+    commandEnv: () => ({ ...process.env }),
+    killTree: (child) => {
+      child.kill();
+      return 'signal';
+    },
     ...overrides,
   };
 }
@@ -83,7 +93,7 @@ describe('runtime propio contra el servidor falso', () => {
 
     // Las dos lecturas van en paralelo: sus resultados llegan en cualquier orden.
     const results = new Map(events.filter((e) => e.kind === 'tool_result').map((e) => [e.result.toolUseId, e.result]));
-    expect(results.get('call_a')).toMatchObject({ isError: false, output: '     1	hola' });
+    expect(results.get('call_a')).toMatchObject({ isError: false, output: '     1\thola' });
     expect(results.get('call_b')).toMatchObject({ isError: false, output: 'hola.txt' });
     expect(fake.stats.completions).toBe(2);
     const second = fake.stats.requests[1];
@@ -102,6 +112,40 @@ describe('runtime propio contra el servidor falso', () => {
 
     expect(events.filter((e) => e.kind === 'tool_result').map((e) => e.result.isError)).toEqual([true, true, false]);
     expect(events.find((e) => e.kind === 'result').result).toMatchObject({ isError: false, numTurns: 4 });
+  });
+
+  it('turno_writeEnManual_pidePermisoYNoEscribeHastaQueSeConceda', async () => {
+    fake = await startFakeOpenAiServer();
+    const cwd = tempProject({});
+    const events = [];
+    const session = buildRuntimeSession('custom:falso', launch('fake:write', events, { cwd }), envFor(fake.baseUrl));
+
+    session.start();
+    session.sendUserMessage('escribe');
+    await waitFor(events, (e) => e.kind === 'permission_request');
+    const request = events.find((e) => e.kind === 'permission_request').request;
+    expect(request).toMatchObject({ toolName: 'Write', input: { file_path: 'vg-runtime.txt' } });
+    expect(() => readFileSync(join(cwd, 'vg-runtime.txt'))).toThrow();
+
+    session.answerPermission(request.requestId, { behavior: 'allow' });
+    await waitFor(events, (e) => e.kind === 'result');
+
+    expect(readFileSync(join(cwd, 'vg-runtime.txt'), 'utf8')).toBe('hola desde el runtime\n');
+  });
+
+  it('turno_editAprobado_traeSuDiff', async () => {
+    fake = await startFakeOpenAiServer();
+    const cwd = tempProject({ 'hola.txt': 'hola\n' });
+    const events = [];
+    const session = buildRuntimeSession('custom:falso', launch('fake:edit', events, { cwd, permissionMode: 'acceptEdits' }), envFor(fake.baseUrl));
+
+    session.start();
+    session.sendUserMessage('edita');
+    await waitFor(events, (e) => e.kind === 'result');
+
+    const result = events.find((e) => e.kind === 'tool_result').result;
+    expect(result.file.structuredPatch).toEqual([{ oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, lines: ['-hola', '+adiós'] }]);
+    expect(readFileSync(join(cwd, 'hola.txt'), 'utf8')).toBe('adiós\n');
   });
 
   it('turno_proveedorNoConfigurado_lanzaConElId', () => {

@@ -1,4 +1,5 @@
 import type { ImageAttachment } from '@shared/ipc';
+import { RUNTIME_PERMISSION_MODES, type RuntimePermissionMode } from '@shared/providers';
 import type { MageEvent, PermissionDecision, TurnUsage } from '@shared/events';
 import type { ManagedSession } from '../engine/sessionManager';
 import type { SessionLogFn } from '../engine/agentSession';
@@ -14,9 +15,7 @@ import { loopToMageEvents } from './loopToMageEvents';
 // vez se mide un bloqueo (Glob/Grep sobre un arbol enorme), se mueve `runTurn` a un `utilityProcess` sin
 // cambiar estos contratos.
 
-// Modos de permiso del runtime (§8.1 D9: los cinco, con un Auto propio como el preset de Codex).
-export const RUNTIME_PERMISSION_MODES = ['default', 'acceptEdits', 'plan', 'auto', 'bypassPermissions'] as const;
-export type RuntimePermissionMode = (typeof RUNTIME_PERMISSION_MODES)[number];
+export { RUNTIME_PERMISSION_MODES, type RuntimePermissionMode };
 
 export function isRuntimePermissionMode(mode: string): mode is RuntimePermissionMode {
   return (RUNTIME_PERMISSION_MODES as readonly string[]).includes(mode);

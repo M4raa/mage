@@ -1,6 +1,7 @@
 import { join } from 'node:path';
 import { EFFORT_LEVELS, PERMISSION_MODES, type CreateSessionParams } from '@shared/ipc';
 import type { LaunchParams, SharedLaunchConfig } from './providerAdapter';
+import { runsOnMageRuntime } from '@shared/providers';
 
 // Dependencias inyectables (FS/HOME) -> testable.
 export interface DefaultsDeps {
@@ -35,7 +36,8 @@ export function resolveLaunchParams(
   const model = params.model.trim();
   if (model.length === 0) throw new Error('El modelo no puede estar vacio');
 
-  const accountDir = params.accountDir.trim() || resolveDefaultAccountDir(deps);
+  // El runtime propio (P-032) no corre bajo ninguna cuenta de Claude: sin cuenta, no se busca una.
+  const accountDir = params.accountDir.trim() || (runsOnMageRuntime(params.provider) ? '' : resolveDefaultAccountDir(deps));
   const isClaude = params.provider === 'claude';
   const hasLogin = deps.hasClaudeLogin ?? ((dir: string) => deps.fileExists(join(dir, CREDENTIALS_FILE)));
   if (isClaude && !hasLogin(accountDir)) {

@@ -31,6 +31,7 @@ const VALID: AppSettings = {
   autoArchiveOnPrClose: true,
   agyCommandRules: { allow: ['git status'], deny: ['rm -rf build'] },
   agyLinkedPaths: ['.aws'],
+  runtimeShell: 'powershell',
 };
 
 function deps(overrides: Partial<SettingsStoreDeps> = {}): SettingsStoreDeps {
@@ -54,6 +55,16 @@ describe('SettingsStore.load', () => {
 
     expect(loaded.agyCommandRules).toEqual({ allow: [], deny: [] });
     expect(loaded.agyLinkedPaths).toEqual([]);
+  });
+
+  it('load_runtimeShellAusenteOInvalido_caeAAuto', () => {
+    // Un fichero de antes de P-032 no lo trae; uno editado a mano puede traer cualquier cosa.
+    const { runtimeShell: _shell, ...previo } = VALID;
+
+    const sinCampo = new SettingsStore(deps({ readFile: () => JSON.stringify(previo) })).load();
+    const invalido = new SettingsStore(deps({ readFile: () => JSON.stringify({ ...VALID, runtimeShell: 'cmd' }) })).load();
+
+    expect([sinCampo.runtimeShell, invalido.runtimeShell]).toEqual(['auto', 'auto']);
   });
 
   it('load_accentByAccountFueraDeRango_caeAVacio', () => {

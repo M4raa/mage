@@ -6,6 +6,10 @@ import { EMPTY_AGY_COMMAND_RULES, type AgyCommandRules } from './agyRules';
 import type { CustomProvider } from './providers';
 import type { VscodeTokenColor } from './themeMarket';
 
+// Shell de la herramienta `Bash` del runtime propio (ficha D4 de P-032).
+export const RUNTIME_SHELLS = ['auto', 'bash', 'powershell'] as const;
+export type RuntimeShell = (typeof RUNTIME_SHELLS)[number];
+
 // Regla de notificacion: si el texto del asistente al terminar un turno casa con `pattern` (RegExp)
 // y la regla esta activa, se dispara una notificacion del SO. El patron se guarda como string y se
 // compila en la frontera con try/catch (un patron invalido nunca rompe el flujo).
@@ -156,6 +160,9 @@ export interface AppSettings {
   // Carpetas extra (relativas a la casa del usuario) que Mage enlaza en el perfil de agy, ademas de
   // `.gemini/config` y `.ssh`. Default [].
   readonly agyLinkedPaths: readonly string[];
+  // Shell con la que el runtime propio (P-032, ficha D4) ejecuta `Bash`: 'auto' = Git Bash si existe y
+  // si no PowerShell (en Windows; en macOS/Linux, la del usuario). Default 'auto'.
+  readonly runtimeShell: RuntimeShell;
 }
 
 // Nº de acentos del tema (--mg-accent-<i>-* en index.css); lo comparten cuentas y pestañas.
@@ -213,4 +220,5 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   autoArchiveOnPrClose: false,
   agyCommandRules: EMPTY_AGY_COMMAND_RULES,
   agyLinkedPaths: [],
+  runtimeShell: 'auto',
 };

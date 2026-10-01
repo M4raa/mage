@@ -42,6 +42,10 @@ describe('parseCodexPermissionProfiles', () => {
 });
 
 describe('isKnownPermissionModeFor', () => {
+  it('isKnownPermissionModeFor_runtime_losCincoDeMageSinSondeo', () => {
+    expect(['default', 'auto', 'bypassPermissions', 'dontAsk'].map((mode) => isKnownPermissionModeFor('custom:ollama', mode, null))).toEqual([true, true, true, false]);
+  });
+
   it('isKnownPermissionModeFor_claudeSinSondeo_laListaDeMage', () => {
     expect(isKnownPermissionModeFor('claude', 'plan', null)).toBe(true);
     expect(isKnownPermissionModeFor('claude', 'review', null)).toBe(false);

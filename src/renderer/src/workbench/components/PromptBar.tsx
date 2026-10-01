@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { isPermissionMode } from '@shared/ipc';
 import type { EditorInfo } from '@shared/ipc';
-import { CODEX_PROVIDER_ID, NO_PERMISSION_CONTROL_WARNING, UNVERIFIED_PROVIDER_NOTE, isAutoApprovedProvider, isUnverifiedProvider } from '@shared/providers';
+import { CODEX_PROVIDER_ID, NO_PERMISSION_CONTROL_WARNING, UNVERIFIED_PROVIDER_NOTE, isAutoApprovedProvider, isUnverifiedProvider, runsOnMageRuntime } from '@shared/providers';
 import { useWorkbenchStore } from '../workbenchStore';
 import { displayModelId, modelOptionsForProvider } from '../models';
 import { describeAttachment, insertImageTokens, reconcileImageTokens, removeImageToken } from '@shared/imageRefs';
@@ -185,9 +185,14 @@ export function PromptBar(): React.JSX.Element {
   // Proveedor sin puente de permisos (E3, `agy`): auto-aprueba las tools y la UI tiene que decirlo.
   const autoApproved = activeTab !== undefined && isAutoApprovedProvider(activeTab.provider);
   const isCodex = activeTab?.provider === CODEX_PROVIDER_ID;
+  // Runtime propio de Mage (P-032): los cinco modos de Mage, sin CLI que sondear.
+  const isRuntime = activeTab !== undefined && runsOnMageRuntime(activeTab.provider);
   const cliModes = useWorkbenchStore((s) => s.permissionModes);
   // Los pasos salen de lo que expone el CLI (respuesta 18); sin respuesta, la lista fija de Mage.
-  const modeSteps = useMemo(() => (isCodex ? codexPermissionSteps(cliModes?.codex ?? null) : permissionStepsFor(cliModes?.claude ?? null)), [isCodex, cliModes]);
+  const modeSteps = useMemo(() => {
+    if (isCodex) return codexPermissionSteps(cliModes?.codex ?? null);
+    return permissionStepsFor(isRuntime ? null : (cliModes?.claude ?? null));
+  }, [isCodex, isRuntime, cliModes]);
   const permissionMode: string = activeTab?.permissionMode ?? (isCodex ? (modeSteps[0]?.value ?? '') : 'default');
   const effort = activeTab?.effort ?? '';
   // Turno en marcha (generando o esperando permiso): se puede interrumpir.
@@ -245,7 +250,7 @@ export function PromptBar(): React.JSX.Element {
   // los mismos 8 s que el de coste) cada vez que el modo pasa a `bypassPermissions` —por el chip, Shift+Tab,
   // el atajo global, el evento del CLI o al reabrir una conversacion que ya estaba en ese modo—. La señal
   // permanente es solo el control en rojo.
-  const bypassActive = isClaude && permissionMode === 'bypassPermissions';
+  const bypassActive = (isClaude || isRuntime) && permissionMode === 'bypassPermissions';
   useEffect(() => {
     if (bypassActive) setAdvice({ severity: 'warn', message: BYPASS_PERMISSIONS_ADVICE });
   }, [bypassActive, activeTabId]);
@@ -439,7 +444,7 @@ export function PromptBar(): React.JSX.Element {
         applyEdit(outdentLines(editState));
         return true;
       case 'prompt.cyclePermissionMode':
-        if (isClaude) cyclePermissionMode();
+        if (isClaude || isRuntime) cyclePermissionMode();
         return true;
       default:
         return false;
@@ -691,7 +696,7 @@ export function PromptBar(): React.JSX.Element {
               Sin verificar
             </span>
           )}
-          {(isClaude || (isCodex && modeSteps.length > 0)) && (
+          {(isClaude || isRuntime || (isCodex && modeSteps.length > 0)) && (
             // Modo de permiso (M2.6; P-028 32/33: deslizador de pasos). Los pasos son los que EXPONE el CLI
             // (respuesta 18): en Claude, su `--permission-mode`; en Codex (sin verificar), sus perfiles,
             // que aplican al siguiente turno. Shift+Tab con el input vacio sigue ciclando en Claude. Un modo

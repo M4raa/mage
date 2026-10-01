@@ -19,7 +19,7 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs';
-import { glob, readFile, stat } from 'node:fs/promises';
+import { glob, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { isUnderCliScratchpad as isUnderCliScratchpadPure } from './files/cliScratchpad';
@@ -130,7 +130,7 @@ import { ProviderAccountService } from './accounts/providerAccounts';
 import { CodexLoginService, type CodexLoginResult } from './accounts/codexLoginService';
 import { defaultProbeDeps, probeProvider } from './engine/providerProbe';
 import { findAgyBinary } from './os/agyBinaryResolver';
-import { AGY_PROVIDER_ID, CODEX_PROVIDER_ID } from '@shared/providers';
+import { AGY_PROVIDER_ID, CODEX_PROVIDER_ID, runsOnMageRuntime } from '@shared/providers';
 import { setCustomProviderLoader, setGatewayLogger, startGateway, stopGateway } from './engine/proxy/gateway';
 import { defaultKillTreeDeps, killProcessTree } from './os/processTree';
 import { SessionManager } from './engine/sessionManager';
@@ -191,6 +191,7 @@ import { expiredScratchDirs, SWEEP_INTERVAL_MS } from './state/scratchRetention'
 import { ThinkingBuffer, ThinkingStore } from './state/thinkingStore';
 import { isTrusted, readCliTrustedFolders } from './os/workspaceTrust';
 import { findGitBinary } from './os/gitBinaryResolver';
+import { resolveShell } from './os/shellResolver';
 import { execCapturingStdout } from './os/execCapture';
 import { createGitService, findRepoRootWith, type GitService } from './git/gitService';
 import type { GitParams, GitSnapshot, GitSwitchParams } from '@shared/git';
@@ -490,7 +491,6 @@ const sessionManager = new SessionManager(
     createSessionFor(provider, base, {
       buildAdapter,
       buildRuntime: (id, runtimeBase) => buildRuntimeSession(id, runtimeBase, runtimeEnv()),
-      runtimeEnabled: process.env.MAGE_RUNTIME === '1',
     }),
   {
     homedir: homedir(),
@@ -515,6 +515,21 @@ function runtimeEnv(): RuntimeEnv {
     newId: randomUUID,
     platform: process.platform,
     fs: runtimeFs,
+    editFs: { readFile, writeFile, mkdir },
+    shell: () =>
+      resolveShell({
+        platform: process.platform,
+        preference: getSettingsStore().load().runtimeShell,
+        fileExists: existsSync,
+        commandInPath: isCommandOnPath,
+        programFiles: process.env.ProgramFiles,
+        gitBinary: findGitBinary(),
+        envShell: process.env.SHELL,
+      }),
+    spawn: (command, args, options) => spawn(command, [...args], options),
+    // Los comandos del modelo tampoco ven ninguna clave del usuario (invariante de facturacion).
+    commandEnv: () => scrubAgentEnv(process.env),
+    killTree: (child) => killProcessTree(child, killTreeDeps),
   };
 }
 
@@ -772,6 +787,22 @@ function listAllAccounts(): AccountInfo[] {
 function isLaunchableAccountDir(dir: string): boolean {
   if (isManagedAccountConfigDir(dir)) return true;
   return getProviderAccounts().find('codex', dir) !== null || getProviderAccounts().find('agy', dir) !== null;
+}
+
+// Guarda de `SessionCreate`. Un proveedor del runtime propio (P-032) no corre bajo ninguna cuenta: basta
+// con que exista en los ajustes; la carpeta, como siempre, tiene que ser de confianza.
+function assertLaunchable(params: CreateSessionParams): void {
+  if (runsOnMageRuntime(params.provider)) {
+    if (!getSettingsStore().load().customProviders.some((provider) => provider.id === params.provider)) {
+      throw new Error(`Proveedor no configurado: ${params.provider}`);
+    }
+  } else if (!isLaunchableAccountDir(params.accountDir)) {
+    throw new Error(`Cuenta no valida para lanzar un agente: ${params.accountDir}`);
+  }
+  // Sin cuenta de Claude detras no hay confianzas del CLI que leer: solo las de Mage.
+  const ownOnly = runsOnMageRuntime(params.provider) && !isManagedAccountConfigDir(params.accountDir);
+  const trusted = ownOnly ? isTrusted(params.cwd, getSettingsStore().load().trustedFolders) : isFolderTrusted(params.cwd, params.accountDir);
+  if (!trusted) throw new Error(`Carpeta no autorizada para lanzar un agente: ${params.cwd}`);
 }
 
 // ¿Tiene la cuenta de Claude con que autenticar? Login del CLI (.credentials.json) o clave de API en la
@@ -2182,12 +2213,7 @@ function registerIpcHandlers(): void {
     // Y la CUENTA se valida como en el resto de canales con ruta (`UsageGet`, `ConversationsList`…):
     // este es el unico que LANZA UN PROCESO, asi que un `accountDir` arbitrario seria un CLI corriendo
     // contra un config dir ajeno —con sus credenciales y sus hooks— por un solo mensaje IPC.
-    if (!isLaunchableAccountDir(params.accountDir)) {
-      throw new Error(`Cuenta no valida para lanzar un agente: ${params.accountDir}`);
-    }
-    if (!isFolderTrusted(params.cwd, params.accountDir)) {
-      throw new Error(`Carpeta no autorizada para lanzar un agente: ${params.cwd}`);
-    }
+    assertLaunchable(params);
     // M2.6: una conversacion privada se lanza bajo el perfil privado de la cuenta (mismo login,
     // projects propio). Compartida (default) usa la cuenta tal cual. El config dir efectivo vuelve al
     // renderer para localizar transcripciones/memoria de la conversacion.

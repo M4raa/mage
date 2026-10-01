@@ -1,4 +1,5 @@
 import { EFFORT_LEVELS, isPermissionMode, PERMISSION_MODES, type PermissionMode } from '@shared/ipc';
+import { RUNTIME_PERMISSION_MODES, runsOnMageRuntime } from '@shared/providers';
 
 // Datos PUROS de los selectores de pasos (P-028 32/33): modo de permiso y esfuerzo se eligen con un
 // deslizador de pasos (`StepSlider`); aqui viven sus pasos, etiquetas y el mapeo posicion <-> valor, sin
@@ -75,8 +76,17 @@ export function permissionModeLabel(mode: string): string {
 
 // --- Modos leidos del CLI (respuesta 18) ----------------------------------------------------------
 
-// Proveedores con selector de modo: Claude (su `--permission-mode`) y Codex (sus perfiles, sin verificar).
-export const PERMISSION_MODE_PROVIDERS: readonly string[] = ['claude', 'codex'];
+// Proveedores con selector de modo: Claude (su `--permission-mode`), Codex (sus perfiles, sin verificar) y
+// los del runtime propio de Mage (P-032: los cinco modos de Mage, sin CLI que sondear).
+export function hasPermissionModes(providerId: string): boolean {
+  return providerId === 'claude' || providerId === 'codex' || runsOnMageRuntime(providerId);
+}
+
+// Modos que rota Shift+Tab en una pestaña: el runtime siempre los cinco; Claude, los que exponga su CLI.
+export function permissionCycleForProvider(providerId: string, claudeModes: readonly string[] | null): readonly string[] {
+  if (runsOnMageRuntime(providerId)) return RUNTIME_PERMISSION_MODES;
+  return providerId === 'claude' ? permissionCycleFor(claudeModes) : [];
+}
 
 // Perfiles integrados de `codex app-server` (`permissionProfile/list`, medido en 0.144.4).
 const CODEX_PROFILE_LABEL: Readonly<Record<string, string>> = {
