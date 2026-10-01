@@ -1,3 +1,13 @@
+import {
+  parseChatChunk,
+  parseFinishReason,
+  parseOpenAiUsage,
+  sseData,
+  ToolCallAccumulator,
+  type TokenUsage,
+} from '../../runtime/openAiStream';
+import type { ChatChunk, ToolCallDelta } from '../../runtime/chatSchemas';
+
 // Traduccion del stream SSE de un proveedor OpenAI-compatible al SSE de la Messages API de Anthropic,
 // que es lo que el CLI de Claude espera cuando se le apunta a nuestro gateway.
 //
@@ -5,44 +15,20 @@
 // testeable: la clase no toca la red ni el reloj, solo consume lineas y devuelve las lineas SSE a
 // escribir. Antes esta logica estaba embebida en el handler de la respuesta HTTP y no tenia ni un test.
 
-// Contadores de tokens de un turno. Enteros: los tokens NO son decimales.
-export interface TokenUsage {
-  readonly inputTokens: number;
-  readonly outputTokens: number;
-}
+export { parseOpenAiUsage, type TokenUsage };
 
 const ZERO_USAGE: TokenUsage = { inputTokens: 0, outputTokens: 0 };
 
 // Motivo de parada en vocabulario Anthropic.
 type StopReason = 'end_turn' | 'tool_use' | 'max_tokens';
 
-// Parseo SEGURO del bloque `usage` del proveedor (frontera externa: puede venir ausente, null, con
-// strings, con decimales o con negativos). Devuelve null si no hay nada aprovechable, para que el
-// llamante distinga "el proveedor no mando uso" de "el uso fue cero" — que es justo la diferencia que
-// el gateway borraba al escribir 0 siempre.
-export function parseOpenAiUsage(raw: unknown): TokenUsage | null {
-  if (typeof raw !== 'object' || raw === null) return null;
-  const record = raw as Record<string, unknown>;
-  const inputTokens = readTokenCount(record.prompt_tokens);
-  const outputTokens = readTokenCount(record.completion_tokens);
-  if (inputTokens === null && outputTokens === null) return null;
-  return { inputTokens: inputTokens ?? 0, outputTokens: outputTokens ?? 0 };
-}
-
-// Un contador de tokens valido es un entero >= 0. Cualquier otra cosa (string, decimal, negativo,
-// NaN, Infinity) se descarta en vez de propagarse como un numero basura al panel de Uso.
-function readTokenCount(value: unknown): number | null {
-  if (typeof value !== 'number') return null;
-  if (!Number.isInteger(value) || value < 0) return null;
-  return value;
-}
-
-// `finish_reason` de OpenAI -> `stop_reason` de Anthropic. Un valor desconocido cae a 'end_turn': es
-// el unico neutro, y el turno termino de todas formas.
+// `finish_reason` de OpenAI -> `stop_reason` de Anthropic, sobre el vocabulario neutro de
+// `openAiStream`. Un valor desconocido cae a 'end_turn': es el unico neutro, y el turno termino.
 export function mapFinishReason(finishReason: unknown): StopReason | null {
-  if (typeof finishReason !== 'string' || finishReason.length === 0) return null;
-  if (finishReason === 'tool_calls' || finishReason === 'function_call') return 'tool_use';
-  if (finishReason === 'length') return 'max_tokens';
+  const reason = parseFinishReason(finishReason);
+  if (reason === null) return null;
+  if (reason === 'tool_calls') return 'tool_use';
+  if (reason === 'length') return 'max_tokens';
   return 'end_turn';
 }
 
@@ -67,6 +53,7 @@ export class AnthropicStreamTranslator {
   // propio espacio de numeracion y NO se pueden usar como indices de bloque: con texto + varias tools
   // colisionarian entre si (el codigo anterior los mezclaba).
   private readonly toolBlocks = new Map<number, OpenBlock>();
+  private readonly toolCalls = new ToolCallAccumulator();
   private capturedUsage: TokenUsage | null = null;
   private stopReason: StopReason | null = null;
   private modelName: string | null = null;
@@ -89,48 +76,43 @@ export class AnthropicStreamTranslator {
   // Consume una linea CRUDA del SSE del proveedor. Tolera lineas vacias, comentarios y el centinela
   // `[DONE]`; cualquier otra cosa que no sea JSON valido incrementa el contador de malformadas.
   push(rawLine: string): TranslatorResult {
-    const line = rawLine.trim();
-    if (line.length === 0 || !line.startsWith('data:')) return { lines: [] };
-    const data = line.slice('data:'.length).trim();
-    if (data.length === 0 || data === '[DONE]') return { lines: [] };
+    const data = sseData(rawLine);
+    return data === null ? { lines: [] } : this.pushData(data);
+  }
 
-    let chunk: unknown;
+  // Consume la carga de una linea `data:` ya extraida (la que devuelve `SseDecoder`).
+  pushData(data: string): TranslatorResult {
+    let chunk: ChatChunk;
     try {
-      chunk = JSON.parse(data);
+      chunk = parseChatChunk(data);
     } catch {
+      // No es silencioso: se cuenta y el gateway lo reporta (ver `malformedLines`).
       this.malformedLines += 1;
       return { lines: [] };
     }
     return this.consumeChunk(chunk);
   }
 
-  private consumeChunk(chunk: unknown): TranslatorResult {
-    if (typeof chunk !== 'object' || chunk === null) {
-      this.malformedLines += 1;
-      return { lines: [] };
-    }
-    const record = chunk as Record<string, unknown>;
-
+  private consumeChunk(chunk: ChatChunk): TranslatorResult {
     // El uso puede venir en CUALQUIER chunk (Gemini lo manda en varios; OpenAI solo en el ultimo, y
     // solo si se pidio `stream_options.include_usage`). Nos quedamos con el ultimo no nulo.
-    const usage = parseOpenAiUsage(record.usage);
+    const usage = parseOpenAiUsage(chunk.usage);
     if (usage !== null) this.capturedUsage = usage;
-    if (typeof record.model === 'string' && record.model.length > 0) this.modelName = record.model;
+    if (chunk.model !== undefined && chunk.model.length > 0) this.modelName = chunk.model;
 
-    const choice = readFirstChoice(record.choices);
-    if (choice === null) return { lines: [] };
+    const choice = chunk.choices[0];
+    if (choice === undefined) return { lines: [] };
 
     const finish = mapFinishReason(choice.finish_reason);
     if (finish !== null) this.stopReason = finish;
 
     const delta = choice.delta;
-    if (typeof delta !== 'object' || delta === null) return { lines: [] };
-    const deltaRecord = delta as Record<string, unknown>;
+    if (delta === undefined) return { lines: [] };
 
     const lines: string[] = [];
     this.ensureMessageStart(lines);
-    this.emitTextDelta(deltaRecord.content, lines);
-    this.emitToolCallDeltas(deltaRecord.tool_calls, lines);
+    this.emitTextDelta(delta.content, lines);
+    for (const call of delta.tool_calls ?? []) this.emitToolCallDelta(call, lines);
     return { lines };
   }
 
@@ -185,7 +167,7 @@ export class AnthropicStreamTranslator {
     );
   }
 
-  private emitTextDelta(content: unknown, lines: string[]): void {
+  private emitTextDelta(content: string | null | undefined, lines: string[]): void {
     if (typeof content !== 'string' || content.length === 0) return;
     if (this.textBlock === null) {
       this.textBlock = { index: this.nextBlockIndex++, kind: 'text' };
@@ -202,49 +184,35 @@ export class AnthropicStreamTranslator {
     );
   }
 
-  private emitToolCallDeltas(toolCalls: unknown, lines: string[]): void {
-    if (!Array.isArray(toolCalls)) return;
-    for (const entry of toolCalls) {
-      if (typeof entry !== 'object' || entry === null) continue;
-      this.emitToolCallDelta(entry as Record<string, unknown>, lines);
-    }
-  }
+  // El reensamblado (por `index`, o por `id`) es el de `openAiStream`; aqui solo se decide cuando abrir
+  // el bloque Anthropic de cada llamada y se reenvian sus fragmentos de argumentos.
+  private emitToolCallDelta(call: ToolCallDelta, lines: string[]): void {
+    const fragment = this.toolCalls.add(call);
 
-  private emitToolCallDelta(call: Record<string, unknown>, lines: string[]): void {
-    const providerIndex = typeof call.index === 'number' && Number.isInteger(call.index) ? call.index : 0;
-    const fn = typeof call.function === 'object' && call.function !== null ? (call.function as Record<string, unknown>) : {};
-    const id = typeof call.id === 'string' && call.id.length > 0 ? call.id : null;
-
-    // Chunk de APERTURA: trae el id de la tool call. Antes de abrir el bloque de tool hay que cerrar el
-    // de texto, porque Anthropic no admite dos bloques abiertos a la vez.
-    if (id !== null && !this.toolBlocks.has(providerIndex)) {
+    // APERTURA: cuando la llamada ya tiene id. Antes de abrir el bloque de tool hay que cerrar el de
+    // texto, porque Anthropic no admite dos bloques abiertos a la vez.
+    if (fragment.id !== null && !this.toolBlocks.has(fragment.slot)) {
       this.closeTextBlock(lines);
       const block: OpenBlock = { index: this.nextBlockIndex++, kind: 'tool_use' };
-      this.toolBlocks.set(providerIndex, block);
+      this.toolBlocks.set(fragment.slot, block);
       lines.push(
         sse({
           type: 'content_block_start',
           index: block.index,
-          content_block: {
-            type: 'tool_use',
-            id,
-            name: typeof fn.name === 'string' ? fn.name : '',
-            input: {},
-          },
+          content_block: { type: 'tool_use', id: fragment.id, name: fragment.name, input: {} },
         }),
       );
     }
 
-    // Chunks de CONTINUACION: fragmentos del JSON de argumentos.
-    const args = fn.arguments;
-    if (typeof args !== 'string' || args.length === 0) return;
-    const block = this.toolBlocks.get(providerIndex);
+    // CONTINUACION: fragmentos del JSON de argumentos.
+    if (fragment.argumentsDelta.length === 0) return;
+    const block = this.toolBlocks.get(fragment.slot);
     if (block === undefined) return; // argumentos sin apertura previa: nada donde colgarlos
     lines.push(
       sse({
         type: 'content_block_delta',
         index: block.index,
-        delta: { type: 'input_json_delta', partial_json: args },
+        delta: { type: 'input_json_delta', partial_json: fragment.argumentsDelta },
       }),
     );
   }

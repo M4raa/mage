@@ -5,6 +5,7 @@ import { request as httpRequest } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { URL } from 'node:url';
 import { AnthropicStreamTranslator, translateOpenAiResponse } from './streamTranslator';
+import { SseDecoder } from '../../runtime/openAiStream';
 import { resolveUpstream, type KeyedCustomProvider, type UpstreamTarget } from './providerEndpoints';
 
 // Registry to keep track of active sessions
@@ -351,22 +352,17 @@ function sendOpenAiRequest(targetUrl: string, apiKey: string, payload: any, res:
 
 function handleStreamResponse(targetRes: IncomingMessage, res: ServerResponse, fallbackModel: string): void {
   const translator = new AnthropicStreamTranslator(newMessageId(), fallbackModel);
-  let buffer = '';
+  const decoder = new SseDecoder();
+  const write = (payloads: readonly string[]): void => {
+    for (const data of payloads) for (const out of translator.pushData(data).lines) res.write(out);
+  };
 
   targetRes.setEncoding('utf8');
-  targetRes.on('data', (chunk: string) => {
-    buffer += chunk;
-    let nl: number;
-    while ((nl = buffer.indexOf('\n')) !== -1) {
-      const line = buffer.slice(0, nl);
-      buffer = buffer.slice(nl + 1);
-      for (const out of translator.push(line).lines) res.write(out);
-    }
-  });
+  targetRes.on('data', (chunk: string) => write(decoder.push(chunk)));
 
   targetRes.on('end', () => {
     // Ultima linea sin '\n' final (algunos proveedores cierran sin el salto).
-    for (const out of translator.push(buffer).lines) res.write(out);
+    write(decoder.end());
     for (const out of translator.finish().lines) res.write(out);
     res.end();
 
