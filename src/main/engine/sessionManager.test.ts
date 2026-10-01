@@ -90,14 +90,24 @@ describe('SessionManager.create', () => {
     expect(h.launchOf(0)).toMatchObject({ sessionId: 'previa-123', resume: true });
   });
 
-  it('create_proveedorNoClaudeConResumeSessionId_ignoraElResumeYArrancaFresca', () => {
-    // Solo Claude soporta --resume; los adapters por gateway arrancan sesion nueva con id nuevo.
+  it('create_proveedorSinTranscripcionConResumeSessionId_ignoraElResumeYArrancaFresca', () => {
+    // agy lleva su historial en su propio formato: Mage no lo relee, asi que arranca sesion nueva.
     const h = harness();
 
-    const sessionId = h.manager.create(params({ provider: 'gemini', resumeSessionId: 'previa-123' }), h.sink);
+    const sessionId = h.manager.create(params({ provider: 'agy', resumeSessionId: 'previa-123' }), h.sink);
 
     expect(sessionId).not.toBe('previa-123');
     expect(h.launchOf(0).resume).toBe(false);
+  });
+
+  it('create_runtimePropioConResumeSessionId_reanudaConElMismoId', () => {
+    // P-032 R4: el runtime propio relee su transcripcion de userData/runtime.
+    const h = harness();
+
+    const sessionId = h.manager.create(params({ provider: 'custom:ollama', accountDir: '', resumeSessionId: 'previa-123' }), h.sink);
+
+    expect(sessionId).toBe('previa-123');
+    expect(h.launchOf(0).resume).toBe(true);
   });
 
   it('create_resumeSessionIdVacio_seTrataComoAusente', () => {

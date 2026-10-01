@@ -28,6 +28,7 @@ const PREFS_SCHEMA = z.object({
   model: z.string().min(1).optional(),
   effort: z.string().min(1).optional(),
   permissionMode: z.enum(['default', 'acceptEdits', 'plan', 'auto', 'bypassPermissions']).optional().catch(undefined),
+  provider: z.string().min(1).optional().catch(undefined),
   // "Permitir siempre <tool> aqui" (2.3b).
   alwaysAllowTools: z.array(z.string().min(1)).optional(),
 });
@@ -128,7 +129,7 @@ export class ConversationIndexStore {
 // Fusion campo a campo: `undefined` conserva lo que hubiera; cadena vacia borra.
 function mergePrefs(current: ConversationPrefs | undefined, incoming: ConversationPrefs): ConversationPrefs {
   const merged: Record<string, unknown> = { ...current };
-  for (const key of ['model', 'effort', 'permissionMode'] as const) {
+  for (const key of ['model', 'effort', 'permissionMode', 'provider'] as const) {
     const value = incoming[key];
     if (value === undefined) continue;
     if (value.length === 0) delete merged[key];

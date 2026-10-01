@@ -159,3 +159,32 @@ describe('ConversationAdminService.moveConversation', () => {
 function encoded(cwd: string): string {
   return cwd.replace(/[^a-zA-Z0-9]/g, '-');
 }
+
+describe('ConversationAdminService con el runtime propio (P-032 R4)', () => {
+  const RUNTIME = join('/datos', 'runtime');
+
+  it('deleteConversation_delRuntime_borraSuFichero', () => {
+    const file = resolveTranscriptPath(RUNTIME, CWD, SID);
+    const { deps, removeFile } = makeDeps([file], { runtimeRoot: RUNTIME });
+
+    new ConversationAdminService(deps).deleteConversation({ accountDir: ACC, sessionId: SID, cwd: CWD, privacy: 'shared' });
+
+    expect(removeFile).toHaveBeenCalledWith(file);
+  });
+
+  it('moveConversation_delRuntime_noMueveNada', () => {
+    const { deps, move } = makeDeps([resolveTranscriptPath(RUNTIME, CWD, SID)], { runtimeRoot: RUNTIME });
+
+    const result = new ConversationAdminService(deps).moveConversation({
+      accountDir: ACC,
+      sessionId: SID,
+      cwd: CWD,
+      privacy: 'shared',
+      destAccountDir: ACC2,
+      destPrivacy: 'shared',
+    });
+
+    expect(move).not.toHaveBeenCalled();
+    expect(result).toEqual({ configDir: ACC2 });
+  });
+});

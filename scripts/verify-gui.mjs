@@ -7085,7 +7085,11 @@ const CHECKS = [
         if (outcome.tab !== null) await page.evaluate((tabId) => window.__mageDev.store.getState().closeTab(tabId), outcome.tab.id);
         const viaFake =
           fake === null || (fake.stats.completions === 2 && outcome.tools.includes('Read') && outcome.agentText.includes(FAKE_TURN_FINAL_TEXT));
-        const ok = outcome.sent && outcome.status === 'idle' && outcome.agentText.trim().length > 0 && outcome.errors.length === 0 && viaFake;
+        // P-032 R4: la conversacion del runtime se reabre desde el historial con su Read y su texto (sin
+        // enviar nada: la hidratacion sale de la transcripcion de userData/runtime).
+        const reabierta = fake !== null && outcome.sent ? await reopenTurnFromHistory(page, outcome.tab) : null;
+        const reabiertaOk = reabierta === null || (reabierta.tools.includes('Read') && reabierta.agentText.includes(FAKE_TURN_FINAL_TEXT));
+        const ok = outcome.sent && outcome.status === 'idle' && outcome.agentText.trim().length > 0 && outcome.errors.length === 0 && viaFake && reabiertaOk;
         const detail = {
           modo: decision.target,
           motivo: decision.reason,
@@ -7097,7 +7101,7 @@ const CHECKS = [
           errores: outcome.errors,
           bloques: outcome.kinds,
           ms: outcome.ms,
-          ...(fake === null ? {} : { peticionesAlFalso: fake.stats.completions, conStream: fake.stats.streamed, herramientas: outcome.tools }),
+          ...(fake === null ? {} : { peticionesAlFalso: fake.stats.completions, conStream: fake.stats.streamed, herramientas: outcome.tools, reabierta }),
         };
         return { ok, detail: JSON.stringify(detail) };
       } finally {
@@ -8583,6 +8587,31 @@ async function openTurnTab(page, { target, fake, userDataDir }) {
   );
   await waitForFile(path.join(userDataDir, 'app-settings.json'), (text) => text.includes(FAKE_TURN_PROVIDER.id));
   return { provider: FAKE_TURN_PROVIDER.id, model: FAKE_TURN_MODEL };
+}
+
+// Reabre desde el historial la conversacion del turno local y espera a que se hidrate. Cierra la pestaña.
+async function reopenTurnFromHistory(page, tab) {
+  const opened = await page.evaluate(async (sessionTitle) => {
+    const state = window.__mageDev.store.getState();
+    await state.loadConversationHistory();
+    const item = window.__mageDev.store.getState().conversationHistory.find((entry) => entry.title.startsWith(sessionTitle.slice(0, 20))) ?? null;
+    if (item === null) return null;
+    window.__mageDev.store.getState().openConversation(item);
+    return item.sessionId;
+  }, MINIMAL_TURN.prompt);
+  if (opened === null) return { encontrada: false, tools: [], agentText: '' };
+  const deadline = Date.now() + CONFIG.actionTimeoutMs;
+  let last = { tools: [], agentText: '' };
+  while (Date.now() < deadline) {
+    const reopened = await activeTurnTab(page);
+    if (reopened !== null) last = await readTurnState(page, reopened);
+    if (last.tools.includes('Read') && last.agentText.length > 0) {
+      await page.evaluate((id) => window.__mageDev.store.getState().closeTab(id), reopened.id);
+      return { encontrada: true, provider: reopened.provider, ...last };
+    }
+    await page.waitForTimeout(CONFIG.pollIntervalMs);
+  }
+  return { encontrada: true, ...last, agotado: true, tab: tab?.id ?? null };
 }
 
 // La pestaña activa, lo justo para la guarda y el informe.

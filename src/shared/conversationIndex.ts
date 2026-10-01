@@ -12,6 +12,9 @@ export interface ConversationPrefs {
   // del indice la reemplaza entera: la lista que manda el renderer es siempre el estado completo de
   // esa conversacion (se concede en la tarjeta y se revoca en el panel, nunca por parches sueltos).
   readonly alwaysAllowTools?: readonly string[];
+  // Proveedor con el que se abrio (P-032 R4): al reabrir del historial decide el runtime. Ausente =
+  // Claude (todo lo anterior, y las transcripciones antiguas del gateway).
+  readonly provider?: string;
 }
 
 // Artifact publicado: pertenece a la cuenta que lo publico y NO cambia de dueño al abrir la

@@ -166,3 +166,22 @@ describe('ConversationsService.listConversations', () => {
     expect(service.listConversations(ACC)[0]).toMatchObject({ title: 'say-hello', isScheduled: true });
   });
 });
+
+describe('ConversationsService con el runtime propio (P-032 R4)', () => {
+  it('listConversations_runtime_salenConLaCuentaQueLista', () => {
+    const runtime = join('/datos', 'runtime', 'projects');
+    const folder = join(runtime, 'C--proj');
+    const service = new ConversationsService(
+      deps({
+        exists: (p) => p === runtime,
+        listDir: (p) => (p === runtime ? ['C--proj'] : p === folder ? ['r1.jsonl'] : []),
+        readPrefix: () => userLine('hola runtime', 'C:\proj'),
+        runtimeProjectsDir: () => runtime,
+      }),
+    );
+
+    const list = service.listConversations(ACC);
+
+    expect(list).toEqual([expect.objectContaining({ sessionId: 'r1', configDir: ACC, privacy: 'shared', title: 'hola runtime' })]);
+  });
+});

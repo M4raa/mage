@@ -26,6 +26,9 @@ export interface ConversationsDeps {
   readonly readPrefix: (path: string, maxBytes: number) => string;
   // Los ULTIMOS `maxBytes` del fichero (todo el fichero si es mas pequeño).
   readonly readSuffix: (path: string, maxBytes: number) => string;
+  // `projects/` del runtime propio de Mage (P-032, ficha D3), que no es de ninguna cuenta. Sus
+  // conversaciones salen en el historial de TODAS, como las compartidas.
+  readonly runtimeProjectsDir?: () => string;
 }
 
 interface Root {
@@ -46,6 +49,9 @@ export class ConversationsService {
     const roots: readonly Root[] = [
       { projectsDir: join(dir, 'projects'), configDir: dir, privacy: 'shared' },
       { projectsDir: join(dir, PRIVATE_PROFILE_DIR, 'projects'), configDir: join(dir, PRIVATE_PROFILE_DIR), privacy: 'private' },
+      // `configDir` es la CUENTA que lista, no la raiz del runtime: la pestaña reabierta sigue bajo esa
+      // cuenta y main encuentra el fichero por su id (`conversationTranscriptPath`).
+      ...(this.deps.runtimeProjectsDir === undefined ? [] : [{ projectsDir: this.deps.runtimeProjectsDir(), configDir: dir, privacy: 'shared' as const }]),
     ];
     const all = roots.flatMap((root) => this.listRoot(root));
     all.sort((a, b) => b.updatedAtMs - a.updatedAtMs);

@@ -1,4 +1,4 @@
-import { normalize } from 'node:path';
+import { normalize, sep } from 'node:path';
 
 // Compara dos rutas del sistema de forma robusta: normaliza separadores y '..'/'.', ignora la barra
 // final y compara sin distinguir mayusculas/minusculas (Windows es case-insensitive; en POSIX rara vez
@@ -29,4 +29,11 @@ function stripTrailingSeparator(path: string): string {
   if (trimmed.length === 0) return path; // era solo separadores ("/", "\\", "//")
   if (/^[A-Za-z]:$/.test(trimmed)) return path; // "C:\" -> no dejarlo en "C:"
   return trimmed;
+}
+
+// ¿Cae `target` DENTRO de `root` (no en `root` mismo)? Con la misma normalizacion que `pathEquals`.
+export function isPathUnder(root: string, target: string): boolean {
+  const base = normalizeForCompare(root);
+  const candidate = normalizeForCompare(target);
+  return candidate.length > base.length + 1 && candidate.startsWith(base) && (candidate[base.length] === sep || candidate[base.length] === '/');
 }

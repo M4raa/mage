@@ -25,6 +25,8 @@ export interface ConversationAdminDeps {
   readonly privateProfileDir: (accountDir: string) => string;
   // Ruta del perfil privado CREANDOLO si falta (para el DESTINO privado).
   readonly ensurePrivateProfile: (accountDir: string) => string;
+  // Raiz de las transcripciones del runtime propio (P-032): no son de ninguna cuenta.
+  readonly runtimeRoot?: string;
 }
 
 export class ConversationAdminService {
@@ -38,6 +40,12 @@ export class ConversationAdminService {
     if (this.deps.exists(file)) this.deps.removeFile(file);
     const subagents = join(dirname(file), params.sessionId);
     if (this.deps.exists(subagents)) this.deps.removeDir(subagents);
+    const runtime = this.runtimeFile(params.cwd, params.sessionId);
+    if (runtime !== null && this.deps.exists(runtime)) this.deps.removeFile(runtime);
+  }
+
+  private runtimeFile(cwd: string, sessionId: string): string | null {
+    return this.deps.runtimeRoot === undefined ? null : resolveTranscriptPath(this.deps.runtimeRoot, cwd, sessionId);
   }
 
   // Mueve la transcripcion (y subagentes) al projects/ del destino. Devuelve el dir efectivo destino
@@ -57,6 +65,9 @@ export class ConversationAdminService {
     // ya existe». No hay nada que mover: basta con reabrirla bajo la otra cuenta.
     if (this.isSameFile(srcFile, destFile)) return { configDir: destDir };
 
+    // Una conversacion del runtime propio no vive en ninguna cuenta: tampoco hay nada que mover.
+    const runtime = this.runtimeFile(params.cwd, params.sessionId);
+    if (!this.deps.exists(srcFile) && runtime !== null && this.deps.exists(runtime)) return { configDir: destDir };
     if (!this.deps.exists(srcFile)) {
       throw new Error(`No existe la transcripcion a mover: ${srcFile}`);
     }

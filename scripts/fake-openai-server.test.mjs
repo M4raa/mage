@@ -1,10 +1,10 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { glob, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, describe, expect, it } from 'vitest';
 import { FAKE_OPENAI_REPLY, startFakeOpenAiServer } from './fake-openai-server.mjs';
 import { buildRuntimeSession } from '../src/main/runtime/runtimeFactory';
 
@@ -12,6 +12,8 @@ import { buildRuntimeSession } from '../src/main/runtime/runtimeFactory';
 // sesion que monta main, sin GUI. Es la verificacion de punta a punta de cada fase de P-032.
 let fake = null;
 let workDir = null;
+const transcriptRoot = mkdtempSync(join(tmpdir(), 'mage-rt-transcripts-'));
+afterAll(() => rmSync(transcriptRoot, { recursive: true, force: true }));
 afterEach(async () => {
   await fake?.close();
   fake = null;
@@ -46,6 +48,10 @@ function envFor(baseUrl, overrides = {}) {
       child.kill();
       return 'signal';
     },
+    transcriptRoot,
+    appendLine: (path, line) => appendFileSync(path, line, 'utf8'),
+    mkdir: (path) => mkdirSync(path, { recursive: true }),
+    readText: (path) => (existsSync(path) ? readFileSync(path, 'utf8') : null),
     ...overrides,
   };
 }
@@ -146,6 +152,27 @@ describe('runtime propio contra el servidor falso', () => {
     const result = events.find((e) => e.kind === 'tool_result').result;
     expect(result.file.structuredPatch).toEqual([{ oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, lines: ['-hola', '+adiós'] }]);
     expect(readFileSync(join(cwd, 'hola.txt'), 'utf8')).toBe('adiós\n');
+  });
+
+  it('reanudar_trasCerrar_elSiguienteMensajeMantieneElContexto', async () => {
+    fake = await startFakeOpenAiServer();
+    const cwd = tempProject({});
+    const first = [];
+    const params = { cwd, sessionId: 'reanudar-1' };
+    const one = buildRuntimeSession('custom:falso', launch('fake:cuenta-mensajes', first, params), envFor(fake.baseUrl));
+    one.start();
+    one.sendUserMessage('uno');
+    await waitFor(first, (e) => e.kind === 'result');
+    one.stop();
+
+    const second = [];
+    const two = buildRuntimeSession('custom:falso', launch('fake:cuenta-mensajes', second, { ...params, resume: true }), envFor(fake.baseUrl));
+    two.start();
+    two.sendUserMessage('dos');
+    await waitFor(second, (e) => e.kind === 'result');
+
+    const reply = second.filter((e) => e.kind === 'stream_delta').map((e) => e.text).join('');
+    expect(reply).toBe('mensajes: 3');
   });
 
   it('turno_proveedorNoConfigurado_lanzaConElId', () => {

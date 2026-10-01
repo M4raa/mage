@@ -30,6 +30,7 @@ export interface TurnRecorder {
   // Mensajes nuevos que dejo el turno en el historial (para reanudar con lo mismo que vio el modelo).
   turnEnd(added: readonly ChatMessage[], outcome: TurnOutcome): void;
   reset(newSessionId: string): void;
+  rename(title: string): void;
 }
 
 export interface RuntimeSessionDeps {
@@ -59,6 +60,7 @@ interface PendingPermission {
 }
 
 const CLEAR_COMMAND = '/clear';
+const RENAME_COMMAND = /^\/rename\s+(\S.*)$/s;
 
 export class RuntimeSession implements ManagedSession {
   private sessionId: string;
@@ -79,6 +81,10 @@ export class RuntimeSession implements ManagedSession {
     this.mode = deps.permissionMode;
     this.toolsEnabled = deps.toolsEnabled;
     this.history = [...(deps.history ?? [])];
+  }
+
+  get currentModel(): string {
+    return this.model;
   }
 
   start(): void {
@@ -139,7 +145,9 @@ export class RuntimeSession implements ManagedSession {
     this.draining = true;
     try {
       for (let text = this.queue.shift(); text !== undefined && !this.stopped; text = this.queue.shift()) {
+        const rename = RENAME_COMMAND.exec(text.trim());
         if (text.trim() === CLEAR_COMMAND) this.resetConversation();
+        else if (rename !== null) this.rename(rename[1]!.trim());
         else await this.runOne(text);
       }
     } finally {
@@ -246,6 +254,12 @@ export class RuntimeSession implements ManagedSession {
     }
   }
 
+  // `/rename <titulo>`: el `custom-title` va a la transcripcion, como lo hace el CLI. Sin turno.
+  private rename(title: string): void {
+    this.deps.recorder?.rename(title);
+    this.deps.emit({ kind: 'local_command_output', command: 'rename', args: title, text: '' });
+  }
+
   // `/clear`: conversacion nueva en la misma sesion, sin gastar nada.
   private resetConversation(): void {
     const newSessionId = this.deps.newId();
@@ -263,7 +277,7 @@ export class RuntimeSession implements ManagedSession {
       model: this.model,
       tools: this.toolsEnabled ? this.deps.tools.names() : [],
       mcpServers: [],
-      slashCommands: ['clear'],
+      slashCommands: ['clear', 'rename'],
       skills: [],
       plugins: [],
       pluginErrors: [],

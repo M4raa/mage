@@ -209,7 +209,7 @@ import type { WidgetSnapshot } from '@shared/widget';
 import { ThemeMarketService } from './theme/themeMarketService';
 import type { FetchThemeParams } from '@shared/themeMarket';
 import { flushPendingUpdatePrompt, getUpdateState, installUpdate, startAutoUpdate } from './update/autoUpdate';
-import { pathEquals } from './os/pathUtils';
+import { isPathUnder, pathEquals } from './os/pathUtils';
 import { isWindowId, MAIN_WINDOW_ID, WindowManager, type WindowPlacement } from './windows/windowManager';
 import { installExternalLinkHandler, type ExternalLinkDeps } from './windows/externalLinks';
 import { resolveDropTarget } from './windows/dropTarget';
@@ -530,7 +530,26 @@ function runtimeEnv(): RuntimeEnv {
     // Los comandos del modelo tampoco ven ninguna clave del usuario (invariante de facturacion).
     commandEnv: () => scrubAgentEnv(process.env),
     killTree: (child) => killProcessTree(child, killTreeDeps),
+    transcriptRoot: runtimeTranscriptRoot(),
+    appendLine: (path, line) => appendFileSync(path, line, 'utf8'),
+    mkdir: (path) => mkdirSync(path, { recursive: true }),
+    readText: (path) => (existsSync(path) ? readFileSync(path, 'utf8') : null),
   };
+}
+
+// Transcripciones del runtime propio (P-032, ficha D3): de Mage, fuera de las cuentas de Claude.
+function runtimeTranscriptRoot(): string {
+  return join(app.getPath('userData'), 'runtime');
+}
+
+// Donde esta la transcripcion de una conversacion: la de la cuenta si existe y, si no, la del runtime
+// propio. Una pestaña del runtime conserva su cuenta de Claude (los paneles que la usan siguen igual) y
+// es aqui donde se encuentra su fichero. Los ids son UUID: no hay dos conversaciones con el mismo.
+function conversationTranscriptPath(accountDir: string, cwd: string, sessionId: string): string {
+  const own = resolveTranscriptPath(accountDir, cwd, sessionId);
+  if (existsSync(own)) return own;
+  const runtime = resolveTranscriptPath(runtimeTranscriptRoot(), cwd, sessionId);
+  return existsSync(runtime) ? runtime : own;
 }
 
 // Lo que las herramientas del runtime leen y escriben del disco (fs/promises, asincrono: no bloquea main).
@@ -897,6 +916,7 @@ const conversationsService = new ConversationsService({
   },
   readPrefix: (path, maxBytes) => readFilePrefix(path, maxBytes),
   readSuffix: (path, maxBytes) => readFileSuffix(path, maxBytes),
+  runtimeProjectsDir: () => join(runtimeTranscriptRoot(), 'projects'),
 });
 
 // FS del fichero de credenciales, compartido por los DOS escritores del token: el login y la
@@ -1070,6 +1090,8 @@ const PRIVATE_PROFILE_SEGMENT = 'mage-private';
 // (nunca una ruta arbitraria via IPC). No exige que exista (eso lo validan los servicios al leer).
 function isUnderManagedProjects(targetPath: string): boolean {
   const resolved = resolve(targetPath);
+  // Las transcripciones del runtime propio (P-032, ficha D3) viven en userData/runtime/projects.
+  if (isPathUnder(join(runtimeTranscriptRoot(), 'projects'), resolved)) return true;
   // Comparacion por `pathEquals` y no por `startsWith` crudo (B13f): en Windows las rutas no
   // distinguen mayusculas, asi que una ruta con la unidad en minusculas se rechazaba con
   // `bad_request_invalid_config_dir`. `pathEquals` ya resuelve eso, y solo en win32.
@@ -2505,7 +2527,7 @@ function registerIpcHandlers(): void {
     const filePath =
       params.agentId !== undefined
         ? resolveSubagentTranscriptPath(params.accountDir, params.cwd, params.sessionId, params.agentId)
-        : resolveTranscriptPath(params.accountDir, params.cwd, params.sessionId);
+        : conversationTranscriptPath(params.accountDir, params.cwd, params.sessionId);
     if (!isUnderManagedProjects(filePath)) {
       throw new Error(`Ruta de transcripcion no permitida (debe caer bajo ~/.claude*/projects): ${filePath}`);
     }
@@ -2565,6 +2587,7 @@ function registerIpcHandlers(): void {
     realpath: (p) => realpathSync(p),
     privateProfileDir: (dir) => join(dir, PRIVATE_PROFILE_SEGMENT),
     ensurePrivateProfile: (dir) => accountService.ensurePrivateProfile(dir),
+    runtimeRoot: runtimeTranscriptRoot(),
   });
   // Whitelisting IPC: cuentas gestionadas bajo HOME + sessionId como segmento seguro (nunca `..`).
   const requireSafeConversation = (accountDir: string, sessionId: string): void => {

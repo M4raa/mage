@@ -7,6 +7,7 @@ import type { AgentSessionDeps, SessionLogFn } from './agentSession';
 import { resolveLaunchParams, type DefaultsDeps } from './sessionDefaults';
 import { unregisterSession } from './proxy/gateway';
 import { pathEquals } from '../os/pathUtils';
+import { writesClaudeTranscript } from '@shared/providers';
 
 // Sumidero de eventos hacia el consumidor (en produccion, webContents.send del renderer).
 export type EventSink = (payload: SessionEventPayload) => void;
@@ -51,11 +52,12 @@ export class SessionManager {
 
   // Crea y arranca una sesion; devuelve su id. Los eventos van al sink proporcionado. `ownerId` (el
   // webContents que la pide) permite pararlas todas juntas cuando ese dueño desaparece.
-  // Reanudar (M2.5) solo aplica a Claude: se reutiliza el sessionId pasado (misma transcripcion) y se
-  // marca `resume`. Otros proveedores ignoran resumeSessionId y arrancan una sesion fresca con id nuevo.
+  // Reanudar (M2.5) aplica a quien deja una transcripcion que Mage sabe releer (Claude y el runtime
+  // propio, P-032 R4): se reutiliza el sessionId pasado y se marca `resume`. El resto ignora
+  // resumeSessionId y arranca una sesion fresca con id nuevo.
   create(params: CreateSessionParams, sink: EventSink, ownerId?: number): string {
     const isResume =
-      params.provider === 'claude' && typeof params.resumeSessionId === 'string' && params.resumeSessionId.length > 0;
+      writesClaudeTranscript(params.provider) && typeof params.resumeSessionId === 'string' && params.resumeSessionId.length > 0;
     const sessionId = isResume ? (params.resumeSessionId as string) : randomUUID();
     // Una conversacion NO puede estar viva dos veces: serian dos procesos del CLI escribiendo la misma
     // transcripcion, que acabaria corrupta. Hoy el renderer ya evita llegar aqui (openConversation

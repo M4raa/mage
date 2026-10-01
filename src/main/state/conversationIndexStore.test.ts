@@ -57,6 +57,16 @@ describe('ConversationIndexStore — preferencias (2.1)', () => {
     expect(store.loadPrefs(SESSION)).toEqual({ model: 'opus', effort: 'high', permissionMode: 'plan' });
   });
 
+  it('savePrefs_provider_seGuardaYSeConservaEnLosParciales', () => {
+    // P-032 R4: el proveedor decide con que runtime se reabre la conversacion.
+    const store = memoryStore();
+    store.savePrefs(SESSION, { model: 'qwen', provider: 'custom:ollama' });
+
+    store.savePrefs(SESSION, { effort: 'low' });
+
+    expect(store.loadPrefs(SESSION)).toEqual({ model: 'qwen', effort: 'low', provider: 'custom:ollama' });
+  });
+
   it('savePrefs_parcial_conservaLosCamposNoEnviados', () => {
     const store = memoryStore();
     store.savePrefs(SESSION, { model: 'opus', effort: 'high' });

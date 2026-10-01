@@ -169,7 +169,7 @@ describe('RuntimeSession turno', () => {
   });
 
   it('sendUserMessage_unexpectedRecorderFailure_reportsAndKeepsSessionAlive', async () => {
-    const recorder = { user: () => { throw new Error('disco lleno'); }, loop: () => undefined, turnEnd: () => undefined, reset: () => undefined };
+    const recorder = { user: () => { throw new Error('disco lleno'); }, loop: () => undefined, turnEnd: () => undefined, reset: () => undefined, rename: () => undefined };
     const { session, events } = setup([textReply('x')], { recorder });
     session.start();
 
@@ -205,6 +205,20 @@ describe('RuntimeSession turno', () => {
 
     expect(client.requests).toHaveLength(0);
     expect(events).toContainEqual({ kind: 'conversation_reset', newSessionId: 'id1' });
+  });
+
+  it('sendUserMessage_rename_recordsTitleWithoutRequest', async () => {
+    const titles: string[] = [];
+    const recorder = { user: () => undefined, loop: () => undefined, turnEnd: () => undefined, reset: () => undefined, rename: (t: string) => titles.push(t) };
+    const { session, events, client } = setup([], { recorder });
+    session.start();
+
+    session.sendUserMessage('/rename  Mi conversación ');
+    await settle();
+
+    expect(titles).toEqual(['Mi conversación']);
+    expect(client.requests).toHaveLength(0);
+    expect(events).toContainEqual({ kind: 'local_command_output', command: 'rename', args: 'Mi conversación', text: '' });
   });
 
   it('setPermissionMode_unknown_throwsWithValue', () => {

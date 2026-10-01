@@ -26,6 +26,8 @@ export interface ReopenedTabPrefs {
   readonly permissionMode?: PermissionMode;
   // Reglas "Permitir siempre <tool> aqui" con las que se dejo la conversacion (2.3b).
   readonly alwaysAllowTools?: readonly string[];
+  // Proveedor con el que se abrio (P-032 R4). Ausente = Claude.
+  readonly provider?: string;
 }
 
 export function resolveReopenedTabPrefs(ctx: ReopenedTabPrefsContext): ReopenedTabPrefs {
@@ -39,6 +41,7 @@ export function resolveReopenedTabPrefs(ctx: ReopenedTabPrefsContext): ReopenedT
   const effort = firstNonEmpty(saved?.effort);
   const permissionMode = toPermissionMode(saved?.permissionMode);
   const alwaysAllowTools = sanitizeAlwaysAllow(saved?.alwaysAllowTools);
+  const provider = firstNonEmpty(saved?.provider);
   return {
     model,
     // Las claves ausentes NO se ponen a undefined: `Tab` las declara opcionales y un `effort:
@@ -46,6 +49,7 @@ export function resolveReopenedTabPrefs(ctx: ReopenedTabPrefsContext): ReopenedT
     ...(effort === undefined ? {} : { effort }),
     ...(permissionMode === undefined ? {} : { permissionMode }),
     ...(alwaysAllowTools.length === 0 ? {} : { alwaysAllowTools }),
+    ...(provider === undefined ? {} : { provider }),
   };
 }
 
@@ -73,6 +77,7 @@ export function toConversationPrefs(tab: {
   readonly effort?: string;
   readonly permissionMode?: string;
   readonly alwaysAllowTools?: readonly string[];
+  readonly provider?: string;
 }): ConversationPrefs {
   return {
     model: tab.model,
@@ -82,5 +87,7 @@ export function toConversationPrefs(tab: {
     // de las reglas, y vacia significa "revocadas todas" — omitirla dejaria en el indice las que el
     // usuario acaba de quitar.
     ...(tab.alwaysAllowTools === undefined ? {} : { alwaysAllowTools: tab.alwaysAllowTools }),
+    // Solo lo que no es Claude: el resto de conversaciones ya reabre con Claude por defecto.
+    ...(tab.provider === undefined || tab.provider === 'claude' ? {} : { provider: tab.provider }),
   };
 }
