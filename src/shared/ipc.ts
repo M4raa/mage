@@ -5,8 +5,9 @@
 import type { GitParams, GitSnapshot, GitSwitchParams } from './git';
 import type { WorktreeCreateParams, WorktreeMergeBaseParams, WorktreeRemoveResult } from './worktree';
 import type { GhAutoMergeParams, GhPrUpdate, GhRunActionParams, GhRunsParams, GhRunsSnapshot, GhSnapshot, GhWatchParams } from './gh';
-import type { AccountInfo, CliLoginStart, EmbeddedLoginResult } from './accounts';
-import type { ProviderAuthSummary, ProviderModel } from './providers';
+import type { AccountCreateParams, AccountInfo, CliLoginStart, CodexLoginOutcome, EmbeddedLoginResult } from './accounts';
+import type { ProviderModel } from './providers';
+import type { AgyUsageSnapshot } from './usage';
 import type { MageEvent, PermissionDecision, SlashCommandInfo } from './events';
 import type { ArtifactRecord, ConversationPrefs } from './conversationIndex';
 import type { UsageInfo } from './usage';
@@ -113,8 +114,16 @@ export const IpcChannel = {
   AccountsLoginCancel: 'accounts:login:cancel',
   AccountsAdoptLogin: 'accounts:adopt-login',
   AccountsDelete: 'accounts:delete',
-  // Como se da de alta cada proveedor (P-028, 41): solo {providerId, label, kind, reason}.
-  ProvidersAuthList: 'providers:authList',
+  // Alta de una cuenta de la matriz (grupo E): Claude por API, Codex y agy por clave.
+  AccountsCreateFor: 'accounts:create-for',
+  // Login de ChatGPT de una cuenta de Codex por su CLI (sin verificar).
+  CodexLoginStart: 'accounts:codex-login:start',
+  CodexLoginCancel: 'accounts:codex-login:cancel',
+  CodexInstalled: 'engine:codexInstalled',
+  // Uso de la suscripcion de agy («/usage», gratis).
+  AgyUsageRead: 'usage:agy',
+  // Modos de permiso que expone cada CLI (respuesta 18).
+  PermissionModesList: 'engine:permissionModes',
   DialogPickDirectory: 'dialog:pickDirectory',
   UsageGet: 'usage:get',
   StatusGet: 'status:get',
@@ -249,6 +258,13 @@ export type IpcChannel = (typeof IpcChannel)[keyof typeof IpcChannel];
 
 // Niveles de esfuerzo del CLI (`--effort <level>`), confirmados en `claude --help` (M2.4). Optimizan
 // el gasto de tokens/pensamiento por sesion. Vacio/undefined -> no se pasa el flag (default del CLI).
+// Modos de permiso que expone cada CLI, leidos de el (respuesta 18). null = no contesto: la UI cae a la
+// lista fija (`PERMISSION_MODES` en Claude). En Codex son perfiles de `permissionProfile/list`.
+export interface PermissionModesByProviderView {
+  readonly claude: readonly string[] | null;
+  readonly codex: readonly string[] | null;
+}
+
 export const EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
 export type EffortLevel = (typeof EFFORT_LEVELS)[number];
 
@@ -323,7 +339,7 @@ export interface SetModelParams {
 // Cambio de modo de permiso en caliente (M2.6, solo Claude): control_request set_permission_mode.
 export interface SetPermissionModeParams {
   readonly sessionId: string;
-  readonly mode: PermissionMode;
+  readonly mode: string; // el CLI decide si lo acepta (Claude: control_error si no; Codex: perfil del siguiente turno)
 }
 
 // Parar un subagente (0.1.1 R2, punto 29): `taskId` es el `agentId` del bloque del subagente.
@@ -766,7 +782,16 @@ export interface MageApi {
   adoptLogin(params: AdoptLoginParams): Promise<void>;
   // Elimina una cuenta (desenlaza compartidas + borra su dir). Nunca la principal.
   deleteAccount(configDir: string): Promise<void>;
-  listProviderAuth(): Promise<readonly ProviderAuthSummary[]>;
+  // Alta de una cuenta de la matriz (grupo E). La clave sube aqui UNA vez y no vuelve nunca.
+  createProviderAccount(params: AccountCreateParams): Promise<AccountInfo>;
+  // Login de ChatGPT de una cuenta de Codex: resuelve cuando el CLI lo da por hecho (o falla).
+  startCodexLogin(configDir: string): Promise<CodexLoginOutcome>;
+  cancelCodexLogin(): Promise<void>;
+  isCodexInstalled(): Promise<boolean>;
+  // Uso de la suscripcion de agy («/usage»): grupos y ventanas, o el motivo por el que no hay.
+  readAgyUsage(): Promise<AgyUsageSnapshot>;
+  // Modos de permiso leidos de cada CLI; null en el que no contesto (cae a la lista de Mage).
+  listPermissionModes(): Promise<PermissionModesByProviderView>;
   // Selector de carpeta de proyecto (cwd de una pestana); null si el usuario cancela.
   pickDirectory(): Promise<string | null>;
   // Confia el usuario en `cwd` para lanzar un agente? Suma lo autorizado en Mage y lo que el usuario ya

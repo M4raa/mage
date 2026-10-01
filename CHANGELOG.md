@@ -40,7 +40,19 @@ versión.
   siempre (se recupera en Configuración › General), donde también está **Archivar al fusionar o cerrar
   el PR**.
 
+- **Añadir cuenta para cualquier proveedor**: Anthropic, OpenAI y Google, por suscripción o con
+  **clave de API**, y servidores locales (IP y puerto). Las claves se guardan cifradas y solo las recibe
+  su cuenta; las pestañas de una cuenta que factura la API llevan la marca **Factura API**.
+- **Codex** (OpenAI) como proveedor, con su propio diálogo de permisos, su catálogo de modelos y sus
+  límites de uso. Marcado **sin verificar** hasta probarlo con una cuenta real.
+- **Uso de agy** en el panel de Uso: las ventanas de 5 h y semanal de cada grupo de modelos.
+- Los modos de permiso salen del propio CLI: si Claude o Codex estrenan uno, Mage lo ofrece.
+
 ### Cambiado
+- Las pestañas de **agy** mantienen la conversación en un solo proceso: el contexto se conserva,
+  interrumpir ya no la pierde, admite imágenes (las abre con su propia herramienta), el esfuerzo llega a
+  **Máximo** y los turnos largos ya no se cortan a los 30 minutos.
+- Cuando agy deniega un comando, la conversación dice **qué comando** y por qué.
 - «Confirmar cambios» se llama ahora **Pedir commit al agente**, que es lo que hace.
 - Sin pestañas abiertas se ve la misma pantalla que en un chat nuevo, con sus proyectos recientes:
   elegir un proyecto abre la conversación en esa carpeta, y **＋ Nuevo chat** la abre siempre en una
@@ -69,8 +81,7 @@ versión.
 - Las variables `OPENAI_API_KEY` y `CODEX_API_KEY` ya no llegan a los agentes que lanza Mage.
 
 ### Por completar antes de publicar
-- Por completar: cuentas por proveedor y forma de pago (Claude por API, agy y Codex), agy en sesión
-  persistente y con su uso en el panel.
+- Por completar: probar Codex con una cuenta real (hoy funciona según su documentación, sin verificar).
 - Por completar: runtime propio para los modelos locales, en lugar del gateway.
 
 ## 0.1.1 — 2026-09-30

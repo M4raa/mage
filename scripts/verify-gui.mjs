@@ -1559,37 +1559,116 @@ const CHECKS = [
     },
   },
   {
-    // P-028, punto 41: «Añadir cuenta» deja elegir proveedor. Claude va preseleccionado (el flujo de
-    // la 9.2); agy (`external`) no pide nada; uno de API (`api-key`) lleva a Ajustes › Proveedores y
-    // modelos. No se crea nada: solo se pulsan los botones de proveedor y el de ir a Ajustes.
-    name: '41: el alta de cuenta elige proveedor (Claude, agy sin campos, API a Ajustes)',
+    // Grupo E (respuestas 3 y 6): «Añadir cuenta» es la matriz FABRICANTE × FORMA DE PAGO. Se recorre
+    // entera SIN crear nada (ningun boton de crear se pulsa): Anthropic por suscripcion es el formulario
+    // de la 9.2 (dos campos), por API pide nombre y una clave en un campo de contraseña, OpenAI lleva el
+    // aviso «sin verificar», la suscripcion de agy no pide nada y Local reutiliza el formulario de
+    // proveedor con la plantilla de Ollama.
+    name: '41/E: el alta de cuenta es la matriz fabricante × forma de pago (sin crear nada)',
     async run(page) {
       await page.getByRole('button', { name: 'Añadir cuenta' }).first().click();
       const dialog = page.locator(MODAL).first();
       await dialog.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
       await page.waitForTimeout(CONFIG.settleMs);
-      const grupo = dialog.locator('[role="group"][aria-label="Proveedor de la cuenta"]');
-      const tipos = await grupo.locator('button').evaluateAll((nodes) =>
-        nodes.map((n) => ({ kind: n.getAttribute('data-provider-kind'), pressed: n.getAttribute('aria-pressed') === 'true', label: (n.textContent ?? '').trim() })),
-      );
-      const claudePreseleccionado = tipos.some((t) => t.kind === 'cli-oauth' && t.pressed);
-      let agyCampos = null;
-      if (tipos.some((t) => t.kind === 'external')) {
-        await grupo.locator('button[data-provider-kind="external"]').first().click();
-        agyCampos = await dialog.locator('input').count();
-      }
-      await grupo.locator('button[data-provider-kind="api-key"]').first().click();
-      await dialog.getByRole('button', { name: 'Abrir Proveedores y modelos' }).click();
-      await page.waitForTimeout(CONFIG.settleMs);
-      const seccion = await page.evaluate(() => document.querySelector('[aria-labelledby="settings-title"] [role="tab"][aria-selected="true"]')?.textContent?.trim() ?? null);
+      const vendors = dialog.locator('[role="group"][aria-label="Fabricante de la cuenta"] button');
+      const payments = dialog.locator('[role="group"][aria-label="Forma de pago de la cuenta"] button');
+      const fields = () => dialog.locator('input').evaluateAll((nodes) => nodes.map((n) => n.getAttribute('type') ?? 'text'));
+      const medido = { fabricantes: await vendors.count(), anthropicPorDefecto: (await vendors.first().getAttribute('aria-pressed')) === 'true' };
+      medido.suscripcion = await fields();
+      await payments.filter({ hasText: 'Clave de API' }).first().click();
+      medido.claudeApi = await fields();
+      medido.claudeApiAviso = /Factura API/.test((await dialog.textContent()) ?? '');
+      await vendors.filter({ hasText: 'OpenAI' }).click();
+      medido.openaiSinVerificar = /Sin verificar/.test((await dialog.textContent()) ?? '');
+      medido.openaiFormas = await payments.count();
+      await vendors.filter({ hasText: 'Google' }).click();
+      medido.agySuscripcion = await fields();
+      await vendors.filter({ hasText: 'Local' }).click();
+      medido.localUrl = await dialog.getByRole('textbox', { name: 'URL base del endpoint compatible con la API de OpenAI' }).inputValue();
       const closed = await closeDialog(page);
       const ok =
-        claudePreseleccionado &&
-        tipos.some((t) => t.kind === 'api-key') &&
-        (agyCampos === null || agyCampos === 0) &&
-        /Proveedores y modelos/.test(seccion ?? '') &&
+        medido.fabricantes === 4 &&
+        medido.anthropicPorDefecto &&
+        medido.suscripcion.length === 2 &&
+        JSON.stringify(medido.claudeApi) === JSON.stringify(['text', 'password']) &&
+        medido.claudeApiAviso &&
+        medido.openaiSinVerificar &&
+        medido.openaiFormas === 2 &&
+        medido.agySuscripcion.length === 0 &&
+        medido.localUrl === OLLAMA_TEMPLATE.baseUrl &&
         closed === 0;
-      return { ok, detail: JSON.stringify({ tipos: tipos.map((t) => t.kind), claudePreseleccionado, agyCampos, seccion, cerrado: closed === 0 }) };
+      return { ok, detail: JSON.stringify({ ...medido, cerrado: closed === 0 }) };
+    },
+  },
+  {
+    // Grupo E: la pestaña de una cuenta que factura la API lo dice con TEXTO fijo («Factura API»), y la de
+    // una suscripcion no. Se abre una conversacion temporal (sin mensaje: no se lanza nada), se la pasa en
+    // el store a una cuenta de API sembrada y se deshace todo al terminar.
+    name: 'E: la pestaña de una cuenta por API lleva «Factura API»',
+    async run(page) {
+      const previo = await captureTurnState(page);
+      const cuentas = await page.evaluate(() => window.__mageDev.store.getState().accounts);
+      await openTemporaryConversation(page);
+      const tabId = await page.evaluate(() => {
+        const dev = window.__mageDev;
+        const id = dev.store.getState().activeTabId;
+        dev.store.setState((s) => {
+          const base = s.accounts[0];
+          if (base === undefined) return {};
+          const api = { ...base, id: 'C:\\vg\\.claude-api', alias: 'vg-api', apiBilled: true, isMain: false };
+          return { accounts: [...s.accounts, api], tabs: s.tabs.map((t) => (t.id === id ? { ...t, accountId: api.id } : t)) };
+        });
+        return id;
+      });
+      await page.waitForTimeout(CONFIG.settleMs);
+      const medido = await page.evaluate((id) => {
+        const tab = document.querySelector(`[role="tab"][data-tab-id="${id}"]`);
+        const others = [...document.querySelectorAll('[role="tab"][data-tab-id]')].filter((n) => n.getAttribute('data-tab-id') !== id);
+        return {
+          pestañaSembrada: tab !== null,
+          marca: tab?.querySelector('[data-tab-api-billed]')?.textContent?.trim() ?? null,
+          marcasEnOtras: others.filter((n) => n.querySelector('[data-tab-api-billed]') !== null).length,
+        };
+      }, tabId);
+      await page.evaluate((accounts) => window.__mageDev.store.setState({ accounts }), cuentas);
+      await restoreTurnState(page, previo);
+      const ok = medido.pestañaSembrada && medido.marca === 'Factura API' && medido.marcasEnOtras === 0;
+      return { ok, detail: JSON.stringify(medido) };
+    },
+  },
+  {
+    // Grupo E (M9): el panel de Uso enseña la suscripcion de agy. main lee `agy /usage` (gratis); aqui,
+    // el fichero FALSO de MAGE_AGY_USAGE_FAKE (la salida medida de agy 1.2.14), sin lanzar agy.
+    name: 'E: el panel de Uso enseña el uso de agy (su /usage, falso)',
+    async run(page) {
+      const layout = await page.evaluate(() => window.__mageDev.panelStore.getState().layout);
+      await page.evaluate(() => window.__mageDev.panelStore.getState().revealPanelById('usage'));
+      const section = page.locator('[data-agy-usage="true"]');
+      await section.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      const medido = await section.evaluate((node) => ({
+        titulo: /ANTIGRAVITY/.test(node.textContent ?? ''),
+        barras: (node.textContent ?? '').match(/\d+% ·/g)?.length ?? 0,
+        grupos: ['Gemini Models', 'Claude and GPT models'].filter((g) => (node.textContent ?? '').includes(g)).length,
+      }));
+      await page.evaluate((l) => window.__mageDev.panelStore.setState({ layout: l }), layout);
+      return { ok: medido.titulo && medido.barras === 4 && medido.grupos === 2, detail: JSON.stringify(medido) };
+    },
+  },
+  {
+    // Grupo E (respuesta 30): Codex se ofrece en Nueva conversacion, y con el aviso «sin verificar».
+    name: 'E: elegir Codex en Nueva conversacion avisa de que está sin verificar',
+    async run(page) {
+      return withNewTabDialog(page, async () => {
+        const provider = newTabSelect(page, NEW_TAB_FIELD.provider);
+        if ((await provider.count()) !== 1) return { ok: false, detail: 'sin un selector de proveedor' };
+        const options = await selectOptionsOf(page, NEW_TAB_FIELD.provider);
+        const before = await page.locator(`${NEW_TAB_DIALOG} [data-unverified-provider]`).count();
+        await provider.selectOption('codex');
+        await page.waitForTimeout(CONFIG.settleMs);
+        const after = await page.locator(`${NEW_TAB_DIALOG} [data-unverified-provider]`).count();
+        const ok = (options ?? []).some((o) => o.startsWith('codex|')) && before === 0 && after === 1;
+        return { ok, detail: JSON.stringify({ codexOfrecido: (options ?? []).some((o) => o.startsWith('codex|')), avisoAntes: before, avisoDespues: after }) };
+      });
     },
   },
   {
@@ -8372,6 +8451,8 @@ function launchApp(userDataDir) {
       MAGE_MCP_FAKE_CLI: '1',
       // MAGE_GH_FAKE: el PR y el CI salen de un `gh` falso en proceso; nunca se lanza el real.
       MAGE_GH_FAKE: '1',
+      // MAGE_AGY_USAGE_FAKE: el uso de agy del panel sale de su salida medida; nunca se lanza agy.
+      MAGE_AGY_USAGE_FAKE: path.join(repoRoot, 'src', 'main', 'usage', '__fixtures__', 'agy-usage.json'),
       VITE_MAGE_RELEASE_NOTES_IN_DEV: '1',
     },
     windowsHide: true,

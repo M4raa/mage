@@ -30,7 +30,11 @@ export interface Account {
   readonly id: string; // configDir de la cuenta (identificador estable y unico)
   readonly monogram: string; // letra del avatar
   readonly alias: string; // "claude-p" (nombre del dir sin el punto inicial)
-  readonly provider: string; // "Claude" | "Gemini" ...
+  readonly provider: string; // "Claude" | "Codex" | "agy": el CLI de la cuenta
+  // Proveedor de la cuenta (grupo E). Una conversacion nueva en ella usa este proveedor.
+  readonly providerId: string;
+  // La cuenta factura la API (clave propia): sus pestañas llevan la marca «Factura API».
+  readonly apiBilled: boolean;
   readonly defaultModel: string; // id de modelo por defecto (settings.json -> model, o "sonnet")
   readonly accent: Accent;
   readonly activity: WorkerActivity; // punto del rail

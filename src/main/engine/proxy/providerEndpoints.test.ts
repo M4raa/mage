@@ -43,7 +43,7 @@ describe('resolveUpstream built-in', () => {
     const env = { GEMINI_API_KEY: 'g-key' };
 
     expect(resolveUpstream({ providerId: 'gemini', model: 'sonnet', customProviders: NO_PROVIDERS, env }).model).toBe('gemini-2.5-flash');
-    expect(resolveUpstream({ providerId: 'gemini', model: 'haiku', customProviders: NO_PROVIDERS, env }).model).toBe('gemini-1.5-flash');
+    expect(resolveUpstream({ providerId: 'gemini', model: 'haiku', customProviders: NO_PROVIDERS, env }).model).toBe('gemini-2.5-flash-lite');
     expect(resolveUpstream({ providerId: 'gemini', model: 'opus', customProviders: NO_PROVIDERS, env }).model).toBe('gemini-2.5-pro');
   });
 

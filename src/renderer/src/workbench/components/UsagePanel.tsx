@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { Icon } from './Icon';
 import { selectAccount, useWorkbenchStore } from '../workbenchStore';
 import {
@@ -6,6 +6,7 @@ import {
   SEVEN_DAY_WINDOW_MS,
   formatApiCredits,
   formatProjection,
+  formatResetAbsolute,
   perModelBars,
   projectWindowExhaustion,
   severityForPct,
@@ -13,7 +14,7 @@ import {
   type UsageProjection,
   type UsageSeverity,
 } from '../usageView';
-import type { UsageInfo } from '@shared/usage';
+import type { AgyUsageSnapshot, UsageInfo } from '@shared/usage';
 import type { Account } from '../types';
 
 // Colores de severidad (inline: el sistema de diseno mantiene lo cromatico fuera del CSS). El estado
@@ -59,7 +60,8 @@ export function UsagePanel(): React.JSX.Element {
         </button>
       </div>
 
-      {account.loginStatus !== 'logged_in' && <Hint text="La cuenta no tiene login válido: no hay datos de uso." />}
+      {account.apiBilled && <Hint text="Esta cuenta factura la API con su clave: no tiene ventanas de suscripción." />}
+      {!account.apiBilled && account.loginStatus !== 'logged_in' && <Hint text="La cuenta no tiene login válido: no hay datos de uso." />}
       {error !== null && account.loginStatus === 'logged_in' && (
         <div className="rounded-[7px] border border-mg-danger-border bg-mg-danger-bg p-[8px_10px] text-[10.5px] text-mg-danger">
           No se pudo obtener el uso: {error}
@@ -70,6 +72,7 @@ export function UsagePanel(): React.JSX.Element {
       )}
 
       {usage !== null && <UsageBody account={account} usage={usage} />}
+      <AgyUsageSection okColor={account.accent.base} />
     </div>
   );
 }
@@ -164,6 +167,45 @@ function severityColor(severity: UsageSeverity, okColor: string): string {
   if (severity === 'warn') return WARN_COLOR;
   return okColor;
 }
+
+// Suscripcion de agy (M9): su `/usage` es gratis (medido en 1.2.14). Solo se pinta si agy contesta;
+// sin agy instalado, nada. Se pide al abrir el panel y con su propio boton (main cachea 180 s).
+function AgyUsageSection({ okColor }: { readonly okColor: string }): React.JSX.Element | null {
+  const [snapshot, setSnapshot] = useState<AgyUsageSnapshot | null>(null);
+  const load = (): void => {
+    window.mage
+      .readAgyUsage()
+      .then(setSnapshot)
+      .catch((err: unknown) => setSnapshot({ status: 'unavailable', reason: err instanceof Error ? err.message : String(err), fetchedAt: Date.now() }));
+  };
+  useEffect(load, []);
+  if (snapshot === null || snapshot.status !== 'ok' || snapshot.groups.length === 0) return null;
+  const now = Date.now();
+  return (
+    <section aria-label="Uso de agy" data-agy-usage="true" className="flex flex-col gap-[8px] border-t border-mg-border-subtle pt-[10px]">
+      <div className="flex items-center justify-between">
+        <div className="text-[9.5px] font-bold tracking-[.08em] text-mg-ter">ANTIGRAVITY (AGY) · SUSCRIPCIÓN</div>
+        <button onClick={load} data-tip="Refrescar uso de agy" aria-label="Refrescar uso de agy" className="flex h-5 w-5 items-center justify-center rounded-[5px] text-mg-muted hover:bg-mg-hover hover:text-mg-body">
+          ⟳
+        </button>
+      </div>
+      {snapshot.groups.flatMap((group) =>
+        group.buckets.map((bucket) => (
+          <WindowRow
+            key={bucket.id}
+            title={`${group.name} · ${AGY_WINDOW_LABEL[bucket.window] ?? bucket.window}`}
+            pct={bucket.usedPercent}
+            label={formatResetAbsolute(bucket.resetsAt, now, bucket.window !== '5h')}
+            severity={severityForPct(bucket.usedPercent)}
+            okColor={okColor}
+          />
+        )),
+      )}
+    </section>
+  );
+}
+
+const AGY_WINDOW_LABEL: Readonly<Record<string, string>> = { '5h': 'ventana de 5 h', weekly: 'semanal' };
 
 function Hint({ text }: { readonly text: string }): React.JSX.Element {
   return <div className="text-[11px] text-mg-muted">{text}</div>;

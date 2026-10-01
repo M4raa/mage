@@ -221,3 +221,40 @@ describe('normalizeAgyEvent', () => {
     expect(() => normalizeAgyEvent(raw)).toThrow();
   });
 });
+
+// Denegaciones: mensajes COPIADOS de lo que emitio agy 1.2.14 el 2026-09-30 (`agy-spike --permissions`).
+describe('normalizeAgyEvent: comandos denegados', () => {
+  const step = (state: string, message: string): unknown => ({
+    event: 'step_update',
+    step_update: { step_index: 4, state, step_type: 'tool', tool_name: 'run_command', tool_info: { error: { message } } },
+  });
+  const unlisted = 'permission check failed for command "whoami > unlisted.txt": user denied permission to run command: whoami > unlisted.txt';
+  const denyRule = 'Permission denied for command(hostname > denied.txt). Matches user-configured deny rule.';
+
+  it('normalizeAgyEvent_comandoSinRegla_dicePasoDoneConElComandoExacto', () => {
+    const events = normalizeAgyEvent(step('DONE', unlisted));
+
+    expect(events[0]).toMatchObject({ kind: 'tool_result', result: { isError: true } });
+    expect(events[1]).toMatchObject({ kind: 'error', message: expect.stringContaining('«whoami > unlisted.txt»') as unknown as string });
+  });
+
+  it('normalizeAgyEvent_reglaDeny_diceQueLoProhibeUnaRegla', () => {
+    const events = normalizeAgyEvent(step('ERROR', denyRule));
+
+    expect(events).toHaveLength(2);
+    expect(events[1]).toMatchObject({ kind: 'error', message: expect.stringContaining('«hostname > denied.txt»: lo prohíbe una regla deny') as unknown as string });
+  });
+
+  it('normalizeAgyEvent_resultConDeniedActions_avisaAunqueSeaSuccess', () => {
+    const events = normalizeAgyEvent({ event: 'result', result: { status: 'SUCCESS', denied_actions: [{ action: 'command', display_name: 'RunCommand' }] } });
+
+    expect(events[0]).toMatchObject({ kind: 'error', message: expect.stringContaining('RunCommand') as unknown as string });
+    expect(events[1]).toMatchObject({ kind: 'result' });
+  });
+
+  it('normalizeAgyEvent_resultConDeniedActionsYaContado_noRepiteElAviso', () => {
+    const events = normalizeAgyEvent({ event: 'result', result: { status: 'SUCCESS', denied_actions: [{ action: 'command' }] } }, true);
+
+    expect(events.map((event) => event.kind)).toEqual(['result']);
+  });
+});

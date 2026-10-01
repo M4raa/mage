@@ -1,0 +1,7 @@
+{
+  "id": 2,
+  "result": {
+    "account": null,
+    "requiresOpenaiAuth": true
+  }
+}

@@ -1,8 +1,9 @@
-import { describe, expect, it } from 'vitest';
-import { AgyAdapter } from './agyAdapter';
+import { describe, expect, it, vi } from 'vitest';
+import { AgyAdapter, type AgyAdapterDeps } from './agyAdapter';
 import type { LaunchParams, ProviderAdapter } from './providerAdapter';
 
-const adapter = new AgyAdapter(() => 'agy.exe');
+const deps: AgyAdapterDeps = { resolveBinary: () => 'agy.exe' };
+const adapter = new AgyAdapter(deps);
 
 const launch: LaunchParams = {
   sessionId: 'mage-session-1',
@@ -11,102 +12,118 @@ const launch: LaunchParams = {
   cwd: '/proj',
 };
 
-// Indice del valor que sigue a un flag en el array de argumentos (-1 si el flag no esta).
+// Valor que sigue a un flag en el array de argumentos (undefined si el flag no esta).
 function valueAfter(args: readonly string[], flag: string): string | undefined {
   const index = args.indexOf(flag);
   return index === -1 ? undefined : args[index + 1];
 }
 
-describe('AgyAdapter', () => {
-  it('turnMode_esPerTurn', () => {
-    expect(adapter.turnMode).toBe('perTurn');
-  });
+function withEnv(values: Record<string, string>, body: () => void): void {
+  const previous = Object.fromEntries(Object.keys(values).map((name) => [name, process.env[name]]));
+  Object.assign(process.env, values);
+  try {
+    body();
+  } finally {
+    for (const [name, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  }
+}
 
-  // `agy` no tiene --input-format: no existe una sesion que arrancar sin prompt, y decirlo con un Error
-  // explicito es mejor que construir un plan que no serviria para nada.
-  it('buildSpawnPlan_siempre_lanzaConLaSesionPedida', () => {
-    expect(() => adapter.buildSpawnPlan(launch)).toThrow(/"mage-session-1"/);
-  });
-
-  it('buildTurnSpawnPlan_turnoNormal_ponePromptModoAddDirYModelo', () => {
-    const plan = adapter.buildTurnSpawnPlan(launch, 'haz algo');
+describe('AgyAdapter (sesion persistente, agy 1.2.14)', () => {
+  it('buildSpawnPlan_sesionNormal_entradaYSalidaStreamJsonModoAddDirYModelo', () => {
+    const plan = adapter.buildSpawnPlan(launch);
 
     expect(plan.command).toBe('agy.exe');
+    expect(valueAfter(plan.args, '--input-format')).toBe('stream-json');
     expect(valueAfter(plan.args, '--output-format')).toBe('stream-json');
-    // --add-dir es OBLIGATORIO: sin el, `agy` escribe en su scratch e ignora el cwd (medido).
+    expect(valueAfter(plan.args, '--mode')).toBe('accept-edits');
     expect(valueAfter(plan.args, '--add-dir')).toBe('/proj');
     expect(valueAfter(plan.args, '--model')).toBe('gemini-3.6-flash-medium');
-    expect(valueAfter(plan.args, '--mode')).toBe('accept-edits');
-    // El prompt va en argv, y al final (asi un prompt que empiece por '-' no se lee como flag).
-    expect(plan.args[plan.args.length - 2]).toBe('--print');
-    expect(plan.args[plan.args.length - 1]).toBe('haz algo');
   });
 
-  it('buildTurnSpawnPlan_flagsQueAgyNoTiene_noSeAnaden', () => {
-    const plan = adapter.buildTurnSpawnPlan(launch, 'hola');
+  // Desde la 1.2.6 el tope por defecto es ilimitado: el `30m` de antes recortaba turnos.
+  it('buildSpawnPlan_sesionNormal_noPasaPrintTimeoutNiPrint', () => {
+    const plan = adapter.buildSpawnPlan(launch);
 
-    for (const flag of ['--input-format', '--verbose', '--permission-prompt-tool', '--session-id', '--settings', '--mcp-config']) {
-      expect(plan.args, flag).not.toContain(flag);
-    }
+    expect(plan.args).not.toContain('--print-timeout');
+    expect(plan.args).not.toContain('--print');
   });
 
-  it('buildTurnSpawnPlan_primerTurno_noPasaConversation', () => {
-    expect(adapter.buildTurnSpawnPlan(launch, 'hola').args).not.toContain('--conversation');
+  it('buildSpawnPlan_primerArranque_noPasaConversation', () => {
+    expect(adapter.buildSpawnPlan(launch).args).not.toContain('--conversation');
   });
 
-  it('buildTurnSpawnPlan_conConversationId_continuaLaConversacionDelProveedor', () => {
-    const plan = adapter.buildTurnSpawnPlan({ ...launch, conversationId: 'agy-conv-7' }, 'sigue');
-
-    expect(valueAfter(plan.args, '--conversation')).toBe('agy-conv-7');
+  it('buildSpawnPlan_relanzadoConConversationId_continuaLaConversacionDelProveedor', () => {
+    expect(valueAfter(adapter.buildSpawnPlan({ ...launch, conversationId: 'agy-conv-7' }).args, '--conversation')).toBe('agy-conv-7');
   });
 
-  it('buildTurnSpawnPlan_conversationIdVacio_noPasaElFlag', () => {
-    expect(adapter.buildTurnSpawnPlan({ ...launch, conversationId: '' }, 'hola').args).not.toContain('--conversation');
+  it('buildSpawnPlan_conversationIdVacio_noPasaElFlag', () => {
+    expect(adapter.buildSpawnPlan({ ...launch, conversationId: '' }).args).not.toContain('--conversation');
   });
 
-  it.each(['low', 'medium', 'high'])('buildTurnSpawnPlan_effortSoportado_%s_seAnade', (effort) => {
-    expect(valueAfter(adapter.buildTurnSpawnPlan({ ...launch, effort }, 'hola').args, '--effort')).toBe(effort);
+  it.each(['low', 'medium', 'high', 'max'])('buildSpawnPlan_effortSoportado_%s_seAnade', (effort) => {
+    expect(valueAfter(adapter.buildSpawnPlan({ ...launch, effort }).args, '--effort')).toBe(effort);
   });
 
-  // xhigh/max son niveles del CLI de Claude: pasarselos a `agy` abortaria el turno con un flag invalido.
-  it.each(['xhigh', 'max', 'raro'])('buildTurnSpawnPlan_effortQueAgyNoConoce_%s_seOmite', (effort) => {
-    expect(adapter.buildTurnSpawnPlan({ ...launch, effort }, 'hola').args).not.toContain('--effort');
+  it.each(['xhigh', 'raro'])('buildSpawnPlan_effortQueAgyNoConoce_%s_seOmite', (effort) => {
+    expect(adapter.buildSpawnPlan({ ...launch, effort }).args).not.toContain('--effort');
   });
 
-  it.each(['', '   '])('buildTurnSpawnPlan_promptVacio_lanza_%#', (prompt) => {
-    expect(() => adapter.buildTurnSpawnPlan(launch, prompt)).toThrow(/Prompt vacio/);
-  });
-
-  // Invariante nº 1 del proyecto: el hijo consume la SUSCRIPCION, nunca una API facturada.
-  it('buildTurnSpawnPlan_conApiKeysEnElEntorno_lasBorraDelProcesoHijo', () => {
-    const previous = {
-      anthropic: process.env.ANTHROPIC_API_KEY,
-      gemini: process.env.GEMINI_API_KEY,
-      google: process.env.GOOGLE_API_KEY,
-    };
-    process.env.ANTHROPIC_API_KEY = 'sk-ant-xxx';
-    process.env.GEMINI_API_KEY = 'gm-xxx';
-    process.env.GOOGLE_API_KEY = 'go-xxx';
-    try {
-      const plan = adapter.buildTurnSpawnPlan(launch, 'hola');
+  // Invariante: una cuenta de suscripcion no recibe NINGUNA clave, aunque el usuario la tenga exportada.
+  it('buildSpawnPlan_suscripcionConClavesEnElEntorno_lasBorraDelProcesoHijo', () => {
+    withEnv({ ANTHROPIC_API_KEY: 'sk-ant-xxx', GEMINI_API_KEY: 'gm-xxx', GOOGLE_API_KEY: 'go-xxx' }, () => {
+      const plan = adapter.buildSpawnPlan(launch);
 
       expect(plan.env.ANTHROPIC_API_KEY).toBeUndefined();
       expect(plan.env.GEMINI_API_KEY).toBeUndefined();
       expect(plan.env.GOOGLE_API_KEY).toBeUndefined();
-    } finally {
-      restoreEnv('ANTHROPIC_API_KEY', previous.anthropic);
-      restoreEnv('GEMINI_API_KEY', previous.gemini);
-      restoreEnv('GOOGLE_API_KEY', previous.google);
-    }
+      expect(plan.env.USERPROFILE).toBe(process.env.USERPROFILE);
+    });
   });
 
-  // Lo que `agy` no soporta lanza con un motivo, nunca en silencio ni con un no-op que aparente exito.
-  it('encodeUserMessage_siempre_lanzaExplicandoQueElPromptVaEnArgv', () => {
-    expect(() => adapter.encodeUserMessage('hola')).toThrow(/argv/);
+  it('buildSpawnPlan_cuentaPorClave_suPerfilSuClaveYHomeReal', () => {
+    const prepareProfile = vi.fn();
+    const keyed = new AgyAdapter({
+      resolveBinary: () => 'agy.exe',
+      resolveApiAccount: (dir) => (dir === '/data/agy-accounts/trabajo' ? { profileDir: dir, apiKey: 'gm-de-la-cuenta' } : null),
+      prepareProfile,
+    });
+
+    withEnv({ GEMINI_API_KEY: 'gm-del-usuario' }, () => {
+      const plan = keyed.buildSpawnPlan({ ...launch, accountDir: '/data/agy-accounts/trabajo' });
+
+      expect(plan.env.GEMINI_API_KEY).toBe('gm-de-la-cuenta');
+      expect(plan.env.USERPROFILE).toBe('/data/agy-accounts/trabajo');
+      expect(plan.env.HOME).toBeDefined();
+      expect(prepareProfile).toHaveBeenCalledWith('/data/agy-accounts/trabajo', '/proj');
+    });
   });
 
-  it('encodeUserMessage_conAdjuntos_lanzaExplicandoQueEseProveedorNoLosSoporta', () => {
-    expect(() => adapter.encodeUserMessage('hola', [{ mediaType: 'image/png', data: 'AAAA' }])).toThrow(/imagenes/i);
+  it('encodeUserMessage_soloTexto_lineaUserConContentString', () => {
+    expect(adapter.encodeUserMessage('hola')).toEqual({ event: 'user', message: { content: 'hola' } });
+  });
+
+  // agy solo admite bloques `text` (medido): la imagen va a disco y su ruta al mensaje.
+  it('encodeUserMessage_conImagen_guardaLaImagenYCitaSuRuta', () => {
+    const saveAttachment = vi.fn(() => 'C:\\tmp\\img-1.png');
+    const withImages = new AgyAdapter({ resolveBinary: () => 'agy.exe', saveAttachment });
+    withImages.buildSpawnPlan(launch);
+
+    const message = withImages.encodeUserMessage('mira [Imagen 1]', [{ mediaType: 'image/png', data: 'AAAA' }]) as { message: { content: string } };
+
+    expect(saveAttachment).toHaveBeenCalledWith('mage-session-1', { mediaType: 'image/png', data: 'AAAA' }, 0);
+    expect(message.message.content).toContain('[Imagen 1]: C:\\tmp\\img-1.png');
+    expect(message.message.content).toContain('view_file');
+  });
+
+  it('encodeUserMessage_conImagenSinDondeGuardarla_lanza', () => {
+    expect(() => adapter.encodeUserMessage('hola', [{ mediaType: 'image/png', data: 'AAAA' }])).toThrow(/imagenes/);
+  });
+
+  it('interruptsByKill_siempre_true', () => {
+    expect(adapter.interruptsByKill).toBe(true);
   });
 
   it('encodePermissionResponse_siempre_lanzaPorqueNoHayPuenteDePermisos', () => {
@@ -115,36 +132,41 @@ describe('AgyAdapter', () => {
     );
   });
 
-  it('encodeInterrupt_siempre_lanza', () => {
-    expect(() => adapter.encodeInterrupt()).toThrow();
-  });
-
   it('encodeSetModel_siempre_lanzaConElModeloPedido', () => {
     expect(() => adapter.encodeSetModel('gemini-3.1-pro-low')).toThrow(/"gemini-3.1-pro-low"/);
   });
 
-  it('encodeSetPermissionMode_siempre_lanzaConElModoPedido', () => {
-    expect(() => adapter.encodeSetPermissionMode('plan')).toThrow(/"plan"/);
-  });
-
-  // Los opcionales que `agy` no tiene simplemente NO estan: AgentSession no los pide (no hay
-  // control_request, ni hooks, ni --mcp-config/--settings en este CLI).
   it('metodosOpcionalesQueAgyNoSoporta_noEstanDeclarados', () => {
     const asContract: ProviderAdapter = adapter;
 
     expect(asContract.encodeGetContextUsage).toBeUndefined();
     expect(asContract.encodeInitialize).toBeUndefined();
-    expect(asContract.encodeHookResponse).toBeUndefined();
+    expect(asContract.takeOutgoing).toBeUndefined();
   });
 
-  it('normalize_lineaDeAgy_traduceAEventosComunes', () => {
-    const events = adapter.normalize({ event: 'step_update', step_update: { step_index: 1, state: 'DONE', step_type: 'agent_response', text_delta: 'ok' } });
+  // El uso del `result` es ACUMULADO por proceso (medido): el adapter da el de cada turno.
+  it('normalize_dosResultsSeguidos_restaElUsoDelTurnoAnterior', () => {
+    const local = new AgyAdapter(deps);
+    local.buildSpawnPlan(launch);
+    const result = (input: number, output: number): unknown => ({
+      event: 'result',
+      result: { status: 'SUCCESS', num_turns: 1, usage: { input_tokens: input, output_tokens: output, total_tokens: input + output } },
+    });
 
-    expect(events).toEqual([{ kind: 'stream_delta', text: 'ok' }]);
+    local.normalize(result(12_215, 2));
+    const second = local.normalize(result(24_513, 4)).find((event) => event.kind === 'result');
+
+    expect(second).toMatchObject({ result: { usage: { inputTokens: 12_298, outputTokens: 2, totalTokens: 12_300 } } });
+  });
+
+  it('normalize_trasRelanzar_elUsoVuelveACero', () => {
+    const local = new AgyAdapter(deps);
+    local.buildSpawnPlan(launch);
+    local.normalize({ event: 'result', result: { status: 'SUCCESS', usage: { input_tokens: 100 } } });
+
+    local.buildSpawnPlan({ ...launch, conversationId: 'c1' });
+    const after = local.normalize({ event: 'result', result: { status: 'SUCCESS', usage: { input_tokens: 40 } } });
+
+    expect(after.find((event) => event.kind === 'result')).toMatchObject({ result: { usage: { inputTokens: 40 } } });
   });
 });
-
-function restoreEnv(name: string, value: string | undefined): void {
-  if (value === undefined) delete process.env[name];
-  else process.env[name] = value;
-}

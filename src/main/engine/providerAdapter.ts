@@ -27,22 +27,13 @@ export interface LaunchParams {
   // Lo COMUN a todas las cuentas para ESTE proveedor y cuenta, ya filtrado por «Solo en…». Neutro de
   // proveedor: cada adapter lo traduce a su CLI (mcpProviderTranslate.ts). undefined -> nada.
   readonly shared?: SharedLaunchConfig;
-  // Id de conversacion que asigna el PROVEEDOR, no Mage (E3). Solo lo usa el modo 'perTurn': ahi el
-  // proceso muere al cerrar cada turno, asi que este id es lo UNICO que enlaza el contexto entre un
-  // turno y el siguiente. Ausente en el primer turno (aun no existe). Medido en `agy` 1.1.11: un id
-  // arbitrario NO sirve (`warning: conversation "…" not found` y arranca una conversacion nueva), hay
-  // que capturar el que el CLI emite en su `init` y devolverselo.
+  // Id de conversacion que asigna el PROVEEDOR, no Mage (E3): el que emitio en su `session_init`. Solo
+  // viaja en un RELANZADO (tras un corte o un cierre inesperado) para que el proceso nuevo continue la
+  // misma conversacion: `agy --conversation <id>`, `thread/resume` de codex. Claude no lo necesita
+  // (reanuda por `sessionId`). Medido en `agy` 1.1.11: un id arbitrario NO sirve (`warning:
+  // conversation "…" not found` y arranca otra), hay que devolverle el que emitio.
   readonly conversationId?: string;
 }
-
-// Como se relaciona una sesion con el proceso del CLI:
-//   - 'persistent' (default): UN proceso vivo entre turnos; los mensajes entran por stdin en NDJSON.
-//     Es lo que hacen los CLI de Claude Code (nativo y por gateway).
-//   - 'perTurn': el CLI NO acepta entrada estructurada (`agy` no tiene `--input-format`, medido): el
-//     prompt va en argv y el proceso TERMINA al acabar el turno. Un proceso por turno no cuesta cache
-//     porque `agy --conversation <id>` cachea en servidor entre procesos distintos (medido:
-//     cache_read_tokens 24 410 en el turno 2 de la misma conversacion).
-export type TurnMode = 'persistent' | 'perTurn';
 
 // Plan de spawn resuelto: comando, argumentos y entorno del proceso hijo.
 export interface SpawnPlan {
@@ -94,26 +85,28 @@ export type AuthModel =
   | { readonly kind: 'external'; readonly reason: string };
 
 // Costura multi-proveedor. `AgentSession` es provider-agnostic y delega TODA la especificidad del
-// proveedor (comando, formato NDJSON de entrada, protocolo de permisos, parseo) en un adapter.
-// En el MVP solo existe ClaudeAdapter; el diseno ya permite anadir Gemini/OpenAI/locales en M2.
+// proveedor (comando, formato NDJSON de entrada, protocolo de permisos, parseo) en un adapter. Hay una
+// instancia POR SESION, asi que un adapter puede guardar estado del protocolo (codex: el hilo y el turno
+// en curso; agy: el uso acumulado del proceso).
+//
+// Contrato de los `encode*`: devuelven el mensaje a escribir en stdin, o `null` si no hay nada que
+// mandar AHORA (el adapter lo aplica mas tarde o lo encola en `takeOutgoing`).
 export interface ProviderAdapter {
   // Como autentica este proveedor. OBLIGATORIO (ver AuthModel): es la pregunta que un proveedor nuevo
   // no puede dejar sin contestar.
   readonly auth: AuthModel;
-  // Modo de turno. Ausente = 'persistent' (los adapters existentes no tienen que declarar nada).
-  readonly turnMode?: TurnMode;
-  // Como lanzar el proceso del agente. En 'perTurn' no hay proceso que arrancar sin prompt: los
-  // adapters de ese modo LANZAN aqui y construyen su plan en buildTurnSpawnPlan.
+  // Como lanzar el proceso del agente. Se llama una vez por proceso (arranque y cada relanzado): un
+  // adapter con estado lo reinicia aqui.
   buildSpawnPlan(params: LaunchParams): SpawnPlan;
-  // Plan de spawn de UN turno, con el prompt ya dentro (argv). OBLIGATORIO si turnMode es 'perTurn';
-  // ausente en 'persistent' (ahi el prompt viaja por stdin via encodeUserMessage).
-  buildTurnSpawnPlan?(params: LaunchParams, prompt: string): SpawnPlan;
   // Objetos que se serializan como lineas NDJSON hacia stdin del hijo.
   // `attachments` (2.12.1): imagenes del mensaje. SIN adjuntos el payload no cambia ni un byte
   // respecto al de siempre — la forma minima con `content` string esta validada por el spike.
   encodeUserMessage(text: string, attachments?: readonly ImageAttachment[]): unknown;
   encodePermissionResponse(ref: PermissionRef, decision: PermissionDecision): unknown;
   encodeInterrupt(): unknown;
+  // true = el CLI no tiene interrupcion por protocolo: AgentSession corta matando el arbol y el siguiente
+  // mensaje relanza reanudando la conversacion (`agy`). Entonces `encodeInterrupt` no se llama.
+  readonly interruptsByKill?: boolean;
   // Cambio de modelo en caliente (M2.4): control_request set_model; aplica al siguiente turno.
   // Los adapters que no lo soportan lanzan Error (la UI solo lo ofrece para Claude).
   encodeSetModel(model: string): unknown;
@@ -132,6 +125,9 @@ export interface ProviderAdapter {
   // Respuesta a un control_request hook_callback del CLI (D2). Obligatoria si se registran hooks: el
   // CLI se queda esperandola hasta el timeout declarado.
   encodeHookResponse?(requestId: string): unknown;
+  // Mensajes que el adapter quiere mandar por su cuenta (respuestas y peticiones de JSON-RPC de codex).
+  // AgentSession los drena tras lanzar el proceso, tras cada linea de stdout y tras cada `encode*`.
+  takeOutgoing?(): readonly unknown[];
   // Traduce una linea cruda de stdout (ya JSON-parseada) a 0..n eventos comunes.
   normalize(raw: unknown): MageEvent[];
 }

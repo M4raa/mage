@@ -52,7 +52,13 @@ const AgyStepUpdateSchema = z.object({
       text_delta: z.string().optional(),
       tool_name: z.string().optional(),
       tool_info: z
-        .object({ name: z.string().optional(), parameters: z.record(z.unknown()).optional() })
+        .object({
+          name: z.string().optional(),
+          parameters: z.record(z.unknown()).optional(),
+          // Por que fallo la herramienta. MEDIDO en 1.2.14: en una denegacion trae el COMANDO exacto
+          // (`permission check failed for command "…"` o `Permission denied for command(…)`).
+          error: z.object({ message: z.string().optional() }).passthrough().optional(),
+        })
         .passthrough()
         .optional(),
       duration_seconds: z.number().optional(),
@@ -70,6 +76,11 @@ const AgyResultSchema = z.object({
       error: z.string().optional(),
       num_turns: z.number().int().nonnegative().optional(),
       usage: AgyUsageSchema.optional(),
+      // Acciones denegadas por no tener a quien preguntar (medido en 1.2.14; sin el comando). Una regla
+      // `deny` explicita NO aparece aqui.
+      denied_actions: z
+        .array(z.object({ action: z.string().optional(), display_name: z.string().optional() }).passthrough())
+        .optional(),
     })
     .passthrough(),
 });
@@ -89,7 +100,9 @@ const TOOL_ID_PREFIX = 'agy-step-';
 // Traduce UNA linea ya JSON-parseada a 0..n eventos comunes.
 // Contrato (igual que normalizeRawEvent de Claude): [] para lo que no nos interesa; LANZA Error si un
 // evento que SI reconocemos llega con forma invalida (AgentSession lo convierte en evento 'error').
-export function normalizeAgyEvent(raw: unknown): MageEvent[] {
+// `deniedReported`: el turno ya dijo QUE comando se denego (paso a paso), asi que el resumen generico
+// del `result` sobra.
+export function normalizeAgyEvent(raw: unknown, deniedReported = false): MageEvent[] {
   if (!isRecord(raw) || typeof raw.event !== 'string') return [];
   switch (raw.event) {
     case 'init':
@@ -97,10 +110,53 @@ export function normalizeAgyEvent(raw: unknown): MageEvent[] {
     case 'step_update':
       return normalizeStepUpdate(raw);
     case 'result':
-      return normalizeResult(raw);
+      return normalizeResult(raw, deniedReported);
     default:
       return [];
   }
+}
+
+// Estado de UNA sesion persistente de agy encima del traductor puro:
+//   - el `usage` de cada `result` es ACUMULADO por proceso (medido en 1.2.14: el turno 2 trae
+//     input 24 513 ≈ 2 × 12 215, output 2 + 2), asi que se resta el del turno anterior;
+//   - si un paso ya dijo que comando se denego, el resumen generico del `result` no se repite.
+export class AgyTurnTracker {
+  private previous: TurnUsage | null = null;
+  private deniedReported = false;
+
+  // Proceso nuevo (arranque o relanzado tras un corte): su contador empieza en cero (medido).
+  resetProcess(): void {
+    this.previous = null;
+    this.deniedReported = false;
+  }
+
+  normalize(raw: unknown): MageEvent[] {
+    const events = normalizeAgyEvent(raw, this.deniedReported);
+    return events.map((event) => this.track(event));
+  }
+
+  private track(event: MageEvent): MageEvent {
+    if (event.kind === 'error' && event.message.startsWith(DENIED_PREFIX)) this.deniedReported = true;
+    if (event.kind !== 'result') return event;
+    this.deniedReported = false;
+    const cumulative = event.result.usage;
+    if (cumulative === undefined) return event;
+    const delta = subtractUsage(cumulative, this.previous);
+    this.previous = cumulative;
+    return { ...event, result: { ...event.result, usage: delta } };
+  }
+}
+
+function subtractUsage(current: TurnUsage, previous: TurnUsage | null): TurnUsage {
+  const minus = (now: number | null, before: number | null | undefined): number | null =>
+    now === null ? null : Math.max(0, now - (before ?? 0));
+  return {
+    inputTokens: minus(current.inputTokens, previous?.inputTokens),
+    outputTokens: minus(current.outputTokens, previous?.outputTokens),
+    totalTokens: minus(current.totalTokens, previous?.totalTokens),
+    thinkingTokens: minus(current.thinkingTokens, previous?.thinkingTokens),
+    cacheReadTokens: minus(current.cacheReadTokens, previous?.cacheReadTokens),
+  };
 }
 
 // `init` -> session_init. El `sessionId` que viaja es el `conversation_id` de AGY (no el de Mage): es
@@ -128,8 +184,9 @@ function normalizeStepUpdate(raw: Record<string, unknown>): MageEvent[] {
   const step = AgyStepUpdateSchema.parse(raw).step_update;
   const events: MageEvent[] = [];
 
+  const denial = deniedCommandMessage(step.tool_info?.error?.message);
   if (step.step_type === STEP_TOOL && step.tool_name !== undefined) {
-    events.push(...toolEvents(step.step_index, step.state, step.tool_name, step.tool_info?.parameters));
+    events.push(...toolEvents(step, denial));
   } else if (step.step_type === STEP_AGENT_RESPONSE && step.text_delta !== undefined && step.text_delta.length > 0) {
     // ponytail: cada `text_delta` se APILA (semantica de delta, la que mide el spike: un unico evento
     // por paso `agent_response`, ya en estado DONE). Techo: si una version futura emitiera tambien el
@@ -139,45 +196,61 @@ function normalizeStepUpdate(raw: Record<string, unknown>): MageEvent[] {
   }
 
   // Un paso en ERROR NO se traga: el `result` global de `agy` sigue diciendo SUCCESS aunque un paso
-  // haya fallado (medido en 1.1.2 y 1.1.11), asi que si esto no se pinta el usuario ve datos falsos.
-  if (step.state === STATE_ERROR) events.push({ kind: 'error', message: describeFailedStep(step) });
+  // haya fallado (medido en 1.1.2 y 1.1.11), asi que si esto no se pinta el usuario ve datos falsos. Una
+  // DENEGACION se dice siempre con su comando: medido en 1.2.14, su paso sale unas veces ERROR y otras
+  // DONE, asi que el `state` no sirve de señal.
+  if (denial !== null && step.state !== STATE_ACTIVE) events.push({ kind: 'error', message: denial });
+  else if (step.state === STATE_ERROR) events.push({ kind: 'error', message: describeFailedStep(step) });
   return events;
 }
 
-// ACTIVE -> tool_use (con sus parametros); DONE/ERROR -> tool_result. `output` vacio: `agy` no publica
-// la salida de la tool en su stream (a diferencia del CLI de Claude), y fabricarla seria mentir.
-function toolEvents(
-  stepIndex: number,
-  state: string,
-  toolName: string,
-  parameters: Readonly<Record<string, unknown>> | undefined,
-): MageEvent[] {
-  const toolUseId = `${TOOL_ID_PREFIX}${stepIndex}`;
-  if (state === STATE_ACTIVE) {
-    return [{ kind: 'tool_use', tool: { toolUseId, toolName, input: parameters ?? {} } }];
-  }
-  const isError = state === STATE_ERROR;
-  return [
-    {
-      kind: 'tool_result',
-      result: {
-        toolUseId,
-        isError,
-        output: isError ? 'agy no pudo completar esta herramienta (state ERROR).' : '',
-        durationMs: null, // lo mide AgentSession emparejando tool_use -> tool_result
-      },
-    },
-  ];
+// Prefijo de los avisos de comando denegado: el tracker lo usa para no repetir el resumen del result.
+const DENIED_PREFIX = 'agy denegó';
+// Las dos formas medidas en 1.2.14: `permission check failed for command "<cmd>": …` (sin regla) y
+// `Permission denied for command(<cmd>). Matches user-configured deny rule.` (regla deny).
+const DENIED_COMMAND_PATTERNS: readonly RegExp[] = [/for command "((?:[^"\\]|\\.)*)"/, /for command\((.*)\)\./];
+const DENY_RULE_HINT = 'deny rule';
+
+// Aviso para el usuario a partir del error del paso, con el comando EXACTO. null = no es una denegacion.
+function deniedCommandMessage(errorMessage: string | undefined): string | null {
+  if (errorMessage === undefined || !/permission/i.test(errorMessage)) return null;
+  const command = DENIED_COMMAND_PATTERNS.map((pattern) => pattern.exec(errorMessage)?.[1]).find((match) => match !== undefined);
+  const what = command === undefined ? 'una acción' : `el comando «${command}»`;
+  if (errorMessage.includes(DENY_RULE_HINT)) return `${DENIED_PREFIX} ${what}: lo prohíbe una regla deny de su configuración.`;
+  return (
+    `${DENIED_PREFIX} ${what}: sin pantalla no tiene a quién pedir permiso y lo deniega. Mage aún no puede ` +
+    'concederle comandos en esta pestaña.'
+  );
 }
 
-// `result` -> result (con el uso REAL del turno) y, si `agy` reporta un fallo, un error visible antes.
-function normalizeResult(raw: Record<string, unknown>): MageEvent[] {
+// ACTIVE -> tool_use (con sus parametros); DONE/ERROR -> tool_result. `output` vacio: `agy` no publica
+// la salida de la tool en su stream (a diferencia del CLI de Claude), y fabricarla seria mentir. Una
+// denegacion es un resultado con error aunque el paso diga DONE.
+function toolEvents(step: z.infer<typeof AgyStepUpdateSchema>['step_update'], denial: string | null): MageEvent[] {
+  const toolUseId = `${TOOL_ID_PREFIX}${step.step_index}`;
+  if (step.state === STATE_ACTIVE) {
+    return [{ kind: 'tool_use', tool: { toolUseId, toolName: step.tool_name ?? '', input: step.tool_info?.parameters ?? {} } }];
+  }
+  const isError = step.state === STATE_ERROR || denial !== null;
+  const output = denial ?? (isError ? 'agy no pudo completar esta herramienta (state ERROR).' : '');
+  // durationMs lo mide AgentSession emparejando tool_use -> tool_result
+  return [{ kind: 'tool_result', result: { toolUseId, isError, output, durationMs: null } }];
+}
+
+// `result` -> result (con el uso del proceso, que el tracker convierte en el del turno) y, si `agy`
+// reporta un fallo o denego acciones sin decir cuales, un aviso visible antes.
+function normalizeResult(raw: Record<string, unknown>, deniedReported: boolean): MageEvent[] {
   const result = AgyResultSchema.parse(raw).result;
   const isError = result.status !== RESULT_SUCCESS;
   const events: MageEvent[] = [];
   if (isError) {
     const detail = result.error ?? `estado ${result.status}`;
     events.push({ kind: 'error', message: `agy termino el turno con error: ${detail}` });
+  }
+  const denied = result.denied_actions ?? [];
+  if (denied.length > 0 && !deniedReported) {
+    const names = [...new Set(denied.map((action) => action.display_name ?? action.action ?? '?'))].join(', ');
+    events.push({ kind: 'error', message: `${DENIED_PREFIX} ${denied.length} acción(es) (${names}): sin pantalla no tiene a quién pedir permiso.` });
   }
   const usage = toTurnUsage(result.usage);
   events.push({

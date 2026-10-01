@@ -1,6 +1,7 @@
 // Catalogo de proveedores (E2). Hay dos clases, y la diferencia es de DATOS, no de codigo:
 //   - de serie (`BUILT_IN_PROVIDERS`): los de motor NATIVO —`claude` (su CLI habla directo con
-//     Anthropic) y `agy` (Antigravity, que es EL CLI DE GOOGLE: Gemini no tiene uno propio, E3)— y los
+//     Anthropic), `agy` (Antigravity, que es EL CLI DE GOOGLE: Gemini no tiene uno propio, E3) y `codex`
+//     (el de OpenAI, sobre `codex app-server`, sin verificar)— y los
 //     de nube cuyo endpoint y variable de entorno son fijos (`openai`, `gemini`), que van por el
 //     gateway local Anthropic<->OpenAI. Ojo a las DOS entradas de Google: `agy` corre los modelos
 //     Gemini con la SUSCRIPCION (login OAuth del propio CLI) y `gemini` los mismos con una CLAVE de
@@ -55,39 +56,38 @@ export const AGY_PROVIDER_ID = 'agy';
 // catalogo y los tests.
 export const CODEX_PROVIDER_ID = 'codex';
 
-// Proveedores que Mage DETECTA pero todavia no sabe EJECUTAR: les falta su `ProviderAdapter`. Se
-// listan en Ajustes (con el motivo a la vista) y NO se ofrecen al abrir una conversacion — ofrecer
-// algo que va a fallar al primer mensaje es peor que no ofrecerlo.
-//
-// Codex esta aqui por una razon concreta y reversible: su protocolo ENCAJA (`codex exec --json` da
-// JSONL por stdout, y acepta `-C/--cd`, `--add-dir`, `-m/--model` y `codex exec resume`), pero el
-// stream de eventos de un turno real no se ha podido MEDIR porque la maquina donde se añadio no tiene
-// cuenta de Codex (`codex login status` -> "Not logged in"). Escribir el adapter desde el `--help` es
-// exactamente lo que prohibe la skill `protocolo-cli`, y este proyecto ya lo pago dos veces. Con una
-// cuenta se mide, se escribe el adapter y Codex sale de esta lista.
-export const PROVIDERS_WITHOUT_ADAPTER: readonly string[] = [CODEX_PROVIDER_ID];
+// Codex corre sobre `codex app-server` (JSON-RPC por stdio), que SI tiene puente de permisos
+// (`item/*/requestApproval`) y catalogo de modelos (`model/list`). Su adapter esta escrito desde el
+// esquema que genera `codex app-server generate-json-schema` y lo medido SIN cuenta (codex-cli 0.144.4,
+// `spike/codex-spike.mjs --app-server`): un turno real no se ha podido medir. La UI lo dice con este texto.
+export const UNVERIFIED_PROVIDER_IDS: readonly string[] = [CODEX_PROVIDER_ID];
+export const UNVERIFIED_PROVIDER_NOTE =
+  'Sin verificar: Mage habla con Codex según su documentación y su esquema, pero aún no se ha probado ' +
+  'un turno con una cuenta real.';
 
-// ¿Puede Mage EJECUTAR este proveedor? Lo consultan los selectores de conversacion, que solo deben
-// ofrecer lo que de verdad va a arrancar.
-export function hasAdapter(providerId: string): boolean {
-  return !PROVIDERS_WITHOUT_ADAPTER.includes(providerId);
+export function isUnverifiedProvider(providerId: string): boolean {
+  return UNVERIFIED_PROVIDER_IDS.includes(providerId);
 }
 
 // Proveedores cuyo CLI NO tiene puente de permisos y por tanto AUTO-APRUEBAN toda tool.
-//   - `agy` 1.1.11: no existe `--permission-prompt-tool` ni ninguna peticion de permiso por stdout que
-//     Mage pueda contestar, y con `--add-dir` las escrituras se aplican sin preguntar.
-//   - `codex` 0.144.4 (medido el 2026-09-18): el oraculo de flags rechaza `--permission-prompt-tool`,
-//     `--approval-mode` y `--ask-for-approval`; lo unico que ofrece es `--sandbox`
-//     (read-only | workspace-write | danger-full-access), que es una politica ESTATICA, no un puente.
-// Eso rompe la decision nº 2 del proyecto (dialogos de permiso propios) solo para estos proveedores,
-// asi que la UI tiene la obligacion de decirlo donde no se pueda pasar por alto.
-export const AUTO_APPROVED_PROVIDER_IDS: readonly string[] = [AGY_PROVIDER_ID, CODEX_PROVIDER_ID];
+//   - `agy` 1.2.14: no existe `--permission-prompt-tool`, y `control_request`/`control_response` por
+//     stdin estan reservados («not supported yet»). Con `--add-dir` las escrituras se aplican sin
+//     preguntar (en sus tres modos, medido) y los comandos se DENIEGAN en silencio salvo regla en su
+//     configuracion.
+// Eso rompe la decision nº 2 del proyecto (dialogos de permiso propios) solo para este proveedor, asi
+// que la UI tiene la obligacion de decirlo donde no se pueda pasar por alto.
+export const AUTO_APPROVED_PROVIDER_IDS: readonly string[] = [AGY_PROVIDER_ID];
 
 // Texto UNICO del aviso (no se duplica por componente: si cambia, cambia en todos a la vez).
 export const NO_PERMISSION_CONTROL_WARNING =
   'Sin control de permisos: el agente crea y modifica ficheros SIN preguntar dentro de la carpeta del ' +
-  'proyecto. Mage no puede interceptarlo (ni el CLI de agy ni el de Codex ofrecen ningún puente de ' +
-  'permisos), así que esta pestaña no pasa por los diálogos de permiso de Mage.';
+  'proyecto, y agy deniega los comandos de terminal porque no tiene a quién preguntar. Mage no puede ' +
+  'interceptarlo (el CLI de agy no ofrece puente de permisos), así que esta pestaña no pasa por los ' +
+  'diálogos de permiso de Mage.';
+
+// Niveles de `--effort` de `agy`, medidos en 1.2.14 (`--help`: low|medium|high|max). Un solo sitio: lo
+// usan su adapter (main) y los selectores (renderer).
+export const AGY_EFFORT_LEVELS: readonly string[] = ['low', 'medium', 'high', 'max'];
 
 // ¿Las sesiones de este proveedor auto-aprueban las tools? Lo consultan la barra de prompt, el estado
 // vacio de la conversacion y el dialogo de nueva pestana.
@@ -169,24 +169,23 @@ export const BUILT_IN_PROVIDERS: readonly BuiltInProvider[] = [
     ],
   },
   {
-    // Motor NATIVO nº 3: el CLI `codex` de OpenAI. MEDIDO el 2026-09-18 contra codex-cli 0.144.4:
-    // `codex exec --json` imprime eventos JSONL por stdout y acepta `-C/--cd`, `--add-dir`,
-    // `-m/--model` y `codex exec resume`, asi que el protocolo encaja con el motor de Mage.
-    //
-    // DETECTADO PERO AUN NO EJECUTABLE (ver PROVIDERS_WITHOUT_ADAPTER): falta medir el stream de
-    // eventos de un turno real, y para eso hace falta una cuenta de Codex.
-    //
-    // Sin catalogo preguntable —no hay ningun comando que liste modelos, igual que en Claude—, asi que
-    // esta lista es la CURADA y se dice en la UI. Los ids son los que acepta `-m/--model`.
+    // Motor NATIVO nº 3: el CLI `codex` de OpenAI sobre `codex app-server` (sin verificar con cuenta).
+    // El catalogo SI es preguntable: `model/list` responde sin cuenta (medido el 2026-10-01 contra
+    // codex-cli 0.144.4) y la sesion lo pide al arrancar. Esta lista es la RESERVA: lo que contesto ese
+    // `model/list`, en su orden y sin los ocultos.
     id: CODEX_PROVIDER_ID,
-    label: 'Codex (OpenAI) · sin permisos',
+    label: 'Codex (OpenAI) · sin verificar',
     baseUrl: null,
     apiKeyEnvVar: null,
     modelAliases: {},
     models: [
-      { id: 'gpt-5-codex', label: 'GPT-5 Codex' },
-      { id: 'gpt-5', label: 'GPT-5' },
-      { id: 'o4-mini', label: 'o4-mini' },
+      { id: 'gpt-5.6-sol', label: 'GPT-5.6-Sol' },
+      { id: 'gpt-5.6-terra', label: 'GPT-5.6-Terra' },
+      { id: 'gpt-5.6-luna', label: 'GPT-5.6-Luna' },
+      { id: 'gpt-5.5', label: 'GPT-5.5' },
+      { id: 'gpt-5.4', label: 'GPT-5.4' },
+      { id: 'gpt-5.4-mini', label: 'GPT-5.4-Mini' },
+      { id: 'gpt-5.2', label: 'GPT-5.2' },
     ],
   },
   {
@@ -210,12 +209,12 @@ export const BUILT_IN_PROVIDERS: readonly BuiltInProvider[] = [
     label: 'Gemini · API de Google (clave propia)',
     baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
     apiKeyEnvVar: 'GEMINI_API_KEY',
-    modelAliases: { sonnet: 'gemini-2.5-flash', haiku: 'gemini-1.5-flash', opus: 'gemini-2.5-pro' },
+    // Reserva sin la familia 1.5, que Google retiro; el sondeo (`GET /models`) lista lo que haya de verdad.
+    modelAliases: { sonnet: 'gemini-2.5-flash', haiku: 'gemini-2.5-flash-lite', opus: 'gemini-2.5-pro' },
     models: [
       { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
       { id: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
-      { id: 'gemini-1.5-flash', label: 'Gemini 1.5 Flash' },
-      { id: 'gemini-1.5-pro', label: 'Gemini 1.5 Pro' },
+      { id: 'gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash-Lite' },
     ],
   },
 ];
@@ -245,24 +244,13 @@ export const PROVIDER_TEMPLATES: readonly ProviderTemplate[] = [
     // La API de Google. Su CLI es Antigravity (`agy`), que es otra entrada y va por suscripcion.
     label: 'Gemini (API)',
     baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
-    modelIds: ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-1.5-flash', 'gemini-1.5-pro'],
+    modelIds: ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.5-flash-lite'],
   },
 ];
 
 // Prefijo de los ids generados para proveedores del usuario: garantiza que jamas colisionen con un id
 // de serie (que no lo lleva) sin tener que validar contra la lista.
 export const CUSTOM_PROVIDER_ID_PREFIX = 'custom:';
-
-// Como se da de alta un proveedor (P-028, punto 41), tal como lo ve el renderer. Solo cadenas
-// descriptivas: el dialogo «Añadir cuenta» nunca pide ni muestra claves.
-export type ProviderAuthKind = 'cli-oauth' | 'api-key' | 'external';
-
-export interface ProviderAuthSummary {
-  readonly providerId: string;
-  readonly label: string;
-  readonly kind: ProviderAuthKind;
-  readonly reason: string;
-}
 
 const CHAT_COMPLETIONS_PATH = '/chat/completions';
 const MODELS_PATH = '/models';

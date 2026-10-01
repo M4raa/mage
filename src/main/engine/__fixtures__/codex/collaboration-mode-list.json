@@ -1,0 +1,19 @@
+{
+  "id": 5,
+  "result": {
+    "data": [
+      {
+        "name": "Plan",
+        "mode": "plan",
+        "model": null,
+        "reasoning_effort": "medium"
+      },
+      {
+        "name": "Default",
+        "mode": "default",
+        "model": null,
+        "reasoning_effort": null
+      }
+    ]
+  }
+}

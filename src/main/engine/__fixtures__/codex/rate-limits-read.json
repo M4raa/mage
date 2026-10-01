@@ -1,0 +1,7 @@
+{
+  "error": {
+    "code": -32600,
+    "message": "codex account authentication required to read rate limits"
+  },
+  "id": 6
+}

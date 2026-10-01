@@ -19,7 +19,7 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs';
-import { homedir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { isUnderCliScratchpad as isUnderCliScratchpadPure } from './files/cliScratchpad';
 import { fileURLToPath } from 'node:url';
@@ -100,7 +100,7 @@ import type { PanelLayoutState } from '@shared/panelLayout';
 import type { MenuItemConstructorOptions } from 'electron';
 import { DebugChannel } from '@shared/debug';
 import type { RendererLogInput } from '@shared/debug';
-import type { AccountInfo, CliLoginStart, EmbeddedLoginResult } from '@shared/accounts';
+import type { AccountCreateParams, AccountInfo, CliLoginStart, EmbeddedLoginResult } from '@shared/accounts';
 import { BASE_ARGS as CLAUDE_BASE_ARGS, ClaudeAdapter } from './engine/claudeAdapter';
 import { probeModelCatalogs, type ProbeProcess } from './engine/modelProbe';
 import { registerMcpIpc } from './config/mcpIpc';
@@ -108,13 +108,26 @@ import { resolveClaudeDesktopDirs, type McpAccountLocation } from './config/mcpI
 import { probeMcpStatuses } from './config/mcpStatusProbe';
 import { authenticateMcp } from './config/mcpAuthFlow';
 import { FAKE_AUTH_URL, spawnFakeMcpCli } from './config/mcpFakeCli';
-import type { ProviderAuthSummary, ProviderModel } from '@shared/providers';
+import type { ProviderModel } from '@shared/providers';
 import { GatewayAdapter } from './engine/gatewayAdapter';
 import { AgyAdapter } from './engine/agyAdapter';
+import { CodexAdapter } from './engine/codexAdapter';
+import { agyApiProfileSettings, agyAttachmentPath, writeAgyProfileSettings } from './engine/agyProfile';
+import { AGY_USAGE_ARGS, readAgyUsage } from './usage/agyUsage';
+import type { AgyUsageSnapshot } from '@shared/usage';
+import {
+  isKnownPermissionModeFor,
+  PERMISSION_MODE_ORACLE_VALUE,
+  probePermissionModes,
+  type PermissionModesByProvider,
+} from './engine/permissionModes';
+import { findCodexBinary, resolveCodexBinary } from './os/codexBinaryResolver';
+import { resolveAgyBinary } from './os/agyBinaryResolver';
+import { ProviderAccountService } from './accounts/providerAccounts';
+import { CodexLoginService, type CodexLoginResult } from './accounts/codexLoginService';
 import { defaultProbeDeps, probeProvider } from './engine/providerProbe';
 import { findAgyBinary } from './os/agyBinaryResolver';
-import { AGY_PROVIDER_ID, BUILT_IN_PROVIDERS, hasAdapter } from '@shared/providers';
-import { providerAuthSummary } from './engine/providerAuth';
+import { AGY_PROVIDER_ID, CODEX_PROVIDER_ID } from '@shared/providers';
 import { setCustomProviderLoader, setGatewayLogger, startGateway, stopGateway } from './engine/proxy/gateway';
 import { defaultKillTreeDeps, killProcessTree } from './os/processTree';
 import { SessionManager } from './engine/sessionManager';
@@ -476,6 +489,8 @@ const sessionManager = new SessionManager(
     fileExists: existsSync,
     listHome: () => readdirSync(homedir()),
     resolveShared: loadSharedLaunch,
+    hasClaudeLogin,
+    isKnownPermissionMode: (provider, mode) => isKnownPermissionMode(provider, mode),
   },
   logBus.loggerFor('engine'),
 );
@@ -492,9 +507,226 @@ function accountLayoutOf(adapter: ProviderAdapter): AccountLayout {
 
 function buildAdapter(provider: string): ProviderAdapter {
   const writeMcpConfig = getMcpServices().writeClaudeMcpConfig;
-  if (provider === 'claude') return new ClaudeAdapter(undefined, writeMcpConfig);
-  if (provider === AGY_PROVIDER_ID) return new AgyAdapter();
+  // La clave de una cuenta por API la pone SOLO el adapter de su CLI, y solo en el hijo de esa cuenta
+  // (agentEnv.ts, excepcion 2). Las de suscripcion resuelven null.
+  if (provider === 'claude') return new ClaudeAdapter(undefined, writeMcpConfig, claudeApiKeyFor);
+  if (provider === AGY_PROVIDER_ID) return buildAgyAdapter();
+  if (provider === CODEX_PROVIDER_ID) return buildCodexAdapter();
   return new GatewayAdapter(provider, undefined, undefined, writeMcpConfig);
+}
+
+// Clave de una cuenta de Claude por API (null en las de suscripcion). Una cuenta de API nunca inicia
+// sesion: si aparece un login del CLI en su dir, se avisa (no se ha medido que credencial preferiria).
+function claudeApiKeyFor(dir: string): string | null {
+  const key = getProviderAccounts().apiKeyFor('claude', dir);
+  if (key !== null && existsSync(join(dir, '.credentials.json'))) {
+    mainLog('warn', 'Una cuenta de Claude por API tiene un login del CLI en su carpeta: se usa su clave', { dir });
+  }
+  return key;
+}
+
+// Imagenes que se le pasan a agy por ruta (solo admite texto, medido en 1.2.14). En el temporal del SO.
+// ponytail: no se barren; las limpia el SO con su temporal. Si pesan, barrerlas con scratchRetention.
+function agyAttachmentsDir(): string {
+  const dir = join(tmpdir(), 'mage-agy-attachments');
+  mkdirSync(dir, { recursive: true });
+  return realpathSync.native(dir); // ruta LARGA: con la 8.3 la regla read_file no casa (medido)
+}
+
+function buildAgyAdapter(): AgyAdapter {
+  return new AgyAdapter({
+    resolveApiAccount: (dir) => {
+      const entry = getProviderAccounts().find('agy', dir);
+      if (entry === null || entry.authKind !== 'api-key') return null;
+      const apiKey = getProviderAccounts().apiKeyFor('agy', dir);
+      return apiKey === null ? null : { profileDir: entry.home, apiKey };
+    },
+    // Costura de (a)/(b)/(c): hoy solo el perfil de una cuenta por CLAVE, con las reglas imprescindibles.
+    prepareProfile: (profileDir, cwd) => {
+      const settings = agyApiProfileSettings(realpathSync.native(cwd), agyAttachmentsDir());
+      writeAgyProfileSettings({ mkdir: (path) => mkdirSync(path, { recursive: true }), writeFile: (path, text) => writeFileSync(path, text, 'utf8') }, profileDir, settings);
+    },
+    saveAttachment: (sessionId, attachment, index) => {
+      const path = agyAttachmentPath(agyAttachmentsDir(), sessionId, attachment, index);
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, Buffer.from(attachment.data, 'base64'));
+      return path;
+    },
+  });
+}
+
+function buildCodexAdapter(): CodexAdapter {
+  return new CodexAdapter({
+    resolveAccount: (dir) => {
+      const entry = getProviderAccounts().find('codex', dir);
+      if (entry === null) return null;
+      mkdirSync(entry.home, { recursive: true }); // codex se niega a arrancar si CODEX_HOME no existe (medido)
+      return { home: entry.home, apiKey: getProviderAccounts().apiKeyFor('codex', dir) };
+    },
+  });
+}
+
+// --- Sondeos gratis de los CLI (grupo E): ninguno abre un turno ---------------------------------
+
+const CLI_PROBE_TIMEOUT_MS = 20_000;
+const AGY_USAGE_TTL_MS = 180_000;
+const CODEX_LOGIN_TIMEOUT_MS = 10 * 60_000;
+const CLI_PROBE_MAX_BUFFER = 4 * 1024 * 1024;
+
+// stdout+stderr de un CLI lanzado sin shell y con el entorno saneado. Un exit distinto de 0 no es un
+// fallo aqui: el oraculo de `--permission-mode` sale con 1 a proposito. null = no se pudo lanzar.
+function runCliCapture(command: string, args: readonly string[], env: NodeJS.ProcessEnv): Promise<{ stdout: string; output: string } | null> {
+  return new Promise((resolveRun) => {
+    execFile(command, [...args], { env, timeout: CLI_PROBE_TIMEOUT_MS, windowsHide: true, maxBuffer: CLI_PROBE_MAX_BUFFER }, (err, stdout, stderr) => {
+      if (err !== null && (err as NodeJS.ErrnoException).code === 'ENOENT') {
+        mainLog('warn', 'No se pudo lanzar el CLI para un sondeo', { command, error: err.message });
+        resolveRun(null);
+        return;
+      }
+      resolveRun({ stdout: String(stdout), output: `${String(stdout)}${String(stderr)}` });
+    });
+  });
+}
+
+// `/usage` de agy con TTL (no gasta, pero es un proceso). verify:gui: MAGE_AGY_USAGE_FAKE=<fichero>.
+let agyUsageCache: AgyUsageSnapshot | null = null;
+async function readAgyUsageCached(): Promise<AgyUsageSnapshot> {
+  if (agyUsageCache !== null && Date.now() - agyUsageCache.fetchedAt < AGY_USAGE_TTL_MS) return agyUsageCache;
+  agyUsageCache = await readAgyUsage({
+    now: () => Date.now(),
+    runUsage: async () => {
+      const fake = process.env.MAGE_AGY_USAGE_FAKE;
+      if (fake !== undefined && fake.length > 0) return readFileSync(fake, 'utf8');
+      const result = await runCliCapture(resolveAgyBinary(), AGY_USAGE_ARGS, scrubAgentEnv(process.env));
+      if (result === null) throw new Error('No se pudo lanzar agy');
+      return result.stdout;
+    },
+  });
+  return agyUsageCache;
+}
+
+// Modos de permiso leidos de cada CLI, una vez por ejecucion de Mage (no cambian sin actualizar el CLI).
+let permissionModesPromise: Promise<PermissionModesByProvider> | null = null;
+let permissionModesProbed: PermissionModesByProvider | null = null;
+function loadPermissionModes(): Promise<PermissionModesByProvider> {
+  // verify:gui no lanza ningun CLI (MAGE_SKIP_MODEL_PROBE): ahi manda la lista fija de Mage.
+  if (process.env.MAGE_SKIP_MODEL_PROBE === '1') return Promise.resolve({ claude: null, codex: null });
+  permissionModesPromise ??= probePermissionModes({
+    runClaudeOracle: async () => {
+      const result = await runCliCapture(resolveClaudeBinary(), ['-p', '--permission-mode', PERMISSION_MODE_ORACLE_VALUE], scrubAgentEnv(process.env));
+      return result?.output ?? null;
+    },
+    readCodexProfiles: () => readCodexPermissionProfiles(),
+  }).then((modes) => {
+    permissionModesProbed = modes;
+    mainLog('info', 'Modos de permiso leidos de los CLI', modes);
+    return modes;
+  });
+  return permissionModesPromise;
+}
+
+function isKnownPermissionMode(provider: string, mode: string): boolean {
+  return isKnownPermissionModeFor(provider, mode, permissionModesProbed);
+}
+
+// `permissionProfile/list` de un app-server de codex con un CODEX_HOME de Mage (nunca el del usuario):
+// los perfiles integrados no dependen de la cuenta (medido sin cuenta). null si no hay codex o no contesta.
+async function readCodexPermissionProfiles(): Promise<unknown> {
+  if (findCodexBinary() === null) return null;
+  const home = join(app.getPath('userData'), 'codex-probe');
+  mkdirSync(home, { recursive: true });
+  const child = spawn(resolveCodexBinary(), ['app-server'], { env: { ...scrubAgentEnv(process.env), CODEX_HOME: home }, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+  return new Promise((resolveList) => {
+    let buffer = '';
+    const done = (value: unknown): void => {
+      clearTimeout(timer);
+      killProcessTree(child, defaultKillTreeDeps());
+      resolveList(value);
+    };
+    const timer = setTimeout(() => done(null), CLI_PROBE_TIMEOUT_MS);
+    child.on('error', () => done(null));
+    child.stdout.setEncoding('utf8');
+    child.stdout.on('data', (chunk: string) => {
+      buffer += chunk;
+      const lines = buffer.split('\n');
+      buffer = lines.pop() ?? '';
+      for (const line of lines) answerCodexProbeLine(child.stdin, safeJson(line), done);
+    });
+    child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { clientInfo: { name: 'mage', version: app.getVersion() } } })}\n`);
+  });
+}
+
+function answerCodexProbeLine(stdin: NodeJS.WritableStream, message: { id?: unknown; result?: unknown } | null, done: (value: unknown) => void): void {
+  if (message?.id === 1) {
+    stdin.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'initialized' })}\n`);
+    stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'permissionProfile/list', params: {} })}\n`);
+  }
+  if (message?.id === 2) done(message.result ?? null);
+}
+
+function safeJson(line: string): { id?: unknown; result?: unknown } | null {
+  try {
+    return JSON.parse(line) as { id?: unknown; result?: unknown };
+  } catch {
+    return null; // una linea de aviso del CLI no es una respuesta
+  }
+}
+
+let codexLoginSingleton: CodexLoginService | null = null;
+function getCodexLogin(): CodexLoginService {
+  codexLoginSingleton ??= new CodexLoginService({
+    spawnAppServer: (codexHome) =>
+      spawn(resolveCodexBinary(), ['app-server'], { env: { ...scrubAgentEnv(process.env), CODEX_HOME: codexHome }, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true }),
+    openUrl: (url) => openWithService.openExternal(url),
+    killTree: (child) => {
+      killProcessTree(child, defaultKillTreeDeps());
+    },
+    timeoutMs: CODEX_LOGIN_TIMEOUT_MS,
+  });
+  return codexLoginSingleton;
+}
+
+// Cuentas que no son la suscripcion de Claude (grupo E): registro en userData, claves en la boveda.
+let providerAccountsSingleton: ProviderAccountService | null = null;
+function getProviderAccounts(): ProviderAccountService {
+  if (providerAccountsSingleton === null) {
+    providerAccountsSingleton = new ProviderAccountService({
+      filePath: join(app.getPath('userData'), 'provider-accounts.json'),
+      homedir: homedir(),
+      userDataDir: app.getPath('userData'),
+      vault: getSecretStore(),
+      exists: existsSync,
+      readFile: (path) => readFileSync(path, 'utf8'),
+      writeFile: (path, data) => writeFileSync(path, data, 'utf8'),
+      rename: renameSync,
+      tempSuffix: () => randomUUID(),
+      mkdir: (path) => mkdirSync(path, { recursive: true }),
+      rmrf: (path) => rmSync(path, { recursive: true, force: true }),
+      createClaudeDir: (name) => accountService.createAccount(name),
+      deleteClaudeDir: (dir) => accountService.deleteAccount(dir),
+    });
+  }
+  return providerAccountsSingleton;
+}
+
+// Todas las cuentas: las de Claude descubiertas en disco (marcadas si son de API) y las del registro.
+function listAllAccounts(): AccountInfo[] {
+  return getProviderAccounts().list(accountService.listAccounts());
+}
+
+// ¿Puede una sesion lanzarse con este dir de cuenta? Un config dir de Claude bajo HOME, o una cuenta
+// del registro (CODEX_HOME de codex, perfil de agy por clave). Nunca una ruta arbitraria por IPC.
+function isLaunchableAccountDir(dir: string): boolean {
+  if (isManagedAccountConfigDir(dir)) return true;
+  return getProviderAccounts().find('codex', dir) !== null || getProviderAccounts().find('agy', dir) !== null;
+}
+
+// ¿Tiene la cuenta de Claude con que autenticar? Login del CLI (.credentials.json) o clave de API en la
+// boveda (una cuenta de API nunca inicia sesion).
+function hasClaudeLogin(accountDir: string): boolean {
+  if (existsSync(join(accountDir, '.credentials.json'))) return true;
+  const entry = getProviderAccounts().find('claude', accountDir);
+  return entry !== null && entry.authKind === 'api-key' && getProviderAccounts().apiKeyFor('claude', accountDir) !== null;
 }
 
 // Servicio "abrir con": revelar en el gestor de archivos y guardar-como (copiar) los ficheros que
@@ -1897,7 +2129,7 @@ function registerIpcHandlers(): void {
     // Y la CUENTA se valida como en el resto de canales con ruta (`UsageGet`, `ConversationsList`…):
     // este es el unico que LANZA UN PROCESO, asi que un `accountDir` arbitrario seria un CLI corriendo
     // contra un config dir ajeno —con sus credenciales y sus hooks— por un solo mensaje IPC.
-    if (!isManagedAccountConfigDir(params.accountDir)) {
+    if (!isLaunchableAccountDir(params.accountDir)) {
       throw new Error(`Cuenta no valida para lanzar un agente: ${params.accountDir}`);
     }
     if (!isFolderTrusted(params.cwd, params.accountDir)) {
@@ -1906,8 +2138,9 @@ function registerIpcHandlers(): void {
     // M2.6: una conversacion privada se lanza bajo el perfil privado de la cuenta (mismo login,
     // projects propio). Compartida (default) usa la cuenta tal cual. El config dir efectivo vuelve al
     // renderer para localizar transcripciones/memoria de la conversacion.
+    // El perfil privado es de Claude: en otro proveedor la privacidad no cambia el dir de la cuenta.
     const configDir =
-      params.privacy === 'private' ? accountService.ensurePrivateProfile(params.accountDir) : params.accountDir;
+      params.privacy === 'private' && params.provider === 'claude' ? accountService.ensurePrivateProfile(params.accountDir) : params.accountDir;
     const effectiveParams = configDir === params.accountDir ? params : { ...params, accountDir: configDir };
     const sessionId = sessionManager.create(effectiveParams, (payload) => {
       // Cache del catalogo "/" (2.2): la sesion es la UNICA fuente del catalogo real, y una
@@ -1984,13 +2217,11 @@ function registerIpcHandlers(): void {
   // instalacion hecha con Mage abierto (que es la razon de no cachearlo de por vida), pero deja de
   // pagarse el proceso en cada apertura del dialogo.
   let agyProbe: { atMs: number; installed: boolean } | null = null;
-  // «Añadir cuenta» por proveedor (P-028, 41). Los integrados con adapter y los del usuario; de estos
-  // solo viajan id y nombre (su `apiKey` no sale de main).
-  ipcMain.handle(IpcChannel.ProvidersAuthList, (): readonly ProviderAuthSummary[] => {
-    const custom = getSettingsStore().load().customProviders.map(({ id, label }) => ({ id, label }));
-    const builtIn = BUILT_IN_PROVIDERS.filter((p) => hasAdapter(p.id)).map(({ id, label }) => ({ id, label }));
-    return providerAuthSummary([...builtIn, ...custom], buildAdapter);
-  });
+  ipcMain.handle(IpcChannel.CodexInstalled, (): boolean => findCodexBinary() !== null);
+  // Uso de la suscripcion de agy (`/usage`, gratis: 0 turnos, medido en 1.2.14), con TTL.
+  ipcMain.handle(IpcChannel.AgyUsageRead, (): Promise<AgyUsageSnapshot> => readAgyUsageCached());
+  // Modos de permiso que expone cada CLI (respuesta 18): leidos del propio CLI, no de una lista fija.
+  ipcMain.handle(IpcChannel.PermissionModesList, (): Promise<PermissionModesByProvider> => loadPermissionModes());
   ipcMain.handle(IpcChannel.AgyInstalled, () => {
     const nowMs = Date.now();
     if (agyProbe === null || nowMs - agyProbe.atMs > AGY_PROBE_TTL_MS) {
@@ -2066,10 +2297,20 @@ function registerIpcHandlers(): void {
 
   // Cuentas: listar (datos seguros), crear (dir + enlaces + settings) y lanzar login interactivo
   // en terminal externa (headless no puede loguear). El binario se resuelve por SO.
-  ipcMain.handle(IpcChannel.AccountsList, (): readonly AccountInfo[] => accountService.listAccounts());
+  ipcMain.handle(IpcChannel.AccountsList, (): readonly AccountInfo[] => listAllAccounts());
   ipcMain.handle(IpcChannel.AccountsCreate, (_e, name: string): AccountInfo =>
     accountService.createAccount(name),
   );
+  // Alta de la matriz (grupo E): Claude por API, Codex (ChatGPT o clave) y agy por clave. La clave sube
+  // aqui UNA vez y se cifra; nunca vuelve al renderer.
+  ipcMain.handle(IpcChannel.AccountsCreateFor, (_e, params: AccountCreateParams): AccountInfo => getProviderAccounts().create(params));
+  // Login de ChatGPT de una cuenta de Codex por su CLI (sin verificar). Solo cuentas del registro.
+  ipcMain.handle(IpcChannel.CodexLoginStart, (_e, configDir: string): Promise<CodexLoginResult> => {
+    const entry = getProviderAccounts().find('codex', configDir);
+    if (entry === null || entry.authKind !== 'subscription') throw new Error(`No es una cuenta de Codex por suscripcion: ${configDir}`);
+    return getCodexLogin().login(entry.home);
+  });
+  ipcMain.handle(IpcChannel.CodexLoginCancel, (): void => getCodexLogin().cancel());
   // Login por el CLI (Fase 9.2), en tres pasos porque el usuario pega el *code* en medio. El
   // whitelisting del configDir vive dentro del servicio (`validateConfigDir`), que es su frontera.
   ipcMain.handle(IpcChannel.AccountsLoginStart, (_e, params: LoginStartParams): Promise<CliLoginStart> => {
@@ -2097,12 +2338,13 @@ function registerIpcHandlers(): void {
   // Las guardas de datos (principal, carpeta compartida real con datos, enlace que no se quita) viven
   // en `AccountService.deleteAccount`, que es la frontera.
   ipcMain.handle(IpcChannel.AccountsDelete, (_e, configDir: string) => {
-    if (!isManagedAccountConfigDir(configDir)) {
+    if (!isLaunchableAccountDir(configDir)) {
       throw new Error(`Cuenta no valida para borrar: ${configDir}`);
     }
     const stopped = sessionManager.stopByConfigDir(configDir);
     if (stopped > 0) mainLog('info', `Paradas ${stopped} sesiones antes de borrar la cuenta "${configDir}"`);
-    accountService.deleteAccount(configDir);
+    // Una cuenta del registro (API, Codex) se borra con su clave; una suscripcion de Claude, como siempre.
+    if (!getProviderAccounts().delete(configDir)) accountService.deleteAccount(configDir);
     getCommandCatalogStore().forgetAccount(
       configDir,
       (key) => pathEquals(key, configDir) || pathEquals(dirname(key), configDir),
@@ -2121,6 +2363,8 @@ function registerIpcHandlers(): void {
   // main leyera .credentials.json de CUALQUIER ruta y usara ese token contra la API de uso — mismo
   // patron que ConversationsList/AccountsDelete.
   ipcMain.handle(IpcChannel.UsageGet, (_e, configDir: string) => {
+    // Una cuenta de Codex no tiene endpoint de uso de Mage: lo que trajo su sesion (grupo E).
+    if (getProviderAccounts().find('codex', configDir) !== null) return usageService.getStreamUsage(configDir);
     if (!isManagedAccountConfigDir(configDir)) {
       throw new Error(`Cuenta no valida para consultar uso: ${configDir}`);
     }

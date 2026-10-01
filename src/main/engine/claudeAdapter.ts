@@ -71,9 +71,12 @@ export class ClaudeAdapter implements ProviderAdapter {
 
   // Resolver inyectable para testear el plan de spawn sin tocar el FS. `writeMcpConfig` escribe el
   // fichero de `--mcp-config` de la cuenta (con los secretos, en la carpeta de Mage): lo pone main.
+  // `resolveApiKey` devuelve la clave de API de la cuenta SI Y SOLO SI es una cuenta de Claude por API
+  // (grupo E); null para las de suscripcion. La lee main de su boveda: nunca viene del renderer.
   constructor(
     private readonly resolveBinary: () => string = resolveClaudeBinary,
     private readonly writeMcpConfig: ClaudeMcpConfigWriter = refuseClaudeMcpConfig,
+    private readonly resolveApiKey: (accountDir: string) => string | null = () => null,
   ) {}
 
   buildSpawnPlan(params: LaunchParams): SpawnPlan {
@@ -96,9 +99,17 @@ export class ClaudeAdapter implements ProviderAdapter {
     // Lo comun (MCP compartidos y extensiones, hooks y permisos) traducido a flags de Claude.
     const shared = claudeSharedLaunch(params.shared, params.accountDir, this.writeMcpConfig);
     args.push(...shared.args);
-    // Env del hijo: se fija la cuenta y se SANEA (scrubAgentEnv). El invariante de facturacion vive
-    // ahora en un solo sitio: ver src/main/os/agentEnv.ts.
-    const env: NodeJS.ProcessEnv = { ...scrubAgentEnv(process.env), CLAUDE_CONFIG_DIR: params.accountDir, ...shared.env };
+    // Env del hijo: se fija la cuenta y se SANEA (scrubAgentEnv), que borra toda credencial heredada. El
+    // invariante de facturacion vive en un solo sitio: ver src/main/os/agentEnv.ts. Segunda excepcion
+    // escrita alli: la clave de una cuenta de Claude por API se pone DESPUES del saneado y solo en el hijo
+    // de esa cuenta; las de suscripcion no reciben ninguna.
+    const apiKey = this.resolveApiKey(params.accountDir);
+    const env: NodeJS.ProcessEnv = {
+      ...scrubAgentEnv(process.env),
+      CLAUDE_CONFIG_DIR: params.accountDir,
+      ...shared.env,
+      ...(apiKey === null ? {} : { [ANTHROPIC_API_KEY_ENV]: apiKey }),
+    };
     return { command: this.resolveBinary(), args, env };
   }
 
@@ -202,6 +213,10 @@ export class ClaudeAdapter implements ProviderAdapter {
     return normalizeRawEvent(raw);
   }
 }
+
+// Variable con la que el CLI autentica por clave de API (medido en 2.1.285: con un config dir vacio,
+// `claude auth status` da `authMethod: "api_key"`, `apiKeySource: "ANTHROPIC_API_KEY"`).
+const ANTHROPIC_API_KEY_ENV = 'ANTHROPIC_API_KEY';
 
 // Formatea centavos enteros como dolares con 2 decimales (p.ej. 500 -> "5.00"), solo para el arg del
 // CLI. La division entera + resto evita el error de coma flotante de (cents/100).toFixed(2).

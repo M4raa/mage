@@ -1,10 +1,11 @@
 import { create } from 'zustand';
-import { defaultEffortForProvider, effortSettingKey, type ApiKeyUpdate } from './models';
+import { defaultEffortForProvider, defaultModelForProvider, effortSettingKey, providerFallbackModel, type ApiKeyUpdate } from './models';
 import type { PersistedTab } from '@shared/state';
 import { disposeTranscriptStore, transcriptStoreForTab } from './transcriptStore';
 import type { ContextUsage, MageEvent, McpServerStatus, PermissionDecision, PermissionRequest, SlashCommandInfo, SubagentInfo } from '@shared/events';
 import { buildUpdatedInput, parseAskUserQuestion } from '@shared/askUserQuestion';
-import type { CloseAnswer, NotificationTarget, PermissionMode, SessionEventPayload } from '@shared/ipc';
+import type { CloseAnswer, NotificationTarget, PermissionMode, PermissionModesByProviderView, SessionEventPayload } from '@shared/ipc';
+import { PERMISSION_MODE_PROVIDERS, permissionCycleFor } from './stepSliderModel';
 import { IDLE_UPDATE_STATE, type UpdateState } from '@shared/update';
 import { isPermissionMode, MAIN_WINDOW_ID, PERMISSION_MODES } from '@shared/ipc';
 import { RELEASE_NOTES_TAB_ID, releaseNotesDecision } from './releaseNotes';
@@ -98,7 +99,7 @@ import type {
   ThemePreference,
 } from '@shared/settings';
 import { clampUiScale, DEFAULT_APP_SETTINGS, DEFAULT_PERMISSION_MODES, ONBOARDING_VERSION } from '@shared/settings';
-import { writesClaudeTranscript, type CustomProvider, type ProviderModel } from '@shared/providers';
+import { AGY_PROVIDER_ID, CODEX_PROVIDER_ID, writesClaudeTranscript, type CustomProvider, type ProviderModel } from '@shared/providers';
 import { applyBackgroundOpacity, applyThemeFromSettings, findActiveImportedTheme, resolveTheme, systemPrefersDark } from './theme';
 import { toWidgetSnapshot } from './widgetView';
 import { deriveTitleFromPrompt, isPlaceholderTitle, isSlashCommandText, NEW_CONVERSATION_TITLE, renamedTitleFrom } from './conversationTitle';
@@ -142,6 +143,8 @@ export interface WorkbenchState extends PrState, PrActions {
   appVersion: string;
   // Configuracion de la app (M2.3): se carga en init(); defaults hasta entonces.
   readonly settings: AppSettings;
+  // Modos de permiso que expone cada CLI (respuesta 18); null hasta leerlos (o si no contestan).
+  readonly permissionModes: PermissionModesByProviderView | null;
   // Contador que pide FOCO para el input del prompt (extras): cada incremento hace que el PromptBar se
   // enfoque. Un contador (y no un booleano) evita tener que "consumir" el flag.
   promptFocusToken: number;
@@ -484,7 +487,8 @@ export interface WorkbenchState extends PrState, PrActions {
   setActiveModel: (model: string) => void;
   // Modo de permiso de la pestana activa (M2.6, solo Claude): fija el modo y, si hay sesion viva,
   // envia set_permission_mode; cyclePermissionMode rota default->acceptEdits->plan (shift+tab / chip).
-  setActivePermissionMode: (mode: PermissionMode) => void;
+  // Claude: un modo de su CLI; Codex: un perfil de `permissionProfile/list` (aplica al siguiente turno).
+  setActivePermissionMode: (mode: string) => void;
   cyclePermissionMode: () => void;
   // Nivel de esfuerzo (--effort, M2.4) de la pestana activa. Es un parametro de ARRANQUE del CLI: se
   // guarda en la Tab y aplica al arrancar/reanudar la sesion (no hay control_request para cambiarlo).
@@ -1121,6 +1125,7 @@ export function createWorkbenchStore(mage: MageClient) {
 
     usageByAccount: {},
     usageErrorByAccount: {},
+    permissionModes: null,
     status: null,
 
     blocksByChat: {},
@@ -1518,6 +1523,11 @@ export function createWorkbenchStore(mage: MageClient) {
         .then(() => get().refreshActiveUsage())
         .then(() => get().loadConversationHistory()); // historial de la cuenta activa (M2.6)
       void get().refreshStatus();
+      // Modos de permiso leidos de cada CLI (respuesta 18). Sin ellos, la lista fija de Mage.
+      void mage
+        .listPermissionModes()
+        .then((permissionModes) => set({ permissionModes }))
+        .catch((err: unknown) => console.warn('No se pudieron leer los modos de permiso de los CLI:', describeError(err)));
       // Configuracion de la app (M2.3): carga tolerante (main devuelve defaults si no hay fichero). Al
       // llegar, reconcilia el tema (el hint de localStorage se aplico antes de montar) con la preferencia
       // real del fichero y lo aplica al DOM.
@@ -1733,6 +1743,11 @@ export function createWorkbenchStore(mage: MageClient) {
       const account = get().accounts.find((a) => a.id === accountId);
       if (account === undefined) return;
       const cwd = await resolveNewConversationCwd(mage, get(), folder);
+      // Una cuenta de otro CLI (Codex, agy por clave) abre conversaciones de SU proveedor (grupo E).
+      if (account.providerId === CODEX_PROVIDER_ID || account.providerId === AGY_PROVIDER_ID) {
+        await get().newTab(newTabForProviderAccount(account, cwd, privacy, get().settings));
+        return;
+      }
       // Ultima conversacion Claude de la cuenta (las pestanas se anaden al final -> la ultima es la mas
       // reciente); su modelo es el "ultimo usado". Sobrevive reinicios porque las pestanas se restauran.
       const lastTab = [...get().tabs].reverse().find((t) => t.accountId === accountId && t.provider === 'claude');
@@ -2002,6 +2017,11 @@ export function createWorkbenchStore(mage: MageClient) {
     // (p.ej. sin login) guarda el mensaje en usageErrorByAccount para el dashboard; nunca lo traga.
     refreshUsage: async (configDir) => {
       if (configDir.length === 0) return;
+      // Uso de SUSCRIPCION: Claude por su endpoint, Codex por lo que trae su sesion (`usage_limits`). Una
+      // cuenta que factura la API no tiene ventanas, y agy por clave tampoco (el de su suscripcion va
+      // aparte en el panel, por su `/usage`).
+      const account = get().accounts.find((a) => a.id === configDir);
+      if (account !== undefined && (account.apiBilled || account.providerId === 'agy')) return;
       try {
         const info = await mage.getUsage(configDir);
         const windows = toUsageWindows(info, Date.now());
@@ -2480,7 +2500,7 @@ export function createWorkbenchStore(mage: MageClient) {
     setActivePermissionMode: (mode) => {
       const tabId = get().activeTabId;
       const tab = get().tabs.find((t) => t.id === tabId);
-      if (tab === undefined || tab.provider !== 'claude' || (tab.permissionMode ?? 'default') === mode) return;
+      if (tab === undefined || !PERMISSION_MODE_PROVIDERS.includes(tab.provider) || (tab.permissionMode ?? 'default') === mode) return;
       set((s) => ({ tabs: s.tabs.map((t) => (t.id === tabId ? { ...t, permissionMode: mode } : t)) }));
       persistConversationPrefs(mage, get(), tabId);
       const sessionId = get().sessionIdByChat[tabId];
@@ -2497,9 +2517,11 @@ export function createWorkbenchStore(mage: MageClient) {
       const tab = get().tabs.find((t) => t.id === get().activeTabId);
       if (tab === undefined || tab.provider !== 'claude') return;
       const current = tab.permissionMode ?? 'default';
-      // Un modo desconocido (`dontAsk`) no esta en el ciclo: -1, y el siguiente es el primero.
-      const index = PERMISSION_MODES.findIndex((mode) => mode === current);
-      const next = PERMISSION_MODES[(index + 1) % PERMISSION_MODES.length] ?? 'default';
+      // El ciclo sigue el orden de siempre con los modos que de verdad expone el CLI. Un modo desconocido
+      // (`dontAsk`) no esta en el ciclo: -1, y el siguiente es el primero.
+      const cycle = permissionCycleFor(get().permissionModes?.claude ?? null);
+      const index = cycle.findIndex((mode) => mode === current);
+      const next = cycle[(index + 1) % cycle.length] ?? 'default';
       get().setActivePermissionMode(next);
     },
 
@@ -3154,10 +3176,35 @@ async function closeMatchingTab(get: () => WorkbenchState, sessionId: string): P
   if (tab !== undefined) await state.closeTab(tab.id);
 }
 
-// Cuenta activa por defecto: primera con login valido; si no, la primera disponible; si no, "".
+// Cuenta activa por defecto: la primera SUSCRIPCION de Claude con login; si no, cualquiera con login;
+// si no, la primera disponible; si no, "". Una cuenta que factura la API nunca es la de por defecto
+// (grupo E): usarla tiene que ser una eleccion.
 function pickDefaultAccountId(accounts: readonly Account[]): string {
-  const loggedIn = accounts.find((a) => a.loginStatus === 'logged_in');
-  return (loggedIn ?? accounts[0])?.id ?? '';
+  const subscription = accounts.find((a) => a.loginStatus === 'logged_in' && a.providerId === 'claude' && !a.apiBilled);
+  const loggedIn = accounts.find((a) => a.loginStatus === 'logged_in' && !a.apiBilled);
+  return (subscription ?? loggedIn ?? accounts[0])?.id ?? '';
+}
+
+// Pestaña nueva en una cuenta de otro CLI: su proveedor, el modelo por defecto de ese proveedor (o el
+// primero de su catalogo) y su esfuerzo por defecto.
+function newTabForProviderAccount(
+  account: Account,
+  cwd: string,
+  privacy: ConversationPrivacy,
+  settings: AppSettings,
+): Parameters<WorkbenchState['newTab']>[0] {
+  const provider = account.providerId;
+  const model = defaultModelForProvider(settings.defaultModelByProvider, provider) || (providerFallbackModel(provider, settings.customProviders) ?? '');
+  const effort = defaultEffortForProvider(settings.defaultModelByProvider, provider);
+  return {
+    accountId: account.id,
+    cwd,
+    model,
+    provider,
+    title: NEW_CONVERSATION_TITLE,
+    privacy,
+    ...(effort.length === 0 ? {} : { effort }),
+  };
 }
 
 // Titulo de pestana: ultimo segmento no vacio del cwd (cross-platform: separa por / y \).

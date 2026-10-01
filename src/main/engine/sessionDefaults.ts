@@ -10,6 +10,12 @@ export interface DefaultsDeps {
   // Resuelve lo comun (MCP de mcp-common.json y extensiones, settings-common.json) para ESTE proveedor y
   // cuenta; se llama en cada sesion nueva para leerlo fresco (nunca se cachea).
   readonly resolveShared: (provider: string, accountDir: string) => SharedLaunchConfig;
+  // ¿Puede autenticar esta cuenta de Claude? Login del CLI o, en una cuenta de API, clave en la boveda
+  // (grupo E). Ausente = solo el login del CLI (`.credentials.json`).
+  readonly hasClaudeLogin?: (accountDir: string) => boolean;
+  // ¿Acepta el CLI de ese proveedor este modo de permiso? Los modos se leen del CLI (respuesta 18);
+  // ausente = la lista fija de Mage.
+  readonly isKnownPermissionMode?: (provider: string, mode: string) => boolean;
 }
 
 // Un CLAUDE_CONFIG_DIR es una cuenta valida si tiene credenciales OAuth.
@@ -31,14 +37,15 @@ export function resolveLaunchParams(
 
   const accountDir = params.accountDir.trim() || resolveDefaultAccountDir(deps);
   const isClaude = params.provider === 'claude';
-  if (isClaude && !deps.fileExists(join(accountDir, CREDENTIALS_FILE))) {
-    throw new Error(`La cuenta no tiene login valido (falta ${CREDENTIALS_FILE}): ${accountDir}`);
+  const hasLogin = deps.hasClaudeLogin ?? ((dir: string) => deps.fileExists(join(dir, CREDENTIALS_FILE)));
+  if (isClaude && !hasLogin(accountDir)) {
+    throw new Error(`La cuenta no tiene login valido (ni ${CREDENTIALS_FILE} ni clave de API): ${accountDir}`);
   }
 
   const cwd = params.cwd.trim() || deps.homedir;
   const effort = resolveEffort(params.effort);
   const maxBudgetUsdCents = resolveBudgetCents(params.maxBudgetUsdCents);
-  const permissionMode = resolvePermissionMode(params.permissionMode);
+  const permissionMode = resolvePermissionMode(params.provider, params.permissionMode, deps.isKnownPermissionMode);
   return {
     sessionId,
     accountDir,
@@ -56,10 +63,15 @@ export function resolveLaunchParams(
 // que tenga configurado la cuenta (P-026 2.3: Mage lo adopta de su `initialize`). Cualquier valor DEBE
 // ser un PERMISSION_MODES conocido (si no, lanza: nunca un flag invalido al hijo). `default` SI se
 // pasa: si el usuario eligio Manual, el `defaultMode` de la cuenta no puede cambiarselo por detras.
-function resolvePermissionMode(mode: string | undefined): string | undefined {
+function resolvePermissionMode(
+  provider: string,
+  mode: string | undefined,
+  isKnown: ((provider: string, mode: string) => boolean) | undefined,
+): string | undefined {
   if (mode === undefined || mode.length === 0) return undefined;
-  if (!(PERMISSION_MODES as readonly string[]).includes(mode)) {
-    throw new Error(`Modo de permiso invalido: ${JSON.stringify(mode)} (validos: ${PERMISSION_MODES.join(', ')})`);
+  const known = isKnown?.(provider, mode) ?? (PERMISSION_MODES as readonly string[]).includes(mode);
+  if (!known) {
+    throw new Error(`Modo de permiso invalido para ${provider}: ${JSON.stringify(mode)} (validos de Mage: ${PERMISSION_MODES.join(', ')})`);
   }
   return mode;
 }

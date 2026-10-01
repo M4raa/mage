@@ -30,3 +30,21 @@ export interface UsageInfo {
   readonly apiCreditsMinor: number | null;
   readonly fetchedAt: number; // epoch ms
 }
+
+// Uso de la suscripcion de agy (M9), de su `/usage` (gratis). `usedPercent` = 100 - lo que queda.
+export interface AgyUsageBucket {
+  readonly id: string;
+  readonly name: string;
+  readonly window: string;
+  readonly usedPercent: number; // 0..100, entero
+  readonly resetsAt: number | null; // epoch ms
+}
+
+export interface AgyUsageGroup {
+  readonly name: string;
+  readonly buckets: readonly AgyUsageBucket[];
+}
+
+export type AgyUsageSnapshot =
+  | { readonly status: 'ok'; readonly groups: readonly AgyUsageGroup[]; readonly fetchedAt: number }
+  | { readonly status: 'unavailable'; readonly reason: string; readonly fetchedAt: number };

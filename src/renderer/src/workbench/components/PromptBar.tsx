@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { isPermissionMode } from '@shared/ipc';
 import type { EditorInfo } from '@shared/ipc';
-import { NO_PERMISSION_CONTROL_WARNING, isAutoApprovedProvider } from '@shared/providers';
+import { CODEX_PROVIDER_ID, NO_PERMISSION_CONTROL_WARNING, UNVERIFIED_PROVIDER_NOTE, isAutoApprovedProvider, isUnverifiedProvider } from '@shared/providers';
 import { useWorkbenchStore } from '../workbenchStore';
 import { displayModelId, modelOptionsForProvider } from '../models';
 import { describeAttachment, insertImageTokens, reconcileImageTokens, removeImageToken } from '@shared/imageRefs';
@@ -22,7 +22,7 @@ import { isMacPlatform } from '../keybindings/platform';
 import { effortChangeAdvice, modelChangeAdvice, type CostAdvice } from '../costAdvice';
 import { Dropdown } from './Dropdown';
 import { StepSlider } from './StepSlider';
-import { EFFORT_STEP_LABEL, effortSteps, permissionModeLabel, permissionSteps } from '../stepSliderModel';
+import { EFFORT_STEP_LABEL, codexPermissionSteps, effortSteps, permissionModeLabel, permissionStepsFor } from '../stepSliderModel';
 import { usePaneTabId } from '../paneContext';
 import type { PermissionMode } from '@shared/ipc';
 
@@ -184,7 +184,11 @@ export function PromptBar(): React.JSX.Element {
   const isClaude = activeTab?.provider === 'claude';
   // Proveedor sin puente de permisos (E3, `agy`): auto-aprueba las tools y la UI tiene que decirlo.
   const autoApproved = activeTab !== undefined && isAutoApprovedProvider(activeTab.provider);
-  const permissionMode: string = activeTab?.permissionMode ?? 'default';
+  const isCodex = activeTab?.provider === CODEX_PROVIDER_ID;
+  const cliModes = useWorkbenchStore((s) => s.permissionModes);
+  // Los pasos salen de lo que expone el CLI (respuesta 18); sin respuesta, la lista fija de Mage.
+  const modeSteps = useMemo(() => (isCodex ? codexPermissionSteps(cliModes?.codex ?? null) : permissionStepsFor(cliModes?.claude ?? null)), [isCodex, cliModes]);
+  const permissionMode: string = activeTab?.permissionMode ?? (isCodex ? (modeSteps[0]?.value ?? '') : 'default');
   const effort = activeTab?.effort ?? '';
   // Turno en marcha (generando o esperando permiso): se puede interrumpir.
   const running = chatStatus === 'streaming' || chatStatus === 'needs_permission';
@@ -676,17 +680,29 @@ export function PromptBar(): React.JSX.Element {
               <Icon name="warning" size={12} /> Sin permisos
             </span>
           )}
-          {isClaude && (
-            // Modo de permiso (M2.6, solo Claude; P-028 32/33: deslizador de cinco pasos). Shift+Tab con el
-            // input vacio y el atajo global siguen ciclando (`cyclePermissionMode`). El chip conserva su
-            // color por modo. Un modo que el CLI reporta y Mage no ofrece (`dontAsk`) sale como etiqueta.
+          {activeTab !== undefined && isUnverifiedProvider(activeTab.provider) && (
+            // Codex corre sobre su app-server desde el esquema, sin un turno real probado (respuesta 30).
+            <span
+              data-unverified-provider="true"
+              data-tip={UNVERIFIED_PROVIDER_NOTE}
+              aria-label={UNVERIFIED_PROVIDER_NOTE}
+              className="shrink-0 cursor-help self-center rounded-full border border-mg-warn-border bg-mg-warn-bg px-[8px] py-[2px] text-[10.5px] text-mg-warn-text"
+            >
+              Sin verificar
+            </span>
+          )}
+          {(isClaude || (isCodex && modeSteps.length > 0)) && (
+            // Modo de permiso (M2.6; P-028 32/33: deslizador de pasos). Los pasos son los que EXPONE el CLI
+            // (respuesta 18): en Claude, su `--permission-mode`; en Codex (sin verificar), sus perfiles,
+            // que aplican al siguiente turno. Shift+Tab con el input vacio sigue ciclando en Claude. Un modo
+            // que el CLI reporta y Mage no ofrece (`dontAsk`) sale como etiqueta.
             <StepSlider
-              steps={permissionSteps}
+              steps={modeSteps}
               value={permissionMode}
-              onChange={(mode) => isPermissionMode(mode) && setActivePermissionMode(mode)}
+              onChange={(mode) => modeSteps.some((step) => step.value === mode) && setActivePermissionMode(mode)}
               ariaLabel={`Modo de permiso: ${permissionModeLabel(permissionMode)}`}
               chipLabel={permissionModeLabel(permissionMode)}
-              chipSizers={permissionSteps.map((step) => step.label)}
+              chipSizers={modeSteps.map((step) => step.label)}
               heading={`Modo ${permissionModeLabel(permissionMode)}`}
               endLabels={['Más control', 'Más autonomía']}
               tip={PERMISSION_MODE_TIP}

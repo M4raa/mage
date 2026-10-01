@@ -1,0 +1,23 @@
+{
+  "id": 4,
+  "result": {
+    "data": [
+      {
+        "id": ":read-only",
+        "description": null,
+        "allowed": true
+      },
+      {
+        "id": ":workspace",
+        "description": null,
+        "allowed": true
+      },
+      {
+        "id": ":danger-full-access",
+        "description": null,
+        "allowed": true
+      }
+    ],
+    "nextCursor": null
+  }
+}

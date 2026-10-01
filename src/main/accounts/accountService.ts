@@ -21,7 +21,7 @@ const PRIVATE_PROFILE_DIR = 'mage-private';
 // El perfil privado comparte todo lo comun MENOS `projects` (justo lo que se aisla).
 const PRIVATE_SHARED_FOLDERS = SHARED_FOLDERS.filter((folder) => folder !== 'projects');
 // Nombre de comando/cuenta valido al crear (letra inicial + letras/numeros/-/_).
-const ACCOUNT_NAME_PATTERN = /^[A-Za-z][A-Za-z0-9_-]*$/;
+export const ACCOUNT_NAME_PATTERN = /^[A-Za-z][A-Za-z0-9_-]*$/;
 const CREDENTIALS_FILE = '.credentials.json';
 const SETTINGS_FILE = 'settings.json';
 // Caracteres a escapar para meter el nombre del dir principal dentro de una RegExp.
@@ -284,6 +284,10 @@ export class AccountService {
       configDir: dir,
       name: basename(dir),
       isMain,
+      // Una cuenta de Claude por clave de API tambien es un config dir: la marca la pone el registro de
+      // cuentas de proveedor (providerAccounts.ts), que es quien sabe de claves.
+      providerId: 'claude',
+      authKind: 'subscription',
       email: account.email,
       org: account.org,
       loginStatus: login.status,

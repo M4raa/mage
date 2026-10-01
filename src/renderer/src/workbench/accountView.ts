@@ -15,6 +15,12 @@ const USAGE_PLACEHOLDER = { fiveHour: PLACEHOLDER_WINDOW, weekly: PLACEHOLDER_WI
 // Modelo por defecto conceptual de la app cuando la cuenta no fija uno en su settings.json.
 const DEFAULT_MODEL = 'sonnet';
 
+// Nombre del CLI de cada cuenta (el rail y la cabecera del sidebar).
+const ACCOUNT_PROVIDER_LABEL: Readonly<Record<string, string>> = { claude: 'Claude', codex: 'Codex', agy: 'agy' };
+
+// Texto FIJO de la marca de las cuentas que facturan la API (texto, no solo color).
+export const API_BILLED_LABEL = 'Factura API';
+
 // Mapea una cuenta de dominio (AccountInfo, segura) a la cuenta de PRESENTACION que consume la UI.
 export function toAccountView(info: AccountInfo, index: number, accentOverride?: number): Account {
   const alias = info.name.replace(/^\.+/, ''); // ".claude-p" -> "claude-p"
@@ -22,7 +28,9 @@ export function toAccountView(info: AccountInfo, index: number, accentOverride?:
     id: info.configDir,
     monogram: deriveMonogram(info.email, alias),
     alias,
-    provider: 'Claude',
+    provider: ACCOUNT_PROVIDER_LABEL[info.providerId] ?? info.providerId,
+    providerId: info.providerId,
+    apiBilled: info.authKind === 'api-key',
     defaultModel: info.defaultModel ?? DEFAULT_MODEL,
     accent: accentForIndex(accentOverride ?? index),
     activity: 'idle',

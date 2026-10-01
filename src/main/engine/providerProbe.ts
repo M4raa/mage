@@ -35,10 +35,9 @@ export const CLAUDE_NO_CATALOG_REASON =
   'Todavía no se ha sondeado el catálogo de esta cuenta (se pide al CLI al arrancar Mage): mientras, ' +
   'la lista de reserva de Mage. Puedes escribir cualquier id de modelo a mano.';
 
-export const CODEX_NO_ADAPTER_REASON =
-  'Detectado, pero todavía no se puede usar: falta el adapter de Mage para su protocolo. Codex sí ' +
-  'expone `codex exec --json`; lo que no se ha podido medir es el stream de un turno real, porque esta ' +
-  'máquina no tiene cuenta de Codex. No se escribe a ciegas.';
+export const CODEX_CATALOG_REASON =
+  'Sin verificar: el catálogo lo pide cada conversación a codex (`model/list` de `codex app-server`, ' +
+  'responde sin cuenta). Mientras, la lista de reserva de Mage.';
 
 // Tiempos: un sondeo es interactivo, no puede colgar la pantalla de Configuracion.
 const CLI_TIMEOUT_MS = 20_000;
@@ -108,18 +107,9 @@ async function probeAgy(deps: ProbeDeps): Promise<ProviderProbeResult> {
   }
 }
 
-// Codex (OpenAI). MEDIDO el 2026-09-18 contra codex-cli 0.144.4 en la maquina del usuario:
-//   - `codex exec --json` imprime eventos JSONL por stdout, y acepta `-C/--cd`, `--add-dir`,
-//     `-m/--model` y `codex exec resume` — o sea que el protocolo encaja con el motor de Mage.
-//   - NO hay puente de permisos. El oraculo de flags rechaza `--permission-prompt-tool`,
-//     `--approval-mode` y `--ask-for-approval`; lo unico que hay es `--sandbox`
-//     (read-only | workspace-write | danger-full-access), que es una politica estatica. Por eso Codex
-//     entra en AUTO_APPROVED_PROVIDER_IDS, igual que `agy`.
-//   - NO publica su catalogo de modelos: no hay ningun comando que los liste (`features list` es de
-//     feature flags). Mismo caso que Claude, y se dice en la UI en vez de inventarlo.
-// Lo que FALTA para poder usarlo es el adapter, y falta porque no se ha podido medir el stream de
-// eventos de un turno real: la maquina no tiene cuenta de Codex (`codex login status` -> "Not logged
-// in"). Deducirlo del `--help` es exactamente lo que la skill `protocolo-cli` prohibe.
+// Codex (OpenAI) corre sobre `codex app-server` (codexAdapter.ts), que SI tiene puente de permisos y
+// catalogo (`model/list`, medido sin cuenta en 0.144.4). El sondeo de Ajustes no lanza el app-server: el
+// catalogo vivo llega con la primera conversacion, y aqui se dice.
 function probeCodex(deps: ProbeDeps): ProviderProbeResult {
   const bin = deps.findCodexBinary();
   return {
@@ -129,7 +119,7 @@ function probeCodex(deps: ProbeDeps): ProviderProbeResult {
     error:
       bin === null
         ? 'No se encontró el CLI de Codex. Instálalo, o fija MAGE_CODEX_BIN con su ruta.'
-        : CODEX_NO_ADAPTER_REASON,
+        : CODEX_CATALOG_REASON,
   };
 }
 

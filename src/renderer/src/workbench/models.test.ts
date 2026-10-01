@@ -5,7 +5,6 @@ import {
   BUILT_IN_PROVIDERS,
   CODEX_PROVIDER_ID,
   CUSTOM_PROVIDER_ID_PREFIX,
-  hasAdapter,
   isAutoApprovedProvider,
   writesClaudeTranscript,
 } from '@shared/providers';
@@ -45,7 +44,7 @@ describe('modelOptionsForProvider', () => {
   it('modelOptionsForProvider_proveedorConocido_devuelveSusModelos', () => {
     const ids = modelOptionsForProvider('gemini', 'gemini-2.5-flash').map((m) => m.id);
 
-    expect(ids).toEqual(['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-1.5-flash', 'gemini-1.5-pro']);
+    expect(ids).toEqual(['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.5-flash-lite']);
   });
 
   it('modelOptionsForProvider_proveedorDesconocido_caeAClaude', () => {
@@ -88,24 +87,20 @@ describe('modelOptionsForProvider', () => {
 });
 
 describe('providerOptions', () => {
-  // Los de serie QUE SE PUEDEN EJECUTAR: desde el 2026-09-18 el catalogo tambien incluye proveedores
-  // DETECTADOS pero sin adapter (hoy Codex), que se ven en Ajustes y no aqui — ofrecer algo que falla
-  // al primer mensaje es peor que no ofrecerlo.
-  it('providerOptions_sinProveedoresDelUsuario_devuelveLosDeSerieConAdapter', () => {
-    const conAdapter = BUILT_IN_PROVIDERS.filter((p) => hasAdapter(p.id)).map((p) => p.id);
-
-    expect(providerOptions([]).map((p) => p.id)).toEqual(conAdapter);
+  // Desde la 0.1.2 todos los de serie tienen adapter (Codex sobre `codex app-server`, sin verificar).
+  it('providerOptions_sinProveedoresDelUsuario_devuelveLosDeSerie', () => {
+    expect(providerOptions([]).map((p) => p.id)).toEqual(BUILT_IN_PROVIDERS.map((p) => p.id));
   });
 
-  it('providerOptions_proveedorSinAdapter_noSeOfrece', () => {
-    expect(providerOptions([]).map((p) => p.id)).not.toContain(CODEX_PROVIDER_ID);
+  it('providerOptions_codex_seOfrece', () => {
+    expect(providerOptions([]).map((p) => p.id)).toContain(CODEX_PROVIDER_ID);
   });
 
   it('providerOptions_conProveedorDelUsuario_loAnadeAlFinal', () => {
     const ids = providerOptions([customProvider()]).map((p) => p.id);
 
     expect(ids[ids.length - 1]).toBe('custom:ollama');
-    expect(ids).toHaveLength(BUILT_IN_PROVIDERS.filter((p) => hasAdapter(p.id)).length + 1);
+    expect(ids).toHaveLength(BUILT_IN_PROVIDERS.length + 1);
   });
 
   it('providerOptions_proveedorSinModelos_noSeOfrece', () => {

@@ -23,8 +23,8 @@ describe('effortLevelsForProvider', () => {
     expect(effortLevelsForProvider('claude')).toEqual(['low', 'medium', 'high', 'xhigh', 'max']);
   });
 
-  it('effortLevelsForProvider_agy_devuelveSoloLosTresQueAceptaSuCli', () => {
-    expect(effortLevelsForProvider('agy')).toEqual(['low', 'medium', 'high']);
+  it('effortLevelsForProvider_agy_devuelveLosCuatroQueAceptaSuCli', () => {
+    expect(effortLevelsForProvider('agy')).toEqual(['low', 'medium', 'high', 'max']);
   });
 
   it('effortLevelsForProvider_proveedorPorGateway_noOfreceNinguno', () => {

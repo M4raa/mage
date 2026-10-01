@@ -17,14 +17,21 @@ multiagéntico y multi-proveedor** sobre agentes de código tipo Claude Code, co
 multicuenta, análisis de uso/logs y más.
 
 ## Invariantes (no romper)
-- **Motor:** cada agente = CLI real de Claude Code en headless stream-json
-  (`claude -p --input-format stream-json --output-format stream-json --verbose
-  --permission-prompt-tool stdio --include-partial-messages ...`). Consume la **suscripción** con login OAuth. El entorno del
-  hijo se sanea con `scrubAgentEnv` (`src/main/os/agentEnv.ts`), que borra **todas** las variables de
-  credencial —no solo `ANTHROPIC_API_KEY`: también `ANTHROPIC_AUTH_TOKEN` y `ANTHROPIC_BASE_URL`, que
-  desactivan OAuth o redirigen el Bearer—. **Única excepción, y es a propósito:** `gatewayAdapter`
-  fija después `ANTHROPIC_BASE_URL` a `127.0.0.1` y `ANTHROPIC_API_KEY` a un ticket `sk-mage-<id>` que
-  no es credencial de ningún proveedor. **NO** usar el Agent SDK (factura API).
+- **Motor:** cada agente = el CLI REAL de su fabricante, uno por proveedor: Claude Code en headless
+  stream-json (`claude -p --input-format stream-json --output-format stream-json --verbose
+  --permission-prompt-tool stdio --include-partial-messages ...`), `agy` en stream-json y
+  `codex app-server` (JSON-RPC). **NO** usar el Agent SDK: es el mismo CLI o nada.
+- **Facturación (suscripción o API, por CUENTA):** cada cuenta es suscripción (login del CLI) o clave
+  de API, y conviven. El entorno de TODO hijo se sanea con `scrubAgentEnv` (`src/main/os/agentEnv.ts`),
+  que borra **todas** las variables de credencial —`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`,
+  `ANTHROPIC_BASE_URL`, las de Gemini y OpenAI…—, así que una clave exportada por el usuario nunca llega
+  a un hijo. Después solo hay dos excepciones, escritas en `agentEnv.ts`: (1) `gatewayAdapter` fija
+  `ANTHROPIC_BASE_URL` a `127.0.0.1` y `ANTHROPIC_API_KEY` a un ticket `sk-mage-<id>` que no es
+  credencial de nadie; (2) una cuenta **por clave de API** recibe SU clave —leída de la bóveda de main
+  (`SecretStore`), nunca del renderer— y solo en el hijo de esa cuenta, puesta por el adapter de su CLI
+  (`claudeAdapter` `ANTHROPIC_API_KEY`, `agyAdapter` `GEMINI_API_KEY`, `codexAdapter` la de su
+  proveedor con `env_key`). Una cuenta de API tiene su propio dir, nunca inicia sesión, nunca es la de
+  por defecto y sus pestañas dicen «Factura API». Test: `src/main/engine/apiKeyInvariant.test.ts`.
 - **Multiplataforma (crítico):** Windows/macOS/Linux. Nada de rutas/comandos hardcodeados por SO;
   todo tras abstracción (`LinkService`, `OpenWithService` y los tres resolutores de binario:
   `claudeBinaryResolver`, `agyBinaryResolver` y su núcleo común `agentBinaryResolver`); usar

@@ -44,6 +44,16 @@ export function findCodexBinary(deps: CodexResolverDeps = defaultCodexDeps()): s
   return deps.commandInPath(command) ? command : null;
 }
 
+// Para lanzar una sesion: la ruta, o un Error que dice como arreglarlo.
+export function resolveCodexBinary(deps: CodexResolverDeps = defaultCodexDeps()): string {
+  const found = findCodexBinary(deps);
+  if (found !== null) return found;
+  throw new Error(
+    `No se encontro el CLI de Codex (${codexCommandName(deps.platform)}) ni en las rutas de instalacion ni en el PATH. ` +
+      'Instalalo, o fija MAGE_CODEX_BIN con su ruta.',
+  );
+}
+
 // Candidatos de instalacion por SO. Windows: %LOCALAPPDATA%\Programs\OpenAI\Codex\bin (y su
 // equivalente bajo HOME, por si la variable no esta definida en el entorno del proceso).
 function platformCandidates(deps: CodexResolverDeps): readonly string[] {

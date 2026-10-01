@@ -24,6 +24,8 @@ function makeAccount(overrides: Partial<Account> = {}): Account {
     monogram: 'C',
     alias: 'claude-p',
     provider: 'Claude',
+    providerId: 'claude',
+    apiBilled: false,
     defaultModel: 'sonnet',
     accent: {
       base: 'var(--mg-accent-0-base)',

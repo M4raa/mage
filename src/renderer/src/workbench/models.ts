@@ -3,7 +3,7 @@
 // se FUSIONA con los proveedores que el usuario haya anadido en Configuracion (E2) y se valida el
 // formulario de esa seccion. Todo son funciones puras: el estado lo trae el store.
 import type { CustomProvider, ProviderModel } from '@shared/providers';
-import { AGY_PROVIDER_ID, BUILT_IN_PROVIDERS, CUSTOM_PROVIDER_ID_PREFIX, chatCompletionsUrl, hasAdapter } from '@shared/providers';
+import { AGY_EFFORT_LEVELS, AGY_PROVIDER_ID, BUILT_IN_PROVIDERS, CUSTOM_PROVIDER_ID_PREFIX, chatCompletionsUrl } from '@shared/providers';
 import { EFFORT_LEVELS } from '@shared/ipc';
 
 export type ModelOption = ProviderModel;
@@ -20,9 +20,8 @@ const FALLBACK_PROVIDER_ID = 'claude';
 // un proveedor con el selector de modelo vacio no permitiria abrir una conversacion. La seccion de
 // Configuracion si los lista todos, para poder arreglarlos.
 export function providerOptions(customProviders: readonly CustomProvider[]): readonly ProviderOption[] {
-  // Solo lo que Mage sabe EJECUTAR: un proveedor detectado pero sin adapter (hoy Codex) se ve en
-  // Ajustes con su motivo, pero no se ofrece aqui — fallaria al primer mensaje.
-  const options: ProviderOption[] = BUILT_IN_PROVIDERS.filter((provider) => hasAdapter(provider.id)).map((provider) => ({
+  // Todos los de serie tienen adapter desde la 0.1.2 (Codex sobre `codex app-server`, sin verificar).
+  const options: ProviderOption[] = BUILT_IN_PROVIDERS.map((provider) => ({
     id: provider.id,
     label: provider.label,
   }));
@@ -234,7 +233,7 @@ export interface ProviderEntry {
 
 // Niveles de `--effort` que acepta cada proveedor, MEDIDOS en sus CLI (no deducidos):
 //   - `claude --help`: low, medium, high, xhigh, max (= EFFORT_LEVELS).
-//   - `agy --help`: low, medium, high.
+//   - `agy --help` (1.2.14): low, medium, high, max (= AGY_EFFORT_LEVELS).
 //   - por gateway (openai/gemini/del usuario): NINGUNO. `gatewayAdapter` no pasa `--effort`, asi que
 //     ofrecerlo seria un control que no hace nada.
 export function effortLevelsForProvider(providerId: string): readonly string[] {
@@ -243,7 +242,6 @@ export function effortLevelsForProvider(providerId: string): readonly string[] {
   return [];
 }
 
-const AGY_EFFORT_LEVELS: readonly string[] = ['low', 'medium', 'high'];
 
 // Todos los proveedores configurables, de serie primero. A diferencia de `providerOptions` (que alimenta
 // los selectores de conversacion) aqui NO se descarta ninguno: un proveedor del usuario sin modelos es

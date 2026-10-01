@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { PERMISSION_MODES } from '@shared/ipc';
 import {
+  codexPermissionSteps,
+  permissionCycleFor,
+  permissionStepsFor,
   defaultPermissionSteps,
   effortSteps,
   permissionModeLabel,
@@ -131,5 +134,37 @@ describe('stepFraction', () => {
 
   it('stepFraction_indicePasadoDelFinal_seQuedaEnElExtremo', () => {
     expect(stepFraction(9, 5)).toBe(1);
+  });
+});
+
+describe('modos leidos del CLI (respuesta 18)', () => {
+  // Lista de claude 2.1.286 ya normalizada en main (manual -> default, sin dontAsk).
+  const CLAUDE = ['acceptEdits', 'auto', 'bypassPermissions', 'default', 'plan'];
+
+  it('permissionStepsFor_sinRespuesta_laListaFijaDeMage', () => {
+    expect(permissionStepsFor(null)).toBe(permissionSteps);
+  });
+
+  it('permissionStepsFor_listaMedida_laEscalaDeSiempre', () => {
+    expect(permissionStepsFor(CLAUDE).map((step) => step.value)).toEqual(['plan', 'default', 'acceptEdits', 'auto', 'bypassPermissions']);
+  });
+
+  it('permissionStepsFor_modoNuevoDelCli_apareceAlFinalConSuNombre', () => {
+    const steps = permissionStepsFor([...CLAUDE, 'review']);
+
+    expect(steps.at(-1)).toEqual({ value: 'review', label: 'review' });
+  });
+
+  it('permissionStepsFor_modoQueElCliQuita_desaparece', () => {
+    expect(permissionStepsFor(['default', 'plan']).map((step) => step.value)).toEqual(['plan', 'default']);
+  });
+
+  it('permissionCycleFor_conModoNuevo_ordenHistoricoYElNuevoDetras', () => {
+    expect(permissionCycleFor([...CLAUDE, 'review'])).toEqual(['default', 'acceptEdits', 'plan', 'auto', 'bypassPermissions', 'review']);
+  });
+
+  it('codexPermissionSteps_perfilesMedidos_conSuEtiqueta', () => {
+    expect(codexPermissionSteps([':read-only', ':workspace', ':danger-full-access']).map((step) => step.label)).toEqual(['Solo lectura', 'Espacio de trabajo', 'Acceso total']);
+    expect(codexPermissionSteps(null)).toEqual([]);
   });
 });

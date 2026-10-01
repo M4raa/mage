@@ -1,0 +1,52 @@
+{
+  "id": 7,
+  "result": {
+    "thread": {
+      "id": "01a0f642-75d1-7780-9dc7-1ef1c4030e5e",
+      "extra": null,
+      "sessionId": "01a0f642-75d1-7780-9dc7-1ef1c4030e5e",
+      "forkedFromId": null,
+      "parentThreadId": null,
+      "preview": "",
+      "ephemeral": true,
+      "historyMode": "legacy",
+      "modelProvider": "openai",
+      "createdAt": 1790837945,
+      "updatedAt": 1790837945,
+      "recencyAt": 1790837945,
+      "status": {
+        "type": "idle"
+      },
+      "path": null,
+      "cwd": "C:\\proyecto",
+      "cliVersion": "0.144.4",
+      "source": "vscode",
+      "threadSource": null,
+      "agentNickname": null,
+      "agentRole": null,
+      "gitInfo": null,
+      "name": null,
+      "turns": []
+    },
+    "model": "gpt-5.6-sol",
+    "modelProvider": "openai",
+    "serviceTier": null,
+    "cwd": "C:\\proyecto",
+    "runtimeWorkspaceRoots": [
+      "C:\\proyecto"
+    ],
+    "instructionSources": [],
+    "approvalPolicy": "on-request",
+    "approvalsReviewer": "user",
+    "sandbox": {
+      "type": "readOnly",
+      "networkAccess": false
+    },
+    "activePermissionProfile": {
+      "id": ":read-only",
+      "extends": null
+    },
+    "reasoningEffort": null,
+    "multiAgentMode": "explicitRequestOnly"
+  }
+}

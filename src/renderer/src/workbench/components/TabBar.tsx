@@ -8,7 +8,7 @@ import { TAB_INDICATOR_TRANSITION } from '../motionPresets';
 import { orderTabsForDisplay, TAB_DRAG_MIME, TAB_DRAG_ORIGIN_MIME, tabColorVar, tabsToCloseAll, tabsToCloseInactive } from '../tabActions';
 import { tabMoveBlockedReason } from '../backgroundWork';
 import { TabContextMenu } from './TabContextMenu';
-import { providerBadge } from '../accountView';
+import { API_BILLED_LABEL, providerBadge } from '../accountView';
 import type { Tab as TabModel } from '../types';
 import { RELEASE_NOTES_TAB_ID } from '../releaseNotes';
 
@@ -75,6 +75,8 @@ export function TabBar({
   const accentOf = (accountId: string): string =>
     accounts.find((a) => a.id === accountId)?.accent.base ?? 'transparent';
   const monogramOf = (accountId: string): string => accounts.find((a) => a.id === accountId)?.monogram ?? '?';
+  // Grupo E: la pestaña de una cuenta que factura la API lo dice con texto fijo.
+  const apiBilledOf = (accountId: string): boolean => accounts.find((a) => a.id === accountId)?.apiBilled === true;
 
   // Navegacion roving: flechas/Home/End mueven la seleccion y el foco a la pestana correspondiente.
   const onListKeyDown = (e: React.KeyboardEvent<HTMLDivElement>): void => {
@@ -134,6 +136,7 @@ export function TabBar({
             tab={tab}
             accent={tabColorVar(tab.colorIndex, accentOf(tab.accountId))}
             monogram={monogramOf(tab.accountId)}
+            apiBilled={apiBilledOf(tab.accountId)}
             active={tab.id === paneActiveTabId}
             // Activa de un panel que NO tiene el foco: encendida pero atenuada. Con el workspace dividido
             // hay N activas a la vez y solo una manda; sin esto las dos barras mienten igual.
@@ -284,6 +287,7 @@ function Tab({
   tab,
   accent,
   monogram,
+  apiBilled,
   active,
   unfocusedPane,
   moveBlockedReason,
@@ -296,6 +300,7 @@ function Tab({
   readonly accent: string;
   // Letra de la cuenta sobre su acento (P-028, 2): distinguir cuentas no puede depender solo del color.
   readonly monogram: string;
+  readonly apiBilled: boolean;
   readonly active: boolean;
   // Se esta viendo en el SEGUNDO panel del centro (item 13): tambien esta a la vista, aunque el foco
   // no este en el, y conviene que la barra lo diga.
@@ -396,6 +401,11 @@ function Tab({
           className="flex-none rounded-[4px] border border-mg-border-emph px-[4px] text-[9px] leading-[13px] text-mg-muted"
         >
           {badge}
+        </span>
+      )}
+      {apiBilled && (
+        <span data-tab-api-billed="true" className="flex-none rounded-[4px] border border-mg-warn px-[4px] text-[9px] leading-[13px] text-mg-warn">
+          {API_BILLED_LABEL}
         </span>
       )}
       {tab.pinned === true && <Icon name="pin" size={10} className="flex-none text-mg-ter" />}

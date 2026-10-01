@@ -442,7 +442,7 @@ function ModelsLine({ count, probe }: { readonly count: number; readonly probe: 
 // Formulario de alta/edicion de un proveedor del usuario. La API key va en type="password" y sube a la
 // boveda cifrada de main al guardar; la guardada NO vuelve nunca, asi que al editar el campo sale vacio
 // y solo se dice que hay una (escribir otra la sustituye; la casilla la quita).
-function ProviderForm({
+export function ProviderForm({
   idSuffix,
   draft,
   savedApiKey,

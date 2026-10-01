@@ -1,125 +1,121 @@
+import { homedir } from 'node:os';
 import type { ImageAttachment } from '@shared/ipc';
 import type { MageEvent, PermissionDecision } from '@shared/events';
+import { AGY_EFFORT_LEVELS } from '@shared/providers';
 import { resolveAgyBinary } from '../os/agyBinaryResolver';
-import { normalizeAgyEvent } from './agyNormalize';
-import type { AuthModel, LaunchParams, PermissionRef, ProviderAdapter, SpawnPlan, TurnMode } from './providerAdapter';
+import { AgyTurnTracker } from './agyNormalize';
+import type { AuthModel, LaunchParams, PermissionRef, ProviderAdapter, SpawnPlan } from './providerAdapter';
 import { scrubAgentEnv } from '../os/agentEnv';
 
-// Adapter del CLI de Antigravity (`agy`) como motor NATIVO (E3). Consume la SUSCRIPCION de Google con
-// el login OAuth propio de `agy` (no hay `GEMINI_API_KEY` de por medio: eso facturaria la API y
-// contradiria el invariante nº 1 del proyecto).
+// Adapter del CLI de Antigravity (`agy`) como motor NATIVO (E3). Por defecto consume la SUSCRIPCION de
+// Google con el login propio de `agy`; una cuenta de agy POR CLAVE (grupo E) corre con su propio perfil
+// y su `GEMINI_API_KEY`.
 //
-// Es el primer adapter en modo 'perTurn': `agy` NO tiene `--input-format` (medido con el oraculo de
-// flags: `flags provided but not defined`), asi que no hay protocolo por stdin. El prompt va en argv
-// (`--print <prompt>`) y el proceso MUERE al cerrar el turno. Ver providerAdapter.ts (TurnMode) y
-// agentSession.ts para lo que eso implica en el ciclo de vida.
+// SESION PERSISTENTE desde la 0.1.2: `agy` estreno `--input-format stream-json` en la 1.1.15. Medido en
+// 1.2.14 (`node spike/agy-spike.mjs --persistent`): un proceso por pestaña, una linea
+// `{"event":"user","message":{"content":"…"}}` por mensaje, un `result` por turno, el mismo
+// `conversation_id` y el contexto conservado; los mensajes con un turno en curso se ENCOLAN en el CLI.
+//   - El `usage` del `result` es ACUMULADO por proceso: lo resta `AgyTurnTracker` (agyNormalize.ts).
+//   - No hay interrupcion por stdin (`interrupt`/`cancel` se ignoran; `control_request` esta reservado):
+//     el adapter declara `interruptsByKill` y AgentSession mata el arbol. El siguiente mensaje relanza con
+//     `--conversation <id>`: la conversacion sobrevive al corte (medido) y el uso vuelve a contar de 0.
+//   - `content` solo admite bloques `text` («only "text"», medido): las imagenes se guardan en disco y
+//     el mensaje lleva su ruta; el agente las abre con `view_file` (medido: contesto bien el color).
 //
-// Todo lo de aqui esta MEDIDO contra `agy` 1.1.11 el 2026-08-11 (informe de E3); el CLI se
-// auto-actualiza cada pocos dias, asi que `node spike/agy-spike.mjs` re-mide sin gastar peticiones.
-//
-// ponytail: TECHO DE v1, deliberado. Una pestana de `agy` conversa multi-turno mientras Mage esta
-// abierto (el conversation_id vive en memoria, en la AgentSession), con su uso real y sus tool calls.
-// Fuera de v1, con el camino para subirlo:
-//   - Persistir el conversation_id entre reinicios de Mage: se sube guardandolo en la Tab del
+// ponytail: TECHO deliberado, con el camino para subirlo:
+//   - El `conversation_id` no sobrevive a reiniciar Mage: se sube guardandolo en la Tab del
 //     workspace-state.json y pasandolo como `conversationId` al crear la sesion.
-//   - Reconstruir el hilo al reabrir la pestana: `agy` no escribe en ~/.claude/projects, pero deja un
-//     fichero por conversacion en ~/.gemini/antigravity-cli/conversations (.db/.pb, formato propio);
-//     se sube traduciendolo al modelo de transcripcion de Mage.
-//   - Permisos REALES: bloqueados en el CLI (no hay --permission-prompt-tool). Se sube el dia que
-//     `agy` lo estrene: entonces esta pestana pasaria por los dialogos de Mage y sobraria el aviso.
-//   - Multicuenta: `agy` tiene un unico login propio; el `accountDir` de Mage no le aplica.
+//   - Reconstruir el hilo al reabrir la pestana: `agy` deja un fichero por conversacion en
+//     ~/.gemini/antigravity-cli/conversations (.db/.pb, formato propio).
+//   - Permisos REALES: el CLI no tiene puente (no hay --permission-prompt-tool). Las reglas
+//     allow/deny que se escriben en su settings.json antes de lanzar (M10) son la via medida.
 
-// Argumentos fijos de cada turno.
-//  - `--output-format stream-json`: NDJSON por stdout (init/step_update/result). NO exige `--verbose`
-//    (ese flag no existe en `agy`), a diferencia del CLI de Claude.
-//  - `--print <prompt>`: el prompt entero por argv; es el unico canal de entrada que hay.
-const BASE_ARGS = ['--output-format', 'stream-json'] as const;
+// Argumentos fijos. `--output-format stream-json` NO exige `--verbose` (ese flag no existe en `agy`).
+// Sin `--print-timeout`: desde la 1.2.6 el tope por defecto es ILIMITADO, y el `30m` que se pasaba antes
+// cortaba los turnos largos en vez de ampliarlos.
+const BASE_ARGS = ['--output-format', 'stream-json', '--input-format', 'stream-json'] as const;
 
-// Modo de ejecucion. `accept-edits` EXPLICITO a proposito: con el modo por defecto
-// (`request-review`) el comportamiento observado ha cambiado entre versiones —en 1.1.2 una tool que
-// necesitaba permiso acababa en `state: ERROR`, y en 1.1.11 la escritura simplemente se aplica sin
-// preguntar— y en ninguno de los dos casos Mage puede intervenir. Declararlo hace la sesion
-// DETERMINISTA y coherente con lo que la UI advierte ("edita sin preguntar").
+// Modo de ejecucion. `accept-edits` EXPLICITO para que la sesion sea determinista y coherente con lo que
+// la UI advierte ("edita sin preguntar"). Medido en 1.2.14: los tres modos (por defecto, accept-edits,
+// plan) escriben sin preguntar y deniegan los comandos; `--mode` solo admite `accept-edits` y `plan`.
 // NO se usa `--dangerously-skip-permissions`: no hace falta para escribir dentro de `--add-dir`.
-// ponytail: no hay permisos reales porque el CLI no ofrece puente (no existe
-// `--permission-prompt-tool`, medido). Techo: esta pestana no pasa por los dialogos de permiso de
-// Mage; se sube el dia que `agy` estrene un puente, sustituyendo este flag por el modo por defecto.
 const MODE_ARGS = ['--mode', 'accept-edits'] as const;
 
-// Tope de espera del turno. `agy` mata el suyo a los 5m por defecto; un turno de agente puede pasar de
-// ahi con facilidad, y el corte llega como un proceso muerto SIN `result`, que es justo el caso que
-// AgentSession tiene que reportar como fallo. Se sube a 30m para que el tope real sea el del usuario.
-const PRINT_TIMEOUT = '30m';
+// Cuenta de agy por clave de API: su perfil y su clave, resueltos en main (boveda).
+export interface AgyApiAccount {
+  readonly profileDir: string;
+  readonly apiKey: string;
+}
+
+export interface AgyAdapterDeps {
+  readonly resolveBinary?: () => string;
+  // La cuenta de API cuyo perfil es `accountDir`, o null (suscripcion: el login propio de agy).
+  readonly resolveApiAccount?: (accountDir: string) => AgyApiAccount | null;
+  // Prepara el perfil de una cuenta por clave ANTES de lanzar (settings.json con `modelProvider` y las
+  // reglas imprescindibles). Lo escribe main: el adapter no toca el disco.
+  readonly prepareProfile?: (profileDir: string, cwd: string) => void;
+  // Guarda una imagen adjunta y devuelve su ruta absoluta (main la escribe en su carpeta temporal).
+  readonly saveAttachment?: (sessionId: string, attachment: ImageAttachment, index: number) => string;
+}
 
 export class AgyAdapter implements ProviderAdapter {
-  // `agy` mantiene su propia sesion OAuth fuera de Mage (por eso su buildSpawnPlan NO fija ningun
-  // config dir de cuenta). No hay alta que ofrecer: la UI no debe pintar un boton que no hace nada.
+  // La suscripcion de `agy` vive fuera de Mage (su login no esta en su carpeta de datos, medido): no hay
+  // alta que ofrecer. Las cuentas por clave son otra celda de la matriz (providerAccounts.ts).
   readonly auth: AuthModel = {
     kind: 'external',
-    reason: 'agy gestiona su propio login OAuth; Mage no crea ni cambia sus cuentas',
+    reason: 'agy gestiona su propio login; Mage no crea ni cambia esa sesión',
   };
 
-  readonly turnMode: TurnMode = 'perTurn';
+  private readonly tracker = new AgyTurnTracker();
+  private sessionId = '';
 
-  // Resolver inyectable para testear el plan de spawn sin tocar el FS.
-  constructor(private readonly resolveBinary: () => string = resolveAgyBinary) {}
+  constructor(private readonly deps: AgyAdapterDeps = {}) {}
 
-  // En 'perTurn' no hay nada que arrancar antes del primer mensaje: sin prompt no hay proceso.
   buildSpawnPlan(params: LaunchParams): SpawnPlan {
-    throw new Error(
-      `agy no admite una sesion persistente (no tiene --input-format): cada turno es un proceso. ` +
-        `Sesion pedida: ${JSON.stringify(params.sessionId)}`,
-    );
-  }
-
-  buildTurnSpawnPlan(params: LaunchParams, prompt: string): SpawnPlan {
-    if (prompt.trim().length === 0) {
-      throw new Error(`Prompt vacio para un turno de agy: ${JSON.stringify(prompt)}`);
-    }
+    this.sessionId = params.sessionId;
+    this.tracker.resetProcess(); // proceso nuevo: su uso acumulado empieza en cero (medido)
     // `--add-dir <cwd>` es OBLIGATORIO: sin el, `agy` escribe en su propio scratch
     // (~/.gemini/antigravity-cli/scratch/) ignorando el cwd que el mismo reporta en su `init`.
-    const args = [
-      ...BASE_ARGS,
-      ...MODE_ARGS,
-      '--add-dir',
-      params.cwd,
-      '--model',
-      params.model,
-      '--print-timeout',
-      PRINT_TIMEOUT,
-    ];
-    // Continuar la conversacion: el id lo genera `agy` (uno arbitrario responde "conversation not
-    // found" y arranca otra), asi que solo se pasa desde el segundo turno, con el capturado en el init.
+    const args = [...BASE_ARGS, ...MODE_ARGS, '--add-dir', params.cwd, '--model', params.model];
+    // Relanzado tras un corte: el id lo genera `agy` (uno arbitrario responde "conversation not found"),
+    // asi que solo se pasa el que emitio en su init.
     if (params.conversationId !== undefined && params.conversationId.length > 0) {
       args.push('--conversation', params.conversationId);
     }
-    // Nivel de esfuerzo opcional (--effort low|medium|high). Los niveles de Mage incluyen xhigh/max,
-    // que `agy` no acepta: lo que no encaje se omite en vez de abortar el turno con un flag invalido.
+    // Nivel de esfuerzo (--effort low|medium|high|max). Lo que no encaje (xhigh es de Claude) se omite
+    // en vez de abortar la sesion con un flag invalido.
     if (params.effort !== undefined && AGY_EFFORT_LEVELS.includes(params.effort)) {
       args.push('--effort', params.effort);
     }
-    args.push('--print', prompt);
-
-    // Env del hijo: `agy` usa su propio login OAuth (no el CLAUDE_CONFIG_DIR de la cuenta de Mage, que
-    // aqui no aplica). Se BORRAN las api keys de pago que pudiera haber en el entorno del usuario:
-    // invariante nº 1 (suscripcion, nunca API facturada) y ninguna key entra en el proceso hijo.
     // `params.shared` no se traduce aqui: agy no tiene flag de sesion para MCP (medido en 1.2.14). Lo que
     // Mage comparte con agy se EXPORTA a su mcp_config.json («Sincronizar con agy», mcpAgySync.ts).
-    const env: NodeJS.ProcessEnv = scrubAgentEnv(process.env);
-    return { command: this.resolveBinary(), args, env };
+    return { command: (this.deps.resolveBinary ?? resolveAgyBinary)(), args, env: this.childEnv(params) };
   }
 
-  // --- Lo que `agy` NO soporta ---------------------------------------------------------------------
-  // Mismo patron que GatewayAdapter: metodo presente por contrato que LANZA explicando por que, o
-  // metodo opcional simplemente ausente (encodeGetContextUsage/encodeInitialize/encodeHookResponse:
-  // `agy` no tiene control_request, hooks, --mcp-config ni --settings).
+  // Env del hijo, SANEADO (scrubAgentEnv borra toda clave heredada, tambien GEMINI_API_KEY). Una cuenta
+  // por clave lleva despues SU clave y SU perfil: agy resuelve su casa SOLO por `USERPROFILE` (medido), y
+  // `HOME` se fija al real para que git siga encontrando su `.gitconfig` (lo resuelve por HOME o
+  // HOMEDRIVE+HOMEPATH, medido). Con perfil propio + `modelProvider: "gemini"` + clave, agy NO cae a la
+  // suscripcion (medido con una clave falsa: 400 API_KEY_INVALID).
+  private childEnv(params: LaunchParams): NodeJS.ProcessEnv {
+    const env = scrubAgentEnv(process.env);
+    const account = this.deps.resolveApiAccount?.(params.accountDir) ?? null;
+    if (account === null) return env;
+    this.deps.prepareProfile?.(account.profileDir, params.cwd);
+    return { ...env, USERPROFILE: account.profileDir, HOME: homedir(), GEMINI_API_KEY: account.apiKey };
+  }
 
+  // `content` solo admite texto (medido): cada imagen se guarda en disco y su ruta va al final del
+  // mensaje, junto a su token `[Imagen N]`, para que el agente la abra con `view_file`.
   encodeUserMessage(text: string, attachments: readonly ImageAttachment[] = []): unknown {
-    throw new Error(
-      `agy no lee mensajes por stdin (no tiene --input-format): el prompt va en argv, y tampoco admite ` +
-        `imagenes adjuntas (${attachments.length} descartadas). ` +
-        `Texto recibido: ${JSON.stringify(text.slice(0, TEXT_IN_ERROR_MAX))}`,
-    );
+    if (attachments.length === 0) return { event: 'user', message: { content: text } };
+    const save = this.deps.saveAttachment;
+    if (save === undefined) {
+      throw new Error(`No hay donde guardar las ${attachments.length} imagenes del mensaje para agy`);
+    }
+    const lines = attachments.map((attachment, index) => `[Imagen ${index + 1}]: ${save(this.sessionId, attachment, index)}`);
+    const content = `${text}\n\n${ATTACHMENTS_HEADER}\n${lines.join('\n')}`;
+    return { event: 'user', message: { content } };
   }
 
   encodePermissionResponse(ref: PermissionRef, decision: PermissionDecision): unknown {
@@ -129,35 +125,26 @@ export class AgyAdapter implements ProviderAdapter {
     );
   }
 
-  // Interrumpir un turno de `agy` es matar su proceso, no mandarle un mensaje: lo hace AgentSession en
-  // modo perTurn sin pasar por aqui.
+  // Sin interrupcion por stdin (medido en 1.2.14): AgentSession corta matando el arbol de procesos.
+  readonly interruptsByKill = true;
+
   encodeInterrupt(): unknown {
-    throw new Error('agy no admite interrupcion por protocolo: el turno se corta matando el proceso');
+    throw new Error("agy no admite interrupcion por protocolo: el turno se corta matando el proceso");
   }
 
-  // Cambiar de modelo en `agy` es gratis y no necesita peticion: el turno SIGUIENTE se lanza con otro
-  // `--model`. AgentSession lo resuelve asi en modo perTurn y no llega a llamar aqui.
+  // El modelo se fija al lanzar (`--model`); la UI no ofrece cambiarlo en caliente en agy.
   encodeSetModel(model: string): unknown {
-    throw new Error(
-      `set_model no aplica a agy: el modelo se fija al lanzar cada turno (--model). Pedido: ${JSON.stringify(model)}`,
-    );
+    throw new Error(`set_model no aplica a agy: el modelo se fija al lanzar (--model). Pedido: ${JSON.stringify(model)}`);
   }
 
   encodeSetPermissionMode(mode: string): unknown {
-    throw new Error(
-      `set_permission_mode no aplica a agy: no tiene control de permisos que cambiar. Pedido: ${JSON.stringify(mode)}`,
-    );
+    throw new Error(`set_permission_mode no aplica a agy: no tiene control de permisos que cambiar. Pedido: ${JSON.stringify(mode)}`);
   }
 
   normalize(raw: unknown): MageEvent[] {
-    return normalizeAgyEvent(raw);
+    return this.tracker.normalize(raw);
   }
 }
 
-// Niveles que acepta `--effort` de `agy` (documentados en su --help: low|medium|high). Los de Mage
-// (EFFORT_LEVELS) traen ademas xhigh/max, que son del CLI de Claude.
-const AGY_EFFORT_LEVELS: readonly string[] = ['low', 'medium', 'high'];
-
-// Cuanto prompt se cita en un mensaje de error (el contrato de errores pide incluir el valor recibido,
-// pero un prompt entero en un Error no ayuda a nadie).
-const TEXT_IN_ERROR_MAX = 60;
+// Texto que precede a las rutas de las imagenes (para el modelo, no para el usuario).
+const ATTACHMENTS_HEADER = 'Imágenes adjuntas (ábrelas con la herramienta view_file):';

@@ -69,7 +69,40 @@ export const defaultPermissionSteps: readonly SliderStep[] = [{ value: '', label
 
 // Un modo que Mage no ofrece (el CLI puede estar en `dontAsk`) se enseña con su nombre crudo.
 export function permissionModeLabel(mode: string): string {
-  return isPermissionMode(mode) ? PERMISSION_MODE_LABEL[mode] : mode;
+  if (isPermissionMode(mode)) return PERMISSION_MODE_LABEL[mode];
+  return CODEX_PROFILE_LABEL[mode] ?? mode;
+}
+
+// --- Modos leidos del CLI (respuesta 18) ----------------------------------------------------------
+
+// Proveedores con selector de modo: Claude (su `--permission-mode`) y Codex (sus perfiles, sin verificar).
+export const PERMISSION_MODE_PROVIDERS: readonly string[] = ['claude', 'codex'];
+
+// Perfiles integrados de `codex app-server` (`permissionProfile/list`, medido en 0.144.4).
+const CODEX_PROFILE_LABEL: Readonly<Record<string, string>> = {
+  ':read-only': 'Solo lectura',
+  ':workspace': 'Espacio de trabajo',
+  ':danger-full-access': 'Acceso total',
+};
+
+// Pasos del deslizador con los modos QUE EXPONE el CLI: los conocidos en su escala de siempre y los
+// nuevos detras, con su nombre crudo. null (el CLI no contesto) = la lista fija de Mage.
+export function permissionStepsFor(cliModes: readonly string[] | null): readonly SliderStep[] {
+  if (cliModes === null) return permissionSteps;
+  const known = PERMISSION_SLIDER_ORDER.filter((mode) => cliModes.includes(mode));
+  const unknown = cliModes.filter((mode) => !isPermissionMode(mode));
+  return [...known, ...unknown].map((mode) => ({ value: mode, label: permissionModeLabel(mode) }));
+}
+
+// Orden del ciclo de Shift+Tab con los modos del CLI (el historico, y los nuevos al final).
+export function permissionCycleFor(cliModes: readonly string[] | null): readonly string[] {
+  if (cliModes === null) return PERMISSION_MODES;
+  return [...PERMISSION_MODES.filter((mode) => cliModes.includes(mode)), ...cliModes.filter((mode) => !isPermissionMode(mode))];
+}
+
+// Pasos de Codex: sus perfiles, en el orden que los da (de menos a mas acceso). Sin sondeo, ninguno.
+export function codexPermissionSteps(profiles: readonly string[] | null): readonly SliderStep[] {
+  return (profiles ?? []).map((profile) => ({ value: profile, label: permissionModeLabel(profile) }));
 }
 
 // Donde nace el popover respecto a su chip. El alto real no se conoce hasta montarlo (depende de si

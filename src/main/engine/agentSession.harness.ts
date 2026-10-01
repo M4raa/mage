@@ -89,7 +89,7 @@ export interface Harness {
   advanceClock: (ms: number) => void;
 }
 
-// `custom` permite inyectar otro adapter (p.ej. el de modo perTurn) sin duplicar el arnes entero.
+// `custom` permite inyectar otro adapter (p.ej. uno que interrumpe por corte) sin duplicar el arnes entero.
 export function harness(custom?: { readonly adapter: ProviderAdapter; readonly plans: LaunchParams[] }): Harness {
   const { adapter, plans } = custom ?? fakeAdapter();
   const events: MageEvent[] = [];

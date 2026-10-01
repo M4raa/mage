@@ -221,18 +221,17 @@ describe('modelsUrl', () => {
 
 // Codex (CLI de OpenAI). Detectado el 2026-09-18 en la maquina del usuario con codex-cli 0.144.4.
 describe('probeProvider — codex', () => {
-  it('codexInstalado_devuelveSuRutaYElMotivoDeQueAunNoSePuedaUsar', async () => {
+  it('codexInstalado_devuelveSuRutaYQueElCatalogoLoPideLaSesion', async () => {
     const bin = 'C:\Users\quien\AppData\Local\Programs\OpenAI\Codex\bin\codex.exe';
 
     const result = await probeProvider({ providerId: 'codex', baseUrl: null }, deps({ findCodexBinary: () => bin }));
 
     expect(result.kind).toBe('cli');
     expect(result.endpoint).toBe(bin);
-    // No hay catalogo preguntable: igual que Claude, no hay ningun comando que liste modelos.
+    // El catalogo lo pide cada sesion (`model/list`): Ajustes no lanza el app-server. No es un fallo:
+    // la UI lo distingue por el endpoint, que no es null.
     expect(result.models).toBeNull();
-    // El motivo NO es un fallo: es "detectado, pero falta el adapter". La UI lo distingue por el
-    // endpoint, que no es null.
-    expect(result.error).toContain('adapter');
+    expect(result.error).toContain('model/list');
   });
 
   it('codexNoInstalado_endpointNuloParaQueAjustesNoLoListe', async () => {

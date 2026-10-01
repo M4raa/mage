@@ -102,7 +102,7 @@ describe('resolveLaunchParams', () => {
   it('resolve_permissionModeInvalido_lanzaConElValor', () => {
     expect(() =>
       resolveLaunchParams('s1', { ...params, permissionMode: 'yolo' as never }, deps({})),
-    ).toThrow(/modo de permiso invalido: "yolo"/i);
+    ).toThrow(/modo de permiso invalido para claude: "yolo"/i);
   });
 
   it('resolve_budgetCentsValido_sePropaga', () => {

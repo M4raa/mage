@@ -7,6 +7,8 @@ function info(overrides: Partial<AccountInfo>): AccountInfo {
     configDir: '/home/u/.claude',
     name: '.claude',
     isMain: true,
+    providerId: 'claude',
+    authKind: 'subscription',
     email: null,
     org: null,
     loginStatus: 'logged_in',

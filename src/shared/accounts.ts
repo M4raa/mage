@@ -5,16 +5,42 @@
 // Estado de login de una cuenta: sin credenciales, con credenciales expiradas, o con login valido.
 export type LoginStatus = 'logged_in' | 'expired' | 'logged_out';
 
+// Forma de pago de una cuenta (grupo E): la suscripcion del fabricante (login de su CLI) o una clave de
+// API, que Mage guarda cifrada en su boveda y solo pone en el hijo de ESA cuenta.
+export type AccountAuthKind = 'subscription' | 'api-key';
+
+// Proveedores con cuentas propias (cada uno con su CLI). El de Claude es el de siempre.
+export type AccountProviderId = 'claude' | 'codex' | 'agy';
+
 export interface AccountInfo {
-  readonly configDir: string; // CLAUDE_CONFIG_DIR absoluto
+  // Donde vive el estado de la cuenta: CLAUDE_CONFIG_DIR (claude), CODEX_HOME (codex) o el perfil
+  // (USERPROFILE) de una cuenta de agy por clave. Es tambien su id: el de la pestaña (`accountId`).
+  readonly configDir: string;
   readonly name: string; // basename del dir (p.ej. ".claude-p")
   readonly isMain: boolean; // true si es ~/.claude (cuenta principal)
+  readonly providerId: AccountProviderId;
+  readonly authKind: AccountAuthKind;
   readonly email: string | null; // oauthAccount.emailAddress (o null)
   readonly org: string | null; // oauthAccount.organizationName (o null)
   readonly loginStatus: LoginStatus;
   readonly expiresAt: number | null; // epoch ms de caducidad del token; null si no hay login
   readonly defaultModel: string | null; // settings.json -> model (o null)
 }
+
+// Alta de una cuenta que no es la suscripcion de Claude (grupo E, «Añadir cuenta» para la matriz). La
+// clave (solo en las de API) sube UNA vez, en este mensaje, y nunca vuelve al renderer.
+export interface AccountCreateParams {
+  readonly providerId: AccountProviderId;
+  readonly authKind: AccountAuthKind;
+  readonly name: string;
+  readonly apiKey?: string;
+}
+
+// Resultado del login de ChatGPT de una cuenta de Codex (sin verificar). `reason` con forma
+// `<fase>_<detalle>`, nunca con tokens.
+export type CodexLoginOutcome =
+  | { readonly status: 'ok' }
+  | { readonly status: 'cancelled' | 'timeout' | 'error'; readonly reason: string };
 
 // Resultado del login. El nombre conserva el "Embedded" del login OAuth propio de M3 (ventana propia
 // + servidor local de callback), que ya NO existe: hoy lo produce `cliLoginService`, spawneando el CLI

@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { Icon } from './Icon';
 import { AnimatePresence, motion } from 'motion/react';
 import { EFFORT_LEVELS } from '@shared/ipc';
-import { NO_PERMISSION_CONTROL_WARNING, isAutoApprovedProvider } from '@shared/providers';
+import { NO_PERMISSION_CONTROL_WARNING, UNVERIFIED_PROVIDER_NOTE, isAutoApprovedProvider, isUnverifiedProvider } from '@shared/providers';
+import { API_BILLED_LABEL } from '../accountView';
 import { useWorkbenchStore } from '../workbenchStore';
 import { useDialogA11y } from '../a11y/useDialogA11y';
 import { displayModelId, modelOptionsForProvider, providerFallbackModel, providerOptions } from '../models';
@@ -214,7 +215,7 @@ function DialogBody({
           >
             {accounts.map((a) => (
               <option key={a.id} value={a.id}>
-                {a.alias} {a.email !== null ? `· ${a.email}` : ''} {a.loginStatus !== 'logged_in' ? '(sin login)' : ''}
+                {a.alias} {a.email !== null ? `· ${a.email}` : ''} {a.apiBilled ? `· ${API_BILLED_LABEL}` : ''} {a.loginStatus !== 'logged_in' ? '(sin login)' : ''}
               </option>
             ))}
           </select>
@@ -278,6 +279,11 @@ function DialogBody({
           </select>
         </Field>
 
+        {isUnverifiedProvider(provider) && (
+          <div data-unverified-provider="true" className="rounded-[7px] border border-mg-warn-border bg-mg-warn-bg p-[8px_10px] text-[10.5px] text-mg-warn-text">
+            {UNVERIFIED_PROVIDER_NOTE}
+          </div>
+        )}
         {autoApproved && (
           // Aviso ANTES de abrir la pestana (E3): el usuario decide sabiendo que esa conversacion no
           // pasara por los dialogos de permiso de Mage. Y si el CLI no esta instalado, no se puede

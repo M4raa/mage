@@ -49,8 +49,13 @@ descartado.
 
 ## Invariantes que no se negocian al añadir un proveedor
 
-- **Suscripción, no API**: `ANTHROPIC_API_KEY` fuera del proceso hijo. Un adapter que factura API
-  contradice el invariante nº 1 aunque funcione.
+- **Facturación por cuenta**: `scrubAgentEnv` borra toda clave heredada; la ÚNICA clave que llega a
+  un hijo es la de una cuenta de API, puesta por su adapter y solo en el hijo de esa cuenta (ver
+  `CLAUDE.md`). Un adapter que leyera una clave del entorno del usuario rompe el invariante aunque
+  funcione.
+- **Mide también cómo autentica por clave**: `codex app-server` 0.144.4 NO lee `CODEX_API_KEY` del
+  entorno aunque el binario la mencione (medido con una clave falsa: «Missing bearer»). Se mide con una
+  clave falsa contra el error del servidor, nunca con una real.
 - **Nunca loguear** credenciales, tokens, `oauthAccount`, `userID`, `machineID`.
 - **Multiplataforma**: sin rutas ni comandos hardcodeados por SO.
 

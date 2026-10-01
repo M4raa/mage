@@ -579,6 +579,8 @@ describe('pestaña nueva sin formulario', () => {
         monogram: 'P',
         alias: 'principal',
         provider: 'Claude',
+        providerId: 'claude',
+        apiBilled: false,
         defaultModel: 'sonnet',
         accent: { base: '#888', tint: '#888', bgActive: '#888', borderInactive: '#888' },
         activity: 'idle',
