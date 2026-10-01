@@ -8842,7 +8842,7 @@ async function chooseTurnTarget(page) {
 
 // Abre la pestaña del turno y devuelve lo que TIENE que tener antes de enviar. Real: Ctrl+N (el camino
 // de siempre) con modelo y esfuerzo minimos. Local: un proveedor del usuario apuntando al servidor
-// falso; el gateway lee los proveedores del DISCO, asi que se espera a que el guardado llegue.
+// falso; el runtime propio lee los proveedores del DISCO, asi que se espera a que el guardado llegue.
 async function openTurnTab(page, { target, fake, userDataDir }) {
   if (target === 'real') {
     await openTemporaryConversation(page);

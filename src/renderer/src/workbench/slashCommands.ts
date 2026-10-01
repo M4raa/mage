@@ -75,7 +75,7 @@ function describeDiscovered(name: string): string {
 // (2) la curada de Mage (en castellano, para los built-in), (3) una derivada del nombre. Asi el texto
 // mas fiable gana, y nunca se queda una entrada sin nada que explicar.
 //
-// Si la sesion no ha reportado comandos todavia (arrancando, o un proveedor por gateway que no los
+// Si la sesion no ha reportado comandos todavia (arrancando, o un proveedor que no los
 // manda), se cae a la lista curada: mejor un autocompletado aproximado que ninguno.
 export function buildSlashCatalog(sessionCommands: readonly SlashCommand[]): readonly SlashCommand[] {
   const byName = new Map<string, SlashCommand>(); // nombre normalizado -> mejor entrada conocida

@@ -166,7 +166,7 @@ export class AgentSession {
 
   // Registra los hooks de la sesion (D2). Se manda nada mas arrancar: el CLI no emite su `init` hasta
   // recibir algo por stdin, asi que esto es tambien lo que arranca el handshake. Best-effort: si el
-  // proveedor no lo soporta (adapters por gateway) no se manda nada, y un fallo al escribir se registra
+  // proveedor no lo soporta (agy, codex) no se manda nada, y un fallo al escribir se registra
   // pero NO tumba la sesion (los hooks son seguimiento, no funcionalidad critica).
   private sendInitialize(): void {
     const encode = this.deps.adapter.encodeInitialize;
@@ -340,7 +340,7 @@ export class AgentSession {
   }
 
   // Re-pide el catalogo de comandos al cerrar turno (2.2). MISMA forma best-effort que
-  // requestContextUsage: sin `encodeInitialize` (adapters por gateway) o sin proceso no hace nada, y un
+  // requestContextUsage: sin `encodeInitialize` (agy, codex) o sin proceso no hace nada, y un
   // fallo al escribir se loguea pero NUNCA tumba la sesion — es un refresco de conveniencia, no algo
   // que el usuario haya pedido.
   private requestCommandCatalog(): void {
@@ -554,7 +554,7 @@ export class AgentSession {
   }
 
   // Relanza reanudando la conversacion (`resumeParams`), asi que la pestana conserva su hilo. Los
-  // adapters por gateway reanudan IGUAL: debajo
+  // otros adapters reanudan IGUAL: debajo
   // corre el mismo CLI, y relanzar con `--session-id` de un id ya usado hace que el CLI salga con
   // "Session ID ... is already in use" — o sea, los cinco reintentos de C1 fallando en cadena.
   private restartNow(): void {

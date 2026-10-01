@@ -1,5 +1,5 @@
 // Catalogo de proveedores y modelos para los selectores de la UI. La verdad de los proveedores de serie
-// vive en `@shared/providers` (la comparte el gateway, que resuelve el upstream con la misma tabla); aqui
+// vive en `@shared/providers` (la comparte main); aqui
 // se FUSIONA con los proveedores que el usuario haya anadido en Configuracion (E2) y se valida el
 // formulario de esa seccion. Todo son funciones puras: el estado lo trae el store.
 import type { CustomProvider, ProviderModel } from '@shared/providers';
@@ -153,7 +153,7 @@ export function nextCustomProviderId(label: string, taken: readonly string[]): s
 
 // Valida el formulario y devuelve el proveedor listo para guardar, o el motivo CONCRETO del rechazo (se
 // pinta junto al formulario). `editingId` = null al anadir; al editar, ese id se conserva.
-// La URL se valida con el MISMO parser que usa el gateway al reenviar (chatCompletionsUrl), asi no se
+// La URL se valida con el MISMO parser que usa el runtime al llamar (chatCompletionsUrl), asi no se
 // puede guardar una URL que la UI acepte y el motor no.
 export function validateCustomProviderDraft(
   draft: CustomProviderDraft,
@@ -199,7 +199,7 @@ function resolveApiKeyUpdate(draft: CustomProviderDraft): ApiKeyUpdate {
   return draft.forgetApiKey ? { kind: 'delete' } : { kind: 'keep' };
 }
 
-// Motivo por el que la URL base no sirve, o null si sirve. Reutiliza el parser del gateway: su Error ya
+// Motivo por el que la URL base no sirve, o null si sirve. Reutiliza el parser del runtime: su Error ya
 // trae el valor recibido, y aqui se acompana de un ejemplo (el mensaje crudo no basta para arreglarlo).
 function describeBaseUrlError(baseUrl: string): string | null {
   try {
@@ -234,7 +234,7 @@ export interface ProviderEntry {
 // Niveles de `--effort` que acepta cada proveedor, MEDIDOS en sus CLI (no deducidos):
 //   - `claude --help`: low, medium, high, xhigh, max (= EFFORT_LEVELS).
 //   - `agy --help` (1.2.14): low, medium, high, max (= AGY_EFFORT_LEVELS).
-//   - por gateway (openai/gemini/del usuario): NINGUNO. `gatewayAdapter` no pasa `--effort`, asi que
+//   - del usuario (runtime propio): NINGUNO. El runtime no tiene `--effort`, asi que
 //     ofrecerlo seria un control que no hace nada.
 export function effortLevelsForProvider(providerId: string): readonly string[] {
   if (providerId === 'claude') return EFFORT_LEVELS;
@@ -250,8 +250,8 @@ export function providerEntries(customProviders: readonly CustomProvider[]): rea
   const builtIn: ProviderEntry[] = BUILT_IN_PROVIDERS.map((provider) => ({
     id: provider.id,
     label: provider.label,
-    kind: provider.baseUrl === null ? 'cli' : 'http',
-    baseUrl: provider.baseUrl,
+    kind: 'cli',
+    baseUrl: null,
     models: provider.models,
     custom: false,
     effortLevels: effortLevelsForProvider(provider.id),

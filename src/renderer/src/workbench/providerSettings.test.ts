@@ -38,7 +38,7 @@ describe('providerEntries', () => {
     const entries = providerEntries([]);
 
     expect(entries.find((entry) => entry.id === 'claude')).toMatchObject({ kind: 'cli', baseUrl: null, custom: false });
-    expect(entries.find((entry) => entry.id === 'openai')).toMatchObject({ kind: 'http', custom: false });
+    expect(entries.every((entry) => entry.kind === 'cli')).toBe(true);
   });
 
   it('providerEntries_conProveedorDelUsuario_loAnadeComoEditable', () => {

@@ -5,7 +5,6 @@ import type { PermissionDecision } from '@shared/events';
 import type { CreateSessionParams, SessionEventPayload } from '@shared/ipc';
 import type { AgentSessionDeps, SessionLogFn } from './agentSession';
 import { resolveLaunchParams, type DefaultsDeps } from './sessionDefaults';
-import { unregisterSession } from './proxy/gateway';
 import { pathEquals } from '../os/pathUtils';
 import { writesClaudeTranscript } from '@shared/providers';
 
@@ -41,8 +40,6 @@ export class SessionManager {
   // Config dir EFECTIVO de cada sesion (el de la cuenta o su `mage-private`). Hace falta para parar
   // las sesiones de una cuenta que se va a borrar, esten en la ventana que esten (P-028, punto 30).
   private readonly accountDirs = new Map<string, string>();
-  // Id con el que ARRANCO cada sesion re-etiquetada por un `/clear` (P-028), por id actual.
-  private readonly originalIds = new Map<string, string>();
 
   constructor(
     private readonly createSession: SessionFactory,
@@ -126,14 +123,6 @@ export class SessionManager {
   }
 
   stop(sessionId: string): void {
-    // El ticket del gateway muere con la sesion (B11). `unregisterSession` estaba exportada y no la
-    // importaba NADIE: el Map crecia durante toda la vida del proceso y el `sk-mage-<sessionId>` de
-    // una pestaña cerrada seguia siendo valido contra el puerto local.
-    unregisterSession(sessionId);
-    // Tras un `/clear` el ticket del arranque sigue registrado con el id de ANTES (P-028).
-    const original = this.originalIds.get(sessionId);
-    if (original !== undefined) unregisterSession(original);
-    this.originalIds.delete(sessionId);
     this.require(sessionId).stop();
     this.sessions.delete(sessionId);
     this.owners.delete(sessionId);
@@ -175,8 +164,6 @@ export class SessionManager {
     const owner = this.owners.get(from);
     this.owners.delete(from);
     if (owner !== undefined) this.owners.set(to, owner);
-    this.originalIds.set(to, this.originalIds.get(from) ?? from);
-    this.originalIds.delete(from);
     return to;
   }
 

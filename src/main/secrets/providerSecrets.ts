@@ -1,7 +1,6 @@
 import { z } from 'zod';
 import type { AppSettings } from '@shared/settings';
 import { CUSTOM_PROVIDER_ID_PREFIX, type CustomProvider } from '@shared/providers';
-import type { KeyedCustomProvider } from '../engine/proxy/providerEndpoints';
 
 // Claves de API de los proveedores del usuario, guardadas en la boveda (`SecretStore`) y no en
 // `app-settings.json`. Lo que aqui se decide es la costura entre los dos ficheros: con que id se
@@ -25,11 +24,6 @@ export function withApiKeyFlags(settings: AppSettings, vault: ProviderKeyVault):
     hasApiKey: vault.has(providerApiKeySecretId(provider.id)),
   }));
   return { ...settings, customProviders };
-}
-
-// Para el gateway (main): cada proveedor con su clave descifrada; '' = sin clave (runtime local).
-export function withApiKeys(providers: readonly CustomProvider[], vault: ProviderKeyVault): readonly KeyedCustomProvider[] {
-  return providers.map((provider) => ({ ...provider, apiKey: vault.get(providerApiKeySecretId(provider.id)) ?? '' }));
 }
 
 // Parametros de «guardar la clave de un proveedor» (IPC). Solo proveedores DEL USUARIO: los de serie

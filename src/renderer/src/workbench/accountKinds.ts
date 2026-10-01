@@ -4,7 +4,7 @@
 //   - codex-login: login de ChatGPT por `codex app-server` (sin verificar).
 //   - api-key: nombre + clave; la clave sube una vez y se cifra en main.
 //   - external: la suscripcion de agy, que vive fuera de Mage (una sola).
-//   - endpoint: un servidor local o compatible con OpenAI (IP:puerto), que va por el gateway.
+//   - endpoint: un servidor local o compatible con OpenAI (IP:puerto), que va por el runtime propio de Mage.
 
 export type AccountVendor = 'anthropic' | 'openai' | 'google' | 'local';
 export type AccountKindFlow = 'cli-oauth' | 'codex-login' | 'api-key' | 'external' | 'endpoint';

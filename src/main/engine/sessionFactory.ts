@@ -1,4 +1,4 @@
-import { AGY_PROVIDER_ID, BUILT_IN_PROVIDERS, CODEX_PROVIDER_ID, runsOnMageRuntime } from '@shared/providers';
+import { AGY_PROVIDER_ID, CODEX_PROVIDER_ID, runsOnMageRuntime } from '@shared/providers';
 import { AgentSession, type AgentSessionDeps } from './agentSession';
 import type { ProviderAdapter } from './providerAdapter';
 import type { ManagedSession } from './sessionManager';
@@ -24,9 +24,5 @@ export function createSessionFor(provider: string, base: SessionBase, deps: Sess
   const createAgent = deps.createAgentSession ?? ((agentDeps: AgentSessionDeps) => new AgentSession(agentDeps));
   if (CLI_PROVIDERS.includes(provider)) return createAgent({ ...base, adapter: deps.buildAdapter(provider) });
   if (runsOnMageRuntime(provider)) return deps.buildRuntime(provider, base);
-  // Gateway (se retira en R6): los de serie de nube (`openai`, `gemini`).
-  if (BUILT_IN_PROVIDERS.some((entry) => entry.id === provider)) {
-    return createAgent({ ...base, adapter: deps.buildAdapter(provider) });
-  }
   throw new Error(`Proveedor sin runtime: ${JSON.stringify(provider)}`);
 }

@@ -1,8 +1,8 @@
 import { CHAT_CHUNK_SCHEMA, type ChatChunk, type ToolCallDelta } from './chatSchemas';
 
 // Lectura PURA del stream SSE de Chat Completions (OpenAI-compatible): partir el SSE, parsear cada
-// trozo y reensamblar las tool calls. Sin red ni reloj: lo consumen el runtime propio (`chatClient`) y,
-// mientras exista, el gateway (`proxy/streamTranslator.ts`). Medido en `spike/runtime-spike.mjs`.
+// trozo y reensamblar las tool calls. Sin red ni reloj: lo consume el runtime propio (`chatClient`).
+// Medido en `spike/runtime-spike.mjs`.
 
 // Contadores de tokens de una respuesta. Enteros: los tokens NO son decimales.
 export interface TokenUsage {

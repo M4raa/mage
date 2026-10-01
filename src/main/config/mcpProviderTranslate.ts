@@ -83,7 +83,7 @@ export function toClaudeArgs(
 // Escribe el fichero de `--mcp-config` de UNA cuenta y devuelve su ruta (lo inyecta main).
 export type ClaudeMcpConfigWriter = (accountDir: string, text: string) => string;
 
-// Lo compartido de un lanzamiento de Claude (nativo o por gateway): flags y variables de entorno.
+// Lo compartido de un lanzamiento de Claude (el nativo): flags y variables de entorno.
 // Medido en 2.1.285: `ENABLE_CLAUDEAI_MCP_SERVERS=false` deja la sesion sin conectores de claude.ai.
 export function claudeSharedLaunch(
   shared: { readonly mcpServers: readonly ResolvedMcpServer[]; readonly settingsFragment: Readonly<Record<string, unknown>> | null; readonly claudeAiConnectors: boolean } | undefined,

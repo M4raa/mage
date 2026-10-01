@@ -104,7 +104,7 @@ export interface AppSettings {
   readonly keybindingOverrides: readonly KeybindingOverride[];
   // Proveedores compatibles con la API de OpenAI anadidos por el usuario (E2): runtimes locales
   // (Ollama, LM Studio) o cualquier endpoint remoto. Cada uno trae su URL base, sus modelos y una api
-  // key opcional; el gateway los resuelve por id sin codigo especifico. Default [].
+  // key opcional; el runtime propio los resuelve por id sin codigo especifico. Default [].
   readonly customProviders: readonly CustomProvider[];
   // Carpetas en las que el usuario ha AUTORIZADO lanzar un agente. Lanzar el CLI en una carpeta ejecuta
   // lo que esa carpeta traiga —sus hooks, su `.claude/settings.json`, sus servidores MCP—, asi que

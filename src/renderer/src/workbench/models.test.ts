@@ -42,9 +42,9 @@ function draft(overrides: Partial<CustomProviderDraft> = {}): CustomProviderDraf
 
 describe('modelOptionsForProvider', () => {
   it('modelOptionsForProvider_proveedorConocido_devuelveSusModelos', () => {
-    const ids = modelOptionsForProvider('gemini', 'gemini-2.5-flash').map((m) => m.id);
+    const ids = modelOptionsForProvider('codex', 'gpt-5.5').map((m) => m.id);
 
-    expect(ids).toEqual(['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.5-flash-lite']);
+    expect(ids.slice(0, 2)).toEqual(['gpt-5.6-sol', 'gpt-5.6-terra']);
   });
 
   it('modelOptionsForProvider_proveedorDesconocido_caeAClaude', () => {
@@ -109,10 +109,10 @@ describe('providerOptions', () => {
   });
 
   it('providerOptions_idQueColisionaConUnoDeSerie_seDescarta', () => {
-    const options = providerOptions([customProvider({ id: 'openai', label: 'Impostor' })]);
+    const options = providerOptions([customProvider({ id: 'codex', label: 'Impostor' })]);
 
-    expect(options.filter((p) => p.id === 'openai')).toHaveLength(1);
-    expect(options.find((p) => p.id === 'openai')?.label).not.toBe('Impostor');
+    expect(options.filter((p) => p.id === 'codex')).toHaveLength(1);
+    expect(options.find((p) => p.id === 'codex')?.label).not.toBe('Impostor');
   });
 
   it('providerOptions_dosProveedoresConElMismoId_soloElPrimero', () => {
@@ -125,7 +125,7 @@ describe('providerOptions', () => {
 
 describe('providerModels y providerFallbackModel', () => {
   it('providerFallbackModel_proveedorDeSerie_devuelveSuPrimerModelo', () => {
-    expect(providerFallbackModel('openai', [])).toBe('gpt-4o');
+    expect(providerFallbackModel('codex', [])).toBe('gpt-5.6-sol');
   });
 
   it('providerFallbackModel_proveedorDelUsuario_devuelveSuPrimerModelo', () => {
@@ -297,26 +297,9 @@ describe('catalogo de proveedores de serie', () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
-  // Los alias existen para traducir un modelo de Claude arrastrado por la sesion: apuntar a un modelo
-  // que el proveedor no declara mandaria al upstream un id que no conoce.
-  it('cadaAliasDeModeloApuntaAUnModeloDeclarado', () => {
-    for (const provider of BUILT_IN_PROVIDERS) {
-      const declared = provider.models.map((m) => m.id);
-      for (const target of Object.values(provider.modelAliases)) {
-        expect(declared, `alias de ${provider.id}`).toContain(target);
-      }
-    }
-  });
-
-  // Los motores NATIVOS (claude, agy) lanzan su propio CLI y no pasan por el gateway; el resto tiene
-  // que declarar su URL base o `resolveUpstream` no sabria a donde reenviar.
-  it('losProveedoresNativosNoTienenUrlBase_elRestoSi', () => {
-    // Los NATIVOS (CLI propio, sin gateway) ya son tres: claude, agy y codex.
-    const native = ['claude', AGY_PROVIDER_ID, CODEX_PROVIDER_ID];
-    for (const provider of BUILT_IN_PROVIDERS) {
-      if (native.includes(provider.id)) expect(provider.baseUrl, provider.id).toBeNull();
-      else expect(provider.baseUrl, provider.id).not.toBeNull();
-    }
+  // P-032 R6: de serie solo quedan los tres CLI; `openai`/`gemini` se retiraron con el gateway.
+  it('deSerie_soloLosTresCli', () => {
+    expect(BUILT_IN_PROVIDERS.map((provider) => provider.id)).toEqual(['claude', AGY_PROVIDER_ID, CODEX_PROVIDER_ID]);
   });
 
   // El aviso de "sin permisos" que pinta la UI se apoya en esta lista: si `agy` desapareciera de ella,
@@ -327,12 +310,12 @@ describe('catalogo de proveedores de serie', () => {
     expect(isAutoApprovedProvider('custom:ollama')).toBe(false);
   });
 
-  // Los de gateway tambien dejan transcripcion (su motor sigue siendo el CLI de Claude Code); solo
-  // `agy` no. Si esto se invirtiera, el Inspector pediria un fichero inexistente en cada pestana suya.
-  it('writesClaudeTranscript_soloAgyNoLaEscribe', () => {
+  // El runtime propio escribe la suya en el mismo formato (P-032 R4); agy y codex no. Si esto se
+  // invirtiera, el Inspector pediria un fichero inexistente en cada pestana suya.
+  it('writesClaudeTranscript_agyYCodexNo', () => {
     expect(writesClaudeTranscript(AGY_PROVIDER_ID)).toBe(false);
+    expect(writesClaudeTranscript(CODEX_PROVIDER_ID)).toBe(false);
     expect(writesClaudeTranscript('claude')).toBe(true);
-    expect(writesClaudeTranscript('gemini')).toBe(true);
     expect(writesClaudeTranscript('custom:ollama')).toBe(true);
   });
 });

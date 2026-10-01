@@ -7,7 +7,6 @@ import {
   parseProviderId,
   providerApiKeySecretId,
   withApiKeyFlags,
-  withApiKeys,
   type ProviderKeyVault,
 } from './providerSecrets';
 
@@ -34,16 +33,6 @@ describe('withApiKeyFlags', () => {
 
     expect(flagged.customProviders.map((p) => p.hasApiKey)).toEqual([true, false]);
     expect(JSON.stringify(flagged)).not.toContain('sk-centinela-boveda');
-  });
-});
-
-describe('withApiKeys', () => {
-  it('withApiKeys_conYSinClave_ponLaDescifradaOVacia', () => {
-    const vault = memoryVault({ [providerApiKeySecretId('custom:a')]: 'sk-a' });
-
-    const keyed = withApiKeys([provider('custom:a'), provider('custom:b')], vault);
-
-    expect(keyed.map((p) => p.apiKey)).toEqual(['sk-a', '']);
   });
 });
 

@@ -2,6 +2,7 @@ import { sanitizeAlwaysAllow } from './permissionRules';
 import type { PersistedTab, PersistedWorkspace, SplitLayout } from '@shared/state';
 import { WORKSPACE_STATE_VERSION } from '@shared/state';
 import { isPermissionMode } from '@shared/ipc';
+import { RETIRED_PROVIDER_IDS } from '@shared/providers';
 import type { Tab } from './types';
 import { findLeafPath, fromLegacySplit, singleLeaf, pruneSplitLayout } from './splitLayout';
 
@@ -67,6 +68,8 @@ export interface RestoredTabs {
 // existen (cuenta borrada entre arranques) para no dejar pestanas huerfanas sin cuenta valida. El
 // sessionId persistido pasa a `resumeSessionId` (la sesion NO se arranca aqui: resume perezoso). La
 // pestana activa se conserva si sigue presente; si no, la primera; si no hay ninguna, "".
+const RETIRED_PROVIDER_FALLBACK_MODEL = 'sonnet';
+
 export function restoreTabs(
   persisted: PersistedWorkspace,
   existingAccountIds: ReadonlySet<string>,
@@ -78,8 +81,10 @@ export function restoreTabs(
       accountId: t.accountId,
       accountAlias: t.accountAlias,
       cwd: t.cwd,
-      model: t.model,
-      provider: t.provider,
+      // Un proveedor retirado (P-032 R6: `openai`/`gemini`, que iban por el gateway) reabre con Claude y su
+      // modelo por defecto. Su transcripcion la escribio el CLI de Claude, asi que se reanuda igual.
+      model: RETIRED_PROVIDER_IDS.includes(t.provider) ? RETIRED_PROVIDER_FALLBACK_MODEL : t.model,
+      provider: RETIRED_PROVIDER_IDS.includes(t.provider) ? 'claude' : t.provider,
       title: t.title,
       privacy: t.privacy,
       ...(t.resolvedConfigDir === undefined ? {} : { resolvedConfigDir: t.resolvedConfigDir }),

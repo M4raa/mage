@@ -20,7 +20,7 @@ import { execCapturingStdout } from '../os/execCapture';
 //   - `claude` NO tiene ningun subcomando ni flag que liste modelos, pero SI los publica en la respuesta
 //     a `initialize` (P-026 2.4, medido en 2.1.283 con `spike/init-spike.mjs`, sin turno). Main los
 //     sondea al arrancar y los guarda por cuenta; aqui se lee esa cache (`loadClaudeModels`).
-//   - proveedores por gateway (openai/gemini) y del usuario: `GET <base>/models` (convencion OpenAI).
+//   - proveedores del usuario: `GET <base>/models` (convencion OpenAI).
 
 // CORRECCION del 2026-09-18, MEDIDA sobre el bundle del CLI 2.1.276: era FALSO decir que el catalogo
 // de Claude no se puede descubrir. El propio CLI lo pide a `https://api.anthropic.com/v1/models`
@@ -123,7 +123,7 @@ function probeCodex(deps: ProbeDeps): ProviderProbeResult {
   };
 }
 
-// Proveedores OpenAI-compatibles (de serie por gateway, o del usuario): GET <base>/models.
+// Proveedores OpenAI-compatibles (los del usuario): GET <base>/models.
 async function probeHttp(
   providerId: string,
   params: ProviderProbeParams,
@@ -144,20 +144,12 @@ interface HttpTarget {
   readonly apiKey: string;
 }
 
-// URL y credencial con las que sondear. Un proveedor de serie las saca de su ficha y del entorno del
-// main; uno del usuario trae la URL en la peticion y su clave sale de la boveda (la key nunca viaja por
-// IPC). Devuelve el MOTIVO (una cadena) cuando no hay con que sondear, que es informacion para la UI y
-// no un fallo del programa.
+// URL y credencial con las que sondear: la URL viene en la peticion y la clave sale de la boveda (la key
+// nunca viaja por IPC). Los de serie son todos CLI y no tienen endpoint. Devuelve el MOTIVO (una cadena)
+// cuando no hay con que sondear, que es informacion para la UI y no un fallo del programa.
 function resolveHttpTarget(providerId: string, params: ProviderProbeParams, deps: ProbeDeps): HttpTarget | string {
-  const env = deps.env;
-  const builtIn = BUILT_IN_PROVIDERS.find((provider) => provider.id === providerId);
-  if (builtIn !== undefined) {
-    if (builtIn.baseUrl === null) return `El proveedor ${JSON.stringify(providerId)} es nativo y no tiene endpoint HTTP`;
-    const apiKey = (builtIn.apiKeyEnvVar === null ? '' : env[builtIn.apiKeyEnvVar] ?? '').trim();
-    if (builtIn.apiKeyEnvVar !== null && apiKey.length === 0) {
-      return `Falta la variable de entorno ${builtIn.apiKeyEnvVar}: sin ella no se puede consultar su catálogo.`;
-    }
-    return { baseUrl: builtIn.baseUrl, apiKey };
+  if (BUILT_IN_PROVIDERS.some((provider) => provider.id === providerId)) {
+    return `El proveedor ${JSON.stringify(providerId)} es nativo y no tiene endpoint HTTP`;
   }
   const baseUrl = (params.baseUrl ?? '').trim();
   if (baseUrl.length === 0) return `El proveedor ${JSON.stringify(providerId)} no declara URL base.`;

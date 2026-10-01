@@ -1,8 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { AgyAdapter } from './agyAdapter';
 import { ClaudeAdapter } from './claudeAdapter';
-import { CODEX_API_KEY_ENV, CodexAdapter } from './codexAdapter';
-import { GatewayAdapter } from './gatewayAdapter';
+import { CodexAdapter } from './codexAdapter';
 import type { LaunchParams } from './providerAdapter';
 
 // Invariante de facturacion (CLAUDE.md, grupo E): las claves de API solo llegan al hijo de SU cuenta de
@@ -49,14 +48,5 @@ describe('invariante de claves de API', () => {
 
     expect(own.ANTHROPIC_API_KEY).toBe('sk-ant-de-la-cuenta');
     for (const env of envOfEverySubscriptionChild()) expect(Object.values(env)).not.toContain('sk-ant-de-la-cuenta');
-  });
-
-  // El gateway lanza el MISMO CLI de Claude con su ticket; nunca la clave de una cuenta de API.
-  it('gateway_sobreUnaCuentaDeApi_llevaElTicketNoLaClave', () => {
-    const env = new GatewayAdapter('custom:x', () => 'claude', () => 4242).buildSpawnPlan(launch(API_DIR)).env;
-
-    expect(env.ANTHROPIC_API_KEY).toMatch(/^sk-mage-/);
-    expect(Object.values(env)).not.toContain('sk-ant-de-la-cuenta');
-    expect(env[CODEX_API_KEY_ENV]).toBeUndefined();
   });
 });

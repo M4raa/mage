@@ -109,7 +109,6 @@ import { probeMcpStatuses } from './config/mcpStatusProbe';
 import { authenticateMcp } from './config/mcpAuthFlow';
 import { FAKE_AUTH_URL, spawnFakeMcpCli } from './config/mcpFakeCli';
 import type { ProviderModel } from '@shared/providers';
-import { GatewayAdapter } from './engine/gatewayAdapter';
 import { AgyAdapter } from './engine/agyAdapter';
 import { CodexAdapter } from './engine/codexAdapter';
 import { agyAttachmentPath, agyProfileSettings, writeAgyProfileSettings, type AgyProfileMode } from './engine/agyProfile';
@@ -130,7 +129,6 @@ import { CodexLoginService, type CodexLoginResult } from './accounts/codexLoginS
 import { defaultProbeDeps, probeProvider } from './engine/providerProbe';
 import { findAgyBinary } from './os/agyBinaryResolver';
 import { AGY_PROVIDER_ID, CODEX_PROVIDER_ID, runsOnMageRuntime } from '@shared/providers';
-import { setCustomProviderLoader, setGatewayLogger, startGateway, stopGateway } from './engine/proxy/gateway';
 import { defaultKillTreeDeps, killProcessTree } from './os/processTree';
 import { SessionManager } from './engine/sessionManager';
 import { createSessionFor } from './engine/sessionFactory';
@@ -185,7 +183,6 @@ import {
   parseProviderId,
   providerApiKeySecretId,
   withApiKeyFlags,
-  withApiKeys,
 } from './secrets/providerSecrets';
 import { expiredScratchDirs, SWEEP_INTERVAL_MS } from './state/scratchRetention';
 import { ThinkingBuffer, ThinkingStore } from './state/thinkingStore';
@@ -560,7 +557,6 @@ function conversationTranscriptPath(accountDir: string, cwd: string, sessionId: 
 // Lo que las herramientas del runtime leen y escriben del disco (fs/promises, asincrono: no bloquea main).
 const runtimeFs = { stat, readFile, glob: glob as RuntimeEnv['fs']['glob'] };
 
-// Adapter de un proveedor. Guard clauses, un caso por motor nativo; el resto, gateway.
 // Layout de cuentas de un proveedor. Solo lo tiene quien autentica por CLI con config dir propio;
 // pedirselo a un proveedor por api-key o externo es un error de programacion, no un caso a tragar.
 function accountLayoutOf(adapter: ProviderAdapter): AccountLayout {
@@ -570,6 +566,7 @@ function accountLayoutOf(adapter: ProviderAdapter): AccountLayout {
   return adapter.auth.login.accounts;
 }
 
+// Adapter del CLI de un proveedor. Solo hay tres; el resto va por el runtime propio (sessionFactory.ts).
 function buildAdapter(provider: string): ProviderAdapter {
   const writeMcpConfig = getMcpServices().writeClaudeMcpConfig;
   // La clave de una cuenta por API la pone SOLO el adapter de su CLI, y solo en el hijo de esa cuenta
@@ -577,7 +574,7 @@ function buildAdapter(provider: string): ProviderAdapter {
   if (provider === 'claude') return new ClaudeAdapter(undefined, writeMcpConfig, claudeApiKeyFor);
   if (provider === AGY_PROVIDER_ID) return buildAgyAdapter();
   if (provider === CODEX_PROVIDER_ID) return buildCodexAdapter();
-  return new GatewayAdapter(provider, undefined, undefined, writeMcpConfig);
+  throw new Error(`Proveedor sin CLI: ${JSON.stringify(provider)}`);
 }
 
 // Clave de una cuenta de Claude por API (null en las de suscripcion). Una cuenta de API nunca inicia
@@ -3088,7 +3085,7 @@ if (!gotSingleInstanceLock) {
 
 app.whenReady().then(async () => {
   // Guarda: si no se obtuvo el lock ya se llamo a app.quit(); no se arranca nada mas (registrar IPC o
-  // el gateway desde una instancia que se esta cerrando solo crea efectos a medias).
+  // ventanas desde una instancia que se esta cerrando solo crea efectos a medias).
   if (!gotSingleInstanceLock) return;
 
   if (process.platform === 'win32') app.setAppUserModelId(app.isPackaged ? WINDOWS_APP_USER_MODEL_ID : process.execPath);
@@ -3103,22 +3100,6 @@ app.whenReady().then(async () => {
   importSharedMcpOnce();
   // Y a agy, lo que haya cambiado mientras Mage estaba cerrado (si la sincronizacion automatica esta activa).
   onSharedMcpChanged();
-
-  // Iniciar local proxy gateway para multi-proveedor
-  try {
-    // Antes de arrancarlo: sus avisos (lineas ilegibles del proveedor, respuestas sin contadores de
-    // tokens) van al LogBus en vez de perderse en un catch mudo.
-    setGatewayLogger((level, message, data) => logBus.publish('engine', level, message, data));
-    // Proveedores del usuario (E2): se LEEN DEL DISCO en cada peticion, no se cachea un registro de
-    // arranque, asi anadir o editar un proveedor en Configuracion aplica al siguiente turno sin
-    // reiniciar (mismo criterio que loadSharedLaunch).
-    // La clave de cada uno sale de la boveda aqui mismo, en main: nunca del fichero de ajustes.
-    setCustomProviderLoader(() => withApiKeys(getSettingsStore().load().customProviders, getSecretStore()));
-    const port = await startGateway();
-    mainLog('info', 'Local proxy gateway arrancado', { port });
-  } catch (err) {
-    mainLog('error', 'No se pudo arrancar el local proxy gateway', { error: err instanceof Error ? err.message : String(err) });
-  }
 
   const mainWindow = windowManager.ensureMain();
   tray = createTray();
@@ -3183,7 +3164,6 @@ app.on('before-quit', () => {
   sweepScratchDirs();
   for (const controller of openTranscriptControllers.values()) controller.abort();
   openTranscriptControllers.clear();
-  stopGateway();
   debugWindow?.dispose();
   widgetWindow?.dispose();
   if (isDev) globalShortcut.unregisterAll();

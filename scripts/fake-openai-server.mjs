@@ -214,7 +214,7 @@ async function answerCompletion(req, res, rawBody, stats, fallback) {
   return undefined;
 }
 
-// Lo mismo sin streaming (el gateway lo pide asi a veces).
+// Lo mismo sin streaming (por si un cliente lo pide asi).
 function wholeCompletion(model, deltas, finish, usage) {
   const content = deltas.map((d) => d.content ?? '').join('');
   const toolCalls = deltas.flatMap((d) => d.tool_calls ?? []).filter((c) => c.id !== undefined);

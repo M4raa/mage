@@ -1,14 +1,11 @@
 // Catalogo de proveedores (E2). Hay dos clases, y la diferencia es de DATOS, no de codigo:
-//   - de serie (`BUILT_IN_PROVIDERS`): los de motor NATIVO —`claude` (su CLI habla directo con
-//     Anthropic), `agy` (Antigravity, que es EL CLI DE GOOGLE: Gemini no tiene uno propio, E3) y `codex`
-//     (el de OpenAI, sobre `codex app-server`, sin verificar)— y los
-//     de nube cuyo endpoint y variable de entorno son fijos (`openai`, `gemini`), que van por el
-//     gateway local Anthropic<->OpenAI. Ojo a las DOS entradas de Google: `agy` corre los modelos
-//     Gemini con la SUSCRIPCION (login OAuth del propio CLI) y `gemini` los mismos con una CLAVE de
-//     API facturada aparte. No son proveedores distintos: son dos caminos al mismo sitio.
+//   - de serie (`BUILT_IN_PROVIDERS`): los de motor NATIVO, cada uno con su CLI —`claude` (habla directo
+//     con Anthropic), `agy` (Antigravity, que es EL CLI DE GOOGLE: Gemini no tiene uno propio, E3) y
+//     `codex` (el de OpenAI, sobre `codex app-server`, sin verificar). Suscripcion o clave de API es cosa
+//     de la CUENTA, no del proveedor (grupo E).
 //   - del usuario (`AppSettings.customProviders`): CUALQUIER endpoint compatible con la API de OpenAI
 //     —runtime local (Ollama, LM Studio) o remoto— con su URL base, sus modelos y una api key opcional.
-//     Anadir uno NO requiere codigo nuevo: el mismo adapter de gateway y el mismo resolutor sirven.
+//     Los ejecuta el runtime propio de Mage (P-032): anadir uno NO requiere codigo nuevo.
 //
 // `PROVIDER_TEMPLATES` son solo valores PREFIJADOS para el formulario de "anadir proveedor": Mage no
 // asume que el usuario tenga ninguna IA local instalada, asi que de serie no existe ninguna entrada
@@ -36,20 +33,17 @@ export interface CustomProvider {
   readonly supportsTools?: boolean;
 }
 
-// Proveedor de serie. `baseUrl === null` marca el motor nativo (no pasa por el gateway).
-// `apiKeyEnvVar` es la variable de entorno de la que se lee su credencial (obligatoria si no es null);
-// la key vive SOLO en el proceso main y nunca se pasa al CLI hijo ni se loguea.
+// Proveedor de serie: siempre un CLI nativo.
 export interface BuiltInProvider {
   readonly id: string;
   readonly label: string;
   readonly models: readonly ProviderModel[];
-  readonly baseUrl: string | null;
-  readonly apiKeyEnvVar: string | null;
-  // Alias de modelo: un id de modelo de Claude que arrastre la sesion se traduce al equivalente del
-  // proveedor. Sin esto, una pestana creada con 'sonnet' que cambia a otro proveedor pide un modelo
-  // que el upstream no conoce y responde 404 model_not_found.
-  readonly modelAliases: Readonly<Record<string, string>>;
 }
+
+// Proveedores de serie que se RETIRARON con el gateway (P-032 R6): `openai` y `gemini` por clave de
+// API iban por el CLI de Claude detras de un proxy. Sus cuentas son ahora de codex y de agy (grupo E).
+// Una pestaña guardada con uno de ellos se reabre con Claude (`restoreTabs`).
+export const RETIRED_PROVIDER_IDS: readonly string[] = ['openai', 'gemini'];
 
 // Id del proveedor `agy` (E3). Constante porque lo miran main (fabrica de adapters), el renderer (el
 // aviso de permisos) y los tests: un literal repetido en cinco sitios es la forma de que un dia solo
@@ -110,9 +104,9 @@ export function isAutoApprovedProvider(providerId: string): boolean {
   return AUTO_APPROVED_PROVIDER_IDS.includes(providerId);
 }
 
-// ¿Deja este proveedor una transcripcion en el CLAUDE_CONFIG_DIR de la cuenta? La escribe el CLI de
-// Claude Code, asi que la tienen el proveedor nativo `claude` y TODOS los de gateway (su motor sigue
-// siendo ese CLI). `agy` es el primero que no: lleva su propio historial en su carpeta, en formato
+// ¿Deja este proveedor una transcripcion en el formato del CLI de Claude Code, que Mage sabe releer?
+// La escribe ese CLI (`claude`) y, en el mismo formato, el runtime propio (los del usuario, P-032 R4,
+// en `userData/runtime`). `agy` y `codex` no: llevan su propio historial en su carpeta, en formato
 // propio. Sin esta pregunta, el Inspector intentaria leer un fichero que no existe y pintaria un error
 // falso en cada pestana de `agy`.
 // ponytail: v1 se limita a NO pedirla. Techo: esas pestanas no tienen panel de logs ni reconstruccion
@@ -126,9 +120,6 @@ export const BUILT_IN_PROVIDERS: readonly BuiltInProvider[] = [
   {
     id: 'claude',
     label: 'Claude (Anthropic)',
-    baseUrl: null,
-    apiKeyEnvVar: null,
-    modelAliases: {},
     // Los ids son ALIAS del CLI (`sonnet`, `opus`, `haiku`): apuntan siempre a la ultima version de esa
     // familia, y por eso no se ponen ids con version — quedarian clavados en un modelo viejo. La
     // VERSION si va en la etiqueta, que era lo unico que faltaba (reporte del usuario: "la lista de
@@ -153,7 +144,7 @@ export const BUILT_IN_PROVIDERS: readonly BuiltInProvider[] = [
   {
     // Motor NATIVO nº 2 (E3): el CLI `agy` de Antigravity en `--output-format stream-json`, que
     // consume la SUSCRIPCION de Google con su propio login OAuth (nada de GEMINI_API_KEY, que
-    // facturaria la API). No pasa por el gateway: `baseUrl` null.
+    // facturaria la API). Es un CLI nativo.
     // Modelos MEDIDOS con `agy models` contra la cuenta real (2026-09-18), en su mismo orden. Esta lista
     // es solo el RESPALDO de la seccion "Proveedores y modelos", que sondea el CLI en vivo: cuando se
     // pudo preguntar manda lo que responda `agy models`, no esto. Aun asi se mantiene al dia porque es
@@ -161,11 +152,6 @@ export const BUILT_IN_PROVIDERS: readonly BuiltInProvider[] = [
     // ofrecia Gemini 3.8 y 3.7 cuando aqui seguian el 3.6 y un 3.5 que ya no existe).
     id: AGY_PROVIDER_ID,
     label: 'Antigravity · el CLI de Google (agy) · sin permisos',
-    baseUrl: null,
-    apiKeyEnvVar: null,
-    // Los alias son un concepto del GATEWAY (traducir un modelo de Claude arrastrado por la sesion al
-    // del upstream). Un proveedor nativo no pasa por ahi, asi que no tiene ninguno.
-    modelAliases: {},
     models: [
       { id: 'gemini-3.8-flash-high', label: 'Gemini 3.8 Flash (High)' },
       { id: 'gemini-3.8-flash-medium', label: 'Gemini 3.8 Flash (Medium)' },
@@ -190,9 +176,6 @@ export const BUILT_IN_PROVIDERS: readonly BuiltInProvider[] = [
     // `model/list`, en su orden y sin los ocultos.
     id: CODEX_PROVIDER_ID,
     label: 'Codex (OpenAI) · sin verificar',
-    baseUrl: null,
-    apiKeyEnvVar: null,
-    modelAliases: {},
     models: [
       { id: 'gpt-5.6-sol', label: 'GPT-5.6-Sol' },
       { id: 'gpt-5.6-terra', label: 'GPT-5.6-Terra' },
@@ -201,35 +184,6 @@ export const BUILT_IN_PROVIDERS: readonly BuiltInProvider[] = [
       { id: 'gpt-5.4', label: 'GPT-5.4' },
       { id: 'gpt-5.4-mini', label: 'GPT-5.4-Mini' },
       { id: 'gpt-5.2', label: 'GPT-5.2' },
-    ],
-  },
-  {
-    id: 'openai',
-    label: 'OpenAI · API (clave propia)',
-    baseUrl: 'https://api.openai.com/v1',
-    apiKeyEnvVar: 'OPENAI_API_KEY',
-    modelAliases: { sonnet: 'gpt-4o', haiku: 'gpt-4o-mini' },
-    models: [
-      { id: 'gpt-4o', label: 'GPT-4o' },
-      { id: 'gpt-4o-mini', label: 'GPT-4o-mini' },
-      { id: 'o1', label: 'o1' },
-      { id: 'o1-mini', label: 'o1-mini' },
-    ],
-  },
-  {
-    id: 'gemini',
-    // API, NO un CLI: Gemini no tiene uno propio — el CLI de Google es Antigravity (`agy`), que corre
-    // estos mismos modelos con la SUSCRIPCION en vez de con una clave de API. Se deja el nombre del
-    // camino en la etiqueta para que las dos entradas de Google no parezcan proveedores distintos.
-    label: 'Gemini · API de Google (clave propia)',
-    baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
-    apiKeyEnvVar: 'GEMINI_API_KEY',
-    // Reserva sin la familia 1.5, que Google retiro; el sondeo (`GET /models`) lista lo que haya de verdad.
-    modelAliases: { sonnet: 'gemini-2.5-flash', haiku: 'gemini-2.5-flash-lite', opus: 'gemini-2.5-pro' },
-    models: [
-      { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
-      { id: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
-      { id: 'gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash-Lite' },
     ],
   },
 ];
@@ -245,22 +199,6 @@ export interface ProviderTemplate {
 export const PROVIDER_TEMPLATES: readonly ProviderTemplate[] = [
   { label: 'Ollama', baseUrl: 'http://localhost:11434/v1', modelIds: ['llama3', 'mistral', 'qwen2.5-coder'] },
   { label: 'LM Studio', baseUrl: 'http://localhost:1234/v1', modelIds: ['local-model'] },
-  // Los dos de NUBE tambien son plantillas desde el 2026-09-18. Antes eran entradas fijas del catalogo
-  // y salian SIEMPRE en Ajustes, estuvieran configuradas o no; ahora la seccion solo lista lo que se
-  // puede usar, asi que la via para darlos de alta es esta — con su URL ya puesta y pidiendo la clave,
-  // que es justo lo que les falta. Siguen existiendo en BUILT_IN_PROVIDERS para quien ya los usa con
-  // su variable de entorno: en ese caso el sondeo los encuentra y la seccion los muestra sola.
-  {
-    label: 'OpenAI',
-    baseUrl: 'https://api.openai.com/v1',
-    modelIds: ['gpt-4o', 'gpt-4o-mini', 'o1', 'o1-mini'],
-  },
-  {
-    // La API de Google. Su CLI es Antigravity (`agy`), que es otra entrada y va por suscripcion.
-    label: 'Gemini (API)',
-    baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
-    modelIds: ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.5-flash-lite'],
-  },
 ];
 
 // Prefijo de los ids generados para proveedores del usuario: garantiza que jamas colisionen con un id
@@ -272,8 +210,8 @@ const MODELS_PATH = '/models';
 const DEFAULT_VERSION_PATH = '/v1';
 
 // URL final del endpoint de chat a partir de la URL base de un proveedor. Vive en `shared` a proposito:
-// la usan el gateway (para hablar con el upstream) y la validacion del formulario, asi lo que la UI
-// acepta es exactamente lo que el gateway podra llamar. Lanza Error con el valor recibido si no sirve.
+// la usan el runtime propio (para hablar con el servidor) y la validacion del formulario, asi lo que la
+// UI acepta es exactamente lo que el runtime podra llamar. Lanza Error con el valor recibido si no sirve.
 export function chatCompletionsUrl(baseUrl: string): string {
   return endpointUrl(baseUrl, CHAT_COMPLETIONS_PATH);
 }

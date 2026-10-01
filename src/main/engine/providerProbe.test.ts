@@ -142,28 +142,12 @@ describe('probeProvider', () => {
     expect(result.models).toEqual([{ id: 'llama3', label: 'llama3' }]);
   });
 
-  it('probeProvider_builtInSinVariableDeEntorno_diceQueFaltaLaKey', async () => {
+  it('probeProvider_retiradoDelGateway_noTieneEndpoint', async () => {
+    // P-032 R6: `openai` ya no es de serie; sin URL base no hay nada que sondear.
     const result = await probeProvider({ providerId: 'openai', baseUrl: null }, deps());
 
     expect(result.models).toBeNull();
-    expect(result.error).toMatch(/OPENAI_API_KEY/);
-  });
-
-  it('probeProvider_builtInConKeyEnElEntorno_laUsaSinQueViajePorIpc', async () => {
-    let usedKey = '';
-    const result = await probeProvider(
-      { providerId: 'openai', baseUrl: null },
-      deps({
-        env: { OPENAI_API_KEY: 'sk-real' },
-        fetchJson: (_url, apiKey) => {
-          usedKey = apiKey;
-          return Promise.resolve({ data: [{ id: 'gpt-4o' }] });
-        },
-      }),
-    );
-
-    expect(usedKey).toBe('sk-real');
-    expect(result.models).toEqual([{ id: 'gpt-4o', label: 'gpt-4o' }]);
+    expect(result.error).toMatch(/URL base/);
   });
 
   it('probeProvider_proveedorDelUsuarioConClave_laSacaDeLaBovedaPorSuId', async () => {

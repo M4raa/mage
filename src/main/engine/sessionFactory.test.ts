@@ -31,10 +31,11 @@ describe('createSessionFor', () => {
     expect(createSessionFor('custom:ollama', BASE, factory)).toBe(RUNTIME);
   });
 
-  it('create_builtInCloud_staysOnGatewayUntilR6', () => {
+  it('create_retiredCloudBuiltIns_throwWithoutFallingIntoTheRuntime', () => {
+    // El gateway se retiro (P-032 R6): `openai`/`gemini` ya no tienen runtime, y nunca caen al propio.
     const { factory, buildRuntime } = deps();
 
-    expect(createSessionFor('openai', BASE, factory)).toBe(AGENT);
+    expect(() => createSessionFor('openai', BASE, factory)).toThrow(/openai/);
     expect(buildRuntime).not.toHaveBeenCalled();
   });
 

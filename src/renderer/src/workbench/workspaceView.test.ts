@@ -161,6 +161,15 @@ describe('restoreTabs', () => {
     expect(tabs[0]?.resumeSessionId).toBe('s1');
   });
 
+  it('restoreTabs_proveedorRetiradoDelGateway_reabreConClaudeYConservaLaSesion', () => {
+    // P-032 R6: `openai`/`gemini` ya no tienen runtime; su transcripcion es del CLI de Claude.
+    const ws = persisted({ tabs: [{ id: 'tab1', accountId: '.claude', accountAlias: 'main', cwd: '/p', model: 'gpt-4o', provider: 'openai', title: 'p', privacy: 'shared', sessionId: 's1' }] });
+
+    const [restored] = restoreTabs(ws, new Set(['.claude'])).tabs;
+
+    expect(restored).toMatchObject({ provider: 'claude', model: 'sonnet', resumeSessionId: 's1' });
+  });
+
   it('cuentaInexistente_descartaLaPestana', () => {
     const { tabs, activeTabId } = restoreTabs(persisted(), new Set(['.otra']));
 

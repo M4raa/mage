@@ -186,8 +186,8 @@ export type McpAuthResult =
 
 // --- Proveedores: quien carga que («Solo en…») --------------------------------------------------
 
-// Familia de proveedor a efectos de MCP. `local` = los modelos sin CLI de fabricante (el gateway hoy,
-// el runtime propio despues).
+// Familia de proveedor a efectos de MCP. `local` = los modelos sin CLI de fabricante (los ejecuta el
+// runtime propio de Mage).
 export const MCP_PROVIDER_FAMILIES = ['claude', 'codex', 'agy', 'local'] as const;
 export type McpProviderFamily = (typeof MCP_PROVIDER_FAMILIES)[number];
 
@@ -231,7 +231,7 @@ export function familiesInScope(scope: McpScope): readonly McpProviderFamily[] {
 }
 
 // Que familias pueden cargar un transporte. Medido (`spike/mcp-providers-spike.mjs`): codex solo tiene
-// stdio y `streamable_http`; agy, stdio y http. SSE solo lo habla Claude (y el gateway, que es Claude).
+// stdio y `streamable_http`; agy, stdio y http. SSE solo lo habla Claude.
 export function familiesForTransport(transport: McpTransport): readonly McpProviderFamily[] {
   return transport === 'sse' ? ['claude', 'local'] : MCP_PROVIDER_FAMILIES;
 }

@@ -31,8 +31,6 @@ const BLOCKED_ENV_VARS = [
   'GEMINI_API_KEY',
   'GOOGLE_API_KEY',
   // OpenAI: `codex` lee las dos del entorno y con cualquiera factura la API en vez de la cuenta.
-  // `OPENAI_API_KEY` sigue sirviendo al proveedor de serie `openai` del gateway, que la lee del entorno
-  // de MAIN (process.env), no del hijo: borrarla aqui no le quita nada.
   'OPENAI_API_KEY',
   'CODEX_API_KEY',
 ] as const;
@@ -40,11 +38,9 @@ const BLOCKED_ENV_VARS = [
 // Devuelve una copia de `baseEnv` sin las variables prohibidas. No muta la entrada: quien llama suele
 // pasar `process.env` y mutarlo afectaria al proceso main entero.
 //
-// Se aplica ANTES de que el llamante ponga las suyas, a proposito. Las excepciones, escritas porque son
-// las unicas:
-//   1. `gatewayAdapter` fija `ANTHROPIC_BASE_URL` (a 127.0.0.1) y `ANTHROPIC_API_KEY` (un ticket
-//      `sk-mage-<sessionId>`, no una credencial de proveedor) DESPUES de llamar aqui.
-//   2. (grupo E) Una cuenta POR CLAVE DE API recibe SU clave, y solo el hijo de esa cuenta: el adapter
+// Se aplica ANTES de que el llamante ponga las suyas, a proposito. TODO hijo pasa por aqui: los CLI y
+// los comandos que lanza el runtime propio (`Bash`, P-032). La excepcion, escrita porque es la unica:
+//   (grupo E) Una cuenta POR CLAVE DE API recibe SU clave, y solo el hijo de esa cuenta: el adapter
 //      de su CLI la pone despues del saneado, leida de la boveda de main — `claudeAdapter`
 //      `ANTHROPIC_API_KEY`, `agyAdapter` `GEMINI_API_KEY` y `codexAdapter` `MAGE_CODEX_API_KEY` (la de un
 //      proveedor propio con `env_key`: el app-server no lee `CODEX_API_KEY`, medido en 0.144.4). Una

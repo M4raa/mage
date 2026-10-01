@@ -50,7 +50,7 @@ en una transcripción de verdad. Por eso `verify:gui` envía **uno y solo uno** 
 
 - Claude con el modelo y el esfuerzo más bajos (`haiku`, `low`) y una respuesta de una palabra.
 - Antes de nada lee el uso de la cuenta: con **más del 70 % gastado** avisa y deja elegir entre real y
-  local (un servidor falso OpenAI-compatible, `scripts/fake-openai-server.mjs`, por el gateway). Sin
+  local (un servidor falso OpenAI-compatible, `scripts/fake-openai-server.mjs`, por el runtime propio de Mage). Sin
   terminal interactiva elige local y lo dice en el informe; un uso que no se puede leer cuenta como
   «por encima». `--turn=local` o `--turn=real` fuerzan uno.
 - Antes de pulsar `Enter` **afirma el proveedor y el modelo de la pestaña activa**; si no son los

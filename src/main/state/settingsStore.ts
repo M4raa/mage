@@ -64,7 +64,7 @@ const KEYBINDING_OVERRIDE_SCHEMA = z.object({
 });
 
 // Proveedor del usuario (E2): endpoint compatible con la API de OpenAI. `baseUrl` se exige NO vacia
-// aqui y se valida a fondo (parseable, http/https) en la frontera de la UI y del gateway con
+// aqui y se valida a fondo (parseable, http/https) en la frontera de la UI y del runtime con
 // `chatCompletionsUrl` — el mismo parser en los dos sitios. La api key NO se persiste aqui (vive en la
 // boveda de main): el esquema ya no la conserva, asi que un fichero de la 0.1.1 sale sin ella al primer
 // guardado, despues de que `migrateLegacyProviderKeys` la haya pasado a la boveda. `hasApiKey` es solo
@@ -155,7 +155,7 @@ export class SettingsStore {
 
   // Lee la configuracion persistida; defaults si no existe, no es JSON valido o no encaja.
   // Cache por mtime del ultimo `load` (P9). `app-settings.json` son 234 kB aqui y se releia y
-  // re-validaba con Zod en CADA consulta — incluida una por peticion reenviada del gateway, via
+  // re-validaba con Zod en CADA consulta — incluida una por peticion del runtime, via
   // `setCustomProviderLoader`. La invalidacion es por mtime, asi que el contrato de "se leen
   // frescos" se mantiene: editar el fichero a mano sigue aplicando a la siguiente lectura.
   private cached: { readonly mtimeMs: number; readonly value: AppSettings } | null = null;

@@ -79,7 +79,7 @@ export interface CliOauthLogin {
 export type AuthModel =
   // El CLI del proveedor hace el login; Mage solo lo orquesta (claude).
   | { readonly kind: 'cli-oauth'; readonly login: CliOauthLogin }
-  // Credencial de API que vive en el main y nunca entra en el entorno del hijo (gateway).
+  // Credencial de API que vive en el main y nunca entra en el entorno de un hijo.
   | { readonly kind: 'api-key'; readonly keyLabel: string }
   // El proveedor gestiona su propia sesion fuera de Mage; no hay alta que ofrecer (`agy`).
   | { readonly kind: 'external'; readonly reason: string };
@@ -114,7 +114,7 @@ export interface ProviderAdapter {
   // que no lo soportan lanzan Error (la UI solo lo ofrece para Claude).
   encodeSetPermissionMode(mode: string): unknown;
   // Desglose de la ventana de contexto (D3): control_request get_context_usage. OPCIONAL a proposito:
-  // solo Claude lo soporta, y asi los adapters por gateway no tienen que declarar un metodo que
+  // solo Claude lo soporta, y asi agy y codex no tienen que declarar un metodo que
   // lanzaria. Si no esta, AgentSession simplemente no lo pide.
   encodeGetContextUsage?(): unknown;
   // Parar UN subagente en segundo plano (0.1.1 R2, punto 29): control_request stop_task. OPCIONAL como
