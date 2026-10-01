@@ -135,6 +135,7 @@ import { defaultKillTreeDeps, killProcessTree } from './os/processTree';
 import { SessionManager } from './engine/sessionManager';
 import { createSessionFor } from './engine/sessionFactory';
 import { buildRuntimeSession, type RuntimeEnv } from './runtime/runtimeFactory';
+import { ModelCatalog } from './runtime/modelCatalog';
 import type { AccountLayout, ProviderAdapter, SharedLaunchConfig } from './engine/providerAdapter';
 import {
   buildSettingsFragment,
@@ -534,8 +535,12 @@ function runtimeEnv(): RuntimeEnv {
     appendLine: (path, line) => appendFileSync(path, line, 'utf8'),
     mkdir: (path) => mkdirSync(path, { recursive: true }),
     readText: (path) => (existsSync(path) ? readFileSync(path, 'utf8') : null),
+    catalog: runtimeModelCatalog,
   };
 }
+
+// Ventana y herramientas de los modelos del runtime propio, con cache compartida entre sesiones (R5).
+const runtimeModelCatalog = new ModelCatalog({ fetch: globalThis.fetch, now: Date.now });
 
 // Transcripciones del runtime propio (P-032, ficha D3): de Mage, fuera de las cuentas de Claude.
 function runtimeTranscriptRoot(): string {

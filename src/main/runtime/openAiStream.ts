@@ -187,6 +187,7 @@ function nonEmpty(value: string | undefined): string | null {
 // venir en varios trozos (Gemini) o en uno final con `choices: []` (OpenAI): se toma el ultimo.
 export class ChatStreamParser {
   private readonly tools = new ToolCallAccumulator();
+  private readonly think = new ThinkTagSplitter();
   private usage: TokenUsage | null = null;
   private finish: FinishReason | null = null;
 
@@ -202,7 +203,7 @@ export class ChatStreamParser {
     if (delta === undefined) return parts;
     const thinking = delta.reasoning_content ?? delta.reasoning;
     if (typeof thinking === 'string' && thinking.length > 0) parts.push({ kind: 'thinking', text: thinking });
-    if (typeof delta.content === 'string' && delta.content.length > 0) parts.push({ kind: 'text', text: delta.content });
+    if (typeof delta.content === 'string' && delta.content.length > 0) parts.push(...this.think.push(delta.content));
     for (const call of delta.tool_calls ?? []) this.tools.add(call);
     return parts;
   }
@@ -212,10 +213,76 @@ export class ChatStreamParser {
   // con la llamada sin ejecutar.
   end(): StreamPart[] {
     const calls = this.tools.calls();
-    const parts: StreamPart[] = calls.map((call) => ({ kind: 'tool_call', call }));
+    const parts: StreamPart[] = [...this.think.end(), ...calls.map((call): StreamPart => ({ kind: 'tool_call', call }))];
     if (this.usage !== null) parts.push({ kind: 'usage', ...this.usage });
     const reason = calls.length > 0 && (this.finish === null || this.finish === 'stop') ? 'tool_calls' : (this.finish ?? 'stop');
     parts.push({ kind: 'finish', reason });
     return parts;
   }
+}
+
+// --- Razonamiento en etiquetas -------------------------------------------------------------------------
+
+const THINK_OPEN = '<think>';
+const THINK_CLOSE = '</think>';
+
+// Modelos Qwen/DeepSeek mandan el razonamiento DENTRO del contenido, entre `<think>` y `</think>`. Solo
+// se trata como pensamiento si la respuesta EMPIEZA por la etiqueta (ficha D15b): un `<think>` en mitad
+// del texto es texto. Las etiquetas pueden llegar partidas entre trozos, asi que se retiene lo justo.
+export class ThinkTagSplitter {
+  private state: 'start' | 'thinking' | 'text' = 'start';
+  private pending = '';
+
+  push(chunk: string): StreamPart[] {
+    if (this.state === 'text') return [{ kind: 'text', text: chunk }];
+    this.pending += chunk;
+    if (this.state === 'start') return this.decideStart();
+    return this.drainThinking();
+  }
+
+  // Lo retenido al cerrarse la respuesta: un `<think>` sin cerrar se da como pensamiento.
+  end(): StreamPart[] {
+    const rest = this.pending;
+    this.pending = '';
+    if (rest.length === 0) return [];
+    return [{ kind: this.state === 'thinking' ? 'thinking' : 'text', text: rest }];
+  }
+
+  private decideStart(): StreamPart[] {
+    const trimmed = this.pending.trimStart();
+    if (trimmed.length < THINK_OPEN.length && THINK_OPEN.startsWith(trimmed)) return []; // aun no se sabe
+    if (!trimmed.startsWith(THINK_OPEN)) {
+      this.state = 'text';
+      const text = this.pending;
+      this.pending = '';
+      return [{ kind: 'text', text }];
+    }
+    this.state = 'thinking';
+    this.pending = trimmed.slice(THINK_OPEN.length);
+    return this.drainThinking();
+  }
+
+  private drainThinking(): StreamPart[] {
+    const close = this.pending.indexOf(THINK_CLOSE);
+    if (close === -1) {
+      // Se retiene la cola que podria ser el principio de `</think>`.
+      const keep = partialSuffix(this.pending, THINK_CLOSE);
+      const thought = this.pending.slice(0, this.pending.length - keep);
+      this.pending = this.pending.slice(this.pending.length - keep);
+      return thought.length === 0 ? [] : [{ kind: 'thinking', text: thought }];
+    }
+    const thought = this.pending.slice(0, close);
+    const text = this.pending.slice(close + THINK_CLOSE.length).replace(/^\s+/, '');
+    this.pending = '';
+    this.state = 'text';
+    return [...(thought.length === 0 ? [] : [{ kind: 'thinking' as const, text: thought }]), ...(text.length === 0 ? [] : [{ kind: 'text' as const, text }])];
+  }
+}
+
+// Longitud del sufijo de `text` que es prefijo de `tag` (0 si ninguno).
+function partialSuffix(text: string, tag: string): number {
+  for (let length = Math.min(tag.length - 1, text.length); length > 0; length--) {
+    if (tag.startsWith(text.slice(text.length - length))) return length;
+  }
+  return 0;
 }

@@ -30,6 +30,10 @@ export interface CustomProvider {
   readonly baseUrl: string;
   readonly hasApiKey: boolean;
   readonly models: readonly ProviderModel[];
+  // Ventana de contexto del modelo y si admite herramientas, si el usuario los fija (o los rellena
+  // «Probar conexión»). Ausentes = los pregunta el runtime al servidor (P-032 §4.7).
+  readonly contextWindow?: number;
+  readonly supportsTools?: boolean;
 }
 
 // Proveedor de serie. `baseUrl === null` marca el motor nativo (no pasa por el gateway).

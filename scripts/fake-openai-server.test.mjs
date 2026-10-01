@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { afterAll, afterEach, describe, expect, it } from 'vitest';
 import { FAKE_OPENAI_REPLY, startFakeOpenAiServer } from './fake-openai-server.mjs';
 import { buildRuntimeSession } from '../src/main/runtime/runtimeFactory';
+import { ModelCatalog } from '../src/main/runtime/modelCatalog';
 
 // Integracion del runtime propio con el servidor falso REAL (red de verdad en 127.0.0.1): la misma
 // sesion que monta main, sin GUI. Es la verificacion de punta a punta de cada fase de P-032.
@@ -52,6 +53,7 @@ function envFor(baseUrl, overrides = {}) {
     appendLine: (path, line) => appendFileSync(path, line, 'utf8'),
     mkdir: (path) => mkdirSync(path, { recursive: true }),
     readText: (path) => (existsSync(path) ? readFileSync(path, 'utf8') : null),
+    catalog: new ModelCatalog({ fetch: globalThis.fetch, now: Date.now }),
     ...overrides,
   };
 }
@@ -199,6 +201,37 @@ describe('runtime propio contra el servidor falso', () => {
     await waitFor(resumed, (e) => e.kind === 'result');
     const sent = fake.stats.requests.at(-1).messages.map((m) => m.role);
     expect(sent).toEqual(['system', 'user', 'assistant', 'tool', 'tool', 'assistant', 'user']);
+  });
+
+  it('contexto_ventanaDe2048_daElErrorExplicadoEnVezDeUn400', async () => {
+    fake = await startFakeOpenAiServer();
+    const events = [];
+    const session = buildRuntimeSession('custom:falso', launch('fake:contexto-2048', events, { cwd: tempProject({}) }), envFor(fake.baseUrl));
+    session.start();
+
+    for (let turn = 0; turn < 12 && !events.some((e) => e.kind === 'error'); turn++) {
+      const before = events.filter((e) => e.kind === 'result').length;
+      session.sendUserMessage(`mensaje ${turn}`);
+      await waitFor(events, () => events.filter((e) => e.kind === 'result').length > before);
+    }
+
+    const error = events.find((e) => e.kind === 'error');
+    expect(error?.message).toMatch(/no cabe en la ventana de 2048 tokens de fake:contexto-2048/);
+    expect(events.some((e) => e.kind === 'notice' && /se acerca al límite/.test(e.text))).toBe(true);
+    const usage = events.filter((e) => e.kind === 'context_usage').at(-1)?.usage;
+    expect(usage?.maxTokens).toBe(2048);
+  });
+
+  it('herramientas_catalogoDiceQueNo_noSeMandanYSeAvisa', async () => {
+    fake = await startFakeOpenAiServer();
+    const events = [];
+    const session = buildRuntimeSession('custom:falso', launch('fake:sin-tools', events, { cwd: tempProject({}) }), envFor(fake.baseUrl));
+    session.start();
+    session.sendUserMessage('hola');
+    await waitFor(events, (e) => e.kind === 'result');
+
+    expect(fake.stats.requests.every((request) => request.tools === undefined)).toBe(true);
+    expect(events.some((e) => e.kind === 'notice' && /no admite herramientas/.test(e.text))).toBe(true);
   });
 
   it('turno_proveedorNoConfigurado_lanzaConElId', () => {

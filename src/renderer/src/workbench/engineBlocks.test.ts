@@ -402,6 +402,10 @@ describe('turnUsageText', () => {
     cacheReadTokens: 24410,
   };
 
+  it('turnUsageText_estimado_loDiceEnElTexto', () => {
+    expect(turnUsageText({ ...full, estimated: true })).toMatch(/^◷ Tokens del turno \(estimados\): /);
+  });
+
   it('turnUsageText_todosLosContadores_losListaEnOrden', () => {
     const text = turnUsageText(full);
 

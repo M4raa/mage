@@ -75,6 +75,9 @@ const CUSTOM_PROVIDER_SCHEMA = z.object({
   baseUrl: z.string().min(1),
   hasApiKey: z.boolean().catch(false),
   models: z.array(z.object({ id: z.string().min(1), label: z.string() })),
+  // P-032 R5: opcionales y tolerantes (un valor raro se descarta, no tira el proveedor).
+  contextWindow: z.number().int().positive().optional().catch(undefined),
+  supportsTools: z.boolean().optional().catch(undefined),
 });
 
 const APP_SETTINGS_SCHEMA = z.object({

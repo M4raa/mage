@@ -52,3 +52,42 @@ export const CHAT_CHUNK_SCHEMA = z
   .passthrough();
 
 export type ChatChunk = z.infer<typeof CHAT_CHUNK_SCHEMA>;
+
+// --- Catalogos de modelos -------------------------------------------------------------------------
+
+// `GET /v1/models` (convencion OpenAI; Ollama y LM Studio la sirven igual).
+export const MODELS_LIST_SCHEMA = z
+  .object({ data: z.array(z.object({ id: z.string().min(1) }).passthrough()).catch([]) })
+  .passthrough();
+
+// `GET /api/v1/models` de LM Studio (lmstudio.ai/docs/developer/rest/list, 2026-09): `key`,
+// `max_context_length`, `capabilities.trained_for_tool_use` y, si esta cargado, el contexto REAL en
+// `loaded_instances[].config.context_length`.
+export const LMSTUDIO_MODELS_SCHEMA = z
+  .object({
+    models: z
+      .array(
+        z
+          .object({
+            key: z.string().min(1),
+            max_context_length: z.number().int().positive().optional().catch(undefined),
+            capabilities: z.object({ trained_for_tool_use: z.boolean().optional().catch(undefined) }).passthrough().optional().catch(undefined),
+            loaded_instances: z
+              .array(z.object({ config: z.object({ context_length: z.number().int().positive().optional().catch(undefined) }).passthrough().optional().catch(undefined) }).passthrough())
+              .optional()
+              .catch(undefined),
+          })
+          .passthrough(),
+      )
+      .catch([]),
+  })
+  .passthrough();
+
+// `POST /api/show` de Ollama (docs.ollama.com/api, 2026-09): `capabilities` (["completion","tools",…])
+// y `model_info["<arquitectura>.context_length"]`.
+export const OLLAMA_SHOW_SCHEMA = z
+  .object({
+    capabilities: z.array(z.string()).optional().catch(undefined),
+    model_info: z.record(z.string(), z.unknown()).optional().catch(undefined),
+  })
+  .passthrough();

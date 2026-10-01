@@ -5,6 +5,7 @@ import {
   parseFinishReason,
   SseDecoder,
   sseData,
+  ThinkTagSplitter,
   ToolCallAccumulator,
   type StreamPart,
 } from './openAiStream';
@@ -191,5 +192,35 @@ describe('parseFinishReason', () => {
       null,
       null,
     ]);
+  });
+});
+
+describe('ThinkTagSplitter', () => {
+  const run = (...chunks: string[]): StreamPart[] => {
+    const splitter = new ThinkTagSplitter();
+    return [...chunks.flatMap((chunk) => splitter.push(chunk)), ...splitter.end()];
+  };
+  const joined = (parts: StreamPart[], kind: 'text' | 'thinking') => parts.flatMap((p) => (p.kind === kind ? [p.text] : [])).join('');
+
+  it('split_thinkTagsAcrossChunks_routesToThinking', () => {
+    const parts = run('<thi', 'nk>pienso ', 'mucho</th', 'ink>\n\nRespuesta');
+
+    expect(joined(parts, 'thinking')).toBe('pienso mucho');
+    expect(joined(parts, 'text')).toBe('Respuesta');
+  });
+
+  it('split_thinkInTheMiddle_isLeftAsText', () => {
+    const parts = run('Hola <think>esto no</think> fin');
+
+    expect(joined(parts, 'text')).toBe('Hola <think>esto no</think> fin');
+    expect(joined(parts, 'thinking')).toBe('');
+  });
+
+  it('split_unclosedThink_isThinkingAtEnd', () => {
+    expect(joined(run('<think>sin cerrar'), 'thinking')).toBe('sin cerrar');
+  });
+
+  it('split_shortTextNotATag_flushesAtEnd', () => {
+    expect(run('<th')).toEqual([{ kind: 'text', text: '<th' }]);
   });
 });

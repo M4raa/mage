@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { ContextBudget } from './contextBudget';
 import type { MageEvent } from '@shared/events';
 import type { LoopTools, ToolOutcome } from './agentLoop';
 import type { ChatClient, ChatRequest } from './chatClient';
@@ -316,5 +317,63 @@ describe('RuntimeSession permisos', () => {
     await settle();
 
     expect(client.requests[1]!.messages.find((m) => m.role === 'tool')).toMatchObject({ content: 'Write no está permitido: modo Plan: solo lectura' });
+  });
+});
+
+describe('RuntimeSession y el modelo (R5)', () => {
+  const budget = () => new ContextBudget(4_096, 'm');
+
+  it('prepare_catalogSaysNoTools_sendsNoToolsAndNotices', async () => {
+    const { session, events, client } = setup([textReply('hola')], {
+      prepareModel: async () => ({ budget: budget(), supportsTools: false, warning: null }),
+    });
+    session.start();
+
+    session.sendUserMessage('hey');
+    await settle();
+    await settle();
+
+    expect(client.requests[0]!.tools).toBeUndefined();
+    expect(events).toContainEqual({ kind: 'notice', text: expect.stringContaining('no admite herramientas') });
+  });
+
+  it('prepare_warning_isNoticedOncePerModel', async () => {
+    const prepareModel = vi.fn(async () => ({ budget: budget(), supportsTools: null, warning: 'Ollama carga menos' }));
+    const { session, events } = setup([textReply('uno'), textReply('dos')], { prepareModel });
+    session.start();
+
+    session.sendUserMessage('a');
+    session.sendUserMessage('b');
+    await settle();
+    await settle();
+    await settle();
+
+    expect(prepareModel).toHaveBeenCalledTimes(1);
+    expect(events.filter((e) => e.kind === 'notice')).toHaveLength(1);
+  });
+
+  it('result_withoutServerUsage_isEstimated', async () => {
+    const { session, events } = setup([[{ kind: 'text', text: 'hola' }, { kind: 'finish', reason: 'stop' }]], {
+      prepareModel: async () => ({ budget: budget(), supportsTools: null, warning: null }),
+    });
+    session.start();
+
+    session.sendUserMessage('hey');
+    await settle();
+    await settle();
+
+    const result = events.find((e): e is Extract<MageEvent, { kind: 'result' }> => e.kind === 'result');
+    expect(result?.result.usage).toMatchObject({ estimated: true });
+    expect(events.find((e) => e.kind === 'context_usage')).toMatchObject({ usage: { maxTokens: 4_096 } });
+  });
+
+  it('result_toolCallWrittenAsText_noticed', async () => {
+    const { session, events } = setup([textReply('<tool_call>{"name":"Read"}</tool_call>')]);
+    session.start();
+
+    session.sendUserMessage('lee');
+    await settle();
+
+    expect(events).toContainEqual({ kind: 'notice', text: expect.stringContaining('como texto') });
   });
 });

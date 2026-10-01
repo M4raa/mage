@@ -20,6 +20,8 @@ export interface TurnUsage {
   readonly totalTokens: number | null;
   readonly thinkingTokens: number | null;
   readonly cacheReadTokens: number | null;
+  // true = el proveedor no dio el uso y Mage lo ESTIMO (runtime propio, ficha D14 de P-032).
+  readonly estimated?: boolean;
 }
 
 // Resultado terminal de un turno (neutralizado desde el `result` del CLI).

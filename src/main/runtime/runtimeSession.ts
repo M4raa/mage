@@ -1,6 +1,6 @@
 import type { ImageAttachment } from '@shared/ipc';
 import { RUNTIME_PERMISSION_MODES, type RuntimePermissionMode } from '@shared/providers';
-import type { MageEvent, PermissionDecision, TurnUsage } from '@shared/events';
+import type { ContextUsage, MageEvent, PermissionDecision, TurnUsage } from '@shared/events';
 import type { ManagedSession } from '../engine/sessionManager';
 import type { SessionLogFn } from '../engine/agentSession';
 import { runTurn, type Authorization, type LoopEvent, type LoopTools, type PreparedCall, type TurnOutcome } from './agentLoop';
@@ -47,12 +47,33 @@ export interface RuntimeSessionDeps {
   readonly newId: () => string;
   readonly toolsEnabled: boolean;
   readonly history?: readonly ChatMessage[]; // al reanudar (R4)
-  readonly fit?: (messages: readonly ChatMessage[]) => readonly ChatMessage[];
   readonly recorder?: TurnRecorder;
-  // Tras cada turno: el `context_usage` (R5). Ausente = no se emite.
-  readonly contextUsage?: (messages: readonly ChatMessage[], outcome: TurnOutcome) => MageEvent | null;
+  // Lo que se sabe del modelo (ventana, herramientas), preguntado ANTES del primer turno y al cambiar de
+  // modelo (R5). Ausente = sin presupuesto de contexto (tests, servidores sin catalogo).
+  readonly prepareModel?: (model: string) => Promise<PreparedModel>;
   readonly log?: SessionLogFn;
 }
+
+// Presupuesto de contexto de la sesion (lo implementa `contextBudget.ts`).
+export interface ModelBudget {
+  readonly window: number;
+  fit(messages: readonly ChatMessage[]): readonly ChatMessage[];
+  recalibrate(actualInputTokens: number): void;
+  estimate(messages: readonly ChatMessage[]): number;
+  usage(messages: readonly ChatMessage[]): ContextUsage;
+  isNearLimit(messages: readonly ChatMessage[]): boolean;
+}
+
+export interface PreparedModel {
+  readonly budget: ModelBudget | null;
+  // false = el catalogo dice que no admite herramientas: no se mandan (modo solo chat, con aviso).
+  readonly supportsTools: boolean | null;
+  readonly warning: string | null;
+}
+
+const CHAT_ONLY_NOTICE = 'Este modelo no admite herramientas: Mage solo puede conversar con él.';
+const TOOL_CALL_AS_TEXT = /<tool_call>|\[TOOL_REQUEST\]|^\s*```(?:json)?\s*\{\s*"(?:name|tool)"/m;
+const TOOL_CALL_AS_TEXT_NOTICE = 'El modelo escribió una llamada a una herramienta como texto en vez de hacerla.';
 
 interface PendingPermission {
   readonly toolUseId: string;
@@ -71,6 +92,10 @@ export class RuntimeSession implements ManagedSession {
   private readonly queue: string[] = [];
   private readonly pending = new Map<string, PendingPermission>();
   private turn: AbortController | null = null;
+  private budget: ModelBudget | null = null;
+  private preparedFor: string | null = null;
+  private warnedNearLimit = false;
+  private lastSystem = '';
   private draining = false;
   private started = false;
   private stopped = false;
@@ -161,15 +186,18 @@ export class RuntimeSession implements ManagedSession {
     this.deps.emit({ kind: 'session_state', state: 'running' });
     const before = this.history.length;
     try {
+      await this.prepare();
       this.history.push({ role: 'user', content: text });
       this.deps.recorder?.user(text);
+      this.lastSystem = this.deps.systemPrompt();
       const outcome = await runTurn(
-        { model: this.model, system: this.deps.systemPrompt(), history: this.history, signal: controller.signal, toolsEnabled: this.toolsEnabled },
+        { model: this.model, system: this.lastSystem, history: this.history, signal: controller.signal, toolsEnabled: this.toolsEnabled },
         this.loopDeps(),
       );
       this.toolsEnabled = outcome.toolsEnabled;
-      this.deps.recorder?.turnEnd(this.history.slice(before), outcome);
-      this.finishTurn(outcome);
+      const added = this.history.slice(before);
+      this.deps.recorder?.turnEnd(added, outcome);
+      this.finishTurn(outcome, added);
     } catch (err) {
       // Un fallo inesperado (no del modelo: del registro, del escritor…) no mata la sesion.
       const message = err instanceof Error ? err.message : String(err);
@@ -183,9 +211,24 @@ export class RuntimeSession implements ManagedSession {
     }
   }
 
-  private finishTurn(outcome: TurnOutcome): void {
+  // Una vez por modelo: ventana y herramientas del catalogo, con sus avisos.
+  private async prepare(): Promise<void> {
+    if (this.deps.prepareModel === undefined || this.preparedFor === this.model) return;
+    const prepared = await this.deps.prepareModel(this.model);
+    this.preparedFor = this.model;
+    this.budget = prepared.budget;
+    this.warnedNearLimit = false;
+    if (prepared.warning !== null) this.deps.emit({ kind: 'notice', text: prepared.warning });
+    if (prepared.supportsTools === false && this.toolsEnabled) {
+      this.toolsEnabled = false;
+      this.deps.emit({ kind: 'notice', text: CHAT_ONLY_NOTICE });
+    }
+  }
+
+  private finishTurn(outcome: TurnOutcome, added: readonly ChatMessage[]): void {
     if (outcome.error !== null) this.deps.emit({ kind: 'error', message: outcome.error });
-    const usage = toTurnUsage(outcome);
+    if (outcome.status === 'success' && writesCallAsText(added)) this.deps.emit({ kind: 'notice', text: TOOL_CALL_AS_TEXT_NOTICE });
+    const usage = toTurnUsage(outcome) ?? this.estimatedUsage(added);
     this.deps.emit({
       kind: 'result',
       result: {
@@ -195,8 +238,25 @@ export class RuntimeSession implements ManagedSession {
         ...(usage === null ? {} : { usage }),
       },
     });
-    const context = this.deps.contextUsage?.(this.history, outcome) ?? null;
-    if (context !== null) this.deps.emit(context);
+    this.emitContextUsage();
+  }
+
+  // Sin `usage` del servidor (Ollama sin trozo de uso), una estimacion marcada como tal (ficha D14).
+  private estimatedUsage(added: readonly ChatMessage[]): TurnUsage | null {
+    if (this.budget === null) return null;
+    const outputs: readonly ChatMessage[] = added.filter((message) => message.role === 'assistant');
+    const inputTokens = this.budget.estimate([{ role: 'system', content: this.lastSystem }, ...this.history.filter((message) => !outputs.includes(message))]);
+    const outputTokens = this.budget.estimate(outputs);
+    return { inputTokens, outputTokens, totalTokens: inputTokens + outputTokens, thinkingTokens: null, cacheReadTokens: null, estimated: true };
+  }
+
+  private emitContextUsage(): void {
+    if (this.budget === null) return;
+    const messages: ChatMessage[] = [{ role: 'system', content: this.lastSystem }, ...this.history];
+    this.deps.emit({ kind: 'context_usage', usage: this.budget.usage(messages) });
+    if (this.warnedNearLimit || !this.budget.isNearLimit(messages)) return;
+    this.warnedNearLimit = true;
+    this.deps.emit({ kind: 'notice', text: `La conversación se acerca al límite de la ventana de ${this.budget.window} tokens de ${this.model}. Usa /clear para empezar de cero.` });
   }
 
   private loopDeps() {
@@ -204,8 +264,9 @@ export class RuntimeSession implements ManagedSession {
       client: this.deps.client,
       tools: this.deps.tools,
       authorize: (call: PreparedCall, signal: AbortSignal) => this.authorize(call, signal),
-      fit: this.deps.fit ?? ((messages: readonly ChatMessage[]) => messages),
+      fit: (messages: readonly ChatMessage[]) => this.budget?.fit(messages) ?? messages,
       emit: (event: LoopEvent) => {
+        if (event.kind === 'round_done' && event.usage !== null) this.budget?.recalibrate(event.usage.inputTokens);
         this.deps.recorder?.loop(event);
         for (const mage of loopToMageEvents(event)) this.deps.emit(mage);
       },
@@ -283,6 +344,12 @@ export class RuntimeSession implements ManagedSession {
       pluginErrors: [],
     });
   }
+}
+
+// ¿Escribio el modelo una llamada a herramienta en su texto final en vez de hacerla?
+function writesCallAsText(added: readonly ChatMessage[]): boolean {
+  const last = added.at(-1);
+  return last !== undefined && last.role === 'assistant' && last.tool_calls === undefined && TOOL_CALL_AS_TEXT.test(last.content ?? '');
 }
 
 function toTurnUsage(outcome: TurnOutcome): TurnUsage | null {

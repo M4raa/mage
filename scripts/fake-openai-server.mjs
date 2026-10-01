@@ -112,7 +112,7 @@ const SCENARIOS = {
     usage: true,
   },
   // Respuesta larga en un modelo de ventana pequeña (el catalogo declara FAKE_SMALL_CONTEXT).
-  'contexto-2048': { reply: () => round(text('x'.repeat(1200)), 'stop'), usage: true },
+  'contexto-2048': { reply: () => round([{ role: 'assistant', content: 'x'.repeat(1200) }], 'stop'), usage: true },
 };
 
 export const FAKE_SCENARIOS = Object.keys(SCENARIOS);
@@ -196,7 +196,8 @@ async function answerCompletion(req, res, rawBody, stats, fallback) {
   const rejection = scenario.reject?.(payload) ?? null;
   if (rejection !== null) return sendJson(res, rejection.status, rejection.body);
   const { deltas, finish } = scenario.reply(payload);
-  const usage = { prompt_tokens: 12 + Math.floor(rawBody.length / 40), completion_tokens: 5, total_tokens: 0 };
+  // Cuenta aproximada (chars/4 del cuerpo): lo justo para que el recalibrado del runtime vea algo creible.
+  const usage = { prompt_tokens: Math.max(1, Math.floor(rawBody.length / 4)), completion_tokens: 5, total_tokens: 0 };
   usage.total_tokens = usage.prompt_tokens + usage.completion_tokens;
   if (payload.stream !== true) return sendJson(res, 200, wholeCompletion(payload.model, deltas, finish, usage));
   stats.streamed += 1;

@@ -424,7 +424,8 @@ export function turnUsageText(usage: TurnUsage): string | null {
   pushCounter(parts, usage.thinkingTokens, 'pensamiento');
   pushCounter(parts, usage.cacheReadTokens, 'caché');
   pushCounter(parts, usage.totalTokens, 'total');
-  return parts.length === 0 ? null : `◷ Tokens del turno: ${parts.join(' · ')}`;
+  if (parts.length === 0) return null;
+  return `◷ Tokens del turno${usage.estimated === true ? ' (estimados)' : ''}: ${parts.join(' · ')}`;
 }
 
 // Anade "<n> <etiqueta>" si el contador viene. Un contador negativo o no entero es dato corrupto de la

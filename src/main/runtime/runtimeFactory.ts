@@ -1,4 +1,5 @@
 import type { ChildProcess, SpawnOptions } from 'node:child_process';
+import { join } from 'node:path';
 import type { CustomProvider } from '@shared/providers';
 import type { SessionBase } from '../engine/sessionFactory';
 import type { KillableChild, KillOutcome } from '../os/processTree';
@@ -6,8 +7,10 @@ import type { ResolvedShell } from '../os/shellResolver';
 import { resolveTranscriptPath } from '../transcripts/transcriptPath';
 import { HttpChatClient, type TimerDeps } from './chatClient';
 import { createRuntimeGate } from './permissionGate';
-import { isRuntimePermissionMode, RuntimeSession, type RuntimePermissionMode } from './runtimeSession';
-import { buildSystemPrompt } from './systemPrompt';
+import { isRuntimePermissionMode, RuntimeSession, type PreparedModel, type RuntimePermissionMode } from './runtimeSession';
+import { buildSystemPrompt, trimProjectNotes } from './systemPrompt';
+import { CHARS_PER_TOKEN, ContextBudget } from './contextBudget';
+import type { ModelCatalog } from './modelCatalog';
 import { createBashTool } from './tools/bashTool';
 import { createEditTool, createWriteTool, type EditToolsFs } from './tools/editTools';
 import { createGlobTool, createGrepTool, createReadTool, type ReadToolsFs } from './tools/readTools';
@@ -43,7 +46,13 @@ export interface RuntimeEnv {
   readonly mkdir: (path: string) => void;
   // Texto de un fichero, o null si no existe.
   readonly readText: (path: string) => string | null;
+  // Ventana y herramientas de cada modelo (compartido entre sesiones: tiene cache).
+  readonly catalog: ModelCatalog;
 }
+
+// Notas del proyecto en el prompt de sistema (ficha D16): el PRIMERO que exista, recortado.
+const PROJECT_NOTES_FILES = ['AGENTS.md', 'CLAUDE.md'];
+export const PROJECT_NOTES_MAX_TOKENS = 1_000;
 
 interface SessionTools {
   readonly registry: ToolRegistry;
@@ -70,6 +79,7 @@ export function buildRuntimeSession(providerId: string, base: SessionBase, env: 
   if (provider === null) throw new Error(`Proveedor no configurado: ${JSON.stringify(providerId)}. Añádelo en Configuración > Proveedores.`);
   const { params } = base;
   const { registry, shell } = sessionTools(env, params.cwd);
+  const projectNotes = readProjectNotes(env, params.cwd);
   const resumed = params.resume === true ? resumeHistory(params, env, base) : null;
   let session: RuntimeSession | null = null;
   const recorder = new TranscriptWriter(
@@ -107,13 +117,14 @@ export function buildRuntimeSession(providerId: string, base: SessionBase, env: 
         shellName: shell.name,
         nowIso: new Date(env.now()).toISOString(),
         toolNames: registry.names(),
-        projectNotes: null,
+        projectNotes,
       }),
     emit: base.emit,
     now: env.now,
     newId: env.newId,
     toolsEnabled: true,
     recorder,
+    prepareModel: (model) => prepareModel(providerId, model, env),
     ...(resumed === null ? {} : { history: resumed.messages }),
     ...(base.log === undefined ? {} : { log: base.log }),
   });
@@ -132,6 +143,32 @@ function resumeHistory(params: SessionBase['params'], env: RuntimeEnv, base: Ses
   const resumed = transcriptToMessages(text.split(/\r?\n/));
   for (const warning of resumed.warnings) base.log?.('warn', warning, { sessionId: params.sessionId });
   return resumed;
+}
+
+// Lo que el catalogo sabe del modelo, con el proveedor RELEIDO (el usuario puede haber fijado la ventana
+// entre una conversacion y otra).
+async function prepareModel(providerId: string, model: string, env: RuntimeEnv): Promise<PreparedModel> {
+  const provider = env.findProvider(providerId);
+  if (provider === null) throw new Error(`Proveedor no configurado: ${JSON.stringify(providerId)}`);
+  const info = await env.catalog.info(
+    {
+      id: provider.id,
+      baseUrl: provider.baseUrl,
+      apiKey: env.apiKeyFor(providerId),
+      ...(provider.contextWindow === undefined ? {} : { contextWindow: provider.contextWindow }),
+      ...(provider.supportsTools === undefined ? {} : { supportsTools: provider.supportsTools }),
+    },
+    model,
+  );
+  return { budget: new ContextBudget(info.contextWindow, model), supportsTools: info.supportsTools, warning: info.warning };
+}
+
+function readProjectNotes(env: RuntimeEnv, cwd: string): { readonly file: string; readonly text: string } | null {
+  for (const file of PROJECT_NOTES_FILES) {
+    const text = env.readText(join(cwd, file));
+    if (text !== null && text.trim().length > 0) return { file, text: trimProjectNotes(text, PROJECT_NOTES_MAX_TOKENS * CHARS_PER_TOKEN) };
+  }
+  return null;
 }
 
 function initialMode(mode: string | undefined): RuntimePermissionMode {

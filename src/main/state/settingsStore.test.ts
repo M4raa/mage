@@ -284,6 +284,23 @@ describe('SettingsStore.load', () => {
     expect(store.load().customProviders).toEqual([provider]);
   });
 
+  it('load_customProviderConVentanaYHerramientas_lasConservaYDescartaLasRaras', () => {
+    // P-032 R5: opcionales; un valor raro se descarta sin tirar el proveedor.
+    const base = { id: 'custom:lm', label: 'LM', baseUrl: 'http://h:1/v1', hasApiKey: false, models: [] };
+    const store = new SettingsStore(
+      deps({
+        readFile: () =>
+          JSON.stringify({ version: 1, notificationRules: [], customProviders: [{ ...base, contextWindow: 8192, supportsTools: false }, { ...base, id: 'custom:b', contextWindow: -1, supportsTools: 'si' }] }),
+      }),
+    );
+
+    const [first, second] = store.load().customProviders;
+
+    expect(first).toMatchObject({ contextWindow: 8192, supportsTools: false });
+    expect(second?.contextWindow).toBeUndefined();
+    expect(second?.supportsTools).toBeUndefined();
+  });
+
   it('load_customProviderFormaInvalida_caeAVacio', () => {
     // Un proveedor sin baseUrl rompe el array entero (mismo patron que importedThemes): cae a [].
     const store = new SettingsStore(
