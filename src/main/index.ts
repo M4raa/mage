@@ -19,6 +19,7 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs';
+import { glob, readFile, stat } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { isUnderCliScratchpad as isUnderCliScratchpadPure } from './files/cliScratchpad';
@@ -513,8 +514,12 @@ function runtimeEnv(): RuntimeEnv {
     now: Date.now,
     newId: randomUUID,
     platform: process.platform,
+    fs: runtimeFs,
   };
 }
+
+// Lo que las herramientas del runtime leen y escriben del disco (fs/promises, asincrono: no bloquea main).
+const runtimeFs = { stat, readFile, glob: glob as RuntimeEnv['fs']['glob'] };
 
 // Adapter de un proveedor. Guard clauses, un caso por motor nativo; el resto, gateway.
 // Layout de cuentas de un proveedor. Solo lo tiene quien autentica por CLI con config dir propio;
