@@ -26,6 +26,8 @@ const NOTICEABLE_HOOKS: ReadonlyMap<string, string> = new Map([['SubagentStop', 
 // y su texto se basta solo. El emoji ademas viajaba a las notificaciones del SO via notify.ts.
 export function noticeTextFor(event: MageEvent): string | null {
   switch (event.kind) {
+    case 'notice':
+      return event.text;
     case 'compacted':
       return `Contexto compactado (${event.trigger === 'auto' ? 'automática' : 'manual'})`;
     case 'permission_mode':

@@ -3,8 +3,7 @@ import { dirname } from 'node:path';
 import type { ImageAttachment } from '@shared/ipc';
 import type { PermissionDecision } from '@shared/events';
 import type { CreateSessionParams, SessionEventPayload } from '@shared/ipc';
-import { AgentSession, type AgentSessionDeps, type SessionLogFn } from './agentSession';
-import type { ProviderAdapter } from './providerAdapter';
+import type { AgentSessionDeps, SessionLogFn } from './agentSession';
 import { resolveLaunchParams, type DefaultsDeps } from './sessionDefaults';
 import { unregisterSession } from './proxy/gateway';
 import { pathEquals } from '../os/pathUtils';
@@ -25,9 +24,10 @@ export interface ManagedSession {
   stop(): void;
 }
 
-// Fabrica de sesiones inyectable (default: la real). Sin esto, el manager instanciaba AgentSession
-// dentro de `create` y cualquier test suyo spawneaba el CLI de verdad.
-export type SessionFactory = (deps: AgentSessionDeps) => ManagedSession;
+// Fabrica de sesiones inyectable: dado el PROVEEDOR, decide el runtime (su CLI o el runtime propio,
+// `sessionFactory.ts`). Sin esto, el manager instanciaba AgentSession dentro de `create` y cualquier
+// test suyo spawneaba el CLI de verdad.
+export type SessionFactory = (provider: string, base: Pick<AgentSessionDeps, 'params' | 'emit' | 'log'>) => ManagedSession;
 
 // Gestiona el ciclo de vida de multiples sesiones (una por pestana). Acceso O(1) por id.
 export class SessionManager {
@@ -44,10 +44,9 @@ export class SessionManager {
   private readonly originalIds = new Map<string, string>();
 
   constructor(
-    private readonly adapterFactory: (provider: string) => ProviderAdapter,
+    private readonly createSession: SessionFactory,
     private readonly defaults: DefaultsDeps,
     private readonly log?: SessionLogFn,
-    private readonly createSession: SessionFactory = (deps) => new AgentSession(deps),
   ) {}
 
   // Crea y arranca una sesion; devuelve su id. Los eventos van al sink proporcionado. `ownerId` (el
@@ -73,8 +72,7 @@ export class SessionManager {
     // la sesion se etiqueta con el id nuevo, que es el que usan la transcripcion, la persistencia y el
     // `--resume`. El evento del reset aun sale con el id viejo, para que el renderer sepa de que pestaña es.
     let key = sessionId;
-    const session = this.createSession({
-      adapter: this.adapterFactory(params.provider),
+    const session = this.createSession(params.provider, {
       params: launch,
       emit: (event) => {
         sink({ sessionId: key, event });

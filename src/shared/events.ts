@@ -252,6 +252,9 @@ export type MageEvent =
   // `/clear` (P-028): el CLI empieza una conversacion NUEVA en el mismo proceso, con otro id y otro
   // `.jsonl`; la anterior sigue en disco. A partir de aqui main etiqueta la sesion con `newSessionId`.
   | { readonly kind: 'conversation_reset'; readonly newSessionId: string }
+  // Aviso del runtime propio de Mage (P-032) que va al hilo como linea de sistema: p.ej. «este modelo
+  // no admite herramientas». Los CLI no lo emiten: sus avisos llegan por sus propios eventos.
+  | { readonly kind: 'notice'; readonly text: string }
   | { readonly kind: 'result'; readonly result: ResultInfo }
   // `deniedCommand`: la linea EXACTA de un comando que agy denego (grupo E, fase 2), para ofrecer permitirlo
   // en la conversacion siguiente. Solo cuando el CLI la dice.

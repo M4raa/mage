@@ -133,6 +133,8 @@ import { AGY_PROVIDER_ID, CODEX_PROVIDER_ID } from '@shared/providers';
 import { setCustomProviderLoader, setGatewayLogger, startGateway, stopGateway } from './engine/proxy/gateway';
 import { defaultKillTreeDeps, killProcessTree } from './os/processTree';
 import { SessionManager } from './engine/sessionManager';
+import { createSessionFor } from './engine/sessionFactory';
+import { buildRuntimeSession, type RuntimeEnv } from './runtime/runtimeFactory';
 import type { AccountLayout, ProviderAdapter, SharedLaunchConfig } from './engine/providerAdapter';
 import {
   buildSettingsFragment,
@@ -479,13 +481,16 @@ function loadSharedLaunch(provider: string, accountDir: string): SharedLaunchCon
   };
 }
 
-// Gestor de sesiones del motor. adapterFactory: hay dos motores NATIVOS (Claude y `agy`, E3, cada uno
-// con su propio CLI y su propia suscripcion); cualquier otro proveedor —de serie o anadido por el
-// usuario (E2)— va por el mismo GatewayAdapter parametrizado, que solo necesita el id (el gateway
-// resuelve su endpoint). defaults resuelve cuenta/cwd por defecto contra el FS real; el logger del
-// motor va al LogBus.
+// Gestor de sesiones del motor. La fabrica elige el runtime por proveedor (`sessionFactory.ts`): los
+// CLI reales (Claude, `agy`, codex) sobre AgentSession y los del usuario por el runtime propio (P-032).
+// defaults resuelve cuenta/cwd por defecto contra el FS real; el logger del motor va al LogBus.
 const sessionManager = new SessionManager(
-  (provider) => buildAdapter(provider),
+  (provider, base) =>
+    createSessionFor(provider, base, {
+      buildAdapter,
+      buildRuntime: (id, runtimeBase) => buildRuntimeSession(id, runtimeBase, runtimeEnv()),
+      runtimeEnabled: process.env.MAGE_RUNTIME === '1',
+    }),
   {
     homedir: homedir(),
     fileExists: existsSync,
@@ -496,6 +501,20 @@ const sessionManager = new SessionManager(
   },
   logBus.loggerFor('engine'),
 );
+
+// Lo que el runtime propio necesita de main: el proveedor de los ajustes, su clave de la boveda (en
+// cada peticion, nunca al renderer) y la red.
+function runtimeEnv(): RuntimeEnv {
+  return {
+    findProvider: (id) => getSettingsStore().load().customProviders.find((provider) => provider.id === id) ?? null,
+    apiKeyFor: (id) => getSecretStore().get(providerApiKeySecretId(id)),
+    fetch: globalThis.fetch,
+    timers: { setTimeout: (fn, ms) => setTimeout(fn, ms), clearTimeout: (handle) => clearTimeout(handle as NodeJS.Timeout) },
+    now: Date.now,
+    newId: randomUUID,
+    platform: process.platform,
+  };
+}
 
 // Adapter de un proveedor. Guard clauses, un caso por motor nativo; el resto, gateway.
 // Layout de cuentas de un proveedor. Solo lo tiene quien autentica por CLI con config dir propio;

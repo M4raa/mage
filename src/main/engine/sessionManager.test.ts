@@ -39,12 +39,9 @@ function harness(): Harness {
   const payloads: SessionEventPayload[] = [];
   const providers: string[] = [];
 
-  const adapterFactory = (provider: string): ProviderAdapter => {
+  const manager = new SessionManager((provider, base) => {
     providers.push(provider);
-    return {} as ProviderAdapter; // el manager solo lo pasa a la sesion; no lo usa
-  };
-
-  const manager = new SessionManager(adapterFactory, defaults(), undefined, (deps) => {
+    const deps = { ...base, adapter: {} as ProviderAdapter } as AgentSessionDeps;
     const session: ManagedSession = {
       start: vi.fn(),
       sendUserMessage: vi.fn(),
@@ -57,7 +54,7 @@ function harness(): Harness {
     };
     created.push({ deps, session });
     return session;
-  });
+  }, defaults());
 
   return {
     manager,
