@@ -81,9 +81,9 @@ export const AUTO_APPROVED_PROVIDER_IDS: readonly string[] = [AGY_PROVIDER_ID];
 // Texto UNICO del aviso (no se duplica por componente: si cambia, cambia en todos a la vez).
 export const NO_PERMISSION_CONTROL_WARNING =
   'Sin control de permisos: el agente crea y modifica ficheros SIN preguntar dentro de la carpeta del ' +
-  'proyecto, y agy deniega los comandos de terminal porque no tiene a quién preguntar. Mage no puede ' +
-  'interceptarlo (el CLI de agy no ofrece puente de permisos), así que esta pestaña no pasa por los ' +
-  'diálogos de permiso de Mage.';
+  'proyecto, y agy deniega los comandos de terminal salvo los que permitas al empezar la conversación. ' +
+  'Mage no puede preguntarte a mitad de turno (el CLI de agy no ofrece puente de permisos), así que esta ' +
+  'pestaña no pasa por los diálogos de permiso de Mage.';
 
 // Niveles de `--effort` de `agy`, medidos en 1.2.14 (`--help`: low|medium|high|max). Un solo sitio: lo
 // usan su adapter (main) y los selectores (renderer).

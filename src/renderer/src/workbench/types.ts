@@ -238,7 +238,7 @@ export type Block =
       readonly summary: string;
       readonly state: 'pending' | 'allowed' | 'denied' | 'cancelled';
     }
-  | { readonly kind: 'error'; readonly id: string; readonly message: string }
+  | { readonly kind: 'error'; readonly id: string; readonly message: string; readonly deniedCommand?: string }
   // Marcador de sistema (M2.4): eventos de la sesion que no son conversacion (p.ej. "contexto
   // compactado"). Se renderiza como una linea tenue centrada.
   // `tip`: texto secundario en el tooltip (P-028, 20: el aviso del CLI en ingles tras la linea de Mage).

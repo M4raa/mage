@@ -112,7 +112,9 @@ import type { ProviderModel } from '@shared/providers';
 import { GatewayAdapter } from './engine/gatewayAdapter';
 import { AgyAdapter } from './engine/agyAdapter';
 import { CodexAdapter } from './engine/codexAdapter';
-import { agyApiProfileSettings, agyAttachmentPath, writeAgyProfileSettings } from './engine/agyProfile';
+import { agyAttachmentPath, agyProfileSettings, writeAgyProfileSettings, type AgyProfileMode } from './engine/agyProfile';
+import { linkAgyProfile, type AgyProfileLinksDeps } from './engine/agyProfileLinks';
+import { agyLinkedPaths, toAgyPermissionRules } from '@shared/agyRules';
 import { AGY_USAGE_ARGS, readAgyUsage } from './usage/agyUsage';
 import type { AgyUsageSnapshot } from '@shared/usage';
 import {
@@ -533,6 +535,35 @@ function agyAttachmentsDir(): string {
   return realpathSync.native(dir); // ruta LARGA: con la 8.3 la regla read_file no casa (medido)
 }
 
+// Carpeta (en userData) del perfil de agy por suscripcion. Las cuentas por clave tienen el suyo.
+const AGY_SUBSCRIPTION_PROFILE = 'agy-profile';
+
+// Deja el perfil de agy listo ANTES de lanzar: enlaces a la casa del usuario y settings.json con las
+// reglas imprescindibles mas las del usuario. Rutas LARGAS: con la 8.3 las reglas no casan (medido).
+function prepareAgyProfile(profileDir: string, cwd: string, mode: AgyProfileMode): void {
+  mkdirSync(profileDir, { recursive: true });
+  const profile = realpathSync.native(profileDir);
+  const settings = getSettingsStore().load();
+  const paths = agyLinkedPaths(settings.agyLinkedPaths, process.platform === 'win32');
+  linkAgyProfile(agyProfileLinksDeps(), { profileDir: profile, home: homedir(), paths });
+  const extra = toAgyPermissionRules(settings.agyCommandRules);
+  const content = agyProfileSettings({ mode, profileDir: profile, cwd: realpathSync.native(cwd), attachmentsDir: agyAttachmentsDir(), extra });
+  writeAgyProfileSettings({ mkdir: (path) => mkdirSync(path, { recursive: true }), writeFile: (path, text) => writeFileSync(path, text, 'utf8') }, profile, content);
+}
+
+function agyProfileLinksDeps(): AgyProfileLinksDeps {
+  return {
+    links: linkService,
+    isDirectory: (path) => existsSync(path) && statSync(path).isDirectory(),
+    mkdir: (path) => mkdirSync(path, { recursive: true }),
+    rename: renameSync,
+    readFile: (path) => (existsSync(path) ? readFileSync(path, 'utf8') : null),
+    writeFile: (path, content) => writeFileSync(path, content, 'utf8'),
+    now: () => Date.now(),
+    log: (level, message, data) => mainLog(level, message, data),
+  };
+}
+
 function buildAgyAdapter(): AgyAdapter {
   return new AgyAdapter({
     resolveApiAccount: (dir) => {
@@ -541,11 +572,9 @@ function buildAgyAdapter(): AgyAdapter {
       const apiKey = getProviderAccounts().apiKeyFor('agy', dir);
       return apiKey === null ? null : { profileDir: entry.home, apiKey };
     },
-    // Costura de (a)/(b)/(c): hoy solo el perfil de una cuenta por CLAVE, con las reglas imprescindibles.
-    prepareProfile: (profileDir, cwd) => {
-      const settings = agyApiProfileSettings(realpathSync.native(cwd), agyAttachmentsDir());
-      writeAgyProfileSettings({ mkdir: (path) => mkdirSync(path, { recursive: true }), writeFile: (path, text) => writeFileSync(path, text, 'utf8') }, profileDir, settings);
-    },
+    // La suscripcion tambien corre con perfil propio: las reglas de Mage nunca tocan el settings.json real.
+    subscriptionProfileDir: () => join(app.getPath('userData'), AGY_SUBSCRIPTION_PROFILE),
+    prepareProfile: prepareAgyProfile,
     saveAttachment: (sessionId, attachment, index) => {
       const path = agyAttachmentPath(agyAttachmentsDir(), sessionId, attachment, index);
       mkdirSync(dirname(path), { recursive: true });

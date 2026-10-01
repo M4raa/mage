@@ -139,6 +139,10 @@ const APP_SETTINGS_SCHEMA = z.object({
   ghNoticeDismissed: z.boolean().catch(false),
   // Auto-archivar al cerrarse el PR. Ausente o basura -> false: no se cierra nada solo.
   autoArchiveOnPrClose: z.boolean().catch(false),
+  // Reglas de comandos de agy. Ausente o basura -> ninguna: el lado que no concede nada.
+  agyCommandRules: z.object({ allow: z.array(z.string().min(1)), deny: z.array(z.string().min(1)) }).catch({ allow: [], deny: [] }),
+  // Carpetas extra del perfil de agy. Ausente o basura -> [] (solo las de serie).
+  agyLinkedPaths: z.array(z.string().min(1)).catch([]),
 });
 
 export class SettingsStore {

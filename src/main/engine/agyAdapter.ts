@@ -4,12 +4,14 @@ import type { MageEvent, PermissionDecision } from '@shared/events';
 import { AGY_EFFORT_LEVELS } from '@shared/providers';
 import { resolveAgyBinary } from '../os/agyBinaryResolver';
 import { AgyTurnTracker } from './agyNormalize';
+import type { AgyProfileMode } from './agyProfile';
 import type { AuthModel, LaunchParams, PermissionRef, ProviderAdapter, SpawnPlan } from './providerAdapter';
 import { scrubAgentEnv } from '../os/agentEnv';
 
 // Adapter del CLI de Antigravity (`agy`) como motor NATIVO (E3). Por defecto consume la SUSCRIPCION de
-// Google con el login propio de `agy`; una cuenta de agy POR CLAVE (grupo E) corre con su propio perfil
-// y su `GEMINI_API_KEY`.
+// Google con el login propio de `agy`; una cuenta de agy POR CLAVE (grupo E) lleva su `GEMINI_API_KEY`.
+// Las dos corren con un perfil (`USERPROFILE`) propio de Mage: la de clave, el de su cuenta; la de
+// suscripcion, uno comun (el login de agy no vive en el perfil, medido). Ver agyProfile.ts.
 //
 // SESION PERSISTENTE desde la 0.1.2: `agy` estreno `--input-format stream-json` en la 1.1.15. Medido en
 // 1.2.14 (`node spike/agy-spike.mjs --persistent`): un proceso por pestaña, una linea
@@ -28,7 +30,11 @@ import { scrubAgentEnv } from '../os/agentEnv';
 //   - Reconstruir el hilo al reabrir la pestana: `agy` deja un fichero por conversacion en
 //     ~/.gemini/antigravity-cli/conversations (.db/.pb, formato propio).
 //   - Permisos REALES: el CLI no tiene puente (no hay --permission-prompt-tool). Las reglas
-//     allow/deny que se escriben en su settings.json antes de lanzar (M10) son la via medida.
+//     allow/deny por comando exacto se escriben en el settings.json del perfil antes de lanzar; agy las
+//     lee al arrancar (medido), asi que valen para la conversacion siguiente o el relanzado tras un corte.
+//   - Las conversaciones de agy viven en su perfil (`--conversation` solo reanuda dentro del mismo, medido):
+//     las de antes de la 0.1.2, del perfil real, no se ven. No se pierde nada que Mage reanudara: el id no
+//     sobrevive a reiniciar Mage (primer punto).
 
 // Argumentos fijos. `--output-format stream-json` NO exige `--verbose` (ese flag no existe en `agy`).
 // Sin `--print-timeout`: desde la 1.2.6 el tope por defecto es ILIMITADO, y el `30m` que se pasaba antes
@@ -51,9 +57,11 @@ export interface AgyAdapterDeps {
   readonly resolveBinary?: () => string;
   // La cuenta de API cuyo perfil es `accountDir`, o null (suscripcion: el login propio de agy).
   readonly resolveApiAccount?: (accountDir: string) => AgyApiAccount | null;
-  // Prepara el perfil de una cuenta por clave ANTES de lanzar (settings.json con `modelProvider` y las
-  // reglas imprescindibles). Lo escribe main: el adapter no toca el disco.
-  readonly prepareProfile?: (profileDir: string, cwd: string) => void;
+  // Perfil de Mage para la suscripcion. Sin el (tests), agy corre con el perfil real del usuario.
+  readonly subscriptionProfileDir?: () => string;
+  // Prepara el perfil ANTES de lanzar (enlaces y settings.json con las reglas). Lo escribe main: el
+  // adapter no toca el disco.
+  readonly prepareProfile?: (profileDir: string, cwd: string, mode: AgyProfileMode) => void;
   // Guarda una imagen adjunta y devuelve su ruta absoluta (main la escribe en su carpeta temporal).
   readonly saveAttachment?: (sessionId: string, attachment: ImageAttachment, index: number) => string;
 }
@@ -92,17 +100,21 @@ export class AgyAdapter implements ProviderAdapter {
     return { command: (this.deps.resolveBinary ?? resolveAgyBinary)(), args, env: this.childEnv(params) };
   }
 
-  // Env del hijo, SANEADO (scrubAgentEnv borra toda clave heredada, tambien GEMINI_API_KEY). Una cuenta
-  // por clave lleva despues SU clave y SU perfil: agy resuelve su casa SOLO por `USERPROFILE` (medido), y
-  // `HOME` se fija al real para que git siga encontrando su `.gitconfig` (lo resuelve por HOME o
-  // HOMEDRIVE+HOMEPATH, medido). Con perfil propio + `modelProvider: "gemini"` + clave, agy NO cae a la
-  // suscripcion (medido con una clave falsa: 400 API_KEY_INVALID).
+  // Env del hijo, SANEADO (scrubAgentEnv borra toda clave heredada, tambien GEMINI_API_KEY). Lleva despues
+  // SU perfil: agy resuelve su casa SOLO por `USERPROFILE` (medido), y `HOME` se fija al real para que
+  // git siga encontrando su `.gitconfig` (lo resuelve por HOME o HOMEDRIVE+HOMEPATH, medido). Una cuenta
+  // por clave lleva ademas SU clave: con perfil propio + `modelProvider: "gemini"` + clave, agy NO cae a
+  // la suscripcion (medido con una clave falsa: 400 API_KEY_INVALID).
+  // ponytail: solo medido en Windows (la 0.1.2 es solo Windows). En POSIX agy resolvera su casa por HOME,
+  // que aqui va al real; se sube midiendolo y fijando HOME al perfil alli.
   private childEnv(params: LaunchParams): NodeJS.ProcessEnv {
     const env = scrubAgentEnv(process.env);
     const account = this.deps.resolveApiAccount?.(params.accountDir) ?? null;
-    if (account === null) return env;
-    this.deps.prepareProfile?.(account.profileDir, params.cwd);
-    return { ...env, USERPROFILE: account.profileDir, HOME: homedir(), GEMINI_API_KEY: account.apiKey };
+    const profileDir = account?.profileDir ?? this.deps.subscriptionProfileDir?.();
+    if (profileDir === undefined) return env;
+    this.deps.prepareProfile?.(profileDir, params.cwd, account === null ? 'subscription' : 'api-key');
+    const profiled = { ...env, USERPROFILE: profileDir, HOME: homedir() };
+    return account === null ? profiled : { ...profiled, GEMINI_API_KEY: account.apiKey };
   }
 
   // `content` solo admite texto (medido): cada imagen se guarda en disco y su ruta va al final del

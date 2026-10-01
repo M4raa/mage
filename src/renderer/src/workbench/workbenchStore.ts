@@ -99,6 +99,7 @@ import type {
   ThemePreference,
 } from '@shared/settings';
 import { clampUiScale, DEFAULT_APP_SETTINGS, DEFAULT_PERMISSION_MODES, ONBOARDING_VERSION } from '@shared/settings';
+import { setAgyCommandVerdict, type AgyCommandVerdict } from '@shared/agyRules';
 import { AGY_PROVIDER_ID, CODEX_PROVIDER_ID, writesClaudeTranscript, type CustomProvider, type ProviderModel } from '@shared/providers';
 import { applyBackgroundOpacity, applyThemeFromSettings, findActiveImportedTheme, resolveTheme, systemPrefersDark } from './theme';
 import { toWidgetSnapshot } from './widgetView';
@@ -389,6 +390,10 @@ export interface WorkbenchState extends PrState, PrActions {
   setAccountAccent: (accountId: string, colorIndex: number | undefined) => void;
   // Conectores de claude.ai de una cuenta (C3-f): aplica a las sesiones que se abran despues.
   setClaudeAiConnectorsEnabled: (accountId: string, enabled: boolean) => void;
+  // Comando de agy permitido, denegado o quitado (null). Se guarda al momento: agy lee sus reglas al lanzar.
+  setAgyCommandVerdict: (command: string, verdict: AgyCommandVerdict | null) => void;
+  // Carpetas extra que Mage enlaza en el perfil de agy (relativas a la casa del usuario).
+  setAgyLinkedPaths: (paths: readonly string[]) => void;
   // Modo de permiso con el que arrancan las conversaciones nuevas de Claude (P-028 6); '' = el de la cuenta.
   setDefaultPermissionMode: (mode: DefaultPermissionMode) => void;
   // Da por visto el asistente de primer arranque (o lo vuelve a abrir, con `completed=false`).
@@ -703,6 +708,16 @@ function scheduleSettingsPersist(mage: MageClient, getState: () => WorkbenchStat
       .saveSettings(getState().settings)
       .catch((err: unknown) => console.warn('No se pudo guardar la configuracion:', describeError(err)));
   }, PERSIST_DEBOUNCE_MS);
+}
+
+// Sin debounce: lo que main lee al lanzar un CLI (las reglas de agy) tiene que estar en disco antes del
+// siguiente mensaje. Cancela un guardado pendiente: este ya lleva el estado entero.
+function persistSettingsNow(mage: MageClient, getState: () => WorkbenchState): void {
+  if (settingsPersistTimer !== null) clearTimeout(settingsPersistTimer);
+  settingsPersistTimer = null;
+  void mage
+    .saveSettings(getState().settings)
+    .catch((err: unknown) => console.warn('No se pudo guardar la configuracion:', describeError(err)));
 }
 
 export interface KeptWorktreeNotice {
@@ -2169,6 +2184,16 @@ export function createWorkbenchStore(mage: MageClient) {
       scheduleSettingsPersist(mage, get);
     },
 
+    setAgyCommandVerdict: (command, verdict) => {
+      set((s) => ({ settings: { ...s.settings, agyCommandRules: setAgyCommandVerdict(s.settings.agyCommandRules, command, verdict) } }));
+      persistSettingsNow(mage, get);
+    },
+
+    setAgyLinkedPaths: (paths) => {
+      set((s) => ({ settings: { ...s.settings, agyLinkedPaths: paths } }));
+      persistSettingsNow(mage, get);
+    },
+
     setDefaultProvider: (providerId) => {
       set((s) => ({ settings: { ...s.settings, defaultProvider: providerId } }));
       scheduleSettingsPersist(mage, get);
@@ -2942,7 +2967,7 @@ export function reduceEvent(state: WorkbenchState, tabId: string, event: MageEve
     case 'permission_mode':
       return { tabs: state.tabs.map((t) => (t.id === tabId ? { ...t, permissionMode: event.mode } : t)) };
     case 'error': {
-      const next = appendErrorBlock(closeStreaming(blocks, streamingId), event.message, nextBlockId());
+      const next = appendErrorBlock(closeStreaming(blocks, streamingId), event.message, nextBlockId(), event.deniedCommand);
       return {
         ...withBlocks(state, tabId, next),
         streamingIdByChat: { ...state.streamingIdByChat, [tabId]: null },

@@ -29,6 +29,8 @@
 //   node spike/agy-spike.mjs --permissions  # reglas allow/deny en un USERPROFILE aislado (~14 turnos)
 //   node spike/agy-spike.mjs --images       # imagenes en sesion persistente (M13, 2026-10-01): que
 //                                            # bloques admite `content` (gratis) y ~3 turnos cortos
+//   node spike/agy-spike.mjs --profile      # perfil propio para la suscripcion, MCP por junction de
+//                                            # .gemini/config y relectura de settings (~3 turnos)
 
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -676,6 +678,103 @@ function reportImageTurn(session) {
   console.log(`  respuesta=${JSON.stringify((result?.response ?? '').trim())} denied_actions=${JSON.stringify(result?.denied_actions ?? null)}`);
 }
 
+// ================================================================================================
+// Modo --profile (2026-10-01, agy 1.2.14): el perfil propio de Mage para la SUSCRIPCION (sin
+// `modelProvider`) y lo que se enlaza en el. Mide:
+//   (a) GRATIS: `/usage` en un USERPROFILE aislado sin `modelProvider`: si trae las cuotas, el login de
+//       suscripcion sigue valiendo ahi.
+//   (b) un MCP de `~/.gemini/config` visto desde el perfil por un JUNCTION. Nunca se toca la config real:
+//       el junction apunta a una copia falsa en el temporal con un servidor MCP minimo (stdio, node).
+//   (c) ¿relee agy su settings.json a mitad de sesion? Se cambia la regla allow entre dos turnos.
+// Resultado (2026-10-01, agy 1.2.14): (a) SI, el login vale; (b) `agy mcp list` lo lista y la tool se llama,
+// pero solo con `read_file(<perfil>/.gemini/antigravity-cli/mcp)` (agy lee alli el esquema) y `mcp(<srv>/<tool>)`;
+// (c) NO relee: las reglas valen solo al lanzar. Ademas: agy crea `.gemini/config` como carpeta real al
+// arrancar en un perfil nuevo, y con `.gemini/config` colgado no arranca.
+// CONSUME SUSCRIPCION: ~3 turnos cortos.
+// ================================================================================================
+
+// Servidor MCP minimo por stdio (JSON-RPC por lineas): una tool `echo` que devuelve un texto fijo.
+const MCP_SERVER_SOURCE = `
+const rl = require('node:readline').createInterface({ input: process.stdin });
+const send = (msg) => process.stdout.write(JSON.stringify({ jsonrpc: '2.0', ...msg }) + '\\n');
+rl.on('line', (line) => {
+  const req = JSON.parse(line);
+  if (req.id === undefined) return;
+  if (req.method === 'initialize') send({ id: req.id, result: { protocolVersion: req.params.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: 'magespike', version: '1.0.0' } } });
+  else if (req.method === 'tools/list') send({ id: req.id, result: { tools: [{ name: 'mage_echo', description: 'Returns a fixed secret word', inputSchema: { type: 'object', properties: {} } }] } });
+  else if (req.method === 'tools/call') send({ id: req.id, result: { content: [{ type: 'text', text: 'TANGERINE' }] } });
+  else send({ id: req.id, result: {} });
+});`;
+
+// OJO (medido): el `/usage` de (a) ya CREA `.gemini/config` en el perfil como carpeta real (`.migrated`,
+// `mcp_config.json` vacio, `projects/default-cli-project.json`). Un junction se tiene que crear antes de
+// que agy arranque, o quitar de en medio la que dejo. Aqui es un temporal del spike: se borra.
+function linkDir(target, link) {
+  fs.mkdirSync(path.dirname(link), { recursive: true });
+  if (fs.existsSync(link)) {
+    console.log(`  agy ya creo ${path.basename(link)} como carpeta real: ${JSON.stringify(fs.readdirSync(link))} (se quita)`);
+    fs.rmSync(link, { recursive: true, force: true });
+  }
+  fs.symlinkSync(target, link, 'junction'); // en POSIX el tipo se ignora: symlink de directorio
+}
+
+async function probeProfile() {
+  const before = realConfigFingerprint();
+  await withWorkspace('mage-agy-prof-', async (workspace) => {
+    await withWorkspace('mage-agy-profile-', async (profile) => {
+      // Medido: para llamar a una tool MCP agy lee antes su esquema con view_file en
+      // `<perfil>/.gemini/antigravity-cli/mcp/<servidor>/<tool>.json`; en un perfil aislado eso se deniega
+      // salvo `read_file(<esa carpeta>)` (ruta LARGA, como la de las imagenes).
+      const mcpDir = path.join(fs.realpathSync.native(profile), '.gemini', 'antigravity-cli', 'mcp');
+      const baseAllow = [`write_file(${workspace})`, `read_file(${mcpDir})`];
+      const env = isolatedProfileEnv(profile, { allow: [...baseAllow, 'command(echo one > one.txt)'] });
+      console.log('\n=== [profile a] /usage en perfil aislado SIN modelProvider (gratis) ===');
+      const usage = runWithEnv(['--output-format', 'json', '--print', '/usage'], env);
+      const groups = /"groups"\s*:\s*\[\s*\{/.test(usage.stdout) || /Limit Remaining/.test(usage.stdout);
+      console.log(`  exit=${usage.code} cuotas de suscripcion: ${groups ? 'SI' : 'NO'}`);
+
+      console.log('\n=== [profile c] ¿relee settings.json a mitad de sesion? (2 turnos) ===');
+      const session = startPersistent(workspace, ['--mode', 'accept-edits'], env);
+      session.send('Use the run_command tool to run exactly this command and nothing else: echo one > one.txt');
+      await waitFor(session, (events) => countResults(events) >= 1);
+      isolatedProfileEnv(profile, { allow: [...baseAllow, 'command(echo two > two.txt)'] });
+      session.send('Use the run_command tool to run exactly this command and nothing else: echo two > two.txt');
+      await waitFor(session, (events) => countResults(events) >= 2);
+      session.child.stdin.end();
+      await session.exited;
+      console.log(`  one.txt (regla al lanzar): ${fs.existsSync(path.join(workspace, 'one.txt')) ? 'EJECUTADO' : 'no ejecutado'}`);
+      console.log(`  two.txt (regla cambiada a mitad): ${fs.existsSync(path.join(workspace, 'two.txt')) ? 'EJECUTADO -> relee' : 'no ejecutado -> solo lee al lanzar'}`);
+      summarize(session);
+      reportCases(workspace, session, []);
+
+      await withWorkspace('mage-agy-fakecfg-', async (fakeConfig) => {
+        const server = path.join(fakeConfig, 'server.cjs');
+        fs.writeFileSync(server, MCP_SERVER_SOURCE);
+        fs.writeFileSync(path.join(fakeConfig, 'mcp_config.json'), JSON.stringify({ mcpServers: { magespike: { command: process.execPath, args: [server] } } }));
+        linkDir(fakeConfig, path.join(profile, '.gemini', 'config'));
+        console.log('\n=== [profile b] MCP de .gemini/config por junction: `agy mcp list` (gratis) y una llamada (1 turno) ===');
+        console.log(`  ${runWithEnv(['mcp', 'list'], env).stdout.trim().replace(/\n/g, '\n  ')}`);
+        // Con la tool permitida por su regla `mcp(<servidor>/<tool>)` (sin ella: denied_actions mcp/CallMcpTool).
+        isolatedProfileEnv(profile, { allow: [...baseAllow, 'mcp(magespike/mage_echo)'] });
+        const call = await singleTurnWithEnv(workspace, 'Call the mage_echo tool of the magespike MCP server and reply with ONLY the word it returns.', env);
+        const response = call.events.find((event) => event.event === 'result')?.result?.response ?? '';
+        console.log(`  respuesta: ${JSON.stringify(response.trim().slice(0, 120))} -> tool MCP ejecutada: ${/TANGERINE/i.test(response) ? 'SI' : 'NO'}`);
+        reportCases(workspace, { events: call.events, stderr: call.stderr }, []);
+      });
+    });
+  });
+  console.log(`\n  config real de agy intacta: ${before === realConfigFingerprint() ? 'SI' : 'NO — revisa'}`);
+}
+
+async function singleTurnWithEnv(workspace, text, env) {
+  const session = startPersistent(workspace, ['--mode', 'accept-edits'], env);
+  session.send(text);
+  await waitFor(session, (events) => countResults(events) >= 1);
+  session.child.stdin.end();
+  await session.exited;
+  return session;
+}
+
 async function main() {
   const version = await run(['--version'], { timeoutMs: CONFIG.probeTimeoutMs });
   const found = version.code === 0;
@@ -689,7 +788,8 @@ async function main() {
   if (process.argv.includes('--persistent')) await probePersistent();
   if (process.argv.includes('--permissions')) await probePermissionRules();
   if (process.argv.includes('--images')) await probeImages();
-  if (!['--live', '--persistent', '--permissions', '--images'].some((flag) => process.argv.includes(flag))) {
+  if (process.argv.includes('--profile')) await probeProfile();
+  if (!['--live', '--persistent', '--permissions', '--images', '--profile'].some((flag) => process.argv.includes(flag))) {
     console.log('\n(--live: 2 turnos reales por proceso; --persistent: sesion persistente, ~12 turnos; --permissions: reglas de comandos, ~14 turnos; --images: imagenes, ~3 turnos. Consumen suscripción)');
   }
 }

@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import type { ProviderProbeResult } from '@shared/ipc';
 import type { CustomProvider } from '@shared/providers';
-import { NO_PERMISSION_CONTROL_WARNING, PROVIDER_TEMPLATES, isAutoApprovedProvider } from '@shared/providers';
+import { AGY_PROVIDER_ID, NO_PERMISSION_CONTROL_WARNING, PROVIDER_TEMPLATES, isAutoApprovedProvider } from '@shared/providers';
+import { AgyProfileLinks } from './AgyProfileLinks';
 import { useWorkbenchStore } from '../../workbenchStore';
 import {
   EMPTY_CUSTOM_PROVIDER_DRAFT,
@@ -294,6 +295,7 @@ function ProviderCard({
       {isAutoApprovedProvider(entry.id) && (
         <div className="text-[10.5px] leading-[1.45] text-mg-warn">{NO_PERMISSION_CONTROL_WARNING}</div>
       )}
+      {entry.id === AGY_PROVIDER_ID && <AgyProfileLinks />}
 
       <ModelsLine count={models.length} probe={probe} />
 

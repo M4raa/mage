@@ -1,24 +1,32 @@
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { agyApiProfileSettings, agyAttachmentPath, writeAgyProfileSettings } from './agyProfile';
+import { agyAttachmentPath, agyProfileSettings, writeAgyProfileSettings } from './agyProfile';
 
-describe('agyApiProfileSettings', () => {
-  it('agyApiProfileSettings_siempre_modoClaveEscrituraEnElCwdYLecturaDeAdjuntos', () => {
-    expect(agyApiProfileSettings('C:\\proyecto', 'C:\\tmp\\adjuntos')).toEqual({
-      modelProvider: 'gemini',
-      permissions: { allow: ['write_file(C:\\proyecto)', 'read_file(C:\\tmp\\adjuntos)'], deny: [] },
-    });
+describe('agyProfileSettings', () => {
+  const base = { profileDir: '/perfil', cwd: '/proyecto', attachmentsDir: '/tmp/adjuntos' };
+  const essentials = ['write_file(/proyecto)', 'read_file(/tmp/adjuntos)', `read_file(${join('/perfil', '.gemini', 'antigravity-cli', 'mcp')})`];
+
+  it('agyProfileSettings_cuentaPorClave_modoClaveYLasReglasImprescindibles', () => {
+    expect(agyProfileSettings({ ...base, mode: 'api-key' })).toEqual({ modelProvider: 'gemini', permissions: { allow: essentials, deny: [] } });
   });
 
-  // Costura de M10/M15: las reglas que conceda el usuario se suman sin tocar las imprescindibles.
-  it('agyApiProfileSettings_conReglasExtra_seSuman', () => {
-    const settings = agyApiProfileSettings('C:\\p', 'C:\\a', { allow: ['command(git status)'], deny: ['command(regex:^rm .*)'] });
-
-    expect(settings.permissions).toEqual({ allow: ['write_file(C:\\p)', 'read_file(C:\\a)', 'command(git status)'], deny: ['command(regex:^rm .*)'] });
+  // Sin `modelProvider` agy usa su login de suscripcion (medido en un perfil aislado).
+  it('agyProfileSettings_suscripcion_sinModelProvider', () => {
+    expect(agyProfileSettings({ ...base, mode: 'subscription' })).toEqual({ permissions: { allow: essentials, deny: [] } });
   });
 
-  it.each(['', '  '])('agyApiProfileSettings_cwdVacio_lanza_%#', (cwd) => {
-    expect(() => agyApiProfileSettings(cwd, 'C:\\a')).toThrow(/vacia/);
+  it('agyProfileSettings_conReglasDelUsuario_seSumanDetrasDeLasImprescindibles', () => {
+    const settings = agyProfileSettings({ ...base, mode: 'subscription', extra: { allow: ['command(git status)'], deny: ['command(rm -rf build)'] } });
+
+    expect(settings.permissions).toEqual({ allow: [...essentials, 'command(git status)'], deny: ['command(rm -rf build)'] });
+  });
+
+  it.each(['', '  '])('agyProfileSettings_cwdVacio_lanza_%#', (cwd) => {
+    expect(() => agyProfileSettings({ ...base, mode: 'api-key', cwd })).toThrow(/vacia/);
+  });
+
+  it('agyProfileSettings_perfilVacio_lanza', () => {
+    expect(() => agyProfileSettings({ ...base, mode: 'subscription', profileDir: '' })).toThrow(/Perfil de agy vacio/);
   });
 });
 

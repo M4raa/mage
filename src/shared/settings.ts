@@ -2,6 +2,7 @@
 // (workspace = sesiones/pestanas; settings = preferencias globales de la app). Crece por secciones;
 // la primera son las reglas de notificacion por regex.
 
+import { EMPTY_AGY_COMMAND_RULES, type AgyCommandRules } from './agyRules';
 import type { CustomProvider } from './providers';
 import type { VscodeTokenColor } from './themeMarket';
 
@@ -149,6 +150,12 @@ export interface AppSettings {
   // Archivar sola la conversacion (cerrar su pestaña y borrar su worktree si esta limpio) cuando su PR se
   // fusiona o se cierra, como el «Auto-archive» de Claude Desktop. Solo con la pestaña parada. Default false.
   readonly autoArchiveOnPrClose: boolean;
+  // Comandos de agy permitidos o denegados por linea EXACTA (grupo E, fase 2). Mage los escribe en el
+  // settings.json del perfil de agy antes de lanzarlo; agy los lee al arrancar. Default: ninguno.
+  readonly agyCommandRules: AgyCommandRules;
+  // Carpetas extra (relativas a la casa del usuario) que Mage enlaza en el perfil de agy, ademas de
+  // `.gemini/config` y `.ssh`. Default [].
+  readonly agyLinkedPaths: readonly string[];
 }
 
 // Nº de acentos del tema (--mg-accent-<i>-* en index.css); lo comparten cuentas y pestañas.
@@ -204,4 +211,6 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   claudeAiConnectorsOff: [],
   ghNoticeDismissed: false,
   autoArchiveOnPrClose: false,
+  agyCommandRules: EMPTY_AGY_COMMAND_RULES,
+  agyLinkedPaths: [],
 };

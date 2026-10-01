@@ -186,7 +186,7 @@ function normalizeStepUpdate(raw: Record<string, unknown>): MageEvent[] {
 
   const denial = deniedCommandMessage(step.tool_info?.error?.message);
   if (step.step_type === STEP_TOOL && step.tool_name !== undefined) {
-    events.push(...toolEvents(step, denial));
+    events.push(...toolEvents(step, denial?.message ?? null));
   } else if (step.step_type === STEP_AGENT_RESPONSE && step.text_delta !== undefined && step.text_delta.length > 0) {
     // ponytail: cada `text_delta` se APILA (semantica de delta, la que mide el spike: un unico evento
     // por paso `agent_response`, ya en estado DONE). Techo: si una version futura emitiera tambien el
@@ -199,7 +199,9 @@ function normalizeStepUpdate(raw: Record<string, unknown>): MageEvent[] {
   // haya fallado (medido en 1.1.2 y 1.1.11), asi que si esto no se pinta el usuario ve datos falsos. Una
   // DENEGACION se dice siempre con su comando: medido en 1.2.14, su paso sale unas veces ERROR y otras
   // DONE, asi que el `state` no sirve de señal.
-  if (denial !== null && step.state !== STATE_ACTIVE) events.push({ kind: 'error', message: denial });
+  if (denial !== null && step.state !== STATE_ACTIVE) {
+    events.push({ kind: 'error', message: denial.message, ...(denial.command === undefined ? {} : { deniedCommand: denial.command }) });
+  }
   else if (step.state === STATE_ERROR) events.push({ kind: 'error', message: describeFailedStep(step) });
   return events;
 }
@@ -211,16 +213,16 @@ const DENIED_PREFIX = 'agy denegó';
 const DENIED_COMMAND_PATTERNS: readonly RegExp[] = [/for command "((?:[^"\\]|\\.)*)"/, /for command\((.*)\)\./];
 const DENY_RULE_HINT = 'deny rule';
 
-// Aviso para el usuario a partir del error del paso, con el comando EXACTO. null = no es una denegacion.
-function deniedCommandMessage(errorMessage: string | undefined): string | null {
+// Aviso para el usuario a partir del error del paso, con el comando EXACTO (que la UI ofrece permitir en
+// la conversacion siguiente: agy lee sus reglas al lanzar, medido). null = no es una denegacion.
+function deniedCommandMessage(errorMessage: string | undefined): { readonly message: string; readonly command?: string } | null {
   if (errorMessage === undefined || !/permission/i.test(errorMessage)) return null;
   const command = DENIED_COMMAND_PATTERNS.map((pattern) => pattern.exec(errorMessage)?.[1]).find((match) => match !== undefined);
   const what = command === undefined ? 'una acción' : `el comando «${command}»`;
-  if (errorMessage.includes(DENY_RULE_HINT)) return `${DENIED_PREFIX} ${what}: lo prohíbe una regla deny de su configuración.`;
-  return (
-    `${DENIED_PREFIX} ${what}: sin pantalla no tiene a quién pedir permiso y lo deniega. Mage aún no puede ` +
-    'concederle comandos en esta pestaña.'
-  );
+  const message = errorMessage.includes(DENY_RULE_HINT)
+    ? `${DENIED_PREFIX} ${what}: lo prohíbe una regla deny.`
+    : `${DENIED_PREFIX} ${what}: sin pantalla no tiene a quién pedir permiso y lo deniega.`;
+  return command === undefined ? { message } : { message, command };
 }
 
 // ACTIVE -> tool_use (con sus parametros); DONE/ERROR -> tool_result. `output` vacio: `agy` no publica

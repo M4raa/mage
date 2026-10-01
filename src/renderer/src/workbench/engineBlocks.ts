@@ -335,8 +335,8 @@ export function applyToolResult(blocks: readonly Block[], result: ToolResult): r
 }
 
 
-export function appendErrorBlock(blocks: readonly Block[], message: string, id: string): readonly Block[] {
-  return [...blocks, { kind: 'error', id, message }];
+export function appendErrorBlock(blocks: readonly Block[], message: string, id: string, deniedCommand?: string): readonly Block[] {
+  return [...blocks, { kind: 'error', id, message, ...(deniedCommand === undefined ? {} : { deniedCommand }) }];
 }
 
 // Marcador de sistema (M2.4): p.ej. "🗜 Contexto compactado (manual)".

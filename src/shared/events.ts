@@ -253,7 +253,9 @@ export type MageEvent =
   // `.jsonl`; la anterior sigue en disco. A partir de aqui main etiqueta la sesion con `newSessionId`.
   | { readonly kind: 'conversation_reset'; readonly newSessionId: string }
   | { readonly kind: 'result'; readonly result: ResultInfo }
-  | { readonly kind: 'error'; readonly message: string };
+  // `deniedCommand`: la linea EXACTA de un comando que agy denego (grupo E, fase 2), para ofrecer permitirlo
+  // en la conversacion siguiente. Solo cuando el CLI la dice.
+  | { readonly kind: 'error'; readonly message: string; readonly deniedCommand?: string };
 
 // Decision del usuario ante un permiso (viaja renderer -> main -> CLI).
 //

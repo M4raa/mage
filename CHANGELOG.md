@@ -46,6 +46,11 @@ versión.
 - **Codex** (OpenAI) como proveedor, con su propio diálogo de permisos, su catálogo de modelos y sus
   límites de uso. Marcado **sin verificar** hasta probarlo con una cuenta real.
 - **Uso de agy** en el panel de Uso: las ventanas de 5 h y semanal de cada grupo de modelos.
+- **Comandos de agy**: al empezar una conversación de agy eliges qué comandos de terminal puede
+  ejecutar, escritos exactamente como los lanzará (o los deniegas). Cuando agy deniega uno, el aviso
+  ofrece **permitirlo para la próxima conversación**.
+- agy ve tus carpetas `~/.gemini/config` (sus MCP, skills y plugins) y `~/.ssh`, y en Configuración ›
+  Proveedores y modelos puedes añadirle las de tus herramientas (`.aws`, `.kube`…).
 - Los modos de permiso salen del propio CLI: si Claude o Codex estrenan uno, Mage lo ofrece.
 
 ### Cambiado
@@ -53,6 +58,9 @@ versión.
   interrumpir ya no la pierde, admite imágenes (las abre con su propia herramienta), el esfuerzo llega a
   **Máximo** y los turnos largos ya no se cortan a los 30 minutos.
 - Cuando agy deniega un comando, la conversación dice **qué comando** y por qué.
+- agy corre con un perfil propio de Mage también con tu suscripción: lo que Mage le configura nunca toca
+  tu configuración de agy. Sus conversaciones de antes no se ven desde Mage (tampoco se podían reanudar
+  tras reiniciar).
 - «Confirmar cambios» se llama ahora **Pedir commit al agente**, que es lo que hace.
 - Sin pestañas abiertas se ve la misma pantalla que en un chat nuevo, con sus proyectos recientes:
   elegir un proyecto abre la conversación en esa carpeta, y **＋ Nuevo chat** la abre siempre en una

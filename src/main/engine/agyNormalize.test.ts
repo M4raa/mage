@@ -236,6 +236,15 @@ describe('normalizeAgyEvent: comandos denegados', () => {
 
     expect(events[0]).toMatchObject({ kind: 'tool_result', result: { isError: true } });
     expect(events[1]).toMatchObject({ kind: 'error', message: expect.stringContaining('«whoami > unlisted.txt»') as unknown as string });
+    expect(events[1]).toMatchObject({ deniedCommand: 'whoami > unlisted.txt' });
+  });
+
+  // Sin comando en el mensaje no hay nada exacto que ofrecer permitir.
+  it('normalizeAgyEvent_denegacionSinComando_noLlevaDeniedCommand', () => {
+    const events = normalizeAgyEvent(step('ERROR', 'permission check failed for read_file "/x/y.json": user denied permission'));
+
+    expect(events[1]).toMatchObject({ kind: 'error' });
+    expect(events[1]).not.toHaveProperty('deniedCommand');
   });
 
   it('normalizeAgyEvent_reglaDeny_diceQueLoProhibeUnaRegla', () => {
@@ -243,6 +252,7 @@ describe('normalizeAgyEvent: comandos denegados', () => {
 
     expect(events).toHaveLength(2);
     expect(events[1]).toMatchObject({ kind: 'error', message: expect.stringContaining('«hostname > denied.txt»: lo prohíbe una regla deny') as unknown as string });
+    expect(events[1]).toMatchObject({ deniedCommand: 'hostname > denied.txt' });
   });
 
   it('normalizeAgyEvent_resultConDeniedActions_avisaAunqueSeaSuccess', () => {

@@ -97,7 +97,27 @@ describe('AgyAdapter (sesion persistente, agy 1.2.14)', () => {
       expect(plan.env.GEMINI_API_KEY).toBe('gm-de-la-cuenta');
       expect(plan.env.USERPROFILE).toBe('/data/agy-accounts/trabajo');
       expect(plan.env.HOME).toBeDefined();
-      expect(prepareProfile).toHaveBeenCalledWith('/data/agy-accounts/trabajo', '/proj');
+      expect(prepareProfile).toHaveBeenCalledWith('/data/agy-accounts/trabajo', '/proj', 'api-key');
+    });
+  });
+
+  // Fase 2 del grupo E: la suscripcion tambien corre con perfil propio de Mage, sin clave.
+  it('buildSpawnPlan_suscripcionConPerfilDeMage_suPerfilSinClaveYHomeReal', () => {
+    const prepareProfile = vi.fn();
+    const subscribed = new AgyAdapter({
+      resolveBinary: () => 'agy.exe',
+      resolveApiAccount: () => null,
+      subscriptionProfileDir: () => '/data/agy-profile',
+      prepareProfile,
+    });
+
+    withEnv({ GEMINI_API_KEY: 'gm-del-usuario' }, () => {
+      const plan = subscribed.buildSpawnPlan(launch);
+
+      expect(plan.env.GEMINI_API_KEY).toBeUndefined();
+      expect(plan.env.USERPROFILE).toBe('/data/agy-profile');
+      expect(plan.env.HOME).toBeDefined();
+      expect(prepareProfile).toHaveBeenCalledWith('/data/agy-profile', '/proj', 'subscription');
     });
   });
 

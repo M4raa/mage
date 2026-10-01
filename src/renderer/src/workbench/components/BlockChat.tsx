@@ -1,6 +1,10 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { AnimatePresence } from 'motion/react';
 import { CopyButton } from './CopyButton';
 import { Icon } from './Icon';
+import { AgyCommandsDialog } from './AgyCommandsDialog';
+import { validateAgyCommand } from '@shared/agyRules';
 import { NO_PERMISSION_CONTROL_WARNING, isAutoApprovedProvider } from '@shared/providers';
 import { useWorkbenchStore } from '../workbenchStore';
 import { SPARKLE_WAIST_RATIO } from '../brandMark';
@@ -205,13 +209,7 @@ function EmptyConversation(): React.JSX.Element {
         <div className="text-[13px] font-medium text-mg-text">Escribe una instrucción para empezar</div>
         <WorkingFolder />
         {autoApproved ? (
-          <div
-            role="status"
-            className="flex max-w-[420px] items-start gap-[8px] rounded-[7px] border border-mg-warn-border bg-mg-warn-bg p-[7px_10px] text-left text-[10.5px] text-mg-warn-text"
-          >
-            <Icon name="warning" />
-            <span>{NO_PERMISSION_CONTROL_WARNING}</span>
-          </div>
+          <AgyStartNotice />
         ) : (
           <div className="flex items-center gap-[7px] text-[10.5px] text-mg-muted">
             <Kbd>/</Kbd>
@@ -222,6 +220,30 @@ function EmptyConversation(): React.JSX.Element {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+// Aviso de agy al empezar la conversacion, con la entrada a sus comandos permitidos (grupo E, fase 2):
+// es AQUI donde se conceden, porque agy lee sus reglas al lanzar.
+function AgyStartNotice(): React.JSX.Element {
+  const [open, setOpen] = useState(false);
+  const count = useWorkbenchStore((s) => s.settings.agyCommandRules.allow.length);
+  return (
+    <div className="flex max-w-[420px] flex-col items-start gap-[6px] rounded-[7px] border border-mg-warn-border bg-mg-warn-bg p-[7px_10px] text-left text-[10.5px] text-mg-warn-text">
+      <div role="status" className="flex items-start gap-[8px]">
+        <Icon name="warning" />
+        <span>{NO_PERMISSION_CONTROL_WARNING}</span>
+      </div>
+      <button
+        onClick={() => setOpen(true)}
+        data-agy-commands-open="true"
+        className="ml-[22px] rounded-[6px] border border-mg-warn-border px-[8px] py-[2px] text-[10.5px] font-semibold hover:bg-mg-hover"
+      >
+        Comandos permitidos ({count})…
+      </button>
+      {/* Al body: el estado vacio puede ir dentro de un panel con transform, que romperia el `fixed`. */}
+      {createPortal(<AnimatePresence>{open && <AgyCommandsDialog key="agy-commands" onClose={() => setOpen(false)} />}</AnimatePresence>, document.body)}
     </div>
   );
 }
@@ -526,7 +548,31 @@ function ErrorBlock({ block }: { readonly block: Extract<Block, { kind: 'error' 
   return (
     <div role="alert" className="rounded-[9px] border border-mg-danger-border bg-mg-danger-bg p-[10px_14px] text-[12px] leading-[1.55] text-mg-danger">
       {block.message}
+      {block.deniedCommand !== undefined && <AllowDeniedCommand command={block.deniedCommand} />}
     </div>
+  );
+}
+
+// Comando que agy denego: permitirlo vale para la conversacion siguiente (agy lee sus reglas al lanzar).
+function AllowDeniedCommand({ command }: { readonly command: string }): React.JSX.Element | null {
+  const allowed = useWorkbenchStore((s) => s.settings.agyCommandRules.allow.includes(command));
+  const setVerdict = useWorkbenchStore((s) => s.setAgyCommandVerdict);
+  if (!validateAgyCommand(command).ok) return null;
+  if (allowed) {
+    return (
+      <div data-agy-command-allowed="true" className="mt-[6px] text-[11px] text-mg-sec">
+        Permitido para la próxima conversación.
+      </div>
+    );
+  }
+  return (
+    <button
+      onClick={() => setVerdict(command, 'allow')}
+      data-agy-allow-command="true"
+      className="mt-[6px] block rounded-[6px] border border-mg-danger-border px-[8px] py-[2px] text-[11px] font-semibold hover:bg-mg-hover"
+    >
+      Permitir este comando para la próxima conversación
+    </button>
   );
 }
 

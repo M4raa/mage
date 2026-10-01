@@ -78,6 +78,10 @@ const NO_PERMISSION_HEAD = 'Sin control de permisos';
 const AGY_MISSING_HEAD = 'No se ha encontrado el CLI';
 const AGY_PROVIDER_ID = 'agy';
 const AGY_PERMISSION_CHIP = 'Sin permisos';
+// Grupo E, fase 2: comando y carpeta de prueba (nunca se lanza agy con ellos).
+const AGY_VG_COMMAND = 'vg-comando --exacto > vg.txt';
+const AGY_VG_DENIED = 'vg-denegado > vg.txt';
+const AGY_VG_LINK = '.vg-carpeta';
 // Vallas de codigo para medir el resaltado (F4): `ts` esta en HIGHLIGHT_LANGS (debe tokenizar) y `rust`
 // no lo esta (debe caer a texto plano, que NO es lo mismo que quedarse en blanco).
 const TS_FENCE = '```ts\nconst answer: number = 42;\nexport const twice = (n: number): number => n * 2;\n```';
@@ -479,6 +483,21 @@ const CHECKS = [
         return { ok, detail: `avisos con bypass=${conBypass} texto=${JSON.stringify(texto)} sin bypass=${await aviso.count()}` };
       } finally {
         await page.evaluate((modo) => window.__mageDev?.store.getState().setDefaultPermissionMode(modo), previo);
+      }
+    },
+  },
+  {
+    // Grupo E, fase 2: la ficha de agy deja añadir y quitar carpetas extra para su perfil, valida la ruta
+    // y lo guarda en app-settings.json (main las enlaza al lanzar agy; aqui no se lanza nada).
+    name: 'E fase 2: Ajustes › agy añade, valida y quita carpetas extra de su perfil',
+    async run(page, { userDataDir }) {
+      // Autosuficiente con `--only`: en la tanda completa Configuracion ya llega abierta (y se deja abierta).
+      const propio = (await page.locator(MODAL).count()) === 0;
+      if (propio) await openSettingsDialog(page);
+      try {
+        return await measureAgyProfileLinks(page, userDataDir);
+      } finally {
+        if (propio) await closeDialog(page);
       }
     },
   },
@@ -2157,6 +2176,55 @@ const CHECKS = [
         measured.permissionModeControls === 0 &&
         measured.effortControls === 0;
       return { ok, detail: `agy instalado; pestaña abierta: ${JSON.stringify(measured)}` };
+    },
+  },
+  {
+    // Grupo E, fase 2: los comandos de agy se conceden al EMPEZAR la conversacion (el estado vacio de su
+    // pestaña) por linea exacta, sin regex, y el aviso de comando denegado ofrece permitirlo para la
+    // siguiente. Autosuficiente: pestaña temporal marcada como agy en el store (no se lanza nada).
+    name: 'E fase 2: comandos de agy al empezar la conversación y «permitir» desde el aviso de denegado',
+    async run(page, { userDataDir }) {
+      const previo = await page.evaluate(() => (({ tabs, activeTabId, splitLayout, blocksByChat }) => ({ tabs, activeTabId, splitLayout, blocksByChat }))(window.__mageDev.store.getState()));
+      const ajustes = path.join(userDataDir, 'app-settings.json');
+      const reglas = (t) => JSON.parse(t).agyCommandRules ?? { allow: [], deny: [] };
+      const medido = {};
+      try {
+        await openTemporaryConversation(page);
+        await page.evaluate(() => {
+          const s = window.__mageDev.store.getState();
+          window.__mageDev.store.setState({ tabs: s.tabs.map((t) => (t.id === s.activeTabId ? { ...t, provider: 'agy' } : t)) });
+        });
+        const abrir = page.locator('[data-agy-commands-open="true"]');
+        await abrir.first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        medido.botones = await abrir.count();
+        if (medido.botones !== 1) return { ok: false, detail: `botones de comandos=${medido.botones} (se esperaba 1: no se toca)` };
+        await abrir.click();
+        const dialogo = page.locator('[data-agy-commands-dialog="true"]');
+        await dialogo.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const campo = dialogo.getByRole('textbox', { name: 'Comando exacto' });
+        await campo.fill('regex:.*');
+        await dialogo.getByRole('button', { name: 'Permitir', exact: true }).click();
+        medido.errorRegex = await dialogo.getByRole('alert').count();
+        await campo.fill(AGY_VG_COMMAND);
+        await dialogo.getByRole('button', { name: 'Permitir', exact: true }).click();
+        medido.permitido = (await waitForFile(ajustes, (t) => reglas(t).allow.includes(AGY_VG_COMMAND))) !== null;
+        await dialogo.getByRole('button', { name: 'Permitido', exact: true }).click();
+        medido.denegado = (await waitForFile(ajustes, (t) => reglas(t).deny.includes(AGY_VG_COMMAND) && !reglas(t).allow.includes(AGY_VG_COMMAND))) !== null;
+        await dialogo.getByRole('button', { name: `Quitar ${AGY_VG_COMMAND}`, exact: true }).click();
+        medido.quitado = (await waitForFile(ajustes, (t) => !reglas(t).deny.includes(AGY_VG_COMMAND))) !== null;
+        await dialogo.getByRole('button', { name: 'Listo', exact: true }).click();
+        await dialogo.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+        await hydrateBlocks(page, [{ kind: 'error', id: 'vg-denied', message: `agy denegó el comando «${AGY_VG_DENIED}»`, deniedCommand: AGY_VG_DENIED }]);
+        await page.locator('[data-agy-allow-command="true"]').click();
+        await page.locator('[data-agy-command-allowed="true"]').waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        medido.desdeElAviso = (await waitForFile(ajustes, (t) => reglas(t).allow.includes(AGY_VG_DENIED))) !== null;
+      } finally {
+        await page.evaluate((cmd) => window.__mageDev.store.getState().setAgyCommandVerdict(cmd, null), AGY_VG_DENIED);
+        await page.evaluate((p) => window.__mageDev.store.setState(p), previo);
+        await page.waitForTimeout(CONFIG.settleMs);
+      }
+      const ok = medido.errorRegex === 1 && medido.permitido && medido.denegado && medido.quitado && medido.desdeElAviso;
+      return { ok, detail: JSON.stringify(medido) };
     },
   },
   {
@@ -7316,6 +7384,26 @@ async function focusedTabLabel(page) {
 }
 
 // Abre una seccion de Configuracion por su etiqueta. Extraido porque lo usan cuatro comprobaciones.
+// Grupo E, fase 2: el editor de carpetas extra del perfil de agy (Ajustes › Proveedores y modelos).
+async function measureAgyProfileLinks(page, userDataDir) {
+  await openSection(page, /Proveedores y modelos/);
+  const editor = page.locator('[data-agy-profile-links="true"]');
+  await editor.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs }).catch(() => undefined);
+  if ((await editor.count()) !== 1) return { ok: false, detail: `editores de carpetas de agy=${await editor.count()} (¿agy no instalado?)` };
+  const ajustes = path.join(userDataDir, 'app-settings.json');
+  const campo = editor.getByRole('textbox', { name: 'Carpeta extra para el perfil de agy' });
+  await campo.fill('../fuera');
+  await editor.getByRole('button', { name: 'Enlazar', exact: true }).click();
+  const error = await editor.getByRole('alert').count();
+  await campo.fill(AGY_VG_LINK);
+  await editor.getByRole('button', { name: 'Enlazar', exact: true }).click();
+  const guardada = await waitForFile(ajustes, (t) => (JSON.parse(t).agyLinkedPaths ?? []).includes(AGY_VG_LINK));
+  await editor.getByRole('button', { name: `Dejar de enlazar ${AGY_VG_LINK}`, exact: true }).click();
+  const quitada = await waitForFile(ajustes, (t) => !(JSON.parse(t).agyLinkedPaths ?? []).includes(AGY_VG_LINK));
+  const ok = error === 1 && guardada !== null && quitada !== null;
+  return { ok, detail: `error con ../fuera=${error} guardada=${guardada !== null} quitada=${quitada !== null}` };
+}
+
 async function openSection(page, namePattern) {
   await page.getByRole('tab', { name: namePattern }).click();
   await page.waitForTimeout(150);

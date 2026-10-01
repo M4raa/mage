@@ -29,6 +29,8 @@ const VALID: AppSettings = {
   claudeAiConnectorsOff: ['C:/Users/u/.claude-p'],
   ghNoticeDismissed: true,
   autoArchiveOnPrClose: true,
+  agyCommandRules: { allow: ['git status'], deny: ['rm -rf build'] },
+  agyLinkedPaths: ['.aws'],
 };
 
 function deps(overrides: Partial<SettingsStoreDeps> = {}): SettingsStoreDeps {
@@ -44,6 +46,16 @@ function deps(overrides: Partial<SettingsStoreDeps> = {}): SettingsStoreDeps {
 }
 
 describe('SettingsStore.load', () => {
+  it('load_sinCamposDeAgy_caeANingunaReglaYNingunaCarpeta', () => {
+    // Un fichero de antes de la fase 2 del grupo E no los trae: no se concede nada ni se enlaza nada extra.
+    const { agyCommandRules: _reglas, agyLinkedPaths: _rutas, ...previo } = VALID;
+
+    const loaded = new SettingsStore(deps({ readFile: () => JSON.stringify(previo) })).load();
+
+    expect(loaded.agyCommandRules).toEqual({ allow: [], deny: [] });
+    expect(loaded.agyLinkedPaths).toEqual([]);
+  });
+
   it('load_accentByAccountFueraDeRango_caeAVacio', () => {
     // PERS-3: un indice que no es un acento del tema no se pinta; la cuenta vuelve al de su posicion.
     const file = JSON.stringify({ ...VALID, accentByAccount: { 'C:/Users/u/.claude-p': 9 } });
