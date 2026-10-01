@@ -9,6 +9,7 @@ import { HttpChatClient, type TimerDeps } from './chatClient';
 import { createRuntimeGate } from './permissionGate';
 import { isRuntimePermissionMode, RuntimeSession, type PreparedModel, type RuntimePermissionMode } from './runtimeSession';
 import { buildSystemPrompt, trimProjectNotes } from './systemPrompt';
+import { textToolInstructions } from './textToolCalls';
 import { CHARS_PER_TOKEN, ContextBudget } from './contextBudget';
 import type { ModelCatalog } from './modelCatalog';
 import type { ToolAccessRule } from '@shared/toolAccess';
@@ -120,13 +121,14 @@ export function buildRuntimeSession(providerId: string, base: SessionBase, env: 
     client,
     tools,
     gate: createRuntimeGate({ cwd: params.cwd, extraDirs: [], platform: env.platform }),
-    systemPrompt: () =>
+    systemPrompt: (toolsEnabled) =>
       buildSystemPrompt({
         cwd: params.cwd,
         platform: env.platform,
         shellName: shell.name,
         nowIso: new Date(env.now()).toISOString(),
-        toolNames: tools.names(),
+        toolNames: toolsEnabled ? tools.names() : [],
+        textToolGuide: toolsEnabled ? null : textToolInstructions(tools.specs().map((spec) => spec.function)),
         projectNotes,
       }),
     emit: base.emit,

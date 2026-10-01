@@ -1,6 +1,7 @@
 import type { ToolFileInfo } from '@shared/events';
 import { ChatHttpError, type ChatClient, type ChatMessage, type ChatToolCall, type ChatToolSpec } from './chatClient';
 import type { AssembledToolCall, FinishReason } from './openAiStream';
+import { parseTextToolCalls } from './textToolCalls';
 
 // El bucle de UN turno del runtime propio: peticion -> stream -> llamadas -> validar -> permiso ->
 // ejecutar -> siguiente vuelta, hasta que el modelo para, se pasa de vueltas o se aborta. No conoce
@@ -64,8 +65,9 @@ export interface LoopDeps {
   readonly client: ChatClient;
   readonly tools: LoopTools;
   readonly authorize: (call: PreparedCall, signal: AbortSignal) => Promise<Authorization>;
-  // Ajusta los mensajes a la ventana del modelo antes de cada peticion (R5). Lanza si no caben.
-  readonly fit: (messages: readonly ChatMessage[]) => readonly ChatMessage[];
+  // Ajusta los mensajes a la ventana del modelo antes de cada peticion (R5; R9 puede resumir, por eso
+  // puede ser asincrono). Lanza si no caben.
+  readonly fit: (messages: readonly ChatMessage[]) => readonly ChatMessage[] | Promise<readonly ChatMessage[]>;
   readonly emit: (event: LoopEvent) => void;
   readonly now: () => number;
   readonly newId: () => string;
@@ -118,19 +120,19 @@ export async function runTurn(input: TurnInput, deps: LoopDeps): Promise<TurnOut
       if (round === null) continue; // reintento sin herramientas
       state.rounds += 1;
       state.usage = addUsage(state.usage, round.usage);
-      const calls = round.reason === 'tool_calls' ? round.calls : [];
+      const { calls, textual } = callsOf(round, deps, state.toolsEnabled);
       const ids = calls.map((call) => call.id ?? `rt-${deps.newId()}`);
-      input.history.push(assistantMessage(round.text, calls, ids));
+      input.history.push(textual ? { role: 'assistant', content: round.text } : assistantMessage(round.text, calls, ids));
       if (round.text.length > 0) deps.emit({ kind: 'text_done', text: round.text });
       // Las llamadas se anuncian ANTES de cerrar la vuelta: quien escribe la transcripcion cierra la linea
       // `assistant` en `round_done`, y esa linea tiene que llevar sus `tool_use` y preceder a sus resultados.
       const plans = calls.map((call, i) => prepareCall(call, ids[i]!, deps));
       deps.emit({ kind: 'round_done', usage: round.usage, requestMessages: round.requestMessages });
-      if (input.signal.aborted) return closeInterrupted(input, ids, 0, finish);
+      if (input.signal.aborted) return closeInterrupted(input, textual ? [] : ids, 0, finish);
       if (round.reason === 'length') return finish('error', 'El modelo cortó la respuesta por longitud (límite de tokens de salida).');
       if (calls.length === 0) return finish('success');
-      const done = await runCalls(plans, input, deps);
-      if (done < calls.length) return closeInterrupted(input, ids, done, finish);
+      const done = await runCalls(plans, input, deps, textual);
+      if (done < calls.length) return closeInterrupted(input, textual ? [] : ids, done, finish);
       if (state.rounds >= MAX_TOOL_ROUNDS) {
         return finish('error', `El modelo superó ${MAX_TOOL_ROUNDS} vueltas de herramientas en un turno; se para aquí.`);
       }
@@ -143,7 +145,7 @@ export async function runTurn(input: TurnInput, deps: LoopDeps): Promise<TurnOut
 
 // Una peticion al modelo. null = el servidor rechazo `tools` y hay que repetir la vuelta sin ellas.
 async function streamRound(input: TurnInput, deps: LoopDeps, state: { toolsEnabled: boolean }): Promise<RoundResult | null> {
-  const messages = deps.fit([{ role: 'system', content: input.system }, ...input.history]);
+  const messages = await deps.fit([{ role: 'system', content: input.system }, ...input.history]);
   const tools = state.toolsEnabled ? deps.tools.specs() : [];
   deps.emit({ kind: 'request_started' });
   const round = { text: '', calls: [] as AssembledToolCall[], reason: 'stop' as FinishReason, usage: null as RoundUsage | null, requestMessages: messages.length };
@@ -167,17 +169,32 @@ async function streamRound(input: TurnInput, deps: LoopDeps, state: { toolsEnabl
   return round;
 }
 
+// Las llamadas de una vuelta: las nativas o, si el modelo las ESCRIBIO en el texto (§8.1 D7), las que
+// se entienden de el. `textual` = el modelo no tiene herramientas nativas: sus resultados vuelven como
+// un mensaje de usuario, que es lo unico que su plantilla sabe leer.
+function callsOf(round: RoundResult, deps: LoopDeps, toolsEnabled: boolean): { calls: readonly AssembledToolCall[]; textual: boolean } {
+  if (round.reason === 'tool_calls') return { calls: round.calls, textual: false };
+  if (round.reason !== 'stop' || round.text.length === 0 || deps.tools.specs().length === 0) return { calls: [], textual: false };
+  const written = parseTextToolCalls(round.text).map((call) => ({ id: null, name: call.name, argumentsJson: call.argumentsJson }));
+  return { calls: written, textual: written.length > 0 && !toolsEnabled };
+}
+
 // Ejecuta las llamadas EN ORDEN; las lecturas seguidas van en paralelo (D9b). Devuelve cuantas
 // terminaron: menos que `calls.length` = se aborto a mitad.
-async function runCalls(prepared: readonly CallPlan[], input: TurnInput, deps: LoopDeps): Promise<number> {
+async function runCalls(prepared: readonly CallPlan[], input: TurnInput, deps: LoopDeps, textual: boolean): Promise<number> {
   let done = 0;
+  const written: string[] = [];
   while (done < prepared.length) {
-    if (input.signal.aborted) return done;
+    if (input.signal.aborted) break;
     const batch = readBatch(prepared, done);
     const results = await Promise.all(batch.map((call) => executeCall(call, input.signal, deps)));
-    for (const [i, result] of results.entries()) input.history.push({ role: 'tool', tool_call_id: batch[i]!.id, content: result });
+    for (const [i, result] of results.entries()) {
+      if (textual) written.push(`<tool_result name="${batch[i]!.name}">\n${result}\n</tool_result>`);
+      else input.history.push({ role: 'tool', tool_call_id: batch[i]!.id, content: result });
+    }
     done += batch.length;
   }
+  if (textual && written.length > 0) input.history.push({ role: 'user', content: written.join('\n') });
   return done;
 }
 

@@ -6,6 +6,8 @@ import type { SessionLogFn } from '../engine/agentSession';
 import { runTurn, type Authorization, type LoopEvent, type LoopTools, type PreparedCall, type TurnOutcome } from './agentLoop';
 import type { ChatClient, ChatMessage } from './chatClient';
 import { loopToMageEvents } from './loopToMageEvents';
+import { ContextOverflowError } from './contextBudget';
+import { compactedHistory, KEEP_RECENT_RATIO, splitForCompaction, summaryRequest } from './compaction';
 
 // Una sesion del runtime propio (P-032): implementa `ManagedSession`, asi que el `SessionManager` y la
 // UI la tratan igual que a un CLI. Guarda el historial, encola los mensajes que llegan con un turno en
@@ -31,6 +33,8 @@ export interface TurnRecorder {
   turnEnd(added: readonly ChatMessage[], outcome: TurnOutcome): void;
   reset(newSessionId: string): void;
   rename(title: string): void;
+  // Compactacion por resumen (R9): lo que queda del historial es `compactedHistory(summary, tail)`.
+  compact(summary: string, tail: readonly ChatMessage[], trigger: 'auto' | 'manual'): void;
 }
 
 export interface RuntimeSessionDeps {
@@ -40,8 +44,8 @@ export interface RuntimeSessionDeps {
   readonly client: ChatClient;
   readonly tools: LoopTools & { names(): readonly string[] };
   readonly gate: (call: PreparedCall, mode: RuntimePermissionMode) => GateVerdict;
-  // Se construye en cada turno (fecha, notas del proyecto).
-  readonly systemPrompt: () => string;
+  // Se construye en cada turno (fecha, notas del proyecto); cambia si el modelo no tiene herramientas nativas.
+  readonly systemPrompt: (toolsEnabled: boolean) => string;
   readonly emit: (event: MageEvent) => void;
   readonly now: () => number;
   readonly newId: () => string;
@@ -65,6 +69,7 @@ export interface SessionMcp {
 // Presupuesto de contexto de la sesion (lo implementa `contextBudget.ts`).
 export interface ModelBudget {
   readonly window: number;
+  readonly limit: number;
   fit(messages: readonly ChatMessage[]): readonly ChatMessage[];
   recalibrate(actualInputTokens: number): void;
   estimate(messages: readonly ChatMessage[]): number;
@@ -81,7 +86,8 @@ export interface PreparedModel {
 
 const CHAT_ONLY_NOTICE = 'Este modelo no admite herramientas: Mage solo puede conversar con él.';
 const TOOL_CALL_AS_TEXT = /<tool_call>|\[TOOL_REQUEST\]|^\s*```(?:json)?\s*\{\s*"(?:name|tool)"/m;
-const TOOL_CALL_AS_TEXT_NOTICE = 'El modelo escribió una llamada a una herramienta como texto en vez de hacerla.';
+// Las que se entienden las ejecuta el bucle (R9); esta solo sale con una que NO se pudo interpretar.
+const TOOL_CALL_AS_TEXT_NOTICE = 'El modelo escribió una llamada a una herramienta como texto y Mage no pudo interpretarla.';
 
 interface PendingPermission {
   readonly toolUseId: string;
@@ -89,6 +95,8 @@ interface PendingPermission {
 }
 
 const CLEAR_COMMAND = '/clear';
+const COMPACT_COMMAND = '/compact';
+const NOTHING_TO_COMPACT = 'No hay nada que compactar todavía.';
 const RENAME_COMMAND = /^\/rename\s+(\S.*)$/s;
 
 export class RuntimeSession implements ManagedSession {
@@ -191,6 +199,7 @@ export class RuntimeSession implements ManagedSession {
       for (let text = this.queue.shift(); text !== undefined && !this.stopped; text = this.queue.shift()) {
         const rename = RENAME_COMMAND.exec(text.trim());
         if (text.trim() === CLEAR_COMMAND) this.resetConversation();
+        else if (text.trim() === COMPACT_COMMAND) await this.compactNow();
         else if (rename !== null) this.rename(rename[1]!.trim());
         else await this.runOne(text);
       }
@@ -208,7 +217,7 @@ export class RuntimeSession implements ManagedSession {
       await this.prepare();
       this.history.push({ role: 'user', content: text });
       this.deps.recorder?.user(text);
-      this.lastSystem = this.deps.systemPrompt();
+      this.lastSystem = this.deps.systemPrompt(this.toolsEnabled);
       const outcome = await runTurn(
         { model: this.model, system: this.lastSystem, history: this.history, signal: controller.signal, toolsEnabled: this.toolsEnabled },
         this.loopDeps(),
@@ -261,6 +270,55 @@ export class RuntimeSession implements ManagedSession {
     this.emitContextUsage();
   }
 
+  // Lo que cabe; si no cabe, se RESUME lo antiguo con el propio modelo (§8.1 D8) y se reintenta. Si ni
+  // asi cabe, el error explicado de `ContextBudget`.
+  private async fit(messages: readonly ChatMessage[]): Promise<readonly ChatMessage[]> {
+    const budget = this.budget;
+    if (budget === null) return messages;
+    try {
+      return budget.fit(messages);
+    } catch (err) {
+      if (!(err instanceof ContextOverflowError)) throw err;
+      const signal = this.turn?.signal ?? new AbortController().signal;
+      if (!(await this.compact('auto', signal))) throw err;
+      return budget.fit([messages[0] ?? { role: 'system', content: this.lastSystem }, ...this.history]);
+    }
+  }
+
+  // Resume lo antiguo con el modelo de la sesion. false = no habia nada que resumir o salio vacio.
+  private async compact(trigger: 'auto' | 'manual', signal: AbortSignal): Promise<boolean> {
+    const budget = this.budget;
+    if (budget === null) return false;
+    const split = splitForCompaction(this.history, Math.floor(budget.limit * KEEP_RECENT_RATIO), (messages) => budget.estimate(messages));
+    if (split === null) return false;
+    let summary = '';
+    for await (const part of this.deps.client.streamChat({ model: this.model, messages: summaryRequest(split.head, budget.limit) }, signal)) {
+      if (part.kind === 'text') summary += part.text;
+    }
+    if (summary.trim().length === 0) return false;
+    this.history.splice(0, this.history.length, ...compactedHistory(summary, split.tail));
+    this.deps.recorder?.compact(summary, split.tail, trigger);
+    this.deps.emit({ kind: 'compacted', trigger });
+    return true;
+  }
+
+  // `/compact` del usuario: lo mismo que la automatica, a demanda y sin turno.
+  private async compactNow(): Promise<void> {
+    const controller = new AbortController();
+    this.turn = controller;
+    this.deps.emit({ kind: 'session_state', state: 'running' });
+    try {
+      await this.prepare();
+      if (!(await this.compact('manual', controller.signal))) this.deps.emit({ kind: 'notice', text: NOTHING_TO_COMPACT });
+      this.emitContextUsage();
+    } catch (err) {
+      if (!controller.signal.aborted) this.deps.emit({ kind: 'error', message: `No se pudo compactar: ${err instanceof Error ? err.message : String(err)}` });
+    } finally {
+      this.turn = null;
+      this.deps.emit({ kind: 'session_state', state: 'idle' });
+    }
+  }
+
   // Sin `usage` del servidor (Ollama sin trozo de uso), una estimacion marcada como tal (ficha D14).
   private estimatedUsage(added: readonly ChatMessage[]): TurnUsage | null {
     if (this.budget === null) return null;
@@ -284,7 +342,7 @@ export class RuntimeSession implements ManagedSession {
       client: this.deps.client,
       tools: this.deps.tools,
       authorize: (call: PreparedCall, signal: AbortSignal) => this.authorize(call, signal),
-      fit: (messages: readonly ChatMessage[]) => this.budget?.fit(messages) ?? messages,
+      fit: (messages: readonly ChatMessage[]) => this.fit(messages),
       emit: (event: LoopEvent) => {
         if (event.kind === 'round_done' && event.usage !== null) this.budget?.recalibrate(event.usage.inputTokens);
         this.deps.recorder?.loop(event);
@@ -358,7 +416,7 @@ export class RuntimeSession implements ManagedSession {
       model: this.model,
       tools: this.toolsEnabled ? this.deps.tools.names() : [],
       mcpServers: [...(this.deps.mcp?.statuses() ?? [])],
-      slashCommands: ['clear', 'rename'],
+      slashCommands: ['clear', 'compact', 'rename'],
       skills: [],
       plugins: [],
       pluginErrors: [],

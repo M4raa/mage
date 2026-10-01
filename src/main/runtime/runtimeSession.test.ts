@@ -170,7 +170,7 @@ describe('RuntimeSession turno', () => {
   });
 
   it('sendUserMessage_unexpectedRecorderFailure_reportsAndKeepsSessionAlive', async () => {
-    const recorder = { user: () => { throw new Error('disco lleno'); }, loop: () => undefined, turnEnd: () => undefined, reset: () => undefined, rename: () => undefined };
+    const recorder = { user: () => { throw new Error('disco lleno'); }, loop: () => undefined, turnEnd: () => undefined, reset: () => undefined, rename: () => undefined, compact: () => undefined };
     const { session, events } = setup([textReply('x')], { recorder });
     session.start();
 
@@ -210,7 +210,7 @@ describe('RuntimeSession turno', () => {
 
   it('sendUserMessage_rename_recordsTitleWithoutRequest', async () => {
     const titles: string[] = [];
-    const recorder = { user: () => undefined, loop: () => undefined, turnEnd: () => undefined, reset: () => undefined, rename: (t: string) => titles.push(t) };
+    const recorder = { user: () => undefined, loop: () => undefined, turnEnd: () => undefined, reset: () => undefined, rename: (t: string) => titles.push(t), compact: () => undefined };
     const { session, events, client } = setup([], { recorder });
     session.start();
 
@@ -367,13 +367,26 @@ describe('RuntimeSession y el modelo (R5)', () => {
     expect(events.find((e) => e.kind === 'context_usage')).toMatchObject({ usage: { maxTokens: 4_096 } });
   });
 
-  it('result_toolCallWrittenAsText_noticed', async () => {
-    const { session, events } = setup([textReply('<tool_call>{"name":"Read"}</tool_call>')]);
+  it('result_unparseableCallWrittenAsText_noticed', async () => {
+    const { session, events } = setup([textReply('<tool_call>{"name": roto}</tool_call>')]);
     session.start();
 
     session.sendUserMessage('lee');
     await settle();
 
-    expect(events).toContainEqual({ kind: 'notice', text: expect.stringContaining('como texto') });
+    expect(events).toContainEqual({ kind: 'notice', text: expect.stringContaining('no pudo interpretarla') });
+  });
+
+  it('result_callWrittenAsText_isExecuted', async () => {
+    const { session, tools, client } = setup([textReply('<tool_call>{"name":"Read","arguments":{"file_path":"a"}}</tool_call>'), textReply('leido')]);
+    session.start();
+
+    session.sendUserMessage('lee');
+    await settle();
+    await settle();
+
+    expect(tools.ran).toEqual(['Read']);
+    // Con herramientas nativas, la llamada escrita viaja de vuelta como una llamada de verdad.
+    expect(client.requests[1]!.messages.map((m) => m.role)).toEqual(['system', 'user', 'assistant', 'tool']);
   });
 });

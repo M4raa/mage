@@ -94,6 +94,12 @@ export class TranscriptWriter implements TurnRecorder {
     this.round = emptyRound();
   }
 
+  // La marca de compactacion del CLI (`system/compact_boundary`, que el renderer pinta) con lo que
+  // necesita reanudar: el resumen y la cola conservada (`mageCompaction`, campo propio de Mage).
+  compact(summary: string, tail: readonly ChatMessage[], trigger: 'auto' | 'manual'): void {
+    this.write({ type: 'system', subtype: 'compact_boundary', compact_metadata: { trigger }, mageCompaction: { summary, tail } });
+  }
+
   rename(title: string): void {
     this.write({ type: 'custom-title', customTitle: title });
   }

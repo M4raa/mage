@@ -82,8 +82,9 @@ const SCENARIOS = {
   },
   // Llamada escrita DENTRO del texto (modelos sin plantilla de herramientas), con `stop`.
   'tool-en-texto': {
+    // Ya hay resultado si llego un `tool` o, en modo solo chat, el <tool_result> que Mage manda como usuario.
     reply: (body) =>
-      lastRole(body) === 'user'
+      !body.messages.some((m) => m.role === 'tool' || String(m.content ?? '').includes('<tool_result'))
         ? round(text('<tool_call>{"name":"Read","arguments":{"file_path":"hola.txt"}}</tool_call>'), 'stop')
         : round(text('Leído.'), 'stop'),
     usage: false,
@@ -115,6 +116,15 @@ const SCENARIOS = {
   // Contesta con el numero de mensajes (sin el de sistema) que recibe: prueba que reanudar mantiene el contexto.
   'cuenta-mensajes': {
     reply: (body) => round(text(`mensajes: ${body.messages.filter((m) => m.role !== 'system').length}`), 'stop'),
+    usage: true,
+  },
+  // Ventana pequeña que se llena: cuando el runtime pide un RESUMEN (su prompt de compactacion) contesta
+  // uno corto; si no, una respuesta larga (P-032 R9).
+  resumen: {
+    reply: (body) =>
+      String(body.messages[0]?.content ?? '').startsWith('You compress')
+        ? round(text('RESUMEN: el usuario mando varios mensajes.'), 'stop')
+        : round([{ role: 'assistant', content: `ok ${'y'.repeat(900)}` }], 'stop'),
     usage: true,
   },
   // Respuesta larga en un modelo de ventana pequeña (el catalogo declara FAKE_SMALL_CONTEXT).
@@ -176,7 +186,7 @@ function lmStudioCatalog() {
   return {
     models: [
       entry(FAKE_OPENAI_MODEL, 32768, true),
-      ...FAKE_SCENARIOS.map((name) => entry(`${SCENARIO_MODEL_PREFIX}${name}`, name === 'contexto-2048' ? FAKE_SMALL_CONTEXT : 32768, name !== 'sin-tools')),
+      ...FAKE_SCENARIOS.map((name) => entry(`${SCENARIO_MODEL_PREFIX}${name}`, name === 'contexto-2048' || name === 'resumen' ? FAKE_SMALL_CONTEXT : 32768, name !== 'sin-tools')),
     ],
   };
 }

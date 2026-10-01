@@ -10,6 +10,8 @@ export interface SystemPromptInput {
   readonly shellName: string | null;
   readonly nowIso: string; // fecha en UTC
   readonly toolNames: readonly string[];
+  // Sin herramientas nativas (modo solo chat): como escribirlas para que Mage las ejecute (R9). null = nada.
+  readonly textToolGuide?: string | null;
   // Primer `AGENTS.md`/`CLAUDE.md` del cwd, ya recortado (ficha D16). null = no hay.
   readonly projectNotes: { readonly file: string; readonly text: string } | null;
 }
@@ -22,9 +24,7 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
     `Working directory: ${input.cwd}`,
     `OS: ${OS_NAMES[input.platform] ?? input.platform}. Date (UTC): ${input.nowIso.slice(0, 10)}.`,
     ...(input.shellName === null ? [] : [`The Bash tool runs commands with ${input.shellName}; write commands for that shell.`]),
-    input.toolNames.length === 0
-      ? 'You have no tools in this conversation: answer with text only.'
-      : `Tools: ${input.toolNames.join(', ')}. Call them through the tool interface, never by writing the call as text.`,
+    toolsLine(input),
     ...(input.toolNames.length === 0
       ? []
       : [
@@ -37,6 +37,11 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
     lines.push('', `Project notes (${input.projectNotes.file}):`, input.projectNotes.text);
   }
   return lines.join('\n');
+}
+
+function toolsLine(input: SystemPromptInput): string {
+  if (input.toolNames.length > 0) return `Tools: ${input.toolNames.join(', ')}. Call them through the tool interface, never by writing the call as text.`;
+  return input.textToolGuide ?? 'You have no tools in this conversation: answer with text only.';
 }
 
 // Recorta las notas del proyecto a un tope de caracteres, marcando el corte. ponytail: corta por

@@ -1,4 +1,5 @@
 import type { ChatMessage, ChatToolCall } from './chatClient';
+import { compactedHistory } from './compaction';
 
 // Reconstruye los mensajes de Chat Completions de una transcripcion JSONL (la del runtime o una antigua
 // del gateway, que escribio el CLI de Claude en el mismo formato) para REANUDAR. PURO.
@@ -35,6 +36,13 @@ export function transcriptToMessages(lines: readonly string[]): ResumedTranscrip
     if (line === null) return;
     if (typeof line.uuid === 'string') lastUuid = line.uuid;
     if (line.isSidechain === true || line.isMeta === true) return;
+    const compaction = compactionOf(line);
+    if (compaction !== null) {
+      // Lo anterior a una compactacion lo sustituye su resumen (con la cola que se conservo).
+      draft = null;
+      messages.splice(0, messages.length, ...compactedHistory(compaction.summary, compaction.tail));
+      return;
+    }
     if (line.type === 'assistant') {
       draft ??= { text: '', calls: [] };
       appendAssistant(draft, line);
@@ -45,6 +53,21 @@ export function transcriptToMessages(lines: readonly string[]): ResumedTranscrip
   });
   flush();
   return { messages: repair(messages), lastUuid, warnings };
+}
+
+function compactionOf(line: Record<string, unknown>): { summary: string; tail: ChatMessage[] } | null {
+  if (line.type !== 'system' || line.subtype !== 'compact_boundary') return null;
+  const data = line.mageCompaction;
+  if (typeof data !== 'object' || data === null) return null;
+  const { summary, tail } = data as { summary?: unknown; tail?: unknown };
+  if (typeof summary !== 'string' || !Array.isArray(tail)) return null;
+  return { summary, tail: tail.filter(isChatMessage) };
+}
+
+function isChatMessage(value: unknown): value is ChatMessage {
+  if (typeof value !== 'object' || value === null) return false;
+  const role = (value as { role?: unknown }).role;
+  return role === 'user' || role === 'assistant' || role === 'tool' || role === 'system';
 }
 
 function parseLine(raw: string, index: number, warnings: string[]): Record<string, unknown> | null {

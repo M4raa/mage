@@ -225,6 +225,53 @@ describe('runtime propio contra el servidor falso', () => {
     expect(usage?.maxTokens).toBe(2048);
   });
 
+  it('contexto_seLlena_seResumeConElModeloYSeSigueYSeReanudaConElResumen', async () => {
+    fake = await startFakeOpenAiServer();
+    const events = [];
+    const params = { cwd: tempProject({}), sessionId: 'resumen-1' };
+    const session = buildRuntimeSession('custom:falso', launch('fake:resumen', events, params), envFor(fake.baseUrl));
+    session.start();
+
+    for (let turn = 0; turn < 10 && !events.some((e) => e.kind === 'compacted'); turn++) {
+      const before = events.filter((e) => e.kind === 'result').length;
+      session.sendUserMessage(`mensaje ${turn}`);
+      await waitFor(events, () => events.filter((e) => e.kind === 'result').length > before);
+    }
+    session.stop();
+
+    expect(events).toContainEqual({ kind: 'compacted', trigger: 'auto' });
+    expect(events.some((e) => e.kind === 'error')).toBe(false);
+    const after = fake.stats.requests.at(-1).messages;
+    expect(after[1].content).toMatch(/^\[Resumen de la conversación anterior/);
+
+    const resumed = [];
+    const again = buildRuntimeSession('custom:falso', launch('fake:cuenta-mensajes', resumed, { ...params, resume: true }), envFor(fake.baseUrl));
+    again.start();
+    again.sendUserMessage('sigo');
+    await waitFor(resumed, (e) => e.kind === 'result');
+    expect(fake.stats.requests.at(-1).messages[1].content).toMatch(/RESUMEN: el usuario/);
+  });
+
+  it('textual_modeloSinHerramientasEscribeLaLlamada_MageLaEjecutaYLeDevuelveElResultado', async () => {
+    fake = await startFakeOpenAiServer();
+    const events = [];
+    const cwd = tempProject({ 'hola.txt': 'hola' });
+    const env = envFor(fake.baseUrl, {
+      findProvider: (id) => ({ id, label: 'Falso', baseUrl: fake.baseUrl, hasApiKey: false, models: [], supportsTools: false }),
+    });
+    const session = buildRuntimeSession('custom:falso', launch('fake:tool-en-texto', events, { cwd }), env);
+    session.start();
+    session.sendUserMessage('lee hola.txt');
+    await waitFor(events, (e) => e.kind === 'result');
+
+    const [first, second] = fake.stats.requests;
+    expect(first.tools).toBeUndefined();
+    expect(first.messages[0].content).toContain('<tool_call>');
+    expect(events.find((e) => e.kind === 'tool_result').result).toMatchObject({ isError: false });
+    expect(second.messages.at(-1)).toMatchObject({ role: 'user', content: expect.stringContaining('<tool_result name="Read">') });
+    expect(second.messages.some((m) => m.role === 'tool')).toBe(false);
+  });
+
   it('herramientas_catalogoDiceQueNo_noSeMandanYSeAvisa', async () => {
     fake = await startFakeOpenAiServer();
     const events = [];
