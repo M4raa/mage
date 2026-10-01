@@ -4,7 +4,7 @@
 // formulario de esa seccion. Todo son funciones puras: el estado lo trae el store.
 import type { CustomProvider, ProviderModel } from '@shared/providers';
 import { AGY_EFFORT_LEVELS, AGY_PROVIDER_ID, BUILT_IN_PROVIDERS, CUSTOM_PROVIDER_ID_PREFIX, chatCompletionsUrl } from '@shared/providers';
-import { EFFORT_LEVELS } from '@shared/ipc';
+import { EFFORT_LEVELS, type RuntimeProbeResult } from '@shared/ipc';
 
 export type ModelOption = ProviderModel;
 
@@ -113,7 +113,15 @@ export interface CustomProviderDraft {
   readonly apiKey: string;
   readonly forgetApiKey: boolean;
   readonly models: string;
+  // Ventana de contexto en tokens ('' = la pregunta el runtime al servidor) y herramientas (P-032 R7).
+  readonly contextWindow: string;
+  readonly supportsTools: ToolsChoice;
 }
+
+export type ToolsChoice = 'auto' | 'yes' | 'no';
+
+// La ventana tiene que dejar sitio a la respuesta (la reserva del runtime es de 1024 tokens).
+const MIN_CONTEXT_WINDOW = 1_025;
 
 // Que hacer con la clave en la boveda de main al guardar el proveedor.
 export type ApiKeyUpdate =
@@ -125,7 +133,38 @@ export type CustomProviderValidation =
   | { readonly ok: true; readonly provider: CustomProvider; readonly apiKeyUpdate: ApiKeyUpdate }
   | { readonly ok: false; readonly message: string };
 
-export const EMPTY_CUSTOM_PROVIDER_DRAFT: CustomProviderDraft = { label: '', baseUrl: '', apiKey: '', forgetApiKey: false, models: '' };
+export const EMPTY_CUSTOM_PROVIDER_DRAFT: CustomProviderDraft = {
+  label: '',
+  baseUrl: '',
+  apiKey: '',
+  forgetApiKey: false,
+  models: '',
+  contextWindow: '',
+  supportsTools: 'auto',
+};
+
+// El borrador con el que se edita un proveedor ya guardado.
+export function draftFromProvider(provider: CustomProvider): CustomProviderDraft {
+  return {
+    ...EMPTY_CUSTOM_PROVIDER_DRAFT,
+    label: provider.label,
+    baseUrl: provider.baseUrl,
+    models: provider.models.map((model) => model.id).join(', '),
+    contextWindow: provider.contextWindow === undefined ? '' : String(provider.contextWindow),
+    supportsTools: provider.supportsTools === undefined ? 'auto' : provider.supportsTools ? 'yes' : 'no',
+  };
+}
+
+// Lo que «Probar conexión» rellena: los modelos del servidor y, si los supo, ventana y herramientas.
+// Lo que no supo se deja como estaba (nunca se borra lo que el usuario escribio).
+export function applyRuntimeProbe(draft: CustomProviderDraft, result: RuntimeProbeResult): CustomProviderDraft {
+  return {
+    ...draft,
+    ...(result.models === null || result.models.length === 0 ? {} : { models: result.models.join(', ') }),
+    ...(result.contextWindow === null ? {} : { contextWindow: String(result.contextWindow) }),
+    ...(result.supportsTools === null ? {} : { supportsTools: result.supportsTools ? 'yes' : 'no' }),
+  };
+}
 
 // Ids de modelo de un texto libre, sin duplicados y sin huecos.
 export function parseModelIds(text: string): readonly string[] {
@@ -170,6 +209,10 @@ export function validateCustomProviderDraft(
   if (modelIds.length === 0) {
     return { ok: false, message: 'Indica al menos un modelo (ids separados por comas), p. ej. llama3, mistral.' };
   }
+  const contextWindow = parseContextWindow(draft.contextWindow);
+  if (contextWindow === null) {
+    return { ok: false, message: `La ventana de contexto tiene que ser un número entero de tokens mayor que ${MIN_CONTEXT_WINDOW - 1} (o vacía).` };
+  }
 
   // Ids ya cogidos (de serie + del usuario) para generar uno nuevo que no colisione. Al editar, el id
   // propio no cuenta: se conserva tal cual para no romper las pestanas y ajustes que ya lo referencian.
@@ -187,9 +230,31 @@ export function validateCustomProviderDraft(
       baseUrl: draft.baseUrl.trim(),
       hasApiKey: apiKeyUpdate.kind === 'keep' ? hadApiKey : apiKeyUpdate.kind === 'set',
       models: modelIds.map((id) => ({ id, label: id })),
+      ...(contextWindow === undefined ? {} : { contextWindow }),
+      ...(draft.supportsTools === 'auto' ? {} : { supportsTools: draft.supportsTools === 'yes' }),
     },
     apiKeyUpdate,
   };
+}
+
+// Linea de resultado de «Probar conexión».
+export function runtimeProbeSummary(result: RuntimeProbeResult): string {
+  const models = result.models?.length ?? 0;
+  const parts = [
+    `${models} modelo${models === 1 ? '' : 's'}`,
+    result.contextWindow === null ? 'ventana: la del servidor no se supo' : `ventana de ${result.contextWindow} tokens`,
+    result.supportsTools === null ? 'herramientas: sin saber' : result.supportsTools ? 'con herramientas' : 'sin herramientas',
+  ];
+  return `Conectado: ${parts.join(' · ')}.${result.warning === null ? '' : ` ${result.warning}`}`;
+}
+
+// '' = sin fijar (undefined); un numero valido; null = invalido.
+function parseContextWindow(text: string): number | undefined | null {
+  const clean = text.trim();
+  if (clean.length === 0) return undefined;
+  if (!/^\d+$/.test(clean)) return null;
+  const value = Number(clean);
+  return Number.isSafeInteger(value) && value >= MIN_CONTEXT_WINDOW ? value : null;
 }
 
 // Una clave tecleada gana a «quitar la guardada»: es lo ultimo que el usuario quiso decir.

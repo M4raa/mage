@@ -1,0 +1,54 @@
+import { z } from 'zod';
+import type { RuntimeProbeParams, RuntimeProbeResult } from '@shared/ipc';
+import { CUSTOM_PROVIDER_ID_PREFIX } from '@shared/providers';
+import type { ModelCatalog } from './modelCatalog';
+
+// «Probar conexión» del formulario de proveedor (P-032 R7): lista los modelos del endpoint y, del
+// primero, la ventana y si admite herramientas, para rellenar el formulario sin tocar JSON.
+// La clave NUNCA llega del renderer: si el proveedor ya existe, sale de la boveda por su id.
+
+// `.strict()`: una peticion con cualquier otro campo (una `apiKey`, por ejemplo) se rechaza entera.
+const PARAMS_SCHEMA = z
+  .object({
+    providerId: z.string().startsWith(CUSTOM_PROVIDER_ID_PREFIX).nullable(),
+    baseUrl: z.string().trim().min(1),
+  })
+  .strict();
+
+export function parseRuntimeProbeParams(raw: unknown): RuntimeProbeParams {
+  const result = PARAMS_SCHEMA.safeParse(raw);
+  // El mensaje no cita valores: podria venir una clave en un campo que no toca.
+  if (!result.success) throw new Error(`Peticion de prueba de conexion invalida: ${result.error.issues.map((i) => i.path.join('.') || i.code).join(', ')}`);
+  return result.data;
+}
+
+export interface RuntimeProbeDeps {
+  readonly catalog: ModelCatalog;
+  readonly apiKeyFor: (providerId: string) => string | null;
+}
+
+export async function probeRuntimeEndpoint(params: RuntimeProbeParams, deps: RuntimeProbeDeps): Promise<RuntimeProbeResult> {
+  const apiKey = params.providerId === null ? null : deps.apiKeyFor(params.providerId);
+  const endpoint = { id: params.providerId ?? 'custom:nuevo', baseUrl: params.baseUrl, apiKey };
+  let models: string[];
+  try {
+    models = await deps.catalog.listModels(endpoint);
+  } catch (err) {
+    return { models: null, contextWindow: null, supportsTools: null, warning: null, error: `No se pudo conectar: ${scrub(err, apiKey)}` };
+  }
+  const first = models[0];
+  if (first === undefined) return { models, contextWindow: null, supportsTools: null, warning: null, error: null };
+  const info = await deps.catalog.info(endpoint, first);
+  return {
+    models,
+    contextWindow: info.contextSource === 'default' ? null : info.contextWindow,
+    supportsTools: info.supportsTools,
+    warning: info.warning,
+    error: null,
+  };
+}
+
+function scrub(err: unknown, apiKey: string | null): string {
+  const message = err instanceof Error ? err.message : String(err);
+  return apiKey === null || apiKey.length === 0 ? message : message.split(apiKey).join('***');
+}

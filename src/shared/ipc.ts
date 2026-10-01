@@ -51,6 +51,22 @@ export interface ProviderProbeParams {
   readonly baseUrl: string | null;
 }
 
+// «Probar conexión» de un proveedor del runtime propio (P-032 R7). Sin clave: si el proveedor ya existe
+// (`providerId`), main la saca de la boveda; si es nuevo, se prueba sin ella.
+export interface RuntimeProbeParams {
+  readonly providerId: string | null;
+  readonly baseUrl: string;
+}
+
+// Modelos del endpoint y, del primero, ventana y herramientas. null = no se supo.
+export interface RuntimeProbeResult {
+  readonly models: readonly string[] | null;
+  readonly contextWindow: number | null;
+  readonly supportsTools: boolean | null;
+  readonly warning: string | null;
+  readonly error: string | null;
+}
+
 // Guardar la api key de un proveedor DEL USUARIO en la boveda de main. Sube una vez y no vuelve.
 export interface ProviderApiKeySetParams {
   readonly providerId: string;
@@ -88,6 +104,7 @@ export const IpcChannel = {
   // Sondeo de un proveedor (D2): a donde apunta y que modelos ofrece DE VERDAD. Solo main puede mirar
   // el disco/PATH y salir a la red.
   ProviderProbe: 'engine:providerProbe',
+  RuntimeProbe: 'runtime:probe',
   // Clave de un proveedor del usuario: guardarla o borrarla en la boveda de main. No hay canal para
   // LEERLA: el renderer solo sabe si existe (`CustomProvider.hasApiKey`).
   ProviderApiKeySet: 'secrets:providerApiKeySet',
@@ -736,6 +753,7 @@ export interface MageApi {
   // Sondea un proveedor para la seccion "Proveedores y modelos" (D2). Nunca rechaza por un fallo DEL
   // PROVEEDOR: eso viaja en `error` para que la UI lo pueda decir en vez de inventarse una lista.
   probeProvider(params: ProviderProbeParams): Promise<ProviderProbeResult>;
+  probeRuntime(params: RuntimeProbeParams): Promise<RuntimeProbeResult>;
   // Guarda (cifrada, en main) o borra la api key de un proveedor del usuario. Rechaza si el cifrado del
   // sistema no esta disponible: nunca se guarda en claro.
   setProviderApiKey(params: ProviderApiKeySetParams): Promise<void>;

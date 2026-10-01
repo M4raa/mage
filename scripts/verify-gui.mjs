@@ -36,7 +36,7 @@ import path from 'node:path';
 import readline from 'node:readline/promises';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
-import { FAKE_OPENAI_MODEL, FAKE_OPENAI_REPLY, startFakeOpenAiServer } from './fake-openai-server.mjs';
+import { FAKE_SCENARIOS, startFakeOpenAiServer } from './fake-openai-server.mjs';
 import { decideTurnTarget, parseTurnAnswer, spentPercent } from './lib/usageGuard.mjs';
 
 const repoRoot = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
@@ -1238,6 +1238,42 @@ const CHECKS = [
         ok,
         detail: `botones de borrado=${targets} filas tras borrar=${rows} sigue en Modelos=${inModels} sigue en Nueva conversacion=${inNewTab} opciones=${JSON.stringify(options)}`,
       };
+    },
+  },
+  {
+    // P-032 R7: «Probar conexión» del formulario de proveedor pregunta al servidor (aqui, el falso) y
+    // rellena los modelos, la ventana y las herramientas sin tocar JSON. No guarda nada: cancela y
+    // cierra Configuracion, como llego.
+    name: 'Runtime propio: «Probar conexión» rellena los modelos, la ventana y las herramientas',
+    async run(page) {
+      const fake = await startFakeOpenAiServer();
+      try {
+        await openSettingsDialog(page);
+        await openSection(page, /Proveedores/);
+        await page.getByRole('button', { name: /Añadir proveedor/ }).click();
+        await page.getByRole('textbox', { name: 'URL base del endpoint compatible con la API de OpenAI' }).fill(fake.baseUrl);
+        await page.locator('[data-runtime-probe="true"]').click();
+        const status = page.locator('[data-runtime-probe-status="true"]');
+        await status.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const measured = {
+          estado: (await status.innerText()).trim(),
+          modelos: (await page.getByRole('textbox', { name: 'Modelos del proveedor, separados por comas' }).inputValue()).split(',').map((m) => m.trim()).filter(Boolean).length,
+          ventana: await page.getByRole('textbox', { name: 'Ventana de contexto del modelo, en tokens' }).inputValue(),
+          herramientas: ((await page.getByRole('button', { name: 'Si el modelo admite herramientas' }).innerText()) ?? '').trim(),
+          peticionesDeModelos: fake.stats.models,
+        };
+        await page.getByRole('button', { name: 'Cancelar', exact: true }).click();
+        const closed = await closeDialog(page);
+        const ok =
+          measured.modelos === FAKE_SCENARIOS.length + 1 &&
+          measured.ventana === '32768' &&
+          measured.herramientas.endsWith('sí') &&
+          measured.peticionesDeModelos >= 1 &&
+          closed === 0;
+        return { ok, detail: JSON.stringify({ ...measured, dialogosAlCerrar: closed }) };
+      } finally {
+        await fake.close();
+      }
     },
   },
   {

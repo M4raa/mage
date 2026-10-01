@@ -384,8 +384,9 @@ function LocalEndpointBody({ onClose }: { readonly onClose: () => void }): React
   return (
     <div data-add-account-local="true" className="flex flex-col gap-[8px]">
       <div className="text-[11px] leading-[1.5] text-mg-body2">
-        Un servidor compatible con la API de OpenAI (Ollama, LM Studio…) en su IP y puerto. Sus pestañas corren
-        sobre una de tus cuentas de Claude a través del puente local de Mage. Se puede editar en Ajustes › Proveedores y modelos.
+        Un servidor compatible con la API de OpenAI (Ollama, LM Studio…) en su IP y puerto. Sus conversaciones las
+        ejecuta Mage por sí mismo (no hay CLI de por medio). «Probar conexión» rellena los modelos. Se puede editar en
+        Ajustes › Proveedores y modelos.
       </div>
       <ProviderForm
         idSuffix="alta"

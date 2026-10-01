@@ -20,6 +20,8 @@ import {
   providerModels,
   providerOptions,
   validateCustomProviderDraft,
+  applyRuntimeProbe,
+  draftFromProvider,
   type CustomProviderDraft,
 } from './models';
 
@@ -37,7 +39,7 @@ function customProvider(overrides: Partial<CustomProvider> = {}): CustomProvider
 }
 
 function draft(overrides: Partial<CustomProviderDraft> = {}): CustomProviderDraft {
-  return { label: 'Ollama', baseUrl: 'http://localhost:11434/v1', apiKey: '', forgetApiKey: false, models: 'llama3, mistral', ...overrides };
+  return { label: 'Ollama', baseUrl: 'http://localhost:11434/v1', apiKey: '', forgetApiKey: false, models: 'llama3, mistral', contextWindow: '', supportsTools: 'auto', ...overrides };
 }
 
 describe('modelOptionsForProvider', () => {
@@ -393,5 +395,42 @@ describe('displayModelId', () => {
 
   it('displayModelId_sinSufijo_talCual', () => {
     expect(displayModelId('haiku', OPTIONS)).toBe('haiku');
+  });
+});
+
+// P-032 R7: ventana y herramientas en el formulario del proveedor, y lo que rellena «Probar conexión».
+describe('borrador de proveedor del runtime', () => {
+  it('validate_ventanaYHerramientas_pasanAlProveedor', () => {
+    const result = validateCustomProviderDraft(draft({ contextWindow: ' 8192 ', supportsTools: 'no' }), [], null);
+
+    expect(result.ok && result.provider).toMatchObject({ contextWindow: 8192, supportsTools: false });
+  });
+
+  it('validate_sinFijar_noLasDeclara', () => {
+    const result = validateCustomProviderDraft(draft(), [], null);
+
+    expect(result.ok && 'contextWindow' in result.provider).toBe(false);
+    expect(result.ok && 'supportsTools' in result.provider).toBe(false);
+  });
+
+  it('validate_ventanaInvalida_loDice', () => {
+    for (const value of ['abc', '512', '-4', '1.5']) {
+      const result = validateCustomProviderDraft(draft({ contextWindow: value }), [], null);
+      expect(result.ok, value).toBe(false);
+    }
+  });
+
+  it('applyRuntimeProbe_rellenaLoQueSupoYConservaElResto', () => {
+    const filled = applyRuntimeProbe(draft({ contextWindow: '4096' }), { models: ['a', 'b'], contextWindow: null, supportsTools: true, warning: null, error: null });
+
+    expect(filled).toMatchObject({ models: 'a, b', contextWindow: '4096', supportsTools: 'yes' });
+  });
+
+  it('draftFromProvider_idaYVuelta_mismoProveedor', () => {
+    const provider = customProvider({ contextWindow: 16000, supportsTools: true });
+
+    const result = validateCustomProviderDraft(draftFromProvider(provider), [provider], provider.id);
+
+    expect(result.ok && result.provider).toMatchObject({ contextWindow: 16000, supportsTools: true, models: provider.models });
   });
 });

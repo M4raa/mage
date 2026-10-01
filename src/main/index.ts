@@ -134,6 +134,7 @@ import { SessionManager } from './engine/sessionManager';
 import { createSessionFor } from './engine/sessionFactory';
 import { buildRuntimeSession, type RuntimeEnv } from './runtime/runtimeFactory';
 import { ModelCatalog } from './runtime/modelCatalog';
+import { parseRuntimeProbeParams, probeRuntimeEndpoint } from './runtime/runtimeProbe';
 import type { AccountLayout, ProviderAdapter, SharedLaunchConfig } from './engine/providerAdapter';
 import {
   buildSettingsFragment,
@@ -2340,6 +2341,10 @@ function registerIpcHandlers(): void {
       params,
       defaultProbeDeps(() => getCommandCatalogStore().loadModels(join(homedir(), cliLogin.accounts.mainDirName)), readCustomProviderApiKey),
     ),
+  );
+  // «Probar conexión» del runtime propio (P-032 R7): la clave, si la hay, sale de la boveda aqui.
+  ipcMain.handle(IpcChannel.RuntimeProbe, (_e, raw: unknown) =>
+    probeRuntimeEndpoint(parseRuntimeProbeParams(raw), { catalog: runtimeModelCatalog, apiKeyFor: (id) => getSecretStore().get(providerApiKeySecretId(id)) }),
   );
   // Clave de un proveedor del usuario: sube UNA vez, al guardarla, y se cifra en main. No hay canal para
   // leerla de vuelta: el renderer solo ve `hasApiKey` en los ajustes.
