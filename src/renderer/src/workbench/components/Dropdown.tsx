@@ -150,7 +150,9 @@ export function Dropdown({
                     aria-selected={o.value === value}
                     tabIndex={o.value === value ? 0 : -1}
                     onClick={() => {
-                      onChange(o.value);
+                      // Como el <select> nativo: reelegir la opción puesta no es un cambio (el selector
+                      // de modelo avisaba «Modelo cambiado» al reelegir Opus sobre `opus[1m]`).
+                      if (o.value !== value) onChange(o.value);
                       close();
                     }}
                     className={`block w-full px-[10px] py-[5px] text-left transition-colors duration-150 ease-out hover:bg-mg-hover ${

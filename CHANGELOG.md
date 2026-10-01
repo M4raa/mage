@@ -89,6 +89,8 @@ versión.
 - Los proveedores compatibles con OpenAI (Ollama, LM Studio…) ya pintan su respuesta: antes el turno
   terminaba vacío.
 - El aviso «Abre una pestaña…» ya no se queda en el prompt después de abrir un chat.
+- Volver a elegir en un desplegable la opción que ya estaba puesta no cuenta como un cambio: el selector
+  de modelo avisaba «Modelo cambiado» sin haber cambiado nada.
 - La fila de controles del prompt ya no baja unos píxeles al elegir un esfuerzo alto.
 - Si falla algo que acabas de pedir (cambiar de rama, borrar una conversación, abrir un enlace, mover una
   pestaña a otra ventana, guardar la configuración, instalar la actualización…), Mage lo dice en vez de

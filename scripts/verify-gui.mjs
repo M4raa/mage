@@ -1928,10 +1928,21 @@ const CHECKS = [
       });
       const propia = (await trigger.count()) === 0;
       if (propia) await openTemporaryConversation(page);
-      // La pestaña temporal nace en Opus: se parte de Sonnet para que el cambio encarezca.
-      if (propia) await page.evaluate(() => window.__mageDev.store.getState().setActiveModel('sonnet'));
+      // Las pestañas nacen en Opus, también la que deja una comprobación anterior en la tanda completa:
+      // se parte SIEMPRE de Sonnet para que el cambio encarezca, y al final se repone el modelo de antes.
+      const modeloPrevio = await page.evaluate(() => {
+        const st = window.__mageDev.store.getState();
+        const modelo = st.tabs.find((t) => t.id === st.activeTabId)?.model ?? null;
+        st.setActiveModel('sonnet');
+        return modelo;
+      });
+      await clearNotifications(page);
       await trigger.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
       const initial = (await trigger.innerText()).trim();
+      // Elegir la opción que ya está puesta no es un cambio: no avisa (el Dropdown no dispara onChange).
+      await pickDropdownOption(page, 'Modelo (aplica al siguiente turno)', new RegExp(`^${escapeRegExp(initial)}$`, 'i'));
+      await page.waitForTimeout(CONFIG.settleMs);
+      const avisosSinCambio = await page.locator('[data-notification-toasts="true"] [data-notification-level]').count();
       const opus = await pickDropdownOption(page, 'Modelo (aplica al siguiente turno)', /opus/i);
       if (opus === null) return { ok: false, detail: `no hay ninguna opcion de Opus en el selector (modelo actual=${JSON.stringify(initial)})` };
       // Grupo G: el aviso es un toast de la pestaña (`warning` si encarece), con su ✕.
@@ -1949,10 +1960,13 @@ const CHECKS = [
       await clearNotifications(page);
       const restored = (await trigger.innerText()).trim();
       if (propia) await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
-      const ok = warned === 1 && text !== null && /opus/i.test(text) && level === 'warning' && dismissed === 0 && restored === initial;
+      else if (modeloPrevio !== null) await page.evaluate((m) => window.__mageDev.store.getState().setActiveModel(m), modeloPrevio);
+      await clearNotifications(page);
+      const ok =
+        avisosSinCambio === 0 && warned === 1 && text !== null && /opus/i.test(text) && level === 'warning' && dismissed === 0 && restored === initial;
       return {
         ok,
-        detail: `modelo ${JSON.stringify(initial)} -> ${JSON.stringify(opus)} avisos=${warned} nivel=${level} texto=${JSON.stringify(text)} tras descartar=${dismissed} modelo repuesto=${JSON.stringify(restored)}`,
+        detail: `sin cambio=${avisosSinCambio} avisos · modelo ${JSON.stringify(initial)} -> ${JSON.stringify(opus)} avisos=${warned} nivel=${level} texto=${JSON.stringify(text)} tras descartar=${dismissed} modelo repuesto=${JSON.stringify(restored)}`,
       };
     },
   },
