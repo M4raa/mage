@@ -99,6 +99,7 @@ interface RoundResult {
   readonly calls: readonly AssembledToolCall[];
   readonly reason: FinishReason;
   readonly usage: RoundUsage | null;
+  readonly requestMessages: number;
 }
 
 export async function runTurn(input: TurnInput, deps: LoopDeps): Promise<TurnOutcome> {
@@ -121,10 +122,14 @@ export async function runTurn(input: TurnInput, deps: LoopDeps): Promise<TurnOut
       const ids = calls.map((call) => call.id ?? `rt-${deps.newId()}`);
       input.history.push(assistantMessage(round.text, calls, ids));
       if (round.text.length > 0) deps.emit({ kind: 'text_done', text: round.text });
+      // Las llamadas se anuncian ANTES de cerrar la vuelta: quien escribe la transcripcion cierra la linea
+      // `assistant` en `round_done`, y esa linea tiene que llevar sus `tool_use` y preceder a sus resultados.
+      const plans = calls.map((call, i) => prepareCall(call, ids[i]!, deps));
+      deps.emit({ kind: 'round_done', usage: round.usage, requestMessages: round.requestMessages });
       if (input.signal.aborted) return closeInterrupted(input, ids, 0, finish);
       if (round.reason === 'length') return finish('error', 'El modelo cortó la respuesta por longitud (límite de tokens de salida).');
       if (calls.length === 0) return finish('success');
-      const done = await runCalls(calls, ids, input, deps);
+      const done = await runCalls(plans, input, deps);
       if (done < calls.length) return closeInterrupted(input, ids, done, finish);
       if (state.rounds >= MAX_TOOL_ROUNDS) {
         return finish('error', `El modelo superó ${MAX_TOOL_ROUNDS} vueltas de herramientas en un turno; se para aquí.`);
@@ -141,7 +146,7 @@ async function streamRound(input: TurnInput, deps: LoopDeps, state: { toolsEnabl
   const messages = deps.fit([{ role: 'system', content: input.system }, ...input.history]);
   const tools = state.toolsEnabled ? deps.tools.specs() : [];
   deps.emit({ kind: 'request_started' });
-  const round = { text: '', calls: [] as AssembledToolCall[], reason: 'stop' as FinishReason, usage: null as RoundUsage | null };
+  const round = { text: '', calls: [] as AssembledToolCall[], reason: 'stop' as FinishReason, usage: null as RoundUsage | null, requestMessages: messages.length };
   try {
     const request = { model: input.model, messages, ...(tools.length === 0 ? {} : { tools }) };
     for await (const part of deps.client.streamChat(request, input.signal)) {
@@ -159,14 +164,12 @@ async function streamRound(input: TurnInput, deps: LoopDeps, state: { toolsEnabl
     deps.emit({ kind: 'notice', text: NO_TOOLS_NOTICE });
     return null;
   }
-  deps.emit({ kind: 'round_done', usage: round.usage, requestMessages: messages.length });
   return round;
 }
 
 // Ejecuta las llamadas EN ORDEN; las lecturas seguidas van en paralelo (D9b). Devuelve cuantas
 // terminaron: menos que `calls.length` = se aborto a mitad.
-async function runCalls(calls: readonly AssembledToolCall[], ids: readonly string[], input: TurnInput, deps: LoopDeps): Promise<number> {
-  const prepared = calls.map((call, i) => prepareCall(call, ids[i]!, deps));
+async function runCalls(prepared: readonly CallPlan[], input: TurnInput, deps: LoopDeps): Promise<number> {
   let done = 0;
   while (done < prepared.length) {
     if (input.signal.aborted) return done;

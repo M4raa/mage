@@ -175,6 +175,32 @@ describe('runtime propio contra el servidor falso', () => {
     expect(reply).toBe('mensajes: 3');
   });
 
+  it('transcripcion_turnoConHerramientas_cadaAssistantPrecedeASusResultados', async () => {
+    fake = await startFakeOpenAiServer();
+    const cwd = tempProject({ 'hola.txt': 'hola' });
+    const events = [];
+    const params = { cwd, sessionId: 'orden-1' };
+    const session = buildRuntimeSession('custom:falso', launch('fake:openai-troceado', events, params), envFor(fake.baseUrl));
+    session.start();
+    session.sendUserMessage('lee hola.txt');
+    await waitFor(events, (e) => e.kind === 'result');
+    session.stop();
+
+    const file = join(transcriptRoot, 'projects', cwd.replace(/[^a-zA-Z0-9]/g, '-'), 'orden-1.jsonl');
+    const lines = readFileSync(file, 'utf8').trim().split(/\r?\n/).map((line) => JSON.parse(line));
+    const order = lines.map((line) => (line.type === 'user' && Array.isArray(line.message.content) ? 'tool_result' : line.type));
+    expect(order).toEqual(['user', 'assistant', 'tool_result', 'tool_result', 'assistant']);
+    expect(lines[1].message.content.map((block) => block.type)).toEqual(['tool_use', 'tool_use']);
+
+    const resumed = [];
+    const again = buildRuntimeSession('custom:falso', launch('fake:cuenta-mensajes', resumed, { ...params, resume: true }), envFor(fake.baseUrl));
+    again.start();
+    again.sendUserMessage('y ahora?');
+    await waitFor(resumed, (e) => e.kind === 'result');
+    const sent = fake.stats.requests.at(-1).messages.map((m) => m.role);
+    expect(sent).toEqual(['system', 'user', 'assistant', 'tool', 'tool', 'assistant', 'user']);
+  });
+
   it('turno_proveedorNoConfigurado_lanzaConElId', () => {
     expect(() => buildRuntimeSession('custom:otro', launch('m', []), envFor('http://127.0.0.1:1/v1'))).toThrow(/custom:otro/);
   });
