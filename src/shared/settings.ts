@@ -143,6 +143,12 @@ export interface AppSettings {
   // `ENABLE_CLAUDEAI_MCP_SERVERS=false` (medido en 2.1.285: 0 conectores). No se escribe nada en su
   // config dir. Default []: todas los usan, como siempre.
   readonly claudeAiConnectorsOff: readonly string[];
+  // Aviso «PR: instala gh / inicia sesión en gh» (grupo D, DA-3) descartado para siempre. Ajustes ›
+  // General lo vuelve a encender. Default false.
+  readonly ghNoticeDismissed: boolean;
+  // Archivar sola la conversacion (cerrar su pestaña y borrar su worktree si esta limpio) cuando su PR se
+  // fusiona o se cierra, como el «Auto-archive» de Claude Desktop. Solo con la pestaña parada. Default false.
+  readonly autoArchiveOnPrClose: boolean;
 }
 
 // Nº de acentos del tema (--mg-accent-<i>-* en index.css); lo comparten cuentas y pestañas.
@@ -196,4 +202,6 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   defaultProvider: 'claude',
   accentByAccount: {},
   claudeAiConnectorsOff: [],
+  ghNoticeDismissed: false,
+  autoArchiveOnPrClose: false,
 };

@@ -41,6 +41,7 @@ export function toPersistedWorkspace(
       ...(tab.pinned === undefined ? {} : { pinned: tab.pinned }),
       ...(tab.colorIndex === undefined ? {} : { colorIndex: tab.colorIndex }),
       ...(tab.pendingCliTitle === undefined ? {} : { pendingCliTitle: tab.pendingCliTitle }),
+      ...prFields(tab),
     };
   });
   return {
@@ -93,6 +94,7 @@ export function restoreTabs(
       ...(t.pinned === undefined ? {} : { pinned: t.pinned }),
       ...(t.colorIndex === undefined ? {} : { colorIndex: t.colorIndex }),
       ...(t.pendingCliTitle === undefined ? {} : { pendingCliTitle: t.pendingCliTitle }),
+      ...prFields(t),
     }));
 
   const activeTabId = tabs.some((t) => t.id === persisted.activeTabId)
@@ -107,4 +109,13 @@ export function restoreTabs(
   const pruned = activeTabId.length === 0 ? null : pruneSplitLayout(rawLayout, survivingIds);
   const splitLayout = pruned === null || findLeafPath(pruned, activeTabId) === null ? singleLeaf(activeTabId) : pruned;
   return { tabs, activeTabId, splitLayout };
+}
+
+// Los tres campos del PR vinculado (grupo D) viajan igual en las dos direcciones; ausentes no se escriben.
+function prFields(tab: Pick<Tab, 'prNumber' | 'prDismissed' | 'prAutoFix'>): Pick<Tab, 'prNumber' | 'prDismissed' | 'prAutoFix'> {
+  return {
+    ...(tab.prNumber === undefined ? {} : { prNumber: tab.prNumber }),
+    ...(tab.prDismissed === undefined ? {} : { prDismissed: tab.prDismissed }),
+    ...(tab.prAutoFix === undefined ? {} : { prAutoFix: tab.prAutoFix }),
+  };
 }

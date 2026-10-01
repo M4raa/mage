@@ -52,6 +52,12 @@ export const PERSISTED_TAB_SCHEMA = z.object({
   // Nombre puesto en Mage que aun no llego al CLI como `/rename` (P-026, D3). Opcional: un estado
   // anterior sin el campo parsea igual.
   pendingCliTitle: z.string().min(1).optional(),
+  // PR vinculado a la pestaña (grupo D): el que vigila main. `prDismissed` es el que el usuario quito con
+  // la ✕, para no volver a vincularlo solo; `prAutoFix`, el interruptor de auto-fix de ese PR (apagado).
+  // `.catch(undefined)`: un valor raro deja la pestaña sin PR, no sin restaurar.
+  prNumber: z.number().int().positive().optional().catch(undefined),
+  prDismissed: z.number().int().positive().optional().catch(undefined),
+  prAutoFix: z.boolean().optional().catch(undefined),
 });
 
 // Arbol de division del centro (I11, ampliado en I12): generaliza `splitTabId`/`splitDirection`

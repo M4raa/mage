@@ -1,6 +1,6 @@
 import { dirname, join } from 'node:path';
 import type { GitRepoState, GitSnapshot } from '@shared/git';
-import { parseBranches, parseNumstat, parseStatusV2, switchTargetError } from './gitParse';
+import { parseBranches, parseNumstat, parseRemoteUrl, parseStatusV2, pickRemoteUrl, switchTargetError, type GitRemoteRef } from './gitParse';
 
 // Git de la carpeta de una conversacion (P-026 3.5, fase A): estado, ramas y cambio de rama. Todo
 // inyectado (binario, runner, confianza, deteccion del repo) para poder testear sin procesos.
@@ -25,6 +25,9 @@ export interface GitService {
   status(cwd: string, accountDir: string): Promise<GitSnapshot>;
   branches(cwd: string, accountDir: string): Promise<readonly string[]>;
   switchBranch(cwd: string, accountDir: string, name: string): Promise<void>;
+  // Remoto de la rama actual (o `origin`), ya sin credenciales. null sin git, sin repo, sin confianza,
+  // con la HEAD suelta o sin un remoto reconocible.
+  remote(cwd: string, accountDir: string): Promise<GitRemoteRef | null>;
 }
 
 const READ_FLAGS = ['-c', 'core.fsmonitor=false'] as const;
@@ -76,6 +79,17 @@ class CachedGitService implements GitService {
     this.cache.delete(cwd);
     await this.deps.run(gated.git, ['switch', name], { cwd, env: this.env });
     this.cache.delete(cwd);
+  }
+
+  async remote(cwd: string, accountDir: string): Promise<GitRemoteRef | null> {
+    const status = await this.status(cwd, accountDir);
+    if (status.kind !== 'repo' || status.branch === null) return null;
+    const gated = this.gate(cwd, accountDir);
+    if (!('git' in gated)) return null;
+    // Las dos salen con 0 aunque no haya remotos ni upstream (no hay que distinguir fallos por stderr).
+    const upstream = await this.read(gated.git, cwd, ['for-each-ref', '--format=%(upstream:remotename)', `refs/heads/${status.branch}`]);
+    const url = pickRemoteUrl(await this.read(gated.git, cwd, ['remote', '-v']), upstream);
+    return url === null ? null : parseRemoteUrl(url);
   }
 
   // Precondiciones comunes: hay git, hay repo y la carpeta es de confianza. Si falta algo, el motivo.

@@ -88,6 +88,14 @@ export interface Tab {
   // mitad de un turno. Se manda como `/rename` al acabar el siguiente turno, y mientras exista, el
   // `custom-title` de la transcripcion (el viejo) no pisa el titulo de la pestaña.
   readonly pendingCliTitle?: string;
+  // PR vinculado (grupo D, como Claude Desktop): lo vincula el `gh pr create` del agente, su
+  // `<pr-created>` o la rama con un PR abierto; la ✕ lo quita y lo deja en `prDismissed`. Main lo vigila.
+  readonly prNumber?: number;
+  readonly prDismissed?: number;
+  readonly prAutoFix?: boolean;
+  // Casilla «Worktree» desmarcada antes del primer mensaje (DN-6: marcada por defecto en un repo git). No
+  // se persiste: solo decide al arrancar la primera sesion.
+  readonly worktreeOff?: boolean;
 }
 
 // Dialogo de «¿migrar la conversacion?» al cambiar de cuenta (P-026 2.7).

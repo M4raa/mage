@@ -1,0 +1,43 @@
+[
+  {
+    "autoMergeRequest": null,
+    "baseRefName": "main",
+    "headRefName": "prueba/gh-medicion",
+    "headRefOid": "2b2687300a116fa13712dbed0a4b6470cff427e3",
+    "headRepositoryOwner": {
+      "login": "acme"
+    },
+    "isCrossRepository": false,
+    "isDraft": true,
+    "mergeStateStatus": "CLEAN",
+    "mergeable": "MERGEABLE",
+    "number": 1,
+    "reviewDecision": "",
+    "state": "OPEN",
+    "statusCheckRollup": [
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-09-30T19:34:57Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/acme/demo/actions/runs/36766441586/job/110061688162",
+        "name": "check",
+        "startedAt": "2026-09-30T19:33:02Z",
+        "status": "COMPLETED",
+        "workflowName": "check"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-09-30T19:32:58Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://dashboard.gitguardian.com",
+        "name": "GitGuardian Security Checks",
+        "startedAt": "2026-09-30T19:32:58Z",
+        "status": "COMPLETED",
+        "workflowName": ""
+      }
+    ],
+    "title": "Prueba: medir gh desde Mage",
+    "updatedAt": "2026-09-30T19:32:54Z",
+    "url": "https://github.com/acme/demo/pull/1"
+  }
+]

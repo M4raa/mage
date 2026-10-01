@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { diffChip, folderChip, gitChip, isInside, lastPathSegment, privacyChip } from './chatInfoView';
+import { diffChip, folderChip, ghNoticeView, gitChip, isInside, lastPathSegment, prBarView, privacyChip } from './chatInfoView';
+import { EMPTY_CHECK_SUMMARY, type GhPullRequest } from '@shared/gh';
 import type { GitRepoState } from '@shared/git';
 
 // Estas etiquetas las lee el usuario de un vistazo, asi que lo que importa es que NO mientan: una ruta
@@ -136,5 +137,48 @@ describe('diffChip', () => {
 
   it('diffChip_soloNoSeguidos_ceroLineas', () => {
     expect(diffChip({ ...REPO, added: 0, removed: 0, changedFiles: 0, untracked: 2 })).toMatchObject({ added: '+0', removed: '−0' });
+  });
+});
+
+describe('prBarView', () => {
+  const base: GhPullRequest = {
+    number: 7, title: 'Arregla x', url: 'https://github.com/acme/demo/pull/7', state: 'open', isDraft: true, headRefName: 'f', headSha: 's',
+    baseRefName: 'main', mergeable: 'conflicting', mergeStateStatus: 'DIRTY', reviewDecision: 'changes_requested', autoMerge: true,
+    checks: [{ name: 'check', workflow: 'check', state: 'fail', url: null, startedAt: null, completedAt: null }],
+    summary: { ...EMPTY_CHECK_SUMMARY, pass: 3, fail: 1 },
+  };
+
+  it('prBarView_borradorConFallos_etiquetaCuentasYDetalles', () => {
+    const view = prBarView(base);
+
+    expect(view.label).toBe('#7 · Borrador');
+    expect(view.counts.map((c) => `${c.glyph}${c.count}`)).toEqual(['✓3', '✗1']);
+    expect(view.details).toEqual(['Cambios pedidos', 'Conflicto de fusión', 'Auto-merge activo']);
+    expect(view.failing).toEqual(['check']);
+  });
+
+  it('prBarView_fusionado_sinConflictoNiCuentasVacias', () => {
+    const view = prBarView({ ...base, state: 'merged', isDraft: false, reviewDecision: null, autoMerge: false, summary: EMPTY_CHECK_SUMMARY });
+
+    expect(view.label).toBe('#7 · Fusionado');
+    expect(view.counts).toEqual([]);
+    expect(view.details).toEqual([]);
+  });
+});
+
+describe('ghNoticeView', () => {
+  it('ghNoticeView_sinGh_enlazaAlInstalador', () => {
+    expect(ghNoticeView({ kind: 'off', reason: 'no-gh' }, false)).toMatchObject({ label: 'PR: instala gh', url: 'https://cli.github.com' });
+  });
+
+  it('ghNoticeView_sinSesion_explicaElComandoSinEnlace', () => {
+    expect(ghNoticeView({ kind: 'off', reason: 'no-auth' }, false)).toMatchObject({ url: null, title: expect.stringContaining('gh auth login') });
+  });
+
+  it('ghNoticeView_descartadoUOtroMotivo_null', () => {
+    expect(ghNoticeView({ kind: 'off', reason: 'no-gh' }, true)).toBeNull();
+    expect(ghNoticeView({ kind: 'off', reason: 'not-github' }, false)).toBeNull();
+    expect(ghNoticeView({ kind: 'no-pr', branch: 'f' }, false)).toBeNull();
+    expect(ghNoticeView(undefined, false)).toBeNull();
   });
 });

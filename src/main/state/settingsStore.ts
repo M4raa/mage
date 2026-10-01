@@ -135,6 +135,10 @@ const APP_SETTINGS_SCHEMA = z.object({
   accentByAccount: z.record(z.string(), z.number().int().min(0).max(ACCOUNT_ACCENT_COUNT - 1)).catch({}),
   // Conectores de claude.ai apagados por cuenta. Ausente o basura -> [] (encendidos, como antes de existir).
   claudeAiConnectorsOff: z.array(z.string().min(1)).catch([]),
+  // Aviso de gh descartado (DA-3). Ausente o basura -> false: el lado que vuelve a avisar.
+  ghNoticeDismissed: z.boolean().catch(false),
+  // Auto-archivar al cerrarse el PR. Ausente o basura -> false: no se cierra nada solo.
+  autoArchiveOnPrClose: z.boolean().catch(false),
 });
 
 export class SettingsStore {

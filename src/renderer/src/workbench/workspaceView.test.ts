@@ -184,3 +184,13 @@ describe('restoreTabs', () => {
     expect(restoreTabs(ws, new Set(['.claude'])).activeTabId).toBe('tab1');
   });
 });
+
+describe('toPersistedWorkspace + restoreTabs — PR vinculado (grupo D)', () => {
+  it('prVinculado_idaYVuelta_conservaNumeroDescarteYAutoFix', () => {
+    const tab = { id: 't1', accountId: '.claude', accountAlias: 'a', cwd: '/r', model: 'm', provider: 'claude', title: 'x', privacy: 'shared' as const, prNumber: 7, prDismissed: 3, prAutoFix: true };
+
+    const restored = restoreTabs(toPersistedWorkspace([tab], 't1', {}), new Set(['.claude']));
+
+    expect(restored.tabs[0]).toMatchObject({ prNumber: 7, prDismissed: 3, prAutoFix: true });
+  });
+});

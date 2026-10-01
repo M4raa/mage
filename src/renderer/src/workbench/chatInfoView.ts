@@ -1,4 +1,5 @@
 import type { GitSnapshot } from '@shared/git';
+import type { GhPullRequest, GhSnapshot } from '@shared/gh';
 import type { IconName } from './components/Icon';
 // Modelo de vista de las etiquetas de informacion del chat (la fila que va encima del input). PURO:
 // datos -> etiquetas.
@@ -83,4 +84,51 @@ export function diffChip(snapshot: GitSnapshot | undefined): DiffChip | null {
     removed: `−${snapshot.removed}`,
     title: `${snapshot.changedFiles} ${snapshot.changedFiles === 1 ? 'fichero cambiado' : 'ficheros cambiados'}${untracked}: +${snapshot.added} líneas, −${snapshot.removed}`,
   };
+}
+
+// --- Barra de PR/CI (grupo D, como Claude Desktop) -------------------------------------------------
+
+export interface PrBarView {
+  readonly label: string; // "#7 · Borrador"
+  readonly counts: readonly { readonly glyph: string; readonly count: number; readonly tone: 'add' | 'del' | 'muted' }[];
+  readonly details: readonly string[]; // revision, fusion, auto-merge: lo que no cabe en la etiqueta
+  readonly failing: readonly string[]; // nombres de los checks que fallan
+  readonly title: string;
+}
+
+const PR_STATE_LABELS = { open: 'Abierto', merged: 'Fusionado', closed: 'Cerrado' } as const;
+const REVIEW_LABELS = { approved: 'Aprobado', changes_requested: 'Cambios pedidos', review_required: 'Revisión pendiente' } as const;
+
+export function prBarView(pr: GhPullRequest): PrBarView {
+  const state = pr.state === 'open' && pr.isDraft ? 'Borrador' : PR_STATE_LABELS[pr.state];
+  const { pass, fail, pending } = pr.summary;
+  const counts = [
+    { glyph: '✓', count: pass, tone: 'add' as const },
+    { glyph: '✗', count: fail, tone: 'del' as const },
+    { glyph: '●', count: pending, tone: 'muted' as const },
+  ].filter((entry) => entry.count > 0);
+  const details = [
+    pr.reviewDecision === null ? null : REVIEW_LABELS[pr.reviewDecision],
+    pr.state === 'open' && pr.mergeable === 'conflicting' ? 'Conflicto de fusión' : null,
+    pr.autoMerge ? 'Auto-merge activo' : null,
+  ].filter((entry): entry is string => entry !== null);
+  const failing = pr.checks.filter((check) => check.state === 'fail').map((check) => check.name);
+  const checks = `${pass} pasan, ${fail} fallan, ${pending} en marcha`;
+  return { label: `#${pr.number} · ${state}`, counts, details, failing, title: `PR #${pr.number}: ${pr.title} · ${checks}` };
+}
+
+export interface GhNoticeView {
+  readonly label: string;
+  readonly title: string;
+  readonly url: string | null; // a donde lleva el clic (solo https, lo exige openExternal)
+}
+
+const GH_INSTALL_URL = 'https://cli.github.com';
+
+// DA-3: sin gh o sin sesion, un chip apagado que lo explica, descartable para siempre (Ajustes lo repone).
+export function ghNoticeView(snapshot: GhSnapshot | undefined, dismissed: boolean): GhNoticeView | null {
+  if (dismissed || snapshot?.kind !== 'off') return null;
+  if (snapshot.reason === 'no-gh') return { label: 'PR: instala gh', title: 'Para ver el PR y el CI de esta rama hace falta el GitHub CLI (gh). Abre cli.github.com', url: GH_INSTALL_URL };
+  if (snapshot.reason === 'no-auth') return { label: 'PR: inicia sesión en gh', title: 'gh está instalado pero sin sesión: ejecuta «gh auth login» en una terminal', url: null };
+  return null;
 }

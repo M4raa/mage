@@ -1457,3 +1457,206 @@ describe('dialogos de cierre y actualizacion', () => {
     expect(store.getState().updatePromptVersion).toBeNull();
   });
 });
+
+// Grupo D: PR vinculado, barreras del turno de «Crear PR», vigilancia y auto-fix.
+describe('PR de la pestaña (grupo D)', () => {
+  const PR = {
+    number: 7, title: 'Arregla x', url: 'https://github.com/acme/demo/pull/7', state: 'open' as const, isDraft: false, headRefName: 'f', headSha: 'sha1',
+    baseRefName: 'main', mergeable: 'mergeable' as const, mergeStateStatus: 'UNSTABLE', reviewDecision: null, autoMerge: false,
+    checks: [{ name: 'check', workflow: 'check', state: 'fail' as const, url: null, startedAt: null, completedAt: null }],
+    summary: { pending: 0, pass: 0, fail: 1, skip: 0, cancel: 0 },
+  };
+
+  function prStore(over: Partial<MageApi> = {}) {
+    const mage = { ghWatch: vi.fn().mockResolvedValue(undefined), ghUnwatch: vi.fn().mockResolvedValue(undefined), saveWorkspace: vi.fn().mockResolvedValue(undefined), ...over };
+    const store = createWorkbenchStore(fakeMage(mage));
+    store.setState({ tabs: [tab('a')], activeTabId: 'a', splitLayout: singleLeaf('a'), sessionIdByChat: { a: 's-a' }, statusByChat: { a: 'streaming' } });
+    return { store, mage };
+  }
+
+  it('handleEvent_ghPrCreateConUrlEnElResultado_vinculaYVigila', () => {
+    const { store, mage } = prStore();
+
+    store.getState().handleEvent('s-a', { kind: 'tool_use', tool: { toolUseId: 'u1', toolName: 'Bash', input: { command: 'gh pr create --fill' } } });
+    store.getState().handleEvent('s-a', { kind: 'tool_result', result: { toolUseId: 'u1', isError: false, output: 'https://github.com/acme/demo/pull/7\n', durationMs: 1 } });
+
+    expect(store.getState().tabs[0]?.prNumber).toBe(7);
+    expect(mage.ghWatch).toHaveBeenCalledWith({ cwd: 'C:\\proyecto', accountDir: 'C:\\Users\\u\\.claude', key: 'a', number: 7 });
+  });
+
+  it('handleEvent_urlDeUnBashQueNoEsGhPrCreate_noVincula', () => {
+    const { store } = prStore();
+
+    store.getState().handleEvent('s-a', { kind: 'tool_use', tool: { toolUseId: 'u1', toolName: 'Bash', input: { command: 'cat notas.md' } } });
+    store.getState().handleEvent('s-a', { kind: 'tool_result', result: { toolUseId: 'u1', isError: false, output: 'https://github.com/acme/demo/pull/7', durationMs: 1 } });
+
+    expect(store.getState().tabs[0]?.prNumber).toBeUndefined();
+  });
+
+  it('handleEvent_marcaPrCreated_vincula', () => {
+    const { store } = prStore();
+
+    store.getState().handleEvent('s-a', { kind: 'assistant_text', text: 'Hecho: <pr-created>https://github.com/acme/demo/pull/9</pr-created>' });
+
+    expect(store.getState().tabs[0]?.prNumber).toBe(9);
+  });
+
+  it('handleEvent_pushForzadoEnElTurnoDePr_loDeniegaSinTarjeta', () => {
+    const answerPermission = vi.fn().mockResolvedValue(undefined);
+    const { store } = prStore({ answerPermission });
+    store.setState({ prGuardByChat: { a: true } });
+    const request = { requestId: 'r1', toolUseId: 'u1', toolName: 'Bash', input: { command: 'git push --force' }, description: null, requiresUserInteraction: false, displayName: null };
+
+    store.getState().handleEvent('s-a', { kind: 'permission_request', request });
+
+    expect(answerPermission).toHaveBeenCalledWith({ sessionId: 's-a', requestId: 'r1', decision: { behavior: 'deny', message: expect.stringContaining('git push --force') } });
+    expect(store.getState().pendingByChat['a'] ?? []).toEqual([]);
+  });
+
+  it('handleEvent_pushForzadoFueraDelTurnoDePr_pideComoSiempre', () => {
+    const answerPermission = vi.fn();
+    const { store } = prStore({ answerPermission, notify: vi.fn().mockResolvedValue(undefined) });
+    const request = { requestId: 'r1', toolUseId: 'u1', toolName: 'Bash', input: { command: 'git push --force' }, description: null, requiresUserInteraction: false, displayName: null };
+
+    store.getState().handleEvent('s-a', { kind: 'permission_request', request });
+
+    expect(answerPermission).not.toHaveBeenCalled();
+    expect(store.getState().pendingByChat['a']).toHaveLength(1);
+  });
+
+  it('insertCreatePrPrompt_dejaElPromptSinEnviar', () => {
+    const { store } = prStore();
+    store.setState({ statusByChat: {} });
+
+    store.getState().insertCreatePrPrompt('a');
+
+    expect(store.getState().draftByChat['a']?.text).toContain('gh pr create');
+    expect(store.getState().statusByChat['a']).toBeUndefined();
+  });
+
+  it('applyGhPrUpdate_ciTerminadoYAutoFix_avisaYEncolaElEventoUnaVez', () => {
+    const notify = vi.fn().mockResolvedValue(undefined);
+    const { store } = prStore({ notify });
+    store.setState({ tabs: [tab('a', { prNumber: 7, prAutoFix: true })] });
+
+    store.getState().applyGhPrUpdate({ key: 'a', snapshot: { kind: 'pr', pr: PR }, ciFinished: true });
+    store.getState().applyGhPrUpdate({ key: 'a', snapshot: { kind: 'pr', pr: PR }, ciFinished: false });
+
+    expect(notify).toHaveBeenCalledWith(expect.objectContaining({ title: 'CI terminado' }));
+    const queued = store.getState().queuedByChat['a'] ?? [];
+    expect(queued).toHaveLength(1);
+    expect(queued[0]?.text).toContain('<ci-monitor-event>');
+  });
+
+  it('applyGhPrUpdate_deOtroPr_seDescarta', () => {
+    const { store } = prStore();
+    store.setState({ tabs: [tab('a', { prNumber: 3 })] });
+
+    store.getState().applyGhPrUpdate({ key: 'a', snapshot: { kind: 'pr', pr: PR }, ciFinished: false });
+
+    expect(store.getState().prByTab['a']).toBeUndefined();
+  });
+
+  it('unbindPr_loQuitaLoRecuerdaYDejaDeVigilar', () => {
+    const { store, mage } = prStore();
+    store.setState({ tabs: [tab('a', { prNumber: 7, prAutoFix: true })] });
+
+    store.getState().unbindPr('a');
+
+    expect(store.getState().tabs[0]).toMatchObject({ prDismissed: 7 });
+    expect(store.getState().tabs[0]?.prNumber).toBeUndefined();
+    expect(mage.ghUnwatch).toHaveBeenCalledWith('a');
+  });
+
+  it('refreshPr_ramaConPrAbierto_loVinculaSalvoQueSeQuitara', async () => {
+    const ghBranchPr = vi.fn().mockResolvedValue({ kind: 'pr', pr: PR });
+    const { store } = prStore({ ghBranchPr });
+    store.setState({ tabs: [tab('a'), tab('b', { prDismissed: 7 })] });
+
+    await store.getState().refreshPr('a');
+    await store.getState().refreshPr('b');
+
+    expect(store.getState().tabs.map((t) => t.prNumber)).toEqual([7, undefined]);
+  });
+});
+
+// Grupo D, bloque 3: el worktree se crea al arrancar la primera sesion y se archiva al cerrar.
+describe('worktree de la pestaña (grupo D)', () => {
+  const REPO_SNAPSHOT = { kind: 'repo' as const, branch: 'main', detached: false, headShort: 'abc1234', upstream: null, ahead: 0, behind: 0, dirty: false, added: 0, removed: 0, changedFiles: 0, untracked: 0 };
+  const WT = 'C:/proyecto/.claude/worktrees/arreglar-el-login';
+
+  function sessionMage(over: Partial<MageApi> = {}) {
+    return {
+      createSession: vi.fn().mockResolvedValue({ sessionId: 's-1', configDir: 'C:/Users/u/.claude' }),
+      isFolderTrusted: vi.fn().mockResolvedValue(true),
+      saveWorkspace: vi.fn().mockResolvedValue(undefined),
+      saveConversationPrefs: vi.fn().mockResolvedValue(undefined),
+      worktreeCreate: vi.fn().mockResolvedValue({ path: WT, branch: 'claude/arreglar-el-login' }),
+      worktreeRestore: vi.fn().mockResolvedValue(undefined),
+      ...over,
+    };
+  }
+
+  function withRepo(mage: ReturnType<typeof sessionMage>, over: Partial<Tab> = {}) {
+    const store = createWorkbenchStore(fakeMage(mage));
+    store.setState({
+      tabs: [tab('a', { cwd: 'C:/proyecto', ...over })],
+      activeTabId: 'a',
+      splitLayout: singleLeaf('a'),
+      gitByCwd: { 'C:/proyecto': { snapshot: REPO_SNAPSHOT, branches: ['main'], error: null } },
+      blocksByChat: { a: [{ kind: 'user', id: 'b1', text: 'Arreglar el login', time: '10:00', attachments: [] }] },
+    });
+    return store;
+  }
+
+  it('ensureSession_conversacionNuevaEnUnRepo_creaElWorktreeYArrancaAlli', async () => {
+    const mage = sessionMage();
+    const store = withRepo(mage);
+
+    await store.getState().ensureSession('a');
+
+    expect(mage.worktreeCreate).toHaveBeenCalledWith({ cwd: 'C:/proyecto', accountDir: 'C:\\Users\\u\\.claude', base: 'main', firstMessage: 'Arreglar el login' });
+    expect(mage.createSession).toHaveBeenCalledWith(expect.objectContaining({ cwd: WT }));
+    expect(store.getState().tabs[0]?.cwd).toBe(WT);
+  });
+
+  it('ensureSession_casillaDesmarcada_trabajaEnLaCarpeta', async () => {
+    const mage = sessionMage();
+    const store = withRepo(mage, { worktreeOff: true });
+
+    await store.getState().ensureSession('a');
+
+    expect(mage.worktreeCreate).not.toHaveBeenCalled();
+    expect(mage.createSession).toHaveBeenCalledWith(expect.objectContaining({ cwd: 'C:/proyecto' }));
+  });
+
+  it('ensureSession_conversacionReabiertaDeUnWorktree_loRecreaSinCrearOtro', async () => {
+    const mage = sessionMage();
+    const store = withRepo(mage, { cwd: WT, resumeSessionId: 's-0' });
+
+    await store.getState().ensureSession('a');
+
+    expect(mage.worktreeRestore).toHaveBeenCalledWith({ cwd: WT, accountDir: 'C:\\Users\\u\\.claude' });
+    expect(mage.worktreeCreate).not.toHaveBeenCalled();
+  });
+
+  it('closeTab_pestañaEnUnWorktree_loArchiva', async () => {
+    const worktreeRemove = vi.fn().mockResolvedValue({ removed: true });
+    const store = createWorkbenchStore(fakeMage({ worktreeRemove, saveWorkspace: vi.fn().mockResolvedValue(undefined), listConversations: vi.fn().mockResolvedValue([]) }));
+    store.setState({ tabs: [tab('a', { cwd: WT })], activeTabId: 'a', splitLayout: singleLeaf('a') });
+
+    await store.getState().closeTab('a');
+
+    expect(worktreeRemove).toHaveBeenCalledWith({ cwd: WT, accountDir: 'C:\\Users\\u\\.claude' });
+  });
+
+  it('applyGhPrUpdate_prFusionadoConAutoArchivo_cierraLaPestañaParada', async () => {
+    const store = createWorkbenchStore(fakeMage({ ghUnwatch: vi.fn().mockResolvedValue(undefined), saveWorkspace: vi.fn().mockResolvedValue(undefined), listConversations: vi.fn().mockResolvedValue([]) }));
+    store.setState({ tabs: [tab('a', { prNumber: 7 })], activeTabId: 'a', splitLayout: singleLeaf('a'), settings: { ...store.getState().settings, autoArchiveOnPrClose: true } });
+    const merged = { number: 7, title: 't', url: 'https://github.com/a/b/pull/7', state: 'merged' as const, isDraft: false, headRefName: 'f', headSha: 's', baseRefName: 'main', mergeable: 'unknown' as const, mergeStateStatus: '', reviewDecision: null, autoMerge: false, checks: [], summary: { pending: 0, pass: 0, fail: 0, skip: 0, cancel: 0 } };
+
+    store.getState().applyGhPrUpdate({ key: 'a', snapshot: { kind: 'pr', pr: merged }, ciFinished: false });
+
+    await vi.waitFor(() => expect(store.getState().tabs).toEqual([]));
+  });
+});

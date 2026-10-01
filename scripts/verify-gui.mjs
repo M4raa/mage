@@ -5294,7 +5294,7 @@ const CHECKS = [
     // commit, una segunda rama, un fichero cambiado y otro sin seguir; la pestaña apunta ahi. La carpeta
     // no es de confianza en el perfil aislado, asi que primero tiene que salir el dialogo de siempre
     // (D28) y solo al confiar aparecen los chips. Nunca se envia nada y nunca se cambia de rama de verdad.
-    name: '3.5: git: la rama y +N −M salen al confiar, el cambio de rama se bloquea sucio y «Confirmar cambios» no envía',
+    name: '3.5: git: la rama y +N −M salen al confiar, el cambio de rama se bloquea sucio y «Pedir commit al agente» no envía',
     async run(page) {
       const repo = createTempGitRepo();
       if (repo === null) return { ok: true, detail: 'saltada: no hay git en esta maquina' };
@@ -5361,6 +5361,190 @@ const CHECKS = [
         await page.evaluate((state) => window.__mageDev.store.setState(state), previo);
         await page.waitForTimeout(CONFIG.settleMs);
         fs.rmSync(repo, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    // Grupo D (PR como Claude Desktop): con MAGE_GH_FAKE=1 main contesta con un `gh` FALSO en proceso
+    // (src/main/gh/ghFakeRunner.ts), nunca el real. El repo temporal tiene un remoto de github.com y esta
+    // en `main`, que en el falso no tiene PR: sale «Crear PR», que deja el prompt SIN enviar. Despues un
+    // `gh pr create` falso con la URL en su resultado vincula el PR #7 a la pestaña, la ✕ lo quita, y en
+    // una rama sin sesion de gh sale el aviso, que se descarta para siempre.
+    name: 'Grupo D: «Crear PR» no envía, la URL de gh pr create vincula el PR y el aviso de gh se descarta',
+    async run(page) {
+      const repo = createTempGhRepo('main');
+      if (repo === null) return { ok: true, detail: 'saltada: no hay git en esta maquina' };
+      const previo = await capturePrState(page);
+      try {
+        await pointActiveTabAtTrustedRepo(page, repo);
+        await page.locator('[data-pr-create]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        await page.locator('[data-pr-create]').first().click();
+        await page.waitForTimeout(CONFIG.settleMs);
+        const trasCrear = await page.evaluate(() => {
+          const s = window.__mageDev.store.getState();
+          return {
+            borrador: s.draftByChat[s.activeTabId]?.text ?? '',
+            estado: s.statusByChat[s.activeTabId] ?? 'idle',
+            mensajes: (s.blocksByChat[s.activeTabId] ?? []).filter((b) => b.kind === 'user').length,
+          };
+        });
+        // El `gh pr create` del agente, por el reducer real: tool_use + tool_result con la URL.
+        await page.evaluate(() => {
+          const dev = window.__mageDev;
+          const tabId = dev.store.getState().activeTabId;
+          dev.store.setState((s) => ({ sessionIdByChat: { ...s.sessionIdByChat, [tabId]: 'vg-pr-sesion' } }));
+          const st = dev.store.getState();
+          st.handleEvent('vg-pr-sesion', { kind: 'tool_use', tool: { toolUseId: 'vg-pr-u1', toolName: 'Bash', input: { command: 'git push -u origin HEAD && gh pr create --fill' } } });
+          st.handleEvent('vg-pr-sesion', { kind: 'tool_result', result: { toolUseId: 'vg-pr-u1', isError: false, output: 'https://github.com/acme/demo/pull/7\n', durationMs: 5 } });
+        });
+        await page.locator('[data-pr-chip]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const vinculado = await page.evaluate(() => {
+          const s = window.__mageDev.store.getState();
+          return { prNumber: s.tabs.find((t) => t.id === s.activeTabId)?.prNumber ?? null, chip: document.querySelector('[data-pr-chip]')?.textContent?.trim() ?? '' };
+        });
+        await page.getByRole('button', { name: 'Dejar de seguir el PR #7', exact: true }).click();
+        await page.locator('[data-pr-chip]').first().waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+        const quitado = await page.evaluate(() => {
+          const s = window.__mageDev.store.getState();
+          const t = s.tabs.find((x) => x.id === s.activeTabId);
+          return { prNumber: t?.prNumber ?? null, prDismissed: t?.prDismissed ?? null };
+        });
+        // Rama sin sesion de gh en el falso (salida 4): aviso «inicia sesión», y su ✕ lo descarta para siempre.
+        runGit(repo, ['switch', '-c', 'vg-sin-sesion']);
+        await page.waitForTimeout(GIT_STATUS_FRESH_MS);
+        await page.evaluate(async () => {
+          const st = window.__mageDev.store.getState();
+          await st.refreshGit(st.activeTabId);
+          await st.refreshPr(st.activeTabId);
+        });
+        await page.locator('[data-gh-notice]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const aviso = await page.locator('[data-gh-notice]').first().textContent();
+        await page.getByRole('button', { name: 'No volver a avisar de gh', exact: true }).click();
+        await page.locator('[data-gh-notice]').first().waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+        const descartado = await page.evaluate(() => window.__mageDev.store.getState().settings.ghNoticeDismissed);
+        const ok =
+          trasCrear.borrador.includes('gh pr create') &&
+          trasCrear.estado === 'idle' &&
+          trasCrear.mensajes === 0 &&
+          vinculado.prNumber === 7 &&
+          vinculado.chip.includes('#7') &&
+          quitado.prNumber === null &&
+          quitado.prDismissed === 7 &&
+          (aviso ?? '').includes('inicia sesión en gh') &&
+          descartado === true;
+        return { ok, detail: `crear=${JSON.stringify({ ...trasCrear, borrador: trasCrear.borrador.slice(0, 40) })} vinculado=${JSON.stringify(vinculado)} quitado=${JSON.stringify(quitado)} aviso=${JSON.stringify(aviso)} descartado=${descartado}` };
+      } finally {
+        await restorePrState(page, previo, repo);
+      }
+    },
+  },
+  {
+    // Grupo D: en una rama con PR abierto (el #7 del `gh` falso: borrador, un check roto y otro en
+    // marcha) la pestaña lo vincula sola, la barra enseña sus cuentas, y relanzar, cancelar y el
+    // auto-merge piden confirmacion antes de llegar al runner falso (que cambia de estado al recibirlos).
+    name: 'Grupo D: la barra del PR enseña sus checks y relanzar, cancelar y el auto-merge piden confirmación',
+    async run(page) {
+      const repo = createTempGhRepo('vg-pr');
+      if (repo === null) return { ok: true, detail: 'saltada: no hay git en esta maquina' };
+      const previo = await capturePrState(page);
+      const runsText = () => page.evaluate(() => [...document.querySelectorAll('[data-pr-runs] li')].map((li) => li.textContent?.trim() ?? ''));
+      try {
+        await pointActiveTabAtTrustedRepo(page, repo);
+        await page.locator('[data-pr-chip]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const chip = (await page.locator('[data-pr-chip]').first().textContent())?.trim() ?? '';
+        await page.locator('[data-pr-chip]').first().click();
+        await page.locator('[data-pr-runs]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const runsAntes = await runsText();
+        const fallan = await page.locator('[data-pr-failing] li').allTextContents();
+        await page.locator('[data-pr-runs]').getByRole('button', { name: 'Relanzar', exact: true }).click();
+        await page.locator('[data-pr-confirm]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const sinConfirmar = await runsText();
+        await page.locator('[data-pr-confirm]').getByRole('button', { name: 'Confirmar', exact: true }).click();
+        await waitForRunText(page, 'checken marcha');
+        await page.locator('[data-pr-runs] li', { hasText: /^lint/ }).getByRole('button', { name: 'Cancelar run', exact: true }).click();
+        await page.locator('[data-pr-confirm]').getByRole('button', { name: 'Confirmar', exact: true }).click();
+        await waitForRunText(page, 'lintcancelado');
+        const autoMerge = page.locator('[data-pr-details]').getByRole('checkbox', { name: 'Auto-merge', exact: true });
+        await autoMerge.click();
+        await page.locator('[data-pr-confirm]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const marcadoSinConfirmar = await autoMerge.isChecked();
+        await page.locator('[data-pr-confirm]').getByRole('button', { name: 'Confirmar', exact: true }).click();
+        await page.locator('[data-pr-details]').getByText('Auto-merge activo', { exact: true }).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        // Se deja el falso como estaba: auto-merge apagado otra vez (tambien con confirmacion).
+        await autoMerge.click();
+        await page.locator('[data-pr-confirm]').getByRole('button', { name: 'Confirmar', exact: true }).click();
+        await page.locator('[data-pr-details]').getByText('Auto-merge activo', { exact: true }).waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+        const ok =
+          chip.includes('#7 · Borrador') &&
+          chip.includes('✗1') &&
+          chip.includes('●1') &&
+          fallan.some((t) => t.includes('check')) &&
+          runsAntes.some((t) => t.startsWith('checkfalla')) &&
+          sinConfirmar.some((t) => t.startsWith('checkfalla')) &&
+          marcadoSinConfirmar === false;
+        return { ok, detail: `chip=${JSON.stringify(chip)} fallan=${JSON.stringify(fallan)} runs=${JSON.stringify(runsAntes)} sinConfirmar=${JSON.stringify(sinConfirmar)} autoMergeSinConfirmar=${marcadoSinConfirmar}` };
+      } finally {
+        await restorePrState(page, previo, repo);
+      }
+    },
+  },
+  {
+    // Grupo D, bloque 3 (worktrees como Claude Desktop), con el git REAL en un repo temporal y sin enviar
+    // nada: en una conversacion nueva en la raiz del repo la casilla «Worktree» sale marcada; el worktree
+    // se crea por el mismo IPC que usa el arranque de la sesion; dentro, la fila enseña el chip y bloquea
+    // el cambio de rama; y archivar (cerrar la pestaña) lo borra limpio y lo conserva con cambios.
+    name: 'Grupo D: worktree: casilla marcada, chip y rama bloqueada dentro, y archivar borra el limpio y conserva el sucio',
+    async run(page) {
+      const repo = createTempGhRepo('main');
+      if (repo === null) return { ok: true, detail: 'saltada: no hay git en esta maquina' };
+      const previo = await capturePrState(page);
+      try {
+        await pointActiveTabAtTrustedRepo(page, repo);
+        await page.locator('[data-worktree-toggle]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const casilla = await page.locator('[data-worktree-toggle] input').first().isChecked();
+        const crear = (mensaje) =>
+          page.evaluate(async ({ cwd, mensaje }) => {
+            const st = window.__mageDev.store.getState();
+            const tab = st.tabs.find((t) => t.id === st.activeTabId);
+            return window.mage.worktreeCreate({ cwd, accountDir: tab.accountId, base: 'main', firstMessage: mensaje });
+          }, { cwd: repo, mensaje });
+        const limpio = await crear('Arreglar el login');
+        // La pestaña pasa a vivir en el worktree, como tras el arranque de su sesion.
+        await page.evaluate((cwd) => {
+          const dev = window.__mageDev;
+          const tabId = dev.store.getState().activeTabId;
+          dev.store.setState((s) => ({ tabs: s.tabs.map((t) => (t.id === tabId ? { ...t, cwd } : t)) }));
+        }, limpio.path);
+        await page.locator('[data-worktree-chip]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const rama = await page.evaluate(() => {
+          const el = document.querySelector('[aria-label^="Cambiar de rama"]');
+          return { texto: el?.textContent?.trim() ?? '', bloqueada: el?.getAttribute('aria-disabled') === 'true', motivo: el?.getAttribute('aria-label') ?? '' };
+        });
+        const sucio = await crear('Arreglar el login');
+        fs.writeFileSync(path.join(sucio.path, 'a.txt'), 'cambiado\n');
+        const archivar = (cwd) =>
+          page.evaluate(async (cwd) => {
+            const st = window.__mageDev.store.getState();
+            return window.mage.worktreeRemove({ cwd, accountDir: st.tabs.find((t) => t.id === st.activeTabId).accountId });
+          }, cwd);
+        const archivadoSucio = await archivar(sucio.path);
+        const archivadoLimpio = await archivar(limpio.path);
+        const ramas = spawnSync('git', ['branch', '--list', 'claude/*'], { cwd: repo, encoding: 'utf8', windowsHide: true }).stdout.trim();
+        const ok =
+          casilla &&
+          limpio.branch === 'claude/arreglar-el-login' &&
+          sucio.branch === 'claude/arreglar-el-login-2' &&
+          rama.texto.includes('claude/arreglar-el-login') &&
+          rama.bloqueada &&
+          rama.motivo.includes('worktree') &&
+          archivadoSucio.removed === false &&
+          fs.existsSync(sucio.path) &&
+          archivadoLimpio.removed === true &&
+          !fs.existsSync(limpio.path) &&
+          ramas.includes('claude/arreglar-el-login');
+        return { ok, detail: `casilla=${casilla} limpio=${limpio.branch} sucio=${sucio.branch} rama=${JSON.stringify(rama)} archivar=${JSON.stringify({ sucio: archivadoSucio, limpio: archivadoLimpio })} ramas=${JSON.stringify(ramas)}` };
+      } finally {
+        await restorePrState(page, previo, repo);
       }
     },
   },
@@ -7844,6 +8028,62 @@ function cleanTempGitRepo(repo) {
   fs.rmSync(path.join(repo, 'b.txt'), { force: true });
 }
 
+// Repo temporal de grupo D: el de 3.5, limpio, con un remoto de github.com (el `gh` falso no lo toca) y en
+// la rama pedida. null si no hay git.
+function createTempGhRepo(branch) {
+  const repo = createTempGitRepo();
+  if (repo === null) return null;
+  cleanTempGitRepo(repo);
+  runGit(repo, ['remote', 'add', 'origin', 'https://github.com/acme/demo.git']);
+  if (branch !== 'main') runGit(repo, ['switch', '-c', branch]);
+  return repo;
+}
+
+// Espera a que un run de la lista empiece por `prefix`; si no llega, lanza con lo que hay (y el error del panel).
+async function waitForRunText(page, prefix) {
+  const read = () => page.evaluate(() => ({ runs: [...document.querySelectorAll('[data-pr-runs] li')].map((li) => li.textContent ?? ''), error: document.querySelector('[data-pr-details] [role="alert"]')?.textContent ?? null }));
+  const deadline = Date.now() + CONFIG.actionTimeoutMs;
+  for (;;) {
+    const seen = await read();
+    if (seen.runs.some((text) => text.startsWith(prefix))) return;
+    if (Date.now() > deadline) throw new Error(`ningun run empieza por ${JSON.stringify(prefix)}: ${JSON.stringify(seen)}`);
+    await page.waitForTimeout(CONFIG.pollIntervalMs);
+  }
+}
+
+async function capturePrState(page) {
+  return page.evaluate(() => {
+    const s = window.__mageDev.store.getState();
+    return { tabs: s.tabs, activeTabId: s.activeTabId, splitLayout: s.splitLayout, draftByChat: s.draftByChat, gitByCwd: s.gitByCwd, sessionIdByChat: s.sessionIdByChat, prByTab: s.prByTab, ghRunsByTab: s.ghRunsByTab };
+  });
+}
+
+// Pestaña temporal apuntando al repo, con la confianza concedida en el dialogo de siempre (D28).
+async function pointActiveTabAtTrustedRepo(page, repo) {
+  await openTemporaryConversation(page);
+  await page.evaluate((cwd) => {
+    const dev = window.__mageDev;
+    const tabId = dev.store.getState().activeTabId;
+    dev.store.setState((s) => ({ tabs: s.tabs.map((t) => (t.id === tabId ? { ...t, cwd } : t)) }));
+  }, repo);
+  const dialogo = page.getByRole('button', { name: 'Confiar en esta carpeta' });
+  await dialogo.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+  await dialogo.click();
+}
+
+// Suelta la vigilancia del PR de la pestaña temporal, repone el aviso de gh, el estado y la confianza.
+async function restorePrState(page, previo, repo) {
+  await page.evaluate(async (cwd) => {
+    const st = window.__mageDev.store.getState();
+    await window.mage.ghUnwatch(st.activeTabId);
+    st.setGhNoticeDismissed(false);
+    st.revokeTrustedFolder(cwd);
+  }, repo);
+  await page.evaluate((state) => window.__mageDev.store.setState(state), previo);
+  await page.waitForTimeout(CONFIG.settleMs);
+  fs.rmSync(repo, { recursive: true, force: true });
+}
+
 // Claves del store que tocan las comprobaciones de un turno inyectado (P-026 3.4). Selectivo, como el
 // resto: ninguna es un Set, que no sobreviviria al viaje por CDP.
 async function captureTurnState(page) {
@@ -8130,6 +8370,8 @@ function launchApp(userDataDir) {
       MAGE_SKIP_MODEL_PROBE: '1',
       MAGE_MCP_FAKE_SOURCES: mcpFakeSourcesDir(userDataDir),
       MAGE_MCP_FAKE_CLI: '1',
+      // MAGE_GH_FAKE: el PR y el CI salen de un `gh` falso en proceso; nunca se lanza el real.
+      MAGE_GH_FAKE: '1',
       VITE_MAGE_RELEASE_NOTES_IN_DEV: '1',
     },
     windowsHide: true,

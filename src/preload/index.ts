@@ -10,6 +10,7 @@ import {
   WIDGET_SNAPSHOT_CHANNEL,
   SETTINGS_CHANGED_CHANNEL,
   MODEL_CATALOG_CHANGED_CHANNEL,
+  GH_PR_UPDATE_CHANNEL,
   WINDOW_TAB_RECEIVED_CHANNEL,
   CLOSE_PROMPT_CHANNEL,
   UPDATE_PROMPT_CHANNEL,
@@ -17,6 +18,7 @@ import {
   type CloseAnswer,
 } from '@shared/ipc';
 import type { UpdateState } from '@shared/update';
+import type { GhPrUpdate } from '@shared/gh';
 import type {
   McpAuthParams,
   McpCommonMutateParams,
@@ -109,6 +111,21 @@ const api: MageApi = {
   gitStatus: (params) => ipcRenderer.invoke(IpcChannel.GitStatus, params),
   gitBranches: (params) => ipcRenderer.invoke(IpcChannel.GitBranches, params),
   gitSwitch: (params) => ipcRenderer.invoke(IpcChannel.GitSwitch, params),
+  ghBranchPr: (params) => ipcRenderer.invoke(IpcChannel.GhBranchPr, params),
+  ghWatch: (params) => ipcRenderer.invoke(IpcChannel.GhWatch, params),
+  ghUnwatch: (key) => ipcRenderer.invoke(IpcChannel.GhUnwatch, key),
+  ghRuns: (params) => ipcRenderer.invoke(IpcChannel.GhRuns, params),
+  ghRunAction: (params) => ipcRenderer.invoke(IpcChannel.GhRunAction, params),
+  ghAutoMerge: (params) => ipcRenderer.invoke(IpcChannel.GhAutoMerge, params),
+  worktreeCreate: (params) => ipcRenderer.invoke(IpcChannel.WorktreeCreate, params),
+  worktreeRestore: (params) => ipcRenderer.invoke(IpcChannel.WorktreeRestore, params),
+  worktreeRemove: (params) => ipcRenderer.invoke(IpcChannel.WorktreeRemove, params),
+  worktreeMergeBase: (params) => ipcRenderer.invoke(IpcChannel.WorktreeMergeBase, params),
+  onGhPrUpdate: (listener: (update: GhPrUpdate) => void) => {
+    const handler = (_: unknown, update: GhPrUpdate) => listener(update);
+    ipcRenderer.on(GH_PR_UPDATE_CHANNEL, handler);
+    return () => ipcRenderer.removeListener(GH_PR_UPDATE_CHANNEL, handler);
+  },
   readThinking: (sessionId) => ipcRenderer.invoke(IpcChannel.ThinkingRead, sessionId),
   getUsage: (configDir: string) => ipcRenderer.invoke(IpcChannel.UsageGet, configDir),
   getStatus: () => ipcRenderer.invoke(IpcChannel.StatusGet),

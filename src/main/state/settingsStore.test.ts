@@ -27,6 +27,8 @@ const VALID: AppSettings = {
   defaultProvider: 'claude',
   accentByAccount: { 'C:/Users/u/.claude-p': 3 },
   claudeAiConnectorsOff: ['C:/Users/u/.claude-p'],
+  ghNoticeDismissed: true,
+  autoArchiveOnPrClose: true,
 };
 
 function deps(overrides: Partial<SettingsStoreDeps> = {}): SettingsStoreDeps {

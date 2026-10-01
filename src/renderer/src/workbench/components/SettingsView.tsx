@@ -545,6 +545,7 @@ function StorageSection({
       ))}
       <NewConversationFolderControl />
       <CloseBehaviorControl />
+      <GhNoticeControl />
     </div>
   );
 }
@@ -584,6 +585,38 @@ function NewConversationFolderControl(): React.JSX.Element {
           </span>
         </label>
       ))}
+    </div>
+  );
+}
+
+// Aviso «PR: instala gh / inicia sesión en gh» de la fila del chat (grupo D, DA-3): se descarta para
+// siempre desde el propio aviso, y aqui se recupera.
+function GhNoticeControl(): React.JSX.Element {
+  const dismissed = useWorkbenchStore((s) => s.settings.ghNoticeDismissed);
+  const setDismissed = useWorkbenchStore((s) => s.setGhNoticeDismissed);
+  const autoArchive = useWorkbenchStore((s) => s.settings.autoArchiveOnPrClose);
+  const setAutoArchive = useWorkbenchStore((s) => s.setAutoArchiveOnPrClose);
+  return (
+    <div data-setting="gh-notice" className="mt-[8px] flex flex-col gap-[8px] border-t border-mg-border pt-[12px]">
+      <span className="text-[10.5px] font-bold tracking-[.06em] text-mg-ter">PULL REQUESTS</span>
+      <label className="flex items-start gap-[8px] text-[11.5px] text-mg-body">
+        <input type="checkbox" className="mt-[3px]" checked={!dismissed} onChange={(e) => setDismissed(!e.target.checked)} />
+        <span>
+          <span className="font-semibold">Avisar si falta el GitHub CLI</span>
+          <span className="block text-[10.5px] leading-[1.45] text-mg-ter">
+            El PR y el CI de la rama se leen con gh. Sin gh, o sin sesión, la fila del chat lo dice.
+          </span>
+        </span>
+      </label>
+      <label className="flex items-start gap-[8px] text-[11.5px] text-mg-body">
+        <input type="checkbox" className="mt-[3px]" checked={autoArchive} onChange={(e) => setAutoArchive(e.target.checked)} />
+        <span>
+          <span className="font-semibold">Archivar al fusionar o cerrar el PR</span>
+          <span className="block text-[10.5px] leading-[1.45] text-mg-ter">
+            Cierra la conversación (si no está trabajando) y borra su worktree si no tiene cambios. La rama se queda.
+          </span>
+        </span>
+      </label>
     </div>
   );
 }

@@ -100,3 +100,83 @@ export function switchTargetError(name: string, branches: readonly string[]): st
   if (!branches.includes(name)) return `la rama "${name}" no existe en este repositorio`;
   return null;
 }
+
+// Remoto de GitHub (o de cualquier host) reducido a lo que Mage necesita: host, dueño y repo. NUNCA lleva
+// las credenciales que una URL `https://usuario:token@host/...` pueda traer incrustadas: se descartan aqui
+// y no se copian a ningun sitio.
+export interface GitRemoteRef {
+  readonly host: string; // en minusculas, sin puerto
+  readonly owner: string;
+  readonly repo: string; // sin `.git`
+}
+
+// `git@host:dueño/repo.git` (forma scp de ssh). El usuario delante de la arroba es opcional.
+const SCP_REMOTE = /^(?:[^@/\s]+@)?([^:/\s]+):([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/;
+
+// Las tres formas de remoto: `https://host/dueño/repo(.git)`, `ssh://git@host[:puerto]/dueño/repo` y la de
+// scp. Cualquier otra cosa (ruta local, `file://`, mas o menos segmentos) es null.
+export function parseRemoteUrl(raw: string): GitRemoteRef | null {
+  const url = raw.trim();
+  if (/^(https?|ssh|git):\/\//i.test(url)) return parseSchemeRemote(url);
+  const scp = SCP_REMOTE.exec(url);
+  if (scp === null || /^[a-z]$/i.test(scp[1]!)) return null; // `C:/repo` es una ruta de Windows
+  return { host: scp[1]!.toLowerCase(), owner: scp[2]!, repo: scp[3]! };
+}
+
+function parseSchemeRemote(url: string): GitRemoteRef | null {
+  if (!URL.canParse(url)) return null;
+  const parsed = new URL(url);
+  const segments = parsed.pathname.split('/').filter((segment) => segment.length > 0);
+  if (segments.length !== 2 || parsed.hostname.length === 0) return null;
+  return { host: parsed.hostname.toLowerCase(), owner: segments[0]!, repo: segments[1]!.replace(/\.git$/, '') };
+}
+
+// `git remote -v` (`nombre\turl (fetch)` por linea) → el remoto que manda: el de la rama (`upstream`, ya
+// leido aparte) y, sin el, `origin`. Sin ninguno de los dos, null: Mage no adivina entre varios remotos.
+export function pickRemoteUrl(remoteVerbose: string, upstreamRemote: string): string | null {
+  const urls = new Map<string, string>();
+  for (const line of remoteVerbose.split(/\r?\n/)) {
+    const match = /^(\S+)\t(\S+) \(fetch\)$/.exec(line.trim());
+    if (match !== null) urls.set(match[1]!, match[2]!);
+  }
+  return urls.get(upstreamRemote.trim()) ?? urls.get('origin') ?? null;
+}
+
+// `git worktree list --porcelain`: bloques separados por linea en blanco con `worktree <ruta>`,
+// `HEAD <sha>` y `branch refs/heads/<rama>` (o `detached`). Medido con git 2.55: rutas con `/` tambien en
+// Windows.
+export interface GitWorktreeEntry {
+  readonly path: string;
+  readonly branch: string | null;
+}
+
+export function parseWorktreeList(stdout: string): readonly GitWorktreeEntry[] {
+  const entries: GitWorktreeEntry[] = [];
+  for (const block of stdout.split(/\r?\n\r?\n/)) {
+    const lines = block.split(/\r?\n/);
+    const path = lines.find((line) => line.startsWith('worktree '))?.slice('worktree '.length);
+    if (path === undefined || path.length === 0) continue;
+    const ref = lines.find((line) => line.startsWith('branch '))?.slice('branch '.length) ?? null;
+    entries.push({ path, branch: ref?.startsWith('refs/heads/') === true ? ref.slice('refs/heads/'.length) : null });
+  }
+  return entries;
+}
+
+const SLUG_MAX_WORDS = 4;
+const SLUG_MAX_CHARS = 40;
+const SLUG_FALLBACK = 'sesion';
+
+// Nombre del worktree y de su rama a partir del primer mensaje (DN-5: local, sin gastar un turno en que
+// lo invente un modelo): ASCII en minusculas, hasta 4 palabras unidas por guiones. «Arreglar el login
+// de Google» → `arreglar-el-login-de`.
+export function worktreeSlug(text: string): string {
+  const words = text
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((word) => word.length > 0)
+    .slice(0, SLUG_MAX_WORDS);
+  const slug = words.join('-').slice(0, SLUG_MAX_CHARS).replace(/-+$/, '');
+  return slug.length > 0 ? slug : SLUG_FALLBACK;
+}

@@ -39,7 +39,10 @@ import {
   restartingText,
   turnUsageText,
 } from './engineBlocks';
-import { addAlwaysAllow, isAlwaysAllowed, removeAlwaysAllow } from './permissionRules';
+import { addAlwaysAllow, isAlwaysAllowed, prTurnBlockReason, removeAlwaysAllow } from './permissionRules';
+import { createPrActions, CREATE_PR_PROMPT, resetPrActionsState, type PrActions, type PrState } from './prActions';
+import { isPrCreateCommand, prNumberFromCreatedTag, prNumberFromUrl } from './prBinding';
+import { worktreeOfCwd } from '@shared/worktree';
 import { createdFileFrom } from './createdFilesView';
 import { enqueueMessage, mergeIntoDraft, removeQueuedMessage as withoutQueuedMessage, takeNextMessage, type QueuedMessage } from './messageQueue';
 import type { Account, AccountSwitchPrompt, Block, ChatStatus, ContextInfo, ImageAttachment, PermissionView, PromptDraft, RateLimitNotice, SessionExtensions, Tab } from './types';
@@ -116,7 +119,7 @@ const CONTEXT_PLACEHOLDER: ContextInfo = { usedTokens: '—', maxTokens: '200k',
 // {cuenta, proyecto, modelo} con su AgentSession aislada. El estado del motor va keyed por id de
 // pestana (un chat = una pestana): asi anadir pestanas no obliga a refactorizar el reducer.
 // Exportado junto con `reduceEvent` para poder testear el reducer con un estado de mentira.
-export interface WorkbenchState {
+export interface WorkbenchState extends PrState, PrActions {
   accounts: readonly Account[];
   tabs: readonly Tab[];
   activeAccountId: string;
@@ -206,6 +209,9 @@ export interface WorkbenchState {
   switchGitBranch: (tabId: string, name: string) => Promise<void>;
   // D27: deja en el input el prompt de commit, SIN enviarlo.
   insertCommitPrompt: (tabId: string) => void;
+  // Worktrees (grupo D): la casilla de antes del primer mensaje y «Traer la base» (merge, nunca rebase).
+  setWorktreeOff: (tabId: string, off: boolean) => void;
+  mergeBaseIntoWorktree: (tabId: string, base: string) => Promise<'merged' | 'conflict'>;
   // Lo que el usuario lleva escrito y aun no ha enviado, POR PESTAÑA (auditoria B.1.2). Vivia como
   // estado local del `PromptBar`, que no se remonta al cambiar de pestaña: el borrador de A acababa
   // enviado a B. Aqui cada conversacion conserva el suyo (texto y adjuntos) mientras paseas entre
@@ -259,7 +265,8 @@ export interface WorkbenchState {
   setActiveTab: (tabId: string) => void;
   // Devuelve una promesa que resuelve cuando el CLI de esa pestaña YA ha parado (B17): quien borre
   // o mueva la conversacion despues tiene que esperarla o correra contra un fichero aun abierto.
-  closeTab: (tabId: string) => Promise<void>;
+  // `moved`: la pestaña se va a otra ventana, asi que su worktree NO se archiva (grupo D).
+  closeTab: (tabId: string, options?: { readonly moved?: boolean }) => Promise<void>;
   // Cierra la pestana ACTIVA (D5, atajo tab.close): resuelve el id activo y delega en closeTab.
   closeActiveTab: () => void;
   // Menu contextual de pestañas (Ronda 3, item 12). Los cierres en masa respetan SIEMPRE las ancladas
@@ -942,6 +949,9 @@ async function requestFolderTrust(
 // que no, no se le vuelve a preguntar hasta reiniciar; el agente, al arrancar, si pregunta.
 const gitTrustAsked = new Set<string>();
 
+// `Bash` con `gh pr create` en vuelo, por `tabId:toolUseId`: su resultado trae la URL del PR.
+const prCreateToolUses = new Set<string>();
+
 export interface GitView {
   readonly snapshot: GitSnapshot;
   readonly branches: readonly string[];
@@ -954,6 +964,14 @@ export const COMMIT_PROMPT =
 
 function isTurnLive(status: string | undefined): boolean {
   return status === 'streaming' || status === 'needs_permission';
+}
+
+// Deja un prompt en el input SIN enviarlo (D27). Lo que el usuario ya tuviera escrito se conserva: el
+// prompt va detras.
+function insertPromptIntoDraft(get: () => WorkbenchState, tabId: string, prompt: string): void {
+  const draft = get().draftByChat[tabId];
+  const text = draft === undefined || draft.text.trim().length === 0 ? prompt : `${draft.text.trimEnd()}\n\n${prompt}`;
+  get().setDraft(tabId, { text, attachments: draft?.attachments ?? [] });
 }
 
 // Arranca (o reanuda) la sesion del CLI de una pestaña y deja su id en el estado. Extraida de la
@@ -970,13 +988,16 @@ async function createSessionFor(
     // dialogo— porque arrancar y luego preguntar seria preguntar tarde: el CLI ya habria leido los
     // hooks del proyecto.
     await ensureFolderTrusted(mage, get, set, tab);
+    // Grupo D: una conversacion nueva en la raiz de un repo trabaja en su worktree (DN-6), y una que ya
+    // vivia en uno lo recrea si se archivo. El cwd cambia ANTES de arrancar: la transcripcion nace alli.
+    await prepareWorktree(mage, get, set, tabId);
     // Pestana restaurada de un arranque anterior: reanuda su conversacion (`claude --resume`) en vez
     // de arrancar una fresca; el id de sesion resultante es el mismo (misma transcripcion).
     const { sessionId, configDir } = await mage.createSession({
       accountDir: tab.accountId,
       model: tab.model,
       provider: tab.provider,
-      cwd: tab.cwd,
+      cwd: get().tabs.find((t) => t.id === tabId)?.cwd ?? tab.cwd,
       privacy: tab.privacy,
       ...(tab.resumeSessionId === undefined ? {} : { resumeSessionId: tab.resumeSessionId }),
       ...(tab.effort === undefined ? {} : { effort: tab.effort }),
@@ -1073,6 +1094,8 @@ export function createWorkbenchStore(mage: MageClient) {
   // Lo mismo con los `/rename` silenciosos: los recuentos son de las sesiones del store anterior.
   silentRenamesBySession.clear();
   gitTrustAsked.clear();
+  resetPrActionsState();
+  prCreateToolUses.clear();
   // `api` es el store QUE SE ESTA CREANDO. Se usa para suscribirse a si mismo: con
   // `useWorkbenchStore.subscribe` (el singleton global) un store creado con un cliente de pruebas
   // cableaba el espejo del widget contra el store real de la app — justo el acoplamiento que la
@@ -1203,7 +1226,7 @@ export function createWorkbenchStore(mage: MageClient) {
       if (tab === undefined || view?.snapshot.kind !== 'repo') return;
       // Revalida la guarda que la UI ya aplico (D26). Cuenta cualquier pestaña trabajando en la carpeta.
       const turnActive = state.tabs.some((t) => t.cwd === tab.cwd && isTurnLive(state.statusByChat[t.id]));
-      const verdict = canSwitchBranch({ turnActive, dirty: view.snapshot.dirty, detached: view.snapshot.detached });
+      const verdict = canSwitchBranch({ turnActive, dirty: view.snapshot.dirty, detached: view.snapshot.detached, worktree: worktreeOfCwd(tab.cwd) !== null });
       if (!verdict.allowed) throw new Error(verdict.reason);
       let error: string | null = null;
       try {
@@ -1220,12 +1243,32 @@ export function createWorkbenchStore(mage: MageClient) {
       });
     },
 
-    insertCommitPrompt: (tabId) => {
-      const draft = get().draftByChat[tabId];
-      // Lo que el usuario ya tuviera escrito se conserva: el prompt va detras.
-      const text = draft === undefined || draft.text.trim().length === 0 ? COMMIT_PROMPT : `${draft.text.trimEnd()}\n\n${COMMIT_PROMPT}`;
-      get().setDraft(tabId, { text, attachments: draft?.attachments ?? [] });
+    insertCommitPrompt: (tabId) => insertPromptIntoDraft(get, tabId, COMMIT_PROMPT),
+
+    setWorktreeOff: (tabId, off) => set((s) => ({ tabs: s.tabs.map((t) => (t.id === tabId ? { ...t, worktreeOff: off } : t)) })),
+
+    mergeBaseIntoWorktree: async (tabId, base) => {
+      const tab = get().tabs.find((t) => t.id === tabId);
+      if (tab === undefined) throw new Error(`Pestana inexistente: ${tabId}`);
+      const result = await mage.worktreeMergeBase({ cwd: tab.cwd, accountDir: tab.accountId, base });
+      await get().refreshGit(tabId);
+      return result;
     },
+
+    // PR y CI (grupo D): estado y acciones en `prActions.ts`.
+    prByTab: {},
+    ghRunsByTab: {},
+    prGuardByChat: {},
+    ...createPrActions({
+      mage,
+      get,
+      set,
+      persistTabs: () => schedulePersist(mage, get),
+      persistSettings: () => scheduleSettingsPersist(mage, get),
+      insertPrompt: (tabId, prompt) => insertPromptIntoDraft(get, tabId, prompt),
+      sendToTab: (tabId, text) => get().sendMessageToTab(tabId, text),
+      archiveTab: (tabId) => get().closeTab(tabId),
+    }),
 
     setActiveTab: (tabId) => {
       // Invariante de la division (Ronda 3 item 13, generalizado en I11): `activeTabId` es el panel
@@ -1256,7 +1299,7 @@ export function createWorkbenchStore(mage: MageClient) {
     // EXCEPCION (decision del usuario, 2026-09-15): si el agente esta trabajando o esperando un
     // permiso, cerrar NO corta el trabajo — la sesion se queda viva "en segundo plano" y la
     // conversacion sale marcada en el panel de Conversaciones (`backgroundSessions`).
-    closeTab: async (tabId) => {
+    closeTab: async (tabId, options) => {
       const sessionId = get().sessionIdByChat[tabId];
       const tab = get().tabs.find((t) => t.id === tabId);
       const background = sessionId !== undefined && tab !== undefined && shouldBackgroundOnClose(get().statusByChat[tabId]);
@@ -1310,8 +1353,16 @@ export function createWorkbenchStore(mage: MageClient) {
           // pestaña — fuga pequeña, pero que crece con cada conversacion que se cierra.
           turnStartByChat: without(s.turnStartByChat, tabId),
           lastActivityByChat: without(s.lastActivityByChat, tabId),
+          prByTab: without(s.prByTab, tabId),
+          ghRunsByTab: without(s.ghRunsByTab, tabId),
+          prGuardByChat: without(s.prGuardByChat, tabId),
         };
       });
+      // Archivar (grupo D): su worktree se borra si esta limpio; con cambios se queda y se reabre con la
+      // conversacion. La rama se queda siempre. En segundo plano el CLI sigue trabajando ahi: no se toca.
+      if (tab !== undefined && !background && options?.moved !== true) archiveWorktree(mage, tab);
+      // Su PR deja de vigilarse aqui; si la pestaña se fue a otra ventana, alli se vuelve a pedir.
+      if (tab?.prNumber !== undefined) void mage.ghUnwatch(tabId).catch((err: unknown) => console.warn('No se pudo dejar de vigilar el PR:', describeError(err)));
       schedulePersist(mage, get);
       // Cerrar una pestana NO borra la conversacion (sigue en disco): recargar el historial para que
       // reaparezca como entrada del repertorio (M2.6).
@@ -1510,6 +1561,9 @@ export function createWorkbenchStore(mage: MageClient) {
         .then((updateState) => set({ updateState }))
         .catch((err: unknown) => console.warn('No se pudo leer el estado de la actualización:', describeError(err)));
 
+      // PR vigilados (grupo D): cada lectura de main llega aqui, solo a esta ventana.
+      mage.onGhPrUpdate((update) => get().applyGhPrUpdate(update));
+
       // El sondeo de modelos de arranque (P-026 2.4) termina cuando el selector ya esta pintado.
       mage.onModelCatalogChanged(({ configDir, models }) => {
         set((s) => ({ modelCatalogByAccount: { ...s.modelCatalogByAccount, [configDir]: models } }));
@@ -1521,7 +1575,7 @@ export function createWorkbenchStore(mage: MageClient) {
     openInNewWindow: async (tabId) => {
       const persisted = movableTab(get(), tabId);
       await mage.openWindowWithTab(persisted);
-      await get().closeTab(tabId);
+      await get().closeTab(tabId, { moved: true });
     },
 
     moveTabToWindow: async (tabId, targetWindowId) => {
@@ -1529,13 +1583,13 @@ export function createWorkbenchStore(mage: MageClient) {
       // La pestaña se cierra AQUI solo si la otra ventana la acepto: si la ventana destino ya no existe
       // el IPC lanza, y cerrarla antes habria perdido la conversacion de la vista sin ganar nada.
       await mage.moveTabToWindow({ targetWindowId, tab: persisted });
-      await get().closeTab(tabId);
+      await get().closeTab(tabId, { moved: true });
     },
 
     dropTabOutside: async (tabId) => {
       const persisted = movableTab(get(), tabId);
       const outcome = await mage.dropTabOutside(persisted);
-      if (outcome === 'moved') await get().closeTab(tabId);
+      if (outcome === 'moved') await get().closeTab(tabId, { moved: true });
     },
 
     openConversationInNewWindow: async (item) => {
@@ -1574,6 +1628,8 @@ export function createWorkbenchStore(mage: MageClient) {
         splitLayout: addTabToLeaf(s.splitLayout, findLeafPath(s.splitLayout, s.activeTabId) ?? firstLeafPath(s.splitLayout), tab.id),
       }));
       schedulePersist(mage, get);
+      // Su PR se vigila ahora desde esta ventana (la de origen lo solto al cerrarla).
+      if (tab.prNumber !== undefined) void get().refreshPr(tab.id);
     },
 
     // Restaura las pestanas del arranque anterior (M2.5). Descarta las de cuentas ya inexistentes; NO
@@ -1592,6 +1648,8 @@ export function createWorkbenchStore(mage: MageClient) {
         splitLayout,
         activeAccountId: tabs.find((t) => t.id === activeTabId)?.accountId ?? s.activeAccountId,
       }));
+      // Los PR vinculados se vuelven a vigilar al arrancar, esten o no a la vista (DN-8: sin foco).
+      for (const tab of tabs) if (tab.prNumber !== undefined) void get().refreshPr(tab.id);
     },
 
     // Descubre las cuentas en disco y las mapea a presentacion. Conserva la cuenta activa si sigue
@@ -2345,6 +2403,8 @@ export function createWorkbenchStore(mage: MageClient) {
       // que la transcripcion se relea.
       patchBlocks(set, tabId, (blocks) => appendUserBlock(blocks, { id: nextBlockId(), text: trimmed, time: currentTime(), attachments }));
       setStatus(set, tabId, 'streaming');
+      // El turno que lleva el prompt de «Crear PR» arma sus barreras hasta su `result` (como Desktop).
+      if (trimmed.includes(CREATE_PR_PROMPT)) set((s) => ({ prGuardByChat: { ...s.prGuardByChat, [tabId]: true } }));
       // El aviso de limite se retira al escribir: o la ventana ya se restablecio, o el CLI lo volvera a
       // mandar en este mismo turno. Dejarlo puesto ofreceria mudarse de cuenta por un limite caducado.
       set((s) => ({ rateLimitByChat: without(s.rateLimitByChat, tabId) }));
@@ -2597,6 +2657,13 @@ export function createWorkbenchStore(mage: MageClient) {
       if (event.kind === 'result' && tab !== undefined) void get().refreshUsage(tab.accountId);
       // Y el de git (P-026 3.5): el agente acaba de tocar ficheros, quiza de hacer commit.
       if (event.kind === 'result' && tab !== undefined) void get().refreshGit(tab.id);
+      // Y el del PR (grupo D): quiza acaba de hacer push o de abrirlo. Las barreras del turno de PR caen.
+      if (event.kind === 'result' && tab !== undefined) {
+        set((s) => ({ prGuardByChat: without(s.prGuardByChat, tab.id) }));
+        void get().refreshPr(tab.id).catch((err: unknown) => console.warn('No se pudo leer el PR:', describeError(err)));
+      }
+      detectPrBinding(get, tabId, event);
+      denyPrTurnCommand(mage, get, set, sessionId, tabId, event);
       // Y es el momento de mandar un nombre que el usuario puso con el turno en marcha (D3).
       if (event.kind === 'result') flushPendingCliTitle(mage, get, set, tabId);
       // Y el primer mensaje de la cola sale como turno propio (0.1.1 R2, punto 30).
@@ -2612,7 +2679,9 @@ export function createWorkbenchStore(mage: MageClient) {
       // titulo de la pestana como cuerpo; los eventos de ruido devuelven null (no se notifica).
       // Un permiso que Mage contesto sola («Permitir siempre aqui») no pide nada al usuario (P-026, 1.8).
       if (tab !== undefined) {
-        const content = notificationForEvent(event, { tabTitle: tab.title, rules: get().settings.notificationRules, autoAllowed });
+        // Tampoco uno que denego la barrera del turno de PR: ya esta contestado.
+        const answered = autoAllowed || (event.kind === 'permission_request' && prTurnDenial(get(), tabId, event.request) !== null);
+        const content = notificationForEvent(event, { tabTitle: tab.title, rules: get().settings.notificationRules, autoAllowed: answered });
         if (content !== null) void mage.notify(toNotifyParams(content, { tabId, sessionId })).catch(() => undefined);
       }
     },
@@ -2759,6 +2828,8 @@ export function reduceEvent(state: WorkbenchState, tabId: string, event: MageEve
       // ni cola, ni panel, ni estado "necesita permiso" — el usuario ya dijo que si a esta tool aqui.
       // La respuesta la manda `handleEvent`, que es donde viven los efectos.
       if (isAutoAllowedRequest(state, tabId, event.request)) return {};
+      // Barrera del turno de «Crear PR»: la deniega `handleEvent`, sin tarjeta.
+      if (prTurnDenial(state, tabId, event.request) !== null) return {};
 
       // La tarjeta: de pregunta si el input tiene esa forma, de permiso si no. En los dos casos, una
       // sola por requestId.
@@ -2961,6 +3032,68 @@ function isTurnRunning(status: ChatStatus | undefined): boolean {
 const NO_DRAFT: PromptDraft = { text: '', attachments: [] };
 
 // Al acabar un turno sale el PRIMERO de la cola; el siguiente espera a que acabe ese.
+// Vinculacion del PR (grupo D, `prBinding.ts`): la URL del `gh pr create` o la marca `<pr-created>`.
+function detectPrBinding(get: () => WorkbenchState, tabId: string, event: MageEvent): void {
+  if (event.kind === 'tool_use' && event.tool.toolName === 'Bash' && isPrCreateCommand(String(event.tool.input.command ?? ''))) {
+    prCreateToolUses.add(`${tabId}:${event.tool.toolUseId}`);
+    return;
+  }
+  let number: number | null = null;
+  if (event.kind === 'tool_result' && prCreateToolUses.delete(`${tabId}:${event.result.toolUseId}`) && !event.result.isError) number = prNumberFromUrl(event.result.output);
+  if (event.kind === 'assistant_text') number = prNumberFromCreatedTag(event.text);
+  if (number !== null) get().bindPr(tabId, number);
+}
+
+// Worktree de la pestaña al arrancar su sesion (grupo D, bloque 3). Nueva + casilla marcada + repo con
+// rama → se crea desde la rama del selector (DN-4) con el nombre del primer mensaje (DN-5). Ya en un
+// worktree de Mage → se recrea si no existe (se archivo limpio).
+async function prepareWorktree(mage: MageClient, get: () => WorkbenchState, set: SetFn, tabId: string): Promise<void> {
+  const tab = get().tabs.find((t) => t.id === tabId);
+  if (tab === undefined) return;
+  if (worktreeOfCwd(tab.cwd) !== null) {
+    await mage.worktreeRestore({ cwd: tab.cwd, accountDir: tab.accountId });
+    return;
+  }
+  const snapshot = get().gitByCwd[tab.cwd]?.snapshot;
+  if (!wantsNewWorktree(tab, snapshot)) return;
+  const firstMessage = (get().blocksByChat[tabId] ?? []).find((b) => b.kind === 'user');
+  const created = await mage.worktreeCreate({ cwd: tab.cwd, accountDir: tab.accountId, base: snapshot.branch, firstMessage: firstMessage?.kind === 'user' ? firstMessage.text : '' });
+  if (created === null) return;
+  set((s) => ({ tabs: s.tabs.map((t) => (t.id === tabId ? { ...t, cwd: created.path } : t)) }));
+  schedulePersist(mage, get);
+}
+
+function wantsNewWorktree(tab: Tab, snapshot: GitSnapshot | undefined): snapshot is Extract<GitSnapshot, { kind: 'repo' }> & { readonly branch: string } {
+  return tab.resumeSessionId === undefined && tab.worktreeOff !== true && snapshot?.kind === 'repo' && snapshot.branch !== null;
+}
+
+function archiveWorktree(mage: MageClient, tab: Tab): void {
+  if (worktreeOfCwd(tab.cwd) === null) return;
+  void mage
+    .worktreeRemove({ cwd: tab.cwd, accountDir: tab.accountId })
+    .then((result) => {
+      if (!result.removed) console.warn(`Worktree conservado (${result.reason === 'dirty' ? 'tiene cambios sin confirmar' : 'no se pudo comprobar'}): ${tab.cwd}`);
+    })
+    .catch((err: unknown) => console.warn('No se pudo archivar el worktree:', describeError(err)));
+}
+
+// Motivo por el que la barrera del turno de PR rechaza este permiso, o null.
+function prTurnDenial(state: WorkbenchState, tabId: string, request: PermissionRequest): string | null {
+  if (state.prGuardByChat[tabId] !== true || request.toolName !== 'Bash') return null;
+  return prTurnBlockReason(String(request.input.command ?? ''));
+}
+
+function denyPrTurnCommand(mage: MageClient, get: () => WorkbenchState, set: SetFn, sessionId: string, tabId: string, event: MageEvent): void {
+  if (event.kind !== 'permission_request') return;
+  const blocked = prTurnDenial(get(), tabId, event.request);
+  if (blocked === null) return;
+  const message = `Mage no permite \`${blocked}\` en el turno de crear el PR: haz un push normal de la rama, sin forzar ni saltar los hooks, y abre el PR en este repositorio.`;
+  patchBlocks(set, tabId, (blocks) => [...blocks, { kind: 'system', id: nextBlockId(), text: `Bloqueado durante «Crear PR»: ${blocked}` }]);
+  void mage
+    .answerPermission({ sessionId, requestId: event.request.requestId, decision: { behavior: 'deny', message } })
+    .catch((err: unknown) => failChat(set, tabId, describeError(err)));
+}
+
 function sendNextQueuedMessage(get: () => WorkbenchState, tabId: string, set: SetFn): void {
   if (isTurnRunning(get().statusByChat[tabId])) return;
   const { next, rest } = takeNextMessage(get().queuedByChat[tabId] ?? []);

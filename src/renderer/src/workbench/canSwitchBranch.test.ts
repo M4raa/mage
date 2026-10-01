@@ -24,3 +24,11 @@ describe('canSwitchBranch', () => {
     expect(canSwitchBranch({ turnActive: true, dirty: true, detached: true })).toMatchObject({ reason: expect.stringContaining('turno') });
   });
 });
+
+describe('canSwitchBranch (worktree, grupo D)', () => {
+  it('canSwitchBranch_enUnWorktree_bloqueaAunqueEsteLimpio', () => {
+    const verdict = canSwitchBranch({ turnActive: false, dirty: false, detached: false, worktree: true });
+
+    expect(verdict).toEqual({ allowed: false, reason: expect.stringContaining('worktree') });
+  });
+});

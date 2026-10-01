@@ -24,8 +24,24 @@ versión.
   copiándolas (ya no dependen de que Desktop siga instalado), activarlas, configurarlas y
   desinstalarlas. Los valores sensibles de su configuración se guardan cifrados. Mage avisa si a una le
   falta configurar algo o necesita `node`/`python` en el PATH.
+- **Pull requests y CI en la conversación**, como en Claude Desktop y con el GitHub CLI (`gh`): la fila
+  del chat enseña el PR de la rama con sus checks (✓ ✗ ●) y, al desplegarlo, los que fallan, los runs
+  de la rama con **Relanzar** y **Cancelar**, el **auto-merge** nativo de GitHub (squash) y el
+  **auto-fix**, que abre un turno para que el agente arregle un CI roto o un conflicto. Lo que escribe en
+  GitHub pide confirmación. El PR se sigue aunque la ventana no tenga el foco y avisa cuando termina el CI.
+- **Crear PR** deja en el input el prompt para que el agente suba la rama y abra el PR (lo envías tú), y
+  el PR que crea se vincula solo a la conversación. Durante ese turno Mage no deja forzar el push, saltar
+  los hooks ni abrir el PR en otro repositorio.
+- **Worktrees**: en un repositorio git, cada conversación nueva trabaja en su propia copia en
+  `.claude/worktrees/`, en una rama `claude/…` con el tema del primer mensaje (la casilla **Worktree**
+  lo desactiva). Al cerrar la pestaña el worktree se borra si no tiene cambios (la rama se queda), y al
+  reabrir la conversación vuelve. **Traer la base** fusiona la rama base en la del worktree.
+- Si falta `gh` o no tiene sesión, la fila del chat lo dice con un aviso que se puede descartar para
+  siempre (se recupera en Configuración › General), donde también está **Archivar al fusionar o cerrar
+  el PR**.
 
 ### Cambiado
+- «Confirmar cambios» se llama ahora **Pedir commit al agente**, que es lo que hace.
 - Sin pestañas abiertas se ve la misma pantalla que en un chat nuevo, con sus proyectos recientes:
   elegir un proyecto abre la conversación en esa carpeta, y **＋ Nuevo chat** la abre siempre en una
   carpeta temporal.
@@ -55,7 +71,6 @@ versión.
 ### Por completar antes de publicar
 - Por completar: cuentas por proveedor y forma de pago (Claude por API, agy y Codex), agy en sesión
   persistente y con su uso en el panel.
-- Por completar: seguimiento de PR y CI desde la conversación, y worktrees.
 - Por completar: runtime propio para los modelos locales, en lugar del gateway.
 
 ## 0.1.1 — 2026-09-30

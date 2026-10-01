@@ -147,3 +147,40 @@ describe('createGitService.status (cache)', () => {
     expect((await service.status('/r', '/acc')).kind).toBe('repo');
   });
 });
+
+describe('createGitService.remote', () => {
+  const REMOTES = ['origin\thttps://tok@github.com/acme/demo.git (fetch)', 'origin\thttps://tok@github.com/acme/demo.git (push)', 'fork\tgit@github.com:yo/demo.git (fetch)', ''].join('\n');
+
+  function remoteRunner(upstream: string): ReturnType<typeof vi.fn<GitRunner>> {
+    return vi.fn<GitRunner>(async (_bin, args) => {
+      if (args.includes('status')) return CLEAN_STATUS;
+      if (args.includes('diff')) return '';
+      if (args.includes('for-each-ref')) return `${upstream}\n`;
+      if (args.includes('remote')) return REMOTES;
+      throw new Error(`no esperado: ${args.join(' ')}`);
+    });
+  }
+
+  it('remote_ramaConUpstream_usaSuRemotoSinCredenciales', async () => {
+    const run = remoteRunner('fork');
+
+    const ref = await createGitService(deps({ run })).remote('/r', '/acc');
+
+    expect(ref).toEqual({ host: 'github.com', owner: 'yo', repo: 'demo' });
+    expect(run.mock.calls.find(([, a]) => a.includes('for-each-ref'))?.[1]).toContain('refs/heads/main');
+  });
+
+  it('remote_sinUpstream_caeAOriginYNoDevuelveElToken', async () => {
+    const ref = await createGitService(deps({ run: remoteRunner('') })).remote('/r', '/acc');
+
+    expect(ref).toEqual({ host: 'github.com', owner: 'acme', repo: 'demo' });
+    expect(JSON.stringify(ref)).not.toContain('tok');
+  });
+
+  it('remote_sinConfianza_nullSinEjecutar', async () => {
+    const run = remoteRunner('');
+
+    expect(await createGitService(deps({ run, isTrusted: () => false })).remote('/r', '/acc')).toBeNull();
+    expect(run).not.toHaveBeenCalled();
+  });
+});

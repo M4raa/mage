@@ -48,3 +48,54 @@ export function sanitizeAlwaysAllow(values: readonly string[] | undefined): read
   }
   return clean;
 }
+
+// --- Barreras del turno de «Crear PR» (grupo D, como Claude Desktop) ----------------------------------
+// Mientras dura el turno que pidio crear el PR, un `Bash` que fuerce el push, salte los hooks, reescriba
+// historia o publique en otro repo se DENIEGA sin preguntar. Un push normal de la rama a su remoto vale.
+// Techo conocido: solo actua cuando el CLI pide permiso; con «Omitir permisos» el CLI no pregunta.
+// ponytail: tokenizado por espacios, sin entender comillas; un `--force` dentro de un mensaje entre
+// comillas tambien se rechaza (el lado seguro). Si molesta, un tokenizador de shell de verdad.
+
+const SEGMENT_SEPARATORS = /&&|\|\||[;|\n]/;
+
+type Rule = { readonly command: readonly string[]; readonly long: readonly string[]; readonly short: string; readonly plusRefspec?: boolean };
+
+const PR_TURN_RULES: readonly Rule[] = [
+  { command: ['git', 'push'], long: ['--force', '--force-with-lease', '--force-if-includes', '--delete', '--mirror', '--prune', '--push-option', '--no-verify'], short: 'fdo', plusRefspec: true },
+  { command: ['git', 'commit'], long: ['--no-verify', '--amend', '--allow-empty', '--file'], short: 'nF' },
+  { command: ['gh', 'pr', 'create'], long: ['--repo', '--head', '--body-file', '--recover'], short: 'RHF' },
+];
+
+// Motivo por el que se bloquea el comando en el turno de PR, o null si se puede dejar pasar.
+export function prTurnBlockReason(command: string): string | null {
+  for (const segment of command.split(SEGMENT_SEPARATORS)) {
+    const tokens = segment.trim().split(/\s+/).filter((token) => token.length > 0);
+    for (const rule of PR_TURN_RULES) {
+      const flag = blockedFlag(tokens, rule);
+      if (flag !== null) return `${rule.command.join(' ')} ${flag}`;
+    }
+  }
+  return null;
+}
+
+function blockedFlag(tokens: readonly string[], rule: Rule): string | null {
+  const start = commandStart(tokens, rule.command);
+  if (start < 0) return null;
+  for (const token of tokens.slice(start + rule.command.length)) {
+    const name = token.split('=')[0]!;
+    if (rule.long.some((flag) => name === flag || (flag === '--force' && name.startsWith('--force')))) return name;
+    if (/^-[a-zA-Z]+$/.test(token) && [...token.slice(1)].some((letter) => rule.short.includes(letter))) return token;
+    if (rule.plusRefspec === true && token.startsWith('+')) return token;
+  }
+  return null;
+}
+
+// Indice donde empieza el comando (`git push`, `gh pr create`), saltando `git -C <ruta>`/`-c k=v`.
+function commandStart(tokens: readonly string[], command: readonly string[]): number {
+  const head = tokens.indexOf(command[0]!);
+  if (head < 0) return -1;
+  let i = head + 1;
+  while (tokens[i] === '-C' || tokens[i] === '-c') i += 2;
+  const rest = command.slice(1);
+  return rest.every((word, k) => tokens[i + k] === word) ? i - 1 : -1;
+}

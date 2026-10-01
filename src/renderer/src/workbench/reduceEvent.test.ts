@@ -13,6 +13,7 @@ function state(overrides: Partial<WorkbenchState> = {}): WorkbenchState {
     streamingIdByChat: {},
     statusByChat: {},
     pendingByChat: {},
+    prGuardByChat: {},
     slashCommandsByChat: {},
     contextUsageByChat: {},
     rateLimitByChat: {},

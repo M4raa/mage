@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseBranches, parseNumstat, parseStatusV2, switchTargetError } from './gitParse';
+import { parseBranches, parseNumstat, parseRemoteUrl, parseStatusV2, parseWorktreeList, pickRemoteUrl, switchTargetError, worktreeSlug } from './gitParse';
 
 const Z = '\u0000';
 const OID = '1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d';
@@ -89,5 +89,81 @@ describe('switchTargetError', () => {
 
   it('switchTargetError_vacia_rechaza', () => {
     expect(switchTargetError('', [''])).toBe('rama vacía');
+  });
+});
+
+describe('parseRemoteUrl', () => {
+  it('https_conYSinPuntoGit_daHostDueñoYRepo', () => {
+    expect(parseRemoteUrl('https://github.com/acme/demo.git')).toEqual({ host: 'github.com', owner: 'acme', repo: 'demo' });
+    expect(parseRemoteUrl('https://GitHub.com/acme/demo/')).toEqual({ host: 'github.com', owner: 'acme', repo: 'demo' });
+  });
+
+  it('httpsConCredenciales_lasDescarta', () => {
+    const ref = parseRemoteUrl('https://usuario:ghp_secreto@github.com/acme/demo.git');
+
+    expect(ref).toEqual({ host: 'github.com', owner: 'acme', repo: 'demo' });
+    expect(JSON.stringify(ref)).not.toContain('secreto');
+  });
+
+  it('scpYSsh_conPuerto_daElHostSinPuerto', () => {
+    expect(parseRemoteUrl('git@github.com:acme/demo.git')).toEqual({ host: 'github.com', owner: 'acme', repo: 'demo' });
+    expect(parseRemoteUrl('ssh://git@ghe.example.com:2222/acme/demo')).toEqual({ host: 'ghe.example.com', owner: 'acme', repo: 'demo' });
+  });
+
+  it('rutasLocalesYFormasRaras_null', () => {
+    expect(parseRemoteUrl('C:/repos/demo')).toBeNull();
+    expect(parseRemoteUrl('/srv/git/demo.git')).toBeNull();
+    expect(parseRemoteUrl('file:///srv/git/demo.git')).toBeNull();
+    expect(parseRemoteUrl('https://github.com/acme/demo/tree/main')).toBeNull();
+    expect(parseRemoteUrl('')).toBeNull();
+  });
+});
+
+describe('pickRemoteUrl', () => {
+  const V = 'origin\thttps://github.com/a/b.git (fetch)\norigin\thttps://github.com/a/b.git (push)\nup\tgit@github.com:c/d.git (fetch)\n';
+
+  it('pickRemoteUrl_upstreamConocido_gana', () => {
+    expect(pickRemoteUrl(V, 'up')).toBe('git@github.com:c/d.git');
+  });
+
+  it('pickRemoteUrl_sinUpstream_origin', () => {
+    expect(pickRemoteUrl(V, '')).toBe('https://github.com/a/b.git');
+  });
+
+  it('pickRemoteUrl_sinOriginNiUpstream_null', () => {
+    expect(pickRemoteUrl('up\tgit@github.com:c/d.git (fetch)\n', '')).toBeNull();
+    expect(pickRemoteUrl('', 'x')).toBeNull();
+  });
+});
+
+describe('parseWorktreeList', () => {
+  it('parseWorktreeList_formaMedida_rutaYRama', () => {
+    const out = 'worktree C:/r\nHEAD 486a\nbranch refs/heads/main\n\nworktree C:/r/.claude/worktrees/x\nHEAD 486a\nbranch refs/heads/claude/x\n\nworktree C:/otro\nHEAD 1\ndetached\n';
+
+    expect(parseWorktreeList(out)).toEqual([
+      { path: 'C:/r', branch: 'main' },
+      { path: 'C:/r/.claude/worktrees/x', branch: 'claude/x' },
+      { path: 'C:/otro', branch: null },
+    ]);
+  });
+
+  it('parseWorktreeList_vacio_listaVacia', () => {
+    expect(parseWorktreeList('')).toEqual([]);
+  });
+});
+
+describe('worktreeSlug', () => {
+  it('worktreeSlug_mensaje_cuatroPalabrasAsciiConGuiones', () => {
+    expect(worktreeSlug('Arreglar el login de Google, por favor')).toBe('arreglar-el-login-de');
+    expect(worktreeSlug('¿Añadir caché a la API?')).toBe('anadir-cache-a-la');
+  });
+
+  it('worktreeSlug_sinLetras_nombrePorDefecto', () => {
+    expect(worktreeSlug('¿¡!? ')).toBe('sesion');
+    expect(worktreeSlug('')).toBe('sesion');
+  });
+
+  it('worktreeSlug_palabraLarguisima_seRecorta', () => {
+    expect(worktreeSlug('a'.repeat(100)).length).toBe(40);
   });
 });

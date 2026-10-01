@@ -1,0 +1,19 @@
+[
+  {
+    "attempt": 1,
+    "conclusion": "success",
+    "createdAt": "2026-09-30T19:32:58Z",
+    "databaseId": 36766441586,
+    "displayTitle": "Prueba: medir gh desde Mage",
+    "event": "pull_request",
+    "headBranch": "prueba/gh-medicion",
+    "headSha": "2b2687300a116fa13712dbed0a4b6470cff427e3",
+    "name": "check",
+    "number": 10,
+    "startedAt": "2026-09-30T19:32:58Z",
+    "status": "completed",
+    "updatedAt": "2026-09-30T19:34:58Z",
+    "url": "https://github.com/acme/demo/actions/runs/36766441586",
+    "workflowName": "check"
+  }
+]

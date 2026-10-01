@@ -3,6 +3,8 @@
 // rompe en ambos lados. El renderer NUNCA accede a Node/procesos: todo pasa por aqui.
 
 import type { GitParams, GitSnapshot, GitSwitchParams } from './git';
+import type { WorktreeCreateParams, WorktreeMergeBaseParams, WorktreeRemoveResult } from './worktree';
+import type { GhAutoMergeParams, GhPrUpdate, GhRunActionParams, GhRunsParams, GhRunsSnapshot, GhSnapshot, GhWatchParams } from './gh';
 import type { AccountInfo, CliLoginStart, EmbeddedLoginResult } from './accounts';
 import type { ProviderAuthSummary, ProviderModel } from './providers';
 import type { MageEvent, PermissionDecision, SlashCommandInfo } from './events';
@@ -147,6 +149,19 @@ export const IpcChannel = {
   GitStatus: 'git:status',
   GitBranches: 'git:branches',
   GitSwitch: 'git:switch',
+  // PR y CI de la rama con el GitHub CLI (grupo D de la 0.1.2). Lectura, vigilancia y tres acciones que
+  // escriben en GitHub (relanzar, cancelar y el auto-merge nativo), siempre con confirmacion en la UI.
+  GhBranchPr: 'gh:branchPr',
+  GhWatch: 'gh:watch',
+  GhUnwatch: 'gh:unwatch',
+  GhRuns: 'gh:runs',
+  GhRunAction: 'gh:runAction',
+  GhAutoMerge: 'gh:autoMerge',
+  // Worktrees de Mage (grupo D, bloque 3): crear al empezar, recrear al reabrir, archivar y traer la base.
+  WorktreeCreate: 'worktree:create',
+  WorktreeRestore: 'worktree:restore',
+  WorktreeRemove: 'worktree:remove',
+  WorktreeMergeBase: 'worktree:mergeBase',
   PromptImprove: 'prompt:improve',
   PromptHandoff: 'prompt:handoff',
   NotifyShow: 'notify:show',
@@ -628,6 +643,8 @@ export const WINDOW_TAB_RECEIVED_CHANNEL = 'windows:tabReceived';
 // main -> TODAS las ventanas: el catalogo de modelos de un config dir cambio (P-026 2.4). Llega del
 // sondeo de arranque, que termina cuando la ventana ya esta pintada.
 export const MODEL_CATALOG_CHANGED_CHANNEL = 'modelCatalog:changed';
+// Main -> todas las ventanas: lectura nueva de un PR vigilado (`GhPrUpdate`).
+export const GH_PR_UPDATE_CHANNEL = 'gh:prUpdate';
 
 // --- Dialogos propios de cierre y de actualizacion (grupo B) ----------------------------------
 
@@ -759,6 +776,19 @@ export interface MageApi {
   gitStatus(params: GitParams): Promise<GitSnapshot>;
   gitBranches(params: GitParams): Promise<readonly string[]>;
   gitSwitch(params: GitSwitchParams): Promise<void>;
+  // PR/CI (grupo D). Sin gh, sin sesion, sin repo de GitHub o sin confianza, el estado lo dice.
+  ghBranchPr(params: GitParams): Promise<GhSnapshot>;
+  ghWatch(params: GhWatchParams): Promise<void>;
+  ghUnwatch(key: string): Promise<void>;
+  ghRuns(params: GhRunsParams): Promise<GhRunsSnapshot>;
+  ghRunAction(params: GhRunActionParams): Promise<void>;
+  ghAutoMerge(params: GhAutoMergeParams): Promise<void>;
+  onGhPrUpdate(listener: (update: GhPrUpdate) => void): () => void;
+  // Worktrees (grupo D). `worktreeCreate` da null si la carpeta no es la raiz del repo.
+  worktreeCreate(params: WorktreeCreateParams): Promise<{ readonly path: string; readonly branch: string } | null>;
+  worktreeRestore(params: GitParams): Promise<void>;
+  worktreeRemove(params: GitParams): Promise<WorktreeRemoveResult>;
+  worktreeMergeBase(params: WorktreeMergeBaseParams): Promise<'merged' | 'conflict'>;
   // Uso de una cuenta (por configDir). Devuelve datos agregados SEGUROS (sin token). Cacheado en main.
   getUsage(configDir: string): Promise<UsageInfo>;
   // Estado del servicio de Claude (global, no por cuenta). Cacheado en main.

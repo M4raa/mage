@@ -5,6 +5,8 @@ import { usePaneTabId } from '../paneContext';
 import { diffChip, folderChip, gitChip, privacyChip, type ChatChip } from '../chatInfoView';
 import { canSwitchBranch } from '../canSwitchBranch';
 import { Dropdown } from './Dropdown';
+import { PrBar } from './PrBar';
+import { worktreeOfCwd } from '@shared/worktree';
 
 // Fila de informacion del chat, encima del input (peticion del usuario).
 //
@@ -29,14 +31,19 @@ export function ChatInfoBar(): React.JSX.Element | null {
   // Git se refresca por eventos (P-026 3.5), sin watchers ni timers: al activar la pestaña o cambiar su
   // carpeta, y al volver el foco a la ventana. El fin de turno y el cambio de rama los lanza el store.
   const refreshGit = useWorkbenchStore((s) => s.refreshGit);
+  const refreshPr = useWorkbenchStore((s) => s.refreshPr);
   const cwd = tab?.cwd;
   useEffect(() => {
     if (cwd === undefined) return;
-    void refreshGit(tabId);
-    const onFocus = (): void => void refreshGit(tabId);
+    // El PR va detras de git (grupo D): `gh` solo corre si git ya puede (repo, confianza).
+    const refresh = (): void => {
+      void refreshGit(tabId).then(() => refreshPr(tabId)).catch((err: unknown) => console.warn('No se pudo leer el PR:', err));
+    };
+    refresh();
+    const onFocus = refresh;
     window.addEventListener('focus', onFocus);
     return () => window.removeEventListener('focus', onFocus);
-  }, [tabId, cwd, refreshGit]);
+  }, [tabId, cwd, refreshGit, refreshPr]);
 
   const chips = useMemo((): readonly ChatChip[] => {
     if (tab === undefined) return [];
@@ -62,6 +69,7 @@ export function ChatInfoBar(): React.JSX.Element | null {
         <span className="truncate">{folder!.label}</span>
       </button>
       <GitChips tabId={tabId} cwd={tab.cwd} />
+      <PrBar tabId={tabId} />
       {rest.map((chip) => (
         // Las informativas NO son botones: nada ocurre al pulsarlas, y un boton que no hace nada es una
         // promesa rota. El dato largo va en el tooltip y en el nombre accesible.
@@ -81,7 +89,8 @@ export function ChatInfoBar(): React.JSX.Element | null {
 
 const CHIP_CLASS = 'inline-flex max-w-[280px] items-center gap-[5px] rounded-full border border-mg-border-ctrl px-[8px] py-[2px]';
 
-// Rama, cambios y «Confirmar cambios» (P-026 3.5, D25–D27). Sin repo, sin git o sin confianza, nada.
+// Rama, cambios y «Pedir commit al agente» (P-026 3.5, D25–D27; el nombre es el de DA-1). Sin repo, sin
+// git o sin confianza, nada.
 function GitChips({ tabId, cwd }: { readonly tabId: string; readonly cwd: string }): React.JSX.Element | null {
   const view = useWorkbenchStore((s) => s.gitByCwd[cwd]);
   const turnActive = useWorkbenchStore((s) => s.tabs.some((t) => t.cwd === cwd && isTurnLive(s.statusByChat[t.id])));
@@ -91,7 +100,8 @@ function GitChips({ tabId, cwd }: { readonly tabId: string; readonly cwd: string
   const branch = gitChip(snapshot);
   if (view === undefined || branch === null || snapshot?.kind !== 'repo') return null;
   const diff = diffChip(snapshot);
-  const verdict = canSwitchBranch({ turnActive, dirty: snapshot.dirty, detached: snapshot.detached });
+  const worktree = worktreeOfCwd(cwd);
+  const verdict = canSwitchBranch({ turnActive, dirty: snapshot.dirty, detached: snapshot.detached, worktree: worktree !== null });
   const onSwitch = (name: string): void => {
     if (name === snapshot.branch) return;
     void switchGitBranch(tabId, name).catch((err: unknown) => console.warn('No se pudo cambiar de rama:', err));
@@ -114,6 +124,7 @@ function GitChips({ tabId, cwd }: { readonly tabId: string; readonly cwd: string
           <span className="truncate">{branch.label}</span>
         </span>
       )}
+      <WorktreeToggle tabId={tabId} isWorktree={worktree !== null} canBranch={snapshot.branch !== null} />
       {diff !== null && (
         <span data-git-diff data-tip={diff.title} aria-label={diff.title} className={`${CHIP_CLASS} cursor-help font-mono`}>
           <span className="text-mg-diff-add">{diff.added}</span>
@@ -127,7 +138,7 @@ function GitChips({ tabId, cwd }: { readonly tabId: string; readonly cwd: string
           data-tip="Deja en el input un prompt para que el agente haga el commit; lo envías tú"
           className={`${CHIP_CLASS} text-mg-body2 transition-colors duration-150 ease-out hover:bg-mg-hover hover:text-mg-body`}
         >
-          Confirmar cambios
+          Pedir commit al agente
         </button>
       )}
       {view.error !== null && (
@@ -136,6 +147,30 @@ function GitChips({ tabId, cwd }: { readonly tabId: string; readonly cwd: string
         </span>
       )}
     </>
+  );
+}
+
+// Casilla «Worktree» (DN-6: marcada por defecto) mientras la conversacion no ha empezado; despues, si
+// trabaja en uno, un chip que lo dice. Al archivar (cerrar la pestaña) el worktree se borra si esta limpio.
+function WorktreeToggle({ tabId, isWorktree, canBranch }: { readonly tabId: string; readonly isWorktree: boolean; readonly canBranch: boolean }): React.JSX.Element | null {
+  const tab = useWorkbenchStore((s) => s.tabs.find((t) => t.id === tabId));
+  const started = useWorkbenchStore((s) => s.sessionIdByChat[tabId] !== undefined || (s.blocksByChat[tabId]?.length ?? 0) > 0);
+  const setWorktreeOff = useWorkbenchStore((s) => s.setWorktreeOff);
+  if (tab === undefined) return null;
+  if (isWorktree) {
+    const tip = 'Trabaja en su propio worktree (.claude/worktrees). Al cerrar la pestaña se borra si no tiene cambios; con cambios se conserva y vuelve al reabrir la conversación. La rama se queda.';
+    return (
+      <span data-worktree-chip data-tip={tip} aria-label={tip} className={`${CHIP_CLASS} cursor-help`}>
+        worktree
+      </span>
+    );
+  }
+  if (started || tab.resumeSessionId !== undefined || !canBranch) return null;
+  return (
+    <label data-worktree-toggle data-tip="Trabajar en una copia aparte del repo, en la rama claude/<tema del primer mensaje>, sin tocar esta carpeta" className={`${CHIP_CLASS} cursor-pointer`}>
+      <input type="checkbox" checked={tab.worktreeOff !== true} onChange={(e) => setWorktreeOff(tabId, !e.target.checked)} />
+      Worktree
+    </label>
   );
 }
 

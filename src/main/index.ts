@@ -45,6 +45,7 @@ import {
   IpcChannel,
   JUMP_LIST_OPEN_CHANNEL,
   MODEL_CATALOG_CHANGED_CHANNEL,
+  GH_PR_UPDATE_CHANNEL,
   NOTIFICATION_CLICKED_CHANNEL,
   SETTINGS_CHANGED_CHANNEL,
   TRANSCRIPT_BATCH_CHANNEL,
@@ -175,6 +176,13 @@ import { findGitBinary } from './os/gitBinaryResolver';
 import { execCapturingStdout } from './os/execCapture';
 import { createGitService, findRepoRootWith, type GitService } from './git/gitService';
 import type { GitParams, GitSnapshot, GitSwitchParams } from '@shared/git';
+import type { GhAutoMergeParams, GhRunActionParams, GhRunsParams, GhRunsSnapshot, GhSnapshot, GhWatchParams } from '@shared/gh';
+import { findGhBinary } from './os/ghBinaryResolver';
+import { createGhService, type GhRunner, type GhService } from './gh/ghService';
+import { PrMonitor } from './gh/prMonitor';
+import { FAKE_GH_BIN, runFakeGh } from './gh/ghFakeRunner';
+import { createWorktreeService, nodeWorktreeFs, type WorktreeService } from './git/worktreeService';
+import type { WorktreeCreateParams, WorktreeMergeBaseParams, WorktreeRemoveResult } from '@shared/worktree';
 import { PanelLayoutStore } from './state/panelLayoutStore';
 import { PromptService } from './prompt/promptService';
 import { WidgetWindowController } from './widget/widgetWindow';
@@ -1086,6 +1094,136 @@ function registerGitHandlers(): void {
     assertGitParams(params);
     if (typeof params.name !== 'string') throw new Error(`Rama no valida: ${String(params.name)}`);
     return getGitService().switchBranch(params.cwd, params.accountDir, params.name);
+  });
+}
+
+// PR y CI con el GitHub CLI (grupo D). Mismo timeout y buffer que git; `gh` falso en proceso con
+// MAGE_GH_FAKE=1 (verify:gui). El runner traduce la salida a un codigo: el «sin sesion» de gh es el 4.
+const GH_FAKE = process.env.MAGE_GH_FAKE === '1';
+const runRealGh: GhRunner = async (bin, args, options) => {
+  try {
+    return { code: 0, stdout: await execCapturingStdout(bin, args, { ...options, timeoutMs: GIT_TIMEOUT_MS, maxBufferBytes: GIT_MAX_BUFFER_BYTES }) };
+  } catch (err) {
+    // Ni stderr ni el mensaje (puede llevar la linea de comandos): solo el codigo, que es lo que se clasifica.
+    const code = (err as { code?: unknown }).code;
+    return { code: typeof code === 'number' ? code : -1, stdout: '' };
+  }
+};
+let ghServiceSingleton: GhService | null = null;
+function getGhService(): GhService {
+  ghServiceSingleton ??= createGhService({
+    findBin: () => (GH_FAKE ? FAKE_GH_BIN : findGhBinary()),
+    run: GH_FAKE ? runFakeGh : runRealGh,
+    git: getGitService(),
+    baseEnv: process.env,
+    now: Date.now,
+  });
+  return ghServiceSingleton;
+}
+
+// Cada ventana vigila sus pestañas: la clave en main es `<webContents>:<pestaña>` (los ids de pestaña
+// son por ventana) y la lectura vuelve SOLO a esa ventana. Al cerrarse o recargarse, sus vigilancias se
+// sueltan: una ventana recargada vuelve a pedirlas al restaurar.
+const ghWatchers = new Map<number, Electron.WebContents>();
+function ghWatchKey(sender: Electron.WebContents, key: string): string {
+  if (!ghWatchers.has(sender.id)) {
+    ghWatchers.set(sender.id, sender);
+    const release = (): void => {
+      ghWatchers.delete(sender.id);
+      prMonitor.unwatchPrefix(`${sender.id}:`);
+    };
+    sender.once('destroyed', release);
+    sender.once('did-start-loading', release);
+  }
+  return `${sender.id}:${key}`;
+}
+const prMonitor = new PrMonitor({
+  fetch: (params) => getGhService().prByNumber(params.cwd, params.accountDir, params.number),
+  emit: (update) => {
+    const separator = update.key.indexOf(':');
+    const sender = ghWatchers.get(Number(update.key.slice(0, separator)));
+    if (sender !== undefined && !sender.isDestroyed()) sender.send(GH_PR_UPDATE_CHANNEL, { ...update, key: update.key.slice(separator + 1) });
+  },
+  setTimer: (fn, ms) => setTimeout(fn, ms),
+  clearTimer: (handle) => clearTimeout(handle as NodeJS.Timeout),
+  onError: (err) => console.warn('[gh] fallo al vigilar un PR:', err instanceof Error ? err.message : String(err)),
+});
+
+function assertPositiveInteger(value: unknown, what: string): asserts value is number {
+  if (typeof value !== 'number' || !Number.isInteger(value) || value <= 0) throw new Error(`${what} no valido: ${String(value)}`);
+}
+
+// Worktrees (grupo D, bloque 3). La confianza es la misma que la de git; `core.hooksPath` apunta a una
+// carpeta de userData que nunca se crea, para que el checkout del worktree no ejecute hooks del repo.
+let worktreeServiceSingleton: WorktreeService | null = null;
+function getWorktreeService(): WorktreeService {
+  worktreeServiceSingleton ??= createWorktreeService({
+    findBin: () => findGitBinary(),
+    run: (bin, args, options) => execCapturingStdout(bin, args, { ...options, timeoutMs: WORKTREE_TIMEOUT_MS, maxBufferBytes: GIT_MAX_BUFFER_BYTES }),
+    isTrusted: isFolderTrusted,
+    findRepoRoot: (cwd) => findRepoRootWith(cwd, existsSync),
+    baseEnv: process.env,
+    fs: nodeWorktreeFs,
+    noHooksDir: join(app.getPath('userData'), 'worktree-no-hooks'),
+    platform: process.platform,
+  });
+  return worktreeServiceSingleton;
+}
+// Un checkout de un repo grande o un fetch tardan mas que una lectura de git.
+const WORKTREE_TIMEOUT_MS = 120_000;
+
+function registerWorktreeHandlers(): void {
+  ipcMain.handle(IpcChannel.WorktreeCreate, (_e, params: WorktreeCreateParams): Promise<{ readonly path: string; readonly branch: string } | null> => {
+    assertGitParams(params);
+    if (typeof params.base !== 'string' || typeof params.firstMessage !== 'string') throw new Error(`Worktree no valido: ${String(params.base)}`);
+    return getWorktreeService().create(params.cwd, params.accountDir, params.base, params.firstMessage);
+  });
+  ipcMain.handle(IpcChannel.WorktreeRestore, (_e, params: GitParams): Promise<void> => {
+    assertGitParams(params);
+    return getWorktreeService().restore(params.cwd, params.accountDir);
+  });
+  ipcMain.handle(IpcChannel.WorktreeRemove, (_e, params: GitParams): Promise<WorktreeRemoveResult> => {
+    assertGitParams(params);
+    return getWorktreeService().remove(params.cwd, params.accountDir);
+  });
+  ipcMain.handle(IpcChannel.WorktreeMergeBase, (_e, params: WorktreeMergeBaseParams): Promise<'merged' | 'conflict'> => {
+    assertGitParams(params);
+    if (typeof params.base !== 'string') throw new Error(`Rama base no valida: ${String(params.base)}`);
+    return getWorktreeService().mergeBase(params.cwd, params.accountDir, params.base);
+  });
+}
+
+function registerGhHandlers(): void {
+  ipcMain.handle(IpcChannel.GhBranchPr, (_e, params: GitParams): Promise<GhSnapshot> => {
+    assertGitParams(params);
+    return getGhService().branchPr(params.cwd, params.accountDir);
+  });
+  ipcMain.handle(IpcChannel.GhWatch, (e, params: GhWatchParams): void => {
+    assertGitParams(params);
+    if (typeof params.key !== 'string' || params.key.length === 0) throw new Error(`Clave de vigilancia no valida: ${String(params.key)}`);
+    assertPositiveInteger(params.number, 'Numero de PR');
+    prMonitor.watch({ key: ghWatchKey(e.sender, params.key), cwd: params.cwd, accountDir: params.accountDir, number: params.number });
+  });
+  ipcMain.handle(IpcChannel.GhUnwatch, (e, key: string): void => {
+    if (typeof key !== 'string') throw new Error(`Clave de vigilancia no valida: ${String(key)}`);
+    prMonitor.unwatch(`${e.sender.id}:${key}`);
+  });
+  ipcMain.handle(IpcChannel.GhRuns, (_e, params: GhRunsParams): Promise<GhRunsSnapshot> => {
+    assertGitParams(params);
+    if (typeof params.branch !== 'string') throw new Error(`Rama no valida: ${String(params.branch)}`);
+    return getGhService().runs(params.cwd, params.accountDir, params.branch);
+  });
+  ipcMain.handle(IpcChannel.GhRunAction, (_e, params: GhRunActionParams): Promise<void> => {
+    assertGitParams(params);
+    assertPositiveInteger(params.runId, 'Id de run');
+    if (params.action !== 'rerun' && params.action !== 'cancel') throw new Error(`Accion de run no valida: ${String(params.action)}`);
+    return getGhService().runAction(params.cwd, params.accountDir, params.runId, params.action);
+  });
+  ipcMain.handle(IpcChannel.GhAutoMerge, (_e, params: GhAutoMergeParams): Promise<void> => {
+    assertGitParams(params);
+    assertPositiveInteger(params.number, 'Numero de PR');
+    if (typeof params.enabled !== 'boolean') throw new Error(`Auto-merge no valido: ${String(params.enabled)}`);
+    return getGhService().setAutoMerge(params.cwd, params.accountDir, params.number, params.enabled);
   });
 }
 
@@ -2197,6 +2335,8 @@ function registerIpcHandlers(): void {
     isFolderTrusted(params.cwd, params.accountDir),
   );
   registerGitHandlers();
+  registerGhHandlers();
+  registerWorktreeHandlers();
 
   // Cache del catalogo "/" (2.2) e indice propio por conversacion (2.1). La cache solo se LEE por IPC:
   // la escribe main en el sink de la sesion, que es quien ve el catalogo real.
@@ -2682,6 +2822,7 @@ app.on('window-all-closed', () => {
 
 // Al salir, matar todos los procesos hijo del motor (no dejar agentes huerfanos) y limpiar dev.
 app.on('before-quit', () => {
+  prMonitor.dispose();
   // Lo primero: a partir de aqui ninguna ventana pregunta al cerrarse (ver `resolveCloseAction`).
   isQuitting = true;
   sessionManager.stopAll();
