@@ -24,7 +24,9 @@ export default defineConfig({
     // mano el cierre transitivo en el YAML. Coste de (a): el paquete entra por completo (incluidos los
     // updaters de deb/rpm/pacman que Windows no usa) porque su `autoUpdater` los resuelve con
     // `require()` dinamico segun plataforma, y eso rollup no lo puede sacudir.
-    plugins: [externalizeDepsPlugin({ exclude: ['electron-updater', 'zod'] })],
+    // @modelcontextprotocol/sdk (P-032 R8, cliente MCP del runtime propio) por lo mismo: sin bundlear no
+    // existiria en la app empaquetada. Solo entra lo que importa el cliente (stdio, HTTP, SSE y OAuth).
+    plugins: [externalizeDepsPlugin({ exclude: ['electron-updater', 'zod', '@modelcontextprotocol/sdk'] })],
     resolve: { alias: sharedAlias },
   },
   preload: {

@@ -101,6 +101,7 @@ import type {
   ThemePreference,
 } from '@shared/settings';
 import { clampUiScale, DEFAULT_APP_SETTINGS, DEFAULT_PERMISSION_MODES, ONBOARDING_VERSION, RUNTIME_SHELLS, type RuntimeShell } from '@shared/settings';
+import type { ToolAccessRule } from '@shared/toolAccess';
 import { setAgyCommandVerdict, type AgyCommandVerdict } from '@shared/agyRules';
 import { AGY_PROVIDER_ID, CODEX_PROVIDER_ID, writesClaudeTranscript, type CustomProvider, type ProviderModel } from '@shared/providers';
 import { applyBackgroundOpacity, applyThemeFromSettings, findActiveImportedTheme, resolveTheme, systemPrefersDark } from './theme';
@@ -397,6 +398,8 @@ export interface WorkbenchState extends PrState, PrActions {
   setDefaultPermissionMode: (mode: DefaultPermissionMode) => void;
   // Shell de `Bash` en los proveedores del runtime propio (P-032, ficha D4). Aplica a sesiones nuevas.
   setRuntimeShell: (shell: RuntimeShell) => void;
+  // Reglas de acceso a herramientas por modelo de un proveedor del runtime (§8.1 D10). [] las borra.
+  setRuntimeToolAccess: (providerId: string, rules: readonly ToolAccessRule[]) => void;
   // Da por visto el asistente de primer arranque (o lo vuelve a abrir, con `completed=false`).
   setOnboardingCompleted: (completed: boolean) => void;
   // Activa/desactiva el widget flotante (M3): abre/cierra su ventana (main) y persiste la preferencia.
@@ -2200,6 +2203,14 @@ export function createWorkbenchStore(mage: MageClient) {
     setDefaultPermissionMode: (mode) => {
       if (!DEFAULT_PERMISSION_MODES.includes(mode)) throw new Error(`Modo de permiso por defecto invalido: ${JSON.stringify(mode)}`);
       set((s) => ({ settings: { ...s.settings, defaultPermissionMode: mode } }));
+      scheduleSettingsPersist(mage, get);
+    },
+
+    setRuntimeToolAccess: (providerId, rules) => {
+      set((s) => {
+        const { [providerId]: _previous, ...rest } = s.settings.runtimeToolAccess;
+        return { settings: { ...s.settings, runtimeToolAccess: rules.length === 0 ? rest : { ...rest, [providerId]: rules } } };
+      });
       scheduleSettingsPersist(mage, get);
     },
 

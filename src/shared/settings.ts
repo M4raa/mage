@@ -5,6 +5,7 @@
 import { EMPTY_AGY_COMMAND_RULES, type AgyCommandRules } from './agyRules';
 import type { CustomProvider } from './providers';
 import type { VscodeTokenColor } from './themeMarket';
+import type { ToolAccessRule } from './toolAccess';
 
 // Shell de la herramienta `Bash` del runtime propio (ficha D4 de P-032).
 export const RUNTIME_SHELLS = ['auto', 'bash', 'powershell'] as const;
@@ -163,6 +164,9 @@ export interface AppSettings {
   // Shell con la que el runtime propio (P-032, ficha D4) ejecuta `Bash`: 'auto' = Git Bash si existe y
   // si no PowerShell (en Windows; en macOS/Linux, la del usuario). Default 'auto'.
   readonly runtimeShell: RuntimeShell;
+  // Acceso a herramientas por modelo de cada proveedor del usuario (§8.1 D10 de P-032), por id de
+  // proveedor. Default {} (todo permitido).
+  readonly runtimeToolAccess: Readonly<Record<string, readonly ToolAccessRule[]>>;
 }
 
 // Nº de acentos del tema (--mg-accent-<i>-* en index.css); lo comparten cuentas y pestañas.
@@ -221,4 +225,5 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   agyCommandRules: EMPTY_AGY_COMMAND_RULES,
   agyLinkedPaths: [],
   runtimeShell: 'auto',
+  runtimeToolAccess: {},
 };

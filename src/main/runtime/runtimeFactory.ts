@@ -11,6 +11,10 @@ import { isRuntimePermissionMode, RuntimeSession, type PreparedModel, type Runti
 import { buildSystemPrompt, trimProjectNotes } from './systemPrompt';
 import { CHARS_PER_TOKEN, ContextBudget } from './contextBudget';
 import type { ModelCatalog } from './modelCatalog';
+import type { ToolAccessRule } from '@shared/toolAccess';
+import type { ResolvedMcpServer } from '../config/mcpResolved';
+import { McpPool, type McpConnector } from './mcp/mcpPool';
+import { AccessFilteredTools } from './tools/accessFilter';
 import { createBashTool } from './tools/bashTool';
 import { createEditTool, createWriteTool, type EditToolsFs } from './tools/editTools';
 import { createGlobTool, createGrepTool, createReadTool, type ReadToolsFs } from './tools/readTools';
@@ -48,6 +52,10 @@ export interface RuntimeEnv {
   readonly readText: (path: string) => string | null;
   // Ventana y herramientas de cada modelo (compartido entre sesiones: tiene cache).
   readonly catalog: ModelCatalog;
+  // Conector MCP real (SDK, boveda, navegador) para los servidores de una sesion con este cwd (R8).
+  readonly mcpConnector: (cwd: string) => McpConnector;
+  // Reglas de acceso a herramientas por modelo de un proveedor (§8.1 D10), leidas en cada turno.
+  readonly toolAccess: (providerId: string) => readonly ToolAccessRule[];
 }
 
 // Notas del proyecto en el prompt de sistema (ficha D16): el PRIMERO que exista, recortado.
@@ -103,12 +111,14 @@ export function buildRuntimeSession(providerId: string, base: SessionBase, env: 
     fetch: env.fetch,
     timers: env.timers,
   });
+  const pool = createPool(params.shared?.mcpServers ?? [], params.cwd, env, base, () => session, registry);
+  const tools = new AccessFilteredTools(registry, () => env.toolAccess(providerId), () => session?.currentModel ?? params.model);
   session = new RuntimeSession({
     sessionId: params.sessionId,
     model: params.model,
     permissionMode: initialMode(params.permissionMode),
     client,
-    tools: registry,
+    tools,
     gate: createRuntimeGate({ cwd: params.cwd, extraDirs: [], platform: env.platform }),
     systemPrompt: () =>
       buildSystemPrompt({
@@ -116,7 +126,7 @@ export function buildRuntimeSession(providerId: string, base: SessionBase, env: 
         platform: env.platform,
         shellName: shell.name,
         nowIso: new Date(env.now()).toISOString(),
-        toolNames: registry.names(),
+        toolNames: tools.names(),
         projectNotes,
       }),
     emit: base.emit,
@@ -125,6 +135,7 @@ export function buildRuntimeSession(providerId: string, base: SessionBase, env: 
     toolsEnabled: true,
     recorder,
     prepareModel: (model) => prepareModel(providerId, model, env),
+    ...(pool === null ? {} : { mcp: { ready: pool.start(), statuses: () => pool.statuses(), close: () => pool.close() } }),
     ...(resumed === null ? {} : { history: resumed.messages }),
     ...(base.log === undefined ? {} : { log: base.log }),
   });
@@ -143,6 +154,30 @@ function resumeHistory(params: SessionBase['params'], env: RuntimeEnv, base: Ses
   const resumed = transcriptToMessages(text.split(/\r?\n/));
   for (const warning of resumed.warnings) base.log?.('warn', warning, { sessionId: params.sessionId });
   return resumed;
+}
+
+// Los MCP comunes de la sesion (ya filtrados para la familia `local` por `loadSharedLaunch`). Al
+// conectar, sus herramientas entran en el registro y la sesion se vuelve a anunciar.
+function createPool(
+  servers: readonly ResolvedMcpServer[],
+  cwd: string,
+  env: RuntimeEnv,
+  base: SessionBase,
+  session: () => RuntimeSession | null,
+  registry: ToolRegistry,
+): McpPool | null {
+  if (servers.length === 0) return null;
+  const pool: McpPool = new McpPool(servers, {
+    connect: env.mcpConnector(cwd),
+    notify: (text) => session()?.notice(text),
+    onChange: () => {
+      const skipped = registry.add(pool.tools());
+      if (skipped.length > 0) base.log?.('info', 'Herramientas MCP ya registradas (se omiten)', { skipped });
+      session()?.announce();
+    },
+    ...(base.log === undefined ? {} : { log: base.log }),
+  });
+  return pool;
 }
 
 // Lo que el catalogo sabe del modelo, con el proveedor RELEIDO (el usuario puede haber fijado la ventana

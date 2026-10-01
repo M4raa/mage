@@ -9,7 +9,7 @@ import { fail, toJsonSchema, type RuntimeTool, type ToolContext } from './types'
 const RAW_ARGS_IN_ERROR_MAX = 200;
 
 export class ToolRegistry implements LoopTools {
-  private readonly byName: ReadonlyMap<string, RuntimeTool>;
+  private readonly byName: Map<string, RuntimeTool>;
 
   constructor(
     tools: readonly RuntimeTool[],
@@ -23,6 +23,17 @@ export class ToolRegistry implements LoopTools {
     this.byName = byName;
   }
 
+  // Herramientas que llegan despues de crear la sesion (las de los servidores MCP, al conectar). Un
+  // nombre repetido se descarta con su motivo: nunca pisa a una herramienta propia.
+  add(tools: readonly RuntimeTool[]): readonly string[] {
+    const skipped: string[] = [];
+    for (const tool of tools) {
+      if (this.byName.has(tool.name)) skipped.push(tool.name);
+      else this.byName.set(tool.name, tool);
+    }
+    return skipped;
+  }
+
   names(): readonly string[] {
     return [...this.byName.keys()];
   }
@@ -34,7 +45,7 @@ export class ToolRegistry implements LoopTools {
   specs(): readonly ChatToolSpec[] {
     return [...this.byName.values()].map((tool) => ({
       type: 'function',
-      function: { name: tool.name, description: tool.description, parameters: toJsonSchema(tool.fields) },
+      function: { name: tool.name, description: tool.description, parameters: tool.jsonSchema ?? toJsonSchema(tool.fields) },
     }));
   }
 

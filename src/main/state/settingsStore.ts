@@ -148,6 +148,12 @@ const APP_SETTINGS_SCHEMA = z.object({
   // Carpetas extra del perfil de agy. Ausente o basura -> [] (solo las de serie).
   agyLinkedPaths: z.array(z.string().min(1)).catch([]),
   runtimeShell: z.enum(RUNTIME_SHELLS).catch('auto'),
+  runtimeToolAccess: z
+    .record(
+      z.string(),
+      z.array(z.object({ model: z.string().min(1), allow: z.array(z.string().min(1)).nullable(), deny: z.array(z.string().min(1)) })),
+    )
+    .catch({}),
 });
 
 export class SettingsStore {

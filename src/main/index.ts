@@ -134,6 +134,7 @@ import { SessionManager } from './engine/sessionManager';
 import { createSessionFor } from './engine/sessionFactory';
 import { buildRuntimeSession, type RuntimeEnv } from './runtime/runtimeFactory';
 import { ModelCatalog } from './runtime/modelCatalog';
+import { createMcpConnector } from './runtime/mcp/mcpSdk';
 import { parseRuntimeProbeParams, probeRuntimeEndpoint } from './runtime/runtimeProbe';
 import type { AccountLayout, ProviderAdapter, SharedLaunchConfig } from './engine/providerAdapter';
 import {
@@ -534,7 +535,23 @@ function runtimeEnv(): RuntimeEnv {
     mkdir: (path) => mkdirSync(path, { recursive: true }),
     readText: (path) => (existsSync(path) ? readFileSync(path, 'utf8') : null),
     catalog: runtimeModelCatalog,
+    mcpConnector: (cwd) =>
+      createMcpConnector({
+        vault: { get: (id) => getSecretStore().get(id), set: (id, value) => getSecretStore().set(id, value) },
+        openUrl: openOAuthUrl,
+        baseEnv: () => scrubAgentEnv(process.env),
+        cwd,
+      }),
+    toolAccess: (id) => getSettingsStore().load().runtimeToolAccess[id] ?? [],
   };
+}
+
+// La pagina de login de un servidor MCP remoto (OAuth del runtime propio) se abre en el navegador del
+// sistema, como hacen los CLI. Solo http(s): una URL de otro esquema no la abre Mage.
+async function openOAuthUrl(url: string): Promise<void> {
+  const protocol = new URL(url).protocol;
+  if (protocol !== 'https:' && protocol !== 'http:') throw new Error(`URL de autorización con esquema no permitido: ${protocol}`);
+  await shell.openExternal(url);
 }
 
 // Ventana y herramientas de los modelos del runtime propio, con cache compartida entre sesiones (R5).

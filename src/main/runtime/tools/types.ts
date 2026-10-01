@@ -25,6 +25,8 @@ export interface RuntimeTool<TInput extends Record<string, unknown> = Record<str
   readonly kind: ToolKind;
   readonly description: string;
   readonly fields: Readonly<Record<string, FieldSpec>>;
+  // Esquema JSON ya hecho (las herramientas MCP traen el suyo); ausente = se genera de `fields`.
+  readonly jsonSchema?: Readonly<Record<string, unknown>>;
   readonly input: z.ZodType<TInput, z.ZodTypeDef, unknown>;
   run(input: TInput, ctx: ToolContext): Promise<ToolOutcome>;
 }

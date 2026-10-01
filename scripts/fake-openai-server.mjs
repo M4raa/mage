@@ -106,6 +106,12 @@ const SCENARIOS = {
         : round(text('Editado.'), 'stop'),
     usage: true,
   },
+  // Llama a la herramienta del servidor MCP falso de los tests (`mcp__falso__eco`).
+  mcp: {
+    reply: (body) =>
+      lastRole(body) === 'user' ? round([call(0, 'call_m', 'mcp__falso__eco', '{"texto":"desde el runtime"}')], 'tool_calls') : round(text('Hecho.'), 'stop'),
+    usage: true,
+  },
   // Contesta con el numero de mensajes (sin el de sistema) que recibe: prueba que reanudar mantiene el contexto.
   'cuenta-mensajes': {
     reply: (body) => round(text(`mensajes: ${body.messages.filter((m) => m.role !== 'system').length}`), 'stop'),

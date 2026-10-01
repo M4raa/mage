@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { ProviderProbeResult } from '@shared/ipc';
 import type { CustomProvider } from '@shared/providers';
+import { formatToolAccessRules, parseToolAccessText } from '@shared/toolAccess';
 import { AGY_PROVIDER_ID, NO_PERMISSION_CONTROL_WARNING, PROVIDER_TEMPLATES, isAutoApprovedProvider } from '@shared/providers';
 import { AgyProfileLinks } from './AgyProfileLinks';
 import { useWorkbenchStore } from '../../workbenchStore';
@@ -327,6 +328,40 @@ function ProviderCard({
         )}
         {entry.id === 'claude' && <DefaultPermissionModePicker />}
       </div>
+      {entry.custom && <ToolAccessEditor providerId={entry.id} label={entry.label} />}
+    </div>
+  );
+}
+
+// Acceso a herramientas por modelo de un proveedor del runtime propio (P-032, §8.1 D10). Se guarda al
+// salir del campo; las lineas que no se entienden se dicen y no se guardan.
+function ToolAccessEditor({ providerId, label }: { readonly providerId: string; readonly label: string }): React.JSX.Element {
+  const saved = useWorkbenchStore((s) => s.settings.runtimeToolAccess[providerId]);
+  const setAccess = useWorkbenchStore((s) => s.setRuntimeToolAccess);
+  const [text, setText] = useState(() => formatToolAccessRules(saved ?? []));
+  const [errors, setErrors] = useState<readonly string[]>([]);
+  const save = (): void => {
+    const parsed = parseToolAccessText(text);
+    setErrors(parsed.errors);
+    if (parsed.errors.length === 0) setAccess(providerId, parsed.rules);
+  };
+  return (
+    <div className="flex flex-col gap-[4px]">
+      <textarea
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        onBlur={save}
+        rows={2}
+        placeholder={'Acceso a herramientas por modelo, p. ej.\n*: -Bash\nqwen2.5-coder: Read, Glob'}
+        aria-label={`Acceso a herramientas por modelo de ${label}`}
+        data-tip="Una regla por línea: «modelo: herramientas». Con - delante se restringe; sin él, solo vale lo concedido. * vale para todos los modelos."
+        className="w-full rounded-[6px] border border-mg-border-subtle bg-mg-panel px-[8px] py-[4px] font-mono text-[11px] text-mg-body outline-none placeholder:text-mg-muted"
+      />
+      {errors.map((error) => (
+        <div key={error} role="alert" className="text-[10.5px] text-mg-danger">
+          {error}
+        </div>
+      ))}
     </div>
   );
 }

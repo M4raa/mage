@@ -32,6 +32,7 @@ const VALID: AppSettings = {
   agyCommandRules: { allow: ['git status'], deny: ['rm -rf build'] },
   agyLinkedPaths: ['.aws'],
   runtimeShell: 'powershell',
+  runtimeToolAccess: { 'custom:lm': [{ model: '*', allow: null, deny: ['Bash'] }] },
 };
 
 function deps(overrides: Partial<SettingsStoreDeps> = {}): SettingsStoreDeps {

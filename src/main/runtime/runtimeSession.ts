@@ -1,6 +1,6 @@
 import type { ImageAttachment } from '@shared/ipc';
 import { RUNTIME_PERMISSION_MODES, type RuntimePermissionMode } from '@shared/providers';
-import type { ContextUsage, MageEvent, PermissionDecision, TurnUsage } from '@shared/events';
+import type { ContextUsage, MageEvent, McpServerStatus, PermissionDecision, TurnUsage } from '@shared/events';
 import type { ManagedSession } from '../engine/sessionManager';
 import type { SessionLogFn } from '../engine/agentSession';
 import { runTurn, type Authorization, type LoopEvent, type LoopTools, type PreparedCall, type TurnOutcome } from './agentLoop';
@@ -51,7 +51,15 @@ export interface RuntimeSessionDeps {
   // Lo que se sabe del modelo (ventana, herramientas), preguntado ANTES del primer turno y al cambiar de
   // modelo (R5). Ausente = sin presupuesto de contexto (tests, servidores sin catalogo).
   readonly prepareModel?: (model: string) => Promise<PreparedModel>;
+  // Servidores MCP de la sesion (R8): el primer turno espera a que conecten; su estado va al `session_init`.
+  readonly mcp?: SessionMcp;
   readonly log?: SessionLogFn;
+}
+
+export interface SessionMcp {
+  readonly ready: Promise<void>;
+  statuses(): readonly McpServerStatus[];
+  close(): Promise<void>;
 }
 
 // Presupuesto de contexto de la sesion (lo implementa `contextBudget.ts`).
@@ -164,6 +172,17 @@ export class RuntimeSession implements ManagedSession {
     this.stopped = true;
     this.queue.length = 0;
     this.interrupt();
+    this.deps.mcp?.close().catch((err: unknown) => this.deps.log?.('warn', 'No se pudieron cerrar los MCP del runtime', { message: String(err) }));
+  }
+
+  // Vuelve a anunciar la sesion (herramientas y estado de los MCP han cambiado al conectar).
+  announce(): void {
+    if (this.started && !this.stopped) this.emitInit();
+  }
+
+  // Aviso al hilo desde fuera del turno (p.ej. un servidor MCP que pide iniciar sesion).
+  notice(text: string): void {
+    if (!this.stopped) this.deps.emit({ kind: 'notice', text });
   }
 
   private async drain(): Promise<void> {
@@ -213,6 +232,7 @@ export class RuntimeSession implements ManagedSession {
 
   // Una vez por modelo: ventana y herramientas del catalogo, con sus avisos.
   private async prepare(): Promise<void> {
+    if (this.deps.mcp !== undefined) await this.deps.mcp.ready;
     if (this.deps.prepareModel === undefined || this.preparedFor === this.model) return;
     const prepared = await this.deps.prepareModel(this.model);
     this.preparedFor = this.model;
@@ -337,7 +357,7 @@ export class RuntimeSession implements ManagedSession {
       sessionId: this.sessionId,
       model: this.model,
       tools: this.toolsEnabled ? this.deps.tools.names() : [],
-      mcpServers: [],
+      mcpServers: [...(this.deps.mcp?.statuses() ?? [])],
       slashCommands: ['clear', 'rename'],
       skills: [],
       plugins: [],

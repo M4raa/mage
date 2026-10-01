@@ -8,6 +8,7 @@ import { afterAll, afterEach, describe, expect, it } from 'vitest';
 import { FAKE_OPENAI_REPLY, startFakeOpenAiServer } from './fake-openai-server.mjs';
 import { buildRuntimeSession } from '../src/main/runtime/runtimeFactory';
 import { ModelCatalog } from '../src/main/runtime/modelCatalog';
+import { createMcpConnector } from '../src/main/runtime/mcp/mcpSdk';
 
 // Integracion del runtime propio con el servidor falso REAL (red de verdad en 127.0.0.1): la misma
 // sesion que monta main, sin GUI. Es la verificacion de punta a punta de cada fase de P-032.
@@ -54,6 +55,8 @@ function envFor(baseUrl, overrides = {}) {
     mkdir: (path) => mkdirSync(path, { recursive: true }),
     readText: (path) => (existsSync(path) ? readFileSync(path, 'utf8') : null),
     catalog: new ModelCatalog({ fetch: globalThis.fetch, now: Date.now }),
+    mcpConnector: (cwd) => createMcpConnector({ vault: { get: () => null, set: () => undefined }, openUrl: async () => undefined, baseEnv: () => ({ PATH: process.env.PATH }), cwd }),
+    toolAccess: () => [],
     ...overrides,
   };
 }
@@ -232,6 +235,51 @@ describe('runtime propio contra el servidor falso', () => {
 
     expect(fake.stats.requests.every((request) => request.tools === undefined)).toBe(true);
     expect(events.some((e) => e.kind === 'notice' && /no admite herramientas/.test(e.text))).toBe(true);
+  });
+
+  it('mcp_servidorComun_apareceEnSessionInitYSeLlama', async () => {
+    fake = await startFakeOpenAiServer();
+    const events = [];
+    const server = {
+      name: 'falso',
+      source: 'common',
+      onlyIn: null,
+      extra: {},
+      secrets: {},
+      transport: 'stdio',
+      command: process.execPath,
+      args: [join(process.cwd(), 'src', 'main', 'runtime', 'mcp', '__fixtures__', 'fake-mcp-server.mjs')],
+      env: {},
+      // Fuera del temporal del test: el proceso del servidor se cierra en segundo plano al parar.
+      cwd: process.cwd(),
+    };
+    const shared = { mcpServers: [server], settingsFragment: null, claudeAiConnectors: false };
+    const session = buildRuntimeSession('custom:falso', launch('fake:mcp', events, { cwd: tempProject({}), shared, permissionMode: 'bypassPermissions' }), envFor(fake.baseUrl));
+    session.start();
+    session.sendUserMessage('usa el mcp');
+    await waitFor(events, (e) => e.kind === 'result', 15_000);
+    session.stop();
+
+    const inits = events.filter((e) => e.kind === 'session_init');
+    expect(inits.at(-1).mcpServers).toEqual([{ name: 'falso', status: 'connected' }]);
+    expect(inits.at(-1).tools).toContain('mcp__falso__eco');
+    const result = events.find((e) => e.kind === 'tool_result').result;
+    expect(result).toMatchObject({ isError: false, output: expect.stringContaining('eco: desde el runtime') });
+  });
+
+  it('acceso_reglaQueRestringe_laHerramientaNoSeAnuncia', async () => {
+    fake = await startFakeOpenAiServer();
+    const events = [];
+    const env = envFor(fake.baseUrl, { toolAccess: () => [{ model: '*', allow: null, deny: ['Bash', 'Write'] }] });
+    const session = buildRuntimeSession('custom:falso', launch('fake:eco', events, { cwd: tempProject({}) }), env);
+    session.start();
+    session.sendUserMessage('hola');
+    await waitFor(events, (e) => e.kind === 'result');
+
+    const names = fake.stats.requests[0].tools.map((tool) => tool.function.name);
+    expect(names).not.toContain('Bash');
+    expect(names).not.toContain('Write');
+    expect(names).toContain('Read');
   });
 
   it('turno_proveedorNoConfigurado_lanzaConElId', () => {
