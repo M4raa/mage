@@ -4,6 +4,7 @@ import type { StoreApi, UseBoundStore } from 'zustand';
 import { transcriptToBlocks } from './transcriptToBlocks';
 import { usePanelLayoutStore } from './panelLayoutStore';
 import { PANEL_REGISTRY } from './panels/panelRegistry';
+import { notify, useNotificationStore } from './notificationStore';
 
 // Asidero SOLO de desarrollo para `pnpm verify:gui`: deja medir el DOM del chat sin gastar un turno
 // real ni spawnear el CLI. Sin el, el harness no puede hidratar una conversacion (el store de Zustand
@@ -30,6 +31,10 @@ export interface MageDevBridge {
   // usuario ("nueve iconos apilados en una columna") en vez de esperar a toparselo por casualidad.
   readonly panelStore: typeof usePanelLayoutStore;
   readonly panelRegistry: typeof PANEL_REGISTRY;
+  // Notificaciones propias: el harness inyecta avisos (sin cerrar una pestaña de verdad) y vacia el store
+  // al acabar cada comprobacion.
+  readonly notify: typeof notify;
+  readonly notifications: typeof useNotificationStore;
 }
 
 (window as unknown as { __mageDev?: MageDevBridge }).__mageDev = {
@@ -43,4 +48,6 @@ export interface MageDevBridge {
   reduceEvent,
   panelStore: usePanelLayoutStore,
   panelRegistry: PANEL_REGISTRY,
+  notify,
+  notifications: useNotificationStore,
 };

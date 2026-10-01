@@ -8,6 +8,7 @@ import { filterConversationRows, formatSize, mergeConversationRows, relativeTime
 import { backgroundLabel, backgroundMoveBlockedReason, type BackgroundSession } from '../backgroundWork';
 import { ConversationContextMenu, type ConversationTarget } from './ConversationContextMenu';
 import type { ConversationPrivacy } from '@shared/state';
+import { reportActionError } from '../notificationStore';
 
 // Estado del menu contextual abierto (posicion + conversacion objetivo).
 interface MenuState {
@@ -211,9 +212,9 @@ export function ChatSidebar(): React.JSX.Element {
 }
 
 // Abrir en otra ventana puede fallar (main rechaza la pestaña, sigue trabajando en segundo plano): se
-// traza en vez de tragarse; la conversacion sigue aqui.
+// avisa en vez de tragarse; la conversacion sigue aqui.
 function reportNewWindowError(err: unknown): void {
-  console.warn('No se pudo abrir la conversacion en otra ventana:', err instanceof Error ? err.message : String(err));
+  reportActionError('No se pudo abrir la conversación en otra ventana', err, 'window');
 }
 
 // Aviso de cuenta huérfana (sin login) con confirmación EN LA APP (no dialogo nativo del SO).

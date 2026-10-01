@@ -7,6 +7,7 @@ import { canSwitchBranch } from '../canSwitchBranch';
 import { Dropdown } from './Dropdown';
 import { PrBar } from './PrBar';
 import { worktreeOfCwd } from '@shared/worktree';
+import { reportActionError } from '../notificationStore';
 
 // Fila de informacion del chat, encima del input (peticion del usuario).
 //
@@ -104,7 +105,7 @@ function GitChips({ tabId, cwd }: { readonly tabId: string; readonly cwd: string
   const verdict = canSwitchBranch({ turnActive, dirty: snapshot.dirty, detached: snapshot.detached, worktree: worktree !== null });
   const onSwitch = (name: string): void => {
     if (name === snapshot.branch) return;
-    void switchGitBranch(tabId, name).catch((err: unknown) => console.warn('No se pudo cambiar de rama:', err));
+    void switchGitBranch(tabId, name).catch((err: unknown) => reportActionError('No se pudo cambiar de rama', err, 'git'));
   };
   return (
     <>

@@ -5,6 +5,7 @@ import { AppMenu } from './AppMenu';
 import { AccountSwitcher } from './AccountSwitcher';
 import { Icon } from './Icon';
 import { buildBugReportUrl, buildIdeaUrl } from '../bugReport';
+import { reportActionError } from '../notificationStore';
 
 // Ancho que reserva Windows para sus tres botones de sistema (minimizar/maximizar/cerrar) en la franja
 // de `titleBarOverlay`. Se deja libre a la derecha: cualquier cosa pintada debajo seria inalcanzable.
@@ -128,7 +129,7 @@ function IdeaButton(): React.JSX.Element {
       onClick={() => {
         window.mage
           .openExternal(buildIdeaUrl())
-          .catch((err: unknown) => console.warn('No se pudo abrir el formulario de idea:', err));
+          .catch((err: unknown) => reportActionError('No se pudo abrir el formulario de idea', err, 'titlebar'));
       }}
     />
   );
@@ -152,7 +153,7 @@ function BugReportButton(): React.JSX.Element {
           buildBugReportUrl({ appVersion: about?.versions.app ?? null, platform: navigator.platform }),
         ),
       )
-      .catch((err: unknown) => console.warn('No se pudo abrir el informe de fallo:', err));
+      .catch((err: unknown) => reportActionError('No se pudo abrir el informe de fallo', err, 'titlebar'));
   };
 
   return (

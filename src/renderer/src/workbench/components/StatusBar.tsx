@@ -3,6 +3,8 @@ import { Icon } from './Icon';
 import { selectAccount, useWorkbenchStore } from '../workbenchStore';
 import { severityForPct, type UsageSeverity } from '../usageView';
 import { UsagePopover } from './UsagePopover';
+import { NotificationBell } from './NotificationCenter';
+import { reportActionError } from '../notificationStore';
 import { providerLabel } from '../accountView';
 import type { Account } from '../types';
 import type { StatusIndicator, StatusInfo } from '@shared/status';
@@ -38,40 +40,12 @@ export function StatusBar(): React.JSX.Element {
   const focusedProvider = useWorkbenchStore((s) => providerLabel(s.tabs.find((t) => t.id === s.activeTabId)?.provider ?? 'claude'));
 
   return (
-    <div className="flex h-[26px] items-center gap-[14px] border-t border-mg-border bg-mg-rail px-[12px] text-[10.5px] text-mg-ter">
+    <div data-status-bar="true" className="flex h-[26px] items-center gap-[14px] border-t border-mg-border bg-mg-rail px-[12px] text-[10.5px] text-mg-ter">
       {account !== undefined && <AccountStatus account={account} provider={focusedProvider} />}
       <ServiceStatus status={status} />
       <AppVersion />
       <UpdateIndicator />
-      <KeptWorktreeNotice />
-    </div>
-  );
-}
-
-const KEPT_WORKTREE_REASON: Record<'dirty' | 'unknown', string> = {
-  dirty: 'tiene cambios sin confirmar',
-  unknown: 'no se pudo comprobar si tenía cambios',
-};
-
-// Grupo D: cerrar la pestaña de un worktree con cambios lo conserva (vuelve al reabrir la conversacion).
-// No bloquea nada: se queda aqui, con la ruta, hasta que se descarta.
-function KeptWorktreeNotice(): React.JSX.Element | null {
-  const notice = useWorkbenchStore((s) => s.keptWorktreeNotice);
-  const dismiss = useWorkbenchStore((s) => s.dismissKeptWorktreeNotice);
-  if (notice === null) return null;
-  return (
-    <div role="status" data-kept-worktree-notice="true" className="flex min-w-0 items-center gap-[6px] text-mg-body">
-      <span className="h-[6px] w-[6px] shrink-0 rounded-full bg-[var(--mg-warn)]" aria-hidden="true" />
-      <span className="truncate" title={notice.path}>
-        Worktree conservado ({KEPT_WORKTREE_REASON[notice.reason]}): {notice.path}
-      </span>
-      <button
-        onClick={dismiss}
-        aria-label="Descartar el aviso del worktree conservado"
-        className="shrink-0 cursor-pointer rounded-[4px] px-[4px] text-mg-ter hover:bg-mg-hover hover:text-mg-body"
-      >
-        ✕
-      </button>
+      <NotificationBell />
     </div>
   );
 }
@@ -179,11 +153,11 @@ function ServiceStatus({ status }: { readonly status: StatusInfo | null }): Reac
   const presentation = STATUS_PRESENTATION[status?.indicator ?? 'none'];
   // Ronda 3, item 20: el badge era un <span> muerto. Ahora es un <button> que abre la pagina de estado
   // en el navegador (main valida que la URL sea https antes de pasarsela al SO). Un fallo al abrir se
-  // avisa por consola, nunca se traga en silencio.
+  // avisa con un error visible (y en el log), nunca se traga en silencio.
   const openStatusPage = (): void => {
     void window.mage
       .openExternal(CLAUDE_STATUS_PAGE_URL)
-      .catch((err: unknown) => console.warn('No se pudo abrir la página de estado:', err));
+      .catch((err: unknown) => reportActionError('No se pudo abrir la página de estado', err, 'status'));
   };
   return (
     <div className="group relative ml-auto">

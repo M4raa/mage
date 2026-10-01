@@ -10,6 +10,7 @@ import { ChatPane } from './workbench/components/ChatPane';
 import { RightDock, RightDockPanes } from './workbench/components/RightDock';
 import { BottomDock } from './workbench/components/BottomDock';
 import { StatusBar } from './workbench/components/StatusBar';
+import { NotificationToasts } from './workbench/components/NotificationToasts';
 import { TooltipLayer } from './workbench/components/TooltipLayer';
 // El de confianza NO va perezoso, al reves que los demas dialogos: es lo que se interpone entre abrir
 // una carpeta y ejecutar su codigo, y bloquea el arranque de la sesion. Cargarlo bajo demanda pondria
@@ -268,6 +269,8 @@ export function App(): React.JSX.Element {
         <RightDock />
       </div>
       <StatusBar />
+      {/* Detras de la barra de estado en el orden de Tab: se llega a los toasts sin atajo propio. */}
+      <NotificationToasts />
       <Suspense fallback={null}>
         <NewTabDialog />
         <AddAccountDialog />

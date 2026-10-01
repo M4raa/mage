@@ -81,9 +81,11 @@ import {
   reconcileSplitLayoutAfterClose,
   resizeAt,
   singleLeaf,
+  visibleTabIds,
 } from './splitLayout';
 import type { SplitLayout } from '@shared/state';
-import { notificationForEvent, toNotifyParams } from './notify';
+import { inAppNoticeForEvent, notificationForEvent, toNotifyParams } from './notify';
+import { notify, reportActionError } from './notificationStore';
 import { resolveNotificationTarget } from './notificationTarget';
 import { noticeTextFor } from './cliNotices';
 import { SUBAGENT_TOOL_NAMES } from './toolSummary';
@@ -257,8 +259,6 @@ export interface WorkbenchState extends PrState, PrActions {
   updateState: UpdateState;
   // Version cuyo dialogo de «lista para instalar» esta abierto en esta ventana; null = cerrado.
   updatePromptVersion: string | null;
-  // Worktree que se conservo al cerrar su pestaña (la barra de estado lo avisa); null = nada que avisar.
-  keptWorktreeNotice: KeptWorktreeNotice | null;
 
   // --- Acciones de UI ---
   setActiveAccount: (accountId: string) => void;
@@ -363,7 +363,6 @@ export interface WorkbenchState extends PrState, PrActions {
   openUpdatePrompt: () => void;
   // «Más tarde»: cierra el dialogo; el indicador sigue y se instala al cerrar Mage.
   dismissUpdatePrompt: () => void;
-  dismissKeptWorktreeNotice: () => void;
   // «Reiniciar ahora»: main cierra Mage e instala.
   installUpdate: () => void;
   // Arranque: si Mage se ha actualizado desde la ultima vez, abre las novedades (ver releaseNotes.ts).
@@ -593,9 +592,9 @@ function schedulePersist(mage: MageClient, getState: () => WorkbenchState): void
     try {
       void Promise.resolve(
         mage.saveWorkspace(toPersistedWorkspace(s.tabs, s.activeTabId, s.sessionIdByChat, s.splitLayout)),
-      ).catch((err: unknown) => console.warn('No se pudo guardar el workspace:', describeError(err)));
+      ).catch((err: unknown) => reportActionError('No se pudo guardar el workspace', err, 'persist', SAVE_FAILED_KEY.workspace));
     } catch (err: unknown) {
-      console.warn('No se pudo guardar el workspace:', describeError(err));
+      reportActionError('No se pudo guardar el workspace', err, 'persist', SAVE_FAILED_KEY.workspace);
     }
   }, PERSIST_DEBOUNCE_MS);
 }
@@ -626,6 +625,7 @@ function applyBackgroundEvent(
   // avisaba. Main solo la enseña con la ventana sin foco; el titulo es el que tenia la pestaña al cerrar.
   const content = notificationForEvent(event, { tabTitle: entry.title, rules: get().settings.notificationRules });
   if (content !== null) void mage.notify(toNotifyParams(content, { sessionId })).catch(() => undefined);
+  toastIfHidden(get, event, { tabId: null, tabTitle: entry.title, target: { sessionId } });
   const state = nextBackgroundState(entry.state, event);
   if (state === entry.state) return;
   set((s) => ({ backgroundSessions: { ...s.backgroundSessions, [sessionId]: { ...entry, state } } }));
@@ -699,6 +699,9 @@ function persistConversationPrefs(mage: MageClient, state: WorkbenchState, tabId
     .catch((err: unknown) => console.warn('No se pudieron guardar las preferencias de la conversacion:', describeError(err)));
 }
 
+// Un guardado con debounce que falla lo haria en cada cambio: la clave deja un solo aviso con contador.
+const SAVE_FAILED_KEY = { workspace: 'save-failed:workspace', settings: 'save-failed:settings' } as const;
+
 // Persistencia de la configuracion de la app (M2.3) con el mismo patron de debounce que el
 // workspace (agrupa rafagas de edicion de reglas en una escritura). Fallo trazado, nunca tragado.
 let settingsPersistTimer: ReturnType<typeof setTimeout> | null = null;
@@ -708,7 +711,7 @@ function scheduleSettingsPersist(mage: MageClient, getState: () => WorkbenchStat
     settingsPersistTimer = null;
     void mage
       .saveSettings(getState().settings)
-      .catch((err: unknown) => console.warn('No se pudo guardar la configuracion:', describeError(err)));
+      .catch((err: unknown) => reportActionError('No se pudo guardar la configuración', err, 'persist', SAVE_FAILED_KEY.settings));
   }, PERSIST_DEBOUNCE_MS);
 }
 
@@ -719,12 +722,7 @@ function persistSettingsNow(mage: MageClient, getState: () => WorkbenchState): v
   settingsPersistTimer = null;
   void mage
     .saveSettings(getState().settings)
-    .catch((err: unknown) => console.warn('No se pudo guardar la configuracion:', describeError(err)));
-}
-
-export interface KeptWorktreeNotice {
-  readonly path: string;
-  readonly reason: 'dirty' | 'unknown';
+    .catch((err: unknown) => reportActionError('No se pudo guardar la configuración', err, 'persist', SAVE_FAILED_KEY.settings));
 }
 
 // De donde sale la carpeta de una conversacion nueva (ver `createConversation`).
@@ -1182,7 +1180,6 @@ export function createWorkbenchStore(mage: MageClient) {
     closePromptOpen: false,
     updateState: IDLE_UPDATE_STATE,
     updatePromptVersion: null,
-    keptWorktreeNotice: null,
 
     // Cambiar de cuenta refresca su uso (cacheado en main; barato) para reflejarlo al instante.
     setActiveAccount: (accountId) => {
@@ -1391,7 +1388,7 @@ export function createWorkbenchStore(mage: MageClient) {
       });
       // Archivar (grupo D): su worktree se borra si esta limpio; con cambios se queda y se reabre con la
       // conversacion. La rama se queda siempre. En segundo plano el CLI sigue trabajando ahi: no se toca.
-      if (tab !== undefined && !background && options?.moved !== true) archiveWorktree(mage, set, tab);
+      if (tab !== undefined && !background && options?.moved !== true) archiveWorktree(mage, tab);
       // Su PR deja de vigilarse aqui; si la pestaña se fue a otra ventana, alli se vuelve a pedir.
       if (tab?.prNumber !== undefined) void mage.ghUnwatch(tabId).catch((err: unknown) => console.warn('No se pudo dejar de vigilar el PR:', describeError(err)));
       schedulePersist(mage, get);
@@ -1944,7 +1941,7 @@ export function createWorkbenchStore(mage: MageClient) {
       try {
         await mage.deleteConversation({ accountDir, sessionId, cwd, privacy });
       } catch (err) {
-        console.warn('No se pudo eliminar la conversacion:', describeError(err));
+        reportActionError('No se pudo eliminar la conversación', err, 'history');
       }
       await get().loadConversationHistory();
     },
@@ -2120,10 +2117,9 @@ export function createWorkbenchStore(mage: MageClient) {
       if (state.kind === 'ready') set({ updatePromptVersion: state.version });
     },
     dismissUpdatePrompt: () => set({ updatePromptVersion: null }),
-    dismissKeptWorktreeNotice: () => set({ keptWorktreeNotice: null }),
     installUpdate: () => {
       set({ updatePromptVersion: null });
-      void mage.installUpdate().catch((err: unknown) => console.warn('No se pudo instalar la actualización:', describeError(err)));
+      void mage.installUpdate().catch((err: unknown) => reportActionError('No se pudo instalar la actualización', err, 'update'));
     },
 
     showReleaseNotesIfUpdated: async (isDev) => {
@@ -2754,6 +2750,7 @@ export function createWorkbenchStore(mage: MageClient) {
         const answered = autoAllowed || (event.kind === 'permission_request' && prTurnDenial(get(), tabId, event.request) !== null);
         const content = notificationForEvent(event, { tabTitle: tab.title, rules: get().settings.notificationRules, autoAllowed: answered });
         if (content !== null) void mage.notify(toNotifyParams(content, { tabId, sessionId })).catch(() => undefined);
+        toastIfHidden(get, event, { tabId, tabTitle: tab.title, target: { tabId, sessionId }, autoAllowed: answered });
       }
     },
   }));
@@ -3138,18 +3135,63 @@ function wantsNewWorktree(tab: Tab, snapshot: GitSnapshot | undefined): snapshot
   return tab.resumeSessionId === undefined && tab.worktreeOff !== true && snapshot?.kind === 'repo' && snapshot.branch !== null;
 }
 
-// Con cambios (o sin poder comprobarlo) el worktree se queda, y se avisa en la barra de estado: la
-// pestaña que lo explicaria ya no existe.
-function archiveWorktree(mage: MageClient, set: SetFn, tab: Tab): void {
+const KEPT_WORKTREE_REASON: Readonly<Record<'dirty' | 'unknown', string>> = {
+  dirty: 'tiene cambios sin confirmar',
+  unknown: 'no se pudo comprobar si tenía cambios',
+};
+
+// Con cambios (o sin poder comprobarlo) el worktree se queda, y se avisa con una notificacion: la pestaña
+// que lo explicaria ya no existe. No se pierde nada: vuelve al reabrir la conversacion.
+function archiveWorktree(mage: MageClient, tab: Tab): void {
   if (worktreeOfCwd(tab.cwd) === null) return;
+  const path = tab.cwd;
+  const dedupeKey = `worktree-kept:${path}`;
   void mage
-    .worktreeRemove({ cwd: tab.cwd, accountDir: tab.accountId })
+    .worktreeRemove({ cwd: path, accountDir: tab.accountId })
     .then((result) => {
       if (result.removed) return;
-      console.warn(`Worktree conservado (${result.reason === 'dirty' ? 'tiene cambios sin confirmar' : 'no se pudo comprobar'}): ${tab.cwd}`);
-      set(() => ({ keptWorktreeNotice: { path: tab.cwd, reason: result.reason } }));
+      console.warn(`Worktree conservado (${KEPT_WORKTREE_REASON[result.reason]}): ${path}`);
+      notify({
+        level: 'warning',
+        title: `Worktree conservado: ${KEPT_WORKTREE_REASON[result.reason]}`,
+        body: path,
+        source: 'worktree',
+        dedupeKey,
+        actions: [
+          { label: 'Abrir carpeta', run: () => mage.openPath(path) },
+          { label: 'Copiar ruta', run: () => navigator.clipboard.writeText(path) },
+        ],
+      });
     })
-    .catch((err: unknown) => console.warn('No se pudo archivar el worktree:', describeError(err)));
+    .catch((err: unknown) => {
+      console.warn('No se pudo archivar el worktree:', describeError(err));
+      notify({ level: 'error', title: 'No se pudo archivar el worktree', body: `${path}: ${describeError(err)}`, source: 'worktree', dedupeKey });
+    });
+}
+
+// Con la ventana enfocada main no enseña la notificacion del SO: si la conversacion que avisa no esta a la
+// vista (otra pestaña, segundo plano), sale un toast que lleva a ella. Sin foco manda la del SO.
+interface HiddenConversationContext {
+  readonly tabId: string | null;
+  readonly tabTitle: string;
+  readonly target: NotificationTarget;
+  readonly autoAllowed?: boolean;
+}
+
+function toastIfHidden(get: () => WorkbenchState, event: MageEvent, context: HiddenConversationContext): void {
+  if (typeof document === 'undefined' || !document.hasFocus()) return;
+  if (context.tabId !== null && visibleTabIds(get().splitLayout).includes(context.tabId)) return;
+  const notice = inAppNoticeForEvent(event, { tabTitle: context.tabTitle, rules: get().settings.notificationRules, autoAllowed: context.autoAllowed === true });
+  if (notice === null) return;
+  const target: NotificationTarget = notice.content.opensActivity === true ? { ...context.target, opensActivity: true } : context.target;
+  notify({
+    level: notice.level,
+    title: notice.content.title,
+    body: notice.content.body,
+    source: 'conversation',
+    dedupeKey: `conversation:${context.target.sessionId}:${notice.content.title}`,
+    actions: [{ label: 'Ir a la conversación', run: () => get().focusNotificationTarget(target) }],
+  });
 }
 
 // Motivo por el que la barrera del turno de PR rechaza este permiso, o null.

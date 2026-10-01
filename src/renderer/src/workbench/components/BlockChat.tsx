@@ -24,6 +24,7 @@ import type { Block, ImageAttachment } from '../types';
 import { classifySystemWrapper } from '@shared/systemWrappers';
 import { useStickToBottom } from '../useStickToBottom';
 import { RecentProjects } from './RecentProjects';
+import { reportActionError } from '../notificationStore';
 
 // Referencia ESTABLE para el caso "todavia no hay pensamientos de esta sesion": un `[]` nuevo en cada
 // render haria que el efecto de hidratacion se disparase en bucle.
@@ -291,7 +292,7 @@ function ProjectPicker({
         if (picked === null) return; // el usuario cancelo el dialogo del SO
         onPick(picked);
       })
-      .catch((err: unknown) => console.warn('No se pudo abrir el selector de carpeta:', err));
+      .catch((err: unknown) => reportActionError('No se pudo abrir el selector de carpeta', err, 'chat'));
   };
 
   return (

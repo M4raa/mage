@@ -58,3 +58,11 @@ export const DISCLOSURE_VARIANTS: Variants = {
   animate: { height: 'auto', opacity: 1, transition: { duration: 0.18, ease: 'easeOut' } },
   exit: { height: 0, opacity: 0, transition: { duration: 0.12, ease: 'easeIn' } },
 };
+
+// Toasts de notificacion (abajo a la derecha): entran desde su borde, sin bounce. Con movimiento
+// reducido `MotionConfig reducedMotion="user"` quita el desplazamiento y deja el fundido.
+export const TOAST_VARIANTS: Variants = {
+  initial: { opacity: 0, x: 16 },
+  animate: { opacity: 1, x: 0, transition: { duration: 0.18, ease: 'easeOut' } },
+  exit: { opacity: 0, x: 16, transition: { duration: 0.12, ease: 'easeIn' } },
+};

@@ -209,13 +209,23 @@ function useProviderProbe(providerId: string): { readonly probe: ProviderProbeRe
   return { probe: result, recheck: () => setAttempt((value) => value + 1) };
 }
 
+const COPY_LABEL: Readonly<Record<'idle' | 'copied' | 'failed', string>> = {
+  idle: 'Copiar',
+  copied: '✓ Copiado',
+  failed: 'No se pudo copiar',
+};
+
 function CommandToCopy({ command }: { readonly command: string }): React.JSX.Element {
-  const [copied, setCopied] = useState(false);
+  // El asistente va por encima de los toasts (z-[60]): el fallo se dice aqui, en el boton, y queda en el log.
+  const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
   const copy = (): void => {
     void navigator.clipboard
       .writeText(command)
-      .then(() => setCopied(true))
-      .catch((err: unknown) => console.warn('No se pudo copiar el comando:', err));
+      .then(() => setCopyState('copied'))
+      .catch((err: unknown) => {
+        console.warn('No se pudo copiar el comando:', err);
+        setCopyState('failed');
+      });
   };
   return (
     <div className="flex items-center gap-[8px]">
@@ -224,8 +234,13 @@ function CommandToCopy({ command }: { readonly command: string }): React.JSX.Ele
         onClick={copy}
         className="flex-none rounded-[6px] border border-mg-border-ctrl px-[9px] py-[5px] text-[11px] text-mg-body2 hover:bg-mg-hover"
       >
-        {copied ? '✓ Copiado' : 'Copiar'}
+        {COPY_LABEL[copyState]}
       </button>
+      {copyState === 'failed' && (
+        <span role="alert" className="sr-only">
+          No se pudo copiar el comando: cópialo a mano.
+        </span>
+      )}
     </div>
   );
 }

@@ -69,7 +69,6 @@ import type {
   LoadPanelLayoutParams,
   AdoptLoginParams,
   LoginStartParams,
-  NotifyParams,
   OpenEditorParams,
   OpenTranscriptParams,
   ReadInstructionsParams,
@@ -228,6 +227,7 @@ import {
 import type { CloseBehavior } from '@shared/settings';
 import { fitSavedBounds, WindowBoundsStore, type SavedWindowBounds } from './windows/windowBounds';
 import { NotificationCenter } from './notifications/notificationCenter';
+import { parseNotifyParams } from './notifications/notifyParams';
 
 // __dirname no existe en modulos ESM: lo derivamos de import.meta.url.
 const currentDir = dirname(fileURLToPath(import.meta.url));
@@ -2882,8 +2882,8 @@ function registerIpcHandlers(): void {
   // Notificacion del SO (M2.3): solo si la ventana NO tiene el foco (si el usuario ya esta mirando,
   // seria ruido). Requiere soporte del SO (Notification.isSupported).
   // P-028 40: el foco que cuenta es el de la ventana QUE LA PIDIO, y el clic lleva a su conversacion.
-  ipcMain.handle(IpcChannel.NotifyShow, (e, params: NotifyParams) => {
-    notificationCenter.show(params, senderWindowId(e));
+  ipcMain.handle(IpcChannel.NotifyShow, (e, params: unknown) => {
+    notificationCenter.show(parseNotifyParams(params), senderWindowId(e));
   });
 
   // Widget flotante (M3). SetEnabled abre/cierra la ventana (la preferencia la persiste el renderer).

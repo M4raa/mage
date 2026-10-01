@@ -11,6 +11,7 @@ import { resolveKeyEvent } from './resolver';
 import type { KeyEventLike } from './keyParser';
 import { isMacPlatform } from './platform';
 import { hasPendingQuestion } from '../engineBlocks';
+import { reportActionError } from '../notificationStore';
 
 const PANEL_TOGGLE_PREFIX = 'panel.toggle.';
 
@@ -48,7 +49,7 @@ export function runGlobalAction(actionId: string): void {
       return;
     case 'window.new':
       // Ventana nueva VACIA: comparte configuracion con esta y arranca con su propio workspace.
-      void window.mage.openWindow().catch((err: unknown) => console.warn('No se pudo abrir la ventana:', err));
+      void window.mage.openWindow().catch((err: unknown) => reportActionError('No se pudo abrir la ventana', err, 'window'));
       return;
     case 'tab.close':
       store.closeActiveTab();

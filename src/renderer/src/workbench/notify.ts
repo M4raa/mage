@@ -1,6 +1,7 @@
 import type { MageEvent } from '@shared/events';
 import type { NotificationRule } from '@shared/settings';
 import type { NotificationTarget, NotifyParams } from '@shared/ipc';
+import type { NotifyLevel } from './notifications';
 
 // Contenido de una notificacion del SO derivado de un evento del motor (M2.3). PURO y testeable: la
 // decision de MOSTRARLA (solo si la ventana no tiene el foco) vive en main; aqui solo el "que decir".
@@ -14,6 +15,30 @@ export interface NotificationContent {
 // Lo que viaja a main: el contenido y a donde lleva el clic (la conversacion que la disparo).
 export function toNotifyParams(content: NotificationContent, target: Omit<NotificationTarget, 'opensActivity'>): NotifyParams {
   return { title: content.title, body: content.body, target: { ...target, ...(content.opensActivity === true ? { opensActivity: true } : {}) } };
+}
+
+// Aviso DENTRO de Mage de lo que pasa en una conversacion que no esta a la vista (otra pestaña, segundo
+// plano) con la ventana enfocada: con foco, main no enseña la del SO. Lo mismo que la del SO, mas el
+// limite de uso (que al SO no va: su banner ya lo dice en la pestaña) y un nivel para el toast.
+export interface InAppConversationNotice {
+  readonly level: NotifyLevel;
+  readonly content: NotificationContent;
+}
+
+export function inAppNoticeForEvent(event: MageEvent, context: NotificationContext): InAppConversationNotice | null {
+  if (event.kind === 'rate_limit') {
+    const body = event.summary.trim().length === 0 ? context.tabTitle : `${context.tabTitle}: ${excerpt(event.summary)}`;
+    return { level: 'warning', content: { title: 'Límite de uso alcanzado', body } };
+  }
+  const content = notificationForEvent(event, context);
+  return content === null ? null : { level: inAppLevelFor(event), content };
+}
+
+function inAppLevelFor(event: MageEvent): NotifyLevel {
+  if (event.kind === 'result') return 'success';
+  if (event.kind === 'error') return 'error';
+  if (event.kind === 'permission_request') return 'warning';
+  return 'info';
 }
 
 // `origin.kind` del `result` de un turno abierto por la notificacion de una tarea (medido en 2.1.284).

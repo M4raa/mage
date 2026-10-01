@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { MageEvent } from '@shared/events';
-import { notificationForEvent } from './notify';
+import { inAppNoticeForEvent, notificationForEvent } from './notify';
 
 describe('notificationForEvent', () => {
   it('result_avisaDeTurnoCompletadoConElTitulo', () => {
@@ -147,5 +147,32 @@ describe('notificationForEvent con reglas regex (assistant_text)', () => {
 
     expect(content?.body.length).toBeLessThanOrEqual('proj: '.length + 121);
     expect(content?.body.endsWith('…')).toBe(true);
+  });
+});
+
+describe('inAppNoticeForEvent', () => {
+  it('inAppNoticeForEvent_limiteDeUso_avisoConElTextoDelCli', () => {
+    const event: MageEvent = { kind: 'rate_limit', summary: 'You have hit your limit', resetsAtMs: null };
+
+    expect(inAppNoticeForEvent(event, { tabTitle: 'proj' })).toEqual({
+      level: 'warning',
+      content: { title: 'Límite de uso alcanzado', body: 'proj: You have hit your limit' },
+    });
+  });
+
+  it('inAppNoticeForEvent_turnoCompletado_esSuccess', () => {
+    const event: MageEvent = { kind: 'result', result: { isError: false, subtype: 'success', numTurns: 1 } };
+
+    expect(inAppNoticeForEvent(event, { tabTitle: 'proj' })?.level).toBe('success');
+  });
+
+  it('inAppNoticeForEvent_permisoAutoPermitido_esNull', () => {
+    const event: MageEvent = { kind: 'permission_request', request: { requestId: 'r', toolName: 'Bash', input: {} } } as MageEvent;
+
+    expect(inAppNoticeForEvent(event, { tabTitle: 'proj', autoAllowed: true })).toBeNull();
+  });
+
+  it('inAppNoticeForEvent_eventoDeRuido_esNull', () => {
+    expect(inAppNoticeForEvent({ kind: 'stream_delta', text: 'x' }, { tabTitle: 'proj' })).toBeNull();
   });
 });

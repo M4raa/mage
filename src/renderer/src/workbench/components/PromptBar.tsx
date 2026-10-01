@@ -20,6 +20,7 @@ import { useCachedCommandCatalog } from '../commandCatalogStore';
 import { resolveKeyEvent } from '../keybindings/resolver';
 import { isMacPlatform } from '../keybindings/platform';
 import { effortChangeAdvice, modelChangeAdvice, type CostAdvice } from '../costAdvice';
+import { notify } from '../notificationStore';
 import { Dropdown } from './Dropdown';
 import { StepSlider } from './StepSlider';
 import { EFFORT_STEP_LABEL, codexPermissionSteps, effortSteps, permissionModeLabel, permissionStepsFor } from '../stepSliderModel';
@@ -36,9 +37,6 @@ const PromptEditor = lazy(() => import('./PromptEditor').then((m) => ({ default:
 // Referencia estable para "esta pestana no ha reportado comandos": devolver [] recien creado en cada
 // render haria que el selector de Zustand viera un valor nuevo siempre y re-renderizara sin parar.
 const EMPTY_COMMANDS: readonly SlashCommand[] = [];
-
-// Cuanto se deja en pantalla un aviso de coste antes de desaparecer solo (ms).
-const ADVICE_TIMEOUT_MS = 8000;
 
 const BYPASS_PERMISSIONS_ADVICE = 'Omitir permisos: el agente ejecuta todo sin preguntar';
 
@@ -143,8 +141,6 @@ export function PromptBar(): React.JSX.Element {
   const text = draft.text;
   const attachments = draft.attachments;
   const setText = (next: string): void => setDraft(activeTabId, { text: next, attachments });
-  // Aviso de coste tras cambiar modelo/esfuerzo (B1). Se autodescarta a los pocos segundos.
-  const [advice, setAdvice] = useState<CostAdvice | null>(null);
   // Autocompletado de comandos "/" (M2.6): indice seleccionado + flag de descartado (Escape).
   const [slashIndex, setSlashIndex] = useState(0);
   const [slashDismissed, setSlashDismissed] = useState(false);
@@ -252,15 +248,8 @@ export function PromptBar(): React.JSX.Element {
   // permanente es solo el control en rojo.
   const bypassActive = (isClaude || isRuntime) && permissionMode === 'bypassPermissions';
   useEffect(() => {
-    if (bypassActive) setAdvice({ severity: 'warn', message: BYPASS_PERMISSIONS_ADVICE });
+    if (bypassActive) notifyCostAdvice({ severity: 'warn', message: BYPASS_PERMISSIONS_ADVICE }, activeTabId);
   }, [bypassActive, activeTabId]);
-
-  // El aviso de coste desaparece solo (no es un error que haya que atender).
-  useEffect(() => {
-    if (advice === null) return;
-    const timer = setTimeout(() => setAdvice(null), ADVICE_TIMEOUT_MS);
-    return () => clearTimeout(timer);
-  }, [advice]);
 
   // Deteccion de editores (una vez al montar). Fallo de IPC -> lista vacia (item deshabilitado).
   useEffect(() => {
@@ -293,13 +282,13 @@ export function PromptBar(): React.JSX.Element {
   // Cambio de modelo en caliente + aviso de coste (B1): el usuario ve que Opus muerde mas bolsa que
   // Sonnet y que el cambio aplica al SIGUIENTE turno.
   const changeModel = (model: string): void => {
-    setAdvice(modelChangeAdvice(activeModel, model));
+    notifyCostAdvice(modelChangeAdvice(activeModel, model), activeTabId);
     setActiveModel(model);
   };
 
   // Cambio de nivel de esfuerzo (--effort): flag de arranque, el aviso lo explica.
   const changeEffort = (level: string): void => {
-    setAdvice(effortChangeAdvice(level, sessionId !== undefined));
+    notifyCostAdvice(effortChangeAdvice(level, sessionId !== undefined), activeTabId);
     setActiveEffort(level);
   };
 
@@ -531,8 +520,6 @@ export function PromptBar(): React.JSX.Element {
           <Spinner /> Mejorando el prompt…
         </div>
       )}
-
-      {advice !== null && <CostAdviceBanner advice={advice} onDismiss={() => setAdvice(null)} />}
 
       {/* Tira de adjuntos (2.12.1): las imagenes que se van a enviar con este mensaje. */}
       {attachments.length > 0 && (
@@ -766,28 +753,19 @@ export function PromptBar(): React.JSX.Element {
   );
 }
 
-// Aviso de coste tras cambiar de modelo/esfuerzo (B1). Ambar cuando el cambio encarece; tenue cuando
-// solo informa. Descartable y con autocierre (lo gestiona el llamante).
-function CostAdviceBanner({
-  advice,
-  onDismiss,
-}: {
-  readonly advice: CostAdvice;
-  readonly onDismiss: () => void;
-}): React.JSX.Element {
-  const skin =
-    advice.severity === 'warn'
-      ? 'border-mg-warn-border bg-mg-warn-bg text-mg-warn-text'
-      : 'border-mg-border-subtle bg-mg-code text-mg-sec';
-  return (
-    <div role="status" className={`mb-[6px] flex items-center gap-[8px] rounded-[7px] border p-[6px_10px] text-[10.5px] ${skin}`}>
-      <Icon name={advice.severity === 'warn' ? 'warning' : 'info'} />
-      <span className="min-w-0 flex-1">{advice.message}</span>
-      <button onClick={onDismiss} aria-label="Descartar aviso" className="shrink-0 opacity-70 hover:opacity-100">
-        <Icon name="close" size={11} label="Descartar aviso" />
-      </button>
-    </div>
-  );
+// Aviso de coste tras cambiar de modelo/esfuerzo (B1) y el de «Omitir permisos»: un toast POR PESTAÑA
+// (cambiar dos veces sustituye al anterior). El cuerpo dice de que pestaña es: con paneles divididos el
+// toast ya no esta pegado al control que lo provoco.
+function notifyCostAdvice(advice: CostAdvice | null, tabId: string): void {
+  if (advice === null || tabId.length === 0) return;
+  const title = useWorkbenchStore.getState().tabs.find((t) => t.id === tabId)?.title;
+  notify({
+    level: advice.severity === 'warn' ? 'warning' : 'info',
+    title: advice.message,
+    ...(title === undefined ? {} : { body: title }),
+    dedupeKey: `cost-advice:${tabId}`,
+    source: 'prompt',
+  });
 }
 
 // Preview de la mejora: textarea EDITABLE con el prompt sugerido + Aceptar / Rechazar / Rehacer.

@@ -4,6 +4,7 @@ import { Icon } from './Icon';
 import { useWorkbenchStore } from '../workbenchStore';
 import { ghNoticeView, prBarView } from '../chatInfoView';
 import { worktreeOfCwd } from '@shared/worktree';
+import { reportActionError } from '../notificationStore';
 
 // Barra de PR/CI de la sesion (grupo D, como Claude Desktop): el PR vinculado con sus checks, y al
 // desplegarla los que fallan, los runs (relanzar/cancelar), el auto-merge y el auto-fix. Sin PR en la
@@ -16,7 +17,7 @@ const BUTTON = `${CHIP} text-mg-body2 transition-colors duration-150 ease-out ho
 const TONES = { add: 'text-mg-diff-add', del: 'text-mg-diff-del', muted: 'text-mg-muted' } as const;
 
 function openExternal(url: string): void {
-  void window.mage.openExternal(url).catch((err: unknown) => console.warn('No se pudo abrir el enlace:', err));
+  void window.mage.openExternal(url).catch((err: unknown) => reportActionError('No se pudo abrir el enlace', err, 'pr'));
 }
 
 export function PrBar({ tabId }: { readonly tabId: string }): React.JSX.Element | null {

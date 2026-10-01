@@ -1,8 +1,10 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MageApi } from '@shared/ipc';
 import type { ConversationSummary } from '@shared/conversations';
 import { createWorkbenchStore, type ConversationFolderChoice } from './workbenchStore';
 import { findLeafPath, singleLeaf } from './splitLayout';
+import { useNotificationStore } from './notificationStore';
+import { EMPTY_NOTIFICATIONS } from './notifications';
 import type { Account, Tab } from './types';
 
 // El store alcanzaba `window.mage` directamente en 18 sitios, asi que estas 850 lineas de orquestacion
@@ -1683,9 +1685,10 @@ describe('worktree de la pestaña (grupo D)', () => {
     await store.getState().closeTab('a');
 
     // Assert
-    await vi.waitFor(() => expect(store.getState().keptWorktreeNotice).toEqual({ path: WT, reason: 'dirty' }));
-    store.getState().dismissKeptWorktreeNotice();
-    expect(store.getState().keptWorktreeNotice).toBeNull();
+    await vi.waitFor(() => expect(keptWorktreeToasts()).toHaveLength(1));
+    const [toast] = keptWorktreeToasts();
+    expect(toast).toMatchObject({ level: 'warning', body: WT, title: 'Worktree conservado: tiene cambios sin confirmar', timeoutMs: 10_000 });
+    expect(toast?.actions.map((a) => a.label)).toEqual(['Abrir carpeta', 'Copiar ruta']);
   });
 
   it('closeTab_worktreeLimpio_noAvisa', async () => {
@@ -1699,7 +1702,40 @@ describe('worktree de la pestaña (grupo D)', () => {
     await vi.waitFor(() => expect(worktreeRemove).toHaveBeenCalled());
 
     // Assert
-    expect(store.getState().keptWorktreeNotice).toBeNull();
+    expect(keptWorktreeToasts()).toHaveLength(0);
+  });
+
+  it('handleEvent_turnoEnPestañaNoVisibleConFoco_avisaConToastQueLlevaALaPestaña', () => {
+    // Arrange
+    vi.stubGlobal('document', { hasFocus: () => true });
+    const store = createWorkbenchStore(fakeMage({ notify: vi.fn().mockResolvedValue(undefined), getUsage: vi.fn().mockResolvedValue(null) }));
+    store.setState({ tabs: [tab('a'), tab('b')], activeTabId: 'a', splitLayout: singleLeaf('a'), sessionIdByChat: { a: 's-a', b: 's-b' } });
+
+    // Act
+    store.getState().handleEvent('s-b', { kind: 'result', result: { isError: false, subtype: 'success', numTurns: 1 } });
+    store.getState().handleEvent('s-a', { kind: 'result', result: { isError: false, subtype: 'success', numTurns: 1 } });
+    vi.unstubAllGlobals();
+
+    // Assert: solo la de la pestaña que no se ve
+    const toasts = useNotificationStore.getState().toasts.filter((n) => n.source === 'conversation');
+    expect(toasts).toHaveLength(1);
+    expect(toasts[0]).toMatchObject({ level: 'success', title: 'Turno completado', body: 'Conversacion b' });
+    void toasts[0]?.actions[0]?.run();
+    expect(store.getState().activeTabId).toBe('b');
+  });
+
+  it('handleEvent_sinFocoDeLaVentana_noSacaToast', () => {
+    // Arrange
+    vi.stubGlobal('document', { hasFocus: () => false });
+    const store = createWorkbenchStore(fakeMage({ notify: vi.fn().mockResolvedValue(undefined), getUsage: vi.fn().mockResolvedValue(null) }));
+    store.setState({ tabs: [tab('a'), tab('b')], activeTabId: 'a', splitLayout: singleLeaf('a'), sessionIdByChat: { a: 's-a', b: 's-b' } });
+
+    // Act
+    store.getState().handleEvent('s-b', { kind: 'result', result: { isError: false, subtype: 'success', numTurns: 1 } });
+    vi.unstubAllGlobals();
+
+    // Assert
+    expect(useNotificationStore.getState().toasts.filter((n) => n.source === 'conversation')).toHaveLength(0);
   });
 
   it('applyGhPrUpdate_prFusionadoConAutoArchivo_cierraLaPestañaParada', async () => {
@@ -1712,3 +1748,10 @@ describe('worktree de la pestaña (grupo D)', () => {
     await vi.waitFor(() => expect(store.getState().tabs).toEqual([]));
   });
 });
+
+// El store de notificaciones es de modulo: se vacia antes de cada test para no depender del orden.
+beforeEach(() => useNotificationStore.setState(EMPTY_NOTIFICATIONS, true));
+
+function keptWorktreeToasts(): ReturnType<typeof useNotificationStore.getState>['toasts'] {
+  return useNotificationStore.getState().toasts.filter((n) => n.dedupeKey?.startsWith('worktree-kept:') === true);
+}

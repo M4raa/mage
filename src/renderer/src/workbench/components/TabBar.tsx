@@ -11,6 +11,7 @@ import { TabContextMenu } from './TabContextMenu';
 import { API_BILLED_LABEL, providerBadge } from '../accountView';
 import type { Tab as TabModel } from '../types';
 import { RELEASE_NOTES_TAB_ID } from '../releaseNotes';
+import { reportActionError } from '../notificationStore';
 
 // Id compartido del indicador de pestaña activa (Type 4 del catalogo de motion: shared-element). Solo
 // la pestaña activa lo renderiza; motion detecta que "el mismo" elemento cambio de padre entre renders
@@ -219,9 +220,9 @@ export function TabBar({
 }
 
 // Un movimiento a otra ventana que falla (la ventana destino se cerro, main rechazo la pestaña) se
-// traza: la pestaña sigue aqui, que es el lado seguro, pero no en silencio.
+// avisa: la pestaña sigue aqui, que es el lado seguro, pero no en silencio.
 function reportMoveError(err: unknown): void {
-  console.warn('No se pudo mover la pestaña a otra ventana:', err instanceof Error ? err.message : String(err));
+  reportActionError('No se pudo mover la pestaña a otra ventana', err, 'window');
 }
 
 // La pseudo-pestaña de novedades (no es una conversacion, no esta en `tabs`). Va siempre al final de su

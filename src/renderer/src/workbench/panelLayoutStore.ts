@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { reconcileLayoutWithRegistry, type Anchor, type PanelId, type PanelLayoutState, type PanelPlacement, type ZoneKey } from '@shared/panelLayout';
 import { PANEL_REGISTRY } from './panels/panelRegistry';
+import { reportActionError } from './notificationStore';
 import {
   didZoneJustOpen,
   locatePanel,
@@ -85,9 +86,11 @@ export interface PanelLayoutStoreState {
 
 // Persiste de forma best-effort (fire-and-forget, igual que loadSettings/loadWorkspace en
 // workbenchStore.ts): un fallo de escritura no debe romper la interaccion del usuario, pero tampoco se
-// traga en silencio (se avisa por consola, mismo contrato de "nunca silenciar" del proyecto).
+// traga en silencio (log + aviso visible, con clave: el siguiente fallo suma en vez de apilar).
 function persist(layout: PanelLayoutState): void {
-  void window.mage.savePanelLayout(layout).catch((err: unknown) => console.warn('No se pudo guardar el layout de paneles:', describeError(err)));
+  void window.mage
+    .savePanelLayout(layout)
+    .catch((err: unknown) => reportActionError('No se pudo guardar la disposición de los paneles', err, 'persist', 'save-failed:layout'));
 }
 
 export const usePanelLayoutStore = create<PanelLayoutStoreState>((set, get) => ({

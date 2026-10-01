@@ -52,6 +52,11 @@ versión.
 - agy ve tus carpetas `~/.gemini/config` (sus MCP, skills y plugins) y `~/.ssh`, y en Configuración ›
   Proveedores y modelos puedes añadirle las de tus herramientas (`.aws`, `.kube`…).
 - Los modos de permiso salen del propio CLI: si Claude o Codex estrenan uno, Mage lo ofrece.
+- **Avisos propios de Mage**, abajo a la derecha: los errores se quedan hasta que los cierras, el resto se
+  va solo (y no mientras tienes el ratón encima o Mage en segundo plano). Con Mage delante también te
+  avisa de lo que pasa en las conversaciones que no estás viendo —un permiso pendiente, un turno
+  terminado, un subagente que acaba, un límite de uso— y el aviso te lleva a ella. La **campana** de la
+  barra de estado guarda los últimos de la ventana: marcarlos como leídos o limpiarlos.
 
 ### Cambiado
 - Las pestañas de **agy** mantienen la conversación en un solo proceso: el contexto se conserva,
@@ -75,6 +80,9 @@ versión.
   la barra de estado hasta que reinicies. Con Mage en la bandeja no aparece nada hasta que vuelves.
 - El instalador tiene el aspecto de Mage y va en castellano; al actualizar solo enseña el progreso y el
   final.
+- El aviso de coste al cambiar de modelo o de esfuerzo, y el de «Omitir permisos», salen ahora como aviso
+  de Mage y dicen de qué conversación son.
+- Al cerrar la pestaña de un worktree con cambios, el aviso trae **Abrir carpeta** y **Copiar ruta**.
 
 ### Corregido
 - Los enlaces del chat se abren en el navegador del sistema, no en otra ventana de Mage.
@@ -82,6 +90,9 @@ versión.
   terminaba vacío.
 - El aviso «Abre una pestaña…» ya no se queda en el prompt después de abrir un chat.
 - La fila de controles del prompt ya no baja unos píxeles al elegir un esfuerzo alto.
+- Si falla algo que acabas de pedir (cambiar de rama, borrar una conversación, abrir un enlace, mover una
+  pestaña a otra ventana, guardar la configuración, instalar la actualización…), Mage lo dice en vez de
+  no hacer nada.
 
 ### Seguridad
 - Las claves de API de los proveedores se guardan cifradas con el almacén del sistema y la interfaz ya

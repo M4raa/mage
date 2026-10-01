@@ -1824,12 +1824,16 @@ const CHECKS = [
       const prompt = page.getByRole('textbox', { name: 'Escribe una instrucción para el agente' });
       await clearPrompt(page);
       // P-026 2.3 (D8/D9): CINCO modos. P-028 14: «Omitir permisos» ya no lleva franja fija: sale un aviso
-      // TEMPORAL (8 s, con X) y la señal permanente es solo el chip en rojo.
+      // TEMPORAL y la señal permanente es solo el chip en rojo. Grupo G: el aviso es un toast `warning` de
+      // la pestaña (su reloj y su pausa los mide la comprobacion de notificaciones); aqui, que sale y que
+      // su ✕ lo quita.
       const MODES = 5;
       const AVISO = 'Omitir permisos: el agente ejecuta todo sin preguntar';
+      await clearNotifications(page);
       const seen = [await permissionModeLabel(page)];
       let avisoAlEntrar = null;
-      let avisoTras9s = null;
+      let avisoNivel = null;
+      let avisoTrasDescartar = null;
       let chipRojo = null;
       let franjaFija = 0;
       for (let step = 0; step < MODES; step += 1) {
@@ -1840,17 +1844,28 @@ const CHECKS = [
         franjaFija += await page.locator('[data-bypass-warning="true"]').count();
         if (label !== 'Omitir permisos') continue;
         avisoAlEntrar = await countBypassAdvice(page, AVISO);
-        await page.waitForTimeout(8600);
-        avisoTras9s = await countBypassAdvice(page, AVISO);
+        const toast = page.locator('[data-notification-level]').filter({ hasText: AVISO });
+        avisoNivel = await toast.getAttribute('data-notification-level', { timeout: CONFIG.actionTimeoutMs });
+        await toast.getByRole('button', { name: 'Descartar notificación' }).click();
+        await toast.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+        avisoTrasDescartar = await countBypassAdvice(page, AVISO);
         chipRojo = await chip.evaluate((el) => el.className.includes('text-mg-danger'));
       }
       if (propia) await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
+      await clearNotifications(page);
       const distinct = new Set(seen.slice(0, MODES)).size;
       const ok =
-        distinct === MODES && seen[MODES] === seen[0] && seen.includes('Auto') && avisoAlEntrar === 1 && avisoTras9s === 0 && chipRojo === true && franjaFija === 0;
+        distinct === MODES &&
+        seen[MODES] === seen[0] &&
+        seen.includes('Auto') &&
+        avisoAlEntrar === 1 &&
+        avisoNivel === 'warning' &&
+        avisoTrasDescartar === 0 &&
+        chipRojo === true &&
+        franjaFija === 0;
       return {
         ok,
-        detail: `modos=${JSON.stringify(seen)} distintos=${distinct} vuelve al inicio=${seen[MODES] === seen[0]} aviso al entrar=${avisoAlEntrar} tras 8,6 s=${avisoTras9s} chip rojo=${chipRojo} franja fija=${franjaFija}`,
+        detail: `modos=${JSON.stringify(seen)} distintos=${distinct} vuelve al inicio=${seen[MODES] === seen[0]} aviso al entrar=${avisoAlEntrar} nivel=${avisoNivel} tras descartar=${avisoTrasDescartar} chip rojo=${chipRojo} franja fija=${franjaFija}`,
       };
     },
   },
@@ -1906,28 +1921,38 @@ const CHECKS = [
     name: 'Cambiar a Opus avisa del coste y el aviso se puede descartar',
     async run(page) {
       const trigger = page.getByRole('button', { name: 'Modelo (aplica al siguiente turno)' });
+      // Autosuficiente: con `--only` no hay pestaña de una comprobacion anterior.
+      const previo = await page.evaluate(() => {
+        const st = window.__mageDev.store.getState();
+        return { tabs: st.tabs, activeTabId: st.activeTabId, splitLayout: st.splitLayout };
+      });
+      const propia = (await trigger.count()) === 0;
+      if (propia) await openTemporaryConversation(page);
+      // La pestaña temporal nace en Opus: se parte de Sonnet para que el cambio encarezca.
+      if (propia) await page.evaluate(() => window.__mageDev.store.getState().setActiveModel('sonnet'));
       await trigger.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
       const initial = (await trigger.innerText()).trim();
       const opus = await pickDropdownOption(page, 'Modelo (aplica al siguiente turno)', /opus/i);
       if (opus === null) return { ok: false, detail: `no hay ninguna opcion de Opus en el selector (modelo actual=${JSON.stringify(initial)})` };
-      await page.waitForTimeout(CONFIG.settleMs);
-      const banner = page.getByRole('button', { name: 'Descartar aviso' });
-      const warned = await banner.count();
-      const text = warned === 0 ? null : ((await banner.locator('..').innerText()) ?? '').trim();
-      if (warned === 1) await banner.click();
-      await page.waitForTimeout(CONFIG.settleMs);
-      const dismissed = await page.getByRole('button', { name: 'Descartar aviso' }).count();
-      // Reponer el modelo de partida y descartar el aviso que provoca el propio cambio de vuelta.
+      // Grupo G: el aviso es un toast de la pestaña (`warning` si encarece), con su ✕.
+      const toast = page.locator('[data-notification-toasts="true"] [data-notification-level]');
+      await toast.first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs }).catch(() => undefined);
+      const warned = await toast.count();
+      const text = warned === 0 ? null : ((await toast.first().innerText()) ?? '').trim();
+      const level = warned === 0 ? null : await toast.first().getAttribute('data-notification-level');
+      if (warned === 1) await toast.getByRole('button', { name: 'Descartar notificación' }).click();
+      await toast.first().waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs }).catch(() => undefined);
+      const dismissed = await toast.count();
+      // Reponer el modelo de partida y vaciar los avisos que provoca el propio cambio de vuelta.
       await pickDropdownOption(page, 'Modelo (aplica al siguiente turno)', new RegExp(`^${escapeRegExp(initial)}$`, 'i'));
       await page.waitForTimeout(CONFIG.settleMs);
-      const back = page.getByRole('button', { name: 'Descartar aviso' });
-      if ((await back.count()) === 1) await back.click();
-      await page.waitForTimeout(CONFIG.settleMs);
+      await clearNotifications(page);
       const restored = (await trigger.innerText()).trim();
-      const ok = warned === 1 && text !== null && /opus/i.test(text) && dismissed === 0 && restored === initial;
+      if (propia) await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
+      const ok = warned === 1 && text !== null && /opus/i.test(text) && level === 'warning' && dismissed === 0 && restored === initial;
       return {
         ok,
-        detail: `modelo ${JSON.stringify(initial)} -> ${JSON.stringify(opus)} avisos=${warned} texto=${JSON.stringify(text)} tras descartar=${dismissed} modelo repuesto=${JSON.stringify(restored)}`,
+        detail: `modelo ${JSON.stringify(initial)} -> ${JSON.stringify(opus)} avisos=${warned} nivel=${level} texto=${JSON.stringify(text)} tras descartar=${dismissed} modelo repuesto=${JSON.stringify(restored)}`,
       };
     },
   },
@@ -7000,32 +7025,188 @@ const CHECKS = [
     },
   },
   {
-    // Integracion 0.1.2: cerrar la pestaña de un worktree con cambios lo conserva, y antes no se veia en
-    // ningun sitio (solo el log). El aviso va a la barra de estado: no bloquea, dice el motivo y la ruta,
-    // y cabe sin estirar la barra aunque la ruta sea larga. Se inyecta el estado que deja `closeTab` (el
-    // cableado lo cubre el test del store) y se descarta con su ✕.
-    name: 'Worktree conservado al cerrar: aviso en la barra de estado con la ruta, descartable',
+    // Grupo G: cerrar la pestaña de un worktree con cambios lo conserva y lo avisa con un toast `warning`
+    // de 10 s con «Abrir carpeta» y «Copiar ruta». Se inyecta el MISMO aviso que emite `closeTab` (el
+    // cableado lo cubre el test del store). NUNCA se pulsa «Abrir carpeta» (abriria el explorador del SO
+    // de verdad; el objeto del contextBridge no se puede sustituir) ni «Copiar ruta» (el portapapeles del
+    // usuario): se miden y se descarta con la ✕.
+    name: 'Avisos de Mage: worktree conservado, toast con «Abrir carpeta» y «Copiar ruta» sobre la barra de estado',
     async run(page) {
-      const ruta = 'C:\\proyectos\\un-repo-con-un-nombre-largo\\.claude\\worktrees\\arreglar-el-cierre-de-pestanas-con-cambios';
-      await page.evaluate((path) => window.__mageDev.store.setState({ keptWorktreeNotice: { path, reason: 'dirty' } }), ruta);
-      const aviso = page.locator('[data-kept-worktree-notice="true"]');
-      await aviso.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
-      const medido = await aviso.evaluate((node) => {
-        const barra = node.parentElement.getBoundingClientRect();
+      const ruta = 'C:\\proyectos\\un-repo-con-un-nombre-largo\\.claude\\worktrees\\arreglar-el-cierre-de-pestanas-con-cambios-y-una-ruta-muy-larga';
+      await clearNotifications(page);
+      await page.evaluate((path) => {
+        window.__mageDev.notify({
+          level: 'warning',
+          title: 'Worktree conservado: tiene cambios sin confirmar',
+          body: path,
+          source: 'worktree',
+          dedupeKey: `worktree-kept:${path}`,
+          actions: [
+            { label: 'Abrir carpeta', run: () => window.mage.openPath(path) },
+            { label: 'Copiar ruta', run: () => navigator.clipboard.writeText(path) },
+          ],
+        });
+      }, ruta);
+      const toast = page.locator('[data-notification-toasts="true"] [data-notification-level]');
+      await toast.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      await waitForStillBox(page, '[data-notification-toasts="true"] [data-notification-level]');
+      const medido = await toast.evaluate((node, path) => {
+        const barra = document.querySelector('[data-status-bar="true"]').getBoundingClientRect();
         const caja = node.getBoundingClientRect();
-        return { texto: node.textContent, rol: node.getAttribute('role'), altoBarra: barra.height, dentro: caja.right <= barra.right + 0.5 && caja.bottom <= barra.bottom + 0.5, titulo: node.querySelector('[title]')?.getAttribute('title') ?? null };
-      });
-      await aviso.getByRole('button', { name: 'Descartar el aviso del worktree conservado' }).click();
-      await aviso.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
-      const trasDescartar = await page.evaluate(() => window.__mageDev.store.getState().keptWorktreeNotice);
+        const cuerpo = [...node.querySelectorAll('[title]')].find((el) => el.getAttribute('title') === path);
+        return {
+          nivel: node.getAttribute('data-notification-level'),
+          region: node.closest('[role]')?.getAttribute('role') ?? null,
+          titulo: node.querySelector('[id^="notification-title-"]')?.textContent ?? null,
+          botones: [...node.querySelectorAll('button')].map((b) => b.getAttribute('aria-label') ?? b.textContent),
+          rutaEnTitle: cuerpo !== undefined,
+          rutaRecortada: cuerpo !== undefined && cuerpo.scrollHeight > cuerpo.clientHeight + 0.5,
+          altoBarra: barra.height,
+          encimaDeLaBarra: caja.bottom <= barra.top + 0.5,
+          dentroDeLaVentana: caja.right <= window.innerWidth + 0.5 && caja.left >= 0,
+        };
+      }, ruta);
+      const reloj = await page.evaluate(() => window.__mageDev.notifications.getState().toasts[0]?.timeoutMs ?? null);
+      await toast.getByRole('button', { name: 'Descartar notificación' }).click();
+      await toast.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+      const enElCentro = await page.evaluate(() => window.__mageDev.notifications.getState().history.length);
+      await clearNotifications(page);
       const ok =
-        medido.rol === 'status' &&
-        medido.texto.includes('Worktree conservado (tiene cambios sin confirmar)') &&
-        medido.titulo === ruta &&
+        medido.nivel === 'warning' &&
+        medido.region === 'status' &&
+        medido.titulo === 'Worktree conservado: tiene cambios sin confirmar' &&
+        JSON.stringify(medido.botones) === JSON.stringify(['Abrir carpeta', 'Copiar ruta', 'Descartar notificación']) &&
+        medido.rutaEnTitle &&
+        medido.rutaRecortada &&
         medido.altoBarra === 26 &&
-        medido.dentro &&
-        trasDescartar === null;
-      return { ok, detail: JSON.stringify({ ...medido, trasDescartar }) };
+        medido.encimaDeLaBarra &&
+        medido.dentroDeLaVentana &&
+        reloj === 10_000 &&
+        enElCentro === 1;
+      return { ok, detail: JSON.stringify({ ...medido, reloj, enElCentro }) };
+    },
+  },
+  {
+    // Grupo G: tres toasts a la vista y el resto en cola; una clave repetida suma «×2» en vez de apilar. La
+    // campana de la barra de estado lleva la cuenta de sin leer y abre el centro (marcar leidas, limpiar);
+    // Escape lo cierra y devuelve el foco a la campana. Todo persistente (`timeoutMs: null`): aqui no se
+    // mide el reloj.
+    name: 'Avisos de Mage: pila de tres, cola, «×2» por clave y centro de la campana',
+    async run(page) {
+      await clearNotifications(page);
+      await page.evaluate(() => {
+        for (let i = 0; i < 2; i += 1) window.__mageDev.notify({ level: 'info', title: 'Repetido', dedupeKey: 'verify:repetido', timeoutMs: null, source: 'verify' });
+      });
+      const toasts = page.locator('[data-notification-toasts="true"] [data-notification-level]');
+      await toasts.first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      const repetido = await page.evaluate(() => window.__mageDev.notifications.getState().toasts.map((n) => n.count));
+      const contador = await page.locator('[data-notification-count="true"]').allInnerTexts();
+      await page.evaluate(() => {
+        for (let i = 1; i <= 3; i += 1) window.__mageDev.notify({ level: 'info', title: `Aviso ${i}`, timeoutMs: null, source: 'verify' });
+      });
+      await toasts.nth(2).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      const visibles = await toasts.count();
+      const enCola = await page.getByText('Aviso 3', { exact: true }).count();
+      await toasts.first().getByRole('button', { name: 'Descartar notificación' }).click();
+      await page.getByText('Aviso 3', { exact: true }).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      await waitForNoExitingToasts(page);
+      const bell = page.locator('[data-notification-bell="true"]');
+      const sinLeer = (await page.locator('[data-notification-unread="true"]').innerText()).trim();
+      await bell.click();
+      const centro = page.locator('[data-notification-center="true"]');
+      await centro.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      const entradas = await centro.locator('[data-notification-entry]').count();
+      await centro.getByRole('button', { name: 'Marcar como leídas' }).click();
+      const sinLeerTrasMarcar = await page.locator('[data-notification-unread="true"]').count();
+      await centro.getByRole('button', { name: 'Limpiar' }).click();
+      const vacio = await centro.getByText('No hay notificaciones.').count();
+      await page.keyboard.press('Escape');
+      await centro.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+      const focoEnLaCampana = await bell.evaluate((el) => document.activeElement === el);
+      const toastsTrasLimpiar = await toasts.count();
+      await clearNotifications(page);
+      const ok =
+        visibles === 3 &&
+        enCola === 0 &&
+        JSON.stringify(repetido) === '[2]' &&
+        contador.includes('×2') &&
+        sinLeer === '4' &&
+        entradas === 4 &&
+        sinLeerTrasMarcar === 0 &&
+        vacio === 1 &&
+        focoEnLaCampana &&
+        toastsTrasLimpiar === 3;
+      return { ok, detail: JSON.stringify({ visibles, enCola, repetido, contador, sinLeer, entradas, sinLeerTrasMarcar, vacio, focoEnLaCampana, toastsTrasLimpiar }) };
+    },
+  },
+  {
+    // Grupo G: el reloj solo corre con la ventana enfocada y sin el raton encima; un toast no roba el foco;
+    // el error va a la region `alert` y el resto a `status`; Escape con el foco dentro lo descarta; queda
+    // por debajo de los modales (z-50); con movimiento reducido entra sin desplazamiento. El foco del SO
+    // se EMULA por CDP (con el usuario usando el escritorio la ventana del harness no lo tiene) y se
+    // repone al acabar, como el movimiento reducido.
+    name: 'Avisos de Mage: reloj con pausa, foco, regiones vivas, Escape, capa y movimiento reducido',
+    async run(page) {
+      await clearNotifications(page);
+      const cdp = await page.context().newCDPSession(page);
+      await cdp.send('Emulation.setFocusEmulationEnabled', { enabled: true });
+      try {
+        const bell = page.locator('[data-notification-bell="true"]');
+        await bell.focus();
+        await page.evaluate(() => window.__mageDev.notify({ level: 'info', title: 'Reloj corto', timeoutMs: 800, source: 'verify' }));
+        const reloj = page.locator('[data-notification-level]').filter({ hasText: 'Reloj corto' });
+        await reloj.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const focoSigueEnLaCampana = await bell.evaluate((el) => document.activeElement === el);
+        await reloj.hover({ timeout: CONFIG.actionTimeoutMs });
+        await page.waitForTimeout(1600);
+        const sigueConElRatonEncima = await reloj.count();
+        await page.mouse.move(4, 400);
+        const t0 = Date.now();
+        await reloj.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+        const seVaAlSalirMs = Date.now() - t0;
+
+        await page.evaluate(() => {
+          window.__mageDev.notify({ level: 'error', title: 'Fallo de prueba', source: 'verify' });
+          window.__mageDev.notify({ level: 'success', title: 'Hecho de prueba', timeoutMs: null, source: 'verify' });
+        });
+        const error = page.locator('[data-notification-level="error"]');
+        await error.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const regiones = await page.evaluate(() => ({
+          error: document.querySelector('[data-notification-level="error"]').parentElement.getAttribute('role'),
+          success: document.querySelector('[data-notification-level="success"]').parentElement.getAttribute('role'),
+          zIndex: Number(getComputedStyle(document.querySelector('[data-notification-toasts="true"]')).zIndex),
+        }));
+        await error.getByRole('button', { name: 'Descartar notificación' }).focus();
+        await page.keyboard.press('Escape');
+        await error.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+        const quedaElDeExito = await page.locator('[data-notification-level="success"]').count();
+        await clearNotifications(page);
+
+        await page.emulateMedia({ reducedMotion: 'reduce' });
+        const transformAlEntrar = await page.evaluate(async () => {
+          // motion lee la preferencia al montar, y el `change` de la media query llega en el siguiente frame.
+          await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+          window.__mageDev.notify({ level: 'info', title: 'Sin movimiento', timeoutMs: null, source: 'verify' });
+          await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+          const node = document.querySelector('[data-notification-level="info"]');
+          return { casa: matchMedia('(prefers-reduced-motion)').matches, transform: node === null ? 'no montado' : getComputedStyle(node).transform };
+        });
+        await page.emulateMedia({ reducedMotion: null });
+        await clearNotifications(page);
+        const ok =
+          focoSigueEnLaCampana &&
+          sigueConElRatonEncima === 1 &&
+          seVaAlSalirMs < 3000 &&
+          regiones.error === 'alert' &&
+          regiones.success === 'status' &&
+          regiones.zIndex < 50 &&
+          quedaElDeExito === 1 &&
+          (transformAlEntrar.transform === 'none' || transformAlEntrar.transform === 'matrix(1, 0, 0, 1, 0, 0)');
+        return { ok, detail: JSON.stringify({ focoSigueEnLaCampana, sigueConElRatonEncima, seVaAlSalirMs, regiones, quedaElDeExito, transformAlEntrar }) };
+      } finally {
+        await cdp.send('Emulation.setFocusEmulationEnabled', { enabled: false }).catch(() => undefined);
+        await cdp.detach().catch(() => undefined);
+      }
     },
   },
   {
@@ -7933,6 +8114,23 @@ function countBypassAdvice(page, text) {
   return page.evaluate(
     (t) => [...document.querySelectorAll('body *')].filter((n) => n.childElementCount === 0 && (n.textContent ?? '').trim() === t && n.closest('[data-active-panel]') === null).length,
     text,
+  );
+}
+
+// Vacia el store de notificaciones (toasts y centro): contrato 5 de la skill, cada comprobacion que
+// las provoca deja la pila como la encontro.
+async function clearNotifications(page) {
+  await page.evaluate(() => window.__mageDev.notifications.setState({ toasts: [], history: [] }, true));
+  await waitForNoExitingToasts(page);
+}
+
+// Un toast descartado sigue en el DOM mientras dura su salida (y con la ventana tapada los frames se
+// paran): se espera a que en el DOM haya solo los que el store tiene, sondeando por tiempo y no por rAF.
+function waitForNoExitingToasts(page) {
+  return page.waitForFunction(
+    () => document.querySelectorAll('[data-notification-toasts="true"] [data-notification-level]').length === Math.min(3, window.__mageDev.notifications.getState().toasts.length),
+    undefined,
+    { polling: 100, timeout: CONFIG.actionTimeoutMs },
   );
 }
 
