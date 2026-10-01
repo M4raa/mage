@@ -165,6 +165,52 @@ describe('ConversationsService.listConversations', () => {
 
     expect(service.listConversations(ACC)[0]).toMatchObject({ title: 'say-hello', isScheduled: true });
   });
+
+  it('listConversations_ficheroSinCambios_noLoReleeEnLaSegundaLlamada', () => {
+    const readPrefix = vi.fn(() => userLine('prompt', 'C:\\proj'));
+    const service = singleFile({ statFile: () => ({ mtimeMs: 1000, sizeBytes: 1024 }), readPrefix });
+
+    const first = service.listConversations(ACC);
+    const second = service.listConversations(ACC);
+
+    expect(readPrefix).toHaveBeenCalledTimes(1);
+    expect(second).toEqual(first);
+  });
+
+  it('listConversations_ficheroConMtimeOTamanoNuevo_loRelee', () => {
+    let stat = { mtimeMs: 1000, sizeBytes: 1024 };
+    let text = 'antes';
+    const readPrefix = vi.fn(() => userLine(text, 'C:\\proj'));
+    const service = singleFile({ statFile: () => stat, readPrefix });
+    service.listConversations(ACC);
+
+    text = 'despues';
+    stat = { mtimeMs: 2000, sizeBytes: 1024 };
+    const byMtime = service.listConversations(ACC);
+    stat = { mtimeMs: 2000, sizeBytes: 2048 };
+    text = 'crecio';
+    const bySize = service.listConversations(ACC);
+
+    expect(readPrefix).toHaveBeenCalledTimes(3);
+    expect(byMtime[0]?.title).toBe('despues');
+    expect(bySize[0]).toMatchObject({ title: 'crecio', updatedAtMs: 2000, sizeBytes: 2048 });
+  });
+
+  it('listConversations_ficheroIlegible_noSeCacheaYSeReintenta', () => {
+    const readPrefix = vi
+      .fn<(path: string, maxBytes: number) => string>()
+      .mockImplementationOnce(() => {
+        throw new Error('EBUSY');
+      })
+      .mockImplementation(() => userLine('ya legible', 'C:\\proj'));
+    const service = singleFile({ statFile: () => ({ mtimeMs: 1000, sizeBytes: 1024 }), readPrefix });
+
+    const first = service.listConversations(ACC);
+    const second = service.listConversations(ACC);
+
+    expect(first).toEqual([]);
+    expect(second[0]?.title).toBe('ya legible');
+  });
 });
 
 describe('ConversationsService con el runtime propio (P-032 R4)', () => {

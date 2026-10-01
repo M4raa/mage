@@ -54,6 +54,22 @@ versión.
 - agy ve tus carpetas `~/.gemini/config` (sus MCP, skills y plugins) y `~/.ssh`, y en Configuración ›
   Proveedores y modelos puedes añadirle las de tus herramientas (`.aws`, `.kube`…).
 - Los modos de permiso salen del propio CLI: si Claude o Codex estrenan uno, Mage lo ofrece.
+- **Runtime propio de Mage para los modelos sin CLI** (Ollama, LM Studio y cualquier servidor compatible
+  con OpenAI): Mage habla con el servidor directamente, sin pasar por el CLI de Claude, y la
+  conversación se ve igual que las demás.
+  - El modelo puede leer y buscar en tu proyecto, escribir y editar ficheros (con su diff) y ejecutar
+    comandos. Lo que cambia algo pide permiso con el mismo diálogo de siempre, y tiene los cinco modos
+    de permiso. En Configuración › Proveedores y modelos eliges con qué terminal ejecuta los comandos.
+  - Usa los **servidores MCP comunes**; si uno pide iniciar sesión, Mage abre el navegador. Puedes
+    decidir qué herramientas puede usar cada modelo.
+  - Sus conversaciones salen en el historial y se pueden reanudar; funcionan `/clear`, `/rename` y
+    `/compact`.
+  - Mage conoce la ventana de contexto del modelo, avisa cuando se acerca al límite y, al llenarse,
+    resume la conversación con el propio modelo para seguir.
+  - Con un modelo que no admite herramientas, la conversación lo dice y sigue como chat; si el modelo
+    escribe la llamada como texto, Mage la ejecuta igualmente.
+  - **Probar conexión**, al dar de alta el servidor, rellena sus modelos, la ventana de contexto y si
+    admite herramientas.
 - **Avisos propios de Mage**, abajo a la derecha: los errores se quedan hasta que los cierras, el resto se
   va solo (y no mientras tienes el ratón encima o Mage en segundo plano). Con Mage delante también te
   avisa de lo que pasa en las conversaciones que no estás viendo —un permiso pendiente, un turno
@@ -85,11 +101,16 @@ versión.
 - El aviso de coste al cambiar de modelo o de esfuerzo, y el de «Omitir permisos», salen ahora como aviso
   de Mage y dicen de qué conversación son.
 - Al cerrar la pestaña de un worktree con cambios, el aviso trae **Abrir carpeta** y **Copiar ruta**.
+- Desaparecen los proveedores **OpenAI · API** y **Gemini · API**: una clave de OpenAI o de Gemini se
+  añade ahora como cuenta de Codex o de agy («Añadir cuenta»). Una pestaña que usaba uno de ellos se
+  abre con Claude.
 
 ### Corregido
 - Los enlaces del chat se abren en el navegador del sistema, no en otra ventana de Mage.
-- Los proveedores compatibles con OpenAI (Ollama, LM Studio…) ya pintan su respuesta: antes el turno
-  terminaba vacío.
+- Los proveedores compatibles con OpenAI (Ollama, LM Studio…) ya responden: antes el turno terminaba
+  vacío.
+- El historial de conversaciones ya no deja la app trabada unas décimas de segundo cada vez que se
+  actualiza.
 - El aviso «Abre una pestaña…» ya no se queda en el prompt después de abrir un chat.
 - Volver a elegir en un desplegable la opción que ya estaba puesta no cuenta como un cambio: el selector
   de modelo avisaba «Modelo cambiado» sin haber cambiado nada.
@@ -103,9 +124,8 @@ versión.
   no las ve; las de la 0.1.1 se cifran solas al arrancar.
 - Las variables `OPENAI_API_KEY` y `CODEX_API_KEY` ya no llegan a los agentes que lanza Mage.
 
-### Por completar antes de publicar
-- Por completar: probar Codex con una cuenta real (hoy funciona según su documentación, sin verificar).
-- Por completar: runtime propio para los modelos locales, en lugar del gateway.
+### Sin verificar todavía
+- Codex no se ha probado con una cuenta real: funciona según su documentación.
 
 ## 0.1.1 — 2026-09-30
 

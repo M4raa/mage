@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import type { ConversationSummary } from '@shared/conversations';
 import type { ConversationPrivacy } from '@shared/state';
-import { deriveConversationMeta } from './conversationMeta';
+import { deriveConversationMeta, type ConversationMeta } from './conversationMeta';
 
 // Lista las conversaciones EN DISCO de una cuenta para el sidebar-historial (M2.6): las compartidas
 // (pozo comun, `<cuenta>/projects`) y las privadas (`<cuenta>/mage-private/projects`). Solo FS con DI
@@ -31,6 +31,13 @@ export interface ConversationsDeps {
   readonly runtimeProjectsDir?: () => string;
 }
 
+// Lo derivado de un fichero, valido mientras no cambien su mtime ni su tamaño.
+interface CachedMeta {
+  readonly mtimeMs: number;
+  readonly sizeBytes: number;
+  readonly meta: ConversationMeta;
+}
+
 interface Root {
   readonly projectsDir: string;
   readonly configDir: string; // dir efectivo (cuenta o perfil privado)
@@ -38,6 +45,12 @@ interface Root {
 }
 
 export class ConversationsService {
+  // Cache por ruta: el sondeo del historial (cada 30 s) releia 64+64 KB de CADA transcripcion en el
+  // hilo de main (160–190 ms con ~300 ficheros, medido). Con ella, un fichero que no cambio cuesta un
+  // `stat` (~10 ms la lista entera, medido). ponytail: no se purgan las rutas borradas; son unos
+  // cientos de bytes por conversacion y solo crece con transcripciones nuevas.
+  private readonly metaCache = new Map<string, CachedMeta>();
+
   constructor(private readonly deps: ConversationsDeps) {}
 
   // Devuelve las conversaciones de la cuenta (compartidas + privadas), mas recientes primero, acotadas.
@@ -80,10 +93,7 @@ export class ConversationsService {
     try {
       // UN solo `stat` para las dos cosas que se leen del fichero: cuando se modifico y cuanto pesa.
       const stat = this.deps.statFile(path);
-      const head = this.deps.readPrefix(path, PREFIX_BYTES).split(/\r?\n/);
-      // Un fichero que cabe entero en la cabeza no necesita cola (y leerla seria leerlo dos veces).
-      const tail = stat.sizeBytes > PREFIX_BYTES ? this.deps.readSuffix(path, SUFFIX_BYTES).split(/\r?\n/) : [];
-      const meta = deriveConversationMeta(head, tail);
+      const meta = this.readMeta(path, stat);
       // D4: sin ningun mensaje real del usuario, la conversacion no existe para el historial. Solo se
       // decide si cabeza y cola cubren el fichero ENTERO: en uno mayor, el primer mensaje podria estar
       // en medio y esconderlo borraria del historial una conversacion de verdad.
@@ -101,5 +111,17 @@ export class ConversationsService {
     } catch {
       return null;
     }
+  }
+
+  // Meta del fichero: de la cache si mtime y tamaño no cambiaron; si no, se lee cabeza (y cola).
+  private readMeta(path: string, stat: { readonly mtimeMs: number; readonly sizeBytes: number }): ConversationMeta {
+    const cached = this.metaCache.get(path);
+    if (cached !== undefined && cached.mtimeMs === stat.mtimeMs && cached.sizeBytes === stat.sizeBytes) return cached.meta;
+    const head = this.deps.readPrefix(path, PREFIX_BYTES).split(/\r?\n/);
+    // Un fichero que cabe entero en la cabeza no necesita cola (y leerla seria leerlo dos veces).
+    const tail = stat.sizeBytes > PREFIX_BYTES ? this.deps.readSuffix(path, SUFFIX_BYTES).split(/\r?\n/) : [];
+    const meta = deriveConversationMeta(head, tail);
+    this.metaCache.set(path, { mtimeMs: stat.mtimeMs, sizeBytes: stat.sizeBytes, meta });
+    return meta;
   }
 }
