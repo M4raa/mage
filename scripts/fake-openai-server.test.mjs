@@ -9,6 +9,7 @@ import { FAKE_OPENAI_REPLY, startFakeOpenAiServer } from './fake-openai-server.m
 import { buildRuntimeSession } from '../src/main/runtime/runtimeFactory';
 import { ModelCatalog } from '../src/main/runtime/modelCatalog';
 import { createMcpConnector } from '../src/main/runtime/mcp/mcpSdk';
+import { nodeRealpath } from '../src/main/runtime/tools/pathGuard';
 
 // Integracion del runtime propio con el servidor falso REAL (red de verdad en 127.0.0.1): la misma
 // sesion que monta main, sin GUI. Es la verificacion de punta a punta de cada fase de P-032.
@@ -41,6 +42,7 @@ function envFor(baseUrl, overrides = {}) {
     now: Date.now,
     newId: () => `id-${++id}`,
     platform: process.platform,
+    realpath: nodeRealpath,
     fs: { stat, readFile, glob },
     editFs: { readFile, writeFile, mkdir },
     shell: () => ({ name: 'node', command: process.execPath, argsFor: (script) => ['-e', script] }),

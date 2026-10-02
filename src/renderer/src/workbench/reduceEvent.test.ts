@@ -85,7 +85,7 @@ describe('reduceEvent — permisos', () => {
   const pendingEntry = (requestId: string) => ({
     requestId,
     input: {},
-    view: { prompt: '', target: '', toolLabel: 'Write', diff: [], summary: '' },
+    view: { prompt: '', target: '', toolLabel: 'Write', rememberable: true, diff: [], summary: '' },
   });
 
   it('reduceEvent_permissionRequest_dejaLaPestanaEsperandoPermiso', () => {

@@ -77,7 +77,7 @@ export function PermissionPanel(): React.JSX.Element {
         <div className="flex flex-col gap-[11px] border-b border-mg-border-subtle p-[14px]">
           <div className="text-[12px] leading-[1.5] text-mg-body2">{permission.prompt}</div>
           <PermissionDiff permission={permission} />
-          <PermissionDecisionButtons toolLabel={permission.toolLabel} />
+          <PermissionDecisionButtons toolLabel={permission.toolLabel} rememberable={permission.rememberable} />
         </div>
       )}
 
@@ -168,7 +168,7 @@ function ConfiguredPermissions({
         </h3>
         {alwaysAllowTools.length === 0 ? (
           <p className="text-[11.5px] text-mg-muted">
-            Nada. Con «Permitir siempre» en una tarjeta de permiso, esa herramienta deja de preguntar aquí.
+            Nada. Con «Permitir siempre» en una tarjeta de permiso, esa herramienta deja de preguntar aquí (lo de fuera del proyecto sigue preguntando).
           </p>
         ) : (
           <ul className="flex flex-col gap-[3px]">

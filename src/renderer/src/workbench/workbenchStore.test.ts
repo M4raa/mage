@@ -929,6 +929,33 @@ describe('permiso auto-permitido', () => {
     expect(notify).not.toHaveBeenCalled();
   });
 
+  it('handleEvent_permisoFueraDelProyectoConRegla_noContesta', () => {
+    // D2 de P-033: «Permitir siempre Bash» vale dentro del proyecto; lo de fuera siempre pregunta.
+    const answerPermission = vi.fn().mockResolvedValue(undefined);
+    const store = createWorkbenchStore(fakeMage({ answerPermission, notify: vi.fn().mockResolvedValue(undefined) }));
+    store.setState({ tabs: [tab('a', { alwaysAllowTools: ['Bash'] })], activeTabId: 'a', splitLayout: singleLeaf('a'), sessionIdByChat: { a: 's-a' } });
+    const outside = REQUEST('Bash');
+
+    store.getState().handleEvent('s-a', { ...outside, request: { ...outside.request, description: 'Fuera del proyecto: rm -rf ~', outsideProject: true } });
+
+    expect(answerPermission).not.toHaveBeenCalled();
+    expect(store.getState().pendingByChat.a?.[0]?.view.rememberable).toBe(false);
+  });
+
+  it('handleEvent_segundoPlanoFueraDelProyectoConRegla_pideAccion', () => {
+    const answerPermission = vi.fn().mockResolvedValue(undefined);
+    const store = createWorkbenchStore(fakeMage({ answerPermission, notify: vi.fn().mockResolvedValue(undefined) }));
+    store.setState({
+      backgroundSessions: { 's-bg': { sessionId: 's-bg', title: 'fondo', accountId: 'acc', state: 'working', sinceMs: 1, alwaysAllowTools: ['Read'] } },
+    });
+    const outside = REQUEST('Read');
+
+    store.getState().handleEvent('s-bg', { ...outside, request: { ...outside.request, outsideProject: true } });
+
+    expect(answerPermission).not.toHaveBeenCalled();
+    expect(store.getState().backgroundSessions['s-bg']?.state).toBe('needs_action');
+  });
+
   it('handleEvent_permisoSinRegla_notifica', () => {
     const notify = vi.fn().mockResolvedValue(undefined);
     const store = createWorkbenchStore(fakeMage({ notify }));

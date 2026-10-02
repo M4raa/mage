@@ -128,3 +128,38 @@ describe('Grep', () => {
     expect((await grep.run({ pattern: 'x' }, ctx())).output).toMatch(/Sin coincidencias/);
   });
 });
+
+// C2: aunque la puerta fallara, un patron que sale de la carpeta de busqueda no devuelve nada de fuera.
+describe('Glob y Grep fuera del proyecto (C2)', () => {
+  const insideCtx = (): ToolContext => ({ cwd: join(dir, 'proj'), extraDirs: [], signal: new AbortController().signal });
+
+  beforeEach(() => {
+    mkdirSync(join(dir, 'proj'));
+    writeFileSync(join(dir, 'secreto.txt'), 'KEY=123');
+    writeFileSync(join(dir, 'proj', 'a.txt'), 'KEY=dentro');
+  });
+
+  it('glob_patternWithParentSegments_returnsNothingOutside', async () => {
+    const out = await createGlobTool(deps).run({ pattern: '../*.txt' }, insideCtx());
+
+    expect(out.output).not.toMatch(/secreto/);
+  });
+
+  it('glob_absolutePatternOutside_returnsNothingOutside', async () => {
+    const out = await createGlobTool(deps).run({ pattern: `${dir.replaceAll('\\', '/')}/*.txt` }, insideCtx());
+
+    expect(out.output).not.toMatch(/secreto/);
+  });
+
+  it('grep_globOutsideCwd_returnsNothing', async () => {
+    const out = await createGrepTool(deps).run({ pattern: 'KEY', glob: '../*.txt' }, insideCtx());
+
+    expect(out.output).not.toMatch(/123/);
+  });
+
+  it('grep_globInside_stillFinds', async () => {
+    const out = await createGrepTool(deps).run({ pattern: 'KEY', glob: '*.txt' }, insideCtx());
+
+    expect(out.output).toBe('a.txt:1:KEY=dentro');
+  });
+});

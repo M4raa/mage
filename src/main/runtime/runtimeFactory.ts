@@ -36,6 +36,8 @@ export interface RuntimeEnv {
   readonly now: () => number;
   readonly newId: () => string;
   readonly platform: string;
+  // Ruta real (sigue symlinks y junctions) o null si no existe: la puerta y Glob/Grep clasifican con ella.
+  readonly realpath: (path: string) => string | null;
   readonly fs: ReadToolsFs;
   readonly editFs: EditToolsFs;
   // Shell de `Bash` segun el ajuste del usuario (ficha D4); se resuelve al crear la sesion.
@@ -70,7 +72,7 @@ interface SessionTools {
 
 function sessionTools(env: RuntimeEnv, cwd: string): SessionTools {
   const shell = env.shell();
-  const readDeps = { fs: env.fs, platform: env.platform };
+  const readDeps = { fs: env.fs, platform: env.platform, realpath: env.realpath };
   const editDeps = { fs: env.editFs, platform: env.platform };
   const tools = [
     createReadTool(readDeps),
@@ -120,7 +122,7 @@ export function buildRuntimeSession(providerId: string, base: SessionBase, env: 
     permissionMode: initialMode(params.permissionMode),
     client,
     tools,
-    gate: createRuntimeGate({ cwd: params.cwd, extraDirs: [], platform: env.platform }),
+    gate: createRuntimeGate({ cwd: params.cwd, extraDirs: [], platform: env.platform, realpath: env.realpath }),
     systemPrompt: (toolsEnabled) =>
       buildSystemPrompt({
         cwd: params.cwd,

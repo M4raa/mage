@@ -48,6 +48,9 @@ export interface PermissionRequest {
   readonly requiresUserInteraction: boolean;
   // Nombre para humanos que da el CLI (`display_name`); null si no viene. Se prefiere a `toolName`.
   readonly displayName: string | null;
+  // Solo el runtime propio: la peticion es por algo FUERA del proyecto o por red (su motivo va en
+  // `description`). «Permitir siempre» no se ofrece ni se aplica a estas (D2 de P-033).
+  readonly outsideProject?: boolean;
 }
 
 // Uso de una llamada a tool ya emitida por el asistente (para render de tool calls).

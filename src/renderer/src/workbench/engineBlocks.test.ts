@@ -197,6 +197,16 @@ describe('applyToolResult', () => {
 });
 
 describe('mapPermissionToView', () => {
+  it('mapPermissionToView_outsideProject_notRememberableAndSummaryIsReason', () => {
+    const view = mapPermissionToView({ ...permission({ toolName: 'Read', input: { file_path: '/etc/hosts' } }), description: 'Fuera del proyecto: /etc/hosts', outsideProject: true });
+
+    expect(view).toMatchObject({ rememberable: false, summary: 'Fuera del proyecto: /etc/hosts' });
+  });
+
+  it('mapPermissionToView_normalRequest_rememberable', () => {
+    expect(mapPermissionToView(permission({ toolName: 'Read', input: { file_path: 'a' } })).rememberable).toBe(true);
+  });
+
   it('mapPermissionToView_edit_buildsDiffAndSummary', () => {
     const view = mapPermissionToView(
       permission({ toolName: 'Edit', input: { file_path: 'a.ts', old_string: 'a', new_string: 'b\nc' } }),

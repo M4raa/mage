@@ -14,9 +14,12 @@ import { usePaneTabId } from '../paneContext';
 export function PermissionDecisionButtons({
   toolLabel,
   requestId,
+  rememberable = true,
   compact = false,
 }: {
   readonly toolLabel: string;
+  // false = la peticion es de fuera del proyecto o de red (runtime propio): no se ofrece recordarla.
+  readonly rememberable?: boolean;
   // La peticion que contestan. La tarjeta pasa la SUYA: con varias en cola (tools en paralelo), cada
   // tarjeta decide sobre su can_use_tool. Sin ella (panel), la primera de la cola.
   readonly requestId?: string;
@@ -36,14 +39,16 @@ export function PermissionDecisionButtons({
       </Option>
       {/* "Permitir siempre" SI recuerda (2.3b): guarda una regla por conversacion en el indice de Mage y
           los siguientes can_use_tool de esa tool se auto-aprueban. Se lista y se revoca en el panel. */}
-      <Option
-        shortcut="2"
-        label={`Permitir siempre ${toolLabel} aquí`}
-        compact={compact}
-        onClick={() => allowAlways(toolLabel)}
-      >
-        Permitir siempre <span className="font-mono text-[11px]">{toolLabel}</span> aquí
-      </Option>
+      {rememberable && (
+        <Option
+          shortcut="2"
+          label={`Permitir siempre ${toolLabel} aquí`}
+          compact={compact}
+          onClick={() => allowAlways(toolLabel)}
+        >
+          Permitir siempre <span className="font-mono text-[11px]">{toolLabel}</span> aquí
+        </Option>
+      )}
       <Option
         shortcut="3"
         label="Denegar y decir por qué"

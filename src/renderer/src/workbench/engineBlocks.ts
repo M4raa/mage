@@ -132,6 +132,7 @@ export function appendPermissionBlock(
     readonly prompt: string;
     readonly target: string;
     readonly summary: string;
+    readonly rememberable?: boolean;
   },
 ): readonly Block[] {
   return [...blocks, { kind: 'permission', ...permission, state: 'pending' }];
@@ -455,12 +456,15 @@ export function restartingText(attempt: number, delayMs: number): string {
 // Peticion de permiso -> vista del Inspector (prompt + tarjeta target/diff + resumen).
 export function mapPermissionToView(request: PermissionRequest): PermissionView {
   const { toolName, input } = request;
+  const outside = request.outsideProject === true;
   return {
     prompt: buildPrompt(toolName),
     target: buildTarget(toolName, input),
     toolLabel: toolName,
+    rememberable: !outside,
     diff: buildDiff(toolName, input),
-    summary: buildSummary(toolName, input),
+    // Fuera del proyecto o red: el motivo que da el runtime («Fuera del proyecto: C:\…»).
+    summary: outside && request.description !== null ? request.description : buildSummary(toolName, input),
   };
 }
 

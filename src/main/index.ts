@@ -133,6 +133,7 @@ import { defaultKillTreeDeps, killProcessTree } from './os/processTree';
 import { SessionManager } from './engine/sessionManager';
 import { createSessionFor } from './engine/sessionFactory';
 import { buildRuntimeSession, type RuntimeEnv } from './runtime/runtimeFactory';
+import { nodeRealpath } from './runtime/tools/pathGuard';
 import { ModelCatalog } from './runtime/modelCatalog';
 import { createMcpConnector } from './runtime/mcp/mcpSdk';
 import { parseRuntimeProbeParams, probeRuntimeEndpoint } from './runtime/runtimeProbe';
@@ -514,6 +515,7 @@ function runtimeEnv(): RuntimeEnv {
     now: Date.now,
     newId: randomUUID,
     platform: process.platform,
+    realpath: nodeRealpath,
     fs: runtimeFs,
     editFs: { readFile, writeFile, mkdir },
     shell: () =>

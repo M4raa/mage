@@ -616,7 +616,7 @@ function applyBackgroundEvent(
   if (entry === undefined) return; // sesion ya parada: evento rezagado, se ignora
   // «Permitir siempre aqui» sigue valiendo con la pestaña cerrada (P-026, 1.8): se contesta sola, sin
   // pasar a «pendiente de accion» ni avisar de un permiso que el usuario ya concedio.
-  if (event.kind === 'permission_request' && isAlwaysAllowed(entry.alwaysAllowTools, event.request.toolName)) {
+  if (event.kind === 'permission_request' && event.request.outsideProject !== true && isAlwaysAllowed(entry.alwaysAllowTools, event.request.toolName)) {
     void mage
       .answerPermission({ sessionId, requestId: event.request.requestId, decision: { behavior: 'allow' } })
       .catch((err: unknown) => console.warn(`No se pudo auto-permitir en segundo plano (${sessionId}):`, describeError(err)));
@@ -2647,7 +2647,7 @@ export function createWorkbenchStore(mage: MageClient) {
     // las PREGUNTAS, que no son una autorizacion sino un turno de palabra.
     allowAlwaysAndAnswer: (toolName, tabId = get().activeTabId) => {
       const matching = (get().pendingByChat[tabId] ?? []).filter(
-        (p) => p.view.toolLabel === toolName && parseAskUserQuestion(p.input) === null,
+        (p) => p.view.toolLabel === toolName && p.view.rememberable && parseAskUserQuestion(p.input) === null,
       );
       if (matching.length === 0) return; // sin peticion viva no hay nada que conceder
       set((s) => ({
@@ -2814,6 +2814,8 @@ export function headPermission(state: Pick<WorkbenchState, 'pendingByChat'>, tab
 // que hay que contestar con datos (y su regla no puede existir — la tarjeta de permiso, que es la unica
 // que crea reglas, no se pinta para preguntas).
 function isAutoAllowedRequest(state: WorkbenchState, tabId: string, request: PermissionRequest): boolean {
+  // Fuera del proyecto o red (runtime propio, D2 de P-033): la regla nunca la cubre.
+  if (request.outsideProject === true) return false;
   return parseAskUserQuestion(request.input) === null && shouldAutoAllow(state, tabId, request.toolName);
 }
 
@@ -2928,6 +2930,7 @@ export function reduceEvent(state: WorkbenchState, tabId: string, event: MageEve
                   prompt: view.prompt,
                   target: view.target,
                   summary: view.summary,
+                  rememberable: view.rememberable,
                 })
               : appendQuestionBlock(blocks, { id: nextBlockId(), requestId: event.request.requestId, questions }),
           );

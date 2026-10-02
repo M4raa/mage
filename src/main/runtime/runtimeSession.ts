@@ -23,7 +23,11 @@ export function isRuntimePermissionMode(mode: string): mode is RuntimePermission
   return (RUNTIME_PERMISSION_MODES as readonly string[]).includes(mode);
 }
 
-export type GateVerdict = { readonly verdict: 'allow' } | { readonly verdict: 'ask' } | { readonly verdict: 'deny'; readonly reason: string };
+// `outside` en un `ask` = fuera del proyecto o red (su motivo, para la tarjeta): nunca se recuerda.
+export type GateVerdict =
+  | { readonly verdict: 'allow' }
+  | { readonly verdict: 'ask'; readonly outside?: string }
+  | { readonly verdict: 'deny'; readonly reason: string };
 
 // Lo que el runtime registra de un turno para la transcripcion (R4). Opcional: sin el, nada se escribe.
 export interface TurnRecorder {
@@ -85,6 +89,9 @@ export interface PreparedModel {
 }
 
 const CHAT_ONLY_NOTICE = 'Este modelo no admite herramientas: Mage solo puede conversar con él.';
+// D1 de P-033: Auto en el runtime es una lista blanca, no el sandbox de Codex. Se dice al entrar.
+export const AUTO_MODE_NOTICE =
+  'Auto no es un sandbox: edita dentro del proyecto y ejecuta sin preguntar solo comandos de una lista corta (lectura, git sin red, test y build). Esos comandos ejecutan código del proyecto; todo lo demás pregunta.';
 const TOOL_CALL_AS_TEXT = /<tool_call>|\[TOOL_REQUEST\]|^\s*```(?:json)?\s*\{\s*"(?:name|tool)"/m;
 // Las que se entienden las ejecuta el bucle (R9); esta solo sale con una que NO se pudo interpretar.
 const TOOL_CALL_AS_TEXT_NOTICE = 'El modelo escribió una llamada a una herramienta como texto y Mage no pudo interpretarla.';
@@ -133,6 +140,7 @@ export class RuntimeSession implements ManagedSession {
     this.started = true;
     this.emitInit();
     this.deps.emit({ kind: 'session_state', state: 'idle' });
+    if (this.mode === 'auto') this.deps.emit({ kind: 'notice', text: AUTO_MODE_NOTICE });
   }
 
   sendUserMessage(text: string, attachments: readonly ImageAttachment[] = []): void {
@@ -166,8 +174,10 @@ export class RuntimeSession implements ManagedSession {
     if (!isRuntimePermissionMode(mode)) {
       throw new Error(`Modo de permiso invalido para el runtime: ${JSON.stringify(mode)} (validos: ${RUNTIME_PERMISSION_MODES.join(', ')})`);
     }
+    const entering = mode === 'auto' && this.mode !== 'auto';
     this.mode = mode;
     this.deps.emit({ kind: 'permission_mode', mode });
+    if (entering) this.deps.emit({ kind: 'notice', text: AUTO_MODE_NOTICE });
   }
 
   stopTask(taskId: string): void {
@@ -358,6 +368,7 @@ export class RuntimeSession implements ManagedSession {
     if (gate.verdict === 'allow') return Promise.resolve({ behavior: 'allow' });
     if (gate.verdict === 'deny') return Promise.resolve({ behavior: 'deny', message: gate.reason, byUser: false });
     if (signal.aborted) return Promise.resolve({ behavior: 'deny', message: 'turno interrumpido', byUser: false });
+    const outside = gate.outside;
     const requestId = this.deps.newId();
     return new Promise<Authorization>((resolve) => {
       this.pending.set(requestId, {
@@ -374,9 +385,10 @@ export class RuntimeSession implements ManagedSession {
           toolUseId: call.id,
           toolName: call.name,
           input: call.input,
-          description: null,
+          description: outside ?? null,
           requiresUserInteraction: false,
           displayName: null,
+          ...(outside === undefined ? {} : { outsideProject: true }),
         },
       });
       this.deps.emit({ kind: 'session_state', state: 'requires_action' });

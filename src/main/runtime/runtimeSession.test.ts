@@ -4,7 +4,7 @@ import type { MageEvent } from '@shared/events';
 import type { LoopTools, ToolOutcome } from './agentLoop';
 import type { ChatClient, ChatRequest } from './chatClient';
 import type { StreamPart } from './openAiStream';
-import { RuntimeSession, type GateVerdict, type RuntimeSessionDeps } from './runtimeSession';
+import { AUTO_MODE_NOTICE, RuntimeSession, type GateVerdict, type RuntimeSessionDeps } from './runtimeSession';
 
 // ChatClient falso: cada peticion consume el siguiente guion. Un guion puede esperar a una promesa
 // (para probar la cola y el interrupt) o lanzar.
@@ -222,6 +222,16 @@ describe('RuntimeSession turno', () => {
     expect(events).toContainEqual({ kind: 'local_command_output', command: 'rename', args: 'Mi conversación', text: '' });
   });
 
+  it('setPermissionMode_enteringAuto_noticeOnce', () => {
+    const { session, events } = setup([]);
+    session.start();
+
+    session.setPermissionMode('auto');
+    session.setPermissionMode('auto');
+
+    expect(events.filter((e) => e.kind === 'notice')).toEqual([{ kind: 'notice', text: AUTO_MODE_NOTICE }]);
+  });
+
   it('setPermissionMode_unknown_throwsWithValue', () => {
     const { session } = setup([]);
 
@@ -248,6 +258,18 @@ describe('RuntimeSession permisos', () => {
 
     expect(tools.ran).toEqual(['Write']);
     expect(events.filter((e) => e.kind === 'result')).toHaveLength(1);
+  });
+
+  it('ask_outsideVerdict_requestMarkedOutsideWithReason', async () => {
+    const outside = (): GateVerdict => ({ verdict: 'ask', outside: 'Fuera del proyecto: /etc/hosts' });
+    const { session, events } = setup([toolCallReply('Read', '{"file_path":"/etc/hosts"}'), textReply('vale')], { gate: outside });
+    session.start();
+
+    session.sendUserMessage('lee');
+    await settle();
+
+    const request = events.find((e): e is Extract<MageEvent, { kind: 'permission_request' }> => e.kind === 'permission_request');
+    expect(request?.request).toMatchObject({ description: 'Fuera del proyecto: /etc/hosts', outsideProject: true });
   });
 
   it('allow_withInvalidUpdatedInput_toolErrorWithoutRunning', async () => {

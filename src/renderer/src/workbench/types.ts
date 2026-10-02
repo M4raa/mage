@@ -236,6 +236,8 @@ export type Block =
       readonly prompt: string;
       readonly target: string;
       readonly summary: string;
+      // Ver `PermissionView.rememberable`; ausente = se puede recordar.
+      readonly rememberable?: boolean;
       readonly state: 'pending' | 'allowed' | 'denied' | 'cancelled';
     }
   | { readonly kind: 'error'; readonly id: string; readonly message: string; readonly deniedCommand?: string }
@@ -254,6 +256,8 @@ export interface PermissionView {
   readonly prompt: string; // "El agente quiere escribir en el proyecto:"
   readonly target: string; // "Write src/services/TokenService.ts"
   readonly toolLabel: string; // "Write" (para "Permitir siempre X aqui")
+  // false = peticion de fuera del proyecto o de red (runtime propio): «Permitir siempre» no se ofrece.
+  readonly rememberable: boolean;
   readonly diff: readonly DiffLine[];
   readonly summary: string; // "+14 −3 · 2 tests actualizados"
 }

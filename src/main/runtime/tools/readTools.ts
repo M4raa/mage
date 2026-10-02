@@ -26,6 +26,8 @@ export interface ReadToolsFs {
 export interface ReadToolsDeps {
   readonly fs: ReadToolsFs;
   readonly platform: string;
+  // Sigue enlaces al clasificar los resultados de Glob/Grep (A3); ausente = lexico.
+  readonly realpath?: (path: string) => string | null;
 }
 
 // Los modelos pequeños escriben `path` donde el CLI usa `file_path`: se acepta como alias.
@@ -44,6 +46,14 @@ const READ_INPUT = z.preprocess(
 
 function absolutePath(target: string, ctx: ToolContext, platform: string): string {
   return resolveToolPath(target, { cwd: ctx.cwd, extraDirs: ctx.extraDirs, platform }).absolute;
+}
+
+// C2, segunda linea de defensa: un resultado de Glob/Grep vale si cae dentro de la carpeta de busqueda
+// (que ya paso por la puerta) o del proyecto. Un patron `../**` o absoluto no saca nada de fuera aunque
+// la puerta fallara.
+function withinSearch(file: string, root: string, ctx: ToolContext, deps: ReadToolsDeps): boolean {
+  const scope = { cwd: root, extraDirs: [ctx.cwd, ...ctx.extraDirs], platform: deps.platform, ...(deps.realpath === undefined ? {} : { realpath: deps.realpath }) };
+  return resolveToolPath(file, scope).pathClass === 'inside';
 }
 
 export function createReadTool(deps: ReadToolsDeps): RuntimeTool<z.infer<typeof READ_INPUT>> {
@@ -96,7 +106,7 @@ export function createGlobTool(deps: ReadToolsDeps): RuntimeTool<z.infer<typeof 
       const root = absolutePath(input.path ?? '.', ctx, deps.platform);
       const found: string[] = [];
       for await (const entry of walk(deps.fs, input.pattern, root, ctx.signal)) {
-        if (!entry.isFile()) continue;
+        if (!entry.isFile() || !withinSearch(joinEntry(entry), root, ctx, deps)) continue;
         found.push(relative(root, joinEntry(entry)) || entry.name);
         if (found.length >= GLOB_MAX_RESULTS) break;
       }
@@ -166,7 +176,7 @@ async function grepTargets(root: string, glob: string | undefined, ctx: ToolCont
   const pattern = glob === undefined ? '**/*' : glob.includes('/') ? glob : `**/${glob}`;
   const files: string[] = [];
   for await (const entry of walk(deps.fs, pattern, root, ctx.signal)) {
-    if (entry.isFile()) files.push(joinEntry(entry));
+    if (entry.isFile() && withinSearch(joinEntry(entry), root, ctx, deps)) files.push(joinEntry(entry));
     if (files.length >= GREP_MAX_FILES) break;
   }
   return files;
