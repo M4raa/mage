@@ -3,6 +3,7 @@ import { ModelCatalog } from './modelCatalog';
 import { parseRuntimeProbeParams, probeRuntimeEndpoint } from './runtimeProbe';
 
 const KEY = 'sk-de-la-boveda-123';
+const SAVED = 'http://127.0.0.1:1234/v1';
 
 // `fetch` falso que registra la cabecera Authorization y devuelve un catalogo LM Studio.
 function catalogWith(seen: string[], fail = false): ModelCatalog {
@@ -44,23 +45,39 @@ describe('probeRuntimeEndpoint', () => {
   it('probe_savedProvider_usesVaultKeyAndResultHasNoKey', async () => {
     const seen: string[] = [];
 
-    const result = await probeRuntimeEndpoint({ providerId: 'custom:a', baseUrl: 'http://127.0.0.1:1234/v1' }, { catalog: catalogWith(seen), apiKeyFor: () => KEY });
+    const result = await probeRuntimeEndpoint({ providerId: 'custom:a', baseUrl: 'http://127.0.0.1:1234/v1' }, { catalog: catalogWith(seen), apiKeyFor: () => KEY, savedBaseUrlFor: () => SAVED });
 
     expect(result).toEqual({ models: ['qwen', 'llama'], contextWindow: 32768, supportsTools: true, warning: null, error: null });
     expect(seen.every((header) => header === `Bearer ${KEY}`)).toBe(true);
     expect(JSON.stringify(result)).not.toContain(KEY);
   });
 
+  it('probe_existingProviderOtherBaseUrl_sendsNoKey', async () => {
+    const seen: string[] = [];
+
+    await probeRuntimeEndpoint({ providerId: 'custom:a', baseUrl: 'http://127.0.0.1:9999/v1' }, { catalog: catalogWith(seen), apiKeyFor: () => KEY, savedBaseUrlFor: () => SAVED });
+
+    expect(seen).toEqual([]);
+  });
+
+  it('probe_sameBaseUrlWithTrailingSlashAndHostCase_usesKey', async () => {
+    const seen: string[] = [];
+
+    await probeRuntimeEndpoint({ providerId: 'custom:a', baseUrl: 'http://127.0.0.1:1234/v1/' }, { catalog: catalogWith(seen), apiKeyFor: () => KEY, savedBaseUrlFor: () => 'HTTP://127.0.0.1:1234/v1' });
+
+    expect(seen.length).toBeGreaterThan(0);
+  });
+
   it('probe_newProvider_noAuthorization', async () => {
     const seen: string[] = [];
 
-    await probeRuntimeEndpoint({ providerId: null, baseUrl: 'http://127.0.0.1:1234/v1' }, { catalog: catalogWith(seen), apiKeyFor: () => KEY });
+    await probeRuntimeEndpoint({ providerId: null, baseUrl: 'http://127.0.0.1:1234/v1' }, { catalog: catalogWith(seen), apiKeyFor: () => KEY, savedBaseUrlFor: () => SAVED });
 
     expect(seen).toEqual([]);
   });
 
   it('probe_serverRejects_errorWithoutKey', async () => {
-    const result = await probeRuntimeEndpoint({ providerId: 'custom:a', baseUrl: 'http://127.0.0.1:1234/v1' }, { catalog: catalogWith([], true), apiKeyFor: () => KEY });
+    const result = await probeRuntimeEndpoint({ providerId: 'custom:a', baseUrl: 'http://127.0.0.1:1234/v1' }, { catalog: catalogWith([], true), apiKeyFor: () => KEY, savedBaseUrlFor: () => SAVED });
 
     expect(result.models).toBeNull();
     expect(result.error).toMatch(/401/);

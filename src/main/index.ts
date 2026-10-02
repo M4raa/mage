@@ -2363,7 +2363,11 @@ function registerIpcHandlers(): void {
   );
   // «Probar conexión» del runtime propio (P-032 R7): la clave, si la hay, sale de la boveda aqui.
   ipcMain.handle(IpcChannel.RuntimeProbe, (_e, raw: unknown) =>
-    probeRuntimeEndpoint(parseRuntimeProbeParams(raw), { catalog: runtimeModelCatalog, apiKeyFor: (id) => getSecretStore().get(providerApiKeySecretId(id)) }),
+    probeRuntimeEndpoint(parseRuntimeProbeParams(raw), {
+      catalog: runtimeModelCatalog,
+      apiKeyFor: (id) => getSecretStore().get(providerApiKeySecretId(id)),
+      savedBaseUrlFor: (id) => getSettingsStore().load().customProviders.find((provider) => provider.id === id)?.baseUrl ?? null,
+    }),
   );
   // Clave de un proveedor del usuario: sube UNA vez, al guardarla, y se cifra en main. No hay canal para
   // leerla de vuelta: el renderer solo ve `hasApiKey` en los ajustes.

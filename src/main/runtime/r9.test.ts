@@ -59,29 +59,41 @@ describe('summaryRequest y compactedHistory', () => {
   });
 });
 
+const KNOWN = (name: string): boolean => ['Read', 'Glob', 'Bash'].includes(name);
+
 describe('parseTextToolCalls', () => {
+  it('callsOf_nativeToolsAndFencedPackageJson_noCall', () => {
+    // A1: un manifest citado (`name` de paquete) o un nombre que no es herramienta no es una llamada.
+    expect(parseTextToolCalls('Este es:\n```json\n{"name": "mage", "version": "0.1.2"}\n```', KNOWN)).toEqual([]);
+    expect(parseTextToolCalls('<tool_call>{"name": "Borrar", "arguments": {}}</tool_call>', KNOWN)).toEqual([]);
+  });
+
+  it('parse_fencedCallNotLast_ignored', () => {
+    expect(parseTextToolCalls('```json\n{"name":"Bash","arguments":{"command":"ls"}}\n```\nY luego te explico.', KNOWN)).toEqual([]);
+  });
+
   it('parse_taggedQwenStyle', () => {
-    expect(parseTextToolCalls('Voy.\n<tool_call>{"name": "Read", "arguments": {"file_path": "a"}}</tool_call>')).toEqual([{ name: 'Read', argumentsJson: '{"file_path":"a"}' }]);
+    expect(parseTextToolCalls('Voy.\n<tool_call>{"name": "Read", "arguments": {"file_path": "a"}}</tool_call>', KNOWN)).toEqual([{ name: 'Read', argumentsJson: '{"file_path":"a"}' }]);
   });
 
   it('parse_lmStudioRequest_andParametersKey', () => {
-    expect(parseTextToolCalls('[TOOL_REQUEST]{"name":"Glob","parameters":{"pattern":"*"}}[END_TOOL_REQUEST]')).toEqual([{ name: 'Glob', argumentsJson: '{"pattern":"*"}' }]);
+    expect(parseTextToolCalls('[TOOL_REQUEST]{"name":"Glob","parameters":{"pattern":"*"}}[END_TOOL_REQUEST]', KNOWN)).toEqual([{ name: 'Glob', argumentsJson: '{"pattern":"*"}' }]);
   });
 
   it('parse_fencedJson_onlyIfItIsACall', () => {
-    expect(parseTextToolCalls('```json\n{"name":"Bash","arguments":{"command":"ls"}}\n```')).toHaveLength(1);
-    expect(parseTextToolCalls('```json\n{"version": 1}\n```')).toEqual([]);
+    expect(parseTextToolCalls('```json\n{"name":"Bash","arguments":{"command":"ls"}}\n```', KNOWN)).toHaveLength(1);
+    expect(parseTextToolCalls('```json\n{"version": 1}\n```', KNOWN)).toEqual([]);
   });
 
   it('parse_brokenJson_ignored', () => {
-    expect(parseTextToolCalls('<tool_call>{"name": roto}</tool_call>')).toEqual([]);
+    expect(parseTextToolCalls('<tool_call>{"name": roto}</tool_call>', KNOWN)).toEqual([]);
   });
 
   it('parse_twoCalls_bothInOrder', () => {
     const text = '<tool_call>{"name":"Read","arguments":{}}</tool_call><tool_call>{"name":"Glob","arguments":"{\\"pattern\\":\\"*\\"}"}</tool_call>';
 
-    expect(parseTextToolCalls(text).map((call) => call.name)).toEqual(['Read', 'Glob']);
-    expect(parseTextToolCalls(text)[1]!.argumentsJson).toBe('{"pattern":"*"}');
+    expect(parseTextToolCalls(text, KNOWN).map((call) => call.name)).toEqual(['Read', 'Glob']);
+    expect(parseTextToolCalls(text, KNOWN)[1]!.argumentsJson).toBe('{"pattern":"*"}');
   });
 
   it('instructions_listToolsWithFields', () => {

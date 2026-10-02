@@ -169,14 +169,15 @@ async function streamRound(input: TurnInput, deps: LoopDeps, state: { toolsEnabl
   return round;
 }
 
-// Las llamadas de una vuelta: las nativas o, si el modelo las ESCRIBIO en el texto (§8.1 D7), las que
-// se entienden de el. `textual` = el modelo no tiene herramientas nativas: sus resultados vuelven como
-// un mensaje de usuario, que es lo unico que su plantilla sabe leer.
+// Las llamadas de una vuelta: las nativas o, SOLO si el modelo no tiene herramientas nativas (§8.1 D7),
+// las que escribio en el texto y nombran una herramienta registrada (A1 de la revision). `textual` =
+// sus resultados vuelven como un mensaje de usuario, que es lo unico que su plantilla sabe leer.
 function callsOf(round: RoundResult, deps: LoopDeps, toolsEnabled: boolean): { calls: readonly AssembledToolCall[]; textual: boolean } {
   if (round.reason === 'tool_calls') return { calls: round.calls, textual: false };
-  if (round.reason !== 'stop' || round.text.length === 0 || deps.tools.specs().length === 0) return { calls: [], textual: false };
-  const written = parseTextToolCalls(round.text).map((call) => ({ id: null, name: call.name, argumentsJson: call.argumentsJson }));
-  return { calls: written, textual: written.length > 0 && !toolsEnabled };
+  if (toolsEnabled || round.reason !== 'stop' || round.text.length === 0) return { calls: [], textual: false };
+  const names = new Set(deps.tools.specs().map((spec) => spec.function.name));
+  const written = parseTextToolCalls(round.text, (name) => names.has(name)).map((call) => ({ id: null, name: call.name, argumentsJson: call.argumentsJson }));
+  return { calls: written, textual: written.length > 0 };
 }
 
 // Ejecuta las llamadas EN ORDEN; las lecturas seguidas van en paralelo (D9b). Devuelve cuantas

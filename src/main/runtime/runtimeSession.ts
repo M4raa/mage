@@ -93,8 +93,9 @@ const CHAT_ONLY_NOTICE = 'Este modelo no admite herramientas: Mage solo puede co
 export const AUTO_MODE_NOTICE =
   'Auto no es un sandbox: edita dentro del proyecto y ejecuta sin preguntar solo comandos de una lista corta (lectura, git sin red, test y build). Esos comandos ejecutan código del proyecto; todo lo demás pregunta.';
 const TOOL_CALL_AS_TEXT = /<tool_call>|\[TOOL_REQUEST\]|^\s*```(?:json)?\s*\{\s*"(?:name|tool)"/m;
-// Las que se entienden las ejecuta el bucle (R9); esta solo sale con una que NO se pudo interpretar.
-const TOOL_CALL_AS_TEXT_NOTICE = 'El modelo escribió una llamada a una herramienta como texto y Mage no pudo interpretarla.';
+// Sin herramientas nativas, las que se entienden las ejecuta el bucle (R9); con ellas, una llamada
+// escrita nunca se ejecuta (A1 de la revision). Esta sale con la que se quedo sin ejecutar.
+const TOOL_CALL_AS_TEXT_NOTICE = 'El modelo escribió una llamada a una herramienta como texto y Mage no la ejecutó.';
 
 interface PendingPermission {
   readonly toolUseId: string;

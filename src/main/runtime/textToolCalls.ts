@@ -3,7 +3,9 @@
 //   - `<tool_call>{"name": …, "arguments": {…}}</tool_call>`  (plantillas de Qwen/Hermes; el spike lo mide)
 //   - `[TOOL_REQUEST]{…}[END_TOOL_REQUEST]`                    (LM Studio cuando no sabe parsearla)
 //   - un bloque ```json con `{"name": …, "arguments"|"parameters": {…}}` (modelos sin plantilla)
-// PURO.
+// PURO. Solo se interpretan con un modelo SIN herramientas nativas y solo con nombres de herramientas
+// registradas (A1 de la revision): un ```json con `name` (un package.json citado, un README envenenado)
+// no es una llamada.
 
 export interface TextToolCall {
   readonly name: string;
@@ -14,11 +16,15 @@ const TAGGED = /<tool_call>\s*([\s\S]*?)\s*<\/tool_call>/g;
 const LMSTUDIO = /\[TOOL_REQUEST\]\s*([\s\S]*?)\s*\[END_TOOL_REQUEST\]/g;
 const FENCED = /```(?:json)?\s*\n?([\s\S]*?)```/g;
 
-export function parseTextToolCalls(text: string): TextToolCall[] {
-  const tagged = [...collect(text, TAGGED), ...collect(text, LMSTUDIO)];
+export function parseTextToolCalls(text: string, isTool: (name: string) => boolean): TextToolCall[] {
+  const tagged = [...collect(text, TAGGED), ...collect(text, LMSTUDIO)].filter((call) => isTool(call.name));
   if (tagged.length > 0) return tagged;
-  // Los bloques ```json solo cuentan si TODO lo que traen es una llamada (un ejemplo de codigo no lo es).
-  return collect(text, FENCED);
+  // Un bloque ```json solo cuenta si es lo ULTIMO del mensaje y TODO lo que trae es una llamada: un
+  // ejemplo de codigo en mitad de una explicacion no lo es.
+  const fenced = [...text.matchAll(FENCED)].at(-1);
+  if (fenced === undefined || text.slice((fenced.index ?? 0) + fenced[0].length).trim().length > 0) return [];
+  const call = toCall(fenced[1] ?? '');
+  return call !== null && isTool(call.name) ? [call] : [];
 }
 
 function collect(text: string, pattern: RegExp): TextToolCall[] {

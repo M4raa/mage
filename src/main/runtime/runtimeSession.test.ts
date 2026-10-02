@@ -396,11 +396,25 @@ describe('RuntimeSession y el modelo (R5)', () => {
     session.sendUserMessage('lee');
     await settle();
 
-    expect(events).toContainEqual({ kind: 'notice', text: expect.stringContaining('no pudo interpretarla') });
+    expect(events).toContainEqual({ kind: 'notice', text: expect.stringContaining('no la ejecutó') });
   });
 
-  it('result_callWrittenAsText_isExecuted', async () => {
-    const { session, tools, client } = setup([textReply('<tool_call>{"name":"Read","arguments":{"file_path":"a"}}</tool_call>'), textReply('leido')]);
+  it('result_callWrittenAsTextWithNativeTools_notExecuted', async () => {
+    // A1: con herramientas nativas, un bloque escrito (citado de un fichero, p.ej.) no se ejecuta nunca.
+    const { session, tools, events } = setup([textReply('<tool_call>{"name":"Read","arguments":{"file_path":"a"}}</tool_call>')]);
+    session.start();
+
+    session.sendUserMessage('lee');
+    await settle();
+    await settle();
+
+    expect(tools.ran).toEqual([]);
+    expect(events).toContainEqual({ kind: 'notice', text: expect.stringContaining('no la ejecutó') });
+  });
+
+  it('result_callWrittenAsTextWithoutNativeTools_isExecutedAndAnsweredAsUser', async () => {
+    const replies = [textReply('<tool_call>{"name":"Read","arguments":{"file_path":"a"}}</tool_call>'), textReply('leido')];
+    const { session, tools, client } = setup(replies, { toolsEnabled: false });
     session.start();
 
     session.sendUserMessage('lee');
@@ -408,7 +422,6 @@ describe('RuntimeSession y el modelo (R5)', () => {
     await settle();
 
     expect(tools.ran).toEqual(['Read']);
-    // Con herramientas nativas, la llamada escrita viaja de vuelta como una llamada de verdad.
-    expect(client.requests[1]!.messages.map((m) => m.role)).toEqual(['system', 'user', 'assistant', 'tool']);
+    expect(client.requests[1]!.messages.map((m) => m.role)).toEqual(['system', 'user', 'assistant', 'user']);
   });
 });

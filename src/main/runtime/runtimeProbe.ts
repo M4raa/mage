@@ -5,7 +5,9 @@ import type { ModelCatalog } from './modelCatalog';
 
 // «Probar conexión» del formulario de proveedor (P-032 R7): lista los modelos del endpoint y, del
 // primero, la ventana y si admite herramientas, para rellenar el formulario sin tocar JSON.
-// La clave NUNCA llega del renderer: si el proveedor ya existe, sale de la boveda por su id.
+// La clave NUNCA llega del renderer: si el proveedor ya existe, sale de la boveda por su id, y SOLO si
+// la URL que se prueba es la que tiene guardada (A2 de la revision): si no, el renderer elegiria adonde
+// viaja la clave, que equivale a leerla.
 
 // `.strict()`: una peticion con cualquier otro campo (una `apiKey`, por ejemplo) se rechaza entera.
 const PARAMS_SCHEMA = z
@@ -25,10 +27,12 @@ export function parseRuntimeProbeParams(raw: unknown): RuntimeProbeParams {
 export interface RuntimeProbeDeps {
   readonly catalog: ModelCatalog;
   readonly apiKeyFor: (providerId: string) => string | null;
+  // URL base del proveedor guardado en ajustes; null si no existe.
+  readonly savedBaseUrlFor: (providerId: string) => string | null;
 }
 
 export async function probeRuntimeEndpoint(params: RuntimeProbeParams, deps: RuntimeProbeDeps): Promise<RuntimeProbeResult> {
-  const apiKey = params.providerId === null ? null : deps.apiKeyFor(params.providerId);
+  const apiKey = savedKeyFor(params, deps);
   const endpoint = { id: params.providerId ?? 'custom:nuevo', baseUrl: params.baseUrl, apiKey };
   let models: string[];
   try {
@@ -46,6 +50,24 @@ export async function probeRuntimeEndpoint(params: RuntimeProbeParams, deps: Run
     warning: info.warning,
     error: null,
   };
+}
+
+function savedKeyFor(params: RuntimeProbeParams, deps: RuntimeProbeDeps): string | null {
+  if (params.providerId === null) return null;
+  const saved = deps.savedBaseUrlFor(params.providerId);
+  if (saved === null || !sameEndpoint(saved, params.baseUrl)) return null;
+  return deps.apiKeyFor(params.providerId);
+}
+
+// Misma URL salvo mayusculas del host, puerto por defecto y barras finales. Una URL que no se puede
+// leer no coincide con nada (y la prueba fallara al conectar, con su propio error).
+function sameEndpoint(a: string, b: string): boolean {
+  if (!URL.canParse(a) || !URL.canParse(b)) return false;
+  const norm = (raw: string) => {
+    const url = new URL(raw);
+    return `${url.protocol}//${url.host}${url.pathname.replace(/\/+$/, '')}`;
+  };
+  return norm(a) === norm(b);
 }
 
 function scrub(err: unknown, apiKey: string | null): string {
