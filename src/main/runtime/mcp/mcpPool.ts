@@ -83,8 +83,9 @@ export class McpPool {
 
   private async connectOne(server: ResolvedMcpServer): Promise<void> {
     const entry = this.entries.get(server.name)!;
+    const connecting = this.deps.connect(server, this.controller.signal);
     try {
-      const client = await withTimeout(this.deps.connect(server, this.controller.signal), this.deps.connectTimeoutMs ?? MCP_CONNECT_TIMEOUT_MS, server.name);
+      const client = await withTimeout(connecting, this.deps.connectTimeoutMs ?? MCP_CONNECT_TIMEOUT_MS, server.name);
       if (this.closed) return void (await closeQuietly(client, this.deps.log));
       const { tools } = await client.listTools();
       entry.client = client;
@@ -93,6 +94,9 @@ export class McpPool {
     } catch (err) {
       if (err instanceof McpNeedsAuth) return this.awaitAuth(server, entry, err);
       entry.status = 'failed';
+      // M1: si venció el tope (o falló `listTools`), el cliente que llegue se cierra: si no, su proceso
+      // vivía hasta salir de Mage. Si `connect` fue lo que falló, no hay cliente y ya se ha avisado.
+      void connecting.then((late) => closeQuietly(late, this.deps.log), () => undefined);
       const message = err instanceof Error ? err.message : String(err);
       this.deps.log?.('warn', 'Servidor MCP del runtime sin conectar', { server: server.name, message });
       this.deps.notify(`El servidor MCP ${server.name} no se pudo conectar: ${message}`);

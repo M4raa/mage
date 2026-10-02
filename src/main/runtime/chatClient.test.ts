@@ -1,5 +1,6 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { getEventListeners } from 'node:events';
 import { afterEach, describe, expect, it } from 'vitest';
 import { ChatHttpError, classifyStatus, HttpChatClient, redactUrl, type TimerDeps } from './chatClient';
 import type { StreamPart } from './openAiStream';
@@ -159,5 +160,25 @@ describe('classifyStatus', () => {
 describe('redactUrl', () => {
   it('redact_urlWithCredentials_dropsThem', () => {
     expect(redactUrl('http://user:pass@host:1/v1/chat/completions')).toBe('http://host:1/v1/chat/completions');
+  });
+
+  it('redact_queryWithKey_dropsIt', () => {
+    expect(redactUrl('https://h/v1/chat/completions?api-key=secreta')).toBe('https://h/v1/chat/completions');
+  });
+
+  it('redact_invalidUrl_saysSo', () => {
+    expect(redactUrl('no es url')).toBe('(URL no válida)');
+  });
+});
+
+describe('IdleWatchdog (B1)', () => {
+  it('streamChat_manyRequestsSameSignal_noListenerLeft', async () => {
+    const baseUrl = await serve((_req, res) => sseResponse(res, [{ choices: [{ index: 0, delta: { content: 'ok' }, finish_reason: 'stop' }] }]));
+    const turn = new AbortController();
+    const chat = client(baseUrl);
+
+    for (let i = 0; i < 3; i++) await collect(chat.streamChat(REQUEST, turn.signal));
+
+    expect(getEventListeners(turn.signal, 'abort')).toHaveLength(0);
   });
 });

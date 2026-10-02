@@ -17,7 +17,7 @@ import type { ResolvedMcpServer } from '../config/mcpResolved';
 import { McpPool, type McpConnector } from './mcp/mcpPool';
 import { AccessFilteredTools } from './tools/accessFilter';
 import { createBashTool } from './tools/bashTool';
-import { createEditTool, createWriteTool, type EditToolsFs } from './tools/editTools';
+import { createEditTool, createWriteTool, ReadLedger, type EditToolsFs } from './tools/editTools';
 import { createGlobTool, createGrepTool, createReadTool, type ReadToolsFs } from './tools/readTools';
 import { ToolRegistry } from './tools/registry';
 import type { RuntimeTool } from './tools/types';
@@ -72,8 +72,9 @@ interface SessionTools {
 
 function sessionTools(env: RuntimeEnv, cwd: string): SessionTools {
   const shell = env.shell();
-  const readDeps = { fs: env.fs, platform: env.platform, realpath: env.realpath };
-  const editDeps = { fs: env.editFs, platform: env.platform };
+  const ledger = new ReadLedger(env.platform);
+  const readDeps = { fs: env.fs, platform: env.platform, realpath: env.realpath, ledger };
+  const editDeps = { fs: env.editFs, platform: env.platform, ledger };
   const tools = [
     createReadTool(readDeps),
     createGlobTool(readDeps),
@@ -105,6 +106,7 @@ export function buildRuntimeSession(providerId: string, base: SessionBase, env: 
       now: env.now,
       newId: env.newId,
       ...(base.log === undefined ? {} : { log: base.log }),
+      onWriteFailure: (text) => session?.notice(text),
     },
     resumed?.lastUuid ?? null,
   );

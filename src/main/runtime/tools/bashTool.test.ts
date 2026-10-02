@@ -1,4 +1,6 @@
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
+import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
 import { describe, expect, it, vi } from 'vitest';
 import { scrubAgentEnv } from '../../os/agentEnv';
 import type { ResolvedShell } from '../../os/shellResolver';
@@ -69,6 +71,39 @@ describe('Bash', () => {
     const out = await createBashTool(deps()).run({ command: 'console.log(String(process.env.ANTHROPIC_API_KEY))' }, ctx());
 
     expect(out.output.trim()).toBe('undefined');
+  });
+
+  it('run_alreadyAbortedSignal_doesNotSpawn', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const spawnSpy = vi.fn();
+
+    const out = await createBashTool(deps({ spawn: spawnSpy })).run({ command: 'x' }, ctx(controller.signal));
+
+    expect(spawnSpy).not.toHaveBeenCalled();
+    expect(out.output).toMatch(/interrumpido/);
+  });
+
+  it('run_exitWithoutClose_resolvesAfterGrace', async () => {
+    // Un nieto que hereda los pipes: el shell sale, pero `close` no llega nunca.
+    const fake = Object.assign(new EventEmitter(), { stdout: new PassThrough(), stderr: new PassThrough(), exitCode: 0, kill: () => true });
+    const run = createBashTool(deps({ spawn: () => fake as unknown as ChildProcess, closeGraceMs: 20 })).run({ command: 'x' }, ctx());
+    fake.stdout.write('hecho');
+    fake.emit('exit', 0);
+
+    expect(await run).toEqual({ isError: false, output: 'hecho' });
+  });
+
+  it('run_utf8SplitAcrossChunks_reassembled', async () => {
+    const fake = Object.assign(new EventEmitter(), { stdout: new PassThrough(), stderr: new PassThrough(), exitCode: 0, kill: () => true });
+    const run = createBashTool(deps({ spawn: () => fake as unknown as ChildProcess })).run({ command: 'x' }, ctx());
+    const bytes = Buffer.from('añ');
+    fake.stdout.write(bytes.subarray(0, 2));
+    fake.stdout.write(bytes.subarray(2));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    fake.emit('close', 0);
+
+    expect((await run).output).toBe('añ');
   });
 
   it('run_missingShell_errorExplained', async () => {

@@ -54,7 +54,9 @@ export type LoopEvent =
   | { readonly kind: 'tool_result'; readonly id: string; readonly isError: boolean; readonly output: string; readonly durationMs: number; readonly file?: ToolFileInfo }
   | { readonly kind: 'notice'; readonly text: string }
   // Una vuelta terminada: lo que el modelo devolvio, para la transcripcion y el presupuesto de contexto.
-  | { readonly kind: 'round_done'; readonly usage: RoundUsage | null; readonly requestMessages: number };
+  // `textual` = las llamadas de la vuelta las escribio el modelo en su texto (sin herramientas nativas):
+  // quien reanude tiene que rehacer el historial igual que en memoria (M3 de la revision).
+  | { readonly kind: 'round_done'; readonly usage: RoundUsage | null; readonly requestMessages: number; readonly textual?: boolean };
 
 export interface RoundUsage {
   readonly inputTokens: number;
@@ -127,7 +129,7 @@ export async function runTurn(input: TurnInput, deps: LoopDeps): Promise<TurnOut
       // Las llamadas se anuncian ANTES de cerrar la vuelta: quien escribe la transcripcion cierra la linea
       // `assistant` en `round_done`, y esa linea tiene que llevar sus `tool_use` y preceder a sus resultados.
       const plans = calls.map((call, i) => prepareCall(call, ids[i]!, deps));
-      deps.emit({ kind: 'round_done', usage: round.usage, requestMessages: round.requestMessages });
+      deps.emit({ kind: 'round_done', usage: round.usage, requestMessages: round.requestMessages, ...(textual ? { textual } : {}) });
       if (input.signal.aborted) return closeInterrupted(input, textual ? [] : ids, 0, finish);
       if (round.reason === 'length') return finish('error', 'El modelo cortó la respuesta por longitud (límite de tokens de salida).');
       if (calls.length === 0) return finish('success');
@@ -190,13 +192,19 @@ async function runCalls(prepared: readonly CallPlan[], input: TurnInput, deps: L
     const batch = readBatch(prepared, done);
     const results = await Promise.all(batch.map((call) => executeCall(call, input.signal, deps)));
     for (const [i, result] of results.entries()) {
-      if (textual) written.push(`<tool_result name="${batch[i]!.name}">\n${result}\n</tool_result>`);
+      if (textual) written.push(textualToolResult(batch[i]!.name, result));
       else input.history.push({ role: 'tool', tool_call_id: batch[i]!.id, content: result });
     }
     done += batch.length;
   }
   if (textual && written.length > 0) input.history.push({ role: 'user', content: written.join('\n') });
   return done;
+}
+
+// El resultado de una llamada ESCRITA, como lo lee un modelo sin herramientas nativas (desviacion R9).
+// Lo comparten el bucle y la reanudacion (`transcriptToMessages`).
+export function textualToolResult(name: string, output: string): string {
+  return `<tool_result name="${name}">\n${output}\n</tool_result>`;
 }
 
 type CallPlan = { readonly id: string; readonly name: string; readonly prepared: PreparedInput };

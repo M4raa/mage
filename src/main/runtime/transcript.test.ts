@@ -170,3 +170,70 @@ describe('transcriptToMessages', () => {
     expect(transcriptToMessages(lines).messages).toEqual([]);
   });
 });
+
+describe('reanudar en modo texto y con Zod (M3, M6, M7)', () => {
+  it('roundTrip_textualTurn_rebuildsLikeInMemory', () => {
+    // Un modelo SIN herramientas nativas: el bucle guarda en memoria el texto de la llamada y los
+    // resultados como un mensaje del usuario. Reanudar tiene que dar exactamente eso.
+    const { writer, lines } = memoryWriter();
+    const call = '<tool_call>{"name":"Read","arguments":{"file_path":"a"}}</tool_call>';
+    writer.user('lee a');
+    for (const event of [
+      { kind: 'text_delta', text: call },
+      { kind: 'tool_use', id: 'rt-1', name: 'Read', input: { file_path: 'a' } },
+      { kind: 'tool_use', id: 'rt-2', name: 'Glob', input: { pattern: '*' } },
+      { kind: 'round_done', usage: null, requestMessages: 2, textual: true },
+      { kind: 'tool_result', id: 'rt-1', isError: false, output: 'hola', durationMs: 1 },
+      { kind: 'tool_result', id: 'rt-2', isError: false, output: 'a', durationMs: 1 },
+      { kind: 'text_delta', text: 'Dice hola.' },
+      { kind: 'round_done', usage: null, requestMessages: 4 },
+    ] satisfies LoopEvent[]) {
+      writer.loop(event);
+    }
+
+    expect(transcriptToMessages(lines()).messages).toEqual([
+      { role: 'user', content: 'lee a' },
+      { role: 'assistant', content: call },
+      { role: 'user', content: '<tool_result name="Read">\nhola\n</tool_result>\n<tool_result name="Glob">\na\n</tool_result>' },
+      { role: 'assistant', content: 'Dice hola.' },
+    ]);
+  });
+
+  it('resume_compactionTailWithInvalidMessages_dropsThemWithWarning', () => {
+    const tail = [{ role: 'user', content: 'sigue' }, { role: 'tool', content: 'sin id' }, { role: 'user', content: 7 }];
+    const lines = [JSON.stringify({ type: 'system', subtype: 'compact_boundary', mageCompaction: { summary: 'resumen', tail } })];
+
+    const { messages, warnings } = transcriptToMessages(lines);
+
+    expect(messages.at(-1)).toEqual({ role: 'user', content: 'sigue' });
+    expect(messages).toHaveLength(3);
+    expect(warnings).toHaveLength(2);
+  });
+
+  it('resume_blocksOfWrongShape_ignored', () => {
+    const lines = [JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 5, name: 'Read' }, { type: 'text', text: 'ok' }, 'suelto'] } })];
+
+    expect(transcriptToMessages(lines).messages).toEqual([{ role: 'assistant', content: 'ok' }]);
+  });
+
+  it('write_diskFails_notifiesSessionOnce', () => {
+    const notices: string[] = [];
+    const writer = new TranscriptWriter('s', {
+      root: '/r',
+      cwd: '/p',
+      model: () => 'm',
+      mkdir: () => undefined,
+      appendLine: () => {
+        throw new Error('ENOSPC');
+      },
+      now: () => 0,
+      newId: () => 'u',
+      onWriteFailure: (text) => notices.push(text),
+    });
+
+    writer.user('a');
+    writer.user('b');
+
+    expect(notices).toEqual([expect.stringContaining('ENOSPC')]);
+  });
+});

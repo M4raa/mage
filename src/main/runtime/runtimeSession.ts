@@ -48,7 +48,8 @@ export interface RuntimeSessionDeps {
   readonly client: ChatClient;
   readonly tools: LoopTools & { names(): readonly string[] };
   readonly gate: (call: PreparedCall, mode: RuntimePermissionMode) => GateVerdict;
-  // Se construye en cada turno (fecha, notas del proyecto); cambia si el modelo no tiene herramientas nativas.
+  // Se construye en cada turno (la fecha; las notas del proyecto se leen una vez al crear la sesion);
+  // cambia si el modelo no tiene herramientas nativas.
   readonly systemPrompt: (toolsEnabled: boolean) => string;
   readonly emit: (event: MageEvent) => void;
   readonly now: () => number;
@@ -223,10 +224,13 @@ export class RuntimeSession implements ManagedSession {
     const controller = new AbortController();
     this.turn = controller;
     this.deps.emit({ kind: 'session_state', state: 'running' });
-    const before = this.history.length;
+    // B4: lo añadido se cuenta desde el mensaje del usuario por IDENTIDAD, no por posicion: una
+    // compactacion a mitad de turno reescribe el principio del historial, pero la cola (que siempre
+    // empieza en o antes de este mensaje) conserva los mismos objetos.
+    const userMessage: ChatMessage = { role: 'user', content: text };
     try {
       await this.prepare();
-      this.history.push({ role: 'user', content: text });
+      this.history.push(userMessage);
       this.deps.recorder?.user(text);
       this.lastSystem = this.deps.systemPrompt(this.toolsEnabled);
       const outcome = await runTurn(
@@ -234,7 +238,7 @@ export class RuntimeSession implements ManagedSession {
         this.loopDeps(),
       );
       this.toolsEnabled = outcome.toolsEnabled;
-      const added = this.history.slice(before);
+      const added = this.history.slice(Math.max(0, this.history.lastIndexOf(userMessage)));
       this.deps.recorder?.turnEnd(added, outcome);
       this.finishTurn(outcome, added);
     } catch (err) {

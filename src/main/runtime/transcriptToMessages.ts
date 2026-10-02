@@ -1,3 +1,5 @@
+import { z } from 'zod';
+import { textualToolResult } from './agentLoop';
 import type { ChatMessage, ChatToolCall } from './chatClient';
 import { compactedHistory } from './compaction';
 
@@ -7,6 +9,11 @@ import { compactedHistory } from './compaction';
 // Reglas: `tool_use` -> `assistant.tool_calls`, `tool_result` -> `role: 'tool'`. El CLI parte un
 // mensaje del asistente en varias lineas (una por bloque): las consecutivas se funden. Se reparan los
 // huecos que el protocolo no admite (una llamada sin resultado, tras un corte, recibe uno).
+//
+// Una vuelta marcada `mageTextual` (llamadas escritas en el texto por un modelo sin herramientas
+// nativas) se rehace como en memoria: el asistente solo con su texto y los resultados como un mensaje
+// del usuario (M3 de la revision). Lo que se lee pasa por Zod tolerante (M7): un campo de otra forma se
+// ignora, nunca llega a la peticion.
 
 export interface ResumedTranscript {
   readonly messages: ChatMessage[];
@@ -16,112 +23,178 @@ export interface ResumedTranscript {
 
 const MISSING_RESULT = 'Sin resultado: la conversación se cortó antes de que terminara.';
 
+const LINE_SCHEMA = z
+  .object({
+    type: z.string().optional().catch(undefined),
+    subtype: z.string().optional().catch(undefined),
+    uuid: z.string().optional().catch(undefined),
+    isSidechain: z.boolean().optional().catch(undefined),
+    isMeta: z.boolean().optional().catch(undefined),
+    mageTextual: z.boolean().optional().catch(undefined),
+    message: z
+      .object({ content: z.union([z.string(), z.array(z.unknown())]).optional().catch(undefined) })
+      .passthrough()
+      .optional()
+      .catch(undefined),
+    mageCompaction: z.object({ summary: z.string(), tail: z.array(z.unknown()) }).optional().catch(undefined),
+  })
+  .passthrough();
+type Line = z.infer<typeof LINE_SCHEMA>;
+
+const TEXT_BLOCK = z.object({ type: z.literal('text'), text: z.string() });
+const TOOL_USE_BLOCK = z.object({ type: z.literal('tool_use'), id: z.string(), name: z.string(), input: z.unknown().optional() });
+const TOOL_RESULT_BLOCK = z.object({ type: z.literal('tool_result'), tool_use_id: z.string(), content: z.unknown().optional() });
+
+const TOOL_CALL_SCHEMA = z.object({ id: z.string(), type: z.literal('function'), function: z.object({ name: z.string(), arguments: z.string() }) });
+const CHAT_MESSAGE_SCHEMA = z.discriminatedUnion('role', [
+  z.object({ role: z.literal('system'), content: z.string() }),
+  z.object({ role: z.literal('user'), content: z.string() }),
+  z.object({ role: z.literal('assistant'), content: z.string().nullable(), tool_calls: z.array(TOOL_CALL_SCHEMA).optional() }),
+  z.object({ role: z.literal('tool'), tool_call_id: z.string(), content: z.string() }),
+]);
+
 interface AssistantDraft {
   text: string;
   calls: ChatToolCall[];
+  textual: boolean;
+}
+
+interface ResumeState {
+  readonly messages: ChatMessage[];
+  readonly warnings: string[];
+  // Llamadas escritas como texto: id -> nombre (sus resultados vuelven como mensaje del usuario).
+  readonly textualCalls: Map<string, string>;
+  // El ultimo mensaje de resultados escritos, para juntar los de la misma vuelta en uno.
+  lastTextualResults: ChatMessage | null;
+  draft: AssistantDraft | null;
 }
 
 export function transcriptToMessages(lines: readonly string[]): ResumedTranscript {
-  const messages: ChatMessage[] = [];
-  const warnings: string[] = [];
+  const state: ResumeState = { messages: [], warnings: [], textualCalls: new Map(), lastTextualResults: null, draft: null };
   let lastUuid: string | null = null;
-  let draft: AssistantDraft | null = null;
-  const flush = () => {
-    if (draft !== null) messages.push(assistantOf(draft));
-    draft = null;
-  };
   lines.forEach((raw, index) => {
     if (raw.trim().length === 0) return;
-    const line = parseLine(raw, index, warnings);
+    const line = parseLine(raw, index, state.warnings);
     if (line === null) return;
-    if (typeof line.uuid === 'string') lastUuid = line.uuid;
+    if (line.uuid !== undefined) lastUuid = line.uuid;
     if (line.isSidechain === true || line.isMeta === true) return;
-    const compaction = compactionOf(line);
-    if (compaction !== null) {
-      // Lo anterior a una compactacion lo sustituye su resumen (con la cola que se conservo).
-      draft = null;
-      messages.splice(0, messages.length, ...compactedHistory(compaction.summary, compaction.tail));
-      return;
-    }
-    if (line.type === 'assistant') {
-      draft ??= { text: '', calls: [] };
-      appendAssistant(draft, line);
-    } else if (line.type === 'user') {
-      flush();
-      messages.push(...userMessages(line));
-    }
+    applyLine(state, line);
   });
-  flush();
-  return { messages: repair(messages), lastUuid, warnings };
+  flush(state);
+  return { messages: repair(state.messages), lastUuid, warnings: state.warnings };
 }
 
-function compactionOf(line: Record<string, unknown>): { summary: string; tail: ChatMessage[] } | null {
-  if (line.type !== 'system' || line.subtype !== 'compact_boundary') return null;
-  const data = line.mageCompaction;
-  if (typeof data !== 'object' || data === null) return null;
-  const { summary, tail } = data as { summary?: unknown; tail?: unknown };
-  if (typeof summary !== 'string' || !Array.isArray(tail)) return null;
-  return { summary, tail: tail.filter(isChatMessage) };
+function applyLine(state: ResumeState, line: Line): void {
+  if (line.type === 'system' && line.subtype === 'compact_boundary' && line.mageCompaction !== undefined) {
+    // Lo anterior a una compactacion lo sustituye su resumen (con la cola que se conservo).
+    state.draft = null;
+    state.lastTextualResults = null;
+    state.messages.splice(0, state.messages.length, ...compactedHistory(line.mageCompaction.summary, validTail(line.mageCompaction.tail, state.warnings)));
+    return;
+  }
+  if (line.type === 'assistant') {
+    state.draft ??= { text: '', calls: [], textual: false };
+    appendAssistant(state.draft, line);
+  } else if (line.type === 'user') {
+    flush(state);
+    appendUser(state, line);
+  }
 }
 
-function isChatMessage(value: unknown): value is ChatMessage {
-  if (typeof value !== 'object' || value === null) return false;
-  const role = (value as { role?: unknown }).role;
-  return role === 'user' || role === 'assistant' || role === 'tool' || role === 'system';
+function validTail(tail: readonly unknown[], warnings: string[]): ChatMessage[] {
+  const valid: ChatMessage[] = [];
+  for (const entry of tail) {
+    const parsed = CHAT_MESSAGE_SCHEMA.safeParse(entry);
+    if (parsed.success) valid.push(parsed.data);
+    else warnings.push(`Un mensaje de la cola compactada no tiene forma de mensaje: se ignora (${parsed.error.issues[0]?.message ?? 'forma desconocida'})`);
+  }
+  return valid;
 }
 
-function parseLine(raw: string, index: number, warnings: string[]): Record<string, unknown> | null {
+function parseLine(raw: string, index: number, warnings: string[]): Line | null {
+  let parsed: unknown;
   try {
-    const parsed: unknown = JSON.parse(raw);
-    if (typeof parsed === 'object' && parsed !== null) return parsed as Record<string, unknown>;
-    warnings.push(`Línea ${index + 1} de la transcripción no es un objeto: se ignora`);
+    parsed = JSON.parse(raw);
   } catch {
     // Lo normal es la ULTIMA linea cortada por un cierre a mitad de escritura: se avisa, no se silencia.
     warnings.push(`Línea ${index + 1} de la transcripción no es JSON válido: se ignora`);
+    return null;
   }
+  const line = LINE_SCHEMA.safeParse(parsed);
+  if (line.success) return line.data;
+  warnings.push(`Línea ${index + 1} de la transcripción no es un objeto: se ignora`);
   return null;
 }
 
-function contentOf(line: Record<string, unknown>): unknown {
-  const message = line.message;
-  return typeof message === 'object' && message !== null ? (message as { content?: unknown }).content : undefined;
+function contentOf(line: Line): string | readonly unknown[] | undefined {
+  return line.message?.content;
 }
 
-function appendAssistant(draft: AssistantDraft, line: Record<string, unknown>): void {
+function appendAssistant(draft: AssistantDraft, line: Line): void {
+  if (line.mageTextual === true) draft.textual = true;
   const content = contentOf(line);
   if (!Array.isArray(content)) return;
   for (const block of content) {
-    if (typeof block !== 'object' || block === null) continue;
-    const record = block as Record<string, unknown>;
-    if (record.type === 'text' && typeof record.text === 'string') draft.text += record.text;
-    if (record.type === 'tool_use' && typeof record.id === 'string' && typeof record.name === 'string') {
-      draft.calls.push({ id: record.id, type: 'function', function: { name: record.name, arguments: JSON.stringify(record.input ?? {}) } });
-    }
+    const text = TEXT_BLOCK.safeParse(block);
+    if (text.success) draft.text += text.data.text;
+    const use = TOOL_USE_BLOCK.safeParse(block);
+    if (use.success) draft.calls.push({ id: use.data.id, type: 'function', function: { name: use.data.name, arguments: JSON.stringify(use.data.input ?? {}) } });
   }
 }
 
-function userMessages(line: Record<string, unknown>): ChatMessage[] {
+function flush(state: ResumeState): void {
+  const draft = state.draft;
+  state.draft = null;
+  if (draft === null) return;
+  if (!draft.textual || draft.calls.length === 0) {
+    state.messages.push(assistantOf(draft));
+    return;
+  }
+  for (const call of draft.calls) state.textualCalls.set(call.id, call.function.name);
+  state.messages.push({ role: 'assistant', content: draft.text });
+}
+
+function appendUser(state: ResumeState, line: Line): void {
   const content = contentOf(line);
-  if (typeof content === 'string') return content.length === 0 ? [] : [{ role: 'user', content }];
-  if (!Array.isArray(content)) return [];
-  const out: ChatMessage[] = [];
+  if (typeof content === 'string') {
+    if (content.length > 0) pushUser(state, content);
+    return;
+  }
+  if (!Array.isArray(content)) return;
   let text = '';
   for (const block of content) {
-    if (typeof block !== 'object' || block === null) continue;
-    const record = block as Record<string, unknown>;
-    if (record.type === 'tool_result' && typeof record.tool_use_id === 'string') {
-      out.push({ role: 'tool', tool_call_id: record.tool_use_id, content: flattenContent(record.content) });
-    } else if (record.type === 'text' && typeof record.text === 'string') text += record.text;
+    const result = TOOL_RESULT_BLOCK.safeParse(block);
+    if (result.success) appendResult(state, result.data.tool_use_id, flattenContent(result.data.content));
+    const plain = TEXT_BLOCK.safeParse(block);
+    if (plain.success) text += plain.data.text;
   }
-  return text.length > 0 ? [...out, { role: 'user', content: text }] : out;
+  if (text.length > 0) pushUser(state, text);
+}
+
+function pushUser(state: ResumeState, content: string): void {
+  state.lastTextualResults = null;
+  state.messages.push({ role: 'user', content });
+}
+
+function appendResult(state: ResumeState, id: string, output: string): void {
+  const name = state.textualCalls.get(id);
+  if (name === undefined) {
+    state.messages.push({ role: 'tool', tool_call_id: id, content: output });
+    return;
+  }
+  // Los resultados escritos de una misma vuelta van juntos en UN mensaje del usuario, como en memoria.
+  const piece = textualToolResult(name, output);
+  const last = state.lastTextualResults;
+  const merged: ChatMessage = { role: 'user', content: last === null ? piece : `${last.content}\n${piece}` };
+  if (last !== null && state.messages.at(-1) === last) state.messages[state.messages.length - 1] = merged;
+  else state.messages.push(merged);
+  state.lastTextualResults = merged;
 }
 
 function flattenContent(content: unknown): string {
   if (typeof content === 'string') return content;
   if (!Array.isArray(content)) return '';
-  return content
-    .map((part) => (typeof part === 'object' && part !== null && typeof (part as { text?: unknown }).text === 'string' ? (part as { text: string }).text : ''))
-    .join('');
+  return content.map((part) => TEXT_BLOCK.omit({ type: true }).safeParse(part)).map((part) => (part.success ? part.data.text : '')).join('');
 }
 
 function assistantOf(draft: AssistantDraft): ChatMessage {

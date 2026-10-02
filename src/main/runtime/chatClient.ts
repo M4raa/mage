@@ -136,7 +136,8 @@ async function* readStream(body: ReadableStream<Uint8Array>, idle: IdleWatchdog)
     for (const data of decoder.end()) yield* parser.push(parseChatChunk(data));
     yield* parser.end();
   } finally {
-    // Cortar la conexion si el consumidor deja de leer (abortar, error en el bucle).
+    // Cortar la conexion si el consumidor deja de leer (abortar, error en el bucle). Es limpieza de un
+    // stream que ya termino o se abandono: si `cancel` falla no queda nada que cerrar ni a quien avisar.
     await reader.cancel().catch(() => undefined);
   }
 }
@@ -145,15 +146,17 @@ async function* readStream(body: ReadableStream<Uint8Array>, idle: IdleWatchdog)
 class IdleWatchdog {
   private readonly controller = new AbortController();
   private handle: unknown = null;
+  private readonly onParentAbort: () => void;
   fired = false;
 
   constructor(
     private readonly timers: TimerDeps,
     readonly ms: number,
-    parent: AbortSignal,
+    private readonly parent: AbortSignal,
   ) {
+    this.onParentAbort = () => this.controller.abort(parent.reason);
     if (parent.aborted) this.controller.abort(parent.reason);
-    else parent.addEventListener('abort', () => this.controller.abort(parent.reason), { once: true });
+    else parent.addEventListener('abort', this.onParentAbort, { once: true });
     this.reset();
   }
 
@@ -169,8 +172,10 @@ class IdleWatchdog {
     }, this.ms);
   }
 
+  // B1: el oyente se quita al terminar, o la senal del turno acumula uno por peticion.
   stop(): void {
     this.clear();
+    this.parent.removeEventListener('abort', this.onParentAbort);
   }
 
   private clear(): void {
@@ -192,14 +197,13 @@ function scrubError(err: unknown, apiKey: string | null): unknown {
   return clean;
 }
 
-// URL sin usuario ni contraseña (una base `http://user:pass@host` no debe acabar en un mensaje).
+// URL sin usuario, contraseña ni query (una base `http://user:pass@host` o un `?api-key=…`, que piden
+// algunos servidores compatibles, no deben acabar en un mensaje).
 export function redactUrl(url: string): string {
-  try {
-    const parsed = new URL(url);
-    parsed.username = '';
-    parsed.password = '';
-    return parsed.toString();
-  } catch {
-    return '(URL no válida)';
-  }
+  if (!URL.canParse(url)) return '(URL no válida)';
+  const parsed = new URL(url);
+  parsed.username = '';
+  parsed.password = '';
+  parsed.search = '';
+  return parsed.toString();
 }

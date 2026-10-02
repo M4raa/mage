@@ -3,7 +3,7 @@ import { glob, readFile, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { createGlobTool, createGrepTool, createReadTool, GLOB_MAX_RESULTS, type ReadToolsDeps } from './readTools';
+import { createGlobTool, createGrepTool, createReadTool, GLOB_MAX_RESULTS, GREP_MAX_LINE_CHARS, type ReadToolsDeps } from './readTools';
 import type { ToolContext } from './types';
 
 let dir = '';
@@ -161,5 +161,23 @@ describe('Glob y Grep fuera del proyecto (C2)', () => {
     const out = await createGrepTool(deps).run({ pattern: 'KEY', glob: '*.txt' }, insideCtx());
 
     expect(out.output).toBe('a.txt:1:KEY=dentro');
+  });
+});
+
+describe('Grep con una expresion catastrofica (A5)', () => {
+  it('grep_catastrophicRegex_failsWithinBudgetInsteadOfFreezing', async () => {
+    writeFileSync(join(dir, 'min.js'), `${'a'.repeat(40)}b`);
+    const started = Date.now();
+
+    const out = await createGrepTool(deps).run({ pattern: '(a+)+$' }, ctx());
+
+    expect(out).toMatchObject({ isError: true, output: expect.stringContaining('tarda demasiado') });
+    expect(Date.now() - started).toBeLessThan(5_000);
+  });
+
+  it('grep_longLine_matchesWithinFirstChars', async () => {
+    writeFileSync(join(dir, 'largo.txt'), `${'x'.repeat(GREP_MAX_LINE_CHARS)}FIN`);
+
+    expect((await createGrepTool(deps).run({ pattern: 'FIN' }, ctx())).output).toMatch(/Sin coincidencias/);
   });
 });

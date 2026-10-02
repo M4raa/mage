@@ -1,8 +1,10 @@
 import type { Dirent, Stats } from 'node:fs';
 import { join, relative } from 'node:path';
+import { createContext, Script } from 'node:vm';
 import { z } from 'zod';
 import { fail, ok, type RuntimeTool, type ToolContext } from './types';
 import { resolveToolPath } from './pathGuard';
+import type { ReadLedger } from './editTools';
 
 // Las tres herramientas de LECTURA del runtime propio: Read, Glob y Grep. Asincronas, con topes (un
 // arbol enorme no bloquea el hilo de main) y sin dependencias (ficha D6).
@@ -14,6 +16,20 @@ export const GREP_MAX_MATCHES = 200;
 export const GREP_MAX_FILES = 5_000;
 export const GREP_MAX_FILE_BYTES = 1024 * 1024;
 const BINARY_SNIFF_BYTES = 8_000;
+// A5: la expresion la escribe el modelo y corre en el hilo de `main`. Cada linea se recorta antes de
+// probarla y cada fichero tiene un tope de tiempo: `vm` con `timeout` corta una expresion catastrofica
+// (`(a+)+$` sobre una linea larga) en vez de congelar la app (medido en Node 24.16: corta a los 210 ms
+// con un tope de 200). ponytail: tope por fichero en el mismo hilo; si hiciera falta mas, Grep a un
+// `utilityProcess`.
+export const GREP_MAX_LINE_CHARS = 2_000;
+export const GREP_FILE_TIMEOUT_MS = 500;
+const GREP_SHOWN_LINE_CHARS = 300;
+const MATCH_SCRIPT = new Script(`
+  found = [];
+  for (let i = 0; i < lines.length && found.length < max; i++) {
+    const line = lines[i].slice(0, maxLine);
+    if (regex.test(line)) found.push([i + 1, line.slice(0, shown)]);
+  }`);
 // Directorios que nunca se recorren.
 const IGNORED_DIRS = new Set(['.git', 'node_modules']);
 
@@ -28,6 +44,8 @@ export interface ReadToolsDeps {
   readonly platform: string;
   // Sigue enlaces al clasificar los resultados de Glob/Grep (A3); ausente = lexico.
   readonly realpath?: (path: string) => string | null;
+  // Lo que `Read` deja apuntado para que `Write` sepa que se leyo (D5 de P-033).
+  readonly ledger?: ReadLedger;
 }
 
 // Los modelos pequeños escriben `path` donde el CLI usa `file_path`: se acepta como alias.
@@ -75,6 +93,7 @@ export function createReadTool(deps: ReadToolsDeps): RuntimeTool<z.infer<typeof 
       if (stats.size > READ_MAX_BYTES) return fail(`${path} ocupa ${stats.size} bytes (máximo ${READ_MAX_BYTES})`);
       const buffer = await deps.fs.readFile(path);
       if (isBinary(buffer)) return fail(`${path} es un fichero binario: Read solo lee texto`);
+      deps.ledger?.record(path, stats.mtimeMs);
       return ok(numberLines(buffer.toString('utf8'), input.offset ?? 1, input.limit ?? READ_MAX_LINES, path));
     },
   };
@@ -159,6 +178,7 @@ async function runGrep(input: z.infer<typeof GREP_INPUT>, ctx: ToolContext, deps
     if (text === null) continue;
     const label = relative(root, file) || file;
     const matches = matchLines(text, regex, GREP_MAX_MATCHES - out.length);
+    if (matches === null) return fail(`La expresión ${JSON.stringify(input.pattern)} tarda demasiado (más de ${GREP_FILE_TIMEOUT_MS} ms en ${label}): simplifícala.`);
     if (matches.length === 0) continue;
     if (filesOnly) out.push(label);
     else out.push(...matches.map(([line, content]) => `${label}:${line}:${content}`));
@@ -182,13 +202,16 @@ async function grepTargets(root: string, glob: string | undefined, ctx: ToolCont
   return files;
 }
 
-function matchLines(text: string, regex: RegExp, max: number): Array<[number, string]> {
-  const matches: Array<[number, string]> = [];
-  const lines = text.split(/\r?\n/);
-  for (let i = 0; i < lines.length && matches.length < max; i++) {
-    if (regex.test(lines[i]!)) matches.push([i + 1, lines[i]!.slice(0, 300)]);
+// null = la expresion supero el tope de tiempo en este fichero.
+function matchLines(text: string, regex: RegExp, max: number): Array<[number, string]> | null {
+  const sandbox = createContext({ lines: text.split(/\r?\n/), regex, max, maxLine: GREP_MAX_LINE_CHARS, shown: GREP_SHOWN_LINE_CHARS, found: [] });
+  try {
+    MATCH_SCRIPT.runInContext(sandbox, { timeout: GREP_FILE_TIMEOUT_MS });
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ERR_SCRIPT_EXECUTION_TIMEOUT') return null;
+    throw err;
   }
-  return matches;
+  return sandbox.found as Array<[number, string]>;
 }
 
 async function* walk(fs: ReadToolsFs, pattern: string, root: string, signal: AbortSignal): AsyncIterable<Dirent> {

@@ -23,6 +23,9 @@ export interface TranscriptWriterDeps {
   readonly now: () => number;
   readonly newId: () => string;
   readonly log?: SessionLogFn;
+  // M6: la primera vez que falla el disco se avisa a la sesion (la conversacion sigue, pero no se podra
+  // reabrir y el usuario tiene que saberlo).
+  readonly onWriteFailure?: (message: string) => void;
 }
 
 interface RoundBuffer {
@@ -67,7 +70,7 @@ export class TranscriptWriter implements TurnRecorder {
         this.round.toolUses.push({ type: 'tool_use', id: event.id, name: event.name, input: event.input });
         return;
       case 'round_done':
-        this.flushRound(event.usage);
+        this.flushRound(event.usage, event.textual === true);
         return;
       case 'tool_result':
         this.write({
@@ -85,7 +88,7 @@ export class TranscriptWriter implements TurnRecorder {
 
   // Lo que quedo a medias de una vuelta (un turno que fallo con texto ya recibido).
   turnEnd(_added: readonly ChatMessage[], _outcome: TurnOutcome): void {
-    if (this.round.text.length > 0 || this.round.toolUses.length > 0) this.flushRound(null);
+    if (this.round.text.length > 0 || this.round.toolUses.length > 0) this.flushRound(null, false);
   }
 
   reset(newSessionId: string): void {
@@ -104,7 +107,8 @@ export class TranscriptWriter implements TurnRecorder {
     this.write({ type: 'custom-title', customTitle: title });
   }
 
-  private flushRound(usage: { inputTokens: number; outputTokens: number } | null): void {
+  // `mageTextual` (campo propio de Mage): las llamadas de esta vuelta las escribio el modelo en el texto.
+  private flushRound(usage: { inputTokens: number; outputTokens: number } | null, textual: boolean): void {
     const { thinking, text, toolUses } = this.round;
     this.round = emptyRound();
     const content = [
@@ -121,6 +125,7 @@ export class TranscriptWriter implements TurnRecorder {
         content,
         ...(usage === null ? {} : { usage: { input_tokens: usage.inputTokens, output_tokens: usage.outputTokens } }),
       },
+      ...(textual ? { mageTextual: true } : {}),
     });
   }
 
@@ -141,8 +146,12 @@ export class TranscriptWriter implements TurnRecorder {
       this.deps.appendLine(path, `${JSON.stringify(record)}\n`);
       this.parentUuid = uuid;
     } catch (err) {
-      // La conversacion sigue aunque el disco falle; se avisa UNA vez por sesion en el log.
-      if (!this.failed) this.deps.log?.('error', 'No se pudo escribir la transcripcion del runtime', { error: (err as Error).message });
+      // La conversacion sigue aunque el disco falle; se avisa UNA vez por sesion, en el log y en el hilo.
+      if (!this.failed) {
+        const message = (err as Error).message;
+        this.deps.log?.('error', 'No se pudo escribir la transcripcion del runtime', { error: message });
+        this.deps.onWriteFailure?.(`No se puede guardar esta conversación en disco (${message}): sigue funcionando, pero no se podrá reabrir.`);
+      }
       this.failed = true;
     }
   }

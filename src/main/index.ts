@@ -517,7 +517,7 @@ function runtimeEnv(): RuntimeEnv {
     platform: process.platform,
     realpath: nodeRealpath,
     fs: runtimeFs,
-    editFs: { readFile, writeFile, mkdir },
+    editFs: { readFile, writeFile, mkdir, stat },
     shell: () =>
       resolveShell({
         platform: process.platform,

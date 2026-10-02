@@ -1,10 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
-import { ContextBudget } from './contextBudget';
+import { ContextBudget, ContextOverflowError } from './contextBudget';
 import type { MageEvent } from '@shared/events';
 import type { LoopTools, ToolOutcome } from './agentLoop';
-import type { ChatClient, ChatRequest } from './chatClient';
+import type { ChatClient, ChatMessage, ChatRequest } from './chatClient';
 import type { StreamPart } from './openAiStream';
-import { AUTO_MODE_NOTICE, RuntimeSession, type GateVerdict, type RuntimeSessionDeps } from './runtimeSession';
+import { AUTO_MODE_NOTICE, RuntimeSession, type GateVerdict, type ModelBudget, type RuntimeSessionDeps } from './runtimeSession';
 
 // ChatClient falso: cada peticion consume el siguiente guion. Un guion puede esperar a una promesa
 // (para probar la cola y el interrupt) o lanzar.
@@ -423,5 +423,41 @@ describe('RuntimeSession y el modelo (R5)', () => {
 
     expect(tools.ran).toEqual(['Read']);
     expect(client.requests[1]!.messages.map((m) => m.role)).toEqual(['system', 'user', 'assistant', 'user']);
+  });
+});
+
+describe('RuntimeSession compactacion a mitad de turno (B4)', () => {
+  it('turnEnd_afterMidTurnCompaction_addedIsOnlyThisTurn', async () => {
+    let overflowed = false;
+    const budget: ModelBudget = {
+      window: 1_000,
+      limit: 1_000,
+      fit: (messages) => {
+        if (overflowed) return messages;
+        overflowed = true;
+        throw new ContextOverflowError('no cabe');
+      },
+      recalibrate: () => undefined,
+      estimate: (messages) => messages.length * 10,
+      usage: () => ({ totalTokens: 0, maxTokens: 1_000, percentage: 0, categories: [] }),
+      isNearLimit: () => false,
+    };
+    const history: ChatMessage[] = [
+      { role: 'user', content: 'a' },
+      { role: 'assistant', content: null, tool_calls: [{ id: 'c1', type: 'function', function: { name: 'Read', arguments: '{}' } }] },
+      { role: 'tool', tool_call_id: 'c1', content: 'r' },
+      { role: 'assistant', content: 'b' },
+      { role: 'user', content: 'c' },
+      { role: 'assistant', content: 'd' },
+    ];
+    const added: ChatMessage[][] = [];
+    const recorder = { user: () => undefined, loop: () => undefined, turnEnd: (turn: readonly ChatMessage[]) => added.push([...turn]), reset: () => undefined, rename: () => undefined, compact: () => undefined };
+    const { session } = setup([textReply('resumen'), textReply('fin')], { history, recorder, prepareModel: async () => ({ budget, supportsTools: null, warning: null }) });
+    session.start();
+
+    session.sendUserMessage('e');
+    for (let i = 0; i < 5; i++) await settle();
+
+    expect(added).toEqual([[{ role: 'user', content: 'e' }, { role: 'assistant', content: 'fin' }]]);
   });
 });

@@ -1,13 +1,13 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { createEditTool, createWriteTool, EDIT_FAILS_BEFORE_HINT, type EditToolsDeps } from './editTools';
+import { createEditTool, createWriteTool, EDIT_FAILS_BEFORE_HINT, ReadLedger, type EditToolsDeps } from './editTools';
 import type { ToolContext } from './types';
 
 let dir = '';
-const deps: EditToolsDeps = { fs: { readFile, writeFile, mkdir }, platform: process.platform };
+const deps: EditToolsDeps = { fs: { readFile, writeFile, mkdir, stat }, platform: process.platform };
 const ctx = (): ToolContext => ({ cwd: dir, extraDirs: [], signal: new AbortController().signal });
 
 beforeEach(() => {
@@ -31,6 +31,46 @@ describe('Write', () => {
 
     expect(out.output).toMatch(/^Sobrescrito/);
     expect(out.file?.structuredPatch).toEqual([{ oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, lines: ['-uno', '+dos'] }]);
+  });
+});
+
+describe('Write con lo leido (B10, D5)', () => {
+  const withLedger = (): EditToolsDeps => ({ ...deps, ledger: new ReadLedger(process.platform) });
+
+  it('write_existingFileNotRead_failsAndKeepsContent', async () => {
+    writeFileSync(join(dir, 'a.txt'), 'del usuario');
+
+    const out = await createWriteTool(withLedger()).run({ file_path: 'a.txt', content: 'pisado' }, ctx());
+
+    expect(out).toMatchObject({ isError: true, output: expect.stringContaining('no lo has leído') });
+    expect(readFileSync(join(dir, 'a.txt'), 'utf8')).toBe('del usuario');
+  });
+
+  it('write_fileChangedSinceRead_fails', async () => {
+    const shared = withLedger();
+    writeFileSync(join(dir, 'a.txt'), 'uno');
+    shared.ledger!.record(join(dir, 'a.txt'), 1);
+
+    const out = await createWriteTool(shared).run({ file_path: 'a.txt', content: 'dos' }, ctx());
+
+    expect(out).toMatchObject({ isError: true, output: expect.stringContaining('ha cambiado') });
+  });
+
+  it('write_readThenWriteTwice_ok', async () => {
+    const shared = withLedger();
+    writeFileSync(join(dir, 'a.txt'), 'uno');
+    shared.ledger!.record(join(dir, 'a.txt'), (await stat(join(dir, 'a.txt'))).mtimeMs);
+    const write = createWriteTool(shared);
+
+    await write.run({ file_path: 'a.txt', content: 'dos' }, ctx());
+    const second = await write.run({ file_path: 'a.txt', content: 'tres' }, ctx());
+
+    expect(second.isError).toBe(false);
+    expect(readFileSync(join(dir, 'a.txt'), 'utf8')).toBe('tres');
+  });
+
+  it('write_newFile_needsNoRead', async () => {
+    expect((await createWriteTool(withLedger()).run({ file_path: 'nuevo.txt', content: 'x' }, ctx())).isError).toBe(false);
   });
 });
 

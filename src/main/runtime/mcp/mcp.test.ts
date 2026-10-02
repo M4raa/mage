@@ -84,6 +84,21 @@ describe('McpPool (conector falso)', () => {
     expect(onChange).toHaveBeenCalled();
   });
 
+  it('start_connectResolvesAfterTimeout_lateClientIsClosed', async () => {
+    const late = client();
+    let resolveLate: (value: McpClientLike) => void = () => undefined;
+    const connect = () => new Promise<McpClientLike>((resolve) => (resolveLate = resolve));
+    const created = new McpPool([stdio('lento')], { connect, notify: () => undefined, onChange: () => undefined, connectTimeoutMs: 10 });
+    pools.push(created);
+
+    await created.start();
+    resolveLate(late);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(created.statuses()).toEqual([{ name: 'lento', status: 'failed' }]);
+    expect(late.close).toHaveBeenCalledTimes(1);
+  });
+
   it('close_closesClientsOnce', async () => {
     const c = client();
     const p = new McpPool([stdio('uno')], { connect: async () => c, notify: () => undefined, onChange: () => undefined });

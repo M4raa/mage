@@ -16,11 +16,36 @@ export interface EditToolsFs {
   readonly readFile: (path: string, encoding: 'utf8') => Promise<string>;
   readonly writeFile: (path: string, data: string, encoding: 'utf8') => Promise<void>;
   readonly mkdir: (path: string, options: { recursive: true }) => Promise<unknown>;
+  readonly stat: (path: string) => Promise<{ readonly mtimeMs: number }>;
 }
 
 export interface EditToolsDeps {
   readonly fs: EditToolsFs;
   readonly platform: string;
+  // D5 de P-033: lo que la sesion ha leido. Sin el, Write no comprueba nada (tests de otras piezas).
+  readonly ledger?: ReadLedger;
+}
+
+// Lo que la sesion ha leido (o escrito) y con que mtime. `Write` sobre un fichero existente exige que
+// este aqui con el mismo mtime que tiene en disco, como el CLI de Claude (B10 de la revision): asi no
+// pisa un cambio que el usuario hizo despues de la ultima lectura del modelo.
+export class ReadLedger {
+  private readonly seen = new Map<string, number>();
+
+  constructor(private readonly platform: string) {}
+
+  record(path: string, mtimeMs: number): void {
+    this.seen.set(this.key(path), mtimeMs);
+  }
+
+  mtimeOf(path: string): number | undefined {
+    return this.seen.get(this.key(path));
+  }
+
+  // En win32 el FS no distingue mayusculas: `A.txt` y `a.txt` son el mismo fichero.
+  private key(path: string): string {
+    return this.platform === 'win32' ? path.toLowerCase() : path;
+  }
 }
 
 const withFilePathAlias = (raw: unknown): unknown => {
@@ -61,8 +86,11 @@ export function createWriteTool(deps: EditToolsDeps): RuntimeTool<z.infer<typeof
     run: async (input, ctx): Promise<ToolOutcome> => {
       const path = absolutePath(input.file_path, ctx, deps.platform);
       const before = await readOrNull(deps.fs, path);
+      const stale = before === null ? null : await staleReason(deps, path);
+      if (stale !== null) return fail(stale);
       await deps.fs.mkdir(dirname(path), { recursive: true });
       await deps.fs.writeFile(path, input.content, 'utf8');
+      await recordWrite(deps, path);
       const lines = input.content.length === 0 ? 0 : input.content.split(/\r?\n/).length;
       return {
         isError: false,
@@ -105,6 +133,7 @@ export function createEditTool(deps: EditToolsDeps): RuntimeTool<z.infer<typeof 
       }
       const after = input.replace_all === true ? before.split(oldText).join(newText) : before.replace(oldText, () => newText);
       await deps.fs.writeFile(path, after, 'utf8');
+      await recordWrite(deps, path);
       consecutiveFails = 0;
       return {
         isError: false,
@@ -113,6 +142,21 @@ export function createEditTool(deps: EditToolsDeps): RuntimeTool<z.infer<typeof 
       };
     },
   };
+}
+
+// null = se puede sobrescribir. Si no, el motivo para el modelo.
+async function staleReason(deps: EditToolsDeps, path: string): Promise<string | null> {
+  if (deps.ledger === undefined) return null;
+  const seen = deps.ledger.mtimeOf(path);
+  if (seen === undefined) return `${path} ya existe y no lo has leído en esta conversación: léelo con Read antes de sobrescribirlo.`;
+  const { mtimeMs } = await deps.fs.stat(path);
+  return mtimeMs === seen ? null : `${path} ha cambiado desde que lo leíste: vuelve a leerlo con Read antes de sobrescribirlo.`;
+}
+
+// Lo que acaba de escribir la propia sesion cuenta como leido (Write tras Edit, o dos Write seguidos).
+async function recordWrite(deps: EditToolsDeps, path: string): Promise<void> {
+  if (deps.ledger === undefined) return;
+  deps.ledger.record(path, (await deps.fs.stat(path)).mtimeMs);
 }
 
 // Un fichero con CRLF y un `old_string` con LF (lo normal en un modelo) no casarian nunca en Windows.

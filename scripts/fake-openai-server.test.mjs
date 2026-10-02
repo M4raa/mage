@@ -44,7 +44,7 @@ function envFor(baseUrl, overrides = {}) {
     platform: process.platform,
     realpath: nodeRealpath,
     fs: { stat, readFile, glob },
-    editFs: { readFile, writeFile, mkdir },
+    editFs: { readFile, writeFile, mkdir, stat },
     shell: () => ({ name: 'node', command: process.execPath, argsFor: (script) => ['-e', script] }),
     spawn: (command, args, options) => spawn(command, [...args], options),
     commandEnv: () => ({ ...process.env }),
