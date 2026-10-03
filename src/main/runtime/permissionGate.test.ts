@@ -156,7 +156,7 @@ describe('createRuntimeGate', () => {
     expect(gate({ id: '1', name: 'Read', kind: 'read', input: { file_path: '/etc/hosts' } }, 'bypassPermissions')).toEqual({ verdict: 'ask', outside: 'Fuera del proyecto: /etc/hosts' });
   });
 
-  it('gate_bashUsesCommandInAuto', () => {
+  it('gate_bashWhitelistedInAuto_allows', () => {
     const gate = createRuntimeGate(SCOPE);
 
     expect(gate({ id: '1', name: 'Bash', kind: 'exec', input: { command: 'pnpm test' } }, 'auto')).toEqual({ verdict: 'allow' });

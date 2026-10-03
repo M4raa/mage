@@ -37,7 +37,7 @@ describe('splitForCompaction', () => {
 });
 
 describe('summaryRequest y compactedHistory', () => {
-  it('request_isPlainTextWithoutToolCalls', () => {
+  it('request_headWithCalls_isPlainTextWithoutToolCalls', () => {
     const request = summaryRequest([user('hola'), { role: 'assistant', content: null, tool_calls: [{ id: 'c', type: 'function', function: { name: 'Bash', arguments: '{"command":"ls"}' } }] }], 1_000);
 
     expect(request.map((m) => m.role)).toEqual(['system', 'user']);
@@ -51,7 +51,7 @@ describe('summaryRequest y compactedHistory', () => {
     expect(request[1]!.content).toContain('ultimo');
   });
 
-  it('history_summaryThenAckThenTail', () => {
+  it('history_compacted_summaryThenAckThenTail', () => {
     const result = compactedHistory(' resumen ', [user('tres')]);
 
     expect(result.map((m) => m.role)).toEqual(['user', 'assistant', 'user']);
@@ -72,7 +72,7 @@ describe('parseTextToolCalls', () => {
     expect(parseTextToolCalls('```json\n{"name":"Bash","arguments":{"command":"ls"}}\n```\nY luego te explico.', KNOWN)).toEqual([]);
   });
 
-  it('parse_taggedQwenStyle', () => {
+  it('parse_taggedQwenStyle_returnsCall', () => {
     expect(parseTextToolCalls('Voy.\n<tool_call>{"name": "Read", "arguments": {"file_path": "a"}}</tool_call>', KNOWN)).toEqual([{ name: 'Read', argumentsJson: '{"file_path":"a"}' }]);
   });
 
@@ -96,7 +96,7 @@ describe('parseTextToolCalls', () => {
     expect(parseTextToolCalls(text, KNOWN)[1]!.argumentsJson).toBe('{"pattern":"*"}');
   });
 
-  it('instructions_listToolsWithFields', () => {
+  it('instructions_tools_listNamesWithFields', () => {
     const guide = textToolInstructions([{ name: 'Read', description: 'Read a file.\nMore', parameters: { properties: { file_path: {}, offset: {} }, required: ['file_path'] } }]);
 
     expect(guide).toContain('- Read(file_path, offset?): Read a file.');

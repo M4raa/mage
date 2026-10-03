@@ -101,7 +101,7 @@ describe('McpPool (conector falso)', () => {
     expect(late.close).toHaveBeenCalledTimes(1);
   });
 
-  it('close_closesClientsOnce', async () => {
+  it('close_calledTwice_closesClientsOnce', async () => {
     const c = client();
     const p = new McpPool([stdio('uno')], { connect: async () => c, notify: () => undefined, loginRequired: () => undefined, onChange: () => undefined });
     await p.start();
@@ -114,12 +114,12 @@ describe('McpPool (conector falso)', () => {
 });
 
 describe('mcpTools', () => {
-  it('name_sanitizesAndCaps', () => {
+  it('name_oddOrLongChars_sanitizedAndCapped', () => {
     expect(mcpToolName('mi servidor', 'leer.fichero')).toBe('mcp__mi_servidor__leer_fichero');
     expect(mcpToolName('s'.repeat(80), 't').length).toBe(64);
   });
 
-  it('flatten_textAndOtherBlocks', () => {
+  it('flatten_mixedBlocks_keepsTextAndDescribesOthers', () => {
     expect(flattenResult({ content: [{ type: 'text', text: 'a' }, { type: 'image', mimeType: 'image/png' }], isError: true })).toEqual({
       isError: true,
       output: 'a\n[image image/png: el runtime no lo muestra]',
@@ -204,7 +204,7 @@ describe('McpLoginRegistry (D3)', () => {
     expect(registry.pendingFor('gh')?.id).toBe('l1');
   });
 
-  it('open_startsWaitingOnceOpensUrlAndForgetsWhenDone', async () => {
+  it('open_clickedTwice_waitsOnceOpensUrlTwiceAndForgets', async () => {
     const opened: string[] = [];
     let finish: () => void = () => undefined;
     const complete = vi.fn(() => new Promise<void>((resolve) => (finish = resolve)));

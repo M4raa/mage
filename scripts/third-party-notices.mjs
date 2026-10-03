@@ -7,8 +7,11 @@
 // tampoco viajan. Medido: `grep -c "Permission is hereby granted" out/**` -> 0 en los dos bundles.
 // Este fichero externo es lo que satisface la clausula, y la pantalla «Acerca de» es donde se muestra.
 //
-// COMO: `pnpm licenses list --prod --json` da el paquete, su version, su licencia SPDX y su ruta en el
-// store; de ahi se lee el fichero de licencia REAL (con su copyright, que es lo que hay que conservar).
+// COMO: `pnpm licenses list --json` da el paquete, su version, su licencia SPDX y su ruta en el store;
+// de ahi se lee el fichero de licencia REAL (con su copyright, que es lo que hay que conservar). Solo
+// entran los paquetes que el build deja DE VERDAD en los bundles (`third-party-bundle.json`, que escribe
+// `scripts/bundledPackagesPlugin.ts` en cada `pnpm build`; B7 de la revision del runtime): lo instalado
+// que no viaja (la pila de servidor del SDK de MCP, p.ej.) no se anuncia.
 // Un paquete sin fichero cae al texto canonico de su SPDX + su autor: es lo unico que se puede
 // atribuir, y decirlo es mejor que omitir el paquete.
 //
@@ -23,13 +26,14 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const OUTPUT = path.join(ROOT, 'THIRD-PARTY-NOTICES.txt');
+const BUNDLE_MANIFEST = path.join(ROOT, 'third-party-bundle.json');
 // Nombres de fichero de licencia, en orden de preferencia. `LICENSE` antes que `README` siempre: un
 // README puede citar la licencia de otra cosa.
 const LICENSE_FILES = ['LICENSE', 'LICENSE.md', 'LICENSE.txt', 'LICENCE', 'LICENCE.md', 'license', 'COPYING', 'COPYING.txt'];
 
 function main() {
   const packages = collectPackages();
-  if (packages.length === 0) throw new Error('`pnpm licenses list --prod --json` no devolvio ningun paquete: sin eso no hay avisos que generar');
+  if (packages.length === 0) throw new Error('`pnpm licenses list --json` no devolvio ningun paquete de los bundles: sin eso no hay avisos que generar');
   const text = renderNotices(packages);
   if (!process.argv.includes('--check')) {
     fs.writeFileSync(OUTPUT, text, 'utf8');
@@ -49,15 +53,24 @@ function main() {
   process.exit(1);
 }
 
-// Paquetes de produccion, ordenados por nombre y con el texto de su licencia ya resuelto.
+// Los paquetes que el build dejo en algun bundle (main, preload o renderer).
+function bundledPackageNames() {
+  if (!fs.existsSync(BUNDLE_MANIFEST)) throw new Error(`Falta ${path.basename(BUNDLE_MANIFEST)}: ejecuta \`pnpm build\` (lo escribe el build) y vuelve a lanzar esto`);
+  const manifest = JSON.parse(fs.readFileSync(BUNDLE_MANIFEST, 'utf8'));
+  return new Set(Object.values(manifest).flat());
+}
+
+// Paquetes de los bundles, ordenados por nombre y con el texto de su licencia ya resuelto.
 function collectPackages() {
+  const bundled = bundledPackageNames();
   // `execSync` con la linea entera y no `execFileSync`: en Windows, node 24 se niega a lanzar un `.cmd`
   // sin shell (EINVAL), y `pnpm` es un `.cmd`. El comando es literal, sin nada interpolado.
-  const raw = execSync('pnpm licenses list --prod --json', { cwd: ROOT, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
+  const raw = execSync('pnpm licenses list --json', { cwd: ROOT, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
   const byLicense = JSON.parse(raw);
   const packages = [];
   for (const [license, entries] of Object.entries(byLicense)) {
     for (const entry of entries) {
+      if (!bundled.has(entry.name)) continue;
       packages.push({
         name: entry.name,
         versions: entry.versions ?? [],
@@ -68,6 +81,9 @@ function collectPackages() {
       });
     }
   }
+  const found = new Set(packages.map((pkg) => pkg.name));
+  const missing = [...bundled].filter((name) => !found.has(name));
+  if (missing.length > 0) throw new Error(`Paquetes de los bundles sin licencia en \`pnpm licenses list\`: ${missing.join(', ')}`);
   return packages.sort((a, b) => a.name.localeCompare(b.name, 'en'));
 }
 
@@ -92,9 +108,9 @@ function renderNotices(packages) {
   const header = [
     'AVISOS DE TERCEROS — Mage',
     '',
-    'Mage incorpora software de terceros. Abajo va, para cada paquete que viaja en el binario, su',
-    'licencia completa con su aviso de copyright. Este fichero se genera con `pnpm notices` a partir',
-    'de las dependencias de produccion realmente instaladas; no se edita a mano.',
+    'Mage incorpora software de terceros. Abajo va, para cada paquete cuyo codigo entra en los bundles',
+    'de la aplicacion, su licencia completa con su aviso de copyright. Este fichero se genera con',
+    '`pnpm notices` a partir de lo que el build deja en esos bundles; no se edita a mano.',
     '',
     `Paquetes: ${packages.length} · Licencias: ${resumen}`,
     '',

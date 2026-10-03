@@ -2,6 +2,7 @@ import { resolve } from 'node:path';
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
+import { bundledPackagesPlugin } from './scripts/bundledPackagesPlugin';
 
 // Config de los tres targets de Electron (main / preload / renderer).
 // El alias @shared apunta al contrato compartido main<->renderer.
@@ -26,11 +27,11 @@ export default defineConfig({
     // `require()` dinamico segun plataforma, y eso rollup no lo puede sacudir.
     // @modelcontextprotocol/sdk (P-032 R8, cliente MCP del runtime propio) por lo mismo: sin bundlear no
     // existiria en la app empaquetada. Solo entra lo que importa el cliente (stdio, HTTP, SSE y OAuth).
-    plugins: [externalizeDepsPlugin({ exclude: ['electron-updater', 'zod', '@modelcontextprotocol/sdk'] })],
+    plugins: [externalizeDepsPlugin({ exclude: ['electron-updater', 'zod', '@modelcontextprotocol/sdk'] }), bundledPackagesPlugin('main', resolve('.'))],
     resolve: { alias: sharedAlias },
   },
   preload: {
-    plugins: [externalizeDepsPlugin()],
+    plugins: [externalizeDepsPlugin(), bundledPackagesPlugin('preload', resolve('.'))],
     resolve: { alias: sharedAlias },
   },
   renderer: {
@@ -51,6 +52,6 @@ export default defineConfig({
         '@renderer': resolve('src/renderer/src'),
       },
     },
-    plugins: [react(), tailwindcss()],
+    plugins: [react(), tailwindcss(), bundledPackagesPlugin('renderer', resolve('.'))],
   },
 });

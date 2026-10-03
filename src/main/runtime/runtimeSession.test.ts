@@ -242,7 +242,7 @@ describe('RuntimeSession turno', () => {
 describe('RuntimeSession permisos', () => {
   const ask = (): GateVerdict => ({ verdict: 'ask' });
 
-  it('ask_emitsPermissionRequestAndAllowRunsTool', async () => {
+  it('ask_thenAllow_emitsRequestAndRunsTool', async () => {
     const { session, events, tools } = setup([toolCallReply('Write', '{"file_path":"a"}'), textReply('hecho')], { gate: ask });
     session.start();
 
@@ -287,7 +287,7 @@ describe('RuntimeSession permisos', () => {
     expect(events).toContainEqual(expect.objectContaining({ kind: 'tool_result', result: expect.objectContaining({ isError: true, output: 'file_path obligatorio' }) }));
   });
 
-  it('deny_turnContinuesWithErrorToModel', async () => {
+  it('deny_byUser_turnContinuesWithErrorToModel', async () => {
     const { session, events, client } = setup([toolCallReply('Write', '{"file_path":"a"}'), textReply('entendido')], { gate: ask });
     session.start();
     session.sendUserMessage('escribe');

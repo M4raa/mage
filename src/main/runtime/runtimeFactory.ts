@@ -13,7 +13,6 @@ import { textToolInstructions } from './textToolCalls';
 import { CHARS_PER_TOKEN, ContextBudget } from './contextBudget';
 import type { ModelCatalog } from './modelCatalog';
 import type { ToolAccessRule } from '@shared/toolAccess';
-import type { ResolvedMcpServer } from '../config/mcpResolved';
 import { McpPool, type McpConnector } from './mcp/mcpPool';
 import { AccessFilteredTools } from './tools/accessFilter';
 import { createBashTool } from './tools/bashTool';
@@ -86,66 +85,80 @@ function sessionTools(env: RuntimeEnv, cwd: string): SessionTools {
   return { registry: new ToolRegistry(tools, (signal) => ({ cwd, extraDirs: [], signal })), shell };
 }
 
+// Lo que comparten las piezas de UNA sesion mientras se monta. `session()` es null hasta el final: las
+// piezas que la necesitan (avisos, modelo actual) la piden cuando ya existe.
+interface SessionBuild {
+  readonly providerId: string;
+  readonly base: SessionBase;
+  readonly env: RuntimeEnv;
+  readonly session: () => RuntimeSession | null;
+}
+
 export function buildRuntimeSession(providerId: string, base: SessionBase, env: RuntimeEnv): RuntimeSession {
   const provider = env.findProvider(providerId);
   if (provider === null) throw new Error(`Proveedor no configurado: ${JSON.stringify(providerId)}. Añádelo en Configuración > Proveedores.`);
   const { params } = base;
-  const { registry, shell } = sessionTools(env, params.cwd);
-  const projectNotes = readProjectNotes(env, params.cwd);
-  const resumed = params.resume === true ? resumeHistory(params, env, base) : null;
   let session: RuntimeSession | null = null;
-  const recorder = new TranscriptWriter(
-    params.sessionId,
-    {
-      root: env.transcriptRoot,
-      cwd: params.cwd,
-      // El modelo de la linea `assistant` sigue al de la sesion si el usuario lo cambia en caliente.
-      model: () => session?.currentModel ?? params.model,
-      mkdir: env.mkdir,
-      appendLine: env.appendLine,
-      now: env.now,
-      newId: env.newId,
-      ...(base.log === undefined ? {} : { log: base.log }),
-      onWriteFailure: (text) => session?.notice(text),
-    },
-    resumed?.lastUuid ?? null,
-  );
-  const client = new HttpChatClient({
-    baseUrl: provider.baseUrl,
-    apiKey: () => env.apiKeyFor(providerId),
-    fetch: env.fetch,
-    timers: env.timers,
-  });
-  const pool = createPool(params.shared?.mcpServers ?? [], params.cwd, env, base, () => session, registry);
+  const build: SessionBuild = { providerId, base, env, session: () => session };
+  const { registry, shell } = sessionTools(env, params.cwd);
+  const resumed = params.resume === true ? resumeHistory(params, env, base) : null;
+  const pool = createPool(build, registry);
   const tools = new AccessFilteredTools(registry, () => env.toolAccess(providerId), () => session?.currentModel ?? params.model);
   session = new RuntimeSession({
     sessionId: params.sessionId,
     model: params.model,
     permissionMode: initialMode(params.permissionMode),
-    client,
+    client: new HttpChatClient({ baseUrl: provider.baseUrl, apiKey: () => env.apiKeyFor(providerId), fetch: env.fetch, timers: env.timers }),
     tools,
     gate: createRuntimeGate({ cwd: params.cwd, extraDirs: [], platform: env.platform, realpath: env.realpath }),
-    systemPrompt: (toolsEnabled) =>
-      buildSystemPrompt({
-        cwd: params.cwd,
-        platform: env.platform,
-        shellName: shell.name,
-        nowIso: new Date(env.now()).toISOString(),
-        toolNames: toolsEnabled ? tools.names() : [],
-        textToolGuide: toolsEnabled ? null : textToolInstructions(tools.specs().map((spec) => spec.function)),
-        projectNotes,
-      }),
+    systemPrompt: buildSystemPromptFn(build, shell, tools),
     emit: base.emit,
     now: env.now,
     newId: env.newId,
     toolsEnabled: true,
-    recorder,
+    recorder: buildRecorder(build, resumed?.lastUuid ?? null),
     prepareModel: (model) => prepareModel(providerId, model, env),
     ...(pool === null ? {} : { mcp: { ready: pool.start(), statuses: () => pool.statuses(), close: () => pool.close() } }),
     ...(resumed === null ? {} : { history: resumed.messages }),
     ...(base.log === undefined ? {} : { log: base.log }),
   });
   return session;
+}
+
+function buildRecorder({ base, env, session }: SessionBuild, lastUuid: string | null): TranscriptWriter {
+  const { params } = base;
+  return new TranscriptWriter(
+    params.sessionId,
+    {
+      root: env.transcriptRoot,
+      cwd: params.cwd,
+      // El modelo de la linea `assistant` sigue al de la sesion si el usuario lo cambia en caliente.
+      model: () => session()?.currentModel ?? params.model,
+      mkdir: env.mkdir,
+      appendLine: env.appendLine,
+      now: env.now,
+      newId: env.newId,
+      ...(base.log === undefined ? {} : { log: base.log }),
+      onWriteFailure: (text) => session()?.notice(text),
+    },
+    lastUuid,
+  );
+}
+
+// El prompt de sistema de cada turno: la fecha cambia, las notas del proyecto se leen una vez aqui.
+function buildSystemPromptFn({ base, env }: SessionBuild, shell: ResolvedShell, tools: AccessFilteredTools): (toolsEnabled: boolean) => string {
+  const { cwd } = base.params;
+  const projectNotes = readProjectNotes(env, cwd);
+  return (toolsEnabled) =>
+    buildSystemPrompt({
+      cwd,
+      platform: env.platform,
+      shellName: shell.name,
+      nowIso: new Date(env.now()).toISOString(),
+      toolNames: toolsEnabled ? tools.names() : [],
+      textToolGuide: toolsEnabled ? null : textToolInstructions(tools.specs().map((spec) => spec.function)),
+      projectNotes,
+    });
 }
 
 // Reanudar: los mensajes de la transcripcion propia (P-032 R4). Sin fichero, la conversacion empieza
@@ -164,14 +177,9 @@ function resumeHistory(params: SessionBase['params'], env: RuntimeEnv, base: Ses
 
 // Los MCP comunes de la sesion (ya filtrados para la familia `local` por `loadSharedLaunch`). Al
 // conectar, sus herramientas entran en el registro y la sesion se vuelve a anunciar.
-function createPool(
-  servers: readonly ResolvedMcpServer[],
-  cwd: string,
-  env: RuntimeEnv,
-  base: SessionBase,
-  session: () => RuntimeSession | null,
-  registry: ToolRegistry,
-): McpPool | null {
+function createPool({ base, env, session }: SessionBuild, registry: ToolRegistry): McpPool | null {
+  const servers = base.params.shared?.mcpServers ?? [];
+  const { cwd } = base.params;
   if (servers.length === 0) return null;
   const pool: McpPool = new McpPool(servers, {
     connect: env.mcpConnector(cwd),

@@ -56,7 +56,7 @@ describe('ContextBudget', () => {
     expect(budget.estimate([user(400)])).toBe(104 * 3);
   });
 
-  it('usage_reportsWindowAsMax', () => {
+  it('usage_afterTurn_reportsWindowAsMax', () => {
     const usage = new ContextBudget(4_096, 'm').usage([{ role: 'system', content: text(400) }, user(400)]);
 
     expect(usage).toMatchObject({ totalTokens: 208, maxTokens: 4_096, percentage: 5 });

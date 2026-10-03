@@ -69,14 +69,22 @@ function myers(a: readonly string[], b: readonly string[]): Op[] {
         y++;
       }
       next[offset + k] = x;
-      if (x >= n && y >= m) return backtrack(trace, a, b, offset, d, k);
+      if (x >= n && y >= m) return backtrack({ trace, a, b, offset }, d, k);
     }
     v = next;
   }
   throw new Error(`Diff sin solucion (n=${n}, m=${m})`);
 }
 
-function backtrack(trace: readonly Int32Array[], a: readonly string[], b: readonly string[], offset: number, dEnd: number, kEnd: number): Op[] {
+// Lo que deja la busqueda hacia delante: las fronteras de cada `d` y las dos secuencias.
+interface DiffSearch {
+  readonly trace: readonly Int32Array[];
+  readonly a: readonly string[];
+  readonly b: readonly string[];
+  readonly offset: number;
+}
+
+function backtrack({ trace, a, b, offset }: DiffSearch, dEnd: number, kEnd: number): Op[] {
   const ops: Op[] = [];
   let x = a.length;
   let y = b.length;

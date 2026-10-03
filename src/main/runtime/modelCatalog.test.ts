@@ -109,7 +109,7 @@ describe('ModelCatalog.listModels', () => {
 });
 
 describe('serverRoot', () => {
-  it('root_stripsV1AndSlash', () => {
+  it('root_urlWithV1AndSlash_stripsBoth', () => {
     expect([serverRoot('http://h:1/v1'), serverRoot('http://h:1/v1/'), serverRoot('http://h:1')]).toEqual(['http://h:1', 'http://h:1', 'http://h:1']);
   });
 });

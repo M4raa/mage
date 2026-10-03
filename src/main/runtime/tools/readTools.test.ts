@@ -122,7 +122,7 @@ describe('Grep', () => {
     expect(out).toMatchObject({ isError: true, output: expect.stringContaining('"("') });
   });
 
-  it('run_skipsBinaryFiles', async () => {
+  it('run_binaryFile_skipped', async () => {
     writeFileSync(join(dir, 'b.bin'), Buffer.from('x\0x'));
 
     expect((await grep.run({ pattern: 'x' }, ctx())).output).toMatch(/Sin coincidencias/);
