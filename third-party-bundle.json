@@ -12,6 +12,7 @@
     "eventsource-parser",
     "fast-deep-equal",
     "fast-uri",
+    "fflate",
     "fs-extra",
     "graceful-fs",
     "has-flag",

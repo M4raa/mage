@@ -118,6 +118,29 @@ versión.
 - Si falla algo que acabas de pedir (cambiar de rama, borrar una conversación, abrir un enlace, mover una
   pestaña a otra ventana, guardar la configuración, instalar la actualización…), Mage lo dice en vez de
   no hacer nada.
+- **Modelos locales (runtime propio de Mage):**
+  - En **Auto**, el agente solo ejecuta sin preguntar comandos de una lista corta (leer ficheros, `git`
+    sin red, test y build del proyecto); todo lo demás pregunta. Antes se escapaban comandos que borraban
+    o leían fuera del proyecto (`rm -rf $HOME`, `$env:USERPROFILE`, `cd; …`). Al entrar en Auto, Mage
+    avisa de que no es un sandbox.
+  - Glob y Grep ya no leen fuera del proyecto sin preguntar (`../**`, rutas absolutas), y un enlace
+    simbólico o un junction dentro del proyecto ya no sirve para salir de él.
+  - «Permitir siempre» vale dentro del proyecto: lo que va fuera de él o a la red pregunta siempre, y su
+    tarjeta ya no ofrece recordarlo. En «Omitir permisos», un comando que borra o escribe fuera del
+    proyecto también pregunta.
+  - Un bloque de JSON en la respuesta del modelo (un `package.json` citado, un README con trampa) ya no
+    se ejecuta como si fuera una llamada a una herramienta.
+  - «Probar conexión» solo usa la clave guardada con la URL del proveedor guardado.
+  - Con solo un servidor local dado de alta (sin cuentas de Claude, Codex ni agy) ya se puede abrir una
+    conversación.
+  - Un servidor MCP que pide iniciar sesión ya no abre el navegador solo en cada pestaña: sale un aviso
+    con **Iniciar sesión**, uno por servidor para toda la app.
+  - `Write` ya no pisa un fichero que no ha leído antes o que ha cambiado desde que lo leyó.
+  - Una búsqueda con una expresión muy costosa ya no congela la app, un comando que deja procesos en
+    segundo plano ya no cuelga el turno y reabrir una conversación de un modelo sin herramientas nativas
+    la reconstruye bien.
+  - Si no se puede guardar la conversación en disco, Mage lo dice en el chat.
+- Los avisos de terceros listan solo los paquetes que viajan de verdad en la aplicación.
 
 ### Seguridad
 - Las claves de API de los proveedores se guardan cifradas con el almacén del sistema y la interfaz ya

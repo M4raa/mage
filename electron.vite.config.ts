@@ -27,7 +27,9 @@ export default defineConfig({
     // `require()` dinamico segun plataforma, y eso rollup no lo puede sacudir.
     // @modelcontextprotocol/sdk (P-032 R8, cliente MCP del runtime propio) por lo mismo: sin bundlear no
     // existiria en la app empaquetada. Solo entra lo que importa el cliente (stdio, HTTP, SSE y OAuth).
-    plugins: [externalizeDepsPlugin({ exclude: ['electron-updater', 'zod', '@modelcontextprotocol/sdk'] }), bundledPackagesPlugin('main', resolve('.'))],
+    // fflate (extensiones .mcpb, grupo C) por lo mismo: externalizado, el smoke empaquetado pasaba solo
+    // porque `release/` vive dentro del repo y Node lo encontraba subiendo hasta su `node_modules`.
+    plugins: [externalizeDepsPlugin({ exclude: ['electron-updater', 'zod', '@modelcontextprotocol/sdk', 'fflate'] }), bundledPackagesPlugin('main', resolve('.'))],
     resolve: { alias: sharedAlias },
   },
   preload: {
