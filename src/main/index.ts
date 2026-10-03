@@ -136,6 +136,7 @@ import { buildRuntimeSession, type RuntimeEnv } from './runtime/runtimeFactory';
 import { nodeRealpath } from './runtime/tools/pathGuard';
 import { ModelCatalog } from './runtime/modelCatalog';
 import { createMcpConnector } from './runtime/mcp/mcpSdk';
+import { McpLoginRegistry } from './runtime/mcp/mcpLogins';
 import { parseRuntimeProbeParams, probeRuntimeEndpoint } from './runtime/runtimeProbe';
 import type { AccountLayout, ProviderAdapter, SharedLaunchConfig } from './engine/providerAdapter';
 import {
@@ -540,7 +541,7 @@ function runtimeEnv(): RuntimeEnv {
     mcpConnector: (cwd) =>
       createMcpConnector({
         vault: { get: (id) => getSecretStore().get(id), set: (id, value) => getSecretStore().set(id, value) },
-        openUrl: openOAuthUrl,
+        logins: mcpLogins,
         baseEnv: () => scrubAgentEnv(process.env),
         cwd,
       }),
@@ -548,8 +549,11 @@ function runtimeEnv(): RuntimeEnv {
   };
 }
 
+// Logins OAuth pendientes de los MCP del runtime propio, uno por servidor para toda la app (D3 de P-033).
+const mcpLogins = new McpLoginRegistry({ openUrl: (url) => openOAuthUrl(url), newId: randomUUID });
+
 // La pagina de login de un servidor MCP remoto (OAuth del runtime propio) se abre en el navegador del
-// sistema, como hacen los CLI. Solo http(s): una URL de otro esquema no la abre Mage.
+// sistema cuando el usuario pulsa «Iniciar sesión». Solo http(s): una URL de otro esquema no la abre Mage.
 async function openOAuthUrl(url: string): Promise<void> {
   const protocol = new URL(url).protocol;
   if (protocol !== 'https:' && protocol !== 'http:') throw new Error(`URL de autorización con esquema no permitido: ${protocol}`);
@@ -2171,6 +2175,8 @@ function toggleWidgetFromTray(): void {
 function isFolderTrusted(cwd: string, accountDir: string): boolean {
   const own = getSettingsStore().load().trustedFolders;
   if (isTrusted(cwd, own)) return true;
+  // Una pestaña del runtime sin cuenta (A6): no hay config del CLI que leer, solo las confianzas de Mage.
+  if (accountDir.length === 0) return false;
   const fromCli = readCliTrustedFolders(accountDir, { exists: existsSync, readFile: (path) => readFileSync(path, 'utf8') });
   return isTrusted(cwd, fromCli);
 }
@@ -2361,6 +2367,11 @@ function registerIpcHandlers(): void {
       defaultProbeDeps(() => getCommandCatalogStore().loadModels(join(homedir(), cliLogin.accounts.mainDirName)), readCustomProviderApiKey),
     ),
   );
+  // «Iniciar sesión» del aviso de un MCP del runtime propio (D3 de P-033).
+  ipcMain.handle(IpcChannel.McpLoginOpen, (_e, loginId: unknown): Promise<void> => {
+    if (typeof loginId !== 'string' || loginId.length === 0) throw new Error(`Id de inicio de sesión MCP inválido: ${JSON.stringify(loginId)}`);
+    return mcpLogins.open(loginId);
+  });
   // «Probar conexión» del runtime propio (P-032 R7): la clave, si la hay, sale de la boveda aqui.
   ipcMain.handle(IpcChannel.RuntimeProbe, (_e, raw: unknown) =>
     probeRuntimeEndpoint(parseRuntimeProbeParams(raw), {

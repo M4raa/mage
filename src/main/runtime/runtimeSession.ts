@@ -1,5 +1,5 @@
 import type { ImageAttachment } from '@shared/ipc';
-import { RUNTIME_PERMISSION_MODES, type RuntimePermissionMode } from '@shared/providers';
+import { RUNTIME_AUTO_MODE_NOTE, RUNTIME_PERMISSION_MODES, type RuntimePermissionMode } from '@shared/providers';
 import type { ContextUsage, MageEvent, McpServerStatus, PermissionDecision, TurnUsage } from '@shared/events';
 import type { ManagedSession } from '../engine/sessionManager';
 import type { SessionLogFn } from '../engine/agentSession';
@@ -91,8 +91,7 @@ export interface PreparedModel {
 
 const CHAT_ONLY_NOTICE = 'Este modelo no admite herramientas: Mage solo puede conversar con él.';
 // D1 de P-033: Auto en el runtime es una lista blanca, no el sandbox de Codex. Se dice al entrar.
-export const AUTO_MODE_NOTICE =
-  'Auto no es un sandbox: edita dentro del proyecto y ejecuta sin preguntar solo comandos de una lista corta (lectura, git sin red, test y build). Esos comandos ejecutan código del proyecto; todo lo demás pregunta.';
+export const AUTO_MODE_NOTICE = RUNTIME_AUTO_MODE_NOTE;
 const TOOL_CALL_AS_TEXT = /<tool_call>|\[TOOL_REQUEST\]|^\s*```(?:json)?\s*\{\s*"(?:name|tool)"/m;
 // Sin herramientas nativas, las que se entienden las ejecuta el bucle (R9); con ellas, una llamada
 // escrita nunca se ejecuta (A1 de la revision). Esta sale con la que se quedo sin ejecutar.
@@ -200,9 +199,16 @@ export class RuntimeSession implements ManagedSession {
     if (this.started && !this.stopped) this.emitInit();
   }
 
-  // Aviso al hilo desde fuera del turno (p.ej. un servidor MCP que pide iniciar sesion).
+  // Aviso al hilo desde fuera del turno (p.ej. un servidor MCP que no conecta).
   notice(text: string): void {
     if (!this.stopped) this.deps.emit({ kind: 'notice', text });
+  }
+
+  // Un servidor MCP remoto pide iniciar sesion: linea en el hilo y, en el renderer, aviso con boton.
+  loginRequired(server: string, loginId: string): void {
+    if (this.stopped) return;
+    this.deps.emit({ kind: 'notice', text: `El servidor MCP ${server} pide iniciar sesión: pulsa «Iniciar sesión» en el aviso. Sus herramientas llegarán al terminar.` });
+    this.deps.emit({ kind: 'mcp_login_required', server, loginId });
   }
 
   private async drain(): Promise<void> {

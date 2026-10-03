@@ -7325,6 +7325,50 @@ const CHECKS = [
     },
   },
   {
+    // A6 de la revision de P-032: quien solo da de alta un servidor local (sin cuentas de Claude, Codex ni
+    // agy) puede conversar. Se simula el perfil sin cuentas vaciandolas EN EL STORE (el perfil aislado
+    // ve las del usuario), se pide «Nuevo chat» y se arranca la sesion del runtime. Sin Enter: no envia
+    // nada. Al terminar cierra la pestaña, borra el proveedor y vuelve a leer las cuentas.
+    name: 'Runtime propio: sin ninguna cuenta, «Nuevo chat» abre y arranca una pestaña del proveedor del usuario (A6)',
+    async run(page) {
+      const previo = await page.evaluate(() => window.__mageDev.store.getState().activeTabId);
+      const provider = { id: 'custom:vg-sin-cuenta', label: 'VG sin cuenta' };
+      try {
+        const medido = await page.evaluate(async ({ provider }) => {
+          const store = window.__mageDev.store;
+          await store.getState().saveCustomProvider({ id: provider.id, label: provider.label, baseUrl: 'http://127.0.0.1:9/v1', hasApiKey: false, models: [{ id: 'fake:eco', label: 'fake:eco' }] });
+          store.setState({ accounts: [], activeAccountId: '' });
+          const antes = store.getState().tabs.length;
+          await store.getState().createConversation('shared', { scratch: true });
+          const tab = store.getState().tabs.at(-1);
+          if (tab === undefined || store.getState().tabs.length === antes) return { abierta: false };
+          // Sin cuenta no hay confianzas del CLI: la carpeta temporal se pregunta. No se espera aqui (el
+          // dialogo se contesta fuera); el resultado queda en `__vgSinCuenta`.
+          window.__vgSinCuenta = null;
+          store
+            .getState()
+            .ensureSession(tab.id)
+            .then((sessionId) => (window.__vgSinCuenta = { sessionId, error: null }), (err) => (window.__vgSinCuenta = { sessionId: null, error: String(err?.message ?? err) }));
+          return { abierta: true, tabId: tab.id, provider: tab.provider, cuenta: tab.accountId, alias: tab.accountAlias };
+        }, { provider });
+        if (!medido.abierta) return { ok: false, detail: JSON.stringify(medido) };
+        const dialogo = page.locator(TRUST_DIALOG);
+        await dialogo.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        await dialogo.getByRole('button', { name: 'Confiar en esta carpeta', exact: true }).click();
+        await dialogo.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+        await page.waitForFunction(() => window.__vgSinCuenta !== null, null, { timeout: CONFIG.actionTimeoutMs });
+        const sesion = await page.evaluate(() => window.__vgSinCuenta);
+        await page.evaluate((id) => window.__mageDev.store.getState().closeTab(id), medido.tabId);
+        const ok = medido.provider === provider.id && medido.cuenta === '' && typeof sesion.sessionId === 'string' && sesion.error === null;
+        return { ok, detail: JSON.stringify({ ...medido, pidioConfianza: true, ...sesion }) };
+      } finally {
+        await page.evaluate((id) => window.__mageDev.store.getState().removeCustomProvider(id), provider.id);
+        await page.evaluate(() => window.__mageDev.store.getState().refreshAccounts());
+        if (previo !== '') await page.evaluate((id) => window.__mageDev.store.getState().setActiveTab(id), previo);
+      }
+    },
+  },
+  {
     // P-032 R3: una pestaña de un proveedor del usuario va por el RUNTIME PROPIO, que ofrece los cinco
     // modos de Mage (con su Auto a lo Codex) y los rota con Shift+Tab. Sin Enter: no envia nada (el unico
     // turno de la ejecucion es la ultima comprobacion). Abre su pestaña y la cierra, y borra su proveedor.

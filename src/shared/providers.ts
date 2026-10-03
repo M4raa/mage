@@ -76,6 +76,11 @@ export function isUnverifiedProvider(providerId: string): boolean {
 // que la UI tiene la obligacion de decirlo donde no se pueda pasar por alto.
 export const AUTO_APPROVED_PROVIDER_IDS: readonly string[] = [AGY_PROVIDER_ID];
 
+// Auto en el runtime propio (D1 de P-033, M5): una lista blanca, no el sandbox de Codex. Lo dicen el
+// aviso al entrar en el modo (main) y la nota del deslizador (renderer).
+export const RUNTIME_AUTO_MODE_NOTE =
+  'Auto no es un sandbox: edita dentro del proyecto y ejecuta sin preguntar solo comandos de una lista corta (lectura, git sin red, test y build). Esos comandos ejecutan código del proyecto; todo lo demás pregunta.';
+
 // Texto UNICO del aviso (no se duplica por componente: si cambia, cambia en todos a la vez).
 export const NO_PERMISSION_CONTROL_WARNING =
   'Sin control de permisos: el agente crea y modifica ficheros SIN preguntar dentro de la carpeta del ' +

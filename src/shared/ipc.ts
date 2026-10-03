@@ -105,6 +105,7 @@ export const IpcChannel = {
   // el disco/PATH y salir a la red.
   ProviderProbe: 'engine:providerProbe',
   RuntimeProbe: 'runtime:probe',
+  McpLoginOpen: 'runtime:mcpLoginOpen',
   // Clave de un proveedor del usuario: guardarla o borrarla en la boveda de main. No hay canal para
   // LEERLA: el renderer solo sabe si existe (`CustomProvider.hasApiKey`).
   ProviderApiKeySet: 'secrets:providerApiKeySet',
@@ -754,6 +755,8 @@ export interface MageApi {
   // PROVEEDOR: eso viaja en `error` para que la UI lo pueda decir en vez de inventarse una lista.
   probeProvider(params: ProviderProbeParams): Promise<ProviderProbeResult>;
   probeRuntime(params: RuntimeProbeParams): Promise<RuntimeProbeResult>;
+  // Abre en el navegador el login OAuth pendiente de un servidor MCP del runtime propio (D3 de P-033).
+  openMcpLogin(loginId: string): Promise<void>;
   // Guarda (cifrada, en main) o borra la api key de un proveedor del usuario. Rechaza si el cifrado del
   // sistema no esta disponible: nunca se guarda en claro.
   setProviderApiKey(params: ProviderApiKeySetParams): Promise<void>;

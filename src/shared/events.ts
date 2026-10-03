@@ -260,6 +260,9 @@ export type MageEvent =
   // Aviso del runtime propio de Mage (P-032) que va al hilo como linea de sistema: p.ej. «este modelo
   // no admite herramientas». Los CLI no lo emiten: sus avisos llegan por sus propios eventos.
   | { readonly kind: 'notice'; readonly text: string }
+  // Un servidor MCP remoto del runtime propio pide iniciar sesion (D3 de P-033): el renderer avisa con un
+  // boton que abre el login (`openMcpLogin(loginId)`). Mage no abre el navegador por su cuenta.
+  | { readonly kind: 'mcp_login_required'; readonly server: string; readonly loginId: string }
   | { readonly kind: 'result'; readonly result: ResultInfo }
   // `deniedCommand`: la linea EXACTA de un comando que agy denego (grupo E, fase 2), para ofrecer permitirlo
   // en la conversacion siguiente. Solo cuando el CLI la dice.

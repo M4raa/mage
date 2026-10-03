@@ -26,6 +26,8 @@ export type McpConnector = (server: ResolvedMcpServer, signal: AbortSignal) => P
 export class McpNeedsAuth extends Error {
   constructor(
     readonly server: string,
+    // El login pendiente (a nivel de app) que abre el boton «Iniciar sesión».
+    readonly loginId: string,
     readonly authorized: Promise<void>,
   ) {
     super(`El servidor MCP ${server} pide iniciar sesión`);
@@ -37,6 +39,8 @@ export interface McpPoolDeps {
   readonly connect: McpConnector;
   // Avisos para el hilo de la conversacion (un servidor que pide login, uno que falla).
   readonly notify: (text: string) => void;
+  // Un remoto pide iniciar sesion: la sesion lo dice con un aviso que lleva el boton (D3 de P-033).
+  readonly loginRequired: (server: string, loginId: string) => void;
   // Se llama cuando cambian las herramientas o el estado (para volver a anunciar `session_init`).
   readonly onChange: () => void;
   readonly connectTimeoutMs?: number;
@@ -105,10 +109,10 @@ export class McpPool {
     }
   }
 
-  // OAuth en segundo plano: el navegador ya esta abierto; al volver se reintenta la conexion.
+  // OAuth en segundo plano: el usuario abre el login desde el aviso; al volver se reintenta la conexion.
   private awaitAuth(server: ResolvedMcpServer, entry: Entry, pending: McpNeedsAuth): void {
     entry.status = 'needs-auth';
-    this.deps.notify(`El servidor MCP ${server.name} pide iniciar sesión: Mage ha abierto el navegador. Sus herramientas llegarán al terminar.`);
+    this.deps.loginRequired(server.name, pending.loginId);
     pending.authorized.then(
       () => (this.closed ? undefined : this.connectOne(server)),
       (err: unknown) => {

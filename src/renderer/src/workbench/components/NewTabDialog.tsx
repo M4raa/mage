@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Icon } from './Icon';
 import { AnimatePresence, motion } from 'motion/react';
 import { EFFORT_LEVELS } from '@shared/ipc';
-import { NO_PERMISSION_CONTROL_WARNING, UNVERIFIED_PROVIDER_NOTE, isAutoApprovedProvider, isUnverifiedProvider } from '@shared/providers';
+import { NO_PERMISSION_CONTROL_WARNING, UNVERIFIED_PROVIDER_NOTE, isAutoApprovedProvider, isUnverifiedProvider, runsOnMageRuntime } from '@shared/providers';
 import { API_BILLED_LABEL } from '../accountView';
 import { useWorkbenchStore } from '../workbenchStore';
 import { useDialogA11y } from '../a11y/useDialogA11y';
@@ -115,8 +115,10 @@ function DialogBody({
   // CLI no lo instala Mage, comprobar que existe. null = aun sin respuesta (no se bloquea por eso).
   const autoApproved = isAutoApprovedProvider(provider);
   const agyInstalled = useAgyInstalled(autoApproved);
+  // El runtime propio no usa la cuenta (A6): ni se enseña ni se exige.
+  const onRuntime = runsOnMageRuntime(provider);
   const canSubmit =
-    accountId.length > 0 && cwd.length > 0 && model.length > 0 && provider.length > 0 && !busy && agyInstalled !== false;
+    (onRuntime || accountId.length > 0) && cwd.length > 0 && model.length > 0 && provider.length > 0 && !busy && agyInstalled !== false;
 
   // Al cambiar de cuenta, adopta su modelo por defecto (el usuario aun puede cambiarlo despues).
   const onAccountChange = (id: string): void => {
@@ -207,31 +209,33 @@ function DialogBody({
       >
         <div id="newtab-title" className="text-[13px] font-bold text-mg-text">Nueva conversación</div>
 
-        <Field label="Cuenta base (configuración/historial)">
-          <select
-            value={accountId}
-            onChange={(e) => onAccountChange(e.target.value)}
-            className="w-full rounded-[7px] border border-mg-border-ctrl bg-mg-window p-[7px_9px] text-mg-body outline-none"
-          >
-            {accounts.map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.alias} {a.email !== null ? `· ${a.email}` : ''} {a.apiBilled ? `· ${API_BILLED_LABEL}` : ''} {a.loginStatus !== 'logged_in' ? '(sin login)' : ''}
-              </option>
-            ))}
-          </select>
-          {selectedAccount !== undefined && selectedAccount.loginStatus !== 'logged_in' && provider === 'claude' && (
-            <div className="flex items-center gap-[8px]">
-              <span className="text-[10.5px] text-mg-danger">Sin login válido; el envío fallará.</span>
-              <button
-                onClick={() => reloginExpired(selectedAccount.id)}
-                className="rounded-[6px] border border-mg-border-ctrl px-[8px] py-[3px] text-[10.5px] text-mg-body2 hover:bg-mg-hover"
-              >
-                Iniciar sesión
-              </button>
-            </div>
-          )}
-          <CliLoginPanel login={relogin} />
-        </Field>
+        {!onRuntime && (
+          <Field label="Cuenta base (configuración/historial)">
+            <select
+              value={accountId}
+              onChange={(e) => onAccountChange(e.target.value)}
+              className="w-full rounded-[7px] border border-mg-border-ctrl bg-mg-window p-[7px_9px] text-mg-body outline-none"
+            >
+              {accounts.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.alias} {a.email !== null ? `· ${a.email}` : ''} {a.apiBilled ? `· ${API_BILLED_LABEL}` : ''} {a.loginStatus !== 'logged_in' ? '(sin login)' : ''}
+                </option>
+              ))}
+            </select>
+            {selectedAccount !== undefined && selectedAccount.loginStatus !== 'logged_in' && provider === 'claude' && (
+              <div className="flex items-center gap-[8px]">
+                <span className="text-[10.5px] text-mg-danger">Sin login válido; el envío fallará.</span>
+                <button
+                  onClick={() => reloginExpired(selectedAccount.id)}
+                  className="rounded-[6px] border border-mg-border-ctrl px-[8px] py-[3px] text-[10.5px] text-mg-body2 hover:bg-mg-hover"
+                >
+                  Iniciar sesión
+                </button>
+              </div>
+            )}
+            <CliLoginPanel login={relogin} />
+          </Field>
+        )}
 
         <Field label="Proyecto (carpeta)">
           <div className="flex items-center gap-[8px]">

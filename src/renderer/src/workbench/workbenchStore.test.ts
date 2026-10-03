@@ -618,6 +618,32 @@ describe('pestaña nueva sin formulario', () => {
     expect(findLeafPath(state.splitLayout, state.activeTabId)).toEqual(['b']);
   });
 
+  // A6 de la revision de P-032: quien solo tiene un proveedor local (sin cuentas) puede conversar.
+  it('createConversation_sinCuentasConProveedorLocal_abrePestanaDelRuntimeSinCuenta', async () => {
+    const store = createWorkbenchStore(fakeMage({ getScratchDir: vi.fn().mockResolvedValue('C:\\tmp\\scratch'), saveWorkspace: vi.fn().mockResolvedValue(undefined) }));
+    const ollama = { id: 'custom:ollama', label: 'Ollama', baseUrl: 'http://127.0.0.1:11434/v1', hasApiKey: false, models: [{ id: 'qwen3', label: 'qwen3' }] };
+    store.setState((s) => ({ accounts: [], activeAccountId: '', settings: { ...s.settings, customProviders: [ollama] } }));
+
+    await store.getState().createConversation('shared');
+
+    expect(store.getState().tabs.at(-1)).toMatchObject({ accountId: '', accountAlias: 'Ollama', provider: 'custom:ollama', model: 'qwen3', cwd: 'C:\\tmp\\scratch' });
+  });
+
+  it('createConversation_sinCuentasNiProveedores_noAbreNada', async () => {
+    const store = createWorkbenchStore(fakeMage({ getScratchDir: vi.fn().mockResolvedValue('C:\\tmp\\scratch') }));
+    store.setState({ accounts: [], activeAccountId: '' });
+
+    await store.getState().createConversation('shared');
+
+    expect(store.getState().tabs).toHaveLength(0);
+  });
+
+  it('newTab_sinCuentaParaClaude_lanza', async () => {
+    const store = createWorkbenchStore(fakeMage());
+
+    await expect(store.getState().newTab({ accountId: '', cwd: 'C:\\p', model: 'sonnet', provider: 'claude' })).rejects.toThrow(/cuenta=""/);
+  });
+
   // P-028 16: «Nuevo chat» con el ajuste 'lastProject' nace en la carpeta del proyecto mas reciente.
   function historyItem(cwd: string, updatedAtMs: number): ConversationSummary {
     return { sessionId: `s-${updatedAtMs}`, configDir: 'C:\\Users\\u\\.claude', cwd, title: 't', privacy: 'shared', updatedAtMs, sizeBytes: 1, isScheduled: false };
@@ -904,6 +930,23 @@ describe('permisos en cola', () => {
 
 // P-026, 1.8: con «Permitir siempre aqui» concedido, la peticion se contesta sola y NO se avisa de un
 // «Permiso requerido» que el usuario ya dio. En las dos rutas: pestaña abierta y segundo plano.
+describe('login de MCP del runtime (D3 de P-033)', () => {
+  it('handleEvent_mcpLoginRequired_avisoConBotonQueAbreElLogin', async () => {
+    const openMcpLogin = vi.fn().mockResolvedValue(undefined);
+    const store = createWorkbenchStore(fakeMage({ openMcpLogin }));
+    const event = { kind: 'mcp_login_required', server: 'gh', loginId: 'l1' } as const;
+
+    store.getState().handleEvent('s-sin-pestana', event);
+    store.getState().handleEvent('s-otra', event);
+
+    const toasts = useNotificationStore.getState().toasts.filter((n) => n.source === 'mcp-login');
+    expect(toasts).toHaveLength(1);
+    expect(toasts[0]?.actions?.map((a) => a.label)).toEqual(['Iniciar sesión']);
+    await toasts[0]?.actions?.[0]?.run();
+    expect(openMcpLogin).toHaveBeenCalledWith('l1');
+  });
+});
+
 describe('permiso auto-permitido', () => {
   const REQUEST = (toolName: string) =>
     ({

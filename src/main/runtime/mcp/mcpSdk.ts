@@ -8,6 +8,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { OAuthClientInformationMixed, OAuthClientMetadata, OAuthTokens } from '@modelcontextprotocol/sdk/shared/auth.js';
 import { materializeSecrets, mcpOAuthTokenId, type ResolvedMcpServer, type ResolvedRemoteServer, type ResolvedStdioServer } from '../../config/mcpResolved';
+import type { McpLogins } from './mcpLogins';
 import { McpNeedsAuth, type McpClientLike, type McpConnector } from './mcpPool';
 
 // Conector real del runtime propio con el SDK oficial de MCP (ficha D10): stdio, streamable HTTP y SSE,
@@ -25,14 +26,17 @@ export interface McpVault {
 
 export interface McpSdkDeps {
   readonly vault: McpVault;
-  readonly openUrl: (url: string) => Promise<void>;
+  // Logins pendientes a nivel de app (D3 de P-033): el navegador lo abre el usuario desde el aviso.
+  readonly logins: McpLogins;
   // Entorno base de los servidores stdio, YA saneado con `scrubAgentEnv`.
   readonly baseEnv: () => Readonly<Record<string, string | undefined>>;
   readonly cwd: string;
 }
 
 export function createMcpConnector(deps: McpSdkDeps): McpConnector {
-  return (server, signal) => (server.transport === 'stdio' ? connectStdio(server, deps) : connectRemote(server, deps, signal));
+  // El login de un remoto es de la APP, no de la sesion: cerrar la pestaña no lo aborta (lo puede estar
+  // esperando otra). Por eso la señal de la sesion no le llega.
+  return (server) => (server.transport === 'stdio' ? connectStdio(server, deps) : connectRemote(server, deps));
 }
 
 async function connectStdio(server: ResolvedStdioServer, deps: McpSdkDeps): Promise<McpClientLike> {
@@ -50,9 +54,13 @@ async function connectStdio(server: ResolvedStdioServer, deps: McpSdkDeps): Prom
   return client as unknown as McpClientLike;
 }
 
-async function connectRemote(server: ResolvedRemoteServer, deps: McpSdkDeps, signal: AbortSignal): Promise<McpClientLike> {
-  const callback = await LoopbackCallback.listen(server.oauth.callbackPort);
-  const provider = new VaultOAuthProvider(server, callback, deps);
+async function connectRemote(server: ResolvedRemoteServer, deps: McpSdkDeps): Promise<McpClientLike> {
+  // Ya hay un login de este servidor esperando al usuario: esta sesion se une a el.
+  const pending = deps.logins.pendingFor(server.oauth.tokenStoreId);
+  if (pending !== null) throw new McpNeedsAuth(server.name, pending.id, pending.authorized);
+  const state = randomUUID();
+  const callback = await LoopbackCallback.listen(server.oauth.callbackPort, state);
+  const provider = new VaultOAuthProvider(server, callback, deps, state);
   const headers = Object.fromEntries(Object.entries(server.headers).map(([key, value]) => [key, materializeSecrets(value, server.secrets)]));
   const url = new URL(server.url);
   const options = { requestInit: { headers }, authProvider: provider };
@@ -67,12 +75,20 @@ async function connectRemote(server: ResolvedRemoteServer, deps: McpSdkDeps, sig
       callback.close();
       throw err;
     }
-    // El SDK ya pidio abrir el navegador (`redirectToAuthorization`): se espera al codigo en el callback.
-    const authorized = callback
-      .waitForCode(provider.expectedState, MCP_OAUTH_TIMEOUT_MS, signal)
-      .then((code) => transport.finishAuth(code))
-      .finally(() => callback.close());
-    throw new McpNeedsAuth(server.name, authorized);
+    const url = provider.authorizationUrl;
+    if (url === null) {
+      callback.close();
+      throw err;
+    }
+    // El SDK ha pedido la autorizacion y Mage la guarda; el codigo se espera cuando el usuario abra el login.
+    const login = deps.logins.register(server.oauth.tokenStoreId, url, () =>
+      callback
+        .waitForCode(MCP_OAUTH_TIMEOUT_MS)
+        .then((code) => transport.finishAuth(code))
+        .finally(() => callback.close()),
+    );
+    if (!login.created) callback.close();
+    throw new McpNeedsAuth(server.name, login.id, login.authorized);
   }
 }
 
@@ -80,12 +96,14 @@ async function connectRemote(server: ResolvedRemoteServer, deps: McpSdkDeps, sig
 // `clientId`/secreto que declare el comun) y los tokens, por servidor y destino (`mcpOAuthTokenId`).
 export class VaultOAuthProvider implements OAuthClientProvider {
   private verifier = '';
-  readonly expectedState = randomUUID();
+  // La URL de autorizacion que pidio el SDK. Mage NO la abre: la abre el usuario desde el aviso (M2).
+  authorizationUrl: string | null = null;
 
   constructor(
     private readonly server: ResolvedRemoteServer,
     private readonly callback: { readonly redirectUrl: string },
-    private readonly deps: Pick<McpSdkDeps, 'vault' | 'openUrl'>,
+    private readonly deps: Pick<McpSdkDeps, 'vault'>,
+    readonly expectedState: string = randomUUID(),
   ) {}
 
   get redirectUrl(): string {
@@ -129,8 +147,8 @@ export class VaultOAuthProvider implements OAuthClientProvider {
     this.deps.vault.set(this.tokenId(), JSON.stringify(tokens));
   }
 
-  async redirectToAuthorization(authorizationUrl: URL): Promise<void> {
-    await this.deps.openUrl(authorizationUrl.toString());
+  redirectToAuthorization(authorizationUrl: URL): void {
+    this.authorizationUrl = authorizationUrl.toString();
   }
 
   saveCodeVerifier(codeVerifier: string): void {
@@ -168,17 +186,25 @@ function readJson<T>(text: string | null): T | undefined {
 }
 
 // Servidor local del redirect de OAuth (RFC 8252: loopback por IP). Escucha en el puerto que declare el
-// servidor (`oauth.callbackPort`) o en uno libre.
+// servidor (`oauth.callbackPort`) o en uno libre. Solo cuenta el golpe con el `state` de ESTE login:
+// cualquier web puede pedir `http://127.0.0.1:<puerto>/callback`, y antes eso abortaba el login (M2).
 export class LoopbackCallback {
   private resolveCode: ((query: URLSearchParams) => void) | null = null;
   private readonly received: Promise<URLSearchParams>;
 
-  private constructor(private readonly server: Server) {
+  private constructor(
+    private readonly server: Server,
+    expectedState: string,
+  ) {
     this.received = new Promise((resolve) => (this.resolveCode = resolve));
     server.on('request', (req, res) => {
       const url = new URL(req.url ?? '/', 'http://127.0.0.1');
       if (url.pathname !== '/callback') {
         res.writeHead(404).end();
+        return;
+      }
+      if (url.searchParams.get('state') !== expectedState) {
+        res.writeHead(400, { 'content-type': 'text/plain; charset=utf-8' }).end('state no reconocido');
         return;
       }
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
@@ -187,11 +213,11 @@ export class LoopbackCallback {
     });
   }
 
-  static listen(port: number | null): Promise<LoopbackCallback> {
+  static listen(port: number | null, expectedState: string): Promise<LoopbackCallback> {
     const server = createServer();
     return new Promise((resolve, reject) => {
       server.once('error', reject);
-      server.listen(port ?? 0, '127.0.0.1', () => resolve(new LoopbackCallback(server)));
+      server.listen(port ?? 0, '127.0.0.1', () => resolve(new LoopbackCallback(server, expectedState)));
     });
   }
 
@@ -199,17 +225,15 @@ export class LoopbackCallback {
     return `http://127.0.0.1:${(this.server.address() as AddressInfo).port}/callback`;
   }
 
-  async waitForCode(expectedState: string, timeoutMs: number, signal: AbortSignal): Promise<string> {
+  async waitForCode(timeoutMs: number): Promise<string> {
     let timer: NodeJS.Timeout | null = null;
     const stop = new Promise<never>((_resolve, reject) => {
       timer = setTimeout(() => reject(new Error(`no se completó en ${Math.round(timeoutMs / 60_000)} min`)), timeoutMs);
-      signal.addEventListener('abort', () => reject(new Error('sesión cerrada')), { once: true });
     });
     try {
       const query = await Promise.race([this.received, stop]);
       const error = query.get('error');
       if (error !== null) throw new Error(`el servidor de autorización respondió ${error}`);
-      if (query.get('state') !== expectedState) throw new Error('el «state» del callback no coincide');
       const code = query.get('code');
       if (code === null || code.length === 0) throw new Error('el callback no trae código');
       return code;

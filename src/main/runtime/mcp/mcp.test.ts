@@ -2,6 +2,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ResolvedMcpServer, ResolvedRemoteServer } from '../../config/mcpResolved';
 import { McpNeedsAuth, McpPool, type McpClientLike } from './mcpPool';
+import { McpLoginRegistry } from './mcpLogins';
 import { createMcpConnector, LoopbackCallback, VaultOAuthProvider } from './mcpSdk';
 import { flattenResult, mcpToolName } from './mcpTools';
 
@@ -17,9 +18,9 @@ afterEach(async () => {
   pools.length = 0;
 });
 
-function pool(servers: readonly ResolvedMcpServer[], connect = createMcpConnector({ vault: { get: () => null, set: () => undefined }, openUrl: async () => undefined, baseEnv: () => ({ PATH: process.env.PATH }), cwd: process.cwd() })) {
+function pool(servers: readonly ResolvedMcpServer[], connect = createMcpConnector({ vault: { get: () => null, set: () => undefined }, logins: new McpLoginRegistry({ openUrl: async () => undefined, newId: () => 'l1' }), baseEnv: () => ({ PATH: process.env.PATH }), cwd: process.cwd() })) {
   const notices: string[] = [];
-  const created = new McpPool(servers, { connect, notify: (text) => notices.push(text), onChange: () => undefined, connectTimeoutMs: 10_000 });
+  const created = new McpPool(servers, { connect, notify: (text) => notices.push(text), loginRequired: () => undefined, onChange: () => undefined, connectTimeoutMs: 10_000 });
   pools.push(created);
   return { pool: created, notices };
 }
@@ -67,10 +68,11 @@ describe('McpPool (conector falso)', () => {
     const p = new McpPool([stdio('remoto')], {
       connect: async () => {
         attempts += 1;
-        if (attempts === 1) throw new McpNeedsAuth('remoto', authorized);
+        if (attempts === 1) throw new McpNeedsAuth('remoto', 'l1', authorized);
         return client();
       },
       notify: () => undefined,
+      loginRequired: () => undefined,
       onChange,
     });
     pools.push(p);
@@ -88,7 +90,7 @@ describe('McpPool (conector falso)', () => {
     const late = client();
     let resolveLate: (value: McpClientLike) => void = () => undefined;
     const connect = () => new Promise<McpClientLike>((resolve) => (resolveLate = resolve));
-    const created = new McpPool([stdio('lento')], { connect, notify: () => undefined, onChange: () => undefined, connectTimeoutMs: 10 });
+    const created = new McpPool([stdio('lento')], { connect, notify: () => undefined, loginRequired: () => undefined, onChange: () => undefined, connectTimeoutMs: 10 });
     pools.push(created);
 
     await created.start();
@@ -101,7 +103,7 @@ describe('McpPool (conector falso)', () => {
 
   it('close_closesClientsOnce', async () => {
     const c = client();
-    const p = new McpPool([stdio('uno')], { connect: async () => c, notify: () => undefined, onChange: () => undefined });
+    const p = new McpPool([stdio('uno')], { connect: async () => c, notify: () => undefined, loginRequired: () => undefined, onChange: () => undefined });
     await p.start();
 
     await p.close();
@@ -141,7 +143,7 @@ describe('OAuth del runtime', () => {
 
   it('provider_tokensAndClientInfo_liveInTheVault', () => {
     const vault = new Map<string, string>();
-    const provider = new VaultOAuthProvider(remote, { redirectUrl: 'http://127.0.0.1:1/callback' }, { vault: { get: (id) => vault.get(id) ?? null, set: (id, v) => void vault.set(id, v) }, openUrl: async () => undefined });
+    const provider = new VaultOAuthProvider(remote, { redirectUrl: 'http://127.0.0.1:1/callback' }, { vault: { get: (id) => vault.get(id) ?? null, set: (id, v) => void vault.set(id, v) } });
 
     provider.saveTokens({ access_token: 'at', token_type: 'bearer' });
     provider.saveClientInformation({ client_id: 'dyn' });
@@ -153,14 +155,14 @@ describe('OAuth del runtime', () => {
   });
 
   it('provider_brokenJsonInVault_meansNoTokens', () => {
-    const provider = new VaultOAuthProvider(remote, { redirectUrl: 'x' }, { vault: { get: () => '{roto', set: () => undefined }, openUrl: async () => undefined });
+    const provider = new VaultOAuthProvider(remote, { redirectUrl: 'x' }, { vault: { get: () => '{roto', set: () => undefined } });
 
     expect(provider.tokens()).toBeUndefined();
   });
 
   it('callback_rightState_returnsCode', async () => {
-    const callback = await LoopbackCallback.listen(null);
-    const code = callback.waitForCode('estado-1', 5_000, new AbortController().signal);
+    const callback = await LoopbackCallback.listen(null, 'estado-1');
+    const code = callback.waitForCode(5_000);
 
     await fetch(`${callback.redirectUrl}?code=abc&state=estado-1`);
 
@@ -168,13 +170,68 @@ describe('OAuth del runtime', () => {
     callback.close();
   });
 
-  it('callback_wrongState_rejects', async () => {
-    const callback = await LoopbackCallback.listen(null);
-    const outcome = callback.waitForCode('estado-1', 5_000, new AbortController().signal).catch((err: unknown) => err);
+  it('callback_wrongStateFirst_ignoredAndKeepsWaiting', async () => {
+    // M2: cualquier web puede pedir el callback; un golpe con otro `state` ya no aborta el login.
+    const callback = await LoopbackCallback.listen(null, 'estado-1');
+    const code = callback.waitForCode(5_000);
 
-    await fetch(`${callback.redirectUrl}?code=abc&state=otro`);
+    const forged = await fetch(`${callback.redirectUrl}?code=malo&state=otro`);
+    await fetch(`${callback.redirectUrl}?code=bueno&state=estado-1`);
 
-    expect(String(await outcome)).toMatch(/state/);
+    expect(forged.status).toBe(400);
+    await expect(code).resolves.toBe('bueno');
     callback.close();
+  });
+
+  it('provider_redirect_doesNotOpenBrowserButKeepsUrl', () => {
+    const provider = new VaultOAuthProvider(remote, { redirectUrl: 'x' }, { vault: { get: () => null, set: () => undefined } });
+
+    provider.redirectToAuthorization(new URL('https://auth.example/authorize?x=1'));
+
+    expect(provider.authorizationUrl).toBe('https://auth.example/authorize?x=1');
+  });
+});
+
+describe('McpLoginRegistry (D3)', () => {
+  it('register_sameServerTwice_joinsTheFirst', () => {
+    const registry = new McpLoginRegistry({ openUrl: async () => undefined, newId: () => 'l1' });
+
+    const first = registry.register('gh', 'https://a', async () => undefined);
+    const second = registry.register('gh', 'https://b', async () => undefined);
+
+    expect(first.created).toBe(true);
+    expect(second).toMatchObject({ id: 'l1', created: false });
+    expect(registry.pendingFor('gh')?.id).toBe('l1');
+  });
+
+  it('open_startsWaitingOnceOpensUrlAndForgetsWhenDone', async () => {
+    const opened: string[] = [];
+    let finish: () => void = () => undefined;
+    const complete = vi.fn(() => new Promise<void>((resolve) => (finish = resolve)));
+    const registry = new McpLoginRegistry({ openUrl: async (url) => void opened.push(url), newId: () => 'l1' });
+    const login = registry.register('gh', 'https://auth', complete);
+
+    await registry.open('l1');
+    await registry.open('l1');
+    finish();
+    await login.authorized;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(complete).toHaveBeenCalledTimes(1);
+    expect(opened).toEqual(['https://auth', 'https://auth']);
+    expect(registry.pendingFor('gh')).toBeNull();
+  });
+
+  it('register_beforeOpen_neverOpensBrowser', () => {
+    const openUrl = vi.fn(async () => undefined);
+    const registry = new McpLoginRegistry({ openUrl, newId: () => 'l1' });
+
+    registry.register('gh', 'https://auth', async () => undefined);
+
+    expect(openUrl).not.toHaveBeenCalled();
+  });
+
+  it('open_unknownId_throwsWithId', async () => {
+    await expect(new McpLoginRegistry({ openUrl: async () => undefined, newId: () => 'x' }).open('nada')).rejects.toThrow(/nada/);
   });
 });

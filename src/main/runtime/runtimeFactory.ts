@@ -176,6 +176,7 @@ function createPool(
   const pool: McpPool = new McpPool(servers, {
     connect: env.mcpConnector(cwd),
     notify: (text) => session()?.notice(text),
+    loginRequired: (server, loginId) => session()?.loginRequired(server, loginId),
     onChange: () => {
       const skipped = registry.add(pool.tools());
       if (skipped.length > 0) base.log?.('info', 'Herramientas MCP ya registradas (se omiten)', { skipped });

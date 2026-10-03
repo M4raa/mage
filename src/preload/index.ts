@@ -89,6 +89,7 @@ const api: MageApi = {
   isAgyInstalled: () => ipcRenderer.invoke(IpcChannel.AgyInstalled),
   probeProvider: (params: ProviderProbeParams) => ipcRenderer.invoke(IpcChannel.ProviderProbe, params),
   probeRuntime: (params: RuntimeProbeParams) => ipcRenderer.invoke(IpcChannel.RuntimeProbe, params),
+  openMcpLogin: (loginId: string) => ipcRenderer.invoke(IpcChannel.McpLoginOpen, loginId),
   setProviderApiKey: (params: ProviderApiKeySetParams) => ipcRenderer.invoke(IpcChannel.ProviderApiKeySet, params),
   deleteProviderApiKey: (providerId: string) => ipcRenderer.invoke(IpcChannel.ProviderApiKeyDelete, providerId),
   revealFile: (path: string) => ipcRenderer.invoke(IpcChannel.FileReveal, path),

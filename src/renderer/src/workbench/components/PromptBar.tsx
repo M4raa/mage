@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { isPermissionMode } from '@shared/ipc';
 import type { EditorInfo } from '@shared/ipc';
-import { CODEX_PROVIDER_ID, NO_PERMISSION_CONTROL_WARNING, UNVERIFIED_PROVIDER_NOTE, isAutoApprovedProvider, isUnverifiedProvider, runsOnMageRuntime } from '@shared/providers';
+import { CODEX_PROVIDER_ID, NO_PERMISSION_CONTROL_WARNING, RUNTIME_AUTO_MODE_NOTE, UNVERIFIED_PROVIDER_NOTE, isAutoApprovedProvider, isUnverifiedProvider, runsOnMageRuntime } from '@shared/providers';
 import { useWorkbenchStore } from '../workbenchStore';
 import { displayModelId, modelOptionsForProvider } from '../models';
 import { describeAttachment, insertImageTokens, reconcileImageTokens, removeImageToken } from '@shared/imageRefs';
@@ -698,6 +698,7 @@ export function PromptBar(): React.JSX.Element {
               heading={`Modo ${permissionModeLabel(permissionMode)}`}
               endLabels={['Más control', 'Más autonomía']}
               tip={PERMISSION_MODE_TIP}
+              {...(isRuntime && permissionMode === 'auto' ? { note: RUNTIME_AUTO_MODE_NOTE } : {})}
               triggerClassName={permissionChipSkin(permissionMode)}
               leading={isPermissionMode(permissionMode) ? <Icon name={PERMISSION_MODE_ICON[permissionMode]} size={11} /> : undefined}
             />

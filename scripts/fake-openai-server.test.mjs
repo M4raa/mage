@@ -57,7 +57,7 @@ function envFor(baseUrl, overrides = {}) {
     mkdir: (path) => mkdirSync(path, { recursive: true }),
     readText: (path) => (existsSync(path) ? readFileSync(path, 'utf8') : null),
     catalog: new ModelCatalog({ fetch: globalThis.fetch, now: Date.now }),
-    mcpConnector: (cwd) => createMcpConnector({ vault: { get: () => null, set: () => undefined }, openUrl: async () => undefined, baseEnv: () => ({ PATH: process.env.PATH }), cwd }),
+    mcpConnector: (cwd) => createMcpConnector({ vault: { get: () => null, set: () => undefined }, logins: { pendingFor: () => null, register: () => { throw new Error('sin OAuth en este test'); } }, baseEnv: () => ({ PATH: process.env.PATH }), cwd }),
     toolAccess: () => [],
     ...overrides,
   };

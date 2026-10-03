@@ -103,7 +103,7 @@ import type {
 import { clampUiScale, DEFAULT_APP_SETTINGS, DEFAULT_PERMISSION_MODES, ONBOARDING_VERSION, RUNTIME_SHELLS, type RuntimeShell } from '@shared/settings';
 import type { ToolAccessRule } from '@shared/toolAccess';
 import { setAgyCommandVerdict, type AgyCommandVerdict } from '@shared/agyRules';
-import { AGY_PROVIDER_ID, CODEX_PROVIDER_ID, writesClaudeTranscript, type CustomProvider, type ProviderModel } from '@shared/providers';
+import { AGY_PROVIDER_ID, CODEX_PROVIDER_ID, runsOnMageRuntime, writesClaudeTranscript, type CustomProvider, type ProviderModel } from '@shared/providers';
 import { applyBackgroundOpacity, applyThemeFromSettings, findActiveImportedTheme, resolveTheme, systemPrefersDark } from './theme';
 import { toWidgetSnapshot } from './widgetView';
 import { deriveTitleFromPrompt, isPlaceholderTitle, isSlashCommandText, NEW_CONVERSATION_TITLE, renamedTitleFrom } from './conversationTitle';
@@ -1725,10 +1725,13 @@ export function createWorkbenchStore(mage: MageClient) {
     // Abre una pestana real ligada a {cuenta, proyecto, modelo}. La sesion del motor se crea perezosa
     // al primer mensaje (ensureSession) para no lanzar procesos hasta que se use.
     newTab: async ({ accountId, cwd, model, provider, title, effort, maxBudgetUsdCents, privacy, permissionMode }) => {
-      if (accountId.length === 0 || cwd.length === 0 || model.length === 0 || provider.length === 0) {
+      // El runtime propio no necesita cuenta (A6 de la revision de P-032): una pestaña de Ollama abre
+      // aunque no haya ninguna cuenta de Claude, Codex ni agy.
+      const accountRequired = !runsOnMageRuntime(provider);
+      if ((accountRequired && accountId.length === 0) || cwd.length === 0 || model.length === 0 || provider.length === 0) {
         throw new Error(`Parametros de pestana invalidos: cuenta="${accountId}" cwd="${cwd}" modelo="${model}" proveedor="${provider}"`);
       }
-      const alias = get().accounts.find((a) => a.id === accountId)?.alias ?? accountId;
+      const alias = get().accounts.find((a) => a.id === accountId)?.alias ?? (accountId || providerLabel(provider, get().settings.customProviders));
       // TODAS las rutas que crean pestañas pasan por aqui (nueva conversacion, dialogo, clon): el modo por
       // defecto de Ajustes (P-028 6) se aplica en un solo sitio. Solo Claude tiene modos de permiso.
       const initialMode = permissionMode ?? (provider === 'claude' ? get().settings.defaultPermissionMode : '');
@@ -1765,9 +1768,13 @@ export function createWorkbenchStore(mage: MageClient) {
     // (el primer prompt lo fija). `privacy` viene de la seccion del sidebar (compartida/privada).
     createConversation: async (privacy, folder = {}) => {
       const accountId = get().activeAccountId;
-      if (accountId.length === 0) return;
       const account = get().accounts.find((a) => a.id === accountId);
-      if (account === undefined) return;
+      if (account === undefined) {
+        // Sin ninguna cuenta: si hay un proveedor del usuario, la conversacion es suya (A6).
+        const fallback = runtimeTabWithoutAccount(get().settings, privacy);
+        if (fallback !== null) await get().newTab({ ...fallback, cwd: await resolveNewConversationCwd(mage, get(), folder) });
+        return;
+      }
       const cwd = await resolveNewConversationCwd(mage, get(), folder);
       // Una cuenta de otro CLI (Codex, agy por clave) abre conversaciones de SU proveedor (grupo E).
       if (account.providerId === CODEX_PROVIDER_ID || account.providerId === AGY_PROVIDER_ID) {
@@ -2682,6 +2689,12 @@ export function createWorkbenchStore(mage: MageClient) {
 
     // Enruta un evento del motor a la pestana correspondiente y aplica el reducer puro.
     handleEvent: (sessionId, event) => {
+      // Un MCP del runtime pide login (D3 de P-033): aviso con boton, uno por login aunque lo pidan
+      // varias pestañas (el login es de la app). Vale igual con la pestaña cerrada.
+      if (event.kind === 'mcp_login_required') {
+        notifyMcpLogin(mage, event.server, event.loginId);
+        return;
+      }
       const tabId = tabIdForSession(get(), sessionId);
       // Sin pestaña: o es una sesion en SEGUNDO PLANO (se cerro con trabajo en vuelo y sigue viva) o
       // es un evento rezagado de una sesion ya parada, que se ignora como hasta ahora.
@@ -3314,6 +3327,33 @@ function newTabForProviderAccount(
     privacy,
     ...(effort.length === 0 ? {} : { effort }),
   };
+}
+
+export function notifyMcpLogin(mage: Pick<MageClient, 'openMcpLogin'>, server: string, loginId: string): void {
+  notify({
+    level: 'warning',
+    title: `El servidor MCP ${server} pide iniciar sesión`,
+    body: 'Sus herramientas llegarán cuando termines en el navegador.',
+    actions: [{ label: 'Iniciar sesión', run: () => mage.openMcpLogin(loginId) }],
+    timeoutMs: null,
+    dedupeKey: `mcp-login:${loginId}`,
+    source: 'mcp-login',
+  });
+}
+
+// Pestaña del runtime propio cuando no hay ninguna cuenta: el proveedor por defecto si es del usuario y,
+// si no, el primero que haya dado de alta. null = no hay ninguno (no se puede abrir nada).
+function runtimeTabWithoutAccount(settings: AppSettings, privacy: ConversationPrivacy): Omit<Parameters<WorkbenchState['newTab']>[0], 'cwd'> | null {
+  const byDefault = settings.customProviders.find((p) => p.id === settings.defaultProvider);
+  const provider = byDefault ?? settings.customProviders[0];
+  if (provider === undefined) return null;
+  const model = defaultModelForProvider(settings.defaultModelByProvider, provider.id) || (providerFallbackModel(provider.id, settings.customProviders) ?? '');
+  if (model.length === 0) return null;
+  return { accountId: '', model, provider: provider.id, title: NEW_CONVERSATION_TITLE, privacy };
+}
+
+function providerLabel(provider: string, customProviders: readonly CustomProvider[]): string {
+  return customProviders.find((p) => p.id === provider)?.label ?? provider;
 }
 
 // Titulo de pestana: ultimo segmento no vacio del cwd (cross-platform: separa por / y \).
