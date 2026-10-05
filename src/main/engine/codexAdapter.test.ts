@@ -35,6 +35,14 @@ function answer(adapter: CodexAdapter, requests: readonly Rpc[], method: string,
 const notification = (method: string, params: Record<string, unknown>): unknown => ({ jsonrpc: '2.0', method, params });
 
 describe('CodexAdapter: arranque (codex app-server, sin verificar)', () => {
+  it('buildSpawnPlan_perfilesDePermiso_habilitaApiExperimentalAntesDeAbrirHilo', () => {
+    const adapter = codex();
+    adapter.buildSpawnPlan({ ...launch, permissionMode: ':read-only' });
+    expect(adapter.takeOutgoing()).toEqual([expect.objectContaining({
+      method: 'initialize', params: expect.objectContaining({ capabilities: { experimentalApi: true } }),
+    })]);
+  });
+
   it('buildSpawnPlan_suscripcionPorDefecto_appServerSinCodexHomeNiClaves', () => {
     const previous = process.env.OPENAI_API_KEY;
     process.env.OPENAI_API_KEY = 'sk-del-usuario';
@@ -126,6 +134,27 @@ describe('CodexAdapter: arranque (codex app-server, sin verificar)', () => {
 });
 
 describe('CodexAdapter: turno', () => {
+  it('encodeUserMessage_esfuerzoBajoLoEnviaEnTurnStart', () => {
+    const adapter = codex();
+    const requests = handshake(adapter, { ...launch, effort: 'low' });
+    answer(adapter, requests, 'thread/start', fixture('thread-start'));
+
+    adapter.encodeUserMessage('hola');
+
+    expect((adapter.takeOutgoing() as Rpc[])[0]?.params?.effort).toBe('low');
+    expect(requests.find((r) => r.method === 'thread/start')?.params?.effort).toBeUndefined();
+  });
+
+  it.each([undefined, ''])('encodeUserMessage_sinEsfuerzoConservaElDelCli_%s', (effort) => {
+    const adapter = codex();
+    const requests = handshake(adapter, { ...launch, effort });
+    answer(adapter, requests, 'thread/start', fixture('thread-start'));
+
+    adapter.encodeUserMessage('hola');
+
+    expect((adapter.takeOutgoing() as Rpc[])[0]?.params).not.toHaveProperty('effort');
+  });
+
   // Secuencia medida de un turno sin credencial: errores con willRetry (no se pintan) y el turno
   // interrumpido termina con su `result`.
   it('normalize_turnoMedidoInterrumpido_soloElResultInterrupted', () => {
@@ -180,6 +209,23 @@ describe('CodexAdapter: turno', () => {
     expect(events[1]).toMatchObject({ kind: 'result', result: { isError: true, subtype: 'failed' } });
   });
 
+  it('normalize_mcpMedido0160_conservaContenidoTextualDelResultado', () => {
+    const raw = notification('item/completed', { threadId: 't', turnId: 'u', item: fixture('real-mcp-0160') });
+    expect(codex().normalize(raw)).toMatchObject([{ kind: 'tool_result', result: {
+      toolUseId: 'mcp-measured', isError: false, output: 'MAGE_MCP_ENV_OK',
+    } }]);
+  });
+
+  it('normalize_mcpFallido_muestraErrorYOmiteContenidoBinario', () => {
+    expect(codex().normalize(notification('item/completed', { item: {
+      type: 'mcpToolCall', id: 'm', server: 's', tool: 't', status: 'failed', result: null, error: { message: 'rechazado' },
+    } }))).toMatchObject([{ result: { isError: true, output: 'rechazado' } }]);
+    expect(codex().normalize(notification('item/completed', { item: {
+      type: 'mcpToolCall', id: 'm', server: 's', tool: 't', status: 'completed',
+      result: { content: [{ type: 'image', data: 'binario' }, { type: 'text', text: 'uno' }, null, { type: 'text', text: 'dos' }] },
+    } }))).toMatchObject([{ result: { output: 'uno\ndos' } }]);
+  });
+
   it('normalize_errorDefinitivoConLaClaveDentro_laOculta', () => {
     const adapter = new CodexAdapter({ resolveBinary: () => 'codex', resolveAccount: () => ({ home: 'h', apiKey: 'sk-mage-spike-falsa' }) });
     adapter.buildSpawnPlan(launch);
@@ -205,6 +251,17 @@ describe('CodexAdapter: turno', () => {
 });
 
 describe('CodexAdapter: aprobaciones (forma del esquema)', () => {
+  it('normalize_aprobacionDeEdicionMedida_incluyeDiffDelItemPendiente', () => {
+    const adapter = codex();
+    const changes = fixture('real-file-change-0160').changes;
+    adapter.normalize(notification('item/started', { item: { type: 'fileChange', id: 'edit-1', status: 'inProgress', changes } }));
+    const approval = { id: 9, method: 'item/fileChange/requestApproval', params: { itemId: 'edit-1', threadId: 't', turnId: 'u', grantRoot: null } };
+    expect(adapter.normalize(approval)).toMatchObject([{ request: { input: { changes } } }]);
+    adapter.normalize(notification('item/completed', { item: { type: 'fileChange', id: 'edit-1', status: 'completed', changes } }));
+    expect(adapter.normalize({ ...approval, id: 10 })).toMatchObject([{ request: { input: { grantRoot: null } } }]);
+    expect(JSON.stringify(adapter.normalize({ ...approval, id: 11 }))).not.toContain('MAGE_EDIT_OK');
+  });
+
   it('normalize_peticionDeAprobacionDeComando_permissionRequestYRespuestaAccept', () => {
     const adapter = codex();
     const events = adapter.normalize({

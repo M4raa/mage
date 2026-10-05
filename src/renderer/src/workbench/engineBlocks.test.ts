@@ -197,6 +197,25 @@ describe('applyToolResult', () => {
 });
 
 describe('mapPermissionToView', () => {
+  it('mapPermissionToView_codexAltaMedida_muestraRutaYContenidoSinInventarLineas', () => {
+    const view = mapPermissionToView(permission({ toolName: 'apply_patch', input: {
+      changes: [{ path: 'mage-edit.txt', kind: { type: 'add' }, diff: 'MAGE_EDIT_OK\n' }],
+    } }));
+    expect(view.target).toBe('apply_patch mage-edit.txt');
+    expect(view.summary).toBe('+1 −0');
+    expect(view.diff).toContainEqual({ sign: '+', text: 'MAGE_EDIT_OK', oldLine: null, newLine: null });
+  });
+
+  it('mapPermissionToView_codexDiffVariasRutas_conservaBorradosYAdiciones', () => {
+    const view = mapPermissionToView(permission({ toolName: 'apply_patch', input: { changes: [
+      { path: 'a', kind: { type: 'update' }, diff: '--- a\n+++ a\n@@ -1 +1 @@\n-antes\n+despues\n' },
+      { path: 'b', kind: { type: 'delete' }, diff: 'borrado\n' },
+    ] } }));
+    expect(view.target).toBe('apply_patch a, b');
+    expect(view.summary).toBe('+1 −2');
+    expect(view.diff.map((line) => line.text)).toEqual(['a', '@@ -1 +1 @@', 'antes', 'despues', 'b', 'borrado']);
+    expect(mapPermissionToView(permission({ toolName: 'apply_patch', input: { changes: [null] } })).diff).toEqual([]);
+  });
   it('mapPermissionToView_outsideProject_notRememberableAndSummaryIsReason', () => {
     const view = mapPermissionToView({ ...permission({ toolName: 'Read', input: { file_path: '/etc/hosts' } }), description: 'Fuera del proyecto: /etc/hosts', outsideProject: true });
 

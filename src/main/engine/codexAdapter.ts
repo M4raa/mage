@@ -19,11 +19,9 @@ import {
 // mensaje, proceso PERSISTENTE. Es el unico CLI que pide permiso por protocolo como Claude: las
 // peticiones `item/*/requestApproval` pasan por los dialogos de Mage (decision nº 2).
 //
-// SIN VERIFICAR con cuenta (respuesta 30 del usuario): escrito desde el esquema de
-// `codex app-server generate-json-schema` y lo medido SIN cuenta contra codex-cli 0.144.4 el 2026-10-01
-// (`spike/codex-spike.mjs --app-server`): handshake, `model/list` sin cuenta, `thread/start`, un turno
-// que falla con 401 y `turn/interrupt` -> `turn/completed` `interrupted`. Lo que pase con un modelo que
-// responde de verdad (deltas, items, aprobaciones, uso) sale del esquema.
+// Medido con cuenta ChatGPT contra codex-cli 0.160.0 (spike/codex-spike.mjs --verify --real):
+// deltas, items, uso, aprobaciones de comando/edicion, corte y resume tras reiniciar. El handshake
+// habilita experimentalApi porque los perfiles de permisos lo exigen en esta version.
 //
 // Ciclo: al lanzar se encola `initialize`; con su respuesta, `initialized` + `thread/start` (o
 // `thread/resume` en un relanzado) + el catalogo y los limites. Los mensajes del usuario que lleguen
@@ -88,6 +86,7 @@ export class CodexAdapter implements ProviderAdapter {
   private nextId = 0;
   private readonly own = new Map<number, OwnRequest>();
   private readonly approvals = new Map<string, PendingApproval>();
+  private readonly fileChanges = new Map<string, readonly unknown[]>();
   private threadId: string | null = null;
   private turnId: string | null = null;
   private turnUsage: TurnUsage | null = null;
@@ -117,7 +116,8 @@ export class CodexAdapter implements ProviderAdapter {
       ...(account === null ? {} : { CODEX_HOME: account.home }),
       ...(this.apiKey === null ? {} : { [CODEX_API_KEY_ENV]: this.apiKey }),
     };
-    this.request('initialize', { clientInfo: CLIENT_INFO }, 'initialize');
+    // 0.160.0 rechaza thread/start.permissions sin esta capacidad: perfiles y MCP son experimentales.
+    this.request('initialize', { clientInfo: CLIENT_INFO, capabilities: { experimentalApi: true } }, 'initialize');
     return { command: (this.deps.resolveBinary ?? resolveCodexBinary)(), args, env };
   }
 
@@ -128,6 +128,7 @@ export class CodexAdapter implements ProviderAdapter {
     this.outgoing = [];
     this.own.clear();
     this.approvals.clear();
+    this.fileChanges.clear();
     this.threadId = null;
     this.turnId = null;
     this.turnUsage = null;
@@ -187,6 +188,7 @@ export class CodexAdapter implements ProviderAdapter {
     if (hasId && typeof raw.method === 'string') return this.onServerRequest(raw.id, raw.method, raw.params);
     if (hasId) return this.onResponse(raw);
     if (typeof raw.method !== 'string') return [];
+    this.trackFileChanges(raw.method, raw.params);
     if (raw.method === 'thread/tokenUsage/updated') this.turnUsage = turnUsageOf(raw.params) ?? this.turnUsage;
     if (raw.method === 'serverRequest/resolved') return this.onResolved(raw.params);
     const events = normalizeNotification(raw.method, raw.params, this.turnUsage);
@@ -197,6 +199,16 @@ export class CodexAdapter implements ProviderAdapter {
   private closeTurn(): void {
     this.turnId = null;
     this.turnUsage = null;
+    this.fileChanges.clear();
+  }
+
+  // 0.160.0 manda el diff en item/started; requestApproval solo lleva el itemId.
+  private trackFileChanges(method: string, params: unknown): void {
+    if (!isRecord(params) || !isRecord(params.item) || typeof params.item.id !== 'string') return;
+    const item = params.item;
+    if (method === 'item/completed') this.fileChanges.delete(params.item.id);
+    if (method !== 'item/started' || item.type !== 'fileChange' || !Array.isArray(item.changes)) return;
+    this.fileChanges.set(params.item.id, item.changes);
   }
 
   // --- Respuestas a lo que pidio Mage -------------------------------------------------------------
@@ -259,7 +271,9 @@ export class CodexAdapter implements ProviderAdapter {
 
   private onServerRequest(rawId: unknown, method: string, params: unknown): MageEvent[] {
     const requestId = `codex-${String(rawId)}`;
-    const request = approvalRequest(requestId, method, params);
+    const changes = isRecord(params) && typeof params.itemId === 'string' ? this.fileChanges.get(params.itemId) : undefined;
+    const enriched = changes !== undefined && isRecord(params) ? { ...params, changes } : params;
+    const request = approvalRequest(requestId, method, enriched);
     if (request === null) {
       // Una peticion que Mage no implementa se contesta con error: sin respuesta, codex esperaria.
       this.outgoing.push({ jsonrpc: '2.0', id: rawId, error: { code: JSONRPC_METHOD_NOT_FOUND, message: `Mage no implementa ${method}` } });
@@ -281,7 +295,14 @@ export class CodexAdapter implements ProviderAdapter {
 
   private startTurn(input: readonly unknown[]): void {
     if (this.threadId === null) throw new Error('turn/start sin hilo de codex');
-    this.request('turn/start', { threadId: this.threadId, input, model: this.model, ...this.permissionsField() }, 'turn');
+    // Medido con codex-cli 0.160.0 y Responses local: omitir esfuerzo manda medium; `effort: low`
+    // en turn/start llega como reasoning.effort=low. Thread/start no acepta este campo.
+    const effort = this.requireParams().effort;
+    this.request('turn/start', {
+      threadId: this.threadId, input, model: this.model,
+      ...(effort === undefined || effort.length === 0 ? {} : { effort }),
+      ...this.permissionsField(),
+    }, 'turn');
   }
 
   // El modo de permiso de Mage para codex es un perfil de su `permissionProfile/list` (`:workspace`…).

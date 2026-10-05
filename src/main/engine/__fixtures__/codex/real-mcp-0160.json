@@ -1,0 +1,18 @@
+{
+  "type": "mcpToolCall",
+  "id": "mcp-measured",
+  "server": "mage_verify",
+  "tool": "probe",
+  "arguments": {},
+  "status": "completed",
+  "result": {
+    "content": [
+      {
+        "type": "text",
+        "text": "MAGE_MCP_ENV_OK"
+      }
+    ],
+    "structuredContent": null
+  },
+  "error": null
+}

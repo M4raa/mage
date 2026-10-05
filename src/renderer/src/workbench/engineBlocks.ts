@@ -7,6 +7,7 @@ import { parseStructuredPatch } from './diffLines';
 import { classifyTool } from './toolClassify';
 import { completeArtifactPublication, parseArtifactDraft } from '@shared/artifacts';
 import { formatToolMeta, summarizeToolInput } from './toolSummary';
+import { codexChangeView } from './codexChanges';
 
 // Mapeo PURO del modelo de eventos comun (MageEvent) a los bloques/permiso de la UI. Sin React ni
 // zustand: solo funciones de datos -> datos (testeable en Vitest, env node). Los ids de bloque los
@@ -457,14 +458,15 @@ export function restartingText(attempt: number, delayMs: number): string {
 export function mapPermissionToView(request: PermissionRequest): PermissionView {
   const { toolName, input } = request;
   const outside = request.outsideProject === true;
+  const patch = toolName === 'apply_patch' ? codexChangeView(input.changes) : null;
   return {
     prompt: buildPrompt(toolName),
-    target: buildTarget(toolName, input),
+    target: patch?.target ?? buildTarget(toolName, input),
     toolLabel: toolName,
     rememberable: !outside,
-    diff: buildDiff(toolName, input),
+    diff: patch?.diff ?? buildDiff(toolName, input),
     // Fuera del proyecto o red: el motivo que da el runtime («Fuera del proyecto: C:\…»).
-    summary: outside && request.description !== null ? request.description : buildSummary(toolName, input),
+    summary: outside && request.description !== null ? request.description : patch?.summary ?? buildSummary(toolName, input),
   };
 }
 
@@ -517,7 +519,7 @@ function buildSummary(toolName: string, input: Readonly<Record<string, unknown>>
 }
 
 function isWriteTool(toolName: string): boolean {
-  return toolName === 'Write' || toolName === 'Edit' || toolName === 'MultiEdit';
+  return toolName === 'Write' || toolName === 'Edit' || toolName === 'MultiEdit' || toolName === 'apply_patch';
 }
 
 function toLines(value: unknown): string[] {

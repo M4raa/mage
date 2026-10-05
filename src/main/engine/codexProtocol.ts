@@ -4,10 +4,9 @@ import type { ProviderModel } from '@shared/providers';
 import type { UsageWindowInfo } from '@shared/usage';
 
 // Traduccion PURA del protocolo de `codex app-server` (JSON-RPC 2.0, una linea por mensaje) al modelo de
-// eventos de Mage. Esquemas PROPIOS y tolerantes (`.passthrough()`), escritos desde el esquema que genera
-// `codex app-server generate-json-schema` y lo medido SIN cuenta contra codex-cli 0.144.4 el 2026-10-01
-// (`spike/codex-spike.mjs --app-server`, fixtures en `__fixtures__/codex/`). SIN VERIFICAR con un turno
-// real: lo que el modelo responde (deltas, items de herramienta, uso) sale del esquema, no de una medida.
+// eventos de Mage. Esquemas PROPIOS y tolerantes (`.passthrough()`). Medidos con cuenta ChatGPT contra
+// codex-cli 0.160.0: deltas, herramientas, permisos y uso (spike/codex-spike.mjs --verify --real;
+// proyecciones anonimas de items reales en __fixtures__/codex/real-*-0160.json).
 
 const ThreadItemSchema = z.object({ id: z.string(), type: z.string() }).passthrough();
 type ThreadItem = z.infer<typeof ThreadItemSchema>;
@@ -115,10 +114,20 @@ function itemCompleted(item: ThreadItem): MageEvent[] {
 
 function itemOutput(item: ThreadItem): string {
   if (typeof item.aggregatedOutput === 'string') return item.aggregatedOutput;
+  // 0.160.0 entrega el resultado MCP en result.content, no en aggregatedOutput.
+  if (item.type === 'mcpToolCall') return mcpOutput(item);
   if (item.type === 'fileChange' && Array.isArray(item.changes)) {
     return item.changes.map((change) => (isRecord(change) && typeof change.diff === 'string' ? change.diff : '')).join('\n');
   }
   return '';
+}
+
+function mcpOutput(item: ThreadItem): string {
+  if (isRecord(item.error) && typeof item.error.message === 'string') return item.error.message;
+  if (!isRecord(item.result) || !Array.isArray(item.result.content)) return '';
+  return item.result.content.flatMap((block: unknown) =>
+    isRecord(block) && block.type === 'text' && typeof block.text === 'string' ? [block.text] : [],
+  ).join('\n');
 }
 
 function turnCompleted(turn: z.infer<typeof TurnSchema>, usage: TurnUsage | null): MageEvent[] {
@@ -203,7 +212,9 @@ export function approvalRequest(requestId: string, method: string, params: unkno
     case APPROVAL_METHODS.command:
       return { ...base, toolName: 'Bash', displayName: 'Ejecutar un comando', input: { command: params.command, cwd: params.cwd } };
     case APPROVAL_METHODS.fileChange:
-      return { ...base, toolName: 'apply_patch', displayName: 'Modificar ficheros', input: { grantRoot: params.grantRoot } };
+      return { ...base, toolName: 'apply_patch', displayName: 'Modificar ficheros', input: {
+        grantRoot: params.grantRoot, ...(Array.isArray(params.changes) ? { changes: params.changes } : {}),
+      } };
     case APPROVAL_METHODS.permissions:
       return { ...base, toolName: 'permissions', displayName: 'Ampliar permisos', input: { permissions: params.permissions, cwd: params.cwd } };
     default:

@@ -1,0 +1,14 @@
+{
+  "type": "fileChange",
+  "id": "edit-measured",
+  "status": "completed",
+  "changes": [
+    {
+      "path": "<workspace>/mage-edit.txt",
+      "kind": {
+        "type": "add"
+      },
+      "diff": "MAGE_EDIT_OK\n"
+    }
+  ]
+}
