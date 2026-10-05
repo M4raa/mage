@@ -18,8 +18,8 @@ versión.
   «Solo agy»…) y **Solo en…** elige en qué proveedores y cuentas se carga.
 - **Conectores** por cuenta con su último estado y la fecha en que se comprobó, **Conectar** en los que
   piden autorización y un interruptor para no usar los de claude.ai en una cuenta. «Claude in Chrome»
-  aparece como solo disponible en Claude Desktop, y las Apps de ChatGPT de Codex, como pendientes de
-  verificar con una cuenta.
+  aparece como solo disponible en Claude Desktop. Las Apps de ChatGPT se consultan por cuenta de Codex;
+  si el CLI rechaza la consulta, se muestra el error y se puede reintentar.
 - **Extensiones** `.mcpb` propias de Mage: instalar desde archivo, importar las de Claude Desktop
   copiándolas (ya no dependen de que Desktop siga instalado), activarlas, configurarlas y
   desinstalarlas. Los valores sensibles de su configuración se guardan cifrados. Mage avisa si a una le
@@ -44,7 +44,8 @@ versión.
   **clave de API**, y servidores locales (IP y puerto). Las claves se guardan cifradas y solo las recibe
   su cuenta; las pestañas de una cuenta que factura la API llevan la marca **Factura API**.
 - **Codex** (OpenAI) como proveedor, con su propio diálogo de permisos, su catálogo de modelos y sus
-  límites de uso. Marcado **sin verificar** hasta probarlo con una cuenta real.
+  límites de uso. Login, turnos, aprobaciones, interrupción, reanudación e instrucciones comprobados
+  con una cuenta real y Codex 0.160.0.
 - **Uso de agy** en el panel de Uso: las ventanas de 5 h y semanal de cada grupo de modelos.
 - **Comandos de agy**: al empezar una conversación de agy eliges qué comandos de terminal puede
   ejecutar, escritos exactamente como los lanzará (o los deniegas). Cuando agy deniega uno, el aviso
@@ -114,6 +115,9 @@ versión.
   abre con Claude.
 
 ### Corregido
+- Codex recibe el esfuerzo configurado al iniciar cada turno; antes usaba el predeterminado del CLI.
+- Codex abre los hilos con permisos en 0.160.0, muestra el texto devuelto por MCP y conserva el
+  contenido de los cambios para el diálogo de aprobación de edición.
 - Los enlaces del chat se abren en el navegador del sistema, no en otra ventana de Mage.
 - Los proveedores compatibles con OpenAI (Ollama, LM Studio…) ya responden: antes el turno terminaba
   vacío.
@@ -156,9 +160,6 @@ versión.
 - Las claves de API de los proveedores se guardan cifradas con el almacén del sistema y la interfaz ya
   no las ve; las de la 0.1.1 se cifran solas al arrancar.
 - Las variables `OPENAI_API_KEY` y `CODEX_API_KEY` ya no llegan a los agentes que lanza Mage.
-
-### Sin verificar todavía
-- Codex no se ha probado con una cuenta real: funciona según su documentación.
 
 ## 0.1.1 — 2026-09-30
 

@@ -42,7 +42,7 @@ describe('CodexLoginService', () => {
     const done = service.login('h');
     server.reply({ method: 'account/login/completed', params: { success: false, error: 'denied' } });
 
-    expect(await done).toEqual({ status: 'error', reason: 'login_failed_denied' });
+    expect(await done).toEqual({ status: 'error', reason: 'login_failed' });
   });
 
   it('cancel_conLoginEnCurso_cancelled', async () => {
@@ -60,5 +60,22 @@ describe('CodexLoginService', () => {
     server.reply({ id: 2, result: { type: 'chatgpt' } });
 
     expect(await done).toMatchObject({ status: 'error', reason: 'login_without_auth_url' });
+  });
+
+  it('login_urlAjenaOInvalida_noAbreNavegador', async () => {
+    for (const authUrl of ['https://evil.test/token', 'file:///tmp/login', 'https://auth.openai.com.evil.test', 'roto']) {
+      const { service, server, openUrl } = setup();
+      const done = service.login('h');
+      server.reply({ id: 2, result: { authUrl } });
+      expect(await done).toEqual({ status: 'error', reason: 'login_invalid_auth_url' });
+      expect(openUrl).not.toHaveBeenCalled();
+    }
+  });
+
+  it('login_errorConDatosOAuth_noLosDevuelveAlRenderer', async () => {
+    const { service, server } = setup();
+    const done = service.login('h');
+    server.reply({ id: 2, error: { code: -32603, message: 'token=private' } });
+    expect(await done).toEqual({ status: 'error', reason: 'rpc_-32603' });
   });
 });

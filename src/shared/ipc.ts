@@ -22,6 +22,7 @@ import type { WidgetSnapshot } from './widget';
 import type { FetchThemeParams, FetchedVscodeTheme, ThemeSearchItem } from './themeMarket';
 import type { PanelLayoutState, PanelPlacement } from './panelLayout';
 import type {
+  CodexAccountMetadata,
   McpCommonMutateParams,
   McpImportApplyParams,
   McpImportPreview,
@@ -134,9 +135,10 @@ export const IpcChannel = {
   AccountsDelete: 'accounts:delete',
   // Alta de una cuenta de la matriz (grupo E): Claude por API, Codex y agy por clave.
   AccountsCreateFor: 'accounts:create-for',
-  // Login de ChatGPT de una cuenta de Codex por su CLI (sin verificar).
+  // Login oficial de ChatGPT de una cuenta de Codex por su CLI.
   CodexLoginStart: 'accounts:codex-login:start',
   CodexLoginCancel: 'accounts:codex-login:cancel',
+  CodexAppsRead: 'accounts:codex-apps:read',
   CodexInstalled: 'engine:codexInstalled',
   // Uso de la suscripcion de agy («/usage», gratis).
   AgyUsageRead: 'usage:agy',
@@ -813,6 +815,7 @@ export interface MageApi {
   // Login de ChatGPT de una cuenta de Codex: resuelve cuando el CLI lo da por hecho (o falla).
   startCodexLogin(configDir: string): Promise<CodexLoginOutcome>;
   cancelCodexLogin(): Promise<void>;
+  readCodexApps(configDir: string): Promise<CodexAccountMetadata>;
   isCodexInstalled(): Promise<boolean>;
   // Uso de la suscripcion de agy («/usage»): grupos y ventanas, o el motivo por el que no hay.
   readAgyUsage(): Promise<AgyUsageSnapshot>;

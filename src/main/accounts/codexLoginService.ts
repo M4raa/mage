@@ -6,9 +6,8 @@ import type { CodexLoginOutcome } from '@shared/accounts';
 // la `authUrl` en el navegador y espera `account/login/completed`. El token lo escribe codex en su
 // `auth.json`; Mage nunca lo ve.
 //
-// SIN VERIFICAR: escrito desde el esquema de `codex app-server generate-json-schema` (0.144.4,
-// `LoginAccountParams`/`LoginAccountResponse`/`AccountLoginCompletedNotification`); sin cuenta no se ha
-// podido completar un login de verdad.
+// Login oficial completado con codex-cli 0.160.0 en CODEX_HOME temporal: authUrl de auth.openai.com,
+// account/login/completed success=true y account/read tipo chatgpt. Mage no lee auth.json.
 
 export interface CodexLoginDeps {
   readonly spawnAppServer: (codexHome: string) => ChildProcessWithoutNullStreams;
@@ -64,19 +63,20 @@ export class CodexLoginService {
         if (line.length > 0) this.onLine(child, line, finish);
       }
     });
-    child.on('error', (err) => finish({ status: 'error', reason: `spawn_${err.message}` }));
+    child.on('error', () => finish({ status: 'error', reason: 'spawn_failed' }));
     child.on('exit', (code) => finish({ status: 'error', reason: `app_server_exit_${String(code)}` }));
   }
 
   private onLine(child: ChildProcessWithoutNullStreams, line: string, finish: (result: CodexLoginResult) => void): void {
-    let message: { id?: unknown; method?: unknown; result?: unknown; error?: { message?: unknown }; params?: { success?: unknown; error?: unknown } };
+    let message: { id?: unknown; method?: unknown; result?: unknown; error?: { code?: unknown }; params?: { success?: unknown; error?: unknown } };
     try {
       message = JSON.parse(line) as typeof message;
     } catch {
       return; // una linea que no es JSON (aviso del CLI) no es una respuesta: se sigue esperando
     }
     if (message.error !== undefined) {
-      finish({ status: 'error', reason: `rpc_${String(message.error.message)}` });
+      const code = typeof message.error.code === 'number' ? String(message.error.code) : 'unknown';
+      finish({ status: 'error', reason: `rpc_${code}` });
       return;
     }
     if (message.id === INITIALIZE_ID) {
@@ -87,12 +87,19 @@ export class CodexLoginService {
     if (message.id === LOGIN_ID) {
       const url = (message.result as { authUrl?: unknown } | undefined)?.authUrl;
       if (typeof url !== 'string') finish({ status: 'error', reason: 'login_without_auth_url' });
-      else void this.deps.openUrl(url).catch((err: unknown) => finish({ status: 'error', reason: `open_url_${String(err)}` }));
+      else if (!isOfficialLoginUrl(url)) finish({ status: 'error', reason: 'login_invalid_auth_url' });
+      else void this.deps.openUrl(url).catch(() => finish({ status: 'error', reason: 'open_url_failed' }));
       return;
     }
     if (message.method === 'account/login/completed') {
       const ok = message.params?.success === true;
-      finish(ok ? { status: 'ok' } : { status: 'error', reason: `login_failed_${String(message.params?.error ?? '')}` });
+      finish(ok ? { status: 'ok' } : { status: 'error', reason: 'login_failed' });
     }
   }
+}
+
+function isOfficialLoginUrl(value: string): boolean {
+  if (!URL.canParse(value)) return false;
+  const url = new URL(value);
+  return url.protocol === 'https:' && url.hostname === 'auth.openai.com' && url.username === '' && url.password === '';
 }

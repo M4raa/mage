@@ -9,7 +9,22 @@
 //      node spike/codex-spike.mjs "C:/ruta/a/codex.exe"   (si no esta en el PATH)
 //      node spike/codex-spike.mjs --app-server [--key]   (protocolo JSON-RPC sin cuenta; ver abajo)
 //      node spike/codex-spike.mjs --instructions         (instrucciones sin tocar el repo; ver abajo)
+//      node spike/codex-spike.mjs --verify [--contract] [--offline] [--mcp]
+//      node spike/codex-spike.mjs --verify --login --keep-home
+//      node spike/codex-spike.mjs --verify --real --keep-home
+//      node spike/codex-spike.mjs --verify --real --resume-real --scenario=approvals --keep-home
+//      node spike/codex-spike.mjs --verify --real --resume-real --scenario=resume --keep-home
+//      node spike/codex-spike.mjs --verify --real --metadata --keep-home (0 turnos)
+// --verify (0.160.0): solo temporales, sin consultar ~/.codex. --offline usa Responses LOCAL (0
+// turnos reales); --mcp llama directamente al servidor de prueba (0 turnos). --login abre el navegador
+// oficial. MAGE_CODEX_VERIFY_HOME permite continuar exclusivamente con un temporal creado por el spike.
 import { spawnSync } from 'node:child_process';
+
+// La verificacion nueva nunca consulta el login ni los ficheros del CODEX_HOME del usuario.
+if (process.argv.includes('--verify')) {
+  const { verifyCodex } = await import('./codex-verification.mjs');
+  await verifyCodex();
+} else {
 
 const explicitBin = process.argv.slice(2).find((arg) => !arg.startsWith('--'));
 const bin = explicitBin ?? (process.platform === 'win32' ? 'codex.exe' : 'codex');
@@ -380,4 +395,5 @@ async function probeInstructions() {
   }
   const after = realFiles.map(hashOf);
   console.log(`\n  configuracion real de codex intacta: ${JSON.stringify(before) === JSON.stringify(after) ? 'SI' : 'NO — revisa'}`);
+}
 }

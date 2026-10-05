@@ -785,7 +785,7 @@ const CHECKS = [
         (!hayConector || (conectar === 1 && etiquetaApagado === 'Apagados en esta cuenta')) &&
         /Última comprobación/.test(fecha) === hayConector &&
         chrome.includes('Solo disponible en Claude Desktop') &&
-        codex.includes('sin verificar') &&
+        codex.includes('Apps de ChatGPT') &&
         guardado &&
         repuesto !== null &&
         !(JSON.parse(repuesto).claudeAiConnectorsOff ?? []).includes(cuenta);
@@ -1648,7 +1648,7 @@ const CHECKS = [
         medido.suscripcion.length === 2 &&
         JSON.stringify(medido.claudeApi) === JSON.stringify(['text', 'password']) &&
         medido.claudeApiAviso &&
-        medido.openaiSinVerificar &&
+        medido.openaiSinVerificar === false &&
         medido.openaiFormas === 2 &&
         medido.agySuscripcion.length === 0 &&
         medido.localUrl === OLLAMA_TEMPLATE.baseUrl &&
@@ -1760,8 +1760,8 @@ const CHECKS = [
     },
   },
   {
-    // Grupo E (respuesta 30): Codex se ofrece en Nueva conversacion, y con el aviso «sin verificar».
-    name: 'E: elegir Codex en Nueva conversacion avisa de que está sin verificar',
+    // Codex 0.160.0 ya se midio con cuenta: se ofrece sin el aviso anterior.
+    name: 'E: elegir Codex en Nueva conversacion ya no muestra sin verificar',
     async run(page) {
       return withNewTabDialog(page, async () => {
         const provider = newTabSelect(page, NEW_TAB_FIELD.provider);
@@ -1771,9 +1771,66 @@ const CHECKS = [
         await provider.selectOption('codex');
         await page.waitForTimeout(CONFIG.settleMs);
         const after = await page.locator(`${NEW_TAB_DIALOG} [data-unverified-provider]`).count();
-        const ok = (options ?? []).some((o) => o.startsWith('codex|')) && before === 0 && after === 1;
+        const ok = (options ?? []).some((o) => o.startsWith('codex|') && !o.includes('sin verificar')) && before === 0 && after === 0;
         return { ok, detail: JSON.stringify({ codexOfrecido: (options ?? []).some((o) => o.startsWith('codex|')), avisoAntes: before, avisoDespues: after }) };
       });
+    },
+  },
+  {
+    name: 'Codex 0.160: el permiso de edición enseña el fichero y su contenido medido',
+    async run(page) {
+      const previous = await captureTurnState(page);
+      const layout = await page.evaluate(() => window.__mageDev.panelStore.getState().layout);
+      const item = JSON.parse(fs.readFileSync(path.join(repoRoot, 'src/main/engine/__fixtures__/codex/real-file-change-0160.json'), 'utf8'));
+      await openTemporaryConversation(page);
+      await page.evaluate(() => window.__mageDev.panelStore.getState().revealPanelById('permissions'));
+      try {
+        await injectPermissionRequest(page, { grantRoot: null, changes: item.changes }, 'vg-codex-edit', 'apply_patch');
+        const card = page.locator('[data-permission-card="pending"]');
+        await card.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const measured = await page.evaluate(() => {
+          const card = document.querySelector('[data-permission-card="pending"]');
+          const panel = document.querySelector('[data-permissions-panel="true"]');
+          return { target: card?.textContent?.includes('mage-edit.txt'),
+            allow: !!card?.querySelector('button[aria-label="Permitir"]'),
+            deny: !!card?.querySelector('button[aria-label="Denegar y decir por qué"]'),
+            diff: panel?.textContent?.includes('MAGE_EDIT_OK'), summary: panel?.textContent?.includes('+1 −0') };
+        });
+        return { ok: Object.values(measured).every((value) => value === true), detail: JSON.stringify(measured) };
+      } finally {
+        await cancelInjectedPermission(page, 'vg-codex-edit');
+        await page.evaluate((value) => window.__mageDev.panelStore.setState({ layout: value }), layout);
+        await restoreTurnState(page, previous);
+      }
+    },
+  },
+  {
+    name: 'Codex 0.160: Conectores distingue el error de consulta de una lista vacía',
+    async run(page) {
+      const previous = await page.evaluate(() => window.__mageDev.store.getState().accounts);
+      const ownDialog = (await page.locator(MODAL).count()) === 0;
+      if (ownDialog) await openSettingsDialog(page);
+      await openSection(page, /MCP y conectores/);
+      await page.locator('[data-mcp-tab="connectors"]').click();
+      try {
+        await page.evaluate(() => window.__mageDev.store.setState((s) => ({ accounts: [{ ...s.accounts[0],
+          id: 'vg-codex-unregistered', providerId: 'codex', apiBilled: false, alias: 'Codex de prueba', isMain: false }] })));
+        const apps = page.locator('[data-mcp-codex-apps]');
+        await apps.getByRole('button', { name: 'Consultar Apps', exact: true }).click();
+        // Cuenta sin registrar: el IPC real rechaza ANTES de lanzar CLI, cero turnos.
+        await apps.getByRole('status').waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const text = await apps.innerText();
+        const measured = { error: text.includes('No se pudieron consultar'), retry: text.includes('Puedes volver a intentarlo'),
+          falseEmpty: text.includes('no ha devuelto ninguna App'), enabled: await apps.getByRole('button', { name: 'Consultar Apps', exact: true }).isEnabled() };
+        return { ok: measured.error && measured.retry && !measured.falseEmpty && measured.enabled, detail: JSON.stringify(measured) };
+      } finally {
+        await page.evaluate((accounts) => window.__mageDev.store.setState({ accounts }), previous);
+        await page.locator('[data-mcp-tab="servers"]').click();
+        if (ownDialog) {
+          await page.keyboard.press('Escape');
+          await page.locator(MODAL).waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+        }
+      }
     },
   },
   {
@@ -3235,45 +3292,10 @@ const CHECKS = [
     // La pestaña lleva un `resumeSessionId` FALSO (nada se reanuda) y solo se pulsa «Abrir un chat nuevo
     // en <B>» (P-028, 26: sustituye a «Solo cambiar de cuenta»), que no mueve nada: la pestaña tiene que
     // seguir ahi, en su cuenta, y la activa pasa a B con un chat nuevo. Se restaura todo al final. Si
-    // solo hay una cuenta, no hay a donde cambiar: se da por no aplicable.
+    // El destino autenticado es controlado: no depende del login de las cuentas descubiertas.
     name: 'Cambiar de cuenta con una conversación parada pregunta si migrarla',
     async run(page) {
-      const previo = await page.evaluate(() => {
-        const s = window.__mageDev.store.getState();
-        return { tabs: s.tabs, activeTabId: s.activeTabId, splitLayout: s.splitLayout, activeAccountId: s.activeAccountId };
-      });
-      const otra = page.locator('[role="group"][aria-label="Cuentas"] button[aria-pressed="false"]');
-      if ((await otra.count()) === 0) return { ok: true, detail: 'una sola cuenta: no aplicable' };
-      await openTemporaryConversation(page);
-      const tabId = await page.evaluate(() => {
-        const store = window.__mageDev.store;
-        const { activeTabId, tabs } = store.getState();
-        store.setState({ tabs: tabs.map((t) => (t.id === activeTabId ? { ...t, resumeSessionId: 'vg-migrar' } : t)) });
-        return activeTabId;
-      });
-      await otra.first().click();
-      const dialogo = page.locator('[data-account-switch-dialog="true"]');
-      await dialogo.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
-      const botones = await dialogo.locator('button').evaluateAll((nodes) => nodes.map((n) => (n.textContent ?? '').trim()));
-      const lineaMigrar = /Compartida: se reanuda con .+\. Privada: se mueve a /.test((await dialogo.textContent()) ?? '');
-      await dialogo.getByRole('button', { name: /^Abrir un chat nuevo en / }).click();
-      await dialogo.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
-      const tras = await page.evaluate((id) => {
-        const s = window.__mageDev.store.getState();
-        return { pestanaSigue: s.tabs.some((t) => t.id === id && t.resumeSessionId === 'vg-migrar'), cuentaActiva: s.activeAccountId };
-      }, tabId);
-      await page.evaluate((estado) => {
-        window.__mageDev.store.getState().setActiveAccount(estado.activeAccountId);
-        window.__mageDev.store.setState({ tabs: estado.tabs, activeTabId: estado.activeTabId, splitLayout: estado.splitLayout });
-      }, previo);
-      await page.waitForTimeout(CONFIG.settleMs);
-      const ok =
-        botones.some((t) => t.startsWith('Abrir un chat nuevo en')) &&
-        lineaMigrar &&
-        botones.some((t) => t.startsWith('Migrar la conversación a')) &&
-        tras.pestanaSigue &&
-        tras.cuentaActiva !== previo.activeAccountId;
-      return { ok, detail: `botones=${JSON.stringify(botones)} lineaMigrar=${lineaMigrar} tras «Chat nuevo»=${JSON.stringify({ pestanaSigue: tras.pestanaSigue, cambioDeCuenta: tras.cuentaActiva !== previo.activeAccountId })}` };
+      return verifyMigrationWithLogin(page);
     },
   },
   {
@@ -8800,6 +8822,52 @@ async function captureTurnState(page) {
       streamingIdByChat: s.streamingIdByChat,
       activitySubagentByChat: s.activitySubagentByChat,
     };
+  });
+}
+
+async function verifyMigrationWithLogin(page) {
+  const previous = { ...await captureTurnState(page), ...await page.evaluate(() => {
+    const s = window.__mageDev.store.getState();
+    return { accounts: s.accounts, activeAccountId: s.activeAccountId, accountSwitchPrompt: s.accountSwitchPrompt };
+  }) };
+  try {
+    await openTemporaryConversation(page);
+    const tabId = await seedMigrationTarget(page);
+    const other = page.getByRole('group', { name: 'Cuentas', exact: true }).getByRole('button', { name: /^Cuenta vg-migracion,/ });
+    if ((await other.count()) !== 1) throw new Error('Destino controlado de migración ambiguo');
+    await other.click();
+    const dialog = page.locator('[data-account-switch-dialog="true"]');
+    await dialog.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+    const buttons = await dialog.locator('button').allTextContents();
+    const migration = /Compartida: se reanuda con .+\. Privada: se mueve a /.test((await dialog.textContent()) ?? '');
+    await dialog.getByRole('button', { name: /^Abrir un chat nuevo en / }).click();
+    await dialog.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+    const measured = await page.evaluate((id) => {
+      const s = window.__mageDev.store.getState();
+      return { originalRemains: s.tabs.some((t) => t.id === id && t.resumeSessionId === 'vg-migrar'), switched: s.activeAccountId === 'vg-migrate-target' };
+    }, tabId);
+    return { ok: buttons.some((b) => b.startsWith('Abrir un chat nuevo en')) && buttons.some((b) => b.startsWith('Migrar la conversación a')) && migration && measured.originalRemains && measured.switched,
+      detail: JSON.stringify({ buttons, migration, ...measured }) };
+  } finally {
+    await page.evaluate((state) => {
+      window.__mageDev.store.getState().setActiveAccount(state.activeAccountId);
+      window.__mageDev.store.setState(state);
+    }, previous);
+    await page.waitForTimeout(CONFIG.settleMs);
+  }
+}
+
+function seedMigrationTarget(page) {
+  return page.evaluate(() => {
+    const store = window.__mageDev.store;
+    const { activeTabId, tabs, accounts } = store.getState();
+    const base = accounts[0];
+    if (base === undefined) throw new Error('Sin cuenta base para la prueba controlada de migración');
+    // El destino del caso ask DEBE tener login; una cuenta expirada produce switch.
+    // Solo presentacion: no se registra ni se inicia una sesion de CLI.
+    const target = { ...base, id: 'vg-migrate-target', alias: 'vg-migracion', loginStatus: 'logged_in', isMain: false };
+    store.setState({ accounts: [...accounts, target], tabs: tabs.map((t) => (t.id === activeTabId ? { ...t, resumeSessionId: 'vg-migrar' } : t)) });
+    return activeTabId;
   });
 }
 

@@ -1,6 +1,6 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useMcpStore } from '../../mcpStore';
-import type { McpStatusByAccount } from '@shared/mcp';
+import type { CodexAccountMetadata, McpStatusByAccount } from '@shared/mcp';
 import { buildClaudeConnectorGroups, CLAUDE_AI_CONNECTORS_URL, describeCheckedAt, type McpConnectorGroup, type McpConnectorRow } from '../../mcpView';
 import { useWorkbenchStore } from '../../workbenchStore';
 import { Icon } from '../Icon';
@@ -34,14 +34,57 @@ export function McpConnectorsTab({ statuses }: { readonly statuses: McpStatusByA
         <ClaudeAccountGroup key={group.accountId} group={group} />
       ))}
       <ProviderHeading title="Codex" />
-      <p data-mcp-codex-apps="true" className="text-[11px] text-mg-sec">
-        Apps de ChatGPT — <strong>sin verificar</strong>: hace falta una cuenta de ChatGPT en Codex para saber cuáles tienes y en qué estado.
-        Mage las leerá de <code>codex app-server</code> (<code>app/list</code>) cuando haya una.
-      </p>
+      <CodexApps />
       <ProviderHeading title="agy" />
       <p className="text-[11px] text-mg-sec">agy no expone conectores: sus integraciones de Google no se pueden gestionar desde su CLI.</p>
     </div>
   );
+}
+
+function CodexApps(): React.JSX.Element {
+  const accounts = useWorkbenchStore((s) => s.accounts);
+  const [results, setResults] = useState<Readonly<Record<string, CodexAccountMetadata>>>({});
+  const [loading, setLoading] = useState(false);
+  const subscriptions = accounts.filter((account) => account.providerId === 'codex' && !account.apiBilled);
+  const refresh = async (): Promise<void> => {
+    setLoading(true);
+    try {
+      for (const account of subscriptions) {
+        const value = await window.mage.readCodexApps(account.id).catch((): CodexAccountMetadata => ({
+          authenticated: null, apps: null, error: 'No se pudieron consultar las Apps de esta cuenta.',
+        }));
+        setResults((previous) => ({ ...previous, [account.id]: value }));
+      }
+    } finally { setLoading(false); }
+  };
+  return <section data-mcp-codex-apps="true" className="flex flex-col gap-[6px] text-[11px] text-mg-sec">
+    <div className="flex items-center gap-[8px]">
+      <span className="flex-1">Apps de ChatGPT</span>
+      <button className={BUTTON_CLASS} disabled={loading || subscriptions.length === 0} onClick={() => void refresh()}>
+        <Icon name="refresh" />{loading ? 'Consultando…' : 'Consultar Apps'}
+      </button>
+    </div>
+    {subscriptions.length === 0 && <p>Añade una cuenta de suscripción de Codex para consultar sus Apps de ChatGPT.</p>}
+    {subscriptions.map((account) => <div key={account.id} data-codex-app-account={account.id}>
+      <strong>{account.alias}</strong>
+      <CodexAppsResult result={results[account.id]} />
+    </div>)}
+  </section>;
+}
+
+function CodexAppsResult({ result }: { readonly result: CodexAccountMetadata | undefined }): React.JSX.Element {
+  if (result === undefined) return <p>Sin consultar.</p>;
+  if (result.error !== null) return <p role="status">{result.error} Puedes volver a intentarlo.</p>;
+  if (result.authenticated !== true) return <p>Inicia sesión en esta cuenta de Codex para consultar sus Apps.</p>;
+  if (result.apps?.length === 0) return <p>Codex no ha devuelto ninguna App.</p>;
+  return <ul>{result.apps?.map((app) => <li key={app.id} className="py-[3px]">
+    <span className="font-medium text-mg-body">{app.name}</span> · {codexAppStatus(app)}
+  </li>)}</ul>;
+}
+
+function codexAppStatus(app: { readonly accessible: boolean; readonly enabled: boolean }): string {
+  if (!app.accessible) return 'Sin acceso';
+  return app.enabled ? 'Disponible' : 'Desactivada';
 }
 
 function ProviderHeading({ title, children }: { readonly title: string; readonly children?: React.ReactNode }): React.JSX.Element {

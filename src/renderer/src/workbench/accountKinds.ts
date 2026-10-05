@@ -28,8 +28,8 @@ export const ACCOUNT_VENDORS: readonly { readonly id: AccountVendor; readonly la
 export const ACCOUNT_KINDS: readonly AccountKindOption[] = [
   { vendor: 'anthropic', payment: 'subscription', providerId: 'claude', flow: 'cli-oauth', label: 'Suscripción', unverified: false },
   { vendor: 'anthropic', payment: 'api-key', providerId: 'claude', flow: 'api-key', label: 'Clave de API', unverified: false },
-  { vendor: 'openai', payment: 'subscription', providerId: 'codex', flow: 'codex-login', label: 'Suscripción (ChatGPT)', unverified: true },
-  { vendor: 'openai', payment: 'api-key', providerId: 'codex', flow: 'api-key', label: 'Clave de API', unverified: true },
+  { vendor: 'openai', payment: 'subscription', providerId: 'codex', flow: 'codex-login', label: 'Suscripción (ChatGPT)', unverified: false },
+  { vendor: 'openai', payment: 'api-key', providerId: 'codex', flow: 'api-key', label: 'Clave de API', unverified: false },
   { vendor: 'google', payment: 'subscription', providerId: 'agy', flow: 'external', label: 'Suscripción', unverified: false },
   { vendor: 'google', payment: 'api-key', providerId: 'agy', flow: 'api-key', label: 'Clave de API (Gemini)', unverified: false },
   { vendor: 'local', payment: 'endpoint', providerId: null, flow: 'endpoint', label: 'Servidor local', unverified: false },

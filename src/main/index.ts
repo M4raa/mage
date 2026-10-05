@@ -126,6 +126,7 @@ import { findCodexBinary, resolveCodexBinary } from './os/codexBinaryResolver';
 import { resolveAgyBinary } from './os/agyBinaryResolver';
 import { ProviderAccountService } from './accounts/providerAccounts';
 import { CodexLoginService, type CodexLoginResult } from './accounts/codexLoginService';
+import { probeCodexAccount } from './accounts/codexAccountProbe';
 import { defaultProbeDeps, probeProvider } from './engine/providerProbe';
 import { findAgyBinary } from './os/agyBinaryResolver';
 import { AGY_PROVIDER_ID, CODEX_PROVIDER_ID, runsOnMageRuntime } from '@shared/providers';
@@ -804,7 +805,7 @@ async function readCodexPermissionProfiles(): Promise<unknown> {
       buffer = lines.pop() ?? '';
       for (const line of lines) answerCodexProbeLine(child.stdin, safeJson(line), done);
     });
-    child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { clientInfo: { name: 'mage', version: app.getVersion() } } })}\n`);
+    child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { clientInfo: { name: 'mage', version: app.getVersion() }, capabilities: { experimentalApi: true } } })}\n`);
   });
 }
 
@@ -862,8 +863,33 @@ function getProviderAccounts(): ProviderAccountService {
 }
 
 // Todas las cuentas: las de Claude descubiertas en disco (marcadas si son de API) y las del registro.
-function listAllAccounts(): AccountInfo[] {
-  return getProviderAccounts().list(accountService.listAccounts());
+async function listAllAccounts(): Promise<AccountInfo[]> {
+  const accounts = getProviderAccounts().list(accountService.listAccounts());
+  const result: AccountInfo[] = [];
+  for (const account of accounts) {
+    if (account.providerId !== 'codex' || account.authKind !== 'subscription' || account.loginStatus === 'logged_out') {
+      result.push(account);
+      continue;
+    }
+    const metadata = await probeCodexAccount(codexAccountProbeDeps(), { home: account.configDir, includeApps: false });
+    result.push(metadata.authenticated === null ? account : { ...account, loginStatus: metadata.authenticated ? 'logged_in' : 'logged_out' });
+  }
+  return result;
+}
+
+function codexAccountProbeDeps(): import('./accounts/codexAccountProbe').CodexAccountProbeDeps {
+  return { timeoutMs: 20_000, spawnProbe: (home) => {
+    const child = spawn(resolveCodexBinary(), ['app-server'], {
+      env: { ...scrubAgentEnv(process.env), CODEX_HOME: home }, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true,
+    });
+    child.stderr.resume(); // Consumir sin registrar: puede llevar detalles OAuth.
+    return {
+      onStdout: (listener) => { child.stdout.setEncoding('utf8'); child.stdout.on('data', listener); },
+      onExit: (listener) => { child.on('exit', listener); child.on('error', listener); },
+      writeLine: (line) => { child.stdin.write(`${line}\n`); }, endInput: () => child.stdin.end(),
+      killTree: () => { killProcessTree(child, defaultKillTreeDeps()); },
+    };
+  } };
 }
 
 // ¿Puede una sesion lanzarse con este dir de cuenta? Un config dir de Claude bajo HOME, o una cuenta
@@ -2478,7 +2504,7 @@ function registerIpcHandlers(): void {
 
   // Cuentas: listar (datos seguros), crear (dir + enlaces + settings) y lanzar login interactivo
   // en terminal externa (headless no puede loguear). El binario se resuelve por SO.
-  ipcMain.handle(IpcChannel.AccountsList, (): readonly AccountInfo[] => listAllAccounts());
+  ipcMain.handle(IpcChannel.AccountsList, () => listAllAccounts());
   ipcMain.handle(IpcChannel.AccountsCreate, (_e, name: string): AccountInfo =>
     accountService.createAccount(name),
   );
@@ -2492,6 +2518,11 @@ function registerIpcHandlers(): void {
     return getCodexLogin().login(entry.home);
   });
   ipcMain.handle(IpcChannel.CodexLoginCancel, (): void => getCodexLogin().cancel());
+  ipcMain.handle(IpcChannel.CodexAppsRead, (_e, configDir: string) => {
+    const entry = getProviderAccounts().find('codex', configDir);
+    if (entry === null || entry.authKind !== 'subscription') throw new Error('Las Apps requieren una cuenta de suscripción de Codex registrada.');
+    return probeCodexAccount(codexAccountProbeDeps(), { home: entry.home, includeApps: true });
+  });
   // Login por el CLI (Fase 9.2), en tres pasos porque el usuario pega el *code* en medio. El
   // whitelisting del configDir vive dentro del servicio (`validateConfigDir`), que es su frontera.
   ipcMain.handle(IpcChannel.AccountsLoginStart, (_e, params: LoginStartParams): Promise<CliLoginStart> => {

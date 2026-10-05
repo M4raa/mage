@@ -56,9 +56,9 @@ export const CODEX_PROVIDER_ID = 'codex';
 
 // Codex corre sobre `codex app-server` (JSON-RPC por stdio), que SI tiene puente de permisos
 // (`item/*/requestApproval`) y catalogo de modelos (`model/list`). Su adapter esta escrito desde el
-// esquema que genera `codex app-server generate-json-schema` y lo medido SIN cuenta (codex-cli 0.144.4,
-// `spike/codex-spike.mjs --app-server`): un turno real no se ha podido medir. La UI lo dice con este texto.
-export const UNVERIFIED_PROVIDER_IDS: readonly string[] = [CODEX_PROVIDER_ID];
+// esquema y lo medido con cuenta en codex-cli 0.160.0 (`spike/codex-spike.mjs --verify --real`).
+// Se conserva el mecanismo de aviso para proveedores que se incorporen sin haber sido medidos.
+export const UNVERIFIED_PROVIDER_IDS: readonly string[] = [];
 export const UNVERIFIED_PROVIDER_NOTE =
   'Sin verificar: Mage habla con Codex según su documentación y su esquema, pero aún no se ha probado ' +
   'un turno con una cuenta real.';
@@ -180,7 +180,7 @@ export const BUILT_IN_PROVIDERS: readonly BuiltInProvider[] = [
     // codex-cli 0.144.4) y la sesion lo pide al arrancar. Esta lista es la RESERVA: lo que contesto ese
     // `model/list`, en su orden y sin los ocultos.
     id: CODEX_PROVIDER_ID,
-    label: 'Codex (OpenAI) · sin verificar',
+    label: 'Codex (OpenAI)',
     models: [
       { id: 'gpt-5.6-sol', label: 'GPT-5.6-Sol' },
       { id: 'gpt-5.6-terra', label: 'GPT-5.6-Terra' },

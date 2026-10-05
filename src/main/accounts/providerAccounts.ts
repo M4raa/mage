@@ -55,7 +55,7 @@ const FILE_SCHEMA = z.object({ version: z.literal(FILE_VERSION), accounts: z.arr
 const CODEX_DIR_PREFIX = '.codex-';
 const AGY_ACCOUNTS_DIR = 'agy-accounts';
 const AGY_NAME_PREFIX = 'agy-';
-// Lo que deja el login de ChatGPT de codex en su CODEX_HOME (documentado; sin verificar con cuenta).
+// Lo que deja el login de ChatGPT de codex en su CODEX_HOME (medido en 0.160.0).
 const CODEX_AUTH_FILE = 'auth.json';
 // Nombre del perfil privado de una cuenta de Claude (AccountService): factura como su cuenta.
 const PRIVATE_PROFILE_DIR = 'mage-private';
@@ -165,6 +165,7 @@ export class ProviderAccountService {
   }
 
   private codexLoginStatus(home: string): LoginStatus {
+    // Primera foto local. AccountsList la confirma con account/read antes de responder al renderer.
     return this.deps.exists(join(home, CODEX_AUTH_FILE)) ? 'logged_in' : 'logged_out';
   }
 

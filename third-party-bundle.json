@@ -77,6 +77,7 @@
     "stringify-entities",
     "style-mod",
     "w3c-keyname",
+    "zod",
     "zustand",
     "zwitch"
   ]

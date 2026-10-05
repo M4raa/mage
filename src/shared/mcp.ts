@@ -329,6 +329,12 @@ export interface CodexAppView {
   readonly installUrl: string | null;
 }
 
+export interface CodexAccountMetadata {
+  readonly authenticated: boolean | null;
+  readonly apps: readonly CodexAppView[] | null;
+  readonly error: string | null;
+}
+
 // --- Sincronizar con agy ------------------------------------------------------------------------
 
 export type McpAgyChangeAction = 'add' | 'update' | 'remove' | 'skip';

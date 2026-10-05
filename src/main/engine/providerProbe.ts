@@ -36,7 +36,7 @@ export const CLAUDE_NO_CATALOG_REASON =
   'la lista de reserva de Mage. Puedes escribir cualquier id de modelo a mano.';
 
 export const CODEX_CATALOG_REASON =
-  'Sin verificar: el catálogo lo pide cada conversación a codex (`model/list` de `codex app-server`, ' +
+  'El catálogo lo pide cada conversación a codex (`model/list` de `codex app-server`, ' +
   'responde sin cuenta). Mientras, la lista de reserva de Mage.';
 
 // Tiempos: un sondeo es interactivo, no puede colgar la pantalla de Configuracion.

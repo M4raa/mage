@@ -111,6 +111,7 @@ const api: MageApi = {
   createProviderAccount: (params) => ipcRenderer.invoke(IpcChannel.AccountsCreateFor, params),
   startCodexLogin: (configDir: string) => ipcRenderer.invoke(IpcChannel.CodexLoginStart, configDir),
   cancelCodexLogin: () => ipcRenderer.invoke(IpcChannel.CodexLoginCancel),
+  readCodexApps: (configDir: string) => ipcRenderer.invoke(IpcChannel.CodexAppsRead, configDir),
   isCodexInstalled: () => ipcRenderer.invoke(IpcChannel.CodexInstalled),
   readAgyUsage: () => ipcRenderer.invoke(IpcChannel.AgyUsageRead),
   listPermissionModes: () => ipcRenderer.invoke(IpcChannel.PermissionModesList),
