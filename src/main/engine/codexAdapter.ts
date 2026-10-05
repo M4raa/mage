@@ -3,6 +3,7 @@ import type { MageEvent, PermissionDecision, TurnUsage } from '@shared/events';
 import { resolveCodexBinary } from '../os/codexBinaryResolver';
 import { scrubAgentEnv } from '../os/agentEnv';
 import { toCodexOverrides } from '../config/mcpProviderTranslate';
+import { bridgeDocument, type BridgedFile } from '../instructions/instructionsBridge';
 import type { AuthModel, LaunchParams, PermissionRef, ProviderAdapter, SpawnPlan } from './providerAdapter';
 import {
   approvalRequest,
@@ -38,6 +39,9 @@ export interface CodexAdapterDeps {
   readonly resolveBinary?: () => string;
   // La cuenta de Codex cuyo CODEX_HOME es `accountDir`, o null (la sesion por defecto, `~/.codex`).
   readonly resolveAccount?: (accountDir: string) => CodexAccount | null;
+  // Puente de instrucciones (grupo H): los CLAUDE.md que codex no tiene como suyos, para el cwd y el
+  // CODEX_HOME (null = el de por defecto). Lo lee main: el adapter no toca el disco.
+  readonly resolveInstructions?: (cwd: string, codexHome: string | null) => readonly BridgedFile[];
 }
 
 // Medido en 0.144.4: el app-server NO lee `CODEX_API_KEY`/`OPENAI_API_KEY` del entorno («Missing
@@ -51,6 +55,16 @@ const API_PROVIDER_ARGS: readonly string[] = [
   '-c',
   'model_provider="mage-openai"',
 ];
+
+// Puente de instrucciones, MEDIDO sin cuenta contra un servidor Responses falso (codex-cli 0.144.4,
+// `spike/codex-spike.mjs --instructions`):
+//   - el CLAUDE.md del PROYECTO lo lee el propio codex con este fallback, como si fuera su AGENTS.md
+//     («# AGENTS.md instructions for <cwd>») y solo en la carpeta que no tenga AGENTS.md;
+//   - el GLOBAL va en `developerInstructions` de `thread/start` (un mensaje developer). En
+//     `thread/resume` el hilo conserva las suyas y las nuevas se ignoran, asi que solo se mandan al empezar.
+// ponytail: el `-c` pisa un `project_doc_fallback_filenames` que el usuario tenga en su config.toml; solo
+// se pasa cuando hay puente. Si molesta, leer su valor y sumarle CLAUDE.md.
+const PROJECT_FALLBACK_ARGS: readonly string[] = ['-c', 'project_doc_fallback_filenames=["CLAUDE.md"]'];
 
 const CLIENT_INFO = { name: 'mage', title: 'Mage', version: '0.1.2' } as const;
 // `on-request`: el modelo pide aprobacion cuando sale del sandbox (medido: en una carpeta sin confianza
@@ -82,6 +96,7 @@ export class CodexAdapter implements ProviderAdapter {
   private model = '';
   private permissionProfile: string | null = null;
   private apiKey: string | null = null;
+  private developerInstructions: string | null = null;
 
   constructor(private readonly deps: CodexAdapterDeps = {}) {}
 
@@ -91,7 +106,11 @@ export class CodexAdapter implements ProviderAdapter {
     const account = this.deps.resolveAccount?.(params.accountDir) ?? null;
     this.apiKey = account?.apiKey ?? null;
     const mcp = toCodexOverrides(params.shared?.mcpServers ?? []);
-    const args = ['app-server', ...mcp.args, ...(this.apiKey === null ? [] : API_PROVIDER_ARGS)];
+    const bridged = this.deps.resolveInstructions?.(params.cwd, account?.home ?? null) ?? [];
+    const userFiles = bridged.filter((file) => file.scope === 'user');
+    this.developerInstructions = userFiles.length === 0 ? null : bridgeDocument(userFiles);
+    const fallback = bridged.some((file) => file.scope === 'project') ? PROJECT_FALLBACK_ARGS : [];
+    const args = ['app-server', ...mcp.args, ...fallback, ...(this.apiKey === null ? [] : API_PROVIDER_ARGS)];
     const env: NodeJS.ProcessEnv = {
       ...scrubAgentEnv(process.env),
       ...mcp.env,
@@ -217,7 +236,7 @@ export class CodexAdapter implements ProviderAdapter {
     const common = { cwd: params.cwd, model: this.model, approvalPolicy: APPROVAL_POLICY, ...this.permissionsField() };
     const resume = params.conversationId !== undefined && params.conversationId.length > 0;
     if (resume) this.request('thread/resume', { ...common, threadId: params.conversationId }, 'thread');
-    else this.request('thread/start', common, 'thread');
+    else this.request('thread/start', { ...common, ...this.instructionsField() }, 'thread');
     this.request('model/list', {}, 'models');
     this.request('account/rateLimits/read', undefined, 'rateLimits');
     return [];
@@ -268,6 +287,10 @@ export class CodexAdapter implements ProviderAdapter {
   // El modo de permiso de Mage para codex es un perfil de su `permissionProfile/list` (`:workspace`…).
   private permissionsField(): { readonly permissions?: string } {
     return this.permissionProfile === null || this.permissionProfile.length === 0 ? {} : { permissions: this.permissionProfile };
+  }
+
+  private instructionsField(): { readonly developerInstructions?: string } {
+    return this.developerInstructions === null ? {} : { developerInstructions: this.developerInstructions };
   }
 
   private request(method: string, params: unknown, kind: OwnRequest): void {

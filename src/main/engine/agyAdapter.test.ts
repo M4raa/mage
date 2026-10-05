@@ -190,3 +190,40 @@ describe('AgyAdapter (sesion persistente, agy 1.2.14)', () => {
     expect(after.find((event) => event.kind === 'result')).toMatchObject({ result: { usage: { inputTokens: 40 } } });
   });
 });
+
+// Puente de instrucciones (grupo H), medido con `node spike/agy-spike.mjs --instructions` en agy 1.2.16.
+describe('AgyAdapter: puente de instrucciones', () => {
+  const PROFILE = 'C:\\mage\\agy-profile';
+  const profiled = (bridge: AgyAdapterDeps['bridgeInstructions']): AgyAdapter =>
+    new AgyAdapter({ resolveBinary: () => 'agy.exe', subscriptionProfileDir: () => PROFILE, bridgeInstructions: bridge });
+  const addDirs = (args: readonly string[]): readonly (string | undefined)[] => args.flatMap((arg, index) => (arg === '--add-dir' ? [args[index + 1]] : []));
+
+  it('buildSpawnPlan_conPuente_anadeSuCarpetaConOtroAddDir', () => {
+    const plan = profiled(() => 'C:\\Temp\\mage-agy-instructions\\s1').buildSpawnPlan(launch);
+
+    expect(addDirs(plan.args)).toEqual(['/proj', 'C:\\Temp\\mage-agy-instructions\\s1']);
+  });
+
+  it('buildSpawnPlan_sinNadaQuePuentear_soloElAddDirDelCwd', () => {
+    const plan = profiled(() => null).buildSpawnPlan(launch);
+
+    expect(addDirs(plan.args)).toEqual(['/proj']);
+  });
+
+  it('buildSpawnPlan_puente_recibeLaSesionElCwdYElPerfil', () => {
+    const bridge = vi.fn(() => null);
+
+    profiled(bridge).buildSpawnPlan(launch);
+
+    expect(bridge).toHaveBeenCalledWith('mage-session-1', '/proj', PROFILE);
+  });
+
+  it('buildSpawnPlan_sinPerfilDeMage_noPuentea', () => {
+    const bridge = vi.fn(() => 'C:\\x');
+
+    const plan = new AgyAdapter({ resolveBinary: () => 'agy.exe', bridgeInstructions: bridge }).buildSpawnPlan(launch);
+
+    expect(bridge).not.toHaveBeenCalled();
+    expect(addDirs(plan.args)).toEqual(['/proj']);
+  });
+});

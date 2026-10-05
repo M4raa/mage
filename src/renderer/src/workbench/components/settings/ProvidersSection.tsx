@@ -392,7 +392,8 @@ function RuntimeShellPicker(): React.JSX.Element {
 }
 
 // Linea fija mientras «Omitir permisos» es el defecto (0.1.1 R2, punto 6).
-export const DEFAULT_BYPASS_WARNING = 'Las conversaciones nuevas ejecutarán todo sin preguntar';
+export const DEFAULT_BYPASS_WARNING =
+  'Las conversaciones nuevas podrán ejecutar cualquier comando y modificar cualquier fichero sin preguntar. Úsalo solo con proyectos y contenido de confianza.';
 
 // Modo de permiso con el que arrancan las conversaciones nuevas de Claude (P-028 6). El deslizador del chat
 // con una posicion delante: «De la cuenta» (adopta el del CLI). «Omitir permisos» se ofrece desde la 0.1.1

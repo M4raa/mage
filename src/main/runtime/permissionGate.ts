@@ -12,9 +12,12 @@ import { resolveToolPath, type PathClass, type PathScope } from './tools/pathGua
 // | auto              | allow | allow | allow solo si esta en la lista blanca, si no ask   |
 // | bypassPermissions | allow | allow | allow                                             |
 //
-// Encima de la tabla: una ruta FUERA del cwd (y de los directorios añadidos) pregunta SIEMPRE, en
-// todos los modos, tambien en bypassPermissions; y en `Bash` eso incluye los comandos que nombran
-// rutas de fuera, HOME o una unidad (D4 de P-033). Una peticion de fuera o de red va MARCADA (`outside`)
+// Encima de la tabla: una ruta que se VE fuera del cwd (y de los directorios añadidos) pregunta en todos
+// los modos, tambien en bypassPermissions; en `Bash`, los comandos que NOMBRAN rutas de fuera, HOME o una
+// unidad (D4 de P-033). Es una heuristica sobre el TEXTO, no una frontera: un comando puede salir del
+// proyecto sin nombrarlo (un script del proyecto, una variable propia, un programa que escribe donde
+// quiere), y en bypassPermissions eso se ejecuta sin preguntar. Por eso el aviso al activar «Omitir
+// permisos» no promete nada fuera del proyecto. Una peticion de fuera o de red va MARCADA (`outside`)
 // para que el renderer nunca la recuerde con «Permitir siempre» (D2 de P-033).
 //
 // `auto` (D1 de P-033): el runtime no tiene sandbox, asi que en vez de adivinar que es peligroso solo
@@ -38,10 +41,19 @@ export interface GateInput {
 
 const PLAN_DENY_REASON = 'modo Plan: solo lectura';
 
+// Opciones globales de git ANTES del subcomando (`git -C <dir> push`, `git -c k=v pull`,
+// `git --git-dir=… fetch`): las que llevan el valor aparte (-C, -c, --git-dir, --work-tree, --namespace,
+// --config-env, --super-prefix) se comen tambien su argumento, con comillas o sin ellas. El programa puede
+// ir con ruta, `.exe` y entre comillas (`"C:\…\git.exe" push`).
+const SHELL_WORD = String.raw`(?:"[^"]*"|'[^']*'|\S+)`;
+const GIT_VALUE_OPTION = String.raw`(?:-c|--(?:git-dir|work-tree|namespace|config-env|super-prefix))`;
+const GIT_GLOBAL_OPTION = String.raw`(?:${GIT_VALUE_OPTION}(?:=|\s+)${SHELL_WORD}|--?[a-z][\w-]*(?:=${SHELL_WORD})?)`;
+const GIT_NETWORK = String.raw`\bgit(?:\.exe)?["']?(?:\s+${GIT_GLOBAL_OPTION})*\s+(push|pull|fetch|clone|ls-remote|submodule\s+update)\b`;
+
 const NETWORK_COMMAND = new RegExp(
   [
     String.raw`\b(curl|wget|ssh|scp|sftp|rsync|ftp|telnet|ncat|nc|Invoke-WebRequest|Invoke-RestMethod|iwr|irm|Start-BitsTransfer|certutil)\b`,
-    String.raw`\bgit\s+(push|pull|fetch|clone|ls-remote|submodule\s+update)\b`,
+    GIT_NETWORK,
     String.raw`\b(npm|pnpm|yarn|bun)\s+(install|i|add|update|up|upgrade|publish|dlx|create)\b`,
     String.raw`\b(npx|pnpx|bunx|uvx)\b`,
     String.raw`\b(pip3?|uv|pipx|poetry)\s+(install|add|sync|download)\b`,

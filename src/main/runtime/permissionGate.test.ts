@@ -90,6 +90,43 @@ describe('decidePermission', () => {
     });
   });
 
+  // Grupo H: las opciones globales de git antes del subcomando no esconden la red.
+  it.each([
+    'git -C sub push',
+    'git -C "C:\\proj\\app\\mi sub" pull',
+    "git -C 'dir con espacios' fetch --all",
+    'git -c http.proxy=http://p:8080 pull',
+    'git -c "http.extraHeader=Authorization: x" push origin main',
+    'git --git-dir=.git --work-tree=. fetch',
+    'git --git-dir .git fetch origin',
+    'git --no-pager -C sub ls-remote origin',
+    'git --namespace=x -c a=b -C sub clone repo',
+    'git -C sub submodule update --init',
+    'GIT -C sub PUSH',
+    'git.exe -C C:\\proj\\app push',
+    '"git.exe" -C sub pull',
+    "& 'git.exe' push",
+    'git status && git -C sub push',
+  ])('decide_gitConOpcionesGlobales_%s_preguntaMarcadoComoRed', (command) => {
+    for (const mode of ['default', 'acceptEdits', 'auto'] as const) {
+      expect(decidePermission({ mode, kind: 'exec', pathClass: null, target: null, command, scope: WIN }), mode).toEqual({ verdict: 'ask', outside: `Red: ${command}` });
+    }
+  });
+
+  // Con el git de Program Files gana «Fuera del proyecto» (la ruta ya sale del cwd): tambien marcada.
+  it('decide_gitConRutaDeFuera_preguntaMarcadoComoFuera', () => {
+    const command = '"C:\\Program Files\\Git\\cmd\\git.exe" -C sub pull';
+
+    expect(decidePermission({ mode: 'default', kind: 'exec', pathClass: null, target: null, command, scope: WIN })).toEqual({ verdict: 'ask', outside: `Fuera del proyecto: ${command}` });
+  });
+
+  it.each(['git -C sub status', 'git -c core.pager=cat log', 'git --no-pager diff', 'git commit -m "push the fix"', 'git log --grep=fetch'])(
+    'decide_gitConOpcionesSinRed_%s_preguntaSinMarcar',
+    (command) => {
+      expect(decidePermission({ mode: 'default', kind: 'exec', pathClass: null, target: null, command, scope: WIN })).toEqual({ verdict: 'ask' });
+    },
+  );
+
   it('decide_autoOpaqueExec_asks', () => {
     expect(decidePermission({ mode: 'auto', kind: 'exec', pathClass: null, target: null, command: null, scope: SCOPE })).toEqual({ verdict: 'ask' });
   });

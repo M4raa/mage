@@ -45,6 +45,13 @@ invariantes que no se rompen. Los tres que más gente pisa:
 - **Nunca se loguea ni se emite una credencial.** Ni tokens, ni `oauthAccount`, ni identificadores de
   máquina.
 
+Para las instrucciones para agentes de un proyecto recomendamos una convención:
+**`AGENTS.md`** con el contenido y **`CLAUDE.md`** con una sola línea, `@AGENTS.md`, para que Claude
+Code, Codex y `agy` lean lo mismo. Si un proyecto solo tiene `CLAUDE.md`, Mage hace de puente y se lo da
+a Codex como `AGENTS.md` y a `agy` como `GEMINI.md` sin escribir en el repositorio
+(`src/main/instructions/instructionsBridge.ts`; lo medido, en `spike/codex-spike.mjs --instructions` y
+`spike/agy-spike.mjs --instructions`).
+
 Y las skills de [`.claude/skills/`](.claude/skills/) ahorran tiempo: recogen, con su causa raíz
 medida, errores que este proyecto ya pagó — el protocolo real del CLI, qué hace falta al tocar el
 proceso `main`, y cómo se verifica la interfaz sin fiarse del ojo.

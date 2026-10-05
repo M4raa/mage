@@ -1711,6 +1711,55 @@ const CHECKS = [
     },
   },
   {
+    // Grupo H (respuesta 38): en una pestaña de Codex o agy, Inspector › Instrucciones dice que el CLAUDE.md
+    // del proyecto se le pasa como AGENTS.md / GEMINI.md, y deja de decirlo cuando el proyecto tiene el suyo.
+    // Conversacion temporal SIN mensaje (no se lanza ningun CLI); el CLAUDE.md va en su carpeta temporal.
+    name: 'H: Instrucciones dice que Codex y agy reciben el CLAUDE.md del proyecto',
+    async run(page) {
+      const previo = await captureTurnState(page);
+      const layout = await page.evaluate(() => window.__mageDev.panelStore.getState().layout);
+      await openTemporaryConversation(page);
+      const cwd = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return s.tabs.find((t) => t.id === s.activeTabId)?.cwd ?? null;
+      });
+      const medido = {};
+      try {
+        if (cwd === null) throw new Error('la conversacion temporal no tiene cwd');
+        fs.writeFileSync(path.join(cwd, 'CLAUDE.md'), '# Instrucciones de prueba de verify:gui\n');
+        await page.evaluate(() => window.__mageDev.panelStore.getState().revealPanelById('instructions'));
+        const proyecto = page.locator('[data-instructions-scope="project"]');
+        const ponerProveedor = (provider) =>
+          page.evaluate(
+            ({ provider, accountDir }) => {
+              const dev = window.__mageDev;
+              const id = dev.store.getState().activeTabId;
+              dev.store.setState((s) => ({ tabs: s.tabs.map((t) => (t.id === id ? { ...t, provider, accountId: accountDir, resolvedConfigDir: accountDir } : t)) }));
+            },
+            { provider, accountDir: path.join(os.homedir(), '.claude') },
+          );
+        const puente = async (target) => {
+          await proyecto.locator(`[data-instructions-bridge="${target}"]`).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+          return (await proyecto.locator('[data-instructions-bridge]').textContent())?.trim() ?? '';
+        };
+        await ponerProveedor('codex');
+        medido.codex = await puente('AGENTS.md');
+        await ponerProveedor('agy');
+        medido.agy = await puente('GEMINI.md');
+        fs.writeFileSync(path.join(cwd, 'AGENTS.md'), '# El suyo\n');
+        await ponerProveedor('codex'); // cambia el proveedor: el panel vuelve a leer
+        await proyecto.getByText(/No se le pasa: Codex usa su propio/).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        medido.conElSuyo = await proyecto.locator('[data-instructions-bridge]').count();
+      } finally {
+        await page.evaluate((l) => window.__mageDev.panelStore.setState({ layout: l }), layout);
+        await restoreTurnState(page, previo);
+        if (cwd !== null) for (const name of ['CLAUDE.md', 'AGENTS.md']) fs.rmSync(path.join(cwd, name), { force: true });
+      }
+      const ok = /como AGENTS\.md/.test(medido.codex ?? '') && /a agy como GEMINI\.md/.test(medido.agy ?? '') && medido.conElSuyo === 0;
+      return { ok, detail: JSON.stringify(medido) };
+    },
+  },
+  {
     // Grupo E (respuesta 30): Codex se ofrece en Nueva conversacion, y con el aviso «sin verificar».
     name: 'E: elegir Codex en Nueva conversacion avisa de que está sin verificar',
     async run(page) {
@@ -1865,7 +1914,7 @@ const CHECKS = [
       // la pestaña (su reloj y su pausa los mide la comprobacion de notificaciones); aqui, que sale y que
       // su ✕ lo quita.
       const MODES = 5;
-      const AVISO = 'Omitir permisos: el agente ejecuta todo sin preguntar';
+      const AVISO = 'Omitir permisos: el modelo podrá ejecutar cualquier comando y modificar cualquier fichero sin preguntar. Úsalo solo con proyectos y contenido de confianza.';
       await clearNotifications(page);
       const seen = [await permissionModeLabel(page)];
       let avisoAlEntrar = null;

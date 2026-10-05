@@ -573,6 +573,8 @@ export interface TitleBarOverlayColors {
 export interface ReadInstructionsParams {
   readonly cwd: string;
   readonly accountDir: string;
+  // Proveedor de la pestaña. Con codex o agy la vista enseña los CLAUDE.md que Mage le PUENTEA (grupo H).
+  readonly provider?: string;
 }
 
 // Un fichero del proyecto, tal como lo ve el panel "Ficheros" (2.10).
@@ -608,6 +610,9 @@ export interface InstructionsFile {
   readonly scope: 'project' | 'user';
   readonly path: string;
   readonly content: string | null; // null = el fichero no existe (no es un error)
+  // Solo en pestañas de codex o agy: como se lo pasa Mage (`target`) o, si el CLI tiene su propio
+  // fichero en ese ambito (`ownFile`), que no se le pasa.
+  readonly bridge?: { readonly target: 'AGENTS.md' | 'GEMINI.md'; readonly ownFile: string | null };
 }
 
 // De donde sale una regla o un hook. MEDIDO (2026-08-02): los hooks y `permissions.allow` se CONCATENAN

@@ -75,8 +75,16 @@ versión.
   avisa de lo que pasa en las conversaciones que no estás viendo —un permiso pendiente, un turno
   terminado, un subagente que acaba, un límite de uso— y el aviso te lleva a ella. La **campana** de la
   barra de estado guarda los últimos de la ventana: marcarlos como leídos o limpiarlos.
+- **Instrucciones del proyecto para Codex y agy**: si tu proyecto solo tiene `CLAUDE.md`, Mage se lo da
+  a Codex como su `AGENTS.md` y a agy como su `GEMINI.md` en cada conversación, junto con tu
+  `~/.claude/CLAUDE.md`, sin escribir nada en el repositorio. Si el proyecto ya tiene el fichero propio de
+  ese agente, se usa el suyo. El Inspector › Instrucciones dice qué recibe la conversación, y el README
+  explica la convención recomendada: `AGENTS.md` con el contenido y `CLAUDE.md` con `@AGENTS.md`.
 
 ### Cambiado
+- El aviso al activar **Omitir permisos** dice claramente lo que implica: el modelo podrá ejecutar
+  cualquier comando y modificar cualquier fichero sin preguntar, así que úsalo solo con proyectos y
+  contenido de confianza.
 - Las pestañas de **agy** mantienen la conversación en un solo proceso: el contexto se conserva,
   interrumpir ya no la pierde, admite imágenes (las abre con su propia herramienta), el esfuerzo llega a
   **Máximo** y los turnos largos ya no se cortan a los 30 minutos.
@@ -126,8 +134,10 @@ versión.
   - Glob y Grep ya no leen fuera del proyecto sin preguntar (`../**`, rutas absolutas), y un enlace
     simbólico o un junction dentro del proyecto ya no sirve para salir de él.
   - «Permitir siempre» vale dentro del proyecto: lo que va fuera de él o a la red pregunta siempre, y su
-    tarjeta ya no ofrece recordarlo. En «Omitir permisos», un comando que borra o escribe fuera del
-    proyecto también pregunta.
+    tarjeta ya no ofrece recordarlo. En «Omitir permisos», un comando que nombra una ruta de fuera del
+    proyecto también pregunta; no es una barrera: lo que sale del proyecto sin nombrarlo se ejecuta.
+  - `git -C <carpeta> push`, `git -c … pull`, `git --git-dir=… fetch` y similares cuentan como acceso a
+    la red: su tarjeta lo marca como red y nunca se puede «Permitir siempre».
   - Un bloque de JSON en la respuesta del modelo (un `package.json` citado, un README con trampa) ya no
     se ejecuta como si fuera una llamada a una herramienta.
   - «Probar conexión» solo usa la clave guardada con la URL del proveedor guardado.

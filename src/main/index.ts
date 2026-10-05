@@ -175,6 +175,7 @@ import { WorkspaceStore } from './state/workspaceStore';
 import { CommandCatalogStore } from './state/commandCatalogStore';
 import { openArtifactWindow } from './artifacts/artifactWindow';
 import { InstructionsService } from './instructions/instructionsService';
+import { agyBridgeSpec, bridgeDocument, codexBridgeSpec, resolveBridge, type BridgeFs, type BridgeSpec } from './instructions/instructionsBridge';
 import { EffectiveSettingsService } from './config/effectiveSettingsService';
 import { ConversationIndexStore } from './state/conversationIndexStore';
 import { ProjectFileService, resolveProjectFilePath } from './files/projectFileService';
@@ -648,6 +649,41 @@ function agyProfileLinksDeps(): AgyProfileLinksDeps {
   };
 }
 
+// --- Puente de instrucciones (grupo H) -------------------------------------------------------------
+
+const instructionsFs: BridgeFs = { exists: existsSync, readFile: (path) => readFileSync(path, 'utf8') };
+// El CLAUDE.md global que se puentea: el de la cuenta de Claude principal.
+// ponytail: siempre ~/.claude; si el usuario solo tiene cuentas alternativas con su propio CLAUDE.md,
+// resolver aqui la cuenta por defecto como sessionDefaults.ts.
+const claudeUserDir = (): string => join(homedir(), '.claude');
+
+function codexHomeFor(accountDir: string): string {
+  return getProviderAccounts().find('codex', accountDir)?.home ?? join(homedir(), '.codex');
+}
+
+function agyProfileFor(accountDir: string): string {
+  const entry = getProviderAccounts().find('agy', accountDir);
+  return entry !== null && entry.authKind === 'api-key' ? entry.home : join(app.getPath('userData'), AGY_SUBSCRIPTION_PROFILE);
+}
+
+// Que es "el fichero propio" del CLI de una pestaña; null = el proveedor no lleva puente.
+function bridgeSpecFor(provider: string, accountDir: string): BridgeSpec | null {
+  if (provider === CODEX_PROVIDER_ID) return codexBridgeSpec(codexHomeFor(accountDir));
+  if (provider === AGY_PROVIDER_ID) return agyBridgeSpec(agyProfileFor(accountDir));
+  return null;
+}
+
+// GEMINI.md de una sesion de agy en una carpeta suya del temporal (nunca en el repo ni en el perfil).
+// ponytail: no se barren, como las imagenes adjuntas; las limpia el SO con su temporal.
+function bridgeAgyInstructions(sessionId: string, cwd: string, profileDir: string): string | null {
+  const files = resolveBridge(instructionsFs, { cwd, claudeUserDir: claudeUserDir(), spec: agyBridgeSpec(profileDir) });
+  if (files.length === 0) return null;
+  const dir = join(tmpdir(), 'mage-agy-instructions', sessionId.replace(/[^A-Za-z0-9-]/g, '_'));
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'GEMINI.md'), bridgeDocument(files), 'utf8');
+  return realpathSync.native(dir);
+}
+
 function buildAgyAdapter(): AgyAdapter {
   return new AgyAdapter({
     resolveApiAccount: (dir) => {
@@ -659,6 +695,7 @@ function buildAgyAdapter(): AgyAdapter {
     // La suscripcion tambien corre con perfil propio: las reglas de Mage nunca tocan el settings.json real.
     subscriptionProfileDir: () => join(app.getPath('userData'), AGY_SUBSCRIPTION_PROFILE),
     prepareProfile: prepareAgyProfile,
+    bridgeInstructions: bridgeAgyInstructions,
     saveAttachment: (sessionId, attachment, index) => {
       const path = agyAttachmentPath(agyAttachmentsDir(), sessionId, attachment, index);
       mkdirSync(dirname(path), { recursive: true });
@@ -676,6 +713,8 @@ function buildCodexAdapter(): CodexAdapter {
       mkdirSync(entry.home, { recursive: true }); // codex se niega a arrancar si CODEX_HOME no existe (medido)
       return { home: entry.home, apiKey: getProviderAccounts().apiKeyFor('codex', dir) };
     },
+    resolveInstructions: (cwd, codexHome) =>
+      resolveBridge(instructionsFs, { cwd, claudeUserDir: claudeUserDir(), spec: codexBridgeSpec(codexHome ?? join(homedir(), '.codex')) }),
   });
 }
 
@@ -2757,14 +2796,12 @@ function registerIpcHandlers(): void {
 
   // Vistas nuevas (2.9.b). Las dos leen POR CONVERSACION (su cwd y su config dir efectivo) y son de
   // SOLO LECTURA: Mage no reescribe el settings.json del usuario ni el del proyecto.
-  const instructionsService = new InstructionsService({
-    exists: existsSync,
-    readFile: (path) => readFileSync(path, 'utf8'),
-  });
+  const instructionsService = new InstructionsService({ ...instructionsFs, bridgeSpecFor, claudeUserDir: claudeUserDir() });
   ipcMain.handle(IpcChannel.InstructionsRead, (_e, params: ReadInstructionsParams): readonly InstructionsFile[] => {
     // Whitelisting, igual que el resto de canales que reciben una ruta: el config dir tiene que ser
     // una cuenta gestionada bajo HOME, nunca una ruta arbitraria por IPC.
-    if (!isManagedAccountConfigDir(params.accountDir)) {
+    // Con codex o agy vale tambien una cuenta de su registro (CODEX_HOME, perfil de agy por clave).
+    if (!isLaunchableAccountDir(params.accountDir)) {
       throw new Error(`Cuenta no valida para leer instrucciones: ${params.accountDir}`);
     }
     return instructionsService.read(params);

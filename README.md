@@ -115,6 +115,19 @@ Mage es la interfaz; el agente es un proceso aparte que lanza por ti.
 > gestor de cuentas: Mage aísla las credenciales de cada una y cambias de una a otra sin repetir el
 > login.
 
+### Instrucciones del proyecto para todos los agentes
+
+Cada CLI lee su propio fichero: Claude Code, `CLAUDE.md`; Codex, `AGENTS.md`; `agy`, `GEMINI.md` o
+`AGENTS.md`. Para escribirlas una sola vez, la convención que recomendamos es:
+
+- **`AGENTS.md`** con las instrucciones de verdad.
+- **`CLAUDE.md`** con una sola línea, `@AGENTS.md`, para que Claude Code importe el mismo fichero.
+
+Si tu proyecto solo tiene `CLAUDE.md`, Mage hace de puente: en cada conversación se lo da a Codex como
+su `AGENTS.md` y a `agy` como su `GEMINI.md`, junto con tu `~/.claude/CLAUDE.md` global, **sin escribir
+nada en tu repositorio**. Si el proyecto ya tiene el fichero propio de ese CLI, se usa el suyo y Mage
+no añade nada. El Inspector › Instrucciones de la conversación dice qué está recibiendo.
+
 ---
 
 ## Qué trae

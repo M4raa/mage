@@ -66,3 +66,29 @@ describe('InstructionsService.read', () => {
     expect(result.map((f) => f.scope)).toEqual(['project', 'user']);
   });
 });
+
+describe('InstructionsService.read con puente (grupo H)', () => {
+  const OWN_PROJECT = 'C:\\sourcecode\\mage\\AGENTS.md';
+  const spec = { target: 'AGENTS.md', projectOwnFiles: ['AGENTS.md'], userOwnPaths: ['C:\\Users\\u\\.codex\\AGENTS.md'] } as const;
+  const bridged = (files: Readonly<Record<string, string>>): InstructionsService =>
+    service(files, { bridgeSpecFor: (provider) => (provider === 'codex' ? spec : null), claudeUserDir: ACCOUNT });
+
+  it('read_codexSoloConClaudeMd_marcaElPuenteComoAgentsMd', () => {
+    const result = bridged({ [PROJECT_FILE]: '# Proyecto' }).read({ cwd: CWD, accountDir: 'C:\\x', provider: 'codex' });
+
+    expect(result[0]).toEqual({ scope: 'project', path: PROJECT_FILE, content: '# Proyecto', bridge: { target: 'AGENTS.md', ownFile: null } });
+    expect(result[1]?.path).toBe(USER_FILE);
+  });
+
+  it('read_codexConSuAgentsMd_diceCualEsElSuyo', () => {
+    const result = bridged({ [PROJECT_FILE]: '# Proyecto', [OWN_PROJECT]: '# A' }).read({ cwd: CWD, accountDir: 'C:\\x', provider: 'codex' });
+
+    expect(result[0]?.bridge).toEqual({ target: 'AGENTS.md', ownFile: OWN_PROJECT });
+  });
+
+  it('read_claude_sinCampoBridge', () => {
+    const result = bridged({ [PROJECT_FILE]: '# Proyecto' }).read({ cwd: CWD, accountDir: ACCOUNT, provider: 'claude' });
+
+    expect(result[0]).toEqual({ scope: 'project', path: PROJECT_FILE, content: '# Proyecto' });
+  });
+});

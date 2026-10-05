@@ -243,3 +243,66 @@ describe('CodexAdapter: aprobaciones (forma del esquema)', () => {
     expect(adapter.normalize(notification('serverRequest/resolved', { requestId: 4, threadId: 't' }))).toEqual([{ kind: 'permission_cancelled', requestId: 'codex-4' }]);
   });
 });
+
+// Puente de instrucciones (grupo H), medido con `spike/codex-spike.mjs --instructions`.
+describe('CodexAdapter: puente de instrucciones', () => {
+  const PROJECT = { scope: 'project', path: 'C:\\proyecto\\CLAUDE.md', content: '# Proyecto' } as const;
+  const USER = { scope: 'user', path: 'C:\\Users\\u\\.claude\\CLAUDE.md', content: '# Global' } as const;
+  const FALLBACK = 'project_doc_fallback_filenames=["CLAUDE.md"]';
+
+  it('buildSpawnPlan_claudeMdDelProyecto_pasaElFallbackDeCodex', () => {
+    const adapter = new CodexAdapter({ resolveBinary: () => 'codex', resolveInstructions: () => [PROJECT] });
+
+    const plan = adapter.buildSpawnPlan(launch);
+
+    expect(plan.args).toContain(FALLBACK);
+  });
+
+  it('buildSpawnPlan_sinNadaQuePuentear_niFallbackNiDeveloperInstructions', () => {
+    const adapter = new CodexAdapter({ resolveBinary: () => 'codex', resolveInstructions: () => [] });
+
+    const requests = handshake(adapter);
+
+    expect(requests.find((r) => r.method === 'thread/start')?.params?.developerInstructions).toBeUndefined();
+    expect(adapter.buildSpawnPlan(launch).args).not.toContain(FALLBACK);
+  });
+
+  it('normalize_claudeMdGlobal_vaEnDeveloperInstructionsDelThreadStart', () => {
+    const adapter = new CodexAdapter({ resolveBinary: () => 'codex', resolveInstructions: () => [USER] });
+
+    const requests = handshake(adapter);
+
+    const instructions = requests.find((r) => r.method === 'thread/start')?.params?.developerInstructions;
+    expect(instructions).toContain('# Global');
+    expect(instructions).toContain(USER.path);
+  });
+
+  it('buildSpawnPlan_soloGlobal_noPasaElFallback', () => {
+    const adapter = new CodexAdapter({ resolveBinary: () => 'codex', resolveInstructions: () => [USER] });
+
+    expect(adapter.buildSpawnPlan(launch).args).not.toContain(FALLBACK);
+  });
+
+  // Medido: en thread/resume el hilo conserva las del inicio y las nuevas se ignoran.
+  it('normalize_relanzadoConConversationId_resumeSinDeveloperInstructions', () => {
+    const adapter = new CodexAdapter({ resolveBinary: () => 'codex', resolveInstructions: () => [USER] });
+
+    const requests = handshake(adapter, { ...launch, resume: true, conversationId: 'thread-9' });
+
+    expect(requests.find((r) => r.method === 'thread/resume')?.params?.developerInstructions).toBeUndefined();
+  });
+
+  it('buildSpawnPlan_conYSinCuentaPropia_resuelveConSuCodexHomeONull', () => {
+    const seen: (string | null)[] = [];
+    const record = (_cwd: string, home: string | null): readonly [] => {
+      seen.push(home);
+      return [];
+    };
+    const withAccount = new CodexAdapter({ resolveBinary: () => 'codex', resolveAccount: () => ({ home: 'C:\\Users\\u\\.codex-b', apiKey: null }), resolveInstructions: record });
+
+    withAccount.buildSpawnPlan(launch);
+    new CodexAdapter({ resolveBinary: () => 'codex', resolveInstructions: record }).buildSpawnPlan(launch);
+
+    expect(seen).toEqual(['C:\\Users\\u\\.codex-b', null]);
+  });
+});

@@ -64,6 +64,15 @@ export interface AgyAdapterDeps {
   readonly prepareProfile?: (profileDir: string, cwd: string, mode: AgyProfileMode) => void;
   // Guarda una imagen adjunta y devuelve su ruta absoluta (main la escribe en su carpeta temporal).
   readonly saveAttachment?: (sessionId: string, attachment: ImageAttachment, index: number) => string;
+  // Puente de instrucciones (grupo H): deja en una carpeta de Mage, fuera del repo, el GEMINI.md con los
+  // CLAUDE.md que agy no tiene como suyos, y devuelve esa carpeta (null = no hay nada que puentear).
+  readonly bridgeInstructions?: (sessionId: string, cwd: string, profileDir: string) => string | null;
+}
+
+// Entorno del hijo y el perfil con el que corre (undefined = el real del usuario, solo en tests).
+interface ChildLaunch {
+  readonly env: NodeJS.ProcessEnv;
+  readonly profileDir: string | undefined;
 }
 
 export class AgyAdapter implements ProviderAdapter {
@@ -97,7 +106,21 @@ export class AgyAdapter implements ProviderAdapter {
     }
     // `params.shared` no se traduce aqui: agy no tiene flag de sesion para MCP (medido en 1.2.14). Lo que
     // Mage comparte con agy se EXPORTA a su mcp_config.json («Sincronizar con agy», mcpAgySync.ts).
-    return { command: (this.deps.resolveBinary ?? resolveAgyBinary)(), args, env: this.childEnv(params) };
+    const child = this.childLaunch(params);
+    args.push(...this.bridgeArgs(params, child.profileDir));
+    return { command: (this.deps.resolveBinary ?? resolveAgyBinary)(), args, env: child.env };
+  }
+
+  // Puente de instrucciones, MEDIDO en agy 1.2.16 (`node spike/agy-spike.mjs --instructions`): agy carga
+  // como regla el GEMINI.md de cualquier carpeta que reciba con `--add-dir`, aunque este fuera del
+  // proyecto. Es POR SESION a proposito: el GEMINI.md global del perfil tambien lo carga, pero lo RELEE
+  // EN CADA TURNO (medido) y el perfil de la suscripcion es comun, asi que la pestaña de otro proyecto le
+  // cambiaria las instrucciones a esta. Escribir en esa carpeta sigue denegado: solo el cwd tiene
+  // `write_file` en el settings.json del perfil.
+  private bridgeArgs(params: LaunchParams, profileDir: string | undefined): readonly string[] {
+    if (profileDir === undefined || this.deps.bridgeInstructions === undefined) return [];
+    const dir = this.deps.bridgeInstructions(params.sessionId, params.cwd, profileDir);
+    return dir === null ? [] : ['--add-dir', dir];
   }
 
   // Env del hijo, SANEADO (scrubAgentEnv borra toda clave heredada, tambien GEMINI_API_KEY). Lleva despues
@@ -107,14 +130,14 @@ export class AgyAdapter implements ProviderAdapter {
   // la suscripcion (medido con una clave falsa: 400 API_KEY_INVALID).
   // ponytail: solo medido en Windows (la 0.1.2 es solo Windows). En POSIX agy resolvera su casa por HOME,
   // que aqui va al real; se sube midiendolo y fijando HOME al perfil alli.
-  private childEnv(params: LaunchParams): NodeJS.ProcessEnv {
+  private childLaunch(params: LaunchParams): ChildLaunch {
     const env = scrubAgentEnv(process.env);
     const account = this.deps.resolveApiAccount?.(params.accountDir) ?? null;
     const profileDir = account?.profileDir ?? this.deps.subscriptionProfileDir?.();
-    if (profileDir === undefined) return env;
+    if (profileDir === undefined) return { env, profileDir };
     this.deps.prepareProfile?.(profileDir, params.cwd, account === null ? 'subscription' : 'api-key');
     const profiled = { ...env, USERPROFILE: profileDir, HOME: homedir() };
-    return account === null ? profiled : { ...profiled, GEMINI_API_KEY: account.apiKey };
+    return { env: account === null ? profiled : { ...profiled, GEMINI_API_KEY: account.apiKey }, profileDir };
   }
 
   // `content` solo admite texto (medido): cada imagen se guarda en disco y su ruta va al final del

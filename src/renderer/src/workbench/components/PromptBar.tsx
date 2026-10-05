@@ -38,7 +38,10 @@ const PromptEditor = lazy(() => import('./PromptEditor').then((m) => ({ default:
 // render haria que el selector de Zustand viera un valor nuevo siempre y re-renderizara sin parar.
 const EMPTY_COMMANDS: readonly SlashCommand[] = [];
 
-const BYPASS_PERMISSIONS_ADVICE = 'Omitir permisos: el agente ejecuta todo sin preguntar';
+// Sin prometer nada fuera del proyecto: el runtime propio pregunta por las rutas que VE fuera, pero es una
+// heuristica de texto, no una frontera (permissionGate.ts), y Claude con este modo no pregunta nada.
+const BYPASS_PERMISSIONS_ADVICE =
+  'Omitir permisos: el modelo podrá ejecutar cualquier comando y modificar cualquier fichero sin preguntar. Úsalo solo con proyectos y contenido de confianza.';
 
 // Los cinco llevan icono: uno sin el hacia que el chip encogiera 16 px al pasar por el y la fila, alineada
 // a la derecha, lo desplazaba.

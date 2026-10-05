@@ -8,6 +8,7 @@
 // Uso: node spike/codex-spike.mjs
 //      node spike/codex-spike.mjs "C:/ruta/a/codex.exe"   (si no esta en el PATH)
 //      node spike/codex-spike.mjs --app-server [--key]   (protocolo JSON-RPC sin cuenta; ver abajo)
+//      node spike/codex-spike.mjs --instructions         (instrucciones sin tocar el repo; ver abajo)
 import { spawnSync } from 'node:child_process';
 
 const explicitBin = process.argv.slice(2).find((arg) => !arg.startsWith('--'));
@@ -218,6 +219,161 @@ async function probeAppServer() {
   for (const dir of [home, workspace]) {
     try {
       rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
+    } catch (err) {
+      console.log(`  (no se pudo borrar ${dir}: ${err.code ?? err.message})`);
+    }
+  }
+  const after = realFiles.map(hashOf);
+  console.log(`\n  configuracion real de codex intacta: ${JSON.stringify(before) === JSON.stringify(after) ? 'SI' : 'NO — revisa'}`);
+}
+
+// ================================================================================================
+// Modo --instructions (2026-10-05, codex-cli 0.144.4, grupo H): ¿como se le dan instrucciones a codex
+// SIN escribir en el repo ni en la config real? GRATIS y SIN CUENTA: codex habla con un servidor
+// Responses FALSO local (proveedor propio por `-c`, clave falsa por `env_key`) que guarda el cuerpo de
+// cada peticion y contesta 400; asi se ve EXACTAMENTE que instrucciones manda codex al modelo. Mide:
+//   (1) un CLAUDE.md solo en el proyecto: ¿lo lee codex por si mismo?;
+//   (2) `-c project_doc_fallback_filenames=["CLAUDE.md"]`: ¿lo lee como si fuera su AGENTS.md?;
+//   (3) `developerInstructions` en `thread/start`: ¿donde y como llega?;
+//   (4) `CODEX_HOME/AGENTS.md` (un CODEX_HOME temporal): su global;
+//   (5) AGENTS.md y CLAUDE.md a la vez con el fallback: ¿solo el suyo?;
+//   (6) `thread/resume` con `developerInstructions`: ¿se suman o se sustituyen las del hilo?
+// Compara el hash de `~/.codex/config.toml` y `auth.json` antes y despues.
+// ================================================================================================
+
+if (process.argv.includes('--instructions')) await probeInstructions();
+
+async function probeInstructions() {
+  const fs = await import('node:fs');
+  const { tmpdir, homedir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { createHash } = await import('node:crypto');
+  const { spawn } = await import('node:child_process');
+  const http = await import('node:http');
+  const realFiles = [join(homedir(), '.codex', 'config.toml'), join(homedir(), '.codex', 'auth.json')];
+  const hashOf = (file) => (fs.existsSync(file) ? createHash('sha256').update(fs.readFileSync(file)).digest('hex') : null);
+  const before = realFiles.map(hashOf);
+  const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  // Servidor Responses falso: guarda cada cuerpo y contesta 400.
+  const bodies = [];
+  const server = http.createServer((req, res) => {
+    let raw = '';
+    req.on('data', (chunk) => (raw += chunk));
+    req.on('end', () => {
+      bodies.push(raw);
+      res.writeHead(400, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ error: { message: 'mage spike: peticion capturada', type: 'invalid_request_error' } }));
+    });
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const port = server.address().port;
+  const providerArgs = [
+    '-c', `model_providers.mage-fake={name="Fake",base_url="http://127.0.0.1:${port}/v1",env_key="MAGE_CODEX_API_KEY",wire_api="responses"}`,
+    '-c', 'model_provider="mage-fake"',
+  ];
+
+  // Un hilo y un turno; devuelve el cuerpo de la PRIMERA peticion que codex mando al modelo.
+  const turn = async ({ home, workspace, extraArgs = [], thread = {}, resumeId = null }) => {
+    const env = { ...process.env, CODEX_HOME: home, MAGE_CODEX_API_KEY: 'sk-mage-spike-falsa' };
+    delete env.CODEX_API_KEY;
+    delete env.OPENAI_API_KEY;
+    const child = spawn(bin, ['app-server', ...providerArgs, ...extraArgs], { env, cwd: workspace, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+    const pending = new Map();
+    let buffer = '';
+    let nextId = 0;
+    child.stdout.setEncoding('utf8');
+    child.stdout.on('data', (chunk) => {
+      buffer += chunk;
+      let nl;
+      while ((nl = buffer.indexOf('\n')) !== -1) {
+        const line = buffer.slice(0, nl).trim();
+        buffer = buffer.slice(nl + 1);
+        if (line.length === 0) continue;
+        const message = JSON.parse(line);
+        if (message.id !== undefined && pending.has(message.id)) {
+          pending.get(message.id)(message);
+          pending.delete(message.id);
+        }
+      }
+    });
+    const request = (method, params) =>
+      new Promise((resolve) => {
+        nextId += 1;
+        pending.set(nextId, resolve);
+        child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: nextId, method, params })}\n`);
+      });
+    await request('initialize', { clientInfo: { name: 'mage-spike', version: '0' } });
+    child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'initialized' })}\n`);
+    const opened = resumeId === null
+      ? await request('thread/start', { cwd: workspace, ...thread })
+      : await request('thread/resume', { threadId: resumeId, cwd: workspace, ...thread });
+    const threadId = opened.result?.thread?.id;
+    const already = bodies.length;
+    if (threadId !== undefined) {
+      await request('turn/start', { threadId, input: [{ type: 'text', text: 'hi', text_elements: [] }] });
+      const deadline = Date.now() + 15_000;
+      while (bodies.length === already && Date.now() < deadline) await wait(100);
+      await wait(1_500);
+    } else console.log(`  el hilo no abrio: ${JSON.stringify(opened.error ?? opened.result).slice(0, 200)}`);
+    await new Promise((resolve) => {
+      child.on('close', resolve);
+      child.kill();
+    });
+    return { threadId: threadId ?? null, text: bodies[already] ?? '{}' };
+  };
+
+  // Donde aparece cada marca en la peticion: en `instructions` (base) o como mensaje de un rol.
+  const where = (body, mark) => {
+    if (!body.includes(mark)) return 'NO llega';
+    const parsed = JSON.parse(body);
+    if (typeof parsed.instructions === 'string' && parsed.instructions.includes(mark)) return 'en `instructions` (base)';
+    const hits = (parsed.input ?? []).filter((item) => JSON.stringify(item).includes(mark));
+    const roles = hits.map((item) => item.role ?? item.type).join(',');
+    const count = body.split(mark).length - 1;
+    const head = hits.map((item) => JSON.stringify(item.content ?? '').slice(0, 110)).join(' | ');
+    return `llega ${count}x como [${roles}]: ${head}`;
+  };
+
+  const dirs = [];
+  const fresh = (files = {}) => {
+    const home = fs.mkdtempSync(join(tmpdir(), 'mage-codex-ih-'));
+    const workspace = fs.mkdtempSync(join(tmpdir(), 'mage-codex-iw-'));
+    dirs.push(home, workspace);
+    for (const [name, text] of Object.entries(files)) {
+      const [root, rel] = name.split(':');
+      fs.writeFileSync(join(root === 'home' ? home : workspace, rel), text);
+    }
+    return { home, workspace };
+  };
+  const FALLBACK = ['-c', 'project_doc_fallback_filenames=["CLAUDE.md"]'];
+
+  console.log('\n## 9. Instrucciones sin tocar el repo (servidor Responses falso, sin cuenta)');
+  const c1 = await turn(fresh({ 'ws:CLAUDE.md': 'MARK-CLAUDE-PROJ' }));
+  console.log(`  (1) solo CLAUDE.md en el proyecto          -> ${where(c1.text, 'MARK-CLAUDE-PROJ')}`);
+  const c2 = await turn({ ...fresh({ 'ws:CLAUDE.md': 'MARK-CLAUDE-PROJ' }), extraArgs: FALLBACK });
+  console.log(`  (2) con project_doc_fallback_filenames      -> ${where(c2.text, 'MARK-CLAUDE-PROJ')}`);
+  const c3 = await turn({ ...fresh(), thread: { developerInstructions: 'MARK-DEV-START' } });
+  console.log(`  (3) developerInstructions en thread/start   -> ${where(c3.text, 'MARK-DEV-START')}`);
+  const c4 = await turn(fresh({ 'home:AGENTS.md': 'MARK-CODEX-HOME' }));
+  console.log(`  (4) CODEX_HOME/AGENTS.md                    -> ${where(c4.text, 'MARK-CODEX-HOME')}`);
+  const c5 = await turn({ ...fresh({ 'ws:AGENTS.md': 'MARK-AGENTS-PROJ', 'ws:CLAUDE.md': 'MARK-CLAUDE-PROJ' }), extraArgs: FALLBACK });
+  console.log(`  (5) AGENTS.md + CLAUDE.md con fallback: AGENTS -> ${where(c5.text, 'MARK-AGENTS-PROJ')}`);
+  console.log(`                                          CLAUDE -> ${where(c5.text, 'MARK-CLAUDE-PROJ')}`);
+  const both = fresh();
+  const first = await turn({ ...both, thread: { developerInstructions: 'MARK-DEV-FIRST' } });
+  if (first.threadId !== null) {
+    const resumed = await turn({ ...both, thread: { developerInstructions: 'MARK-DEV-RESUME' }, resumeId: first.threadId });
+    console.log(`  (6) thread/resume: las del inicio          -> ${where(resumed.text, 'MARK-DEV-FIRST')}`);
+    console.log(`                     las del resume          -> ${where(resumed.text, 'MARK-DEV-RESUME')}`);
+  }
+  console.log(`  peticiones capturadas: ${bodies.length}`);
+
+  server.close();
+  await wait(1_000);
+  for (const dir of dirs) {
+    try {
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
     } catch (err) {
       console.log(`  (no se pudo borrar ${dir}: ${err.code ?? err.message})`);
     }

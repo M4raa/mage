@@ -32,6 +32,7 @@
 //   node spike/agy-spike.mjs --profile      # perfil propio para la suscripcion, MCP por junction de
 //                                            # .gemini/config y relectura de settings (~3 turnos)
 //   node spike/agy-spike.mjs --mcp-rules    # reglas mcp(<srv>/<tool>): denegada, comodin y deny (~3 turnos)
+//   node spike/agy-spike.mjs --instructions # que fichero de instrucciones lee y desde donde (3 turnos)
 
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -825,6 +826,83 @@ async function singleTurnWithEnv(workspace, text, env) {
   return session;
 }
 
+// ================================================================================================
+// Modo --instructions (grupo H; 2026-10-05, agy 1.2.16): que fichero de instrucciones lee agy y desde
+// donde, para darle el CLAUDE.md de un proyecto SIN escribir en el repo. Lo que dice el binario (sus
+// docs embebidas y su changelog de la 1.2.16, gratis): reglas `GEMINI.md`/`AGENTS.md` en cada carpeta
+// del cwd a la raiz del repo, y globales en `~/.gemini/{GEMINI,AGENTS}.md` y `~/.gemini/config/…`. No
+// hay flag ni ajuste para otro nombre (`contextFileName` es de los manifiestos de plugin). Mide con
+// turnos (gemini-3.8-flash-low), en un USERPROFILE aislado:
+//   (a) CLAUDE.md en el proyecto y GEMINI.md en `<perfil>/.gemini/`: ¿cual llega? (1 turno);
+//   (b) se reescribe el GEMINI.md del perfil con la sesion viva: ¿lo relee por turno o solo al lanzar? (1);
+//   (c) AGENTS.md y GEMINI.md en el proyecto: ¿lee los dos? (1 turno).
+// Las instrucciones las cuenta el modelo (se le piden las palabras clave que llevan, sin herramientas);
+// el resumen de pasos dice si abrio algun fichero, que invalidaria el caso. CONSUME SUSCRIPCION: 3 turnos.
+// ================================================================================================
+const INSTRUCTIONS_QUESTION =
+  'Without using any tool and without reading any file, list every CODEWORD that appears in your rules, ' +
+  'user rules or system instructions. Reply with ONLY the codewords separated by commas, or NONE.';
+
+function realRulesFingerprint() {
+  const files = ['GEMINI.md', 'AGENTS.md'].map((name) => path.join(os.homedir(), '.gemini', name));
+  return files.map((file) => (fs.existsSync(file) ? createHash('sha256').update(fs.readFileSync(file)).digest('hex') : '-')).join(',');
+}
+
+async function askCodewords(session, expectedResults) {
+  session.send(INSTRUCTIONS_QUESTION);
+  await waitFor(session, (events) => countResults(events) >= expectedResults);
+  const results = session.events.filter((event) => event.event === 'result');
+  const tools = session.events.filter((event) => event.step_update?.tool_name).map((event) => event.step_update.tool_name);
+  return `${JSON.stringify((results.at(-1)?.result?.response ?? '').trim().slice(0, 120))} herramientas=${JSON.stringify([...new Set(tools)])}`;
+}
+
+async function probeInstructions() {
+  const before = `${realConfigFingerprint()}|${realRulesFingerprint()}`;
+  await withWorkspace('mage-agy-ins-', async (workspace) => {
+    await withWorkspace('mage-agy-ins-profile-', async (profile) => {
+      const env = isolatedProfileEnv(profile, { allow: [] });
+      const globalRules = path.join(profile, '.gemini', 'GEMINI.md');
+      fs.writeFileSync(path.join(workspace, 'CLAUDE.md'), 'CODEWORD: PLUM\n');
+      fs.writeFileSync(globalRules, 'CODEWORD: KIWI\n');
+      console.log('\n=== [instructions a] CLAUDE.md (PLUM) en el proyecto, GEMINI.md (KIWI) en el perfil ===');
+      const session = startPersistent(workspace, ['--mode', 'accept-edits'], env);
+      console.log(`  respuesta: ${await askCodewords(session, 1)}`);
+      fs.writeFileSync(globalRules, 'CODEWORD: MANGO\n');
+      console.log('\n=== [instructions b] GEMINI.md del perfil reescrito (MANGO) con la sesion viva ===');
+      console.log(`  respuesta: ${await askCodewords(session, 2)}  (KIWI = solo al lanzar; MANGO = relee)`);
+      session.child.stdin.end();
+      await session.exited;
+    });
+  });
+  await withWorkspace('mage-agy-ins2-', async (workspace) => {
+    await withWorkspace('mage-agy-ins2-profile-', async (profile) => {
+      const env = isolatedProfileEnv(profile, { allow: [] });
+      fs.writeFileSync(path.join(workspace, 'AGENTS.md'), 'CODEWORD: FIG\n');
+      fs.writeFileSync(path.join(workspace, 'GEMINI.md'), 'CODEWORD: LIME\n');
+      console.log('\n=== [instructions c] AGENTS.md (FIG) y GEMINI.md (LIME) en el proyecto ===');
+      const session = startPersistent(workspace, ['--mode', 'accept-edits'], env);
+      console.log(`  respuesta: ${await askCodewords(session, 1)}`);
+      session.child.stdin.end();
+      await session.exited;
+    });
+  });
+  await withWorkspace('mage-agy-ins3-', async (workspace) => {
+    await withWorkspace('mage-agy-ins3-bridge-', async (bridge) => {
+      await withWorkspace('mage-agy-ins3-profile-', async (profile) => {
+        const env = isolatedProfileEnv(profile, { allow: [] });
+        fs.writeFileSync(path.join(bridge, 'GEMINI.md'), 'CODEWORD: PEAR\n');
+        console.log('\n=== [instructions d] GEMINI.md (PEAR) en una carpeta FUERA del proyecto pasada con un segundo --add-dir ===');
+        const session = startPersistent(workspace, ['--mode', 'accept-edits', '--add-dir', bridge], env);
+        console.log(`  respuesta: ${await askCodewords(session, 1)}`);
+        session.child.stdin.end();
+        await session.exited;
+      });
+    });
+  });
+  const after = `${realConfigFingerprint()}|${realRulesFingerprint()}`;
+  console.log(`\n  config y reglas reales de agy intactas: ${before === after ? 'SI' : 'NO — revisa'}`);
+}
+
 async function main() {
   const version = await run(['--version'], { timeoutMs: CONFIG.probeTimeoutMs });
   const found = version.code === 0;
@@ -840,7 +918,8 @@ async function main() {
   if (process.argv.includes('--images')) await probeImages();
   if (process.argv.includes('--profile')) await probeProfile();
   if (process.argv.includes('--mcp-rules')) await probeMcpRules();
-  if (!['--live', '--persistent', '--permissions', '--images', '--profile', '--mcp-rules'].some((flag) => process.argv.includes(flag))) {
+  if (process.argv.includes('--instructions')) await probeInstructions();
+  if (!['--live', '--persistent', '--permissions', '--images', '--profile', '--mcp-rules', '--instructions'].some((flag) => process.argv.includes(flag))) {
     console.log('\n(--live: 2 turnos reales por proceso; --persistent: sesion persistente, ~12 turnos; --permissions: reglas de comandos, ~14 turnos; --images: imagenes, ~3 turnos. Consumen suscripción)');
   }
 }

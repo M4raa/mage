@@ -4,6 +4,7 @@ import { usePaneTabId } from '../paneContext';
 import { Markdown } from './Markdown';
 import { Hint } from './TranscriptHint';
 import type { InstructionsFile } from '@shared/ipc';
+import { AGY_PROVIDER_ID } from '@shared/providers';
 
 // Panel "Instrucciones" (2.9.b): el `CLAUDE.md` del PROYECTO y el del USUARIO, que son las
 // instrucciones que el CLI aplica de verdad a esta conversacion.
@@ -13,6 +14,9 @@ import type { InstructionsFile } from '@shared/ipc';
 //
 // Ojo con una afirmacion que circulaba: Mage NO leia `CLAUDE.md` en ningun sitio — lo lee el CLI. Esta
 // vista es fontaneria nueva (servicio + IPC + panel), no exponer algo que ya existiera.
+//
+// En una pestaña de codex o agy (grupo H) son los CLAUDE.md que Mage le PUENTEA como su AGENTS.md o
+// GEMINI.md, y cada uno dice si se le pasa o si el CLI usa el suyo.
 const SCOPE_LABEL: Readonly<Record<InstructionsFile['scope'], string>> = {
   project: 'Proyecto',
   user: 'Usuario',
@@ -23,6 +27,7 @@ export function InstructionsPanel(): React.JSX.Element {
   const tab = useWorkbenchStore((s) => s.tabs.find((t) => t.id === tabId));
   const cwd = tab?.cwd;
   const accountDir = tab === undefined ? undefined : (tab.resolvedConfigDir ?? tab.accountId);
+  const provider = tab?.provider;
   const [files, setFiles] = useState<readonly InstructionsFile[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -32,7 +37,7 @@ export function InstructionsPanel(): React.JSX.Element {
     setFiles(null);
     setError(null);
     void window.mage
-      .readInstructions({ cwd, accountDir })
+      .readInstructions({ cwd, accountDir, ...(provider === undefined ? {} : { provider }) })
       .then((result) => {
         if (!cancelled) setFiles(result);
       })
@@ -42,7 +47,7 @@ export function InstructionsPanel(): React.JSX.Element {
     return () => {
       cancelled = true;
     };
-  }, [cwd, accountDir]);
+  }, [cwd, accountDir, provider]);
 
   if (tab === undefined) return <Hint text="Abre una conversación para ver sus instrucciones." />;
   if (error !== null) {
@@ -57,7 +62,7 @@ export function InstructionsPanel(): React.JSX.Element {
   return (
     <div className="flex min-h-0 flex-col gap-[12px] overflow-y-auto p-[12px_14px]">
       {files.map((file) => (
-        <section key={file.scope} className="flex flex-col gap-[6px]">
+        <section key={file.scope} data-instructions-scope={file.scope} className="flex flex-col gap-[6px]">
           <header className="flex items-baseline gap-[8px]">
             <span className="text-[9.5px] font-bold uppercase tracking-[.07em] text-mg-ter">{SCOPE_LABEL[file.scope]}</span>
             <span className="truncate font-mono text-[10px] text-mg-muted" title={file.path}>
@@ -72,6 +77,7 @@ export function InstructionsPanel(): React.JSX.Element {
               </button>
             )}
           </header>
+          {file.bridge !== undefined && file.content !== null && <BridgeNote bridge={file.bridge} provider={provider ?? ''} />}
           {file.content === null ? (
             // Ausente NO es un error: la mayoria de los proyectos no tienen CLAUDE.md.
             <div className="text-[11px] text-mg-muted">No hay fichero.</div>
@@ -84,6 +90,23 @@ export function InstructionsPanel(): React.JSX.Element {
           )}
         </section>
       ))}
+    </div>
+  );
+}
+
+// Una linea por fichero en codex/agy: si esta conversacion lo recibe como instrucciones y como que.
+function BridgeNote({ bridge, provider }: { readonly bridge: NonNullable<InstructionsFile['bridge']>; readonly provider: string }): React.JSX.Element {
+  const cli = provider === AGY_PROVIDER_ID ? 'agy' : 'Codex';
+  if (bridge.ownFile !== null) {
+    return (
+      <div className="text-[10.5px] text-mg-muted" title={bridge.ownFile}>
+        No se le pasa: {cli} usa su propio fichero de instrucciones.
+      </div>
+    );
+  }
+  return (
+    <div data-instructions-bridge={bridge.target} className="text-[10.5px] text-mg-sec">
+      Esta conversación usa este CLAUDE.md como instrucciones: Mage se lo pasa a {cli} como {bridge.target}, sin escribir en el repo.
     </div>
   );
 }
