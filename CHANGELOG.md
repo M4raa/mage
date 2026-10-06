@@ -115,6 +115,7 @@ versión.
   abre con Claude.
 
 ### Corregido
+- Las cuentas y pestañas se muestran al arrancar sin esperar al sondeo de login de Codex; se confirma en segundo plano con caché.
 - Los errores MCP de Codex no muestran detalles de autenticación; las claves conocidas se ocultan
   también en resultados de herramientas y permisos antes de llegar a la interfaz.
 - Codex recibe el esfuerzo configurado al iniciar cada turno; antes usaba el predeterminado del CLI.

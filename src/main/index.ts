@@ -127,6 +127,7 @@ import { resolveAgyBinary } from './os/agyBinaryResolver';
 import { ProviderAccountService } from './accounts/providerAccounts';
 import { CodexLoginService, type CodexLoginResult } from './accounts/codexLoginService';
 import { probeCodexAccount } from './accounts/codexAccountProbe';
+import { CodexAccountCatalog } from './accounts/codexAccountCatalog';
 import { defaultProbeDeps, probeProvider } from './engine/providerProbe';
 import { findAgyBinary } from './os/agyBinaryResolver';
 import { AGY_PROVIDER_ID, CODEX_PROVIDER_ID, runsOnMageRuntime } from '@shared/providers';
@@ -863,18 +864,18 @@ function getProviderAccounts(): ProviderAccountService {
 }
 
 // Todas las cuentas: las de Claude descubiertas en disco (marcadas si son de API) y las del registro.
-async function listAllAccounts(): Promise<AccountInfo[]> {
+function listAllAccounts(): readonly AccountInfo[] {
   const accounts = getProviderAccounts().list(accountService.listAccounts());
-  const result: AccountInfo[] = [];
-  for (const account of accounts) {
-    if (account.providerId !== 'codex' || account.authKind !== 'subscription' || account.loginStatus === 'logged_out') {
-      result.push(account);
-      continue;
-    }
-    const metadata = await probeCodexAccount(codexAccountProbeDeps(), { home: account.configDir, includeApps: false });
-    result.push(metadata.authenticated === null ? account : { ...account, loginStatus: metadata.authenticated ? 'logged_in' : 'logged_out' });
-  }
-  return result;
+  return getCodexAccountCatalog().list(accounts);
+}
+
+let codexAccountCatalog: CodexAccountCatalog | null = null;
+function getCodexAccountCatalog(): CodexAccountCatalog {
+  codexAccountCatalog ??= new CodexAccountCatalog({
+    probe: (home) => probeCodexAccount(codexAccountProbeDeps(), { home, includeApps: false }), now: Date.now,
+    onError: (reason) => mainLog('warn', 'No se pudo confirmar el login de Codex', { reason }),
+  });
+  return codexAccountCatalog;
 }
 
 function codexAccountProbeDeps(): import('./accounts/codexAccountProbe').CodexAccountProbeDeps {
@@ -2506,6 +2507,7 @@ function registerIpcHandlers(): void {
   // Cuentas: listar (datos seguros), crear (dir + enlaces + settings) y lanzar login interactivo
   // en terminal externa (headless no puede loguear). El binario se resuelve por SO.
   ipcMain.handle(IpcChannel.AccountsList, () => listAllAccounts());
+  ipcMain.handle(IpcChannel.AccountsCodexConfirm, () => getCodexAccountCatalog().confirm(getProviderAccounts().list(accountService.listAccounts())));
   ipcMain.handle(IpcChannel.AccountsCreate, (_e, name: string): AccountInfo =>
     accountService.createAccount(name),
   );
@@ -2516,7 +2518,10 @@ function registerIpcHandlers(): void {
   ipcMain.handle(IpcChannel.CodexLoginStart, (_e, configDir: string): Promise<CodexLoginResult> => {
     const entry = getProviderAccounts().find('codex', configDir);
     if (entry === null || entry.authKind !== 'subscription') throw new Error(`No es una cuenta de Codex por suscripcion: ${configDir}`);
-    return getCodexLogin().login(entry.home);
+    return getCodexLogin().login(entry.home).then((result) => {
+      if (result.status === 'ok') getCodexAccountCatalog().invalidate(entry.home);
+      return result;
+    });
   });
   ipcMain.handle(IpcChannel.CodexLoginCancel, (): void => getCodexLogin().cancel());
   ipcMain.handle(IpcChannel.CodexAppsRead, (_e, configDir: string) => {

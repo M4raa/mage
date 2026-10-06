@@ -126,6 +126,7 @@ export const IpcChannel = {
   OpenEditor: 'openWith:editor',
   EditorsList: 'openWith:editorsList',
   AccountsList: 'accounts:list',
+  AccountsCodexConfirm: 'accounts:codex-confirm',
   AccountsCreate: 'accounts:create',
   // Login por el CLI (Fase 9.2): tres pasos, porque el usuario tiene que pegar el *code* en medio.
   AccountsLoginStart: 'accounts:login:start',
@@ -796,6 +797,7 @@ export interface MageApi {
   onSessionEvent(listener: (payload: SessionEventPayload) => void): () => void;
   // Cuentas: descubrir en disco, crear una nueva, y lanzar el login interactivo (terminal externa).
   listAccounts(): Promise<readonly AccountInfo[]>;
+  confirmCodexAccounts(): Promise<readonly AccountInfo[]>;
   createAccount(name: string): Promise<AccountInfo>;
   // Login por el CLI (Fase 9.2). Tres pasos porque el usuario pega el *code* en medio:
   //   startLogin  -> spawnea el CLI, abre su URL en ventana privada y dice COMO se abrio.

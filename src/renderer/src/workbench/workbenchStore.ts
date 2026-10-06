@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { applyCodexConfirmation, confirmCodexAccounts } from './codexAccountConfirmation';
 import { defaultEffortForProvider, defaultModelForProvider, effortSettingKey, providerFallbackModel, type ApiKeyUpdate } from './models';
 import type { PersistedTab } from '@shared/state';
 import { disposeTranscriptStore, transcriptStoreForTab } from './transcriptStore';
@@ -1720,6 +1721,7 @@ export function createWorkbenchStore(mage: MageClient) {
             : pickDefaultAccountId(accounts),
         };
       });
+      confirmCodexAccounts(mage, infos, (confirmed) => set((state) => ({ accounts: applyCodexConfirmation(state.accounts, confirmed) })));
     },
 
     // Abre una pestana real ligada a {cuenta, proyecto, modelo}. La sesion del motor se crea perezosa

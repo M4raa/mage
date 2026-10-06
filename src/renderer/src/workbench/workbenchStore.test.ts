@@ -6,6 +6,7 @@ import { findLeafPath, singleLeaf } from './splitLayout';
 import { useNotificationStore } from './notificationStore';
 import { EMPTY_NOTIFICATIONS } from './notifications';
 import type { Account, Tab } from './types';
+import type { AccountInfo } from '@shared/accounts';
 
 // El store alcanzaba `window.mage` directamente en 18 sitios, asi que estas 850 lineas de orquestacion
 // no tenian una sola red — y ahi vivia el bug de `closeTab`. Con el cliente inyectado (decision A1) se
@@ -42,6 +43,19 @@ function fakeMage(over: Partial<MageApi> = {}): MageApi {
 // Borradores por pestaña (auditoria B.1.2): antes vivian como estado local del `PromptBar`, que no se
 // remonta al cambiar de pestaña, asi que el texto de A se enviaba a B.
 describe('setDraft', () => {
+  it('refreshAccounts_confirmacionTardia_actualizaLoginSinRetrasarLista', async () => {
+    const info: AccountInfo = { configDir: '/codex-test', name: 'test', providerId: 'codex', authKind: 'subscription',
+      isMain: false, email: null, org: null, loginStatus: 'logged_in', expiresAt: null, defaultModel: null };
+    let confirm: (accounts: readonly AccountInfo[]) => void = () => undefined;
+    const pending = new Promise<readonly AccountInfo[]>((resolve) => { confirm = resolve; });
+    const store = createWorkbenchStore(fakeMage({ listAccounts: async () => [info], loadModelCatalog: async () => [], confirmCodexAccounts: () => pending }));
+
+    await store.getState().refreshAccounts();
+    confirm([{ ...info, loginStatus: 'logged_out' }]);
+    await pending;
+
+    expect(store.getState().accounts[0]?.loginStatus).toBe('logged_out');
+  });
   it('setDraft_dosPestanas_cadaUnaConservaElSuyo', () => {
     // Arrange
     const store = createWorkbenchStore(fakeMage());
