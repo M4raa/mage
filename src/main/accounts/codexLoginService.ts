@@ -1,5 +1,6 @@
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import type { CodexLoginOutcome } from '@shared/accounts';
+import { z } from 'zod';
 
 // Inicio de sesion de una cuenta de Codex (suscripcion de ChatGPT) por su propio CLI: Mage lanza
 // `codex app-server` con el CODEX_HOME de la cuenta, pide `account/login/start {type:"chatgpt"}`, abre
@@ -20,6 +21,8 @@ export type CodexLoginResult = CodexLoginOutcome;
 
 const INITIALIZE_ID = 1;
 const LOGIN_ID = 2;
+const LOGIN_MESSAGE = z.object({ id: z.number().int().optional(), method: z.string().optional(), result: z.unknown().optional(),
+  error: z.object({ code: z.number().int() }).optional(), params: z.object({ success: z.boolean().optional() }).optional() }).passthrough();
 
 export class CodexLoginService {
   private current: { readonly child: ChildProcessWithoutNullStreams; readonly finish: (result: CodexLoginResult) => void } | null = null;
@@ -68,12 +71,15 @@ export class CodexLoginService {
   }
 
   private onLine(child: ChildProcessWithoutNullStreams, line: string, finish: (result: CodexLoginResult) => void): void {
-    let message: { id?: unknown; method?: unknown; result?: unknown; error?: { code?: unknown }; params?: { success?: unknown; error?: unknown } };
+    let raw: unknown;
     try {
-      message = JSON.parse(line) as typeof message;
+      raw = JSON.parse(line);
     } catch {
       return; // una linea que no es JSON (aviso del CLI) no es una respuesta: se sigue esperando
     }
+    const parsed = LOGIN_MESSAGE.safeParse(raw);
+    if (!parsed.success) return finish({ status: 'error', reason: 'invalid_rpc_message' });
+    const message = parsed.data;
     if (message.error !== undefined) {
       const code = typeof message.error.code === 'number' ? String(message.error.code) : 'unknown';
       finish({ status: 'error', reason: `rpc_${code}` });
@@ -85,7 +91,8 @@ export class CodexLoginService {
       return;
     }
     if (message.id === LOGIN_ID) {
-      const url = (message.result as { authUrl?: unknown } | undefined)?.authUrl;
+      const result = z.object({ authUrl: z.string() }).safeParse(message.result);
+      const url = result.success ? result.data.authUrl : undefined;
       if (typeof url !== 'string') finish({ status: 'error', reason: 'login_without_auth_url' });
       else if (!isOfficialLoginUrl(url)) finish({ status: 'error', reason: 'login_invalid_auth_url' });
       else void this.deps.openUrl(url).catch(() => finish({ status: 'error', reason: 'open_url_failed' }));

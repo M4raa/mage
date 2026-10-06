@@ -23,6 +23,16 @@ function setup(): { service: CodexLoginService; server: ReturnType<typeof fakeAp
 
 // Forma del esquema de `codex app-server generate-json-schema` 0.144.4 (sin verificar con cuenta).
 describe('CodexLoginService', () => {
+  it.each([null, { error: null }])('login_jsonValidoInesperado_%s_terminaConErrorSeguro', async (message) => {
+    const { service, server, killTree, openUrl } = setup();
+    const done = service.login('h');
+
+    expect(() => server.reply(message)).not.toThrow();
+
+    expect(await done).toEqual({ status: 'error', reason: 'invalid_rpc_message' });
+    expect(killTree).toHaveBeenCalledOnce();
+    expect(openUrl).not.toHaveBeenCalled();
+  });
   it('login_flujoCompleto_abreLaUrlYTerminaConOk', async () => {
     const { service, server, openUrl, killTree } = setup();
     const done = service.login('C:\\Users\\u\\.codex-chatgpt');

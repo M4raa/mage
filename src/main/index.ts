@@ -128,6 +128,7 @@ import { ProviderAccountService } from './accounts/providerAccounts';
 import { CodexLoginService, type CodexLoginResult } from './accounts/codexLoginService';
 import { probeCodexAccount } from './accounts/codexAccountProbe';
 import { CodexAccountCatalog } from './accounts/codexAccountCatalog';
+import { requireCodexSubscription } from './accounts/codexAccountBoundary';
 import { defaultProbeDeps, probeProvider } from './engine/providerProbe';
 import { findAgyBinary } from './os/agyBinaryResolver';
 import { AGY_PROVIDER_ID, CODEX_PROVIDER_ID, runsOnMageRuntime } from '@shared/providers';
@@ -2515,18 +2516,16 @@ function registerIpcHandlers(): void {
   // aqui UNA vez y se cifra; nunca vuelve al renderer.
   ipcMain.handle(IpcChannel.AccountsCreateFor, (_e, params: AccountCreateParams): AccountInfo => getProviderAccounts().create(params));
   // Login de ChatGPT de una cuenta de Codex por su CLI (sin verificar). Solo cuentas del registro.
-  ipcMain.handle(IpcChannel.CodexLoginStart, (_e, configDir: string): Promise<CodexLoginResult> => {
-    const entry = getProviderAccounts().find('codex', configDir);
-    if (entry === null || entry.authKind !== 'subscription') throw new Error(`No es una cuenta de Codex por suscripcion: ${configDir}`);
+  ipcMain.handle(IpcChannel.CodexLoginStart, (_e, configDir: unknown): Promise<CodexLoginResult> => {
+    const entry = requireCodexSubscription(configDir, (home) => getProviderAccounts().find('codex', home));
     return getCodexLogin().login(entry.home).then((result) => {
       if (result.status === 'ok') getCodexAccountCatalog().invalidate(entry.home);
       return result;
     });
   });
   ipcMain.handle(IpcChannel.CodexLoginCancel, (): void => getCodexLogin().cancel());
-  ipcMain.handle(IpcChannel.CodexAppsRead, (_e, configDir: string) => {
-    const entry = getProviderAccounts().find('codex', configDir);
-    if (entry === null || entry.authKind !== 'subscription') throw new Error('Las Apps requieren una cuenta de suscripción de Codex registrada.');
+  ipcMain.handle(IpcChannel.CodexAppsRead, (_e, configDir: unknown) => {
+    const entry = requireCodexSubscription(configDir, (home) => getProviderAccounts().find('codex', home));
     return probeCodexAccount(codexAccountProbeDeps(), { home: entry.home, includeApps: true });
   });
   // Login por el CLI (Fase 9.2), en tres pasos porque el usuario pega el *code* en medio. El
