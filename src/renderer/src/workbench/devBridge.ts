@@ -1,11 +1,12 @@
 import { reduceEvent, useWorkbenchStore } from './workbenchStore';
-import { transcriptStoreForTab, type TranscriptStoreState } from './transcriptStore';
+import { disposeTranscriptStore, transcriptStoreForTab, type TranscriptStoreState } from './transcriptStore';
 import type { StoreApi, UseBoundStore } from 'zustand';
 import { transcriptToBlocks } from './transcriptToBlocks';
 import { usePanelLayoutStore } from './panelLayoutStore';
 import { PANEL_REGISTRY } from './panels/panelRegistry';
 import { notify, useNotificationStore } from './notificationStore';
 import { useCodexAppsStore } from './codexAppsStore';
+import { toPersistedWorkspace } from './workspaceView';
 
 // Asidero SOLO de desarrollo para `pnpm verify:gui`: deja medir el DOM del chat sin gastar un turno
 // real ni spawnear el CLI. Sin el, el harness no puede hidratar una conversacion (el store de Zustand
@@ -24,6 +25,9 @@ export interface MageDevBridge {
   // El de una pestaña CONCRETA: con el workspace dividido hay dos paneles hidratando a la vez y "el
   // activo" ya no alcanza para montar ese estado (comprobacion de 4.3).
   readonly transcriptStoreFor: typeof transcriptStoreForTab;
+  // La restauracion del harness libera tambien los listeners de las pestañas ficticias que retiro.
+  readonly disposeTranscriptStore: typeof disposeTranscriptStore;
+  readonly toPersistedWorkspace: typeof toPersistedWorkspace;
   readonly transcriptToBlocks: typeof transcriptToBlocks;
   // El reducer REAL de eventos del motor. Con el, el harness puede inyectar un evento (p.ej. un
   // `permission_request` de AskUserQuestion) sin sesion viva: `handleEvent` no vale, porque resuelve la
@@ -47,6 +51,8 @@ export interface MageDevBridge {
     return transcriptStoreForTab(useWorkbenchStore.getState().activeTabId);
   },
   transcriptStoreFor: transcriptStoreForTab,
+  disposeTranscriptStore,
+  toPersistedWorkspace,
   transcriptToBlocks,
   reduceEvent,
   panelStore: usePanelLayoutStore,

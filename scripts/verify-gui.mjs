@@ -20,6 +20,10 @@
 //   pnpm verify:gui --only=texto # solo las comprobaciones cuyo nombre contenga `texto`
 //   pnpm verify:gui --turn=local # el turno minimo contra el servidor falso, sin gastar cuota
 //   pnpm verify:gui --turn=real  # el turno minimo contra Claude aunque la guarda de uso avise
+//   pnpm verify:gui --slow-frames --only=Preguntas: # estresa Motion con frames de un segundo
+//   pnpm verify:gui --trace-layout # guarda geometria/animaciones antes y despues de cada caso
+//   pnpm verify:gui --inspect-running # lee el estado de la tanda en curso, sin otra instancia
+//   pnpm verify:gui --initial-close-prompt --only=2.7: # prueba el aislamiento con la pregunta de cierre
 //
 // UN TURNO REAL POR EJECUCION: la ultima comprobacion envia un mensaje minimo a Claude (modelo y
 // esfuerzo mas bajos). Antes mira el uso de la cuenta; con mas del 70 % gastado avisa y deja elegir
@@ -39,6 +43,7 @@ import { chromium } from 'playwright-core';
 import { FAKE_SCENARIOS, startFakeOpenAiServer } from './fake-openai-server.mjs';
 import { decideTurnTarget, parseTurnAnswer, spentPercent } from './lib/usageGuard.mjs';
 import { withGuiState } from './lib/guiState.mjs';
+import { closeCheckOverlays, runGuiCheck } from './lib/guiCheckState.mjs';
 
 const repoRoot = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 // Version de Mage que corre (la de package.json): la usan el seed de ajustes y las notas de version.
@@ -106,6 +111,8 @@ const RUST_FENCE = '```rust\nfn main() { println!("hola"); }\n```';
 // justo el falso verde que hay que evitar. Lo que se mide no es "caben N", es que la columna se las
 // arregle sola —scrolleando por dentro— en vez de empujar la pagina entera.
 const RAIL_STRESS_ACCOUNTS = 30;
+// Inyeccion diagnostica de la cadencia medida en segundo plano, fuera del camino normal.
+const STRESS_FRAME_INTERVAL_MS = 1000;
 
 const DELTA_BURST_SIZE = 60;
 // Coste maximo por delta, INCLUIDO el frame que se le deja pintar (de ese presupuesto, unos 16,7 ms
@@ -439,6 +446,7 @@ const CHECKS = [
   {
     // B5 / F3 del backlog: "Modelo por defecto por proveedor", pendiente de verificacion GUI.
     name: 'Proveedores y modelos: un selector de modelo por proveedor (F3)',
+    state: { settingsSection: 'Proveedores y modelos' },
     async run(page) {
       // La seccion 'Modelos' se fundio con 'Proveedores' el 2026-09-18: una ficha por proveedor con su
       // ruta/URL, sus modelos reales y sus valores por defecto.
@@ -454,6 +462,7 @@ const CHECKS = [
     // resaltado azul imposible de tematizar). Se mide que no queda ninguno y que el control es el
     // Dropdown propio (boton con aria-haspopup="listbox").
     name: 'Proveedores y modelos: el selector es el Dropdown propio, no un <select> nativo',
+    state: { settingsSection: 'Proveedores y modelos' },
     async run(page) {
       await openSection(page, /Proveedores y modelos/);
       const selectors = page.locator('[aria-label^="Modelo por defecto de"]');
@@ -470,6 +479,7 @@ const CHECKS = [
     // 0.1.1 R2, punto 6: «Omitir permisos» como modo por defecto, con su linea fija en Ajustes. Se elige
     // por la accion del store (no abre ninguna conversacion) y se restaura el que habia.
     name: 'Proveedores y modelos: «Omitir permisos» por defecto enseña su aviso fijo (R2 6)',
+    state: { settingsSection: 'Proveedores y modelos' },
     async run(page) {
       await openSection(page, /Proveedores y modelos/);
       const aviso = page.locator('[data-testid="default-bypass-warning"]');
@@ -506,6 +516,7 @@ const CHECKS = [
   {
     // D5: la seccion existe, lista atajos y el buscador FILTRA de verdad (no solo pinta la caja).
     name: 'Seccion Atajos: lista y el buscador filtra (D5)',
+    state: { settingsSection: 'Atajos de teclado' },
     async run(page) {
       await openSection(page, /Atajos de teclado/);
       const search = page.getByRole('textbox', { name: 'Buscar atajo por nombre' });
@@ -525,6 +536,7 @@ const CHECKS = [
   {
     // M3: tema claro/oscuro. Se mide el efecto REAL en el DOM (data-theme en <html>), no el clic.
     name: 'Apariencia: cambiar de tema aplica data-theme',
+    state: { settingsSection: 'Apariencia' },
     async run(page) {
       await openSection(page, /Apariencia/);
       const before = await page.evaluate(() => document.documentElement.dataset.theme);
@@ -605,6 +617,7 @@ const CHECKS = [
     // una verificacion no enseña nunca lo real de la maquina. Se mide que salen las cuatro filas, que
     // ningun valor de env/headers llega al DOM y que el editor de hooks ya no esta aqui.
     name: 'MCP y conectores: inventario de las fuentes sembradas sin valores de env en el DOM',
+    state: { settingsSection: 'MCP y conectores' },
     async run(page) {
       // Autosuficiente con `--only=MCP`: en la tanda completa Configuracion ya llega abierta.
       if ((await page.locator(MODAL).count()) === 0) await openSettingsDialog(page);
@@ -633,6 +646,7 @@ const CHECKS = [
     // (Configuracion sigue abierta: es una capa dentro de otra) y que «Guardar» sin tocar nada deja en
     // DISCO el remoto intacto: con su URL, sin `command` y con el valor de la cabecera conservado.
     name: 'MCP y conectores: un comun HTTP se edita y se guarda sin comando y sin perder su cabecera',
+    state: { settingsSection: 'MCP y conectores' },
     async run(page, { userDataDir }) {
       const dialogo = page.locator('[data-mcp-server-dialog]');
       await page.getByRole('button', { name: `Editar ${SEEDED_MCP_HTTP}`, exact: true }).click();
@@ -661,6 +675,7 @@ const CHECKS = [
     // falsas (la cuenta y Claude Desktop) sin valores en el DOM, y se CANCELA: la comprobacion no
     // cambia mcp-common.json para las que vienen detras. Configuracion se deja abierta, como llego.
     name: 'MCP y conectores: Importar… enseña la vista previa de las fuentes y se cancela sin escribir',
+    state: { settingsSection: 'MCP y conectores' },
     async run(page, { userDataDir }) {
       const fichero = path.join(userDataDir, 'shared-config', 'mcp-common.json');
       const antes = fs.readFileSync(fichero, 'utf-8');
@@ -684,6 +699,7 @@ const CHECKS = [
     // la secuencia visible: boton → «Autenticando…» → mensaje de conectado y el boton de esa cuenta fuera.
     // Nunca hay OAuth real ni se spawnea el CLI. Configuracion se deja abierta, como llego.
     name: '18: «Autenticar» un MCP que pide OAuth pasa por «Autenticando…» y acaba conectado (CLI falso)',
+    state: { settingsSection: 'MCP y conectores' },
     async run(page) {
       const seccion = page.locator('[data-mcp-section]');
       await seccion.getByRole('button', { name: 'Comprobar estado', exact: true }).click();
@@ -717,6 +733,7 @@ const CHECKS = [
     // propio de agy con su insignia «Solo agy» (mcp_config.json FALSO de MAGE_MCP_FAKE_SOURCES). Los
     // conectores de claude.ai ya no salen aqui. Se deja en Servidores, como llego.
     name: 'MCP y conectores: tres pestañas, columna Proveedores y «Solo agy» en Servidores',
+    state: { settingsSection: 'MCP y conectores' },
     async run(page) {
       if ((await page.locator(MODAL).count()) === 0) await openSettingsDialog(page);
       if ((await page.locator('[data-mcp-section]').count()) === 0) await openSection(page, /MCP y conectores/);
@@ -745,6 +762,7 @@ const CHECKS = [
     // Chrome» como solo de Desktop, Codex «sin verificar» y el interruptor de claude.ai, que se guarda
     // en los ajustes del perfil aislado y se repone. Se deja en Servidores.
     name: 'MCP y conectores: Conectores con último estado y fecha, «Conectar», Claude in Chrome y el interruptor de claude.ai',
+    state: { settingsSection: 'MCP y conectores' },
     async run(page, { userDataDir }) {
       await page.locator('[data-mcp-tab="connectors"]').click();
       // Autosuficiente: sondea con el CLI falso (el ultimo estado queda guardado con su fecha).
@@ -774,6 +792,7 @@ const CHECKS = [
     // y no vuelve al DOM ni queda en extensions-settings/; «Importar de Claude Desktop» COPIA la de la
     // carpeta falsa a la de Mage, y se desinstala para dejarlo como estaba. Se deja en Servidores.
     name: 'MCP y conectores: Extensiones, el secreto va a la bóveda y no vuelve; importar de Desktop copia y se desinstala',
+    state: { settingsSection: 'MCP y conectores' },
     async run(page, { userDataDir }) {
       await page.locator('[data-mcp-tab="extensions"]').click();
       const tarjeta = page.locator(`[data-mcp-extension="${SEEDED_EXTENSION}"]`);
@@ -817,6 +836,7 @@ const CHECKS = [
     // Mage. Despues, los comunes llevan la pastilla agy con su nota de copia. Va la ultima de las de MCP:
     // deja el fichero falso de agy sincronizado.
     name: 'MCP y conectores: «Sincronizar con agy» enseña el cambio y escribe solo lo de Mage, con copia previa',
+    state: { settingsSection: 'MCP y conectores' },
     async run(page, { userDataDir }) {
       const fichero = path.join(mcpFakeSourcesDir(userDataDir), 'agy', 'mcp_config.json');
       const dialogo = page.locator('[data-mcp-agy-dialog]');
@@ -849,6 +869,7 @@ const CHECKS = [
     // que una regex rota se rechaza con motivo (y no revienta la pantalla) y que el banco de pruebas usa
     // el mismo compilador que el matcher real: mismo patron, un texto que casa y otro que no.
     name: 'Notificaciones: regex invalida con motivo y banco de pruebas que acierta',
+    state: { settingsSection: 'Notificaciones' },
     async run(page) {
       await openSection(page, /Notificaciones/);
       const add = page.getByRole('button', { name: /Añadir regla/ });
@@ -891,6 +912,7 @@ const CHECKS = [
     // La comprobacion exige que el foco CAMBIE: una version anterior solo miraba que hubiera foco, y
     // pasaba en falso mientras las flechas no hacian nada.
     name: 'Accesibilidad: el tablist de Configuracion responde a flechas',
+    state: { settingsSection: 'Proveedores y modelos' },
     async run(page) {
       const tabs = page.getByRole('tab');
       const count = await tabs.count();
@@ -916,6 +938,7 @@ const CHECKS = [
     // un outline heredado, y comprobar solo el pseudo-selector pasaria si la regla CSS desapareciera.
     // Llega justo despues del check de flechas, que ya dejo a Chromium en modalidad de teclado.
     name: 'Accesibilidad: el foco por teclado pinta el anillo visible',
+    state: { settingsSection: 'Proveedores y modelos' },
     async run(page) {
       await page.keyboard.press('Tab');
       await page.waitForTimeout(CONFIG.settleMs);
@@ -945,6 +968,7 @@ const CHECKS = [
     // A3 de la checklist: "Widget flotante: activarlo en Configuracion". Se mide que aparece una
     // VENTANA nueva (widget.html), no solo que la casilla queda marcada.
     name: 'Widget flotante: activarlo abre su ventana y desactivarlo la cierra',
+    state: { settingsSection: 'Widget flotante' },
     async run(page) {
       await openSection(page, /Widget flotante/);
       const toggle = page.getByRole('checkbox');
@@ -960,6 +984,7 @@ const CHECKS = [
   },
   {
     name: 'Escape cierra el dialogo',
+    state: { settingsSection: 'Proveedores y modelos' },
     async run(page) {
       await page.keyboard.press('Escape');
       await page.waitForTimeout(300);
@@ -1186,6 +1211,7 @@ const CHECKS = [
     // Tercer sitio donde tiene que aparecer: el selector de proveedor de "Nueva conversacion". Se abre y
     // se CIERRA con Escape (no crea ninguna pestaña, no spawnea nada).
     name: 'E2: el proveedor anadido aparece en el selector de Nueva conversacion',
+    state: { provider: 'ollama' },
     async run(page) {
       const options = await withNewTabDialog(page, (dialogPage) => selectOptionsOf(dialogPage, NEW_TAB_FIELD.provider));
       const ok = options !== null && options.some((option) => option.endsWith(`|${OLLAMA_TEMPLATE.label}`));
@@ -1197,6 +1223,7 @@ const CHECKS = [
     // exactamente 1 boton de borrado con ese nombre (regla de la skill: si esperas 1 y hay otra cosa, no
     // se clica).
     name: 'E2: borrar el proveedor lo quita de la lista, de Modelos y de Nueva conversacion',
+    state: { provider: 'ollama' },
     async run(page) {
       await openSettingsDialog(page);
       await openSection(page, /Proveedores/);
@@ -1437,6 +1464,7 @@ const CHECKS = [
     // F2: la conversacion vacia dice EN QUE carpeta va a trabajar el agente y deja cambiarla.
     // P-028 16: el boton es ahora el primario «Elegir proyecto…» y la ruta va debajo, con su ancla.
     name: 'F2: la conversacion vacia muestra la carpeta y deja cambiarla',
+    state: { tabs: 1 },
     async run(page) {
       const change = page.getByRole('button', { name: 'Elegir proyecto' });
       await change.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
@@ -1455,6 +1483,7 @@ const CHECKS = [
     // (nunca el real): dos carpetas que existen, una borrada y una del scratch. Pulsar una tarjeta solo
     // cambia la carpeta de la pestaña: no se envia nada ni se arranca ninguna sesion.
     name: 'P-028 16: el estado vacio ofrece los proyectos recientes y fija la carpeta al pulsar',
+    state: { tabs: 1 },
     async run(page) {
       const previo = await page.evaluate(() => {
         const s = window.__mageDev.store.getState();
@@ -1910,6 +1939,7 @@ const CHECKS = [
     // Input rico (M3): Tab indenta y Shift+Tab desindenta. NUNCA se pulsa Enter: dispararia un turno
     // real del agente, que gasta suscripcion y escribe en una transcripcion de verdad.
     name: 'Input rico: Tab indenta y Shift+Tab desindenta',
+    state: { tabs: 1 },
     async run(page) {
       const prompt = page.getByRole('textbox', { name: 'Escribe una instrucción para el agente' });
       await prompt.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
@@ -1929,6 +1959,7 @@ const CHECKS = [
     // marcador siguiente, y en un item VACIO sale de la lista. Shift+Enter NO envia (el envio es Enter a
     // secas), asi que aqui no se dispara ningun turno.
     name: 'Input rico: Shift+Enter continua la lista y la cierra en un item vacio',
+    state: { tabs: 1 },
     async run(page) {
       const prompt = page.getByRole('textbox', { name: 'Escribe una instrucción para el agente' });
       await prompt.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
@@ -2021,6 +2052,7 @@ const CHECKS = [
     // (`cost`, `help`…) NO vuelven a ofrecerse: ofrecerlos era engañar, porque el modelo los recibe como
     // texto. NUNCA se pulsa Enter ni Tab con el popover abierto (completarian y dejarian texto).
     name: 'Comandos /: el popover filtra, Escape lo cierra y no ofrece los de la TUI',
+    state: { tabs: 1 },
     async run(page) {
       const prompt = page.getByRole('textbox', { name: 'Escribe una instrucción para el agente' });
       const listbox = page.getByRole('listbox', { name: 'Comandos disponibles' });
@@ -2121,6 +2153,7 @@ const CHECKS = [
     // a..." del menu contextual (la alternativa SIN raton) tiene que estar deshabilitado: no hay OTRA
     // pestaña con la que dividir el panel enfocado, y esta pestaña ya es esa misma.
     name: 'Dividir workspace: con una sola pestaña, "Dividir a..." esta deshabilitado en el menu',
+    state: { tabs: 1 },
     async run(page) {
       const tab = page.locator('[role="tab"]').first();
       await tab.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
@@ -2162,7 +2195,10 @@ const CHECKS = [
       ];
       const medidas = [];
       try {
-        for (const caso of casos) medidas.push(await walkStepSlider(page, caso));
+        for (const caso of casos) {
+          medidas.push(await walkStepSlider(page, caso));
+          await clearNotifications(page); // avisos provocados por este recorrido, fuera de la medida siguiente
+        }
       } finally {
         if (propia) await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
       }
@@ -2189,6 +2225,7 @@ const CHECKS = [
     // devuelve null y el bloque cae a texto plano: 0 spans y un solo color heredado. Contar "spans > 0"
     // o "hay un <pre>" pasaria en verde con la funcionalidad muerta.
     name: 'F4: un bloque ```ts se tokeniza con varios colores en el chat',
+    state: { tabs: 1 },
     async run(page) {
       // La vista previa del prompt desaparecio con 2.7 (el input YA es WYSIWYG), asi que el resaltado
       // se mide donde de verdad importa: en el hilo. Mismo componente (`Markdown`) y mismo resaltador.
@@ -2206,6 +2243,7 @@ const CHECKS = [
     // que el codigo SIGUE AHI (0 spans pero texto intacto): un fallo que se comiera el contenido
     // dejaria el bloque en blanco.
     name: 'F4: un lenguaje no registrado (rust) queda en texto plano y no en blanco',
+    state: { tabs: 1 },
     async run(page) {
       await hydrateBlocks(page, [{ kind: 'agent', id: 'hl-rs', runs: [{ code: false, text: RUST_FENCE }], streaming: false }]);
       const measured = await waitForChatCode(page, (m) => m.lang === 'rust' && m.spans === 0);
@@ -2483,6 +2521,7 @@ const CHECKS = [
     // que esto caza es que el CSS no llegue y las cinco queden estaticas con animationName="none".
     // Se cuenta POR constelacion, no en total: con el workspace dividido hay un estado vacio por panel.
     name: "I1: el estado vacio son cinco chispas de la marca, titilando desfasadas",
+    state: { tabs: 1 },
     async run(page) {
       const measured = await page.evaluate(() => {
         const grupos = [...document.querySelectorAll("svg")].filter((svg) => svg.querySelector(".mg-sparkle") !== null);
@@ -2508,19 +2547,20 @@ const CHECKS = [
       return { ok, detail: `estado vacio=${JSON.stringify(measured)}` };
     },
   },
-  // --- Las dos ultimas necesitan DOS conversaciones abiertas, que es justo lo que deja E3 ------------
+  // --- Navegacion y grupos: sus conversaciones se preparan por caso ---------------------------------
   {
     // Accesibilidad (M3): el TabBar declara role="tablist", y en el se aprendio la leccion. Hasta ahora
     // solo estaba cubierto el tablist de Configuracion; este es el otro. Aqui las flechas mueven foco Y
     // seleccion (a diferencia del roving puro de Configuracion), asi que se miden las dos cosas — y se
     // vuelve con la flecha contraria para dejar activa la pestaña de partida.
     name: 'Accesibilidad: el tablist de conversaciones responde a flechas',
+    state: { tabs: 2 },
     async run(page) {
       const tablist = page.locator('[role="tablist"][aria-label^="Conversaciones abiertas"]');
       await tablist.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
       const tabs = tablist.locator('[role="tab"]');
       const total = await tabs.count();
-      if (total < 2) return { ok: false, detail: `pestañas=${total} (hacen falta 2; las abren las comprobaciones anteriores)` };
+      if (total < 2) return { ok: false, detail: `pestañas=${total} (hacen falta 2 en la preparacion del caso)` };
       await tablist.locator('[role="tab"][aria-selected="true"]').first().focus();
       const start = await focusedTabLabel(page);
       await page.keyboard.press('ArrowLeft');
@@ -3023,6 +3063,7 @@ const CHECKS = [
     // image-cache de img_6 y el `<system-reminder>` de img_10) y no deben pintar nada.
     // `naturalWidth > 0` es lo que distingue "pinta la imagen" de "pinta un `data:` roto".
     name: '2.12.1/2.12.3: isMeta invisible y la imagen en la misma burbuja',
+    state: { tabs: 1 },
     async run(page) {
       const blocks = await hydrateFromEntries(page, REAL_TRANSCRIPT_ENTRIES);
       const measured = await waitForUserBubbles(page, (m) => m.naturalWidth > 0);
@@ -3041,6 +3082,7 @@ const CHECKS = [
     // P-026, 1.3: el Markdown trataba «\ + cualquier caracter» como escape, y una ruta de Windows salia
     // como `C:Usersx` en todos los mensajes. CommonMark solo escapa puntuacion ASCII.
     name: 'Markdown: una ruta de Windows conserva sus barras invertidas en la burbuja',
+    state: { tabs: 1 },
     async run(page) {
       const previo = await page.evaluate(() => window.__mageDev.store.getState().blocksByChat);
       await hydrateBlocks(page, [
@@ -3057,6 +3099,7 @@ const CHECKS = [
     // del usuario. `writeText` va MOCKEADO: el portapapeles real del SO falla en silencio (ver 2.9.b).
     // Cada boton copia el markdown CRUDO (el texto exacto del bloque, no el renderizado).
     name: 'P-028 8/12: los botones Copiar entregan el markdown crudo de su bloque',
+    state: { tabs: 1 },
     async run(page) {
       const previo = await page.evaluate(() => window.__mageDev.store.getState().blocksByChat);
       const crudo = 'Mira **esto**:\n\n```ts\nconst a = 1;\n```\n\n```\nsin lenguaje\n```';
@@ -3098,6 +3141,7 @@ const CHECKS = [
     // P-028, 25 (+13): un mensaje nuevo del usuario lleva al final aunque el chat estuviera arriba del
     // todo. Se anade el bloque por el store (lo mismo que hace `sendActiveMessage`); NUNCA Enter.
     name: 'P-028 25: un mensaje nuevo del usuario aterriza al fondo aunque se hubiera subido',
+    state: { tabs: 1 },
     async run(page) {
       const previo = await page.evaluate(() => window.__mageDev.store.getState().blocksByChat);
       const hilo = Array.from({ length: 40 }, (_, i) =>
@@ -3129,6 +3173,7 @@ const CHECKS = [
   {
     // P-028, 28: la tarjeta de tarea programada dice quien la lanza.
     name: 'P-028 28: la tarea programada avisa de que la lanza la app de escritorio de Claude',
+    state: { tabs: 1 },
     async run(page) {
       const previo = await page.evaluate(() => window.__mageDev.store.getState().blocksByChat);
       await hydrateBlocks(page, [
@@ -3161,8 +3206,8 @@ const CHECKS = [
       const tres = { questions: [base, { ...base, question: '¿Y de fondo?' }, { ...base, question: '¿Y el borde?' }] };
       await injectPermissionRequest(page, tres, 'vg-ask-3');
       const dock = page.locator('[data-question-dock="true"]');
-      await dock.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
-      await page.waitForTimeout(CONFIG.settleMs);
+      await waitForDockReady(page, '[data-question-dock="true"]');
+      const layoutEvidence = await captureDockGeometry(page);
       const posicion = await page.evaluate(() => {
         const d = document.querySelector('[data-question-dock="true"]').getBoundingClientRect();
         const fila = document.querySelector('[data-prompt-editor="true"]').parentElement.getBoundingClientRect();
@@ -3199,7 +3244,7 @@ const CHECKS = [
         trasElegir.opcion2 === 'true' &&
         trasElegir.sigue === 'vg-ask-3' &&
         contadorTras === '2 de 3';
-      return { ok, detail: JSON.stringify({ ...posicion, visibleTrasScroll, ...trasElegir, contadorTras }) };
+      return { ok, detail: JSON.stringify({ ...posicion, layoutEvidence, visibleTrasScroll, ...trasElegir, contadorTras }) };
     },
   },
   {
@@ -3509,6 +3554,7 @@ const CHECKS = [
     // P-026, 1.6 (D20): los envoltorios de sistema que el CLI guarda como mensaje del usuario ya no se
     // pintan como una burbuja con el XML crudo. Formas REALES del CLI 2.1.283.
     name: 'Envoltorios de sistema: /rename es un chip, la tarea programada una tarjeta y el historial la marca',
+    state: { tabs: 1 },
     async run(page) {
       const previo = await page.evaluate(() => {
         const s = window.__mageDev.store.getState();
@@ -3564,6 +3610,7 @@ const CHECKS = [
     // tiene sesion de la que sacarlos). Se siembra en `main()`, antes de arrancar la app.
     // Se escribe con `type`, NUNCA se pulsa Enter.
     name: '2.2: con el catalogo cacheado, "/" ofrece comandos namespaced antes del primer mensaje',
+    state: { tabs: 1 },
     async run(page) {
       const prompt = promptAreas(page).first();
       await clearPrompt(page);
@@ -3591,6 +3638,7 @@ const CHECKS = [
     // "Responder" (sin sesion viva `answerActivePermission` sale por su guard y se mediria el guard).
     // P-026 3.3: la tarjeta ya no va en el hilo sino ANCLADA encima del input (`[data-question-dock]`).
     name: '2.3: un can_use_tool de AskUserQuestion se pinta como tarjeta y no como permiso',
+    state: { tabs: 1, panel: 'permissions' },
     async run(page) {
       await injectPermissionRequest(page, ASK_USER_QUESTION_INPUT, 'vg-ask-1');
       const measured = await page.evaluate(() => {
@@ -3623,6 +3671,7 @@ const CHECKS = [
   {
     // La mitad barata que distingue dos comportamientos que un solo check confundiria.
     name: '2.3: multiSelect pinta casillas y no radios',
+    state: { tabs: 1 },
     async run(page) {
       const multi = {
         questions: [
@@ -3653,6 +3702,7 @@ const CHECKS = [
     // necesitan el mismo estado (una conversacion con una burbuja de usuario) y la segunda deja el menu
     // cerrado, como lo encontro.
     name: '2.10 / 2.11: sin cabecera «Tú» y menu de pestaña sin subtitulos',
+    state: { tabs: 1 },
     async run(page) {
       // Autosuficiente: antes medía la burbuja que dejara en el chat activo alguna comprobacion anterior,
       // y desde que W-E añadio comprobaciones que abren chats nuevos delante, el chat activo llegaba
@@ -3801,7 +3851,8 @@ const CHECKS = [
       // P-028 38: el dock es UNA linea agregada; las filas se ven al desplegarla.
       const resumen = await page.evaluate(() => document.querySelector('[data-agents-dock-summary]')?.textContent?.trim() ?? '');
       await page.locator('[data-agents-dock-summary]').first().click();
-      await page.waitForTimeout(CONFIG.settleMs);
+      await waitForDockReady(page, '[data-agents-dock]');
+      const layoutEvidence = await captureDockGeometry(page);
       const vivo = await page.evaluate(() => {
         const dock = document.querySelector('[data-agents-dock]');
         const input = document.querySelector('[data-prompt-editor="true"]');
@@ -3822,6 +3873,7 @@ const CHECKS = [
         dev.store.setState((s) => ({ statusByChat: { ...s.statusByChat, [tabId]: 'idle' } }));
       });
       await page.waitForTimeout(CONFIG.settleMs * 2);
+      await page.locator('[data-agents-dock]').waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
       const final = await page.evaluate(() => ({
         dock: document.querySelectorAll('[data-agents-dock-row]').length,
         linea: document.querySelector('[data-block="subagents"]')?.textContent?.trim() ?? '',
@@ -3840,7 +3892,7 @@ const CHECKS = [
         final.dock === 0 &&
         /2 terminados/.test(final.linea) &&
         /1 con error/.test(final.linea);
-      return { ok, detail: `resumen=${JSON.stringify(resumen)} vivo=${JSON.stringify(vivo)} filtrado=${filtrado} final=${JSON.stringify(final)}` };
+      return { ok, detail: `resumen=${JSON.stringify(resumen)} vivo=${JSON.stringify(vivo)} layoutEvidence=${JSON.stringify(layoutEvidence)} filtrado=${filtrado} final=${JSON.stringify(final)}` };
     },
   },
   {
@@ -3916,6 +3968,7 @@ const CHECKS = [
         dev.store.setState((s) => dev.reduceEvent(s, tabId, { kind: 'subagent_update', toolUseId: 'v37-b', status: 'stopped', tokens: null, toolUses: null, durationMs: null }));
       });
       await page.waitForTimeout(CONFIG.settleMs * 2);
+      await page.locator('[data-agents-dock]').waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
       const final = await page.evaluate(() => document.querySelectorAll('[data-agents-dock]').length);
       await page.evaluate((l) => window.__mageDev.panelStore.setState({ layout: l }), layout);
       await restoreTurnState(page, previo);
@@ -3961,8 +4014,9 @@ const CHECKS = [
         return { tabId, previos };
       });
       await page.locator('[data-queued-messages]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
-      // Que termine la animacion de entrada (crece de alto): a mitad, el input aun no se ha desplazado.
-      await page.waitForTimeout(CONFIG.settleMs * 2);
+      // La altura la anima Motion por JS: no aparece en getAnimations().
+      await waitForDockReady(page, '[data-queued-messages]');
+      const layoutEvidence = await captureDockGeometry(page);
       const encolado = await page.evaluate((tabId) => {
         const s = window.__mageDev.store.getState();
         const dock = document.querySelector('[data-queued-messages]');
@@ -4010,7 +4064,7 @@ const CHECKS = [
         trasEditar.borrador === 'segundo en cola' &&
         JSON.stringify(enviados.llamadas) === JSON.stringify([[true, 'primero en cola']]) &&
         enviados.cola === 0;
-      return { ok, detail: `encolado=${JSON.stringify(encolado)} trasEditar=${JSON.stringify(trasEditar)} enviados=${JSON.stringify(enviados)}` };
+      return { ok, detail: `encolado=${JSON.stringify(encolado)} layoutEvidence=${JSON.stringify(layoutEvidence)} trasEditar=${JSON.stringify(trasEditar)} enviados=${JSON.stringify(enviados)}` };
     },
   },
   {
@@ -4085,6 +4139,7 @@ const CHECKS = [
     // no le dice nada a nadie. Y NUNCA entra en una racha: un artifact escondido en "Leídos 2 ficheros"
     // seria el peor resultado posible.
     name: '2.4: una publicacion de artifact se pinta como tarjeta y no como caja de tool',
+    state: { tabs: 1 },
     async run(page) {
       await hydrateBlocks(page, [toolBlock('r1', 'read'), toolBlock('r2', 'read'), artifactBlock()]);
       const measured = await page.evaluate((expected) => {
@@ -4116,6 +4171,7 @@ const CHECKS = [
     // 2.4: sin cuenta publicadora conocida (el indice del perfil aislado esta vacio), NO puede haber un
     // "Abrir" que abriria con una cuenta arbitraria: solo "Abrir con…", que lo elige el usuario.
     name: '2.4: sin cuenta publicadora conocida, el boton ofrece "abrir con…"',
+    state: { tabs: 1 },
     async run(page) {
       await hydrateBlocks(page, [artifactBlock('a2')]);
       const measured = await page.evaluate(() => {
@@ -4134,6 +4190,7 @@ const CHECKS = [
     // maneja Ctrl+C/V dentro de campos editables sin acelerador de menu. "Deberia" no es suficiente.
     // No se pulsa Enter en ningun momento.
     name: '2.9.b: copiar y pegar siguen funcionando en el prompt sin el menu nativo',
+    state: { tabs: 1 },
     async run(page) {
       // Lo que hay que medir es que, sin menu nativo, los atajos LLEGAN al editor y el editor los
       // atiende. El round-trip completo por el PORTAPAPELES DEL SO no vale como criterio: en Windows el
@@ -4211,10 +4268,12 @@ const CHECKS = [
     // 2.9.b: la seccion nueva de Configuracion. Contrato de orden: ABRE el dialogo y lo DEJA ABIERTO
     // solo si es la ultima; como no lo es, lo cierra ella misma con Escape.
     name: '2.9.b: la seccion Hooks y permisos carga',
+    state: { tabs: 1 },
     async run(page) {
       await page.keyboard.press('Control+Comma');
       await page.locator(MODAL).first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
       await openSection(page, /Hooks y permisos/);
+      await page.getByRole('heading', { name: /^Hooks \(/ }).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
       const measured = await page.evaluate(() => {
         const dialog = document.querySelector('[role="dialog"][aria-modal="true"]');
         const text = dialog?.textContent ?? '';
@@ -4239,6 +4298,7 @@ const CHECKS = [
     // 2.7: lo que se ENVIA es markdown, no lo pintado. La medida que distingue "decorado" de
     // "transformado" es que el documento conserve el `- ` literal.
     name: '2.7: "- " produce una viñeta de verdad en el input y el documento conserva el markdown',
+    state: { tabs: 1 },
     async run(page) {
       await clearPrompt(page);
       await typeInPrompt(page, '- uno');
@@ -4304,6 +4364,7 @@ const CHECKS = [
     // 2.7: el popover de "/" contra el editor NUEVO. Si el puente de teclado esta mal, esta es la que
     // lo caza (las flechas tienen que llegar al popover, no a CodeMirror).
     name: '2.7: el popover de "/" sigue navegable con flechas en el editor nuevo',
+    state: { tabs: 1 },
     async run(page) {
       await clearPrompt(page);
       await typeInPrompt(page, '/');
@@ -4329,6 +4390,7 @@ const CHECKS = [
     // 2.7: Tab/Shift+Tab siguen indentando en el editor nuevo. El puente delega en el MISMO resolver,
     // asi que esto mide que la delegacion funciona (y con ella los overrides de D5).
     name: '2.7: Tab indenta y Shift+Tab desindenta en el editor nuevo',
+    state: { tabs: 1 },
     async run(page) {
       await clearPrompt(page);
       await typeInPrompt(page, 'hola');
@@ -4347,6 +4409,7 @@ const CHECKS = [
     // 2.7: deshacer. Un <textarea> lo daba GRATIS; un contenteditable no, y sin `history()` se pierde
     // en silencio (el usuario lo descubre perdiendo un parrafo).
     name: '2.7: deshacer funciona en el editor nuevo',
+    state: { tabs: 1 },
     async run(page) {
       await clearPrompt(page);
       await typeInPrompt(page, 'hola');
@@ -4365,6 +4428,7 @@ const CHECKS = [
     // porque `isEditableTarget` miraba HTMLTextAreaElement; con CM6 pasa a depender de la rama de
     // `isContentEditable`, asi que se MIDE en vez de suponerse.
     name: '2.7: el editor es editable a ojos del resolver global',
+    state: { tabs: 1 },
     async run(page) {
       await promptAreas(page).first().click();
       await page.waitForTimeout(CONFIG.settleMs);
@@ -4387,6 +4451,7 @@ const CHECKS = [
     // formato para el resto de la sesion. Se mide el estilo CALCULADO, no la clase: si el plugin muere,
     // los contadores se van a 0.
     name: '2.7: teclear un encabezado con enfasis y codigo decora sin tumbar el plugin',
+    state: { tabs: 1 },
     async run(page) {
       await clearPrompt(page);
       // El enfasis va en su PROPIA linea: dentro de un encabezado no se decora (solaparia con el rango
@@ -4426,6 +4491,7 @@ const CHECKS = [
     // 2.7: la vista previa se va (el input YA es WYSIWYG). Sin esta medida el boton se quedaria
     // huerfano y nadie lo notaria.
     name: '2.7: ya no hay boton de vista previa del markdown',
+    state: { tabs: 1 },
     async run(page) {
       const measured = await page.evaluate(() => {
         const nodes = [...document.querySelectorAll('[data-tip], [title]')];
@@ -6109,10 +6175,8 @@ const CHECKS = [
       });
       await openTemporaryConversation(page);
 
-      // DOS pasos, y el orden importa: al fijar `resumeSessionId` se dispara `useTranscriptLifecycle`,
-      // que abre la transcripcion de verdad y RESETEA el store (el fichero no existe en el perfil
-      // aislado). Inyectar las entradas en la misma tanda las borraba ese `open()` — el primer intento
-      // media "Cargando transcripcion…" por eso, no por el bug.
+      // Fijar resumeSessionId dispara open() y resetea el store. Se espera su identidad y se
+      // cancela el sondeo del fichero ficticio ANTES de inyectar, para excluir un lote tardio.
       await page.evaluate(() => {
         const dev = window.__mageDev;
         const tabId = dev.store.getState().activeTabId;
@@ -6122,7 +6186,7 @@ const CHECKS = [
           sessionIdByChat: Object.fromEntries(Object.entries(s.sessionIdByChat).filter(([k]) => k !== tabId)),
         }));
       });
-      await page.waitForTimeout(CONFIG.settleMs * 4);
+      await prepareTranscriptInjection(page, ['s-reabierta']);
       await page.evaluate(() => {
         const uso = { inputTokens: 4200, outputTokens: 900, cacheCreationInputTokens: 1200, cacheReadInputTokens: 30000, model: 'claude-sonnet-5' };
         window.__mageDev.transcriptStore.setState({
@@ -6144,16 +6208,16 @@ const CHECKS = [
           medido.paneles[nombre] = 'sin icono';
           continue;
         }
-        await boton.click();
-        await page.waitForTimeout(CONFIG.settleMs);
+        await page.evaluate((id) => window.__mageDev.panelStore.getState().revealPanelById(id), panelId);
+        await waitForPanelContent(page, panelId);
         // Por `data-active-panel` y no por "el primer pane": con varias zonas abiertas (Conversaciones
         // esta siempre) el primero no es el que se acaba de abrir.
         medido.paneles[nombre] = await page.evaluate((id) => {
           const pane = document.querySelector(`[data-active-panel="${id}"]`);
           return (pane?.innerText ?? '(no se monto)').replace(/\s+/g, ' ').slice(0, 140);
         }, panelId);
-        await boton.click();
-        await page.waitForTimeout(CONFIG.settleMs);
+        await page.evaluate((id) => window.__mageDev.panelStore.getState().togglePanelById(id), panelId);
+        await page.locator(`[data-active-panel="${panelId}"]`).waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
       }
 
       await page.evaluate((p) => {
@@ -6805,6 +6869,7 @@ const CHECKS = [
     // NO estan. Un solo `includes('**')` no bastaria — el texto plano tambien pasaria si hubiera
     // <strong> por otro motivo.
     name: 'H2: el mensaje del usuario renderiza Markdown en la burbuja',
+    state: { tabs: 1 },
     async run(page) {
       const bloques = await hydrateFromEntries(page, [
         {
@@ -6863,6 +6928,7 @@ const CHECKS = [
     // Va la ULTIMA: deja dos paneles montados a mitad de la prueba, y con dos paneles los localizadores
     // de prompt de cualquier otra comprobacion dejarian de ser unicos.
     name: '4.3: en un split, los DOS paneles hidratan su conversacion reanudada',
+    state: { tabs: 1 },
     async run(page) {
       const previo = await page.evaluate(() => {
         const s = window.__mageDev.store.getState();
@@ -6896,10 +6962,9 @@ const CHECKS = [
         // El destino de un drop es el CAMINO del panel (grupos de pestañas): con un unico panel, la raiz.
         dev.store.getState().movePaneTab(p.tabA, [], 'left');
       }, { tabA, tabB, sesionA: SPLIT_HYDRATION_SESSIONS.a, sesionB: SPLIT_HYDRATION_SESSIONS.b });
-      // Espera LARGA a proposito: el ciclo de vida de cada panel intenta abrir su transcripcion de
-      // verdad y falla (la carpeta temporal no tiene ninguna). Hay que dejar que ese fallo aterrice
-      // ANTES de inyectar, o el lote de error llegaria despues y borraria lo inyectado.
-      await page.waitForTimeout(CONFIG.settleMs * 4);
+      // Espera al inicio de AMBAS lecturas y cancela el sondeo de los ficheros ficticios. Ningun
+      // lote tardio puede borrar el contenido inyectado en el store de otra pestaña.
+      await prepareTranscriptInjection(page, [SPLIT_HYDRATION_SESSIONS.a, SPLIT_HYDRATION_SESSIONS.b]);
 
       const inyectados = await page.evaluate((p) => {
         const dev = window.__mageDev;
@@ -9294,12 +9359,20 @@ function writeReport(runDir, results, consoleErrors) {
 // --- Main ----------------------------------------------------------------------------------------
 
 async function main() {
+  // Diagnostico reutilizable de una tanda bloqueada, sin arrancar otra instancia ni mutar sus stores.
+  if (process.argv.includes('--inspect-running')) {
+    const browser = await chromium.connectOverCDP(`http://127.0.0.1:${CONFIG.port}`);
+    try {
+      const page = browser.contexts().flatMap((context) => context.pages()).find((page) => !page.url().includes('widget.html') && !page.url().includes('debug.html'));
+      console.log(JSON.stringify(await captureLayoutEvidence(page), null, 2));
+    } finally { await browser.close(); }
+    return;
+  }
   const keepOpen = process.argv.includes('--keep');
   // Filtro por SUBCADENA del nombre (`--only=ventana`): iterar sobre UNA comprobacion sin pagar las 84
   // de la suite. Sin el flag corren todas, que es lo que hace `pnpm verify:gui`.
   const only = process.argv.find((arg) => arg.startsWith('--only='))?.slice('--only='.length) ?? '';
-  // Varias subcadenas con `|` (`--only=Ctrl+,|MCP y conectores`): una comprobacion que llega con un
-  // dialogo abierto se puede probar junto a la que lo abre, en su orden de siempre.
+  // Varias subcadenas con `|`: ejecutar un grupo de casos con sus preparaciones independientes.
   const needles = only.toLowerCase().split('|').filter((needle) => needle.length > 0);
   const checks = only === '' ? CHECKS : CHECKS.filter((c) => needles.some((needle) => c.name.toLowerCase().includes(needle)));
   if (checks.length === 0) throw new Error(`--only=${only} no casa con ninguna comprobacion`);
@@ -9330,38 +9403,48 @@ async function main() {
     // DESPUES del primer render. Sin esperarlas, la primera comprobacion medía una UI a medio montar
     // y daba un falso negativo (toolbars=0 con la app perfectamente arrancada).
     await page.locator('[role="toolbar"]').first().waitFor({ state: 'attached', timeout: CONFIG.bootTimeoutMs });
+    // Control negativo reproducible: la cadencia medida con la ventana tapada, antes de importar Motion.
+    if (process.argv.includes('--slow-frames')) {
+      await page.addInitScript((intervalMs) => {
+        const nativeFrame = window.requestAnimationFrame.bind(window);
+        window.requestAnimationFrame = (callback) => nativeFrame(() => setTimeout(() => callback(performance.now()), intervalMs));
+      }, STRESS_FRAME_INTERVAL_MS);
+      await page.reload();
+      await page.waitForFunction(() => window.__mageDev !== undefined);
+    }
     page.on('console', (message) => {
       if (message.type() === 'error') consoleErrors.push(message.text());
     });
     page.on('pageerror', (error) => consoleErrors.push(String(error)));
 
+    const baselinePanels = await page.evaluate(() => window.__mageDev.panelStore.getState().layout);
+    if (process.argv.includes('--initial-close-prompt')) {
+      await page.evaluate(() => window.close());
+      await page.locator(CLOSE_DIALOG).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+    }
     for (const [index, check] of checks.entries()) {
+      const fileName = `${String(index + 1).padStart(2, '0')}-${slug(check.name)}.png`;
       try {
-        const outcome = await check.run(page, { userDataDir, runDir });
+        const before = process.argv.includes('--trace-layout') ? await captureLayoutEvidence(page) : null;
+        const outcome = await runGuiCheck({ page, check,
+          context: { userDataDir, runDir, screenshot: path.join(runDir, fileName) },
+          prepare: () => prepareGuiCheck(page, check.state ?? {}, baselinePanels),
+          settle: () => settleGuiState(page),
+        });
+        if (before !== null) fs.appendFileSync(path.join(runDir, 'layout-evidence.jsonl'), JSON.stringify({ name: check.name, before, after: await captureLayoutEvidence(page), outcome }) + '\n');
         results.push({ name: check.name, ...outcome });
         console.log(`  ${outcome.ok ? '✓' : '✗'} ${check.name} — ${outcome.detail}`);
       } catch (error) {
         results.push({ name: check.name, ok: false, detail: `excepcion: ${error.message}` });
         console.log(`  ✗ ${check.name} — excepcion: ${error.message}`);
-        // RESCATE. Las comprobaciones comparten UNA ventana y tienen un contrato de estado: quien abre
-        // un dialogo lo cierra. Ese contrato lo cumple el camino feliz — cuando una LANZA, su limpieza
-        // no corre y el modal se queda abierto, tapando la app para todas las siguientes.
-        //
-        // Medido el 2026-09-18: tres comprobaciones de Proveedores se quedaron a medias con
-        // Configuracion abierta y arrastraron a ~35 detras. Un informe donde un fallo produce treinta y
-        // seis no se puede leer: no distingue la causa del daño colateral.
-        //
-        // Solo corre TRAS UN FALLO, asi que no puede enmascarar nada: lo que una comprobacion en verde
-        // deje abierto a proposito sigue llegando intacto a la siguiente.
-        await rescatarEstado(page).catch(() => undefined);
+
       }
       // El INDICE va delante del slug: `slug()` trunca a 60 caracteres y ya hay nombres de comprobacion
       // que solo se diferencian mas alla de ese corte -> dos capturas colisionaban y la segunda
       // sobrescribia a la primera EN SILENCIO (una captura que no es de lo que dice ser es peor que
       // ninguna). Con el indice delante, el nombre del PNG es unico por construccion y ademas queda
       // ordenado como el informe.
-      const fileName = `${String(index + 1).padStart(2, '0')}-${slug(check.name)}.png`;
-      await page.screenshot({ path: path.join(runDir, fileName) }).catch(() => {});
+
     }
   } catch (error) {
     results.push({ name: 'Arranque', ok: false, detail: error.message });
@@ -9407,27 +9490,6 @@ function slug(text) {
 
 void main();
 
-// Deja la ventana en un estado del que la siguiente comprobacion pueda partir, despues de que una haya
-// LANZADO. No es cosmetica: sin esto un fallo se propaga a todas las que vienen detras y el informe
-// deja de servir para diagnosticar (ver el comentario del bucle).
-//
-// Se usa Escape y no un boton de cerrar concreto: es lo que cierra CUALQUIER dialogo de la app (el
-// contrato de `useDialogA11y`), y no depende de que exista tal o cual control. Se espera al
-// DESMONTAJE, no a un tiempo fijo: los modales salen con animacion y medir a medias fue un
-// intermitente real de este harness.
-async function rescatarEstado(page) {
-  for (let intento = 0; intento < 3; intento += 1) {
-    if ((await page.locator(MODAL).count()) === 0) break;
-    await page.keyboard.press('Escape');
-    await page.locator(MODAL).first().waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs }).catch(() => undefined);
-  }
-  // Un menu contextual abierto tapa clics igual que un modal, y no responde al mismo Escape en todos
-  // los casos: un clic en una zona muerta lo cierra.
-  if ((await page.locator('[role="menu"]').count()) > 0) {
-    await page.mouse.click(2, 2).catch(() => undefined);
-  }
-}
-
 async function measureClaudeConnectorGroup(page, { userDataDir }, group) {
       const cuenta = await group.getAttribute('data-mcp-connector-group');
       const conector = group.locator(`[data-mcp-connector="${FAKE_MCP_CONNECTOR_NAME}"]`);
@@ -9455,3 +9517,127 @@ async function measureClaudeConnectorGroup(page, { userDataDir }, group) {
         !(JSON.parse(repuesto).claudeAiConnectorsOff ?? []).includes(cuenta);
       return { ok, detail: `conector=${hayConector} conectar=${conectar} fecha=«${fecha}» apagado=«${etiquetaApagado}» guardado=${guardado} chrome=${chrome.includes('Solo disponible')} codex=${codex.includes('sin verificar')}` };
     }
+
+// Evidencia acotada de posicion: separa el layout de las transformaciones de entrada/salida.
+async function captureLayoutEvidence(page) {
+  return page.evaluate(() => {
+    const selectors = ['[aria-modal="true"]', '[data-question-dock]', '[data-agents-dock]', '[data-queued-messages]', '[data-prompt-editor]', '[data-notification-toasts]', '[data-active-panel]'];
+    const boxes = selectors.flatMap((selector) => [...document.querySelectorAll(selector)].map((node) => {
+      const rect = node.getBoundingClientRect();
+      const ancestors = [];
+      for (let parent = node; parent && ancestors.length < 5; parent = parent.parentElement) {
+        const style = getComputedStyle(parent);
+        ancestors.push({ tag: parent.tagName, transform: style.transform, height: style.height, overflow: style.overflow });
+      }
+      return { selector, top: rect.top, bottom: rect.bottom, height: rect.height, ancestors };
+    }));
+    const animations = document.getAnimations().filter((a) => a.effect?.getComputedTiming().endTime !== Infinity).map((a) => ({
+      target: a.effect?.target?.outerHTML?.slice(0, 160), state: a.playState, time: a.currentTime, timing: a.effect?.getComputedTiming(),
+    }));
+    const dev = window.__mageDev;
+    return { visibility: document.visibilityState, focus: document.hasFocus(), boxes, animations,
+      panels: dev.panelStore.getState().layout, toasts: dev.notifications.getState().toasts.length,
+      settingsOpen: dev.store.getState().settingsOpen,
+      modalIds: [...document.querySelectorAll('[aria-modal="true"]')].map((node) => node.getAttribute('aria-labelledby')),
+      dialogs: document.querySelectorAll('[aria-modal="true"]').length };
+  });
+}
+
+// Precondiciones declaradas por caso, sin consumir lo que hizo la comprobacion anterior.
+async function prepareGuiCheck(page, state, baselinePanels) {
+  await closeCheckOverlays(page);
+  await page.evaluate((baseline) => {
+    const dev = window.__mageDev;
+    const current = dev.store.getState();
+    const chatMaps = Object.fromEntries(Object.keys(current).filter((key) => key.endsWith('ByChat')).map((key) => [key, {}]));
+    dev.store.setState({ ...chatMaps, tabs: [], activeTabId: '', splitLayout: { kind: 'leaf', tabIds: [''], activeTabId: '' }, backgroundSessions: {} });
+    const layout = structuredClone(baseline);
+    for (const [anchor, stripe] of Object.entries(layout.stripes)) {
+      for (const zone of ['a', 'b']) stripe[zone].activePanelId = anchor === 'left' && zone === 'a' ? 'conversations' : null;
+    }
+    dev.panelStore.setState({ layout, pendingFocusPanelId: null });
+    dev.notifications.setState({ toasts: [], history: [] });
+  }, baselinePanels);
+  await settleGuiState(page);
+  for (let count = 0; count < (state.tabs ?? 0); count += 1) {
+    await openTemporaryConversation(page);
+    if (state.tabs > 1) await page.evaluate((index) => {
+      const store = window.__mageDev.store;
+      store.getState().renameTab(store.getState().activeTabId, `VG pestaña ${index + 1}`);
+    }, count);
+  }
+  if ((state.tabs ?? 0) > 0) await promptAreas(page).first().focus();
+  if (state.provider === 'ollama') await prepareOllamaProvider(page);
+  if (state.panel !== undefined) await page.evaluate((id) => window.__mageDev.panelStore.getState().revealPanelById(id), state.panel);
+  if (state.settingsSection !== undefined) {
+    await openSettingsDialog(page);
+    await openSection(page, new RegExp(state.settingsSection));
+    if (state.settingsSection === 'MCP y conectores') await page.locator('[data-mcp-tab="servers"]').click();
+  }
+  await settleGuiState(page);
+}
+
+async function prepareOllamaProvider(page) {
+  await page.evaluate(async (template) => {
+    await window.__mageDev.store.getState().saveCustomProvider({ id: 'custom:vg-ollama', label: template.label,
+      baseUrl: template.baseUrl, hasApiKey: false, models: template.models.split(', ').map((id) => ({ id, label: id })) });
+  }, OLLAMA_TEMPLATE);
+}
+
+async function settleGuiState(page) {
+  await waitForFiniteAnimations(page);
+  await waitForNoExitingToasts(page);
+  await page.waitForFunction(() => [...document.querySelectorAll('[data-zone-pane]')].every((pane) =>
+    pane.querySelectorAll(':scope > div.relative > div').length <= 1), undefined, { polling: 50, timeout: CONFIG.actionTimeoutMs });
+}
+
+// Espera el estado terminal de la altura, no una relacion geometrica que podria ocultar un bug.
+async function waitForDockReady(page, selector) {
+  await page.locator(selector).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+  await page.waitForFunction((selector) => {
+    const wrapper = document.querySelector(selector)?.parentElement;
+    return wrapper?.style.height === 'auto' && getComputedStyle(wrapper).opacity === '1';
+  }, selector, { polling: 50, timeout: CONFIG.actionTimeoutMs });
+  await waitForStillBox(page, '[data-prompt-editor]');
+}
+
+async function waitForPanelContent(page, id) {
+  await page.locator(`[data-active-panel="${id}"]`).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+  await page.waitForFunction((id) => {
+    const pane = document.querySelector(`[data-active-panel="${id}"]`);
+    const host = pane?.querySelector(':scope > div.relative');
+    return host?.children.length === 1 && getComputedStyle(host.firstElementChild).opacity === '1';
+  }, id, { polling: 50, timeout: CONFIG.actionTimeoutMs });
+}
+
+async function prepareTranscriptInjection(page, sessionIds) {
+  await page.waitForFunction((ids) => ids.every((id) => {
+    const dev = window.__mageDev;
+    const tab = dev.store.getState().tabs.find((tab) => tab.resumeSessionId === id);
+    if (tab === undefined) return false;
+    const transcript = dev.transcriptStoreFor(tab.id).getState();
+    return transcript.lastParams?.sessionId === id && transcript.transcriptId !== null;
+  }), sessionIds, { polling: 50, timeout: CONFIG.actionTimeoutMs });
+  // Main espera hasta 30 s a que aparezca un fichero nuevo. Este fichero es ficticio: cancela
+  // su sondeo antes de inyectar, para que ningun lote tardio pise el fixture.
+  await page.evaluate((ids) => {
+    const dev = window.__mageDev;
+    for (const tab of dev.store.getState().tabs.filter((tab) => ids.includes(tab.resumeSessionId))) {
+      dev.transcriptStoreFor(tab.id).getState().cancel();
+    }
+  }, sessionIds);
+}
+
+async function captureDockGeometry(page) {
+  return page.evaluate(() => {
+    const rect = (node) => {
+      if (node === null) return null;
+      const box = node.getBoundingClientRect();
+      return { top: box.top, bottom: box.bottom, height: box.height, inlineHeight: node.style.height };
+    };
+    const dock = document.querySelector('[data-question-dock], [data-agents-dock], [data-queued-messages]');
+    const input = document.querySelector('[data-prompt-editor]');
+    return { dock: rect(dock), wrapper: rect(dock?.parentElement ?? null), input: rect(input),
+      composer: rect(input?.parentElement ?? null), toasts: window.__mageDev.notifications.getState().toasts.length };
+  });
+}
