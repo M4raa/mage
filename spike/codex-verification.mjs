@@ -282,7 +282,7 @@ async function verificationDependencies() {
   try {
     const { scrubAgentEnv } = await loader.ssrLoadModule('/src/main/os/agentEnv.ts');
     const { resolveCodexBinary } = await loader.ssrLoadModule('/src/main/os/codexBinaryResolver.ts');
-    return { spawn, spawnSync, createServer, createLoader, scrubAgentEnv, baseEnv: process.env,
+    return { spawn, spawnSync, createServer, createLoader, scrubAgentEnv, baseEnv: process.env, platform: process.platform,
       resolveBinary: (explicit) => explicit ?? resolveCodexBinary(),
       createAdapter: (Adapter, params) => new Adapter(params), createSession: (Session, params) => new Session(params) };
   } finally { await loader.close(); }

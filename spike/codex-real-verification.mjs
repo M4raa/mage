@@ -5,6 +5,8 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isolatedEnv } from './codex-verification.mjs';
 import { jsonLines, parseExternalJson, RPC_MESSAGE, THREAD_MARKER } from './codex-wire.mjs';
+import { approvalSleep, safeSleep } from './codex-platform.mjs';
+export { safeSleep } from './codex-platform.mjs';
 
 const MODEL = 'gpt-6-luna';
 const TIMEOUT_MS = 120_000;
@@ -117,14 +119,14 @@ async function runScenario(harness, scenario) {
 
 async function measureApprovals(harness) {
   const offset = harness.events.length;
-  harness.session.sendUserMessage('Verification only. Use the shell tool once to run powershell.exe -NoProfile -Command "Start-Sleep -Seconds 20". Set sandbox_permissions to require_escalated and ask for approval. No other commands or file operations.');
+  const platform = harness.context.deps.platform;
+  harness.session.sendUserMessage(`Verification only. Use the shell tool once to run ${approvalSleep(platform)}. Set sandbox_permissions to require_escalated and ask for approval. No other commands or file operations.`);
   console.log(`Turno real: modelo=${MODEL}; esfuerzo=low; aprobacion comando + interrupcion`);
   await waitUntil(() => harness.events.slice(offset).some((e) => e.kind === 'permission_request' || e.kind === 'result'), 'aprobacion comando');
   const request = harness.events.slice(offset).find((e) => e.kind === 'permission_request')?.request;
   console.log('Comando controlado:', JSON.stringify({ type: typeof request?.input.command,
-    sleep: /Start-Sleep -Seconds 20/i.test(String(request?.input.command)),
-    shellWrapper: /pwsh|powershell/i.test(String(request?.input.command)) }));
-  if (!request || request.toolName !== 'Bash' || !safeSleep(request.input.command)) throw new Error('No llego el permiso del comando controlado; no se aprueba');
+    sleep: safeSleep(request?.input.command, platform) }));
+  if (!request || request.toolName !== 'Bash' || !safeSleep(request.input.command, platform)) throw new Error('No llego el permiso del comando controlado; no se aprueba');
   harness.session.answerPermission(request.requestId, { behavior: 'allow' });
   await new Promise((done) => setTimeout(done, 1_000));
   harness.session.interrupt();
@@ -142,14 +144,6 @@ async function measureApprovals(harness) {
   harness.session.answerPermission(edit.requestId, { behavior: 'allow' });
   await waitUntil(() => harness.events.slice(editOffset).some((e) => e.kind === 'result'), 'edicion completada');
   console.log(`Edicion aprobada y fichero correcto=${readFileSync(join(harness.context.workspace, 'mage-edit.txt'), 'utf8').trim() === 'MAGE_EDIT_OK'}`);
-}
-
-function safeSleep(command) {
-  if (typeof command !== 'string' || /[;&|`$\n\r]/.test(command)) return false;
-  // app-server entrega la invocacion del shell envolviendo el comando solicitado.
-  const unwrapped = command.replace(/^["'][A-Z]:\\[^"']*\\(?:pwsh|powershell)\.exe["']\s+(?:-NoProfile\s+)?-Command\s+/i, '')
-    .replace(/["']/g, '').trim();
-  return /^powershell(?:\.exe)?\s+-NoProfile\s+-Command\s+Start-Sleep -Seconds 20$/i.test(unwrapped);
 }
 
 async function turn(harness, prompt) {
