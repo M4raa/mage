@@ -13,7 +13,7 @@ export function codexChangeView(raw: unknown): { readonly target: string; readon
     const lines = change.diff.split('\n');
     if (lines.at(-1) === '') lines.pop();
     const content = lines.map((line) => prefixedLine(change.kind.type, line));
-    const useful = change.kind.type === 'update' ? content.filter((line) => !/^(---|\+\+\+) /.test(line)) : content;
+    const useful = change.kind.type === 'update' ? withoutFileHeaders(content) : content;
     const header: DiffLine = { sign: ' ', text: change.path, oldLine: null, newLine: null };
     return [header, ...(parseStructuredPatch([{ lines: useful }]) ?? [])];
   });
@@ -25,4 +25,10 @@ function prefixedLine(kind: string, line: string): string {
   if (kind === 'add') return `+${line}`;
   if (kind === 'delete') return `-${line}`;
   return line;
+}
+
+function withoutFileHeaders(lines: readonly string[]): readonly string[] {
+  const firstHunk = lines.findIndex((line) => line.startsWith('@@ '));
+  if (firstHunk === -1) return lines;
+  return lines.filter((line, index) => index >= firstHunk || !/^(---|\+\+\+) /.test(line));
 }
