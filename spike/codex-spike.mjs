@@ -17,13 +17,17 @@
 //      node spike/codex-spike.mjs --verify --real --metadata --keep-home (0 turnos)
 //      node spike/codex-spike.mjs --catalog --keep-home (0 turnos; etiquetas y esfuerzos por modelo)
 //      node spike/codex-spike.mjs --elicitation --keep-home [--save-fixture] (0 turnos)
+//      node spike/codex-spike.mjs --apps-refetch --keep-home (0 turnos; también features.apps=true)
 // --verify (0.160.0): solo temporales, sin consultar ~/.codex. --offline usa Responses LOCAL (0
 // turnos reales); --mcp llama directamente al servidor de prueba (0 turnos). --login abre el navegador
 // oficial. MAGE_CODEX_VERIFY_HOME permite continuar exclusivamente con un temporal creado por el spike.
 import { spawnSync } from 'node:child_process';
 
 // La verificacion nueva nunca consulta el login ni los ficheros del CODEX_HOME del usuario.
-if (process.argv.includes('--elicitation')) {
+if (process.argv.includes('--apps-refetch')) {
+  const { verifyApps } = await import('./codex-apps-verification.mjs');
+  await verifyApps();
+} else if (process.argv.includes('--elicitation')) {
   const { verifyElicitation } = await import('./codex-elicitation-verification.mjs');
   await verifyElicitation();
 } else if (process.argv.includes('--catalog')) {
