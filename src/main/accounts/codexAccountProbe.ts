@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { CodexAccountMetadata } from '@shared/mcp';
+import type { CodexAccountMetadata, CodexAppView } from '@shared/mcp';
 import type { ProbeProcess } from '../engine/modelProbe';
 import { parseCodexAppList } from '../config/codexMcp';
 
@@ -14,8 +14,13 @@ const ACCOUNT = z.object({ account: z.object({ type: z.string() }).passthrough()
 const INIT = 'mage-codex-init';
 const ACCOUNT_ID = 'mage-codex-account';
 const APPS_ID = 'mage-codex-apps';
+const APP_PAGE_SIZE = 50;
+const PROBE_INPUT = z.object({ home: z.string().trim().min(1), includeApps: z.boolean(), timeoutMs: z.number().finite().positive() });
 
 export function probeCodexAccount(deps: CodexAccountProbeDeps, params: { readonly home: string; readonly includeApps: boolean }): Promise<CodexAccountMetadata> {
+  if (!PROBE_INPUT.safeParse({ ...params, timeoutMs: deps.timeoutMs }).success) {
+    return Promise.resolve({ authenticated: null, apps: null, error: 'Parámetros del sondeo de Codex inválidos.' });
+  }
   return new Promise((resolve) => {
     let child: ProbeProcess;
     try { child = deps.spawnProbe(params.home); } catch {
@@ -33,7 +38,7 @@ export function probeCodexAccount(deps: CodexAccountProbeDeps, params: { readonl
 }
 
 interface ReplyContext {
-  readonly state: { buffer: string; done: boolean; authenticated: boolean | null; apps: CodexAccountMetadata['apps']; cursors: Set<string> };
+  readonly state: { buffer: string; done: boolean; authenticated: boolean | null; apps: CodexAppView[]; cursors: Set<string> };
   readonly send: (id: string | undefined, method: string, payload: unknown) => void;
   readonly finish: (error: string | null) => void;
   readonly includeApps: boolean;
@@ -86,7 +91,7 @@ function handleReply(line: string, ctx: ReplyContext): void {
     if (!account.success) return ctx.finish('Codex devolvió un estado de cuenta inesperado.');
     ctx.state.authenticated = account.data.account?.type === 'chatgpt';
     if (!ctx.includeApps || !ctx.state.authenticated) return ctx.finish(null);
-    return ctx.send(APPS_ID, 'app/list', { limit: 50 });
+    return ctx.send(APPS_ID, 'app/list', { limit: APP_PAGE_SIZE });
   }
   appendApps(result, ctx);
 }
@@ -94,11 +99,11 @@ function handleReply(line: string, ctx: ReplyContext): void {
 function appendApps(result: unknown, ctx: ReplyContext): void {
   try {
     const page = parseCodexAppList(result);
-    ctx.state.apps = [...(ctx.state.apps ?? []), ...page.apps];
+    ctx.state.apps.push(...page.apps);
     if (page.nextCursor === null) return ctx.finish(null);
     if (ctx.state.cursors.has(page.nextCursor)) return ctx.finish('Codex repitió el cursor de Apps.');
     ctx.state.cursors.add(page.nextCursor);
-    ctx.send(APPS_ID, 'app/list', { limit: 50, cursor: page.nextCursor });
+    ctx.send(APPS_ID, 'app/list', { limit: APP_PAGE_SIZE, cursor: page.nextCursor });
   } catch {
     ctx.finish('Codex devolvió una lista de Apps inesperada.'); // Nunca citar el cuerpo externo.
   }
