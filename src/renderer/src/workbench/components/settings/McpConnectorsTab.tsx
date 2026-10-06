@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
+import { useCodexAppsStore } from '../../codexAppsStore';
 import { useMcpStore } from '../../mcpStore';
 import type { CodexAccountMetadata, McpStatusByAccount } from '@shared/mcp';
 import { buildClaudeConnectorGroups, CLAUDE_AI_CONNECTORS_URL, describeCheckedAt, type McpConnectorGroup, type McpConnectorRow } from '../../mcpView';
@@ -43,24 +44,14 @@ export function McpConnectorsTab({ statuses }: { readonly statuses: McpStatusByA
 
 function CodexApps(): React.JSX.Element {
   const accounts = useWorkbenchStore((s) => s.accounts);
-  const [results, setResults] = useState<Readonly<Record<string, CodexAccountMetadata>>>({});
-  const [loading, setLoading] = useState(false);
+  const results = useCodexAppsStore((state) => state.results);
+  const loading = useCodexAppsStore((state) => state.loading);
+  const refresh = useCodexAppsStore((state) => state.refresh);
   const subscriptions = accounts.filter((account) => account.providerId === 'codex' && !account.apiBilled);
-  const refresh = async (): Promise<void> => {
-    setLoading(true);
-    try {
-      for (const account of subscriptions) {
-        const value = await window.mage.readCodexApps(account.id).catch((): CodexAccountMetadata => ({
-          authenticated: null, apps: null, error: 'No se pudieron consultar las Apps de esta cuenta.',
-        }));
-        setResults((previous) => ({ ...previous, [account.id]: value }));
-      }
-    } finally { setLoading(false); }
-  };
   return <section data-mcp-codex-apps="true" className="flex flex-col gap-[6px] text-[11px] text-mg-sec">
     <div className="flex items-center gap-[8px]">
       <span className="flex-1">Apps de ChatGPT</span>
-      <button className={BUTTON_CLASS} disabled={loading || subscriptions.length === 0} onClick={() => void refresh()}>
+      <button className={BUTTON_CLASS} disabled={loading || subscriptions.length === 0} onClick={() => void refresh(subscriptions.map((account) => account.id))}>
         <Icon name="refresh" />{loading ? 'Consultando…' : 'Consultar Apps'}
       </button>
     </div>
