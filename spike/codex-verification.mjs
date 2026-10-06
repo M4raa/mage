@@ -89,7 +89,7 @@ function wireRpc(child, { pending, messages }) {
   child.on('exit', () => rejectPending());
 }
 
-async function initialized(session) {
+export async function initialized(session) {
   const reply = await session.request('initialize', {
     clientInfo: { name: 'mage-verification', version: '0.1.2' },
     capabilities: { experimentalApi: true },
@@ -292,9 +292,10 @@ export async function verifyLegacyCodex(mode) {
 }
 
 // Raíz de composición: las dependencias reales se crean una vez, fuera de los helpers de medición.
-async function verificationDependencies() {
+export async function verificationDependencies() {
   const { createServer: createLoader } = await import('vite');
-  const loader = await createLoader({ configFile: false, server: { middlewareMode: true }, appType: 'custom' });
+  const loader = await createLoader({ configFile: false, server: { middlewareMode: true }, appType: 'custom',
+    optimizeDeps: { noDiscovery: true, include: [] } });
   try {
     const { scrubAgentEnv } = await loader.ssrLoadModule('/src/main/os/agentEnv.ts');
     const { resolveCodexBinary } = await loader.ssrLoadModule('/src/main/os/codexBinaryResolver.ts');
@@ -305,7 +306,7 @@ async function verificationDependencies() {
   } finally { await loader.close(); }
 }
 
-function cleanupContext({ home, workspace }) {
+export function cleanupContext({ home, workspace }) {
     if (readOwnedWorkspace(home) !== workspace) throw new Error('Contexto temporal de verificación inconsistente');
     if (process.argv.includes('--keep-home')) {
       console.log('Perfil temporal conservado para medir turnos; borrar al finalizar.');

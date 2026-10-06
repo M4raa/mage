@@ -44,9 +44,9 @@ function draft(overrides: Partial<CustomProviderDraft> = {}): CustomProviderDraf
 
 describe('modelOptionsForProvider', () => {
   it('modelOptionsForProvider_proveedorConocido_devuelveSusModelos', () => {
-    const ids = modelOptionsForProvider('codex', 'gpt-5.5').map((m) => m.id);
+    const ids = modelOptionsForProvider('codex', 'gpt-6.1-sol').map((m) => m.id);
 
-    expect(ids.slice(0, 2)).toEqual(['gpt-5.6-sol', 'gpt-5.6-terra']);
+    expect(ids.slice(0, 2)).toEqual(['gpt-6.1-sol', 'gpt-6-astra']);
   });
 
   it('modelOptionsForProvider_proveedorDesconocido_caeAClaude', () => {
@@ -127,7 +127,7 @@ describe('providerOptions', () => {
 
 describe('providerModels y providerFallbackModel', () => {
   it('providerFallbackModel_proveedorDeSerie_devuelveSuPrimerModelo', () => {
-    expect(providerFallbackModel('codex', [])).toBe('gpt-5.6-sol');
+    expect(providerFallbackModel('codex', [])).toBe('gpt-6.1-sol');
   });
 
   it('providerFallbackModel_proveedorDelUsuario_devuelveSuPrimerModelo', () => {

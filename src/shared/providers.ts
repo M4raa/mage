@@ -14,6 +14,7 @@
 export interface ProviderModel {
   readonly id: string; // id que se manda al proveedor (--model y payload OpenAI)
   readonly label: string; // texto visible en los selectores
+  readonly supportedEfforts?: readonly string[]; // esfuerzos medidos por modelo; ausente = sin catálogo
 }
 
 // Proveedor configurado por el usuario. `id` lo genera Mage (prefijo CUSTOM_PROVIDER_ID_PREFIX) para
@@ -175,20 +176,20 @@ export const BUILT_IN_PROVIDERS: readonly BuiltInProvider[] = [
     ],
   },
   {
-    // Motor NATIVO nº 3: el CLI `codex` de OpenAI sobre `codex app-server` (sin verificar con cuenta).
-    // El catalogo SI es preguntable: `model/list` responde sin cuenta (medido el 2026-10-01 contra
-    // codex-cli 0.144.4) y la sesion lo pide al arrancar. Esta lista es la RESERVA: lo que contesto ese
-    // `model/list`, en su orden y sin los ocultos.
+    // Motor NATIVO nº 3: Codex sobre app-server. Reserva medida con cuenta ChatGPT el 2026-10-06
+    // contra codex-cli 0.160.0 (spike/codex-spike.mjs --catalog): model/list paginado, en su orden,
+    // sin ocultos, con etiquetas y esfuerzos por modelo. Sin cuenta también aparece GPT-5.5;
+    // no pertenece al catálogo de esta cuenta. El sondeo vivo manda sobre esta reserva.
     id: CODEX_PROVIDER_ID,
     label: 'Codex (OpenAI)',
     models: [
-      { id: 'gpt-5.6-sol', label: 'GPT-5.6-Sol' },
-      { id: 'gpt-5.6-terra', label: 'GPT-5.6-Terra' },
-      { id: 'gpt-5.6-luna', label: 'GPT-5.6-Luna' },
-      { id: 'gpt-5.5', label: 'GPT-5.5' },
-      { id: 'gpt-5.4', label: 'GPT-5.4' },
-      { id: 'gpt-5.4-mini', label: 'GPT-5.4-Mini' },
-      { id: 'gpt-5.2', label: 'GPT-5.2' },
+      { id: 'gpt-6.1-sol', label: 'GPT-6.1-Sol', supportedEfforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'] },
+      { id: 'gpt-6-astra', label: 'GPT-6-Astra', supportedEfforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'] },
+      { id: 'gpt-6-sol', label: 'GPT-6-Sol', supportedEfforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'] },
+      { id: 'gpt-6-luna', label: 'GPT-6-Luna', supportedEfforts: ['low', 'medium', 'high', 'xhigh', 'max'] },
+      { id: 'gpt-5.6-sol', label: 'GPT-5.6-Sol', supportedEfforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'] },
+      { id: 'gpt-5.6-terra', label: 'GPT-5.6-Terra', supportedEfforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'] },
+      { id: 'gpt-5.6-luna', label: 'GPT-5.6-Luna', supportedEfforts: ['low', 'medium', 'high', 'xhigh', 'max'] },
     ],
   },
 ];
