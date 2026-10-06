@@ -1,16 +1,21 @@
 // Medicion segura de app-server. Solo temporales propios; nunca lee ~/.codex ni imprime respuestas
 // de autenticacion, stderr, urls OAuth, ids personales o contenidos de credenciales.
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtempSync, readdirSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
+import { mkdtempSync, readdirSync, rmSync, writeFileSync, readFileSync, lstatSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, isAbsolute, join, relative, resolve } from 'node:path';
 import { createServer } from 'node:http';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { projectVerificationFile, projectVerificationMcp } from './codex-fixtures.mjs';
+import { randomUUID } from 'node:crypto';
+import { z } from 'zod';
 
 const RPC_TIMEOUT_MS = 30_000;
 const LOGIN_TIMEOUT_MS = 600_000;
+const MANIFEST_FILE = 'mage-verification.json';
+const OWNER_FILE = '.mage-verification-owner';
+const MANIFEST = z.object({ format: z.literal(1), owner: z.string().uuid(), workspace: z.string().min(1) }).strict();
 const BLOCKED = ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL',
   'CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX',
   'GEMINI_API_KEY', 'GOOGLE_API_KEY', 'OPENAI_API_KEY', 'CODEX_API_KEY', 'MAGE_CODEX_API_KEY'];
@@ -254,17 +259,16 @@ function verificationContext() {
   const suppliedHome = process.env.MAGE_CODEX_VERIFY_HOME;
   const home = suppliedHome === undefined ? mkdtempSync(join(tmpdir(), 'mage-codex-verify-home-')) : suppliedHome;
   assertTemporary(home, 'mage-codex-verify-home-');
-  const workspace = suppliedHome === undefined ? mkdtempSync(join(tmpdir(), 'mage-codex-verify-ws-'))
-    : JSON.parse(readFileSync(join(home, 'mage-verification.json'), 'utf8')).workspace;
+  const workspace = suppliedHome === undefined ? createWorkspace(home) : readOwnedWorkspace(home);
   assertTemporary(workspace, 'mage-codex-verify-ws-');
   const version = spawnSync(bin, ['--version'], { encoding: 'utf8', env: isolatedEnv(home), windowsHide: true });
   if (version.status !== 0) throw new Error('No se pudo consultar la version del binario Codex');
   return { bin, home, workspace, version: version.stdout.trim() };
 }
 
-function cleanupContext({ home, workspace, version }) {
+function cleanupContext({ home, workspace }) {
+    if (readOwnedWorkspace(home) !== workspace) throw new Error('Contexto temporal de verificación inconsistente');
     if (process.argv.includes('--keep-home')) {
-      writeFileSync(join(home, 'mage-verification.json'), JSON.stringify({ workspace, version }));
       console.log('Perfil temporal conservado para medir turnos; borrar al finalizar.');
     }
     // Validacion de las rutas antes de cualquier borrado recursivo en Windows.
@@ -274,12 +278,41 @@ function cleanupContext({ home, workspace, version }) {
     }
 }
 
-function assertTemporary(dir, prefix) {
+export function assertTemporary(dir, prefix) {
   if (typeof dir !== 'string') throw new Error('Ruta temporal invalida');
   const rel = relative(resolve(tmpdir()), resolve(dir));
   if (isAbsolute(rel) || rel.startsWith('..') || !basename(dir).startsWith(prefix) || rel.includes('/') || rel.includes('\\')) {
     throw new Error('La verificacion solo admite sus carpetas directas del temporal del SO');
   }
+  const stat = lstatSync(dir);
+  if (stat.isSymbolicLink()) throw new Error('El temporal de verificación no puede ser un enlace.');
+  if (!stat.isDirectory()) throw new Error('El temporal de verificación debe ser un directorio.');
+  const expected = join(realpathSync(tmpdir()), basename(resolve(dir)));
+  if (realpathSync(dir) !== expected) throw new Error('El temporal de verificación tiene un destino inesperado.');
+}
+
+function createWorkspace(home) {
+  const workspace = mkdtempSync(join(tmpdir(), 'mage-codex-verify-ws-'));
+  const owner = randomUUID();
+  writeFileSync(join(workspace, OWNER_FILE), owner, { flag: 'wx' });
+  writeFileSync(join(home, MANIFEST_FILE), JSON.stringify({ format: 1, owner, workspace }), { flag: 'wx' });
+  return workspace;
+}
+
+export function readOwnedWorkspace(home) {
+  assertTemporary(home, 'mage-codex-verify-home-');
+  let manifest;
+  try {
+    const path = join(home, MANIFEST_FILE);
+    if (lstatSync(path).isSymbolicLink()) throw new Error('Enlace de manifiesto');
+    manifest = MANIFEST.parse(JSON.parse(readFileSync(path, 'utf8')));
+  } catch { throw new Error('El perfil temporal no tiene un manifiesto propio válido.'); }
+  assertTemporary(manifest.workspace, 'mage-codex-verify-ws-');
+  try {
+    const marker = join(manifest.workspace, OWNER_FILE);
+    if (lstatSync(marker).isSymbolicLink() || readFileSync(marker, 'utf8') !== manifest.owner) throw new Error('Propiedad inconsistente');
+  } catch { throw new Error('El workspace temporal no pertenece a este perfil.'); }
+  return manifest.workspace;
 }
 
 async function probeThreadContract(session, workspace) {
