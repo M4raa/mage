@@ -38,6 +38,7 @@ import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
 import { FAKE_SCENARIOS, startFakeOpenAiServer } from './fake-openai-server.mjs';
 import { decideTurnTarget, parseTurnAnswer, spentPercent } from './lib/usageGuard.mjs';
+import { withGuiState } from './lib/guiState.mjs';
 
 const repoRoot = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 // Version de Mage que corre (la de package.json): la usan el seed de ajustes y las notas de version.
@@ -1782,9 +1783,10 @@ const CHECKS = [
       const previous = await captureTurnState(page);
       const layout = await page.evaluate(() => window.__mageDev.panelStore.getState().layout);
       const item = JSON.parse(fs.readFileSync(path.join(repoRoot, 'src/main/engine/__fixtures__/codex/real-file-change-0160.json'), 'utf8'));
-      await openTemporaryConversation(page);
-      await page.evaluate(() => window.__mageDev.panelStore.getState().revealPanelById('permissions'));
-      try {
+      return withGuiState({ capture: async () => ({ previous, layout }), prepare: async () => {
+        await openTemporaryConversation(page);
+        await page.evaluate(() => window.__mageDev.panelStore.getState().revealPanelById('permissions'));
+      }, run: async () => {
         await injectPermissionRequest(page, { grantRoot: null, changes: item.changes }, 'vg-codex-edit', 'apply_patch');
         const card = page.locator('[data-permission-card="pending"]');
         await card.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
@@ -1797,11 +1799,12 @@ const CHECKS = [
             diff: panel?.textContent?.includes('MAGE_EDIT_OK'), summary: panel?.textContent?.includes('+1 −0') };
         });
         return { ok: Object.values(measured).every((value) => value === true), detail: JSON.stringify(measured) };
-      } finally {
-        await cancelInjectedPermission(page, 'vg-codex-edit');
-        await page.evaluate((value) => window.__mageDev.panelStore.setState({ layout: value }), layout);
-        await restoreTurnState(page, previous);
-      }
+      }, restore: async () => {
+        try { await cancelInjectedPermission(page, 'vg-codex-edit'); } finally {
+          await page.evaluate((value) => window.__mageDev.panelStore.setState({ layout: value }), layout);
+          await restoreTurnState(page, previous);
+        }
+      } });
     },
   },
   {
@@ -1809,10 +1812,12 @@ const CHECKS = [
     async run(page) {
       const previous = await page.evaluate(() => window.__mageDev.store.getState().accounts);
       const ownDialog = (await page.locator(MODAL).count()) === 0;
-      if (ownDialog) await openSettingsDialog(page);
-      await openSection(page, /MCP y conectores/);
-      await page.locator('[data-mcp-tab="connectors"]').click();
-      try {
+      const settings = await captureSettingsPosition(page);
+      return withGuiState({ capture: async () => ({ previous, ownDialog, settings }), prepare: async () => {
+        if (ownDialog) await openSettingsDialog(page);
+        await openSection(page, /MCP y conectores/);
+        await page.locator('[data-mcp-tab="connectors"]').click();
+      }, run: async () => {
         await page.evaluate(() => window.__mageDev.store.setState((s) => ({ accounts: [{ ...s.accounts[0],
           id: 'vg-codex-unregistered', providerId: 'codex', apiBilled: false, alias: 'Codex de prueba', isMain: false }] })));
         const apps = page.locator('[data-mcp-codex-apps]');
@@ -1823,14 +1828,27 @@ const CHECKS = [
         const measured = { error: text.includes('No se pudieron consultar'), retry: text.includes('Puedes volver a intentarlo'),
           falseEmpty: text.includes('no ha devuelto ninguna App'), enabled: await apps.getByRole('button', { name: 'Consultar Apps', exact: true }).isEnabled() };
         return { ok: measured.error && measured.retry && !measured.falseEmpty && measured.enabled, detail: JSON.stringify(measured) };
-      } finally {
+      }, restore: async () => {
         await page.evaluate((accounts) => window.__mageDev.store.setState({ accounts }), previous);
-        await page.locator('[data-mcp-tab="servers"]').click();
-        if (ownDialog) {
-          await page.keyboard.press('Escape');
-          await page.locator(MODAL).waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
-        }
-      }
+        await restoreSettingsPosition(page, { ownDialog, settings });
+      } });
+    },
+  },
+  {
+    name: 'Codex 0.160: consulta de Apps conserva la pestaña MCP recibida',
+    async run(page) {
+      const ownDialog = (await page.locator(MODAL).count()) === 0;
+      const previous = await captureSettingsPosition(page);
+      try {
+        if (ownDialog) await openSettingsDialog(page);
+        await openSection(page, /MCP y conectores/);
+        await page.locator('[data-mcp-tab="extensions"]').click();
+        const check = CHECKS.find((entry) => entry.name === 'Codex 0.160: Conectores distingue el error de consulta de una lista vacía');
+        if (!check) throw new Error('Falta la comprobacion de Apps');
+        await check.run(page);
+        const tab = await page.locator('[data-mcp-tab="extensions"]').getAttribute('aria-selected');
+        return { ok: tab === 'true', detail: JSON.stringify({ conservaExtensiones: tab === 'true' }) };
+      } finally { await restoreSettingsPosition(page, { ownDialog, settings: previous }); }
     },
   },
   {
@@ -7862,6 +7880,27 @@ async function measureAgyProfileLinks(page, userDataDir) {
 async function openSection(page, namePattern) {
   await page.getByRole('tab', { name: namePattern }).click();
   await page.waitForTimeout(150);
+}
+
+function captureSettingsPosition(page) {
+  return page.evaluate(() => ({
+    section: document.querySelector('#settings-title')?.closest('[role="dialog"]')?.querySelector('nav [aria-selected="true"]')?.id ?? null,
+    mcpTab: document.querySelector('[data-mcp-tab][aria-selected="true"]')?.getAttribute('data-mcp-tab') ?? null,
+  }));
+}
+
+async function restoreSettingsPosition(page, { ownDialog, settings }) {
+  if (ownDialog) {
+    await page.evaluate(() => window.__mageDev.store.getState().closeSettings());
+    await page.locator(`${MODAL}[aria-labelledby="settings-title"]`).waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+    return;
+  }
+  if (settings.mcpTab !== null) {
+    await page.locator(`[data-mcp-tab="${settings.mcpTab}"]`).click();
+  }
+  if (settings.section !== null) {
+    await page.locator(`#${settings.section}`).click();
+  }
 }
 
 // Estado del paso "motor" del asistente, ya resuelto (el sondeo del CLI es asincrono). Devuelve si se
