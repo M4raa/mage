@@ -10,25 +10,27 @@ import { fileURLToPath } from 'node:url';
 import { projectVerificationFile, projectVerificationMcp } from './codex-fixtures.mjs';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
+import { jsonLines, parseExternalJson, RPC_MESSAGE, THREAD_MARKER, RESPONSES_BODY, validatedResult,
+  ACCOUNT_RESULT, MODELS_RESULT, PROFILES_RESULT, APPS_RESULT, RATE_RESULT, THREAD_RESULT, THREAD_READ } from './codex-wire.mjs';
 
 const RPC_TIMEOUT_MS = 30_000;
 const LOGIN_TIMEOUT_MS = 600_000;
 const MANIFEST_FILE = 'mage-verification.json';
 const OWNER_FILE = '.mage-verification-owner';
 const MANIFEST = z.object({ format: z.literal(1), owner: z.string().uuid(), workspace: z.string().min(1) }).strict();
-const BLOCKED = ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL',
-  'CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX',
-  'GEMINI_API_KEY', 'GOOGLE_API_KEY', 'OPENAI_API_KEY', 'CODEX_API_KEY', 'MAGE_CODEX_API_KEY'];
-
-export function isolatedEnv(home) {
-  const env = { ...process.env, CODEX_HOME: home };
-  for (const key of BLOCKED) delete env[key];
-  return env;
+export function isolatedEnv(home, deps) {
+  const env = deps.scrubAgentEnv(deps.baseEnv);
+  delete env.MAGE_CODEX_API_KEY;
+  return { ...env, CODEX_HOME: home };
 }
 
-export function rpcSession({ bin, home, workspace, args = [], env = {} }) {
-  const child = spawn(bin, ['app-server', ...args], {
-    env: { ...isolatedEnv(home), ...env }, cwd: workspace, stdio: 'pipe', windowsHide: true,
+export function loginEnvironment(home, url, deps) {
+  return { ...isolatedEnv(home, deps), MAGE_CODEX_LOGIN_URL: url };
+}
+
+export function rpcSession({ bin, home, workspace, args = [], env = {}, deps }) {
+  const child = deps.spawn(bin, ['app-server', ...args], {
+    env: { ...isolatedEnv(home, deps), ...env }, cwd: workspace, stdio: 'pipe', windowsHide: true,
   });
   const pending = new Map();
   const messages = [];
@@ -42,7 +44,11 @@ export function rpcSession({ bin, home, workspace, args = [], env = {} }) {
       reject(new Error(`Timeout de ${method}`));
     }, RPC_TIMEOUT_MS);
     pending.set(id, { resolve: resolveReply, reject, timer });
-    send({ jsonrpc: '2.0', id, method, params });
+    try { send({ jsonrpc: '2.0', id, method, params }); } catch {
+      clearTimeout(timer);
+      pending.delete(id);
+      reject(new Error('Falló la escritura RPC'));
+    }
   });
   const close = async () => {
     if (child.exitCode !== null || child.signalCode !== null) return;
@@ -54,34 +60,28 @@ export function rpcSession({ bin, home, workspace, args = [], env = {} }) {
 }
 
 function wireRpc(child, { pending, messages }) {
-  let buffer = '';
   // stderr puede contener datos de autenticacion: se consume sin registrarlo.
   child.stderr.resume();
   child.stdout.setEncoding('utf8');
-  child.stdout.on('data', (chunk) => {
-    buffer += chunk;
-    const lines = buffer.split('\n');
-    buffer = lines.pop() ?? '';
-    for (const line of lines) {
-      if (!line.trim()) continue;
-      const message = JSON.parse(line);
+  const receive = (message) => {
       const waiter = pending.get(message.id);
       if (waiter && message.method === undefined) {
         clearTimeout(waiter.timer);
         pending.delete(message.id);
         waiter.resolve(message);
       } else messages.push(message);
-    }
-  });
-  const rejectPending = () => {
+  };
+  const rejectPending = (error = new Error('app-server terminó antes de contestar')) => {
     for (const waiter of pending.values()) {
       clearTimeout(waiter.timer);
-      waiter.reject(new Error('app-server termino antes de contestar'));
+      waiter.reject(error);
     }
     pending.clear();
   };
-  child.on('error', rejectPending);
-  child.on('exit', rejectPending);
+  child.stdout.on('data', jsonLines({ schema: RPC_MESSAGE, receive, fail: (error) => { rejectPending(error); child.kill(); } }));
+  child.on('error', () => rejectPending());
+  child.stdin.on('error', () => rejectPending());
+  child.on('exit', () => rejectPending());
 }
 
 async function initialized(session) {
@@ -96,36 +96,41 @@ async function initialized(session) {
 
 async function inventory(session) {
   const account = await session.request('account/read');
-  console.log(`account/read: tipo=${account.result?.account?.type ?? 'sin cuenta'} error=${account.error?.code ?? 'ninguno'}`);
+  const accountType = account.error ? 'sin confirmar' : validatedResult(account, ACCOUNT_RESULT, 'account/read').account?.type ?? 'sin cuenta';
+  console.log(`account/read: tipo=${accountType} error=${account.error?.code ?? 'ninguno'}`);
   const models = await session.request('model/list');
-  console.log('model/list:', JSON.stringify(models.result?.data?.map((m) => ({
+  console.log('model/list:', JSON.stringify(models.error ? { errorCode: models.error.code } : validatedResult(models, MODELS_RESULT, 'model/list').data.map((m) => ({
     id: m.id, model: m.model, hidden: m.hidden,
     efforts: m.supportedReasoningEfforts?.map((e) => e.reasoningEffort),
-  })) ?? { errorCode: models.error?.code }));
+  }))));
   const profiles = await session.request('permissionProfile/list');
-  console.log('permissionProfile/list:', JSON.stringify(profiles.result?.data?.map((p) => ({ id: p.id, allowed: p.allowed })) ?? { errorCode: profiles.error?.code }));
+  console.log('permissionProfile/list:', JSON.stringify(profiles.error ? { errorCode: profiles.error.code } : validatedResult(profiles, PROFILES_RESULT, 'permissionProfile/list').data));
   for (const method of ['account/rateLimits/read', 'account/usage/read', 'app/list']) {
     const reply = await session.request(method);
     console.log(`${method}: campos=${JSON.stringify(Object.keys(reply.result ?? {}))} error=${reply.error?.code ?? 'ninguno'}`);
     if (method === 'account/rateLimits/read' && reply.result) {
-      const limits = reply.result.rateLimits;
+      const limits = validatedResult(reply, RATE_RESULT, method).rateLimits;
       console.log('Ventanas:', JSON.stringify({ primary: limits?.primary, secondary: limits?.secondary }));
     }
-    if (method === 'app/list' && !reply.error) console.log(`Apps: ${reply.result?.data?.length ?? 0}; hay pagina siguiente=${reply.result?.nextCursor != null}`);
+    if (method === 'app/list' && !reply.error) {
+      const apps = validatedResult(reply, APPS_RESULT, method);
+      console.log(`Apps: ${apps.data.length}; hay pagina siguiente=${apps.nextCursor !== null && apps.nextCursor !== undefined}`);
+    }
   }
 }
 
-async function login(session) {
+async function login(session, context) {
   const reply = await session.request('account/login/start', { type: 'chatgpt' });
   if (reply.error) throw new Error(`account/login/start fallo: codigo ${reply.error.code}`);
-  const url = reply.result?.authUrl;
-  if (typeof url !== 'string' || new URL(url).hostname !== 'auth.openai.com') {
+  const url = validatedResult(reply, z.object({ authUrl: z.string() }), 'account/login/start').authUrl;
+  const parsedUrl = URL.canParse(url) ? new URL(url) : null;
+  if (parsedUrl === null || parsedUrl.protocol !== 'https:' || parsedUrl.hostname !== 'auth.openai.com' || parsedUrl.username !== '' || parsedUrl.password !== '') {
     throw new Error('El login no devolvio una URL OAuth de auth.openai.com');
   }
   // URL solo en el entorno del navegador, nunca en la consola ni en disco.
   const browser = browserCommand(url);
-  const opener = spawn(browser.command, browser.args, {
-    env: { ...process.env, MAGE_CODEX_LOGIN_URL: url }, windowsHide: true, stdio: 'ignore',
+  const opener = context.deps.spawn(browser.command, browser.args, {
+    env: loginEnvironment(context.home, url, context.deps), windowsHide: true, stdio: 'ignore',
   });
   await new Promise((done, reject) => {
     opener.once('error', () => reject(new Error('No se pudo abrir el navegador del login')));
@@ -173,7 +178,8 @@ export async function verifyCodex() {
   if (process.argv.includes('--login') && (process.argv.includes('--offline') || process.argv.includes('--mcp'))) {
     throw new Error('--login debe ejecutarse separado de --offline y --mcp');
   }
-  const context = verificationContext();
+  const deps = await verificationDependencies();
+  const context = verificationContext(deps);
   const { home, workspace, version } = context;
   console.log(version);
   console.log(`CODEX_HOME temporal: ${home}`);
@@ -186,7 +192,7 @@ export async function verifyCodex() {
     if (process.argv.includes('--inspect-thread')) await inspectThread(session, workspace);
     await standaloneModes(session, context);
     if (process.argv.includes('--login')) {
-      await login(session);
+      await login(session, context);
       console.log('Ficheros tras login:', readdirSync(home).filter((name) => !name.startsWith('.')));
       await inventory(session);
     }
@@ -199,7 +205,7 @@ export async function verifyCodex() {
 async function standaloneModes(session, context) {
   if (process.argv.includes('--real')) {
     const account = await session.request('account/read');
-    if (account.result?.account?.type !== 'chatgpt') throw new Error('--real exige login oficial en el temporal');
+    if (validatedResult(account, ACCOUNT_RESULT, 'account/read').account?.type !== 'chatgpt') throw new Error('--real exige login oficial en el temporal');
     await session.close();
     const { verifyReal } = await import('./codex-real-verification.mjs');
     await verifyReal(context);
@@ -215,10 +221,10 @@ async function standaloneModes(session, context) {
 }
 
 async function inspectThread(session, workspace) {
-  const { threadId } = JSON.parse(readFileSync(join(workspace, 'mage-thread.json'), 'utf8'));
+  const { threadId } = parseExternalJson(readFileSync(join(workspace, 'mage-thread.json'), 'utf8'), THREAD_MARKER, 'Marcador de hilo');
   const reply = await session.request('thread/read', { threadId, includeTurns: true });
   if (reply.error) throw new Error(`thread/read: codigo ${reply.error.code}`);
-  const items = reply.result?.thread?.turns?.flatMap((turn) => turn.items) ?? [];
+  const items = validatedResult(reply, THREAD_READ, 'thread/read').thread.turns.flatMap((turn) => turn.items);
   const file = items.findLast((item) => item.type === 'fileChange');
   const mcp = items.find((item) => item.type === 'mcpToolCall' && item.server === 'mage_verify' && JSON.stringify(item.result).includes('MAGE_MCP_ENV_OK'));
   console.log('Hilo persistido:', JSON.stringify({ itemTypes: [...new Set(items.map((item) => item.type))],
@@ -238,32 +244,48 @@ async function probeApps(context) {
   try {
     await initialized(session);
     const thread = await session.request('thread/start', { cwd: context.workspace, ephemeral: true });
-    for (const params of [{ limit: 50 }, { limit: 50, threadId: thread.result?.thread?.id, forceRefetch: true }]) {
+    const threadId = validatedResult(thread, THREAD_RESULT, 'thread/start').thread.id;
+    for (const params of [{ limit: 50 }, { limit: 50, threadId, forceRefetch: true }]) {
       const reply = await session.request('app/list', params);
       const errorText = reply.error?.message ?? '';
       const category = /unauthorized|auth|401/i.test(errorText) ? 'auth'
         : /connect|network|fetch|dns|resolve|request|load|502|503/i.test(errorText) ? 'network_or_upstream' : 'other';
+      const apps = reply.error ? null : validatedResult(reply, APPS_RESULT, 'app/list');
       console.log('Apps con features.apps:', JSON.stringify({ withThread: !!params.threadId,
         errorCode: reply.error?.code, errorCategory: reply.error ? category : undefined,
-        count: reply.result?.data?.length, fields: Object.keys(reply.result ?? {}),
-        accessible: reply.result?.data?.filter((app) => app.isAccessible).length,
-        enabled: reply.result?.data?.filter((app) => app.isEnabled).length }));
+        count: apps?.data.length, fields: Object.keys(reply.result ?? {}),
+        accessible: apps?.data.filter((app) => app.isAccessible).length,
+        enabled: apps?.data.filter((app) => app.isEnabled).length }));
     }
   } finally {
     await session.close();
   }
 }
 
-function verificationContext() {
-  const bin = process.platform === 'win32' ? 'codex.exe' : 'codex';
+export function verificationContext(deps) {
+  const explicit = process.argv.slice(2).find((arg) => !arg.startsWith('--'));
+  const bin = deps.resolveBinary(explicit);
   const suppliedHome = process.env.MAGE_CODEX_VERIFY_HOME;
   const home = suppliedHome === undefined ? mkdtempSync(join(tmpdir(), 'mage-codex-verify-home-')) : suppliedHome;
   assertTemporary(home, 'mage-codex-verify-home-');
   const workspace = suppliedHome === undefined ? createWorkspace(home) : readOwnedWorkspace(home);
   assertTemporary(workspace, 'mage-codex-verify-ws-');
-  const version = spawnSync(bin, ['--version'], { encoding: 'utf8', env: isolatedEnv(home), windowsHide: true });
+  const version = deps.spawnSync(bin, ['--version'], { encoding: 'utf8', env: isolatedEnv(home, deps), windowsHide: true });
   if (version.status !== 0) throw new Error('No se pudo consultar la version del binario Codex');
-  return { bin, home, workspace, version: version.stdout.trim() };
+  return { bin, home, workspace, version: version.stdout.trim(), deps };
+}
+
+// Raíz de composición: las dependencias reales se crean una vez, fuera de los helpers de medición.
+async function verificationDependencies() {
+  const { createServer: createLoader } = await import('vite');
+  const loader = await createLoader({ configFile: false, server: { middlewareMode: true }, appType: 'custom' });
+  try {
+    const { scrubAgentEnv } = await loader.ssrLoadModule('/src/main/os/agentEnv.ts');
+    const { resolveCodexBinary } = await loader.ssrLoadModule('/src/main/os/codexBinaryResolver.ts');
+    return { spawn, spawnSync, createServer, createLoader, scrubAgentEnv, baseEnv: process.env,
+      resolveBinary: (explicit) => explicit ?? resolveCodexBinary(),
+      createAdapter: (Adapter, params) => new Adapter(params), createSession: (Session, params) => new Session(params) };
+  } finally { await loader.close(); }
 }
 
 function cleanupContext({ home, workspace }) {
@@ -331,7 +353,7 @@ async function probeThreadContract(session, workspace) {
 // recibe un turno: el cuerpo solo se inspecciona en memoria y se imprime su esfuerzo, nunca el resto.
 async function probeEffort(context) {
   writeFileSync(join(context.workspace, 'CLAUDE.md'), 'Instruccion de prueba: MAGE_VERIFY_PROJECT\n');
-  const capture = await captureResponses();
+  const capture = await captureResponses(context.deps);
   const session = rpcSession({ ...context, args: [
     '-c', `model_providers.mage-fake={name="Fake",base_url="http://127.0.0.1:${capture.port}/v1",env_key="MAGE_VERIFY_FAKE_KEY",wire_api="responses"}`,
     '-c', 'model_provider="mage-fake"',
@@ -354,14 +376,18 @@ async function probeEffort(context) {
   }
 }
 
-async function captureResponses() {
+export async function captureResponses(deps) {
   const bodies = [];
   const authorizations = [];
-  const server = createServer((req, res) => {
+  const server = deps.createServer((req, res) => {
     let raw = '';
     req.on('data', (chunk) => { raw += chunk; });
     req.on('end', () => {
-      bodies.push(JSON.parse(raw));
+      try { bodies.push(parseExternalJson(raw, RESPONSES_BODY, 'Responses local')); } catch {
+        res.writeHead(400, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ error: { message: 'JSON de Responses inválido' } }));
+        return;
+      }
       authorizations.push(req.headers.authorization === 'Bearer mage-artificial-key');
       res.writeHead(400, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ error: { message: 'Mage: medicion local', type: 'invalid_request_error' } }));
@@ -415,10 +441,18 @@ async function probeMcp(context) {
 function serveMcp() {
   const input = createInterface({ input: process.stdin });
   input.on('line', (line) => {
-    const request = JSON.parse(line);
+    let request;
+    try { request = parseExternalJson(line, RPC_MESSAGE, 'MCP'); } catch {
+      process.stdout.write(`${JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Petición MCP inválida' } })}\n`);
+      return;
+    }
     if (request.id === undefined) return;
     let result = {};
-    if (request.method === 'initialize') result = { protocolVersion: request.params.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: 'Mage verification', version: '1' } };
+    if (request.method === 'initialize') {
+      const params = z.object({ protocolVersion: z.string() }).safeParse(request.params);
+      if (!params.success) { process.stdout.write(`${JSON.stringify({ jsonrpc: '2.0', id: request.id, error: { code: -32602, message: 'Parámetros MCP inválidos' } })}\n`); return; }
+      result = { protocolVersion: params.data.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: 'Mage verification', version: '1' } };
+    }
     if (request.method === 'tools/list') result = { tools: [{ name: 'probe', description: 'Confirma la entrega del entorno sin revelar su valor', annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }, inputSchema: { type: 'object', properties: {} } }] };
     if (request.method === 'tools/call') result = { content: [{ type: 'text', text: process.env.MAGE_VERIFY_MCP_SECRET === 'mage-artificial-mcp-secret' ? 'MAGE_MCP_ENV_OK' : 'MAGE_MCP_ENV_MISSING' }] };
     process.stdout.write(`${JSON.stringify({ jsonrpc: '2.0', id: request.id, result })}\n`);

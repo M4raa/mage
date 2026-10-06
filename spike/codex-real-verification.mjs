@@ -1,24 +1,23 @@
 // Medicion de la ruta REAL de Mage (AgentSession + CodexAdapter), con perfil temporal autenticado.
 // Vite carga TypeScript sin generar otro adapter. Nunca se conecta a Electron ni al perfil del usuario.
-import { createServer } from 'vite';
 import { writeFileSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { spawn } from 'node:child_process';
 import { isolatedEnv } from './codex-verification.mjs';
+import { jsonLines, parseExternalJson, RPC_MESSAGE, THREAD_MARKER } from './codex-wire.mjs';
 
 const MODEL = 'gpt-6-luna';
 const TIMEOUT_MS = 120_000;
 
 export async function verifyReal(context) {
-  const loader = await createServer({ configFile: false, server: { middlewareMode: true },
+  const loader = await context.deps.createLoader({ configFile: false, server: { middlewareMode: true },
     resolve: { alias: { '@shared': resolve('src/shared') } }, appType: 'custom' });
   try {
     const { CodexAdapter } = await loader.ssrLoadModule('/src/main/engine/codexAdapter.ts');
     const { AgentSession } = await loader.ssrLoadModule('/src/main/engine/agentSession.ts');
     if (process.argv.includes('--metadata')) {
       const { probeCodexAccount } = await loader.ssrLoadModule('/src/main/accounts/codexAccountProbe.ts');
-      const metadata = await probeCodexAccount({ timeoutMs: 30_000, spawnProbe: (home) => metadataProcess(context.bin, home) }, { home: context.home, includeApps: true });
+      const metadata = await probeCodexAccount({ timeoutMs: 30_000, spawnProbe: (home) => metadataProcess(context, home) }, { home: context.home, includeApps: true });
       console.log('Sondeo de PRODUCCION:', JSON.stringify(metadata));
       return;
     }
@@ -37,8 +36,8 @@ export async function verifyReal(context) {
   }
 }
 
-function metadataProcess(bin, home) {
-  const child = spawn(bin, ['app-server'], { env: isolatedEnv(home), stdio: 'pipe', windowsHide: true });
+function metadataProcess(context, home) {
+  const child = context.deps.spawn(context.bin, ['app-server'], { env: isolatedEnv(home, context.deps), stdio: 'pipe', windowsHide: true });
   child.stderr.resume();
   return { onStdout: (listener) => { child.stdout.setEncoding('utf8'); child.stdout.on('data', listener); },
     onExit: (listener) => { child.on('exit', listener); child.on('error', listener); },
@@ -51,19 +50,19 @@ function realSession({ context, CodexAdapter, AgentSession }) {
   const events = [];
   const raw = [];
   let child;
-  const adapter = new CodexAdapter({ resolveBinary: () => context.bin,
+  const adapter = context.deps.createAdapter(CodexAdapter, { resolveBinary: () => context.bin,
     resolveAccount: () => ({ home: context.home, apiKey: null }),
     resolveInstructions: () => [{ scope: 'project', path: join(context.workspace, 'CLAUDE.md'), content: 'marker' }],
   });
   writeFileSync(join(context.workspace, 'CLAUDE.md'), 'Verification instruction: when asked for the project marker reply MAGE_PROJECT_OK.\n');
   const resumeFile = join(context.workspace, 'mage-thread.json');
-  const resumed = process.argv.includes('--resume-real') ? JSON.parse(readFileSync(resumeFile, 'utf8')).threadId : undefined;
-  const session = new AgentSession({ adapter, params: {
+  const resumed = process.argv.includes('--resume-real') ? parseExternalJson(readFileSync(resumeFile, 'utf8'), THREAD_MARKER, 'Marcador de hilo').threadId : undefined;
+  const session = context.deps.createSession(AgentSession, { adapter, params: {
     sessionId: 'mage-verification', accountDir: context.home, cwd: context.workspace,
     model: MODEL, effort: 'low', permissionMode: ':read-only', conversationId: resumed,
     shared: { mcpServers: [verificationMcp()], settingsFragment: null, claudeAiConnectors: false },
   }, emit: (event) => recordEvent({ events, resumeFile }, event),
-  spawn: recordedSpawn(raw, (value) => { child = value; }) });
+  spawn: recordedSpawn(raw, (value) => { child = value; }, context.deps.spawn) });
   session.start();
   return { session, events, raw, context, closed: () => child.exitCode !== null || child.signalCode !== null
     ? Promise.resolve() : new Promise((done) => child.once('close', done)) };
@@ -79,18 +78,13 @@ function recordEvent({ events, resumeFile }, event) {
   if (event.kind === 'permission_request') console.log(`Permiso recibido: ${event.request.toolName}; campos=${Object.keys(event.request.input).join(',')}`);
 }
 
-function recordedSpawn(raw, onChild) {
+export function recordedSpawn(raw, onChild, spawnChild) {
   return (command, args, options) => {
     if (args.join(' ').includes('mage-artificial-mcp-secret')) throw new Error('Secreto artificial en argv');
-    const child = spawn(command, args, options);
+    const child = spawnChild(command, args, options);
     onChild(child);
-    let buffer = '';
-    child.stdout.on('data', (chunk) => {
-      buffer += chunk;
-      const lines = buffer.split('\n');
-      buffer = lines.pop() ?? '';
-      for (const line of lines) if (line.trim()) raw.push(JSON.parse(line));
-    });
+    child.stdout.on('data', jsonLines({ schema: RPC_MESSAGE, receive: (message) => raw.push(message),
+      fail: () => { console.warn('Captura RPC inválida; se detiene la medición.'); child.kill(); } }));
     return child;
   };
 }
