@@ -1,0 +1,327 @@
+{
+  "version": "codex-cli 0.160.0",
+  "artificial": true,
+  "realTurns": 0,
+  "records": [
+    {
+      "kind": "confirmation",
+      "action": "accept",
+      "request": {
+        "id": 1,
+        "method": "mcpServer/elicitation/request",
+        "params": {
+          "threadId": "mage-artificial-thread",
+          "turnId": null,
+          "serverName": "mage_elicitation",
+          "mode": "form",
+          "_meta": null,
+          "message": "MAGE_CONFIRM: ¿continuar?",
+          "requestedSchema": {
+            "type": "object",
+            "properties": {},
+            "required": []
+          }
+        }
+      },
+      "response": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+          "action": "accept",
+          "content": {}
+        }
+      },
+      "mcpResult": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"action\":\"accept\",\"content\":{}}"
+          }
+        ],
+        "isError": false
+      }
+    },
+    {
+      "kind": "confirmation",
+      "action": "decline",
+      "request": {
+        "id": 1,
+        "method": "mcpServer/elicitation/request",
+        "params": {
+          "threadId": "mage-artificial-thread",
+          "turnId": null,
+          "serverName": "mage_elicitation",
+          "mode": "form",
+          "_meta": null,
+          "message": "MAGE_CONFIRM: ¿continuar?",
+          "requestedSchema": {
+            "type": "object",
+            "properties": {},
+            "required": []
+          }
+        }
+      },
+      "response": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+          "action": "decline",
+          "content": null
+        }
+      },
+      "mcpResult": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"action\":\"decline\"}"
+          }
+        ],
+        "isError": false
+      }
+    },
+    {
+      "kind": "confirmation",
+      "action": "cancel",
+      "request": {
+        "id": 1,
+        "method": "mcpServer/elicitation/request",
+        "params": {
+          "threadId": "mage-artificial-thread",
+          "turnId": null,
+          "serverName": "mage_elicitation",
+          "mode": "form",
+          "_meta": null,
+          "message": "MAGE_CONFIRM: ¿continuar?",
+          "requestedSchema": {
+            "type": "object",
+            "properties": {},
+            "required": []
+          }
+        }
+      },
+      "response": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+          "action": "cancel",
+          "content": null
+        }
+      },
+      "mcpResult": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"action\":\"cancel\"}"
+          }
+        ],
+        "isError": false
+      }
+    },
+    {
+      "kind": "form",
+      "action": "accept",
+      "request": {
+        "id": 1,
+        "method": "mcpServer/elicitation/request",
+        "params": {
+          "threadId": "mage-artificial-thread",
+          "turnId": null,
+          "serverName": "mage_elicitation",
+          "mode": "form",
+          "_meta": null,
+          "message": "MAGE_FORM: datos artificiales",
+          "requestedSchema": {
+            "type": "object",
+            "properties": {
+              "choice": {
+                "type": "string",
+                "title": "Opción",
+                "enum": [
+                  "one",
+                  "two"
+                ]
+              },
+              "confirmed": {
+                "type": "boolean",
+                "title": "Confirmación"
+              },
+              "count": {
+                "type": "integer",
+                "title": "Cantidad",
+                "minimum": 1,
+                "maximum": 3
+              },
+              "name": {
+                "type": "string",
+                "title": "Nombre artificial",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "name",
+              "count",
+              "confirmed",
+              "choice"
+            ]
+          }
+        }
+      },
+      "response": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+          "action": "accept",
+          "content": {
+            "name": "mage-artificial",
+            "count": 1,
+            "confirmed": true,
+            "choice": "one"
+          }
+        }
+      },
+      "mcpResult": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"action\":\"accept\",\"content\":{\"name\":\"mage-artificial\",\"count\":1,\"confirmed\":true,\"choice\":\"one\"}}"
+          }
+        ],
+        "isError": false
+      }
+    },
+    {
+      "kind": "form",
+      "action": "decline",
+      "request": {
+        "id": 1,
+        "method": "mcpServer/elicitation/request",
+        "params": {
+          "threadId": "mage-artificial-thread",
+          "turnId": null,
+          "serverName": "mage_elicitation",
+          "mode": "form",
+          "_meta": null,
+          "message": "MAGE_FORM: datos artificiales",
+          "requestedSchema": {
+            "type": "object",
+            "properties": {
+              "choice": {
+                "type": "string",
+                "title": "Opción",
+                "enum": [
+                  "one",
+                  "two"
+                ]
+              },
+              "confirmed": {
+                "type": "boolean",
+                "title": "Confirmación"
+              },
+              "count": {
+                "type": "integer",
+                "title": "Cantidad",
+                "minimum": 1,
+                "maximum": 3
+              },
+              "name": {
+                "type": "string",
+                "title": "Nombre artificial",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "name",
+              "count",
+              "confirmed",
+              "choice"
+            ]
+          }
+        }
+      },
+      "response": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+          "action": "decline",
+          "content": null
+        }
+      },
+      "mcpResult": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"action\":\"decline\"}"
+          }
+        ],
+        "isError": false
+      }
+    },
+    {
+      "kind": "form",
+      "action": "cancel",
+      "request": {
+        "id": 1,
+        "method": "mcpServer/elicitation/request",
+        "params": {
+          "threadId": "mage-artificial-thread",
+          "turnId": null,
+          "serverName": "mage_elicitation",
+          "mode": "form",
+          "_meta": null,
+          "message": "MAGE_FORM: datos artificiales",
+          "requestedSchema": {
+            "type": "object",
+            "properties": {
+              "choice": {
+                "type": "string",
+                "title": "Opción",
+                "enum": [
+                  "one",
+                  "two"
+                ]
+              },
+              "confirmed": {
+                "type": "boolean",
+                "title": "Confirmación"
+              },
+              "count": {
+                "type": "integer",
+                "title": "Cantidad",
+                "minimum": 1,
+                "maximum": 3
+              },
+              "name": {
+                "type": "string",
+                "title": "Nombre artificial",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "name",
+              "count",
+              "confirmed",
+              "choice"
+            ]
+          }
+        }
+      },
+      "response": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+          "action": "cancel",
+          "content": null
+        }
+      },
+      "mcpResult": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"action\":\"cancel\"}"
+          }
+        ],
+        "isError": false
+      }
+    }
+  ]
+}
