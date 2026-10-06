@@ -15,6 +15,58 @@ function setup(includeApps = true) {
 }
 
 describe('probeCodexAccount', () => {
+  it('probeCodexAccount_escrituraTrasInitializeFalla_noLanzaDesdeStdout', async () => {
+    let output: (chunk: string) => void = () => undefined;
+    const writeLine = vi.fn().mockImplementationOnce(() => undefined).mockImplementation(() => { throw new Error('fallo artificial'); });
+    const child = { onStdout: (listener: typeof output) => { output = listener; }, onExit: vi.fn(), endInput: vi.fn(), killTree: vi.fn(), writeLine };
+    const done = probeCodexAccount({ timeoutMs: 1_000, spawnProbe: () => child }, { home: '/isolated', includeApps: false });
+
+    output(JSON.stringify({ id: 'mage-codex-init', result: {} }) + '\n');
+    const result = await done;
+
+    expect(result.error).toBe('Falló el transporte del sondeo de Codex.');
+    expect(child.killTree).toHaveBeenCalledOnce();
+  });
+
+  it('probeCodexAccount_limpiezaFalla_resuelveConErrorSeguro', async () => {
+    let exit: () => void = () => undefined;
+    const child = { onStdout: vi.fn(), onExit: (listener: () => void) => { exit = listener; }, endInput: vi.fn(), writeLine: vi.fn(),
+      killTree: () => { throw new Error('detalle artificial'); },
+    };
+    const done = probeCodexAccount({ timeoutMs: 1_000, spawnProbe: () => child }, { home: '/isolated', includeApps: false });
+
+    exit();
+    const result = await done;
+
+    expect(result.error).toBe('No se pudo cerrar el sondeo de Codex.');
+  });
+
+  it('probeCodexAccount_escrituraInicialFalla_devuelveErrorSeguroYLimpia', async () => {
+    const killTree = vi.fn();
+    const child = { onStdout: vi.fn(), onExit: vi.fn(), endInput: vi.fn(), killTree,
+      writeLine: () => { throw new Error('fallo artificial privado'); },
+    };
+
+    const result = await probeCodexAccount({ timeoutMs: 1_000, spawnProbe: () => child }, { home: '/isolated', includeApps: false });
+
+    expect(result).toEqual({ authenticated: null, apps: null, error: 'Falló el transporte del sondeo de Codex.' });
+    expect(killTree).toHaveBeenCalledOnce();
+  });
+
+  it('probeCodexAccount_errorAsincronoDeStdin_finalizaSinEsperarTimeout', async () => {
+    let onError: () => void = () => undefined;
+    const child = { onStdout: vi.fn(), onExit: vi.fn(), endInput: vi.fn(), killTree: vi.fn(), writeLine: vi.fn(),
+      onError: (listener: () => void) => { onError = listener; },
+    };
+    const done = probeCodexAccount({ timeoutMs: 1_000, spawnProbe: () => child }, { home: '/isolated', includeApps: false });
+
+    onError();
+    const result = await done;
+
+    expect(result.error).toBe('Falló el transporte del sondeo de Codex.');
+    expect(child.killTree).toHaveBeenCalledOnce();
+  });
+
   it('probe_cuentaValidaYAppsPaginadas_devuelveSoloMetadataSinTurnos', async () => {
     const probe = setup();
     probe.reply({});

@@ -22,36 +22,51 @@ export function probeCodexAccount(deps: CodexAccountProbeDeps, params: { readonl
       resolve({ authenticated: null, apps: null, error: 'No se pudo arrancar el CLI de Codex.' });
       return;
     }
-    const state = { buffer: '', done: false, authenticated: null as boolean | null, apps: [] as CodexAccountMetadata['apps'], cursors: new Set<string>() };
-    const finish = (error: string | null): void => {
-      if (state.done) return;
-      state.done = true;
-      clearTimeout(timer);
-      child.killTree();
-      resolve({ authenticated: state.authenticated, apps: error === null ? state.apps : null, error });
-    };
-    const send = (id: string, method: string, payload: unknown): void => child.writeLine(JSON.stringify({ jsonrpc: '2.0', id, method, params: payload }));
-    const timer = setTimeout(() => finish('Codex no respondió dentro del plazo.'), deps.timeoutMs);
-    child.onExit(() => finish('El CLI de Codex terminó antes de responder.'));
-    child.onStdout((chunk) => {
-      state.buffer += chunk;
-      const parts = state.buffer.split('\n');
-      state.buffer = parts.pop() ?? '';
-      for (const line of parts) {
-        if (state.done) break;
-        handleReply(line, { state, send, finish, includeApps: params.includeApps, child });
-      }
-    });
-    send(INIT, 'initialize', { clientInfo: { name: 'mage', version: '0.1.2' }, capabilities: { experimentalApi: true } });
+    const ctx = createReplyContext({ child, timeoutMs: deps.timeoutMs, includeApps: params.includeApps, resolve });
+    try {
+      child.onError?.(() => ctx.finish('Falló el transporte del sondeo de Codex.'));
+      child.onExit(() => ctx.finish('El CLI de Codex terminó antes de responder.'));
+      child.onStdout((chunk) => receiveChunk(chunk, ctx));
+      ctx.send(INIT, 'initialize', { clientInfo: { name: 'mage', version: '0.1.2' }, capabilities: { experimentalApi: true } });
+    } catch { ctx.finish('Falló el transporte del sondeo de Codex.'); }
   });
 }
 
 interface ReplyContext {
-  readonly state: { authenticated: boolean | null; apps: CodexAccountMetadata['apps']; cursors: Set<string> };
-  readonly send: (id: string, method: string, payload: unknown) => void;
+  readonly state: { buffer: string; done: boolean; authenticated: boolean | null; apps: CodexAccountMetadata['apps']; cursors: Set<string> };
+  readonly send: (id: string | undefined, method: string, payload: unknown) => void;
   readonly finish: (error: string | null) => void;
   readonly includeApps: boolean;
-  readonly child: ProbeProcess;
+}
+
+function createReplyContext(params: { child: ProbeProcess; timeoutMs: number; includeApps: boolean; resolve: (value: CodexAccountMetadata) => void }): ReplyContext {
+  const state: ReplyContext['state'] = { buffer: '', done: false, authenticated: null, apps: [], cursors: new Set() };
+  const finish = (error: string | null): void => {
+    if (state.done) return;
+    state.done = true;
+    clearTimeout(timer);
+    try { params.child.killTree(); } catch { error = 'No se pudo cerrar el sondeo de Codex.'; }
+    params.resolve({ authenticated: state.authenticated, apps: error === null ? state.apps : null, error });
+  };
+  const timer = setTimeout(() => finish('Codex no respondió dentro del plazo.'), params.timeoutMs);
+  const send: ReplyContext['send'] = (id, method, payload) => {
+    if (state.done) return;
+    try { params.child.writeLine(JSON.stringify({ jsonrpc: '2.0', id, method, params: payload })); } catch {
+      finish('Falló el transporte del sondeo de Codex.');
+    }
+  };
+  return { state, send, finish, includeApps: params.includeApps };
+}
+
+function receiveChunk(chunk: string, ctx: ReplyContext): void {
+  if (ctx.state.done) return;
+  ctx.state.buffer += chunk;
+  const parts = ctx.state.buffer.split('\n');
+  ctx.state.buffer = parts.pop() ?? '';
+  for (const line of parts) {
+    if (ctx.state.done) return;
+    handleReply(line, ctx);
+  }
 }
 
 function handleReply(line: string, ctx: ReplyContext): void {
@@ -63,7 +78,7 @@ function handleReply(line: string, ctx: ReplyContext): void {
   if (id !== INIT && id !== ACCOUNT_ID && id !== APPS_ID) return;
   if (error !== undefined) return ctx.finish(`Codex rechazó ${id === APPS_ID ? 'la consulta de Apps' : 'la consulta de cuenta'} (código ${error.code}).`);
   if (id === INIT) {
-    ctx.child.writeLine(JSON.stringify({ jsonrpc: '2.0', method: 'initialized' }));
+    ctx.send(undefined, 'initialized', undefined);
     return ctx.send(ACCOUNT_ID, 'account/read', {});
   }
   if (id === ACCOUNT_ID) {

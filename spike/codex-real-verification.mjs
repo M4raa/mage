@@ -42,6 +42,7 @@ function metadataProcess(bin, home) {
   child.stderr.resume();
   return { onStdout: (listener) => { child.stdout.setEncoding('utf8'); child.stdout.on('data', listener); },
     onExit: (listener) => { child.on('exit', listener); child.on('error', listener); },
+    onError: (listener) => { child.on('error', listener); child.stdin.on('error', listener); },
     writeLine: (line) => child.stdin.write(`${line}\n`), endInput: () => child.stdin.end(),
     killTree: () => child.kill() };
 }

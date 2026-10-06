@@ -11,6 +11,8 @@ import { normalizeRawEvent } from './normalize';
 // servidores MCP); solo si no sale en `exitGraceMs` se mata el arbol.
 
 export interface ProbeProcess {
+  // Los sondeos RPC pueden distinguir un error de transporte de una salida del proceso.
+  onError?(listener: () => void): void;
   onStdout(listener: (chunk: string) => void): void;
   // Tambien cuando el proceso no llega a arrancar (binario ausente).
   onExit(listener: () => void): void;
