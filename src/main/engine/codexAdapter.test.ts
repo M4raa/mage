@@ -159,7 +159,7 @@ describe('CodexAdapter: turno', () => {
     expect(events).toMatchObject([{ result: { isError: true, output: 'La llamada MCP de Codex falló.' } }]);
   });
 
-  it('encodeUserMessage_esfuerzoBajoLoEnviaEnTurnStart', () => {
+  it('encodeUserMessage_esfuerzoBajo_enviaLowEnTurnStart', () => {
     const adapter = codex();
     const requests = handshake(adapter, { ...launch, effort: 'low' });
     answer(adapter, requests, 'thread/start', fixture('thread-start'));
@@ -242,13 +242,20 @@ describe('CodexAdapter: turno', () => {
   });
 
   it('normalize_mcpFallido_muestraErrorYOmiteContenidoBinario', () => {
-    expect(codex().normalize(notification('item/completed', { item: {
+    const events = codex().normalize(notification('item/completed', { item: {
       type: 'mcpToolCall', id: 'm', server: 's', tool: 't', status: 'failed', result: null, error: { message: 'rechazado' },
-    } }))).toMatchObject([{ result: { isError: true, output: 'La llamada MCP de Codex falló.' } }]);
-    expect(codex().normalize(notification('item/completed', { item: {
+    } }));
+
+    expect(events).toMatchObject([{ result: { isError: true, output: 'La llamada MCP de Codex falló.' } }]);
+  });
+
+  it('normalize_mcpConImagenYTextos_omiteBinarioYConservaTextos', () => {
+    const events = codex().normalize(notification('item/completed', { item: {
       type: 'mcpToolCall', id: 'm', server: 's', tool: 't', status: 'completed',
       result: { content: [{ type: 'image', data: 'binario' }, { type: 'text', text: 'uno' }, null, { type: 'text', text: 'dos' }] },
-    } }))).toMatchObject([{ result: { output: 'uno\ndos' } }]);
+    } }));
+
+    expect(events).toMatchObject([{ result: { output: 'uno\ndos' } }]);
   });
 
   it('normalize_errorDefinitivoConLaClaveDentro_laOculta', () => {
@@ -281,10 +288,22 @@ describe('CodexAdapter: aprobaciones (forma del esquema)', () => {
     const changes = fixture('real-file-change-0160').changes;
     adapter.normalize(notification('item/started', { item: { type: 'fileChange', id: 'edit-1', status: 'inProgress', changes } }));
     const approval = { id: 9, method: 'item/fileChange/requestApproval', params: { itemId: 'edit-1', threadId: 't', turnId: 'u', grantRoot: null } };
-    expect(adapter.normalize(approval)).toMatchObject([{ request: { input: { changes } } }]);
+    const events = adapter.normalize(approval);
+
+    expect(events).toMatchObject([{ request: { input: { changes } } }]);
+  });
+
+  it('normalize_edicionCompletada_limpiaElDiffPendiente', () => {
+    const adapter = codex();
+    const changes = fixture('real-file-change-0160').changes;
+    adapter.normalize(notification('item/started', { item: { type: 'fileChange', id: 'edit-1', status: 'inProgress', changes } }));
     adapter.normalize(notification('item/completed', { item: { type: 'fileChange', id: 'edit-1', status: 'completed', changes } }));
-    expect(adapter.normalize({ ...approval, id: 10 })).toMatchObject([{ request: { input: { grantRoot: null } } }]);
-    expect(JSON.stringify(adapter.normalize({ ...approval, id: 11 }))).not.toContain('MAGE_EDIT_OK');
+    const approval = { id: 10, method: 'item/fileChange/requestApproval', params: { itemId: 'edit-1', threadId: 't', turnId: 'u', grantRoot: null } };
+
+    const events = adapter.normalize(approval);
+
+    expect(events).toMatchObject([{ request: { input: { grantRoot: null } } }]);
+    expect(JSON.stringify(events)).not.toContain('MAGE_EDIT_OK');
   });
 
   it('normalize_peticionDeAprobacionDeComando_permissionRequestYRespuestaAccept', () => {

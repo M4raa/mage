@@ -880,7 +880,7 @@ function getCodexAccountCatalog(): CodexAccountCatalog {
 }
 
 function codexAccountProbeDeps(): import('./accounts/codexAccountProbe').CodexAccountProbeDeps {
-  return { timeoutMs: 20_000, spawnProbe: (home) => {
+  return { timeoutMs: CLI_PROBE_TIMEOUT_MS, spawnProbe: (home) => {
     const child = spawn(resolveCodexBinary(), ['app-server'], {
       env: { ...scrubAgentEnv(process.env), CODEX_HOME: home }, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true,
     });

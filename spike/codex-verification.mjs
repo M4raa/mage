@@ -15,6 +15,11 @@ import { jsonLines, parseExternalJson, RPC_MESSAGE, THREAD_MARKER, RESPONSES_BOD
 
 const RPC_TIMEOUT_MS = 30_000;
 const LOGIN_TIMEOUT_MS = 600_000;
+const LOGIN_POLL_MS = 250;
+const TURN_POLL_MS = 100;
+const APP_PAGE_SIZE = 50;
+const CLEANUP_MAX_RETRIES = 10;
+const CLEANUP_RETRY_DELAY_MS = 300;
 const MANIFEST_FILE = 'mage-verification.json';
 const OWNER_FILE = '.mage-verification-owner';
 const MANIFEST = z.object({ format: z.literal(1), owner: z.string().uuid(), workspace: z.string().min(1) }).strict();
@@ -147,7 +152,7 @@ async function login(session, context) {
       console.log('account/login/completed: success=true');
       return;
     }
-    await new Promise((done) => setTimeout(done, 250));
+    await new Promise((done) => setTimeout(done, LOGIN_POLL_MS));
   }
   throw new Error('Timeout esperando que termine el login del navegador');
 }
@@ -245,7 +250,7 @@ async function probeApps(context) {
     await initialized(session);
     const thread = await session.request('thread/start', { cwd: context.workspace, ephemeral: true });
     const threadId = validatedResult(thread, THREAD_RESULT, 'thread/start').thread.id;
-    for (const params of [{ limit: 50 }, { limit: 50, threadId, forceRefetch: true }]) {
+    for (const params of [{ limit: APP_PAGE_SIZE }, { limit: APP_PAGE_SIZE, threadId, forceRefetch: true }]) {
       const reply = await session.request('app/list', params);
       const errorText = reply.error?.message ?? '';
       const category = /unauthorized|auth|401/i.test(errorText) ? 'auth'
@@ -296,7 +301,7 @@ function cleanupContext({ home, workspace }) {
     // Validacion de las rutas antes de cualquier borrado recursivo en Windows.
     for (const dir of process.argv.includes('--keep-home') ? [] : [home, workspace]) {
       assertTemporary(dir, dir === home ? 'mage-codex-verify-home-' : 'mage-codex-verify-ws-');
-      rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
+      rmSync(dir, { recursive: true, force: true, maxRetries: CLEANUP_MAX_RETRIES, retryDelay: CLEANUP_RETRY_DELAY_MS });
     }
 }
 
@@ -407,7 +412,7 @@ async function measureEffortTurn(session, { threadId, effort, capture }) {
       const deadline = Date.now() + RPC_TIMEOUT_MS;
       while (!session.messages.some((m) => m.method === 'turn/completed' && m.params?.turn?.id === turn.result.turn.id)) {
         if (Date.now() >= deadline) throw new Error('El turno local no termino dentro del plazo');
-        await new Promise((done) => setTimeout(done, 100));
+        await new Promise((done) => setTimeout(done, TURN_POLL_MS));
       }
       console.log(`Responses local: esfuerzo enviado=${effort ?? 'omitido'}, recibido=${capture.bodies[offset]?.reasoning?.effort ?? 'omitido'}`);
       const body = JSON.stringify(capture.bodies[offset]);

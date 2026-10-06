@@ -214,7 +214,11 @@ describe('mapPermissionToView', () => {
     expect(view.target).toBe('apply_patch a, b');
     expect(view.summary).toBe('+1 −2');
     expect(view.diff.map((line) => line.text)).toEqual(['a', '@@ -1 +1 @@', 'antes', 'despues', 'b', 'borrado']);
-    expect(mapPermissionToView(permission({ toolName: 'apply_patch', input: { changes: [null] } })).diff).toEqual([]);
+  });
+  it('mapPermissionToView_codexEntradaInvalida_devuelveDiffVacio', () => {
+    const view = mapPermissionToView(permission({ toolName: 'apply_patch', input: { changes: [null] } }));
+
+    expect(view.diff).toEqual([]);
   });
   it('mapPermissionToView_outsideProject_notRememberableAndSummaryIsReason', () => {
     const view = mapPermissionToView({ ...permission({ toolName: 'Read', input: { file_path: '/etc/hosts' } }), description: 'Fuera del proyecto: /etc/hosts', outsideProject: true });

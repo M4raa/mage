@@ -10,6 +10,8 @@ export { safeSleep } from './codex-platform.mjs';
 
 const MODEL = 'gpt-6-luna';
 const TIMEOUT_MS = 120_000;
+const INTERRUPT_DELAY_MS = 1_000;
+const TURN_POLL_MS = 100;
 
 export async function verifyReal(context) {
   const loader = await context.deps.createLoader({ configFile: false, server: { middlewareMode: true },
@@ -128,7 +130,7 @@ async function measureApprovals(harness) {
     sleep: safeSleep(request?.input.command, platform) }));
   if (!request || request.toolName !== 'Bash' || !safeSleep(request.input.command, platform)) throw new Error('No llego el permiso del comando controlado; no se aprueba');
   harness.session.answerPermission(request.requestId, { behavior: 'allow' });
-  await new Promise((done) => setTimeout(done, 1_000));
+  await new Promise((done) => setTimeout(done, INTERRUPT_DELAY_MS));
   harness.session.interrupt();
   await waitUntil(() => harness.events.slice(offset).some((e) => e.kind === 'result'), 'interrupcion');
   console.log(`Comando aprobado=true; interrumpido=${harness.events.slice(offset).some((e) => e.kind === 'result' && e.result.subtype === 'interrupted')}`);
@@ -160,6 +162,6 @@ async function waitUntil(predicate, label) {
   const deadline = Date.now() + TIMEOUT_MS;
   while (!predicate()) {
     if (Date.now() >= deadline) throw new Error(`Timeout de ${label}; no se repite el turno automaticamente`);
-    await new Promise((done) => setTimeout(done, 100));
+    await new Promise((done) => setTimeout(done, TURN_POLL_MS));
   }
 }

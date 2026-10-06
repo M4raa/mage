@@ -183,12 +183,12 @@ export function modelsEvent(result: unknown): MageEvent[] {
 export function rateLimitEvents(raw: unknown): MageEvent[] {
   const parsed = RateLimitsSchema.safeParse(isRecord(raw) && isRecord(raw.rateLimits) ? raw.rateLimits : raw);
   if (!parsed.success) return [];
-  const windows = [parsed.data.primary, parsed.data.secondary].filter((w): w is z.infer<typeof RateWindowSchema> => w != null);
+  const windows = [parsed.data.primary, parsed.data.secondary].filter((w): w is z.infer<typeof RateWindowSchema> => w !== null && w !== undefined);
   const pick = (minutes: number): UsageWindowInfo | null => {
     const window = windows.find((candidate) => candidate.windowDurationMins === minutes);
     if (window === undefined) return null;
     const utilization = Math.min(100, Math.max(0, Math.round(window.usedPercent)));
-    return { utilization, resetsAt: window.resetsAt == null ? null : window.resetsAt * MS_PER_SECOND };
+    return { utilization, resetsAt: window.resetsAt === null || window.resetsAt === undefined ? null : window.resetsAt * MS_PER_SECOND };
   };
   const fiveHour = pick(FIVE_HOURS_MIN);
   const sevenDay = pick(SEVEN_DAYS_MIN);
