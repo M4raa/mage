@@ -7,18 +7,26 @@ interface CodexAppsState {
   readonly loading: boolean;
   refresh: (homes: readonly string[]) => Promise<void>;
 }
+type SetAppsState = (update: Partial<CodexAppsState> | ((state: CodexAppsState) => Partial<CodexAppsState>)) => void;
+interface RefreshContext { readonly api: CodexAppsApi; readonly set: SetAppsState; readonly get: () => CodexAppsState }
 
 export function createCodexAppsStore(api: CodexAppsApi) {
   return create<CodexAppsState>((set, get) => ({
     results: {}, loading: false,
-    refresh: async (homes) => {
-      if (get().loading) return;
-      set({ loading: true });
-      try {
-        await queryAccounts(api, homes, (home, value) => set((state) => ({ results: { ...state.results, [home]: value } })));
-      } finally { set({ loading: false }); }
-    },
+    refresh: (homes) => refreshApps({ api, set, get }, homes),
   }));
+}
+
+async function refreshApps(ctx: RefreshContext, homes: readonly string[]): Promise<void> {
+  if (ctx.get().loading) return;
+  ctx.set({ loading: true });
+  try {
+    await queryAccounts(ctx.api, homes, (home, value) => storeResult(ctx.set, home, value));
+  } finally { ctx.set({ loading: false }); }
+}
+
+function storeResult(set: SetAppsState, home: string, value: CodexAccountMetadata): void {
+  set((state) => ({ results: { ...state.results, [home]: value } }));
 }
 
 async function queryAccounts(api: CodexAppsApi, homes: readonly string[], receive: (home: string, value: CodexAccountMetadata) => void): Promise<void> {

@@ -16,6 +16,14 @@ function nearestFunction(node) {
 }
 
 describe('baremo de revisión Codex', () => {
+  it('storeApps_fabricaSinCoordinacionAnidada_delegaElContratoDeError', () => {
+    const tree = source('src/renderer/src/workbench/codexAppsStore.ts');
+    const factory = matching(tree, (node) => ts.isFunctionDeclaration(node) && node.name?.text === 'createCodexAppsStore')[0];
+
+    const nestedControl = matching(factory, (node) => ts.isTryStatement(node) || ts.isForOfStatement(node));
+
+    expect(nestedControl.map((node) => position(node, tree))).toEqual([]);
+  });
   it('funcionesRevisadas_deudaPrevia_noSuperanCuarentaLineas', () => {
     const files = ['src/main/index.ts', 'spike/codex-spike.mjs', 'spike/codex-legacy-verification.mjs', 'scripts/verify-gui.mjs'];
     const names = new Set(['registerIpcHandlers', 'probeAppServer', 'probeInstructions']);
