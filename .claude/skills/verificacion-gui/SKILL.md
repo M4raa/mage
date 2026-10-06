@@ -1,6 +1,6 @@
 ---
 name: verificacion-gui
-description: Cómo verificar cambios de UI de Mage contra la app real por CDP/Playwright, y los cuatro errores concretos que ya se cometieron haciéndolo. Úsalo antes de declarar "verificado" cualquier cosa visible.
+description: Cómo verificar cambios de UI de Mage por CDP/Playwright y evitar las trampas ya medidas de aislamiento, animaciones y HMR. Úsalo antes de declarar verificado cualquier cambio visible.
 ---
 
 # Verificación GUI de Mage (por CDP)
@@ -25,7 +25,7 @@ pnpm dev -- --remote-debugging-port=9222
 
 Luego un driver Playwright/CDP que se conecte a `http://127.0.0.1:9222`.
 
-## Los seis errores que YA se cometieron
+## Los errores que YA se cometieron
 
 ### 1. El driver no puede vivir en el scratchpad
 
@@ -115,3 +115,51 @@ daba 95/96. El informe describe un desastre que no existe.
 
 Regla: **mientras `verify:gui` corre no se toca `src/`.** Se lanza al terminar de editar, no antes. Si
 hace falta seguir trabajando, se espera — son diez minutos, y un informe que miente cuesta más.
+
+### 8. Pasar en la tanda no demuestra que el caso prepare su estado
+
+El 2026-10-06 el encabezado decorado pasaba tras Ctrl+N y fallaba solo (`documento=""`): estaba
+tecleando en la pantalla sin conversación. También había casos que consumían Configuración abierta,
+Ollama creado por otro caso o dos pestañas con títulos distintos.
+
+Cada caso pasa por `runGuiCheck` (`scripts/lib/guiCheckState.mjs`), con el límite
+`withGuiState` **capture → prepare → run → restore**, incluida la preparación fallida. Declara en
+`state` las precondiciones que no monta su propio `run`: pestañas editables, sección, proveedor o
+panel. La preparación común retira diálogos, menús, avisos, splits y docks heredados; la restauración
+devuelve stores, borradores, acciones sustituidas, sección/subpestaña, foco, viewport y estado de main.
+Libera los listeners de las pestañas ficticias. Las preparaciones internas autosuficientes se conservan.
+
+Prueba el caso **solo** además de en la tanda. Las capturas pertenecen al caso antes de restaurar.
+Un viewport inicial `null` en Playwright no significa que no haya tamaño: captura `innerWidth/Height`,
+o un caso que lo agrande deja ese tamaño a los siguientes. Si falla ejecución y restauración, conserva
+ambos errores; la limpieza no debe ocultar la causa inicial.
+
+`sessionIdByChat` también contiene ids sintéticos (p. ej. `v39-session`): no demuestra que main tenga
+una sesión viva. Al liberar recursos, solo «Sesion inexistente: <ese id>» es una ausencia idempotente;
+cualquier otro error de stop/IPC se propaga. No convertir la limpieza en un catch general silencioso.
+
+El diálogo «¿Cerrar Mage?» tiene una pregunta pendiente en main, además de `closePromptOpen`. La
+preparación cancela por `answerClose` y espera al desmontaje; si llegó abierto, la restauración vuelve
+a pedir el cierre para recuperar ambos lados. No esperar su desaparición sin cancelar: la captura
+del bloqueo mostró cero animaciones y ese diálogo todavía abierto. `--inspect-running` lee el estado
+de una tanda bloqueada; `--initial-close-prompt --only=2.7:` prueba esa entrada heredada.
+
+### 9. Motion por JS y el panel saliente no aparecen como animaciones WAAPI
+
+Reproducido con `--slow-frames` (cadencia de un segundo, inyectada **antes de importar Motion**):
+preguntas de 189 px dentro de un contenedor que aún mide 43 px; subagentes de 80 px dentro de 8 px;
+cola superpuesta al input y filas salientes todavía montadas. **Cero toasts y cero `getAnimations()`**.
+No era el aviso anterior ni un bug de posición: se medía durante la animación de altura por JS.
+
+En los docks, espera al estado terminal de la altura (`style.height === 'auto'`, opacidad 1) y al
+composer quieto; después afirma la geometría con la tolerancia original. Para salida, espera
+**detached**. `--trace-layout` guarda cajas, ancestros, animaciones, paneles y avisos en el informe.
+`--slow-frames` es una inyección de fallo para regresiones, nunca una espera añadida al camino normal.
+
+Al cambiar de panel, `AnimatePresence` mantiene un contenido saliente junto al entrante. El Inspector
+concatenaba «Esta conversación todavía no ha creado ningún fichero» antes de Contexto y el recorte de
+140 caracteres se comía «TOKENS»: espera a **un solo contenido**, opacidad 1, antes de leerlo.
+
+Una transcripción ficticia tampoco termina de fallar en 800 ms: main sondea el fichero hasta 30 s.
+Espera a que `lastParams.sessionId` y `transcriptId` identifiquen la lectura, **cancélala** y entonces
+inyecta el fixture por pestaña. Así un lote tardío no pisa la medición ni contamina al siguiente caso.
