@@ -7,6 +7,7 @@ import { basename, isAbsolute, join, relative, resolve } from 'node:path';
 import { createServer } from 'node:http';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
+import { projectVerificationFile, projectVerificationMcp } from './codex-fixtures.mjs';
 
 const RPC_TIMEOUT_MS = 30_000;
 const LOGIN_TIMEOUT_MS = 600_000;
@@ -220,18 +221,10 @@ async function inspectThread(session, workspace) {
     diffIsUnified: /^---|^@@/m.test(file?.changes?.[0]?.diff ?? ''), mcpResultFields: Object.keys(mcp?.result ?? {}) }));
   // Solo proyecciones del contenido ARTIFICIAL conocido; jamas serializar el hilo entero ni su metadata.
   if (file?.changes?.length === 1 && file.changes[0].diff.includes('MAGE_EDIT_OK')) {
-    const changed = file.changes[0];
-    const diff = changed.diff.replaceAll(changed.path, '<workspace>/mage-edit.txt');
-    writeFileSync('src/main/engine/__fixtures__/codex/real-file-change-0160.json', JSON.stringify({
-      type: file.type, id: 'edit-measured', status: file.status,
-      changes: [{ path: '<workspace>/mage-edit.txt', kind: changed.kind, diff }],
-    }, null, 2) + '\n');
+    writeFileSync('src/main/engine/__fixtures__/codex/real-file-change-0160.json', JSON.stringify(projectVerificationFile(file, workspace), null, 2) + '\n');
   }
   if (mcp?.result?.content?.every((block) => block.type === 'text' && block.text === 'MAGE_MCP_ENV_OK')) {
-    writeFileSync('src/main/engine/__fixtures__/codex/real-mcp-0160.json', JSON.stringify({ type: mcp.type,
-      id: 'mcp-measured', server: mcp.server, tool: mcp.tool, arguments: {}, status: mcp.status,
-      result: { content: mcp.result.content, structuredContent: null }, error: null,
-    }, null, 2) + '\n');
+    writeFileSync('src/main/engine/__fixtures__/codex/real-mcp-0160.json', JSON.stringify(projectVerificationMcp(mcp), null, 2) + '\n');
   }
 }
 
