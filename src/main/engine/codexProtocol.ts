@@ -123,7 +123,7 @@ function itemOutput(item: ThreadItem): string {
 }
 
 function mcpOutput(item: ThreadItem): string {
-  if (isRecord(item.error) && typeof item.error.message === 'string') return item.error.message;
+  if (item.error !== undefined && item.error !== null) return 'La llamada MCP de Codex falló.';
   if (!isRecord(item.result) || !Array.isArray(item.result.content)) return '';
   return item.result.content.flatMap((block: unknown) =>
     isRecord(block) && block.type === 'text' && typeof block.text === 'string' ? [block.text] : [],

@@ -115,6 +115,8 @@ versión.
   abre con Claude.
 
 ### Corregido
+- Los errores MCP de Codex no muestran detalles de autenticación; las claves conocidas se ocultan
+  también en resultados de herramientas y permisos antes de llegar a la interfaz.
 - Codex recibe el esfuerzo configurado al iniciar cada turno; antes usaba el predeterminado del CLI.
 - Codex abre los hilos con permisos en 0.160.0, muestra el texto devuelto por MCP y conserva el
   contenido de los cambios para el diálogo de aprobación de edición.

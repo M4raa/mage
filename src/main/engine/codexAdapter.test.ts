@@ -134,6 +134,31 @@ describe('CodexAdapter: arranque (codex app-server, sin verificar)', () => {
 });
 
 describe('CodexAdapter: turno', () => {
+  it('normalize_contenidoMcpConClaveConocida_ocultaElValorEnTodoElEvento', () => {
+    const key = 'clave-artificial-de-regresion';
+    const adapter = new CodexAdapter({ resolveBinary: () => 'codex', resolveAccount: () => ({ home: 'h', apiKey: key }) });
+    adapter.buildSpawnPlan(launch);
+    const raw = notification('item/completed', { item: { id: 'm', type: 'mcpToolCall', server: 's', tool: 't',
+      status: 'completed', result: { content: [{ type: 'text', text: `respuesta ${key}` }] },
+    } });
+
+    const serialized = JSON.stringify(adapter.normalize(raw));
+
+    expect(serialized.includes(key)).toBe(false);
+    expect(serialized).toContain('[clave oculta]');
+  });
+
+  it('normalize_errorMcpConCredencial_excluyeMensajeCrudo', () => {
+    const adapter = codex();
+    const raw = notification('item/completed', { item: {
+      type: 'mcpToolCall', id: 'm', status: 'failed', server: 's', tool: 't', error: { message: 'detalle privado artificial' },
+    } });
+
+    const events = adapter.normalize(raw);
+
+    expect(events).toMatchObject([{ result: { isError: true, output: 'La llamada MCP de Codex falló.' } }]);
+  });
+
   it('encodeUserMessage_esfuerzoBajoLoEnviaEnTurnStart', () => {
     const adapter = codex();
     const requests = handshake(adapter, { ...launch, effort: 'low' });
@@ -219,7 +244,7 @@ describe('CodexAdapter: turno', () => {
   it('normalize_mcpFallido_muestraErrorYOmiteContenidoBinario', () => {
     expect(codex().normalize(notification('item/completed', { item: {
       type: 'mcpToolCall', id: 'm', server: 's', tool: 't', status: 'failed', result: null, error: { message: 'rechazado' },
-    } }))).toMatchObject([{ result: { isError: true, output: 'rechazado' } }]);
+    } }))).toMatchObject([{ result: { isError: true, output: 'La llamada MCP de Codex falló.' } }]);
     expect(codex().normalize(notification('item/completed', { item: {
       type: 'mcpToolCall', id: 'm', server: 's', tool: 't', status: 'completed',
       result: { content: [{ type: 'image', data: 'binario' }, { type: 'text', text: 'uno' }, null, { type: 'text', text: 'dos' }] },

@@ -95,6 +95,7 @@ export class CodexAdapter implements ProviderAdapter {
   private model = '';
   private permissionProfile: string | null = null;
   private apiKey: string | null = null;
+  private secrets: readonly string[] = [];
   private developerInstructions: string | null = null;
 
   constructor(private readonly deps: CodexAdapterDeps = {}) {}
@@ -105,6 +106,7 @@ export class CodexAdapter implements ProviderAdapter {
     const account = this.deps.resolveAccount?.(params.accountDir) ?? null;
     this.apiKey = account?.apiKey ?? null;
     const mcp = toCodexOverrides(params.shared?.mcpServers ?? []);
+    this.secrets = [...new Set([this.apiKey ?? '', ...Object.values(mcp.env)].filter((value) => value.length > 0))];
     const bridged = this.deps.resolveInstructions?.(params.cwd, account?.home ?? null) ?? [];
     const userFiles = bridged.filter((file) => file.scope === 'user');
     this.developerInstructions = userFiles.length === 0 ? null : bridgeDocument(userFiles);
@@ -180,7 +182,7 @@ export class CodexAdapter implements ProviderAdapter {
   normalize(raw: unknown): MageEvent[] {
     if (!isRecord(raw)) return [];
     const events = this.dispatch(raw);
-    return this.apiKey === null ? events : events.map((event) => redactKey(event, this.apiKey ?? ''));
+    return this.secrets.length === 0 ? events : events.map((event) => redactEventSecrets(event, this.secrets));
   }
 
   private dispatch(raw: Record<string, unknown>): MageEvent[] {
@@ -332,7 +334,12 @@ export class CodexAdapter implements ProviderAdapter {
 
 // Medido con una clave falsa: OpenAI devuelve la clave en el error («Incorrect API key provided:
 // sk-…»). Nunca llega asi a la conversacion.
-function redactKey(event: MageEvent, key: string): MageEvent {
-  if (event.kind !== 'error' || key.length === 0 || !event.message.includes(key)) return event;
-  return { ...event, message: event.message.split(key).join('[clave oculta]') };
+function redactEventSecrets(event: MageEvent, secrets: readonly string[]): MageEvent {
+  // Son eventos propios, ya normalizados, sin ciclos. La proyeccion preserva su forma y limpia
+  // TODOS los strings antes de salir a logs/IPC, incluidos outputs, diffs e inputs de permisos.
+  const serialized = JSON.stringify(event, (_field, value: unknown) => {
+    if (typeof value !== 'string') return value;
+    return secrets.reduce((text, secret) => text.split(secret).join('[clave oculta]'), value);
+  });
+  return JSON.parse(serialized) as MageEvent;
 }
