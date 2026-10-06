@@ -2319,27 +2319,8 @@ function stopSessionsWhenDestroyed(sender: Electron.WebContents): void {
 
 // Registro de handlers IPC: puentean el renderer con el SessionManager. Los eventos del motor se
 // empujan al webContents que creo la sesion (guardando contra un renderer ya destruido).
-function registerIpcHandlers(): void {
-  ipcMain.handle(IpcChannel.SessionCreate, (event, params: CreateSessionParams): CreateSessionResult => {
-    const sender = event.sender;
-    // FRONTERA DE CONFIANZA. Lanzar el CLI en una carpeta ejecuta lo que esa carpeta traiga (hooks,
-    // `.claude/settings.json`, servidores MCP del repo), asi que abrir un repositorio ajeno es ejecutar
-    // codigo ajeno. La guarda va AQUI y no en el selector de carpeta porque este es el unico punto por
-    // el que pasan TODOS los arranques: pestana nueva, `--resume`, restaurar el workspace al abrir la
-    // app y dividir el panel. El renderer pregunta antes para que el usuario vea un dialogo y no un
-    // error; esto es lo que lo hace cierto aunque el renderer se salte el paso.
-    // Y la CUENTA se valida como en el resto de canales con ruta (`UsageGet`, `ConversationsList`…):
-    // este es el unico que LANZA UN PROCESO, asi que un `accountDir` arbitrario seria un CLI corriendo
-    // contra un config dir ajeno —con sus credenciales y sus hooks— por un solo mensaje IPC.
-    assertLaunchable(params);
-    // M2.6: una conversacion privada se lanza bajo el perfil privado de la cuenta (mismo login,
-    // projects propio). Compartida (default) usa la cuenta tal cual. El config dir efectivo vuelve al
-    // renderer para localizar transcripciones/memoria de la conversacion.
-    // El perfil privado es de Claude: en otro proveedor la privacidad no cambia el dir de la cuenta.
-    const configDir =
-      params.privacy === 'private' && params.provider === 'claude' ? accountService.ensurePrivateProfile(params.accountDir) : params.accountDir;
-    const effectiveParams = configDir === params.accountDir ? params : { ...params, accountDir: configDir };
-    const sessionId = sessionManager.create(effectiveParams, (payload) => {
+function relaySessionEvent(payload: { readonly sessionId: string; readonly event: MageEvent },
+  { sender, configDir, accountDir }: { sender: Electron.WebContents; configDir: string; accountDir: string }): void {
       // Cache del catalogo "/" (2.2): la sesion es la UNICA fuente del catalogo real, y una
       // conversacion recien abierta no tiene sesion. Se escribe con el config dir EFECTIVO (para una
       // conversacion privada, el perfil `mage-private`), nunca con el de la cuenta: si no, la cache de
@@ -2362,16 +2343,184 @@ function registerIpcHandlers(): void {
         // Con la clave de la CUENTA, no con el config dir efectivo: `UsageGet` solo sirve cuentas
         // gestionadas (rechaza `mage-private`), asi que guardarlo bajo el perfil privado era escribir
         // en una entrada que nadie lee jamas. Y es correcto compartirlo: mismo login, mismo uso.
-        usageService.recordStreamUsage(params.accountDir, {
+        usageService.recordStreamUsage(accountDir, {
           fiveHour: payload.event.fiveHour,
           sevenDay: payload.event.sevenDay,
         });
       }
       if (!sender.isDestroyed()) sender.send(EVENT_CHANNEL, payload);
-    }, sender.id);
+    }
+
+function createSessionFromIpc(event: Electron.IpcMainInvokeEvent, params: CreateSessionParams): CreateSessionResult {
+    const sender = event.sender;
+    // FRONTERA DE CONFIANZA. Lanzar el CLI en una carpeta ejecuta lo que esa carpeta traiga (hooks,
+    // `.claude/settings.json`, servidores MCP del repo), asi que abrir un repositorio ajeno es ejecutar
+    // codigo ajeno. La guarda va AQUI y no en el selector de carpeta porque este es el unico punto por
+    // el que pasan TODOS los arranques: pestana nueva, `--resume`, restaurar el workspace al abrir la
+    // app y dividir el panel. El renderer pregunta antes para que el usuario vea un dialogo y no un
+    // error; esto es lo que lo hace cierto aunque el renderer se salte el paso.
+    // Y la CUENTA se valida como en el resto de canales con ruta (`UsageGet`, `ConversationsList`…):
+    // este es el unico que LANZA UN PROCESO, asi que un `accountDir` arbitrario seria un CLI corriendo
+    // contra un config dir ajeno —con sus credenciales y sus hooks— por un solo mensaje IPC.
+    assertLaunchable(params);
+    // M2.6: una conversacion privada se lanza bajo el perfil privado de la cuenta (mismo login,
+    // projects propio). Compartida (default) usa la cuenta tal cual. El config dir efectivo vuelve al
+    // renderer para localizar transcripciones/memoria de la conversacion.
+    // El perfil privado es de Claude: en otro proveedor la privacidad no cambia el dir de la cuenta.
+    const configDir =
+      params.privacy === 'private' && params.provider === 'claude' ? accountService.ensurePrivateProfile(params.accountDir) : params.accountDir;
+    const effectiveParams = configDir === params.accountDir ? params : { ...params, accountDir: configDir };
+    const sessionId = sessionManager.create(effectiveParams, (payload) => relaySessionEvent(payload, { sender, configDir, accountDir: params.accountDir }), sender.id);
     stopSessionsWhenDestroyed(sender);
     return { sessionId, configDir };
+  }
+
+function registerIpcHandlers(): void {
+  const deps = createIpcDependencies();
+  registerEngineIpc(deps);
+  registerApplicationIpc(deps);
+}
+
+let agyProbe: { atMs: number; installed: boolean } | null = null;
+
+interface IpcDependencies {
+  readonly conversationAdminService: ReturnType<typeof createIpcConversationAdminService>;
+  readonly requireSafeConversation: ReturnType<typeof createIpcRequireSafeConversation>;
+  readonly settingsStore: ReturnType<typeof createIpcSettingsStore>;
+  readonly instructionsService: ReturnType<typeof createIpcInstructionsService>;
+  readonly effectiveSettingsService: ReturnType<typeof createIpcEffectiveSettingsService>;
+  readonly projectFileService: ReturnType<typeof createIpcProjectFileService>;
+  readonly promptService: ReturnType<typeof createIpcPromptService>;
+}
+
+function createIpcDependencies(): IpcDependencies {
+  return {
+    conversationAdminService: createIpcConversationAdminService(),
+    requireSafeConversation: createIpcRequireSafeConversation(),
+    settingsStore: createIpcSettingsStore(),
+    instructionsService: createIpcInstructionsService(),
+    effectiveSettingsService: createIpcEffectiveSettingsService(),
+    projectFileService: createIpcProjectFileService(),
+    promptService: createIpcPromptService(),
+  };
+}
+
+function createIpcConversationAdminService() {
+  return new ConversationAdminService({
+    exists: existsSync,
+    removeFile: (p) => rmSync(p, { force: true }),
+    removeDir: (p) => rmSync(p, { recursive: true, force: true }),
+    ensureDir: (p) => mkdirSync(p, { recursive: true }),
+    move: (from, to) => renameSync(from, to),
+    realpath: (p) => realpathSync(p),
+    privateProfileDir: (dir) => join(dir, PRIVATE_PROFILE_SEGMENT),
+    ensurePrivateProfile: (dir) => accountService.ensurePrivateProfile(dir),
+    runtimeRoot: runtimeTranscriptRoot(),
   });
+}
+
+function createIpcRequireSafeConversation() {
+  return (accountDir: string, sessionId: string): void => {
+    if (!isManagedAccountConfigDir(accountDir)) {
+      throw new Error(`Cuenta no valida para administrar conversaciones: ${accountDir}`);
+    }
+    if (!/^[A-Za-z0-9_-]+$/.test(sessionId)) {
+      throw new Error(`sessionId no valido: ${JSON.stringify(sessionId)}`);
+    }
+  };
+}
+
+function createIpcSettingsStore() {
+  return getSettingsStore();
+}
+
+function createIpcInstructionsService() {
+  return new InstructionsService({ ...instructionsFs, bridgeSpecFor, claudeUserDir: claudeUserDir() });
+}
+
+function createIpcEffectiveSettingsService() {
+  return new EffectiveSettingsService({
+    exists: existsSync,
+    readFile: (path) => readFileSync(path, 'utf8'),
+    commonSettingsPath: settingsCommonPath(),
+    log: (level, message) => mainLog(level, message),
+  });
+}
+
+function createIpcProjectFileService() {
+  return new ProjectFileService({
+    exists: existsSync,
+    readFile: (path) => readFileSync(path, 'utf8'),
+    writeFile: (path, content) => writeFileSync(path, content, 'utf8'),
+    mtimeMs: (path) => (existsSync(path) ? statSync(path).mtimeMs : null),
+    byteLength: (path) => statSync(path).size,
+    // TRES raices fuera del cwd sin pregunta: los planes del CLI, su memoria y su scratchpad. Las tres
+    // ancladas por estructura, nunca por prefijo — ver el comentario de cada una. El resto de fuera
+    // solo con aprobacion del usuario (dialogo nativo de `approveOutsideFile`).
+    isAllowedOutsideCwd: (path: string) => isUnderManagedPlans(path) || isUnderManagedMemory(path) || isUnderCliScratchpad(path),
+    isApprovedOutside,
+  });
+}
+
+function createIpcPromptService() {
+  return new PromptService({
+    resolveBinary: () => resolveClaudeBinary(),
+    run: (command, args, env, cwd) =>
+      new Promise<string>((resolvePromise, rejectPromise) => {
+        const child = execFile(
+          command,
+          [...args],
+          { env, cwd, maxBuffer: 4 * 1024 * 1024, windowsHide: true },
+          (err, stdout) => {
+            clearTimeout(timer);
+            if (err !== null) rejectPromise(err);
+            else resolvePromise(stdout);
+          },
+        );
+        const timer = setTimeout(() => {
+          const outcome = killProcessTree(child, killTreeDeps);
+          mainLog('warn', 'Timeout de una peticion puntual al CLI; arbol terminado', {
+            timeoutMs: PROMPT_RUN_TIMEOUT_MS,
+            pid: child.pid,
+            outcome,
+          });
+          rejectPromise(new Error(`El CLI no respondio en ${PROMPT_RUN_TIMEOUT_MS} ms`));
+        }, PROMPT_RUN_TIMEOUT_MS);
+        // El CLI espera datos por stdin unos segundos antes de seguir ("no stdin data received in 3s"):
+        // no le vamos a mandar nada, asi que se cierra ya y arranca sin esperar.
+        child.stdin?.end();
+      }),
+  });
+}
+
+function registerEngineIpc(deps: IpcDependencies): void {
+  registerSessionIpc1();
+  registerSessionIpc2();
+  registerRuntimeIpc1();
+  registerEditIpc1();
+  registerAccountsIpc1();
+  registerAccountsIpc2();
+  registerDialogIpc1();
+  registerAboutIpc1();
+  registerWindowIpc1();
+  registerTranscriptIpc1();
+}
+
+function registerApplicationIpc(deps: IpcDependencies): void {
+  registerTranscriptIpc2(deps);
+  registerConversationsIpc1(deps);
+  registerSettingsIpc1(deps);
+  registerThinkingIpc1();
+  registerArtifactIpc1(deps);
+  registerProjectIpc1(deps);
+  registerSharedIpc1();
+  registerPromptIpc1(deps);
+  registerPromptIpc2(deps);
+  registerThemeIpc1();
+}
+
+function registerSessionIpc1(): void {
+  ipcMain.handle(IpcChannel.SessionCreate, createSessionFromIpc);
   ipcMain.handle(IpcChannel.SessionSendMessage, (_e, params: SendMessageParams) =>
     // Los adjuntos se validan tambien AQUI (el renderer valida por cortesia; esta es la frontera de
     // verdad). El adapter vuelve a validarlos antes de codificarlos: es barato y es el ultimo punto
@@ -2400,20 +2549,15 @@ function registerIpcHandlers(): void {
     mkdirSync(dir, { recursive: true });
     return dir;
   });
+}
+
+function registerSessionIpc2(): void {
   // La RAIZ, sin crear nada. Existe porque `getScratchDir` no sirve para saberla: acuña un
   // subdirectorio NUEVO en cada llamada, asi que preguntarla para averiguar la raiz devolvia un
   // hermano del que se buscaba —y de paso dejaba una carpeta vacia por cada arranque—. La usa la fila
   // de informacion del chat para saber si la conversacion vive en el scratchpad.
   ipcMain.handle(IpcChannel.SessionGetScratchRoot, () => scratchRoot());
   ipcMain.handle(IpcChannel.FsExistsDirs, (_e, paths: unknown): readonly boolean[] => existsDirs(paths));
-  // ¿Esta instalado el CLI de Antigravity (E3)? Se resuelve en cada consulta (el usuario puede
-  // instalarlo con Mage abierto) y solo viaja el booleano: la ruta del binario no le hace falta al
-  // renderer.
-  // `findAgyBinary` lanza un `where`/`which` SINCRONO: medido, 71-93 ms de main bloqueado por
-  // consulta, y se consulta al abrir "Nueva conversacion". Con TTL sigue detectandose una
-  // instalacion hecha con Mage abierto (que es la razon de no cachearlo de por vida), pero deja de
-  // pagarse el proceso en cada apertura del dialogo.
-  let agyProbe: { atMs: number; installed: boolean } | null = null;
   ipcMain.handle(IpcChannel.CodexInstalled, (): boolean => findCodexBinary() !== null);
   // Uso de la suscripcion de agy (`/usage`, gratis: 0 turnos, medido en 1.2.14), con TTL.
   ipcMain.handle(IpcChannel.AgyUsageRead, (): Promise<AgyUsageSnapshot> => readAgyUsageCached());
@@ -2440,6 +2584,9 @@ function registerIpcHandlers(): void {
     if (typeof loginId !== 'string' || loginId.length === 0) throw new Error(`Id de inicio de sesión MCP inválido: ${JSON.stringify(loginId)}`);
     return mcpLogins.open(loginId);
   });
+}
+
+function registerRuntimeIpc1(): void {
   // «Probar conexión» del runtime propio (P-032 R7): la clave, si la hay, sale de la boveda aqui.
   ipcMain.handle(IpcChannel.RuntimeProbe, (_e, raw: unknown) =>
     probeRuntimeEndpoint(parseRuntimeProbeParams(raw), {
@@ -2462,7 +2609,6 @@ function registerIpcHandlers(): void {
   ipcMain.handle(IpcChannel.FileSaveAs, (_e, path: string) => openWithService.saveAs(path));
   ipcMain.handle(IpcChannel.OpenPath, (_e, path: string) => openWithService.openPath(path));
   ipcMain.handle(IpcChannel.OpenExternal, (_e, url: string) => openWithService.openExternal(url));
-
   // Cabecera propia (Ronda 3, item 9). setTitleBarOverlay solo existe en Windows/Linux y lanza si la
   // ventana no se creo con titleBarStyle:'hidden' -> guarda explicita, no try/catch mudo.
   // Sobre la ventana QUE LLAMA (no sobre la principal): con varias ventanas abiertas, recolorear la
@@ -2473,6 +2619,9 @@ function registerIpcHandlers(): void {
     if (window === null || window.isDestroyed()) return;
     window.setTitleBarOverlay({ ...colors, height: TITLE_BAR_HEIGHT_PX });
   });
+}
+
+function registerEditIpc1(): void {
   // Comandos de EDICION (2.9.b). Existen porque el menu de aplicacion propio sustituye al `Menu`
   // nativo, y con el se fueron los `role:` que daban deshacer/cortar/copiar/pegar. Es literalmente lo
   // que hacian aquellos: el metodo homonimo del webContents que tiene el foco.
@@ -2504,7 +2653,9 @@ function registerIpcHandlers(): void {
   ipcMain.handle(IpcChannel.OpenEditor, (_e, params: OpenEditorParams) =>
     openWithService.openEditor(params.bin, params.cwd),
   );
+}
 
+function registerAccountsIpc1(): void {
   // Cuentas: listar (datos seguros), crear (dir + enlaces + settings) y lanzar login interactivo
   // en terminal externa (headless no puede loguear). El binario se resuelve por SO.
   ipcMain.handle(IpcChannel.AccountsList, () => listAllAccounts());
@@ -2534,6 +2685,9 @@ function registerIpcHandlers(): void {
     loginConfigDir = params.configDir;
     return cliLoginService.start(params.configDir, params.email);
   });
+}
+
+function registerAccountsIpc2(): void {
   // Cuenta recien añadida (D7): se sondean sus modelos en cuanto tiene sesion, sin esperar al reinicio.
   ipcMain.handle(IpcChannel.AccountsLoginSubmitCode, async (_e, code: string): Promise<EmbeddedLoginResult> => {
     const result = await cliLoginService.submitCode(code);
@@ -2567,6 +2721,9 @@ function registerIpcHandlers(): void {
       (key) => pathEquals(key, configDir) || pathEquals(dirname(key), configDir),
     );
   });
+}
+
+function registerDialogIpc1(): void {
   // Selector de carpeta de proyecto (cwd de una pestana). Devuelve null si el usuario cancela.
   ipcMain.handle(IpcChannel.DialogPickDirectory, async (): Promise<string | null> => {
     const options = { properties: ['openDirectory' as const] };
@@ -2574,7 +2731,6 @@ function registerIpcHandlers(): void {
     const result = parent !== null ? await dialog.showOpenDialog(parent, options) : await dialog.showOpenDialog(options);
     return result.canceled || result.filePaths.length === 0 ? null : (result.filePaths[0] ?? null);
   });
-
   // Uso por cuenta (datos agregados seguros; el token no sale de main) y estado del servicio.
   // Whitelisting IPC (auditoria de seguridad, 2026-08-10): sin esto, un configDir arbitrario haria que
   // main leyera .credentials.json de CUALQUIER ruta y usara ese token contra la API de uso — mismo
@@ -2595,6 +2751,9 @@ function registerIpcHandlers(): void {
   ipcMain.handle(IpcChannel.CloseAnswer, (event, answer: unknown) => answerClosePrompt(event, answer));
   ipcMain.handle(IpcChannel.UpdateGetState, () => getUpdateState());
   ipcMain.handle(IpcChannel.UpdateInstall, () => installUpdate());
+}
+
+function registerAboutIpc1(): void {
   // «Acerca de» (B.2/B.3): versiones del runtime y los avisos de terceros. Las rutas se calculan aqui
   // —es lo unico que sabe de Electron— y el servicio decide que existe y que se puede enseñar.
   ipcMain.handle(IpcChannel.AboutGet, () =>
@@ -2612,6 +2771,9 @@ function registerIpcHandlers(): void {
       },
     ),
   );
+}
+
+function registerWindowIpc1(): void {
   // Opacidad de fondo (peticion del usuario): el alfa de las superficies lo pinta el renderer, pero
   // sin material detras el resultado seria alfa sobre NEGRO, no translucidez. En Windows 11 se activa
   // el acrilico del sistema, que es lo unico que hace que se vea el escritorio; y para que asome, el
@@ -2633,7 +2795,9 @@ function registerIpcHandlers(): void {
       window.setBackgroundMaterial(translucida ? 'acrylic' : 'none');
     }
   });
+}
 
+function registerTranscriptIpc1(): void {
   // Transcripciones (M2.2.1): abre en streaming y empuja lotes por TRANSCRIPT_BATCH_CHANNEL sin
   // bloquear el invoke (devuelve el transcriptId de inmediato). Whitelisting de ruta: solo
   // ~/.claude*/projects/** (nunca una ruta arbitraria via IPC).
@@ -2668,11 +2832,14 @@ function registerIpcHandlers(): void {
       }
     })();
   });
+}
+
+function registerTranscriptIpc2(deps: IpcDependencies): void {
+  const { conversationAdminService, requireSafeConversation } = deps;
   ipcMain.handle(IpcChannel.TranscriptCancel, (_e, transcriptId: string) => {
     openTranscriptControllers.get(transcriptId)?.abort();
     openTranscriptControllers.delete(transcriptId);
   });
-
   // Memoria del proyecto (M2.2.4): lee los .md crudos de <cuenta>/projects/<cwd-encoded>/memory/.
   // Whitelisting de ruta como en transcripciones (solo bajo <cuenta>/projects). Ficheros pequenos
   // (KB) -> lectura sincrona y respuesta directa por invoke (no hace falta streaming).
@@ -2683,7 +2850,6 @@ function registerIpcHandlers(): void {
     }
     return memoryService.read(dir);
   });
-
   // Historial de conversaciones de una cuenta (M2.6, sidebar = historial). Whitelisting: la ruta debe
   // ser un dir de cuenta gestionado bajo HOME (nunca una ruta arbitraria via IPC).
   ipcMain.handle(IpcChannel.ConversationsList, (_e, accountDir: string): readonly ConversationSummary[] => {
@@ -2692,28 +2858,6 @@ function registerIpcHandlers(): void {
     }
     return conversationsService.listConversations(accountDir);
   });
-
-  // Administracion de conversaciones (#2 de AJUSTES): borrar y mover. Servicio con DI de FS reales.
-  const conversationAdminService = new ConversationAdminService({
-    exists: existsSync,
-    removeFile: (p) => rmSync(p, { force: true }),
-    removeDir: (p) => rmSync(p, { recursive: true, force: true }),
-    ensureDir: (p) => mkdirSync(p, { recursive: true }),
-    move: (from, to) => renameSync(from, to),
-    realpath: (p) => realpathSync(p),
-    privateProfileDir: (dir) => join(dir, PRIVATE_PROFILE_SEGMENT),
-    ensurePrivateProfile: (dir) => accountService.ensurePrivateProfile(dir),
-    runtimeRoot: runtimeTranscriptRoot(),
-  });
-  // Whitelisting IPC: cuentas gestionadas bajo HOME + sessionId como segmento seguro (nunca `..`).
-  const requireSafeConversation = (accountDir: string, sessionId: string): void => {
-    if (!isManagedAccountConfigDir(accountDir)) {
-      throw new Error(`Cuenta no valida para administrar conversaciones: ${accountDir}`);
-    }
-    if (!/^[A-Za-z0-9_-]+$/.test(sessionId)) {
-      throw new Error(`sessionId no valido: ${JSON.stringify(sessionId)}`);
-    }
-  };
   ipcMain.handle(IpcChannel.ConversationsDelete, (_e, params: DeleteConversationParams): void => {
     requireSafeConversation(params.accountDir, params.sessionId);
     conversationAdminService.deleteConversation(params);
@@ -2723,6 +2867,10 @@ function registerIpcHandlers(): void {
     // Y sus pensamientos, por lo mismo: si no, queda un `.jsonl` huerfano por cada conversacion borrada.
     getThinkingStore().forget(params.sessionId);
   });
+}
+
+function registerConversationsIpc1(deps: IpcDependencies): void {
+  const { conversationAdminService, requireSafeConversation, settingsStore } = deps;
   ipcMain.handle(IpcChannel.ConversationsMove, (_e, params: MoveConversationParams): MoveConversationResult => {
     requireSafeConversation(params.accountDir, params.sessionId);
     if (!isManagedAccountConfigDir(params.destAccountDir)) {
@@ -2730,7 +2878,6 @@ function registerIpcHandlers(): void {
     }
     return conversationAdminService.moveConversation(params);
   });
-
   // Persistencia del workspace (M2.5): lista de pestanas + activa, en un JSON bajo userData. Escritura
   // atomica (tmp + rename); lectura tolerante (corrupto -> null). NO guarda credenciales ni el
   // contenido de las conversaciones (eso vive en las transcripciones del CLI).
@@ -2748,12 +2895,12 @@ function registerIpcHandlers(): void {
     // La jump list se sigue refrescando al arrancar y al recuperar el foco, que es cuando de verdad
     // puede haber cambiado lo que muestra. Lo mide `verify:gui` 0.3.
   });
-
-  // Configuracion de la app (M2.3): mismo patron que el workspace (atomico, tolerante), fichero
-  // separado (settings = preferencias globales; workspace = sesiones).
-  const settingsStore = getSettingsStore();
   // Las claves de los proveedores no viajan: solo `hasApiKey`, que dice la boveda.
   ipcMain.handle(IpcChannel.SettingsLoad, (): AppSettings => withApiKeyFlags(settingsStore.load(), getSecretStore()));
+}
+
+function registerSettingsIpc1(deps: IpcDependencies): void {
+  const { settingsStore } = deps;
   // Los ajustes son COMPARTIDOS entre ventanas (ajustes, temas, permisos y carpetas de confianza viven
   // todos en `app-settings.json`): tras guardar, se avisa a TODAS las demas para que apliquen lo mismo.
   // Se excluye a la que lo origino —ya lo tiene aplicado— para no devolverle un eco que pisaria una
@@ -2785,7 +2932,9 @@ function registerIpcHandlers(): void {
   ipcMain.handle(IpcChannel.WindowsDropTab, (event, tab: unknown): DropTabOutcome =>
     dropTabOutside(senderWindowId(event), parsePersistedTab(tab)),
   );
+}
 
+function registerThinkingIpc1(): void {
   ipcMain.handle(IpcChannel.ThinkingRead, (_e, sessionId: string): readonly string[] => {
     if (sessionId.length === 0) return [];
     return getThinkingStore().read(sessionId);
@@ -2799,7 +2948,6 @@ function registerIpcHandlers(): void {
   registerGitHandlers();
   registerGhHandlers();
   registerWorktreeHandlers();
-
   // Cache del catalogo "/" (2.2) e indice propio por conversacion (2.1). La cache solo se LEE por IPC:
   // la escribe main en el sink de la sesion, que es quien ve el catalogo real.
   ipcMain.handle(IpcChannel.CommandCatalogLoad, (_e, accountDir: string): readonly SlashCommandInfo[] =>
@@ -2814,6 +2962,10 @@ function registerIpcHandlers(): void {
   ipcMain.handle(IpcChannel.ArtifactRecordSave, (_e, params: RecordArtifactParams): void =>
     getConversationIndexStore().recordArtifact(params.url, params.record),
   );
+}
+
+function registerArtifactIpc1(deps: IpcDependencies): void {
+  const { instructionsService, effectiveSettingsService, projectFileService } = deps;
   // Abrir un artifact (2.4). La cuenta la manda el renderer o sale del indice; si no hay ninguna, se
   // LANZA: abrirlo con una cuenta arbitraria es exactamente el fallo que este punto viene a arreglar.
   ipcMain.handle(IpcChannel.ArtifactOpen, (_e, params: OpenArtifactParams): void => {
@@ -2829,10 +2981,6 @@ function registerIpcHandlers(): void {
   ipcMain.handle(IpcChannel.ArtifactPublisherLookup, (_e, url: string): string | null =>
     getConversationIndexStore().loadArtifact(url)?.accountDir ?? null,
   );
-
-  // Vistas nuevas (2.9.b). Las dos leen POR CONVERSACION (su cwd y su config dir efectivo) y son de
-  // SOLO LECTURA: Mage no reescribe el settings.json del usuario ni el del proyecto.
-  const instructionsService = new InstructionsService({ ...instructionsFs, bridgeSpecFor, claudeUserDir: claudeUserDir() });
   ipcMain.handle(IpcChannel.InstructionsRead, (_e, params: ReadInstructionsParams): readonly InstructionsFile[] => {
     // Whitelisting, igual que el resto de canales que reciben una ruta: el config dir tiene que ser
     // una cuenta gestionada bajo HOME, nunca una ruta arbitraria por IPC.
@@ -2842,50 +2990,25 @@ function registerIpcHandlers(): void {
     }
     return instructionsService.read(params);
   });
-  // Una sola instancia (no una por llamada: "deps instanciadas dentro de funciones" es antipatron del
-  // proyecto, y esto se llama cada vez que el usuario abre el panel de ajustes efectivos).
-  const effectiveSettingsService = new EffectiveSettingsService({
-    exists: existsSync,
-    readFile: (path) => readFileSync(path, 'utf8'),
-    commonSettingsPath: settingsCommonPath(),
-    log: (level, message) => mainLog(level, message),
-  });
   ipcMain.handle(IpcChannel.EffectiveSettingsRead, (_e, params: ReadInstructionsParams): EffectiveSettings => {
     if (!isManagedAccountConfigDir(params.accountDir)) {
       throw new Error(`Cuenta no valida para leer los ajustes efectivos: ${params.accountDir}`);
     }
     return effectiveSettingsService.read(params);
   });
-
-  // Ficheros creados por el agente (2.10, panel "Ficheros"). Es el UNICO canal por el que el renderer
-  // puede escribir un fichero cualquiera del proyecto, asi que la validacion de la ruta (dentro del cwd
-  // de la conversacion) y el compare-and-swap por mtime viven en el servicio, con sus tests.
-  //
-  // `writeFileSync` a secas y NO `writeAtomic`: aqui se edita un fichero del PROYECTO del usuario, que
-  // puede tener enlaces duros o estar vigilado por un watcher, y el tmp+rename de la escritura atomica
-  // rompe lo primero (es el mismo motivo por el que `seedSettings` escribe plano, ver CLAUDE.md).
-  const projectFileService = new ProjectFileService({
-    exists: existsSync,
-    readFile: (path) => readFileSync(path, 'utf8'),
-    writeFile: (path, content) => writeFileSync(path, content, 'utf8'),
-    mtimeMs: (path) => (existsSync(path) ? statSync(path).mtimeMs : null),
-    byteLength: (path) => statSync(path).size,
-    // TRES raices fuera del cwd sin pregunta: los planes del CLI, su memoria y su scratchpad. Las tres
-    // ancladas por estructura, nunca por prefijo — ver el comentario de cada una. El resto de fuera
-    // solo con aprobacion del usuario (dialogo nativo de `approveOutsideFile`).
-    isAllowedOutsideCwd: (path: string) => isUnderManagedPlans(path) || isUnderManagedMemory(path) || isUnderCliScratchpad(path),
-    isApprovedOutside,
-  });
   ipcMain.handle(IpcChannel.ProjectFileRead, (_e, params: ReadProjectFileParams): ProjectFileContent =>
     projectFileService.read(params),
   );
+}
+
+function registerProjectIpc1(deps: IpcDependencies): void {
+  const { projectFileService } = deps;
   ipcMain.handle(IpcChannel.ProjectFileWrite, (_e, params: WriteProjectFileParams): ProjectFileContent =>
     projectFileService.write(params),
   );
   ipcMain.handle(IpcChannel.ProjectFileApproveOutside, (event, params: ReadProjectFileParams): Promise<boolean> =>
     approveOutsideFile(event, params),
   );
-
   // Layout de paneles acoplables (F6 Fase 2): userData/panels-layout.json, global (§5.3). El
   // renderer manda su catalogo real (sin `render`) en cada `load`; ver cabecera de panelLayoutStore.ts.
   // POR VENTANA (como el workspace): main resuelve la ventana por el `event.sender`, la firma del
@@ -2896,7 +3019,9 @@ function registerIpcHandlers(): void {
   ipcMain.handle(IpcChannel.PanelsSave, (event, state: PanelLayoutState) =>
     getPanelLayoutStore(senderWindowId(event)).save(state),
   );
+}
 
+function registerSharedIpc1(): void {
   // Config compartida entre cuentas (D1 Fase 2): editor de mcp-common.json/settings-common.json.
   // Los avisos del snapshot (formas descartadas) salen de re-parsear el texto ya guardado, NO de
   // loadMcpCommon/loadSettingsCommon (esos van al LogBus en cada lanzamiento real, no a la UI).
@@ -2921,7 +3046,10 @@ function registerIpcHandlers(): void {
     if (params.file !== 'settings-common') throw new Error(`Fichero de config compartida desconocido: ${String(params.file)}`);
     return getSharedConfigService().saveSettingsCommonText(settingsCommonPath(), params.text, params.expected);
   });
+}
 
+function registerPromptIpc1(deps: IpcDependencies): void {
+  const { promptService } = deps;
   // MCP y conectores (P-028 puntos 5 y 34).
   registerMcpIpc({
     handle: (channel, listener) => ipcMain.handle(channel, listener as Parameters<typeof ipcMain.handle>[1]),
@@ -2946,45 +3074,13 @@ function registerIpcHandlers(): void {
     authenticate: (accountDir, serverName) =>
       authenticateMcp({ spawnProbe: spawnMcpStatusProbe, openUrl: openMcpAuthUrl, timeoutMs: MCP_AUTH_TIMEOUT_MS, pollMs: MCP_AUTH_POLL_MS, exitGraceMs: MODEL_PROBE_EXIT_GRACE_MS }, accountDir, serverName),
   });
-
-  // Mejora de prompt (M2.3): `claude -p` puntual con modelo barato. execFile (sin shell) captura el
-  // stdout; windowsHide para no abrir una consola en Windows.
-  //
-  // El timeout NO se delega en la opcion `timeout` de execFile: esa mata solo el hijo DIRECTO, y este
-  // `claude -p` levanta los servidores MCP de la cuenta y sus hooks igual que cualquier sesion. Con el
-  // timeout nativo, un CLI colgado dejaba todos esos nietos vivos. Se usa un temporizador propio que
-  // termina el ARBOL (mismo motivo y mismo modulo que AgentSession.stop).
-  const promptService = new PromptService({
-    resolveBinary: () => resolveClaudeBinary(),
-    run: (command, args, env, cwd) =>
-      new Promise<string>((resolvePromise, rejectPromise) => {
-        const child = execFile(
-          command,
-          [...args],
-          { env, cwd, maxBuffer: 4 * 1024 * 1024, windowsHide: true },
-          (err, stdout) => {
-            clearTimeout(timer);
-            if (err !== null) rejectPromise(err);
-            else resolvePromise(stdout);
-          },
-        );
-        const timer = setTimeout(() => {
-          const outcome = killProcessTree(child, killTreeDeps);
-          mainLog('warn', 'Timeout de una peticion puntual al CLI; arbol terminado', {
-            timeoutMs: PROMPT_RUN_TIMEOUT_MS,
-            pid: child.pid,
-            outcome,
-          });
-          rejectPromise(new Error(`El CLI no respondio en ${PROMPT_RUN_TIMEOUT_MS} ms`));
-        }, PROMPT_RUN_TIMEOUT_MS);
-        // El CLI espera datos por stdin unos segundos antes de seguir ("no stdin data received in 3s"):
-        // no le vamos a mandar nada, asi que se cierra ya y arranca sin esperar.
-        child.stdin?.end();
-      }),
-  });
   ipcMain.handle(IpcChannel.PromptImprove, (_e, params: ImprovePromptParams): Promise<string> =>
     promptService.improve(params.draft, params.accountDir),
   );
+}
+
+function registerPromptIpc2(deps: IpcDependencies): void {
+  const { promptService } = deps;
   ipcMain.handle(IpcChannel.PromptHandoff, (_e, params: HandoffPromptParams): Promise<string> => {
     // El handoff reanuda la sesion con el config dir EFECTIVO, que en una conversacion privada es el
     // perfil privado: hay que convergir sus credenciales antes de spawnear igual que al crear la
@@ -2992,14 +3088,12 @@ function registerIpcHandlers(): void {
     accountService.ensureCredentialsFor(params.accountDir);
     return promptService.handoff(params);
   });
-
   // Notificacion del SO (M2.3): solo si la ventana NO tiene el foco (si el usuario ya esta mirando,
   // seria ruido). Requiere soporte del SO (Notification.isSupported).
   // P-028 40: el foco que cuenta es el de la ventana QUE LA PIDIO, y el clic lleva a su conversacion.
   ipcMain.handle(IpcChannel.NotifyShow, (e, params: unknown) => {
     notificationCenter.show(parseNotifyParams(params), senderWindowId(e));
   });
-
   // Widget flotante (M3). SetEnabled abre/cierra la ventana (la preferencia la persiste el renderer).
   // Update recibe el snapshot del renderer principal y lo empuja a la ventana (no-op si no existe).
   // ActivateTab (desde el widget) enfoca la principal y le reenvia el tabId para activar la pestana.
@@ -3018,17 +3112,19 @@ function registerIpcHandlers(): void {
     if (!windowManager.focus(MAIN_WINDOW_ID)) return;
     liveMainWindow()?.webContents.send(WIDGET_FOCUS_TAB_CHANNEL, tabId);
   });
+}
 
+function registerThemeIpc1(): void {
   // Mercado de temas Open VSX (M3): buscar y traer un tema de color de VS Code (colores crudos; el
   // mapeo a los tokens de Mage lo hace el renderer).
   ipcMain.handle(IpcChannel.ThemeMarketSearch, (_e, query: string, offset?: number) => themeMarketService.search(query, offset ?? 0));
   ipcMain.handle(IpcChannel.ThemeMarketFetch, (_e, params: FetchThemeParams) => themeMarketService.fetchTheme(params));
-
   // Renderer principal -> LogBus: reenvio de su consola/errores (source 'renderer').
   ipcMain.on(DebugChannel.RendererLog, (_e, input: RendererLogInput) => {
     logBus.publish('renderer', input.level, input.message, input.data);
   });
 }
+
 
 // CSP como cabecera de respuesta (recomendacion de seguridad de Electron). En dev se relaja para
 // permitir el WebSocket de HMR y el refresh de React; en produccion queda estricta.

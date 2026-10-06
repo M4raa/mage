@@ -5,6 +5,7 @@ import { transcriptToBlocks } from './transcriptToBlocks';
 import { usePanelLayoutStore } from './panelLayoutStore';
 import { PANEL_REGISTRY } from './panels/panelRegistry';
 import { notify, useNotificationStore } from './notificationStore';
+import { useCodexAppsStore } from './codexAppsStore';
 
 // Asidero SOLO de desarrollo para `pnpm verify:gui`: deja medir el DOM del chat sin gastar un turno
 // real ni spawnear el CLI. Sin el, el harness no puede hidratar una conversacion (el store de Zustand
@@ -15,6 +16,7 @@ import { notify, useNotificationStore } from './notificationStore';
 // `import.meta.env.DEV`, que Vite reemplaza por `false` al construir, asi que Rollup elimina la rama y
 // el modulo entero. Comprobado en el "hecho" de la Fase A con `grep __mageDev out/renderer/assets`.
 export interface MageDevBridge {
+  readonly codexAppsStore: typeof useCodexAppsStore;
   readonly store: typeof useWorkbenchStore;
   // 4.1: ya no hay un store global, hay uno por pestaña. El puente entrega el de la ACTIVA, que es lo
   // que el harness siempre quiso decir (mide el panel enfocado) — asi sus llamadas no cambian.
@@ -38,6 +40,7 @@ export interface MageDevBridge {
 }
 
 (window as unknown as { __mageDev?: MageDevBridge }).__mageDev = {
+  codexAppsStore: useCodexAppsStore,
   store: useWorkbenchStore,
   // Getter, no valor: la pestaña activa cambia durante la propia verificacion.
   get transcriptStore() {

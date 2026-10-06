@@ -1,7 +1,7 @@
 // Medicion segura de app-server. Solo temporales propios; nunca lee ~/.codex ni imprime respuestas
 // de autenticacion, stderr, urls OAuth, ids personales o contenidos de credenciales.
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtempSync, readdirSync, rmSync, writeFileSync, readFileSync, lstatSync, realpathSync } from 'node:fs';
+import { mkdtempSync, readdirSync, rmSync, writeFileSync, readFileSync, lstatSync, realpathSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, isAbsolute, join, relative, resolve } from 'node:path';
 import { createServer } from 'node:http';
@@ -267,10 +267,10 @@ async function probeApps(context) {
   }
 }
 
-export function verificationContext(deps) {
+export function verificationContext(deps, { fresh = false } = {}) {
   const explicit = process.argv.slice(2).find((arg) => !arg.startsWith('--'));
   const bin = deps.resolveBinary(explicit);
-  const suppliedHome = process.env.MAGE_CODEX_VERIFY_HOME;
+  const suppliedHome = fresh ? undefined : process.env.MAGE_CODEX_VERIFY_HOME;
   const home = suppliedHome === undefined ? mkdtempSync(join(tmpdir(), 'mage-codex-verify-home-')) : suppliedHome;
   assertTemporary(home, 'mage-codex-verify-home-');
   const workspace = suppliedHome === undefined ? createWorkspace(home) : readOwnedWorkspace(home);
@@ -278,6 +278,17 @@ export function verificationContext(deps) {
   const version = deps.spawnSync(bin, ['--version'], { encoding: 'utf8', env: isolatedEnv(home, deps), windowsHide: true });
   if (version.status !== 0) throw new Error('No se pudo consultar la version del binario Codex');
   return { bin, home, workspace, version: version.stdout.trim(), deps };
+}
+
+export async function verifyLegacyCodex(mode) {
+  const deps = await verificationDependencies();
+  const context = verificationContext(deps, { fresh: true });
+  const { probeAppServer, probeInstructions } = await import('./codex-legacy-verification.mjs');
+  try {
+    console.log(context.version);
+    if (mode === 'app-server') await probeAppServer(context);
+    else await probeInstructions(context);
+  } finally { cleanupContext(context); }
 }
 
 // Raíz de composición: las dependencias reales se crean una vez, fuera de los helpers de medición.
@@ -288,6 +299,7 @@ async function verificationDependencies() {
     const { scrubAgentEnv } = await loader.ssrLoadModule('/src/main/os/agentEnv.ts');
     const { resolveCodexBinary } = await loader.ssrLoadModule('/src/main/os/codexBinaryResolver.ts');
     return { spawn, spawnSync, createServer, createLoader, scrubAgentEnv, baseEnv: process.env, platform: process.platform,
+      mkdir: (dir) => mkdirSync(dir, { recursive: true }), nextScenarioId: randomUUID,
       resolveBinary: (explicit) => explicit ?? resolveCodexBinary(),
       createAdapter: (Adapter, params) => new Adapter(params), createSession: (Session, params) => new Session(params) };
   } finally { await loader.close(); }

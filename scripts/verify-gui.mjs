@@ -766,31 +766,7 @@ const CHECKS = [
         await page.locator('[data-mcp-tab="servers"]').click();
         return { ok: true, detail: 'sin cuentas de Claude: no hay grupos de conectores, no aplicable' };
       }
-      const cuenta = await grupo.getAttribute('data-mcp-connector-group');
-      const conector = grupo.locator(`[data-mcp-connector="${FAKE_MCP_CONNECTOR_NAME}"]`);
-      const hayConector = (await conector.count()) === 1;
-      const conectar = hayConector ? await conector.getByRole('button', { name: /^Autenticar / }).count() : 0;
-      const fecha = await grupo.locator('[data-mcp-checked-at]').innerText();
-      const chrome = await grupo.locator('[data-mcp-connector="Claude in Chrome"]').innerText();
-      const codex = await page.locator('[data-mcp-codex-apps]').innerText();
-      const interruptor = grupo.getByRole('checkbox', { name: /^Usar los conectores de claude\.ai en / });
-      await interruptor.uncheck();
-      const ajustes = path.join(userDataDir, 'app-settings.json');
-      const apagado = await waitForFile(ajustes, (t) => (JSON.parse(t).claudeAiConnectorsOff ?? []).includes(cuenta));
-      const guardado = apagado !== null && (JSON.parse(apagado).claudeAiConnectorsOff ?? []).includes(cuenta);
-      const etiquetaApagado = hayConector ? await conector.locator('[data-mcp-status]').innerText() : '';
-      await interruptor.check();
-      const repuesto = await waitForFile(ajustes, (t) => !(JSON.parse(t).claudeAiConnectorsOff ?? []).includes(cuenta));
-      await page.locator('[data-mcp-tab="servers"]').click();
-      const ok =
-        (!hayConector || (conectar === 1 && etiquetaApagado === 'Apagados en esta cuenta')) &&
-        /Última comprobación/.test(fecha) === hayConector &&
-        chrome.includes('Solo disponible en Claude Desktop') &&
-        codex.includes('Apps de ChatGPT') &&
-        guardado &&
-        repuesto !== null &&
-        !(JSON.parse(repuesto).claudeAiConnectorsOff ?? []).includes(cuenta);
-      return { ok, detail: `conector=${hayConector} conectar=${conectar} fecha=«${fecha}» apagado=«${etiquetaApagado}» guardado=${guardado} chrome=${chrome.includes('Solo disponible')} codex=${codex.includes('sin verificar')}` };
+      return measureClaudeConnectorGroup(page, { userDataDir }, grupo);
     },
   },
   {
@@ -1782,8 +1758,10 @@ const CHECKS = [
     async run(page) {
       const previous = await captureTurnState(page);
       const layout = await page.evaluate(() => window.__mageDev.panelStore.getState().layout);
+      const settings = await captureSettingsPosition(page);
       const item = JSON.parse(fs.readFileSync(path.join(repoRoot, 'src/main/engine/__fixtures__/codex/real-file-change-0160.json'), 'utf8'));
-      return withGuiState({ capture: async () => ({ previous, layout }), prepare: async () => {
+      return withGuiState({ capture: async () => ({ previous, layout, settings }), prepare: async () => {
+        if (settings.section !== null) await restoreSettingsPosition(page, { ownDialog: true, settings });
         await openTemporaryConversation(page);
         await page.evaluate(() => window.__mageDev.panelStore.getState().revealPanelById('permissions'));
       }, run: async () => {
@@ -1803,6 +1781,10 @@ const CHECKS = [
         try { await cancelInjectedPermission(page, 'vg-codex-edit'); } finally {
           await page.evaluate((value) => window.__mageDev.panelStore.setState({ layout: value }), layout);
           await restoreTurnState(page, previous);
+          if (settings.section !== null) {
+            await openSettingsDialog(page);
+            await restoreSettingsPosition(page, { ownDialog: false, settings });
+          }
         }
       } });
     },
@@ -1813,7 +1795,8 @@ const CHECKS = [
       const previous = await page.evaluate(() => window.__mageDev.store.getState().accounts);
       const ownDialog = (await page.locator(MODAL).count()) === 0;
       const settings = await captureSettingsPosition(page);
-      return withGuiState({ capture: async () => ({ previous, ownDialog, settings }), prepare: async () => {
+      const appsState = await page.evaluate(() => ({ results: window.__mageDev.codexAppsStore.getState().results }));
+      return withGuiState({ capture: async () => ({ previous, ownDialog, settings, appsState }), prepare: async () => {
         if (ownDialog) await openSettingsDialog(page);
         await openSection(page, /MCP y conectores/);
         await page.locator('[data-mcp-tab="connectors"]').click();
@@ -1829,6 +1812,7 @@ const CHECKS = [
           falseEmpty: text.includes('no ha devuelto ninguna App'), enabled: await apps.getByRole('button', { name: 'Consultar Apps', exact: true }).isEnabled() };
         return { ok: measured.error && measured.retry && !measured.falseEmpty && measured.enabled, detail: JSON.stringify(measured) };
       }, restore: async () => {
+        await page.evaluate((state) => window.__mageDev.codexAppsStore.setState(state), appsState);
         await page.evaluate((accounts) => window.__mageDev.store.setState({ accounts }), previous);
         await restoreSettingsPosition(page, { ownDialog, settings });
       } });
@@ -7895,11 +7879,11 @@ async function restoreSettingsPosition(page, { ownDialog, settings }) {
     await page.locator(`${MODAL}[aria-labelledby="settings-title"]`).waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
     return;
   }
-  if (settings.mcpTab !== null) {
-    await page.locator(`[data-mcp-tab="${settings.mcpTab}"]`).click();
-  }
   if (settings.section !== null) {
     await page.locator(`#${settings.section}`).click();
+  }
+  if (settings.mcpTab !== null) {
+    await page.locator(`[data-mcp-tab="${settings.mcpTab}"]`).click();
   }
 }
 
@@ -9443,3 +9427,31 @@ async function rescatarEstado(page) {
     await page.mouse.click(2, 2).catch(() => undefined);
   }
 }
+
+async function measureClaudeConnectorGroup(page, { userDataDir }, group) {
+      const cuenta = await group.getAttribute('data-mcp-connector-group');
+      const conector = group.locator(`[data-mcp-connector="${FAKE_MCP_CONNECTOR_NAME}"]`);
+      const hayConector = (await conector.count()) === 1;
+      const conectar = hayConector ? await conector.getByRole('button', { name: /^Autenticar / }).count() : 0;
+      const fecha = await group.locator('[data-mcp-checked-at]').innerText();
+      const chrome = await group.locator('[data-mcp-connector="Claude in Chrome"]').innerText();
+      const codex = await page.locator('[data-mcp-codex-apps]').innerText();
+      const interruptor = group.getByRole('checkbox', { name: /^Usar los conectores de claude\.ai en / });
+      await interruptor.uncheck();
+      const ajustes = path.join(userDataDir, 'app-settings.json');
+      const apagado = await waitForFile(ajustes, (t) => (JSON.parse(t).claudeAiConnectorsOff ?? []).includes(cuenta));
+      const guardado = apagado !== null && (JSON.parse(apagado).claudeAiConnectorsOff ?? []).includes(cuenta);
+      const etiquetaApagado = hayConector ? await conector.locator('[data-mcp-status]').innerText() : '';
+      await interruptor.check();
+      const repuesto = await waitForFile(ajustes, (t) => !(JSON.parse(t).claudeAiConnectorsOff ?? []).includes(cuenta));
+      await page.locator('[data-mcp-tab="servers"]').click();
+      const ok =
+        (!hayConector || (conectar === 1 && etiquetaApagado === 'Apagados en esta cuenta')) &&
+        /Última comprobación/.test(fecha) === hayConector &&
+        chrome.includes('Solo disponible en Claude Desktop') &&
+        codex.includes('Apps de ChatGPT') &&
+        guardado &&
+        repuesto !== null &&
+        !(JSON.parse(repuesto).claudeAiConnectorsOff ?? []).includes(cuenta);
+      return { ok, detail: `conector=${hayConector} conectar=${conectar} fecha=«${fecha}» apagado=«${etiquetaApagado}» guardado=${guardado} chrome=${chrome.includes('Solo disponible')} codex=${codex.includes('sin verificar')}` };
+    }
