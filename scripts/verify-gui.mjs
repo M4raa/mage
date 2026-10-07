@@ -1701,10 +1701,16 @@ const CHECKS = [
   {
     // Grupo E (M9): el panel de Uso enseña la suscripcion de agy. main lee `agy /usage` (gratis); aqui,
     // el fichero FALSO de MAGE_AGY_USAGE_FAKE (la salida medida de agy 1.2.14), sin lanzar agy.
-    name: 'E: el panel de Uso enseña el uso de agy (su /usage, falso)',
+    name: 'E: el panel de Uso enseña el uso de agy (su /usage, falso) solo en la cuenta de agy',
     async run(page) {
       const layout = await page.evaluate(() => window.__mageDev.panelStore.getState().layout);
       await page.evaluate(() => window.__mageDev.panelStore.getState().revealPanelById('usage'));
+      // Con una cuenta de Claude activa el uso de agy NO se pinta; solo en la cuenta de agy.
+      await page.locator('[data-active-panel]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      await page.waitForTimeout(CONFIG.settleMs * 2);
+      const enClaude = await page.locator('[data-agy-usage="true"]').count();
+      await seedAgyAccount(page);
+      await page.evaluate(() => window.__mageDev.store.setState({ activeAccountId: 'vg-agy-account' }));
       const section = page.locator('[data-agy-usage="true"]');
       await section.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
       const medido = await section.evaluate((node) => ({
@@ -1713,7 +1719,7 @@ const CHECKS = [
         grupos: ['Gemini Models', 'Claude and GPT models'].filter((g) => (node.textContent ?? '').includes(g)).length,
       }));
       await page.evaluate((l) => window.__mageDev.panelStore.setState({ layout: l }), layout);
-      return { ok: medido.titulo && medido.barras === 4 && medido.grupos === 2, detail: JSON.stringify(medido) };
+      return { ok: enClaude === 0 && medido.titulo && medido.barras === 4 && medido.grupos === 2, detail: JSON.stringify({ ...medido, enClaude }) };
     },
   },
   {

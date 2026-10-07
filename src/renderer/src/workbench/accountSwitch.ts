@@ -21,6 +21,10 @@ export interface AccountSwitchContext {
   readonly destLoggedIn: boolean;
   // La pestaña ya tiene algo en pantalla (bloques del stream o hidratados): ya no es un chat nuevo.
   readonly hasBlocks: boolean;
+  // Origen y destino son cuentas de Claude: solo sus transcripciones se pueden mover entre cuentas. Las de
+  // Codex (y entre proveedores) tienen otro formato y otro almacén, así que una conversación con
+  // contenido no migra: se queda donde está y en la cuenta destino se abre una nueva.
+  readonly canMigrate: boolean;
 }
 
 export function planAccountSwitch(ctx: AccountSwitchContext): AccountSwitchPlan {
@@ -28,7 +32,7 @@ export function planAccountSwitch(ctx: AccountSwitchContext): AccountSwitchPlan 
   if (tab === undefined || tab.accountId === ctx.destAccountId || !ctx.destLoggedIn) return 'switch';
   if (ctx.status === 'streaming' || ctx.status === 'needs_permission') return 'switch-and-new-chat';
   const migratable = ctx.liveSessionId !== undefined || tab.resumeSessionId !== undefined;
-  if (migratable) return 'ask';
+  if (migratable) return ctx.canMigrate ? 'ask' : 'switch-and-new-chat';
   return ctx.hasBlocks ? 'switch' : 'reassign';
 }
 

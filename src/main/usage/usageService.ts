@@ -104,10 +104,11 @@ export class UsageService {
   // Devuelve el uso de una cuenta. Sirve de cache si la entrada es reciente (< ttl); si no, relee el
   // token, consulta el endpoint, valida y cachea. Lanza Error (con status, nunca el token) en fallo.
   // Uso de una cuenta SIN endpoint de Mage (Codex, grupo E): solo lo que trajo su sesion
-  // (`account/rateLimits`, sin verificar). Sin foto todavia LANZA: el panel dice que llega con el turno.
-  getStreamUsage(configDir: string): UsageInfo {
+  // (`account/rateLimits`, sin verificar). Sin foto todavia devuelve null: no es un error, el panel dice
+  // que los datos llegan con el primer turno.
+  getStreamUsage(configDir: string): UsageInfo | null {
     const stream = this.streamCache.get(configDir);
-    if (stream === undefined) throw new Error(`Aún no hay datos de uso de ${configDir}: llegan con la primera conversación`);
+    if (stream === undefined) return null;
     return {
       fiveHour: stream.fiveHour ?? UNKNOWN_WINDOW,
       sevenDay: stream.sevenDay ?? UNKNOWN_WINDOW,

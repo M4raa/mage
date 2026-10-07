@@ -1216,6 +1216,7 @@ export function createWorkbenchStore(mage: MageClient) {
         destAccountId,
         destLoggedIn: state.accounts.find((a) => a.id === destAccountId)?.loginStatus === 'logged_in',
         hasBlocks: (state.blocksByChat[state.activeTabId]?.length ?? 0) > 0,
+        canMigrate: [tab?.accountId, destAccountId].every((id) => state.accounts.find((a) => a.id === id)?.providerId === 'claude'),
       });
       if (plan === 'ask' && tab !== undefined) {
         set({ accountSwitchPrompt: { tabId: tab.id, destAccountId } });
@@ -2109,6 +2110,10 @@ export function createWorkbenchStore(mage: MageClient) {
       if (account !== undefined && account.providerId === 'agy') return;
       try {
         const info = await mage.getUsage(configDir);
+        if (info === null) {
+          set((s) => ({ usageErrorByAccount: { ...s.usageErrorByAccount, [configDir]: null } }));
+          return;
+        }
         const windows = toUsageWindows(info, Date.now());
         set((s) => ({
           usageByAccount: { ...s.usageByAccount, [configDir]: info },

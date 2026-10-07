@@ -403,3 +403,16 @@ describe('UsageService.recordStreamUsage (uso por stream, 9.3)', () => {
     expect(info.apiCreditsMinor).toBeNull();
   });
 });
+
+describe('UsageService.getStreamUsage', () => {
+  it('getStreamUsage_sinFotoDeLaSesion_devuelveNullSinLanzar', () => {
+    expect(new UsageService(deps()).getStreamUsage('C:\home\.codex-x')).toBeNull();
+  });
+
+  it('getStreamUsage_conFoto_devuelveSusVentanas', () => {
+    const service = new UsageService(deps());
+    service.recordStreamUsage('C:\home\.codex-x', { fiveHour: { utilization: 10, resetsAt: null }, sevenDay: null });
+
+    expect(service.getStreamUsage('C:\home\.codex-x')?.fiveHour.utilization).toBe(10);
+  });
+});

@@ -859,7 +859,8 @@ export interface MageApi {
   worktreeRemove(params: GitParams): Promise<WorktreeRemoveResult>;
   worktreeMergeBase(params: WorktreeMergeBaseParams): Promise<'merged' | 'conflict'>;
   // Uso de una cuenta (por configDir). Devuelve datos agregados SEGUROS (sin token). Cacheado en main.
-  getUsage(configDir: string): Promise<UsageInfo>;
+  // null = la cuenta aún no tiene datos de uso (Codex: llegan con su primer turno); no es un error.
+  getUsage(configDir: string): Promise<UsageInfo | null>;
   // Estado del servicio de Claude (global, no por cuenta). Cacheado en main.
   getStatus(): Promise<StatusInfo>;
   // Version de Mage, para pintarla en la barra de estado. No cambia en caliente.

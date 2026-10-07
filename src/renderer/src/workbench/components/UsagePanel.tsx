@@ -68,12 +68,12 @@ export function UsagePanel(): React.JSX.Element {
         </div>
       )}
       {usage === null && error === null && account.loginStatus === 'logged_in' && account.providerId !== 'agy' && (
-        <Hint text="Cargando uso…" />
+        <Hint text={account.providerId === 'codex' ? 'Aún sin datos de uso: llegan con la primera conversación.' : 'Cargando uso…'} />
       )}
 
       {account.apiBilled && account.providerId === 'claude' && <ApiUsageSection snapshot={usage?.apiUsage ?? null} />}
       {usage !== null && !account.apiBilled && <UsageBody account={account} usage={usage} />}
-      <AgyUsageSection okColor={account.accent.base} />
+      {account.providerId === 'agy' && <AgyUsageSection okColor={account.accent.base} />}
     </div>
   );
 }
