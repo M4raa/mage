@@ -1764,6 +1764,29 @@ const CHECKS = [
     },
   },
   {
+    // Migración REAL (IPC, ficheros y SQLite reales de la carpeta aislada): una conversación de agy pasa a una cuenta de
+    // Codex como la MISMA conversación (su rollout nativo, con los mismos mensajes) y desaparece de agy. No se lanza
+    // ningún CLI: agy se retira borrando su base, y Codex solo se escribe.
+    name: 'Historial: migrar una conversación de agy a Codex la escribe en su formato y la retira de agy',
+    async run(page, { userDataDir }) {
+      const fx = seedProviderHistory({ userDataDir, repoRoot });
+      try {
+        await refreshAccountsUntil(page, fx.codexHome2);
+        const result = await page.evaluate(({ agyHome, codexHome2, id }) => window.mage.migrateConversation({
+          sourceAccountDir: agyHome, sourceProvider: 'agy', sessionId: id, cwd: 'C:\proyecto', privacy: 'shared', destAccountDir: codexHome2, destProvider: 'codex',
+        }), { agyHome: fx.agyHome, codexHome2: fx.codexHome2, id: AGY_FIXTURE_ID });
+        const listar = (dir) => page.evaluate((d) => window.mage.listConversations(d), dir);
+        const enCodex = await listar(fx.codexHome2);
+        const enAgy = await listar(fx.agyHome);
+        const migrada = enCodex.find((c) => c.sessionId === result.sessionId);
+        const ok = result.provider === 'codex' && migrada?.title === AGY_FIXTURE_TITLE && migrada?.providerId === 'codex' && !enAgy.some((c) => c.sessionId === AGY_FIXTURE_ID);
+        return { ok, detail: JSON.stringify({ result, titulo: migrada?.title ?? null, enAgy: enAgy.length }) };
+      } finally {
+        fx.cleanup();
+      }
+    },
+  },
+  {
     // Migrar una conversación de Claude a una cuenta de otro proveedor: el diálogo dice que la original se queda y
     // que la nueva arranca con su historial. No se pulsa nada: seguir crearía una pestaña.
     name: 'Historial: pasar una conversación de Claude a Codex ofrece migrarla y, aparte, un handoff con su historial',

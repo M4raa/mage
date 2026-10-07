@@ -36,6 +36,9 @@ export function seedProviderHistory({ userDataDir, repoRoot }) {
   const root = join(userDataDir, 'provider-history-fixtures');
   const codexHome = join(root, '.codex-vgfixture');
   const agyHome = join(root, 'agy-vgfixture');
+  // Segunda cuenta de Codex, vacía: destino de las migraciones (nunca se lanza ningún CLI contra ella).
+  const codexHome2 = join(root, '.codex-vgfixture2');
+  mkdirSync(codexHome2, { recursive: true });
   const rollout = join(codexHome, 'sessions', '2026', '10', '05', `rollout-2026-10-05T10-00-00-${CODEX_FIXTURE_ID}.jsonl`);
   mkdirSync(dirname(rollout), { recursive: true });
   copyFileSync(join(repoRoot, 'src', 'shared', 'fixtures', 'codex-rollout.jsonl'), rollout);
@@ -50,8 +53,9 @@ export function seedProviderHistory({ userDataDir, repoRoot }) {
   const registry = { version: 1, accounts: [
     { providerId: 'codex', authKind: 'subscription', name: 'vgfixture', home: codexHome },
     { providerId: 'agy', authKind: 'api-key', name: 'vgfixture', home: agyHome },
+    { providerId: 'codex', authKind: 'subscription', name: 'vgfixture2', home: codexHome2 },
   ] };
   const registryPath = join(userDataDir, 'provider-accounts.json');
   writeFileSync(registryPath, JSON.stringify(registry));
-  return { codexHome, agyHome, cleanup: () => { rmSync(registryPath, { force: true }); rmSync(root, { recursive: true, force: true }); } };
+  return { codexHome, codexHome2, agyHome, cleanup: () => { rmSync(registryPath, { force: true }); rmSync(root, { recursive: true, force: true }); } };
 }
