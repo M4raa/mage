@@ -103,7 +103,7 @@ import type {
   ScratchRetention,
   ThemePreference,
 } from '@shared/settings';
-import { clampUiScale, DEFAULT_APP_SETTINGS, DEFAULT_PERMISSION_MODES, ONBOARDING_VERSION, RUNTIME_SHELLS, type RuntimeShell } from '@shared/settings';
+import { clampUiScale, DEFAULT_APP_SETTINGS, IMPORTED_CONTEXT_LIMITS, DEFAULT_PERMISSION_MODES, ONBOARDING_VERSION, RUNTIME_SHELLS, type RuntimeShell } from '@shared/settings';
 import type { ToolAccessRule } from '@shared/toolAccess';
 import { setAgyCommandVerdict, type AgyCommandVerdict } from '@shared/agyRules';
 import { AGY_PROVIDER_ID, CODEX_PROVIDER_ID, runsOnMageRuntime, writesClaudeTranscript, type CustomProvider, type ProviderModel } from '@shared/providers';
@@ -395,6 +395,7 @@ export interface WorkbenchState extends PrState, PrActions {
   setCloseBehavior: (behavior: CloseBehavior) => void;
   // Carpeta con la que nace «Nuevo chat» (P-028, 16).
   setNewConversationFolder: (folder: NewConversationFolder) => void;
+  setImportedContextMaxChars: (chars: number) => void;
   // Escala de la interfaz (80..150 %). Se aplica al frame al instante y se persiste con debounce.
   setUiScale: (percent: number) => void;
   // Proveedor con el que se abre "Nueva conversacion".
@@ -2055,7 +2056,7 @@ export function createWorkbenchStore(mage: MageClient) {
       // Solo las transcripciones de Claude se mueven entre cuentas. Con otro CLI (o entre proveedores) la
       // conversación se queda donde está y el destino arranca con su historial como contexto.
       if (![tab.accountId, destAccountId].every((id) => get().accounts.find((a) => a.id === id)?.providerId === 'claude')) {
-        const context = importedConversationContext(get().blocksByChat[tabId] ?? [], { title: tab.title, fromProvider: providerLabel(tab.provider, get().settings.customProviders) });
+        const context = importedConversationContext(get().blocksByChat[tabId] ?? [], { title: tab.title, fromProvider: providerLabel(tab.provider, get().settings.customProviders) }, get().settings.importedContextMaxChars);
         get().setActiveAccount(destAccountId);
         await get().createConversation(tab.privacy, { cwd: tab.cwd, ...(context === null ? {} : { importedContext: context }) });
         return;
@@ -2329,6 +2330,13 @@ export function createWorkbenchStore(mage: MageClient) {
 
     setNewConversationFolder: (folder) => {
       set((s) => ({ settings: { ...s.settings, newConversationFolder: folder } }));
+      scheduleSettingsPersist(mage, get);
+    },
+
+    setImportedContextMaxChars: (chars) => {
+      // Se acota aqui y no solo en la UI: el store es el contrato, el input no es su unico llamante.
+      const clamped = Math.min(IMPORTED_CONTEXT_LIMITS.max, Math.max(IMPORTED_CONTEXT_LIMITS.min, Math.round(chars)));
+      set((s) => ({ settings: { ...s.settings, importedContextMaxChars: clamped } }));
       scheduleSettingsPersist(mage, get);
     },
 

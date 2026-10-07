@@ -4,9 +4,11 @@ import type { Block } from './types';
 // CLI): cada CLI guarda su historial en su formato y ninguno acepta el de otro, así que lo común es el hilo
 // que Mage ya tiene en bloques. Se entrega al arrancar la sesión como instrucciones, no como mensajes.
 
-// Tope del texto: las instrucciones de arranque cuentan en el contexto del modelo. Entra lo más reciente.
-export const IMPORTED_CONTEXT_MAX_CHARS = 24_000;
+import { IMPORTED_CONTEXT_LIMITS } from '@shared/settings';
+
 const TOOL_COMMAND_MAX_CHARS = 160;
+// Extracto de la salida de cada herramienta que acompaña a su línea.
+const TOOL_OUTPUT_MAX_CHARS = 300;
 
 export interface ImportedContextSource {
   readonly title: string;
@@ -19,12 +21,16 @@ function lineFor(block: Block): string | null {
     const text = block.runs.map((run) => run.text).join('').trim();
     return text.length === 0 ? null : `Asistente: ${text}`;
   }
-  if (block.kind === 'tool') return `[herramienta ${block.tool}: ${block.command.trim().slice(0, TOOL_COMMAND_MAX_CHARS)}${block.isError ? ' (con error)' : ''}]`;
+  if (block.kind === 'tool') {
+    const output = block.output.map((run) => run.text).join(' ').replace(/\s+/g, ' ').trim();
+    const excerpt = output.length === 0 ? '' : ` → ${output.slice(0, TOOL_OUTPUT_MAX_CHARS)}${output.length > TOOL_OUTPUT_MAX_CHARS ? '…' : ''}`;
+    return `[herramienta ${block.tool}: ${block.command.trim().slice(0, TOOL_COMMAND_MAX_CHARS)}${block.isError ? ' (con error)' : ''}${excerpt}]`;
+  }
   return null;
 }
 
 // Texto de contexto, o null si la conversación no tiene nada que contar.
-export function importedConversationContext(blocks: readonly Block[], source: ImportedContextSource, maxChars = IMPORTED_CONTEXT_MAX_CHARS): string | null {
+export function importedConversationContext(blocks: readonly Block[], source: ImportedContextSource, maxChars: number = IMPORTED_CONTEXT_LIMITS.default): string | null {
   const lines = blocks.map(lineFor).filter((line): line is string => line !== null);
   if (lines.length === 0) return null;
   const kept: string[] = [];

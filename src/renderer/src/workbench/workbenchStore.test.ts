@@ -1870,3 +1870,20 @@ beforeEach(() => useNotificationStore.setState(EMPTY_NOTIFICATIONS, true));
 function keptWorktreeToasts(): ReturnType<typeof useNotificationStore.getState>['toasts'] {
   return useNotificationStore.getState().toasts.filter((n) => n.dedupeKey?.startsWith('worktree-kept:') === true);
 }
+
+describe('setImportedContextMaxChars', () => {
+  const make = (): ReturnType<typeof createWorkbenchStore> => createWorkbenchStore(fakeMage({ saveSettings: vi.fn().mockResolvedValue(undefined) }));
+
+  it.each([
+    [50_000, 50_000],
+    [1, 4_000],
+    [9_999_999, 120_000],
+    [12_345.6, 12_346],
+  ])('setImportedContextMaxChars_%s_quedaAcotadoA_%s', (input, expected) => {
+    const store = make();
+
+    store.getState().setImportedContextMaxChars(input);
+
+    expect(store.getState().settings.importedContextMaxChars).toBe(expected);
+  });
+});

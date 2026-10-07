@@ -5,7 +5,7 @@ import type { Block } from './types';
 const SOURCE = { title: 'Arreglar el login', fromProvider: 'Codex' };
 const user = (text: string): Block => ({ kind: 'user', id: 'u', text, time: '', attachments: [] });
 const agent = (text: string): Block => ({ kind: 'agent', id: 'a', runs: [{ code: false, text }], streaming: false });
-const tool = (command: string, isError = false): Block => ({ kind: 'tool', id: 't', toolUseId: 'x', tool: 'Bash', command, isError } as unknown as Block);
+const tool = (command: string, isError = false, output = ''): Block => ({ kind: 'tool', id: 't', toolUseId: 'x', tool: 'Bash', command, isError, output: output === '' ? [] : [{ code: true, text: output }] } as unknown as Block);
 
 describe('importedConversationContext', () => {
   it('importedConversationContext_hiloNormal_usuarioAsistenteYHerramientasEnOrden', () => {
@@ -19,6 +19,19 @@ describe('importedConversationContext', () => {
 
   it('importedConversationContext_herramientaConError_loDice', () => {
     expect(importedConversationContext([tool('pnpm test', true)], SOURCE)).toContain('(con error)');
+  });
+
+  it('importedConversationContext_herramientaConSalida_incluyeUnExtractoUnaLinea', () => {
+    const text = importedConversationContext([tool('ls', false, 'a.txt\n  b.txt')], SOURCE)!;
+
+    expect(text).toContain('[herramienta Bash: ls → a.txt b.txt]');
+  });
+
+  it('importedConversationContext_salidaLarga_secortaConPuntosSuspensivos', () => {
+    const text = importedConversationContext([tool('cat x', false, 'z'.repeat(1000))], SOURCE)!;
+
+    expect(text).toContain(`${'z'.repeat(300)}…]`);
+    expect(text).not.toContain('z'.repeat(301));
   });
 
   it('importedConversationContext_sinNadaQueContar_null', () => {

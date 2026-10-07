@@ -5,6 +5,7 @@ import {
   CLOSE_BEHAVIORS,
   DEFAULT_APP_SETTINGS,
   DEFAULT_PERMISSION_MODES,
+  IMPORTED_CONTEXT_LIMITS,
   NEW_CONVERSATION_FOLDERS,
   RUNTIME_SHELLS,
   SCRATCH_RETENTIONS,
@@ -130,6 +131,8 @@ const APP_SETTINGS_SCHEMA = z.object({
   closeBehavior: z.enum(CLOSE_BEHAVIORS).catch('ask'),
   // Carpeta de «Nuevo chat» (P-028, 16). Ausente o basura -> 'scratch', lo de siempre.
   newConversationFolder: z.enum(NEW_CONVERSATION_FOLDERS).catch('scratch'),
+  // Ausente o basura -> el valor por defecto; el fichero es editable a mano, así que se acota aquí también.
+  importedContextMaxChars: z.number().int().min(IMPORTED_CONTEXT_LIMITS.min).max(IMPORTED_CONTEXT_LIMITS.max).catch(IMPORTED_CONTEXT_LIMITS.default),
   // Asistente de primer arranque ya completado (y con que version). Ausente o basura -> 0, o sea
   // "no lo ha visto": equivocarse hacia enseñarlo de mas es molesto; hacia no enseñarlo nunca deja al
   // usuario sin el unico sitio donde se le explica como instalar el motor.

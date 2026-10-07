@@ -97,6 +97,7 @@ import type { ConversationPrefs } from '@shared/conversationIndex';
 import type { ConversationSummary, DeleteConversationParams, MoveConversationParams, MoveConversationResult } from '@shared/conversations';
 import type { PersistedWorkspace } from '@shared/state';
 import type { AppSettings } from '@shared/settings';
+import { IMPORTED_CONTEXT_LIMITS } from '@shared/settings';
 import type { PanelLayoutState } from '@shared/panelLayout';
 import type { MenuItemConstructorOptions } from 'electron';
 import { DebugChannel } from '@shared/debug';
@@ -635,8 +636,6 @@ function agyAttachmentsDir(): string {
 
 // Carpeta (en userData) del perfil de agy por suscripcion. Las cuentas por clave tienen el suyo.
 const AGY_SUBSCRIPTION_PROFILE = 'agy-profile';
-// Tope del historial importado de otra conversación (el renderer ya lo acota; main no se fía de la frontera).
-const CONTEXT_IMPORT_MAX_CHARS = 30_000;
 
 // Deja el perfil de agy listo ANTES de lanzar: enlaces a la casa del usuario y settings.json con las
 // reglas imprescindibles mas las del usuario. Rutas LARGAS: con la 8.3 las reglas no casan (medido).
@@ -2421,7 +2420,7 @@ function createSessionFromIpc(event: Electron.IpcMainInvokeEvent, params: Create
     const configDir =
       params.privacy === 'private' && params.provider === 'claude' ? accountService.ensurePrivateProfile(params.accountDir) : params.accountDir;
     const project = params.projectId === undefined ? undefined : getSettingsStore().load().chatProjects.find((candidate) => candidate.id === params.projectId);
-    const projectInstructions = [project?.instructions.trim().slice(0, 8000), params.contextImport?.slice(0, CONTEXT_IMPORT_MAX_CHARS)]
+    const projectInstructions = [project?.instructions.trim().slice(0, 8000), params.contextImport?.slice(0, IMPORTED_CONTEXT_LIMITS.max)]
       .filter((text): text is string => text !== undefined && text.length > 0).join('\n\n') || undefined;
     const effectiveParams = { ...params, accountDir: configDir, projectInstructions };
     const sessionId = sessionManager.create(effectiveParams, (payload) => relaySessionEvent(payload, { sender, configDir, accountDir: params.accountDir }), sender.id);

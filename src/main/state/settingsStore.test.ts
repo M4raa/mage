@@ -22,6 +22,7 @@ const VALID: AppSettings = {
   scratchRetention: '30d',
   closeBehavior: 'background',
   newConversationFolder: 'lastProject',
+  importedContextMaxChars: 50_000,
   onboardingCompletedVersion: 1,
   lastSeenReleaseNotesVersion: '0.1.1',
   uiScale: 110,

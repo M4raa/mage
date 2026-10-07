@@ -7,7 +7,7 @@ import type {
   ScratchRetention,
   ThemePreference,
 } from '@shared/settings';
-import { UI_SCALE_MAX, UI_SCALE_MIN, UI_SCALE_STEP } from '@shared/settings';
+import { IMPORTED_CONTEXT_LIMITS, UI_SCALE_MAX, UI_SCALE_MIN, UI_SCALE_STEP } from '@shared/settings';
 import type { KeybindingOverride } from '@shared/settings';
 import type { AboutInfo } from '@shared/ipc';
 import { useWorkbenchStore } from '../workbenchStore';
@@ -544,6 +544,7 @@ function StorageSection({
         </label>
       ))}
       <NewConversationFolderControl />
+      <ImportedContextControl />
       <CloseBehaviorControl />
       <GhNoticeControl />
     </div>
@@ -585,6 +586,46 @@ function NewConversationFolderControl(): React.JSX.Element {
           </span>
         </label>
       ))}
+    </div>
+  );
+}
+
+// Cuánto historial arranca una conversación que continúa otra de un proveedor distinto («Migrar»).
+function ImportedContextControl(): React.JSX.Element {
+  const chars = useWorkbenchStore((s) => s.settings.importedContextMaxChars);
+  const setChars = useWorkbenchStore((s) => s.setImportedContextMaxChars);
+  // Se escribe libremente y se acota al salir del campo: acotar en cada tecla impediría teclear «12000».
+  const [draft, setDraft] = useState(String(chars));
+  const commit = (): void => {
+    const value = Number(draft);
+    if (Number.isFinite(value) && draft.trim().length > 0) setChars(value);
+    setDraft(String(useWorkbenchStore.getState().settings.importedContextMaxChars));
+  };
+  return (
+    <div data-setting="imported-context" className="mt-[8px] flex flex-col gap-[8px] border-t border-mg-border pt-[12px]">
+      <span className="text-[10.5px] font-bold tracking-[.06em] text-mg-ter">HISTORIAL AL CONTINUAR EN OTRO PROVEEDOR</span>
+      <label className="flex items-center gap-[8px] text-[11.5px] text-mg-body">
+        <input
+          type="number"
+          aria-label="Caracteres de historial al continuar en otro proveedor"
+          min={IMPORTED_CONTEXT_LIMITS.min}
+          max={IMPORTED_CONTEXT_LIMITS.max}
+          step={1000}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') commit();
+          }}
+          className="w-[96px] rounded-[6px] border border-mg-border-ctrl bg-mg-window p-[4px_7px] text-mg-body outline-none"
+        />
+        <span>caracteres</span>
+      </label>
+      <span className="text-[10.5px] leading-[1.45] text-mg-ter">
+        Al pasar una conversación de un proveedor a otro, el destino arranca con su historial (lo más reciente primero) como
+        contexto. Entre {IMPORTED_CONTEXT_LIMITS.min.toLocaleString('es-ES')} y {IMPORTED_CONTEXT_LIMITS.max.toLocaleString('es-ES')}: cuenta en el
+        contexto del modelo.
+      </span>
     </div>
   );
 }

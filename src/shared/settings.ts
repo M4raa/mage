@@ -84,6 +84,10 @@ export type CloseBehavior = (typeof CLOSE_BEHAVIORS)[number];
 export const NEW_CONVERSATION_FOLDERS = ['scratch', 'lastProject'] as const;
 export type NewConversationFolder = (typeof NEW_CONVERSATION_FOLDERS)[number];
 
+// Límites del historial importado de otro proveedor (se entrega como instrucciones de arranque, que cuentan en el
+// contexto del modelo). `max` es también el tope que main aplica a lo que le llega por IPC.
+export const IMPORTED_CONTEXT_LIMITS = { default: 24_000, min: 4_000, max: 120_000 } as const;
+
 export interface AppSettings {
   readonly version: number;
   readonly notificationRules: readonly NotificationRule[];
@@ -136,6 +140,8 @@ export interface AppSettings {
   readonly closeBehavior: CloseBehavior;
   // Carpeta de «Nuevo chat» (P-028, 16). Default 'scratch'.
   readonly newConversationFolder: NewConversationFolder;
+  // Tope (en caracteres) del historial que arranca una conversación importada de otro proveedor.
+  readonly importedContextMaxChars: number;
   // Asistente de primer arranque: version del asistente que el usuario ya COMPLETO. 0 = nunca lo vio,
   // que es el default y lo que hace que salga en la primera apertura. Es un NUMERO y no un booleano a
   // proposito: el dia que el asistente gane un paso que haya que enseñar a quien ya lo hizo, basta
@@ -226,6 +232,7 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   scratchRetention: 'never',
   closeBehavior: 'ask',
   newConversationFolder: 'scratch',
+  importedContextMaxChars: IMPORTED_CONTEXT_LIMITS.default,
   onboardingCompletedVersion: 0,
   lastSeenReleaseNotesVersion: '',
   uiScale: 100,
