@@ -12,7 +12,6 @@ function ctx(over: Partial<AccountSwitchContext> = {}): AccountSwitchContext {
     destAccountId: B,
     destLoggedIn: true,
     hasBlocks: false,
-    canMigrate: true,
     ...over,
   };
 }
@@ -33,10 +32,6 @@ describe('planAccountSwitch', () => {
   it('planAccountSwitch_turnoEnMarcha_switchAndNewChat', () => {
     expect(planAccountSwitch(ctx({ status: 'streaming', liveSessionId: 'live' }))).toBe('switch-and-new-chat');
     expect(planAccountSwitch(ctx({ status: 'needs_permission', liveSessionId: 'live' }))).toBe('switch-and-new-chat');
-  });
-
-  it('planAccountSwitch_cuentasDeOtroProveedor_noMigraAbreChatNuevo', () => {
-    expect(planAccountSwitch(ctx({ canMigrate: false }))).toBe('switch-and-new-chat');
   });
 
   it('planAccountSwitch_pestanaParadaDeOtraCuenta_ask', () => {

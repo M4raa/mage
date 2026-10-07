@@ -332,6 +332,8 @@ export interface CreateSessionParams {
   readonly projectId?: string;
   // Lo rellena main desde el proyecto persistido; el renderer solo envía projectId.
   readonly projectInstructions?: string;
+  // Historial de otra conversación (de otro proveedor) con el que arranca esta; main lo suma a las instrucciones.
+  readonly contextImport?: string;
 }
 
 // Resultado de crear una sesion: el id y el config dir EFECTIVO con el que se lanzo (la cuenta o su

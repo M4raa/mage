@@ -52,6 +52,7 @@ import type { ConversationPrivacy } from '@shared/state';
 import type { ConversationSummary } from '@shared/conversations';
 import { planOpenConversation, tabFromConversation } from './conversationList';
 import { modelForReassignedTab, planAccountSwitch } from './accountSwitch';
+import { importedConversationContext } from './conversationContext';
 import {
   AUTO_CONTINUE_POLL_MS,
   AUTO_CONTINUE_TEXT,
@@ -558,6 +559,7 @@ export interface NewTabParams {
   // Modo de permiso inicial; ausente -> el `defaultPermissionMode` de Ajustes (solo Claude), y '' = el de la cuenta.
   readonly permissionMode?: PermissionMode;
   readonly projectId?: string;
+  readonly importedContext?: string;
 }
 
 // Contadores monotonos (no usamos Date.now/random para ids de bloque ni de pestana).
@@ -745,6 +747,7 @@ export interface ConversationFolderChoice {
   readonly cwd?: string;
   readonly scratch?: boolean;
   readonly projectId?: string;
+  readonly importedContext?: string;
 }
 
 function resolveNewConversationCwd(mage: MageClient, state: WorkbenchState, folder: ConversationFolderChoice): Promise<string> {
@@ -1048,6 +1051,7 @@ async function createSessionFor(
       ...(tab.maxBudgetUsdCents === undefined ? {} : { maxBudgetUsdCents: tab.maxBudgetUsdCents }),
       ...(isPermissionMode(tab.permissionMode) ? { permissionMode: tab.permissionMode } : {}),
       ...(projectId === undefined ? {} : { projectId }),
+      ...(tab.importedContext === undefined || tab.resumeSessionId !== undefined ? {} : { contextImport: tab.importedContext }),
     });
   // La pestaña puede haberse CERRADO mientras iba el round-trip (B16, segunda mitad). Sin esta
   // guarda se resucitaba `sessionIdByChat` de una pestaña que ya no existe, y el proceso del CLI se
@@ -1219,7 +1223,6 @@ export function createWorkbenchStore(mage: MageClient) {
         destAccountId,
         destLoggedIn: state.accounts.find((a) => a.id === destAccountId)?.loginStatus === 'logged_in',
         hasBlocks: (state.blocksByChat[state.activeTabId]?.length ?? 0) > 0,
-        canMigrate: [tab?.accountId, destAccountId].every((id) => state.accounts.find((a) => a.id === id)?.providerId === 'claude'),
       });
       if (plan === 'ask' && tab !== undefined) {
         set({ accountSwitchPrompt: { tabId: tab.id, destAccountId } });
@@ -1745,7 +1748,7 @@ export function createWorkbenchStore(mage: MageClient) {
 
     // Abre una pestana real ligada a {cuenta, proyecto, modelo}. La sesion del motor se crea perezosa
     // al primer mensaje (ensureSession) para no lanzar procesos hasta que se use.
-    newTab: async ({ accountId, cwd, model, provider, title, effort, maxBudgetUsdCents, privacy, permissionMode, projectId }) => {
+    newTab: async ({ accountId, cwd, model, provider, title, effort, maxBudgetUsdCents, privacy, permissionMode, projectId, importedContext }) => {
       // El runtime propio no necesita cuenta (A6 de la revision de P-032): una pestaña de Ollama abre
       // aunque no haya ninguna cuenta de Claude, Codex ni agy.
       const accountRequired = !runsOnMageRuntime(provider);
@@ -1770,6 +1773,7 @@ export function createWorkbenchStore(mage: MageClient) {
         ...(initialMode.length === 0 ? {} : { permissionMode: initialMode }),
         title: title ?? deriveTitle(cwd),
         ...(projectId === undefined ? {} : { projectId }),
+        ...(importedContext === undefined ? {} : { importedContext }),
         privacy: privacy ?? 'shared',
         // Una conversacion recien creada es la mas reciente de su seccion hasta que se escriba en otra.
         createdAtMs: Date.now(),
@@ -1804,7 +1808,7 @@ export function createWorkbenchStore(mage: MageClient) {
       const cwd = await resolveNewConversationCwd(mage, get(), folder);
       // Una cuenta de otro CLI (Codex, agy por clave) abre conversaciones de SU proveedor (grupo E).
       if (account.providerId === CODEX_PROVIDER_ID || account.providerId === AGY_PROVIDER_ID) {
-        await get().newTab({ ...newTabForProviderAccount(account, cwd, privacy, get().settings), projectId: folder.projectId });
+        await get().newTab({ ...newTabForProviderAccount(account, cwd, privacy, get().settings), projectId: folder.projectId, importedContext: folder.importedContext });
         return;
       }
       // Ultima conversacion Claude de la cuenta (las pestanas se anaden al final -> la ultima es la mas
@@ -1827,6 +1831,7 @@ export function createWorkbenchStore(mage: MageClient) {
         title: NEW_CONVERSATION_TITLE,
         privacy,
         projectId: folder.projectId,
+        importedContext: folder.importedContext,
         ...(effort.length === 0 ? {} : { effort }),
       });
     },
@@ -2047,6 +2052,14 @@ export function createWorkbenchStore(mage: MageClient) {
       const sessionId = get().sessionIdByChat[tabId] ?? tab?.resumeSessionId;
       if (tab === undefined || sessionId === undefined || sessionId.length === 0) return;
       if (destAccountId === tab.accountId) return;
+      // Solo las transcripciones de Claude se mueven entre cuentas. Con otro CLI (o entre proveedores) la
+      // conversación se queda donde está y el destino arranca con su historial como contexto.
+      if (![tab.accountId, destAccountId].every((id) => get().accounts.find((a) => a.id === id)?.providerId === 'claude')) {
+        const context = importedConversationContext(get().blocksByChat[tabId] ?? [], { title: tab.title, fromProvider: providerLabel(tab.provider, get().settings.customProviders) });
+        get().setActiveAccount(destAccountId);
+        await get().createConversation(tab.privacy, { cwd: tab.cwd, ...(context === null ? {} : { importedContext: context }) });
+        return;
+      }
       await get().moveConversation(sessionId, tab.cwd, tab.privacy, destAccountId, tab.privacy, tab.accountId);
       get().setActiveAccount(destAccountId);
       await get().loadConversationHistory();

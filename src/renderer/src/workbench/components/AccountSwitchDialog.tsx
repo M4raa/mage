@@ -19,6 +19,9 @@ function AccountSwitchBody({ prompt }: { readonly prompt: AccountSwitchPrompt })
   const createConversation = useWorkbenchStore((s) => s.createConversation);
   const dest = useWorkbenchStore((s) => s.accounts.find((a) => a.id === prompt.destAccountId));
   const title = useWorkbenchStore((s) => s.tabs.find((t) => t.id === prompt.tabId)?.title ?? 'esta conversación');
+  // Entre cuentas de Claude la transcripción se mueve; con otro CLI cada uno guarda la suya, así que la
+  // conversación sigue en la destino como una nueva que arranca con su historial como contexto.
+  const crossProvider = useWorkbenchStore((s) => ![s.tabs.find((t) => t.id === prompt.tabId)?.accountId, prompt.destAccountId].every((id) => s.accounts.find((a) => a.id === id)?.providerId === 'claude'));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const dialogRef = useDialogA11y({ onClose: close });
@@ -67,8 +70,10 @@ function AccountSwitchBody({ prompt }: { readonly prompt: AccountSwitchPrompt })
           la dejas donde está?
         </p>
         {/* P-028, 27: migrar no es lo mismo segun donde viva la conversacion. */}
-        <p className="text-[11px] leading-[1.5] text-mg-muted">
-          Compartida: se reanuda con {alias}. Privada: se mueve a {alias}.
+        <p className="text-[11px] leading-[1.5] text-mg-muted" data-account-switch-note={crossProvider ? 'history' : 'move'}>
+          {crossProvider
+            ? `Es de otro proveedor: la original se queda donde está y en ${alias} se abre una conversación nueva que arranca con su historial como contexto.`
+            : `Compartida: se reanuda con ${alias}. Privada: se mueve a ${alias}.`}
         </p>
         {error !== null && (
           <div role="alert" className="text-[11px] text-mg-danger">
@@ -88,7 +93,7 @@ function AccountSwitchBody({ prompt }: { readonly prompt: AccountSwitchPrompt })
             disabled={busy}
             className="rounded-[7px] bg-mg-primary px-[12px] py-[6px] font-semibold text-mg-primary-ink disabled:opacity-50"
           >
-            {busy ? 'Migrando…' : `Migrar la conversación a ${alias}`}
+            {busy ? 'Migrando…' : crossProvider ? `Continuar en ${alias} con el historial` : `Migrar la conversación a ${alias}`}
           </button>
         </div>
       </motion.div>

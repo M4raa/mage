@@ -1123,13 +1123,25 @@ describe('requestAccountSwitch y continueInAccount', () => {
     expect(store.getState().activeAccountId).toBe(accounts[0]!.id);
   });
 
-  it('requestAccountSwitch_haciaCuentaDeCodex_noOfreceMigrarYAbreChatNuevo', () => {
-    const store = mounted({ getScratchDir: vi.fn(() => new Promise<string>(() => undefined)) });
+  it('requestAccountSwitch_haciaCuentaDeCodex_tambienPreguntaPorLaMigracion', () => {
+    const store = mounted();
 
     store.getState().requestAccountSwitch('C:/Users/u/.codex-x');
 
-    expect(store.getState().accountSwitchPrompt).toBeNull();
-    expect(store.getState().activeAccountId).toBe('C:/Users/u/.codex-x');
+    expect(store.getState().accountSwitchPrompt).toEqual({ tabId: 'a', destAccountId: 'C:/Users/u/.codex-x' });
+  });
+
+  it('continueInAccount_haciaOtroProveedor_noMueveElFicheroYAbreChatConElHistorial', async () => {
+    const moveConversation = vi.fn();
+    const store = mounted({ moveConversation });
+    store.setState({ blocksByChat: { a: [{ kind: 'user', id: 'u1', text: 'arregla el login', time: '', attachments: [] }] } });
+
+    await store.getState().continueInAccount('a', 'C:/Users/u/.codex-x');
+
+    const created = store.getState().tabs.find((t) => t.id !== 'a');
+    expect(moveConversation).not.toHaveBeenCalled();
+    expect(created?.provider).toBe('codex');
+    expect(created?.importedContext).toContain('Usuario: arregla el login');
   });
 
   it('requestAccountSwitch_soloCambiar_noLlamaAlIpcDeMover', () => {

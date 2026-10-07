@@ -57,6 +57,8 @@ export interface Tab {
   readonly provider: string; // 'claude' | 'openai' | 'gemini' | 'ollama' | 'lmstudio'
   readonly title: string;
   readonly projectId?: string;
+  // Historial de otra conversación (de otro proveedor) con el que arranca esta; se entrega UNA vez, al crear la sesión.
+  readonly importedContext?: string;
   // Privacidad de la conversacion (M2.6). 'shared' (por defecto) usa el pozo comun; 'private' usa el
   // perfil privado (mage-private) de la cuenta con su mismo login. Factura SIEMPRE la cuenta activa.
   readonly privacy: ConversationPrivacy;
