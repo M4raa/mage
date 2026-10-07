@@ -482,6 +482,8 @@ export class AgentSession {
       this.pendingElicitations.delete(event.requestId);
     } else if (event.kind === 'permission_cancelled') {
       this.pendingPermissions.delete(event.requestId);
+      // El CLI cancela con el mismo `control_cancel_request` una elicitation que un permiso.
+      if (this.pendingElicitations.delete(event.requestId)) this.deps.emit({ kind: 'elicitation_cancelled', requestId: event.requestId });
     } else if (event.kind === 'tool_use') {
       this.toolStartTimes.set(event.tool.toolUseId, this.now());
     } else if (event.kind === 'tool_result') {

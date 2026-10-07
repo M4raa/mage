@@ -93,7 +93,7 @@ versión.
   conversación enseña un formulario encima del input, generado de lo que pide el servidor (texto,
   contraseña, número, entero, casilla o lista), con validación y **Aceptar / Rechazar / Cancelar**. Se
   maneja con el teclado (Esc cancela, Ctrl+Intro acepta), avisa si la pestaña no se ve y se cancela
-  solo si cierras la pestaña o muere la sesión. Funciona con Codex y con el runtime propio. Lo que no
+  solo si cierras la pestaña o muere la sesión. Funciona con Claude, Codex y el runtime propio. Lo que no
   encaja en un formulario sencillo se cancela con un aviso; los datos escritos nunca se guardan en logs.
 
 ### Cambiado

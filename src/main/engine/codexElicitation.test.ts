@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { parseElicitationRequest, validateElicitationAnswer, type ElicitationRequest } from '@shared/elicitation';
 import { CodexAdapter } from './codexAdapter';
+import { ClaudeAdapter } from './claudeAdapter';
 import { ElicitationBroker } from '../runtime/mcp/elicitationBroker';
 import type { MageEvent } from '@shared/events';
 
@@ -108,5 +109,40 @@ describe('ElicitationBroker', () => {
     const broker = new ElicitationBroker((e) => events.push(e));
     await expect(broker.request('srv', { mode: 'form', message: 'm', requestedSchema: { type: 'array' } })).resolves.toEqual({ action: 'cancel' });
     expect(events[0]?.kind).toBe('notice');
+  });
+});
+
+// Medido con `node spike/claude-elicitation-spike.mjs` (claude 2.1.292, servidor Anthropic falso, 0 turnos de pago).
+describe('ClaudeAdapter: elicitation MCP (2.1.292)', () => {
+  const adapter = (): ClaudeAdapter => new ClaudeAdapter(() => 'claude');
+  const control = (request: Record<string, unknown>): unknown => ({ type: 'control_request', request_id: 'rq1', request: { subtype: 'elicitation', mcp_server_name: 'elic', ...request } });
+
+  it('normalize_elicitationDeFormulario_emiteSolicitudConElIdDelCli', () => {
+    const events = adapter().normalize(control({ message: 'm', mode: 'form', requested_schema: { type: 'object', properties: { n: { type: 'integer' } }, required: ['n'] } }));
+
+    expect(events).toMatchObject([{ kind: 'elicitation_request', request: { requestId: 'rq1', server: 'elic', mode: 'form' } }]);
+  });
+
+  it('encodeElicitationResponse_acceptYDecline_formaMedida', () => {
+    const claude = adapter();
+
+    expect(claude.encodeElicitationResponse({ sessionId: 's', requestId: 'rq1', action: 'accept', content: { n: 2 } })).toEqual(
+      { type: 'control_response', response: { subtype: 'success', request_id: 'rq1', response: { action: 'accept', content: { n: 2 } } } });
+    expect(claude.encodeElicitationResponse({ sessionId: 's', requestId: 'rq1', action: 'decline' })).toEqual(
+      { type: 'control_response', response: { subtype: 'success', request_id: 'rq1', response: { action: 'decline' } } });
+  });
+
+  it('normalize_esquemaNoSoportado_cancelaAlCliYAvisa', () => {
+    const claude = adapter();
+
+    const events = claude.normalize(control({ message: 'm', mode: 'form', requested_schema: { type: 'array' } }));
+
+    expect(events[0]?.kind).toBe('notice');
+    expect(claude.takeOutgoing()).toEqual([{ type: 'control_response', response: { subtype: 'success', request_id: 'rq1', response: { action: 'cancel' } } }]);
+    expect(claude.takeOutgoing()).toEqual([]);
+  });
+
+  it('normalize_otroControlRequest_sigueElCaminoDeSiempre', () => {
+    expect(adapter().normalize({ type: 'control_request', request_id: 'x', request: { subtype: 'desconocido' } })).toEqual([]);
   });
 });

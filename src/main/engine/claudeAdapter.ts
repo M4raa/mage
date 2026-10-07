@@ -3,6 +3,7 @@ import type { ImageAttachment } from '@shared/ipc';
 import { base64ByteLength, validateAttachment } from '@shared/attachments';
 import { buildUserContentBlocks } from '@shared/imageRefs';
 import type { MageEvent, PermissionDecision } from '@shared/events';
+import { parseElicitationRequest, type ElicitationAnswer } from '@shared/elicitation';
 import { resolveClaudeBinary } from '../os/claudeBinaryResolver';
 import { normalizeRawEvent } from './normalize';
 import type { AuthModel, LaunchParams, PermissionRef, ProviderAdapter, SpawnPlan } from './providerAdapter';
@@ -212,8 +213,37 @@ export class ClaudeAdapter implements ProviderAdapter {
     };
   }
 
+  // Cancelaciones que hay que mandar al CLI por una elicitation que Mage no sabe mostrar.
+  private outgoing: unknown[] = [];
+
+  takeOutgoing(): readonly unknown[] {
+    const taken = this.outgoing;
+    this.outgoing = [];
+    return taken;
+  }
+
+  // MEDIDO en 2.1.292 (`spike/claude-elicitation-spike.mjs`, sin turnos de pago): el CLI manda un
+  // control_request `elicitation` y espera un control_response `{action, content}`; el MCP recibe lo mismo.
+  encodeElicitationResponse(answer: ElicitationAnswer): unknown {
+    const payload = answer.action === 'accept' ? { action: 'accept', content: answer.content ?? {} } : { action: answer.action };
+    return { type: 'control_response', response: { subtype: 'success', request_id: answer.requestId, response: payload } };
+  }
+
   normalize(raw: unknown): MageEvent[] {
-    return normalizeRawEvent(raw);
+    const elicitation = this.normalizeElicitation(raw);
+    return elicitation ?? normalizeRawEvent(raw);
+  }
+
+  private normalizeElicitation(raw: unknown): MageEvent[] | null {
+    const { request_id: requestId, request } = (raw ?? {}) as { request_id?: unknown; request?: Record<string, unknown> };
+    if ((raw as { type?: unknown })?.type !== 'control_request' || request?.subtype !== 'elicitation' || typeof requestId !== 'string') return null;
+    const server = typeof request.mcp_server_name === 'string' ? request.mcp_server_name : 'MCP';
+    const parsed = parseElicitationRequest(requestId, server, {
+      mode: request.mode, message: request.message, url: request.url, elicitationId: request.elicitation_id, requestedSchema: request.requested_schema,
+    });
+    if (parsed !== null) return [{ kind: 'elicitation_request', request: parsed }];
+    this.outgoing.push({ type: 'control_response', response: { subtype: 'success', request_id: requestId, response: { action: 'cancel' } } });
+    return [{ kind: 'notice', text: `El servidor ${server} pidió un formulario MCP que Mage no puede mostrar; se canceló.` }];
   }
 }
 

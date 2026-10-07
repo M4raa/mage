@@ -384,7 +384,7 @@ function normalizeControlRequest(raw: Record<string, unknown>): MageEvent[] {
   if (!isRecord(request)) return [];
   // hook_callback: solo llega si Mage registro hooks en el `initialize` (D2). El CLI ESPERA respuesta.
   if (request.subtype === 'hook_callback') return [toHookFired(raw)];
-  // Del resto solo can_use_tool nos concierne (mcp/elicitation no ocurren sin registrarlos).
+  // Del resto solo can_use_tool nos concierne (la elicitation de MCP la traduce `ClaudeAdapter`, que necesita responder al CLI).
   if (request.subtype !== 'can_use_tool') return [];
   const parsed = CanUseToolSchema.parse(raw);
   return [
