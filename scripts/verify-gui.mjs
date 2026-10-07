@@ -37,6 +37,7 @@ import { createRequire } from 'node:module';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { AGY_FIXTURE_ID, AGY_FIXTURE_TITLE, CODEX_FIXTURE_ID, CODEX_FIXTURE_TITLE, seedProviderHistory } from './lib/providerHistoryFixtures.mjs';
 import readline from 'node:readline/promises';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
@@ -1735,6 +1736,63 @@ const CHECKS = [
           sinDato: (fila?.textContent ?? '').includes('sin dato') };
       });
       return { ok: medido.fila && medido.ventanas === 4 && !medido.sinDato, detail: JSON.stringify(medido) };
+    },
+  },
+  {
+    // Historial por proveedor: una cuenta de Codex lista los rollouts de su CODEX_HOME y reabrir uno devuelve sus
+    // mensajes y herramientas (lector de main + hidratación del chat). Fixtures sintéticas en la carpeta aislada.
+    name: 'Historial: una cuenta de Codex lista sus conversaciones y reabre una con sus mensajes',
+    async run(page, { userDataDir }) {
+      const fx = seedProviderHistory({ userDataDir, repoRoot });
+      try {
+        return await measureProviderHistory(page, { home: fx.codexHome, sessionId: CODEX_FIXTURE_ID, title: CODEX_FIXTURE_TITLE, provider: 'codex' });
+      } finally {
+        fx.cleanup();
+      }
+    },
+  },
+  {
+    // Lo mismo con agy: sus conversaciones son bases SQLite con protobuf, no ficheros NDJSON.
+    name: 'Historial: una cuenta de agy lista sus conversaciones y reabre una con sus mensajes',
+    async run(page, { userDataDir }) {
+      const fx = seedProviderHistory({ userDataDir, repoRoot });
+      try {
+        return await measureProviderHistory(page, { home: fx.agyHome, sessionId: AGY_FIXTURE_ID, title: AGY_FIXTURE_TITLE, provider: 'agy' });
+      } finally {
+        fx.cleanup();
+      }
+    },
+  },
+  {
+    // Migrar una conversación de Claude a una cuenta de otro proveedor: el diálogo dice que la original se queda y
+    // que la nueva arranca con su historial. No se pulsa nada: seguir crearía una pestaña.
+    name: 'Historial: pasar una conversación de Claude a Codex avisa de que sigue con su historial',
+    async run(page, { userDataDir }) {
+      const fx = seedProviderHistory({ userDataDir, repoRoot });
+      try {
+        await refreshAccountsUntil(page, fx.codexHome);
+        await openTemporaryConversation(page);
+        await page.evaluate(() => {
+          const dev = window.__mageDev;
+          const s = dev.store.getState();
+          dev.store.setState({ tabs: s.tabs.map((t) => (t.id === s.activeTabId ? { ...t, resumeSessionId: 'vg-previa' } : t)) });
+          dev.store.getState().hydrateBlocks(s.activeTabId, [{ kind: 'user', id: 'vg-u', text: 'hola', time: '', attachments: [] }]);
+        });
+        // Sin auth.json la cuenta de fixture está sin sesión (y entonces solo se cambia de cuenta): se da por iniciada.
+        await page.evaluate((home) => window.__mageDev.store.setState((st) => ({ accounts: st.accounts.map((a) => (a.id === home ? { ...a, loginStatus: 'logged_in' } : a)) })), fx.codexHome);
+        await page.evaluate((home) => window.__mageDev.store.getState().requestAccountSwitch(home), fx.codexHome);
+        const note = page.locator('[data-account-switch-note="history"]');
+        await note.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const medido = await page.evaluate(() => ({
+          boton: [...document.querySelectorAll('[data-account-switch-dialog="true"] button')].map((b) => b.textContent ?? ''),
+          texto: document.querySelector('[data-account-switch-note]')?.textContent ?? '',
+        }));
+        await page.keyboard.press('Escape');
+        const ok = medido.texto.includes('se queda donde está') && medido.boton.some((t) => t.startsWith('Continuar en') && t.endsWith('con el historial'));
+        return { ok, detail: JSON.stringify(medido) };
+      } finally {
+        fx.cleanup();
+      }
     },
   },
   {
@@ -8386,6 +8444,36 @@ async function selectOptionsOf(page, fieldLabel) {
 async function seedAgyAccount(page) {
   await page.evaluate(() => window.__mageDev.store.setState((s) => ({ accounts: [...s.accounts,
     { ...s.accounts[0], id: 'vg-agy-account', providerId: 'agy', alias: 'agy de prueba', isMain: false, apiBilled: false }] })));
+}
+
+// Refresca las cuentas hasta que aparece la de `home` (el registro se acaba de escribir en la carpeta de datos).
+async function refreshAccountsUntil(page, home) {
+  await page.evaluate(() => window.__mageDev.store.getState().refreshAccounts());
+  await page.waitForFunction((id) => window.__mageDev.store.getState().accounts.some((a) => a.id === id), home, { timeout: CONFIG.actionTimeoutMs });
+}
+
+// Cuenta de otro proveedor → su historial en la barra lateral → reabrir una conversación → su transcripción hidratada.
+async function measureProviderHistory(page, { home, sessionId, title, provider }) {
+  await refreshAccountsUntil(page, home);
+  await page.evaluate((id) => window.__mageDev.store.getState().setActiveAccount(id), home);
+  await page.locator(`[data-history-session="${sessionId}"]`).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+  const listada = await page.evaluate((id) => document.querySelector(`[data-history-session="${id}"]`)?.textContent ?? '', sessionId);
+  await page.evaluate((id) => {
+    const store = window.__mageDev.store.getState();
+    store.openConversation(store.conversationHistory.find((c) => c.sessionId === id));
+  }, sessionId);
+  await page.waitForFunction((id) => {
+    const s = window.__mageDev.store.getState();
+    const tab = s.tabs.find((t) => t.resumeSessionId === id);
+    return tab !== undefined && (s.blocksByChat[tab.id] ?? []).length > 0;
+  }, sessionId, { timeout: CONFIG.actionTimeoutMs });
+  const medido = await page.evaluate((id) => {
+    const s = window.__mageDev.store.getState();
+    const tab = s.tabs.find((t) => t.resumeSessionId === id);
+    return { provider: tab.provider, cuenta: tab.accountId, tipos: [...new Set((s.blocksByChat[tab.id] ?? []).map((b) => b.kind))].sort() };
+  }, sessionId);
+  const ok = listada.includes(title) && medido.provider === provider && medido.cuenta === home && ['agent', 'tool', 'user'].every((k) => medido.tipos.includes(k));
+  return { ok, detail: JSON.stringify({ listada: listada.slice(0, 60), ...medido }) };
 }
 
 async function withNewTabDialog(page, measure) {
