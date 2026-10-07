@@ -1,0 +1,11 @@
+{"timestamp":"2026-10-05T08:00:00.000Z","ordinal":0,"type":"session_meta","payload":{"id":"11111111-2222-3333-4444-555555555555","timestamp":"2026-10-05T08:00:00.000Z","cwd":"C:\\proyecto","cli_version":"0.160.0"}}
+{"timestamp":"2026-10-05T08:00:01.000Z","ordinal":1,"type":"response_item","payload":{"type":"message","role":"developer","content":[{"type":"input_text","text":"instrucciones del sistema"}]}}
+{"timestamp":"2026-10-05T08:00:02.000Z","ordinal":2,"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<environment_context>\n  <cwd>C:\\proyecto</cwd>\n</environment_context>"}]}}
+{"timestamp":"2026-10-05T08:00:03.000Z","ordinal":3,"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Lista los ficheros\ny luego resume"}]}}
+{"timestamp":"2026-10-05T08:00:04.000Z","ordinal":4,"type":"response_item","payload":{"type":"reasoning","summary":[],"encrypted_content":"xxx"}}
+{"timestamp":"2026-10-05T08:00:05.000Z","ordinal":5,"type":"response_item","payload":{"type":"function_call","call_id":"call_1","name":"shell","arguments":"{\"command\":[\"ls\"]}"}}
+{"timestamp":"2026-10-05T08:00:06.000Z","ordinal":6,"type":"response_item","payload":{"type":"function_call_output","call_id":"call_1","output":"a.txt\nb.txt"}}
+{"timestamp":"2026-10-05T08:00:07.000Z","ordinal":7,"type":"response_item","payload":{"type":"custom_tool_call","call_id":"call_2","name":"exec","input":"text(1)"}}
+{"timestamp":"2026-10-05T08:00:08.000Z","ordinal":8,"type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"call_2","output":[{"type":"input_text","text":"Script completed"},{"type":"input_text","text":"1"}]}}
+{"timestamp":"2026-10-05T08:00:09.000Z","ordinal":9,"type":"event_msg","payload":{"type":"token_count"}}
+{"timestamp":"2026-10-05T08:00:10.000Z","ordinal":10,"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Hay dos ficheros."}]}}

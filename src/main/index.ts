@@ -156,7 +156,9 @@ import { claudeSharedLaunch } from './config/mcpProviderTranslate';
 import { selectForTarget } from './config/mcpResolved';
 import { mcpFamilyOf } from '@shared/mcp';
 import { AccountService } from './accounts/accountService';
-import { ConversationsService } from './conversations/conversationsService';
+import { ConversationsService, type ConversationsDeps } from './conversations/conversationsService';
+import { CodexHistoryService } from './conversations/codexHistory';
+import { adaptCodexLine } from '@shared/codexTranscript';
 import { ConversationAdminService } from './conversations/conversationAdminService';
 import { CliLoginService, type CliLoginProcess } from './accounts/cliLoginService';
 import { writeCredentials } from './accounts/credentialsStore';
@@ -1026,7 +1028,7 @@ const accountService = new AccountService({
 });
 // Historial de conversaciones en disco (M2.6). Lee prefijos de los .jsonl bajo projects/ (comun) y
 // mage-private/projects/ (privado) de la cuenta. Solo FS de lectura.
-const conversationsService = new ConversationsService({
+const conversationFsDeps: ConversationsDeps = {
   exists: existsSync,
   listDir: (path) => readdirSync(path),
   isDirectory: (path) => tryIsDirectory(path),
@@ -1037,7 +1039,10 @@ const conversationsService = new ConversationsService({
   readPrefix: (path, maxBytes) => readFilePrefix(path, maxBytes),
   readSuffix: (path, maxBytes) => readFileSuffix(path, maxBytes),
   runtimeProjectsDir: () => join(runtimeTranscriptRoot(), 'projects'),
-});
+};
+const conversationsService = new ConversationsService(conversationFsDeps);
+// Historial de las cuentas de Codex: sus rollouts, medidos con codex-cli 0.160.0.
+const codexHistory = new CodexHistoryService(conversationFsDeps);
 
 // FS del fichero de credenciales, compartido por los DOS escritores del token: el login y la
 // renovacion de sesion. 0600 en el tmp ANTES del rename (no tras publicar el fichero final): cierra la
@@ -2855,11 +2860,14 @@ function registerTranscriptIpc1(): void {
   ipcMain.handle(IpcChannel.TranscriptOpen, (event, transcriptId: string, params: OpenTranscriptParams): void => {
     // Con `agentId` se abre el transcript del SUBAGENTE (drill-down, M2.2.3b); sin el, el principal.
     // Ambos resolvers validan sus segmentos (anti path-traversal) y ambas rutas caen bajo projects/.
+    const codexPath = params.provider === 'codex' ? codexRolloutPath(params) : null;
     const filePath =
-      params.agentId !== undefined
-        ? resolveSubagentTranscriptPath(params.accountDir, params.cwd, params.sessionId, params.agentId)
-        : conversationTranscriptPath(params.accountDir, params.cwd, params.sessionId);
-    if (!isUnderManagedProjects(filePath)) {
+      codexPath !== null
+        ? codexPath
+        : params.agentId !== undefined
+          ? resolveSubagentTranscriptPath(params.accountDir, params.cwd, params.sessionId, params.agentId)
+          : conversationTranscriptPath(params.accountDir, params.cwd, params.sessionId);
+    if (codexPath === null && !isUnderManagedProjects(filePath)) {
       throw new Error(`Ruta de transcripcion no permitida (debe caer bajo ~/.claude*/projects): ${filePath}`);
     }
     const sender = event.sender;
@@ -2868,7 +2876,7 @@ function registerTranscriptIpc1(): void {
 
     void (async () => {
       try {
-        for await (const batch of transcriptService.openStream(filePath, controller.signal, params.resumeFrom)) {
+        for await (const batch of transcriptService.openStream(filePath, controller.signal, params.resumeFrom, codexPath === null ? undefined : adaptCodexLine)) {
           if (sender.isDestroyed()) break;
           sender.send(TRANSCRIPT_BATCH_CHANNEL, { transcriptId, batch });
         }
@@ -2883,6 +2891,15 @@ function registerTranscriptIpc1(): void {
       }
     })();
   });
+}
+
+// Rollout de una conversación de Codex: solo de una cuenta registrada y por su id (nunca una ruta del renderer).
+function codexRolloutPath(params: OpenTranscriptParams): string {
+  const account = getProviderAccounts().find('codex', params.accountDir);
+  if (account === null) throw new Error(`Cuenta de Codex no valida para abrir una transcripcion: ${params.accountDir}`);
+  const path = codexHistory.findRollout(account.home, params.sessionId);
+  if (path === null) throw new Error(`No existe la conversacion de Codex ${params.sessionId} en ${account.home}`);
+  return path;
 }
 
 function registerTranscriptIpc2(deps: IpcDependencies): void {
@@ -2904,6 +2921,8 @@ function registerTranscriptIpc2(deps: IpcDependencies): void {
   // Historial de conversaciones de una cuenta (M2.6, sidebar = historial). Whitelisting: la ruta debe
   // ser un dir de cuenta gestionado bajo HOME (nunca una ruta arbitraria via IPC).
   ipcMain.handle(IpcChannel.ConversationsList, (_e, accountDir: string): readonly ConversationSummary[] => {
+    const codex = getProviderAccounts().find('codex', accountDir);
+    if (codex !== null) return codexHistory.list(codex.home);
     if (!isManagedAccountConfigDir(accountDir)) {
       throw new Error(`Cuenta no valida para listar conversaciones: ${accountDir}`);
     }

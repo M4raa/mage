@@ -100,6 +100,16 @@ describe('SessionManager.create', () => {
     expect(h.launchOf(0).resume).toBe(false);
   });
 
+  it('create_codexConResumeSessionId_sesionNuevaYReanudaSuHilo', () => {
+    // Codex lleva su propia conversacion: el id es el de su hilo, y Mage abre una sesion nueva sobre el.
+    const h = harness();
+
+    const sessionId = h.manager.create(params({ provider: 'codex', resumeSessionId: 'hilo-123' }), h.sink);
+
+    expect(sessionId).not.toBe('hilo-123');
+    expect(h.launchOf(0)).toMatchObject({ resume: false, conversationId: 'hilo-123' });
+  });
+
   it('create_runtimePropioConResumeSessionId_reanudaConElMismoId', () => {
     // P-032 R4: el runtime propio relee su transcripcion de userData/runtime.
     const h = harness();

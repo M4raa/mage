@@ -1,6 +1,7 @@
 // Resumen de una conversacion existente en disco (M2.6, sidebar = historial). Se deriva de la
 // transcripcion persistida (`<configDir>/projects[/…]/<enc>/<sessionId>.jsonl`). NO incluye el
 // contenido ni credenciales; solo metadatos para listar/reabrir.
+import type { AccountProviderId } from './accounts';
 import type { ConversationPrivacy } from './state';
 
 export interface ConversationSummary {
@@ -19,6 +20,8 @@ export interface ConversationSummary {
   // La conversacion la empezo una TAREA PROGRAMADA (`<scheduled-task>`), no el usuario: el historial
   // lo marca con una insignia (P-026, D20).
   readonly isScheduled: boolean;
+  // CLI al que pertenece (Codex lee sus rollouts, medidos). Ausente = Claude, el historial de siempre.
+  readonly providerId?: AccountProviderId;
 }
 
 // Borrado de una conversacion en disco (#2 de AJUSTES). accountDir es la cuenta RAIZ; privacy indica

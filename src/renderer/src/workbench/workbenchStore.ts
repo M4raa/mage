@@ -1906,7 +1906,7 @@ export function createWorkbenchStore(mage: MageClient) {
     // Carga el historial en disco de la cuenta activa (M2.6). Tolerante: un fallo no rompe el shell.
     loadConversationHistory: async () => {
       const accountId = get().activeAccountId;
-      if (accountId.length === 0 || get().accounts.find((account) => account.id === accountId)?.providerId !== 'claude') {
+      if (accountId.length === 0 || !HISTORY_PROVIDERS.includes(get().accounts.find((account) => account.id === accountId)?.providerId ?? '')) {
         set({ conversationHistory: [] });
         return;
       }
@@ -1980,7 +1980,11 @@ export function createWorkbenchStore(mage: MageClient) {
         // que `createConversation` si respeta.
         providerDefaultModel: get().settings.defaultModelByProvider.claude ?? null,
       });
-      const reopened = tabFromConversation({ id: nextTabId(), item, accountId, accountAlias: account?.alias ?? accountId, prefs });
+      // El modelo de Claude de la cuenta/índice no vale para otro CLI: se parte del suyo.
+      const providerModel = item.providerId === undefined || item.providerId === 'claude' ? null
+        : (get().settings.defaultModelByProvider[item.providerId] ?? providerFallbackModel(item.providerId, get().settings.customProviders));
+      const reopened = tabFromConversation({ id: nextTabId(), item, accountId, accountAlias: account?.alias ?? accountId,
+        prefs: providerModel === null ? prefs : { ...prefs, model: providerModel } });
       const project = get().settings.chatProjects.find((p) => p.sessionIds.includes(item.sessionId) || (p.cwd !== null && p.cwd === item.cwd));
       const tab = project === undefined ? reopened : { ...reopened, projectId: project.id };
       set((s) => ({
@@ -2843,6 +2847,8 @@ export function createWorkbenchStore(mage: MageClient) {
       }
       detectPrBinding(get, tabId, event);
       denyPrTurnCommand(mage, get, set, sessionId, tabId, event);
+      // El hilo de Codex se conoce al arrancar: se persiste para poder reabrir la conversación.
+      if (event.kind === 'session_init' && tab?.provider === CODEX_PROVIDER_ID) schedulePersist(mage, get);
       // Y es el momento de mandar un nombre que el usuario puso con el turno en marcha (D3).
       if (event.kind === 'result') flushPendingCliTitle(mage, get, set, tabId);
       // Y el primer mensaje de la cola sale como turno propio (0.1.1 R2, punto 30).
@@ -2924,6 +2930,17 @@ function settleElicitation(state: WorkbenchState, tabId: string, requestId: stri
 async function refreshAgyUsage(set: SetFn): Promise<void> {
   const agyUsage = await window.mage.readAgyUsage().catch((err: unknown): AgyUsageSnapshot => ({ status: 'unavailable', reason: describeError(err), fetchedAt: Date.now() }));
   set(() => ({ agyUsage }));
+}
+
+// Proveedores cuyo historial en disco sabe leer Mage (un lector por CLI: el de Claude y el rollout de Codex).
+const HISTORY_PROVIDERS: readonly string[] = ['claude', CODEX_PROVIDER_ID];
+
+// El id del hilo de una pestaña de Codex, la primera vez que se conoce. Es lo que permite reabrir la
+// conversación (`thread/resume`) y leer su rollout; las pestañas de los demás proveedores no lo usan.
+function codexThreadBinding(state: WorkbenchState, tabId: string, threadId: string): Partial<WorkbenchState> {
+  const tab = state.tabs.find((t) => t.id === tabId);
+  if (tab === undefined || tab.provider !== CODEX_PROVIDER_ID || tab.resumeSessionId !== undefined || threadId.length === 0) return {};
+  return { tabs: state.tabs.map((t) => (t.id === tabId ? { ...t, resumeSessionId: threadId } : t)) };
 }
 
 export function headPermission(state: Pick<WorkbenchState, 'pendingByChat'>, tabId: string): PendingPermission | null {
@@ -3131,6 +3148,8 @@ export function reduceEvent(state: WorkbenchState, tabId: string, event: MageEve
     // NOMBRES de comandos; las descripciones llegan luego en commands_available (si el CLI las da).
     case 'session_init':
       return {
+        // Codex lleva su propia conversación: su id de hilo es lo que reanuda y lo que localiza su historial.
+        ...codexThreadBinding(state, tabId, event.sessionId),
         slashCommandsByChat: {
           ...state.slashCommandsByChat,
           [tabId]: event.slashCommands.map((name) => ({ name, description: '', argumentHint: null, aliases: [] })),

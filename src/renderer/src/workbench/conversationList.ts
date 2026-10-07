@@ -130,7 +130,7 @@ export function tabFromConversation(context: ConversationTabContext): Tab {
     cwd: item.cwd,
     model: prefs.model,
     // El runtime con el que se abrio (P-032 R4); lo antiguo, y lo que no dejo nada guardado, es Claude.
-    provider: prefs.provider ?? 'claude',
+    provider: item.providerId ?? prefs.provider ?? 'claude',
     title: item.title,
     privacy: item.privacy,
     resolvedConfigDir: item.configDir,

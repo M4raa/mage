@@ -7,7 +7,7 @@ import type { CreateSessionParams, SessionEventPayload } from '@shared/ipc';
 import type { AgentSessionDeps, SessionLogFn } from './agentSession';
 import { resolveLaunchParams, type DefaultsDeps } from './sessionDefaults';
 import { pathEquals } from '../os/pathUtils';
-import { writesClaudeTranscript } from '@shared/providers';
+import { CODEX_PROVIDER_ID, writesClaudeTranscript } from '@shared/providers';
 
 // Sumidero de eventos hacia el consumidor (en produccion, webContents.send del renderer).
 export type EventSink = (payload: SessionEventPayload) => void;
@@ -56,9 +56,11 @@ export class SessionManager {
   // propio, P-032 R4): se reutiliza el sessionId pasado y se marca `resume`. El resto ignora
   // resumeSessionId y arranca una sesion fresca con id nuevo.
   create(params: CreateSessionParams, sink: EventSink, ownerId?: number): string {
-    const isResume =
-      writesClaudeTranscript(params.provider) && typeof params.resumeSessionId === 'string' && params.resumeSessionId.length > 0;
-    const sessionId = isResume ? (params.resumeSessionId as string) : randomUUID();
+    const resumeId = typeof params.resumeSessionId === 'string' && params.resumeSessionId.length > 0 ? params.resumeSessionId : null;
+    // Codex lleva su propia conversacion (su hilo): `resumeSessionId` es ese id y la sesion de Mage es nueva.
+    const providerOwnsConversation = !writesClaudeTranscript(params.provider);
+    const isResume = resumeId !== null && !providerOwnsConversation;
+    const sessionId = isResume ? resumeId : randomUUID();
     // Una conversacion NO puede estar viva dos veces: serian dos procesos del CLI escribiendo la misma
     // transcripcion, que acabaria corrupta. Hoy el renderer ya evita llegar aqui (openConversation
     // activa la pestana existente en vez de abrir otra), pero esto es una FRONTERA IPC y el estado
@@ -69,7 +71,8 @@ export class SessionManager {
     if (this.sessions.has(sessionId)) {
       throw new Error(`Esa conversacion ya esta abierta en otra pestana (sesion ${sessionId})`);
     }
-    const launch = resolveLaunchParams(sessionId, params, this.defaults, isResume);
+    const resolved = resolveLaunchParams(sessionId, params, this.defaults, isResume);
+    const launch = resumeId !== null && providerOwnsConversation && params.provider === CODEX_PROVIDER_ID ? { ...resolved, conversationId: resumeId } : resolved;
     // `/clear` (P-028) abre OTRA conversacion en el mismo proceso: a partir de su `conversation_reset`
     // la sesion se etiqueta con el id nuevo, que es el que usan la transcripcion, la persistencia y el
     // `--resume`. El evento del reset aun sale con el id viejo, para que el renderer sepa de que pestaña es.

@@ -590,3 +590,18 @@ describe('reduceEvent — elicitation MCP', () => {
     expect(reduceEvent(resolved, TAB, { kind: 'elicitation_cancelled', requestId: 'e1' })).toEqual({});
   });
 });
+
+describe('reduceEvent — hilo de Codex', () => {
+  const init = { kind: 'session_init', sessionId: 'hilo-1', model: 'm', tools: [], mcpServers: [], slashCommands: [], skills: [], plugins: [], pluginErrors: [] } as unknown as MageEvent;
+
+  it('reduceEvent_sessionInitDeCodex_guardaElHiloComoResumeSessionId', () => {
+    const patch = reduceEvent(state({ tabs: [tab({ provider: 'codex' })] }), TAB, init);
+
+    expect(patch.tabs?.[0]?.resumeSessionId).toBe('hilo-1');
+  });
+
+  it('reduceEvent_sessionInitDeClaudeOHiloYaConocido_noTocaLaPestana', () => {
+    expect(reduceEvent(state({ tabs: [tab({ provider: 'claude' })] }), TAB, init).tabs).toBeUndefined();
+    expect(reduceEvent(state({ tabs: [tab({ provider: 'codex', resumeSessionId: 'otro' })] }), TAB, init).tabs).toBeUndefined();
+  });
+});

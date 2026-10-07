@@ -2,6 +2,11 @@ import { createInterface } from 'node:readline';
 import type { TranscriptBatch, TranscriptEntry, TranscriptParseError } from '@shared/transcripts';
 import { parseTranscriptLine, type ParsedLineResult } from './normalize';
 
+// Traduce una línea ya parseada de otro CLI (Codex) a la forma de línea de transcripción de Claude. Una línea
+// entra, una sale: los índices por línea física no cambian. Para Claude no hay traducción.
+export type LineAdapter = (parsed: unknown) => unknown;
+const IDENTITY_ADAPTER: LineAdapter = (parsed) => parsed;
+
 // Tamano de lote por numero de lineas: ~2000-2500 lineas (caso real del DoD, ~7-9MB) producen
 // 10-13 lotes.
 export const BATCH_SIZE = 200;
@@ -76,6 +81,7 @@ export async function* readTranscriptLines(
   readStream: NodeJS.ReadableStream,
   signal?: AbortSignal,
   startingLineNumber = 0,
+  adapt: LineAdapter = IDENTITY_ADAPTER,
 ): AsyncGenerator<ParsedLineResult> {
   const rl = createInterface({ input: readStream, crlfDelay: Infinity });
   const onAbort = (): void => rl.close();
@@ -85,21 +91,21 @@ export async function* readTranscriptLines(
     for await (const rawLine of rl) {
       lineNumber += 1;
       if (rawLine.trim().length === 0) continue; // linea en blanco (p.ej. fichero vacio): se ignora
-      yield parseJsonLine(rawLine, lineNumber);
+      yield parseJsonLine(rawLine, lineNumber, adapt);
     }
   } finally {
     signal?.removeEventListener('abort', onAbort);
   }
 }
 
-function parseJsonLine(rawLine: string, lineNumber: number): ParsedLineResult {
+function parseJsonLine(rawLine: string, lineNumber: number, adapt: LineAdapter): ParsedLineResult {
   let parsedJson: unknown;
   try {
     parsedJson = JSON.parse(rawLine);
   } catch {
     return { ok: false, error: 'JSON invalido (linea corrupta o truncada)', lineNumber };
   }
-  return parseTranscriptLine(parsedJson, lineNumber);
+  return parseTranscriptLine(adapt(parsedJson), lineNumber);
 }
 
 // Orquesta lectura + troceo para un stream ya abierto. Punto de entrada usado por
@@ -110,6 +116,7 @@ export function readTranscriptBatches(
   signal?: AbortSignal,
   startingLineNumber = 0,
   startingTotalLines = 0,
+  adapt: LineAdapter = IDENTITY_ADAPTER,
 ): AsyncGenerator<Omit<TranscriptBatch, 'bytesReadSoFar'>> {
-  return groupIntoBatches(readTranscriptLines(readStream, signal, startingLineNumber), BATCH_SIZE, startingTotalLines, startingLineNumber);
+  return groupIntoBatches(readTranscriptLines(readStream, signal, startingLineNumber, adapt), BATCH_SIZE, startingTotalLines, startingLineNumber);
 }

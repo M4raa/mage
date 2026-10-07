@@ -5,7 +5,7 @@
 import type { GitParams, GitSnapshot, GitSwitchParams } from './git';
 import type { WorktreeCreateParams, WorktreeMergeBaseParams, WorktreeRemoveResult } from './worktree';
 import type { GhAutoMergeParams, GhPrUpdate, GhRunActionParams, GhRunsParams, GhRunsSnapshot, GhSnapshot, GhWatchParams } from './gh';
-import type { AccountCreateParams, AccountInfo, CliLoginStart, CodexLoginOutcome, EmbeddedLoginResult } from './accounts';
+import type { AccountCreateParams, AccountInfo, AccountProviderId, CliLoginStart, CodexLoginOutcome, EmbeddedLoginResult } from './accounts';
 import type { ProviderModel } from './providers';
 import type { AgyUsageSnapshot } from './usage';
 import type { MageEvent, PermissionDecision, SlashCommandInfo } from './events';
@@ -409,6 +409,8 @@ export interface OpenTranscriptParams {
   readonly cwd: string;
   readonly sessionId: string;
   readonly agentId?: string;
+  // CLI de la conversación. Ausente = Claude. Con 'codex', `accountDir` es su CODEX_HOME y se lee su rollout.
+  readonly provider?: AccountProviderId;
   // I5: reanuda desde esta posicion en vez de leer desde el principio (lectura incremental/tail).
   // Ausente o `TRANSCRIPT_TAIL_START` = comportamiento de siempre (todo el fichero).
   readonly resumeFrom?: TranscriptTailPosition;

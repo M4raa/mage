@@ -1,6 +1,6 @@
 import type { TranscriptBatch, TranscriptTailPosition } from '@shared/transcripts';
 import { TRANSCRIPT_TAIL_START } from '@shared/transcripts';
-import { readTranscriptBatches } from './transcriptReader';
+import { readTranscriptBatches, type LineAdapter } from './transcriptReader';
 
 // Espera por defecto a que el fichero aparezca: el CLI vuelca el .jsonl al arrancar el primer turno,
 // asi que abrir Logs/Contexto de una sesion recien creada puede adelantarse unos segundos al fichero.
@@ -53,7 +53,7 @@ export class TranscriptService {
   // `from` (I5): posicion de reanudacion. Si el fichero es hoy MAS PEQUEÑO que `from.bytesRead` (se
   // truncó/reescribió por fuera, nunca deberia pasar con el CLI pero no se asume), la posicion
   // recordada ya no vale y se relee entero — mejor eso que pedir un rango que ya no existe.
-  async *openStream(filePath: string, signal: AbortSignal, from: TranscriptTailPosition = TRANSCRIPT_TAIL_START): AsyncGenerator<TranscriptBatch> {
+  async *openStream(filePath: string, signal: AbortSignal, from: TranscriptTailPosition = TRANSCRIPT_TAIL_START, adapt?: LineAdapter): AsyncGenerator<TranscriptBatch> {
     if (filePath.trim().length === 0) {
       throw new Error(`Ruta de transcripcion invalida: "${filePath}"`);
     }
@@ -90,7 +90,7 @@ export class TranscriptService {
     stream.on('error', (err: Error) => {
       streamError = err;
     });
-    for await (const batch of readTranscriptBatches(stream, signal, resumeFrom.rawLineNumber, resumeFrom.totalLinesSoFar)) {
+    for await (const batch of readTranscriptBatches(stream, signal, resumeFrom.rawLineNumber, resumeFrom.totalLinesSoFar, adapt)) {
       // Al cancelar, readline cierra su iterador y el ultimo lote sale marcado isFinal:true (como
       // si el archivo hubiera terminado de verdad); NO se propaga ese ultimo lote para no mentirle
       // al renderer sobre que la transcripcion se leyo completa.
