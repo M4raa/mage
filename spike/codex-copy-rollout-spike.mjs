@@ -24,7 +24,7 @@ console.log('rollout copiado:', basename(source), `(${statSync(source).size} byt
 
 const env = { ...process.env, CODEX_HOME: home };
 for (const name of ['OPENAI_API_KEY', 'CODEX_API_KEY']) delete env[name];
-const child = spawn('codex', ['app-server'], { env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, shell: process.platform === 'win32' });
+const child = spawn('codex', ['app-server'], { env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
 const replies = new Map();
 let buffer = '';
 child.stdout.setEncoding('utf8');
