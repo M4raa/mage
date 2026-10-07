@@ -6,6 +6,7 @@ import { AccountSwitcher } from './AccountSwitcher';
 import { Icon } from './Icon';
 import { buildBugReportUrl, buildIdeaUrl } from '../bugReport';
 import { reportActionError } from '../notificationStore';
+import { NotificationBell } from './NotificationCenter';
 
 // Ancho que reserva Windows para sus tres botones de sistema (minimizar/maximizar/cerrar) en la franja
 // de `titleBarOverlay`. Se deja libre a la derecha: cualquier cosa pintada debajo seria inalcanzable.
@@ -78,6 +79,7 @@ export function TitleBar(): React.JSX.Element {
         <>
           <AccountSwitcher />
           <div className="flex-1" />
+          <NotificationBell />
           <IdeaButton />
           <BugReportButton />
         </>

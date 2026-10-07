@@ -9,14 +9,14 @@ import { clearNotificationHistory, markNotificationsRead, useNotificationStore }
 
 const TIME_FORMAT = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' });
 
-// Campana de la barra de estado con el centro de notificaciones: las ultimas de esta ventana (en
+// Campana de la cabecera con el centro de notificaciones: las ultimas de esta ventana (en
 // memoria, no se persisten), marcar como leidas y limpiar. Descartar un toast no lo quita de aqui.
 export function NotificationBell(): React.JSX.Element {
   const [open, setOpen] = useState(false);
   const unread = useNotificationStore(unreadCount);
   const label = unread === 0 ? 'Notificaciones' : `Notificaciones (${unread} sin leer)`;
   return (
-    <div className="relative flex items-center">
+    <div className="relative flex items-center" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
       <button
         onClick={() => setOpen((v) => !v)}
         aria-label={label}
@@ -62,7 +62,7 @@ function CenterPanel({ onClose }: { readonly onClose: () => void }): React.JSX.E
       aria-label="Centro de notificaciones"
       data-notification-center="true"
       style={{ zIndex: 9999 }}
-      className="absolute bottom-[calc(100%_+_8px)] right-0 flex max-h-[min(420px,70vh)] w-[340px] flex-col rounded-[9px] border border-mg-border-pop bg-mg-popover text-[11px] text-mg-body mg-shadow-pop"
+      className="absolute top-[calc(100%_+_10px)] right-0 flex max-h-[min(420px,70vh)] w-[340px] flex-col rounded-[9px] border border-mg-border-pop bg-mg-popover text-[11px] text-mg-body mg-shadow-pop"
     >
       <div className="flex items-center gap-[6px] border-b border-mg-border-subtle p-[8px_10px]">
         <span className="flex-1 text-[9.5px] font-bold tracking-[.08em] text-mg-ter">NOTIFICACIONES</span>

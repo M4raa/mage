@@ -3,7 +3,6 @@ import { Icon } from './Icon';
 import { selectAccount, useWorkbenchStore } from '../workbenchStore';
 import { severityForPct, type UsageSeverity } from '../usageView';
 import { UsagePopover } from './UsagePopover';
-import { NotificationBell } from './NotificationCenter';
 import { reportActionError } from '../notificationStore';
 import { providerLabel } from '../accountView';
 import type { Account } from '../types';
@@ -46,7 +45,6 @@ export function StatusBar(): React.JSX.Element {
       <ServiceStatus status={status} />
       <AppVersion />
       <UpdateIndicator />
-      <NotificationBell />
     </div>
   );
 }

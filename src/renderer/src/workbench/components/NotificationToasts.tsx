@@ -20,7 +20,7 @@ const LEVEL_SKIN: Readonly<Record<NotifyLevel, string>> = {
   error: 'border-mg-danger-border bg-mg-danger-bg text-mg-danger',
 };
 
-// Pila de toasts abajo a la derecha, encima de la barra de estado (26 px + 8 de aire) y por debajo de los
+// Pila de toasts arriba a la derecha, bajo la cabecera (32 px + 8 de aire) y por debajo de los
 // modales (z-50). Las dos regiones vivas existen SIEMPRE, aunque esten vacias: un lector de pantalla solo
 // anuncia lo que se inserta en una region que ya estaba. Nunca roba el foco.
 export function NotificationToasts(): React.JSX.Element {
@@ -30,7 +30,7 @@ export function NotificationToasts(): React.JSX.Element {
     <section
       aria-label="Notificaciones"
       data-notification-toasts="true"
-      className="pointer-events-none fixed bottom-[34px] right-[8px] z-40 flex w-[340px] max-w-[calc(100vw-16px)] flex-col gap-[6px]"
+      className="pointer-events-none fixed top-[40px] right-[8px] z-40 flex w-[340px] max-w-[calc(100vw-16px)] flex-col gap-[6px]"
     >
       <div role="status" aria-live="polite" className="flex flex-col gap-[6px]">
         <AnimatePresence initial={false}>
@@ -54,7 +54,7 @@ function Toast({ notification }: { readonly notification: AppNotification }): Re
   const attentive = useWindowAttention();
   // El reloj solo corre con la ventana a la vista y sin el usuario encima: un aviso que nace con Mage en
   // segundo plano no puede caducar sin que nadie lo vea.
-  useToastClock(notification, hovered || focusWithin || !attentive);
+  const progressRef = useToastClock(notification, hovered || focusWithin || !attentive);
   const titleId = `notification-title-${id}`;
   return (
     <motion.div
@@ -76,6 +76,11 @@ function Toast({ notification }: { readonly notification: AppNotification }): Re
       className={`pointer-events-auto rounded-[8px] border p-[8px_10px] text-[11px] mg-shadow-pop ${LEVEL_SKIN[notification.level]}`}
     >
       <NotificationContent notification={notification} titleId={titleId} onDismiss={() => dismissToast(id)} />
+      {notification.timeoutMs !== null && (
+        <div className="mt-[8px] h-[3px] overflow-hidden rounded-full bg-mg-border-subtle" aria-hidden="true">
+          <div ref={progressRef} data-notification-progress="true" className="h-full w-full origin-left" />
+        </div>
+      )}
     </motion.div>
   );
 }
@@ -152,19 +157,43 @@ function useWindowAttention(): boolean {
 
 // Cuenta atras pausable. Al pausar se guarda lo que queda; un aviso repetido (dedupe: sube `count`)
 // vuelve a empezar desde su tiempo entero.
-function useToastClock(notification: AppNotification, paused: boolean): void {
+function useToastClock(notification: AppNotification, paused: boolean): React.RefObject<HTMLDivElement | null> {
   const { id, timeoutMs, count } = notification;
   const remaining = useRef(timeoutMs ?? 0);
+  const progressRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    remaining.current = timeoutMs ?? 0;
-  }, [timeoutMs, count]);
+    if (timeoutMs === null) return;
+    remaining.current = timeoutMs;
+  }, [id, timeoutMs, count]);
   useEffect(() => {
-    if (timeoutMs === null || paused) return;
+    if (timeoutMs === null) return;
+    const paint = (elapsedMs: number): void => {
+      const fraction = timeoutMs === 0 ? 0 : tickRemaining(remaining.current, elapsedMs) / timeoutMs;
+      const progress = progressRef.current;
+      if (progress === null) return;
+      progress.style.transform = `scaleX(${fraction})`;
+      progress.style.backgroundColor = `color-mix(in srgb, var(--color-mg-diff-add) ${fraction * 100}%, var(--color-mg-danger-emph))`;
+    };
+    paint(0);
+    if (paused) return;
     const startedAt = performance.now();
     const timer = setTimeout(() => dismissToast(id), remaining.current);
+    const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+    let frame = 0;
+    const animate = (): void => {
+      paint(performance.now() - startedAt);
+      frame = requestAnimationFrame(animate);
+    };
+    let interval: ReturnType<typeof setInterval> | undefined;
+    if (reducedMotion) interval = setInterval(() => paint(performance.now() - startedAt), 250);
+    else frame = requestAnimationFrame(animate);
     return () => {
       clearTimeout(timer);
+      cancelAnimationFrame(frame);
+      if (interval !== undefined) clearInterval(interval);
       remaining.current = tickRemaining(remaining.current, performance.now() - startedAt);
+      paint(0);
     };
   }, [id, timeoutMs, count, paused]);
+  return progressRef;
 }

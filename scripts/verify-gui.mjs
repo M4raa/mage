@@ -7383,7 +7383,7 @@ const CHECKS = [
     // cableado lo cubre el test del store). NUNCA se pulsa «Abrir carpeta» (abriria el explorador del SO
     // de verdad; el objeto del contextBridge no se puede sustituir) ni «Copiar ruta» (el portapapeles del
     // usuario): se miden y se descarta con la ✕.
-    name: 'Avisos de Mage: worktree conservado, toast con «Abrir carpeta» y «Copiar ruta» sobre la barra de estado',
+    name: 'Avisos de Mage: worktree conservado, toast con «Abrir carpeta» y «Copiar ruta» bajo la cabecera',
     async run(page) {
       const ruta = 'C:\\proyectos\\un-repo-con-un-nombre-largo\\.claude\\worktrees\\arreglar-el-cierre-de-pestanas-con-cambios-y-una-ruta-muy-larga';
       await clearNotifications(page);
@@ -7404,7 +7404,7 @@ const CHECKS = [
       await toast.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
       await waitForStillBox(page, '[data-notification-toasts="true"] [data-notification-level]');
       const medido = await toast.evaluate((node, path) => {
-        const barra = document.querySelector('[data-status-bar="true"]').getBoundingClientRect();
+        const barra = document.querySelector('[data-titlebar]').getBoundingClientRect();
         const caja = node.getBoundingClientRect();
         const cuerpo = [...node.querySelectorAll('[title]')].find((el) => el.getAttribute('title') === path);
         return {
@@ -7415,7 +7415,7 @@ const CHECKS = [
           rutaEnTitle: cuerpo !== undefined,
           rutaRecortada: cuerpo !== undefined && cuerpo.scrollHeight > cuerpo.clientHeight + 0.5,
           altoBarra: barra.height,
-          encimaDeLaBarra: caja.bottom <= barra.top + 0.5,
+          debajoDeLaBarra: caja.top >= barra.bottom - 0.5,
           dentroDeLaVentana: caja.right <= window.innerWidth + 0.5 && caja.left >= 0,
         };
       }, ruta);
@@ -7431,8 +7431,8 @@ const CHECKS = [
         JSON.stringify(medido.botones) === JSON.stringify(['Abrir carpeta', 'Copiar ruta', 'Descartar notificación']) &&
         medido.rutaEnTitle &&
         medido.rutaRecortada &&
-        medido.altoBarra === 26 &&
-        medido.encimaDeLaBarra &&
+        medido.altoBarra === 32 &&
+        medido.debajoDeLaBarra &&
         medido.dentroDeLaVentana &&
         reloj === 10_000 &&
         enElCentro === 1;
@@ -7557,6 +7557,66 @@ const CHECKS = [
           (transformAlEntrar.transform === 'none' || transformAlEntrar.transform === 'matrix(1, 0, 0, 1, 0, 0)');
         return { ok, detail: JSON.stringify({ focoSigueEnLaCampana, sigueConElRatonEncima, seVaAlSalirMs, regiones, quedaElDeExito, transformAlEntrar }) };
       } finally {
+        await cdp.send('Emulation.setFocusEmulationEnabled', { enabled: false }).catch(() => undefined);
+        await cdp.detach().catch(() => undefined);
+      }
+    },
+  },
+  {
+    name: 'I: Notificaciones en cabecera y arriba, progreso pausable y errores sin barra',
+    async run(page) {
+      await clearNotifications(page);
+      const cdp = await page.context().newCDPSession(page);
+      await cdp.send('Emulation.setFocusEmulationEnabled', { enabled: true });
+      try {
+        await page.evaluate(() => {
+          window.__mageDev.notify({ level: 'info', title: 'Progreso medido', timeoutMs: 3000, source: 'verify' });
+          window.__mageDev.notify({ level: 'error', title: 'Error persistente', source: 'verify' });
+        });
+        const toast = page.locator('[data-notification-level="info"]');
+        const progress = toast.locator('[data-notification-progress]');
+        await progress.waitFor({ state: 'visible' });
+        await waitForStillBox(page, '[data-notification-level="info"]');
+        const geometry = await page.evaluate(() => {
+          const header = document.querySelector('[data-titlebar]').getBoundingClientRect();
+          const bell = document.querySelector('[data-notification-bell]').getBoundingClientRect();
+          const toast = document.querySelector('[data-notification-level="info"]').getBoundingClientRect();
+          return { bellInHeader: bell.top >= header.top && bell.bottom <= header.bottom,
+            toastAtTop: toast.top >= header.bottom && toast.top < innerHeight / 2,
+            toastAtRight: toast.right <= innerWidth && toast.right > innerWidth - 30 };
+        });
+        const fraction = () => progress.evaluate((node) => Number(node.style.transform.match(/scaleX\(([^)]+)\)/)?.[1] ?? -1));
+        const initial = await fraction();
+        await page.waitForTimeout(300);
+        const running = await fraction();
+        await toast.hover();
+        const pausedAt = await fraction();
+        await page.waitForTimeout(450);
+        const pausedAfter = await fraction();
+        await page.mouse.move(4, 400);
+        await page.waitForTimeout(300);
+        const resumed = await fraction();
+        const errorBar = await page.locator('[data-notification-level="error"] [data-notification-progress]').count();
+        await page.locator('[data-notification-bell]').click();
+        await waitForStillBox(page, '[data-notification-center]');
+        const centerPosition = await page.locator('[data-notification-center]').evaluate((node) => ({ top: node.getBoundingClientRect().top, headerBottom: document.querySelector('[data-titlebar]').getBoundingClientRect().bottom }));
+        const centerBelow = centerPosition.top >= centerPosition.headerBottom;
+        await page.keyboard.press('Escape');
+        await page.emulateMedia({ reducedMotion: 'reduce' });
+        await clearNotifications(page);
+        await page.evaluate(() => window.__mageDev.notify({ level: 'info', title: 'Progreso reducido', timeoutMs: 3000, source: 'verify' }));
+        const reduced = page.locator('[data-notification-progress]');
+        await reduced.waitFor({ state: 'visible' });
+        const reducedInitial = await reduced.evaluate((node) => Number(node.style.transform.match(/scaleX\(([^)]+)\)/)?.[1] ?? -1));
+        await page.waitForTimeout(350);
+        const reducedLater = await reduced.evaluate((node) => Number(node.style.transform.match(/scaleX\(([^)]+)\)/)?.[1] ?? -1));
+        const ok = geometry.bellInHeader && geometry.toastAtTop && geometry.toastAtRight &&
+          initial > running && running > pausedAt - 0.03 && Math.abs(pausedAfter - pausedAt) < 0.015 &&
+          resumed < pausedAfter && errorBar === 0 && centerBelow && reducedInitial > reducedLater;
+        return { ok, detail: JSON.stringify({ geometry, initial, running, pausedAt, pausedAfter, resumed, errorBar, centerPosition, reducedInitial, reducedLater }) };
+      } finally {
+        await page.emulateMedia({ reducedMotion: null });
+        await clearNotifications(page);
         await cdp.send('Emulation.setFocusEmulationEnabled', { enabled: false }).catch(() => undefined);
         await cdp.detach().catch(() => undefined);
       }
