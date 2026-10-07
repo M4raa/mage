@@ -14,6 +14,7 @@ export interface SystemPromptInput {
   readonly textToolGuide?: string | null;
   // Primer `AGENTS.md`/`CLAUDE.md` del cwd, ya recortado (ficha D16). null = no hay.
   readonly projectNotes: { readonly file: string; readonly text: string } | null;
+  readonly projectInstructions?: string;
 }
 
 const OS_NAMES: Readonly<Record<string, string>> = { win32: 'Windows', darwin: 'macOS', linux: 'Linux' };
@@ -36,6 +37,7 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
   if (input.projectNotes !== null) {
     lines.push('', `Project notes (${input.projectNotes.file}):`, input.projectNotes.text);
   }
+  if (input.projectInstructions) lines.push('', 'Mage project instructions:', input.projectInstructions);
   return lines.join('\n');
 }
 

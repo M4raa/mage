@@ -35,6 +35,11 @@ function answer(adapter: CodexAdapter, requests: readonly Rpc[], method: string,
 const notification = (method: string, params: Record<string, unknown>): unknown => ({ jsonrpc: '2.0', method, params });
 
 describe('CodexAdapter: arranque (codex app-server, sin verificar)', () => {
+  it('enviaReglasDelProyectoEnLasInstruccionesDeDesarrollo', () => {
+    const adapter = codex();
+    const requests = handshake(adapter, { ...launch, projectInstructions: 'Eres experto en Python' });
+    expect(requests.find((request) => request.method === 'thread/start')?.params?.developerInstructions).toContain('Eres experto en Python');
+  });
   it('buildSpawnPlan_perfilesDePermiso_habilitaApiExperimentalAntesDeAbrirHilo', () => {
     const adapter = codex();
     adapter.buildSpawnPlan({ ...launch, permissionMode: ':read-only' });

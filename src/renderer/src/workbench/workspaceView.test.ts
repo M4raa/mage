@@ -32,6 +32,11 @@ const tab = (over: Partial<Tab> = {}): Tab => ({
 });
 
 describe('toPersistedWorkspace', () => {
+  it('proyectoDePestanaSobreviveAlReinicio', () => {
+    const persisted = toPersistedWorkspace([tab({ projectId: 'python' })], 'tab1', {});
+    expect(persisted.tabs[0]?.projectId).toBe('python');
+    expect(restoreTabs(persisted, new Set(['.claude'])).tabs[0]?.projectId).toBe('python');
+  });
   it('pestanaConSesionViva_persisteEseSessionId', () => {
     const ws = toPersistedWorkspace([tab()], 'tab1', { tab1: 'live-123' });
 

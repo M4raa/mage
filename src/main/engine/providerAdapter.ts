@@ -24,6 +24,7 @@ export interface LaunchParams {
   readonly effort?: string; // nivel --effort (M2.4); ya validado en la frontera. undefined -> sin flag
   readonly maxBudgetUsdCents?: number; // tope --max-budget-usd en centavos enteros (M2.4); undefined -> sin tope
   readonly permissionMode?: string; // modo de permiso inicial (--permission-mode, M2.6); undefined/'default' -> sin flag
+  readonly projectInstructions?: string;
   // Lo COMUN a todas las cuentas para ESTE proveedor y cuenta, ya filtrado por «Solo en…». Neutro de
   // proveedor: cada adapter lo traduce a su CLI (mcpProviderTranslate.ts). undefined -> nada.
   readonly shared?: SharedLaunchConfig;

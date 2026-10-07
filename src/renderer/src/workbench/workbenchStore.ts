@@ -93,6 +93,7 @@ import { SUBAGENT_TOOL_NAMES } from './toolSummary';
 import { classifySystemWrapper } from '@shared/systemWrappers';
 import type {
   AppSettings,
+  ChatProject,
   CloseBehavior,
   DefaultPermissionMode,
   ImportedTheme,
@@ -115,6 +116,7 @@ import type { MageApi } from '@shared/ipc';
 import type { GitSnapshot } from '@shared/git';
 import { canSwitchBranch } from './canSwitchBranch';
 import { recentProjects, RECENT_PROJECTS_LIMIT } from './recentProjects';
+import { projectForRow } from './chatProjects';
 import { isWindowsPlatform } from './keybindings/platform';
 
 // Contexto en placeholder hasta M1.3 (el uso/contexto real llega con UsageService).
@@ -249,6 +251,9 @@ export interface WorkbenchState extends PrState, PrActions {
 
   // --- Historial de conversaciones en disco (M2.6, sidebar = historial) ---
   readonly conversationHistory: readonly ConversationSummary[];
+  saveChatProject: (project: ChatProject) => Promise<void>;
+  deleteChatProject: (projectId: string) => void;
+  assignChatProject: (sessionId: string | undefined, tabId: string | undefined, projectId: string | null) => void;
 
   // Sesiones que siguen VIVAS sin pestaña (decision del usuario, 2026-09-15: cerrar no corta el
   // trabajo), por sessionId. NO se persiste: al cerrar Mage mueren todos los CLI, asi que un mapa
@@ -547,6 +552,7 @@ export interface NewTabParams {
   readonly privacy?: ConversationPrivacy; // M2.6; ausente -> 'shared'
   // Modo de permiso inicial; ausente -> el `defaultPermissionMode` de Ajustes (solo Claude), y '' = el de la cuenta.
   readonly permissionMode?: PermissionMode;
+  readonly projectId?: string;
 }
 
 // Contadores monotonos (no usamos Date.now/random para ids de bloque ni de pestana).
@@ -733,6 +739,7 @@ function persistSettingsNow(mage: MageClient, getState: () => WorkbenchState): v
 export interface ConversationFolderChoice {
   readonly cwd?: string;
   readonly scratch?: boolean;
+  readonly projectId?: string;
 }
 
 function resolveNewConversationCwd(mage: MageClient, state: WorkbenchState, folder: ConversationFolderChoice): Promise<string> {
@@ -1024,6 +1031,7 @@ async function createSessionFor(
     await prepareWorktree(mage, get, set, tabId);
     // Pestana restaurada de un arranque anterior: reanuda su conversacion (`claude --resume`) en vez
     // de arrancar una fresca; el id de sesion resultante es el mismo (misma transcripcion).
+    const projectId = projectForRow({ kind: 'tab', tab }, get().settings.chatProjects, get().sessionIdByChat)?.id;
     const { sessionId, configDir } = await mage.createSession({
       accountDir: tab.accountId,
       model: tab.model,
@@ -1034,6 +1042,7 @@ async function createSessionFor(
       ...(tab.effort === undefined ? {} : { effort: tab.effort }),
       ...(tab.maxBudgetUsdCents === undefined ? {} : { maxBudgetUsdCents: tab.maxBudgetUsdCents }),
       ...(isPermissionMode(tab.permissionMode) ? { permissionMode: tab.permissionMode } : {}),
+      ...(projectId === undefined ? {} : { projectId }),
     });
   // La pestaña puede haberse CERRADO mientras iba el round-trip (B16, segunda mitad). Sin esta
   // guarda se resucitaba `sessionIdByChat` de una pestaña que ya no existe, y el proceso del CLI se
@@ -1052,6 +1061,7 @@ async function createSessionFor(
     // Es el momento en que una conversacion NUEVA estrena `sessionId`: hasta ahora no habia a que
     // asociar sus preferencias (2.1).
     persistConversationPrefs(mage, get(), tabId);
+    if (projectId !== undefined) get().assignChatProject(sessionId, tabId, projectId);
   return sessionId;
 }
 
@@ -1726,7 +1736,7 @@ export function createWorkbenchStore(mage: MageClient) {
 
     // Abre una pestana real ligada a {cuenta, proyecto, modelo}. La sesion del motor se crea perezosa
     // al primer mensaje (ensureSession) para no lanzar procesos hasta que se use.
-    newTab: async ({ accountId, cwd, model, provider, title, effort, maxBudgetUsdCents, privacy, permissionMode }) => {
+    newTab: async ({ accountId, cwd, model, provider, title, effort, maxBudgetUsdCents, privacy, permissionMode, projectId }) => {
       // El runtime propio no necesita cuenta (A6 de la revision de P-032): una pestaña de Ollama abre
       // aunque no haya ninguna cuenta de Claude, Codex ni agy.
       const accountRequired = !runsOnMageRuntime(provider);
@@ -1750,6 +1760,7 @@ export function createWorkbenchStore(mage: MageClient) {
         provider,
         ...(initialMode.length === 0 ? {} : { permissionMode: initialMode }),
         title: title ?? deriveTitle(cwd),
+        ...(projectId === undefined ? {} : { projectId }),
         privacy: privacy ?? 'shared',
         // Una conversacion recien creada es la mas reciente de su seccion hasta que se escriba en otra.
         createdAtMs: Date.now(),
@@ -1778,13 +1789,13 @@ export function createWorkbenchStore(mage: MageClient) {
       if (account === undefined) {
         // Sin ninguna cuenta: si hay un proveedor del usuario, la conversacion es suya (A6).
         const fallback = runtimeTabWithoutAccount(get().settings, privacy);
-        if (fallback !== null) await get().newTab({ ...fallback, cwd: await resolveNewConversationCwd(mage, get(), folder) });
+        if (fallback !== null) await get().newTab({ ...fallback, cwd: await resolveNewConversationCwd(mage, get(), folder), projectId: folder.projectId });
         return;
       }
       const cwd = await resolveNewConversationCwd(mage, get(), folder);
       // Una cuenta de otro CLI (Codex, agy por clave) abre conversaciones de SU proveedor (grupo E).
       if (account.providerId === CODEX_PROVIDER_ID || account.providerId === AGY_PROVIDER_ID) {
-        await get().newTab(newTabForProviderAccount(account, cwd, privacy, get().settings));
+        await get().newTab({ ...newTabForProviderAccount(account, cwd, privacy, get().settings), projectId: folder.projectId });
         return;
       }
       // Ultima conversacion Claude de la cuenta (las pestanas se anaden al final -> la ultima es la mas
@@ -1806,6 +1817,7 @@ export function createWorkbenchStore(mage: MageClient) {
         provider: 'claude',
         title: NEW_CONVERSATION_TITLE,
         privacy,
+        projectId: folder.projectId,
         ...(effort.length === 0 ? {} : { effort }),
       });
     },
@@ -1853,6 +1865,33 @@ export function createWorkbenchStore(mage: MageClient) {
       set((s) => ({ tabs: s.tabs.map((t) => (t.id === tabId ? { ...t, pendingCliTitle: clean } : t)) }));
       schedulePersist(mage, get);
       flushPendingCliTitle(mage, get, set, tabId);
+    },
+
+    saveChatProject: async (project) => {
+      const clean = { ...project, name: project.name.trim(), instructions: project.instructions.trim(), cwd: project.cwd?.trim() || null };
+      if (clean.name.length === 0) return;
+      set((s) => ({ settings: { ...s.settings, chatProjects: [...s.settings.chatProjects.filter((p) => p.id !== clean.id), clean] } }));
+      await mage.saveSettings(get().settings);
+    },
+    deleteChatProject: (projectId) => {
+      set((s) => ({
+        settings: { ...s.settings, chatProjects: s.settings.chatProjects.filter((p) => p.id !== projectId) },
+        tabs: s.tabs.map((t) => t.projectId === projectId ? { ...t, projectId: undefined } : t),
+      }));
+      scheduleSettingsPersist(mage, get);
+      schedulePersist(mage, get);
+    },
+    assignChatProject: (sessionId, tabId, projectId) => {
+      set((s) => ({
+        settings: { ...s.settings, chatProjects: s.settings.chatProjects.map((p) => ({
+          ...p, sessionIds: projectId === p.id && sessionId !== undefined
+            ? [...new Set([...p.sessionIds, sessionId])]
+            : p.sessionIds.filter((id) => id !== sessionId),
+        })) },
+        tabs: tabId === undefined ? s.tabs : s.tabs.map((t) => t.id === tabId ? { ...t, projectId: projectId ?? undefined } : t),
+      }));
+      scheduleSettingsPersist(mage, get);
+      schedulePersist(mage, get);
     },
 
     // Carga el historial en disco de la cuenta activa (M2.6). Tolerante: un fallo no rompe el shell.
@@ -1932,7 +1971,9 @@ export function createWorkbenchStore(mage: MageClient) {
         // que `createConversation` si respeta.
         providerDefaultModel: get().settings.defaultModelByProvider.claude ?? null,
       });
-      const tab = tabFromConversation({ id: nextTabId(), item, accountId, accountAlias: account?.alias ?? accountId, prefs });
+      const reopened = tabFromConversation({ id: nextTabId(), item, accountId, accountAlias: account?.alias ?? accountId, prefs });
+      const project = get().settings.chatProjects.find((p) => p.sessionIds.includes(item.sessionId) || (p.cwd !== null && p.cwd === item.cwd));
+      const tab = project === undefined ? reopened : { ...reopened, projectId: project.id };
       set((s) => ({
         tabs: [...s.tabs, tab],
         activeTabId: tab.id,

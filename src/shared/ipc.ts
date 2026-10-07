@@ -327,6 +327,9 @@ export interface CreateSessionParams {
   readonly privacy?: ConversationPrivacy;
   // M2.6: modo de permiso inicial (--permission-mode). Ausente -> 'default'. Solo Claude.
   readonly permissionMode?: PermissionMode;
+  readonly projectId?: string;
+  // Lo rellena main desde el proyecto persistido; el renderer solo envía projectId.
+  readonly projectInstructions?: string;
 }
 
 // Resultado de crear una sesion: el id y el config dir EFECTIVO con el que se lanzo (la cuenta o su

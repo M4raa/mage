@@ -215,7 +215,13 @@ describe('AgyAdapter: puente de instrucciones', () => {
 
     profiled(bridge).buildSpawnPlan(launch);
 
-    expect(bridge).toHaveBeenCalledWith('mage-session-1', '/proj', PROFILE);
+    expect(bridge).toHaveBeenCalledWith('mage-session-1', '/proj', PROFILE, undefined);
+  });
+
+  it('buildSpawnPlan_entregaLasReglasDelProyectoAlPuente', () => {
+    const bridge = vi.fn(() => 'C:\\Temp\\mage-agy-instructions\\s1');
+    profiled(bridge).buildSpawnPlan({ ...launch, projectInstructions: 'Eres experto en Python' });
+    expect(bridge).toHaveBeenCalledWith('mage-session-1', '/proj', PROFILE, 'Eres experto en Python');
   });
 
   it('buildSpawnPlan_sinPerfilDeMage_noPuentea', () => {

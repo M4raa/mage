@@ -680,12 +680,12 @@ function bridgeSpecFor(provider: string, accountDir: string): BridgeSpec | null 
 
 // GEMINI.md de una sesion de agy en una carpeta suya del temporal (nunca en el repo ni en el perfil).
 // ponytail: no se barren, como las imagenes adjuntas; las limpia el SO con su temporal.
-function bridgeAgyInstructions(sessionId: string, cwd: string, profileDir: string): string | null {
+function bridgeAgyInstructions(sessionId: string, cwd: string, profileDir: string, projectInstructions?: string): string | null {
   const files = resolveBridge(instructionsFs, { cwd, claudeUserDir: claudeUserDir(), spec: agyBridgeSpec(profileDir) });
-  if (files.length === 0) return null;
+  if (files.length === 0 && !projectInstructions) return null;
   const dir = join(tmpdir(), 'mage-agy-instructions', sessionId.replace(/[^A-Za-z0-9-]/g, '_'));
   mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, 'GEMINI.md'), bridgeDocument(files), 'utf8');
+  writeFileSync(join(dir, 'GEMINI.md'), [files.length === 0 ? '' : bridgeDocument(files), projectInstructions ?? ''].filter(Boolean).join('\n\n'), 'utf8');
   return realpathSync.native(dir);
 }
 
@@ -2383,7 +2383,9 @@ function createSessionFromIpc(event: Electron.IpcMainInvokeEvent, params: Create
     // El perfil privado es de Claude: en otro proveedor la privacidad no cambia el dir de la cuenta.
     const configDir =
       params.privacy === 'private' && params.provider === 'claude' ? accountService.ensurePrivateProfile(params.accountDir) : params.accountDir;
-    const effectiveParams = configDir === params.accountDir ? params : { ...params, accountDir: configDir };
+    const project = params.projectId === undefined ? undefined : getSettingsStore().load().chatProjects.find((candidate) => candidate.id === params.projectId);
+    const projectInstructions = project?.instructions.trim().slice(0, 8000);
+    const effectiveParams = { ...params, accountDir: configDir, projectInstructions };
     const sessionId = sessionManager.create(effectiveParams, (payload) => relaySessionEvent(payload, { sender, configDir, accountDir: params.accountDir }), sender.id);
     stopSessionsWhenDestroyed(sender);
     return { sessionId, configDir };

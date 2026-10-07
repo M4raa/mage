@@ -6,6 +6,7 @@ import { SettingsStore, type SettingsStoreDeps } from './settingsStore';
 const VALID: AppSettings = {
   version: 1,
   notificationRules: [{ id: 'r1', label: 'Deploy', pattern: 'deploy (ok|listo)', enabled: true }],
+  chatProjects: [],
   theme: 'light',
   widgetEnabled: true,
   backgroundOpacity: 80,
@@ -102,6 +103,12 @@ describe('SettingsStore.load', () => {
     const store = new SettingsStore(deps({ exists: () => false }));
 
     expect(store.load()).toEqual(DEFAULT_APP_SETTINGS);
+  });
+
+  it('load_proyectosPersistidosConReglasYAplicacion', () => {
+    const project = { id: 'p1', name: 'Python', instructions: 'Experto en Python', cwd: 'C:/apps/Python', sessionIds: ['s1'] };
+    const store = new SettingsStore(deps({ readFile: () => JSON.stringify({ ...VALID, chatProjects: [project] }) }));
+    expect(store.load().chatProjects).toEqual([project]);
   });
 
   it('load_jsonCorrupto_devuelveDefaults', () => {

@@ -18,6 +18,10 @@ function deps(overrides: Partial<DefaultsDeps>): DefaultsDeps {
 const params = { accountDir: '', model: 'haiku', provider: 'claude', cwd: '' };
 
 describe('resolveLaunchParams', () => {
+  it('entregaLasReglasDelProyectoAlProveedor', () => {
+    const result = resolveLaunchParams('s1', { ...params, accountDir: '/home/u/.claude', projectInstructions: 'Eres experto en Python' }, deps({}));
+    expect(result.projectInstructions).toBe('Eres experto en Python');
+  });
   it('resolve_emptyModel_throws', () => {
     expect(() => resolveLaunchParams('s1', { ...params, model: '  ' }, deps({}))).toThrow(/modelo/i);
   });

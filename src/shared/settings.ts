@@ -21,6 +21,16 @@ export interface NotificationRule {
   readonly enabled: boolean;
 }
 
+// Carpetas lógicas del historial. `cwd` vincula opcionalmente el proyecto a una aplicación en disco;
+// `sessionIds` permite incluir chats de otras carpetas sin mover sus transcripciones.
+export interface ChatProject {
+  readonly id: string;
+  readonly name: string;
+  readonly instructions: string;
+  readonly cwd: string | null;
+  readonly sessionIds: readonly string[];
+}
+
 export const APP_SETTINGS_VERSION = 1;
 
 // Modo de permiso con el que arrancan las conversaciones nuevas de Claude (P-028 6). '' = el de la cuenta
@@ -77,6 +87,7 @@ export type NewConversationFolder = (typeof NEW_CONVERSATION_FOLDERS)[number];
 export interface AppSettings {
   readonly version: number;
   readonly notificationRules: readonly NotificationRule[];
+  readonly chatProjects: readonly ChatProject[];
   // Preferencia de tema base (claro/oscuro/sistema). Default 'dark' para preservar el aspecto actual.
   readonly theme: ThemePreference;
   // Widget flotante always-on-top (M3): si esta activo, se abre al arrancar. Default false (opt-in).
@@ -201,6 +212,7 @@ export interface KeybindingOverride {
 export const DEFAULT_APP_SETTINGS: AppSettings = {
   version: APP_SETTINGS_VERSION,
   notificationRules: [],
+  chatProjects: [],
   theme: 'dark',
   widgetEnabled: false,
   backgroundOpacity: 100,

@@ -111,7 +111,10 @@ export class CodexAdapter implements ProviderAdapter {
     this.secrets = [...new Set([this.apiKey ?? '', ...Object.values(mcp.env)].filter((value) => value.length > 0))];
     const bridged = this.deps.resolveInstructions?.(params.cwd, account?.home ?? null) ?? [];
     const userFiles = bridged.filter((file) => file.scope === 'user');
-    this.developerInstructions = userFiles.length === 0 ? null : bridgeDocument(userFiles);
+    this.developerInstructions = [
+      ...(userFiles.length === 0 ? [] : [bridgeDocument(userFiles)]),
+      ...(params.projectInstructions === undefined ? [] : [`# Mage project instructions\n${params.projectInstructions}`]),
+    ].join('\n\n') || null;
     const fallback = bridged.some((file) => file.scope === 'project') ? PROJECT_FALLBACK_ARGS : [];
     const args = ['app-server', ...mcp.args, ...fallback, ...(this.apiKey === null ? [] : API_PROVIDER_ARGS)];
     const env: NodeJS.ProcessEnv = {

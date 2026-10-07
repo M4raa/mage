@@ -7563,6 +7563,38 @@ const CHECKS = [
     },
   },
   {
+    name: 'I: Historial agrupa chats en proyectos con reglas y aplicación',
+    async run(page) {
+      await page.locator('[data-chat-projects] [aria-label="Crear proyecto de chats"]').click();
+      const editor = page.locator('[data-chat-project-editor]');
+      await editor.getByLabel('Nombre del proyecto').fill('Python');
+      await editor.getByLabel('Reglas del proyecto').fill('Eres experto en Python');
+      await editor.getByRole('button', { name: 'Guardar' }).click();
+      const project = page.locator('[data-chat-project]');
+      await project.waitFor({ state: 'visible' });
+      const id = await project.getAttribute('data-chat-project');
+      await page.waitForTimeout(500);
+      await page.evaluate(() => {
+        window.__mageDev.store.setState({ conversationHistory: [{ sessionId: 'verify-project-chat', configDir: '.claude', cwd: 'C:/proyecto/python', title: 'Chat Python de prueba', privacy: 'shared', updatedAtMs: Date.now(), sizeBytes: 100, isScheduled: false }] });
+      });
+      const history = page.locator('[data-history-session="verify-project-chat"]');
+      await history.waitFor({ state: 'visible' });
+      await waitForStillBox(page, '[data-history-session="verify-project-chat"]');
+      await history.click({ button: 'right' });
+      await page.getByRole('menuitem', { name: 'Python' }).click();
+      const assigned = await project.locator('[data-history-session="verify-project-chat"]').count();
+      const saved = await page.evaluate(() => window.__mageDev.store.getState().settings.chatProjects[0]);
+      await project.getByRole('button', { name: /Nueva conversación/ }).click();
+      const tabProject = await page.evaluate(() => {
+        const state = window.__mageDev.store.getState();
+        return state.tabs.find((tab) => tab.id === state.activeTabId)?.projectId ?? null;
+      });
+      const ok = id === saved.id && saved.instructions === 'Eres experto en Python' &&
+        saved.sessionIds.includes('verify-project-chat') && assigned === 1 && tabProject === id;
+      return { ok, detail: JSON.stringify({ id, saved, assigned, tabProject }) };
+    },
+  },
+  {
     name: 'I: Notificaciones en cabecera y arriba, progreso pausable y errores sin barra',
     async run(page) {
       await clearNotifications(page);

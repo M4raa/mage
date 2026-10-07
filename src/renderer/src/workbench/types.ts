@@ -56,6 +56,7 @@ export interface Tab {
   readonly model: string; // id de modelo (--model)
   readonly provider: string; // 'claude' | 'openai' | 'gemini' | 'ollama' | 'lmstudio'
   readonly title: string;
+  readonly projectId?: string;
   // Privacidad de la conversacion (M2.6). 'shared' (por defecto) usa el pozo comun; 'private' usa el
   // perfil privado (mage-private) de la cuenta con su mismo login. Factura SIEMPRE la cuenta activa.
   readonly privacy: ConversationPrivacy;

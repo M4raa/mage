@@ -96,6 +96,9 @@ export class ClaudeAdapter implements ProviderAdapter {
     if (params.permissionMode !== undefined && params.permissionMode.length > 0) {
       args.push('--permission-mode', params.permissionMode);
     }
+    if (params.projectInstructions !== undefined && params.projectInstructions.length > 0) {
+      args.push('--append-system-prompt', params.projectInstructions);
+    }
     // Lo comun (MCP compartidos y extensiones, hooks y permisos) traducido a flags de Claude.
     const shared = claudeSharedLaunch(params.shared, params.accountDir, this.writeMcpConfig);
     args.push(...shared.args);

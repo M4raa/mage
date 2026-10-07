@@ -24,6 +24,7 @@ export const PERSISTED_TAB_SCHEMA = z.object({
   model: z.string(),
   provider: z.string(),
   title: z.string(),
+  projectId: z.string().min(1).optional(),
   // M2.6: privacidad de la conversacion. `.catch('shared')` para tolerar estados persistidos
   // ANTERIORES a M2.6 (sin el campo) o con un valor invalido -> se tratan como compartidas.
   privacy: z.enum(['shared', 'private']).catch('shared'),

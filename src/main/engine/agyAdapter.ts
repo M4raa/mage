@@ -66,7 +66,7 @@ export interface AgyAdapterDeps {
   readonly saveAttachment?: (sessionId: string, attachment: ImageAttachment, index: number) => string;
   // Puente de instrucciones (grupo H): deja en una carpeta de Mage, fuera del repo, el GEMINI.md con los
   // CLAUDE.md que agy no tiene como suyos, y devuelve esa carpeta (null = no hay nada que puentear).
-  readonly bridgeInstructions?: (sessionId: string, cwd: string, profileDir: string) => string | null;
+  readonly bridgeInstructions?: (sessionId: string, cwd: string, profileDir: string, projectInstructions?: string) => string | null;
 }
 
 // Entorno del hijo y el perfil con el que corre (undefined = el real del usuario, solo en tests).
@@ -119,7 +119,7 @@ export class AgyAdapter implements ProviderAdapter {
   // `write_file` en el settings.json del perfil.
   private bridgeArgs(params: LaunchParams, profileDir: string | undefined): readonly string[] {
     if (profileDir === undefined || this.deps.bridgeInstructions === undefined) return [];
-    const dir = this.deps.bridgeInstructions(params.sessionId, params.cwd, profileDir);
+    const dir = this.deps.bridgeInstructions(params.sessionId, params.cwd, profileDir, params.projectInstructions);
     return dir === null ? [] : ['--add-dir', dir];
   }
 

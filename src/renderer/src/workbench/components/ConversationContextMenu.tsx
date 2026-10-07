@@ -4,6 +4,7 @@ import { createPortal } from 'react-dom';
 import { motion } from 'motion/react';
 import type { ConversationPrivacy } from '@shared/state';
 import type { Account } from '../types';
+import type { ChatProject } from '@shared/settings';
 import { POPOVER_VARIANTS } from '../motionPresets';
 
 // Descriptor de la conversacion sobre la que se abrio el menu (clic derecho). sessionId puede faltar
@@ -30,6 +31,8 @@ export function ConversationContextMenu({
   onOpenInNewTab,
   onOpenInNewWindow,
   newWindowBlockedReason = null,
+  projects = [],
+  onAssignProject,
 }: {
   readonly target: ConversationTarget;
   readonly x: number;
@@ -47,6 +50,8 @@ export function ConversationContextMenu({
   readonly onOpenInNewWindow?: (() => void) | undefined;
   // Sigue trabajando en segundo plano: el item se desactiva con este motivo.
   readonly newWindowBlockedReason?: string | null;
+  readonly projects?: readonly ChatProject[];
+  readonly onAssignProject?: (projectId: string | null) => void;
 }): React.JSX.Element {
   const [confirmingDelete, setConfirmingDelete] = useState(false);
 
@@ -98,6 +103,14 @@ export function ConversationContextMenu({
         )}
 
         {/* Mover a la otra seccion de la MISMA cuenta. */}
+        {onAssignProject !== undefined && (
+          <>
+            <div className="px-[10px] pt-[5px] text-[9.5px] font-bold tracking-[.06em] text-mg-ter">PROYECTO</div>
+            {projects.map((project) => <MenuItem key={project.id} onClick={() => onAssignProject(project.id)}>{project.name}</MenuItem>)}
+            <MenuItem onClick={() => onAssignProject(null)}>Quitar del proyecto</MenuItem>
+            <div className="my-[3px] h-px bg-mg-border-subtle" />
+          </>
+        )}
         <MenuItem
           disabled={!hasSession}
           onClick={() => onMove(activeAccountId, oppositePrivacy)}

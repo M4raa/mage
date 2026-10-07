@@ -55,6 +55,7 @@ export function resolveLaunchParams(
     cwd,
     resume,
     shared: deps.resolveShared(params.provider, accountDir),
+    ...(params.projectInstructions === undefined ? {} : { projectInstructions: params.projectInstructions }),
     ...(effort === undefined ? {} : { effort }),
     ...(maxBudgetUsdCents === undefined ? {} : { maxBudgetUsdCents }),
     ...(permissionMode === undefined ? {} : { permissionMode }),

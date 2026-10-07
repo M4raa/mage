@@ -158,6 +158,7 @@ function buildSystemPromptFn({ base, env }: SessionBuild, shell: ResolvedShell, 
       toolNames: toolsEnabled ? tools.names() : [],
       textToolGuide: toolsEnabled ? null : textToolInstructions(tools.specs().map((spec) => spec.function)),
       projectNotes,
+      projectInstructions: base.params.projectInstructions,
     });
 }
 

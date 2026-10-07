@@ -52,6 +52,9 @@ versión.
 - La campana de notificaciones está en la cabecera, junto a idea y fallo. Los avisos aparecen arriba a
   la derecha y muestran el tiempo restante con una barra verde que vira a rojo; se pausa con el aviso
   o la ventana sin foco. Los errores permanecen hasta descartarlos y no muestran barra.
+- El historial permite crear **proyectos** como carpetas de chats, asignarles conversaciones desde el
+  menú contextual y vincularlos a la carpeta de una aplicación. Cada proyecto admite instrucciones
+  propias que se aplican al iniciar los chats de Claude, Codex, agy y el runtime de Mage.
 - **Comandos de agy**: al empezar una conversación de agy eliges qué comandos de terminal puede
   ejecutar, escritos exactamente como los lanzará (o los deniegas). Cuando agy deniega uno, el aviso
   ofrece **permitirlo para la próxima conversación**. Lo mismo con sus **herramientas MCP**: eliges el

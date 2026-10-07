@@ -6,6 +6,11 @@ const launch = { sessionId: 's1', accountDir: '/home/u/.claude-p', model: 'haiku
 describe('ClaudeAdapter', () => {
   const adapter = new ClaudeAdapter(() => 'claude');
 
+  it('aplicaReglasDelProyectoComoPromptDeSistemaAdicional', () => {
+    const plan = adapter.buildSpawnPlan({ ...launch, projectInstructions: 'Eres experto en Python' });
+    expect(plan.args.slice(plan.args.indexOf('--append-system-prompt'))).toContain('Eres experto en Python');
+  });
+
   it('encodeUserMessage_text_returnsMinimalUserEnvelope', () => {
     expect(adapter.encodeUserMessage('hola')).toEqual({
       type: 'user',

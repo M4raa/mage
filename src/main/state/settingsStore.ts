@@ -34,6 +34,14 @@ const NOTIFICATION_RULE_SCHEMA = z.object({
   enabled: z.boolean(),
 });
 
+const CHAT_PROJECT_SCHEMA = z.object({
+  id: z.string().min(1),
+  name: z.string().trim().min(1),
+  instructions: z.string(),
+  cwd: z.string().min(1).nullable(),
+  sessionIds: z.array(z.string().min(1)),
+});
+
 // Regla `tokenColors` de un tema de VS Code (F4): scopes TextMate -> estilo. La forma la sanea ya
 // ThemeMarketService al importar; aqui solo se valida lo que hay en disco.
 const VSCODE_TOKEN_COLOR_SCHEMA = z.object({
@@ -83,6 +91,7 @@ const CUSTOM_PROVIDER_SCHEMA = z.object({
 const APP_SETTINGS_SCHEMA = z.object({
   version: z.number(),
   notificationRules: z.array(NOTIFICATION_RULE_SCHEMA),
+  chatProjects: z.array(CHAT_PROJECT_SCHEMA).catch([]),
   // theme opcional en disco: ficheros antiguos (sin la clave) y valores invalidos caen a 'dark' via
   // .catch (frontera laxa; el default preserva el aspecto oscuro actual).
   theme: z.enum(THEME_PREFERENCES).catch('dark'),

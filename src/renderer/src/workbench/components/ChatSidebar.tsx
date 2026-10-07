@@ -9,6 +9,8 @@ import { backgroundLabel, backgroundMoveBlockedReason, type BackgroundSession } 
 import { ConversationContextMenu, type ConversationTarget } from './ConversationContextMenu';
 import type { ConversationPrivacy } from '@shared/state';
 import { reportActionError } from '../notificationStore';
+import type { ChatProject } from '@shared/settings';
+import { projectForRow } from '../chatProjects';
 
 // Estado del menu contextual abierto (posicion + conversacion objetivo).
 interface MenuState {
@@ -19,6 +21,7 @@ interface MenuState {
   // "Abrir en una pestaña nueva": `ConversationTarget` no lleva cwd/configDir/updatedAtMs, y
   // `openConversation` los necesita para reanudar con `--resume` en vez de abrir una pestaña vacia.
   readonly item: ConversationSummary | undefined;
+  readonly tabId: string | undefined;
 }
 
 // Nº de conversaciones visibles por seccion antes de "mostrar más" (#1 de AJUSTES) y tamaño del
@@ -49,14 +52,18 @@ export function ChatSidebar(): React.JSX.Element {
   const renameConversation = useWorkbenchStore((s) => s.renameConversation);
   const deleteAccount = useWorkbenchStore((s) => s.deleteAccount);
   const accounts = useWorkbenchStore((s) => s.accounts);
+  const projects = useWorkbenchStore((s) => s.settings.chatProjects);
+  const saveChatProject = useWorkbenchStore((s) => s.saveChatProject);
+  const deleteChatProject = useWorkbenchStore((s) => s.deleteChatProject);
+  const assignChatProject = useWorkbenchStore((s) => s.assignChatProject);
   const deleteConversation = useWorkbenchStore((s) => s.deleteConversation);
   const moveConversation = useWorkbenchStore((s) => s.moveConversation);
   const openConversationInNewWindow = useWorkbenchStore((s) => s.openConversationInNewWindow);
   const dropConversationOutside = useWorkbenchStore((s) => s.dropConversationOutside);
   // Menu contextual (clic derecho, #2). Objetivo + posicion; null cuando esta cerrado.
   const [menu, setMenu] = useState<MenuState | null>(null);
-  const openMenu = (target: ConversationTarget, x: number, y: number, item?: ConversationSummary): void =>
-    setMenu({ target, x, y, item });
+  const openMenu = (target: ConversationTarget, x: number, y: number, item?: ConversationSummary, tabId?: string): void =>
+    setMenu({ target, x, y, item, tabId });
   // Dos secciones (M2.6): compartido (por defecto) y privado. Cada una fusiona el HISTORIAL en disco
   // con las pestanas ABIERTAS. useMemo sobre estado bruto (nunca un selector que devuelva array nuevo
   // por render -> bucle en Zustand v5).
@@ -70,6 +77,10 @@ export function ChatSidebar(): React.JSX.Element {
     () => filterConversationRows(mergeConversationRows(tabs, conversationHistory, sessionIdByChat, activeAccountId, 'private'), search),
     [tabs, conversationHistory, sessionIdByChat, activeAccountId, search],
   );
+  const allRows = [...sharedRows, ...privateRows];
+  const ungroupedShared = sharedRows.filter((row) => projectForRow(row, projects, sessionIdByChat) === undefined);
+  const ungroupedPrivate = privateRows.filter((row) => projectForRow(row, projects, sessionIdByChat) === undefined);
+  const [editingProject, setEditingProject] = useState<ChatProject | 'new' | null>(null);
   if (account === undefined) {
     return (
       <div className="flex h-full w-full items-center justify-center bg-mg-panel p-4 text-center text-[11px] text-mg-muted">
@@ -125,10 +136,37 @@ export function ChatSidebar(): React.JSX.Element {
       </div>
 
       <div className="flex flex-1 flex-col gap-[10px] overflow-y-auto p-[6px] text-[12px]">
+        <section data-chat-projects="true">
+          <div className="flex items-center justify-between">
+            <SectionLabel icon={<Icon name="folder" size={12} />} text="PROYECTOS" hint={`${projects.length}`} />
+            <button onClick={() => setEditingProject('new')} aria-label="Crear proyecto de chats" className="rounded-[5px] px-[7px] text-mg-icon hover:bg-mg-hover">＋</button>
+          </div>
+          {editingProject !== null && <ProjectEditor project={editingProject === 'new' ? null : editingProject}
+            onSave={async (project) => { await saveChatProject(project); setEditingProject(null); }} onCancel={() => setEditingProject(null)} />}
+          {projects.map((project) => (
+            <div key={project.id} data-chat-project={project.id}>
+              <div className="flex justify-end gap-[4px] pr-[5px]">
+                <button onClick={() => setEditingProject(project)} aria-label={`Editar proyecto ${project.name}`} className="text-[10px] text-mg-muted hover:text-mg-body">Editar</button>
+                <button onClick={() => deleteChatProject(project.id)} aria-label={`Eliminar proyecto ${project.name}`} className="text-[10px] text-mg-muted hover:text-mg-danger">Quitar</button>
+              </div>
+              <ConversationSection
+                icon={<Icon name="folder" size={12} />} title={project.name.toUpperCase()}
+                rows={allRows.filter((row) => projectForRow(row, projects, sessionIdByChat)?.id === project.id)}
+                expandedByDefault={search.length > 0} account={account} activeTabId={activeTabId}
+                statusByChat={statusByChat} sessionIdByChat={sessionIdByChat} backgroundSessions={backgroundSessions}
+                onSelect={setActiveTab} onOpen={openConversation}
+                onDragOutside={(item) => void dropConversationOutside(item).catch(reportNewWindowError)}
+                onRename={renameConversation} onContextMenu={openMenu}
+                onCreate={() => void createConversation('shared', { projectId: project.id, ...(project.cwd === null ? { scratch: true } : { cwd: project.cwd }) })}
+                onCreateWithOptions={openNewTabDialog} emptyHint="Sin chats en este proyecto." />
+            </div>
+          ))}
+        </section>
+        <SectionLabel icon="◷" text="RECIENTES" hint={`${ungroupedShared.length + ungroupedPrivate.length}`} />
         <ConversationSection
           icon="◇"
           title="COMPARTIDO"
-          rows={sharedRows}
+          rows={ungroupedShared}
           expandedByDefault={search.length > 0}
           account={account}
           activeTabId={activeTabId}
@@ -147,7 +185,7 @@ export function ChatSidebar(): React.JSX.Element {
         <ConversationSection
           icon={<Icon name="lock" size={12} />}
           title="PRIVADO"
-          rows={privateRows}
+          rows={ungroupedPrivate}
           expandedByDefault={search.length > 0}
           account={account}
           activeTabId={activeTabId}
@@ -173,6 +211,11 @@ export function ChatSidebar(): React.JSX.Element {
             x={menu.x}
             y={menu.y}
             accounts={accounts}
+            projects={projects}
+            onAssignProject={(projectId) => {
+              assignChatProject(menu.target.sessionId, menu.tabId, projectId);
+              setMenu(null);
+            }}
             activeAccountId={activeAccountId}
             onClose={() => setMenu(null)}
             onOpenInNewTab={
@@ -215,6 +258,44 @@ export function ChatSidebar(): React.JSX.Element {
 // avisa en vez de tragarse; la conversacion sigue aqui.
 function reportNewWindowError(err: unknown): void {
   reportActionError('No se pudo abrir la conversación en otra ventana', err, 'window');
+}
+
+function ProjectEditor({ project, onSave, onCancel }: {
+  readonly project: ChatProject | null;
+  readonly onSave: (project: ChatProject) => Promise<void>;
+  readonly onCancel: () => void;
+}): React.JSX.Element {
+  const [name, setName] = useState(project?.name ?? '');
+  const [instructions, setInstructions] = useState(project?.instructions ?? '');
+  const [cwd, setCwd] = useState<string | null>(project?.cwd ?? null);
+  return (
+    <form data-chat-project-editor="true" onSubmit={(event) => {
+      event.preventDefault();
+      if (name.trim().length === 0) return;
+      void onSave({ id: project?.id ?? crypto.randomUUID(), name: name.trim(), instructions, cwd, sessionIds: project?.sessionIds ?? [] })
+        .catch((err: unknown) => reportActionError('No se pudo guardar el proyecto', err, 'projects'));
+    }} className="mx-[3px] flex flex-col gap-[6px] rounded-[7px] border border-mg-border-ctrl bg-mg-window p-[8px] text-[11px]">
+      <label className="flex flex-col gap-[2px]">Nombre del proyecto
+        <input autoFocus value={name} onChange={(event) => setName(event.target.value)} maxLength={80}
+          className="rounded-[5px] border border-mg-border-ctrl bg-mg-panel p-[5px] text-mg-body outline-none focus:border-mg-border-pop" />
+      </label>
+      <label className="flex flex-col gap-[2px]">Reglas del proyecto
+        <textarea value={instructions} onChange={(event) => setInstructions(event.target.value)} rows={4} maxLength={8000}
+          placeholder="Instrucciones para los chats de este proyecto (al abrir la sesión)"
+          className="resize-y rounded-[5px] border border-mg-border-ctrl bg-mg-panel p-[5px] text-mg-body outline-none focus:border-mg-border-pop" />
+      </label>
+      <div className="flex items-center gap-[5px]">
+        <button type="button" onClick={() => void window.mage.pickDirectory().then((picked) => { if (picked !== null) setCwd(picked); })}
+          className="rounded-[5px] border border-mg-border-ctrl px-[6px] py-[3px] hover:bg-mg-hover">Vincular aplicación…</button>
+        {cwd !== null && <button type="button" onClick={() => setCwd(null)} aria-label="Desvincular aplicación">✕</button>}
+      </div>
+      {cwd !== null && <span className="break-all font-mono text-[10px] text-mg-muted">{cwd}</span>}
+      <div className="flex justify-end gap-[6px]">
+        <button type="button" onClick={onCancel} className="rounded-[5px] px-[7px] py-[4px] hover:bg-mg-hover">Cancelar</button>
+        <button type="submit" disabled={name.trim().length === 0} className="rounded-[5px] bg-mg-activity px-[7px] py-[4px] text-mg-window disabled:opacity-40">Guardar</button>
+      </div>
+    </form>
+  );
 }
 
 // Aviso de cuenta huérfana (sin login) con confirmación EN LA APP (no dialogo nativo del SO).
@@ -318,7 +399,7 @@ function ConversationSection({
   // Se solto la fila fuera de la ventana (P-028, 36): a otra ventana de Mage o a una nueva.
   readonly onDragOutside: (item: ConversationSummary) => void;
   readonly onRename: (tabId: string, title: string) => void;
-  readonly onContextMenu: (target: ConversationTarget, x: number, y: number, item?: ConversationSummary) => void;
+  readonly onContextMenu: (target: ConversationTarget, x: number, y: number, item?: ConversationSummary, tabId?: string) => void;
   readonly onCreate: () => void;
   readonly onCreateWithOptions: () => void;
   readonly emptyHint: string;
@@ -352,6 +433,8 @@ function ConversationSection({
                 { sessionId: sessionIdByChat[row.tab.id] ?? row.tab.resumeSessionId, cwd: row.tab.cwd, privacy: row.tab.privacy, title: row.tab.title },
                 e.clientX,
                 e.clientY,
+                undefined,
+                row.tab.id,
               );
             }}
           />
@@ -606,4 +689,3 @@ function statusLabel(status: ChatStatus): string {
       return 'en espera';
   }
 }
-
