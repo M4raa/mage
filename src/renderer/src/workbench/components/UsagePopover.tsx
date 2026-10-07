@@ -1,4 +1,4 @@
-import { formatMicroUsd, type UsageInfo } from '@shared/usage';
+import { formatMicroUsd, type AgyUsageSnapshot, type UsageInfo } from '@shared/usage';
 import { useWorkbenchStore } from '../workbenchStore';
 import { formatResetAbsolute } from '../usageView';
 import type { Account } from '../types';
@@ -11,6 +11,7 @@ import type { Account } from '../types';
 export function UsagePopover(): React.JSX.Element {
   const accounts = useWorkbenchStore((s) => s.accounts);
   const usageByAccount = useWorkbenchStore((s) => s.usageByAccount);
+  const agyUsage = useWorkbenchStore((s) => s.agyUsage);
   const now = Date.now();
 
   return (
@@ -20,7 +21,7 @@ export function UsagePopover(): React.JSX.Element {
     >
       <div className="text-[9.5px] font-bold tracking-[.08em] text-mg-ter">USO GENERAL</div>
       {accounts.map((a) => (
-        <AccountUsageRow key={a.id} account={a} info={usageByAccount[a.id] ?? null} now={now} />
+        <AccountUsageRow key={a.id} account={a} info={usageByAccount[a.id] ?? null} agy={a.providerId === 'agy' ? agyUsage : undefined} now={now} />
       ))}
     </div>
   );
@@ -29,10 +30,13 @@ export function UsagePopover(): React.JSX.Element {
 function AccountUsageRow({
   account,
   info,
+  agy,
   now,
 }: {
   readonly account: Account;
   readonly info: UsageInfo | null;
+  // Solo en cuentas de agy: su `/usage` (undefined = no es de agy; null = aún sin consultar).
+  readonly agy?: AgyUsageSnapshot | null;
   readonly now: number;
 }): React.JSX.Element {
   return (
@@ -40,10 +44,15 @@ function AccountUsageRow({
       <div className="flex items-center gap-[6px] text-mg-body2">
         <span className="h-[6px] w-[6px] rounded-[2px]" style={{ background: account.accent.base }} />
         {account.alias} · {account.provider}
-        {info === null && !account.apiBilled && <span className="ml-auto text-mg-muted">sin dato</span>}
+        {info === null && !account.apiBilled && agy === undefined && <span className="ml-auto text-mg-muted">sin dato</span>}
+        {agy !== undefined && !account.apiBilled && (agy === null || agy.status !== 'ok') && <span className="ml-auto text-mg-muted">sin dato</span>}
       </div>
       {account.apiBilled && <div className="text-mg-ter">API · {info?.apiUsage === undefined ? 'sin turnos medidos' :
         `${info.apiUsage.totals.totalTokens.toLocaleString('es-ES')} tokens · ${formatMicroUsd(info.apiUsage.totals.costMicroUsd)}`}</div>}
+      {agy?.status === 'ok' && !account.apiBilled && agy.groups.flatMap((group) => group.buckets.map((bucket) => (
+        <WindowLine key={bucket.id} label={bucket.window === '5h' ? '5 h' : '7 d'} pct={bucket.usedPercent} accent={account.accent.base}
+          reset={`${group.name} · ${formatResetAbsolute(bucket.resetsAt, now, bucket.window !== '5h')}`} />
+      )))}
       {info !== null && !account.apiBilled && (
         <>
           <WindowLine label="5 h" pct={info.fiveHour.utilization} reset={formatResetAbsolute(info.fiveHour.resetsAt, now, false)} accent={account.accent.base} />

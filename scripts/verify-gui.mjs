@@ -1597,7 +1597,7 @@ const CHECKS = [
           botonesAdoptar: [...(modal?.querySelectorAll('button') ?? [])].filter((b) =>
             (b.textContent ?? '').startsWith('Usar la sesión de'),
           ).length,
-          conLogin: (window.__mageDev?.store.getState().accounts ?? []).filter((a) => a.loginStatus === 'logged_in').length,
+          conLogin: (window.__mageDev?.store.getState().accounts ?? []).filter((a) => a.providerId === 'claude' && a.loginStatus === 'logged_in').length,
         };
       });
       const closed = await closeDialog(page);
@@ -1720,6 +1720,21 @@ const CHECKS = [
       }));
       await page.evaluate((l) => window.__mageDev.panelStore.setState({ layout: l }), layout);
       return { ok: enClaude === 0 && medido.titulo && medido.barras === 4 && medido.grupos === 2, detail: JSON.stringify({ ...medido, enClaude }) };
+    },
+  },
+  {
+    // El uso general (popover de la barra de abajo) lista TODAS las cuentas, y la de agy con su /usage.
+    name: 'E: el uso general de la barra de abajo enseña el uso de la cuenta de agy',
+    async run(page) {
+      await seedAgyAccount(page);
+      await page.evaluate(() => window.__mageDev.store.getState().refreshUsage('vg-agy-account'));
+      await page.waitForTimeout(CONFIG.settleMs * 2);
+      const medido = await page.evaluate(() => {
+        const fila = document.querySelector('[data-usage-popover="true"] [data-usage-account="agy de prueba"]');
+        return { fila: fila !== null, ventanas: fila?.querySelectorAll('[data-usage-window]').length ?? 0,
+          sinDato: (fila?.textContent ?? '').includes('sin dato') };
+      });
+      return { ok: medido.fila && medido.ventanas === 4 && !medido.sinDato, detail: JSON.stringify(medido) };
     },
   },
   {
@@ -3565,7 +3580,7 @@ const CHECKS = [
         return { titulo: /USO GENERAL/.test(pop?.textContent ?? ''), filas };
       });
       await page.mouse.move(0, 0);
-      const filasOk = medido.filas.every((f) => f.sinDato || (f.ventanas.length === 2 && f.ventanas.every((t) => /% · reset /.test(t))));
+      const filasOk = medido.filas.every((f) => f.sinDato || ([2, 4].includes(f.ventanas.length) && f.ventanas.every((t) => /% · reset /.test(t))));
       return { ok: medido.titulo && medido.filas.length > 0 && filasOk, detail: JSON.stringify(medido) };
     },
   },

@@ -10,7 +10,7 @@ import { hasPermissionModes, permissionCycleForProvider } from './stepSliderMode
 import { IDLE_UPDATE_STATE, type UpdateState } from '@shared/update';
 import { isPermissionMode, MAIN_WINDOW_ID, PERMISSION_MODES } from '@shared/ipc';
 import { RELEASE_NOTES_TAB_ID, releaseNotesDecision } from './releaseNotes';
-import type { UsageInfo } from '@shared/usage';
+import type { AgyUsageSnapshot, UsageInfo } from '@shared/usage';
 import type { StatusInfo } from '@shared/status';
 import { applyAccentOverrides, toAccountView } from './accountView';
 import { nextIndexForArrow } from './a11y/keyboardNav';
@@ -162,6 +162,8 @@ export interface WorkbenchState extends PrState, PrActions {
   readonly usageByAccount: Readonly<Record<string, UsageInfo | null>>;
   // Ultimo error de consulta de uso por cuenta (p.ej. "sin login"), para mostrarlo en el dashboard.
   readonly usageErrorByAccount: Readonly<Record<string, string | null>>;
+  // `/usage` de la suscripción de agy (no tiene ventanas de Mage: su CLI da cuotas por grupo de modelos).
+  readonly agyUsage: AgyUsageSnapshot | null;
   // Estado del servicio de Claude (global). null mientras no se ha cargado.
   readonly status: StatusInfo | null;
 
@@ -1165,6 +1167,7 @@ export function createWorkbenchStore(mage: MageClient) {
 
     usageByAccount: {},
     usageErrorByAccount: {},
+    agyUsage: null,
     permissionModes: null,
     status: null,
 
@@ -2107,7 +2110,10 @@ export function createWorkbenchStore(mage: MageClient) {
       // cuenta que factura la API no tiene ventanas, y agy por clave tampoco (el de su suscripcion va
       // aparte en el panel, por su `/usage`).
       const account = get().accounts.find((a) => a.id === configDir);
-      if (account !== undefined && account.providerId === 'agy') return;
+      if (account !== undefined && account.providerId === 'agy') {
+        if (!account.apiBilled) await refreshAgyUsage(set);
+        return;
+      }
       try {
         const info = await mage.getUsage(configDir);
         if (info === null) {
@@ -2912,6 +2918,12 @@ function settleElicitation(state: WorkbenchState, tabId: string, requestId: stri
     elicitationsByChat: { ...state.elicitationsByChat, [tabId]: next },
     ...(waiting || state.statusByChat[tabId] !== 'needs_permission' ? {} : { statusByChat: { ...state.statusByChat, [tabId]: 'streaming' as const } }),
   };
+}
+
+// Uso de la suscripción de agy (su `/usage`, gratis; main cachea 180 s). Un fallo queda como `unavailable`.
+async function refreshAgyUsage(set: SetFn): Promise<void> {
+  const agyUsage = await window.mage.readAgyUsage().catch((err: unknown): AgyUsageSnapshot => ({ status: 'unavailable', reason: describeError(err), fetchedAt: Date.now() }));
+  set(() => ({ agyUsage }));
 }
 
 export function headPermission(state: Pick<WorkbenchState, 'pendingByChat'>, tabId: string): PendingPermission | null {

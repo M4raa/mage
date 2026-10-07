@@ -871,7 +871,29 @@ function getProviderAccounts(): ProviderAccountService {
 // Todas las cuentas: las de Claude descubiertas en disco (marcadas si son de API) y las del registro.
 function listAllAccounts(): readonly AccountInfo[] {
   const accounts = getProviderAccounts().list(accountService.listAccounts());
-  return getCodexAccountCatalog().list(accounts);
+  return [...getCodexAccountCatalog().list(accounts), ...agySubscriptionAccounts()];
+}
+
+// La suscripcion de agy que ya esta iniciada en esta maquina, como una cuenta mas (el chip de la cabecera).
+// Su login no vive en una carpeta de Mage (medido en agy 1.2.14: un USERPROFILE aislado sigue
+// autenticado), asi que su id es la carpeta `~/.gemini` de agy y NO se puede borrar desde Mage.
+// ponytail: una sola; varias suscripciones exigen medir donde guarda agy su login (ver respuesta 42).
+const AGY_SUBSCRIPTION_ACCOUNT_DIR = join(homedir(), '.gemini');
+const AGY_LOGIN_FILE = 'oauth_creds.json';
+
+function agySubscriptionAccounts(): readonly AccountInfo[] {
+  if (!isAgyInstalledCached()) return [];
+  return [{
+    configDir: AGY_SUBSCRIPTION_ACCOUNT_DIR, name: 'agy', isMain: false, providerId: 'agy', authKind: 'subscription',
+    email: null, org: null, expiresAt: null, defaultModel: null,
+    loginStatus: existsSync(join(AGY_SUBSCRIPTION_ACCOUNT_DIR, AGY_LOGIN_FILE)) ? 'logged_in' : 'logged_out',
+  }];
+}
+
+function isAgyInstalledCached(): boolean {
+  const nowMs = Date.now();
+  if (agyProbe === null || nowMs - agyProbe.atMs > AGY_PROBE_TTL_MS) agyProbe = { atMs: nowMs, installed: findAgyBinary() !== null };
+  return agyProbe.installed;
 }
 
 let codexAccountCatalog: CodexAccountCatalog | null = null;
@@ -902,7 +924,7 @@ function codexAccountProbeDeps(): import('./accounts/codexAccountProbe').CodexAc
 // ¿Puede una sesion lanzarse con este dir de cuenta? Un config dir de Claude bajo HOME, o una cuenta
 // del registro (CODEX_HOME de codex, perfil de agy por clave). Nunca una ruta arbitraria por IPC.
 function isLaunchableAccountDir(dir: string): boolean {
-  if (isManagedAccountConfigDir(dir)) return true;
+  if (isManagedAccountConfigDir(dir) || pathEquals(dir, AGY_SUBSCRIPTION_ACCOUNT_DIR)) return true;
   return getProviderAccounts().find('codex', dir) !== null || getProviderAccounts().find('agy', dir) !== null;
 }
 
@@ -2588,11 +2610,7 @@ function registerSessionIpc2(): void {
   // Modos de permiso que expone cada CLI (respuesta 18): leidos del propio CLI, no de una lista fija.
   ipcMain.handle(IpcChannel.PermissionModesList, (): Promise<PermissionModesByProvider> => loadPermissionModes());
   ipcMain.handle(IpcChannel.AgyInstalled, () => {
-    const nowMs = Date.now();
-    if (agyProbe === null || nowMs - agyProbe.atMs > AGY_PROBE_TTL_MS) {
-      agyProbe = { atMs: nowMs, installed: findAgyBinary() !== null };
-    }
-    return agyProbe.installed;
+    return isAgyInstalledCached();
   });
   // Sondeo de un proveedor para Configuracion (D2): ruta del binario detectada o URL del endpoint, y
   // los modelos que ofrece de verdad. Sin cache: se pide al abrir la seccion y al pulsar "Reintentar",
@@ -2735,6 +2753,9 @@ function registerAccountsIpc2(): void {
   ipcMain.handle(IpcChannel.AccountsDelete, (_e, configDir: string) => {
     if (!isLaunchableAccountDir(configDir)) {
       throw new Error(`Cuenta no valida para borrar: ${configDir}`);
+    }
+    if (pathEquals(configDir, AGY_SUBSCRIPTION_ACCOUNT_DIR)) {
+      throw new Error('La suscripción de agy no se borra desde Mage: cierra su sesión desde agy');
     }
     const stopped = sessionManager.stopByConfigDir(configDir);
     if (stopped > 0) mainLog('info', `Paradas ${stopped} sesiones antes de borrar la cuenta "${configDir}"`);
