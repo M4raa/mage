@@ -95,6 +95,17 @@ versión.
   maneja con el teclado (Esc cancela, Ctrl+Intro acepta), avisa si la pestaña no se ve y se cancela
   solo si cierras la pestaña o muere la sesión. Funciona con Claude, Codex y el runtime propio. Lo que no
   encaja en un formulario sencillo se cancela con un aviso; los datos escritos nunca se guardan en logs.
+- **Historial de Codex y de agy**: la barra lateral lista las conversaciones de la cuenta de Codex
+  activa (sus rollouts) y las de agy que Mage ha lanzado, y se pueden reabrir: el chat recupera sus
+  mensajes y herramientas y Codex reanuda su hilo (`thread/resume`) y agy su conversación (`--conversation`).
+  Cada CLI tiene su lector, porque cada uno guarda su historial en su propio formato.
+- **Migrar entre proveedores**: al pasar una conversación parada de una cuenta de Claude a una de Codex o
+  agy (o al revés) ya no falla: la original se queda donde está y en la cuenta destino se abre una
+  conversación nueva que arranca con su historial como contexto. Entre cuentas de Claude se sigue moviendo
+  la transcripción como siempre.
+- **Suscripción de agy como cuenta**: si agy está instalado y con sesión, aparece como una cuenta más, con
+  su chip, y su uso (cuotas por grupo de modelos) sale en el uso general de la barra de abajo y solo en su
+  panel de Uso.
 
 ### Cambiado
 - El aviso al activar **Omitir permisos** dice claramente lo que implica: el modelo podrá ejecutar
