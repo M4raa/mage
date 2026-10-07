@@ -2847,8 +2847,8 @@ export function createWorkbenchStore(mage: MageClient) {
       }
       detectPrBinding(get, tabId, event);
       denyPrTurnCommand(mage, get, set, sessionId, tabId, event);
-      // El hilo de Codex se conoce al arrancar: se persiste para poder reabrir la conversación.
-      if (event.kind === 'session_init' && tab?.provider === CODEX_PROVIDER_ID) schedulePersist(mage, get);
+      // El id de conversación de Codex/agy se conoce al arrancar: se persiste para poder reabrir la conversación.
+      if (event.kind === 'session_init' && tab !== undefined && OWN_CONVERSATION_PROVIDERS.includes(tab.provider)) schedulePersist(mage, get);
       // Y es el momento de mandar un nombre que el usuario puso con el turno en marcha (D3).
       if (event.kind === 'result') flushPendingCliTitle(mage, get, set, tabId);
       // Y el primer mensaje de la cola sale como turno propio (0.1.1 R2, punto 30).
@@ -2933,13 +2933,15 @@ async function refreshAgyUsage(set: SetFn): Promise<void> {
 }
 
 // Proveedores cuyo historial en disco sabe leer Mage (un lector por CLI: el de Claude y el rollout de Codex).
-const HISTORY_PROVIDERS: readonly string[] = ['claude', CODEX_PROVIDER_ID];
+const HISTORY_PROVIDERS: readonly string[] = ['claude', CODEX_PROVIDER_ID, AGY_PROVIDER_ID];
+// Los que llevan su propia conversación (su id viene del CLI en el `session_init`).
+const OWN_CONVERSATION_PROVIDERS: readonly string[] = [CODEX_PROVIDER_ID, AGY_PROVIDER_ID];
 
-// El id del hilo de una pestaña de Codex, la primera vez que se conoce. Es lo que permite reabrir la
-// conversación (`thread/resume`) y leer su rollout; las pestañas de los demás proveedores no lo usan.
+// El id de conversación de una pestaña de Codex o agy, la primera vez que se conoce. Es lo que permite
+// reabrirla (`thread/resume`, `--conversation`) y leer su historial; Claude y el runtime propio usan el de Mage.
 function codexThreadBinding(state: WorkbenchState, tabId: string, threadId: string): Partial<WorkbenchState> {
   const tab = state.tabs.find((t) => t.id === tabId);
-  if (tab === undefined || tab.provider !== CODEX_PROVIDER_ID || tab.resumeSessionId !== undefined || threadId.length === 0) return {};
+  if (tab === undefined || !OWN_CONVERSATION_PROVIDERS.includes(tab.provider) || tab.resumeSessionId !== undefined || threadId.length === 0) return {};
   return { tabs: state.tabs.map((t) => (t.id === tabId ? { ...t, resumeSessionId: threadId } : t)) };
 }
 

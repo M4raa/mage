@@ -90,14 +90,14 @@ describe('SessionManager.create', () => {
     expect(h.launchOf(0)).toMatchObject({ sessionId: 'previa-123', resume: true });
   });
 
-  it('create_proveedorSinTranscripcionConResumeSessionId_ignoraElResumeYArrancaFresca', () => {
-    // agy lleva su historial en su propio formato: Mage no lo relee, asi que arranca sesion nueva.
+  it('create_agyConResumeSessionId_sesionNuevaYReanudaSuConversacion', () => {
+    // agy lleva su historial en su propio formato: el id es el suyo (`--conversation`) y la sesion de Mage es nueva.
     const h = harness();
 
     const sessionId = h.manager.create(params({ provider: 'agy', resumeSessionId: 'previa-123' }), h.sink);
 
     expect(sessionId).not.toBe('previa-123');
-    expect(h.launchOf(0).resume).toBe(false);
+    expect(h.launchOf(0)).toMatchObject({ resume: false, conversationId: 'previa-123' });
   });
 
   it('create_codexConResumeSessionId_sesionNuevaYReanudaSuHilo', () => {

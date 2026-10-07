@@ -158,6 +158,10 @@ import { mcpFamilyOf } from '@shared/mcp';
 import { AccountService } from './accounts/accountService';
 import { ConversationsService, type ConversationsDeps } from './conversations/conversationsService';
 import { CodexHistoryService } from './conversations/codexHistory';
+import { AgyHistoryService } from './conversations/agyHistory';
+import { createAgySqliteStore } from './conversations/agySqliteStore';
+import { staticTranscriptBatch } from './transcripts/staticBatch';
+import type { LineAdapter } from './transcripts/transcriptReader';
 import { adaptCodexLine } from '@shared/codexTranscript';
 import { ConversationAdminService } from './conversations/conversationAdminService';
 import { CliLoginService, type CliLoginProcess } from './accounts/cliLoginService';
@@ -1043,6 +1047,8 @@ const conversationFsDeps: ConversationsDeps = {
 const conversationsService = new ConversationsService(conversationFsDeps);
 // Historial de las cuentas de Codex: sus rollouts, medidos con codex-cli 0.160.0.
 const codexHistory = new CodexHistoryService(conversationFsDeps);
+// Historial de agy: las bases SQLite de los perfiles con los que Mage lo lanza (resumibles con `--conversation`).
+const agyHistory = new AgyHistoryService(createAgySqliteStore());
 
 // FS del fichero de credenciales, compartido por los DOS escritores del token: el login y la
 // renovacion de sesion. 0600 en el tmp ANTES del rename (no tras publicar el fichero final): cierra la
@@ -2858,39 +2864,70 @@ function registerTranscriptIpc1(): void {
   // bloquear el invoke (devuelve el transcriptId de inmediato). Whitelisting de ruta: solo
   // ~/.claude*/projects/** (nunca una ruta arbitraria via IPC).
   ipcMain.handle(IpcChannel.TranscriptOpen, (event, transcriptId: string, params: OpenTranscriptParams): void => {
-    // Con `agentId` se abre el transcript del SUBAGENTE (drill-down, M2.2.3b); sin el, el principal.
-    // Ambos resolvers validan sus segmentos (anti path-traversal) y ambas rutas caen bajo projects/.
-    const codexPath = params.provider === 'codex' ? codexRolloutPath(params) : null;
-    const filePath =
-      codexPath !== null
-        ? codexPath
-        : params.agentId !== undefined
-          ? resolveSubagentTranscriptPath(params.accountDir, params.cwd, params.sessionId, params.agentId)
-          : conversationTranscriptPath(params.accountDir, params.cwd, params.sessionId);
-    if (codexPath === null && !isUnderManagedProjects(filePath)) {
-      throw new Error(`Ruta de transcripcion no permitida (debe caer bajo ~/.claude*/projects): ${filePath}`);
-    }
-    const sender = event.sender;
-    const controller = new AbortController();
-    openTranscriptControllers.set(transcriptId, controller);
-
-    void (async () => {
-      try {
-        for await (const batch of transcriptService.openStream(filePath, controller.signal, params.resumeFrom, codexPath === null ? undefined : adaptCodexLine)) {
-          if (sender.isDestroyed()) break;
-          sender.send(TRANSCRIPT_BATCH_CHANNEL, { transcriptId, batch });
-        }
-      } catch (err) {
-        const error = err instanceof Error ? err.message : String(err);
-        mainLog('error', 'Fallo leyendo transcripcion', { transcriptId, error });
-        // Propaga el fallo al renderer (no solo al log): sin esto el panel se queda "Cargando…"
-        // para siempre. Es terminal (cierra la lectura igual que un lote final).
-        if (!sender.isDestroyed()) sender.send(TRANSCRIPT_BATCH_CHANNEL, { transcriptId, error });
-      } finally {
-        openTranscriptControllers.delete(transcriptId);
-      }
-    })();
+    if (params.provider === 'agy') openAgyTranscript(event.sender, transcriptId, params);
+    else streamTranscript(event.sender, transcriptId, params);
   });
+}
+
+// Ruta de la transcripción y, si el CLI no es Claude, cómo traducir sus líneas. Con `agentId` se abre el
+// transcript del SUBAGENTE (drill-down, M2.2.3b). Los resolvers de Claude validan sus segmentos
+// (anti path-traversal) y su ruta cae bajo projects/; la de Codex sale de su cuenta registrada y de un id.
+function resolveTranscriptSource(params: OpenTranscriptParams): { readonly filePath: string; readonly adapt?: LineAdapter } {
+  if (params.provider === 'codex') return { filePath: codexRolloutPath(params), adapt: adaptCodexLine };
+  const filePath =
+    params.agentId !== undefined
+      ? resolveSubagentTranscriptPath(params.accountDir, params.cwd, params.sessionId, params.agentId)
+      : conversationTranscriptPath(params.accountDir, params.cwd, params.sessionId);
+  if (!isUnderManagedProjects(filePath)) {
+    throw new Error(`Ruta de transcripcion no permitida (debe caer bajo ~/.claude*/projects): ${filePath}`);
+  }
+  return { filePath };
+}
+
+// Abre en streaming y empuja lotes por TRANSCRIPT_BATCH_CHANNEL sin bloquear el invoke.
+function streamTranscript(sender: Electron.WebContents, transcriptId: string, params: OpenTranscriptParams): void {
+  const { filePath, adapt } = resolveTranscriptSource(params);
+  const controller = new AbortController();
+  openTranscriptControllers.set(transcriptId, controller);
+
+  void (async () => {
+    try {
+      for await (const batch of transcriptService.openStream(filePath, controller.signal, params.resumeFrom, adapt)) {
+        if (sender.isDestroyed()) break;
+        sender.send(TRANSCRIPT_BATCH_CHANNEL, { transcriptId, batch });
+      }
+    } catch (err) {
+      const error = err instanceof Error ? err.message : String(err);
+      mainLog('error', 'Fallo leyendo transcripcion', { transcriptId, error });
+      // Propaga el fallo al renderer (no solo al log): sin esto el panel se queda "Cargando…"
+      // para siempre. Es terminal (cierra la lectura igual que un lote final).
+      if (!sender.isDestroyed()) sender.send(TRANSCRIPT_BATCH_CHANNEL, { transcriptId, error });
+    } finally {
+      openTranscriptControllers.delete(transcriptId);
+    }
+  })();
+}
+
+// Perfil (`USERPROFILE`) con el que Mage lanza agy para esa cuenta, o null si no es una cuenta de agy.
+function agyProfileOfAccount(accountDir: string): string | null {
+  if (pathEquals(accountDir, AGY_SUBSCRIPTION_ACCOUNT_DIR) || getProviderAccounts().find('agy', accountDir) !== null) return agyProfileFor(accountDir);
+  return null;
+}
+
+// Transcripción de una conversación de agy: sale de su base SQLite, así que va en un único lote final.
+function openAgyTranscript(sender: Electron.WebContents, transcriptId: string, params: OpenTranscriptParams): void {
+  const profile = agyProfileOfAccount(params.accountDir);
+  if (profile === null) throw new Error(`Cuenta de agy no valida para abrir una transcripcion: ${params.accountDir}`);
+  const dbPath = agyHistory.findDb(profile, params.sessionId);
+  if (dbPath === null) throw new Error(`No existe la conversacion de agy ${params.sessionId} en ${profile}`);
+  try {
+    const batch = staticTranscriptBatch(agyHistory.readLines(dbPath));
+    if (!sender.isDestroyed()) sender.send(TRANSCRIPT_BATCH_CHANNEL, { transcriptId, batch });
+  } catch (err) {
+    const error = err instanceof Error ? err.message : String(err);
+    mainLog('error', 'Fallo leyendo la conversacion de agy', { transcriptId, error });
+    if (!sender.isDestroyed()) sender.send(TRANSCRIPT_BATCH_CHANNEL, { transcriptId, error });
+  }
 }
 
 // Rollout de una conversación de Codex: solo de una cuenta registrada y por su id (nunca una ruta del renderer).
@@ -2923,6 +2960,8 @@ function registerTranscriptIpc2(deps: IpcDependencies): void {
   ipcMain.handle(IpcChannel.ConversationsList, (_e, accountDir: string): readonly ConversationSummary[] => {
     const codex = getProviderAccounts().find('codex', accountDir);
     if (codex !== null) return codexHistory.list(codex.home);
+    const agyProfile = agyProfileOfAccount(accountDir);
+    if (agyProfile !== null) return agyHistory.list(agyProfile, accountDir);
     if (!isManagedAccountConfigDir(accountDir)) {
       throw new Error(`Cuenta no valida para listar conversaciones: ${accountDir}`);
     }

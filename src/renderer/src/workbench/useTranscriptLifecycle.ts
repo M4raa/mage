@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { CODEX_PROVIDER_ID, writesClaudeTranscript } from '@shared/providers';
+import { AGY_PROVIDER_ID, CODEX_PROVIDER_ID, writesClaudeTranscript } from '@shared/providers';
 import { useWorkbenchStore } from './workbenchStore';
 import { transcriptStoreForTab } from './transcriptStore';
 import { useThinkingStore } from './thinkingStore';
@@ -36,9 +36,9 @@ export function useTranscriptLifecycle(tabId: string): void {
   // vacio (la hidratacion de BlockChat depende de estas entradas).
   const sessionId = useWorkbenchStore((s) => {
     const tab = s.tabs.find((t) => t.id === tabId);
-    // Codex: la conversación es su hilo (`resumeSessionId`), no el id de la sesión de Mage, y solo se relee
-    // el rollout de una conversación SIN sesión viva (reabierta): la viva ya pinta sus eventos.
-    if (tab?.provider === CODEX_PROVIDER_ID) return s.sessionIdByChat[tabId] === undefined ? tab.resumeSessionId : undefined;
+    // Codex y agy: la conversación es su id (`resumeSessionId`), no el de la sesión de Mage, y solo se relee
+    // su historial de una conversación SIN sesión viva (reabierta): la viva ya pinta sus eventos.
+    if (tab?.provider === CODEX_PROVIDER_ID || tab?.provider === AGY_PROVIDER_ID) return s.sessionIdByChat[tabId] === undefined ? tab.resumeSessionId : undefined;
     return s.sessionIdByChat[tabId] ?? tab?.resumeSessionId;
   });
   const chatStatus = useWorkbenchStore((s) => s.statusByChat[tabId]);
@@ -46,9 +46,13 @@ export function useTranscriptLifecycle(tabId: string): void {
   // CLI de Claude Code (E3: `agy` lleva la suya en su propia carpeta y en su propio formato).
   const hasTranscript = useWorkbenchStore((s) => {
     const provider = s.tabs.find((t) => t.id === tabId)?.provider;
-    return provider === undefined || writesClaudeTranscript(provider) || provider === CODEX_PROVIDER_ID;
+    return provider === undefined || writesClaudeTranscript(provider) || provider === CODEX_PROVIDER_ID || provider === AGY_PROVIDER_ID;
   });
-  const isCodex = useWorkbenchStore((s) => s.tabs.find((t) => t.id === tabId)?.provider === CODEX_PROVIDER_ID);
+  // Proveedores con conversación propia: su historial se lee con su lector, no del .jsonl de Claude.
+  const ownProvider = useWorkbenchStore((s) => {
+    const provider = s.tabs.find((t) => t.id === tabId)?.provider;
+    return provider === CODEX_PROVIDER_ID || provider === AGY_PROVIDER_ID ? provider : undefined;
+  });
   const useTranscriptStore = transcriptStoreForTab(tabId);
   const openTranscript = useTranscriptStore((s) => s.open);
   const cancelTranscript = useTranscriptStore((s) => s.cancel);
@@ -74,7 +78,7 @@ export function useTranscriptLifecycle(tabId: string): void {
     // Proveedor sin transcripcion en el config dir (E3, `agy`): pedirla daria un error de "fichero
     // inexistente" en cada pestaña suya, que es peor que no ofrecer el panel.
     if (!hasTranscript) return;
-    void openTranscript({ accountDir: configDir, cwd, sessionId, ...(isCodex ? { provider: CODEX_PROVIDER_ID } : {}) });
+    void openTranscript({ accountDir: configDir, cwd, sessionId, ...(ownProvider === undefined ? {} : { provider: ownProvider }) });
     // Los pensamientos van APARTE de la transcripcion: son de Mage, no del CLI (que los persiste
     // vacios), y viven en otro fichero. Se piden a la vez porque se consumen a la vez, al hidratar.
     void loadThinking(sessionId);
@@ -82,7 +86,7 @@ export function useTranscriptLifecycle(tabId: string): void {
     // Reabre solo cuando cambia la sesion real a mostrar (nueva sesion en esta pestaña) o el store al
     // que se abre. `openTranscript`/`cancelTranscript` entran en las deps porque con un store por
     // pestaña su identidad ya no es constante.
-  }, [configDir, cwd, sessionId, hasTranscript, isCodex, openTranscript, cancelTranscript, loadThinking]);
+  }, [configDir, cwd, sessionId, hasTranscript, ownProvider, openTranscript, cancelTranscript, loadThinking]);
 
   // Auto-refresco al TERMINAR cada interaccion: el CLI escribe la transcripcion mientras trabaja, asi
   // que releerla al pasar a `idle` es lo que hace que Logs/Contexto vean el turno recien acabado.

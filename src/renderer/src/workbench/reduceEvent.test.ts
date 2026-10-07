@@ -600,6 +600,10 @@ describe('reduceEvent — hilo de Codex', () => {
     expect(patch.tabs?.[0]?.resumeSessionId).toBe('hilo-1');
   });
 
+  it('reduceEvent_sessionInitDeAgy_guardaSuConversacion', () => {
+    expect(reduceEvent(state({ tabs: [tab({ provider: 'agy' })] }), TAB, init).tabs?.[0]?.resumeSessionId).toBe('hilo-1');
+  });
+
   it('reduceEvent_sessionInitDeClaudeOHiloYaConocido_noTocaLaPestana', () => {
     expect(reduceEvent(state({ tabs: [tab({ provider: 'claude' })] }), TAB, init).tabs).toBeUndefined();
     expect(reduceEvent(state({ tabs: [tab({ provider: 'codex', resumeSessionId: 'otro' })] }), TAB, init).tabs).toBeUndefined();

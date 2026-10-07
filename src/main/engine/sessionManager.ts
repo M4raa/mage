@@ -7,7 +7,7 @@ import type { CreateSessionParams, SessionEventPayload } from '@shared/ipc';
 import type { AgentSessionDeps, SessionLogFn } from './agentSession';
 import { resolveLaunchParams, type DefaultsDeps } from './sessionDefaults';
 import { pathEquals } from '../os/pathUtils';
-import { CODEX_PROVIDER_ID, writesClaudeTranscript } from '@shared/providers';
+import { AGY_PROVIDER_ID, CODEX_PROVIDER_ID, writesClaudeTranscript } from '@shared/providers';
 
 // Sumidero de eventos hacia el consumidor (en produccion, webContents.send del renderer).
 export type EventSink = (payload: SessionEventPayload) => void;
@@ -57,7 +57,7 @@ export class SessionManager {
   // resumeSessionId y arranca una sesion fresca con id nuevo.
   create(params: CreateSessionParams, sink: EventSink, ownerId?: number): string {
     const resumeId = typeof params.resumeSessionId === 'string' && params.resumeSessionId.length > 0 ? params.resumeSessionId : null;
-    // Codex lleva su propia conversacion (su hilo): `resumeSessionId` es ese id y la sesion de Mage es nueva.
+    // Codex y agy llevan su propia conversacion: `resumeSessionId` es ese id y la sesion de Mage es nueva.
     const providerOwnsConversation = !writesClaudeTranscript(params.provider);
     const isResume = resumeId !== null && !providerOwnsConversation;
     const sessionId = isResume ? resumeId : randomUUID();
@@ -72,7 +72,7 @@ export class SessionManager {
       throw new Error(`Esa conversacion ya esta abierta en otra pestana (sesion ${sessionId})`);
     }
     const resolved = resolveLaunchParams(sessionId, params, this.defaults, isResume);
-    const launch = resumeId !== null && providerOwnsConversation && params.provider === CODEX_PROVIDER_ID ? { ...resolved, conversationId: resumeId } : resolved;
+    const launch = resumeId !== null && providerOwnsConversation && (params.provider === CODEX_PROVIDER_ID || params.provider === AGY_PROVIDER_ID) ? { ...resolved, conversationId: resumeId } : resolved;
     // `/clear` (P-028) abre OTRA conversacion en el mismo proceso: a partir de su `conversation_reset`
     // la sesion se etiqueta con el id nuevo, que es el que usan la transcripcion, la persistencia y el
     // `--resume`. El evento del reset aun sale con el id viejo, para que el renderer sepa de que pestaña es.
