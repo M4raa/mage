@@ -35,6 +35,8 @@ export interface MigrationEndpointDeps {
   readonly agy: {
     // Perfil (USERPROFILE) con el que Mage lanza agy para esa cuenta.
     readonly profileOf: (accountDir: string) => string;
+    // Perfil REAL de agy del usuario (solo la suscripción lo tiene): sus conversaciones se leen, pero nunca se borran.
+    readonly externalOf?: (accountDir: string) => string | undefined;
     readonly history: Pick<AgyHistoryService, 'findDb' | 'readLines'>;
     readonly writeDb: (dbPath: string, content: AgyDbContent) => void;
   };
@@ -119,13 +121,16 @@ function relativeToSessions(rolloutPath: string, threadId: string): string[] {
 // --- agy ------------------------------------------------------------------------------------------------------------
 
 function agyEndpoints(deps: MigrationEndpointDeps): MigrationEndpoints {
-  const dbOf = (ref: ConversationRef): string => deps.agy.history.findDb(deps.agy.profileOf(ref.accountDir), ref.sessionId) ?? missing('agy', ref.sessionId);
+  const dbOf = (ref: ConversationRef): string => deps.agy.history.findDb(deps.agy.profileOf(ref.accountDir), ref.sessionId, deps.agy.externalOf?.(ref.accountDir)) ?? missing('agy', ref.sessionId);
+  // Solo se retira lo que es de Mage: la conversación del CLI propio del usuario se queda en su sitio.
+  const removeOwned = (ref: ConversationRef): void => {
+    const db = dbOf(ref);
+    if (!db.startsWith(deps.agy.profileOf(ref.accountDir))) return;
+    for (const suffix of ['', '-wal', '-shm']) deps.removeFile(`${db}${suffix}`);
+  };
   const source: ConversationSource = {
     read: (ref) => neutralFromLines(deps.agy.history.readLines(dbOf(ref)), { cwd: ref.cwd, title: '' }),
-    remove: async (ref) => {
-      const db = dbOf(ref);
-      for (const suffix of ['', '-wal', '-shm']) deps.removeFile(`${db}${suffix}`);
-    },
+    remove: async (ref) => removeOwned(ref),
   };
   const sink: ConversationSink = {
     write: (conversation: NeutralConversation, dest) => {
@@ -134,10 +139,7 @@ function agyEndpoints(deps: MigrationEndpointDeps): MigrationEndpoints {
       deps.agy.writeDb(dbPath, agyDbContent(conversation, { conversationId, trajectoryId: deps.newId(), newId: deps.newId, clock: { baseMs: deps.nowMs() } }));
       return { sessionId: conversationId, configDir: dest.accountDir };
     },
-    discard: async (ref) => {
-      const db = dbOf(ref);
-      for (const suffix of ['', '-wal', '-shm']) deps.removeFile(`${db}${suffix}`);
-    },
+    discard: async (ref) => removeOwned(ref),
   };
   return { source, sink };
 }

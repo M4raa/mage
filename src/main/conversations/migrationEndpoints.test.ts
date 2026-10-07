@@ -7,7 +7,7 @@ import { createAgySqliteStore, writeAgyConversationDb } from './agySqliteStore';
 import { CodexHistoryService } from './codexHistory';
 import { ConversationMigrationService } from './conversationMigration';
 import { createMigrationEndpoints } from './migrationEndpoints';
-import { claudeTranscriptText } from './nativeWriters';
+import { agyDbContent, claudeTranscriptText } from './nativeWriters';
 import { resolveTranscriptPath } from '../transcripts/transcriptPath';
 
 // Migración de punta a punta sobre ficheros y bases SQLite REALES en una carpeta temporal: solo el CLI de Codex
@@ -25,7 +25,7 @@ const CWD = 'C:\\proyecto';
 function world() {
   const root = mkdtempSync(join(tmpdir(), 'mage-migrate-'));
   roots.push(root);
-  const dirs = { claudeA: join(root, '.claude-a'), claudeB: join(root, '.claude-b'), codexA: join(root, '.codex-a'), codexB: join(root, '.codex-b'), agyA: join(root, 'agy-a'), agyB: join(root, 'agy-b') };
+  const dirs = { claudeA: join(root, '.claude-a'), claudeB: join(root, '.claude-b'), codexA: join(root, '.codex-a'), codexB: join(root, '.codex-b'), agyA: join(root, 'agy-a'), agyB: join(root, 'agy-b'), agyReal: join(root, 'agy-real') };
   let counter = 0;
   const fsDeps = {
     exists: existsSync,
@@ -47,7 +47,7 @@ function world() {
     newId: () => `00000000-0000-4000-8000-${String((counter += 1)).padStart(12, '0')}`,
     claude: { effectiveDir: (dir) => dir, deleteConversation: (ref) => { deleted.push(ref.sessionId); rmSync(resolveTranscriptPath(ref.accountDir, ref.cwd, ref.sessionId), { force: true }); } },
     codex: { homeOf: (dir) => dir, history: codexHistory, deleteThread: async (home, id) => { deleted.push(id); const path = codexHistory.findRollout(home, id); if (path !== null) rmSync(path); } },
-    agy: { profileOf: (dir) => dir, history: agyHistory, writeDb: writeAgyConversationDb },
+    agy: { profileOf: (dir) => dir, externalOf: (dir) => (dir === dirs.agyA ? dirs.agyReal : undefined), history: agyHistory, writeDb: writeAgyConversationDb },
   });
   return { dirs, service: new ConversationMigrationService(endpoints), codexHistory, agyHistory, deleted, endpoints };
 }
@@ -122,5 +122,18 @@ describe('migración de punta a punta', () => {
       .rejects.toThrow('ya tiene la conversacion');
 
     expect(w.codexHistory.findRollout(w.dirs.codexA, THREAD)).not.toBeNull();
+  });
+
+  it('agyDelPerfilRealDelUsuario_seMigraPeroSuBaseNoSeBorra', async () => {
+    const w = world();
+    const id = 'bbbbbbbb-0000-4000-8000-000000000002';
+    const content = agyDbContent({ cwd: CWD, title: 't', items: [{ kind: 'user', text: 'del cli real', atMs: null }, { kind: 'assistant', text: 'ok', atMs: null }] },
+      { conversationId: id, trajectoryId: 'traj', newId: () => 'step-id', clock: { baseMs: 0 } });
+    writeAgyConversationDb(join(w.dirs.agyReal, '.gemini', 'antigravity-cli', 'conversations', `${id}.db`), content);
+
+    const result = await w.service.migrate({ sourceAccountDir: w.dirs.agyA, sourceProvider: 'agy', sessionId: id, cwd: CWD, privacy: 'shared', destAccountDir: w.dirs.codexB, destProvider: 'codex' });
+
+    expect(w.codexHistory.list(w.dirs.codexB)[0]).toMatchObject({ sessionId: result.sessionId, title: 'del cli real' });
+    expect(w.agyHistory.findDb(w.dirs.agyReal, id)).not.toBeNull();
   });
 });

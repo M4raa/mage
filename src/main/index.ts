@@ -2417,6 +2417,7 @@ function createSessionFromIpc(event: Electron.IpcMainInvokeEvent, params: Create
     // este es el unico que LANZA UN PROCESO, asi que un `accountDir` arbitrario seria un CLI corriendo
     // contra un config dir ajeno —con sus credenciales y sus hooks— por un solo mensaje IPC.
     assertLaunchable(params);
+    prepareAgyResume(params);
     // M2.6: una conversacion privada se lanza bajo el perfil privado de la cuenta (mismo login,
     // projects propio). Compartida (default) usa la cuenta tal cual. El config dir efectivo vuelve al
     // renderer para localizar transcripciones/memoria de la conversacion.
@@ -2921,11 +2922,26 @@ function agyProfileOfAccount(accountDir: string): string | null {
   return null;
 }
 
+// Una conversación de agy que viene del CLI propio del usuario se copia al perfil de Mage antes de reanudarla.
+function prepareAgyResume(params: CreateSessionParams): void {
+  if (params.provider !== AGY_PROVIDER_ID || params.resumeSessionId === undefined || params.resumeSessionId.length === 0) return;
+  agyHistory.ensureInProfile(agyProfileFor(params.accountDir), agyExternalProfileOf(params.accountDir), params.resumeSessionId, (from, to) => {
+    mkdirSync(dirname(to), { recursive: true });
+    for (const suffix of ['', '-wal', '-shm']) if (existsSync(`${from}${suffix}`)) copyFileSync(`${from}${suffix}`, `${to}${suffix}`);
+  });
+}
+
+// Perfil REAL de agy del usuario (`~/.gemini`): solo la suscripción lo comparte. Sus conversaciones salen en el
+// historial y se copian al perfil de Mage al reanudarlas (ver `AgyHistoryService.ensureInProfile`).
+function agyExternalProfileOf(accountDir: string): string | undefined {
+  return pathEquals(accountDir, AGY_SUBSCRIPTION_ACCOUNT_DIR) ? homedir() : undefined;
+}
+
 // Transcripción de una conversación de agy: sale de su base SQLite, así que va en un único lote final.
 function openAgyTranscript(sender: Electron.WebContents, transcriptId: string, params: OpenTranscriptParams): void {
   const profile = agyProfileOfAccount(params.accountDir);
   if (profile === null) throw new Error(`Cuenta de agy no valida para abrir una transcripcion: ${params.accountDir}`);
-  const dbPath = agyHistory.findDb(profile, params.sessionId);
+  const dbPath = agyHistory.findDb(profile, params.sessionId, agyExternalProfileOf(params.accountDir));
   if (dbPath === null) throw new Error(`No existe la conversacion de agy ${params.sessionId} en ${profile}`);
   try {
     const batch = staticTranscriptBatch(agyHistory.readLines(dbPath));
@@ -2968,7 +2984,7 @@ function registerTranscriptIpc2(deps: IpcDependencies): void {
     const codex = getProviderAccounts().find('codex', accountDir);
     if (codex !== null) return codexHistory.list(codex.home);
     const agyProfile = agyProfileOfAccount(accountDir);
-    if (agyProfile !== null) return agyHistory.list(agyProfile, accountDir);
+    if (agyProfile !== null) return agyHistory.list(agyProfile, accountDir, agyExternalProfileOf(accountDir));
     if (!isManagedAccountConfigDir(accountDir)) {
       throw new Error(`Cuenta no valida para listar conversaciones: ${accountDir}`);
     }
@@ -3022,7 +3038,7 @@ function conversationMigration(): ConversationMigrationService {
       history: codexHistory,
       deleteThread: (home, threadId) => codexThreadDelete({ spawnProbe: codexAccountProbeDeps().spawnProbe, timeoutMs: CLI_PROBE_TIMEOUT_MS }, home, threadId),
     },
-    agy: { profileOf: (accountDir) => agyProfileOfAccount(accountDir) ?? failMigration(`Cuenta de agy no valida: ${accountDir}`), history: agyHistory, writeDb: writeAgyConversationDb },
+    agy: { profileOf: (accountDir) => agyProfileOfAccount(accountDir) ?? failMigration(`Cuenta de agy no valida: ${accountDir}`), externalOf: agyExternalProfileOf, history: agyHistory, writeDb: writeAgyConversationDb },
   }));
   return conversationMigrationService;
 }

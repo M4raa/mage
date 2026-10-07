@@ -139,9 +139,17 @@ export class AgyHistoryService {
 
   constructor(private readonly store: AgyStore) {}
 
-  // Conversaciones de un perfil de agy (`USERPROFILE` con el que Mage lo lanza), más recientes primero.
-  list(profileDir: string, configDir: string): ConversationSummary[] {
+  // Conversaciones de un perfil de agy (`USERPROFILE` con el que Mage lo lanza), más recientes primero. `externalDir` es
+  // el perfil REAL de agy del usuario (su `~/.gemini`): sus conversaciones también salen, las del perfil de Mage primero.
+  list(profileDir: string, configDir: string, externalDir?: string): ConversationSummary[] {
     if (profileDir.trim().length === 0) throw new Error(`Perfil de agy vacio al listar conversaciones: ${JSON.stringify(profileDir)}`);
+    const own = this.listProfile(profileDir, configDir);
+    const ownIds = new Set(own.map((summary) => summary.sessionId));
+    const external = externalDir === undefined ? [] : this.listProfile(externalDir, configDir).filter((summary) => !ownIds.has(summary.sessionId));
+    return [...own, ...external].sort((a, b) => b.updatedAtMs - a.updatedAtMs).slice(0, MAX_CONVERSATIONS);
+  }
+
+  private listProfile(profileDir: string, configDir: string): ConversationSummary[] {
     const dir = join(profileDir, ...CONVERSATIONS_DIR);
     if (!this.store.exists(dir)) return [];
     const summaries: ConversationSummary[] = [];
@@ -150,15 +158,28 @@ export class AgyHistoryService {
       const summary = this.describe(join(dir, file), file.slice(0, -DB_EXT.length), configDir);
       if (summary !== null) summaries.push(summary);
     }
-    summaries.sort((a, b) => b.updatedAtMs - a.updatedAtMs);
-    return summaries.slice(0, MAX_CONVERSATIONS);
+    return summaries;
   }
 
-  // Ruta de la base de una conversación, o null. El id se valida: nunca llega un segmento de ruta del renderer.
-  findDb(profileDir: string, sessionId: string): string | null {
+  // Ruta de la base de una conversación (en el perfil de Mage y, si no está, en el real del usuario), o null. El id se
+  // valida: nunca llega un segmento de ruta del renderer.
+  findDb(profileDir: string, sessionId: string, externalDir?: string): string | null {
     if (!/^[A-Za-z0-9-]+$/.test(sessionId)) throw new Error(`sessionId de agy no valido: ${JSON.stringify(sessionId)}`);
-    const path = join(profileDir, ...CONVERSATIONS_DIR, `${sessionId}${DB_EXT}`);
-    return this.store.exists(path) ? path : null;
+    for (const dir of externalDir === undefined ? [profileDir] : [profileDir, externalDir]) {
+      const path = join(dir, ...CONVERSATIONS_DIR, `${sessionId}${DB_EXT}`);
+      if (this.store.exists(path)) return path;
+    }
+    return null;
+  }
+
+  // Antes de reanudar una conversación del perfil real del usuario, se COPIA al perfil de Mage: `--conversation` solo
+  // reanuda dentro del perfil con el que se lanza (medido) y Mage no lanza agy con el real para no tocar su
+  // `settings.json`. La original no se toca. No hace nada si ya está en el perfil de Mage.
+  ensureInProfile(profileDir: string, externalDir: string | undefined, sessionId: string, copyDb: (from: string, to: string) => void): void {
+    const found = this.findDb(profileDir, sessionId, externalDir);
+    const target = join(profileDir, ...CONVERSATIONS_DIR, `${sessionId}${DB_EXT}`);
+    if (found === null || found === target) return;
+    copyDb(found, target);
   }
 
   readLines(dbPath: string): Line[] {
