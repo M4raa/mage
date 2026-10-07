@@ -1766,7 +1766,7 @@ const CHECKS = [
   {
     // Migrar una conversación de Claude a una cuenta de otro proveedor: el diálogo dice que la original se queda y
     // que la nueva arranca con su historial. No se pulsa nada: seguir crearía una pestaña.
-    name: 'Historial: pasar una conversación de Claude a Codex avisa de que sigue con su historial',
+    name: 'Historial: pasar una conversación de Claude a Codex ofrece migrarla y, aparte, un handoff con su historial',
     async run(page, { userDataDir }) {
       const fx = seedProviderHistory({ userDataDir, repoRoot });
       try {
@@ -1788,7 +1788,8 @@ const CHECKS = [
           texto: document.querySelector('[data-account-switch-note]')?.textContent ?? '',
         }));
         await page.keyboard.press('Escape');
-        const ok = medido.texto.includes('se queda donde está') && medido.boton.some((t) => t.startsWith('Continuar en') && t.endsWith('con el historial'));
+        const ok = medido.texto.includes('sigue siendo la misma conversación') && medido.boton.some((t) => t.startsWith('Migrar la conversación a'))
+          && medido.boton.some((t) => t === 'Nueva conversación con su historial');
         return { ok, detail: JSON.stringify(medido) };
       } finally {
         fx.cleanup();

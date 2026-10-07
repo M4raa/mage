@@ -94,7 +94,7 @@ import type { ImageAttachment, ProviderProbeParams } from '@shared/ipc';
 import { base64ByteLength, validateAttachmentSet } from '@shared/attachments';
 import type { EffectiveSettings, InstructionsFile, ProjectFileContent, ReadProjectFileParams, WriteProjectFileParams } from '@shared/ipc';
 import type { ConversationPrefs } from '@shared/conversationIndex';
-import type { ConversationSummary, DeleteConversationParams, MoveConversationParams, MoveConversationResult } from '@shared/conversations';
+import type { ConversationSummary, DeleteConversationParams, MigrateConversationResult, MoveConversationParams, MoveConversationResult } from '@shared/conversations';
 import type { PersistedWorkspace } from '@shared/state';
 import type { AppSettings } from '@shared/settings';
 import { IMPORTED_CONTEXT_LIMITS } from '@shared/settings';
@@ -102,7 +102,7 @@ import type { PanelLayoutState } from '@shared/panelLayout';
 import type { MenuItemConstructorOptions } from 'electron';
 import { DebugChannel } from '@shared/debug';
 import type { RendererLogInput } from '@shared/debug';
-import type { AccountCreateParams, AccountInfo, CliLoginStart, EmbeddedLoginResult } from '@shared/accounts';
+import type { AccountCreateParams, AccountInfo, AccountProviderId, CliLoginStart, EmbeddedLoginResult } from '@shared/accounts';
 import { BASE_ARGS as CLAUDE_BASE_ARGS, ClaudeAdapter } from './engine/claudeAdapter';
 import { probeModelCatalogs, type ProbeProcess } from './engine/modelProbe';
 import { registerMcpIpc } from './config/mcpIpc';
@@ -159,8 +159,12 @@ import { mcpFamilyOf } from '@shared/mcp';
 import { AccountService } from './accounts/accountService';
 import { ConversationsService, type ConversationsDeps } from './conversations/conversationsService';
 import { CodexHistoryService } from './conversations/codexHistory';
+import { ConversationMigrationService } from './conversations/conversationMigration';
+import { createMigrationEndpoints } from './conversations/migrationEndpoints';
+import { codexThreadDelete } from './conversations/codexRpc';
+import { MIGRATE_CONVERSATION_SCHEMA } from './conversations/migrationParams';
 import { AgyHistoryService } from './conversations/agyHistory';
-import { createAgySqliteStore } from './conversations/agySqliteStore';
+import { createAgySqliteStore, writeAgyConversationDb } from './conversations/agySqliteStore';
 import { staticTranscriptBatch } from './transcripts/staticBatch';
 import type { LineAdapter } from './transcripts/transcriptReader';
 import { adaptCodexLine } from '@shared/codexTranscript';
@@ -2562,6 +2566,7 @@ function registerEngineIpc(deps: IpcDependencies): void {
 function registerApplicationIpc(deps: IpcDependencies): void {
   registerTranscriptIpc2(deps);
   registerConversationsIpc1(deps);
+  registerConversationMigrationIpc();
   registerSettingsIpc1(deps);
   registerThinkingIpc1();
   registerArtifactIpc1(deps);
@@ -2978,6 +2983,52 @@ function registerTranscriptIpc2(deps: IpcDependencies): void {
     // Y sus pensamientos, por lo mismo: si no, queda un `.jsonl` huerfano por cada conversacion borrada.
     getThinkingStore().forget(params.sessionId);
   });
+}
+
+// Migración de una conversación a una cuenta de otro proveedor (formato nativo del destino). La frontera valida la
+// forma y que cada cuenta sea REALMENTE del proveedor que dice el renderer; el servicio lo demás.
+function registerConversationMigrationIpc(): void {
+  ipcMain.handle(IpcChannel.ConversationsMigrate, (_e, input: unknown): Promise<MigrateConversationResult> => {
+    const params = MIGRATE_CONVERSATION_SCHEMA.parse(input);
+    for (const [dir, provider] of [[params.sourceAccountDir, params.sourceProvider], [params.destAccountDir, params.destProvider]] as const) {
+      if (accountProviderOf(dir) !== provider) throw new Error(`La cuenta ${dir} no es de ${provider}`);
+    }
+    return conversationMigration().migrate(params);
+  });
+}
+
+// Proveedor al que pertenece un directorio de cuenta, o null si no es una cuenta de Mage.
+function accountProviderOf(dir: string): AccountProviderId | null {
+  if (getProviderAccounts().find('codex', dir) !== null) return 'codex';
+  if (agyProfileOfAccount(dir) !== null) return 'agy';
+  return isManagedAccountConfigDir(dir) ? 'claude' : null;
+}
+
+let conversationMigrationService: ConversationMigrationService | null = null;
+function conversationMigration(): ConversationMigrationService {
+  conversationMigrationService ??= new ConversationMigrationService(createMigrationEndpoints({
+    readText: (path) => readFileSync(path, 'utf8'),
+    writeText: (path, text) => { mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, text, 'utf8'); },
+    copyFile: (from, to) => { mkdirSync(dirname(to), { recursive: true }); copyFileSync(from, to); },
+    removeFile: (path) => rmSync(path, { force: true }),
+    nowMs: Date.now,
+    newId: randomUUID,
+    claude: {
+      effectiveDir: (accountDir, privacy) => (privacy === 'private' ? accountService.ensurePrivateProfile(accountDir) : accountDir),
+      deleteConversation: (ref) => createIpcConversationAdminService().deleteConversation({ accountDir: ref.accountDir, sessionId: ref.sessionId, cwd: ref.cwd, privacy: ref.privacy }),
+    },
+    codex: {
+      homeOf: (accountDir) => getProviderAccounts().find('codex', accountDir)?.home ?? failMigration(`Cuenta de Codex no valida: ${accountDir}`),
+      history: codexHistory,
+      deleteThread: (home, threadId) => codexThreadDelete({ spawnProbe: codexAccountProbeDeps().spawnProbe, timeoutMs: CLI_PROBE_TIMEOUT_MS }, home, threadId),
+    },
+    agy: { profileOf: (accountDir) => agyProfileOfAccount(accountDir) ?? failMigration(`Cuenta de agy no valida: ${accountDir}`), history: agyHistory, writeDb: writeAgyConversationDb },
+  }));
+  return conversationMigrationService;
+}
+
+function failMigration(message: string): never {
+  throw new Error(message);
 }
 
 function registerConversationsIpc1(deps: IpcDependencies): void {

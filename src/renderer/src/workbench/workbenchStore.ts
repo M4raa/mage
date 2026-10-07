@@ -114,6 +114,7 @@ import { resolveDefaultModel } from './modelDefaults';
 import { resolveReopenedTabPrefs, toConversationPrefs } from './conversationPrefs';
 import type { ConversationPrefs } from '@shared/conversationIndex';
 import type { MageApi } from '@shared/ipc';
+import type { AccountProviderId } from '@shared/accounts';
 import type { ElicitationAnswer, ElicitationRequest } from '@shared/elicitation';
 import type { GitSnapshot } from '@shared/git';
 import { canSwitchBranch } from './canSwitchBranch';
@@ -477,6 +478,9 @@ export interface WorkbenchState extends PrState, PrActions {
   // H4: mueve ESTA conversacion a `destAccountId`, activa esa cuenta y la reabre, de forma que el
   // usuario siga escribiendo donde lo dejo cuando se le agota el uso.
   continueInAccount: (tabId: string, destAccountId: string) => Promise<void>;
+  // Handoff: una conversación NUEVA en la cuenta destino que arranca con el historial de esta como contexto. La
+  // original se queda donde está (no es la misma conversación: para eso, `continueInAccount`).
+  continueWithHistoryIn: (tabId: string, destAccountId: string) => Promise<void>;
   // Respuesta del usuario al dialogo de confianza de una carpeta. `granted` la guarda en los ajustes
   // (y con ella todo lo que cuelgue de esa carpeta); si no, la sesion que la pedia no arranca.
   answerTrustRequest: (folder: string, granted: boolean) => Promise<void>;
@@ -2053,12 +2057,10 @@ export function createWorkbenchStore(mage: MageClient) {
       const sessionId = get().sessionIdByChat[tabId] ?? tab?.resumeSessionId;
       if (tab === undefined || sessionId === undefined || sessionId.length === 0) return;
       if (destAccountId === tab.accountId) return;
-      // Solo las transcripciones de Claude se mueven entre cuentas. Con otro CLI (o entre proveedores) la
-      // conversación se queda donde está y el destino arranca con su historial como contexto.
+      // Entre cuentas de Claude se mueve la transcripción; en cualquier otro caso se traduce a formato nativo del
+      // destino y sigue siendo LA MISMA conversación (la de origen se retira).
       if (![tab.accountId, destAccountId].every((id) => get().accounts.find((a) => a.id === id)?.providerId === 'claude')) {
-        const context = importedConversationContext(get().blocksByChat[tabId] ?? [], { title: tab.title, fromProvider: providerLabel(tab.provider, get().settings.customProviders) }, get().settings.importedContextMaxChars);
-        get().setActiveAccount(destAccountId);
-        await get().createConversation(tab.privacy, { cwd: tab.cwd, ...(context === null ? {} : { importedContext: context }) });
+        await migrateToOtherProvider(get, mage, { tabId, sessionId, destAccountId });
         return;
       }
       await get().moveConversation(sessionId, tab.cwd, tab.privacy, destAccountId, tab.privacy, tab.accountId);
@@ -2068,6 +2070,14 @@ export function createWorkbenchStore(mage: MageClient) {
       // Sin entrada en el historial no se reabre nada: es preferible dejar al usuario en la cuenta
       // nueva con el sidebar cargado que abrir una pestana apuntando a un fichero que no aparecio.
       if (moved !== undefined) get().openConversation(moved);
+    },
+
+    continueWithHistoryIn: async (tabId, destAccountId) => {
+      const tab = get().tabs.find((t) => t.id === tabId);
+      if (tab === undefined || destAccountId === tab.accountId) return;
+      const context = importedConversationContext(get().blocksByChat[tabId] ?? [], { title: tab.title, fromProvider: providerLabel(tab.provider, get().settings.customProviders) }, get().settings.importedContextMaxChars);
+      get().setActiveAccount(destAccountId);
+      await get().createConversation(tab.privacy, { cwd: tab.cwd, ...(context === null ? {} : { importedContext: context }) });
     },
 
     answerTrustRequest: async (folder, granted) => {
@@ -2951,6 +2961,36 @@ function settleElicitation(state: WorkbenchState, tabId: string, requestId: stri
 async function refreshAgyUsage(set: SetFn): Promise<void> {
   const agyUsage = await window.mage.readAgyUsage().catch((err: unknown): AgyUsageSnapshot => ({ status: 'unavailable', reason: describeError(err), fetchedAt: Date.now() }));
   set(() => ({ agyUsage }));
+}
+
+// Migra la conversación de una pestaña a una cuenta de otro proveedor (o de otra cuenta de Codex/agy) y la reabre
+// ahí. Se cierra la pestaña y se para su sesión ANTES: el origen se retira al acabar y nadie debe estar escribiéndolo.
+async function migrateToOtherProvider(
+  get: () => WorkbenchState,
+  mage: MageClient,
+  ctx: { readonly tabId: string; readonly sessionId: string; readonly destAccountId: string },
+): Promise<void> {
+  const tab = get().tabs.find((t) => t.id === ctx.tabId);
+  const source = get().accounts.find((a) => a.id === tab?.accountId);
+  const dest = get().accounts.find((a) => a.id === ctx.destAccountId);
+  if (tab === undefined || source === undefined || dest === undefined || tab.provider !== source.providerId) {
+    throw new Error(`Esta conversacion (${tab?.provider ?? 'sin pestana'}) no se puede migrar a ${dest?.providerId ?? ctx.destAccountId}`);
+  }
+  await closeMatchingTab(get, ctx.sessionId);
+  await get().discardBackgroundSession(ctx.sessionId);
+  const result = await mage.migrateConversation({
+    sourceAccountDir: source.id, sourceProvider: asAccountProvider(source.providerId), sessionId: ctx.sessionId, cwd: tab.cwd, privacy: tab.privacy,
+    destAccountDir: dest.id, destProvider: asAccountProvider(dest.providerId),
+  });
+  get().setActiveAccount(dest.id);
+  await get().loadConversationHistory();
+  const migrated = get().conversationHistory.find((c) => c.sessionId === result.sessionId);
+  if (migrated !== undefined) get().openConversation(migrated);
+}
+
+function asAccountProvider(id: string): AccountProviderId {
+  if (id === 'claude' || id === 'codex' || id === 'agy') return id;
+  throw new Error(`Proveedor de cuenta desconocido: ${JSON.stringify(id)}`);
 }
 
 // Proveedores cuyo historial en disco sabe leer Mage (un lector por CLI: el de Claude y el rollout de Codex).

@@ -99,10 +99,13 @@ versión.
   activa (sus rollouts) y las de agy que Mage ha lanzado, y se pueden reabrir: el chat recupera sus
   mensajes y herramientas y Codex reanuda su hilo (`thread/resume`) y agy su conversación (`--conversation`).
   Cada CLI tiene su lector, porque cada uno guarda su historial en su propio formato.
-- **Migrar entre proveedores**: al pasar una conversación parada de una cuenta de Claude a una de Codex o
-  agy (o al revés) ya no falla: la original se queda donde está y en la cuenta destino se abre una
-  conversación nueva que arranca con su historial como contexto. Entre cuentas de Claude se sigue moviendo
-  la transcripción como siempre.
+- **Migrar una conversación a otro proveedor**: al pasar una conversación parada de una cuenta a una de otro
+  proveedor (Claude, Codex o agy, en cualquier dirección) Mage la traduce al formato nativo del destino y sigue
+  siendo **la misma conversación**: Claude la reanuda con `--resume`, Codex con `thread/resume` y agy con
+  `--conversation`, con sus mensajes y herramientas. La de origen se retira tras comprobar lo escrito. Se pierden
+  los pensamientos y las imágenes (y, en agy, las herramientas pasan a texto). Entre cuentas de Codex el rollout se
+  copia sin pérdida. Aparte queda «Nueva conversación con su historial», que abre una conversación nueva con el
+  historial como contexto (límite configurable en Ajustes).
 - **Suscripción de agy como cuenta**: si agy está instalado y con sesión, aparece como una cuenta más, con
   su chip, y su uso (cuotas por grupo de modelos) sale en el uso general de la barra de abajo y solo en su
   panel de Uso.

@@ -1131,15 +1131,40 @@ describe('requestAccountSwitch y continueInAccount', () => {
     expect(store.getState().accountSwitchPrompt).toEqual({ tabId: 'a', destAccountId: 'C:/Users/u/.codex-x' });
   });
 
-  it('continueInAccount_haciaOtroProveedor_noMueveElFicheroYAbreChatConElHistorial', async () => {
+  it('continueInAccount_haciaOtroProveedor_migraLaConversacionYReabreLaDelDestino', async () => {
     const moveConversation = vi.fn();
-    const store = mounted({ moveConversation });
-    store.setState({ blocksByChat: { a: [{ kind: 'user', id: 'u1', text: 'arregla el login', time: '', attachments: [] }] } });
+    const migrateConversation = vi.fn().mockResolvedValue({ sessionId: 'hilo-nuevo', configDir: 'C:/Users/u/.codex-x', provider: 'codex' });
+    const listConversations = vi.fn().mockResolvedValue([
+      { sessionId: 'hilo-nuevo', configDir: 'C:/Users/u/.codex-x', cwd: '/p', title: 't', privacy: 'shared', updatedAtMs: 1, sizeBytes: 1, isScheduled: false, providerId: 'codex' },
+    ]);
+    const store = mounted({ moveConversation, migrateConversation, listConversations });
 
     await store.getState().continueInAccount('a', 'C:/Users/u/.codex-x');
 
-    const created = store.getState().tabs.find((t) => t.id !== 'a');
     expect(moveConversation).not.toHaveBeenCalled();
+    expect(migrateConversation).toHaveBeenCalledWith(expect.objectContaining({ sourceProvider: 'claude', destProvider: 'codex', destAccountDir: 'C:/Users/u/.codex-x', sessionId: 's-old' }));
+    expect(store.getState().tabs.find((t) => t.resumeSessionId === 'hilo-nuevo')?.provider).toBe('codex');
+    expect(store.getState().tabs.some((t) => t.id === 'a')).toBe(false);
+  });
+
+  it('continueInAccount_laMigracionFalla_elErrorSubeYNoSeCambiaDeCuenta', async () => {
+    const migrateConversation = vi.fn().mockRejectedValue(new Error('no se pudo comprobar'));
+    const store = mounted({ migrateConversation });
+
+    await expect(store.getState().continueInAccount('a', 'C:/Users/u/.codex-x')).rejects.toThrow('no se pudo comprobar');
+
+    expect(store.getState().activeAccountId).toBe(accounts[0]!.id);
+  });
+
+  it('continueWithHistoryIn_haciaOtroProveedor_abreChatNuevoConElHistorialYNoMigra', async () => {
+    const migrateConversation = vi.fn();
+    const store = mounted({ migrateConversation, getScratchDir: vi.fn(() => new Promise<string>(() => undefined)) });
+    store.setState({ blocksByChat: { a: [{ kind: 'user', id: 'u1', text: 'arregla el login', time: '', attachments: [] }] } });
+
+    await store.getState().continueWithHistoryIn('a', 'C:/Users/u/.codex-x');
+
+    const created = store.getState().tabs.find((t) => t.id !== 'a');
+    expect(migrateConversation).not.toHaveBeenCalled();
     expect(created?.provider).toBe('codex');
     expect(created?.importedContext).toContain('Usuario: arregla el login');
   });

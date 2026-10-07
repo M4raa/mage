@@ -2,7 +2,7 @@
 // el CODEX_HOME de destino es una carpeta temporal vacía (sin auth.json ni bases internas) y solo se pide
 // reanudar y leer el hilo; nunca se manda un turno. Uso: node spike/codex-copy-rollout-spike.mjs [rollout.jsonl]
 import { spawn, spawnSync } from 'node:child_process';
-import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 
@@ -56,6 +56,12 @@ try {
   const read = await call('thread/read', { threadId: meta.id, includeTurns: true });
   console.log('thread/read:', read.error === undefined ? `ok (${read.result?.thread?.turns?.length ?? '?'} turnos)` : `ERROR ${JSON.stringify(read.error)}`);
   console.log('ficheros creados en el home destino:', readdirSync(home).join(', '));
+  // `thread/delete`: ¿borra el rollout y su rastro en la base interna? (para quitar la conversación de origen al migrar)
+  const rolloutPath = join(day, basename(source));
+  const del = await call('thread/delete', { threadId: meta.id });
+  console.log('thread/delete:', del.error === undefined ? 'ok' : `ERROR ${JSON.stringify(del.error)}`, '| rollout sigue en disco:', existsSync(rolloutPath));
+  const after = await call('thread/read', { threadId: meta.id, includeTurns: false });
+  console.log('thread/read tras borrar:', after.error === undefined ? 'AÚN EXISTE' : `error esperado (${after.error.message?.slice(0, 80)})`);
 } finally {
   // Con `shell: true` en Windows `kill()` solo mata al cmd; el árbol entero libera los ficheros del home temporal.
   if (process.platform === 'win32') spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore' });

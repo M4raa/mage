@@ -116,3 +116,32 @@ export function collectTexts(fields: readonly WireField[], depth = 0): string[] 
 }
 
 const MAX_NESTING = 6;
+
+// --- Escritura -------------------------------------------------------------------------------------------------
+// Codificador mínimo para los pocos mensajes que Mage escribe en las bases de agy (medidos con `spike/agy-resume-synth-spike.mjs`).
+
+function encodeVarint(value: number): number[] {
+  const out: number[] = [];
+  let rest = value;
+  while (rest >= 0x80) {
+    out.push((rest % 0x80) | 0x80);
+    rest = Math.floor(rest / 0x80);
+  }
+  return [...out, rest];
+}
+
+export function varintField(field: number, value: number): Uint8Array {
+  return Uint8Array.from([...encodeVarint(field * 8), ...encodeVarint(value)]);
+}
+
+export function bytesFieldOf(field: number, value: Uint8Array): Uint8Array {
+  return Uint8Array.from([...encodeVarint(field * 8 + 2), ...encodeVarint(value.length), ...value]);
+}
+
+export function textFieldOf(field: number, value: string): Uint8Array {
+  return bytesFieldOf(field, new TextEncoder().encode(value));
+}
+
+export function concatBytes(...parts: readonly Uint8Array[]): Uint8Array {
+  return Uint8Array.from(parts.flatMap((part) => [...part]));
+}

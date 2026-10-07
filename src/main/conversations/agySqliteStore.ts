@@ -1,6 +1,8 @@
-import { existsSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, statSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import type { AgyStep, AgyStore } from './agyHistory';
+import { AGY_DB_SCHEMA, type AgyDbContent } from './nativeWriters';
 
 // Lectura real de las bases de agy: SQLite en SOLO LECTURA (agy puede tener la conversación abierta; nunca se
 // escribe en ella). Cada consulta abre y cierra: el historial se sondea poco y no se retienen manejadores.
@@ -39,4 +41,25 @@ export function createAgySqliteStore(): AgyStore {
         return row === undefined ? null : toStep(row);
       }),
   };
+}
+
+// agy 1.3.1 reanuda una base escrita así (medido con `spike/agy-resume-synth-spike.mjs --mode minimal`).
+const AGY_TRAJECTORY_TYPE = 4;
+const AGY_SOURCE = 17;
+const AGY_STEP_DONE = 3;
+
+export function writeAgyConversationDb(dbPath: string, content: AgyDbContent): void {
+  mkdirSync(dirname(dbPath), { recursive: true });
+  const db = new DatabaseSync(dbPath);
+  try {
+    db.exec('BEGIN');
+    for (const statement of AGY_DB_SCHEMA) db.exec(statement);
+    db.prepare('INSERT INTO trajectory_meta (trajectory_id, cascade_id, trajectory_type, source) VALUES (?, ?, ?, ?)').run(content.trajectoryId, content.conversationId, AGY_TRAJECTORY_TYPE, AGY_SOURCE);
+    db.prepare('INSERT INTO trajectory_metadata_blob (id, data) VALUES (?, ?)').run('main', content.metadataBlob);
+    const insert = db.prepare('INSERT INTO steps (idx, step_type, status, has_subtrajectory, metadata, step_payload, step_format) VALUES (?, ?, ?, 0, ?, ?, 0)');
+    for (const step of content.steps) insert.run(step.idx, step.stepType, AGY_STEP_DONE, step.metadata, step.payload);
+    db.exec('COMMIT');
+  } finally {
+    db.close();
+  }
 }

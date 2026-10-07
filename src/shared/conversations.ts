@@ -49,3 +49,24 @@ export interface MoveConversationParams {
 export interface MoveConversationResult {
   readonly configDir: string;
 }
+
+// Migración de una conversación a una cuenta de OTRO proveedor (o de otra cuenta de Codex/agy): se traduce a
+// formato nativo del destino y SIGUE SIENDO LA MISMA conversación; la de origen se retira. Entre cuentas de
+// Claude se usa `MoveConversationParams` (mover la transcripción).
+export interface MigrateConversationParams {
+  readonly sourceAccountDir: string;
+  readonly sourceProvider: AccountProviderId;
+  readonly sessionId: string;
+  readonly cwd: string;
+  readonly privacy: ConversationPrivacy;
+  readonly destAccountDir: string;
+  readonly destProvider: AccountProviderId;
+}
+
+export interface MigrateConversationResult {
+  // Id de la conversación en el destino (el de Claude, el hilo de Codex o la conversación de agy).
+  readonly sessionId: string;
+  // Config dir EFECTIVO donde queda (la cuenta, o su perfil privado en Claude).
+  readonly configDir: string;
+  readonly provider: AccountProviderId;
+}

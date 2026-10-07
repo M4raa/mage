@@ -14,7 +14,7 @@ import type { UsageInfo } from './usage';
 import type { StatusInfo } from './status';
 import type { TranscriptBatch, TranscriptTailPosition } from './transcripts';
 import type { MemoryFile } from './memory';
-import type { ConversationSummary, DeleteConversationParams, MoveConversationParams, MoveConversationResult } from './conversations';
+import type { ConversationSummary, DeleteConversationParams, MigrateConversationParams, MigrateConversationResult, MoveConversationParams, MoveConversationResult } from './conversations';
 import type { ConversationPrivacy, PersistedWorkspace } from './state';
 import type { AppSettings } from './settings';
 import type { ElicitationAnswer } from './elicitation';
@@ -172,6 +172,7 @@ export const IpcChannel = {
   // Administracion de conversaciones (#2 de AJUSTES): borrar y mover entre secciones/cuentas.
   ConversationsDelete: 'conversations:delete',
   ConversationsMove: 'conversations:move',
+  ConversationsMigrate: 'conversations:migrate',
   StateLoad: 'state:load',
   StateSave: 'state:save',
   SettingsLoad: 'settings:load',
@@ -888,6 +889,8 @@ export interface MageApi {
   listConversations(accountDir: string): Promise<readonly ConversationSummary[]>;
   deleteConversation(params: DeleteConversationParams): Promise<void>;
   moveConversation(params: MoveConversationParams): Promise<MoveConversationResult>;
+  // Sigue la MISMA conversación en una cuenta de otro proveedor (formato nativo del destino); la de origen se retira.
+  migrateConversation(params: MigrateConversationParams): Promise<MigrateConversationResult>;
   // Persistencia del workspace (M2.5): lista de pestanas + activa. null si nunca se guardo o el
   // fichero esta corrupto (arranque limpio). El contenido de las conversaciones NO se guarda aqui.
   loadWorkspace(): Promise<PersistedWorkspace | null>;

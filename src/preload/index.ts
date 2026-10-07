@@ -69,7 +69,7 @@ import type { LogEntry, MageDebugApi, RendererLogInput } from '@shared/debug';
 import type { PersistedTab, PersistedWorkspace } from '@shared/state';
 import type { AppSettings } from '@shared/settings';
 import type { PanelLayoutState } from '@shared/panelLayout';
-import type { DeleteConversationParams, MoveConversationParams } from '@shared/conversations';
+import type { DeleteConversationParams, MigrateConversationParams, MoveConversationParams } from '@shared/conversations';
 
 // Puente unico entre renderer y main. El renderer solo ve esta API tipada (window.mage);
 // no tiene acceso a Node, FS ni procesos. Cada metodo reenvia por un canal del contrato IPC.
@@ -168,6 +168,7 @@ const api: MageApi = {
   listConversations: (accountDir: string) => ipcRenderer.invoke(IpcChannel.ConversationsList, accountDir),
   deleteConversation: (params: DeleteConversationParams) => ipcRenderer.invoke(IpcChannel.ConversationsDelete, params),
   moveConversation: (params: MoveConversationParams) => ipcRenderer.invoke(IpcChannel.ConversationsMove, params),
+  migrateConversation: (params: MigrateConversationParams) => ipcRenderer.invoke(IpcChannel.ConversationsMigrate, params),
   loadWorkspace: () => ipcRenderer.invoke(IpcChannel.StateLoad),
   saveWorkspace: (state: PersistedWorkspace) => ipcRenderer.invoke(IpcChannel.StateSave, state),
   loadCommandCatalog: (accountDir: string) => ipcRenderer.invoke(IpcChannel.CommandCatalogLoad, accountDir),

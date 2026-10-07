@@ -17,6 +17,7 @@ function AccountSwitchBody({ prompt }: { readonly prompt: AccountSwitchPrompt })
   const setActiveAccount = useWorkbenchStore((s) => s.setActiveAccount);
   const continueInAccount = useWorkbenchStore((s) => s.continueInAccount);
   const createConversation = useWorkbenchStore((s) => s.createConversation);
+  const continueWithHistoryIn = useWorkbenchStore((s) => s.continueWithHistoryIn);
   const dest = useWorkbenchStore((s) => s.accounts.find((a) => a.id === prompt.destAccountId));
   const title = useWorkbenchStore((s) => s.tabs.find((t) => t.id === prompt.tabId)?.title ?? 'esta conversación');
   // Entre cuentas de Claude la transcripción se mueve; con otro CLI cada uno guarda la suya, así que la
@@ -33,6 +34,14 @@ function AccountSwitchBody({ prompt }: { readonly prompt: AccountSwitchPrompt })
     close();
     setActiveAccount(prompt.destAccountId);
     void createConversation('shared');
+  };
+  const handoff = (): void => {
+    setBusy(true);
+    setError(null);
+    continueWithHistoryIn(prompt.tabId, prompt.destAccountId)
+      .then(close)
+      .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)))
+      .finally(() => setBusy(false));
   };
   const migrate = (): void => {
     setBusy(true);
@@ -72,7 +81,7 @@ function AccountSwitchBody({ prompt }: { readonly prompt: AccountSwitchPrompt })
         {/* P-028, 27: migrar no es lo mismo segun donde viva la conversacion. */}
         <p className="text-[11px] leading-[1.5] text-mg-muted" data-account-switch-note={crossProvider ? 'history' : 'move'}>
           {crossProvider
-            ? `Es de otro proveedor: la original se queda donde está y en ${alias} se abre una conversación nueva que arranca con su historial como contexto.`
+            ? `Es de otro proveedor: se traduce al formato de ${alias} y sigue siendo la misma conversación; la de origen se retira. Se pierden los pensamientos y las imágenes${dest?.providerId === 'agy' ? ', y las herramientas pasan a texto' : ''}.`
             : `Compartida: se reanuda con ${alias}. Privada: se mueve a ${alias}.`}
         </p>
         {error !== null && (
@@ -80,7 +89,7 @@ function AccountSwitchBody({ prompt }: { readonly prompt: AccountSwitchPrompt })
             No se pudo migrar: {error}
           </div>
         )}
-        <div className="mt-[2px] flex justify-end gap-[8px]">
+        <div className="mt-[2px] flex flex-wrap justify-end gap-[8px]">
           <button
             onClick={newChatInDest}
             disabled={busy}
@@ -88,12 +97,22 @@ function AccountSwitchBody({ prompt }: { readonly prompt: AccountSwitchPrompt })
           >
             Abrir un chat nuevo en {alias}
           </button>
+          {crossProvider && (
+            <button
+              onClick={handoff}
+              disabled={busy}
+              data-account-switch-handoff="true"
+              className="rounded-[7px] border border-mg-border-emph px-[12px] py-[6px] text-mg-body2 hover:bg-mg-hover disabled:opacity-50"
+            >
+              Nueva conversación con su historial
+            </button>
+          )}
           <button
             onClick={migrate}
             disabled={busy}
             className="rounded-[7px] bg-mg-primary px-[12px] py-[6px] font-semibold text-mg-primary-ink disabled:opacity-50"
           >
-            {busy ? 'Migrando…' : crossProvider ? `Continuar en ${alias} con el historial` : `Migrar la conversación a ${alias}`}
+            {busy ? 'Migrando…' : `Migrar la conversación a ${alias}`}
           </button>
         </div>
       </motion.div>
