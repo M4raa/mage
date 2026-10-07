@@ -113,6 +113,7 @@ import { resolveDefaultModel } from './modelDefaults';
 import { resolveReopenedTabPrefs, toConversationPrefs } from './conversationPrefs';
 import type { ConversationPrefs } from '@shared/conversationIndex';
 import type { MageApi } from '@shared/ipc';
+import type { ElicitationAnswer, ElicitationRequest } from '@shared/elicitation';
 import type { GitSnapshot } from '@shared/git';
 import { canSwitchBranch } from './canSwitchBranch';
 import { recentProjects, RECENT_PROJECTS_LIMIT } from './recentProjects';
@@ -251,6 +252,8 @@ export interface WorkbenchState extends PrState, PrActions {
 
   // --- Historial de conversaciones en disco (M2.6, sidebar = historial) ---
   readonly conversationHistory: readonly ConversationSummary[];
+  readonly elicitationsByChat: Readonly<Record<string, readonly { readonly request: ElicitationRequest; readonly state: 'pending' | 'accept' | 'decline' | 'cancel' }[]>>;
+  answerElicitation: (tabId: string, answer: Omit<ElicitationAnswer, 'sessionId'>) => Promise<void>;
   saveChatProject: (project: ChatProject) => Promise<void>;
   deleteChatProject: (projectId: string) => void;
   assignChatProject: (sessionId: string | undefined, tabId: string | undefined, projectId: string | null) => void;
@@ -1190,6 +1193,7 @@ export function createWorkbenchStore(mage: MageClient) {
     trustRequests: [],
     mcpServersByChat: {},
     conversationHistory: [],
+    elicitationsByChat: {},
     backgroundSessions: {},
     closePromptOpen: false,
     updateState: IDLE_UPDATE_STATE,
@@ -1379,6 +1383,7 @@ export function createWorkbenchStore(mage: MageClient) {
           streamingIdByChat: without(s.streamingIdByChat, tabId),
           statusByChat: without(s.statusByChat, tabId),
           pendingByChat: without(s.pendingByChat, tabId),
+          elicitationsByChat: without(s.elicitationsByChat, tabId),
           slashCommandsByChat: without(s.slashCommandsByChat, tabId),
           subagentsByChat: without(s.subagentsByChat, tabId),
           contextUsageByChat: without(s.contextUsageByChat, tabId),
@@ -2690,6 +2695,15 @@ export function createWorkbenchStore(mage: MageClient) {
       void mage.stopTask({ sessionId, taskId }).catch((err: unknown) => failChat(set, tabId, describeError(err)));
     },
 
+    // Responde a una elicitation MCP. La tarjeta se cierra cuando main confirma con `elicitation_resolved`.
+    answerElicitation: async (tabId, answer) => {
+      const sessionId = get().sessionIdByChat[tabId];
+      if (sessionId === undefined) return;
+      const request = get().elicitationsByChat[tabId]?.find((e) => e.request.requestId === answer.requestId)?.request;
+      if (request?.mode === 'url' && answer.action === 'accept') await mage.openExternal(request.url);
+      await mage.answerElicitation({ ...answer, sessionId });
+    },
+
     // Responde al permiso pendiente de la pestana activa y limpia el panel.
     answerActivePermission: (decision) => get().answerPermissionFor(get().activeTabId, decision),
 
@@ -2882,6 +2896,19 @@ export interface PendingPermission {
 
 // La peticion que contestan el panel de Permisos, los atajos y el dock de preguntas: la que MAS lleva
 // esperando. Devuelve la referencia guardada, asi que vale como selector de zustand sin re-render de mas.
+// Cierra una elicitation (queda como registro en la lista) y devuelve la pestaña a 'streaming' si ya no
+// espera nada del usuario.
+function settleElicitation(state: WorkbenchState, tabId: string, requestId: string, outcome: 'accept' | 'decline' | 'cancel'): Partial<WorkbenchState> {
+  const list = state.elicitationsByChat[tabId] ?? [];
+  if (!list.some((e) => e.request.requestId === requestId && e.state === 'pending')) return {};
+  const next = list.map((e) => (e.request.requestId === requestId ? { ...e, state: outcome } : e));
+  const waiting = next.some((e) => e.state === 'pending') || (state.pendingByChat[tabId]?.length ?? 0) > 0;
+  return {
+    elicitationsByChat: { ...state.elicitationsByChat, [tabId]: next },
+    ...(waiting || state.statusByChat[tabId] !== 'needs_permission' ? {} : { statusByChat: { ...state.statusByChat, [tabId]: 'streaming' as const } }),
+  };
+}
+
 export function headPermission(state: Pick<WorkbenchState, 'pendingByChat'>, tabId: string): PendingPermission | null {
   return state.pendingByChat[tabId]?.[0] ?? null;
 }
@@ -3017,6 +3044,18 @@ export function reduceEvent(state: WorkbenchState, tabId: string, event: MageEve
         statusByChat: { ...state.statusByChat, [tabId]: 'needs_permission' },
       };
     }
+    case 'elicitation_request': {
+      const list = state.elicitationsByChat[tabId] ?? [];
+      if (list.some((e) => e.request.requestId === event.request.requestId)) return {};
+      return {
+        elicitationsByChat: { ...state.elicitationsByChat, [tabId]: [...list, { request: event.request, state: 'pending' }] },
+        statusByChat: { ...state.statusByChat, [tabId]: 'needs_permission' },
+      };
+    }
+    case 'elicitation_cancelled':
+      return settleElicitation(state, tabId, event.requestId, 'cancel');
+    case 'elicitation_resolved':
+      return settleElicitation(state, tabId, event.requestId, event.action);
     case 'permission_cancelled': {
       // Si no habia tarjeta para ese requestId, `cancelQuestionBlock` devuelve el MISMO array y no se
       // emite parche de bloques: un parche vacio tiene que seguir siendo vacio.

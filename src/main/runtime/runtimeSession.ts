@@ -2,6 +2,8 @@ import type { ImageAttachment } from '@shared/ipc';
 import { RUNTIME_AUTO_MODE_NOTE, RUNTIME_PERMISSION_MODES, type RuntimePermissionMode } from '@shared/providers';
 import type { ContextUsage, MageEvent, McpServerStatus, PermissionDecision, TurnUsage } from '@shared/events';
 import type { ManagedSession } from '../engine/sessionManager';
+import type { ElicitationAnswer } from '@shared/elicitation';
+import type { ElicitationBroker } from './mcp/elicitationBroker';
 import type { SessionLogFn } from '../engine/agentSession';
 import { runTurn, type Authorization, type LoopEvent, type LoopTools, type PreparedCall, type TurnOutcome } from './agentLoop';
 import type { ChatClient, ChatMessage } from './chatClient';
@@ -62,6 +64,7 @@ export interface RuntimeSessionDeps {
   readonly prepareModel?: (model: string) => Promise<PreparedModel>;
   // Servidores MCP de la sesion (R8): el primer turno espera a que conecten; su estado va al `session_init`.
   readonly mcp?: SessionMcp;
+  readonly elicitation?: ElicitationBroker;
   readonly log?: SessionLogFn;
 }
 
@@ -189,9 +192,14 @@ export class RuntimeSession implements ManagedSession {
   stop(): void {
     if (this.stopped) return;
     this.stopped = true;
+    this.deps.elicitation?.cancelAll();
     this.queue.length = 0;
     this.interrupt();
     this.deps.mcp?.close().catch((err: unknown) => this.deps.log?.('warn', 'No se pudieron cerrar los MCP del runtime', { message: String(err) }));
+  }
+
+  answerElicitation(answer: ElicitationAnswer): void {
+    this.deps.elicitation?.answer(answer);
   }
 
   // Vuelve a anunciar la sesion (herramientas y estado de los MCP han cambiado al conectar).

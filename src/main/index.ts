@@ -180,6 +180,7 @@ import { WorkspaceStore } from './state/workspaceStore';
 import { CommandCatalogStore } from './state/commandCatalogStore';
 import { openArtifactWindow } from './artifacts/artifactWindow';
 import { InstructionsService } from './instructions/instructionsService';
+import { ELICITATION_ANSWER_SCHEMA } from '@shared/elicitation';
 import { agyBridgeSpec, bridgeDocument, codexBridgeSpec, resolveBridge, type BridgeFs, type BridgeSpec } from './instructions/instructionsBridge';
 import { EffectiveSettingsService } from './config/effectiveSettingsService';
 import { ConversationIndexStore } from './state/conversationIndexStore';
@@ -544,12 +545,13 @@ function runtimeEnv(): RuntimeEnv {
     mkdir: (path) => mkdirSync(path, { recursive: true }),
     readText: (path) => (existsSync(path) ? readFileSync(path, 'utf8') : null),
     catalog: runtimeModelCatalog,
-    mcpConnector: (cwd) =>
+    mcpConnector: (cwd, broker) =>
       createMcpConnector({
         vault: { get: (id) => getSecretStore().get(id), set: (id, value) => getSecretStore().set(id, value) },
         logins: mcpLogins,
         baseEnv: () => scrubAgentEnv(process.env),
         cwd,
+        elicit: (server, params, signal) => broker.request(server, params, signal),
       }),
     toolAccess: (id) => getSettingsStore().load().runtimeToolAccess[id] ?? [],
   };
@@ -2545,6 +2547,9 @@ function registerSessionIpc1(): void {
   );
   ipcMain.handle(IpcChannel.SessionAnswerPermission, (_e, params: AnswerPermissionParams) =>
     sessionManager.answerPermission(params.sessionId, params.requestId, params.decision),
+  );
+  ipcMain.handle(IpcChannel.SessionAnswerElicitation, (_e, input: unknown) =>
+    sessionManager.answerElicitation(ELICITATION_ANSWER_SCHEMA.parse(input)),
   );
   ipcMain.handle(IpcChannel.SessionInterrupt, (_e, sessionId: string) =>
     sessionManager.interrupt(sessionId),

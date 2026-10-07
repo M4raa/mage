@@ -37,7 +37,7 @@ export function inAppNoticeForEvent(event: MageEvent, context: NotificationConte
 function inAppLevelFor(event: MageEvent): NotifyLevel {
   if (event.kind === 'result') return 'success';
   if (event.kind === 'error') return 'error';
-  if (event.kind === 'permission_request') return 'warning';
+  if (event.kind === 'permission_request' || event.kind === 'elicitation_request') return 'warning';
   return 'info';
 }
 
@@ -78,6 +78,8 @@ export function notificationForEvent(event: MageEvent, context: NotificationCont
       return event.result.origin === TASK_NOTIFICATION_ORIGIN ? null : { title: 'Turno completado', body: tabTitle };
     case 'permission_request':
       return autoAllowed ? null : { title: 'Permiso requerido', body: `${tabTitle}: ${event.request.toolName}` };
+    case 'elicitation_request':
+      return { title: 'Formulario MCP pendiente', body: `${tabTitle}: ${event.request.server}` };
     case 'error':
       return { title: 'Error en la conversación', body: `${tabTitle}: ${event.message}` };
     case 'assistant_text':

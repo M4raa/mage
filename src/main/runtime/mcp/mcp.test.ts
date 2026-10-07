@@ -18,7 +18,7 @@ afterEach(async () => {
   pools.length = 0;
 });
 
-function pool(servers: readonly ResolvedMcpServer[], connect = createMcpConnector({ vault: { get: () => null, set: () => undefined }, logins: new McpLoginRegistry({ openUrl: async () => undefined, newId: () => 'l1' }), baseEnv: () => ({ PATH: process.env.PATH }), cwd: process.cwd() })) {
+function pool(servers: readonly ResolvedMcpServer[], connect = createMcpConnector({ vault: { get: () => null, set: () => undefined }, logins: new McpLoginRegistry({ openUrl: async () => undefined, newId: () => 'l1' }), baseEnv: () => ({ PATH: process.env.PATH }), cwd: process.cwd(), elicit: async () => ({ action: 'cancel' }) })) {
   const notices: string[] = [];
   const created = new McpPool(servers, { connect, notify: (text) => notices.push(text), loginRequired: () => undefined, onChange: () => undefined, connectTimeoutMs: 10_000 });
   pools.push(created);

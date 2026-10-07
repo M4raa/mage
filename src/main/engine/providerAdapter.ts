@@ -1,5 +1,6 @@
 import type { ImageAttachment } from '@shared/ipc';
 import type { MageEvent, PermissionDecision } from '@shared/events';
+import type { ElicitationAnswer } from '@shared/elicitation';
 import type { ResolvedMcpServer } from '../config/mcpResolved';
 
 // Configuracion compartida de un lanzamiento. Lleva los valores de env/cabeceras de los MCP: solo
@@ -104,6 +105,7 @@ export interface ProviderAdapter {
   // respecto al de siempre — la forma minima con `content` string esta validada por el spike.
   encodeUserMessage(text: string, attachments?: readonly ImageAttachment[]): unknown;
   encodePermissionResponse(ref: PermissionRef, decision: PermissionDecision): unknown;
+  encodeElicitationResponse?(answer: ElicitationAnswer): unknown;
   encodeInterrupt(): unknown;
   // true = el CLI no tiene interrupcion por protocolo: AgentSession corta matando el arbol y el siguiente
   // mensaje relanza reanudando la conversacion (`agy`). Entonces `encodeInterrupt` no se llama.

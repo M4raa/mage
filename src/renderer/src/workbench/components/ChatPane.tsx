@@ -11,6 +11,7 @@ import { PromptBar } from './PromptBar';
 import { RateLimitBanner } from './RateLimitBanner';
 import { ChatInfoBar } from './ChatInfoBar';
 import { QuestionDock } from './QuestionDock';
+import { ElicitationDock } from './ElicitationDock';
 import { AgentsDock } from './AgentsDock';
 import { QueuedMessagesDock } from './QueuedMessagesDock';
 
@@ -133,6 +134,7 @@ export function ChatPane({
         <ChatInfoBar />
         {/* La pregunta pendiente del agente, anclada encima del input (P-026 3.3). */}
         <QuestionDock />
+        <ElicitationDock />
         <AgentsDock />
         {/* Lo enviado con el turno en marcha espera aqui, no en el hilo (0.1.1 R2, punto 30). */}
         <QueuedMessagesDock />

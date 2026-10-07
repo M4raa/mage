@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { ElicitRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { UnauthorizedError, type OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js';
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
@@ -10,6 +11,7 @@ import type { OAuthClientInformationMixed, OAuthClientMetadata, OAuthTokens } fr
 import { materializeSecrets, mcpOAuthTokenId, type ResolvedMcpServer, type ResolvedRemoteServer, type ResolvedStdioServer } from '../../config/mcpResolved';
 import type { McpLogins } from './mcpLogins';
 import { McpNeedsAuth, type McpClientLike, type McpConnector } from './mcpPool';
+import type { McpElicitationResult } from './elicitationBroker';
 
 // Conector real del runtime propio con el SDK oficial de MCP (ficha D10): stdio, streamable HTTP y SSE,
 // y OAuth para los remotos (§8.1 D10, C3-l) con los tokens en la BOVEDA de main, nunca en un fichero.
@@ -31,6 +33,13 @@ export interface McpSdkDeps {
   // Entorno base de los servidores stdio, YA saneado con `scrubAgentEnv`.
   readonly baseEnv: () => Readonly<Record<string, string | undefined>>;
   readonly cwd: string;
+  readonly elicit: (server: string, params: unknown, signal?: AbortSignal) => Promise<McpElicitationResult>;
+}
+
+function elicitingClient(server: string, deps: McpSdkDeps): Client {
+  const client = new Client(CLIENT_INFO, { capabilities: { elicitation: { form: {}, url: {} } } });
+  client.setRequestHandler(ElicitRequestSchema, (request, extra) => deps.elicit(server, request.params, extra.signal));
+  return client;
 }
 
 export function createMcpConnector(deps: McpSdkDeps): McpConnector {
@@ -49,7 +58,7 @@ async function connectStdio(server: ResolvedStdioServer, deps: McpSdkDeps): Prom
     cwd: server.cwd ?? deps.cwd,
     stderr: 'ignore',
   });
-  const client = new Client(CLIENT_INFO);
+  const client = elicitingClient(server.name, deps);
   await client.connect(transport);
   return client as unknown as McpClientLike;
 }
@@ -65,7 +74,7 @@ async function connectRemote(server: ResolvedRemoteServer, deps: McpSdkDeps): Pr
   const url = new URL(server.url);
   const options = { requestInit: { headers }, authProvider: provider };
   const transport = server.transport === 'sse' ? new SSEClientTransport(url, options) : new StreamableHTTPClientTransport(url, options);
-  const client = new Client(CLIENT_INFO);
+  const client = elicitingClient(server.name, deps);
   try {
     await client.connect(transport);
     callback.close();

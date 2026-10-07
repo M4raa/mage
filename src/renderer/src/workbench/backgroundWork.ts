@@ -52,12 +52,12 @@ export function backgroundMoveBlockedReason(background: BackgroundSession | unde
 // evento no cambia nada (la inmensa mayoria: deltas de texto, herramientas...), para que quien llama
 // pueda no tocar el store.
 export function nextBackgroundState(current: BackgroundState, event: MageEvent): BackgroundState {
-  if (event.kind === 'permission_request') return 'needs_action';
+  if (event.kind === 'permission_request' || event.kind === 'elicitation_request') return 'needs_action';
   // `error` cuenta como fin de turno: el trabajo ya no avanza y lo que queda es mirarlo.
   if (event.kind === 'result' || event.kind === 'error') return 'done';
   // Un permiso cancelado (por timeout del CLI o por el propio agente) deja de exigir accion: si el
   // turno sigue, vuelve a ser trabajo normal.
-  if (event.kind === 'permission_cancelled' && current === 'needs_action') return 'working';
+  if ((event.kind === 'permission_cancelled' || event.kind === 'elicitation_cancelled' || event.kind === 'elicitation_resolved') && current === 'needs_action') return 'working';
   return current;
 }
 

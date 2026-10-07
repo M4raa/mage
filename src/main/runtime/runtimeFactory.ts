@@ -14,6 +14,7 @@ import { CHARS_PER_TOKEN, ContextBudget } from './contextBudget';
 import type { ModelCatalog } from './modelCatalog';
 import type { ToolAccessRule } from '@shared/toolAccess';
 import { McpPool, type McpConnector } from './mcp/mcpPool';
+import { ElicitationBroker } from './mcp/elicitationBroker';
 import { AccessFilteredTools } from './tools/accessFilter';
 import { createBashTool } from './tools/bashTool';
 import { createEditTool, createWriteTool, ReadLedger, type EditToolsFs } from './tools/editTools';
@@ -55,7 +56,7 @@ export interface RuntimeEnv {
   // Ventana y herramientas de cada modelo (compartido entre sesiones: tiene cache).
   readonly catalog: ModelCatalog;
   // Conector MCP real (SDK, boveda, navegador) para los servidores de una sesion con este cwd (R8).
-  readonly mcpConnector: (cwd: string) => McpConnector;
+  readonly mcpConnector: (cwd: string, broker: ElicitationBroker) => McpConnector;
   // Reglas de acceso a herramientas por modelo de un proveedor (§8.1 D10), leidas en cada turno.
   readonly toolAccess: (providerId: string) => readonly ToolAccessRule[];
 }
@@ -92,6 +93,7 @@ interface SessionBuild {
   readonly base: SessionBase;
   readonly env: RuntimeEnv;
   readonly session: () => RuntimeSession | null;
+  readonly elicitation: ElicitationBroker;
 }
 
 export function buildRuntimeSession(providerId: string, base: SessionBase, env: RuntimeEnv): RuntimeSession {
@@ -99,7 +101,8 @@ export function buildRuntimeSession(providerId: string, base: SessionBase, env: 
   if (provider === null) throw new Error(`Proveedor no configurado: ${JSON.stringify(providerId)}. Añádelo en Configuración > Proveedores.`);
   const { params } = base;
   let session: RuntimeSession | null = null;
-  const build: SessionBuild = { providerId, base, env, session: () => session };
+  const elicitation = new ElicitationBroker(base.emit);
+  const build: SessionBuild = { providerId, base, env, session: () => session, elicitation };
   const { registry, shell } = sessionTools(env, params.cwd);
   const resumed = params.resume === true ? resumeHistory(params, env, base) : null;
   const pool = createPool(build, registry);
@@ -116,6 +119,7 @@ export function buildRuntimeSession(providerId: string, base: SessionBase, env: 
     now: env.now,
     newId: env.newId,
     toolsEnabled: true,
+    elicitation,
     recorder: buildRecorder(build, resumed?.lastUuid ?? null),
     prepareModel: (model) => prepareModel(providerId, model, env),
     ...(pool === null ? {} : { mcp: { ready: pool.start(), statuses: () => pool.statuses(), close: () => pool.close() } }),
@@ -178,12 +182,12 @@ function resumeHistory(params: SessionBase['params'], env: RuntimeEnv, base: Ses
 
 // Los MCP comunes de la sesion (ya filtrados para la familia `local` por `loadSharedLaunch`). Al
 // conectar, sus herramientas entran en el registro y la sesion se vuelve a anunciar.
-function createPool({ base, env, session }: SessionBuild, registry: ToolRegistry): McpPool | null {
+function createPool({ base, env, session, elicitation }: SessionBuild, registry: ToolRegistry): McpPool | null {
   const servers = base.params.shared?.mcpServers ?? [];
   const { cwd } = base.params;
   if (servers.length === 0) return null;
   const pool: McpPool = new McpPool(servers, {
-    connect: env.mcpConnector(cwd),
+    connect: env.mcpConnector(cwd, elicitation),
     notify: (text) => session()?.notice(text),
     loginRequired: (server, loginId) => session()?.loginRequired(server, loginId),
     onChange: () => {

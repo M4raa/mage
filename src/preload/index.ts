@@ -78,6 +78,7 @@ const api: MageApi = {
   sendMessage: (params: SendMessageParams) => ipcRenderer.invoke(IpcChannel.SessionSendMessage, params),
   answerPermission: (params: AnswerPermissionParams) =>
     ipcRenderer.invoke(IpcChannel.SessionAnswerPermission, params),
+  answerElicitation: (params) => ipcRenderer.invoke(IpcChannel.SessionAnswerElicitation, params),
   interrupt: (sessionId: string) => ipcRenderer.invoke(IpcChannel.SessionInterrupt, sessionId),
   setModel: (params: SetModelParams) => ipcRenderer.invoke(IpcChannel.SessionSetModel, params),
   setEffort: (params: SetEffortParams) => ipcRenderer.invoke(IpcChannel.SessionSetEffort, params),

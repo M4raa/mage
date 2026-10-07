@@ -5,6 +5,7 @@
 
 import type { UsageWindowInfo } from './usage';
 import type { ProviderModel } from './providers';
+import type { ElicitationRequest } from './elicitation';
 import type { SubagentRunInfo } from './subagentRun';
 
 // Estado del worker de una sesion (espejo neutral de session_state_changed del CLI).
@@ -185,6 +186,9 @@ export type MageEvent =
   | { readonly kind: 'tool_result'; readonly result: ToolResult }
   | { readonly kind: 'permission_request'; readonly request: PermissionRequest }
   | { readonly kind: 'permission_cancelled'; readonly requestId: string }
+  | { readonly kind: 'elicitation_request'; readonly request: ElicitationRequest }
+  | { readonly kind: 'elicitation_cancelled'; readonly requestId: string }
+  | { readonly kind: 'elicitation_resolved'; readonly requestId: string; readonly action: 'accept' | 'decline' | 'cancel' }
   | { readonly kind: 'session_state'; readonly state: SessionState }
   // El proceso del agente murio sin que lo pidieramos y se va a relanzar reanudando la conversacion
   // (C1). `attempt` es 1-based y `delayMs` la espera antes del relanzado; sirve para que la UI diga

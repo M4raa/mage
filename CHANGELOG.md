@@ -89,6 +89,12 @@ versión.
   `~/.claude/CLAUDE.md`, sin escribir nada en el repositorio. Si el proyecto ya tiene el fichero propio de
   ese agente, se usa el suyo. El Inspector › Instrucciones dice qué recibe la conversación, y el README
   explica la convención recomendada: `AGENTS.md` con el contenido y `CLAUDE.md` con `@AGENTS.md`.
+- **Formularios de servidores MCP** (elicitation): cuando un servidor MCP pide datos al usuario, la
+  conversación enseña un formulario encima del input, generado de lo que pide el servidor (texto,
+  contraseña, número, entero, casilla o lista), con validación y **Aceptar / Rechazar / Cancelar**. Se
+  maneja con el teclado (Esc cancela, Ctrl+Intro acepta), avisa si la pestaña no se ve y se cancela
+  solo si cierras la pestaña o muere la sesión. Funciona con Codex y con el runtime propio. Lo que no
+  encaja en un formulario sencillo se cancela con un aviso; los datos escritos nunca se guardan en logs.
 
 ### Cambiado
 - El aviso al activar **Omitir permisos** dice claramente lo que implica: el modelo podrá ejecutar

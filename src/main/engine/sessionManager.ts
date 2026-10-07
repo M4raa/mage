@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { dirname } from 'node:path';
 import type { ImageAttachment } from '@shared/ipc';
 import type { PermissionDecision } from '@shared/events';
+import type { ElicitationAnswer } from '@shared/elicitation';
 import type { CreateSessionParams, SessionEventPayload } from '@shared/ipc';
 import type { AgentSessionDeps, SessionLogFn } from './agentSession';
 import { resolveLaunchParams, type DefaultsDeps } from './sessionDefaults';
@@ -17,6 +18,7 @@ export interface ManagedSession {
   start(): void;
   sendUserMessage(text: string, attachments?: readonly ImageAttachment[]): void;
   answerPermission(requestId: string, decision: PermissionDecision): void;
+  answerElicitation?(answer: ElicitationAnswer): void;
   interrupt(): void;
   setModel(model: string): void;
   setEffort?(effort: string): void;
@@ -102,6 +104,12 @@ export class SessionManager {
 
   answerPermission(sessionId: string, requestId: string, decision: PermissionDecision): void {
     this.require(sessionId).answerPermission(requestId, decision);
+  }
+
+  answerElicitation(answer: ElicitationAnswer): void {
+    const session = this.require(answer.sessionId);
+    if (session.answerElicitation === undefined) throw new Error('Esta sesión no admite elicitation');
+    session.answerElicitation(answer);
   }
 
   interrupt(sessionId: string): void {

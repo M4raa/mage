@@ -17,6 +17,7 @@ import type { MemoryFile } from './memory';
 import type { ConversationSummary, DeleteConversationParams, MoveConversationParams, MoveConversationResult } from './conversations';
 import type { ConversationPrivacy, PersistedWorkspace } from './state';
 import type { AppSettings } from './settings';
+import type { ElicitationAnswer } from './elicitation';
 import type { UpdateState } from './update';
 import type { WidgetSnapshot } from './widget';
 import type { FetchThemeParams, FetchedVscodeTheme, ThemeSearchItem } from './themeMarket';
@@ -90,6 +91,7 @@ export const IpcChannel = {
   SessionCreate: 'session:create',
   SessionSendMessage: 'session:sendMessage',
   SessionAnswerPermission: 'session:answerPermission',
+  SessionAnswerElicitation: 'session:answerElicitation',
   SessionInterrupt: 'session:interrupt',
   SessionSetModel: 'session:setModel',
   SessionSetEffort: 'session:setEffort',
@@ -749,6 +751,7 @@ export interface MageApi {
   createSession(params: CreateSessionParams): Promise<CreateSessionResult>; // sessionId + configDir efectivo
   sendMessage(params: SendMessageParams): Promise<void>;
   answerPermission(params: AnswerPermissionParams): Promise<void>;
+  answerElicitation(params: ElicitationAnswer): Promise<void>;
   interrupt(sessionId: string): Promise<void>;
   // Cambia el modelo de una sesion viva (M2.4, solo Claude); aplica al siguiente turno.
   setModel(params: SetModelParams): Promise<void>;

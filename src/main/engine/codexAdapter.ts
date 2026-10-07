@@ -1,5 +1,6 @@
 import type { ImageAttachment } from '@shared/ipc';
 import type { MageEvent, PermissionDecision, TurnUsage } from '@shared/events';
+import { parseElicitationRequest, validateElicitationAnswer, type ElicitationAnswer, type ElicitationRequest } from '@shared/elicitation';
 import { parseCodexPermissionPreset } from '@shared/codexPermissions';
 import { resolveCodexBinary } from '../os/codexBinaryResolver';
 import { scrubAgentEnv } from '../os/agentEnv';
@@ -87,6 +88,7 @@ export class CodexAdapter implements ProviderAdapter {
   private nextId = 0;
   private readonly own = new Map<number, OwnRequest>();
   private readonly approvals = new Map<string, PendingApproval>();
+  private readonly elicitations = new Map<string, { readonly rawId: unknown; readonly request: ElicitationRequest }>();
   private readonly fileChanges = new Map<string, readonly unknown[]>();
   private threadId: string | null = null;
   private turnId: string | null = null;
@@ -136,6 +138,7 @@ export class CodexAdapter implements ProviderAdapter {
     this.outgoing = [];
     this.own.clear();
     this.approvals.clear();
+    this.elicitations.clear();
     this.fileChanges.clear();
     this.threadId = null;
     this.turnId = null;
@@ -165,6 +168,15 @@ export class CodexAdapter implements ProviderAdapter {
     if (pending === undefined) throw new Error(`Aprobacion de codex desconocida o ya resuelta: ${ref.requestId}`);
     this.approvals.delete(ref.requestId);
     return { jsonrpc: '2.0', id: pending.rawId, result: approvalResult(pending.method, pending.params, decision.behavior === 'allow') };
+  }
+
+  encodeElicitationResponse(answer: ElicitationAnswer): unknown {
+    const pending = this.elicitations.get(answer.requestId);
+    if (pending === undefined) throw new Error(`Elicitation desconocida o resuelta: ${answer.requestId}`);
+    if (!validateElicitationAnswer(pending.request, answer)) throw new Error('Respuesta de elicitation inválida');
+    this.elicitations.delete(answer.requestId);
+    return { jsonrpc: '2.0', id: pending.rawId, result: { action: answer.action,
+      content: answer.action === 'accept' ? (answer.content ?? (pending.request.mode === 'form' ? {} : null)) : null } };
   }
 
   encodeInterrupt(): unknown {
@@ -286,6 +298,17 @@ export class CodexAdapter implements ProviderAdapter {
   // --- Peticiones del servidor --------------------------------------------------------------------
 
   private onServerRequest(rawId: unknown, method: string, params: unknown): MageEvent[] {
+    if (method === 'mcpServer/elicitation/request') {
+      const server = isRecord(params) && typeof params.serverName === 'string' ? params.serverName : 'MCP';
+      const requestId = `codex-elicitation-${String(rawId)}`;
+      const request = parseElicitationRequest(requestId, server, params);
+      if (request === null) {
+        this.outgoing.push({ jsonrpc: '2.0', id: rawId, result: { action: 'cancel', content: null } });
+        return [{ kind: 'notice', text: `El servidor ${server} pidió un formulario MCP que Mage no puede mostrar; se canceló.` }];
+      }
+      this.elicitations.set(requestId, { rawId, request });
+      return [{ kind: 'elicitation_request', request }];
+    }
     const requestId = `codex-${String(rawId)}`;
     const changes = isRecord(params) && typeof params.itemId === 'string' ? this.fileChanges.get(params.itemId) : undefined;
     const enriched = changes !== undefined && isRecord(params) ? { ...params, changes } : params;

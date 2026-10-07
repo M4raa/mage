@@ -3,6 +3,7 @@ import type { ImageAttachment } from '@shared/ipc';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import type { LogLevel } from '@shared/debug';
 import type { MageEvent, PermissionDecision } from '@shared/events';
+import { validateElicitationAnswer, type ElicitationAnswer, type ElicitationRequest } from '@shared/elicitation';
 import type { LaunchParams, ProviderAdapter } from './providerAdapter';
 import { DEFAULT_RESTART_POLICY, decideRestart, type RestartPolicy } from './restartPolicy';
 import { defaultKillTreeDeps, killProcessTree, type KillTreeDeps } from '../os/processTree';
@@ -56,6 +57,7 @@ export class AgentSession {
   private stopping = false;
   // Permisos abiertos: request_id -> tool_use_id (para construir el control_response).
   private readonly pendingPermissions = new Map<string, string>();
+  private readonly pendingElicitations = new Map<string, ElicitationRequest>();
   // Inicio de cada tool en curso: tool_use_id -> epoch ms (para medir la duracion en tool_result).
   private readonly toolStartTimes = new Map<string, number>();
   private readonly spawnFn: SpawnFn;
@@ -235,6 +237,17 @@ export class AgentSession {
     this.writePayload(this.deps.adapter.encodePermissionResponse({ requestId, toolUseId }, decision));
   }
 
+  answerElicitation(answer: ElicitationAnswer): void {
+    const request = this.pendingElicitations.get(answer.requestId);
+    if (request === undefined) throw new Error(`Elicitation desconocida o resuelta: ${answer.requestId}`);
+    if (!validateElicitationAnswer(request, answer)) throw new Error('Respuesta de elicitation inválida');
+    const encode = this.deps.adapter.encodeElicitationResponse;
+    if (encode === undefined) throw new Error('Este proveedor no admite elicitation');
+    this.writePayload(encode.call(this.deps.adapter, answer));
+    this.pendingElicitations.delete(answer.requestId);
+    this.deps.emit({ kind: 'elicitation_resolved', requestId: answer.requestId, action: answer.action });
+  }
+
   // Sin interrupcion por protocolo (`interruptsByKill`) el turno se corta matando el arbol;
   // el terminador lo emitimos nosotros para que la pestana vuelva a 'idle' (nadie mas va a mandarlo).
   interrupt(): void {
@@ -265,6 +278,7 @@ export class AgentSession {
       this.deps.emit({ kind: 'permission_cancelled', requestId });
     }
     this.pendingPermissions.clear();
+    this.cancelPendingElicitations();
     this.toolStartTimes.clear();
     this.deps.emit({ kind: 'result', result: { isError: false, subtype: 'interrupted', numTurns: null } });
   }
@@ -303,6 +317,9 @@ export class AgentSession {
   stop(): void {
     this.stopping = true;
     this.cancelPendingRestart();
+    for (const requestId of this.pendingElicitations.keys()) {
+      try { this.answerElicitation({ sessionId: this.deps.params.sessionId, requestId, action: 'cancel' }); } catch { /* El proceso ya terminó. */ }
+    }
     if (this.child === null) return;
     const child = this.child;
     // Cerrar stdin es lo que le pide al CLI que termine por las buenas. Tolerante a que el stream ya
@@ -322,6 +339,7 @@ export class AgentSession {
     });
     this.child = null;
     this.pendingPermissions.clear();
+    this.cancelPendingElicitations();
     this.toolStartTimes.clear();
   }
 
@@ -456,6 +474,12 @@ export class AgentSession {
       return this.classifyControlError(event);
     } else if (event.kind === 'permission_request') {
       this.pendingPermissions.set(event.request.requestId, event.request.toolUseId);
+    } else if (event.kind === 'elicitation_request') {
+      this.pendingElicitations.set(event.request.requestId, event.request);
+    } else if (event.kind === 'elicitation_cancelled') {
+      this.pendingElicitations.delete(event.requestId);
+    } else if (event.kind === 'elicitation_resolved') {
+      this.pendingElicitations.delete(event.requestId);
     } else if (event.kind === 'permission_cancelled') {
       this.pendingPermissions.delete(event.requestId);
     } else if (event.kind === 'tool_use') {
@@ -519,6 +543,7 @@ export class AgentSession {
       this.deps.emit({ kind: 'permission_cancelled', requestId });
     }
     this.pendingPermissions.clear();
+    this.cancelPendingElicitations();
     this.toolStartTimes.clear();
     this.log(this.stopping ? 'info' : 'error', 'Exit del proceso del agente', {
       sessionId: this.deps.params.sessionId,
@@ -538,6 +563,11 @@ export class AgentSession {
       return;
     }
     this.scheduleRestart(decision.attempt, decision.delayMs, decision.streakReset);
+  }
+
+  private cancelPendingElicitations(): void {
+    for (const requestId of this.pendingElicitations.keys()) this.deps.emit({ kind: 'elicitation_cancelled', requestId });
+    this.pendingElicitations.clear();
   }
 
   // Programa el relanzado. No se reenvia el mensaje que estuviera en curso: el CLI pudo haberlo

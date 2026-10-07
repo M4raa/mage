@@ -3348,6 +3348,60 @@ const CHECKS = [
     },
   },
   {
+    // Elicitation MCP: el formulario se genera del esquema, queda encima del input, valida antes de dejar
+    // aceptar y marca la contraseña como tal. Se inyecta por el reducer real y se cierra por el mismo
+    // camino que main (`elicitation_resolved`). No se pulsa ningun boton: contestaria por IPC.
+    name: 'Elicitation: el formulario MCP va encima del input, valida y oculta la contraseña',
+    async run(page) {
+      const previo = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return { tabs: s.tabs, activeTabId: s.activeTabId, splitLayout: s.splitLayout, elicitationsByChat: s.elicitationsByChat };
+      });
+      await openTemporaryConversation(page);
+      const request = {
+        requestId: 'vg-elic-1', server: 'vg_server', message: 'Datos de prueba', mode: 'form',
+        schema: { type: 'object', required: ['usuario', 'edad'], properties: {
+          usuario: { type: 'string', title: 'Usuario' }, clave: { type: 'string', title: 'Clave', format: 'password' },
+          edad: { type: 'integer', title: 'Edad', minimum: 18 }, ok: { type: 'boolean', title: 'Acepto' } } },
+      };
+      await page.evaluate((req) => {
+        const dev = window.__mageDev;
+        const tabId = dev.store.getState().activeTabId;
+        dev.store.setState((state) => dev.reduceEvent(state, tabId, { kind: 'elicitation_request', request: req }));
+      }, request);
+      await waitForDockReady(page, '[data-elicitation-dock="true"]');
+      const dock = page.locator('[data-elicitation-dock="true"]');
+      const medida = () => page.evaluate(() => {
+        const d = document.querySelector('[data-elicitation-dock="true"]');
+        const fila = document.querySelector('[data-prompt-editor="true"]').parentElement.getBoundingClientRect();
+        return {
+          encimaDelInput: d.getBoundingClientRect().bottom <= fila.top + 1,
+          clave: d.querySelector('input[type="password"]')?.id !== undefined,
+          aceptarDeshabilitado: [...d.querySelectorAll('button')].find((b) => b.textContent === 'Aceptar')?.disabled ?? null,
+          etiquetas: [...d.querySelectorAll('label')].map((l) => l.textContent),
+        };
+      });
+      const vacio = await medida();
+      await dock.getByLabel('Usuario *').fill('ana');
+      await dock.getByLabel('Edad *').fill('17');
+      const menor = await medida();
+      await dock.getByLabel('Edad *').fill('30');
+      const valido = await medida();
+      await page.evaluate(() => {
+        const dev = window.__mageDev;
+        const tabId = dev.store.getState().activeTabId;
+        dev.store.setState((state) => dev.reduceEvent(state, tabId, { kind: 'elicitation_resolved', requestId: 'vg-elic-1', action: 'cancel' }));
+      });
+      await page.waitForTimeout(CONFIG.settleMs * 2);
+      const cerrado = await page.locator('[data-elicitation-dock="true"]').count();
+      await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
+      await page.waitForTimeout(CONFIG.settleMs);
+      const ok = vacio.encimaDelInput && vacio.clave && vacio.aceptarDeshabilitado === true && menor.aceptarDeshabilitado === true &&
+        valido.aceptarDeshabilitado === false && cerrado === 0 && vacio.etiquetas.includes('Usuario *') && vacio.etiquetas.includes('Edad *');
+      return { ok, detail: JSON.stringify({ vacio, menor: menor.aceptarDeshabilitado, valido: valido.aceptarDeshabilitado, cerrado }) };
+    },
+  },
+  {
     // P-026, 3.2 (D13): pegar imagenes deja un token `[Imagen N]` en el cursor por cada una, y quitar una
     // miniatura quita su token y renumera. Pegado sintetico; el borrador se limpia al final.
     name: 'Prompt: pegar dos imagenes deja [Imagen 1] y [Imagen 2], y quitar la primera renumera',

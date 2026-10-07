@@ -559,3 +559,34 @@ describe('reduceEvent — comandos locales', () => {
     expect(patch.tabs?.[0]?.resumeSessionId).toBeUndefined();
   });
 });
+
+describe('reduceEvent — elicitation MCP', () => {
+  const request = { requestId: 'e1', server: 'srv', message: 'm', mode: 'form', schema: { type: 'object', properties: {} } } as const;
+  const asked = (): WorkbenchState => ({ ...state({ elicitationsByChat: {}, statusByChat: { [TAB]: 'streaming' } }), ...reduceEvent(state({ elicitationsByChat: {}, statusByChat: { [TAB]: 'streaming' } }), TAB, { kind: 'elicitation_request', request }) }) as WorkbenchState;
+
+  it('reduceEvent_elicitationRequest_quedaPendienteYPideAtencion', () => {
+    const next = asked();
+
+    expect(next.elicitationsByChat[TAB]).toEqual([{ request, state: 'pending' }]);
+    expect(next.statusByChat[TAB]).toBe('needs_permission');
+  });
+
+  it('reduceEvent_elicitationRequestRepetida_noDuplica', () => {
+    const again = reduceEvent(asked(), TAB, { kind: 'elicitation_request', request });
+
+    expect(again).toEqual({});
+  });
+
+  it('reduceEvent_elicitationResolved_cierraYVuelveAStreaming', () => {
+    const patch = reduceEvent(asked(), TAB, { kind: 'elicitation_resolved', requestId: 'e1', action: 'decline' });
+
+    expect(patch.elicitationsByChat?.[TAB]?.[0]?.state).toBe('decline');
+    expect(patch.statusByChat?.[TAB]).toBe('streaming');
+  });
+
+  it('reduceEvent_elicitationCancelledYaResuelta_noHaceNada', () => {
+    const resolved = { ...asked(), ...reduceEvent(asked(), TAB, { kind: 'elicitation_cancelled', requestId: 'e1' }) } as WorkbenchState;
+
+    expect(reduceEvent(resolved, TAB, { kind: 'elicitation_cancelled', requestId: 'e1' })).toEqual({});
+  });
+});
