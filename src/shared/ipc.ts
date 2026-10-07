@@ -92,6 +92,7 @@ export const IpcChannel = {
   SessionAnswerPermission: 'session:answerPermission',
   SessionInterrupt: 'session:interrupt',
   SessionSetModel: 'session:setModel',
+  SessionSetEffort: 'session:setEffort',
   SessionSetPermissionMode: 'session:setPermissionMode',
   // Parar UN subagente en segundo plano (0.1.1 R2, punto 29, solo Claude).
   SessionStopTask: 'session:stopTask',
@@ -355,6 +356,11 @@ export interface ImageAttachment {
 export interface SetModelParams {
   readonly sessionId: string;
   readonly model: string;
+}
+
+export interface SetEffortParams {
+  readonly sessionId: string;
+  readonly effort: string;
 }
 
 // Cambio de modo de permiso en caliente (M2.6, solo Claude): control_request set_permission_mode.
@@ -743,6 +749,7 @@ export interface MageApi {
   interrupt(sessionId: string): Promise<void>;
   // Cambia el modelo de una sesion viva (M2.4, solo Claude); aplica al siguiente turno.
   setModel(params: SetModelParams): Promise<void>;
+  setEffort(params: SetEffortParams): Promise<void>;
   // Cambia el modo de permiso de una sesion viva (M2.6, solo Claude): default/acceptEdits/plan.
   setPermissionMode(params: SetPermissionModeParams): Promise<void>;
   // Para UN subagente en segundo plano (0.1.1 R2, punto 29, solo Claude).

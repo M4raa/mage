@@ -1766,6 +1766,81 @@ const CHECKS = [
     },
   },
   {
+    name: 'I: Codex muestra sus controles de modelo y esfuerzo',
+    state: { tabs: 1 },
+    async run(page) {
+      await page.evaluate(() => window.__mageDev.store.setState((state) => ({
+        tabs: state.tabs.map((tab) => tab.id === state.activeTabId
+          ? { ...tab, provider: 'codex', model: 'gpt-6.1-sol', effort: 'low', permissionMode: ':workspace' } : tab),
+        permissionModes: { claude: null, codex: [':read-only', ':workspace', ':danger-full-access'] },
+      })));
+      const measured = await page.evaluate(() => ({
+        model: document.querySelectorAll('[aria-label="Modelo (aplica al siguiente turno)"]').length,
+        effort: document.querySelectorAll('[aria-label="Nivel de esfuerzo"]').length,
+        permission: document.querySelectorAll('[aria-label^="Modo de permiso"]').length,
+      }));
+      await page.getByRole('button', { name: 'Modelo (aplica al siguiente turno)' }).click();
+      await page.getByRole('option', { name: 'GPT-6-Astra' }).click();
+      await page.getByRole('button', { name: 'Nivel de esfuerzo' }).click();
+      await page.locator('[data-step-slider-popover] input[type="range"]').press('ArrowRight');
+      await page.keyboard.press('Escape');
+      await page.getByRole('button', { name: /^Modo de permiso:/ }).click();
+      await page.locator('[data-step-slider-popover] input[type="range"]').press('ArrowRight');
+      const selected = await page.evaluate(() => {
+        const state = window.__mageDev.store.getState();
+        const tab = state.tabs.find((item) => item.id === state.activeTabId);
+        return { model: tab?.model, effort: tab?.effort, permissionMode: tab?.permissionMode };
+      });
+      return { ok: measured.model === 1 && measured.effort === 1 && measured.permission === 1
+        && selected.model === 'gpt-6-astra' && selected.effort === 'medium' && selected.permissionMode === ':workspace|never',
+        detail: JSON.stringify({ ...measured, selected }) };
+    },
+  },
+  {
+    name: 'I: cambiar proveedor en Nuevo chat cambia cuenta, modelos y esfuerzo',
+    async run(page) {
+      await page.evaluate(() => window.__mageDev.store.setState((state) => ({ accounts: [
+        ...state.accounts,
+        { ...state.accounts[0], id: 'C:\\vg\\.codex-vg', alias: 'Codex VG', providerId: 'codex', provider: 'Codex', defaultModel: 'gpt-6.1-sol' },
+      ] })));
+      return withNewTabDialog(page, async () => {
+        const provider = newTabSelect(page, NEW_TAB_FIELD.provider);
+        await provider.selectOption('codex');
+        const codex = await page.locator(NEW_TAB_DIALOG).evaluate((dialog) => ({
+          account: dialog.querySelector('select')?.value,
+          model: [...dialog.querySelectorAll('select')].find((item) => item.closest('label')?.textContent?.toLowerCase().includes('modelo'))?.value,
+          effort: !![...dialog.querySelectorAll('label')].find((item) => item.textContent?.toLowerCase().includes('esfuerzo')),
+        }));
+        await provider.selectOption('claude');
+        const claude = await page.locator(NEW_TAB_DIALOG).evaluate((dialog) => ({
+          account: dialog.querySelector('select')?.value,
+          model: [...dialog.querySelectorAll('select')].find((item) => item.closest('label')?.textContent?.toLowerCase().includes('modelo'))?.value,
+        }));
+        const ok = codex.account === 'C:\\vg\\.codex-vg' && codex.model?.startsWith('gpt-') && codex.effort
+          && claude.account !== codex.account && claude.model?.startsWith('sonnet');
+        return { ok, detail: JSON.stringify({ codex, claude }) };
+      });
+    },
+  },
+  {
+    name: 'I: Inspector de Codex no lee ajustes efectivos de Claude',
+    state: { tabs: 1 },
+    async run(page) {
+      await page.evaluate(() => {
+        const dev = window.__mageDev;
+        dev.store.setState((state) => ({ tabs: state.tabs.map((tab) => tab.id === state.activeTabId
+          ? { ...tab, provider: 'codex', accountId: 'C:\\vg\\.codex-vg', resolvedConfigDir: 'C:\\vg\\.codex-vg' } : tab) }));
+        dev.panelStore.getState().revealPanelById('permissions');
+      });
+      await waitForPanelContent(page, 'permissions');
+      const measured = await page.locator('[data-permissions-panel="true"]').evaluate((panel) => ({
+        rejected: panel.textContent?.includes('Cuenta no valida') ?? false,
+        provider: panel.textContent?.includes('CLI de codex') ?? false,
+      }));
+      return { ok: !measured.rejected && measured.provider, detail: JSON.stringify(measured) };
+    },
+  },
+  {
     // Codex 0.160.0 ya se midio con cuenta: se ofrece sin el aviso anterior.
     name: 'E: elegir Codex en Nueva conversacion ya no muestra sin verificar',
     async run(page) {

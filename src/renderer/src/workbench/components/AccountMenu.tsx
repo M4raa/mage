@@ -95,7 +95,7 @@ export function DeleteAccountDialog({
   readonly onClose: () => void;
 }): React.JSX.Element {
   const deleteAccount = useWorkbenchStore((s) => s.deleteAccount);
-  const privateCount = usePrivateConversationCount(account.id);
+  const privateCount = usePrivateConversationCount(account.id, account.providerId);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const dialogRef = useDialogA11y({ onClose });
@@ -167,9 +167,10 @@ export function DeleteAccountDialog({
 }
 
 // null mientras se cuenta; si el historial no se puede leer, el error se ve en el texto (no se traga).
-function usePrivateConversationCount(configDir: string): number | string | null {
+function usePrivateConversationCount(configDir: string, providerId: string): number | string | null {
   const [count, setCount] = useState<number | string | null>(null);
   useEffect(() => {
+    if (providerId !== 'claude') { setCount(0); return; }
     let alive = true;
     window.mage
       .listConversations(configDir)
@@ -178,7 +179,7 @@ function usePrivateConversationCount(configDir: string): number | string | null 
     return () => {
       alive = false;
     };
-  }, [configDir]);
+  }, [configDir, providerId]);
   return count;
 }
 

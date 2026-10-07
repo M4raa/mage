@@ -60,6 +60,9 @@ describe('isKnownPermissionModeFor', () => {
     expect(isKnownPermissionModeFor('codex', ':otro', { claude: null, codex: [':workspace'] })).toBe(false);
     expect(isKnownPermissionModeFor('codex', ':workspace', null)).toBe(true);
     expect(isKnownPermissionModeFor('codex', 'plan', null)).toBe(false);
+    expect(isKnownPermissionModeFor('codex', ':workspace|never', { claude: null, codex: [':workspace'] })).toBe(true);
+    expect(isKnownPermissionModeFor('codex', ':otro|never', { claude: null, codex: [':workspace'] })).toBe(false);
+    expect(isKnownPermissionModeFor('codex', ':workspace|untrusted', null)).toBe(false);
   });
 
   it('isKnownPermissionModeFor_otroProveedor_false', () => {

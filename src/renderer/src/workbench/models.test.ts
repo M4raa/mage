@@ -49,6 +49,12 @@ describe('modelOptionsForProvider', () => {
     expect(ids.slice(0, 2)).toEqual(['gpt-6.1-sol', 'gpt-6-astra']);
   });
 
+  it('modelOptionsForProvider_codexConCatalogoVivo_usaModelListYEsfuerzos', () => {
+    const live = [{ id: 'gpt-vivo', label: 'GPT Vivo', supportedEfforts: ['low', 'ultra'] }];
+
+    expect(modelOptionsForProvider('codex', 'gpt-vivo', [], live)).toEqual(live);
+  });
+
   it('modelOptionsForProvider_proveedorDesconocido_caeAClaude', () => {
     expect(modelOptionsForProvider('inventado', 'sonnet')).toEqual(CLAUDE_MODELS);
   });

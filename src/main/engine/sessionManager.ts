@@ -19,6 +19,7 @@ export interface ManagedSession {
   answerPermission(requestId: string, decision: PermissionDecision): void;
   interrupt(): void;
   setModel(model: string): void;
+  setEffort?(effort: string): void;
   setPermissionMode(mode: string): void;
   stopTask(taskId: string): void;
   stop(): void;
@@ -110,6 +111,12 @@ export class SessionManager {
   // Cambio de modelo en caliente (M2.4); aplica al siguiente turno de la sesion.
   setModel(sessionId: string, model: string): void {
     this.require(sessionId).setModel(model);
+  }
+
+  setEffort(sessionId: string, effort: string): void {
+    const session = this.require(sessionId);
+    if (session.setEffort === undefined) throw new Error(`La sesion no admite cambiar esfuerzo: ${sessionId}`);
+    session.setEffort(effort);
   }
 
   // Cambio de modo de permiso en caliente (M2.6).

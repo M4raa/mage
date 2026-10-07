@@ -179,7 +179,9 @@ export function PromptBar(): React.JSX.Element {
 
   const disabled = activeTabId.length === 0;
   const activeModel = activeTab?.model ?? '';
-  const modelOptions = useMemo(() => modelOptionsForProvider('claude', activeModel, [], claudeCatalog), [activeModel, claudeCatalog]);
+  const providerId = activeTab?.provider ?? 'claude';
+  const customProviders = useWorkbenchStore((s) => s.settings.customProviders);
+  const modelOptions = useMemo(() => modelOptionsForProvider(providerId, activeModel, customProviders, claudeCatalog), [providerId, activeModel, customProviders, claudeCatalog]);
   const isClaude = activeTab?.provider === 'claude';
   // Proveedor sin puente de permisos (E3, `agy`): auto-aprueba las tools y la UI tiene que decirlo.
   const autoApproved = activeTab !== undefined && isAutoApprovedProvider(activeTab.provider);
@@ -194,6 +196,9 @@ export function PromptBar(): React.JSX.Element {
   }, [isCodex, isRuntime, cliModes]);
   const permissionMode: string = activeTab?.permissionMode ?? (isCodex ? (modeSteps[0]?.value ?? '') : 'default');
   const effort = activeTab?.effort ?? '';
+  const selectedModel = modelOptions.find((option) => option.id === activeModel);
+  const effortLevels = isCodex ? (selectedModel?.supportedEfforts ?? []) : undefined;
+  const availableEffortSteps = effortSteps(effortLevels);
   // Turno en marcha (generando o esperando permiso): se puede interrumpir.
   const running = chatStatus === 'streaming' || chatStatus === 'needs_permission';
   const canInterrupt = running && sessionId !== undefined;
@@ -291,7 +296,9 @@ export function PromptBar(): React.JSX.Element {
 
   // Cambio de nivel de esfuerzo (--effort): flag de arranque, el aviso lo explica.
   const changeEffort = (level: string): void => {
-    notifyCostAdvice(effortChangeAdvice(level, sessionId !== undefined), activeTabId);
+    notifyCostAdvice(isCodex
+      ? { severity: 'info', message: `Esfuerzo ${level || 'automático'}. Se aplica al siguiente turno.` }
+      : effortChangeAdvice(level, sessionId !== undefined), activeTabId);
     setActiveEffort(level);
   };
 
@@ -706,23 +713,23 @@ export function PromptBar(): React.JSX.Element {
               leading={isPermissionMode(permissionMode) ? <Icon name={PERMISSION_MODE_ICON[permissionMode]} size={11} /> : undefined}
             />
           )}
-          {isClaude && (
+          {(isClaude || isCodex) && (
             // Esfuerzo (--effort, M2.4 / B4; P-028 33: deslizador de seis pasos con Auto a la izquierda).
             // Flag de ARRANQUE del CLI, no hay cambio en caliente: el aviso y la nota lo aclaran.
             <StepSlider
-              steps={effortSteps()}
+              steps={availableEffortSteps}
               value={effort}
               onChange={changeEffort}
               ariaLabel="Nivel de esfuerzo"
               chipLabel={`Esfuerzo ${(EFFORT_STEP_LABEL[effort] ?? effort).toLowerCase()}`}
-              chipSizers={effortSteps().map((step) => `Esfuerzo ${step.label.toLowerCase()}`)}
+              chipSizers={availableEffortSteps.map((step) => `Esfuerzo ${step.label.toLowerCase()}`)}
               heading={`Esfuerzo ${EFFORT_STEP_LABEL[effort] ?? effort}`}
               endLabels={['Más rápido', 'Más inteligente']}
-              tip={EFFORT_TIP}
-              note="Se aplica al arrancar o reabrir la conversación."
+              tip={isCodex ? 'Nivel de esfuerzo del modelo. Se aplica al siguiente turno.' : EFFORT_TIP}
+              note={isCodex ? 'Se aplica al siguiente turno.' : 'Se aplica al arrancar o reabrir la conversación.'}
             />
           )}
-          {activeModel.length > 0 && isClaude && (
+          {activeModel.length > 0 && (isClaude || isCodex) && (
             // Dropdown de modelo en caliente (M2.4, solo Claude): set_model aplica al siguiente turno.
             <Dropdown
               value={displayModelId(activeModel, modelOptions)}
@@ -734,7 +741,7 @@ export function PromptBar(): React.JSX.Element {
               ariaLabel="Modelo (aplica al siguiente turno)"
             />
           )}
-          {activeModel.length > 0 && !isClaude && (
+          {activeModel.length > 0 && !isClaude && !isCodex && (
             <span className="shrink-0 self-center rounded-full border border-mg-border-ctrl px-[8px] py-[2px] text-[10.5px] text-mg-sec">{activeModel}</span>
           )}
           {canInterrupt ? (

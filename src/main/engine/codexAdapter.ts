@@ -1,5 +1,6 @@
 import type { ImageAttachment } from '@shared/ipc';
 import type { MageEvent, PermissionDecision, TurnUsage } from '@shared/events';
+import { parseCodexPermissionPreset } from '@shared/codexPermissions';
 import { resolveCodexBinary } from '../os/codexBinaryResolver';
 import { scrubAgentEnv } from '../os/agentEnv';
 import { toCodexOverrides } from '../config/mcpProviderTranslate';
@@ -93,6 +94,7 @@ export class CodexAdapter implements ProviderAdapter {
   private queuedInputs: unknown[][] = [];
   private params: LaunchParams | null = null;
   private model = '';
+  private effort: string | null = null;
   private permissionProfile: string | null = null;
   private apiKey: string | null = null;
   private secrets: readonly string[] = [];
@@ -126,6 +128,7 @@ export class CodexAdapter implements ProviderAdapter {
   private resetProcess(params: LaunchParams): void {
     this.params = params;
     this.model = this.model.length === 0 ? params.model : this.model;
+    this.effort ??= params.effort ?? '';
     this.permissionProfile ??= params.permissionMode ?? null;
     this.outgoing = [];
     this.own.clear();
@@ -170,6 +173,14 @@ export class CodexAdapter implements ProviderAdapter {
   encodeSetModel(model: string): unknown {
     if (model.trim().length === 0) throw new Error(`Modelo vacio para codex: ${JSON.stringify(model)}`);
     this.model = model;
+    return null;
+  }
+
+  encodeSetEffort(effort: string): unknown {
+    if (effort.length > 0 && !['low', 'medium', 'high', 'xhigh', 'max', 'ultra'].includes(effort)) {
+      throw new Error(`Esfuerzo de codex no valido: ${JSON.stringify(effort)}`);
+    }
+    this.effort = effort;
     return null;
   }
 
@@ -247,7 +258,7 @@ export class CodexAdapter implements ProviderAdapter {
   private afterInitialize(): MageEvent[] {
     const params = this.requireParams();
     this.outgoing.push({ jsonrpc: '2.0', method: 'initialized' });
-    const common = { cwd: params.cwd, model: this.model, approvalPolicy: APPROVAL_POLICY, ...this.permissionsField() };
+    const common = { cwd: params.cwd, model: this.model, approvalPolicy: this.approvalPolicy(), ...this.permissionsField() };
     const resume = params.conversationId !== undefined && params.conversationId.length > 0;
     if (resume) this.request('thread/resume', { ...common, threadId: params.conversationId }, 'thread');
     else this.request('thread/start', { ...common, ...this.instructionsField() }, 'thread');
@@ -299,17 +310,23 @@ export class CodexAdapter implements ProviderAdapter {
     if (this.threadId === null) throw new Error('turn/start sin hilo de codex');
     // Medido con codex-cli 0.160.0 y Responses local: omitir esfuerzo manda medium; `effort: low`
     // en turn/start llega como reasoning.effort=low. Thread/start no acepta este campo.
-    const effort = this.requireParams().effort;
+    const effort = this.effort;
     this.request('turn/start', {
       threadId: this.threadId, input, model: this.model,
-      ...(effort === undefined || effort.length === 0 ? {} : { effort }),
-      ...this.permissionsField(),
+      ...(effort === null || effort.length === 0 ? {} : { effort }),
+      approvalPolicy: this.approvalPolicy(), ...this.permissionsField(),
     }, 'turn');
   }
 
   // El modo de permiso de Mage para codex es un perfil de su `permissionProfile/list` (`:workspace`…).
   private permissionsField(): { readonly permissions?: string } {
-    return this.permissionProfile === null || this.permissionProfile.length === 0 ? {} : { permissions: this.permissionProfile };
+    const preset = this.permissionProfile === null ? null : parseCodexPermissionPreset(this.permissionProfile);
+    return preset === null ? {} : { permissions: preset.profile };
+  }
+
+  private approvalPolicy(): string {
+    return this.permissionProfile === null ? APPROVAL_POLICY
+      : (parseCodexPermissionPreset(this.permissionProfile)?.approvalPolicy ?? APPROVAL_POLICY);
   }
 
   private instructionsField(): { readonly developerInstructions?: string } {

@@ -166,7 +166,9 @@ describe('modos leidos del CLI (respuesta 18)', () => {
   });
 
   it('codexPermissionSteps_perfilesMedidos_conSuEtiqueta', () => {
-    expect(codexPermissionSteps([':read-only', ':workspace', ':danger-full-access']).map((step) => step.label)).toEqual(['Solo lectura', 'Espacio de trabajo', 'Acceso total']);
+    expect(codexPermissionSteps([':read-only', ':workspace', ':danger-full-access']).map((step) => step.label)).toEqual([
+      'Solo lectura', 'Solicitar aprobación', 'Aprobar automáticamente', 'Acceso total', 'Acceso completo',
+    ]);
     expect(codexPermissionSteps(null)).toEqual([]);
   });
 });

@@ -87,6 +87,7 @@ export function PermissionPanel(): React.JSX.Element {
         <ConfiguredPermissions
           cwd={tab.cwd}
           accountDir={tab.resolvedConfigDir ?? tab.accountId}
+          provider={tab.provider}
           permissionMode={tab.permissionMode ?? 'default'}
           alwaysAllowTools={tab.alwaysAllowTools ?? []}
           onRevoke={(toolName) => revoke(tab.id, toolName)}
@@ -122,12 +123,14 @@ function PermissionDiff({ permission }: { readonly permission: PermissionView })
 function ConfiguredPermissions({
   cwd,
   accountDir,
+  provider,
   permissionMode,
   alwaysAllowTools,
   onRevoke,
 }: {
   readonly cwd: string;
   readonly accountDir: string;
+  readonly provider: string;
   readonly permissionMode: string;
   readonly alwaysAllowTools: readonly string[];
   readonly onRevoke: (toolName: string) => void;
@@ -141,6 +144,7 @@ function ConfiguredPermissions({
     let cancelled = false;
     setRules(null);
     setError(null);
+    if (provider !== 'claude') return;
     void window.mage
       .readEffectiveSettings({ cwd, accountDir })
       .then((settings) => {
@@ -152,10 +156,11 @@ function ConfiguredPermissions({
     return () => {
       cancelled = true;
     };
-  }, [cwd, accountDir]);
+  }, [cwd, accountDir, provider]);
 
   return (
     <div className="flex flex-col gap-[14px] p-[14px]">
+      {provider !== 'claude' && <p className="text-[11px] text-mg-muted">Los ajustes de permisos del CLI de {provider} se gestionan en ese proveedor.</p>}
       <section className="flex flex-col gap-[5px]">
         <h3 className="text-[10px] font-bold uppercase tracking-[.07em] text-mg-ter">Modo de permiso</h3>
         <p className="text-[11.5px] leading-[1.5] text-mg-body2">{MODE_LABEL[permissionMode] ?? permissionMode}</p>

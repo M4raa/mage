@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { applyCodexConfirmation, confirmCodexAccounts } from './codexAccountConfirmation';
-import { defaultEffortForProvider, defaultModelForProvider, effortSettingKey, providerFallbackModel, type ApiKeyUpdate } from './models';
+import { defaultEffortForProvider, defaultModelForProvider, effortSettingKey, providerFallbackModel, providerModels, type ApiKeyUpdate } from './models';
 import type { PersistedTab } from '@shared/state';
 import { disposeTranscriptStore, transcriptStoreForTab } from './transcriptStore';
 import type { ContextUsage, MageEvent, McpServerStatus, PermissionDecision, PermissionRequest, SlashCommandInfo, SubagentInfo } from '@shared/events';
@@ -1733,6 +1733,10 @@ export function createWorkbenchStore(mage: MageClient) {
       if ((accountRequired && accountId.length === 0) || cwd.length === 0 || model.length === 0 || provider.length === 0) {
         throw new Error(`Parametros de pestana invalidos: cuenta="${accountId}" cwd="${cwd}" modelo="${model}" proveedor="${provider}"`);
       }
+      const account = get().accounts.find((candidate) => candidate.id === accountId);
+      if (accountRequired && account?.providerId !== provider) {
+        throw new Error(`La cuenta ${JSON.stringify(accountId)} no pertenece al proveedor ${JSON.stringify(provider)}`);
+      }
       const alias = get().accounts.find((a) => a.id === accountId)?.alias ?? (accountId || providerLabel(provider, get().settings.customProviders));
       // TODAS las rutas que crean pestañas pasan por aqui (nueva conversacion, dialogo, clon): el modo por
       // defecto de Ajustes (P-028 6) se aplica en un solo sitio. Solo Claude tiene modos de permiso.
@@ -1854,7 +1858,7 @@ export function createWorkbenchStore(mage: MageClient) {
     // Carga el historial en disco de la cuenta activa (M2.6). Tolerante: un fallo no rompe el shell.
     loadConversationHistory: async () => {
       const accountId = get().activeAccountId;
-      if (accountId.length === 0) {
+      if (accountId.length === 0 || get().accounts.find((account) => account.id === accountId)?.providerId !== 'claude') {
         set({ conversationHistory: [] });
         return;
       }
@@ -2547,14 +2551,22 @@ export function createWorkbenchStore(mage: MageClient) {
       const trimmed = model.trim();
       const tabId = get().activeTabId;
       const tab = get().tabs.find((t) => t.id === tabId);
-      if (trimmed.length === 0 || tab === undefined || tab.provider !== 'claude' || tab.model === trimmed) return;
-      set((s) => ({ tabs: s.tabs.map((t) => (t.id === tabId ? { ...t, model: trimmed } : t)) }));
+      if (trimmed.length === 0 || tab === undefined || !['claude', CODEX_PROVIDER_ID].includes(tab.provider) || tab.model === trimmed) return;
+      const supported = (get().modelCatalogByAccount[tab.accountId] ?? providerModels(CODEX_PROVIDER_ID, []) ?? [])
+        .find((option) => option.id === trimmed)?.supportedEfforts;
+      const effort = tab.provider === CODEX_PROVIDER_ID && supported !== undefined && tab.effort !== undefined && !supported.includes(tab.effort)
+        ? undefined : tab.effort;
+      set((s) => ({ tabs: s.tabs.map((t) => (t.id === tabId ? { ...t, model: trimmed, effort } : t)) }));
       persistConversationPrefs(mage, get(), tabId);
       const sessionId = get().sessionIdByChat[tabId];
       if (sessionId !== undefined) {
         void mage
           .setModel({ sessionId, model: trimmed })
           .catch((err: unknown) => failChat(set, tabId, describeError(err)));
+        if (tab.provider === CODEX_PROVIDER_ID && effort === undefined && tab.effort !== undefined) {
+          void mage.setEffort({ sessionId, effort: '' })
+            .catch((err: unknown) => failChat(set, tabId, describeError(err)));
+        }
       }
       schedulePersist(mage, get);
     },
@@ -2597,7 +2609,10 @@ export function createWorkbenchStore(mage: MageClient) {
       const clean = effort.trim().toLowerCase();
       const tabId = get().activeTabId;
       const tab = get().tabs.find((t) => t.id === tabId);
-      if (tab === undefined || tab.provider !== 'claude' || (tab.effort ?? '') === clean) return;
+      if (tab === undefined || !['claude', CODEX_PROVIDER_ID].includes(tab.provider) || (tab.effort ?? '') === clean) return;
+      const supported = (get().modelCatalogByAccount[tab.accountId] ?? providerModels(CODEX_PROVIDER_ID, []) ?? [])
+        .find((option) => option.id === tab.model)?.supportedEfforts;
+      if (tab.provider === CODEX_PROVIDER_ID && clean.length > 0 && !supported?.includes(clean)) return;
       set((s) => ({
         tabs: s.tabs.map((t) => {
           if (t.id !== tabId) return t;
@@ -2606,6 +2621,11 @@ export function createWorkbenchStore(mage: MageClient) {
         }),
       }));
       persistConversationPrefs(mage, get(), tabId);
+      if (tab.provider === CODEX_PROVIDER_ID) {
+        const sessionId = get().sessionIdByChat[tabId];
+        if (sessionId !== undefined) void mage.setEffort({ sessionId, effort: clean })
+          .catch((err: unknown) => failChat(set, tabId, describeError(err)));
+      }
       schedulePersist(mage, get);
     },
 

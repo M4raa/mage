@@ -115,6 +115,10 @@ versión.
   abre con Claude.
 
 ### Corregido
+- En Codex se pueden cambiar el modelo, el esfuerzo y el nivel de permisos desde el prompt. Los
+  permisos incluyen solicitar aprobación, aprobar automáticamente dentro del proyecto y acceso
+  completo; al cambiar de proveedor en un chat nuevo se elige su cuenta y su catálogo. El Inspector
+  deja de pedir a Codex y agy los ajustes efectivos del CLI de Claude.
 - Las cuentas y pestañas se muestran al arrancar sin esperar al sondeo de login de Codex; se confirma en segundo plano con caché.
 - Los errores MCP de Codex no muestran detalles de autenticación; las claves conocidas se ocultan
   también en resultados de herramientas y permisos antes de llegar a la interfaz.

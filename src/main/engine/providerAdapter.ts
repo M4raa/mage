@@ -110,6 +110,7 @@ export interface ProviderAdapter {
   // Cambio de modelo en caliente (M2.4): control_request set_model; aplica al siguiente turno.
   // Los adapters que no lo soportan lanzan Error (la UI solo lo ofrece para Claude).
   encodeSetModel(model: string): unknown;
+  encodeSetEffort?(effort: string): unknown;
   // Cambio de modo de permiso en caliente (M2.6): control_request set_permission_mode. Los adapters
   // que no lo soportan lanzan Error (la UI solo lo ofrece para Claude).
   encodeSetPermissionMode(mode: string): unknown;

@@ -80,6 +80,7 @@ import type {
   SaveSharedConfigResult,
   SendMessageParams,
   SetModelParams,
+  SetEffortParams,
   SetPermissionModeParams,
   StopTaskParams,
   SharedConfigSnapshot,
@@ -1508,7 +1509,7 @@ function getGitService(): GitService {
 // config dir ajeno que «autoriza» la carpeta.
 function assertGitParams(params: GitParams): void {
   if (typeof params?.cwd !== 'string' || !isAbsolute(params.cwd)) throw new Error(`Carpeta no valida para git: ${String(params?.cwd)}`);
-  if (typeof params.accountDir !== 'string' || !isManagedAccountConfigDir(params.accountDir)) {
+  if (typeof params.accountDir !== 'string' || !isLaunchableAccountDir(params.accountDir)) {
     throw new Error(`Cuenta no valida para git: ${String(params.accountDir)}`);
   }
 }
@@ -2538,6 +2539,9 @@ function registerSessionIpc1(): void {
   );
   ipcMain.handle(IpcChannel.SessionSetModel, (_e, params: SetModelParams) =>
     sessionManager.setModel(params.sessionId, params.model),
+  );
+  ipcMain.handle(IpcChannel.SessionSetEffort, (_e, params: SetEffortParams) =>
+    sessionManager.setEffort(params.sessionId, params.effort),
   );
   ipcMain.handle(IpcChannel.SessionStopTask, (_e, params: StopTaskParams) => sessionManager.stopTask(params.sessionId, params.taskId));
   ipcMain.handle(IpcChannel.SessionStop, (_e, sessionId: string) => sessionManager.stop(sessionId));

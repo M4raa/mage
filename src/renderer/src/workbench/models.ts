@@ -3,7 +3,7 @@
 // se FUSIONA con los proveedores que el usuario haya anadido en Configuracion (E2) y se valida el
 // formulario de esa seccion. Todo son funciones puras: el estado lo trae el store.
 import type { CustomProvider, ProviderModel } from '@shared/providers';
-import { AGY_EFFORT_LEVELS, AGY_PROVIDER_ID, BUILT_IN_PROVIDERS, CUSTOM_PROVIDER_ID_PREFIX, chatCompletionsUrl } from '@shared/providers';
+import { AGY_EFFORT_LEVELS, AGY_PROVIDER_ID, BUILT_IN_PROVIDERS, CODEX_PROVIDER_ID, CUSTOM_PROVIDER_ID_PREFIX, chatCompletionsUrl } from '@shared/providers';
 import { EFFORT_LEVELS, type RuntimeProbeResult } from '@shared/ipc';
 
 export type ModelOption = ProviderModel;
@@ -71,7 +71,9 @@ export function modelOptionsForProvider(
 ): readonly ModelOption[] {
   const fallback = providerModels(FALLBACK_PROVIDER_ID, []) ?? [];
   const declared = providerModels(providerId, customProviders);
-  const models = providerId === FALLBACK_PROVIDER_ID && claudeCatalog.length > 0 ? claudeModelOptions(claudeCatalog) : (declared ?? fallback);
+  const models = claudeCatalog.length > 0 && (providerId === FALLBACK_PROVIDER_ID || providerId === CODEX_PROVIDER_ID)
+    ? (providerId === FALLBACK_PROVIDER_ID ? claudeModelOptions(claudeCatalog) : claudeCatalog)
+    : (declared ?? fallback);
   const shown = displayModelId(modelId, models);
   if (shown.length === 0 || models.some((model) => model.id === shown)) return models;
   return [{ id: modelId, label: modelId }, ...models];

@@ -56,6 +56,7 @@ import type {
   SendMessageParams,
   SessionEventPayload,
   SetModelParams,
+  SetEffortParams,
   StopTaskParams,
   SetPermissionModeParams,
   TranscriptBatchPayload,
@@ -79,6 +80,7 @@ const api: MageApi = {
     ipcRenderer.invoke(IpcChannel.SessionAnswerPermission, params),
   interrupt: (sessionId: string) => ipcRenderer.invoke(IpcChannel.SessionInterrupt, sessionId),
   setModel: (params: SetModelParams) => ipcRenderer.invoke(IpcChannel.SessionSetModel, params),
+  setEffort: (params: SetEffortParams) => ipcRenderer.invoke(IpcChannel.SessionSetEffort, params),
   setPermissionMode: (params: SetPermissionModeParams) =>
     ipcRenderer.invoke(IpcChannel.SessionSetPermissionMode, params),
   stopTask: (params: StopTaskParams) => ipcRenderer.invoke(IpcChannel.SessionStopTask, params),

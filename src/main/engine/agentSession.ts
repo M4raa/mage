@@ -276,6 +276,11 @@ export class AgentSession {
     this.writePayload(this.deps.adapter.encodeSetModel(model));
   }
 
+  setEffort(effort: string): void {
+    if (this.deps.adapter.encodeSetEffort === undefined) throw new Error(`Este proveedor no admite cambiar esfuerzo: ${JSON.stringify(effort)}`);
+    this.writePayload(this.deps.adapter.encodeSetEffort(effort));
+  }
+
   // Cambia el modo de permiso de la sesion en caliente (M2.6). El CLI responde y emite system/status.
   setPermissionMode(mode: string): void {
     if (mode.trim().length === 0) throw new Error(`Modo de permiso vacio para set_permission_mode: ${JSON.stringify(mode)}`);

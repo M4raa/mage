@@ -1239,7 +1239,7 @@ describe('requestAccountSwitch y continueInAccount', () => {
 
 // P-028 6: modo de permiso por defecto de las conversaciones nuevas.
 describe('createConversation y el modo de permiso por defecto', () => {
-  const account = { id: tab('x').accountId, alias: 'principal', loginStatus: 'logged_in' } as unknown as Account;
+  const account = { id: tab('x').accountId, alias: 'principal', providerId: 'claude', loginStatus: 'logged_in' } as unknown as Account;
 
   function fresh(defaultPermissionMode: 'plan' | 'bypassPermissions' | ''): ReturnType<typeof createWorkbenchStore> {
     const store = createWorkbenchStore(
@@ -1279,10 +1279,19 @@ describe('createConversation y el modo de permiso por defecto', () => {
 
   it('newTab_proveedorNoClaude_noAplicaElModoPorDefecto', async () => {
     const store = fresh('plan');
+    store.setState((state) => ({ accounts: state.accounts.map((item) => item.id === account.id ? { ...item, providerId: 'codex' } : item) }));
 
-    await store.getState().newTab({ accountId: account.id, cwd: 'C:/p', model: 'gpt', provider: 'openai' });
+    await store.getState().newTab({ accountId: account.id, cwd: 'C:/p', model: 'gpt-6.1-sol', provider: 'codex' });
 
     expect(store.getState().tabs[0]?.permissionMode).toBeUndefined();
+  });
+
+  it('newTab_cuentaDeOtroProveedor_rechazaAntesDeCrearPestana', async () => {
+    const store = fresh('');
+
+    await expect(store.getState().newTab({ accountId: account.id, cwd: 'C:/p', model: 'gpt-6.1-sol', provider: 'codex' }))
+      .rejects.toThrow(/no pertenece al proveedor/);
+    expect(store.getState().tabs).toHaveLength(0);
   });
 });
 

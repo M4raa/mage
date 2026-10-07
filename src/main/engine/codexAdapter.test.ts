@@ -280,6 +280,27 @@ describe('CodexAdapter: turno', () => {
 
     expect((adapter.takeOutgoing() as Rpc[])[0]?.params).toMatchObject({ model: 'gpt-5.5', permissions: ':workspace' });
   });
+
+  it('encodeSetPermissionMode_presetAuto_aplicaPerfilYPoliticaEnElTurno', () => {
+    const adapter = codex();
+    answer(adapter, handshake(adapter), 'thread/start', fixture('thread-start'));
+
+    adapter.encodeSetPermissionMode(':workspace|never');
+    adapter.encodeUserMessage('hola');
+
+    expect((adapter.takeOutgoing() as Rpc[])[0]?.params).toMatchObject({ permissions: ':workspace', approvalPolicy: 'never' });
+  });
+
+  it('encodeSetEffort_sesionViva_aplicaAlSiguienteTurno', () => {
+    const adapter = codex();
+    answer(adapter, handshake(adapter), 'thread/start', fixture('thread-start'));
+
+    expect(adapter.encodeSetEffort('ultra')).toBeNull();
+    adapter.encodeUserMessage('hola');
+
+    expect((adapter.takeOutgoing() as Rpc[])[0]?.params).toMatchObject({ effort: 'ultra' });
+    expect(() => adapter.encodeSetEffort('imposible')).toThrow(/imposible/);
+  });
 });
 
 describe('CodexAdapter: aprobaciones (forma del esquema)', () => {

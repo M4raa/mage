@@ -22,6 +22,7 @@ export function MemoryPanel(): React.JSX.Element {
     return t === undefined ? undefined : (t.resolvedConfigDir ?? t.accountId);
   });
   const cwd = useWorkbenchStore((s) => s.tabs.find((t) => t.id === s.activeTabId)?.cwd);
+  const provider = useWorkbenchStore((s) => s.tabs.find((t) => t.id === s.activeTabId)?.provider);
   const view = useMemoryStore((s) => s.view);
   const isLoading = useMemoryStore((s) => s.isLoading);
   const errorMessage = useMemoryStore((s) => s.errorMessage);
@@ -32,12 +33,13 @@ export function MemoryPanel(): React.JSX.Element {
   const [selected, setSelected] = useState<string | null>(null);
 
   useEffect(() => {
-    if (configDir === undefined || cwd === undefined) return;
+    if (configDir === undefined || cwd === undefined || provider !== 'claude') return;
     setSelected(null); // cambio de proyecto: vuelve a la lista
     void load({ accountDir: configDir, cwd });
-  }, [configDir, cwd, load]);
+  }, [configDir, cwd, provider, load]);
 
   if (configDir === undefined || cwd === undefined) return <Hint text="Sin conversación activa." />;
+  if (provider !== 'claude') return <Hint text={`La memoria de ${provider} se consulta en su CLI.`} />;
   if (errorMessage !== null) return <Hint text={`No se pudo leer la memoria: ${errorMessage}`} onRetry={refresh} />;
   if (view === null) return <Hint text="Cargando memoria…" />;
   if (view.notes.length === 0) {

@@ -74,8 +74,9 @@ function DialogBody({
   // Proveedor inicial: el que el usuario eligio en el asistente (o cambio en Configuracion). Antes
   // estaba escrito 'claude' a mano aqui, asi que quien trabajaba con otro motor lo recambiaba en cada
   // conversacion nueva.
-  const [provider, setProvider] = useState(() => useWorkbenchStore.getState().settings.defaultProvider);
-  const [model, setModel] = useState(initialAccount?.defaultModel ?? 'sonnet');
+  const [provider, setProvider] = useState(() => initialAccount?.providerId ?? useWorkbenchStore.getState().settings.defaultProvider);
+  const [model, setModel] = useState(() => initialAccount?.providerId === 'claude'
+    ? initialAccount.defaultModel : (providerFallbackModel(initialAccount?.providerId ?? 'claude', useWorkbenchStore.getState().settings.customProviders) ?? 'sonnet'));
   const [cwd, setCwd] = useState('');
   const [effort, setEffort] = useState(''); // '' = por defecto (sin flag --effort)
   const [budgetUsd, setBudgetUsd] = useState(''); // dolares como texto; '' = sin tope
@@ -117,16 +118,18 @@ function DialogBody({
   const agyInstalled = useAgyInstalled(autoApproved);
   // El runtime propio no usa la cuenta (A6): ni se enseña ni se exige.
   const onRuntime = runsOnMageRuntime(provider);
+  const matchingAccount = selectedAccount?.providerId === provider;
   const canSubmit =
-    (onRuntime || accountId.length > 0) && cwd.length > 0 && model.length > 0 && provider.length > 0 && !busy && agyInstalled !== false;
+    (onRuntime || matchingAccount) && cwd.length > 0 && model.length > 0 && provider.length > 0 && !busy && agyInstalled !== false;
 
   // Al cambiar de cuenta, adopta su modelo por defecto (el usuario aun puede cambiarlo despues).
   const onAccountChange = (id: string): void => {
     setAccountId(id);
     const account = accounts.find((a) => a.id === id);
     if (account !== undefined) {
-      setProvider('claude'); // Las cuentas de Claude siempre inician con el proveedor de Claude por defecto
-      setModel(account.defaultModel);
+      setProvider(account.providerId);
+      setModel(account.providerId === 'claude' ? account.defaultModel : (providerFallbackModel(account.providerId, customProviders) ?? ''));
+      setEffort('');
     }
   };
 
@@ -135,11 +138,13 @@ function DialogBody({
   // configurar "gemini-2.5-pro" no servía de nada al abrir una conversación.
   const onProviderChange = (newProvider: string): void => {
     setProvider(newProvider);
+    setAccountId(runsOnMageRuntime(newProvider) ? '' : (accounts.find((account) => account.providerId === newProvider)?.id ?? ''));
+    setEffort('');
     setModel(
       resolveDefaultModel({
         lastUsedModel: null,
         // El `model` de settings.json es de Claude (es su fichero): no aplica a los demás proveedores.
-        accountDefaultModel: newProvider === 'claude' ? (selectedAccount?.defaultModel ?? null) : null,
+        accountDefaultModel: newProvider === 'claude' ? (accounts.find((account) => account.providerId === newProvider)?.defaultModel ?? null) : null,
         providerDefaultModel: defaultModelByProvider[newProvider] ?? null,
         providerFallbackModel: providerFallbackModel(newProvider, customProviders),
       }),
@@ -216,12 +221,13 @@ function DialogBody({
               onChange={(e) => onAccountChange(e.target.value)}
               className="w-full rounded-[7px] border border-mg-border-ctrl bg-mg-window p-[7px_9px] text-mg-body outline-none"
             >
-              {accounts.map((a) => (
+              {accounts.filter((a) => a.providerId === provider).map((a) => (
                 <option key={a.id} value={a.id}>
                   {a.alias} {a.email !== null ? `· ${a.email}` : ''} {a.apiBilled ? `· ${API_BILLED_LABEL}` : ''} {a.loginStatus !== 'logged_in' ? '(sin login)' : ''}
                 </option>
               ))}
             </select>
+            {!matchingAccount && <span role="status" className="text-mg-warn-text">Añade una cuenta de este proveedor para abrir el chat.</span>}
             {selectedAccount !== undefined && selectedAccount.loginStatus !== 'logged_in' && provider === 'claude' && (
               <div className="flex items-center gap-[8px]">
                 <span className="text-[10.5px] text-mg-danger">Sin login válido; el envío fallará.</span>
@@ -310,7 +316,7 @@ function DialogBody({
           </div>
         )}
 
-        {provider === 'claude' && (
+        {(provider === 'claude' || provider === 'codex') && (
           <Field label="Esfuerzo (opcional)">
             <select
               value={effort}
@@ -318,7 +324,7 @@ function DialogBody({
               className="w-full rounded-[7px] border border-mg-border-ctrl bg-mg-window p-[7px_9px] text-mg-body outline-none"
             >
               <option value="">Por defecto</option>
-              {EFFORT_LEVELS.map((level) => (
+              {(provider === 'codex' ? modelOptions.find((option) => option.id === model)?.supportedEfforts ?? [] : EFFORT_LEVELS).map((level) => (
                 <option key={level} value={level}>
                   {level}
                 </option>

@@ -1,5 +1,6 @@
 import { EFFORT_LEVELS, isPermissionMode, PERMISSION_MODES, type PermissionMode } from '@shared/ipc';
 import { RUNTIME_PERMISSION_MODES, runsOnMageRuntime } from '@shared/providers';
+import { codexPermissionPreset } from '@shared/codexPermissions';
 
 // Datos PUROS de los selectores de pasos (P-028 32/33): modo de permiso y esfuerzo se eligen con un
 // deslizador de pasos (`StepSlider`); aqui viven sus pasos, etiquetas y el mapeo posicion <-> valor, sin
@@ -32,6 +33,7 @@ export const EFFORT_STEP_LABEL: Readonly<Record<string, string>> = {
   high: 'Alto',
   xhigh: 'Muy alto',
   max: 'Máximo',
+  ultra: 'Ultra',
 };
 
 // Pasos de esfuerzo de un proveedor: 'Auto' y sus niveles (Claude, los cinco de `EFFORT_LEVELS`; `agy`, tres).
@@ -71,6 +73,9 @@ export const defaultPermissionSteps: readonly SliderStep[] = [{ value: '', label
 // Un modo que Mage no ofrece (el CLI puede estar en `dontAsk`) se enseña con su nombre crudo.
 export function permissionModeLabel(mode: string): string {
   if (isPermissionMode(mode)) return PERMISSION_MODE_LABEL[mode];
+  if (mode === codexPermissionPreset(':workspace', 'never')) return 'Aprobar automáticamente';
+  if (mode === codexPermissionPreset(':danger-full-access', 'never')) return 'Acceso completo';
+  if (mode === ':workspace') return 'Solicitar aprobación';
   return CODEX_PROFILE_LABEL[mode] ?? mode;
 }
 
@@ -112,7 +117,12 @@ export function permissionCycleFor(cliModes: readonly string[] | null): readonly
 
 // Pasos de Codex: sus perfiles, en el orden que los da (de menos a mas acceso). Sin sondeo, ninguno.
 export function codexPermissionSteps(profiles: readonly string[] | null): readonly SliderStep[] {
-  return (profiles ?? []).map((profile) => ({ value: profile, label: permissionModeLabel(profile) }));
+  return (profiles ?? []).flatMap((profile) => {
+    const step = { value: profile, label: permissionModeLabel(profile) };
+    if (profile !== ':workspace' && profile !== ':danger-full-access') return [step];
+    const value = codexPermissionPreset(profile, 'never');
+    return [step, { value, label: permissionModeLabel(value) }];
+  });
 }
 
 // Donde nace el popover respecto a su chip. El alto real no se conoce hasta montarlo (depende de si

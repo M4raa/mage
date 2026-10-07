@@ -36,7 +36,9 @@ export function HooksPermissionsSection(): React.JSX.Element {
   }, []);
 
   useEffect(() => {
-    if (cwd === undefined || accountDir === undefined) return;
+    setSettings(null);
+    setError(null);
+    if (cwd === undefined || accountDir === undefined || tab?.provider !== 'claude') return;
     let cancelled = false;
     void window.mage
       .readEffectiveSettings({ cwd, accountDir })
@@ -49,7 +51,7 @@ export function HooksPermissionsSection(): React.JSX.Element {
     return () => {
       cancelled = true;
     };
-  }, [cwd, accountDir]);
+  }, [cwd, accountDir, tab?.provider]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-[16px] overflow-y-auto p-[14px_16px]">
@@ -60,7 +62,9 @@ export function HooksPermissionsSection(): React.JSX.Element {
         <strong>{ORIGIN_LABEL.mageCommon}</strong>, en el bloque del final.
       </p>
 
-      <EffectiveView settings={settings} error={error} hasTab={tab !== undefined} />
+      {tab !== undefined && tab.provider !== 'claude'
+        ? <p className="text-[12px] text-mg-muted">Los hooks y permisos efectivos de {tab.provider} se consultan en su CLI.</p>
+        : <EffectiveView settings={settings} error={error} hasTab={tab !== undefined} />}
 
       <div className="flex flex-col gap-[8px] border-t border-mg-border pt-[14px]">
         <h3 className="text-[11px] font-semibold text-mg-body">Editable desde Mage — {ORIGIN_LABEL.mageCommon}</h3>
