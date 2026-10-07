@@ -1089,8 +1089,9 @@ describe('cyclePermissionMode', () => {
 describe('requestAccountSwitch y continueInAccount', () => {
   const B = 'C:/Users/u/.claude-p';
   const accounts = [
-    { id: tab('x').accountId, alias: 'principal', loginStatus: 'logged_in' },
-    { id: B, alias: 'otra', loginStatus: 'logged_in' },
+    { id: tab('x').accountId, alias: 'principal', providerId: 'claude', loginStatus: 'logged_in' },
+    { id: B, alias: 'otra', providerId: 'claude', loginStatus: 'logged_in' },
+    { id: 'C:/Users/u/.codex-x', alias: 'codex', providerId: 'codex', loginStatus: 'logged_in' },
   ] as unknown as Account[];
 
   function mounted(over: Partial<MageApi> = {}, status: 'idle' | 'streaming' = 'idle') {
@@ -1120,6 +1121,15 @@ describe('requestAccountSwitch y continueInAccount', () => {
 
     expect(store.getState().accountSwitchPrompt).toEqual({ tabId: 'a', destAccountId: B });
     expect(store.getState().activeAccountId).toBe(accounts[0]!.id);
+  });
+
+  it('requestAccountSwitch_haciaCuentaDeCodex_noOfreceMigrarYAbreChatNuevo', () => {
+    const store = mounted({ getScratchDir: vi.fn(() => new Promise<string>(() => undefined)) });
+
+    store.getState().requestAccountSwitch('C:/Users/u/.codex-x');
+
+    expect(store.getState().accountSwitchPrompt).toBeNull();
+    expect(store.getState().activeAccountId).toBe('C:/Users/u/.codex-x');
   });
 
   it('requestAccountSwitch_soloCambiar_noLlamaAlIpcDeMover', () => {
