@@ -2411,8 +2411,10 @@ const CHECKS = [
   {
     name: 'E3: elegir `agy` en Nueva conversacion muestra el aviso de sin permisos',
     async run(page) {
+      await seedAgyAccount(page);
       return withNewTabDialog(page, async () => {
-        const warning = page.locator(`${NEW_TAB_DIALOG} [role="status"]`);
+        // Solo el aviso de permisos: el de «Añade una cuenta» (sin cuenta de agy) es otro `role=status`.
+        const warning = page.locator(`${NEW_TAB_DIALOG} [role="status"]`).filter({ hasText: NO_PERMISSION_HEAD });
         const withClaude = await warning.count();
         const provider = newTabSelect(page, NEW_TAB_FIELD.provider);
         const targets = await provider.count();
@@ -2442,6 +2444,7 @@ const CHECKS = [
     // el motivo a la vista.
     name: 'E3: la pestaña de `agy` lleva el chip "Sin permisos" y no el selector de modo de permiso',
     async run(page) {
+      await seedAgyAccount(page);
       await page.locator('button[aria-label="Nueva pestaña"]').first().click({ button: 'right' });
       await page.locator(NEW_TAB_DIALOG).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
       await page.getByRole('button', { name: 'Carpeta temporal', exact: true }).click();
@@ -2453,7 +2456,7 @@ const CHECKS = [
       }
       await provider.selectOption(AGY_PROVIDER_ID);
       await page.waitForTimeout(CONFIG.settleMs);
-      const warning = (await page.locator(`${NEW_TAB_DIALOG} [role="status"]`).first().innerText()).trim();
+      const warning = (await page.locator(`${NEW_TAB_DIALOG} [role="status"]`).last().innerText()).trim();
       const open = page.getByRole('button', { name: /Abrir pestaña|Abriendo/ });
       const enabled = await open.isEnabled();
       if (warning.includes(AGY_MISSING_HEAD)) {
@@ -8357,6 +8360,13 @@ async function selectOptionsOf(page, fieldLabel) {
 
 // Abre el dialogo de nueva conversacion, ejecuta la medida y lo CIERRA con Escape. Abrirlo no crea
 // ninguna pestaña ni spawnea nada: eso solo pasa al pulsar "Abrir pestaña".
+// Desde que abrir un chat exige una cuenta del proveedor elegido, el perfil aislado (sin cuenta de agy)
+// no podria abrir su pestaña: se añade una ficticia al store; el arnes restaura `accounts` al acabar.
+async function seedAgyAccount(page) {
+  await page.evaluate(() => window.__mageDev.store.setState((s) => ({ accounts: [...s.accounts,
+    { ...s.accounts[0], id: 'vg-agy-account', providerId: 'agy', alias: 'agy de prueba', isMain: false, apiBilled: false }] })));
+}
+
 async function withNewTabDialog(page, measure) {
   // El dialogo ya no cuelga de Ctrl+N (camino por defecto = abrir directo): se llega por clic
   // derecho sobre el ＋ de la barra de pestañas.
