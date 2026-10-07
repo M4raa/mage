@@ -20,6 +20,7 @@ export interface TurnUsage {
   readonly totalTokens: number | null;
   readonly thinkingTokens: number | null;
   readonly cacheReadTokens: number | null;
+  readonly cacheCreationTokens?: number | null;
   // true = el proveedor no dio el uso y Mage lo ESTIMO (runtime propio, ficha D14 de P-032).
   readonly estimated?: boolean;
 }
@@ -31,6 +32,7 @@ export interface ResultInfo {
   readonly numTurns: number | null;
   // Uso del turno cuando el proveedor lo reporta (E3, `agy`). Ausente = no lo reporta.
   readonly usage?: TurnUsage;
+  readonly costMicroUsd?: number;
   // Quien abrio el turno (`origin.kind` del `result`). MEDIDO en 2.1.284: `'task-notification'` cuando
   // lo abrio el CLI solo, al terminar un subagente en segundo plano. Ausente en un turno del usuario.
   readonly origin?: string;

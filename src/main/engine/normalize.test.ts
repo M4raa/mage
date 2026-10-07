@@ -188,8 +188,17 @@ describe('normalizeRawEvent: el turno', () => {
     const raw = { type: 'result', subtype: 'success', total_cost_usd: 0.01, num_turns: 2 };
 
     expect(normalizeRawEvent(raw)).toEqual([
-      { kind: 'result', result: { isError: false, subtype: 'success', numTurns: 2 } },
+      { kind: 'result', result: { isError: false, subtype: 'success', numTurns: 2, costMicroUsd: 10000 } },
     ]);
+  });
+
+  it('normalize_resultApiKey_traeTokensYCosteEnEnteros', () => {
+    const raw = { type: 'result', subtype: 'success', num_turns: 1, total_cost_usd: 0.000019,
+      usage: { input_tokens: 9, output_tokens: 2, cache_creation_input_tokens: 0, cache_read_input_tokens: 0,
+        output_tokens_details: { thinking_tokens: 0 } } };
+
+    expect(normalizeRawEvent(raw)).toMatchObject([{ result: { costMicroUsd: 19,
+      usage: { inputTokens: 9, outputTokens: 2, totalTokens: 11, cacheReadTokens: 0, cacheCreationTokens: 0 } } }]);
   });
 
   it('normalize_resultErrorSubtype_returnsResultIsError', () => {

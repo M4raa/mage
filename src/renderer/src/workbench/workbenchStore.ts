@@ -2060,7 +2060,7 @@ export function createWorkbenchStore(mage: MageClient) {
       // cuenta que factura la API no tiene ventanas, y agy por clave tampoco (el de su suscripcion va
       // aparte en el panel, por su `/usage`).
       const account = get().accounts.find((a) => a.id === configDir);
-      if (account !== undefined && (account.apiBilled || account.providerId === 'agy')) return;
+      if (account !== undefined && account.providerId === 'agy') return;
       try {
         const info = await mage.getUsage(configDir);
         const windows = toUsageWindows(info, Date.now());

@@ -29,6 +29,30 @@ export interface UsageInfo {
   readonly limits: readonly UsageLimit[];
   readonly apiCreditsMinor: number | null;
   readonly fetchedAt: number; // epoch ms
+  readonly apiUsage?: ApiUsageSnapshot;
+}
+
+export interface ApiUsageAmounts {
+  readonly inputTokens: number;
+  readonly outputTokens: number;
+  readonly cacheReadTokens: number;
+  readonly cacheCreationTokens: number;
+  readonly totalTokens: number;
+  readonly costMicroUsd: number;
+}
+
+export interface ApiUsageSnapshot {
+  readonly turns: number;
+  readonly totals: ApiUsageAmounts;
+  readonly lastTurn: ApiUsageAmounts;
+  readonly updatedAtMs: number;
+}
+
+export function formatMicroUsd(amount: number): string {
+  if (!Number.isSafeInteger(amount) || amount < 0) throw new Error(`Coste microUSD invalido: ${amount}`);
+  const whole = Math.floor(amount / 1_000_000);
+  const fraction = String(amount % 1_000_000).padStart(6, '0').replace(/0+$/, '').padEnd(2, '0');
+  return `$${whole}.${fraction}`;
 }
 
 // Uso de la suscripcion de agy (M9), de su `/usage` (gratis). `usedPercent` = 100 - lo que queda.

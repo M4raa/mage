@@ -8,6 +8,7 @@ import { reportActionError } from '../notificationStore';
 import { providerLabel } from '../accountView';
 import type { Account } from '../types';
 import type { StatusIndicator, StatusInfo } from '@shared/status';
+import { formatMicroUsd } from '@shared/usage';
 
 // Presentacion de cada indicador de estado de Claude: color del punto + texto corto.
 const STATUS_PRESENTATION: Record<StatusIndicator, { readonly color: string; readonly text: string }> = {
@@ -107,6 +108,7 @@ function AppVersion(): React.JSX.Element | null {
 
 function AccountStatus({ account, provider }: { readonly account: Account; readonly provider: string }): React.JSX.Element {
   const { fiveHour, weekly } = account.usage;
+  const apiUsage = useWorkbenchStore((s) => s.usageByAccount[account.id]?.apiUsage);
   // Severidad global de la cuenta: la peor de sus ventanas (para el aviso ⚠/⛔ en la barra).
   const severity = worst(severityForPct(fiveHour.pct), severityForPct(weekly.pct));
   const refreshUsage = useWorkbenchStore((s) => s.refreshUsage);
@@ -138,7 +140,9 @@ function AccountStatus({ account, provider }: { readonly account: Account; reado
           style={severity !== 'ok' ? { color: SEVERITY_COLOR[severity] } : undefined}
         >
           {severity !== 'ok' && <Icon name={severity === 'critical' ? 'error' : 'warning'} size={12} className="mr-[4px]" />}
-          5h {fiveHour.pct}% · sem {weekly.pct}% · reset {fiveHour.label}
+          {account.apiBilled ? (apiUsage === undefined ? 'API · sin turnos medidos'
+            : `API · ${apiUsage.totals.totalTokens.toLocaleString('es-ES')} tokens · ${formatMicroUsd(apiUsage.totals.costMicroUsd)}`)
+            : `5h ${fiveHour.pct}% · sem ${weekly.pct}% · reset ${fiveHour.label}`}
         </span>
         <div className="pointer-events-none absolute bottom-[calc(100%_+_8px)] left-0 opacity-0 transition-opacity duration-150 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100">
           <UsagePopover />

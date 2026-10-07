@@ -1,4 +1,4 @@
-import type { UsageInfo } from '@shared/usage';
+import { formatMicroUsd, type UsageInfo } from '@shared/usage';
 import { useWorkbenchStore } from '../workbenchStore';
 import { formatResetAbsolute } from '../usageView';
 import type { Account } from '../types';
@@ -40,9 +40,11 @@ function AccountUsageRow({
       <div className="flex items-center gap-[6px] text-mg-body2">
         <span className="h-[6px] w-[6px] rounded-[2px]" style={{ background: account.accent.base }} />
         {account.alias} · {account.provider}
-        {info === null && <span className="ml-auto text-mg-muted">sin dato</span>}
+        {info === null && !account.apiBilled && <span className="ml-auto text-mg-muted">sin dato</span>}
       </div>
-      {info !== null && (
+      {account.apiBilled && <div className="text-mg-ter">API · {info?.apiUsage === undefined ? 'sin turnos medidos' :
+        `${info.apiUsage.totals.totalTokens.toLocaleString('es-ES')} tokens · ${formatMicroUsd(info.apiUsage.totals.costMicroUsd)}`}</div>}
+      {info !== null && !account.apiBilled && (
         <>
           <WindowLine label="5 h" pct={info.fiveHour.utilization} reset={formatResetAbsolute(info.fiveHour.resetsAt, now, false)} accent={account.accent.base} />
           <WindowLine label="7 d" pct={info.sevenDay.utilization} reset={formatResetAbsolute(info.sevenDay.resetsAt, now, true)} accent={account.accent.base} />

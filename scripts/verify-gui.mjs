@@ -1766,6 +1766,31 @@ const CHECKS = [
     },
   },
   {
+    name: 'I: Uso API de Claude enseña tokens y coste sin ventanas de suscripción',
+    state: { tabs: 1, panel: 'usage' },
+    async run(page) {
+      await page.evaluate(() => window.__mageDev.store.setState((state) => {
+        const accountId = state.activeAccountId;
+        const amounts = { inputTokens: 9, outputTokens: 2, cacheReadTokens: 0, cacheCreationTokens: 0,
+          totalTokens: 11, costMicroUsd: 19 };
+        return {
+          accounts: state.accounts.map((account) => account.id === accountId ? { ...account, apiBilled: true } : account),
+          usageByAccount: { ...state.usageByAccount, [accountId]: { fiveHour: { utilization: 0, resetsAt: null },
+            sevenDay: { utilization: 0, resetsAt: null }, limits: [], apiCreditsMinor: null, fetchedAt: Date.now(),
+            apiUsage: { turns: 1, totals: amounts, lastTurn: amounts, updatedAtMs: Date.now() } } },
+        };
+      }));
+      await waitForPanelContent(page, 'usage');
+      const measured = await page.locator('[data-active-panel="usage"]').evaluate((panel) => ({
+        api: panel.querySelectorAll('[data-api-usage="true"]').length,
+        tokens: panel.textContent?.includes('Tokens: 11') ?? false,
+        cost: panel.textContent?.includes('$0.000019') ?? false,
+        windows: panel.textContent?.includes('Ventana de 5 h') ?? false,
+      }));
+      return { ok: measured.api === 1 && measured.tokens && measured.cost && !measured.windows, detail: JSON.stringify(measured) };
+    },
+  },
+  {
     name: 'I: Codex muestra sus controles de modelo y esfuerzo',
     state: { tabs: 1 },
     async run(page) {

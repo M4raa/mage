@@ -14,7 +14,7 @@ import {
   type UsageProjection,
   type UsageSeverity,
 } from '../usageView';
-import type { AgyUsageSnapshot, UsageInfo } from '@shared/usage';
+import { formatMicroUsd, type AgyUsageSnapshot, type ApiUsageAmounts, type ApiUsageSnapshot, type UsageInfo } from '@shared/usage';
 import type { Account } from '../types';
 
 // Colores de severidad (inline: el sistema de diseno mantiene lo cromatico fuera del CSS). El estado
@@ -67,12 +67,36 @@ export function UsagePanel(): React.JSX.Element {
           No se pudo obtener el uso: {error}
         </div>
       )}
-      {usage === null && error === null && account.loginStatus === 'logged_in' && (
+      {usage === null && error === null && account.loginStatus === 'logged_in' && account.providerId !== 'agy' && (
         <Hint text="Cargando uso…" />
       )}
 
-      {usage !== null && <UsageBody account={account} usage={usage} />}
+      {account.apiBilled && account.providerId === 'claude' && <ApiUsageSection snapshot={usage?.apiUsage ?? null} />}
+      {usage !== null && !account.apiBilled && <UsageBody account={account} usage={usage} />}
       <AgyUsageSection okColor={account.accent.base} />
+    </div>
+  );
+}
+
+function ApiUsageSection({ snapshot }: { readonly snapshot: ApiUsageSnapshot | null }): React.JSX.Element {
+  if (snapshot === null) return <Hint text="Todavía no hay turnos de API medidos por Mage en esta cuenta." />;
+  return (
+    <section data-api-usage="true" aria-label="Uso de API de Claude" className="flex flex-col gap-[12px] border-t border-mg-border-subtle pt-[10px]">
+      <ApiAmounts title="Último turno" amounts={snapshot.lastTurn} />
+      <ApiAmounts title={`Total en Mage · ${snapshot.turns} turnos`} amounts={snapshot.totals} />
+    </section>
+  );
+}
+
+function ApiAmounts({ title, amounts }: { readonly title: string; readonly amounts: ApiUsageAmounts }): React.JSX.Element {
+  const count = (value: number): string => value.toLocaleString('es-ES');
+  return (
+    <div className="flex flex-col gap-[5px] text-mg-body">
+      <div className="font-semibold text-mg-text">{title}</div>
+      <div>Tokens: {count(amounts.totalTokens)} · entrada {count(amounts.inputTokens)} · salida {count(amounts.outputTokens)}</div>
+      {(amounts.cacheReadTokens > 0 || amounts.cacheCreationTokens > 0) &&
+        <div>Caché: lectura {count(amounts.cacheReadTokens)} · creación {count(amounts.cacheCreationTokens)}</div>}
+      <div>Coste: {formatMicroUsd(amounts.costMicroUsd)}</div>
     </div>
   );
 }

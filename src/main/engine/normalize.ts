@@ -4,6 +4,7 @@ import type { UsageWindowInfo } from '@shared/usage';
 // segundos de epoch en ms) en vez de escribir aqui un segundo: el `resetsAt` del stream viene en
 // SEGUNDOS y ese es justo el caso que ya resuelve.
 import { parseEpochMs } from '../usage/schemas';
+import { parseMicroUsd } from '../usage/apiUsage';
 import { countOrNull, parseSubagentRunInfo } from '@shared/subagentRun';
 import {
   CanUseToolSchema,
@@ -465,6 +466,8 @@ function normalizeResult(raw: Record<string, unknown>): MageEvent[] {
   const parsed = ResultSchema.parse(raw);
   const isError = parsed.is_error ?? parsed.subtype !== 'success';
   const origin = isRecord(raw.origin) && typeof raw.origin.kind === 'string' ? raw.origin.kind : undefined;
+  const usage = parsed.usage;
+  const costMicroUsd = parseMicroUsd(parsed.total_cost_usd);
   return [
     {
       kind: 'result',
@@ -472,6 +475,15 @@ function normalizeResult(raw: Record<string, unknown>): MageEvent[] {
         isError,
         subtype: parsed.subtype,
         numTurns: parsed.num_turns ?? null,
+        ...(usage === undefined ? {} : { usage: {
+          inputTokens: usage.input_tokens,
+          outputTokens: usage.output_tokens,
+          cacheReadTokens: usage.cache_read_input_tokens ?? null,
+          cacheCreationTokens: usage.cache_creation_input_tokens ?? null,
+          thinkingTokens: usage.output_tokens_details?.thinking_tokens ?? null,
+          totalTokens: usage.input_tokens + usage.output_tokens + (usage.cache_read_input_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0),
+        } }),
+        ...(costMicroUsd === null ? {} : { costMicroUsd }),
         ...(origin === undefined ? {} : { origin }),
       },
     },

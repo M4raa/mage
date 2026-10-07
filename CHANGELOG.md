@@ -47,6 +47,8 @@ versión.
   límites de uso. Login, turnos, aprobaciones, interrupción, reanudación e instrucciones comprobados
   con una cuenta real y Codex 0.160.0.
 - **Uso de agy** en el panel de Uso: las ventanas de 5 h y semanal de cada grupo de modelos.
+- **Uso de Claude por API** en el panel: tokens y coste del último turno y el acumulado por cuenta,
+  guardados entre reinicios. Estas cuentas no muestran ventanas de suscripción.
 - **Comandos de agy**: al empezar una conversación de agy eliges qué comandos de terminal puede
   ejecutar, escritos exactamente como los lanzará (o los deniegas). Cuando agy deniega uno, el aviso
   ofrece **permitirlo para la próxima conversación**. Lo mismo con sus **herramientas MCP**: eliges el

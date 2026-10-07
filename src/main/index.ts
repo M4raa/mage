@@ -168,6 +168,7 @@ import { scrubAgentEnv } from './os/agentEnv';
 import { OpenWithService } from './os/openWithService';
 import { buildJumpListCategories, parseJumpListArgs } from './os/jumpList';
 import { UsageService } from './usage/usageService';
+import { ApiUsageStore } from './usage/apiUsageStore';
 import { StatusService } from './status/statusService';
 import { claudeUserAgent } from './os/claudeVersion';
 import { LogBus } from './debug/logBus';
@@ -1146,6 +1147,14 @@ const usageService = new UsageService({
   // panel no se actualiza.
   log: (level, message) => mainLog(level, message),
   refreshSession: (configDir) => tokenRefreshService.refresh(configDir),
+});
+const apiUsageStore = new ApiUsageStore({
+  read: () => {
+    const path = join(app.getPath('userData'), 'api-usage.json');
+    return existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) as unknown : null;
+  },
+  write: (file) => writeAtomic(fileSystemDeps(), join(app.getPath('userData'), 'api-usage.json'), JSON.stringify(file)),
+  now: () => Date.now(),
 });
 const statusService = new StatusService({ fetch, now: () => Date.now() });
 
@@ -2349,6 +2358,10 @@ function relaySessionEvent(payload: { readonly sessionId: string; readonly event
           sevenDay: payload.event.sevenDay,
         });
       }
+      if (payload.event.kind === 'result' && getProviderAccounts().find('claude', accountDir)?.authKind === 'api-key') {
+        try { apiUsageStore.record(accountDir, payload.event.result); }
+        catch (err) { mainLog('warn', `No se pudo guardar el uso API de ${accountDir}: ${err instanceof Error ? err.message : String(err)}`); }
+      }
       if (!sender.isDestroyed()) sender.send(EVENT_CHANNEL, payload);
     }
 
@@ -2720,6 +2733,7 @@ function registerAccountsIpc2(): void {
     if (stopped > 0) mainLog('info', `Paradas ${stopped} sesiones antes de borrar la cuenta "${configDir}"`);
     // Una cuenta del registro (API, Codex) se borra con su clave; una suscripcion de Claude, como siempre.
     if (!getProviderAccounts().delete(configDir)) accountService.deleteAccount(configDir);
+    apiUsageStore.forget(configDir);
     getCommandCatalogStore().forgetAccount(
       configDir,
       (key) => pathEquals(key, configDir) || pathEquals(dirname(key), configDir),
@@ -2740,6 +2754,11 @@ function registerDialogIpc1(): void {
   // main leyera .credentials.json de CUALQUIER ruta y usara ese token contra la API de uso — mismo
   // patron que ConversationsList/AccountsDelete.
   ipcMain.handle(IpcChannel.UsageGet, (_e, configDir: string) => {
+    if (getProviderAccounts().find('claude', configDir)?.authKind === 'api-key') {
+      const apiUsage = apiUsageStore.get(configDir);
+      return { fiveHour: { utilization: 0, resetsAt: null }, sevenDay: { utilization: 0, resetsAt: null },
+        limits: [], apiCreditsMinor: null, fetchedAt: Date.now(), ...(apiUsage === null ? {} : { apiUsage }) };
+    }
     // Una cuenta de Codex no tiene endpoint de uso de Mage: lo que trajo su sesion (grupo E).
     if (getProviderAccounts().find('codex', configDir) !== null) return usageService.getStreamUsage(configDir);
     if (!isManagedAccountConfigDir(configDir)) {

@@ -223,6 +223,15 @@ export const ResultSchema = z.object({
   subtype: z.string(),
   is_error: z.boolean().optional(),
   num_turns: z.number().nullish(),
+  // Medido con claude 2.1.292 y ANTHROPIC_API_KEY contra el servidor local del spike de uso API.
+  usage: z.object({
+    input_tokens: z.number().int().nonnegative(),
+    output_tokens: z.number().int().nonnegative(),
+    cache_creation_input_tokens: z.number().int().nonnegative().optional(),
+    cache_read_input_tokens: z.number().int().nonnegative().optional(),
+    output_tokens_details: z.object({ thinking_tokens: z.number().int().nonnegative().optional() }).passthrough().optional(),
+  }).passthrough().optional(),
+  total_cost_usd: z.union([z.number().nonnegative(), z.string()]).optional(),
 });
 
 // Comando LOCAL del CLI (P-028, grupo C). MEDIDO contra 2.1.284 (`/rename`, `/context`, `/mcp`...): no
