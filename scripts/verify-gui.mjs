@@ -1863,7 +1863,7 @@ const CHECKS = [
           model: [...dialog.querySelectorAll('select')].find((item) => item.closest('label')?.textContent?.toLowerCase().includes('modelo'))?.value,
         }));
         const ok = codex.account === 'C:\\vg\\.codex-vg' && codex.model?.startsWith('gpt-') && codex.effort
-          && claude.account !== codex.account && claude.model?.startsWith('sonnet');
+          && claude.account !== codex.account && !!claude.model && !claude.model.startsWith('gpt-'); // el de Claude sale del settings.json real de la cuenta: no se fija
         return { ok, detail: JSON.stringify({ codex, claude }) };
       });
     },
