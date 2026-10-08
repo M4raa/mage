@@ -43,6 +43,14 @@ describe('AgyAdapter (sesion persistente, agy 1.2.14)', () => {
     expect(valueAfter(plan.args, '--model')).toBe('gemini-3.6-flash-medium');
   });
 
+  it('buildSpawnPlan_modoPlan_pasaModoPlan', () => {
+    expect(valueAfter(adapter.buildSpawnPlan({ ...launch, permissionMode: 'plan' }).args, '--mode')).toBe('plan');
+  });
+
+  it('buildSpawnPlan_modoNoSoportado_caeAAcceptEdits', () => {
+    expect(valueAfter(adapter.buildSpawnPlan({ ...launch, permissionMode: 'bypassPermissions' }).args, '--mode')).toBe('accept-edits');
+  });
+
   // Desde la 1.2.6 el tope por defecto es ilimitado: el `30m` de antes recortaba turnos.
   it('buildSpawnPlan_sesionNormal_noPasaPrintTimeoutNiPrint', () => {
     const plan = adapter.buildSpawnPlan(launch);

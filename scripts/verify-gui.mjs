@@ -2562,12 +2562,12 @@ const CHECKS = [
   },
   {
     // La mas delicada del lote. Con `agy` instalado se abre su pestaña y se mide lo que la UI DEBE tener
-    // (el chip permanente "⚠ Sin permisos" y el recuadro del estado vacio) y lo que NO debe tener: el
-    // chip de modo de permiso y el selector de esfuerzo, que son de Claude y para `agy` no existen —
-    // pintarlos seria fingir un control de permisos que su CLI no ofrece.
+    // (el chip permanente "⚠ Sin permisos", el recuadro del estado vacio y, desde la 0.1.2, los selectores de
+    // modelo, esfuerzo y modo: son flags de arranque de agy y Mage relanza el CLI en el siguiente mensaje).
+    // El modo solo ofrece `accept-edits` y `plan` (dos pasos): no finge un modo manual que su CLI no tiene.
     // Si `agy` NO estuviera instalado, el contrato es otro y se mide ese: boton de crear DESHABILITADO y
     // el motivo a la vista.
-    name: 'E3: la pestaña de `agy` lleva el chip "Sin permisos" y no el selector de modo de permiso',
+    name: 'E3: la pestaña de `agy` lleva el chip "Sin permisos" y los selectores de modelo, esfuerzo y modo',
     async run(page) {
       await seedAgyAccount(page);
       await page.locator('button[aria-label="Nueva pestaña"]').first().click({ button: 'right' });
@@ -2617,14 +2617,16 @@ const CHECKS = [
           }),
           permissionModeControls: document.querySelectorAll('[aria-label^="Modo de permiso"]').length,
           effortControls: document.querySelectorAll('[aria-label="Nivel de esfuerzo"]').length,
+          modelControls: document.querySelectorAll('[aria-label="Modelo (aplica al siguiente turno)"]').length,
         };
       }, NO_PERMISSION_HEAD);
       const ok =
         measured.chips === 1 &&
         measured.chipText === AGY_PERMISSION_CHIP &&
         measured.emptyStateBoxes === 1 &&
-        measured.permissionModeControls === 0 &&
-        measured.effortControls === 0;
+        measured.permissionModeControls === 1 &&
+        measured.effortControls === 1 &&
+        measured.modelControls === 1;
       return { ok, detail: `agy instalado; pestaña abierta: ${JSON.stringify(measured)}` };
     },
   },

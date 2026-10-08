@@ -6,7 +6,7 @@ import { disposeTranscriptStore, transcriptStoreForTab } from './transcriptStore
 import type { ContextUsage, MageEvent, McpServerStatus, PermissionDecision, PermissionRequest, SlashCommandInfo, SubagentInfo, TurnUsage } from '@shared/events';
 import { buildUpdatedInput, parseAskUserQuestion } from '@shared/askUserQuestion';
 import type { CloseAnswer, NotificationTarget, PermissionMode, PermissionModesByProviderView, SessionEventPayload } from '@shared/ipc';
-import { hasPermissionModes, permissionCycleForProvider } from './stepSliderModel';
+import { defaultModeOf, hasPermissionModes, permissionCycleForProvider } from './stepSliderModel';
 import { IDLE_UPDATE_STATE, type UpdateState } from '@shared/update';
 import { isPermissionMode, MAIN_WINDOW_ID, PERMISSION_MODES } from '@shared/ipc';
 import { RELEASE_NOTES_TAB_ID, releaseNotesDecision } from './releaseNotes';
@@ -2648,7 +2648,7 @@ export function createWorkbenchStore(mage: MageClient) {
       const trimmed = model.trim();
       const tabId = get().activeTabId;
       const tab = get().tabs.find((t) => t.id === tabId);
-      if (trimmed.length === 0 || tab === undefined || !['claude', CODEX_PROVIDER_ID].includes(tab.provider) || tab.model === trimmed) return;
+      if (trimmed.length === 0 || tab === undefined || !['claude', CODEX_PROVIDER_ID, AGY_PROVIDER_ID].includes(tab.provider) || tab.model === trimmed) return;
       const supported = (get().modelCatalogByAccount[tab.accountId] ?? providerModels(CODEX_PROVIDER_ID, []) ?? [])
         .find((option) => option.id === trimmed)?.supportedEfforts;
       const effort = tab.provider === CODEX_PROVIDER_ID && supported !== undefined && tab.effort !== undefined && !supported.includes(tab.effort)
@@ -2673,7 +2673,7 @@ export function createWorkbenchStore(mage: MageClient) {
     setActivePermissionMode: (mode) => {
       const tabId = get().activeTabId;
       const tab = get().tabs.find((t) => t.id === tabId);
-      if (tab === undefined || !hasPermissionModes(tab.provider) || (tab.permissionMode ?? 'default') === mode) return;
+      if (tab === undefined || !hasPermissionModes(tab.provider) || (tab.permissionMode ?? defaultModeOf(tab.provider)) === mode) return;
       set((s) => ({ tabs: s.tabs.map((t) => (t.id === tabId ? { ...t, permissionMode: mode } : t)) }));
       persistConversationPrefs(mage, get(), tabId);
       const sessionId = get().sessionIdByChat[tabId];
@@ -2706,7 +2706,7 @@ export function createWorkbenchStore(mage: MageClient) {
       const clean = effort.trim().toLowerCase();
       const tabId = get().activeTabId;
       const tab = get().tabs.find((t) => t.id === tabId);
-      if (tab === undefined || !['claude', CODEX_PROVIDER_ID].includes(tab.provider) || (tab.effort ?? '') === clean) return;
+      if (tab === undefined || !['claude', CODEX_PROVIDER_ID, AGY_PROVIDER_ID].includes(tab.provider) || (tab.effort ?? '') === clean) return;
       const supported = (get().modelCatalogByAccount[tab.accountId] ?? providerModels(CODEX_PROVIDER_ID, []) ?? [])
         .find((option) => option.id === tab.model)?.supportedEfforts;
       if (tab.provider === CODEX_PROVIDER_ID && clean.length > 0 && !supported?.includes(clean)) return;
@@ -2718,7 +2718,7 @@ export function createWorkbenchStore(mage: MageClient) {
         }),
       }));
       persistConversationPrefs(mage, get(), tabId);
-      if (tab.provider === CODEX_PROVIDER_ID) {
+      if (tab.provider === CODEX_PROVIDER_ID || tab.provider === AGY_PROVIDER_ID) {
         const sessionId = get().sessionIdByChat[tabId];
         if (sessionId !== undefined) void mage.setEffort({ sessionId, effort: clean })
           .catch((err: unknown) => failChat(set, tabId, describeError(err)));

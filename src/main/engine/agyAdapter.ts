@@ -1,7 +1,7 @@
 import { homedir } from 'node:os';
 import type { ImageAttachment } from '@shared/ipc';
 import type { MageEvent, PermissionDecision } from '@shared/events';
-import { AGY_EFFORT_LEVELS } from '@shared/providers';
+import { AGY_EFFORT_LEVELS, AGY_PERMISSION_MODES } from '@shared/providers';
 import { resolveAgyBinary } from '../os/agyBinaryResolver';
 import { AgyTurnTracker } from './agyNormalize';
 import { AGY_FILE_TOKEN_ENV, type AgyProfileMode } from './agyProfile';
@@ -45,7 +45,13 @@ const BASE_ARGS = ['--output-format', 'stream-json', '--input-format', 'stream-j
 // la UI advierte ("edita sin preguntar"). Medido en 1.2.14: los tres modos (por defecto, accept-edits,
 // plan) escriben sin preguntar y deniegan los comandos; `--mode` solo admite `accept-edits` y `plan`.
 // NO se usa `--dangerously-skip-permissions`: no hace falta para escribir dentro de `--add-dir`.
-const MODE_ARGS = ['--mode', 'accept-edits'] as const;
+const DEFAULT_MODE = 'accept-edits';
+const PLAN_MODE = 'plan';
+
+// `--mode` de agy para el modo de permiso de Mage: `plan` -> plan; cualquier otro (o ninguno) -> accept-edits.
+function agyModeArg(permissionMode: string | undefined): string {
+  return permissionMode === PLAN_MODE && AGY_PERMISSION_MODES.includes(permissionMode) ? PLAN_MODE : DEFAULT_MODE;
+}
 
 // Cuenta de agy por clave de API: su perfil y su clave, resueltos en main (boveda).
 export interface AgyApiAccount {
@@ -82,6 +88,7 @@ interface ChildLaunch {
 export class AgyAdapter implements ProviderAdapter {
   // El login lo hace el propio agy (Mage lo lanza en el perfil de la cuenta y le pasa el codigo que da Google, sin
   // ver el token): `accountLogin` en main. Las cuentas por clave son otra celda de la matriz (providerAccounts.ts).
+  readonly launchFlagSettings = true;
   readonly auth: AuthModel = {
     kind: 'external',
     reason: 'agy gestiona su propio login; Mage solo lo lanza en el perfil de cada cuenta y relaya el código',
@@ -97,7 +104,7 @@ export class AgyAdapter implements ProviderAdapter {
     this.tracker.resetProcess(); // proceso nuevo: su uso acumulado empieza en cero (medido)
     // `--add-dir <cwd>` es OBLIGATORIO: sin el, `agy` escribe en su propio scratch
     // (~/.gemini/antigravity-cli/scratch/) ignorando el cwd que el mismo reporta en su `init`.
-    const args = [...BASE_ARGS, ...MODE_ARGS, '--add-dir', params.cwd, '--model', params.model];
+    const args = [...BASE_ARGS, '--mode', agyModeArg(params.permissionMode), '--add-dir', params.cwd, '--model', params.model];
     // Relanzado tras un corte: el id lo genera `agy` (uno arbitrario responde "conversation not found"),
     // asi que solo se pasa el que emitio en su init.
     if (params.conversationId !== undefined && params.conversationId.length > 0) {

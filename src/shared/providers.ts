@@ -93,6 +93,10 @@ export const NO_PERMISSION_CONTROL_WARNING =
 // usan su adapter (main) y los selectores (renderer).
 export const AGY_EFFORT_LEVELS: readonly string[] = ['low', 'medium', 'high', 'max'];
 
+// Modos de permiso de agy: su `--mode` solo admite `accept-edits` y `plan` (medido en 1.2.14), con los nombres de Mage.
+// En los dos el CLI deniega los comandos: no hay modo manual.
+export const AGY_PERMISSION_MODES: readonly string[] = ['acceptEdits', 'plan'];
+
 // ¿Corre este proveedor en el runtime propio de Mage (P-032)? Los del usuario (endpoints
 // OpenAI-compatibles, locales o remotos): no tienen CLI. Los de serie con CLI nunca.
 export function runsOnMageRuntime(providerId: string): boolean {

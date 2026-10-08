@@ -1,5 +1,5 @@
 import { EFFORT_LEVELS, isPermissionMode, PERMISSION_MODES, type PermissionMode } from '@shared/ipc';
-import { RUNTIME_PERMISSION_MODES, runsOnMageRuntime } from '@shared/providers';
+import { AGY_PERMISSION_MODES, AGY_PROVIDER_ID, RUNTIME_PERMISSION_MODES, runsOnMageRuntime } from '@shared/providers';
 import { codexPermissionPreset } from '@shared/codexPermissions';
 
 // Datos PUROS de los selectores de pasos (P-028 32/33): modo de permiso y esfuerzo se eligen con un
@@ -82,9 +82,9 @@ export function permissionModeLabel(mode: string): string {
 // --- Modos leidos del CLI (respuesta 18) ----------------------------------------------------------
 
 // Proveedores con selector de modo: Claude (su `--permission-mode`), Codex (sus perfiles, sin verificar) y
-// los del runtime propio de Mage (P-032: los cinco modos de Mage, sin CLI que sondear).
+// los del runtime propio de Mage (P-032: los cinco modos de Mage, sin CLI que sondear) y agy (solo `acceptEdits` y `plan`).
 export function hasPermissionModes(providerId: string): boolean {
-  return providerId === 'claude' || providerId === 'codex' || runsOnMageRuntime(providerId);
+  return providerId === 'claude' || providerId === 'codex' || providerId === AGY_PROVIDER_ID || runsOnMageRuntime(providerId);
 }
 
 // Modos que rota Shift+Tab en una pestaña: el runtime siempre los cinco; Claude, los que exponga su CLI.
@@ -92,6 +92,14 @@ export function permissionCycleForProvider(providerId: string, claudeModes: read
   if (runsOnMageRuntime(providerId)) return RUNTIME_PERMISSION_MODES;
   return providerId === 'claude' ? permissionCycleFor(claudeModes) : [];
 }
+
+// Modo en el que arranca una pestaña sin modo elegido: agy corre en `accept-edits` (su `--mode` por defecto en Mage).
+export function defaultModeOf(providerId: string): string {
+  return providerId === AGY_PROVIDER_ID ? 'acceptEdits' : 'default';
+}
+
+// Pasos de agy: su `--mode` solo admite `accept-edits` y `plan`.
+export const agyPermissionSteps: readonly SliderStep[] = AGY_PERMISSION_MODES.map((mode) => ({ value: mode, label: permissionModeLabel(mode) }));
 
 // Perfiles integrados de `codex app-server` (`permissionProfile/list`, medido en 0.144.4).
 const CODEX_PROFILE_LABEL: Readonly<Record<string, string>> = {

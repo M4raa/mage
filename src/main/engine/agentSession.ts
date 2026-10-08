@@ -85,6 +85,12 @@ export class AgentSession {
   // El turno se corto matando el proceso (proveedor sin interrupcion por protocolo): el siguiente
   // mensaje relanza el CLI reanudando la conversacion.
   private relaunchOnNextMessage = false;
+  // Proveedor con modelo/esfuerzo/modo como flags de arranque (`launchFlagSettings`): lo elegido por el usuario despues
+  // de lanzar. Pisa a `deps.params` en cada (re)lanzamiento; `launchStale` = el proceso vivo aun no lo lleva.
+  private launchOverrides: Partial<LaunchParams> = {};
+  private launchStale = false;
+  // Hay un turno en marcha (desde el mensaje hasta su `result`): no se recicla el proceso a mitad de uno.
+  private turnActive = false;
   // Id de la conversacion del CLI tras un `/clear` (P-028): el relanzado reanuda ESA y no la de antes
   // del clear. null = la del arranque (`params.sessionId`).
   private resetConversationId: string | null = null;
@@ -109,7 +115,7 @@ export class AgentSession {
     // Repone el flag por si la instancia se reutiliza tras un stop(): si se quedara en true, el reinicio
     // automatico se daria por desactivado para siempre en esa sesion.
     this.stopping = false;
-    this.launch(this.deps.params);
+    this.launch(this.currentParams());
   }
 
   private launch(params: LaunchParams): void {
@@ -119,6 +125,8 @@ export class AgentSession {
     // proceso nuevo si este muere sin decir nada.
     this.stdoutBuffer = '';
     this.lastStderr = '';
+    this.launchStale = false; // el proceso nuevo ya lleva los ajustes de `currentParams()`
+    this.turnActive = false;
     const plan = this.deps.adapter.buildSpawnPlan(params);
     this.log('info', 'Spawn del agente', {
       sessionId: this.deps.params.sessionId,
@@ -202,10 +210,12 @@ export class AgentSession {
   // Envia un mensaje de usuario. Precondicion: proceso vivo, o un turno cortado matando el proceso
   // (entonces se relanza aqui, reanudando la conversacion del proveedor).
   sendUserMessage(text: string, attachments: readonly ImageAttachment[] = []): void {
+    if (this.launchStale && this.child !== null && !this.turnActive) this.recycleForLaunchSettings();
     if (this.child === null && this.relaunchOnNextMessage && !this.stopping) {
       this.relaunchOnNextMessage = false;
       this.launch(this.resumeParams());
     }
+    this.turnActive = true;
     this.writePayload(this.deps.adapter.encodeUserMessage(text, attachments));
   }
 
@@ -213,13 +223,31 @@ export class AgentSession {
   // de conversacion del proveedor si ya lo emitio. Si nunca hubo handshake no hay nada que reanudar y se
   // relanza con los params originales (arranque fresco con el mismo id).
   private resumeParams(): LaunchParams {
-    if (!this.handshaked) return this.deps.params;
+    if (!this.handshaked) return this.currentParams();
     return {
-      ...this.deps.params,
+      ...this.currentParams(),
       sessionId: this.resetConversationId ?? this.deps.params.sessionId,
       resume: true,
       ...(this.providerConversationId === null ? {} : { conversationId: this.providerConversationId }),
     };
+  }
+
+  // Params del lanzamiento: los de la sesion con lo que el usuario cambio despues (solo `launchFlagSettings`).
+  private currentParams(): LaunchParams {
+    return { ...this.deps.params, ...this.launchOverrides };
+  }
+
+  // Guarda un ajuste de arranque. El CLI no lo aplica en caliente: el siguiente mensaje, con la sesion en reposo, relanza.
+  private changeLaunchSetting(patch: Partial<LaunchParams>): void {
+    this.launchOverrides = { ...this.launchOverrides, ...patch };
+    this.launchStale = true;
+  }
+
+  // Corta el proceso en reposo para que el siguiente mensaje lo relance con los ajustes nuevos, reanudando la conversacion.
+  private recycleForLaunchSettings(): void {
+    this.launchStale = false;
+    this.killForRelaunch();
+    this.log('info', 'Relanzado para aplicar modelo, esfuerzo o modo', { sessionId: this.deps.params.sessionId });
   }
 
   // Responde a un permiso pendiente. Precondicion: el requestId existe.
@@ -260,10 +288,18 @@ export class AgentSession {
 
   private interruptByKill(): void {
     if (this.child === null) return; // no hay proceso: nada que interrumpir
+    this.killForRelaunch();
+    this.deps.emit({ kind: 'result', result: { isError: false, subtype: 'interrupted', numTurns: null } });
+  }
+
+  // Mata el arbol y deja el relanzado para el siguiente mensaje. Sin `result`: quien interrumpe lo emite.
+  private killForRelaunch(): void {
     const child = this.child;
+    if (child === null) return;
     this.relaunchOnNextMessage = true;
+    this.turnActive = false;
     const outcome = killProcessTree(child, this.killTree);
-    this.log('info', 'Turno interrumpido matando el arbol de procesos (sin interrupcion por protocolo)', {
+    this.log('info', 'Proceso cortado matando el arbol (interrupcion sin protocolo o relanzado por ajustes de arranque)', {
       sessionId: this.deps.params.sessionId,
       pid: child.pid,
       outcome,
@@ -280,17 +316,18 @@ export class AgentSession {
     this.pendingPermissions.clear();
     this.cancelPendingElicitations();
     this.toolStartTimes.clear();
-    this.deps.emit({ kind: 'result', result: { isError: false, subtype: 'interrupted', numTurns: null } });
   }
 
   // Cambia el modelo de la sesion en caliente (M2.4). El CLI lo aplica al SIGUIENTE turno.
   setModel(model: string): void {
     if (model.trim().length === 0) throw new Error(`Modelo vacio para set_model: ${JSON.stringify(model)}`);
     this.log('info', 'Cambio de modelo en caliente', { sessionId: this.deps.params.sessionId, model });
+    if (this.deps.adapter.launchFlagSettings === true) return this.changeLaunchSetting({ model });
     this.writePayload(this.deps.adapter.encodeSetModel(model));
   }
 
   setEffort(effort: string): void {
+    if (this.deps.adapter.launchFlagSettings === true) return this.changeLaunchSetting({ effort: effort.length > 0 ? effort : undefined });
     if (this.deps.adapter.encodeSetEffort === undefined) throw new Error(`Este proveedor no admite cambiar esfuerzo: ${JSON.stringify(effort)}`);
     this.writePayload(this.deps.adapter.encodeSetEffort(effort));
   }
@@ -299,6 +336,7 @@ export class AgentSession {
   setPermissionMode(mode: string): void {
     if (mode.trim().length === 0) throw new Error(`Modo de permiso vacio para set_permission_mode: ${JSON.stringify(mode)}`);
     this.log('info', 'Cambio de modo de permiso', { sessionId: this.deps.params.sessionId, mode });
+    if (this.deps.adapter.launchFlagSettings === true) return this.changeLaunchSetting({ permissionMode: mode });
     this.writePayload(this.deps.adapter.encodeSetPermissionMode(mode));
   }
 
@@ -461,6 +499,7 @@ export class AgentSession {
       this.handshaked = true; // ya hay transcripcion: un relanzado puede reanudarla
       this.captureProviderConversationId(event.sessionId);
     } else if (event.kind === 'result') {
+      this.turnActive = false;
       this.requestContextUsage(); // fin de turno: es cuando el desglose de contexto cambia (D3)
       // Refresco del catalogo de comandos "/" (2.2): un `/reload-plugins` o un plugin instalado a
       // mitad de sesion aparece SIN reiniciar nada. Medido: un segundo `initialize` responde con los

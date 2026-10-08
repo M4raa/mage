@@ -1,5 +1,5 @@
 import { PERMISSION_MODES, type PermissionModesByProviderView } from '@shared/ipc';
-import { RUNTIME_PERMISSION_MODES, runsOnMageRuntime } from '@shared/providers';
+import { AGY_PERMISSION_MODES, AGY_PROVIDER_ID, RUNTIME_PERMISSION_MODES, runsOnMageRuntime } from '@shared/providers';
 import { parseCodexPermissionPreset } from '@shared/codexPermissions';
 
 // Modos de permiso LEIDOS DEL CLI (respuesta 18 del usuario: si mañana un CLI añade un modo, Mage lo
@@ -55,6 +55,7 @@ export function isKnownPermissionModeFor(provider: string, mode: string, probed:
     const preset = parseCodexPermissionPreset(mode);
     return preset !== null && (probed?.codex?.includes(preset.profile) ?? CODEX_PROFILE_PATTERN.test(preset.profile));
   }
+  if (provider === AGY_PROVIDER_ID) return AGY_PERMISSION_MODES.includes(mode);
   // El runtime propio (P-032) no tiene CLI que sondear: sus modos son los de Mage.
   if (runsOnMageRuntime(provider)) return (RUNTIME_PERMISSION_MODES as readonly string[]).includes(mode);
   return false;

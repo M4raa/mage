@@ -79,11 +79,15 @@ versión.
     escribe la llamada como texto, Mage la ejecuta igualmente.
   - **Probar conexión**, al dar de alta el servidor, rellena sus modelos, la ventana de contexto y si
     admite herramientas.
-- **Avisos propios de Mage**, abajo a la derecha: los errores se quedan hasta que los cierras, el resto se
+- **Avisos propios de Mage**, arriba a la derecha: los errores se quedan hasta que los cierras, el resto se
   va solo (y no mientras tienes el ratón encima o Mage en segundo plano). Con Mage delante también te
   avisa de lo que pasa en las conversaciones que no estás viendo —un permiso pendiente, un turno
   terminado, un subagente que acaba, un límite de uso— y el aviso te lleva a ella. La **campana** de la
-  barra de estado guarda los últimos de la ventana: marcarlos como leídos o limpiarlos.
+  cabecera guarda los últimos de la ventana: marcarlos como leídos o limpiarlos.
+- **Modelo, esfuerzo y modo de permiso en las pestañas de agy**: se pueden cambiar como en Claude y Codex. agy
+  los toma al arrancar, así que el cambio se aplica en el siguiente mensaje (Mage relanza agy en la misma
+  conversación; si hay un turno en marcha, espera a que termine). El modo ofrece los dos que admite agy:
+  **Aceptar ediciones** y **Plan**; en ambos agy deniega los comandos que no hayas permitido.
 - **Instrucciones del proyecto para Codex y agy**: si tu proyecto solo tiene `CLAUDE.md`, Mage se lo da
   a Codex como su `AGENTS.md` y a agy como su `GEMINI.md` en cada conversación, junto con tu
   `~/.claude/CLAUDE.md`, sin escribir nada en el repositorio. Si el proyecto ya tiene el fichero propio de

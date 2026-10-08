@@ -174,8 +174,8 @@ describe('modos leidos del CLI (respuesta 18)', () => {
 });
 
 describe('modos por proveedor', () => {
-  it('hasPermissionModes_claudeCodexYRuntime_siAgyNo', () => {
-    expect(['claude', 'codex', 'custom:ollama', 'agy'].map(hasPermissionModes)).toEqual([true, true, true, false]);
+  it('hasPermissionModes_claudeCodexAgyYRuntime_siOtroNo', () => {
+    expect(['claude', 'codex', 'custom:ollama', 'agy', 'otro'].map(hasPermissionModes)).toEqual([true, true, true, true, false]);
   });
 
   it('permissionCycleForProvider_runtime_losCincoAunqueElCliDigaOtraCosa', () => {

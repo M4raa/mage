@@ -110,6 +110,9 @@ export interface ProviderAdapter {
   // true = el CLI no tiene interrupcion por protocolo: AgentSession corta matando el arbol y el siguiente
   // mensaje relanza reanudando la conversacion (`agy`). Entonces `encodeInterrupt` no se llama.
   readonly interruptsByKill?: boolean;
+  // true = modelo, esfuerzo y modo de permiso son flags de ARRANQUE (`agy`): no hay cambio en caliente, asi que
+  // AgentSession los guarda y relanza el CLI, reanudando la conversacion, en el siguiente mensaje con la sesion en reposo.
+  readonly launchFlagSettings?: boolean;
   // Cambio de modelo en caliente (M2.4): control_request set_model; aplica al siguiente turno.
   // Los adapters que no lo soportan lanzan Error (la UI solo lo ofrece para Claude).
   encodeSetModel(model: string): unknown;

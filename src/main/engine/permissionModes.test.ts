@@ -65,8 +65,14 @@ describe('isKnownPermissionModeFor', () => {
     expect(isKnownPermissionModeFor('codex', ':workspace|untrusted', null)).toBe(false);
   });
 
+  it('isKnownPermissionModeFor_agy_soloAcceptEditsYPlan', () => {
+    expect(isKnownPermissionModeFor('agy', 'plan', null)).toBe(true);
+    expect(isKnownPermissionModeFor('agy', 'acceptEdits', null)).toBe(true);
+    expect(isKnownPermissionModeFor('agy', 'bypassPermissions', null)).toBe(false);
+  });
+
   it('isKnownPermissionModeFor_otroProveedor_false', () => {
-    expect(isKnownPermissionModeFor('agy', 'plan', null)).toBe(false);
+    expect(isKnownPermissionModeFor('desconocido', 'plan', null)).toBe(false);
   });
 });
 

@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { isPermissionMode } from '@shared/ipc';
 import type { EditorInfo } from '@shared/ipc';
-import { CODEX_PROVIDER_ID, NO_PERMISSION_CONTROL_WARNING, RUNTIME_AUTO_MODE_NOTE, UNVERIFIED_PROVIDER_NOTE, isAutoApprovedProvider, isUnverifiedProvider, runsOnMageRuntime } from '@shared/providers';
+import { AGY_EFFORT_LEVELS, AGY_PROVIDER_ID, CODEX_PROVIDER_ID, NO_PERMISSION_CONTROL_WARNING, RUNTIME_AUTO_MODE_NOTE, UNVERIFIED_PROVIDER_NOTE, isAutoApprovedProvider, isUnverifiedProvider, runsOnMageRuntime } from '@shared/providers';
 import { useWorkbenchStore } from '../workbenchStore';
 import { displayModelId, modelOptionsForProvider } from '../models';
 import { describeAttachment, insertImageTokens, reconcileImageTokens, removeImageToken } from '@shared/imageRefs';
@@ -23,7 +23,7 @@ import { effortChangeAdvice, modelChangeAdvice, type CostAdvice } from '../costA
 import { notify } from '../notificationStore';
 import { Dropdown } from './Dropdown';
 import { StepSlider } from './StepSlider';
-import { EFFORT_STEP_LABEL, codexPermissionSteps, effortSteps, permissionModeLabel, permissionStepsFor } from '../stepSliderModel';
+import { EFFORT_STEP_LABEL, agyPermissionSteps, codexPermissionSteps, defaultModeOf, effortSteps, permissionModeLabel, permissionStepsFor } from '../stepSliderModel';
 import { usePaneTabId } from '../paneContext';
 import type { PermissionMode } from '@shared/ipc';
 
@@ -186,18 +186,21 @@ export function PromptBar(): React.JSX.Element {
   // Proveedor sin puente de permisos (E3, `agy`): auto-aprueba las tools y la UI tiene que decirlo.
   const autoApproved = activeTab !== undefined && isAutoApprovedProvider(activeTab.provider);
   const isCodex = activeTab?.provider === CODEX_PROVIDER_ID;
+  // agy: modelo, esfuerzo y modo son flags de arranque; Mage relanza el CLI (misma conversacion) en el siguiente mensaje.
+  const isAgy = activeTab?.provider === AGY_PROVIDER_ID;
   // Runtime propio de Mage (P-032): los cinco modos de Mage, sin CLI que sondear.
   const isRuntime = activeTab !== undefined && runsOnMageRuntime(activeTab.provider);
   const cliModes = useWorkbenchStore((s) => s.permissionModes);
   // Los pasos salen de lo que expone el CLI (respuesta 18); sin respuesta, la lista fija de Mage.
   const modeSteps = useMemo(() => {
     if (isCodex) return codexPermissionSteps(cliModes?.codex ?? null);
+    if (isAgy) return agyPermissionSteps;
     return permissionStepsFor(isRuntime ? null : (cliModes?.claude ?? null));
-  }, [isCodex, isRuntime, cliModes]);
-  const permissionMode: string = activeTab?.permissionMode ?? (isCodex ? (modeSteps[0]?.value ?? '') : 'default');
+  }, [isCodex, isAgy, isRuntime, cliModes]);
+  const permissionMode: string = activeTab?.permissionMode ?? (isCodex ? (modeSteps[0]?.value ?? '') : defaultModeOf(providerId));
   const effort = activeTab?.effort ?? '';
   const selectedModel = modelOptions.find((option) => option.id === activeModel);
-  const effortLevels = isCodex ? (selectedModel?.supportedEfforts ?? []) : undefined;
+  const effortLevels = isCodex ? (selectedModel?.supportedEfforts ?? []) : isAgy ? AGY_EFFORT_LEVELS : undefined;
   const availableEffortSteps = effortSteps(effortLevels);
   // Turno en marcha (generando o esperando permiso): se puede interrumpir.
   const running = chatStatus === 'streaming' || chatStatus === 'needs_permission';
@@ -296,8 +299,8 @@ export function PromptBar(): React.JSX.Element {
 
   // Cambio de nivel de esfuerzo (--effort): flag de arranque, el aviso lo explica.
   const changeEffort = (level: string): void => {
-    notifyCostAdvice(isCodex
-      ? { severity: 'info', message: `Esfuerzo ${level || 'automático'}. Se aplica al siguiente turno.` }
+    notifyCostAdvice(isCodex || isAgy
+      ? { severity: 'info', message: `Esfuerzo ${level || 'automático'}. Se aplica al siguiente ${isAgy ? 'mensaje' : 'turno'}.` }
       : effortChangeAdvice(level, sessionId !== undefined), activeTabId);
     setActiveEffort(level);
   };
@@ -693,7 +696,7 @@ export function PromptBar(): React.JSX.Element {
               Sin verificar
             </span>
           )}
-          {(isClaude || isRuntime || (isCodex && modeSteps.length > 0)) && (
+          {(isClaude || isRuntime || isAgy || (isCodex && modeSteps.length > 0)) && (
             // Modo de permiso (M2.6; P-028 32/33: deslizador de pasos). Los pasos son los que EXPONE el CLI
             // (respuesta 18): en Claude, su `--permission-mode`; en Codex (sin verificar), sus perfiles,
             // que aplican al siguiente turno. Shift+Tab con el input vacio sigue ciclando en Claude. Un modo
@@ -713,7 +716,7 @@ export function PromptBar(): React.JSX.Element {
               leading={isPermissionMode(permissionMode) ? <Icon name={PERMISSION_MODE_ICON[permissionMode]} size={11} /> : undefined}
             />
           )}
-          {(isClaude || isCodex) && (
+          {(isClaude || isCodex || isAgy) && (
             // Esfuerzo (--effort, M2.4 / B4; P-028 33: deslizador de seis pasos con Auto a la izquierda).
             // Flag de ARRANQUE del CLI, no hay cambio en caliente: el aviso y la nota lo aclaran.
             <StepSlider
@@ -725,11 +728,11 @@ export function PromptBar(): React.JSX.Element {
               chipSizers={availableEffortSteps.map((step) => `Esfuerzo ${step.label.toLowerCase()}`)}
               heading={`Esfuerzo ${EFFORT_STEP_LABEL[effort] ?? effort}`}
               endLabels={['Más rápido', 'Más inteligente']}
-              tip={isCodex ? 'Nivel de esfuerzo del modelo. Se aplica al siguiente turno.' : EFFORT_TIP}
-              note={isCodex ? 'Se aplica al siguiente turno.' : 'Se aplica al arrancar o reabrir la conversación.'}
+              tip={isCodex ? 'Nivel de esfuerzo del modelo. Se aplica al siguiente turno.' : isAgy ? 'Nivel de esfuerzo del modelo. Se aplica al siguiente mensaje.' : EFFORT_TIP}
+              note={isCodex ? 'Se aplica al siguiente turno.' : isAgy ? 'Se aplica al siguiente mensaje: Mage relanza agy con la misma conversación.' : 'Se aplica al arrancar o reabrir la conversación.'}
             />
           )}
-          {activeModel.length > 0 && (isClaude || isCodex) && (
+          {activeModel.length > 0 && (isClaude || isCodex || isAgy) && (
             // Dropdown de modelo en caliente (M2.4, solo Claude): set_model aplica al siguiente turno.
             <Dropdown
               value={displayModelId(activeModel, modelOptions)}
@@ -741,7 +744,7 @@ export function PromptBar(): React.JSX.Element {
               ariaLabel="Modelo (aplica al siguiente turno)"
             />
           )}
-          {activeModel.length > 0 && !isClaude && !isCodex && (
+          {activeModel.length > 0 && !isClaude && !isCodex && !isAgy && (
             <span className="shrink-0 self-center rounded-full border border-mg-border-ctrl px-[8px] py-[2px] text-[10.5px] text-mg-sec">{activeModel}</span>
           )}
           {canInterrupt ? (
