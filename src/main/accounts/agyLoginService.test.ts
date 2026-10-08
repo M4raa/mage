@@ -7,7 +7,7 @@ const URL_LINE = 'Authentication required. Please visit the URL to log in:\n  ht
 
 function fakeChild() {
   const child = new EventEmitter() as unknown as ChildProcessWithoutNullStreams & { stdout: EventEmitter; stderr: EventEmitter };
-  Object.assign(child, { stdout: new EventEmitter(), stderr: new EventEmitter(), stdin: { write: vi.fn() } });
+  Object.assign(child, { stdout: new EventEmitter(), stderr: new EventEmitter(), stdin: { write: vi.fn() }, exitCode: null });
   return child;
 }
 
@@ -18,11 +18,13 @@ function setup(over: Partial<AgyLoginDeps> = {}) {
     spawnLogin: () => child,
     openUrl: vi.fn().mockResolvedValue(undefined),
     killTree: vi.fn(),
+    sendCode: vi.fn().mockResolvedValue(undefined),
     tokenExists: () => token,
     urlTimeoutMs: 1000,
     authTimeoutMs: 1000,
     pollMs: 5,
     settleMs: 5,
+    exitWaitMs: 20,
     ...over,
   };
   return { service: new AgyLoginService(deps), child, deps, writeToken: () => { token = true; } };
@@ -37,11 +39,11 @@ describe('AgyLoginService', () => {
 
     await expect(started).resolves.toMatchObject({ status: 'url', url: 'https://accounts.google.com/o/oauth2/auth?client_id=x&state=y', timeoutMs: 1000 });
     expect(deps.openUrl).toHaveBeenCalledWith('https://accounts.google.com/o/oauth2/auth?client_id=x&state=y');
-    service.cancel();
+    await service.cancel();
   });
 
-  it('submitCode_codigoValidoYTokenEscrito_devuelveOkYEscribeElCodigoEnStdin', async () => {
-    const { service, child, writeToken } = setup();
+  it('submitCode_codigoValidoYTokenEscrito_devuelveOkYEntregaElCodigoALaConsola', async () => {
+    const { service, child, writeToken, deps } = setup();
     const started = service.start('C:\perfil');
     child.stdout.emit('data', Buffer.from(URL_LINE));
     await started;
@@ -50,11 +52,11 @@ describe('AgyLoginService', () => {
     writeToken();
 
     await expect(pending).resolves.toEqual({ status: 'ok' });
-    expect(child.stdin.write).toHaveBeenCalledWith('4/0AbCdEfGh-ijkLmn_12345\n');
+    expect(deps.sendCode).toHaveBeenCalledWith(child, '4/0AbCdEfGh-ijkLmn_12345');
   });
 
-  it('submitCode_formatoInvalido_noEscribeNadaEnStdin', async () => {
-    const { service, child } = setup();
+  it('submitCode_formatoInvalido_noEntregaNada', async () => {
+    const { service, child, deps } = setup();
     const started = service.start('C:\perfil');
     child.stdout.emit('data', Buffer.from(URL_LINE));
     await started;
@@ -62,8 +64,8 @@ describe('AgyLoginService', () => {
     await expect(service.submitCode('dos palabras')).resolves.toEqual({ status: 'error', reason: 'invalid_code_format' });
     await expect(service.submitCode('')).resolves.toEqual({ status: 'error', reason: 'invalid_code_format' });
 
-    expect(child.stdin.write).not.toHaveBeenCalled();
-    service.cancel();
+    expect(deps.sendCode).not.toHaveBeenCalled();
+    await service.cancel();
   });
 
   it('submitCode_sinLoginEnCurso_error', async () => {
@@ -100,13 +102,51 @@ describe('AgyLoginService', () => {
     await expect(service.submitCode('4/0AbCdEfGh')).resolves.toEqual({ status: 'error', reason: 'no_login_in_progress' });
   });
 
+  it('submitCode_googleRechazaElCodigo_agyLoDiceAlInstanteYSeDevuelveCodeRejected', async () => {
+    const { service, child } = setup();
+    const started = service.start('C:\perfil');
+    child.stdout.emit('data', Buffer.from(URL_LINE));
+    await started;
+
+    const pending = service.submitCode('4/0AbCdEfGh');
+    child.stderr.emit('data', Buffer.from('Error: authentication failed: token exchange failed: oauth2: "invalid_grant" "Bad Request"'));
+
+    await expect(pending).resolves.toEqual({ status: 'error', reason: 'code_rejected' });
+  });
+
+  it('submitCode_noSePuedeEscribirEnLaConsola_errorConsoleInputFailed', async () => {
+    const { service, child, deps } = setup();
+    vi.mocked(deps.sendCode).mockRejectedValueOnce(new Error('AttachConsole fallo: 5'));
+    const started = service.start('C:\perfil');
+    child.stdout.emit('data', Buffer.from(URL_LINE));
+    await started;
+
+    await expect(service.submitCode('4/0AbCdEfGh')).resolves.toEqual({ status: 'error', reason: 'console_input_failed' });
+  });
+
+  it('cancel_loginEnCurso_esperaALaSalidaDeAgy', async () => {
+    const { service, child } = setup();
+    const started = service.start('C:\perfil');
+    child.stdout.emit('data', Buffer.from(URL_LINE));
+    await started;
+    let resolved = false;
+
+    const cancelling = service.cancel().then(() => { resolved = true; });
+    await Promise.resolve();
+    expect(resolved).toBe(false);
+    child.emit('exit', 1);
+    await cancelling;
+
+    expect(resolved).toBe(true);
+  });
+
   it('cancel_loginEnCurso_matasuArbol', async () => {
     const { service, child, deps } = setup();
     const started = service.start('C:\perfil');
     child.stdout.emit('data', Buffer.from(URL_LINE));
     await started;
 
-    service.cancel();
+    await service.cancel();
 
     expect(deps.killTree).toHaveBeenCalledTimes(1);
   });

@@ -336,6 +336,8 @@ const AGY_LOGIN_REASONS: Readonly<Record<string, string>> = {
   code_timeout: 'Pasaron los 60 s que agy espera por el código. Vuelve a empezar.',
   agy_exit: 'agy terminó sin completar el inicio de sesión (¿código incorrecto?).',
   invalid_code_format: 'Ese no parece un código de Google: pega solo el código, sin espacios.',
+  code_rejected: 'Google rechazó el código (¿caducó o está mal copiado?). Pulsa «Reintentar» para pedir otro.',
+  console_input_failed: 'No se pudo entregar el código a agy. Pulsa «Reintentar».',
   spawn_failed: 'No se pudo lanzar agy.',
   login_cancelled: 'Inicio de sesión cancelado.',
   no_login_in_progress: 'No hay un inicio de sesión en curso: vuelve a empezar.',
@@ -405,19 +407,29 @@ function AgyLoginBody({
     void window.mage
       .submitAgyLoginCode(code)
       .then(async (outcome) => {
-        if (outcome.status !== 'ok') throw new Error(agyLoginMessage(outcome.reason));
+        if (outcome.status !== 'ok') {
+          setUrl(null); // agy ya terminó: hace falta otro enlace
+          throw new Error(agyLoginMessage(outcome.reason));
+        }
         await onRefresh();
         onClose();
       })
       .catch((err: unknown) => setError(describe(err)))
       .finally(() => setBusy(false));
   };
+  // Espera a que agy salga (cancelAgyLogin) ANTES de borrar su perfil, y si no se puede borrar lo dice: antes el
+  // diálogo se cerraba igual y la cuenta se quedaba sin aviso.
   const discard = (): void => {
-    void window.mage.cancelAgyLogin();
-    if (created === null) return onClose();
-    void onDelete(created.configDir)
-      .catch((err: unknown) => setError(describe(err)))
-      .finally(onClose);
+    setBusy(true);
+    setError(null);
+    void window.mage
+      .cancelAgyLogin()
+      .then(() => (created === null ? undefined : onDelete(created.configDir)))
+      .then(onClose)
+      .catch((err: unknown) => {
+        setError(`No se pudo eliminar la cuenta: ${describe(err)}`);
+        setBusy(false);
+      });
   };
 
   return (
@@ -448,6 +460,7 @@ function AgyLoginBody({
         </div>
       )}
       {busy && url === null && created !== null && <div className="text-[11.5px] text-mg-body2">Lanzando agy…</div>}
+      {busy && url !== null && <div data-agy-login-checking="true" className="text-[11.5px] text-mg-body2">Comprobando el código con Google…</div>}
       <ErrorLine error={error} />
       <div className="mt-[2px] flex justify-end gap-[8px]">
         <SecondaryButton onClick={discard}>{created === null ? 'Cancelar' : 'Eliminar cuenta'}</SecondaryButton>

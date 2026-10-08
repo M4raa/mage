@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { execFile, spawn, spawnSync } from 'node:child_process';
+import { execFile, spawn, spawnSync, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import {
   appendFileSync,
   chmodSync,
@@ -167,6 +167,7 @@ import { AgyHistoryService } from './conversations/agyHistory';
 import { createAgySqliteStore, writeAgyConversationDb } from './conversations/agySqliteStore';
 import { AGY_TOKEN_PARTS } from './accounts/providerAccounts';
 import { AgyLoginService } from './accounts/agyLoginService';
+import { sendToConsole } from './accounts/agyConsoleInput';
 import { AGY_FILE_TOKEN_ENV } from './engine/agyProfile';
 import { staticTranscriptBatch } from './transcripts/staticBatch';
 import type { LineAdapter } from './transcripts/transcriptReader';
@@ -754,6 +755,11 @@ const AGY_LOGIN_URL_TIMEOUT_MS = 30_000;
 const AGY_LOGIN_AUTH_TIMEOUT_MS = 60_000;
 const AGY_LOGIN_POLL_MS = 250;
 const AGY_LOGIN_SETTLE_MS = 3_000;
+const AGY_LOGIN_EXIT_WAIT_MS = 3_000;
+// Borrar la carpeta de una cuenta: Windows tarda en soltar los ficheros de un proceso recien cortado.
+const RMRF_RETRIES = 10;
+const RMRF_RETRY_DELAY_MS = 300;
+const AGY_CONSOLE_INPUT_TIMEOUT_MS = 10_000;
 const CODEX_LOGIN_TIMEOUT_MS = 10 * 60_000;
 const CLI_PROBE_MAX_BUFFER = 4 * 1024 * 1024;
 
@@ -895,7 +901,7 @@ function getProviderAccounts(): ProviderAccountService {
       rename: renameSync,
       tempSuffix: () => randomUUID(),
       mkdir: (path) => mkdirSync(path, { recursive: true }),
-      rmrf: (path) => rmSync(path, { recursive: true, force: true }),
+      rmrf: (path) => rmSync(path, { recursive: true, force: true, maxRetries: RMRF_RETRIES, retryDelay: RMRF_RETRY_DELAY_MS }),
       createClaudeDir: (name) => accountService.createAccount(name),
       deleteClaudeDir: (dir) => accountService.deleteAccount(dir),
     });
@@ -1033,7 +1039,7 @@ const accountService = new AccountService({
   // Escritura PLANA a proposito (NO writeFileAtomic): trunca in situ y preserva los hard links del
   // settings.json compartido entre instalaciones. Ver la invariante en AccountService.seedSettings.
   writeFile: (path, content) => writeFileSync(path, content),
-  rmrf: (path) => rmSync(path, { recursive: true, force: true }),
+  rmrf: (path) => rmSync(path, { recursive: true, force: true, maxRetries: RMRF_RETRIES, retryDelay: RMRF_RETRY_DELAY_MS }),
   // Convergencia de credenciales cuenta <-> perfil privado (grupo G). Antes esto era un hard link,
   // sobre la premisa de que el CLI reescribe el fichero in-place sobre el mismo inode: se comprobo en
   // disco que es FALSO (tmp+rename -> inode nuevo -> el enlace muere en silencio y los dos lados
@@ -2767,13 +2773,28 @@ function getAgyLogin(): AgyLoginService {
     }),
     openUrl: (url) => shell.openExternal(url),
     killTree: (child) => killProcessTree(child, defaultKillTreeDeps()),
+    sendCode: (child, code) => sendAgyLoginCode(child, code),
     tokenExists: (profileDir) => existsSync(join(profileDir, ...AGY_TOKEN_PARTS)),
     urlTimeoutMs: AGY_LOGIN_URL_TIMEOUT_MS,
     authTimeoutMs: AGY_LOGIN_AUTH_TIMEOUT_MS,
     pollMs: AGY_LOGIN_POLL_MS,
     settleMs: AGY_LOGIN_SETTLE_MS,
+    exitWaitMs: AGY_LOGIN_EXIT_WAIT_MS,
   });
   return agyLoginService;
+}
+
+// agy lee el codigo de su CONSOLA, no de stdin (ver agyConsoleInput.ts): en Windows se le escribe como pulsaciones.
+function sendAgyLoginCode(child: ChildProcessWithoutNullStreams, code: string): Promise<void> {
+  if (process.platform !== 'win32' || child.pid === undefined) {
+    child.stdin.write(`${code}
+`);
+    return Promise.resolve();
+  }
+  return sendToConsole({
+    timeoutMs: AGY_CONSOLE_INPUT_TIMEOUT_MS,
+    spawnHelper: (script, pid) => spawn('powershell', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', `& { ${script} } -TargetPid ${pid}`], { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true }),
+  }, child.pid, code);
 }
 
 function registerAgyAccountIpc(): void {
@@ -2783,7 +2804,7 @@ function registerAgyAccountIpc(): void {
     return getAgyLogin().start(entry.home);
   });
   ipcMain.handle(IpcChannel.AgyLoginSubmit, (_e, code: unknown) => getAgyLogin().submitCode(typeof code === 'string' ? code : ''));
-  ipcMain.handle(IpcChannel.AgyLoginCancel, (): void => getAgyLogin().cancel());
+  ipcMain.handle(IpcChannel.AgyLoginCancel, (): Promise<void> => getAgyLogin().cancel());
 }
 
 function registerAccountsIpc2(): void {
@@ -2807,10 +2828,12 @@ function registerAccountsIpc2(): void {
   // cuentas que adoptaron el login comparten refresh token y revocarlo cerraria las demas.
   // Las guardas de datos (principal, carpeta compartida real con datos, enlace que no se quita) viven
   // en `AccountService.deleteAccount`, que es la frontera.
-  ipcMain.handle(IpcChannel.AccountsDelete, (_e, configDir: string) => {
+  ipcMain.handle(IpcChannel.AccountsDelete, async (_e, configDir: string) => {
     if (!isLaunchableAccountDir(configDir)) {
       throw new Error(`Cuenta no valida para borrar: ${configDir}`);
     }
+    // Un login de agy a medias tiene el CLI vivo en el perfil que se va a borrar: se espera a que salga.
+    if (getProviderAccounts().find('agy', configDir) !== null) await getAgyLogin().cancel();
     const stopped = sessionManager.stopByConfigDir(configDir);
     if (stopped > 0) mainLog('info', `Paradas ${stopped} sesiones antes de borrar la cuenta "${configDir}"`);
     // Una cuenta del registro (API, Codex) se borra con su clave; una suscripcion de Claude, como siempre.

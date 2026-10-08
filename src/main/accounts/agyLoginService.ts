@@ -4,13 +4,16 @@ import type { AgyLoginStart, CodexLoginOutcome } from '@shared/accounts';
 // Inicio de sesion de una cuenta de agy por suscripcion, por su propio CLI (medido en agy 1.3.1,
 // `spike/agy-login-spike.mjs`): `agy --print /usage` en el perfil de la cuenta, con `SSH_CONNECTION` (agy guarda
 // el token en un fichero del perfil), imprime «Authentication required … <URL>» y «Or, paste the authorization code
-// here and press Enter:». Mage abre la URL en el navegador, el usuario pega aqui el codigo y Mage lo escribe en la
-// entrada estandar del CLI. agy solo espera 60 s por el codigo. El token lo escribe agy en el perfil; Mage no lo lee.
+// here and press Enter:». Mage abre la URL en el navegador, el usuario pega aqui el codigo y Mage se lo entrega a la
+// CONSOLA de agy (lee de `CONIN$`, no de stdin: ver agyConsoleInput.ts). agy solo espera 60 s por el codigo y contesta
+// al instante si Google lo rechaza. El token lo escribe agy en el perfil; Mage no lo lee.
 
 export interface AgyLoginDeps {
   readonly spawnLogin: (profileDir: string) => ChildProcessWithoutNullStreams;
   readonly openUrl: (url: string) => Promise<void>;
   readonly killTree: (child: ChildProcessWithoutNullStreams) => void;
+  // Entrega el codigo a agy (su consola); rechaza si Windows no lo acepta.
+  readonly sendCode: (child: ChildProcessWithoutNullStreams, code: string) => Promise<void>;
   // ¿Existe ya el fichero de token de ese perfil? Es la prueba de que el login terminó bien.
   readonly tokenExists: (profileDir: string) => boolean;
   readonly urlTimeoutMs: number;
@@ -18,11 +21,14 @@ export interface AgyLoginDeps {
   readonly pollMs: number;
   // Cuanto se espera a que agy termine solo tras aparecer el token, antes de cortarlo.
   readonly settleMs: number;
+  // Cuanto se espera a que agy salga tras cortarlo, como maximo.
+  readonly exitWaitMs: number;
 }
 
 export type AgyLoginResult = CodexLoginOutcome;
 
 const URL_PATTERN = /https:\/\/accounts\.google\.com\/\S+/;
+const REJECTED_PATTERN = /token exchange failed|invalid_grant/i;
 // Un codigo de autorizacion de Google: una sola linea, sin espacios, de longitud razonable.
 const CODE_PATTERN = /^[A-Za-z0-9._~\-/+=]{8,2048}$/;
 
@@ -39,8 +45,8 @@ export class AgyLoginService {
   constructor(private readonly deps: AgyLoginDeps) {}
 
   // Paso 1: lanza el CLI y devuelve la URL (que tambien abre en el navegador). Un login a la vez.
-  start(profileDir: string): Promise<AgyLoginStart> {
-    this.cancel();
+  async start(profileDir: string): Promise<AgyLoginStart> {
+    if (this.current !== null) await this.cancel(); // sin login previo se lanza en el acto
     const child = this.deps.spawnLogin(profileDir);
     let resolveUrl: (start: AgyLoginStart) => void = () => undefined;
     const urlPromise = new Promise<AgyLoginStart>((resolve) => { resolveUrl = resolve; });
@@ -60,7 +66,10 @@ export class AgyLoginService {
       const urlTimer = setTimeout(() => finish({ status: 'timeout', reason: 'url_timeout' }), this.deps.urlTimeoutMs);
       let buffer = '';
       const onData = (chunk: Buffer | string): void => {
-        buffer += chunk.toString();
+        const text = chunk.toString();
+        // Tras el codigo, agy dice al instante si Google lo rechazo («token exchange failed … invalid_grant»).
+        if (REJECTED_PATTERN.test(text)) return finish({ status: 'error', reason: 'code_rejected' });
+        buffer += text;
         const url = URL_PATTERN.exec(buffer)?.[0];
         if (url === undefined || done) return;
         buffer = '';
@@ -84,7 +93,12 @@ export class AgyLoginService {
     if (current === null) return { status: 'error', reason: 'no_login_in_progress' };
     const trimmed = code.trim();
     if (!CODE_PATTERN.test(trimmed)) return { status: 'error', reason: 'invalid_code_format' };
-    current.child.stdin.write(`${trimmed}\n`);
+    try {
+      await this.deps.sendCode(current.child, trimmed);
+    } catch {
+      current.finish({ status: 'error', reason: 'console_input_failed' });
+      return { status: 'error', reason: 'console_input_failed' };
+    }
     const appeared = await this.waitForToken(current);
     if (appeared) {
       // agy sigue unos instantes (pide su /usage): se le deja terminar antes de cortarlo, para no truncar el token.
@@ -95,8 +109,17 @@ export class AgyLoginService {
     return current.result;
   }
 
-  cancel(): void {
-    this.current?.finish({ status: 'cancelled', reason: 'login_cancelled' });
+  // Corta el login en curso y ESPERA a que agy haya salido: quien llama suele borrar su perfil a continuacion, y con
+  // agy aun vivo (matar el arbol es asincrono) Windows no deja borrar sus ficheros abiertos.
+  async cancel(): Promise<void> {
+    const current = this.current;
+    if (current === null) return;
+    current.finish({ status: 'cancelled', reason: 'login_cancelled' });
+    await new Promise<void>((resolve) => {
+      if (current.child.exitCode !== null) return resolve();
+      const timer = setTimeout(resolve, this.deps.exitWaitMs);
+      current.child.once('exit', () => { clearTimeout(timer); resolve(); });
+    });
   }
 
   // Sondea el fichero de token hasta que aparece o el login termina por su cuenta.
