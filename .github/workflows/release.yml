@@ -40,7 +40,7 @@ jobs:
       # `--publish never` a proposito: con un tag en CI, electron-builder publica SOLO ("Implicit
       # publishing triggered by git tag") y, sin GH_TOKEN en el entorno, revienta con "GitHub Personal
       # Access Token is not set". La subida la hace el paso de release de abajo.
-      - run: pnpm dist:win --publish never -c.releaseInfo.releaseNotesFile=release/NOTES.md
+      - run: pnpm dist:win --publish never --config.releaseInfo.releaseNotesFile=release/NOTES.md
       # El humo del EMPAQUETADO, que es lo unico que prueba que el .exe arranca de verdad. Necesita
       # una sesion con escritorio: `windows-latest` la tiene, a diferencia de los runners de Linux.
       - run: pnpm smoke:packaged
