@@ -1657,7 +1657,8 @@ const CHECKS = [
         medido.claudeApiAviso &&
         medido.openaiSinVerificar === false &&
         medido.openaiFormas === 2 &&
-        medido.agySuscripcion.length === 0 &&
+        medido.agySuscripcion.length === 1 && // nombre de la cuenta: agy por suscripción ya se crea con perfil propio
+        
         medido.localUrl === OLLAMA_TEMPLATE.baseUrl &&
         closed === 0;
       return { ok, detail: JSON.stringify({ ...medido, cerrado: closed === 0 }) };
@@ -3519,7 +3520,8 @@ const CHECKS = [
         const tabId = dev.store.getState().activeTabId;
         dev.store.setState((state) => dev.reduceEvent(state, tabId, { kind: 'elicitation_resolved', requestId: 'vg-elic-1', action: 'cancel' }));
       });
-      await page.waitForTimeout(CONFIG.settleMs * 2);
+      // Espera al DESMONTAJE (su animacion de salida), no a un tiempo fijo: con la maquina cargada tardaba mas.
+      await page.locator('[data-elicitation-dock="true"]').waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
       const cerrado = await page.locator('[data-elicitation-dock="true"]').count();
       await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
       await page.waitForTimeout(CONFIG.settleMs);
