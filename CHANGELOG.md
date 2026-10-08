@@ -4,7 +4,7 @@ Lo que cambia de una versión a otra, contado para quien usa la app. La más rec
 enseña estas mismas notas en su pestaña de novedades al actualizarse, y en Configuración › Notas de
 versión.
 
-## 0.1.2 — en desarrollo
+## 0.1.2 — 2026-10-08
 
 ### Añadido
 - Pestaña de **novedades**: al actualizar Mage se abre sola con las notas de la versión instalada, y
