@@ -370,7 +370,7 @@ describe('ensureSession', () => {
 
   it('ensureSession_carpetaAutorizadaEnElDialogo_laGuardaYArranca', async () => {
     const createSession = vi.fn().mockResolvedValue(sesionCreada);
-    const saveSettings = vi.fn().mockResolvedValue(undefined);
+    const saveSettings = vi.fn(() => Promise.resolve());
     const store = createWorkbenchStore(
       fakeMage({
         createSession,
@@ -1897,7 +1897,7 @@ function keptWorktreeToasts(): ReturnType<typeof useNotificationStore.getState>[
 }
 
 describe('setImportedContextMaxChars', () => {
-  const make = (): ReturnType<typeof createWorkbenchStore> => createWorkbenchStore(fakeMage({ saveSettings: vi.fn().mockResolvedValue(undefined) }));
+  const make = (): ReturnType<typeof createWorkbenchStore> => createWorkbenchStore(fakeMage({ saveSettings: () => Promise.resolve() }));
 
   it.each([
     [50_000, 50_000],
