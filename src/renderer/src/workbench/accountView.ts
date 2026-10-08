@@ -47,13 +47,14 @@ export function applyAccentOverrides(accounts: readonly Account[], overrides: Re
   return accounts.map((account, index) => ({ ...account, accent: accentForIndex(overrides[account.id] ?? index) }));
 }
 
-// Marca corta del proveedor de una PESTAÑA (P-028, punto 2): null para Claude (lo normal, no se marca);
-// si no, el id sin el prefijo de los proveedores del usuario («agy», «openai», «ollama»...), recortado
-// para que quepa en la pestaña.
+// Marca corta del proveedor de una PESTAÑA: el id sin el prefijo de los proveedores del usuario («claude»,
+// «agy», «openai», «ollama»...), recortado para que quepa en la pestaña. Claude TAMBIÉN se marca (decisión del
+// usuario, 2026-10-08): con tres proveedores de primera clase, marcar solo a los demás era una asimetría. Antes
+// (P-028, punto 2) era null para Claude por ser «lo normal».
 const PROVIDER_BADGE_MAX = 8;
 
 export function providerBadge(providerId: string): string | null {
-  if (providerId === 'claude' || providerId.length === 0) return null;
+  if (providerId.length === 0) return null;
   const bare = providerId.startsWith(CUSTOM_PROVIDER_ID_PREFIX) ? providerId.slice(CUSTOM_PROVIDER_ID_PREFIX.length) : providerId;
   return bare.slice(0, PROVIDER_BADGE_MAX);
 }
@@ -61,7 +62,7 @@ export function providerBadge(providerId: string): string | null {
 // Nombre del proveedor en la barra de estado: el de la pestaña enfocada, no el de la cuenta (una
 // pestaña de agy o del gateway corre bajo una cuenta de Claude y decia «Claude»).
 export function providerLabel(providerId: string): string {
-  return providerBadge(providerId) ?? 'Claude';
+  return providerId === 'claude' || providerId.length === 0 ? 'Claude' : (providerBadge(providerId) ?? 'Claude');
 }
 
 // Devuelve el acento del indice como referencias a variables CSS (var(--mg-accent-<i>-*)); el tema

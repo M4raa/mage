@@ -116,6 +116,11 @@ versión.
   lanzarlo para no usar la cuenta global sin avisar.
 
 ### Cambiado
+- **Tokens y contexto iguales en los tres proveedores**: la línea «Tokens del turno» cuenta la **entrada** igual en
+  Claude, Codex y agy (todo lo enviado al modelo, con su caché dentro y desglosada entre paréntesis; antes Claude no
+  enseñaba lo escrito en caché y el total no cuadraba). El panel de **Contexto** de Codex y agy ya no se queda en
+  «Cargando transcripción…»: Codex enseña la ocupación de su ventana y agy su último prompt, y los dos los tokens
+  acumulados desde que Mage abrió la conversación. Las pestañas de **Claude** también llevan su marca de proveedor.
 - El aviso al activar **Omitir permisos** dice claramente lo que implica: el modelo podrá ejecutar
   cualquier comando y modificar cualquier fichero sin preguntar, así que úsalo solo con proyectos y
   contenido de confianza.

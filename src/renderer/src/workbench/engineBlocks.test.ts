@@ -439,13 +439,25 @@ describe('turnUsageText', () => {
     expect(turnUsageText({ ...full, estimated: true })).toMatch(/^◷ Tokens del turno \(estimados\): /);
   });
 
-  it('turnUsageText_todosLosContadores_losListaEnOrden', () => {
-    const text = turnUsageText(full);
+  it('turnUsageText_codexOAgy_laCacheEsUnSubconjuntoDeLaEntrada', () => {
+    const text = turnUsageText({ inputTokens: 18778, outputTokens: 13, totalTokens: 18791, thinkingTokens: 0, cacheReadTokens: 11008 });
 
     expect(text).toBe(
-      `◷ Tokens del turno: ${(17533).toLocaleString('es-ES')} entrada · 7 salida · 112 pensamiento · ` +
-        `${(24410).toLocaleString('es-ES')} caché · ${(17540).toLocaleString('es-ES')} total`,
+      `◷ Tokens del turno: ${(18778).toLocaleString('es-ES')} entrada (${(11008).toLocaleString('es-ES')} en caché) · 13 salida · 0 pensamiento · ${(18791).toLocaleString('es-ES')} total`,
     );
+  });
+
+  it('turnUsageText_claude_sumaLaCacheAEntradaYLaDesglosa', () => {
+    const text = turnUsageText({ inputTokens: 2, outputTokens: 151, totalTokens: 42733, thinkingTokens: 66, cacheReadTokens: 0, cacheCreationTokens: 42580 });
+
+    expect(text).toContain(`${(42582).toLocaleString('es-ES')} entrada (0 en caché · ${(42580).toLocaleString('es-ES')} escritos en caché)`);
+  });
+
+  it('turnUsageText_claudeSinCacheEscrita_noPintaElDetalleDeEscritura', () => {
+    const text = turnUsageText({ inputTokens: 10, outputTokens: 5, totalTokens: 100, thinkingTokens: null, cacheReadTokens: 85, cacheCreationTokens: 0 });
+
+    expect(text).toContain('95 entrada (85 en caché)');
+    expect(text).not.toContain('escritos');
   });
 
   // "No lo reporta" y "gasto cero" no son lo mismo: lo ausente se omite, no se pinta como 0.
@@ -453,7 +465,7 @@ describe('turnUsageText', () => {
     const text = turnUsageText({ ...full, thinkingTokens: null, cacheReadTokens: null });
 
     expect(text).not.toContain('pensamiento');
-    expect(text).not.toContain('caché');
+    expect(text).not.toContain('en caché');
     expect(text).toContain('entrada');
   });
 

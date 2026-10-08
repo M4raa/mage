@@ -16,6 +16,8 @@ import {
 import { ContextEvolutionChart } from './ContextEvolutionChart';
 import { ContextBreakdown } from './ContextBreakdown';
 import { Hint } from './TranscriptHint';
+import { AGY_PROVIDER_ID, CODEX_PROVIDER_ID } from '@shared/providers';
+import { providerUsageCategoryTotals } from '../providerUsage';
 
 // Color fijo por categoria (orden fijo, nunca por rango). Tokens `dataviz` slots 1-4 como variables
 // CSS del tema (M3, conmutan claro/oscuro): cada barra ademas lleva su etiqueta -> identidad nunca solo por color.
@@ -61,6 +63,10 @@ export function TranscriptContextPanel(): React.JSX.Element {
     [usage, series, totals.outputTokens, model],
   );
 
+  const provider = useWorkbenchStore((s) => s.tabs.find((t) => t.id === s.activeTabId)?.provider);
+  // Codex y agy no dejan una transcripción de Claude ni dan el desglose de su contexto: el panel se alimenta del uso
+  // que informa cada turno (y, en Codex, del tamaño de su ventana), con o sin sesión abierta.
+  if (provider === CODEX_PROVIDER_ID || provider === AGY_PROVIDER_ID) return <ProviderContextPanel provider={provider} />;
   if (!hasSession) return <Hint text="Abre una conversación para ver su contexto." />;
 
   return (
@@ -92,6 +98,48 @@ export function TranscriptContextPanel(): React.JSX.Element {
           <CompactionNote count={series.filter((p) => p.isCompaction).length} />
         </section>
       )}
+    </div>
+  );
+}
+
+// Panel de Contexto de una pestaña de Codex o agy: ocupación de la ventana (solo Codex la informa) y tokens acumulados
+// desde que Mage abrió la conversación.
+function ProviderContextPanel({ provider }: { readonly provider: string }): React.JSX.Element {
+  const tabId = useWorkbenchStore((s) => s.activeTabId);
+  const usage = useWorkbenchStore((s) => s.contextUsageByChat[tabId]);
+  const totals = useWorkbenchStore((s) => s.providerUsageByChat[tabId]);
+  const model = useWorkbenchStore((s) => s.tabs.find((t) => t.id === tabId)?.model ?? '');
+  const context = usage !== undefined && usage.maxTokens > 0 ? resolveContext(usage, { contextTokens: 0, tokensOut: totals?.outputTokens ?? 0, model }) : null;
+  const shares = totals === undefined ? [] : toTokenCategoryShares(providerUsageCategoryTotals(totals));
+  const totalTokens = totals === undefined ? 0 : providerUsageCategoryTotals(totals).totalTokens;
+  const name = provider === AGY_PROVIDER_ID ? 'agy' : 'Codex';
+  return (
+    <div data-provider-context-panel={provider} className="flex flex-col gap-[16px] p-[14px] text-[11px]">
+      {context !== null && context.advice.level !== 'ok' && (
+        <ContextAdvisor advice={context.advice} canHandoff={false} onHandoff={() => undefined} onCompact={() => undefined} />
+      )}
+      <section data-context-window="true" className="flex flex-col gap-[8px]">
+        <div className="text-[9.5px] font-bold tracking-[.08em] text-mg-ter">VENTANA DE CONTEXTO</div>
+        {context !== null && <ContextBreakdown usage={usage} context={context.info} noBreakdownNote={`${name} no da el desglose por categorías.`} />}
+        {context === null && totals !== undefined && (
+          <div className="text-mg-body2">
+            Último prompt: <span style={{ fontVariantNumeric: 'tabular-nums' }}>{totals.lastInputTokens.toLocaleString('es')}</span> tokens. {name} no informa el tamaño de su ventana.
+          </div>
+        )}
+        {context === null && totals === undefined && <div className="text-mg-ter">Aún sin turnos: {name} informa el uso al terminar el primero.</div>}
+      </section>
+      <section className="flex flex-col gap-[10px] border-t border-mg-border-subtle pt-[12px]">
+        <div className="flex items-center justify-between">
+          <span className="text-[9.5px] font-bold tracking-[.08em] text-mg-ter">TOKENS CONSUMIDOS (acumulado)</span>
+          {totals !== undefined && (
+            <span className="text-[10px] text-mg-body" style={{ fontVariantNumeric: 'tabular-nums' }}>
+              {totalTokens.toLocaleString('es')} tok
+            </span>
+          )}
+        </div>
+        {totals === undefined ? <div className="text-[10.5px] text-mg-ter">Sin turnos todavía en esta conversación.</div> : shares.map((share) => <CategoryBar key={share.key} share={share} />)}
+        <div className="text-[10px] text-mg-muted">Desde que Mage abrió esta conversación: no se reconstruye del historial del CLI.</div>
+      </section>
     </div>
   );
 }

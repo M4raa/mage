@@ -3,7 +3,7 @@ import { applyCodexConfirmation, confirmCodexAccounts } from './codexAccountConf
 import { defaultEffortForProvider, defaultModelForProvider, effortSettingKey, providerFallbackModel, providerModels, type ApiKeyUpdate } from './models';
 import type { PersistedTab } from '@shared/state';
 import { disposeTranscriptStore, transcriptStoreForTab } from './transcriptStore';
-import type { ContextUsage, MageEvent, McpServerStatus, PermissionDecision, PermissionRequest, SlashCommandInfo, SubagentInfo } from '@shared/events';
+import type { ContextUsage, MageEvent, McpServerStatus, PermissionDecision, PermissionRequest, SlashCommandInfo, SubagentInfo, TurnUsage } from '@shared/events';
 import { buildUpdatedInput, parseAskUserQuestion } from '@shared/askUserQuestion';
 import type { CloseAnswer, NotificationTarget, PermissionMode, PermissionModesByProviderView, SessionEventPayload } from '@shared/ipc';
 import { hasPermissionModes, permissionCycleForProvider } from './stepSliderModel';
@@ -53,6 +53,7 @@ import type { ConversationSummary } from '@shared/conversations';
 import { planOpenConversation, tabFromConversation } from './conversationList';
 import { modelForReassignedTab, planAccountSwitch } from './accountSwitch';
 import { importedConversationContext } from './conversationContext';
+import { accumulateProviderUsage, type ProviderUsageTotals } from './providerUsage';
 import {
   AUTO_CONTINUE_POLL_MS,
   AUTO_CONTINUE_TEXT,
@@ -166,6 +167,8 @@ export interface WorkbenchState extends PrState, PrActions {
   readonly usageErrorByAccount: Readonly<Record<string, string | null>>;
   // `/usage` de cada cuenta de agy por suscripción (su CLI da cuotas por grupo de modelos, no ventanas de Mage), por id de cuenta.
   readonly agyUsageByAccount: Readonly<Record<string, AgyUsageSnapshot>>;
+  // Uso acumulado de las conversaciones de Codex y agy desde que Mage las abrió (sus CLI no dejan transcripción de Claude).
+  readonly providerUsageByChat: Readonly<Record<string, ProviderUsageTotals>>;
   // Estado del servicio de Claude (global). null mientras no se ha cargado.
   readonly status: StatusInfo | null;
 
@@ -1177,6 +1180,7 @@ export function createWorkbenchStore(mage: MageClient) {
     usageByAccount: {},
     usageErrorByAccount: {},
     agyUsageByAccount: {},
+    providerUsageByChat: {},
     permissionModes: null,
     status: null,
 
@@ -1399,6 +1403,7 @@ export function createWorkbenchStore(mage: MageClient) {
           slashCommandsByChat: without(s.slashCommandsByChat, tabId),
           subagentsByChat: without(s.subagentsByChat, tabId),
           contextUsageByChat: without(s.contextUsageByChat, tabId),
+          providerUsageByChat: without(s.providerUsageByChat, tabId),
           rateLimitByChat: without(s.rateLimitByChat, tabId),
           mcpServersByChat: without(s.mcpServersByChat, tabId),
           toolsByChat: without(s.toolsByChat, tabId),
@@ -2998,6 +3003,15 @@ const HISTORY_PROVIDERS: readonly string[] = ['claude', CODEX_PROVIDER_ID, AGY_P
 // Los que llevan su propia conversación (su id viene del CLI en el `session_init`).
 const OWN_CONVERSATION_PROVIDERS: readonly string[] = [CODEX_PROVIDER_ID, AGY_PROVIDER_ID];
 
+// Acumula el uso del turno de una pestaña de Codex o agy (las de Claude lo leen de su transcripción).
+function providerUsagePatch(state: WorkbenchState, tabId: string, usage: TurnUsage | undefined): Partial<WorkbenchState> {
+  if (usage === undefined) return {};
+  const tab = state.tabs.find((t) => t.id === tabId);
+  if (tab === undefined || !OWN_CONVERSATION_PROVIDERS.includes(tab.provider)) return {};
+  const next = accumulateProviderUsage(state.providerUsageByChat[tabId], usage);
+  return next === null ? {} : { providerUsageByChat: { ...state.providerUsageByChat, [tabId]: next } };
+}
+
 // El id de conversación de una pestaña de Codex o agy, la primera vez que se conoce. Es lo que permite
 // reabrirla (`thread/resume`, `--conversation`) y leer su historial; Claude y el runtime propio usan el de Mage.
 function codexThreadBinding(state: WorkbenchState, tabId: string, threadId: string): Partial<WorkbenchState> {
@@ -3169,6 +3183,7 @@ export function reduceEvent(state: WorkbenchState, tabId: string, event: MageEve
       const closed = closeStreaming(blocks, streamingId);
       const usageText = event.result.usage === undefined ? null : turnUsageText(event.result.usage);
       return {
+        ...providerUsagePatch(state, tabId, event.result.usage),
         ...withBlocks(state, tabId, usageText === null ? closed : appendSystemBlock(closed, usageText, nextBlockId())),
         streamingIdByChat: { ...state.streamingIdByChat, [tabId]: null },
         statusByChat: { ...state.statusByChat, [tabId]: 'idle' },

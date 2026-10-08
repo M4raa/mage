@@ -13,6 +13,7 @@ function state(overrides: Partial<WorkbenchState> = {}): WorkbenchState {
     streamingIdByChat: {},
     statusByChat: {},
     pendingByChat: {},
+    providerUsageByChat: {},
     prGuardByChat: {},
     slashCommandsByChat: {},
     contextUsageByChat: {},
@@ -607,5 +608,23 @@ describe('reduceEvent — hilo de Codex', () => {
   it('reduceEvent_sessionInitDeClaudeOHiloYaConocido_noTocaLaPestana', () => {
     expect(reduceEvent(state({ tabs: [tab({ provider: 'claude' })] }), TAB, init).tabs).toBeUndefined();
     expect(reduceEvent(state({ tabs: [tab({ provider: 'codex', resumeSessionId: 'otro' })] }), TAB, init).tabs).toBeUndefined();
+  });
+});
+
+describe('reduceEvent — uso acumulado de Codex y agy', () => {
+  const result = (usage: Record<string, number | null>): MageEvent => ({ kind: 'result', result: { isError: false, subtype: 'success', numTurns: 1, usage: { thinkingTokens: 0, ...usage } } }) as unknown as MageEvent;
+
+  it('reduceEvent_resultConUsoEnPestanaDeCodex_acumulaElUso', () => {
+    const base = state({ tabs: [tab({ provider: 'codex' })] });
+    const first = { ...base, ...reduceEvent(base, TAB, result({ inputTokens: 100, outputTokens: 10, totalTokens: 110, cacheReadTokens: 40 })) } as WorkbenchState;
+    const second = reduceEvent(first, TAB, result({ inputTokens: 200, outputTokens: 20, totalTokens: 220, cacheReadTokens: 150 }));
+
+    expect(second.providerUsageByChat?.[TAB]).toMatchObject({ turns: 2, inputTokens: 300, cachedTokens: 190, outputTokens: 30, lastInputTokens: 200 });
+  });
+
+  it('reduceEvent_resultEnPestanaDeClaude_noAcumulaPorqueLeeSuTranscripcion', () => {
+    const patch = reduceEvent(state({ tabs: [tab({ provider: 'claude' })] }), TAB, result({ inputTokens: 100, outputTokens: 10, totalTokens: 110, cacheReadTokens: 0 }));
+
+    expect(patch.providerUsageByChat).toBeUndefined();
   });
 });

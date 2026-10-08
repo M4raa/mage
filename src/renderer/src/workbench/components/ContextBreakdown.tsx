@@ -8,10 +8,13 @@ export function ContextBreakdown({
   usage,
   context,
   estimated = false,
+  noBreakdownNote,
 }: {
   readonly usage: ContextUsage | undefined;
   readonly context: ContextInfo;
   readonly estimated?: boolean;
+  // Texto cuando el CLI no da desglose por categorías (Codex): sustituye al genérico.
+  readonly noBreakdownNote?: string;
 }): React.JSX.Element {
   const categories = usage === undefined ? [] : occupiedCategories(usage);
   return (
@@ -26,7 +29,7 @@ export function ContextBreakdown({
         <div className="h-full rounded-[2px] bg-mg-fill" style={{ width: `${context.usedPct}%` }} />
       </div>
       {categories.length === 0 ? (
-        <div className="text-mg-ter">{estimated ? 'Sin desglose: la conversación no tiene sesión abierta.' : 'Sin desglose todavía.'}</div>
+        <div className="text-mg-ter">{noBreakdownNote ?? (estimated ? 'Sin desglose: la conversación no tiene sesión abierta.' : 'Sin desglose todavía.')}</div>
       ) : (
         <div className="flex flex-col gap-[4px] border-t border-mg-border-subtle pt-[7px]">
           {categories.map((category) => (

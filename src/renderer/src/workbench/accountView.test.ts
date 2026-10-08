@@ -97,8 +97,8 @@ describe('accentos elegidos por el usuario (PERS-3) y marca de proveedor (P-028,
     expect(applyAccentOverrides(accounts, {})[0]?.accent.base).toBe('var(--mg-accent-0-base)');
   });
 
-  it('providerBadge_claude_null', () => {
-    expect(providerBadge('claude')).toBeNull();
+  it('providerBadge_claudeTambienSeMarca_vacioNo', () => {
+    expect(providerBadge('claude')).toBe('claude');
     expect(providerBadge('')).toBeNull();
   });
 

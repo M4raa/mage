@@ -3632,7 +3632,7 @@ const CHECKS = [
     // P-028, punto 2: cada pestaña lleva el MONOGRAMA de su cuenta y, si no es de Claude, una marca
     // corta del proveedor; la barra de estado dice el proveedor de la pestaña ENFOCADA. Se simula una
     // pestaña de agy cambiando solo su `provider` en el store (no se lanza nada) y se restaura.
-    name: '2: monograma de la cuenta en la pestaña y marca «agy» también en la barra de estado',
+    name: '2: monograma de la cuenta en la pestaña y marca del proveedor (también Claude) en la pestaña y la barra de estado',
     async run(page) {
       const previo = await page.evaluate(() => {
         const s = window.__mageDev.store.getState();
@@ -3646,12 +3646,14 @@ const CHECKS = [
         const pestana = () => document.querySelector(`[data-tab-id="${activeTabId}"]`);
         const monograma = pestana()?.querySelector('[data-tab-monogram]')?.textContent ?? null;
         const proveedorAntes = document.querySelector('[data-status-provider]')?.textContent ?? null;
+        const marcaTabClaude = pestana()?.querySelector('[data-tab-provider]')?.textContent ?? null;
         store.setState({ tabs: tabs.map((t) => (t.id === activeTabId ? { ...t, provider: 'agy' } : t)) });
         await new Promise((resolve) => requestAnimationFrame(resolve));
         return {
           monograma,
           esperado: cuenta?.monogram ?? null,
           marcaClaude: proveedorAntes,
+          marcaTabClaude,
           marcaAgy: pestana()?.querySelector('[data-tab-provider]')?.textContent ?? null,
           barraAgy: document.querySelector('[data-status-provider]')?.textContent ?? null,
         };
@@ -3662,8 +3664,42 @@ const CHECKS = [
         medido.monograma !== null &&
         medido.monograma === medido.esperado &&
         medido.marcaClaude === 'Claude' &&
+        medido.marcaTabClaude === 'claude' && // Claude también se marca (decisión del usuario, 2026-10-08)
         medido.marcaAgy === 'agy' &&
         medido.barraAgy === 'agy';
+      return { ok, detail: JSON.stringify(medido) };
+    },
+  },
+  {
+    // Panel de Contexto en una pestaña de Codex: la ocupación de la ventana (su `modelContextWindow`) y los tokens
+    // acumulados salen del uso que informa cada turno, no de una transcripción de Claude. Se simulan los eventos por el
+    // reducer real (no se lanza ningún CLI) y se restaura.
+    name: 'Contexto: una pestaña de Codex enseña su ventana y sus tokens acumulados, sin «Cargando transcripción»',
+    async run(page) {
+      const previo = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return { tabs: s.tabs, activeTabId: s.activeTabId, splitLayout: s.splitLayout, contextUsageByChat: s.contextUsageByChat, providerUsageByChat: s.providerUsageByChat };
+      });
+      await openTemporaryConversation(page);
+      await page.evaluate(() => {
+        const dev = window.__mageDev;
+        const id = dev.store.getState().activeTabId;
+        dev.store.setState((s) => ({ tabs: s.tabs.map((t) => (t.id === id ? { ...t, provider: 'codex' } : t)) }));
+        const apply = (event) => dev.store.setState((s) => dev.reduceEvent(s, id, event));
+        apply({ kind: 'context_usage', usage: { totalTokens: 18791, maxTokens: 258400, percentage: 7.3, categories: [] } });
+        apply({ kind: 'result', result: { isError: false, subtype: 'success', numTurns: 1,
+          usage: { inputTokens: 18778, outputTokens: 13, totalTokens: 18791, thinkingTokens: 0, cacheReadTokens: 11008 } } });
+        dev.panelStore.getState().revealPanelById('context');
+      });
+      await waitForPanelContent(page, 'context');
+      const medido = await page.locator('[data-provider-context-panel="codex"]').evaluate((panel) => {
+        const text = (panel.textContent ?? '').replace(/\s+/g, ' ');
+        return { texto: text.slice(0, 400), ventana: /258/.test(text) && /7\s?%/.test(text), cargando: /Cargando transcripción/.test(text),
+          total: /18\.791 tok/.test(text), cache: /Lectura de caché/.test(text), entrada: /Entrada/.test(text) };
+      });
+      await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
+      await page.waitForTimeout(CONFIG.settleMs);
+      const ok = medido.ventana && !medido.cargando && medido.total && medido.cache && medido.entrada;
       return { ok, detail: JSON.stringify(medido) };
     },
   },

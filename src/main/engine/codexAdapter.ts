@@ -14,6 +14,7 @@ import {
   modelsEvent,
   normalizeNotification,
   rateLimitEvents,
+  contextUsageOf,
   turnUsageOf,
 } from './codexProtocol';
 
@@ -221,7 +222,8 @@ export class CodexAdapter implements ProviderAdapter {
     if (raw.method === 'serverRequest/resolved') return this.onResolved(raw.params);
     const events = normalizeNotification(raw.method, raw.params, this.turnUsage);
     if (raw.method === 'turn/completed') this.closeTurn();
-    return events;
+    const context = raw.method === 'thread/tokenUsage/updated' ? contextUsageOf(raw.params) : null;
+    return context === null ? events : [...events, { kind: 'context_usage', usage: context }];
   }
 
   private closeTurn(): void {

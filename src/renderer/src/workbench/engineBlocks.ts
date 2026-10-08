@@ -421,13 +421,30 @@ export function pendingToolName(blocks: readonly Block[]): string | null {
 // reporta se OMITEN (nunca se pintan como 0: no es lo mismo). Devuelve null si no hay ninguno.
 export function turnUsageText(usage: TurnUsage): string | null {
   const parts: string[] = [];
-  pushCounter(parts, usage.inputTokens, 'entrada');
+  pushInput(parts, usage);
   pushCounter(parts, usage.outputTokens, 'salida');
   pushCounter(parts, usage.thinkingTokens, 'pensamiento');
-  pushCounter(parts, usage.cacheReadTokens, 'caché');
   pushCounter(parts, usage.totalTokens, 'total');
   if (parts.length === 0) return null;
   return `◷ Tokens del turno${usage.estimated === true ? ' (estimados)' : ''}: ${parts.join(' · ')}`;
+}
+
+// «Entrada» significa lo mismo en los tres proveedores: TODO lo que se mando al modelo, con su caché dentro. Codex y
+// agy ya la cuentan asi (`total` = entrada + salida; la caché es un subconjunto de la entrada). Claude da la entrada
+// SIN caché y aparte lo leído y lo escrito en caché (su `cacheCreationTokens` solo existe en Claude): se suman. El
+// detalle va entre paréntesis para que la entrada cuadre con el total.
+function pushInput(parts: string[], usage: TurnUsage): void {
+  if (usage.inputTokens === null) return;
+  const separate = usage.cacheCreationTokens !== undefined;
+  const read = usage.cacheReadTokens;
+  const written = usage.cacheCreationTokens ?? null;
+  const input = separate ? usage.inputTokens + (read ?? 0) + (written ?? 0) : usage.inputTokens;
+  const detail: string[] = [];
+  pushCounter(detail, read, 'en caché');
+  if (written !== null && written > 0) pushCounter(detail, written, 'escritos en caché');
+  const text: string[] = [];
+  pushCounter(text, input, 'entrada');
+  parts.push(detail.length === 0 ? (text[0] ?? '') : `${text[0] ?? ''} (${detail.join(' · ')})`);
 }
 
 // Anade "<n> <etiqueta>" si el contador viene. Un contador negativo o no entero es dato corrupto de la

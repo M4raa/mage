@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { MageEvent, PermissionRequest, TurnUsage } from '@shared/events';
+import type { ContextUsage, MageEvent, PermissionRequest, TurnUsage } from '@shared/events';
 import type { ProviderModel } from '@shared/providers';
 import type { UsageWindowInfo } from '@shared/usage';
 
@@ -163,6 +163,18 @@ export function turnUsageOf(params: unknown): TurnUsage | null {
     thinkingTokens: last.reasoningOutputTokens,
     cacheReadTokens: last.cachedInputTokens,
   };
+}
+
+// Ocupacion de la ventana desde el mismo `thread/tokenUsage/updated`: `last` es la ultima llamada al modelo (su
+// entrada + salida es lo que ocupa ahora el contexto) y `modelContextWindow` el tamaño de la ventana, que Codex
+// da con la cuenta y el modelo. Sin desglose por categorias (Codex no lo ofrece). null si falta alguno de los dos.
+export function contextUsageOf(params: unknown): ContextUsage | null {
+  if (!isRecord(params) || !isRecord(params.tokenUsage)) return null;
+  const window = params.tokenUsage.modelContextWindow;
+  const last = TokenBreakdownSchema.safeParse(params.tokenUsage.last);
+  if (!last.success || typeof window !== 'number' || !Number.isInteger(window) || window <= 0) return null;
+  const used = last.data.totalTokens;
+  return { totalTokens: used, maxTokens: window, percentage: Math.min(100, (used / window) * 100), categories: [] };
 }
 
 // --- Respuestas a peticiones de Mage -----------------------------------------------------------------
