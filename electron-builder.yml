@@ -75,7 +75,7 @@ msi:
   createDesktopShortcut: true
   createStartMenuShortcut: true
   shortcutName: Mage
-  artifactName: mage-setup-alpha-${version}.${ext}
+  artifactName: mage-setup-beta-${version}.${ext}
 
 nsis:
   # Instalador con asistente (no one-click) para poder elegir carpeta, y POR USUARIO: asi no pide
@@ -86,7 +86,7 @@ nsis:
   createDesktopShortcut: true
   createStartMenuShortcut: true
   shortcutName: Mage
-  artifactName: mage-setup-alpha-${version}.${ext}
+  artifactName: mage-setup-beta-${version}.${ext}
   # Aspecto de Mage (grupo B de la 0.1.2): `installerSidebar.bmp`, `installerHeader.bmp` (los genera
   # `pnpm icons`) e `installer.nsh` (colores y textos propios) se recogen solos de resources/brand por su
   # nombre. Solo en castellano, como la app: sin esto el asistente sigue al idioma de Windows. Ojo, NO
@@ -100,7 +100,7 @@ mac:
   category: public.app-category.developer-tools
   # Sin .icns en el repo: electron-builder lo deriva del PNG de 1024 al construir en macOS.
   icon: resources/brand/icon-1024.png
-  artifactName: mage-setup-alpha-${version}-${arch}.${ext}
+  artifactName: mage-setup-beta-${version}-${arch}.${ext}
 
 linux:
   target:
@@ -113,4 +113,4 @@ linux:
   category: Development
   icon: resources/brand/icon-1024.png
   synopsis: Wrapper multiagentico y multi-proveedor sobre agentes de codigo
-  artifactName: mage-setup-alpha-${version}-${arch}.${ext}
+  artifactName: mage-setup-beta-${version}-${arch}.${ext}

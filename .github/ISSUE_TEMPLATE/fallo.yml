@@ -32,7 +32,7 @@ body:
     attributes:
       label: Versión de Mage
       description: Está en Configuración → Acerca de Mage.
-      placeholder: "0.1.1"
+      placeholder: "0.1.2"
     validations:
       required: true
 

@@ -8,7 +8,7 @@
 y el control de lo que cada uno toca antes de que lo toque.
 
 [![check](https://github.com/M4raa/mage/actions/workflows/check.yml/badge.svg)](https://github.com/M4raa/mage/actions/workflows/check.yml)
-[![versión](https://img.shields.io/badge/versión-0.1.0--alpha-blue)](https://github.com/M4raa/mage/releases)
+[![versión](https://img.shields.io/badge/versión-0.1.2--beta-blue)](https://github.com/M4raa/mage/releases)
 [![licencia](https://img.shields.io/badge/licencia-MIT-green)](LICENSE)
 [![plataforma](https://img.shields.io/badge/instalador-Windows%20x64-0078D4)](https://github.com/M4raa/mage/releases)
 [![linux y macos](https://img.shields.io/badge/Linux%20y%20macOS-pr%C3%B3ximamente-lightgrey)](#macos-y-linux--pr%C3%B3ximamente)
@@ -65,7 +65,7 @@ Mage no sustituye nada de eso: lo envuelve.
 > sesión iniciada. Lee [Qué tienes que poner tú](#qué-tienes-que-poner-tú) — sin eso la app arranca,
 > pero no podrás abrir una conversación.
 
-1. Descarga `mage-setup-alpha-<versión>.exe` de la sección de **[releases](https://github.com/M4raa/mage/releases)**. Hay también un `.msi`, para desplegar
+1. Descarga `mage-setup-beta-<versión>.exe` de la sección de **[releases](https://github.com/M4raa/mage/releases)**. Hay también un `.msi`, para desplegar
    por política de grupo o con `msiexec /qn`; para instalarlo tú, el que quieres es el `.exe`.
 2. Ejecútalo. Se instala **por usuario**, sin permisos de administrador.
 3. Al primer arranque sale un asistente de tres pasos: comprueba el motor, eliges tema y escala, y te
@@ -74,8 +74,8 @@ Mage no sustituye nada de eso: lo envuelve.
 > [!WARNING]
 > **El instalador no está firmado todavía.** Windows enseñará la pantalla azul de SmartScreen:
 > *Más información* → *Ejecutar de todas formas*. La firma está en camino vía
-> [SignPath Foundation](https://signpath.org/), que exige que el proyecto ya esté publicado — por eso esta
-> primera alpha sale sin ella.
+> [SignPath Foundation](https://signpath.org/), que exige que el proyecto ya esté publicado; mientras llega,
+> la beta sale sin ella.
 
 ### macOS y Linux — próximamente
 
