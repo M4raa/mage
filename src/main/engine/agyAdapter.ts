@@ -4,7 +4,7 @@ import type { MageEvent, PermissionDecision } from '@shared/events';
 import { AGY_EFFORT_LEVELS } from '@shared/providers';
 import { resolveAgyBinary } from '../os/agyBinaryResolver';
 import { AgyTurnTracker } from './agyNormalize';
-import type { AgyProfileMode } from './agyProfile';
+import { AGY_FILE_TOKEN_ENV, type AgyProfileMode } from './agyProfile';
 import type { AuthModel, LaunchParams, PermissionRef, ProviderAdapter, SpawnPlan } from './providerAdapter';
 import { scrubAgentEnv } from '../os/agentEnv';
 
@@ -57,6 +57,10 @@ export interface AgyAdapterDeps {
   readonly resolveBinary?: () => string;
   // La cuenta de API cuyo perfil es `accountDir`, o null (suscripcion: el login propio de agy).
   readonly resolveApiAccount?: (accountDir: string) => AgyApiAccount | null;
+  // La cuenta de SUSCRIPCION registrada cuyo perfil es `accountDir` (login en fichero dentro del perfil), o null.
+  readonly resolveSubscriptionAccount?: (accountDir: string) => { readonly profileDir: string } | null;
+  // ¿Tiene ese perfil el fichero de token? Sin el, lanzar caeria a la cuenta global de Windows sin avisar.
+  readonly hasSubscriptionLogin?: (profileDir: string) => boolean;
   // Perfil de Mage para la suscripcion. Sin el (tests), agy corre con el perfil real del usuario.
   readonly subscriptionProfileDir?: () => string;
   // Prepara el perfil ANTES de lanzar (enlaces y settings.json con las reglas). Lo escribe main: el
@@ -76,11 +80,11 @@ interface ChildLaunch {
 }
 
 export class AgyAdapter implements ProviderAdapter {
-  // La suscripcion de `agy` vive fuera de Mage (su login no esta en su carpeta de datos, medido): no hay
-  // alta que ofrecer. Las cuentas por clave son otra celda de la matriz (providerAccounts.ts).
+  // El login lo hace el propio agy (Mage lo lanza en el perfil de la cuenta y le pasa el codigo que da Google, sin
+  // ver el token): `accountLogin` en main. Las cuentas por clave son otra celda de la matriz (providerAccounts.ts).
   readonly auth: AuthModel = {
     kind: 'external',
-    reason: 'agy gestiona su propio login; Mage no crea ni cambia esa sesión',
+    reason: 'agy gestiona su propio login; Mage solo lo lanza en el perfil de cada cuenta y relaya el código',
   };
 
   private readonly tracker = new AgyTurnTracker();
@@ -133,11 +137,22 @@ export class AgyAdapter implements ProviderAdapter {
   private childLaunch(params: LaunchParams): ChildLaunch {
     const env = scrubAgentEnv(process.env);
     const account = this.deps.resolveApiAccount?.(params.accountDir) ?? null;
+    const own = account === null ? this.deps.resolveSubscriptionAccount?.(params.accountDir) ?? null : null;
+    if (own !== null) return this.subscriptionLaunch(own.profileDir, params, env);
     const profileDir = account?.profileDir ?? this.deps.subscriptionProfileDir?.();
     if (profileDir === undefined) return { env, profileDir };
     this.deps.prepareProfile?.(profileDir, params.cwd, account === null ? 'subscription' : 'api-key');
     const profiled = { ...env, USERPROFILE: profileDir, HOME: homedir() };
     return { env: account === null ? profiled : { ...profiled, GEMINI_API_KEY: account.apiKey }, profileDir };
+  }
+
+  // Cuenta de suscripcion con perfil PROPIO: su login vive en un fichero de ese perfil (ver AGY_FILE_TOKEN_ENV).
+  private subscriptionLaunch(profileDir: string, params: LaunchParams, env: NodeJS.ProcessEnv): ChildLaunch {
+    if (this.deps.hasSubscriptionLogin?.(profileDir) === false) {
+      throw new Error(`La cuenta de agy (${profileDir}) no tiene la sesión iniciada: inicia sesión desde «Añadir cuenta» antes de abrir una conversación`);
+    }
+    this.deps.prepareProfile?.(profileDir, params.cwd, 'subscription');
+    return { env: { ...env, USERPROFILE: profileDir, HOME: homedir(), ...AGY_FILE_TOKEN_ENV }, profileDir };
   }
 
   // `content` solo admite texto (medido): cada imagen se guarda en disco y su ruta va al final del

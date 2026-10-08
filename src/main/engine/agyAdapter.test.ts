@@ -121,6 +121,41 @@ describe('AgyAdapter (sesion persistente, agy 1.2.14)', () => {
     });
   });
 
+  // Multicuenta de suscripcion (agy 1.3.1): perfil propio + SSH_CONNECTION para que el token vaya a un fichero del perfil.
+  it('buildSpawnPlan_cuentaDeSuscripcionConPerfilPropio_suPerfilYElMarcadorDeTokenEnFichero', () => {
+    const prepareProfile = vi.fn();
+    const own = new AgyAdapter({
+      resolveBinary: () => 'agy.exe',
+      resolveSubscriptionAccount: (dir) => (dir === '/data/agy-accounts/personal' ? { profileDir: dir } : null),
+      hasSubscriptionLogin: () => true,
+      subscriptionProfileDir: () => '/data/agy-profile',
+      prepareProfile,
+    });
+
+    const plan = own.buildSpawnPlan({ ...launch, accountDir: '/data/agy-accounts/personal' });
+
+    expect(plan.env.USERPROFILE).toBe('/data/agy-accounts/personal');
+    expect(plan.env.SSH_CONNECTION).toBeDefined();
+    expect(plan.env.GEMINI_API_KEY).toBeUndefined();
+    expect(prepareProfile).toHaveBeenCalledWith('/data/agy-accounts/personal', '/proj', 'subscription');
+  });
+
+  it('buildSpawnPlan_cuentaDeSuscripcionSinFicheroDeToken_seNiegaALanzar', () => {
+    const own = new AgyAdapter({
+      resolveBinary: () => 'agy.exe',
+      resolveSubscriptionAccount: (dir) => ({ profileDir: dir }),
+      hasSubscriptionLogin: () => false,
+    });
+
+    expect(() => own.buildSpawnPlan({ ...launch, accountDir: '/data/agy-accounts/personal' })).toThrow('no tiene la sesión iniciada');
+  });
+
+  it('buildSpawnPlan_cuentaSinPerfilPropio_noPoneElMarcadorSsh', () => {
+    const plan = new AgyAdapter({ resolveBinary: () => 'agy.exe', resolveApiAccount: () => null, subscriptionProfileDir: () => '/data/agy-profile', prepareProfile: vi.fn() }).buildSpawnPlan(launch);
+
+    expect(plan.env.SSH_CONNECTION).toBeUndefined();
+  });
+
   it('encodeUserMessage_soloTexto_lineaUserConContentString', () => {
     expect(adapter.encodeUserMessage('hola')).toEqual({ event: 'user', message: { content: 'hola' } });
   });

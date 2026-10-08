@@ -34,6 +34,13 @@ export const NO_EXTRA_RULES: AgyProfileRules = EMPTY_AGY_COMMAND_RULES;
 
 export type AgyProfileMode = 'api-key' | 'subscription';
 
+// Entorno que hace que agy guarde el token de la suscripcion en un FICHERO del perfil (`USERPROFILE`) en vez de en el
+// Administrador de credenciales de Windows, que es global y deja una sola cuenta. MEDIDO en agy 1.3.1
+// (`spike/agy-login-spike.mjs`): con cualquiera de `SSH_CONNECTION`, `SSH_CLIENT` o `SSH_TTY` detecta «sesion SSH» y
+// usa «file-based token storage». Es un detalle del CLI: por eso Mage se niega a lanzar una cuenta de este tipo si su
+// perfil no tiene el fichero de token (sin la variable caeria, sin avisar, a la cuenta global).
+export const AGY_FILE_TOKEN_ENV: Readonly<Record<string, string>> = { SSH_CONNECTION: '127.0.0.1 22 127.0.0.1 22' };
+
 export interface AgyProfileSettingsInput {
   readonly mode: AgyProfileMode;
   readonly profileDir: string; // ruta LARGA del perfil

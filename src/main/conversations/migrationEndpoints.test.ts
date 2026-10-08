@@ -47,7 +47,7 @@ function world() {
     newId: () => `00000000-0000-4000-8000-${String((counter += 1)).padStart(12, '0')}`,
     claude: { effectiveDir: (dir) => dir, deleteConversation: (ref) => { deleted.push(ref.sessionId); rmSync(resolveTranscriptPath(ref.accountDir, ref.cwd, ref.sessionId), { force: true }); } },
     codex: { homeOf: (dir) => dir, history: codexHistory, deleteThread: async (home, id) => { deleted.push(id); const path = codexHistory.findRollout(home, id); if (path !== null) rmSync(path); } },
-    agy: { profileOf: (dir) => dir, externalOf: (dir) => (dir === dirs.agyA ? dirs.agyReal : undefined), history: agyHistory, writeDb: writeAgyConversationDb },
+    agy: { profileOf: (dir) => dir, externalOf: (dir) => (dir === dirs.agyA ? [dirs.agyReal] : []), history: agyHistory, writeDb: writeAgyConversationDb },
   });
   return { dirs, service: new ConversationMigrationService(endpoints), codexHistory, agyHistory, deleted, endpoints };
 }

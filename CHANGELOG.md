@@ -106,9 +106,14 @@ versión.
   los pensamientos y las imágenes (y, en agy, las herramientas pasan a texto). Entre cuentas de Codex el rollout se
   copia sin pérdida. Aparte queda «Nueva conversación con su historial», que abre una conversación nueva con el
   historial como contexto (límite configurable en Ajustes).
-- **Suscripción de agy como cuenta**: si agy está instalado y con sesión, aparece como una cuenta más, con
-  su chip, y su uso (cuotas por grupo de modelos) sale en el uso general de la barra de abajo y solo en su
-  panel de Uso.
+- **Varias cuentas de agy por suscripción**: en «Añadir cuenta» › Google · agy › Suscripción, Mage crea un perfil propio
+  por cuenta y lanza agy para iniciar sesión: abre el enlace de Google en el navegador, tú pegas el código que te da la
+  web (agy espera 60 s) y el login queda guardado en el perfil de esa cuenta, sin tocar la sesión de agy de tu equipo.
+  Cada cuenta tiene su chip, su uso (cuotas por grupo de modelos, en el uso general de la barra de abajo y solo en su
+  panel de Uso) y su historial de conversaciones, que también incluye las del CLI propio de agy: al reanudar una se copia
+  al perfil de la cuenta. Funciona porque Mage lanza agy con `SSH_CONNECTION`, que le hace guardar el token en un fichero
+  del perfil en vez de en el Administrador de credenciales de Windows; si el perfil no tiene ese fichero, Mage se niega a
+  lanzarlo para no usar la cuenta global sin avisar.
 
 ### Cambiado
 - El aviso al activar **Omitir permisos** dice claramente lo que implica: el modelo podrá ejecutar

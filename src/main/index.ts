@@ -102,7 +102,7 @@ import type { PanelLayoutState } from '@shared/panelLayout';
 import type { MenuItemConstructorOptions } from 'electron';
 import { DebugChannel } from '@shared/debug';
 import type { RendererLogInput } from '@shared/debug';
-import type { AccountCreateParams, AccountInfo, AccountProviderId, CliLoginStart, EmbeddedLoginResult } from '@shared/accounts';
+import type { AccountCreateParams, AccountInfo, AccountProviderId, AgyLoginStart, CliLoginStart, EmbeddedLoginResult } from '@shared/accounts';
 import { BASE_ARGS as CLAUDE_BASE_ARGS, ClaudeAdapter } from './engine/claudeAdapter';
 import { probeModelCatalogs, type ProbeProcess } from './engine/modelProbe';
 import { registerMcpIpc } from './config/mcpIpc';
@@ -165,6 +165,9 @@ import { codexThreadDelete } from './conversations/codexRpc';
 import { MIGRATE_CONVERSATION_SCHEMA } from './conversations/migrationParams';
 import { AgyHistoryService } from './conversations/agyHistory';
 import { createAgySqliteStore, writeAgyConversationDb } from './conversations/agySqliteStore';
+import { AGY_TOKEN_PARTS } from './accounts/providerAccounts';
+import { AgyLoginService } from './accounts/agyLoginService';
+import { AGY_FILE_TOKEN_ENV } from './engine/agyProfile';
 import { staticTranscriptBatch } from './transcripts/staticBatch';
 import type { LineAdapter } from './transcripts/transcriptReader';
 import { adaptCodexLine } from '@shared/codexTranscript';
@@ -681,7 +684,7 @@ function codexHomeFor(accountDir: string): string {
 
 function agyProfileFor(accountDir: string): string {
   const entry = getProviderAccounts().find('agy', accountDir);
-  return entry !== null && entry.authKind === 'api-key' ? entry.home : join(app.getPath('userData'), AGY_SUBSCRIPTION_PROFILE);
+  return entry !== null ? entry.home : join(app.getPath('userData'), AGY_SUBSCRIPTION_PROFILE);
 }
 
 // Que es "el fichero propio" del CLI de una pestaña; null = el proveedor no lleva puente.
@@ -710,7 +713,13 @@ function buildAgyAdapter(): AgyAdapter {
       const apiKey = getProviderAccounts().apiKeyFor('agy', dir);
       return apiKey === null ? null : { profileDir: entry.home, apiKey };
     },
-    // La suscripcion tambien corre con perfil propio: las reglas de Mage nunca tocan el settings.json real.
+    // La suscripcion de una cuenta de Mage guarda su login en el fichero de token de SU perfil (ver AGY_FILE_TOKEN_ENV).
+    resolveSubscriptionAccount: (dir) => {
+      const entry = getProviderAccounts().find('agy', dir);
+      return entry !== null && entry.authKind === 'subscription' ? { profileDir: entry.home } : null;
+    },
+    hasSubscriptionLogin: (profileDir) => existsSync(join(profileDir, ...AGY_TOKEN_PARTS)),
+    // Sin cuenta registrada (conversaciones antiguas), el perfil comun de siempre: las reglas de Mage nunca tocan el settings.json real.
     subscriptionProfileDir: () => join(app.getPath('userData'), AGY_SUBSCRIPTION_PROFILE),
     prepareProfile: prepareAgyProfile,
     bridgeInstructions: bridgeAgyInstructions,
@@ -740,6 +749,11 @@ function buildCodexAdapter(): CodexAdapter {
 
 const CLI_PROBE_TIMEOUT_MS = 20_000;
 const AGY_USAGE_TTL_MS = 180_000;
+// Login de agy: la URL aparece en segundos; agy espera 60 s por el codigo (fijo, medido).
+const AGY_LOGIN_URL_TIMEOUT_MS = 30_000;
+const AGY_LOGIN_AUTH_TIMEOUT_MS = 60_000;
+const AGY_LOGIN_POLL_MS = 250;
+const AGY_LOGIN_SETTLE_MS = 3_000;
 const CODEX_LOGIN_TIMEOUT_MS = 10 * 60_000;
 const CLI_PROBE_MAX_BUFFER = 4 * 1024 * 1024;
 
@@ -758,21 +772,31 @@ function runCliCapture(command: string, args: readonly string[], env: NodeJS.Pro
   });
 }
 
-// `/usage` de agy con TTL (no gasta, pero es un proceso). verify:gui: MAGE_AGY_USAGE_FAKE=<fichero>.
-let agyUsageCache: AgyUsageSnapshot | null = null;
-async function readAgyUsageCached(): Promise<AgyUsageSnapshot> {
-  if (agyUsageCache !== null && Date.now() - agyUsageCache.fetchedAt < AGY_USAGE_TTL_MS) return agyUsageCache;
-  agyUsageCache = await readAgyUsage({
+// `/usage` de una cuenta de agy con TTL (no gasta, pero es un proceso), POR CUENTA: cada una tiene su perfil y su
+// login. verify:gui: MAGE_AGY_USAGE_FAKE=<fichero>.
+const agyUsageCache = new Map<string, AgyUsageSnapshot>();
+async function readAgyUsageCached(accountDir: string): Promise<AgyUsageSnapshot> {
+  const cached = agyUsageCache.get(accountDir);
+  if (cached !== undefined && Date.now() - cached.fetchedAt < AGY_USAGE_TTL_MS) return cached;
+  const fresh = await readAgyUsage({
     now: () => Date.now(),
     runUsage: async () => {
       const fake = process.env.MAGE_AGY_USAGE_FAKE;
       if (fake !== undefined && fake.length > 0) return readFileSync(fake, 'utf8');
-      const result = await runCliCapture(resolveAgyBinary(), AGY_USAGE_ARGS, scrubAgentEnv(process.env));
+      const result = await runCliCapture(resolveAgyBinary(), AGY_USAGE_ARGS, agyAccountEnv(accountDir));
       if (result === null) throw new Error('No se pudo lanzar agy');
       return result.stdout;
     },
   });
-  return agyUsageCache;
+  agyUsageCache.set(accountDir, fresh);
+  return fresh;
+}
+
+// Entorno con el que se lanza agy para una cuenta de suscripcion registrada: su perfil y el marcador de token en fichero.
+function agyAccountEnv(accountDir: string): NodeJS.ProcessEnv {
+  const entry = getProviderAccounts().find('agy', accountDir);
+  if (entry === null || entry.authKind !== 'subscription') throw new Error(`Cuenta de agy por suscripcion no valida: ${accountDir}`);
+  return { ...scrubAgentEnv(process.env), USERPROFILE: entry.home, HOME: homedir(), ...AGY_FILE_TOKEN_ENV };
 }
 
 // Modos de permiso leidos de cada CLI, una vez por ejecucion de Mage (no cambian sin actualizar el CLI).
@@ -882,23 +906,7 @@ function getProviderAccounts(): ProviderAccountService {
 // Todas las cuentas: las de Claude descubiertas en disco (marcadas si son de API) y las del registro.
 function listAllAccounts(): readonly AccountInfo[] {
   const accounts = getProviderAccounts().list(accountService.listAccounts());
-  return [...getCodexAccountCatalog().list(accounts), ...agySubscriptionAccounts()];
-}
-
-// La suscripcion de agy que ya esta iniciada en esta maquina, como una cuenta mas (el chip de la cabecera).
-// Su login no vive en una carpeta de Mage (medido en agy 1.2.14: un USERPROFILE aislado sigue
-// autenticado), asi que su id es la carpeta `~/.gemini` de agy y NO se puede borrar desde Mage.
-// ponytail: una sola; varias suscripciones exigen medir donde guarda agy su login (ver respuesta 42).
-const AGY_SUBSCRIPTION_ACCOUNT_DIR = join(homedir(), '.gemini');
-const AGY_LOGIN_FILE = 'oauth_creds.json';
-
-function agySubscriptionAccounts(): readonly AccountInfo[] {
-  if (!isAgyInstalledCached()) return [];
-  return [{
-    configDir: AGY_SUBSCRIPTION_ACCOUNT_DIR, name: 'agy', isMain: false, providerId: 'agy', authKind: 'subscription',
-    email: null, org: null, expiresAt: null, defaultModel: null,
-    loginStatus: existsSync(join(AGY_SUBSCRIPTION_ACCOUNT_DIR, AGY_LOGIN_FILE)) ? 'logged_in' : 'logged_out',
-  }];
+  return getCodexAccountCatalog().list(accounts);
 }
 
 function isAgyInstalledCached(): boolean {
@@ -935,7 +943,7 @@ function codexAccountProbeDeps(): import('./accounts/codexAccountProbe').CodexAc
 // ¿Puede una sesion lanzarse con este dir de cuenta? Un config dir de Claude bajo HOME, o una cuenta
 // del registro (CODEX_HOME de codex, perfil de agy por clave). Nunca una ruta arbitraria por IPC.
 function isLaunchableAccountDir(dir: string): boolean {
-  if (isManagedAccountConfigDir(dir) || pathEquals(dir, AGY_SUBSCRIPTION_ACCOUNT_DIR)) return true;
+  if (isManagedAccountConfigDir(dir)) return true;
   return getProviderAccounts().find('codex', dir) !== null || getProviderAccounts().find('agy', dir) !== null;
 }
 
@@ -2558,6 +2566,7 @@ function registerEngineIpc(deps: IpcDependencies): void {
   registerEditIpc1();
   registerAccountsIpc1();
   registerAccountsIpc2();
+  registerAgyAccountIpc();
   registerDialogIpc1();
   registerAboutIpc1();
   registerWindowIpc1();
@@ -2625,7 +2634,7 @@ function registerSessionIpc2(): void {
   ipcMain.handle(IpcChannel.FsExistsDirs, (_e, paths: unknown): readonly boolean[] => existsDirs(paths));
   ipcMain.handle(IpcChannel.CodexInstalled, (): boolean => findCodexBinary() !== null);
   // Uso de la suscripcion de agy (`/usage`, gratis: 0 turnos, medido en 1.2.14), con TTL.
-  ipcMain.handle(IpcChannel.AgyUsageRead, (): Promise<AgyUsageSnapshot> => readAgyUsageCached());
+  ipcMain.handle(IpcChannel.AgyUsageRead, (_e, accountDir: string): Promise<AgyUsageSnapshot> => readAgyUsageCached(accountDir));
   // Modos de permiso que expone cada CLI (respuesta 18): leidos del propio CLI, no de una lista fija.
   ipcMain.handle(IpcChannel.PermissionModesList, (): Promise<PermissionModesByProvider> => loadPermissionModes());
   ipcMain.handle(IpcChannel.AgyInstalled, () => {
@@ -2748,6 +2757,35 @@ function registerAccountsIpc1(): void {
   });
 }
 
+// Login de una cuenta de agy por suscripcion: el CLI imprime una URL de Google y espera el codigo que da su web.
+// Solo cuentas del registro (nunca un perfil arbitrario por IPC).
+let agyLoginService: AgyLoginService | null = null;
+function getAgyLogin(): AgyLoginService {
+  agyLoginService ??= new AgyLoginService({
+    spawnLogin: (profileDir) => spawn(resolveAgyBinary(), AGY_USAGE_ARGS, {
+      cwd: profileDir, env: { ...scrubAgentEnv(process.env), USERPROFILE: profileDir, HOME: homedir(), ...AGY_FILE_TOKEN_ENV }, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true,
+    }),
+    openUrl: (url) => shell.openExternal(url),
+    killTree: (child) => killProcessTree(child, defaultKillTreeDeps()),
+    tokenExists: (profileDir) => existsSync(join(profileDir, ...AGY_TOKEN_PARTS)),
+    urlTimeoutMs: AGY_LOGIN_URL_TIMEOUT_MS,
+    authTimeoutMs: AGY_LOGIN_AUTH_TIMEOUT_MS,
+    pollMs: AGY_LOGIN_POLL_MS,
+    settleMs: AGY_LOGIN_SETTLE_MS,
+  });
+  return agyLoginService;
+}
+
+function registerAgyAccountIpc(): void {
+  ipcMain.handle(IpcChannel.AgyLoginStart, (_e, configDir: unknown): Promise<AgyLoginStart> => {
+    const entry = typeof configDir === 'string' ? getProviderAccounts().find('agy', configDir) : null;
+    if (entry === null || entry.authKind !== 'subscription') throw new Error(`Cuenta de agy por suscripcion no valida: ${String(configDir)}`);
+    return getAgyLogin().start(entry.home);
+  });
+  ipcMain.handle(IpcChannel.AgyLoginSubmit, (_e, code: unknown) => getAgyLogin().submitCode(typeof code === 'string' ? code : ''));
+  ipcMain.handle(IpcChannel.AgyLoginCancel, (): void => getAgyLogin().cancel());
+}
+
 function registerAccountsIpc2(): void {
   // Cuenta recien añadida (D7): se sondean sus modelos en cuanto tiene sesion, sin esperar al reinicio.
   ipcMain.handle(IpcChannel.AccountsLoginSubmitCode, async (_e, code: string): Promise<EmbeddedLoginResult> => {
@@ -2772,9 +2810,6 @@ function registerAccountsIpc2(): void {
   ipcMain.handle(IpcChannel.AccountsDelete, (_e, configDir: string) => {
     if (!isLaunchableAccountDir(configDir)) {
       throw new Error(`Cuenta no valida para borrar: ${configDir}`);
-    }
-    if (pathEquals(configDir, AGY_SUBSCRIPTION_ACCOUNT_DIR)) {
-      throw new Error('La suscripción de agy no se borra desde Mage: cierra su sesión desde agy');
     }
     const stopped = sessionManager.stopByConfigDir(configDir);
     if (stopped > 0) mainLog('info', `Paradas ${stopped} sesiones antes de borrar la cuenta "${configDir}"`);
@@ -2918,8 +2953,7 @@ function streamTranscript(sender: Electron.WebContents, transcriptId: string, pa
 
 // Perfil (`USERPROFILE`) con el que Mage lanza agy para esa cuenta, o null si no es una cuenta de agy.
 function agyProfileOfAccount(accountDir: string): string | null {
-  if (pathEquals(accountDir, AGY_SUBSCRIPTION_ACCOUNT_DIR) || getProviderAccounts().find('agy', accountDir) !== null) return agyProfileFor(accountDir);
-  return null;
+  return getProviderAccounts().find('agy', accountDir)?.home ?? null;
 }
 
 // Una conversación de agy que viene del CLI propio del usuario se copia al perfil de Mage antes de reanudarla.
@@ -2931,10 +2965,10 @@ function prepareAgyResume(params: CreateSessionParams): void {
   });
 }
 
-// Perfil REAL de agy del usuario (`~/.gemini`): solo la suscripción lo comparte. Sus conversaciones salen en el
-// historial y se copian al perfil de Mage al reanudarlas (ver `AgyHistoryService.ensureInProfile`).
-function agyExternalProfileOf(accountDir: string): string | undefined {
-  return pathEquals(accountDir, AGY_SUBSCRIPTION_ACCOUNT_DIR) ? homedir() : undefined;
+// Perfiles de agy ajenos a la cuenta, solo para las de suscripción: el REAL del usuario (`~/.gemini`) y el común antiguo
+// de Mage. Sus conversaciones salen en el historial y se copian al perfil de Mage al reanudarlas (ver `AgyHistoryService.ensureInProfile`).
+function agyExternalProfileOf(accountDir: string): readonly string[] {
+  return getProviderAccounts().find('agy', accountDir)?.authKind === 'subscription' ? [homedir(), join(app.getPath('userData'), AGY_SUBSCRIPTION_PROFILE)] : [];
 }
 
 // Transcripción de una conversación de agy: sale de su base SQLite, así que va en un único lote final.

@@ -36,6 +36,13 @@ export interface AccountCreateParams {
   readonly apiKey?: string;
 }
 
+// Login de una cuenta de agy por suscripcion (dos pasos, medido en agy 1.3.1): 1) Mage lanza agy en el perfil de la
+// cuenta, que imprime una URL de Google; 2) el usuario la abre, inicia sesion y pega aqui el codigo que le da la web.
+// agy espera 60 s en total por el codigo (fijo, `--print-timeout` no lo cambia).
+export type AgyLoginStart =
+  | { readonly status: 'url'; readonly url: string; readonly timeoutMs: number }
+  | { readonly status: 'error'; readonly reason: string };
+
 // Resultado del login de ChatGPT de una cuenta de Codex (sin verificar). `reason` con forma
 // `<fase>_<detalle>`, nunca con tokens.
 export type CodexLoginOutcome =

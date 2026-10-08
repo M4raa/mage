@@ -136,7 +136,7 @@ describe('AgyHistoryService', () => {
     };
     const service = new AgyHistoryService({ ...store(STEPS), exists: (path) => path in files, listDir: (path) => files[path] ?? [] });
 
-    const ids = service.list(PROFILE, 'cfg', EXTERNAL).map((summary) => summary.sessionId).sort();
+    const ids = service.list(PROFILE, 'cfg', [EXTERNAL]).map((summary) => summary.sessionId).sort();
 
     expect(ids).toEqual(['aaaa-1111', 'bbbb-2222']);
   });
@@ -148,9 +148,9 @@ describe('AgyHistoryService', () => {
     const onlyOutside = new AgyHistoryService({ ...store(STEPS), exists: (path) => path === outside });
     const both = new AgyHistoryService({ ...store(STEPS), exists: (path) => path === outside || path === own });
 
-    expect(onlyOutside.findDb(PROFILE, 'x-1', EXTERNAL)).toBe(outside);
+    expect(onlyOutside.findDb(PROFILE, 'x-1', [EXTERNAL])).toBe(outside);
     expect(onlyOutside.findDb(PROFILE, 'x-1')).toBeNull();
-    expect(both.findDb(PROFILE, 'x-1', EXTERNAL)).toBe(own);
+    expect(both.findDb(PROFILE, 'x-1', [EXTERNAL])).toBe(own);
   });
 
   it('ensureInProfile_conversacionDelUsuario_laCopiaAlPerfilDeMageUnaSolaVez', () => {
@@ -162,8 +162,8 @@ describe('AgyHistoryService', () => {
     const service = new AgyHistoryService({ ...store(STEPS), exists: (path) => path === outside || (present && path === own) });
     const copy = (from: string, to: string): void => { copied.push([from, to]); present = true; };
 
-    service.ensureInProfile(PROFILE, EXTERNAL, 'x-1', copy);
-    service.ensureInProfile(PROFILE, EXTERNAL, 'x-1', copy);
+    service.ensureInProfile(PROFILE, [EXTERNAL], 'x-1', copy);
+    service.ensureInProfile(PROFILE, [EXTERNAL], 'x-1', copy);
 
     expect(copied).toEqual([[outside, own]]);
   });
@@ -171,7 +171,7 @@ describe('AgyHistoryService', () => {
   it('ensureInProfile_conversacionInexistente_noCopiaNada', () => {
     const copied: string[] = [];
 
-    new AgyHistoryService({ ...store(STEPS), exists: () => false }).ensureInProfile(PROFILE, 'C:\real', 'x-1', (from) => copied.push(from));
+    new AgyHistoryService({ ...store(STEPS), exists: () => false }).ensureInProfile(PROFILE, ['C:\real'], 'x-1', (from) => copied.push(from));
 
     expect(copied).toEqual([]);
   });

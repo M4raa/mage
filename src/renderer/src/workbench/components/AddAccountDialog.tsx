@@ -17,7 +17,7 @@ import { ProviderForm } from './settings/ProvidersSection';
 //   - Claude, Codex o agy · clave de API: nombre y clave. La clave sube UNA vez a main, que la cifra en
 //     su boveda; no vuelve nunca y solo la recibe el hijo de esa cuenta.
 //   - Codex · suscripcion: crea su CODEX_HOME y abre el login de ChatGPT de su CLI (sin verificar).
-//   - agy · suscripcion: vive fuera de Mage (una sola); se explica.
+//   - agy · suscripcion: perfil propio por cuenta; Mage lanza agy (URL de Google), el usuario pega el codigo que da su web.
 //   - Local: el formulario de proveedor de Ajustes, reutilizado aqui (IP:puerto).
 export function AddAccountDialog(): React.JSX.Element {
   const open = useWorkbenchStore((s) => s.addAccountOpen);
@@ -115,8 +115,8 @@ function KindBody({
       return <ApiKeyBody kind={kind} onRefresh={props.onRefresh} onClose={onClose} />;
     case 'codex-login':
       return <CodexLoginBody kind={kind} onRefresh={props.onRefresh} onDelete={props.onDelete} onClose={onClose} onLoginCancel={onLoginCancel} />;
-    case 'external':
-      return <ExternalBody onClose={onClose} />;
+    case 'agy-login':
+      return <AgyLoginBody kind={kind} onRefresh={props.onRefresh} onDelete={props.onDelete} onClose={onClose} onLoginCancel={onLoginCancel} />;
     case 'endpoint':
       return <LocalEndpointBody onClose={onClose} />;
   }
@@ -327,22 +327,141 @@ function CodexLoginBody({
   );
 }
 
-// --- agy · suscripcion -------------------------------------------------------------------------
+// --- agy · suscripcion ----------------------------------------------------------------------------
+// Dos pasos (medido en agy 1.3.1): Mage lanza agy en el perfil de la cuenta, que imprime una URL de Google; la abre en
+// el navegador y el usuario pega aqui el codigo que le da la web. agy solo espera 60 s por el codigo.
 
-function ExternalBody({ onClose }: { readonly onClose: () => void }): React.JSX.Element {
+const AGY_LOGIN_REASONS: Readonly<Record<string, string>> = {
+  url_timeout: 'agy no dio el enlace de inicio de sesión a tiempo.',
+  code_timeout: 'Pasaron los 60 s que agy espera por el código. Vuelve a empezar.',
+  agy_exit: 'agy terminó sin completar el inicio de sesión (¿código incorrecto?).',
+  invalid_code_format: 'Ese no parece un código de Google: pega solo el código, sin espacios.',
+  spawn_failed: 'No se pudo lanzar agy.',
+  login_cancelled: 'Inicio de sesión cancelado.',
+  no_login_in_progress: 'No hay un inicio de sesión en curso: vuelve a empezar.',
+};
+
+function agyLoginMessage(reason: string): string {
+  return AGY_LOGIN_REASONS[reason] ?? `El inicio de sesión de agy no terminó (${reason}).`;
+}
+
+function AgyLoginBody({
+  kind,
+  onRefresh,
+  onDelete,
+  onClose,
+  onLoginCancel,
+}: {
+  readonly kind: AccountKindOption;
+  readonly onRefresh: () => Promise<void>;
+  readonly onDelete: (configDir: string) => Promise<void>;
+  readonly onClose: () => void;
+  readonly onLoginCancel: (cancel: () => void) => void;
+}): React.JSX.Element {
   const installed = useAgyInstalled();
+  const [name, setName] = useState('');
+  const [created, setCreated] = useState<AccountInfo | null>(null);
+  const [url, setUrl] = useState<string | null>(null);
+  const [secondsLeft, setSecondsLeft] = useState(0);
+  const [code, setCode] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => onLoginCancel(() => () => void window.mage.cancelAgyLogin()), [onLoginCancel]);
+  useEffect(() => {
+    if (url === null) return undefined;
+    const timer = setInterval(() => setSecondsLeft((left) => Math.max(0, left - 1)), 1000);
+    return () => clearInterval(timer);
+  }, [url]);
+
+  const start = (account: AccountInfo): void => {
+    setBusy(true);
+    setError(null);
+    setUrl(null);
+    setCode('');
+    void window.mage
+      .startAgyLogin(account.configDir)
+      .then((result) => {
+        if (result.status === 'error') throw new Error(agyLoginMessage(result.reason));
+        setUrl(result.url);
+        setSecondsLeft(Math.round(result.timeoutMs / 1000));
+      })
+      .catch((err: unknown) => setError(describe(err)))
+      .finally(() => setBusy(false));
+  };
+  const create = (): void => {
+    if (name.trim().length === 0 || busy) return;
+    void window.mage
+      .createProviderAccount({ providerId: 'agy', authKind: 'subscription', name: name.trim() })
+      .then((account) => {
+        setCreated(account);
+        start(account);
+      })
+      .catch((err: unknown) => setError(describe(err)));
+  };
+  const submit = (): void => {
+    if (code.trim().length === 0 || busy) return;
+    setBusy(true);
+    setError(null);
+    void window.mage
+      .submitAgyLoginCode(code)
+      .then(async (outcome) => {
+        if (outcome.status !== 'ok') throw new Error(agyLoginMessage(outcome.reason));
+        await onRefresh();
+        onClose();
+      })
+      .catch((err: unknown) => setError(describe(err)))
+      .finally(() => setBusy(false));
+  };
+  const discard = (): void => {
+    void window.mage.cancelAgyLogin();
+    if (created === null) return onClose();
+    void onDelete(created.configDir)
+      .catch((err: unknown) => setError(describe(err)))
+      .finally(onClose);
+  };
+
   return (
     <>
-      <div data-add-account-external="true" className="flex flex-col gap-[7px] rounded-[8px] border border-mg-border-ctrl bg-mg-block p-[10px_12px] text-[11.5px] leading-[1.55] text-mg-body2">
-        <div>
-          La suscripción de <b>agy</b> vive fuera de Mage: no hay cuenta que crear aquí. Inicia sesión con su
-          propio CLI y Mage la usará en las pestañas de agy. Es una sola por equipo: su inicio de sesión no se
-          guarda en una carpeta que Mage pueda separar.
+      {installed === false && <div className="text-[10.5px] text-mg-warn">agy no está instalado en este equipo: instálalo antes de añadir la cuenta.</div>}
+      {created === null && (
+        <NameField name={name} onName={setName} onSubmit={create} hint={`Se creará un perfil propio (${accountHomeHint(kind, name)}) y agy abrirá el inicio de sesión de Google en tu navegador. Es independiente de la sesión de agy de tu equipo.`} />
+      )}
+      {url !== null && (
+        <div data-agy-login-step="code" className="flex flex-col gap-[8px] rounded-[8px] border border-mg-border-ctrl bg-mg-block p-[10px_12px] text-[11.5px] leading-[1.5] text-mg-body2">
+          <div>
+            Inicia sesión en el navegador (ya se ha abierto), copia el código que te da la web y pégalo aquí.{' '}
+            <b data-agy-login-seconds={secondsLeft}>{secondsLeft > 0 ? `Te quedan ${secondsLeft} s.` : 'Se acabó el tiempo: vuelve a empezar.'}</b>
+          </div>
+          <input
+            value={code}
+            onChange={(e) => setCode(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && submit()}
+            aria-label="Código de autorización de Google"
+            placeholder="Código de la web de Google"
+            autoComplete="off"
+            spellCheck={false}
+            className="w-full rounded-[7px] border border-mg-border-ctrl bg-mg-window p-[7px_9px] font-mono text-mg-body outline-none"
+          />
+          <button className="self-start text-[10.5px] text-mg-sec underline" onClick={() => void window.mage.openExternal(url)}>
+            Abrir el enlace otra vez
+          </button>
         </div>
-        {installed !== null && <div className="text-[10.5px]">{installed ? 'Instalado en este equipo.' : 'No está instalado en este equipo.'}</div>}
-      </div>
+      )}
+      {busy && url === null && created !== null && <div className="text-[11.5px] text-mg-body2">Lanzando agy…</div>}
+      <ErrorLine error={error} />
       <div className="mt-[2px] flex justify-end gap-[8px]">
-        <SecondaryButton onClick={onClose}>Cerrar</SecondaryButton>
+        <SecondaryButton onClick={discard}>{created === null ? 'Cancelar' : 'Eliminar cuenta'}</SecondaryButton>
+        {created === null && (
+          <PrimaryButton onClick={create} disabled={name.trim().length === 0 || installed === false}>
+            Crear e iniciar sesión
+          </PrimaryButton>
+        )}
+        {created !== null && url !== null && (
+          <PrimaryButton onClick={submit} disabled={code.trim().length === 0 || busy || secondsLeft === 0}>
+            Terminar
+          </PrimaryButton>
+        )}
+        {created !== null && (url === null || secondsLeft === 0) && !busy && <PrimaryButton onClick={() => start(created)}>Reintentar</PrimaryButton>}
       </div>
     </>
   );

@@ -5,7 +5,7 @@
 import type { GitParams, GitSnapshot, GitSwitchParams } from './git';
 import type { WorktreeCreateParams, WorktreeMergeBaseParams, WorktreeRemoveResult } from './worktree';
 import type { GhAutoMergeParams, GhPrUpdate, GhRunActionParams, GhRunsParams, GhRunsSnapshot, GhSnapshot, GhWatchParams } from './gh';
-import type { AccountCreateParams, AccountInfo, AccountProviderId, CliLoginStart, CodexLoginOutcome, EmbeddedLoginResult } from './accounts';
+import type { AccountCreateParams, AccountInfo, AccountProviderId, AgyLoginStart, CliLoginStart, CodexLoginOutcome, EmbeddedLoginResult } from './accounts';
 import type { ProviderModel } from './providers';
 import type { AgyUsageSnapshot } from './usage';
 import type { MageEvent, PermissionDecision, SlashCommandInfo } from './events';
@@ -142,6 +142,9 @@ export const IpcChannel = {
   // Login oficial de ChatGPT de una cuenta de Codex por su CLI.
   CodexLoginStart: 'accounts:codex-login:start',
   CodexLoginCancel: 'accounts:codex-login:cancel',
+  AgyLoginStart: 'accounts:agy-login:start',
+  AgyLoginSubmit: 'accounts:agy-login:submit',
+  AgyLoginCancel: 'accounts:agy-login:cancel',
   CodexAppsRead: 'accounts:codex-apps:read',
   CodexInstalled: 'engine:codexInstalled',
   // Uso de la suscripcion de agy («/usage», gratis).
@@ -837,8 +840,12 @@ export interface MageApi {
   cancelCodexLogin(): Promise<void>;
   readCodexApps(configDir: string): Promise<CodexAccountMetadata>;
   isCodexInstalled(): Promise<boolean>;
-  // Uso de la suscripcion de agy («/usage»): grupos y ventanas, o el motivo por el que no hay.
-  readAgyUsage(): Promise<AgyUsageSnapshot>;
+  // Login de una cuenta de agy por suscripcion (dos pasos: la URL de Google y el codigo que da su web).
+  startAgyLogin(configDir: string): Promise<AgyLoginStart>;
+  submitAgyLoginCode(code: string): Promise<CodexLoginOutcome>;
+  cancelAgyLogin(): Promise<void>;
+  // Uso de la suscripcion de una cuenta de agy («/usage»): grupos y ventanas, o el motivo por el que no hay.
+  readAgyUsage(configDir: string): Promise<AgyUsageSnapshot>;
   // Modos de permiso leidos de cada CLI; null en el que no contesto (cae a la lista de Mage).
   listPermissionModes(): Promise<PermissionModesByProviderView>;
   // Selector de carpeta de proyecto (cwd de una pestana); null si el usuario cancela.

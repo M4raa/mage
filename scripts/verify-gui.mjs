@@ -1820,6 +1820,27 @@ const CHECKS = [
     },
   },
   {
+    // Alta de una cuenta de agy por suscripcion: pide un nombre y arranca el login (URL de Google + codigo) al crearla.
+    // Aqui NO se crea (lanzaria agy y abriria el navegador): se mide el formulario y que el boton espera al nombre.
+    name: 'Cuentas: añadir una de agy por suscripción pide nombre y avisa de que es un perfil propio',
+    async run(page) {
+      await page.getByRole('button', { name: 'Añadir cuenta' }).first().click();
+      const dialog = page.locator(MODAL).first();
+      await dialog.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      await dialog.getByRole('button', { name: 'Google · agy', exact: true }).click();
+      await page.waitForTimeout(CONFIG.settleMs);
+      const crear = dialog.getByRole('button', { name: 'Crear e iniciar sesión', exact: true });
+      await crear.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      const antes = await crear.isDisabled();
+      await dialog.getByPlaceholder('p.ej. trabajo').fill('vg-prueba');
+      const despues = await crear.isDisabled();
+      const texto = (await dialog.innerText()).replace(/\s+/g, ' ');
+      const closed = await closeDialog(page);
+      const ok = antes && !despues && texto.includes('perfil propio') && texto.includes('independiente de la sesión de agy de tu equipo') && closed === 0;
+      return { ok, detail: JSON.stringify({ antes, despues, perfilPropio: texto.includes('perfil propio'), cerrado: closed === 0 }) };
+    },
+  },
+  {
     // Grupo H (respuesta 38): en una pestaña de Codex o agy, Inspector › Instrucciones dice que el CLAUDE.md
     // del proyecto se le pasa como AGENTS.md / GEMINI.md, y deja de decirlo cuando el proyecto tiene el suyo.
     // Conversacion temporal SIN mensaje (no se lanza ningun CLI); el CLAUDE.md va en su carpeta temporal.

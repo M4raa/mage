@@ -3,11 +3,11 @@
 //   - cli-oauth: login de Claude Code por su CLI (el de siempre).
 //   - codex-login: login de ChatGPT por `codex app-server` (sin verificar).
 //   - api-key: nombre + clave; la clave sube una vez y se cifra en main.
-//   - external: la suscripcion de agy, que vive fuera de Mage (una sola).
+//   - agy-login: login de la suscripcion de agy en un perfil propio (URL de Google + codigo que da su web).
 //   - endpoint: un servidor local o compatible con OpenAI (IP:puerto), que va por el runtime propio de Mage.
 
 export type AccountVendor = 'anthropic' | 'openai' | 'google' | 'local';
-export type AccountKindFlow = 'cli-oauth' | 'codex-login' | 'api-key' | 'external' | 'endpoint';
+export type AccountKindFlow = 'cli-oauth' | 'codex-login' | 'api-key' | 'agy-login' | 'endpoint';
 
 export interface AccountKindOption {
   readonly vendor: AccountVendor;
@@ -30,7 +30,7 @@ export const ACCOUNT_KINDS: readonly AccountKindOption[] = [
   { vendor: 'anthropic', payment: 'api-key', providerId: 'claude', flow: 'api-key', label: 'Clave de API', unverified: false },
   { vendor: 'openai', payment: 'subscription', providerId: 'codex', flow: 'codex-login', label: 'Suscripción (ChatGPT)', unverified: false },
   { vendor: 'openai', payment: 'api-key', providerId: 'codex', flow: 'api-key', label: 'Clave de API', unverified: false },
-  { vendor: 'google', payment: 'subscription', providerId: 'agy', flow: 'external', label: 'Suscripción', unverified: false },
+  { vendor: 'google', payment: 'subscription', providerId: 'agy', flow: 'agy-login', label: 'Suscripción', unverified: false },
   { vendor: 'google', payment: 'api-key', providerId: 'agy', flow: 'api-key', label: 'Clave de API (Gemini)', unverified: false },
   { vendor: 'local', payment: 'endpoint', providerId: null, flow: 'endpoint', label: 'Servidor local', unverified: false },
 ];

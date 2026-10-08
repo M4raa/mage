@@ -12,8 +12,11 @@ import { ACCOUNT_NAME_PATTERN } from './accountService';
 //     las carpetas compartidas), en el que NUNCA se inicia sesion. Solo esta cuenta recibe su clave.
 //   - Codex: un `CODEX_HOME` propio, `~/.codex-<nombre>`. La de suscripcion guarda alli su `auth.json`
 //     (lo escribe el CLI al iniciar sesion); la de API no tiene `auth.json`: su clave va por el entorno.
-//   - agy · API: un perfil propio (`USERPROFILE`) en `userData/agy-accounts/<nombre>`. La suscripcion
-//     de agy no se aisla por carpeta (su login vive fuera, medido en 1.2.14) y sigue siendo una sola.
+//   - agy: un perfil propio (`USERPROFILE`) en `userData/agy-accounts/<nombre>`. La de clave lleva su clave; la de
+//     suscripcion guarda su login en ESE perfil (`.gemini/antigravity-cli/antigravity-oauth-token`) porque Mage
+//     lanza agy con `SSH_CONNECTION`, lo que le hace usar almacenamiento de token en fichero en vez del
+//     Administrador de credenciales de Windows (medido en agy 1.3.1: sin la variable el login es global).
+//     Ver `spike/agy-login-spike.mjs`.
 // Las claves viven cifradas en la boveda (`SecretStore`); aqui solo se guarda QUE cuentas hay.
 
 export interface ProviderAccountEntry {
@@ -60,9 +63,11 @@ const CODEX_AUTH_FILE = 'auth.json';
 // Nombre del perfil privado de una cuenta de Claude (AccountService): factura como su cuenta.
 const PRIVATE_PROFILE_DIR = 'mage-private';
 
-// Que celdas de la matriz se dan de alta aqui. La suscripcion de Claude va por AccountService (login del
-// CLI) y la de agy no se crea: es una sola y vive fuera de Mage.
-const CREATABLE: readonly string[] = ['claude:api-key', 'codex:subscription', 'codex:api-key', 'agy:api-key'];
+// Que celdas de la matriz se dan de alta aqui. La suscripcion de Claude va por AccountService (login del CLI).
+const CREATABLE: readonly string[] = ['claude:api-key', 'codex:subscription', 'codex:api-key', 'agy:subscription', 'agy:api-key'];
+
+// Fichero donde agy guarda el token de una cuenta de suscripcion dentro de su perfil (medido en agy 1.3.1).
+export const AGY_TOKEN_PARTS = ['.gemini', 'antigravity-cli', 'antigravity-oauth-token'] as const;
 
 export function accountApiKeySecretId(providerId: AccountProviderId, home: string): string {
   return `account-api-key:${providerId}:${home}`;
@@ -154,7 +159,7 @@ export class ProviderAccountService {
       authKind: entry.authKind,
       email: null,
       org: null,
-      loginStatus: entry.authKind === 'api-key' ? this.keyStatus(entry) : this.codexLoginStatus(entry.home),
+      loginStatus: entry.authKind === 'api-key' ? this.keyStatus(entry) : this.subscriptionLoginStatus(entry),
       expiresAt: null,
       defaultModel: null,
     };
@@ -164,9 +169,10 @@ export class ProviderAccountService {
     return this.deps.vault.has(accountApiKeySecretId(entry.providerId, entry.home)) ? 'logged_in' : 'logged_out';
   }
 
-  private codexLoginStatus(home: string): LoginStatus {
-    // Primera foto local. AccountsList la confirma con account/read antes de responder al renderer.
-    return this.deps.exists(join(home, CODEX_AUTH_FILE)) ? 'logged_in' : 'logged_out';
+  // Primera foto local. En Codex, AccountsList la confirma con account/read antes de responder al renderer.
+  private subscriptionLoginStatus(entry: ProviderAccountEntry): LoginStatus {
+    const proof = entry.providerId === 'agy' ? join(entry.home, ...AGY_TOKEN_PARTS) : join(entry.home, CODEX_AUTH_FILE);
+    return this.deps.exists(proof) ? 'logged_in' : 'logged_out';
   }
 
   // Un fichero corrupto LANZA: leerlo como vacio haria que la siguiente alta lo sobrescribiera y Mage

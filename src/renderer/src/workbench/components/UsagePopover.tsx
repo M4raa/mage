@@ -11,7 +11,7 @@ import type { Account } from '../types';
 export function UsagePopover(): React.JSX.Element {
   const accounts = useWorkbenchStore((s) => s.accounts);
   const usageByAccount = useWorkbenchStore((s) => s.usageByAccount);
-  const agyUsage = useWorkbenchStore((s) => s.agyUsage);
+  const agyUsageByAccount = useWorkbenchStore((s) => s.agyUsageByAccount);
   const now = Date.now();
 
   return (
@@ -21,7 +21,7 @@ export function UsagePopover(): React.JSX.Element {
     >
       <div className="text-[9.5px] font-bold tracking-[.08em] text-mg-ter">USO GENERAL</div>
       {accounts.map((a) => (
-        <AccountUsageRow key={a.id} account={a} info={usageByAccount[a.id] ?? null} agy={a.providerId === 'agy' ? agyUsage : undefined} now={now} />
+        <AccountUsageRow key={a.id} account={a} info={usageByAccount[a.id] ?? null} agy={a.providerId === 'agy' ? (agyUsageByAccount[a.id] ?? null) : undefined} now={now} />
       ))}
     </div>
   );

@@ -73,7 +73,7 @@ export function UsagePanel(): React.JSX.Element {
 
       {account.apiBilled && account.providerId === 'claude' && <ApiUsageSection snapshot={usage?.apiUsage ?? null} />}
       {usage !== null && !account.apiBilled && <UsageBody account={account} usage={usage} />}
-      {account.providerId === 'agy' && <AgyUsageSection okColor={account.accent.base} />}
+      {account.providerId === 'agy' && <AgyUsageSection accountId={account.id} okColor={account.accent.base} />}
     </div>
   );
 }
@@ -194,15 +194,15 @@ function severityColor(severity: UsageSeverity, okColor: string): string {
 
 // Suscripcion de agy (M9): su `/usage` es gratis (medido en 1.2.14). Solo se pinta si agy contesta;
 // sin agy instalado, nada. Se pide al abrir el panel y con su propio boton (main cachea 180 s).
-function AgyUsageSection({ okColor }: { readonly okColor: string }): React.JSX.Element | null {
+function AgyUsageSection({ accountId, okColor }: { readonly accountId: string; readonly okColor: string }): React.JSX.Element | null {
   const [snapshot, setSnapshot] = useState<AgyUsageSnapshot | null>(null);
   const load = (): void => {
     window.mage
-      .readAgyUsage()
+      .readAgyUsage(accountId)
       .then(setSnapshot)
       .catch((err: unknown) => setSnapshot({ status: 'unavailable', reason: err instanceof Error ? err.message : String(err), fetchedAt: Date.now() }));
   };
-  useEffect(load, []);
+  useEffect(load, [accountId]);
   if (snapshot === null || snapshot.status !== 'ok' || snapshot.groups.length === 0) return null;
   const now = Date.now();
   return (

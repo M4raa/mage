@@ -77,8 +77,21 @@ describe('ProviderAccountService', () => {
     expect(account).toMatchObject({ configDir: join(USER_DATA, 'agy-accounts', 'gem'), name: 'agy-gem', providerId: 'agy', authKind: 'api-key' });
   });
 
+  it('create_agySuscripcion_perfilPropioSinSesionHastaQueExisteElFicheroDeToken', () => {
+    const { service, files } = setup();
+
+    const account = service.create({ providerId: 'agy', authKind: 'subscription', name: 'personal' });
+    const home = join(USER_DATA, 'agy-accounts', 'personal');
+    const before = service.list([]).find((a) => a.configDir === home);
+    files.set(join(home, '.gemini', 'antigravity-cli', 'antigravity-oauth-token'), 'x');
+    const after = service.list([]).find((a) => a.configDir === home);
+
+    expect(account).toMatchObject({ configDir: home, name: 'agy-personal', providerId: 'agy', authKind: 'subscription', loginStatus: 'logged_out' });
+    expect(before?.loginStatus).toBe('logged_out');
+    expect(after?.loginStatus).toBe('logged_in');
+  });
+
   it.each([
-    [{ providerId: 'agy', authKind: 'subscription', name: 'x' }, /no se da de alta/],
     [{ providerId: 'claude', authKind: 'subscription', name: 'x' }, /no se da de alta/],
     [{ providerId: 'codex', authKind: 'api-key', name: 'x' }, /Falta la clave/],
     [{ providerId: 'codex', authKind: 'api-key', name: '1mal' }, /Nombre de cuenta invalido/],

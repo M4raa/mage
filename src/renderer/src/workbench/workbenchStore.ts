@@ -164,8 +164,8 @@ export interface WorkbenchState extends PrState, PrActions {
   readonly usageByAccount: Readonly<Record<string, UsageInfo | null>>;
   // Ultimo error de consulta de uso por cuenta (p.ej. "sin login"), para mostrarlo en el dashboard.
   readonly usageErrorByAccount: Readonly<Record<string, string | null>>;
-  // `/usage` de la suscripción de agy (no tiene ventanas de Mage: su CLI da cuotas por grupo de modelos).
-  readonly agyUsage: AgyUsageSnapshot | null;
+  // `/usage` de cada cuenta de agy por suscripción (su CLI da cuotas por grupo de modelos, no ventanas de Mage), por id de cuenta.
+  readonly agyUsageByAccount: Readonly<Record<string, AgyUsageSnapshot>>;
   // Estado del servicio de Claude (global). null mientras no se ha cargado.
   readonly status: StatusInfo | null;
 
@@ -1176,7 +1176,7 @@ export function createWorkbenchStore(mage: MageClient) {
 
     usageByAccount: {},
     usageErrorByAccount: {},
-    agyUsage: null,
+    agyUsageByAccount: {},
     permissionModes: null,
     status: null,
 
@@ -2139,7 +2139,7 @@ export function createWorkbenchStore(mage: MageClient) {
       // aparte en el panel, por su `/usage`).
       const account = get().accounts.find((a) => a.id === configDir);
       if (account !== undefined && account.providerId === 'agy') {
-        if (!account.apiBilled) await refreshAgyUsage(set);
+        if (!account.apiBilled) await refreshAgyUsage(set, configDir);
         return;
       }
       try {
@@ -2958,9 +2958,9 @@ function settleElicitation(state: WorkbenchState, tabId: string, requestId: stri
 }
 
 // Uso de la suscripción de agy (su `/usage`, gratis; main cachea 180 s). Un fallo queda como `unavailable`.
-async function refreshAgyUsage(set: SetFn): Promise<void> {
-  const agyUsage = await window.mage.readAgyUsage().catch((err: unknown): AgyUsageSnapshot => ({ status: 'unavailable', reason: describeError(err), fetchedAt: Date.now() }));
-  set(() => ({ agyUsage }));
+async function refreshAgyUsage(set: SetFn, accountId: string): Promise<void> {
+  const snapshot = await window.mage.readAgyUsage(accountId).catch((err: unknown): AgyUsageSnapshot => ({ status: 'unavailable', reason: describeError(err), fetchedAt: Date.now() }));
+  set((s) => ({ agyUsageByAccount: { ...s.agyUsageByAccount, [accountId]: snapshot } }));
 }
 
 // Migra la conversación de una pestaña a una cuenta de otro proveedor (o de otra cuenta de Codex/agy) y la reabre
