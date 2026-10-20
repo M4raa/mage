@@ -29,7 +29,7 @@ const OUTPUT = path.join(ROOT, 'THIRD-PARTY-NOTICES.txt');
 const BUNDLE_MANIFEST = path.join(ROOT, 'third-party-bundle.json');
 // Nombres de fichero de licencia, en orden de preferencia. `LICENSE` antes que `README` siempre: un
 // README puede citar la licencia de otra cosa.
-const LICENSE_FILES = ['LICENSE', 'LICENSE.md', 'LICENSE.txt', 'LICENCE', 'LICENCE.md', 'license', 'COPYING', 'COPYING.txt'];
+const LICENSE_FILES = ['LICENSE', 'LICENSE.md', 'LICENSE.txt', 'LICENCE', 'LICENCE.md', 'license', 'license.md', 'license.txt', 'COPYING', 'COPYING.txt'];
 
 function main() {
   const packages = collectPackages();

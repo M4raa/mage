@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
 import { homedir, platform } from 'node:os';
-import { join } from 'node:path';
+import { win32 } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { firstExistingPath } from './agentBinaryResolver';
 
@@ -60,9 +60,9 @@ function platformCandidates(deps: CodexResolverDeps): readonly string[] {
   if (deps.platform !== 'win32') return [];
   const candidates: string[] = [];
   if (deps.localAppData !== undefined && deps.localAppData.length > 0) {
-    candidates.push(join(deps.localAppData, ...WINDOWS_LOCAL_APPDATA_PARTS));
+    candidates.push(win32.join(deps.localAppData, ...WINDOWS_LOCAL_APPDATA_PARTS));
   }
-  candidates.push(join(deps.homedir, ...WINDOWS_HOME_PARTS));
+  candidates.push(win32.join(deps.homedir, ...WINDOWS_HOME_PARTS));
   return candidates;
 }
 

@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { CodexHistoryService } from './codexHistory';
 import type { ConversationsDeps } from './conversationsService';
@@ -12,11 +12,11 @@ const DAY = join(HOME, 'sessions', '2026', '10', '05');
 // Sistema de ficheros en memoria: ruta -> contenido (los directorios salen de las rutas).
 function fakeDeps(files: Record<string, string>): ConversationsDeps {
   const paths = Object.keys(files);
-  const children = (dir: string): string[] => [...new Set(paths.filter((p) => p.startsWith(`${dir}\\`)).map((p) => p.slice(dir.length + 1).split('\\')[0]!))];
+  const children = (dir: string): string[] => [...new Set(paths.filter((p) => p.startsWith(`${dir}${sep}`)).map((p) => p.slice(dir.length + 1).split(sep)[0]!))];
   return {
-    exists: (path) => paths.some((p) => p === path || p.startsWith(`${path}\\`)),
+    exists: (path) => paths.some((p) => p === path || p.startsWith(`${path}${sep}`)),
     listDir: children,
-    isDirectory: (path) => paths.some((p) => p.startsWith(`${path}\\`)),
+    isDirectory: (path) => paths.some((p) => p.startsWith(`${path}${sep}`)),
     statFile: (path) => ({ mtimeMs: 1000, sizeBytes: files[path]!.length }),
     readPrefix: (path, max) => files[path]!.slice(0, max),
     readSuffix: (path, max) => files[path]!.slice(-max),

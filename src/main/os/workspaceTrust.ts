@@ -16,7 +16,9 @@ import { normalize, resolve } from 'node:path';
 // leer lo que el usuario ya autorizo alli. En Windows ademas se compara sin distinguir mayusculas.
 export function trustKey(folder: string): string {
   if (folder.trim().length === 0) throw new Error(`Carpeta vacia: ${JSON.stringify(folder)}`);
-  const forward = normalize(folder).replace(/\\/g, '/');
+  const normalized = normalize(folder);
+  // En POSIX una barra invertida puede formar parte del nombre de una carpeta.
+  const forward = process.platform === 'win32' ? normalized.replace(/\\/g, '/') : normalized;
   const trimmed = forward.replace(/\/+$/, '');
   // La barra final se quita SALVO en una raiz. `C:/` -> `C:` seria una ruta relativa a la unidad en
   // Windows (`C:` significa "el directorio actual de C:"), y `/` -> `` dejaria la raiz POSIX sin clave.
@@ -44,10 +46,9 @@ export function ancestorKeys(folder: string): readonly string[] {
   return keys;
 }
 
-// Comparacion insensible a mayusculas: en Windows `C:/Repo` y `c:/repo` son la MISMA carpeta, y una
-// confianza que no se reconoce a si misma segun como se escribiera la ruta no es una confianza.
+// Windows ignora mayusculas; en POSIX autorizar Repo nunca debe autorizar tambien repo.
 function sameKey(a: string, b: string): boolean {
-  return a.toLowerCase() === b.toLowerCase();
+  return process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b;
 }
 
 // Confia esta carpeta, o cualquiera de sus padres, en `trusted`?

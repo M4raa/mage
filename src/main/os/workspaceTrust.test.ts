@@ -1,16 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import { ancestorKeys, isTrusted, readCliTrustedFolders, trustKey, trustedProjectKeys } from './workspaceTrust';
 
+const ROOT = process.platform === 'win32' ? 'C:/' : '/';
+const PROJECT = `${ROOT}sourcecode/mage`;
+
 // Frontera de seguridad: decide si se lanza un agente dentro de una carpeta, y lanzarlo ejecuta lo que
 // esa carpeta traiga. Los casos que importan aqui no son el happy path sino los bordes por donde se
 // cuela un "si" que nadie dio: rutas escritas de otra forma, ficheros a medio escribir, formas que no
 // encajan. En todos ellos el lado seguro es NO confiar (o volver a preguntar), nunca al reves.
 
 describe('trustKey', () => {
-  it('trustKey_rutaConBarrasInvertidas_lasPasaABarrasNormales', () => {
+  it('trustKey_rutaConBarrasInvertidas_soloLasConvierteEnWindows', () => {
     // Es la forma que usa el CLI en su config (`normalizePathForConfigKey`), y por eso Mage puede leer
     // lo que el usuario ya autorizo alli.
-    expect(trustKey('C:\\sourcecode\\mage')).toBe('C:/sourcecode/mage');
+    expect(trustKey('C:\\sourcecode\\mage')).toBe(process.platform === 'win32' ? 'C:/sourcecode/mage' : 'C:\\sourcecode\\mage');
   });
 
   it('trustKey_rutaConBarraFinal_laQuita', () => {
@@ -28,15 +31,16 @@ describe('trustKey', () => {
 
 describe('ancestorKeys', () => {
   it('ancestorKeys_incluyeLaCarpetaYTodosSusPadres', () => {
-    const keys = ancestorKeys('C:/sourcecode/mage/src');
+    const keys = ancestorKeys(`${PROJECT}/src`);
 
-    expect(keys[0]).toBe('C:/sourcecode/mage/src');
-    expect(keys).toContain('C:/sourcecode/mage');
-    expect(keys).toContain('C:/sourcecode');
+    expect(keys[0]).toBe(`${PROJECT}/src`);
+    expect(keys).toContain(PROJECT);
+    expect(keys).toContain(`${ROOT}sourcecode`);
+    expect(keys.at(-1)).toBe(ROOT);
   });
 
   it('ancestorKeys_terminaEnLaRaiz_sinRepetirla', () => {
-    const keys = ancestorKeys('C:/sourcecode/mage');
+    const keys = ancestorKeys(PROJECT);
 
     expect(new Set(keys).size).toBe(keys.length);
     expect(keys.length).toBeLessThan(64);
@@ -50,28 +54,32 @@ describe('isTrusted', () => {
 
   it('isTrusted_subcarpetaDeUnaAutorizada_si', () => {
     // Autorizar un directorio de trabajo vale para los repos que cuelgan de el, igual que en el CLI.
-    expect(isTrusted('C:/sourcecode/mage/src/main', ['C:/sourcecode'])).toBe(true);
+    expect(isTrusted(`${PROJECT}/src/main`, [`${ROOT}sourcecode`])).toBe(true);
   });
 
   it('isTrusted_carpetaPadreDeUnaAutorizada_NO', () => {
     // Al reves NO se hereda: confiar en un repo no autoriza todo lo que hay junto a el.
-    expect(isTrusted('C:/sourcecode', ['C:/sourcecode/mage'])).toBe(false);
+    expect(isTrusted(`${ROOT}sourcecode`, [PROJECT])).toBe(false);
   });
 
   it('isTrusted_hermanaConPrefijoComun_NO', () => {
     // El borde clasico de comparar rutas por prefijo de cadena: "C:/src/mage-malo" empieza por
     // "C:/src/mage". Se compara por SEGMENTOS, asi que no cuela.
-    expect(isTrusted('C:/sourcecode/mage-malo', ['C:/sourcecode/mage'])).toBe(false);
+    expect(isTrusted(`${PROJECT}-malo`, [PROJECT])).toBe(false);
   });
 
-  it('isTrusted_entradaGuardadaConBarrasInvertidas_si', () => {
+  it('isTrusted_entradaGuardadaConBarrasInvertidas_soloEquivaleEnWindows', () => {
     // Es el caso REAL: el renderer guarda la ruta tal cual la dio el selector de carpeta de Windows.
-    expect(isTrusted('C:/sourcecode/mage', ['C:\\sourcecode\\mage'])).toBe(true);
+    expect(isTrusted('C:/sourcecode/mage', ['C:\\sourcecode\\mage'])).toBe(process.platform === 'win32');
   });
 
-  it('isTrusted_mayusculasDistintas_si', () => {
-    // En Windows es la misma carpeta.
-    expect(isTrusted('c:/sourcecode/MAGE', ['C:/SourceCode/mage'])).toBe(true);
+  it('isTrusted_mayusculasDistintas_soloEquivaleEnWindows', () => {
+    // Linux puede tener ambas carpetas: autorizar una no autoriza la otra.
+    expect(isTrusted(`${ROOT}sourcecode/MAGE`, [PROJECT])).toBe(process.platform === 'win32');
+  });
+
+  it.skipIf(process.platform === 'win32')('isTrusted_barraInvertidaEnNombrePosix_noAutorizaOtraCarpeta', () => {
+    expect(isTrusted('/sourcecode/mage\\private', ['/sourcecode/mage/private'])).toBe(false);
   });
 
   it('isTrusted_listaVacia_no', () => {
