@@ -103,6 +103,8 @@ mac:
   artifactName: mage-setup-beta-${version}-${arch}.${ext}
 
 linux:
+  maintainer: M4raa <119252250+M4raa@users.noreply.github.com>
+  syncDesktopName: true
   target:
     - target: AppImage
       arch: [x64]

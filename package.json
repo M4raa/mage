@@ -5,6 +5,8 @@
   "type": "module",
   "main": "./out/main/index.js",
   "author": "M4raa",
+  "homepage": "https://github.com/M4raa/mage",
+  "desktopName": "mage.desktop",
   "license": "MIT",
   "private": true,
   "packageManager": "pnpm@11.5.2",
