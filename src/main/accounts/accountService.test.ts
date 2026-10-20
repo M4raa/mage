@@ -343,7 +343,7 @@ describe('AccountService.listAccounts (estado de login)', () => {
         listHome: () => ['.claude'],
         now: () => 1_000,
         exists: (p) => p === creds,
-        readJson: jsonFrom({ [creds]: { claudeAiOauth: { expiresAt: 5_000 } } }),
+        readJson: jsonFrom({ [creds]: { claudeAiOauth: { accessToken: 'a', refreshToken: 'r', expiresAt: 5_000 } } }),
       }),
     );
 
@@ -360,7 +360,7 @@ describe('AccountService.listAccounts (estado de login)', () => {
         listHome: () => ['.claude'],
         now: () => 10_000,
         exists: (p) => p === creds,
-        readJson: jsonFrom({ [creds]: { claudeAiOauth: { expiresAt: 5_000 } } }),
+        readJson: jsonFrom({ [creds]: { claudeAiOauth: { accessToken: 'a', refreshToken: 'r', expiresAt: 5_000 } } }),
       }),
     );
 
@@ -373,13 +373,30 @@ describe('AccountService.listAccounts (estado de login)', () => {
       deps({
         listHome: () => ['.claude'],
         exists: (p) => p === creds,
-        readJson: jsonFrom({ [creds]: { claudeAiOauth: {} } }),
+        readJson: jsonFrom({ [creds]: { claudeAiOauth: { accessToken: 'a', refreshToken: 'r' } } }),
       }),
     );
 
     const main = service.listAccounts()[0]!;
 
     expect(main.loginStatus).toBe('logged_in');
+    expect(main.expiresAt).toBeNull();
+  });
+
+  // El CLI vacia el fichero al fallar un refresh: debe verse sin login para que la UI ofrezca entrar.
+  it('login_credentialsEmptiedByCli_loggedOut', () => {
+    const creds = join(HOME, '.claude', '.credentials.json');
+    const service = new AccountService(
+      deps({
+        listHome: () => ['.claude'],
+        exists: (p) => p === creds,
+        readJson: jsonFrom({ [creds]: { claudeAiOauth: { accessToken: '', refreshToken: '', expiresAt: 0 } } }),
+      }),
+    );
+
+    const main = service.listAccounts()[0]!;
+
+    expect(main.loginStatus).toBe('logged_out');
     expect(main.expiresAt).toBeNull();
   });
 });

@@ -300,7 +300,9 @@ export class AccountService {
     // Se reutiliza el lector de la convergencia (el unico sitio que conoce el formato del fichero de
     // credenciales) en vez de duplicarlo aqui: saca metadata, nunca el token.
     const side = this.readCredentialsSide(join(dir, CREDENTIALS_FILE));
-    if (!side.exists) return { status: 'logged_out', expiresAt: null };
+    // Sin tokens = sin login, aunque el fichero exista: al fallar un refresh el CLI lo deja VACIO, y
+    // darlo por bueno ocultaba el boton de iniciar sesion (el unico camino para recuperar la cuenta).
+    if (!side.exists || !side.hasTokens) return { status: 'logged_out', expiresAt: null };
     const { expiresAt } = side;
     if (expiresAt === null) return { status: 'logged_in', expiresAt: null };
     const status: LoginStatus = expiresAt < this.deps.now() ? 'expired' : 'logged_in';
