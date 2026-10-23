@@ -108,7 +108,11 @@ export class ClaudeAdapter implements ProviderAdapter {
     // escrita alli: la clave de una cuenta de Claude por API se pone DESPUES del saneado y solo en el hijo
     // de esa cuenta; las de suscripcion no reciben ninguna.
     const apiKey = this.resolveApiKey(params.accountDir);
+    // #53 (medido en 2.1.309, spike/f1-artifact.mjs): en modo SDK el CLI apaga Artifact por defecto
+    // («sdk_default_off») salvo con CLAUDE_CODE_ARTIFACT verdadero. Va ANTES del env heredado: si el
+    // usuario la fijó (p. ej. a 0), manda la suya.
     const env: NodeJS.ProcessEnv = {
+      CLAUDE_CODE_ARTIFACT: '1',
       ...scrubAgentEnv(process.env),
       CLAUDE_CONFIG_DIR: params.accountDir,
       ...shared.env,

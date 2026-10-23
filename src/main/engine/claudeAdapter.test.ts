@@ -193,6 +193,27 @@ describe('ClaudeAdapter', () => {
       expect(plan.env.CLAUDE_CONFIG_DIR).toBe('/home/u/.claude-p');
     });
 
+    it('buildSpawnPlan_sinPreferenciaDelUsuario_activaArtifact', () => {
+      const original = process.env.CLAUDE_CODE_ARTIFACT;
+      delete process.env.CLAUDE_CODE_ARTIFACT;
+
+      const plan = adapter.buildSpawnPlan(launch);
+
+      if (original !== undefined) process.env.CLAUDE_CODE_ARTIFACT = original;
+      expect(plan.env.CLAUDE_CODE_ARTIFACT).toBe('1');
+    });
+
+    it('buildSpawnPlan_usuarioApagaArtifact_seRespeta', () => {
+      const original = process.env.CLAUDE_CODE_ARTIFACT;
+      process.env.CLAUDE_CODE_ARTIFACT = '0';
+
+      const plan = adapter.buildSpawnPlan(launch);
+
+      if (original === undefined) delete process.env.CLAUDE_CODE_ARTIFACT;
+      else process.env.CLAUDE_CODE_ARTIFACT = original;
+      expect(plan.env.CLAUDE_CODE_ARTIFACT).toBe('0');
+    });
+
     it('buildSpawnPlan_args_includeSessionModelAndVerbose', () => {
       const plan = adapter.buildSpawnPlan(launch);
 
