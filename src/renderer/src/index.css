@@ -484,7 +484,6 @@ select:focus-visible,
   margin-right: 0.45em;
   color: var(--color-mg-ter);
 }
-.cm-mg-bullet,
 .cm-mg-ordinal {
   color: var(--color-mg-ter);
 }

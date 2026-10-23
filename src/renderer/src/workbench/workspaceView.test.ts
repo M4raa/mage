@@ -208,3 +208,17 @@ describe('toPersistedWorkspace + restoreTabs — PR vinculado (grupo D)', () => 
     expect(restored.tabs[0]).toMatchObject({ prNumber: 7, prDismissed: 3, prAutoFix: true });
   });
 });
+
+describe('toPersistedWorkspace + restoreTabs — worktree (#52)', () => {
+  it.each([true, false])('restoreTabs_eleccionWorktreeOff%s_sobreviveAlReinicio', (worktreeOff) => {
+    const persisted = toPersistedWorkspace([tab({ worktreeOff })], 'tab1', {});
+
+    expect(restoreTabs(persisted, new Set(['.claude'])).tabs[0]?.worktreeOff).toBe(worktreeOff);
+  });
+
+  it('restoreTabs_pestanaAntiguaSinCampo_noInventaEleccion', () => {
+    const persisted = toPersistedWorkspace([tab({})], 'tab1', {});
+
+    expect(restoreTabs(persisted, new Set(['.claude'])).tabs[0]?.worktreeOff).toBeUndefined();
+  });
+});

@@ -222,12 +222,20 @@ export class LoopbackCallback {
     });
   }
 
-  static listen(port: number | null, expectedState: string): Promise<LoopbackCallback> {
-    const server = createServer();
-    return new Promise((resolve, reject) => {
-      server.once('error', reject);
-      server.listen(port ?? 0, '127.0.0.1', () => resolve(new LoopbackCallback(server, expectedState)));
-    });
+  // A13: un puerto efímero puede caer en la lista de puertos bloqueados del navegador (en Windows el rango
+  // dinámico empieza en 1024, medido por dirección) y el redirect fallaría con «bad port». Se suelta y se
+  // pide otro, con intentos acotados. Un `callbackPort` explícito nunca se sustituye: error claro.
+  static async listen(port: number | null, expectedState: string, listen: LoopbackListen = listenLoopback): Promise<LoopbackCallback> {
+    if (port !== null && FETCH_BLOCKED_PORTS.has(port)) {
+      throw new Error(`El puerto OAuth ${port} (callbackPort del servidor) está bloqueado por el navegador; configura otro.`);
+    }
+    if (port !== null) return new LoopbackCallback(await listen(port), expectedState);
+    for (let attempt = 0; attempt < MAX_CALLBACK_LISTEN_ATTEMPTS; attempt++) {
+      const server = await listen(EPHEMERAL_PORT);
+      if (!FETCH_BLOCKED_PORTS.has((server.address() as AddressInfo).port)) return new LoopbackCallback(server, expectedState);
+      await closeServer(server);
+    }
+    throw new Error(`No se encontró un puerto OAuth permitido por el navegador tras ${MAX_CALLBACK_LISTEN_ATTEMPTS} intentos.`);
   }
 
   get redirectUrl(): string {
@@ -254,4 +262,37 @@ export class LoopbackCallback {
   close(): void {
     this.server.close();
   }
+}
+
+// Puertos que Fetch/Chromium rechazan («bad port»). Fetch Standard, «port blocking», consultado el
+// 24-10-2026: https://fetch.spec.whatwg.org/#port-blocking
+const FETCH_BLOCKED_PORTS: ReadonlySet<number> = new Set([
+  0, 1, 7, 9, 11, 13, 15, 17, 19, 20, 21, 22, 23, 25, 37, 42, 43, 53, 69, 77, 79, 87, 95, 101, 102, 103, 104, 109,
+  110, 111, 113, 115, 117, 119, 123, 135, 137, 139, 143, 161, 179, 389, 427, 465, 512, 513, 514, 515, 526, 530, 531,
+  532, 540, 548, 554, 556, 563, 587, 601, 636, 989, 990, 993, 995, 1719, 1720, 1723, 2049, 3659, 4045, 4190, 5060,
+  5061, 6000, 6566, 6665, 6666, 6667, 6668, 6669, 6679, 6697, 10080,
+]);
+// Intentos acotados: con ~80 puertos bloqueados entre ~64 000 efímeros, dos seguidos ya es improbable.
+const MAX_CALLBACK_LISTEN_ATTEMPTS = 8;
+const EPHEMERAL_PORT = 0;
+
+export type LoopbackListen = (port: number) => Promise<Server>;
+
+function listenLoopback(port: number): Promise<Server> {
+  const server = createServer();
+  return new Promise((resolve, reject) => {
+    const onError = (error: Error): void => {
+      server.close();
+      reject(error);
+    };
+    server.once('error', onError);
+    server.listen(port, '127.0.0.1', () => {
+      server.removeListener('error', onError);
+      resolve(server);
+    });
+  });
+}
+
+function closeServer(server: Server): Promise<void> {
+  return new Promise((resolve, reject) => server.close((error) => (error === undefined ? resolve() : reject(error))));
 }

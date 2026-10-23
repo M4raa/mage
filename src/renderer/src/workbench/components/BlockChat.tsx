@@ -35,6 +35,11 @@ export function BlockChat(): React.JSX.Element {
   // La pestaña de ESTE panel del centro (item 13): con el workspace dividido no tiene por que ser la
   // activa global. Sin division, `usePaneTabId` devuelve exactamente `activeTabId`.
   const activeTabId = usePaneTabId();
+  // #48: una conversacion reabierta sin bloques todavia esta leyendo su transcripcion: se dice.
+  const resumed = useWorkbenchStore((s) => s.tabs.find((tab) => tab.id === activeTabId)?.resumeSessionId !== undefined);
+  const useTranscript = usePaneTranscriptStore();
+  const transcriptFinal = useTranscript((s) => s.isFinal);
+  const transcriptError = useTranscript((s) => s.errorMessage);
   const allBlocks = useWorkbenchStore((s) => s.blocksByChat[activeTabId] ?? EMPTY);
   useHydrateFromTranscript();
   const accent = useWorkbenchStore((s) => {
@@ -66,6 +71,8 @@ export function BlockChat(): React.JSX.Element {
 
   if (blocks.length === 0 && !turnLive) {
     if (activeTabId.length === 0) return <NoConversationState />;
+    if (resumed && transcriptError !== null) return <ConversationLoadState text={`No se pudo cargar la conversación: ${transcriptError}`} />;
+    if (resumed && !transcriptFinal) return <ConversationLoadState text="Cargando conversación…" loading />;
     return <EmptyConversation />;
   }
 
@@ -188,6 +195,20 @@ function BrandConstellation(): React.JSX.Element {
           />
         ))}
       </svg>
+    </div>
+  );
+}
+
+// Estado de lectura de una conversacion reabierta (#48): nunca una superficie muda mientras carga o si falla.
+function ConversationLoadState({ text, loading = false }: { readonly text: string; readonly loading?: boolean }): React.JSX.Element {
+  return (
+    <div role="status" className="flex flex-1 items-center justify-center gap-2 p-[16px_22px] text-center text-mg-muted">
+      {loading && (
+        <span aria-hidden="true" className="animate-spin motion-reduce:animate-none">
+          <Icon name="refresh" size={16} />
+        </span>
+      )}
+      {text}
     </div>
   );
 }

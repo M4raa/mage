@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MageApi } from '@shared/ipc';
 import type { ConversationSummary } from '@shared/conversations';
 import { createWorkbenchStore, type ConversationFolderChoice } from './workbenchStore';
@@ -1223,7 +1223,7 @@ describe('requestAccountSwitch y continueInAccount', () => {
 
     expect(conColor).toBe('var(--mg-accent-4-base)');
     expect(store.getState().settings.accentByAccount).toEqual({});
-    expect(store.getState().accounts.find((a) => a.id === B)?.accent.base).toBe('var(--mg-accent-1-base)');
+    expect(store.getState().accounts.find((a) => a.id === B)?.accent.base).toBe('var(--mg-accent-0-base)'); // Default estable del identificador B, no su posición.
   });
 
   it('setActiveTab_pestanaDeOtraCuenta_cambiaCuentaActiva', () => {
@@ -1930,4 +1930,28 @@ it('R32_avisoDeCarpetaRecreada_seMuestraEnLaConversacion', async () => {
  store.setState({ tabs: [tab('a')], activeTabId: 'a', splitLayout: singleLeaf('a') });
  await store.getState().ensureSession('a');
  expect(store.getState().blocksByChat.a).toEqual(expect.arrayContaining([expect.objectContaining({ kind: 'system', text: 'Carpeta recreada; archivos anteriores perdidos' })]));
+});
+
+describe('R52 — worktree desactivado por defecto', () => {
+  afterEach(() => vi.useRealTimers());
+
+  it('newTab_sinEleccion_worktreeDesactivado', async () => {
+    const store = createWorkbenchStore(fakeMage({ saveWorkspace: async () => undefined }));
+
+    await store.getState().newTab({ accountId: '', cwd: '/fixture', model: 'local', provider: 'custom:fixture' });
+
+    expect(store.getState().tabs[0]?.worktreeOff).toBe(true);
+  });
+
+  it('setWorktreeOff_eleccionDelUsuario_seGuardaEnElWorkspace', async () => {
+    vi.useFakeTimers();
+    const saveWorkspace = vi.fn().mockResolvedValue(undefined);
+    const store = createWorkbenchStore(fakeMage({ saveWorkspace }));
+    store.setState({ tabs: [tab('a')], activeTabId: 'a', splitLayout: singleLeaf('a') });
+
+    store.getState().setWorktreeOff('a', false);
+    await vi.runAllTimersAsync();
+
+    expect(saveWorkspace).toHaveBeenLastCalledWith(expect.objectContaining({ tabs: [expect.objectContaining({ id: 'a', worktreeOff: false })] }));
+  });
 });

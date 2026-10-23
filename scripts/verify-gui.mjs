@@ -6252,7 +6252,7 @@ const CHECKS = [
     // nada: en una conversacion nueva en la raiz del repo la casilla «Worktree» sale marcada; el worktree
     // se crea por el mismo IPC que usa el arranque de la sesion; dentro, la fila enseña el chip y bloquea
     // el cambio de rama; y archivar (cerrar la pestaña) lo borra limpio y lo conserva con cambios.
-    name: 'Grupo D: worktree: casilla marcada, chip y rama bloqueada dentro, y archivar borra el limpio y conserva el sucio',
+    name: 'Grupo D: worktree: casilla desmarcada por defecto, chip y rama bloqueada dentro, y archivar borra el limpio y conserva el sucio',
     async run(page) {
       const repo = createTempGhRepo('main');
       if (repo === null) return { ok: true, detail: 'saltada: no hay git en esta maquina' };
@@ -6290,7 +6290,7 @@ const CHECKS = [
         const archivadoLimpio = await archivar(limpio.path);
         const ramas = spawnSync('git', ['branch', '--list', 'claude/*'], { cwd: repo, encoding: 'utf8', windowsHide: true }).stdout.trim();
         const ok =
-          casilla &&
+          !casilla &&
           limpio.branch === 'claude/arreglar-el-login' &&
           sucio.branch === 'claude/arreglar-el-login-2' &&
           rama.texto.includes('claude/arreglar-el-login') &&
@@ -6839,6 +6839,58 @@ const CHECKS = [
         medido.nombresCompletos.length === 2 &&
         medido.extensiones.join(' | ') === 'Plugins (1) | Skills (2)';
       return { ok, detail: JSON.stringify({ enElInspector, abiertoSolo, ...medido }) };
+    },
+  },
+  {
+    name: 'F1.11 R48: una conversación pendiente de cargar muestra indicador y, si falla, el error',
+    async run(page) {
+      await openTemporaryConversation(page);
+      await page.evaluate(() => { const dev = window.__mageDev; const id = dev.store.getState().activeTabId; dev.store.setState(s => ({ tabs: s.tabs.map(t => t.id === id ? { ...t, resumeSessionId: 'vg-carga-pendiente' } : t), blocksByChat: { ...s.blocksByChat, [id]: [] } })); dev.transcriptStoreFor(id).setState({ isFinal: false }); });
+      await page.getByRole('status').filter({ hasText: 'Cargando conversación' }).waitFor({ state: 'visible', timeout: 2500 });
+      // Un fallo de lectura se dice, no se disfraza de conversación vacía.
+      await page.evaluate(() => { const dev = window.__mageDev; dev.transcriptStoreFor(dev.store.getState().activeTabId).setState({ isFinal: true, errorMessage: 'vg-lectura-fallida' }); });
+      await page.getByRole('status').filter({ hasText: 'No se pudo cargar la conversación: vg-lectura-fallida' }).waitFor({ state: 'visible', timeout: 2500 });
+      return { ok: true, detail: 'Indicador visible mientras la lectura no es final y error visible si falla.' };
+    },
+  },
+  {
+    name: 'F1.11 R58: pregunta en otro split no roba el foco',
+    async run(page) {
+      await openTemporaryConversation(page);
+      await page.evaluate(() => { const store = window.__mageDev.store; const base = store.getState().tabs.find(t => t.id === store.getState().activeTabId); store.setState({ tabs: [{ ...base, id: 'vg-focus-a' }, { ...base, id: 'vg-focus-b' }], activeTabId: 'vg-focus-a', splitLayout: { kind: 'split', direction: 'row', ratio: 0.5, a: { kind: 'leaf', tabIds: ['vg-focus-a'], activeTabId: 'vg-focus-a' }, b: { kind: 'leaf', tabIds: ['vg-focus-b'], activeTabId: 'vg-focus-b' } } }); });
+      await page.locator('[data-pane-tab-id="vg-focus-a"] .cm-content').focus();
+      await page.keyboard.type('borrador en primer panel');
+      await page.evaluate(input => { const dev = window.__mageDev; dev.store.setState(state => dev.reduceEvent(state, 'vg-focus-b', { kind: 'permission_request', request: { requestId: 'vg-focus-question', toolUseId: 'vg-focus-tool', toolName: 'AskUserQuestion', input, description: null, requiresUserInteraction: true, displayName: 'AskUserQuestion' } })); }, ASK_USER_QUESTION_INPUT);
+      await waitForDockReady(page, '[data-question-dock="true"]');
+      const pane = await page.evaluate(() => document.activeElement?.closest('[data-pane-tab-id]')?.getAttribute('data-pane-tab-id'));
+      return { ok: pane === 'vg-focus-a', detail: JSON.stringify({ focusedPane: pane }) };
+    },
+  },
+  {
+    name: 'F1.11 R59: la pregunta conserva visible el final seguido del chat',
+    async run(page) {
+      await openTemporaryConversation(page);
+      await page.evaluate(() => { const store = window.__mageDev.store; const id = store.getState().activeTabId; store.setState(s => ({ blocksByChat: { ...s.blocksByChat, [id]: Array.from({ length: 32 }, (_, i) => ({ kind: 'user', id: 'vg-tail-' + i, text: 'Fila ' + i + '\n' + 'Contenido largo de prueba. '.repeat(20), time: '12:00', attachments: [] })) } })); });
+      await page.waitForTimeout(CONFIG.settleMs);
+      await page.evaluate(() => { const element = document.querySelector('[data-pane-tab-id] .overflow-y-auto'); element.scrollTop = element.scrollHeight; element.dispatchEvent(new Event('scroll')); });
+      await injectPermissionRequest(page, ASK_USER_QUESTION_INPUT, 'vg-tail-question');
+      await waitForDockReady(page, '[data-question-dock="true"]');
+      const gap = await page.evaluate(() => { const element = document.querySelector('[data-pane-tab-id] .overflow-y-auto'); return element.scrollHeight - element.scrollTop - element.clientHeight; });
+      return { ok: gap <= 3, detail: JSON.stringify({ bottomGap: gap }) };
+    },
+  },
+  {
+    name: 'F1.11 R60: Otra cosa participa en la navegación con flechas',
+    async run(page) {
+      await openTemporaryConversation(page);
+      await injectPermissionRequest(page, ASK_USER_QUESTION_INPUT, 'vg-other-keyboard');
+      await waitForDockReady(page, '[data-question-dock="true"]');
+      const dock = page.locator('[data-question-dock="true"]'); await dock.focus();
+      for (let i = 0; i < ASK_USER_QUESTION_INPUT.questions[0].options.length; i++) await page.keyboard.press('ArrowDown');
+      const other = await dock.getByRole('textbox', { name: 'Otra cosa' }).evaluate(element => element === document.activeElement);
+      await page.keyboard.press('ArrowUp');
+      const back = await dock.evaluate(element => element === document.activeElement);
+      return { ok: other && back, detail: JSON.stringify({ otherFocused: other, backToOptions: back }) };
     },
   },
   ...(process.argv.some(arg => arg.startsWith('--trust-stage=')) ? [{
@@ -8585,6 +8637,12 @@ async function measureProviderHistory(page, { home, sessionId, title, provider }
   await page.evaluate((id) => window.__mageDev.store.getState().setActiveAccount(id), home);
   await page.locator(`[data-history-session="${sessionId}"]`).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
   const listada = await page.evaluate((id) => document.querySelector(`[data-history-session="${id}"]`)?.textContent ?? '', sessionId);
+  const search = page.getByRole('textbox', { name: 'Buscar conversaciones', exact: true });
+  await search.fill(title);
+  await page.locator(`[data-history-session="${sessionId}"]`).waitFor({ state: 'visible' });
+  await search.fill('vg-sin-coincidencias-imposible');
+  await page.locator(`[data-history-session="${sessionId}"]`).waitFor({ state: 'hidden' });
+  await search.fill('');
   await page.evaluate((id) => {
     const store = window.__mageDev.store.getState();
     store.openConversation(store.conversationHistory.find((c) => c.sessionId === id));

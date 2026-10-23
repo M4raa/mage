@@ -1311,7 +1311,11 @@ export function createWorkbenchStore(mage: MageClient) {
 
     insertCommitPrompt: (tabId) => insertPromptIntoDraft(get, tabId, COMMIT_PROMPT),
 
-    setWorktreeOff: (tabId, off) => set((s) => ({ tabs: s.tabs.map((t) => (t.id === tabId ? { ...t, worktreeOff: off } : t)) })),
+    // #52: la eleccion se guarda en el workspace; sin persistir, un reinicio la devolvia al defecto.
+    setWorktreeOff: (tabId, off) => {
+      set((s) => ({ tabs: s.tabs.map((t) => (t.id === tabId ? { ...t, worktreeOff: off } : t)) }));
+      schedulePersist(mage, get);
+    },
 
     mergeBaseIntoWorktree: async (tabId, base) => {
       const tab = get().tabs.find((t) => t.id === tabId);
@@ -1745,8 +1749,8 @@ export function createWorkbenchStore(mage: MageClient) {
       set((s) => {
         // toAccountView repone el placeholder de uso; re-fusionamos el uso real ya conocido para no
         // parpadear a 0% mientras se re-descubren las cuentas (el placeholder solo queda si no hay dato).
-        const accounts = infos.map((infoItem, index) => {
-          const view = toAccountView(infoItem, index, s.settings.accentByAccount[infoItem.configDir]);
+        const accounts = infos.map((infoItem) => {
+          const view = toAccountView(infoItem, s.settings.accentByAccount[infoItem.configDir]);
           const info = s.usageByAccount[view.id];
           return info === null || info === undefined ? view : { ...view, usage: toUsageWindows(info, Date.now()) };
         });
@@ -1791,6 +1795,8 @@ export function createWorkbenchStore(mage: MageClient) {
         privacy: privacy ?? 'shared',
         // Una conversacion recien creada es la mas reciente de su seccion hasta que se escriba en otra.
         createdAtMs: Date.now(),
+        // #52: worktree desactivado por defecto en las conversaciones nuevas; las ya guardadas conservan el suyo.
+        worktreeOff: true,
         ...(effort === undefined || effort.length === 0 ? {} : { effort }),
         ...(maxBudgetUsdCents === undefined ? {} : { maxBudgetUsdCents }),
       };

@@ -40,5 +40,18 @@ export function useStickToBottom(deps: readonly unknown[], resetKey?: string): {
     element.scrollTop = element.scrollHeight;
   }, [...deps, resetKey]);
 
+  // #59: el dock de preguntas encoge el contenedor sin añadir filas, asi que ningun dep cambia. Si el
+  // usuario seguia el final, se le mantiene ahi. Se reengancha con los deps porque el div puede no
+  // existir aun (chat vacio) en el primer render.
+  useLayoutEffect(() => {
+    const element = ref.current;
+    if (element === null) return;
+    const observer = new ResizeObserver(() => {
+      if (stuckRef.current) element.scrollTop = element.scrollHeight;
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [...deps, resetKey]);
+
   return { ref, onScroll };
 }

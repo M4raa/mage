@@ -24,6 +24,7 @@ export function toPersistedWorkspace(
       id: tab.id,
       accountId: tab.accountId,
       accountAlias: tab.accountAlias,
+      ...(tab.worktreeOff === undefined ? {} : { worktreeOff: tab.worktreeOff }),
       cwd: tab.cwd,
       model: tab.model,
       provider: tab.provider,
@@ -81,6 +82,7 @@ export function restoreTabs(
       id: t.id,
       accountId: t.accountId,
       accountAlias: t.accountAlias,
+      ...(t.worktreeOff === undefined ? {} : { worktreeOff: t.worktreeOff }),
       cwd: t.cwd,
       // Un proveedor retirado (P-032 R6: `openai`/`gemini`, que iban por el gateway) reabre con Claude y su
       // modelo por defecto. Su transcripcion la escribio el CLI de Claude, asi que se reanuda igual.

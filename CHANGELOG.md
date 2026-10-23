@@ -7,6 +7,13 @@ versión.
 ## 0.1.3 — en preparación
 
 ### Corregido
+- El login OAuth de MCP evita puertos bloqueados por el navegador y explica los puertos fijos no válidos.
+- Los avatares toman la inicial del nombre de cuenta y mantienen su color al añadir otras. El color por defecto de cada cuenta puede cambiar una vez con esta versión; los elegidos a mano se conservan.
+- Las conversaciones muestran un indicador mientras cargan y el motivo si no se pueden leer.
+- Con la ventana dividida, una pregunta en el otro panel ya no roba el foco, y el chat sigue mostrando el final cuando aparece una pregunta. «Otra cosa» se alcanza con las flechas.
+- Las sesiones de Claude Code lanzadas por Mage tienen disponible la herramienta Artifact (se puede apagar con `CLAUDE_CODE_ARTIFACT=0`).
+- Los nuevos chats empiezan con worktree desactivado; la elección de cada pestaña se conserva al reiniciar.
+- Las viñetas del prompt siguen siendo viñetas en la línea del cursor.
 - Los borradores nuevos se guardan fuera del temporal. Si desaparece un borrador antiguo, se recrea su carpeta y se avisa de los archivos perdidos.
 - La confianza reconoce rutas equivalentes, permite autorizar la carpeta superior y respeta las revocaciones. Los borradores de Mage son de confianza por defecto.
 - El handoff usa una bifurcación sin persistencia y no añade su instrucción interna a la conversación original.

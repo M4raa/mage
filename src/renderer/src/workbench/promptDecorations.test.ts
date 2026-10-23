@@ -23,11 +23,11 @@ describe('decorationRangesFor — listas', () => {
     expect(kinds(ranges)).not.toContain('marker-hidden');
   });
 
-  it('decorationRangesFor_lineaDelCursor_noOcultaElMarcador', () => {
-    // Comportamiento Obsidian: en la linea que se esta editando el marcador se VE.
+  it('decorationRangesFor_lineaDelCursor_pintaLaVinetaSinOcultarElMarcador', () => {
+    // #54: en la linea que se esta editando la viñeta tambien se pinta como `•` (antes, «-» crudo).
     const ranges = decorationRangesFor('- uno', 0);
 
-    expect(kinds(ranges)).toContain('bullet');
+    expect(kinds(ranges)).toContain('bullet-painted');
     expect(kinds(ranges)).not.toContain('marker-hidden');
   });
 
@@ -41,7 +41,7 @@ describe('decorationRangesFor — listas', () => {
   });
 
   it('decorationRangesFor_guionSinEspacio_noEsLista', () => {
-    expect(kinds(decorationRangesFor('-uno', 0))).not.toContain('bullet');
+    expect(kinds(decorationRangesFor('-uno', 0))).not.toContain('bullet-painted');
   });
 });
 

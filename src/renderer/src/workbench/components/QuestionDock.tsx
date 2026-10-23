@@ -40,6 +40,13 @@ export function QuestionDock(): React.JSX.Element {
   );
 }
 
+const OTHER_LABEL = 'Otra cosa';
+
+// El panel del split donde esta el usuario: solo ahi puede una pregunta tomar el foco (#58).
+function isActivePane(tabId: string): boolean {
+  return useWorkbenchStore.getState().activeTabId === tabId;
+}
+
 function pendingQuestionBlock(requestId: string | undefined, blocks: readonly Block[] | undefined): QuestionBlock | null {
   if (requestId === undefined || blocks === undefined) return null;
   const found = blocks.find((b): b is QuestionBlock => b.kind === 'question' && b.requestId === requestId && b.state === 'pending');
@@ -54,12 +61,18 @@ function QuestionDockBody({ block, tabId }: { readonly block: QuestionBlock; rea
   const ref = useRef<HTMLDivElement>(null);
   const question = block.questions[state.step] ?? block.questions[0];
 
-  // Toma el foco al aparecer SOLO con el input vacio: si el usuario estaba escribiendo, no se le roba.
+  // Toma el foco al aparecer SOLO con el input vacio y en el panel activo: si el usuario estaba
+  // escribiendo, aqui o en el otro lado del split (#58), no se le roba.
   useEffect(() => {
     const draft = useWorkbenchStore.getState().draftByChat[tabId]?.text ?? '';
-    if (draft.trim().length === 0) ref.current?.focus();
+    if (isActivePane(tabId) && draft.trim().length === 0) ref.current?.focus();
   }, [tabId]);
 
+  // #60: «Otra cosa» es la ultima parada de las flechas; al llegar ahi se escribe en su input.
+  const focusOther = (): void => ref.current?.querySelector<HTMLInputElement>(`input[aria-label="${OTHER_LABEL}"]`)?.focus();
+  useEffect(() => {
+    if (question !== undefined && state.cursor === question.options.length && isActivePane(tabId)) focusOther();
+  }, [question, state.cursor, tabId]);
   if (question === undefined) return <></>;
 
   const submit = (): void => {
@@ -81,7 +94,8 @@ function QuestionDockBody({ block, tabId }: { readonly block: QuestionBlock; rea
   };
   const run = (action: FlowKeyAction): void => {
     setError(null);
-    if (action.type === 'close') answerPermissionFor(tabId, { behavior: 'deny', message: DENY_MESSAGE }, block.requestId);
+    if (action.type === 'focus-other') focusOther();
+    else if (action.type === 'close') answerPermissionFor(tabId, { behavior: 'deny', message: DENY_MESSAGE }, block.requestId);
     else if (action.type === 'submit') submit();
     else setState((current) => applyAction(current, action, question));
   };
@@ -96,7 +110,15 @@ function QuestionDockBody({ block, tabId }: { readonly block: QuestionBlock; rea
         data-question-dock="true"
         data-question-step={state.step}
         onKeyDown={(e) => {
-          if (e.target instanceof HTMLInputElement) return; // el texto de «Otra cosa» es del input
+          // El texto de «Otra cosa» es del input; solo ↑ al principio vuelve a las opciones (#60).
+          if (e.target instanceof HTMLInputElement) {
+            if (e.key !== 'ArrowUp' || e.target.selectionStart !== 0) return;
+            e.preventDefault();
+            e.stopPropagation();
+            setState((current) => ({ ...current, cursor: question.options.length - 1 }));
+            ref.current?.focus();
+            return;
+          }
           const action = keyToAction(e.key, state, question);
           if (action === null) return;
           // `Esc` es el `session.interrupt` global y `1/2/3` los atajos de permiso: el dock se los queda.
@@ -235,8 +257,8 @@ function DockFooter({
       <input
         value={other}
         onChange={(e) => onOther(e.target.value)}
-        aria-label="Otra cosa"
-        placeholder="Otra cosa"
+        aria-label={OTHER_LABEL}
+        placeholder={OTHER_LABEL}
         className="min-w-0 flex-1 bg-transparent text-[11.5px] text-mg-text outline-none placeholder:text-mg-muted"
       />
       <button onClick={onSkip} className="rounded-[7px] border border-mg-border-ctrl px-[10px] py-[4px] text-[11px] text-mg-body2 hover:bg-mg-hover">
