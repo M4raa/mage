@@ -19,6 +19,7 @@ const VALID: AppSettings = {
     { id: 'custom:ollama', label: 'Ollama', baseUrl: 'http://localhost:11434/v1', hasApiKey: false, models: [{ id: 'llama3', label: 'llama3' }] },
   ],
   trustedFolders: ['C:/sourcecode/mage'],
+  distrustedFolders: [],
   scratchRetention: '30d',
   closeBehavior: 'background',
   newConversationFolder: 'lastProject',

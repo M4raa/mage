@@ -99,3 +99,8 @@ describe('decideRestart', () => {
     expect(decideRestart(context()).action).toBe('restart');
   });
 });
+
+
+it('R50_ENOENT_noProgramaReintentoDeterminista', () => {
+  expect(decideRestart({ attempt: 0, uptimeMs: 0, exitCode: null, signal: null, intentional: false, launchErrorCode: 'ENOENT' }).action).toBe('none');
+});

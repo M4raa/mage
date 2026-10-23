@@ -7,6 +7,10 @@ versión.
 ## 0.1.3 — en preparación
 
 ### Corregido
+- Los borradores nuevos se guardan fuera del temporal. Si desaparece un borrador antiguo, se recrea su carpeta y se avisa de los archivos perdidos.
+- La confianza reconoce rutas equivalentes, permite autorizar la carpeta superior y respeta las revocaciones. Los borradores de Mage son de confianza por defecto.
+- El handoff usa una bifurcación sin persistencia y no añade su instrucción interna a la conversación original.
+- Un ejecutable ausente no provoca reintentos repetidos de arranque.
 - Traer la base de un worktree admite las copias locales de Mage y sigue rechazando cambios sin confirmar.
 - Consultar el estado de Git revalida los permisos de la cuenta antes de devolver datos de caché.
 - La bóveda rechaza explícitamente los backends Linux inseguros, incluso si anuncian cifrado disponible.

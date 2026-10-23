@@ -12,6 +12,7 @@ export interface RestartContext {
   readonly uptimeMs: number; // cuanto vivio el proceso que acaba de morir
   readonly exitCode: number | null;
   readonly signal: string | null;
+  readonly launchErrorCode?: string;
   readonly intentional: boolean; // lo paramos nosotros (stop()) -> no es un fallo
 }
 
@@ -48,6 +49,7 @@ export function decideRestart(
 ): RestartDecision {
   assertValid(context, policy);
 
+  if (context.launchErrorCode === 'ENOENT' || context.launchErrorCode === 'ENOTDIR' || context.launchErrorCode === 'EACCES') return { action: 'none', reason: 'fallo determinista de arranque' };
   if (context.intentional) {
     return { action: 'none', reason: 'la sesion se detuvo a proposito' };
   }

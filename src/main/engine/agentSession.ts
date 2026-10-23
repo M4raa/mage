@@ -29,6 +29,7 @@ export interface AgentSessionDeps {
   readonly params: LaunchParams;
   readonly emit: (event: MageEvent) => void; // eventos comunes hacia el consumidor (IPC/UI)
   readonly spawn?: SpawnFn;
+  readonly prepareCwd?: (cwd: string) => string | null;
   readonly log?: SessionLogFn; // stream de debug (dev); nunca recibe credenciales
   // Reinicio automatico (C1). Inyectables para poder testear sin esperas reales ni reloj del sistema.
   readonly restartPolicy?: RestartPolicy;
@@ -64,6 +65,7 @@ export class AgentSession {
   // Reinicio automatico (C1): racha de reinicios seguidos, momento del ultimo arranque y el timer del
   // reinicio programado (para poder cancelarlo si el usuario para la sesion mientras espera).
   private restartStreak = 0;
+  private launchErrorCode: string | undefined;
   private startedAtMs = 0;
   private pendingRestart: TimerHandle | null = null;
   // ¿Llego a haber handshake (system/init) alguna vez? Decide si el relanzado puede usar `--resume`:
@@ -119,11 +121,14 @@ export class AgentSession {
   }
 
   private launch(params: LaunchParams): void {
+    const warning = this.deps.prepareCwd?.(params.cwd);
+    if (warning) this.deps.emit({ kind: 'notice', text: warning });
     // Buffers del proceso ANTERIOR fuera. Si murio a mitad de una linea NDJSON, ese fragmento se
     // concatenaria con la primera linea del proceso nuevo y daria un JSON invalido -> un evento 'error'
     // espurio en la conversacion justo despues de reanudarla. Y el stderr viejo no debe atribuirse al
     // proceso nuevo si este muere sin decir nada.
     this.stdoutBuffer = '';
+    this.launchErrorCode = undefined;
     this.lastStderr = '';
     this.launchStale = false; // el proceso nuevo ya lleva los ajustes de `currentParams()`
     this.turnActive = false;
@@ -152,6 +157,7 @@ export class AgentSession {
     // `child` que apunta a un proceso muerto y `writeLine` escribia al stdin de un fantasma EN SILENCIO
     // (medido: no lanza). Se reusa el cierre comun para cancelar permisos, limpiar y aplicar C1.
     child.on('error', (err) => {
+      this.launchErrorCode = (err as NodeJS.ErrnoException).code;
       this.deps.emit({ kind: 'error', message: describeSpawnError(err) });
       if (this.child === child) this.onExit(null, null);
     });
@@ -595,7 +601,7 @@ export class AgentSession {
     });
 
     const decision = decideRestart(
-      { attempt: this.restartStreak, uptimeMs, exitCode: code, signal, intentional: this.stopping },
+      { attempt: this.restartStreak, uptimeMs, exitCode: code, signal, intentional: this.stopping, launchErrorCode: this.launchErrorCode },
       this.policy,
     );
     if (decision.action === 'none') return; // salida intencionada

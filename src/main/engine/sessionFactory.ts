@@ -15,6 +15,7 @@ export type SessionBase = Pick<AgentSessionDeps, 'params' | 'emit' | 'log'>;
 export interface SessionFactoryDeps {
   readonly buildAdapter: (provider: string) => ProviderAdapter;
   readonly buildRuntime: (provider: string, base: SessionBase) => ManagedSession;
+  readonly prepareCwd?: AgentSessionDeps['prepareCwd'];
   readonly createAgentSession?: (deps: AgentSessionDeps) => ManagedSession;
 }
 
@@ -22,7 +23,7 @@ const CLI_PROVIDERS: readonly string[] = ['claude', AGY_PROVIDER_ID, CODEX_PROVI
 
 export function createSessionFor(provider: string, base: SessionBase, deps: SessionFactoryDeps): ManagedSession {
   const createAgent = deps.createAgentSession ?? ((agentDeps: AgentSessionDeps) => new AgentSession(agentDeps));
-  if (CLI_PROVIDERS.includes(provider)) return createAgent({ ...base, adapter: deps.buildAdapter(provider) });
+  if (CLI_PROVIDERS.includes(provider)) return createAgent({ ...base, adapter: deps.buildAdapter(provider), ...(deps.prepareCwd === undefined ? {} : { prepareCwd: deps.prepareCwd }) });
   if (runsOnMageRuntime(provider)) return deps.buildRuntime(provider, base);
   throw new Error(`Proveedor sin runtime: ${JSON.stringify(provider)}`);
 }

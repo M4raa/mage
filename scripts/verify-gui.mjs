@@ -6841,6 +6841,40 @@ const CHECKS = [
       return { ok, detail: JSON.stringify({ enElInspector, abiertoSolo, ...medido }) };
     },
   },
+  ...(process.argv.some(arg => arg.startsWith('--trust-stage=')) ? [{
+    name: 'F1.10: confianza persistida entre reinicios completos',
+    persistSettings: true,
+    async run(page, { userDataDir }) {
+      const stage = process.argv.find(arg => arg.startsWith('--trust-stage=')).split('=')[1];
+      const folder = path.join(userDataDir, 'trust-fixture', 'project');
+      fs.mkdirSync(folder, { recursive: true });
+      const measured = await page.evaluate(async ({ folder, stage }) => {
+        const store = window.__mageDev.store;
+        const params = { cwd: folder, accountDir: '' };
+        const before = await window.mage.isFolderTrusted(params);
+        if (stage === 'write') await store.getState().answerTrustRequest(folder, true, true);
+        if (stage === 'read') await store.getState().revokeTrustedFolder(folder);
+        const after = await window.mage.isFolderTrusted(params);
+        return { before, after };
+      }, { folder, stage });
+      return { ok: stage === 'write' ? measured.after : stage === 'read' ? measured.before && !measured.after : !measured.before && !measured.after, detail: JSON.stringify({ stage, ...measured }) };
+    },
+  }] : []),
+  {
+    name: 'F1.10: el aviso de carpeta recreada permanece visible en el chat',
+    async run(page) {
+      await openTemporaryConversation(page);
+      const tabId = await page.evaluate(() => window.__mageDev.store.getState().activeTabId);
+      const notice = 'Se ha recreado vacía la carpeta de borrador de prueba. La conversación se conserva; los archivos anteriores se perdieron.';
+      await page.evaluate(({ tabId, notice }) => {
+        const store = window.__mageDev.store;
+        store.setState({ blocksByChat: { ...store.getState().blocksByChat, [tabId]: [{ kind: 'system', id: 'vg-recreated', text: notice }] } });
+      }, { tabId, notice });
+      const visible = await page.getByText(notice, { exact: true }).isVisible();
+      await page.evaluate(id => window.__mageDev.store.getState().closeTab(id), tabId);
+      return { ok: visible, detail: 'Aviso sintético visible; recuperación y cableado cubiertos con fixtures main/store.' };
+    },
+  },
   {
     // Frontera de confianza: lanzar un agente dentro de una carpeta ejecuta lo que esa carpeta traiga
     // (hooks, `.claude/settings.json`, MCP del repo), y el CLI en headless —el unico modo que usa
@@ -6861,6 +6895,8 @@ const CHECKS = [
       await page.waitForTimeout(CONFIG.settleMs);
 
       const dialogo = page.getByRole('dialog').filter({ hasText: 'Confías en los archivos' });
+      const focoSeguro = await dialogo.getByRole('button', { name: 'No confiar' }).evaluate(button => button === document.activeElement);
+      const opcionPadre = await dialogo.getByRole('checkbox', { name: 'Confiar también en la carpeta superior' }).count();
       const visible = await dialogo.isVisible().catch(() => false);
       const nombraLaCarpeta = visible ? (await dialogo.innerText()).includes(CARPETA) : false;
 
@@ -6880,13 +6916,13 @@ const CHECKS = [
       }));
 
       await page.evaluate((trustRequests) => window.__mageDev.store.setState({ trustRequests }), previo);
-      const medido = { visible, nombraLaCarpeta, sigueTrasDescartar, botones, ...trasResponder };
+      const medido = { visible, focoSeguro, opcionPadre, nombraLaCarpeta, sigueTrasDescartar, botones, ...trasResponder };
       // La otra mitad de la frontera: lo que se autoriza se tiene que poder RETIRAR. Una lista de
       // confianza que solo crece es una puerta de un solo sentido, y se autoriza al vuelo en un
       // dialogo. Se comprueba que la seccion existe y que lista lo que hay en los ajustes.
       medido.enAjustes = await medirSeccionDeConfianza(page, CARPETA);
       const ok =
-        medido.visible &&
+        medido.visible && medido.focoSeguro && medido.opcionPadre === 1 &&
         medido.nombraLaCarpeta &&
         medido.sigueTrasDescartar === 1 &&
         medido.botones.length === 2 &&
@@ -9837,12 +9873,14 @@ async function main() {
   // Perfil NUEVO por ejecucion (no uno fijo que se borra): Electron mantiene el lock del perfil un
   // rato despues de morir, asi que un `rm` al arrancar fallaba con EPERM y tumbaba la verificacion
   // entera antes de empezar. Con un directorio por ejecucion no hay nada que borrar en caliente.
-  const userDataDir = path.join(CONFIG.outDir, 'user-data', stamp);
+  const reuseProfile = process.argv.find(arg => arg.startsWith('--fixture-profile='))?.slice('--fixture-profile='.length);
+  const userDataDir = reuseProfile === undefined ? path.join(CONFIG.outDir, 'user-data', stamp) : path.resolve(reuseProfile);
+  if (reuseProfile !== undefined && !userDataDir.startsWith(path.join(CONFIG.outDir, 'user-data') + path.sep)) throw new Error('El perfil de fixture debe estar dentro de .verify-out/user-data');
   fs.mkdirSync(runDir, { recursive: true });
   fs.mkdirSync(userDataDir, { recursive: true });
   prunePreviousProfiles(userDataDir);
   seedCommandCatalog(userDataDir);
-  seedOnboardingDone(userDataDir);
+  if (reuseProfile === undefined || !fs.existsSync(path.join(userDataDir, 'app-settings.json'))) seedOnboardingDone(userDataDir);
   seedMcpCommon(userDataDir);
 
   console.log(`[verify:gui] perfil aislado: ${userDataDir}`);

@@ -102,6 +102,7 @@ export const IpcChannel = {
   SessionGetScratchDir: 'session:getScratchDir',
   // La RAIZ de los borradores, sin crear nada (a diferencia de la de arriba, que acuña una carpeta).
   SessionGetScratchRoot: 'session:getScratchRoot',
+  SessionGetScratchRoots: 'session:getScratchRoots',
   FsExistsDirs: 'fs:existsDirs',
   // ¿Esta instalado el CLI de Antigravity (E3)? Solo main puede mirar el disco/PATH.
   AgyInstalled: 'engine:agyInstalled',
@@ -343,6 +344,7 @@ export interface CreateSessionParams {
 // Resultado de crear una sesion: el id y el config dir EFECTIVO con el que se lanzo (la cuenta o su
 // perfil privado). El renderer guarda el configDir en la pestana para localizar sus transcripciones.
 export interface CreateSessionResult {
+  readonly workspaceWarning?: string;
   readonly sessionId: string;
   readonly configDir: string;
 }
@@ -775,6 +777,7 @@ export interface MageApi {
   // Raiz de los directorios de borrador. NO crea nada: `getScratchDir` acuña una carpeta nueva en cada
   // llamada, asi que no vale para averiguar la raiz — devolveria un hermano, no el padre.
   getScratchRoot(): Promise<string>;
+  getScratchRoots?(): Promise<readonly string[]>;
   // ¿Existe cada carpeta, en el mismo orden? Para no ofrecer proyectos recientes borrados (P-028, 16).
   existsDirs(paths: readonly string[]): Promise<readonly boolean[]>;
   // ¿Esta instalado el CLI `agy` (E3)? El renderer no puede mirar el PATH ni el disco, y ofrecer un

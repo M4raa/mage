@@ -15,10 +15,11 @@ import { shortenPath } from '../cwdChange';
 function useExistingRecentProjects(): readonly RecentProject[] {
   const history = useWorkbenchStore((s) => s.conversationHistory);
   const scratchDir = useWorkbenchStore((s) => s.scratchDir);
+  const scratchRoots = useWorkbenchStore((s) => s.scratchRoots);
   const ensureScratchDir = useWorkbenchStore((s) => s.ensureScratchDir);
   const candidates = useMemo(
-    () => recentProjects({ history, scratchRoot: scratchDir, limit: RECENT_PROJECTS_LIMIT, caseInsensitive: isWindowsPlatform() }),
-    [history, scratchDir],
+    () => recentProjects({ history, scratchRoot: scratchDir, scratchRoots, limit: RECENT_PROJECTS_LIMIT, caseInsensitive: isWindowsPlatform() }),
+    [history, scratchDir, scratchRoots],
   );
   const [existing, setExisting] = useState<readonly RecentProject[]>([]);
 

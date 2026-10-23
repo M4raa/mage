@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { useWorkbenchStore } from '../workbenchStore';
 import { MODAL_PANEL_VARIANTS, MODAL_SCRIM_VARIANTS } from '../motionPresets';
@@ -19,6 +20,9 @@ export function TrustFolderDialog(): React.JSX.Element {
   // de una en una en vez de apilar dialogos encima del anterior.
   const folder = useWorkbenchStore((s) => s.trustRequests[0] ?? null);
   const answerTrustRequest = useWorkbenchStore((s) => s.answerTrustRequest);
+  const [trustParent, setTrustParent] = useState(false);
+  const refuse = useRef<HTMLButtonElement>(null);
+  useEffect(() => { setTrustParent(false); refuse.current?.focus(); }, [folder]);
   const pendientes = useWorkbenchStore((s) => s.trustRequests.length);
 
   return (
@@ -62,10 +66,15 @@ export function TrustFolderDialog(): React.JSX.Element {
               </div>
             )}
 
+            <label className="flex items-center gap-2 text-mg-body">
+              <input type="checkbox" checked={trustParent} onChange={event => setTrustParent(event.target.checked)} />
+              Confiar también en la carpeta superior
+            </label>
             <div className="flex justify-end gap-[8px] pt-[2px]">
               {/* "No confiar" primero y con el foco inicial: ante la duda, la respuesta segura es la que
                   está a mano y la que se lleva un Enter distraído. */}
               <button
+                ref={refuse}
                 autoFocus
                 onClick={() => void answerTrustRequest(folder, false)}
                 className="rounded-[7px] border border-mg-border-emph px-[12px] py-[6px] text-mg-body transition-colors duration-150 ease-out hover:bg-mg-hover"
@@ -73,7 +82,7 @@ export function TrustFolderDialog(): React.JSX.Element {
                 No confiar
               </button>
               <button
-                onClick={() => void answerTrustRequest(folder, true)}
+                onClick={() => void answerTrustRequest(folder, true, trustParent)}
                 className="rounded-[7px] border border-mg-border-emph bg-mg-sel px-[12px] py-[6px] font-bold text-mg-text transition-colors duration-150 ease-out hover:bg-mg-hover"
               >
                 Confiar en esta carpeta

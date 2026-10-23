@@ -1912,3 +1912,22 @@ describe('setImportedContextMaxChars', () => {
     expect(store.getState().settings.importedContextMaxChars).toBe(expected);
   });
 });
+
+
+it('R30_confiarPadre_guardaAmbasRutasYRevocarPersisteDenegacion', async () => {
+ const saveSettings = vi.fn(async () => undefined);
+ const store = createWorkbenchStore(fakeMage({ saveSettings }));
+ await store.getState().answerTrustRequest('C:/proyectos/uno', true, true);
+ expect(store.getState().settings.trustedFolders).toEqual(['C:/proyectos/uno', 'C:/proyectos']);
+ await store.getState().revokeTrustedFolder('C:/proyectos/uno');
+ expect(store.getState().settings.distrustedFolders).toContain('C:/proyectos/uno');
+ expect(saveSettings).toHaveBeenCalled();
+});
+
+
+it('R32_avisoDeCarpetaRecreada_seMuestraEnLaConversacion', async () => {
+ const store = createWorkbenchStore(fakeMage({ isFolderTrusted: vi.fn().mockResolvedValue(true), saveWorkspace: vi.fn().mockResolvedValue(undefined), saveConversationPrefs: vi.fn().mockResolvedValue(undefined), createSession: vi.fn().mockResolvedValue({ sessionId: 'fixture-recreated', configDir: 'C:/fixture', workspaceWarning: 'Carpeta recreada; archivos anteriores perdidos' }) }));
+ store.setState({ tabs: [tab('a')], activeTabId: 'a', splitLayout: singleLeaf('a') });
+ await store.getState().ensureSession('a');
+ expect(store.getState().blocksByChat.a).toEqual(expect.arrayContaining([expect.objectContaining({ kind: 'system', text: 'Carpeta recreada; archivos anteriores perdidos' })]));
+});

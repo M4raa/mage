@@ -40,7 +40,15 @@ export async function runGuiCheck({ page, check, context, prepare, settle }) {
       await page.screenshot({ path: context.screenshot });
       return outcome;
     },
-    restore: (previous) => restoreCheckState(page, previous, settle),
+    restore: async (previous) => {
+      // Solo fixtures de persistencia con perfil aislado reutilizable conservan sus ajustes.
+      if (check.persistSettings === true) {
+        const snapshot = decodeGuiState(previous.data);
+        snapshot.states.store.settings = await page.evaluate(() => window.__mageDev.store.getState().settings);
+        previous = { ...previous, data: encodeGuiState(snapshot) };
+      }
+      return restoreCheckState(page, previous, settle);
+    },
   });
 }
 

@@ -132,6 +132,7 @@ export interface AppSettings {
   // los padres, igual que hace el CLI: confiar en `C:/sourcecode` cubre todo lo que hay debajo.
   // Default []: no se estrena confiando en nada.
   readonly trustedFolders: readonly string[];
+  readonly distrustedFolders?: readonly string[];
   // Retencion de los scratchpads (auditoria B.4.2). Default 'never': borrar ficheros del disco es una
   // decision del usuario, no un defecto.
   readonly scratchRetention: ScratchRetention;
@@ -229,6 +230,7 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   keybindingOverrides: [],
   customProviders: [],
   trustedFolders: [],
+  distrustedFolders: [],
   scratchRetention: 'never',
   closeBehavior: 'ask',
   newConversationFolder: 'scratch',

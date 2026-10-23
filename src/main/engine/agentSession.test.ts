@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { AgentSession, type SpawnFn } from './agentSession';
 import type { ProviderAdapter } from './providerAdapter';
 import { emitLine, fakeAdapter, FakeChild, harness, written } from './agentSession.harness';
@@ -243,4 +243,22 @@ describe('AgentSession protocolo de control (D2/D3)', () => {
 
     expect(written(children[0]!)).toEqual([]);
   });
+});
+
+
+it('R50_spawnENOENT_emiteUnErrorYNoReinicia', () => {
+ const h = harness(); h.session.start();
+ h.children[0]!.emit('error', Object.assign(new Error('ENOENT fixture'), { code: 'ENOENT' }));
+ expect(h.events.filter(event => event.kind === 'error')).toHaveLength(1);
+ expect(h.events.filter(event => event.kind === 'session_restarting')).toEqual([]);
+ expect(h.timers).toEqual([]);
+});
+
+
+it('R32_preflightNombraCwdAusenteAntesDeIntentarSpawn', () => {
+ const { adapter } = fakeAdapter(); const spawn = vi.fn();
+ const session = new AgentSession({ adapter, spawn, params: { sessionId: 'fixture', accountDir: '/fixture', model: 'haiku', cwd: '/usuario/ausente' }, emit: () => undefined,
+ prepareCwd: cwd => { throw new Error(`La carpeta de trabajo ${cwd} ya no existe`); } });
+ expect(() => session.start()).toThrow('/usuario/ausente');
+ expect(spawn).not.toHaveBeenCalled();
 });

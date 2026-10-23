@@ -39,9 +39,9 @@ export function isInside(path: string, parent: string): boolean {
 // Etiqueta de la carpeta de trabajo. Una conversacion "sin friccion" arranca en un subdirectorio del
 // scratchpad con nombre de UUID, y ahi el ultimo segmento no dice NADA (es lo que se veia: `aa691438-
 // 9c76-4efe-…`). En ese caso la etiqueta es "Scratchpad", y la ruta entera sigue en el tooltip.
-export function folderChip(cwd: string, scratchDir: string | null): ChatChip | null {
+export function folderChip(cwd: string, scratchDir: string | readonly string[] | null): ChatChip | null {
   if (cwd.trim().length === 0) return null;
-  const enScratch = scratchDir !== null && scratchDir.length > 0 && isInside(cwd, scratchDir);
+  const enScratch = (typeof scratchDir === 'string' ? [scratchDir] : scratchDir ?? []).some(root => root.length > 0 && isInside(cwd, root));
   const segment = lastPathSegment(cwd);
   return {
     icon: enScratch ? 'note' : 'folder',

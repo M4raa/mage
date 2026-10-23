@@ -89,6 +89,7 @@ const api: MageApi = {
   stop: (sessionId: string) => ipcRenderer.invoke(IpcChannel.SessionStop, sessionId),
   getScratchDir: () => ipcRenderer.invoke(IpcChannel.SessionGetScratchDir),
   getScratchRoot: () => ipcRenderer.invoke(IpcChannel.SessionGetScratchRoot),
+  getScratchRoots: () => ipcRenderer.invoke(IpcChannel.SessionGetScratchRoots),
   existsDirs: (paths: readonly string[]) => ipcRenderer.invoke(IpcChannel.FsExistsDirs, paths),
   isAgyInstalled: () => ipcRenderer.invoke(IpcChannel.AgyInstalled),
   probeProvider: (params: ProviderProbeParams) => ipcRenderer.invoke(IpcChannel.ProviderProbe, params),

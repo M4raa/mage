@@ -26,6 +26,7 @@ export interface RecentProjectsInput {
   readonly history: readonly ConversationSummary[];
   // Raiz de las carpetas temporales de Mage: lo que cuelga de ella no es un proyecto.
   readonly scratchRoot: string | null;
+  readonly scratchRoots?: readonly string[];
   readonly limit: number;
   readonly caseInsensitive: boolean;
 }
@@ -38,7 +39,7 @@ export function recentProjects(input: RecentProjectsInput): readonly RecentProje
   const byKey = new Map<string, RecentProject>();
   for (const item of input.history) {
     if (item.privacy !== 'shared' || item.cwd.trim().length === 0) continue;
-    if (input.scratchRoot !== null && isInside(item.cwd, input.scratchRoot)) continue;
+    if ([...(input.scratchRoots ?? []), ...(input.scratchRoot === null ? [] : [input.scratchRoot])].some(root => isInside(item.cwd, root))) continue;
     const key = projectKey(item.cwd, input.caseInsensitive);
     const known = byKey.get(key);
     if (known !== undefined && known.updatedAtMs >= item.updatedAtMs) continue;

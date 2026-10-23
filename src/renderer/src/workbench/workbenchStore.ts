@@ -247,6 +247,7 @@ export interface WorkbenchState extends PrState, PrActions {
   // de una conversacion "sin friccion" es el scratchpad y no un UUID sin sentido. La raiz y no
   // `getScratchDir`, que acuña una carpeta NUEVA en cada llamada y devolveria un hermano.
   readonly scratchDir: string | null;
+  readonly scratchRoots: readonly string[];
 
   // Limite de uso alcanzado en esta conversacion (H4), por pestana. Ausente = no hay limite pendiente.
   // Se guarda APARTE de la linea de sistema que ya va al hilo porque no es lo mismo contar lo que paso
@@ -486,7 +487,7 @@ export interface WorkbenchState extends PrState, PrActions {
   continueWithHistoryIn: (tabId: string, destAccountId: string) => Promise<void>;
   // Respuesta del usuario al dialogo de confianza de una carpeta. `granted` la guarda en los ajustes
   // (y con ella todo lo que cuelgue de esa carpeta); si no, la sesion que la pedia no arranca.
-  answerTrustRequest: (folder: string, granted: boolean) => Promise<void>;
+  answerTrustRequest: (folder: string, granted: boolean, trustParent?: boolean) => Promise<void>;
   // Resuelve (una vez) la carpeta de borradores. Idempotente: si ya se sabe, no vuelve a preguntar.
   ensureScratchDir: () => Promise<void>;
   // Retira una carpeta de la lista de confianza. La siguiente sesion que se lance ahi volvera a
@@ -773,6 +774,7 @@ async function newConversationCwd(mage: MageClient, state: WorkbenchState): Prom
   const candidates = recentProjects({
     history: state.conversationHistory,
     scratchRoot: state.scratchDir,
+    scratchRoots: state.scratchRoots,
     limit: RECENT_PROJECTS_LIMIT,
     caseInsensitive: isWindowsPlatform(),
   });
@@ -1048,7 +1050,7 @@ async function createSessionFor(
     // Pestana restaurada de un arranque anterior: reanuda su conversacion (`claude --resume`) en vez
     // de arrancar una fresca; el id de sesion resultante es el mismo (misma transcripcion).
     const projectId = projectForRow({ kind: 'tab', tab }, get().settings.chatProjects, get().sessionIdByChat)?.id;
-    const { sessionId, configDir } = await mage.createSession({
+    const { sessionId, configDir, workspaceWarning } = await mage.createSession({
       accountDir: tab.accountId,
       model: tab.model,
       provider: tab.provider,
@@ -1074,6 +1076,7 @@ async function createSessionFor(
       sessionIdByChat: { ...s.sessionIdByChat, [tabId]: sessionId },
       tabs: s.tabs.map((t) => (t.id === tabId ? { ...t, resolvedConfigDir: configDir } : t)),
     }));
+    if (workspaceWarning !== undefined) patchBlocks(set, tabId, blocks => [...blocks, { kind: 'system', id: nextBlockId(), text: workspaceWarning }]);
     schedulePersist(mage, get); // ya hay sesion viva: persistir su id para poder reanudar en el futuro
     // Es el momento en que una conversacion NUEVA estrena `sessionId`: hasta ahora no habia a que
     // asociar sus preferencias (2.1).
@@ -1205,6 +1208,7 @@ export function createWorkbenchStore(mage: MageClient) {
     queuedByChat: {},
     resolvedModelByChat: {},
     scratchDir: null,
+    scratchRoots: [],
     rateLimitByChat: {},
     trustRequests: [],
     mcpServersByChat: {},
@@ -2085,14 +2089,17 @@ export function createWorkbenchStore(mage: MageClient) {
       await get().createConversation(tab.privacy, { cwd: tab.cwd, ...(context === null ? {} : { importedContext: context }) });
     },
 
-    answerTrustRequest: async (folder, granted) => {
+    answerTrustRequest: async (folder, granted, trustParent = false) => {
+      const normalized = folder.replaceAll('\\', '/').replace(/\/+$/, '');
+      const parent = normalized.slice(0, normalized.lastIndexOf('/')) || '/';
+      const folders = trustParent ? [folder, parent.endsWith(':') ? parent + '/' : parent] : [folder];
       const pending = trustAnswersInFlight.get(folder);
       trustAnswersInFlight.delete(folder);
       set((s) => ({
         trustRequests: s.trustRequests.filter((f) => f !== folder),
         // La carpeta se guarda TAL CUAL la dio el selector: main la normaliza al comparar, y asi el
         // renderer no necesita una copia de la logica de rutas (que ademas es de `node:path`).
-        ...(granted ? { settings: { ...s.settings, trustedFolders: [...s.settings.trustedFolders, folder] } } : {}),
+        ...(granted ? { settings: { ...s.settings, trustedFolders: [...new Set([...s.settings.trustedFolders, ...folders])], distrustedFolders: (s.settings.distrustedFolders ?? []).filter(entry => !folders.includes(entry)) } } : {}),
       }));
       // Se guarda AQUI, sin debounce y ESPERANDO, y no con `scheduleSettingsPersist` como el resto de
       // ajustes: main decide si deja arrancar la sesion leyendo `trustedFolders` del fichero, y la
@@ -2115,7 +2122,8 @@ export function createWorkbenchStore(mage: MageClient) {
     ensureScratchDir: async () => {
       if (get().scratchDir !== null) return;
       try {
-        set({ scratchDir: await mage.getScratchRoot() });
+        const scratchDir = await mage.getScratchRoot();
+        set({ scratchDir, scratchRoots: await mage.getScratchRoots?.() ?? [scratchDir] });
       } catch (err) {
         // Sin esto la etiqueta de carpeta enseña el ultimo segmento (un UUID) en vez de "Scratchpad":
         // peor, pero no roto. Se traza y no se reintenta en bucle.
@@ -2124,7 +2132,7 @@ export function createWorkbenchStore(mage: MageClient) {
     },
 
     revokeTrustedFolder: async (folder) => {
-      set((s) => ({ settings: { ...s.settings, trustedFolders: s.settings.trustedFolders.filter((f) => f !== folder) } }));
+      set((s) => ({ settings: { ...s.settings, trustedFolders: s.settings.trustedFolders.filter((f) => f !== folder), distrustedFolders: [...new Set([...(s.settings.distrustedFolders ?? []), folder])] } }));
       // Tambien sin debounce, y aqui la prisa es la que importa de verdad: quitar un permiso que sigue
       // escrito en disco durante medio segundo es el lado MALO de equivocarse.
       try {

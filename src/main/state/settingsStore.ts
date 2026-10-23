@@ -124,6 +124,7 @@ const APP_SETTINGS_SCHEMA = z.object({
   // una version anterior no la trae y cae a []. Que caiga a [] y no a "todo confiado" es el punto: al
   // perderse el dato se vuelve a PREGUNTAR, que es el lado seguro de equivocarse.
   trustedFolders: z.array(z.string().min(1)).catch([]),
+  distrustedFolders: z.array(z.string().min(1)).catch([]),
   // Retencion de scratchpads (B.4.2). Ausente o basura -> 'never', que es el lado que NO borra nada:
   // equivocarse hacia el borrado seria destruir trabajo por un fichero corrupto.
   scratchRetention: z.enum(SCRATCH_RETENTIONS).catch('never'),

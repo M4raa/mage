@@ -23,6 +23,7 @@ export function ChatInfoBar(): React.JSX.Element | null {
   const tabId = usePaneTabId();
   const tab = useWorkbenchStore((s) => s.tabs.find((t) => t.id === tabId));
   const scratchDir = useWorkbenchStore((s) => s.scratchDir);
+  const scratchRoots = useWorkbenchStore((s) => s.scratchRoots);
   const ensureScratchDir = useWorkbenchStore((s) => s.ensureScratchDir);
 
   useEffect(() => {
@@ -48,11 +49,11 @@ export function ChatInfoBar(): React.JSX.Element | null {
 
   const chips = useMemo((): readonly ChatChip[] => {
     if (tab === undefined) return [];
-    const folder = folderChip(tab.cwd, scratchDir);
+    const folder = folderChip(tab.cwd, scratchRoots.length > 0 ? scratchRoots : scratchDir);
     // Sin el chip del modelo (P-026, D18): salia aqui, en el selector del input y en la barra de estado.
     // Se queda solo en el selector, que es donde se puede cambiar.
     return [...(folder === null ? [] : [folder]), privacyChip(tab.privacy)];
-  }, [tab, scratchDir]);
+  }, [tab, scratchDir, scratchRoots]);
 
   // Sin pestaña no hay nada que contar, y una fila vacia solo roba alto al hilo.
   if (tab === undefined || chips.length === 0) return null;

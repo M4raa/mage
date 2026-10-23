@@ -119,3 +119,13 @@ describe('PromptService.handoff', () => {
     await expect(build(async () => '  ').handoff(request)).rejects.toThrow(/vacia/i);
   });
 });
+
+
+it('R49_handoff_noPersisteNiModificaLaSesionOriginal', async () => {
+  const run = vi.fn(async () => 'handoff');
+  await new PromptService({ resolveBinary: () => 'claude', run }).handoff({ sessionId: 'fixture', accountDir: '/fixture', model: 'haiku', cwd: '/project' });
+  const args = run.mock.calls[0] as unknown as [string, readonly string[]];
+  expect(args[1]).toContain('--fork-session');
+  expect(args[1]).toContain('--no-session-persistence');
+  expect(args[1]).toContain('--max-turns');
+});

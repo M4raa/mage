@@ -1,3 +1,5 @@
+import { resolvedPath as canonicalPath } from './os/resolvedPath';
+import { localScratchRoot, workspaceTrusted, ensureWorkingDirectory } from './os/scratchWorkspace';
 import { randomUUID } from 'node:crypto';
 import { execFile, spawn, spawnSync, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import {
@@ -520,6 +522,7 @@ const sessionManager = new SessionManager(
   (provider, base) =>
     createSessionFor(provider, base, {
       buildAdapter,
+      prepareCwd: cwd => ensureWorkingDirectory(cwd, scratchRoots(), { exists: path => existsSync(path) && statSync(path).isDirectory(), mkdir: path => { mkdirSync(path, { recursive: true }); } }) ? `Se ha recreado vacía la carpeta de borrador ${cwd}. Los archivos anteriores se perdieron.` : null,
       buildRuntime: (id, runtimeBase) => buildRuntimeSession(id, runtimeBase, runtimeEnv()),
     }),
   {
@@ -973,7 +976,7 @@ function assertLaunchable(params: CreateSessionParams): void {
   }
   // Sin cuenta de Claude detras no hay confianzas del CLI que leer: solo las de Mage.
   const ownOnly = runsOnMageRuntime(params.provider) && !isManagedAccountConfigDir(params.accountDir);
-  const trusted = ownOnly ? isTrusted(params.cwd, getSettingsStore().load().trustedFolders) : isFolderTrusted(params.cwd, params.accountDir);
+  const trusted = isFolderTrusted(params.cwd, ownOnly ? '' : params.accountDir);
   if (!trusted) throw new Error(`Carpeta no autorizada para lanzar un agente: ${params.cwd}`);
 }
 
@@ -1351,23 +1354,6 @@ async function approveOutsideFile(event: Electron.IpcMainInvokeEvent, params: Re
 // es. `realpathSync.native` resuelve el 8.3, pero EXIGE QUE LA RUTA EXISTA, y aqui llegan tambien
 // ficheros que aun no existen (un guardado nuevo), asi que se canonicaliza el ancestro mas profundo que
 // SI exista y se le vuelve a pegar el resto. El bucle esta acotado por la profundidad de la ruta.
-function canonicalPath(target: string): string {
-  const resolved = resolve(target);
-  const tail: string[] = [];
-  let current = resolved;
-  for (;;) {
-    try {
-      return join(realpathSync.native(current), ...tail);
-    } catch {
-      // No existe todavia: se sube un nivel y se reintenta con el padre.
-    }
-    const parent = dirname(current);
-    // Raiz alcanzada sin encontrar nada que exista: se devuelve lo resuelto, que es lo mejor que hay.
-    if (parent === current) return resolved;
-    tail.unshift(basename(current));
-    current = parent;
-  }
-}
 
 // Segunda raiz permitida fuera del cwd, junto a los planes: el SCRATCHPAD del CLI (reporte del usuario
 // del 2026-09-21). La decision de que forma vale vive en `files/cliScratchpad.ts`, que es puro y tiene
@@ -2322,12 +2308,15 @@ function toggleWidgetFromTray(): void {
 //    esta ahi para no volver a preguntar lo que el usuario ya autorizo.
 // La comprobacion sube por los directorios padre en las dos, igual que hace el CLI.
 function isFolderTrusted(cwd: string, accountDir: string): boolean {
-  const own = getSettingsStore().load().trustedFolders;
-  if (isTrusted(cwd, own)) return true;
+  const settings = getSettingsStore().load();
+  if (workspaceTrusted(cwd, [], scratchRoots())) return true;
+  if (workspaceTrusted(cwd, settings.distrustedFolders ?? [], [])) return false;
+  const own = settings.trustedFolders;
+  if (workspaceTrusted(cwd, own, scratchRoots())) return true;
   // Una pestaña del runtime sin cuenta (A6): no hay config del CLI que leer, solo las confianzas de Mage.
   if (accountDir.length === 0) return false;
   const fromCli = readCliTrustedFolders(accountDir, { exists: existsSync, readFile: (path) => readFileSync(path, 'utf8') });
-  return isTrusted(cwd, fromCli);
+  return workspaceTrusted(cwd, fromCli, []);
 }
 
 // Cuantas rutas acepta `existsDirs` de una vez: el renderer pide las tarjetas de proyectos recientes
@@ -2346,9 +2335,9 @@ function existsDirs(paths: unknown): readonly boolean[] {
 // Raiz de los directorios de borrador. Un solo sitio: si la calculan dos, un dia divergen y la fila de
 // informacion deja de reconocer el scratchpad sin que nada falle.
 function scratchRoot(): string {
-  // Cada perfil dev barre solo sus borradores; nunca los de la instalada u otro verify:gui.
-  return isDev ? join(app.getPath('userData'), 'mage-scratch') : join(app.getPath('temp'), 'mage-scratch');
+  return localScratchRoot({ platform: process.platform, home: homedir(), userData: app.getPath('userData'), temp: app.getPath('temp'), env: process.env });
 }
+function scratchRoots(): readonly string[] { return [scratchRoot(), join(app.getPath('temp'), 'mage-scratch'), join(app.getPath('userData'), 'mage-scratch')].map(root => canonicalPath(root)); }
 
 // Barrido de scratchpads (auditoria B.4.2). La POLITICA la elige el usuario y por defecto es 'never':
 // esto borra ficheros de su disco, asi que no puede pasar sin que lo haya pedido. Quien decide QUE
@@ -2448,6 +2437,7 @@ function createSessionFromIpc(event: Electron.IpcMainInvokeEvent, params: Create
     // Y la CUENTA se valida como en el resto de canales con ruta (`UsageGet`, `ConversationsList`…):
     // este es el unico que LANZA UN PROCESO, asi que un `accountDir` arbitrario seria un CLI corriendo
     // contra un config dir ajeno —con sus credenciales y sus hooks— por un solo mensaje IPC.
+    const recreated = ensureWorkingDirectory(params.cwd, scratchRoots(), { exists: path => existsSync(path) && statSync(path).isDirectory(), mkdir: path => { mkdirSync(path, { recursive: true }); } });
     assertLaunchable(params);
     prepareAgyResume(params);
     // M2.6: una conversacion privada se lanza bajo el perfil privado de la cuenta (mismo login,
@@ -2462,7 +2452,7 @@ function createSessionFromIpc(event: Electron.IpcMainInvokeEvent, params: Create
     const effectiveParams = { ...params, accountDir: configDir, projectInstructions };
     const sessionId = sessionManager.create(effectiveParams, (payload) => relaySessionEvent(payload, { sender, configDir, accountDir: params.accountDir }), sender.id);
     stopSessionsWhenDestroyed(sender);
-    return { sessionId, configDir };
+    return { sessionId, configDir, ...(recreated ? { workspaceWarning: `Se ha recreado vacía la carpeta de borrador ${params.cwd}. La conversación se conserva; los archivos anteriores se perdieron.` } : {}) };
   }
 
 function registerIpcHandlers(): void {
@@ -2574,7 +2564,7 @@ function createIpcPromptService() {
             pid: child.pid,
             outcome,
           });
-          rejectPromise(new Error(`El CLI no respondio en ${PROMPT_RUN_TIMEOUT_MS} ms`));
+          rejectPromise(new Error(`Se agotó el plazo de ${PROMPT_RUN_TIMEOUT_MS} ms. Se canceló la petición; la conversación original se conserva y puedes volver a intentarlo.`));
         }, PROMPT_RUN_TIMEOUT_MS);
         // El CLI espera datos por stdin unos segundos antes de seguir ("no stdin data received in 3s"):
         // no le vamos a mandar nada, asi que se cierra ya y arranca sin esperar.
@@ -2645,7 +2635,7 @@ function registerSessionIpc1(): void {
   ipcMain.handle(IpcChannel.SessionGetScratchDir, () => {
     const dir = join(scratchRoot(), randomUUID());
     mkdirSync(dir, { recursive: true });
-    return dir;
+    return canonicalPath(dir);
   });
 }
 
@@ -2655,6 +2645,7 @@ function registerSessionIpc2(): void {
   // hermano del que se buscaba —y de paso dejaba una carpeta vacia por cada arranque—. La usa la fila
   // de informacion del chat para saber si la conversacion vive en el scratchpad.
   ipcMain.handle(IpcChannel.SessionGetScratchRoot, () => scratchRoot());
+  ipcMain.handle(IpcChannel.SessionGetScratchRoots, () => scratchRoots());
   ipcMain.handle(IpcChannel.FsExistsDirs, (_e, paths: unknown): readonly boolean[] => existsDirs(paths));
   ipcMain.handle(IpcChannel.CodexInstalled, (): boolean => findCodexBinary() !== null);
   // Uso de la suscripcion de agy (`/usage`, gratis: 0 turnos, medido en 1.2.14), con TTL.
@@ -3159,7 +3150,9 @@ function registerSettingsIpc1(deps: IpcDependencies): void {
   // Se excluye a la que lo origino —ya lo tiene aplicado— para no devolverle un eco que pisaria una
   // edicion en curso suya. Esto es el nucleo de "que no surjan discrepancias entre configuraciones".
   ipcMain.handle(IpcChannel.SettingsSave, (event, settings: AppSettings) => {
-    settingsStore.save(settings);
+    const trustedFolders = settings.trustedFolders.filter(folder => folder.trim().length > 0).map(folder => canonicalPath(folder));
+    const distrustedFolders = (settings.distrustedFolders ?? []).map(folder => canonicalPath(folder)).filter(folder => !trustedFolders.some(own => (process.platform === 'win32' ? own.toLowerCase() === folder.toLowerCase() : own === folder)));
+    settingsStore.save({ ...settings, trustedFolders, distrustedFolders });
     windowManager.broadcast(SETTINGS_CHANGED_CHANNEL, settings, event.sender.id);
   });
   // --- Varias ventanas del workbench ----------------------------------------------------------
