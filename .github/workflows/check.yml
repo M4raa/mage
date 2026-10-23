@@ -15,7 +15,7 @@ jobs:
         os: [windows-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
     env:
-      # T01: timeouts bajo carga con la concurrencia por defecto. No ampliar timeouts.
+      # Limitar workers por timeouts bajo carga con la concurrencia por defecto. No ampliar timeouts.
       VITEST_MAX_THREADS: 2
       VITEST_MIN_THREADS: 1
     steps:

@@ -9,7 +9,8 @@ import { cleanupProfile, credentialDigest } from './f0-profile-cleanup.mjs';
 import crypto from 'node:crypto';
 // F0.3 Claude: SDK desempaquetado temporalmente, CLI real; no dependencia del proyecto.
 import fs from 'node:fs';import os from 'node:os';import path from 'node:path';import { pathToFileURL } from 'node:url';
-const sdk=process.env.MAGE_F0_SDK_DIR || fs.readFileSync('audit/informes/evidencias-002/sdk-temp-path.txt','utf8').replace(/^\uFEFF/,'').trim();
+const sdk=process.env.MAGE_F0_SDK_DIR;
+if (!sdk) throw new Error('Define MAGE_F0_SDK_DIR con el directorio temporal donde has desempaquetado el SDK (véase la cabecera).');
 const {query}=await import(pathToFileURL(path.join(sdk,'package/sdk.mjs')).href);
 const root=fs.mkdtempSync(path.join(os.tmpdir(),'mage-f0-claude-002-'));const credential=path.join(root,'profile','.credentials.json');let initialDigest=null;
 try {
