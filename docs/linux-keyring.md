@@ -62,12 +62,13 @@ Electron por argv; no abrirá ventanas ni usará `--no-sandbox` por defecto.
 
 El diseño fija un máximo total de 3 segundos para el diagnóstico/inicialización de la bóveda. Las
 consultas D-Bus tienen un máximo de 500 ms cada una, dentro del mismo presupuesto. Antes de admitir
-sesiones se precalienta el cifrado con texto sintético y se verifica el round trip; un supervisor
-externo controla la inicialización síncrona. Un temporizador del mismo hilo no puede interrumpir
-safeStorage. Si se agota el plazo, solo se aborta el arranque aún no anunciado, sin sesiones, y se
-inicia el propietario en modo suscripción sin bóveda; nunca se reinicia un propietario que ya sirve
-sesiones. Un propietario arrancado sin bóveda no intenta inicializarla en segundo plano: habilitarla
-requiere cerrar y reabrir explícitamente después de desbloquear el llavero.
+sesiones se comprueban la disponibilidad y el round trip con texto sintético. En las tres distribuciones,
+las llamadas en frío medidas con llavero bloqueado o sin arrancar respondieron en menos de 100 ms,
+con error y sin bloquearse. No se prevé construir un supervisor externo de arranque; queda como
+contingencia solo si una medición futura demuestra un bloqueo real de safeStorage síncrono.
+Un propietario arrancado sin bóveda no intenta inicializarla en segundo plano: habilitarla requiere
+cerrar y reabrir explícitamente después de desbloquear el llavero. Nunca se reinicia un propietario
+que ya sirve sesiones.
 
 Mientras no haya backend seguro y cifrado disponible, crear o usar una cuenta de API debe fallar con:
 
