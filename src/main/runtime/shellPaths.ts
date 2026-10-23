@@ -72,10 +72,13 @@ function componentPattern(value: string, unquoted: readonly boolean[], caseInsen
       if (end < 0 || !unquoted[end]) return null;
       const content = value.slice(i + 1, end);
       if (!/^!?[a-zA-Z0-9_ -]+$/.test(content) || unquoted.slice(i + 1, end).some(active => !active)) return null;
-      pattern += '[' + (content.startsWith('!') ? '^' + content.slice(1) : content) + ']'; i = end;
+      // Sin conocer LC_COLLATE del shell no descartamos nombres por un rango de locale. Usamos
+      // una sobreaproximación (también para elementos de colación multicaracter) y clasificamos
+      // todo candidato resultante; puede preguntar de más, nunca omitir el enlace externo.
+      pattern += '.*'; i = end;
     } else return null;
   }
-  try { return new RegExp('^' + pattern + '$', caseInsensitive ? 'i' : ''); } catch { return null; }
+  try { return new RegExp('^' + pattern + '$', caseInsensitive ? 'isu' : 'su'); } catch { return null; }
 }
 
 // Expansión mínima por niveles, sin fs.globSync ni dependencia de su disponibilidad/estabilidad.
@@ -108,6 +111,10 @@ export function expandShellWord(word: ShellWord, scope: PathScope): readonly str
         const names = readDirectory(dir);
         budget -= names.length;
         if (budget < 0) return null;
+        // Decodificación/locale no garantizados: no permitir por no haber emparejado una cadena
+        // UTF-8 con un patrón que el shell podría evaluar por bytes u otra colación.
+        const localeSensitive = scope.platform === 'win32' || flags.some((flag, i) => flag && '?[]'.includes(part[i]!));
+        if (names.some(name => name.includes('\ufffd') || (localeSensitive && /[^\x00-\x7f]/.test(name)))) return null;
         // Incluye nombres ocultos como sobreaproximación segura ante dotglob.
         for (const name of names) if (pattern!.test(name)) next.push(api.join(dir, name));
         if (next.length > 2000) return null;

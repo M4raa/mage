@@ -105,4 +105,11 @@ describe('A05 — F1.9b, palabras POSIX y comodines', () => {
     const gate = createRuntimeGate({ cwd, extraDirs: [], platform: process.platform, realpath: nodeRealpath });
     expect(gate({ id: 'c', name: 'Bash', kind: 'exec', input: { command } }, 'auto')).toEqual({ verdict: 'allow' });
   });
+  it.each([['linked\nexternal', 'ls lin*'], ['l😀nked', 'ls l?nked']])('nombre %s_noDescartaUnaCoincidenciaExterna', (name, command) => {
+    const { cwd, outside } = linkedFixture();
+    // Nombres válidos POSIX, representados mediante el seam de enumeración también en Windows.
+    const gate = createRuntimeGate({ cwd, extraDirs: [], platform: process.platform,
+      realpath: path => path.endsWith(name) ? outside : nodeRealpath(path), readDirectory: () => [name] });
+    expect(gate({ id: 'c', name: 'Bash', kind: 'exec', input: { command } }, 'auto')).toMatchObject({ verdict: 'ask' });
+  });
 });
