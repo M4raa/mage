@@ -52,6 +52,9 @@ class CachedGitService implements GitService {
   }
 
   status(cwd: string, accountDir: string): Promise<GitSnapshot> {
+    // La caché comparte datos del repo, nunca una autorización de otra cuenta o ya revocada.
+    const gated = this.gate(cwd, accountDir);
+    if (!('git' in gated)) return Promise.resolve(gated);
     const hit = this.cache.get(cwd);
     if (hit !== undefined && this.deps.now() - hit.at < STATUS_FRESH_MS) return hit.promise;
     const promise = this.readStatus(cwd, accountDir);

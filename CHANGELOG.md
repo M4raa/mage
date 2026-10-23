@@ -7,6 +7,9 @@ versión.
 ## 0.1.3 — en preparación
 
 ### Corregido
+- Traer la base de un worktree admite las copias locales de Mage y sigue rechazando cambios sin confirmar.
+- Consultar el estado de Git revalida los permisos de la cuenta antes de devolver datos de caché.
+- La bóveda rechaza explícitamente los backends Linux inseguros, incluso si anuncian cifrado disponible.
 - Refrescar una transcripción truncada sustituye el historial anterior y sus errores.
 - Las lecturas incrementales conservan los índices tras líneas en blanco y esperan a que termine una línea parcial.
 - El runtime propio recupera las herramientas al cambiar a un modelo que las admite.

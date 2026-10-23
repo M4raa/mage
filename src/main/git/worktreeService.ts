@@ -148,7 +148,7 @@ class GitWorktreeService implements WorktreeService {
     if (!/^[\w.][\w./-]*$/.test(base)) throw new Error(`Rama base no valida: "${base}"`);
     const git = this.gate(cwd, accountDir);
     const dirty = await this.git(git, cwd, [...READ_FLAGS, 'status', '--porcelain']);
-    if (dirty.trim().length > 0) throw new Error(`No se trae ${base} con cambios sin confirmar en ${cwd}`);
+    if (hasUserChanges(dirty)) throw new Error(`No se trae ${base} con cambios sin confirmar en ${cwd}`);
     await this.git(git, cwd, ['fetch', 'origin', base]);
     try {
       await this.git(git, cwd, ['merge', '--no-edit', 'FETCH_HEAD']);

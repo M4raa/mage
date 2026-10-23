@@ -17,6 +17,8 @@ import { writeAtomic, type AtomicWriteDeps } from '../os/atomicFile';
 // El cifrado del SO. Se inyecta (en produccion, `electron.safeStorage`) para testear sin Electron.
 export interface SecretCipher {
   readonly isEncryptionAvailable: () => boolean;
+  // Solo Linux expone selección de backend; Windows/macOS conservan el cifrado del SO.
+  readonly getSelectedStorageBackend?: () => string;
   readonly encryptString: (plain: string) => Buffer;
   readonly decryptString: (encrypted: Buffer) => string;
 }
@@ -40,9 +42,7 @@ export class SecretStore {
   set(id: string, value: string): void {
     requireId(id);
     if (value.length === 0) throw new Error(`Secreto vacio para ${JSON.stringify(id)}: para quitarlo se usa delete`);
-    if (!this.deps.cipher.isEncryptionAvailable()) {
-      throw new Error(`El cifrado del sistema no esta disponible: no se guarda el secreto ${JSON.stringify(id)} en claro`);
-    }
+    this.requireEncryption();
     const encoded = this.deps.cipher.encryptString(value).toString('base64');
     this.write({ ...this.read(), [id]: encoded });
   }
@@ -52,6 +52,7 @@ export class SecretStore {
     requireId(id);
     const encoded = this.read()[id];
     if (encoded === undefined) return null;
+    this.requireEncryption();
     try {
       return this.deps.cipher.decryptString(Buffer.from(encoded, 'base64'));
     } catch (err) {
@@ -91,6 +92,16 @@ export class SecretStore {
 
   private write(secrets: EncodedSecrets): void {
     writeAtomic(this.deps, this.deps.filePath, JSON.stringify({ version: SECRET_FILE_VERSION, secrets }, null, 2));
+  }
+
+  private requireEncryption(): void {
+    const backend = this.deps.cipher.getSelectedStorageBackend?.();
+    if (backend === 'basic_text' || backend === 'unknown') {
+      throw new Error(`El backend de cifrado ${JSON.stringify(backend)} no es seguro: no se puede usar la boveda`);
+    }
+    if (!this.deps.cipher.isEncryptionAvailable()) {
+      throw new Error('El cifrado del sistema no esta disponible: no se puede usar la boveda en claro');
+    }
   }
 }
 

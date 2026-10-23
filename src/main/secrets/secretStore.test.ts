@@ -135,3 +135,38 @@ describe('SecretStore', () => {
     expect(() => store.get('a')).toThrow(/No se pudo descifrar el secreto "a": no es de este usuario/);
   });
 });
+
+
+describe('A12 — lectura con backend inseguro', () => {
+  it.each(['basic_text', 'unknown'])('get_backend_%s_rechazaSinDescifrar', backend => {
+    let selected = 'gnome_libsecret';
+    let decrypts = 0;
+    const cipher = fakeCipher({ getSelectedStorageBackend: () => selected });
+    const { store } = memoryStore({ ...cipher, decryptString: encrypted => { decrypts++; return cipher.decryptString(encrypted); } });
+    store.set('fixture', 'dato artificial');
+    selected = backend;
+    expect(() => store.get('fixture')).toThrow(/backend de cifrado/);
+    expect(decrypts).toBe(0);
+    expect(store.has('fixture')).toBe(true);
+    store.delete('fixture');
+    expect(store.has('fixture')).toBe(false);
+  });
+});
+
+
+it.each(['gnome_libsecret', 'kwallet', 'kwallet5', 'kwallet6'])('A12_backendSeguro_%s_conservaRoundTrip', backend => {
+  const { store } = memoryStore(fakeCipher({ getSelectedStorageBackend: () => backend }));
+  store.set('fixture', 'dato artificial');
+  expect(store.get('fixture')).toBe('dato artificial');
+});
+
+it('A12_backendSeguroSinDisponibilidad_rechazaEscrituraYLectura', () => {
+  let available = true;
+  const { store, files } = memoryStore(fakeCipher({ getSelectedStorageBackend: () => 'gnome_libsecret', isEncryptionAvailable: () => available }));
+  store.set('fixture', 'dato artificial');
+  const before = files.get(FILE);
+  available = false;
+  expect(() => store.set('otro', 'otro dato artificial')).toThrow(/cifrado del sistema no esta disponible/);
+  expect(() => store.get('fixture')).toThrow(/cifrado del sistema no esta disponible/);
+  expect(files.get(FILE)).toBe(before);
+});
