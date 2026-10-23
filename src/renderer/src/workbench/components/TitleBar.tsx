@@ -70,6 +70,7 @@ export function TitleBar(): React.JSX.Element {
       >
         <MageMark size={18} />
       </button>
+      {window.mage.isDevelopment && <span>Mage (dev)</span>}
       {/* Menu de aplicacion PROPIO (2.9.b), generado del catalogo de acciones. Sustituye al `Menu`
           nativo, que ya solo existe en macOS y solo por sus roles de edicion (ver main/index.ts). */}
       <AppMenu expanded={menuExpanded} onExpandedChange={setMenuExpanded} />

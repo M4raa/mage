@@ -756,6 +756,7 @@ export type DropTabOutcome = 'moved' | 'none';
 // --- API tipada que el preload expone en window.mage ------------------------------------------
 
 export interface MageApi {
+  readonly isDevelopment: boolean;
   createSession(params: CreateSessionParams): Promise<CreateSessionResult>; // sessionId + configDir efectivo
   sendMessage(params: SendMessageParams): Promise<void>;
   answerPermission(params: AnswerPermissionParams): Promise<void>;

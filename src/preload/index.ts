@@ -74,6 +74,7 @@ import type { DeleteConversationParams, MigrateConversationParams, MoveConversat
 // Puente unico entre renderer y main. El renderer solo ve esta API tipada (window.mage);
 // no tiene acceso a Node, FS ni procesos. Cada metodo reenvia por un canal del contrato IPC.
 const api: MageApi = {
+  isDevelopment: process.argv.includes('--mage-development'),
   createSession: (params: CreateSessionParams) => ipcRenderer.invoke(IpcChannel.SessionCreate, params),
   sendMessage: (params: SendMessageParams) => ipcRenderer.invoke(IpcChannel.SessionSendMessage, params),
   answerPermission: (params: AnswerPermissionParams) =>

@@ -253,6 +253,11 @@ import type { CloseBehavior } from '@shared/settings';
 import { fitSavedBounds, WindowBoundsStore, type SavedWindowBounds } from './windows/windowBounds';
 import { NotificationCenter } from './notifications/notificationCenter';
 import { parseNotifyParams } from './notifications/notifyParams';
+import { developmentUserData } from './os/developmentProfile';
+
+// Antes de construir servicios y de pedir el lock: nunca abrir el perfil de la instalada en dev.
+const developmentProfile = developmentUserData(app.isPackaged, process.argv, app.getPath('appData'));
+if (developmentProfile !== null) app.setPath('userData', developmentProfile);
 
 // __dirname no existe en modulos ESM: lo derivamos de import.meta.url.
 const currentDir = dirname(fileURLToPath(import.meta.url));
@@ -1201,7 +1206,8 @@ const usageService = new UsageService({
   // uso conocido. Sin traza, esa degradacion seria invisible — y es justo la que explica por que el
   // panel no se actualiza.
   log: (level, message) => mainLog(level, message),
-  refreshSession: (configDir) => tokenRefreshService.refresh(configDir),
+  // Dev no añade otro renovador de Mage a los tokens de HOME compartidos con la instalada.
+  refreshSession: isDev ? undefined : (configDir) => tokenRefreshService.refresh(configDir),
 });
 const apiUsageStore = new ApiUsageStore({
   read: () => {
@@ -2044,6 +2050,7 @@ function createWorkbenchWindow(windowId: string, placement?: WindowPlacement): B
   // recuperan sus bounds guardados.
   const saved = placement === undefined ? restoredWindowBounds(windowId) : null;
   const window = new BrowserWindow({
+    title: isDev ? 'Mage (dev)' : 'Mage',
     ...windowGeometry(saved, placement),
     minWidth: WINDOW.minWidth,
     minHeight: WINDOW.minHeight,
@@ -2068,6 +2075,7 @@ function createWorkbenchWindow(windowId: string, placement?: WindowPlacement): B
     // TitleBar.tsx a la izquierda.
     ...(process.platform === 'darwin' ? {} : { titleBarOverlay: titleBarOverlayFromTheme() }),
     webPreferences: {
+      additionalArguments: isDev ? ['--mage-development'] : [],
       preload: join(currentDir, '../preload/index.mjs'),
       contextIsolation: true,
       nodeIntegration: false,
@@ -2075,6 +2083,12 @@ function createWorkbenchWindow(windowId: string, placement?: WindowPlacement): B
     },
   });
 
+  if (isDev) {
+    window.on('page-title-updated', (event, title) => {
+      event.preventDefault();
+      window.setTitle(`${title.replace(/ \(dev\)$/, '')} (dev)`);
+    });
+  }
   window.on('ready-to-show', () => {
     if (saved?.maximized === true) window.maximize();
     window.show();
@@ -2274,7 +2288,7 @@ function createTray(): Tray {
   const icon = nativeImage.createFromPath(join(brandDir, isMac ? 'tray-template.png' : 'tray-32.png'));
   if (isMac) icon.setTemplateImage(true);
   const trayInstance = new Tray(icon);
-  trayInstance.setToolTip('Mage');
+  trayInstance.setToolTip(isDev ? 'Mage (dev)' : 'Mage');
   trayInstance.setContextMenu(
     Menu.buildFromTemplate([
       { label: 'Abrir Mage', click: () => focusMainWindow() },
@@ -2330,7 +2344,8 @@ function existsDirs(paths: unknown): readonly boolean[] {
 // Raiz de los directorios de borrador. Un solo sitio: si la calculan dos, un dia divergen y la fila de
 // informacion deja de reconocer el scratchpad sin que nada falle.
 function scratchRoot(): string {
-  return join(app.getPath('temp'), 'mage-scratch');
+  // Cada perfil dev barre solo sus borradores; nunca los de la instalada u otro verify:gui.
+  return isDev ? join(app.getPath('userData'), 'mage-scratch') : join(app.getPath('temp'), 'mage-scratch');
 }
 
 // Barrido de scratchpads (auditoria B.4.2). La POLITICA la elige el usuario y por defecto es 'never':
@@ -3432,7 +3447,7 @@ function openDebugWindow(): void {
 let lastJumpListAtMs = 0;
 
 function refreshJumpList(): void {
-  if (process.platform !== 'win32') return;
+  if (isDev || process.platform !== 'win32') return;
   const nowMs = Date.now();
   if (nowMs - lastJumpListAtMs < JUMP_LIST_MIN_INTERVAL_MS) return;
   lastJumpListAtMs = nowMs;
@@ -3509,8 +3524,7 @@ if (!gotSingleInstanceLock) {
   // Se dice EN VOZ ALTA por que se cierra. Sin esta linea, la segunda instancia se rendia en silencio y
   // lo unico que se veia era la ventana de la instancia VIEJA saltando al frente: quien lanzaba
   // `pnpm dev` con la app instalada abierta concluia "el dev no aplica mis cambios" (paso de verdad).
-  // Dev y la version instalada comparten `userData` (%APPDATA%/mage, y Windows no distingue mayusculas),
-  // asi que comparten tambien este lock.
+  // El perfil dev por defecto es propio; dos arranques con el MISMO perfil siguen compartiendo lock.
   console.error(
     '[mage] Ya hay otra instancia de Mage con este perfil: esta se cierra y se enfoca la existente. ' +
       'Si esperabas ver tus cambios, cierra la otra (incluido el icono del tray) o arranca con ' +
