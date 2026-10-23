@@ -1,3 +1,4 @@
+import { cleanupProfile, credentialDigest } from './f0-profile-cleanup.mjs';
 // Solo metadatos saneados, cuenta desechable con copia de auth; no registra credenciales.
 import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -5,12 +6,17 @@ import os from 'node:os';
 import path from 'node:path';
 import { createInterface } from 'node:readline';
 const root=fs.mkdtempSync(path.join(os.tmpdir(),'mage-f0-codex-002-'));
+const credential=path.join(root,'profile','auth.json');let initialDigest=null;
+try {
 const profile=path.join(root,'profile');fs.mkdirSync(profile);const workspace=path.join(root,'workspace');fs.mkdirSync(workspace);
 const auth=path.join(os.homedir(),'.codex','auth.json');
 if(fs.existsSync(auth)) fs.copyFileSync(auth,path.join(profile,'auth.json'));
+initialDigest=credentialDigest(credential);
 const env={...process.env,CODEX_HOME:profile};for(const k of Object.keys(env))if(/^(OPENAI_API_KEY|CODEX_API_KEY|MAGE_CODEX_API_KEY|ANTHROPIC_|CLAUDECODE)/.test(k))delete env[k];
 const bin=process.env.MAGE_F0_CODEX_BIN||'codex';
 const child=spawn(bin,['app-server'],{cwd:workspace,env,windowsHide:true,stdio:'pipe'});child.stderr.resume();
+// Capturar errores de spawn/stdin permite alcanzar el finally, también si el binario desaparece.
+child.on('error',()=>{process.exitCode=1;});child.stdin.on('error',()=>{process.exitCode=1;});
 const pending=new Map();let seq=0;const events=[];const send=m=>child.stdin.write(JSON.stringify(m)+'\n');
 createInterface({input:child.stdout}).on('line',line=>{let m;try{m=JSON.parse(line);}catch{return;}if(m.id!==undefined&&!m.method){const p=pending.get(m.id);if(p){clearTimeout(p.timer);pending.delete(m.id);p.resolve(m);}}else {
  events.push(m);
@@ -58,4 +64,5 @@ try{
   console.log(JSON.stringify({stage:'event-fixture',methods:[...new Set(events.map(m=>m.method))],items:[...new Set(events.map(m=>m.params?.item?.type).filter(Boolean))]}));
  }
 }catch(e){console.log(JSON.stringify({stage:'failure',category:e.message.startsWith('Timeout')?e.message:e.message.replaceAll(root,'<temp>').slice(0,120)}));process.exitCode=1;
-}finally{if(process.platform==='win32')spawnSync('taskkill',['/PID',String(child.pid),'/T','/F'],{windowsHide:true,stdio:'ignore'});else child.kill();for(const p of pending.values())clearTimeout(p.timer);await new Promise(r=>setTimeout(r,400));if(path.resolve(root).startsWith(path.resolve(os.tmpdir())+path.sep))try{fs.rmSync(root,{recursive:true,force:true,maxRetries:5,retryDelay:300});}catch{console.log(JSON.stringify({stage:'cleanup',temporaryDirectoryStillLocked:true}));}}
+}finally{if(process.platform==='win32')spawnSync('taskkill',['/PID',String(child.pid),'/T','/F'],{windowsHide:true,stdio:'ignore'});else child.kill();for(const p of pending.values())clearTimeout(p.timer);await new Promise(r=>setTimeout(r,400));}
+} finally { cleanupProfile(root,credential,initialDigest); }

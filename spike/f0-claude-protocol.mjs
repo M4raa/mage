@@ -1,10 +1,21 @@
+// Ejecución (PowerShell), SDK temporal; nunca instalarlo como dependencia del repo:
+// $sdkTmp = Join-Path $env:TEMP ('mage-sdk-' + [guid]::NewGuid()); New-Item -ItemType Directory $sdkTmp
+// npm pack @anthropic-ai/claude-agent-sdk@0.3.304 --pack-destination $sdkTmp
+// tar -xf (Join-Path $sdkTmp 'anthropic-ai-claude-agent-sdk-0.3.304.tgz') -C $sdkTmp
+// $env:MAGE_F0_SDK_DIR = $sdkTmp; $env:MAGE_F0_CLAUDE_BIN = (Get-Command claude).Source
+// node spike/f0-claude-protocol.mjs --real
+// Sin --real solo metadatos. El producto usa el binario directamente: NO usa el SDK.
+import { cleanupProfile, credentialDigest } from './f0-profile-cleanup.mjs';
 import crypto from 'node:crypto';
 // F0.3 Claude: SDK desempaquetado temporalmente, CLI real; no dependencia del proyecto.
 import fs from 'node:fs';import os from 'node:os';import path from 'node:path';import { pathToFileURL } from 'node:url';
-const sdk=fs.readFileSync('audit/informes/evidencias-002/sdk-temp-path.txt','utf8').replace(/^\uFEFF/,'').trim();
+const sdk=process.env.MAGE_F0_SDK_DIR || fs.readFileSync('audit/informes/evidencias-002/sdk-temp-path.txt','utf8').replace(/^\uFEFF/,'').trim();
 const {query}=await import(pathToFileURL(path.join(sdk,'package/sdk.mjs')).href);
-const root=fs.mkdtempSync(path.join(os.tmpdir(),'mage-f0-claude-002-'));const profile=path.join(root,'profile');fs.mkdirSync(profile);const work=path.join(root,'work');fs.mkdirSync(work);
+const root=fs.mkdtempSync(path.join(os.tmpdir(),'mage-f0-claude-002-'));const credential=path.join(root,'profile','.credentials.json');let initialDigest=null;
+try {
+const profile=path.join(root,'profile');fs.mkdirSync(profile);const work=path.join(root,'work');fs.mkdirSync(work);
 const auth=path.join(os.homedir(),'.claude','.credentials.json');if(fs.existsSync(auth))fs.copyFileSync(auth,path.join(profile,'.credentials.json'));
+initialDigest=credentialDigest(credential);
 fs.writeFileSync(path.join(profile,'.claude.json'),JSON.stringify({hasCompletedOnboarding:true}));
 const env={...process.env,CLAUDE_CONFIG_DIR:profile,CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING:'1',CLAUDE_CODE_SAFE_MODE:'1'};
 for(const k of Object.keys(env))if(/^(ANTHROPIC_|OPENAI_API_KEY|CODEX_API_KEY|CLAUDECODE|CLAUDE_CODE_OAUTH_TOKEN)/.test(k))delete env[k];
@@ -62,3 +73,5 @@ try{
   clearTimeout(deadline);
  }
 }catch(e){console.log(JSON.stringify({stage:'error',name:e.name,category:/auth|login/i.test(e.message)?'auth':'process',message:e.message.replaceAll(root,'<temp>').slice(0,250)}));process.exitCode=1;}finally{ended=true;wake?.();q.close();}
+
+} finally { await new Promise(r=>setTimeout(r,500));cleanupProfile(root,credential,initialDigest); }
