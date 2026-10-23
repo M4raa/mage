@@ -59,19 +59,21 @@ export class TranscriptService {
     }
     if (signal.aborted) return;
 
-    const resumeFrom = from.bytesRead > 0 && this.deps.sizeOf(filePath) < from.bytesRead ? TRANSCRIPT_TAIL_START : from;
-
     const appeared = await this.waitForFile(filePath, signal);
     if (signal.aborted) return; // cancelado mientras se esperaba al fichero: ni error ni lotes
     if (!appeared) {
       throw new Error(`No existe la transcripcion en la ruta: "${filePath}"`);
     }
 
+    const truncated = from.bytesRead > 0 && this.deps.sizeOf(filePath) < from.bytesRead;
+    const resumeFrom = truncated ? TRANSCRIPT_TAIL_START : from;
+    let reset = truncated;
     const stream = this.deps.createReadStream(filePath, resumeFrom.bytesRead);
     // A01: los bytes recibidos pueden adelantarse MUCHAS líneas al lote entregado. Guardar offsets
     // de cada LF y confirmarlos solo cuando readline consume esa línea evita saltar mensajes tras
     // cancelar. El offset nunca confirma una última línea parcial sin LF (B15).
     let bytesRead = resumeFrom.bytesRead;
+    let rawLineNumber = resumeFrom.rawLineNumber;
     let receivedBytes = resumeFrom.bytesRead;
     let lineEnds: number[] = [];
     let nextLine = 0;
@@ -87,15 +89,18 @@ export class TranscriptService {
       receivedBytes += buffer.length;
       wake?.();
     };
-    const onPhysicalLine = async (): Promise<void> => {
+    const onPhysicalLine = async (): Promise<boolean> => {
       // readline puede emitir al ver CR, antes de recibir el LF del siguiente chunk. Esperar ese
       // terminador impide publicar el offset de la línea anterior en transcripciones CRLF.
       while (nextLine >= lineEnds.length && !ended && !signal.aborted) {
         await new Promise<void>(resolve => { wake = resolve; });
         wake = undefined;
       }
-      if (nextLine < lineEnds.length) bytesRead = lineEnds[nextLine++]!;
+      if (nextLine >= lineEnds.length) return false;
+      bytesRead = lineEnds[nextLine++]!;
+      rawLineNumber += 1;
       if (nextLine >= 4096) { lineEnds = lineEnds.slice(nextLine); nextLine = 0; }
+      return true;
     };
     stream.on('data', onData);
     stream.once('end', onEnd);
@@ -117,7 +122,8 @@ export class TranscriptService {
         if (streamError !== null) {
           throw new Error(`No se pudo leer la transcripcion "${filePath}": ${(streamError as Error).message}`);
         }
-        yield { ...batch, bytesReadSoFar: bytesRead };
+        yield { ...batch, bytesReadSoFar: bytesRead, rawLineNumber, ...(reset ? { reset: true } : {}) };
+        reset = false;
       }
     } finally {
       stream.removeListener('data', onData);

@@ -106,3 +106,27 @@ describe('transcriptStoreForTab', () => {
     expect(() => disposeTranscriptStore('nunca-existio')).not.toThrow();
   });
 });
+
+
+describe('A10 — reemplazo de historial truncado', () => {
+  it('reset_reemplazaEntradasYErrores_yElLoteSiguienteAcumula', () => {
+    const current: Accumulated = { transcriptId: 'lectura-1', entries: [entry(7)], errors: [{ lineNumber: 9, message: 'anterior' }] };
+    const reset = { transcriptId: 'lectura-1', batch: batch([entry(0)], false, { reset: true, bytesReadSoFar: 42, rawLineNumber: 1 }) };
+    expect(applyTranscriptBatch(current, { ...reset, transcriptId: 'otra' })).toEqual({});
+    const patch = applyTranscriptBatch(current, reset);
+    expect(patch.entries).toEqual([entry(0)]);
+    expect(patch.errors).toEqual([]);
+    expect(patch.tailPosition).toEqual({ bytesRead: 42, rawLineNumber: 1, totalLinesSoFar: 1 });
+    const next = applyTranscriptBatch({ ...current, ...patch }, { transcriptId: 'lectura-1', batch: batch([entry(1)]) });
+    expect(next.entries).toEqual([entry(0), entry(1)]);
+  });
+
+  it('resetAVacio_borraTambienErroresYCheckpoint', () => {
+    const current: Accumulated = { transcriptId: 'lectura-1', entries: [entry(7)], errors: [{ lineNumber: 9, message: 'anterior' }] };
+    const patch = applyTranscriptBatch(current, { transcriptId: 'lectura-1', batch: batch([], true, { reset: true }) });
+    expect(patch.entries).toEqual([]);
+    expect(patch.errors).toEqual([]);
+    expect(patch.totalLinesSoFar).toBe(0);
+    expect(patch.tailPosition).toEqual({ bytesRead: 0, rawLineNumber: 0, totalLinesSoFar: 0 });
+  });
+});

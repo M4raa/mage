@@ -42,3 +42,30 @@ describe('A01 — cancelar y reanudar transcripción', () => {
     expect(recovered.map(entry => entry.uuid)).toEqual(ids);
   });
 });
+
+
+it('F1_9d_archivoReal_UTF8Fragmentado_blancasColaYTruncado', async () => {
+  const path = join(temporaryDir(), 'incremental.jsonl');
+  const service = new TranscriptService({ exists: existsSync, sizeOf: file => statSync(file).size,
+    createReadStream: (file, start = 0) => createReadStream(file, { start, highWaterMark: 7 }) });
+  const readLast = async (from?: TranscriptTailPosition): Promise<TranscriptBatch> => {
+    let last: TranscriptBatch | undefined;
+    for await (const batch of service.openStream(path, new AbortController().signal, from)) last = batch;
+    if (last === undefined) throw new Error('Sin lote final');
+    return last;
+  };
+  const complete = line('ñ😀');
+  writeFileSync(path, line('á😀') + '\n\n' + complete.slice(0, 12));
+  const first = await readLast();
+  expect(first.rawLineNumber).toBe(3);
+  expect(first.errors).toEqual([]);
+  writeFileSync(path, line('á😀') + '\n\n' + complete);
+  const second = await readLast(tailOf(first));
+  expect(second.entries.map(entry => [entry.uuid, entry.index])).toEqual([['ñ😀', 3]]);
+  expect(second.totalLinesSoFar).toBe(2);
+  writeFileSync(path, line('nuevo'));
+  const third = await readLast(tailOf(second));
+  expect(third.reset).toBe(true);
+  expect(third.entries.map(entry => entry.uuid)).toEqual(['nuevo']);
+  expect(third.rawLineNumber).toBe(1);
+});

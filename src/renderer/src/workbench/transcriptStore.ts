@@ -44,8 +44,8 @@ export function applyTranscriptBatch(
   if (payload.batch === undefined) return {};
   const batch = payload.batch;
   return {
-    entries: [...current.entries, ...batch.entries],
-    errors: [...current.errors, ...batch.errors],
+    entries: batch.reset ? [...batch.entries] : [...current.entries, ...batch.entries],
+    errors: batch.reset ? [...batch.errors] : [...current.errors, ...batch.errors],
     isFinal: batch.isFinal,
     totalLinesSoFar: batch.totalLinesSoFar,
     // I5: posicion tras ESTE lote (ya acumulada desde main si esta lectura era una reanudacion) —

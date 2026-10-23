@@ -7,6 +7,8 @@ versión.
 ## 0.1.3 — en preparación
 
 ### Corregido
+- Refrescar una transcripción truncada sustituye el historial anterior y sus errores.
+- Las lecturas incrementales conservan los índices tras líneas en blanco y esperan a que termine una línea parcial.
 - El runtime propio recupera las herramientas al cambiar a un modelo que las admite.
 - Un error al comprobar un permiso conserva un historial válido para continuar la conversación.
 - Cerrar una sesión libera el cliente MCP aunque todavía esté consultando sus herramientas.
