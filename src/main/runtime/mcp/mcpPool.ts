@@ -57,6 +57,7 @@ export class McpPool {
   private readonly entries = new Map<string, Entry>();
   private readonly controller = new AbortController();
   private closed = false;
+  private readonly closing = new WeakMap<McpClientLike, Promise<void>>();
 
   constructor(
     private readonly servers: readonly ResolvedMcpServer[],
@@ -82,7 +83,7 @@ export class McpPool {
     if (this.closed) return;
     this.closed = true;
     this.controller.abort();
-    await Promise.all([...this.entries.values()].map((entry) => closeQuietly(entry.client, this.deps.log)));
+    await Promise.all([...this.entries.values()].map((entry) => this.closeClient(entry.client)));
   }
 
   private async connectOne(server: ResolvedMcpServer): Promise<void> {
@@ -90,23 +91,35 @@ export class McpPool {
     const connecting = this.deps.connect(server, this.controller.signal);
     try {
       const client = await withTimeout(connecting, this.deps.connectTimeoutMs ?? MCP_CONNECT_TIMEOUT_MS, server.name);
-      if (this.closed) return void (await closeQuietly(client, this.deps.log));
-      const { tools } = await client.listTools();
+      if (this.closed) return void (await this.closeClient(client));
       entry.client = client;
+      const { tools } = await client.listTools();
+      if (this.closed) return;
       entry.tools = tools.map((tool) => mcpRuntimeTool(server.name, tool, (name, args, signal) => this.call(client, name, args, signal)));
       entry.status = 'connected';
     } catch (err) {
-      if (err instanceof McpNeedsAuth) return this.awaitAuth(server, entry, err);
+      if (err instanceof McpNeedsAuth && !this.closed) return this.awaitAuth(server, entry, err);
       entry.status = 'failed';
       // M1: si venció el tope (o falló `listTools`), el cliente que llegue se cierra: si no, su proceso
       // vivía hasta salir de Mage. Si `connect` fue lo que falló, no hay cliente y ya se ha avisado.
-      void connecting.then((late) => closeQuietly(late, this.deps.log), () => undefined);
+      void connecting.then((late) => this.closeClient(late), () => undefined);
+      if (this.closed) return;
       const message = err instanceof Error ? err.message : String(err);
       this.deps.log?.('warn', 'Servidor MCP del runtime sin conectar', { server: server.name, message });
       this.deps.notify(`El servidor MCP ${server.name} no se pudo conectar: ${message}`);
     } finally {
       if (!this.closed) this.deps.onChange();
     }
+  }
+
+  private closeClient(client: McpClientLike | null): Promise<void> {
+    if (client === null) return Promise.resolve();
+    let pending = this.closing.get(client);
+    if (pending === undefined) {
+      pending = closeQuietly(client, this.deps.log);
+      this.closing.set(client, pending);
+    }
+    return pending;
   }
 
   // OAuth en segundo plano: el usuario abre el login desde el aviso; al volver se reintenta la conexion.

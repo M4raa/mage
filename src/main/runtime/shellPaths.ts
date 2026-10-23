@@ -1,4 +1,3 @@
-import { readdirSync } from 'node:fs';
 import { posix, win32 } from 'node:path';
 import { resolveToolPath, type PathScope } from './tools/pathGuard';
 
@@ -66,7 +65,7 @@ function componentPattern(value: string, unquoted: readonly boolean[], caseInsen
     if (char === '*') {
       if (value[i + 1] === '*' && unquoted[i + 1]) return null;
       pattern += '.*';
-    } else if (char === '?') pattern += '.';
+    } else if (char === '?') pattern += '.*';
     else if (char === '[') {
       const end = value.indexOf(']', i + 1);
       if (end < 0 || !unquoted[end]) return null;
@@ -87,7 +86,7 @@ function componentPattern(value: string, unquoted: readonly boolean[], caseInsen
 export function expandShellWord(word: ShellWord, scope: PathScope): readonly string[] | null {
   const active = word.unquoted.some((flag, i) => flag && '*?[]'.includes(word.value[i]!));
   if (!active) return [word.value];
-  if (scope.realpath === undefined || (scope.readDirectory === undefined && scope.platform !== process.platform)) return null;
+  if (scope.realpath === undefined || scope.readDirectory === undefined || scope.enumerationPlatform !== scope.platform) return null;
   const api = scope.platform === 'win32' ? win32 : posix;
   const root = api.parse(word.value).root;
   const start = root.length;
@@ -96,7 +95,7 @@ export function expandShellWord(word: ShellWord, scope: PathScope): readonly str
   let offset = start;
   let candidates = [root || scope.cwd];
   let budget = 10000;
-  const readDirectory = scope.readDirectory ?? ((dir: string) => readdirSync(dir));
+  const readDirectory = scope.readDirectory;
   try {
     for (const part of parts) {
       const flags = word.unquoted.slice(offset, offset + part.length); offset += part.length + 1;
@@ -113,8 +112,7 @@ export function expandShellWord(word: ShellWord, scope: PathScope): readonly str
         if (budget < 0) return null;
         // Decodificación/locale no garantizados: no permitir por no haber emparejado una cadena
         // UTF-8 con un patrón que el shell podría evaluar por bytes u otra colación.
-        const localeSensitive = scope.platform === 'win32' || flags.some((flag, i) => flag && '?[]'.includes(part[i]!));
-        if (names.some(name => name.includes('\ufffd') || (localeSensitive && /[^\x00-\x7f]/.test(name)))) return null;
+        if (names.some(name => name.includes('\ufffd'))) return null;
         // Incluye nombres ocultos como sobreaproximación segura ante dotglob.
         for (const name of names) if (pattern!.test(name)) next.push(api.join(dir, name));
         if (next.length > 2000) return null;

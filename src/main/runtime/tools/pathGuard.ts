@@ -19,6 +19,7 @@ export interface PathScope {
   readonly realpath?: (path: string) => string | null;
   // Expansión de palabras del shell; inyectable para denegaciones/errores de enumeración.
   readonly readDirectory?: (path: string) => readonly string[];
+  readonly enumerationPlatform?: string;
 }
 
 export interface ResolvedPath {

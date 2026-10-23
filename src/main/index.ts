@@ -545,6 +545,8 @@ function runtimeEnv(): RuntimeEnv {
     newId: randomUUID,
     platform: process.platform,
     realpath: nodeRealpath,
+    enumerationPlatform: process.platform,
+    readDirectory: (dir) => readdirSync(dir),
     fs: runtimeFs,
     editFs: { readFile, writeFile, mkdir, stat },
     shell: () =>

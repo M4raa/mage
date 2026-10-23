@@ -107,6 +107,7 @@ interface RoundResult {
 }
 
 export async function runTurn(input: TurnInput, deps: LoopDeps): Promise<TurnOutcome> {
+  const historyStart = input.history.length;
   const state = { rounds: 0, usage: null as RoundUsage | null, toolsEnabled: input.toolsEnabled };
   const finish = (status: TurnStatus, error: string | null = null): TurnOutcome => ({
     status,
@@ -140,6 +141,7 @@ export async function runTurn(input: TurnInput, deps: LoopDeps): Promise<TurnOut
       }
     }
   } catch (err) {
+    closeFailedCalls(input.history, historyStart, deps, describeError(err));
     if (input.signal.aborted) return finish('interrupted');
     return finish('error', describeError(err));
   }
@@ -190,12 +192,19 @@ async function runCalls(prepared: readonly CallPlan[], input: TurnInput, deps: L
   while (done < prepared.length) {
     if (input.signal.aborted) break;
     const batch = readBatch(prepared, done);
-    const results = await Promise.all(batch.map((call) => executeCall(call, input.signal, deps)));
+    // Esperar también las lecturas hermanas: ninguna puede emitir resultados después de cerrar turno.
+    const results = await Promise.allSettled(batch.map((call) => executeCall(call, input.signal, deps)));
     for (const [i, result] of results.entries()) {
-      if (textual) written.push(textualToolResult(batch[i]!.name, result));
-      else input.history.push({ role: 'tool', tool_call_id: batch[i]!.id, content: result });
+      const output = result.status === 'fulfilled' ? result.value : describeError(result.reason);
+      if (textual) written.push(textualToolResult(batch[i]!.name, output));
+      else input.history.push({ role: 'tool', tool_call_id: batch[i]!.id, content: output });
     }
     done += batch.length;
+    const failed = results.find((result) => result.status === 'rejected');
+    if (failed?.status === 'rejected') {
+      if (textual) input.history.push({ role: 'user', content: written.join('\n') });
+      throw failed.reason;
+    }
   }
   if (textual && written.length > 0) input.history.push({ role: 'user', content: written.join('\n') });
   return done;
@@ -231,6 +240,11 @@ async function executeCall(plan: CallPlan, signal: AbortSignal, deps: LoopDeps):
     deps.emit({ kind: 'tool_result', id: plan.id, ...outcome, durationMs: deps.now() - started });
     return outcome.output;
   };
+  try { return await executeAuthorizedCall(plan, signal, deps, report); }
+  catch (error) { report({ isError: true, output: describeError(error) }); throw error; }
+}
+
+async function executeAuthorizedCall(plan: CallPlan, signal: AbortSignal, deps: LoopDeps, report: (outcome: ToolOutcome) => string): Promise<string> {
   if (!plan.prepared.ok) return report({ isError: true, output: plan.prepared.error });
   const call: PreparedCall = { id: plan.id, name: plan.name, kind: plan.prepared.kind, input: plan.prepared.input };
   const decision = await deps.authorize(call, signal);
@@ -241,6 +255,19 @@ async function executeCall(plan: CallPlan, signal: AbortSignal, deps: LoopDeps):
   const finalInput = resolveUpdatedInput(plan.name, call.input, decision.updatedInput, deps.tools);
   if (!finalInput.ok) return report({ isError: true, output: finalInput.error });
   return report(await deps.tools.run(plan.name, finalInput.input, signal));
+}
+
+// Cerrar solo las llamadas de ESTE turno aún sin respuesta, incluidas las que no llegaron a ejecutarse.
+function closeFailedCalls(history: ChatMessage[], start: number, deps: LoopDeps, message: string): void {
+  const pending = new Set<string>();
+  for (const entry of history.slice(start)) {
+    if (entry.role === 'assistant') for (const call of entry.tool_calls ?? []) pending.add(call.id);
+    if (entry.role === 'tool') pending.delete(entry.tool_call_id);
+  }
+  for (const id of pending) {
+    history.push({ role: 'tool', tool_call_id: id, content: message });
+    deps.emit({ kind: 'tool_result', id, isError: true, output: message, durationMs: 0 });
+  }
 }
 
 // `updatedInput` ausente o vacio = el input original (mismo contrato que el CLI de Claude).

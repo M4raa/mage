@@ -277,6 +277,8 @@ export class RuntimeSession implements ManagedSession {
     this.budget = prepared.budget;
     this.warnedNearLimit = false;
     if (prepared.warning !== null) this.deps.emit({ kind: 'notice', text: prepared.warning });
+    // La degradación del modelo anterior no se hereda por otro que sí anuncia herramientas.
+    if (prepared.supportsTools === true) this.toolsEnabled = true;
     if (prepared.supportsTools === false && this.toolsEnabled) {
       this.toolsEnabled = false;
       this.deps.emit({ kind: 'notice', text: CHAT_ONLY_NOTICE });

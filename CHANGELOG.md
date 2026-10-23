@@ -4,6 +4,14 @@ Lo que cambia de una versión a otra, contado para quien usa la app. La más rec
 enseña estas mismas notas en su pestaña de novedades al actualizarse, y en Configuración › Notas de
 versión.
 
+## 0.1.3 — en preparación
+
+### Corregido
+- El runtime propio recupera las herramientas al cambiar a un modelo que las admite.
+- Un error al comprobar un permiso conserva un historial válido para continuar la conversación.
+- Cerrar una sesión libera el cliente MCP aunque todavía esté consultando sus herramientas.
+- Auto permite comodines sobre archivos internos aunque haya otros nombres con caracteres Unicode.
+
 ## 0.1.2 — 2026-10-08
 
 ### Añadido

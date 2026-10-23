@@ -36,6 +36,8 @@ export interface RuntimeEnv {
   readonly now: () => number;
   readonly newId: () => string;
   readonly platform: string;
+  readonly enumerationPlatform: string;
+  readonly readDirectory: (path: string) => readonly string[];
   // Ruta real (sigue symlinks y junctions) o null si no existe: la puerta y Glob/Grep clasifican con ella.
   readonly realpath: (path: string) => string | null;
   readonly fs: ReadToolsFs;
@@ -113,7 +115,8 @@ export function buildRuntimeSession(providerId: string, base: SessionBase, env: 
     permissionMode: initialMode(params.permissionMode),
     client: new HttpChatClient({ baseUrl: provider.baseUrl, apiKey: () => env.apiKeyFor(providerId), fetch: env.fetch, timers: env.timers }),
     tools,
-    gate: createRuntimeGate({ cwd: params.cwd, extraDirs: [], platform: env.platform, realpath: env.realpath }),
+    gate: createRuntimeGate({ cwd: params.cwd, extraDirs: [], platform: env.platform, realpath: env.realpath,
+      enumerationPlatform: env.enumerationPlatform, readDirectory: env.readDirectory }),
     systemPrompt: buildSystemPromptFn(build, shell, tools),
     emit: base.emit,
     now: env.now,
