@@ -161,7 +161,7 @@ const CHECKS = [
     // suya (arrastrable, con el boton "Editar" que despliega el Menu nativo) y que hereda los tokens
     // del tema en vez de un color fijo del SO.
     name: 'Cabecera propia: existe, es arrastrable y hereda el tema',
-    async run(page) {
+    async run(page, { runDir }) {
       // Ancla: el icono de la app. El boton "Preferencias" que se usaba antes ya no existe — su accion
       // vive en el menu de tres puntos (donde el catalogo la generaba desde el principio) y en el propio
       // icono, que desde 2026-09-07 es quien abre los ajustes.
@@ -182,6 +182,10 @@ const CHECKS = [
           // siendo el del menu — era el unico que tenia la cabecera.
           menuPlegado: document.querySelectorAll('[data-app-menu-toggle="true"]').length,
           nombreDelMenu: document.querySelector('[data-app-menu-toggle="true"]')?.getAttribute('aria-label') ?? null,
+          development: window.mage.isDevelopment,
+          marcaDevVisible: [...bar.querySelectorAll('span')].some((node) =>
+            node.textContent === 'Mage (dev)' && node.getBoundingClientRect().width > 0),
+          regionMenu: getComputedStyle(document.querySelector('[data-app-menu-toggle="true"]')).getPropertyValue('-webkit-app-region').trim(),
         };
       });
       const ok =
@@ -190,8 +194,10 @@ const CHECKS = [
         measured.height === 32 &&
         measured.appRegion === 'drag' &&
         measured.menuPlegado === 1 &&
+        measured.development === true && measured.marcaDevVisible && measured.regionMenu === 'no-drag' &&
         measured.nombreDelMenu === 'Menú de la aplicación' &&
         measured.background !== 'rgba(0, 0, 0, 0)';
+      await page.locator('[data-titlebar]').screenshot({ path: path.join(runDir, 'barra-titulo-dev.png') });
       return { ok, detail: `cabecera=${JSON.stringify(measured)}` };
     },
   },

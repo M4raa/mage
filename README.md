@@ -83,6 +83,9 @@ Mage no sustituye nada de eso: lo envuelve.
 
 ### macOS y Linux — próximamente
 
+Las cuentas de API en Linux requieren un [llavero seguro](docs/linux-keyring.md); la guía detalla
+los paquetes y el arranque/desbloqueo sin escritorio. Mage no instala esos paquetes por su cuenta.
+
 El código es multiplataforma desde el primer día: no hay una sola ruta ni comando específico de un
 sistema fuera de la capa de SO. Lo que falta no es código, es **haberlo construido y visto arrancar**
 en esas dos máquinas, y de eso no se publica un instalador.
