@@ -68,39 +68,63 @@ export class TranscriptService {
     }
 
     const stream = this.deps.createReadStream(filePath, resumeFrom.bytesRead);
-    // El offset solo avanza hasta el ULTIMO salto de linea visto (B15). Antes se sumaba TODO lo que
-    // emitia el stream, incluida una linea final a medias —el CLI estaba escribiendola—, y esa
-    // posicion se guardaba como punto de reanudacion: al refrescar se empezaba a mitad de una linea
-    // ya completa, salia un segundo "JSON invalido" y esa entrada se perdia PARA SIEMPRE.
+    // A01: los bytes recibidos pueden adelantarse MUCHAS líneas al lote entregado. Guardar offsets
+    // de cada LF y confirmarlos solo cuando readline consume esa línea evita saltar mensajes tras
+    // cancelar. El offset nunca confirma una última línea parcial sin LF (B15).
     let bytesRead = resumeFrom.bytesRead;
-    let pendingBytes = 0;
-    stream.on('data', (chunk: Buffer | string) => {
+    let receivedBytes = resumeFrom.bytesRead;
+    let lineEnds: number[] = [];
+    let nextLine = 0;
+    let ended = false;
+    let wake: (() => void) | undefined;
+    const onEnd = (): void => { ended = true; wake?.(); };
+    const onAbort = (): void => { wake?.(); };
+    const onData = (chunk: Buffer | string): void => {
       const buffer = typeof chunk === 'string' ? Buffer.from(chunk) : chunk;
-      const lastNewline = buffer.lastIndexOf(0x0a);
-      if (lastNewline === -1) {
-        pendingBytes += buffer.length;
-        return;
+      for (let i = buffer.indexOf(0x0a); i !== -1; i = buffer.indexOf(0x0a, i + 1)) {
+        lineEnds.push(receivedBytes + i + 1);
       }
-      bytesRead += pendingBytes + lastNewline + 1;
-      pendingBytes = buffer.length - lastNewline - 1;
-    });
+      receivedBytes += buffer.length;
+      wake?.();
+    };
+    const onPhysicalLine = async (): Promise<void> => {
+      // readline puede emitir al ver CR, antes de recibir el LF del siguiente chunk. Esperar ese
+      // terminador impide publicar el offset de la línea anterior en transcripciones CRLF.
+      while (nextLine >= lineEnds.length && !ended && !signal.aborted) {
+        await new Promise<void>(resolve => { wake = resolve; });
+        wake = undefined;
+      }
+      if (nextLine < lineEnds.length) bytesRead = lineEnds[nextLine++]!;
+      if (nextLine >= 4096) { lineEnds = lineEnds.slice(nextLine); nextLine = 0; }
+    };
+    stream.on('data', onData);
+    stream.once('end', onEnd);
+    signal.addEventListener('abort', onAbort);
     // Un error del stream (EACCES, o el fichero borrado entre el `exists()` y la apertura) tiene que
     // llegar al llamante como error, no propagarse crudo hasta el IPC (4.5).
     let streamError: Error | null = null;
     stream.on('error', (err: Error) => {
       streamError = err;
+      onEnd();
     });
-    for await (const batch of readTranscriptBatches(stream, signal, resumeFrom.rawLineNumber, resumeFrom.totalLinesSoFar, adapt)) {
-      // Al cancelar, readline cierra su iterador y el ultimo lote sale marcado isFinal:true (como
-      // si el archivo hubiera terminado de verdad); NO se propaga ese ultimo lote para no mentirle
-      // al renderer sobre que la transcripcion se leyo completa.
-      if (signal.aborted) return;
-      // `bytesRead` es exacto en el ultimo lote (isFinal): todos los 'data' del stream ya dispararon
-      // para entonces (mismo emitter, mismo loop de eventos que agoto readline antes de cerrarse).
-      if (streamError !== null) {
-        throw new Error(`No se pudo leer la transcripcion "${filePath}": ${(streamError as Error).message}`);
+    try {
+      for await (const batch of readTranscriptBatches(stream, signal, resumeFrom.rawLineNumber, resumeFrom.totalLinesSoFar, adapt, onPhysicalLine)) {
+        // Al cancelar, readline cierra su iterador y el ultimo lote sale marcado isFinal:true (como
+        // si el archivo hubiera terminado de verdad); NO se propaga ese ultimo lote para no mentirle
+        // al renderer sobre que la transcripcion se leyo completa.
+        if (signal.aborted) return;
+        // El checkpoint corresponde a líneas consumidas, también en lotes intermedios.
+        if (streamError !== null) {
+          throw new Error(`No se pudo leer la transcripcion "${filePath}": ${(streamError as Error).message}`);
+        }
+        yield { ...batch, bytesReadSoFar: bytesRead };
       }
-      yield { ...batch, bytesReadSoFar: bytesRead };
+    } finally {
+      stream.removeListener('data', onData);
+      stream.removeListener('end', onEnd);
+      signal.removeEventListener('abort', onAbort);
+      // No dejar el descriptor leyendo tras cancelar o devolver el generador antes de EOF.
+      (stream as NodeJS.ReadableStream & { destroy?: () => void }).destroy?.();
     }
   }
 

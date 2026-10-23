@@ -1,9 +1,11 @@
 import type { PreparedCall, ToolKind } from './agentLoop';
 import type { GateVerdict, RuntimePermissionMode } from './runtimeSession';
 import { resolveToolPath, type PathClass, type PathScope } from './tools/pathGuard';
+import { expandShellWord, shellWords, type ShellWord } from './shellPaths';
 
 // Que hace el runtime propio con una llamada antes de ejecutarla: permitir, preguntar o denegar.
-// PURO (la `realpath` llega dentro del `scope`). Tabla de P-032 §4.6 con los cinco modos (§8.1 D9):
+// La realpath llega en scope; los comodines se enumeran de forma acotada en shellPaths.
+// Tabla de P-032 §4.6 con los cinco modos (§8.1 D9):
 //
 // | modo              | read  | edit  | exec                                              |
 // | plan              | allow | deny  | deny                                              |
@@ -75,7 +77,6 @@ const OUTSIDE_VARIABLE =
 // `C:` o `C:algo`: relativo a la unidad (su directorio actual, no el cwd). `C:\…` se resuelve normal.
 const DRIVE_RELATIVE = /^[a-z]:([^\\/]|$)/i;
 const URL_TOKEN = /^[a-z][a-z0-9+.-]*:\/\//i;
-const SEGMENT_SEPARATOR = /&&|\|\||[;|&\n\r]/;
 const FD_REDIRECT = /\d*>&\d+/g;
 
 // Lista blanca de Auto (D1 de P-033). En minusculas: PowerShell no distingue.
@@ -134,20 +135,36 @@ function askVerdict(command: string | null): GateVerdict {
 export function isContainedCommand(command: string | null, scope: PathScope): boolean {
   if (command === null || DYNAMIC_CODE.test(command)) return false;
   if (NETWORK_COMMAND.test(command) || referencesOutside(command, scope)) return false;
-  return commandSegments(command).every(isWhitelistedSegment);
+  const segments = commandSegments(command);
+  return segments !== null && segments.length > 0 && segments.every(isWhitelistedSegment);
 }
 
 // ¿Nombra el comando algo fuera del proyecto? Rutas que salen del cwd, `~`, HOME y carpetas del
 // sistema por variable, una unidad suelta (`C:`) o un `cd` sin argumento (va a HOME).
 export function referencesOutside(command: string, scope: PathScope): boolean {
   if (OUTSIDE_VARIABLE.test(command)) return true;
-  if (commandSegments(command).some((words) => CD_PROGRAMS.has(words[0]!.toLowerCase()) && words.length === 1)) return true;
-  return shellTokens(command).some(
-    // Un nombre sin barras también puede ser un enlace. Con realpath se resuelven TODOS los
-    // candidatos; sin FS inyectado conservamos la heurística léxica de los clientes puros.
-    (token) => token.startsWith('~') || DRIVE_RELATIVE.test(token) ||
-      ((looksLikePath(token) || scope.realpath !== undefined) && resolveToolPath(token, scope).pathClass === 'outside'),
-  );
+  const segments = shellWords(command.replace(FD_REDIRECT, ' '));
+  if (segments === null) return true;
+  if (segments.some(words => CD_PROGRAMS.has(words[0]!.value.toLowerCase()) && words.length === 1)) return true;
+  return segments.flat().some(word => wordReferencesOutside(word, scope));
+}
+
+function wordReferencesOutside(word: ShellWord, scope: PathScope): boolean {
+  // Conservar rutas absolutas/parentales nativas en el shell Windows existente. Los nombres POSIX
+  // relativos siguen componiendo escapes: lin\ked se clasifica como linked.
+  if (scope.platform === 'win32' && word.windowsValue.includes('\\')) {
+    if (word.unquoted.some((flag, i) => flag && '*?[]'.includes(word.value[i]!))) return true;
+    if (resolveToolPath(word.windowsValue, scope).pathClass === 'outside') return true;
+    if (/^(?:[a-z]:\\|\\\\|\.{1,2}\\)/i.test(word.windowsValue)) return false;
+  }
+  if (URL_TOKEN.test(word.value)) return false;
+  if (word.value.startsWith('~') || DRIVE_RELATIVE.test(word.value)) return true;
+  // Opciones --file=../x: clasificar también el valor, sin cambiar las palabras del whitelist.
+  const equals = word.value.indexOf('=');
+  if (equals >= 0 && wordReferencesOutside({ value: word.value.slice(equals + 1), windowsValue: word.windowsValue.slice(equals + 1), unquoted: word.unquoted.slice(equals + 1) }, scope)) return true;
+  if (word.value.length === 0) return false;
+  const expanded = expandShellWord(word, scope);
+  return expanded === null || expanded.some(token => (looksLikePath(token) || scope.realpath !== undefined) && resolveToolPath(token, scope).pathClass === 'outside');
 }
 
 function isWhitelistedSegment(words: readonly string[]): boolean {
@@ -161,20 +178,8 @@ function isWhitelistedSegment(words: readonly string[]): boolean {
 }
 
 // Los trozos del comando, cada uno como lista de palabras (sin comillas). `2>&1` no parte nada.
-function commandSegments(command: string): string[][] {
-  return command
-    .replace(FD_REDIRECT, ' ')
-    .split(SEGMENT_SEPARATOR)
-    .map((segment) => segment.split(/[\s'"]+/).filter((word) => word.length > 0))
-    .filter((words) => words.length > 0);
-}
-
-// Trozos del comando que pueden ser rutas (sin las URL: la red se juzga aparte).
-function shellTokens(command: string): string[] {
-  // Conservar argumentos entre comillas: «external folder» es UNA ruta, no dos nombres internos.
-  return [...command.matchAll(/"([^"]*)"|'([^']*)'|[^\s'"`;|&<>()=,]+/g)]
-    .map((match) => match[1] ?? match[2] ?? match[0])
-    .filter((token) => token.length > 0 && !URL_TOKEN.test(token));
+function commandSegments(command: string): string[][] | null {
+  return shellWords(command.replace(FD_REDIRECT, ' '))?.map(words => words.map(word => word.value)) ?? null;
 }
 
 function looksLikePath(token: string): boolean {

@@ -82,6 +82,7 @@ export async function* readTranscriptLines(
   signal?: AbortSignal,
   startingLineNumber = 0,
   adapt: LineAdapter = IDENTITY_ADAPTER,
+  onPhysicalLine?: () => void | Promise<void>,
 ): AsyncGenerator<ParsedLineResult> {
   const rl = createInterface({ input: readStream, crlfDelay: Infinity });
   const onAbort = (): void => rl.close();
@@ -89,12 +90,14 @@ export async function* readTranscriptLines(
   try {
     let lineNumber = startingLineNumber;
     for await (const rawLine of rl) {
+      await onPhysicalLine?.();
       lineNumber += 1;
       if (rawLine.trim().length === 0) continue; // linea en blanco (p.ej. fichero vacio): se ignora
       yield parseJsonLine(rawLine, lineNumber, adapt);
     }
   } finally {
     signal?.removeEventListener('abort', onAbort);
+    rl.close();
   }
 }
 
@@ -117,6 +120,7 @@ export function readTranscriptBatches(
   startingLineNumber = 0,
   startingTotalLines = 0,
   adapt: LineAdapter = IDENTITY_ADAPTER,
+  onPhysicalLine?: () => void | Promise<void>,
 ): AsyncGenerator<Omit<TranscriptBatch, 'bytesReadSoFar'>> {
-  return groupIntoBatches(readTranscriptLines(readStream, signal, startingLineNumber, adapt), BATCH_SIZE, startingTotalLines, startingLineNumber);
+  return groupIntoBatches(readTranscriptLines(readStream, signal, startingLineNumber, adapt, onPhysicalLine), BATCH_SIZE, startingTotalLines, startingLineNumber);
 }
