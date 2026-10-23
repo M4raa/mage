@@ -143,7 +143,10 @@ export function referencesOutside(command: string, scope: PathScope): boolean {
   if (OUTSIDE_VARIABLE.test(command)) return true;
   if (commandSegments(command).some((words) => CD_PROGRAMS.has(words[0]!.toLowerCase()) && words.length === 1)) return true;
   return shellTokens(command).some(
-    (token) => token.startsWith('~') || DRIVE_RELATIVE.test(token) || (looksLikePath(token) && resolveToolPath(token, scope).pathClass === 'outside'),
+    // Un nombre sin barras también puede ser un enlace. Con realpath se resuelven TODOS los
+    // candidatos; sin FS inyectado conservamos la heurística léxica de los clientes puros.
+    (token) => token.startsWith('~') || DRIVE_RELATIVE.test(token) ||
+      ((looksLikePath(token) || scope.realpath !== undefined) && resolveToolPath(token, scope).pathClass === 'outside'),
   );
 }
 
@@ -168,7 +171,10 @@ function commandSegments(command: string): string[][] {
 
 // Trozos del comando que pueden ser rutas (sin las URL: la red se juzga aparte).
 function shellTokens(command: string): string[] {
-  return command.split(/[\s'"`;|&<>()=,]+/).filter((token) => token.length > 0 && !URL_TOKEN.test(token));
+  // Conservar argumentos entre comillas: «external folder» es UNA ruta, no dos nombres internos.
+  return [...command.matchAll(/"([^"]*)"|'([^']*)'|[^\s'"`;|&<>()=,]+/g)]
+    .map((match) => match[1] ?? match[2] ?? match[0])
+    .filter((token) => token.length > 0 && !URL_TOKEN.test(token));
 }
 
 function looksLikePath(token: string): boolean {

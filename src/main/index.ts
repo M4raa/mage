@@ -200,6 +200,7 @@ import { agyBridgeSpec, bridgeDocument, codexBridgeSpec, resolveBridge, type Bri
 import { EffectiveSettingsService } from './config/effectiveSettingsService';
 import { ConversationIndexStore } from './state/conversationIndexStore';
 import { ProjectFileService, resolveProjectFilePath } from './files/projectFileService';
+import { resolvedPath } from './os/resolvedPath';
 import { writeAtomic, type AtomicWriteDeps } from './os/atomicFile';
 import { SettingsStore } from './state/settingsStore';
 import { SecretStore } from './secrets/secretStore';
@@ -1315,7 +1316,7 @@ async function approveOutsideFile(event: Electron.IpcMainInvokeEvent, params: Re
   if (params.cwd.trim().length === 0 || params.path.trim().length === 0) {
     throw new Error(`Carpeta o ruta vacia al aprobar un fichero: ${JSON.stringify(params)}`);
   }
-  const path = resolveProjectFilePath(params);
+  const path = resolvedPath(resolveProjectFilePath(params));
   if (NEVER_APPROVED_FILE_NAMES.has(basename(path).toLowerCase())) {
     throw new Error(`Mage no abre ficheros de credenciales del CLI: ${path}`);
   }

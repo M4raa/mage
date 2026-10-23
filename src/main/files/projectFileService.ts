@@ -1,5 +1,6 @@
 import { isAbsolute, relative, resolve } from 'node:path';
 import type { ProjectFileContent } from '@shared/ipc';
+import { resolvedPath } from '../os/resolvedPath';
 
 // Lectura y escritura de un fichero que el agente ha creado DENTRO de la carpeta de la conversacion
 // (2.10, panel "Ficheros"). Es la primera vez que el renderer puede escribir un fichero cualquiera del
@@ -106,7 +107,8 @@ export class ProjectFileService {
     if (target.cwd.trim().length === 0) throw new Error('Carpeta de la conversación vacía al abrir un fichero');
     if (target.path.trim().length === 0) throw new Error('Ruta de fichero vacía');
     const path = resolveProjectFilePath(target);
-    const allowed = isInside(resolve(target.cwd), path) || this.deps.isAllowedOutsideCwd(path) || this.deps.isApprovedOutside(path);
+    const realPath = resolvedPath(path);
+    const allowed = isInside(resolvedPath(target.cwd), realPath) || this.deps.isAllowedOutsideCwd(realPath) || this.deps.isApprovedOutside(realPath);
     return { path, allowed };
   }
 }
