@@ -540,6 +540,7 @@ const sessionCoordinator = new SessionCoordinator({
   },
   now: () => Date.now(),
   log: logBus.loggerFor('engine'),
+  newId: () => randomUUID(),
 });
 
 // Lo que el runtime propio necesita de main: el proveedor de los ajustes, su clave de la boveda (en

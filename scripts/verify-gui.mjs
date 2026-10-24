@@ -4328,14 +4328,14 @@ const CHECKS = [
     },
   },
   {
-    // 0.1.1 R2, punto 30: con un turno en marcha la cola es de Mage. Se encola por la ACCION del store
-    // (nunca Enter con texto), y el `result` se inyecta por `handleEvent` con una sesion de mentira; el
-    // envio que sale de la cola se intercepta sustituyendo `sendMessageToTab`, asi no arranca ningun CLI.
-    name: 'R2 30: cola de Mage: «En cola» encima del input, sin burbuja ni reloj nuevo, y sale de uno en uno',
+    // 0.1.1 R2, punto 30 (F2.2: la cola es de main y el renderer la PINTA). Aqui solo la interfaz: la cola
+    // llega como la manda main (`queue_changed`) a una sesion de mentira, sin turno ni proceso. Quitar,
+    // editar y que salga de uno en uno se miden de punta a punta en «F2.2: la cola vive en main».
+    name: 'R2 30: cola de Mage: «En cola» encima del input, sin burbuja ni reloj nuevo, y desaparece al vaciarse',
     async run(page) {
       const previo = await captureTurnState(page);
       await openTemporaryConversation(page);
-      const antes = await page.evaluate(async () => {
+      const antes = await page.evaluate(() => {
         const dev = window.__mageDev;
         const tabId = dev.store.getState().activeTabId;
         const previos = { sessionIdByChat: dev.store.getState().sessionIdByChat, turnStartByChat: dev.store.getState().turnStartByChat };
@@ -4344,9 +4344,8 @@ const CHECKS = [
           statusByChat: { ...s.statusByChat, [tabId]: 'streaming' },
           turnStartByChat: { ...s.turnStartByChat, [tabId]: 1234 },
         }));
-        await dev.store.getState().sendMessageToTab(tabId, 'primero en cola');
-        await dev.store.getState().sendMessageToTab(tabId, 'segundo en cola');
-        await dev.store.getState().sendMessageToTab(tabId, 'tercero en cola');
+        const queue = ['primero', 'segundo', 'tercero'].map((t, i) => ({ id: `vq${i}`, text: `${t} en cola`, attachments: [] }));
+        dev.store.getState().handleEvent('verify-queue-session', { kind: 'queue_changed', queue });
         return { tabId, previos };
       });
       await page.locator('[data-queued-messages]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
@@ -4365,42 +4364,17 @@ const CHECKS = [
           y: [dock?.getBoundingClientRect().top, dock?.getBoundingClientRect().bottom, input?.getBoundingClientRect().top, document.querySelectorAll('[data-prompt-editor="true"]').length],
         };
       }, antes.tabId);
-      // Quitar el tercero y editar el segundo (vuelve al input).
-      await page.locator('[data-queued-message]').nth(2).locator('[data-queued-remove]').click();
-      await page.locator('[data-queued-message]').nth(1).locator('[data-queued-edit]').click();
-      await page.waitForTimeout(CONFIG.settleMs);
-      const trasEditar = await page.evaluate((tabId) => ({
-        filas: document.querySelectorAll('[data-queued-message]').length,
-        borrador: window.__mageDev.store.getState().draftByChat[tabId]?.text ?? null,
-      }), antes.tabId);
-      // Fin del turno: sale SOLO el primero.
-      const enviados = await page.evaluate((tabId) => {
-        const dev = window.__mageDev;
-        const original = dev.store.getState().sendMessageToTab;
-        const llamadas = [];
-        dev.store.setState({ sendMessageToTab: async (id, text) => { llamadas.push([id === tabId, text]); } });
-        dev.store.getState().handleEvent('verify-queue-session', { kind: 'result', result: { isError: false, subtype: 'success', numTurns: 1 } });
-        dev.store.setState({ sendMessageToTab: original });
-        return { llamadas, cola: dev.store.getState().queuedByChat[tabId]?.length ?? 0 };
-      }, antes.tabId);
+      await page.evaluate(() => window.__mageDev.store.getState().handleEvent('verify-queue-session', { kind: 'queue_changed', queue: [] }));
       await page.locator('[data-queued-messages]').first().waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
-      await page.evaluate(({ tabId, previos }) => {
-        const dev = window.__mageDev;
-        dev.store.getState().setDraft(tabId, null);
-        dev.store.setState(previos);
-      }, antes);
+      await page.evaluate(({ previos }) => window.__mageDev.store.setState(previos), antes);
       await restoreTurnState(page, previo);
       const ok =
         encolado.filas.length === 3 &&
         encolado.filas[0]?.startsWith('primero en cola') === true &&
         encolado.burbujas === 0 &&
         encolado.reloj === 1234 &&
-        encolado.encimaDelInput &&
-        trasEditar.filas === 1 &&
-        trasEditar.borrador === 'segundo en cola' &&
-        JSON.stringify(enviados.llamadas) === JSON.stringify([[true, 'primero en cola']]) &&
-        enviados.cola === 0;
-      return { ok, detail: `encolado=${JSON.stringify(encolado)} layoutEvidence=${JSON.stringify(layoutEvidence)} trasEditar=${JSON.stringify(trasEditar)} enviados=${JSON.stringify(enviados)}` };
+        encolado.encimaDelInput;
+      return { ok, detail: `encolado=${JSON.stringify(encolado)} layoutEvidence=${JSON.stringify(layoutEvidence)}` };
     },
   },
   {
@@ -8317,6 +8291,64 @@ const CHECKS = [
     },
   },
   {
+    // F2.2: la cola vive en main. Un turno del runtime propio contra el servidor falso (escenario `cola`, ~4 s,
+    // sin CLI ni cuota) y, con el en marcha, tres envios por la accion del store (nunca Enter): esperan en
+    // main, quitar y editar van a main, y al acabar sale UNO como turno propio. Cierra su pestaña y borra su
+    // proveedor; va justo antes del turno minimo porque deja una transcripcion del runtime en el perfil.
+    name: 'F2.2: la cola vive en main: espera con el turno en marcha, quitar y editar van a main, y sale de uno en uno',
+    async run(page, { userDataDir }) {
+      const fake = await startFakeOpenAiServer();
+      try {
+        const tabId = await openQueueTab(page, { fake, userDataDir });
+        const recibos = await page.evaluate(async (id) => {
+          const state = () => window.__mageDev.store.getState();
+          await state().sendMessageToTab(id, 'primero');
+          const sessionId = state().sessionIdByChat[id];
+          for (const text of ['segundo', 'tercero', 'cuarto']) await state().sendMessageToTab(id, text);
+          return { sessionId, cola: (await window.mage.getSessionSnapshot(sessionId)).queue.map((m) => m.text) };
+        }, tabId);
+        await page.locator('[data-queued-messages]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        await waitForDockReady(page, '[data-queued-messages]');
+        const filas = await page.locator('[data-queued-message]').count();
+        // Quitar el ultimo y editar el del medio: los dos van a main, y main devuelve la cola nueva.
+        await page.locator('[data-queued-message]').nth(2).locator('[data-queued-remove]').click();
+        await page.locator('[data-queued-message]').nth(1).locator('[data-queued-edit]').click();
+        await page.waitForFunction((id) => (window.__mageDev.store.getState().queuedByChat[id]?.length ?? 0) === 1, tabId, { timeout: CONFIG.actionTimeoutMs });
+        const trasEditar = await page.evaluate(async ({ id, sessionId }) => ({
+          enMain: (await window.mage.getSessionSnapshot(sessionId)).queue.map((m) => m.text),
+          borrador: window.__mageDev.store.getState().draftByChat[id]?.text ?? null,
+        }), { id: tabId, sessionId: recibos.sessionId });
+        // Al acabar el primero sale `segundo` como turno propio; al acabar ese, nada mas.
+        await page.waitForFunction((id) => {
+          const s = window.__mageDev.store.getState();
+          const users = (s.blocksByChat[id] ?? []).filter((b) => b.kind === 'user').length;
+          return users === 2 && s.statusByChat[id] === 'idle' && (s.queuedByChat[id]?.length ?? 0) === 0;
+        }, tabId, { timeout: 30_000 });
+        const final = await page.evaluate(async ({ id, sessionId }) => {
+          const s = window.__mageDev.store.getState();
+          const snapshot = await window.mage.getSessionSnapshot(sessionId);
+          return { burbujas: (s.blocksByChat[id] ?? []).filter((b) => b.kind === 'user').map((b) => b.text), estado: snapshot.state, colaMain: snapshot.queue.length };
+        }, { id: tabId, sessionId: recibos.sessionId });
+        await page.evaluate((id) => {
+          window.__mageDev.store.getState().setDraft(id, null);
+          return window.__mageDev.store.getState().closeTab(id);
+        }, tabId);
+        const ok =
+          JSON.stringify(recibos.cola) === JSON.stringify(['segundo', 'tercero', 'cuarto']) &&
+          filas === 3 &&
+          JSON.stringify(trasEditar.enMain) === JSON.stringify(['segundo']) &&
+          trasEditar.borrador === 'tercero' &&
+          JSON.stringify(final.burbujas) === JSON.stringify(['primero', 'segundo']) &&
+          final.estado === 'idle' && final.colaMain === 0 &&
+          fake.stats.completions === 2;
+        return { ok, detail: JSON.stringify({ recibos: recibos.cola, filas, trasEditar, final, peticionesAlFalso: fake.stats.completions }) };
+      } finally {
+        await page.evaluate((id) => window.__mageDev.store.getState().removeCustomProvider(id), QUEUE_TURN_PROVIDER.id);
+        await fake.close();
+      }
+    },
+  },
+  {
     // Grupo 0 (0.1.2, ficha D11 de P-032): UN turno minimo de verdad, de punta a punta — teclear, Enter,
     // proceso del CLI, respuesta pintada. Es la unica comprobacion que envia: todas las demas miden sin
     // gastar. Contra Claude con el modelo y el esfuerzo mas bajos; si la cuenta lleva gastado mas del
@@ -9897,6 +9929,25 @@ async function measureTabContextMenuClamp(page) {
   await page.keyboard.press('Escape');
   await page.locator(TAB_MENU).waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
   return measured;
+}
+
+// --- F2.2: la cola de main, de punta a punta (runtime propio + servidor falso) ----------------------------
+
+const QUEUE_TURN_PROVIDER = { id: 'custom:vg-cola', label: 'VG cola' };
+const QUEUE_TURN_MODEL = 'fake:cola';
+
+// Proveedor del usuario hacia el servidor falso y pestaña nueva en un borrador (confianza automatica, D4).
+// El runtime lee los proveedores del DISCO: se espera a que el guardado llegue.
+async function openQueueTab(page, { fake, userDataDir }) {
+  const tabId = await page.evaluate(async ({ provider, baseUrl, model }) => {
+    const state = window.__mageDev.store.getState();
+    await state.saveCustomProvider({ id: provider.id, label: provider.label, baseUrl, hasApiKey: false, models: [{ id: model, label: model }] });
+    const cwd = await window.mage.getScratchDir();
+    await state.newTab({ accountId: state.activeAccountId, cwd, model, provider: provider.id, title: 'VG cola', privacy: 'shared' });
+    return window.__mageDev.store.getState().activeTabId;
+  }, { provider: QUEUE_TURN_PROVIDER, baseUrl: fake.baseUrl, model: QUEUE_TURN_MODEL });
+  await waitForFile(path.join(userDataDir, 'app-settings.json'), (text) => text.includes(QUEUE_TURN_PROVIDER.id));
+  return tabId;
 }
 
 // --- Grupo 0: el turno minimo de verdad -----------------------------------------------------------

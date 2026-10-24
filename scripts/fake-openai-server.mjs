@@ -20,6 +20,7 @@ export const FAKE_SMALL_CONTEXT = 2048;
 const SCENARIO_MODEL_PREFIX = 'fake:';
 const CHUNK_DELAY_MS = 5;
 const SLOW_CHUNK_DELAY_MS = 200;
+const QUEUE_CHUNK_DELAY_MS = 400;
 
 const chunk = (model, delta, finish = null) => ({
   id: 'chatcmpl-fake',
@@ -91,6 +92,8 @@ const SCENARIOS = {
   },
   // Trozos lentos para probar el abortar.
   abortar: { reply: () => round(text('uno dos tres cuatro cinco seis siete ocho nueve diez'), 'stop'), usage: false, delay: SLOW_CHUNK_DELAY_MS },
+  // Turno que dura ~4 s: da tiempo a encolar, quitar y editar mensajes con el turno en marcha (cola de F2.2).
+  cola: { reply: () => round(text('uno dos tres cuatro cinco seis siete ocho nueve diez'), 'stop'), usage: false, delay: QUEUE_CHUNK_DELAY_MS },
   // Escritura: pide un Write (lo que dispara la tarjeta de permiso en modo Manual).
   write: {
     reply: (body) =>

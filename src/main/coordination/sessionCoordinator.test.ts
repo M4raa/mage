@@ -18,6 +18,8 @@ function harness(options: { index?: Partial<ConversationIdentityIndex>; emitOnSt
       return id;
     }),
     stop: vi.fn(),
+    sendMessage: vi.fn(),
+    interrupt: vi.fn(),
     stopOwnedBy: vi.fn().mockReturnValue([]),
     stopByConfigDir: vi.fn().mockReturnValue([]),
     stopAll: vi.fn(),
@@ -30,7 +32,8 @@ function harness(options: { index?: Partial<ConversationIdentityIndex>; emitOnSt
   };
   const log = vi.fn();
   let clock = 1_000;
-  const coordinator = new SessionCoordinator({ sessions, index, now: () => ++clock, log });
+  let ids = 0;
+  const coordinator = new SessionCoordinator({ sessions, index, now: () => ++clock, log, newId: () => `cmd-${++ids}` });
   const received: SequencedSessionEvent[] = [];
   const create = (params: Partial<CreateSessionParams> = {}, ownerId?: number) =>
     coordinator.create({ accountDir: ACCOUNT, cwd: '/p', provider: 'claude', ...params } as CreateSessionParams, (p) => received.push(p), ownerId);
@@ -59,7 +62,7 @@ describe('SessionCoordinator — secuencia e identidades (F2.1)', () => {
     const id = h.create({ accountDir: `${ACCOUNT}/mage-private` });
 
     expect(h.index.resolveConversation).toHaveBeenCalledWith({ provider: 'claude', accountDir: `${ACCOUNT}/mage-private`, nativeId: id });
-    expect(h.coordinator.snapshot(id)).toEqual({ sessionId: id, provider: 'claude', conversationId: `conv-${id}`, nativeRef: { provider: 'claude', accountDir: `${ACCOUNT}/mage-private`, nativeId: id }, lastSeq: 0, state: 'starting' });
+    expect(h.coordinator.snapshot(id)).toEqual({ sessionId: id, provider: 'claude', conversationId: `conv-${id}`, nativeRef: { provider: 'claude', accountDir: `${ACCOUNT}/mage-private`, nativeId: id }, lastSeq: 0, state: 'starting', queue: [] });
   });
 
   it('create_codexNueva_sinConversacionHastaSuSessionInit', () => {
@@ -209,5 +212,171 @@ describe('SessionCoordinator — secuencia e identidades (F2.1)', () => {
 
   it('snapshot_sesionDesconocida_lanzaConElId', () => {
     expect(() => harness().coordinator.snapshot('nadie')).toThrow('Sesion inexistente: nadie');
+  });
+});
+
+describe('SessionCoordinator — cola de mensajes en main (F2.2)', () => {
+  const result: MageEvent = { kind: 'result', result: { isError: false, subtype: 'success', numTurns: 1 } };
+  const kinds = (h: ReturnType<typeof harness>) => h.received.map((p) => p.event.kind);
+
+  it('send_sinTurno_vaAlMotorYQuedaEnMarcha', () => {
+    const h = harness();
+    const id = h.create();
+
+    const receipt = h.coordinator.send({ sessionId: id, text: 'hola', commandId: 'c1' });
+
+    expect(receipt).toEqual({ status: 'accepted', commandId: 'c1' });
+    expect(h.sessions.sendMessage).toHaveBeenCalledWith(id, 'hola', []);
+    expect(h.coordinator.snapshot(id).state).toBe('running');
+  });
+
+  it('send_dosSeguidosSinEventosEntreMedias_elSegundoEspera', () => {
+    // La carrera que la cola del renderer no podia cerrar: dos envíos antes de que el motor diga nada.
+    const h = harness();
+    const id = h.create();
+
+    const first = h.coordinator.send({ sessionId: id, text: 'ALFA', commandId: 'a' });
+    const second = h.coordinator.send({ sessionId: id, text: 'BETA', commandId: 'b' });
+
+    expect([first.status, second.status]).toEqual(['accepted', 'queued']);
+    expect(h.sessions.sendMessage).toHaveBeenCalledTimes(1);
+    expect(h.coordinator.snapshot(id).queue).toEqual([{ id: 'b', text: 'BETA', attachments: [] }]);
+  });
+
+  it('send_conTurnoEnMarcha_encolaYEmiteLaColaConSecuencia', () => {
+    const h = harness();
+    const id = h.create();
+    h.emit(id, state('running'));
+
+    h.coordinator.send({ sessionId: id, text: 'luego', commandId: 'c1', attachments: [{ mediaType: 'image/png', data: 'AA==' }] });
+
+    expect(h.received.at(-1)).toMatchObject({ seq: 2, event: { kind: 'queue_changed', queue: [{ id: 'c1', text: 'luego', attachments: [{ mediaType: 'image/png', data: 'AA==' }] }] } });
+    expect(h.sessions.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('send_esperandoPermiso_tambienEspera', () => {
+    const h = harness();
+    const id = h.create();
+    h.emit(id, { kind: 'permission_request', request: { requestId: 'r', toolUseId: 't', toolName: 'Bash', input: {}, description: null, isQuestion: false } } as unknown as MageEvent);
+
+    expect(h.coordinator.send({ sessionId: id, text: 'x', commandId: 'c' }).status).toBe('queued');
+  });
+
+  it('result_conCola_sacaSoloElPrimeroYLoAnuncia', () => {
+    const h = harness();
+    const id = h.create();
+    h.coordinator.send({ sessionId: id, text: 'ALFA', commandId: 'a' });
+    h.coordinator.send({ sessionId: id, text: 'BETA', commandId: 'b' });
+    h.coordinator.send({ sessionId: id, text: 'GAMMA', commandId: 'g' });
+
+    h.emit(id, result);
+
+    expect(vi.mocked(h.sessions.sendMessage).mock.calls.map((c) => c[1])).toEqual(['ALFA', 'BETA']);
+    expect(kinds(h).slice(-3)).toEqual(['result', 'queued_message_sent', 'queue_changed']);
+    expect(h.received.at(-2)?.event).toEqual({ kind: 'queued_message_sent', message: { id: 'b', text: 'BETA', attachments: [] } });
+    expect(h.coordinator.snapshot(id)).toMatchObject({ state: 'running', queue: [{ id: 'g' }] });
+  });
+
+  it('result_variosTurnos_salenEnOrdenUnoPorTurno', () => {
+    const h = harness();
+    const id = h.create();
+    for (const text of ['ALFA', 'BETA', 'GAMMA']) h.coordinator.send({ sessionId: id, text, commandId: text });
+
+    h.emit(id, result);
+    h.emit(id, result);
+    h.emit(id, result);
+
+    expect(vi.mocked(h.sessions.sendMessage).mock.calls.map((c) => c[1])).toEqual(['ALFA', 'BETA', 'GAMMA']);
+    expect(h.coordinator.snapshot(id)).toMatchObject({ state: 'idle', queue: [] });
+  });
+
+  it('send_mismoCommandId_mismoReciboSinEnviarDosVeces', () => {
+    const h = harness();
+    const id = h.create();
+
+    const first = h.coordinator.send({ sessionId: id, text: 'hola', commandId: 'c1' });
+    const retry = h.coordinator.send({ sessionId: id, text: 'hola', commandId: 'c1' });
+
+    expect(retry).toBe(first);
+    expect(h.sessions.sendMessage).toHaveBeenCalledTimes(1);
+    expect(h.coordinator.snapshot(id).queue).toEqual([]);
+  });
+
+  it('send_sinCommandId_generaUno', () => {
+    const h = harness();
+    const id = h.create();
+
+    expect(h.coordinator.send({ sessionId: id, text: 'hola' })).toEqual({ status: 'accepted', commandId: 'cmd-1' });
+  });
+
+  it('send_motorLanza_propagaSinCambiarEstadoNiRecordarElRecibo', () => {
+    const h = harness();
+    const id = h.create();
+    vi.mocked(h.sessions.sendMessage).mockImplementationOnce(() => { throw new Error('stdin cerrado'); });
+
+    expect(() => h.coordinator.send({ sessionId: id, text: 'hola', commandId: 'c1' })).toThrow('stdin cerrado');
+    expect(h.coordinator.snapshot(id).state).toBe('starting');
+    expect(h.coordinator.send({ sessionId: id, text: 'hola', commandId: 'c1' }).status).toBe('accepted');
+  });
+
+  it('interrupt_vaciaLaColaAntesDeInterrumpir_yElResultYaNoSacaNada', () => {
+    const h = harness();
+    const id = h.create();
+    h.coordinator.send({ sessionId: id, text: 'ALFA', commandId: 'a' });
+    h.coordinator.send({ sessionId: id, text: 'BETA', commandId: 'b' });
+
+    const taken = h.coordinator.interrupt(id);
+    h.emit(id, result);
+
+    expect(taken).toEqual([{ id: 'b', text: 'BETA', attachments: [] }]);
+    expect(h.sessions.interrupt).toHaveBeenCalledWith(id);
+    expect(h.sessions.sendMessage).toHaveBeenCalledTimes(1);
+    expect(h.coordinator.snapshot(id).queue).toEqual([]);
+  });
+
+  it('removeQueued_quitaYDevuelve_oNullSiYaNoEsta', () => {
+    const h = harness();
+    const id = h.create();
+    h.coordinator.send({ sessionId: id, text: 'ALFA', commandId: 'a' });
+    h.coordinator.send({ sessionId: id, text: 'BETA', commandId: 'b' });
+
+    expect(h.coordinator.removeQueued(id, 'b')).toEqual({ id: 'b', text: 'BETA', attachments: [] });
+    expect(h.coordinator.removeQueued(id, 'b')).toBeNull();
+    expect(h.received.at(-1)?.event).toEqual({ kind: 'queue_changed', queue: [] });
+  });
+
+  it('takeQueue_colaVacia_noEmiteNada', () => {
+    const h = harness();
+    const id = h.create();
+
+    expect(h.coordinator.takeQueue(id)).toEqual([]);
+    expect(h.received).toEqual([]);
+  });
+
+  it('drain_motorLanza_anunciaElFalloYQuedaEnReposo', () => {
+    const h = harness();
+    const id = h.create();
+    h.coordinator.send({ sessionId: id, text: 'ALFA', commandId: 'a' });
+    h.coordinator.send({ sessionId: id, text: 'BETA', commandId: 'b' });
+    vi.mocked(h.sessions.sendMessage).mockImplementationOnce(() => { throw new Error('proceso muerto'); });
+
+    h.emit(id, result);
+
+    expect(h.received.at(-2)?.event).toEqual({ kind: 'queued_message_failed', message: { id: 'b', text: 'BETA', attachments: [] }, error: 'proceso muerto' });
+    expect(h.coordinator.snapshot(id)).toMatchObject({ state: 'idle', queue: [] });
+  });
+
+  it('error_delMotor_dejaDeContarComoTurnoEnMarcha', () => {
+    // Mismo criterio que el chat del renderer: tras un error, Enter envía en vez de encolar.
+    const h = harness();
+    const id = h.create();
+    h.emit(id, state('running'));
+    h.emit(id, { kind: 'error', message: 'falló' });
+
+    expect(h.coordinator.send({ sessionId: id, text: 'otra vez', commandId: 'c' }).status).toBe('accepted');
+  });
+
+  it('send_sesionDesconocida_lanzaConElId', () => {
+    expect(() => harness().coordinator.send({ sessionId: 'nadie', text: 'x' })).toThrow('Sesion inexistente: nadie');
   });
 });

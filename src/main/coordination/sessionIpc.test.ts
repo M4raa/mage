@@ -8,10 +8,17 @@ type Listener = (event: IpcMainInvokeEvent, arg: unknown) => unknown;
 function setup(over: Partial<SessionIpcDeps> = {}) {
   const handlers = new Map<string, Listener>();
   const sessions: SessionCommands = {
-    sendMessage: vi.fn(), answerPermission: vi.fn(), answerElicitation: vi.fn(), interrupt: vi.fn(),
+    answerPermission: vi.fn(), answerElicitation: vi.fn(),
     setPermissionMode: vi.fn(), setModel: vi.fn(), setEffort: vi.fn(), stopTask: vi.fn(),
   };
-  const coordinator = { stop: vi.fn(), snapshot: vi.fn().mockReturnValue({ sessionId: 's1', lastSeq: 3 }) };
+  const coordinator = {
+    send: vi.fn().mockReturnValue({ status: 'queued', commandId: 'c1' }),
+    interrupt: vi.fn().mockReturnValue([{ id: 'q1', text: 'luego', attachments: [] }]),
+    removeQueued: vi.fn().mockReturnValue(null),
+    takeQueue: vi.fn().mockReturnValue([]),
+    stop: vi.fn(),
+    snapshot: vi.fn().mockReturnValue({ sessionId: 's1', lastSeq: 3 }),
+  };
   const deps: SessionIpcDeps = {
     handle: (channel, listener) => {
       if (handlers.has(channel)) throw new Error(`canal registrado dos veces: ${channel}`);
@@ -39,7 +46,7 @@ describe('registerSessionIpc', () => {
 
     expect([...handlers.keys()].sort()).toEqual([
       IpcChannel.SessionAnswerElicitation, IpcChannel.SessionAnswerPermission, IpcChannel.SessionCreate, IpcChannel.SessionGetScratchDir,
-      IpcChannel.SessionInterrupt, IpcChannel.SessionSendMessage, IpcChannel.SessionSetEffort, IpcChannel.SessionSetModel,
+      IpcChannel.SessionInterrupt, IpcChannel.SessionQueueRemove, IpcChannel.SessionQueueTake, IpcChannel.SessionSendMessage, IpcChannel.SessionSetEffort, IpcChannel.SessionSetModel,
       IpcChannel.SessionSetPermissionMode, IpcChannel.SessionSnapshot, IpcChannel.SessionStop, IpcChannel.SessionStopTask,
     ].sort());
   });
@@ -54,13 +61,26 @@ describe('registerSessionIpc', () => {
     expect(deps.createSession).toHaveBeenCalledWith(expect.objectContaining({ sender: { id: 7 } }), params);
   });
 
-  it('sendMessage_validaLosAdjuntosEnLaFrontera', () => {
+  it('sendMessage_validaLosAdjuntosEnLaFronteraYDevuelveElRecibo', () => {
     const validated = [{ mediaType: 'image/png', dataBase64: 'AA==' }];
-    const { sessions, invoke } = setup({ validateAttachments: vi.fn().mockReturnValue(validated) });
+    const { coordinator, invoke } = setup({ validateAttachments: vi.fn().mockReturnValue(validated) });
 
-    invoke(IpcChannel.SessionSendMessage, { sessionId: 's1', text: 'hola', attachments: [{ raro: true }] });
+    const receipt = invoke(IpcChannel.SessionSendMessage, { sessionId: 's1', text: 'hola', attachments: [{ raro: true }], commandId: 'c1' });
 
-    expect(sessions.sendMessage).toHaveBeenCalledWith('s1', 'hola', validated);
+    expect(receipt).toEqual({ status: 'queued', commandId: 'c1' });
+    expect(coordinator.send).toHaveBeenCalledWith({ sessionId: 's1', text: 'hola', attachments: validated, commandId: 'c1' });
+  });
+
+  it('cola_interrumpirQuitarYVaciar_vanALaCoordinacion', () => {
+    const { coordinator, invoke } = setup();
+
+    expect(invoke(IpcChannel.SessionInterrupt, 's1')).toEqual([{ id: 'q1', text: 'luego', attachments: [] }]);
+    invoke(IpcChannel.SessionQueueRemove, { sessionId: 's1', messageId: 'q2' });
+    invoke(IpcChannel.SessionQueueTake, 's1');
+
+    expect(coordinator.interrupt).toHaveBeenCalledWith('s1');
+    expect(coordinator.removeQueued).toHaveBeenCalledWith('s1', 'q2');
+    expect(coordinator.takeQueue).toHaveBeenCalledWith('s1');
   });
 
   it('answerElicitation_respuestaMalFormada_lanzaSinLlegarALaSesion', () => {
@@ -78,7 +98,6 @@ describe('registerSessionIpc', () => {
     invoke(IpcChannel.SessionSetPermissionMode, { sessionId: 's1', mode: 'plan' });
     invoke(IpcChannel.SessionStopTask, { sessionId: 's1', taskId: 't1' });
     invoke(IpcChannel.SessionAnswerPermission, { sessionId: 's1', requestId: 'r1', decision: { behavior: 'deny', message: 'no' } });
-    invoke(IpcChannel.SessionInterrupt, 's1');
     invoke(IpcChannel.SessionStop, 's1');
 
     expect(sessions.setModel).toHaveBeenCalledWith('s1', 'haiku');
@@ -86,7 +105,6 @@ describe('registerSessionIpc', () => {
     expect(sessions.setPermissionMode).toHaveBeenCalledWith('s1', 'plan');
     expect(sessions.stopTask).toHaveBeenCalledWith('s1', 't1');
     expect(sessions.answerPermission).toHaveBeenCalledWith('s1', 'r1', { behavior: 'deny', message: 'no' });
-    expect(sessions.interrupt).toHaveBeenCalledWith('s1');
     expect(coordinator.stop).toHaveBeenCalledWith('s1');
   });
 

@@ -4,6 +4,7 @@
 // src/main/engine/normalize.ts). Es la costura que hace el nucleo provider-agnostic.
 
 import type { UsageWindowInfo } from './usage';
+import type { QueuedMessage } from './coordination';
 import type { ProviderModel } from './providers';
 import type { ElicitationRequest } from './elicitation';
 import type { SubagentRunInfo } from './subagentRun';
@@ -272,7 +273,13 @@ export type MageEvent =
   | { readonly kind: 'result'; readonly result: ResultInfo }
   // `deniedCommand`: la linea EXACTA de un comando que agy denego (grupo E, fase 2), para ofrecer permitirlo
   // en la conversacion siguiente. Solo cuando el CLI la dice.
-  | { readonly kind: 'error'; readonly message: string; readonly deniedCommand?: string };
+  | { readonly kind: 'error'; readonly message: string; readonly deniedCommand?: string }
+  // Cola de Mage (F2.2): los emite la coordinación de main, no un proveedor. `queue_changed` lleva la cola
+  // ENTERA tras cada cambio; `queued_message_sent`, el primero que acaba de salir como turno propio; y
+  // `queued_message_failed`, el que no se pudo enviar (vuelve al usuario).
+  | { readonly kind: 'queue_changed'; readonly queue: readonly QueuedMessage[] }
+  | { readonly kind: 'queued_message_sent'; readonly message: QueuedMessage }
+  | { readonly kind: 'queued_message_failed'; readonly message: QueuedMessage; readonly error: string };
 
 // Decision del usuario ante un permiso (viaja renderer -> main -> CLI).
 //

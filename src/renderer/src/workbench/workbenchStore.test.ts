@@ -1443,15 +1443,21 @@ describe('stopSubagent', () => {
 });
 
 // 0.1.1 R2, punto 30: con un turno en marcha la cola es de Mage. Nada va al stdin hasta que acaba.
+// F2.2: la cola es de main. El renderer envía siempre (con su commandId), adelanta lo que se ve, pinta la
+// cola que llega en `queue_changed` y reacciona a lo que main saca de ella.
 describe('cola de mensajes', () => {
-  const RESULT = { kind: 'result', result: { isError: false, subtype: 'success', numTurns: 1 } } as const;
   const IMG = { mediaType: 'image/png', data: 'AAAA' } as const;
+  const queued = { status: 'queued', commandId: 'x' } as const;
+  const accepted = { status: 'accepted', commandId: 'x' } as const;
+  const userTexts = (store: ReturnType<typeof createWorkbenchStore>) =>
+    (store.getState().blocksByChat.a ?? []).filter((b) => b.kind === 'user').map((b) => b.kind === 'user' && b.text);
 
-  function mounted(status: 'idle' | 'streaming') {
-    const sendMessage = vi.fn().mockResolvedValue(undefined);
-    const interrupt = vi.fn().mockResolvedValue(undefined);
+  function mounted(status: 'idle' | 'streaming', receipt: { status: 'queued' | 'accepted'; commandId: string } = status === 'streaming' ? queued : accepted) {
+    const sendMessage = vi.fn().mockResolvedValue(receipt);
+    const interrupt = vi.fn().mockResolvedValue([]);
+    const removeQueuedMessage = vi.fn().mockResolvedValue(null);
     const store = createWorkbenchStore(
-      fakeMage({ sendMessage, interrupt, notify: vi.fn().mockResolvedValue(undefined), saveWorkspace: vi.fn().mockResolvedValue(undefined), getUsage: vi.fn().mockResolvedValue(null) }),
+      fakeMage({ sendMessage, interrupt, removeQueuedMessage, notify: vi.fn().mockResolvedValue(undefined), saveWorkspace: vi.fn().mockResolvedValue(undefined), getUsage: vi.fn().mockResolvedValue(null) }),
     );
     store.setState({
       tabs: [tab('a')],
@@ -1461,96 +1467,123 @@ describe('cola de mensajes', () => {
       statusByChat: { a: status },
       turnStartByChat: { a: 1000 },
     });
-    return { store, sendMessage, interrupt };
+    return { store, sendMessage, interrupt, removeQueuedMessage };
   }
 
-  it('sendMessageToTab_turnoEnMarcha_encolaSinBurbujaNiStdinNiReloj', async () => {
+  it('sendMessageToTab_turnoEnMarcha_loMandaAMainSinBurbujaNiReloj', async () => {
     const { store, sendMessage } = mounted('streaming');
 
     await store.getState().sendMessageToTab('a', ' segundo ', [IMG]);
 
-    expect(sendMessage).not.toHaveBeenCalled();
+    expect(sendMessage).toHaveBeenCalledWith({ sessionId: 's-a', text: 'segundo', attachments: [IMG], commandId: expect.any(String) as unknown });
     expect(store.getState().blocksByChat.a ?? []).toEqual([]);
-    expect(store.getState().queuedByChat.a?.map((m) => [m.text, m.attachments])).toEqual([['segundo', [IMG]]]);
     expect(store.getState().turnStartByChat.a).toBe(1000);
   });
 
-  it('sendMessageToTab_comandoConTurnoEnMarcha_tambienEspera', async () => {
+  it('sendMessageToTab_comandoConTurnoEnMarcha_tambienVaAMainSinBurbuja', async () => {
     const { store, sendMessage } = mounted('streaming');
 
     await store.getState().sendMessageToTab('a', '/context');
 
-    expect(sendMessage).not.toHaveBeenCalled();
-    expect(store.getState().queuedByChat.a).toHaveLength(1);
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(store.getState().blocksByChat.a ?? []).toEqual([]);
   });
 
-  it('result_conCola_enviaSoloElPrimeroYElSiguienteEsperaASuTurno', async () => {
+  it('sendMessageToTab_cadaEnvio_llevaSuPropioCommandId', async () => {
     const { store, sendMessage } = mounted('streaming');
-    await store.getState().sendMessageToTab('a', 'uno');
-    await store.getState().sendMessageToTab('a', 'dos', [IMG]);
 
-    store.getState().handleEvent('s-a', RESULT);
-    await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
-
-    expect(sendMessage).toHaveBeenLastCalledWith({ sessionId: 's-a', text: 'uno' });
-    expect(store.getState().statusByChat.a).toBe('streaming');
-    expect(store.getState().blocksByChat.a?.filter((b) => b.kind === 'user').map((b) => b.kind === 'user' && b.text)).toEqual(['uno']);
-    expect(store.getState().queuedByChat.a?.map((m) => m.text)).toEqual(['dos']);
-
-    store.getState().handleEvent('s-a', RESULT);
-    await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(2));
-
-    expect(sendMessage).toHaveBeenLastCalledWith({ sessionId: 's-a', text: 'dos', attachments: [IMG] });
-    expect(store.getState().queuedByChat.a).toBeUndefined();
-  });
-
-  it('interrupt_conCola_laDevuelveAlInputYNoLaEnviaAlAcabar', async () => {
-    const { store, sendMessage, interrupt } = mounted('streaming');
-    store.getState().setDraft('a', { text: 'borrador', attachments: [] });
-    await store.getState().sendMessageToTab('a', 'uno');
-    await store.getState().sendMessageToTab('a', 'mira [Imagen 1]', [IMG]);
-
-    store.getState().interruptActiveSession();
-    store.getState().handleEvent('s-a', RESULT);
-
-    expect(interrupt).toHaveBeenCalledWith('s-a');
-    expect(store.getState().queuedByChat.a).toBeUndefined();
-    expect(store.getState().draftByChat.a?.text).toBe('uno\n\nmira [Imagen 1]\n\nborrador');
-    expect(store.getState().draftByChat.a?.attachments.map((a) => a.attachment)).toEqual([IMG]);
-    expect(sendMessage).not.toHaveBeenCalled();
-  });
-
-  it('turnoQueAbreElCli_cuentaComoEnMarchaYLaColaEsperaASuResult', async () => {
-    const { store, sendMessage } = mounted('idle');
-    store.getState().handleEvent('s-a', { kind: 'request_started' });
-
-    await store.getState().sendMessageToTab('a', 'uno');
-    expect(sendMessage).not.toHaveBeenCalled();
-
-    store.getState().handleEvent('s-a', RESULT);
-    await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledWith({ sessionId: 's-a', text: 'uno' }));
-  });
-
-  it('editQueuedMessage_loDevuelveAlInputYLoQuitaDeLaCola', async () => {
-    const { store } = mounted('streaming');
     await store.getState().sendMessageToTab('a', 'uno');
     await store.getState().sendMessageToTab('a', 'dos');
-    const [first] = store.getState().queuedByChat.a ?? [];
 
-    store.getState().editQueuedMessage('a', first?.id ?? '');
-
-    expect(store.getState().draftByChat.a?.text).toBe('uno');
-    expect(store.getState().queuedByChat.a?.map((m) => m.text)).toEqual(['dos']);
+    const ids = sendMessage.mock.calls.map(([params]) => (params as { commandId: string }).commandId);
+    expect(new Set(ids).size).toBe(2);
   });
 
-  it('removeQueuedMessage_elUltimo_vaciaLaEntrada', async () => {
+  it('queueChanged_proyectaLaColaDeMainYLaVaciaConUnaVacia', () => {
     const { store } = mounted('streaming');
-    await store.getState().sendMessageToTab('a', 'uno');
-    const [first] = store.getState().queuedByChat.a ?? [];
 
-    store.getState().removeQueuedMessage('a', first?.id ?? '');
+    store.getState().handleEvent('s-a', { kind: 'queue_changed', queue: [{ id: 'q1', text: 'uno', attachments: [] }, { id: 'q2', text: 'dos', attachments: [IMG] }] });
+    expect(store.getState().queuedByChat.a?.map((m) => m.text)).toEqual(['uno', 'dos']);
 
+    store.getState().handleEvent('s-a', { kind: 'queue_changed', queue: [] });
     expect(store.getState().queuedByChat.a).toBeUndefined();
+  });
+
+  it('queuedMessageSent_seVeComoUnTurnoQueAcabaDeEmpezar', () => {
+    const { store, sendMessage } = mounted('idle');
+
+    store.getState().handleEvent('s-a', { kind: 'queued_message_sent', message: { id: 'q1', text: 'uno', attachments: [IMG] } });
+
+    expect(userTexts(store)).toEqual(['uno']);
+    expect(store.getState().statusByChat.a).toBe('streaming');
+    expect(store.getState().turnStartByChat.a).toBeGreaterThan(1000);
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('queuedMessageFailed_errorEnElChatYElMensajeVuelveAlInput', () => {
+    const { store } = mounted('idle');
+
+    store.getState().handleEvent('s-a', { kind: 'queued_message_failed', message: { id: 'q1', text: 'uno', attachments: [] }, error: 'proceso muerto' });
+
+    expect(store.getState().statusByChat.a).toBe('error');
+    expect(store.getState().draftByChat.a?.text).toBe('uno');
+  });
+
+  it('reciboQueued_conBurbujaAdelantada_laQuita', async () => {
+    // El renderer creía que no había turno; main sí lo tenía (p. ej. uno que abrió el CLI solo).
+    const { store } = mounted('idle', queued);
+
+    await store.getState().sendMessageToTab('a', 'uno');
+
+    expect(userTexts(store)).toEqual([]);
+  });
+
+  it('reciboAccepted_sinBurbujaAdelantada_pintaElInicioDelTurno', async () => {
+    // El renderer aún veía el turno en marcha; en main ya había acabado.
+    const { store } = mounted('streaming', accepted);
+
+    await store.getState().sendMessageToTab('a', 'uno');
+
+    expect(userTexts(store)).toEqual(['uno']);
+    expect(store.getState().statusByChat.a).toBe('streaming');
+  });
+
+  it('interrupt_losMensajesQueDevuelveMainVuelvenAlInput', async () => {
+    const { store, interrupt } = mounted('streaming');
+    interrupt.mockResolvedValue([{ id: 'q1', text: 'uno', attachments: [] }, { id: 'q2', text: 'mira [Imagen 1]', attachments: [IMG] }]);
+    store.getState().setDraft('a', { text: 'borrador', attachments: [] });
+
+    store.getState().interruptActiveSession();
+
+    expect(interrupt).toHaveBeenCalledWith('s-a');
+    await vi.waitFor(() => expect(store.getState().draftByChat.a?.text).toBe('uno\n\nmira [Imagen 1]\n\nborrador'));
+    expect(store.getState().draftByChat.a?.attachments.map((a) => a.attachment)).toEqual([IMG]);
+  });
+
+  it('editQueuedMessage_loQuitaDeMainYLoDevuelveAlInput', async () => {
+    const { store, removeQueuedMessage } = mounted('streaming');
+    removeQueuedMessage.mockResolvedValue({ id: 'q1', text: 'uno', attachments: [] });
+
+    await store.getState().editQueuedMessage('a', 'q1');
+
+    expect(removeQueuedMessage).toHaveBeenCalledWith({ sessionId: 's-a', messageId: 'q1' });
+    expect(store.getState().draftByChat.a?.text).toBe('uno');
+  });
+
+  it('editQueuedMessage_yaSalio_noTocaElInput', async () => {
+    const { store } = mounted('streaming');
+
+    await store.getState().editQueuedMessage('a', 'q1');
+
+    expect(store.getState().draftByChat.a).toBeUndefined();
+  });
+
+  it('removeQueuedMessage_loQuitaDeMain', async () => {
+    const { store, removeQueuedMessage } = mounted('streaming');
+
+    await store.getState().removeQueuedMessage('a', 'q1');
+
+    expect(removeQueuedMessage).toHaveBeenCalledWith({ sessionId: 's-a', messageId: 'q1' });
   });
 });
 
@@ -1775,18 +1808,20 @@ describe('PR de la pestaña (grupo D)', () => {
     expect(store.getState().statusByChat['a']).toBeUndefined();
   });
 
-  it('applyGhPrUpdate_ciTerminadoYAutoFix_avisaYEncolaElEventoUnaVez', () => {
+  it('applyGhPrUpdate_ciTerminadoYAutoFix_avisaYEncolaElEventoUnaVez', async () => {
+    // Con el turno en marcha el evento va a main, que lo deja en su cola (F2.2): se envía UNA vez.
     const notify = vi.fn().mockResolvedValue(undefined);
-    const { store } = prStore({ notify });
+    const sendMessage = vi.fn().mockResolvedValue({ status: 'queued', commandId: 'x' });
+    const { store } = prStore({ notify, sendMessage });
     store.setState({ tabs: [tab('a', { prNumber: 7, prAutoFix: true })] });
 
     store.getState().applyGhPrUpdate({ key: 'a', snapshot: { kind: 'pr', pr: PR }, ciFinished: true });
     store.getState().applyGhPrUpdate({ key: 'a', snapshot: { kind: 'pr', pr: PR }, ciFinished: false });
 
     expect(notify).toHaveBeenCalledWith(expect.objectContaining({ title: 'CI terminado' }));
-    const queued = store.getState().queuedByChat['a'] ?? [];
-    expect(queued).toHaveLength(1);
-    expect(queued[0]?.text).toContain('<ci-monitor-event>');
+    await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
+    expect((sendMessage.mock.calls[0]?.[0] as { text: string }).text).toContain('<ci-monitor-event>');
+    expect(store.getState().blocksByChat['a'] ?? []).toEqual([]);
   });
 
   it('applyGhPrUpdate_deOtroPr_seDescarta', () => {

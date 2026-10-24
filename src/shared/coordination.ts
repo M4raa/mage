@@ -2,6 +2,7 @@
 // secuencia y la instantánea consultable de una sesión. Solo TIPOS y constantes: cruza el IPC y, más
 // adelante, el protocolo del host local.
 import type { SessionState } from './events';
+import type { ImageAttachment } from './ipc';
 
 // Identificador de la conversación PARA MAGE. Estable: es la clave de su entrada en
 // `conversation-index.json`. Al crearse coincide con el id nativo de la primera sesión que la escribió
@@ -17,8 +18,23 @@ export interface NativeSessionRef {
   readonly nativeId: string;
 }
 
-// Estado de la sesión según la coordinación: `starting` hasta que el motor informa del suyo.
-export type CoordinatedState = SessionState | 'starting' | 'restarting';
+// Estado de la sesión según la coordinación: `starting` hasta que el motor informa del suyo; `error` tras
+// un error del motor (el turno ya no corre). En marcha = `running` o `requires_action`.
+export type CoordinatedState = SessionState | 'starting' | 'restarting' | 'error';
+
+// Mensaje en la cola de Mage (0.1.1 R2, punto 30; dueño: main desde F2.2). Con un turno en marcha el
+// mensaje espera y sale como turno propio al acabar ese. `id` = el `commandId` de quien lo envió.
+export interface QueuedMessage {
+  readonly id: string;
+  readonly text: string;
+  readonly attachments: readonly ImageAttachment[];
+}
+
+// Respuesta a un envío (F2.2): lo tomó el motor, o espera en la cola. Un envío inválido se rechaza con
+// error (como cualquier canal), no con un recibo. La finalización llega por eventos.
+export type SendReceipt =
+  | { readonly status: 'accepted'; readonly commandId: string }
+  | { readonly status: 'queued'; readonly commandId: string };
 
 // Proyección consultable de una sesión viva: lo que necesita un cliente que llega tarde o detecta un hueco
 // en la secuencia. `conversationId`/`nativeRef` son null mientras el proveedor no ha dicho su id nativo (una
@@ -30,4 +46,5 @@ export interface ConversationSnapshot {
   readonly nativeRef: NativeSessionRef | null;
   readonly lastSeq: number;
   readonly state: CoordinatedState;
+  readonly queue: readonly QueuedMessage[];
 }

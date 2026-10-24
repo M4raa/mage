@@ -10,7 +10,7 @@ import type { ProviderModel } from './providers';
 import type { AgyUsageSnapshot } from './usage';
 import type { MageEvent, PermissionDecision, SlashCommandInfo } from './events';
 import type { ArtifactRecord, ConversationPrefs } from './conversationIndex';
-import type { ConversationId, ConversationSnapshot } from './coordination';
+import type { ConversationId, ConversationSnapshot, QueuedMessage, SendReceipt } from './coordination';
 import type { UsageInfo } from './usage';
 import type { StatusInfo } from './status';
 import type { TranscriptBatch, TranscriptTailPosition } from './transcripts';
@@ -94,6 +94,9 @@ export const IpcChannel = {
   SessionAnswerPermission: 'session:answerPermission',
   SessionAnswerElicitation: 'session:answerElicitation',
   SessionInterrupt: 'session:interrupt',
+  // F2.2: la cola vive en main. Quitar un mensaje (editar o descartar) y vaciarla devolviendo sus mensajes.
+  SessionQueueRemove: 'session:queueRemove',
+  SessionQueueTake: 'session:queueTake',
   SessionSetModel: 'session:setModel',
   SessionSetEffort: 'session:setEffort',
   SessionSetPermissionMode: 'session:setPermissionMode',
@@ -359,6 +362,15 @@ export interface SendMessageParams {
   // Imagenes adjuntas (2.12.1). `data` es base64 SIN el prefijo `data:`. AUSENTE o [] = mensaje de solo
   // texto, y entonces el adapter manda EXACTAMENTE el payload de siempre (`content` como string).
   readonly attachments?: readonly ImageAttachment[];
+  // F2.2: id del envío, generado por quien envía. Reenviar el mismo devuelve el mismo recibo sin enviar dos
+  // veces; si el mensaje espera en la cola, es su id. Ausente = main genera uno.
+  readonly commandId?: string;
+}
+
+// Quitar un mensaje de la cola de main (F2.2) para editarlo o descartarlo.
+export interface QueuedMessageParams {
+  readonly sessionId: string;
+  readonly messageId: string;
 }
 
 // Imagen adjunta a un mensaje del usuario. Vive en el contrato IPC porque cruza main<->renderer; la
@@ -769,10 +781,17 @@ export type DropTabOutcome = 'moved' | 'none';
 export interface MageApi {
   readonly isDevelopment: boolean;
   createSession(params: CreateSessionParams): Promise<CreateSessionResult>; // sessionId + configDir efectivo
-  sendMessage(params: SendMessageParams): Promise<void>;
+  // Envía, o deja en la cola de main si hay un turno en marcha (F2.2): el recibo dice cuál de las dos.
+  sendMessage(params: SendMessageParams): Promise<SendReceipt>;
   answerPermission(params: AnswerPermissionParams): Promise<void>;
   answerElicitation(params: ElicitationAnswer): Promise<void>;
-  interrupt(sessionId: string): Promise<void>;
+  // Para el turno en curso y devuelve los mensajes que esperaban en la cola (un Stop no los envía: vuelven
+  // al input). Se vacía ANTES de interrumpir, así que el `result` del turno parado ya no saca ninguno.
+  interrupt(sessionId: string): Promise<readonly QueuedMessage[]>;
+  // Quita un mensaje de la cola de main y lo devuelve (null si ya no estaba: salió o lo quitó otro).
+  removeQueuedMessage(params: QueuedMessageParams): Promise<QueuedMessage | null>;
+  // Vacía la cola de main y devuelve sus mensajes.
+  takeQueuedMessages(sessionId: string): Promise<readonly QueuedMessage[]>;
   // Cambia el modelo de una sesion viva (M2.4, solo Claude); aplica al siguiente turno.
   setModel(params: SetModelParams): Promise<void>;
   setEffort(params: SetEffortParams): Promise<void>;

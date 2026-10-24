@@ -54,6 +54,7 @@ import type {
   SaveConversationPrefsParams,
   SaveSharedConfigParams,
   SendMessageParams,
+  QueuedMessageParams,
   SessionEventPayload,
   SetModelParams,
   SetEffortParams,
@@ -81,6 +82,8 @@ const api: MageApi = {
     ipcRenderer.invoke(IpcChannel.SessionAnswerPermission, params),
   answerElicitation: (params) => ipcRenderer.invoke(IpcChannel.SessionAnswerElicitation, params),
   interrupt: (sessionId: string) => ipcRenderer.invoke(IpcChannel.SessionInterrupt, sessionId),
+  removeQueuedMessage: (params: QueuedMessageParams) => ipcRenderer.invoke(IpcChannel.SessionQueueRemove, params),
+  takeQueuedMessages: (sessionId: string) => ipcRenderer.invoke(IpcChannel.SessionQueueTake, sessionId),
   setModel: (params: SetModelParams) => ipcRenderer.invoke(IpcChannel.SessionSetModel, params),
   setEffort: (params: SetEffortParams) => ipcRenderer.invoke(IpcChannel.SessionSetEffort, params),
   setPermissionMode: (params: SetPermissionModeParams) =>

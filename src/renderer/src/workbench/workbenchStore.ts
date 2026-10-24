@@ -46,7 +46,8 @@ import { createPrActions, CREATE_PR_PROMPT, resetPrActionsState, type PrActions,
 import { isPrCreateCommand, prNumberFromCreatedTag, prNumberFromUrl } from './prBinding';
 import { worktreeOfCwd } from '@shared/worktree';
 import { createdFileFrom } from './createdFilesView';
-import { enqueueMessage, mergeIntoDraft, removeQueuedMessage as withoutQueuedMessage, takeNextMessage, type QueuedMessage } from './messageQueue';
+import { mergeIntoDraft, type QueuedMessage } from './messageQueue';
+import type { SendReceipt } from '@shared/coordination';
 import type { Account, AccountSwitchPrompt, Block, ChatStatus, ContextInfo, ImageAttachment, PermissionView, PromptDraft, RateLimitNotice, SessionExtensions, Tab } from './types';
 import type { ConversationPrivacy } from '@shared/state';
 import type { ConversationSummary } from '@shared/conversations';
@@ -471,8 +472,9 @@ export interface WorkbenchState extends PrState, PrActions {
   // Guarda el borrador de UNA pestaña (auditoria B.1.2). `null` lo borra: es lo que hace el envio.
   setDraft: (tabId: string, draft: PromptDraft | null) => void;
   // Cola de mensajes (0.1.1 R2, punto 30): editar lo devuelve al input; quitar lo descarta.
-  editQueuedMessage: (tabId: string, id: string) => void;
-  removeQueuedMessage: (tabId: string, id: string) => void;
+  // La cola es de main (F2.2): editar la quita de alli y devuelve el mensaje al input; quitar la descarta.
+  editQueuedMessage: (tabId: string, id: string) => Promise<void>;
+  removeQueuedMessage: (tabId: string, id: string) => Promise<void>;
   // Carga el historial de conversaciones en disco de la cuenta activa (M2.6, sidebar = historial).
   loadConversationHistory: () => Promise<void>;
   // Abre (reanuda) una conversacion del historial: activa su pestana si ya esta abierta, o crea una.
@@ -1417,6 +1419,11 @@ export function createWorkbenchStore(mage: MageClient) {
         };
         set((s) => ({ backgroundSessions: { ...s.backgroundSessions, [sessionId]: entry } }));
         armBackgroundTtl(get, sessionId);
+        // Lo que esperaba en la cola de una pestaña que se cierra no sale solo en segundo plano: se descarta
+        // con su estado, como antes de que la cola viviera en main (F2.2).
+        if ((get().queuedByChat[tabId]?.length ?? 0) > 0) {
+          await mage.takeQueuedMessages(sessionId).catch((err: unknown) => reportActionError('No se pudo vaciar la cola de la conversación', err, 'chat'));
+        }
       }
       // Se ESPERA a que el CLI pare (B17). Borrar o mover la conversacion justo despues necesita que
       // nadie siga escribiendo su .jsonl: con `void` el borrado corria contra un proceso vivo y en
@@ -1918,18 +1925,13 @@ export function createWorkbenchStore(mage: MageClient) {
       set((s) => ({ draftByChat: vacio ? without(s.draftByChat, tabId) : { ...s.draftByChat, [tabId]: draft } }));
     },
 
-    editQueuedMessage: (tabId, id) => {
-      const message = (get().queuedByChat[tabId] ?? []).find((m) => m.id === id);
-      if (message === undefined) return;
-      get().removeQueuedMessage(tabId, id);
-      get().setDraft(tabId, mergeIntoDraft([message], get().draftByChat[tabId] ?? NO_DRAFT));
+    editQueuedMessage: async (tabId, id) => {
+      const message = await takeQueuedMessage(mage, get, set, tabId, id);
+      if (message !== null) get().setDraft(tabId, mergeIntoDraft([message], get().draftByChat[tabId] ?? NO_DRAFT));
     },
 
-    removeQueuedMessage: (tabId, id) => {
-      set((s) => {
-        const rest = withoutQueuedMessage(s.queuedByChat[tabId] ?? [], id);
-        return { queuedByChat: rest.length === 0 ? without(s.queuedByChat, tabId) : { ...s.queuedByChat, [tabId]: rest } };
-      });
+    removeQueuedMessage: async (tabId, id) => {
+      await takeQueuedMessage(mage, get, set, tabId, id);
     },
 
     renameTab: (tabId, title) => {
@@ -2646,40 +2648,15 @@ export function createWorkbenchStore(mage: MageClient) {
       if (get().tabs.find((t) => t.id === tabId)?.pendingCliTitle !== undefined && /^\/rename\b/.test(trimmed)) {
         set((s) => ({ tabs: s.tabs.map((t) => (t.id === tabId ? withoutPendingCliTitle(t) : t)) }));
       }
-      // Con un turno en marcha el mensaje espera en la cola de Mage (0.1.1 R2, punto 30), tambien un
-      // comando `/`: ni burbuja, ni stdin, ni reloj nuevo. Sale como turno propio al acabar este.
-      if (isTurnRunning(get().statusByChat[tabId])) {
-        const message = { id: nextBlockId(), text: trimmed, attachments };
-        set((s) => ({ queuedByChat: { ...s.queuedByChat, [tabId]: enqueueMessage(s.queuedByChat[tabId] ?? [], message) } }));
-        return;
-      }
-      // Auto-titulo (M2.6): el primer mensaje de una conversacion aun sin titulo lo fija desde el prompt.
-      // Un comando "/" no titula (P-028): la pestaña sigue «Nuevo chat» hasta el primer prompt real.
-      const activeTab = get().tabs.find((t) => t.id === tabId);
-      if (activeTab !== undefined && shouldAutoTitle(activeTab, get().blocksByChat[tabId] ?? EMPTY_BLOCKS, trimmed)) {
-        get().renameTab(tabId, deriveTitleFromPrompt(trimmed));
-      }
-      // El bloque optimista lleva ya los adjuntos, asi que la miniatura se ve al instante, sin esperar a
-      // que la transcripcion se relea.
-      patchBlocks(set, tabId, (blocks) => appendUserBlock(blocks, { id: nextBlockId(), text: trimmed, time: currentTime(), attachments }));
-      setStatus(set, tabId, 'streaming');
-      // El turno que lleva el prompt de «Crear PR» arma sus barreras hasta su `result` (como Desktop).
-      if (trimmed.includes(CREATE_PR_PROMPT)) set((s) => ({ prGuardByChat: { ...s.prGuardByChat, [tabId]: true } }));
-      // El aviso de limite se retira al escribir: o la ventana ya se restablecio, o el CLI lo volvera a
-      // mandar en este mismo turno. Dejarlo puesto ofreceria mudarse de cuenta por un limite caducado.
-      set((s) => ({ rateLimitByChat: without(s.rateLimitByChat, tabId) }));
-      // Marca el inicio del turno y la actividad (feedback de "pensando": timer + deteccion de cuelgue).
-      const startedAt = Date.now();
-      set((s) => ({
-        turnStartByChat: { ...s.turnStartByChat, [tabId]: startedAt },
-        lastActivityByChat: { ...s.lastActivityByChat, [tabId]: startedAt },
-        // ESCRIBIR es lo que sube la conversacion al principio del sidebar (abrirla no, A6).
-        tabs: s.tabs.map((t) => (t.id === tabId ? { ...t, lastMessageAtMs: startedAt } : t)),
-      }));
-      schedulePersist(mage, get);
+      // Main decide si sale ya o espera en su cola (F2.2; 0.1.1 R2, punto 30). Aqui solo se ADELANTA lo que
+      // se ve: con un turno en marcha no hay burbuja ni reloj nuevo (la cola se pinta con `queue_changed`);
+      // sin el, la burbuja sale al instante. Si main decide otra cosa, `reconcileReceipt` lo corrige.
+      const commandId = crypto.randomUUID();
+      const optimisticBlockId = isTurnRunning(get().statusByChat[tabId]) ? null : beginTurnLocally(mage, get, set, tabId, trimmed, attachments);
       try {
         const sessionId = await get().ensureSession(tabId);
-        await mage.sendMessage({ sessionId, text: trimmed, ...(attachments.length === 0 ? {} : { attachments }) });
+        const receipt = await mage.sendMessage({ sessionId, text: trimmed, commandId, ...(attachments.length === 0 ? {} : { attachments }) });
+        reconcileReceipt(mage, get, set, { tabId, receipt, optimisticBlockId, text: trimmed, attachments });
       } catch (err) {
         failChat(set, tabId, describeError(err));
         restoreDraftAfterFailedSend(set, tabId, trimmed, attachments);
@@ -2806,13 +2783,13 @@ export function createWorkbenchStore(mage: MageClient) {
     // parar. El CLI cierra el turno y emite su `result`, que devuelve el chat a 'idle'.
     interruptActiveSession: () => {
       const tabId = get().activeTabId;
-      // Un Stop no envia la cola (0.1.1 R2, punto 30): sus mensajes vuelven al input para que el usuario
-      // decida. Antes de pedir el interrupt: su `result` ya no debe encontrar nada que mandar.
-      returnQueueToDraft(get, set, tabId);
+      // Un Stop no envia la cola (0.1.1 R2, punto 30): main la vacia ANTES de interrumpir (su `result` ya no
+      // encuentra nada que mandar) y devuelve sus mensajes, que vuelven al input para que el usuario decida.
       const sessionId = get().sessionIdByChat[tabId];
       if (sessionId === undefined) return;
       void mage
         .interrupt(sessionId)
+        .then((taken) => returnMessagesToDraft(get, tabId, taken))
         .catch((err: unknown) => failChat(set, tabId, describeError(err)));
     },
 
@@ -2968,8 +2945,13 @@ export function createWorkbenchStore(mage: MageClient) {
       }
       // Y es el momento de mandar un nombre que el usuario puso con el turno en marcha (D3).
       if (event.kind === 'result') flushPendingCliTitle(mage, get, set, tabId);
-      // Y el primer mensaje de la cola sale como turno propio (0.1.1 R2, punto 30).
-      if (event.kind === 'result') sendNextQueuedMessage(get, tabId, set);
+      // Main saco de su cola el primero como turno propio (F2.2): se pinta como si se acabara de enviar. Si no
+      // pudo enviarlo, vuelve al input con el error.
+      if (event.kind === 'queued_message_sent') beginTurnLocally(mage, get, set, tabId, event.message.text, event.message.attachments);
+      if (event.kind === 'queued_message_failed') {
+        failChat(set, tabId, event.error);
+        restoreDraftAfterFailedSend(set, tabId, event.message.text, event.message.attachments);
+      }
       // Comandos locales con efecto en la pestaña (P-028): `/rename` la renombra al instante y `/clear`
       // deja persistido el id nuevo, para que reabrir Mage reanude la conversacion de despues.
       if (event.kind === 'local_command_output' && event.command === 'rename') applyCliRename(get, tabId, event);
@@ -3370,6 +3352,13 @@ export function reduceEvent(state: WorkbenchState, tabId: string, event: MageEve
         contextUsageByChat: without(state.contextUsageByChat, tabId),
         tabs: state.tabs.map((t) => (t.id === tabId && t.resumeSessionId !== undefined ? { ...t, resumeSessionId: event.newSessionId } : t)),
       };
+    // Cola de main (F2.2): el renderer la PINTA tal cual llega, entera. Los otros dos avisos de la cola
+    // tienen efecto en el store (`handleEvent`), no en el hilo.
+    case 'queue_changed':
+      return { queuedByChat: event.queue.length === 0 ? without(state.queuedByChat, tabId) : { ...state.queuedByChat, [tabId]: event.queue } };
+    case 'queued_message_sent':
+    case 'queued_message_failed':
+      return {};
     // Desglose de contexto del propio CLI (D3): no toca la conversacion, alimenta el Inspector.
     case 'context_usage':
       return { contextUsageByChat: { ...state.contextUsageByChat, [tabId]: event.usage } };
@@ -3557,20 +3546,70 @@ function denyPrTurnCommand(mage: MageClient, get: () => WorkbenchState, set: Set
     .catch((err: unknown) => failChat(set, tabId, describeError(err)));
 }
 
-function sendNextQueuedMessage(get: () => WorkbenchState, tabId: string, set: SetFn): void {
-  if (isTurnRunning(get().statusByChat[tabId])) return;
-  const { next, rest } = takeNextMessage(get().queuedByChat[tabId] ?? []);
-  if (next === null) return;
-  set((s) => ({ queuedByChat: rest.length === 0 ? without(s.queuedByChat, tabId) : { ...s.queuedByChat, [tabId]: rest } }));
-  void get().sendMessageToTab(tabId, next.text, next.attachments);
+// Lo que se ve al EMPEZAR un turno del usuario: auto-titulo, burbuja, estado, reloj y avisos que caducan.
+// Lo usan el envio directo y el mensaje que main saca de su cola. Devuelve el id de la burbuja.
+function beginTurnLocally(mage: MageClient, get: () => WorkbenchState, set: SetFn, tabId: string, text: string, attachments: readonly ImageAttachment[]): string {
+  // Auto-titulo (M2.6): el primer mensaje de una conversacion aun sin titulo lo fija desde el prompt.
+  // Un comando "/" no titula (P-028): la pestaña sigue «Nuevo chat» hasta el primer prompt real.
+  const tab = get().tabs.find((t) => t.id === tabId);
+  if (tab !== undefined && shouldAutoTitle(tab, get().blocksByChat[tabId] ?? EMPTY_BLOCKS, text)) get().renameTab(tabId, deriveTitleFromPrompt(text));
+  // El bloque optimista lleva ya los adjuntos, asi que la miniatura se ve al instante.
+  const blockId = nextBlockId();
+  patchBlocks(set, tabId, (blocks) => appendUserBlock(blocks, { id: blockId, text, time: currentTime(), attachments }));
+  setStatus(set, tabId, 'streaming');
+  // El turno que lleva el prompt de «Crear PR» arma sus barreras hasta su `result` (como Desktop).
+  if (text.includes(CREATE_PR_PROMPT)) set((s) => ({ prGuardByChat: { ...s.prGuardByChat, [tabId]: true } }));
+  // El aviso de limite se retira al escribir: o la ventana ya se restablecio, o el CLI lo volvera a
+  // mandar en este mismo turno. Dejarlo puesto ofreceria mudarse de cuenta por un limite caducado.
+  // Y se marca el inicio del turno y la actividad (feedback de "pensando": timer + deteccion de cuelgue).
+  // ESCRIBIR es lo que sube la conversacion al principio del sidebar (abrirla no, A6).
+  const startedAt = Date.now();
+  set((s) => ({
+    rateLimitByChat: without(s.rateLimitByChat, tabId),
+    turnStartByChat: { ...s.turnStartByChat, [tabId]: startedAt },
+    lastActivityByChat: { ...s.lastActivityByChat, [tabId]: startedAt },
+    tabs: s.tabs.map((t) => (t.id === tabId ? { ...t, lastMessageAtMs: startedAt } : t)),
+  }));
+  schedulePersist(mage, get);
+  return blockId;
 }
 
-// Vacia la cola en el input, en orden y delante de lo que ya hubiera escrito.
-function returnQueueToDraft(get: () => WorkbenchState, set: SetFn, tabId: string): void {
-  const queue = get().queuedByChat[tabId] ?? [];
-  if (queue.length === 0) return;
-  set((s) => ({ queuedByChat: without(s.queuedByChat, tabId) }));
-  get().setDraft(tabId, mergeIntoDraft(queue, get().draftByChat[tabId] ?? NO_DRAFT));
+interface ReceiptContext {
+  readonly tabId: string;
+  readonly receipt: SendReceipt;
+  readonly optimisticBlockId: string | null;
+  readonly text: string;
+  readonly attachments: readonly ImageAttachment[];
+}
+
+// El renderer adelanto lo que creia (burbuja o nada); main decidio. Si no coinciden (un turno que el renderer
+// aun no habia visto empezar, o que ya habia acabado en main), se corrige: fuera la burbuja de un mensaje que
+// espera en la cola, o se pinta el inicio de uno que salio.
+function reconcileReceipt(mage: MageClient, get: () => WorkbenchState, set: SetFn, context: ReceiptContext): void {
+  const { tabId, receipt, optimisticBlockId } = context;
+  if (receipt.status === 'queued' && optimisticBlockId !== null) {
+    patchBlocks(set, tabId, (blocks) => blocks.filter((b) => b.id !== optimisticBlockId));
+    return;
+  }
+  if (receipt.status === 'accepted' && optimisticBlockId === null) beginTurnLocally(mage, get, set, tabId, context.text, context.attachments);
+}
+
+// Quita un mensaje de la cola de main y lo devuelve (null si ya no estaba o no hay sesion).
+async function takeQueuedMessage(mage: MageClient, get: () => WorkbenchState, set: SetFn, tabId: string, messageId: string): Promise<QueuedMessage | null> {
+  const sessionId = get().sessionIdByChat[tabId];
+  if (sessionId === undefined) return null;
+  try {
+    return await mage.removeQueuedMessage({ sessionId, messageId });
+  } catch (err) {
+    failChat(set, tabId, describeError(err));
+    return null;
+  }
+}
+
+// Devuelve mensajes de la cola al input, en orden y delante de lo que ya hubiera escrito.
+function returnMessagesToDraft(get: () => WorkbenchState, tabId: string, messages: readonly QueuedMessage[]): void {
+  if (messages.length === 0) return;
+  get().setDraft(tabId, mergeIntoDraft(messages, get().draftByChat[tabId] ?? NO_DRAFT));
 }
 
 function patchBlocks(set: SetFn, tabId: string, fn: (blocks: readonly Block[]) => readonly Block[]): void {
