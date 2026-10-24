@@ -1,5 +1,5 @@
 import type { ImageAttachment } from '@shared/ipc';
-import type { MageEvent, PermissionDecision, TurnUsage } from '@shared/events';
+import type { MageEvent, PermissionDecision } from '@shared/events';
 import { parseElicitationRequest, validateElicitationAnswer, type ElicitationAnswer, type ElicitationRequest } from '@shared/elicitation';
 import { parseCodexPermissionPreset } from '@shared/codexPermissions';
 import { resolveCodexBinary } from '../os/codexBinaryResolver';
@@ -15,7 +15,9 @@ import {
   normalizeNotification,
   rateLimitEvents,
   contextUsageOf,
-  turnUsageOf,
+  trackTokenUsage,
+  EMPTY_USAGE_TRACKER,
+  type CodexUsageTracker,
 } from './codexProtocol';
 
 // Adapter de Codex (CLI de OpenAI) sobre `codex app-server`: JSON-RPC 2.0 por stdio, una linea por
@@ -93,7 +95,7 @@ export class CodexAdapter implements ProviderAdapter {
   private readonly fileChanges = new Map<string, readonly unknown[]>();
   private threadId: string | null = null;
   private turnId: string | null = null;
-  private turnUsage: TurnUsage | null = null;
+  private usage: CodexUsageTracker = EMPTY_USAGE_TRACKER;
   private queuedInputs: unknown[][] = [];
   private params: LaunchParams | null = null;
   private model = '';
@@ -143,7 +145,7 @@ export class CodexAdapter implements ProviderAdapter {
     this.fileChanges.clear();
     this.threadId = null;
     this.turnId = null;
-    this.turnUsage = null;
+    this.usage = EMPTY_USAGE_TRACKER;
   }
 
   takeOutgoing(): readonly unknown[] {
@@ -218,9 +220,9 @@ export class CodexAdapter implements ProviderAdapter {
     if (hasId) return this.onResponse(raw);
     if (typeof raw.method !== 'string') return [];
     this.trackFileChanges(raw.method, raw.params);
-    if (raw.method === 'thread/tokenUsage/updated') this.turnUsage = turnUsageOf(raw.params) ?? this.turnUsage;
+    if (raw.method === 'thread/tokenUsage/updated') this.usage = trackTokenUsage(this.usage, raw.params);
     if (raw.method === 'serverRequest/resolved') return this.onResolved(raw.params);
-    const events = normalizeNotification(raw.method, raw.params, this.turnUsage);
+    const events = normalizeNotification(raw.method, raw.params, this.usage.turn);
     if (raw.method === 'turn/completed') this.closeTurn();
     const context = raw.method === 'thread/tokenUsage/updated' ? contextUsageOf(raw.params) : null;
     return context === null ? events : [...events, { kind: 'context_usage', usage: context }];
@@ -228,7 +230,8 @@ export class CodexAdapter implements ProviderAdapter {
 
   private closeTurn(): void {
     this.turnId = null;
-    this.turnUsage = null;
+    // El total del hilo se conserva: el turno siguiente cuenta desde el.
+    this.usage = { ...this.usage, turn: null };
     this.fileChanges.clear();
   }
 

@@ -150,18 +150,52 @@ function errorNotification(params: Record<string, unknown>): MageEvent[] {
   return [{ kind: 'error', message: `codex: ${String(message)}${detail}` }];
 }
 
-// Uso del turno desde `thread/tokenUsage/updated` (`last` es el del turno, `total` el del hilo).
-export function turnUsageOf(params: unknown): TurnUsage | null {
-  if (!isRecord(params) || !isRecord(params.tokenUsage)) return null;
-  const parsed = TokenBreakdownSchema.safeParse(params.tokenUsage.last);
-  if (!parsed.success) return null;
-  const last = parsed.data;
+// Uso de tokens de Codex (F2.1). `thread/tokenUsage/updated` trae `last` (la ULTIMA llamada al modelo) y
+// `total` (acumulado del HILO). El uso del TURNO —el que lleva su `result` y suma el panel de Uso— es lo
+// que crece `total` durante el turno, actualizacion a actualizacion: una notificacion repetida suma 0, y
+// en el primer dato del proceso (un hilo reanudado arrastra en `total` todo lo anterior) cuenta `last`.
+// Antes se tomaba `last` como uso del turno: un turno con herramientas solo contaba su ultima llamada.
+type TokenBreakdown = Pick<z.infer<typeof TokenBreakdownSchema>, 'inputTokens' | 'cachedInputTokens' | 'outputTokens' | 'reasoningOutputTokens' | 'totalTokens'>;
+
+export interface CodexUsageTracker {
+  readonly threadTotal: TokenBreakdown | null; // ultimo `total` visto en este proceso
+  readonly turn: TurnUsage | null; // acumulado del turno en curso
+}
+
+export const EMPTY_USAGE_TRACKER: CodexUsageTracker = { threadTotal: null, turn: null };
+
+export function trackTokenUsage(tracker: CodexUsageTracker, params: unknown): CodexUsageTracker {
+  if (!isRecord(params) || !isRecord(params.tokenUsage)) return tracker;
+  const last = TokenBreakdownSchema.safeParse(params.tokenUsage.last);
+  if (!last.success) return tracker;
+  const total = TokenBreakdownSchema.safeParse(params.tokenUsage.total);
+  // Sin `total` utilizable (ausente o a cero) no hay con que restar: cuenta la llamada.
+  if (!total.success || total.data.totalTokens === 0) return { ...tracker, turn: addUsage(tracker.turn, last.data) };
+  return { threadTotal: total.data, turn: addUsage(tracker.turn, growth(tracker.threadTotal, total.data, last.data)) };
+}
+
+// Lo que crecio el hilo desde el dato anterior. Sin anterior, o si algun contador retrocede (es un
+// acumulado: no deberia), la ultima llamada.
+function growth(previous: TokenBreakdown | null, total: TokenBreakdown, last: TokenBreakdown): TokenBreakdown {
+  if (previous === null) return last;
+  const delta: TokenBreakdown = {
+    inputTokens: total.inputTokens - previous.inputTokens,
+    cachedInputTokens: total.cachedInputTokens - previous.cachedInputTokens,
+    outputTokens: total.outputTokens - previous.outputTokens,
+    reasoningOutputTokens: total.reasoningOutputTokens - previous.reasoningOutputTokens,
+    totalTokens: total.totalTokens - previous.totalTokens,
+  };
+  return Object.values(delta).some((value) => value < 0) ? last : delta;
+}
+
+function addUsage(turn: TurnUsage | null, add: TokenBreakdown): TurnUsage {
+  const sum = (current: number | null | undefined, extra: number): number => (current ?? 0) + extra;
   return {
-    inputTokens: last.inputTokens,
-    outputTokens: last.outputTokens,
-    totalTokens: last.totalTokens,
-    thinkingTokens: last.reasoningOutputTokens,
-    cacheReadTokens: last.cachedInputTokens,
+    inputTokens: sum(turn?.inputTokens, add.inputTokens),
+    outputTokens: sum(turn?.outputTokens, add.outputTokens),
+    totalTokens: sum(turn?.totalTokens, add.totalTokens),
+    thinkingTokens: sum(turn?.thinkingTokens, add.reasoningOutputTokens),
+    cacheReadTokens: sum(turn?.cacheReadTokens, add.cachedInputTokens),
   };
 }
 

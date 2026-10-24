@@ -165,6 +165,9 @@ function onCodexNotification(run, m) {
   if (m.method === 'item/agentMessage/delta') markUseful(run);
   if (m.method === 'item/started' && item?.type !== 'agentMessage' && item?.type !== 'userMessage' && item?.type !== 'reasoning') { markUseful(run); run.tools.push(item?.type === 'mcpToolCall' ? `${item.server}/${item.tool}` : String(item?.type)); }
   if (m.method === 'item/completed' && item?.type === 'agentMessage') run.text += item.text ?? '';
+  // R2 lee el TOTAL del hilo (todos los turnos de la tarea); R3 suma el uso del `result` de cada turno, que
+  // desde F2.1 es lo que crece ese total durante el turno. Por eso coinciden: antes R3 tomaba solo la
+  // última llamada al modelo (`last`) de cada turno.
   if (m.method === 'thread/tokenUsage/updated') {
     const u = m.params?.tokenUsage?.total ?? {};
     run.tokens = { input: u.inputTokens ?? 0, output: u.outputTokens ?? 0, cacheRead: u.cachedInputTokens ?? 0, cacheCreate: 0 };

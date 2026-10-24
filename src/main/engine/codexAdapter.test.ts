@@ -232,6 +232,52 @@ describe('CodexAdapter: turno', () => {
     expect(events[3]).toMatchObject({ result: { usage: { inputTokens: 10, outputTokens: 2, thinkingTokens: 1, cacheReadTokens: 4 } } });
   });
 
+  // F2.1 (respuesta 5 de la devolución 13): el uso del TURNO es lo que crece el total del hilo durante el
+  // turno. `last` es solo la última llamada al modelo: un turno con herramientas hace varias.
+  describe('uso de tokens por turno', () => {
+    const usage = (last: [number, number, number], total: [number, number, number]) => notification('thread/tokenUsage/updated', {
+      threadId: 't', turnId: 'u',
+      tokenUsage: {
+        last: { inputTokens: last[0], cachedInputTokens: last[1], outputTokens: last[2], reasoningOutputTokens: 0, totalTokens: last[0] + last[2] },
+        total: { inputTokens: total[0], cachedInputTokens: total[1], outputTokens: total[2], reasoningOutputTokens: 0, totalTokens: total[0] + total[2] },
+      },
+    });
+    const completed = notification('turn/completed', { threadId: 't', turn: { id: 'u', items: [], status: 'completed', error: null } });
+    const resultUsage = (adapter: CodexAdapter, raws: unknown[]) => {
+      const result = raws.flatMap((raw) => adapter.normalize(raw)).find((e) => e.kind === 'result');
+      return result?.kind === 'result' ? result.result.usage : undefined;
+    };
+
+    it('normalize_dosLlamadasEnUnTurno_sumaLasDos', () => {
+      const adapter = codex();
+
+      const turn = resultUsage(adapter, [usage([25_000, 20_000, 30], [25_000, 20_000, 30]), usage([41_000, 38_000, 25], [66_000, 58_000, 55]), completed]);
+
+      expect(turn).toMatchObject({ inputTokens: 66_000, cacheReadTokens: 58_000, outputTokens: 55 });
+    });
+
+    it('normalize_notificacionRepetida_noCuentaDosVeces', () => {
+      const adapter = codex();
+      const same = usage([25_000, 20_000, 30], [25_000, 20_000, 30]);
+
+      expect(resultUsage(adapter, [same, same, completed])).toMatchObject({ inputTokens: 25_000, outputTokens: 30 });
+    });
+
+    it('normalize_segundoTurno_soloLoQueCrecioEnEse', () => {
+      const adapter = codex();
+      resultUsage(adapter, [usage([25_000, 20_000, 30], [25_000, 20_000, 30]), completed]);
+
+      expect(resultUsage(adapter, [usage([27_000, 25_000, 10], [52_000, 45_000, 40]), completed])).toMatchObject({ inputTokens: 27_000, cacheReadTokens: 25_000, outputTokens: 10 });
+    });
+
+    it('normalize_hiloReanudado_noCuentaElHistorialDelTotal', () => {
+      // Primer dato del proceso: el total arrastra lo de antes de reanudar; del turno solo es la llamada.
+      const adapter = codex();
+
+      expect(resultUsage(adapter, [usage([30_000, 28_000, 12], [500_000, 400_000, 900]), completed])).toMatchObject({ inputTokens: 30_000, outputTokens: 12 });
+    });
+  });
+
   it('normalize_turnoFallido_errorVisibleYResultDeError', () => {
     const events = codex().normalize(notification('turn/completed', { threadId: 't', turn: { id: 'u', items: [], status: 'failed', error: { message: 'cuota' } } }));
 
