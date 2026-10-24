@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { AccountInfo } from '@shared/accounts';
-import { applyAccentOverrides, providerBadge, providerLabel, toAccountView } from './accountView';
+import { applyAccentOverrides, assignMissingAccents, providerBadge, providerLabel, toAccountView } from './accountView';
 
 function info(overrides: Partial<AccountInfo>): AccountInfo {
   return {
@@ -127,5 +127,44 @@ describe('R46 — avatares', () => {
 
     expect(existing.monogram).toBe('W');
     expect(after[1]?.accent).toEqual(before[0]?.accent);
+  });
+});
+
+describe('assignMissingAccents (#46, H3)', () => {
+  it('assignMissingAccents_seisCuentasSinGuardar_seisColoresDistintos', () => {
+    const ids = ['a', 'b', 'c', 'd', 'e', 'f'];
+
+    const result = assignMissingAccents(ids, {});
+
+    expect(new Set(ids.map((id) => result[id])).size).toBe(6);
+  });
+
+  it('assignMissingAccents_anadirCuentas_noCambiaLasExistentes', () => {
+    const first = assignMissingAccents(['a', 'b'], {});
+
+    const later = assignMissingAccents(['nueva', 'a', 'b'], first);
+
+    expect(later.a).toBe(first.a);
+    expect(later.b).toBe(first.b);
+    expect([first.a, first.b]).not.toContain(later.nueva);
+  });
+
+  it('assignMissingAccents_eleccionManual_seRespetaYNoSeRepite', () => {
+    const result = assignMissingAccents(['manual', 'x'], { manual: 0 });
+
+    expect(result.manual).toBe(0);
+    expect(result.x).toBe(1);
+  });
+
+  it('assignMissingAccents_nadaQueAsignar_mismaReferencia', () => {
+    const saved = { a: 2 };
+
+    expect(assignMissingAccents(['a'], saved)).toBe(saved);
+  });
+
+  it('assignMissingAccents_sieteCuentas_reutilizaElMenosUsado', () => {
+    const result = assignMissingAccents(['a', 'b', 'c', 'd', 'e', 'f', 'g'], {});
+
+    expect(result.g).toBe(0);
   });
 });

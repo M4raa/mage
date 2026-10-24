@@ -2037,3 +2037,38 @@ describe('saveCustomProvider — A14', () => {
     await expect(store.getState().saveCustomProvider({ id: 'custom:a14', label: 'A14', baseUrl: 'http://127.0.0.1:9/v1', hasApiKey: false, models: [] })).rejects.toThrow('disco lleno');
   });
 });
+
+describe('assignAccountAccents — #46 H3', () => {
+  const account = (n: number): AccountInfo => ({ configDir: `/fixture/.claude-${n}`, name: `.claude-${n}`, providerId: 'claude', authKind: 'subscription',
+    isMain: n === 0, email: null, org: null, loginStatus: 'logged_in', expiresAt: null, defaultModel: null });
+
+  it('assignAccountAccents_seisCuentas_coloresDistintosYGuardados', async () => {
+    const saveSettings = vi.fn().mockResolvedValue(undefined);
+    const infos = [0, 1, 2, 3, 4, 5].map(account);
+    const store = createWorkbenchStore(fakeMage({ listAccounts: async () => infos, loadModelCatalog: async () => [], confirmCodexAccounts: async () => infos, saveSettings }));
+    await store.getState().refreshAccounts();
+
+    store.getState().assignAccountAccents();
+
+    const accents = store.getState().accounts.map((a) => a.accent.base);
+    expect(new Set(accents).size).toBe(6);
+    expect(Object.keys(store.getState().settings.accentByAccount)).toHaveLength(6);
+  });
+
+  it('assignAccountAccents_cuentaNueva_noCambiaElColorDeLasDemas', async () => {
+    let infos = [1, 2].map(account);
+    const store = createWorkbenchStore(fakeMage({ listAccounts: async () => infos, loadModelCatalog: async () => [], confirmCodexAccounts: async () => infos, saveSettings: vi.fn().mockResolvedValue(undefined) }));
+    await store.getState().refreshAccounts();
+    store.getState().assignAccountAccents();
+    const before = Object.fromEntries(store.getState().accounts.map((a) => [a.id, a.accent.base]));
+
+    infos = [0, 1, 2].map(account);
+    await store.getState().refreshAccounts();
+    store.getState().assignAccountAccents();
+
+    const after = Object.fromEntries(store.getState().accounts.map((a) => [a.id, a.accent.base]));
+    expect(after['/fixture/.claude-1']).toBe(before['/fixture/.claude-1']);
+    expect(after['/fixture/.claude-2']).toBe(before['/fixture/.claude-2']);
+    expect(new Set(Object.values(after)).size).toBe(3);
+  });
+});

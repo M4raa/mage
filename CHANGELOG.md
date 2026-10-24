@@ -16,7 +16,8 @@ versión.
 - El ⏎ del prompt es un botón que envía; si el envío falla, el mensaje vuelve a la caja.
 - Actividad dice que está cargando, o el motivo del error, al reabrir una conversación en vez de «sin actividad».
 - El login OAuth de MCP evita puertos bloqueados por el navegador y explica los puertos fijos no válidos.
-- Los avatares toman la inicial del nombre de cuenta y mantienen su color al añadir otras. El color por defecto de cada cuenta puede cambiar una vez con esta versión; los elegidos a mano se conservan.
+- Los avatares toman la inicial del nombre de cuenta. Cada cuenta nueva recibe el color menos usado y lo conserva al añadir otras, así que no se repiten mientras queden colores libres. El color por defecto de las cuentas existentes puede cambiar una vez con esta versión; los elegidos a mano se conservan.
+- Dar de alta un proveedor propio y abrir enseguida una conversación con él ya no falla con «Proveedor no configurado».
 - Las conversaciones muestran un indicador mientras cargan y el motivo si no se pueden leer.
 - Con la ventana dividida, una pregunta en el otro panel ya no roba el foco, y el chat sigue mostrando el final cuando aparece una pregunta. «Otra cosa» se alcanza con las flechas.
 - Configuración › Almacenamiento tiene «Permitir Artifact (publica en claude.ai)», apagado por defecto: con él, las sesiones de Claude Code pueden usar la herramienta Artifact (se aplica al reabrir la conversación).

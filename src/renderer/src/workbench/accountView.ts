@@ -96,3 +96,24 @@ function stableAccent(id: string): number {
   for (let i = 0; i < id.length; i++) hash = (Math.imul(hash, HASH_MULTIPLIER) + id.charCodeAt(i)) >>> 0;
   return hash % ACCENT_COUNT;
 }
+
+// #46/H3: acento de las cuentas que aún no tienen uno guardado: el MENOS usado entre los ya asignados
+// (empates, el índice más bajo), en orden de descubrimiento. Las guardadas (elegidas a mano o asignadas
+// antes) no se tocan, así que añadir una cuenta no cambia el color de las demás, y mientras haya colores
+// libres no se repiten. Devuelve la MISMA referencia si no falta ninguna (no hay nada que persistir).
+export function assignMissingAccents(accountIds: readonly string[], saved: Readonly<Record<string, number>>): Readonly<Record<string, number>> {
+  const missing = accountIds.filter((id) => saved[id] === undefined);
+  if (missing.length === 0) return saved;
+  const uses = Array.from({ length: ACCENT_COUNT }, () => 0);
+  for (const id of accountIds) {
+    const accent = saved[id];
+    if (accent !== undefined) uses[accent] = (uses[accent] ?? 0) + 1;
+  }
+  const next: Record<string, number> = { ...saved };
+  for (const id of missing) {
+    const least = uses.indexOf(Math.min(...uses));
+    next[id] = least;
+    uses[least] = (uses[least] ?? 0) + 1;
+  }
+  return next;
+}

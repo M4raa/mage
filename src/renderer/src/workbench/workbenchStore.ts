@@ -12,7 +12,7 @@ import { isPermissionMode, MAIN_WINDOW_ID, PERMISSION_MODES } from '@shared/ipc'
 import { RELEASE_NOTES_TAB_ID, releaseNotesDecision } from './releaseNotes';
 import type { AgyUsageSnapshot, UsageInfo } from '@shared/usage';
 import type { StatusInfo } from '@shared/status';
-import { applyAccentOverrides, toAccountView } from './accountView';
+import { applyAccentOverrides, assignMissingAccents, toAccountView } from './accountView';
 import { nextIndexForArrow } from './a11y/keyboardNav';
 import { canChangeCwd } from './cwdChange';
 import { toUsageWindows } from './usageView';
@@ -348,6 +348,9 @@ export interface WorkbenchState extends PrState, PrActions {
   // --- Shell (cuentas y pestanas reales) ---
   init: () => void;
   refreshAccounts: () => Promise<void>;
+  // #46/H3: guarda un acento (el menos usado) para cada cuenta que aún no tiene uno. Solo con los ajustes
+  // ya cargados: antes, persistir pisaría los colores elegidos a mano.
+  assignAccountAccents: () => void;
   // Lee de la cache de main el catalogo de modelos de un config dir, si aun no esta en memoria.
   loadModelCatalog: (configDir: string) => Promise<void>;
   restoreWorkspace: () => Promise<void>;
@@ -1177,6 +1180,8 @@ export function createWorkbenchStore(mage: MageClient) {
   gitTrustAsked.clear();
   resetPrActionsState();
   prCreateToolUses.clear();
+  // Los ajustes reales ya están en el store (los cargó `init`): hasta entonces no se asignan acentos.
+  let settingsReady = false;
   // `api` es el store QUE SE ESTA CREANDO. Se usa para suscribirse a si mismo: con
   // `useWorkbenchStore.subscribe` (el singleton global) un store creado con un cliente de pruebas
   // cableaba el espejo del widget contra el store real de la app — justo el acoplamiento que la
@@ -1633,6 +1638,12 @@ export function createWorkbenchStore(mage: MageClient) {
       // la pestaña) y con los ajustes reales. Si alguno falla no se decide nada: con los ajustes por
       // defecto esto parece una instalacion nueva y guardaria encima de los del usuario.
       void Promise.all([workspaceRestored, settingsLoaded])
+        .then(() => {
+          settingsReady = true;
+          get().assignAccountAccents();
+        })
+        .catch((err: unknown) => console.warn('No se pudieron asignar los colores de las cuentas:', describeError(err)));
+      void Promise.all([workspaceRestored, settingsLoaded])
         .then(() => get().showReleaseNotesIfUpdated(isReleaseNotesDevRun()))
         .catch((err: unknown) => console.warn('No se pudieron comprobar las novedades:', describeError(err)));
 
@@ -1787,6 +1798,15 @@ export function createWorkbenchStore(mage: MageClient) {
         };
       });
       confirmCodexAccounts(mage, infos, (confirmed) => set((state) => ({ accounts: applyCodexConfirmation(state.accounts, confirmed) })));
+      if (settingsReady) get().assignAccountAccents();
+    },
+
+    assignAccountAccents: () => {
+      const saved = get().settings.accentByAccount;
+      const accentByAccount = assignMissingAccents(get().accounts.map((a) => a.id), saved);
+      if (accentByAccount === saved) return;
+      set((s) => ({ settings: { ...s.settings, accentByAccount }, accounts: applyAccentOverrides(s.accounts, accentByAccount) }));
+      scheduleSettingsPersist(mage, get);
     },
 
     // Abre una pestana real ligada a {cuenta, proyecto, modelo}. La sesion del motor se crea perezosa
