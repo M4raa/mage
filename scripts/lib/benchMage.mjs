@@ -1,6 +1,6 @@
 // Benchmark F0-B, ruta R3: las mismas tareas que spike/bench-r2.mjs, pero ejecutadas POR MAGE (pestaña,
 // sesión y motor reales), conducidas por el store desde el harness. Excepción explícita a «un turno real
-// por ejecución» de verify:gui, autorizada por dirección para el baseline (DEVOLUCION-012 H7); la guarda
+// por ejecución» de verify:gui, autorizada para el baseline del benchmark; la guarda
 // de uso del 70 % se aplica antes de cada tarea. Solo mide: no cambia el producto.
 import fs from 'node:fs';
 import path from 'node:path';

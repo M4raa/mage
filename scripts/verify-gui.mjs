@@ -10293,7 +10293,7 @@ async function main() {
 
 // Benchmark F0-B, ruta R3 (`--bench --provider=claude|codex --rep=<n> --out=<fichero> [--tasks=T1,..]`):
 // Mage con perfil aislado y una CASA temporal (USERPROFILE/HOME) con copia de la credencial del
-// proveedor, retirada en finally con su comprobación de token. Gasta turnos reales (DEVOLUCION-012 H7).
+// proveedor, retirada en finally con su comprobación de token. Gasta turnos reales (autorizados para el baseline).
 async function runBenchMode() {
   const arg = (name) => process.argv.find((a) => a.startsWith(`--${name}=`))?.split('=')[1];
   const provider = arg('provider');
