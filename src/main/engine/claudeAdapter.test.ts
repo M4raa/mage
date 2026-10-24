@@ -193,25 +193,30 @@ describe('ClaudeAdapter', () => {
       expect(plan.env.CLAUDE_CONFIG_DIR).toBe('/home/u/.claude-p');
     });
 
-    it('buildSpawnPlan_sinPreferenciaDelUsuario_activaArtifact', () => {
+    // D5 (#53): Artifact es una opción del usuario, apagada por defecto. El ajuste manda sobre lo que el
+    // usuario exportara en su entorno: apagado es `0` explícito (el CLI lo enciende con cualquier valor verdadero).
+    const withExportedArtifact = (value: string | undefined, run: () => void): void => {
       const original = process.env.CLAUDE_CODE_ARTIFACT;
-      delete process.env.CLAUDE_CODE_ARTIFACT;
+      if (value === undefined) delete process.env.CLAUDE_CODE_ARTIFACT;
+      else process.env.CLAUDE_CODE_ARTIFACT = value;
+      try { run(); } finally {
+        if (original === undefined) delete process.env.CLAUDE_CODE_ARTIFACT;
+        else process.env.CLAUDE_CODE_ARTIFACT = original;
+      }
+    };
 
-      const plan = adapter.buildSpawnPlan(launch);
-
-      if (original !== undefined) process.env.CLAUDE_CODE_ARTIFACT = original;
-      expect(plan.env.CLAUDE_CODE_ARTIFACT).toBe('1');
+    it('buildSpawnPlan_ajustePorDefecto_apagaArtifact', () => {
+      withExportedArtifact(undefined, () => expect(adapter.buildSpawnPlan(launch).env.CLAUDE_CODE_ARTIFACT).toBe('0'));
     });
 
-    it('buildSpawnPlan_usuarioApagaArtifact_seRespeta', () => {
-      const original = process.env.CLAUDE_CODE_ARTIFACT;
-      process.env.CLAUDE_CODE_ARTIFACT = '0';
+    it('buildSpawnPlan_ajusteApagadoYUsuarioExportaUno_sigueApagado', () => {
+      withExportedArtifact('1', () => expect(adapter.buildSpawnPlan(launch).env.CLAUDE_CODE_ARTIFACT).toBe('0'));
+    });
 
-      const plan = adapter.buildSpawnPlan(launch);
+    it('buildSpawnPlan_ajusteEncendido_activaArtifact', () => {
+      const enabled = new ClaudeAdapter(() => 'claude', undefined, undefined, () => true);
 
-      if (original === undefined) delete process.env.CLAUDE_CODE_ARTIFACT;
-      else process.env.CLAUDE_CODE_ARTIFACT = original;
-      expect(plan.env.CLAUDE_CODE_ARTIFACT).toBe('0');
+      withExportedArtifact('0', () => expect(enabled.buildSpawnPlan(launch).env.CLAUDE_CODE_ARTIFACT).toBe('1'));
     });
 
     it('buildSpawnPlan_args_includeSessionModelAndVerbose', () => {

@@ -7078,6 +7078,31 @@ const CHECKS = [
     },
   },
   {
+    // F1.12 H1 (D5, #53): «Permitir Artifact» es una opción apagada por defecto que main recibe guardada.
+    // Abre Configuración y la cierra; deja el ajuste como lo encontró.
+    name: 'F1.12 D5: Permitir Artifact está apagado por defecto y se guarda en main',
+    async run(page) {
+      await openSettingsDialog(page);
+      await openSection(page, /Almacenamiento/);
+      const casilla = page.locator('[data-setting="artifact"] input[type="checkbox"]');
+      const porDefecto = await casilla.isChecked();
+      // El guardado lleva debounce: se sondea main hasta que el valor llega (o se agota el plazo).
+      const enMain = (esperado) => page.evaluate(async ({ esperado, plazo }) => {
+        const fin = Date.now() + plazo;
+        let valor = (await window.mage.loadSettings()).artifactEnabled;
+        while (valor !== esperado && Date.now() < fin) { await new Promise((r) => setTimeout(r, 100)); valor = (await window.mage.loadSettings()).artifactEnabled; }
+        return valor;
+      }, { esperado, plazo: CONFIG.actionTimeoutMs });
+      await casilla.check();
+      const encendido = await enMain(true);
+      await casilla.uncheck();
+      const apagado = await enMain(false);
+      await page.keyboard.press('Escape');
+      await page.locator(MODAL).first().waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+      return { ok: porDefecto === false && encendido === true && apagado === false, detail: JSON.stringify({ porDefecto, encendido, apagado }) };
+    },
+  },
+  {
     name: 'F1.11 R48: una conversación pendiente de cargar muestra indicador y, si falla, el error',
     async run(page) {
       await openTemporaryConversation(page);

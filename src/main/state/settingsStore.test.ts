@@ -30,6 +30,7 @@ const VALID: AppSettings = {
   defaultProvider: 'claude',
   accentByAccount: { 'C:/Users/u/.claude-p': 3 },
   claudeAiConnectorsOff: ['C:/Users/u/.claude-p'],
+  artifactEnabled: true,
   ghNoticeDismissed: true,
   autoArchiveOnPrClose: true,
   agyCommandRules: { allow: ['git status'], deny: ['rm -rf build'] },
@@ -352,5 +353,26 @@ describe('SettingsStore.save', () => {
 
     expect(() => store.save({ version: 1, notificationRules: [{ id: '' }] } as unknown as AppSettings)).toThrow(/invalida/i);
     expect(writeFile).not.toHaveBeenCalled();
+  });
+});
+
+describe('SettingsStore — Artifact (D5)', () => {
+  it('load_sinCampoArtifact_apagado', () => {
+    const { artifactEnabled: _omitted, ...withoutArtifact } = VALID;
+    const store = new SettingsStore(deps({ readFile: () => JSON.stringify(withoutArtifact) }));
+
+    expect(store.load().artifactEnabled).toBe(false);
+  });
+
+  it('load_artifactBasura_apagado', () => {
+    const store = new SettingsStore(deps({ readFile: () => JSON.stringify({ ...VALID, artifactEnabled: 'sí' }) }));
+
+    expect(store.load().artifactEnabled).toBe(false);
+  });
+
+  it('load_artifactEncendido_seConserva', () => {
+    const store = new SettingsStore(deps({ readFile: () => JSON.stringify(VALID) }));
+
+    expect(store.load().artifactEnabled).toBe(true);
   });
 });

@@ -78,6 +78,8 @@ export class ClaudeAdapter implements ProviderAdapter {
     private readonly resolveBinary: () => string = resolveClaudeBinary,
     private readonly writeMcpConfig: ClaudeMcpConfigWriter = refuseClaudeMcpConfig,
     private readonly resolveApiKey: (accountDir: string) => string | null = () => null,
+    // D5 (#53): ajuste del usuario «Permitir Artifact», apagado por defecto. Se lee en cada arranque.
+    private readonly artifactEnabled: () => boolean = () => false,
   ) {}
 
   buildSpawnPlan(params: LaunchParams): SpawnPlan {
@@ -108,12 +110,12 @@ export class ClaudeAdapter implements ProviderAdapter {
     // escrita alli: la clave de una cuenta de Claude por API se pone DESPUES del saneado y solo en el hijo
     // de esa cuenta; las de suscripcion no reciben ninguna.
     const apiKey = this.resolveApiKey(params.accountDir);
-    // #53 (medido en 2.1.309, spike/f1-artifact.mjs): en modo SDK el CLI apaga Artifact por defecto
-    // («sdk_default_off») salvo con CLAUDE_CODE_ARTIFACT verdadero. Va ANTES del env heredado: si el
-    // usuario la fijó (p. ej. a 0), manda la suya.
+    // #53/D5 (medido en 2.1.309, spike/f1-artifact.mjs): en modo SDK el CLI apaga Artifact salvo con
+    // CLAUDE_CODE_ARTIFACT verdadero. Publica en claude.ai, así que es opción del usuario, apagada por
+    // defecto; el valor va DESPUÉS del env heredado: manda el ajuste, no lo que el usuario exportara.
     const env: NodeJS.ProcessEnv = {
-      CLAUDE_CODE_ARTIFACT: '1',
       ...scrubAgentEnv(process.env),
+      CLAUDE_CODE_ARTIFACT: this.artifactEnabled() ? '1' : '0',
       CLAUDE_CONFIG_DIR: params.accountDir,
       ...shared.env,
       ...(apiKey === null ? {} : { [ANTHROPIC_API_KEY_ENV]: apiKey }),

@@ -19,7 +19,7 @@ versión.
 - Los avatares toman la inicial del nombre de cuenta y mantienen su color al añadir otras. El color por defecto de cada cuenta puede cambiar una vez con esta versión; los elegidos a mano se conservan.
 - Las conversaciones muestran un indicador mientras cargan y el motivo si no se pueden leer.
 - Con la ventana dividida, una pregunta en el otro panel ya no roba el foco, y el chat sigue mostrando el final cuando aparece una pregunta. «Otra cosa» se alcanza con las flechas.
-- Las sesiones de Claude Code lanzadas por Mage tienen disponible la herramienta Artifact (se puede apagar con `CLAUDE_CODE_ARTIFACT=0`).
+- Configuración › Almacenamiento tiene «Permitir Artifact (publica en claude.ai)», apagado por defecto: con él, las sesiones de Claude Code pueden usar la herramienta Artifact (se aplica al reabrir la conversación).
 - Los nuevos chats empiezan con worktree desactivado; la elección de cada pestaña se conserva al reiniciar.
 - Las viñetas del prompt siguen siendo viñetas en la línea del cursor.
 - Los borradores nuevos se guardan fuera del temporal. Si desaparece un borrador antiguo, se recrea su carpeta y se avisa de los archivos perdidos.

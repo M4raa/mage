@@ -629,7 +629,7 @@ function buildAdapter(provider: string): ProviderAdapter {
   const writeMcpConfig = getMcpServices().writeClaudeMcpConfig;
   // La clave de una cuenta por API la pone SOLO el adapter de su CLI, y solo en el hijo de esa cuenta
   // (agentEnv.ts, excepcion 2). Las de suscripcion resuelven null.
-  if (provider === 'claude') return new ClaudeAdapter(undefined, writeMcpConfig, claudeApiKeyFor);
+  if (provider === 'claude') return new ClaudeAdapter(undefined, writeMcpConfig, claudeApiKeyFor, () => getSettingsStore().load().artifactEnabled);
   if (provider === AGY_PROVIDER_ID) return buildAgyAdapter();
   if (provider === CODEX_PROVIDER_ID) return buildCodexAdapter();
   throw new Error(`Proveedor sin CLI: ${JSON.stringify(provider)}`);

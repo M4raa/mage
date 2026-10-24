@@ -423,6 +423,8 @@ export interface WorkbenchState extends PrState, PrActions {
   setAgyLinkedPaths: (paths: readonly string[]) => void;
   // Modo de permiso con el que arrancan las conversaciones nuevas de Claude (P-028 6); '' = el de la cuenta.
   setDefaultPermissionMode: (mode: DefaultPermissionMode) => void;
+  // D5 (#53): permitir Artifact en las sesiones de Claude Code (publica en claude.ai). Siguiente arranque.
+  setArtifactEnabled: (enabled: boolean) => void;
   // Shell de `Bash` en los proveedores del runtime propio (P-032, ficha D4). Aplica a sesiones nuevas.
   setRuntimeShell: (shell: RuntimeShell) => void;
   // Reglas de acceso a herramientas por modelo de un proveedor del runtime (§8.1 D10). [] las borra.
@@ -2331,6 +2333,11 @@ export function createWorkbenchStore(mage: MageClient) {
 
     setDefaultProvider: (providerId) => {
       set((s) => ({ settings: { ...s.settings, defaultProvider: providerId } }));
+      scheduleSettingsPersist(mage, get);
+    },
+
+    setArtifactEnabled: (enabled) => {
+      set((s) => ({ settings: { ...s.settings, artifactEnabled: enabled } }));
       scheduleSettingsPersist(mage, get);
     },
 

@@ -581,6 +581,7 @@ function StorageSection({
       <ImportedContextControl />
       <CloseBehaviorControl />
       <GhNoticeControl />
+      <ArtifactControl />
     </div>
   );
 }
@@ -689,6 +690,28 @@ function GhNoticeControl(): React.JSX.Element {
           <span className="font-semibold">Archivar al fusionar o cerrar el PR</span>
           <span className="block text-[10.5px] leading-[1.45] text-mg-ter">
             Cierra la conversación (si no está trabajando) y borra su worktree si no tiene cambios. La rama se queda.
+          </span>
+        </span>
+      </label>
+    </div>
+  );
+}
+
+// D5 (#53): Artifact publica contenido en claude.ai y, con «Omitir permisos», el modelo podría hacerlo sin
+// preguntar. Por eso es una elección explícita, apagada por defecto.
+function ArtifactControl(): React.JSX.Element {
+  const enabled = useWorkbenchStore((s) => s.settings.artifactEnabled);
+  const setEnabled = useWorkbenchStore((s) => s.setArtifactEnabled);
+  return (
+    <div data-setting="artifact" className="mt-[8px] flex flex-col gap-[8px] border-t border-mg-border pt-[12px]">
+      <span className="text-[10.5px] font-bold tracking-[.06em] text-mg-ter">CLAUDE CODE</span>
+      <label className="flex items-start gap-[8px] text-[11.5px] text-mg-body">
+        <input type="checkbox" className="mt-[3px]" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
+        <span>
+          <span className="font-semibold">Permitir Artifact (publica en claude.ai)</span>
+          <span className="block text-[10.5px] leading-[1.45] text-mg-ter">
+            El modelo podrá crear artifacts en tu cuenta de claude.ai; con «Omitir permisos», sin preguntarte.
+            Se aplica la próxima vez que arranque o se reabra cada conversación.
           </span>
         </span>
       </label>

@@ -167,6 +167,9 @@ export interface AppSettings {
   // `ENABLE_CLAUDEAI_MCP_SERVERS=false` (medido en 2.1.285: 0 conectores). No se escribe nada en su
   // config dir. Default []: todas los usan, como siempre.
   readonly claudeAiConnectorsOff: readonly string[];
+  // D5 (#53): permitir la herramienta Artifact de Claude Code, que publica en claude.ai. Apagada por defecto;
+  // se aplica al siguiente arranque de cada sesión.
+  readonly artifactEnabled: boolean;
   // Aviso «PR: instala gh / inicia sesión en gh» (grupo D, DA-3) descartado para siempre. Ajustes ›
   // General lo vuelve a encender. Default false.
   readonly ghNoticeDismissed: boolean;
@@ -241,6 +244,7 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   defaultProvider: 'claude',
   accentByAccount: {},
   claudeAiConnectorsOff: [],
+  artifactEnabled: false,
   ghNoticeDismissed: false,
   autoArchiveOnPrClose: false,
   agyCommandRules: EMPTY_AGY_COMMAND_RULES,
