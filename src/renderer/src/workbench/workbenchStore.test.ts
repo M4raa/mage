@@ -2071,6 +2071,25 @@ describe('assignAccountAccents — #46 H3', () => {
     expect(after['/fixture/.claude-2']).toBe(before['/fixture/.claude-2']);
     expect(new Set(Object.values(after)).size).toBe(3);
   });
+
+  // H2 de la devolución 13: el fallo se ve (aviso del store), no solo en la consola.
+  it('init_noSePuedenCargarLosAjustes_avisaDeQueNoSeAsignanColores', async () => {
+    const permissive = new Proxy({ loadSettings: () => Promise.reject(new Error('ajustes ilegibles')), loadWorkspace: async () => null } as unknown as MageApi, {
+      get: (target, prop: string) => {
+        if (prop in target) return (target as unknown as Record<string, unknown>)[prop];
+        if (prop.startsWith('on')) return () => () => {};
+        return async () => [];
+      },
+    });
+    const store = createWorkbenchStore(permissive);
+
+    store.getState().init();
+
+    await vi.waitFor(() => {
+      const toasts = useNotificationStore.getState().toasts.filter((n) => n.source === 'accounts');
+      expect(toasts.map((n) => [n.title, n.body])).toContainEqual(['No se pudieron asignar los colores de las cuentas', 'ajustes ilegibles']);
+    });
+  });
 });
 
 describe('guardado de ajustes con debounce', () => {

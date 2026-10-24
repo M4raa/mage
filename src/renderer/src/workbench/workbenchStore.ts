@@ -1650,7 +1650,7 @@ export function createWorkbenchStore(mage: MageClient) {
           settingsReady = true;
           get().assignAccountAccents();
         })
-        .catch((err: unknown) => console.warn('No se pudieron asignar los colores de las cuentas:', describeError(err)));
+        .catch((err: unknown) => reportActionError('No se pudieron asignar los colores de las cuentas', err, 'accounts'));
       void Promise.all([workspaceRestored, settingsLoaded])
         .then(() => get().showReleaseNotesIfUpdated(isReleaseNotesDevRun()))
         .catch((err: unknown) => console.warn('No se pudieron comprobar las novedades:', describeError(err)));
