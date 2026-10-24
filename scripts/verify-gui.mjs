@@ -8330,7 +8330,12 @@ const CHECKS = [
       const fake = decision.target === 'local' ? await startFakeOpenAiServer() : null;
       try {
         const expected = await openTurnTab(page, { target: decision.target, fake, userDataDir });
+        await recordSequencedEvents(page);
         const outcome = await sendMinimalTurn(page, expected);
+        // F2.1: los eventos del turno llegan con secuencia contigua y su conversacion, y la instantanea
+        // de main coincide. Antes de cerrar la pestaña: despues la sesion ya no existe.
+        const secuencia = outcome.tab === null ? null : await readSequencedEvents(page, outcome.tab.id);
+        const secuenciaOk = secuencia !== null && secuencia.ok;
         if (outcome.tab !== null) await page.evaluate((tabId) => window.__mageDev.store.getState().closeTab(tabId), outcome.tab.id);
         const viaFake =
           fake === null || (fake.stats.completions === 2 && outcome.tools.includes('Read') && outcome.agentText.includes(FAKE_TURN_FINAL_TEXT));
@@ -8338,7 +8343,7 @@ const CHECKS = [
         // enviar nada: la hidratacion sale de la transcripcion de userData/runtime).
         const reabierta = fake !== null && outcome.sent ? await reopenTurnFromHistory(page, outcome.tab) : null;
         const reabiertaOk = reabierta === null || (reabierta.tools.includes('Read') && reabierta.agentText.includes(FAKE_TURN_FINAL_TEXT));
-        const ok = outcome.sent && outcome.status === 'idle' && outcome.agentText.trim().length > 0 && outcome.errors.length === 0 && viaFake && reabiertaOk;
+        const ok = outcome.sent && outcome.status === 'idle' && outcome.agentText.trim().length > 0 && outcome.errors.length === 0 && viaFake && reabiertaOk && secuenciaOk;
         const detail = {
           modo: decision.target,
           motivo: decision.reason,
@@ -8350,6 +8355,7 @@ const CHECKS = [
           errores: outcome.errors,
           bloques: outcome.kinds,
           ms: outcome.ms,
+          secuencia,
           ...(fake === null ? {} : { peticionesAlFalso: fake.stats.completions, conStream: fake.stats.streamed, herramientas: outcome.tools, reabierta }),
         };
         return { ok, detail: JSON.stringify(detail) };
@@ -9894,6 +9900,32 @@ async function measureTabContextMenuClamp(page) {
 }
 
 // --- Grupo 0: el turno minimo de verdad -----------------------------------------------------------
+
+// F2.1: escucha en la pagina los eventos de sesion tal cual llegan por el IPC (con `seq` y `conversationId`).
+async function recordSequencedEvents(page) {
+  await page.evaluate(() => {
+    window.__vgSequenced = [];
+    window.__vgSequencedOff?.();
+    window.__vgSequencedOff = window.mage.onSessionEvent((p) => window.__vgSequenced.push({ sessionId: p.sessionId, seq: p.seq, conversationId: p.conversationId ?? null }));
+  });
+}
+
+// Secuencia de la sesion de la pestaña: contigua y creciente, una sola conversacion (no nula) y la misma
+// ultima secuencia en la instantanea de main.
+async function readSequencedEvents(page, tabId) {
+  return page.evaluate(async (id) => {
+    window.__vgSequencedOff?.();
+    const sessionId = window.__mageDev.store.getState().sessionIdByChat[id];
+    const events = window.__vgSequenced.filter((e) => e.sessionId === sessionId);
+    const snapshot = await window.mage.getSessionSnapshot(sessionId);
+    const seqs = events.map((e) => e.seq);
+    const contiguous = seqs.every((seq, i) => typeof seq === 'number' && (i === 0 || seq === seqs[i - 1] + 1));
+    const conversations = [...new Set(events.map((e) => e.conversationId))];
+    const ok = events.length > 0 && contiguous && conversations.length === 1 && conversations[0] !== null
+      && snapshot.conversationId === conversations[0] && snapshot.lastSeq === seqs.at(-1) && snapshot.state === 'idle';
+    return { ok, eventos: events.length, primera: seqs[0], ultima: seqs.at(-1), contigua: contiguous, conversaciones: conversations.length, instantanea: { estado: snapshot.state, lastSeq: snapshot.lastSeq, conConversacion: snapshot.conversationId !== null } };
+  }, tabId);
+}
 
 // Lo mas barato que acepta el CLI: el modelo pequeño, el esfuerzo minimo y una respuesta de una palabra.
 const MINIMAL_TURN = {

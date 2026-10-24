@@ -169,9 +169,16 @@ function initialNativeId(params: CreateSessionParams, sessionId: string): string
   return resume;
 }
 
+// Solo Claude y el runtime propio dicen su estado (`session_state`); Codex y agy no. Para ellos manda el
+// turno: lista al arrancar, en marcha con la primera salida del modelo y en reposo con su `result`.
+const RUNNING_EVENTS: ReadonlySet<MageEvent['kind']> = new Set(['request_started', 'stream_delta', 'thinking_delta', 'tool_use']);
+
 function nextState(current: CoordinatedState, event: MageEvent): CoordinatedState {
   if (event.kind === 'session_state') return event.state;
   if (event.kind === 'session_restarting') return 'restarting';
+  if (event.kind === 'result') return 'idle';
+  if (event.kind === 'session_init' && current === 'starting') return 'idle';
+  if (RUNNING_EVENTS.has(event.kind) && current !== 'requires_action') return 'running';
   return current;
 }
 

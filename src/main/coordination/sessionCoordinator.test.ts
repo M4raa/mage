@@ -111,6 +111,29 @@ describe('SessionCoordinator — secuencia e identidades (F2.1)', () => {
     expect(h.coordinator.snapshot(id)).toMatchObject({ state: 'idle', lastSeq: 3 });
   });
 
+  it('snapshot_proveedorSinSessionState_estadoPorElTurno', () => {
+    // Codex no emite `session_state`: sin esto la instantánea se quedaba en `starting` para siempre.
+    const h = harness();
+    const id = h.create({ provider: 'codex' });
+
+    h.emit(id, init('thread-1'));
+    expect(h.coordinator.snapshot(id).state).toBe('idle');
+    h.emit(id, { kind: 'stream_delta', text: 'ho' });
+    expect(h.coordinator.snapshot(id).state).toBe('running');
+    h.emit(id, { kind: 'result', result: { isError: false, subtype: 'completed', numTurns: null } });
+    expect(h.coordinator.snapshot(id).state).toBe('idle');
+  });
+
+  it('snapshot_esperandoRespuesta_unDeltaNoLoPisa', () => {
+    const h = harness();
+    const id = h.create();
+    h.emit(id, { kind: 'session_state', state: 'requires_action' });
+
+    h.emit(id, { kind: 'stream_delta', text: 'x' });
+
+    expect(h.coordinator.snapshot(id).state).toBe('requires_action');
+  });
+
   it('conversationReset_elResetSaleConLaViejaYLoSiguienteConLaNueva', () => {
     const h = harness();
     const id = h.create();
