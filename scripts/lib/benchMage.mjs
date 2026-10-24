@@ -95,6 +95,8 @@ function summarize(run) {
     tools: run.tools, permissions: run.permissions, tokens,
     costUsd: run.costMicroUsd > 0 ? run.costMicroUsd / 1e6 : null,
     errors: run.timedOut ? [...run.errors, 'timeout'] : run.errors,
+    // Diagnóstico, igual que R2: el final de lo que dijo el agente (sin rutas del perfil).
+    textTail: run.text.slice(-240),
   };
 }
 
