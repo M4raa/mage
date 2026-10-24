@@ -57,8 +57,8 @@ function onClaudeLine(run, child, line) {
 }
 
 export function runClaude({ bin, profile, cwd, task }) {
-  const run = newRun();
-  const args = [...CLAUDE_BASE_ARGS, '--session-id', crypto.randomUUID(), '--model', CLAUDE_MODEL.model, '--effort', CLAUDE_MODEL.effort, '--permission-mode', 'acceptEdits'];
+  const run = { ...newRun(), sessionId: crypto.randomUUID() };
+  const args = [...CLAUDE_BASE_ARGS, '--session-id', run.sessionId, '--model', CLAUDE_MODEL.model, '--effort', CLAUDE_MODEL.effort, '--permission-mode', 'acceptEdits'];
   const child = spawn(bin, args, { cwd, env: scrubbedEnv({ CLAUDE_CONFIG_DIR: profile, CLAUDE_CODE_ARTIFACT: '0' }), windowsHide: true, stdio: 'pipe' });
   child.stderr.resume();
   createInterface({ input: child.stdout }).on('line', (line) => onClaudeLine(run, child, line));

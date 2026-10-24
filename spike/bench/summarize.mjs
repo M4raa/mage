@@ -34,6 +34,9 @@ export function summarize(rows) {
       totalMs: { median: median(ran.map((r) => r.totalMs)), range: range(ran.map((r) => r.totalMs)) },
       inputTokens: median(ran.map((r) => r.tokens?.input + r.tokens?.cacheRead + r.tokens?.cacheCreate)),
       outputTokens: median(ran.map((r) => r.tokens?.output)),
+      // H3 de la devolución 13 (solo Claude; null en filas anteriores que no lo midieron).
+      rounds: median(ran.map((r) => r.rounds)),
+      firstRequestTokens: median(ran.map((r) => r.firstRequestTokens)),
       costUsd: ran.reduce((sum, r) => sum + (r.costUsd ?? 0), 0),
       realTurns: ran.reduce((sum, r) => sum + (r.realTurns ?? 0), 0),
     };

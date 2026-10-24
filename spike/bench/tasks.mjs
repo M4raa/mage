@@ -134,7 +134,24 @@ export const TASKS = [
       return { ok, detail: `ALFA@${alfa} BETA@${beta}` };
     },
   },
+  {
+    // Sonda (H3 de la devolución 13): una petición sin herramientas para medir el contexto fijo de cada
+    // ruta y lo que ve el modelo en el `init`. Solo bajo demanda (`--tasks=T0`): no es tarea del baseline.
+    id: 'T0',
+    title: 'Contexto fijo',
+    probe: true,
+    turns: 1,
+    prompts: ['Responde solo OK. No uses ninguna herramienta.'],
+    prepare: () => ({}),
+    check: (_dir, run) => {
+      const ok = run.text.includes('OK') && run.tools.length === 0;
+      return { ok, detail: `texto con OK=${run.text.includes('OK')} herramientas=${run.tools.length}` };
+    },
+  },
 ];
+
+// Tareas de una ejecución: las pedidas o, sin `--tasks`, todas menos las sondas.
+export const tasksFor = (wanted) => TASKS.filter((t) => (wanted === undefined ? t.probe !== true : wanted.includes(t.id)));
 
 // T4: servidor MCP y skill del PROYECTO, los mismos para las dos rutas (el CLI los lee del cwd).
 function writeProjectCapabilities(dir) {

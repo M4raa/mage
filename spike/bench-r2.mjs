@@ -6,7 +6,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { cleanupProfile, credentialDigest } from './f0-profile-cleanup.mjs';
-import { TASKS, createWorkspace } from './bench/tasks.mjs';
+import { createWorkspace, tasksFor } from './bench/tasks.mjs';
+import { initSummary, roundsOf } from './bench/transcript.mjs';
 import { CLAUDE_MODEL, CODEX_MODEL, claudeUsage, codexRateLimits, prepareCodexHome, runClaude, runCodex, guardedUsage } from './bench/headless.mjs';
 
 const arg = (name) => process.argv.find((a) => a.startsWith(`--${name}=`))?.split('=')[1];
@@ -15,7 +16,7 @@ const provider = arg('provider');
 const rep = Number(arg('rep'));
 const out = arg('out');
 if (!['claude', 'codex'].includes(provider) || !Number.isInteger(rep) || out === undefined) throw new Error(`Argumentos invalidos: ${process.argv.slice(2).join(' ')}`);
-const wanted = (arg('tasks') ?? TASKS.map((t) => t.id).join(',')).split(',');
+const wanted = arg('tasks')?.split(',');
 
 function claudeBinary() {
   return execFileSync('where.exe', ['claude'], { encoding: 'utf8', windowsHide: true }).split(/\r?\n/).find((p) => p.endsWith('.exe'));
@@ -51,7 +52,9 @@ async function runTask(task) {
     const prepared = task.prepare(ctx.cwd);
     const run = provider === 'claude' ? await runClaude({ bin: claudeBinary(), profile: ctx.profile, cwd: ctx.cwd, task }) : await runCodex({ home: ctx.profile, cwd: ctx.cwd, task });
     const verdict = task.check(ctx.cwd, run, prepared);
-    return { ...row, ...summarizeRun(run), realTurns: task.turns, ok: verdict.ok, detail: verdict.detail };
+    // Claude: rondas y contexto fijo de la transcripción (antes de retirar el perfil) y, en la sonda, el init.
+    const claudeExtra = provider === 'claude' ? { ...roundsOf(ctx.profile, run.sessionId), ...(task.probe ? { init: initSummary(run.init) } : {}) } : {};
+    return { ...row, ...summarizeRun(run), ...claudeExtra, realTurns: task.turns, ok: verdict.ok, detail: verdict.detail };
   } catch (error) {
     return { ...row, ok: false, error: String(error.message).slice(0, 300) };
   } finally {
@@ -74,7 +77,7 @@ function summarizeRun(run) {
   };
 }
 
-for (const task of TASKS.filter((t) => wanted.includes(t.id))) {
+for (const task of tasksFor(wanted)) {
   const row = await runTask(task);
   fs.appendFileSync(out, JSON.stringify(row) + '\n');
   console.log(JSON.stringify({ task: row.task, ok: row.ok, pending: row.pending, error: row.error, detail: row.detail, totalMs: row.totalMs }));

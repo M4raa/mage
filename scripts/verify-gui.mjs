@@ -10300,7 +10300,7 @@ async function runBenchMode() {
   const out = arg('out');
   const rep = Number(arg('rep'));
   if (!['claude', 'codex'].includes(provider) || out === undefined || !Number.isInteger(rep)) throw new Error('--bench exige --provider, --rep y --out');
-  const tasks = (arg('tasks') ?? 'T1,T2,T3,T4,T5').split(',');
+  const tasks = arg('tasks')?.split(',');
   const root = fs.mkdtempSync(path.join(os.tmpdir(), `mage-f0-bench-r3-${provider}-`));
   const home = path.join(root, 'home');
   const credential = prepareBenchHome(home, provider);
@@ -10321,7 +10321,7 @@ async function runBenchMode() {
     await page.locator('[role="toolbar"]').first().waitFor({ state: 'attached', timeout: CONFIG.bootTimeoutMs });
     await page.waitForFunction(() => window.__mageDev?.store.getState().accounts.length > 0, undefined, { timeout: CONFIG.bootTimeoutMs });
     const usageAllows = guardedUsage(() => (provider === 'claude' ? claudeUsage(credential) : codexRateLimits(path.join(home, '.codex'))));
-    await runMageBench(page, { provider, rep, tasks, root, usageAllows, out });
+    await runMageBench(page, { provider, rep, tasks, root, usageAllows, out, claudeConfigDir: path.join(home, '.claude') });
   } catch (error) {
     fs.writeFileSync(`${out}.arranque.log`, log.join('').slice(-20_000), 'utf-8');
     throw error;

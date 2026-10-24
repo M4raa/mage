@@ -4,7 +4,8 @@
 // de uso del 70 % se aplica antes de cada tarea. Solo mide: no cambia el producto.
 import fs from 'node:fs';
 import path from 'node:path';
-import { TASKS, createWorkspace } from '../../spike/bench/tasks.mjs';
+import { createWorkspace, tasksFor } from '../../spike/bench/tasks.mjs';
+import { initSummary, roundsOf } from '../../spike/bench/transcript.mjs';
 import { CLAUDE_MODEL, CODEX_MODEL } from '../../spike/bench/headless.mjs';
 
 const TASK_TIMEOUT_MS = 300_000;
@@ -97,11 +98,19 @@ function summarize(run) {
   };
 }
 
+// Claude (H3 de la devolución 13): rondas y contexto fijo leídos de la transcripción del CLI en el config
+// dir de la casa temporal, con el id de sesión del CLI que trae el `session_init`; en la sonda, el init.
+function claudeExtra(run, task, claudeConfigDir) {
+  const sessionId = run.init === '' ? null : JSON.parse(run.init).sessionId;
+  const rounds = sessionId === null ? { rounds: null, firstRequestTokens: null } : roundsOf(claudeConfigDir, sessionId);
+  return { ...rounds, ...(task.probe ? { init: initSummary(run.init) } : {}) };
+}
+
 // Corre las tareas pedidas de un proveedor. `usageAllows` (inyectada) aplica la guarda del 70 %;
 // `root` es la raíz desechable de la ejecución (la retira quien llama).
-export async function runMageBench(page, { provider, rep, tasks, root, usageAllows, out }) {
+export async function runMageBench(page, { provider, rep, tasks, root, usageAllows, out, claudeConfigDir }) {
   await installCollector(page);
-  for (const task of TASKS.filter((t) => tasks.includes(t.id))) {
+  for (const task of tasksFor(tasks)) {
     const row = { route: 'R3', provider, task: task.id, rep, model: provider === 'claude' ? CLAUDE_MODEL : CODEX_MODEL };
     try {
       const guard = await usageAllows();
@@ -116,7 +125,7 @@ export async function runMageBench(page, { provider, rep, tasks, root, usageAllo
       const sent = await sendTask(page, { cwd, task, provider });
       const run = await collect(page, { ...sent, task });
       const verdict = task.check(cwd, run, prepared);
-      Object.assign(row, summarize(run), { realTurns: task.turns, ok: verdict.ok, detail: verdict.detail });
+      Object.assign(row, summarize(run), provider === 'claude' ? claudeExtra(run, task, claudeConfigDir) : {}, { realTurns: task.turns, ok: verdict.ok, detail: verdict.detail });
       await page.evaluate((id) => window.__mageDev.store.getState().closeTab(id), sent.tabId);
     } catch (error) {
       Object.assign(row, { ok: false, error: String(error.message).slice(0, 300) });
