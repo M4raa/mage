@@ -113,6 +113,13 @@ linux:
     - target: rpm
       arch: [x64]
   category: Development
-  icon: resources/brand/icon-1024.png
+  # Carpeta con un PNG por tamaño (`pnpm icons`): hicolor de 16 a 1024 en el deb y el AppImage (F1.8, H4).
+  icon: resources/brand/linux
   synopsis: Wrapper multiagentico y multi-proveedor sobre agentes de codigo
   artifactName: mage-setup-beta-${version}-${arch}.${ext}
+
+# F1.8 (H4 b): el `Exec` del AppImage SIN `--no-sandbox` (sin esto electron-builder lo pone por defecto en
+# la toolset heredada). Ojo: su `AppRun` generado lo sigue añadiendo SOLO si `unshare -Ur true` falla
+# (namespaces de usuario restringidos); no es configurable.
+appImage:
+  executableArgs: []

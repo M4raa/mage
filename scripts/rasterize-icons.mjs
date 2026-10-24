@@ -3,9 +3,10 @@
 //  - `icon.ico` MULTI-TAMAÑO para Windows: tamaños pequeños (16–48) con el glifo SIMPLIFICADO y grueso
 //    (icon-small.svg, legible a 16px) y grandes (64–256) con el icono completo (icon-app.svg).
 //  - PNG de bandeja (16/32).
+//  - Serie de PNG de Linux (16–1024) para hicolor.
 // Usa @resvg/resvg-js (SVG->PNG, binario preempaquetado) + png-to-ico (empaqueta el .ico).
 // Ejecutar: `pnpm icons`. Re-ejecutar al cambiar cualquier SVG de resources/brand/.
-import { readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Resvg } from '@resvg/resvg-js';
@@ -30,6 +31,15 @@ writePng('tray-32.png', 'tray@2x.svg', 32); // bandeja Win/Linux @2x (200% DPI)
 writePng('tray-16.png', 'tray.svg', 16); // bandeja Win/Linux @1x (16px nativo)
 writePng('tray-template.png', 'tray-template.svg', 16); // bandeja macOS (template, negro) @1x
 writePng('tray-template@2x.png', 'tray-template@2x.svg', 32); // bandeja macOS (template) @2x
+
+// Linux (F1.8, H4): un PNG por tamaño en `linux/<N>x<N>.png`. electron-builder copia esa carpeta a
+// `icons/hicolor/<N>x<N>/apps/` del deb y del AppImage. Mismo reparto que el .ico: pequeños con el glifo
+// simplificado, grandes con el icono completo. No entran en el asar (`files` solo mete brand/*.png).
+const LINUX_SMALL_SIZES = [16, 24, 32, 48];
+const LINUX_LARGE_SIZES = [64, 128, 256, 512, 1024];
+mkdirSync(join(brandDir, 'linux'), { recursive: true });
+for (const size of LINUX_SMALL_SIZES) writePng(join('linux', `${size}x${size}.png`), 'icon-small.svg', size);
+for (const size of LINUX_LARGE_SIZES) writePng(join('linux', `${size}x${size}.png`), 'icon-app.svg', size);
 
 // icon.ico multi-tamaño: pequeños con el glifo simplificado (nítido a 16px), grandes con el completo.
 const icoPngs = [
