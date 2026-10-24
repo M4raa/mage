@@ -234,7 +234,7 @@ import { WidgetWindowController } from './widget/widgetWindow';
 import type { WidgetSnapshot } from '@shared/widget';
 import { ThemeMarketService } from './theme/themeMarketService';
 import type { FetchThemeParams } from '@shared/themeMarket';
-import { flushPendingUpdatePrompt, getUpdateState, installUpdate, startAutoUpdate } from './update/autoUpdate';
+import { checkForUpdatesNow, flushPendingUpdatePrompt, getUpdateState, installUpdate, startAutoUpdate } from './update/autoUpdate';
 import { isPathUnder, pathEquals } from './os/pathUtils';
 import { isWindowId, MAIN_WINDOW_ID, WindowManager, type WindowPlacement } from './windows/windowManager';
 import { installExternalLinkHandler, type ExternalLinkDeps } from './windows/externalLinks';
@@ -2888,6 +2888,7 @@ function registerDialogIpc1(): void {
   ipcMain.handle(IpcChannel.CloseAnswer, (event, answer: unknown) => answerClosePrompt(event, answer));
   ipcMain.handle(IpcChannel.UpdateGetState, () => getUpdateState());
   ipcMain.handle(IpcChannel.UpdateInstall, () => installUpdate());
+  ipcMain.handle(IpcChannel.UpdateCheck, () => checkForUpdatesNow());
 }
 
 function registerAboutIpc1(): void {

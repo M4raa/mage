@@ -127,13 +127,47 @@ export function closeTab(layout: SplitLayout, tabId: string): SplitLayout | null
     if (!layout.tabIds.includes(tabId)) return layout;
     const kept = layout.tabIds.filter((id) => id !== tabId);
     if (kept.length === 0) return null;
-    return leaf(kept, layout.activeTabId === tabId ? kept[0]! : layout.activeTabId);
+    return leaf(kept, layout.activeTabId === tabId ? neighborOf(layout.tabIds, tabId)! : layout.activeTabId);
   }
   const a = closeTab(layout.a, tabId);
   if (a === null) return layout.b;
   const b = closeTab(layout.b, tabId);
   if (b === null) return layout.a;
   return a === layout.a && b === layout.b ? layout : { ...layout, a, b };
+}
+
+// #47/#22: suelta `draggedTabId` junto a `targetTabId` en la barra de esta (delante o detras). En la
+// misma barra reordena; en otra la mueve alli y, si su barra se queda vacia, ese panel colapsa (asi se
+// reune una division). La soltada queda activa. Soltarla sobre si misma no cambia nada.
+export type TabDropSide = 'before' | 'after';
+
+export function dropTabBeside(layout: SplitLayout, draggedTabId: string, targetTabId: string, side: TabDropSide): SplitLayout {
+  if (draggedTabId === targetTabId) return layout;
+  if (findLeafPath(layout, targetTabId) === null) throw new Error(`dropTabBeside: la pestaña destino "${targetTabId}" no esta en el arbol`);
+  const without = findLeafPath(layout, draggedTabId) === null ? layout : (closeTab(layout, draggedTabId) ?? layout);
+  const path = findLeafPath(without, targetTabId)!;
+  const target = leafAt(without, path);
+  const index = target.tabIds.indexOf(targetTabId) + (side === 'after' ? 1 : 0);
+  const tabIds = [...target.tabIds.slice(0, index), draggedTabId, ...target.tabIds.slice(index)];
+  return replaceAt(without, path, leaf(tabIds, draggedTabId));
+}
+
+// #38: la vecina de `tabId` en `ids` que hereda el foco al cerrarla: la siguiente; si no hay, la
+// anterior. null si no esta o era la unica.
+export function neighborOf(ids: readonly string[], tabId: string): string | null {
+  const index = ids.indexOf(tabId);
+  if (index === -1) return null;
+  return ids[index + 1] ?? ids[index - 1] ?? null;
+}
+
+// #38: la pestaña activa de la hoja que pasa a ocupar el sitio de la de `closedTabId` cuando esa hoja se
+// queda vacia (su hermana sube). null si la pestaña no estaba o era la ultima del arbol.
+export function activeTabReplacingLeaf(layout: SplitLayout, closedTabId: string): string | null {
+  const path = findLeafPath(layout, closedTabId);
+  const remaining = closeTab(layout, closedTabId);
+  if (path === null || remaining === null) return null;
+  const node = nodeAt(remaining, path.slice(0, -1)) ?? remaining;
+  return leafAt(node, firstLeafPath(node)).activeTabId;
 }
 
 // Mete `tabId` en la barra de la hoja de `path` y lo deja ACTIVO. Si la pestaña ya estaba en otra

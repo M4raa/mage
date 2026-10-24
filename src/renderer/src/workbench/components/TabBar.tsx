@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { SplitPath } from '../splitLayout';
+import type { SplitPath, TabDropSide } from '../splitLayout';
 import { Icon } from './Icon';
 import { AnimatePresence, motion } from 'motion/react';
 import { useWorkbenchStore } from '../workbenchStore';
 import { isArrowNavKey, nextIndexForArrow } from '../a11y/keyboardNav';
 import { TAB_INDICATOR_TRANSITION } from '../motionPresets';
-import { orderTabsForDisplay, TAB_DRAG_MIME, TAB_DRAG_ORIGIN_MIME, tabColorVar, tabsToCloseAll, tabsToCloseInactive } from '../tabActions';
+import { orderTabsForDisplay, TAB_DRAG_MIME, TAB_DRAG_ORIGIN_MIME, tabColorVar, tabDropSide, tabsToCloseAll, tabsToCloseInactive } from '../tabActions';
 import { tabMoveBlockedReason } from '../backgroundWork';
 import { TabContextMenu } from './TabContextMenu';
 import { API_BILLED_LABEL, providerBadge } from '../accountView';
@@ -55,6 +55,7 @@ export function TabBar({
   const setTabColor = useWorkbenchStore((s) => s.setTabColor);
 
   const movePaneTab = useWorkbenchStore((s) => s.movePaneTab);
+  const tabDrop = useTabDrop(useWorkbenchStore((s) => s.dropTabOnTab));
   const listRef = useRef<HTMLDivElement>(null);
   // Menu contextual (Ronda 3, item 12): pestaña objetivo + posicion del clic; null cuando esta cerrado.
   const [menu, setMenu] = useState<{ readonly tab: TabModel; readonly x: number; readonly y: number } | null>(null);
@@ -129,6 +130,9 @@ export function TabBar({
         // estable y corto, y sirve de desambiguador.
         aria-label={path.length === 0 ? 'Conversaciones abiertas' : `Conversaciones abiertas (panel ${path.join('')})`}
         onKeyDown={onListKeyDown}
+        onDragOver={tabDrop.onDragOver}
+        onDragLeave={tabDrop.onDragLeave}
+        onDrop={tabDrop.onDrop}
         className="mg-tabscroll flex min-w-0 flex-1 overflow-x-auto"
       >
         {orderedTabs.map((tab) => (
@@ -150,6 +154,7 @@ export function TabBar({
             }}
             onClose={() => closeTab(tab.id)}
             moveBlockedReason={tabMoveBlockedReason(statusByChat[tab.id])}
+            dropSide={tabDrop.target?.tabId === tab.id ? tabDrop.target.side : null}
             onDragOutOfWindow={() => void dropTabOutside(tab.id).catch(reportMoveError)}
             onContextMenu={(x, y) => {
               setMenu({ tab, x, y });
@@ -296,6 +301,7 @@ function Tab({
   onClose,
   onContextMenu,
   onDragOutOfWindow,
+  dropSide,
 }: {
   readonly tab: TabModel;
   readonly accent: string;
@@ -314,6 +320,8 @@ function Tab({
   readonly onContextMenu: (x: number, y: number) => void;
   // Se solto la pestaña fuera de la ventana: sale a una ventana nueva.
   readonly onDragOutOfWindow: () => void;
+  // #47/#22: otra pestaña se va a soltar delante o detras de esta (la marca el borde).
+  readonly dropSide: TabDropSide | null;
 }): React.JSX.Element {
   const accountAlias = tab.accountAlias;
   const badge = providerBadge(tab.provider);
@@ -368,6 +376,8 @@ function Tab({
         onDragOutOfWindow();
       }}
       data-tip={moveBlockedReason ?? undefined}
+      data-drop-side={dropSide ?? undefined}
+      style={dropSide === null ? undefined : { boxShadow: `inset ${dropSide === 'before' ? 2 : -2}px 0 0 var(--color-mg-focus)` }}
       className={`relative flex flex-none cursor-pointer items-center gap-[7px] border-r border-mg-border p-[8px_14px] transition-colors duration-150 ease-out ${
         active && !unfocusedPane
           ? 'bg-mg-window text-mg-text'
@@ -427,4 +437,48 @@ function Tab({
       )}
     </div>
   );
+}
+
+// #47/#22: la barra acepta pestañas de ESTA ventana (mismo filtro de origen que ChatPane). Soltar sobre
+// una pestaña la pone delante o detras segun la mitad; en otra barra la mueve alli (reunir paneles). Si
+// la barra no aceptara, el arrastre terminaba en `dropEffect === 'none'` y se trataba como «fuera».
+interface TabDropTarget {
+  readonly tabId: string;
+  readonly side: TabDropSide;
+}
+
+function useTabDrop(drop: (draggedTabId: string, targetTabId: string, side: TabDropSide) => void): {
+  readonly target: TabDropTarget | null;
+  readonly onDragOver: (e: React.DragEvent<HTMLDivElement>) => void;
+  readonly onDragLeave: () => void;
+  readonly onDrop: (e: React.DragEvent<HTMLDivElement>) => void;
+} {
+  const [target, setTarget] = useState<TabDropTarget | null>(null);
+  const targetFromEvent = (e: React.DragEvent<HTMLDivElement>): TabDropTarget | null => {
+    const element = e.target instanceof Element ? e.target.closest<HTMLElement>('[role="tab"][data-tab-id]') : null;
+    const tabId = element?.dataset.tabId;
+    if (element === null || element === undefined || tabId === undefined) return null;
+    const rect = element.getBoundingClientRect();
+    return { tabId, side: tabDropSide(rect.left, rect.width, e.clientX) };
+  };
+  const accepts = (e: React.DragEvent<HTMLDivElement>): boolean =>
+    e.dataTransfer.types.includes(TAB_DRAG_MIME) && e.dataTransfer.types.includes(TAB_DRAG_ORIGIN_MIME);
+  const onDragOver = (e: React.DragEvent<HTMLDivElement>): void => {
+    if (!accepts(e)) return;
+    const next = targetFromEvent(e);
+    if (next === null) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (target?.tabId !== next.tabId || target.side !== next.side) setTarget(next);
+  };
+  const onDrop = (e: React.DragEvent<HTMLDivElement>): void => {
+    setTarget(null);
+    const next = targetFromEvent(e);
+    const dragged = e.dataTransfer.getData(TAB_DRAG_MIME);
+    if (next === null || dragged.length === 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    drop(dragged, next.tabId, next.side);
+  };
+  return { target, onDragOver, onDragLeave: () => setTarget(null), onDrop };
 }

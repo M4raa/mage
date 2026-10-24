@@ -56,6 +56,8 @@ function updater(): Promise<AppUpdater> {
   return updaterPromise;
 }
 
+// El cableado de listeners (asincrono por el import diferido): una comprobacion manual lo espera.
+let wiring: Promise<void> | null = null;
 let checkInFlight = false;
 let lastCheckAtMs: number | null = null;
 let updateState: UpdateState = IDLE_UPDATE_STATE;
@@ -73,8 +75,23 @@ export function startAutoUpdate(baseLog: LogFn, updateUi: UpdateUi): void {
     log('debug', `Auto-update desactivado: ${decision.reason}`);
     return;
   }
-  void wireUpdater();
+  wiring = wireUpdater();
 }
+
+// «Buscar actualizaciones» del usuario (F1.3, #15): ignora el intervalo de 6 h pero no duplica una
+// comprobacion en vuelo. El resultado llega a TODAS las ventanas por el mismo `broadcast`. En dev no hay
+// updater: se dice en el estado en vez de no hacer nada.
+export async function checkForUpdatesNow(): Promise<void> {
+  if (!app.isPackaged) {
+    report({ kind: 'error', message: DEV_UPDATE_MESSAGE });
+    return;
+  }
+  if (wiring === null) throw new Error('El actualizador todavía no ha arrancado; vuelve a intentarlo en unos segundos.');
+  await wiring;
+  await runCheck(true);
+}
+
+const DEV_UPDATE_MESSAGE = 'En desarrollo no se buscan actualizaciones: solo lo hace la app instalada.';
 
 // Para una ventana que carga tarde (o se recarga): el estado de ahora.
 export function getUpdateState(): UpdateState {
@@ -147,8 +164,8 @@ function mirrorToConsole(baseLog: LogFn): LogFn {
 // Lanza una comprobacion si la politica lo permite. El resultado se observa por los eventos de
 // arriba; aqui solo se marca el "en vuelo" y se recoge el rechazo de la promesa (que duplica el
 // evento 'error', ya reportado: sin este catch seria un unhandledRejection).
-async function runCheck(): Promise<void> {
-  const decision = decideCheck({ isPackaged: app.isPackaged, checkInFlight, lastCheckAtMs, nowMs: Date.now() });
+async function runCheck(manual = false): Promise<void> {
+  const decision = decideCheck({ isPackaged: app.isPackaged, checkInFlight, lastCheckAtMs, nowMs: Date.now(), manual });
   if (!decision.check) {
     log('debug', `Comprobacion de update omitida: ${decision.reason}`);
     return;

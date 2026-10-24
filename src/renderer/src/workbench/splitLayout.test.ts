@@ -9,6 +9,7 @@ import {
   applyDrop,
   clampRatioForSize,
   closeTab,
+  dropTabBeside,
   findLeafPath,
   firstLeafPath,
   fromLegacySplit,
@@ -135,10 +136,15 @@ describe('activateTab', () => {
 });
 
 describe('closeTab', () => {
-  it('unaDeVarias_seQuitaDelGrupoYLaHojaSigue', () => {
+  // #38: al cerrar la activa hereda el foco la SIGUIENTE de su barra (antes, la primera).
+  it('unaDeVarias_seQuitaDelGrupoYActivaLaSiguiente', () => {
     const result = closeTab(leaf(['t1', 't2', 't3'], 't2'), 't2');
-    expect(result).toEqual(leaf(['t1', 't3'], 't1'));
+    expect(result).toEqual(leaf(['t1', 't3'], 't3'));
     expectInvariants(result!);
+  });
+
+  it('cerrarLaUltimaActiva_activaLaAnterior', () => {
+    expect(closeTab(leaf(['t1', 't2', 't3'], 't3'), 't3')).toEqual(leaf(['t1', 't2'], 't2'));
   });
 
   it('noEraLaActiva_laActivaNoCambia', () => {
@@ -157,6 +163,47 @@ describe('closeTab', () => {
   it('noPresente_mismaReferencia', () => {
     const layout = split(singleLeaf('t1'), singleLeaf('t2'));
     expect(closeTab(layout, 'fantasma')).toBe(layout);
+  });
+});
+
+describe('dropTabBeside (#47, #22)', () => {
+  it('dropTabBeside_mismaBarraDelante_reordenaYLaActiva', () => {
+    const result = dropTabBeside(leaf(['t1', 't2', 't3'], 't1'), 't3', 't1', 'before');
+
+    expect(result).toEqual(leaf(['t3', 't1', 't2'], 't3'));
+    expectInvariants(result);
+  });
+
+  it('dropTabBeside_mismaBarraDetras_reordena', () => {
+    expect(dropTabBeside(leaf(['t1', 't2', 't3'], 't1'), 't1', 't2', 'after')).toEqual(leaf(['t2', 't1', 't3'], 't1'));
+  });
+
+  it('dropTabBeside_otraBarraConSuPanelVacio_reuneLaDivision', () => {
+    const layout = split(singleLeaf('t1'), leaf(['t2', 't3'], 't2'));
+
+    const result = dropTabBeside(layout, 't1', 't3', 'after');
+
+    expect(result).toEqual(leaf(['t2', 't3', 't1'], 't1'));
+    expectInvariants(result);
+  });
+
+  it('dropTabBeside_otraBarraConMasPestanas_mueveSinDuplicar', () => {
+    const layout = split(leaf(['t1', 't4'], 't1'), singleLeaf('t2'));
+
+    const result = dropTabBeside(layout, 't1', 't2', 'before');
+
+    expect(result).toEqual(split(leaf(['t4'], 't4'), leaf(['t1', 't2'], 't1')));
+    expectInvariants(result);
+  });
+
+  it('dropTabBeside_sobreSiMisma_mismaReferencia', () => {
+    const layout = leaf(['t1', 't2'], 't1');
+
+    expect(dropTabBeside(layout, 't1', 't1', 'before')).toBe(layout);
+  });
+
+  it('dropTabBeside_destinoAusente_lanzaConSuId', () => {
+    expect(() => dropTabBeside(leaf(['t1'], 't1'), 't1', 'fantasma', 'before')).toThrow('fantasma');
   });
 });
 

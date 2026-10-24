@@ -38,11 +38,6 @@ const PromptEditor = lazy(() => import('./PromptEditor').then((m) => ({ default:
 // render haria que el selector de Zustand viera un valor nuevo siempre y re-renderizara sin parar.
 const EMPTY_COMMANDS: readonly SlashCommand[] = [];
 
-// Sin prometer nada fuera del proyecto: el runtime propio pregunta por las rutas que VE fuera, pero es una
-// heuristica de texto, no una frontera (permissionGate.ts), y Claude con este modo no pregunta nada.
-const BYPASS_PERMISSIONS_ADVICE =
-  'Omitir permisos: el modelo podrá ejecutar cualquier comando y modificar cualquier fichero sin preguntar. Úsalo solo con proyectos y contenido de confianza.';
-
 // Los cinco llevan icono: uno sin el hacia que el chip encogiera 16 px al pasar por el y la fila, alineada
 // a la derecha, lo desplazaba.
 const PERMISSION_MODE_ICON: Readonly<Record<PermissionMode, IconName>> = {
@@ -253,14 +248,8 @@ export function PromptBar(): React.JSX.Element {
     return () => cancelAnimationFrame(id);
   }, [promptFocusToken, disabled]);
 
-  // «Omitir permisos» (P-028 14, revoca la franja fija de D9): un aviso TEMPORAL (el mismo mecanismo y
-  // los mismos 8 s que el de coste) cada vez que el modo pasa a `bypassPermissions` —por el chip, Shift+Tab,
-  // el atajo global, el evento del CLI o al reabrir una conversacion que ya estaba en ese modo—. La señal
-  // permanente es solo el control en rojo.
-  const bypassActive = (isClaude || isRuntime) && permissionMode === 'bypassPermissions';
-  useEffect(() => {
-    if (bypassActive) notifyCostAdvice({ severity: 'warn', message: BYPASS_PERMISSIONS_ADVICE }, activeTabId);
-  }, [bypassActive, activeTabId]);
+  // «Omitir permisos»: su aviso temporal lo emite el store al ACTIVAR el modo (#1, bypassActivation.ts);
+  // aqui solo queda la señal permanente, el control en rojo.
 
   // Deteccion de editores (una vez al montar). Fallo de IPC -> lista vacia (item deshabilitado).
   useEffect(() => {
@@ -288,6 +277,14 @@ export function PromptBar(): React.JSX.Element {
     setPreview(null);
     setError(null);
     void sendActiveMessage(trimmed, sent);
+  };
+
+  // #24: el botón de enviar hace lo mismo que Enter cuando Enter envía: el borrador entero y, si el cursor
+  // está en un item de lista VACÍO, sin su marcador huérfano. Vacío o sin pestaña, no se puede pulsar.
+  const canSend = !disabled && (text.trim().length > 0 || attachments.length > 0);
+  const sendFromButton = (): void => {
+    const state = currentTextState();
+    submit(enterAction(state) === 'send' ? continueListOnNewline(state)?.value : undefined);
   };
 
   // Cambio de modelo en caliente + aviso de coste (B1): el usuario ve que Opus muerde mas bolsa que
@@ -759,7 +756,16 @@ export function PromptBar(): React.JSX.Element {
               <Icon name="stop" size={11} /> Parar
             </button>
           ) : (
-            <span className="shrink-0 self-center font-mono text-[10.5px] text-mg-muted">⏎</span>
+            // #24: era un ⏎ decorativo. Ahora envía con la MISMA acción que Enter (sendFromButton).
+            <button
+              onClick={sendFromButton}
+              disabled={!canSend}
+              aria-label="Enviar mensaje"
+              data-tip="Enviar (Enter)"
+              className="shrink-0 cursor-pointer self-center rounded-full border border-mg-border-ctrl px-[8px] py-[1px] font-mono text-[10.5px] text-mg-body2 transition-colors duration-150 ease-out hover:bg-mg-hover disabled:cursor-default disabled:text-mg-muted disabled:opacity-60 disabled:hover:bg-transparent"
+            >
+              ⏎
+            </button>
           )}
         </motion.div>
       </div>

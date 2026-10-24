@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useWorkbenchStore } from '../workbenchStore';
-import { usePaneTabId } from '../paneContext';
+import { usePaneTabId, usePaneTranscriptStore } from '../paneContext';
 import { useStickToBottom } from '../useStickToBottom';
 import { activityStepLabel, activityTurns, runningStepId, runsText, type ActivityTurn } from '../chatVisibility';
 import { formatElapsed } from '../thinkingStatus';
@@ -33,6 +33,11 @@ export function ActivityPanel(): React.JSX.Element {
   const status = useWorkbenchStore((s) => s.statusByChat[tabId] ?? 'idle');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const turnLive = status === 'streaming' || status === 'needs_permission';
+  // #26: una conversación reabierta saca sus pasos de la transcripción: mientras se lee, o si falla, el
+  // panel lo dice en vez de «sin actividad».
+  const useTranscript = usePaneTranscriptStore();
+  const transcriptFinal = useTranscript((s) => s.isFinal);
+  const transcriptError = useTranscript((s) => s.errorMessage);
   // Acento de la cuenta de ESTA pestaña, como el chat (BlockChat): el turno activo y su paso en marcha lo llevan.
   const accent = useWorkbenchStore((s) => s.accounts.find((a) => a.id === tab?.accountId)?.accent.base ?? 'var(--color-mg-fill)');
 
@@ -52,7 +57,7 @@ export function ActivityPanel(): React.JSX.Element {
     <div data-panel="activity" className="relative flex h-full min-h-0 flex-col">
       <ActivityHeader tabId={tabId} title={tab.title} subagent={subagent} />
       <div ref={ref} onScroll={onScroll} className="min-h-0 flex-1 overflow-auto py-[4px]">
-        {stepCount === 0 && <Hint text={turnLive ? 'Esperando el primer paso…' : 'Sin actividad todavía.'} />}
+        {stepCount === 0 && <Hint text={emptyActivityText({ turnLive, resumed: tab.resumeSessionId !== undefined, transcriptFinal, transcriptError })} />}
         {turns.map((turn) => (
           <TurnSection
             key={turn.turnIndex}
@@ -69,6 +74,19 @@ export function ActivityPanel(): React.JSX.Element {
       {subagent !== null && <SubagentOverlay tabId={tabId} subagent={subagent} />}
     </div>
   );
+}
+
+// Lo que dice Actividad sin pasos que enseñar (#26): nunca «sin actividad» mientras carga o tras un error.
+function emptyActivityText(state: {
+  readonly turnLive: boolean;
+  readonly resumed: boolean;
+  readonly transcriptFinal: boolean;
+  readonly transcriptError: string | null;
+}): string {
+  if (state.turnLive) return 'Esperando el primer paso…';
+  if (state.resumed && state.transcriptError !== null) return `No se pudo cargar la actividad: ${state.transcriptError}`;
+  if (state.resumed && !state.transcriptFinal) return 'Cargando la actividad…';
+  return 'Sin actividad todavía.';
 }
 
 function findSubagent(blocks: readonly Block[], toolUseId: string | null): SubagentBlock | null {

@@ -531,14 +531,16 @@ function SystemBlock({ block }: { readonly block: Extract<Block, { kind: 'system
 }
 
 // `tip`: texto secundario en el tooltip (P-028, 20: el aviso del CLI tras la linea de limite de Mage).
+// #14: el texto encoge y parte por donde haga falta (rutas sin espacios incluidas) y se lee entero; las
+// rayas conservan un minimo para que siga pareciendo una linea de sistema.
 function SystemLine({ text, tip }: { readonly text: string; readonly tip?: string }): React.JSX.Element {
   return (
-    <div className="flex items-center gap-[10px] px-[4px] text-[10.5px] text-mg-muted">
-      <span className="h-px flex-1 bg-mg-border-subtle" />
-      <span className="flex-none" {...(tip === undefined ? {} : { 'data-tip': tip })}>
+    <div className="flex min-w-0 items-center gap-[10px] px-[4px] text-[10.5px] text-mg-muted">
+      <span className="h-px min-w-[16px] flex-1 bg-mg-border-subtle" />
+      <span className="min-w-0 text-center [overflow-wrap:anywhere]" {...(tip === undefined ? {} : { 'data-tip': tip })}>
         {text}
       </span>
-      <span className="h-px flex-1 bg-mg-border-subtle" />
+      <span className="h-px min-w-[16px] flex-1 bg-mg-border-subtle" />
     </div>
   );
 }

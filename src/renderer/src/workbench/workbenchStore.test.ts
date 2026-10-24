@@ -106,6 +106,70 @@ describe('setDraft', () => {
   });
 });
 
+describe('sendMessageToTab — envío fallido (#24)', () => {
+  const image = { mediaType: 'image/png', data: 'aGVsbG8=' } as const;
+
+  it('sendMessageToTab_fallaAlArrancar_devuelveElTextoYLosAdjuntosAlBorrador', async () => {
+    const store = createWorkbenchStore(fakeMage({ saveWorkspace: vi.fn().mockResolvedValue(undefined), isFolderTrusted: vi.fn().mockResolvedValue(true), createSession: vi.fn().mockRejectedValue(new Error('sin red')) }));
+    store.setState({ tabs: [tab('a')], activeTabId: 'a', splitLayout: singleLeaf('a') });
+
+    await store.getState().sendMessageToTab('a', 'Arregla el login', [image]);
+
+    expect(store.getState().draftByChat.a).toEqual({ text: 'Arregla el login', attachments: [{ attachment: image, byteLength: 5 }] });
+  });
+
+  it('sendMessageToTab_fallaYaHayOtroBorrador_noLoPisa', async () => {
+    const store = createWorkbenchStore(fakeMage({ saveWorkspace: vi.fn().mockResolvedValue(undefined), isFolderTrusted: vi.fn().mockResolvedValue(true), createSession: vi.fn().mockRejectedValue(new Error('sin red')) }));
+    store.setState({ tabs: [tab('a')], activeTabId: 'a', splitLayout: singleLeaf('a'), draftByChat: { a: { text: 'lo nuevo', attachments: [] } } });
+
+    await store.getState().sendMessageToTab('a', 'lo enviado');
+
+    expect(store.getState().draftByChat.a?.text).toBe('lo nuevo');
+  });
+});
+
+describe('closeTab — pestaña que hereda el foco (#38)', () => {
+  const closing = (layout: ReturnType<typeof singleLeaf>, active: string, ids: readonly string[]) => {
+    const store = createWorkbenchStore(fakeMage({ stop: vi.fn().mockResolvedValue(undefined), saveWorkspace: vi.fn().mockResolvedValue(undefined), listConversations: vi.fn().mockResolvedValue([]) }));
+    store.setState({ tabs: ids.map((id) => tab(id)), activeTabId: active, splitLayout: layout });
+    return store;
+  };
+
+  it('closeTab_activaEnMedio_activaLaSiguiente', async () => {
+    const store = closing({ kind: 'leaf', tabIds: ['a', 'b', 'c'], activeTabId: 'b' }, 'b', ['a', 'b', 'c']);
+
+    await store.getState().closeTab('b');
+
+    expect(store.getState().activeTabId).toBe('c');
+  });
+
+  it('closeTab_activaAlFinal_activaLaAnterior', async () => {
+    const store = closing({ kind: 'leaf', tabIds: ['a', 'b', 'c'], activeTabId: 'c' }, 'c', ['a', 'b', 'c']);
+
+    await store.getState().closeTab('c');
+
+    expect(store.getState().activeTabId).toBe('b');
+  });
+
+  it('closeTab_conFijadas_sigueElOrdenQueSeVe', async () => {
+    const store = closing({ kind: 'leaf', tabIds: ['a', 'b', 'c'], activeTabId: 'a' }, 'a', ['a', 'b', 'c']);
+    store.setState((s) => ({ tabs: s.tabs.map((t) => (t.id === 'c' ? { ...t, pinned: true } : t)) }));
+
+    await store.getState().closeTab('a');
+
+    expect(store.getState().activeTabId).toBe('b'); // se ve c, a, b: la siguiente de a es b
+  });
+
+  it('closeTab_unicaDeSuPanel_activaLaDelPanelQueOcupaSuSitio', async () => {
+    const layout = { kind: 'split', direction: 'row', ratio: 0.5, a: { kind: 'leaf', tabIds: ['a'], activeTabId: 'a' }, b: { kind: 'leaf', tabIds: ['x', 'y'], activeTabId: 'y' } } as const;
+    const store = closing(layout as never, 'a', ['x', 'y', 'a']);
+
+    await store.getState().closeTab('a');
+
+    expect(store.getState().activeTabId).toBe('y');
+  });
+});
+
 describe('closeTab', () => {
   it('closeTab_pestanaConEstadoDeMotor_limpiaTodosSusMapas', async () => {
     // B12: se limpiaban diez mapas y faltaban `turnStartByChat` y `lastActivityByChat`.

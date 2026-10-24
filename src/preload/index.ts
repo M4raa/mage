@@ -290,6 +290,7 @@ const api: MageApi = {
     return () => ipcRenderer.removeListener(UPDATE_PROMPT_CHANNEL, handler);
   },
   installUpdate: () => ipcRenderer.invoke(IpcChannel.UpdateInstall),
+  checkForUpdates: () => ipcRenderer.invoke(IpcChannel.UpdateCheck),
 };
 
 contextBridge.exposeInMainWorld('mage', api);

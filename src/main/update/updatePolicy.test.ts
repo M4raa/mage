@@ -32,6 +32,24 @@ describe('decideCheck', () => {
     expect(decision.check === false && decision.reason).toContain('empaquetada');
   });
 
+  it('decideCheck_manualTrasUnaComprobacionReciente_compruebaIgualmente', () => {
+    const decision = decideCheck({ ...baseContext, lastCheckAtMs: baseContext.nowMs - 1_000, manual: true });
+
+    expect(decision).toEqual({ check: true });
+  });
+
+  it('decideCheck_manualConOtraEnVuelo_noDuplica', () => {
+    const decision = decideCheck({ ...baseContext, checkInFlight: true, manual: true });
+
+    expect(decision.check).toBe(false);
+  });
+
+  it('decideCheck_manualSinEmpaquetar_noCompruebaYDiceElMotivo', () => {
+    const decision = decideCheck({ ...baseContext, isPackaged: false, manual: true });
+
+    expect(decision.check === false && decision.reason).toContain('empaquetada');
+  });
+
   it('decideCheck_comprobacionEnVuelo_noCompruebaAunqueEsteEmpaquetada', () => {
     const decision = decideCheck({ ...baseContext, checkInFlight: true });
 
@@ -124,8 +142,27 @@ describe('nextUpdateState', () => {
     expect(state).toEqual(READY);
   });
 
-  it('nextUpdateState_errorDuranteDescarga_vuelveAIdle', () => {
-    expect(nextUpdateState({ kind: 'downloading', version: '0.1.3' }, { kind: 'error', message: 'ECONNRESET' })).toEqual(IDLE_UPDATE_STATE);
+  it('nextUpdateState_errorDuranteDescarga_pasaAErrorConElMotivo', () => {
+    expect(nextUpdateState({ kind: 'downloading', version: '0.1.3' }, { kind: 'error', message: 'ECONNRESET' })).toEqual({ kind: 'error', message: 'ECONNRESET' });
+  });
+
+  // F1.3 (#15): «buscando», «al día» y «error» se ven en Configuración.
+  it('nextUpdateState_comprobandoDesdeReposoAlDiaOError_pasaABuscando', () => {
+    expect(nextUpdateState(IDLE_UPDATE_STATE, { kind: 'checking' })).toEqual({ kind: 'checking' });
+    expect(nextUpdateState({ kind: 'upToDate', version: '0.1.2' }, { kind: 'checking' })).toEqual({ kind: 'checking' });
+    expect(nextUpdateState({ kind: 'error', message: 'x' }, { kind: 'checking' })).toEqual({ kind: 'checking' });
+  });
+
+  it('nextUpdateState_comprobandoDuranteDescarga_sigueDescargando', () => {
+    const downloading: UpdateState = { kind: 'downloading', version: '0.1.3' };
+
+    expect(nextUpdateState(downloading, { kind: 'checking' })).toBe(downloading);
+  });
+
+  it('nextUpdateState_errorMensajeLargo_seResume', () => {
+    const state = nextUpdateState({ kind: 'checking' }, { kind: 'error', message: '404\nSet-Cookie: SECRETO' });
+
+    expect(state).toEqual({ kind: 'error', message: '404' });
   });
 
   // Mage es residente: 6 h despues vuelve a comprobar. Ni un error de red, ni «al dia», ni volver a
@@ -141,12 +178,12 @@ describe('nextUpdateState', () => {
     expect(nextUpdateState(READY, { kind: 'available', version: '0.1.4' })).toEqual({ kind: 'downloading', version: '0.1.4' });
   });
 
-  it('nextUpdateState_alDiaDesdeIdle_sigueIdle', () => {
-    expect(nextUpdateState(IDLE_UPDATE_STATE, { kind: 'notAvailable', version: '0.1.2' })).toEqual(IDLE_UPDATE_STATE);
+  it('nextUpdateState_alDiaTrasBuscar_pasaAAlDiaConSuVersion', () => {
+    expect(nextUpdateState({ kind: 'checking' }, { kind: 'notAvailable', version: '0.1.2' })).toEqual({ kind: 'upToDate', version: '0.1.2' });
   });
 
-  it('nextUpdateState_errorEnReposo_noCambiaNada', () => {
-    expect(nextUpdateState(IDLE_UPDATE_STATE, { kind: 'error', message: 'ENOTFOUND' })).toBe(IDLE_UPDATE_STATE);
+  it('nextUpdateState_errorAlBuscar_pasaAError', () => {
+    expect(nextUpdateState({ kind: 'checking' }, { kind: 'error', message: 'ENOTFOUND' })).toEqual({ kind: 'error', message: 'ENOTFOUND' });
   });
 
   it('nextUpdateState_versionVacia_lanzaConElEvento', () => {

@@ -21,6 +21,13 @@ export const TAB_DRAG_MIME = 'application/x-mage-tab-id';
 // del `dataTransfer` van en minusculas: un UUID ya lo esta.
 export const TAB_DRAG_ORIGIN_MIME = `application/x-mage-origin-${crypto.randomUUID()}`;
 
+// #47/#22: lado de la pestaña destino en el que cae una pestaña soltada: la mitad izquierda la pone
+// delante y la derecha detras. Un ancho no positivo no tiene mitades: lanza con el valor.
+export function tabDropSide(left: number, width: number, clientX: number): 'before' | 'after' {
+  if (!(width > 0)) throw new Error(`Ancho de pestaña invalido para soltar: ${width}`);
+  return clientX < left + width / 2 ? 'before' : 'after';
+}
+
 // Color del punto/indicador de una pestaña: su override manual si lo tiene, si no el acento de su
 // cuenta. Devuelve una referencia a variable CSS, asi conmuta con el tema sin recolorear en JS.
 // Tolera indices fuera de rango (estado persistido manipulado a mano) en vez de pintar `undefined`.

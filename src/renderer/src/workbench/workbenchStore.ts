@@ -64,7 +64,7 @@ import {
   shouldAutoContinue,
 } from './rateLimit';
 import { restoreTabs, toPersistedWorkspace } from './workspaceView';
-import { tabsToCloseAll, tabsToCloseInactive } from './tabActions';
+import { orderTabsForDisplay, tabsToCloseAll, tabsToCloseInactive } from './tabActions';
 import {
   BACKGROUND_TTL_MS,
   backgroundMoveBlockedReason,
@@ -73,14 +73,17 @@ import {
   tabMoveBlockedReason,
   type BackgroundSession,
 } from './backgroundWork';
-import type { DropZone, SplitPath } from './splitLayout';
+import type { DropZone, SplitPath, TabDropSide } from './splitLayout';
 import {
   activateTab,
+  activeTabReplacingLeaf,
   addTabToLeaf,
   applyDrop,
+  dropTabBeside,
   findLeafPath,
   firstLeafPath,
   leafAt,
+  neighborOf,
   reconcileSplitLayoutAfterClose,
   resizeAt,
   singleLeaf,
@@ -89,6 +92,8 @@ import {
 import type { SplitLayout } from '@shared/state';
 import { inAppNoticeForEvent, notificationForEvent, toNotifyParams } from './notify';
 import { notify, reportActionError } from './notificationStore';
+import { base64ByteLength } from '@shared/attachments';
+import { BYPASS_PERMISSIONS_ADVICE, bypassActivatedTabs } from './bypassActivation';
 import { resolveNotificationTarget } from './notificationTarget';
 import { noticeTextFor } from './cliNotices';
 import { SUBAGENT_TOOL_NAMES } from './toolSummary';
@@ -313,6 +318,8 @@ export interface WorkbenchState extends PrState, PrActions {
   // El destino es el CAMINO del panel, no una pestaña: con grupos, soltar sobre un panel significa
   // "a esta barra", y el panel puede tener varias.
   movePaneTab: (draggedTabId: string, targetPath: SplitPath, zone: DropZone) => void;
+  // #47/#22: soltar una pestaña sobre otra de una barra (reordenar o reunir paneles).
+  dropTabOnTab: (draggedTabId: string, targetTabId: string, side: TabDropSide) => void;
   // Pestaña nueva en ESA barra (el + de cada panel dividido).
   addTabToPane: (path: SplitPath) => Promise<void>;
   resizeSplitAt: (path: SplitPath, ratio: number, totalPx?: number) => void;
@@ -383,6 +390,8 @@ export interface WorkbenchState extends PrState, PrActions {
   dismissUpdatePrompt: () => void;
   // «Reiniciar ahora»: main cierra Mage e instala.
   installUpdate: () => void;
+  // «Buscar actualizaciones» (F1.3, #15): el estado vuelve por `onUpdateState`.
+  checkForUpdates: () => void;
   // Arranque: si Mage se ha actualizado desde la ultima vez, abre las novedades (ver releaseNotes.ts).
   // `isDev` se inyecta para poder probar la regla (en Vitest `import.meta.env.DEV` siempre es true).
   showReleaseNotesIfUpdated: (isDev: boolean) => Promise<void>;
@@ -1394,7 +1403,7 @@ export function createWorkbenchStore(mage: MageClient) {
       disposeTranscriptStore(tabId);
       set((s) => {
         const tabs = s.tabs.filter((t) => t.id !== tabId);
-        const activeTabId = s.activeTabId === tabId ? nextActiveAfterClose(tabs, s.splitLayout, tabId) : s.activeTabId;
+        const activeTabId = s.activeTabId === tabId ? nextActiveAfterClose(s.tabs, s.splitLayout, tabId) : s.activeTabId;
         // El panel de la pestaña cerrada colapsa al hermano (o, si era el panel enfocado, la nueva
         // activa ocupa su sitio exacto) — ver `reconcileSplitLayoutAfterClose` (I11).
         const splitLayout = reconcileSplitLayoutAfterClose(s.splitLayout, tabId, activeTabId);
@@ -1471,6 +1480,11 @@ export function createWorkbenchStore(mage: MageClient) {
 
     movePaneTab: (draggedTabId, targetPath, zone) => {
       set((s) => ({ activeTabId: draggedTabId, splitLayout: applyDrop(s.splitLayout, draggedTabId, targetPath, zone) }));
+      schedulePersist(mage, get);
+    },
+
+    dropTabOnTab: (draggedTabId, targetTabId, side) => {
+      set((s) => ({ activeTabId: draggedTabId, splitLayout: dropTabBeside(s.splitLayout, draggedTabId, targetTabId, side) }));
       schedulePersist(mage, get);
     },
 
@@ -2241,6 +2255,9 @@ export function createWorkbenchStore(mage: MageClient) {
       set({ updatePromptVersion: null });
       void mage.installUpdate().catch((err: unknown) => reportActionError('No se pudo instalar la actualización', err, 'update'));
     },
+    checkForUpdates: () => {
+      void mage.checkForUpdates().catch((err: unknown) => reportActionError('No se pudo buscar actualizaciones', err, 'update'));
+    },
 
     showReleaseNotesIfUpdated: async (isDev) => {
       const [current, windows] = await Promise.all([mage.getAppVersion(), mage.listWindows()]);
@@ -2621,6 +2638,7 @@ export function createWorkbenchStore(mage: MageClient) {
         await mage.sendMessage({ sessionId, text: trimmed, ...(attachments.length === 0 ? {} : { attachments }) });
       } catch (err) {
         failChat(set, tabId, describeError(err));
+        restoreDraftAfterFailedSend(set, tabId, trimmed, attachments);
       }
     },
 
@@ -2923,7 +2941,29 @@ export function createWorkbenchStore(mage: MageClient) {
     },
   }));
   followFocusedTabAccount(store);
+  notifyBypassActivations(store);
   return store;
+}
+
+// #24: si el envío falla, lo enviado vuelve a la caja para reintentar sin reescribirlo. Solo si la caja
+// sigue vacia: lo que el usuario haya empezado a escribir despues no se pisa.
+function restoreDraftAfterFailedSend(set: SetFn, tabId: string, text: string, attachments: readonly ImageAttachment[]): void {
+  set((s) => {
+    if (s.draftByChat[tabId] !== undefined) return {};
+    const restored = attachments.map((attachment) => ({ attachment, byteLength: base64ByteLength(attachment.data) }));
+    return { draftByChat: { ...s.draftByChat, [tabId]: { text, attachments: restored } } };
+  });
+}
+
+// #1: aviso de «Omitir permisos» al ACTIVARLO, venga de donde venga (chip, Shift+Tab, atajo o evento del
+// CLI). Suscripcion y no un efecto de componente: el efecto avisaba en cada montaje con el modo activo.
+// Mismo toast que el de coste de la pestaña (`cost-advice:<tab>`), que se sustituyen entre si.
+function notifyBypassActivations(store: { subscribe: (fn: (s: WorkbenchState, prev: WorkbenchState) => void) => unknown }): void {
+  store.subscribe((state, prev) => {
+    for (const tab of bypassActivatedTabs(prev.tabs, state.tabs)) {
+      notify({ level: 'warning', title: BYPASS_PERMISSIONS_ADVICE, body: tab.title, dedupeKey: `cost-advice:${tab.id}`, source: 'prompt' });
+    }
+  });
 }
 
 // La cuenta activa sigue a la conversacion enfocada (P-028, punto 26). Suscripcion y no un cambio en
@@ -3617,8 +3657,18 @@ export function selectAccount(state: WorkbenchState, accountId: string): Account
 // A quien pasa el foco al cerrar la pestaña ACTIVA: la primera conversacion; sin ninguna, la de
 // novedades si sigue abierta en algun panel (si no, el panel mostraria la pantalla vacia con la pestaña
 // de novedades al lado sin seleccionar); y si no, nadie.
+// #38: hereda el foco la vecina en el orden que se VE en su barra (fijadas primero): la siguiente y, si
+// no hay, la anterior. Si su panel se queda vacio, la activa del panel que ocupa su sitio. `tabs` son las
+// de ANTES de cerrar.
 function nextActiveAfterClose(tabs: readonly Tab[], layout: SplitLayout, closedTabId: string): string {
-  const first = tabs[0]?.id;
+  const path = findLeafPath(layout, closedTabId);
+  if (path !== null) {
+    const byId = new Map(tabs.map((tab) => [tab.id, tab]));
+    const shown = orderTabsForDisplay(leafAt(layout, path).tabIds.map((id) => byId.get(id)).filter((tab): tab is Tab => tab !== undefined));
+    const neighbor = neighborOf(shown.map((tab) => tab.id), closedTabId) ?? activeTabReplacingLeaf(layout, closedTabId);
+    if (neighbor !== null) return neighbor;
+  }
+  const first = tabs.find((tab) => tab.id !== closedTabId)?.id;
   if (first !== undefined) return first;
   const notesStayOpen = closedTabId !== RELEASE_NOTES_TAB_ID && findLeafPath(layout, RELEASE_NOTES_TAB_ID) !== null;
   return notesStayOpen ? RELEASE_NOTES_TAB_ID : '';

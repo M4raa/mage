@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useRef, useState } from 'react';
+import { canCheckForUpdates, updateStatusText } from '../updateStatus';
 import type {
   CloseBehavior,
   ImportedTheme,
@@ -411,6 +412,7 @@ function ReleaseNotesSection(): React.JSX.Element {
       >
         Abrir las notas de versión
       </button>
+      <UpdateCheck />
       <ul className="flex flex-col gap-[1px]" aria-label="Versiones de Mage">
         {CHANGELOG_ENTRIES.map((entry) => (
           <li key={entry.version}>
@@ -425,6 +427,38 @@ function ReleaseNotesSection(): React.JSX.Element {
           </li>
         ))}
       </ul>
+    </div>
+  );
+}
+
+// «Buscar actualizaciones» (F1.3, #15): consulta ya, aunque la automática sea reciente, y enseña cada
+// estado. La versión lista se instala desde el mismo diálogo de siempre (UpdateReadyDialog).
+function UpdateCheck(): React.JSX.Element {
+  const state = useWorkbenchStore((s) => s.updateState);
+  const checkForUpdates = useWorkbenchStore((s) => s.checkForUpdates);
+  const closeSettings = useWorkbenchStore((s) => s.closeSettings);
+  const openUpdatePrompt = useWorkbenchStore((s) => s.openUpdatePrompt);
+  const showReady = (): void => {
+    closeSettings();
+    openUpdatePrompt();
+  };
+  return (
+    <div data-update-check="true" className="flex flex-wrap items-center gap-[10px]">
+      <button
+        onClick={checkForUpdates}
+        disabled={!canCheckForUpdates(state)}
+        className="rounded-[7px] border border-mg-border-emph px-[12px] py-[6px] text-[11.5px] text-mg-body transition-colors duration-150 ease-out hover:bg-mg-hover disabled:opacity-50"
+      >
+        Buscar actualizaciones
+      </button>
+      {state.kind === 'ready' && (
+        <button onClick={showReady} className="rounded-[7px] bg-mg-activity px-[12px] py-[6px] text-[11.5px] text-mg-window">
+          Ver y reiniciar
+        </button>
+      )}
+      <span role="status" className="min-w-0 text-[11px] text-mg-sec [overflow-wrap:anywhere]">
+        {updateStatusText(state)}
+      </span>
     </div>
   );
 }

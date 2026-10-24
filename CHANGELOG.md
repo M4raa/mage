@@ -7,6 +7,14 @@ versión.
 ## 0.1.3 — en preparación
 
 ### Corregido
+- El aviso de «Omitir permisos» sale al activarlo, no al volver a un chat que ya lo tenía ni al reabrir Mage.
+- Los avisos largos del chat (rutas sin espacios incluidas) se parten y no desbordan el panel.
+- Configuración › Notas de versión tiene «Buscar actualizaciones», que consulta al momento y dice si busca, si Mage está al día, si hay error o si hay una versión lista.
+- Una cuenta de Claude sin login válido, la principal incluida, ofrece «Iniciar sesión» desde la barra lateral sin recrearla.
+- Al cerrar una pestaña se activa la siguiente (o la anterior), no la primera.
+- Las pestañas se reordenan arrastrándolas en su barra, y soltar una sobre la barra de otro panel lo reúne.
+- El ⏎ del prompt es un botón que envía; si el envío falla, el mensaje vuelve a la caja.
+- Actividad dice que está cargando, o el motivo del error, al reabrir una conversación en vez de «sin actividad».
 - El login OAuth de MCP evita puertos bloqueados por el navegador y explica los puertos fijos no válidos.
 - Los avatares toman la inicial del nombre de cuenta y mantienen su color al añadir otras. El color por defecto de cada cuenta puede cambiar una vez con esta versión; los elegidos a mano se conservan.
 - Las conversaciones muestran un indicador mientras cargan y el motivo si no se pueden leer.

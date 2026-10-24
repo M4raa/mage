@@ -281,6 +281,7 @@ export const IpcChannel = {
   // Estado de la actualizacion (para una ventana que carga tarde) e instalarla ya descargada.
   UpdateGetState: 'update:getState',
   UpdateInstall: 'update:install',
+  UpdateCheck: 'update:check',
 } as const;
 
 export type IpcChannel = (typeof IpcChannel)[keyof typeof IpcChannel];
@@ -1068,4 +1069,6 @@ export interface MageApi {
   onUpdatePrompt(listener: (version: string) => void): () => void;
   // Reinicia e instala la actualizacion descargada. Lanza si no hay ninguna lista.
   installUpdate(): Promise<void>;
+  // «Buscar actualizaciones» (F1.3, #15): el resultado llega por `onUpdateState`.
+  checkForUpdates(): Promise<void>;
 }

@@ -11,6 +11,8 @@ import type { ConversationPrivacy } from '@shared/state';
 import { reportActionError } from '../notificationStore';
 import type { ChatProject } from '@shared/settings';
 import { projectForRow } from '../chatProjects';
+import { accountRecovery } from '../accountRecovery';
+import { CliLoginPanel, useCliLogin } from './CliLoginPanel';
 
 // Estado del menu contextual abierto (posicion + conversacion objetivo).
 interface MenuState {
@@ -108,10 +110,8 @@ export function ChatSidebar(): React.JSX.Element {
         </div>
       </header>
 
-      {/* Cuenta huérfana (sin login y no principal): permitir eliminarla para no dejarla a medias. */}
-      {!account.isMain && account.loginStatus !== 'logged_in' && (
-        <OrphanBanner account={account} onDelete={deleteAccount} />
-      )}
+      {/* Cuenta sin login válido (#18): iniciar sesión otra vez (Claude) y, si no es la principal, eliminarla. */}
+      <OrphanBanner key={account.id} account={account} onDelete={deleteAccount} />
 
       <div className="border-b border-mg-border-subtle p-[8px_10px]">
         <div className="flex items-center gap-[6px] rounded-[7px] border border-mg-border-ctrl bg-mg-window px-[8px] py-[5px] focus-within:border-mg-border-pop">
@@ -298,30 +298,60 @@ function ProjectEditor({ project, onSave, onCancel }: {
   );
 }
 
-// Aviso de cuenta huérfana (sin login) con confirmación EN LA APP (no dialogo nativo del SO).
+// Aviso de cuenta sin login válido, con confirmación EN LA APP (no dialogo nativo del SO). #18: ofrece
+// iniciar sesión de nuevo con el CLI oficial sobre la MISMA cuenta (conserva sus conversaciones); el
+// siguiente arranque de sus sesiones ya lee las credenciales nuevas de su config dir.
 function OrphanBanner({
   account,
   onDelete,
 }: {
   readonly account: Account;
   readonly onDelete: (configDir: string) => Promise<void>;
-}): React.JSX.Element {
+}): React.JSX.Element | null {
   const [confirming, setConfirming] = useState(false);
+  const refreshAccounts = useWorkbenchStore((s) => s.refreshAccounts);
+  const login = useCliLogin(() => {
+    void refreshAccounts().catch((err: unknown) => reportActionError('No se pudieron actualizar las cuentas', err, 'accounts'));
+  });
+  const recovery = accountRecovery(account);
+  if (recovery === null) return null;
+  if (confirming) return <DeleteAccountConfirm account={account} onCancel={() => setConfirming(false)} onDelete={onDelete} />;
 
-  if (!confirming) {
-    return (
-      <div className="flex items-center justify-between gap-[8px] border-b border-mg-border-subtle bg-mg-danger-bg p-[7px_12px] text-[10.5px] text-mg-danger">
+  return (
+    <div data-account-recovery="true" className="flex flex-col gap-[6px] border-b border-mg-border-subtle bg-mg-danger-bg p-[7px_12px] text-[10.5px] text-mg-danger">
+      <div className="flex items-center justify-between gap-[8px]">
         <span>Cuenta sin login válido.</span>
-        <button
-          onClick={() => setConfirming(true)}
-          className="rounded-[6px] border border-mg-danger-border px-[8px] py-[3px] text-mg-danger hover:bg-mg-danger-bg"
-        >
-          Eliminar
-        </button>
+        <div className="flex gap-[6px]">
+          {recovery.relogin && (
+            <button
+              onClick={() => login.begin(account.id, account.email)}
+              disabled={login.phase === 'starting' || login.phase === 'submitting'}
+              className="rounded-[6px] border border-mg-danger-border px-[8px] py-[3px] text-mg-danger hover:bg-mg-danger-bg disabled:opacity-50"
+            >
+              Iniciar sesión
+            </button>
+          )}
+          {recovery.remove && (
+            <button onClick={() => setConfirming(true)} className="rounded-[6px] border border-mg-danger-border px-[8px] py-[3px] text-mg-danger hover:bg-mg-danger-bg">
+              Eliminar
+            </button>
+          )}
+        </div>
       </div>
-    );
-  }
+      <CliLoginPanel login={login} />
+    </div>
+  );
+}
 
+function DeleteAccountConfirm({
+  account,
+  onCancel,
+  onDelete,
+}: {
+  readonly account: Account;
+  readonly onCancel: () => void;
+  readonly onDelete: (configDir: string) => Promise<void>;
+}): React.JSX.Element {
   return (
     <div className="flex flex-col gap-[7px] border-b border-mg-border-subtle bg-mg-danger-bg p-[8px_12px] text-[10.5px] text-mg-danger">
       <span>
@@ -330,7 +360,7 @@ function OrphanBanner({
       </span>
       <div className="flex justify-end gap-[6px]">
         <button
-          onClick={() => setConfirming(false)}
+          onClick={onCancel}
           className="rounded-[6px] border border-mg-border-emph px-[8px] py-[3px] text-mg-body2 hover:bg-mg-hover"
         >
           Cancelar
