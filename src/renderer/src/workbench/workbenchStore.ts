@@ -3252,6 +3252,10 @@ export function reduceEvent(state: WorkbenchState, tabId: string, event: MageEve
       return settleElicitation(state, tabId, event.requestId, 'cancel');
     case 'elicitation_resolved':
       return settleElicitation(state, tabId, event.requestId, event.action);
+    // F2.3: main acepto UNA respuesta (de esta ventana o de otro cliente). Cierra la tarjeta con la decision
+    // y quita la peticion de pendientes; si esta ventana ya lo habia hecho al contestar, no cambia nada.
+    case 'permission_resolved':
+      return resolvedPermissionPatch(state, tabId, event);
     case 'permission_cancelled': {
       // Si no habia tarjeta para ese requestId, `cancelQuestionBlock` devuelve el MISMO array y no se
       // emite parche de bloques: un parche vacio tiene que seguir siendo vacio.
@@ -3401,6 +3405,27 @@ function undismissSubagent(state: WorkbenchState, tabId: string, toolUseId: stri
   const dismissed = state.dismissedSubagentsByChat[tabId];
   if (dismissed === undefined || !dismissed.includes(toolUseId)) return {};
   return { dismissedSubagentsByChat: { ...state.dismissedSubagentsByChat, [tabId]: dismissed.filter((id) => id !== toolUseId) } };
+}
+
+function resolvedPermissionPatch(state: WorkbenchState, tabId: string, event: Extract<MageEvent, { kind: 'permission_resolved' }>): Partial<WorkbenchState> {
+  const blocks = blocksOf(state, tabId);
+  const withDecision = resolvePermissionBlock(blocks, event.requestId, event.behavior === 'allow' ? 'allowed' : 'denied');
+  const answered = event.answers === undefined ? withDecision : answerPendingQuestion(withDecision, event.requestId, event.answers);
+  const queue = state.pendingByChat[tabId] ?? [];
+  const rest = queue.filter((p) => p.requestId !== event.requestId);
+  return {
+    ...(answered === blocks ? {} : withBlocks(state, tabId, answered)),
+    ...(rest.length === queue.length ? {} : {
+      pendingByChat: { ...state.pendingByChat, [tabId]: rest },
+      statusByChat: { ...state.statusByChat, [tabId]: rest.length > 0 ? 'needs_permission' : 'streaming' },
+    }),
+  };
+}
+
+// Solo una tarjeta de pregunta aun PENDIENTE: la que ya contesto esta ventana conserva lo que se pinto.
+function answerPendingQuestion(blocks: readonly Block[], requestId: string, answers: Readonly<Record<string, string>>): readonly Block[] {
+  const pending = blocks.some((b) => b.kind === 'question' && b.requestId === requestId && b.state === 'pending');
+  return pending ? answerQuestionBlock(blocks, requestId, answers) : blocks;
 }
 
 function clearPermissionIfMatches(

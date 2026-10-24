@@ -1,6 +1,7 @@
 import type { CreateSessionParams, SendMessageParams, SessionEventPayload } from '@shared/ipc';
-import type { MageEvent } from '@shared/events';
-import type { ConversationId, ConversationSnapshot, CoordinatedState, NativeSessionRef, QueuedMessage, SendReceipt } from '@shared/coordination';
+import type { MageEvent, PermissionDecision } from '@shared/events';
+import type { ElicitationAnswer } from '@shared/elicitation';
+import type { AnswerReceipt, ConversationId, ConversationSnapshot, CoordinatedState, NativeSessionRef, PendingRequest, QueuedMessage, SendReceipt } from '@shared/coordination';
 import { enqueueMessage, removeQueuedMessage, takeNextMessage } from '@shared/messageQueue';
 import { writesClaudeTranscript } from '@shared/providers';
 import type { SessionManager } from '../engine/sessionManager';
@@ -10,8 +11,9 @@ import type { SessionLogFn } from '../engine/agentSession';
 // evento su conversacion de Mage y una secuencia monotona, y mantiene una instantanea consultable de cada
 // sesion viva. Va SOBRE `SessionManager` (no hay otra lista de procesos): crear y parar pasan por aqui para
 // que el seguimiento no se desincronice. Desde F2.2 es tambien el UNICO dueño de la cola de mensajes: decide
-// en un solo paso si un envio va al motor o espera, y saca el siguiente al acabar el turno. Los permisos
-// siguen en el renderer hasta F2.3.
+// en un solo paso si un envio va al motor o espera, y saca el siguiente al acabar el turno. Y desde F2.3 lleva
+// las peticiones que esperan al usuario (permisos, preguntas y elicitations): cada una se contesta UNA vez,
+// gane quien gane, y la respuesta aceptada se anuncia a todos los clientes.
 
 // Evento de sesion con su identidad y su secuencia. Los campos nuevos son opcionales en el contrato del
 // IPC (`SessionEventPayload`) para que un cliente que no los usa siga igual.
@@ -29,7 +31,8 @@ export interface ConversationIdentityIndex {
   recordLastSeq(conversationId: ConversationId, seq: number): void;
 }
 
-export type CoordinatedSessions = Pick<SessionManager, 'create' | 'stop' | 'stopOwnedBy' | 'stopByConfigDir' | 'stopAll' | 'sendMessage' | 'interrupt'>;
+export type CoordinatedSessions = Pick<SessionManager,
+  'create' | 'stop' | 'stopOwnedBy' | 'stopByConfigDir' | 'stopAll' | 'sendMessage' | 'interrupt' | 'answerPermission' | 'answerElicitation'>;
 
 export interface SessionCoordinatorDeps {
   readonly sessions: CoordinatedSessions;
@@ -54,6 +57,8 @@ interface Tracked {
   state: CoordinatedState;
   queue: readonly QueuedMessage[];
   readonly receipts: Map<string, SendReceipt>;
+  // Peticiones que esperan al usuario, por requestId (en orden de llegada).
+  readonly pending: Map<string, PendingRequest>;
   // Emite un evento propio de la coordinacion por el mismo camino que los del motor (con secuencia).
   emit: (event: MageEvent) => void;
 }
@@ -68,7 +73,7 @@ export class SessionCoordinator {
   create(params: CreateSessionParams, sink: SequencedSink, ownerId?: number): string {
     const tracked: Tracked = {
       sessionId: '', provider: params.provider, accountDir: params.accountDir, conversationId: null, nativeRef: null, lastSeq: 0, state: 'starting',
-      queue: [], receipts: new Map(), emit: () => undefined,
+      queue: [], receipts: new Map(), pending: new Map(), emit: () => undefined,
     };
     tracked.emit = (event) => this.relay(tracked, { sessionId: tracked.sessionId, event }, sink);
     const sessionId = this.deps.sessions.create(params, (payload) => this.relay(tracked, payload, sink), ownerId);
@@ -82,7 +87,29 @@ export class SessionCoordinator {
   snapshot(sessionId: string): ConversationSnapshot {
     const tracked = this.require(sessionId);
     const { sessionId: id, provider, conversationId, nativeRef, lastSeq, state, queue } = tracked;
-    return { sessionId: id, provider, conversationId, nativeRef, lastSeq, state, queue };
+    return { sessionId: id, provider, conversationId, nativeRef, lastSeq, state, queue, pending: [...tracked.pending.values()] };
+  }
+
+  // Contesta un permiso (o pregunta) UNA vez. La respuesta aceptada sale de pendientes ANTES de llegar al
+  // motor, asi que una segunda —de otro cliente o un doble clic— se rechaza sin tocarlo. Si el motor lanza,
+  // la peticion no vuelve a pendientes: el CLI ya no la espera, y el error llega a quien contesto.
+  answerPermission(sessionId: string, requestId: string, decision: PermissionDecision): AnswerReceipt {
+    const tracked = this.require(sessionId);
+    if (tracked.pending.get(requestId)?.kind !== 'permission') return ALREADY_ANSWERED;
+    tracked.pending.delete(requestId);
+    this.deps.sessions.answerPermission(sessionId, requestId, decision);
+    const answers = answersOf(decision);
+    tracked.emit({ kind: 'permission_resolved', requestId, behavior: decision.behavior, ...(answers === null ? {} : { answers }) });
+    return ACCEPTED;
+  }
+
+  // Igual para una elicitation; su resolucion la anuncia la propia sesion (`elicitation_resolved`).
+  answerElicitation(answer: ElicitationAnswer): AnswerReceipt {
+    const tracked = this.require(answer.sessionId);
+    if (tracked.pending.get(answer.requestId)?.kind !== 'elicitation') return ALREADY_ANSWERED;
+    tracked.pending.delete(answer.requestId);
+    this.deps.sessions.answerElicitation(answer);
+    return ACCEPTED;
   }
 
   // Envia, o deja en la cola si hay un turno en marcha: la decision y el cambio de estado van juntos, asi que
@@ -153,7 +180,8 @@ export class SessionCoordinator {
     this.follow(tracked, payload.sessionId);
     const { event } = payload;
     if (event.kind === 'session_init' && event.sessionId !== tracked.nativeRef?.nativeId) this.bind(tracked, event.sessionId);
-    tracked.state = nextState(tracked.state, event);
+    trackPending(tracked.pending, event);
+    tracked.state = nextState(tracked.state, event, tracked.pending.size);
     tracked.lastSeq += 1;
     sink({ ...payload, conversationId: tracked.conversationId, seq: tracked.lastSeq, at: this.deps.now() });
     if (event.kind === 'conversation_reset') this.rebind(tracked, event.newSessionId);
@@ -261,9 +289,33 @@ function initialNativeId(params: CreateSessionParams, sessionId: string): string
 // reinicio o un error dejan de contar como turno en marcha.
 const RUNNING_EVENTS: ReadonlySet<MageEvent['kind']> = new Set(['request_started', 'stream_delta', 'thinking_delta', 'tool_use']);
 const WAITING_EVENTS: ReadonlySet<MageEvent['kind']> = new Set(['permission_request', 'elicitation_request']);
+const RESOLVING_EVENTS: ReadonlySet<MageEvent['kind']> = new Set(['permission_resolved', 'permission_cancelled', 'elicitation_resolved', 'elicitation_cancelled']);
 
-function nextState(current: CoordinatedState, event: MageEvent): CoordinatedState {
+const ACCEPTED: AnswerReceipt = { status: 'accepted' };
+
+// Respuestas de una pregunta: viajan en `updatedInput.answers` (texto por pregunta). null si no lo es.
+function answersOf(decision: PermissionDecision): Readonly<Record<string, string>> | null {
+  if (decision.behavior !== 'allow') return null;
+  const answers = decision.updatedInput?.answers;
+  if (typeof answers !== 'object' || answers === null || Array.isArray(answers)) return null;
+  const entries = Object.entries(answers);
+  return entries.every(([, value]) => typeof value === 'string') ? (Object.fromEntries(entries) as Record<string, string>) : null;
+}
+const ALREADY_ANSWERED: AnswerReceipt = { status: 'rejected', reason: 'already_answered' };
+
+// Lo que espera al usuario: entra con su peticion y sale cuando se contesta, se cancela o el turno acaba (una
+// peticion de un turno ya terminado no la espera nadie). Un reenvio del mismo requestId no se duplica.
+function trackPending(pending: Map<string, PendingRequest>, event: MageEvent): void {
+  if (event.kind === 'permission_request' && !pending.has(event.request.requestId)) pending.set(event.request.requestId, { kind: 'permission', request: event.request });
+  if (event.kind === 'elicitation_request' && !pending.has(event.request.requestId)) pending.set(event.request.requestId, { kind: 'elicitation', request: event.request });
+  if (event.kind === 'permission_cancelled' || event.kind === 'elicitation_cancelled' || event.kind === 'elicitation_resolved') pending.delete(event.requestId);
+  if (event.kind === 'result' || event.kind === 'session_restarting') pending.clear();
+}
+
+function nextState(current: CoordinatedState, event: MageEvent, pendingCount: number): CoordinatedState {
   if (event.kind === 'session_state') return event.state;
+  // Contestada la ultima peticion, el turno sigue (lo que hacia el chat del renderer al contestar).
+  if (RESOLVING_EVENTS.has(event.kind)) return current === 'requires_action' && pendingCount === 0 ? 'running' : current;
   if (event.kind === 'session_restarting') return 'restarting';
   if (event.kind === 'result') return 'idle';
   if (event.kind === 'error') return 'error';

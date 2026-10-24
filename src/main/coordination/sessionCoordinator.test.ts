@@ -20,6 +20,8 @@ function harness(options: { index?: Partial<ConversationIdentityIndex>; emitOnSt
     stop: vi.fn(),
     sendMessage: vi.fn(),
     interrupt: vi.fn(),
+    answerPermission: vi.fn(),
+    answerElicitation: vi.fn(),
     stopOwnedBy: vi.fn().mockReturnValue([]),
     stopByConfigDir: vi.fn().mockReturnValue([]),
     stopAll: vi.fn(),
@@ -62,7 +64,7 @@ describe('SessionCoordinator — secuencia e identidades (F2.1)', () => {
     const id = h.create({ accountDir: `${ACCOUNT}/mage-private` });
 
     expect(h.index.resolveConversation).toHaveBeenCalledWith({ provider: 'claude', accountDir: `${ACCOUNT}/mage-private`, nativeId: id });
-    expect(h.coordinator.snapshot(id)).toEqual({ sessionId: id, provider: 'claude', conversationId: `conv-${id}`, nativeRef: { provider: 'claude', accountDir: `${ACCOUNT}/mage-private`, nativeId: id }, lastSeq: 0, state: 'starting', queue: [] });
+    expect(h.coordinator.snapshot(id)).toEqual({ sessionId: id, provider: 'claude', conversationId: `conv-${id}`, nativeRef: { provider: 'claude', accountDir: `${ACCOUNT}/mage-private`, nativeId: id }, lastSeq: 0, state: 'starting', queue: [], pending: [] });
   });
 
   it('create_codexNueva_sinConversacionHastaSuSessionInit', () => {
@@ -380,3 +382,121 @@ describe('SessionCoordinator — cola de mensajes en main (F2.2)', () => {
     expect(() => harness().coordinator.send({ sessionId: 'nadie', text: 'x' })).toThrow('Sesion inexistente: nadie');
   });
 });
+
+describe('SessionCoordinator — permisos, preguntas y elicitations: contestar una vez (F2.3)', () => {
+  const permission = (requestId: string): MageEvent =>
+    ({ kind: 'permission_request', request: { requestId, toolUseId: `t-${requestId}`, toolName: 'Write', input: { file_path: 'a.txt' }, description: null } }) as unknown as MageEvent;
+  const elicitation = (requestId: string): MageEvent =>
+    ({ kind: 'elicitation_request', request: { requestId, server: 'bench', mode: 'form', message: '¿Seguro?', requestedSchema: {} } }) as unknown as MageEvent;
+  const allow = { behavior: 'allow' } as const;
+
+  it('answerPermission_pendiente_llegaAlMotorYSeAnunciaATodos', () => {
+    const h = harness();
+    const id = h.create();
+    h.emit(id, permission('r1'));
+
+    const receipt = h.coordinator.answerPermission(id, 'r1', allow);
+
+    expect(receipt).toEqual({ status: 'accepted' });
+    expect(h.sessions.answerPermission).toHaveBeenCalledWith(id, 'r1', allow);
+    expect(h.received.at(-1)?.event).toEqual({ kind: 'permission_resolved', requestId: 'r1', behavior: 'allow' });
+    expect(h.coordinator.snapshot(id)).toMatchObject({ state: 'running', pending: [] });
+  });
+
+  it('answerPermission_dosRespuestas_unSoloEfecto', () => {
+    // Dos clientes (o un doble clic) contestan la misma petición: gana la primera y la otra no llega al motor.
+    const h = harness();
+    const id = h.create();
+    h.emit(id, permission('r1'));
+
+    const first = h.coordinator.answerPermission(id, 'r1', allow);
+    const second = h.coordinator.answerPermission(id, 'r1', { behavior: 'deny', message: 'no' });
+
+    expect([first.status, second]).toEqual(['accepted', { status: 'rejected', reason: 'already_answered' }]);
+    expect(h.sessions.answerPermission).toHaveBeenCalledTimes(1);
+    expect(h.received.filter((p) => p.event.kind === 'permission_resolved')).toHaveLength(1);
+  });
+
+  it('answerPermission_cancelada_oDeUnTurnoAcabado_seRechaza', () => {
+    const h = harness();
+    const id = h.create();
+    h.emit(id, permission('r1'));
+    h.emit(id, permission('r2'));
+    h.emit(id, { kind: 'permission_cancelled', requestId: 'r1' });
+    h.emit(id, { kind: 'result', result: { isError: false, subtype: 'success', numTurns: 1 } });
+
+    expect(h.coordinator.answerPermission(id, 'r1', allow).status).toBe('rejected');
+    expect(h.coordinator.answerPermission(id, 'r2', allow).status).toBe('rejected');
+    expect(h.sessions.answerPermission).not.toHaveBeenCalled();
+  });
+
+  it('answerPermission_unaDeDos_siguePidiendoRespuesta', () => {
+    const h = harness();
+    const id = h.create();
+    h.emit(id, permission('r1'));
+    h.emit(id, permission('r2'));
+
+    h.coordinator.answerPermission(id, 'r1', allow);
+
+    expect(h.coordinator.snapshot(id)).toMatchObject({ state: 'requires_action', pending: [{ kind: 'permission', request: { requestId: 'r2' } }] });
+  });
+
+  it('permissionRequest_reenviado_noSeDuplica', () => {
+    const h = harness();
+    const id = h.create();
+
+    h.emit(id, permission('r1'));
+    h.emit(id, permission('r1'));
+
+    expect(h.coordinator.snapshot(id).pending).toHaveLength(1);
+  });
+
+  it('answerPermission_motorLanza_propagaYNoVuelveAPendientes', () => {
+    const h = harness();
+    const id = h.create();
+    h.emit(id, permission('r1'));
+    vi.mocked(h.sessions.answerPermission).mockImplementationOnce(() => { throw new Error('Permiso desconocido o ya resuelto: requestId=r1'); });
+
+    expect(() => h.coordinator.answerPermission(id, 'r1', allow)).toThrow(/ya resuelto/);
+    expect(h.coordinator.answerPermission(id, 'r1', allow).status).toBe('rejected');
+  });
+
+  it('answerElicitation_unaVez_yLaResolucionDeLaSesionLaCierra', () => {
+    const h = harness();
+    const id = h.create();
+    h.emit(id, elicitation('e1'));
+    const answer = { sessionId: id, requestId: 'e1', action: 'accept' as const, content: {} };
+
+    const first = h.coordinator.answerElicitation(answer);
+    const second = h.coordinator.answerElicitation(answer);
+    h.emit(id, { kind: 'elicitation_resolved', requestId: 'e1', action: 'accept' });
+
+    expect([first.status, second.status]).toEqual(['accepted', 'rejected']);
+    expect(h.sessions.answerElicitation).toHaveBeenCalledTimes(1);
+    expect(h.coordinator.snapshot(id)).toMatchObject({ pending: [], state: 'running' });
+  });
+
+  it('answerElicitation_unPermisoConEseId_noLoContesta', () => {
+    const h = harness();
+    const id = h.create();
+    h.emit(id, permission('x'));
+
+    expect(h.coordinator.answerElicitation({ sessionId: id, requestId: 'x', action: 'decline' }).status).toBe('rejected');
+    expect(h.coordinator.answerPermission(id, 'x', allow).status).toBe('accepted');
+  });
+
+  it('answerPermission_pregunta_anunciaSusRespuestas', () => {
+    const h = harness();
+    const id = h.create();
+    h.emit(id, permission('q1'));
+
+    h.coordinator.answerPermission(id, 'q1', { behavior: 'allow', updatedInput: { questions: [], answers: { '¿Color?': 'Azul' } } });
+
+    expect(h.received.at(-1)?.event).toEqual({ kind: 'permission_resolved', requestId: 'q1', behavior: 'allow', answers: { '¿Color?': 'Azul' } });
+  });
+
+  it('answerPermission_sesionDesconocida_lanzaConElId', () => {
+    expect(() => harness().coordinator.answerPermission('nadie', 'r', allow)).toThrow('Sesion inexistente: nadie');
+  });
+});
+

@@ -8,7 +8,6 @@ type Listener = (event: IpcMainInvokeEvent, arg: unknown) => unknown;
 function setup(over: Partial<SessionIpcDeps> = {}) {
   const handlers = new Map<string, Listener>();
   const sessions: SessionCommands = {
-    answerPermission: vi.fn(), answerElicitation: vi.fn(),
     setPermissionMode: vi.fn(), setModel: vi.fn(), setEffort: vi.fn(), stopTask: vi.fn(),
   };
   const coordinator = {
@@ -16,6 +15,8 @@ function setup(over: Partial<SessionIpcDeps> = {}) {
     interrupt: vi.fn().mockReturnValue([{ id: 'q1', text: 'luego', attachments: [] }]),
     removeQueued: vi.fn().mockReturnValue(null),
     takeQueue: vi.fn().mockReturnValue([]),
+    answerPermission: vi.fn().mockReturnValue({ status: 'accepted' }),
+    answerElicitation: vi.fn().mockReturnValue({ status: 'rejected', reason: 'already_answered' }),
     stop: vi.fn(),
     snapshot: vi.fn().mockReturnValue({ sessionId: 's1', lastSeq: 3 }),
   };
@@ -83,11 +84,22 @@ describe('registerSessionIpc', () => {
     expect(coordinator.takeQueue).toHaveBeenCalledWith('s1');
   });
 
-  it('answerElicitation_respuestaMalFormada_lanzaSinLlegarALaSesion', () => {
-    const { sessions, invoke } = setup();
+  it('answerElicitation_respuestaMalFormada_lanzaSinLlegarALaCoordinacion', () => {
+    const { coordinator, invoke } = setup();
 
     expect(() => invoke(IpcChannel.SessionAnswerElicitation, { sessionId: 's1' })).toThrow();
-    expect(sessions.answerElicitation).not.toHaveBeenCalled();
+    expect(coordinator.answerElicitation).not.toHaveBeenCalled();
+  });
+
+  it('respuestas_vanALaCoordinacionYDevuelvenSuRecibo', () => {
+    const { coordinator, invoke } = setup();
+
+    const permiso = invoke(IpcChannel.SessionAnswerPermission, { sessionId: 's1', requestId: 'r1', decision: { behavior: 'deny', message: 'no' } });
+    const elicitation = invoke(IpcChannel.SessionAnswerElicitation, { sessionId: 's1', requestId: 'e1', action: 'decline' });
+
+    expect(permiso).toEqual({ status: 'accepted' });
+    expect(elicitation).toEqual({ status: 'rejected', reason: 'already_answered' });
+    expect(coordinator.answerPermission).toHaveBeenCalledWith('s1', 'r1', { behavior: 'deny', message: 'no' });
   });
 
   it('opciones_yParada_vanAlGestorConSusArgumentos', () => {
@@ -97,14 +109,12 @@ describe('registerSessionIpc', () => {
     invoke(IpcChannel.SessionSetEffort, { sessionId: 's1', effort: 'low' });
     invoke(IpcChannel.SessionSetPermissionMode, { sessionId: 's1', mode: 'plan' });
     invoke(IpcChannel.SessionStopTask, { sessionId: 's1', taskId: 't1' });
-    invoke(IpcChannel.SessionAnswerPermission, { sessionId: 's1', requestId: 'r1', decision: { behavior: 'deny', message: 'no' } });
     invoke(IpcChannel.SessionStop, 's1');
 
     expect(sessions.setModel).toHaveBeenCalledWith('s1', 'haiku');
     expect(sessions.setEffort).toHaveBeenCalledWith('s1', 'low');
     expect(sessions.setPermissionMode).toHaveBeenCalledWith('s1', 'plan');
     expect(sessions.stopTask).toHaveBeenCalledWith('s1', 't1');
-    expect(sessions.answerPermission).toHaveBeenCalledWith('s1', 'r1', { behavior: 'deny', message: 'no' });
     expect(coordinator.stop).toHaveBeenCalledWith('s1');
   });
 

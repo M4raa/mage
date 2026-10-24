@@ -10,7 +10,7 @@ import type { ProviderModel } from './providers';
 import type { AgyUsageSnapshot } from './usage';
 import type { MageEvent, PermissionDecision, SlashCommandInfo } from './events';
 import type { ArtifactRecord, ConversationPrefs } from './conversationIndex';
-import type { ConversationId, ConversationSnapshot, QueuedMessage, SendReceipt } from './coordination';
+import type { AnswerReceipt, ConversationId, ConversationSnapshot, QueuedMessage, SendReceipt } from './coordination';
 import type { UsageInfo } from './usage';
 import type { StatusInfo } from './status';
 import type { TranscriptBatch, TranscriptTailPosition } from './transcripts';
@@ -783,8 +783,9 @@ export interface MageApi {
   createSession(params: CreateSessionParams): Promise<CreateSessionResult>; // sessionId + configDir efectivo
   // Envía, o deja en la cola de main si hay un turno en marcha (F2.2): el recibo dice cuál de las dos.
   sendMessage(params: SendMessageParams): Promise<SendReceipt>;
-  answerPermission(params: AnswerPermissionParams): Promise<void>;
-  answerElicitation(params: ElicitationAnswer): Promise<void>;
+  // Contesta UNA vez (F2.3): una segunda respuesta a la misma petición devuelve `rejected` sin llegar al motor.
+  answerPermission(params: AnswerPermissionParams): Promise<AnswerReceipt>;
+  answerElicitation(params: ElicitationAnswer): Promise<AnswerReceipt>;
   // Para el turno en curso y devuelve los mensajes que esperaban en la cola (un Stop no los envía: vuelven
   // al input). Se vacía ANTES de interrumpir, así que el `result` del turno parado ya no saca ninguno.
   interrupt(sessionId: string): Promise<readonly QueuedMessage[]>;

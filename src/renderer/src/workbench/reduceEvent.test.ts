@@ -133,6 +133,33 @@ describe('reduceEvent — permisos', () => {
     expect(blocksOf(patch)).toMatchObject([{ kind: 'permission', state: 'cancelled' }]);
   });
 
+  // F2.3: main anuncia la respuesta que aceptó, también si la dio otro cliente.
+  it('reduceEvent_permissionResolvedPorOtroCliente_cierraLaTarjetaYQuitaElPendiente', () => {
+    const conTarjeta = reduceEvent(state(), TAB, { kind: 'permission_request', request: request('r1') });
+    const current = state({ blocksByChat: { [TAB]: blocksOf(conTarjeta) }, pendingByChat: conTarjeta.pendingByChat ?? {}, statusByChat: { [TAB]: 'needs_permission' } });
+
+    const patch = reduceEvent(current, TAB, { kind: 'permission_resolved', requestId: 'r1', behavior: 'deny' });
+
+    expect(blocksOf(patch)).toMatchObject([{ kind: 'permission', state: 'denied' }]);
+    expect(patch.pendingByChat?.[TAB]).toEqual([]);
+    expect(patch.statusByChat?.[TAB]).toBe('streaming');
+  });
+
+  it('reduceEvent_permissionResolvedYaContestadaAqui_noCambiaNada', () => {
+    const current = state({ blocksByChat: { [TAB]: [{ kind: 'permission', id: 'b', requestId: 'r1', toolName: 'Write', prompt: '', target: '', summary: '', rememberable: true, state: 'allowed' } as Block] } });
+
+    expect(reduceEvent(current, TAB, { kind: 'permission_resolved', requestId: 'r1', behavior: 'allow' })).toEqual({});
+  });
+
+  it('reduceEvent_permissionResolvedDeUnaPregunta_laCierraConSusRespuestas', () => {
+    const question = { kind: 'question', id: 'q', requestId: 'r1', questions: [], state: 'pending' } as unknown as Block;
+    const current = state({ blocksByChat: { [TAB]: [question] }, pendingByChat: { [TAB]: [pendingEntry('r1')] } });
+
+    const patch = reduceEvent(current, TAB, { kind: 'permission_resolved', requestId: 'r1', behavior: 'allow', answers: { '¿Color?': 'Azul' } });
+
+    expect(blocksOf(patch)).toMatchObject([{ kind: 'question', state: 'answered', answers: { '¿Color?': 'Azul' } }]);
+  });
+
   it('reduceEvent_permissionCancelledDelPermisoEnCurso_limpiaElDialogo', () => {
     // Es lo que emite AgentSession cuando el proceso muere con permisos en vuelo (C1): el dialogo no
     // puede quedarse esperando una respuesta que ya nadie va a leer.

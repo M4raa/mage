@@ -8291,6 +8291,56 @@ const CHECKS = [
     },
   },
   {
+    // F2.3: un permiso se contesta UNA vez, gane quien gane. Turno del runtime propio contra el servidor falso
+    // (escenario `write`, modo Manual: pide permiso para un Write), sin CLI ni cuota. Dos respuestas a la vez
+    // por el IPC (como dos clientes): main acepta la primera y rechaza la segunda sin llegar al motor; la
+    // tarjeta queda con la decision ganadora y el fichero se escribe una vez. Va antes del turno minimo por
+    // la transcripcion que deja en el perfil.
+    name: 'F2.3: un permiso se contesta una vez: dos respuestas a la vez, un solo efecto',
+    async run(page, { userDataDir }) {
+      const fake = await startFakeOpenAiServer();
+      try {
+        const { tabId, cwd } = await openRuntimeTab(page, { fake, userDataDir, provider: PERMISSION_TURN_PROVIDER, model: 'fake:write', permissionMode: 'default' });
+        await page.evaluate((id) => window.__mageDev.store.getState().sendMessageToTab(id, 'Escribe el fichero.'), tabId);
+        await page.waitForFunction((id) => (window.__mageDev.store.getState().pendingByChat[id]?.length ?? 0) === 1, tabId, { timeout: CONFIG.actionTimeoutMs });
+        const respuestas = await page.evaluate(async (id) => {
+          const s = window.__mageDev.store.getState();
+          const sessionId = s.sessionIdByChat[id];
+          const requestId = s.pendingByChat[id][0].requestId;
+          const recibos = await Promise.all([
+            window.mage.answerPermission({ sessionId, requestId, decision: { behavior: 'allow' } }),
+            window.mage.answerPermission({ sessionId, requestId, decision: { behavior: 'deny', message: 'segundo cliente' } }),
+          ]);
+          return { sessionId, recibos };
+        }, tabId);
+        await page.waitForFunction((id) => window.__mageDev.store.getState().statusByChat[id] === 'idle', tabId, { timeout: 30_000 });
+        const final = await page.evaluate(async ({ id, sessionId }) => {
+          const s = window.__mageDev.store.getState();
+          const blocks = s.blocksByChat[id] ?? [];
+          const snapshot = await window.mage.getSessionSnapshot(sessionId);
+          return {
+            tarjetas: blocks.filter((b) => b.kind === 'permission').map((b) => b.state),
+            errores: blocks.filter((b) => b.kind === 'error').length,
+            pendientes: s.pendingByChat[id]?.length ?? 0,
+            pendientesMain: snapshot.pending.length,
+          };
+        }, { id: tabId, sessionId: respuestas.sessionId });
+        const fichero = fs.existsSync(path.join(cwd, 'vg-runtime.txt')) ? fs.readFileSync(path.join(cwd, 'vg-runtime.txt'), 'utf8') : null;
+        await page.evaluate((id) => window.__mageDev.store.getState().closeTab(id), tabId);
+        const ok =
+          JSON.stringify(respuestas.recibos) === JSON.stringify([{ status: 'accepted' }, { status: 'rejected', reason: 'already_answered' }]) &&
+          JSON.stringify(final.tarjetas) === JSON.stringify(['allowed']) &&
+          final.errores === 0 && final.pendientes === 0 && final.pendientesMain === 0 &&
+          fichero === 'hola desde el runtime\n' &&
+          fake.stats.completions === 2;
+        return { ok, detail: JSON.stringify({ recibos: respuestas.recibos, final, fichero, peticionesAlFalso: fake.stats.completions }) };
+      } finally {
+        await page.evaluate((id) => window.__mageDev.store.getState().removeCustomProvider(id), PERMISSION_TURN_PROVIDER.id);
+        await fake.close();
+      }
+    },
+  },
+  {
     // F2.2: la cola vive en main. Un turno del runtime propio contra el servidor falso (escenario `cola`, ~4 s,
     // sin CLI ni cuota) y, con el en marcha, tres envios por la accion del store (nunca Enter): esperan en
     // main, quitar y editar van a main, y al acabar sale UNO como turno propio. Cierra su pestaña y borra su
@@ -9938,17 +9988,23 @@ const QUEUE_TURN_MODEL = 'fake:cola';
 
 // Proveedor del usuario hacia el servidor falso y pestaña nueva en un borrador (confianza automatica, D4).
 // El runtime lee los proveedores del DISCO: se espera a que el guardado llegue.
-async function openQueueTab(page, { fake, userDataDir }) {
-  const tabId = await page.evaluate(async ({ provider, baseUrl, model }) => {
+async function openRuntimeTab(page, { fake, userDataDir, provider, model, permissionMode }) {
+  const opened = await page.evaluate(async ({ provider, baseUrl, model, permissionMode }) => {
     const state = window.__mageDev.store.getState();
     await state.saveCustomProvider({ id: provider.id, label: provider.label, baseUrl, hasApiKey: false, models: [{ id: model, label: model }] });
     const cwd = await window.mage.getScratchDir();
-    await state.newTab({ accountId: state.activeAccountId, cwd, model, provider: provider.id, title: 'VG cola', privacy: 'shared' });
-    return window.__mageDev.store.getState().activeTabId;
-  }, { provider: QUEUE_TURN_PROVIDER, baseUrl: fake.baseUrl, model: QUEUE_TURN_MODEL });
-  await waitForFile(path.join(userDataDir, 'app-settings.json'), (text) => text.includes(QUEUE_TURN_PROVIDER.id));
-  return tabId;
+    await state.newTab({ accountId: state.activeAccountId, cwd, model, provider: provider.id, title: provider.label, privacy: 'shared', ...(permissionMode === undefined ? {} : { permissionMode }) });
+    return { tabId: window.__mageDev.store.getState().activeTabId, cwd };
+  }, { provider, baseUrl: fake.baseUrl, model, permissionMode });
+  await waitForFile(path.join(userDataDir, 'app-settings.json'), (text) => text.includes(provider.id));
+  return opened;
 }
+
+async function openQueueTab(page, { fake, userDataDir }) {
+  return (await openRuntimeTab(page, { fake, userDataDir, provider: QUEUE_TURN_PROVIDER, model: QUEUE_TURN_MODEL })).tabId;
+}
+
+const PERMISSION_TURN_PROVIDER = { id: 'custom:vg-permiso', label: 'VG permiso' };
 
 // --- Grupo 0: el turno minimo de verdad -----------------------------------------------------------
 

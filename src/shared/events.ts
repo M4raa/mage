@@ -279,7 +279,11 @@ export type MageEvent =
   // `queued_message_failed`, el que no se pudo enviar (vuelve al usuario).
   | { readonly kind: 'queue_changed'; readonly queue: readonly QueuedMessage[] }
   | { readonly kind: 'queued_message_sent'; readonly message: QueuedMessage }
-  | { readonly kind: 'queued_message_failed'; readonly message: QueuedMessage; readonly error: string };
+  | { readonly kind: 'queued_message_failed'; readonly message: QueuedMessage; readonly error: string }
+  // Un permiso (o pregunta) se contestó (F2.3): lo emite la coordinación de main al aceptar LA respuesta, para
+  // que todo cliente cierre su tarjeta, también el que no contestó.
+  // `answers`: las respuestas de una PREGUNTA (AskUserQuestion), para que otro cliente cierre su tarjeta con ellas.
+  | { readonly kind: 'permission_resolved'; readonly requestId: string; readonly behavior: 'allow' | 'deny'; readonly answers?: Readonly<Record<string, string>> };
 
 // Decision del usuario ante un permiso (viaja renderer -> main -> CLI).
 //

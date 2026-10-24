@@ -1,7 +1,8 @@
 // Contrato de la coordinación de sesiones (F2, §3.3 del diseño): identidades separadas, eventos con
 // secuencia y la instantánea consultable de una sesión. Solo TIPOS y constantes: cruza el IPC y, más
 // adelante, el protocolo del host local.
-import type { SessionState } from './events';
+import type { PermissionRequest, SessionState } from './events';
+import type { ElicitationRequest } from './elicitation';
 import type { ImageAttachment } from './ipc';
 
 // Identificador de la conversación PARA MAGE. Estable: es la clave de su entrada en
@@ -36,6 +37,19 @@ export type SendReceipt =
   | { readonly status: 'accepted'; readonly commandId: string }
   | { readonly status: 'queued'; readonly commandId: string };
 
+// Respuesta a un permiso, una pregunta o una elicitation (F2.3): se contesta UNA vez, gane quien gane. La
+// segunda respuesta a la misma petición no llega al motor: `rejected` con `already_answered` (también si la
+// petición ya no está pendiente porque el motor la canceló o el turno acabó).
+export type AnswerReceipt =
+  | { readonly status: 'accepted' }
+  | { readonly status: 'rejected'; readonly reason: 'already_answered' };
+
+// Petición que espera respuesta del usuario: un permiso (o pregunta, que es un permiso con otra forma) o una
+// elicitation de un servidor MCP.
+export type PendingRequest =
+  | { readonly kind: 'permission'; readonly request: PermissionRequest }
+  | { readonly kind: 'elicitation'; readonly request: ElicitationRequest };
+
 // Proyección consultable de una sesión viva: lo que necesita un cliente que llega tarde o detecta un hueco
 // en la secuencia. `conversationId`/`nativeRef` son null mientras el proveedor no ha dicho su id nativo (una
 // conversación nueva de Codex o agy, hasta su `session_init`).
@@ -47,4 +61,5 @@ export interface ConversationSnapshot {
   readonly lastSeq: number;
   readonly state: CoordinatedState;
   readonly queue: readonly QueuedMessage[];
+  readonly pending: readonly PendingRequest[];
 }
