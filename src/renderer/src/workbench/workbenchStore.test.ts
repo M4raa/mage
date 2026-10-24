@@ -2072,3 +2072,29 @@ describe('assignAccountAccents — #46 H3', () => {
     expect(new Set(Object.values(after)).size).toBe(3);
   });
 });
+
+describe('guardado de ajustes con debounce', () => {
+  afterEach(() => vi.useRealTimers());
+
+  it('createWorkbenchStore_conGuardadoDeAjustesPendiente_loCancela', async () => {
+    vi.useFakeTimers();
+    const oldSave = vi.fn().mockResolvedValue(undefined);
+    createWorkbenchStore(fakeMage({ saveSettings: oldSave })).getState().setArtifactEnabled(true);
+
+    createWorkbenchStore(fakeMage());
+    await vi.runAllTimersAsync();
+
+    expect(oldSave).not.toHaveBeenCalled();
+  });
+
+  it('scheduleSettingsPersist_dobleQueNoDevuelvePromesa_noRevienta', async () => {
+    vi.useFakeTimers();
+    const saveSettings = vi.fn(() => undefined as unknown as Promise<void>);
+    const store = createWorkbenchStore(fakeMage({ saveSettings }));
+    store.getState().setArtifactEnabled(true);
+
+    await vi.runAllTimersAsync();
+
+    expect(saveSettings).toHaveBeenCalledTimes(1);
+  });
+});

@@ -613,9 +613,11 @@ let persistTimer: ReturnType<typeof setTimeout> | null = null;
 // el temporizador es de MODULO, asi que sin esto el de un store viejo sigue vivo apuntando al
 // `getState` de ese store — pasa con HMR (recarga del renderer) y, sobre todo, entre ficheros de test.
 export function cancelPendingPersist(): void {
-  if (persistTimer === null) return;
-  clearTimeout(persistTimer);
+  if (persistTimer !== null) clearTimeout(persistTimer);
   persistTimer = null;
+  // Tambien la de ajustes: apunta igual al `getState` y al cliente del store anterior.
+  if (settingsPersistTimer !== null) clearTimeout(settingsPersistTimer);
+  settingsPersistTimer = null;
 }
 
 function schedulePersist(mage: MageClient, getState: () => WorkbenchState): void {
@@ -749,9 +751,15 @@ function scheduleSettingsPersist(mage: MageClient, getState: () => WorkbenchStat
   if (settingsPersistTimer !== null) clearTimeout(settingsPersistTimer);
   settingsPersistTimer = setTimeout(() => {
     settingsPersistTimer = null;
-    void mage
-      .saveSettings(getState().settings)
-      .catch((err: unknown) => reportActionError('No se pudo guardar la configuración', err, 'persist', SAVE_FAILED_KEY.settings));
+    // Mismo contrato que `schedulePersist`: la dependencia inyectada puede no devolver una promesa (o
+    // lanzar en sincrono) y esto corre desde un timer; se normaliza y se traza, nunca se traga.
+    try {
+      void Promise.resolve(mage.saveSettings(getState().settings)).catch((err: unknown) =>
+        reportActionError('No se pudo guardar la configuración', err, 'persist', SAVE_FAILED_KEY.settings),
+      );
+    } catch (err: unknown) {
+      reportActionError('No se pudo guardar la configuración', err, 'persist', SAVE_FAILED_KEY.settings);
+    }
   }, PERSIST_DEBOUNCE_MS);
 }
 
