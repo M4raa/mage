@@ -76,7 +76,6 @@ import type {
   ReadMemoryParams,
   OpenArtifactParams,
   RecordArtifactParams,
-  SaveConversationPrefsParams,
   SaveSharedConfigParams,
   SaveSharedConfigResult,
   SharedConfigSnapshot,
@@ -89,7 +88,6 @@ import type { MageEvent, SlashCommandInfo } from '@shared/events';
 import type { ImageAttachment, ProviderProbeParams } from '@shared/ipc';
 import { base64ByteLength, validateAttachmentSet } from '@shared/attachments';
 import type { EffectiveSettings, InstructionsFile, ProjectFileContent, ReadProjectFileParams, WriteProjectFileParams } from '@shared/ipc';
-import type { ConversationPrefs } from '@shared/conversationIndex';
 import type { ConversationSummary, DeleteConversationParams, MigrateConversationResult, MoveConversationParams, MoveConversationResult } from '@shared/conversations';
 import type { PersistedWorkspace } from '@shared/state';
 import type { AppSettings } from '@shared/settings';
@@ -195,6 +193,8 @@ import { agyBridgeSpec, bridgeDocument, codexBridgeSpec, resolveBridge, type Bri
 import { EffectiveSettingsService } from './config/effectiveSettingsService';
 import { ConversationIndexStore } from './state/conversationIndexStore';
 import { registerSessionIpc } from './coordination/sessionIpc';
+import { registerConversationPrefsIpc } from './coordination/conversationPrefsIpc';
+import { SessionCoordinator } from './coordination/sessionCoordinator';
 import { ProjectFileService, resolveProjectFilePath } from './files/projectFileService';
 import { resolvedPath } from './os/resolvedPath';
 import { writeAtomic, type AtomicWriteDeps } from './os/atomicFile';
@@ -529,6 +529,18 @@ const sessionManager = new SessionManager(
   },
   logBus.loggerFor('engine'),
 );
+
+// Coordinacion de sesiones (F2.1): crear y parar pasan por aqui; da a cada evento su conversacion y su
+// secuencia y guarda la instantanea de cada sesion viva. El indice se resuelve perezoso (userData).
+const sessionCoordinator = new SessionCoordinator({
+  sessions: sessionManager,
+  index: {
+    resolveConversation: (ref) => getConversationIndexStore().resolveConversation(ref),
+    recordLastSeq: (conversationId, seq) => getConversationIndexStore().recordLastSeq(conversationId, seq),
+  },
+  now: () => Date.now(),
+  log: logBus.loggerFor('engine'),
+});
 
 // Lo que el runtime propio necesita de main: el proveedor de los ajustes, su clave de la boveda (en
 // cada peticion, nunca al renderer) y la red.
@@ -2377,7 +2389,7 @@ function stopSessionsWhenDestroyed(sender: Electron.WebContents): void {
   const ownerId = sender.id;
   sender.once('destroyed', () => {
     sessionOwnersWatched.delete(ownerId);
-    const stopped = sessionManager.stopOwnedBy(ownerId);
+    const stopped = sessionCoordinator.stopOwnedBy(ownerId).length;
     if (stopped > 0) mainLog('info', 'Sesiones paradas al cerrarse su ventana', { stopped });
   });
 }
@@ -2444,7 +2456,7 @@ function createSessionFromIpc(event: Electron.IpcMainInvokeEvent, params: Create
     const projectInstructions = [project?.instructions.trim().slice(0, 8000), params.contextImport?.slice(0, IMPORTED_CONTEXT_LIMITS.max)]
       .filter((text): text is string => text !== undefined && text.length > 0).join('\n\n') || undefined;
     const effectiveParams = { ...params, accountDir: configDir, projectInstructions };
-    const sessionId = sessionManager.create(effectiveParams, (payload) => relaySessionEvent(payload, { sender, configDir, accountDir: params.accountDir }), sender.id);
+    const sessionId = sessionCoordinator.create(effectiveParams, (payload) => relaySessionEvent(payload, { sender, configDir, accountDir: params.accountDir }), sender.id);
     stopSessionsWhenDestroyed(sender);
     return { sessionId, configDir, ...(recreated ? { workspaceWarning: `Se ha recreado vacía la carpeta de borrador ${params.cwd}. La conversación se conserva; los archivos anteriores se perdieron.` } : {}) };
   }
@@ -2599,6 +2611,7 @@ function registerSessionIpc1(): void {
   registerSessionIpc({
     handle: (channel, listener) => ipcMain.handle(channel, listener),
     sessions: sessionManager,
+    coordinator: sessionCoordinator,
     createSession: createSessionFromIpc,
     validateAttachments,
     // Carpeta scratch AISLADA por conversacion (subdir unico y vacio): asi crear un archivo nuevo
@@ -2815,7 +2828,7 @@ function registerAccountsIpc2(): void {
     }
     // Un login de agy a medias tiene el CLI vivo en el perfil que se va a borrar: se espera a que salga.
     if (getProviderAccounts().find('agy', configDir) !== null) await getAgyLogin().cancel();
-    const stopped = sessionManager.stopByConfigDir(configDir);
+    const stopped = sessionCoordinator.stopByConfigDir(configDir).length;
     if (stopped > 0) mainLog('info', `Paradas ${stopped} sesiones antes de borrar la cuenta "${configDir}"`);
     // Una cuenta del registro (API, Codex) se borra con su clave; una suscripcion de Claude, como siempre.
     if (!getProviderAccounts().delete(configDir)) accountService.deleteAccount(configDir);
@@ -3172,12 +3185,7 @@ function registerThinkingIpc1(): void {
   ipcMain.handle(IpcChannel.CommandCatalogLoad, (_e, accountDir: string): readonly SlashCommandInfo[] =>
     getCommandCatalogStore().load(accountDir),
   );
-  ipcMain.handle(IpcChannel.ConversationPrefsLoad, (_e, sessionId: string): ConversationPrefs | null =>
-    getConversationIndexStore().loadPrefs(sessionId),
-  );
-  ipcMain.handle(IpcChannel.ConversationPrefsSave, (_e, params: SaveConversationPrefsParams): void =>
-    getConversationIndexStore().savePrefs(params.sessionId, params.prefs),
-  );
+  registerConversationPrefsIpc({ handle: (channel, listener) => ipcMain.handle(channel, listener), index: getConversationIndexStore, coordinator: sessionCoordinator });
   ipcMain.handle(IpcChannel.ArtifactRecordSave, (_e, params: RecordArtifactParams): void =>
     getConversationIndexStore().recordArtifact(params.url, params.record),
   );
@@ -3583,7 +3591,7 @@ app.on('before-quit', () => {
   prMonitor.dispose();
   // Lo primero: a partir de aqui ninguna ventana pregunta al cerrarse (ver `resolveCloseAction`).
   isQuitting = true;
-  sessionManager.stopAll();
+  sessionCoordinator.stopAll();
   // Incognito ('session'): las carpetas de trabajo no sobreviven a la ejecucion. Se barre aqui ADEMAS
   // de al arrancar, porque si no quedarian en el temp todo el tiempo que la app este cerrada — que es
   // justo lo que esa politica promete evitar.

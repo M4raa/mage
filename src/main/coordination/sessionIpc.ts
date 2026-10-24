@@ -13,20 +13,23 @@ import type {
 } from '@shared/ipc';
 import { ELICITATION_ANSWER_SCHEMA } from '@shared/elicitation';
 import type { SessionManager } from '../engine/sessionManager';
+import type { SessionCoordinator } from './sessionCoordinator';
 
 // Registro IPC del dominio de sesiones (F2, H7 de la devolución 13): sale de `index.ts` con sus
 // dependencias inyectadas para poder probarlo sin Electron. Solo enruta: crear una sesión (con su frontera
-// de confianza) lo decide quien inyecta `createSession`; el resto va al gestor de sesiones tal cual.
+// de confianza) lo decide quien inyecta `createSession`; parar y la instantánea pasan por la coordinación
+// (que sigue cada sesión viva), y el resto va al gestor de sesiones tal cual.
 
 // `ipcMain.handle` o un doble de pruebas. Cada canal recibe UN argumento, que es lo que usa el preload.
 export type IpcRegister = (channel: string, listener: (event: IpcMainInvokeEvent, arg: unknown) => unknown) => void;
 
 export type SessionCommands = Pick<SessionManager,
-  'sendMessage' | 'answerPermission' | 'answerElicitation' | 'interrupt' | 'setPermissionMode' | 'setModel' | 'setEffort' | 'stopTask' | 'stop'>;
+  'sendMessage' | 'answerPermission' | 'answerElicitation' | 'interrupt' | 'setPermissionMode' | 'setModel' | 'setEffort' | 'stopTask'>;
 
 export interface SessionIpcDeps {
   readonly handle: IpcRegister;
   readonly sessions: SessionCommands;
+  readonly coordinator: Pick<SessionCoordinator, 'stop' | 'snapshot'>;
   readonly createSession: (event: IpcMainInvokeEvent, params: CreateSessionParams) => CreateSessionResult;
   readonly validateAttachments: (attachments: readonly ImageAttachment[] | undefined) => readonly ImageAttachment[];
   // Carpeta scratch AISLADA por conversación (subdir único y vacío), ya creada y canonizada.
@@ -48,7 +51,8 @@ export function registerSessionIpc(deps: SessionIpcDeps): void {
   handle(IpcChannel.SessionAnswerElicitation, (_e, arg) => sessions.answerElicitation(ELICITATION_ANSWER_SCHEMA.parse(arg)));
   handle(IpcChannel.SessionInterrupt, (_e, sessionId) => sessions.interrupt(sessionId as string));
   registerSessionOptions(deps);
-  handle(IpcChannel.SessionStop, (_e, sessionId) => sessions.stop(sessionId as string));
+  handle(IpcChannel.SessionStop, (_e, sessionId) => deps.coordinator.stop(sessionId as string));
+  handle(IpcChannel.SessionSnapshot, (_e, sessionId) => deps.coordinator.snapshot(sessionId as string));
   handle(IpcChannel.SessionGetScratchDir, () => deps.newScratchDir());
 }
 

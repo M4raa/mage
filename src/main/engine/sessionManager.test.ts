@@ -279,7 +279,7 @@ describe('SessionManager delegacion y ciclo de vida', () => {
 
     const stopped = h.manager.stopOwnedBy(7);
 
-    expect(stopped).toBe(1);
+    expect(stopped).toEqual([mine]);
     expect(h.created[0]?.session.stop).toHaveBeenCalledTimes(1);
     expect(h.created[1]?.session.stop).not.toHaveBeenCalled();
     expect(() => h.manager.sendMessage(mine, 'x')).toThrow(/inexistente/i);
@@ -291,7 +291,7 @@ describe('SessionManager delegacion y ciclo de vida', () => {
     const sessionId = h.manager.create(params(), h.sink, 7);
     h.manager.stop(sessionId);
 
-    expect(h.manager.stopOwnedBy(7)).toBe(0);
+    expect(h.manager.stopOwnedBy(7)).toEqual([]);
     expect(h.created[0]?.session.stop).toHaveBeenCalledTimes(1);
   });
 
@@ -299,7 +299,7 @@ describe('SessionManager delegacion y ciclo de vida', () => {
     const h = harness();
     h.manager.create(params(), h.sink);
 
-    expect(h.manager.stopOwnedBy(7)).toBe(0);
+    expect(h.manager.stopOwnedBy(7)).toEqual([]);
     expect(h.created[0]?.session.stop).not.toHaveBeenCalled();
   });
 
@@ -315,17 +315,17 @@ describe('SessionManager delegacion y ciclo de vida', () => {
     const stopped = h.manager.stopByConfigDir(account);
 
     // Assert
-    expect(stopped).toBe(2);
+    expect([...stopped].sort()).toEqual([shared, priv].sort());
     expect(() => h.manager.sendMessage(shared, 'x')).toThrow(/inexistente/i);
     expect(() => h.manager.sendMessage(priv, 'x')).toThrow(/inexistente/i);
     expect(() => h.manager.sendMessage(other, 'x')).not.toThrow();
   });
 
-  it('stopByConfigDir_sinSesionesDeEsaCuenta_devuelveCero', () => {
+  it('stopByConfigDir_sinSesionesDeEsaCuenta_devuelveVacio', () => {
     const h = harness();
     h.manager.create(params(), h.sink);
 
-    expect(h.manager.stopByConfigDir(`${HOME}/.claude-z`)).toBe(0);
+    expect(h.manager.stopByConfigDir(`${HOME}/.claude-z`)).toEqual([]);
   });
 });
 
@@ -364,7 +364,7 @@ describe('SessionManager tras conversation_reset', () => {
     h.manager.create(params({ accountDir: account }), h.sink);
     h.created[0]?.deps.emit(reset('nuevo'));
 
-    expect(h.manager.stopByConfigDir(account)).toBe(1);
+    expect(h.manager.stopByConfigDir(account)).toEqual(['nuevo']);
     expect(h.created[0]?.session.stop).toHaveBeenCalledTimes(1);
   });
 
@@ -385,7 +385,7 @@ describe('SessionManager tras conversation_reset', () => {
 
     h.created[0]?.deps.emit(reset('id-nuevo'));
 
-    expect(h.manager.stopOwnedBy(7)).toBe(1);
+    expect(h.manager.stopOwnedBy(7)).toEqual(['id-nuevo']);
     expect(h.created[0]?.session.stop).toHaveBeenCalledTimes(1);
     expect(sessionId).not.toBe('id-nuevo');
   });

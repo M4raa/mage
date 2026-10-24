@@ -288,6 +288,18 @@ describe('sesiones en segundo plano', () => {
     expect(store.getState().backgroundSessions['s-a']?.state).toBe('done');
   });
 
+  it('handleEvent_sessionInitDeCodex_reenviaLasPreferenciasParaLigarlasALaConversacion', () => {
+    // F2.1: lo elegido antes del arranque se guardó con el id de sesión de Mage; al llegar el hilo, main ya
+    // conoce la conversación y el reenvío lo deja donde se leerá al reabrir.
+    const saveConversationPrefs = vi.fn().mockResolvedValue(undefined);
+    const store = createWorkbenchStore(fakeMage({ saveConversationPrefs, saveWorkspace: vi.fn().mockResolvedValue(undefined) }));
+    store.setState({ tabs: [{ ...tab('a'), provider: 'codex', model: 'gpt-6-luna', effort: 'low' }], activeTabId: 'a', splitLayout: singleLeaf('a'), sessionIdByChat: { a: 's-a' } });
+
+    store.getState().handleEvent('s-a', { kind: 'session_init', sessionId: 'thread-1', model: 'gpt-6-luna', tools: [], mcpServers: [], slashCommands: [], skills: [], plugins: [], pluginErrors: [] });
+
+    expect(saveConversationPrefs).toHaveBeenCalledWith({ sessionId: 's-a', prefs: expect.objectContaining({ model: 'gpt-6-luna', effort: 'low' }) as unknown });
+  });
+
   it('handleEvent_sesionYaParada_ignoraElEventoRezagado', () => {
     const store = createWorkbenchStore(fakeMage({}));
 

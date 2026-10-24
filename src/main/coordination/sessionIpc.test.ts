@@ -9,14 +9,16 @@ function setup(over: Partial<SessionIpcDeps> = {}) {
   const handlers = new Map<string, Listener>();
   const sessions: SessionCommands = {
     sendMessage: vi.fn(), answerPermission: vi.fn(), answerElicitation: vi.fn(), interrupt: vi.fn(),
-    setPermissionMode: vi.fn(), setModel: vi.fn(), setEffort: vi.fn(), stopTask: vi.fn(), stop: vi.fn(),
+    setPermissionMode: vi.fn(), setModel: vi.fn(), setEffort: vi.fn(), stopTask: vi.fn(),
   };
+  const coordinator = { stop: vi.fn(), snapshot: vi.fn().mockReturnValue({ sessionId: 's1', lastSeq: 3 }) };
   const deps: SessionIpcDeps = {
     handle: (channel, listener) => {
       if (handlers.has(channel)) throw new Error(`canal registrado dos veces: ${channel}`);
       handlers.set(channel, listener);
     },
     sessions,
+    coordinator,
     createSession: vi.fn().mockReturnValue({ sessionId: 's1', configDir: '/cfg' }),
     validateAttachments: vi.fn().mockReturnValue([]),
     newScratchDir: vi.fn().mockReturnValue('/scratch/x'),
@@ -28,7 +30,7 @@ function setup(over: Partial<SessionIpcDeps> = {}) {
     if (listener === undefined) throw new Error(`canal sin registrar: ${channel}`);
     return listener({ sender: { id: 7 } } as unknown as IpcMainInvokeEvent, arg);
   };
-  return { deps, sessions, handlers, invoke };
+  return { deps, sessions, coordinator, handlers, invoke };
 }
 
 describe('registerSessionIpc', () => {
@@ -38,7 +40,7 @@ describe('registerSessionIpc', () => {
     expect([...handlers.keys()].sort()).toEqual([
       IpcChannel.SessionAnswerElicitation, IpcChannel.SessionAnswerPermission, IpcChannel.SessionCreate, IpcChannel.SessionGetScratchDir,
       IpcChannel.SessionInterrupt, IpcChannel.SessionSendMessage, IpcChannel.SessionSetEffort, IpcChannel.SessionSetModel,
-      IpcChannel.SessionSetPermissionMode, IpcChannel.SessionStop, IpcChannel.SessionStopTask,
+      IpcChannel.SessionSetPermissionMode, IpcChannel.SessionSnapshot, IpcChannel.SessionStop, IpcChannel.SessionStopTask,
     ].sort());
   });
 
@@ -69,7 +71,7 @@ describe('registerSessionIpc', () => {
   });
 
   it('opciones_yParada_vanAlGestorConSusArgumentos', () => {
-    const { sessions, invoke } = setup();
+    const { sessions, coordinator, invoke } = setup();
 
     invoke(IpcChannel.SessionSetModel, { sessionId: 's1', model: 'haiku' });
     invoke(IpcChannel.SessionSetEffort, { sessionId: 's1', effort: 'low' });
@@ -85,7 +87,14 @@ describe('registerSessionIpc', () => {
     expect(sessions.stopTask).toHaveBeenCalledWith('s1', 't1');
     expect(sessions.answerPermission).toHaveBeenCalledWith('s1', 'r1', { behavior: 'deny', message: 'no' });
     expect(sessions.interrupt).toHaveBeenCalledWith('s1');
-    expect(sessions.stop).toHaveBeenCalledWith('s1');
+    expect(coordinator.stop).toHaveBeenCalledWith('s1');
+  });
+
+  it('snapshot_vaALaCoordinacion', () => {
+    const { coordinator, invoke } = setup();
+
+    expect(invoke(IpcChannel.SessionSnapshot, 's1')).toEqual({ sessionId: 's1', lastSeq: 3 });
+    expect(coordinator.snapshot).toHaveBeenCalledWith('s1');
   });
 
   it('getScratchDir_devuelveLaCarpetaNueva', () => {

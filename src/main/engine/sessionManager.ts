@@ -147,21 +147,22 @@ export class SessionManager {
     this.accountDirs.delete(sessionId);
   }
 
-  // Para las sesiones de un dueño (la ventana que se destruye). Devuelve cuantas paro.
-  stopOwnedBy(ownerId: number): number {
+  // Para las sesiones de un dueño (la ventana que se destruye). Devuelve los ids que paro (la coordinacion
+  // cierra su seguimiento con ellos).
+  stopOwnedBy(ownerId: number): readonly string[] {
     const owned = [...this.owners].filter(([, owner]) => owner === ownerId).map(([sessionId]) => sessionId);
     for (const sessionId of owned) this.stop(sessionId);
-    return owned.length;
+    return owned;
   }
 
   // Para todas las sesiones que corren bajo `configDir` o bajo su perfil privado (hijo directo).
-  // Devuelve cuantas paro. Antes de borrar una cuenta: un CLI vivo sobre un dir borrado lo recrearia.
-  stopByConfigDir(configDir: string): number {
+  // Devuelve los ids que paro. Antes de borrar una cuenta: un CLI vivo sobre un dir borrado lo recrearia.
+  stopByConfigDir(configDir: string): readonly string[] {
     const ids = [...this.accountDirs]
       .filter(([, dir]) => pathEquals(dir, configDir) || pathEquals(dirname(dir), configDir))
       .map(([id]) => id);
     for (const id of ids) this.stop(id);
-    return ids.length;
+    return ids;
   }
 
   // Mueve la sesion `from` al id `to`. Devuelve el id con el que queda: `from` si `to` no sirve (vacio,

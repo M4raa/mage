@@ -87,6 +87,7 @@ const api: MageApi = {
     ipcRenderer.invoke(IpcChannel.SessionSetPermissionMode, params),
   stopTask: (params: StopTaskParams) => ipcRenderer.invoke(IpcChannel.SessionStopTask, params),
   stop: (sessionId: string) => ipcRenderer.invoke(IpcChannel.SessionStop, sessionId),
+  getSessionSnapshot: (sessionId: string) => ipcRenderer.invoke(IpcChannel.SessionSnapshot, sessionId),
   getScratchDir: () => ipcRenderer.invoke(IpcChannel.SessionGetScratchDir),
   getScratchRoot: () => ipcRenderer.invoke(IpcChannel.SessionGetScratchRoot),
   getScratchRoots: () => ipcRenderer.invoke(IpcChannel.SessionGetScratchRoots),

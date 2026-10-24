@@ -10,6 +10,7 @@ import type { ProviderModel } from './providers';
 import type { AgyUsageSnapshot } from './usage';
 import type { MageEvent, PermissionDecision, SlashCommandInfo } from './events';
 import type { ArtifactRecord, ConversationPrefs } from './conversationIndex';
+import type { ConversationId, ConversationSnapshot } from './coordination';
 import type { UsageInfo } from './usage';
 import type { StatusInfo } from './status';
 import type { TranscriptBatch, TranscriptTailPosition } from './transcripts';
@@ -99,6 +100,8 @@ export const IpcChannel = {
   // Parar UN subagente en segundo plano (0.1.1 R2, punto 29, solo Claude).
   SessionStopTask: 'session:stopTask',
   SessionStop: 'session:stop',
+  // F2.1: instantanea de solo lectura de una sesion viva (identidad, estado y ultima secuencia).
+  SessionSnapshot: 'session:snapshot',
   SessionGetScratchDir: 'session:getScratchDir',
   // La RAIZ de los borradores, sin crear nada (a diferencia de la de arriba, que acuña una carpeta).
   SessionGetScratchRoot: 'session:getScratchRoot',
@@ -552,6 +555,11 @@ export const EVENT_CHANNEL = 'session:event';
 export interface SessionEventPayload {
   readonly sessionId: string;
   readonly event: MageEvent;
+  // F2.1 (coordinacion): conversacion de Mage (null mientras el proveedor no dice su id nativo), secuencia
+  // monotona por conversacion y hora de emision. Un cliente que ve un hueco en `seq` pide la instantanea.
+  readonly conversationId?: ConversationId | null;
+  readonly seq?: number;
+  readonly at?: number;
 }
 
 // Canal DEDICADO para lotes de transcripcion (dominio distinto de EVENT_CHANNEL: transcripciones
@@ -773,6 +781,8 @@ export interface MageApi {
   // Para UN subagente en segundo plano (0.1.1 R2, punto 29, solo Claude).
   stopTask(params: StopTaskParams): Promise<void>;
   stop(sessionId: string): Promise<void>;
+  // Instantanea de una sesion viva (F2.1). Rechaza si la sesion no existe.
+  getSessionSnapshot(sessionId: string): Promise<ConversationSnapshot>;
   // Carpeta scratch temporal (cross-platform) para el cwd de la sesion de prueba (Fase B).
   getScratchDir(): Promise<string>;
   // Raiz de los directorios de borrador. NO crea nada: `getScratchDir` acuña una carpeta nueva en cada

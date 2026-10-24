@@ -2960,7 +2960,12 @@ export function createWorkbenchStore(mage: MageClient) {
       detectPrBinding(get, tabId, event);
       denyPrTurnCommand(mage, get, set, sessionId, tabId, event);
       // El id de conversación de Codex/agy se conoce al arrancar: se persiste para poder reabrir la conversación.
-      if (event.kind === 'session_init' && tab !== undefined && OWN_CONVERSATION_PROVIDERS.includes(tab.provider)) schedulePersist(mage, get);
+      // Y sus preferencias: main ya liga la sesión a la conversación (F2.1), así que lo elegido antes del
+      // arranque deja de estar bajo el id de sesión de Mage y queda en la conversación que se reabrirá.
+      if (event.kind === 'session_init' && tab !== undefined && OWN_CONVERSATION_PROVIDERS.includes(tab.provider)) {
+        schedulePersist(mage, get);
+        persistConversationPrefs(mage, get(), tab.id);
+      }
       // Y es el momento de mandar un nombre que el usuario puso con el turno en marcha (D3).
       if (event.kind === 'result') flushPendingCliTitle(mage, get, set, tabId);
       // Y el primer mensaje de la cola sale como turno propio (0.1.1 R2, punto 30).
