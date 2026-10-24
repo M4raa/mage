@@ -103,6 +103,11 @@ Al terminar: borra el driver del repo, cierra los procesos de Electron que hayas
 cualquier fichero de prueba que hayas creado (p. ej. en `shared-config/`). Está en la cultura del
 proyecto y en varias entradas del ROADMAP.
 
+**Ningún proceso se para por nombre.** Solo los que lanzó tu script (por su PID) o los que llevan en la
+línea de comandos la ruta del perfil temporal que creó. Un filtro por nombre (`electron.exe`, `claude`,
+`codex app-server`) alcanza también a los del Mage instalado del usuario: midiendo el benchmark se
+pararon así tres `codex app-server`, y dos podían ser de una pestaña real.
+
 ### 7. Editar el código fuente MIENTRAS corre `verify:gui`
 
 El harness arranca la app con `electron-vite dev`, o sea **con HMR**. Tocar un fichero del renderer

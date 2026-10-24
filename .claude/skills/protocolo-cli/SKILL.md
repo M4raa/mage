@@ -64,3 +64,6 @@ descartado.
 Como `spike/engine-spike.mjs` y `spike/agy-spike.mjs`: no es código de producción, es la prueba
 reproducible de que el contrato es el que dices. Con CLIs que se mueven semanalmente, un script que
 re-mide en segundos vale mucho más que un párrafo afirmando lo que se midió una vez.
+
+Un spike para lo que lanza **por su PID** o por la ruta de su perfil desechable, **nunca por nombre**:
+`claude` o `codex app-server` también son los procesos de las pestañas del Mage instalado del usuario.
