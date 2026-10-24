@@ -59,7 +59,6 @@ import {
   UPDATE_STATE_CHANNEL,
 } from '@shared/ipc';
 import type {
-  AnswerPermissionParams,
   ModelCatalogChange,
   CreateSessionParams,
   CreateSessionResult,
@@ -80,11 +79,6 @@ import type {
   SaveConversationPrefsParams,
   SaveSharedConfigParams,
   SaveSharedConfigResult,
-  SendMessageParams,
-  SetModelParams,
-  SetEffortParams,
-  SetPermissionModeParams,
-  StopTaskParams,
   SharedConfigSnapshot,
   MageWindowInfo,
   MoveTabToWindowParams,
@@ -197,10 +191,10 @@ import { WorkspaceStore } from './state/workspaceStore';
 import { CommandCatalogStore } from './state/commandCatalogStore';
 import { openArtifactWindow } from './artifacts/artifactWindow';
 import { InstructionsService } from './instructions/instructionsService';
-import { ELICITATION_ANSWER_SCHEMA } from '@shared/elicitation';
 import { agyBridgeSpec, bridgeDocument, codexBridgeSpec, resolveBridge, type BridgeFs, type BridgeSpec } from './instructions/instructionsBridge';
 import { EffectiveSettingsService } from './config/effectiveSettingsService';
 import { ConversationIndexStore } from './state/conversationIndexStore';
+import { registerSessionIpc } from './coordination/sessionIpc';
 import { ProjectFileService, resolveProjectFilePath } from './files/projectFileService';
 import { resolvedPath } from './os/resolvedPath';
 import { writeAtomic, type AtomicWriteDeps } from './os/atomicFile';
@@ -2602,40 +2596,18 @@ function registerApplicationIpc(deps: IpcDependencies): void {
 }
 
 function registerSessionIpc1(): void {
-  ipcMain.handle(IpcChannel.SessionCreate, createSessionFromIpc);
-  ipcMain.handle(IpcChannel.SessionSendMessage, (_e, params: SendMessageParams) =>
-    // Los adjuntos se validan tambien AQUI (el renderer valida por cortesia; esta es la frontera de
-    // verdad). El adapter vuelve a validarlos antes de codificarlos: es barato y es el ultimo punto
-    // donde se puede impedir que algo raro llegue al CLI.
-    sessionManager.sendMessage(params.sessionId, params.text, validateAttachments(params.attachments)),
-  );
-  ipcMain.handle(IpcChannel.SessionAnswerPermission, (_e, params: AnswerPermissionParams) =>
-    sessionManager.answerPermission(params.sessionId, params.requestId, params.decision),
-  );
-  ipcMain.handle(IpcChannel.SessionAnswerElicitation, (_e, input: unknown) =>
-    sessionManager.answerElicitation(ELICITATION_ANSWER_SCHEMA.parse(input)),
-  );
-  ipcMain.handle(IpcChannel.SessionInterrupt, (_e, sessionId: string) =>
-    sessionManager.interrupt(sessionId),
-  );
-  ipcMain.handle(IpcChannel.SessionSetPermissionMode, (_e, params: SetPermissionModeParams) =>
-    sessionManager.setPermissionMode(params.sessionId, params.mode),
-  );
-  ipcMain.handle(IpcChannel.SessionSetModel, (_e, params: SetModelParams) =>
-    sessionManager.setModel(params.sessionId, params.model),
-  );
-  ipcMain.handle(IpcChannel.SessionSetEffort, (_e, params: SetEffortParams) =>
-    sessionManager.setEffort(params.sessionId, params.effort),
-  );
-  ipcMain.handle(IpcChannel.SessionStopTask, (_e, params: StopTaskParams) => sessionManager.stopTask(params.sessionId, params.taskId));
-  ipcMain.handle(IpcChannel.SessionStop, (_e, sessionId: string) => sessionManager.stop(sessionId));
-  // Carpeta scratch AISLADA por conversacion (subdir unico y vacio): asi crear un archivo nuevo
-  // funciona a la primera, sin el "read first" de Claude Code por ficheros preexistentes. Fase B;
-  // en M1.2 el cwd sera un proyecto real elegido por el usuario. Cross-platform.
-  ipcMain.handle(IpcChannel.SessionGetScratchDir, () => {
-    const dir = join(scratchRoot(), randomUUID());
-    mkdirSync(dir, { recursive: true });
-    return canonicalPath(dir);
+  registerSessionIpc({
+    handle: (channel, listener) => ipcMain.handle(channel, listener),
+    sessions: sessionManager,
+    createSession: createSessionFromIpc,
+    validateAttachments,
+    // Carpeta scratch AISLADA por conversacion (subdir unico y vacio): asi crear un archivo nuevo
+    // funciona a la primera, sin el "read first" de Claude Code por ficheros preexistentes.
+    newScratchDir: () => {
+      const dir = join(scratchRoot(), randomUUID());
+      mkdirSync(dir, { recursive: true });
+      return canonicalPath(dir);
+    },
   });
 }
 
