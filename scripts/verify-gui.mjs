@@ -46,6 +46,9 @@ import { decideTurnTarget, parseTurnAnswer, spentPercent } from './lib/usageGuar
 import { withGuiState } from './lib/guiState.mjs';
 import { closeCheckOverlays, runGuiCheck } from './lib/guiCheckState.mjs';
 import { runPerfBaseline } from './lib/perfBaseline.mjs';
+import { runMageBench } from './lib/benchMage.mjs';
+import { cleanupProfile, credentialDigest } from '../spike/f0-profile-cleanup.mjs';
+import { claudeUsage, codexRateLimits, guardedUsage, prepareCodexHome } from '../spike/bench/headless.mjs';
 
 const repoRoot = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 // Version de Mage que corre (la de package.json): la usan el seed de ajustes y las notas de version.
@@ -10043,7 +10046,7 @@ function readTurnState(page, tab) {
 
 // --- Arranque y conexion -------------------------------------------------------------------------
 
-function launchApp(userDataDir) {
+function launchApp(userDataDir, extraEnv = {}) {
   // electron-vite reenvia a Electron lo que va tras `--`. `--user-data-dir` es un switch nativo de
   // Electron/Chromium, asi que no hace falta nada en el codigo de Mage para aislarlo.
   // Se lanza el JS de electron-vite con el propio node, NO `pnpm`/`pnpm.cmd`: en Windows, `pnpm` es
@@ -10076,6 +10079,8 @@ function launchApp(userDataDir) {
       // MAGE_AGY_USAGE_FAKE: el uso de agy del panel sale de su salida medida; nunca se lanza agy.
       MAGE_AGY_USAGE_FAKE: path.join(repoRoot, 'src', 'main', 'usage', '__fixtures__', 'agy-usage.json'),
       VITE_MAGE_RELEASE_NOTES_IN_DEV: '1',
+      // --bench: la casa temporal con las credenciales COPIADAS (nunca las reales del usuario).
+      ...extraEnv,
     },
     windowsHide: true,
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -10171,6 +10176,7 @@ function writeReport(runDir, results, consoleErrors) {
 // --- Main ----------------------------------------------------------------------------------------
 
 async function main() {
+  if (process.argv.includes('--bench')) return runBenchMode();
   // Diagnostico reutilizable de una tanda bloqueada, sin arrancar otra instancia ni mutar sus stores.
   if (process.argv.includes('--inspect-running')) {
     const browser = await chromium.connectOverCDP(`http://127.0.0.1:${CONFIG.port}`);
@@ -10283,6 +10289,60 @@ async function main() {
   console.log(`\n[verify:gui] informe: ${path.join(runDir, 'session.md')}`);
   console.log(`[verify:gui] ${results.length - failed.length}/${results.length} comprobaciones en verde`);
   process.exit(failed.length === 0 ? 0 : 1);
+}
+
+// Benchmark F0-B, ruta R3 (`--bench --provider=claude|codex --rep=<n> --out=<fichero> [--tasks=T1,..]`):
+// Mage con perfil aislado y una CASA temporal (USERPROFILE/HOME) con copia de la credencial del
+// proveedor, retirada en finally con su comprobación de token. Gasta turnos reales (DEVOLUCION-012 H7).
+async function runBenchMode() {
+  const arg = (name) => process.argv.find((a) => a.startsWith(`--${name}=`))?.split('=')[1];
+  const provider = arg('provider');
+  const out = arg('out');
+  const rep = Number(arg('rep'));
+  if (!['claude', 'codex'].includes(provider) || out === undefined || !Number.isInteger(rep)) throw new Error('--bench exige --provider, --rep y --out');
+  const tasks = (arg('tasks') ?? 'T1,T2,T3,T4,T5').split(',');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), `mage-f0-bench-r3-${provider}-`));
+  const home = path.join(root, 'home');
+  const credential = prepareBenchHome(home, provider);
+  const initial = credentialDigest(credential);
+  const userDataDir = path.join(root, 'user-data');
+  fs.mkdirSync(userDataDir);
+  seedOnboardingDone(userDataDir);
+  if (provider === 'codex') fs.writeFileSync(path.join(userDataDir, 'provider-accounts.json'), JSON.stringify({ version: 1, accounts: [{ providerId: 'codex', authKind: 'subscription', name: 'bench', home: path.join(home, '.codex') }] }));
+  // APPDATA también dentro de la casa: con USERPROFILE cambiado, Electron no resolvía 'appData'. LOCALAPPDATA
+  // se queda el real: ahí localiza Mage el ejecutable de Codex.
+  const appData = path.join(home, 'AppData', 'Roaming');
+  fs.mkdirSync(appData, { recursive: true });
+  const { child, log } = launchApp(userDataDir, { USERPROFILE: home, HOME: home, APPDATA: appData });
+  let browser = null;
+  try {
+    browser = await chromium.connectOverCDP(await waitForCdp());
+    const page = await findMainPage(browser);
+    await page.locator('[role="toolbar"]').first().waitFor({ state: 'attached', timeout: CONFIG.bootTimeoutMs });
+    await page.waitForFunction(() => window.__mageDev?.store.getState().accounts.length > 0, undefined, { timeout: CONFIG.bootTimeoutMs });
+    const usageAllows = guardedUsage(() => (provider === 'claude' ? claudeUsage(credential) : codexRateLimits(path.join(home, '.codex'))));
+    await runMageBench(page, { provider, rep, tasks, root, usageAllows, out });
+  } catch (error) {
+    fs.writeFileSync(`${out}.arranque.log`, log.join('').slice(-20_000), 'utf-8');
+    throw error;
+  } finally {
+    if (browser !== null) await browser.close().catch(() => {});
+    killTree(child);
+    await new Promise((r) => setTimeout(r, 3000)); // Electron suelta el perfil antes de borrarlo
+    cleanupProfile(root, credential, initial);
+  }
+}
+
+// Casa temporal del benchmark: solo la credencial del proveedor medido, copiada.
+function prepareBenchHome(home, provider) {
+  if (provider === 'codex') {
+    prepareCodexHome(path.join(home, '.codex'));
+    return path.join(home, '.codex', 'auth.json');
+  }
+  fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
+  fs.copyFileSync(path.join(os.homedir(), '.claude', '.credentials.json'), path.join(home, '.claude', '.credentials.json'));
+  fs.writeFileSync(path.join(home, '.claude.json'), JSON.stringify({ hasCompletedOnboarding: true }));
+  return path.join(home, '.claude', '.credentials.json');
 }
 
 // Borra los perfiles de ejecuciones anteriores. Best-effort: si Electron aun tiene el lock, se deja
