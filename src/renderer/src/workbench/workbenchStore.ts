@@ -762,6 +762,15 @@ function persistSettingsNow(mage: MageClient, getState: () => WorkbenchState): v
     .catch((err: unknown) => reportActionError('No se pudo guardar la configuración', err, 'persist', SAVE_FAILED_KEY.settings));
 }
 
+// A14: como `persistSettingsNow`, pero ESPERA a que main confirme el guardado y propaga su fallo. Lo
+// usan las acciones tras las que se puede arrancar una sesión que main resuelve con esos ajustes (alta
+// o cambio de un proveedor): resolver antes dejaba una ventana con «Proveedor no configurado».
+async function saveSettingsConfirmed(mage: MageClient, getState: () => WorkbenchState): Promise<void> {
+  if (settingsPersistTimer !== null) clearTimeout(settingsPersistTimer);
+  settingsPersistTimer = null;
+  await mage.saveSettings(getState().settings);
+}
+
 // De donde sale la carpeta de una conversacion nueva (ver `createConversation`).
 export interface ConversationFolderChoice {
   readonly cwd?: string;
@@ -2496,7 +2505,7 @@ export function createWorkbenchStore(mage: MageClient) {
           : [...s.settings.customProviders, provider];
         return { settings: { ...s.settings, customProviders } };
       });
-      scheduleSettingsPersist(mage, get);
+      await saveSettingsConfirmed(mage, get);
     },
 
     // Elimina un proveedor y, con el, su modelo por defecto (F3): dejar la clave huerfana en

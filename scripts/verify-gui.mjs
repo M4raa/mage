@@ -8245,9 +8245,7 @@ const CHECKS = [
         const medido = await page.evaluate(async ({ provider }) => {
           const store = window.__mageDev.store;
           await store.getState().saveCustomProvider({ id: provider.id, label: provider.label, baseUrl: 'http://127.0.0.1:9/v1', hasApiKey: false, models: [{ id: 'fake:eco', label: 'fake:eco' }] });
-          // El guardado de ajustes lleva debounce: se espera a que main conozca el proveedor (carrera
-          // anotada en INFORME-014; antes la tapaba el diálogo de confianza que D4 quitó).
-          for (let i = 0; i < 50 && !(await window.mage.loadSettings()).customProviders.some((p) => p.id === provider.id); i++) await new Promise((r) => setTimeout(r, 100));
+          // A14: `saveCustomProvider` resuelve cuando main YA tiene el proveedor; aquí no se espera nada más.
           store.setState({ accounts: [], activeAccountId: '' });
           const antes = store.getState().tabs.length;
           await store.getState().createConversation('shared', { scratch: true });

@@ -2019,3 +2019,21 @@ describe('R52 — worktree desactivado por defecto', () => {
     expect(saveWorkspace).toHaveBeenLastCalledWith(expect.objectContaining({ tabs: [expect.objectContaining({ id: 'a', worktreeOff: false })] }));
   });
 });
+
+describe('saveCustomProvider — A14', () => {
+  it('saveCustomProvider_alResolver_mainYaTieneElProveedorGuardado', async () => {
+    const saved: unknown[] = [];
+    const saveSettings = vi.fn(async (settings: { customProviders: readonly { id: string }[] }) => { saved.push(settings.customProviders.map((p) => p.id)); });
+    const store = createWorkbenchStore(fakeMage({ saveSettings }));
+
+    await store.getState().saveCustomProvider({ id: 'custom:a14', label: 'A14', baseUrl: 'http://127.0.0.1:9/v1', hasApiKey: false, models: [] });
+
+    expect(saved.at(-1)).toEqual(['custom:a14']);
+  });
+
+  it('saveCustomProvider_mainRechazaElGuardado_lanza', async () => {
+    const store = createWorkbenchStore(fakeMage({ saveSettings: vi.fn().mockRejectedValue(new Error('disco lleno')) }));
+
+    await expect(store.getState().saveCustomProvider({ id: 'custom:a14', label: 'A14', baseUrl: 'http://127.0.0.1:9/v1', hasApiKey: false, models: [] })).rejects.toThrow('disco lleno');
+  });
+});
