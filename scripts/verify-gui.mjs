@@ -45,12 +45,18 @@ import { FAKE_SCENARIOS, startFakeOpenAiServer } from './fake-openai-server.mjs'
 import { decideTurnTarget, parseTurnAnswer, spentPercent } from './lib/usageGuard.mjs';
 import { withGuiState } from './lib/guiState.mjs';
 import { closeCheckOverlays, runGuiCheck } from './lib/guiCheckState.mjs';
+import { runPerfBaseline } from './lib/perfBaseline.mjs';
 
 const repoRoot = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 // Version de Mage que corre (la de package.json): la usan el seed de ajustes y las notas de version.
 const APP_VERSION = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf-8')).version;
 // El paquete `electron` exporta la RUTA a su binario cuando se carga desde node (no desde Electron).
 const requireFromHere = createRequire(import.meta.url);
+
+// `--prod`: arranca el build de produccion (`electron-vite preview`). Sin puente de desarrollo, asi que
+// solo vale para medir (--perf-baseline), nunca para las comprobaciones.
+const PROD_BUILD = process.argv.includes('--prod');
+if (PROD_BUILD && !process.argv.includes('--perf-baseline')) throw new Error('--prod solo se admite con --perf-baseline');
 
 const CONFIG = {
   port: 9222,
@@ -10023,7 +10029,8 @@ function launchApp(userDataDir) {
   // hay ni shell ni .cmd, y ademas funciona igual en los tres SO.
   const args = [
     path.join(repoRoot, 'node_modules', 'electron-vite', 'bin', 'electron-vite.js'),
-    'dev',
+    // `--prod` (solo con --perf-baseline): el build ya hecho (`pnpm build`), con React de produccion.
+    PROD_BUILD ? 'preview' : 'dev',
     '--',
     `--remote-debugging-port=${CONFIG.port}`,
     `--user-data-dir=${userDataDir}`,
@@ -10201,6 +10208,14 @@ async function main() {
     });
     page.on('pageerror', (error) => consoleErrors.push(String(error)));
 
+    // #40 (baseline de interfaz, SOLO medicion): en vez de las comprobaciones, mide y deja el JSON.
+    if (process.argv.includes('--perf-baseline')) {
+      const medido = await runPerfBaseline(page, { openConversation: openTemporaryConversation, devBridge: !PROD_BUILD });
+      fs.writeFileSync(path.join(runDir, 'perf-baseline.json'), JSON.stringify(medido, null, 2), 'utf-8');
+      console.log(`[verify:gui] baseline: ${path.join(runDir, 'perf-baseline.json')}`);
+      results.push({ name: 'Baseline de interfaz #40', ok: true, detail: 'medido' });
+      return;
+    }
     const baselinePanels = await page.evaluate(() => window.__mageDev.panelStore.getState().layout);
     if (process.argv.includes('--initial-close-prompt')) {
       await page.evaluate(() => window.close());
