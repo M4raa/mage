@@ -5,6 +5,7 @@ import {
   type ArtifactRecord,
   type ConversationPrefs,
 } from '@shared/conversationIndex';
+import type { ConversationId, NativeSessionRef } from '@shared/coordination';
 import { writeAtomic, type AtomicWriteDeps } from '../os/atomicFile';
 
 // Persistencia del indice propio de Mage por conversacion (2.1) y del registro de artifacts (2.4), en
@@ -18,11 +19,28 @@ import { writeAtomic, type AtomicWriteDeps } from '../os/atomicFile';
 //
 // Por que no vive en `PersistedTab`: tiene que sobrevivir al CIERRE de la pestaña (se lee al reabrir la
 // conversacion desde el historial, cuando ya no hay pestaña ninguna).
+//
+// v2 (F2.1): la clave de cada conversacion es su `ConversationId` (estable); la entrada guarda ademas su
+// sesion nativa (`nativeRef`) y la ultima secuencia de eventos (`lastSeq`). Las claves de v1 eran el
+// sessionId del CLI y se conservan tal cual como ConversationId; su `nativeRef` se completa al abrirlas.
+export interface ConversationEntry extends ConversationPrefs {
+  readonly nativeRef?: NativeSessionRef;
+  readonly lastSeq?: number;
+}
+
 export interface ConversationIndexFile {
   readonly version: number;
-  readonly conversations: Readonly<Record<string, ConversationPrefs>>; // clave: sessionId del CLI
+  readonly conversations: Readonly<Record<ConversationId, ConversationEntry>>;
   readonly artifacts: Readonly<Record<string, ArtifactRecord>>; // clave: URL del artifact
 }
+
+// Version anterior que se sabe migrar: misma forma, sin `nativeRef` ni `lastSeq`.
+const LEGACY_INDEX_VERSION = 1;
+// Respaldo del fichero v1 antes de la primera escritura en v2: Mage 0.1.2 lee un v2 como indice vacio
+// (comprueba la version), asi que volver atras pierde las preferencias si no hay copia.
+const LEGACY_BACKUP_SUFFIX = '.v1.bak';
+
+const PREF_KEYS = ['model', 'effort', 'permissionMode', 'provider', 'alwaysAllowTools'] as const;
 
 const PREFS_SCHEMA = z.object({
   model: z.string().min(1).optional(),
@@ -31,6 +49,13 @@ const PREFS_SCHEMA = z.object({
   provider: z.string().min(1).optional().catch(undefined),
   // "Permitir siempre <tool> aqui" (2.3b).
   alwaysAllowTools: z.array(z.string().min(1)).optional(),
+});
+
+const NATIVE_REF_SCHEMA = z.object({ provider: z.string().min(1), accountDir: z.string().min(1), nativeId: z.string().min(1) });
+
+const ENTRY_SCHEMA = PREFS_SCHEMA.extend({
+  nativeRef: NATIVE_REF_SCHEMA.optional().catch(undefined),
+  lastSeq: z.number().int().nonnegative().optional().catch(undefined),
 });
 
 const ARTIFACT_SCHEMA = z.object({
@@ -42,7 +67,7 @@ const ARTIFACT_SCHEMA = z.object({
 
 const INDEX_FILE_SCHEMA = z.object({
   version: z.number(),
-  conversations: z.record(z.string(), PREFS_SCHEMA),
+  conversations: z.record(z.string(), ENTRY_SCHEMA),
   artifacts: z.record(z.string(), ARTIFACT_SCHEMA),
 });
 
@@ -53,33 +78,67 @@ export interface ConversationIndexStoreDeps extends AtomicWriteDeps {
 }
 
 export class ConversationIndexStore {
+  // Contenido v1 leido de disco y aun sin respaldar: se copia antes de la primera escritura en v2.
+  private legacyContent: string | null = null;
+
   constructor(private readonly deps: ConversationIndexStoreDeps) {}
 
   // Preferencias de una conversacion, o null si no hay ninguna guardada (que es lo que devuelve una
-  // instalacion sin fichero: entonces la pestaña se abre con los defaults de siempre).
-  loadPrefs(sessionId: string): ConversationPrefs | null {
-    return this.read().conversations[sessionId] ?? null;
+  // instalacion sin fichero: entonces la pestaña se abre con los defaults de siempre). `id` es su
+  // ConversationId o el id de su sesion nativa (el renderer conoce el nativo).
+  loadPrefs(id: string): ConversationPrefs | null {
+    const index = this.read();
+    const entry = index.conversations[keyFor(index, id)];
+    return entry === undefined ? null : prefsOf(entry);
   }
 
   // Fusion PARCIAL: lo que no venga en `prefs` se conserva. Un campo con cadena vacia se BORRA (paridad
   // con `setActiveEffort`, que trata '' como "sin esfuerzo"), porque guardar '' haria que la
   // conversacion arrancara con un `--effort ` vacio.
-  savePrefs(sessionId: string, prefs: ConversationPrefs): void {
-    if (sessionId.length === 0) {
-      throw new Error(`sessionId vacio al guardar las preferencias de la conversacion: ${JSON.stringify(sessionId)}`);
+  savePrefs(id: string, prefs: ConversationPrefs): void {
+    if (id.length === 0) {
+      throw new Error(`sessionId vacio al guardar las preferencias de la conversacion: ${JSON.stringify(id)}`);
     }
     const index = this.read();
-    const merged = mergePrefs(index.conversations[sessionId], prefs);
-    this.write({ ...index, conversations: { ...index.conversations, [sessionId]: merged } });
+    const key = keyFor(index, id);
+    const merged = mergePrefs(index.conversations[key], prefs);
+    this.write({ ...index, conversations: { ...index.conversations, [key]: merged } });
   }
 
   // Olvida una conversacion (la borra `ConversationsDelete`). No-op si no estaba.
-  forgetConversation(sessionId: string): void {
+  forgetConversation(id: string): void {
     const index = this.read();
-    if (index.conversations[sessionId] === undefined) return;
+    const key = keyFor(index, id);
+    if (index.conversations[key] === undefined) return;
     const conversations = { ...index.conversations };
-    delete conversations[sessionId];
+    delete conversations[key];
     this.write({ ...index, conversations });
+  }
+
+  // ConversationId de una sesion nativa (F2.1): la entrada que ya la tenga, la de v1 cuya clave es su id
+  // nativo (y entonces se completa su `nativeRef`), o una nueva con el id nativo como clave. Solo escribe si
+  // algo cambia: abrir la misma conversacion dos veces no toca el disco.
+  resolveConversation(ref: NativeSessionRef): { readonly conversationId: ConversationId; readonly lastSeq: number } {
+    if (ref.nativeId.length === 0) throw new Error(`nativeId vacio al resolver la conversacion: ${JSON.stringify(ref)}`);
+    const index = this.read();
+    const key = keyFor(index, ref.nativeId);
+    const entry = index.conversations[key];
+    if (entry === undefined || !sameRef(entry.nativeRef, ref)) {
+      this.write({ ...index, conversations: { ...index.conversations, [key]: { ...entry, nativeRef: ref } } });
+    }
+    return { conversationId: key, lastSeq: entry?.lastSeq ?? 0 };
+  }
+
+  // Ultima secuencia de eventos de una conversacion conocida; nunca retrocede.
+  recordLastSeq(conversationId: ConversationId, seq: number): void {
+    const index = this.read();
+    const entry = index.conversations[conversationId];
+    if (entry === undefined || seq <= (entry.lastSeq ?? 0)) return;
+    this.write({ ...index, conversations: { ...index.conversations, [conversationId]: { ...entry, lastSeq: seq } } });
+  }
+
+  nativeRefOf(conversationId: ConversationId): NativeSessionRef | null {
+    return this.read().conversations[conversationId]?.nativeRef ?? null;
   }
 
   recordArtifact(url: string, record: ArtifactRecord): void {
@@ -93,41 +152,77 @@ export class ConversationIndexStore {
     return this.read().artifacts[url] ?? null;
   }
 
-  // Lectura TOLERANTE: fichero ausente, corrupto o de otra version -> indice vacio (comportamiento de
-  // antes del indice). Nunca lanza: perder estas preferencias no puede impedir abrir una conversacion.
+  // Lectura TOLERANTE: fichero ausente, corrupto o de una version desconocida -> indice vacio
+  // (comportamiento de antes del indice). La v1 se migra en memoria. Nunca lanza por el contenido:
+  // perder estas preferencias no puede impedir abrir una conversacion.
   private read(): ConversationIndexFile {
     if (!this.deps.exists(this.deps.filePath)) return EMPTY_INDEX;
+    const content = this.readContent();
     let parsed: unknown;
     try {
-      parsed = JSON.parse(this.deps.readFile(this.deps.filePath));
+      parsed = JSON.parse(content);
     } catch (err) {
-      // Solo un JSON MAL FORMADO justifica caer a defaults (B9). Un EACCES/EBUSY —antivirus o
-      // agente de backup reteniendo el fichero, cosa habitual en Windows— era indistinguible del
-      // JSON corrupto: se cargaban defaults y el siguiente `save()` SOBRESCRIBIA los datos reales
-      // del usuario. Un fallo de lectura tiene que doler, no borrar.
-      if (!(err instanceof SyntaxError)) {
-        throw new Error(`No se pudo leer ${this.deps.filePath}: ${err instanceof Error ? err.message : String(err)}`);
-      }
-      return EMPTY_INDEX;
+      if (err instanceof SyntaxError) return EMPTY_INDEX; // solo un JSON MAL FORMADO cae a defaults (B9)
+      throw err;
     }
     const result = INDEX_FILE_SCHEMA.safeParse(parsed);
-    if (!result.success || result.data.version !== CONVERSATION_INDEX_VERSION) return EMPTY_INDEX;
-    return result.data;
+    if (!result.success) return EMPTY_INDEX;
+    if (result.data.version === LEGACY_INDEX_VERSION) {
+      this.legacyContent = content;
+      return { ...result.data, version: CONVERSATION_INDEX_VERSION };
+    }
+    return result.data.version === CONVERSATION_INDEX_VERSION ? result.data : EMPTY_INDEX;
   }
 
-  // Se valida al CARGAR, no al escribir (P10). Antes habia un segundo `safeParse` del documento
-  // ENTERO aqui, asi que cada `recordArtifact` validaba dos veces un objeto que crece: una O(n²)
-  // real, y el motivo de que este fuera el test mas lento de toda la suite (746 ms de 2,9 s).
-  // `next` lo acaba de construir esta misma clase con tipos: revalidarlo no aportaba nada que el
-  // compilador no supiera ya, y la lectura tolerante sigue siendo la red por si el fichero se
-  // corrompe por fuera.
+  // Un EACCES/EBUSY —antivirus o agente de backup reteniendo el fichero, cosa habitual en Windows— era
+  // indistinguible del JSON corrupto: se cargaban defaults y el siguiente `save()` SOBRESCRIBIA los datos
+  // reales del usuario (B9). Un fallo de lectura tiene que doler, no borrar.
+  private readContent(): string {
+    try {
+      return this.deps.readFile(this.deps.filePath);
+    } catch (err) {
+      throw new Error(`No se pudo leer ${this.deps.filePath}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  // Se valida al CARGAR, no al escribir (P10): un segundo `safeParse` del documento entero aqui hacia
+  // O(n²) cada `recordArtifact`. `next` lo acaba de construir esta clase con tipos, y la lectura tolerante
+  // sigue siendo la red si el fichero se corrompe por fuera. Antes de la primera escritura sobre un v1, su
+  // copia: Mage 0.1.2 no sabe leer el v2.
   private write(next: ConversationIndexFile): void {
+    this.backupLegacy();
     writeAtomic(this.deps, this.deps.filePath, JSON.stringify(next, null, 2));
+  }
+
+  private backupLegacy(): void {
+    if (this.legacyContent === null) return;
+    const backup = `${this.deps.filePath}${LEGACY_BACKUP_SUFFIX}`;
+    if (!this.deps.exists(backup)) writeAtomic(this.deps, backup, this.legacyContent);
+    this.legacyContent = null;
   }
 }
 
+// Clave de la entrada de `id`: la suya si es un ConversationId (O(1), el caso comun), la de la entrada
+// cuya sesion nativa es `id`, o `id` si no hay ninguna (conversacion nueva o anterior a F2.1).
+function keyFor(index: ConversationIndexFile, id: string): ConversationId {
+  if (index.conversations[id] !== undefined) return id;
+  const owner = Object.entries(index.conversations).find(([, entry]) => entry.nativeRef?.nativeId === id);
+  return owner === undefined ? id : owner[0];
+}
+
+function sameRef(a: NativeSessionRef | undefined, b: NativeSessionRef): boolean {
+  return a !== undefined && a.provider === b.provider && a.accountDir === b.accountDir && a.nativeId === b.nativeId;
+}
+
+// Solo las preferencias (sin identidad ni secuencia); null si la entrada no tiene ninguna.
+function prefsOf(entry: ConversationEntry): ConversationPrefs | null {
+  const present = PREF_KEYS.filter((key) => entry[key] !== undefined);
+  if (present.length === 0) return null;
+  return Object.fromEntries(present.map((key) => [key, entry[key]])) as ConversationPrefs;
+}
+
 // Fusion campo a campo: `undefined` conserva lo que hubiera; cadena vacia borra.
-function mergePrefs(current: ConversationPrefs | undefined, incoming: ConversationPrefs): ConversationPrefs {
+function mergePrefs(current: ConversationEntry | undefined, incoming: ConversationPrefs): ConversationEntry {
   const merged: Record<string, unknown> = { ...current };
   for (const key of ['model', 'effort', 'permissionMode', 'provider'] as const) {
     const value = incoming[key];
@@ -142,7 +237,7 @@ function mergePrefs(current: ConversationPrefs | undefined, incoming: Conversati
     if (incoming.alwaysAllowTools.length === 0) delete merged.alwaysAllowTools;
     else merged.alwaysAllowTools = [...incoming.alwaysAllowTools];
   }
-  return merged as ConversationPrefs;
+  return merged as ConversationEntry;
 }
 
 // Desaloja los artifacts mas antiguos hasta caber en `max`. Ordenar por `publishedAtMs` (y no confiar

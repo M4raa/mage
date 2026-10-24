@@ -172,3 +172,141 @@ describe('ConversationIndexStore — artifacts (2.4)', () => {
     expect(store.loadPrefs(SESSION)).toEqual({ model: 'opus' });
   });
 });
+
+// F2.1: identidades separadas en el índice v2. Disco en memoria con varios ficheros (el índice y su
+// respaldo), para comprobar la migración desde v1.
+function memoryDisk(initial: Record<string, string> = {}) {
+  const files = new Map(Object.entries(initial));
+  const store = new ConversationIndexStore(buildDeps({
+    exists: (path) => files.has(path),
+    readFile: (path) => files.get(path) ?? '',
+    writeFile: (path, data) => { files.set(path.replace(/\.suf\.tmp$|\.tmp$/, ''), data); },
+  }));
+  return { store, files };
+}
+
+const CODEX_REF = { provider: 'codex', accountDir: '/home/u/.codex', nativeId: 'thread-1' };
+const V1_FILE = JSON.stringify({ version: 1, conversations: { [SESSION]: { model: 'opus', effort: 'high' } }, artifacts: {} });
+
+describe('ConversationIndexStore — identidades y migración v2 (F2.1)', () => {
+  it('read_ficheroV1_conservaLasPreferencias', () => {
+    const { store } = memoryDisk({ [FILE]: V1_FILE });
+
+    expect(store.loadPrefs(SESSION)).toEqual({ model: 'opus', effort: 'high' });
+  });
+
+  it('write_sobreFicheroV1_dejaRespaldoYEscribeV2', () => {
+    const { store, files } = memoryDisk({ [FILE]: V1_FILE });
+
+    store.savePrefs(SESSION, { permissionMode: 'plan' });
+
+    expect(files.get(`${FILE}.v1.bak`)).toBe(V1_FILE);
+    expect(JSON.parse(files.get(FILE) ?? '{}')).toMatchObject({ version: 2, conversations: { [SESSION]: { model: 'opus', effort: 'high', permissionMode: 'plan' } } });
+  });
+
+  it('write_respaldoYaExistente_noLoPisa', () => {
+    const { store, files } = memoryDisk({ [FILE]: V1_FILE, [`${FILE}.v1.bak`]: 'anterior' });
+
+    store.savePrefs(SESSION, { model: 'haiku' });
+
+    expect(files.get(`${FILE}.v1.bak`)).toBe('anterior');
+  });
+
+  it('read_versionFutura_indiceVacioSinLanzar', () => {
+    const { store } = memoryDisk({ [FILE]: JSON.stringify({ version: 3, conversations: { [SESSION]: { model: 'opus' } }, artifacts: {} }) });
+
+    expect(store.loadPrefs(SESSION)).toBeNull();
+  });
+
+  it('resolveConversation_entradaV1SinNativeRef_reutilizaSuClaveYLaCompleta', () => {
+    const { store, files } = memoryDisk({ [FILE]: V1_FILE });
+    const ref = { provider: 'claude', accountDir: '/home/u/.claude', nativeId: SESSION };
+
+    const resolved = store.resolveConversation(ref);
+
+    expect(resolved).toEqual({ conversationId: SESSION, lastSeq: 0 });
+    expect(JSON.parse(files.get(FILE) ?? '{}').conversations[SESSION]).toEqual({ model: 'opus', effort: 'high', nativeRef: ref });
+  });
+
+  it('resolveConversation_conversacionNueva_creaLaEntradaConSuIdNativo', () => {
+    const { store } = memoryDisk();
+
+    expect(store.resolveConversation(CODEX_REF)).toEqual({ conversationId: 'thread-1', lastSeq: 0 });
+    expect(store.loadPrefs('thread-1')).toBeNull();
+  });
+
+  it('resolveConversation_dosVeces_noReescribeSiNadaCambia', () => {
+    const writeFile = vi.fn();
+    let content = '';
+    const store = new ConversationIndexStore(buildDeps({
+      exists: () => content.length > 0,
+      readFile: () => content,
+      writeFile: (_path, data) => { writeFile(); content = data; },
+    }));
+    store.resolveConversation(CODEX_REF);
+
+    store.resolveConversation(CODEX_REF);
+
+    expect(writeFile).toHaveBeenCalledTimes(1);
+  });
+
+  it('resolveConversation_otraCuenta_actualizaLaCuentaDeLaSesionNativa', () => {
+    const { store } = memoryDisk();
+    store.resolveConversation(CODEX_REF);
+
+    store.resolveConversation({ ...CODEX_REF, accountDir: '/home/u/.codex-2' });
+
+    expect(store.nativeRefOf('thread-1')).toEqual({ ...CODEX_REF, accountDir: '/home/u/.codex-2' });
+  });
+
+  it('recordLastSeq_yResolve_devuelveLaUltimaSecuencia', () => {
+    const { store } = memoryDisk();
+    store.resolveConversation(CODEX_REF);
+
+    store.recordLastSeq('thread-1', 42);
+
+    expect(store.resolveConversation(CODEX_REF).lastSeq).toBe(42);
+  });
+
+  it('recordLastSeq_menorQueLaGuardada_noRetrocede', () => {
+    const { store } = memoryDisk();
+    store.resolveConversation(CODEX_REF);
+    store.recordLastSeq('thread-1', 42);
+
+    store.recordLastSeq('thread-1', 7);
+
+    expect(store.resolveConversation(CODEX_REF).lastSeq).toBe(42);
+  });
+
+  it('recordLastSeq_conversacionDesconocida_noCreaNada', () => {
+    const { store, files } = memoryDisk();
+
+    store.recordLastSeq('nadie', 3);
+
+    expect(files.has(FILE)).toBe(false);
+  });
+
+  it('prefs_porIdNativoDeUnaEntradaConOtraClave_usanLaEntrada', () => {
+    // Una conversación cuya sesión nativa cambió (bifurcar, mover de cuenta) se sigue encontrando por el id
+    // nativo nuevo: las preferencias no se pierden ni se duplican.
+    const { store, files } = memoryDisk({ [FILE]: JSON.stringify({ version: 2, conversations: { 'conv-a': { model: 'opus', nativeRef: CODEX_REF } }, artifacts: {} }) });
+
+    store.savePrefs('thread-1', { effort: 'low' });
+
+    expect(store.loadPrefs('thread-1')).toEqual({ model: 'opus', effort: 'low' });
+    expect(Object.keys(JSON.parse(files.get(FILE) ?? '{}').conversations)).toEqual(['conv-a']);
+  });
+
+  it('forgetConversation_porIdNativo_borraLaEntrada', () => {
+    const { store } = memoryDisk({ [FILE]: JSON.stringify({ version: 2, conversations: { 'conv-a': { model: 'opus', nativeRef: CODEX_REF } }, artifacts: {} }) });
+
+    store.forgetConversation('thread-1');
+
+    expect(store.loadPrefs('thread-1')).toBeNull();
+    expect(store.nativeRefOf('conv-a')).toBeNull();
+  });
+
+  it('resolveConversation_idNativoVacio_lanzaConElValor', () => {
+    expect(() => memoryDisk().store.resolveConversation({ ...CODEX_REF, nativeId: '' })).toThrow(/nativeId vacio/);
+  });
+});
