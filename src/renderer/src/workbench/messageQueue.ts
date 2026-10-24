@@ -1,4 +1,3 @@
-import type { ImageAttachment } from '@shared/ipc';
 import { base64ByteLength } from '@shared/attachments';
 import { shiftImageTokens } from '@shared/imageRefs';
 import type { PromptDraft } from './types';
