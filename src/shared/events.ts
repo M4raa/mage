@@ -286,6 +286,8 @@ export type MageEvent =
   | { readonly kind: 'permission_resolved'; readonly requestId: string; readonly behavior: 'allow' | 'deny'; readonly answers?: Readonly<Record<string, string>> }
   // Un permiso que main contestó solo (F2.4): una regla «Permitir siempre» o la barrera del turno de «Crear PR»
   // (`blocked`: el comando denegado; null si lo permitió una regla). Ese permiso NO se anunció a los clientes.
+  // Una sesion en segundo plano que nadie reclamo caduca (F2.4): main la para justo despues de este evento.
+  | { readonly kind: 'background_expired' }
   | { readonly kind: 'permission_auto_answered'; readonly requestId: string; readonly toolName: string; readonly behavior: 'allow' | 'deny'; readonly blocked: string | null };
 
 // Decision del usuario ante un permiso (viaja renderer -> main -> CLI).

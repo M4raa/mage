@@ -10,7 +10,7 @@ import type { ProviderModel } from './providers';
 import type { AgyUsageSnapshot } from './usage';
 import type { MageEvent, PermissionDecision, SlashCommandInfo } from './events';
 import type { ArtifactRecord, ConversationPrefs } from './conversationIndex';
-import type { AnswerReceipt, ConversationId, ConversationSnapshot, QueuedMessage, SendReceipt } from './coordination';
+import type { AnswerReceipt, CloseReceipt, ConversationId, ConversationSnapshot, QueuedMessage, SendReceipt } from './coordination';
 import type { UsageInfo } from './usage';
 import type { StatusInfo } from './status';
 import type { TranscriptBatch, TranscriptTailPosition } from './transcripts';
@@ -103,6 +103,7 @@ export const IpcChannel = {
   // Parar UN subagente en segundo plano (0.1.1 R2, punto 29, solo Claude).
   SessionStopTask: 'session:stopTask',
   SessionStop: 'session:stop',
+  SessionClose: 'session:close',
   // F2.1: instantanea de solo lectura de una sesion viva (identidad, estado y ultima secuencia).
   SessionSnapshot: 'session:snapshot',
   SessionGetScratchDir: 'session:getScratchDir',
@@ -801,6 +802,8 @@ export interface MageApi {
   // Para UN subagente en segundo plano (0.1.1 R2, punto 29, solo Claude).
   stopTask(params: StopTaskParams): Promise<void>;
   stop(sessionId: string): Promise<void>;
+  // Cierra la conversacion de esta ventana (F2.4): main decide si se para o queda en segundo plano.
+  closeSession(sessionId: string): Promise<CloseReceipt>;
   // Instantanea de una sesion viva (F2.1). Rechaza si la sesion no existe.
   getSessionSnapshot(sessionId: string): Promise<ConversationSnapshot>;
   // Carpeta scratch temporal (cross-platform) para el cwd de la sesion de prueba (Fase B).

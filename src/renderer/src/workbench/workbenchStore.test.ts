@@ -173,7 +173,7 @@ describe('closeTab — pestaña que hereda el foco (#38)', () => {
 describe('closeTab', () => {
   it('closeTab_pestanaConEstadoDeMotor_limpiaTodosSusMapas', async () => {
     // B12: se limpiaban diez mapas y faltaban `turnStartByChat` y `lastActivityByChat`.
-    const store = createWorkbenchStore(fakeMage({ stop: vi.fn().mockResolvedValue(undefined), saveWorkspace: vi.fn().mockResolvedValue(undefined), listConversations: vi.fn().mockResolvedValue([]) }));
+    const store = createWorkbenchStore(fakeMage({ closeSession: vi.fn().mockResolvedValue({ background: false }), saveWorkspace: vi.fn().mockResolvedValue(undefined), listConversations: vi.fn().mockResolvedValue([]) }));
     store.setState({
       tabs: [tab('a'), tab('b')],
       activeTabId: 'a',
@@ -199,16 +199,16 @@ describe('closeTab', () => {
   });
 
   it('closeTab_conSesionViva_esperaAQueElCliPareAntesDeResolver', async () => {
-    // B17: se hacia `void stop()`, asi que borrar la conversacion corria contra un fichero aun abierto.
+    // B17: se hacia `void stop()`. Desde F2.4 el cierre lo decide main, y se sigue esperando, asi que borrar la conversacion corria contra un fichero aun abierto.
     let paradoCon: string | null = null;
     let resolverStop: (() => void) | undefined;
-    const stop = vi.fn().mockImplementation((sessionId: string) => {
+    const closeSession = vi.fn().mockImplementation((sessionId: string) => {
       paradoCon = sessionId;
-      return new Promise<void>((resolve) => {
-        resolverStop = resolve;
+      return new Promise<{ background: boolean }>((resolve) => {
+        resolverStop = () => resolve({ background: false });
       });
     });
-    const store = createWorkbenchStore(fakeMage({ stop, saveWorkspace: vi.fn().mockResolvedValue(undefined), listConversations: vi.fn().mockResolvedValue([]) }));
+    const store = createWorkbenchStore(fakeMage({ closeSession, saveWorkspace: vi.fn().mockResolvedValue(undefined), listConversations: vi.fn().mockResolvedValue([]) }));
     store.setState({ tabs: [tab('a')], activeTabId: 'a', splitLayout: singleLeaf('a'), sessionIdByChat: { a: 's-a' } });
 
     let cerrado = false;
@@ -230,7 +230,7 @@ describe('closeTab', () => {
     // Decision del usuario (2026-09-15): cerrar no corta el trabajo. La sesion sigue viva y la
     // conversacion queda apuntada para que su fila del panel lo diga.
     const stop = vi.fn();
-    const store = createWorkbenchStore(fakeMage({ stop, saveWorkspace: vi.fn().mockResolvedValue(undefined), listConversations: vi.fn().mockResolvedValue([]) }));
+    const store = createWorkbenchStore(fakeMage({ stop, closeSession: vi.fn().mockResolvedValue({ background: true }), saveWorkspace: vi.fn().mockResolvedValue(undefined), listConversations: vi.fn().mockResolvedValue([]) }));
     store.setState({ tabs: [tab('a')], activeTabId: 'a', splitLayout: singleLeaf('a'), sessionIdByChat: { a: 's-a' }, statusByChat: { a: 'streaming' } });
 
     await store.getState().closeTab('a');
@@ -240,7 +240,7 @@ describe('closeTab', () => {
   });
 
   it('closeTab_conPermisoPendiente_quedaPendienteDeAccion', async () => {
-    const store = createWorkbenchStore(fakeMage({ stop: vi.fn(), saveWorkspace: vi.fn().mockResolvedValue(undefined), listConversations: vi.fn().mockResolvedValue([]) }));
+    const store = createWorkbenchStore(fakeMage({ closeSession: vi.fn().mockResolvedValue({ background: true }), saveWorkspace: vi.fn().mockResolvedValue(undefined), listConversations: vi.fn().mockResolvedValue([]) }));
     store.setState({ tabs: [tab('a')], activeTabId: 'a', splitLayout: singleLeaf('a'), sessionIdByChat: { a: 's-a' }, statusByChat: { a: 'needs_permission' } });
 
     await store.getState().closeTab('a');
@@ -249,24 +249,24 @@ describe('closeTab', () => {
   });
 
   it('closeTab_conversacionParada_siParaElCliYNoDejaNadaEnSegundoPlano', async () => {
-    const stop = vi.fn().mockResolvedValue(undefined);
-    const store = createWorkbenchStore(fakeMage({ stop, saveWorkspace: vi.fn().mockResolvedValue(undefined), listConversations: vi.fn().mockResolvedValue([]) }));
+    const closeSession = vi.fn().mockResolvedValue({ background: false });
+    const store = createWorkbenchStore(fakeMage({ closeSession, saveWorkspace: vi.fn().mockResolvedValue(undefined), listConversations: vi.fn().mockResolvedValue([]) }));
     store.setState({ tabs: [tab('a')], activeTabId: 'a', splitLayout: singleLeaf('a'), sessionIdByChat: { a: 's-a' }, statusByChat: { a: 'idle' } });
 
     await store.getState().closeTab('a');
 
-    expect(stop).toHaveBeenCalledWith('s-a');
+    expect(closeSession).toHaveBeenCalledWith('s-a');
     expect(store.getState().backgroundSessions).toEqual({});
   });
 
   it('closeTab_sinSesionViva_noLlamaAStop', async () => {
-    const stop = vi.fn();
-    const store = createWorkbenchStore(fakeMage({ stop, saveWorkspace: vi.fn().mockResolvedValue(undefined), listConversations: vi.fn().mockResolvedValue([]) }));
+    const closeSession = vi.fn();
+    const store = createWorkbenchStore(fakeMage({ closeSession, saveWorkspace: vi.fn().mockResolvedValue(undefined), listConversations: vi.fn().mockResolvedValue([]) }));
     store.setState({ tabs: [tab('a')], activeTabId: 'a', splitLayout: singleLeaf('a'), sessionIdByChat: {} });
 
     await store.getState().closeTab('a');
 
-    expect(stop).not.toHaveBeenCalled();
+    expect(closeSession).not.toHaveBeenCalled();
   });
 });
 
@@ -274,7 +274,7 @@ describe('sesiones en segundo plano', () => {
   it('handleEvent_sesionEnSegundoPlanoTerminaElTurno_quedaPendienteDeRevision', async () => {
     const store = createWorkbenchStore(
       fakeMage({
-        stop: vi.fn(),
+        closeSession: vi.fn().mockResolvedValue({ background: true }),
         saveWorkspace: vi.fn().mockResolvedValue(undefined),
         listConversations: vi.fn().mockResolvedValue([]),
         notify: vi.fn().mockResolvedValue(undefined),
@@ -300,6 +300,19 @@ describe('sesiones en segundo plano', () => {
     expect(saveConversationPrefs).toHaveBeenCalledWith({ sessionId: 's-a', prefs: expect.objectContaining({ model: 'gpt-6-luna', effort: 'low' }) as unknown });
   });
 
+  it('handleEvent_segundoPlanoCaducadoEnMain_quitaLaFilaSinPararDeNuevo', async () => {
+    // F2.4: la caducidad la lleva main, que para la sesion tras avisar.
+    const stop = vi.fn();
+    const store = createWorkbenchStore(fakeMage({ stop, closeSession: vi.fn().mockResolvedValue({ background: true }), saveWorkspace: vi.fn().mockResolvedValue(undefined), listConversations: vi.fn().mockResolvedValue([]) }));
+    store.setState({ tabs: [tab('a')], activeTabId: 'a', splitLayout: singleLeaf('a'), sessionIdByChat: { a: 's-a' }, statusByChat: { a: 'streaming' } });
+    await store.getState().closeTab('a');
+
+    store.getState().handleEvent('s-a', { kind: 'background_expired' });
+
+    expect(store.getState().backgroundSessions).toEqual({});
+    expect(stop).not.toHaveBeenCalled();
+  });
+
   it('handleEvent_sesionYaParada_ignoraElEventoRezagado', () => {
     const store = createWorkbenchStore(fakeMage({}));
 
@@ -311,7 +324,7 @@ describe('sesiones en segundo plano', () => {
 
   it('discardBackgroundSession_conversacionReclamada_paraElCliYLaSacaDelMapa', async () => {
     const stop = vi.fn().mockResolvedValue(undefined);
-    const store = createWorkbenchStore(fakeMage({ stop, saveWorkspace: vi.fn().mockResolvedValue(undefined), listConversations: vi.fn().mockResolvedValue([]) }));
+    const store = createWorkbenchStore(fakeMage({ stop, closeSession: vi.fn().mockResolvedValue({ background: true }), saveWorkspace: vi.fn().mockResolvedValue(undefined), listConversations: vi.fn().mockResolvedValue([]) }));
     store.setState({ tabs: [tab('a')], activeTabId: 'a', splitLayout: singleLeaf('a'), sessionIdByChat: { a: 's-a' }, statusByChat: { a: 'streaming' } });
     await store.getState().closeTab('a');
 

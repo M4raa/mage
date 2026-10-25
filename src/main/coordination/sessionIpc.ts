@@ -32,7 +32,7 @@ export interface SessionIpcDeps {
   readonly handle: IpcRegister;
   readonly sessions: SessionCommands;
   readonly coordinator: Pick<SessionCoordinator,
-    'send' | 'interrupt' | 'removeQueued' | 'takeQueue' | 'answerPermission' | 'answerElicitation' | 'stop' | 'snapshot'>;
+    'send' | 'interrupt' | 'removeQueued' | 'takeQueue' | 'answerPermission' | 'answerElicitation' | 'stop' | 'close' | 'snapshot'>;
   readonly createSession: (event: IpcMainInvokeEvent, params: CreateSessionParams) => CreateSessionResult;
   readonly validateAttachments: (attachments: readonly ImageAttachment[] | undefined) => readonly ImageAttachment[];
   // Carpeta scratch AISLADA por conversación (subdir único y vacío), ya creada y canonizada.
@@ -60,6 +60,7 @@ export function registerSessionIpc(deps: SessionIpcDeps): void {
   handle(IpcChannel.SessionQueueTake, (_e, sessionId) => coordinator.takeQueue(sessionId as string));
   registerSessionOptions(deps);
   handle(IpcChannel.SessionStop, (_e, sessionId) => coordinator.stop(sessionId as string));
+  handle(IpcChannel.SessionClose, (_e, sessionId) => coordinator.close(sessionId as string));
   handle(IpcChannel.SessionSnapshot, (_e, sessionId) => coordinator.snapshot(sessionId as string));
   handle(IpcChannel.SessionGetScratchDir, () => deps.newScratchDir());
 }

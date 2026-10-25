@@ -67,10 +67,8 @@ import {
 import { restoreTabs, toPersistedWorkspace } from './workspaceView';
 import { orderTabsForDisplay, tabsToCloseAll, tabsToCloseInactive } from './tabActions';
 import {
-  BACKGROUND_TTL_MS,
   backgroundMoveBlockedReason,
   nextBackgroundState,
-  shouldBackgroundOnClose,
   tabMoveBlockedReason,
   type BackgroundSession,
 } from './backgroundWork';
@@ -655,6 +653,12 @@ function applyBackgroundEvent(
 ): void {
   const entry = get().backgroundSessions[sessionId];
   if (entry === undefined) return; // sesion ya parada: evento rezagado, se ignora
+  // Caducada en main (F2.4): main la para; su fila desaparece y el historial se refresca.
+  if (event.kind === 'background_expired') {
+    set((s) => ({ backgroundSessions: without(s.backgroundSessions, sessionId) }));
+    void get().loadConversationHistory();
+    return;
+  }
   // La notificacion va ANTES del corte por "estado sin cambio", y no despues: las reglas del usuario
   // (M2.3) se disparan con `assistant_text` y `hook_fired`, que NO cambian el estado de segundo plano.
   // Calculandola detras, la unica conversacion que el usuario no esta mirando era justo la unica que no
@@ -904,17 +908,16 @@ export type MageClient = MageApi;
 // no es estado de UI: nadie lo pinta, y meterlo en el store obligaria a que cada `set` lo arrastrase.
 const sessionCreationInFlight = new Map<string, Promise<string>>();
 
-// Temporizadores de caducidad de las sesiones en segundo plano, por sessionId. Viven a nivel de modulo
-// por el mismo motivo que los dos mapas de arriba: no son estado de UI, nadie los pinta. A la semana
-// (BACKGROUND_TTL_MS) se mata el CLI que nadie ha reclamado; reabrir o borrar la conversacion cancela.
-const backgroundTtlTimers = new Map<string, ReturnType<typeof setTimeout>>();
-
-function armBackgroundTtl(get: () => WorkbenchState, sessionId: string): void {
-  clearBackgroundTtl(sessionId);
-  backgroundTtlTimers.set(
-    sessionId,
-    setTimeout(() => void get().discardBackgroundSession(sessionId), BACKGROUND_TTL_MS),
-  );
+// Main decide si la sesion se para o queda en segundo plano, y lleva su caducidad (F2.4). Un id que main ya no
+// sigue (sesion parada o sintetica) es una ausencia idempotente; cualquier otro fallo se avisa y la pestaña se
+// cierra igual.
+async function closeSessionInMain(mage: MageClient, sessionId: string): Promise<boolean> {
+  try {
+    return (await mage.closeSession(sessionId)).background;
+  } catch (err) {
+    if (!describeError(err).includes(`Sesion inexistente: ${sessionId}`)) reportActionError('No se pudo cerrar la sesión', err, 'chat');
+    return false;
+  }
 }
 
 // Chat NUEVO que sigue a la cuenta pulsada (P-028, punto 31): reescribe cuenta, alias y modelo de la
@@ -980,13 +983,6 @@ function runAutoContinue(get: () => WorkbenchState): void {
     void state.sendMessageToTab(tabId, AUTO_CONTINUE_TEXT);
   }
   syncAutoContinueTimer(get);
-}
-
-function clearBackgroundTtl(sessionId: string): void {
-  const timer = backgroundTtlTimers.get(sessionId);
-  if (timer === undefined) return;
-  clearTimeout(timer);
-  backgroundTtlTimers.delete(sessionId);
 }
 
 // Dialogos de confianza EN VUELO, por carpeta. Mismo sitio y mismo motivo que el mapa de arriba: no es
@@ -1394,11 +1390,14 @@ export function createWorkbenchStore(mage: MageClient) {
     // Cierra una pestana: para su sesion (no dejar procesos huerfanos) y limpia su estado de motor.
     // EXCEPCION (decision del usuario, 2026-09-15): si el agente esta trabajando o esperando un
     // permiso, cerrar NO corta el trabajo — la sesion se queda viva "en segundo plano" y la
-    // conversacion sale marcada en el panel de Conversaciones (`backgroundSessions`).
+    // conversacion sale marcada en el panel de Conversaciones (`backgroundSessions`). Lo decide main en un
+    // solo paso, con la cola descartada (F2.4); aqui queda la fila que se pinta.
+    // Se ESPERA a que el CLI pare (B17). Borrar o mover la conversacion justo despues necesita que nadie siga
+    // escribiendo su .jsonl: con `void` el borrado corria contra un proceso vivo y en Windows el unlink fallaba.
     closeTab: async (tabId, options) => {
       const sessionId = get().sessionIdByChat[tabId];
       const tab = get().tabs.find((t) => t.id === tabId);
-      const background = sessionId !== undefined && tab !== undefined && shouldBackgroundOnClose(get().statusByChat[tabId]);
+      const background = sessionId !== undefined && (await closeSessionInMain(mage, sessionId));
       if (background && sessionId !== undefined && tab !== undefined) {
         const entry: BackgroundSession = {
           sessionId,
@@ -1408,17 +1407,7 @@ export function createWorkbenchStore(mage: MageClient) {
           sinceMs: Date.now(),
         };
         set((s) => ({ backgroundSessions: { ...s.backgroundSessions, [sessionId]: entry } }));
-        armBackgroundTtl(get, sessionId);
-        // Lo que esperaba en la cola de una pestaña que se cierra no sale solo en segundo plano: se descarta
-        // con su estado, como antes de que la cola viviera en main (F2.2).
-        if ((get().queuedByChat[tabId]?.length ?? 0) > 0) {
-          await mage.takeQueuedMessages(sessionId).catch((err: unknown) => reportActionError('No se pudo vaciar la cola de la conversación', err, 'chat'));
-        }
       }
-      // Se ESPERA a que el CLI pare (B17). Borrar o mover la conversacion justo despues necesita que
-      // nadie siga escribiendo su .jsonl: con `void` el borrado corria contra un proceso vivo y en
-      // Windows el unlink fallaba. El comentario de la accion ya decia esto; el codigo no lo hacia.
-      if (sessionId !== undefined && !background) await mage.stop(sessionId).catch(() => undefined);
       // Su store de transcripcion, con el listener del canal y las entradas ya leidas, se libera con
       // el resto de su estado por pestaña: es la misma fuga que B12, en otro sitio (4.1).
       disposeTranscriptStore(tabId);
@@ -1493,7 +1482,6 @@ export function createWorkbenchStore(mage: MageClient) {
 
     discardBackgroundSession: async (sessionId) => {
       if (get().backgroundSessions[sessionId] === undefined) return;
-      clearBackgroundTtl(sessionId);
       set((s) => ({ backgroundSessions: without(s.backgroundSessions, sessionId) }));
       await mage.stop(sessionId).catch(() => undefined);
     },

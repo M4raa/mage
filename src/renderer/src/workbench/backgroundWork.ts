@@ -16,13 +16,8 @@ export interface BackgroundSession {
   readonly title: string; // el de la pestaña al cerrarla (la fila del historial puede tardar en refrescarse)
   readonly accountId: string;
   readonly state: BackgroundState;
-  readonly sinceMs: number; // cuando se mando a segundo plano; base del TTL
+  readonly sinceMs: number; // cuando se mando a segundo plano (la caducidad la lleva main, F2.4)
 }
-
-// Se mata la sesion huerfana a la semana de mandarla a segundo plano (decision del usuario): si nadie
-// ha vuelto en ese plazo, el proceso del CLI ya no le sirve a nadie. Cabe en un setTimeout (el tope de
-// los temporizadores del navegador son ~24,8 dias).
-export const BACKGROUND_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 // Solo se manda a segundo plano lo que TIENE trabajo vivo. Una conversacion parada se cierra como
 // siempre (su proceso se para): dejarla viva seria pagar un CLI por cada pestaña que se cierra.

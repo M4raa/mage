@@ -1,7 +1,7 @@
 import type { CreateSessionParams, SendMessageParams, SessionEventPayload } from '@shared/ipc';
 import type { MageEvent, PermissionDecision, PermissionRequest } from '@shared/events';
 import type { ElicitationAnswer } from '@shared/elicitation';
-import type { AnswerReceipt, ConversationId, ConversationSnapshot, CoordinatedState, NativeSessionRef, PendingRequest, QueuedMessage, SendReceipt } from '@shared/coordination';
+import type { AnswerReceipt, CloseReceipt, ConversationId, ConversationSnapshot, CoordinatedState, NativeSessionRef, PendingRequest, QueuedMessage, SendReceipt } from '@shared/coordination';
 import { enqueueMessage, removeQueuedMessage, takeNextMessage } from '@shared/messageQueue';
 import { writesClaudeTranscript } from '@shared/providers';
 import { automaticAnswer, automaticDecision, CREATE_PR_PROMPT, type AutomaticAnswer } from '@shared/permissionPolicy';
@@ -49,7 +49,13 @@ export interface SessionCoordinatorDeps {
   // Aplaza la respuesta automatica (`queueMicrotask` en produccion): el motor termina de emitir la peticion
   // (el runtime emite despues `requires_action`) antes de recibir la respuesta.
   readonly defer: (fn: () => void) => void;
+  // Temporizador cancelable (`setTimeout` en produccion): la caducidad del segundo plano.
+  readonly setTimer: (fn: () => void, ms: number) => () => void;
 }
+
+// Una sesion en segundo plano que nadie reclama se para a la semana (decision del usuario, 2026-09-15): su CLI
+// ya no le sirve a nadie. Cabe en un setTimeout (el tope son ~24,8 dias).
+export const BACKGROUND_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 // Recibos recordados por sesion para deduplicar reintentos: los ultimos, no todos.
 const MAX_RECEIPTS = 100;
@@ -69,6 +75,8 @@ interface Tracked {
   readonly pending: Map<string, PendingRequest>;
   // El turno en marcha lleva el prompt de «Crear PR»: sus barreras estan armadas hasta el `result`.
   prGuard: boolean;
+  // En segundo plano: cancela su caducidad. null si tiene cliente.
+  cancelExpiry: (() => void) | null;
   // Emite un evento propio de la coordinacion por el mismo camino que los del motor (con secuencia).
   emit: (event: MageEvent) => void;
 }
@@ -83,7 +91,7 @@ export class SessionCoordinator {
   create(params: CreateSessionParams, sink: SequencedSink, ownerId?: number): string {
     const tracked: Tracked = {
       sessionId: '', provider: params.provider, accountDir: params.accountDir, conversationId: null, nativeRef: null, lastSeq: 0, state: 'starting',
-      queue: [], receipts: new Map(), pending: new Map(), prGuard: false, emit: () => undefined,
+      queue: [], receipts: new Map(), pending: new Map(), prGuard: false, cancelExpiry: null, emit: () => undefined,
     };
     tracked.emit = (event) => this.relay(tracked, { sessionId: tracked.sessionId, event }, sink);
     const sessionId = this.deps.sessions.create(params, (payload) => this.relay(tracked, payload, sink), ownerId);
@@ -97,7 +105,21 @@ export class SessionCoordinator {
   snapshot(sessionId: string): ConversationSnapshot {
     const tracked = this.require(sessionId);
     const { sessionId: id, provider, conversationId, nativeRef, lastSeq, state, queue } = tracked;
-    return { sessionId: id, provider, conversationId, nativeRef, lastSeq, state, queue, pending: [...tracked.pending.values()] };
+    return { sessionId: id, provider, conversationId, nativeRef, lastSeq, state, queue, pending: [...tracked.pending.values()], background: tracked.cancelExpiry !== null };
+  }
+
+  // Cierra la conversacion de un cliente. Con trabajo en vuelo NO se corta: queda en segundo plano (la cola se
+  // descarta en el MISMO paso, asi que el `result` ya no saca nada) y caduca a la semana. Sin trabajo, se para.
+  close(sessionId: string): CloseReceipt {
+    const tracked = this.require(sessionId);
+    if (!isBusy(tracked.state)) {
+      this.stop(sessionId);
+      return { background: false };
+    }
+    if (tracked.queue.length > 0) this.setQueue(tracked, []);
+    tracked.cancelExpiry?.();
+    tracked.cancelExpiry = this.deps.setTimer(() => this.expire(tracked), BACKGROUND_TTL_MS);
+    return { background: true };
   }
 
   // Contesta un permiso (o pregunta) UNA vez. La respuesta aceptada sale de pendientes ANTES de llegar al
@@ -307,9 +329,17 @@ export class SessionCoordinator {
     }
   }
 
+  private expire(tracked: Tracked): void {
+    if (this.tracked.get(tracked.sessionId) !== tracked) return;
+    tracked.emit({ kind: 'background_expired' });
+    this.stop(tracked.sessionId);
+  }
+
   private release(sessionId: string): void {
     const tracked = this.tracked.get(sessionId);
     if (tracked === undefined) return;
+    tracked.cancelExpiry?.();
+    tracked.cancelExpiry = null;
     this.tracked.delete(sessionId);
     this.persist(tracked);
   }

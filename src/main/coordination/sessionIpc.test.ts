@@ -18,6 +18,7 @@ function setup(over: Partial<SessionIpcDeps> = {}) {
     answerPermission: vi.fn().mockReturnValue({ status: 'accepted' }),
     answerElicitation: vi.fn().mockReturnValue({ status: 'rejected', reason: 'already_answered' }),
     stop: vi.fn(),
+    close: vi.fn().mockReturnValue({ background: true }),
     snapshot: vi.fn().mockReturnValue({ sessionId: 's1', lastSeq: 3 }),
   };
   const deps: SessionIpcDeps = {
@@ -46,7 +47,7 @@ describe('registerSessionIpc', () => {
     const { handlers } = setup();
 
     expect([...handlers.keys()].sort()).toEqual([
-      IpcChannel.SessionAnswerElicitation, IpcChannel.SessionAnswerPermission, IpcChannel.SessionCreate, IpcChannel.SessionGetScratchDir,
+      IpcChannel.SessionAnswerElicitation, IpcChannel.SessionAnswerPermission, IpcChannel.SessionClose, IpcChannel.SessionCreate, IpcChannel.SessionGetScratchDir,
       IpcChannel.SessionInterrupt, IpcChannel.SessionQueueRemove, IpcChannel.SessionQueueTake, IpcChannel.SessionSendMessage, IpcChannel.SessionSetEffort, IpcChannel.SessionSetModel,
       IpcChannel.SessionSetPermissionMode, IpcChannel.SessionSnapshot, IpcChannel.SessionStop, IpcChannel.SessionStopTask,
     ].sort());
@@ -129,5 +130,12 @@ describe('registerSessionIpc', () => {
     const { invoke } = setup();
 
     expect(invoke(IpcChannel.SessionGetScratchDir)).toBe('/scratch/x');
+  });
+
+  it('close_delegaEnLaCoordinacionYDevuelveSiQuedaEnSegundoPlano', () => {
+    const { coordinator, invoke } = setup();
+
+    expect(invoke(IpcChannel.SessionClose, 's1')).toEqual({ background: true });
+    expect(coordinator.close).toHaveBeenCalledWith('s1');
   });
 });

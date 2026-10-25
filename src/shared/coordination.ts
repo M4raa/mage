@@ -62,4 +62,11 @@ export interface ConversationSnapshot {
   readonly state: CoordinatedState;
   readonly queue: readonly QueuedMessage[];
   readonly pending: readonly PendingRequest[];
+  // Cerrada con trabajo en vuelo: sigue viva sin cliente que la muestre (F2.4).
+  readonly background: boolean;
+}
+
+// Resultado de cerrar una conversacion (F2.4): con trabajo en vuelo queda en segundo plano; si no, se para.
+export interface CloseReceipt {
+  readonly background: boolean;
 }

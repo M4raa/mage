@@ -39,15 +39,21 @@ function harness(options: { index?: Partial<ConversationIdentityIndex>; emitOnSt
   // Lo diferido (respuestas automáticas) se ejecuta a mano con `flush`, como haría la microtarea.
   const deferred: (() => void)[] = [];
   const alwaysAllowTools = vi.fn((key: string): readonly string[] => options.rules?.[key] ?? []);
+  const timers: { fn: () => void; ms: number; cancelled: boolean }[] = [];
+  const setTimer = (fn: () => void, ms: number) => {
+    const timer = { fn, ms, cancelled: false };
+    timers.push(timer);
+    return () => { timer.cancelled = true; };
+  };
   const coordinator = new SessionCoordinator({
-    sessions, index, now: () => ++clock, log, newId: () => `cmd-${++ids}`, alwaysAllowTools, defer: (fn) => deferred.push(fn),
+    sessions, index, now: () => ++clock, log, newId: () => `cmd-${++ids}`, alwaysAllowTools, defer: (fn) => deferred.push(fn), setTimer,
   });
   const flush = () => { while (deferred.length > 0) deferred.shift()!(); };
   const received: SequencedSessionEvent[] = [];
   const create = (params: Partial<CreateSessionParams> = {}, ownerId?: number) =>
     coordinator.create({ accountDir: ACCOUNT, cwd: '/p', provider: 'claude', ...params } as CreateSessionParams, (p) => received.push(p), ownerId);
   const emit = (sessionId: string, event: MageEvent, as = sessionId) => sinks.get(sessionId)?.({ sessionId: as, event });
-  return { coordinator, sessions, index, saved, log, received, create, emit, flush, alwaysAllowTools };
+  return { coordinator, sessions, index, saved, log, received, create, emit, flush, alwaysAllowTools, timers };
 }
 
 const state = (value: 'idle' | 'running'): MageEvent => ({ kind: 'session_state', state: value });
@@ -71,7 +77,7 @@ describe('SessionCoordinator — secuencia e identidades (F2.1)', () => {
     const id = h.create({ accountDir: `${ACCOUNT}/mage-private` });
 
     expect(h.index.resolveConversation).toHaveBeenCalledWith({ provider: 'claude', accountDir: `${ACCOUNT}/mage-private`, nativeId: id });
-    expect(h.coordinator.snapshot(id)).toEqual({ sessionId: id, provider: 'claude', conversationId: `conv-${id}`, nativeRef: { provider: 'claude', accountDir: `${ACCOUNT}/mage-private`, nativeId: id }, lastSeq: 0, state: 'starting', queue: [], pending: [] });
+    expect(h.coordinator.snapshot(id)).toEqual({ sessionId: id, provider: 'claude', conversationId: `conv-${id}`, nativeRef: { provider: 'claude', accountDir: `${ACCOUNT}/mage-private`, nativeId: id }, lastSeq: 0, state: 'starting', queue: [], pending: [], background: false });
   });
 
   it('create_codexNueva_sinConversacionHastaSuSessionInit', () => {
@@ -630,5 +636,85 @@ describe('SessionCoordinator — respuestas automáticas en main (F2.4, H1 de la
 
     expect(() => h.coordinator.answerPermission(id, 'r1', { behavior: 'allow' })).toThrow(/ya resuelto/);
     expect(h.received.at(-1)!.event).toEqual({ kind: 'permission_cancelled', requestId: 'r1' });
+  });
+});
+
+describe('SessionCoordinator — cierre y segundo plano en main (F2.4)', () => {
+  const result: MageEvent = { kind: 'result', result: { isError: false, subtype: 'success', numTurns: 1 } };
+  const forcePush: MageEvent = { kind: 'permission_request', request: { requestId: 'r1', toolUseId: 't1', toolName: 'Bash', input: { command: 'git push --force' }, description: null, requiresUserInteraction: false, displayName: null } };
+
+  it('close_sinTurno_paraLaSesion', () => {
+    const h = harness();
+    const id = h.create();
+
+    expect(h.coordinator.close(id)).toEqual({ background: false });
+    expect(h.sessions.stop).toHaveBeenCalledWith(id);
+    expect(() => h.coordinator.snapshot(id)).toThrow(`Sesion inexistente: ${id}`);
+  });
+
+  it('close_conTurnoEnMarcha_segundoPlanoYLaColaNoSaleAlAcabar', () => {
+    // Cierra la ventana de INFORME-022 (decisión 3): descartar la cola y pasar a segundo plano es un solo paso.
+    const h = harness();
+    const id = h.create();
+    h.coordinator.send({ sessionId: id, text: 'primero' });
+    h.coordinator.send({ sessionId: id, text: 'segundo' });
+
+    const receipt = h.coordinator.close(id);
+    h.emit(id, result);
+
+    expect(receipt).toEqual({ background: true });
+    expect(h.sessions.stop).not.toHaveBeenCalled();
+    expect(h.sessions.sendMessage).toHaveBeenCalledTimes(1);
+    expect(h.coordinator.snapshot(id)).toMatchObject({ background: true, queue: [], state: 'idle' });
+    expect(h.timers.map((t) => t.ms)).toEqual([7 * 24 * 60 * 60 * 1000]);
+  });
+
+  it('close_esperandoPermiso_segundoPlano', () => {
+    const h = harness();
+    const id = h.create();
+    h.emit(id, { kind: 'permission_request', request: { requestId: 'r0', toolUseId: 't0', toolName: 'Write', input: {}, description: null, requiresUserInteraction: false, displayName: null } });
+
+    expect(h.coordinator.close(id).background).toBe(true);
+  });
+
+  it('pestañaCerrada_reglaBashEnElTurnoDePr_soloDeniega', () => {
+    // El caso de la sonda con la pestaña cerrada: la sesión sigue en main y la barrera también.
+    const h = harness();
+    const id = h.create();
+    h.alwaysAllowTools.mockReturnValue(['Bash']);
+    h.coordinator.send({ sessionId: id, text: CREATE_PR_PROMPT });
+    h.coordinator.close(id);
+
+    h.emit(id, forcePush);
+    h.flush();
+
+    expect(vi.mocked(h.sessions.answerPermission).mock.calls.map(([, , d]) => d.behavior)).toEqual(['deny']);
+  });
+
+  it('caducidad_avisaYParaLaSesion', () => {
+    const h = harness();
+    const id = h.create();
+    h.coordinator.send({ sessionId: id, text: 'largo' });
+    h.coordinator.close(id);
+
+    h.timers[0]!.fn();
+
+    expect(h.received.at(-1)!.event).toEqual({ kind: 'background_expired' });
+    expect(h.sessions.stop).toHaveBeenCalledWith(id);
+  });
+
+  it('stop_enSegundoPlano_cancelaLaCaducidad', () => {
+    const h = harness();
+    const id = h.create();
+    h.coordinator.send({ sessionId: id, text: 'largo' });
+    h.coordinator.close(id);
+
+    h.coordinator.stop(id);
+
+    expect(h.timers[0]!.cancelled).toBe(true);
+  });
+
+  it('close_sesionDesconocida_lanzaConElId', () => {
+    expect(() => harness().coordinator.close('nada')).toThrow('Sesion inexistente: nada');
   });
 });
