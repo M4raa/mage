@@ -1,6 +1,5 @@
 import { create } from 'zustand';
-import { applyCodexConfirmation, confirmCodexAccounts } from './codexAccountConfirmation';
-import { defaultEffortForProvider, defaultModelForProvider, effortSettingKey, providerFallbackModel, providerModels, type ApiKeyUpdate } from './models';
+import { defaultEffortForProvider, defaultModelForProvider, providerFallbackModel, providerModels, type ApiKeyUpdate } from './models';
 import type { PersistedTab } from '@shared/state';
 import { disposeTranscriptStore, transcriptStoreForTab } from './transcriptStore';
 import type { ContextUsage, MageEvent, McpServerStatus, PermissionDecision, PermissionRequest, SlashCommandInfo, SubagentInfo, TurnUsage } from '@shared/events';
@@ -12,10 +11,9 @@ import { isPermissionMode, MAIN_WINDOW_ID, PERMISSION_MODES } from '@shared/ipc'
 import { RELEASE_NOTES_TAB_ID, releaseNotesDecision } from './releaseNotes';
 import type { AgyUsageSnapshot, UsageInfo } from '@shared/usage';
 import type { StatusInfo } from '@shared/status';
-import { applyAccentOverrides, assignMissingAccents, toAccountView } from './accountView';
+import { applyAccentOverrides } from './accountView';
 import { nextIndexForArrow } from './a11y/keyboardNav';
 import { canChangeCwd } from './cwdChange';
-import { toUsageWindows } from './usageView';
 import {
   answerQuestionBlock,
   appendSubagentBlock,
@@ -42,6 +40,9 @@ import {
   turnUsageText,
 } from './engineBlocks';
 import { addAlwaysAllow, removeAlwaysAllow } from './permissionRules';
+import { createSettingsActions } from './settingsActions';
+import { createHistoryActions } from './historyActions';
+import { createAccountsActions } from './accountsActions';
 import { createPrActions, resetPrActionsState, type PrActions, type PrState } from './prActions';
 import { isPrCreateCommand, prNumberFromCreatedTag, prNumberFromUrl } from './prBinding';
 import { worktreeOfCwd } from '@shared/worktree';
@@ -108,11 +109,11 @@ import type {
   ScratchRetention,
   ThemePreference,
 } from '@shared/settings';
-import { clampUiScale, DEFAULT_APP_SETTINGS, IMPORTED_CONTEXT_LIMITS, DEFAULT_PERMISSION_MODES, ONBOARDING_VERSION, RUNTIME_SHELLS, type RuntimeShell } from '@shared/settings';
+import { DEFAULT_APP_SETTINGS, type RuntimeShell } from '@shared/settings';
 import type { ToolAccessRule } from '@shared/toolAccess';
-import { setAgyCommandVerdict, type AgyCommandVerdict } from '@shared/agyRules';
+import type { AgyCommandVerdict } from '@shared/agyRules';
 import { AGY_PROVIDER_ID, CODEX_PROVIDER_ID, runsOnMageRuntime, writesClaudeTranscript, type CustomProvider, type ProviderModel } from '@shared/providers';
-import { applyBackgroundOpacity, applyThemeFromSettings, findActiveImportedTheme, resolveTheme, systemPrefersDark } from './theme';
+import { applyThemeFromSettings, findActiveImportedTheme, resolveTheme, systemPrefersDark } from './theme';
 import { toWidgetSnapshot } from './widgetView';
 import { deriveTitleFromPrompt, isPlaceholderTitle, isSlashCommandText, NEW_CONVERSATION_TITLE, renamedTitleFrom } from './conversationTitle';
 import { resolveDefaultModel } from './modelDefaults';
@@ -1757,49 +1758,13 @@ export function createWorkbenchStore(mage: MageClient) {
       for (const tab of tabs) if (tab.prNumber !== undefined) void get().refreshPr(tab.id);
     },
 
-    // Descubre las cuentas en disco y las mapea a presentacion. Conserva la cuenta activa si sigue
-    // existiendo; si no, elige la primera con login (o la primera disponible).
-    loadModelCatalog: async (configDir) => {
-      if (configDir.length === 0 || get().modelCatalogByAccount[configDir] !== undefined) return;
-      const models = await mage.loadModelCatalog(configDir);
-      if (models.length === 0 || get().modelCatalogByAccount[configDir] !== undefined) return;
-      set((s) => ({ modelCatalogByAccount: { ...s.modelCatalogByAccount, [configDir]: models } }));
-    },
-
-    refreshAccounts: async () => {
-      const infos = await mage.listAccounts();
-      // Catalogo de modelos de cada cuenta (P-026 2.4): en segundo plano, no retrasa la lista.
-      for (const info of infos) {
-        void get()
-          .loadModelCatalog(info.configDir)
-          .catch((err: unknown) => console.warn('No se pudo leer el catalogo de modelos:', describeError(err)));
-      }
-      set((s) => {
-        // toAccountView repone el placeholder de uso; re-fusionamos el uso real ya conocido para no
-        // parpadear a 0% mientras se re-descubren las cuentas (el placeholder solo queda si no hay dato).
-        const accounts = infos.map((infoItem) => {
-          const view = toAccountView(infoItem, s.settings.accentByAccount[infoItem.configDir]);
-          const info = s.usageByAccount[view.id];
-          return info === null || info === undefined ? view : { ...view, usage: toUsageWindows(info, Date.now()) };
-        });
-        return {
-          accounts,
-          activeAccountId: accounts.some((a) => a.id === s.activeAccountId)
-            ? s.activeAccountId
-            : pickDefaultAccountId(accounts),
-        };
-      });
-      confirmCodexAccounts(mage, infos, (confirmed) => set((state) => ({ accounts: applyCodexConfirmation(state.accounts, confirmed) })));
-      if (settingsReady) get().assignAccountAccents();
-    },
-
-    assignAccountAccents: () => {
-      const saved = get().settings.accentByAccount;
-      const accentByAccount = assignMissingAccents(get().accounts.map((a) => a.id), saved);
-      if (accentByAccount === saved) return;
-      set((s) => ({ settings: { ...s.settings, accentByAccount }, accounts: applyAccentOverrides(s.accounts, accentByAccount) }));
-      scheduleSettingsPersist(mage, get);
-    },
+    ...createAccountsActions({
+      mage,
+      get,
+      set,
+      persistSettings: () => scheduleSettingsPersist(mage, get),
+      isSettingsReady: () => settingsReady,
+    }),
 
     // Abre una pestana real ligada a {cuenta, proyecto, modelo}. La sesion del motor se crea perezosa
     // al primer mensaje (ensureSession) para no lanzar procesos hasta que se use.
@@ -1933,48 +1898,13 @@ export function createWorkbenchStore(mage: MageClient) {
       flushPendingCliTitle(mage, get, set, tabId);
     },
 
-    saveChatProject: async (project) => {
-      const clean = { ...project, name: project.name.trim(), instructions: project.instructions.trim(), cwd: project.cwd?.trim() || null };
-      if (clean.name.length === 0) return;
-      set((s) => ({ settings: { ...s.settings, chatProjects: [...s.settings.chatProjects.filter((p) => p.id !== clean.id), clean] } }));
-      await mage.saveSettings(get().settings);
-    },
-    deleteChatProject: (projectId) => {
-      set((s) => ({
-        settings: { ...s.settings, chatProjects: s.settings.chatProjects.filter((p) => p.id !== projectId) },
-        tabs: s.tabs.map((t) => t.projectId === projectId ? { ...t, projectId: undefined } : t),
-      }));
-      scheduleSettingsPersist(mage, get);
-      schedulePersist(mage, get);
-    },
-    assignChatProject: (sessionId, tabId, projectId) => {
-      set((s) => ({
-        settings: { ...s.settings, chatProjects: s.settings.chatProjects.map((p) => ({
-          ...p, sessionIds: projectId === p.id && sessionId !== undefined
-            ? [...new Set([...p.sessionIds, sessionId])]
-            : p.sessionIds.filter((id) => id !== sessionId),
-        })) },
-        tabs: tabId === undefined ? s.tabs : s.tabs.map((t) => t.id === tabId ? { ...t, projectId: projectId ?? undefined } : t),
-      }));
-      scheduleSettingsPersist(mage, get);
-      schedulePersist(mage, get);
-    },
-
-    // Carga el historial en disco de la cuenta activa (M2.6). Tolerante: un fallo no rompe el shell.
-    loadConversationHistory: async () => {
-      const accountId = get().activeAccountId;
-      if (accountId.length === 0 || !HISTORY_PROVIDERS.includes(get().accounts.find((account) => account.id === accountId)?.providerId ?? '')) {
-        set({ conversationHistory: [] });
-        return;
-      }
-      try {
-        const list = await mage.listConversations(accountId);
-        if (get().activeAccountId !== accountId) return; // cambio de cuenta mientras cargaba: descartar
-        set({ conversationHistory: list });
-      } catch (err) {
-        console.warn('No se pudo cargar el historial de conversaciones:', describeError(err));
-      }
-    },
+    ...createHistoryActions({
+      mage,
+      get,
+      set,
+      persistSettings: () => scheduleSettingsPersist(mage, get),
+      persistTabs: () => schedulePersist(mage, get),
+    }),
 
     // Abre una conversacion del historial (M2.6). La cuenta ACTIVA es la que manda: una conversacion
     // compartida se abre con la cuenta que este seleccionada, sin que la app cambie de cuenta por detras
@@ -2180,54 +2110,6 @@ export function createWorkbenchStore(mage: MageClient) {
       }
     },
 
-    // Consulta el uso real de una cuenta (main cachea >=180 s) y lo fusiona en la Account de
-    // presentacion (asi StatusBar/UsagePanel/Popover leen account.usage sin cambios). Ante error
-    // (p.ej. sin login) guarda el mensaje en usageErrorByAccount para el dashboard; nunca lo traga.
-    refreshUsage: async (configDir) => {
-      if (configDir.length === 0) return;
-      // Uso de SUSCRIPCION: Claude por su endpoint, Codex por lo que trae su sesion (`usage_limits`). Una
-      // cuenta que factura la API no tiene ventanas, y agy por clave tampoco (el de su suscripcion va
-      // aparte en el panel, por su `/usage`).
-      const account = get().accounts.find((a) => a.id === configDir);
-      if (account !== undefined && account.providerId === 'agy') {
-        if (!account.apiBilled) await refreshAgyUsage(set, configDir);
-        return;
-      }
-      try {
-        const info = await mage.getUsage(configDir);
-        if (info === null) {
-          set((s) => ({ usageErrorByAccount: { ...s.usageErrorByAccount, [configDir]: null } }));
-          return;
-        }
-        const windows = toUsageWindows(info, Date.now());
-        set((s) => ({
-          usageByAccount: { ...s.usageByAccount, [configDir]: info },
-          usageErrorByAccount: { ...s.usageErrorByAccount, [configDir]: null },
-          accounts: s.accounts.map((a) => (a.id === configDir ? { ...a, usage: windows } : a)),
-        }));
-      } catch (err) {
-        set((s) => ({ usageErrorByAccount: { ...s.usageErrorByAccount, [configDir]: describeError(err) } }));
-      }
-    },
-
-    // Refresca el uso de la cuenta activa (la que muestran sidebar/status bar/dashboard).
-    refreshActiveUsage: async () => {
-      const accountId = get().activeAccountId;
-      if (accountId.length > 0) await get().refreshUsage(accountId);
-    },
-
-    // Consulta el estado del servicio de Claude (global). Ante error, deja el status previo (best-effort).
-    refreshStatus: async () => {
-      try {
-        const status = await mage.getStatus();
-        set({ status });
-      } catch (err) {
-        // El estado es informativo (no critico): no rompemos la UI, pero lo dejamos trazado (se reintenta
-        // en el proximo refresco). El forwarder de consola del renderer lo envia al LogBus.
-        console.warn('No se pudo refrescar el estado de Claude:', describeError(err));
-      }
-    },
-
     // El camino POR DEFECTO de "pestaña nueva" ya NO pasa por el dialogo (peticion del usuario): se abre
     // directamente con los valores por defecto (cuenta activa, modelo/esfuerzo resueltos) en una carpeta
     // temporal, que es justo lo que ya hacia `createConversation`. El dialogo sigue existiendo para quien
@@ -2296,248 +2178,16 @@ export function createWorkbenchStore(mage: MageClient) {
       if (decision.open) get().openReleaseNotes();
     },
 
-    // Sustituye las reglas de notificacion (edicion completa desde SettingsView) y persiste.
-    saveNotificationRules: (rules) => {
-      set((s) => ({ settings: { ...s.settings, notificationRules: rules } }));
-      scheduleSettingsPersist(mage, get);
-    },
-
-    // Cambia la preferencia de tema base. Elegir claro/oscuro/sistema DESACTIVA cualquier tema importado
-    // (activeThemeId -> null). Aplica al DOM ya (feedback inmediato) y persiste con debounce.
-    setTheme: (pref) => {
-      set((s) => ({ settings: { ...s.settings, theme: pref, activeThemeId: null } }));
-      applyThemeFromSettings(get().settings, systemPrefersDark());
-      scheduleSettingsPersist(mage, get);
-    },
-
-    setUiScale: (percent) => {
-      // Se acota en el store y no solo en el deslizador: esta accion es el contrato, y un valor de
-      // fuera (un ajuste a mano, una version futura) no puede dejar la app ilegible.
-      const clamped = clampUiScale(percent);
-      set((s) => ({ settings: { ...s.settings, uiScale: clamped } }));
-      mage.setUiScale(clamped);
-      scheduleSettingsPersist(mage, get);
-    },
-
-    // PERS-3 (P-028, 2): color de una cuenta. `undefined` vuelve al de su posicion.
-    setAccountAccent: (accountId, colorIndex) => {
-      set((s) => {
-        const { [accountId]: _previo, ...rest } = s.settings.accentByAccount;
-        const accentByAccount = colorIndex === undefined ? rest : { ...rest, [accountId]: colorIndex };
-        return { settings: { ...s.settings, accentByAccount }, accounts: applyAccentOverrides(s.accounts, accentByAccount) };
-      });
-      scheduleSettingsPersist(mage, get);
-    },
-
-    setClaudeAiConnectorsEnabled: (accountId, enabled) => {
-      set((s) => {
-        const rest = s.settings.claudeAiConnectorsOff.filter((id) => id !== accountId);
-        return { settings: { ...s.settings, claudeAiConnectorsOff: enabled ? rest : [...rest, accountId] } };
-      });
-      scheduleSettingsPersist(mage, get);
-    },
-
-    setAgyCommandVerdict: (command, verdict) => {
-      set((s) => ({ settings: { ...s.settings, agyCommandRules: setAgyCommandVerdict(s.settings.agyCommandRules, command, verdict) } }));
-      persistSettingsNow(mage, get);
-    },
-
-    setAgyLinkedPaths: (paths) => {
-      set((s) => ({ settings: { ...s.settings, agyLinkedPaths: paths } }));
-      persistSettingsNow(mage, get);
-    },
-
-    setDefaultProvider: (providerId) => {
-      set((s) => ({ settings: { ...s.settings, defaultProvider: providerId } }));
-      scheduleSettingsPersist(mage, get);
-    },
-
-    setArtifactEnabled: (enabled) => {
-      set((s) => ({ settings: { ...s.settings, artifactEnabled: enabled } }));
-      scheduleSettingsPersist(mage, get);
-    },
-
-    setDefaultPermissionMode: (mode) => {
-      if (!DEFAULT_PERMISSION_MODES.includes(mode)) throw new Error(`Modo de permiso por defecto invalido: ${JSON.stringify(mode)}`);
-      set((s) => ({ settings: { ...s.settings, defaultPermissionMode: mode } }));
-      scheduleSettingsPersist(mage, get);
-    },
-
-    setRuntimeToolAccess: (providerId, rules) => {
-      set((s) => {
-        const { [providerId]: _previous, ...rest } = s.settings.runtimeToolAccess;
-        return { settings: { ...s.settings, runtimeToolAccess: rules.length === 0 ? rest : { ...rest, [providerId]: rules } } };
-      });
-      scheduleSettingsPersist(mage, get);
-    },
-
-    setRuntimeShell: (shell) => {
-      if (!RUNTIME_SHELLS.includes(shell)) throw new Error(`Shell del runtime invalida: ${JSON.stringify(shell)}`);
-      set((s) => ({ settings: { ...s.settings, runtimeShell: shell } }));
-      scheduleSettingsPersist(mage, get);
-    },
-
-    setOnboardingCompleted: (completed) => {
-      set((s) => ({ settings: { ...s.settings, onboardingCompletedVersion: completed ? ONBOARDING_VERSION : 0 } }));
-      scheduleSettingsPersist(mage, get);
-      // Una actualizacion que llego con el asistente a medias se enseña ahora, no debajo de el.
-      if (!completed) return;
-      void get()
-        .showReleaseNotesIfUpdated(isReleaseNotesDevRun())
-        .catch((err: unknown) => console.warn('No se pudieron comprobar las novedades:', describeError(err)));
-    },
-
-    setScratchRetention: (retention) => {
-      set((s) => ({ settings: { ...s.settings, scratchRetention: retention } }));
-      scheduleSettingsPersist(mage, get);
-    },
-
-    setCloseBehavior: (behavior) => {
-      set((s) => ({ settings: { ...s.settings, closeBehavior: behavior } }));
-      scheduleSettingsPersist(mage, get);
-    },
-
-    setNewConversationFolder: (folder) => {
-      set((s) => ({ settings: { ...s.settings, newConversationFolder: folder } }));
-      scheduleSettingsPersist(mage, get);
-    },
-
-    setImportedContextMaxChars: (chars) => {
-      // Se acota aqui y no solo en la UI: el store es el contrato, el input no es su unico llamante.
-      const clamped = Math.min(IMPORTED_CONTEXT_LIMITS.max, Math.max(IMPORTED_CONTEXT_LIMITS.min, Math.round(chars)));
-      set((s) => ({ settings: { ...s.settings, importedContextMaxChars: clamped } }));
-      scheduleSettingsPersist(mage, get);
-    },
-
-    setBackgroundOpacity: (percent) => {
-      // Se acota AQUI y no solo en la UI: esta accion es parte del contrato del store y un slider no es
-      // su unico llamante posible. Por debajo de 50 el texto deja de leerse sobre un escritorio
-      // cualquiera, y un ajuste que permite romper la app no es un ajuste.
-      const clamped = Math.min(100, Math.max(50, Math.round(percent)));
-      set((s) => ({ settings: { ...s.settings, backgroundOpacity: clamped } }));
-      applyBackgroundOpacity(clamped);
-      void mage.setWindowOpacity(clamped).catch((err: unknown) => {
-        // Sin material translucido el alfa mezcla contra el color de fondo en vez de contra el
-        // escritorio: se ve distinto, pero la app no se rompe. Se traza y se sigue.
-        console.warn('No se pudo ajustar el material de la ventana:', describeError(err));
-      });
-      scheduleSettingsPersist(mage, get);
-    },
-
-    // Añade (o reemplaza por id) y activa un tema ya mapeado; aplica al DOM y persiste. Sin red.
-    applyImportedTheme: (imported) => {
-      set((s) => ({
-        settings: {
-          ...s.settings,
-          importedThemes: [...s.settings.importedThemes.filter((t) => t.id !== imported.id), imported],
-          activeThemeId: imported.id,
-        },
-      }));
-      applyThemeFromSettings(get().settings, systemPrefersDark());
-      scheduleSettingsPersist(mage, get);
-    },
-
-    // Elimina un tema importado; si era el activo, vuelve al tema base.
-    removeImportedTheme: (id) => {
-      set((s) => ({
-        settings: {
-          ...s.settings,
-          importedThemes: s.settings.importedThemes.filter((t) => t.id !== id),
-          activeThemeId: s.settings.activeThemeId === id ? null : s.settings.activeThemeId,
-        },
-      }));
-      applyThemeFromSettings(get().settings, systemPrefersDark());
-      scheduleSettingsPersist(mage, get);
-    },
-
-    // Activa un tema importado (id) o vuelve al tema base (null).
-    selectImportedTheme: (id) => {
-      set((s) => ({ settings: { ...s.settings, activeThemeId: id } }));
-      applyThemeFromSettings(get().settings, systemPrefersDark());
-      scheduleSettingsPersist(mage, get);
-    },
-
-    // Activa/desactiva el widget: actualiza y persiste la preferencia, abre/cierra la ventana en main y,
-    // al abrir, empuja un snapshot inmediato (evita widget en blanco hasta el proximo cambio de estado).
-    setWidgetEnabled: (enabled) => {
-      set((s) => ({ settings: { ...s.settings, widgetEnabled: enabled } }));
-      scheduleSettingsPersist(mage, get);
-      void mage.setWidgetEnabled(enabled).catch((err: unknown) =>
-        console.warn('No se pudo cambiar el widget flotante:', describeError(err)),
-      );
-      if (enabled) pushWidgetSnapshotNow(mage, get());
-    },
-
-    // Fija (o borra) el modelo por defecto de un proveedor (F3). Guard clauses: sin proveedor no se hace
-    // nada; con modelo vacio se QUITA la clave en vez de guardar '' (una cadena vacia en el mapa seria un
-    // "configurado" que no configura nada, y obligaria a todos los consumidores a tratarla aparte).
-    setDefaultModelForProvider: (providerId, model) => {
-      const provider = providerId.trim();
-      if (provider.length === 0) return;
-      const value = model.trim();
-      set((s) => {
-        const next = { ...s.settings.defaultModelByProvider };
-        if (value.length === 0) delete next[provider];
-        else next[provider] = value;
-        return { settings: { ...s.settings, defaultModelByProvider: next } };
-      });
-      scheduleSettingsPersist(mage, get);
-    },
-
-    // Fija/borra el override de un atajo (D5). Una accion tiene como mucho un override: se sustituye el
-    // anterior en vez de acumular. `keys === null` borra el override (vuelve al default del catalogo).
-    setKeybindingOverride: (actionId, keys) => {
-      set((s) => {
-        const withoutExisting = s.settings.keybindingOverrides.filter((o) => o.actionId !== actionId);
-        const next = keys === null ? withoutExisting : [...withoutExisting, { actionId, keys }];
-        return { settings: { ...s.settings, keybindingOverrides: next } };
-      });
-      scheduleSettingsPersist(mage, get);
-    },
-
-    resetAllKeybindings: () => {
-      set((s) => ({ settings: { ...s.settings, keybindingOverrides: [] } }));
-      scheduleSettingsPersist(mage, get);
-    },
-
-    // Anade o actualiza un proveedor del usuario (E2). Upsert por id EN SU SITIO (map en vez de
-    // filter+push) para que editar uno no lo mande al final de la lista de Configuracion.
-    saveCustomProvider: async (provider, apiKeyUpdate = { kind: 'keep' }) => {
-      if (apiKeyUpdate.kind === 'set') await mage.setProviderApiKey({ providerId: provider.id, apiKey: apiKeyUpdate.value });
-      if (apiKeyUpdate.kind === 'delete') await mage.deleteProviderApiKey(provider.id);
-      set((s) => {
-        const known = s.settings.customProviders.some((p) => p.id === provider.id);
-        const customProviders = known
-          ? s.settings.customProviders.map((p) => (p.id === provider.id ? provider : p))
-          : [...s.settings.customProviders, provider];
-        return { settings: { ...s.settings, customProviders } };
-      });
-      await saveSettingsConfirmed(mage, get);
-    },
-
-    // Elimina un proveedor y, con el, su modelo por defecto (F3): dejar la clave huerfana en
-    // defaultModelByProvider haria que volver a crear un proveedor con el mismo id heredara ese modelo.
-    removeCustomProvider: (id) => {
-      // Y su clave, de la boveda de main: un proveedor recreado con el mismo id no hereda la del viejo.
-      if (get().settings.customProviders.find((p) => p.id === id)?.hasApiKey === true) {
-        void mage.deleteProviderApiKey(id).catch((err: unknown) => console.error(`No se pudo borrar la clave de ${id}:`, describeError(err)));
-      }
-      set((s) => {
-        const defaultModelByProvider = { ...s.settings.defaultModelByProvider };
-        delete defaultModelByProvider[id];
-        // Y su ESFUERZO por defecto, que vive en el mismo mapa bajo `<id>#effort`. Por el mismo motivo
-        // que el modelo: recrear un proveedor con el mismo id no debe heredar los ajustes del viejo.
-        delete defaultModelByProvider[effortSettingKey(id)];
-        return {
-          settings: {
-            ...s.settings,
-            customProviders: s.settings.customProviders.filter((p) => p.id !== id),
-            defaultModelByProvider,
-          },
-        };
-      });
-      scheduleSettingsPersist(mage, get);
-    },
+    ...createSettingsActions({
+      mage,
+      get,
+      set,
+      persistSettings: () => scheduleSettingsPersist(mage, get),
+      persistSettingsNow: () => persistSettingsNow(mage, get),
+      saveSettingsConfirmed: () => saveSettingsConfirmed(mage, get),
+      pushWidgetSnapshot: () => pushWidgetSnapshotNow(mage, get()),
+      isReleaseNotesDevRun,
+    }),
 
     // Crea una pestana nueva clonando {cuenta, proyecto, modelo} de la activa y envia `prompt`. newTab
     // fija la nueva pestana como activa, asi sendActiveMessage la usa como destino.
@@ -3010,12 +2660,6 @@ function settleElicitation(state: WorkbenchState, tabId: string, requestId: stri
   };
 }
 
-// Uso de la suscripción de agy (su `/usage`, gratis; main cachea 180 s). Un fallo queda como `unavailable`.
-async function refreshAgyUsage(set: SetFn, accountId: string): Promise<void> {
-  const snapshot = await window.mage.readAgyUsage(accountId).catch((err: unknown): AgyUsageSnapshot => ({ status: 'unavailable', reason: describeError(err), fetchedAt: Date.now() }));
-  set((s) => ({ agyUsageByAccount: { ...s.agyUsageByAccount, [accountId]: snapshot } }));
-}
-
 // Migra la conversación de una pestaña a una cuenta de otro proveedor (o de otra cuenta de Codex/agy) y la reabre
 // ahí. Se cierra la pestaña y se para su sesión ANTES: el origen se retira al acabar y nadie debe estar escribiéndolo.
 async function migrateToOtherProvider(
@@ -3046,8 +2690,6 @@ function asAccountProvider(id: string): AccountProviderId {
   throw new Error(`Proveedor de cuenta desconocido: ${JSON.stringify(id)}`);
 }
 
-// Proveedores cuyo historial en disco sabe leer Mage (un lector por CLI: el de Claude y el rollout de Codex).
-const HISTORY_PROVIDERS: readonly string[] = ['claude', CODEX_PROVIDER_ID, AGY_PROVIDER_ID];
 // Los que llevan su propia conversación (su id viene del CLI en el `session_init`).
 const OWN_CONVERSATION_PROVIDERS: readonly string[] = [CODEX_PROVIDER_ID, AGY_PROVIDER_ID];
 
@@ -3609,15 +3251,6 @@ async function closeMatchingTab(get: () => WorkbenchState, sessionId: string): P
   const state = get();
   const tab = state.tabs.find((t) => (state.sessionIdByChat[t.id] ?? t.resumeSessionId) === sessionId);
   if (tab !== undefined) await state.closeTab(tab.id);
-}
-
-// Cuenta activa por defecto: la primera SUSCRIPCION de Claude con login; si no, cualquiera con login;
-// si no, la primera disponible; si no, "". Una cuenta que factura la API nunca es la de por defecto
-// (grupo E): usarla tiene que ser una eleccion.
-function pickDefaultAccountId(accounts: readonly Account[]): string {
-  const subscription = accounts.find((a) => a.loginStatus === 'logged_in' && a.providerId === 'claude' && !a.apiBilled);
-  const loggedIn = accounts.find((a) => a.loginStatus === 'logged_in' && !a.apiBilled);
-  return (subscription ?? loggedIn ?? accounts[0])?.id ?? '';
 }
 
 // Pestaña nueva en una cuenta de otro CLI: su proveedor, el modelo por defecto de ese proveedor (o el
