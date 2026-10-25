@@ -4,6 +4,7 @@ import type { Tab } from './types';
 import type { WorkbenchState } from './workbenchStore';
 import { buildCiMonitorEvent, pendingAutoFix } from './ciMonitorEvent';
 import { prBarView } from './chatInfoView';
+import { CREATE_PR_PROMPT } from '@shared/permissionPolicy';
 
 // PR y CI de una pestaña (grupo D, como Claude Desktop). Las acciones del store que hablan con `gh` por
 // main, fuera de `workbenchStore.ts` para no engordarlo; el store las mezcla tal cual.
@@ -42,11 +43,6 @@ export interface PrDeps {
   readonly sendToTab: (tabId: string, text: string) => Promise<void>;
   readonly archiveTab: (tabId: string) => Promise<void>;
 }
-
-export const CREATE_PR_PROMPT =
-  'Crea un pull request de esta rama. Revisa el diff y haz commit de lo pendiente con un mensaje descriptivo (si estás en la rama principal, crea antes una rama nueva). ' +
-  'Haz un push normal de la rama a su remoto, sin forzar, y abre el PR con `gh pr create` con un título y una descripción que expliquen el cambio. ' +
-  'Cuando exista, escribe su URL entre <pr-created> y </pr-created>.';
 
 // Checks rotos y conflictos ya mandados al agente, por pestaña: `${sha}:${check}`. Solo en memoria.
 // ponytail: tras reiniciar, un PR que sigue roto vuelve a mandarse una vez (el auto-fix sigue encendido).

@@ -41,8 +41,9 @@ import {
   restartingText,
   turnUsageText,
 } from './engineBlocks';
-import { addAlwaysAllow, automaticAnswer, prTurnDenyMessage, removeAlwaysAllow, type AutomaticAnswer } from './permissionRules';
-import { createPrActions, CREATE_PR_PROMPT, resetPrActionsState, type PrActions, type PrState } from './prActions';
+import { addAlwaysAllow, removeAlwaysAllow } from './permissionRules';
+import { automaticAnswer, CREATE_PR_PROMPT, prTurnDenyMessage, type AutomaticAnswer } from '@shared/permissionPolicy';
+import { createPrActions, resetPrActionsState, type PrActions, type PrState } from './prActions';
 import { isPrCreateCommand, prNumberFromCreatedTag, prNumberFromUrl } from './prBinding';
 import { worktreeOfCwd } from '@shared/worktree';
 import { createdFileFrom } from './createdFilesView';
