@@ -1787,6 +1787,44 @@ describe('PR de la pestaña (grupo D)', () => {
     expect(store.getState().pendingByChat['a'] ?? []).toEqual([]);
   });
 
+  // H1 de la devolución 14: la barrera del turno de PR manda sobre «Permitir siempre Bash». Antes salía
+  // primero el allow, main lo aceptaba y el deny recibía `already_answered` en silencio.
+  const FORCE_PUSH = { requestId: 'r1', toolUseId: 'u1', toolName: 'Bash', input: { command: 'git push --force' }, description: null, requiresUserInteraction: false, displayName: null };
+
+  it('handleEvent_reglaSiempreBashYPushForzadoEnElTurnoDePr_soloDeniega', () => {
+    const answerPermission = vi.fn().mockResolvedValue({ status: 'accepted' });
+    const { store } = prStore({ answerPermission, notify: vi.fn().mockResolvedValue(undefined) });
+    store.setState({ tabs: [tab('a', { alwaysAllowTools: ['Bash'] })], prGuardByChat: { a: true } });
+
+    store.getState().handleEvent('s-a', { kind: 'permission_request', request: FORCE_PUSH });
+
+    expect(answerPermission.mock.calls.map(([p]) => (p as { decision: { behavior: string } }).decision.behavior)).toEqual(['deny']);
+  });
+
+  it('handleEvent_segundoPlanoConReglaSiempreBashYTurnoDePr_soloDeniega', async () => {
+    const answerPermission = vi.fn().mockResolvedValue({ status: 'accepted' });
+    const notify = vi.fn().mockResolvedValue(undefined);
+    const { store } = prStore({ answerPermission, notify, listConversations: vi.fn().mockResolvedValue([]) });
+    store.setState({ tabs: [tab('a', { alwaysAllowTools: ['Bash'] })], prGuardByChat: { a: true } });
+    await store.getState().closeTab('a');
+
+    store.getState().handleEvent('s-a', { kind: 'permission_request', request: FORCE_PUSH });
+
+    expect(answerPermission.mock.calls.map(([p]) => (p as { decision: { behavior: string } }).decision.behavior)).toEqual(['deny']);
+    expect(notify).not.toHaveBeenCalled();
+    expect(store.getState().backgroundSessions['s-a']?.state).toBe('working');
+  });
+
+  it('handleEvent_denegacionAutomaticaRechazadaPorMain_loAvisa', async () => {
+    const answerPermission = vi.fn().mockResolvedValue({ status: 'rejected', reason: 'already_answered' });
+    const { store } = prStore({ answerPermission });
+    store.setState({ prGuardByChat: { a: true } });
+
+    store.getState().handleEvent('s-a', { kind: 'permission_request', request: FORCE_PUSH });
+
+    await vi.waitFor(() => expect(useNotificationStore.getState().toasts.some((n) => n.level === 'error' && (n.body ?? '').includes('already_answered'))).toBe(true));
+  });
+
   it('handleEvent_pushForzadoFueraDelTurnoDePr_pideComoSiempre', () => {
     const answerPermission = vi.fn();
     const { store } = prStore({ answerPermission, notify: vi.fn().mockResolvedValue(undefined) });

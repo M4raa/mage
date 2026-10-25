@@ -10,6 +10,9 @@
 //
 // Nunca se crea una regla sola: solo la crea el usuario pulsando el boton de la tarjeta.
 
+import type { PermissionRequest } from '@shared/events';
+import { parseAskUserQuestion } from '@shared/askUserQuestion';
+
 // ¿Esta tool tiene permiso permanente en esta conversacion?
 export function isAlwaysAllowed(rules: readonly string[], toolName: string): boolean {
   const wanted = toolName.trim();
@@ -88,6 +91,31 @@ function blockedFlag(tokens: readonly string[], rule: Rule): string | null {
     if (rule.plusRefspec === true && token.startsWith('+')) return token;
   }
   return null;
+}
+
+// Mensaje de la denegacion: le dice al agente que hacer en su lugar.
+export function prTurnDenyMessage(blocked: string): string {
+  return `Mage no permite \`${blocked}\` en el turno de crear el PR: haz un push normal de la rama, sin forzar ni saltar los hooks, y abre el PR en este repositorio.`;
+}
+
+// --- Respuesta automatica a un permiso (H1 de la devolucion 14) --------------------------------------
+// Orden fijo: barrera del turno de PR > fuera del proyecto > regla «Permitir siempre» > preguntar (null).
+// La barrera va primero porque una regla «Permitir siempre Bash» no puede abrirle paso a un push forzado:
+// antes salia el allow, main lo aceptaba y el deny llegaba tarde. Una PREGUNTA no se auto-permite nunca:
+// es un turno de palabra, no una autorizacion.
+export type AutomaticAnswer = { readonly behavior: 'deny'; readonly blocked: string } | { readonly behavior: 'allow' };
+
+export interface AutomaticAnswerContext {
+  readonly prGuard: boolean;
+  readonly alwaysAllowTools: readonly string[];
+  readonly request: Pick<PermissionRequest, 'toolName' | 'input' | 'outsideProject'>;
+}
+
+export function automaticAnswer({ prGuard, alwaysAllowTools, request }: AutomaticAnswerContext): AutomaticAnswer | null {
+  const blocked = prGuard && request.toolName === 'Bash' ? prTurnBlockReason(String(request.input.command ?? '')) : null;
+  if (blocked !== null) return { behavior: 'deny', blocked };
+  if (request.outsideProject === true || parseAskUserQuestion(request.input) !== null) return null;
+  return isAlwaysAllowed(alwaysAllowTools, request.toolName) ? { behavior: 'allow' } : null;
 }
 
 // Indice donde empieza el comando (`git push`, `gh pr create`), saltando `git -C <ruta>`/`-c k=v`.

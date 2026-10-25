@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { addAlwaysAllow, isAlwaysAllowed, prTurnBlockReason, removeAlwaysAllow, sanitizeAlwaysAllow } from './permissionRules';
+import { addAlwaysAllow, automaticAnswer, isAlwaysAllowed, prTurnBlockReason, removeAlwaysAllow, sanitizeAlwaysAllow } from './permissionRules';
 
 describe('isAlwaysAllowed', () => {
   it('isAlwaysAllowed_toolConRegla_true', () => {
@@ -101,5 +101,35 @@ describe('prTurnBlockReason', () => {
   it('prTurnBlockReason_vacioOComandoAjeno_null', () => {
     expect(prTurnBlockReason('')).toBeNull();
     expect(prTurnBlockReason('pnpm test --force')).toBeNull();
+  });
+});
+
+// Orden fijo (H1 de la devolución 14): barrera de PR > fuera del proyecto > regla > preguntar.
+describe('automaticAnswer', () => {
+  const bash = (command: string, outsideProject?: boolean) => ({ toolName: 'Bash', input: { command }, ...(outsideProject === undefined ? {} : { outsideProject }) });
+
+  it('automaticAnswer_reglaBashYBarreraDePr_deniega', () => {
+    expect(automaticAnswer({ prGuard: true, alwaysAllowTools: ['Bash'], request: bash('git push --force') })).toEqual({ behavior: 'deny', blocked: 'git push --force' });
+  });
+
+  it('automaticAnswer_barreraDePrFueraDelProyecto_deniega', () => {
+    expect(automaticAnswer({ prGuard: true, alwaysAllowTools: [], request: bash('git push -f', true) })?.behavior).toBe('deny');
+  });
+
+  it('automaticAnswer_barreraConComandoPermitido_aplicaLaRegla', () => {
+    expect(automaticAnswer({ prGuard: true, alwaysAllowTools: ['Bash'], request: bash('git push origin rama') })).toEqual({ behavior: 'allow' });
+  });
+
+  it('automaticAnswer_reglaFueraDelProyecto_pregunta', () => {
+    expect(automaticAnswer({ prGuard: false, alwaysAllowTools: ['Bash'], request: bash('ls', true) })).toBeNull();
+  });
+
+  it('automaticAnswer_preguntaConRegla_pregunta', () => {
+    const question = { toolName: 'AskUserQuestion', input: { questions: [{ question: '¿Cuál?', header: 'h', options: [{ label: 'a', description: '' }, { label: 'b', description: '' }], multiSelect: false }] } };
+    expect(automaticAnswer({ prGuard: false, alwaysAllowTools: ['AskUserQuestion'], request: question })).toBeNull();
+  });
+
+  it('automaticAnswer_sinReglaNiBarrera_pregunta', () => {
+    expect(automaticAnswer({ prGuard: false, alwaysAllowTools: [], request: bash('git push --force') })).toBeNull();
   });
 });

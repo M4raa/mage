@@ -5,7 +5,7 @@ import type { PersistedTab } from '@shared/state';
 import { disposeTranscriptStore, transcriptStoreForTab } from './transcriptStore';
 import type { ContextUsage, MageEvent, McpServerStatus, PermissionDecision, PermissionRequest, SlashCommandInfo, SubagentInfo, TurnUsage } from '@shared/events';
 import { buildUpdatedInput, parseAskUserQuestion } from '@shared/askUserQuestion';
-import type { CloseAnswer, NotificationTarget, PermissionMode, PermissionModesByProviderView, SessionEventPayload } from '@shared/ipc';
+import type { AnswerPermissionParams, CloseAnswer, NotificationTarget, PermissionMode, PermissionModesByProviderView, SessionEventPayload } from '@shared/ipc';
 import { defaultModeOf, hasPermissionModes, permissionCycleForProvider } from './stepSliderModel';
 import { IDLE_UPDATE_STATE, type UpdateState } from '@shared/update';
 import { isPermissionMode, MAIN_WINDOW_ID, PERMISSION_MODES } from '@shared/ipc';
@@ -41,7 +41,7 @@ import {
   restartingText,
   turnUsageText,
 } from './engineBlocks';
-import { addAlwaysAllow, isAlwaysAllowed, prTurnBlockReason, removeAlwaysAllow } from './permissionRules';
+import { addAlwaysAllow, automaticAnswer, prTurnDenyMessage, removeAlwaysAllow, type AutomaticAnswer } from './permissionRules';
 import { createPrActions, CREATE_PR_PROMPT, resetPrActionsState, type PrActions, type PrState } from './prActions';
 import { isPrCreateCommand, prNumberFromCreatedTag, prNumberFromUrl } from './prBinding';
 import { worktreeOfCwd } from '@shared/worktree';
@@ -656,11 +656,15 @@ function applyBackgroundEvent(
   const entry = get().backgroundSessions[sessionId];
   if (entry === undefined) return; // sesion ya parada: evento rezagado, se ignora
   // «Permitir siempre aqui» sigue valiendo con la pestaña cerrada (P-026, 1.8): se contesta sola, sin
-  // pasar a «pendiente de accion» ni avisar de un permiso que el usuario ya concedio.
-  if (event.kind === 'permission_request' && event.request.outsideProject !== true && isAlwaysAllowed(entry.alwaysAllowTools, event.request.toolName)) {
-    void mage
-      .answerPermission({ sessionId, requestId: event.request.requestId, decision: { behavior: 'allow' } })
-      .catch((err: unknown) => console.warn(`No se pudo auto-permitir en segundo plano (${sessionId}):`, describeError(err)));
+  // pasar a «pendiente de accion» ni avisar de un permiso que el usuario ya concedio. Y la barrera del turno
+  // de PR que estaba armada al cerrar tambien, por delante de la regla (H1 de la devolucion 14).
+  const automatic = event.kind === 'permission_request'
+    ? automaticAnswer({ prGuard: entry.prGuard === true, alwaysAllowTools: entry.alwaysAllowTools, request: event.request })
+    : null;
+  if (event.kind === 'permission_request' && automatic !== null) {
+    sendAutomaticAnswer(mage, { sessionId, requestId: event.request.requestId, decision: decisionOf(automatic) }, (err) =>
+      reportActionError('No se pudo contestar el permiso en segundo plano', err, 'chat'),
+    );
     return;
   }
   // La notificacion va ANTES del corte por "estado sin cambio", y no despues: las reglas del usuario
@@ -1416,6 +1420,7 @@ export function createWorkbenchStore(mage: MageClient) {
           state: get().statusByChat[tabId] === 'needs_permission' ? 'needs_action' : 'working',
           sinceMs: Date.now(),
           alwaysAllowTools: tab.alwaysAllowTools ?? [],
+          prGuard: get().prGuardByChat[tabId] === true,
         };
         set((s) => ({ backgroundSessions: { ...s.backgroundSessions, [sessionId]: entry } }));
         armBackgroundTtl(get, sessionId);
@@ -2913,12 +2918,13 @@ export function createWorkbenchStore(mage: MageClient) {
       // Auto-permitido (2.3b): el reducer ya decidio que esta peticion no lleva tarjeta ni entra en la
       // cola; la RESPUESTA va aqui, que es donde el store puede hablar por IPC, con el requestId del
       // propio evento. Mismo criterio (`isAutoAllowedRequest`) en los dos sitios. Nunca la pestaña
-      // "activa": el evento manda la suya.
+      // "activa": el evento manda la suya. La barrera del turno de PR se evalua ANTES y gana a la regla.
+      denyPrTurnCommand(mage, get, set, sessionId, tabId, event);
       const autoAllowed = event.kind === 'permission_request' && isAutoAllowedRequest(get(), tabId, event.request);
       if (autoAllowed) {
-        void mage
-          .answerPermission({ sessionId, requestId: event.request.requestId, decision: { behavior: 'allow' } })
-          .catch((err: unknown) => failChat(set, tabId, describeError(err)));
+        sendAutomaticAnswer(mage, { sessionId, requestId: event.request.requestId, decision: { behavior: 'allow' } }, (err) =>
+          failChat(set, tabId, describeError(err)),
+        );
       }
       // Se deja `find` a proposito: `tabs` son unidades, no miles. Un indice por id habria que
       // mantenerlo sincronizado en cada alta/baja/reorden de pestaña — complejidad real a cambio de
@@ -2935,7 +2941,6 @@ export function createWorkbenchStore(mage: MageClient) {
         void get().refreshPr(tab.id).catch((err: unknown) => console.warn('No se pudo leer el PR:', describeError(err)));
       }
       detectPrBinding(get, tabId, event);
-      denyPrTurnCommand(mage, get, set, sessionId, tabId, event);
       // El id de conversación de Codex/agy se conoce al arrancar: se persiste para poder reabrir la conversación.
       // Y sus preferencias: main ya liga la sesión a la conversación (F2.1), así que lo elegido antes del
       // arranque deja de estar bajo el id de sesión de Mage y queda en la conversación que se reabrirá.
@@ -3112,16 +3117,33 @@ export function headPermission(state: Pick<WorkbenchState, 'pendingByChat'>, tab
 // Una PREGUNTA no se auto-permite ni habiendo regla: no es una autorizacion, es un turno de palabra
 // que hay que contestar con datos (y su regla no puede existir — la tarjeta de permiso, que es la unica
 // que crea reglas, no se pinta para preguntas).
+// Fuera del proyecto o red (runtime propio, D2 de P-033) la regla nunca la cubre, y la barrera del turno de
+// PR le gana (ver `automaticAnswer`).
 function isAutoAllowedRequest(state: WorkbenchState, tabId: string, request: PermissionRequest): boolean {
-  // Fuera del proyecto o red (runtime propio, D2 de P-033): la regla nunca la cubre.
-  if (request.outsideProject === true) return false;
-  return parseAskUserQuestion(request.input) === null && shouldAutoAllow(state, tabId, request.toolName);
+  return automaticAnswerFor(state, tabId, request)?.behavior === 'allow';
 }
 
-export function shouldAutoAllow(state: WorkbenchState, tabId: string, toolName: string): boolean {
+function automaticAnswerFor(state: WorkbenchState, tabId: string, request: PermissionRequest): AutomaticAnswer | null {
   const tab = state.tabs.find((t) => t.id === tabId);
-  if (tab === undefined) return false;
-  return isAlwaysAllowed(tab.alwaysAllowTools ?? [], toolName);
+  if (tab === undefined) return null;
+  return automaticAnswer({ prGuard: state.prGuardByChat[tabId] === true, alwaysAllowTools: tab.alwaysAllowTools ?? [], request });
+}
+
+function decisionOf(answer: AutomaticAnswer): PermissionDecision {
+  return answer.behavior === 'allow' ? { behavior: 'allow' } : { behavior: 'deny', message: prTurnDenyMessage(answer.blocked) };
+}
+
+// Respuesta que Mage da sola (regla o barrera). Un recibo `rejected` es que otra respuesta llego antes que
+// esta: se avisa y queda trazado, nunca en silencio (H1 de la devolucion 14).
+function sendAutomaticAnswer(mage: MageClient, params: AnswerPermissionParams, onError: (err: unknown) => void): void {
+  void mage
+    .answerPermission(params)
+    .then((receipt) => {
+      if (receipt?.status !== 'rejected') return;
+      const verb = params.decision.behavior === 'deny' ? 'denegar' : 'permitir';
+      reportActionError(`Mage no pudo ${verb} el permiso automáticamente`, new Error(`petición ${params.requestId}: ${receipt.reason}`), 'chat');
+    })
+    .catch(onError);
 }
 
 // --- Reducer del motor (fuera del store: logica de lectura pura sobre el estado) ----------------
@@ -3556,19 +3578,18 @@ function toastIfHidden(get: () => WorkbenchState, event: MageEvent, context: Hid
 
 // Motivo por el que la barrera del turno de PR rechaza este permiso, o null.
 function prTurnDenial(state: WorkbenchState, tabId: string, request: PermissionRequest): string | null {
-  if (state.prGuardByChat[tabId] !== true || request.toolName !== 'Bash') return null;
-  return prTurnBlockReason(String(request.input.command ?? ''));
+  const answer = automaticAnswerFor(state, tabId, request);
+  return answer?.behavior === 'deny' ? answer.blocked : null;
 }
 
 function denyPrTurnCommand(mage: MageClient, get: () => WorkbenchState, set: SetFn, sessionId: string, tabId: string, event: MageEvent): void {
   if (event.kind !== 'permission_request') return;
   const blocked = prTurnDenial(get(), tabId, event.request);
   if (blocked === null) return;
-  const message = `Mage no permite \`${blocked}\` en el turno de crear el PR: haz un push normal de la rama, sin forzar ni saltar los hooks, y abre el PR en este repositorio.`;
   patchBlocks(set, tabId, (blocks) => [...blocks, { kind: 'system', id: nextBlockId(), text: `Bloqueado durante «Crear PR»: ${blocked}` }]);
-  void mage
-    .answerPermission({ sessionId, requestId: event.request.requestId, decision: { behavior: 'deny', message } })
-    .catch((err: unknown) => failChat(set, tabId, describeError(err)));
+  sendAutomaticAnswer(mage, { sessionId, requestId: event.request.requestId, decision: { behavior: 'deny', message: prTurnDenyMessage(blocked) } }, (err) =>
+    failChat(set, tabId, describeError(err)),
+  );
 }
 
 // Lo que se ve al EMPEZAR un turno del usuario: auto-titulo, burbuja, estado, reloj y avisos que caducan.

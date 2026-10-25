@@ -30,6 +30,7 @@ versión.
 - Traer la base de un worktree admite las copias locales de Mage y sigue rechazando cambios sin confirmar.
 - El uso de tokens de un turno de Codex cuenta todas las llamadas al modelo del turno, no solo la última.
 - Una conversación de Codex o agy recupera su modelo y su esfuerzo al reabrirla desde el historial.
+- Durante «Crear PR», un push forzado o saltarse los hooks se deniega aunque la conversación tenga «Permitir siempre Bash», también con la pestaña cerrada.
 - Consultar el estado de Git revalida los permisos de la cuenta antes de devolver datos de caché.
 - La bóveda rechaza explícitamente los backends Linux inseguros, incluso si anuncian cifrado disponible.
 - Refrescar una transcripción truncada sustituye el historial anterior y sus errores.
