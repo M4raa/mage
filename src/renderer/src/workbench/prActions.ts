@@ -14,8 +14,6 @@ export interface PrState {
   // la de su rama.
   readonly prByTab: Readonly<Record<string, GhSnapshot>>;
   readonly ghRunsByTab: Readonly<Record<string, GhRunsSnapshot>>;
-  // Pestañas cuyo turno en marcha es el de «Crear PR»: sus barreras de permiso estan activas.
-  readonly prGuardByChat: Readonly<Record<string, true>>;
 }
 
 export interface PrActions {

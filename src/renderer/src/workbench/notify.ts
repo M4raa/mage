@@ -64,20 +64,18 @@ const NOTIFIABLE_HOOKS: ReadonlyMap<string, string> = new Map([
 export interface NotificationContext {
   readonly tabTitle: string;
   readonly rules?: readonly NotificationRule[];
-  // La peticion de permiso ya la contesto Mage sola («Permitir siempre aqui»): no hay nada que pedir al
-  // usuario, y avisar «Permiso requerido» era mentirle (P-026, 1.8).
-  readonly autoAllowed?: boolean;
 }
 
 export function notificationForEvent(event: MageEvent, context: NotificationContext): NotificationContent | null {
-  const { tabTitle, rules = [], autoAllowed = false } = context;
+  const { tabTitle, rules = [] } = context;
   switch (event.kind) {
     case 'result':
       // Un turno que abrio el CLI solo al terminar un subagente en segundo plano (P-028 37a): con nueve
       // agentes serian nueve «Turno completado» que el usuario no pidio. Ya avisa `SubagentStop`.
       return event.result.origin === TASK_NOTIFICATION_ORIGIN ? null : { title: 'Turno completado', body: tabTitle };
     case 'permission_request':
-      return autoAllowed ? null : { title: 'Permiso requerido', body: `${tabTitle}: ${event.request.toolName}` };
+      // Lo que contesta main sola (regla o barrera de PR, F2.4) no llega como peticion: esta SI pide al usuario.
+      return { title: 'Permiso requerido', body: `${tabTitle}: ${event.request.toolName}` };
     case 'elicitation_request':
       return { title: 'Formulario MCP pendiente', body: `${tabTitle}: ${event.request.server}` };
     case 'error':

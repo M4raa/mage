@@ -1,7 +1,7 @@
 // Politica de respuesta automatica a los permisos (H1 de la devolucion 14). PURO, en shared: hoy la aplica
 // el renderer y en F2.4 la aplica main antes de anunciar el permiso a los clientes.
 
-import type { PermissionRequest } from './events';
+import type { PermissionDecision, PermissionRequest } from './events';
 import { parseAskUserQuestion } from './askUserQuestion';
 
 // Prompt de «Crear PR» (D27). El turno que lo lleva arma las barreras de abajo hasta su `result`.
@@ -75,6 +75,11 @@ export function automaticAnswer({ prGuard, alwaysAllowTools, request }: Automati
   if (request.outsideProject === true || parseAskUserQuestion(request.input) !== null) return null;
   const tool = request.toolName.trim();
   return tool.length > 0 && alwaysAllowTools.includes(tool) ? { behavior: 'allow' } : null;
+}
+
+// Decision que llega al motor por una respuesta automatica.
+export function automaticDecision(answer: AutomaticAnswer): PermissionDecision {
+  return answer.behavior === 'allow' ? { behavior: 'allow' } : { behavior: 'deny', message: prTurnDenyMessage(answer.blocked) };
 }
 
 // Indice donde empieza el comando (`git push`, `gh pr create`), saltando `git -C <ruta>`/`-c k=v`.

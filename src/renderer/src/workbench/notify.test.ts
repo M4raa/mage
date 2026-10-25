@@ -25,23 +25,13 @@ describe('notificationForEvent', () => {
     expect(notificationForEvent(event, { tabTitle: 'proj' })).toEqual({ title: 'Permiso requerido', body: 'proj: Bash' });
   });
 
-  it('notificationForEvent_permisoAutoPermitido_null', () => {
-    // «Permitir siempre aqui» ya contesto la peticion: el usuario no tiene nada que hacer.
-    const event = {
-      kind: 'permission_request',
-      request: { requestId: 'r1', toolUseId: 'u1', toolName: 'Bash', input: {}, description: null },
-    } as MageEvent;
-
-    expect(notificationForEvent(event, { tabTitle: 'proj', autoAllowed: true })).toBeNull();
-  });
-
   it('notificationForEvent_permisoPendiente_notifica', () => {
     const event = {
       kind: 'permission_request',
       request: { requestId: 'r1', toolUseId: 'u1', toolName: 'Write', input: {}, description: null },
     } as MageEvent;
 
-    expect(notificationForEvent(event, { tabTitle: 'proj', autoAllowed: false })?.title).toBe('Permiso requerido');
+    expect(notificationForEvent(event, { tabTitle: 'proj' })?.title).toBe('Permiso requerido');
   });
 
   it('error_incluyeElMensaje', () => {
@@ -164,12 +154,6 @@ describe('inAppNoticeForEvent', () => {
     const event: MageEvent = { kind: 'result', result: { isError: false, subtype: 'success', numTurns: 1 } };
 
     expect(inAppNoticeForEvent(event, { tabTitle: 'proj' })?.level).toBe('success');
-  });
-
-  it('inAppNoticeForEvent_permisoAutoPermitido_esNull', () => {
-    const event: MageEvent = { kind: 'permission_request', request: { requestId: 'r', toolName: 'Bash', input: {} } } as MageEvent;
-
-    expect(inAppNoticeForEvent(event, { tabTitle: 'proj', autoAllowed: true })).toBeNull();
   });
 
   it('inAppNoticeForEvent_eventoDeRuido_esNull', () => {

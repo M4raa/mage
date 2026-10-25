@@ -541,6 +541,9 @@ const sessionCoordinator = new SessionCoordinator({
   now: () => Date.now(),
   log: logBus.loggerFor('engine'),
   newId: () => randomUUID(),
+  // Las reglas «Permitir siempre» viven en las preferencias de la conversacion (las guarda el renderer).
+  alwaysAllowTools: (key) => getConversationIndexStore().loadPrefs(key)?.alwaysAllowTools ?? [],
+  defer: (fn) => queueMicrotask(fn),
 });
 
 // Lo que el runtime propio necesita de main: el proveedor de los ajustes, su clave de la boveda (en

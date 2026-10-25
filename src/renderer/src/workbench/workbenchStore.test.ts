@@ -1044,22 +1044,19 @@ describe('permiso auto-permitido', () => {
       request: { requestId: 'r1', toolUseId: 'u1', toolName, input: {}, description: null, requiresUserInteraction: false, displayName: null },
     }) as const;
 
-  it('handleEvent_permisoConReglaSiempre_contestaYNoNotifica', () => {
-    const answerPermission = vi.fn().mockResolvedValue(undefined);
+  it('handleEvent_permisoContestadoPorMainConRegla_niTarjetaNiAvisoNiRespuesta', () => {
+    // F2.4: la regla la aplica main; el permiso no llega como petición, solo su respuesta automática.
+    const answerPermission = vi.fn();
     const notify = vi.fn().mockResolvedValue(undefined);
     const store = createWorkbenchStore(fakeMage({ answerPermission, notify }));
-    store.setState({
-      tabs: [tab('a', { alwaysAllowTools: ['Bash'] })],
-      activeTabId: 'a',
-      splitLayout: singleLeaf('a'),
-      sessionIdByChat: { a: 's-a' },
-      statusByChat: { a: 'streaming' },
-    });
+    store.setState({ tabs: [tab('a', { alwaysAllowTools: ['Bash'] })], activeTabId: 'a', splitLayout: singleLeaf('a'), sessionIdByChat: { a: 's-a' }, statusByChat: { a: 'streaming' } });
 
-    store.getState().handleEvent('s-a', REQUEST('Bash'));
+    store.getState().handleEvent('s-a', { kind: 'permission_auto_answered', requestId: 'r1', toolName: 'Bash', behavior: 'allow', blocked: null });
 
-    expect(answerPermission).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 's-a', requestId: 'r1' }));
+    expect(answerPermission).not.toHaveBeenCalled();
     expect(notify).not.toHaveBeenCalled();
+    expect(store.getState().blocksByChat['a'] ?? []).toEqual([]);
+    expect(store.getState().statusByChat['a']).toBe('streaming');
   });
 
   it('handleEvent_permisoFueraDelProyectoConRegla_noContesta', () => {
@@ -1079,7 +1076,7 @@ describe('permiso auto-permitido', () => {
     const answerPermission = vi.fn().mockResolvedValue(undefined);
     const store = createWorkbenchStore(fakeMage({ answerPermission, notify: vi.fn().mockResolvedValue(undefined) }));
     store.setState({
-      backgroundSessions: { 's-bg': { sessionId: 's-bg', title: 'fondo', accountId: 'acc', state: 'working', sinceMs: 1, alwaysAllowTools: ['Read'] } },
+      backgroundSessions: { 's-bg': { sessionId: 's-bg', title: 'fondo', accountId: 'acc', state: 'working', sinceMs: 1 } },
     });
     const outside = REQUEST('Read');
 
@@ -1099,19 +1096,15 @@ describe('permiso auto-permitido', () => {
     expect(notify).toHaveBeenCalledWith({ title: 'Permiso requerido', body: 'Conversacion a: Write', target: { tabId: 'a', sessionId: 's-a' } });
   });
 
-  it('handleEvent_segundoPlanoConReglaSiempre_contestaSinPedirAccion', () => {
-    const answerPermission = vi.fn().mockResolvedValue(undefined);
+  it('handleEvent_segundoPlanoPermisoContestadoPorMain_sigueTrabajandoSinAvisar', () => {
+    const answerPermission = vi.fn();
     const notify = vi.fn().mockResolvedValue(undefined);
     const store = createWorkbenchStore(fakeMage({ answerPermission, notify }));
-    store.setState({
-      backgroundSessions: {
-        's-bg': { sessionId: 's-bg', title: 'fondo', accountId: 'acc', state: 'working', sinceMs: 1, alwaysAllowTools: ['Bash'] },
-      },
-    });
+    store.setState({ backgroundSessions: { 's-bg': { sessionId: 's-bg', title: 'fondo', accountId: 'acc', state: 'working', sinceMs: 1 } } });
 
-    store.getState().handleEvent('s-bg', REQUEST('Bash'));
+    store.getState().handleEvent('s-bg', { kind: 'permission_auto_answered', requestId: 'r1', toolName: 'Bash', behavior: 'deny', blocked: 'git push --force' });
 
-    expect(answerPermission).toHaveBeenCalledWith({ sessionId: 's-bg', requestId: 'r1', decision: { behavior: 'allow' } });
+    expect(answerPermission).not.toHaveBeenCalled();
     expect(notify).not.toHaveBeenCalled();
     expect(store.getState().backgroundSessions['s-bg']?.state).toBe('working');
   });
@@ -1120,7 +1113,7 @@ describe('permiso auto-permitido', () => {
     const notify = vi.fn().mockResolvedValue(undefined);
     const store = createWorkbenchStore(fakeMage({ notify }));
     store.setState({
-      backgroundSessions: { 's-bg': { sessionId: 's-bg', title: 'fondo', accountId: 'acc', state: 'working', sinceMs: 1, alwaysAllowTools: [] } },
+      backgroundSessions: { 's-bg': { sessionId: 's-bg', title: 'fondo', accountId: 'acc', state: 'working', sinceMs: 1 } },
     });
 
     store.getState().handleEvent('s-bg', REQUEST('Write'));
@@ -1775,54 +1768,16 @@ describe('PR de la pestaña (grupo D)', () => {
     expect(store.getState().tabs[0]?.prNumber).toBe(9);
   });
 
-  it('handleEvent_pushForzadoEnElTurnoDePr_loDeniegaSinTarjeta', () => {
-    const answerPermission = vi.fn().mockResolvedValue(undefined);
+  it('handleEvent_barreraDePrAplicadaPorMain_pintaElComandoBloqueadoSinTarjeta', () => {
+    // F2.4: main deniega el push forzado del turno de «Crear PR» y avisa; el renderer solo lo pinta.
+    const answerPermission = vi.fn();
     const { store } = prStore({ answerPermission });
-    store.setState({ prGuardByChat: { a: true } });
-    const request = { requestId: 'r1', toolUseId: 'u1', toolName: 'Bash', input: { command: 'git push --force' }, description: null, requiresUserInteraction: false, displayName: null };
 
-    store.getState().handleEvent('s-a', { kind: 'permission_request', request });
+    store.getState().handleEvent('s-a', { kind: 'permission_auto_answered', requestId: 'r1', toolName: 'Bash', behavior: 'deny', blocked: 'git push --force' });
 
-    expect(answerPermission).toHaveBeenCalledWith({ sessionId: 's-a', requestId: 'r1', decision: { behavior: 'deny', message: expect.stringContaining('git push --force') } });
+    expect(answerPermission).not.toHaveBeenCalled();
     expect(store.getState().pendingByChat['a'] ?? []).toEqual([]);
-  });
-
-  // H1 de la devolución 14: la barrera del turno de PR manda sobre «Permitir siempre Bash». Antes salía
-  // primero el allow, main lo aceptaba y el deny recibía `already_answered` en silencio.
-  const FORCE_PUSH = { requestId: 'r1', toolUseId: 'u1', toolName: 'Bash', input: { command: 'git push --force' }, description: null, requiresUserInteraction: false, displayName: null };
-
-  it('handleEvent_reglaSiempreBashYPushForzadoEnElTurnoDePr_soloDeniega', () => {
-    const answerPermission = vi.fn().mockResolvedValue({ status: 'accepted' });
-    const { store } = prStore({ answerPermission, notify: vi.fn().mockResolvedValue(undefined) });
-    store.setState({ tabs: [tab('a', { alwaysAllowTools: ['Bash'] })], prGuardByChat: { a: true } });
-
-    store.getState().handleEvent('s-a', { kind: 'permission_request', request: FORCE_PUSH });
-
-    expect(answerPermission.mock.calls.map(([p]) => (p as { decision: { behavior: string } }).decision.behavior)).toEqual(['deny']);
-  });
-
-  it('handleEvent_segundoPlanoConReglaSiempreBashYTurnoDePr_soloDeniega', async () => {
-    const answerPermission = vi.fn().mockResolvedValue({ status: 'accepted' });
-    const notify = vi.fn().mockResolvedValue(undefined);
-    const { store } = prStore({ answerPermission, notify, listConversations: vi.fn().mockResolvedValue([]) });
-    store.setState({ tabs: [tab('a', { alwaysAllowTools: ['Bash'] })], prGuardByChat: { a: true } });
-    await store.getState().closeTab('a');
-
-    store.getState().handleEvent('s-a', { kind: 'permission_request', request: FORCE_PUSH });
-
-    expect(answerPermission.mock.calls.map(([p]) => (p as { decision: { behavior: string } }).decision.behavior)).toEqual(['deny']);
-    expect(notify).not.toHaveBeenCalled();
-    expect(store.getState().backgroundSessions['s-a']?.state).toBe('working');
-  });
-
-  it('handleEvent_denegacionAutomaticaRechazadaPorMain_loAvisa', async () => {
-    const answerPermission = vi.fn().mockResolvedValue({ status: 'rejected', reason: 'already_answered' });
-    const { store } = prStore({ answerPermission });
-    store.setState({ prGuardByChat: { a: true } });
-
-    store.getState().handleEvent('s-a', { kind: 'permission_request', request: FORCE_PUSH });
-
-    await vi.waitFor(() => expect(useNotificationStore.getState().toasts.some((n) => n.level === 'error' && (n.body ?? '').includes('already_answered'))).toBe(true));
+    expect((store.getState().blocksByChat['a'] ?? []).map((b) => (b.kind === 'system' ? b.text : b.kind))).toEqual(['Bloqueado durante «Crear PR»: git push --force']);
   });
 
   it('handleEvent_pushForzadoFueraDelTurnoDePr_pideComoSiempre', () => {

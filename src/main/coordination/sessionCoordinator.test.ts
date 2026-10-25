@@ -2,12 +2,13 @@ import { describe, expect, it, vi } from 'vitest';
 import type { CreateSessionParams, SessionEventPayload } from '@shared/ipc';
 import type { MageEvent } from '@shared/events';
 import type { NativeSessionRef } from '@shared/coordination';
+import { CREATE_PR_PROMPT } from '@shared/permissionPolicy';
 import { SessionCoordinator, type ConversationIdentityIndex, type CoordinatedSessions, type SequencedSessionEvent } from './sessionCoordinator';
 
 const ACCOUNT = '/home/u/.claude';
 
 // Gestor de sesiones falso: guarda el sumidero de cada sesion para emitir eventos a mano.
-function harness(options: { index?: Partial<ConversationIdentityIndex>; emitOnStart?: MageEvent } = {}) {
+function harness(options: { index?: Partial<ConversationIdentityIndex>; emitOnStart?: MageEvent; rules?: Record<string, readonly string[]> } = {}) {
   const sinks = new Map<string, (payload: SessionEventPayload) => void>();
   let next = 0;
   const sessions: CoordinatedSessions = {
@@ -35,12 +36,18 @@ function harness(options: { index?: Partial<ConversationIdentityIndex>; emitOnSt
   const log = vi.fn();
   let clock = 1_000;
   let ids = 0;
-  const coordinator = new SessionCoordinator({ sessions, index, now: () => ++clock, log, newId: () => `cmd-${++ids}` });
+  // Lo diferido (respuestas automáticas) se ejecuta a mano con `flush`, como haría la microtarea.
+  const deferred: (() => void)[] = [];
+  const alwaysAllowTools = vi.fn((key: string): readonly string[] => options.rules?.[key] ?? []);
+  const coordinator = new SessionCoordinator({
+    sessions, index, now: () => ++clock, log, newId: () => `cmd-${++ids}`, alwaysAllowTools, defer: (fn) => deferred.push(fn),
+  });
+  const flush = () => { while (deferred.length > 0) deferred.shift()!(); };
   const received: SequencedSessionEvent[] = [];
   const create = (params: Partial<CreateSessionParams> = {}, ownerId?: number) =>
     coordinator.create({ accountDir: ACCOUNT, cwd: '/p', provider: 'claude', ...params } as CreateSessionParams, (p) => received.push(p), ownerId);
   const emit = (sessionId: string, event: MageEvent, as = sessionId) => sinks.get(sessionId)?.({ sessionId: as, event });
-  return { coordinator, sessions, index, saved, log, received, create, emit };
+  return { coordinator, sessions, index, saved, log, received, create, emit, flush, alwaysAllowTools };
 }
 
 const state = (value: 'idle' | 'running'): MageEvent => ({ kind: 'session_state', state: value });
@@ -500,3 +507,128 @@ describe('SessionCoordinator — permisos, preguntas y elicitations: contestar u
   });
 });
 
+describe('SessionCoordinator — respuestas automáticas en main (F2.4, H1 de la devolución 14)', () => {
+  const request = (requestId: string, toolName: string, input: Record<string, unknown>, extra: Record<string, unknown> = {}): MageEvent =>
+    ({ kind: 'permission_request', request: { requestId, toolUseId: `t-${requestId}`, toolName, input, description: null, requiresUserInteraction: false, displayName: null, ...extra } }) as unknown as MageEvent;
+  const forcePush = (requestId = 'r1') => request(requestId, 'Bash', { command: 'git push --force' });
+  const result: MageEvent = { kind: 'result', result: { isError: false, subtype: 'success', numTurns: 1 } };
+  const behaviors = (h: ReturnType<typeof harness>) => vi.mocked(h.sessions.answerPermission).mock.calls.map(([, , d]) => d.behavior);
+  const kinds = (h: ReturnType<typeof harness>) => h.received.map((p) => p.event.kind);
+
+  it('permissionRequest_reglaSiempre_seContestaEnMainSinAnunciarla', () => {
+    const h = harness({ rules: { 'conv-s1': ['Write'] } });
+    const id = h.create({ provider: 'codex', resumeSessionId: 's1' });
+
+    h.emit(id, request('r1', 'Write', { file_path: 'a.txt' }));
+    h.flush();
+
+    expect(h.sessions.answerPermission).toHaveBeenCalledWith(id, 'r1', { behavior: 'allow' });
+    expect(kinds(h)).toEqual(['permission_auto_answered']);
+    expect(h.received[0]!.event).toEqual({ kind: 'permission_auto_answered', requestId: 'r1', toolName: 'Write', behavior: 'allow', blocked: null });
+    expect(h.coordinator.snapshot(id).pending).toEqual([]);
+  });
+
+  it('permissionRequest_reglaBashEnElTurnoDePr_soloDeniega', () => {
+    // El caso de la sonda de dirección: allow nunca antes que deny; aquí ni siquiera hay allow.
+    const h = harness();
+    const id = h.create();
+    h.alwaysAllowTools.mockReturnValue(['Bash']);
+    h.coordinator.send({ sessionId: id, text: `${CREATE_PR_PROMPT} Rama: x` });
+
+    h.emit(id, forcePush());
+    h.flush();
+
+    expect(behaviors(h)).toEqual(['deny']);
+    expect(vi.mocked(h.sessions.answerPermission).mock.calls[0]![2]).toEqual({ behavior: 'deny', message: expect.stringContaining('git push --force') as unknown });
+    expect(h.received.at(-1)!.event).toMatchObject({ kind: 'permission_auto_answered', behavior: 'deny', blocked: 'git push --force' });
+    expect(kinds(h)).not.toContain('permission_request');
+  });
+
+  it('result_desarmaLaBarrera_elSiguienteTurnoPregunta', () => {
+    const h = harness();
+    const id = h.create();
+    h.coordinator.send({ sessionId: id, text: CREATE_PR_PROMPT });
+    h.emit(id, result);
+    h.coordinator.send({ sessionId: id, text: 'otra cosa' });
+
+    h.emit(id, forcePush());
+    h.flush();
+
+    expect(h.sessions.answerPermission).not.toHaveBeenCalled();
+    expect(h.coordinator.snapshot(id).pending).toHaveLength(1);
+  });
+
+  it('drain_mensajeEncoladoConElPromptDePr_armaLaBarrera', () => {
+    const h = harness();
+    const id = h.create();
+    h.coordinator.send({ sessionId: id, text: 'primero' });
+    h.coordinator.send({ sessionId: id, text: CREATE_PR_PROMPT });
+    h.emit(id, result);
+
+    h.emit(id, forcePush());
+    h.flush();
+
+    expect(behaviors(h)).toEqual(['deny']);
+  });
+
+  it('permissionRequest_reglaFueraDelProyectoOPregunta_seAnuncia', () => {
+    const h = harness();
+    const id = h.create();
+    h.alwaysAllowTools.mockReturnValue(['Bash', 'AskUserQuestion']);
+    const question = { questions: [{ question: '¿Cuál?', header: 'h', options: [{ label: 'a', description: '' }, { label: 'b', description: '' }], multiSelect: false }] };
+
+    h.emit(id, request('r1', 'Bash', { command: 'ls' }, { outsideProject: true }));
+    h.emit(id, request('r2', 'AskUserQuestion', question));
+    h.flush();
+
+    expect(h.sessions.answerPermission).not.toHaveBeenCalled();
+    expect(h.coordinator.snapshot(id).pending.map((p) => p.request.requestId)).toEqual(['r1', 'r2']);
+  });
+
+  it('permissionRequest_reglasIlegibles_preguntaYQuedaTrazado', () => {
+    const h = harness();
+    const id = h.create();
+    h.alwaysAllowTools.mockImplementation(() => { throw new Error('EACCES'); });
+
+    h.emit(id, request('r1', 'Write', {}));
+
+    expect(h.coordinator.snapshot(id).pending).toHaveLength(1);
+    expect(h.log).toHaveBeenCalledWith('warn', expect.stringContaining('reglas'), expect.objectContaining({ error: 'EACCES' }));
+  });
+
+  it('respuestaAutomatica_motorLanza_quedaTrazadaYNoSeAnuncia', () => {
+    const h = harness();
+    const id = h.create();
+    h.alwaysAllowTools.mockReturnValue(['Write']);
+    vi.mocked(h.sessions.answerPermission).mockImplementationOnce(() => { throw new Error('Permiso desconocido'); });
+
+    h.emit(id, request('r1', 'Write', {}));
+    h.flush();
+
+    expect(h.log).toHaveBeenCalledWith('warn', expect.stringContaining('automática'), expect.objectContaining({ requestId: 'r1', error: 'Permiso desconocido' }));
+    expect(kinds(h)).not.toContain('permission_auto_answered');
+  });
+
+  it('respuestaAutomatica_sesionParadaAntesDeContestar_noLlegaAlMotor', () => {
+    const h = harness();
+    const id = h.create();
+    h.alwaysAllowTools.mockReturnValue(['Write']);
+    h.emit(id, request('r1', 'Write', {}));
+
+    h.coordinator.stop(id);
+    h.flush();
+
+    expect(h.sessions.answerPermission).not.toHaveBeenCalled();
+  });
+
+  it('answerPermission_motorLanza_anunciaLaCancelacion', () => {
+    // H4: los demás clientes cierran su tarjeta aunque el motor rechace la respuesta.
+    const h = harness();
+    const id = h.create();
+    h.emit(id, request('r1', 'Write', {}));
+    vi.mocked(h.sessions.answerPermission).mockImplementationOnce(() => { throw new Error('ya resuelto'); });
+
+    expect(() => h.coordinator.answerPermission(id, 'r1', { behavior: 'allow' })).toThrow(/ya resuelto/);
+    expect(h.received.at(-1)!.event).toEqual({ kind: 'permission_cancelled', requestId: 'r1' });
+  });
+});

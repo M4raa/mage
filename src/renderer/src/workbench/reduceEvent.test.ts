@@ -110,9 +110,17 @@ describe('reduceEvent — permisos', () => {
     expect(second.blocksByChat).toBeUndefined();
   });
 
-  it('reduceEvent_permissionRequestDeToolConReglaSiempre_niTarjetaNiEstadoDePermiso', () => {
-    // "Permitir siempre Write aqui": NADA en el estado — ni tarjeta, ni cola, ni panel, ni "necesita
-    // permiso". La respuesta la manda `handleEvent` con el requestId del propio evento.
+  it('reduceEvent_permissionAutoAnsweredPorRegla_niTarjetaNiEstadoDePermiso', () => {
+    // F2.4: «Permitir siempre Write aqui» lo aplica main; aqui solo llega su respuesta, que no deja rastro.
+    const current = state({ tabs: [tab({ alwaysAllowTools: ['Write'] })] });
+
+    const patch = reduceEvent(current, TAB, { kind: 'permission_auto_answered', requestId: 'r9', toolName: 'Write', behavior: 'allow', blocked: null });
+
+    expect(patch).toEqual({});
+  });
+
+  it('reduceEvent_permissionRequestConRegla_yaNoSeAutoPermiteAqui', () => {
+    // Si una peticion llega al renderer es porque main decidio preguntar: lleva tarjeta aunque la pestaña tenga regla.
     const current = state({ tabs: [tab({ alwaysAllowTools: ['Write'] })] });
 
     const patch = reduceEvent(current, TAB, {
@@ -120,7 +128,7 @@ describe('reduceEvent — permisos', () => {
       request: { requestId: 'r9', toolUseId: 't9', toolName: 'Write', input: {}, description: null, requiresUserInteraction: false, displayName: null },
     });
 
-    expect(patch).toEqual({});
+    expect(patch.pendingByChat?.[TAB]).toHaveLength(1);
   });
 
   it('reduceEvent_permissionCancelled_cierraLaTarjetaDePermisoComoCancelada', () => {

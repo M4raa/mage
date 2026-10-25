@@ -17,12 +17,6 @@ export interface BackgroundSession {
   readonly accountId: string;
   readonly state: BackgroundState;
   readonly sinceMs: number; // cuando se mando a segundo plano; base del TTL
-  // Las reglas «Permitir siempre aqui» de la pestaña al cerrarla (P-026, 1.8): sin ellas, un permiso
-  // ya concedido dejaba la sesion «pendiente de accion» y avisaba «Permiso requerido».
-  readonly alwaysAllowTools: readonly string[];
-  // La barrera del turno de «Crear PR» seguia armada al cerrar: se sigue aplicando, por delante de la regla
-  // (H1 de la devolucion 14).
-  readonly prGuard?: boolean;
 }
 
 // Se mata la sesion huerfana a la semana de mandarla a segundo plano (decision del usuario): si nadie

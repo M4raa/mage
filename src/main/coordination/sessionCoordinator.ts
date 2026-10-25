@@ -1,9 +1,10 @@
 import type { CreateSessionParams, SendMessageParams, SessionEventPayload } from '@shared/ipc';
-import type { MageEvent, PermissionDecision } from '@shared/events';
+import type { MageEvent, PermissionDecision, PermissionRequest } from '@shared/events';
 import type { ElicitationAnswer } from '@shared/elicitation';
 import type { AnswerReceipt, ConversationId, ConversationSnapshot, CoordinatedState, NativeSessionRef, PendingRequest, QueuedMessage, SendReceipt } from '@shared/coordination';
 import { enqueueMessage, removeQueuedMessage, takeNextMessage } from '@shared/messageQueue';
 import { writesClaudeTranscript } from '@shared/providers';
+import { automaticAnswer, automaticDecision, CREATE_PR_PROMPT, type AutomaticAnswer } from '@shared/permissionPolicy';
 import type { SessionManager } from '../engine/sessionManager';
 import type { SessionLogFn } from '../engine/agentSession';
 
@@ -13,7 +14,9 @@ import type { SessionLogFn } from '../engine/agentSession';
 // que el seguimiento no se desincronice. Desde F2.2 es tambien el UNICO dueño de la cola de mensajes: decide
 // en un solo paso si un envio va al motor o espera, y saca el siguiente al acabar el turno. Y desde F2.3 lleva
 // las peticiones que esperan al usuario (permisos, preguntas y elicitations): cada una se contesta UNA vez,
-// gane quien gane, y la respuesta aceptada se anuncia a todos los clientes.
+// gane quien gane, y la respuesta aceptada se anuncia a todos los clientes. Desde F2.4 decide tambien las
+// respuestas automaticas (barrera del turno de PR > fuera del proyecto > «Permitir siempre» > preguntar) ANTES de
+// anunciar el permiso: lo que contesta main no llega a ningun cliente como peticion.
 
 // Evento de sesion con su identidad y su secuencia. Los campos nuevos son opcionales en el contrato del
 // IPC (`SessionEventPayload`) para que un cliente que no los usa siga igual.
@@ -41,6 +44,11 @@ export interface SessionCoordinatorDeps {
   readonly log: SessionLogFn;
   // Id de un envio que no trae el suyo (`randomUUID` en produccion).
   readonly newId: () => string;
+  // Reglas «Permitir siempre» de una conversacion (su ConversationId, o el id de la sesion si aun no lo tiene).
+  readonly alwaysAllowTools: (key: string) => readonly string[];
+  // Aplaza la respuesta automatica (`queueMicrotask` en produccion): el motor termina de emitir la peticion
+  // (el runtime emite despues `requires_action`) antes de recibir la respuesta.
+  readonly defer: (fn: () => void) => void;
 }
 
 // Recibos recordados por sesion para deduplicar reintentos: los ultimos, no todos.
@@ -59,6 +67,8 @@ interface Tracked {
   readonly receipts: Map<string, SendReceipt>;
   // Peticiones que esperan al usuario, por requestId (en orden de llegada).
   readonly pending: Map<string, PendingRequest>;
+  // El turno en marcha lleva el prompt de «Crear PR»: sus barreras estan armadas hasta el `result`.
+  prGuard: boolean;
   // Emite un evento propio de la coordinacion por el mismo camino que los del motor (con secuencia).
   emit: (event: MageEvent) => void;
 }
@@ -73,7 +83,7 @@ export class SessionCoordinator {
   create(params: CreateSessionParams, sink: SequencedSink, ownerId?: number): string {
     const tracked: Tracked = {
       sessionId: '', provider: params.provider, accountDir: params.accountDir, conversationId: null, nativeRef: null, lastSeq: 0, state: 'starting',
-      queue: [], receipts: new Map(), pending: new Map(), emit: () => undefined,
+      queue: [], receipts: new Map(), pending: new Map(), prGuard: false, emit: () => undefined,
     };
     tracked.emit = (event) => this.relay(tracked, { sessionId: tracked.sessionId, event }, sink);
     const sessionId = this.deps.sessions.create(params, (payload) => this.relay(tracked, payload, sink), ownerId);
@@ -97,7 +107,7 @@ export class SessionCoordinator {
     const tracked = this.require(sessionId);
     if (tracked.pending.get(requestId)?.kind !== 'permission') return ALREADY_ANSWERED;
     tracked.pending.delete(requestId);
-    this.deps.sessions.answerPermission(sessionId, requestId, decision);
+    this.answerEngine(tracked, requestId, decision);
     const answers = answersOf(decision);
     tracked.emit({ kind: 'permission_resolved', requestId, behavior: decision.behavior, ...(answers === null ? {} : { answers }) });
     return ACCEPTED;
@@ -179,13 +189,57 @@ export class SessionCoordinator {
   private relay(tracked: Tracked, payload: SessionEventPayload, sink: SequencedSink): void {
     this.follow(tracked, payload.sessionId);
     const { event } = payload;
+    if (event.kind === 'permission_request' && this.answerAutomatically(tracked, event.request)) return;
     if (event.kind === 'session_init' && event.sessionId !== tracked.nativeRef?.nativeId) this.bind(tracked, event.sessionId);
     trackPending(tracked.pending, event);
     tracked.state = nextState(tracked.state, event, tracked.pending.size);
     tracked.lastSeq += 1;
     sink({ ...payload, conversationId: tracked.conversationId, seq: tracked.lastSeq, at: this.deps.now() });
     if (event.kind === 'conversation_reset') this.rebind(tracked, event.newSessionId);
-    if (event.kind === 'result') this.drain(tracked);
+    if (event.kind === 'result') {
+      tracked.prGuard = false;
+      this.drain(tracked);
+    }
+  }
+
+  // H4: si el motor rechaza la respuesta, los clientes cierran la tarjeta (`permission_cancelled`) y el error
+  // llega a quien contesto.
+  private answerEngine(tracked: Tracked, requestId: string, decision: PermissionDecision): void {
+    try {
+      this.deps.sessions.answerPermission(tracked.sessionId, requestId, decision);
+    } catch (err) {
+      tracked.emit({ kind: 'permission_cancelled', requestId });
+      throw err;
+    }
+  }
+
+  // Contesta sola la peticion si la politica lo decide; true si lo hace (entonces no se anuncia). La respuesta
+  // se aplaza (ver `defer`); si la sesion ya no se sigue, no llega al motor. Un fallo queda en el log.
+  private answerAutomatically(tracked: Tracked, request: PermissionRequest): boolean {
+    const answer = this.automaticAnswerFor(tracked, request);
+    if (answer === null) return false;
+    this.deps.defer(() => {
+      if (this.tracked.get(tracked.sessionId) !== tracked) return;
+      try {
+        this.deps.sessions.answerPermission(tracked.sessionId, request.requestId, automaticDecision(answer));
+      } catch (err) {
+        this.deps.log('warn', 'No se pudo enviar la respuesta automática al permiso', { sessionId: tracked.sessionId, requestId: request.requestId, error: describe(err) });
+        return;
+      }
+      tracked.emit({ kind: 'permission_auto_answered', requestId: request.requestId, toolName: request.toolName, behavior: answer.behavior, blocked: answer.behavior === 'deny' ? answer.blocked : null });
+    });
+    return true;
+  }
+
+  // Unas reglas que no se pueden leer no autorizan nada: se pregunta al usuario y queda trazado.
+  private automaticAnswerFor(tracked: Tracked, request: PermissionRequest): AutomaticAnswer | null {
+    let alwaysAllowTools: readonly string[] = [];
+    try {
+      alwaysAllowTools = this.deps.alwaysAllowTools(tracked.conversationId ?? tracked.sessionId);
+    } catch (err) {
+      this.deps.log('warn', 'No se pudieron leer las reglas «Permitir siempre» de la conversacion', { sessionId: tracked.sessionId, error: describe(err) });
+    }
+    return automaticAnswer({ prGuard: tracked.prGuard, alwaysAllowTools, request });
   }
 
   private enqueue(tracked: Tracked, commandId: string, params: SendMessageParams): SendReceipt {
@@ -197,6 +251,7 @@ export class SessionCoordinator {
   private deliver(tracked: Tracked, commandId: string, params: SendMessageParams): SendReceipt {
     this.deps.sessions.sendMessage(tracked.sessionId, params.text, params.attachments ?? []);
     tracked.state = 'running';
+    armPrGuard(tracked, params.text);
     return { status: 'accepted', commandId };
   }
 
@@ -209,6 +264,7 @@ export class SessionCoordinator {
     try {
       this.deps.sessions.sendMessage(tracked.sessionId, next.text, next.attachments);
       tracked.state = 'running';
+      armPrGuard(tracked, next.text);
       tracked.emit({ kind: 'queued_message_sent', message: next });
     } catch (err) {
       tracked.emit({ kind: 'queued_message_failed', message: next, error: describe(err) });
@@ -323,6 +379,11 @@ function nextState(current: CoordinatedState, event: MageEvent, pendingCount: nu
   if (WAITING_EVENTS.has(event.kind)) return 'requires_action';
   if (RUNNING_EVENTS.has(event.kind) && current !== 'requires_action') return 'running';
   return current;
+}
+
+// El turno que lleva el prompt de «Crear PR» arma sus barreras hasta su `result` (como Claude Desktop).
+function armPrGuard(tracked: Tracked, text: string): void {
+  if (text.includes(CREATE_PR_PROMPT)) tracked.prGuard = true;
 }
 
 function isBusy(state: CoordinatedState): boolean {

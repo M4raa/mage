@@ -104,7 +104,6 @@ describe('backgroundMoveBlockedReason', () => {
     accountId: 'a',
     state,
     sinceMs: 0,
-    alwaysAllowTools: [],
   });
 
   it('backgroundMoveBlockedReason_trabajandoOPendiente_daElMotivo', () => {
@@ -125,7 +124,6 @@ describe('countWorkingConversations', () => {
     accountId: 'a',
     state,
     sinceMs: 0,
-    alwaysAllowTools: [],
   });
 
   it('countWorkingConversations_turnosEnMarchaYSegundoPlanoVivo_losSuma', () => {
