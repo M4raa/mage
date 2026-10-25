@@ -3171,11 +3171,13 @@ const CHECKS = [
   },
   {
     // Decision del usuario (2026-09-15): cerrar una conversacion con trabajo en vuelo NO lo corta — se
-    // va a segundo plano y su fila del panel de Conversaciones lo dice. Se mide en DOS tramos porque
-    // cada uno falla por su cuenta: (a) `closeTab` con estado 'streaming' NO para el CLI y apunta la
-    // sesion; (b) con la sesion ya en 'done', la fila del historial pinta la pastilla REVISAR. La
-    // sesion es FALSA (un id inventado, nunca se spawnea el CLI) y el estado previo se restaura.
-    name: 'Segundo plano: cerrar con trabajo en vuelo no corta, y la fila queda pendiente de revisar',
+    // va a segundo plano y su fila del panel de Conversaciones lo dice. Desde F2.4 quien decide si se va a
+    // segundo plano es MAIN (`closeSession`), y eso lo mide de punta a punta «F2.4: segundo plano en main» con
+    // una sesion real del runtime propio. Aqui queda la parte del renderer: con la sesion apuntada en segundo
+    // plano (como la deja `closeTab` cuando main dice `background`), la pestaña se ha ido y la fila del
+    // historial pinta la pastilla REVISAR al terminar. La sesion es FALSA (un id inventado, nunca se spawnea
+    // el CLI) y el estado previo se restaura.
+    name: 'Segundo plano: la conversacion cerrada con trabajo en vuelo queda en su fila, pendiente de revisar',
     async run(page) {
       const originalState = await page.evaluate(() => {
         const s = window.__mageDev.store.getState();
@@ -3194,11 +3196,15 @@ const CHECKS = [
         const store = window.__mageDev.store;
         const tabId = store.getState().activeTabId;
         const { cwd, title, privacy } = store.getState().tabs.find((t) => t.id === tabId);
-        store.setState({
-          sessionIdByChat: { ...store.getState().sessionIdByChat, [tabId]: 'vg-fondo' },
-          statusByChat: { ...store.getState().statusByChat, [tabId]: 'streaming' },
-        });
+        // Sin sesion en el store, `closeTab` no llama a main; la fila de segundo plano es la que apunta cuando
+        // main contesta `background: true`.
         await store.getState().closeTab(tabId);
+        store.setState({
+          backgroundSessions: {
+            ...store.getState().backgroundSessions,
+            'vg-fondo': { sessionId: 'vg-fondo', title, accountId: store.getState().activeAccountId, state: 'working', sinceMs: Date.now() },
+          },
+        });
         const entry = store.getState().backgroundSessions['vg-fondo'];
         return { estado: entry?.state ?? null, cwd, title, privacy, sigueAbierta: store.getState().tabs.some((t) => t.id === tabId) };
       });
@@ -4991,10 +4997,11 @@ const CHECKS = [
   {
     // 2.3b: "Permitir siempre <tool> aqui" tiene que RECORDAR. La regla se concede por la accion real
     // del store y no por un clic: sin sesion viva la respuesta no llega a main, que es justo lo que deja
-    // medir la regla sin tocar el CLI ni gastar un turno. Lo que se comprueba es lo unico que importa:
-    // que la SIGUIENTE peticion de esa tool no pinta tarjeta ni pone la pestana en "necesita permiso",
-    // que otra tool sigue preguntando, que la regla se ve en el panel y que revocarla la quita.
-    name: '2.3b: "Permitir siempre" recuerda la tool y el panel la deja revocar',
+    // medir la regla sin tocar el CLI ni gastar un turno. Desde F2.4 la regla la APLICA main antes de
+    // anunciar el permiso (lo mide «F2.4: segundo plano en main» con una sesion real); aqui se comprueba la
+    // parte del renderer: la regla queda en la pestaña, se ve en el panel, una peticion que si llega (main
+    // decidio preguntar) lleva su tarjeta, y revocar la quita.
+    name: '2.3b: "Permitir siempre" guarda la tool y el panel la deja revocar',
     async run(page) {
       const previoStore = await page.evaluate(() => {
         const s = window.__mageDev.store.getState();
@@ -5022,18 +5029,7 @@ const CHECKS = [
       // mismo camino que el CLI para dejar el hilo limpio antes de medir la segunda.
       await cancelInjectedPermission(page, 'verify-always-1');
 
-      // Segunda peticion de la MISMA tool: ni tarjeta, ni panel, ni estado de espera.
-      await injectPermissionRequest(page, { file_path: 'C:/proj/b.ts', content: 'b' }, 'verify-always-2', 'Write');
-      const segunda = await page.evaluate(() => {
-        const s = window.__mageDev.store.getState();
-        const tabId = s.activeTabId;
-        return {
-          tarjetasPendientes: document.querySelectorAll('[data-permission-card="pending"]').length,
-          estado: s.statusByChat[tabId] ?? null,
-          panelConPeticion: (s.pendingByChat[tabId] ?? []).length > 0,
-        };
-      });
-      // Una tool DISTINTA sigue preguntando: la regla es por tool, no un "permitir todo".
+      // Una peticion que llega al renderer es una que main decidio preguntar: lleva su tarjeta.
       await injectPermissionRequest(page, { command: 'ls' }, 'verify-always-3', 'Bash');
       const otraTool = await page.evaluate(() => document.querySelectorAll('[data-permission-card="pending"]').length);
 
@@ -5059,13 +5055,10 @@ const CHECKS = [
       const ok =
         conRegla.regla.includes('Write') &&
         conRegla.enElPanel &&
-        segunda.tarjetasPendientes === 0 &&
-        segunda.estado !== 'needs_permission' &&
-        segunda.panelConPeticion === false &&
         otraTool === 1 &&
         trasRevocar.reglas === 0 &&
         trasRevocar.enElPanel === false;
-      return { ok, detail: `conRegla=${JSON.stringify(conRegla)} segunda=${JSON.stringify(segunda)} otraTool=${otraTool} trasRevocar=${JSON.stringify(trasRevocar)}` };
+      return { ok, detail: `conRegla=${JSON.stringify(conRegla)} otraTool=${otraTool} trasRevocar=${JSON.stringify(trasRevocar)}` };
     },
   },
   {
