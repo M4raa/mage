@@ -29,4 +29,15 @@ describe('perfBaseline (#40)', () => {
       { fn: '(anónima) · src/renderer/a.ts:10', selfMs: 0.5 },
     ]);
   });
+
+  it('topSelfTime_funcionDelSidebarFueraDelTop_seConserva', () => {
+    const frame = (functionName, url) => ({ functionName, url, lineNumber: 0 });
+    const profile = {
+      nodes: [{ id: 1, callFrame: frame('caro', 'http://localhost/src/a.ts') }, { id: 2, callFrame: frame('HistoryItem', 'http://localhost/src/workbench/components/ChatSidebar.tsx') }, { id: 3, callFrame: frame('otro', 'http://localhost/src/b.ts') }],
+      samples: [1, 1, 3, 2],
+      timeDeltas: [1000, 1000, 500, 100],
+    };
+
+    expect(topSelfTime(profile, 1).map((e) => e.fn)).toEqual(['caro · src/a.ts:1', 'HistoryItem · src/workbench/components/ChatSidebar.tsx:1']);
+  });
 });

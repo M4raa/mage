@@ -8,6 +8,9 @@
 export const PERF_REPEATS = 20;
 const PROMPT = 'Escribe una instrucción para el agente';
 const PROFILE_TOP = 15;
+// Funciones que se conservan aunque no esten entre las primeras: el sidebar (criterio de F2.5, «el sidebar ya no
+// aparece en el perfil del cambio de pestaña»). Con muestreo de 200 µs, un render mas corto puede no salir.
+const PROFILE_KEEP = /components\/ChatSidebar\.tsx/;
 
 // Resumen estadistico de muestras en ms. Lanza con muestras vacias: un resumen de nada no es un dato.
 export function summarize(samples) {
@@ -18,8 +21,9 @@ export function summarize(samples) {
   return { n: sorted.length, medianaMs: round(at(0.5)), p90Ms: round(at(0.9)), maxMs: round(sorted[sorted.length - 1]) };
 }
 
-// Agrega un perfil de CPU de CDP (`Profiler.stop`) por funcion: tiempo propio en ms, las `top` primeras.
-export function topSelfTime(profile, top = PROFILE_TOP) {
+// Agrega un perfil de CPU de CDP (`Profiler.stop`) por funcion: tiempo propio en ms, las `top` primeras y,
+// detras, las que casan con `keep` aunque no lleguen.
+export function topSelfTime(profile, top = PROFILE_TOP, keep = PROFILE_KEEP) {
   const byId = new Map(profile.nodes.map((node) => [node.id, node]));
   const selfMs = new Map();
   const deltas = profile.timeDeltas ?? [];
@@ -31,11 +35,11 @@ export function topSelfTime(profile, top = PROFILE_TOP) {
     const key = `${frame.functionName || '(anónima)'} · ${file}:${frame.lineNumber + 1}`;
     selfMs.set(key, (selfMs.get(key) ?? 0) + (deltas[index] ?? 0) / 1000);
   });
-  return [...selfMs.entries()]
+  const ranked = [...selfMs.entries()]
     .filter(([key]) => !key.startsWith('(idle)') && !key.startsWith('(program)'))
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, top)
-    .map(([fn, ms]) => ({ fn, selfMs: Math.round(ms * 10) / 10 }));
+    .sort((a, b) => b[1] - a[1]);
+  const kept = ranked.slice(top).filter(([key]) => keep.test(key));
+  return [...ranked.slice(0, top), ...kept].map(([fn, ms]) => ({ fn, selfMs: Math.round(ms * 10) / 10 }));
 }
 
 // Mide UNA interaccion en dos pasos para no perder el evento: primero se arma en la pagina (listener de

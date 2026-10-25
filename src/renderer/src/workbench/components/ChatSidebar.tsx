@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Icon } from './Icon';
 import { AnimatePresence } from 'motion/react';
 import { selectAccount, useWorkbenchStore } from '../workbenchStore';
+import { selectChatStatus, selectIsActiveTab, useConversation } from '../conversationSelectors';
 import type { Account, ChatStatus, Tab } from '../types';
 import type { ConversationSummary } from '@shared/conversations';
 import { filterConversationRows, formatSize, mergeConversationRows, relativeTime, rowRecency, type ConversationRow } from '../conversationList';
@@ -40,8 +41,8 @@ export function ChatSidebar(): React.JSX.Element {
   // selector que devuelva un array nuevo por render (bucle infinito en Zustand v5).
   const tabs = useWorkbenchStore((s) => s.tabs);
   const activeAccountId = useWorkbenchStore((s) => s.activeAccountId);
-  const activeTabId = useWorkbenchStore((s) => s.activeTabId);
-  const statusByChat = useWorkbenchStore((s) => s.statusByChat);
+  // Ni `activeTabId` ni `statusByChat` aqui: cada fila lee los suyos (`useConversation`), y la lista no se
+  // re-renderiza entera al cambiar de pestaña ni con cada cambio de estado de una conversacion (F2.5).
   const sessionIdByChat = useWorkbenchStore((s) => s.sessionIdByChat);
   const conversationHistory = useWorkbenchStore((s) => s.conversationHistory);
   // Sesiones que siguen vivas sin pestaña (cerrar con trabajo en vuelo no lo corta): su fila del
@@ -152,8 +153,8 @@ export function ChatSidebar(): React.JSX.Element {
               <ConversationSection
                 icon={<Icon name="folder" size={12} />} title={project.name.toUpperCase()}
                 rows={allRows.filter((row) => projectForRow(row, projects, sessionIdByChat)?.id === project.id)}
-                expandedByDefault={search.length > 0} account={account} activeTabId={activeTabId}
-                statusByChat={statusByChat} sessionIdByChat={sessionIdByChat} backgroundSessions={backgroundSessions}
+                expandedByDefault={search.length > 0} account={account}
+                sessionIdByChat={sessionIdByChat} backgroundSessions={backgroundSessions}
                 onSelect={setActiveTab} onOpen={openConversation}
                 onDragOutside={(item) => void dropConversationOutside(item).catch(reportNewWindowError)}
                 onRename={renameConversation} onContextMenu={openMenu}
@@ -169,8 +170,6 @@ export function ChatSidebar(): React.JSX.Element {
           rows={ungroupedShared}
           expandedByDefault={search.length > 0}
           account={account}
-          activeTabId={activeTabId}
-          statusByChat={statusByChat}
           sessionIdByChat={sessionIdByChat}
           backgroundSessions={backgroundSessions}
           onSelect={setActiveTab}
@@ -188,8 +187,6 @@ export function ChatSidebar(): React.JSX.Element {
           rows={ungroupedPrivate}
           expandedByDefault={search.length > 0}
           account={account}
-          activeTabId={activeTabId}
-          statusByChat={statusByChat}
           sessionIdByChat={sessionIdByChat}
           backgroundSessions={backgroundSessions}
           onSelect={setActiveTab}
@@ -402,8 +399,6 @@ function ConversationSection({
   rows,
   expandedByDefault,
   account,
-  activeTabId,
-  statusByChat,
   sessionIdByChat,
   backgroundSessions,
   onSelect,
@@ -420,8 +415,6 @@ function ConversationSection({
   readonly rows: readonly ConversationRow[];
   readonly expandedByDefault: boolean; // al buscar, se muestran todas las coincidencias sin cap
   readonly account: Account;
-  readonly activeTabId: string;
-  readonly statusByChat: Readonly<Record<string, ChatStatus>>;
   readonly sessionIdByChat: Readonly<Record<string, string>>;
   readonly backgroundSessions: Readonly<Record<string, BackgroundSession>>;
   readonly onSelect: (tabId: string) => void;
@@ -452,9 +445,7 @@ function ConversationSection({
             tab={row.tab}
             history={row.history}
             recencyMs={rowRecency(row)}
-            status={statusByChat[row.tab.id] ?? 'idle'}
             account={account}
-            selected={row.tab.id === activeTabId}
             onClick={() => onSelect(row.tab.id)}
             onRename={onRename}
             onContextMenu={(e) => {
@@ -628,9 +619,7 @@ function TabItem({
   tab,
   history,
   recencyMs,
-  status,
   account,
-  selected,
   onClick,
   onRename,
   onContextMenu,
@@ -639,13 +628,14 @@ function TabItem({
   // Resumen de su transcripcion en disco; undefined en una conversacion que aun no tiene fichero.
   readonly history: ConversationSummary | undefined;
   readonly recencyMs: number;
-  readonly status: ChatStatus; // estado real del motor para esa pestana
   readonly account: Account;
-  readonly selected: boolean;
   readonly onClick: () => void;
   readonly onRename: (tabId: string, title: string) => void;
   readonly onContextMenu: (e: React.MouseEvent) => void;
 }): React.JSX.Element {
+  // Estado real del motor y seleccion de ESTA pestaña, por selector propio (F2.5).
+  const status = useConversation(tab.id, selectChatStatus);
+  const selected = useConversation(tab.id, selectIsActiveTab);
   const active = status === 'streaming' || status === 'needs_permission';
   const [editing, setEditing] = useState(false);
   const commit = (value: string): void => {
