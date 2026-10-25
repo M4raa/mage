@@ -94,6 +94,18 @@ const SCENARIOS = {
   abortar: { reply: () => round(text('uno dos tres cuatro cinco seis siete ocho nueve diez'), 'stop'), usage: false, delay: SLOW_CHUNK_DELAY_MS },
   // Turno que dura ~4 s: da tiempo a encolar, quitar y editar mensajes con el turno en marcha (cola de F2.2).
   cola: { reply: () => round(text('uno dos tres cuatro cinco seis siete ocho nueve diez'), 'stop'), usage: false, delay: QUEUE_CHUNK_DELAY_MS },
+  // Turno de «Crear PR» en segundo plano (F2.4): texto lento (da tiempo a cerrar la pestaña), un push forzado que
+  // la barrera de main deniega y un `mkdir` que permite la regla «Permitir siempre Bash».
+  'pr-barrera': {
+    reply: (body) => {
+      const n = toolTurns(body);
+      if (n === 0) return round([...text('Preparo el PR antes de empujar.'), call(0, 'call_p', 'Bash', '{"command":"git push --force origin HEAD"}')], 'tool_calls');
+      if (n === 1) return round([call(0, 'call_r', 'Bash', '{"command":"mkdir vg-regla"}')], 'tool_calls');
+      return round(text('Hecho.'), 'stop');
+    },
+    usage: false,
+    delay: SLOW_CHUNK_DELAY_MS,
+  },
   // Escritura: pide un Write (lo que dispara la tarjeta de permiso en modo Manual).
   write: {
     reply: (body) =>

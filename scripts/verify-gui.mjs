@@ -8291,6 +8291,60 @@ const CHECKS = [
     },
   },
   {
+    // F2.4: con la pestaña CERRADA, main sigue decidiendo los permisos. Turno del runtime propio contra el servidor
+    // falso (escenario `pr-barrera`, modo Manual, regla «Permitir siempre Bash»), sin CLI ni cuota: se envía el
+    // prompt de «Crear PR», se cierra la pestaña con el turno en marcha (segundo plano en main) y el agente pide
+    // un `git push --force` (la barrera lo deniega aunque haya regla) y un `mkdir` (lo permite la regla). Nadie
+    // contesta desde la interfaz. Va antes del turno mínimo por la transcripción que deja en el perfil.
+    name: 'F2.4: segundo plano en main: con la pestaña cerrada, la barrera de PR deniega y la regla permite',
+    async run(page, { userDataDir }) {
+      const fake = await startFakeOpenAiServer();
+      let sessionId = null;
+      try {
+        const { tabId, cwd } = await openRuntimeTab(page, { fake, userDataDir, provider: PR_BARRIER_PROVIDER, model: 'fake:pr-barrera', permissionMode: 'default' });
+        sessionId = await page.evaluate(async (id) => {
+          const state = () => window.__mageDev.store.getState();
+          const sid = await state().ensureSession(id);
+          window.__mageDev.store.setState((s) => ({ tabs: s.tabs.map((t) => (t.id === id ? { ...t, alwaysAllowTools: ['Bash'] } : t)) }));
+          await window.mage.saveConversationPrefs({ sessionId: sid, prefs: { alwaysAllowTools: ['Bash'] } });
+          state().insertCreatePrPrompt(id);
+          await state().sendMessageToTab(id, state().draftByChat[id].text);
+          return sid;
+        }, tabId);
+        await page.waitForFunction((id) => window.__mageDev.store.getState().statusByChat[id] === 'streaming', tabId, { timeout: CONFIG.actionTimeoutMs });
+        const cierre = await page.evaluate(async ({ id, sid }) => {
+          await window.__mageDev.store.getState().closeTab(id);
+          const states = [];
+          window.__vgBgOff?.();
+          window.__vgBgStates = states;
+          window.__vgBgOff = window.__mageDev.store.subscribe((s) => { const st = s.backgroundSessions[sid]?.state; if (st !== undefined && states.at(-1) !== st) states.push(st); });
+          return { fila: window.__mageDev.store.getState().backgroundSessions[sid]?.state ?? null, enMain: (await window.mage.getSessionSnapshot(sid)).background };
+        }, { id: tabId, sid: sessionId });
+        await page.waitForFunction((sid) => window.__mageDev.store.getState().backgroundSessions[sid]?.state === 'done', sessionId, { timeout: 30_000 });
+        const final = await page.evaluate(async (sid) => {
+          window.__vgBgOff?.();
+          const snapshot = await window.mage.getSessionSnapshot(sid);
+          return { estados: window.__vgBgStates, pendientesMain: snapshot.pending.length };
+        }, sessionId);
+        const toolText = (request) => String(request?.messages.filter((m) => m.role === 'tool').at(-1)?.content ?? '');
+        const denegado = toolText(fake.stats.requests[1]);
+        const permitido = toolText(fake.stats.requests[2]);
+        const carpeta = fs.existsSync(path.join(cwd, 'vg-regla'));
+        const ok =
+          cierre.fila === 'working' && cierre.enMain === true &&
+          denegado.includes('Mage no permite') && denegado.includes('git push --force') &&
+          !permitido.includes('Mage no permite') && carpeta &&
+          !final.estados.includes('needs_action') && final.pendientesMain === 0 &&
+          fake.stats.completions === 3;
+        return { ok, detail: JSON.stringify({ cierre, final, denegado: denegado.slice(0, 160), permitido: permitido.slice(0, 80), carpeta, peticionesAlFalso: fake.stats.completions }) };
+      } finally {
+        if (sessionId !== null) await page.evaluate((sid) => window.__mageDev.store.getState().discardBackgroundSession(sid), sessionId);
+        await page.evaluate((id) => window.__mageDev.store.getState().removeCustomProvider(id), PR_BARRIER_PROVIDER.id);
+        await fake.close();
+      }
+    },
+  },
+  {
     // F2.3: un permiso se contesta UNA vez, gane quien gane. Turno del runtime propio contra el servidor falso
     // (escenario `write`, modo Manual: pide permiso para un Write), sin CLI ni cuota. Dos respuestas a la vez
     // por el IPC (como dos clientes): main acepta la primera y rechaza la segunda sin llegar al motor; la
@@ -10005,6 +10059,7 @@ async function openQueueTab(page, { fake, userDataDir }) {
 }
 
 const PERMISSION_TURN_PROVIDER = { id: 'custom:vg-permiso', label: 'VG permiso' };
+const PR_BARRIER_PROVIDER = { id: 'custom:vg-barrera-pr', label: 'VG barrera PR' };
 
 // --- Grupo 0: el turno minimo de verdad -----------------------------------------------------------
 
