@@ -17,7 +17,7 @@ async function installCollector(page) {
     if (window.__bench !== undefined) return;
     window.__bench = { bySession: {} };
     window.mage.onSessionEvent(({ sessionId, event }) => {
-      const run = (window.__bench.bySession[sessionId] ??= { firstUsefulAt: null, text: '', tools: [], init: '', results: 0, usage: [], costMicroUsd: 0, permissions: 0, errors: [] });
+      const run = (window.__bench.bySession[sessionId] ??= { firstUsefulAt: null, text: '', tools: [], init: '', results: 0, usage: [], costMicroUsd: 0, permissions: 0, permissionTools: [], resolved: 0, errors: [] });
       const now = performance.now();
       if ((event.kind === 'stream_delta' || event.kind === 'tool_use') && run.firstUsefulAt === null) run.firstUsefulAt = now;
       if (event.kind === 'assistant_text') run.text += event.text;
@@ -35,8 +35,12 @@ async function installCollector(page) {
         const tabId = Object.entries(store.getState().sessionIdByChat).find(([, id]) => id === sessionId)?.[0];
         if (tabId !== undefined) void store.getState().answerElicitation(tabId, { requestId: event.request.requestId, action: 'accept', ...(event.request.mode === 'url' ? {} : { content: {} }) });
       }
+      // Diagnóstico de la frontera de permisos (F2.4): de qué herramienta era cada petición y cuántas
+      // respuestas confirmó main (`permission_resolved`, una por respuesta aceptada).
+      if (event.kind === 'permission_resolved') run.resolved += 1;
       if (event.kind === 'permission_request') {
         run.permissions += 1;
+        run.permissionTools.push(event.request.toolName);
         const store = window.__mageDev.store;
         const tabId = Object.entries(store.getState().sessionIdByChat).find(([, id]) => id === sessionId)?.[0];
         if (tabId !== undefined) store.getState().answerPermissionFor(tabId, { behavior: 'allow', updatedInput: event.request.input }, event.request.requestId);
@@ -82,7 +86,7 @@ async function collect(page, { tabId, startedAt, task }) {
       return idle && (run.results >= turns || (doneText !== undefined && run.text.includes(doneText)));
     };
     while (!finished() && performance.now() < deadline) await new Promise((r) => setTimeout(r, 250));
-    const run = runOf() ?? { firstUsefulAt: null, text: '', tools: [], init: '', results: 0, usage: [], costMicroUsd: 0, permissions: 0, errors: ['sin-sesion'] };
+    const run = runOf() ?? { firstUsefulAt: null, text: '', tools: [], init: '', results: 0, usage: [], costMicroUsd: 0, permissions: 0, permissionTools: [], resolved: 0, errors: ['sin-sesion'] };
     return { ...run, timedOut: !finished(), endedAt: performance.now(), startedAt };
   }, { tabId, startedAt, turns: task.turns, doneText: task.doneText, timeoutMs: TASK_TIMEOUT_MS });
 }
@@ -92,7 +96,7 @@ function summarize(run) {
   return {
     ttfeMs: run.firstUsefulAt === null ? null : Math.round(run.firstUsefulAt - run.startedAt),
     totalMs: Math.round(run.endedAt - run.startedAt),
-    tools: run.tools, permissions: run.permissions, tokens,
+    tools: run.tools, permissions: run.permissions, permissionTools: run.permissionTools, resolved: run.resolved, tokens,
     costUsd: run.costMicroUsd > 0 ? run.costMicroUsd / 1e6 : null,
     errors: run.timedOut ? [...run.errors, 'timeout'] : run.errors,
     // Diagnóstico, igual que R2: el final de lo que dijo el agente (sin rutas del perfil).
