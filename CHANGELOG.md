@@ -40,6 +40,15 @@ versión.
 - Cerrar una sesión libera el cliente MCP aunque todavía esté consultando sus herramientas.
 - Auto permite comodines sobre archivos internos aunque haya otros nombres con caracteres Unicode.
 
+### Añadido
+- Mage deja un host local para otros clientes (terminal, widget, MCP): un socket privado que solo abre quien tiene el token de esa ejecución, con el protocolo versionado. Ve el mismo flujo de eventos que la ventana, contesta permisos y preguntas (se contestan una sola vez, gane quien gane) y puede enviar mensajes. Todavía no crea sesiones ni concede confianza a ninguna carpeta.
+- En Linux sin escritorio, Mage arranca como host sin ventanas (con `--headless` o sin `DISPLAY`). Pedir la interfaz gráfica a ese host dice que no está disponible y no lo reinicia ni toca sus sesiones.
+
+### Seguridad
+- La interfaz corre en el sandbox de Chromium en las tres ventanas (principal, widget y depuración).
+- Las órdenes sobre una sesión (enviar, contestar, parar, cambiar modelo…) se validan antes de llegar al motor y solo las acepta la ventana que la creó o la principal.
+- En Linux, si Mage se inicia sin el sandbox de Chromium (el AppImage lo hace cuando el sistema no permite los espacios de nombres de usuario), avisa de forma persistente con el motivo y recomienda el paquete .deb o activar esos espacios.
+
 ## 0.1.2 — 2026-10-08
 
 ### Añadido
