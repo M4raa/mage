@@ -1,0 +1,326 @@
+import { describe, expect, it, vi } from 'vitest';
+import type { ConversationSnapshot } from '@shared/coordination';
+import type { SequencedSessionEvent } from '../coordination/sessionCoordinator';
+import { HELLO_DEADLINE_MS, HostConnection, MAX_BUFFERED_BYTES, type HostSessions, type HostTransport } from './hostConnection';
+import { HOST_PROTOCOL, HostErrorCode } from './hostProtocol';
+
+const TOKEN = 'a'.repeat(64);
+const SNAPSHOT: ConversationSnapshot = { sessionId: 's1', provider: 'claude', conversationId: 'c1', nativeRef: null, lastSeq: 7, state: 'idle', queue: [], pending: [], background: false };
+const EVENT: SequencedSessionEvent = { sessionId: 's1', conversationId: 'c1', seq: 8, at: 1, event: { kind: 'result', result: { isError: false, subtype: 'success', numTurns: 1 } } };
+
+function harness(options: { sessions?: Partial<HostSessions>; maxLineBytes?: number } = {}) {
+  const written: string[] = [];
+  let buffered = 0;
+  let ended = false;
+  const transport: HostTransport = { write: (data) => { written.push(data); }, end: () => { ended = true; }, bufferedBytes: () => buffered };
+  const sinks: { sink: (event: SequencedSessionEvent) => void; onClosed: () => void }[] = [];
+  const unsubscribe = vi.fn();
+  const sessions: HostSessions = {
+    listSessions: vi.fn(() => [SNAPSHOT]),
+    snapshot: vi.fn(() => SNAPSHOT),
+    subscribe: vi.fn((_id, listener) => { sinks.push(listener); return { snapshot: SNAPSHOT, unsubscribe }; }),
+    send: vi.fn(() => ({ status: 'accepted' as const, commandId: 'k' })),
+    interrupt: vi.fn(() => []),
+    answerPermission: vi.fn(() => ({ status: 'accepted' as const })),
+    answerElicitation: vi.fn(() => ({ status: 'accepted' as const })),
+    ...options.sessions,
+  };
+  const timers: { fn: () => void; ms: number; cancelled: boolean }[] = [];
+  const log = vi.fn();
+  let ids = 0;
+  const connection = new HostConnection(transport, {
+    sessions, token: TOKEN, hostVersion: '0.1.3', log, newId: () => `sub-${++ids}`,
+    setTimer: (fn, ms) => { const timer = { fn, ms, cancelled: false }; timers.push(timer); return () => { timer.cancelled = true; }; },
+    ...(options.maxLineBytes === undefined ? {} : { maxLineBytes: options.maxLineBytes }),
+  });
+  const send = (message: unknown) => connection.receive(Buffer.from(`${JSON.stringify(message)}\n`));
+  const lines = () => written.join('').split('\n').filter((line) => line.length > 0).map((line) => JSON.parse(line) as Record<string, any>);
+  const hello = (overrides: Record<string, unknown> = {}) =>
+    send({ jsonrpc: '2.0', id: 1, method: 'hello', params: { protocol: HOST_PROTOCOL, client: { kind: 'terminal', version: '1' }, token: TOKEN, ...overrides } });
+  return { connection, sessions, send, lines, written, hello, sinks, unsubscribe, timers, log, isEnded: () => ended, setBuffered: (n: number) => { buffered = n; } };
+}
+
+describe('HostConnection — autenticación', () => {
+  it('hello_tokenYVersionBuenos_respondeConProtocoloYCapacidades', () => {
+    const h = harness();
+
+    h.hello();
+
+    expect(h.lines()).toHaveLength(1);
+    expect(h.lines()[0]!.result).toMatchObject({ protocol: HOST_PROTOCOL, hostVersion: '0.1.3' });
+    expect(h.lines()[0]!.result.capabilities).toContain('session.subscribe');
+    expect(h.isEnded()).toBe(false);
+  });
+
+  it('hello_tokenMalo_errorYCierraSinRepetirElToken', () => {
+    const h = harness();
+
+    h.hello({ token: 'b'.repeat(64) });
+
+    expect(h.lines()[0]!.error.code).toBe(HostErrorCode.BadToken);
+    expect(h.isEnded()).toBe(true);
+    expect(h.written.join('')).not.toContain(TOKEN);
+    expect(h.written.join('')).not.toContain('b'.repeat(64));
+    expect(JSON.stringify(h.log.mock.calls)).not.toContain('b'.repeat(64));
+  });
+
+  it('hello_tokenDeOtraLongitud_badTokenSinLanzar', () => {
+    const h = harness();
+
+    h.hello({ token: 'x' });
+
+    expect(h.lines()[0]!.error.code).toBe(HostErrorCode.BadToken);
+  });
+
+  it('receive_peticionSinHelloPrevio_notAuthenticatedYCierra', () => {
+    const h = harness();
+
+    h.send({ jsonrpc: '2.0', id: 2, method: 'sessions.list' });
+
+    expect(h.lines()[0]!.error.code).toBe(HostErrorCode.NotAuthenticated);
+    expect(h.isEnded()).toBe(true);
+    expect(h.sessions.listSessions).not.toHaveBeenCalled();
+  });
+
+  it('hello_versionMayorDistinta_rechazoConMensajeClaro', () => {
+    const h = harness();
+
+    h.hello({ protocol: '2.0' });
+
+    expect(h.lines()[0]!.error.code).toBe(HostErrorCode.ProtocolMismatch);
+    expect(h.lines()[0]!.error.message).toMatch(/2\.0/);
+    expect(h.isEnded()).toBe(true);
+  });
+
+  it('hello_versionMenorDistinta_seAcepta', () => {
+    const h = harness();
+
+    h.hello({ protocol: '1.9' });
+
+    expect(h.lines()[0]!.result).toBeDefined();
+  });
+
+  it('hello_parametrosInvalidos_invalidParamsYCierra', () => {
+    const h = harness();
+
+    h.hello({ client: { kind: 'otro', version: '1' } });
+
+    expect(h.lines()[0]!.error.code).toBe(HostErrorCode.InvalidParams);
+    expect(h.isEnded()).toBe(true);
+  });
+
+  it('plazoDelHello_sinPresentarse_cierra', () => {
+    const h = harness();
+
+    h.timers[0]!.fn();
+
+    expect(h.timers[0]!.ms).toBe(HELLO_DEADLINE_MS);
+    expect(h.lines()[0]!.error.code).toBe(HostErrorCode.NotAuthenticated);
+    expect(h.isEnded()).toBe(true);
+  });
+
+  it('plazoDelHello_trasPresentarse_seCancelaYNoCierra', () => {
+    const h = harness();
+
+    h.hello();
+
+    expect(h.timers[0]!.cancelled).toBe(true);
+    h.timers[0]!.fn();
+    expect(h.isEnded()).toBe(false);
+  });
+});
+
+describe('HostConnection — frontera de entrada', () => {
+  it('receive_jsonInvalido_parseErrorYCierraSinTumbarNada', () => {
+    const h = harness();
+
+    expect(() => h.connection.receive(Buffer.from('{no es json\n'))).not.toThrow();
+
+    expect(h.lines()[0]!.error.code).toBe(HostErrorCode.ParseError);
+    expect(h.isEnded()).toBe(true);
+  });
+
+  it('receive_envoltorioQueNoEsJsonRpc_invalidRequestYCierra', () => {
+    const h = harness();
+
+    h.send({ id: 1, method: 'hello' });
+
+    expect(h.lines()[0]!.error.code).toBe(HostErrorCode.InvalidRequest);
+    expect(h.isEnded()).toBe(true);
+  });
+
+  it('receive_lineaDemasiadoLarga_lineTooLongYCierra', () => {
+    const h = harness({ maxLineBytes: 64 });
+
+    h.connection.receive(Buffer.from('x'.repeat(200)));
+
+    expect(h.lines()[0]!.error.code).toBe(HostErrorCode.LineTooLong);
+    expect(h.isEnded()).toBe(true);
+  });
+
+  it('receive_despuesDeCerrar_ignoraLoQueLlegue', () => {
+    const h = harness();
+    h.connection.receive(Buffer.from('basura\n'));
+    const before = h.written.length;
+
+    h.hello();
+
+    expect(h.written).toHaveLength(before);
+  });
+
+  it('dispatch_metodoDesconocido_methodNotFoundYSigueAbierta', () => {
+    const h = harness();
+    h.hello();
+
+    h.send({ jsonrpc: '2.0', id: 2, method: 'session.destroy' });
+
+    expect(h.lines()[1]!.error.code).toBe(HostErrorCode.MethodNotFound);
+    expect(h.isEnded()).toBe(false);
+  });
+
+  it.each([
+    ['snapshotSinSessionId', 'session.snapshot', {}],
+    ['sendConCampoDeMas', 'session.send', { sessionId: 's1', text: 'x', cwd: '/' }],
+    ['sendConAdjuntos', 'session.send', { sessionId: 's1', text: 'x', attachments: [] }],
+    ['respuestaConDecisionRara', 'session.answerPermission', { sessionId: 's1', requestId: 'r', decision: { behavior: 'maybe' } }],
+    ['respuestaConUpdatedInputNoObjeto', 'session.answerPermission', { sessionId: 's1', requestId: 'r', decision: { behavior: 'allow', updatedInput: 'rm' } }],
+    ['elicitationSinAccion', 'session.answerElicitation', { sessionId: 's1', requestId: 'r' }],
+    ['unsubscribeSinId', 'session.unsubscribe', {}],
+  ])('dispatch_%s_invalidParamsSinTocarElCoordinador', (_name, method, params) => {
+    const h = harness();
+    h.hello();
+
+    h.send({ jsonrpc: '2.0', id: 2, method, params });
+
+    expect(h.lines()[1]!.error.code).toBe(HostErrorCode.InvalidParams);
+    expect(h.isEnded()).toBe(false);
+    for (const fn of Object.values(h.sessions)) expect(fn).not.toHaveBeenCalled();
+  });
+
+  it('dispatch_peticionSinId_seEjecutaYNoSeResponde', () => {
+    const h = harness();
+    h.hello();
+
+    h.send({ jsonrpc: '2.0', method: 'session.interrupt', params: { sessionId: 's1' } });
+
+    expect(h.sessions.interrupt).toHaveBeenCalledWith('s1');
+    expect(h.lines()).toHaveLength(1);
+  });
+
+  it('dispatch_sesionInexistente_unknownSessionSinCerrar', () => {
+    const h = harness({ sessions: { snapshot: vi.fn(() => { throw new Error('Sesion inexistente: zz'); }) } });
+    h.hello();
+
+    h.send({ jsonrpc: '2.0', id: 2, method: 'session.snapshot', params: { sessionId: 'zz' } });
+
+    expect(h.lines()[1]!.error).toEqual({ code: HostErrorCode.UnknownSession, message: 'Sesion inexistente: zz' });
+    expect(h.isEnded()).toBe(false);
+  });
+
+  it('dispatch_falloDelCoordinador_internalConSuMensaje', () => {
+    const h = harness({ sessions: { interrupt: vi.fn(() => { throw new Error('motor caído'); }) } });
+    h.hello();
+
+    h.send({ jsonrpc: '2.0', id: 2, method: 'session.interrupt', params: { sessionId: 's1' } });
+
+    expect(h.lines()[1]!.error).toEqual({ code: HostErrorCode.Internal, message: 'motor caído' });
+  });
+});
+
+describe('HostConnection — métodos', () => {
+  it('sessions.list_devuelveLasInstantaneas', () => {
+    const h = harness();
+    h.hello();
+
+    h.send({ jsonrpc: '2.0', id: 2, method: 'sessions.list' });
+
+    expect(h.lines()[1]!.result).toEqual({ sessions: [SNAPSHOT] });
+  });
+
+  it('session.send_texto_llegaAlCoordinadorYDevuelveElRecibo', () => {
+    const h = harness();
+    h.hello();
+
+    h.send({ jsonrpc: '2.0', id: 2, method: 'session.send', params: { sessionId: 's1', text: 'hola', commandId: 'k' } });
+
+    expect(h.sessions.send).toHaveBeenCalledWith({ sessionId: 's1', text: 'hola', commandId: 'k' });
+    expect(h.lines()[1]!.result).toEqual({ status: 'accepted', commandId: 'k' });
+  });
+
+  it('session.answerPermission_decisionValida_llegaAlCoordinador', () => {
+    const h = harness();
+    h.hello();
+
+    h.send({ jsonrpc: '2.0', id: 2, method: 'session.answerPermission', params: { sessionId: 's1', requestId: 'r1', decision: { behavior: 'deny', message: 'no' } } });
+
+    expect(h.sessions.answerPermission).toHaveBeenCalledWith('s1', 'r1', { behavior: 'deny', message: 'no' });
+    expect(h.lines()[1]!.result).toEqual({ status: 'accepted' });
+  });
+
+  it('session.subscribe_devuelveInstantaneaYLosEventosLlegaanComoNotificaciones', () => {
+    const h = harness();
+    h.hello();
+
+    h.send({ jsonrpc: '2.0', id: 2, method: 'session.subscribe', params: { sessionId: 's1' } });
+    h.sinks[0]!.sink(EVENT);
+
+    const [, subscribed, pushed] = h.lines();
+    expect(subscribed!.result).toEqual({ subscriptionId: 'sub-1', snapshot: SNAPSHOT });
+    expect(pushed).toEqual({ jsonrpc: '2.0', method: 'event', params: { subscriptionId: 'sub-1', ...EVENT } });
+  });
+
+  it('session.unsubscribe_suscripcionViva_laSueltaYNoLlegaMas', () => {
+    const h = harness();
+    h.hello();
+    h.send({ jsonrpc: '2.0', id: 2, method: 'session.subscribe', params: { sessionId: 's1' } });
+
+    h.send({ jsonrpc: '2.0', id: 3, method: 'session.unsubscribe', params: { subscriptionId: 'sub-1' } });
+
+    expect(h.unsubscribe).toHaveBeenCalledTimes(1);
+    expect(h.lines()[2]!.result).toEqual({ released: true });
+  });
+
+  it('session.unsubscribe_idDesconocido_releasedFalse', () => {
+    const h = harness();
+    h.hello();
+
+    h.send({ jsonrpc: '2.0', id: 2, method: 'session.unsubscribe', params: { subscriptionId: 'nada' } });
+
+    expect(h.lines()[1]!.result).toEqual({ released: false });
+  });
+
+  it('closed_conSuscripciones_lasSueltaTodas', () => {
+    const h = harness();
+    h.hello();
+    h.send({ jsonrpc: '2.0', id: 2, method: 'session.subscribe', params: { sessionId: 's1' } });
+    h.send({ jsonrpc: '2.0', id: 3, method: 'session.subscribe', params: { sessionId: 's1' } });
+
+    h.connection.closed();
+
+    expect(h.unsubscribe).toHaveBeenCalledTimes(2);
+  });
+
+  it('onClosed_laSesionTermina_laSuscripcionSeSueltaUnaVez', () => {
+    const h = harness();
+    h.hello();
+    h.send({ jsonrpc: '2.0', id: 2, method: 'session.subscribe', params: { sessionId: 's1' } });
+
+    h.sinks[0]!.onClosed();
+    h.connection.closed();
+
+    expect(h.unsubscribe).toHaveBeenCalledTimes(1);
+  });
+
+  it('pushEvent_consumidorLento_cierraLaConexion', () => {
+    const h = harness();
+    h.hello();
+    h.send({ jsonrpc: '2.0', id: 2, method: 'session.subscribe', params: { sessionId: 's1' } });
+    h.setBuffered(MAX_BUFFERED_BYTES + 1);
+
+    h.sinks[0]!.sink(EVENT);
+
+    expect(h.lines().at(-1)!.error.code).toBe(HostErrorCode.SlowConsumer);
+    expect(h.isEnded()).toBe(true);
+    expect(h.unsubscribe).toHaveBeenCalledTimes(1);
+  });
+});
