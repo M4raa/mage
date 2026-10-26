@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ConversationSnapshot } from '@shared/coordination';
 import { HostErrorCode, HOST_PROTOCOL } from './hostProtocol';
 import { endpointFilePath, modeFilePath, resolveHostEndpoint, tokenFilePath } from './hostEndpoint';
-import { startHostServer, type HostServerHandle } from './hostServer';
+import { startHostServer, type HostFs, type HostServerDeps, type HostServerHandle } from './hostServer';
 import type { HostSessions } from './hostConnection';
 
 // Prueba de integración con transporte real: named pipe en Windows, socket Unix en el resto.
@@ -40,13 +40,18 @@ async function start(prepare: (userData: string) => void = () => undefined) {
   prepare(userDataDir);
   const deps = { platform: process.platform, userDataDir, xdgRuntimeDir: undefined };
   const endpoint = resolveHostEndpoint(deps);
-  const handle = await startHostServer({
-    endpoint, platform: process.platform, tokenFile: tokenFilePath(deps), endpointFile: endpointFilePath(deps), modeFile: modeFilePath(deps), mode: 'headless', token: TOKEN, fs,
-    getuid: process.getuid?.bind(process),
-    connection: { sessions: fakeSessions(), hostVersion: '0.1.3', log: vi.fn(), newId: () => 'sub', setTimer: (fn, ms) => { const t = setTimeout(fn, ms); return () => clearTimeout(t); } },
-  });
+  const handle = await startHostServer(serverDeps(userDataDir));
   handles.push(handle);
   return { endpoint, userDataDir, tokenFile: tokenFilePath(deps), endpointFile: endpointFilePath(deps) };
+}
+
+function serverDeps(userDataDir: string, fsImpl: HostFs = fs): HostServerDeps {
+  const deps = { platform: process.platform, userDataDir, xdgRuntimeDir: undefined };
+  return {
+    endpoint: resolveHostEndpoint(deps), platform: process.platform, tokenFile: tokenFilePath(deps), endpointFile: endpointFilePath(deps), modeFile: modeFilePath(deps), mode: 'headless', token: TOKEN, fs: fsImpl,
+    getuid: process.getuid?.bind(process),
+    connection: { sessions: fakeSessions(), hostVersion: '0.1.3', log: vi.fn(), newId: () => 'sub', setTimer: (fn, ms) => { const t = setTimeout(fn, ms); return () => clearTimeout(t); } },
+  };
 }
 
 // Conecta, envía las líneas y espera a que lleguen `expected` respuestas (o a que el servidor cierre).
@@ -125,6 +130,24 @@ describe('startHostServer', () => {
     handles[0]!.closeFilesSync();
 
     expect(fs.existsSync(tokenFile)).toBe(false);
+  });
+
+  it('start_direccionOcupada_rechazaYNoDejaTokenNiDireccionNiModo', async () => {
+    const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mage-host-'));
+    roots.push(userDataDir);
+    const deps = serverDeps(userDataDir, {
+      ...fs,
+      // En Unix el arranque borra un socket viejo antes de escuchar: se respeta el del ocupante para que listen falle.
+      rmSync: (target, options) => { if (target !== resolveHostEndpoint({ platform: process.platform, userDataDir, xdgRuntimeDir: undefined }).address) fs.rmSync(target, options); },
+    });
+    if (deps.endpoint.directory !== null) fs.mkdirSync(deps.endpoint.directory, { recursive: true, mode: 0o700 });
+    const squatter = net.createServer();
+    await new Promise<void>((resolve) => { squatter.listen(deps.endpoint.address, resolve); });
+
+    await expect(startHostServer(deps)).rejects.toThrow();
+
+    await new Promise<void>((resolve) => { squatter.close(() => resolve()); });
+    expect([deps.tokenFile, deps.endpointFile, deps.modeFile].filter((file) => fs.existsSync(file))).toEqual([]);
   });
 
   posixOnly('start_fichero_token0600_directorio0700_socket0600', async () => {

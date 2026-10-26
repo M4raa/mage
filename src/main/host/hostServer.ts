@@ -54,21 +54,34 @@ export interface HostServerHandle {
 }
 
 export async function startHostServer(deps: HostServerDeps): Promise<HostServerHandle> {
-  prepareFiles(deps);
+  prepareDirectories(deps);
   const sockets = new Set<net.Socket>();
   const server = net.createServer((socket) => attach(socket, sockets, deps));
-  await listen(server, deps.endpoint);
-  if (deps.endpoint.kind === 'unix') deps.fs.chmodSync(deps.endpoint.address, SOCKET_MODE);
+  try {
+    writeFiles(deps);
+    await listen(server, deps.endpoint);
+    if (deps.endpoint.kind === 'unix') deps.fs.chmodSync(deps.endpoint.address, SOCKET_MODE);
+  } catch (err) {
+    // Un host que no escucha no deja token, dirección ni modo en disco (H2 de la devolución 16).
+    server.close();
+    removeFilesKeepingCause(deps, err);
+    throw err;
+  }
   return { endpoint: deps.endpoint, close: () => closeServer(server, sockets, deps), closeFilesSync: () => removeFiles(deps) };
 }
 
-// Directorios privados, socket viejo fuera y token nuevo. La instancia única del perfil garantiza que un socket
-// que ya exista es de una ejecución anterior que cayó sin limpiar.
-function prepareFiles(deps: HostServerDeps): void {
+// Directorios privados y socket viejo fuera. La instancia única del perfil garantiza que un socket que ya exista
+// es de una ejecución anterior que cayó sin limpiar.
+function prepareDirectories(deps: HostServerDeps): void {
   const { endpoint, fs } = deps;
   const directories = [dirname(deps.tokenFile), dirname(deps.endpointFile), dirname(deps.modeFile), ...(endpoint.directory === null ? [] : [endpoint.directory])];
   for (const directory of new Set(directories)) ensurePrivateDirectory(directory, deps);
   if (endpoint.kind === 'unix') fs.rmSync(endpoint.address, { force: true });
+}
+
+// Token nuevo, dirección y modo, solo legibles por el usuario.
+function writeFiles(deps: HostServerDeps): void {
+  const { endpoint, fs } = deps;
   for (const [file, content] of [[deps.tokenFile, deps.token], [deps.endpointFile, endpoint.address], [deps.modeFile, deps.mode]] as const) {
     fs.writeFileSync(file, content, { mode: TOKEN_FILE_MODE });
     if (deps.platform !== 'win32') fs.chmodSync(file, TOKEN_FILE_MODE);
@@ -125,6 +138,17 @@ function closeServer(server: net.Server, sockets: Set<net.Socket>, deps: HostSer
     for (const socket of sockets) socket.destroy();
     server.close((err) => (err === undefined ? resolve() : reject(err)));
   });
+}
+
+// Limpieza tras un arranque fallido: si además falla la limpieza, el error lleva las dos causas.
+function removeFilesKeepingCause(deps: HostServerDeps, cause: unknown): void {
+  try {
+    removeFiles(deps);
+  } catch (cleanupErr) {
+    const reason = cause instanceof Error ? cause.message : String(cause);
+    const cleanup = cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr);
+    throw new Error(`El host no arrancó (${reason}) y no se pudieron borrar sus ficheros: ${cleanup}`, { cause });
+  }
 }
 
 function removeFiles(deps: HostServerDeps): void {

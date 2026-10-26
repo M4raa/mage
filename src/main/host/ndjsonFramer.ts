@@ -24,6 +24,8 @@ export class NdjsonFramer {
   // Devuelve las líneas completas que cierra `chunk` y, si alguna (o el resto sin cerrar) pasa el tope, un
   // `overflow` y nada más: tras un desbordamiento el flujo ya no es de fiar.
   push(chunk: Buffer): readonly FrameEvent[] {
+    // ponytail: concatena todo lo pendiente en cada push; con trozos muy pequeños hasta el tope (1 MiB) el coste
+    // es cuadrático, acotado por MAX_LINE_BYTES. Si un cliente real lo nota, lista de trozos y unir al cerrar línea.
     this.pending = Buffer.concat([this.pending, chunk]);
     const events: FrameEvent[] = [];
     for (let end = this.pending.indexOf(NEWLINE); end !== -1; end = this.pending.indexOf(NEWLINE)) {
