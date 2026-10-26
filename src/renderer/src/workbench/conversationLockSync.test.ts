@@ -1,13 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createStore } from 'zustand/vanilla';
 import type { ConversationLockRef, ConversationLockStatus } from '@shared/conversationLock';
-import { lockRefOf, startConversationLockSync, type LockSyncMage, type LockSyncState } from './conversationLockSync';
+import { lockRefOf, RECLAIMED_NOTICE_MS, startConversationLockSync, type LockSyncMage, type LockSyncState } from './conversationLockSync';
 import type { Tab } from './types';
 
 const tab = (id: string, overrides: Partial<Tab> = {}): Tab => ({ id, accountId: '/home/u/.claude', accountAlias: 'u', cwd: '/p', model: 'm', provider: 'claude', title: id, privacy: 'shared', ...overrides }) as Tab;
 
 function setup(initial: Partial<LockSyncState> = {}, answer: ConversationLockStatus = { owner: true }) {
-  const store = createStore<LockSyncState>(() => ({ tabs: [], sessionIdByChat: {}, lockByChat: {}, ...initial }));
+  const store = createStore<LockSyncState>(() => ({ tabs: [], activeTabId: '', sessionIdByChat: {}, lockByChat: {}, lockReclaimedByChat: {}, ...initial }));
   let lost: (ref: ConversationLockRef) => void = () => undefined;
   const pending: { resolve: (status: ConversationLockStatus) => void }[] = [];
   const mage = {
@@ -18,12 +18,21 @@ function setup(initial: Partial<LockSyncState> = {}, answer: ConversationLockSta
   const reportError = vi.fn();
   let tick: () => void = () => undefined;
   const every = vi.fn((fn: () => void, _ms: number) => { tick = fn; return () => undefined; });
-  const stop = startConversationLockSync({ store, mage, reportError, every });
+  const timers: { fn: () => void; ms: number; cancelled: boolean }[] = [];
+  const after = vi.fn((fn: () => void, ms: number) => {
+    const timer = { fn, ms, cancelled: false };
+    timers.push(timer);
+    return () => { timer.cancelled = true; };
+  });
+  let focus: () => void = () => undefined;
+  const onWindowFocus = vi.fn((fn: () => void) => { focus = fn; return () => undefined; });
+  const stop = startConversationLockSync({ store, mage, reportError, every, after, onWindowFocus });
+  const fireTimers = () => { for (const timer of timers.splice(0)) if (!timer.cancelled) timer.fn(); };
   const answerAll = async (status: ConversationLockStatus = answer) => {
     for (const entry of pending.splice(0)) entry.resolve(status);
     await new Promise((resolve) => setTimeout(resolve, 0));
   };
-  return { store, mage, reportError, stop, answerAll, lose: (ref: ConversationLockRef) => lost(ref), tick: () => tick(), every };
+  return { store, mage, reportError, stop, answerAll, lose: (ref: ConversationLockRef) => lost(ref), tick: () => tick(), every, timers, fireTimers, focus: () => focus() };
 }
 
 const REF = { provider: 'claude', accountDir: '/home/u/.claude', nativeId: 'c1' };
@@ -125,5 +134,77 @@ describe('startConversationLockSync', () => {
     await h.answerAll();
 
     expect(h.reportError).toHaveBeenCalledTimes(1);
+  });
+
+  // Respuesta 4 de la devolución 17: la otra instancia SOLTÓ la conversación → esta pasa a ser la dueña sin botón y la
+  // pestaña lo dice un momento; la revisión se hace también al enfocar la pestaña o la ventana.
+  const READ_ONLY: ConversationLockStatus = { owner: false, profile: 'mage', orphan: false };
+
+  it('soltadaPorLaOtra_alRevisarPasaADuenaConAvisoQueSeVaSolo', async () => {
+    const h = setup({ tabs: [tab('a', { resumeSessionId: 'c1' })] });
+    await h.answerAll(READ_ONLY);
+
+    h.tick();
+    await h.answerAll({ owner: true });
+
+    expect(h.store.getState().lockByChat.a).toEqual({ owner: true });
+    expect(h.store.getState().lockReclaimedByChat).toEqual({ a: true });
+    expect(h.timers.map((t) => t.ms)).toEqual([RECLAIMED_NOTICE_MS]);
+    h.fireTimers();
+    expect(h.store.getState().lockReclaimedByChat).toEqual({});
+  });
+
+  it('duenaDesdeElPrincipio_sinAviso', async () => {
+    const h = setup({ tabs: [tab('a', { resumeSessionId: 'c1' })] });
+
+    await h.answerAll({ owner: true });
+
+    expect(h.store.getState().lockReclaimedByChat).toEqual({});
+    expect(h.timers).toEqual([]);
+  });
+
+  it('enfocarPestanaEnSoloLectura_preguntaEnElActoSinEsperarALaRevision', async () => {
+    const h = setup({ tabs: [tab('a', { resumeSessionId: 'c1' }), tab('b', { resumeSessionId: 'mia' })], activeTabId: 'b' });
+    await h.answerAll();
+    h.store.setState({ lockByChat: { a: READ_ONLY, b: { owner: true } } });
+
+    h.store.setState({ activeTabId: 'a' });
+    await h.answerAll({ owner: true });
+
+    expect(h.mage.acquireConversationLock).toHaveBeenCalledTimes(3);
+    expect(h.mage.acquireConversationLock).toHaveBeenLastCalledWith({ ...REF, tabId: 'a' });
+    expect(h.store.getState().lockReclaimedByChat).toEqual({ a: true });
+  });
+
+  it('enfocarPestanaDuena_noPregunta', async () => {
+    const h = setup({ tabs: [tab('a', { resumeSessionId: 'c1' }), tab('b', { resumeSessionId: 'mia' })], activeTabId: 'b' });
+    await h.answerAll({ owner: true });
+
+    h.store.setState({ activeTabId: 'a' });
+
+    expect(h.mage.acquireConversationLock).toHaveBeenCalledTimes(2);
+  });
+
+  it('focoDeLaVentana_revisaLaPestanaActivaEnSoloLectura', async () => {
+    const h = setup({ tabs: [tab('a', { resumeSessionId: 'c1' })], activeTabId: 'a' });
+    await h.answerAll(READ_ONLY);
+
+    h.focus();
+    await h.answerAll({ owner: true });
+
+    expect(h.mage.acquireConversationLock).toHaveBeenCalledTimes(2);
+    expect(h.store.getState().lockReclaimedByChat).toEqual({ a: true });
+  });
+
+  it('cerrarPestanaConAviso_quitaElAvisoYCancelaSuTemporizador', async () => {
+    const h = setup({ tabs: [tab('a', { resumeSessionId: 'c1' })] });
+    await h.answerAll(READ_ONLY);
+    h.tick();
+    await h.answerAll({ owner: true });
+
+    h.store.setState({ tabs: [] });
+
+    expect(h.store.getState().lockReclaimedByChat).toEqual({});
+    expect(h.timers[0]?.cancelled).toBe(true);
   });
 });

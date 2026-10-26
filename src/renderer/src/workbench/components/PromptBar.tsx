@@ -129,6 +129,15 @@ function ReadOnlyLockNotice({ tabId, profile, orphan }: { readonly tabId: string
   );
 }
 
+// La otra instancia soltó la conversación y esta pasó a ser la dueña sin pulsar nada (respuesta 4 de la devolución 17).
+function ReclaimedLockNotice(): React.JSX.Element {
+  return (
+    <div role="status" data-conversation-lock="reclaimed" className="mb-[6px] rounded-[7px] border border-mg-border px-[10px] py-[5px] text-[11px] text-mg-body2">
+      Ya puedes continuar aquí: la otra instancia de Mage ha soltado esta conversación.
+    </div>
+  );
+}
+
 export function PromptBar(): React.JSX.Element {
   // La pestaña de ESTE panel (item 13). Las acciones del store siguen operando sobre la pestaña
   // ACTIVA, no sobre esta: es correcto porque el panel se enfoca (focusPane) en cuanto se interactua
@@ -140,6 +149,7 @@ export function PromptBar(): React.JSX.Element {
   // #55 (F2.8): la conversación la tiene otra instancia de Mage; aquí se lee pero no se escribe.
   const lock = useWorkbenchStore((s) => s.lockByChat[activeTabId]);
   const readOnlyLock = lock !== undefined && !lock.owner ? lock : null;
+  const lockReclaimed = useWorkbenchStore((s) => s.lockReclaimedByChat[activeTabId] === true);
   const resolvedModel = useWorkbenchStore((s) => s.resolvedModelByChat[activeTabId] ?? null);
   // Modelos reales de la cuenta (P-026 2.4): el config dir EFECTIVO (el perfil privado tiene el suyo)
   // y, si aun no hay sesion, el de la cuenta. Sin ninguno, la lista de reserva.
@@ -548,6 +558,7 @@ export function PromptBar(): React.JSX.Element {
       )}
 
       {readOnlyLock !== null && <ReadOnlyLockNotice tabId={activeTabId} profile={readOnlyLock.profile} orphan={readOnlyLock.orphan} />}
+      {readOnlyLock === null && lockReclaimed && <ReclaimedLockNotice />}
 
       {preview !== null && (
         <ImprovePreview

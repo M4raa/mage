@@ -2213,6 +2213,57 @@ const CHECKS = [
     },
   },
   {
+    // Respuesta 4 de la devolución 17: si la otra instancia SOLTÓ la conversación (no murió), esta pasa a ser la dueña
+    // sin botón y la pestaña lo dice un momento («Ya puedes continuar aquí»). La revisión se hace también al recuperar
+    // el foco, así que se mide que llega MUY por debajo de la revisión periódica de 30 s.
+    name: 'D17: la otra instancia suelta la conversación y, al enfocar, esta pasa a ser la dueña con un aviso',
+    state: { tabs: 1 },
+    async run(page) {
+      if (!fs.existsSync(path.join(repoRoot, 'out', 'main', 'index.js'))) return { ok: false, detail: 'falta out/ (pnpm build): la segunda instancia arranca del build' };
+      const ref = { provider: 'custom:vg-lock', accountDir: '', nativeId: `vg-suelta-${Date.now()}` };
+      const lockFile = conversationLockFileFor(ref);
+      const second = await startSecondInstance();
+      try {
+        const params = { ...ref, tabId: 'vg-segunda' };
+        const segunda = await second.page.evaluate((p) => window.mage.acquireConversationLock(p), params);
+        await openTemporaryConversation(page);
+        const tabId = await page.evaluate((r) => {
+          const store = window.__mageDev.store;
+          const id = store.getState().activeTabId;
+          store.setState((st) => ({ tabs: st.tabs.map((t) => (t.id === id ? { ...t, provider: r.provider, accountId: '', resumeSessionId: r.nativeId } : t)) }));
+          return id;
+        }, ref);
+        await page.locator('[data-conversation-lock="read-only"]').waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        await second.page.evaluate((p) => window.mage.releaseConversationLock(p), params);
+        const soltadoEnDisco = await waitForCondition(() => !fs.existsSync(lockFile), CONFIG.actionTimeoutMs);
+        const enfocadaEn = Date.now();
+        await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+        const aviso = page.locator('[data-conversation-lock="reclaimed"]');
+        await aviso.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const msHastaDuena = Date.now() - enfocadaEn;
+        const duena = await page.evaluate((id) => ({
+          estado: window.__mageDev.store.getState().lockByChat[id] ?? null,
+          aviso: document.querySelector('[data-conversation-lock="reclaimed"]')?.textContent?.trim() ?? null,
+          soloLectura: document.querySelectorAll('[data-conversation-lock="read-only"]').length,
+          editable: document.querySelector(`[data-pane-tab-id="${id}"] .cm-content`)?.getAttribute('contenteditable') ?? null,
+        }), tabId);
+        const ficheroDeEsta = fs.existsSync(lockFile);
+        await aviso.waitFor({ state: 'detached', timeout: 15_000 });
+        await page.evaluate((id) => window.__mageDev.store.getState().closeTab(id), tabId);
+        const liberado = await waitForCondition(() => !fs.existsSync(lockFile), CONFIG.actionTimeoutMs);
+        const ok = segunda.owner === true && soltadoEnDisco && msHastaDuena < READ_ONLY_RECHECK_MS_FOR_CHECK
+          && duena.estado?.owner === true && duena.aviso?.startsWith('Ya puedes continuar aquí') === true && duena.soloLectura === 0
+          && duena.editable === 'true' && ficheroDeEsta && liberado;
+        return { ok, detail: JSON.stringify({ segunda, soltadoEnDisco, msHastaDuena, duena, ficheroDeEsta, liberado }) };
+      } finally {
+        killTree(second.child);
+        await second.browser.close().catch(() => undefined);
+        fs.rmSync(second.profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 500 });
+        fs.rmSync(lockFile, { force: true });
+      }
+    },
+  },
+  {
     // G5: `app.requestSingleInstanceLock()`. Estaba como "⚠ pendiente de verificacion GUI" desde que se
     // implemento. Se lanza un SEGUNDO Electron contra el MISMO perfil: debe rendirse enseguida y no
     // abrir otra ventana; la primera instancia recibe 'second-instance' y se enfoca.
@@ -10442,6 +10493,10 @@ function readTurnState(page, tab) {
 }
 
 // --- Segunda instancia (F2.8) -------------------------------------------------------------------------
+
+// La revisión periódica de una pestaña en solo lectura (`READ_ONLY_RECHECK_MS` del renderer): D17 mide que al enfocar
+// no hace falta esperarla.
+const READ_ONLY_RECHECK_MS_FOR_CHECK = 30_000;
 
 // El fichero del lock de una conversación, como lo nombra main (`conversationLockEnv.ts`): el hash de (proveedor,
 // cuenta canonizada, id nativo) dentro de `dir`. Solo para conversaciones sin cuenta (runtime propio).

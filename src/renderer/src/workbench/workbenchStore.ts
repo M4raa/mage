@@ -194,6 +194,8 @@ export interface WorkbenchState extends PrState, PrActions {
   // Bloqueo entre instancias (#55, F2.8): si esta instancia tiene la conversación de la pestaña o la ve en solo
   // lectura. Lo mantiene `startConversationLockSync`; sin entrada, la pestaña aún no tiene conversación.
   readonly lockByChat: Readonly<Record<string, ConversationLockStatus>>;
+  // La otra instancia soltó la conversación y esta pasó a ser la dueña: la pestaña lo dice un momento.
+  readonly lockReclaimedByChat: Readonly<Record<string, true>>;
   // Feedback de actividad (M2.6): inicio del turno y ultima señal del motor, por pestana (ms epoch).
   // El indicador de "pensando" muestra el tiempo transcurrido y detecta inactividad (posible cuelgue).
   readonly turnStartByChat: Readonly<Record<string, number>>;
@@ -1242,6 +1244,7 @@ export function createWorkbenchStore(mage: MageClient) {
     statusByChat: {},
     pendingByChat: {},
     lockByChat: {},
+    lockReclaimedByChat: {},
     turnStartByChat: {},
     lastActivityByChat: {},
     slashCommandsByChat: {},
