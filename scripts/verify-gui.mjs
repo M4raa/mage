@@ -35,6 +35,7 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { AGY_FIXTURE_ID, AGY_FIXTURE_TITLE, CODEX_FIXTURE_ID, CODEX_FIXTURE_TITLE, seedProviderHistory } from './lib/providerHistoryFixtures.mjs';
@@ -8288,6 +8289,49 @@ const CHECKS = [
     },
   },
   {
+    // F2.6: el host local. Un turno del runtime propio contra el servidor falso (escenario `cola`, ~4 s, sin CLI ni
+    // cuota) y un cliente EXTERNO (`scripts/host-client.mjs`, otro proceso) que lee el token y la dirección de
+    // `<userData>/run`, se presenta con `hello`, lee la instantánea y se suscribe a la sesión. Tiene que recibir la
+    // MISMA secuencia (seq y tipo de evento) que el renderer desde la instantánea hasta el `result`, sin huecos. Un
+    // hello con otro token se rechaza. Va antes de la comprobación F2.4 y del turno mínimo por la transcripción que deja.
+    name: 'F2.6: host local: un cliente externo recibe la misma secuencia que el renderer y un token malo se rechaza',
+    async run(page, { userDataDir }) {
+      const fake = await startFakeOpenAiServer();
+      let client = null;
+      try {
+        const { tabId } = await openRuntimeTab(page, { fake, userDataDir, provider: HOST_TURN_PROVIDER, model: QUEUE_TURN_MODEL });
+        const sessionId = await page.evaluate((id) => window.__mageDev.store.getState().ensureSession(id), tabId);
+        await recordSequencedEvents(page);
+        client = startHostClient(userDataDir, sessionId);
+        await waitUntil(() => client.lines.some((line) => line.kind === 'snapshot'), 30_000, () => `el cliente no llegó a suscribirse: ${client.stderr()} ${JSON.stringify(client.lines)}`);
+        const rechazo = await helloWithWrongToken(userDataDir);
+        await page.evaluate((id) => window.__mageDev.store.getState().sendMessageToTab(id, 'hola host'), tabId);
+        const code = await client.exited;
+        const renderer = await page.evaluate((sid) => window.__vgSequenced.filter((e) => e.sessionId === sid).map((e) => [e.seq, e.kind]), sessionId);
+        const snapshotLine = client.lines.find((line) => line.kind === 'snapshot');
+        const lastSeqAtSubscribe = snapshotLine.snapshot.lastSeq;
+        const external = client.lines.filter((line) => line.kind === 'event').map((line) => [line.seq, line.event.kind]);
+        const expected = renderer.filter(([seq]) => seq > lastSeqAtSubscribe);
+        const contiguous = external.every(([seq], i) => seq === lastSeqAtSubscribe + 1 + i);
+        const hello = client.lines.find((line) => line.kind === 'hello');
+        const list = client.lines.find((line) => line.kind === 'list');
+        const ok =
+          code === 0 && hello?.protocol === '1.0' && list.sessions.some((entry) => entry.sessionId === sessionId) &&
+          // El cliente sale al ver `result`: los eventos que llegan en el mismo trozo (el `session_state` de después) también se imprimen.
+          external.length > 0 && JSON.stringify(external) === JSON.stringify(expected.slice(0, external.length)) && contiguous &&
+          external.some(([, kind]) => kind === 'result') &&
+          rechazo?.error?.code === -32002 && !JSON.stringify(rechazo).includes('f'.repeat(64)) &&
+          !client.lines.some((line) => JSON.stringify(line).includes(fs.readFileSync(path.join(userDataDir, 'run', 'host-token'), 'utf8').trim()));
+        return { ok, detail: JSON.stringify({ code, hello, lastSeqAtSubscribe, externos: external.length, renderer: expected.length, contiguous, tieneResult: external.some(([, kind]) => kind === 'result'), rechazo: rechazo?.error?.code }) };
+      } finally {
+        if (client !== null) client.child.kill();
+        await page.evaluate((id) => window.__mageDev.store.getState().closeTab(id), (await page.evaluate(() => window.__mageDev.store.getState().activeTabId)));
+        await page.evaluate((id) => window.__mageDev.store.getState().removeCustomProvider(id), HOST_TURN_PROVIDER.id);
+        await fake.close();
+      }
+    },
+  },
+  {
     // F2.4: con la pestaña CERRADA, main sigue decidiendo los permisos. Turno del runtime propio contra el servidor
     // falso (escenario `pr-barrera`, modo Manual), sin CLI ni cuota: se envía el prompt de «Crear PR»; el agente
     // pide un `git push --force` (la barrera lo deniega) y un `mkdir` que SÍ pregunta. La regla se crea por la
@@ -10064,6 +10108,48 @@ async function openQueueTab(page, { fake, userDataDir }) {
 
 const PERMISSION_TURN_PROVIDER = { id: 'custom:vg-permiso', label: 'VG permiso' };
 const PR_BARRIER_PROVIDER = { id: 'custom:vg-barrera-pr', label: 'VG barrera PR' };
+const HOST_TURN_PROVIDER = { id: 'custom:vg-host', label: 'VG host' };
+
+// F2.6: el cliente mínimo del host (`scripts/host-client.mjs`) como proceso hijo PROPIO: sus líneas JSON se acumulan y
+// se para por su PID (nunca por nombre).
+function startHostClient(userDataDir, sessionId) {
+  const child = spawn(process.execPath, [path.join(repoRoot, 'scripts', 'host-client.mjs'), '--user-data-dir', userDataDir, '--session', sessionId, '--until', 'result', '--timeout', '60000'], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+  const lines = [];
+  let stderr = '';
+  let buffer = '';
+  child.stdout.on('data', (chunk) => {
+    buffer += chunk.toString('utf8');
+    const parts = buffer.split('\n');
+    buffer = parts.pop() ?? '';
+    for (const part of parts) if (part.length > 0) lines.push(JSON.parse(part));
+  });
+  child.stderr.on('data', (chunk) => { stderr += chunk.toString('utf8'); });
+  const exited = new Promise((resolve) => child.once('exit', (code) => resolve(code)));
+  return { child, lines, exited, stderr: () => stderr };
+}
+
+// Espera a que `predicate` sea cierta o lanza con el motivo que da `describe()` (nunca devuelve en silencio).
+async function waitUntil(predicate, timeoutMs, describe) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, CONFIG.pollIntervalMs));
+  }
+  throw new Error(describe());
+}
+
+// Un hello con un token que no es el del host: el servidor tiene que contestar `BadToken` y cerrar.
+function helloWithWrongToken(userDataDir) {
+  const address = fs.readFileSync(path.join(userDataDir, 'run', 'host-endpoint'), 'utf8').trim();
+  return new Promise((resolve, reject) => {
+    const socket = net.createConnection(address);
+    let received = '';
+    socket.on('connect', () => socket.write(`${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'hello', params: { protocol: '1.0', client: { kind: 'terminal', version: 'verify' }, token: 'f'.repeat(64) } })}\n`));
+    socket.on('data', (chunk) => { received += chunk.toString('utf8'); });
+    socket.on('close', () => resolve(received.length === 0 ? null : JSON.parse(received.split('\n')[0])));
+    socket.on('error', reject);
+  });
+}
 
 // --- Grupo 0: el turno minimo de verdad -----------------------------------------------------------
 
@@ -10072,7 +10158,7 @@ async function recordSequencedEvents(page) {
   await page.evaluate(() => {
     window.__vgSequenced = [];
     window.__vgSequencedOff?.();
-    window.__vgSequencedOff = window.mage.onSessionEvent((p) => window.__vgSequenced.push({ sessionId: p.sessionId, seq: p.seq, conversationId: p.conversationId ?? null }));
+    window.__vgSequencedOff = window.mage.onSessionEvent((p) => window.__vgSequenced.push({ sessionId: p.sessionId, seq: p.seq, conversationId: p.conversationId ?? null, kind: p.event.kind }));
   });
 }
 
