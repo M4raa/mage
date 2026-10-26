@@ -1501,6 +1501,10 @@ const CHECKS = [
     name: 'P-028 16: el estado vacio ofrece los proyectos recientes y fija la carpeta al pulsar',
     state: { tabs: 1 },
     async run(page) {
+      // La carga inicial del historial REAL (disco de la cuenta) puede aterrizar después de sembrar el del caso
+      // y pisarlo: con un historial grande ocurría siempre y la tarjeta se desmontaba bajo el clic (medido
+      // 2026-10-26, también en 5e22826). Se espera a que esa carga acabe ANTES de sembrar.
+      await page.evaluate(() => window.__mageDev.store.getState().loadConversationHistory());
       const previo = await page.evaluate(() => {
         const s = window.__mageDev.store.getState();
         return { conversationHistory: s.conversationHistory, tabs: s.tabs };
