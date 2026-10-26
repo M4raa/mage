@@ -64,6 +64,14 @@ export interface SessionCoordinatorDeps {
   readonly defer: (fn: () => void) => void;
   // Temporizador cancelable (`setTimeout` en produccion): la caducidad del segundo plano.
   readonly setTimer: (fn: () => void, ms: number) => () => void;
+  // Bloqueo entre instancias (#55, F2.8): una sesion en segundo plano CON turno sigue teniendo su conversacion aunque
+  // ya no tenga pestaña; la suelta al acabar el turno (segundo plano sin turno) o al parar.
+  readonly conversationHold?: ConversationHold;
+}
+
+export interface ConversationHold {
+  hold(sessionId: string, ref: NativeSessionRef): void;
+  release(sessionId: string): void;
 }
 
 // Una sesion en segundo plano que nadie reclama se para a la semana (decision del usuario, 2026-09-15): su CLI
@@ -155,6 +163,7 @@ export class SessionCoordinator {
     if (tracked.queue.length > 0) this.setQueue(tracked, []);
     tracked.cancelExpiry?.();
     tracked.cancelExpiry = this.deps.setTimer(() => this.expire(tracked), BACKGROUND_TTL_MS);
+    if (tracked.nativeRef !== null) this.deps.conversationHold?.hold(sessionId, tracked.nativeRef);
     return { background: true };
   }
 
@@ -257,6 +266,8 @@ export class SessionCoordinator {
     if (event.kind === 'result') {
       tracked.prGuard = false;
       this.drain(tracked);
+      // En segundo plano y ya sin turno: la conversacion queda libre para otra instancia.
+      if (tracked.cancelExpiry !== null) this.deps.conversationHold?.release(tracked.sessionId);
     }
   }
 
@@ -389,6 +400,7 @@ export class SessionCoordinator {
     tracked.cancelExpiry?.();
     tracked.cancelExpiry = null;
     this.tracked.delete(sessionId);
+    this.deps.conversationHold?.release(sessionId);
     this.persist(tracked);
     this.notifyClosed(tracked);
   }

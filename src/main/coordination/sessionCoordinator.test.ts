@@ -3,12 +3,12 @@ import type { CreateSessionParams, SessionEventPayload } from '@shared/ipc';
 import type { MageEvent } from '@shared/events';
 import type { NativeSessionRef } from '@shared/coordination';
 import { CREATE_PR_PROMPT } from '@shared/permissionPolicy';
-import { SessionCoordinator, type ConversationIdentityIndex, type CoordinatedSessions, type SequencedSessionEvent } from './sessionCoordinator';
+import { SessionCoordinator, type ConversationHold, type ConversationIdentityIndex, type CoordinatedSessions, type SequencedSessionEvent } from './sessionCoordinator';
 
 const ACCOUNT = '/home/u/.claude';
 
 // Gestor de sesiones falso: guarda el sumidero de cada sesion para emitir eventos a mano.
-function harness(options: { index?: Partial<ConversationIdentityIndex>; emitOnStart?: MageEvent; rules?: Record<string, readonly string[]> } = {}) {
+function harness(options: { index?: Partial<ConversationIdentityIndex>; emitOnStart?: MageEvent; rules?: Record<string, readonly string[]>; hold?: ConversationHold } = {}) {
   const sinks = new Map<string, (payload: SessionEventPayload) => void>();
   let next = 0;
   const sessions: CoordinatedSessions = {
@@ -47,6 +47,7 @@ function harness(options: { index?: Partial<ConversationIdentityIndex>; emitOnSt
   };
   const coordinator = new SessionCoordinator({
     sessions, index, now: () => ++clock, log, newId: () => `cmd-${++ids}`, alwaysAllowTools, defer: (fn) => deferred.push(fn), setTimer,
+    ...(options.hold === undefined ? {} : { conversationHold: options.hold }),
   });
   const flush = () => { while (deferred.length > 0) deferred.shift()!(); };
   const received: SequencedSessionEvent[] = [];
@@ -743,6 +744,65 @@ describe('SessionCoordinator — cierre y segundo plano en main (F2.4)', () => {
 
   it('close_sesionDesconocida_lanzaConElId', () => {
     expect(() => harness().coordinator.close('nada')).toThrow('Sesion inexistente: nada');
+  });
+});
+
+describe('SessionCoordinator — bloqueo de la conversación en segundo plano (#55, F2.8)', () => {
+  const result: MageEvent = { kind: 'result', result: { isError: false, subtype: 'success', numTurns: 1 } };
+  const withHold = () => {
+    const hold = { hold: vi.fn(), release: vi.fn() };
+    return { h: harness({ hold }), hold };
+  };
+
+  it('close_conTurno_laSesionSujetaSuConversacion', () => {
+    const { h, hold } = withHold();
+    const id = h.create();
+    h.coordinator.send({ sessionId: id, text: 'largo' });
+
+    h.coordinator.close(id);
+
+    expect(hold.hold).toHaveBeenCalledWith(id, { provider: 'claude', accountDir: ACCOUNT, nativeId: id });
+  });
+
+  it('result_enSegundoPlano_laSueltaAlQuedarseSinTurno', () => {
+    const { h, hold } = withHold();
+    const id = h.create();
+    h.coordinator.send({ sessionId: id, text: 'largo' });
+    h.coordinator.close(id);
+
+    h.emit(id, result);
+
+    expect(hold.release).toHaveBeenCalledWith(id);
+  });
+
+  it('result_conPestana_noSueltaNada', () => {
+    const { h, hold } = withHold();
+    const id = h.create();
+    h.coordinator.send({ sessionId: id, text: 'corto' });
+
+    h.emit(id, result);
+
+    expect(hold.release).not.toHaveBeenCalled();
+  });
+
+  it('close_sinTurno_noSujetaYAlPararLaSuelta', () => {
+    const { h, hold } = withHold();
+    const id = h.create();
+
+    h.coordinator.close(id);
+
+    expect(hold.hold).not.toHaveBeenCalled();
+    expect(hold.release).toHaveBeenCalledWith(id);
+  });
+
+  it('stopAll_alSalir_sueltaTodas', () => {
+    const { h, hold } = withHold();
+    const a = h.create();
+    const b = h.create();
+
+    h.coordinator.stopAll();
+
+    expect(hold.release.mock.calls.map(([id]) => id).sort()).toEqual([a, b].sort());
   });
 });
 
