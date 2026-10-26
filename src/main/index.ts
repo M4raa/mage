@@ -193,6 +193,7 @@ import { agyBridgeSpec, bridgeDocument, codexBridgeSpec, resolveBridge, type Bri
 import { EffectiveSettingsService } from './config/effectiveSettingsService';
 import { ConversationIndexStore } from './state/conversationIndexStore';
 import { registerSessionIpc } from './coordination/sessionIpc';
+import { canControlSession } from './coordination/sessionAccess';
 import { registerConversationPrefsIpc } from './coordination/conversationPrefsIpc';
 import { SessionCoordinator } from './coordination/sessionCoordinator';
 import { ProjectFileService, resolveProjectFilePath } from './files/projectFileService';
@@ -2622,6 +2623,11 @@ function registerSessionIpc1(): void {
     coordinator: sessionCoordinator,
     createSession: createSessionFromIpc,
     validateAttachments,
+    // Solo la ventana que creo la sesion y la principal le dan ordenes (F2.6, H3 de la devolucion 14).
+    canControl: (senderId, sessionId) => canControlSession({
+      ownerOf: (id) => sessionCoordinator.ownerOf(id),
+      isMainWindow: (webContentsId) => windowManager.windowIdOf(webContentsId) === MAIN_WINDOW_ID,
+    }, senderId, sessionId),
     // Carpeta scratch AISLADA por conversacion (subdir unico y vacio): asi crear un archivo nuevo
     // funciona a la primera, sin el "read first" de Claude Code por ficheros preexistentes.
     newScratchDir: () => {

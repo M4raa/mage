@@ -31,6 +31,7 @@ function setup(over: Partial<SessionIpcDeps> = {}) {
     createSession: vi.fn().mockReturnValue({ sessionId: 's1', configDir: '/cfg' }),
     validateAttachments: vi.fn().mockReturnValue([]),
     newScratchDir: vi.fn().mockReturnValue('/scratch/x'),
+    canControl: vi.fn().mockReturnValue(true),
     ...over,
   };
   registerSessionIpc(deps);
@@ -64,10 +65,10 @@ describe('registerSessionIpc', () => {
   });
 
   it('sendMessage_validaLosAdjuntosEnLaFronteraYDevuelveElRecibo', () => {
-    const validated = [{ mediaType: 'image/png', dataBase64: 'AA==' }];
+    const validated = [{ mediaType: 'image/png' as const, data: 'AA==' }];
     const { coordinator, invoke } = setup({ validateAttachments: vi.fn().mockReturnValue(validated) });
 
-    const receipt = invoke(IpcChannel.SessionSendMessage, { sessionId: 's1', text: 'hola', attachments: [{ raro: true }], commandId: 'c1' });
+    const receipt = invoke(IpcChannel.SessionSendMessage, { sessionId: 's1', text: 'hola', attachments: [{ mediaType: 'image/png', data: 'AA==' }], commandId: 'c1' });
 
     expect(receipt).toEqual({ status: 'queued', commandId: 'c1' });
     expect(coordinator.send).toHaveBeenCalledWith({ sessionId: 's1', text: 'hola', attachments: validated, commandId: 'c1' });
@@ -137,5 +138,73 @@ describe('registerSessionIpc', () => {
 
     expect(invoke(IpcChannel.SessionClose, 's1')).toEqual({ background: true });
     expect(coordinator.close).toHaveBeenCalledWith('s1');
+  });
+});
+
+describe('registerSessionIpc — frontera de entrada (F2.6, H3 de la devolución 14)', () => {
+  const LISTENING = [
+    [IpcChannel.SessionSendMessage, { sessionId: 's1', text: 'hola' }],
+    [IpcChannel.SessionAnswerPermission, { sessionId: 's1', requestId: 'r1', decision: { behavior: 'allow' } }],
+    [IpcChannel.SessionAnswerElicitation, { sessionId: 's1', requestId: 'e1', action: 'decline' }],
+    [IpcChannel.SessionInterrupt, 's1'],
+    [IpcChannel.SessionQueueRemove, { sessionId: 's1', messageId: 'q' }],
+    [IpcChannel.SessionQueueTake, 's1'],
+    [IpcChannel.SessionSetPermissionMode, { sessionId: 's1', mode: 'plan' }],
+    [IpcChannel.SessionSetModel, { sessionId: 's1', model: 'haiku' }],
+    [IpcChannel.SessionSetEffort, { sessionId: 's1', effort: 'low' }],
+    [IpcChannel.SessionStopTask, { sessionId: 's1', taskId: 't' }],
+    [IpcChannel.SessionStop, 's1'],
+    [IpcChannel.SessionClose, 's1'],
+    [IpcChannel.SessionSnapshot, 's1'],
+  ] as const;
+
+  it.each(LISTENING)('%s_sesionDeOtraVentana_lanzaSinLlegarAlCoordinador', (channel, arg) => {
+    const { coordinator, sessions, deps, invoke } = setup({ canControl: vi.fn().mockReturnValue(false) });
+
+    expect(() => invoke(channel, arg)).toThrow(/no controla la sesión s1/);
+
+    expect(deps.canControl).toHaveBeenCalledWith(7, 's1');
+    for (const fn of [...Object.values(coordinator), ...Object.values(sessions)]) expect(fn).not.toHaveBeenCalled();
+  });
+
+  it.each(LISTENING)('%s_sesionPropia_pasa', (channel, arg) => {
+    const { invoke } = setup();
+
+    expect(() => invoke(channel, arg)).not.toThrow();
+  });
+
+  it.each([
+    ['respuestaConDecisionRara', IpcChannel.SessionAnswerPermission, { sessionId: 's1', requestId: 'r1', decision: { behavior: 'quizá' } }],
+    ['respuestaConUpdatedInputNoObjeto', IpcChannel.SessionAnswerPermission, { sessionId: 's1', requestId: 'r1', decision: { behavior: 'allow', updatedInput: 'rm -rf /' } }],
+    ['respuestaSinRequestId', IpcChannel.SessionAnswerPermission, { sessionId: 's1', decision: { behavior: 'allow' } }],
+    ['envioConSessionIdNumerico', IpcChannel.SessionSendMessage, { sessionId: 5, text: 'x' }],
+    ['envioConCampoDeMas', IpcChannel.SessionSendMessage, { sessionId: 's1', text: 'x', cwd: '/' }],
+    ['interrumpirConObjeto', IpcChannel.SessionInterrupt, { sessionId: 's1' }],
+    ['pararSinId', IpcChannel.SessionStop, ''],
+    ['modeloVacio', IpcChannel.SessionSetModel, { sessionId: 's1', model: '' }],
+    ['quitarDeLaColaSinMensaje', IpcChannel.SessionQueueRemove, { sessionId: 's1' }],
+  ])('%s_seRechazaAntesDeAutorizarYSinLlegarAlCoordinador', (_name, channel, arg) => {
+    const { coordinator, sessions, deps, invoke } = setup();
+
+    expect(() => invoke(channel, arg)).toThrow(new RegExp(channel));
+
+    expect(deps.canControl).not.toHaveBeenCalled();
+    for (const fn of [...Object.values(coordinator), ...Object.values(sessions)]) expect(fn).not.toHaveBeenCalled();
+  });
+
+  it('answerPermission_updatedInputValido_llegaTalCual', () => {
+    const { coordinator, invoke } = setup();
+
+    invoke(IpcChannel.SessionAnswerPermission, { sessionId: 's1', requestId: 'r1', decision: { behavior: 'allow', updatedInput: { answers: { p: 'a' } } } });
+
+    expect(coordinator.answerPermission).toHaveBeenCalledWith('s1', 'r1', { behavior: 'allow', updatedInput: { answers: { p: 'a' } } });
+  });
+
+  it('setEffort_esfuerzoVacio_seAcepta', () => {
+    const { sessions, invoke } = setup();
+
+    invoke(IpcChannel.SessionSetEffort, { sessionId: 's1', effort: '' });
+
+    expect(sessions.setEffort).toHaveBeenCalledWith('s1', '');
   });
 });
