@@ -167,6 +167,7 @@ export const IpcChannel = {
   // Datos de la pantalla «Acerca de»: versiones del runtime y los avisos de terceros (B.2/B.3 de la
   // revision legal). Bajo demanda: el texto son ~124 kB que no pinta nadie hasta abrir la seccion.
   AboutGet: 'app:about',
+  StartupWarningsGet: 'app:startup-warnings',
   // Opacidad de fondo: main activa/desactiva el material translucido de la ventana (Windows 11).
   WindowOpacitySet: 'window:opacity',
   TranscriptOpen: 'transcript:open',
@@ -597,6 +598,13 @@ export const JUMP_LIST_OPEN_CHANNEL = 'jumpList:open';
 // Datos de la pantalla «Acerca de». `notices` es el texto COMPLETO de `THIRD-PARTY-NOTICES.txt` (lo
 // que conserva los avisos de copyright que el bundle borra) y `chromiumLicensesPath` es la ruta al
 // fichero de avisos de Chromium que instala Electron, o null si no esta donde se le espera.
+// Aviso persistente que main pide enseñar al abrirse la interfaz (F2.6: Linux arrancado sin el sandbox de Chromium).
+export interface StartupWarning {
+  readonly id: string;
+  readonly title: string;
+  readonly body: string;
+}
+
 export interface AboutInfo {
   readonly versions: {
     readonly app: string;
@@ -832,6 +840,7 @@ export interface MageApi {
   setUiScale(percent: number): void;
   // Datos de «Acerca de» (versiones + avisos de terceros). Se pide al abrir la seccion, no al arrancar.
   getAbout(): Promise<AboutInfo>;
+  getStartupWarnings(): Promise<readonly StartupWarning[]>;
   // Revela un archivo en el gestor de archivos del SO.
   revealFile(path: string): Promise<void>;
   // Abre "Guardar como" y copia el archivo; devuelve false si el usuario cancela.

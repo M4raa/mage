@@ -196,7 +196,7 @@ import { registerSessionIpc } from './coordination/sessionIpc';
 import { canControlSession } from './coordination/sessionAccess';
 import { readHostMode, startLocalHost } from './host/hostBootstrap';
 import type { HostMode, HostServerHandle } from './host/hostServer';
-import { HEADLESS_GUI_UNAVAILABLE, isHeadlessHost } from './startupMode';
+import { HEADLESS_GUI_UNAVAILABLE, isHeadlessHost, startupWarnings } from './startupMode';
 import { registerConversationPrefsIpc } from './coordination/conversationPrefsIpc';
 import { SessionCoordinator } from './coordination/sessionCoordinator';
 import { ProjectFileService, resolveProjectFilePath } from './files/projectFileService';
@@ -2896,6 +2896,9 @@ function registerDialogIpc1(): void {
 function registerAboutIpc1(): void {
   // «Acerca de» (B.2/B.3): versiones del runtime y los avisos de terceros. Las rutas se calculan aqui
   // —es lo unico que sabe de Electron— y el servicio decide que existe y que se puede enseñar.
+  // Avisos persistentes de inicio (F2.6, D-AppImage): hoy, Linux arrancado con el switch `no-sandbox`.
+  ipcMain.handle(IpcChannel.StartupWarningsGet, () =>
+    startupWarnings({ platform: process.platform, hasNoSandboxSwitch: app.commandLine.hasSwitch('no-sandbox') }));
   ipcMain.handle(IpcChannel.AboutGet, () =>
     buildAboutInfo(
       {

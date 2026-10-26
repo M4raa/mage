@@ -39,6 +39,8 @@ const UpdateReadyDialog = lazy(() => import('./workbench/components/UpdateReadyD
 const ReleaseNotesPane = lazy(() => import('./workbench/components/ReleaseNotesPane').then((m) => ({ default: m.ReleaseNotesPane })));
 
 import { useWorkbenchStore } from './workbench/workbenchStore';
+import { notify, reportActionError } from './workbench/notificationStore';
+import { showStartupWarnings } from './workbench/startupWarnings';
 import { RELEASE_NOTES_TAB_ID } from './workbench/releaseNotes';
 import { usePanelLayoutStore } from './workbench/panelLayoutStore';
 import { useGlobalKeybindings } from './workbench/keybindings/useGlobalKeybindings';
@@ -197,6 +199,10 @@ export function App(): React.JSX.Element {
     media.addEventListener('change', onChange);
     return () => media.removeEventListener('change', onChange);
   }, [themePref]);
+  // Avisos de inicio de main (F2.6): hoy, Linux arrancado sin el sandbox de Chromium. Una vez por ventana.
+  useEffect(() => {
+    void showStartupWarnings({ fetchWarnings: () => window.mage.getStartupWarnings(), notify, reportError: reportActionError });
+  }, []);
   // Al recuperar el foco (p.ej. tras el login en la terminal externa), re-descubre las cuentas para
   // reflejar el nuevo estado de login sin pulsar Refrescar, y refresca uso/estado. getState evita
   // re-suscribir el listener.

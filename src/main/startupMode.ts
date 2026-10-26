@@ -1,3 +1,5 @@
+import type { StartupWarning } from '@shared/ipc';
+
 // Cómo arranca el proceso propietario (F2.6, §3.4 del plan). Puro: recibe plataforma, argumentos y entorno, así
 // se prueba sin Electron.
 
@@ -22,12 +24,6 @@ export function isHeadlessHost({ platform, argv, env }: StartupEnvironment): boo
 // ventana, ni se reinicia, ni se mata una sesión por esa petición.
 export const HEADLESS_GUI_UNAVAILABLE =
   'La interfaz gráfica no está disponible en este host iniciado sin pantalla. Para usarla, cierra y vuelve a abrir Mage con pantalla cuando decidas terminar las sesiones activas';
-
-export interface StartupWarning {
-  readonly id: string;
-  readonly title: string;
-  readonly body: string;
-}
 
 export const NO_SANDBOX_WARNING: StartupWarning = {
   id: 'linux-no-sandbox',

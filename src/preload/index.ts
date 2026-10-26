@@ -154,6 +154,7 @@ const api: MageApi = {
   getStatus: () => ipcRenderer.invoke(IpcChannel.StatusGet),
   getAppVersion: () => ipcRenderer.invoke(IpcChannel.AppVersionGet),
   getAbout: () => ipcRenderer.invoke(IpcChannel.AboutGet),
+  getStartupWarnings: () => ipcRenderer.invoke(IpcChannel.StartupWarningsGet),
   setWindowOpacity: (percent: number) => ipcRenderer.invoke(IpcChannel.WindowOpacitySet, percent),
   // Escala de la interfaz: el zoom propio de Chromium. Va por `webFrame` y no por IPC porque es del
   // frame que lo pide — asi cada ventana (principal, widget, artifact) escala la suya sin coordinar
