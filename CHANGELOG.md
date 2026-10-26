@@ -40,11 +40,14 @@ versión.
 - Cerrar una sesión libera el cliente MCP aunque todavía esté consultando sus herramientas.
 - Auto permite comodines sobre archivos internos aunque haya otros nombres con caracteres Unicode.
 - Al contestar un permiso, la tarjeta queda en «Enviando…» con los botones desactivados y se cierra con la decisión que acepta Mage. Si otra ventana o cliente contestó antes, se cierra con su decisión sin dar error; si el envío falla, se ve el error y el permiso sigue pendiente.
+- Los errores que vienen del proceso principal se ven sin el prefijo técnico «Error invoking remote method…».
+- En Linux sin `which` (Arch), Mage encuentra los programas del PATH: los CLI de los agentes, `gh`, `git`, los editores y la shell ya no salen como no instalados.
+- En Windows, renovar el bloqueo de una conversación o guardar un ajuste mientras otro proceso lee ese fichero ya no falla: se reintenta un momento.
 - Una conversación nueva de Codex enseña que arranca en solo lectura (pide permiso antes de escribir), con «Permitir escribir» para que escriba dentro de su carpeta.
 
 ### Añadido
 - Mage deja un host local para otros clientes (terminal, widget, MCP): un socket privado que solo abre quien tiene el token de esa ejecución, con el protocolo versionado. Ve el mismo flujo de eventos que la ventana, contesta permisos y preguntas (se contestan una sola vez, gane quien gane) y puede enviar mensajes. Todavía no crea sesiones ni concede confianza a ninguna carpeta.
-- Una conversación abierta en otra instancia de Mage (la instalada, la de desarrollo u otro perfil) se ve en solo lectura, con el aviso «Abierta en otra instancia de Mage (<perfil>)». Si esa instancia se cierra, la conversación queda libre; si se cae, aparece «Tomar el control». Un `claude` lanzado a mano en una terminal no se puede bloquear desde Mage.
+- Una conversación abierta en otra instancia de Mage (la instalada, la de desarrollo u otro perfil) se ve en solo lectura, con el aviso «Abierta en otra instancia de Mage (<perfil>)». Si esa instancia la suelta o se cierra, esta pasa a ser la dueña sin pulsar nada (también al volver a la pestaña o a la ventana) y lo dice con «Ya puedes continuar aquí»; si se cae, aparece «Tomar el control». Un `claude` lanzado a mano en una terminal no se puede bloquear desde Mage.
 - En Linux sin escritorio, Mage arranca como host sin ventanas (con `--headless` o sin `DISPLAY`). Pedir la interfaz gráfica a ese host dice que no está disponible y no lo reinicia ni toca sus sesiones.
 
 ### Seguridad
