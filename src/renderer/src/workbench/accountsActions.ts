@@ -5,6 +5,7 @@ import type { WorkbenchState } from './workbenchStore';
 import { applyAccentOverrides, assignMissingAccents, toAccountView } from './accountView';
 import { applyCodexConfirmation, confirmCodexAccounts } from './codexAccountConfirmation';
 import { toUsageWindows } from './usageView';
+import { describeError } from './describeError';
 
 // Cuentas (F2.5, division del store por dominio): descubrirlas, su catalogo de modelos, su uso y sus colores, y
 // el estado del servicio. Fuera de `workbenchStore.ts` como las de PR, ajustes e historial; el store las mezcla
@@ -20,10 +21,6 @@ export interface AccountsDeps {
   readonly persistSettings: () => void;
   // Los colores se asignan solo con los ajustes ya cargados (si no, se pisarian los guardados).
   readonly isSettingsReady: () => boolean;
-}
-
-function describeError(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }
 
 export function createAccountsActions(deps: AccountsDeps): AccountsActions {

@@ -33,6 +33,7 @@ import {
 import { Dropdown } from '../Dropdown';
 import { StepSlider } from '../StepSlider';
 import { Icon } from '../Icon';
+import { describeError } from '../../describeError';
 
 // Seccion UNICA "Proveedores y modelos" (D2). Antes eran dos: "Proveedores" (alta de endpoints
 // compatibles con OpenAI) y "Modelos" (modelo por defecto), que listaba proveedores definidos en la
@@ -666,8 +667,4 @@ function editDraftFor(entry: ProviderEntry, customProviders: readonly CustomProv
   const saved = customProviders.find((provider) => provider.id === entry.id);
   if (saved !== undefined) return draftFromProvider(saved);
   return { ...EMPTY_CUSTOM_PROVIDER_DRAFT, label: entry.label, baseUrl: entry.baseUrl ?? '', models: modelsToDraftText(entry.models) };
-}
-
-function describeError(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }

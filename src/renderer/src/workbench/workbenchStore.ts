@@ -129,6 +129,7 @@ import { canSwitchBranch } from './canSwitchBranch';
 import { recentProjects, RECENT_PROJECTS_LIMIT } from './recentProjects';
 import { projectForRow } from './chatProjects';
 import { isWindowsPlatform } from './keybindings/platform';
+import { describeError } from './describeError';
 
 // Contexto en placeholder hasta M1.3 (el uso/contexto real llega con UsageService).
 const CONTEXT_PLACEHOLDER: ContextInfo = { usedTokens: '—', maxTokens: '200k', usedPct: 0, tokensOut: '—' };
@@ -3368,11 +3369,6 @@ function deriveTitle(cwd: string): string {
 // Hora local HH:MM para el bloque de usuario (presentacion; el store no depende de esto para logica).
 function currentTime(): string {
   return new Date().toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
-}
-
-// Contrato de error: mensaje legible que incluye el valor recibido; nunca tragar el error.
-function describeError(err: unknown): string {
-  return err instanceof Error ? err.message : `Error desconocido: ${String(err)}`;
 }
 
 const EMPTY_BLOCKS: readonly Block[] = [];

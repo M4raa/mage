@@ -9,6 +9,7 @@ import {
   type NotifyAction,
   type NotifyInput,
 } from './notifications';
+import { describeError } from './describeError';
 
 // Store propio de las notificaciones de Mage, aparte del `workbenchStore`. Por ventana (cada ventana es
 // su renderer) y en memoria: el centro no se persiste. `notify()` es funcion de modulo para poder
@@ -51,8 +52,4 @@ export function reportActionError(title: string, err: unknown, source: string, d
   const message = describeError(err);
   console.warn(`${title}:`, message);
   notify({ level: 'error', title, body: message, source, ...(dedupeKey === undefined ? {} : { dedupeKey }) });
-}
-
-function describeError(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }

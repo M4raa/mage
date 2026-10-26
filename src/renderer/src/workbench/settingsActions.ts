@@ -5,6 +5,7 @@ import { applyAccentOverrides } from './accountView';
 import { effortSettingKey } from './models';
 import { applyBackgroundOpacity, applyThemeFromSettings, systemPrefersDark } from './theme';
 import type { WorkbenchState } from './workbenchStore';
+import { describeError } from './describeError';
 
 // Ajustes de la app (F2.5, division del store por dominio): las acciones que solo cambian `settings` (y su
 // reflejo inmediato en el DOM, la ventana o los colores de las cuentas) y lo persisten. Viven fuera de
@@ -53,10 +54,6 @@ export interface SettingsDeps {
   readonly pushWidgetSnapshot: () => void;
   // Si las novedades no se abren en esta ejecucion (dev sin la variable del harness).
   readonly isReleaseNotesDevRun: () => boolean;
-}
-
-function describeError(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }
 
 export function createSettingsActions(deps: SettingsDeps): SettingsActions {

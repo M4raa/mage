@@ -1,6 +1,7 @@
 import type { MageApi } from '@shared/ipc';
 import type { WorkbenchState } from './workbenchStore';
 import { AGY_PROVIDER_ID, CODEX_PROVIDER_ID } from '@shared/providers';
+import { describeError } from './describeError';
 
 // Historial de conversaciones y proyectos de chat (F2.5, division del store por dominio): cargar la lista de la
 // cuenta activa y organizar las conversaciones en proyectos. Fuera de `workbenchStore.ts` como las de PR y
@@ -17,10 +18,6 @@ export interface HistoryDeps {
   readonly set: (fn: ((s: WorkbenchState) => Partial<WorkbenchState>) | Partial<WorkbenchState>) => void;
   readonly persistSettings: () => void;
   readonly persistTabs: () => void;
-}
-
-function describeError(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }
 
 export function createHistoryActions(deps: HistoryDeps): HistoryActions {
