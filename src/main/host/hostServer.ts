@@ -15,6 +15,8 @@ import { TOKEN_FILE_MODE } from './hostToken';
 // primer mensaje. No se ha probado con un segundo usuario de Windows (esta máquina solo tiene uno); no se añade
 // ninguna dependencia nativa para cerrarlo.
 
+export type HostMode = 'gui' | 'headless';
+
 export const PRIVATE_DIR_MODE = 0o700;
 export const SOCKET_MODE = 0o600;
 const PERMISSION_BITS = 0o777;
@@ -34,6 +36,9 @@ export interface HostServerDeps {
   readonly tokenFile: string;
   // Fichero con la dirección del host (la ruta del socket o el nombre del pipe) para los clientes locales.
   readonly endpointFile: string;
+  // Con qué modo arrancó este host y dónde se deja dicho.
+  readonly modeFile: string;
+  readonly mode: HostMode;
   readonly token: string;
   readonly fs: HostFs;
   // `process.getuid`: ausente en Windows.
@@ -61,10 +66,10 @@ export async function startHostServer(deps: HostServerDeps): Promise<HostServerH
 // que ya exista es de una ejecución anterior que cayó sin limpiar.
 function prepareFiles(deps: HostServerDeps): void {
   const { endpoint, fs } = deps;
-  const directories = [dirname(deps.tokenFile), dirname(deps.endpointFile), ...(endpoint.directory === null ? [] : [endpoint.directory])];
+  const directories = [dirname(deps.tokenFile), dirname(deps.endpointFile), dirname(deps.modeFile), ...(endpoint.directory === null ? [] : [endpoint.directory])];
   for (const directory of new Set(directories)) ensurePrivateDirectory(directory, deps);
   if (endpoint.kind === 'unix') fs.rmSync(endpoint.address, { force: true });
-  for (const [file, content] of [[deps.tokenFile, deps.token], [deps.endpointFile, endpoint.address]] as const) {
+  for (const [file, content] of [[deps.tokenFile, deps.token], [deps.endpointFile, endpoint.address], [deps.modeFile, deps.mode]] as const) {
     fs.writeFileSync(file, content, { mode: TOKEN_FILE_MODE });
     if (deps.platform !== 'win32') fs.chmodSync(file, TOKEN_FILE_MODE);
   }
@@ -126,4 +131,5 @@ function removeFiles(deps: HostServerDeps): void {
   if (deps.endpoint.kind === 'unix') deps.fs.rmSync(deps.endpoint.address, { force: true });
   deps.fs.rmSync(deps.tokenFile, { force: true });
   deps.fs.rmSync(deps.endpointFile, { force: true });
+  deps.fs.rmSync(deps.modeFile, { force: true });
 }

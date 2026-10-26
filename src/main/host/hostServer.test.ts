@@ -5,7 +5,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ConversationSnapshot } from '@shared/coordination';
 import { HostErrorCode, HOST_PROTOCOL } from './hostProtocol';
-import { endpointFilePath, resolveHostEndpoint, tokenFilePath } from './hostEndpoint';
+import { endpointFilePath, modeFilePath, resolveHostEndpoint, tokenFilePath } from './hostEndpoint';
 import { startHostServer, type HostServerHandle } from './hostServer';
 import type { HostSessions } from './hostConnection';
 
@@ -41,7 +41,7 @@ async function start(prepare: (userData: string) => void = () => undefined) {
   const deps = { platform: process.platform, userDataDir, xdgRuntimeDir: undefined };
   const endpoint = resolveHostEndpoint(deps);
   const handle = await startHostServer({
-    endpoint, platform: process.platform, tokenFile: tokenFilePath(deps), endpointFile: endpointFilePath(deps), token: TOKEN, fs,
+    endpoint, platform: process.platform, tokenFile: tokenFilePath(deps), endpointFile: endpointFilePath(deps), modeFile: modeFilePath(deps), mode: 'headless', token: TOKEN, fs,
     getuid: process.getuid?.bind(process),
     connection: { sessions: fakeSessions(), hostVersion: '0.1.3', log: vi.fn(), newId: () => 'sub', setTimer: (fn, ms) => { const t = setTimeout(fn, ms); return () => clearTimeout(t); } },
   });
@@ -101,6 +101,12 @@ describe('startHostServer', () => {
     const { endpoint, endpointFile } = await start();
 
     expect(fs.readFileSync(endpointFile, 'utf8')).toBe(endpoint.address);
+  });
+
+  it('start_dejaDichoConQueModoArranco', async () => {
+    await start();
+
+    expect(fs.readFileSync(modeFilePath({ platform: process.platform, userDataDir: roots[0]!, xdgRuntimeDir: undefined }), 'utf8')).toBe('headless');
   });
 
   it('close_sacaElTokenYLaDireccionDelDisco', async () => {

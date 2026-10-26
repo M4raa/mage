@@ -14,6 +14,9 @@ export const RUN_DIR_NAME = 'run';
 export const TOKEN_FILE_NAME = 'host-token';
 // Dónde escucha el host, para que un cliente local lo encuentre sin recalcular el hash (no es secreto).
 export const ENDPOINT_FILE_NAME = 'host-endpoint';
+// Con qué modo arrancó el host (`gui` o `headless`): lo lee la segunda instancia que pierde el lock para decir la
+// verdad a quien pidió la interfaz gráfica (§3.4). Tampoco es secreto.
+export const MODE_FILE_NAME = 'host-mode';
 
 export interface HostEndpoint {
   readonly kind: 'pipe' | 'unix';
@@ -58,6 +61,10 @@ export function resolveHostEndpoint(deps: HostEndpointDeps): HostEndpoint {
 // Fichero del token: `<userData>/run/host-token`, en un directorio que solo puede abrir el usuario.
 export function tokenFilePath(deps: HostEndpointDeps): string {
   return pathFor(deps.platform).join(deps.userDataDir, RUN_DIR_NAME, TOKEN_FILE_NAME);
+}
+
+export function modeFilePath(deps: HostEndpointDeps): string {
+  return pathFor(deps.platform).join(deps.userDataDir, RUN_DIR_NAME, MODE_FILE_NAME);
 }
 
 export function endpointFilePath(deps: HostEndpointDeps): string {
