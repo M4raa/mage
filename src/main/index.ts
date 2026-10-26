@@ -1,6 +1,10 @@
 import { resolvedPath as canonicalPath } from './os/resolvedPath';
-import { localScratchRoot, workspaceTrusted, ensureWorkingDirectory } from './os/scratchWorkspace';
-import { randomUUID } from 'node:crypto';
+import { localMageRoot, localScratchRoot, workspaceTrusted, ensureWorkingDirectory } from './os/scratchWorkspace';
+import { ConversationLocks, HEARTBEAT_MS } from './locks/conversationLocks';
+import { conversationLocksDir, lockFileName, nodeLockFs, pidAliveCheck } from './locks/conversationLockEnv';
+import { registerConversationLockIpc } from './locks/conversationLockIpc';
+import { readOnlyLockMessage } from '@shared/conversationLock';
+import { createHash, randomUUID } from 'node:crypto';
 import { execFile, spawn, spawnSync, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import {
   appendFileSync,
@@ -59,6 +63,7 @@ import {
   WINDOW_TAB_RECEIVED_CHANNEL,
   UPDATE_PROMPT_CHANNEL,
   UPDATE_STATE_CHANNEL,
+  CONVERSATION_LOCK_LOST_CHANNEL,
 } from '@shared/ipc';
 import type {
   ModelCatalogChange,
@@ -556,7 +561,52 @@ const sessionCoordinator = new SessionCoordinator({
     const timer = setTimeout(fn, ms);
     return () => clearTimeout(timer);
   },
+  // #55 (F2.8): una sesion en segundo plano con turno sigue teniendo su conversacion frente a otras instancias.
+  conversationHold: {
+    hold: (sessionId, ref) => {
+      const status = getConversationLocks().acquire(ref, `session:${sessionId}`);
+      if (!status.owner) mainLog('warn', 'La sesion en segundo plano no pudo sujetar su conversacion', { sessionId, profile: status.profile });
+    },
+    release: (sessionId) => getConversationLocks().releaseWhere((holder) => holder === `session:${sessionId}`),
+  },
 });
+
+// Bloqueo de conversacion entre instancias (#55, F2.8): un fichero por conversacion abierta en `<raiz local>/mage/locks`,
+// compartido por todos los perfiles. Perezoso: necesita userData. El instanceId es nuevo en cada arranque.
+let conversationLocksSingleton: ConversationLocks | null = null;
+function getConversationLocks(): ConversationLocks {
+  if (conversationLocksSingleton === null) {
+    const userData = app.getPath('userData');
+    conversationLocksSingleton = new ConversationLocks({
+      dir: conversationLocksDir(localMageRoot({ platform: process.platform, home: homedir(), env: process.env })),
+      identity: { instanceId: randomUUID(), profile: basename(userData), profileHash: createHash('sha256').update(userData).digest('hex').slice(0, 16), pid: process.pid },
+      fileNameOf: (ref) => lockFileName(ref, canonicalPath),
+      now: Date.now,
+      isPidAlive: pidAliveCheck((pid, signal) => { process.kill(pid, signal); }),
+      fs: nodeLockFs({ mkdirSync, writeFileSync, readFileSync, renameSync, rmSync, statSync }, randomUUID),
+    });
+  }
+  return conversationLocksSingleton;
+}
+
+// El latido de las conversaciones de esta instancia; las que haya PERDIDO se avisan a las ventanas (solo lectura).
+function startConversationLockHeartbeat(): void {
+  setInterval(() => {
+    for (const ref of getConversationLocks().heartbeat()) {
+      mainLog('warn', 'Otra instancia de Mage tomó el control de una conversación de esta', { provider: ref.provider, nativeId: ref.nativeId });
+      windowManager.broadcast(CONVERSATION_LOCK_LOST_CHANNEL, ref);
+    }
+  }, HEARTBEAT_MS).unref();
+}
+
+// Una conversacion que tiene OTRA instancia no se reanuda aqui (la pestaña ya esta en solo lectura; esto lo hace
+// cierto aunque el renderer se salte el paso).
+function assertConversationNotLockedElsewhere(params: CreateSessionParams): void {
+  if (params.resumeSessionId === undefined) return;
+  const status = getConversationLocks().peek({ provider: params.provider, accountDir: params.accountDir, nativeId: params.resumeSessionId });
+  if (status === null || status.owner) return;
+  throw new Error(`${readOnlyLockMessage(status.profile)}: no se puede continuar aquí. ${status.orphan ? 'Usa «Tomar el control» para continuarla en esta instancia.' : 'Ciérrala en la otra instancia para continuarla en esta.'}`);
+}
 
 // Lo que el runtime propio necesita de main: el proveedor de los ajustes, su clave de la boveda (en
 // cada peticion, nunca al renderer) y la red.
@@ -2488,6 +2538,7 @@ function createSessionFromIpc(event: Electron.IpcMainInvokeEvent, params: Create
     // contra un config dir ajeno —con sus credenciales y sus hooks— por un solo mensaje IPC.
     const recreated = ensureWorkingDirectory(params.cwd, scratchRoots(), { exists: path => existsSync(path) && statSync(path).isDirectory(), mkdir: path => { mkdirSync(path, { recursive: true }); } });
     assertLaunchable(params);
+    assertConversationNotLockedElsewhere(params);
     prepareAgyResume(params);
     // M2.6: una conversacion privada se lanza bajo el perfil privado de la cuenta (mismo login,
     // projects propio). Compartida (default) usa la cuenta tal cual. El config dir efectivo vuelve al
@@ -2505,6 +2556,7 @@ function createSessionFromIpc(event: Electron.IpcMainInvokeEvent, params: Create
   }
 
 function registerIpcHandlers(): void {
+  registerConversationLockIpc(ipcMain, getConversationLocks);
   const deps = createIpcDependencies();
   registerEngineIpc(deps);
   registerApplicationIpc(deps);
@@ -3644,6 +3696,7 @@ app.whenReady().then(async () => {
   Menu.setApplicationMenu(buildApplicationMenu());
   // La bóveda, antes de admitir sesiones y de migrar nada a ella (D1).
   await assessVaultOnce();
+  startConversationLockHeartbeat();
   migrateLegacyProviderKeysOnce();
   registerIpcHandlers();
   // Antes de la primera ventana: la primera sesion ya tiene que recibir los MCP importados.
@@ -3721,6 +3774,8 @@ app.on('before-quit', () => {
   localHost?.closeFilesSync();
   void localHost?.close().catch((err: unknown) => mainLog('warn', 'El host local no cerro limpio', { error: err instanceof Error ? err.message : String(err) }));
   sessionCoordinator.stopAll();
+  // #55: las conversaciones de esta instancia quedan libres para las demas (despues de parar las sesiones).
+  conversationLocksSingleton?.releaseAll();
   // Incognito ('session'): las carpetas de trabajo no sobreviven a la ejecucion. Se barre aqui ADEMAS
   // de al arrancar, porque si no quedarian en el temp todo el tiempo que la app este cerrada — que es
   // justo lo que esa politica promete evitar.

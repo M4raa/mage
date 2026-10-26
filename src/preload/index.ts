@@ -1,3 +1,4 @@
+import type { ConversationLockParams, ConversationLockRef } from '@shared/conversationLock';
 import { contextBridge, ipcRenderer, webFrame } from 'electron';
 import {
   EVENT_CHANNEL,
@@ -15,6 +16,7 @@ import {
   CLOSE_PROMPT_CHANNEL,
   UPDATE_PROMPT_CHANNEL,
   UPDATE_STATE_CHANNEL,
+  CONVERSATION_LOCK_LOST_CHANNEL,
   type CloseAnswer,
 } from '@shared/ipc';
 import type { UpdateState } from '@shared/update';
@@ -156,6 +158,14 @@ const api: MageApi = {
   getAppVersion: () => ipcRenderer.invoke(IpcChannel.AppVersionGet),
   getAbout: () => ipcRenderer.invoke(IpcChannel.AboutGet),
   getStartupWarnings: () => ipcRenderer.invoke(IpcChannel.StartupWarningsGet),
+  acquireConversationLock: (params: ConversationLockParams) => ipcRenderer.invoke(IpcChannel.ConversationLockAcquire, params),
+  takeOverConversationLock: (params: ConversationLockParams) => ipcRenderer.invoke(IpcChannel.ConversationLockTakeOver, params),
+  releaseConversationLock: (params: ConversationLockParams) => ipcRenderer.invoke(IpcChannel.ConversationLockRelease, params),
+  onConversationLockLost: (listener: (ref: ConversationLockRef) => void) => {
+    const handler = (_: unknown, ref: ConversationLockRef) => listener(ref);
+    ipcRenderer.on(CONVERSATION_LOCK_LOST_CHANNEL, handler);
+    return () => ipcRenderer.removeListener(CONVERSATION_LOCK_LOST_CHANNEL, handler);
+  },
   setWindowOpacity: (percent: number) => ipcRenderer.invoke(IpcChannel.WindowOpacitySet, percent),
   // Escala de la interfaz: el zoom propio de Chromium. Va por `webFrame` y no por IPC porque es del
   // frame que lo pide — asi cada ventana (principal, widget, artifact) escala la suya sin coordinar

@@ -2,6 +2,7 @@
 // El preload expone estos canales como `window.mage.*`; si cambia una firma, el compilador
 // rompe en ambos lados. El renderer NUNCA accede a Node/procesos: todo pasa por aqui.
 
+import type { ConversationLockParams, ConversationLockRef, ConversationLockStatus } from './conversationLock';
 import type { GitParams, GitSnapshot, GitSwitchParams } from './git';
 import type { WorktreeCreateParams, WorktreeMergeBaseParams, WorktreeRemoveResult } from './worktree';
 import type { GhAutoMergeParams, GhPrUpdate, GhRunActionParams, GhRunsParams, GhRunsSnapshot, GhSnapshot, GhWatchParams } from './gh';
@@ -168,6 +169,10 @@ export const IpcChannel = {
   // revision legal). Bajo demanda: el texto son ~124 kB que no pinta nadie hasta abrir la seccion.
   AboutGet: 'app:about',
   StartupWarningsGet: 'app:startup-warnings',
+  // Bloqueo de conversación entre instancias (#55, F2.8): tenerla, tomar el control de una huérfana y soltarla.
+  ConversationLockAcquire: 'conversation-lock:acquire',
+  ConversationLockTakeOver: 'conversation-lock:take-over',
+  ConversationLockRelease: 'conversation-lock:release',
   // Opacidad de fondo: main activa/desactiva el material translucido de la ventana (Windows 11).
   WindowOpacitySet: 'window:opacity',
   TranscriptOpen: 'transcript:open',
@@ -754,6 +759,9 @@ export interface CloseAnswer {
 
 // main -> TODAS las ventanas: cambio el estado de la actualizacion (indicador de la barra de estado).
 export const UPDATE_STATE_CHANNEL = 'update:state';
+// Bloqueo de conversación (#55, F2.8): main avisa de que esta instancia PERDIÓ una conversación (otra tomó el control
+// mientras esta no latía, p. ej. con el equipo suspendido). El renderer la vuelve a preguntar y queda en solo lectura.
+export const CONVERSATION_LOCK_LOST_CHANNEL = 'conversation-lock:lost';
 // main -> UNA ventana (la enfocada): enseña el dialogo de «lista para instalar» de esa version.
 export const UPDATE_PROMPT_CHANNEL = 'update:prompt';
 
@@ -844,6 +852,12 @@ export interface MageApi {
   // Datos de «Acerca de» (versiones + avisos de terceros). Se pide al abrir la seccion, no al arrancar.
   getAbout(): Promise<AboutInfo>;
   getStartupWarnings(): Promise<readonly StartupWarning[]>;
+  // Bloqueo de conversación entre instancias (#55, F2.8). `tabId` identifica a la pestaña que la sujeta.
+  acquireConversationLock(params: ConversationLockParams): Promise<ConversationLockStatus>;
+  takeOverConversationLock(params: ConversationLockParams): Promise<ConversationLockStatus>;
+  releaseConversationLock(params: ConversationLockParams): Promise<void>;
+  // Esta instancia perdió una conversación (otra tomó el control mientras esta no latía).
+  onConversationLockLost(listener: (ref: ConversationLockRef) => void): () => void;
   // Revela un archivo en el gestor de archivos del SO.
   revealFile(path: string): Promise<void>;
   // Abre "Guardar como" y copia el archivo; devuelve false si el usuario cancela.
