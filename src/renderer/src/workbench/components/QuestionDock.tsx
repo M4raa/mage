@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import type { AskQuestion } from '@shared/askUserQuestion';
 import { Icon } from './Icon';
-import { headPermission, useWorkbenchStore } from '../workbenchStore';
+import { headPermission, isPermissionSending, useWorkbenchStore } from '../workbenchStore';
 import { usePaneTabId } from '../paneContext';
 import { DISCLOSURE_VARIANTS } from '../motionPresets';
 import type { Block } from '../types';
@@ -56,6 +56,8 @@ function pendingQuestionBlock(requestId: string | undefined, blocks: readonly Bl
 function QuestionDockBody({ block, tabId }: { readonly block: QuestionBlock; readonly tabId: string }): React.JSX.Element {
   const answerQuestion = useWorkbenchStore((s) => s.answerQuestion);
   const answerPermissionFor = useWorkbenchStore((s) => s.answerPermissionFor);
+  // La respuesta va de camino a main: el dock queda quieto hasta que `permission_resolved` lo cierre.
+  const sending = useWorkbenchStore((s) => isPermissionSending(s, tabId, block.requestId));
   const [state, setState] = useState<QuestionFlowState>(() => initialFlow(block.questions));
   const [error, setError] = useState<string | null>(null);
   const ref = useRef<HTMLDivElement>(null);
@@ -109,6 +111,8 @@ function QuestionDockBody({ block, tabId }: { readonly block: QuestionBlock; rea
         aria-label={`Pregunta del agente: ${question.question}`}
         data-question-dock="true"
         data-question-step={state.step}
+        aria-busy={sending}
+        data-permission-sending={sending ? 'true' : undefined}
         onKeyDown={(e) => {
           // El texto de «Otra cosa» es del input; solo ↑ al principio vuelve a las opciones (#60).
           if (e.target instanceof HTMLInputElement) {
@@ -126,7 +130,7 @@ function QuestionDockBody({ block, tabId }: { readonly block: QuestionBlock; rea
           e.stopPropagation();
           run(action);
         }}
-        className="flex flex-col rounded-[11px] border border-mg-border-emph bg-mg-panel outline-none focus-visible:border-mg-focus"
+        className={`flex flex-col rounded-[11px] border border-mg-border-emph bg-mg-panel outline-none focus-visible:border-mg-focus ${sending ? 'pointer-events-none opacity-60' : ''}`}
       >
         <DockHeader question={question} step={state.step} total={block.questions.length} onPrev={() => run({ type: 'prev' })} onNext={() => run({ type: 'next' })} onClose={() => run({ type: 'close' })} />
         <DockOptions question={question} state={state} onToggle={(label) => run({ type: 'toggle', label })} />

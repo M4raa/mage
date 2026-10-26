@@ -983,22 +983,32 @@ describe('permisos en cola', () => {
     return { store, answerPermission };
   }
 
-  it('answerPermissionFor_dosPeticionesEnParalelo_cadaTarjetaContestaLaSuya', () => {
+  const sendingIds = (store: ReturnType<typeof withTwoPending>['store']) =>
+    (store.getState().pendingByChat['a'] ?? []).filter((p) => p.sending === true).map((p) => p.requestId);
+  const permissionStates = (store: ReturnType<typeof withTwoPending>['store']) =>
+    (store.getState().blocksByChat['a'] ?? []).flatMap((b) => (b.kind === 'permission' ? [b.state] : []));
+  const hasErrorBlock = (store: ReturnType<typeof withTwoPending>['store']) =>
+    (store.getState().blocksByChat['a'] ?? []).some((b) => b.kind === 'error');
+
+  it('answerPermissionFor_dosPeticionesEnParalelo_cadaTarjetaContestaLaSuyaYCierraConPermissionResolved', () => {
     const { store, answerPermission } = withTwoPending();
 
     store.getState().answerPermissionFor('a', { behavior: 'allow' }, 'r2');
 
     expect(answerPermission).toHaveBeenCalledWith({ sessionId: 's-a', requestId: 'r2', decision: { behavior: 'allow' } });
+    expect(sendingIds(store)).toEqual(['r2']);
+    expect(permissionStates(store)).toEqual(['pending', 'pending']);
+    store.getState().handleEvent('s-a', { kind: 'permission_resolved', requestId: 'r2', behavior: 'allow' });
     expect(store.getState().pendingByChat['a']?.map((p) => p.requestId)).toEqual(['r1']);
     expect(store.getState().statusByChat['a']).toBe('needs_permission');
 
     store.getState().answerPermissionFor('a', { behavior: 'deny', message: 'no' }, 'r1');
+    store.getState().handleEvent('s-a', { kind: 'permission_resolved', requestId: 'r1', behavior: 'deny' });
 
     expect(answerPermission).toHaveBeenLastCalledWith({ sessionId: 's-a', requestId: 'r1', decision: { behavior: 'deny', message: 'no' } });
     expect(store.getState().pendingByChat['a']).toEqual([]);
     expect(store.getState().statusByChat['a']).toBe('streaming');
-    const states = (store.getState().blocksByChat['a'] ?? []).flatMap((b) => (b.kind === 'permission' ? [b.state] : []));
-    expect(states).toEqual(['denied', 'allowed']);
+    expect(permissionStates(store)).toEqual(['denied', 'allowed']);
   });
 
   it('answerActivePermission_conCola_contestaLaMasAntigua', () => {
@@ -1007,6 +1017,51 @@ describe('permisos en cola', () => {
     store.getState().answerActivePermission({ behavior: 'allow' });
 
     expect(answerPermission).toHaveBeenCalledWith(expect.objectContaining({ requestId: 'r1' }));
+    expect(sendingIds(store)).toEqual(['r1']);
+  });
+
+  it('answerPermissionFor_reciboRejected_sinErrorYLaCierraElPermissionResolvedDelOtroCliente', async () => {
+    const { store, answerPermission } = withTwoPending();
+    answerPermission.mockResolvedValue({ status: 'rejected', reason: 'already_answered' });
+
+    store.getState().answerPermissionFor('a', { behavior: 'allow' }, 'r1');
+    await answerPermission.mock.results[0]?.value;
+    await Promise.resolve();
+
+    expect(sendingIds(store)).toEqual(['r1']);
+    expect(hasErrorBlock(store)).toBe(false);
+    expect(store.getState().statusByChat['a']).toBe('needs_permission');
+    // Ganó otro cliente denegando: la tarjeta se cierra con SU decisión, no con la de esta ventana.
+    store.getState().handleEvent('s-a', { kind: 'permission_resolved', requestId: 'r1', behavior: 'deny' });
+    expect(permissionStates(store)).toEqual(['denied', 'pending']);
+    expect(store.getState().pendingByChat['a']?.map((p) => p.requestId)).toEqual(['r2']);
+  });
+
+  it('answerPermissionFor_laLlamadaLanza_muestraElErrorYLaPeticionVuelveAPendiente', async () => {
+    const { store, answerPermission } = withTwoPending();
+    answerPermission.mockRejectedValue(new Error('main no responde'));
+
+    store.getState().answerPermissionFor('a', { behavior: 'allow' }, 'r1');
+    await vi.waitFor(() => expect(hasErrorBlock(store)).toBe(true));
+
+    expect(sendingIds(store)).toEqual([]);
+    expect(store.getState().pendingByChat['a']?.map((p) => p.requestId)).toEqual(['r1', 'r2']);
+    expect(permissionStates(store)).toEqual(['pending', 'pending']);
+    expect(store.getState().statusByChat['a']).toBe('needs_permission');
+    store.getState().answerPermissionFor('a', { behavior: 'allow' }, 'r1');
+    expect(answerPermission).toHaveBeenCalledTimes(2);
+  });
+
+  it('answerPermissionFor_laLlamadaLanzaTrasPermissionCancelled_noResucitaLaPeticion', async () => {
+    const { store, answerPermission } = withTwoPending();
+    let fail: (err: Error) => void = () => undefined;
+    answerPermission.mockReturnValue(new Promise((_resolve, reject) => { fail = reject; }));
+
+    store.getState().answerPermissionFor('a', { behavior: 'allow' }, 'r1');
+    store.getState().handleEvent('s-a', { kind: 'permission_cancelled', requestId: 'r1' });
+    fail(new Error('Permiso desconocido o ya resuelto'));
+    await vi.waitFor(() => expect(hasErrorBlock(store)).toBe(true));
+
     expect(store.getState().pendingByChat['a']?.map((p) => p.requestId)).toEqual(['r2']);
   });
 
@@ -1026,7 +1081,7 @@ describe('permisos en cola', () => {
     store.getState().allowAlwaysAndAnswer('Read', 'a');
 
     expect(answerPermission.mock.calls.map(([arg]) => (arg as { requestId: string }).requestId)).toEqual(['r1', 'r2']);
-    expect(store.getState().pendingByChat['a']?.map((p) => p.requestId)).toEqual(['r3']);
+    expect(sendingIds(store)).toEqual(['r1', 'r2']);
     expect(store.getState().tabs[0]?.alwaysAllowTools).toEqual(['Read']);
   });
 });

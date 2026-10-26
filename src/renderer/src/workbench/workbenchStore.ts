@@ -2455,23 +2455,22 @@ export function createWorkbenchStore(mage: MageClient) {
     // Responde al permiso pendiente de la pestana activa y limpia el panel.
     answerActivePermission: (decision) => get().answerPermissionFor(get().activeTabId, decision),
 
-    // Responde el permiso pendiente de UNA pestaña. Ademas de limpiar el panel, CIERRA la tarjeta del
-    // hilo con la decision (2.3b): la tarjeta se queda como registro, no desaparece.
+    // Responde el permiso pendiente de UNA pestaña. NO predice el resultado (devolución 16): la peticion pasa a
+    // «enviando» y la tarjeta se cierra con `permission_resolved`, que main difunde a todos los clientes. Un recibo
+    // `rejected` no es un error: gano otro cliente y su `permission_resolved` cierra la tarjeta con la decision
+    // buena. Si la llamada lanza, se ve el error y la peticion vuelve a quedar pendiente.
     answerPermissionFor: (tabId, decision, requestId) => {
       const queue = get().pendingByChat[tabId] ?? [];
       const pending = requestId === undefined ? queue[0] : queue.find((p) => p.requestId === requestId);
       const sessionId = get().sessionIdByChat[tabId];
-      if (pending === undefined || sessionId === undefined) return;
-      const resolved = decision.behavior === 'allow' ? 'allowed' : 'denied';
-      const rest = queue.filter((p) => p !== pending);
-      set((s) => ({
-        ...withBlocks(s, tabId, resolvePermissionBlock(blocksOf(s, tabId), pending.requestId, resolved)),
-        pendingByChat: { ...s.pendingByChat, [tabId]: rest },
-        statusByChat: { ...s.statusByChat, [tabId]: rest.length > 0 ? 'needs_permission' : 'streaming' },
-      }));
-      void mage
-        .answerPermission({ sessionId, requestId: pending.requestId, decision })
-        .catch((err: unknown) => failChat(set, tabId, describeError(err)));
+      if (pending === undefined || sessionId === undefined || pending.sending === true) return;
+      set((s) => markPermissionSending(s, tabId, pending.requestId, true));
+      void mage.answerPermission({ sessionId, requestId: pending.requestId, decision }).catch((err: unknown) => {
+        set((s) => ({
+          ...markPermissionSending(s, tabId, pending.requestId, false),
+          ...withBlocks(s, tabId, appendErrorBlock(blocksOf(s, tabId), describeError(err), nextBlockId())),
+        }));
+      });
     },
 
     // "Permitir siempre <tool> aqui" (2.3b): la regla y luego las respuestas. Se conceden todas las de
@@ -2508,7 +2507,7 @@ export function createWorkbenchStore(mage: MageClient) {
       const tabId = get().activeTabId;
       const pending = (get().pendingByChat[tabId] ?? []).find((p) => p.requestId === requestId);
       if (pending === undefined) return;
-      patchBlocks(set, tabId, (blocks) => answerQuestionBlock(blocks, requestId, answers));
+      // Las respuestas se pintan al llegar `permission_resolved`, que las trae.
       get().answerPermissionFor(tabId, { behavior: 'allow', updatedInput: buildUpdatedInput(pending.input, answers) }, requestId);
     },
 
@@ -2656,6 +2655,8 @@ export const useWorkbenchStore = createWorkbenchStore(browserMage);
 // sola, o una peticion que se queda colgada sin tarjeta.
 export interface PendingPermission {
   readonly requestId: string;
+  // La respuesta de este cliente va de camino a main: botones desactivados hasta `permission_resolved`.
+  readonly sending?: true;
   // El `input` original de la tool: hace falta para responder a un AskUserQuestion (2.3), donde la
   // respuesta viaja como `updatedInput = {...input, answers}`.
   readonly input: Readonly<Record<string, unknown>>;
@@ -3035,6 +3036,26 @@ function resolvedPermissionPatch(state: WorkbenchState, tabId: string, event: Ex
 function answerPendingQuestion(blocks: readonly Block[], requestId: string, answers: Readonly<Record<string, string>>): readonly Block[] {
   const pending = blocks.some((b) => b.kind === 'question' && b.requestId === requestId && b.state === 'pending');
   return pending ? answerQuestionBlock(blocks, requestId, answers) : blocks;
+}
+
+// Marca (o desmarca) una peticion como «enviando». Si ya no esta pendiente (la cerro otro evento), no cambia nada.
+function markPermissionSending(state: WorkbenchState, tabId: string, requestId: string, sending: boolean): Partial<WorkbenchState> {
+  const queue = state.pendingByChat[tabId] ?? [];
+  if (!queue.some((p) => p.requestId === requestId)) return {};
+  const mark = (p: PendingPermission): PendingPermission => (sending ? { ...p, sending: true } : withoutSending(p));
+  const next = queue.map((p) => (p.requestId === requestId ? mark(p) : p));
+  return { pendingByChat: { ...state.pendingByChat, [tabId]: next } };
+}
+
+function withoutSending({ sending: _sending, ...rest }: PendingPermission): PendingPermission {
+  return rest;
+}
+
+// ¿La respuesta a esta peticion (o, sin id, a la primera de la cola) va de camino a main?
+export function isPermissionSending(state: WorkbenchState, tabId: string, requestId?: string): boolean {
+  const queue = state.pendingByChat[tabId] ?? [];
+  const pending = requestId === undefined ? queue[0] : queue.find((p) => p.requestId === requestId);
+  return pending?.sending === true;
 }
 
 function clearPermissionIfMatches(

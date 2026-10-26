@@ -1,4 +1,4 @@
-import { useWorkbenchStore } from '../workbenchStore';
+import { isPermissionSending, useWorkbenchStore } from '../workbenchStore';
 import type { PermissionDecision } from '@shared/events';
 import { usePaneTabId } from '../paneContext';
 
@@ -30,11 +30,17 @@ export function PermissionDecisionButtons({
   const tabId = usePaneTabId();
   const answerFor = useWorkbenchStore((s) => s.answerPermissionFor);
   const allowAlwaysFor = useWorkbenchStore((s) => s.allowAlwaysAndAnswer);
+  // La respuesta va de camino a main: los botones se desactivan hasta que `permission_resolved` cierre la tarjeta.
+  const sending = useWorkbenchStore((s) => isPermissionSending(s, tabId, requestId));
   const answer = (decision: PermissionDecision): void => answerFor(tabId, decision, requestId);
   const allowAlways = (tool: string): void => allowAlwaysFor(tool, tabId);
   return (
-    <div className={compact ? 'flex flex-wrap items-center gap-[6px] text-[11.5px]' : 'flex flex-col gap-[6px] text-[12px]'}>
-      <Option shortcut="1" label="Permitir" primary compact={compact} onClick={() => answer({ behavior: 'allow' })}>
+    <div
+      aria-busy={sending}
+      data-permission-sending={sending ? 'true' : undefined}
+      className={compact ? 'flex flex-wrap items-center gap-[6px] text-[11.5px]' : 'flex flex-col gap-[6px] text-[12px]'}
+    >
+      <Option shortcut="1" label="Permitir" primary compact={compact} disabled={sending} onClick={() => answer({ behavior: 'allow' })}>
         Permitir
       </Option>
       {/* "Permitir siempre" SI recuerda (2.3b): guarda una regla por conversacion en el indice de Mage y
@@ -44,6 +50,7 @@ export function PermissionDecisionButtons({
           shortcut="2"
           label={`Permitir siempre ${toolLabel} aquí`}
           compact={compact}
+          disabled={sending}
           onClick={() => allowAlways(toolLabel)}
         >
           Permitir siempre <span className="font-mono text-[11px]">{toolLabel}</span> aquí
@@ -53,10 +60,12 @@ export function PermissionDecisionButtons({
         shortcut="3"
         label="Denegar y decir por qué"
         compact={compact}
+        disabled={sending}
         onClick={() => answer({ behavior: 'deny', message: 'Denegado por el usuario' })}
       >
         Denegar
       </Option>
+      {sending && <span className="text-[11px] text-mg-muted">Enviando…</span>}
     </div>
   );
 }
@@ -66,6 +75,7 @@ function Option({
   label,
   primary = false,
   compact,
+  disabled,
   onClick,
   children,
 }: {
@@ -73,6 +83,7 @@ function Option({
   readonly label: string;
   readonly primary?: boolean;
   readonly compact: boolean;
+  readonly disabled: boolean;
   readonly onClick: () => void;
   readonly children: React.ReactNode;
 }): React.JSX.Element {
@@ -83,7 +94,7 @@ function Option({
     ? 'bg-mg-primary font-semibold text-mg-primary-ink'
     : 'border border-mg-border-emph text-mg-body2 hover:bg-mg-hover';
   return (
-    <button onClick={onClick} aria-label={label} aria-keyshortcuts={shortcut} className={`${base} ${skin}`}>
+    <button onClick={onClick} disabled={disabled} aria-label={label} aria-keyshortcuts={shortcut} className={`${base} ${skin} disabled:cursor-default disabled:opacity-50`}>
       <span>{children}</span>
       {!compact && (
         <span aria-hidden="true" className="font-mono text-[10.5px] opacity-50">
