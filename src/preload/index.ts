@@ -258,6 +258,7 @@ const api: MageApi = {
   savePanelLayout: (state: PanelLayoutState) => ipcRenderer.invoke(IpcChannel.PanelsSave, state),
   // Varias ventanas del workbench. `loadWorkspace`/`saveWorkspace` NO cambian de firma: main resuelve
   // por el `event.sender` a que ventana pertenece cada llamada y le sirve SU workspace.
+  closeWindow: () => ipcRenderer.invoke(IpcChannel.WindowClose),
   openWindow: () => ipcRenderer.invoke(IpcChannel.WindowsOpen),
   listWindows: () => ipcRenderer.invoke(IpcChannel.WindowsList),
   moveTabToWindow: (params: MoveTabToWindowParams) => ipcRenderer.invoke(IpcChannel.WindowsMoveTab, params),

@@ -3166,6 +3166,11 @@ function registerSettingsIpc1(deps: IpcDependencies): void {
   // --- Varias ventanas del workbench ----------------------------------------------------------
   // Abrir una ventana NUEVA: misma instancia, mismo main, mismos ajustes; workspace propio.
   ipcMain.handle(IpcChannel.WindowsOpen, (): string => windowManager.open().windowId);
+  // Solo la ventana del workbench que lo pide, y solo ELLA (nunca la principal por defecto, como `senderWindowId`).
+  ipcMain.handle(IpcChannel.WindowClose, (event): void => {
+    const windowId = windowManager.windowIdOf(event.sender.id);
+    if (windowId === null || !windowManager.close(windowId)) throw new Error(`Esta ventana no es del workbench y no se puede cerrar por aqui (webContents ${event.sender.id})`);
+  });
   // Ventanas abiertas, marcando cual es la que pregunta (para que el menu de "mover a..." no se
   // ofrezca a si misma).
   ipcMain.handle(IpcChannel.WindowsList, (event): readonly MageWindowInfo[] => {

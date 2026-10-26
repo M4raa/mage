@@ -7819,12 +7819,12 @@ const CHECKS = [
   },
   {
     // Grupo B (0.1.2, respuesta 21): la X de la ultima ventana, con «Preguntar», pinta el dialogo PROPIO
-    // (no el de Windows) y dice cuantas conversaciones trabajan. Se provoca con `window.close()` (entra
+    // (no el de Windows) y dice cuantas conversaciones trabajan. Se provoca con `window.mage.closeWindow()` (entra
     // por el mismo `close` que la X) y se contesta SIEMPRE Cancelar o Escape: «Cerrar Mage» mataria la
     // instancia medida. Tres rondas: con una conversacion marcada como trabajando (cuenta 1 mas), con
     // Escape, y tras RECARGAR el renderer con el dialogo abierto —la trampa del informe: si main no
     // libera la pregunta pendiente, la X queda muerta para siempre—. Sin dos ventanas: con otra visible,
-    // `window.close()` cerraria de verdad esta.
+    // `closeWindow()` cerraria de verdad esta.
     name: 'Grupo B: la X pregunta con el diálogo propio, cuenta las que trabajan y sobrevive a una recarga',
     async run(page) {
       const previo = await page.evaluate(() => window.__mageDev.store.getState().settings.closeBehavior);
@@ -7850,7 +7850,7 @@ const CHECKS = [
       });
       const conEscape = await askCloseAndAnswer(page, 'Escape');
       // Recarga con el dialogo abierto: el renderer que tenia que contestar desaparece.
-      await page.evaluate(() => window.close());
+      await page.evaluate(() => window.mage.closeWindow());
       await page.locator(CLOSE_DIALOG).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
       await page.reload();
       await page.locator('[role="toolbar"]').first().waitFor({ state: 'attached', timeout: CONFIG.bootTimeoutMs });
@@ -8590,7 +8590,7 @@ const UPDATE_PROBE_NOTES = '### Añadido\n- Nota de prueba de verify:gui\n- Otra
 // Provoca el cierre de la ventana (el mismo `close` que la X), mide el dialogo propio y lo contesta con
 // `how` ('Cancelar' o 'Escape': nunca «Cerrar Mage»). Espera al DESMONTAJE (error n.º 6 de la skill).
 async function askCloseAndAnswer(page, how) {
-  await page.evaluate(() => window.close());
+  await page.evaluate(() => window.mage.closeWindow());
   const dialogo = page.locator(CLOSE_DIALOG);
   const aparecio = await dialogo.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs }).then(
     () => true,
@@ -10541,7 +10541,7 @@ async function main() {
     }
     const baselinePanels = await page.evaluate(() => window.__mageDev.panelStore.getState().layout);
     if (process.argv.includes('--initial-close-prompt')) {
-      await page.evaluate(() => window.close());
+      await page.evaluate(() => window.mage.closeWindow());
       await page.locator(CLOSE_DIALOG).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
     }
     for (const [index, check] of checks.entries()) {

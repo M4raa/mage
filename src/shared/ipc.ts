@@ -275,6 +275,7 @@ export const IpcChannel = {
   // objetos de main para todas; lo que cambia por ventana es el workspace (pestañas, paneles, cuenta
   // activa y conversaciones abiertas).
   WindowsOpen: 'windows:open',
+  WindowClose: 'window:close',
   WindowsList: 'windows:list',
   // Mover una pestaña a otra ventana. El ARRASTRE es del renderer (DOM); esto es solo el transporte.
   WindowsMoveTab: 'windows:moveTab',
@@ -1082,6 +1083,9 @@ export interface MageApi {
 
   // --- Varias ventanas del workbench ----------------------------------------------------------
   // Abre una ventana NUEVA de Mage (misma instancia, mismo main, mismos ajustes) y devuelve su id.
+  // Cierra ESTA ventana como lo haría su X: pasa por el mismo `close` de main, que puede preguntar o esconderla.
+  // (Con `sandbox: true`, `window.close()` de la página destruye la ventana sin pasar por ese `close`.)
+  closeWindow(): Promise<void>;
   openWindow(): Promise<string>;
   // Ventanas abiertas, en el orden en que se abrieron, con `isCurrent` marcando la que pregunta.
   listWindows(): Promise<readonly MageWindowInfo[]>;

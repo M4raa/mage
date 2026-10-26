@@ -92,7 +92,7 @@ async function restoreCheckState(page, previous, settle) {
   await restoreRendererState(page, previous.data);
   if (snapshot.states.store.closePromptOpen) {
     // El dialogo de cierre tiene un dueño en main: recrear tambien su pregunta, no solo el booleano.
-    await page.evaluate(() => window.close());
+    await page.evaluate(() => window.mage.closeWindow());
     await page.waitForFunction(() => window.__mageDev.store.getState().closePromptOpen,
       undefined, { polling: STATE_POLL_MS, timeout: STATE_TIMEOUT_MS });
   }
