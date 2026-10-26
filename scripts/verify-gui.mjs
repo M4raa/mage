@@ -8285,11 +8285,12 @@ const CHECKS = [
   },
   {
     // F2.4: con la pestaña CERRADA, main sigue decidiendo los permisos. Turno del runtime propio contra el servidor
-    // falso (escenario `pr-barrera`, modo Manual, regla «Permitir siempre Bash»), sin CLI ni cuota: se envía el
-    // prompt de «Crear PR», se cierra la pestaña con el turno en marcha (segundo plano en main) y el agente pide
-    // un `git push --force` (la barrera lo deniega aunque haya regla) y un `mkdir` (lo permite la regla). Nadie
-    // contesta desde la interfaz. Va antes del turno mínimo por la transcripción que deja en el perfil.
-    name: 'F2.4: segundo plano en main: con la pestaña cerrada, la barrera de PR deniega y la regla permite',
+    // falso (escenario `pr-barrera`, modo Manual), sin CLI ni cuota: se envía el prompt de «Crear PR»; el agente
+    // pide un `git push --force` (la barrera lo deniega) y un `mkdir` que SÍ pregunta. La regla se crea por la
+    // acción del store `allowAlwaysAndAnswer` (la cadena entera: acción → persistConversationPrefs → main), se
+    // cierra la pestaña con el turno en marcha (segundo plano en main) y el segundo `mkdir` lo contesta la regla.
+    // Va antes del turno mínimo por la transcripción que deja en el perfil.
+    name: 'F2.4: segundo plano en main: con la pestaña cerrada, la barrera de PR deniega y la regla creada desde la interfaz permite',
     async run(page, { userDataDir }) {
       const fake = await startFakeOpenAiServer();
       let sessionId = null;
@@ -8298,12 +8299,16 @@ const CHECKS = [
         sessionId = await page.evaluate(async (id) => {
           const state = () => window.__mageDev.store.getState();
           const sid = await state().ensureSession(id);
-          window.__mageDev.store.setState((s) => ({ tabs: s.tabs.map((t) => (t.id === id ? { ...t, alwaysAllowTools: ['Bash'] } : t)) }));
-          await window.mage.saveConversationPrefs({ sessionId: sid, prefs: { alwaysAllowTools: ['Bash'] } });
           state().insertCreatePrPrompt(id);
           await state().sendMessageToTab(id, state().draftByChat[id].text);
           return sid;
         }, tabId);
+        // Sin regla, el `mkdir` llega al usuario: la barrera ya denegó el push forzado sin preguntar.
+        await page.waitForFunction((id) => (window.__mageDev.store.getState().pendingByChat[id] ?? []).some((p) => p.view.toolLabel === 'Bash'), tabId, { timeout: CONFIG.actionTimeoutMs });
+        const preguntaba = await page.evaluate((id) => window.__mageDev.store.getState().pendingByChat[id].map((p) => p.view.rememberable), tabId);
+        await page.evaluate((id) => window.__mageDev.store.getState().allowAlwaysAndAnswer('Bash', id), tabId);
+        // El guardado es asíncrono: se espera a que main tenga la regla ANTES de cerrar la pestaña.
+        await page.waitForFunction(async (sid) => ((await window.mage.loadConversationPrefs(sid))?.alwaysAllowTools ?? []).includes('Bash'), sessionId, { timeout: CONFIG.actionTimeoutMs });
         await page.waitForFunction((id) => window.__mageDev.store.getState().statusByChat[id] === 'streaming', tabId, { timeout: CONFIG.actionTimeoutMs });
         const cierre = await page.evaluate(async ({ id, sid }) => {
           await window.__mageDev.store.getState().closeTab(id);
@@ -8321,15 +8326,17 @@ const CHECKS = [
         }, sessionId);
         const toolText = (request) => String(request?.messages.filter((m) => m.role === 'tool').at(-1)?.content ?? '');
         const denegado = toolText(fake.stats.requests[1]);
-        const permitido = toolText(fake.stats.requests[2]);
-        const carpeta = fs.existsSync(path.join(cwd, 'vg-regla'));
+        const preguntado = toolText(fake.stats.requests[2]);
+        const porRegla = toolText(fake.stats.requests[3]);
+        const carpetas = ['vg-pregunta', 'vg-regla'].map((name) => fs.existsSync(path.join(cwd, name)));
         const ok =
+          preguntaba.length === 1 && preguntaba[0] === true &&
           cierre.fila === 'working' && cierre.enMain === true &&
           denegado.includes('Mage no permite') && denegado.includes('git push --force') &&
-          !permitido.includes('Mage no permite') && carpeta &&
+          !preguntado.includes('Mage no permite') && !porRegla.includes('Mage no permite') && carpetas.every(Boolean) &&
           !final.estados.includes('needs_action') && final.pendientesMain === 0 &&
-          fake.stats.completions === 3;
-        return { ok, detail: JSON.stringify({ cierre, final, denegado: denegado.slice(0, 160), permitido: permitido.slice(0, 80), carpeta, peticionesAlFalso: fake.stats.completions }) };
+          fake.stats.completions === 4;
+        return { ok, detail: JSON.stringify({ preguntaba, cierre, final, denegado: denegado.slice(0, 160), preguntado: preguntado.slice(0, 80), porRegla: porRegla.slice(0, 80), carpetas, peticionesAlFalso: fake.stats.completions }) };
       } finally {
         if (sessionId !== null) await page.evaluate((sid) => window.__mageDev.store.getState().discardBackgroundSession(sid), sessionId);
         await page.evaluate((id) => window.__mageDev.store.getState().removeCustomProvider(id), PR_BARRIER_PROVIDER.id);
