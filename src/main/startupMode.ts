@@ -44,7 +44,30 @@ export const NO_SANDBOX_WARNING: StartupWarning = {
     'Instala el paquete .deb o activa los espacios de nombres de usuario (sysctl kernel.unprivileged_userns_clone=1 o kernel.apparmor_restrict_unprivileged_userns=0) y vuelve a abrir Mage.',
 };
 
-// Avisos persistentes que el renderer enseña al abrirse. Hoy, uno: Linux arrancado con el switch no-sandbox.
-export function startupWarnings({ platform, hasNoSandboxSwitch }: { platform: NodeJS.Platform; hasNoSandboxSwitch: boolean }): readonly StartupWarning[] {
-  return platform === 'linux' && hasNoSandboxSwitch ? [NO_SANDBOX_WARNING] : [];
+export const HOST_UNAVAILABLE_WARNING_ID = 'host-unavailable';
+
+// El host local no arrancó (H1 de la devolución 16): la interfaz sigue, pero ningún cliente local podrá conectarse.
+export function hostUnavailableWarning(reason: string): StartupWarning {
+  return {
+    id: HOST_UNAVAILABLE_WARNING_ID,
+    title: 'El host local de Mage no ha arrancado',
+    body:
+      'La interfaz funciona con normalidad, pero ningún cliente local (terminal, widget o MCP) podrá conectarse a este Mage hasta que lo cierres y lo vuelvas a abrir. ' +
+      `Motivo: ${reason}`,
+  };
+}
+
+export interface StartupWarningsInput {
+  readonly platform: NodeJS.Platform;
+  readonly hasNoSandboxSwitch: boolean;
+  // Motivo por el que no arrancó el host local, o null si escucha.
+  readonly hostFailure: string | null;
+}
+
+// Avisos persistentes que el renderer enseña al abrirse: Linux arrancado con el switch no-sandbox y host caído.
+export function startupWarnings({ platform, hasNoSandboxSwitch, hostFailure }: StartupWarningsInput): readonly StartupWarning[] {
+  const warnings: StartupWarning[] = [];
+  if (platform === 'linux' && hasNoSandboxSwitch) warnings.push(NO_SANDBOX_WARNING);
+  if (hostFailure !== null) warnings.push(hostUnavailableWarning(hostFailure));
+  return warnings;
 }

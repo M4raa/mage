@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ANOTHER_INSTANCE_MESSAGE, HEADLESS_FLAG, HEADLESS_GUI_UNAVAILABLE, isHeadlessHost, lockFailureMessage, NO_SANDBOX_WARNING, startupWarnings } from './startupMode';
+import { ANOTHER_INSTANCE_MESSAGE, HEADLESS_FLAG, HEADLESS_GUI_UNAVAILABLE, HOST_UNAVAILABLE_WARNING_ID, hostUnavailableWarning, isHeadlessHost, lockFailureMessage, NO_SANDBOX_WARNING, startupWarnings } from './startupMode';
 
 const linux = { platform: 'linux' as const, argv: ['electron', '.'], env: {} };
 
@@ -28,7 +28,7 @@ describe('isHeadlessHost', () => {
 
 describe('startupWarnings', () => {
   it('startupWarnings_linuxConNoSandbox_avisaConElMotivoYLaRecomendacion', () => {
-    const warnings = startupWarnings({ platform: 'linux', hasNoSandboxSwitch: true });
+    const warnings = startupWarnings({ platform: 'linux', hasNoSandboxSwitch: true, hostFailure: null });
 
     expect(warnings).toEqual([NO_SANDBOX_WARNING]);
     expect(NO_SANDBOX_WARNING.body).toMatch(/\.deb/);
@@ -36,11 +36,19 @@ describe('startupWarnings', () => {
   });
 
   it('startupWarnings_linuxSinElSwitch_sinAvisos', () => {
-    expect(startupWarnings({ platform: 'linux', hasNoSandboxSwitch: false })).toEqual([]);
+    expect(startupWarnings({ platform: 'linux', hasNoSandboxSwitch: false, hostFailure: null })).toEqual([]);
   });
 
   it.each(['win32', 'darwin'] as const)('startupWarnings_%sConElSwitch_sinAvisos', (platform) => {
-    expect(startupWarnings({ platform, hasNoSandboxSwitch: true })).toEqual([]);
+    expect(startupWarnings({ platform, hasNoSandboxSwitch: true, hostFailure: null })).toEqual([]);
+  });
+
+  it.each(['win32', 'linux', 'darwin'] as const)('startupWarnings_%sHostSinArrancar_avisaConElMotivo', (platform) => {
+    const warnings = startupWarnings({ platform, hasNoSandboxSwitch: false, hostFailure: 'listen EADDRINUSE' });
+
+    expect(warnings).toEqual([hostUnavailableWarning('listen EADDRINUSE')]);
+    expect(warnings[0]!.id).toBe(HOST_UNAVAILABLE_WARNING_ID);
+    expect(warnings[0]!.body).toContain('Motivo: listen EADDRINUSE');
   });
 });
 

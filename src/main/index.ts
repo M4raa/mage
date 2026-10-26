@@ -2899,8 +2899,9 @@ function registerAboutIpc1(): void {
   // «Acerca de» (B.2/B.3): versiones del runtime y los avisos de terceros. Las rutas se calculan aqui
   // —es lo unico que sabe de Electron— y el servicio decide que existe y que se puede enseñar.
   // Avisos persistentes de inicio (F2.6, D-AppImage): hoy, Linux arrancado con el switch `no-sandbox`.
-  ipcMain.handle(IpcChannel.StartupWarningsGet, () =>
-    startupWarnings({ platform: process.platform, hasNoSandboxSwitch: app.commandLine.hasSwitch('no-sandbox') }));
+  // Espera a que el host local arranque o falle: así su aviso no depende de quién llega antes.
+  ipcMain.handle(IpcChannel.StartupWarningsGet, async () =>
+    startupWarnings({ platform: process.platform, hasNoSandboxSwitch: app.commandLine.hasSwitch('no-sandbox'), hostFailure: await hostFailure }));
   ipcMain.handle(IpcChannel.AboutGet, () =>
     buildAboutInfo(
       {
@@ -3532,6 +3533,8 @@ const runsHeadless = isHeadlessHost({ platform: process.platform, argv: process.
 
 // El host local (F2.6): terminal, widget y MCP hablan con el por un socket privado. Vive en los dos modos.
 let localHost: HostServerHandle | null = null;
+// Motivo por el que el host no arrancó (null si escucha): el renderer lo enseña como aviso persistente (H1, devolución 16).
+let hostFailure: Promise<string | null> = Promise.resolve(null);
 function startHost(mode: HostMode): Promise<void> {
   return startLocalHost({
     platform: process.platform,
@@ -3615,9 +3618,16 @@ app.whenReady().then(async () => {
   // `pnpm verify:gui` lo apaga: su contrato es no lanzar nunca el CLI.
   if (process.env.MAGE_SKIP_MODEL_PROBE !== '1') setTimeout(probeLoggedInAccounts, MODEL_PROBE_START_DELAY_MS).unref();
   mainLog('info', 'Mage arrancado', { isDev, platform: process.platform });
-  // El host local de este perfil. Si no arranca (ruta del socket demasiado larga...) la interfaz sigue funcionando
-  // y el motivo queda en el log: nadie depende todavia de el para abrir Mage.
-  startHost('gui').catch((err: unknown) => mainLog('error', 'No se pudo arrancar el host local', { error: err instanceof Error ? err.message : String(err) }));
+  // El host local de este perfil. Si no arranca (ruta del socket demasiado larga, dirección ocupada...) la interfaz
+  // sigue funcionando: el motivo queda en el log y la ventana lo enseña como aviso persistente.
+  hostFailure = startHost('gui').then(
+    () => null,
+    (err: unknown) => {
+      const reason = err instanceof Error ? err.message : String(err);
+      mainLog('error', 'No se pudo arrancar el host local', { error: reason });
+      return reason;
+    },
+  );
 
   // Widget flotante (M3): reabrir al arrancar si la preferencia persistida estaba activa.
   if (getSettingsStore().load().widgetEnabled) getWidgetWindow().open();
