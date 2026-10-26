@@ -39,6 +39,8 @@ versión.
 - Un error al comprobar un permiso conserva un historial válido para continuar la conversación.
 - Cerrar una sesión libera el cliente MCP aunque todavía esté consultando sus herramientas.
 - Auto permite comodines sobre archivos internos aunque haya otros nombres con caracteres Unicode.
+- Al contestar un permiso, la tarjeta queda en «Enviando…» con los botones desactivados y se cierra con la decisión que acepta Mage. Si otra ventana o cliente contestó antes, se cierra con su decisión sin dar error; si el envío falla, se ve el error y el permiso sigue pendiente.
+- Una conversación nueva de Codex enseña que arranca en solo lectura (pide permiso antes de escribir), con «Permitir escribir» para que escriba dentro de su carpeta.
 
 ### Añadido
 - Mage deja un host local para otros clientes (terminal, widget, MCP): un socket privado que solo abre quien tiene el token de esa ejecución, con el protocolo versionado. Ve el mismo flujo de eventos que la ventana, contesta permisos y preguntas (se contestan una sola vez, gane quien gane) y puede enviar mensajes. Todavía no crea sesiones ni concede confianza a ninguna carpeta.
@@ -48,6 +50,7 @@ versión.
 - La interfaz corre en el sandbox de Chromium en las tres ventanas (principal, widget y depuración).
 - Las órdenes sobre una sesión (enviar, contestar, parar, cambiar modelo…) se validan antes de llegar al motor y solo las acepta la ventana que la creó o la principal.
 - En Linux, si Mage se inicia sin el sandbox de Chromium (el AppImage lo hace cuando el sistema no permite los espacios de nombres de usuario), avisa de forma persistente con el motivo y recomienda el paquete .deb o activar esos espacios.
+- Si el host local no arranca, la ventana lo avisa de forma persistente con el motivo; la interfaz sigue funcionando. Un arranque fallido no deja el token ni la dirección del host en disco.
 
 ## 0.1.2 — 2026-10-08
 
