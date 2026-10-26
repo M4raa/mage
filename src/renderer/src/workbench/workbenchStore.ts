@@ -49,6 +49,8 @@ import { worktreeOfCwd } from '@shared/worktree';
 import { createdFileFrom } from './createdFilesView';
 import { mergeIntoDraft, type QueuedMessage } from './messageQueue';
 import type { SendReceipt } from '@shared/coordination';
+import { readOnlyLockMessage, type ConversationLockStatus } from '@shared/conversationLock';
+import { lockRefOf } from './conversationLockSync';
 import type { Account, AccountSwitchPrompt, Block, ChatStatus, ContextInfo, ImageAttachment, PermissionView, PromptDraft, RateLimitNotice, SessionExtensions, Tab } from './types';
 import type { ConversationPrivacy } from '@shared/state';
 import type { ConversationSummary } from '@shared/conversations';
@@ -188,6 +190,9 @@ export interface WorkbenchState extends PrState, PrActions {
   // colgado para siempre (medido el 2026-09-28 con dos `Read` en modo Manual). Cada tarjeta contesta la
   // SUYA por requestId; el panel y los atajos, la primera (`headPermission`).
   readonly pendingByChat: Readonly<Record<string, readonly PendingPermission[]>>;
+  // Bloqueo entre instancias (#55, F2.8): si esta instancia tiene la conversación de la pestaña o la ve en solo
+  // lectura. Lo mantiene `startConversationLockSync`; sin entrada, la pestaña aún no tiene conversación.
+  readonly lockByChat: Readonly<Record<string, ConversationLockStatus>>;
   // Feedback de actividad (M2.6): inicio del turno y ultima señal del motor, por pestana (ms epoch).
   // El indicador de "pensando" muestra el tiempo transcurrido y detecta inactividad (posible cuelgue).
   readonly turnStartByChat: Readonly<Record<string, number>>;
@@ -267,6 +272,8 @@ export interface WorkbenchState extends PrState, PrActions {
   readonly conversationHistory: readonly ConversationSummary[];
   readonly elicitationsByChat: Readonly<Record<string, readonly { readonly request: ElicitationRequest; readonly state: 'pending' | 'accept' | 'decline' | 'cancel' }[]>>;
   answerElicitation: (tabId: string, answer: Omit<ElicitationAnswer, 'sessionId'>) => Promise<void>;
+  // «Tomar el control» de una conversación cuya otra instancia parece muerta (#55): solo si su lock es huérfano.
+  takeOverConversation: (tabId: string) => Promise<void>;
   saveChatProject: (project: ChatProject) => Promise<void>;
   deleteChatProject: (projectId: string) => void;
   assignChatProject: (sessionId: string | undefined, tabId: string | undefined, projectId: string | null) => void;
@@ -1233,6 +1240,7 @@ export function createWorkbenchStore(mage: MageClient) {
     streamingIdByChat: {},
     statusByChat: {},
     pendingByChat: {},
+    lockByChat: {},
     turnStartByChat: {},
     lastActivityByChat: {},
     slashCommandsByChat: {},
@@ -2287,6 +2295,9 @@ export function createWorkbenchStore(mage: MageClient) {
       const trimmed = text.trim();
       // Un mensaje SIN texto pero CON imagen es valido (mandar solo un pantallazo es un caso real).
       if ((trimmed.length === 0 && attachments.length === 0) || tabId.length === 0) return;
+      // #55: en solo lectura no se escribe en la conversación (la tiene otra instancia de Mage).
+      const lock = get().lockByChat[tabId];
+      if (lock !== undefined && !lock.owner) throw new Error(readOnlyLockMessage(lock.profile));
       // Un `/rename` tecleado es el nombre mas nuevo: el pendiente de la UI ya no debe pisarlo al
       // acabar el turno (gana el ultimo, D3). Tambien si espera en la cola: saldria detras del pendiente.
       if (get().tabs.find((t) => t.id === tabId)?.pendingCliTitle !== undefined && /^\/rename\b/.test(trimmed)) {
@@ -2441,6 +2452,14 @@ export function createWorkbenchStore(mage: MageClient) {
       const sessionId = get().sessionIdByChat[tabId];
       if (sessionId === undefined || taskId.length === 0) return;
       void mage.stopTask({ sessionId, taskId }).catch((err: unknown) => failChat(set, tabId, describeError(err)));
+    },
+
+    takeOverConversation: async (tabId) => {
+      const tab = get().tabs.find((t) => t.id === tabId);
+      const ref = tab === undefined ? null : lockRefOf(tab, get().sessionIdByChat[tabId]);
+      if (ref === null) return;
+      const status = await mage.takeOverConversationLock({ ...ref, tabId });
+      set((s) => ({ lockByChat: { ...s.lockByChat, [tabId]: status } }));
     },
 
     // Responde a una elicitation MCP. La tarjeta se cierra cuando main confirma con `elicitation_resolved`.

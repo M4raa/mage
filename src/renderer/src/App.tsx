@@ -41,6 +41,7 @@ const ReleaseNotesPane = lazy(() => import('./workbench/components/ReleaseNotesP
 import { useWorkbenchStore } from './workbench/workbenchStore';
 import { notify, reportActionError } from './workbench/notificationStore';
 import { showStartupWarnings } from './workbench/startupWarnings';
+import { startConversationLockSync } from './workbench/conversationLockSync';
 import { RELEASE_NOTES_TAB_ID } from './workbench/releaseNotes';
 import { usePanelLayoutStore } from './workbench/panelLayoutStore';
 import { useGlobalKeybindings } from './workbench/keybindings/useGlobalKeybindings';
@@ -203,6 +204,9 @@ export function App(): React.JSX.Element {
   useEffect(() => {
     void showStartupWarnings({ fetchWarnings: () => window.mage.getStartupWarnings(), notify, reportError: reportActionError });
   }, []);
+  // Bloqueo entre instancias (#55, F2.8): cada pestaña con conversación la pide a main; la que tiene otra instancia
+  // de Mage queda en solo lectura.
+  useEffect(() => startConversationLockSync({ store: useWorkbenchStore, mage: window.mage, reportError: (title, err) => reportActionError(title, err, 'conversation-lock') }), []);
   // Al recuperar el foco (p.ej. tras el login en la terminal externa), re-descubre las cuentas para
   // reflejar el nuevo estado de login sin pulsar Refrescar, y refresca uso/estado. getState evita
   // re-suscribir el listener.

@@ -1,4 +1,5 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import { readOnlyLockMessage } from '@shared/conversationLock';
 import { isPermissionMode } from '@shared/ipc';
 import type { EditorInfo } from '@shared/ipc';
 import { AGY_EFFORT_LEVELS, AGY_PROVIDER_ID, CODEX_PROVIDER_ID, NO_PERMISSION_CONTROL_WARNING, RUNTIME_AUTO_MODE_NOTE, UNVERIFIED_PROVIDER_NOTE, isAutoApprovedProvider, isUnverifiedProvider, runsOnMageRuntime } from '@shared/providers';
@@ -100,6 +101,34 @@ function measureInlineEditorWidth(row: HTMLElement | null, controls: HTMLElement
   return Number.isFinite(width) ? width : null;
 }
 
+function promptPlaceholder(tabId: string, readOnlyLock: { readonly profile: string } | null): string {
+  if (readOnlyLock !== null) return `${readOnlyLockMessage(readOnlyLock.profile)}: solo lectura`;
+  return tabId.length === 0 ? 'Abre una pestaña para escribir…' : 'Escribe una instrucción…';
+}
+
+// Solo lectura por el bloqueo entre instancias (#55): quién la tiene y, solo si esa instancia parece muerta (pid caído o
+// sin latido en 90 s), «Tomar el control».
+function ReadOnlyLockNotice({ tabId, profile, orphan }: { readonly tabId: string; readonly profile: string; readonly orphan: boolean }): React.JSX.Element {
+  const takeOver = useWorkbenchStore((s) => s.takeOverConversation);
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <div role="status" data-conversation-lock="read-only" className="mb-[6px] flex items-center gap-[8px] rounded-[7px] border border-mg-warn-border bg-mg-warn-bg px-[10px] py-[5px] text-[11px] text-mg-warn-text">
+      <span className="min-w-0 flex-1">
+        {readOnlyLockMessage(profile)}. {orphan ? 'Esa instancia no responde.' : 'Aquí solo se puede leer.'}
+        {error !== null && <span className="ml-[6px] text-mg-danger">{error}</span>}
+      </span>
+      {orphan && (
+        <button
+          onClick={() => takeOver(tabId).catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)))}
+          className="shrink-0 rounded-[6px] border border-mg-border-emph px-[9px] py-[2px] text-[11px] text-mg-body2 hover:bg-mg-hover"
+        >
+          Tomar el control
+        </button>
+      )}
+    </div>
+  );
+}
+
 export function PromptBar(): React.JSX.Element {
   // La pestaña de ESTE panel (item 13). Las acciones del store siguen operando sobre la pestaña
   // ACTIVA, no sobre esta: es correcto porque el panel se enfoca (focusPane) en cuanto se interactua
@@ -108,6 +137,9 @@ export function PromptBar(): React.JSX.Element {
   const sendActiveMessage = useWorkbenchStore((s) => s.sendActiveMessage);
   const activeTab = useWorkbenchStore((s) => s.tabs.find((t) => t.id === activeTabId));
   const sessionId = useWorkbenchStore((s) => s.sessionIdByChat[activeTabId]);
+  // #55 (F2.8): la conversación la tiene otra instancia de Mage; aquí se lee pero no se escribe.
+  const lock = useWorkbenchStore((s) => s.lockByChat[activeTabId]);
+  const readOnlyLock = lock !== undefined && !lock.owner ? lock : null;
   const resolvedModel = useWorkbenchStore((s) => s.resolvedModelByChat[activeTabId] ?? null);
   // Modelos reales de la cuenta (P-026 2.4): el config dir EFECTIVO (el perfil privado tiene el suyo)
   // y, si aun no hay sesion, el de la cuenta. Sin ninguno, la lista de reserva.
@@ -172,7 +204,7 @@ export function PromptBar(): React.JSX.Element {
   // Imagenes pegadas cuyo base64 aun se esta leyendo: cuentan para numerar el token del siguiente pegado.
   const pendingReadsRef = useRef(0);
 
-  const disabled = activeTabId.length === 0;
+  const disabled = activeTabId.length === 0 || readOnlyLock !== null;
   const activeModel = activeTab?.model ?? '';
   const providerId = activeTab?.provider ?? 'claude';
   const customProviders = useWorkbenchStore((s) => s.settings.customProviders);
@@ -515,6 +547,8 @@ export function PromptBar(): React.JSX.Element {
         </div>
       )}
 
+      {readOnlyLock !== null && <ReadOnlyLockNotice tabId={activeTabId} profile={readOnlyLock.profile} orphan={readOnlyLock.orphan} />}
+
       {preview !== null && (
         <ImprovePreview
           value={preview}
@@ -603,7 +637,7 @@ export function PromptBar(): React.JSX.Element {
             value={text}
             disabled={disabled}
             ariaLabel="Escribe una instrucción para el agente"
-            placeholder={disabled ? 'Abre una pestaña para escribir…' : 'Escribe una instrucción…'}
+            placeholder={promptPlaceholder(activeTabId, readOnlyLock)}
             onChange={onChangeText}
             onKeyDown={onKeyDown}
             onPasteImages={addFiles}

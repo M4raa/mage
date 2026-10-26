@@ -2239,3 +2239,32 @@ describe('guardado de ajustes con debounce', () => {
     expect(saveSettings).toHaveBeenCalledTimes(1);
   });
 });
+
+// #55 (F2.8): una conversación que tiene otra instancia de Mage se ve en solo lectura.
+describe('bloqueo entre instancias', () => {
+  function locked(status: { owner: false; profile: string; orphan: boolean }) {
+    const sendMessage = vi.fn().mockResolvedValue({ status: 'accepted', commandId: 'k' });
+    const takeOverConversationLock = vi.fn().mockResolvedValue({ owner: true });
+    const store = createWorkbenchStore(fakeMage({ sendMessage, takeOverConversationLock }));
+    store.setState({ tabs: [tab('a', { resumeSessionId: 'c1' })], activeTabId: 'a', splitLayout: singleLeaf('a'), sessionIdByChat: { a: 's-a' }, lockByChat: { a: status } });
+    return { store, sendMessage, takeOverConversationLock };
+  }
+
+  it('sendMessageToTab_soloLectura_lanzaElAvisoYNoEnvia', async () => {
+    const { store, sendMessage } = locked({ owner: false, profile: 'mage', orphan: false });
+
+    await expect(store.getState().sendMessageToTab('a', 'hola')).rejects.toThrow('Abierta en otra instancia de Mage (mage)');
+
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(store.getState().blocksByChat['a'] ?? []).toEqual([]);
+  });
+
+  it('takeOverConversation_huerfana_pasaADuena', async () => {
+    const { store, takeOverConversationLock } = locked({ owner: false, profile: 'mage', orphan: true });
+
+    await store.getState().takeOverConversation('a');
+
+    expect(takeOverConversationLock).toHaveBeenCalledWith({ provider: 'claude', accountDir: expect.any(String), nativeId: 's-a', tabId: 'a' });
+    expect(store.getState().lockByChat['a']).toEqual({ owner: true });
+  });
+});
