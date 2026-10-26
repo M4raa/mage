@@ -745,3 +745,172 @@ describe('SessionCoordinator — cierre y segundo plano en main (F2.4)', () => {
     expect(() => harness().coordinator.close('nada')).toThrow('Sesion inexistente: nada');
   });
 });
+
+describe('SessionCoordinator — varios clientes por sesión (F2.6, H2 de la devolución 14)', () => {
+  const request = (requestId: string, toolName = 'Write'): MageEvent =>
+    ({ kind: 'permission_request', request: { requestId, toolUseId: `t-${requestId}`, toolName, input: {}, description: null, requiresUserInteraction: false, displayName: null } }) as unknown as MageEvent;
+  const listener = () => {
+    const events: SequencedSessionEvent[] = [];
+    const onClosed = vi.fn();
+    return { events, onClosed, listener: { sink: (e: SequencedSessionEvent) => { events.push(e); }, onClosed } };
+  };
+
+  it('subscribe_otroCliente_recibeLosMismosEventosConLaMismaSecuencia', () => {
+    const h = harness();
+    const id = h.create();
+    const other = listener();
+    h.coordinator.subscribe(id, other.listener);
+
+    h.emit(id, state('running'));
+    h.emit(id, state('idle'));
+
+    expect(other.events.map((e) => [e.seq, e.event.kind])).toEqual(h.received.map((e) => [e.seq, e.event.kind]));
+    expect(other.events).toEqual(h.received);
+  });
+
+  it('subscribe_conEventosPrevios_laInstantaneaYLosSiguientesNoDejanHuecoNiRepiten', () => {
+    const h = harness();
+    const id = h.create();
+    h.emit(id, state('running'));
+    const other = listener();
+
+    const { snapshot } = h.coordinator.subscribe(id, other.listener);
+    h.emit(id, state('idle'));
+
+    expect(snapshot.lastSeq).toBe(1);
+    expect(other.events.map((e) => e.seq)).toEqual([2]);
+  });
+
+  it('unsubscribe_dejaDeRecibir_yEsIdempotente', () => {
+    const h = harness();
+    const id = h.create();
+    const other = listener();
+    const { unsubscribe } = h.coordinator.subscribe(id, other.listener);
+
+    unsubscribe();
+    unsubscribe();
+    h.emit(id, state('running'));
+
+    expect(other.events).toEqual([]);
+    expect(h.received).toHaveLength(1);
+  });
+
+  it('subscribe_unSumideroQueLanza_noCortaAlRestoYQuedaTrazado', () => {
+    const h = harness();
+    const id = h.create();
+    const good = listener();
+    h.coordinator.subscribe(id, { sink: () => { throw new Error('socket roto'); }, onClosed: () => undefined });
+    h.coordinator.subscribe(id, good.listener);
+
+    h.emit(id, state('running'));
+
+    expect(h.received).toHaveLength(1);
+    expect(good.events).toHaveLength(1);
+    expect(h.log).toHaveBeenCalledWith('warn', expect.stringContaining('fallo al recibir'), expect.objectContaining({ error: 'socket roto', seq: 1 }));
+  });
+
+  it('subscribe_clienteQueSeSueltaMientrasRecibe_losDemasSiguenRecibiendo', () => {
+    const h = harness();
+    const id = h.create();
+    const good = listener();
+    let release: () => void = () => undefined;
+    release = h.coordinator.subscribe(id, { sink: () => release(), onClosed: () => undefined }).unsubscribe;
+    h.coordinator.subscribe(id, good.listener);
+
+    h.emit(id, state('running'));
+    h.emit(id, state('idle'));
+
+    expect(good.events.map((e) => e.seq)).toEqual([1, 2]);
+  });
+
+  it('permisoContestado_loVenTodosLosClientes', () => {
+    const h = harness();
+    const id = h.create();
+    const other = listener();
+    h.coordinator.subscribe(id, other.listener);
+    h.emit(id, request('r1'));
+
+    h.coordinator.answerPermission(id, 'r1', { behavior: 'allow' });
+
+    expect(other.events.map((e) => e.event.kind)).toEqual(['permission_request', 'permission_resolved']);
+    expect(h.received.map((e) => e.event.kind)).toEqual(['permission_request', 'permission_resolved']);
+  });
+
+  it('respuestaAutomatica_laVenTodosLosClientes', () => {
+    const h = harness({ rules: { 'conv-s1': ['Write'] } });
+    const id = h.create();
+    const other = listener();
+    h.coordinator.subscribe(id, other.listener);
+
+    h.emit(id, request('r1'));
+    h.flush();
+
+    expect(other.events.map((e) => e.event.kind)).toEqual(['permission_auto_answered']);
+    expect(h.received.map((e) => e.event.kind)).toEqual(['permission_auto_answered']);
+  });
+
+  it('stop_avisaALosClientesUnaSolaVez', () => {
+    const h = harness();
+    const id = h.create();
+    const a = listener();
+    const b = listener();
+    h.coordinator.subscribe(id, a.listener);
+    h.coordinator.subscribe(id, b.listener);
+
+    h.coordinator.stop(id);
+    h.coordinator.stopAll();
+
+    expect(a.onClosed).toHaveBeenCalledTimes(1);
+    expect(b.onClosed).toHaveBeenCalledTimes(1);
+  });
+
+  it('stopAll_yStopOwnedBy_avisanALosClientes', () => {
+    const h = harness();
+    const first = h.create({}, 5);
+    vi.mocked(h.sessions.stopOwnedBy).mockReturnValue([first]);
+    const a = listener();
+    h.coordinator.subscribe(first, a.listener);
+
+    h.coordinator.stopOwnedBy(5);
+
+    expect(a.onClosed).toHaveBeenCalledTimes(1);
+  });
+
+  it('stop_unClienteQueLanzaAlEnterarse_noImpideCerrarYQuedaTrazado', () => {
+    const h = harness();
+    const id = h.create();
+    const good = listener();
+    h.coordinator.subscribe(id, { sink: () => undefined, onClosed: () => { throw new Error('ya cerrado'); } });
+    h.coordinator.subscribe(id, good.listener);
+
+    h.coordinator.stop(id);
+
+    expect(good.onClosed).toHaveBeenCalledTimes(1);
+    expect(h.log).toHaveBeenCalledWith('warn', expect.stringContaining('cierre'), expect.objectContaining({ error: 'ya cerrado' }));
+  });
+
+  it('subscribe_sesionDesconocida_lanzaConElId', () => {
+    const h = harness();
+
+    expect(() => h.coordinator.subscribe('zz', listener().listener)).toThrow(/zz/);
+  });
+
+  it('ownerOf_conDuenoSinDuenoYDesconocida', () => {
+    const h = harness();
+    const owned = h.create({}, 9);
+    const free = h.create();
+
+    expect(h.coordinator.ownerOf(owned)).toBe(9);
+    expect(h.coordinator.ownerOf(free)).toBeNull();
+    expect(h.coordinator.ownerOf('zz')).toBeUndefined();
+  });
+
+  it('listSessions_devuelveLaInstantaneaDeCadaSesionViva', () => {
+    const h = harness();
+    const a = h.create();
+    const b = h.create();
+    h.coordinator.stop(a);
+
+    expect(h.coordinator.listSessions().map((s) => s.sessionId)).toEqual([b]);
+  });
+});

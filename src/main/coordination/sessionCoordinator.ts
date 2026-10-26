@@ -28,6 +28,19 @@ export interface SequencedSessionEvent extends SessionEventPayload {
 
 export type SequencedSink = (payload: SequencedSessionEvent) => void;
 
+// Un cliente suscrito a una sesion (F2.6): su sumidero y el aviso de que la sesion termino. El renderer que la
+// creo es uno mas; el host local (terminal, MCP, widget) suma los suyos con `subscribe`.
+export interface SessionListener {
+  readonly sink: SequencedSink;
+  readonly onClosed: () => void;
+}
+
+export interface SessionSubscription {
+  // La instantanea y los eventos posteriores van juntos: todo lo que llegue despues tiene `seq` mayor que `snapshot.lastSeq`.
+  readonly snapshot: ConversationSnapshot;
+  readonly unsubscribe: () => void;
+}
+
 // Lo que necesita del indice de conversaciones (`ConversationIndexStore`).
 export interface ConversationIdentityIndex {
   resolveConversation(ref: NativeSessionRef): { readonly conversationId: ConversationId; readonly lastSeq: number };
@@ -77,6 +90,10 @@ interface Tracked {
   prGuard: boolean;
   // En segundo plano: cancela su caducidad. null si tiene cliente.
   cancelExpiry: (() => void) | null;
+  // Webcontents que la creo (null si no se dijo): solo el y la ventana principal le dan ordenes (F2.6).
+  readonly ownerId: number | null;
+  // Clientes suscritos: el que la creo y los que se sumen despues.
+  readonly listeners: Set<SessionListener>;
   // Emite un evento propio de la coordinacion por el mismo camino que los del motor (con secuencia).
   emit: (event: MageEvent) => void;
 }
@@ -91,15 +108,34 @@ export class SessionCoordinator {
   create(params: CreateSessionParams, sink: SequencedSink, ownerId?: number): string {
     const tracked: Tracked = {
       sessionId: '', provider: params.provider, accountDir: params.accountDir, conversationId: null, nativeRef: null, lastSeq: 0, state: 'starting',
-      queue: [], receipts: new Map(), pending: new Map(), prGuard: false, cancelExpiry: null, emit: () => undefined,
+      queue: [], receipts: new Map(), pending: new Map(), prGuard: false, cancelExpiry: null, ownerId: ownerId ?? null,
+      listeners: new Set([{ sink, onClosed: () => undefined }]), emit: () => undefined,
     };
-    tracked.emit = (event) => this.relay(tracked, { sessionId: tracked.sessionId, event }, sink);
-    const sessionId = this.deps.sessions.create(params, (payload) => this.relay(tracked, payload, sink), ownerId);
+    tracked.emit = (event) => this.relay(tracked, { sessionId: tracked.sessionId, event });
+    const sessionId = this.deps.sessions.create(params, (payload) => this.relay(tracked, payload), ownerId);
     tracked.sessionId = sessionId;
     this.tracked.set(sessionId, tracked);
     const nativeId = initialNativeId(params, sessionId);
     if (nativeId !== null) this.bind(tracked, nativeId);
     return sessionId;
+  }
+
+  // Quien puede dar ordenes: el id del webContents que creo la sesion, null si no tiene, undefined si no se sigue.
+  ownerOf(sessionId: string): number | null | undefined {
+    return this.tracked.get(sessionId)?.ownerId;
+  }
+
+  // Instantaneas de todas las sesiones vivas (para un cliente que llega y no conoce ningun id).
+  listSessions(): readonly ConversationSnapshot[] {
+    return [...this.tracked.keys()].map((sessionId) => this.snapshot(sessionId));
+  }
+
+  // Suma un cliente a la sesion (F2.6). Todo es sincrono: la instantanea y el primer evento posterior no dejan
+  // hueco ni repeticion. `onClosed` avisa cuando la sesion para; soltar la suscripcion es idempotente.
+  subscribe(sessionId: string, listener: SessionListener): SessionSubscription {
+    const tracked = this.require(sessionId);
+    tracked.listeners.add(listener);
+    return { snapshot: this.snapshot(sessionId), unsubscribe: () => { tracked.listeners.delete(listener); } };
   }
 
   snapshot(sessionId: string): ConversationSnapshot {
@@ -208,7 +244,7 @@ export class SessionCoordinator {
 
   // Cada evento: identidad (antes, si el evento la trae), estado, secuencia y salida. El reinicio de
   // conversacion (`/clear`) sale con la conversacion VIEJA y despues se liga a la nueva.
-  private relay(tracked: Tracked, payload: SessionEventPayload, sink: SequencedSink): void {
+  private relay(tracked: Tracked, payload: SessionEventPayload): void {
     this.follow(tracked, payload.sessionId);
     const { event } = payload;
     if (event.kind === 'permission_request' && this.answerAutomatically(tracked, event.request)) return;
@@ -216,11 +252,23 @@ export class SessionCoordinator {
     trackPending(tracked.pending, event);
     tracked.state = nextState(tracked.state, event, tracked.pending.size);
     tracked.lastSeq += 1;
-    sink({ ...payload, conversationId: tracked.conversationId, seq: tracked.lastSeq, at: this.deps.now() });
+    this.fanOut(tracked, { ...payload, conversationId: tracked.conversationId, seq: tracked.lastSeq, at: this.deps.now() });
     if (event.kind === 'conversation_reset') this.rebind(tracked, event.newSessionId);
     if (event.kind === 'result') {
       tracked.prGuard = false;
       this.drain(tracked);
+    }
+  }
+
+  // A todos los clientes, sobre una COPIA de la lista (un cliente puede soltarse mientras recibe). Un sumidero que
+  // lanza no corta a los demas ni al motor: queda en el log.
+  private fanOut(tracked: Tracked, payload: SequencedSessionEvent): void {
+    for (const listener of [...tracked.listeners]) {
+      try {
+        listener.sink(payload);
+      } catch (err) {
+        this.deps.log('warn', 'Un cliente de la sesion fallo al recibir un evento', { sessionId: tracked.sessionId, seq: payload.seq, error: describe(err) });
+      }
     }
   }
 
@@ -342,6 +390,19 @@ export class SessionCoordinator {
     tracked.cancelExpiry = null;
     this.tracked.delete(sessionId);
     this.persist(tracked);
+    this.notifyClosed(tracked);
+  }
+
+  private notifyClosed(tracked: Tracked): void {
+    const listeners = [...tracked.listeners];
+    tracked.listeners.clear();
+    for (const listener of listeners) {
+      try {
+        listener.onClosed();
+      } catch (err) {
+        this.deps.log('warn', 'Un cliente de la sesion fallo al enterarse de su cierre', { sessionId: tracked.sessionId, error: describe(err) });
+      }
+    }
   }
 
   private persist(tracked: Tracked): void {
