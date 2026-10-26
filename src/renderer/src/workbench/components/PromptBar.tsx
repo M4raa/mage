@@ -23,7 +23,7 @@ import { effortChangeAdvice, modelChangeAdvice, type CostAdvice } from '../costA
 import { notify } from '../notificationStore';
 import { Dropdown } from './Dropdown';
 import { StepSlider } from './StepSlider';
-import { EFFORT_STEP_LABEL, agyPermissionSteps, codexPermissionSteps, defaultModeOf, effortSteps, permissionModeLabel, permissionStepsFor } from '../stepSliderModel';
+import { CODEX_DEFAULT_PROFILE, CODEX_WRITE_PROFILE, EFFORT_STEP_LABEL, agyPermissionSteps, codexPermissionSteps, defaultModeOf, effectiveCodexMode, effortSteps, permissionModeLabel, permissionStepsFor } from '../stepSliderModel';
 import { usePaneTabId } from '../paneContext';
 import type { PermissionMode } from '@shared/ipc';
 
@@ -192,7 +192,7 @@ export function PromptBar(): React.JSX.Element {
     if (isAgy) return agyPermissionSteps;
     return permissionStepsFor(isRuntime ? null : (cliModes?.claude ?? null));
   }, [isCodex, isAgy, isRuntime, cliModes]);
-  const permissionMode: string = activeTab?.permissionMode ?? (isCodex ? (modeSteps[0]?.value ?? '') : defaultModeOf(providerId));
+  const permissionMode: string = isCodex ? effectiveCodexMode(activeTab?.permissionMode) : (activeTab?.permissionMode ?? defaultModeOf(providerId));
   const effort = activeTab?.effort ?? '';
   const selectedModel = modelOptions.find((option) => option.id === activeModel);
   const effortLevels = isCodex ? (selectedModel?.supportedEfforts ?? []) : isAgy ? AGY_EFFORT_LEVELS : undefined;
@@ -692,6 +692,21 @@ export function PromptBar(): React.JSX.Element {
             >
               Sin verificar
             </span>
+          )}
+          {isCodex && permissionMode === CODEX_DEFAULT_PROFILE && (
+            // Respuesta 1 de la devolución 16: Codex arranca en solo lectura y la pestaña lo dice; un clic lo pasa
+            // a `:workspace` (escribe dentro de la carpeta y pide permiso para salir de ella). Sale aunque no se
+            // hayan sondeado sus perfiles, que es cuando el deslizador no aparece.
+            <button
+              type="button"
+              data-codex-read-only="true"
+              aria-label="Codex está en solo lectura: permitir que escriba en la carpeta"
+              data-tip="Codex arranca en solo lectura: pide permiso antes de escribir. Pulsa para que escriba dentro de la carpeta de la conversación."
+              onClick={() => setActivePermissionMode(CODEX_WRITE_PROFILE)}
+              className="shrink-0 self-center rounded-full border border-mg-border-emph px-[8px] py-[2px] text-[10.5px] text-mg-body2 hover:bg-mg-hover"
+            >
+              Solo lectura · Permitir escribir
+            </button>
           )}
           {(isClaude || isRuntime || isAgy || (isCodex && modeSteps.length > 0)) && (
             // Modo de permiso (M2.6; P-028 32/33: deslizador de pasos). Los pasos son los que EXPONE el CLI

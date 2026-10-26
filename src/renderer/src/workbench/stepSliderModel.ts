@@ -98,6 +98,16 @@ export function defaultModeOf(providerId: string): string {
   return providerId === AGY_PROVIDER_ID ? 'acceptEdits' : 'default';
 }
 
+// Codex sin modo elegido: Mage no le manda `permissions` y el hilo arranca en `:read-only` (medido en
+// `spike/codex-sandbox-spike.mjs`, codex-cli 0.164.0). Respuesta 1 de la devolución 16: se queda así por defecto,
+// como Claude, que también pregunta antes de editar, y la pestaña lo enseña con un clic para pasar a `:workspace`.
+export const CODEX_DEFAULT_PROFILE = ':read-only';
+export const CODEX_WRITE_PROFILE = ':workspace';
+
+export function effectiveCodexMode(mode: string | undefined): string {
+  return mode === undefined || mode === '' ? CODEX_DEFAULT_PROFILE : mode;
+}
+
 // Pasos de agy: su `--mode` solo admite `accept-edits` y `plan`.
 export const agyPermissionSteps: readonly SliderStep[] = AGY_PERMISSION_MODES.map((mode) => ({ value: mode, label: permissionModeLabel(mode) }));
 

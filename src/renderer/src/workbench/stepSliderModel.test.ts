@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { PERMISSION_MODES } from '@shared/ipc';
 import {
+  CODEX_DEFAULT_PROFILE,
+  effectiveCodexMode,
   hasPermissionModes,
   permissionCycleForProvider,
   codexPermissionSteps,
@@ -185,5 +187,16 @@ describe('modos por proveedor', () => {
   it('permissionCycleForProvider_claudeSigueAlCliYAgyNada', () => {
     expect(permissionCycleForProvider('claude', ['default', 'plan'])).toEqual(['default', 'plan']);
     expect(permissionCycleForProvider('agy', null)).toEqual([]);
+  });
+});
+
+describe('effectiveCodexMode', () => {
+  it.each([undefined, ''])('effectiveCodexMode_sinModo_%s_esSoloLectura', (mode) => {
+    expect(effectiveCodexMode(mode)).toBe(CODEX_DEFAULT_PROFILE);
+    expect(CODEX_DEFAULT_PROFILE).toBe(':read-only');
+  });
+
+  it('effectiveCodexMode_modoElegido_loRespeta', () => {
+    expect(effectiveCodexMode(':workspace')).toBe(':workspace');
   });
 });

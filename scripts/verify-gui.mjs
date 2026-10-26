@@ -1967,6 +1967,37 @@ const CHECKS = [
     },
   },
   {
+    // Respuesta 1 de la devolución 16: una pestaña NUEVA de Codex (sin modo elegido) corre en `:read-only` y lo dice;
+    // un clic la pasa a `:workspace`. Se crea por `newTab`, el camino de todas las pestañas, con una cuenta de Codex
+    // ficticia y SIN sondeo de perfiles (verify:gui no lanza ningún CLI): la pastilla tiene que salir igual. No se
+    // envía nada, así que no hay sesión ni CLI.
+    name: 'D16: una pestaña nueva de Codex enseña «Solo lectura» y un clic la pasa a :workspace',
+    state: { tabs: 1 },
+    async run(page) {
+      const creada = await page.evaluate(async () => {
+        const store = window.__mageDev.store;
+        const codex = { ...store.getState().accounts[0], id: 'C:\\vg\\.codex-d16', alias: 'Codex D16', providerId: 'codex', provider: 'Codex', defaultModel: 'gpt-6.1-sol' };
+        store.setState((state) => ({ accounts: [...state.accounts, codex], permissionModes: { claude: null, codex: null } }));
+        const cwd = store.getState().tabs.find((tab) => tab.id === store.getState().activeTabId)?.cwd ?? '';
+        await store.getState().newTab({ accountId: codex.id, cwd, model: 'gpt-6.1-sol', provider: 'codex' });
+        const tab = store.getState().tabs.find((item) => item.id === store.getState().activeTabId);
+        return { provider: tab?.provider ?? null, modo: tab?.permissionMode ?? null };
+      });
+      const pastilla = page.locator('[data-codex-read-only="true"]');
+      await pastilla.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      const antes = { pastillas: await pastilla.count(), texto: ((await pastilla.textContent()) ?? '').trim() };
+      await pastilla.click();
+      await pastilla.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+      const despues = await page.evaluate(() => {
+        const state = window.__mageDev.store.getState();
+        return { modo: state.tabs.find((tab) => tab.id === state.activeTabId)?.permissionMode ?? null, pastillas: document.querySelectorAll('[data-codex-read-only="true"]').length };
+      });
+      const ok = creada.provider === 'codex' && creada.modo === null && antes.pastillas === 1 && antes.texto.startsWith('Solo lectura')
+        && despues.modo === ':workspace' && despues.pastillas === 0;
+      return { ok, detail: JSON.stringify({ creada, antes, despues }) };
+    },
+  },
+  {
     name: 'I: cambiar proveedor en Nuevo chat cambia cuenta, modelos y esfuerzo',
     async run(page) {
       await page.evaluate(() => window.__mageDev.store.setState((state) => ({ accounts: [
