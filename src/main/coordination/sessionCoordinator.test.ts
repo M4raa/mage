@@ -627,6 +627,33 @@ describe('SessionCoordinator — respuestas automáticas en main (F2.4, H1 de la
     expect(h.sessions.answerPermission).not.toHaveBeenCalled();
   });
 
+  it('permissionRequest_reglaDeWritePeroLlegaBash_seAnunciaYNoSeContesta', () => {
+    // H1b de la devolución 15: la regla es POR HERRAMIENTA; otra herramienta sigue preguntando.
+    const h = harness({ rules: { 'conv-s1': ['Write'] } });
+    const id = h.create({ provider: 'codex', resumeSessionId: 's1' });
+
+    h.emit(id, request('r1', 'Bash', { command: 'ls' }));
+    h.flush();
+
+    expect(h.sessions.answerPermission).not.toHaveBeenCalled();
+    expect(kinds(h)).toEqual(['permission_request']);
+    expect(h.coordinator.snapshot(id).pending.map((p) => p.request.requestId)).toEqual(['r1']);
+  });
+
+  it('respuestaAutomatica_runtimeEmiteRequiresActionDespuesDeLaPeticion_elEstadoNoQuedaEnRequiresAction', () => {
+    // El runtime emite `requires_action` justo DESPUÉS de la petición y reanuda (`running`) al recibir la
+    // respuesta. Contestar dentro de la propia petición dejaría `running` ANTES de `requires_action`.
+    const h = harness({ rules: { 'conv-s1': ['Write'] } });
+    const id = h.create({ provider: 'codex', resumeSessionId: 's1' });
+    vi.mocked(h.sessions.answerPermission).mockImplementation((sessionId) => h.emit(sessionId, state('running')));
+
+    h.emit(id, request('r1', 'Write', { file_path: 'a.txt' }));
+    h.emit(id, { kind: 'session_state', state: 'requires_action' });
+    h.flush();
+
+    expect(h.coordinator.snapshot(id).state).toBe('running');
+  });
+
   it('answerPermission_motorLanza_anunciaLaCancelacion', () => {
     // H4: los demás clientes cierran su tarjeta aunque el motor rechace la respuesta.
     const h = harness();
