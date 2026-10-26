@@ -8289,6 +8289,16 @@ const CHECKS = [
     },
   },
   {
+    // F2.6: el renderer corre en el sandbox de Chromium (`sandbox: true`, preload CommonJS de un solo fichero). Se
+    // mide en el propio renderer: el preload lee `process.sandboxed` y el mundo de la página no ve `require` ni
+    // `process`. Todo el resto de esta tanda corre con el sandbox puesto: si algo lo necesitara, fallaría.
+    name: 'F2.6: el renderer corre en el sandbox de Chromium y sigue sin ver Node',
+    async run(page) {
+      const medido = await page.evaluate(() => ({ sandboxed: window.mage.sandboxed, require: typeof require, process: typeof process, montado: window.__mageDev !== undefined }));
+      return { ok: medido.sandboxed === true && medido.require === 'undefined' && medido.process === 'undefined' && medido.montado, detail: JSON.stringify(medido) };
+    },
+  },
+  {
     // F2.6: el host local. Un turno del runtime propio contra el servidor falso (escenario `cola`, ~4 s, sin CLI ni
     // cuota) y un cliente EXTERNO (`scripts/host-client.mjs`, otro proceso) que lee el token y la dirección de
     // `<userData>/run`, se presenta con `hello`, lee la instantánea y se suscribe a la sesión. Tiene que recibir la

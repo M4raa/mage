@@ -279,7 +279,7 @@ const AGY_PROBE_TTL_MS = 60_000;
 
 // Entorno de desarrollo (no empaquetado): habilita la ventana de debug y una CSP relajada para HMR.
 const isDev = !app.isPackaged;
-const preloadPath = join(currentDir, '../preload/index.mjs');
+const preloadPath = join(currentDir, '../preload/index.cjs');
 const rendererDir = join(currentDir, '../renderer');
 
 // Dimensiones iniciales de la ventana (sin magic numbers dispersos).
@@ -2082,10 +2082,12 @@ function createWorkbenchWindow(windowId: string, placement?: WindowPlacement): B
     ...(process.platform === 'darwin' ? {} : { titleBarOverlay: titleBarOverlayFromTheme() }),
     webPreferences: {
       additionalArguments: isDev ? ['--mage-development'] : [],
-      preload: join(currentDir, '../preload/index.mjs'),
+      preload: preloadPath,
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false, // el preload necesita 'require' de electron; sigue sin exponer Node al renderer
+      // F2.6: el renderer corre en el sandbox de Chromium. El preload es un unico fichero CommonJS que solo pide
+      // `electron` (contextBridge, ipcRenderer, webFrame) y habla con main por IPC: no necesita Node.
+      sandbox: true,
     },
   });
 

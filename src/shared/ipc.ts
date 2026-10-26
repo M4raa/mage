@@ -788,6 +788,8 @@ export type DropTabOutcome = 'moved' | 'none';
 // --- API tipada que el preload expone en window.mage ------------------------------------------
 
 export interface MageApi {
+  // ¿Corre este renderer en el sandbox de Chromium? (`process.sandboxed` del preload; F2.6). Solo lo lee verify:gui.
+  readonly sandboxed: boolean;
   readonly isDevelopment: boolean;
   createSession(params: CreateSessionParams): Promise<CreateSessionResult>; // sessionId + configDir efectivo
   // Envía, o deja en la cola de main si hay un turno en marcha (F2.2): el recibo dice cuál de las dos.

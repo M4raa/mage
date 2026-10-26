@@ -35,6 +35,9 @@ export default defineConfig({
   preload: {
     plugins: [externalizeDepsPlugin(), bundledPackagesPlugin('preload', resolve('.'))],
     resolve: { alias: sharedAlias },
+    // CommonJS en UN solo fichero: un preload con `sandbox: true` (F2.6) no puede cargar ESM ni otros ficheros, solo
+    // `require('electron')`. Es lo que ya era en la práctica (el bundle solo importa `electron`).
+    build: { rollupOptions: { output: { format: 'cjs', entryFileNames: '[name].cjs' } } },
   },
   renderer: {
     root: 'src/renderer',
