@@ -1,4 +1,4 @@
-import { delimiter, join } from 'node:path';
+import { isOnPath } from '../os/commandOnPath';
 import { createDbusSend, type ExecFileFn } from './dbusSend';
 import { detectLinuxKeyring, hasSessionBus } from './linuxKeyring';
 import type { SecretCipher } from './secretStore';
@@ -36,33 +36,6 @@ export function assessVaultForProcess(deps: VaultBootstrapDeps): Promise<VaultSt
       }),
     osRelease: () => readOsRelease(deps.readTextFile),
   });
-}
-
-export function isOnPath(bin: string, deps: Pick<VaultBootstrapDeps, 'env' | 'isExecutableFile'>): boolean {
-  const dirs = (deps.env['PATH'] ?? '').split(delimiter).filter((dir) => dir.length > 0);
-  return dirs.some((dir) => deps.isExecutableFile(join(dir, bin)));
-}
-
-// Comprobación real de «existe y es ejecutable». Solo «no existe» o «sin permiso» significan que no; cualquier otro
-// error se propaga.
-const ABSENT_CODES: readonly string[] = ['ENOENT', 'ENOTDIR', 'EACCES', 'EPERM'];
-export interface ExecutableFs {
-  readonly accessSync: (path: string, mode: number) => void;
-  readonly statSync: (path: string) => { isFile(): boolean };
-  readonly executableMode: number;
-}
-
-export function executableFileCheck(fs: ExecutableFs): (path: string) => boolean {
-  return (path) => {
-    try {
-      fs.accessSync(path, fs.executableMode);
-      return fs.statSync(path).isFile();
-    } catch (err) {
-      const code = (err as NodeJS.ErrnoException).code;
-      if (code !== undefined && ABSENT_CODES.includes(code)) return false;
-      throw err;
-    }
-  };
 }
 
 function readOsRelease(readTextFile: (path: string) => string | null): ReturnType<typeof parseOsRelease> {

@@ -1,4 +1,3 @@
-import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { z } from 'zod';
 import type { ProviderProbeParams, ProviderProbeResult } from '@shared/ipc';
@@ -7,6 +6,7 @@ import { AGY_PROVIDER_ID, BUILT_IN_PROVIDERS, CODEX_PROVIDER_ID, modelsUrl } fro
 import { resolveClaudeBinary } from '../os/claudeBinaryResolver';
 import { findAgyBinary } from '../os/agyBinaryResolver';
 import { findCodexBinary } from '../os/codexBinaryResolver';
+import { isCommandOnPath } from '../os/commandOnPath';
 import { execCapturingStdout } from '../os/execCapture';
 
 // Sondeo de un proveedor para la seccion "Proveedores y modelos" de Configuracion (D2): a donde apunta
@@ -216,13 +216,7 @@ export function defaultProbeDeps(
 function findInstalledClaudeBinary(): string | null {
   const resolved = resolveClaudeBinary();
   if (existsSync(resolved)) return resolved;
-  return commandInPath(resolved) ? resolved : null;
-}
-
-function commandInPath(bin: string): boolean {
-  const finder = process.platform === 'win32' ? 'where' : 'which';
-  const result = spawnSync(finder, [bin], { stdio: 'ignore', windowsHide: true, timeout: 5_000 });
-  return result.status === 0;
+  return isCommandOnPath(resolved) ? resolved : null;
 }
 
 // Ejecuta un CLI y devuelve su stdout. Lanza (con el mensaje del propio proceso) si falla o si tarda

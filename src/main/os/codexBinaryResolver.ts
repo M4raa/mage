@@ -1,8 +1,8 @@
 import { existsSync } from 'node:fs';
 import { homedir, platform } from 'node:os';
 import { win32 } from 'node:path';
-import { spawnSync } from 'node:child_process';
 import { firstExistingPath } from './agentBinaryResolver';
+import { isCommandOnPath } from './commandOnPath';
 
 // Localizacion del binario `codex` (CLI de OpenAI). Tercer resolutor, mismo patron que los de Claude y
 // `agy`: TODA la diferencia de SO queda encapsulada aqui y ningun otro modulo conoce rutas de Codex.
@@ -71,16 +71,8 @@ function defaultCodexDeps(): CodexResolverDeps {
     platform: platform(),
     homedir: homedir(),
     fileExists: existsSync,
-    commandInPath: isCommandInPath,
+    commandInPath: isCommandOnPath,
     binOverride: process.env.MAGE_CODEX_BIN,
     localAppData: process.env.LOCALAPPDATA,
   };
-}
-
-// `where`/`which` con timeout, igual que los otros dos resolutores. Un fallo del buscador se traduce a
-// "no esta", que es la respuesta correcta para el llamante.
-function isCommandInPath(bin: string): boolean {
-  const finder = process.platform === 'win32' ? 'where' : 'which';
-  const result = spawnSync(finder, [bin], { stdio: 'ignore', windowsHide: true, timeout: 5_000 });
-  return result.status === 0;
 }

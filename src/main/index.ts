@@ -213,7 +213,8 @@ import { writeAtomic, type AtomicWriteDeps } from './os/atomicFile';
 import { SettingsStore } from './state/settingsStore';
 import { SecretStore } from './secrets/secretStore';
 import type { VaultStatus } from './secrets/vaultGate';
-import { assessVaultForProcess, executableFileCheck } from './secrets/vaultBootstrap';
+import { assessVaultForProcess } from './secrets/vaultBootstrap';
+import { isCommandOnPath, isExecutableFile } from './os/commandOnPath';
 import {
   migrateLegacyProviderKeys,
   parseApiKeySetParams,
@@ -1088,14 +1089,6 @@ const openWithService = new OpenWithService({
   isCommandAvailable: isCommandOnPath,
 });
 
-// Detecta si un comando existe en el PATH con where (Windows) / which (POSIX). Sincrona y rapida; solo
-// se consulta en acciones puntuales del usuario (listar editores, listar extensiones), no en caliente.
-function isCommandOnPath(bin: string): boolean {
-  const finder = process.platform === 'win32' ? 'where' : 'which';
-  const result = spawnSync(finder, [bin], { stdio: 'ignore', windowsHide: true, timeout: 5_000 });
-  return result.status === 0;
-}
-
 // Dialogo nativo de abrir fichero (la ruta la elige main, nunca el renderer). null = cancelado.
 async function pickNativeFile(filters: Electron.FileFilter[]): Promise<string | null> {
   const options = { properties: ['openFile' as const], filters };
@@ -1599,7 +1592,7 @@ async function assessVaultOnce(): Promise<void> {
     env: process.env,
     cipher: safeStorage,
     execFile,
-    isExecutableFile: executableFileCheck({ accessSync, statSync, executableMode: fsConstants.X_OK }),
+    isExecutableFile,
     readTextFile: (path) => (existsSync(path) ? readFileSync(path, 'utf8') : null),
     now: Date.now,
   });
