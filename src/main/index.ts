@@ -5,6 +5,8 @@ import { execFile, spawn, spawnSync, type ChildProcessWithoutNullStreams } from 
 import {
   appendFileSync,
   chmodSync,
+  accessSync,
+  constants as fsConstants,
   copyFileSync,
   closeSync,
   createReadStream,
@@ -204,6 +206,8 @@ import { resolvedPath } from './os/resolvedPath';
 import { writeAtomic, type AtomicWriteDeps } from './os/atomicFile';
 import { SettingsStore } from './state/settingsStore';
 import { SecretStore } from './secrets/secretStore';
+import type { VaultStatus } from './secrets/vaultGate';
+import { assessVaultForProcess, executableFileCheck } from './secrets/vaultBootstrap';
 import {
   migrateLegacyProviderKeys,
   parseApiKeySetParams,
@@ -1516,6 +1520,7 @@ function getSecretStore(): SecretStore {
     secretStoreSingleton = new SecretStore({
       filePath: join(app.getPath('userData'), 'secrets.json'),
       cipher: safeStorage,
+      status: currentVaultStatus,
       exists: existsSync,
       readFile: (path) => readFileSync(path, 'utf8'),
       writeFile: (path, data) => writeFileSync(path, data, 'utf8'),
@@ -1524,6 +1529,30 @@ function getSecretStore(): SecretStore {
     });
   }
   return secretStoreSingleton;
+}
+
+// Si la bóveda se puede usar en ESTE proceso (D1, F2.7). Se decide una vez, tras `ready` y antes de admitir sesiones
+// (IPC y host); no cambia mientras el proceso viva: para habilitarla después hay que cerrar y volver a abrir Mage.
+let vaultStatus: VaultStatus | null = null;
+function currentVaultStatus(): VaultStatus {
+  if (vaultStatus === null) throw new Error('La bóveda se ha usado antes de comprobarla al arrancar');
+  return vaultStatus;
+}
+
+async function assessVaultOnce(): Promise<void> {
+  const startedAt = Date.now();
+  vaultStatus = await assessVaultForProcess({
+    platform: process.platform,
+    env: process.env,
+    cipher: safeStorage,
+    execFile,
+    isExecutableFile: executableFileCheck({ accessSync, statSync, executableMode: fsConstants.X_OK }),
+    readTextFile: (path) => (existsSync(path) ? readFileSync(path, 'utf8') : null),
+    now: Date.now,
+  });
+  // El motivo no lleva secretos: estado del llavero y comandos. Solo su primera línea va al log.
+  const reason = vaultStatus.usable ? null : vaultStatus.reason.split('\n')[0];
+  mainLog(vaultStatus.usable ? 'info' : 'warn', 'Bóveda comprobada al arrancar', { usable: vaultStatus.usable, ms: Date.now() - startedAt, reason });
 }
 
 function readCustomProviderApiKey(providerId: string): string {
@@ -3530,6 +3559,13 @@ function focusMainWindow(): void {
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
 // Host sin pantalla (F2.6, §3.4): Linux sin DISPLAY ni WAYLAND_DISPLAY, o `--headless`. No crea ventanas.
 const runsHeadless = isHeadlessHost({ platform: process.platform, argv: process.argv, env: process.env });
+// Linux sin pantalla: sin `--password-store`, Chromium elige basic_text aunque haya un llavero desbloqueado (medido en
+// INFORME-006 y en la validación de F2.7), y la bóveda no se podría usar nunca. Se pide el Secret Service salvo que el
+// usuario haya elegido otro; antes de `ready`, que es cuando Chromium lo lee (medido: vale para este switch). Con
+// pantalla, Chromium elige como siempre (kwallet en KDE): forzarlo dejaría ilegibles las bóvedas que ya existen.
+if (runsHeadless && process.platform === 'linux' && !app.commandLine.hasSwitch('password-store')) {
+  app.commandLine.appendSwitch('password-store', 'gnome-libsecret');
+}
 
 // El host local (F2.6): terminal, widget y MCP hablan con el por un socket privado. Vive en los dos modos.
 let localHost: HostServerHandle | null = null;
@@ -3592,6 +3628,7 @@ app.whenReady().then(async () => {
   if (runsHeadless) {
     // Solo el host: sin ventanas, ni tray, ni widget, ni actualizador, ni IPC del renderer (no hay renderer).
     mainLog('info', 'Mage arrancado sin pantalla', { platform: process.platform });
+    await assessVaultOnce();
     await startHost('headless').catch((err: unknown) => {
       mainLog('error', 'No se pudo arrancar el host local; se cierra el proceso sin pantalla', { error: err instanceof Error ? err.message : String(err) });
       app.exit(1);
@@ -3605,6 +3642,8 @@ app.whenReady().then(async () => {
   // navegador del sistema y nunca crea otra ventana. El artifact pone despues su propio `deny` y manda.
   app.on('web-contents-created', (_event, contents) => installExternalLinkHandler(contents, externalLinkDeps));
   Menu.setApplicationMenu(buildApplicationMenu());
+  // La bóveda, antes de admitir sesiones y de migrar nada a ella (D1).
+  await assessVaultOnce();
   migrateLegacyProviderKeysOnce();
   registerIpcHandlers();
   // Antes de la primera ventana: la primera sesion ya tiene que recibir los MCP importados.
