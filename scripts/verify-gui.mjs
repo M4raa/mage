@@ -33,6 +33,7 @@
 // humano sigue siendo del usuario (ver .claude/skills/verificacion-gui).
 
 import { spawn, spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
 import net from 'node:net';
@@ -2138,6 +2139,66 @@ const CHECKS = [
         const tab = await page.locator('[data-mcp-tab="extensions"]').getAttribute('aria-selected');
         return { ok: tab === 'true', detail: JSON.stringify({ conservaExtensiones: tab === 'true' }) };
       } finally { await restoreSettingsPosition(page, { ownDialog, settings: previous }); }
+    },
+  },
+  {
+    // #55 (F2.8): dos perfiles AISLADOS de Mage sobre la MISMA conversación, del runtime propio (sin CLI ni cuota). La
+    // segunda instancia (otro perfil, arrancada del build en `out/`) la abre primero por su IPC real; esta la abre
+    // después en una pestaña y tiene que quedar en solo lectura (aviso, editor no editable, envío rechazado). Se mata la
+    // segunda POR SU PID: el lock queda huérfano y, en la revisión periódica (30 s), aparece «Tomar el control»; al
+    // pulsarlo esta pasa a ser la dueña. Al cerrar la pestaña, el fichero del lock desaparece.
+    name: 'F2.8: una conversación abierta en otra instancia se ve en solo lectura y, muerta esa, se puede tomar el control',
+    state: { tabs: 1 },
+    async run(page) {
+      if (!fs.existsSync(path.join(repoRoot, 'out', 'main', 'index.js'))) return { ok: false, detail: 'falta out/ (pnpm build): la segunda instancia arranca del build' };
+      const ref = { provider: 'custom:vg-lock', accountDir: '', nativeId: `vg-lock-${Date.now()}` };
+      const lockFile = conversationLockFileFor(ref);
+      const second = await startSecondInstance();
+      try {
+        const segunda = await second.page.evaluate((params) => window.mage.acquireConversationLock(params), { ...ref, tabId: 'vg-segunda' });
+        const ficheroConLaSegunda = fs.existsSync(lockFile);
+        await openTemporaryConversation(page);
+        const tabId = await page.evaluate((r) => {
+          const store = window.__mageDev.store;
+          const id = store.getState().activeTabId;
+          store.setState((st) => ({ tabs: st.tabs.map((t) => (t.id === id ? { ...t, provider: r.provider, accountId: '', resumeSessionId: r.nativeId } : t)) }));
+          return id;
+        }, ref);
+        const aviso = page.locator('[data-conversation-lock="read-only"]');
+        await aviso.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const soloLectura = await page.evaluate(async (id) => {
+          const store = window.__mageDev.store;
+          const envio = await store.getState().sendMessageToTab(id, 'no debe salir').then(() => 'enviado', (err) => err.message);
+          return {
+            aviso: document.querySelector('[data-conversation-lock="read-only"]')?.textContent?.trim() ?? null,
+            tomar: [...document.querySelectorAll('button')].filter((b) => b.textContent?.trim() === 'Tomar el control').length,
+            editable: document.querySelector(`[data-pane-tab-id="${id}"] .cm-content`)?.getAttribute('contenteditable') ?? null,
+            estado: store.getState().lockByChat[id] ?? null,
+            envio,
+          };
+        }, tabId);
+        killTree(second.child);
+        const tomar = page.getByRole('button', { name: 'Tomar el control', exact: true });
+        await tomar.waitFor({ state: 'visible', timeout: 45_000 });
+        await tomar.click();
+        await aviso.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+        const duena = await page.evaluate((id) => ({
+          estado: window.__mageDev.store.getState().lockByChat[id] ?? null,
+          editable: document.querySelector(`[data-pane-tab-id="${id}"] .cm-content`)?.getAttribute('contenteditable') ?? null,
+        }), tabId);
+        await page.evaluate((id) => window.__mageDev.store.getState().closeTab(id), tabId);
+        const liberado = await waitForCondition(() => !fs.existsSync(lockFile), CONFIG.actionTimeoutMs);
+        const ok = segunda.owner === true && ficheroConLaSegunda && soloLectura.estado?.owner === false && soloLectura.estado.orphan === false
+          && soloLectura.aviso?.includes(`Abierta en otra instancia de Mage (${second.profileName})`) === true && soloLectura.tomar === 0
+          && soloLectura.editable === 'false' && soloLectura.envio.startsWith('Abierta en otra instancia de Mage')
+          && duena.estado?.owner === true && duena.editable === 'true' && liberado;
+        return { ok, detail: JSON.stringify({ segunda, ficheroConLaSegunda, soloLectura, duena, liberado }) };
+      } finally {
+        killTree(second.child);
+        await second.browser.close().catch(() => undefined);
+        fs.rmSync(second.profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 500 });
+        fs.rmSync(lockFile, { force: true });
+      }
     },
   },
   {
@@ -10367,6 +10428,54 @@ function readTurnState(page, tab) {
     const tools = blocks.filter((block) => block.kind === 'tool').map((block) => block.tool);
     return { status: state.statusByChat[id] ?? 'idle', agentText, errors, kinds, tools, askingTrust: state.trustRequests.includes(cwd) };
   }, tab);
+}
+
+// --- Segunda instancia (F2.8) -------------------------------------------------------------------------
+
+// El fichero del lock de una conversación, como lo nombra main (`conversationLockEnv.ts`): `<raíz local>/mage/locks`
+// y el hash de (proveedor, cuenta canonizada, id nativo). Solo para conversaciones sin cuenta (runtime propio).
+function conversationLockFileFor(ref) {
+  if (ref.accountDir !== '') throw new Error(`Solo conversaciones sin cuenta: ${JSON.stringify(ref.accountDir)}`);
+  const local = process.platform === 'win32'
+    ? process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local')
+    : process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share');
+  const hash = createHash('sha256').update(JSON.stringify([ref.provider, '', ref.nativeId])).digest('hex').slice(0, 32);
+  return path.join(local, 'mage', 'locks', `${hash}.lock`);
+}
+
+// Otra instancia de Mage con un perfil AISLADO propio, del build en `out/` (el dev server ya es de la primera) y con su
+// propio puerto de depuración. Sin CLI: el sondeo de modelos, MCP y gh, falsos o apagados, como la primera.
+async function startSecondInstance() {
+  const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'mage-verify-segunda-'));
+  const port = CONFIG.port + 1;
+  // Sin ELECTRON_RUN_AS_NODE: con esa variable presente Electron arranca como Node.
+  const { ELECTRON_RUN_AS_NODE: _asNode, ...inherited } = process.env;
+  const child = spawn(requireFromHere('electron'), ['.', `--user-data-dir=${profile}`, `--remote-debugging-port=${port}`], {
+    cwd: repoRoot,
+    env: { ...inherited, MAGE_SKIP_MODEL_PROBE: '1', MAGE_MCP_FAKE_CLI: '1', MAGE_GH_FAKE: '1' },
+    windowsHide: true,
+    stdio: 'ignore',
+    detached: process.platform !== 'win32',
+  });
+  const deadline = Date.now() + CONFIG.bootTimeoutMs;
+  while (Date.now() < deadline) {
+    const response = await fetch(`http://127.0.0.1:${port}/json/version`).catch(() => null);
+    if (response?.ok) break;
+    await new Promise((resolve) => setTimeout(resolve, CONFIG.pollIntervalMs));
+  }
+  const browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`);
+  const secondPage = await findMainPage(browser);
+  await secondPage.waitForFunction(() => typeof window.mage?.acquireConversationLock === 'function', undefined, { timeout: CONFIG.bootTimeoutMs });
+  return { child, browser, page: secondPage, profile, profileName: path.basename(profile) };
+}
+
+async function waitForCondition(condition, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (condition()) return true;
+    await new Promise((resolve) => setTimeout(resolve, CONFIG.pollIntervalMs));
+  }
+  return condition();
 }
 
 // --- Arranque y conexion -------------------------------------------------------------------------

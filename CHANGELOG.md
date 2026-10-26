@@ -44,6 +44,7 @@ versión.
 
 ### Añadido
 - Mage deja un host local para otros clientes (terminal, widget, MCP): un socket privado que solo abre quien tiene el token de esa ejecución, con el protocolo versionado. Ve el mismo flujo de eventos que la ventana, contesta permisos y preguntas (se contestan una sola vez, gane quien gane) y puede enviar mensajes. Todavía no crea sesiones ni concede confianza a ninguna carpeta.
+- Una conversación abierta en otra instancia de Mage (la instalada, la de desarrollo u otro perfil) se ve en solo lectura, con el aviso «Abierta en otra instancia de Mage (<perfil>)». Si esa instancia se cierra, la conversación queda libre; si se cae, aparece «Tomar el control». Un `claude` lanzado a mano en una terminal no se puede bloquear desde Mage.
 - En Linux sin escritorio, Mage arranca como host sin ventanas (con `--headless` o sin `DISPLAY`). Pedir la interfaz gráfica a ese host dice que no está disponible y no lo reinicia ni toca sus sesiones.
 
 ### Seguridad
