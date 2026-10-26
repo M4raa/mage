@@ -1065,6 +1065,22 @@ describe('permisos en cola', () => {
     expect(store.getState().pendingByChat['a']?.map((p) => p.requestId)).toEqual(['r2']);
   });
 
+  // Respuesta 1 de la devolución 17: si el motor lanzó al contestar, main cancela la petición (H4 de la 014). Aunque el
+  // fallo llegue ANTES que su `permission_cancelled` y la tarjeta haya vuelto a pendiente, el cancelado la cierra.
+  it('answerPermissionFor_laLlamadaLanzaYDespuesLlegaPermissionCancelled_laTarjetaNoQuedaPendiente', async () => {
+    const { store, answerPermission } = withTwoPending();
+    answerPermission.mockRejectedValue(new Error('El motor no aceptó la respuesta'));
+
+    store.getState().answerPermissionFor('a', { behavior: 'allow' }, 'r1');
+    await vi.waitFor(() => expect(hasErrorBlock(store)).toBe(true));
+    expect(store.getState().pendingByChat['a']?.map((p) => p.requestId)).toEqual(['r1', 'r2']);
+    store.getState().handleEvent('s-a', { kind: 'permission_cancelled', requestId: 'r1' });
+
+    expect(store.getState().pendingByChat['a']?.map((p) => p.requestId)).toEqual(['r2']);
+    expect(permissionStates(store)).toEqual(['cancelled', 'pending']);
+    expect(store.getState().statusByChat['a']).toBe('needs_permission');
+  });
+
   it('answerPermissionFor_requestIdYaContestado_noContestaDosVeces', () => {
     const { store, answerPermission } = withTwoPending();
     store.getState().answerPermissionFor('a', { behavior: 'allow' }, 'r1');
