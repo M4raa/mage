@@ -45,6 +45,7 @@ function fakeFs(initial: Record<string, string> = {}) {
       files.delete(path);
     },
     tempSuffix: () => 'suf',
+    sleep: () => undefined,
   };
 
   return {
@@ -104,6 +105,35 @@ describe('writeAtomic', () => {
     });
 
     expect(() => writeAtomic({ ...fs.deps, rename }, '/data/a.json', 'x')).toThrow(/EPERM/);
+    expect(fs.removed).toEqual(['/data/a.json.suf.tmp']);
+  });
+});
+
+// H1 de la devolución 17: en Windows el rename falla con EPERM mientras otro proceso lee el destino (el CLI leyendo
+// sus ajustes, otra instancia leyendo el índice). Se reintenta unas pocas veces antes de rendirse.
+describe('writeAtomic ante el bloqueo transitorio de Windows', () => {
+  const eperm = () => Object.assign(new Error('EPERM: operation not permitted, rename'), { code: 'EPERM' });
+
+  it('write_renameEPERMUnaVez_reintentaYPublica', () => {
+    const fs = fakeFs({ '/data/a.json': 'viejo' });
+    let failures = 1;
+    const rename = (from: string, to: string): void => {
+      if (failures > 0) { failures -= 1; throw eperm(); }
+      fs.deps.rename(from, to);
+    };
+
+    writeAtomic({ ...fs.deps, rename }, '/data/a.json', 'nuevo');
+
+    expect(fs.files.get('/data/a.json')).toBe('nuevo');
+    expect(fs.leftoverTemps()).toEqual([]);
+  });
+
+  it('write_renameEPERMSiempre_lanzaConLaRutaYLimpiaElTemporal', () => {
+    const fs = fakeFs({ '/data/a.json': 'viejo' });
+    const rename = (): void => { throw eperm(); };
+
+    expect(() => writeAtomic({ ...fs.deps, rename }, '/data/a.json', 'nuevo')).toThrow('/data/a.json');
+    expect(fs.files.get('/data/a.json')).toBe('viejo');
     expect(fs.removed).toEqual(['/data/a.json.suf.tmp']);
   });
 });

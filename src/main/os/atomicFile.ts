@@ -12,6 +12,8 @@
 
 // Contenido observado de un fichero. `null` significa AUSENTE, que no es lo mismo que vacio: un
 // fichero que no existe y uno de 0 bytes son estados distintos para el compare-and-swap.
+import { renameWithRetry, sleepSync } from './renameRetry';
+
 export type FileSnapshot = string | null;
 
 export interface AtomicWriteDeps {
@@ -25,6 +27,8 @@ export interface AtomicWriteDeps {
   // Borrado del temporal cuando NO se llega a publicar. Opcional para no romper a los llamantes que
   // solo usan `writeAtomic`; sin el, una publicacion rechazada deja el `.tmp` en el directorio.
   readonly removeFile?: (path: string) => void;
+  // Espera entre reintentos del rename (H1 de la devolución 17). Opcional: sin ella, `sleepSync`.
+  readonly sleep?: (ms: number) => void;
 }
 
 // Lee el estado actual del fichero. Es la foto que hay que pasarle luego a `writeAtomicIfUnchanged`.
@@ -91,11 +95,12 @@ function tempPathFor(deps: AtomicWriteDeps, path: string): string {
   return `${path}.${deps.tempSuffix()}.tmp`;
 }
 
-// Publica el temporal. Si el rename falla, se intenta limpiar el temporal antes de propagar el error:
+// Publica el temporal, reintentando el bloqueo transitorio de Windows (otro proceso leyendo el destino: el CLI sus
+// ajustes, otra instancia el indice). Si el rename falla, se intenta limpiar el temporal antes de propagar el error:
 // sin esto, cada fallo dejaria un `.tmp` huerfano junto al fichero real.
 function publish(deps: AtomicWriteDeps, tmp: string, path: string): void {
   try {
-    deps.rename(tmp, path);
+    renameWithRetry({ rename: deps.rename, sleep: deps.sleep ?? sleepSync }, tmp, path);
   } catch (err) {
     discard(deps, tmp);
     throw err;
