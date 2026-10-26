@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { basename, dirname, join } from 'node:path';
+import { basename, dirname, isAbsolute, join } from 'node:path';
 import type { ConversationLockRef } from '@shared/conversationLock';
 import { renameWithRetry, sleepSync } from '../os/renameRetry';
 import type { LockFs } from './conversationLocks';
@@ -15,6 +15,24 @@ const PRIVATE_PROFILE_DIR = 'mage-private';
 // todos ellos y de cualquier config dir de cuenta (H4 de la devolución 13).
 export function conversationLocksDir(localMageRoot: string): string {
   return join(localMageRoot, LOCKS_DIR_NAME);
+}
+
+// Solo para el harness (H3 de la devolución 17): `verify:gui` fija con esta variable una carpeta de locks propia de la
+// tanda, para no escribir en la real del usuario, que comparte con su Mage instalado. La app empaquetada la ignora
+// siempre: el producto usa la raíz compartida.
+export const TEST_LOCKS_DIR_ENV = 'MAGE_TEST_CONVERSATION_LOCKS_DIR';
+
+export interface LocksDirSource {
+  readonly localMageRoot: string;
+  readonly packaged: boolean;
+  readonly env: Readonly<Record<string, string | undefined>>;
+}
+
+export function resolveConversationLocksDir(source: LocksDirSource): string {
+  const override = source.env[TEST_LOCKS_DIR_ENV];
+  if (source.packaged || override === undefined || override.length === 0) return conversationLocksDir(source.localMageRoot);
+  if (!isAbsolute(override)) throw new Error(`${TEST_LOCKS_DIR_ENV} debe ser una ruta absoluta: ${JSON.stringify(override)}`);
+  return override;
 }
 
 // Nombre del fichero: hash de (proveedor, cuenta canonizada, id nativo), para que dos cuentas no choquen. La cuenta se

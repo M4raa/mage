@@ -2,7 +2,7 @@ import { resolvedPath as canonicalPath } from './os/resolvedPath';
 import { localMageRoot, localScratchRoot, workspaceTrusted, ensureWorkingDirectory } from './os/scratchWorkspace';
 import { ConversationLocks, HEARTBEAT_MS } from './locks/conversationLocks';
 import { runLockHeartbeatTick } from './locks/conversationLockHeartbeat';
-import { conversationLocksDir, lockFileName, nodeLockFs, pidAliveCheck } from './locks/conversationLockEnv';
+import { lockFileName, nodeLockFs, pidAliveCheck, resolveConversationLocksDir } from './locks/conversationLockEnv';
 import { registerConversationLockIpc } from './locks/conversationLockIpc';
 import { readOnlyLockMessage } from '@shared/conversationLock';
 import { createHash, randomUUID } from 'node:crypto';
@@ -580,7 +580,7 @@ function getConversationLocks(): ConversationLocks {
   if (conversationLocksSingleton === null) {
     const userData = app.getPath('userData');
     conversationLocksSingleton = new ConversationLocks({
-      dir: conversationLocksDir(localMageRoot({ platform: process.platform, home: homedir(), env: process.env })),
+      dir: resolveConversationLocksDir({ localMageRoot: localMageRoot({ platform: process.platform, home: homedir(), env: process.env }), packaged: app.isPackaged, env: process.env }),
       identity: { instanceId: randomUUID(), profile: basename(userData), profileHash: createHash('sha256').update(userData).digest('hex').slice(0, 16), pid: process.pid },
       fileNameOf: (ref) => lockFileName(ref, canonicalPath),
       now: Date.now,

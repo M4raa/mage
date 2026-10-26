@@ -4,7 +4,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { ConversationLockRef } from '@shared/conversationLock';
 import { ConversationLocks, HEARTBEAT_MS, ORPHAN_MS, type LockFs, type LockIdentity } from './conversationLocks';
-import { lockFileName, nodeLockFs, pidAliveCheck } from './conversationLockEnv';
+import { conversationLocksDir, lockFileName, nodeLockFs, pidAliveCheck, resolveConversationLocksDir, TEST_LOCKS_DIR_ENV } from './conversationLockEnv';
 
 const REF: ConversationLockRef = { provider: 'claude', accountDir: '/home/u/.claude', nativeId: 'c0ffee' };
 const roots: string[] = [];
@@ -191,6 +191,31 @@ describe('ConversationLocks', () => {
 
   it('peek_nadieLaTiene_null', () => {
     expect(world().instance('mage', 1).peek(REF)).toBeNull();
+  });
+});
+
+describe('resolveConversationLocksDir (H3 de la devolución 17)', () => {
+  const root = path.resolve('/datos/mage');
+  const harness = path.resolve('/tmp/mage-verify-locks-1');
+
+  it('locksDir_sinVariable_laRaizCompartida', () => {
+    expect(resolveConversationLocksDir({ localMageRoot: root, packaged: false, env: {} })).toBe(conversationLocksDir(root));
+  });
+
+  it('locksDir_variableDelHarnessSinEmpaquetar_esaCarpeta', () => {
+    expect(resolveConversationLocksDir({ localMageRoot: root, packaged: false, env: { [TEST_LOCKS_DIR_ENV]: harness } })).toBe(harness);
+  });
+
+  it('locksDir_appEmpaquetada_ignoraLaVariable', () => {
+    expect(resolveConversationLocksDir({ localMageRoot: root, packaged: true, env: { [TEST_LOCKS_DIR_ENV]: harness } })).toBe(conversationLocksDir(root));
+  });
+
+  it('locksDir_variableVacia_laRaizCompartida', () => {
+    expect(resolveConversationLocksDir({ localMageRoot: root, packaged: false, env: { [TEST_LOCKS_DIR_ENV]: '' } })).toBe(conversationLocksDir(root));
+  });
+
+  it('locksDir_variableRelativa_lanzaConElValor', () => {
+    expect(() => resolveConversationLocksDir({ localMageRoot: root, packaged: false, env: { [TEST_LOCKS_DIR_ENV]: 'locks' } })).toThrow('"locks"');
   });
 });
 

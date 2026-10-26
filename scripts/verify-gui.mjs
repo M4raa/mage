@@ -7,7 +7,9 @@
 //   1. `--user-data-dir` AISLADO: la verificacion no toca el %APPDATA%/Mage real del usuario. De paso
 //      arranca sin pestañas persistidas, asi que ninguna comprobacion spawnea el CLI salvo la ULTIMA (el
 //      turno minimo de verdad, con su guarda de uso), y no
-//      hereda el "residuo de maquina" (panels-layout.json viejo) que ya disfrazo un bug dos veces.
+//      hereda el "residuo de maquina" (panels-layout.json viejo) que ya disfrazo un bug dos veces. Los locks de
+//      conversacion (#55) tampoco van a la carpeta real compartida (`%LOCALAPPDATA%/mage/locks`): cada tanda fija la
+//      suya con MAGE_TEST_CONVERSATION_LOCKS_DIR, que solo lee una app sin empaquetar.
 //   2. Un ARTEFACTO revisable por ejecucion (`session.md` + capturas), en vez de un parrafo de ROADMAP
 //      que nadie puede volver a comprobar. Idea tomada de playwright-core/src/tools/backend/sessionLog.
 //   3. Terminacion del ARBOL de procesos al acabar (electron-vite -> electron -> renderers/GPU): con
@@ -62,6 +64,14 @@ const requireFromHere = createRequire(import.meta.url);
 // solo vale para medir (--perf-baseline), nunca para las comprobaciones.
 const PROD_BUILD = process.argv.includes('--prod');
 if (PROD_BUILD && !process.argv.includes('--perf-baseline')) throw new Error('--prod solo se admite con --perf-baseline');
+
+// H3 de la devolución 17: la carpeta de locks de conversación (#55) de las instancias que lanza esta tanda. La real del
+// usuario la comparte con su Mage instalado y el harness no la toca. Se borra al salir.
+const HARNESS_LOCKS_ENV = 'MAGE_TEST_CONVERSATION_LOCKS_DIR';
+const HARNESS_LOCKS_DIR = path.join(os.tmpdir(), `mage-verify-locks-${process.pid}`);
+// En el entorno del propio harness, para que la herede CUALQUIER instancia que lance (G5, bench, segunda instancia…).
+process.env[HARNESS_LOCKS_ENV] = HARNESS_LOCKS_DIR;
+process.on('exit', () => fs.rmSync(HARNESS_LOCKS_DIR, { recursive: true, force: true }));
 
 const CONFIG = {
   port: 9222,
@@ -2157,6 +2167,7 @@ const CHECKS = [
       try {
         const segunda = await second.page.evaluate((params) => window.mage.acquireConversationLock(params), { ...ref, tabId: 'vg-segunda' });
         const ficheroConLaSegunda = fs.existsSync(lockFile);
+        const enLaCarpetaReal = fs.existsSync(conversationLockFileFor(ref, userConversationLocksDir()));
         await openTemporaryConversation(page);
         const tabId = await page.evaluate((r) => {
           const store = window.__mageDev.store;
@@ -2188,11 +2199,11 @@ const CHECKS = [
         }), tabId);
         await page.evaluate((id) => window.__mageDev.store.getState().closeTab(id), tabId);
         const liberado = await waitForCondition(() => !fs.existsSync(lockFile), CONFIG.actionTimeoutMs);
-        const ok = segunda.owner === true && ficheroConLaSegunda && soloLectura.estado?.owner === false && soloLectura.estado.orphan === false
+        const ok = segunda.owner === true && ficheroConLaSegunda && !enLaCarpetaReal && soloLectura.estado?.owner === false && soloLectura.estado.orphan === false
           && soloLectura.aviso?.includes(`Abierta en otra instancia de Mage (${second.profileName})`) === true && soloLectura.tomar === 0
           && soloLectura.editable === 'false' && soloLectura.envio.startsWith('Abierta en otra instancia de Mage')
           && duena.estado?.owner === true && duena.editable === 'true' && liberado;
-        return { ok, detail: JSON.stringify({ segunda, ficheroConLaSegunda, soloLectura, duena, liberado }) };
+        return { ok, detail: JSON.stringify({ segunda, ficheroConLaSegunda, enLaCarpetaReal, soloLectura, duena, liberado }) };
       } finally {
         killTree(second.child);
         await second.browser.close().catch(() => undefined);
@@ -10432,15 +10443,21 @@ function readTurnState(page, tab) {
 
 // --- Segunda instancia (F2.8) -------------------------------------------------------------------------
 
-// El fichero del lock de una conversación, como lo nombra main (`conversationLockEnv.ts`): `<raíz local>/mage/locks`
-// y el hash de (proveedor, cuenta canonizada, id nativo). Solo para conversaciones sin cuenta (runtime propio).
-function conversationLockFileFor(ref) {
+// El fichero del lock de una conversación, como lo nombra main (`conversationLockEnv.ts`): el hash de (proveedor,
+// cuenta canonizada, id nativo) dentro de `dir`. Solo para conversaciones sin cuenta (runtime propio).
+function conversationLockFileFor(ref, dir = HARNESS_LOCKS_DIR) {
   if (ref.accountDir !== '') throw new Error(`Solo conversaciones sin cuenta: ${JSON.stringify(ref.accountDir)}`);
+  const hash = createHash('sha256').update(JSON.stringify([ref.provider, '', ref.nativeId])).digest('hex').slice(0, 32);
+  return path.join(dir, `${hash}.lock`);
+}
+
+// La carpeta REAL de locks del usuario (`<raíz local>/mage/locks`, compartida con su Mage instalado). El harness nunca
+// escribe en ella: solo se mira para afirmar que no aparece ahí el lock de la comprobación.
+function userConversationLocksDir() {
   const local = process.platform === 'win32'
     ? process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local')
     : process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share');
-  const hash = createHash('sha256').update(JSON.stringify([ref.provider, '', ref.nativeId])).digest('hex').slice(0, 32);
-  return path.join(local, 'mage', 'locks', `${hash}.lock`);
+  return path.join(local, 'mage', 'locks');
 }
 
 // Otra instancia de Mage con un perfil AISLADO propio, del build en `out/` (el dev server ya es de la primera) y con su
@@ -10452,7 +10469,7 @@ async function startSecondInstance() {
   const { ELECTRON_RUN_AS_NODE: _asNode, ...inherited } = process.env;
   const child = spawn(requireFromHere('electron'), ['.', `--user-data-dir=${profile}`, `--remote-debugging-port=${port}`], {
     cwd: repoRoot,
-    env: { ...inherited, MAGE_SKIP_MODEL_PROBE: '1', MAGE_MCP_FAKE_CLI: '1', MAGE_GH_FAKE: '1' },
+    env: { ...inherited, MAGE_SKIP_MODEL_PROBE: '1', MAGE_MCP_FAKE_CLI: '1', MAGE_GH_FAKE: '1', [HARNESS_LOCKS_ENV]: HARNESS_LOCKS_DIR },
     windowsHide: true,
     stdio: 'ignore',
     detached: process.platform !== 'win32',
@@ -10513,6 +10530,8 @@ function launchApp(userDataDir, extraEnv = {}) {
       // MAGE_AGY_USAGE_FAKE: el uso de agy del panel sale de su salida medida; nunca se lanza agy.
       MAGE_AGY_USAGE_FAKE: path.join(repoRoot, 'src', 'main', 'usage', '__fixtures__', 'agy-usage.json'),
       VITE_MAGE_RELEASE_NOTES_IN_DEV: '1',
+      // Los locks de conversación (#55) van a la carpeta de la tanda, nunca a la real del usuario (H3 de la devolución 17).
+      [HARNESS_LOCKS_ENV]: HARNESS_LOCKS_DIR,
       // --bench: la casa temporal con las credenciales COPIADAS (nunca las reales del usuario).
       ...extraEnv,
     },
