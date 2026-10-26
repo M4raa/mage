@@ -196,7 +196,7 @@ import { registerSessionIpc } from './coordination/sessionIpc';
 import { canControlSession } from './coordination/sessionAccess';
 import { readHostMode, startLocalHost } from './host/hostBootstrap';
 import type { HostMode, HostServerHandle } from './host/hostServer';
-import { HEADLESS_GUI_UNAVAILABLE, isHeadlessHost, startupWarnings } from './startupMode';
+import { HEADLESS_GUI_UNAVAILABLE, isHeadlessHost, lockFailureMessage, startupWarnings } from './startupMode';
 import { registerConversationPrefsIpc } from './coordination/conversationPrefsIpc';
 import { SessionCoordinator } from './coordination/sessionCoordinator';
 import { ProjectFileService, resolveProjectFilePath } from './files/projectFileService';
@@ -3542,28 +3542,21 @@ function startHost(mode: HostMode): Promise<void> {
   }).then((handle) => { localHost = handle; });
 }
 
-// Mensaje a quien pidió la interfaz gráfica con otro Mage ya vivo: si ese es un host sin pantalla, se dice (§3.4).
-function secondInstanceMessage(): string {
-  const mode = readHostMode({
+// Con qué modo corre el Mage que tiene el lock de este perfil (lo deja dicho su host).
+function lockHolderMode(): HostMode | null {
+  return readHostMode({
     platform: process.platform,
     userDataDir: app.getPath('userData'),
     readFile: (file) => (existsSync(file) ? readFileSync(file, 'utf8').trim() : null),
   });
-  return mode === 'headless' ? HEADLESS_GUI_UNAVAILABLE : '';
 }
 
 if (!gotSingleInstanceLock) {
-  const headlessNotice = secondInstanceMessage();
-  if (headlessNotice.length > 0) console.error(`[mage] ${headlessNotice}`);
   // Se dice EN VOZ ALTA por que se cierra. Sin esta linea, la segunda instancia se rendia en silencio y
   // lo unico que se veia era la ventana de la instancia VIEJA saltando al frente: quien lanzaba
   // `pnpm dev` con la app instalada abierta concluia "el dev no aplica mis cambios" (paso de verdad).
   // El perfil dev por defecto es propio; dos arranques con el MISMO perfil siguen compartiendo lock.
-  console.error(
-    '[mage] Ya hay otra instancia de Mage con este perfil: esta se cierra y se enfoca la existente. ' +
-      'Si esperabas ver tus cambios, cierra la otra (incluido el icono del tray) o arranca con ' +
-      '--user-data-dir=<carpeta propia>.',
-  );
+  console.error(lockFailureMessage(lockHolderMode()));
   app.quit();
 } else {
   app.on('second-instance', (_event, argv) => {

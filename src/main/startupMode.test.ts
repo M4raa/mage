@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { HEADLESS_FLAG, isHeadlessHost, NO_SANDBOX_WARNING, startupWarnings } from './startupMode';
+import { ANOTHER_INSTANCE_MESSAGE, HEADLESS_FLAG, HEADLESS_GUI_UNAVAILABLE, isHeadlessHost, lockFailureMessage, NO_SANDBOX_WARNING, startupWarnings } from './startupMode';
 
 const linux = { platform: 'linux' as const, argv: ['electron', '.'], env: {} };
 
@@ -41,5 +41,18 @@ describe('startupWarnings', () => {
 
   it.each(['win32', 'darwin'] as const)('startupWarnings_%sConElSwitch_sinAvisos', (platform) => {
     expect(startupWarnings({ platform, hasNoSandboxSwitch: true })).toEqual([]);
+  });
+});
+
+describe('lockFailureMessage', () => {
+  it('lockFailureMessage_elQueTieneElLockEsUnHostSinPantalla_dicePorQueNoHayInterfazYNoPrometeEnfocar', () => {
+    const message = lockFailureMessage('headless');
+
+    expect(message).toContain(HEADLESS_GUI_UNAVAILABLE);
+    expect(message).not.toMatch(/se enfoca/);
+  });
+
+  it.each([['gui' as const], [null]])('lockFailureMessage_holder%s_elAvisoDeSiempre', (mode) => {
+    expect(lockFailureMessage(mode)).toBe(ANOTHER_INSTANCE_MESSAGE);
   });
 });

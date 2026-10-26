@@ -25,6 +25,17 @@ export function isHeadlessHost({ platform, argv, env }: StartupEnvironment): boo
 export const HEADLESS_GUI_UNAVAILABLE =
   'La interfaz gráfica no está disponible en este host iniciado sin pantalla. Para usarla, cierra y vuelve a abrir Mage con pantalla cuando decidas terminar las sesiones activas';
 
+// Lo que dice por stderr la instancia que pierde el lock del perfil. Si la que lo tiene es un host sin pantalla,
+// se dice la verdad (§3.4) y NO se promete enfocar una ventana que no existe.
+export const ANOTHER_INSTANCE_MESSAGE =
+  '[mage] Ya hay otra instancia de Mage con este perfil: esta se cierra y se enfoca la existente. ' +
+  'Si esperabas ver tus cambios, cierra la otra (incluido el icono del tray) o arranca con ' +
+  '--user-data-dir=<carpeta propia>.';
+
+export function lockFailureMessage(holderMode: 'gui' | 'headless' | null): string {
+  return holderMode === 'headless' ? `[mage] ${HEADLESS_GUI_UNAVAILABLE}` : ANOTHER_INSTANCE_MESSAGE;
+}
+
 export const NO_SANDBOX_WARNING: StartupWarning = {
   id: 'linux-no-sandbox',
   title: 'Mage se ha iniciado sin el sandbox de Chromium',
