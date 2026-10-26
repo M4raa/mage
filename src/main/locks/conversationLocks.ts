@@ -61,6 +61,16 @@ const UNKNOWN_PROFILE = 'perfil desconocido';
 // Si el fichero desaparece entre «no pude crearlo» y «leerlo» (la otra lo soltó justo entonces), se reintenta.
 const CREATE_ATTEMPTS = 2;
 
+export interface HeartbeatFailure {
+  readonly ref: ConversationLockRef;
+  readonly error: Error;
+}
+
+export interface HeartbeatResult {
+  readonly lost: readonly ConversationLockRef[];
+  readonly failed: readonly HeartbeatFailure[];
+}
+
 interface Owned {
   readonly ref: ConversationLockRef;
   readonly path: string;
@@ -127,18 +137,30 @@ export class ConversationLocks {
     return this.describeOther(path);
   }
 
-  // El latido: renueva las de esta instancia. Devuelve las que PERDIÓ (otra instancia tomó el control mientras esta
-  // no latía, p. ej. con el equipo suspendido): ya no se escriben ni se borran.
-  heartbeat(): readonly ConversationLockRef[] {
+  // El latido: renueva las de esta instancia, cada una por separado. Devuelve las que PERDIÓ (otra instancia tomó el
+  // control mientras esta no latía, p. ej. con el equipo suspendido: ya no se escriben ni se borran) y las que no se
+  // pudieron renovar por un error de E/S, que SIGUEN siendo de esta instancia (H1 de la devolución 17): un fallo en una
+  // no impide renovar las demás.
+  heartbeat(): HeartbeatResult {
     const lost: ConversationLockRef[] = [];
+    const failed: HeartbeatFailure[] = [];
     for (const owned of [...this.owned.values()]) {
-      if (this.isStillMine(owned.path)) this.deps.fs.replace(owned.path, this.recordJson(owned.startedAt));
-      else {
+      try {
+        if (this.renew(owned)) continue;
         this.owned.delete(owned.path);
         lost.push(owned.ref);
+      } catch (err) {
+        failed.push({ ref: owned.ref, error: err instanceof Error ? err : new Error(`Fallo no tipado: ${String(err)}`) });
       }
     }
-    return lost;
+    return { lost, failed };
+  }
+
+  // true = renovada; false = ya no es de esta instancia.
+  private renew(owned: Owned): boolean {
+    if (!this.isStillMine(owned.path)) return false;
+    this.deps.fs.replace(owned.path, this.recordJson(owned.startedAt));
+    return true;
   }
 
   private own(ref: ConversationLockRef, path: string, holder: LockHolder): ConversationLockStatus {

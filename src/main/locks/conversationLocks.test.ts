@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { ConversationLockRef } from '@shared/conversationLock';
-import { ConversationLocks, HEARTBEAT_MS, ORPHAN_MS, type LockIdentity } from './conversationLocks';
+import { ConversationLocks, HEARTBEAT_MS, ORPHAN_MS, type LockFs, type LockIdentity } from './conversationLocks';
 import { lockFileName, nodeLockFs, pidAliveCheck } from './conversationLockEnv';
 
 const REF: ConversationLockRef = { provider: 'claude', accountDir: '/home/u/.claude', nativeId: 'c0ffee' };
@@ -122,7 +122,7 @@ describe('ConversationLocks', () => {
     expect(dev.acquire(REF, 'tab:1:b')).toEqual({ owner: false, profile: 'mage', orphan: true });
     expect(dev.takeOver(REF, 'tab:1:b')).toEqual({ owner: true });
     expect(installed.peek(REF)).toEqual({ owner: true }); // la caída no se entera hasta su latido...
-    expect(installed.heartbeat()).toEqual([REF]); // ...y entonces sabe que la perdió
+    expect(installed.heartbeat()).toEqual({ lost: [REF], failed: [] }); // ...y entonces sabe que la perdió
     expect(installed.peek(REF)).toEqual({ owner: false, profile: 'mage-dev', orphan: false });
   });
 
@@ -147,7 +147,7 @@ describe('ConversationLocks', () => {
 
     for (let i = 0; i < 5; i++) {
       clock.now += HEARTBEAT_MS;
-      expect(installed.heartbeat()).toEqual([]);
+      expect(installed.heartbeat()).toEqual({ lost: [], failed: [] });
     }
 
     expect(dev.acquire(REF, 'tab:1:b')).toMatchObject({ owner: false, orphan: false });
@@ -213,6 +213,76 @@ describe('lockFileName', () => {
 
   it('lockFileName_otroProveedor_otroFichero', () => {
     expect(lockFileName({ ...REF, provider: 'codex' }, (p) => p)).not.toBe(lockFileName(REF, (p) => p));
+  });
+});
+
+describe('ConversationLocks.heartbeat con fallos de E/S (H1 de la devolución 17)', () => {
+  const OTHER: ConversationLockRef = { ...REF, nativeId: 'otra' };
+
+  it('heartbeat_unaConversacionFalla_lasDemasSeRenuevanNadaEscapaYSigueSiendoDeEstaInstancia', () => {
+    const { dir, clock, alive, instance } = world();
+    alive.add(101);
+    const eperm = Object.assign(new Error('EPERM: operation not permitted, rename'), { code: 'EPERM' });
+    const failingPath = path.join(dir, lockFileName(REF, (p) => p));
+    const realFs = nodeLockFs(fs, () => String(Math.random()).slice(2), () => undefined);
+    const flakyFs: LockFs = { ...realFs, replace: (target, content) => { if (target === failingPath) throw eperm; realFs.replace(target, content); } };
+    const locks = new ConversationLocks({
+      dir, identity: { instanceId: 'mage-101', profile: 'mage', profileHash: 'mage', pid: 101 }, now: () => clock.now,
+      isPidAlive: (pid) => alive.has(pid), fileNameOf: (ref) => lockFileName(ref, (p) => p), fs: flakyFs,
+    });
+    locks.acquire(REF, 'tab:1:a');
+    locks.acquire(OTHER, 'tab:1:b');
+    clock.now += HEARTBEAT_MS;
+
+    const result = locks.heartbeat();
+
+    expect(result.lost).toEqual([]);
+    expect(result.failed).toEqual([{ ref: REF, error: eperm }]);
+    expect(locks.peek(REF)).toEqual({ owner: true });
+    const renewed = JSON.parse(fs.readFileSync(path.join(dir, lockFileName(OTHER, (p) => p)), 'utf8')) as { heartbeatAt: number };
+    expect(renewed.heartbeatAt).toBe(clock.now);
+    expect(instance('mage-dev', 202).acquire(OTHER, 'tab:9:z')).toMatchObject({ owner: false, orphan: false });
+  });
+});
+
+describe('nodeLockFs.replace (H1 de la devolución 17)', () => {
+  const eperm = () => Object.assign(new Error('EPERM: operation not permitted, rename'), { code: 'EPERM' });
+
+  function flakyRenameFs(failures: number) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mage-locks-replace-'));
+    roots.push(dir);
+    let calls = 0;
+    const renameSync = (from: string, to: string): void => {
+      calls += 1;
+      if (calls <= failures) throw eperm();
+      fs.renameSync(from, to);
+    };
+    const lockFs = nodeLockFs({ ...fs, renameSync }, () => String(calls), () => undefined);
+    return { dir, lockFs, calls: () => calls };
+  }
+
+  it('replace_renameEPERMUnaYDosVeces_reintentaYSustituye', () => {
+    for (const failures of [1, 2]) {
+      const { dir, lockFs, calls } = flakyRenameFs(failures);
+      const target = path.join(dir, 'a.lock');
+      fs.writeFileSync(target, 'viejo');
+
+      lockFs.replace(target, 'nuevo');
+
+      expect(fs.readFileSync(target, 'utf8')).toBe('nuevo');
+      expect(calls()).toBe(failures + 1);
+      expect(fs.readdirSync(dir)).toEqual(['a.lock']);
+    }
+  });
+
+  it('replace_renameEPERMSiempre_lanzaConLaRutaYNoDejaElTemporal', () => {
+    const { dir, lockFs } = flakyRenameFs(Number.POSITIVE_INFINITY);
+    const target = path.join(dir, 'a.lock');
+    fs.writeFileSync(target, 'viejo');
+
+    expect(() => lockFs.replace(target, 'nuevo')).toThrow(target);
+    expect(fs.readFileSync(target, 'utf8')).toBe('viejo');
+    expect(fs.readdirSync(dir)).toEqual(['a.lock']);
   });
 });
 

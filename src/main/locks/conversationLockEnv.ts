@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { basename, dirname, join } from 'node:path';
 import type { ConversationLockRef } from '@shared/conversationLock';
+import { renameWithRetry, sleepSync } from '../os/renameRetry';
 import type { LockFs } from './conversationLocks';
 
 // Lo que ata los locks de conversación (#55) al sistema: dónde viven, cómo se llama cada uno, si un pid vive y el
@@ -53,7 +54,8 @@ export interface NodeLockFs {
   readonly statSync: (path: string) => { mtimeMs: number };
 }
 
-export function nodeLockFs(fs: NodeLockFs, tempSuffix: () => string): LockFs {
+// `sleep`: la espera entre reintentos del rename (inyectable para los tests).
+export function nodeLockFs(fs: NodeLockFs, tempSuffix: () => string, sleep: (ms: number) => void = sleepSync): LockFs {
   return {
     ensureDir: (dir) => { fs.mkdirSync(dir, { recursive: true }); },
     createExclusive: (path, content) => {
@@ -66,10 +68,17 @@ export function nodeLockFs(fs: NodeLockFs, tempSuffix: () => string): LockFs {
       }
     },
     read: (path) => ifExists(() => fs.readFileSync(path, 'utf8')),
+    // En Windows el rename falla mientras la otra instancia lee el lock (H1 de la devolución 17): se reintenta, y si se
+    // agota no queda el temporal.
     replace: (path, content) => {
       const temp = `${path}.${tempSuffix()}.tmp`;
       fs.writeFileSync(temp, content, { encoding: 'utf8' });
-      fs.renameSync(temp, path);
+      try {
+        renameWithRetry({ rename: fs.renameSync, sleep }, temp, path);
+      } catch (err) {
+        fs.rmSync(temp, { force: true });
+        throw err;
+      }
     },
     remove: (path) => { fs.rmSync(path, { force: true }); },
     mtimeMs: (path) => ifExists(() => fs.statSync(path).mtimeMs),

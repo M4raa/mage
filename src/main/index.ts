@@ -1,6 +1,7 @@
 import { resolvedPath as canonicalPath } from './os/resolvedPath';
 import { localMageRoot, localScratchRoot, workspaceTrusted, ensureWorkingDirectory } from './os/scratchWorkspace';
 import { ConversationLocks, HEARTBEAT_MS } from './locks/conversationLocks';
+import { runLockHeartbeatTick } from './locks/conversationLockHeartbeat';
 import { conversationLocksDir, lockFileName, nodeLockFs, pidAliveCheck } from './locks/conversationLockEnv';
 import { registerConversationLockIpc } from './locks/conversationLockIpc';
 import { readOnlyLockMessage } from '@shared/conversationLock';
@@ -589,13 +590,15 @@ function getConversationLocks(): ConversationLocks {
   return conversationLocksSingleton;
 }
 
-// El latido de las conversaciones de esta instancia; las que haya PERDIDO se avisan a las ventanas (solo lectura).
+// El latido de las conversaciones de esta instancia; las que haya PERDIDO se avisan a las ventanas (solo lectura). El
+// tick nunca deja escapar una excepcion (H1 de la devolucion 17).
 function startConversationLockHeartbeat(): void {
   setInterval(() => {
-    for (const ref of getConversationLocks().heartbeat()) {
-      mainLog('warn', 'Otra instancia de Mage tomó el control de una conversación de esta', { provider: ref.provider, nativeId: ref.nativeId });
-      windowManager.broadcast(CONVERSATION_LOCK_LOST_CHANNEL, ref);
-    }
+    runLockHeartbeatTick({
+      heartbeat: () => getConversationLocks().heartbeat(),
+      log: mainLog,
+      notifyLost: (ref) => windowManager.broadcast(CONVERSATION_LOCK_LOST_CHANNEL, ref),
+    });
   }, HEARTBEAT_MS).unref();
 }
 
