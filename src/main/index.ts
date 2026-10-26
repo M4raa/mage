@@ -194,6 +194,9 @@ import { EffectiveSettingsService } from './config/effectiveSettingsService';
 import { ConversationIndexStore } from './state/conversationIndexStore';
 import { registerSessionIpc } from './coordination/sessionIpc';
 import { canControlSession } from './coordination/sessionAccess';
+import { readHostMode, startLocalHost } from './host/hostBootstrap';
+import type { HostMode, HostServerHandle } from './host/hostServer';
+import { HEADLESS_GUI_UNAVAILABLE, isHeadlessHost } from './startupMode';
 import { registerConversationPrefsIpc } from './coordination/conversationPrefsIpc';
 import { SessionCoordinator } from './coordination/sessionCoordinator';
 import { ProjectFileService, resolveProjectFilePath } from './files/projectFileService';
@@ -3510,7 +3513,43 @@ function focusMainWindow(): void {
 // instancia, esta se cierra y la existente se enfoca (comportamiento estandar de escritorio).
 // El lock se pide ANTES de whenReady: cuanto menos haya arrancado la segunda instancia, mejor.
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
+// Host sin pantalla (F2.6, §3.4): Linux sin DISPLAY ni WAYLAND_DISPLAY, o `--headless`. No crea ventanas.
+const runsHeadless = isHeadlessHost({ platform: process.platform, argv: process.argv, env: process.env });
+
+// El host local (F2.6): terminal, widget y MCP hablan con el por un socket privado. Vive en los dos modos.
+let localHost: HostServerHandle | null = null;
+function startHost(mode: HostMode): Promise<void> {
+  return startLocalHost({
+    platform: process.platform,
+    userDataDir: app.getPath('userData'),
+    xdgRuntimeDir: process.env['XDG_RUNTIME_DIR'],
+    mode,
+    fs: { mkdirSync, chmodSync, statSync, writeFileSync, rmSync },
+    getuid: process.getuid?.bind(process),
+    sessions: sessionCoordinator,
+    hostVersion: app.getVersion(),
+    log: mainLog,
+    newId: randomUUID,
+    setTimer: (fn, ms) => {
+      const timer = setTimeout(fn, ms);
+      return () => clearTimeout(timer);
+    },
+  }).then((handle) => { localHost = handle; });
+}
+
+// Mensaje a quien pidió la interfaz gráfica con otro Mage ya vivo: si ese es un host sin pantalla, se dice (§3.4).
+function secondInstanceMessage(): string {
+  const mode = readHostMode({
+    platform: process.platform,
+    userDataDir: app.getPath('userData'),
+    readFile: (file) => (existsSync(file) ? readFileSync(file, 'utf8').trim() : null),
+  });
+  return mode === 'headless' ? HEADLESS_GUI_UNAVAILABLE : '';
+}
+
 if (!gotSingleInstanceLock) {
+  const headlessNotice = secondInstanceMessage();
+  if (headlessNotice.length > 0) console.error(`[mage] ${headlessNotice}`);
   // Se dice EN VOZ ALTA por que se cierra. Sin esta linea, la segunda instancia se rendia en silencio y
   // lo unico que se veia era la ventana de la instancia VIEJA saltando al frente: quien lanzaba
   // `pnpm dev` con la app instalada abierta concluia "el dev no aplica mis cambios" (paso de verdad).
@@ -3526,6 +3565,11 @@ if (!gotSingleInstanceLock) {
     // Otro proceso intento arrancar Mage: traer al frente la ventana de esta instancia (restaurando
     // si estaba minimizada, y recreandola si el usuario la habia cerrado al tray). Si ademas venia de
     // la jump list, su argv dice QUE abrir.
+    // Sin pantalla NO se crea una ventana, no se reinicia y no se mata ninguna sesion por esta peticion (§3.4).
+    if (runsHeadless) {
+      mainLog('warn', HEADLESS_GUI_UNAVAILABLE);
+      return;
+    }
     focusMainWindow();
     handleJumpListArgv(argv);
   });
@@ -3535,6 +3579,15 @@ app.whenReady().then(async () => {
   // Guarda: si no se obtuvo el lock ya se llamo a app.quit(); no se arranca nada mas (registrar IPC o
   // ventanas desde una instancia que se esta cerrando solo crea efectos a medias).
   if (!gotSingleInstanceLock) return;
+  if (runsHeadless) {
+    // Solo el host: sin ventanas, ni tray, ni widget, ni actualizador, ni IPC del renderer (no hay renderer).
+    mainLog('info', 'Mage arrancado sin pantalla', { platform: process.platform });
+    await startHost('headless').catch((err: unknown) => {
+      mainLog('error', 'No se pudo arrancar el host local; se cierra el proceso sin pantalla', { error: err instanceof Error ? err.message : String(err) });
+      app.exit(1);
+    });
+    return;
+  }
 
   if (process.platform === 'win32') app.setAppUserModelId(app.isPackaged ? WINDOWS_APP_USER_MODEL_ID : process.execPath);
   applyContentSecurityPolicy();
@@ -3555,6 +3608,9 @@ app.whenReady().then(async () => {
   // `pnpm verify:gui` lo apaga: su contrato es no lanzar nunca el CLI.
   if (process.env.MAGE_SKIP_MODEL_PROBE !== '1') setTimeout(probeLoggedInAccounts, MODEL_PROBE_START_DELAY_MS).unref();
   mainLog('info', 'Mage arrancado', { isDev, platform: process.platform });
+  // El host local de este perfil. Si no arranca (ruta del socket demasiado larga...) la interfaz sigue funcionando
+  // y el motivo queda en el log: nadie depende todavia de el para abrir Mage.
+  startHost('gui').catch((err: unknown) => mainLog('error', 'No se pudo arrancar el host local', { error: err instanceof Error ? err.message : String(err) }));
 
   // Widget flotante (M3): reabrir al arrancar si la preferencia persistida estaba activa.
   if (getSettingsStore().load().widgetEnabled) getWidgetWindow().open();
@@ -3605,6 +3661,9 @@ app.on('before-quit', () => {
   prMonitor.dispose();
   // Lo primero: a partir de aqui ninguna ventana pregunta al cerrarse (ver `resolveCloseAction`).
   isQuitting = true;
+  // El token, la direccion y el socket salen del disco ya: `before-quit` no espera a nada asincrono.
+  localHost?.closeFilesSync();
+  void localHost?.close().catch((err: unknown) => mainLog('warn', 'El host local no cerro limpio', { error: err instanceof Error ? err.message : String(err) }));
   sessionCoordinator.stopAll();
   // Incognito ('session'): las carpetas de trabajo no sobreviven a la ejecucion. Se barre aqui ADEMAS
   // de al arrancar, porque si no quedarian en el temp todo el tiempo que la app este cerrada — que es
