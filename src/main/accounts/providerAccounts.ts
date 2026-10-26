@@ -28,6 +28,8 @@ export interface ProviderAccountEntry {
 
 // Lo minimo de la boveda que hace falta (DI: los tests pasan un mapa en memoria).
 export interface AccountKeyVault {
+  // Lanza (D1) si la bóveda no se puede usar en este proceso; se llama antes de crear nada de una cuenta de API.
+  readonly assertUsable: () => void;
   readonly set: (id: string, value: string) => void;
   readonly get: (id: string) => string | null;
   readonly has: (id: string) => boolean;
@@ -93,6 +95,8 @@ export class ProviderAccountService {
       throw new Error(`Esa cuenta no se da de alta aqui: ${params.providerId} · ${params.authKind}`);
     }
     const apiKey = params.authKind === 'api-key' ? requireApiKey(params.apiKey) : null;
+    // Sin bóveda usable, una cuenta de API no deja ni su carpeta ni su entrada a medias.
+    if (apiKey !== null) this.deps.vault.assertUsable();
     const entries = this.read(); // antes de crear nada: un registro corrupto no deja carpetas huerfanas
     const claudeDir = params.providerId === 'claude' ? this.deps.createClaudeDir(name) : null;
     const home = claudeDir?.configDir ?? this.createHome(params.providerId, name);

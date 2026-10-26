@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { writeAtomic, type AtomicWriteDeps } from '../os/atomicFile';
+import type { VaultStatus } from './vaultGate';
 
 // Boveda de secretos del proceso main (claves de API de proveedores, secretos de extensiones).
 //
@@ -26,6 +27,9 @@ export interface SecretCipher {
 export interface SecretStoreDeps extends AtomicWriteDeps {
   readonly filePath: string;
   readonly cipher: SecretCipher;
+  // Lo que se decidió al arrancar (D1, `assessVault`). Sin bóveda usable, todo uso lanza ESE mensaje, antes de tocar
+  // `safeStorage`: es el borde donde un fallo del llavero se convierte en el texto que ve el usuario.
+  readonly status?: () => VaultStatus;
 }
 
 const SECRET_FILE_VERSION = 1;
@@ -62,6 +66,12 @@ export class SecretStore {
     }
   }
 
+  // Lanza el mismo error que daría usarla si la bóveda no se puede usar. Para comprobarlo ANTES de crear nada que
+  // dependa de un secreto (una cuenta de API no deja su carpeta a medias).
+  assertUsable(): void {
+    this.requireEncryption();
+  }
+
   has(id: string): boolean {
     requireId(id);
     return this.read()[id] !== undefined;
@@ -95,6 +105,8 @@ export class SecretStore {
   }
 
   private requireEncryption(): void {
+    const status = this.deps.status?.();
+    if (status !== undefined && !status.usable) throw new Error(status.reason);
     const backend = this.deps.cipher.getSelectedStorageBackend?.();
     if (backend === 'basic_text' || backend === 'unknown') {
       throw new Error(`El backend de cifrado ${JSON.stringify(backend)} no es seguro: no se puede usar la boveda`);

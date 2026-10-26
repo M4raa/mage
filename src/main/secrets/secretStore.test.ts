@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { SecretStore, type SecretCipher } from './secretStore';
+import type { VaultStatus } from './vaultGate';
 
 const FILE = '/userData/secrets.json';
 
@@ -19,7 +20,7 @@ function fakeCipher(overrides: Partial<SecretCipher> = {}): SecretCipher {
 }
 
 // FS en memoria (writeAtomic escribe un temporal y lo renombra).
-function memoryStore(cipher: SecretCipher = fakeCipher(), initial?: string): { store: SecretStore; files: Map<string, string> } {
+function memoryStore(cipher: SecretCipher = fakeCipher(), initial?: string, status?: () => VaultStatus): { store: SecretStore; files: Map<string, string> } {
   const files = new Map<string, string>();
   if (initial !== undefined) files.set(FILE, initial);
   let counter = 0;
@@ -38,6 +39,7 @@ function memoryStore(cipher: SecretCipher = fakeCipher(), initial?: string): { s
       files.delete(from);
     },
     tempSuffix: () => String((counter += 1)),
+    ...(status === undefined ? {} : { status }),
   });
   return { store, files };
 }
@@ -169,4 +171,36 @@ it('A12_backendSeguroSinDisponibilidad_rechazaEscrituraYLectura', () => {
   expect(() => store.set('otro', 'otro dato artificial')).toThrow(/cifrado del sistema no esta disponible/);
   expect(() => store.get('fixture')).toThrow(/cifrado del sistema no esta disponible/);
   expect(files.get(FILE)).toBe(before);
+});
+
+// D1 (F2.7): sin bóveda usable, todo lo que cifra o descifra lanza el mensaje decidido al arrancar, sin tocar el cifrado.
+describe('SecretStore con la bóveda no usable', () => {
+  const D1 = 'No se puede crear ni usar esta cuenta de API: el llavero seguro de Linux está bloqueado.';
+  const unusable = (): VaultStatus => ({ usable: false, reason: D1 });
+
+  it('setYGet_bovedaNoUsable_lanzanElMensajeD1SinCifrarNiDescifrar', () => {
+    let calls = 0;
+    const counting = fakeCipher({ encryptString: () => { calls += 1; return Buffer.from('x'); }, decryptString: () => { calls += 1; return 'x'; } });
+    const { store } = memoryStore(counting, JSON.stringify({ version: 1, secrets: { guardado: 'eA==' } }), unusable);
+
+    expect(() => store.set('nuevo', 'dato artificial')).toThrow(D1);
+    expect(() => store.get('guardado')).toThrow(D1);
+    expect(() => store.assertUsable()).toThrow(D1);
+    expect(calls).toBe(0);
+  });
+
+  it('getHasDelete_bovedaNoUsable_loQueNoCifraSigueFuncionando', () => {
+    const { store } = memoryStore(fakeCipher(), JSON.stringify({ version: 1, secrets: { guardado: 'eA==' } }), unusable);
+
+    expect(store.get('no-existe')).toBeNull();
+    expect(store.has('guardado')).toBe(true);
+    store.delete('guardado');
+    expect(store.has('guardado')).toBe(false);
+  });
+
+  it('assertUsable_bovedaUsable_noLanza', () => {
+    const { store } = memoryStore(fakeCipher(), undefined, () => ({ usable: true }));
+
+    expect(() => store.assertUsable()).not.toThrow();
+  });
 });
