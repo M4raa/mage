@@ -4,9 +4,8 @@ Las cuentas de API requieren un llavero seguro. Las cuentas de suscripción usan
 su CLI y no requieren la bóveda de Mage. Mage nunca instala paquetes del sistema ni ejecuta sudo;
 los siguientes comandos los ejecuta el usuario.
 
-Esta guía recoge el requisito y el diseño de diagnóstico de Linux para 0.1.3. La integración del
-lanzador y del diagnóstico en el producto está pendiente; las mediciones se hicieron en WSL Ubuntu
-26.04, Debian 13 y Arch sin escritorio. Ubuntu 24.04 no se ha probado.
+Esta guía recoge el requisito y el diagnóstico de Linux de 0.1.3. Las mediciones se hicieron en WSL
+Ubuntu 26.04, Debian 13 y Arch sin escritorio. Ubuntu 24.04 no se ha probado.
 
 ## Instalar los componentes
 
@@ -46,11 +45,12 @@ vuelve a iniciarla: el primer arranque con `--unlock` debe recibir la contraseñ
 existente para resolver un error. En una sesión existente con una colección bloqueada, `--unlock`
 debe usar la contraseña de esa colección.
 
-Arranca Mage desde la misma shell para que herede el bus. El lanzador previsto para Linux sin
-DISPLAY/WAYLAND_DISPLAY pasará `--ozone-platform=headless --password-store=gnome-libsecret` a
-Electron por argv; no abrirá ventanas ni usará `--no-sandbox` por defecto.
+Arranca Mage desde la misma shell para que herede el bus. En Linux sin DISPLAY/WAYLAND_DISPLAY, Mage pide
+el Secret Service (`--password-store=gnome-libsecret`) si no le has indicado otro: sin él, Chromium usa
+`basic_text` aunque el llavero esté desbloqueado y la bóveda no se podría usar. Con escritorio, Chromium
+elige como siempre (por ejemplo, KWallet en KDE).
 
-## Diagnóstico previsto
+## Diagnóstico
 
 - **Ausente:** no está instalado el proveedor de llavero; mostrar el comando de la distribución.
 - **No arrancado:** hay proveedor instalado, pero no hay bus o no tiene propietario
@@ -60,9 +60,9 @@ Electron por argv; no abrirá ventanas ni usará `--no-sandbox` por defecto.
 - **Sin colección / fallo / tiempo agotado:** explicarlo como tal; no confundirlo con ausencia del
   paquete. Un backend identificado como `gnome_libsecret` no demuestra que el cifrado esté disponible.
 
-El diseño fija un máximo total de 3 segundos para el diagnóstico/inicialización de la bóveda. Las
-consultas D-Bus tienen un máximo de 500 ms cada una, dentro del mismo presupuesto. Antes de admitir
-sesiones se comprueban la disponibilidad y el round trip con texto sintético. En las tres distribuciones,
+Mage lo comprueba una vez al arrancar, antes de admitir sesiones, con `dbus-send` y sin activar
+servicios: un máximo total de 3 segundos y 500 ms por consulta D-Bus. Si el llavero está desbloqueado,
+comprueba además la disponibilidad del cifrado y un round trip con texto sintético. En las tres distribuciones,
 las llamadas en frío medidas con llavero bloqueado o sin arrancar respondieron en menos de 100 ms,
 con error y sin bloquearse. No se prevé construir un supervisor externo de arranque; queda como
 contingencia solo si una medición futura demuestra un bloqueo real de safeStorage síncrono.
@@ -70,13 +70,13 @@ Un propietario arrancado sin bóveda no intenta inicializarla en segundo plano: 
 cerrar y reabrir explícitamente después de desbloquear el llavero. Nunca se reinicia un propietario
 que ya sirve sesiones.
 
-Mientras no haya backend seguro y cifrado disponible, crear o usar una cuenta de API debe fallar con:
+Mientras no haya backend seguro y cifrado disponible, crear o usar una cuenta de API falla con:
 
 > No se puede crear ni usar esta cuenta de API: el llavero seguro de Linux está {estado}. Las cuentas
 > de suscripción siguen disponibles. Sigue las instrucciones de instalación, arranque y desbloqueo
 > del llavero para tu distribución; después cierra y vuelve a abrir Mage para habilitar la bóveda.
 
-El error incluirá el enlace a esta guía y los comandos de la distribución detectada mediante
+El error incluye el enlace a esta guía y los comandos de la distribución detectada mediante
 `/etc/os-release` (ID/ID_LIKE). Una distribución desconocida se declara como tal, sin inventar un
 comando. Nunca usar `basic_text`, `unknown`, `setUsePlainTextEncryption` ni otra alternativa en claro.
 

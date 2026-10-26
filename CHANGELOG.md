@@ -51,6 +51,7 @@ versión.
 - Las órdenes sobre una sesión (enviar, contestar, parar, cambiar modelo…) se validan antes de llegar al motor y solo las acepta la ventana que la creó o la principal.
 - En Linux, si Mage se inicia sin el sandbox de Chromium (el AppImage lo hace cuando el sistema no permite los espacios de nombres de usuario), avisa de forma persistente con el motivo y recomienda el paquete .deb o activar esos espacios.
 - Si el host local no arranca, la ventana lo avisa de forma persistente con el motivo; la interfaz sigue funcionando. Un arranque fallido no deja el token ni la dirección del host en disco.
+- En Linux, Mage comprueba el llavero al arrancar sin activar servicios y en menos de 3 segundos. Si no está instalado, arrancado o desbloqueado, las cuentas de suscripción siguen funcionando, y crear o usar una cuenta de API da un error con el estado del llavero, los comandos de tu distribución y el enlace a la guía; ese intento ya no deja la carpeta de la cuenta creada. Sin escritorio, Mage pide el Secret Service para poder usar la bóveda.
 
 ## 0.1.2 — 2026-10-08
 
