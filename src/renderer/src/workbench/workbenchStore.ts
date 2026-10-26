@@ -943,6 +943,23 @@ function reassignNewChat(
   set((s) => ({
     tabs: s.tabs.map((t) => {
       if (t.id !== target.tabId) return t;
+      if (t.provider !== dest.providerId) {
+        // Cuenta de OTRO proveedor (Claude -> Codex/agy o al reves): el chat pasa a ser de ese proveedor,
+        // con su modelo, esfuerzo y modo por defecto. Conservar `provider` lanzaba Codex como Claude.
+        const { resolvedConfigDir: _olvidado, effort: _e, permissionMode: _p, ...base } = t;
+        const fresh = dest.providerId === 'claude'
+          ? { provider: 'claude', model: reresolve(), effort: defaultEffortForProvider(state.settings.defaultModelByProvider, 'claude'), permissionMode: state.settings.defaultPermissionMode }
+          : newTabForProviderAccount(dest, t.cwd, t.privacy, state.settings);
+        return {
+          ...base,
+          accountId: dest.id,
+          accountAlias: dest.alias,
+          provider: fresh.provider,
+          model: fresh.model,
+          ...(fresh.effort === undefined || fresh.effort.length === 0 ? {} : { effort: fresh.effort }),
+          ...(fresh.permissionMode === undefined || fresh.permissionMode.length === 0 ? {} : { permissionMode: fresh.permissionMode }),
+        };
+      }
       const model = t.provider === 'claude' ? modelForReassignedTab(t.model, catalog, reresolve) : t.model;
       const { resolvedConfigDir: _olvidado, ...rest } = t;
       return { ...rest, accountId: dest.id, accountAlias: dest.alias, model };

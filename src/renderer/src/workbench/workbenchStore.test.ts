@@ -1293,6 +1293,20 @@ describe('requestAccountSwitch y continueInAccount', () => {
     expect(moved.resolvedConfigDir).toBeUndefined();
   });
 
+  it('requestAccountSwitch_reassignACodex_cambiaTambienElProveedor', () => {
+    // Antes la pestaña quedaba con provider 'claude' y cuenta de Codex: session:create pedia .credentials.json.
+    const store = mounted();
+    store.setState({ tabs: [tab('a', { model: 'opus', permissionMode: 'bypassPermissions' })] });
+
+    store.getState().requestAccountSwitch('C:/Users/u/.codex-x');
+
+    const moved = store.getState().tabs[0]!;
+    expect(moved.accountId).toBe('C:/Users/u/.codex-x');
+    expect(moved.provider).toBe('codex');
+    expect(moved.model).not.toBe('opus');
+    expect(moved.permissionMode).toBeUndefined();
+  });
+
   it('setAccountAccent_fijaYQuitaElColorDeLaCuenta', () => {
     // Funcion plana y no vi.fn: el guardado va con debounce y dispara DESPUES del test, cuando vitest ya
     // ha reseteado los mocks (un vi.fn devolveria undefined y el `.catch` reventaria fuera del test).
