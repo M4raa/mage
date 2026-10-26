@@ -3163,7 +3163,11 @@ function registerSettingsIpc1(deps: IpcDependencies): void {
     settingsStore.save({ ...settings, trustedFolders, distrustedFolders });
     windowManager.broadcast(SETTINGS_CHANGED_CHANNEL, settings, event.sender.id);
   });
-  // --- Varias ventanas del workbench ----------------------------------------------------------
+  registerWindowsIpc();
+}
+
+// Varias ventanas del workbench: abrir, cerrar, listar y mover pestañas entre ellas.
+function registerWindowsIpc(): void {
   // Abrir una ventana NUEVA: misma instancia, mismo main, mismos ajustes; workspace propio.
   ipcMain.handle(IpcChannel.WindowsOpen, (): string => windowManager.open().windowId);
   // Solo la ventana del workbench que lo pide, y solo ELLA (nunca la principal por defecto, como `senderWindowId`).
