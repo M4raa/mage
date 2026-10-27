@@ -8,20 +8,40 @@ import fs from 'node:fs';
 // Atributos que la extracción también mueve al catálogo (los visibles y los de accesibilidad).
 export const DUMPED_ATTRIBUTES = ['aria-label', 'title', 'placeholder', 'alt', 'aria-description', 'aria-valuetext', 'data-tip'];
 
-// Se ejecuta EN la página: texto visible del documento y los atributos traducibles, en orden del documento.
-export function collectDomText(attributes) {
+// Datos que vienen de las cuentas REALES del usuario (el perfil del harness es aislado, pero el historial y el uso se
+// leen de sus cuentas): títulos y tamaños de sus conversaciones, sus carpetas recientes y su uso. No son textos de
+// Mage, cambian entre tandas y NO se guardan en el volcado.
+export const EXCLUDED_SUBTREES = ['[data-history-session]', '[data-recent-project]', '[data-usage-popover]', '[data-usage-account]'];
+
+// Se ejecuta EN la página: cada texto visible (un nodo de texto por línea, en orden del documento) y los atributos
+// traducibles, saltando los subárboles excluidos. Los alias de las cuentas y cualquier correo se sustituyen por una
+// marca ANTES de salir de la página: son datos del usuario, no textos de Mage.
+export function collectDomText({ attributes, excluded }) {
+  const skip = (element) => excluded.some((selector) => element.closest(selector) !== null);
+  const aliases = (window.__mageDev?.store.getState().accounts ?? []).map((a) => a.alias).filter((a) => a.length > 2).sort((a, b) => b.length - a.length);
+  const redact = (text) => aliases.reduce((acc, alias) => acc.split(alias).join('<cuenta>'), text).replace(/[\w.+-]+@[\w-]+(\.[\w-]+)+/g, '<correo>');
+  const lines = [];
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
+    const parent = node.parentElement;
+    const text = (node.textContent ?? '').trim();
+    if (parent === null || text.length === 0 || skip(parent) || !parent.checkVisibility()) continue;
+    if (parent.closest('script, style') !== null) continue;
+    lines.push(redact(text));
+  }
   const attrs = [];
   for (const element of document.querySelectorAll('*')) {
+    if (skip(element)) continue;
     for (const name of attributes) {
       const value = element.getAttribute(name);
-      if (value !== null && value.trim().length > 0) attrs.push(`${name}=${value.trim()}`);
+      if (value !== null && value.trim().length > 0) attrs.push(`${name}=${redact(value.trim())}`);
     }
   }
-  return { text: document.body.innerText, attrs };
+  return { text: lines.join('\n'), attrs };
 }
 
 export async function appendDomText(page, file, name) {
-  const dump = await page.evaluate(collectDomText, DUMPED_ATTRIBUTES);
+  const dump = await page.evaluate(collectDomText, { attributes: DUMPED_ATTRIBUTES, excluded: EXCLUDED_SUBTREES });
   fs.appendFileSync(file, JSON.stringify({ name, ...dump }) + '\n');
 }
 
