@@ -11,6 +11,7 @@ import {
 import { useMcpStore } from '../../mcpStore';
 import { Icon } from '../Icon';
 import { MCP_BUTTON_CLASS as BUTTON_CLASS, MCP_DIALOG_PANEL_CLASS, MCP_DIALOG_SCRIM_CLASS, MCP_PRIMARY_BUTTON_CLASS, stopEscape } from './mcpStyles';
+import { useT } from '../../../i18n/uiLanguage';
 
 // Editor de UN servidor comun, en dialogo y por tipo (P-028 punto 5): local = comando, argumentos y
 // variables; remoto = URL y cabeceras. Los valores guardados de env/headers llegan ENMASCARADOS
@@ -19,12 +20,12 @@ import { MCP_BUTTON_CLASS as BUTTON_CLASS, MCP_DIALOG_PANEL_CLASS, MCP_DIALOG_SC
 
 const INPUT_CLASS =
   'w-full min-w-0 rounded-[5px] border border-mg-border-subtle bg-mg-panel px-[7px] py-[3px] font-mono text-[11px] text-mg-body outline-none focus:border-mg-border-emph';
-const TRANSPORTS: readonly { readonly id: McpTransport; readonly label: string }[] = [
-  { id: 'stdio', label: 'Local (comando)' },
-  { id: 'http', label: 'Remoto HTTP' },
-  { id: 'sse', label: 'Remoto SSE' },
-];
-const MASKED_PLACEHOLDER = '•••••• (guardado)';
+// La etiqueta es la CLAVE del catalogo: se traduce al pintar.
+const TRANSPORTS = [
+  { id: 'stdio', label: 'mcp.serverDialog.transport.stdio' },
+  { id: 'http', label: 'mcp.serverDialog.transport.http' },
+  { id: 'sse', label: 'mcp.serverDialog.transport.sse' },
+] as const satisfies readonly { readonly id: McpTransport; readonly label: string }[];
 
 function draftFromRow(row: McpInventoryRow | null): McpServerDraft {
   const common = row?.common ?? null;
@@ -50,6 +51,7 @@ export function McpServerDialog({ row, onClose }: { readonly row: McpInventoryRo
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const firstInput = useRef<HTMLInputElement | null>(null);
+  const t = useT();
   useEffect(() => firstInput.current?.focus(), []);
 
   const patch = (changes: Partial<McpServerDraft>): void => {
@@ -90,9 +92,9 @@ export function McpServerDialog({ row, onClose }: { readonly row: McpInventoryRo
         className={MCP_DIALOG_PANEL_CLASS}
       >
         <div id="mcp-server-dialog-title" className="text-[12.5px] font-bold text-mg-text">
-          {row === null ? 'Añadir servidor común' : `Editar ${row.name}`}
+          {row === null ? t('mcp.serverDialog.addTitle') : t('mcp.serverDialog.editTitle', { name: row.name })}
         </div>
-        <div role="radiogroup" aria-label="Tipo de servidor" className="flex gap-[4px]">
+        <div role="radiogroup" aria-label={t('mcp.serverDialog.transportAria')} className="flex gap-[4px]">
           {TRANSPORTS.map((transport) => (
             <button
               key={transport.id}
@@ -101,29 +103,29 @@ export function McpServerDialog({ row, onClose }: { readonly row: McpInventoryRo
               onClick={() => patch({ transport: transport.id })}
               className={`rounded-[6px] border px-[9px] py-[3px] text-[10.5px] ${draft.transport === transport.id ? 'border-mg-focus bg-mg-sel text-mg-body' : 'border-mg-border-subtle text-mg-body2 hover:bg-mg-hover'}`}
             >
-              {transport.label}
+              {t(transport.label)}
             </button>
           ))}
         </div>
-        <Labeled label="Nombre">
-          <input ref={firstInput} value={draft.name} onChange={(e) => patch({ name: e.target.value })} aria-label="Nombre del servidor" className={INPUT_CLASS} />
+        <Labeled label={t('mcp.serverDialog.name')}>
+          <input ref={firstInput} value={draft.name} onChange={(e) => patch({ name: e.target.value })} aria-label={t('mcp.serverDialog.nameAria')} className={INPUT_CLASS} />
         </Labeled>
         {remote ? (
           <Labeled label="URL">
-            <input value={draft.url} onChange={(e) => patch({ url: e.target.value })} placeholder="https://…/mcp" aria-label="URL del servidor" className={INPUT_CLASS} />
+            <input value={draft.url} onChange={(e) => patch({ url: e.target.value })} placeholder="https://…/mcp" aria-label={t('mcp.serverDialog.urlAria')} className={INPUT_CLASS} />
           </Labeled>
         ) : (
           <>
-            <Labeled label="Comando">
-              <input value={draft.command} onChange={(e) => patch({ command: e.target.value })} placeholder="npx, node, uvx…" aria-label="Comando del servidor" className={INPUT_CLASS} />
+            <Labeled label={t('mcp.serverDialog.command')}>
+              <input value={draft.command} onChange={(e) => patch({ command: e.target.value })} placeholder="npx, node, uvx…" aria-label={t('mcp.serverDialog.commandAria')} className={INPUT_CLASS} />
             </Labeled>
-            <Labeled label="Argumentos (uno por línea)">
-              <textarea value={draft.argsText} onChange={(e) => patch({ argsText: e.target.value })} rows={3} spellCheck={false} aria-label="Argumentos del servidor" className={`${INPUT_CLASS} resize-y`} />
+            <Labeled label={t('mcp.serverDialog.args')}>
+              <textarea value={draft.argsText} onChange={(e) => patch({ argsText: e.target.value })} rows={3} spellCheck={false} aria-label={t('mcp.serverDialog.argsAria')} className={`${INPUT_CLASS} resize-y`} />
             </Labeled>
           </>
         )}
         <KeyValueEditor
-          title={remote ? 'Cabeceras' : 'Variables de entorno'}
+          title={remote ? t('mcp.serverDialog.headers') : t('mcp.serverDialog.env')}
           entries={remote ? draft.headers : draft.env}
           revealed={revealed}
           onChange={(entries) => patch(remote ? { headers: entries } : { env: entries })}
@@ -137,14 +139,14 @@ export function McpServerDialog({ row, onClose }: { readonly row: McpInventoryRo
           {row !== null && hasMasked && (
             <button onClick={reveal} className={`${BUTTON_CLASS} mr-auto`}>
               <Icon name="eye" />
-              Mostrar valores
+              {t('mcp.serverDialog.reveal')}
             </button>
           )}
           <button onClick={onClose} className={BUTTON_CLASS}>
-            Cancelar
+            {t('mcp.common.cancel')}
           </button>
           <button onClick={save} disabled={busy} className={MCP_PRIMARY_BUTTON_CLASS}>
-            {busy ? 'Guardando…' : 'Guardar'}
+            {busy ? t('mcp.serverDialog.saving') : t('mcp.common.save')}
           </button>
         </div>
       </div>
@@ -173,6 +175,7 @@ function KeyValueEditor({
   readonly revealed: boolean;
   readonly onChange: (entries: readonly McpKeyValueDraft[]) => void;
 }): React.JSX.Element {
+  const t = useT();
   const update = (index: number, change: Partial<McpKeyValueDraft>): void => onChange(entries.map((entry, i) => (i === index ? { ...entry, ...change } : entry)));
   return (
     <div className="flex flex-col gap-[4px]" data-mcp-kv={title}>
@@ -180,22 +183,22 @@ function KeyValueEditor({
         <span className="text-[9.5px] uppercase tracking-[.06em] text-mg-ter">{title}</span>
         <button onClick={() => onChange([...entries, { key: '', value: '' }])} className={BUTTON_CLASS}>
           <Icon name="plus" />
-          Añadir
+          {t('mcp.common.add')}
         </button>
       </div>
       {entries.map((entry, index) => (
         <div key={index} className="flex items-center gap-[6px]">
-          <input value={entry.key} onChange={(e) => update(index, { key: e.target.value })} placeholder="CLAVE" aria-label={`Clave ${index + 1} de ${title}`} className={`${INPUT_CLASS} w-[38%] flex-none`} />
+          <input value={entry.key} onChange={(e) => update(index, { key: e.target.value })} placeholder={t('mcp.serverDialog.keyPlaceholder')} aria-label={t('mcp.serverDialog.keyAria', { index: index + 1, title })} className={`${INPUT_CLASS} w-[38%] flex-none`} />
           <input
             type={revealed ? 'text' : 'password'}
             value={entry.value ?? ''}
             onChange={(e) => update(index, { value: e.target.value })}
-            placeholder={entry.value === null ? MASKED_PLACEHOLDER : 'valor'}
-            aria-label={`Valor ${index + 1} de ${title}`}
+            placeholder={entry.value === null ? t('mcp.common.maskedPlaceholder') : t('mcp.serverDialog.valuePlaceholder')}
+            aria-label={t('mcp.serverDialog.valueAria', { index: index + 1, title })}
             autoComplete="off"
             className={INPUT_CLASS}
           />
-          <button onClick={() => onChange(entries.filter((_, i) => i !== index))} aria-label={`Quitar clave ${index + 1} de ${title}`} className="rounded-[5px] p-[3px] text-mg-muted hover:bg-mg-hover">
+          <button onClick={() => onChange(entries.filter((_, i) => i !== index))} aria-label={t('mcp.serverDialog.removeKeyAria', { index: index + 1, title })} className="rounded-[5px] p-[3px] text-mg-muted hover:bg-mg-hover">
             <Icon name="close" />
           </button>
         </div>

@@ -12,10 +12,12 @@ import type {
   McpStatusCache,
   McpTransport,
 } from '@shared/mcp';
+import { t } from '../i18n/uiLanguage';
 
 // Vista PURA de «MCP y conectores» (P-028 punto 5) y del Inspector › MCP: une el inventario de main
 // (ficheros) con lo que reportan las sesiones (`mcp_status` o el `session_init`), traduce estados y
-// decide insignias. Sin React, sin IPC.
+// decide insignias. Sin React, sin IPC. Los textos salen del catalogo del idioma activo al construir la vista; las
+// tablas de modulo guardan la CLAVE.
 
 // Nombres con los que el CLI reporta lo que no esta en ningun fichero. MEDIDO en 2.1.284
 // (`spike/init-spike.mjs --mcp`): `claude.ai <X>` con scope `claudeai` y `plugin:<plugin>:<servidor>`.
@@ -26,17 +28,20 @@ export const CLAUDE_AI_CONNECTORS_URL = 'https://claude.ai/settings/connectors';
 export const NO_STATUS = '—';
 export const NEEDS_AUTH = 'needs-auth';
 
-const STATUS_LABELS: Readonly<Record<string, string>> = {
-  connected: 'Conectado',
-  pending: 'Pendiente',
-  'needs-auth': 'Requiere autenticación',
-  failed: 'Falló',
-  disabled: 'Desactivado',
+type McpStatusKey = 'mcp.status.connected' | 'mcp.status.pending' | 'mcp.status.needsAuth' | 'mcp.status.failed' | 'mcp.status.disabled';
+
+const STATUS_LABELS: Readonly<Record<string, McpStatusKey>> = {
+  connected: 'mcp.status.connected',
+  pending: 'mcp.status.pending',
+  'needs-auth': 'mcp.status.needsAuth',
+  failed: 'mcp.status.failed',
+  disabled: 'mcp.status.disabled',
 };
 
-// Estado del CLI en castellano. Uno que no conocemos se enseña tal cual (lo define el CLI y crece).
+// Estado del CLI traducido. Uno que no conocemos se enseña tal cual (lo define el CLI y crece).
 export function mcpStatusLabel(status: string): string {
-  return STATUS_LABELS[status] ?? status;
+  const key = STATUS_LABELS[status];
+  return key === undefined ? status : t(key);
 }
 
 export type McpBadgeKind = McpOriginKind | 'connector' | 'plugin' | 'session';
@@ -69,7 +74,7 @@ export interface McpTableRow {
 // Lo que solo conoce el CLI de Claude (conectores, plugins, lo de otra carpeta) es suyo.
 const CLAUDE_ONLY = { providers: ['claude'] as const, ownedBy: 'claude' as const };
 
-const TRANSPORT_LABELS: Readonly<Record<McpTransport, string>> = { stdio: 'Local', http: 'Remoto (HTTP)', sse: 'Remoto (SSE)' };
+const TRANSPORT_LABELS = { stdio: 'mcp.transport.stdio', http: 'mcp.transport.http', sse: 'mcp.transport.sse' } as const satisfies Readonly<Record<McpTransport, string>>;
 
 // Estado por cuenta: lo sondeado con `mcp_status` manda; si una cuenta no se sondeo, vale lo que
 // reporto el ultimo `session_init` de cualquiera de sus pestañas.
@@ -117,7 +122,7 @@ function serverRow(row: McpInventoryRow, reports: readonly StatusReport[]): McpT
     key: `server:${row.name}`,
     name: row.name,
     kind: 'server',
-    typeLabel: TRANSPORT_LABELS[row.transport],
+    typeLabel: t(TRANSPORT_LABELS[row.transport]),
     badges: row.origins.map((origin) => ({ kind: origin.kind, label: origin.label })),
     accounts: row.accounts,
     statusLabel: row.disabled ? mcpStatusLabel('disabled') : summarizeStatus(reports),
@@ -137,16 +142,16 @@ function sessionOnlyRow(name: string, reports: readonly StatusReport[]): McpTabl
   if (isConnector) {
     const display = name.startsWith(CONNECTOR_PREFIX) ? name.slice(CONNECTOR_PREFIX.length) : name;
     const badges = [{ kind: 'connector' as const, label: 'claude.ai' }];
-    return { key: `connector:${name}`, name: display, kind: 'connector', typeLabel: 'Conector claude.ai', badges, accounts, statusLabel, inventory: null, ...live };
+    return { key: `connector:${name}`, name: display, kind: 'connector', typeLabel: t('mcp.type.claudeAiConnector'), badges, accounts, statusLabel, inventory: null, ...live };
   }
   const plugin = parsePluginServer(name);
   if (plugin !== null) {
-    const badges = [{ kind: 'plugin' as const, label: `Plugin ${plugin.plugin}` }];
-    return { key: `plugin:${name}`, name: plugin.server, kind: 'plugin', typeLabel: 'Plugin', badges, accounts, statusLabel, inventory: null, ...live };
+    const badges = [{ kind: 'plugin' as const, label: t('mcp.badge.plugin', { plugin: plugin.plugin }) }];
+    return { key: `plugin:${name}`, name: plugin.server, kind: 'plugin', typeLabel: t('mcp.type.plugin'), badges, accounts, statusLabel, inventory: null, ...live };
   }
   // Una sesion lo cargo pero no esta en ninguno de los ficheros leidos (p. ej. el `.mcp.json` de otra
   // carpeta): se enseña igual, con su estado.
-  const badges = [{ kind: 'session' as const, label: 'Sesión' }];
+  const badges = [{ kind: 'session' as const, label: t('mcp.badge.session') }];
   return { key: `session:${name}`, name, kind: 'server', typeLabel: '—', badges, accounts, statusLabel, inventory: null, ...live };
 }
 
@@ -204,8 +209,8 @@ function sessionBadge(name: string, common: ReadonlySet<string>): McpBadge {
   if (common.has(name)) return { kind: 'common', label: 'Mage' };
   if (name.startsWith(CONNECTOR_PREFIX)) return { kind: 'connector', label: 'claude.ai' };
   const plugin = parsePluginServer(name);
-  if (plugin !== null) return { kind: 'plugin', label: `Plugin ${plugin.plugin}` };
-  return { kind: 'account', label: 'Cuenta o proyecto' };
+  if (plugin !== null) return { kind: 'plugin', label: t('mcp.badge.plugin', { plugin: plugin.plugin }) };
+  return { kind: 'account', label: t('mcp.badge.accountOrProject') };
 }
 
 // --- «Autenticar» (punto 18) ----------------------------------------------------------------
@@ -219,11 +224,11 @@ export interface McpAuthMessage {
 export function mcpAuthMessage(result: McpAuthResult): McpAuthMessage {
   switch (result.kind) {
     case 'connected':
-      return { ok: true, text: 'Autenticado y conectado. Las conversaciones nuevas ya lo cargan.' };
+      return { ok: true, text: t('mcp.auth.connected') };
     case 'opened':
-      return { ok: true, text: 'Termina la autorización en el navegador y pulsa «Comprobar estado».' };
+      return { ok: true, text: t('mcp.auth.opened') };
     case 'timeout':
-      return { ok: false, text: 'No se completó la autorización en el navegador a tiempo (5 min). Vuelve a intentarlo.' };
+      return { ok: false, text: t('mcp.auth.timeout') };
     case 'error':
       return { ok: false, text: result.message };
   }
@@ -254,8 +259,8 @@ export interface McpConnectorGroup {
 }
 
 export const CLAUDE_IN_CHROME = 'Claude in Chrome';
-const DESKTOP_ONLY_LABEL = 'Solo disponible en Claude Desktop';
-const CONNECTORS_OFF_LABEL = 'Apagados en esta cuenta';
+const DESKTOP_ONLY_LABEL = 'mcp.connectors.desktopOnly';
+const CONNECTORS_OFF_LABEL = 'mcp.connectors.off';
 
 export interface ConnectorGroupInput {
   readonly accountIds: readonly string[];
@@ -276,7 +281,7 @@ export function buildClaudeConnectorGroups(input: ConnectorGroupInput): readonly
     const extensions = input.extensions
       .filter((ext) => ext.enabled && isInMcpScope(ext.onlyIn, { family: 'claude', accountId }))
       .map((ext) => extensionRow(ext, reported));
-    const chrome: McpConnectorRow = { key: 'desktop:chrome', name: CLAUDE_IN_CHROME, kind: 'desktopOnly', typeLabel: 'Escritorio', statusLabel: DESKTOP_ONLY_LABEL, cliName: null, needsAuth: false };
+    const chrome: McpConnectorRow = { key: 'desktop:chrome', name: CLAUDE_IN_CHROME, kind: 'desktopOnly', typeLabel: t('mcp.connectors.type.desktop'), statusLabel: t(DESKTOP_ONLY_LABEL), cliName: null, needsAuth: false };
     return { accountId, checkedAt: input.cache[accountId]?.checkedAt ?? null, claudeAiEnabled, rows: [...web, ...plugins, ...extensions, chrome] };
   });
 }
@@ -288,7 +293,7 @@ function isConnectorStatus(status: McpLiveStatus): boolean {
 function webRow(status: McpLiveStatus, enabled: boolean): McpConnectorRow {
   const name = status.name.startsWith(CONNECTOR_PREFIX) ? status.name.slice(CONNECTOR_PREFIX.length) : status.name;
   const needsAuth = enabled && status.status === NEEDS_AUTH;
-  return { key: `web:${status.name}`, name, kind: 'web', typeLabel: 'Web', statusLabel: enabled ? mcpStatusLabel(status.status) : CONNECTORS_OFF_LABEL, cliName: status.name, needsAuth };
+  return { key: `web:${status.name}`, name, kind: 'web', typeLabel: t('mcp.connectors.type.web'), statusLabel: enabled ? mcpStatusLabel(status.status) : t(CONNECTORS_OFF_LABEL), cliName: status.name, needsAuth };
 }
 
 function pluginRow(status: McpLiveStatus): McpConnectorRow | null {
@@ -296,9 +301,9 @@ function pluginRow(status: McpLiveStatus): McpConnectorRow | null {
   if (plugin === null) return null;
   return {
     key: `plugin:${status.name}`,
-    name: `${plugin.server} (plugin ${plugin.plugin})`,
+    name: t('mcp.connectors.pluginName', { server: plugin.server, plugin: plugin.plugin }),
     kind: 'plugin',
-    typeLabel: 'Complemento',
+    typeLabel: t('mcp.connectors.type.plugin'),
     statusLabel: mcpStatusLabel(status.status),
     cliName: status.name,
     needsAuth: status.status === NEEDS_AUTH,
@@ -307,9 +312,9 @@ function pluginRow(status: McpLiveStatus): McpConnectorRow | null {
 
 function extensionRow(ext: McpExtensionView, reported: readonly McpLiveStatus[]): McpConnectorRow {
   const live = reported.find((status) => status.name === ext.id);
-  const liveLabel = live === undefined ? 'Activa' : mcpStatusLabel(live.status);
+  const liveLabel = live === undefined ? t('mcp.connectors.extensionActive') : mcpStatusLabel(live.status);
   const statusLabel = ext.problem ?? liveLabel;
-  return { key: `ext:${ext.id}`, name: ext.displayName, kind: 'extension', typeLabel: 'Escritorio', statusLabel, cliName: null, needsAuth: false };
+  return { key: `ext:${ext.id}`, name: ext.displayName, kind: 'extension', typeLabel: t('mcp.connectors.type.desktop'), statusLabel, cliName: null, needsAuth: false };
 }
 
 const MINUTE_MS = 60_000;
@@ -318,12 +323,12 @@ const DAY_MS = 24 * HOUR_MS;
 
 // «Última comprobación: hace 5 min». Una fecha que no se entiende se dice tal cual (no se inventa).
 export function describeCheckedAt(iso: string | null, now: Date): string {
-  if (iso === null) return 'Sin comprobar todavía';
+  if (iso === null) return t('mcp.checkedAt.never');
   const time = Date.parse(iso);
-  if (Number.isNaN(time)) return `Última comprobación: ${iso}`;
+  if (Number.isNaN(time)) return t('mcp.checkedAt.raw', { value: iso });
   const elapsed = Math.max(0, now.getTime() - time);
-  if (elapsed < MINUTE_MS) return 'Última comprobación: hace un momento';
-  if (elapsed < HOUR_MS) return `Última comprobación: hace ${Math.floor(elapsed / MINUTE_MS)} min`;
-  if (elapsed < DAY_MS) return `Última comprobación: hace ${Math.floor(elapsed / HOUR_MS)} h`;
-  return `Última comprobación: hace ${Math.floor(elapsed / DAY_MS)} días`;
+  if (elapsed < MINUTE_MS) return t('mcp.checkedAt.justNow');
+  if (elapsed < HOUR_MS) return t('mcp.checkedAt.minutes', { count: Math.floor(elapsed / MINUTE_MS) });
+  if (elapsed < DAY_MS) return t('mcp.checkedAt.hours', { count: Math.floor(elapsed / HOUR_MS) });
+  return t('mcp.checkedAt.days', { count: Math.floor(elapsed / DAY_MS) });
 }

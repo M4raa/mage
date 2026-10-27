@@ -4,6 +4,7 @@ import { useMcpStore } from '../../mcpStore';
 import { Icon } from '../Icon';
 import { McpScopeDialog, ProviderPills } from './McpScopeDialog';
 import { MCP_BUTTON_CLASS as BUTTON_CLASS, MCP_DIALOG_PANEL_CLASS, MCP_DIALOG_SCRIM_CLASS, MCP_PRIMARY_BUTTON_CLASS, stopEscape } from './mcpStyles';
+import { useT } from '../../../i18n/uiLanguage';
 
 // Pestaña «Extensiones» (C3-a…d): paquetes .mcpb/.dxt de Mage. Instalar desde archivo (el dialogo lo
 // abre main y el usuario confirma viendo autor y version), importar de Claude Desktop COPIANDO,
@@ -12,6 +13,8 @@ import { MCP_BUTTON_CLASS as BUTTON_CLASS, MCP_DIALOG_PANEL_CLASS, MCP_DIALOG_SC
 
 const INPUT_CLASS =
   'w-full min-w-0 rounded-[5px] border border-mg-border-subtle bg-mg-panel px-[7px] py-[3px] font-mono text-[11px] text-mg-body outline-none focus:border-mg-border-emph';
+
+const BYTES_PER_KB = 1024;
 
 // Campos de ruta: el dialogo nativo lo abre main.
 const PATH_PICKERS: Partial<Record<McpUserConfigField['type'], () => Promise<string | null>>> = {
@@ -31,6 +34,7 @@ export function McpExtensionsTab(): React.JSX.Element {
   const run = useMcpStore((s) => s.runExtensionAction);
   const [dialog, setDialog] = useState<Dialog>({ kind: 'none' });
   const [error, setError] = useState<string | null>(null);
+  const t = useT();
   const attempt = (action: () => Promise<unknown>): void => {
     setError(null);
     run(action).catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)));
@@ -46,14 +50,13 @@ export function McpExtensionsTab(): React.JSX.Element {
   return (
     <div className="flex flex-col gap-[10px]" data-mcp-extensions="true">
       <div role="note" className="rounded-[7px] border border-mg-warn-border bg-mg-warn-bg p-[7px_10px] text-[10.5px] text-mg-warn-text">
-        Una extensión ejecuta código en tu máquina con tus permisos. Mage no verifica firmas ni aplica las listas de tu organización de
-        claude.ai: instala solo lo que conozcas.
+        {t('mcp.extensions.warning')}
       </div>
       <div className="flex items-center gap-[8px]">
-        <span className="flex-1 text-[10.5px] text-mg-sec">Se cargan en Claude y Codex al abrir cada sesión; a agy le llegan al sincronizar.</span>
+        <span className="flex-1 text-[10.5px] text-mg-sec">{t('mcp.extensions.loadedIn')}</span>
         <button onClick={pick} className={BUTTON_CLASS}>
           <Icon name="import" />
-          Instalar desde archivo…
+          {t('mcp.extensions.installFromFile')}
         </button>
       </div>
       {(error ?? loadError) !== null && (
@@ -66,8 +69,8 @@ export function McpExtensionsTab(): React.JSX.Element {
           {warning}
         </div>
       ))}
-      {list === null && <p className="text-[11px] text-mg-muted">Cargando…</p>}
-      {list !== null && list.extensions.length === 0 && <p className="text-[11px] text-mg-muted">No hay extensiones instaladas.</p>}
+      {list === null && <p className="text-[11px] text-mg-muted">{t('mcp.common.loading')}</p>}
+      {list !== null && list.extensions.length === 0 && <p className="text-[11px] text-mg-muted">{t('mcp.extensions.empty')}</p>}
       {list !== null &&
         list.extensions.map((extension) => (
           <ExtensionCard
@@ -84,7 +87,7 @@ export function McpExtensionsTab(): React.JSX.Element {
       {dialog.kind === 'config' && <ExtensionConfigDialog extension={dialog.extension} onClose={close} />}
       {dialog.kind === 'scope' && (
         <McpScopeDialog
-          title={`Solo en… · ${dialog.extension.displayName}`}
+          title={t('mcp.scope.dialogTitle', { name: dialog.extension.displayName })}
           scope={dialog.extension.onlyIn}
           onSave={(scope) => run(() => window.mage.setMcpExtensionOnlyIn(dialog.extension.id, scope))}
           onClose={close}
@@ -108,6 +111,7 @@ function ExtensionCard({
   readonly onRemove: () => void;
 }): React.JSX.Element {
   const [confirmRemove, setConfirmRemove] = useState(false);
+  const t = useT();
   return (
     <div data-mcp-extension={extension.id} className="flex flex-col gap-[5px] rounded-[8px] border border-mg-border-subtle p-[9px_11px]">
       <div className="flex items-center gap-[8px]">
@@ -116,13 +120,13 @@ function ExtensionCard({
           {extension.displayName} <span className="font-normal text-mg-sec">{extension.version}</span>
         </span>
         <label className="flex items-center gap-[5px] text-[10.5px] text-mg-body2">
-          <input type="checkbox" checked={extension.enabled} onChange={onToggle} aria-label={`Activar ${extension.displayName}`} />
-          Activada
+          <input type="checkbox" checked={extension.enabled} onChange={onToggle} aria-label={t('mcp.extensions.enableAria', { name: extension.displayName })} />
+          {t('mcp.extensions.enabled')}
         </label>
       </div>
       <div className="flex flex-wrap items-center gap-[6px] text-[10px] text-mg-sec">
-        {extension.author.length > 0 && <span>de {extension.author}</span>}
-        <span>· sin firmar (Mage no verifica firmas)</span>
+        {extension.author.length > 0 && <span>{t('mcp.extensions.byAuthor', { author: extension.author })}</span>}
+        <span>{t('mcp.extensions.unsigned')}</span>
         <span>· {extension.serverType}</span>
         {extension.platforms.length > 0 && <span>· {extension.platforms.join(', ')}</span>}
         <ProviderPills providers={extension.enabled ? extension.providers : []} testId={extension.id} />
@@ -137,24 +141,24 @@ function ExtensionCard({
         {extension.fields.length > 0 && (
           <button onClick={onConfig} className={BUTTON_CLASS}>
             <Icon name="gear" />
-            Ajustes
+            {t('mcp.extensions.settings')}
           </button>
         )}
         <button onClick={onScope} className={BUTTON_CLASS}>
-          Solo en…
+          {t('mcp.extensions.scope')}
         </button>
         <button onClick={() => void window.mage.revealFile(extension.dir)} className={BUTTON_CLASS}>
           <Icon name="folderOpen" />
-          Ver carpeta
+          {t('mcp.extensions.revealFolder')}
         </button>
         {confirmRemove ? (
           <button onClick={onRemove} className={`${BUTTON_CLASS} text-mg-danger`}>
-            ¿Desinstalar?
+            {t('mcp.extensions.confirmUninstall')}
           </button>
         ) : (
-          <button onClick={() => setConfirmRemove(true)} className={BUTTON_CLASS} aria-label={`Desinstalar ${extension.displayName}`}>
+          <button onClick={() => setConfirmRemove(true)} className={BUTTON_CLASS} aria-label={t('mcp.extensions.uninstallAria', { name: extension.displayName })}>
             <Icon name="trash" />
-            Desinstalar
+            {t('mcp.extensions.uninstall')}
           </button>
         )}
       </div>
@@ -164,18 +168,19 @@ function ExtensionCard({
 
 function DesktopImport({ onImport }: { readonly onImport: (dirName: string) => void }): React.JSX.Element | null {
   const candidates = useMcpStore((s) => s.extensions?.desktop ?? []);
+  const t = useT();
   if (candidates.length === 0) return null;
   return (
     <div data-mcp-desktop-import="true" className="flex flex-col gap-[5px]">
-      <span className="text-[10px] font-semibold uppercase tracking-[.06em] text-mg-ter">Importar de Claude Desktop</span>
-      <span className="text-[10.5px] text-mg-sec">Se copia a la carpeta de Mage: deja de depender de que Claude Desktop siga instalado.</span>
+      <span className="text-[10px] font-semibold uppercase tracking-[.06em] text-mg-ter">{t('mcp.extensions.desktopImport.title')}</span>
+      <span className="text-[10.5px] text-mg-sec">{t('mcp.extensions.desktopImport.hint')}</span>
       {candidates.map((candidate) => (
         <div key={candidate.dirName} data-mcp-desktop-candidate={candidate.dirName} className="flex items-center gap-[8px] text-[11px]">
           <span className="min-w-0 flex-1 text-mg-body">
             {candidate.displayName} <span className="text-mg-sec">{candidate.version}</span>
           </span>
           <button onClick={() => onImport(candidate.dirName)} className={BUTTON_CLASS}>
-            {candidate.installed ? 'Volver a importar' : 'Importar'}
+            {candidate.installed ? t('mcp.extensions.desktopImport.reimport') : t('mcp.extensions.desktopImport.import')}
           </button>
         </div>
       ))}
@@ -193,6 +198,7 @@ function InstallDialog({
   readonly onError: (message: string) => void;
 }): React.JSX.Element {
   const run = useMcpStore((s) => s.runExtensionAction);
+  const t = useT();
   const install = (): void => {
     run(() => window.mage.installMcpExtension(preview.token))
       .catch((err: unknown) => onError(err instanceof Error ? err.message : String(err)))
@@ -200,31 +206,31 @@ function InstallDialog({
   };
   return (
     <div className={MCP_DIALOG_SCRIM_CLASS} onClick={onClose}>
-      <div role="dialog" aria-modal="true" aria-label="Instalar extensión" data-mcp-install-dialog="true" onClick={(e) => e.stopPropagation()} onKeyDown={stopEscape(onClose)} className={MCP_DIALOG_PANEL_CLASS}>
+      <div role="dialog" aria-modal="true" aria-label={t('mcp.extensions.install.dialogAria')} data-mcp-install-dialog="true" onClick={(e) => e.stopPropagation()} onKeyDown={stopEscape(onClose)} className={MCP_DIALOG_PANEL_CLASS}>
         <div className="text-[12.5px] font-bold text-mg-text">
-          {preview.replacesVersion === null ? 'Instalar' : 'Actualizar'} {preview.displayName}
+          {preview.replacesVersion === null
+            ? t('mcp.extensions.install.titleInstall', { name: preview.displayName })
+            : t('mcp.extensions.install.titleUpdate', { name: preview.displayName })}
         </div>
         <dl className="grid grid-cols-[auto_1fr] gap-x-[10px] gap-y-[2px] text-[11px]">
-          <dt className="text-mg-sec">Versión</dt>
+          <dt className="text-mg-sec">{t('mcp.extensions.install.version')}</dt>
           <dd>{preview.replacesVersion === null ? preview.version : `${preview.replacesVersion} → ${preview.version}`}</dd>
-          <dt className="text-mg-sec">Autor</dt>
-          <dd>{preview.author.length > 0 ? preview.author : 'Sin declarar'}</dd>
-          <dt className="text-mg-sec">Firma</dt>
-          <dd>Sin verificar: Mage no comprueba firmas</dd>
-          <dt className="text-mg-sec">Tipo</dt>
+          <dt className="text-mg-sec">{t('mcp.extensions.install.author')}</dt>
+          <dd>{preview.author.length > 0 ? preview.author : t('mcp.extensions.install.authorMissing')}</dd>
+          <dt className="text-mg-sec">{t('mcp.extensions.install.signature')}</dt>
+          <dd>{t('mcp.extensions.install.signatureUnverified')}</dd>
+          <dt className="text-mg-sec">{t('mcp.extensions.install.type')}</dt>
           <dd>{preview.serverType}</dd>
-          <dt className="text-mg-sec">Contenido</dt>
-          <dd>
-            {preview.fileCount} ficheros, {Math.ceil(preview.unpackedBytes / 1024)} KB
-          </dd>
+          <dt className="text-mg-sec">{t('mcp.extensions.install.contents')}</dt>
+          <dd>{t('mcp.extensions.install.contentsValue', { files: preview.fileCount, kilobytes: Math.ceil(preview.unpackedBytes / BYTES_PER_KB) })}</dd>
         </dl>
-        <p className="text-[10.5px] text-mg-warn-text">Instalarla es ejecutar su código con tus permisos cada vez que se abra una conversación.</p>
+        <p className="text-[10.5px] text-mg-warn-text">{t('mcp.extensions.install.warning')}</p>
         <div className="flex justify-end gap-[8px]">
           <button onClick={onClose} className={BUTTON_CLASS}>
-            Cancelar
+            {t('mcp.common.cancel')}
           </button>
           <button onClick={install} className={MCP_PRIMARY_BUTTON_CLASS}>
-            {preview.replacesVersion === null ? 'Instalar' : 'Actualizar'}
+            {preview.replacesVersion === null ? t('mcp.extensions.install.install') : t('mcp.extensions.install.update')}
           </button>
         </div>
       </div>
@@ -239,6 +245,7 @@ function ExtensionConfigDialog({ extension, onClose }: { readonly extension: Mcp
   const [values, setValues] = useState<Readonly<Record<string, McpUserConfigValue>>>({});
   const [error, setError] = useState<string | null>(null);
   const first = useRef<HTMLDivElement | null>(null);
+  const t = useT();
   useEffect(() => first.current?.querySelector<HTMLElement>('input, button')?.focus(), []);
   const change = (key: string, value: McpUserConfigValue): void => setValues((current) => ({ ...current, [key]: value }));
   const save = (): void => {
@@ -253,13 +260,13 @@ function ExtensionConfigDialog({ extension, onClose }: { readonly extension: Mcp
         ref={first}
         role="dialog"
         aria-modal="true"
-        aria-label={`Ajustes de ${extension.displayName}`}
+        aria-label={t('mcp.extensions.config.title', { name: extension.displayName })}
         data-mcp-extension-config="true"
         onClick={(e) => e.stopPropagation()}
         onKeyDown={stopEscape(onClose)}
         className={MCP_DIALOG_PANEL_CLASS}
       >
-        <div className="text-[12.5px] font-bold text-mg-text">Ajustes de {extension.displayName}</div>
+        <div className="text-[12.5px] font-bold text-mg-text">{t('mcp.extensions.config.title', { name: extension.displayName })}</div>
         {extension.fields.map((field) => (
           <ConfigField key={field.key} field={field} value={values[field.key]} onChange={(value) => change(field.key, value)} />
         ))}
@@ -270,10 +277,10 @@ function ExtensionConfigDialog({ extension, onClose }: { readonly extension: Mcp
         )}
         <div className="flex justify-end gap-[8px]">
           <button onClick={onClose} className={BUTTON_CLASS}>
-            Cancelar
+            {t('mcp.common.cancel')}
           </button>
           <button onClick={save} className={MCP_PRIMARY_BUTTON_CLASS}>
-            Guardar
+            {t('mcp.common.save')}
           </button>
         </div>
       </div>
@@ -312,6 +319,7 @@ function FieldInput({
   readonly touched: boolean;
   readonly onChange: (value: McpUserConfigValue) => void;
 }): React.JSX.Element {
+  const t = useT();
   if (field.type === 'boolean') return <input type="checkbox" checked={current === true} onChange={(e) => onChange(e.target.checked)} aria-label={field.title} />;
   if (field.sensitive) {
     return (
@@ -319,7 +327,7 @@ function FieldInput({
         type="password"
         autoComplete="off"
         value={touched && typeof current === 'string' ? current : ''}
-        placeholder={field.hasValue ? '•••••• (guardado)' : ''}
+        placeholder={field.hasValue ? t('mcp.common.maskedPlaceholder') : ''}
         onChange={(e) => onChange(e.target.value)}
         aria-label={field.title}
         className={INPUT_CLASS}
@@ -341,7 +349,7 @@ function FieldInput({
       <input type={field.type === 'number' ? 'number' : 'text'} value={text} onChange={(e) => onChange(parse(e.target.value))} aria-label={field.title} className={INPUT_CLASS} />
       {pickPath !== null && (
         <button type="button" onClick={() => void pickPath().then((path) => path !== null && onChange(path))} className={BUTTON_CLASS}>
-          Elegir…
+          {t('mcp.extensions.config.pick')}
         </button>
       )}
     </span>
