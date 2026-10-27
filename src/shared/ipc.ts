@@ -3,6 +3,7 @@
 // rompe en ambos lados. El renderer NUNCA accede a Node/procesos: todo pasa por aqui.
 
 import type { ConversationLockParams, ConversationLockRef, ConversationLockStatus } from './conversationLock';
+import type { ResolvedUiLanguage } from './i18n/language';
 import type { GitParams, GitSnapshot, GitSwitchParams } from './git';
 import type { WorktreeCreateParams, WorktreeMergeBaseParams, WorktreeRemoveResult } from './worktree';
 import type { GhAutoMergeParams, GhPrUpdate, GhRunActionParams, GhRunsParams, GhRunsSnapshot, GhSnapshot, GhWatchParams } from './gh';
@@ -165,6 +166,8 @@ export const IpcChannel = {
   StatusGet: 'status:get',
   // Version de la app (la del package.json empaquetado). Constante durante toda la vida del proceso.
   AppVersionGet: 'app:version',
+  // Idioma de la interfaz ya resuelto por main (F3.1).
+  UiLanguageGet: 'i18n:language',
   // Datos de la pantalla «Acerca de»: versiones del runtime y los avisos de terceros (B.2/B.3 de la
   // revision legal). Bajo demanda: el texto son ~124 kB que no pinta nadie hasta abrir la seccion.
   AboutGet: 'app:about',
@@ -737,6 +740,10 @@ export interface TranscriptBatchPayload {
 // devolverselo pisaria una edicion en curso suya.
 export const SETTINGS_CHANGED_CHANNEL = 'settings:changed';
 
+// main -> TODAS las ventanas, la que lo cambio incluida: el idioma resuelto de la interfaz cambio (F3.1). Se repinta
+// sin reiniciar.
+export const UI_LANGUAGE_CHANGED_CHANNEL = 'i18n:languageChanged';
+
 // main -> UNA ventana: le llega una pestaña movida desde otra. La ventana de origen la quita de su
 // estado; esta la adopta.
 export const WINDOW_TAB_RECEIVED_CHANNEL = 'windows:tabReceived';
@@ -943,6 +950,9 @@ export interface MageApi {
   getStatus(): Promise<StatusInfo>;
   // Version de Mage, para pintarla en la barra de estado. No cambia en caliente.
   getAppVersion(): Promise<string>;
+  // Idioma de la interfaz resuelto por main (preferencia guardada, inicial o sistema) y el locale de formato.
+  getUiLanguage(): Promise<ResolvedUiLanguage>;
+  onUiLanguageChanged(listener: (resolved: ResolvedUiLanguage) => void): () => void;
   // Avisa a main del cambio de opacidad para que ajuste el material de la ventana.
   setWindowOpacity(percent: number): Promise<void>;
   // Abre una transcripcion persistida en streaming. El `transcriptId` lo GENERA el renderer y lo

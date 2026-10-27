@@ -13,6 +13,7 @@ import {
   UI_SCALE_MAX,
   UI_SCALE_MIN,
 } from '@shared/settings';
+import { UI_LANGUAGE_PREFERENCES } from '@shared/i18n/language';
 import { writeAtomic, type AtomicWriteDeps } from '../os/atomicFile';
 
 // Persistencia de la configuracion de la app (M2.3) en userData/app-settings.json. Mismo patron que
@@ -169,6 +170,8 @@ const APP_SETTINGS_SCHEMA = z.object({
       z.array(z.object({ model: z.string().min(1), allow: z.array(z.string().min(1)).nullable(), deny: z.array(z.string().min(1)) })),
     )
     .catch({}),
+  // Idioma (F3). Ausente o basura -> ausente: «sin preferencia», que hereda la inicial o sigue al sistema.
+  uiLanguage: z.enum(UI_LANGUAGE_PREFERENCES).optional().catch(undefined),
 });
 
 export class SettingsStore {

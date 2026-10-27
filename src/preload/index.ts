@@ -10,6 +10,7 @@ import {
   NOTIFICATION_CLICKED_CHANNEL,
   WIDGET_SNAPSHOT_CHANNEL,
   SETTINGS_CHANGED_CHANNEL,
+  UI_LANGUAGE_CHANGED_CHANNEL,
   MODEL_CATALOG_CHANGED_CHANNEL,
   GH_PR_UPDATE_CHANNEL,
   WINDOW_TAB_RECEIVED_CHANNEL,
@@ -20,6 +21,7 @@ import {
   type CloseAnswer,
 } from '@shared/ipc';
 import type { UpdateState } from '@shared/update';
+import type { ResolvedUiLanguage } from '@shared/i18n/language';
 import type { GhPrUpdate } from '@shared/gh';
 import type {
   McpAuthParams,
@@ -156,6 +158,12 @@ const api: MageApi = {
   getUsage: (configDir: string) => ipcRenderer.invoke(IpcChannel.UsageGet, configDir),
   getStatus: () => ipcRenderer.invoke(IpcChannel.StatusGet),
   getAppVersion: () => ipcRenderer.invoke(IpcChannel.AppVersionGet),
+  getUiLanguage: () => ipcRenderer.invoke(IpcChannel.UiLanguageGet),
+  onUiLanguageChanged: (listener: (resolved: ResolvedUiLanguage) => void) => {
+    const handler = (_: unknown, resolved: ResolvedUiLanguage) => listener(resolved);
+    ipcRenderer.on(UI_LANGUAGE_CHANGED_CHANNEL, handler);
+    return () => ipcRenderer.removeListener(UI_LANGUAGE_CHANGED_CHANNEL, handler);
+  },
   getAbout: () => ipcRenderer.invoke(IpcChannel.AboutGet),
   getStartupWarnings: () => ipcRenderer.invoke(IpcChannel.StartupWarningsGet),
   acquireConversationLock: (params: ConversationLockParams) => ipcRenderer.invoke(IpcChannel.ConversationLockAcquire, params),

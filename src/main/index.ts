@@ -58,6 +58,7 @@ import {
   GH_PR_UPDATE_CHANNEL,
   NOTIFICATION_CLICKED_CHANNEL,
   SETTINGS_CHANGED_CHANNEL,
+  UI_LANGUAGE_CHANGED_CHANNEL,
   TRANSCRIPT_BATCH_CHANNEL,
   WIDGET_ENABLED_CHANGED_CHANNEL,
   WIDGET_FOCUS_TAB_CHANNEL,
@@ -212,6 +213,7 @@ import { ProjectFileService, resolveProjectFilePath } from './files/projectFileS
 import { resolvedPath } from './os/resolvedPath';
 import { writeAtomic, type AtomicWriteDeps } from './os/atomicFile';
 import { SettingsStore } from './state/settingsStore';
+import { UiLanguageService } from './i18n/uiLanguageService';
 import { SecretStore } from './secrets/secretStore';
 import type { VaultStatus } from './secrets/vaultGate';
 import { assessVaultForProcess } from './secrets/vaultBootstrap';
@@ -1540,6 +1542,19 @@ function copyCredentialsFile(from: string, to: string): void {
 function chmod600(path: string): void {
   if (process.platform === 'win32') return;
   chmodSync(path, 0o600);
+}
+
+// Idioma de la interfaz (F3.1). Lazy por lo mismo que el SettingsStore. La preferencia inicial (la del instalador
+// de Windows, U3) la aporta F3.7: hasta entonces no hay ninguna.
+let uiLanguageServiceSingleton: UiLanguageService | null = null;
+function getUiLanguageService(): UiLanguageService {
+  uiLanguageServiceSingleton ??= new UiLanguageService({
+    savedPreference: () => getSettingsStore().load().uiLanguage,
+    initialPreference: () => undefined,
+    preferredSystemLanguages: () => app.getPreferredSystemLanguages(),
+    broadcast: (resolved) => windowManager.broadcast(UI_LANGUAGE_CHANGED_CHANNEL, resolved),
+  });
+  return uiLanguageServiceSingleton;
 }
 
 // SettingsStore compartido (M3): lo usan el IPC de settings y createMainWindow (para el tema de
@@ -2973,6 +2988,7 @@ function registerDialogIpc1(): void {
   // `app.getVersion()` lee el package.json de la app EMPAQUETADA, que es la version que el usuario
   // tiene instalada — no la del arbol de fuentes.
   ipcMain.handle(IpcChannel.AppVersionGet, () => app.getVersion());
+  ipcMain.handle(IpcChannel.UiLanguageGet, () => getUiLanguageService().current());
   // Grupo B: dialogos propios de cierre y de actualizacion.
   ipcMain.handle(IpcChannel.CloseAnswer, (event, answer: unknown) => answerClosePrompt(event, answer));
   ipcMain.handle(IpcChannel.UpdateGetState, () => getUpdateState());
@@ -3268,6 +3284,7 @@ function registerSettingsIpc1(deps: IpcDependencies): void {
     const distrustedFolders = (settings.distrustedFolders ?? []).map(folder => canonicalPath(folder)).filter(folder => !trustedFolders.some(own => (process.platform === 'win32' ? own.toLowerCase() === folder.toLowerCase() : own === folder)));
     settingsStore.save({ ...settings, trustedFolders, distrustedFolders });
     windowManager.broadcast(SETTINGS_CHANGED_CHANNEL, settings, event.sender.id);
+    getUiLanguageService().refresh();
   });
   registerWindowsIpc();
 }

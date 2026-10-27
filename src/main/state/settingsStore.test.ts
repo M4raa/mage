@@ -93,6 +93,13 @@ describe('SettingsStore.load', () => {
     expect(new SettingsStore(deps({ readFile: () => file })).load().lastSeenReleaseNotesVersion).toBe('');
   });
 
+  it('load_uiLanguage_ausenteOBasuraQuedaAusenteYElegidoSeConserva', () => {
+    // F3: ausente es «sin preferencia» (hereda la inicial o sigue al sistema); no se confunde con «Sistema» elegido.
+    const leer = (extra: object) => new SettingsStore(deps({ readFile: () => JSON.stringify({ ...VALID, ...extra }) })).load().uiLanguage;
+
+    expect([leer({}), leer({ uiLanguage: 'fr' }), leer({ uiLanguage: 'system' }), leer({ uiLanguage: 'en' })]).toEqual([undefined, undefined, 'system', 'en']);
+  });
+
   it('load_sinAccentByAccount_caeAVacio', () => {
     const { accentByAccount: _ausente, ...previo } = VALID;
 

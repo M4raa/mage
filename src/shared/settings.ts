@@ -4,6 +4,7 @@
 
 import { EMPTY_AGY_COMMAND_RULES, type AgyCommandRules } from './agyRules';
 import type { CustomProvider } from './providers';
+import type { UiLanguagePreference } from './i18n/language';
 import type { VscodeTokenColor } from './themeMarket';
 import type { ToolAccessRule } from './toolAccess';
 
@@ -188,6 +189,10 @@ export interface AppSettings {
   // Acceso a herramientas por modelo de cada proveedor del usuario (§8.1 D10 de P-032), por id de
   // proveedor. Default {} (todo permitido).
   readonly runtimeToolAccess: Readonly<Record<string, readonly ToolAccessRule[]>>;
+  // Idioma de la interfaz (F3). AUSENTE = el usuario no ha elegido nada: main usa la preferencia inicial (la del
+  // instalador de Windows, U3/F3.7) y, sin ella, «Sistema». Elegir «Sistema» en Configuración lo guarda explícito y
+  // ya no se hereda nada. Default: ausente.
+  readonly uiLanguage?: UiLanguagePreference;
 }
 
 // Nº de acentos del tema (--mg-accent-<i>-* en index.css); lo comparten cuentas y pestañas.
