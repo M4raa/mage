@@ -57,6 +57,11 @@ function problemsOf(base) {
   const keys = Object.keys(base);
   const sorted = [...keys].sort((a, b) => a.localeCompare(b, 'en'));
   const problems = keys.join('\n') === sorted.join('\n') ? [] : [`las claves de ${BASE}.json no están ordenadas`];
+  // @lingui/core decodifica \xHH y \uHHHH en el texto final: un mensaje con esas secuencias no saldría como se escribió.
+  for (const locale of [BASE, ...OTHERS]) {
+    const escaped = Object.entries(readCatalog(locale)).filter(([, message]) => /\\(u[0-9a-f]{4}|x[0-9a-f]{2})/i.test(message)).map(([key]) => key);
+    if (escaped.length > 0) problems.push(`${locale}.json tiene secuencias \\x o \\u que Lingui decodificaría: ${escaped.join(', ')}`);
+  }
   for (const locale of OTHERS) {
     const extra = Object.keys(readCatalog(locale)).filter((key) => !(key in base));
     if (extra.length > 0) problems.push(`${locale}.json tiene claves que ${BASE}.json no tiene: ${extra.join(', ')}`);

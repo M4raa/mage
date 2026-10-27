@@ -11,6 +11,13 @@ describe('createTranslator', () => {
     expect(createTranslator('es')('settings.language.systemHint', { language: 'English' })).toBe('Sigue el idioma del sistema operativo (English).');
   });
 
+  it('createTranslator_valorConSecuenciasDeEscape_saleIntacto', () => {
+    // Lingui decodifica \xHH y \uHHHH en el resultado: una ruta de Windows no puede cambiar al pintarla.
+    const path = 'C:\\x86tools\\u0041b\\Users';
+
+    expect(createTranslator('es')('settings.language.systemHint', { language: path })).toBe(`Sigue el idioma del sistema operativo (${path}).`);
+  });
+
   it('createTranslator_catalogoPropio_loUsaEnVezDelCompilado', () => {
     expect(createTranslator('en', { 'settings.language.system': 'Ŝýšţéɱ' })('settings.language.system')).toBe('Ŝýšţéɱ');
   });
