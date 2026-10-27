@@ -10,6 +10,7 @@ function buildDeps(overrides: Partial<WorkspaceStoreDeps> = {}): WorkspaceStoreD
     exists: () => true,
     readFile: () => '{}',
     writeFile: () => undefined,
+    removeFile: () => undefined,
     rename: () => undefined,
     tempSuffix: () => 'suf',
     ...overrides,

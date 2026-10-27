@@ -17,6 +17,7 @@ function deps(overrides: Partial<SharedConfigDeps> = {}): SharedConfigDeps {
     exists: () => true,
     readFile: () => '{}',
     writeFile: () => undefined,
+    removeFile: () => undefined,
     rename: () => undefined,
     ensureDir: () => undefined,
     tempSuffix: () => 'tmp1',

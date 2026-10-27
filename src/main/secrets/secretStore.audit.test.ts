@@ -15,6 +15,7 @@ it.each(['basic_text', 'unknown'])('A12_backend_%s_debeRechazarseAunqueDisponibi
     filePath: '/isolated/secrets.json', cipher,
     exists: (p) => files.has(p), readFile: (p) => files.get(p) ?? '',
     writeFile: (p, value) => { files.set(p, value); },
+    removeFile: () => undefined,
     rename: (from, to) => { files.set(to, files.get(from) ?? ''); files.delete(from); },
     tempSuffix: () => 'fixture',
   });

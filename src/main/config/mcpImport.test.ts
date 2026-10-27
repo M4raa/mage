@@ -66,6 +66,7 @@ describe('SharedConfigService.importMcpCommonIfMissing', () => {
       exists: () => false,
       readFile: () => '{}',
       writeFile: () => undefined,
+      removeFile: () => undefined,
       rename: () => undefined,
       ensureDir: () => undefined,
       tempSuffix: () => 'tmp1',

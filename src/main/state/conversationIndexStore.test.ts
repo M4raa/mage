@@ -11,6 +11,7 @@ function buildDeps(overrides: Partial<ConversationIndexStoreDeps> = {}): Convers
     exists: () => true,
     readFile: () => '{}',
     writeFile: () => undefined,
+    removeFile: () => undefined,
     rename: () => undefined,
     tempSuffix: () => 'suf',
     ...overrides,

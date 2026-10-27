@@ -11,7 +11,7 @@ function setup() {
   let content = '';
   const index = new ConversationIndexStore({
     filePath: '/u/conversation-index.json', exists: () => content.length > 0, readFile: () => content,
-    writeFile: (_path, data) => { content = data; }, rename: () => undefined, tempSuffix: () => 'x',
+    writeFile: (_path, data) => { content = data; }, rename: () => undefined, removeFile: () => undefined, tempSuffix: () => 'x',
   });
   index.resolveConversation({ provider: 'codex', accountDir: '/u/.codex', nativeId: 'thread-1' });
   const handlers = new Map<string, Listener>();

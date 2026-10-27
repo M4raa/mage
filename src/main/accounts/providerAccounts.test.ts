@@ -45,6 +45,7 @@ function setup(vaultError: string | null = null): { service: ProviderAccountServ
     exists: (path) => files.has(path),
     readFile: (path) => files.get(path) ?? '',
     writeFile: (path, data) => files.set(path, data),
+    removeFile: () => undefined,
     rename: (from, to) => {
       files.set(to, files.get(from) ?? '');
       files.delete(from);

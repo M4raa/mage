@@ -17,6 +17,7 @@ function buildDeps(overrides: Partial<CommandCatalogStoreDeps> = {}): CommandCat
     exists: () => true,
     readFile: () => '{}',
     writeFile: () => undefined,
+    removeFile: () => undefined,
     rename: () => undefined,
     tempSuffix: () => 'suf',
     ...overrides,

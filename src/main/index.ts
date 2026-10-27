@@ -987,6 +987,7 @@ function getProviderAccounts(): ProviderAccountService {
       readFile: (path) => readFileSync(path, 'utf8'),
       writeFile: (path, data) => writeFileSync(path, data, 'utf8'),
       rename: renameSync,
+      removeFile: (path) => rmSync(path, { force: true }),
       tempSuffix: () => randomUUID(),
       mkdir: (path) => mkdirSync(path, { recursive: true }),
       rmrf: (path) => rmSync(path, { recursive: true, force: true, maxRetries: RMRF_RETRIES, retryDelay: RMRF_RETRY_DELAY_MS }),
@@ -1552,6 +1553,7 @@ function getSettingsStore(): SettingsStore {
       readFile: (path) => readFileSync(path, 'utf8'),
       writeFile: (path, data) => writeFileSync(path, data, 'utf8'),
       rename: renameSync,
+      removeFile: (path) => rmSync(path, { force: true }),
       tempSuffix: () => randomUUID(),
       mtimeMs: (path) => statSync(path).mtimeMs,
     });
@@ -1572,6 +1574,7 @@ function getSecretStore(): SecretStore {
       readFile: (path) => readFileSync(path, 'utf8'),
       writeFile: (path, data) => writeFileSync(path, data, 'utf8'),
       rename: renameSync,
+      removeFile: (path) => rmSync(path, { force: true }),
       tempSuffix: () => randomUUID(),
     });
   }
@@ -1850,6 +1853,7 @@ function fileSystemDeps(): Omit<AtomicWriteDeps, never> {
     readFile: (path: string) => readFileSync(path, 'utf8'),
     writeFile: (path: string, data: string) => writeFileSync(path, data, 'utf8'),
     rename: renameSync,
+    removeFile: (path) => rmSync(path, { force: true }),
     tempSuffix: () => randomUUID(),
   };
 }
@@ -2006,6 +2010,7 @@ function getWindowBoundsStore(): WindowBoundsStore {
     readFile: (path) => readFileSync(path, 'utf8'),
     writeFile: (path, data) => writeFileSync(path, data, 'utf8'),
     rename: renameSync,
+    removeFile: (path) => rmSync(path, { force: true }),
     tempSuffix: () => randomUUID(),
   });
   return windowBoundsStoreSingleton;
@@ -2059,6 +2064,7 @@ function getWorkspaceStore(windowId: string = MAIN_WINDOW_ID): WorkspaceStore {
     readFile: (path) => readFileSync(path, 'utf8'),
     writeFile: (path, data) => writeFileSync(path, data, 'utf8'),
     rename: renameSync,
+    removeFile: (path) => rmSync(path, { force: true }),
     tempSuffix: () => randomUUID(),
   });
   workspaceStoresByWindow.set(windowId, store);
@@ -2084,6 +2090,7 @@ function getPanelLayoutStore(windowId: string = MAIN_WINDOW_ID): PanelLayoutStor
     readFile: (path) => readFileSync(path, 'utf8'),
     writeFile: (path, data) => writeFileSync(path, data, 'utf8'),
     rename: renameSync,
+    removeFile: (path) => rmSync(path, { force: true }),
     tempSuffix: () => randomUUID(),
     log: (level, message) => mainLog(level, message),
   });

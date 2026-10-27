@@ -24,9 +24,9 @@ export interface AtomicWriteDeps {
   // Sufijo UNICO por escritura para el temporal: un nombre fijo hace que dos escrituras concurrentes se
   // pisen y el rename de una publique el fichero a medio escribir de la otra.
   readonly tempSuffix: () => string;
-  // Borrado del temporal cuando NO se llega a publicar. Opcional para no romper a los llamantes que
-  // solo usan `writeAtomic`; sin el, una publicacion rechazada deja el `.tmp` en el directorio.
-  readonly removeFile?: (path: string) => void;
+  // Borrado del temporal cuando NO se llega a publicar (escritura o rename fallidos, CAS rechazado). Obligatorio
+  // desde la devolución 19 (H3): opcional, casi ningún llamante de producción lo pasaba y la limpieza no ocurría.
+  readonly removeFile: (path: string) => void;
   // Espera entre reintentos del rename (H1 de la devolución 17). Opcional: sin ella, `sleepSync`.
   readonly sleep?: (ms: number) => void;
 }
@@ -41,7 +41,7 @@ export function readSnapshot(deps: AtomicWriteDeps, path: string): FileSnapshot 
 // cambio debajo — usar solo cuando el fichero es propiedad exclusiva de quien escribe.
 export function writeAtomic(deps: AtomicWriteDeps, path: string, content: string): void {
   const tmp = tempPathFor(deps, path);
-  deps.writeFile(tmp, content);
+  writeTemp(deps, tmp, content);
   publish(deps, tmp, path);
 }
 
@@ -71,7 +71,7 @@ export function writeAtomicIfUnchanged(
   if (before !== expected) return { status: 'stale', actual: before };
 
   const tmp = tempPathFor(deps, path);
-  deps.writeFile(tmp, content);
+  writeTemp(deps, tmp, content);
 
   const justBefore = readSnapshot(deps, path);
   if (justBefore !== expected) {
@@ -95,6 +95,17 @@ function tempPathFor(deps: AtomicWriteDeps, path: string): string {
   return `${path}.${deps.tempSuffix()}.tmp`;
 }
 
+// Escribe el temporal. Si la escritura falla (disco lleno: ENOSPC dejaba un `.tmp` de 0 bytes, H3 de la devolución 19),
+// lo borra y propaga el error, como `publish` con el rename.
+function writeTemp(deps: AtomicWriteDeps, tmp: string, content: string): void {
+  try {
+    deps.writeFile(tmp, content);
+  } catch (err) {
+    discard(deps, tmp);
+    throw err;
+  }
+}
+
 // Publica el temporal, reintentando el bloqueo transitorio de Windows (otro proceso leyendo el destino: el CLI sus
 // ajustes, otra instancia el indice). Si el rename falla, se intenta limpiar el temporal antes de propagar el error:
 // sin esto, cada fallo dejaria un `.tmp` huerfano junto al fichero real.
@@ -110,7 +121,6 @@ function publish(deps: AtomicWriteDeps, tmp: string, path: string): void {
 // Borra el temporal sin ruido: es limpieza, y si falla no hay nada mejor que hacer que seguir (el error
 // que de verdad importa es el que provoco el descarte).
 function discard(deps: AtomicWriteDeps, tmp: string): void {
-  if (deps.removeFile === undefined) return;
   try {
     deps.removeFile(tmp);
   } catch {

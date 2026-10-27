@@ -45,6 +45,7 @@ function deps(overrides: Partial<SettingsStoreDeps> = {}): SettingsStoreDeps {
     exists: () => true,
     readFile: () => JSON.stringify(VALID),
     writeFile: vi.fn(),
+    removeFile: () => undefined,
     rename: vi.fn(),
     tempSuffix: () => 'suf',
     ...overrides,

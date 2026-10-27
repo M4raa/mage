@@ -107,6 +107,31 @@ describe('writeAtomic', () => {
     expect(() => writeAtomic({ ...fs.deps, rename }, '/data/a.json', 'x')).toThrow(/EPERM/);
     expect(fs.removed).toEqual(['/data/a.json.suf.tmp']);
   });
+
+  // H3 de la devolución 19: con el disco lleno la escritura del temporal falla y dejaba un `.tmp` de 0 bytes.
+  it('writeAtomic_escrituraDelTemporalFalla_loBorraYPropagaElError', () => {
+    const fs = fakeFs({ '/data/a.json': 'viejo' });
+    const writeFile = vi.fn((path: string) => {
+      fs.files.set(path, '');
+      throw Object.assign(new Error('ENOSPC: no space left on device, write'), { code: 'ENOSPC' });
+    });
+
+    expect(() => writeAtomic({ ...fs.deps, writeFile }, '/data/a.json', 'nuevo')).toThrow(/ENOSPC/);
+    expect(fs.removed).toEqual(['/data/a.json.suf.tmp']);
+    expect([...fs.files.keys()]).toEqual(['/data/a.json']);
+    expect(fs.files.get('/data/a.json')).toBe('viejo');
+  });
+
+  it('writeAtomicIfUnchanged_escrituraDelTemporalFalla_loBorraYPropagaElError', () => {
+    const fs = fakeFs({ '/data/a.json': 'viejo' });
+    const writeFile = vi.fn((path: string) => {
+      fs.files.set(path, '');
+      throw Object.assign(new Error('ENOSPC: no space left on device, write'), { code: 'ENOSPC' });
+    });
+
+    expect(() => writeAtomicIfUnchanged({ ...fs.deps, writeFile }, '/data/a.json', 'nuevo', 'viejo')).toThrow(/ENOSPC/);
+    expect([...fs.files.keys()]).toEqual(['/data/a.json']);
+  });
 });
 
 // H1 de la devolución 17: en Windows el rename falla con EPERM mientras otro proceso lee el destino (el CLI leyendo
@@ -206,17 +231,6 @@ describe('writeAtomicIfUnchanged', () => {
     const result = writeAtomicIfUnchanged(fs.deps, '/data/a.json', 'v2', 'v1');
 
     expect(result).toEqual({ status: 'stale', actual: null });
-  });
-
-  it('cas_sinRemoveFile_noRompeAunqueDejeElTemporal', () => {
-    const fs = fakeFs({ '/data/a.json': 'v1' });
-    const { removeFile: _omitted, ...withoutRemove } = fs.deps;
-    fs.interposeWrite('/data/a.json', 'otro');
-
-    const result = writeAtomicIfUnchanged(withoutRemove, '/data/a.json', 'v2', 'v1');
-
-    expect(result.status).toBe('stale');
-    expect(fs.leftoverTemps()).toEqual(['/data/a.json.suf.tmp']); // documentado: queda residuo
   });
 
   it('cas_removeFileFalla_noTapaElResultado', () => {

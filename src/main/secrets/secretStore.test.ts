@@ -34,6 +34,7 @@ function memoryStore(cipher: SecretCipher = fakeCipher(), initial?: string, stat
       return content;
     },
     writeFile: (path, data) => void files.set(path, data),
+    removeFile: () => undefined,
     rename: (from, to) => {
       files.set(to, files.get(from) ?? '');
       files.delete(from);
