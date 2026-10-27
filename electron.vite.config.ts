@@ -10,12 +10,14 @@ import { noPseudoLocalePlugin } from './scripts/noPseudoLocalePlugin';
 // El alias @shared apunta al contrato compartido main<->renderer.
 const sharedAlias = { '@shared': resolve('src/shared') };
 
-export default defineConfig(({ command }) => ({
+export default defineConfig({
   main: {
     // Main no pasa por el reemplazo de `process.env.NODE_ENV` que sí hace el renderer: sin fijarlo, `@lingui/core`
-    // mete en el build su compilador de mensajes de desarrollo (@messageformat/parser y compañía, medido en F3.1).
-    // Los catálogos ya llegan compilados por `@lingui/vite-plugin`; en dev se conserva, que avisa de un ICU roto.
-    define: command === 'build' ? { 'process.env.NODE_ENV': JSON.stringify('production') } : {},
+    // mete su compilador de mensajes de desarrollo (@messageformat/parser y compañía, medido en F3.1). Los catálogos
+    // ya llegan compilados por `@lingui/vite-plugin`, así que no hace falta ni en dev. Y tiene que ser IGUAL en dev:
+    // `electron-vite dev` también construye main y reescribe `third-party-bundle.json` (medido: con el compilador en
+    // dev, `pnpm dev` dejaba el manifiesto distinto del de `pnpm build` y `notices:check` fallaba).
+    define: { 'process.env.NODE_ENV': JSON.stringify('production') },
     // externalizeDepsPlugin: no bundlear deps de Node en el proceso main.
     //
     // electron-updater y zod son la EXCEPCION (B2) y tienen que viajar BUNDLEADOS: `electron-builder.yml`
@@ -65,4 +67,4 @@ export default defineConfig(({ command }) => ({
     },
     plugins: [react(), tailwindcss(), lingui(), noPseudoLocalePlugin(), bundledPackagesPlugin('renderer', resolve('.'))],
   },
-}));
+});
