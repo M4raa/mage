@@ -26,6 +26,7 @@
 //   pnpm verify:gui --trace-layout # guarda geometria/animaciones antes y despues de cada caso
 //   pnpm verify:gui --inspect-running # lee el estado de la tanda en curso, sin otra instancia
 //   pnpm verify:gui --initial-close-prompt --only=2.7: # prueba el aislamiento con la pregunta de cierre
+//   pnpm verify:gui --dump-dom-text=f.jsonl # SOLO F3 (T4): texto del DOM al final de cada caso, para compare-dom-text
 //
 // UN TURNO REAL POR EJECUCION: la ultima comprobacion envia un mensaje minimo a Claude (modelo y
 // esfuerzo mas bajos). Antes mira el uso de la cuenta; con mas del 70 % gastado avisa y deja elegir
@@ -51,6 +52,7 @@ import { withGuiState } from './lib/guiState.mjs';
 import { closeCheckOverlays, runGuiCheck } from './lib/guiCheckState.mjs';
 import { runPerfBaseline } from './lib/perfBaseline.mjs';
 import { runMageBench } from './lib/benchMage.mjs';
+import { appendDomText } from './lib/domTextDump.mjs';
 import { cleanupProfile, credentialDigest } from '../spike/f0-profile-cleanup.mjs';
 import { claudeUsage, codexRateLimits, guardedUsage, prepareCodexHome } from '../spike/bench/headless.mjs';
 
@@ -10922,7 +10924,7 @@ async function main() {
       const fileName = `${String(index + 1).padStart(2, '0')}-${slug(check.name)}.png`;
       try {
         const before = process.argv.includes('--trace-layout') ? await captureLayoutEvidence(page) : null;
-        const outcome = await runGuiCheck({ page, check,
+        const outcome = await runGuiCheck({ page, check: withDomTextDump(check),
           context: { userDataDir, runDir, screenshot: path.join(runDir, fileName) },
           prepare: () => prepareGuiCheck(page, check.state ?? {}, baselinePanels),
           settle: () => settleGuiState(page),
@@ -10957,6 +10959,18 @@ async function main() {
   console.log(`\n[verify:gui] informe: ${path.join(runDir, 'session.md')}`);
   console.log(`[verify:gui] ${results.length - failed.length}/${results.length} comprobaciones en verde`);
   process.exit(failed.length === 0 ? 0 : 1);
+}
+
+// T4 (DEVOLUCION-018), solo durante F3 y con la opción explícita: tras el `run` de cada caso, ANTES de restaurar, se
+// guarda el texto del DOM. Sin la opción, el caso queda tal cual.
+const DOM_TEXT_DUMP = process.argv.find((arg) => arg.startsWith('--dump-dom-text='))?.slice('--dump-dom-text='.length);
+function withDomTextDump(check) {
+  if (DOM_TEXT_DUMP === undefined) return check;
+  return { ...check, run: async (page, context) => {
+    const outcome = await check.run(page, context);
+    await appendDomText(page, path.resolve(DOM_TEXT_DUMP), check.name);
+    return outcome;
+  } };
 }
 
 // Benchmark F0-B, ruta R3 (`--bench --provider=claude|codex --rep=<n> --out=<fichero> [--tasks=T1,..]`):
