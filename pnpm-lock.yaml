@@ -23,9 +23,6 @@ importers:
       '@lingui/core':
         specifier: 6.10.1
         version: 6.10.1(@babel/core@7.29.7)
-      '@lingui/react':
-        specifier: 6.10.1
-        version: 6.10.1(@babel/core@7.29.7)(react@19.2.7)
       '@modelcontextprotocol/sdk':
         specifier: 1.31.0
         version: 1.31.0(zod@3.25.76)
@@ -665,16 +662,6 @@ packages:
     engines: {node: '>=22.19.0'}
     peerDependencies:
       '@lingui/conf': ^6.0.1
-
-  '@lingui/react@6.10.1':
-    resolution: {integrity: sha512-r0e4T7WpkeKeVxT+qt56u7i8z1ykRIotpsCXaA6Vm2K0iVkE0SebcWpBaEFpBX8FyHEzXSA5nshSH6dm50pL1Q==}
-    engines: {node: '>=22.19.0'}
-    peerDependencies:
-      babel-plugin-macros: 2 || 3
-      react: ^16.14.0 || ^17.0.0 || ^18.0.0 || ^19.0.0
-    peerDependenciesMeta:
-      babel-plugin-macros:
-        optional: true
 
   '@lingui/vite-plugin@6.10.1':
     resolution: {integrity: sha512-AmpTUCMQaw9Eg9Un5R5008E9+O9B/x4zcOuxYe3r/s1ry/OXemuigJStmBGgxsF6fxmUClIKY27JkpWL/GE0LA==}
@@ -4025,15 +4012,6 @@ snapshots:
       '@lingui/native-tools-win32-arm64-msvc': 0.1.6
       '@lingui/native-tools-win32-x64-msvc': 0.1.6
 
-  '@lingui/react@6.10.1(@babel/core@7.29.7)(react@19.2.7)':
-    dependencies:
-      '@lingui/babel-plugin-lingui-macro': 6.10.1(@babel/core@7.29.7)
-      '@lingui/core': 6.10.1(@babel/core@7.29.7)
-      react: 19.2.7
-      use-sync-external-store: 1.7.0(react@19.2.7)
-    transitivePeerDependencies:
-      - '@babel/core'
-
   '@lingui/vite-plugin@6.10.1(@babel/core@7.29.7)(@lingui/babel-plugin-lingui-macro@6.10.1(@babel/core@7.29.7))(vite@6.4.3(@types/node@24.19.0)(jiti@2.7.0)(lightningcss@1.32.0))':
     dependencies:
       '@lingui/cli': 6.10.1
@@ -6715,6 +6693,7 @@ snapshots:
   use-sync-external-store@1.7.0(react@19.2.7):
     dependencies:
       react: 19.2.7
+    optional: true
 
   utf8-byte-length@1.0.5: {}
 
