@@ -2,6 +2,7 @@ import { Readable } from 'node:stream';
 import { describe, expect, it } from 'vitest';
 import { BATCH_SIZE } from './transcriptReader';
 import { TranscriptService } from './transcriptService';
+import { readFoldedTranscript } from '../../testing/transcriptRead';
 import type { TranscriptBatch, TranscriptTailPosition } from '@shared/transcripts';
 
 const line = (uuid: string) => JSON.stringify({ type: 'user', uuid, message: { content: uuid } }) + '\n';
@@ -15,11 +16,11 @@ function transcriptService(contents: () => string): TranscriptService {
     createReadStream: (_path, start = 0) => Readable.from([Buffer.from(contents()).subarray(start)]),
   });
 }
+// El último lote con lo leído plegado como lo pliega el renderer: un corte por tiempo puede dejar el último
+// lote vacío y sin `reset` (H1 de DEVOLUCION-018).
 async function lastBatch(service: TranscriptService, from?: TranscriptTailPosition): Promise<TranscriptBatch> {
-  let last: TranscriptBatch | undefined;
-  for await (const batch of service.openStream('fixture.jsonl', new AbortController().signal, from)) last = batch;
-  if (last === undefined) throw new Error('No se recibió ningún lote');
-  return last;
+  const read = await readFoldedTranscript(service, 'fixture.jsonl', from);
+  return { ...read.last, entries: read.entries, errors: read.errors, ...(read.reset ? { reset: true } : {}) };
 }
 
 describe('transcripciones incrementales', () => {
