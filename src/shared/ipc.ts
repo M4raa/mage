@@ -725,6 +725,8 @@ export interface TranscriptBatchPayload {
   readonly transcriptId: string;
   readonly batch?: TranscriptBatch;
   readonly error?: string;
+  // Con `error`: la conversación pedida no existe en la cuenta (Codex o agy), no un fallo de lectura (devolución 19).
+  readonly missing?: true;
 }
 
 // --- Varias ventanas del workbench ------------------------------------------------------------

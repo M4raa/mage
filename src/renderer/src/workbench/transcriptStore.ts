@@ -16,6 +16,8 @@ export interface TranscriptStoreState {
   // en vez de releer el fichero entero desde el principio en cada turno.
   readonly tailPosition: TranscriptTailPosition;
   readonly errorMessage: string | null;
+  // El error es que la conversacion no existe en la cuenta (Codex o agy), no un fallo de lectura (devolucion 19).
+  readonly missing: boolean;
   // Ultimos params abiertos: permiten reintentar (refresh) sin que el panel tenga que conocerlos.
   readonly lastParams: OpenTranscriptParams | null;
   // Abre la transcripcion de una sesion DESDE EL PRINCIPIO; cancela cualquier lectura anterior en
@@ -40,7 +42,7 @@ export function applyTranscriptBatch(
 ): Partial<TranscriptStoreState> {
   if (current.transcriptId !== payload.transcriptId) return {};
   // Fallo terminal de lectura (fichero inexistente, error de FS): cierra la carga con el mensaje.
-  if (payload.error !== undefined) return { errorMessage: payload.error, isFinal: true };
+  if (payload.error !== undefined) return { errorMessage: payload.error, isFinal: true, missing: payload.missing === true };
   if (payload.batch === undefined) return {};
   const batch = payload.batch;
   return {
@@ -91,6 +93,7 @@ function createTranscriptStore(): TranscriptStoreHandle {
     totalLinesSoFar: 0,
     tailPosition: TRANSCRIPT_TAIL_START,
     errorMessage: null,
+    missing: false,
     lastParams: null,
 
     open: async (params) => {
@@ -109,6 +112,7 @@ function createTranscriptStore(): TranscriptStoreHandle {
         totalLinesSoFar: cached?.totalLinesSoFar ?? 0,
         tailPosition: cached?.tailPosition ?? TRANSCRIPT_TAIL_START,
         errorMessage: null,
+        missing: false,
         lastParams: params,
       });
       try {
@@ -128,7 +132,7 @@ function createTranscriptStore(): TranscriptStoreHandle {
       if (lastParams === null) return;
       get().cancel();
       const transcriptId = crypto.randomUUID();
-      set({ transcriptId, isFinal: false, errorMessage: null });
+      set({ transcriptId, isFinal: false, errorMessage: null, missing: false });
       void window.mage.openTranscript(transcriptId, { ...lastParams, resumeFrom: tailPosition }).catch((err: unknown) => {
         if (get().transcriptId !== transcriptId) return;
         set({ errorMessage: err instanceof Error ? err.message : String(err), isFinal: true });

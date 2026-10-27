@@ -80,6 +80,7 @@ import type {
   LoginStartParams,
   OpenEditorParams,
   OpenTranscriptParams,
+  TranscriptBatchPayload,
   ReadInstructionsParams,
   ReadMemoryParams,
   OpenArtifactParams,
@@ -3033,8 +3034,12 @@ function registerTranscriptIpc1(): void {
 // Ruta de la transcripción y, si el CLI no es Claude, cómo traducir sus líneas. Con `agentId` se abre el
 // transcript del SUBAGENTE (drill-down, M2.2.3b). Los resolvers de Claude validan sus segmentos
 // (anti path-traversal) y su ruta cae bajo projects/; la de Codex sale de su cuenta registrada y de un id.
-function resolveTranscriptSource(params: OpenTranscriptParams): { readonly filePath: string; readonly adapt?: LineAdapter } {
-  if (params.provider === 'codex') return { filePath: codexRolloutPath(params), adapt: adaptCodexLine };
+// null: la conversación de Codex no existe en esa cuenta (ver `sendMissingConversation`).
+function resolveTranscriptSource(params: OpenTranscriptParams): { readonly filePath: string; readonly adapt?: LineAdapter } | null {
+  if (params.provider === 'codex') {
+    const rollout = codexRolloutPath(params);
+    return rollout === null ? null : { filePath: rollout, adapt: adaptCodexLine };
+  }
   const filePath =
     params.agentId !== undefined
       ? resolveSubagentTranscriptPath(params.accountDir, params.cwd, params.sessionId, params.agentId)
@@ -3047,7 +3052,12 @@ function resolveTranscriptSource(params: OpenTranscriptParams): { readonly fileP
 
 // Abre en streaming y empuja lotes por TRANSCRIPT_BATCH_CHANNEL sin bloquear el invoke.
 function streamTranscript(sender: Electron.WebContents, transcriptId: string, params: OpenTranscriptParams): void {
-  const { filePath, adapt } = resolveTranscriptSource(params);
+  const source = resolveTranscriptSource(params);
+  if (source === null) {
+    sendMissingConversation(sender, transcriptId, `No existe la conversacion de Codex ${params.sessionId}`);
+    return;
+  }
+  const { filePath, adapt } = source;
   const controller = new AbortController();
   openTranscriptControllers.set(transcriptId, controller);
 
@@ -3094,7 +3104,10 @@ function openAgyTranscript(sender: Electron.WebContents, transcriptId: string, p
   const profile = agyProfileOfAccount(params.accountDir);
   if (profile === null) throw new Error(`Cuenta de agy no valida para abrir una transcripcion: ${params.accountDir}`);
   const dbPath = agyHistory.findDb(profile, params.sessionId, agyExternalProfileOf(params.accountDir));
-  if (dbPath === null) throw new Error(`No existe la conversacion de agy ${params.sessionId} en ${profile}`);
+  if (dbPath === null) {
+    sendMissingConversation(sender, transcriptId, `No existe la conversacion de agy ${params.sessionId}`);
+    return;
+  }
   try {
     const batch = staticTranscriptBatch(agyHistory.readLines(dbPath));
     if (!sender.isDestroyed()) sender.send(TRANSCRIPT_BATCH_CHANNEL, { transcriptId, batch });
@@ -3105,13 +3118,21 @@ function openAgyTranscript(sender: Electron.WebContents, transcriptId: string, p
   }
 }
 
-// Rollout de una conversación de Codex: solo de una cuenta registrada y por su id (nunca una ruta del renderer).
-function codexRolloutPath(params: OpenTranscriptParams): string {
+// Rollout de una conversación de Codex: solo de una cuenta registrada y por su id (nunca una ruta del renderer). null si
+// esa cuenta no tiene ninguna conversación con ese id.
+function codexRolloutPath(params: OpenTranscriptParams): string | null {
   const account = getProviderAccounts().find('codex', params.accountDir);
   if (account === null) throw new Error(`Cuenta de Codex no valida para abrir una transcripcion: ${params.accountDir}`);
-  const path = codexHistory.findRollout(account.home, params.sessionId);
-  if (path === null) throw new Error(`No existe la conversacion de Codex ${params.sessionId} en ${account.home}`);
-  return path;
+  return codexHistory.findRollout(account.home, params.sessionId);
+}
+
+// La conversación que se pidió no existe en la cuenta: fallo terminal, marcado `missing` para que el renderer lo distinga
+// de un error de lectura. Es el caso de un workspace de 0.1.2 que guardó el UUID de la sesión de Mage en vez del hilo
+// (devolución 19): la pestaña lo dice y deja de reanudar ese id.
+function sendMissingConversation(sender: Electron.WebContents, transcriptId: string, error: string): void {
+  mainLog('warn', 'Conversacion inexistente al abrir su transcripcion', { transcriptId, error });
+  const payload: TranscriptBatchPayload = { transcriptId, error, missing: true };
+  if (!sender.isDestroyed()) sender.send(TRANSCRIPT_BATCH_CHANNEL, payload);
 }
 
 function registerTranscriptIpc2(deps: IpcDependencies): void {

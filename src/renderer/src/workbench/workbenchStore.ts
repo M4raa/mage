@@ -197,6 +197,9 @@ export interface WorkbenchState extends PrState, PrActions {
   readonly lockByChat: Readonly<Record<string, ConversationLockStatus>>;
   // La otra instancia soltó la conversación y esta pasó a ser la dueña: la pestaña lo dice un momento.
   readonly lockReclaimedByChat: Readonly<Record<string, true>>;
+  // Pestañas de Codex o agy restauradas con un id que no es de ninguna conversación de su cuenta (un workspace de 0.1.2
+  // guardó el UUID de la sesión de Mage): proveedor, para el aviso del chat. Devolución 19.
+  readonly missingConversationByChat: Readonly<Record<string, string>>;
   // Feedback de actividad (M2.6): inicio del turno y ultima señal del motor, por pestana (ms epoch).
   // El indicador de "pensando" muestra el tiempo transcurrido y detecta inactividad (posible cuelgue).
   readonly turnStartByChat: Readonly<Record<string, number>>;
@@ -318,6 +321,9 @@ export interface WorkbenchState extends PrState, PrActions {
   // con `--resume` (decision del usuario), y tambien la usan el borrado/movido de conversacion (nadie
   // puede seguir escribiendo el .jsonl) y el temporizador de la semana.
   discardBackgroundSession: (sessionId: string) => Promise<void>;
+  // La transcripción de la conversación de una pestaña de Codex o agy no existe en su cuenta: la pestaña deja de
+  // reanudar ese id (su primer turno abre un hilo nuevo) y el chat lo dice. Ver `missingConversationPatch`.
+  forgetMissingConversation: (tabId: string, conversationId: string) => void;
   // Division del centro en N paneles (Ronda 3 item 13, generalizado en I11 y en I11-drag).
   // INVARIANTE: `activeTabId` es SIEMPRE la pestaña del panel ENFOCADO, con cualquier numero de
   // divisiones — por eso el dock, el sidebar, los atajos y el widget siguen funcionando sin cambios:
@@ -1248,6 +1254,7 @@ export function createWorkbenchStore(mage: MageClient) {
     pendingByChat: {},
     lockByChat: {},
     lockReclaimedByChat: {},
+    missingConversationByChat: {},
     turnStartByChat: {},
     lastActivityByChat: {},
     slashCommandsByChat: {},
@@ -1464,6 +1471,7 @@ export function createWorkbenchStore(mage: MageClient) {
           subagentsByChat: without(s.subagentsByChat, tabId),
           contextUsageByChat: without(s.contextUsageByChat, tabId),
           providerUsageByChat: without(s.providerUsageByChat, tabId),
+          missingConversationByChat: without(s.missingConversationByChat, tabId),
           rateLimitByChat: without(s.rateLimitByChat, tabId),
           mcpServersByChat: without(s.mcpServersByChat, tabId),
           toolsByChat: without(s.toolsByChat, tabId),
@@ -1511,6 +1519,13 @@ export function createWorkbenchStore(mage: MageClient) {
 
     closeInactiveTabs: () => {
       for (const tab of tabsToCloseInactive(get().tabs, get().statusByChat)) void get().closeTab(tab.id);
+    },
+
+    forgetMissingConversation: (tabId, conversationId) => {
+      const patch = missingConversationPatch(get(), tabId, conversationId);
+      if (patch === null) return;
+      set(patch);
+      schedulePersist(mage, get);
     },
 
     discardBackgroundSession: async (sessionId) => {
@@ -2749,6 +2764,29 @@ function codexThreadBinding(state: WorkbenchState, tabId: string, threadId: stri
   const tab = state.tabs.find((t) => t.id === tabId);
   if (tab === undefined || !ownsConversation(tab.provider) || tab.resumeSessionId !== undefined || threadId.length === 0) return {};
   return { tabs: state.tabs.map((t) => (t.id === tabId ? { ...t, resumeSessionId: threadId } : t)) };
+}
+
+// Pestaña de Codex o agy cuyo id de conversación no existe en su cuenta (devolución 19). Sin emparejar por heurística
+// con ningún rollout: se olvida el id —el primer turno abre un hilo nuevo en vez de reanudar uno inexistente, y el
+// workspace deja de guardarlo— y se marca para el aviso. Solo si el id sigue siendo el de la pestaña y no hay sesión
+// viva: una lectura tardía no toca una pestaña que ya cambió de conversación.
+export function missingConversationPatch(
+  state: Pick<WorkbenchState, 'tabs' | 'sessionIdByChat' | 'missingConversationByChat'>,
+  tabId: string,
+  conversationId: string,
+): Pick<WorkbenchState, 'tabs' | 'missingConversationByChat'> | null {
+  const tab = state.tabs.find((t) => t.id === tabId);
+  if (tab === undefined || !ownsConversation(tab.provider)) return null;
+  if (tab.resumeSessionId !== conversationId || state.sessionIdByChat[tabId] !== undefined) return null;
+  return {
+    tabs: state.tabs.map((t) => (t.id === tabId ? withoutResume(t) : t)),
+    missingConversationByChat: { ...state.missingConversationByChat, [tabId]: tab.provider },
+  };
+}
+
+function withoutResume(tab: Tab): Tab {
+  const { resumeSessionId: _forgotten, ...rest } = tab;
+  return rest;
 }
 
 export function headPermission(state: Pick<WorkbenchState, 'pendingByChat'>, tabId: string): PendingPermission | null {

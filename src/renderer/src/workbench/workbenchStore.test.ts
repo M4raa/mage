@@ -323,6 +323,45 @@ describe('sesiones en segundo plano', () => {
     expect(saveConversationPrefs).not.toHaveBeenCalled();
   });
 
+  it('forgetMissingConversation_codexRestauradaConUuidHuerfano_olvidaElIdAvisaYPersisteSinEl', async () => {
+    vi.useFakeTimers();
+    const saveWorkspace = vi.fn().mockResolvedValue(undefined);
+    const store = createWorkbenchStore(fakeMage({ saveWorkspace }));
+    store.setState({ tabs: [{ ...tab('a'), provider: 'codex', resumeSessionId: 'mage-uuid-huerfano' }], activeTabId: 'a', splitLayout: singleLeaf('a'), sessionIdByChat: {} });
+
+    store.getState().forgetMissingConversation('a', 'mage-uuid-huerfano');
+    await vi.runAllTimersAsync();
+    vi.useRealTimers();
+
+    expect(store.getState().tabs[0]?.resumeSessionId).toBeUndefined();
+    expect(store.getState().missingConversationByChat).toEqual({ a: 'codex' });
+    const saved = saveWorkspace.mock.calls.at(-1)?.[0] as { tabs: readonly object[] } | undefined;
+    expect(saved?.tabs).toHaveLength(1);
+    expect('sessionId' in (saved?.tabs[0] ?? { sessionId: 'sin guardar' })).toBe(false);
+  });
+
+  it('forgetMissingConversation_conSesionVivaOIdDistinto_noTocaLaPestaña', () => {
+    const store = createWorkbenchStore(fakeMage({ saveWorkspace: vi.fn().mockResolvedValue(undefined) }));
+    const codex = { ...tab('a'), provider: 'codex', resumeSessionId: 'thread-1' };
+    store.setState({ tabs: [codex], activeTabId: 'a', splitLayout: singleLeaf('a'), sessionIdByChat: { a: 's-a' } });
+
+    store.getState().forgetMissingConversation('a', 'thread-1');
+    store.setState({ sessionIdByChat: {} });
+    store.getState().forgetMissingConversation('a', 'otro-id');
+
+    expect(store.getState().tabs[0]?.resumeSessionId).toBe('thread-1');
+    expect(store.getState().missingConversationByChat).toEqual({});
+  });
+
+  it('forgetMissingConversation_pestañaClaude_noTocaLaPestaña', () => {
+    const store = createWorkbenchStore(fakeMage({ saveWorkspace: vi.fn().mockResolvedValue(undefined) }));
+    store.setState({ tabs: [{ ...tab('a'), resumeSessionId: 's-1' }], activeTabId: 'a', splitLayout: singleLeaf('a'), sessionIdByChat: {} });
+
+    store.getState().forgetMissingConversation('a', 's-1');
+
+    expect(store.getState().tabs[0]?.resumeSessionId).toBe('s-1');
+  });
+
   it('deleteConversation_hiloDeCodexConPestañaViva_cierraEsaPestaña', async () => {
     // closeMatchingTab: el historial borra por el hilo; la pestaña viva de Codex tiene otro id de sesión.
     const store = createWorkbenchStore(

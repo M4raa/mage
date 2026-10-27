@@ -59,6 +59,9 @@ export function useTranscriptLifecycle(tabId: string): void {
   const openTranscript = useTranscriptStore((s) => s.open);
   const cancelTranscript = useTranscriptStore((s) => s.cancel);
   const refreshTranscript = useTranscriptStore((s) => s.refresh);
+  // La conversación pedida no existe en la cuenta (devolución 19): su id, para olvidarlo en la pestaña.
+  const missingId = useTranscriptStore((s) => (s.missing ? s.lastParams?.sessionId : undefined));
+  const forgetMissingConversation = useWorkbenchStore((s) => s.forgetMissingConversation);
   const loadThinking = useThinkingStore((s) => s.load);
   // Nombre que la conversacion tiene en el CLI (`/rename`, P-026 1.6). Selector a una CADENA: zustand
   // compara por valor, asi que la pestaña solo se re-renderiza cuando el nombre cambia de verdad.
@@ -89,6 +92,10 @@ export function useTranscriptLifecycle(tabId: string): void {
     // que se abre. `openTranscript`/`cancelTranscript` entran en las deps porque con un store por
     // pestaña su identidad ya no es constante.
   }, [configDir, cwd, sessionId, hasTranscript, ownProvider, openTranscript, cancelTranscript, loadThinking]);
+
+  useEffect(() => {
+    if (ownProvider !== undefined && missingId !== undefined) forgetMissingConversation(tabId, missingId);
+  }, [tabId, ownProvider, missingId, forgetMissingConversation]);
 
   // Auto-refresco al TERMINAR cada interaccion: el CLI escribe la transcripcion mientras trabaja, asi
   // que releerla al pasar a `idle` es lo que hace que Logs/Contexto vean el turno recien acabado.

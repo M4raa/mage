@@ -48,7 +48,13 @@ describe('applyTranscriptBatch', () => {
   it('applyTranscriptBatch_error_cierraLaCargaConElMensaje', () => {
     const patch = applyTranscriptBatch(EMPTY, { transcriptId: 'lectura-1', error: 'no existe el fichero' });
 
-    expect(patch).toEqual({ errorMessage: 'no existe el fichero', isFinal: true });
+    expect(patch).toEqual({ errorMessage: 'no existe el fichero', isFinal: true, missing: false });
+  });
+
+  it('applyTranscriptBatch_conversacionInexistente_loMarcaComoMissing', () => {
+    const patch = applyTranscriptBatch(EMPTY, { transcriptId: 'lectura-1', error: 'No existe la conversacion de Codex x', missing: true });
+
+    expect(patch).toEqual({ errorMessage: 'No existe la conversacion de Codex x', isFinal: true, missing: true });
   });
 
   it('applyTranscriptBatch_sinLoteNiError_noCambiaNada', () => {

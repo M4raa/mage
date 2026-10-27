@@ -5,7 +5,7 @@ import { CopyButton } from './CopyButton';
 import { Icon } from './Icon';
 import { AgyCommandsDialog } from './AgyCommandsDialog';
 import { isValidAgyRule, parseAgyMcpRule } from '@shared/agyRules';
-import { NO_PERMISSION_CONTROL_WARNING, isAutoApprovedProvider } from '@shared/providers';
+import { AGY_PROVIDER_ID, NO_PERMISSION_CONTROL_WARNING, isAutoApprovedProvider } from '@shared/providers';
 import { useWorkbenchStore } from '../workbenchStore';
 import { SPARKLE_WAIST_RATIO } from '../brandMark';
 import { useThinkingStore } from '../thinkingStore';
@@ -41,6 +41,7 @@ export function BlockChat(): React.JSX.Element {
   const useTranscript = usePaneTranscriptStore();
   const transcriptFinal = useTranscript((s) => s.isFinal);
   const transcriptError = useTranscript((s) => s.errorMessage);
+  const missingProvider = useWorkbenchStore((s) => s.missingConversationByChat[activeTabId]);
   const allBlocks = useWorkbenchStore((s) => s.blocksByChat[activeTabId] ?? EMPTY);
   useHydrateFromTranscript();
   const accent = useWorkbenchStore((s) => {
@@ -72,6 +73,7 @@ export function BlockChat(): React.JSX.Element {
 
   if (blocks.length === 0 && !turnLive) {
     if (activeTabId.length === 0) return <NoConversationState />;
+    if (missingProvider !== undefined) return <ConversationLoadState text={missingConversationText(missingProvider)} />;
     if (resumed && transcriptError !== null) return <ConversationLoadState text={`No se pudo cargar la conversación: ${transcriptError}`} />;
     if (resumed && !transcriptFinal) return <ConversationLoadState text="Cargando conversación…" loading />;
     return <EmptyConversation />;
@@ -90,6 +92,11 @@ export function BlockChat(): React.JSX.Element {
       {turnLive && <ThinkingIndicator accent={accent} tool={runningTool} steps={turnSummary.steps} errors={turnSummary.errors} />}
     </div>
   );
+}
+
+// Aviso de una pestaña restaurada cuya conversación no existe en su cuenta (devolución 19). El primer turno abre una nueva.
+function missingConversationText(provider: string): string {
+  return `No se encontró esta conversación de ${provider === AGY_PROVIDER_ID ? 'agy' : 'Codex'}. Ábrela desde el historial de la cuenta.`;
 }
 
 // Tamaño del contenido de la ULTIMA fila del hilo (caracteres). Cambia con cada delta de streaming ->
