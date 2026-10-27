@@ -32,6 +32,7 @@ versión.
 - Una conversación de Codex o agy recupera su modelo y su esfuerzo al reabrirla desde el historial.
 - Las pestañas de Codex y agy ya no salen vacías al reiniciar Mage: se reabren con su conversación. Una pestaña guardada por la 0.1.2 cuya conversación no se encuentra lo dice («Ábrela desde el historial de la cuenta») y su primer mensaje empieza una nueva.
 - Una conversación de Codex o agy que sigue trabajando en segundo plano ya no se puede abrir en otra ventana desde el historial, y borrarla, moverla o reabrirla para su agente antes de tocarla.
+- El historial ordena y fecha las conversaciones de Codex por su último mensaje: Codex no actualiza la fecha de modificación de sus ficheros y una conversación larga se quedaba con la hora en que empezó.
 - Durante «Crear PR», un push forzado o saltarse los hooks se deniega aunque la conversación tenga «Permitir siempre Bash», también con la pestaña cerrada.
 - Consultar el estado de Git revalida los permisos de la cuenta antes de devolver datos de caché.
 - La bóveda rechaza explícitamente los backends Linux inseguros, incluso si anuncian cifrado disponible.
