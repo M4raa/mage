@@ -1,0 +1,8 @@
+{
+  "settings.language.en": "English",
+  "settings.language.es": "Español",
+  "settings.language.hint": "Cambia los textos de Mage. No cambia el idioma en que te responde el agente ni lo que se le envía.",
+  "settings.language.label": "IDIOMA",
+  "settings.language.system": "Sistema",
+  "settings.language.systemHint": "Sigue el idioma del sistema operativo ({language})."
+}

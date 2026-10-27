@@ -1,5 +1,9 @@
 {
   "main": [
+    "@lingui/core",
+    "@lingui/message-utils",
+    "@messageformat/date-skeleton",
+    "@messageformat/parser",
     "@modelcontextprotocol/sdk",
     "ajv",
     "ajv-formats",
@@ -23,6 +27,7 @@
     "lazy-val",
     "lodash.escaperegexp",
     "lodash.isequal",
+    "moo",
     "ms",
     "path-key",
     "pkce-challenge",
@@ -44,6 +49,7 @@
     "@codemirror/view",
     "@lezer/common",
     "@lezer/highlight",
+    "@lingui/core",
     "@marijn/find-cluster-break",
     "@shikijs/core",
     "@shikijs/engine-javascript",

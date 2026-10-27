@@ -2,14 +2,20 @@ import { resolve } from 'node:path';
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
+import { lingui } from '@lingui/vite-plugin';
 import { bundledPackagesPlugin } from './scripts/bundledPackagesPlugin';
+import { noPseudoLocalePlugin } from './scripts/noPseudoLocalePlugin';
 
 // Config de los tres targets de Electron (main / preload / renderer).
 // El alias @shared apunta al contrato compartido main<->renderer.
 const sharedAlias = { '@shared': resolve('src/shared') };
 
-export default defineConfig({
+export default defineConfig(({ command }) => ({
   main: {
+    // Main no pasa por el reemplazo de `process.env.NODE_ENV` que sí hace el renderer: sin fijarlo, `@lingui/core`
+    // mete en el build su compilador de mensajes de desarrollo (@messageformat/parser y compañía, medido en F3.1).
+    // Los catálogos ya llegan compilados por `@lingui/vite-plugin`; en dev se conserva, que avisa de un ICU roto.
+    define: command === 'build' ? { 'process.env.NODE_ENV': JSON.stringify('production') } : {},
     // externalizeDepsPlugin: no bundlear deps de Node en el proceso main.
     //
     // electron-updater y zod son la EXCEPCION (B2) y tienen que viajar BUNDLEADOS: `electron-builder.yml`
@@ -29,7 +35,7 @@ export default defineConfig({
     // existiria en la app empaquetada. Solo entra lo que importa el cliente (stdio, HTTP, SSE y OAuth).
     // fflate (extensiones .mcpb, grupo C) por lo mismo: externalizado, el smoke empaquetado pasaba solo
     // porque `release/` vive dentro del repo y Node lo encontraba subiendo hasta su `node_modules`.
-    plugins: [externalizeDepsPlugin({ exclude: ['electron-updater', 'zod', '@modelcontextprotocol/sdk', 'fflate'] }), bundledPackagesPlugin('main', resolve('.'))],
+    plugins: [externalizeDepsPlugin({ exclude: ['electron-updater', 'zod', '@modelcontextprotocol/sdk', 'fflate', '@lingui/core'] }), lingui(), noPseudoLocalePlugin(), bundledPackagesPlugin('main', resolve('.'))],
     resolve: { alias: sharedAlias },
   },
   preload: {
@@ -57,6 +63,6 @@ export default defineConfig({
         '@renderer': resolve('src/renderer/src'),
       },
     },
-    plugins: [react(), tailwindcss(), bundledPackagesPlugin('renderer', resolve('.'))],
+    plugins: [react(), tailwindcss(), lingui(), noPseudoLocalePlugin(), bundledPackagesPlugin('renderer', resolve('.'))],
   },
-});
+}));

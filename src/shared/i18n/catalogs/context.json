@@ -1,0 +1,8 @@
+{
+  "settings.language.en": { "description": "Opción del selector de idioma. Endónimo: NO se traduce.", "usage": "src/renderer/src/workbench/components/LanguageControl.tsx" },
+  "settings.language.es": { "description": "Opción del selector de idioma. Endónimo: NO se traduce.", "usage": "src/renderer/src/workbench/components/LanguageControl.tsx" },
+  "settings.language.hint": { "description": "Explicación bajo el selector de idioma en Configuración › Apariencia.", "usage": "src/renderer/src/workbench/components/LanguageControl.tsx" },
+  "settings.language.label": { "description": "Título de la sección del selector de idioma, en mayúsculas como los demás títulos de Configuración.", "usage": "src/renderer/src/workbench/components/LanguageControl.tsx", "maxLength": 24 },
+  "settings.language.system": { "description": "Opción «seguir al sistema operativo» del selector de idioma.", "usage": "src/renderer/src/workbench/components/LanguageControl.tsx", "maxLength": 16 },
+  "settings.language.systemHint": { "description": "Ayuda de la opción Sistema. {language} es el endónimo del idioma que resulta (Español o English).", "usage": "src/renderer/src/workbench/components/LanguageControl.tsx", "variables": { "language": "string" } }
+}
