@@ -7,7 +7,7 @@ import type { CreateSessionParams, SessionEventPayload } from '@shared/ipc';
 import type { AgentSessionDeps, SessionLogFn } from './agentSession';
 import { resolveLaunchParams, type DefaultsDeps } from './sessionDefaults';
 import { pathEquals } from '../os/pathUtils';
-import { AGY_PROVIDER_ID, CODEX_PROVIDER_ID, writesClaudeTranscript } from '@shared/providers';
+import { AGY_PROVIDER_ID, CODEX_PROVIDER_ID, ownsConversation } from '@shared/providers';
 
 // Sumidero de eventos hacia el consumidor (en produccion, webContents.send del renderer).
 export type EventSink = (payload: SessionEventPayload) => void;
@@ -58,7 +58,7 @@ export class SessionManager {
   create(params: CreateSessionParams, sink: EventSink, ownerId?: number): string {
     const resumeId = typeof params.resumeSessionId === 'string' && params.resumeSessionId.length > 0 ? params.resumeSessionId : null;
     // Codex y agy llevan su propia conversacion: `resumeSessionId` es ese id y la sesion de Mage es nueva.
-    const providerOwnsConversation = !writesClaudeTranscript(params.provider);
+    const providerOwnsConversation = ownsConversation(params.provider);
     const isResume = resumeId !== null && !providerOwnsConversation;
     const sessionId = isResume ? resumeId : randomUUID();
     // Una conversacion NO puede estar viva dos veces: serian dos procesos del CLI escribiendo la misma

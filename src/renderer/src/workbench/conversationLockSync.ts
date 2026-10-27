@@ -1,18 +1,15 @@
 import type { ConversationLockRef, ConversationLockStatus } from '@shared/conversationLock';
-import { AGY_PROVIDER_ID, CODEX_PROVIDER_ID } from '@shared/providers';
 import type { MageApi } from '@shared/ipc';
 import type { Tab } from './types';
+import { conversationIdOfTab } from './conversationId';
 
 // Bloqueo de conversación entre instancias (#55, F2.8), lado del renderer: cada pestaña con conversación (reanudada o
 // ya ligada a su id nativo) la pide a main; al cerrarse o cambiar de conversación, la suelta. Una sola suscripción al
 // store cubre todos los caminos (abrir, restaurar, `session_init`, reasignar cuenta, cerrar), en vez de una llamada en
 // cada uno. El resultado (dueña o solo lectura) queda en `lockByChat`.
 
-// Proveedores cuyo id de conversación viene del CLI (`thread`/`cascade`), no del id de sesión de Mage.
-const OWN_CONVERSATION_PROVIDERS: readonly string[] = [CODEX_PROVIDER_ID, AGY_PROVIDER_ID];
-
 export function lockRefOf(tab: Tab, liveSessionId: string | undefined): ConversationLockRef | null {
-  const nativeId = OWN_CONVERSATION_PROVIDERS.includes(tab.provider) ? tab.resumeSessionId : (liveSessionId ?? tab.resumeSessionId);
+  const nativeId = conversationIdOfTab(tab, liveSessionId);
   if (nativeId === undefined || nativeId.length === 0) return null;
   return { provider: tab.provider, accountDir: tab.accountId, nativeId };
 }

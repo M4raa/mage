@@ -51,6 +51,7 @@ import { mergeIntoDraft, type QueuedMessage } from './messageQueue';
 import type { SendReceipt } from '@shared/coordination';
 import { readOnlyLockMessage, type ConversationLockStatus } from '@shared/conversationLock';
 import { lockRefOf } from './conversationLockSync';
+import { conversationIdOfTab } from './conversationId';
 import type { Account, AccountSwitchPrompt, Block, ChatStatus, ContextInfo, ImageAttachment, PermissionView, PromptDraft, RateLimitNotice, SessionExtensions, Tab } from './types';
 import type { ConversationPrivacy } from '@shared/state';
 import type { ConversationSummary } from '@shared/conversations';
@@ -114,7 +115,7 @@ import type {
 import { DEFAULT_APP_SETTINGS, type RuntimeShell } from '@shared/settings';
 import type { ToolAccessRule } from '@shared/toolAccess';
 import type { AgyCommandVerdict } from '@shared/agyRules';
-import { AGY_PROVIDER_ID, CODEX_PROVIDER_ID, runsOnMageRuntime, writesClaudeTranscript, type CustomProvider, type ProviderModel } from '@shared/providers';
+import { AGY_PROVIDER_ID, CODEX_PROVIDER_ID, ownsConversation, runsOnMageRuntime, writesClaudeTranscript, type CustomProvider, type ProviderModel } from '@shared/providers';
 import { applyThemeFromSettings, findActiveImportedTheme, resolveTheme, systemPrefersDark } from './theme';
 import { toWidgetSnapshot } from './widgetView';
 import { deriveTitleFromPrompt, isPlaceholderTitle, isSlashCommandText, NEW_CONVERSATION_TITLE, renamedTitleFrom } from './conversationTitle';
@@ -743,7 +744,9 @@ async function loadConversationPrefsSafely(mage: MageClient, sessionId: string):
 function persistConversationPrefs(mage: MageClient, state: WorkbenchState, tabId: string): void {
   const tab = state.tabs.find((t) => t.id === tabId);
   if (tab === undefined) return;
-  const sessionId = state.sessionIdByChat[tabId] ?? tab.resumeSessionId;
+  // Las preferencias son de la conversación: Codex o agy sin hilo todavía no tienen dónde guardarlas (las escribe su
+  // `session_init`), y no se dejan bajo el UUID de la sesión de Mage.
+  const sessionId = conversationIdOfTab(tab, state.sessionIdByChat[tabId]);
   if (sessionId === undefined || sessionId.length === 0) return;
   void mage
     .saveConversationPrefs({ sessionId, prefs: toConversationPrefs(tab) })
@@ -845,7 +848,7 @@ function movableTab(state: WorkbenchState, tabId: string): PersistedTab {
 
 // La pestaña abierta de una conversacion (viva o por reanudar), si la hay.
 function tabOfConversation(state: WorkbenchState, sessionId: string): Tab | undefined {
-  return state.tabs.find((t) => (state.sessionIdByChat[t.id] ?? t.resumeSessionId) === sessionId);
+  return state.tabs.find((t) => conversationIdOfTab(t, state.sessionIdByChat[t.id]) === sessionId);
 }
 
 // Una fila del historial como pestaña para OTRA ventana: la misma que abriria `openConversation`
@@ -2060,7 +2063,7 @@ export function createWorkbenchStore(mage: MageClient) {
       const tab = get().tabs.find((t) => t.id === tabId);
       // Una pestaña restaurada no tiene sesion viva, solo `resumeSessionId` (mismo criterio que el
       // handoff): sin esto no hacia nada, en silencio (P-026 2.7).
-      const sessionId = get().sessionIdByChat[tabId] ?? tab?.resumeSessionId;
+      const sessionId = tab === undefined ? undefined : conversationIdOfTab(tab, get().sessionIdByChat[tabId]);
       if (tab === undefined || sessionId === undefined || sessionId.length === 0) return;
       if (destAccountId === tab.accountId) return;
       // Entre cuentas de Claude se mueve la transcripción; en cualquier otro caso se traduce a formato nativo del
@@ -2593,7 +2596,7 @@ export function createWorkbenchStore(mage: MageClient) {
       // El id de conversación de Codex/agy se conoce al arrancar: se persiste para poder reabrir la conversación.
       // Y sus preferencias: main ya liga la sesión a la conversación (F2.1), así que lo elegido antes del
       // arranque deja de estar bajo el id de sesión de Mage y queda en la conversación que se reabrirá.
-      if (event.kind === 'session_init' && tab !== undefined && OWN_CONVERSATION_PROVIDERS.includes(tab.provider)) {
+      if (event.kind === 'session_init' && tab !== undefined && ownsConversation(tab.provider)) {
         schedulePersist(mage, get);
         persistConversationPrefs(mage, get(), tab.id);
       }
@@ -2731,14 +2734,11 @@ function asAccountProvider(id: string): AccountProviderId {
   throw new Error(`Proveedor de cuenta desconocido: ${JSON.stringify(id)}`);
 }
 
-// Los que llevan su propia conversación (su id viene del CLI en el `session_init`).
-const OWN_CONVERSATION_PROVIDERS: readonly string[] = [CODEX_PROVIDER_ID, AGY_PROVIDER_ID];
-
 // Acumula el uso del turno de una pestaña de Codex o agy (las de Claude lo leen de su transcripción).
 function providerUsagePatch(state: WorkbenchState, tabId: string, usage: TurnUsage | undefined): Partial<WorkbenchState> {
   if (usage === undefined) return {};
   const tab = state.tabs.find((t) => t.id === tabId);
-  if (tab === undefined || !OWN_CONVERSATION_PROVIDERS.includes(tab.provider)) return {};
+  if (tab === undefined || !ownsConversation(tab.provider)) return {};
   const next = accumulateProviderUsage(state.providerUsageByChat[tabId], usage);
   return next === null ? {} : { providerUsageByChat: { ...state.providerUsageByChat, [tabId]: next } };
 }
@@ -2747,7 +2747,7 @@ function providerUsagePatch(state: WorkbenchState, tabId: string, usage: TurnUsa
 // reabrirla (`thread/resume`, `--conversation`) y leer su historial; Claude y el runtime propio usan el de Mage.
 function codexThreadBinding(state: WorkbenchState, tabId: string, threadId: string): Partial<WorkbenchState> {
   const tab = state.tabs.find((t) => t.id === tabId);
-  if (tab === undefined || !OWN_CONVERSATION_PROVIDERS.includes(tab.provider) || tab.resumeSessionId !== undefined || threadId.length === 0) return {};
+  if (tab === undefined || !ownsConversation(tab.provider) || tab.resumeSessionId !== undefined || threadId.length === 0) return {};
   return { tabs: state.tabs.map((t) => (t.id === tabId ? { ...t, resumeSessionId: threadId } : t)) };
 }
 
@@ -3310,7 +3310,7 @@ function without<T>(record: Readonly<Record<string, T>>, key: string): Record<st
 // CLI siga con el fichero abierto al borrarlo/moverlo.
 async function closeMatchingTab(get: () => WorkbenchState, sessionId: string): Promise<void> {
   const state = get();
-  const tab = state.tabs.find((t) => (state.sessionIdByChat[t.id] ?? t.resumeSessionId) === sessionId);
+  const tab = state.tabs.find((t) => conversationIdOfTab(t, state.sessionIdByChat[t.id]) === sessionId);
   if (tab !== undefined) await state.closeTab(tab.id);
 }
 

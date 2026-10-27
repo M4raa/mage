@@ -4,14 +4,15 @@ import { WORKSPACE_STATE_VERSION } from '@shared/state';
 import { isPermissionMode } from '@shared/ipc';
 import { RETIRED_PROVIDER_IDS } from '@shared/providers';
 import type { Tab } from './types';
+import { conversationIdOfTab } from './conversationId';
 import { findLeafPath, fromLegacySplit, singleLeaf, pruneSplitLayout } from './splitLayout';
 
 // Mapeo PURO entre el estado del workbench y el workspace persistido (M2.5). Sin IPC ni store: el
 // store llama a estas funciones y delega el I/O en window.mage.{load,save}Workspace.
 
-// Construye el snapshot a persistir. El sessionId de cada pestana es el de su sesion VIVA si existe
-// (sessionIdByChat), o el `resumeSessionId` heredado de un arranque anterior (para no perder la
-// posibilidad de reanudar una pestana restaurada que aun no se ha usado en esta sesion).
+// Construye el snapshot a persistir. El sessionId de cada pestana es el id de su CONVERSACIÓN
+// (`conversationIdOfTab`): en Claude y el runtime propio, el de su sesion viva o el `resumeSessionId`
+// heredado de un arranque anterior; en Codex y agy, el del hilo, nunca el UUID de la sesion de Mage.
 export function toPersistedWorkspace(
   tabs: readonly Tab[],
   activeTabId: string,
@@ -19,7 +20,7 @@ export function toPersistedWorkspace(
   splitLayout: SplitLayout = singleLeaf(activeTabId),
 ): PersistedWorkspace {
   const persistedTabs = tabs.map((tab): PersistedTab => {
-    const sessionId = sessionIdByChat[tab.id] ?? tab.resumeSessionId;
+    const sessionId = conversationIdOfTab(tab, sessionIdByChat[tab.id]);
     return {
       id: tab.id,
       accountId: tab.accountId,

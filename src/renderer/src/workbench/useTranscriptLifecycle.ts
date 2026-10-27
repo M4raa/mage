@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
-import { AGY_PROVIDER_ID, CODEX_PROVIDER_ID, writesClaudeTranscript } from '@shared/providers';
+import { AGY_PROVIDER_ID, CODEX_PROVIDER_ID, ownsConversation, writesClaudeTranscript } from '@shared/providers';
+import { conversationIdOfTab } from './conversationId';
 import { useWorkbenchStore } from './workbenchStore';
 import { transcriptStoreForTab } from './transcriptStore';
 import { useThinkingStore } from './thinkingStore';
@@ -36,10 +37,11 @@ export function useTranscriptLifecycle(tabId: string): void {
   // vacio (la hidratacion de BlockChat depende de estas entradas).
   const sessionId = useWorkbenchStore((s) => {
     const tab = s.tabs.find((t) => t.id === tabId);
-    // Codex y agy: la conversación es su id (`resumeSessionId`), no el de la sesión de Mage, y solo se relee
-    // su historial de una conversación SIN sesión viva (reabierta): la viva ya pinta sus eventos.
-    if (tab?.provider === CODEX_PROVIDER_ID || tab?.provider === AGY_PROVIDER_ID) return s.sessionIdByChat[tabId] === undefined ? tab.resumeSessionId : undefined;
-    return s.sessionIdByChat[tabId] ?? tab?.resumeSessionId;
+    if (tab === undefined) return undefined;
+    const live = s.sessionIdByChat[tabId];
+    // Codex y agy: solo se relee el historial de una conversación SIN sesión viva (reabierta): la viva ya pinta sus eventos.
+    if (ownsConversation(tab.provider) && live !== undefined) return undefined;
+    return conversationIdOfTab(tab, live);
   });
   const chatStatus = useWorkbenchStore((s) => s.statusByChat[tabId]);
   // ¿Hay transcripcion que leer para esta pestaña? Solo la escriben los proveedores cuyo motor es el

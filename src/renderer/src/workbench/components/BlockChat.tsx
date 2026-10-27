@@ -25,6 +25,7 @@ import { classifySystemWrapper } from '@shared/systemWrappers';
 import { useStickToBottom } from '../useStickToBottom';
 import { RecentProjects } from './RecentProjects';
 import { reportActionError } from '../notificationStore';
+import { conversationIdOfTab } from '../conversationId';
 
 // Referencia ESTABLE para el caso "todavia no hay pensamientos de esta sesion": un `[]` nuevo en cada
 // render haria que el efecto de hidratacion se disparase en bucle.
@@ -128,7 +129,7 @@ function useHydrateFromTranscript(): void {
   const activeTabId = usePaneTabId();
   const sessionId = useWorkbenchStore((s) => {
     const tab = s.tabs.find((t) => t.id === activeTabId);
-    return s.sessionIdByChat[activeTabId] ?? tab?.resumeSessionId;
+    return tab === undefined ? undefined : conversationIdOfTab(tab, s.sessionIdByChat[activeTabId]);
   });
   const hydrateBlocks = useWorkbenchStore((s) => s.hydrateBlocks);
   // 4.1/4.3: el store de la pestaña de ESTE panel. Con el store global, en un split el panel no

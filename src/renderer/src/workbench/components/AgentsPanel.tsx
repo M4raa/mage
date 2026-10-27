@@ -9,6 +9,7 @@ import { AGENT_STATE_DOT, StopSubagentButton, useAgentElapsed } from './AgentsDo
 import { Hint } from './TranscriptHint';
 import type { SubagentInfo } from '@shared/events';
 import type { Block } from '../types';
+import { conversationIdOfTab } from '../conversationId';
 
 // Panel "Subagentes" (2.9.b), con las dos mitades que el usuario pidio:
 //   - ARRIBA: los subagentes que el CLI DECLARA en su `initialize` (los abrio la Fase B; antes se
@@ -32,7 +33,10 @@ export function AgentsPanel(): React.JSX.Element {
   const tabId = usePaneTabId();
   const declared = useWorkbenchStore((s) => s.subagentsByChat[tabId] ?? NO_AGENTS);
   const tab = useWorkbenchStore((s) => s.tabs.find((t) => t.id === tabId));
-  const sessionId = useWorkbenchStore((s) => s.sessionIdByChat[tabId] ?? s.tabs.find((t) => t.id === tabId)?.resumeSessionId);
+  const sessionId = useWorkbenchStore((s) => {
+    const found = s.tabs.find((t) => t.id === tabId);
+    return found === undefined ? undefined : conversationIdOfTab(found, s.sessionIdByChat[tabId]);
+  });
   // 4.1: los paneles globales siguen a la pestaña ACTIVA (`usePaneTabId` devuelve la activa fuera del centro).
   const blocks = useWorkbenchStore((s) => s.blocksByChat[tabId] ?? NO_BLOCKS);
   const invocations = useMemo(() => conversationAgentRows(blocks), [blocks]);

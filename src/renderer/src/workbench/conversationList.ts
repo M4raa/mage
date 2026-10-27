@@ -5,6 +5,7 @@ import type { ConversationSummary } from '@shared/conversations';
 import type { ConversationPrivacy } from '@shared/state';
 import type { Tab } from './types';
 import type { ReopenedTabPrefs } from './conversationPrefs';
+import { conversationIdOfTab } from './conversationId';
 
 // Una pestaña abierta lleva el resumen de su transcripcion en disco, si ya la tiene (P-026, 1.7): sin
 // el, su fila decia `claude · opus[1m]` y la de una cerrada `hace 3 min · 2,1 MB`.
@@ -102,9 +103,9 @@ export function relativeTime(ms: number, now: number = Date.now()): string {
   return new Date(ms).toISOString().slice(0, 10);
 }
 
-// Sesion asociada a una pestana: la viva si existe, o la que reanuda.
+// Conversacion de una pestana, la que lleva el historial (en Codex y agy, su hilo: ver `conversationIdOfTab`).
 function sessionIdOf(tab: Tab, sessionIdByChat: Readonly<Record<string, string>>): string | undefined {
-  return sessionIdByChat[tab.id] ?? tab.resumeSessionId;
+  return conversationIdOfTab(tab, sessionIdByChat[tab.id]);
 }
 
 // --- Apertura de una conversacion del historial --------------------------------------------------

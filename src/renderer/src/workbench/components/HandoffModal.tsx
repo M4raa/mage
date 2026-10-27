@@ -3,6 +3,7 @@ import { AnimatePresence, motion } from 'motion/react';
 import { useWorkbenchStore } from '../workbenchStore';
 import { useDialogA11y } from '../a11y/useDialogA11y';
 import { MODAL_PANEL_VARIANTS, MODAL_SCRIM_VARIANTS } from '../motionPresets';
+import { conversationIdOfTab } from '../conversationId';
 
 // Modal de PROMPT HANDOFF (M2.3): al abrirse genera —reanudando la sesion de la pestana activa— un
 // prompt autocontenido para arrancar un chat nuevo que continue el trabajo. Muestra la preview
@@ -14,8 +15,8 @@ export function HandoffModal(): React.JSX.Element {
   const sessionId = useWorkbenchStore((s) => s.sessionIdByChat[s.activeTabId]);
   const startChatWithPrompt = useWorkbenchStore((s) => s.startChatWithPrompt);
 
-  // Sesion a reanudar: la viva de la pestana o, si es una restaurada aun no usada, su resumeSessionId.
-  const resumableId = sessionId ?? activeTab?.resumeSessionId ?? null;
+  // Conversacion a reanudar: la viva de la pestana o, si es una restaurada aun no usada, su resumeSessionId.
+  const resumableId = (activeTab === undefined ? undefined : conversationIdOfTab(activeTab, sessionId)) ?? null;
   return (
     <AnimatePresence>
       {open && activeTab !== undefined && (

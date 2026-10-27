@@ -12,6 +12,7 @@ import type { ConversationPrivacy } from '@shared/state';
 import { reportActionError } from '../notificationStore';
 import type { ChatProject } from '@shared/settings';
 import { projectForRow } from '../chatProjects';
+import { conversationIdOfTab } from '../conversationId';
 import { accountRecovery } from '../accountRecovery';
 import { CliLoginPanel, useCliLogin } from './CliLoginPanel';
 
@@ -451,7 +452,7 @@ function ConversationSection({
             onContextMenu={(e) => {
               e.preventDefault();
               onContextMenu(
-                { sessionId: sessionIdByChat[row.tab.id] ?? row.tab.resumeSessionId, cwd: row.tab.cwd, privacy: row.tab.privacy, title: row.tab.title },
+                { sessionId: conversationIdOfTab(row.tab, sessionIdByChat[row.tab.id]), cwd: row.tab.cwd, privacy: row.tab.privacy, title: row.tab.title },
                 e.clientX,
                 e.clientY,
                 undefined,

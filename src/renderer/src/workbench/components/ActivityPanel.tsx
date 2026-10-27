@@ -9,6 +9,7 @@ import { Icon } from './Icon';
 import { ToolBody } from './ToolDetail';
 import { SubagentTranscriptView } from './SubagentTranscriptView';
 import type { Block } from '../types';
+import { conversationIdOfTab } from '../conversationId';
 
 // Panel «Actividad» (P-026 3.4, D21–D24): lo que el agente HACE, paso a paso y por turnos, mientras el
 // chat se queda con lo que se dice. Sigue a la pestaña activa, como el resto de paneles globales. Lee
@@ -289,7 +290,7 @@ function SubagentFacts({ block }: { readonly block: SubagentBlock }): React.JSX.
 function SubagentOverlay({ tabId, subagent }: { readonly tabId: string; readonly subagent: SubagentBlock }): React.JSX.Element | null {
   const [open, setOpen] = useState(false);
   const tab = useWorkbenchStore((s) => s.tabs.find((t) => t.id === tabId));
-  const sessionId = useWorkbenchStore((s) => s.sessionIdByChat[tabId] ?? tab?.resumeSessionId);
+  const sessionId = useWorkbenchStore((s) => (tab === undefined ? undefined : conversationIdOfTab(tab, s.sessionIdByChat[tabId])));
   useEffect(() => setOpen(false), [subagent.toolUseId]);
   if (subagent.agentId === null || tab === undefined || sessionId === undefined) return null;
   if (!open) {

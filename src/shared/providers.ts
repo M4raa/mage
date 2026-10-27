@@ -126,6 +126,13 @@ export function writesClaudeTranscript(providerId: string): boolean {
   return providerId !== AGY_PROVIDER_ID && providerId !== CODEX_PROVIDER_ID;
 }
 
+// ¿Es el proveedor el dueño de su conversación? Lo es quien no escribe la transcripción de Claude (Codex y agy):
+// su id de conversación lo da el CLI en el `session_init` (`threadId`, `cascadeId`) y la sesión de Mage lleva otro,
+// un UUID propio. Única fuente de la regla para main y el renderer (devolución 19).
+export function ownsConversation(providerId: string): boolean {
+  return !writesClaudeTranscript(providerId);
+}
+
 export const BUILT_IN_PROVIDERS: readonly BuiltInProvider[] = [
   {
     id: 'claude',

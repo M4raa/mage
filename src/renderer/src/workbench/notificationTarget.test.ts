@@ -4,10 +4,11 @@ import { toNotifyParams } from './notify';
 
 const context = (overrides: Partial<NotificationTargetContext> = {}): NotificationTargetContext => ({
   tabs: [
-    { id: 'tab1', accountId: 'acc-a' },
-    { id: 'tab2', accountId: 'acc-b', resumeSessionId: 's-reabierta' },
+    { id: 'tab1', accountId: 'acc-a', provider: 'claude' },
+    { id: 'tab2', accountId: 'acc-b', provider: 'claude', resumeSessionId: 's-reabierta' },
+    { id: 'tab3', accountId: 'acc-x', provider: 'codex', resumeSessionId: 'thread-3' },
   ],
-  sessionIdByChat: { tab1: 's-viva' },
+  sessionIdByChat: { tab1: 's-viva', tab3: 'mage-uuid-3' },
   backgroundAccountBySession: {},
   historySessionIds: new Set(),
   ...overrides,
@@ -21,6 +22,15 @@ describe('resolveNotificationTarget', () => {
   it('resolveNotificationTarget_idDeOtraVentana_laEncuentraPorSesion', () => {
     // En otra ventana el id de pestaña no significa nada: manda la sesion (tambien la de reanudar).
     expect(resolveNotificationTarget({ tabId: 'tab9', sessionId: 's-reabierta' }, context())).toEqual({ kind: 'tab', tabId: 'tab2', accountId: 'acc-b' });
+  });
+
+  // Devolución 19: en Codex la sesión viva (eventos) y la conversación (CI, otra ventana) son ids distintos.
+  it('resolveNotificationTarget_codexPorSesionViva_vaASuPestaña', () => {
+    expect(resolveNotificationTarget({ tabId: 'tab9', sessionId: 'mage-uuid-3' }, context())).toEqual({ kind: 'tab', tabId: 'tab3', accountId: 'acc-x' });
+  });
+
+  it('resolveNotificationTarget_codexPorIdDelHilo_vaASuPestaña', () => {
+    expect(resolveNotificationTarget({ tabId: 'tab9', sessionId: 'thread-3' }, context())).toEqual({ kind: 'tab', tabId: 'tab3', accountId: 'acc-x' });
   });
 
   it('resolveNotificationTarget_sesionEnSegundoPlano_resaltaSuFilaConSuCuenta', () => {

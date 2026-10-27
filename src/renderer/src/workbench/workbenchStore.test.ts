@@ -297,7 +297,48 @@ describe('sesiones en segundo plano', () => {
 
     store.getState().handleEvent('s-a', { kind: 'session_init', sessionId: 'thread-1', model: 'gpt-6-luna', tools: [], mcpServers: [], slashCommands: [], skills: [], plugins: [], pluginErrors: [] });
 
-    expect(saveConversationPrefs).toHaveBeenCalledWith({ sessionId: 's-a', prefs: expect.objectContaining({ model: 'gpt-6-luna', effort: 'low' }) as unknown });
+    // Devolución 19: se guardan bajo la conversación (el hilo), no bajo el UUID de la sesión de Mage.
+    expect(saveConversationPrefs).toHaveBeenCalledWith({ sessionId: 'thread-1', prefs: expect.objectContaining({ model: 'gpt-6-luna', effort: 'low' }) as unknown });
+  });
+
+  it('setActiveModel_codexConSesionViva_guardaPreferenciasBajoElHiloYHablaConLaSesionViva', () => {
+    const saveConversationPrefs = vi.fn().mockResolvedValue(undefined);
+    const setModel = vi.fn().mockResolvedValue(undefined);
+    const store = createWorkbenchStore(fakeMage({ saveConversationPrefs, setModel, saveWorkspace: vi.fn().mockResolvedValue(undefined) }));
+    store.setState({ tabs: [{ ...tab('a'), provider: 'codex', model: 'gpt-6-luna', resumeSessionId: 'thread-1' }], activeTabId: 'a', splitLayout: singleLeaf('a'), sessionIdByChat: { a: 's-a' } });
+
+    store.getState().setActiveModel('gpt-6');
+
+    expect(saveConversationPrefs).toHaveBeenCalledWith({ sessionId: 'thread-1', prefs: expect.objectContaining({ model: 'gpt-6' }) as unknown });
+    expect(setModel).toHaveBeenCalledWith({ sessionId: 's-a', model: 'gpt-6' });
+  });
+
+  it('setActiveModel_codexSinHilo_noGuardaPreferenciasBajoElUuidDeMage', () => {
+    const saveConversationPrefs = vi.fn().mockResolvedValue(undefined);
+    const store = createWorkbenchStore(fakeMage({ saveConversationPrefs, setModel: vi.fn().mockResolvedValue(undefined), saveWorkspace: vi.fn().mockResolvedValue(undefined) }));
+    store.setState({ tabs: [{ ...tab('a'), provider: 'codex', model: 'gpt-6-luna' }], activeTabId: 'a', splitLayout: singleLeaf('a'), sessionIdByChat: { a: 's-a' } });
+
+    store.getState().setActiveModel('gpt-6');
+
+    expect(saveConversationPrefs).not.toHaveBeenCalled();
+  });
+
+  it('deleteConversation_hiloDeCodexConPestañaViva_cierraEsaPestaña', async () => {
+    // closeMatchingTab: el historial borra por el hilo; la pestaña viva de Codex tiene otro id de sesión.
+    const store = createWorkbenchStore(
+      fakeMage({
+        closeSession: vi.fn().mockResolvedValue({ background: false }),
+        deleteConversation: vi.fn().mockResolvedValue(undefined),
+        listConversations: vi.fn().mockResolvedValue([]),
+        saveWorkspace: vi.fn().mockResolvedValue(undefined),
+        releaseConversationLock: vi.fn().mockResolvedValue(undefined),
+      }),
+    );
+    store.setState({ tabs: [{ ...tab('a'), provider: 'codex', resumeSessionId: 'thread-1' }], activeTabId: 'a', activeAccountId: tab('a').accountId, splitLayout: singleLeaf('a'), sessionIdByChat: { a: 's-a' } });
+
+    await store.getState().deleteConversation('thread-1', 'C:\\proyecto', 'shared');
+
+    expect(store.getState().tabs.some((t) => t.id === 'a')).toBe(false);
   });
 
   it('handleEvent_segundoPlanoCaducadoEnMain_quitaLaFilaSinPararDeNuevo', async () => {

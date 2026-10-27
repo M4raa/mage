@@ -1,4 +1,5 @@
 import { useWorkbenchStore } from './workbenchStore';
+import { conversationIdOfTab } from './conversationId';
 
 // ¿Que sesion tiene que MOSTRAR el Inspector para la pestaña activa?
 //
@@ -15,6 +16,6 @@ export function useActiveTranscriptSessionId(): string | undefined {
   return useWorkbenchStore((s) => {
     const tab = s.tabs.find((t) => t.id === s.activeTabId);
     if (tab === undefined) return undefined;
-    return s.sessionIdByChat[s.activeTabId] ?? tab.resumeSessionId;
+    return conversationIdOfTab(tab, s.sessionIdByChat[s.activeTabId]);
   });
 }

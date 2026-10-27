@@ -4,6 +4,7 @@ import type { Tab } from './types';
 import { restoreTabs, toPersistedWorkspace } from './workspaceView';
 import { singleLeaf } from './splitLayout';
 import type { SplitLayout } from '@shared/state';
+import { conversationIdOfTab } from './conversationId';
 
 // Fixture de test (splitPane ya no existe: la produccion solo crea splits por arrastre, ver
 // splitLayout.test.ts). Aqui solo hace falta CONSTRUIR arboles para probar persistencia/migracion.
@@ -49,6 +50,51 @@ describe('toPersistedWorkspace', () => {
     const ws = toPersistedWorkspace([tab({ resumeSessionId: 'old-999' })], 'tab1', {});
 
     expect(ws.tabs[0]?.sessionId).toBe('old-999'); // no se pierde la posibilidad de reanudar
+  });
+
+  // Devolución 19, H1: en Codex y agy la sesión viva de Mage es un UUID propio; lo que se reanuda es el hilo.
+  it('toPersistedWorkspace_pestañaCodexConSesionViva_guardaElIdDelHilo', () => {
+    const codex = tab({ provider: 'codex', accountId: '.codex-a', resumeSessionId: 'thread-7' });
+
+    const ws = toPersistedWorkspace([codex], 'tab1', { tab1: 'mage-uuid-1' });
+
+    expect(ws.tabs[0]?.sessionId).toBe('thread-7');
+  });
+
+  it('toPersistedWorkspace_pestañaAgyConSesionViva_guardaElIdDelHilo', () => {
+    const agy = tab({ provider: 'agy', accountId: 'agy-a', resumeSessionId: 'cascade-3' });
+
+    const ws = toPersistedWorkspace([agy], 'tab1', { tab1: 'mage-uuid-2' });
+
+    expect(ws.tabs[0]?.sessionId).toBe('cascade-3');
+  });
+
+  it('toPersistedWorkspace_pestañaClaudeConSesionViva_sinCambios', () => {
+    const ws = toPersistedWorkspace([tab({ resumeSessionId: 'old-1' })], 'tab1', { tab1: 'live-2' });
+
+    expect(ws.tabs[0]?.sessionId).toBe('live-2');
+  });
+
+  it('toPersistedWorkspace_pestañaRuntimePropioConSesionViva_sinCambios', () => {
+    const ws = toPersistedWorkspace([tab({ provider: 'custom:ollama', resumeSessionId: 'old-1' })], 'tab1', { tab1: 'live-3' });
+
+    expect(ws.tabs[0]?.sessionId).toBe('live-3');
+  });
+
+  it('toPersistedWorkspace_pestañaCodexSinHilo_noGuardaElUuidDeMage', () => {
+    const codex = tab({ provider: 'codex', accountId: '.codex-a' });
+
+    const ws = toPersistedWorkspace([codex], 'tab1', { tab1: 'mage-uuid-1' });
+
+    expect('sessionId' in (ws.tabs[0] as object)).toBe(false);
+  });
+
+  it('toPersistedWorkspace_idaYVueltaCodex_conversationIdOfTabDevuelveElHilo', () => {
+    const codex = tab({ provider: 'codex', accountId: '.codex-a', resumeSessionId: 'thread-7' });
+
+    const restored = restoreTabs(toPersistedWorkspace([codex], 'tab1', { tab1: 'mage-uuid-1' }), new Set(['.codex-a'])).tabs[0];
+
+    expect(restored === undefined ? undefined : conversationIdOfTab(restored, undefined)).toBe('thread-7');
   });
 
   it('pestanaNuncaUsada_noEscribeSessionId', () => {

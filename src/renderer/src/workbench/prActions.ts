@@ -2,6 +2,7 @@ import type { GhPrUpdate, GhRunsSnapshot, GhSnapshot } from '@shared/gh';
 import type { MageApi } from '@shared/ipc';
 import type { Tab } from './types';
 import type { WorkbenchState } from './workbenchStore';
+import { conversationIdOfTab } from './conversationId';
 import { buildCiMonitorEvent, pendingAutoFix } from './ciMonitorEvent';
 import { prBarView } from './chatInfoView';
 import { CREATE_PR_PROMPT } from '@shared/permissionPolicy';
@@ -79,7 +80,8 @@ export function createPrActions(deps: PrDeps): PrActions {
     if (snapshot.kind !== 'pr') return;
     const view = prBarView(snapshot.pr);
     const counts = view.counts.map((c) => `${c.glyph}${c.count}`).join(' ');
-    const sessionId = get().sessionIdByChat[tab.id] ?? tab.resumeSessionId;
+    // La conversacion, no la sesion viva: si la pestaña ya no esta, la notificacion lleva a su fila del historial.
+    const sessionId = conversationIdOfTab(tab, get().sessionIdByChat[tab.id]);
     const target = sessionId === undefined ? {} : { target: { tabId: tab.id, sessionId } };
     void mage
       .notify({ title: 'CI terminado', body: `${tab.title}: ${view.label} ${counts}`, ...target })
