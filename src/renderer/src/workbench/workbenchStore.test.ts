@@ -457,6 +457,17 @@ describe('sesiones en segundo plano', () => {
     expect(stop).toHaveBeenCalledWith('s-a');
     expect(store.getState().backgroundSessions).toEqual({});
   });
+
+  it('handleEvent_agyCerradaAntesDeSuHilo_apuntaLaConversacionAlLlegarSessionInit', async () => {
+    const stop = vi.fn().mockResolvedValue(undefined);
+    const store = await backgroundStore('agy', { stop });
+    expect(store.getState().backgroundSessions['s-a']?.conversationId).toBeUndefined();
+
+    store.getState().handleEvent('s-a', { kind: 'session_init', sessionId: 'cascade-1', model: 'm', tools: [], mcpServers: [], slashCommands: [], skills: [], plugins: [], pluginErrors: [] });
+    await store.getState().deleteConversation('cascade-1', 'C:\\proyecto', 'shared');
+
+    expect(stop).toHaveBeenCalledWith('s-a');
+  });
 });
 
 describe('setActiveTab', () => {
