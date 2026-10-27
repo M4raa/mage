@@ -72,6 +72,7 @@ import { restoreTabs, toPersistedWorkspace } from './workspaceView';
 import { orderTabsForDisplay, tabsToCloseAll, tabsToCloseInactive } from './tabActions';
 import {
   backgroundMoveBlockedReason,
+  backgroundOfConversation,
   nextBackgroundState,
   tabMoveBlockedReason,
   type BackgroundSession,
@@ -321,6 +322,7 @@ export interface WorkbenchState extends PrState, PrActions {
   // con `--resume` (decision del usuario), y tambien la usan el borrado/movido de conversacion (nadie
   // puede seguir escribiendo el .jsonl) y el temporizador de la semana.
   discardBackgroundSession: (sessionId: string) => Promise<void>;
+  discardBackgroundConversation: (conversationId: string) => Promise<void>;
   // La transcripción de la conversación de una pestaña de Codex o agy no existe en su cuenta: la pestaña deja de
   // reanudar ese id (su primer turno abre un hilo nuevo) y el chat lo dice. Ver `missingConversationPatch`.
   forgetMissingConversation: (tabId: string, conversationId: string) => void;
@@ -865,9 +867,9 @@ async function conversationForOtherWindow(
   get: () => WorkbenchState,
   item: ConversationSummary,
 ): Promise<PersistedTab> {
-  const blocked = backgroundMoveBlockedReason(get().backgroundSessions[item.sessionId]);
+  const blocked = backgroundMoveBlockedReason(backgroundOfConversation(get().backgroundSessions, item.sessionId));
   if (blocked !== null) throw new Error(blocked);
-  await get().discardBackgroundSession(item.sessionId);
+  await get().discardBackgroundConversation(item.sessionId);
   const state = get();
   const account = state.accounts.find((a) => a.id === state.activeAccountId);
   const prefs = resolveReopenedTabPrefs({
@@ -1441,6 +1443,7 @@ export function createWorkbenchStore(mage: MageClient) {
       if (background && sessionId !== undefined && tab !== undefined) {
         const entry: BackgroundSession = {
           sessionId,
+          conversationId: conversationIdOfTab(tab, sessionId),
           title: tab.title,
           accountId: tab.accountId,
           state: get().statusByChat[tabId] === 'needs_permission' ? 'needs_action' : 'working',
@@ -1532,6 +1535,12 @@ export function createWorkbenchStore(mage: MageClient) {
       if (get().backgroundSessions[sessionId] === undefined) return;
       set((s) => ({ backgroundSessions: without(s.backgroundSessions, sessionId) }));
       await mage.stop(sessionId).catch(() => undefined);
+    },
+
+    // El historial (abrir, mover, borrar, migrar) parte del id de CONVERSACION; se para la sesion viva que la lleva.
+    discardBackgroundConversation: async (conversationId) => {
+      const entry = backgroundOfConversation(get().backgroundSessions, conversationId);
+      if (entry !== undefined) await get().discardBackgroundSession(entry.sessionId);
     },
 
     movePaneTab: (draggedTabId, targetPath, zone) => {
@@ -1964,7 +1973,7 @@ export function createWorkbenchStore(mage: MageClient) {
       // `--resume` (decision del usuario, 2026-09-15): dos procesos del CLI no pueden escribir la misma
       // transcripcion, y re-engancharse a la viva era el camino caro. Si estaba esperando un permiso,
       // ese turno se pierde y hay que repetir la orden.
-      await get().discardBackgroundSession(item.sessionId);
+      await get().discardBackgroundConversation(item.sessionId);
       const accountId = get().activeAccountId;
       const account = get().accounts.find((a) => a.id === accountId);
       const plan = planOpenConversation({
@@ -2041,7 +2050,7 @@ export function createWorkbenchStore(mage: MageClient) {
       // a segundo plano (sin parar el CLI) la conversacion que este trabajando, asi que el `discard`
       // previo era no-op y el .jsonl se borraba con el proceso escribiendolo — B17 por otra puerta.
       await closeMatchingTab(get, sessionId);
-      await get().discardBackgroundSession(sessionId);
+      await get().discardBackgroundConversation(sessionId);
       try {
         await mage.deleteConversation({ accountDir, sessionId, cwd, privacy });
       } catch (err) {
@@ -2056,7 +2065,7 @@ export function createWorkbenchStore(mage: MageClient) {
       // Sin cambio real de ubicacion: nada que hacer.
       if (accountDir === destAccountDir && privacy === destPrivacy) return;
       await closeMatchingTab(get, sessionId); // mismo orden que al borrar: cerrar y LUEGO parar
-      await get().discardBackgroundSession(sessionId);
+      await get().discardBackgroundConversation(sessionId);
       // El error SUBE (P-026 2.7): tragarselo con un console.warn dejaba a `continueInAccount` cambiando
       // de cuenta y reabriendo nada, sin decir por que. El historial se refresca igual.
       try {
@@ -2733,7 +2742,7 @@ async function migrateToOtherProvider(
     throw new Error(`Esta conversacion (${tab?.provider ?? 'sin pestana'}) no se puede migrar a ${dest?.providerId ?? ctx.destAccountId}`);
   }
   await closeMatchingTab(get, ctx.sessionId);
-  await get().discardBackgroundSession(ctx.sessionId);
+  await get().discardBackgroundConversation(ctx.sessionId);
   const result = await mage.migrateConversation({
     sourceAccountDir: source.id, sourceProvider: asAccountProvider(source.providerId), sessionId: ctx.sessionId, cwd: tab.cwd, privacy: tab.privacy,
     destAccountDir: dest.id, destProvider: asAccountProvider(dest.providerId),

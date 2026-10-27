@@ -12,7 +12,10 @@ export type BackgroundState =
   | 'done'; // el turno acabo: pendiente de revision
 
 export interface BackgroundSession {
-  readonly sessionId: string;
+  readonly sessionId: string; // la sesion VIVA de Mage: con la que se habla con main (parar, eventos)
+  // La CONVERSACION (conversationIdOfTab al cerrar), con la que pregunta el historial. En Codex y agy es el
+  // hilo y no coincide con `sessionId`; sin hilo todavia no hay conversacion que buscar (H3, devolucion 18).
+  readonly conversationId: string | undefined;
   readonly title: string; // el de la pestaña al cerrarla (la fila del historial puede tardar en refrescarse)
   readonly accountId: string;
   readonly state: BackgroundState;
@@ -31,6 +34,16 @@ export function shouldBackgroundOnClose(status: ChatStatus | undefined): boolean
 export function tabMoveBlockedReason(status: ChatStatus | undefined): string | null {
   if (!shouldBackgroundOnClose(status)) return null;
   return 'Tiene un turno en marcha: espera a que termine para moverla a otra ventana.';
+}
+
+// La entrada de segundo plano de una conversacion del historial. La UNICA busqueda por conversacion: el mapa
+// va por la sesion viva y el historial no la conoce. Recorre las entradas: son las pocas que se cerraron
+// trabajando, nunca el historial entero.
+export function backgroundOfConversation(
+  sessions: Readonly<Record<string, BackgroundSession>>,
+  conversationId: string,
+): BackgroundSession | undefined {
+  return Object.values(sessions).find((b) => b.conversationId === conversationId);
 }
 
 // Lo mismo para una fila del historial que sigue viva en segundo plano. Terminada ('done') si se puede:

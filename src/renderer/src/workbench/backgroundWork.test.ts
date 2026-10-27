@@ -3,6 +3,7 @@ import type { MageEvent } from '@shared/events';
 import {
   backgroundLabel,
   backgroundMoveBlockedReason,
+  backgroundOfConversation,
   countWorkingConversations,
   nextBackgroundState,
   shouldBackgroundOnClose,
@@ -100,6 +101,7 @@ describe('tabMoveBlockedReason', () => {
 describe('backgroundMoveBlockedReason', () => {
   const session = (state: BackgroundSession['state']): BackgroundSession => ({
     sessionId: 's',
+    conversationId: 's',
     title: 't',
     accountId: 'a',
     state,
@@ -117,9 +119,24 @@ describe('backgroundMoveBlockedReason', () => {
   });
 });
 
+describe('backgroundOfConversation', () => {
+  const codex: BackgroundSession = { sessionId: 'uuid-mage', conversationId: 'thread-1', title: 't', accountId: 'a', state: 'working', sinceMs: 0 };
+  const sinHilo: BackgroundSession = { ...codex, sessionId: 'uuid-2', conversationId: undefined };
+
+  it('backgroundOfConversation_hiloDeCodex_encuentraLaSesionViva', () => {
+    expect(backgroundOfConversation({ [codex.sessionId]: codex }, 'thread-1')?.sessionId).toBe('uuid-mage');
+  });
+
+  it('backgroundOfConversation_idDeSesionVivaOSinHilo_noEncuentraNada', () => {
+    expect(backgroundOfConversation({ [codex.sessionId]: codex, [sinHilo.sessionId]: sinHilo }, 'uuid-mage')).toBeUndefined();
+    expect(backgroundOfConversation({}, 'thread-1')).toBeUndefined();
+  });
+});
+
 describe('countWorkingConversations', () => {
   const session = (state: BackgroundSession['state']): BackgroundSession => ({
     sessionId: state,
+    conversationId: state,
     title: 't',
     accountId: 'a',
     state,

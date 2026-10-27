@@ -3435,7 +3435,7 @@ const CHECKS = [
         store.setState({
           backgroundSessions: {
             ...store.getState().backgroundSessions,
-            'vg-fondo': { sessionId: 'vg-fondo', title, accountId: store.getState().activeAccountId, state: 'working', sinceMs: Date.now() },
+            'vg-fondo': { sessionId: 'vg-fondo', conversationId: 'vg-fondo', title, accountId: store.getState().activeAccountId, state: 'working', sinceMs: Date.now() },
           },
         });
         const entry = store.getState().backgroundSessions['vg-fondo'];

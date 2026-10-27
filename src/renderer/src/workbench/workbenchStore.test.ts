@@ -413,6 +413,50 @@ describe('sesiones en segundo plano', () => {
     expect(stop).toHaveBeenCalledWith('s-a');
     expect(store.getState().backgroundSessions).toEqual({});
   });
+
+  // H3 (devolución 18): el historial habla con el id de la CONVERSACIÓN y el segundo plano iba por la sesión viva.
+  // En Codex y agy no coinciden (hilo frente a UUID de Mage), así que ni se bloqueaba el mover ni se paraba el CLI.
+  const backgroundStore = async (provider: Tab['provider'], over: Partial<MageApi> = {}) => {
+    const store = createWorkbenchStore(fakeMage({
+      closeSession: vi.fn().mockResolvedValue({ background: true }), saveWorkspace: vi.fn().mockResolvedValue(undefined),
+      listConversations: vi.fn().mockResolvedValue([]), deleteConversation: vi.fn().mockResolvedValue(undefined), ...over,
+    }));
+    const resumeSessionId = provider === 'codex' ? 'thread-1' : undefined;
+    store.setState({ tabs: [{ ...tab('a'), provider, resumeSessionId }], activeTabId: 'a', activeAccountId: tab('a').accountId, splitLayout: singleLeaf('a'), sessionIdByChat: { a: 's-a' }, statusByChat: { a: 'streaming' } });
+    await store.getState().closeTab('a');
+    return store;
+  };
+  const historyItem = (sessionId: string): ConversationSummary => ({ sessionId, cwd: 'C:\\proyecto', title: 'fondo', updatedAtMs: 0, privacy: 'shared' } as ConversationSummary);
+
+  it('openConversationInNewWindow_codexTrabajandoEnSegundoPlano_seBloqueaSinAbrirVentana', async () => {
+    const openWindowWithTab = vi.fn();
+    const store = await backgroundStore('codex', { openWindowWithTab, stop: vi.fn().mockResolvedValue(undefined) });
+
+    await expect(store.getState().openConversationInNewWindow(historyItem('thread-1'))).rejects.toThrow(/segundo plano/);
+
+    expect(openWindowWithTab).not.toHaveBeenCalled();
+    expect(store.getState().backgroundSessions['s-a']?.conversationId).toBe('thread-1');
+  });
+
+  it('deleteConversation_codexEnSegundoPlano_paraSuCliPorLaSesionViva', async () => {
+    const stop = vi.fn().mockResolvedValue(undefined);
+    const store = await backgroundStore('codex', { stop });
+
+    await store.getState().deleteConversation('thread-1', 'C:\\proyecto', 'shared');
+
+    expect(stop).toHaveBeenCalledWith('s-a');
+    expect(store.getState().backgroundSessions).toEqual({});
+  });
+
+  it('deleteConversation_claudeEnSegundoPlano_paraSuCliComoAntes', async () => {
+    const stop = vi.fn().mockResolvedValue(undefined);
+    const store = await backgroundStore('claude', { stop });
+
+    await store.getState().deleteConversation('s-a', 'C:\\proyecto', 'shared');
+
+    expect(stop).toHaveBeenCalledWith('s-a');
+    expect(store.getState().backgroundSessions).toEqual({});
+  });
 });
 
 describe('setActiveTab', () => {
@@ -1240,7 +1284,7 @@ describe('permiso auto-permitido', () => {
     const answerPermission = vi.fn().mockResolvedValue(undefined);
     const store = createWorkbenchStore(fakeMage({ answerPermission, notify: vi.fn().mockResolvedValue(undefined) }));
     store.setState({
-      backgroundSessions: { 's-bg': { sessionId: 's-bg', title: 'fondo', accountId: 'acc', state: 'working', sinceMs: 1 } },
+      backgroundSessions: { 's-bg': { sessionId: 's-bg', conversationId: 's-bg', title: 'fondo', accountId: 'acc', state: 'working', sinceMs: 1 } },
     });
     const outside = REQUEST('Read');
 
@@ -1264,7 +1308,7 @@ describe('permiso auto-permitido', () => {
     const answerPermission = vi.fn();
     const notify = vi.fn().mockResolvedValue(undefined);
     const store = createWorkbenchStore(fakeMage({ answerPermission, notify }));
-    store.setState({ backgroundSessions: { 's-bg': { sessionId: 's-bg', title: 'fondo', accountId: 'acc', state: 'working', sinceMs: 1 } } });
+    store.setState({ backgroundSessions: { 's-bg': { sessionId: 's-bg', conversationId: 's-bg', title: 'fondo', accountId: 'acc', state: 'working', sinceMs: 1 } } });
 
     store.getState().handleEvent('s-bg', { kind: 'permission_auto_answered', requestId: 'r1', toolName: 'Bash', behavior: 'deny', blocked: 'git push --force' });
 
@@ -1277,7 +1321,7 @@ describe('permiso auto-permitido', () => {
     const notify = vi.fn().mockResolvedValue(undefined);
     const store = createWorkbenchStore(fakeMage({ notify }));
     store.setState({
-      backgroundSessions: { 's-bg': { sessionId: 's-bg', title: 'fondo', accountId: 'acc', state: 'working', sinceMs: 1 } },
+      backgroundSessions: { 's-bg': { sessionId: 's-bg', conversationId: 's-bg', title: 'fondo', accountId: 'acc', state: 'working', sinceMs: 1 } },
     });
 
     store.getState().handleEvent('s-bg', REQUEST('Write'));

@@ -6,7 +6,7 @@ import { selectChatStatus, selectIsActiveTab, useConversation } from '../convers
 import type { Account, ChatStatus, Tab } from '../types';
 import type { ConversationSummary } from '@shared/conversations';
 import { filterConversationRows, formatSize, mergeConversationRows, relativeTime, rowRecency, type ConversationRow } from '../conversationList';
-import { backgroundLabel, backgroundMoveBlockedReason, type BackgroundSession } from '../backgroundWork';
+import { backgroundLabel, backgroundMoveBlockedReason, backgroundOfConversation, type BackgroundSession } from '../backgroundWork';
 import { ConversationContextMenu, type ConversationTarget } from './ConversationContextMenu';
 import type { ConversationPrivacy } from '@shared/state';
 import { reportActionError } from '../notificationStore';
@@ -234,7 +234,7 @@ export function ChatSidebar(): React.JSX.Element {
                     setMenu(null);
                   }
             }
-            newWindowBlockedReason={menu.item === undefined ? null : backgroundMoveBlockedReason(backgroundSessions[menu.item.sessionId])}
+            newWindowBlockedReason={menu.item === undefined ? null : backgroundMoveBlockedReason(backgroundOfConversation(backgroundSessions, menu.item.sessionId))}
             onDelete={() => {
               void deleteConversation(menu.target.sessionId ?? '', menu.target.cwd, menu.target.privacy);
               setMenu(null);
@@ -465,7 +465,7 @@ function ConversationSection({
             key={`h:${row.item.sessionId}`}
             item={row.item}
             account={account}
-            background={backgroundSessions[row.item.sessionId]}
+            background={backgroundOfConversation(backgroundSessions, row.item.sessionId)}
             onOpen={() => onOpen(row.item)}
             onDragOutside={() => onDragOutside(row.item)}
             onContextMenu={(e) => {
