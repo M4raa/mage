@@ -1,21 +1,23 @@
 import type { UpdateState } from '@shared/update';
+import { t } from '../i18n/uiLanguage';
 
 // Texto del estado de la actualizacion en Configuración (F1.3, #15). La barra de estado solo enseña
-// `ready`; aqui se ve cada paso de «Buscar actualizaciones». PURO: testable sin store ni IPC.
+// `ready`; aqui se ve cada paso de «Buscar actualizaciones». Sin IPC; el texto sale del catalogo del idioma activo
+// en el momento de pintar.
 export function updateStatusText(state: UpdateState): string {
   switch (state.kind) {
     case 'idle':
-      return 'Todavía no se han buscado actualizaciones en esta sesión.';
+      return t('settings.update.status.idle');
     case 'checking':
-      return 'Buscando actualizaciones…';
+      return t('settings.update.status.checking');
     case 'upToDate':
-      return `Mage está al día (versión ${state.version}).`;
+      return t('settings.update.status.upToDate', { version: state.version });
     case 'error':
-      return `No se pudo buscar: ${state.message}`;
+      return t('settings.update.status.error', { message: state.message });
     case 'downloading':
-      return `Hay una versión nueva (${state.version}); se está descargando.`;
+      return t('settings.update.status.downloading', { version: state.version });
     case 'ready':
-      return `La versión ${state.version} está lista para instalarse.`;
+      return t('settings.update.status.ready', { version: state.version });
   }
 }
 

@@ -2,6 +2,7 @@ import { useWorkbenchStore } from '../workbenchStore';
 import { pickReleaseNotesEntry, RELEASE_NOTES_TAB_ID } from '../releaseNotes';
 import { CHANGELOG_ENTRIES } from '../releaseNotesContent';
 import { Markdown } from './Markdown';
+import { useT } from '../../i18n/uiLanguage';
 
 // Panel de la pseudo-pestaña de novedades: ocupa el sitio de un `ChatPane`, pero sin prompt (no es una
 // conversacion). A la izquierda, todas las versiones del changelog; a la derecha, las notas de la elegida,
@@ -11,6 +12,7 @@ export function ReleaseNotesPane({ focused, split }: { readonly focused: boolean
   const openReleaseNotes = useWorkbenchStore((s) => s.openReleaseNotes);
   const requested = useWorkbenchStore((s) => s.releaseNotesVersion);
   const installed = useWorkbenchStore((s) => s.appVersion);
+  const t = useT();
   const entry = pickReleaseNotesEntry(CHANGELOG_ENTRIES, requested, installed);
   // Mismo contrato que `ChatPane`: interactuar con el panel lo enfoca, y el panel enfocado es `activeTabId`.
   const take = (): void => {
@@ -26,8 +28,8 @@ export function ReleaseNotesPane({ focused, split }: { readonly focused: boolean
         split ? (focused ? 'outline outline-1 -outline-offset-1 outline-mg-border-emph' : 'opacity-80') : ''
       }`}
     >
-      <nav aria-label="Versiones de Mage" className="flex w-[168px] shrink-0 flex-col gap-[1px] overflow-y-auto border-r border-mg-border p-[12px]">
-        <div className="mb-[6px] px-[10px] text-[9.5px] font-bold tracking-[.1em] text-mg-ter">VERSIONES</div>
+      <nav aria-label={t('settings.releaseNotes.versionsAria')} className="flex w-[168px] shrink-0 flex-col gap-[1px] overflow-y-auto border-r border-mg-border p-[12px]">
+        <div className="mb-[6px] px-[10px] text-[9.5px] font-bold tracking-[.1em] text-mg-ter">{t('settings.releaseNotes.versionsHeading')}</div>
         {CHANGELOG_ENTRIES.map((candidate) => {
           const current = candidate.version === entry?.version;
           return (
@@ -40,7 +42,7 @@ export function ReleaseNotesPane({ focused, split }: { readonly focused: boolean
               }`}
             >
               <span className="font-mono">{candidate.version}</span>
-              {candidate.version === installed && <span className="text-[9.5px] text-mg-ter">instalada</span>}
+              {candidate.version === installed && <span className="text-[9.5px] text-mg-ter">{t('settings.releaseNotes.installed')}</span>}
             </button>
           );
         })}
@@ -48,7 +50,7 @@ export function ReleaseNotesPane({ focused, split }: { readonly focused: boolean
       {/* `key` por version: cambiar de version remonta el articulo y su scroll vuelve arriba. */}
       <article key={entry?.version ?? ''} aria-labelledby="release-notes-title" className="min-w-0 flex-1 overflow-y-auto p-[20px_28px]">
         {entry === null ? (
-          <p className="text-[12px] text-mg-sec">No hay notas de versión.</p>
+          <p className="text-[12px] text-mg-sec">{t('settings.releaseNotes.empty')}</p>
         ) : (
           <div className="max-w-[760px]">
             <h2 id="release-notes-title" className="text-[16px] font-semibold text-mg-text">

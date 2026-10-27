@@ -27,6 +27,9 @@ import { comboFromEvent, displayKeyCombo, formatKeyCombo, parseKeyCombo } from '
 import { isArrowNavKey, nextIndexForArrow } from '../a11y/keyboardNav';
 import { isMacPlatform } from '../keybindings/platform';
 import { CHANGELOG_ENTRIES } from '../releaseNotesContent';
+import { useT } from '../../i18n/uiLanguage';
+import type { MessageKey } from '@shared/i18n/messageKeys.generated';
+import type { Translate } from '@shared/i18n/translator';
 
 // Secciones de Configuracion (crece por secciones). Cada una tiene su glifo+etiqueta en la nav y su
 // titulo de cabecera.
@@ -45,30 +48,37 @@ type SectionKey =
 // Grupos de la navegacion. NO se fusiona ni se mueve ninguna seccion: solo se agrupan, que es lo que
 // convierte una lista plana de diez en algo escaneable. El orden de `SECTIONS` sigue siendo el orden
 // de navegacion con flechas, asi que los grupos van seguidos.
-type SectionGroup = 'General' | 'Apariencia' | 'Agentes' | 'Seguridad' | 'Acerca de';
+// El grupo guarda la CLAVE de su titulo (ya en mayusculas en el catalogo) y se traduce al pintar.
+type SectionGroup =
+  | 'settings.groups.general'
+  | 'settings.groups.appearance'
+  | 'settings.groups.agents'
+  | 'settings.groups.security'
+  | 'settings.groups.about';
 
-const SECTIONS: readonly {
-  readonly key: SectionKey;
-  readonly group: SectionGroup;
-  readonly icon: IconName;
-  readonly nav: string;
-  readonly title: string;
-}[] = [
-  { key: 'notifications', group: 'General', icon: 'bell', nav: 'Notificaciones', title: 'Reglas de notificación' },
-  { key: 'storage', group: 'General', icon: 'broom', nav: 'Almacenamiento', title: 'Carpetas temporales de las conversaciones' },
-  { key: 'appearance', group: 'Apariencia', icon: 'palette', nav: 'Apariencia', title: 'Apariencia' },
-  { key: 'widget', group: 'Apariencia', icon: 'wand', nav: 'Widget flotante', title: 'Widget flotante' },
-  { key: 'keybindings', group: 'Apariencia', icon: 'keyboard', nav: 'Atajos de teclado', title: 'Atajos de teclado' },
-  { key: 'providers', group: 'Agentes', icon: 'plug', nav: 'Proveedores y modelos', title: 'Proveedores y modelos' },
-  { key: 'mcp', group: 'Agentes', icon: 'puzzle', nav: 'MCP y conectores', title: 'MCP y conectores' },
-  { key: 'hooksPermissions', group: 'Seguridad', icon: 'hook', nav: 'Hooks y permisos', title: 'Hooks y reglas de permisos' },
-  { key: 'trustedFolders', group: 'Seguridad', icon: 'shield', nav: 'Carpetas de confianza', title: 'Carpetas donde se puede lanzar un agente' },
+// `nav` y `title` son claves del catalogo: se traducen al pintar, nunca al importar.
+const SECTIONS = [
+  { key: 'notifications', group: 'settings.groups.general', icon: 'bell', nav: 'settings.sections.notifications.nav', title: 'settings.sections.notifications.title' },
+  { key: 'storage', group: 'settings.groups.general', icon: 'broom', nav: 'settings.sections.storage.nav', title: 'settings.sections.storage.title' },
+  { key: 'appearance', group: 'settings.groups.appearance', icon: 'palette', nav: 'settings.sections.appearance.nav', title: 'settings.sections.appearance.title' },
+  { key: 'widget', group: 'settings.groups.appearance', icon: 'wand', nav: 'settings.sections.widget.nav', title: 'settings.sections.widget.title' },
+  { key: 'keybindings', group: 'settings.groups.appearance', icon: 'keyboard', nav: 'settings.sections.keybindings.nav', title: 'settings.sections.keybindings.title' },
+  { key: 'providers', group: 'settings.groups.agents', icon: 'plug', nav: 'settings.sections.providers.nav', title: 'settings.sections.providers.title' },
+  { key: 'mcp', group: 'settings.groups.agents', icon: 'puzzle', nav: 'settings.sections.mcp.nav', title: 'settings.sections.mcp.title' },
+  { key: 'hooksPermissions', group: 'settings.groups.security', icon: 'hook', nav: 'settings.sections.hooksPermissions.nav', title: 'settings.sections.hooksPermissions.title' },
+  { key: 'trustedFolders', group: 'settings.groups.security', icon: 'shield', nav: 'settings.sections.trustedFolders.nav', title: 'settings.sections.trustedFolders.title' },
   // «Acerca de» va la ULTIMA y en su propio grupo: no es un ajuste, es donde viven los avisos de
   // terceros (B.2 de la revision de licencias de terceros — las 85 dependencias exigen conservar su copyright y el
   // bundle los borra, asi que este es el sitio donde la app los enseña).
-  { key: 'releaseNotes', group: 'Acerca de', icon: 'sparkles', nav: 'Notas de versión', title: 'Notas de versión' },
-  { key: 'about', group: 'Acerca de', icon: 'info', nav: 'Acerca de Mage', title: 'Acerca de Mage' },
-];
+  { key: 'releaseNotes', group: 'settings.groups.about', icon: 'sparkles', nav: 'settings.sections.releaseNotes.nav', title: 'settings.sections.releaseNotes.title' },
+  { key: 'about', group: 'settings.groups.about', icon: 'info', nav: 'settings.sections.about.nav', title: 'settings.sections.about.title' },
+] as const satisfies readonly {
+  readonly key: SectionKey;
+  readonly group: SectionGroup;
+  readonly icon: IconName;
+  readonly nav: MessageKey;
+  readonly title: MessageKey;
+}[];
 
 // Pantalla de Configuracion de la app (M2.3+). Puerta: solo monta el dialogo cuando esta abierto (asi
 // el hook de accesibilidad —foco/Escape/trap— se inicializa en cada apertura).
@@ -81,6 +91,7 @@ export function SettingsView(): React.JSX.Element | null {
 // Overlay a pantalla completa con navegacion de secciones a la izquierda. Cada cambio se guarda al
 // instante (persistencia con debounce en el store).
 function SettingsDialog(): React.JSX.Element {
+  const t = useT();
   const closeSettings = useWorkbenchStore((s) => s.closeSettings);
   const rules = useWorkbenchStore((s) => s.settings.notificationRules);
   const saveNotificationRules = useWorkbenchStore((s) => s.saveNotificationRules);
@@ -145,13 +156,13 @@ function SettingsDialog(): React.JSX.Element {
         >
           <div id="settings-title" className="mb-[10px] flex items-center gap-[7px] text-[13px] font-bold text-mg-text">
             <Icon name="gear" size={15} />
-            Configuración
+            {t('settings.dialog.title')}
           </div>
           {SECTIONS.map((s, index) => (
             <Fragment key={s.key}>
               {(index === 0 || SECTIONS[index - 1]?.group !== s.group) && (
                 <div className="mt-[10px] mb-[3px] px-[10px] text-[9.5px] font-bold tracking-[.1em] text-mg-ter first:mt-0">
-                  {s.group.toUpperCase()}
+                  {t(s.group)}
                 </div>
               )}
               <button
@@ -166,15 +177,15 @@ function SettingsDialog(): React.JSX.Element {
                 }`}
               >
                 <Icon name={s.icon} className={s.key === section ? 'text-mg-focus' : 'text-mg-ter'} />
-                {s.nav}
+                {t(s.nav)}
               </button>
             </Fragment>
           ))}
         </nav>
         <div className="flex min-w-0 flex-1 flex-col">
           <div className="flex items-center justify-between border-b border-mg-border p-[12px_16px]">
-            <div className="text-[12.5px] font-semibold text-mg-text">{current.title}</div>
-            <button onClick={closeSettings} data-tip="Cerrar" aria-label="Cerrar configuración" className="text-[14px] text-mg-muted hover:text-mg-body">
+            <div className="text-[12.5px] font-semibold text-mg-text">{t(current.title)}</div>
+            <button onClick={closeSettings} data-tip={t('settings.dialog.close')} aria-label={t('settings.dialog.closeAria')} className="text-[14px] text-mg-muted hover:text-mg-body">
               ✕
             </button>
           </div>
@@ -223,11 +234,12 @@ function SettingsDialog(): React.JSX.Element {
 }
 
 // Opciones de tema (orden Sistema/Claro/Oscuro). El valor viaja tal cual a setTheme (ThemePreference).
-const THEME_OPTIONS: readonly { readonly value: ThemePreference; readonly label: string; readonly hint: string }[] = [
-  { value: 'system', label: 'Sistema', hint: 'Sigue el tema del sistema operativo.' },
-  { value: 'light', label: 'Claro', hint: 'Fuerza el tema claro.' },
-  { value: 'dark', label: 'Oscuro', hint: 'Fuerza el tema oscuro.' },
-];
+// `label` y `hint` son claves: se traducen al pintar.
+const THEME_OPTIONS = [
+  { value: 'system', label: 'settings.appearance.theme.system', hint: 'settings.appearance.theme.systemHint' },
+  { value: 'light', label: 'settings.appearance.theme.light', hint: 'settings.appearance.theme.lightHint' },
+  { value: 'dark', label: 'settings.appearance.theme.dark', hint: 'settings.appearance.theme.darkHint' },
+] as const satisfies readonly { readonly value: ThemePreference; readonly label: MessageKey; readonly hint: MessageKey }[];
 
 // Seccion Apariencia: tema base (tarjetas) + temas importados de Open VSX. Todo se aplica al instante.
 // Escala de la interfaz. Lee y escribe del store directamente en vez de viajar como dos props mas por
@@ -235,9 +247,10 @@ const THEME_OPTIONS: readonly { readonly value: ThemePreference; readonly label:
 function UiScaleControl(): React.JSX.Element {
   const uiScale = useWorkbenchStore((s) => s.settings.uiScale);
   const setUiScale = useWorkbenchStore((s) => s.setUiScale);
+  const t = useT();
   return (
     <div className="flex flex-col gap-[8px]">
-      <span className="text-[10.5px] font-bold tracking-[.06em] text-mg-ter">ESCALA DE LA INTERFAZ</span>
+      <span className="text-[10.5px] font-bold tracking-[.06em] text-mg-ter">{t('settings.appearance.uiScaleLabel')}</span>
       <div className="flex items-center gap-[12px]">
         <input
           type="range"
@@ -246,7 +259,7 @@ function UiScaleControl(): React.JSX.Element {
           step={UI_SCALE_STEP}
           value={uiScale}
           onChange={(e) => setUiScale(Number(e.target.value))}
-          aria-label="Escala de la interfaz"
+          aria-label={t('settings.appearance.uiScaleAria')}
           className="h-[4px] flex-1 cursor-pointer appearance-none rounded-full bg-mg-track accent-mg-fill"
         />
         <span data-setting="ui-scale" className="w-[42px] text-right font-mono text-[11px] tabular-nums text-mg-body2">
@@ -254,9 +267,7 @@ function UiScaleControl(): React.JSX.Element {
         </span>
       </div>
       <span className="text-[10.5px] text-mg-muted">
-        Escala todo (texto, iconos y separaciones) con el zoom del propio navegador, así que no deforma
-        ningún elemento. Entre {UI_SCALE_MIN} y {UI_SCALE_MAX} %: por debajo el texto pequeño del chat
-        deja de leerse y por encima el diálogo de Configuración no cabe en una ventana pequeña.
+        {t('settings.appearance.uiScaleHint', { min: UI_SCALE_MIN, max: UI_SCALE_MAX })}
       </span>
     </div>
   );
@@ -285,12 +296,13 @@ function AppearanceSection({
   readonly backgroundOpacity: number;
   readonly onChangeBackgroundOpacity: (percent: number) => void;
 }): React.JSX.Element {
+  const t = useT();
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-[16px] overflow-y-auto p-[14px_16px]">
       <LanguageControl />
       <UiScaleControl />
       <div className="flex flex-col gap-[8px]">
-        <span className="text-[10.5px] font-bold tracking-[.06em] text-mg-ter">OPACIDAD DE LOS FONDOS</span>
+        <span className="text-[10.5px] font-bold tracking-[.06em] text-mg-ter">{t('settings.appearance.opacityLabel')}</span>
         <div className="flex items-center gap-[12px]">
           <input
             type="range"
@@ -299,19 +311,17 @@ function AppearanceSection({
             step={1}
             value={backgroundOpacity}
             onChange={(e) => onChangeBackgroundOpacity(Number(e.target.value))}
-            aria-label="Opacidad de los fondos"
+            aria-label={t('settings.appearance.opacityAria')}
             className="h-[4px] flex-1 cursor-pointer appearance-none rounded-full bg-mg-track accent-mg-fill"
           />
           <span className="w-[42px] text-right font-mono text-[11px] tabular-nums text-mg-body2">{backgroundOpacity}%</span>
         </div>
         <span className="text-[10.5px] text-mg-muted">
-          Por debajo del 100 % las superficies dejan ver lo que hay detrás. El mínimo es 50 %: más abajo el
-          texto deja de leerse sobre un escritorio cualquiera. En Windows 11 se activa además el material
-          acrílico del sistema; en macOS y Linux el fondo se mezcla con el color del tema.
+          {t('settings.appearance.opacityHint')}
         </span>
       </div>
       <div className="flex flex-col gap-[8px]">
-        <span className="text-[10.5px] font-bold tracking-[.06em] text-mg-ter">TEMA BASE</span>
+        <span className="text-[10.5px] font-bold tracking-[.06em] text-mg-ter">{t('settings.appearance.baseThemeLabel')}</span>
         <div className="flex gap-[8px]">
           {THEME_OPTIONS.map((option) => {
             // Una tarjeta base solo esta "activa" si no hay tema importado activo.
@@ -320,14 +330,14 @@ function AppearanceSection({
               <button
                 key={option.value}
                 onClick={() => onChangeTheme(option.value)}
-                data-tip={option.hint}
+                data-tip={t(option.hint)}
                 aria-pressed={selected}
                 className={`flex-1 rounded-[8px] border px-[12px] py-[10px] text-left ${
                   selected ? 'border-mg-focus bg-mg-sel text-mg-text' : 'border-mg-border-ctrl text-mg-body2 hover:bg-mg-hover'
                 }`}
               >
-                <div className="text-[12px] font-semibold">{option.label}</div>
-                <div className="mt-[3px] text-[10.5px] leading-[1.4] text-mg-ter">{option.hint}</div>
+                <div className="text-[12px] font-semibold">{t(option.label)}</div>
+                <div className="mt-[3px] text-[10.5px] leading-[1.4] text-mg-ter">{t(option.hint)}</div>
               </button>
             );
           })}
@@ -344,16 +354,14 @@ function AppearanceSection({
       />
 
       <div className="flex flex-col gap-[8px]">
-        <span className="text-[10.5px] font-bold tracking-[.06em] text-mg-ter">DISPOSICIÓN DE PANELES</span>
+        <span className="text-[10.5px] font-bold tracking-[.06em] text-mg-ter">{t('settings.appearance.panelLayoutLabel')}</span>
         <div className="flex items-center justify-between gap-[8px]">
-          <p className="text-[10.5px] leading-[1.5] text-mg-sec">
-            Vuelve los paneles laterales/inferiores a su posición y tamaño de fábrica.
-          </p>
+          <p className="text-[10.5px] leading-[1.5] text-mg-sec">{t('settings.appearance.panelLayoutHint')}</p>
           <button
             onClick={onResetPanelLayout}
             className="shrink-0 rounded-[7px] border border-mg-border-emph px-[10px] py-[6px] text-[11px] text-mg-body2 hover:bg-mg-hover"
           >
-            Restablecer disposición
+            {t('settings.appearance.panelLayoutReset')}
           </button>
         </div>
       </div>
@@ -370,15 +378,13 @@ function WidgetSection({
   readonly enabled: boolean;
   readonly onChange: (enabled: boolean) => void;
 }): React.JSX.Element {
+  const t = useT();
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-[12px] overflow-y-auto p-[14px_16px]">
-      <p className="text-[11px] leading-[1.5] text-mg-sec">
-        Una ventana pequeña siempre visible por encima de otras aplicaciones con los agentes en curso,
-        el uso de la cuenta activa y las alertas. Haz clic en un agente para volver a esa conversación.
-      </p>
+      <p className="text-[11px] leading-[1.5] text-mg-sec">{t('settings.widget.description')}</p>
       <label className="flex items-center gap-[8px] text-[11.5px] text-mg-body">
         <input type="checkbox" checked={enabled} onChange={(e) => onChange(e.target.checked)} />
-        Mostrar widget flotante
+        {t('settings.widget.toggle')}
       </label>
     </div>
   );
@@ -398,24 +404,22 @@ function ReleaseNotesSection(): React.JSX.Element {
   const closeSettings = useWorkbenchStore((s) => s.closeSettings);
   const openReleaseNotes = useWorkbenchStore((s) => s.openReleaseNotes);
   const installed = useWorkbenchStore((s) => s.appVersion);
+  const t = useT();
   const open = (version?: string): void => {
     closeSettings();
     openReleaseNotes(version);
   };
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-[12px] overflow-y-auto p-[14px_16px]">
-      <p className="text-[11px] leading-[1.5] text-mg-sec">
-        Lo que cambia en cada versión de Mage. Al actualizar se abre solo en una pestaña de novedades; desde
-        aquí puedes volver a abrirla en cualquier versión.
-      </p>
+      <p className="text-[11px] leading-[1.5] text-mg-sec">{t('settings.releaseNotes.description')}</p>
       <button
         onClick={() => open()}
         className="self-start rounded-[7px] border border-mg-border-emph px-[12px] py-[6px] text-[11.5px] text-mg-body transition-colors duration-150 ease-out hover:bg-mg-hover"
       >
-        Abrir las notas de versión
+        {t('settings.releaseNotes.open')}
       </button>
       <UpdateCheck />
-      <ul className="flex flex-col gap-[1px]" aria-label="Versiones de Mage">
+      <ul className="flex flex-col gap-[1px]" aria-label={t('settings.releaseNotes.versionsAria')}>
         {CHANGELOG_ENTRIES.map((entry) => (
           <li key={entry.version}>
             <button
@@ -424,7 +428,7 @@ function ReleaseNotesSection(): React.JSX.Element {
             >
               <span className="font-mono text-mg-body">{entry.version}</span>
               <span className="text-mg-ter">{entry.label}</span>
-              {entry.version === installed && <span className="text-[9.5px] text-mg-ter">instalada</span>}
+              {entry.version === installed && <span className="text-[9.5px] text-mg-ter">{t('settings.releaseNotes.installed')}</span>}
             </button>
           </li>
         ))}
@@ -440,6 +444,7 @@ function UpdateCheck(): React.JSX.Element {
   const checkForUpdates = useWorkbenchStore((s) => s.checkForUpdates);
   const closeSettings = useWorkbenchStore((s) => s.closeSettings);
   const openUpdatePrompt = useWorkbenchStore((s) => s.openUpdatePrompt);
+  const t = useT();
   const showReady = (): void => {
     closeSettings();
     openUpdatePrompt();
@@ -451,11 +456,11 @@ function UpdateCheck(): React.JSX.Element {
         disabled={!canCheckForUpdates(state)}
         className="rounded-[7px] border border-mg-border-emph px-[12px] py-[6px] text-[11.5px] text-mg-body transition-colors duration-150 ease-out hover:bg-mg-hover disabled:opacity-50"
       >
-        Buscar actualizaciones
+        {t('settings.update.check')}
       </button>
       {state.kind === 'ready' && (
         <button onClick={showReady} className="rounded-[7px] bg-mg-activity px-[12px] py-[6px] text-[11.5px] text-mg-window">
-          Ver y reiniciar
+          {t('settings.update.viewAndRestart')}
         </button>
       )}
       <span role="status" className="min-w-0 text-[11px] text-mg-sec [overflow-wrap:anywhere]">
@@ -468,6 +473,7 @@ function UpdateCheck(): React.JSX.Element {
 function AboutSection(): React.JSX.Element {
   const closeSettings = useWorkbenchStore((s) => s.closeSettings);
   const setOnboardingCompleted = useWorkbenchStore((s) => s.setOnboardingCompleted);
+  const t = useT();
   // Cierra Configuracion ANTES de reabrir el asistente: si no, el asistente sale por encima del
   // dialogo que lo acaba de lanzar y al terminar se vuelve a ver Configuracion, que no es lo que pidio.
   const reopenOnboarding = (): void => {
@@ -496,11 +502,11 @@ function AboutSection(): React.JSX.Element {
     <div className="flex min-h-0 flex-1 flex-col gap-[12px] overflow-hidden p-[14px_16px]">
       <div className="flex flex-col gap-[3px]">
         <div className="text-[13px] font-semibold text-mg-text">Mage {about === null ? '' : `v${about.versions.app}`}</div>
-        <div className="text-[11px] text-mg-sec">Wrapper multiagéntico y multi-proveedor sobre agentes de código.</div>
+        <div className="text-[11px] text-mg-sec">{t('settings.about.tagline')}</div>
         {/* La licencia de Mage, dicha en la propia app: es lo primero que busca quien va a instalar algo
             que ejecuta comandos en su maquina. */}
         <div className="text-[11px] text-mg-ter">
-          Software libre bajo licencia MIT. © 2026 M4raa. El texto completo viaja con la aplicación en{' '}
+          {t('settings.about.license')}{' '}
           <code>LICENSE</code>.
         </div>
         {about !== null && (
@@ -510,19 +516,18 @@ function AboutSection(): React.JSX.Element {
         )}
       </div>
       <div className="flex flex-col gap-[6px]">
-        <div className="text-[11.5px] font-semibold text-mg-body">Licencias de terceros</div>
+        <div className="text-[11.5px] font-semibold text-mg-body">{t('settings.about.thirdPartyTitle')}</div>
         <p className="text-[11px] leading-[1.5] text-mg-sec">
-          Mage incorpora software libre de terceros. Abajo va la licencia completa de cada paquete que
-          viaja en la aplicación, con su aviso de copyright.
+          {t('settings.about.thirdPartyText')}
           {about?.chromiumLicensesPath !== null && about !== null && (
             <>
               {' '}
-              Los de Electron y Chromium van aparte:{' '}
+              {t('settings.about.chromiumSeparate')}{' '}
               <button
                 onClick={() => void window.mage.openPath(about.chromiumLicensesPath ?? '')}
                 className="underline underline-offset-2 hover:text-mg-body"
               >
-                abrir LICENSES.chromium.html
+                {t('settings.about.openChromiumLicenses')}
               </button>
               .
             </>
@@ -535,15 +540,15 @@ function AboutSection(): React.JSX.Element {
           data-about="reopen-onboarding"
           className="rounded-[6px] border border-mg-border-ctrl px-[9px] py-[4px] text-[11px] text-mg-body2 hover:bg-mg-hover"
         >
-          Volver a ver el asistente de bienvenida
+          {t('settings.about.reopenOnboarding')}
         </button>
       </div>
-      {error !== null && <div className="text-[11px] text-mg-danger">No se pudieron leer los avisos: {error}</div>}
+      {error !== null && <div className="text-[11px] text-mg-danger">{t('settings.about.noticesError', { error })}</div>}
       <pre
         data-about="notices"
         className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap break-words rounded-[7px] border border-mg-border-subtle bg-mg-code p-[10px] font-mono text-[10.5px] leading-[1.5] text-mg-sec"
       >
-        {about === null ? (error === null ? 'Cargando los avisos…' : '') : about.notices}
+        {about === null ? (error === null ? t('settings.about.noticesLoading') : '') : about.notices}
       </pre>
     </div>
   );
@@ -556,13 +561,16 @@ function StorageSection({
   readonly retention: ScratchRetention;
   readonly onChange: (retention: ScratchRetention) => void;
 }): React.JSX.Element {
+  const t = useT();
+  // Los espacios entre trozos van fuera del catalogo, igual que los dejaba el JSX: tras el segundo <b> NO hay
+  // espacio (el salto de linea del JSX original no lo ponia).
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-[12px] overflow-y-auto p-[14px_16px]">
       <p className="text-[11px] leading-[1.5] text-mg-sec">
-        Una conversación creada sin elegir carpeta trabaja en una carpeta temporal propia. Aquí decides
-        cuánto duran esas carpetas. <b>Ojo:</b> esto no afecta a la transcripción de la conversación, que
-        la guarda el CLI en su propio directorio y <b>borra por su cuenta a los 30 días</b>
-        (su ajuste <code>cleanupPeriodDays</code>). Son dos limpiezas distintas.
+        {t('settings.storage.intro')} <b>{t('settings.storage.warningLabel')}</b> {t('settings.storage.warningText')}{' '}
+        <b>{t('settings.storage.warningEmphasis')}</b>
+        {t('settings.storage.cliSettingPrefix')} <code>cleanupPeriodDays</code>
+        {t('settings.storage.cliSettingSuffix')}
       </p>
       {SCRATCH_RETENTION_OPTIONS.map((option) => (
         <label key={option.value} className="flex items-start gap-[8px] text-[11.5px] text-mg-body">
@@ -574,8 +582,8 @@ function StorageSection({
             onChange={() => onChange(option.value)}
           />
           <span>
-            <span className="font-semibold">{option.label}</span>
-            <span className="block text-[10.5px] leading-[1.45] text-mg-ter">{option.hint}</span>
+            <span className="font-semibold">{t(option.label)}</span>
+            <span className="block text-[10.5px] leading-[1.45] text-mg-ter">{t(option.hint)}</span>
           </span>
         </label>
       ))}
@@ -588,26 +596,19 @@ function StorageSection({
   );
 }
 
-const NEW_CONVERSATION_FOLDER_OPTIONS: readonly {
-  readonly value: NewConversationFolder;
-  readonly label: string;
-  readonly hint: string;
-}[] = [
-  { value: 'scratch', label: 'Una carpeta temporal', hint: 'Cada chat nuevo trabaja en su propia carpeta temporal.' },
-  {
-    value: 'lastProject',
-    label: 'El último proyecto',
-    hint: 'La carpeta de la conversación más reciente del historial. Si ya no existe, una temporal.',
-  },
-];
+const NEW_CONVERSATION_FOLDER_OPTIONS = [
+  { value: 'scratch', label: 'settings.storage.newFolder.scratch', hint: 'settings.storage.newFolder.scratchHint' },
+  { value: 'lastProject', label: 'settings.storage.newFolder.lastProject', hint: 'settings.storage.newFolder.lastProjectHint' },
+] as const satisfies readonly { readonly value: NewConversationFolder; readonly label: MessageKey; readonly hint: MessageKey }[];
 
 // Carpeta con la que nace «Nuevo chat» (P-028, 16). Mismo patron que CloseBehaviorControl.
 function NewConversationFolderControl(): React.JSX.Element {
   const folder = useWorkbenchStore((s) => s.settings.newConversationFolder);
   const setFolder = useWorkbenchStore((s) => s.setNewConversationFolder);
+  const t = useT();
   return (
     <div data-setting="new-conversation-folder" className="mt-[8px] flex flex-col gap-[8px] border-t border-mg-border pt-[12px]">
-      <span className="text-[10.5px] font-bold tracking-[.06em] text-mg-ter">CARPETA DE UN CHAT NUEVO</span>
+      <span className="text-[10.5px] font-bold tracking-[.06em] text-mg-ter">{t('settings.storage.newFolder.label')}</span>
       {NEW_CONVERSATION_FOLDER_OPTIONS.map((option) => (
         <label key={option.value} className="flex items-start gap-[8px] text-[11.5px] text-mg-body">
           <input
@@ -618,8 +619,8 @@ function NewConversationFolderControl(): React.JSX.Element {
             onChange={() => setFolder(option.value)}
           />
           <span>
-            <span className="font-semibold">{option.label}</span>
-            <span className="block text-[10.5px] leading-[1.45] text-mg-ter">{option.hint}</span>
+            <span className="font-semibold">{t(option.label)}</span>
+            <span className="block text-[10.5px] leading-[1.45] text-mg-ter">{t(option.hint)}</span>
           </span>
         </label>
       ))}
@@ -633,6 +634,7 @@ function ImportedContextControl(): React.JSX.Element {
   const setChars = useWorkbenchStore((s) => s.setImportedContextMaxChars);
   // Se escribe libremente y se acota al salir del campo: acotar en cada tecla impediría teclear «12000».
   const [draft, setDraft] = useState(String(chars));
+  const t = useT();
   const commit = (): void => {
     const value = Number(draft);
     if (Number.isFinite(value) && draft.trim().length > 0) setChars(value);
@@ -640,11 +642,11 @@ function ImportedContextControl(): React.JSX.Element {
   };
   return (
     <div data-setting="imported-context" className="mt-[8px] flex flex-col gap-[8px] border-t border-mg-border pt-[12px]">
-      <span className="text-[10.5px] font-bold tracking-[.06em] text-mg-ter">HISTORIAL AL CONTINUAR EN OTRO PROVEEDOR</span>
+      <span className="text-[10.5px] font-bold tracking-[.06em] text-mg-ter">{t('settings.storage.importedContext.label')}</span>
       <label className="flex items-center gap-[8px] text-[11.5px] text-mg-body">
         <input
           type="number"
-          aria-label="Caracteres de historial al continuar en otro proveedor"
+          aria-label={t('settings.storage.importedContext.aria')}
           min={IMPORTED_CONTEXT_LIMITS.min}
           max={IMPORTED_CONTEXT_LIMITS.max}
           step={1000}
@@ -656,12 +658,13 @@ function ImportedContextControl(): React.JSX.Element {
           }}
           className="w-[96px] rounded-[6px] border border-mg-border-ctrl bg-mg-window p-[4px_7px] text-mg-body outline-none"
         />
-        <span>caracteres</span>
+        <span>{t('settings.storage.importedContext.unit')}</span>
       </label>
       <span className="text-[10.5px] leading-[1.45] text-mg-ter">
-        Al pasar una conversación de un proveedor a otro, el destino arranca con su historial (lo más reciente primero) como
-        contexto. Entre {IMPORTED_CONTEXT_LIMITS.min.toLocaleString('es-ES')} y {IMPORTED_CONTEXT_LIMITS.max.toLocaleString('es-ES')}: cuenta en el
-        contexto del modelo.
+        {t('settings.storage.importedContext.hint', {
+          min: IMPORTED_CONTEXT_LIMITS.min.toLocaleString('es-ES'),
+          max: IMPORTED_CONTEXT_LIMITS.max.toLocaleString('es-ES'),
+        })}
       </span>
     </div>
   );
@@ -674,25 +677,22 @@ function GhNoticeControl(): React.JSX.Element {
   const setDismissed = useWorkbenchStore((s) => s.setGhNoticeDismissed);
   const autoArchive = useWorkbenchStore((s) => s.settings.autoArchiveOnPrClose);
   const setAutoArchive = useWorkbenchStore((s) => s.setAutoArchiveOnPrClose);
+  const t = useT();
   return (
     <div data-setting="gh-notice" className="mt-[8px] flex flex-col gap-[8px] border-t border-mg-border pt-[12px]">
-      <span className="text-[10.5px] font-bold tracking-[.06em] text-mg-ter">PULL REQUESTS</span>
+      <span className="text-[10.5px] font-bold tracking-[.06em] text-mg-ter">{t('settings.storage.pullRequests.label')}</span>
       <label className="flex items-start gap-[8px] text-[11.5px] text-mg-body">
         <input type="checkbox" className="mt-[3px]" checked={!dismissed} onChange={(e) => setDismissed(!e.target.checked)} />
         <span>
-          <span className="font-semibold">Avisar si falta el GitHub CLI</span>
-          <span className="block text-[10.5px] leading-[1.45] text-mg-ter">
-            El PR y el CI de la rama se leen con gh. Sin gh, o sin sesión, la fila del chat lo dice.
-          </span>
+          <span className="font-semibold">{t('settings.storage.pullRequests.ghNotice')}</span>
+          <span className="block text-[10.5px] leading-[1.45] text-mg-ter">{t('settings.storage.pullRequests.ghNoticeHint')}</span>
         </span>
       </label>
       <label className="flex items-start gap-[8px] text-[11.5px] text-mg-body">
         <input type="checkbox" className="mt-[3px]" checked={autoArchive} onChange={(e) => setAutoArchive(e.target.checked)} />
         <span>
-          <span className="font-semibold">Archivar al fusionar o cerrar el PR</span>
-          <span className="block text-[10.5px] leading-[1.45] text-mg-ter">
-            Cierra la conversación (si no está trabajando) y borra su worktree si no tiene cambios. La rama se queda.
-          </span>
+          <span className="font-semibold">{t('settings.storage.pullRequests.autoArchive')}</span>
+          <span className="block text-[10.5px] leading-[1.45] text-mg-ter">{t('settings.storage.pullRequests.autoArchiveHint')}</span>
         </span>
       </label>
     </div>
@@ -704,32 +704,26 @@ function GhNoticeControl(): React.JSX.Element {
 function ArtifactControl(): React.JSX.Element {
   const enabled = useWorkbenchStore((s) => s.settings.artifactEnabled);
   const setEnabled = useWorkbenchStore((s) => s.setArtifactEnabled);
+  const t = useT();
   return (
     <div data-setting="artifact" className="mt-[8px] flex flex-col gap-[8px] border-t border-mg-border pt-[12px]">
       <span className="text-[10.5px] font-bold tracking-[.06em] text-mg-ter">CLAUDE CODE</span>
       <label className="flex items-start gap-[8px] text-[11.5px] text-mg-body">
         <input type="checkbox" className="mt-[3px]" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
         <span>
-          <span className="font-semibold">Permitir Artifact (publica en claude.ai)</span>
-          <span className="block text-[10.5px] leading-[1.45] text-mg-ter">
-            El modelo podrá crear artifacts en tu cuenta de claude.ai; con «Omitir permisos», sin preguntarte.
-            Se aplica la próxima vez que arranque o se reabra cada conversación.
-          </span>
+          <span className="font-semibold">{t('settings.storage.artifact.toggle')}</span>
+          <span className="block text-[10.5px] leading-[1.45] text-mg-ter">{t('settings.storage.artifact.hint')}</span>
         </span>
       </label>
     </div>
   );
 }
 
-const CLOSE_BEHAVIOR_OPTIONS: readonly { readonly value: CloseBehavior; readonly label: string; readonly hint: string }[] = [
-  { value: 'ask', label: 'Preguntar', hint: 'Al cerrar la ventana, Mage pregunta qué hacer.' },
-  {
-    value: 'background',
-    label: 'Mantener en segundo plano',
-    hint: 'La ventana se oculta y Mage sigue en la bandeja con los agentes trabajando.',
-  },
-  { value: 'quit', label: 'Cerrar Mage', hint: 'Cerrar la ventana sale de Mage y para los agentes.' },
-];
+const CLOSE_BEHAVIOR_OPTIONS = [
+  { value: 'ask', label: 'settings.storage.closeBehavior.ask', hint: 'settings.storage.closeBehavior.askHint' },
+  { value: 'background', label: 'settings.storage.closeBehavior.background', hint: 'settings.storage.closeBehavior.backgroundHint' },
+  { value: 'quit', label: 'settings.storage.closeBehavior.quit', hint: 'settings.storage.closeBehavior.quitHint' },
+] as const satisfies readonly { readonly value: CloseBehavior; readonly label: MessageKey; readonly hint: MessageKey }[];
 
 // Que hace la X de la ventana (P-028, 17). Es el sitio para deshacer el «Recordar mi decisión» del
 // dialogo de cierre. Lee y escribe del store, como UiScaleControl. En macOS no aplica: alli el boton
@@ -737,9 +731,10 @@ const CLOSE_BEHAVIOR_OPTIONS: readonly { readonly value: CloseBehavior; readonly
 function CloseBehaviorControl(): React.JSX.Element {
   const behavior = useWorkbenchStore((s) => s.settings.closeBehavior);
   const setCloseBehavior = useWorkbenchStore((s) => s.setCloseBehavior);
+  const t = useT();
   return (
     <div data-setting="close-behavior" className="mt-[8px] flex flex-col gap-[8px] border-t border-mg-border pt-[12px]">
-      <span className="text-[10.5px] font-bold tracking-[.06em] text-mg-ter">AL CERRAR LA VENTANA</span>
+      <span className="text-[10.5px] font-bold tracking-[.06em] text-mg-ter">{t('settings.storage.closeBehavior.label')}</span>
       {CLOSE_BEHAVIOR_OPTIONS.map((option) => (
         <label key={option.value} className="flex items-start gap-[8px] text-[11.5px] text-mg-body">
           <input
@@ -750,8 +745,8 @@ function CloseBehaviorControl(): React.JSX.Element {
             onChange={() => setCloseBehavior(option.value)}
           />
           <span>
-            <span className="font-semibold">{option.label}</span>
-            <span className="block text-[10.5px] leading-[1.45] text-mg-ter">{option.hint}</span>
+            <span className="font-semibold">{t(option.label)}</span>
+            <span className="block text-[10.5px] leading-[1.45] text-mg-ter">{t(option.hint)}</span>
           </span>
         </label>
       ))}
@@ -759,16 +754,12 @@ function CloseBehaviorControl(): React.JSX.Element {
   );
 }
 
-const SCRATCH_RETENTION_OPTIONS: readonly { readonly value: ScratchRetention; readonly label: string; readonly hint: string }[] = [
-  { value: 'never', label: 'No borrar nunca', hint: 'Mage no toca nada. Las carpetas se acumulan en el temporal del sistema.' },
-  {
-    value: 'session',
-    label: 'Al cerrar Mage (incógnito)',
-    hint: 'No sobreviven a la sesión. Reabrir una de esas conversaciones la dejará sin carpeta de trabajo.',
-  },
-  { value: '7d', label: 'A los 7 días', hint: 'Se borran las que lleven una semana sin tocarse.' },
-  { value: '30d', label: 'A los 30 días', hint: 'El mismo plazo que usa Claude Code para sus propias limpiezas.' },
-];
+const SCRATCH_RETENTION_OPTIONS = [
+  { value: 'never', label: 'settings.storage.retention.never', hint: 'settings.storage.retention.neverHint' },
+  { value: 'session', label: 'settings.storage.retention.session', hint: 'settings.storage.retention.sessionHint' },
+  { value: '7d', label: 'settings.storage.retention.week', hint: 'settings.storage.retention.weekHint' },
+  { value: '30d', label: 'settings.storage.retention.month', hint: 'settings.storage.retention.monthHint' },
+] as const satisfies readonly { readonly value: ScratchRetention; readonly label: MessageKey; readonly hint: MessageKey }[];
 
 // Seccion "Atajos de teclado" (D5, PLAN-D5-KEYBINDINGS.md §8): catalogo agrupado por categoria, con
 // buscador, captura de combinacion con deteccion de conflicto EN VIVO (§7) y restablecer por atajo/global.
@@ -782,6 +773,7 @@ function KeybindingsSection({
   readonly onResetAll: () => void;
 }): React.JSX.Element {
   const [query, setQuery] = useState('');
+  const t = useT();
   const isMac = isMacPlatform();
   const normalizedQuery = query.trim().toLowerCase();
   const visibleActions = KEYBINDING_ACTIONS.filter((a) => a.label.toLowerCase().includes(normalizedQuery));
@@ -795,26 +787,28 @@ function KeybindingsSection({
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Buscar atajo…"
-          aria-label="Buscar atajo por nombre"
+          placeholder={t('settings.keybindings.searchPlaceholder')}
+          aria-label={t('settings.keybindings.searchAria')}
           className="min-w-0 flex-1 rounded-[7px] border border-mg-border-ctrl bg-mg-window p-[7px_9px] text-[11.5px] text-mg-body outline-none placeholder:text-mg-muted"
         />
         <button
           onClick={onResetAll}
           className="shrink-0 rounded-[7px] border border-mg-border-emph px-[10px] py-[6px] text-[11px] text-mg-body2 hover:bg-mg-hover"
         >
-          Restablecer todo
+          {t('settings.keybindings.resetAll')}
         </button>
       </div>
 
       {orphanOverrides.length > 0 && (
         <div role="status" className="rounded-[7px] border border-mg-warn-border bg-mg-warn-bg p-[8px_10px] text-[10.5px] text-mg-warn-text">
-          {orphanOverrides.length} atajo{orphanOverrides.length === 1 ? '' : 's'} personalizado{orphanOverrides.length === 1 ? '' : 's'} ya no
-          aplica{orphanOverrides.length === 1 ? '' : 'n'} (la acción ya no existe): {orphanOverrides.map((o) => o.actionId).join(', ')}.
+          {t('settings.keybindings.orphans', {
+            count: orphanOverrides.length,
+            actions: orphanOverrides.map((o) => o.actionId).join(', '),
+          })}
         </div>
       )}
 
-      {categories.length === 0 && <div className="text-[11.5px] text-mg-muted">Sin resultados.</div>}
+      {categories.length === 0 && <div className="text-[11.5px] text-mg-muted">{t('settings.keybindings.noResults')}</div>}
 
       {categories.map((category) => (
         <div key={category} className="flex flex-col gap-[6px]">
@@ -854,6 +848,7 @@ function KeybindingRow({
   const [capturing, setCapturing] = useState(false);
   const [conflict, setConflict] = useState<{ readonly keys: string; readonly otherActionId: string } | null>(null);
   const captureRef = useRef<HTMLButtonElement>(null);
+  const t = useT();
 
   const effectiveKeys = effectiveKeysOf(action, overrides);
   const parsed = effectiveKeys === null ? null : parseKeyCombo(effectiveKeys);
@@ -905,20 +900,20 @@ function KeybindingRow({
         {!capturing && (
           <>
             <span className="shrink-0 rounded-[5px] border border-mg-border-emph bg-mg-panel px-[7px] py-[2px] font-mono text-[10.5px] text-mg-body2">
-              {parsed === null ? 'Sin atajo' : displayKeyCombo(parsed, isMac)}
+              {parsed === null ? t('settings.keybindings.unbound') : displayKeyCombo(parsed, isMac)}
             </span>
             <button
               onClick={() => setCapturing(true)}
               className="shrink-0 rounded-[6px] border border-mg-border-emph px-[8px] py-[3px] text-[10.5px] text-mg-body2 hover:bg-mg-hover"
             >
-              Cambiar
+              {t('settings.keybindings.change')}
             </button>
             <button
               onClick={() => onSetOverride(action.id, null)}
               disabled={!hasOverride}
               className="shrink-0 rounded-[6px] border border-mg-border-emph px-[8px] py-[3px] text-[10.5px] text-mg-body2 hover:bg-mg-hover disabled:cursor-default disabled:opacity-40"
             >
-              Restablecer
+              {t('settings.keybindings.reset')}
             </button>
           </>
         )}
@@ -928,24 +923,26 @@ function KeybindingRow({
             onKeyDown={onCaptureKeyDown}
             className="shrink-0 rounded-[6px] border border-mg-focus bg-mg-sel px-[10px] py-[3px] text-[10.5px] text-mg-text outline-none"
           >
-            Pulsa una combinación… (Escape cancela)
+            {t('settings.keybindings.capturing')}
           </button>
         )}
       </div>
       {conflict !== null && (
         <div role="alert" className="flex items-center gap-[8px] text-[10.5px] text-mg-danger">
           <span className="min-w-0 flex-1">
-            {conflict.keys} ya la usa «{KEYBINDING_ACTIONS.find((a) => a.id === conflict.otherActionId)?.label ?? conflict.otherActionId}» en
-            este ámbito.
+            {t('settings.keybindings.conflict', {
+              keys: conflict.keys,
+              action: KEYBINDING_ACTIONS.find((a) => a.id === conflict.otherActionId)?.label ?? conflict.otherActionId,
+            })}
           </span>
           <button
             onClick={unlinkAndCommit}
             className="shrink-0 rounded-[6px] border border-mg-danger-border px-[8px] py-[3px] text-mg-danger hover:bg-mg-danger-bg"
           >
-            Desvincular y usar aquí
+            {t('settings.keybindings.unlinkAndUse')}
           </button>
           <button onClick={cancelCapture} className="shrink-0 rounded-[6px] border border-mg-border-emph px-[8px] py-[3px] text-mg-body2 hover:bg-mg-hover">
-            Cancelar
+            {t('settings.keybindings.cancel')}
           </button>
         </div>
       )}
@@ -964,18 +961,16 @@ function nextRuleId(rules: readonly NotificationRule[]): string {
   return `rule${max + 1}`;
 }
 
-interface RulePreset {
-  readonly label: string;
-  readonly pattern: string;
-}
-
 // Ejemplos de un clic (Ronda 3, item 4): el usuario no tenia por donde empezar con las regex. Van con
 // clases [Aa] porque el matcher compila SIN el flag `i` (mismo comportamiento que en tiempo real).
-const RULE_PRESETS: readonly RulePreset[] = [
-  { label: 'Menciona un error', pattern: '[Ee]rror|[Ff]all(o|ó|ido)|[Ff]ailed' },
-  { label: 'Necesita que decidas', pattern: '[Cc]onfirma|[Nn]ecesito que|¿[Qq]uieres' },
-  { label: 'Terminó una tarea larga', pattern: '[Cc]ompletado|[Tt]erminado|[Dd]esplegado' },
-];
+// `label` es la clave del nombre: se traduce al pintar y al crear la regla (el nombre guardado es texto del usuario).
+const RULE_PRESETS = [
+  { label: 'settings.notifications.presets.error', pattern: '[Ee]rror|[Ff]all(o|ó|ido)|[Ff]ailed' },
+  { label: 'settings.notifications.presets.decision', pattern: '[Cc]onfirma|[Nn]ecesito que|¿[Qq]uieres' },
+  { label: 'settings.notifications.presets.longTask', pattern: '[Cc]ompletado|[Tt]erminado|[Dd]esplegado' },
+] as const satisfies readonly { readonly label: MessageKey; readonly pattern: string }[];
+
+type RulePreset = (typeof RULE_PRESETS)[number];
 
 // Seccion de reglas: lista editable (label, patron, toggle, borrar) + "Añadir regla". La validacion
 // del regex es EN VIVO: un patron invalido se marca en rojo y ademas se guarda desactivado de facto
@@ -987,28 +982,28 @@ function NotificationRulesSection({
   readonly rules: readonly NotificationRule[];
   readonly onChange: (rules: readonly NotificationRule[]) => void;
 }): React.JSX.Element {
+  const t = useT();
   const patch = (id: string, changes: Partial<NotificationRule>): void =>
     onChange(rules.map((r) => (r.id === id ? { ...r, ...changes } : r)));
   const remove = (id: string): void => onChange(rules.filter((r) => r.id !== id));
   const add = (): void =>
     onChange([...rules, { id: nextRuleId(rules), label: '', pattern: '', enabled: true }]);
   const addPreset = (preset: RulePreset): void =>
-    onChange([...rules, { id: nextRuleId(rules), label: preset.label, pattern: preset.pattern, enabled: true }]);
+    onChange([...rules, { id: nextRuleId(rules), label: t(preset.label), pattern: preset.pattern, enabled: true }]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-[10px] overflow-y-auto p-[14px_16px]">
       {/* Aclaracion pedida por el usuario (Ronda 3, item 4): creia que TODAS las notificaciones
           dependian de estas reglas y escribia regex para casos que ya funcionan solos. */}
       <p className="text-[11px] leading-[1.5] text-mg-sec">
-        <strong>No hace falta configurar nada</strong> para que Mage avise del fin de un turno, de un
-        permiso pendiente o de un error: eso ya notifica siempre (si la ventana no tiene el foco).
+        <strong>{t('settings.notifications.noConfigNeeded')}</strong> {t('settings.notifications.noConfigNeededDetail')}
       </p>
       <p className="text-[11px] leading-[1.5] text-mg-sec">
-        Estas reglas son solo un <strong>extra</strong> para avisar por el <strong>contenido</strong> del
-        texto del agente: cuando ese texto coincida con el patrón (expresión regular) de una regla activa,
-        se muestra además una notificación propia. Distingue mayúsculas y minúsculas.
+        {t('settings.notifications.extraPrefix')} <strong>{t('settings.notifications.extraEmphasis')}</strong>{' '}
+        {t('settings.notifications.extraMiddle')} <strong>{t('settings.notifications.contentEmphasis')}</strong>{' '}
+        {t('settings.notifications.extraSuffix')}
       </p>
-      {rules.length === 0 && <div className="text-[11.5px] text-mg-muted">No hay reglas todavía.</div>}
+      {rules.length === 0 && <div className="text-[11.5px] text-mg-muted">{t('settings.notifications.empty')}</div>}
       {rules.map((rule) => (
         <RuleRow key={rule.id} rule={rule} onPatch={(c) => patch(rule.id, c)} onRemove={() => remove(rule.id)} />
       ))}
@@ -1017,9 +1012,9 @@ function NotificationRulesSection({
           onClick={add}
           className="rounded-[7px] border border-mg-border-emph px-[12px] py-[5px] text-[11.5px] text-mg-body2 hover:bg-mg-hover"
         >
-          ＋ Añadir regla
+          {t('settings.notifications.addRule')}
         </button>
-        <span className="text-[11px] text-mg-ter">o empieza por un ejemplo:</span>
+        <span className="text-[11px] text-mg-ter">{t('settings.notifications.presetsIntro')}</span>
         {RULE_PRESETS.map((preset) => (
           <button
             key={preset.label}
@@ -1027,7 +1022,7 @@ function NotificationRulesSection({
             data-tip={preset.pattern}
             className="rounded-[7px] border border-mg-border-ctrl px-[10px] py-[5px] text-[11.5px] text-mg-sec hover:bg-mg-hover hover:text-mg-body"
           >
-            {preset.label}
+            {t(preset.label)}
           </button>
         ))}
       </div>
@@ -1050,53 +1045,60 @@ function RuleRow({
   // sitio. Usa el MISMO compilador que el matcher real, para que lo que se ve aqui sea lo que pasara.
   const [probe, setProbe] = useState('');
   const probeMatches = probe.length > 0 && compileSafely(rule.pattern)?.test(probe) === true;
+  const t = useT();
   return (
     <div className="flex flex-col gap-[6px] rounded-[9px] border border-mg-border-ctrl bg-mg-code p-[10px]">
       <div className="flex items-center gap-[8px]">
         <input
           value={rule.label}
           onChange={(e) => onPatch({ label: e.target.value })}
-          placeholder="Nombre de la regla"
-          aria-label="Nombre de la regla"
+          placeholder={t('settings.notifications.ruleName')}
+          aria-label={t('settings.notifications.ruleName')}
           className="w-[180px] rounded-[6px] border border-mg-border-subtle bg-mg-panel px-[8px] py-[4px] text-[11.5px] text-mg-body outline-none placeholder:text-mg-muted"
         />
         <label className="ml-auto flex items-center gap-[5px] text-[11px] text-mg-sec">
           <input type="checkbox" checked={rule.enabled} onChange={(e) => onPatch({ enabled: e.target.checked })} />
-          Activa
+          {t('settings.notifications.ruleEnabled')}
         </label>
-        <button onClick={onRemove} data-tip="Eliminar regla" aria-label="Eliminar regla" className="text-[12px] text-mg-muted hover:text-mg-danger">
+        <button onClick={onRemove} data-tip={t('settings.notifications.removeRule')} aria-label={t('settings.notifications.removeRule')} className="text-[12px] text-mg-muted hover:text-mg-danger">
           <Icon name="trash" size={12} />
         </button>
       </div>
       <input
         value={rule.pattern}
         onChange={(e) => onPatch({ pattern: e.target.value })}
-        placeholder="Patrón regex, p.ej. deploy (ok|listo)"
-        aria-label="Patrón (expresión regular)"
+        placeholder={t('settings.notifications.patternPlaceholder')}
+        aria-label={t('settings.notifications.patternAria')}
         aria-invalid={patternError !== null}
         aria-describedby={patternError !== null ? errorId : undefined}
         className={`w-full rounded-[6px] border bg-mg-panel px-[8px] py-[4px] font-mono text-[11.5px] text-mg-body outline-none placeholder:text-mg-muted ${
           patternError === null ? 'border-mg-border-subtle' : 'border-mg-danger-emph'
         }`}
       />
-      {patternError !== null && <div id={errorId} role="alert" className="text-[10.5px] text-mg-danger">Regex inválida: {patternError}</div>}
+      {patternError !== null && <div id={errorId} role="alert" className="text-[10.5px] text-mg-danger">{t('settings.notifications.invalidPattern', { error: patternError })}</div>}
       <div className="flex items-center gap-[8px]">
         <input
           value={probe}
           onChange={(e) => setProbe(e.target.value)}
-          placeholder="Texto de prueba (no se guarda)"
-          aria-label="Texto de prueba para este patrón"
+          placeholder={t('settings.notifications.probePlaceholder')}
+          aria-label={t('settings.notifications.probeAria')}
           className="min-w-0 flex-1 rounded-[6px] border border-mg-border-subtle bg-mg-panel px-[8px] py-[4px] text-[11.5px] text-mg-body outline-none placeholder:text-mg-muted"
         />
         <span
           role="status"
           className={`shrink-0 text-[11px] ${probe.length === 0 ? 'text-mg-muted' : probeMatches ? 'text-mg-focus' : 'text-mg-ter'}`}
         >
-          {probe.length === 0 ? '—' : probeMatches ? '✓ notificaría' : '✗ no casa'}
+          {probeResultText(probe, probeMatches, t)}
         </span>
       </div>
     </div>
   );
+}
+
+// Resultado del banco de pruebas: raya sin texto, y si no, si casa o no.
+function probeResultText(probe: string, matches: boolean, t: Translate): string {
+  if (probe.length === 0) return '—';
+  return matches ? t('settings.notifications.probeMatches') : t('settings.notifications.probeNoMatch');
 }
 
 // Valida un patron en vivo; devuelve el mensaje de error o null si compila. Frontera segura.
@@ -1123,14 +1125,16 @@ function TrustedFoldersSection(): React.JSX.Element {
   // reutiliza esa accion (guarda la carpeta y persiste los ajustes sin debounce) en vez de duplicar
   // el guardado. Sin dialogo pendiente, la parte de responder al que espera es un no-op.
   const answerTrustRequest = useWorkbenchStore((s) => s.answerTrustRequest);
-  const [addError, setAddError] = useState<string | null>(null);
+  // Carpeta repetida que se intento añadir: se guarda la carpeta, no el aviso, para traducirlo al pintar.
+  const [duplicateFolder, setDuplicateFolder] = useState<string | null>(null);
+  const t = useT();
 
   const addFolder = async (): Promise<void> => {
-    setAddError(null);
+    setDuplicateFolder(null);
     const folder = await window.mage.pickDirectory();
     if (folder === null) return; // el usuario cerro el selector nativo
     if (folders.includes(folder)) {
-      setAddError(`Esa carpeta ya estaba autorizada: ${folder}`);
+      setDuplicateFolder(folder);
       return;
     }
     await answerTrustRequest(folder, true);
@@ -1139,14 +1143,11 @@ function TrustedFoldersSection(): React.JSX.Element {
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-[12px] overflow-y-auto p-[16px]">
       <div className="text-[11.5px] leading-[1.6] text-mg-body2">
-        Un agente se ejecuta <b>dentro</b> de la carpeta de su conversación y aplica lo que encuentre en
-        ella: los <b>hooks</b> y la configuración de su <code>.claude/</code>, y los servidores{' '}
-        <b>MCP</b> que declare. Mage pregunta la primera vez que vas a lanzar un agente en una carpeta
-        nueva, y lo que autorices vale también para sus subcarpetas.
-        <div className="mt-[6px] text-mg-muted">
-          Aquí solo aparece lo autorizado desde Mage. Lo que aceptaste en el diálogo del CLI también
-          cuenta para no volver a preguntar, pero se gestiona desde el CLI.
-        </div>
+        {t('settings.trustedFolders.introStart')} <b>{t('settings.trustedFolders.introInside')}</b>{' '}
+        {t('settings.trustedFolders.introApplies')} <b>{t('settings.trustedFolders.introHooks')}</b>{' '}
+        {t('settings.trustedFolders.introConfig')} <code>.claude/</code>
+        {t('settings.trustedFolders.introServers')} <b>MCP</b> {t('settings.trustedFolders.introEnd')}
+        <div className="mt-[6px] text-mg-muted">{t('settings.trustedFolders.cliNote')}</div>
       </div>
 
       <div className="flex items-center gap-[10px]">
@@ -1154,14 +1155,18 @@ function TrustedFoldersSection(): React.JSX.Element {
           onClick={() => void addFolder()}
           className="flex w-fit items-center gap-[6px] rounded-[6px] border border-mg-border-emph px-[10px] py-[4px] text-[11px] text-mg-body2 hover:bg-mg-hover"
         >
-          <Icon name="plus" size={11} /> Añadir carpeta…
+          <Icon name="plus" size={11} /> {t('settings.trustedFolders.add')}
         </button>
-        {addError !== null && <span role="alert" className="text-[11px] text-mg-warn-text">{addError}</span>}
+        {duplicateFolder !== null && (
+          <span role="alert" className="text-[11px] text-mg-warn-text">
+            {t('settings.trustedFolders.alreadyTrusted', { folder: duplicateFolder })}
+          </span>
+        )}
       </div>
 
       {folders.length === 0 ? (
         <div className="rounded-[7px] border border-mg-border-subtle p-[10px_12px] text-[11.5px] text-mg-muted">
-          Todavía no has autorizado ninguna carpeta desde Mage.
+          {t('settings.trustedFolders.empty')}
         </div>
       ) : (
         <ul className="flex flex-col gap-[6px]">
@@ -1175,20 +1180,17 @@ function TrustedFoldersSection(): React.JSX.Element {
               </span>
               <button
                 onClick={() => void revokeTrustedFolder(folder)}
-                aria-label={`Retirar la confianza de ${folder}`}
+                aria-label={t('settings.trustedFolders.revokeAria', { folder })}
                 className="flex-none rounded-[5px] border border-mg-border-emph px-[8px] py-[3px] text-[11px] text-mg-body2 transition-colors duration-150 ease-out hover:bg-mg-hover"
               >
-                Retirar
+                {t('settings.trustedFolders.revoke')}
               </button>
             </li>
           ))}
         </ul>
       )}
 
-      <div className="text-[11px] text-mg-muted">
-        Retirar una carpeta no detiene las conversaciones que ya están corriendo en ella: se volverá a
-        preguntar la próxima vez que se lance un agente ahí.
-      </div>
+      <div className="text-[11px] text-mg-muted">{t('settings.trustedFolders.revokeNote')}</div>
     </div>
   );
 }
