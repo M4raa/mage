@@ -13,8 +13,9 @@ declare global {
   // la que se carga `devBridge.ts`). Se declara a mano en vez de referenciar `vite/client` completo:
   // `tsconfig.web.json` va con `"types": []` a proposito y esto es lo unico que hace falta.
   // `VITE_MAGE_RELEASE_NOTES_IN_DEV`: la pone `verify:gui` para medir la apertura de novedades en dev.
+  // `VITE_MAGE_PSEUDO_LOCALE=1`: pinta la interfaz en el pseudolocale en-XA (solo dev, F3.1/F3.6).
   interface ImportMeta {
-    readonly env: { readonly DEV: boolean; readonly VITE_MAGE_RELEASE_NOTES_IN_DEV?: string };
+    readonly env: { readonly DEV: boolean; readonly VITE_MAGE_RELEASE_NOTES_IN_DEV?: string; readonly VITE_MAGE_PSEUDO_LOCALE?: string };
   }
 }
 

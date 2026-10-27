@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useRef, useState } from 'react';
+import { LanguageControl } from './LanguageControl';
 import { canCheckForUpdates, updateStatusText } from '../updateStatus';
 import type {
   CloseBehavior,
@@ -286,6 +287,7 @@ function AppearanceSection({
 }): React.JSX.Element {
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-[16px] overflow-y-auto p-[14px_16px]">
+      <LanguageControl />
       <UiScaleControl />
       <div className="flex flex-col gap-[8px]">
         <span className="text-[10.5px] font-bold tracking-[.06em] text-mg-ter">OPACIDAD DE LOS FONDOS</span>

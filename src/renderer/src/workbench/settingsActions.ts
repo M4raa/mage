@@ -16,6 +16,7 @@ export type SettingsActionName =
   | 'saveNotificationRules'
   | 'setTheme'
   | 'setUiScale'
+  | 'setUiLanguage'
   | 'setAccountAccent'
   | 'setClaudeAiConnectorsEnabled'
   | 'setAgyCommandVerdict'
@@ -80,6 +81,13 @@ export function createSettingsActions(deps: SettingsDeps): SettingsActions {
       set((s) => ({ settings: { ...s.settings, uiScale: clamped } }));
       mage.setUiScale(clamped);
       deps.persistSettings();
+    },
+
+    // Idioma de la interfaz (F3.1). Se guarda YA, sin debounce: main resuelve el idioma al guardar y avisa a todas
+    // las ventanas, que se repintan sin reiniciar. Elegir «Sistema» se guarda explícito (deja de heredar nada).
+    setUiLanguage: (preference) => {
+      set((s) => ({ settings: { ...s.settings, uiLanguage: preference } }));
+      deps.persistSettingsNow();
     },
 
     // PERS-3 (P-028, 2): color de una cuenta. `undefined` vuelve al de su posicion.

@@ -114,6 +114,7 @@ import type {
   ThemePreference,
 } from '@shared/settings';
 import { DEFAULT_APP_SETTINGS, type RuntimeShell } from '@shared/settings';
+import type { UiLanguagePreference } from '@shared/i18n/language';
 import type { ToolAccessRule } from '@shared/toolAccess';
 import type { AgyCommandVerdict } from '@shared/agyRules';
 import { AGY_PROVIDER_ID, CODEX_PROVIDER_ID, ownsConversation, runsOnMageRuntime, writesClaudeTranscript, type CustomProvider, type ProviderModel } from '@shared/providers';
@@ -434,6 +435,7 @@ export interface WorkbenchState extends PrState, PrActions {
   setImportedContextMaxChars: (chars: number) => void;
   // Escala de la interfaz (80..150 %). Se aplica al frame al instante y se persiste con debounce.
   setUiScale: (percent: number) => void;
+  setUiLanguage: (preference: UiLanguagePreference) => void;
   // Proveedor con el que se abre "Nueva conversacion".
   setDefaultProvider: (providerId: string) => void;
   setAccountAccent: (accountId: string, colorIndex: number | undefined) => void;

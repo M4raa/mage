@@ -579,6 +579,46 @@ const CHECKS = [
     },
   },
   {
+    // F3.1: elegir «English» repinta la interfaz SIN recargar (una marca en `window` sobrevive), se guarda en disco y
+    // sigue en inglés tras recargar el renderer. Al final se deja el ajuste como estaba (ausente o el que hubiera).
+    name: 'F3.1: cambiar el idioma repinta sin reiniciar y persiste tras recargar',
+    state: { settingsSection: 'Apariencia' },
+    async run(page, { userDataDir }) {
+      await openSection(page, /Apariencia/);
+      const label = page.locator('[data-setting="ui-language"] > span').first();
+      const previo = await page.evaluate(() => {
+        window.__mageF31Marca = true;
+        return window.__mageDev.store.getState().settings.uiLanguage ?? null;
+      });
+      const inicial = await label.textContent();
+      await page.locator('[data-setting="ui-language"] [data-language="en"]').click();
+      await page.waitForFunction(() => document.querySelector('[data-setting="ui-language"] > span')?.textContent === 'LANGUAGE', null, { timeout: CONFIG.actionTimeoutMs }).catch(() => undefined);
+      const enCaliente = await page.evaluate(() => ({
+        texto: document.querySelector('[data-setting="ui-language"] > span')?.textContent ?? null,
+        lang: document.documentElement.lang,
+        sinRecargar: window.__mageF31Marca === true,
+      }));
+      const file = path.join(userDataDir, 'app-settings.json');
+      const enDisco = await waitForFile(file, (text) => JSON.parse(text).uiLanguage === 'en');
+      await page.reload();
+      await page.locator('[role="toolbar"]').first().waitFor({ state: 'attached', timeout: CONFIG.bootTimeoutMs });
+      const trasRecargar = await page.evaluate(async () => ({ lang: document.documentElement.lang, main: (await window.mage.getUiLanguage()).language }));
+      await page.evaluate(async (pref) => {
+        const store = window.__mageDev.store;
+        const { uiLanguage: _actual, ...resto } = store.getState().settings;
+        const settings = pref === null ? resto : { ...resto, uiLanguage: pref };
+        store.setState({ settings });
+        await window.mage.saveSettings(settings);
+      }, previo);
+      await page.waitForFunction((pref) => document.documentElement.lang === (pref ?? document.documentElement.lang), previo, { timeout: CONFIG.actionTimeoutMs }).catch(() => undefined);
+      const restaurado = await page.evaluate(async () => (await window.mage.getUiLanguage()).language);
+      const ok =
+        enCaliente.texto === 'LANGUAGE' && enCaliente.lang === 'en' && enCaliente.sinRecargar &&
+        inicial !== 'LANGUAGE' && enDisco !== null && trasRecargar.lang === 'en' && trasRecargar.main === 'en';
+      return { ok, detail: JSON.stringify({ inicial, enCaliente, guardadoEnDisco: enDisco !== null, trasRecargar, previo, restaurado }) };
+    },
+  },
+  {
     // El fondo del tooltip es OSCURO EN LOS DOS TEMAS a proposito (`--color-mg-tooltip`), asi que su
     // texto no puede salir de un token que SI conmuta. Salia de `--color-mg-body`, y en tema claro eso
     // es casi negro: la burbuja se veia como un rectangulo negro macizo, sin texto (reportado el
