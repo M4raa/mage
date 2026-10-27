@@ -1380,6 +1380,17 @@ describe('requestAccountSwitch y continueInAccount', () => {
     expect(store.getState().tabs.some((t) => t.id === 'a')).toBe(false);
   });
 
+  // Devolución 19: se migra la conversación (el hilo), no el UUID de la sesión viva de Mage.
+  it('continueInAccount_codexConSesionViva_migraElHiloYNoElUuidDeMage', async () => {
+    const migrateConversation = vi.fn().mockRejectedValue(new Error('parada tras medir'));
+    const store = mounted({ migrateConversation, closeSession: vi.fn().mockResolvedValue({ background: false }), releaseConversationLock: vi.fn().mockResolvedValue(undefined) });
+    store.setState({ tabs: [tab('a', { provider: 'codex', accountId: 'C:/Users/u/.codex-x', resumeSessionId: 'thread-1' })], sessionIdByChat: { a: 's-a' } });
+
+    await expect(store.getState().continueInAccount('a', B)).rejects.toThrow('parada tras medir');
+
+    expect(migrateConversation).toHaveBeenCalledWith(expect.objectContaining({ sourceProvider: 'codex', sessionId: 'thread-1' }));
+  });
+
   it('continueInAccount_laMigracionFalla_elErrorSubeYNoSeCambiaDeCuenta', async () => {
     const migrateConversation = vi.fn().mockRejectedValue(new Error('no se pudo comprobar'));
     const store = mounted({ migrateConversation });

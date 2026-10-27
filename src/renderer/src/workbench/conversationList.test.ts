@@ -178,6 +178,13 @@ describe('planOpenConversation', () => {
     expect(planOpenConversation({ ...CTX, tabs: [], sessionIdByChat: {} })).toEqual({ action: 'create' });
   });
 
+  // Devolución 19: antes no la encontraba (casaba el UUID de Mage) y abría OTRA pestaña con el mismo hilo.
+  it('planOpenConversation_codexConSesionViva_activaLaPestaña', () => {
+    const tabs = [tab({ id: 'tA', accountId: '.claude-p', provider: 'codex', resumeSessionId: 's1' })];
+
+    expect(planOpenConversation({ ...CTX, tabs, sessionIdByChat: { tA: 'mage-uuid-1' } })).toEqual({ action: 'activate', tabId: 'tA' });
+  });
+
   it('planOpenConversation_abiertaEnLaCuentaActiva_soloLaActiva', () => {
     const tabs = [tab({ id: 'tA', accountId: '.claude-p', resumeSessionId: 's1' })];
 
