@@ -3,6 +3,7 @@ import { useWorkbenchStore } from '../../workbenchStore';
 import { useSharedConfigStore } from '../../sharedConfigStore';
 import { CommonRulesEditor } from './CommonRulesEditor';
 import type { EffectiveSettings, HookEntry, PermissionRule, SettingsOrigin } from '@shared/ipc';
+import { useT } from '../../../i18n/uiLanguage';
 
 // Seccion "Hooks y permisos" (2.9.b). Los dos salen del MISMO fichero y por eso comparten pantalla:
 // `settings-common.json` esta restringido por forma a exactamente `hooks` y `permissions.allow/deny`.
@@ -14,20 +15,23 @@ import type { EffectiveSettings, HookEntry, PermissionRule, SettingsOrigin } fro
 // Solo se puede EDITAR la parte de Mage (`settings-common.json`), y ahora se edita AQUI MISMO (bloque
 // de abajo) en vez de mandar al usuario a otra seccion a escribir JSON. Los otros tres ficheros son
 // del usuario y del proyecto: se muestran, no se tocan.
-const ORIGIN_LABEL: Readonly<Record<SettingsOrigin, string>> = {
-  account: 'cuenta',
-  project: 'proyecto',
-  projectLocal: 'proyecto (local)',
-  mageCommon: 'Mage (común)',
-};
+// La etiqueta es la CLAVE del catalogo: se traduce al pintar.
+const ORIGIN_LABEL = {
+  account: 'settings.hooks.origin.account',
+  project: 'settings.hooks.origin.project',
+  projectLocal: 'settings.hooks.origin.projectLocal',
+  mageCommon: 'settings.hooks.origin.mageCommon',
+} as const satisfies Readonly<Record<SettingsOrigin, string>>;
 
 export function HooksPermissionsSection(): React.JSX.Element {
-  const tab = useWorkbenchStore((s) => s.tabs.find((t) => t.id === s.activeTabId));
+  const tab = useWorkbenchStore((s) => s.tabs.find((candidate) => candidate.id === s.activeTabId));
   const loadSharedConfig = useSharedConfigStore((s) => s.load);
   const cwd = tab?.cwd;
   const accountDir = tab === undefined ? undefined : (tab.resolvedConfigDir ?? tab.accountId);
   const [settings, setSettings] = useState<EffectiveSettings | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const t = useT();
+  const mageCommon = t(ORIGIN_LABEL.mageCommon);
 
   // El editor de abajo trabaja sobre el fichero comun, que vive en otro store: se carga aqui para que
   // la seccion sirva tambien sin haber pasado antes por otra que lo cargue.
@@ -56,21 +60,26 @@ export function HooksPermissionsSection(): React.JSX.Element {
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-[16px] overflow-y-auto p-[14px_16px]">
       <p className="text-[11.5px] leading-[1.5] text-mg-muted">
-        Arriba ves la <strong>unión</strong> de las cuatro fuentes ({ORIGIN_LABEL.account}, {ORIGIN_LABEL.project},{' '}
-        {ORIGIN_LABEL.projectLocal} y {ORIGIN_LABEL.mageCommon}): el CLI las concatena, no las pisa. Lo que viene del
-        CLI o del proyecto se muestra <strong>solo para consultar</strong>; desde Mage únicamente se edita lo de{' '}
-        <strong>{ORIGIN_LABEL.mageCommon}</strong>, en el bloque del final.
+        {t('settings.hooks.intro.start')} <strong>{t('settings.hooks.intro.union')}</strong>{' '}
+        {t('settings.hooks.intro.sources', {
+          account: t(ORIGIN_LABEL.account),
+          project: t(ORIGIN_LABEL.project),
+          projectLocal: t(ORIGIN_LABEL.projectLocal),
+          mageCommon,
+        })}{' '}
+        <strong>{t('settings.hooks.intro.readOnly')}</strong>
+        {t('settings.hooks.intro.editable')} <strong>{mageCommon}</strong>
+        {t('settings.hooks.intro.end')}
       </p>
 
       {tab !== undefined && tab.provider !== 'claude'
-        ? <p className="text-[12px] text-mg-muted">Los hooks y permisos efectivos de {tab.provider} se consultan en su CLI.</p>
+        ? <p className="text-[12px] text-mg-muted">{t('settings.hooks.otherProvider', { provider: tab.provider })}</p>
         : <EffectiveView settings={settings} error={error} hasTab={tab !== undefined} />}
 
       <div className="flex flex-col gap-[8px] border-t border-mg-border pt-[14px]">
-        <h3 className="text-[11px] font-semibold text-mg-body">Editable desde Mage — {ORIGIN_LABEL.mageCommon}</h3>
+        <h3 className="text-[11px] font-semibold text-mg-body">{t('settings.hooks.editableHeading', { origin: mageCommon })}</h3>
         <p className="text-[10.5px] leading-[1.5] text-mg-muted">
-          Se guarda en <code>settings-common.json</code> y se aplica a todas las cuentas. Los cambios se ven arriba la
-          próxima vez que se lea la conversación.
+          {t('settings.hooks.storedIn.start')} <code>settings-common.json</code> {t('settings.hooks.storedIn.end')}
         </p>
         <CommonRulesEditor />
       </div>
@@ -89,8 +98,9 @@ function EffectiveView({
   readonly error: string | null;
   readonly hasTab: boolean;
 }): React.JSX.Element {
+  const t = useT();
   if (!hasTab) {
-    return <p className="text-[12px] text-mg-muted">Abre una conversación para ver los hooks y reglas efectivos.</p>;
+    return <p className="text-[12px] text-mg-muted">{t('settings.hooks.noTab')}</p>;
   }
   if (error !== null) {
     return (
@@ -99,14 +109,14 @@ function EffectiveView({
       </div>
     );
   }
-  if (settings === null) return <p className="text-[12px] text-mg-muted">Cargando…</p>;
+  if (settings === null) return <p className="text-[12px] text-mg-muted">{t('settings.hooks.loading')}</p>;
 
   return (
     <div className="flex flex-col gap-[16px]">
       <section className="flex flex-col gap-[6px]">
-        <h3 className="text-[10px] font-bold uppercase tracking-[.07em] text-mg-ter">Hooks ({settings.hooks.length})</h3>
+        <h3 className="text-[10px] font-bold uppercase tracking-[.07em] text-mg-ter">{t('settings.hooks.hooksHeading', { count: settings.hooks.length })}</h3>
         {settings.hooks.length === 0 ? (
-          <p className="text-[11.5px] text-mg-muted">No hay ningún hook configurado en las cuatro fuentes.</p>
+          <p className="text-[11.5px] text-mg-muted">{t('settings.hooks.noHooks')}</p>
         ) : (
           <ul className="flex flex-col gap-[3px]">
             {settings.hooks.map((hook, index) => (
@@ -118,10 +128,10 @@ function EffectiveView({
 
       <section className="flex flex-col gap-[6px]">
         <h3 className="text-[10px] font-bold uppercase tracking-[.07em] text-mg-ter">
-          Reglas de permisos ({settings.rules.length})
+          {t('settings.hooks.rulesHeading', { count: settings.rules.length })}
         </h3>
         {settings.rules.length === 0 ? (
-          <p className="text-[11.5px] text-mg-muted">No hay ninguna regla de permisos configurada.</p>
+          <p className="text-[11.5px] text-mg-muted">{t('settings.hooks.noRules')}</p>
         ) : (
           <ul className="flex flex-col gap-[3px]">
             {settings.rules.map((rule, index) => (
@@ -167,14 +177,15 @@ function RuleRow({ rule }: { readonly rule: PermissionRule }): React.JSX.Element
 // resuelve contra ese mismo fondo.
 function OriginTag({ origin }: { readonly origin: SettingsOrigin }): React.JSX.Element {
   const editable = origin === 'mageCommon';
+  const t = useT();
   return (
     <span
-      title={editable ? 'Editable desde Mage' : 'Solo lectura: lo gestiona el CLI o el proyecto'}
+      title={editable ? t('settings.hooks.editableTip') : t('settings.hooks.readOnlyTip')}
       className={`flex-none rounded-[4px] border px-[5px] py-[1px] text-[9px] ${
         editable ? 'border-mg-border-pop text-mg-body2' : 'border-mg-border-ctrl text-mg-sec'
       }`}
     >
-      {ORIGIN_LABEL[origin]}
+      {t(ORIGIN_LABEL[origin])}
     </span>
   );
 }

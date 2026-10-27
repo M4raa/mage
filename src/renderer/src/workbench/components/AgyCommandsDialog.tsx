@@ -15,6 +15,8 @@ import { MODAL_PANEL_VARIANTS, MODAL_SCRIM_VARIANTS } from '../motionPresets';
 import { DialogButton } from './CloseMageDialog';
 import { Dropdown } from './Dropdown';
 import { Icon } from './Icon';
+import { useT } from '../../i18n/uiLanguage';
+import type { Translate } from '@shared/i18n/translator';
 
 // «Comandos de agy» (grupo E, fase 2): los comandos de terminal que agy puede ejecutar, por linea EXACTA.
 // Se conceden o revocan al EMPEZAR la conversacion: agy lee sus reglas al arrancar (medido), asi que lo
@@ -26,6 +28,7 @@ export function AgyCommandsDialog({ onClose }: { readonly onClose: () => void })
   const dialogRef = useDialogA11y({ onClose });
   const [draft, setDraft] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const t = useT();
 
   const add = (verdict: AgyCommandVerdict): void => {
     const checked = validateAgyCommand(draft);
@@ -37,7 +40,7 @@ export function AgyCommandsDialog({ onClose }: { readonly onClose: () => void })
     setDraft('');
     setError(null);
   };
-  const { commands, mcpTools } = splitRules(rules);
+  const { commands, mcpTools } = splitRules(rules, t);
 
   return (
     <motion.div variants={MODAL_SCRIM_VARIANTS} initial="initial" animate="animate" exit="exit" className="fixed inset-0 z-50 flex items-center justify-center bg-mg-scrim" onClick={onClose}>
@@ -52,15 +55,15 @@ export function AgyCommandsDialog({ onClose }: { readonly onClose: () => void })
         className="flex max-h-[calc(100vh-32px)] w-[480px] max-w-[calc(100vw-32px)] flex-col gap-[12px] overflow-y-auto rounded-[11px] border border-mg-border-pop bg-mg-panel p-[18px] text-[12px] mg-shadow-modal"
       >
         <div id="agy-commands-title" className="text-[13px] font-bold text-mg-text">
-          Comandos de agy
+          {t('settings.agyCommands.title')}
         </div>
         <p className="leading-[1.55] text-mg-body2">
-          agy solo ejecuta los comandos de terminal que permitas aquí, escritos <strong>exactamente</strong> como los
-          lanzará: <code>git status</code> no permite <code>git status --short</code>. Denegar gana a permitir. Se
-          aplican al empezar la conversación.
+          {t('settings.agyCommands.intro.start')} <strong>{t('settings.agyCommands.intro.exactly')}</strong> {t('settings.agyCommands.intro.asLaunched')}{' '}
+          <code>git status</code> {t('settings.agyCommands.intro.doesNotAllow')} <code>git status --short</code>
+          {t('settings.agyCommands.intro.end')}
         </p>
         <div className="flex flex-col gap-[12px]" data-agy-command-rules="true">
-          <CommandList entries={commands} empty="Ningún comando todavía: agy los deniega todos." onVerdict={setVerdict} />
+          <CommandList entries={commands} empty={t('settings.agyCommands.emptyCommands')} onVerdict={setVerdict} />
           <div className="flex items-center gap-[6px]">
             <input
               value={draft}
@@ -71,12 +74,12 @@ export function AgyCommandsDialog({ onClose }: { readonly onClose: () => void })
               onKeyDown={(e) => {
                 if (e.key === 'Enter') add('allow');
               }}
-              aria-label="Comando exacto"
-              placeholder="p. ej. pnpm test"
+              aria-label={t('settings.agyCommands.commandAria')}
+              placeholder={t('settings.agyCommands.commandPlaceholder')}
               className="min-w-0 flex-1 rounded-[7px] border border-mg-border-ctrl bg-mg-window px-[8px] py-[5px] font-mono text-[11.5px] text-mg-text"
             />
-            <DialogButton onClick={() => add('allow')}>Permitir</DialogButton>
-            <DialogButton onClick={() => add('deny')}>Denegar</DialogButton>
+            <DialogButton onClick={() => add('allow')}>{t('settings.agyCommands.allow')}</DialogButton>
+            <DialogButton onClick={() => add('deny')}>{t('settings.agyCommands.deny')}</DialogButton>
           </div>
           {error !== null && (
             <div role="alert" className="text-[11px] text-mg-danger">
@@ -87,7 +90,7 @@ export function AgyCommandsDialog({ onClose }: { readonly onClose: () => void })
         <McpToolRules entries={mcpTools} onVerdict={setVerdict} />
         <div className="flex justify-end">
           <DialogButton primary onClick={onClose}>
-            Listo
+            {t('settings.agyCommands.done')}
           </DialogButton>
         </div>
       </motion.div>
@@ -102,14 +105,14 @@ interface RuleEntry {
 }
 
 // Las reglas guardadas, separadas en comandos y herramientas MCP (comparten lista en los ajustes).
-function splitRules(rules: AgyCommandRules): { readonly commands: readonly RuleEntry[]; readonly mcpTools: readonly RuleEntry[] } {
+function splitRules(rules: AgyCommandRules, t: Translate): { readonly commands: readonly RuleEntry[]; readonly mcpTools: readonly RuleEntry[] } {
   const all = [...rules.allow.map((rule) => ({ rule, verdict: 'allow' as const })), ...rules.deny.map((rule) => ({ rule, verdict: 'deny' as const }))];
   const commands: RuleEntry[] = [];
   const mcpTools: RuleEntry[] = [];
   for (const entry of all) {
     const mcp = parseAgyMcpRule(entry.rule);
     if (mcp === null) commands.push({ ...entry, label: entry.rule });
-    else mcpTools.push({ ...entry, label: mcp.tool === AGY_MCP_ANY_TOOL ? `${mcp.server} · todas` : `${mcp.server}/${mcp.tool}` });
+    else mcpTools.push({ ...entry, label: mcp.tool === AGY_MCP_ANY_TOOL ? t('settings.agyCommands.mcp.allTools', { server: mcp.server }) : `${mcp.server}/${mcp.tool}` });
   }
   return { commands, mcpTools };
 }
@@ -138,6 +141,7 @@ function McpToolRules({ entries, onVerdict }: { readonly entries: readonly RuleE
   const [tool, setTool] = useState('');
   const [error, setError] = useState<string | null>(null);
   const chosen = server.length > 0 ? server : (servers?.[0] ?? '');
+  const t = useT();
 
   const add = (verdict: AgyCommandVerdict): void => {
     const checked = validateAgyMcpTool(chosen, tool);
@@ -152,18 +156,17 @@ function McpToolRules({ entries, onVerdict }: { readonly entries: readonly RuleE
 
   return (
     <div className="flex flex-col gap-[8px] border-t border-mg-border-subtle pt-[12px]" data-agy-mcp-rules="true">
-      <div className="text-[12px] font-bold text-mg-text">Herramientas MCP</div>
+      <div className="text-[12px] font-bold text-mg-text">{t('settings.agyCommands.mcp.title')}</div>
       <p className="leading-[1.55] text-mg-body2">
-        agy tampoco llama a una herramienta MCP sin permiso. Elige el servidor y escribe la herramienta exacta, o{' '}
-        <code>{AGY_MCP_ANY_TOOL}</code> para todas las suyas.
+        {t('settings.agyCommands.mcp.intro.start')} <code>{AGY_MCP_ANY_TOOL}</code> {t('settings.agyCommands.mcp.intro.end')}
       </p>
-      <CommandList entries={entries} empty="Ninguna herramienta MCP todavía: agy las deniega todas." onVerdict={onVerdict} />
+      <CommandList entries={entries} empty={t('settings.agyCommands.mcp.empty')} onVerdict={onVerdict} />
       {servers !== null && servers.length === 0 && (
-        <div className="text-[11px] text-mg-muted">agy no carga ningún servidor MCP: añádelos en MCP y conectores y sincronízalos con agy.</div>
+        <div className="text-[11px] text-mg-muted">{t('settings.agyCommands.mcp.noServers')}</div>
       )}
       {loadError !== null && (
         <div role="alert" className="text-[11px] text-mg-danger">
-          No se pudieron leer los servidores MCP: {loadError}
+          {t('settings.agyCommands.mcp.loadError', { error: loadError })}
         </div>
       )}
       {servers !== null && servers.length > 0 && (
@@ -175,7 +178,7 @@ function McpToolRules({ entries, onVerdict }: { readonly entries: readonly RuleE
               setServer(value);
               setError(null);
             }}
-            ariaLabel="Servidor MCP"
+            ariaLabel={t('settings.agyCommands.mcp.serverAria')}
             triggerClassName="max-w-[150px]"
           />
           <input
@@ -187,12 +190,12 @@ function McpToolRules({ entries, onVerdict }: { readonly entries: readonly RuleE
             onKeyDown={(e) => {
               if (e.key === 'Enter') add('allow');
             }}
-            aria-label="Herramienta MCP exacta"
-            placeholder={`herramienta o ${AGY_MCP_ANY_TOOL}`}
+            aria-label={t('settings.agyCommands.mcp.toolAria')}
+            placeholder={t('settings.agyCommands.mcp.toolPlaceholder', { any: AGY_MCP_ANY_TOOL })}
             className="min-w-0 flex-1 rounded-[7px] border border-mg-border-ctrl bg-mg-window px-[8px] py-[5px] font-mono text-[11.5px] text-mg-text"
           />
-          <DialogButton onClick={() => add('allow')}>Permitir</DialogButton>
-          <DialogButton onClick={() => add('deny')}>Denegar</DialogButton>
+          <DialogButton onClick={() => add('allow')}>{t('settings.agyCommands.allow')}</DialogButton>
+          <DialogButton onClick={() => add('deny')}>{t('settings.agyCommands.deny')}</DialogButton>
         </div>
       )}
       {error !== null && (
@@ -213,6 +216,7 @@ function CommandList({
   readonly empty: string;
   readonly onVerdict: (rule: string, verdict: AgyCommandVerdict | null) => void;
 }): React.JSX.Element {
+  const t = useT();
   if (entries.length === 0) return <div className="text-[11px] text-mg-muted">{empty}</div>;
   return (
     <ul className="flex max-h-[220px] flex-col gap-[4px] overflow-y-auto" data-agy-command-list="true">
@@ -221,12 +225,12 @@ function CommandList({
           <code className="min-w-0 flex-1 truncate text-[11.5px] text-mg-body">{label}</code>
           <button
             onClick={() => onVerdict(rule, verdict === 'allow' ? 'deny' : 'allow')}
-            data-tip={verdict === 'allow' ? 'Pasar a denegado' : 'Pasar a permitido'}
+            data-tip={verdict === 'allow' ? t('settings.agyCommands.toDenied') : t('settings.agyCommands.toAllowed')}
             className={`shrink-0 rounded-[5px] border px-[6px] py-[1px] text-[10.5px] ${verdict === 'allow' ? 'border-mg-border-emph text-mg-body2' : 'border-mg-danger-border text-mg-danger'}`}
           >
-            {verdict === 'allow' ? 'Permitido' : 'Denegado'}
+            {verdict === 'allow' ? t('settings.agyCommands.allowed') : t('settings.agyCommands.denied')}
           </button>
-          <button onClick={() => onVerdict(rule, null)} aria-label={`Quitar ${label}`} className="shrink-0 text-mg-muted hover:text-mg-danger">
+          <button onClick={() => onVerdict(rule, null)} aria-label={t('settings.agyCommands.removeAria', { rule: label })} className="shrink-0 text-mg-muted hover:text-mg-danger">
             <Icon name="trash" size={12} />
           </button>
         </li>

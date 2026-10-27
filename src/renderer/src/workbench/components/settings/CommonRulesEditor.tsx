@@ -8,6 +8,7 @@ import {
   type PermissionDraft,
   type PermissionEffect,
 } from './sharedConfigModel';
+import { useT } from '../../../i18n/uiLanguage';
 
 // Editor por BLOQUES de la parte de Mage de hooks y permisos (`settings-common.json`). Sustituye al
 // textarea de JSON crudo: aqui se añade, edita y quita una regla con campos, y el fichero en disco
@@ -44,6 +45,7 @@ export function CommonRulesEditor(): React.JSX.Element {
   const [rules, setRules] = useState<readonly PermissionDraft[]>([]);
   const [dirty, setDirty] = useState(false);
   const [writeError, setWriteError] = useState<string | null>(null);
+  const t = useT();
   const parsed = parseCommonSettings(text);
 
   // Re-sincroniza con el fichero SOLO si el usuario no tiene cambios a medias: el snapshot se recarga
@@ -82,14 +84,13 @@ export function CommonRulesEditor(): React.JSX.Element {
     });
   };
 
-  if (snapshot === null) return <p className="text-[11px] text-mg-muted">Cargando…</p>;
+  if (snapshot === null) return <p className="text-[11px] text-mg-muted">{t('settings.commonRules.loading')}</p>;
 
   return (
     <div className="flex flex-col gap-[12px]">
       {parsed.error !== null && (
         <div role="alert" className="rounded-[6px] border border-mg-danger-border bg-mg-danger-bg p-[7px_9px] text-[10.5px] text-mg-danger">
-          El fichero <code>settings-common.json</code> no se pudo interpretar ({parsed.error}). Al guardar desde aquí se
-          reescribirá con lo que muestre esta pantalla.
+          {t('settings.commonRules.parseError.start')} <code>settings-common.json</code> {t('settings.commonRules.parseError.end', { error: parsed.error })}
         </div>
       )}
 
@@ -102,12 +103,12 @@ export function CommonRulesEditor(): React.JSX.Element {
           disabled={!dirty || saving}
           className="rounded-[6px] border border-mg-border-emph px-[10px] py-[3px] text-[10.5px] text-mg-body2 hover:bg-mg-hover disabled:cursor-default disabled:opacity-50"
         >
-          {saving ? 'Guardando…' : 'Guardar cambios'}
+          {saving ? t('settings.commonRules.saving') : t('settings.commonRules.save')}
         </button>
-        {dirty && <span className="text-[10.5px] text-mg-warn-text">Hay cambios sin guardar.</span>}
+        {dirty && <span className="text-[10.5px] text-mg-warn-text">{t('settings.commonRules.dirty')}</span>}
       </div>
       {writeError !== null && <div role="alert" className="text-[10.5px] text-mg-danger">{writeError}</div>}
-      {saveError !== null && <div role="alert" className="text-[10.5px] text-mg-danger">No se pudo guardar: {saveError}</div>}
+      {saveError !== null && <div role="alert" className="text-[10.5px] text-mg-danger">{t('settings.commonRules.saveError', { error: saveError })}</div>}
     </div>
   );
 }
@@ -119,14 +120,15 @@ function PermissionRulesBlock({
   readonly rules: readonly PermissionDraft[];
   readonly onChange: (next: readonly PermissionDraft[]) => void;
 }): React.JSX.Element {
+  const t = useT();
   const update = (index: number, patch: Partial<PermissionDraft>): void =>
     onChange(rules.map((rule, i) => (i === index ? { ...rule, ...patch } : rule)));
 
   return (
     <BlockShell
-      title={`Reglas de permisos de Mage (${rules.length})`}
-      hint="Se SUMAN a las de la cuenta y del proyecto. Ejemplos: Bash(git status), Read(~/.ssh/**), WebFetch."
-      addLabel="Añadir regla"
+      title={t('settings.commonRules.rules.title', { count: rules.length })}
+      hint={t('settings.commonRules.rules.hint')}
+      addLabel={t('settings.commonRules.rules.add')}
       onAdd={() => onChange([...rules, { effect: 'allow', pattern: '' }])}
     >
       {rules.map((rule, index) => (
@@ -136,10 +138,10 @@ function PermissionRulesBlock({
             value={rule.pattern}
             onChange={(e) => update(index, { pattern: e.target.value })}
             placeholder="Bash(git status:*)"
-            aria-label={`Patrón de la regla ${index + 1}`}
+            aria-label={t('settings.commonRules.rules.patternAria', { index: index + 1 })}
             className={`${INPUT_CLASS} flex-1`}
           />
-          <RemoveButton label={`Quitar la regla ${rule.pattern}`} onClick={() => onChange(rules.filter((_, i) => i !== index))} />
+          <RemoveButton label={t('settings.commonRules.rules.removeAria', { pattern: rule.pattern })} onClick={() => onChange(rules.filter((_, i) => i !== index))} />
         </div>
       ))}
     </BlockShell>
@@ -153,14 +155,15 @@ function HooksBlock({
   readonly hooks: readonly HookDraft[];
   readonly onChange: (next: readonly HookDraft[]) => void;
 }): React.JSX.Element {
+  const t = useT();
   const update = (index: number, patch: Partial<HookDraft>): void =>
     onChange(hooks.map((hook, i) => (i === index ? { ...hook, ...patch } : hook)));
 
   return (
     <BlockShell
-      title={`Hooks de Mage (${hooks.length})`}
-      hint="Comando que el CLI ejecuta en un evento. El filtro es opcional: vacío = todo el evento."
-      addLabel="Añadir hook"
+      title={t('settings.commonRules.hooks.title', { count: hooks.length })}
+      hint={t('settings.commonRules.hooks.hint')}
+      addLabel={t('settings.commonRules.hooks.add')}
       onAdd={() => onChange([...hooks, { event: 'PreToolUse', matcher: null, command: '' }])}
     >
       <datalist id="common-hook-events">
@@ -174,24 +177,24 @@ function HooksBlock({
             value={hook.event}
             list="common-hook-events"
             onChange={(e) => update(index, { event: e.target.value })}
-            aria-label={`Evento del hook ${index + 1}`}
+            aria-label={t('settings.commonRules.hooks.eventAria', { index: index + 1 })}
             className={`${INPUT_CLASS} w-[130px] flex-none`}
           />
           <input
             value={hook.matcher ?? ''}
             onChange={(e) => update(index, { matcher: e.target.value.length === 0 ? null : e.target.value })}
-            placeholder="filtro (Bash, Edit…)"
-            aria-label={`Filtro del hook ${index + 1}`}
+            placeholder={t('settings.commonRules.hooks.matcherPlaceholder')}
+            aria-label={t('settings.commonRules.hooks.matcherAria', { index: index + 1 })}
             className={`${INPUT_CLASS} w-[120px] flex-none`}
           />
           <input
             value={hook.command}
             onChange={(e) => update(index, { command: e.target.value })}
-            placeholder="comando a ejecutar"
-            aria-label={`Comando del hook ${index + 1}`}
+            placeholder={t('settings.commonRules.hooks.commandPlaceholder')}
+            aria-label={t('settings.commonRules.hooks.commandAria', { index: index + 1 })}
             className={`${INPUT_CLASS} flex-1`}
           />
-          <RemoveButton label={`Quitar el hook ${hook.event}`} onClick={() => onChange(hooks.filter((_, i) => i !== index))} />
+          <RemoveButton label={t('settings.commonRules.hooks.removeAria', { event: hook.event })} onClick={() => onChange(hooks.filter((_, i) => i !== index))} />
         </div>
       ))}
     </BlockShell>
@@ -229,11 +232,12 @@ export function BlockShell({
 }
 
 export function RemoveButton({ label, onClick }: { readonly label: string; readonly onClick: () => void }): React.JSX.Element {
+  const t = useT();
   return (
     <button
       onClick={onClick}
       aria-label={label}
-      data-tip="Quitar"
+      data-tip={t('settings.commonRules.removeTip')}
       className="flex-none rounded-[5px] border border-mg-border-emph px-[6px] py-[3px] text-mg-body2 hover:border-mg-danger-border hover:bg-mg-danger-bg hover:text-mg-danger"
     >
       <Icon name="trash" size={11} />
@@ -255,8 +259,9 @@ function EffectToggle({
   readonly effect: PermissionEffect;
   readonly onChange: (effect: PermissionEffect) => void;
 }): React.JSX.Element {
+  const t = useT();
   return (
-    <div role="group" aria-label="Efecto de la regla" className="flex flex-none overflow-hidden rounded-[5px] border border-mg-border-emph">
+    <div role="group" aria-label={t('settings.commonRules.rules.effectAria')} className="flex flex-none overflow-hidden rounded-[5px] border border-mg-border-emph">
       {(['allow', 'deny'] as const).map((value) => (
         <button
           key={value}
