@@ -2264,6 +2264,80 @@ const CHECKS = [
     },
   },
   {
+    // Devolución 19 (H1): en Codex la sesión viva de Mage es un UUID propio y lo que se reanuda es el hilo. Se abre del
+    // historial una conversación de Codex (rollout sintético), se le pone una sesión viva sintética, se fuerza el guardado
+    // del workspace, se cierra Mage y se vuelve a abrir sobre el MISMO perfil: la pestaña guarda el hilo y se hidrata
+    // con sus mensajes. Otra instancia con su perfil propio (el renderer es el de la tanda); sin CLI.
+    name: 'D19: una pestaña de Codex con sesión viva guarda su hilo y, tras reiniciar Mage, se reabre con sus mensajes',
+    async run(page, { runDir }) {
+      if (!fs.existsSync(path.join(repoRoot, 'out', 'main', 'index.js'))) return { ok: false, detail: 'falta out/main: la otra instancia arranca del main construido' };
+      const rendererUrl = page.url().split('#')[0];
+      const { profile, fx } = seedRestartProfile();
+      let instance = null;
+      try {
+        instance = await startRestartInstance(profile, rendererUrl);
+        await measureProviderHistory(instance.page, { home: fx.codexHome, sessionId: CODEX_FIXTURE_ID, title: CODEX_FIXTURE_TITLE, provider: 'codex' });
+        const tabId = await instance.page.evaluate(({ id, live }) => {
+          const store = window.__mageDev.store;
+          const tab = store.getState().tabs.find((t) => t.resumeSessionId === id);
+          store.setState((s) => ({ sessionIdByChat: { ...s.sessionIdByChat, [tab.id]: live } }));
+          store.getState().setTabColor(tab.id, 3); // guardado del workspace por el camino de siempre (`schedulePersist`)
+          return tab.id;
+        }, { id: CODEX_FIXTURE_ID, live: D19_MAGE_SESSION_ID });
+        const file = path.join(profile, 'workspace-state.json');
+        const texto = await waitForFile(file, (t) => JSON.parse(t).tabs?.find((x) => x.id === tabId)?.colorIndex === 3);
+        const guardada = texto === null ? null : (JSON.parse(texto).tabs.find((x) => x.id === tabId)?.sessionId ?? null);
+        // Lo que hace un cierre normal; matar el proceso deja el lock con el pid muerto (solo lectura al reabrir).
+        await instance.page.evaluate((p) => window.mage.releaseConversationLock(p), { provider: 'codex', accountDir: fx.codexHome, nativeId: CODEX_FIXTURE_ID, tabId });
+        await stopRestartInstance(instance);
+        instance = await startRestartInstance(profile, rendererUrl);
+        await instance.page.evaluate((home) => window.__mageDev.store.getState().setActiveAccount(home), fx.codexHome);
+        await instance.page.waitForFunction((id) => (window.__mageDev.store.getState().blocksByChat[id] ?? []).length > 0, tabId, { timeout: CONFIG.actionTimeoutMs }).catch(() => undefined);
+        const restaurada = await readRestoredTab(instance.page, tabId);
+        await instance.page.screenshot({ path: path.join(runDir, 'd19-codex-restaurada.png') });
+        const ok = guardada === CODEX_FIXTURE_ID && restaurada.provider === 'codex' && restaurada.resumeSessionId === CODEX_FIXTURE_ID
+          && ['agent', 'tool', 'user'].every((k) => restaurada.tipos.includes(k)) && !restaurada.aviso;
+        return { ok, detail: JSON.stringify({ guardada, restaurada }) };
+      } finally {
+        if (instance !== null) await stopRestartInstance(instance);
+        fs.rmSync(profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 500 });
+      }
+    },
+  },
+  {
+    // Devolución 19 (H1.4): un workspace de 0.1.2 guardó el UUID de Mage, que no es de ninguna conversación de la cuenta.
+    // La pestaña lo dice, deja de reanudar ese id (el primer turno abre un hilo nuevo), el workspace deja de guardarlo y el
+    // editor sigue usable. Nada de emparejar con un rollout por heurística.
+    name: 'D19: una pestaña de Codex restaurada con el UUID de Mage avisa de que no encuentra la conversación y lo olvida',
+    async run(page, { runDir }) {
+      if (!fs.existsSync(path.join(repoRoot, 'out', 'main', 'index.js'))) return { ok: false, detail: 'falta out/main: la otra instancia arranca del main construido' };
+      const rendererUrl = page.url().split('#')[0];
+      const { profile, fx } = seedRestartProfile();
+      const tabId = 'vg-d19-huerfana';
+      const file = path.join(profile, 'workspace-state.json');
+      fs.writeFileSync(file, JSON.stringify({ version: 1, activeTabId: tabId, tabs: [{
+        id: tabId, accountId: fx.codexHome, accountAlias: 'vgfixture', cwd: 'C:\\proyecto', model: 'gpt-6-luna', provider: 'codex',
+        title: 'Huérfana', privacy: 'shared', sessionId: D19_ORPHAN_ID,
+      }] }));
+      let instance = null;
+      try {
+        instance = await startRestartInstance(profile, rendererUrl);
+        await instance.page.evaluate((home) => window.__mageDev.store.getState().setActiveAccount(home), fx.codexHome);
+        await instance.page.getByText(D19_MISSING_NOTICE, { exact: true }).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const medido = await readRestoredTab(instance.page, tabId);
+        const editable = await instance.page.evaluate((id) => document.querySelector(`[data-pane-tab-id="${id}"] .cm-content`)?.getAttribute('contenteditable') ?? null, tabId);
+        const texto = await waitForFile(file, (t) => { const tab = JSON.parse(t).tabs?.find((x) => x.id === tabId); return tab !== undefined && tab.sessionId === undefined; });
+        await instance.page.screenshot({ path: path.join(runDir, 'd19-codex-huerfana.png') });
+        const ok = medido.existe && medido.provider === 'codex' && medido.resumeSessionId === null && medido.faltaConversacion === 'codex'
+          && medido.aviso && editable === 'true' && texto !== null;
+        return { ok, detail: JSON.stringify({ ...medido, editable, workspaceSinUuid: texto !== null }) };
+      } finally {
+        if (instance !== null) await stopRestartInstance(instance);
+        fs.rmSync(profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 500 });
+      }
+    },
+  },
+  {
     // G5: `app.requestSingleInstanceLock()`. Estaba como "⚠ pendiente de verificacion GUI" desde que se
     // implemento. Se lanza un SEGUNDO Electron contra el MISMO perfil: debe rendirse enseguida y no
     // abrir otra ventana; la primera instancia recibe 'second-instance' y se enfoca.
@@ -10517,14 +10591,16 @@ function userConversationLocksDir() {
 
 // Otra instancia de Mage con un perfil AISLADO propio, del build en `out/` (el dev server ya es de la primera) y con su
 // propio puerto de depuración. Sin CLI: el sondeo de modelos, MCP y gh, falsos o apagados, como la primera.
-async function startSecondInstance() {
-  const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'mage-verify-segunda-'));
+// `profile` reutiliza un perfil ya sembrado (D19: reiniciar sobre el MISMO); `rendererUrl`, el renderer del servidor de
+// desarrollo de la tanda, que trae `__mageDev` (el del build no lo tiene).
+async function startSecondInstance({ profile = fs.mkdtempSync(path.join(os.tmpdir(), 'mage-verify-segunda-')), rendererUrl } = {}) {
   const port = CONFIG.port + 1;
   // Sin ELECTRON_RUN_AS_NODE: con esa variable presente Electron arranca como Node.
   const { ELECTRON_RUN_AS_NODE: _asNode, ...inherited } = process.env;
+  const dev = rendererUrl === undefined ? {} : { ELECTRON_RENDERER_URL: rendererUrl, MAGE_MCP_FAKE_SOURCES: mcpFakeSourcesDir(profile) };
   const child = spawn(requireFromHere('electron'), ['.', `--user-data-dir=${profile}`, `--remote-debugging-port=${port}`], {
     cwd: repoRoot,
-    env: { ...inherited, MAGE_SKIP_MODEL_PROBE: '1', MAGE_MCP_FAKE_CLI: '1', MAGE_GH_FAKE: '1', [HARNESS_LOCKS_ENV]: HARNESS_LOCKS_DIR },
+    env: { ...inherited, MAGE_SKIP_MODEL_PROBE: '1', MAGE_MCP_FAKE_CLI: '1', MAGE_GH_FAKE: '1', [HARNESS_LOCKS_ENV]: HARNESS_LOCKS_DIR, ...dev },
     windowsHide: true,
     stdio: 'ignore',
     detached: process.platform !== 'win32',
@@ -10539,6 +10615,50 @@ async function startSecondInstance() {
   const secondPage = await findMainPage(browser);
   await secondPage.waitForFunction(() => typeof window.mage?.acquireConversationLock === 'function', undefined, { timeout: CONFIG.bootTimeoutMs });
   return { child, browser, page: secondPage, profile, profileName: path.basename(profile) };
+}
+
+// --- D19: pestañas de Codex tras reiniciar Mage ---------------------------------------------------
+// Id sintético de la sesión VIVA de Mage (un UUID propio, distinto del hilo de Codex). Ninguna sesión de main lo tiene.
+const D19_MAGE_SESSION_ID = 'd19d19d1-9999-4999-8999-d19d19d19d19';
+// Lo que guardó 0.1.2 en el workspace: un UUID de Mage que no es de ninguna conversación de la cuenta.
+const D19_ORPHAN_ID = 'd19aaaaa-0000-4000-8000-0000000000d1';
+const D19_MISSING_NOTICE = 'No se encontró esta conversación de Codex. Ábrela desde el historial de la cuenta.';
+
+// Perfil aislado propio (fuera del de la tanda) con el asistente hecho, MCP falso y una cuenta de Codex con un rollout
+// sintético (`seedProviderHistory`, la misma forma que lee `adaptCodexLine`). Sin datos del usuario ni CLI.
+function seedRestartProfile() {
+  const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'mage-verify-d19-'));
+  seedOnboardingDone(profile);
+  seedMcpCommon(profile);
+  return { profile, fx: seedProviderHistory({ userDataDir: profile, repoRoot }) };
+}
+
+// Arranca Mage sobre `profile` con el renderer de la tanda y espera a que monte el workbench con las cuentas cargadas.
+async function startRestartInstance(profile, rendererUrl) {
+  const instance = await startSecondInstance({ profile, rendererUrl });
+  await instance.page.waitForFunction(() => window.__mageDev?.store.getState().accounts.length > 0, undefined, { timeout: CONFIG.bootTimeoutMs });
+  return instance;
+}
+
+// Cierra la instancia por su PID (árbol entero) y espera a que Electron suelte el perfil antes de reabrirlo.
+async function stopRestartInstance(instance) {
+  killTree(instance.child);
+  await instance.browser.close().catch(() => undefined);
+  await new Promise((resolve) => setTimeout(resolve, 3000));
+}
+
+// La pestaña restaurada del workspace: su id de conversación, sus bloques y el aviso de conversación inexistente.
+function readRestoredTab(page, tabId) {
+  return page.evaluate(({ id, notice }) => {
+    const s = window.__mageDev.store.getState();
+    const tab = s.tabs.find((t) => t.id === id);
+    return {
+      existe: tab !== undefined, provider: tab?.provider ?? null, resumeSessionId: tab?.resumeSessionId ?? null,
+      tipos: [...new Set((s.blocksByChat[id] ?? []).map((b) => b.kind))].sort(),
+      faltaConversacion: s.missingConversationByChat[id] ?? null,
+      aviso: [...document.querySelectorAll('[role="status"]')].some((n) => n.textContent?.trim() === notice),
+    };
+  }, { id: tabId, notice: D19_MISSING_NOTICE });
 }
 
 async function waitForCondition(condition, timeoutMs) {
