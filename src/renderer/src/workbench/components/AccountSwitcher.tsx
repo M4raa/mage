@@ -4,6 +4,7 @@ import { useWorkbenchStore } from '../workbenchStore';
 import type { Account } from '../types';
 import { loginDot, loginLabel } from './accountBadge';
 import { AccountMenu, DeleteAccountDialog } from './AccountMenu';
+import { useT } from '../../i18n/uiLanguage';
 
 // Selector de cuenta de la CABECERA (peticion del usuario). Antes vivia en la columna izquierda a
 // 36 px por cuenta, apilado en vertical, y ahi crecia sin techo con el numero de cuentas.
@@ -25,6 +26,7 @@ export function AccountSwitcher(): React.JSX.Element | null {
   // Menu contextual del avatar (P-028, 2 y 30) y la confirmacion de borrado que abre.
   const [menu, setMenu] = useState<{ readonly account: Account; readonly x: number; readonly y: number } | null>(null);
   const [deleting, setDeleting] = useState<Account | null>(null);
+  const t = useT();
 
   // Sin cuentas descubiertas todavia no se pinta nada: un grupo con solo "＋" en la cabecera es ruido
   // durante el arranque, que dura milisegundos.
@@ -35,15 +37,15 @@ export function AccountSwitcher(): React.JSX.Element | null {
       className="flex items-center gap-[4px]"
       style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
       role="group"
-      aria-label="Cuentas"
+      aria-label={t('accounts.switcher.groupAria')}
     >
       {/* "Nueva cuenta" va a la IZQUIERDA de las cuentas (peticion del usuario). No lleva `aria-pressed`
           a proposito: no es una cuenta seleccionable, y la comprobacion de GUI cuenta las cuentas por
           ese atributo. */}
       <button
         onClick={openAddAccount}
-        data-tip="Añadir cuenta"
-        aria-label="Añadir cuenta"
+        data-tip={t('accounts.switcher.add')}
+        aria-label={t('accounts.switcher.add')}
         className={`flex shrink-0 items-center justify-center rounded-[7px] text-[13px] text-mg-muted transition-colors duration-150 ease-out hover:bg-mg-hover hover:text-mg-body ${SIZE}`}
       >
         ＋
@@ -97,6 +99,7 @@ function CompactAccount({
   readonly onContextMenu: (x: number, y: number) => void;
 }): React.JSX.Element {
   const { accent } = account;
+  const t = useT();
   const style: React.CSSProperties = active
     ? { border: `2px solid ${accent.base}`, background: accent.bgActive, color: accent.tint }
     : { border: `1px solid ${accent.borderInactive}`, color: accent.tint, opacity: 0.85 };
@@ -124,7 +127,7 @@ function CompactAccount({
       // (que ya va a opacidad plena) y en las inactivas (que van al 85 %).
       className={`relative flex shrink-0 items-center justify-center rounded-[7px] text-[11px] font-bold transition-[filter,opacity] duration-150 ease-out hover:!opacity-100 hover:brightness-125 ${SIZE}`}
       data-tip={`${account.alias} · ${account.provider} · ${loginLabel(account)}`}
-      aria-label={`Cuenta ${account.alias}, ${account.provider}, ${loginLabel(account)}`}
+      aria-label={t('accounts.switcher.accountAria', { alias: account.alias, provider: account.provider, login: loginLabel(account) })}
     >
       {account.monogram}
       <span

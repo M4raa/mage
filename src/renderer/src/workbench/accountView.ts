@@ -2,6 +2,7 @@ import type { AccountInfo } from '@shared/accounts';
 import { ACCOUNT_ACCENT_COUNT } from '@shared/settings';
 import { CUSTOM_PROVIDER_ID_PREFIX } from '@shared/providers';
 import type { Accent, Account, UsageWindow } from './types';
+import { t } from '../i18n/uiLanguage';
 
 // Nº de acentos disponibles. Los VALORES viven en index.css como variables (--mg-accent-<i>-*), asi el
 // acento conmuta con el tema (claro/oscuro) sin recolorear en JS. Por defecto sale del identificador de la
@@ -18,8 +19,11 @@ const DEFAULT_MODEL = 'sonnet';
 // Nombre del CLI de cada cuenta (el rail y la cabecera del sidebar).
 const ACCOUNT_PROVIDER_LABEL: Readonly<Record<string, string>> = { claude: 'Claude', codex: 'Codex', agy: 'agy' };
 
-// Texto FIJO de la marca de las cuentas que facturan la API (texto, no solo color).
-export const API_BILLED_LABEL = 'Factura API';
+// Texto FIJO de la marca de las cuentas que facturan la API (texto, no solo color). Función y no constante: se
+// traduce al pintar, en el idioma activo.
+export function apiBilledLabel(): string {
+  return t('accounts.apiBilled.badge');
+}
 
 // Mapea una cuenta de dominio (AccountInfo, segura) a la cuenta de PRESENTACION que consume la UI.
 export function toAccountView(info: AccountInfo, accentOverride?: number): Account {

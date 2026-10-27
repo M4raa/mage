@@ -5,7 +5,9 @@ import { AGY_PROVIDER_ID, PROVIDER_TEMPLATES, UNVERIFIED_PROVIDER_NOTE } from '@
 import { useWorkbenchStore } from '../workbenchStore';
 import { useDialogA11y } from '../a11y/useDialogA11y';
 import { MODAL_PANEL_VARIANTS, MODAL_SCRIM_VARIANTS } from '../motionPresets';
-import { ACCOUNT_VENDORS, accountHomeHint, accountKindsFor, type AccountKindOption, type AccountVendor } from '../accountKinds';
+import { ACCOUNT_VENDORS, accountHomeHint, accountKindsFor, accountVendorLabel, type AccountKindOption, type AccountVendor } from '../accountKinds';
+import { apiBilledLabel } from '../accountView';
+import { t as translate, useT } from '../../i18n/uiLanguage';
 import { EMPTY_CUSTOM_PROVIDER_DRAFT, validateCustomProviderDraft, type CustomProviderDraft } from '../models';
 import { CliLoginPanel, useCliLogin } from './CliLoginPanel';
 import { ProviderForm } from './settings/ProvidersSection';
@@ -51,6 +53,7 @@ interface BodyProps {
 
 function DialogBody(props: BodyProps): React.JSX.Element {
   const [vendor, setVendor] = useState<AccountVendor>('anthropic');
+  const t = useT();
   const kinds = accountKindsFor(vendor);
   const [kindIndex, setKindIndex] = useState(0);
   const kind = kinds[Math.min(kindIndex, kinds.length - 1)] ?? kinds[0]!;
@@ -84,11 +87,11 @@ function DialogBody(props: BodyProps): React.JSX.Element {
         className="flex w-[460px] flex-col gap-[14px] rounded-[11px] border border-mg-border-pop bg-mg-panel p-[18px] text-[12px] mg-shadow-modal"
       >
         <div id="addaccount-title" className="text-[13px] font-bold text-mg-text">
-          Añadir cuenta
+          {t('accounts.add.title')}
         </div>
-        <ChoiceGroup label="FABRICANTE" ariaLabel="Fabricante de la cuenta" options={ACCOUNT_VENDORS.map((v) => ({ key: v.id, label: v.label }))} selected={vendor} onSelect={(key) => pickVendor(key as AccountVendor)} />
+        <ChoiceGroup label={t('accounts.add.vendorLabel')} ariaLabel={t('accounts.add.vendorAria')} options={ACCOUNT_VENDORS.map((v) => ({ key: v.id, label: accountVendorLabel(v.id) }))} selected={vendor} onSelect={(key) => pickVendor(key as AccountVendor)} />
         {kinds.length > 1 && (
-          <ChoiceGroup label="FORMA DE PAGO" ariaLabel="Forma de pago de la cuenta" options={kinds.map((k, i) => ({ key: String(i), label: k.label, flow: k.flow }))} selected={String(kinds.indexOf(kind))} onSelect={(key) => setKindIndex(Number(key))} />
+          <ChoiceGroup label={t('accounts.add.paymentLabel')} ariaLabel={t('accounts.add.paymentAria')} options={kinds.map((k, i) => ({ key: String(i), label: t(k.labelKey), flow: k.flow }))} selected={String(kinds.indexOf(kind))} onSelect={(key) => setKindIndex(Number(key))} />
         )}
         {kind.unverified && <div className="text-[10.5px] leading-[1.5] text-mg-warn">{UNVERIFIED_PROVIDER_NOTE}</div>}
         <KindBody key={`${vendor}-${kind.flow}`} kind={kind} props={props} onClose={closeAll} onLoginCancel={setCancelLogin} />
@@ -136,6 +139,7 @@ function ClaudeSubscriptionBody({
   const [created, setCreated] = useState<AccountInfo | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const t = useT();
   const login = useCliLogin(() => {
     void onRefresh()
       .catch((err: unknown) => setError(describe(err)))
@@ -187,17 +191,17 @@ function ClaudeSubscriptionBody({
       <div className="mt-[2px] flex justify-end gap-[8px]">
         {login.phase === 'idle' ? (
           <>
-            <SecondaryButton onClick={onClose}>Cancelar</SecondaryButton>
+            <SecondaryButton onClick={onClose}>{t('accounts.add.cancel')}</SecondaryButton>
             <PrimaryButton onClick={createAndLogin} disabled={name.trim().length === 0 || busy}>
-              {busy ? 'Creando…' : 'Crear e iniciar sesión'}
+              {busy ? t('accounts.add.creating') : t('accounts.add.createAndLogin')}
             </PrimaryButton>
           </>
         ) : (
           <>
-            <SecondaryButton onClick={deleteOrphan}>{created === null ? 'Cancelar' : 'Eliminar cuenta'}</SecondaryButton>
+            <SecondaryButton onClick={deleteOrphan}>{created === null ? t('accounts.add.cancel') : t('accounts.add.deleteAccount')}</SecondaryButton>
             {login.phase === 'failed' && created !== null && (
               <PrimaryButton onClick={() => login.begin(created.configDir, hint)} disabled={busy}>
-                Reintentar
+                {t('accounts.add.retry')}
               </PrimaryButton>
             )}
           </>
@@ -215,6 +219,7 @@ function ApiKeyBody({ kind, onRefresh, onClose }: { readonly kind: AccountKindOp
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const ready = name.trim().length > 0 && apiKey.trim().length > 0 && !busy && kind.providerId !== null;
+  const t = useT();
 
   const submit = (): void => {
     if (!ready || kind.providerId === null) return;
@@ -230,25 +235,25 @@ function ApiKeyBody({ kind, onRefresh, onClose }: { readonly kind: AccountKindOp
 
   return (
     <>
-      <NameField name={name} onName={setName} onSubmit={submit} hint={`Se creará ${accountHomeHint(kind, name)}. Esta cuenta FACTURA LA API: sus pestañas llevan la marca «Factura API».`} />
+      <NameField name={name} onName={setName} onSubmit={submit} hint={t('accounts.add.apiKey.hint', { home: accountHomeHint(kind, name), badge: apiBilledLabel() })} />
       <label className="flex flex-col gap-[6px]">
-        <span className="text-[10.5px] font-bold tracking-[.06em] text-mg-ter">CLAVE DE API</span>
+        <span className="text-[10.5px] font-bold tracking-[.06em] text-mg-ter">{t('accounts.add.apiKey.label')}</span>
         <input
           type="password"
           value={apiKey}
           autoComplete="off"
-          aria-label="Clave de API de la cuenta"
+          aria-label={t('accounts.add.apiKey.aria')}
           onChange={(e) => setApiKey(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && submit()}
           className="w-full rounded-[7px] border border-mg-border-ctrl bg-mg-window p-[7px_9px] font-mono text-mg-body outline-none"
         />
-        <span className="text-[10.5px] text-mg-ter">Se guarda cifrada en este equipo y no se vuelve a enseñar. Solo la recibe esta cuenta.</span>
+        <span className="text-[10.5px] text-mg-ter">{t('accounts.add.apiKey.note')}</span>
       </label>
       <ErrorLine error={error} />
       <div className="mt-[2px] flex justify-end gap-[8px]">
-        <SecondaryButton onClick={onClose}>Cancelar</SecondaryButton>
+        <SecondaryButton onClick={onClose}>{t('accounts.add.cancel')}</SecondaryButton>
         <PrimaryButton onClick={submit} disabled={!ready}>
-          {busy ? 'Creando…' : 'Crear cuenta'}
+          {busy ? t('accounts.add.creating') : t('accounts.add.create')}
         </PrimaryButton>
       </div>
     </>
@@ -274,6 +279,7 @@ function CodexLoginBody({
   const [created, setCreated] = useState<AccountInfo | null>(null);
   const [waiting, setWaiting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const t = useT();
   useEffect(() => onLoginCancel(() => () => void window.mage.cancelCodexLogin()), [onLoginCancel]);
 
   const login = (account: AccountInfo): void => {
@@ -282,7 +288,7 @@ function CodexLoginBody({
     void window.mage
       .startCodexLogin(account.configDir)
       .then(async (outcome) => {
-        if (outcome.status !== 'ok') throw new Error(`El inicio de sesión de Codex no terminó (${outcome.status}: ${outcome.reason})`);
+        if (outcome.status !== 'ok') throw new Error(t('accounts.add.codex.loginFailed', { status: outcome.status, reason: outcome.reason }));
         await onRefresh();
         onClose();
       })
@@ -309,18 +315,18 @@ function CodexLoginBody({
 
   return (
     <>
-      {created === null && <NameField name={name} onName={setName} onSubmit={create} hint={`Se creará ${accountHomeHint(kind, name)} y el CLI de Codex abrirá el inicio de sesión de ChatGPT en tu navegador.`} />}
-      {waiting && <div className="rounded-[8px] border border-mg-border-ctrl bg-mg-block p-[10px_12px] text-[11.5px] text-mg-body2">Esperando a que termines el inicio de sesión en el navegador…</div>}
+      {created === null && <NameField name={name} onName={setName} onSubmit={create} hint={t('accounts.add.codex.hint', { home: accountHomeHint(kind, name) })} />}
+      {waiting && <div className="rounded-[8px] border border-mg-border-ctrl bg-mg-block p-[10px_12px] text-[11.5px] text-mg-body2">{t('accounts.add.codex.waiting')}</div>}
       <ErrorLine error={error} />
       <div className="mt-[2px] flex justify-end gap-[8px]">
-        <SecondaryButton onClick={discard}>{created === null ? 'Cancelar' : 'Eliminar cuenta'}</SecondaryButton>
+        <SecondaryButton onClick={discard}>{created === null ? t('accounts.add.cancel') : t('accounts.add.deleteAccount')}</SecondaryButton>
         {created === null && (
           <PrimaryButton onClick={create} disabled={name.trim().length === 0}>
-            Crear e iniciar sesión
+            {t('accounts.add.createAndLogin')}
           </PrimaryButton>
         )}
         {created !== null && !waiting && (
-          <PrimaryButton onClick={() => login(created)}>Reintentar</PrimaryButton>
+          <PrimaryButton onClick={() => login(created)}>{t('accounts.add.retry')}</PrimaryButton>
         )}
       </div>
     </>
@@ -331,20 +337,33 @@ function CodexLoginBody({
 // Dos pasos (medido en agy 1.3.1): Mage lanza agy en el perfil de la cuenta, que imprime una URL de Google; la abre en
 // el navegador y el usuario pega aqui el codigo que le da la web. agy solo espera 60 s por el codigo.
 
-const AGY_LOGIN_REASONS: Readonly<Record<string, string>> = {
-  url_timeout: 'agy no dio el enlace de inicio de sesión a tiempo.',
-  code_timeout: 'Pasaron los 60 s que agy espera por el código. Vuelve a empezar.',
-  agy_exit: 'agy terminó sin completar el inicio de sesión (¿código incorrecto?).',
-  invalid_code_format: 'Ese no parece un código de Google: pega solo el código, sin espacios.',
-  code_rejected: 'Google rechazó el código (¿caducó o está mal copiado?). Pulsa «Reintentar» para pedir otro.',
-  console_input_failed: 'No se pudo entregar el código a agy. Pulsa «Reintentar».',
-  spawn_failed: 'No se pudo lanzar agy.',
-  login_cancelled: 'Inicio de sesión cancelado.',
-  no_login_in_progress: 'No hay un inicio de sesión en curso: vuelve a empezar.',
+// Guarda la clave, no el texto: se traduce al usarla (la tabla se evalúa al importar).
+type AgyLoginReasonKey =
+  | 'accounts.add.agy.reason.urlTimeout'
+  | 'accounts.add.agy.reason.codeTimeout'
+  | 'accounts.add.agy.reason.agyExit'
+  | 'accounts.add.agy.reason.invalidCodeFormat'
+  | 'accounts.add.agy.reason.codeRejected'
+  | 'accounts.add.agy.reason.consoleInputFailed'
+  | 'accounts.add.agy.reason.spawnFailed'
+  | 'accounts.add.agy.reason.cancelled'
+  | 'accounts.add.agy.reason.noLoginInProgress';
+
+const AGY_LOGIN_REASONS: Readonly<Record<string, AgyLoginReasonKey>> = {
+  url_timeout: 'accounts.add.agy.reason.urlTimeout',
+  code_timeout: 'accounts.add.agy.reason.codeTimeout',
+  agy_exit: 'accounts.add.agy.reason.agyExit',
+  invalid_code_format: 'accounts.add.agy.reason.invalidCodeFormat',
+  code_rejected: 'accounts.add.agy.reason.codeRejected',
+  console_input_failed: 'accounts.add.agy.reason.consoleInputFailed',
+  spawn_failed: 'accounts.add.agy.reason.spawnFailed',
+  login_cancelled: 'accounts.add.agy.reason.cancelled',
+  no_login_in_progress: 'accounts.add.agy.reason.noLoginInProgress',
 };
 
 function agyLoginMessage(reason: string): string {
-  return AGY_LOGIN_REASONS[reason] ?? `El inicio de sesión de agy no terminó (${reason}).`;
+  const key = AGY_LOGIN_REASONS[reason];
+  return key === undefined ? translate('accounts.add.agy.reason.unknown', { reason }) : translate(key);
 }
 
 function AgyLoginBody({
@@ -368,6 +387,7 @@ function AgyLoginBody({
   const [code, setCode] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const t = useT();
   useEffect(() => onLoginCancel(() => () => void window.mage.cancelAgyLogin()), [onLoginCancel]);
   useEffect(() => {
     if (url === null) return undefined;
@@ -427,54 +447,54 @@ function AgyLoginBody({
       .then(() => (created === null ? undefined : onDelete(created.configDir)))
       .then(onClose)
       .catch((err: unknown) => {
-        setError(`No se pudo eliminar la cuenta: ${describe(err)}`);
+        setError(t('accounts.add.agy.deleteFailed', { error: describe(err) }));
         setBusy(false);
       });
   };
 
   return (
     <>
-      {installed === false && <div className="text-[10.5px] text-mg-warn">agy no está instalado en este equipo: instálalo antes de añadir la cuenta.</div>}
+      {installed === false && <div className="text-[10.5px] text-mg-warn">{t('accounts.add.agy.notInstalled')}</div>}
       {created === null && (
-        <NameField name={name} onName={setName} onSubmit={create} hint={`Se creará un perfil propio (${accountHomeHint(kind, name)}) y agy abrirá el inicio de sesión de Google en tu navegador. Es independiente de la sesión de agy de tu equipo.`} />
+        <NameField name={name} onName={setName} onSubmit={create} hint={t('accounts.add.agy.hint', { home: accountHomeHint(kind, name) })} />
       )}
       {url !== null && (
         <div data-agy-login-step="code" className="flex flex-col gap-[8px] rounded-[8px] border border-mg-border-ctrl bg-mg-block p-[10px_12px] text-[11.5px] leading-[1.5] text-mg-body2">
           <div>
-            Inicia sesión en el navegador (ya se ha abierto), copia el código que te da la web y pégalo aquí.{' '}
-            <b data-agy-login-seconds={secondsLeft}>{secondsLeft > 0 ? `Te quedan ${secondsLeft} s.` : 'Se acabó el tiempo: vuelve a empezar.'}</b>
+            {t('accounts.add.agy.codeIntro')}{' '}
+            <b data-agy-login-seconds={secondsLeft}>{secondsLeft > 0 ? t('accounts.add.agy.secondsLeft', { seconds: secondsLeft }) : t('accounts.add.agy.timeUp')}</b>
           </div>
           <input
             value={code}
             onChange={(e) => setCode(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && submit()}
-            aria-label="Código de autorización de Google"
-            placeholder="Código de la web de Google"
+            aria-label={t('accounts.add.agy.codeAria')}
+            placeholder={t('accounts.add.agy.codePlaceholder')}
             autoComplete="off"
             spellCheck={false}
             className="w-full rounded-[7px] border border-mg-border-ctrl bg-mg-window p-[7px_9px] font-mono text-mg-body outline-none"
           />
           <button className="self-start text-[10.5px] text-mg-sec underline" onClick={() => void window.mage.openExternal(url)}>
-            Abrir el enlace otra vez
+            {t('accounts.add.agy.reopenLink')}
           </button>
         </div>
       )}
-      {busy && url === null && created !== null && <div className="text-[11.5px] text-mg-body2">Lanzando agy…</div>}
-      {busy && url !== null && <div data-agy-login-checking="true" className="text-[11.5px] text-mg-body2">Comprobando el código con Google…</div>}
+      {busy && url === null && created !== null && <div className="text-[11.5px] text-mg-body2">{t('accounts.add.agy.launching')}</div>}
+      {busy && url !== null && <div data-agy-login-checking="true" className="text-[11.5px] text-mg-body2">{t('accounts.add.agy.checking')}</div>}
       <ErrorLine error={error} />
       <div className="mt-[2px] flex justify-end gap-[8px]">
-        <SecondaryButton onClick={discard}>{created === null ? 'Cancelar' : 'Eliminar cuenta'}</SecondaryButton>
+        <SecondaryButton onClick={discard}>{created === null ? t('accounts.add.cancel') : t('accounts.add.deleteAccount')}</SecondaryButton>
         {created === null && (
           <PrimaryButton onClick={create} disabled={name.trim().length === 0 || installed === false}>
-            Crear e iniciar sesión
+            {t('accounts.add.createAndLogin')}
           </PrimaryButton>
         )}
         {created !== null && url !== null && (
           <PrimaryButton onClick={submit} disabled={code.trim().length === 0 || busy || secondsLeft === 0}>
-            Terminar
+            {t('accounts.add.finish')}
           </PrimaryButton>
         )}
-        {created !== null && (url === null || secondsLeft === 0) && !busy && <PrimaryButton onClick={() => start(created)}>Reintentar</PrimaryButton>}
+        {created !== null && (url === null || secondsLeft === 0) && !busy && <PrimaryButton onClick={() => start(created)}>{t('accounts.add.retry')}</PrimaryButton>}
       </div>
     </>
   );
@@ -506,6 +526,7 @@ function LocalEndpointBody({ onClose }: { readonly onClose: () => void }): React
     OLLAMA === undefined ? EMPTY_CUSTOM_PROVIDER_DRAFT : { ...EMPTY_CUSTOM_PROVIDER_DRAFT, label: OLLAMA.label, baseUrl: OLLAMA.baseUrl, models: OLLAMA.modelIds.join(', ') },
   );
   const [error, setError] = useState<string | null>(null);
+  const t = useT();
   const submit = (): void => {
     const result = validateCustomProviderDraft(draft, customProviders, null);
     if (!result.ok) return setError(result.message);
@@ -516,16 +537,14 @@ function LocalEndpointBody({ onClose }: { readonly onClose: () => void }): React
   return (
     <div data-add-account-local="true" className="flex flex-col gap-[8px]">
       <div className="text-[11px] leading-[1.5] text-mg-body2">
-        Un servidor compatible con la API de OpenAI (Ollama, LM Studio…) en su IP y puerto. Sus conversaciones las
-        ejecuta Mage por sí mismo (no hay CLI de por medio). «Probar conexión» rellena los modelos. Se puede editar en
-        Ajustes › Proveedores y modelos.
+        {t('accounts.add.local.intro')}
       </div>
       <ProviderForm
         idSuffix="alta"
         draft={draft}
         savedApiKey={false}
         error={error}
-        submitLabel="Añadir"
+        submitLabel={t('accounts.add.local.submit')}
         onChange={(changes) => {
           setDraft({ ...draft, ...changes });
           setError(null);
@@ -577,15 +596,16 @@ function ChoiceGroup({
 }
 
 function NameField({ name, onName, onSubmit, hint }: { readonly name: string; readonly onName: (v: string) => void; readonly onSubmit: () => void; readonly hint: string }): React.JSX.Element {
+  const t = useT();
   return (
     <label className="flex flex-col gap-[6px]">
-      <span className="text-[10.5px] font-bold tracking-[.06em] text-mg-ter">NOMBRE</span>
+      <span className="text-[10.5px] font-bold tracking-[.06em] text-mg-ter">{t('accounts.add.nameLabel')}</span>
       <input
         value={name}
         onChange={(e) => onName(e.target.value)}
         onKeyDown={(e) => e.key === 'Enter' && onSubmit()}
-        placeholder="p.ej. trabajo"
-        aria-label="Nombre de la cuenta"
+        placeholder={t('accounts.add.namePlaceholder')}
+        aria-label={t('accounts.add.nameAria')}
         className="w-full rounded-[7px] border border-mg-border-ctrl bg-mg-window p-[7px_9px] font-mono text-mg-body outline-none"
       />
       <span className="text-[10.5px] text-mg-ter">{hint}</span>
@@ -604,12 +624,13 @@ function AdoptSection({
   readonly disabled: boolean;
   readonly onAdopt: (configDir: string) => void;
 }): React.JSX.Element | null {
+  const t = useT();
   if (accounts.length === 0) return null;
   return (
     <div className="flex flex-col gap-[7px] rounded-[8px] border border-mg-sel bg-mg-block p-[10px_12px] text-[11.5px] leading-[1.55] text-mg-body2">
       <div>
-        …o <b>reutiliza una sesión que ya tienes</b>, sin iniciar sesión otra vez. La cuenta nueva tendrá su
-        propio historial y ajustes, pero la misma identidad de Anthropic.
+        {t('accounts.add.adopt.start')} <b>{t('accounts.add.adopt.emphasis')}</b>
+        {t('accounts.add.adopt.end')}
       </div>
       <div className="flex flex-wrap gap-[6px]">
         {accounts.map((account) => (
@@ -619,7 +640,7 @@ function AdoptSection({
             onClick={() => onAdopt(account.id)}
             className="rounded-[6px] border border-mg-border-ctrl px-[8px] py-[3px] text-[10.5px] text-mg-body2 transition-colors duration-150 ease-out hover:bg-mg-hover disabled:opacity-40"
           >
-            Usar la sesión de {account.alias}
+            {t('accounts.add.adopt.use', { alias: account.alias })}
           </button>
         ))}
       </div>
@@ -640,34 +661,35 @@ function FormPhase({
   readonly onEmail: (value: string) => void;
   readonly onSubmit: () => void;
 }): React.JSX.Element {
+  const t = useT();
   return (
     <div className="flex flex-col gap-[12px]">
       <label className="flex flex-col gap-[6px]">
-        <span className="text-[10.5px] font-bold tracking-[.06em] text-mg-ter">NOMBRE</span>
+        <span className="text-[10.5px] font-bold tracking-[.06em] text-mg-ter">{t('accounts.add.nameLabel')}</span>
         <input
           value={name}
           onChange={(e) => onName(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && onSubmit()}
-          placeholder="p.ej. trabajo"
+          placeholder={t('accounts.add.namePlaceholder')}
           className="w-full rounded-[7px] border border-mg-border-ctrl bg-mg-window p-[7px_9px] font-mono text-mg-body outline-none"
         />
         <span className="text-[10.5px] text-mg-ter">
-          Se creará <span className="font-mono">~/.claude-{name.trim() || '<nombre>'}</span> con las carpetas
-          compartidas enlazadas y, a continuación, <b>el CLI de Claude Code</b> abrirá el inicio de sesión en
-          una <b>ventana privada</b> de tu navegador (suscripción, no consola/API).
+          {t('accounts.add.claude.hint.start')} <span className="font-mono">~/.claude-{name.trim() || t('accounts.homeHint.namePlaceholder')}</span>{' '}
+          {t('accounts.add.claude.hint.linked')} <b>{t('accounts.add.claude.hint.cli')}</b> {t('accounts.add.claude.hint.opens')}{' '}
+          <b>{t('accounts.add.claude.hint.privateWindow')}</b> {t('accounts.add.claude.hint.end')}
         </span>
       </label>
 
       <label className="flex flex-col gap-[6px]">
-        <span className="text-[10.5px] font-bold tracking-[.06em] text-mg-ter">EMAIL (OPCIONAL)</span>
+        <span className="text-[10.5px] font-bold tracking-[.06em] text-mg-ter">{t('accounts.add.claude.emailLabel')}</span>
         <input
           value={email}
           onChange={(e) => onEmail(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && onSubmit()}
-          placeholder="tu@correo.com"
+          placeholder={t('accounts.add.claude.emailPlaceholder')}
           className="w-full rounded-[7px] border border-mg-border-ctrl bg-mg-window p-[7px_9px] font-mono text-mg-body outline-none"
         />
-        <span className="text-[10.5px] text-mg-ter">Solo prerrellena el formulario de Anthropic para que no te equivoques de cuenta.</span>
+        <span className="text-[10.5px] text-mg-ter">{t('accounts.add.claude.emailNote')}</span>
       </label>
     </div>
   );
@@ -703,5 +725,5 @@ function SecondaryButton({ onClick, children }: { readonly onClick: () => void; 
 }
 
 function describe(err: unknown): string {
-  return err instanceof Error ? err.message : `Error desconocido: ${String(err)}`;
+  return err instanceof Error ? err.message : translate('accounts.error.unknown', { error: String(err) });
 }

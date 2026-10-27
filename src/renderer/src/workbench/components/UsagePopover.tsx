@@ -2,6 +2,7 @@ import { formatMicroUsd, type AgyUsageSnapshot, type UsageInfo } from '@shared/u
 import { useWorkbenchStore } from '../workbenchStore';
 import { formatResetAbsolute } from '../usageView';
 import type { Account } from '../types';
+import { useT } from '../../i18n/uiLanguage';
 
 // Popover «Uso general» con el uso de TODAS las cuentas. Se ancla SOLO desde el resumen de la status
 // bar (hover/foco); el posicionamiento lo pone el contenedor. P-028, punto 22: por cuenta, las dos
@@ -13,13 +14,14 @@ export function UsagePopover(): React.JSX.Element {
   const usageByAccount = useWorkbenchStore((s) => s.usageByAccount);
   const agyUsageByAccount = useWorkbenchStore((s) => s.agyUsageByAccount);
   const now = Date.now();
+  const t = useT();
 
   return (
     <div
       data-usage-popover="true"
       className="flex w-[260px] flex-col gap-2 rounded-[9px] border border-mg-border-pop bg-mg-popover p-[11px_12px] text-[10.5px] mg-shadow-pop"
     >
-      <div className="text-[9.5px] font-bold tracking-[.08em] text-mg-ter">USO GENERAL</div>
+      <div className="text-[9.5px] font-bold tracking-[.08em] text-mg-ter">{t('usage.popover.title')}</div>
       {accounts.map((a) => (
         <AccountUsageRow key={a.id} account={a} info={usageByAccount[a.id] ?? null} agy={a.providerId === 'agy' ? (agyUsageByAccount[a.id] ?? null) : undefined} now={now} />
       ))}
@@ -39,16 +41,17 @@ function AccountUsageRow({
   readonly agy?: AgyUsageSnapshot | null;
   readonly now: number;
 }): React.JSX.Element {
+  const t = useT();
   return (
     <div className="flex flex-col gap-[3px]" data-usage-account={account.alias}>
       <div className="flex items-center gap-[6px] text-mg-body2">
         <span className="h-[6px] w-[6px] rounded-[2px]" style={{ background: account.accent.base }} />
         {account.alias} · {account.provider}
-        {info === null && !account.apiBilled && agy === undefined && <span className="ml-auto text-mg-muted">sin dato</span>}
-        {agy !== undefined && !account.apiBilled && (agy === null || agy.status !== 'ok') && <span className="ml-auto text-mg-muted">sin dato</span>}
+        {info === null && !account.apiBilled && agy === undefined && <span className="ml-auto text-mg-muted">{t('usage.popover.noData')}</span>}
+        {agy !== undefined && !account.apiBilled && (agy === null || agy.status !== 'ok') && <span className="ml-auto text-mg-muted">{t('usage.popover.noData')}</span>}
       </div>
-      {account.apiBilled && <div className="text-mg-ter">API · {info?.apiUsage === undefined ? 'sin turnos medidos' :
-        `${info.apiUsage.totals.totalTokens.toLocaleString('es-ES')} tokens · ${formatMicroUsd(info.apiUsage.totals.costMicroUsd)}`}</div>}
+      {account.apiBilled && <div className="text-mg-ter">{info?.apiUsage === undefined ? t('usage.popover.apiNoTurns') :
+        t('usage.popover.apiTotals', { tokens: info.apiUsage.totals.totalTokens.toLocaleString('es-ES'), cost: formatMicroUsd(info.apiUsage.totals.costMicroUsd) })}</div>}
       {agy?.status === 'ok' && !account.apiBilled && agy.groups.flatMap((group) => group.buckets.map((bucket) => (
         <WindowLine key={bucket.id} label={bucket.window === '5h' ? '5 h' : '7 d'} pct={bucket.usedPercent} accent={account.accent.base}
           reset={`${group.name} · ${formatResetAbsolute(bucket.resetsAt, now, bucket.window !== '5h')}`} />
@@ -75,6 +78,7 @@ function WindowLine({
   readonly accent: string;
 }): React.JSX.Element {
   const shown = Number.isFinite(pct) ? Math.max(0, Math.min(100, Math.round(pct))) : 0;
+  const t = useT();
   return (
     <div className="flex items-center gap-[6px]">
       <span className="w-[22px] text-mg-ter">{label}</span>
@@ -82,7 +86,7 @@ function WindowLine({
         <div className="h-full rounded-[2px]" style={{ width: `${shown}%`, background: accent }} />
       </div>
       <span className="text-mg-text" data-usage-window={label}>
-        {shown} % · reset {reset}
+        {t('usage.popover.windowLine', { percent: shown, reset })}
       </span>
     </div>
   );

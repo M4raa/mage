@@ -8,7 +8,7 @@ import { TAB_INDICATOR_TRANSITION } from '../motionPresets';
 import { orderTabsForDisplay, TAB_DRAG_MIME, TAB_DRAG_ORIGIN_MIME, tabColorVar, tabDropSide, tabsToCloseAll, tabsToCloseInactive } from '../tabActions';
 import { tabMoveBlockedReason } from '../backgroundWork';
 import { TabContextMenu } from './TabContextMenu';
-import { API_BILLED_LABEL, providerBadge } from '../accountView';
+import { apiBilledLabel, providerBadge } from '../accountView';
 import type { Tab as TabModel } from '../types';
 import { RELEASE_NOTES_TAB_ID } from '../releaseNotes';
 import { reportActionError } from '../notificationStore';
@@ -416,7 +416,7 @@ function Tab({
       )}
       {apiBilled && (
         <span data-tab-api-billed="true" className="flex-none rounded-[4px] border border-mg-warn px-[4px] text-[9px] leading-[13px] text-mg-warn">
-          {API_BILLED_LABEL}
+          {apiBilledLabel()}
         </span>
       )}
       {tab.pinned === true && <Icon name="pin" size={10} className="flex-none text-mg-ter" />}

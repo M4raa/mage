@@ -3,7 +3,7 @@ import { Icon } from './Icon';
 import { AnimatePresence, motion } from 'motion/react';
 import { EFFORT_LEVELS } from '@shared/ipc';
 import { NO_PERMISSION_CONTROL_WARNING, UNVERIFIED_PROVIDER_NOTE, isAutoApprovedProvider, isUnverifiedProvider, runsOnMageRuntime } from '@shared/providers';
-import { API_BILLED_LABEL } from '../accountView';
+import { apiBilledLabel } from '../accountView';
 import { useWorkbenchStore } from '../workbenchStore';
 import { useDialogA11y } from '../a11y/useDialogA11y';
 import { displayModelId, modelOptionsForProvider, providerFallbackModel, providerOptions } from '../models';
@@ -223,7 +223,7 @@ function DialogBody({
             >
               {accounts.filter((a) => a.providerId === provider).map((a) => (
                 <option key={a.id} value={a.id}>
-                  {a.alias} {a.email !== null ? `· ${a.email}` : ''} {a.apiBilled ? `· ${API_BILLED_LABEL}` : ''} {a.loginStatus !== 'logged_in' ? '(sin login)' : ''}
+                  {a.alias} {a.email !== null ? `· ${a.email}` : ''} {a.apiBilled ? `· ${apiBilledLabel()}` : ''} {a.loginStatus !== 'logged_in' ? '(sin login)' : ''}
                 </option>
               ))}
             </select>
