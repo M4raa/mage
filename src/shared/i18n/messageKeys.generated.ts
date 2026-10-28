@@ -126,6 +126,16 @@ export interface MessageValues {
   readonly "accounts.switcher.add": never;
   readonly "accounts.switcher.groupAria": never;
   readonly "accounts.vendor.local": never;
+  readonly "chat.activity.decision.allowed": never;
+  readonly "chat.activity.decision.answered": never;
+  readonly "chat.activity.decision.cancelled": never;
+  readonly "chat.activity.decision.denied": never;
+  readonly "chat.activity.decision.pending": never;
+  readonly "chat.activity.permission": { readonly "tool": string | number };
+  readonly "chat.activity.question": never;
+  readonly "chat.activity.running": never;
+  readonly "chat.activity.subagent": never;
+  readonly "chat.activity.thinking": never;
   readonly "chat.agyDenied.allowCommand": never;
   readonly "chat.agyDenied.allowed": never;
   readonly "chat.agyDenied.allowTool": never;
@@ -149,6 +159,7 @@ export interface MessageValues {
   readonly "chat.copy.copied": never;
   readonly "chat.copy.copy": never;
   readonly "chat.copy.error": never;
+  readonly "chat.copy.failed": { readonly "error": string | number };
   readonly "chat.copy.userMessage": never;
   readonly "chat.empty.hintCommands": never;
   readonly "chat.empty.hintMode": never;

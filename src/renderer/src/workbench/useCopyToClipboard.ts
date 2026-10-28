@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { t } from '../i18n/uiLanguage';
 
 // Cuanto tiempo se ve «Copiado» antes de volver a «Copiar».
 const COPIED_FLASH_MS = 1500;
@@ -12,7 +13,7 @@ export async function copyText(
     await clipboard.writeText(text);
     return null;
   } catch (err) {
-    return `No se pudo copiar: ${err instanceof Error ? err.message : String(err)}`;
+    return t('chat.copy.failed', { error: err instanceof Error ? err.message : String(err) });
   }
 }
 
