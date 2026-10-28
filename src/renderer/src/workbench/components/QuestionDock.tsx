@@ -5,6 +5,7 @@ import { Icon } from './Icon';
 import { headPermission, isPermissionSending, useWorkbenchStore } from '../workbenchStore';
 import { usePaneTabId } from '../paneContext';
 import { DISCLOSURE_VARIANTS } from '../motionPresets';
+import { t as translate, useT } from '../../i18n/uiLanguage';
 import type { Block } from '../types';
 import {
   canAdvance,
@@ -28,6 +29,7 @@ import {
 // Sigue siendo un `can_use_tool` que se contesta UNA vez: `✕` es el «no contestar» (deny) de siempre.
 type QuestionBlock = Extract<Block, { kind: 'question' }>;
 
+// Lo recibe el modelo (regla: el idioma de la interfaz no cambia lo que se le envía): no se traduce.
 const DENY_MESSAGE = 'El usuario no contestó la pregunta.';
 
 export function QuestionDock(): React.JSX.Element {
@@ -39,8 +41,6 @@ export function QuestionDock(): React.JSX.Element {
     </AnimatePresence>
   );
 }
-
-const OTHER_LABEL = 'Otra cosa';
 
 // El panel del split donde esta el usuario: solo ahi puede una pregunta tomar el foco (#58).
 function isActivePane(tabId: string): boolean {
@@ -54,6 +54,7 @@ function pendingQuestionBlock(requestId: string | undefined, blocks: readonly Bl
 }
 
 function QuestionDockBody({ block, tabId }: { readonly block: QuestionBlock; readonly tabId: string }): React.JSX.Element {
+  const t = useT();
   const answerQuestion = useWorkbenchStore((s) => s.answerQuestion);
   const answerPermissionFor = useWorkbenchStore((s) => s.answerPermissionFor);
   // La respuesta va de camino a main: el dock queda quieto hasta que `permission_resolved` lo cierre.
@@ -71,7 +72,7 @@ function QuestionDockBody({ block, tabId }: { readonly block: QuestionBlock; rea
   }, [tabId]);
 
   // #60: «Otra cosa» es la ultima parada de las flechas; al llegar ahi se escribe en su input.
-  const focusOther = (): void => ref.current?.querySelector<HTMLInputElement>(`input[aria-label="${OTHER_LABEL}"]`)?.focus();
+  const focusOther = (): void => ref.current?.querySelector<HTMLInputElement>(`input[aria-label="${translate('prompt.question.other')}"]`)?.focus();
   useEffect(() => {
     if (question !== undefined && state.cursor === question.options.length && isActivePane(tabId)) focusOther();
   }, [question, state.cursor, tabId]);
@@ -108,7 +109,7 @@ function QuestionDockBody({ block, tabId }: { readonly block: QuestionBlock; rea
         ref={ref}
         tabIndex={-1}
         role="group"
-        aria-label={`Pregunta del agente: ${question.question}`}
+        aria-label={t('prompt.question.ariaLabel', { question: question.question })}
         data-question-dock="true"
         data-question-step={state.step}
         aria-busy={sending}
@@ -182,20 +183,21 @@ function DockHeader({
   readonly onNext: () => void;
   readonly onClose: () => void;
 }): React.JSX.Element {
+  const t = useT();
   return (
     <div className="flex items-start gap-[10px] border-b border-mg-border-subtle p-[10px_12px]">
       <div className="min-w-0 flex-1 text-[12px] font-semibold leading-[1.45] text-mg-text">{question.question}</div>
       {total > 1 && (
         <div className="flex flex-none items-center gap-[4px] text-[10.5px] text-mg-muted">
-          <button onClick={onPrev} aria-label="Pregunta anterior" className="px-[3px] hover:text-mg-body">‹</button>
+          <button onClick={onPrev} aria-label={t('prompt.question.prevAria')} className="px-[3px] hover:text-mg-body">‹</button>
           <span data-question-counter="true" aria-live="polite" className="tabular-nums">
-            {step + 1} de {total}
+            {t('prompt.question.counter', { step: step + 1, total })}
           </span>
-          <button onClick={onNext} aria-label="Pregunta siguiente" className="px-[3px] hover:text-mg-body">›</button>
+          <button onClick={onNext} aria-label={t('prompt.question.nextAria')} className="px-[3px] hover:text-mg-body">›</button>
         </div>
       )}
-      <button onClick={onClose} aria-label="No contestar" data-tip="No contestar" className="flex-none text-mg-muted hover:text-mg-body">
-        <Icon name="close" size={12} label="No contestar" />
+      <button onClick={onClose} aria-label={t('prompt.question.dismiss')} data-tip={t('prompt.question.dismiss')} className="flex-none text-mg-muted hover:text-mg-body">
+        <Icon name="close" size={12} label={t('prompt.question.dismiss')} />
       </button>
     </div>
   );
@@ -255,25 +257,26 @@ function DockFooter({
   readonly onSkip: () => void;
   readonly onAdvance: () => void;
 }): React.JSX.Element {
+  const t = useT();
   return (
     <div className="flex items-center gap-[8px] border-t border-mg-border-subtle p-[7px_12px]">
       <Icon name="pencil" size={12} />
       <input
         value={other}
         onChange={(e) => onOther(e.target.value)}
-        aria-label={OTHER_LABEL}
-        placeholder={OTHER_LABEL}
+        aria-label={t('prompt.question.other')}
+        placeholder={t('prompt.question.other')}
         className="min-w-0 flex-1 bg-transparent text-[11.5px] text-mg-text outline-none placeholder:text-mg-muted"
       />
       <button onClick={onSkip} className="rounded-[7px] border border-mg-border-ctrl px-[10px] py-[4px] text-[11px] text-mg-body2 hover:bg-mg-hover">
-        Omitir
+        {t('prompt.question.skip')}
       </button>
       <button
         onClick={onAdvance}
         disabled={!ready}
         className="rounded-[7px] bg-mg-primary px-[11px] py-[4px] text-[11px] font-semibold text-mg-primary-ink disabled:opacity-40"
       >
-        {last ? 'Responder' : 'Siguiente'}
+        {last ? t('prompt.question.submit') : t('prompt.question.advance')}
       </button>
     </div>
   );

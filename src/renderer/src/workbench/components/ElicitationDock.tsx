@@ -5,6 +5,7 @@ import { useWorkbenchStore } from '../workbenchStore';
 import { usePaneTabId } from '../paneContext';
 import { DISCLOSURE_VARIANTS } from '../motionPresets';
 import { formErrors, initialValues, toContent, type FormValues } from '../elicitationForm';
+import { useT } from '../../i18n/uiLanguage';
 
 // Formulario de un servidor MCP (elicitation) anclado encima del input, como la pregunta del agente.
 // Se genera del esquema acotado de `@shared/elicitation`; los valores solo viajan por IPC a main.
@@ -25,6 +26,7 @@ export function ElicitationDock(): React.JSX.Element {
 }
 
 function ElicitationBody({ request, tabId }: { readonly request: ElicitationRequest; readonly tabId: string }): React.JSX.Element {
+  const t = useT();
   const answer = useWorkbenchStore((s) => s.answerElicitation);
   const ref = useRef<HTMLDivElement>(null);
   const [values, setValues] = useState<FormValues>(() => (request.mode === 'form' ? initialValues(request.schema) : {}));
@@ -52,7 +54,7 @@ function ElicitationBody({ request, tabId }: { readonly request: ElicitationRequ
         ref={ref}
         tabIndex={-1}
         role="group"
-        aria-label={`Formulario de ${request.server}`}
+        aria-label={t('prompt.elicitation.ariaLabel', { server: request.server })}
         data-elicitation-dock="true"
         onKeyDown={(e) => {
           // `Esc` es el `session.interrupt` global: dentro del formulario cancela solo el formulario.
@@ -68,13 +70,13 @@ function ElicitationBody({ request, tabId }: { readonly request: ElicitationRequ
         className="flex flex-col gap-[10px] rounded-[11px] border border-mg-border-emph bg-mg-panel p-[12px] outline-none focus-visible:border-mg-focus"
       >
         <div className="text-[11px] text-mg-sec">
-          El servidor MCP <strong>{request.server}</strong> pide datos
+          {t('prompt.elicitation.introStart')} <strong>{request.server}</strong> {t('prompt.elicitation.introEnd')}
         </div>
         <div className="text-[12.5px] leading-[1.5] text-mg-body">{request.message}</div>
         {request.mode === 'form' ? (
           <FormFields request={request} values={values} errors={errors} onChange={(name, value) => setValues((v) => ({ ...v, [name]: value }))} />
         ) : (
-          <div className="break-all font-mono text-[11px] text-mg-sec">{request.url} (sin verificar; se abre en el navegador si aceptas)</div>
+          <div className="break-all font-mono text-[11px] text-mg-sec">{request.url} {t('prompt.elicitation.urlNote')}</div>
         )}
         {error !== null && (
           <div role="alert" className="text-[10.5px] text-mg-danger">
@@ -83,13 +85,13 @@ function ElicitationBody({ request, tabId }: { readonly request: ElicitationRequ
         )}
         <div className="flex gap-[8px]">
           <button type="button" disabled={blocked} onClick={() => send('accept')} className={`${BUTTON} disabled:opacity-50`}>
-            Aceptar
+            {t('prompt.elicitation.accept')}
           </button>
           <button type="button" onClick={() => send('decline')} className={BUTTON}>
-            Rechazar
+            {t('prompt.elicitation.decline')}
           </button>
           <button type="button" onClick={() => send('cancel')} className={BUTTON}>
-            Cancelar
+            {t('prompt.elicitation.cancel')}
           </button>
         </div>
       </div>

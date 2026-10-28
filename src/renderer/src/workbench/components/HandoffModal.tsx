@@ -4,6 +4,7 @@ import { useWorkbenchStore } from '../workbenchStore';
 import { useDialogA11y } from '../a11y/useDialogA11y';
 import { MODAL_PANEL_VARIANTS, MODAL_SCRIM_VARIANTS } from '../motionPresets';
 import { conversationIdOfTab } from '../conversationId';
+import { t as translate, useT } from '../../i18n/uiLanguage';
 
 // Modal de PROMPT HANDOFF (M2.3): al abrirse genera —reanudando la sesion de la pestana activa— un
 // prompt autocontenido para arrancar un chat nuevo que continue el trabajo. Muestra la preview
@@ -55,6 +56,7 @@ function HandoffBody({
   readonly onClose: () => void;
   readonly onStartChat: (prompt: string) => Promise<void>;
 }): React.JSX.Element {
+  const t = useT();
   const [prompt, setPrompt] = useState('');
   const [busy, setBusy] = useState(true); // genera al montar
   const [error, setError] = useState<string | null>(null);
@@ -66,7 +68,7 @@ function HandoffBody({
     let cancelled = false;
     if (sessionId === null) {
       setBusy(false);
-      setError('Esta conversación aún no tiene una sesión que reanudar (envía al menos un mensaje).');
+      setError(translate('prompt.handoff.noSession'));
       return;
     }
     setBusy(true);
@@ -115,10 +117,10 @@ function HandoffBody({
         className="flex max-h-[80vh] w-[560px] flex-col gap-[12px] rounded-[11px] border border-mg-border-pop bg-mg-panel p-[18px] text-[12px] mg-shadow-modal"
       >
         <div className="flex items-center gap-[8px]">
-          <span id="handoff-title" className="text-[13px] font-bold text-mg-text">Prompt de handoff</span>
+          <span id="handoff-title" className="text-[13px] font-bold text-mg-text">{t('prompt.handoff.title')}</span>
           {busy && <Spinner />}
-          <span className="text-[10.5px] text-mg-muted">— revísalo y edítalo antes de usarlo</span>
-          <button onClick={onClose} className="ml-auto text-mg-muted hover:text-mg-body" data-tip="Cerrar">
+          <span className="text-[10.5px] text-mg-muted">{t('prompt.handoff.hint')}</span>
+          <button onClick={onClose} className="ml-auto text-mg-muted hover:text-mg-body" data-tip={t('prompt.handoff.close')}>
             ✕
           </button>
         </div>
@@ -130,8 +132,8 @@ function HandoffBody({
             value={prompt}
             disabled={busy}
             onChange={(e) => setPrompt(e.target.value)}
-            aria-label="Prompt de handoff (editable)"
-            placeholder={busy ? 'Generando el prompt de handoff…' : ''}
+            aria-label={t('prompt.handoff.editorAria')}
+            placeholder={busy ? t('prompt.handoff.generating') : ''}
             className="h-[320px] w-full resize-none overflow-y-auto rounded-[7px] border border-mg-border-ctrl bg-mg-window p-[10px] text-[12px] leading-[1.55] text-mg-body outline-none disabled:opacity-60"
           />
         )}
@@ -142,14 +144,14 @@ function HandoffBody({
             disabled={!canAct}
             className="rounded-[7px] border border-mg-border-emph px-[12px] py-[6px] text-[11.5px] text-mg-body2 transition-colors duration-150 ease-out hover:bg-mg-hover disabled:opacity-50"
           >
-            {copied ? '✓ Copiado' : 'Copiar'}
+            {copied ? t('prompt.handoff.copied') : t('prompt.handoff.copy')}
           </button>
           <button
             onClick={() => void onStartChat(prompt)}
             disabled={!canAct}
             className="rounded-[7px] bg-mg-primary px-[12px] py-[6px] text-[11.5px] font-semibold text-mg-primary-ink transition-opacity duration-150 ease-out disabled:opacity-50"
           >
-            Empezar nuevo chat con este prompt
+            {t('prompt.handoff.startChat')}
           </button>
         </div>
       </motion.div>
