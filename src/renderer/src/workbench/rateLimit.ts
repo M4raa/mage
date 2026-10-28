@@ -1,15 +1,20 @@
 import type { UsageInfo } from '@shared/usage';
 import type { ChatStatus, RateLimitNotice } from './types';
 import { FIVE_HOUR_WINDOW_MS, formatResetTime } from './usageView';
+import { t } from '../i18n/uiLanguage';
 
 // Limite de uso (P-028, punto 20). PURO: el reductor, la hidratacion, el banner y el temporizador del
 // continuar automatico leen de aqui, asi el aviso dice lo mismo en los cuatro sitios.
 
-export const RATE_LIMIT_LINE = 'Límite de uso alcanzado';
+// Comienzo de la linea de limite, en el idioma activo: el store la busca por este prefijo para fundir el
+// segundo aviso del CLI en ella. `chat.rateLimit.lineWithReset` empieza por este mismo texto.
+export function rateLimitLine(): string {
+  return t('chat.rateLimit.line');
+}
 
-// Texto de Mage (castellano) para la linea del hilo y el banner. El del CLI va en el tooltip.
+// Texto de Mage para la linea del hilo y el banner. El del CLI va en el tooltip.
 export function rateLimitLineText(resetsAtMs: number | null): string {
-  return resetsAtMs === null ? RATE_LIMIT_LINE : `${RATE_LIMIT_LINE} · se restablece a las ${formatResetTime(resetsAtMs)}`;
+  return resetsAtMs === null ? rateLimitLine() : t('chat.rateLimit.lineWithReset', { time: formatResetTime(resetsAtMs) });
 }
 
 // El CLI avisa DOS veces del mismo limite (el `rate_limit_event` rechazado, sin texto pero con hora, y el
@@ -37,13 +42,14 @@ export function effectiveResetMs(notice: RateLimitNotice, usage: UsageInfo | nul
 export const AUTO_CONTINUE_MARGIN_MS = 60_000;
 // Cada cuanto se mira (un intervalo corto aguanta la suspension del equipo; un setTimeout de horas no).
 export const AUTO_CONTINUE_POLL_MS = 60_000;
+// Lo recibe el modelo como turno del usuario: no se traduce (el idioma de la interfaz no cambia lo que se envía).
 export const AUTO_CONTINUE_TEXT = 'Continúa';
 
 // Por que NO se puede activar el continuar automatico, o null si se puede. Sin hora de reset no hay
 // cuando; un reset a mas de 5 h vista es el semanal, y ahi no se gastan turnos solos.
 export function autoContinueBlockedReason(resetsAtMs: number | null, now: number): string | null {
-  if (resetsAtMs === null) return 'Sin hora de reset: no se puede continuar automáticamente.';
-  if (resetsAtMs - now > FIVE_HOUR_WINDOW_MS) return 'Solo para el límite de 5 horas.';
+  if (resetsAtMs === null) return t('chat.rateLimit.noResetTime');
+  if (resetsAtMs - now > FIVE_HOUR_WINDOW_MS) return t('chat.rateLimit.fiveHourOnly');
   return null;
 }
 

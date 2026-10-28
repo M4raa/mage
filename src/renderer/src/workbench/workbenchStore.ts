@@ -64,7 +64,7 @@ import {
   AUTO_CONTINUE_TEXT,
   effectiveResetMs,
   mergeRateLimitNotice,
-  RATE_LIMIT_LINE,
+  rateLimitLine,
   rateLimitLineText,
   shouldAutoContinue,
 } from './rateLimit';
@@ -3080,9 +3080,10 @@ export function reduceEvent(state: WorkbenchState, tabId: string, event: MageEve
 
 // Ultima linea de limite de uso del hilo (para fundir el segundo aviso en ella), o -1.
 function lastRateLimitLineIndex(blocks: readonly Block[]): number {
+  const line = rateLimitLine();
   for (let i = blocks.length - 1; i >= 0; i--) {
     const block = blocks[i];
-    if (block?.kind === 'system' && block.text.startsWith(RATE_LIMIT_LINE)) return i;
+    if (block?.kind === 'system' && block.text.startsWith(line)) return i;
   }
   return -1;
 }

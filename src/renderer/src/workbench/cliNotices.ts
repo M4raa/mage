@@ -1,5 +1,6 @@
 import type { MageEvent } from '@shared/events';
 import { rateLimitLineText } from './rateLimit';
+import { t } from '../i18n/uiLanguage';
 
 // Avisos del propio CLI que van al HILO como linea de sistema tenue (2.5), con su texto en castellano.
 //
@@ -20,7 +21,14 @@ import { rateLimitLineText } from './rateLimit';
 // atención": ahora la peticion se pinta como TARJETA en el hilo, con la accion y los botones, asi que la
 // linea era el aviso de algo que ya esta a la vista. Las notificaciones del SO (notify.ts) siguen
 // usandolo: ahi si aporta, porque la ventana no tiene el foco.
-const NOTICEABLE_HOOKS: ReadonlyMap<string, string> = new Map([['SubagentStop', 'Subagente terminado']]);
+// Guarda las CLAVES del catálogo (sin detalle y con detalle): se traducen al montar el texto.
+interface HookNoticeKeys {
+  readonly plain: 'chat.notice.subagentStop';
+  readonly withDetail: 'chat.notice.subagentStopDetail';
+}
+const NOTICEABLE_HOOKS: ReadonlyMap<string, HookNoticeKeys> = new Map([
+  ['SubagentStop', { plain: 'chat.notice.subagentStop', withDetail: 'chat.notice.subagentStopDetail' }],
+]);
 
 // Sin emoji a proposito (2026-09-17): la linea de aviso ya es visualmente distinta —tenue y centrada—
 // y su texto se basta solo. El emoji ademas viajaba a las notificaciones del SO via notify.ts.
@@ -29,17 +37,17 @@ export function noticeTextFor(event: MageEvent): string | null {
     case 'notice':
       return event.text;
     case 'compacted':
-      return `Contexto compactado (${event.trigger === 'auto' ? 'automática' : 'manual'})`;
+      return event.trigger === 'auto' ? t('chat.notice.compactedAuto') : t('chat.notice.compactedManual');
     case 'permission_mode':
-      return `Modo de permiso: ${permissionModeLabel(event.mode)}`;
+      return t('chat.notice.permissionMode', { mode: permissionModeLabel(event.mode) });
     case 'rate_limit':
       // Texto de Mage en castellano, con la hora si la trae el stream (P-028, 20). El del CLI ("You've
       // hit your session limit · resets 3pm") ya no va al hilo: el reductor lo pone en el tooltip.
       return rateLimitLineText(event.resetsAtMs);
     case 'hook_fired': {
-      const label = NOTICEABLE_HOOKS.get(event.event);
-      if (label === undefined) return null;
-      return event.detail === null || event.detail.trim().length === 0 ? `${label}` : `${label}: ${event.detail.trim()}`;
+      const keys = NOTICEABLE_HOOKS.get(event.event);
+      if (keys === undefined) return null;
+      return event.detail === null || event.detail.trim().length === 0 ? t(keys.plain) : t(keys.withDetail, { detail: event.detail.trim() });
     }
     default:
       // Todo lo demas vive en Logs. Un `default` y no un caso por variante: son 20 y crecen; lo que
@@ -49,15 +57,15 @@ export function noticeTextFor(event: MageEvent): string | null {
 }
 
 // Vocabulario de Mage para el modo de permiso. El CLI usa el suyo (`auto`, `plan`...) y puede traer
-// valores que Mage no conoce: entonces se pinta el crudo en vez de esconder el cambio.
-const PERMISSION_MODE_LABELS: Readonly<Record<string, string>> = {
-  default: 'manual',
-  acceptEdits: 'auto-editar',
-  plan: 'plan',
-  auto: 'auto',
-  bypassPermissions: 'omitir permisos',
-};
+// valores que Mage no conoce: entonces se pinta el crudo en vez de esconder el cambio. Guarda la CLAVE.
+const PERMISSION_MODE_LABELS = {
+  default: 'chat.notice.mode.default',
+  acceptEdits: 'chat.notice.mode.acceptEdits',
+  plan: 'chat.notice.mode.plan',
+  auto: 'chat.notice.mode.auto',
+  bypassPermissions: 'chat.notice.mode.bypassPermissions',
+} as const;
 
 function permissionModeLabel(mode: string): string {
-  return PERMISSION_MODE_LABELS[mode] ?? mode;
+  return Object.hasOwn(PERMISSION_MODE_LABELS, mode) ? t(PERMISSION_MODE_LABELS[mode as keyof typeof PERMISSION_MODE_LABELS]) : mode;
 }

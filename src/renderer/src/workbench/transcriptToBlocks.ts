@@ -6,7 +6,8 @@ import { classifyTool } from './toolClassify';
 import { completeArtifactPublication, parseArtifactDraft } from '@shared/artifacts';
 import { SUBAGENT_TOOL_NAMES } from './toolSummary';
 import { noticeTextFor } from './cliNotices';
-import { RATE_LIMIT_LINE } from './rateLimit';
+import { rateLimitLine } from './rateLimit';
+import { t } from '../i18n/uiLanguage';
 import { classifySystemWrapper } from '@shared/systemWrappers';
 import { EMPTY_SUBAGENT_RUN, withSubagentRun, withSubagentUpdate } from './engineBlocks';
 
@@ -142,7 +143,7 @@ function precedingCommandName(blocks: readonly Block[]): string | null {
 }
 
 function taskNotificationText(summary: string): string {
-  return summary.length === 0 ? 'Tarea en segundo plano terminada' : `Tarea en segundo plano: ${summary}`;
+  return summary.length === 0 ? t('chat.notice.backgroundTaskDone') : t('chat.notice.backgroundTask', { summary });
 }
 
 // Una linea `assistant` puede traer texto y/o varios tool_use. Emite el bloque de texto (si lo hay) y
@@ -160,7 +161,7 @@ function appendAssistant(entry: TranscriptEntry, blocks: Block[], toolIndexById:
   // del agente: se pinta como la misma linea de sistema que en vivo, con su texto en el tooltip (P-028, 20).
   if (isRecord(entry.raw) && entry.raw.error === 'rate_limit') {
     const tip = assistantText(entry.raw).trim();
-    blocks.push({ kind: 'system', id: blockId(entry.index, 0), text: RATE_LIMIT_LINE, ...(tip.length === 0 ? {} : { tip }) });
+    blocks.push({ kind: 'system', id: blockId(entry.index, 0), text: rateLimitLine(), ...(tip.length === 0 ? {} : { tip }) });
     return;
   }
   let slot = 0;
