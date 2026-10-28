@@ -53,6 +53,7 @@ import { closeCheckOverlays, runGuiCheck } from './lib/guiCheckState.mjs';
 import { runPerfBaseline } from './lib/perfBaseline.mjs';
 import { runMageBench } from './lib/benchMage.mjs';
 import { appendDomText } from './lib/domTextDump.mjs';
+import { redactUserData } from './lib/redactUserData.mjs';
 import { cleanupProfile, credentialDigest } from '../spike/f0-profile-cleanup.mjs';
 import { claudeUsage, codexRateLimits, guardedUsage, prepareCodexHome } from '../spike/bench/headless.mjs';
 
@@ -10883,6 +10884,8 @@ async function main() {
   const { child, log } = launchApp(userDataDir);
   let browser = null;
   const results = [];
+  // H1 de DEVOLUCION-022: alias de las cuentas reales del perfil; enmascaran los detalles antes de que lleguen al informe.
+  let accountAliases = [];
   const consoleErrors = [];
 
   try {
@@ -10893,6 +10896,7 @@ async function main() {
     // DESPUES del primer render. Sin esperarlas, la primera comprobacion medía una UI a medio montar
     // y daba un falso negativo (toolbars=0 con la app perfectamente arrancada).
     await page.locator('[role="toolbar"]').first().waitFor({ state: 'attached', timeout: CONFIG.bootTimeoutMs });
+    accountAliases = await page.evaluate(() => (window.__mageDev?.store.getState().accounts ?? []).map((a) => a.alias));
     // Control negativo reproducible: la cadencia medida con la ventana tapada, antes de importar Motion.
     if (process.argv.includes('--slow-frames')) {
       await page.addInitScript((intervalMs) => {
@@ -10912,7 +10916,7 @@ async function main() {
       const medido = await runPerfBaseline(page, { openConversation: openTemporaryConversation, devBridge: !PROD_BUILD });
       fs.writeFileSync(path.join(runDir, 'perf-baseline.json'), JSON.stringify(medido, null, 2), 'utf-8');
       console.log(`[verify:gui] baseline: ${path.join(runDir, 'perf-baseline.json')}`);
-      results.push({ name: 'Baseline de interfaz #40', ok: true, detail: 'medido' });
+      results.push({ name: 'Baseline de interfaz #40', ok: true, detail: redactUserData('medido', accountAliases) });
       return;
     }
     const baselinePanels = await page.evaluate(() => window.__mageDev.panelStore.getState().layout);
@@ -10930,11 +10934,13 @@ async function main() {
           settle: () => settleGuiState(page),
         });
         if (before !== null) fs.appendFileSync(path.join(runDir, 'layout-evidence.jsonl'), JSON.stringify({ name: check.name, before, after: await captureLayoutEvidence(page), outcome }) + '\n');
-        results.push({ name: check.name, ...outcome });
-        console.log(`  ${outcome.ok ? '✓' : '✗'} ${check.name} — ${outcome.detail}`);
+        const detail = redactUserData(outcome.detail, accountAliases);
+        results.push({ name: check.name, ...outcome, detail });
+        console.log(`  ${outcome.ok ? '✓' : '✗'} ${check.name} — ${detail}`);
       } catch (error) {
-        results.push({ name: check.name, ok: false, detail: `excepcion: ${error.message}` });
-        console.log(`  ✗ ${check.name} — excepcion: ${error.message}`);
+        const detail = redactUserData(`excepcion: ${error.message}`, accountAliases);
+        results.push({ name: check.name, ok: false, detail });
+        console.log(`  ✗ ${check.name} — ${detail}`);
 
       }
       // El INDICE va delante del slug: `slug()` trunca a 60 caracteres y ya hay nombres de comprobacion
@@ -10945,7 +10951,7 @@ async function main() {
 
     }
   } catch (error) {
-    results.push({ name: 'Arranque', ok: false, detail: error.message });
+    results.push({ name: 'Arranque', ok: false, detail: redactUserData(error.message, accountAliases) });
     console.error(`[verify:gui] ${error.message}`);
     fs.writeFileSync(path.join(runDir, 'launch.log'), log.join(''), 'utf-8');
   } finally {
