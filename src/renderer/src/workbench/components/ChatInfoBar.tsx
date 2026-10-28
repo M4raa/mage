@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react';
+import { useEffect } from 'react';
 import { Icon } from './Icon';
 import { useWorkbenchStore } from '../workbenchStore';
 import { usePaneTabId } from '../paneContext';
@@ -26,6 +26,8 @@ export function ChatInfoBar(): React.JSX.Element | null {
   const scratchDir = useWorkbenchStore((s) => s.scratchDir);
   const scratchRoots = useWorkbenchStore((s) => s.scratchRoots);
   const ensureScratchDir = useWorkbenchStore((s) => s.ensureScratchDir);
+  // Suscribe la fila al idioma: las etiquetas salen de `chatInfoView`, que traduce al llamarse.
+  useT();
 
   useEffect(() => {
     void ensureScratchDir();
@@ -48,13 +50,8 @@ export function ChatInfoBar(): React.JSX.Element | null {
     return () => window.removeEventListener('focus', onFocus);
   }, [tabId, cwd, refreshGit, refreshPr]);
 
-  const chips = useMemo((): readonly ChatChip[] => {
-    if (tab === undefined) return [];
-    const folder = folderChip(tab.cwd, scratchRoots.length > 0 ? scratchRoots : scratchDir);
-    // Sin el chip del modelo (P-026, D18): salia aqui, en el selector del input y en la barra de estado.
-    // Se queda solo en el selector, que es donde se puede cambiar.
-    return [...(folder === null ? [] : [folder]), privacyChip(tab.privacy)];
-  }, [tab, scratchDir, scratchRoots]);
+  // Sin `useMemo`: son dos objetos pequeños y así siguen al idioma activo sin depender de él.
+  const chips = infoChips(tab, scratchRoots.length > 0 ? scratchRoots : scratchDir);
 
   // Sin pestaña no hay nada que contar, y una fila vacia solo roba alto al hilo.
   if (tab === undefined || chips.length === 0) return null;
@@ -88,6 +85,14 @@ export function ChatInfoBar(): React.JSX.Element | null {
       ))}
     </div>
   );
+}
+
+function infoChips(tab: { readonly cwd: string; readonly privacy: 'shared' | 'private' } | undefined, scratch: string | readonly string[] | null): readonly ChatChip[] {
+  if (tab === undefined) return [];
+  const folder = folderChip(tab.cwd, scratch);
+  // Sin el chip del modelo (P-026, D18): salia aqui, en el selector del input y en la barra de estado.
+  // Se queda solo en el selector, que es donde se puede cambiar.
+  return [...(folder === null ? [] : [folder]), privacyChip(tab.privacy)];
 }
 
 const CHIP_CLASS = 'inline-flex max-w-[280px] items-center gap-[5px] rounded-full border border-mg-border-ctrl px-[8px] py-[2px]';

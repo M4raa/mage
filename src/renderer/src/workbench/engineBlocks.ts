@@ -8,6 +8,7 @@ import { classifyTool } from './toolClassify';
 import { completeArtifactPublication, parseArtifactDraft } from '@shared/artifacts';
 import { formatToolMeta, summarizeToolInput } from './toolSummary';
 import { codexChangeView } from './codexChanges';
+import { t } from '../i18n/uiLanguage';
 
 // Mapeo PURO del modelo de eventos comun (MageEvent) a los bloques/permiso de la UI. Sin React ni
 // zustand: solo funciones de datos -> datos (testeable en Vitest, env node). Los ids de bloque los
@@ -422,11 +423,12 @@ export function pendingToolName(blocks: readonly Block[]): string | null {
 export function turnUsageText(usage: TurnUsage): string | null {
   const parts: string[] = [];
   pushInput(parts, usage);
-  pushCounter(parts, usage.outputTokens, 'salida');
-  pushCounter(parts, usage.thinkingTokens, 'pensamiento');
-  pushCounter(parts, usage.totalTokens, 'total');
+  pushCounter(parts, usage.outputTokens, t('chat.turnUsage.output'));
+  pushCounter(parts, usage.thinkingTokens, t('chat.turnUsage.thinking'));
+  pushCounter(parts, usage.totalTokens, t('chat.turnUsage.total'));
   if (parts.length === 0) return null;
-  return `◷ Tokens del turno${usage.estimated === true ? ' (estimados)' : ''}: ${parts.join(' · ')}`;
+  const counters = parts.join(' · ');
+  return usage.estimated === true ? t('chat.turnUsage.lineEstimated', { counters }) : t('chat.turnUsage.line', { counters });
 }
 
 // «Entrada» significa lo mismo en los tres proveedores: TODO lo que se mando al modelo, con su caché dentro. Codex y
@@ -440,14 +442,14 @@ function pushInput(parts: string[], usage: TurnUsage): void {
   const written = usage.cacheCreationTokens ?? null;
   const input = separate ? usage.inputTokens + (read ?? 0) + (written ?? 0) : usage.inputTokens;
   const detail: string[] = [];
-  pushCounter(detail, read, 'en caché');
-  if (written !== null && written > 0) pushCounter(detail, written, 'escritos en caché');
+  pushCounter(detail, read, t('chat.turnUsage.cacheRead'));
+  if (written !== null && written > 0) pushCounter(detail, written, t('chat.turnUsage.cacheWrite'));
   const text: string[] = [];
-  pushCounter(text, input, 'entrada');
+  pushCounter(text, input, t('chat.turnUsage.input'));
   parts.push(detail.length === 0 ? (text[0] ?? '') : `${text[0] ?? ''} (${detail.join(' · ')})`);
 }
 
-// Anade "<n> <etiqueta>" si el contador viene. Un contador negativo o no entero es dato corrupto de la
+// Anade "<n> <etiqueta>" si el contador viene (la etiqueta llega ya traducida). Un contador negativo o no entero es dato corrupto de la
 // frontera: se lanza con el valor recibido en vez de pintar un numero sin sentido.
 function pushCounter(parts: string[], value: number | null, label: string): void {
   if (value === null) return;
@@ -468,7 +470,7 @@ export function restartingText(attempt: number, delayMs: number): string {
     throw new Error(`Espera invalida para el aviso de reinicio: ${delayMs}`);
   }
   const seconds = (Math.round(delayMs / 100) / 10).toFixed(1);
-  return `⟳ El agente se cerró; reanudando la conversación en ${seconds} s (intento ${attempt})`;
+  return t('chat.restarting', { seconds, attempt });
 }
 
 // Peticion de permiso -> vista del Inspector (prompt + tarjeta target/diff + resumen).
@@ -502,9 +504,9 @@ function growRuns(runs: readonly TextRun[], text: string): readonly TextRun[] {
 
 
 function buildPrompt(toolName: string): string {
-  if (isWriteTool(toolName)) return 'El agente quiere escribir en el proyecto:';
-  if (toolName === 'Bash') return 'El agente quiere ejecutar un comando:';
-  return `El agente quiere usar ${toolName}:`;
+  if (isWriteTool(toolName)) return t('chat.permission.prompt.write');
+  if (toolName === 'Bash') return t('chat.permission.prompt.command');
+  return t('chat.permission.prompt.tool', { tool: toolName });
 }
 
 function buildTarget(toolName: string, input: Readonly<Record<string, unknown>>): string {
