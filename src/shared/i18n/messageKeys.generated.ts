@@ -321,6 +321,7 @@ export interface MessageValues {
   readonly "chat.worktree.chipTip": never;
   readonly "chat.worktree.toggle": never;
   readonly "chat.worktree.toggleTip": never;
+  readonly "history.recentProjects.title": never;
   readonly "mcp.agy.action.add": never;
   readonly "mcp.agy.action.remove": never;
   readonly "mcp.agy.action.skip": never;
@@ -1034,6 +1035,17 @@ export interface MessageValues {
   readonly "settings.update.viewAndRestart": never;
   readonly "settings.widget.description": never;
   readonly "settings.widget.toggle": never;
+  readonly "sidebar.contextMenu.delete": never;
+  readonly "sidebar.contextMenu.deleteAccept": never;
+  readonly "sidebar.contextMenu.deleteCancel": never;
+  readonly "sidebar.contextMenu.deleteConfirm": never;
+  readonly "sidebar.contextMenu.moveToAccountHeader": never;
+  readonly "sidebar.contextMenu.moveToPrivate": never;
+  readonly "sidebar.contextMenu.moveToShared": never;
+  readonly "sidebar.contextMenu.openInNewTab": never;
+  readonly "sidebar.contextMenu.openInNewWindow": never;
+  readonly "sidebar.contextMenu.projectHeader": never;
+  readonly "sidebar.contextMenu.removeFromProject": never;
   readonly "sidebar.deleteAccount.cancel": never;
   readonly "sidebar.deleteAccount.confirm": never;
   readonly "sidebar.deleteAccount.confirmEnd": never;

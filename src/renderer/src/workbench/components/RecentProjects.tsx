@@ -4,6 +4,7 @@ import { useWorkbenchStore } from '../workbenchStore';
 import { recentProjects, RECENT_PROJECTS_LIMIT, type RecentProject } from '../recentProjects';
 import { isWindowsPlatform } from '../keybindings/platform';
 import { shortenPath } from '../cwdChange';
+import { useT } from '../../i18n/uiLanguage';
 
 // Tarjetas de proyectos recientes en el estado vacio de una conversacion nueva (P-028, punto 16;
 // referencia visual: el selector de conexiones de HuginnDB). Pulsar una fija la carpeta de trabajo
@@ -53,11 +54,12 @@ export function RecentProjects({
   readonly currentCwd: string;
   readonly onPick: (cwd: string) => void;
 }): React.JSX.Element | null {
+  const t = useT();
   const projects = useExistingRecentProjects();
   if (projects.length === 0) return null;
   return (
     <div data-recent-projects="true" className="flex w-[min(520px,90%)] flex-col gap-[8px]">
-      <div className="text-left text-[9.5px] font-bold tracking-[.1em] text-mg-ter">PROYECTOS RECIENTES</div>
+      <div className="text-left text-[9.5px] font-bold tracking-[.1em] text-mg-ter">{t('history.recentProjects.title')}</div>
       <div className="grid grid-cols-2 gap-[8px]">
         {projects.map((project) => (
           <button
