@@ -1,6 +1,7 @@
 import { isPermissionSending, useWorkbenchStore } from '../workbenchStore';
 import type { PermissionDecision } from '@shared/events';
 import { usePaneTabId } from '../paneContext';
+import { useT } from '../../i18n/uiLanguage';
 
 // Las TRES decisiones de un permiso, en un solo sitio (2.3b). Las pintan la tarjeta del chat
 // (PermissionCard) y el panel de Permisos, y son la misma cosa: el mismo can_use_tool, los mismos
@@ -34,38 +35,39 @@ export function PermissionDecisionButtons({
   const sending = useWorkbenchStore((s) => isPermissionSending(s, tabId, requestId));
   const answer = (decision: PermissionDecision): void => answerFor(tabId, decision, requestId);
   const allowAlways = (tool: string): void => allowAlwaysFor(tool, tabId);
+  const t = useT();
   return (
     <div
       aria-busy={sending}
       data-permission-sending={sending ? 'true' : undefined}
       className={compact ? 'flex flex-wrap items-center gap-[6px] text-[11.5px]' : 'flex flex-col gap-[6px] text-[12px]'}
     >
-      <Option shortcut="1" label="Permitir" primary compact={compact} disabled={sending} onClick={() => answer({ behavior: 'allow' })}>
-        Permitir
+      <Option shortcut="1" label={t('chat.permission.allow')} primary compact={compact} disabled={sending} onClick={() => answer({ behavior: 'allow' })}>
+        {t('chat.permission.allow')}
       </Option>
       {/* "Permitir siempre" SI recuerda (2.3b): guarda una regla por conversacion en el indice de Mage y
           los siguientes can_use_tool de esa tool se auto-aprueban. Se lista y se revoca en el panel. */}
       {rememberable && (
         <Option
           shortcut="2"
-          label={`Permitir siempre ${toolLabel} aquí`}
+          label={t('chat.permission.allowAlwaysAria', { tool: toolLabel })}
           compact={compact}
           disabled={sending}
           onClick={() => allowAlways(toolLabel)}
         >
-          Permitir siempre <span className="font-mono text-[11px]">{toolLabel}</span> aquí
+          {t('chat.permission.allowAlwaysStart')} <span className="font-mono text-[11px]">{toolLabel}</span> {t('chat.permission.allowAlwaysEnd')}
         </Option>
       )}
       <Option
         shortcut="3"
-        label="Denegar y decir por qué"
+        label={t('chat.permission.denyAria')}
         compact={compact}
         disabled={sending}
         onClick={() => answer({ behavior: 'deny', message: 'Denegado por el usuario' })}
       >
-        Denegar
+        {t('chat.permission.deny')}
       </Option>
-      {sending && <span className="text-[11px] text-mg-muted">Enviando…</span>}
+      {sending && <span className="text-[11px] text-mg-muted">{t('chat.permission.sending')}</span>}
     </div>
   );
 }
