@@ -5,6 +5,7 @@ import { DiffView } from './DiffView';
 import { useHighlightedCode } from '../highlighter';
 import { langFromPath } from '../codeHighlight';
 import type { Block } from '../types';
+import { useT } from '../../i18n/uiLanguage';
 
 // Cuerpos de una herramienta ya ejecutada: salida, diff, contenido escrito y acciones sobre el fichero.
 // Salieron de `BlockChat` (P-026 3.4) para que los use el panel de Actividad, que es donde se ven ahora.
@@ -54,6 +55,7 @@ export function WrittenContent({ lines, path }: { readonly lines: readonly strin
 // Botones para abrir la ubicacion del archivo en el gestor del SO y guardarlo (copiar) fuera.
 export function FileActions({ path }: { readonly path: string }): React.JSX.Element {
   const [saved, setSaved] = useState(false);
+  const t = useT();
 
   const reveal = (): void => {
     void window.mage.revealFile(path).catch((err: unknown) => console.error('No se pudo abrir la ubicación', err));
@@ -71,15 +73,15 @@ export function FileActions({ path }: { readonly path: string }): React.JSX.Elem
         onClick={reveal}
         className="rounded-[6px] border border-mg-border-ctrl px-[9px] py-[4px] text-mg-body2 hover:bg-mg-hover"
       >
-        <Icon name="folderOpen" size={12} /> Abrir ubicación
+        <Icon name="folderOpen" size={12} /> {t('chat.fileActions.reveal')}
       </button>
       <button
         onClick={save}
         className="rounded-[6px] border border-mg-border-ctrl px-[9px] py-[4px] text-mg-body2 hover:bg-mg-hover"
       >
-        <Icon name="save" size={12} /> Guardar como…
+        <Icon name="save" size={12} /> {t('chat.fileActions.saveAs')}
       </button>
-      {saved && <span className="text-mg-ter">✓ guardado</span>}
+      {saved && <span className="text-mg-ter">{t('chat.fileActions.saved')}</span>}
       <span className="ml-auto truncate font-mono text-[10px] text-mg-muted">{path}</span>
     </div>
   );
