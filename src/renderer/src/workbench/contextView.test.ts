@@ -5,14 +5,13 @@ import {
   contextInfoFromUsage,
   contextUsageAdvice,
   contextWindowForModel,
+  countCompactBoundaries,
   currentContextTokens,
   formatTokensShort,
-  markCompactions,
   occupiedCategories,
   resolveContext,
   toContextInfo,
   toTokenCategoryShares,
-  type ContextSizePoint,
 } from './contextView';
 import type { ContextUsage } from '@shared/events';
 import type { TranscriptEntry, TranscriptTokenUsage } from '@shared/transcripts';
@@ -116,66 +115,32 @@ describe('toTokenCategoryShares', () => {
   });
 });
 
-describe('buildContextSizeSeries / markCompactions', () => {
+// Marcador que el CLI escribe al compactar (forma medida en Claude Code 2.1.3xx).
+function compactBoundary(index: number, subtype = 'compact_boundary'): TranscriptEntry {
+  return makeEntry({ index, kind: 'system', raw: { type: 'system', subtype, compactMetadata: { trigger: 'auto', preTokens: 190000, postTokens: 30000 } } });
+}
+
+describe('buildContextSizeSeries', () => {
   it('serieVacia_devuelveVacio', () => {
     expect(buildContextSizeSeries([])).toEqual([]);
-    expect(markCompactions([])).toEqual([]);
   });
 
-  it('unPunto_noEsCompactacion', () => {
-    const series = buildContextSizeSeries([assistantEntry(0, { cacheReadInputTokens: 1000 })]);
-    expect(series).toHaveLength(1);
-    expect(series[0]!.isCompaction).toBe(false);
-  });
-
-  it('serieSinCaidas_nadaMarcado', () => {
+  it('buildContextSizeSeries_caidaDeCacheTrasPausaSinMarcador_noEsCompactacion', () => {
     const series = buildContextSizeSeries([
-      assistantEntry(0, { cacheReadInputTokens: 100 }),
-      assistantEntry(1, { cacheReadInputTokens: 200 }),
-      assistantEntry(2, { cacheReadInputTokens: 300 }),
+      assistantEntry(0, { cacheReadInputTokens: 300000 }),
+      assistantEntry(1, { cacheReadInputTokens: 18324 }),
     ]);
-    expect(series.some((p) => p.isCompaction)).toBe(false);
+    expect(series.map((p) => p.isCompaction)).toEqual([false, false]);
   });
 
-  it('caidaBruscaDeCacheReadConTotalCasiIgual_seMarcaIgualmente', () => {
-    // Numeros reales de una compactacion real: el TOTAL apenas cambia (incluso sube), solo cae
-    // cache_read. Antes: input 2 + cacheRead 221478 + cacheCreation 3809 = 225289.
-    // Compactacion: input 2 + cacheRead 33547 + cacheCreation 192888 = 226437 (total SUBE).
+  it('buildContextSizeSeries_compactBoundary_marcaSoloElPuntoSiguiente', () => {
     const series = buildContextSizeSeries([
-      assistantEntry(0, { inputTokens: 2, cacheReadInputTokens: 221478, cacheCreationInputTokens: 3809 }),
-      assistantEntry(1, { inputTokens: 2, cacheReadInputTokens: 33547, cacheCreationInputTokens: 192888 }),
+      assistantEntry(0, { cacheReadInputTokens: 300000 }),
+      compactBoundary(1),
+      assistantEntry(2, { cacheReadInputTokens: 30000 }),
+      assistantEntry(3, { cacheReadInputTokens: 31000 }),
     ]);
-    expect(series[0]!.contextTokens).toBe(225289);
-    expect(series[1]!.contextTokens).toBe(226437);
-    expect(series[1]!.contextTokens).toBeGreaterThan(series[0]!.contextTokens); // el total SUBE
-    expect(series[1]!.isCompaction).toBe(true); // aun asi se detecta por la caida de cache_read
-  });
-
-  it('caidaDentroDelUmbral_noSeMarca', () => {
-    // cacheRead cae de 1000 a 700 (30% < 40% umbral) -> NO es compactacion.
-    const series = buildContextSizeSeries([
-      assistantEntry(0, { cacheReadInputTokens: 1000 }),
-      assistantEntry(1, { cacheReadInputTokens: 700 }),
-    ]);
-    expect(series[1]!.isCompaction).toBe(false);
-  });
-
-  it('cacheReadPrevioCero_noRompeYNoMarca', () => {
-    const series = buildContextSizeSeries([
-      assistantEntry(0, { cacheReadInputTokens: 0, inputTokens: 5 }),
-      assistantEntry(1, { cacheReadInputTokens: 0, inputTokens: 5 }),
-    ]);
-    expect(series[1]!.isCompaction).toBe(false);
-  });
-
-  it('dropRatioPersonalizado_seRespeta', () => {
-    // caida de 1000 -> 750 (25%); con dropRatio 0.2 el umbral es 800 -> 750<800 = compactacion.
-    const points: readonly Omit<ContextSizePoint, 'isCompaction'>[] = [
-      { entryIndex: 0, timestampMs: 0, contextTokens: 1000, cacheReadInputTokens: 1000 },
-      { entryIndex: 1, timestampMs: 1, contextTokens: 750, cacheReadInputTokens: 750 },
-    ];
-    expect(markCompactions(points, 0.2)[1]!.isCompaction).toBe(true);
-    expect(markCompactions(points, 0.4)[1]!.isCompaction).toBe(false);
+    expect(series.map((p) => p.isCompaction)).toEqual([false, true, false]);
   });
 
   it('ignoraEntradasSinTokenUsage', () => {
@@ -187,6 +152,21 @@ describe('buildContextSizeSeries / markCompactions', () => {
     ]);
     expect(series).toHaveLength(2);
     expect(series.map((p) => p.entryIndex)).toEqual([1, 3]);
+  });
+});
+
+describe('countCompactBoundaries', () => {
+  it('countCompactBoundaries_dosMarcadores_devuelveDos', () => {
+    expect(countCompactBoundaries([compactBoundary(0), assistantEntry(1, {}), compactBoundary(2)])).toBe(2);
+  });
+
+  it('countCompactBoundaries_systemConOtroSubtipo_noCuenta', () => {
+    expect(countCompactBoundaries([compactBoundary(0, 'turn_duration'), makeEntry({ index: 1, kind: 'system', raw: null })])).toBe(0);
+  });
+
+  it('countCompactBoundaries_sinMarcadores_devuelveCero', () => {
+    expect(countCompactBoundaries([assistantEntry(0, { cacheReadInputTokens: 10 })])).toBe(0);
+    expect(countCompactBoundaries([])).toBe(0);
   });
 });
 

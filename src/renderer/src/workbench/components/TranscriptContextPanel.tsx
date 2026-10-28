@@ -6,6 +6,7 @@ import { useActiveTranscriptSessionId } from '../useActiveTranscript';
 import {
   aggregateTokenUsage,
   buildContextSizeSeries,
+  countCompactBoundaries,
   currentContextTokens,
   resolveContext,
   toTokenCategoryShares,
@@ -95,7 +96,7 @@ export function TranscriptContextPanel(): React.JSX.Element {
         <section className="flex flex-col gap-[8px] border-t border-mg-border-subtle pt-[12px]">
           <div className="text-[9.5px] font-bold tracking-[.08em] text-mg-ter">EVOLUCIÓN DEL CONTEXTO</div>
           <ContextEvolutionChart points={series} />
-          <CompactionNote count={series.filter((p) => p.isCompaction).length} />
+          <CompactionNote count={countCompactBoundaries(entries)} />
         </section>
       )}
     </div>

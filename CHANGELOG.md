@@ -28,6 +28,7 @@ versión.
 - El handoff usa una bifurcación sin persistencia y no añade su instrucción interna a la conversación original.
 - Un ejecutable ausente no provoca reintentos repetidos de arranque.
 - Traer la base de un worktree admite las copias locales de Mage y sigue rechazando cambios sin confirmar.
+- El panel de Contexto ya no cuenta como compactación una caché caducada tras una pausa: solo las compactaciones reales del CLI.
 - El uso de tokens de un turno de Codex cuenta todas las llamadas al modelo del turno, no solo la última.
 - Una conversación de Codex o agy recupera su modelo y su esfuerzo al reabrirla desde el historial.
 - Las pestañas de Codex y agy ya no salen vacías al reiniciar Mage: se reabren con su conversación. Una pestaña guardada por la 0.1.2 cuya conversación no se encuentra lo dice («Ábrela desde el historial de la cuenta») y su primer mensaje empieza una nueva.
