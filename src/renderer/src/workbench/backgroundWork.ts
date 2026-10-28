@@ -1,5 +1,6 @@
 import type { MageEvent } from '@shared/events';
 import type { ChatStatus } from './types';
+import { t } from '../i18n/uiLanguage';
 
 // Cerrar una conversacion con trabajo en vuelo NO la corta (decision del usuario, 2026-09-15): la
 // sesion del CLI sigue viva "en segundo plano" y la conversacion reaparece en el panel de
@@ -33,7 +34,7 @@ export function shouldBackgroundOnClose(status: ChatStatus | undefined): boolean
 // plano con el CLI vivo— y la otra ventana no podria reanudarla. No hay traspaso en vivo de la sesion.
 export function tabMoveBlockedReason(status: ChatStatus | undefined): string | null {
   if (!shouldBackgroundOnClose(status)) return null;
-  return 'Tiene un turno en marcha: espera a que termine para moverla a otra ventana.';
+  return t('history.background.tabMoveBlocked');
 }
 
 // La entrada de segundo plano de una conversacion del historial. La UNICA busqueda por conversacion: el mapa
@@ -50,7 +51,7 @@ export function backgroundOfConversation(
 // solo queda revisarla, y abrirla en otra ventana corta su sesion como abrirla aqui.
 export function backgroundMoveBlockedReason(background: BackgroundSession | undefined): string | null {
   if (background === undefined || background.state === 'done') return null;
-  return 'Sigue trabajando en segundo plano: espera a que termine para abrirla en otra ventana.';
+  return t('history.background.moveBlocked');
 }
 
 // Transicion de estado al llegar un evento de una sesion SIN pestaña. Devuelve el estado actual si el
@@ -68,8 +69,8 @@ export function nextBackgroundState(current: BackgroundState, event: MageEvent):
 
 // Etiqueta de la fila del panel de Conversaciones.
 export function backgroundLabel(state: BackgroundState): string {
-  if (state === 'working') return 'en segundo plano';
-  return state === 'needs_action' ? 'pendiente de acción' : 'pendiente de revisión';
+  if (state === 'working') return t('history.background.working');
+  return state === 'needs_action' ? t('history.background.needsAction') : t('history.background.done');
 }
 
 // Conversaciones que un «Cerrar Mage» cortaria: las pestañas con un turno en marcha (o esperando un

@@ -321,6 +321,15 @@ export interface MessageValues {
   readonly "chat.worktree.chipTip": never;
   readonly "chat.worktree.toggle": never;
   readonly "chat.worktree.toggleTip": never;
+  readonly "history.background.done": never;
+  readonly "history.background.moveBlocked": never;
+  readonly "history.background.needsAction": never;
+  readonly "history.background.tabMoveBlocked": never;
+  readonly "history.background.working": never;
+  readonly "history.cwdChange.liveSession": never;
+  readonly "history.cwdChange.resumed": never;
+  readonly "history.lock.checkFailed": never;
+  readonly "history.lock.releaseFailed": never;
   readonly "history.recentProjects.title": never;
   readonly "mcp.agy.action.add": never;
   readonly "mcp.agy.action.remove": never;

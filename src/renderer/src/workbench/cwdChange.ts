@@ -8,6 +8,8 @@
 // conversacion partida entre dos carpetas — y `--resume` la buscaria donde ya no esta (el mismo fallo
 // que costo el handoff roto: "--resume sin cwd -> No conversation found").
 
+import { t } from '../i18n/uiLanguage';
+
 export interface CwdChangeContext {
   // Hay un proceso del CLI vivo para esta pestaña.
   readonly hasLiveSession: boolean;
@@ -21,10 +23,10 @@ export type CwdChangeVerdict =
 
 export function canChangeCwd(context: CwdChangeContext): CwdChangeVerdict {
   if (context.hasLiveSession) {
-    return { allowed: false, reason: 'La sesión ya está en marcha: su transcripción vive en esta carpeta.' };
+    return { allowed: false, reason: t('history.cwdChange.liveSession') };
   }
   if (context.hasResumeTarget) {
-    return { allowed: false, reason: 'Es una conversación anterior: se reanuda en la carpeta donde se creó.' };
+    return { allowed: false, reason: t('history.cwdChange.resumed') };
   }
   return { allowed: true };
 }

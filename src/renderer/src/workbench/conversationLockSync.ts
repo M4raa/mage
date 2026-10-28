@@ -2,6 +2,7 @@ import type { ConversationLockRef, ConversationLockStatus } from '@shared/conver
 import type { MageApi } from '@shared/ipc';
 import type { Tab } from './types';
 import { conversationIdOfTab } from './conversationId';
+import { t } from '../i18n/uiLanguage';
 
 // Bloqueo de conversación entre instancias (#55, F2.8), lado del renderer: cada pestaña con conversación (reanudada o
 // ya ligada a su id nativo) la pide a main; al cerrarse o cambiar de conversación, la suelta. Una sola suscripción al
@@ -153,7 +154,7 @@ class ConversationLockSync {
         store.setState((state) => lockPatch(state, tabId, status));
         if (store.getState().lockReclaimedByChat[tabId] === true) this.showReclaimed(tabId);
       })
-      .catch((err: unknown) => reportError('No se pudo comprobar si la conversación está abierta en otra instancia', err));
+      .catch((err: unknown) => reportError(t('history.lock.checkFailed'), err));
   }
 
   private release(tabId: string, ref: ConversationLockRef): void {
@@ -163,7 +164,7 @@ class ConversationLockSync {
       ...(state.lockByChat[tabId] === undefined ? {} : { lockByChat: withoutKey(state.lockByChat, tabId) }),
       ...clearReclaimed(state, tabId),
     }));
-    this.deps.mage.releaseConversationLock({ ...ref, tabId }).catch((err: unknown) => this.deps.reportError('No se pudo soltar la conversación', err));
+    this.deps.mage.releaseConversationLock({ ...ref, tabId }).catch((err: unknown) => this.deps.reportError(t('history.lock.releaseFailed'), err));
   }
 
   // Vuelve a preguntar por una pestaña solo si la ve en solo lectura.
