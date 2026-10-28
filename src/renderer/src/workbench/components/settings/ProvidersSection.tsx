@@ -24,9 +24,9 @@ import {
 } from '../../models';
 import type { DefaultPermissionMode, RuntimeShell } from '@shared/settings';
 import {
-  DEFAULT_PERMISSION_MODE_ACCOUNT_LABEL,
-  EFFORT_STEP_LABEL,
+  defaultPermissionModeAccountLabel,
   defaultPermissionSteps,
+  effortStepLabel,
   effortSteps,
   permissionModeLabel,
 } from '../../stepSliderModel';
@@ -323,9 +323,9 @@ function ProviderCard({
               value={defaultEffort}
               onChange={onChangeEffort}
               ariaLabel={t('settings.providers.effort.aria', { provider: entry.label })}
-              chipLabel={EFFORT_STEP_LABEL[defaultEffort] ?? defaultEffort}
+              chipLabel={effortStepLabel(defaultEffort)}
               chipSizers={effortSteps(entry.effortLevels).map((step) => step.label)}
-              heading={t('settings.providers.effort.heading', { level: EFFORT_STEP_LABEL[defaultEffort] ?? defaultEffort })}
+              heading={t('settings.providers.effort.heading', { level: effortStepLabel(defaultEffort) })}
               endLabels={[t('settings.providers.effort.faster'), t('settings.providers.effort.smarter')]}
               tip={t('settings.providers.effort.tip')}
             />
@@ -405,7 +405,7 @@ function DefaultPermissionModePicker(): React.JSX.Element {
   const mode = useWorkbenchStore((s) => s.settings.defaultPermissionMode);
   const setMode = useWorkbenchStore((s) => s.setDefaultPermissionMode);
   const t = useT();
-  const label = mode === '' ? DEFAULT_PERMISSION_MODE_ACCOUNT_LABEL : permissionModeLabel(mode);
+  const label = mode === '' ? defaultPermissionModeAccountLabel() : permissionModeLabel(mode);
   return (
     <div className="flex flex-col gap-[4px]">
       <DefaultPermissionModeSlider mode={mode} label={label} onChange={setMode} />

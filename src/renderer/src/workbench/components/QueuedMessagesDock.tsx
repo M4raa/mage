@@ -4,6 +4,7 @@ import { usePaneTabId } from '../paneContext';
 import { DISCLOSURE_VARIANTS } from '../motionPresets';
 import type { QueuedMessage } from '../messageQueue';
 import { Icon } from './Icon';
+import { useT } from '../../i18n/uiLanguage';
 
 // Lista «En cola» encima del input (0.1.1 R2, punto 30): lo que el usuario mando con un turno en marcha.
 // NO son burbujas enviadas: salen al hilo de una en una cuando acaba cada turno. Por elemento, editar (lo
@@ -11,6 +12,7 @@ import { Icon } from './Icon';
 const NO_QUEUE: readonly QueuedMessage[] = [];
 
 export function QueuedMessagesDock(): React.JSX.Element {
+  const t = useT();
   const tabId = usePaneTabId();
   const queue = useWorkbenchStore((s) => s.queuedByChat[tabId] ?? NO_QUEUE);
   return (
@@ -20,7 +22,7 @@ export function QueuedMessagesDock(): React.JSX.Element {
           <div data-queued-messages="true" className="overflow-hidden rounded-[10px] border border-mg-border bg-mg-panel">
             <div className="flex h-[24px] items-center gap-[6px] pl-[10px] text-[10.5px] font-semibold text-mg-sec">
               <Icon name="queue" size={10} />
-              En cola ({queue.length}) · se enviará al terminar el turno
+              {t('prompt.queue.header', { count: queue.length })}
             </div>
             {queue.map((message) => (
               <QueuedMessageRow key={message.id} tabId={tabId} message={message} />
@@ -33,17 +35,18 @@ export function QueuedMessagesDock(): React.JSX.Element {
 }
 
 function QueuedMessageRow({ tabId, message }: { readonly tabId: string; readonly message: QueuedMessage }): React.JSX.Element {
+  const t = useT();
   const editQueuedMessage = useWorkbenchStore((s) => s.editQueuedMessage);
   const removeQueuedMessage = useWorkbenchStore((s) => s.removeQueuedMessage);
   const images = message.attachments.length;
   return (
     <div data-queued-message={message.id} className="flex h-[26px] items-center gap-[6px] border-t border-mg-border-subtle pl-[10px] pr-[6px] text-[11px]">
       <span className="min-w-0 flex-1 truncate text-mg-body2" title={message.text}>
-        {message.text.length > 0 ? message.text : '(solo imágenes)'}
+        {message.text.length > 0 ? message.text : t('prompt.queue.imagesOnly')}
       </span>
-      {images > 0 && <span className="flex-none text-[10px] text-mg-muted">{images === 1 ? '1 imagen' : `${images} imágenes`}</span>}
-      <QueueAction icon="pencil" label="Editar: devolver al input" attr="data-queued-edit" onClick={() => editQueuedMessage(tabId, message.id)} />
-      <QueueAction icon="close" label="Quitar de la cola" attr="data-queued-remove" onClick={() => removeQueuedMessage(tabId, message.id)} />
+      {images > 0 && <span className="flex-none text-[10px] text-mg-muted">{t('prompt.queue.imageCount', { count: images })}</span>}
+      <QueueAction icon="pencil" label={t('prompt.queue.edit')} attr="data-queued-edit" onClick={() => editQueuedMessage(tabId, message.id)} />
+      <QueueAction icon="close" label={t('prompt.queue.remove')} attr="data-queued-remove" onClick={() => removeQueuedMessage(tabId, message.id)} />
     </div>
   );
 }

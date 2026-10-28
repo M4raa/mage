@@ -24,8 +24,9 @@ import { effortChangeAdvice, modelChangeAdvice, type CostAdvice } from '../costA
 import { notify } from '../notificationStore';
 import { Dropdown } from './Dropdown';
 import { StepSlider } from './StepSlider';
-import { CODEX_DEFAULT_PROFILE, CODEX_WRITE_PROFILE, EFFORT_STEP_LABEL, agyPermissionSteps, codexPermissionSteps, defaultModeOf, effectiveCodexMode, effortSteps, permissionModeLabel, permissionStepsFor } from '../stepSliderModel';
+import { CODEX_DEFAULT_PROFILE, CODEX_WRITE_PROFILE, agyPermissionSteps, codexPermissionSteps, defaultModeOf, effectiveCodexMode, effortStepLabel, effortSteps, permissionModeLabel, permissionStepsFor } from '../stepSliderModel';
 import { usePaneTabId } from '../paneContext';
+import { t as translate, useT } from '../../i18n/uiLanguage';
 import type { PermissionMode } from '@shared/ipc';
 
 // Referencia ESTABLE para el selector de zustand (un array nuevo por render seria un bucle).
@@ -56,9 +57,6 @@ function permissionChipSkin(mode: string): string {
   if (mode === 'bypassPermissions') return 'border-mg-danger-border bg-mg-danger-bg text-mg-danger';
   return 'border-mg-warn-border bg-mg-warn-bg text-mg-warn-text';
 }
-
-const PERMISSION_MODE_TIP = 'Modo de permiso (desliza, o Shift+Tab con el input vacío para pasar al siguiente)';
-const EFFORT_TIP = 'Nivel de esfuerzo del modelo (--effort). Se aplica al arrancar o reabrir la conversación.';
 
 // Caja de prompt. Enter (sin shift) envia al motor real del chat activo; Shift+Enter salto de linea.
 // Input rico (M3): Shift+Enter continua listas (- / * / + / 1.) y Tab/Shift+Tab indenta/desindenta
@@ -102,19 +100,20 @@ function measureInlineEditorWidth(row: HTMLElement | null, controls: HTMLElement
 }
 
 function promptPlaceholder(tabId: string, readOnlyLock: { readonly profile: string } | null): string {
-  if (readOnlyLock !== null) return `${readOnlyLockMessage(readOnlyLock.profile)}: solo lectura`;
-  return tabId.length === 0 ? 'Abre una pestaña para escribir…' : 'Escribe una instrucción…';
+  if (readOnlyLock !== null) return translate('prompt.placeholder.readOnly', { lock: readOnlyLockMessage(readOnlyLock.profile) });
+  return tabId.length === 0 ? translate('prompt.placeholder.noTab') : translate('prompt.placeholder.default');
 }
 
 // Solo lectura por el bloqueo entre instancias (#55): quién la tiene y, solo si esa instancia parece muerta (pid caído o
 // sin latido en 90 s), «Tomar el control».
 function ReadOnlyLockNotice({ tabId, profile, orphan }: { readonly tabId: string; readonly profile: string; readonly orphan: boolean }): React.JSX.Element {
+  const t = useT();
   const takeOver = useWorkbenchStore((s) => s.takeOverConversation);
   const [error, setError] = useState<string | null>(null);
   return (
     <div role="status" data-conversation-lock="read-only" className="mb-[6px] flex items-center gap-[8px] rounded-[7px] border border-mg-warn-border bg-mg-warn-bg px-[10px] py-[5px] text-[11px] text-mg-warn-text">
       <span className="min-w-0 flex-1">
-        {readOnlyLockMessage(profile)}. {orphan ? 'Esa instancia no responde.' : 'Aquí solo se puede leer.'}
+        {readOnlyLockMessage(profile)}. {orphan ? t('prompt.lock.orphan') : t('prompt.lock.readOnly')}
         {error !== null && <span className="ml-[6px] text-mg-danger">{error}</span>}
       </span>
       {orphan && (
@@ -122,7 +121,7 @@ function ReadOnlyLockNotice({ tabId, profile, orphan }: { readonly tabId: string
           onClick={() => takeOver(tabId).catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)))}
           className="shrink-0 rounded-[6px] border border-mg-border-emph px-[9px] py-[2px] text-[11px] text-mg-body2 hover:bg-mg-hover"
         >
-          Tomar el control
+          {t('prompt.lock.takeOver')}
         </button>
       )}
     </div>
@@ -131,9 +130,10 @@ function ReadOnlyLockNotice({ tabId, profile, orphan }: { readonly tabId: string
 
 // La otra instancia soltó la conversación y esta pasó a ser la dueña sin pulsar nada (respuesta 4 de la devolución 17).
 function ReclaimedLockNotice(): React.JSX.Element {
+  const t = useT();
   return (
     <div role="status" data-conversation-lock="reclaimed" className="mb-[6px] rounded-[7px] border border-mg-border px-[10px] py-[5px] text-[11px] text-mg-body2">
-      Ya puedes continuar aquí: la otra instancia de Mage ha soltado esta conversación.
+      {t('prompt.lock.reclaimed')}
     </div>
   );
 }
@@ -142,6 +142,7 @@ export function PromptBar(): React.JSX.Element {
   // La pestaña de ESTE panel (item 13). Las acciones del store siguen operando sobre la pestaña
   // ACTIVA, no sobre esta: es correcto porque el panel se enfoca (focusPane) en cuanto se interactua
   // con el — ver ChatPane.tsx. Aqui solo se LEE, para que el panel sin foco pinte sus propios datos.
+  const t = useT();
   const activeTabId = usePaneTabId();
   const sendActiveMessage = useWorkbenchStore((s) => s.sendActiveMessage);
   const activeTab = useWorkbenchStore((s) => s.tabs.find((t) => t.id === activeTabId));
@@ -339,7 +340,7 @@ export function PromptBar(): React.JSX.Element {
   // Cambio de nivel de esfuerzo (--effort): flag de arranque, el aviso lo explica.
   const changeEffort = (level: string): void => {
     notifyCostAdvice(isCodex || isAgy
-      ? { severity: 'info', message: `Esfuerzo ${level || 'automático'}. Se aplica al siguiente ${isAgy ? 'mensaje' : 'turno'}.` }
+      ? { severity: 'info', message: t('prompt.effort.changed', { level: level || t('prompt.effort.autoLevel'), target: isAgy ? 'message' : 'turn' }) }
       : effortChangeAdvice(level, sessionId !== undefined), activeTabId);
     setActiveEffort(level);
   };
@@ -354,7 +355,7 @@ export function PromptBar(): React.JSX.Element {
       const improved = await window.mage.improvePrompt({ draft: text, accountDir: activeTab.accountId });
       setPreview(improved);
     } catch (err) {
-      setError(`No se pudo mejorar el prompt: ${err instanceof Error ? err.message : String(err)}`);
+      setError(t('prompt.improve.failed', { error: err instanceof Error ? err.message : String(err) }));
     } finally {
       setBusy(false);
     }
@@ -507,7 +508,7 @@ export function PromptBar(): React.JSX.Element {
       const metas = current.attachments.map((a) => ({ mediaType: a.attachment.mediaType, byteLength: a.byteLength }));
       validateAttachmentSet(metas, files.map((file) => ({ mediaType: file.type, byteLength: file.size })));
     } catch (err) {
-      setError(`No se pudo adjuntar: ${err instanceof Error ? err.message : String(err)}`);
+      setError(t('prompt.attach.failed', { error: err instanceof Error ? err.message : String(err) }));
       return;
     }
     setError(null);
@@ -522,7 +523,7 @@ export function PromptBar(): React.JSX.Element {
         const latest = draftOf(tabId);
         setDraft(tabId, { text: latest.text, attachments: [...latest.attachments, ...candidates] });
       })
-      .catch((err: unknown) => setError(`No se pudo adjuntar: ${err instanceof Error ? err.message : String(err)}`))
+      .catch((err: unknown) => setError(t('prompt.attach.failed', { error: err instanceof Error ? err.message : String(err) })))
       .finally(() => {
         pendingReadsRef.current -= files.length;
       });
@@ -551,8 +552,8 @@ export function PromptBar(): React.JSX.Element {
       {error !== null && (
         <div role="alert" className="mb-[6px] flex items-center gap-[8px] text-[10.5px] text-mg-danger">
           <span className="min-w-0 flex-1">{error}</span>
-          <button onClick={() => setError(null)} aria-label="Cerrar el error" className="shrink-0 opacity-70 hover:opacity-100">
-            <Icon name="close" size={11} label="Cerrar el error" />
+          <button onClick={() => setError(null)} aria-label={t('prompt.error.close')} className="shrink-0 opacity-70 hover:opacity-100">
+            <Icon name="close" size={11} label={t('prompt.error.close')} />
           </button>
         </div>
       )}
@@ -572,7 +573,7 @@ export function PromptBar(): React.JSX.Element {
       )}
       {busy && preview === null && (
         <div className="mb-[6px] flex items-center gap-[6px] text-[10.5px] text-mg-sec">
-          <Spinner /> Mejorando el prompt…
+          <Spinner /> {t('prompt.improve.running')}
         </div>
       )}
 
@@ -583,7 +584,7 @@ export function PromptBar(): React.JSX.Element {
             <div key={`${item.attachment.data.slice(0, 24)}-${index}`} className="relative">
               <img
                 src={`data:${item.attachment.mediaType};base64,${item.attachment.data}`}
-                alt={`Adjunto ${index + 1}`}
+                alt={t('prompt.attach.thumbAlt', { n: index + 1 })}
                 title={describeAttachment(index + 1, item.attachment.mediaType, item.byteLength)}
                 data-attachment="thumb"
                 className="h-[56px] w-auto rounded-[6px] border border-mg-border-ctrl"
@@ -598,10 +599,10 @@ export function PromptBar(): React.JSX.Element {
               </span>
               <button
                 onClick={() => removeAttachment(index)}
-                aria-label={`Quitar el adjunto ${index + 1}`}
+                aria-label={t('prompt.attach.remove', { n: index + 1 })}
                 className="absolute -right-[6px] -top-[6px] flex h-[16px] w-[16px] items-center justify-center rounded-full border border-mg-border-ctrl bg-mg-panel text-[9px] text-mg-body2 hover:bg-mg-hover"
               >
-                <Icon name="close" size={11} label="Descartar aviso" />
+                <Icon name="close" size={11} label={t('prompt.attach.removeIcon')} />
               </button>
             </div>
           ))}
@@ -615,7 +616,7 @@ export function PromptBar(): React.JSX.Element {
           // Popover de comandos "/" (M2.6): navegable con flechas/Enter/Tab; click completa.
           <div
             role="listbox"
-            aria-label="Comandos disponibles"
+            aria-label={t('prompt.slash.listLabel')}
             className="absolute bottom-full left-0 mb-[6px] w-[300px] overflow-hidden rounded-[8px] border border-mg-border-pop bg-mg-panel py-[4px] mg-shadow-pop"
           >
             {slashSuggestions.map((command, i) => (
@@ -647,7 +648,7 @@ export function PromptBar(): React.JSX.Element {
             handleRef={editorRef}
             value={text}
             disabled={disabled}
-            ariaLabel="Escribe una instrucción para el agente"
+            ariaLabel={t('prompt.editor.ariaLabel')}
             placeholder={promptPlaceholder(activeTabId, readOnlyLock)}
             onChange={onChangeText}
             onKeyDown={onKeyDown}
@@ -672,41 +673,41 @@ export function PromptBar(): React.JSX.Element {
             <ActionsMenu
               busy={busy}
               items={[
-                { icon: 'sparkles', label: 'Mejorar prompt', onClick: () => void runImprove(), disabled: !canImprove, hidden: !isClaude },
+                { icon: 'sparkles', label: t('prompt.actions.improve'), onClick: () => void runImprove(), disabled: !canImprove, hidden: !isClaude },
                 {
                   icon: 'handshake',
-                  label: 'Prompt de handoff',
+                  label: t('prompt.actions.handoff'),
                   onClick: openHandoff,
                   disabled: !canHandoff,
                   hidden: !isClaude,
-                  title: canHandoff ? undefined : 'Envía al menos un mensaje para poder hacer handoff',
+                  title: canHandoff ? undefined : t('prompt.actions.handoffDisabled'),
                 },
                 {
                   icon: 'compress',
-                  label: 'Compactar ahora',
+                  label: t('prompt.actions.compact'),
                   onClick: () => void compactActiveSession(),
                   // Mismo criterio que el handoff: hace falta una sesion viva o reanudable.
                   disabled: !canHandoff,
                   hidden: !isClaude,
-                  title: canHandoff ? 'Compacta el contexto de la sesión (/compact)' : 'Envía al menos un mensaje para poder compactar',
+                  title: canHandoff ? t('prompt.actions.compactTip') : t('prompt.actions.compactDisabled'),
                 },
-                { icon: 'monitor', label: 'Abrir terminal', onClick: () => void window.mage.openTerminal(activeTab.cwd).catch(() => undefined) },
+                { icon: 'monitor', label: t('prompt.actions.openTerminal'), onClick: () => void window.mage.openTerminal(activeTab.cwd).catch(() => undefined) },
                 // "Abrir en <editor>": un item por editor detectado; si no hay ninguno, un unico
                 // item deshabilitado con el motivo en el title.
                 ...(editors.length > 0
                   ? editors.map((editor) => ({
                       icon: 'pencil' as const,
-                      label: `Abrir en ${editor.label}`,
+                      label: t('prompt.actions.openIn', { editor: editor.label }),
                       onClick: () =>
                         void window.mage.openEditor({ bin: editor.bin, cwd: activeTab.cwd }).catch(() => undefined),
                     }))
                   : [
                       {
                         icon: 'pencil' as const,
-                        label: 'Abrir en editor',
+                        label: t('prompt.actions.openInEditor'),
                         onClick: () => undefined,
                         disabled: true,
-                        title: 'No se detectó ningún editor en el PATH',
+                        title: t('prompt.actions.noEditor'),
                       },
                     ]),
               ]}
@@ -724,7 +725,7 @@ export function PromptBar(): React.JSX.Element {
               aria-label={NO_PERMISSION_CONTROL_WARNING}
               className="shrink-0 cursor-help self-center rounded-full border border-mg-warn-border bg-mg-warn-bg px-[8px] py-[2px] text-[10.5px] font-semibold text-mg-warn-text"
             >
-              <Icon name="warning" size={12} /> Sin permisos
+              <Icon name="warning" size={12} /> {t('prompt.permission.none')}
             </span>
           )}
           {activeTab !== undefined && isUnverifiedProvider(activeTab.provider) && (
@@ -735,7 +736,7 @@ export function PromptBar(): React.JSX.Element {
               aria-label={UNVERIFIED_PROVIDER_NOTE}
               className="shrink-0 cursor-help self-center rounded-full border border-mg-warn-border bg-mg-warn-bg px-[8px] py-[2px] text-[10.5px] text-mg-warn-text"
             >
-              Sin verificar
+              {t('prompt.provider.unverified')}
             </span>
           )}
           {isCodex && permissionMode === CODEX_DEFAULT_PROFILE && (
@@ -745,12 +746,12 @@ export function PromptBar(): React.JSX.Element {
             <button
               type="button"
               data-codex-read-only="true"
-              aria-label="Codex está en solo lectura: permitir que escriba en la carpeta"
-              data-tip="Codex arranca en solo lectura: pide permiso antes de escribir. Pulsa para que escriba dentro de la carpeta de la conversación."
+              aria-label={t('prompt.codex.readOnlyAria')}
+              data-tip={t('prompt.codex.readOnlyTip')}
               onClick={() => setActivePermissionMode(CODEX_WRITE_PROFILE)}
               className="shrink-0 self-center rounded-full border border-mg-border-emph px-[8px] py-[2px] text-[10.5px] text-mg-body2 hover:bg-mg-hover"
             >
-              Solo lectura · Permitir escribir
+              {t('prompt.codex.allowWrite')}
             </button>
           )}
           {(isClaude || isRuntime || isAgy || (isCodex && modeSteps.length > 0)) && (
@@ -762,12 +763,12 @@ export function PromptBar(): React.JSX.Element {
               steps={modeSteps}
               value={permissionMode}
               onChange={(mode) => modeSteps.some((step) => step.value === mode) && setActivePermissionMode(mode)}
-              ariaLabel={`Modo de permiso: ${permissionModeLabel(permissionMode)}`}
+              ariaLabel={t('prompt.permission.ariaLabel', { mode: permissionModeLabel(permissionMode) })}
               chipLabel={permissionModeLabel(permissionMode)}
               chipSizers={modeSteps.map((step) => step.label)}
-              heading={`Modo ${permissionModeLabel(permissionMode)}`}
-              endLabels={['Más control', 'Más autonomía']}
-              tip={PERMISSION_MODE_TIP}
+              heading={t('prompt.permission.heading', { mode: permissionModeLabel(permissionMode) })}
+              endLabels={[t('prompt.permission.moreControl'), t('prompt.permission.moreAutonomy')]}
+              tip={t('prompt.permission.tip')}
               {...(isRuntime && permissionMode === 'auto' ? { note: RUNTIME_AUTO_MODE_NOTE } : {})}
               triggerClassName={permissionChipSkin(permissionMode)}
               leading={isPermissionMode(permissionMode) ? <Icon name={PERMISSION_MODE_ICON[permissionMode]} size={11} /> : undefined}
@@ -780,13 +781,13 @@ export function PromptBar(): React.JSX.Element {
               steps={availableEffortSteps}
               value={effort}
               onChange={changeEffort}
-              ariaLabel="Nivel de esfuerzo"
-              chipLabel={`Esfuerzo ${(EFFORT_STEP_LABEL[effort] ?? effort).toLowerCase()}`}
-              chipSizers={availableEffortSteps.map((step) => `Esfuerzo ${step.label.toLowerCase()}`)}
-              heading={`Esfuerzo ${EFFORT_STEP_LABEL[effort] ?? effort}`}
-              endLabels={['Más rápido', 'Más inteligente']}
-              tip={isCodex ? 'Nivel de esfuerzo del modelo. Se aplica al siguiente turno.' : isAgy ? 'Nivel de esfuerzo del modelo. Se aplica al siguiente mensaje.' : EFFORT_TIP}
-              note={isCodex ? 'Se aplica al siguiente turno.' : isAgy ? 'Se aplica al siguiente mensaje: Mage relanza agy con la misma conversación.' : 'Se aplica al arrancar o reabrir la conversación.'}
+              ariaLabel={t('prompt.effort.ariaLabel')}
+              chipLabel={t('prompt.effort.label', { level: effortStepLabel(effort).toLowerCase() })}
+              chipSizers={availableEffortSteps.map((step) => t('prompt.effort.label', { level: step.label.toLowerCase() }))}
+              heading={t('prompt.effort.label', { level: effortStepLabel(effort) })}
+              endLabels={[t('prompt.effort.faster'), t('prompt.effort.smarter')]}
+              tip={isCodex ? t('prompt.effort.tipNextTurn') : isAgy ? t('prompt.effort.tipNextMessage') : t('prompt.effort.tipOnStart')}
+              note={isCodex ? t('prompt.effort.noteNextTurn') : isAgy ? t('prompt.effort.noteNextMessage') : t('prompt.effort.noteOnStart')}
             />
           )}
           {activeModel.length > 0 && (isClaude || isCodex || isAgy) && (
@@ -797,8 +798,8 @@ export function PromptBar(): React.JSX.Element {
               options={modelOptions.map((option) => ({ value: option.id, label: option.label }))}
               // El UNICO sitio del modelo (P-026, D18): lo que resolvio la sesion (el alias apunta a la
               // ultima version de su familia) vive aqui, y no en una insignia aparte.
-              tip={resolvedModel === null ? 'Cambiar el modelo (aplica al siguiente turno)' : `La sesión resolvió ${resolvedModel} · cambiar el modelo (aplica al siguiente turno)`}
-              ariaLabel="Modelo (aplica al siguiente turno)"
+              tip={resolvedModel === null ? t('prompt.model.tip') : t('prompt.model.tipResolved', { model: resolvedModel })}
+              ariaLabel={t('prompt.model.ariaLabel')}
             />
           )}
           {activeModel.length > 0 && !isClaude && !isCodex && !isAgy && (
@@ -809,19 +810,19 @@ export function PromptBar(): React.JSX.Element {
             // cierra el turno con su `result` y el chat vuelve a 'idle'.
             <button
               onClick={interruptActiveSession}
-              data-tip="Parar la acción en curso (interrumpe el turno)"
-              aria-label="Parar la acción en curso"
+              data-tip={t('prompt.stop.tip')}
+              aria-label={t('prompt.stop.ariaLabel')}
               className="shrink-0 cursor-pointer self-center rounded-full border border-mg-danger-border bg-mg-danger-bg px-[9px] py-[2px] text-[10.5px] font-semibold text-mg-danger hover:opacity-90"
             >
-              <Icon name="stop" size={11} /> Parar
+              <Icon name="stop" size={11} /> {t('prompt.stop.button')}
             </button>
           ) : (
             // #24: era un ⏎ decorativo. Ahora envía con la MISMA acción que Enter (sendFromButton).
             <button
               onClick={sendFromButton}
               disabled={!canSend}
-              aria-label="Enviar mensaje"
-              data-tip="Enviar (Enter)"
+              aria-label={t('prompt.send.ariaLabel')}
+              data-tip={t('prompt.send.tip')}
               className="shrink-0 cursor-pointer self-center rounded-full border border-mg-border-ctrl px-[8px] py-[1px] font-mono text-[10.5px] text-mg-body2 transition-colors duration-150 ease-out hover:bg-mg-hover disabled:cursor-default disabled:text-mg-muted disabled:opacity-60 disabled:hover:bg-transparent"
             >
               ⏎
@@ -864,12 +865,13 @@ function ImprovePreview({
   readonly onReject: () => void;
   readonly onRedo: () => void;
 }): React.JSX.Element {
+  const t = useT();
   return (
     <div className="mb-[8px] rounded-[9px] border border-mg-border-emph bg-mg-code p-[10px_12px]">
       <div className="mb-[6px] flex items-center gap-[6px] text-[10px] font-bold uppercase tracking-[.06em] text-mg-ter">
-        <span className="flex items-center gap-[5px]"><Icon name="sparkles" size={12} /> Prompt mejorado</span>
+        <span className="flex items-center gap-[5px]"><Icon name="sparkles" size={12} /> {t('prompt.improve.previewTitle')}</span>
         {busy && <Spinner />}
-        <span className="font-normal normal-case text-mg-muted">— revísalo y edítalo si quieres</span>
+        <span className="font-normal normal-case text-mg-muted">{t('prompt.improve.previewHint')}</span>
       </div>
       <textarea
         rows={4}
@@ -884,13 +886,13 @@ function ImprovePreview({
           disabled={busy || value.trim().length === 0}
           className="rounded-[7px] bg-mg-primary px-[12px] py-[5px] text-[11.5px] font-semibold text-mg-primary-ink disabled:opacity-50"
         >
-          Aceptar
+          {t('prompt.improve.accept')}
         </button>
         <button onClick={onReject} disabled={busy} className="rounded-[7px] border border-mg-border-emph px-[12px] py-[5px] text-[11.5px] text-mg-body2 hover:bg-mg-hover disabled:opacity-50">
-          Rechazar
+          {t('prompt.improve.reject')}
         </button>
         <button onClick={onRedo} disabled={busy} className="ml-auto rounded-[7px] border border-mg-border-emph px-[12px] py-[5px] text-[11.5px] text-mg-body2 hover:bg-mg-hover disabled:opacity-50">
-          ↻ Rehacer
+          {t('prompt.improve.redo')}
         </button>
       </div>
     </div>
@@ -910,6 +912,7 @@ interface ActionItem {
 // popover, para no llenar la fila del input de iconos sueltos. Popover hacia ARRIBA (la barra esta
 // abajo) con cierre al hacer click fuera (backdrop transparente).
 function ActionsMenu({ items, busy }: { readonly items: readonly ActionItem[]; readonly busy: boolean }): React.JSX.Element {
+  const t = useT();
   const [open, setOpen] = useState(false);
   const visible = items.filter((i) => i.hidden !== true);
 
@@ -921,7 +924,7 @@ function ActionsMenu({ items, busy }: { readonly items: readonly ActionItem[]; r
 
   return (
     <div className="relative self-center" onKeyDown={(e) => e.key === 'Escape' && open && setOpen(false)}>
-      <IconButton title="Acciones" onClick={() => setOpen((v) => !v)} ariaHasPopup="menu" ariaExpanded={open}>
+      <IconButton title={t('prompt.actions.menu')} onClick={() => setOpen((v) => !v)} ariaHasPopup="menu" ariaExpanded={open}>
         {busy ? <Spinner /> : '⋯'}
       </IconButton>
       {open && (
