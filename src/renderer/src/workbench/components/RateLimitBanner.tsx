@@ -3,6 +3,7 @@ import { Icon } from './Icon';
 import { useWorkbenchStore } from '../workbenchStore';
 import { usePaneTabId } from '../paneContext';
 import { autoContinueBlockedReason, effectiveResetMs, rateLimitLineText } from '../rateLimit';
+import { useT } from '../../i18n/uiLanguage';
 
 // Salida cuando se agota el uso (H4, punto del usuario: "al acabarse el uso en un chat activo tiene
 // que aparecer una opcion de continuar el chat en otra cuenta").
@@ -19,6 +20,7 @@ export function RateLimitBanner(): React.JSX.Element | null {
   const setAutoContinue = useWorkbenchStore((s) => s.setRateLimitAutoContinue);
   const usage = useWorkbenchStore((s) => s.usageByAccount[s.tabs.find((t) => t.id === tabId)?.accountId ?? '']);
   const [moving, setMoving] = useState(false);
+  const t = useT();
 
   if (notice === undefined || tab === undefined) return null;
   const resetsAtMs = effectiveResetMs(notice, usage);
@@ -46,14 +48,14 @@ export function RateLimitBanner(): React.JSX.Element | null {
           disabled={autoBlockedReason !== null}
           onChange={(e) => setAutoContinue(tabId, e.target.checked)}
         />
-        Continuar al restablecerse
+        {t('chat.rateLimit.autoContinue')}
       </label>
       {targets.length === 0 ? (
         // Sin destino no se ofrece un boton muerto: se dice por que no lo hay.
-        <span className="text-mg-muted">No hay otra cuenta con sesión iniciada.</span>
+        <span className="text-mg-muted">{t('chat.rateLimit.noOtherAccount')}</span>
       ) : (
         <>
-          <span className="text-mg-muted">Continuar en:</span>
+          <span className="text-mg-muted">{t('chat.rateLimit.continueIn')}</span>
           {targets.map((account) => (
             <button
               key={account.id}
