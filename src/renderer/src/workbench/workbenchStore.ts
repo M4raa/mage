@@ -97,7 +97,7 @@ import type { SplitLayout } from '@shared/state';
 import { inAppNoticeForEvent, notificationForEvent, toNotifyParams } from './notify';
 import { notify, reportActionError } from './notificationStore';
 import { base64ByteLength } from '@shared/attachments';
-import { BYPASS_PERMISSIONS_ADVICE, bypassActivatedTabs } from './bypassActivation';
+import { bypassActivatedTabs, bypassPermissionsAdvice } from './bypassActivation';
 import { resolveNotificationTarget } from './notificationTarget';
 import { noticeTextFor } from './cliNotices';
 import { SUBAGENT_TOOL_NAMES } from './toolSummary';
@@ -2678,7 +2678,7 @@ function restoreDraftAfterFailedSend(set: SetFn, tabId: string, text: string, at
 function notifyBypassActivations(store: { subscribe: (fn: (s: WorkbenchState, prev: WorkbenchState) => void) => unknown }): void {
   store.subscribe((state, prev) => {
     for (const tab of bypassActivatedTabs(prev.tabs, state.tabs)) {
-      notify({ level: 'warning', title: BYPASS_PERMISSIONS_ADVICE, body: tab.title, dedupeKey: `cost-advice:${tab.id}`, source: 'prompt' });
+      notify({ level: 'warning', title: bypassPermissionsAdvice(), body: tab.title, dedupeKey: `cost-advice:${tab.id}`, source: 'prompt' });
     }
   });
 }

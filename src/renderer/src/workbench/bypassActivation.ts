@@ -1,5 +1,6 @@
 import { runsOnMageRuntime } from '@shared/providers';
 import type { Tab } from './types';
+import { t } from '../i18n/uiLanguage';
 
 // «Omitir permisos» (#1): el aviso es de la ACTIVACION del modo, no de la visita. Antes lo emitia un
 // efecto de PromptBar en cada montaje con el modo activo (cambiar de chat y volver, reabrir, reiniciar),
@@ -11,8 +12,9 @@ export const BYPASS_PERMISSIONS_MODE = 'bypassPermissions';
 
 // Sin prometer nada fuera del proyecto: el runtime propio pregunta por las rutas que VE fuera, pero es una
 // heuristica de texto, no una frontera (permissionGate.ts), y Claude con este modo no pregunta nada.
-export const BYPASS_PERMISSIONS_ADVICE =
-  'Omitir permisos: el modelo podrá ejecutar cualquier comando y modificar cualquier fichero sin preguntar. Úsalo solo con proyectos y contenido de confianza.';
+export function bypassPermissionsAdvice(): string {
+  return t('prompt.bypass.advice');
+}
 
 // Pestañas que acaban de activar «Omitir permisos». O(n) con un Map de las anteriores.
 export function bypassActivatedTabs(previous: readonly Tab[], next: readonly Tab[]): Tab[] {
