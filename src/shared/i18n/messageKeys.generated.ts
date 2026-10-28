@@ -326,6 +326,10 @@ export interface MessageValues {
   readonly "history.background.needsAction": never;
   readonly "history.background.tabMoveBlocked": never;
   readonly "history.background.working": never;
+  readonly "history.branchSwitch.detached": never;
+  readonly "history.branchSwitch.dirty": never;
+  readonly "history.branchSwitch.turnActive": never;
+  readonly "history.branchSwitch.worktree": never;
   readonly "history.cwdChange.liveSession": never;
   readonly "history.cwdChange.resumed": never;
   readonly "history.lock.checkFailed": never;
