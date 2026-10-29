@@ -56,8 +56,15 @@ export function normalizeDomLine(line) {
     .trim();
 }
 
-function linesOf(entry) {
-  return [...entry.text.split('\n'), ...entry.attrs].map(normalizeDomLine).filter((line) => line.length > 0);
+const normalizedLines = (lines) => lines.map(normalizeDomLine).filter((line) => line.length > 0);
+const linesOf = (entry) => normalizedLines([...entry.text.split('\n'), ...entry.attrs]);
+const attrsOf = (entry) => normalizedLines(entry.attrs);
+
+// Texto visible de un caso unido en una sola cadena sin espacios: el criterio de F3.2 es que el texto sea el mismo
+// aunque la extracción lo reparta en otros nodos (un contador que pasa de nodo propio a ir dentro de la frase). Los
+// atributos NO entran: se comparan aparte con `diffAttrs`.
+export function joinedTextOf(entry) {
+  return normalizedLines(entry.text.split('\n')).join('').replace(/\s+/g, '');
 }
 
 export function readDump(file) {
@@ -70,19 +77,74 @@ export function readDump(file) {
   return byName;
 }
 
-// Diferencias por comprobación: líneas que solo están en una de las dos tandas (multiconjunto, ignora el orden).
-export function diffDumps(before, after) {
+// Recorre los casos de las dos tandas: los que faltan en un lado se marcan y los comunes pasan por `compare`, que
+// devuelve la diferencia (sin `name`) o `null` si son iguales.
+function diffByName(before, after, compare) {
   const differences = [];
   for (const [name, entry] of before) {
     const other = after.get(name);
     if (other === undefined) { differences.push({ name, missing: 'after' }); continue; }
-    const counts = new Map();
-    for (const line of linesOf(entry)) counts.set(line, (counts.get(line) ?? 0) + 1);
-    for (const line of linesOf(other)) counts.set(line, (counts.get(line) ?? 0) - 1);
-    const onlyBefore = [...counts].filter(([, n]) => n > 0).map(([line]) => line);
-    const onlyAfter = [...counts].filter(([, n]) => n < 0).map(([line]) => line);
-    if (onlyBefore.length > 0 || onlyAfter.length > 0) differences.push({ name, onlyBefore, onlyAfter });
+    const difference = compare(entry, other);
+    if (difference !== null) differences.push({ name, ...difference });
   }
   for (const name of after.keys()) if (!before.has(name)) differences.push({ name, missing: 'before' });
   return differences;
+}
+
+// Líneas que solo están en una de las dos tandas (multiconjunto, ignora el orden).
+function diffLines(linesA, linesB) {
+  const counts = new Map();
+  for (const line of linesA) counts.set(line, (counts.get(line) ?? 0) + 1);
+  for (const line of linesB) counts.set(line, (counts.get(line) ?? 0) - 1);
+  const onlyBefore = [...counts].filter(([, n]) => n > 0).map(([line]) => line);
+  const onlyAfter = [...counts].filter(([, n]) => n < 0).map(([line]) => line);
+  return onlyBefore.length === 0 && onlyAfter.length === 0 ? null : { onlyBefore, onlyAfter };
+}
+
+// Diferencias por comprobación, por líneas de texto y atributos juntos.
+export function diffDumps(before, after) {
+  return diffByName(before, after, (a, b) => diffLines(linesOf(a), linesOf(b)));
+}
+
+// Diferencias por comprobación SOLO en los atributos (el texto va por `diffJoined`).
+export function diffAttrs(before, after) {
+  return diffByName(before, after, (a, b) => diffLines(attrsOf(a), attrsOf(b)));
+}
+
+// Fragmento de cada lado alrededor de la primera posición que difiere (como en la sonda de INFORME-037).
+const FRAGMENT_BEFORE_CHARS = 60;
+const FRAGMENT_AFTER_CHARS = 80;
+function fragmentsAroundFirstDifference(a, b) {
+  let i = 0;
+  while (i < a.length && i < b.length && a[i] === b[i]) i++;
+  const start = Math.max(0, i - FRAGMENT_BEFORE_CHARS);
+  return { before: a.slice(start, i + FRAGMENT_AFTER_CHARS), after: b.slice(start, i + FRAGMENT_AFTER_CHARS) };
+}
+
+// Diferencias por comprobación en el texto unido (`joinedTextOf`): { name, before, after } con los fragmentos.
+export function diffJoined(before, after) {
+  return diffByName(before, after, (a, b) => {
+    const x = joinedTextOf(a);
+    const y = joinedTextOf(b);
+    return x === y ? null : fragmentsAroundFirstDifference(x, y);
+  });
+}
+
+// Separa las diferencias de los casos cuyo nombre está en `noiseNames` (ruido medido entre dos tandas del mismo
+// commit, o lista --ignore aceptada). Un caso descartado NO se compara: toda su diferencia se aparta.
+export function partitionNoise(differences, noiseNames) {
+  const names = new Set(noiseNames);
+  const kept = differences.filter((d) => !names.has(d.name));
+  const noise = differences.filter((d) => names.has(d.name));
+  return { kept, noise };
+}
+
+// Valida una lista --ignore: cada entrada lleva el nombre del caso y un motivo no vacío.
+export function readIgnoreList(entries) {
+  if (!Array.isArray(entries)) throw new Error(`lista --ignore no valida: se esperaba una lista, llegó ${JSON.stringify(entries)}`);
+  for (const entry of entries) {
+    if (typeof entry?.name !== 'string' || entry.name.length === 0) throw new Error(`entrada --ignore sin name: ${JSON.stringify(entry)}`);
+    if (typeof entry.reason !== 'string' || entry.reason.trim().length === 0) throw new Error(`entrada --ignore sin reason: ${entry.name}`);
+  }
+  return entries;
 }
