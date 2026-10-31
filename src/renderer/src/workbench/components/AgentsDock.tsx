@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { useWorkbenchStore } from '../workbenchStore';
+import { useT } from '../../i18n/uiLanguage';
 import { usePaneTabId } from '../paneContext';
 import { DISCLOSURE_VARIANTS } from '../motionPresets';
 import { agentsDockRows, agentsDockSummaryText, summarizeAgentsDock, type AgentDockRow, type AgentRunState } from '../agentsDock';
@@ -24,6 +25,7 @@ export const AGENT_STATE_DOT: Readonly<Record<AgentRunState, string>> = {
 };
 
 export function AgentsDock(): React.JSX.Element {
+  const t = useT();
   const tabId = usePaneTabId();
   const blocks = useWorkbenchStore((s) => s.blocksByChat[tabId] ?? EMPTY);
   const status = useWorkbenchStore((s) => s.statusByChat[tabId] ?? 'idle');
@@ -36,6 +38,7 @@ export function AgentsDock(): React.JSX.Element {
 }
 
 function AgentsDockBody({ tabId, rows }: { readonly tabId: string; readonly rows: readonly AgentDockRow[] }): React.JSX.Element {
+  const t = useT();
   const [expanded, setExpanded] = useState(false);
   const dismissSubagents = useWorkbenchStore((s) => s.dismissSubagents);
   const elapsedOf = useAgentElapsed(rows);
@@ -56,12 +59,12 @@ function AgentsDockBody({ tabId, rows }: { readonly tabId: string; readonly rows
             <span className="truncate font-semibold">{agentsDockSummaryText(summary)}</span>
           </button>
           {finishedIds.length > 0 && (
-            <DockAction onClick={() => dismissSubagents(tabId, finishedIds)} attr="data-agents-dock-clear" tip="Quitar del dock los que ya pararon">
-              Quitar terminados
+            <DockAction onClick={() => dismissSubagents(tabId, finishedIds)} attr="data-agents-dock-clear" tip={t('chat.agents.dockClearTip')}>
+              {t('chat.agents.dockClear')}
             </DockAction>
           )}
-          <DockAction onClick={revealAgentsPanel} attr="data-agents-dock-more" tip="Ver todos en el panel de agentes">
-            Ver más
+          <DockAction onClick={revealAgentsPanel} attr="data-agents-dock-more" tip={t('chat.agents.dockMoreTip')}>
+            {t('chat.agents.dockMore')}
           </DockAction>
         </div>
         {expanded && rows.map((row) => <AgentDockRowView key={row.toolUseId} tabId={tabId} row={row} elapsedMs={elapsedOf(row)} />)}
@@ -79,6 +82,7 @@ function DockAction({ onClick, attr, tip, children }: { readonly onClick: () => 
 }
 
 function AgentDockRowView({ tabId, row, elapsedMs }: { readonly tabId: string; readonly row: AgentDockRow; readonly elapsedMs: number }): React.JSX.Element {
+  const t = useT();
   const openActivity = useWorkbenchStore((s) => s.openActivity);
   const dismissSubagents = useWorkbenchStore((s) => s.dismissSubagents);
   return (
@@ -100,8 +104,8 @@ function AgentDockRowView({ tabId, row, elapsedMs }: { readonly tabId: string; r
         <button
           onClick={() => dismissSubagents(tabId, [row.toolUseId])}
           data-agents-dock-dismiss="true"
-          aria-label={`Quitar ${row.description ?? row.name} del dock`}
-          data-tip="Quitar del dock (sigue en el panel de agentes)"
+          aria-label={t('chat.agents.dockDismissAria', { name: row.description ?? row.name })}
+          data-tip={t('chat.agents.dockDismissTip')}
           className="mr-[6px] flex h-[18px] w-[18px] flex-none items-center justify-center rounded-[4px] text-mg-muted hover:bg-mg-sel hover:text-mg-body"
         >
           <Icon name="close" size={10} />
@@ -115,6 +119,7 @@ function AgentDockRowView({ tabId, row, elapsedMs }: { readonly tabId: string; r
 // `task_id` del CLI (medido en 2.1.285). Sin `agentId` (aun no ha llegado el lanzamiento) no hay a quien
 // parar y se deja el hueco, para que la fila no baile.
 export function StopSubagentButton({ tabId, row, className }: { readonly tabId: string; readonly row: AgentDockRow; readonly className: string }): React.JSX.Element {
+  const t = useT();
   const stopSubagent = useWorkbenchStore((s) => s.stopSubagent);
   const agentId = row.agentId;
   if (agentId === null) return <span aria-hidden="true" className={`${className} w-[18px] flex-none`} />;
@@ -125,8 +130,8 @@ export function StopSubagentButton({ tabId, row, className }: { readonly tabId: 
         stopSubagent(tabId, agentId);
       }}
       data-agents-stop="true"
-      aria-label={`Parar ${row.description ?? row.name}`}
-      data-tip="Parar este subagente (los demás siguen)"
+      aria-label={t('chat.agents.stopAria', { name: row.description ?? row.name })}
+      data-tip={t('chat.agents.stopTip')}
       className={`${className} flex h-[18px] w-[18px] flex-none items-center justify-center rounded-[4px] text-mg-muted hover:bg-mg-danger-bg hover:text-mg-danger`}
     >
       <Icon name="stop" size={10} />
