@@ -3,6 +3,7 @@ import type { PersistedTab, PersistedWorkspace, SplitLayout } from '@shared/stat
 import { WORKSPACE_STATE_VERSION } from '@shared/state';
 import { isPermissionMode } from '@shared/ipc';
 import { RETIRED_PROVIDER_IDS } from '@shared/providers';
+import { isPlaceholderTitle } from '@shared/conversationTitle';
 import type { Tab } from './types';
 import { conversationIdOfTab } from './conversationId';
 import { findLeafPath, fromLegacySplit, singleLeaf, pruneSplitLayout } from './splitLayout';
@@ -89,7 +90,7 @@ export function restoreTabs(
       // modelo por defecto. Su transcripcion la escribio el CLI de Claude, asi que se reanuda igual.
       model: RETIRED_PROVIDER_IDS.includes(t.provider) ? RETIRED_PROVIDER_FALLBACK_MODEL : t.model,
       provider: RETIRED_PROVIDER_IDS.includes(t.provider) ? 'claude' : t.provider,
-      title: t.title,
+      title: isPlaceholderTitle(t.title) ? '' : t.title,
       ...(t.projectId === undefined ? {} : { projectId: t.projectId }),
       privacy: t.privacy,
       ...(t.resolvedConfigDir === undefined ? {} : { resolvedConfigDir: t.resolvedConfigDir }),

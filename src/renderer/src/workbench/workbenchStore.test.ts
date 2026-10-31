@@ -1088,10 +1088,10 @@ describe('renameConversation', () => {
 
   it('sendActiveMessage_primerMensajeComando_noAutotitula', async () => {
     const { store } = mounted('idle');
-    store.setState({ tabs: [tab('a', { title: 'Nuevo chat' })] });
+    store.setState({ tabs: [tab('a', { title: '' })] });
 
     await store.getState().sendActiveMessage('/context');
-    expect(store.getState().tabs[0]?.title).toBe('Nuevo chat');
+    expect(store.getState().tabs[0]?.title).toBe('');
     store.getState().handleEvent('s-a', RESULT(0));
 
     await store.getState().sendActiveMessage('Arregla el login');

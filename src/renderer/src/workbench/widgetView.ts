@@ -8,6 +8,7 @@ import type {
 import type { Account, ChatStatus, Tab } from './types';
 import { severityForPct, type UsageSeverity } from './usageView';
 import { t } from '../i18n/uiLanguage';
+import { displayTitle } from './conversationTitle';
 
 // Mapeo PURO del estado del workbench al snapshot compacto del WIDGET FLOTANTE (M3). Sin efectos ni
 // dependencia del reloj (los labels de uso ya vienen formateados en account.usage). Se testea aparte.
@@ -60,7 +61,7 @@ function buildAgents(input: WidgetViewInput): readonly WidgetAgent[] {
 function toAgent(tab: Tab, status: ChatStatus, accentById: ReadonlyMap<string, string>): WidgetAgent {
   return {
     tabId: tab.id,
-    title: tab.title,
+    title: displayTitle(tab.title),
     accountAlias: tab.accountAlias,
     accentBase: accentById.get(tab.accountId) ?? '',
     status,

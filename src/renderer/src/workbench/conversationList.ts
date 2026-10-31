@@ -6,6 +6,7 @@ import type { ConversationPrivacy } from '@shared/state';
 import type { Tab } from './types';
 import type { ReopenedTabPrefs } from './conversationPrefs';
 import { conversationIdOfTab } from './conversationId';
+import { displayTitle } from './conversationTitle';
 
 // Una pestaña abierta lleva el resumen de su transcripcion en disco, si ya la tiene (P-026, 1.7): sin
 // el, su fila decia `claude · opus[1m]` y la de una cerrada `hace 3 min · 2,1 MB`.
@@ -15,7 +16,7 @@ export type ConversationRow =
 
 // Titulo de una fila (pestana abierta o entrada de historial), para buscar/mostrar.
 export function rowTitle(row: ConversationRow): string {
-  return row.kind === 'tab' ? row.tab.title : row.item.title;
+  return row.kind === 'tab' ? displayTitle(row.tab.title) : row.item.title;
 }
 
 // Filtra filas por texto (case-insensitive, sin acentos-sensibilidad basica) sobre el titulo. Query

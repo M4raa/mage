@@ -1605,6 +1605,7 @@ export interface MessageValues {
   readonly "tabs.menu.unpin": never;
   readonly "tabs.releaseNotes.closeLabel": never;
   readonly "tabs.releaseNotes.title": never;
+  readonly "tabs.untitled": never;
   readonly "usage.panel.agyAria": never;
   readonly "usage.panel.agyRefresh": never;
   readonly "usage.panel.agyTitle": never;

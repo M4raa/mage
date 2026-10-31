@@ -1603,6 +1603,7 @@
   "tabs.menu.unpin": { "description": "Opción del menú contextual de una pestaña ya anclada: la desancla.", "usage": "src/renderer/src/workbench/components/TabContextMenu.tsx:124", "maxLength": 24 },
   "tabs.releaseNotes.closeLabel": { "description": "Nombre accesible del botón ✕ de la pestaña de novedades.", "usage": "src/renderer/src/workbench/components/TabBar.tsx:286" },
   "tabs.releaseNotes.title": { "description": "Título de la pestaña de novedades de la versión (no es una conversación).", "usage": "src/renderer/src/workbench/components/TabBar.tsx:277", "maxLength": 20 },
+  "tabs.untitled": { "description": "Título de una conversación que aún no tiene ninguno (pestaña, lista lateral, notificaciones, widget).", "usage": "src/renderer/src/workbench/conversationTitle.ts:23", "maxLength": 30 },
   "usage.panel.agyAria": { "description": "Nombre accesible de la sección con el uso de la suscripción de agy. «agy» no se traduce.", "usage": "src/renderer/src/workbench/components/UsagePanel.tsx:219" },
   "usage.panel.agyRefresh": { "description": "Tooltip y nombre accesible del botón ⟳ que vuelve a leer el uso de agy.", "usage": "src/renderer/src/workbench/components/UsagePanel.tsx:222", "maxLength": 28 },
   "usage.panel.agyTitle": { "description": "Cabecera de la sección de uso de agy, en el panel Uso. Va en mayúsculas; «Antigravity» y «agy» no se traducen.", "usage": "src/renderer/src/workbench/components/UsagePanel.tsx:221", "maxLength": 40 },

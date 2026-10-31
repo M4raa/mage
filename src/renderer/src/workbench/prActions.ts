@@ -7,6 +7,7 @@ import { buildCiMonitorEvent, pendingAutoFix } from './ciMonitorEvent';
 import { prBarView } from './chatInfoView';
 import { CREATE_PR_PROMPT } from '@shared/permissionPolicy';
 import { t as translate } from '../i18n/uiLanguage';
+import { displayTitle } from './conversationTitle';
 
 // PR y CI de una pestaña (grupo D, como Claude Desktop). Las acciones del store que hablan con `gh` por
 // main, fuera de `workbenchStore.ts` para no engordarlo; el store las mezcla tal cual.
@@ -85,7 +86,7 @@ export function createPrActions(deps: PrDeps): PrActions {
     const sessionId = conversationIdOfTab(tab, get().sessionIdByChat[tab.id]);
     const target = sessionId === undefined ? {} : { target: { tabId: tab.id, sessionId } };
     void mage
-      .notify({ title: translate('notifications.pr.ciFinished'), body: `${tab.title}: ${view.label} ${counts}`, ...target })
+      .notify({ title: translate('notifications.pr.ciFinished'), body: `${displayTitle(tab.title)}: ${view.label} ${counts}`, ...target })
       .catch((err: unknown) => console.warn('No se pudo avisar del fin del CI:', String(err)));
   };
 

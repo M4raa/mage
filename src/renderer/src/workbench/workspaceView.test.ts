@@ -243,6 +243,21 @@ describe('restoreTabs', () => {
 
     expect(restoreTabs(ws, new Set(['.claude'])).activeTabId).toBe('tab1');
   });
+
+  it('restaurarWorkspace_de012ConMarcadores_titulosVacios', () => {
+    const base = persisted().tabs[0]!;
+    const ws = persisted({
+      tabs: [
+        { ...base, id: 'a', title: 'Nuevo chat' },
+        { ...base, id: 'b', title: 'Nueva conversación' },
+        { ...base, id: 'c', title: 'Refactor del parser' },
+      ],
+    });
+
+    const titles = restoreTabs(ws, new Set(['.claude'])).tabs.map((tab) => tab.title);
+
+    expect(titles).toEqual(['', '', 'Refactor del parser']);
+  });
 });
 
 describe('toPersistedWorkspace + restoreTabs — PR vinculado (grupo D)', () => {
