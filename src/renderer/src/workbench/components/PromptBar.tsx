@@ -2,7 +2,7 @@ import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { readOnlyLockMessage } from '@shared/conversationLock';
 import { isPermissionMode } from '@shared/ipc';
 import type { EditorInfo } from '@shared/ipc';
-import { AGY_EFFORT_LEVELS, AGY_PROVIDER_ID, CODEX_PROVIDER_ID, NO_PERMISSION_CONTROL_WARNING, RUNTIME_AUTO_MODE_NOTE, UNVERIFIED_PROVIDER_NOTE, isAutoApprovedProvider, isUnverifiedProvider, runsOnMageRuntime } from '@shared/providers';
+import { AGY_EFFORT_LEVELS, AGY_PROVIDER_ID, CODEX_PROVIDER_ID, isAutoApprovedProvider, isUnverifiedProvider, runsOnMageRuntime } from '@shared/providers';
 import { useWorkbenchStore } from '../workbenchStore';
 import { displayModelId, modelOptionsForProvider } from '../models';
 import { describeAttachment, insertImageTokens, reconcileImageTokens, removeImageToken } from '@shared/imageRefs';
@@ -721,8 +721,8 @@ export function PromptBar(): React.JSX.Element {
             // para que un lector de pantalla lo anuncie al abrir la pestana.
             <span
               role="status"
-              data-tip={NO_PERMISSION_CONTROL_WARNING}
-              aria-label={NO_PERMISSION_CONTROL_WARNING}
+              data-tip={t('prompt.providers.noPermissionControl')}
+              aria-label={t('prompt.providers.noPermissionControl')}
               className="shrink-0 cursor-help self-center rounded-full border border-mg-warn-border bg-mg-warn-bg px-[8px] py-[2px] text-[10.5px] font-semibold text-mg-warn-text"
             >
               <Icon name="warning" size={12} /> {t('prompt.permission.none')}
@@ -732,8 +732,8 @@ export function PromptBar(): React.JSX.Element {
             // Codex corre sobre su app-server desde el esquema, sin un turno real probado (respuesta 30).
             <span
               data-unverified-provider="true"
-              data-tip={UNVERIFIED_PROVIDER_NOTE}
-              aria-label={UNVERIFIED_PROVIDER_NOTE}
+              data-tip={t('prompt.providers.unverifiedNote')}
+              aria-label={t('prompt.providers.unverifiedNote')}
               className="shrink-0 cursor-help self-center rounded-full border border-mg-warn-border bg-mg-warn-bg px-[8px] py-[2px] text-[10.5px] text-mg-warn-text"
             >
               {t('prompt.provider.unverified')}
@@ -769,7 +769,7 @@ export function PromptBar(): React.JSX.Element {
               heading={t('prompt.permission.heading', { mode: permissionModeLabel(permissionMode) })}
               endLabels={[t('prompt.permission.moreControl'), t('prompt.permission.moreAutonomy')]}
               tip={t('prompt.permission.tip')}
-              {...(isRuntime && permissionMode === 'auto' ? { note: RUNTIME_AUTO_MODE_NOTE } : {})}
+              {...(isRuntime && permissionMode === 'auto' ? { note: t('prompt.providers.runtimeAutoModeNote') } : {})}
               triggerClassName={permissionChipSkin(permissionMode)}
               leading={isPermissionMode(permissionMode) ? <Icon name={PERMISSION_MODE_ICON[permissionMode]} size={11} /> : undefined}
             />

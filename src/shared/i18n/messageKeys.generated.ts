@@ -1132,7 +1132,9 @@ export interface MessageValues {
   readonly "prompt.placeholder.noTab": never;
   readonly "prompt.placeholder.readOnly": { readonly "lock": string | number };
   readonly "prompt.provider.unverified": never;
+  readonly "prompt.providers.noPermissionControl": never;
   readonly "prompt.providers.runtimeAutoModeNote": never;
+  readonly "prompt.providers.unverifiedNote": never;
   readonly "prompt.question.advance": never;
   readonly "prompt.question.ariaLabel": { readonly "question": string | number };
   readonly "prompt.question.counter": { readonly "step": string | number; readonly "total": string | number };

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import type { AccountInfo } from '@shared/accounts';
-import { AGY_PROVIDER_ID, PROVIDER_TEMPLATES, UNVERIFIED_PROVIDER_NOTE } from '@shared/providers';
+import { AGY_PROVIDER_ID, PROVIDER_TEMPLATES } from '@shared/providers';
 import { useWorkbenchStore } from '../workbenchStore';
 import { useDialogA11y } from '../a11y/useDialogA11y';
 import { MODAL_PANEL_VARIANTS, MODAL_SCRIM_VARIANTS } from '../motionPresets';
@@ -93,7 +93,7 @@ function DialogBody(props: BodyProps): React.JSX.Element {
         {kinds.length > 1 && (
           <ChoiceGroup label={t('accounts.add.paymentLabel')} ariaLabel={t('accounts.add.paymentAria')} options={kinds.map((k, i) => ({ key: String(i), label: t(k.labelKey), flow: k.flow }))} selected={String(kinds.indexOf(kind))} onSelect={(key) => setKindIndex(Number(key))} />
         )}
-        {kind.unverified && <div className="text-[10.5px] leading-[1.5] text-mg-warn">{UNVERIFIED_PROVIDER_NOTE}</div>}
+        {kind.unverified && <div className="text-[10.5px] leading-[1.5] text-mg-warn">{t('prompt.providers.unverifiedNote')}</div>}
         <KindBody key={`${vendor}-${kind.flow}`} kind={kind} props={props} onClose={closeAll} onLoginCancel={setCancelLogin} />
       </motion.div>
     </motion.div>
