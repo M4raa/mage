@@ -5,8 +5,10 @@ import { createTranslator } from '@shared/i18n/translator';
 import type { SequencedSessionEvent } from '../coordination/sessionCoordinator';
 import { HELLO_DEADLINE_MS, HostConnection, MAX_BUFFERED_BYTES, type HostSessions, type HostTransport } from './hostConnection';
 import { HOST_PROTOCOL, HostErrorCode } from './hostProtocol';
+import { challengeProof } from './hostToken';
 
 const TOKEN = 'a'.repeat(64);
+const NONCE = '0'.repeat(64);
 const SNAPSHOT: ConversationSnapshot = { sessionId: 's1', provider: 'claude', conversationId: 'c1', nativeRef: null, lastSeq: 7, state: 'idle', queue: [], pending: [], background: false };
 const EVENT: SequencedSessionEvent = { sessionId: 's1', conversationId: 'c1', seq: 8, at: 1, event: { kind: 'result', result: { isError: false, subtype: 'success', numTurns: 1 } } };
 
@@ -345,5 +347,101 @@ describe('HostConnection — métodos', () => {
     expect(h.lines().at(-1)!.error.code).toBe(HostErrorCode.SlowConsumer);
     expect(h.isEnded()).toBe(true);
     expect(h.unsubscribe).toHaveBeenCalledTimes(1);
+  });
+});
+
+const challenge = (h: ReturnType<typeof harness>, params: unknown, id = 9) =>
+  h.send({ jsonrpc: '2.0', id, method: 'host.challenge', params });
+
+describe('HostConnection — reto (F7.1)', () => {
+  it('challenge_antesDelHello_respondeLaPruebaYNoCierra', () => {
+    const h = harness();
+
+    challenge(h, { nonce: NONCE });
+
+    expect(h.lines()[0]!.result).toEqual({ proof: challengeProof(TOKEN, NONCE) });
+    expect(h.isEnded()).toBe(false);
+  });
+
+  it('challenge_seguidoDeHello_aceptaElHello', () => {
+    const h = harness();
+
+    challenge(h, { nonce: NONCE });
+    h.hello();
+
+    expect(h.lines()[1]!.result.protocol).toBe(HOST_PROTOCOL);
+    expect(h.isEnded()).toBe(false);
+  });
+
+  it('challenge_trasElReto_otraPeticionSigueSinAutenticar', () => {
+    const h = harness();
+
+    challenge(h, { nonce: NONCE });
+    h.send({ jsonrpc: '2.0', id: 2, method: 'sessions.list' });
+
+    expect(h.lines()[1]!.error.code).toBe(HostErrorCode.NotAuthenticated);
+    expect(h.isEnded()).toBe(true);
+  });
+
+  it('challenge_segundoReto_invalidRequestYCierra', () => {
+    const h = harness();
+
+    challenge(h, { nonce: NONCE });
+    challenge(h, { nonce: NONCE }, 10);
+
+    expect(h.lines()[1]!.error.code).toBe(HostErrorCode.InvalidRequest);
+    expect(h.isEnded()).toBe(true);
+  });
+
+  it('challenge_sinId_invalidRequestYCierra', () => {
+    const h = harness();
+
+    h.send({ jsonrpc: '2.0', method: 'host.challenge', params: { nonce: NONCE } });
+
+    expect(h.lines()[0]!.error.code).toBe(HostErrorCode.InvalidRequest);
+    expect(h.lines()[0]!.id).toBeNull();
+    expect(h.isEnded()).toBe(true);
+  });
+
+  it.each([
+    { nonce: 'A'.repeat(64) },
+    { nonce: '0'.repeat(63) },
+    { nonce: 7 },
+    {},
+    { nonce: NONCE, extra: 1 },
+  ])('challenge_nonceInvalido_invalidParamsYCierra %j', (params) => {
+    const h = harness();
+
+    challenge(h, params);
+
+    expect(h.lines()[0]!.error.code).toBe(HostErrorCode.InvalidParams);
+    expect(h.isEnded()).toBe(true);
+    expect(h.written.join('')).not.toContain(TOKEN);
+  });
+
+  it('challenge_despuesDelHello_methodNotFoundYSigueAbierta', () => {
+    const h = harness();
+
+    h.hello();
+    challenge(h, { nonce: NONCE });
+
+    expect(h.lines()[1]!.error.code).toBe(HostErrorCode.MethodNotFound);
+    expect(h.isEnded()).toBe(false);
+  });
+
+  it('challenge_respuesta_noContieneElToken', () => {
+    const h = harness();
+
+    challenge(h, { nonce: NONCE });
+
+    expect(h.written.join('')).not.toContain(TOKEN);
+  });
+
+  it('hello_sinReto_sigueAceptandose', () => {
+    const h = harness();
+
+    h.hello();
+
+    expect(h.lines()[0]!.result.protocol).toBe(HOST_PROTOCOL);
   });
 });

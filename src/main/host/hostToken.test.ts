@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createHostToken, tokenMatches, TOKEN_BYTES } from './hostToken';
+import { challengeProof, createHostToken, tokenMatches, TOKEN_BYTES } from './hostToken';
 
 describe('createHostToken', () => {
   it('createHostToken_treintaYDosBytes_sesentaYCuatroHex', () => {
@@ -32,5 +32,38 @@ describe('tokenMatches', () => {
   it('tokenMatches_largoDistinto_falseSinLanzar', () => {
     expect(tokenMatches('abc123', 'abc12')).toBe(false);
     expect(tokenMatches('abc123', '')).toBe(false);
+  });
+});
+
+describe('challengeProof', () => {
+  it('challengeProof_vectorConocido_devuelveEsteHex', () => {
+    const token = 'a'.repeat(64);
+    const nonce = '0'.repeat(64);
+
+    const proof = challengeProof(token, nonce);
+
+    expect(proof).toBe('591467ed8fef0c66cd3ab7e445af7bf40833c2afeb582a76836fda4e2eb340ee');
+  });
+
+  it('challengeProof_otroNonce_devuelveOtraPrueba', () => {
+    const token = 'a'.repeat(64);
+
+    const first = challengeProof(token, '0'.repeat(64));
+    const second = challengeProof(token, '1'.repeat(64));
+
+    expect(first).not.toBe(second);
+  });
+
+  it('challengeProof_otroToken_devuelveOtraPrueba', () => {
+    const nonce = '0'.repeat(64);
+
+    const first = challengeProof('a'.repeat(64), nonce);
+    const second = challengeProof('b'.repeat(64), nonce);
+
+    expect(first).not.toBe(second);
+  });
+
+  it('challengeProof_tokenVacio_lanzaError', () => {
+    expect(() => challengeProof('', '0'.repeat(64))).toThrow('El token del host está vacío');
   });
 });

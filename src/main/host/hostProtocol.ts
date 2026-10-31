@@ -4,15 +4,17 @@ import { renderLocalized } from '@shared/i18n/localizedText';
 import type { Translate } from '@shared/i18n/translator';
 import { ELICITATION_ANSWER_SCHEMA } from '@shared/elicitation';
 import { ANSWER_PERMISSION_SCHEMA, SEND_MESSAGE_SCHEMA, SESSION_ID_SCHEMA, MAX_ID_CHARS } from '@shared/sessionInput';
+import { CHALLENGE_NONCE_BYTES } from './hostToken';
 
 // Protocolo del host local (F2.6, §2 de INFORME-019 con las enmiendas H6, H2 y H3): JSON-RPC 2.0 sobre NDJSON.
-// Una línea = un mensaje. El primero de cada conexión tiene que ser `hello` con el token y la versión; hasta
-// entonces no se atiende nada más. Todo lo que entra se valida con Zod ANTES de tocar el coordinador.
+// Una línea = un mensaje. El primero de cada conexión tiene que ser `hello` con el token y la versión, salvo un
+// `host.challenge` previo (F7.1); hasta el `hello` no se atiende nada más. Todo lo que entra se valida con Zod ANTES de tocar el coordinador.
 
 export const HOST_PROTOCOL_MAJOR = 1;
 // 1.1 (F3.3): los eventos `notice`, `error` y `queued_message_failed` llevan `localized` (clave y valores) y, para los
 // clientes 1.0, su campo de siempre ya traducido en el idioma de main.
-export const HOST_PROTOCOL_MINOR = 1;
+// 1.2 (F7): `host.challenge` antes de `hello` y los métodos de la terminal.
+export const HOST_PROTOCOL_MINOR = 2;
 export const HOST_PROTOCOL = `${HOST_PROTOCOL_MAJOR}.${HOST_PROTOCOL_MINOR}`;
 
 // Códigos JSON-RPC estándar (-32700…-32603) y propios (-32001…-32099).
@@ -49,6 +51,12 @@ export const HELLO_PARAMS_SCHEMA = z.object({
   token: z.string().min(1).max(MAX_TOKEN_CHARS),
 }).strict();
 export type HelloParams = z.infer<typeof HELLO_PARAMS_SCHEMA>;
+
+// Único método admitido ANTES de `hello` (F7.1): el cliente verifica al host sin enviarle el token.
+export const CHALLENGE_METHOD = 'host.challenge';
+export const CHALLENGE_PARAMS_SCHEMA = z.object({
+  nonce: z.string().regex(new RegExp(`^[0-9a-f]{${CHALLENGE_NONCE_BYTES * 2}}$`), `se esperaban ${CHALLENGE_NONCE_BYTES * 2} caracteres hexadecimales en minúscula`),
+}).strict();
 
 const EMPTY_PARAMS_SCHEMA = z.object({}).strict().optional();
 // El host v1 no admite adjuntos: una imagen en base64 no cabe en una línea de tamaño razonable.

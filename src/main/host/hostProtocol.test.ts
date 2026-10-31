@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { MageEvent } from '@shared/events';
 import { foreignText, localized } from '@shared/i18n/localizedText';
 import { createTranslator } from '@shared/i18n/translator';
-import { withLegacyText } from './hostProtocol';
+import { HOST_PROTOCOL, withLegacyText } from './hostProtocol';
 
 const translate = createTranslator('es');
 const QUEUED = { id: 'q1', text: 'hola', attachments: [] };
@@ -30,5 +30,11 @@ describe('withLegacyText', () => {
     const event: MageEvent = { kind: 'result', result: { isError: false, subtype: 'success', numTurns: 1 } };
 
     expect(withLegacyText(event, translate)).toBe(event);
+  });
+});
+
+describe('HOST_PROTOCOL', () => {
+  it('HOST_PROTOCOL_igualA12', () => {
+    expect(HOST_PROTOCOL).toBe('1.2');
   });
 });

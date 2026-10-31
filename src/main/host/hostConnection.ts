@@ -8,6 +8,8 @@ import type { SessionLogFn } from '../engine/agentSession';
 import type { SequencedSessionEvent } from '../coordination/sessionCoordinator';
 import { MAX_LINE_BYTES, NdjsonFramer } from './ndjsonFramer';
 import {
+  CHALLENGE_METHOD,
+  CHALLENGE_PARAMS_SCHEMA,
   errorResponse,
   HELLO_PARAMS_SCHEMA,
   HOST_CAPABILITIES,
@@ -25,7 +27,7 @@ import {
   type RequestEnvelope,
   type RequestId,
 } from './hostProtocol';
-import { tokenMatches } from './hostToken';
+import { challengeProof, tokenMatches } from './hostToken';
 
 // Una conexión del host local (F2.6). Sin E/S propia: habla con un `HostTransport` (el socket, en producción) y
 // con `HostSessions` (el coordinador), los dos inyectados, así que se prueba entera con dobles.
@@ -76,6 +78,7 @@ type Phase = 'handshake' | 'ready' | 'closed';
 
 export class HostConnection {
   private phase: Phase = 'handshake';
+  private challenged = false;
   private readonly framer: NdjsonFramer;
   private readonly subscriptions = new Map<string, () => void>();
   private readonly cancelHelloTimer: () => void;
@@ -137,6 +140,10 @@ export class HostConnection {
   }
 
   private handleHello(id: RequestId | undefined, method: string, params: unknown): void {
+    if (method === CHALLENGE_METHOD) {
+      this.handleChallenge(id, params);
+      return;
+    }
     if (method !== 'hello') {
       this.fail(id ?? null, { code: HostErrorCode.NotAuthenticated, message: 'Hay que presentarse con «hello» antes de cualquier otra petición' });
       return;
@@ -159,6 +166,26 @@ export class HostConnection {
     this.cancelHelloTimer();
     this.phase = 'ready';
     if (id !== undefined) this.transport.write(resultResponse(id, { protocol: HOST_PROTOCOL, hostVersion: this.deps.hostVersion, capabilities: HOST_CAPABILITIES }));
+  }
+
+  // Reto del cliente (F7.1): solo antes de `hello` y una vez por conexión. La fase no cambia: después hay que
+  // presentarse igual, dentro del mismo plazo.
+  private handleChallenge(id: RequestId | undefined, params: unknown): void {
+    if (id === undefined) {
+      this.fail(null, { code: HostErrorCode.InvalidRequest, message: '«host.challenge» necesita un id para poder responder' });
+      return;
+    }
+    if (this.challenged) {
+      this.fail(id, { code: HostErrorCode.InvalidRequest, message: 'Solo se admite un «host.challenge» por conexión' });
+      return;
+    }
+    const parsed = CHALLENGE_PARAMS_SCHEMA.safeParse(params);
+    if (!parsed.success) {
+      this.fail(id, { code: HostErrorCode.InvalidParams, message: `Parámetros de host.challenge inválidos: ${describeIssues(parsed.error.issues)}` });
+      return;
+    }
+    this.challenged = true;
+    this.transport.write(resultResponse(id, { proof: challengeProof(this.deps.token, parsed.data.nonce) }));
   }
 
   private dispatch(id: RequestId | undefined, method: string, params: unknown): void {
