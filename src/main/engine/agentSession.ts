@@ -9,6 +9,9 @@ import type { LaunchParams, ProviderAdapter } from './providerAdapter';
 import { DEFAULT_RESTART_POLICY, decideRestart, type RestartDecision, type RestartPolicy } from './restartPolicy';
 import { defaultKillTreeDeps, killProcessTree, type KillTreeDeps } from '../os/processTree';
 
+// Única decisión que emite error: `none` sale antes y `restart` reprograma.
+type GiveUpDecision = Extract<RestartDecision, { action: 'give_up' }>;
+
 // Funcion de spawn inyectable (default: la de Node) -> testable con un proceso falso.
 export type SpawnFn = (
   command: string,
@@ -657,10 +660,10 @@ export class AgentSession {
     this.pendingRestart = null;
   }
 
-  private emitUnexpectedExit(code: number | null, signal: NodeJS.Signals | null, decision: Exclude<RestartDecision, { action: 'restart' }>): void {
+  private emitUnexpectedExit(code: number | null, signal: NodeJS.Signals | null, decision: GiveUpDecision): void {
     const detail = this.lastStderr.trim();
     const common = { code: String(code), signal: signal ?? 'none', stderr: detail.length > 0 ? ` — stderr: ${detail}` : '' };
-    this.deps.emit({ kind: 'error', localized: exitMessage(decision, common) });
+    this.deps.emit({ kind: 'error', localized: localized('events.agent.exitGaveUp', { ...common, attempts: String(decision.attempts), lastCode: decision.lastCode, lastSignal: decision.lastSignal }) });
   }
 }
 
@@ -680,14 +683,6 @@ function readControlRequestId(payload: unknown): string | null {
 
 function describeSpawnError(err: unknown): LocalizedText {
   return localized('events.agent.spawnFailed', { detail: describeError(err) });
-}
-
-// La frase de una salida inesperada que no se reintenta, segun la decision de la politica.
-function exitMessage(decision: Exclude<RestartDecision, { action: 'restart' }>, common: { code: string; signal: string; stderr: string }): LocalizedText {
-  if (decision.action === 'give_up') {
-    return localized('events.agent.exitGaveUp', { ...common, attempts: String(decision.attempts), lastCode: decision.lastCode, lastSignal: decision.lastSignal });
-  }
-  return decision.reason === 'startup_failure' ? localized('events.agent.exitStartupFailure', common) : localized('events.agent.exitIntentional', common);
 }
 
 function describeError(err: unknown): string {

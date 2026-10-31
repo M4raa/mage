@@ -640,8 +640,6 @@
   "errors.workbench.saveWorkspaceFailed": "No se pudo guardar el workspace",
   "errors.workbench.unknownError": "Error desconocido: {value}",
   "events.agent.exitGaveUp": "El proceso del agente termino inesperadamente (code={code}, signal={signal}) y no se reintenta: el proceso murio {attempts} veces seguidas sin llegar a arrancar bien (ultimo cierre: code={lastCode}, signal={lastSignal}){stderr}",
-  "events.agent.exitIntentional": "El proceso del agente termino inesperadamente (code={code}, signal={signal}) y no se reintenta: la sesion se detuvo a proposito{stderr}",
-  "events.agent.exitStartupFailure": "El proceso del agente termino inesperadamente (code={code}, signal={signal}) y no se reintenta: fallo determinista de arranque{stderr}",
   "events.agent.resumeFailed": "No se pudo reanudar la sesion tras el cierre: {detail}",
   "events.agent.spawnFailed": "No se pudo arrancar el agente: {detail}",
   "events.agy.deniedActionByRule": "agy denegó una acción: lo prohíbe una regla deny.",

@@ -642,8 +642,6 @@ export interface MessageValues {
   readonly "errors.workbench.saveWorkspaceFailed": never;
   readonly "errors.workbench.unknownError": { readonly "value": string | number };
   readonly "events.agent.exitGaveUp": { readonly "attempts": string | number; readonly "code": string | number; readonly "lastCode": string | number; readonly "lastSignal": string | number; readonly "signal": string | number; readonly "stderr": string | number };
-  readonly "events.agent.exitIntentional": { readonly "code": string | number; readonly "signal": string | number; readonly "stderr": string | number };
-  readonly "events.agent.exitStartupFailure": { readonly "code": string | number; readonly "signal": string | number; readonly "stderr": string | number };
   readonly "events.agent.resumeFailed": { readonly "detail": string | number };
   readonly "events.agent.spawnFailed": { readonly "detail": string | number };
   readonly "events.agy.deniedActionByRule": never;
