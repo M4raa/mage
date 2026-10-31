@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { t, useT } from '../../i18n/uiLanguage';
 import type { SplitPath, TabDropSide } from '../splitLayout';
 import { Icon } from './Icon';
 import { AnimatePresence, motion } from 'motion/react';
@@ -33,6 +34,7 @@ export function TabBar({
   // Camino del panel en el arbol: lo necesitan "pestaña nueva aqui" y el destino de un arrastre.
   readonly path: SplitPath;
 }): React.JSX.Element {
+  const translate = useT();
   const tabs = useWorkbenchStore((s) => s.tabs);
   const accounts = useWorkbenchStore((s) => s.accounts);
   const activeTabId = useWorkbenchStore((s) => s.activeTabId);
@@ -128,7 +130,7 @@ export function TabBar({
         // Con el workspace dividido hay VARIAS barras a la vez: dos listas de pestañas con el mismo
         // nombre accesible son indistinguibles para un lector de pantalla. El camino del panel es
         // estable y corto, y sirve de desambiguador.
-        aria-label={path.length === 0 ? 'Conversaciones abiertas' : `Conversaciones abiertas (panel ${path.join('')})`}
+        aria-label={path.length === 0 ? translate('tabs.bar.listLabel') : translate('tabs.bar.listPaneLabel', { path: path.join('') })}
         onKeyDown={onListKeyDown}
         onDragOver={tabDrop.onDragOver}
         onDragLeave={tabDrop.onDragLeave}
@@ -185,8 +187,8 @@ export function TabBar({
         }}
         disabled={activeAccountId.length === 0}
         className="flex-none p-[8px_12px] text-mg-icon disabled:opacity-40"
-        data-tip="Nueva pestaña · clic derecho para elegir carpeta y modelo"
-        aria-label="Nueva pestaña"
+        data-tip={translate('tabs.bar.newTip')}
+        aria-label={translate('tabs.bar.newLabel')}
       >
         ＋
       </button>
@@ -227,7 +229,7 @@ export function TabBar({
 // Un movimiento a otra ventana que falla (la ventana destino se cerro, main rechazo la pestaña) se
 // avisa: la pestaña sigue aqui, que es el lado seguro, pero no en silencio.
 function reportMoveError(err: unknown): void {
-  reportActionError('No se pudo mover la pestaña a otra ventana', err, 'window');
+  reportActionError(t('tabs.bar.moveError'), err, 'window');
 }
 
 // La pseudo-pestaña de novedades (no es una conversacion, no esta en `tabs`). Va siempre al final de su
@@ -244,6 +246,7 @@ function ReleaseNotesTab({
   readonly onSelect: () => void;
   readonly onClose: () => void;
 }): React.JSX.Element {
+  const translate = useT();
   return (
     <div
       role="tab"
@@ -271,7 +274,7 @@ function ReleaseNotesTab({
         />
       )}
       <Icon name="sparkles" size={12} className="flex-none text-mg-focus" />
-      <span className="max-w-[220px] truncate">Novedades</span>
+      <span className="max-w-[220px] truncate">{translate('tabs.releaseNotes.title')}</span>
       {active && (
         <button
           onClick={(e) => {
@@ -279,8 +282,8 @@ function ReleaseNotesTab({
             onClose();
           }}
           className="text-mg-muted transition-colors duration-150 ease-out hover:text-mg-body"
-          data-tip="Cerrar pestaña"
-          aria-label="Cerrar pestaña Novedades"
+          data-tip={translate('tabs.close.tip')}
+          aria-label={translate('tabs.releaseNotes.closeLabel')}
         >
           ✕
         </button>
@@ -323,6 +326,7 @@ function Tab({
   // #47/#22: otra pestaña se va a soltar delante o detras de esta (la marca el borde).
   readonly dropSide: TabDropSide | null;
 }): React.JSX.Element {
+  const translate = useT();
   const accountAlias = tab.accountAlias;
   const badge = providerBadge(tab.provider);
   // role="tab" sobre un div (no <button>) para poder anidar el boton ✕ sin HTML invalido. Enter/Espacio
@@ -429,8 +433,8 @@ function Tab({
             onClose();
           }}
           className="text-mg-muted transition-colors duration-150 ease-out hover:text-mg-body"
-          data-tip="Cerrar pestaña"
-          aria-label={`Cerrar pestaña ${accountAlias} / ${tab.title}`}
+          data-tip={translate('tabs.close.tip')}
+          aria-label={translate('tabs.close.label', { alias: accountAlias, title: tab.title })}
         >
           ✕
         </button>

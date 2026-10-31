@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useT } from '../../i18n/uiLanguage';
 import { useWorkbenchStore } from '../workbenchStore';
 import { MageMark } from './MageMark';
 import { AppMenu } from './AppMenu';
@@ -33,6 +34,7 @@ const isMac = navigator.platform.toLowerCase().includes('mac');
 //   catalogo de acciones, asi que tambien hereda el tema. El nativo se conserva solo en macOS, donde la
 //   barra la pinta el SO y sus roles de edicion son los que hacen funcionar Cmd+C/Cmd+V.
 export function TitleBar(): React.JSX.Element {
+  const t = useT();
   const openSettings = useWorkbenchStore((s) => s.openSettings);
   // El menu desplegado SUSTITUYE al resto de la cabecera (cuentas y Preferencias) en vez de añadirse y
   // empujarlo a la derecha — peticion explicita del usuario tras el primer intento, y es como se
@@ -61,11 +63,11 @@ export function TitleBar(): React.JSX.Element {
       <button
         onClick={() => openSettings()}
         style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
-        data-tip="Mage · Configuración (Ctrl+,)"
+        data-tip={t('app.titleBar.settingsTip')}
         // El nombre lleva "Mage" a proposito: este control es el UNICO sitio de la ventana donde
         // aparece el nombre de la app desde que el texto "MAGE" se sustituyo por el logo, y al
         // convertirlo en boton de ajustes se perdio — lo canto la comprobacion de GUI, no el ojo.
-        aria-label="Mage · Configuración"
+        aria-label={t('app.titleBar.settingsLabel')}
         className="flex shrink-0 items-center rounded-[5px] p-[3px] text-mg-sec transition-colors duration-150 ease-out hover:bg-mg-hover hover:text-mg-body"
       >
         <MageMark size={18} />
@@ -124,15 +126,16 @@ function TitleBarIssueButton({
 // Aportar una idea. A diferencia del informe de fallo NO pide la version: `idea.yml` no tiene ese
 // campo, asi que no hay nada que prerrellenar y se ahorra el viaje por IPC (ver `buildIdeaUrl`).
 function IdeaButton(): React.JSX.Element {
+  const t = useT();
   return (
     <TitleBarIssueButton
       icon="sparkles"
-      tip="Aportar una idea en GitHub"
-      label="Aportar una idea o sugerencia (abre GitHub en el navegador)"
+      tip={t('app.titleBar.ideaTip')}
+      label={t('app.titleBar.ideaLabel')}
       onClick={() => {
         window.mage
           .openExternal(buildIdeaUrl())
-          .catch((err: unknown) => reportActionError('No se pudo abrir el formulario de idea', err, 'titlebar'));
+          .catch((err: unknown) => reportActionError(t('app.titleBar.ideaError'), err, 'titlebar'));
       }}
     />
   );
@@ -142,6 +145,7 @@ function IdeaButton(): React.JSX.Element {
 // THIRD-PARTY-NOTICES.txt (85 dependencias), y cruzar eso por IPC en cada arranque de la ventana para
 // leer un numero de version seria pagar un fichero por un dato. Aqui se paga solo quien informa.
 function BugReportButton(): React.JSX.Element {
+  const t = useT();
   const openReport = (): void => {
     void window.mage
       .getAbout()
@@ -156,14 +160,14 @@ function BugReportButton(): React.JSX.Element {
           buildBugReportUrl({ appVersion: about?.versions.app ?? null, platform: navigator.platform }),
         ),
       )
-      .catch((err: unknown) => reportActionError('No se pudo abrir el informe de fallo', err, 'titlebar'));
+      .catch((err: unknown) => reportActionError(t('app.titleBar.bugError'), err, 'titlebar'));
   };
 
   return (
     <TitleBarIssueButton
       icon="bug"
-      tip="Informar de un fallo en GitHub"
-      label="Informar de un fallo (abre GitHub en el navegador)"
+      tip={t('app.titleBar.bugTip')}
+      label={t('app.titleBar.bugLabel')}
       onClick={openReport}
     />
   );
