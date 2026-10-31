@@ -668,7 +668,9 @@ const CHECKS = [
         zonas.hilo = await page.evaluate(`(${recoger})(document.querySelector('[data-pane-tab-id="' + window.__mageDev.store.getState().activeTabId + '"]'))`);
         zonas.barraLateral = await page.evaluate(`(${recoger})(document.querySelector('[data-chat-projects]').parentElement.parentElement)`);
         await openSettingsDialog(page);
-        await openSection(page, /Apariencia/);
+        // Por id (no depende del idioma): en inglés la pestaña se llama «Appearance».
+        await page.locator('#settings-tab-appearance').click();
+        await page.waitForTimeout(150);
         zonas.configuracion = await page.evaluate(`(${recoger})(document.querySelector('${MODAL}'))`);
         await closeDialog(page);
         const CLAVE = /\b(?:app|chat|prompt|tabs|sidebar|settings|accounts|usage|mcp|history|notifications|dialogs|menu|tray|events|errors|host|format|a11y)\.[a-z][A-Za-z0-9]*(?:\.[A-Za-z0-9]+)+\b/g;
