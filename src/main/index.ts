@@ -1148,7 +1148,7 @@ const conversationFsDeps: ConversationsDeps = {
 };
 const conversationsService = new ConversationsService(conversationFsDeps);
 // Historial de las cuentas de Codex: sus rollouts, medidos con codex-cli 0.160.0.
-const codexHistory = new CodexHistoryService(conversationFsDeps);
+const codexHistory = new CodexHistoryService(conversationFsDeps, mainLog);
 // Historial de agy: las bases SQLite de los perfiles con los que Mage lo lanza (resumibles con `--conversation`).
 const agyHistory = new AgyHistoryService(createAgySqliteStore());
 

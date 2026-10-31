@@ -1,7 +1,7 @@
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AgyHistoryService } from './agyHistory';
 import { createAgySqliteStore, writeAgyConversationDb } from './agySqliteStore';
 import { CodexHistoryService } from './codexHistory';
@@ -35,7 +35,7 @@ function world() {
     readPrefix: (path: string, max: number) => readFileSync(path, 'utf8').slice(0, max),
     readSuffix: (path: string, max: number) => readFileSync(path, 'utf8').slice(-max),
   };
-  const codexHistory = new CodexHistoryService(fsDeps);
+  const codexHistory = new CodexHistoryService(fsDeps, vi.fn());
   const agyHistory = new AgyHistoryService(createAgySqliteStore());
   const deleted: string[] = [];
   const endpoints = createMigrationEndpoints({
