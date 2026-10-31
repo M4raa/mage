@@ -22,6 +22,7 @@ import { resolveKeyEvent } from '../keybindings/resolver';
 import { isMacPlatform } from '../keybindings/platform';
 import { effortChangeAdvice, modelChangeAdvice, type CostAdvice } from '../costAdvice';
 import { notify } from '../notificationStore';
+import { displayTitle } from '../conversationTitle';
 import { Dropdown } from './Dropdown';
 import { StepSlider } from './StepSlider';
 import { CODEX_DEFAULT_PROFILE, CODEX_WRITE_PROFILE, agyPermissionSteps, codexPermissionSteps, defaultModeOf, effectiveCodexMode, effortStepLabel, effortSteps, permissionModeLabel, permissionStepsFor } from '../stepSliderModel';
@@ -837,13 +838,13 @@ export function PromptBar(): React.JSX.Element {
 // Aviso de coste tras cambiar de modelo/esfuerzo (B1) y el de «Omitir permisos»: un toast POR PESTAÑA
 // (cambiar dos veces sustituye al anterior). El cuerpo dice de que pestaña es: con paneles divididos el
 // toast ya no esta pegado al control que lo provoco.
-function notifyCostAdvice(advice: CostAdvice | null, tabId: string): void {
+export function notifyCostAdvice(advice: CostAdvice | null, tabId: string): void {
   if (advice === null || tabId.length === 0) return;
   const title = useWorkbenchStore.getState().tabs.find((t) => t.id === tabId)?.title;
   notify({
     level: advice.severity === 'warn' ? 'warning' : 'info',
     title: advice.message,
-    ...(title === undefined ? {} : { body: title }),
+    ...(title === undefined ? {} : { body: displayTitle(title) }),
     dedupeKey: `cost-advice:${tabId}`,
     source: 'prompt',
   });
