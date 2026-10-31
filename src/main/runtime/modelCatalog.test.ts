@@ -46,7 +46,7 @@ describe('ModelCatalog.info', () => {
     const info = await catalog.info({ ...ENDPOINT, baseUrl: 'http://127.0.0.1:11434/v1' }, 'qwen');
 
     expect(info).toMatchObject({ contextWindow: OLLAMA_DEFAULT_CTX, contextSource: 'ollama', supportsTools: false });
-    expect(info.warning).toMatch(/OLLAMA_CONTEXT_LENGTH/);
+    expect(info.warning).toEqual({ key: 'events.runtime.ollamaContextLimited', values: { model: 'qwen', declared: '32768', loaded: String(OLLAMA_DEFAULT_CTX) } });
   });
 
   it('info_ollamaSmallModel_noWarning', async () => {

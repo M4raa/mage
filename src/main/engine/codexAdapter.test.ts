@@ -281,7 +281,7 @@ describe('CodexAdapter: turno', () => {
   it('normalize_turnoFallido_errorVisibleYResultDeError', () => {
     const events = codex().normalize(notification('turn/completed', { threadId: 't', turn: { id: 'u', items: [], status: 'failed', error: { message: 'cuota' } } }));
 
-    expect(events[0]).toMatchObject({ kind: 'error', message: expect.stringContaining('cuota') as unknown as string });
+    expect(events[0]).toMatchObject({ kind: 'error', localized: { key: 'events.codex.turnFailed', values: { detail: 'cuota' } } });
     expect(events[1]).toMatchObject({ kind: 'result', result: { isError: true, subtype: 'failed' } });
   });
 

@@ -95,6 +95,7 @@ import type {
 import { buildAboutInfo } from './about/aboutService';
 import type { MemoryFile } from '@shared/memory';
 import type { MageEvent, SlashCommandInfo } from '@shared/events';
+import { localized } from '@shared/i18n/localizedText';
 import type { ImageAttachment, ProviderProbeParams } from '@shared/ipc';
 import { base64ByteLength, validateAttachmentSet } from '@shared/attachments';
 import type { EffectiveSettings, InstructionsFile, ProjectFileContent, ReadProjectFileParams, WriteProjectFileParams } from '@shared/ipc';
@@ -534,7 +535,7 @@ const sessionManager = new SessionManager(
   (provider, base) =>
     createSessionFor(provider, base, {
       buildAdapter,
-      prepareCwd: cwd => ensureWorkingDirectory(cwd, scratchRoots(), { exists: path => existsSync(path) && statSync(path).isDirectory(), mkdir: path => { mkdirSync(path, { recursive: true }); } }) ? `Se ha recreado vacía la carpeta de borrador ${cwd}. Los archivos anteriores se perdieron.` : null,
+      prepareCwd: cwd => ensureWorkingDirectory(cwd, scratchRoots(), { exists: path => existsSync(path) && statSync(path).isDirectory(), mkdir: path => { mkdirSync(path, { recursive: true }); } }) ? localized('events.workspace.scratchRecreated', { path: cwd }) : null,
       buildRuntime: (id, runtimeBase) => buildRuntimeSession(id, runtimeBase, runtimeEnv()),
     }),
   {
@@ -2571,7 +2572,7 @@ function createSessionFromIpc(event: Electron.IpcMainInvokeEvent, params: Create
     const effectiveParams = { ...params, accountDir: configDir, projectInstructions };
     const sessionId = sessionCoordinator.create(effectiveParams, (payload) => relaySessionEvent(payload, { sender, configDir, accountDir: params.accountDir }), sender.id);
     stopSessionsWhenDestroyed(sender);
-    return { sessionId, configDir, ...(recreated ? { workspaceWarning: `Se ha recreado vacía la carpeta de borrador ${params.cwd}. La conversación se conserva; los archivos anteriores se perdieron.` } : {}) };
+    return { sessionId, configDir, ...(recreated ? { workspaceWarning: localized('events.workspace.scratchRecreatedKept', { path: params.cwd }) } : {}) };
   }
 
 function registerIpcHandlers(): void {
@@ -3676,6 +3677,7 @@ function startHost(mode: HostMode): Promise<void> {
     hostVersion: app.getVersion(),
     log: mainLog,
     newId: randomUUID,
+    translate: getUiLanguageService().translate,
     setTimer: (fn, ms) => {
       const timer = setTimeout(fn, ms);
       return () => clearTimeout(timer);

@@ -2,6 +2,7 @@ import type { MageEvent } from '@shared/events';
 import type { NotificationRule } from '@shared/settings';
 import type { NotificationTarget, NotifyParams } from '@shared/ipc';
 import type { NotifyLevel } from './notifications';
+import { renderLocalized } from '@shared/i18n/localizedText';
 import { t } from '../i18n/uiLanguage';
 
 // Contenido de una notificacion del SO derivado de un evento del motor (M2.3). PURO y testeable: la
@@ -82,7 +83,7 @@ export function notificationForEvent(event: MageEvent, context: NotificationCont
     case 'elicitation_request':
       return { title: t('notifications.event.mcpFormPending'), body: `${tabTitle}: ${event.request.server}` };
     case 'error':
-      return { title: t('notifications.event.conversationError'), body: `${tabTitle}: ${event.message}` };
+      return { title: t('notifications.event.conversationError'), body: `${tabTitle}: ${renderLocalized(t, event.localized)}` };
     case 'assistant_text':
       return matchAgainstRules(event.text, tabTitle, rules);
     case 'hook_fired':

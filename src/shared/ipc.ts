@@ -4,6 +4,7 @@
 
 import type { ConversationLockParams, ConversationLockRef, ConversationLockStatus } from './conversationLock';
 import type { ResolvedUiLanguage } from './i18n/language';
+import type { LocalizedText } from './i18n/localizedText';
 import type { GitParams, GitSnapshot, GitSwitchParams } from './git';
 import type { WorktreeCreateParams, WorktreeMergeBaseParams, WorktreeRemoveResult } from './worktree';
 import type { GhAutoMergeParams, GhPrUpdate, GhRunActionParams, GhRunsParams, GhRunsSnapshot, GhSnapshot, GhWatchParams } from './gh';
@@ -68,7 +69,7 @@ export interface RuntimeProbeResult {
   readonly models: readonly string[] | null;
   readonly contextWindow: number | null;
   readonly supportsTools: boolean | null;
-  readonly warning: string | null;
+  readonly warning: LocalizedText | null;
   readonly error: string | null;
 }
 
@@ -362,7 +363,7 @@ export interface CreateSessionParams {
 // Resultado de crear una sesion: el id y el config dir EFECTIVO con el que se lanzo (la cuenta o su
 // perfil privado). El renderer guarda el configDir en la pestana para localizar sus transcripciones.
 export interface CreateSessionResult {
-  readonly workspaceWarning?: string;
+  readonly workspaceWarning?: LocalizedText;
   readonly sessionId: string;
   readonly configDir: string;
 }

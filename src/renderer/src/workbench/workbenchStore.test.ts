@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MageApi } from '@shared/ipc';
 import type { ConversationSummary } from '@shared/conversations';
+import { foreignText } from '@shared/i18n/localizedText';
 import { createWorkbenchStore, type ConversationFolderChoice } from './workbenchStore';
 import { findLeafPath, singleLeaf } from './splitLayout';
 import { useNotificationStore } from './notificationStore';
@@ -1760,7 +1761,7 @@ describe('cola de mensajes', () => {
   it('queuedMessageFailed_errorEnElChatYElMensajeVuelveAlInput', () => {
     const { store } = mounted('idle');
 
-    store.getState().handleEvent('s-a', { kind: 'queued_message_failed', message: { id: 'q1', text: 'uno', attachments: [] }, error: 'proceso muerto' });
+    store.getState().handleEvent('s-a', { kind: 'queued_message_failed', message: { id: 'q1', text: 'uno', attachments: [] }, localized: foreignText('proceso muerto') });
 
     expect(store.getState().statusByChat.a).toBe('error');
     expect(store.getState().draftByChat.a?.text).toBe('uno');
@@ -2274,7 +2275,7 @@ it('R30_confiarPadre_guardaAmbasRutasYRevocarPersisteDenegacion', async () => {
 
 
 it('R32_avisoDeCarpetaRecreada_seMuestraEnLaConversacion', async () => {
- const store = createWorkbenchStore(fakeMage({ isFolderTrusted: vi.fn().mockResolvedValue(true), saveWorkspace: vi.fn().mockResolvedValue(undefined), saveConversationPrefs: vi.fn().mockResolvedValue(undefined), createSession: vi.fn().mockResolvedValue({ sessionId: 'fixture-recreated', configDir: 'C:/fixture', workspaceWarning: 'Carpeta recreada; archivos anteriores perdidos' }) }));
+ const store = createWorkbenchStore(fakeMage({ isFolderTrusted: vi.fn().mockResolvedValue(true), saveWorkspace: vi.fn().mockResolvedValue(undefined), saveConversationPrefs: vi.fn().mockResolvedValue(undefined), createSession: vi.fn().mockResolvedValue({ sessionId: 'fixture-recreated', configDir: 'C:/fixture', workspaceWarning: foreignText('Carpeta recreada; archivos anteriores perdidos') }) }));
  store.setState({ tabs: [tab('a')], activeTabId: 'a', splitLayout: singleLeaf('a') });
  await store.getState().ensureSession('a');
  expect(store.getState().blocksByChat.a).toEqual(expect.arrayContaining([expect.objectContaining({ kind: 'system', text: 'Carpeta recreada; archivos anteriores perdidos' })]));

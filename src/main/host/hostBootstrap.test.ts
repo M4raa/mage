@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createTranslator } from '@shared/i18n/translator';
 import { scrubAgentEnv } from '../os/agentEnv';
 import type { HostSessions } from './hostConnection';
 import { readHostMode, startLocalHost } from './hostBootstrap';
@@ -26,7 +27,7 @@ async function start(mode: 'gui' | 'headless' = 'gui', log = vi.fn()) {
   roots.push(userDataDir);
   const handle = await startLocalHost({
     platform: process.platform, userDataDir, xdgRuntimeDir: undefined, mode, fs, getuid: process.getuid?.bind(process),
-    sessions: sessions(), hostVersion: '0.1.3', log, newId: () => 'id', setTimer: (fn, ms) => { const t = setTimeout(fn, ms); return () => clearTimeout(t); },
+    sessions: sessions(), hostVersion: '0.1.3', log, newId: () => 'id', translate: createTranslator('es'), setTimer: (fn, ms) => { const t = setTimeout(fn, ms); return () => clearTimeout(t); },
   });
   handles.push(handle);
   return { userDataDir, handle };

@@ -4,6 +4,8 @@ import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { MageEvent } from '@shared/events';
+import { renderLocalized } from '@shared/i18n/localizedText';
+import { createTranslator } from '@shared/i18n/translator';
 import { AgentSession } from './agentSession';
 import { ClaudeAdapter } from './claudeAdapter';
 
@@ -34,7 +36,7 @@ describe('AgentSession (integracion, CLI real)', () => {
             } else if (event.kind === 'result') {
               resolve();
             } else if (event.kind === 'error') {
-              reject(new Error(event.message));
+              reject(new Error(renderLocalized(createTranslator('es'), event.localized)));
             }
           },
         });
@@ -85,7 +87,7 @@ describe('AgentSession (integracion, CLI real)', () => {
             events.push(event);
             // El desglose de contexto se pide AL cerrar el turno, asi que llega despues del result.
             if (event.kind === 'context_usage') resolve();
-            else if (event.kind === 'error') reject(new Error(event.message));
+            else if (event.kind === 'error') reject(new Error(renderLocalized(createTranslator('es'), event.localized)));
           },
         });
         session.start();

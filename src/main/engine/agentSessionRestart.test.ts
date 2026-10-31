@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { renderLocalized } from '@shared/i18n/localizedText';
+import { createTranslator } from '@shared/i18n/translator';
 import {
   emitLine,
   harness,
@@ -103,8 +105,9 @@ describe('AgentSession reinicio automatico (C1)', () => {
     const error = h.events.filter((e) => e.kind === 'error').at(-1);
     expect(error).toBeDefined();
     if (error?.kind !== 'error') throw new Error('se esperaba un evento error');
-    expect(error.message).toContain('no se reintenta');
-    expect(error.message).toContain('3 veces');
+    const text = renderLocalized(createTranslator('es'), error.localized);
+    expect(text).toContain('no se reintenta');
+    expect(text).toContain('3 veces');
     expect(h.children).toHaveLength(3); // no hubo un cuarto arranque
   });
 

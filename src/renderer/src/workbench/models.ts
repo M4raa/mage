@@ -5,6 +5,7 @@
 import type { CustomProvider, ProviderModel } from '@shared/providers';
 import { AGY_EFFORT_LEVELS, AGY_PROVIDER_ID, BUILT_IN_PROVIDERS, CODEX_PROVIDER_ID, CUSTOM_PROVIDER_ID_PREFIX, chatCompletionsUrl } from '@shared/providers';
 import { EFFORT_LEVELS, type RuntimeProbeResult } from '@shared/ipc';
+import { renderLocalized } from '@shared/i18n/localizedText';
 import { t } from '../i18n/uiLanguage';
 
 export type ModelOption = ProviderModel;
@@ -248,7 +249,7 @@ export function runtimeProbeSummary(result: RuntimeProbeResult): string {
     result.contextWindow === null ? t('prompt.models.probe.windowUnknown') : t('prompt.models.probe.window', { tokens: result.contextWindow }),
     result.supportsTools === null ? t('prompt.models.probe.toolsUnknown') : result.supportsTools ? t('prompt.models.probe.withTools') : t('prompt.models.probe.withoutTools'),
   ];
-  return `${t('prompt.models.probe.summary', { parts: parts.join(' · ') })}${result.warning === null ? '' : ` ${result.warning}`}`;
+  return `${t('prompt.models.probe.summary', { parts: parts.join(' · ') })}${result.warning === null ? '' : ` ${renderLocalized(t, result.warning)}`}`;
 }
 
 // '' = sin fijar (undefined); un numero valido; null = invalido.

@@ -3,6 +3,7 @@ import type { ImageAttachment } from '@shared/ipc';
 import { base64ByteLength, validateAttachment } from '@shared/attachments';
 import { buildUserContentBlocks } from '@shared/imageRefs';
 import type { MageEvent, PermissionDecision } from '@shared/events';
+import { localized } from '@shared/i18n/localizedText';
 import { parseElicitationRequest, type ElicitationAnswer } from '@shared/elicitation';
 import { resolveClaudeBinary } from '../os/claudeBinaryResolver';
 import { normalizeRawEvent } from './normalize';
@@ -249,7 +250,7 @@ export class ClaudeAdapter implements ProviderAdapter {
     });
     if (parsed !== null) return [{ kind: 'elicitation_request', request: parsed }];
     this.outgoing.push({ type: 'control_response', response: { subtype: 'success', request_id: requestId, response: { action: 'cancel' } } });
-    return [{ kind: 'notice', text: `El servidor ${server} pidió un formulario MCP que Mage no puede mostrar; se canceló.` }];
+    return [{ kind: 'notice', localized: localized('events.mcp.elicitationUnsupported', { server }) }];
   }
 }
 

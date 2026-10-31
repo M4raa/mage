@@ -1,6 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { renderLocalized } from '@shared/i18n/localizedText';
+import { createTranslator } from '@shared/i18n/translator';
 import { deriveConversationMeta } from '../conversations/conversationMeta';
 import { TranscriptAssistantLineSchema, TranscriptLineEnvelopeSchema, TranscriptUserLineSchema } from '../transcripts/schemas';
 import type { LoopEvent, TurnOutcome } from './agentLoop';
@@ -228,7 +230,7 @@ describe('reanudar en modo texto y con Zod (M3, M6, M7)', () => {
       },
       now: () => 0,
       newId: () => 'u',
-      onWriteFailure: (text) => notices.push(text),
+      onWriteFailure: (text) => notices.push(renderLocalized(createTranslator('es'), text)),
     });
 
     writer.user('a');

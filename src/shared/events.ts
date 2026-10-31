@@ -8,6 +8,7 @@ import type { QueuedMessage } from './coordination';
 import type { ProviderModel } from './providers';
 import type { ElicitationRequest } from './elicitation';
 import type { SubagentRunInfo } from './subagentRun';
+import type { LocalizedText } from './i18n/localizedText';
 
 // Estado del worker de una sesion (espejo neutral de session_state_changed del CLI).
 export type SessionState = 'idle' | 'running' | 'requires_action';
@@ -214,6 +215,7 @@ export type MageEvent =
   // convierte en un error visible; si era telemetria nuestra (registrar hooks, pedir el desglose de
   // contexto) se queda en el log, porque ensuciar la conversacion con un fallo que el usuario no ha
   // provocado —y que en un CLI de otra version pasaria en CADA arranque— seria peor que el fallo.
+  // Dato/texto ajeno: no se traduce (F3.3, INFORME-033 §4).
   | { readonly kind: 'control_error'; readonly requestId: string; readonly message: string }
   // Compactacion de contexto completada (M2.4): system/compact_boundary del CLI. trigger:
   // 'manual' (/compact) o 'auto' (umbral del CLI); string laxo por si aparecen valores nuevos.
@@ -227,6 +229,7 @@ export type MageEvent =
   // `summary` es ESE texto, tal cual: el CLI es el unico que sabe cuando se restablece y en que zona.
   // `resetsAtMs` queda en null mientras no se mida un campo con la marca de tiempo — deducirla del
   // texto seria inventarla.
+  // Dato/texto ajeno: no se traduce (F3.3, INFORME-033 §4).
   | { readonly kind: 'rate_limit'; readonly summary: string; readonly resetsAtMs: number | null }
   // Foto del consumo de la suscripcion que el CLI emite SOLO, sin que Mage pregunte a ningun
   // endpoint. MEDIDO el 2026-09-14 contra el CLI 2.1.270 (Fase 9, S3): llega en un turno normal
@@ -266,20 +269,20 @@ export type MageEvent =
   | { readonly kind: 'conversation_reset'; readonly newSessionId: string }
   // Aviso del runtime propio de Mage (P-032) que va al hilo como linea de sistema: p.ej. «este modelo
   // no admite herramientas». Los CLI no lo emiten: sus avisos llegan por sus propios eventos.
-  | { readonly kind: 'notice'; readonly text: string }
+  | { readonly kind: 'notice'; readonly localized: LocalizedText }
   // Un servidor MCP remoto del runtime propio pide iniciar sesion (D3 de P-033): el renderer avisa con un
   // boton que abre el login (`openMcpLogin(loginId)`). Mage no abre el navegador por su cuenta.
   | { readonly kind: 'mcp_login_required'; readonly server: string; readonly loginId: string }
   | { readonly kind: 'result'; readonly result: ResultInfo }
   // `deniedCommand`: la linea EXACTA de un comando que agy denego (grupo E, fase 2), para ofrecer permitirlo
   // en la conversacion siguiente. Solo cuando el CLI la dice.
-  | { readonly kind: 'error'; readonly message: string; readonly deniedCommand?: string }
+  | { readonly kind: 'error'; readonly localized: LocalizedText; readonly deniedCommand?: string }
   // Cola de Mage (F2.2): los emite la coordinación de main, no un proveedor. `queue_changed` lleva la cola
   // ENTERA tras cada cambio; `queued_message_sent`, el primero que acaba de salir como turno propio; y
   // `queued_message_failed`, el que no se pudo enviar (vuelve al usuario).
   | { readonly kind: 'queue_changed'; readonly queue: readonly QueuedMessage[] }
   | { readonly kind: 'queued_message_sent'; readonly message: QueuedMessage }
-  | { readonly kind: 'queued_message_failed'; readonly message: QueuedMessage; readonly error: string }
+  | { readonly kind: 'queued_message_failed'; readonly message: QueuedMessage; readonly localized: LocalizedText }
   // Un permiso (o pregunta) se contestó (F2.3): lo emite la coordinación de main al aceptar LA respuesta, para
   // que todo cliente cierre su tarjeta, también el que no contestó.
   // `answers`: las respuestas de una PREGUNTA (AskUserQuestion), para que otro cliente cierre su tarjeta con ellas.
@@ -288,6 +291,7 @@ export type MageEvent =
   // (`blocked`: el comando denegado; null si lo permitió una regla). Ese permiso NO se anunció a los clientes.
   // Una sesion en segundo plano que nadie reclamo caduca (F2.4): main la para justo despues de este evento.
   | { readonly kind: 'background_expired' }
+  // Dato/texto ajeno: no se traduce (F3.3, INFORME-033 §4).
   | { readonly kind: 'permission_auto_answered'; readonly requestId: string; readonly toolName: string; readonly behavior: 'allow' | 'deny'; readonly blocked: string | null };
 
 // Decision del usuario ante un permiso (viaja renderer -> main -> CLI).

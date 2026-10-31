@@ -1,5 +1,6 @@
 import type { ImageAttachment } from '@shared/ipc';
 import type { MageEvent, PermissionDecision } from '@shared/events';
+import { localized } from '@shared/i18n/localizedText';
 import { parseElicitationRequest, validateElicitationAnswer, type ElicitationAnswer, type ElicitationRequest } from '@shared/elicitation';
 import { parseCodexPermissionPreset } from '@shared/codexPermissions';
 import { resolveCodexBinary } from '../os/codexBinaryResolver';
@@ -272,7 +273,7 @@ export class CodexAdapter implements ProviderAdapter {
   // conversacion; uno del arranque o del turno si se pinta.
   private onError(kind: OwnRequest, error: Record<string, unknown>): MageEvent[] {
     if (kind === 'models' || kind === 'rateLimits' || kind === 'other') return [];
-    return [{ kind: 'error', message: `codex rechazo la peticion (${kind}): ${String(error.message)}` }];
+    return [{ kind: 'error', localized: localized('events.codex.requestRejected', { kind, detail: String(error.message) }) }];
   }
 
   private afterInitialize(): MageEvent[] {
@@ -289,7 +290,7 @@ export class CodexAdapter implements ProviderAdapter {
 
   private afterThread(result: unknown): MageEvent[] {
     const thread = isRecord(result) && isRecord(result.thread) ? result.thread : null;
-    if (thread === null || typeof thread.id !== 'string') return [{ kind: 'error', message: 'codex abrio el hilo sin id' }];
+    if (thread === null || typeof thread.id !== 'string') return [{ kind: 'error', localized: localized('events.codex.threadWithoutId') }];
     this.threadId = thread.id;
     const model = isRecord(result) && typeof result.model === 'string' ? result.model : this.model;
     const queued = this.queuedInputs;
@@ -309,7 +310,7 @@ export class CodexAdapter implements ProviderAdapter {
       const request = parseElicitationRequest(requestId, server, params);
       if (request === null) {
         this.outgoing.push({ jsonrpc: '2.0', id: rawId, result: { action: 'cancel', content: null } });
-        return [{ kind: 'notice', text: `El servidor ${server} pidió un formulario MCP que Mage no puede mostrar; se canceló.` }];
+        return [{ kind: 'notice', localized: localized('events.mcp.elicitationUnsupported', { server }) }];
       }
       this.elicitations.set(requestId, { rawId, request });
       return [{ kind: 'elicitation_request', request }];

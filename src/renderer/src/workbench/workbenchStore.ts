@@ -133,6 +133,7 @@ import { recentProjects, RECENT_PROJECTS_LIMIT } from './recentProjects';
 import { projectForRow } from './chatProjects';
 import { isWindowsPlatform } from './keybindings/platform';
 import { describeError } from './describeError';
+import { renderLocalized } from '@shared/i18n/localizedText';
 import { t } from '../i18n/uiLanguage';
 
 // Contexto en placeholder hasta M1.3 (el uso/contexto real llega con UsageService).
@@ -1144,7 +1145,7 @@ async function createSessionFor(
       sessionIdByChat: { ...s.sessionIdByChat, [tabId]: sessionId },
       tabs: s.tabs.map((t) => (t.id === tabId ? { ...t, resolvedConfigDir: configDir } : t)),
     }));
-    if (workspaceWarning !== undefined) patchBlocks(set, tabId, blocks => [...blocks, { kind: 'system', id: nextBlockId(), text: workspaceWarning }]);
+    if (workspaceWarning !== undefined) patchBlocks(set, tabId, blocks => [...blocks, { kind: 'system', id: nextBlockId(), text: renderLocalized(t, workspaceWarning) }]);
     schedulePersist(mage, get); // ya hay sesion viva: persistir su id para poder reanudar en el futuro
     // Es el momento en que una conversacion NUEVA estrena `sessionId`: hasta ahora no habia a que
     // asociar sus preferencias (2.1).
@@ -2638,7 +2639,7 @@ export function createWorkbenchStore(mage: MageClient) {
       // pudo enviarlo, vuelve al input con el error.
       if (event.kind === 'queued_message_sent') beginTurnLocally(mage, get, set, tabId, event.message.text, event.message.attachments);
       if (event.kind === 'queued_message_failed') {
-        failChat(set, tabId, event.error);
+        failChat(set, tabId, renderLocalized(t, event.localized));
         restoreDraftAfterFailedSend(set, tabId, event.message.text, event.message.attachments);
       }
       // Comandos locales con efecto en la pestaña (P-028): `/rename` la renombra al instante y `/clear`
@@ -2991,7 +2992,7 @@ export function reduceEvent(state: WorkbenchState, tabId: string, event: MageEve
     case 'permission_mode':
       return { tabs: state.tabs.map((t) => (t.id === tabId ? { ...t, permissionMode: event.mode } : t)) };
     case 'error': {
-      const next = appendErrorBlock(closeStreaming(blocks, streamingId), event.message, nextBlockId(), event.deniedCommand);
+      const next = appendErrorBlock(closeStreaming(blocks, streamingId), renderLocalized(t, event.localized), nextBlockId(), event.deniedCommand);
       return {
         ...withBlocks(state, tabId, next),
         streamingIdByChat: { ...state.streamingIdByChat, [tabId]: null },

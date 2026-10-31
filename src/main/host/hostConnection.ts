@@ -3,6 +3,7 @@ import type { PermissionDecision } from '@shared/events';
 import type { ElicitationAnswer } from '@shared/elicitation';
 import type { AnswerReceipt, ConversationSnapshot, QueuedMessage, SendReceipt } from '@shared/coordination';
 import type { SendMessageParams } from '@shared/ipc';
+import type { Translate } from '@shared/i18n/translator';
 import type { SessionLogFn } from '../engine/agentSession';
 import type { SequencedSessionEvent } from '../coordination/sessionCoordinator';
 import { MAX_LINE_BYTES, NdjsonFramer } from './ndjsonFramer';
@@ -18,6 +19,7 @@ import {
   protocolMismatch,
   REQUEST_ENVELOPE_SCHEMA,
   resultResponse,
+  withLegacyText,
   type HostErrorBody,
   type HostMethod,
   type RequestEnvelope,
@@ -61,6 +63,8 @@ export interface HostConnectionDeps {
   // Temporizador cancelable: el plazo para el `hello`.
   readonly setTimer: (fn: () => void, ms: number) => () => void;
   readonly maxLineBytes?: number;
+  // Idioma de main: con él se traduce el campo de siempre de los eventos con `localized` (clientes 1.0).
+  readonly translate: Translate;
 }
 
 // Una conexión que no se identifica en este tiempo se cierra: no puede retener un socket sin dar el token.
@@ -224,7 +228,7 @@ export class HostConnection {
       this.fail(null, { code: HostErrorCode.SlowConsumer, message: 'No lees los eventos a tiempo: se cierra la conexión' });
       return;
     }
-    this.transport.write(notification('event', { subscriptionId, ...event }));
+    this.transport.write(notification('event', { subscriptionId, ...event, event: withLegacyText(event.event, this.deps.translate) }));
   }
 
   private reply(id: RequestId | undefined, error: HostErrorBody): void {

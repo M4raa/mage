@@ -35,13 +35,14 @@ export const DEFAULT_RESTART_POLICY: RestartPolicy = {
 };
 
 export type RestartDecision =
-  // No hay nada que reiniciar (salida intencionada).
-  | { readonly action: 'none'; readonly reason: string }
+  // No hay nada que reiniciar: fallo determinista de arranque o salida intencionada (el consumidor elige la frase).
+  | { readonly action: 'none'; readonly reason: 'startup_failure' | 'intentional' }
   // Relanzar tras `delayMs`. `attempt` es el numero de intento que se va a consumir (1-based) y
   // `streakReset` avisa de que la racha anterior se descarto por haber sido un proceso sano.
   | { readonly action: 'restart'; readonly delayMs: number; readonly attempt: number; readonly streakReset: boolean }
   // Agotados los intentos: el consumidor reporta el error y deja la pestana en manos del usuario.
-  | { readonly action: 'give_up'; readonly reason: string };
+  // Lleva los DATOS (no la frase): cuantas veces murio y como fue el ultimo cierre.
+  | { readonly action: 'give_up'; readonly attempts: number; readonly lastCode: string; readonly lastSignal: string };
 
 export function decideRestart(
   context: RestartContext,
@@ -49,9 +50,9 @@ export function decideRestart(
 ): RestartDecision {
   assertValid(context, policy);
 
-  if (context.launchErrorCode === 'ENOENT' || context.launchErrorCode === 'ENOTDIR' || context.launchErrorCode === 'EACCES') return { action: 'none', reason: 'fallo determinista de arranque' };
+  if (context.launchErrorCode === 'ENOENT' || context.launchErrorCode === 'ENOTDIR' || context.launchErrorCode === 'EACCES') return { action: 'none', reason: 'startup_failure' };
   if (context.intentional) {
-    return { action: 'none', reason: 'la sesion se detuvo a proposito' };
+    return { action: 'none', reason: 'intentional' };
   }
   // Proceso que vivio lo suficiente: la muerte no es un fallo de arranque encadenado, asi que la
   // racha vuelve a empezar y se reintenta ya (con la espera base).
@@ -61,9 +62,9 @@ export function decideRestart(
   if (context.attempt >= policy.maxAttempts) {
     return {
       action: 'give_up',
-      reason:
-        `el proceso murio ${context.attempt + 1} veces seguidas sin llegar a arrancar bien ` +
-        `(ultimo cierre: code=${context.exitCode ?? 'none'}, signal=${context.signal ?? 'none'})`,
+      attempts: context.attempt + 1,
+      lastCode: String(context.exitCode ?? 'none'),
+      lastSignal: context.signal ?? 'none',
     };
   }
   return {

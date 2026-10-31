@@ -1,4 +1,5 @@
 import type { McpServerStatus } from '@shared/events';
+import { localized, type LocalizedText } from '@shared/i18n/localizedText';
 import type { ResolvedMcpServer } from '../../config/mcpResolved';
 import type { RuntimeTool } from '../tools/types';
 import { mcpRuntimeTool, type McpCallResult, type McpToolInfo } from './mcpTools';
@@ -38,7 +39,7 @@ export class McpNeedsAuth extends Error {
 export interface McpPoolDeps {
   readonly connect: McpConnector;
   // Avisos para el hilo de la conversacion (un servidor que pide login, uno que falla).
-  readonly notify: (text: string) => void;
+  readonly notify: (text: LocalizedText) => void;
   // Un remoto pide iniciar sesion: la sesion lo dice con un aviso que lleva el boton (D3 de P-033).
   readonly loginRequired: (server: string, loginId: string) => void;
   // Se llama cuando cambian las herramientas o el estado (para volver a anunciar `session_init`).
@@ -106,7 +107,7 @@ export class McpPool {
       if (this.closed) return;
       const message = err instanceof Error ? err.message : String(err);
       this.deps.log?.('warn', 'Servidor MCP del runtime sin conectar', { server: server.name, message });
-      this.deps.notify(`El servidor MCP ${server.name} no se pudo conectar: ${message}`);
+      this.deps.notify(localized('events.mcp.connectFailed', { server: server.name, detail: message }));
     } finally {
       if (!this.closed) this.deps.onChange();
     }
@@ -130,7 +131,7 @@ export class McpPool {
       () => (this.closed ? undefined : this.connectOne(server)),
       (err: unknown) => {
         entry.status = 'failed';
-        this.deps.notify(`No se completó el inicio de sesión de ${server.name}: ${err instanceof Error ? err.message : String(err)}`);
+        this.deps.notify(localized('events.mcp.loginIncomplete', { server: server.name, detail: err instanceof Error ? err.message : String(err) }));
         if (!this.closed) this.deps.onChange();
       },
     );

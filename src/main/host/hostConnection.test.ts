@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { ConversationSnapshot } from '@shared/coordination';
+import { localized } from '@shared/i18n/localizedText';
+import { createTranslator } from '@shared/i18n/translator';
 import type { SequencedSessionEvent } from '../coordination/sessionCoordinator';
 import { HELLO_DEADLINE_MS, HostConnection, MAX_BUFFERED_BYTES, type HostSessions, type HostTransport } from './hostConnection';
 import { HOST_PROTOCOL, HostErrorCode } from './hostProtocol';
@@ -29,7 +31,7 @@ function harness(options: { sessions?: Partial<HostSessions>; maxLineBytes?: num
   const log = vi.fn();
   let ids = 0;
   const connection = new HostConnection(transport, {
-    sessions, token: TOKEN, hostVersion: '0.1.3', log, newId: () => `sub-${++ids}`,
+    sessions, token: TOKEN, hostVersion: '0.1.3', log, newId: () => `sub-${++ids}`, translate: createTranslator('es'),
     setTimer: (fn, ms) => { const timer = { fn, ms, cancelled: false }; timers.push(timer); return () => { timer.cancelled = true; }; },
     ...(options.maxLineBytes === undefined ? {} : { maxLineBytes: options.maxLineBytes }),
   });
@@ -267,6 +269,27 @@ describe('HostConnection — métodos', () => {
     const [, subscribed, pushed] = h.lines();
     expect(subscribed!.result).toEqual({ subscriptionId: 'sub-1', snapshot: SNAPSHOT });
     expect(pushed).toEqual({ jsonrpc: '2.0', method: 'event', params: { subscriptionId: 'sub-1', ...EVENT } });
+  });
+
+  // F3.3: el host habla 1.1 y el evento lleva `localized` Y el campo de siempre ya traducido.
+  const NOTICE: SequencedSessionEvent = { ...EVENT, event: { kind: 'notice', localized: localized('events.runtime.nothingToCompact') } };
+  const pushedEvent = (protocol: string) => {
+    const h = harness();
+    h.hello({ protocol });
+    h.send({ jsonrpc: '2.0', id: 2, method: 'session.subscribe', params: { sessionId: 's1' } });
+    h.sinks[0]!.sink(NOTICE);
+    return h.lines().at(-1)!.params.event;
+  };
+
+  it('pushEvent_clienteProtocolo10_recibeTextoTraducido', () => {
+    expect(pushedEvent('1.0')).toMatchObject({ kind: 'notice', text: 'No hay nada que compactar todavía.' });
+  });
+
+  it('pushEvent_clienteProtocolo11_recibeLocalized', () => {
+    const event = pushedEvent('1.1');
+
+    expect(event.localized.key).toBe('events.runtime.nothingToCompact');
+    expect(event.text).toBe('No hay nada que compactar todavía.');
   });
 
   it('session.unsubscribe_suscripcionViva_laSueltaYNoLlegaMas', () => {

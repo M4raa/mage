@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ContextUsage, MageEvent } from '@shared/events';
+import { foreignText, localized } from '@shared/i18n/localizedText';
 import { reduceEvent, type WorkbenchState } from './workbenchStore';
 import type { Block, Tab } from './types';
 
@@ -60,8 +61,20 @@ describe('reduceEvent — streaming y bloques', () => {
     expect(patch).toEqual({});
   });
 
+  it('reduceEvent_errorConLocalized_bloqueErrorEnCastellano', () => {
+    const patch = reduceEvent(state(), TAB, { kind: 'error', localized: localized('events.codex.threadWithoutId') });
+
+    expect(blocksOf(patch).at(-1)).toMatchObject({ kind: 'error', message: 'codex abrio el hilo sin id' });
+  });
+
+  it('reduceEvent_noticeConLocalized_lineaDeSistemaEnCastellano', () => {
+    const patch = reduceEvent(state(), TAB, { kind: 'notice', localized: localized('events.runtime.nothingToCompact') });
+
+    expect(blocksOf(patch).at(-1)).toMatchObject({ kind: 'system', text: 'No hay nada que compactar todavía.' });
+  });
+
   it('reduceEvent_error_pintaBloqueDeErrorYDejaLaPestanaEnError', () => {
-    const patch = reduceEvent(state(), TAB, { kind: 'error', message: 'boom' });
+    const patch = reduceEvent(state(), TAB, { kind: 'error', localized: foreignText('boom') });
 
     expect(blocksOf(patch).at(-1)).toMatchObject({ kind: 'error', message: 'boom' });
     expect(patch.statusByChat?.[TAB]).toBe('error');
