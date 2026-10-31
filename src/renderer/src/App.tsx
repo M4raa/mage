@@ -45,6 +45,7 @@ import { startConversationLockSync } from './workbench/conversationLockSync';
 import { RELEASE_NOTES_TAB_ID } from './workbench/releaseNotes';
 import { usePanelLayoutStore } from './workbench/panelLayoutStore';
 import { useGlobalKeybindings } from './workbench/keybindings/useGlobalKeybindings';
+import { useT } from './i18n/uiLanguage';
 
 // Asidero de desarrollo para `pnpm verify:gui` (deja hidratar el chat sin gastar un turno real). El
 // import es DINAMICO y bajo `import.meta.env.DEV`, que Vite reemplaza por `false` al construir: la rama
@@ -101,6 +102,7 @@ function SplitLayoutView({
   readonly activeTabId: string;
   readonly hasSplit: boolean;
 }): React.JSX.Element {
+  const t = useT();
   const resizeSplitAt = useWorkbenchStore((s) => s.resizeSplitAt);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -162,7 +164,7 @@ function SplitLayoutView({
           const total = caja === undefined ? 0 : layout.direction === 'row' ? caja.width : caja.height;
           resizeSplitAt(path, ratio, total);
         }}
-        ariaLabel="Redimensionar la división de paneles"
+        ariaLabel={t('app.splitLayout.resizeHandleLabel')}
       />
       <div className={paneClass} style={{ ...paneMin, flexGrow: `var(${SPLIT_B_VAR})`, flexBasis: 0 }}>
         <SplitLayoutView layout={layout.b} path={[...path, 'b']} activeTabId={activeTabId} hasSplit={hasSplit} />

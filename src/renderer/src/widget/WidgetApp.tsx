@@ -3,6 +3,7 @@ import { MageMark } from '../workbench/components/MageMark';
 import { Icon } from '../workbench/components/Icon';
 import type { WidgetAgent, WidgetAgentStatus, WidgetAlert, WidgetSnapshot, WidgetUsageWindow } from '@shared/widget';
 import { severityForPct, type UsageSeverity } from '../workbench/usageView';
+import { useT } from '../i18n/uiLanguage';
 import { applyCustomThemeTokens, applyResolvedTheme, clearCustomThemeTokens } from '../workbench/theme';
 
 // Color y etiqueta corta de cada estado de agente (paleta monocroma del proyecto + acentos de alerta).
@@ -12,12 +13,12 @@ const STATUS_COLOR: Record<WidgetAgentStatus, string> = {
   error: 'var(--mg-crit)',
   idle: 'var(--color-mg-idle)',
 };
-const STATUS_LABEL: Record<WidgetAgentStatus, string> = {
-  streaming: 'trabajando',
-  needs_permission: 'permiso',
-  error: 'error',
-  idle: 'en espera',
-};
+const STATUS_LABEL = {
+  streaming: 'app.widget.statusStreaming',
+  needs_permission: 'app.widget.statusNeedsPermission',
+  error: 'app.widget.statusError',
+  idle: 'app.widget.statusIdle',
+} as const satisfies Record<WidgetAgentStatus, string>;
 
 // Color de relleno de la barra de uso segun severidad (medidor de salud: claro=ok, ambar=aviso, rojo=critico).
 const SEVERITY_COLOR: Record<UsageSeverity, string> = {
@@ -59,6 +60,7 @@ export function WidgetApp(): React.JSX.Element {
 }
 
 function WidgetHeader(): React.JSX.Element {
+  const t = useT();
   return (
     <div
       style={DRAG}
@@ -68,7 +70,7 @@ function WidgetHeader(): React.JSX.Element {
       <button
         style={NO_DRAG}
         onClick={() => void window.mage.setWidgetEnabled(false)}
-        title="Ocultar widget"
+        title={t('app.widget.hide')}
         className="text-[13px] leading-none text-mg-muted hover:text-mg-body"
       >
         ✕
@@ -96,11 +98,12 @@ function AlertList({ alerts }: { readonly alerts: readonly WidgetAlert[] }): Rea
 }
 
 function AgentList({ agents }: { readonly agents: readonly WidgetAgent[] }): React.JSX.Element {
+  const t = useT();
   return (
     <div className="flex flex-col gap-[4px]">
-      <SectionTitle>AGENTES</SectionTitle>
+      <SectionTitle>{t('app.widget.agentsTitle')}</SectionTitle>
       {agents.length === 0 ? (
-        <div className="px-[2px] py-[4px] text-[10.5px] text-mg-muted">No hay conversaciones abiertas.</div>
+        <div className="px-[2px] py-[4px] text-[10.5px] text-mg-muted">{t('app.widget.noConversations')}</div>
       ) : (
         agents.map((agent) => <AgentRow key={agent.tabId} agent={agent} />)
       )}
@@ -109,10 +112,11 @@ function AgentList({ agents }: { readonly agents: readonly WidgetAgent[] }): Rea
 }
 
 function AgentRow({ agent }: { readonly agent: WidgetAgent }): React.JSX.Element {
+  const t = useT();
   return (
     <button
       onClick={() => window.mage.activateWidgetTab(agent.tabId)}
-      title={`Ir a ${agent.title} (${agent.accountAlias})`}
+      title={t('app.widget.goToAgent', { title: agent.title, account: agent.accountAlias })}
       className="flex items-center gap-[8px] rounded-[7px] bg-mg-block px-[8px] py-[6px] text-left hover:bg-mg-hover"
     >
       <span className="h-[8px] w-[8px] shrink-0 rounded-[2px]" style={{ background: agent.accentBase }} />
@@ -122,19 +126,20 @@ function AgentRow({ agent }: { readonly agent: WidgetAgent }): React.JSX.Element
       </span>
       <span className="flex shrink-0 items-center gap-[4px] text-[9.5px]" style={{ color: STATUS_COLOR[agent.status] }}>
         <span className="h-[6px] w-[6px] rounded-full" style={{ background: STATUS_COLOR[agent.status] }} />
-        {STATUS_LABEL[agent.status]}
+        {t(STATUS_LABEL[agent.status])}
       </span>
     </button>
   );
 }
 
 function UsageBlock({ usage }: { readonly usage: WidgetSnapshot['usage'] }): React.JSX.Element | null {
+  const t = useT();
   if (usage === null) return null;
   return (
     <div className="flex flex-col gap-[6px]">
-      <SectionTitle>USO</SectionTitle>
+      <SectionTitle>{t('app.widget.usageTitle')}</SectionTitle>
       <UsageBar label="5 h" usage={usage.fiveHour} />
-      <UsageBar label="Semanal" usage={usage.weekly} />
+      <UsageBar label={t('app.widget.weeklyBar')} usage={usage.weekly} />
     </div>
   );
 }

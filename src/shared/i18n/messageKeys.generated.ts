@@ -126,6 +126,7 @@ export interface MessageValues {
   readonly "accounts.switcher.add": never;
   readonly "accounts.switcher.groupAria": never;
   readonly "accounts.vendor.local": never;
+  readonly "app.errorBoundary.title": never;
   readonly "app.prBar.autoFix": never;
   readonly "app.prBar.autoFixTip": never;
   readonly "app.prBar.autoMerge": never;
@@ -159,6 +160,7 @@ export interface MessageValues {
   readonly "app.prBar.runsLabel": never;
   readonly "app.prBar.unbindLabel": { readonly "number": string | number };
   readonly "app.prBar.unbindTip": never;
+  readonly "app.splitLayout.resizeHandleLabel": never;
   readonly "app.statusBar.apiNoTurns": never;
   readonly "app.statusBar.apiUsage": { readonly "cost": string | number; readonly "tokens": string | number };
   readonly "app.statusBar.incidentImpact": { readonly "impact": string | number; readonly "status": string | number };
@@ -185,6 +187,18 @@ export interface MessageValues {
   readonly "app.titleBar.ideaTip": never;
   readonly "app.titleBar.settingsLabel": never;
   readonly "app.titleBar.settingsTip": never;
+  readonly "app.widget.agentsTitle": never;
+  readonly "app.widget.goToAgent": { readonly "account": string | number; readonly "title": string | number };
+  readonly "app.widget.hide": never;
+  readonly "app.widget.noConversations": never;
+  readonly "app.widget.statusError": never;
+  readonly "app.widget.statusIdle": never;
+  readonly "app.widget.statusNeedsPermission": never;
+  readonly "app.widget.statusStreaming": never;
+  readonly "app.widget.usageAlert": { readonly "pct": string | number; readonly "window": string | number };
+  readonly "app.widget.usageTitle": never;
+  readonly "app.widget.weeklyBar": never;
+  readonly "app.widget.weeklyWindow": never;
   readonly "chat.activity.closeDetail": never;
   readonly "chat.activity.closeStepDetail": never;
   readonly "chat.activity.decision.allowed": never;

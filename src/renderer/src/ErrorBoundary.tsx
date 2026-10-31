@@ -1,5 +1,6 @@
 import { Component } from 'react';
 import type { ErrorInfo, ReactNode } from 'react';
+import { t } from './i18n/uiLanguage';
 
 interface ErrorBoundaryProps {
   readonly children: ReactNode;
@@ -54,7 +55,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
         }}
       >
         <h1 style={{ color: 'var(--color-mg-text)', fontSize: '14px', fontWeight: 700, marginBottom: '12px' }}>
-          Mage — el renderer ha fallado al montar
+          {t('app.errorBoundary.title')}
         </h1>
         <p style={{ color: 'var(--color-mg-danger)', marginBottom: '12px' }}>{error.message}</p>
         <pre style={{ whiteSpace: 'pre-wrap', color: 'var(--color-mg-ter)' }}>{error.stack}</pre>

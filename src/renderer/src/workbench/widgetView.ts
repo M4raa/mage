@@ -7,6 +7,7 @@ import type {
 } from '@shared/widget';
 import type { Account, ChatStatus, Tab } from './types';
 import { severityForPct, type UsageSeverity } from './usageView';
+import { t } from '../i18n/uiLanguage';
 
 // Mapeo PURO del estado del workbench al snapshot compacto del WIDGET FLOTANTE (M3). Sin efectos ni
 // dependencia del reloj (los labels de uso ya vienen formateados en account.usage). Se testea aparte.
@@ -89,13 +90,13 @@ function buildAlerts(input: WidgetViewInput, activeAccount: Account | undefined)
 function usageAlerts(account: Account): readonly WidgetAlert[] {
   const windows: readonly { readonly label: string; readonly pct: number }[] = [
     { label: '5h', pct: account.usage.fiveHour.pct },
-    { label: 'semanal', pct: account.usage.weekly.pct },
+    { label: t('app.widget.weeklyWindow'), pct: account.usage.weekly.pct },
   ];
   const alerts: WidgetAlert[] = [];
   for (const window of windows) {
     const severity = severityForPct(window.pct);
     if (severity !== 'ok') {
-      alerts.push({ kind: 'usage', severity: mapSeverity(severity), text: `Uso ${window.label} ${window.pct}%` });
+      alerts.push({ kind: 'usage', severity: mapSeverity(severity), text: t('app.widget.usageAlert', { window: window.label, pct: window.pct }) });
     }
   }
   return alerts;
