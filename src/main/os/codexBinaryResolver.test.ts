@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { codexCommandName, findCodexBinary, type CodexResolverDeps } from './codexBinaryResolver';
+import { codexCommandName, codexSpawnCommand, findCodexBinary, type CodexResolverDeps } from './codexBinaryResolver';
 
 // Mismo contrato que los resolutores de Claude y `agy`: override -> candidato por SO -> PATH -> null.
 // El `null` importa tanto como el hallazgo: es lo que decide que Proveedores NO liste Codex.
@@ -71,5 +71,53 @@ describe('findCodexBinary', () => {
     // El caso que de verdad importa: es lo que hace que Proveedores no liste a Codex.
     expect(findCodexBinary(POSIX)).toBeNull();
     expect(findCodexBinary(WIN)).toBeNull();
+  });
+});
+
+const SCRIPT = 'C:\\repo\\scripts\\fake-codex-app-server.mjs';
+const ELECTRON = 'C:\\repo\\node_modules\\electron\\dist\\electron.exe';
+const INSTALLED = 'C:\\Users\\quien\\AppData\\Local\\Programs\\OpenAI\\Codex\\bin\\codex.exe';
+
+describe('codexSpawnCommand', () => {
+  it('codexSpawnCommand_scriptSinEmpaquetar_usaElNodeDeElectron', () => {
+    const log = vi.fn();
+
+    const result = codexSpawnCommand(['app-server'], { resolver: { ...WIN, binOverride: SCRIPT }, isPackaged: false, execPath: ELECTRON, log });
+
+    expect(result).toEqual({ command: ELECTRON, args: [SCRIPT, 'app-server'], env: { ELECTRON_RUN_AS_NODE: '1' } });
+    expect(log).not.toHaveBeenCalled();
+  });
+
+  it('codexSpawnCommand_scriptEmpaquetado_seIgnoraConAviso', () => {
+    const log = vi.fn();
+
+    const result = codexSpawnCommand(['app-server'], { resolver: { ...WIN, binOverride: SCRIPT, fileExists: (p) => p === INSTALLED }, isPackaged: true, execPath: ELECTRON, log });
+
+    expect(result).toEqual({ command: INSTALLED, args: ['app-server'], env: {} });
+    expect(log).toHaveBeenCalledTimes(1);
+    expect(log).toHaveBeenCalledWith('warn', expect.stringContaining('se ignora'), { binOverride: SCRIPT });
+  });
+
+  it('codexSpawnCommand_scriptEmpaquetadoSinCodex_lanzaElErrorDeSiempre', () => {
+    expect(() => codexSpawnCommand(['app-server'], { resolver: { ...WIN, binOverride: SCRIPT }, isPackaged: true, execPath: ELECTRON, log: vi.fn() })).toThrow('No se encontro el CLI de Codex');
+  });
+
+  it('codexSpawnCommand_exe_igualQueHoy', () => {
+    const result = codexSpawnCommand(['app-server'], { resolver: { ...WIN, binOverride: 'C:\\bin\\codex.exe' }, isPackaged: false, execPath: ELECTRON, log: vi.fn() });
+
+    expect(result).toEqual({ command: 'C:\\bin\\codex.exe', args: ['app-server'], env: {} });
+  });
+
+  it('codexSpawnCommand_overrideVacio_igualQueHoy', () => {
+    const result = codexSpawnCommand(['app-server'], { resolver: { ...POSIX, binOverride: '', commandInPath: () => true }, isPackaged: false, execPath: ELECTRON, log: vi.fn() });
+
+    expect(result).toEqual({ command: 'codex', args: ['app-server'], env: {} });
+  });
+
+  it('codexSpawnCommand_extensionEnMayusculas_esScript', () => {
+    const result = codexSpawnCommand(['app-server'], { resolver: { ...WIN, binOverride: 'C:\\x\\FAKE.JS' }, isPackaged: false, execPath: ELECTRON, log: vi.fn() });
+
+    expect(result.command).toBe(ELECTRON);
+    expect(result.args[0]).toBe('C:\\x\\FAKE.JS');
   });
 });

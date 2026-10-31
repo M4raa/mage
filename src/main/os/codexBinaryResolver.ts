@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs';
 import { homedir, platform } from 'node:os';
 import { win32 } from 'node:path';
+import type { LogFn } from '../debug/logBus';
 import { firstExistingPath } from './agentBinaryResolver';
 import { isCommandOnPath } from './commandOnPath';
 
@@ -52,6 +53,42 @@ export function resolveCodexBinary(deps: CodexResolverDeps = defaultCodexDeps())
     `No se encontro el CLI de Codex (${codexCommandName(deps.platform)}) ni en las rutas de instalacion ni en el PATH. ` +
       'Instalalo, o fija MAGE_CODEX_BIN con su ruta.',
   );
+}
+
+// Cómo lanzar `codex <args>`: el comando, sus argumentos y lo que hay que AÑADIR al entorno ya saneado.
+export interface CodexSpawnCommand {
+  readonly command: string;
+  readonly args: readonly string[];
+  readonly env: Readonly<Record<string, string>>;
+}
+
+export interface CodexSpawnDeps {
+  readonly isPackaged: boolean; // app.isPackaged
+  readonly execPath: string; // process.execPath: el binario de Electron
+  readonly log: LogFn;
+  readonly resolver?: CodexResolverDeps; // por defecto, el entorno real
+}
+
+// Un MAGE_CODEX_BIN con estas extensiones es un script de Node (el app-server falso de verify:gui).
+const NODE_SCRIPT_EXTENSIONS: readonly string[] = ['.mjs', '.js'];
+
+// Con la app SIN empaquetar, un MAGE_CODEX_BIN que es un script de Node se lanza con el Node de Electron
+// (`ELECTRON_RUN_AS_NODE`): así verify:gui pone un app-server falso. Con la app EMPAQUETADA se ignora con aviso y se usa
+// el resolvedor normal: una variable de entorno nunca hace que el Mage instalado ejecute un script.
+export function codexSpawnCommand(args: readonly string[], deps: CodexSpawnDeps): CodexSpawnCommand {
+  const resolver = deps.resolver ?? defaultCodexDeps();
+  const override = resolver.binOverride ?? '';
+  if (!isNodeScript(override)) return { command: resolveCodexBinary(resolver), args, env: {} };
+  if (deps.isPackaged) {
+    deps.log('warn', 'MAGE_CODEX_BIN apunta a un script y la app esta empaquetada: se ignora', { binOverride: override });
+    return { command: resolveCodexBinary({ ...resolver, binOverride: undefined }), args, env: {} };
+  }
+  return { command: deps.execPath, args: [override, ...args], env: { ELECTRON_RUN_AS_NODE: '1' } };
+}
+
+function isNodeScript(path: string): boolean {
+  const lower = path.toLowerCase();
+  return NODE_SCRIPT_EXTENSIONS.some((extension) => lower.endsWith(extension));
 }
 
 // Candidatos de instalacion por SO. Windows: %LOCALAPPDATA%\Programs\OpenAI\Codex\bin (y su

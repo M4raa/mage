@@ -128,7 +128,7 @@ import {
   probePermissionModes,
   type PermissionModesByProvider,
 } from './engine/permissionModes';
-import { findCodexBinary, resolveCodexBinary } from './os/codexBinaryResolver';
+import { codexSpawnCommand, findCodexBinary, type CodexSpawnCommand } from './os/codexBinaryResolver';
 import { resolveAgyBinary } from './os/agyBinaryResolver';
 import { ProviderAccountService } from './accounts/providerAccounts';
 import { CodexLoginService, type CodexLoginResult } from './accounts/codexLoginService';
@@ -825,6 +825,7 @@ function buildAgyAdapter(): AgyAdapter {
 
 function buildCodexAdapter(): CodexAdapter {
   return new CodexAdapter({
+    spawnCommand: codexSpawn,
     resolveAccount: (dir) => {
       const entry = getProviderAccounts().find('codex', dir);
       if (entry === null) return null;
@@ -919,13 +920,20 @@ function isKnownPermissionMode(provider: string, mode: string): boolean {
   return isKnownPermissionModeFor(provider, mode, permissionModesProbed);
 }
 
+// Cómo lanzar el CLI de Codex desde main: `MAGE_CODEX_BIN` puede ser el app-server falso de verify:gui, nunca con la app
+// empaquetada.
+function codexSpawn(args: readonly string[]): CodexSpawnCommand {
+  return codexSpawnCommand(args, { isPackaged: app.isPackaged, execPath: process.execPath, log: mainLog });
+}
+
 // `permissionProfile/list` de un app-server de codex con un CODEX_HOME de Mage (nunca el del usuario):
 // los perfiles integrados no dependen de la cuenta (medido sin cuenta). null si no hay codex o no contesta.
 async function readCodexPermissionProfiles(): Promise<unknown> {
   if (findCodexBinary() === null) return null;
   const home = join(app.getPath('userData'), 'codex-probe');
   mkdirSync(home, { recursive: true });
-  const child = spawn(resolveCodexBinary(), ['app-server'], { env: { ...scrubAgentEnv(process.env), CODEX_HOME: home }, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+  const codex = codexSpawn(['app-server']);
+  const child = spawn(codex.command, codex.args, { env: { ...scrubAgentEnv(process.env), ...codex.env, CODEX_HOME: home }, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
   return new Promise((resolveList) => {
     let buffer = '';
     const done = (value: unknown): void => {
@@ -965,8 +973,10 @@ function safeJson(line: string): { id?: unknown; result?: unknown } | null {
 let codexLoginSingleton: CodexLoginService | null = null;
 function getCodexLogin(): CodexLoginService {
   codexLoginSingleton ??= new CodexLoginService({
-    spawnAppServer: (codexHome) =>
-      spawn(resolveCodexBinary(), ['app-server'], { env: { ...scrubAgentEnv(process.env), CODEX_HOME: codexHome }, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true }),
+    spawnAppServer: (codexHome) => {
+      const codex = codexSpawn(['app-server']);
+      return spawn(codex.command, codex.args, { env: { ...scrubAgentEnv(process.env), ...codex.env, CODEX_HOME: codexHome }, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+    },
     openUrl: (url) => openWithService.openExternal(url),
     killTree: (child) => {
       killProcessTree(child, defaultKillTreeDeps());
@@ -1023,8 +1033,9 @@ function getCodexAccountCatalog(): CodexAccountCatalog {
 
 function codexAccountProbeDeps(): import('./accounts/codexAccountProbe').CodexAccountProbeDeps {
   return { timeoutMs: CLI_PROBE_TIMEOUT_MS, spawnProbe: (home) => {
-    const child = spawn(resolveCodexBinary(), ['app-server'], {
-      env: { ...scrubAgentEnv(process.env), CODEX_HOME: home }, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true,
+    const codex = codexSpawn(['app-server']);
+    const child = spawn(codex.command, codex.args, {
+      env: { ...scrubAgentEnv(process.env), ...codex.env, CODEX_HOME: home }, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true,
     });
     child.stderr.resume(); // Consumir sin registrar: puede llevar detalles OAuth.
     return {
