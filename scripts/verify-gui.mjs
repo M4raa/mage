@@ -8694,7 +8694,8 @@ const CHECKS = [
         const hello = client.lines.find((line) => line.kind === 'hello');
         const list = client.lines.find((line) => line.kind === 'list');
         const ok =
-          code === 0 && hello?.protocol === '1.0' && list.sessions.some((entry) => entry.sessionId === sessionId) &&
+          // 1.x: el host sube de versión menor de forma aditiva (1.1 en F3.3, 1.2 en F7); un cliente 1.0 sigue valiendo
+          code === 0 && /^1\.\d+$/.test(hello?.protocol ?? '') && list.sessions.some((entry) => entry.sessionId === sessionId) &&
           // El cliente sale al ver `result`: los eventos que llegan en el mismo trozo (el `session_state` de después) también se imprimen.
           external.length > 0 && JSON.stringify(external) === JSON.stringify(expected.slice(0, external.length)) && contiguous &&
           external.some(([, kind]) => kind === 'result') &&
