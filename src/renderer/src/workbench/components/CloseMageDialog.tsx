@@ -5,6 +5,7 @@ import { useWorkbenchStore } from '../workbenchStore';
 import { useDialogA11y } from '../a11y/useDialogA11y';
 import { MODAL_PANEL_VARIANTS, MODAL_SCRIM_VARIANTS } from '../motionPresets';
 import { countWorkingConversations } from '../backgroundWork';
+import { useT } from '../../i18n/uiLanguage';
 
 // «¿Cerrar Mage?» (grupo B). Lo pide main al pulsar la X de la ultima ventana con «Preguntar» en
 // Configuración › Almacenamiento; main sigue decidiendo (ocultar, salir, recordar) con lo que se
@@ -16,6 +17,7 @@ export function CloseMageDialog(): React.JSX.Element {
 }
 
 function CloseMageBody(): React.JSX.Element {
+  const t = useT();
   const answerClosePrompt = useWorkbenchStore((s) => s.answerClosePrompt);
   const working = useWorkbenchStore((s) =>
     countWorkingConversations(
@@ -55,22 +57,22 @@ function CloseMageBody(): React.JSX.Element {
         className="flex w-[440px] flex-col gap-[12px] rounded-[11px] border border-mg-border-pop bg-mg-panel p-[18px] text-[12px] mg-shadow-modal"
       >
         <div id="close-mage-title" className="text-[13px] font-bold text-mg-text">
-          ¿Cerrar Mage?
+          {t('dialogs.closeMage.title')}
         </div>
         <div id="close-mage-body" className="flex flex-col gap-[6px] leading-[1.55] text-mg-body2">
           <WorkingNotice working={working} />
-          <p>En segundo plano, Mage sigue en la bandeja del sistema y los agentes siguen a lo suyo.</p>
-          <p className="text-[11px] text-mg-muted">Puedes cambiarlo después en Configuración › Almacenamiento.</p>
+          <p>{t('dialogs.closeMage.backgroundNote')}</p>
+          <p className="text-[11px] text-mg-muted">{t('dialogs.closeMage.changeLaterNote')}</p>
         </div>
         <label className="inline-flex items-center gap-[7px] text-mg-body2">
           <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
-          Recordar mi decisión
+          {t('dialogs.closeMage.remember')}
         </label>
         <div className="mt-[2px] flex justify-end gap-[8px]">
-          <DialogButton onClick={cancel}>Cancelar</DialogButton>
-          <DialogButton onClick={() => answer('quit')}>Cerrar Mage</DialogButton>
+          <DialogButton onClick={cancel}>{t('dialogs.closeMage.cancel')}</DialogButton>
+          <DialogButton onClick={() => answer('quit')}>{t('dialogs.closeMage.quit')}</DialogButton>
           <DialogButton primary buttonRef={primaryRef} onClick={() => answer('hide')}>
-            Mantener en segundo plano
+            {t('dialogs.closeMage.keepInBackground')}
           </DialogButton>
         </div>
       </motion.div>
@@ -80,14 +82,12 @@ function CloseMageBody(): React.JSX.Element {
 
 // Con cero no se advierte de nada: cerrar no corta ningun trabajo.
 function WorkingNotice({ working }: { readonly working: number }): React.JSX.Element | null {
+  const t = useT();
   if (working === 0) return null;
-  const plural = working !== 1;
   return (
     <p data-close-working={working} className="rounded-[7px] border border-mg-border-ctrl bg-mg-window p-[8px_10px] text-mg-body">
-      <strong>
-        {working} conversaci{plural ? 'ones siguen' : 'ón sigue'} trabajando.
-      </strong>{' '}
-      Si cierras Mage, se para{plural ? 'n' : ''}.
+      <strong>{t('dialogs.closeMage.workingHeadline', { count: working })}</strong>{' '}
+      {t('dialogs.closeMage.workingConsequence', { count: working })}
     </p>
   );
 }

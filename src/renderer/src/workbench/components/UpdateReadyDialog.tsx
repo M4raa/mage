@@ -4,6 +4,7 @@ import { useWorkbenchStore } from '../workbenchStore';
 import { useDialogA11y } from '../a11y/useDialogA11y';
 import { MODAL_PANEL_VARIANTS, MODAL_SCRIM_VARIANTS } from '../motionPresets';
 import { countWorkingConversations } from '../backgroundWork';
+import { useT } from '../../i18n/uiLanguage';
 import { DialogButton } from './CloseMageDialog';
 import { Markdown } from './Markdown';
 
@@ -23,6 +24,7 @@ export function UpdateReadyDialog(): React.JSX.Element {
 }
 
 function UpdateReadyBody({ version, releaseNotes }: { readonly version: string; readonly releaseNotes: string | null }): React.JSX.Element {
+  const t = useT();
   const dismiss = useWorkbenchStore((s) => s.dismissUpdatePrompt);
   const install = useWorkbenchStore((s) => s.installUpdate);
   const working = useWorkbenchStore((s) =>
@@ -56,22 +58,22 @@ function UpdateReadyBody({ version, releaseNotes }: { readonly version: string; 
       >
         <div>
           <div id="update-ready-title" className="text-[13px] font-bold text-mg-text">
-            Mage {version} está lista para instalarse
+            {t('dialogs.updateReady.title', { version })}
           </div>
           <p className="mt-[4px] leading-[1.55] text-mg-body2">
-            Se instala al reiniciar. Si prefieres seguir trabajando, se instalará sola la próxima vez que cierres Mage.
+            {t('dialogs.updateReady.description')}
           </p>
         </div>
         <ReleaseNotesPreview releaseNotes={releaseNotes} />
         {working > 0 && (
           <p data-update-working={working} className="text-[11px] text-mg-muted">
-            {working === 1 ? 'Hay 1 conversación trabajando: reiniciar la para.' : `Hay ${working} conversaciones trabajando: reiniciar las para.`}
+            {t('dialogs.updateReady.working', { count: working })}
           </p>
         )}
         <div className="mt-[2px] flex justify-end gap-[8px]">
-          <DialogButton onClick={dismiss}>Más tarde</DialogButton>
+          <DialogButton onClick={dismiss}>{t('dialogs.updateReady.later')}</DialogButton>
           <DialogButton primary buttonRef={primaryRef} onClick={install}>
-            Reiniciar ahora
+            {t('dialogs.updateReady.restartNow')}
           </DialogButton>
         </div>
       </motion.div>
@@ -82,8 +84,9 @@ function UpdateReadyBody({ version, releaseNotes }: { readonly version: string; 
 // Las notas de la version que LLEGA vienen con la actualizacion (el changelog incrustado en esta build
 // no las tiene todavia). Sin ellas, se dice donde se van a ver.
 function ReleaseNotesPreview({ releaseNotes }: { readonly releaseNotes: string | null }): React.JSX.Element {
+  const t = useT();
   if (releaseNotes === null) {
-    return <p className="text-mg-muted">Verás sus novedades en cuanto Mage se abra actualizado.</p>;
+    return <p className="text-mg-muted">{t('dialogs.updateReady.noNotes')}</p>;
   }
   return (
     <div

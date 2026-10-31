@@ -12,6 +12,7 @@ import { resolveDefaultModel } from '../modelDefaults';
 import { MODAL_PANEL_VARIANTS, MODAL_SCRIM_VARIANTS } from '../motionPresets';
 import type { Account } from '../types';
 import { CliLoginPanel, useCliLogin } from './CliLoginPanel';
+import { t as translate, useT } from '../../i18n/uiLanguage';
 
 // Referencia ESTABLE para el selector de zustand (un array nuevo por render seria un bucle).
 const NO_MODELS: readonly ProviderModel[] = [];
@@ -68,6 +69,7 @@ function DialogBody({
   readonly onCancel: () => void;
   readonly onSubmit: (params: SubmitParams) => Promise<void>;
 }): React.JSX.Element {
+  const t = useT();
   const firstAccountId = accounts[0]?.id ?? '';
   const initialAccount = accounts.find((a) => a.id === initialAccountId) ?? accounts[0];
   const [accountId, setAccountId] = useState(initialAccountId || firstAccountId);
@@ -179,7 +181,7 @@ function DialogBody({
     if (budgetUsd.trim().length > 0) {
       const dollars = Number(budgetUsd);
       if (!Number.isFinite(dollars) || dollars <= 0) {
-        setError(`Tope de presupuesto invalido: "${budgetUsd}" (usa un número de dólares > 0)`);
+        setError(t('dialogs.newTab.invalidBudget', { value: budgetUsd }));
         return;
       }
       maxBudgetUsdCents = Math.round(dollars * 100);
@@ -212,10 +214,10 @@ function DialogBody({
         onClick={(e) => e.stopPropagation()}
         className="flex w-[420px] flex-col gap-[14px] rounded-[11px] border border-mg-border-pop bg-mg-panel p-[18px] text-[12px] mg-shadow-modal"
       >
-        <div id="newtab-title" className="text-[13px] font-bold text-mg-text">Nueva conversación</div>
+        <div id="newtab-title" className="text-[13px] font-bold text-mg-text">{t('dialogs.newTab.title')}</div>
 
         {!onRuntime && (
-          <Field label="Cuenta base (configuración/historial)">
+          <Field label={t('dialogs.newTab.accountLabel')}>
             <select
               value={accountId}
               onChange={(e) => onAccountChange(e.target.value)}
@@ -223,19 +225,19 @@ function DialogBody({
             >
               {accounts.filter((a) => a.providerId === provider).map((a) => (
                 <option key={a.id} value={a.id}>
-                  {a.alias} {a.email !== null ? `· ${a.email}` : ''} {a.apiBilled ? `· ${apiBilledLabel()}` : ''} {a.loginStatus !== 'logged_in' ? '(sin login)' : ''}
+                  {a.alias} {a.email !== null ? `· ${a.email}` : ''} {a.apiBilled ? `· ${apiBilledLabel()}` : ''} {a.loginStatus !== 'logged_in' ? t('dialogs.newTab.noLoginSuffix') : ''}
                 </option>
               ))}
             </select>
-            {!matchingAccount && <span role="status" className="text-mg-warn-text">Añade una cuenta de este proveedor para abrir el chat.</span>}
+            {!matchingAccount && <span role="status" className="text-mg-warn-text">{t('dialogs.newTab.noMatchingAccount')}</span>}
             {selectedAccount !== undefined && selectedAccount.loginStatus !== 'logged_in' && provider === 'claude' && (
               <div className="flex items-center gap-[8px]">
-                <span className="text-[10.5px] text-mg-danger">Sin login válido; el envío fallará.</span>
+                <span className="text-[10.5px] text-mg-danger">{t('dialogs.newTab.invalidLogin')}</span>
                 <button
                   onClick={() => reloginExpired(selectedAccount.id)}
                   className="rounded-[6px] border border-mg-border-ctrl px-[8px] py-[3px] text-[10.5px] text-mg-body2 hover:bg-mg-hover"
                 >
-                  Iniciar sesión
+                  {t('dialogs.newTab.relogin')}
                 </button>
               </div>
             )}
@@ -243,25 +245,25 @@ function DialogBody({
           </Field>
         )}
 
-        <Field label="Proyecto (carpeta)">
+        <Field label={t('dialogs.newTab.projectLabel')}>
           <div className="flex items-center gap-[8px]">
             <button
               onClick={pickProject}
               className="rounded-[7px] border border-mg-border-ctrl px-[10px] py-[6px] text-mg-body2 hover:bg-mg-hover"
             >
-              Elegir carpeta…
+              {t('dialogs.newTab.pickFolder')}
             </button>
             <button
               onClick={useScratch}
               className="rounded-[7px] border border-mg-border-ctrl px-[10px] py-[6px] text-mg-body2 hover:bg-mg-hover"
             >
-              Carpeta temporal
+              {t('dialogs.newTab.scratchFolder')}
             </button>
           </div>
-          <span className="truncate font-mono text-[10.5px] text-mg-ter">{cwd.length > 0 ? cwd : 'sin elegir'}</span>
+          <span className="truncate font-mono text-[10.5px] text-mg-ter">{cwd.length > 0 ? cwd : t('dialogs.newTab.noFolder')}</span>
         </Field>
 
-        <Field label="Proveedor">
+        <Field label={t('dialogs.newTab.providerLabel')}>
           <select
             value={provider}
             onChange={(e) => onProviderChange(e.target.value)}
@@ -275,7 +277,7 @@ function DialogBody({
           </select>
         </Field>
 
-        <Field label="Modelo">
+        <Field label={t('dialogs.newTab.modelLabel')}>
           <select
             value={displayModelId(model, modelOptions)}
             onChange={(e) => setModel(e.target.value)}
@@ -308,8 +310,7 @@ function DialogBody({
               {agyInstalled === false && (
                 <>
                   {' '}
-                  <strong>No se ha encontrado el CLI `agy`</strong>: instálalo y ejecuta `agy install`
-                  (o fija MAGE_AGY_BIN) para poder usar este proveedor.
+                  <strong>{t('dialogs.newTab.agyMissingEmphasis')}</strong>{t('dialogs.newTab.agyMissingRest')}
                 </>
               )}
             </span>
@@ -317,13 +318,13 @@ function DialogBody({
         )}
 
         {(provider === 'claude' || provider === 'codex') && (
-          <Field label="Esfuerzo (opcional)">
+          <Field label={t('dialogs.newTab.effortLabel')}>
             <select
               value={effort}
               onChange={(e) => setEffort(e.target.value)}
               className="w-full rounded-[7px] border border-mg-border-ctrl bg-mg-window p-[7px_9px] text-mg-body outline-none"
             >
-              <option value="">Por defecto</option>
+              <option value="">{t('dialogs.newTab.effortDefault')}</option>
               {(provider === 'codex' ? modelOptions.find((option) => option.id === model)?.supportedEfforts ?? [] : EFFORT_LEVELS).map((level) => (
                 <option key={level} value={level}>
                   {level}
@@ -334,14 +335,14 @@ function DialogBody({
         )}
 
         {provider === 'claude' && (
-          <Field label="Tope de gasto en USD (opcional)">
+          <Field label={t('dialogs.newTab.budgetLabel')}>
             <input
               type="number"
               min="0"
               step="0.01"
               value={budgetUsd}
               onChange={(e) => setBudgetUsd(e.target.value)}
-              placeholder="Sin tope"
+              placeholder={t('dialogs.newTab.budgetPlaceholder')}
               className="w-full rounded-[7px] border border-mg-border-ctrl bg-mg-window p-[7px_9px] text-mg-body outline-none"
             />
           </Field>
@@ -354,14 +355,14 @@ function DialogBody({
             onClick={cancelAll}
             className="rounded-[7px] border border-mg-border-emph px-[12px] py-[7px] text-mg-body2 transition-colors duration-150 ease-out hover:bg-mg-hover"
           >
-            Cancelar
+            {t('dialogs.newTab.cancel')}
           </button>
           <button
             onClick={submit}
             disabled={!canSubmit}
             className="rounded-[7px] bg-mg-primary px-[12px] py-[7px] font-semibold text-mg-primary-ink transition-opacity duration-150 ease-out disabled:opacity-40"
           >
-            {busy ? 'Abriendo…' : 'Abrir pestaña'}
+            {busy ? t('dialogs.newTab.opening') : t('dialogs.newTab.open')}
           </button>
         </div>
       </motion.div>
@@ -406,5 +407,5 @@ function Field({ label, children }: { readonly label: string; readonly children:
 }
 
 function describe(err: unknown): string {
-  return err instanceof Error ? err.message : `Error desconocido: ${String(err)}`;
+  return err instanceof Error ? err.message : translate('dialogs.newTab.unknownError', { error: String(err) });
 }
