@@ -42,7 +42,7 @@ import fs from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
-import { AGY_FIXTURE_ID, AGY_FIXTURE_TITLE, CODEX_FIXTURE_ID, CODEX_FIXTURE_TITLE, seedProviderHistory } from './lib/providerHistoryFixtures.mjs';
+import { AGY_FIXTURE_ID, AGY_FIXTURE_TITLE, CODEX_FIXTURE_ID, CODEX_FIXTURE_TITLE, CODEX_REVERT_DROPPED, CODEX_REVERT_FIXTURE_ID, CODEX_REVERT_FIXTURE_TITLE, CODEX_REVERT_KEPT, seedProviderHistory } from './lib/providerHistoryFixtures.mjs';
 import readline from 'node:readline/promises';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
@@ -1835,6 +1835,41 @@ const CHECKS = [
         return await measureProviderHistory(page, { home: fx.agyHome, sessionId: AGY_FIXTURE_ID, title: AGY_FIXTURE_TITLE, provider: 'agy' });
       } finally {
         fx.cleanup();
+      }
+    },
+  },
+  {
+    // F4.3: una conversación de Codex con revert (rollout original con el turno descartado y un segmento) se reabre con los
+    // turnos VIGENTES de `thread/turns/list`, servidos por el app-server falso (MAGE_CODEX_BIN, solo sin empaquetar), y
+    // migrarla a otra cuenta de Codex no se lleva el turno descartado. Otra instancia con perfil propio; sin CLI real.
+    name: 'Historial: una conversación de Codex con revert reabre y migra solo sus turnos vigentes (app-server falso)',
+    async run(page, { runDir }) {
+      if (!fs.existsSync(path.join(repoRoot, 'out', 'main', 'index.js'))) return { ok: false, detail: 'falta out/main: la otra instancia arranca del main construido' };
+      const rendererUrl = page.url().split('#')[0];
+      const { profile, fx } = seedRestartProfile();
+      let instance = null;
+      try {
+        instance = await startRestartInstance(profile, rendererUrl, { MAGE_CODEX_BIN: path.join(repoRoot, 'scripts', 'fake-codex-app-server.mjs') });
+        const reabierta = await measureProviderHistory(instance.page, { home: fx.codexHome, sessionId: CODEX_REVERT_FIXTURE_ID, title: CODEX_REVERT_FIXTURE_TITLE, provider: 'codex' });
+        const chat = await instance.page.evaluate((id) => {
+          const s = window.__mageDev.store.getState();
+          const tab = s.tabs.find((t) => t.resumeSessionId === id);
+          return JSON.stringify(s.blocksByChat[tab.id] ?? []);
+        }, CODEX_REVERT_FIXTURE_ID);
+        await instance.page.screenshot({ path: path.join(runDir, 'historial-codex-revert.png') });
+        const migrada = await instance.page.evaluate(({ from, to, id }) => window.mage.migrateConversation({
+          sourceAccountDir: from, sourceProvider: 'codex', sessionId: id, cwd: 'C:\\proyecto', privacy: 'shared', destAccountDir: to, destProvider: 'codex',
+        }), { from: fx.codexHome, to: fx.codexHome2, id: CODEX_REVERT_FIXTURE_ID });
+        const escrito = readCodexRolloutText(fx.codexHome2, migrada.sessionId);
+        const medido = {
+          reabierta: reabierta.ok, vigenteEnChat: chat.includes(CODEX_REVERT_KEPT), descartadoEnChat: chat.includes(CODEX_REVERT_DROPPED),
+          idNuevo: migrada.sessionId !== CODEX_REVERT_FIXTURE_ID, vigenteMigrado: escrito.includes(CODEX_REVERT_KEPT), descartadoMigrado: escrito.includes(CODEX_REVERT_DROPPED),
+        };
+        const ok = medido.reabierta && medido.vigenteEnChat && !medido.descartadoEnChat && medido.idNuevo && medido.vigenteMigrado && !medido.descartadoMigrado;
+        return { ok, detail: JSON.stringify({ ...medido, chat: reabierta.detail }) };
+      } finally {
+        if (instance !== null) await stopRestartInstance(instance);
+        fs.rmSync(profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 500 });
       }
     },
   },
@@ -9396,6 +9431,14 @@ async function measureProviderHistory(page, { home, sessionId, title, provider }
   return { ok, detail: JSON.stringify({ listada: listada.slice(0, 60), ...medido }) };
 }
 
+// Texto del rollout de un hilo en un CODEX_HOME (lo que escribió una migración), o '' si no está.
+function readCodexRolloutText(codexHome, threadId) {
+  const root = path.join(codexHome, 'sessions');
+  if (!fs.existsSync(root)) return '';
+  const file = fs.readdirSync(root, { recursive: true }).map(String).find((name) => name.endsWith(`${threadId}.jsonl`));
+  return file === undefined ? '' : fs.readFileSync(path.join(root, file), 'utf8');
+}
+
 async function withNewTabDialog(page, measure) {
   // El dialogo ya no cuelga de Ctrl+N (camino por defecto = abrir directo): se llega por clic
   // derecho sobre el ＋ de la barra de pestañas.
@@ -10635,15 +10678,16 @@ function userConversationLocksDir() {
 // Otra instancia de Mage con un perfil AISLADO propio, del build en `out/` (el dev server ya es de la primera) y con su
 // propio puerto de depuración. Sin CLI: el sondeo de modelos, MCP y gh, falsos o apagados, como la primera.
 // `profile` reutiliza un perfil ya sembrado (D19: reiniciar sobre el MISMO); `rendererUrl`, el renderer del servidor de
-// desarrollo de la tanda, que trae `__mageDev` (el del build no lo tiene).
-async function startSecondInstance({ profile = fs.mkdtempSync(path.join(os.tmpdir(), 'mage-verify-segunda-')), rendererUrl } = {}) {
+// desarrollo de la tanda, que trae `__mageDev` (el del build no lo tiene). `extraEnv`, variables solo para esa instancia
+// (el app-server falso de Codex).
+async function startSecondInstance({ profile = fs.mkdtempSync(path.join(os.tmpdir(), 'mage-verify-segunda-')), rendererUrl, extraEnv = {} } = {}) {
   const port = CONFIG.port + 1;
   // Sin ELECTRON_RUN_AS_NODE: con esa variable presente Electron arranca como Node.
   const { ELECTRON_RUN_AS_NODE: _asNode, ...inherited } = process.env;
   const dev = rendererUrl === undefined ? {} : { ELECTRON_RENDERER_URL: rendererUrl, MAGE_MCP_FAKE_SOURCES: mcpFakeSourcesDir(profile) };
   const child = spawn(requireFromHere('electron'), ['.', `--user-data-dir=${profile}`, `--remote-debugging-port=${port}`], {
     cwd: repoRoot,
-    env: { ...inherited, MAGE_SKIP_MODEL_PROBE: '1', MAGE_MCP_FAKE_CLI: '1', MAGE_GH_FAKE: '1', [HARNESS_LOCKS_ENV]: HARNESS_LOCKS_DIR, ...dev },
+    env: { ...inherited, MAGE_SKIP_MODEL_PROBE: '1', MAGE_MCP_FAKE_CLI: '1', MAGE_GH_FAKE: '1', [HARNESS_LOCKS_ENV]: HARNESS_LOCKS_DIR, ...dev, ...extraEnv },
     windowsHide: true,
     stdio: 'ignore',
     detached: process.platform !== 'win32',
@@ -10677,8 +10721,8 @@ function seedRestartProfile() {
 }
 
 // Arranca Mage sobre `profile` con el renderer de la tanda y espera a que monte el workbench con las cuentas cargadas.
-async function startRestartInstance(profile, rendererUrl) {
-  const instance = await startSecondInstance({ profile, rendererUrl });
+async function startRestartInstance(profile, rendererUrl, extraEnv = {}) {
+  const instance = await startSecondInstance({ profile, rendererUrl, extraEnv });
   await instance.page.waitForFunction(() => window.__mageDev?.store.getState().accounts.length > 0, undefined, { timeout: CONFIG.bootTimeoutMs });
   return instance;
 }

@@ -9,6 +9,14 @@ export const CODEX_FIXTURE_ID = '11111111-2222-3333-4444-555555555555';
 export const CODEX_FIXTURE_TITLE = 'Lista los ficheros';
 export const AGY_FIXTURE_ID = 'aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb';
 export const AGY_FIXTURE_TITLE = 'Cuenta los ficheros del proyecto';
+// Hilo de Codex con un `thread/revert` (forma medida con codex-cli 0.164.0): el rollout original conserva el turno
+// descartado y el segmento solo trae su `session_meta`. Los turnos VIGENTES los sirve el app-server falso
+// (scripts/fake-codex-app-server.mjs) desde `<CODEX_HOME>/fake-app-server-turns.json`.
+export const CODEX_REVERT_FIXTURE_ID = '22222222-3333-4444-5555-666666666666';
+export const CODEX_REVERT_FIXTURE_TITLE = 'Revisa el proyecto';
+export const CODEX_REVERT_KEPT = 'Hay un fichero.';
+export const CODEX_REVERT_DROPPED = 'descartado-por-el-revert';
+const FAKE_TURNS_FILE = 'fake-app-server-turns.json';
 
 const varint = (value) => {
   const out = [];
@@ -32,6 +40,32 @@ function agySteps(cwd) {
   ];
 }
 
+function seedCodexRevertThread(codexHome) {
+  const day = join(codexHome, 'sessions', '2026', '10', '06');
+  mkdirSync(day, { recursive: true });
+  const name = `rollout-2026-10-06T10-00-00-${CODEX_REVERT_FIXTURE_ID}`;
+  const line = (ordinal, type, payload) => JSON.stringify({ timestamp: `2026-10-06T10:00:0${ordinal}.000Z`, ordinal, type, payload });
+  const message = (role, body) => ({ type: 'message', role, content: [{ type: role === 'assistant' ? 'output_text' : 'input_text', text: body }] });
+  const original = [
+    line(0, 'session_meta', { id: CODEX_REVERT_FIXTURE_ID, timestamp: '2026-10-06T10:00:00.000Z', cwd: 'C:\\proyecto', cli_version: '0.164.0' }),
+    line(1, 'response_item', message('user', CODEX_REVERT_FIXTURE_TITLE)),
+    line(2, 'response_item', { type: 'function_call', call_id: 'call_1', name: 'shell', arguments: JSON.stringify({ command: ['dir'] }) }),
+    line(3, 'response_item', { type: 'function_call_output', call_id: 'call_1', output: 'a.txt' }),
+    line(4, 'response_item', message('assistant', CODEX_REVERT_KEPT)),
+    line(5, 'response_item', message('user', `Pregunta ${CODEX_REVERT_DROPPED}`)),
+    line(6, 'response_item', message('assistant', `Respuesta ${CODEX_REVERT_DROPPED}`)),
+  ];
+  writeFileSync(join(day, `${name}.jsonl`), `${original.join('\n')}\n`);
+  const segmentMeta = { timestamp: '2026-10-06T10:01:00.000Z', type: 'session_meta', payload: { id: CODEX_REVERT_FIXTURE_ID, cwd: 'C:\\proyecto' } };
+  writeFileSync(join(day, `${name}_bbbbbbbb-0000-0000-0000-000000000001.jsonl`), `${JSON.stringify(segmentMeta)}\n`);
+  const turns = [{ id: 'turn-1', items: [
+    { type: 'userMessage', id: 'item-u1', content: [{ type: 'text', text: CODEX_REVERT_FIXTURE_TITLE, text_elements: [] }] },
+    { type: 'commandExecution', id: 'item-c1', command: 'dir', cwd: 'C:\\proyecto', status: 'completed', aggregatedOutput: 'a.txt', exitCode: 0 },
+    { type: 'agentMessage', id: 'item-a1', text: CODEX_REVERT_KEPT },
+  ] }];
+  writeFileSync(join(codexHome, FAKE_TURNS_FILE), JSON.stringify({ [CODEX_REVERT_FIXTURE_ID]: turns }));
+}
+
 export function seedProviderHistory({ userDataDir, repoRoot }) {
   const root = join(userDataDir, 'provider-history-fixtures');
   const codexHome = join(root, '.codex-vgfixture');
@@ -42,6 +76,7 @@ export function seedProviderHistory({ userDataDir, repoRoot }) {
   const rollout = join(codexHome, 'sessions', '2026', '10', '05', `rollout-2026-10-05T10-00-00-${CODEX_FIXTURE_ID}.jsonl`);
   mkdirSync(dirname(rollout), { recursive: true });
   copyFileSync(join(repoRoot, 'src', 'shared', 'fixtures', 'codex-rollout.jsonl'), rollout);
+  seedCodexRevertThread(codexHome);
   const dbPath = join(agyHome, '.gemini', 'antigravity-cli', 'conversations', `${AGY_FIXTURE_ID}.db`);
   mkdirSync(dirname(dbPath), { recursive: true });
   const db = new DatabaseSync(dbPath);
