@@ -188,6 +188,8 @@ export interface MessageValues {
   readonly "app.titleBar.settingsLabel": never;
   readonly "app.titleBar.settingsTip": never;
   readonly "app.widget.agentsTitle": never;
+  readonly "app.widget.alertError": { readonly "title": string | number };
+  readonly "app.widget.alertPermission": { readonly "title": string | number };
   readonly "app.widget.goToAgent": { readonly "account": string | number; readonly "title": string | number };
   readonly "app.widget.hide": never;
   readonly "app.widget.noConversations": never;

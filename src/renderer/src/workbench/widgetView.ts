@@ -78,11 +78,11 @@ function toWidgetUsage(account: Account): WidgetUsage {
 // Alertas ordenadas por urgencia: errores (critical), uso sobre umbral, permisos pendientes (warn).
 function buildAlerts(input: WidgetViewInput, activeAccount: Account | undefined): readonly WidgetAlert[] {
   const errors = tabsWithStatus(input, 'error').map(
-    (tab): WidgetAlert => ({ kind: 'error', severity: 'critical', text: `${tab.title}: error` }),
+    (tab): WidgetAlert => ({ kind: 'error', severity: 'critical', text: t('app.widget.alertError', { title: displayTitle(tab.title) }) }),
   );
   const usage = activeAccount === undefined ? [] : usageAlerts(activeAccount);
   const permissions = tabsWithStatus(input, 'needs_permission').map(
-    (tab): WidgetAlert => ({ kind: 'permission', severity: 'warn', text: `${tab.title}: permiso pendiente` }),
+    (tab): WidgetAlert => ({ kind: 'permission', severity: 'warn', text: t('app.widget.alertPermission', { title: displayTitle(tab.title) }) }),
   );
   return [...errors, ...usage, ...permissions];
 }

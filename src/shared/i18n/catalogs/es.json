@@ -186,6 +186,8 @@
   "app.titleBar.settingsLabel": "Mage · Configuración",
   "app.titleBar.settingsTip": "Mage · Configuración (Ctrl+,)",
   "app.widget.agentsTitle": "AGENTES",
+  "app.widget.alertError": "{title}: error",
+  "app.widget.alertPermission": "{title}: permiso pendiente",
   "app.widget.goToAgent": "Ir a {title} ({account})",
   "app.widget.hide": "Ocultar widget",
   "app.widget.noConversations": "No hay conversaciones abiertas.",

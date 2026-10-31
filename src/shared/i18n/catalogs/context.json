@@ -186,6 +186,8 @@
   "app.titleBar.settingsLabel": { "description": "Nombre accesible del icono de Mage de la cabecera (abre la Configuración). Lleva «Mage» a propósito.", "usage": "src/renderer/src/workbench/components/TitleBar.tsx:70" },
   "app.titleBar.settingsTip": { "description": "Tooltip del icono de Mage en la esquina de la cabecera, que abre la Configuración. El atajo Ctrl+, no se traduce.", "usage": "src/renderer/src/workbench/components/TitleBar.tsx:66", "maxLength": 40 },
   "app.widget.agentsTitle": { "description": "Título de sección del widget flotante con la lista de agentes. En mayúsculas.", "usage": "src/renderer/src/widget/WidgetApp.tsx:101", "maxLength": 16 },
+  "app.widget.alertError": { "description": "Alerta del widget flotante: conversación con error / con un permiso pendiente.", "usage": "src/renderer/src/workbench/widgetView.ts:81", "variables": {"title":"string"} },
+  "app.widget.alertPermission": { "description": "Alerta del widget flotante: conversación con error / con un permiso pendiente.", "usage": "src/renderer/src/workbench/widgetView.ts:85", "variables": {"title":"string"} },
   "app.widget.goToAgent": { "description": "Tooltip de un agente en el widget flotante: activa su pestaña. {title} es el título de la conversación y {account} el alias de la cuenta.", "usage": "src/renderer/src/widget/WidgetApp.tsx:115", "variables": {"title":"string","account":"string"} },
   "app.widget.hide": { "description": "Tooltip del botón ✕ que oculta el widget flotante.", "usage": "src/renderer/src/widget/WidgetApp.tsx:71", "maxLength": 28 },
   "app.widget.noConversations": { "description": "Texto del widget flotante cuando no hay ninguna conversación abierta.", "usage": "src/renderer/src/widget/WidgetApp.tsx:103" },

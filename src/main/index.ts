@@ -1553,7 +1553,10 @@ function getUiLanguageService(): UiLanguageService {
     savedPreference: () => getSettingsStore().load().uiLanguage,
     initialPreference: () => undefined,
     preferredSystemLanguages: () => app.getPreferredSystemLanguages(),
-    broadcast: (resolved) => windowManager.broadcast(UI_LANGUAGE_CHANGED_CHANNEL, resolved),
+    broadcast: (resolved) => {
+      windowManager.broadcast(UI_LANGUAGE_CHANGED_CHANNEL, resolved);
+      widgetWindow?.sendUiLanguage(resolved);
+    },
   });
   return uiLanguageServiceSingleton;
 }

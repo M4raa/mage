@@ -131,6 +131,20 @@ describe('toWidgetSnapshot', () => {
     expect(snapshot.alerts).toContainEqual({ kind: 'permission', severity: 'warn', text: 'proj: permiso pendiente' });
   });
 
+  it('buildAlerts_errorYPermiso_textoCastellano', () => {
+    const tabs = [makeTab({ id: 'e', title: 'Refactor' }), makeTab({ id: 'p', title: 'Refactor' })];
+
+    const snapshot = toWidgetSnapshot(makeInput({ tabs, statusByChat: { e: 'error', p: 'needs_permission' } }), 'dark');
+
+    expect(snapshot.alerts.map((alert) => alert.text)).toEqual(['Refactor: error', 'Refactor: permiso pendiente']);
+  });
+
+  it('buildAlerts_tituloVacio_usaTabsUntitled', () => {
+    const snapshot = toWidgetSnapshot(makeInput({ tabs: [makeTab({ title: '' })], statusByChat: { tab1: 'error' } }), 'dark');
+
+    expect(snapshot.alerts).toContainEqual({ kind: 'error', severity: 'critical', text: 'Nuevo chat: error' });
+  });
+
   it('toWidgetSnapshot_usoSobreUmbralCritico_emiteAlertaCritical', () => {
     const account = makeAccount({ usage: { fiveHour: { pct: 96, label: '30 m' }, weekly: { pct: 20, label: '2 d' } } });
 
