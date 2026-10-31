@@ -256,7 +256,7 @@ import { PERSISTED_TAB_SCHEMA } from '@shared/stateSchema';
 import type { PersistedTab } from '@shared/state';
 import type { DropTabOutcome } from '@shared/ipc';
 import {
-  CLOSE_DIALOG_BUTTONS,
+  CLOSE_DIALOG_BUTTON_KEYS,
   CLOSE_DIALOG_CANCEL_INDEX,
   closeAnswerFromNative,
   interpretCloseAnswer,
@@ -1405,11 +1405,12 @@ async function approveOutsideFile(event: Electron.IpcMainInvokeEvent, params: Re
     throw new Error(`Mage no abre ficheros de credenciales del CLI: ${path}`);
   }
   if (isApprovedOutside(path)) return true;
+  const translate = getUiLanguageService().translate;
   const options: Electron.MessageBoxOptions = {
     type: 'warning',
-    message: 'Este fichero está fuera de la carpeta de la conversación',
-    detail: `${path}\n\nSi lo abres, podrás leerlo y editarlo desde Mage hasta que cierres la aplicación.`,
-    buttons: ['Abrir', 'Cancelar'],
+    message: translate('dialogs.outsideFile.message'),
+    detail: `${path}\n\n${translate('dialogs.outsideFile.detail')}`,
+    buttons: [translate('dialogs.outsideFile.open'), translate('dialogs.outsideFile.cancel')],
     defaultId: 1,
     cancelId: 1,
     noLink: true,
@@ -2328,17 +2329,16 @@ function releaseClosePrompt(window: BrowserWindow): void {
 }
 
 async function askCloseBehaviorNatively(window: BrowserWindow): Promise<void> {
+  const translate = getUiLanguageService().translate;
   try {
     const answer = await dialog.showMessageBox(window, {
       type: 'question',
-      message: '¿Cerrar Mage?',
-      detail:
-        'En segundo plano, Mage sigue en la bandeja del sistema y los agentes siguen trabajando. ' +
-        'Cerrar Mage los para. Puedes cambiarlo después en Configuración › Almacenamiento.',
-      buttons: [...CLOSE_DIALOG_BUTTONS],
+      message: translate('dialogs.closeNative.title'),
+      detail: translate('dialogs.closeNative.detail'),
+      buttons: CLOSE_DIALOG_BUTTON_KEYS.map((key) => translate(key)),
       defaultId: 0,
       cancelId: CLOSE_DIALOG_CANCEL_INDEX,
-      checkboxLabel: 'Recordar mi decisión',
+      checkboxLabel: translate('dialogs.closeNative.remember'),
       noLink: true,
     });
     applyCloseOutcome(window, interpretCloseAnswer(closeAnswerFromNative(answer)));
@@ -2389,6 +2389,20 @@ function buildApplicationMenu(): Menu | null {
   return Menu.buildFromTemplate(template);
 }
 
+// Menú de la bandeja con las etiquetas en el idioma activo; se rehace al cambiar de idioma.
+function buildTrayMenu(): Menu {
+  const translate = getUiLanguageService().translate;
+  return Menu.buildFromTemplate([
+    { label: translate('tray.open'), click: () => focusMainWindow() },
+    // Widget flotante (M3): alterna la ventana y sincroniza la preferencia via el renderer.
+    { label: translate('tray.toggleWidget'), click: () => toggleWidgetFromTray() },
+    // Entrada de debug solo en desarrollo (la ventana no existe en produccion).
+    ...(isDev ? [{ label: translate('tray.debugWindow'), click: () => openDebugWindow() }] : []),
+    { type: 'separator' as const },
+    { label: translate('tray.quit'), click: () => app.quit() },
+  ]);
+}
+
 // Tray con el glifo de la marca; cerrar la ventana no mata la app (patron de app de escritorio).
 // En macOS se usa una imagen TEMPLATE (negra) que la barra de menus invierte segun su tema; en el
 // resto, el glifo blanco. El @2x lo resuelve Electron solo (busca el fichero hermano @2x).
@@ -2399,19 +2413,7 @@ function createTray(): Tray {
   if (isMac) icon.setTemplateImage(true);
   const trayInstance = new Tray(icon);
   trayInstance.setToolTip(isDev ? 'Mage (dev)' : 'Mage');
-  trayInstance.setContextMenu(
-    Menu.buildFromTemplate([
-      { label: 'Abrir Mage', click: () => focusMainWindow() },
-      // Widget flotante (M3): alterna la ventana y sincroniza la preferencia via el renderer.
-      { label: 'Mostrar/ocultar widget flotante', click: () => toggleWidgetFromTray() },
-      // Entrada de debug solo en desarrollo (la ventana no existe en produccion).
-      ...(isDev
-        ? [{ label: 'Ventana de debug (Ctrl+Shift+L)', click: () => openDebugWindow() }]
-        : []),
-      { type: 'separator' as const },
-      { label: 'Salir', click: () => app.quit() },
-    ]),
-  );
+  trayInstance.setContextMenu(buildTrayMenu());
   trayInstance.on('click', () => focusMainWindow());
   return trayInstance;
 }

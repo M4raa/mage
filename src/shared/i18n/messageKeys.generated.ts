@@ -564,6 +564,12 @@ export interface MessageValues {
   readonly "dialogs.closeMage.title": never;
   readonly "dialogs.closeMage.workingConsequence": { readonly "count": number };
   readonly "dialogs.closeMage.workingHeadline": { readonly "count": number };
+  readonly "dialogs.closeNative.background": never;
+  readonly "dialogs.closeNative.cancel": never;
+  readonly "dialogs.closeNative.detail": never;
+  readonly "dialogs.closeNative.quit": never;
+  readonly "dialogs.closeNative.remember": never;
+  readonly "dialogs.closeNative.title": never;
   readonly "dialogs.newTab.accountLabel": never;
   readonly "dialogs.newTab.agyMissingEmphasis": never;
   readonly "dialogs.newTab.agyMissingRest": never;
@@ -619,6 +625,10 @@ export interface MessageValues {
   readonly "dialogs.onboarding.themeSystem": never;
   readonly "dialogs.onboarding.uiScale": never;
   readonly "dialogs.onboarding.uiScaleHint": never;
+  readonly "dialogs.outsideFile.cancel": never;
+  readonly "dialogs.outsideFile.detail": never;
+  readonly "dialogs.outsideFile.message": never;
+  readonly "dialogs.outsideFile.open": never;
   readonly "dialogs.trustFolder.bodyApplies": never;
   readonly "dialogs.trustFolder.bodyConfig": never;
   readonly "dialogs.trustFolder.bodyHooks": never;
@@ -1610,6 +1620,10 @@ export interface MessageValues {
   readonly "tabs.releaseNotes.closeLabel": never;
   readonly "tabs.releaseNotes.title": never;
   readonly "tabs.untitled": never;
+  readonly "tray.debugWindow": never;
+  readonly "tray.open": never;
+  readonly "tray.quit": never;
+  readonly "tray.toggleWidget": never;
   readonly "usage.panel.agyAria": never;
   readonly "usage.panel.agyRefresh": never;
   readonly "usage.panel.agyTitle": never;
