@@ -10,6 +10,18 @@ describe('normalizeDomLine', () => {
   });
 });
 
+describe('normalizeDomLine rutas', () => {
+  it('normalizeDomLine_rutaWindows_seSustituye', () => {
+    expect(normalizeDomLine('Abrir C:\\sourcecode\\mage-wt-A\\src')).toBe('Abrir <ruta>');
+  });
+  it('normalizeDomLine_rutaPosix_seSustituye', () => {
+    expect(normalizeDomLine('/home/u/x/y.ts')).toBe('<ruta>');
+  });
+  it('normalizeDomLine_textoSinRuta_noCambia', () => {
+    expect(normalizeDomLine('Sin conversaciones compartidas.')).toBe('Sin conversaciones compartidas.');
+  });
+});
+
 describe('diffDumps', () => {
   it('diffDumps_mismoTextoConOtroReloj_sinDiferencias', () => {
     const before = dump([{ name: 'A', text: 'IDIOMA\nHace 3 s', attrs: ['aria-label=Cerrar'] }]);

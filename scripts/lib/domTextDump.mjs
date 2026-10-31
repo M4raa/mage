@@ -52,6 +52,8 @@ export async function appendDomText(page, file, name) {
 // Se normaliza antes de comparar: un número distinto no es una frase distinta.
 export function normalizeDomLine(line) {
   return line
+    .replace(/[A-Za-z]:\\[^\s"'«»]+/g, '<ruta>')
+    .replace(/\/(?:home|Users|tmp|mnt)\/[^\s"'«»]+/g, '<ruta>')
     .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, '<uuid>')
     .replace(/\b[0-9a-f]{7,}\b/gi, '<hex>')
     .replace(/\d+([.,:]\d+)*/g, '0')
