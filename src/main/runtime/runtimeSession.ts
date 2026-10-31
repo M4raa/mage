@@ -1,5 +1,6 @@
 import type { ImageAttachment } from '@shared/ipc';
-import { RUNTIME_AUTO_MODE_NOTE, RUNTIME_PERMISSION_MODES, type RuntimePermissionMode } from '@shared/providers';
+import { RUNTIME_PERMISSION_MODES, type RuntimePermissionMode } from '@shared/providers';
+import { localized, type LocalizedText } from '@shared/i18n/localizedText';
 import type { ContextUsage, MageEvent, McpServerStatus, PermissionDecision, TurnUsage } from '@shared/events';
 import type { ManagedSession } from '../engine/sessionManager';
 import type { ElicitationAnswer } from '@shared/elicitation';
@@ -89,16 +90,14 @@ export interface PreparedModel {
   readonly budget: ModelBudget | null;
   // false = el catalogo dice que no admite herramientas: no se mandan (modo solo chat, con aviso).
   readonly supportsTools: boolean | null;
-  readonly warning: string | null;
+  readonly warning: LocalizedText | null;
 }
 
-const CHAT_ONLY_NOTICE = 'Este modelo no admite herramientas: Mage solo puede conversar con él.';
 // D1 de P-033: Auto en el runtime es una lista blanca, no el sandbox de Codex. Se dice al entrar.
-export const AUTO_MODE_NOTICE = RUNTIME_AUTO_MODE_NOTE;
+export const AUTO_MODE_NOTICE: LocalizedText = localized('prompt.providers.runtimeAutoModeNote');
 const TOOL_CALL_AS_TEXT = /<tool_call>|\[TOOL_REQUEST\]|^\s*```(?:json)?\s*\{\s*"(?:name|tool)"/m;
 // Sin herramientas nativas, las que se entienden las ejecuta el bucle (R9); con ellas, una llamada
-// escrita nunca se ejecuta (A1 de la revision). Esta sale con la que se quedo sin ejecutar.
-const TOOL_CALL_AS_TEXT_NOTICE = 'El modelo escribió una llamada a una herramienta como texto y Mage no la ejecutó.';
+// escrita nunca se ejecuta (A1 de la revision). Su aviso sale con la que se quedo sin ejecutar.
 
 interface PendingPermission {
   readonly toolUseId: string;
@@ -107,7 +106,6 @@ interface PendingPermission {
 
 const CLEAR_COMMAND = '/clear';
 const COMPACT_COMMAND = '/compact';
-const NOTHING_TO_COMPACT = 'No hay nada que compactar todavía.';
 const RENAME_COMMAND = /^\/rename\s+(\S.*)$/s;
 
 export class RuntimeSession implements ManagedSession {
@@ -144,7 +142,7 @@ export class RuntimeSession implements ManagedSession {
     this.started = true;
     this.emitInit();
     this.deps.emit({ kind: 'session_state', state: 'idle' });
-    if (this.mode === 'auto') this.deps.emit({ kind: 'notice', text: AUTO_MODE_NOTICE });
+    if (this.mode === 'auto') this.deps.emit({ kind: 'notice', localized: AUTO_MODE_NOTICE });
   }
 
   sendUserMessage(text: string, attachments: readonly ImageAttachment[] = []): void {
@@ -181,7 +179,7 @@ export class RuntimeSession implements ManagedSession {
     const entering = mode === 'auto' && this.mode !== 'auto';
     this.mode = mode;
     this.deps.emit({ kind: 'permission_mode', mode });
-    if (entering) this.deps.emit({ kind: 'notice', text: AUTO_MODE_NOTICE });
+    if (entering) this.deps.emit({ kind: 'notice', localized: AUTO_MODE_NOTICE });
   }
 
   stopTask(taskId: string): void {
@@ -208,14 +206,14 @@ export class RuntimeSession implements ManagedSession {
   }
 
   // Aviso al hilo desde fuera del turno (p.ej. un servidor MCP que no conecta).
-  notice(text: string): void {
-    if (!this.stopped) this.deps.emit({ kind: 'notice', text });
+  notice(text: LocalizedText): void {
+    if (!this.stopped) this.deps.emit({ kind: 'notice', localized: text });
   }
 
   // Un servidor MCP remoto pide iniciar sesion: linea en el hilo y, en el renderer, aviso con boton.
   loginRequired(server: string, loginId: string): void {
     if (this.stopped) return;
-    this.deps.emit({ kind: 'notice', text: `El servidor MCP ${server} pide iniciar sesión: pulsa «Iniciar sesión» en el aviso. Sus herramientas llegarán al terminar.` });
+    this.deps.emit({ kind: 'notice', localized: localized('events.mcp.loginRequired', { server }) });
     this.deps.emit({ kind: 'mcp_login_required', server, loginId });
   }
 
@@ -259,7 +257,7 @@ export class RuntimeSession implements ManagedSession {
       // Un fallo inesperado (no del modelo: del registro, del escritor…) no mata la sesion.
       const message = err instanceof Error ? err.message : String(err);
       this.deps.log?.('error', 'Fallo inesperado en un turno del runtime', { sessionId: this.sessionId, message });
-      this.deps.emit({ kind: 'error', message: `Fallo inesperado del runtime: ${message}` });
+      this.deps.emit({ kind: 'error', localized: localized('events.runtime.unexpectedFailure', { detail: message }) });
       this.deps.emit({ kind: 'result', result: { isError: true, subtype: 'error_during_execution', numTurns: null } });
     } finally {
       this.turn = null;
@@ -276,18 +274,18 @@ export class RuntimeSession implements ManagedSession {
     this.preparedFor = this.model;
     this.budget = prepared.budget;
     this.warnedNearLimit = false;
-    if (prepared.warning !== null) this.deps.emit({ kind: 'notice', text: prepared.warning });
+    if (prepared.warning !== null) this.deps.emit({ kind: 'notice', localized: prepared.warning });
     // La degradación del modelo anterior no se hereda por otro que sí anuncia herramientas.
     if (prepared.supportsTools === true) this.toolsEnabled = true;
     if (prepared.supportsTools === false && this.toolsEnabled) {
       this.toolsEnabled = false;
-      this.deps.emit({ kind: 'notice', text: CHAT_ONLY_NOTICE });
+      this.deps.emit({ kind: 'notice', localized: localized('events.runtime.noTools') });
     }
   }
 
   private finishTurn(outcome: TurnOutcome, added: readonly ChatMessage[]): void {
-    if (outcome.error !== null) this.deps.emit({ kind: 'error', message: outcome.error });
-    if (outcome.status === 'success' && writesCallAsText(added)) this.deps.emit({ kind: 'notice', text: TOOL_CALL_AS_TEXT_NOTICE });
+    if (outcome.error !== null) this.deps.emit({ kind: 'error', localized: outcome.error });
+    if (outcome.status === 'success' && writesCallAsText(added)) this.deps.emit({ kind: 'notice', localized: localized('events.runtime.toolCallAsText') });
     const usage = toTurnUsage(outcome) ?? this.estimatedUsage(added);
     this.deps.emit({
       kind: 'result',
@@ -340,10 +338,10 @@ export class RuntimeSession implements ManagedSession {
     this.deps.emit({ kind: 'session_state', state: 'running' });
     try {
       await this.prepare();
-      if (!(await this.compact('manual', controller.signal))) this.deps.emit({ kind: 'notice', text: NOTHING_TO_COMPACT });
+      if (!(await this.compact('manual', controller.signal))) this.deps.emit({ kind: 'notice', localized: localized('events.runtime.nothingToCompact') });
       this.emitContextUsage();
     } catch (err) {
-      if (!controller.signal.aborted) this.deps.emit({ kind: 'error', message: `No se pudo compactar: ${err instanceof Error ? err.message : String(err)}` });
+      if (!controller.signal.aborted) this.deps.emit({ kind: 'error', localized: localized('events.runtime.compactFailed', { detail: err instanceof Error ? err.message : String(err) }) });
     } finally {
       this.turn = null;
       this.deps.emit({ kind: 'session_state', state: 'idle' });
@@ -365,7 +363,7 @@ export class RuntimeSession implements ManagedSession {
     this.deps.emit({ kind: 'context_usage', usage: this.budget.usage(messages) });
     if (this.warnedNearLimit || !this.budget.isNearLimit(messages)) return;
     this.warnedNearLimit = true;
-    this.deps.emit({ kind: 'notice', text: `La conversación se acerca al límite de la ventana de ${this.budget.window} tokens de ${this.model}. Usa /clear para empezar de cero.` });
+    this.deps.emit({ kind: 'notice', localized: localized('events.runtime.nearContextLimit', { window: String(this.budget.window), model: this.model }) });
   }
 
   private loopDeps() {

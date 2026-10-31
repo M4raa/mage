@@ -14,6 +14,7 @@ import {
 import { useWorkbenchStore } from '../../workbenchStore';
 import { Icon } from '../Icon';
 import { useT } from '../../../i18n/uiLanguage';
+import { formatInteger } from '../../../i18n/format';
 
 // Tienda de temas de VS Code (Open VSX): busqueda, exploracion por paginas, PREVISUALIZAR (aplica en
 // vivo sin guardar) y DESCARGAR (guarda y activa), mas la gestion de los ya descargados.
@@ -462,7 +463,7 @@ function ThemeCard({
       <span className="min-w-0">
         <span className="block truncate text-[11.5px] text-mg-body">{item.displayName}</span>
         <span className="block truncate text-[9.5px] text-mg-ter">
-          {t('settings.themeMarket.downloads', { downloads: item.downloadCount.toLocaleString('es-ES') })}
+          {t('settings.themeMarket.downloads', { downloads: formatInteger(item.downloadCount) })}
           {thumbnail !== null && ` · ${thumbnail.type}`}
         </span>
       </span>

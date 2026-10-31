@@ -622,6 +622,68 @@ const CHECKS = [
     },
   },
   {
+    // F3.3/F3.4 (carril A): con la interfaz en inglés, ni el hilo (avisos y errores de main, que llegan con clave) ni la
+    // barra lateral ni Configuración pintan una clave del catálogo en crudo. Lo que aún no tiene traducción cae al
+    // castellano (fallbackLocales de Lingui) hasta F3.5. Al final deja el idioma como estaba.
+    name: 'F3.3: en inglés no se pinta ningún identificador de clave en crudo',
+    async run(page) {
+      const setLanguage = (pref) =>
+        page.evaluate(async (value) => {
+          const store = window.__mageDev.store;
+          const { uiLanguage: _actual, ...resto } = store.getState().settings;
+          const settings = value === null ? resto : { ...resto, uiLanguage: value };
+          store.setState({ settings });
+          await window.mage.saveSettings(settings);
+        }, pref);
+      const previo = await page.evaluate(() => window.__mageDev.store.getState().settings.uiLanguage ?? null);
+      let lang = null;
+      let eventosVisibles = false;
+      let coincidencias = [];
+      try {
+        await setLanguage('en');
+        await page.waitForFunction(() => document.documentElement.lang === 'en', null, { timeout: CONFIG.actionTimeoutMs }).catch(() => undefined);
+        lang = await page.evaluate(() => document.documentElement.lang);
+        // Autosuficiente: con `--only` no hay pestaña de una comprobacion anterior.
+        if ((await page.locator('[data-pane-tab-id]').count()) === 0) await openTemporaryConversation(page);
+        await page.evaluate(() => {
+          const dev = window.__mageDev;
+          const tabId = dev.store.getState().activeTabId;
+          const sessionId = 'verify-f33-session';
+          dev.store.setState((state) => ({ sessionIdByChat: { ...state.sessionIdByChat, [tabId]: sessionId } }));
+          const handle = (event) => dev.store.getState().handleEvent(sessionId, event);
+          handle({ kind: 'notice', localized: { key: 'events.runtime.nothingToCompact' } });
+          handle({ kind: 'error', localized: { key: 'events.cli.unparseableEvent', values: { detail: 'verify-detail' } } });
+        });
+        eventosVisibles = await page
+          .waitForFunction(() => document.body.innerText.includes('verify-detail'), null, { timeout: CONFIG.actionTimeoutMs })
+          .then(() => true, () => false);
+        // Texto visible + aria-label/title/data-tip/placeholder de cada zona.
+        const recoger = (raiz) => {
+          const attrs = ['aria-label', 'title', 'data-tip', 'placeholder'];
+          const nodos = [raiz, ...raiz.querySelectorAll('*')];
+          const valores = nodos.flatMap((n) => attrs.map((a) => n.getAttribute(a)).filter((v) => v !== null));
+          return [raiz.innerText, ...valores].join('\n');
+        };
+        const zonas = {};
+        zonas.hilo = await page.evaluate(`(${recoger})(document.querySelector('[data-pane-tab-id="' + window.__mageDev.store.getState().activeTabId + '"]'))`);
+        zonas.barraLateral = await page.evaluate(`(${recoger})(document.querySelector('[data-chat-projects]').parentElement.parentElement)`);
+        await openSettingsDialog(page);
+        await openSection(page, /Apariencia/);
+        zonas.configuracion = await page.evaluate(`(${recoger})(document.querySelector('${MODAL}'))`);
+        await closeDialog(page);
+        const CLAVE = /\b(?:app|chat|prompt|tabs|sidebar|settings|accounts|usage|mcp|history|notifications|dialogs|menu|tray|events|errors|host|format|a11y)\.[a-z][A-Za-z0-9]*(?:\.[A-Za-z0-9]+)+\b/g;
+        coincidencias = Object.entries(zonas)
+          .flatMap(([zona, texto]) => (texto.match(CLAVE) ?? []).map((clave) => ({ zona, clave })))
+          .slice(0, 10);
+      } finally {
+        await setLanguage(previo);
+        await page.waitForFunction((pref) => document.documentElement.lang === (pref ?? document.documentElement.lang), previo, { timeout: CONFIG.actionTimeoutMs }).catch(() => undefined);
+      }
+      const ok = lang === 'en' && coincidencias.length === 0 && eventosVisibles;
+      return { ok, detail: JSON.stringify({ lang, coincidencias, eventosVisibles }) };
+    },
+  },
+  {
     // El fondo del tooltip es OSCURO EN LOS DOS TEMAS a proposito (`--color-mg-tooltip`), asi que su
     // texto no puede salir de un token que SI conmuta. Salia de `--color-mg-body`, y en tema claro eso
     // es casi negro: la burbuja se veia como un rectangulo negro macizo, sin texto (reportado el

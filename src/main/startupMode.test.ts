@@ -31,8 +31,8 @@ describe('startupWarnings', () => {
     const warnings = startupWarnings({ platform: 'linux', hasNoSandboxSwitch: true, hostFailure: null });
 
     expect(warnings).toEqual([NO_SANDBOX_WARNING]);
-    expect(NO_SANDBOX_WARNING.body).toMatch(/\.deb/);
-    expect(NO_SANDBOX_WARNING.body).toMatch(/espacios de nombres/);
+    expect(NO_SANDBOX_WARNING.title.key).toBe('notifications.startup.noSandbox.title');
+    expect(NO_SANDBOX_WARNING.body.key).toBe('notifications.startup.noSandbox.body');
   });
 
   it('startupWarnings_linuxSinElSwitch_sinAvisos', () => {
@@ -48,7 +48,7 @@ describe('startupWarnings', () => {
 
     expect(warnings).toEqual([hostUnavailableWarning('listen EADDRINUSE')]);
     expect(warnings[0]!.id).toBe(HOST_UNAVAILABLE_WARNING_ID);
-    expect(warnings[0]!.body).toContain('Motivo: listen EADDRINUSE');
+    expect(warnings[0]!.body).toEqual({ key: 'notifications.startup.hostUnavailable.body', values: { reason: 'listen EADDRINUSE' } });
   });
 });
 

@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useWorkbenchStore } from '../workbenchStore';
 import { useT } from '../../i18n/uiLanguage';
+import { displayTitle } from '../conversationTitle';
 import type { Translate } from '@shared/i18n/translator';
 import { usePaneTabId, usePaneTranscriptStore } from '../paneContext';
 import { useStickToBottom } from '../useStickToBottom';
 import { activityStepLabel, activityTurns, runningStepId, runsText, type ActivityTurn } from '../chatVisibility';
 import { formatElapsed } from '../thinkingStatus';
+import { subagentStatusLabel } from '../engineBlocks';
 import { Hint } from './TranscriptHint';
 import { Icon } from './Icon';
 import { ToolBody } from './ToolDetail';
@@ -59,7 +61,7 @@ export function ActivityPanel(): React.JSX.Element {
   const selected = selectedId === null ? undefined : blocks.find((b) => b.id === selectedId);
   return (
     <div data-panel="activity" className="relative flex h-full min-h-0 flex-col">
-      <ActivityHeader tabId={tabId} title={tab.title} subagent={subagent} />
+      <ActivityHeader tabId={tabId} title={displayTitle(tab.title, t)} subagent={subagent} />
       <div ref={ref} onScroll={onScroll} className="min-h-0 flex-1 overflow-auto py-[4px]">
         {stepCount === 0 && <Hint text={emptyActivityText(t, { turnLive, resumed: tab.resumeSessionId !== undefined, transcriptFinal, transcriptError })} />}
         {turns.map((turn) => (
@@ -286,7 +288,7 @@ function SubagentFacts({ block }: { readonly block: SubagentBlock }): React.JSX.
         facts={[
           [t('chat.activity.factType'), block.agentType ?? t('chat.activity.subagentFallback')],
           [t('chat.activity.factTask'), block.description ?? ''],
-          [t('chat.activity.factStatus'), block.status ?? t('chat.activity.statusRunning')],
+          [t('chat.activity.factStatus'), block.status === null ? t('chat.activity.statusRunning') : subagentStatusLabel(block.status, t)],
           [t('chat.activity.factDuration'), block.elapsedMs === null ? '' : formatElapsed(block.elapsedMs)],
         ]}
       />

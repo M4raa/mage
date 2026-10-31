@@ -1,5 +1,5 @@
 import { artifactCardFrom } from './artifactView';
-import { isSubagentRunning } from './engineBlocks';
+import { isSubagentRunning, SUBAGENT_STATUS, subagentStatusLabel } from './engineBlocks';
 import { formatElapsed } from './thinkingStatus';
 import type { IconName } from './components/Icon';
 import { iconForTool } from './toolIcons';
@@ -74,7 +74,7 @@ export function isActivityStep(block: Block): boolean {
 
 export function isStepError(block: Block): boolean {
   if (block.kind === 'tool') return block.isError;
-  if (block.kind === 'subagent') return block.status === 'error';
+  if (block.kind === 'subagent') return block.status === SUBAGENT_STATUS.error;
   return false;
 }
 
@@ -159,7 +159,7 @@ export function activityStepLabel(block: Block): ActivityStepLabel {
     case 'thinking':
       return { ...base, icon: 'brain', name: t('chat.activity.thinking'), detail: previewOf(runsText(block.runs)), meta: block.elapsedMs === null ? '' : formatElapsed(block.elapsedMs) };
     case 'subagent':
-      return { ...base, icon: 'toolAgent', name: block.agentType ?? t('chat.activity.subagent'), detail: block.description ?? '', meta: block.status ?? t('chat.activity.running') };
+      return { ...base, icon: 'toolAgent', name: block.agentType ?? t('chat.activity.subagent'), detail: block.description ?? '', meta: block.status === null ? t('chat.activity.running') : subagentStatusLabel(block.status) };
     case 'permission':
       return { ...base, icon: 'shield', name: t('chat.activity.permission', { tool: block.toolName }), detail: block.target, meta: decisionLabel(block.state) };
     case 'question':
@@ -177,7 +177,7 @@ function isStepRunning(block: Block): boolean {
       return block.elapsedMs === null;
     case 'subagent':
       // Sin resultado, o lanzado en segundo plano y sin notificacion (W-J, P-028 37a: el bloque guarda
-      // 'en segundo plano', no el `async_launched` crudo del CLI).
+      // 'background', no el `async_launched` crudo del CLI).
       return isSubagentRunning(block);
     default:
       return false;

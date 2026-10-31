@@ -1,5 +1,7 @@
 import { z } from 'zod';
 import type { MageEvent, TurnUsage } from '@shared/events';
+import { localized, type LocalizedText } from '@shared/i18n/localizedText';
+import type { MessageKey } from '@shared/i18n/messageKeys.generated';
 import { toolNames } from './normalize';
 
 // Traduccion del NDJSON de `agy --output-format stream-json` al modelo de eventos COMUN de Mage (E3).
@@ -144,7 +146,7 @@ export class AgyTurnTracker {
   }
 
   private track(event: MageEvent): MageEvent {
-    if (event.kind === 'error' && event.message.startsWith(DENIED_PREFIX)) this.deniedReported = true;
+    if (event.kind === 'error' && DENIAL_KEYS.has(event.localized.key)) this.deniedReported = true;
     if (event.kind !== 'result') return event;
     this.deniedReported = false;
     this.silentMcpCalls = [];
@@ -195,7 +197,7 @@ function normalizeStepUpdate(raw: Record<string, unknown>): MageEvent[] {
 
   const denial = deniedCommandMessage(step.tool_info?.error?.message);
   if (step.step_type === STEP_TOOL && step.tool_name !== undefined) {
-    events.push(...toolEvents(step, denial?.message ?? null));
+    events.push(...toolEvents(step, denial === null ? null : (step.tool_info?.error?.message ?? null)));
   } else if (step.step_type === STEP_AGENT_RESPONSE && step.text_delta !== undefined && step.text_delta.length > 0) {
     // ponytail: cada `text_delta` se APILA (semantica de delta, la que mide el spike: un unico evento
     // por paso `agent_response`, ya en estado DONE). Techo: si una version futura emitiera tambien el
@@ -209,14 +211,22 @@ function normalizeStepUpdate(raw: Record<string, unknown>): MageEvent[] {
   // DENEGACION se dice siempre con su comando: medido en 1.2.14, su paso sale unas veces ERROR y otras
   // DONE, asi que el `state` no sirve de señal.
   if (denial !== null && step.state !== STATE_ACTIVE) {
-    events.push({ kind: 'error', message: denial.message, ...(denial.command === undefined ? {} : { deniedCommand: denial.command }) });
+    events.push({ kind: 'error', localized: denial.localized, ...(denial.command === undefined ? {} : { deniedCommand: denial.command }) });
   }
-  else if (step.state === STATE_ERROR) events.push({ kind: 'error', message: describeFailedStep(step) });
+  else if (step.state === STATE_ERROR) events.push({ kind: 'error', localized: describeFailedStep(step) });
   return events;
 }
 
-// Prefijo de los avisos de comando denegado: el tracker lo usa para no repetir el resumen del result.
-const DENIED_PREFIX = 'agy denegó';
+// Claves de los avisos de denegacion: el tracker las usa para no repetir el resumen del result.
+const DENIAL_KEYS: ReadonlySet<MessageKey> = new Set<MessageKey>([
+  'events.agy.deniedCommandByRule',
+  'events.agy.deniedActionByRule',
+  'events.agy.deniedCommandHeadless',
+  'events.agy.deniedActionHeadless',
+  'events.agy.deniedMcpByRule',
+  'events.agy.deniedMcpNotAllowed',
+  'events.agy.deniedActionsHeadless',
+]);
 // Las dos formas medidas en 1.2.14: `permission check failed for command "<cmd>": …` (sin regla) y
 // `Permission denied for command(<cmd>). Matches user-configured deny rule.` (regla deny).
 const DENIED_COMMAND_PATTERNS: readonly RegExp[] = [/for command "((?:[^"\\]|\\.)*)"/, /for command\((.*)\)\./];
@@ -228,7 +238,7 @@ const MCP_TOOL_NAME = 'call_mcp_tool';
 const DENIED_ACTION_MCP = 'mcp';
 
 interface Denial {
-  readonly message: string;
+  readonly localized: LocalizedText;
   // La regla que lo permitiria tal como la guarda Mage: el comando exacto o `mcp(<srv>/<tool>)`.
   readonly command?: string;
 }
@@ -241,16 +251,18 @@ function deniedCommandMessage(errorMessage: string | undefined): Denial | null {
   const mcpTool = DENIED_MCP_PATTERN.exec(errorMessage)?.[1];
   if (mcpTool !== undefined) return deniedMcpTool(mcpTool, byRule);
   const command = DENIED_COMMAND_PATTERNS.map((pattern) => pattern.exec(errorMessage)?.[1]).find((match) => match !== undefined);
-  const what = command === undefined ? 'una acción' : `el comando «${command}»`;
-  const message = byRule
-    ? `${DENIED_PREFIX} ${what}: lo prohíbe una regla deny.`
-    : `${DENIED_PREFIX} ${what}: sin pantalla no tiene a quién pedir permiso y lo deniega.`;
-  return command === undefined ? { message } : { message, command };
+  const text = deniedCommandText(command, byRule);
+  return command === undefined ? { localized: text } : { localized: text, command };
+}
+
+function deniedCommandText(command: string | undefined, byRule: boolean): LocalizedText {
+  if (command === undefined) return localized(byRule ? 'events.agy.deniedActionByRule' : 'events.agy.deniedActionHeadless');
+  return localized(byRule ? 'events.agy.deniedCommandByRule' : 'events.agy.deniedCommandHeadless', { command });
 }
 
 function deniedMcpTool(tool: string, byRule: boolean): Denial {
-  const why = byRule ? 'lo prohíbe una regla deny.' : 'no está entre las permitidas.';
-  return { message: `${DENIED_PREFIX} la herramienta MCP «${tool}»: ${why}`, command: `mcp(${tool})` };
+  const text = localized(byRule ? 'events.agy.deniedMcpByRule' : 'events.agy.deniedMcpNotAllowed', { tool });
+  return { localized: text, command: `mcp(${tool})` };
 }
 
 // `<servidor>/<tool>` de un paso `call_mcp_tool` terminado SIN salida ni error, o null. Medido en 1.2.14:
@@ -271,7 +283,8 @@ export function silentMcpCall(raw: unknown): string | null {
 
 // ACTIVE -> tool_use (con sus parametros); DONE/ERROR -> tool_result. `output` vacio: `agy` no publica
 // la salida de la tool en su stream (a diferencia del CLI de Claude), y fabricarla seria mentir. Una
-// denegacion es un resultado con error aunque el paso diga DONE.
+// denegacion es un resultado con error aunque el paso diga DONE; su salida es el error CRUDO de agy (la frase de Mage
+// va en el evento `error`, que se traduce).
 function toolEvents(step: z.infer<typeof AgyStepUpdateSchema>['step_update'], denial: string | null): MageEvent[] {
   const toolUseId = `${TOOL_ID_PREFIX}${step.step_index}`;
   if (step.state === STATE_ACTIVE) {
@@ -283,6 +296,10 @@ function toolEvents(step: z.infer<typeof AgyStepUpdateSchema>['step_update'], de
   return [{ kind: 'tool_result', result: { toolUseId, isError, output, durationMs: null } }];
 }
 
+function turnFailedText(error: string | undefined, status: string): LocalizedText {
+  return error === undefined ? localized('events.agy.turnFailedStatus', { status }) : localized('events.agy.turnFailed', { detail: error });
+}
+
 // `result` -> result (con el uso del proceso, que el tracker convierte en el del turno) y, si `agy`
 // reporta un fallo o denego acciones sin decir cuales, un aviso visible antes.
 function normalizeResult(raw: Record<string, unknown>, deniedReported: boolean, silentMcpCalls: readonly string[]): MageEvent[] {
@@ -290,20 +307,19 @@ function normalizeResult(raw: Record<string, unknown>, deniedReported: boolean, 
   const isError = result.status !== RESULT_SUCCESS;
   const events: MageEvent[] = [];
   if (isError) {
-    const detail = result.error ?? `estado ${result.status}`;
-    events.push({ kind: 'error', message: `agy termino el turno con error: ${detail}` });
+    events.push({ kind: 'error', localized: turnFailedText(result.error, result.status) });
   }
   const allDenied = result.denied_actions ?? [];
   // La denegacion `mcp` no dice que tool: se nombran las que acabaron sin salida en este turno.
   const mcpTools = allDenied.some((action) => action.action === DENIED_ACTION_MCP) ? [...new Set(silentMcpCalls)] : [];
   for (const tool of mcpTools) {
     const denial = deniedMcpTool(tool, false);
-    events.push({ kind: 'error', message: denial.message, ...(denial.command === undefined ? {} : { deniedCommand: denial.command }) });
+    events.push({ kind: 'error', localized: denial.localized, ...(denial.command === undefined ? {} : { deniedCommand: denial.command }) });
   }
   const denied = mcpTools.length > 0 ? allDenied.filter((action) => action.action !== DENIED_ACTION_MCP) : allDenied;
   if (denied.length > 0 && !deniedReported) {
     const names = [...new Set(denied.map((action) => action.display_name ?? action.action ?? '?'))].join(', ');
-    events.push({ kind: 'error', message: `${DENIED_PREFIX} ${denied.length} acción(es) (${names}): sin pantalla no tiene a quién pedir permiso.` });
+    events.push({ kind: 'error', localized: localized('events.agy.deniedActionsHeadless', { count: denied.length, names }) });
   }
   const usage = toTurnUsage(result.usage);
   events.push({
@@ -335,12 +351,10 @@ function toTurnUsage(usage: z.infer<typeof AgyUsageSchema> | undefined): TurnUsa
 
 // Mensaje del paso fallido: dice QUE paso y de que tipo, porque `agy` no adjunta ningun detalle del
 // error en el propio step_update (medido: sus claves son fijas).
-function describeFailedStep(step: z.infer<typeof AgyStepUpdateSchema>['step_update']): string {
-  const what = step.tool_name !== undefined ? `la herramienta ${step.tool_name}` : `el paso ${step.step_type}`;
-  return (
-    `agy marco ${what} (paso ${step.step_index}) como fallida y aun asi puede reportar el turno como ` +
-    `correcto: revisa si lo que pediste se hizo de verdad.`
-  );
+function describeFailedStep(step: z.infer<typeof AgyStepUpdateSchema>['step_update']): LocalizedText {
+  const index = String(step.step_index);
+  if (step.tool_name !== undefined) return localized('events.agy.stepFailedTool', { tool: step.tool_name, index });
+  return localized('events.agy.stepFailedStep', { stepType: step.step_type, index });
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

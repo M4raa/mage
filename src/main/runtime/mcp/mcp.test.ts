@@ -1,5 +1,7 @@
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { renderLocalized } from '@shared/i18n/localizedText';
+import { createTranslator } from '@shared/i18n/translator';
 import type { ResolvedMcpServer, ResolvedRemoteServer } from '../../config/mcpResolved';
 import { McpNeedsAuth, McpPool, type McpClientLike } from './mcpPool';
 import { McpLoginRegistry } from './mcpLogins';
@@ -20,7 +22,7 @@ afterEach(async () => {
 
 function pool(servers: readonly ResolvedMcpServer[], connect = createMcpConnector({ vault: { get: () => null, set: () => undefined }, logins: new McpLoginRegistry({ openUrl: async () => undefined, newId: () => 'l1' }), baseEnv: () => ({ PATH: process.env.PATH }), cwd: process.cwd(), elicit: async () => ({ action: 'cancel' }) })) {
   const notices: string[] = [];
-  const created = new McpPool(servers, { connect, notify: (text) => notices.push(text), loginRequired: () => undefined, onChange: () => undefined, connectTimeoutMs: 10_000 });
+  const created = new McpPool(servers, { connect, notify: (text) => notices.push(renderLocalized(createTranslator('es'), text)), loginRequired: () => undefined, onChange: () => undefined, connectTimeoutMs: 10_000 });
   pools.push(created);
   return { pool: created, notices };
 }

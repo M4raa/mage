@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import type { Translate } from '@shared/i18n/translator';
 import type { SessionLogFn } from '../engine/agentSession';
 import type { HostSessions } from './hostConnection';
 import { endpointFilePath, modeFilePath, resolveHostEndpoint, tokenFilePath, type HostEndpointDeps } from './hostEndpoint';
@@ -20,6 +21,7 @@ export interface HostBootstrapDeps {
   readonly log: SessionLogFn;
   readonly newId: () => string;
   readonly setTimer: (fn: () => void, ms: number) => () => void;
+  readonly translate: Translate;
   // Aleatorios del sistema: inyectable para probar.
   readonly randomBytes?: (size: number) => Buffer;
 }
@@ -38,7 +40,7 @@ export async function startLocalHost(deps: HostBootstrapDeps): Promise<HostServe
     token: createHostToken({ randomBytes: deps.randomBytes ?? randomBytes }),
     fs: deps.fs,
     getuid: deps.getuid,
-    connection: { sessions: deps.sessions, hostVersion: deps.hostVersion, log: deps.log, newId: deps.newId, setTimer: deps.setTimer },
+    connection: { sessions: deps.sessions, hostVersion: deps.hostVersion, log: deps.log, newId: deps.newId, setTimer: deps.setTimer, translate: deps.translate },
   });
   deps.log('info', 'Host local escuchando', { kind: endpoint.kind, mode: deps.mode });
   return handle;

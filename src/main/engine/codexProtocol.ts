@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { ContextUsage, MageEvent, PermissionRequest, TurnUsage } from '@shared/events';
+import { localized } from '@shared/i18n/localizedText';
 import type { ProviderModel } from '@shared/providers';
 import type { UsageWindowInfo } from '@shared/usage';
 
@@ -133,7 +134,7 @@ function mcpOutput(item: ThreadItem): string {
 function turnCompleted(turn: z.infer<typeof TurnSchema>, usage: TurnUsage | null): MageEvent[] {
   const isError = turn.status === 'failed';
   const events: MageEvent[] = [];
-  if (isError) events.push({ kind: 'error', message: `codex termino el turno con error: ${turn.error?.message ?? turn.status}` });
+  if (isError) events.push({ kind: 'error', localized: localized('events.codex.turnFailed', { detail: turn.error?.message ?? turn.status }) });
   events.push({
     kind: 'result',
     result: { isError, subtype: turn.status, numTurns: null, ...(usage === null ? {} : { usage }) },
@@ -147,7 +148,7 @@ function errorNotification(params: Record<string, unknown>): MageEvent[] {
   if (params.willRetry === true || !isRecord(params.error)) return [];
   const { message, additionalDetails } = params.error;
   const detail = typeof additionalDetails === 'string' && additionalDetails.length > 0 ? ` (${additionalDetails})` : '';
-  return [{ kind: 'error', message: `codex: ${String(message)}${detail}` }];
+  return [{ kind: 'error', localized: localized('events.codex.error', { detail: `${String(message)}${detail}` }) }];
 }
 
 // Uso de tokens de Codex (F2.1). `thread/tokenUsage/updated` trae `last` (la ULTIMA llamada al modelo) y

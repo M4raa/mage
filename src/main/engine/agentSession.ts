@@ -3,10 +3,14 @@ import type { ImageAttachment } from '@shared/ipc';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import type { LogLevel } from '@shared/debug';
 import type { MageEvent, PermissionDecision } from '@shared/events';
+import { localized, type LocalizedText } from '@shared/i18n/localizedText';
 import { validateElicitationAnswer, type ElicitationAnswer, type ElicitationRequest } from '@shared/elicitation';
 import type { LaunchParams, ProviderAdapter } from './providerAdapter';
-import { DEFAULT_RESTART_POLICY, decideRestart, type RestartPolicy } from './restartPolicy';
+import { DEFAULT_RESTART_POLICY, decideRestart, type RestartDecision, type RestartPolicy } from './restartPolicy';
 import { defaultKillTreeDeps, killProcessTree, type KillTreeDeps } from '../os/processTree';
+
+// Única decisión que emite error: `none` sale antes y `restart` reprograma.
+type GiveUpDecision = Extract<RestartDecision, { action: 'give_up' }>;
 
 // Funcion de spawn inyectable (default: la de Node) -> testable con un proceso falso.
 export type SpawnFn = (
@@ -29,7 +33,7 @@ export interface AgentSessionDeps {
   readonly params: LaunchParams;
   readonly emit: (event: MageEvent) => void; // eventos comunes hacia el consumidor (IPC/UI)
   readonly spawn?: SpawnFn;
-  readonly prepareCwd?: (cwd: string) => string | null;
+  readonly prepareCwd?: (cwd: string) => LocalizedText | null;
   readonly log?: SessionLogFn; // stream de debug (dev); nunca recibe credenciales
   // Reinicio automatico (C1). Inyectables para poder testear sin esperas reales ni reloj del sistema.
   readonly restartPolicy?: RestartPolicy;
@@ -122,7 +126,7 @@ export class AgentSession {
 
   private launch(params: LaunchParams): void {
     const warning = this.deps.prepareCwd?.(params.cwd);
-    if (warning) this.deps.emit({ kind: 'notice', text: warning });
+    if (warning) this.deps.emit({ kind: 'notice', localized: warning });
     // Buffers del proceso ANTERIOR fuera. Si murio a mitad de una linea NDJSON, ese fragmento se
     // concatenaria con la primera linea del proceso nuevo y daria un JSON invalido -> un evento 'error'
     // espurio en la conversacion justo despues de reanudarla. Y el stderr viejo no debe atribuirse al
@@ -158,7 +162,7 @@ export class AgentSession {
     // (medido: no lanza). Se reusa el cierre comun para cancelar permisos, limpiar y aplicar C1.
     child.on('error', (err) => {
       this.launchErrorCode = (err as NodeJS.ErrnoException).code;
-      this.deps.emit({ kind: 'error', message: describeSpawnError(err) });
+      this.deps.emit({ kind: 'error', localized: describeSpawnError(err) });
       if (this.child === child) this.onExit(null, null);
     });
     // Solo se atiende el exit del hijo VIGENTE (B4). Con la interrupcion por corte (`agy`) la secuencia
@@ -477,7 +481,7 @@ export class AgentSession {
     try {
       events = this.deps.adapter.normalize(JSON.parse(line));
     } catch (err) {
-      this.deps.emit({ kind: 'error', message: `Evento no parseable del CLI: ${describeError(err)}` });
+      this.deps.emit({ kind: 'error', localized: localized('events.cli.unparseableEvent', { detail: describeError(err) }) });
       return;
     }
     for (const event of events) this.trackAndEmit(event);
@@ -571,7 +575,7 @@ export class AgentSession {
       });
       return null;
     }
-    return { kind: 'error', message: `El CLI rechazo una peticion de control: ${event.message}` };
+    return { kind: 'error', localized: localized('events.cli.controlRejected', { detail: event.message }) };
   }
 
   private enrichToolResult(event: Extract<MageEvent, { kind: 'tool_result' }>): MageEvent {
@@ -606,7 +610,7 @@ export class AgentSession {
     );
     if (decision.action === 'none') return; // salida intencionada
     if (decision.action === 'give_up') {
-      this.emitUnexpectedExit(code, signal, decision.reason);
+      this.emitUnexpectedExit(code, signal, decision);
       return;
     }
     this.scheduleRestart(decision.attempt, decision.delayMs, decision.streakReset);
@@ -646,7 +650,7 @@ export class AgentSession {
     } catch (err) {
       // Si ni siquiera se puede construir el plan o lanzar el proceso, se reporta y se deja de
       // insistir: no hay nada que un reintento inmediato vaya a mejorar.
-      this.deps.emit({ kind: 'error', message: `No se pudo reanudar la sesion tras el cierre: ${describeError(err)}` });
+      this.deps.emit({ kind: 'error', localized: localized('events.agent.resumeFailed', { detail: describeError(err) }) });
     }
   }
 
@@ -656,15 +660,10 @@ export class AgentSession {
     this.pendingRestart = null;
   }
 
-  private emitUnexpectedExit(code: number | null, signal: NodeJS.Signals | null, reason: string): void {
+  private emitUnexpectedExit(code: number | null, signal: NodeJS.Signals | null, decision: GiveUpDecision): void {
     const detail = this.lastStderr.trim();
-    const suffix = detail.length > 0 ? ` — stderr: ${detail}` : '';
-    this.deps.emit({
-      kind: 'error',
-      message:
-        `El proceso del agente termino inesperadamente (code=${code}, signal=${signal ?? 'none'}) ` +
-        `y no se reintenta: ${reason}${suffix}`,
-    });
+    const common = { code: String(code), signal: signal ?? 'none', stderr: detail.length > 0 ? ` — stderr: ${detail}` : '' };
+    this.deps.emit({ kind: 'error', localized: localized('events.agent.exitGaveUp', { ...common, attempts: String(decision.attempts), lastCode: decision.lastCode, lastSignal: decision.lastSignal }) });
   }
 }
 
@@ -682,8 +681,8 @@ function readControlRequestId(payload: unknown): string | null {
   return typeof value === 'string' && value.length > 0 ? value : null;
 }
 
-function describeSpawnError(err: unknown): string {
-  return `No se pudo arrancar el agente: ${describeError(err)}`;
+function describeSpawnError(err: unknown): LocalizedText {
+  return localized('events.agent.spawnFailed', { detail: describeError(err) });
 }
 
 function describeError(err: unknown): string {

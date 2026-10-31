@@ -29,7 +29,7 @@ export function loopToMageEvents(event: LoopEvent): MageEvent[] {
         },
       ];
     case 'notice':
-      return [{ kind: 'notice', text: event.text }];
+      return [{ kind: 'notice', localized: event.localized }];
     case 'round_done':
       // Contabilidad interna (transcripcion y presupuesto de contexto): no va a la UI.
       return [];

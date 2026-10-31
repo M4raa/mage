@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { t, useT } from '../../i18n/uiLanguage';
+import { displayTitle } from '../conversationTitle';
 import type { SplitPath, TabDropSide } from '../splitLayout';
 import { Icon } from './Icon';
 import { AnimatePresence, motion } from 'motion/react';
@@ -196,7 +197,7 @@ export function TabBar({
         {menu !== null && (
           <TabContextMenu
             key="tab-context-menu"
-            title={menu.tab.title}
+            title={displayTitle(menu.tab.title, translate)}
             pinned={menu.tab.pinned === true}
             colorIndex={menu.tab.colorIndex}
             closableCount={tabsToCloseAll(tabs).length}
@@ -425,7 +426,7 @@ function Tab({
       )}
       {tab.pinned === true && <Icon name="pin" size={10} className="flex-none text-mg-ter" />}
 
-      <span className="max-w-[220px] truncate">{tab.title}</span>
+      <span className="max-w-[220px] truncate">{displayTitle(tab.title, translate)}</span>
       {active && (
         <button
           onClick={(e) => {
@@ -434,7 +435,7 @@ function Tab({
           }}
           className="text-mg-muted transition-colors duration-150 ease-out hover:text-mg-body"
           data-tip={translate('tabs.close.tip')}
-          aria-label={translate('tabs.close.label', { alias: accountAlias, title: tab.title })}
+          aria-label={translate('tabs.close.label', { alias: accountAlias, title: displayTitle(tab.title, translate) })}
         >
           ✕
         </button>

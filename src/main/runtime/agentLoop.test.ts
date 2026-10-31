@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { localized } from '@shared/i18n/localizedText';
 import { z } from 'zod';
 import { MAX_TOOL_ROUNDS, runTurn, type LoopDeps, type LoopEvent } from './agentLoop';
 import { ChatHttpError, type ChatClient, type ChatMessage, type ChatRequest } from './chatClient';
@@ -114,7 +115,7 @@ describe('runTurn con herramientas', () => {
 
     expect(outcome.status).toBe('error');
     expect(outcome.rounds).toBe(MAX_TOOL_ROUNDS);
-    expect(outcome.error).toMatch(String(MAX_TOOL_ROUNDS));
+    expect(outcome.error).toEqual(localized('events.runtime.tooManyToolRounds', { max: String(MAX_TOOL_ROUNDS) }));
   });
 
   it('run_noToolsError_retriesWithoutToolsAndNotices', async () => {
@@ -133,7 +134,7 @@ describe('runTurn con herramientas', () => {
   it('run_finishLength_errorExplained', async () => {
     const outcome = await runTurn(input(), deps(client(() => [text('a medias'), finish('length')]), []));
 
-    expect(outcome).toMatchObject({ status: 'error', error: expect.stringContaining('longitud') });
+    expect(outcome).toMatchObject({ status: 'error', error: localized('events.runtime.outputTruncated') });
   });
 
   it('run_usage_summedAcrossRounds', async () => {

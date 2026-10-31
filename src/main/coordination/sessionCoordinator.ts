@@ -1,5 +1,6 @@
 import type { CreateSessionParams, SendMessageParams, SessionEventPayload } from '@shared/ipc';
 import type { MageEvent, PermissionDecision, PermissionRequest } from '@shared/events';
+import { localizedFromError } from '@shared/i18n/localizedText';
 import type { ElicitationAnswer } from '@shared/elicitation';
 import type { AnswerReceipt, CloseReceipt, ConversationId, ConversationSnapshot, CoordinatedState, NativeSessionRef, PendingRequest, QueuedMessage, SendReceipt } from '@shared/coordination';
 import { enqueueMessage, removeQueuedMessage, takeNextMessage } from '@shared/messageQueue';
@@ -348,7 +349,7 @@ export class SessionCoordinator {
       armPrGuard(tracked, next.text);
       tracked.emit({ kind: 'queued_message_sent', message: next });
     } catch (err) {
-      tracked.emit({ kind: 'queued_message_failed', message: next, error: describe(err) });
+      tracked.emit({ kind: 'queued_message_failed', message: next, localized: localizedFromError(err) });
     }
     tracked.emit({ kind: 'queue_changed', queue: rest });
   }

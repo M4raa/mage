@@ -1,6 +1,7 @@
 import type { ContextCategory, ContextUsage } from '@shared/events';
 import type { TranscriptEntry } from '@shared/transcripts';
 import type { ContextInfo } from './types';
+import { formatDecimal } from '../i18n/format';
 
 // Mapeo PURO del historial de tokens (TranscriptEntry[]) a las dos vistas de la pestana "Contexto":
 // (a) atribucion por categorias (cuanto se gasto en input/output/cache) y (b) evolucion del tamano
@@ -149,8 +150,8 @@ export function contextWindowForModel(model: string): number {
 export function formatTokensShort(tokens: number): string {
   const safe = tokens > 0 ? Math.round(tokens) : 0;
   if (safe < 1000) return String(safe);
-  if (safe < MILLION_CONTEXT_WINDOW_TOKENS) return `${(safe / 1000).toFixed(1).replace('.', ',')}k`;
-  return `${(safe / MILLION_CONTEXT_WINDOW_TOKENS).toFixed(1).replace('.', ',')}M`;
+  if (safe < MILLION_CONTEXT_WINDOW_TOKENS) return `${formatDecimal(safe / 1000, 1)}k`;
+  return `${formatDecimal(safe / MILLION_CONTEXT_WINDOW_TOKENS, 1)}M`;
 }
 
 // Etiqueta de la ventana ("200k" / "1M") para el footer de contexto.

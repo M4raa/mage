@@ -60,9 +60,7 @@ export const CODEX_PROVIDER_ID = 'codex';
 // esquema y lo medido con cuenta en codex-cli 0.160.0 (`spike/codex-spike.mjs --verify --real`).
 // Se conserva el mecanismo de aviso para proveedores que se incorporen sin haber sido medidos.
 export const UNVERIFIED_PROVIDER_IDS: readonly string[] = [];
-export const UNVERIFIED_PROVIDER_NOTE =
-  'Sin verificar: Mage habla con Codex según su documentación y su esquema, pero aún no se ha probado ' +
-  'un turno con una cuenta real.';
+// El aviso que se pinta es la clave `prompt.providers.unverifiedNote`.
 
 export function isUnverifiedProvider(providerId: string): boolean {
   return UNVERIFIED_PROVIDER_IDS.includes(providerId);
@@ -78,16 +76,11 @@ export function isUnverifiedProvider(providerId: string): boolean {
 export const AUTO_APPROVED_PROVIDER_IDS: readonly string[] = [AGY_PROVIDER_ID];
 
 // Auto en el runtime propio (D1 de P-033, M5): una lista blanca, no el sandbox de Codex. Lo dicen el
-// aviso al entrar en el modo (main) y la nota del deslizador (renderer).
-export const RUNTIME_AUTO_MODE_NOTE =
-  'Auto no es un sandbox: edita dentro del proyecto y ejecuta sin preguntar solo comandos de una lista corta (lectura, git sin red, test y build). Esos comandos ejecutan código del proyecto; todo lo demás pregunta.';
+// aviso al entrar en el modo (main) y la nota del deslizador (renderer): clave
+// `prompt.providers.runtimeAutoModeNote`.
 
-// Texto UNICO del aviso (no se duplica por componente: si cambia, cambia en todos a la vez).
-export const NO_PERMISSION_CONTROL_WARNING =
-  'Sin control de permisos: el agente crea y modifica ficheros SIN preguntar dentro de la carpeta del ' +
-  'proyecto, y agy deniega los comandos de terminal salvo los que permitas al empezar la conversación. ' +
-  'Mage no puede preguntarte a mitad de turno (el CLI de agy no ofrece puente de permisos), así que esta ' +
-  'pestaña no pasa por los diálogos de permiso de Mage.';
+// El texto del aviso de agy es la clave `prompt.providers.noPermissionControl` (una sola, para que si
+// cambia, cambie en todos los sitios a la vez).
 
 // Niveles de `--effort` de `agy`, medidos en 1.2.14 (`--help`: low|medium|high|max). Un solo sitio: lo
 // usan su adapter (main) y los selectores (renderer).

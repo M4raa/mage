@@ -1,5 +1,7 @@
+import { SUBAGENT_STATUS } from './engineBlocks';
 import { describe, expect, it } from 'vitest';
 import type { ContextUsage, MageEvent } from '@shared/events';
+import { foreignText, localized } from '@shared/i18n/localizedText';
 import { reduceEvent, type WorkbenchState } from './workbenchStore';
 import type { Block, Tab } from './types';
 
@@ -60,8 +62,20 @@ describe('reduceEvent — streaming y bloques', () => {
     expect(patch).toEqual({});
   });
 
+  it('reduceEvent_errorConLocalized_bloqueErrorEnCastellano', () => {
+    const patch = reduceEvent(state(), TAB, { kind: 'error', localized: localized('events.codex.threadWithoutId') });
+
+    expect(blocksOf(patch).at(-1)).toMatchObject({ kind: 'error', message: 'codex abrio el hilo sin id' });
+  });
+
+  it('reduceEvent_noticeConLocalized_lineaDeSistemaEnCastellano', () => {
+    const patch = reduceEvent(state(), TAB, { kind: 'notice', localized: localized('events.runtime.nothingToCompact') });
+
+    expect(blocksOf(patch).at(-1)).toMatchObject({ kind: 'system', text: 'No hay nada que compactar todavía.' });
+  });
+
   it('reduceEvent_error_pintaBloqueDeErrorYDejaLaPestanaEnError', () => {
-    const patch = reduceEvent(state(), TAB, { kind: 'error', message: 'boom' });
+    const patch = reduceEvent(state(), TAB, { kind: 'error', localized: foreignText('boom') });
 
     expect(blocksOf(patch).at(-1)).toMatchObject({ kind: 'error', message: 'boom' });
     expect(patch.statusByChat?.[TAB]).toBe('error');
@@ -522,12 +536,12 @@ describe('reduceEvent — catalogo de modelos', () => {
 });
 
 describe('reduceEvent — subagentes en segundo plano (P-028 37a/37c)', () => {
-  const sub: Block = { kind: 'subagent', id: 's', toolUseId: 'tu1', agentType: 'general-purpose', description: 'A', agentId: 'ab25', status: 'completado', elapsedMs: 10, tokens: 5, toolUses: 0, model: null };
+  const sub: Block = { kind: 'subagent', id: 's', toolUseId: 'tu1', agentType: 'general-purpose', description: 'A', agentId: 'ab25', status: SUBAGENT_STATUS.completed, elapsedMs: 10, tokens: 5, toolUses: 0, model: null };
 
   it('reduceEvent_subagentUpdate_actualizaElBloque', () => {
     const patch = reduceEvent(state({ blocksByChat: { [TAB]: [sub] } }), TAB, { kind: 'subagent_update', toolUseId: 'tu1', status: 'running', tokens: 99, toolUses: 1, durationMs: 3 });
 
-    expect(blocksOf(patch)[0]).toMatchObject({ status: 'en segundo plano', tokens: 99, toolUses: 1 });
+    expect(blocksOf(patch)[0]).toMatchObject({ status: SUBAGENT_STATUS.background, tokens: 99, toolUses: 1 });
   });
 
   it('reduceEvent_subagentOcultoQueSeReanuda_vuelveAlDock', () => {

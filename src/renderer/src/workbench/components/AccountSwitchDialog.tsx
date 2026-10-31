@@ -5,6 +5,7 @@ import { useDialogA11y } from '../a11y/useDialogA11y';
 import { MODAL_PANEL_VARIANTS, MODAL_SCRIM_VARIANTS } from '../motionPresets';
 import type { AccountSwitchPrompt } from '../types';
 import { useT } from '../../i18n/uiLanguage';
+import { displayTitle } from '../conversationTitle';
 
 // «¿Migrar la conversacion?» al pulsar otra cuenta con una conversacion PARADA abierta (P-026 2.7, D5).
 // Sin «recordar mi eleccion» (D6): se pregunta cada vez. `Esc` cancela: ni se cambia de cuenta.
@@ -21,7 +22,8 @@ function AccountSwitchBody({ prompt }: { readonly prompt: AccountSwitchPrompt })
   const continueWithHistoryIn = useWorkbenchStore((s) => s.continueWithHistoryIn);
   const dest = useWorkbenchStore((s) => s.accounts.find((a) => a.id === prompt.destAccountId));
   const t = useT();
-  const title = useWorkbenchStore((s) => s.tabs.find((tab) => tab.id === prompt.tabId)?.title) ?? t('accounts.switch.thisConversation');
+  const tabTitle = useWorkbenchStore((s) => s.tabs.find((tab) => tab.id === prompt.tabId)?.title);
+  const title = tabTitle === undefined ? t('accounts.switch.thisConversation') : displayTitle(tabTitle, t);
   // Entre cuentas de Claude la transcripción se mueve; con otro CLI cada uno guarda la suya, así que la
   // conversación sigue en la destino como una nueva que arranca con su historial como contexto.
   const crossProvider = useWorkbenchStore((s) => ![s.tabs.find((tab) => tab.id === prompt.tabId)?.accountId, prompt.destAccountId].every((id) => s.accounts.find((a) => a.id === id)?.providerId === 'claude'));

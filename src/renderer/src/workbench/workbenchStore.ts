@@ -57,7 +57,7 @@ import type { ConversationPrivacy } from '@shared/state';
 import type { ConversationSummary } from '@shared/conversations';
 import { planOpenConversation, tabFromConversation } from './conversationList';
 import { modelForReassignedTab, planAccountSwitch } from './accountSwitch';
-import { importedConversationContext } from './conversationContext';
+import { importedConversationContext, MODEL_UNTITLED_TITLE } from './conversationContext';
 import { accumulateProviderUsage, type ProviderUsageTotals } from './providerUsage';
 import {
   AUTO_CONTINUE_POLL_MS,
@@ -120,7 +120,8 @@ import type { AgyCommandVerdict } from '@shared/agyRules';
 import { AGY_PROVIDER_ID, CODEX_PROVIDER_ID, ownsConversation, runsOnMageRuntime, writesClaudeTranscript, type CustomProvider, type ProviderModel } from '@shared/providers';
 import { applyThemeFromSettings, findActiveImportedTheme, resolveTheme, systemPrefersDark } from './theme';
 import { toWidgetSnapshot } from './widgetView';
-import { deriveTitleFromPrompt, isPlaceholderTitle, isSlashCommandText, NEW_CONVERSATION_TITLE, renamedTitleFrom } from './conversationTitle';
+import { deriveTitleFromPrompt, displayTitle, isSlashCommandText, renamedTitleFrom } from './conversationTitle';
+import { isPlaceholderTitle } from '@shared/conversationTitle';
 import { resolveDefaultModel } from './modelDefaults';
 import { resolveReopenedTabPrefs, toConversationPrefs } from './conversationPrefs';
 import type { ConversationPrefs } from '@shared/conversationIndex';
@@ -133,7 +134,9 @@ import { recentProjects, RECENT_PROJECTS_LIMIT } from './recentProjects';
 import { projectForRow } from './chatProjects';
 import { isWindowsPlatform } from './keybindings/platform';
 import { describeError } from './describeError';
+import { renderLocalized } from '@shared/i18n/localizedText';
 import { t } from '../i18n/uiLanguage';
+import { formatClockTime } from '../i18n/format';
 
 // Contexto en placeholder hasta M1.3 (el uso/contexto real llega con UsageService).
 const CONTEXT_PLACEHOLDER: ContextInfo = { usedTokens: '—', maxTokens: '200k', usedPct: 0, tokensOut: '—' };
@@ -691,9 +694,9 @@ function applyBackgroundEvent(
   // (M2.3) se disparan con `assistant_text` y `hook_fired`, que NO cambian el estado de segundo plano.
   // Calculandola detras, la unica conversacion que el usuario no esta mirando era justo la unica que no
   // avisaba. Main solo la enseña con la ventana sin foco; el titulo es el que tenia la pestaña al cerrar.
-  const content = notificationForEvent(event, { tabTitle: entry.title, rules: get().settings.notificationRules });
+  const content = notificationForEvent(event, { tabTitle: displayTitle(entry.title), rules: get().settings.notificationRules });
   if (content !== null) void mage.notify(toNotifyParams(content, { sessionId })).catch(() => undefined);
-  toastIfHidden(get, event, { tabId: null, tabTitle: entry.title, target: { sessionId } });
+  toastIfHidden(get, event, { tabId: null, tabTitle: displayTitle(entry.title), target: { sessionId } });
   const state = nextBackgroundState(entry.state, event);
   if (state === entry.state) return;
   set((s) => ({ backgroundSessions: { ...s.backgroundSessions, [sessionId]: { ...entry, state } } }));
@@ -1144,7 +1147,7 @@ async function createSessionFor(
       sessionIdByChat: { ...s.sessionIdByChat, [tabId]: sessionId },
       tabs: s.tabs.map((t) => (t.id === tabId ? { ...t, resolvedConfigDir: configDir } : t)),
     }));
-    if (workspaceWarning !== undefined) patchBlocks(set, tabId, blocks => [...blocks, { kind: 'system', id: nextBlockId(), text: workspaceWarning }]);
+    if (workspaceWarning !== undefined) patchBlocks(set, tabId, blocks => [...blocks, { kind: 'system', id: nextBlockId(), text: renderLocalized(t, workspaceWarning) }]);
     schedulePersist(mage, get); // ya hay sesion viva: persistir su id para poder reanudar en el futuro
     // Es el momento en que una conversacion NUEVA estrena `sessionId`: hasta ahora no habia a que
     // asociar sus preferencias (2.1).
@@ -1914,7 +1917,7 @@ export function createWorkbenchStore(mage: MageClient) {
         cwd,
         model,
         provider: 'claude',
-        title: NEW_CONVERSATION_TITLE,
+        title: '',
         privacy,
         projectId: folder.projectId,
         importedContext: folder.importedContext,
@@ -2116,7 +2119,7 @@ export function createWorkbenchStore(mage: MageClient) {
     continueWithHistoryIn: async (tabId, destAccountId) => {
       const tab = get().tabs.find((t) => t.id === tabId);
       if (tab === undefined || destAccountId === tab.accountId) return;
-      const context = importedConversationContext(get().blocksByChat[tabId] ?? [], { title: tab.title, fromProvider: providerLabel(tab.provider, get().settings.customProviders) }, get().settings.importedContextMaxChars);
+      const context = importedConversationContext(get().blocksByChat[tabId] ?? [], { title: isPlaceholderTitle(tab.title) ? MODEL_UNTITLED_TITLE : tab.title, fromProvider: providerLabel(tab.provider, get().settings.customProviders) }, get().settings.importedContextMaxChars);
       get().setActiveAccount(destAccountId);
       await get().createConversation(tab.privacy, { cwd: tab.cwd, ...(context === null ? {} : { importedContext: context }) });
     },
@@ -2638,7 +2641,7 @@ export function createWorkbenchStore(mage: MageClient) {
       // pudo enviarlo, vuelve al input con el error.
       if (event.kind === 'queued_message_sent') beginTurnLocally(mage, get, set, tabId, event.message.text, event.message.attachments);
       if (event.kind === 'queued_message_failed') {
-        failChat(set, tabId, event.error);
+        failChat(set, tabId, renderLocalized(t, event.localized));
         restoreDraftAfterFailedSend(set, tabId, event.message.text, event.message.attachments);
       }
       // Comandos locales con efecto en la pestaña (P-028): `/rename` la renombra al instante y `/clear`
@@ -2652,9 +2655,9 @@ export function createWorkbenchStore(mage: MageClient) {
       // titulo de la pestana como cuerpo; los eventos de ruido devuelven null (no se notifica).
       // Un permiso que main contesto sola (regla o barrera de PR, F2.4) no llega aqui como peticion: no avisa.
       if (tab !== undefined) {
-        const content = notificationForEvent(event, { tabTitle: tab.title, rules: get().settings.notificationRules });
+        const content = notificationForEvent(event, { tabTitle: displayTitle(tab.title), rules: get().settings.notificationRules });
         if (content !== null) void mage.notify(toNotifyParams(content, { tabId, sessionId })).catch(() => undefined);
-        toastIfHidden(get, event, { tabId, tabTitle: tab.title, target: { tabId, sessionId } });
+        toastIfHidden(get, event, { tabId, tabTitle: displayTitle(tab.title), target: { tabId, sessionId } });
       }
     },
   }));
@@ -2679,7 +2682,7 @@ function restoreDraftAfterFailedSend(set: SetFn, tabId: string, text: string, at
 function notifyBypassActivations(store: { subscribe: (fn: (s: WorkbenchState, prev: WorkbenchState) => void) => unknown }): void {
   store.subscribe((state, prev) => {
     for (const tab of bypassActivatedTabs(prev.tabs, state.tabs)) {
-      notify({ level: 'warning', title: bypassPermissionsAdvice(), body: tab.title, dedupeKey: `cost-advice:${tab.id}`, source: 'prompt' });
+      notify({ level: 'warning', title: bypassPermissionsAdvice(), body: displayTitle(tab.title), dedupeKey: `cost-advice:${tab.id}`, source: 'prompt' });
     }
   });
 }
@@ -2991,7 +2994,7 @@ export function reduceEvent(state: WorkbenchState, tabId: string, event: MageEve
     case 'permission_mode':
       return { tabs: state.tabs.map((t) => (t.id === tabId ? { ...t, permissionMode: event.mode } : t)) };
     case 'error': {
-      const next = appendErrorBlock(closeStreaming(blocks, streamingId), event.message, nextBlockId(), event.deniedCommand);
+      const next = appendErrorBlock(closeStreaming(blocks, streamingId), renderLocalized(t, event.localized), nextBlockId(), event.deniedCommand);
       return {
         ...withBlocks(state, tabId, next),
         streamingIdByChat: { ...state.streamingIdByChat, [tabId]: null },
@@ -3387,7 +3390,7 @@ function newTabForProviderAccount(
     cwd,
     model,
     provider,
-    title: NEW_CONVERSATION_TITLE,
+    title: '',
     privacy,
     ...(effort.length === 0 ? {} : { effort }),
   };
@@ -3413,7 +3416,7 @@ function runtimeTabWithoutAccount(settings: AppSettings, privacy: ConversationPr
   if (provider === undefined) return null;
   const model = defaultModelForProvider(settings.defaultModelByProvider, provider.id) || (providerFallbackModel(provider.id, settings.customProviders) ?? '');
   if (model.length === 0) return null;
-  return { accountId: '', model, provider: provider.id, title: NEW_CONVERSATION_TITLE, privacy };
+  return { accountId: '', model, provider: provider.id, title: '', privacy };
 }
 
 function providerLabel(provider: string, customProviders: readonly CustomProvider[]): string {
@@ -3428,7 +3431,7 @@ function deriveTitle(cwd: string): string {
 
 // Hora local HH:MM para el bloque de usuario (presentacion; el store no depende de esto para logica).
 function currentTime(): string {
-  return new Date().toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
+  return formatClockTime(Date.now());
 }
 
 const EMPTY_BLOCKS: readonly Block[] = [];

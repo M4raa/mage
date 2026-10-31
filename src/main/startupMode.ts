@@ -1,3 +1,4 @@
+import { localized } from '@shared/i18n/localizedText';
 import type { StartupWarning } from '@shared/ipc';
 
 // Cómo arranca el proceso propietario (F2.6, §3.4 del plan). Puro: recibe plataforma, argumentos y entorno, así
@@ -38,10 +39,8 @@ export function lockFailureMessage(holderMode: 'gui' | 'headless' | null): strin
 
 export const NO_SANDBOX_WARNING: StartupWarning = {
   id: 'linux-no-sandbox',
-  title: 'Mage se ha iniciado sin el sandbox de Chromium',
-  body:
-    'El AppImage arranca con --no-sandbox cuando el sistema no permite los espacios de nombres de usuario, y entonces el contenido web no queda aislado. ' +
-    'Instala el paquete .deb o activa los espacios de nombres de usuario (sysctl kernel.unprivileged_userns_clone=1 o kernel.apparmor_restrict_unprivileged_userns=0) y vuelve a abrir Mage.',
+  title: localized('notifications.startup.noSandbox.title'),
+  body: localized('notifications.startup.noSandbox.body'),
 };
 
 export const HOST_UNAVAILABLE_WARNING_ID = 'host-unavailable';
@@ -50,10 +49,8 @@ export const HOST_UNAVAILABLE_WARNING_ID = 'host-unavailable';
 export function hostUnavailableWarning(reason: string): StartupWarning {
   return {
     id: HOST_UNAVAILABLE_WARNING_ID,
-    title: 'El host local de Mage no ha arrancado',
-    body:
-      'La interfaz funciona con normalidad, pero ningún cliente local (terminal, widget o MCP) podrá conectarse a este Mage hasta que lo cierres y lo vuelvas a abrir. ' +
-      `Motivo: ${reason}`,
+    title: localized('notifications.startup.hostUnavailable.title'),
+    body: localized('notifications.startup.hostUnavailable.body', { reason }),
   };
 }
 

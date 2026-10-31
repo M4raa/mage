@@ -7,8 +7,7 @@ import { POPOVER_VARIANTS } from '../motionPresets';
 import { useT } from '../../i18n/uiLanguage';
 import { unreadCount } from '../notifications';
 import { clearNotificationHistory, markNotificationsRead, useNotificationStore } from '../notificationStore';
-
-const TIME_FORMAT = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' });
+import { formatClockTime } from '../../i18n/format';
 
 // Campana de la cabecera con el centro de notificaciones: las ultimas de esta ventana (en
 // memoria, no se persisten), marcar como leidas y limpiar. Descartar un toast no lo quita de aqui.
@@ -85,7 +84,7 @@ function CenterPanel({ onClose }: { readonly onClose: () => void }): React.JSX.E
               <NotificationContent notification={n} titleId={`notification-entry-${n.id}`} />
               <span className="pl-[22px] text-[9.5px] text-mg-muted">
                 {!n.read && <span className="mr-[5px] inline-block h-[5px] w-[5px] rounded-full bg-mg-activity" aria-label={t('notifications.center.unreadMark')} />}
-                {TIME_FORMAT.format(n.createdAtMs)}
+                {formatClockTime(n.createdAtMs)}
               </span>
             </li>
           ))}

@@ -1,4 +1,5 @@
 import { modelsUrl } from '@shared/providers';
+import { localized, type LocalizedText } from '@shared/i18n/localizedText';
 import { LMSTUDIO_MODELS_SCHEMA, MODELS_LIST_SCHEMA, OLLAMA_SHOW_SCHEMA } from './chatSchemas';
 import { redactUrl } from './chatClient';
 
@@ -25,7 +26,7 @@ export interface ModelInfo {
   // null = no se sabe: se mandan `tools` y, si el servidor las rechaza, el bucle pasa a solo chat.
   readonly supportsTools: boolean | null;
   // Aviso para el usuario (p.ej. la ventana real de Ollama es menor que la del modelo).
-  readonly warning: string | null;
+  readonly warning: LocalizedText | null;
 }
 
 export interface CatalogEndpoint {
@@ -155,10 +156,7 @@ function declaredContextLength(modelInfo: Readonly<Record<string, unknown>> | un
   return null;
 }
 
-function ollamaWarning(probe: Probe, model: string): string | null {
+function ollamaWarning(probe: Probe, model: string): LocalizedText | null {
   if (probe.source !== 'ollama' || probe.declared === undefined || probe.declared <= OLLAMA_DEFAULT_CTX) return null;
-  return (
-    `${model} admite ${probe.declared} tokens, pero Ollama solo carga ${OLLAMA_DEFAULT_CTX} si no se le dice otra cosa. ` +
-    'Para usar más, arranca Ollama con OLLAMA_CONTEXT_LENGTH o fija num_ctx en un Modelfile, y pon la ventana en el proveedor.'
-  );
+  return localized('events.runtime.ollamaContextLimited', { model, declared: String(probe.declared), loaded: String(OLLAMA_DEFAULT_CTX) });
 }

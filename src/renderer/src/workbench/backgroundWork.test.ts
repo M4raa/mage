@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { MageEvent } from '@shared/events';
+import { foreignText } from '@shared/i18n/localizedText';
 import {
   backgroundLabel,
   backgroundMoveBlockedReason,
@@ -16,7 +17,7 @@ function event(kind: MageEvent['kind']): MageEvent {
   if (kind === 'result') {
     return { kind: 'result', result: { isError: false, subtype: 'success', numTurns: 1 } };
   }
-  if (kind === 'error') return { kind: 'error', message: 'roto' };
+  if (kind === 'error') return { kind: 'error', localized: foreignText('roto') };
   if (kind === 'permission_cancelled') return { kind: 'permission_cancelled', requestId: 'r1' };
   if (kind === 'permission_request') {
     return {

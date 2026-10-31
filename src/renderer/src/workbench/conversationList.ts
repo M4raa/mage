@@ -6,6 +6,9 @@ import type { ConversationPrivacy } from '@shared/state';
 import type { Tab } from './types';
 import type { ReopenedTabPrefs } from './conversationPrefs';
 import { conversationIdOfTab } from './conversationId';
+import { displayTitle } from './conversationTitle';
+import { formatDecimal } from '../i18n/format';
+import { t } from '../i18n/uiLanguage';
 
 // Una pestaña abierta lleva el resumen de su transcripcion en disco, si ya la tiene (P-026, 1.7): sin
 // el, su fila decia `claude · opus[1m]` y la de una cerrada `hace 3 min · 2,1 MB`.
@@ -15,7 +18,7 @@ export type ConversationRow =
 
 // Titulo de una fila (pestana abierta o entrada de historial), para buscar/mostrar.
 export function rowTitle(row: ConversationRow): string {
-  return row.kind === 'tab' ? row.tab.title : row.item.title;
+  return row.kind === 'tab' ? displayTitle(row.tab.title) : row.item.title;
 }
 
 // Filtra filas por texto (case-insensitive, sin acentos-sensibilidad basica) sobre el titulo. Query
@@ -82,7 +85,7 @@ export function formatSize(bytes: number): string {
 }
 
 function withUnit(value: number, unit: string): string {
-  return value < ONE_DECIMAL_BELOW ? `${value.toFixed(1).replace('.', ',')} ${unit}` : `${Math.round(value)} ${unit}`;
+  return value < ONE_DECIMAL_BELOW ? `${formatDecimal(value, 1)} ${unit}` : `${Math.round(value)} ${unit}`;
 }
 
 const MS_PER_MINUTE = 60_000;
@@ -94,12 +97,12 @@ const DAYS_BEFORE_DATE = 30;
 // instante futuro (reloj movido) cuenta como "ahora" en vez de dar un negativo.
 export function relativeTime(ms: number, now: number = Date.now()): string {
   const min = Math.floor((now - ms) / MS_PER_MINUTE);
-  if (min < 1) return 'ahora';
-  if (min < MINUTES_PER_HOUR) return `hace ${min} min`;
+  if (min < 1) return t('format.time.now');
+  if (min < MINUTES_PER_HOUR) return t('format.time.minutesAgo', { count: String(min) });
   const hours = Math.floor(min / MINUTES_PER_HOUR);
-  if (hours < HOURS_PER_DAY) return `hace ${hours} h`;
+  if (hours < HOURS_PER_DAY) return t('format.time.hoursAgo', { count: String(hours) });
   const days = Math.floor(hours / HOURS_PER_DAY);
-  if (days < DAYS_BEFORE_DATE) return `hace ${days} d`;
+  if (days < DAYS_BEFORE_DATE) return t('format.time.daysAgo', { count: String(days) });
   return new Date(ms).toISOString().slice(0, 10);
 }
 

@@ -16,6 +16,8 @@ import { conversationIdOfTab } from '../conversationId';
 import { accountRecovery } from '../accountRecovery';
 import { CliLoginPanel, useCliLogin } from './CliLoginPanel';
 import { t as translate, useT } from '../../i18n/uiLanguage';
+import { displayTitle } from '../conversationTitle';
+import { formatInteger } from '../../i18n/format';
 
 // Estado del menu contextual abierto (posicion + conversacion objetivo).
 interface MenuState {
@@ -459,7 +461,7 @@ function ConversationSection({
             onContextMenu={(e) => {
               e.preventDefault();
               onContextMenu(
-                { sessionId: conversationIdOfTab(row.tab, sessionIdByChat[row.tab.id]), cwd: row.tab.cwd, privacy: row.tab.privacy, title: row.tab.title },
+                { sessionId: conversationIdOfTab(row.tab, sessionIdByChat[row.tab.id]), cwd: row.tab.cwd, privacy: row.tab.privacy, title: displayTitle(row.tab.title, t) },
                 e.clientX,
                 e.clientY,
                 undefined,
@@ -478,7 +480,7 @@ function ConversationSection({
             onContextMenu={(e) => {
               e.preventDefault();
               onContextMenu(
-                { sessionId: row.item.sessionId, cwd: row.item.cwd, privacy: row.item.privacy, title: row.item.title },
+                { sessionId: row.item.sessionId, cwd: row.item.cwd, privacy: row.item.privacy, title: displayTitle(row.item.title, t) },
                 e.clientX,
                 e.clientY,
                 row.item,
@@ -578,8 +580,8 @@ function HistoryItem({
         if (e.dataTransfer.dropEffect === 'none') onDragOutside();
       }}
       data-history-highlighted={highlighted.on ? 'true' : undefined}
-      data-tip={background === undefined ? item.title : t('sidebar.history.backgroundTip', { title: item.title, state: backgroundLabel(background.state) })}
-      aria-label={background === undefined ? item.title : `${item.title}, ${backgroundLabel(background.state)}`}
+      data-tip={background === undefined ? displayTitle(item.title, t) : t('sidebar.history.backgroundTip', { title: displayTitle(item.title, t), state: backgroundLabel(background.state) })}
+      aria-label={background === undefined ? displayTitle(item.title, t) : `${displayTitle(item.title, t)}, ${backgroundLabel(background.state)}`}
       className={`flex items-center gap-2 rounded-[6px] p-[7px_9px] text-left transition-colors duration-150 ease-out hover:bg-mg-hover ${highlighted.on ? 'bg-mg-sel ring-1 ring-mg-border-emph' : ''}`}
     >
       <span
@@ -589,7 +591,7 @@ function HistoryItem({
       />
       <span className="min-w-0 flex-1">
         <span className="flex min-w-0 items-center gap-[5px]">
-          <span className="truncate text-mg-sec">{item.title}</span>
+          <span className="truncate text-mg-sec">{displayTitle(item.title, t)}</span>
           {/* La empezo una tarea programada, no el usuario (P-026, D20). */}
           {item.isScheduled && (
             <span data-scheduled-badge="true" className="flex-none rounded-full border border-mg-border-subtle px-[5px] text-[9px] text-mg-muted">
@@ -605,7 +607,7 @@ function HistoryItem({
           {background === undefined && item.sizeBytes > 0 && (
             <>
               <span aria-hidden="true"> · </span>
-              <span title={t('sidebar.history.sizeOnDisk', { bytes: item.sizeBytes.toLocaleString('es-ES') })}>{formatSize(item.sizeBytes)}</span>
+              <span title={t('sidebar.history.sizeOnDisk', { bytes: formatInteger(item.sizeBytes) })}>{formatSize(item.sizeBytes)}</span>
             </>
           )}
         </span>
@@ -665,7 +667,7 @@ function TabItem({
         <span aria-hidden="true" className="h-[6px] w-[6px] flex-none rounded-full bg-mg-idle" />
         <input
           autoFocus
-          defaultValue={tab.title}
+          defaultValue={displayTitle(tab.title, t)}
           onKeyDown={(e) => {
             if (e.key === 'Enter') commit((e.target as HTMLInputElement).value);
             else if (e.key === 'Escape') setEditing(false);
@@ -684,7 +686,7 @@ function TabItem({
       onDoubleClick={() => setEditing(true)}
       onContextMenu={onContextMenu}
       aria-current={selected}
-      aria-label={`${tab.title}, ${tab.provider} ${tab.model}, ${t(statusLabel(status))}`}
+      aria-label={`${displayTitle(tab.title, t)}, ${tab.provider} ${tab.model}, ${t(statusLabel(status))}`}
       data-tip={t('sidebar.tab.tip', { provider: tab.provider, model: tab.model })}
       style={selected ? { borderLeft: `2px solid ${account.accent.base}` } : undefined}
       className={`flex items-center gap-2 rounded-[6px] p-[7px_9px] text-left transition-colors duration-150 ease-out ${selected ? 'bg-mg-sel' : 'hover:bg-mg-hover'}`}
@@ -692,7 +694,7 @@ function TabItem({
       <span aria-hidden="true" className={`h-[6px] w-[6px] flex-none rounded-full ${active ? 'bg-mg-activity mg-pulse' : 'bg-mg-idle'}`} />
       <span className="min-w-0 flex-1">
         <span className={`block truncate font-semibold ${selected ? 'text-mg-text' : 'text-mg-body2'}`}>
-          {tab.title}
+          {displayTitle(tab.title, t)}
         </span>
         {/* La MISMA linea que una conversacion cerrada (P-026, D19): cuando y cuanto pesa. Proveedor y
             modelo van al tooltip y al nombre accesible. Sin fichero todavia, solo el tiempo («ahora»). */}

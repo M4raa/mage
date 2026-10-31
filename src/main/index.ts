@@ -95,6 +95,7 @@ import type {
 import { buildAboutInfo } from './about/aboutService';
 import type { MemoryFile } from '@shared/memory';
 import type { MageEvent, SlashCommandInfo } from '@shared/events';
+import { localized } from '@shared/i18n/localizedText';
 import type { ImageAttachment, ProviderProbeParams } from '@shared/ipc';
 import { base64ByteLength, validateAttachmentSet } from '@shared/attachments';
 import type { EffectiveSettings, InstructionsFile, ProjectFileContent, ReadProjectFileParams, WriteProjectFileParams } from '@shared/ipc';
@@ -255,7 +256,7 @@ import { PERSISTED_TAB_SCHEMA } from '@shared/stateSchema';
 import type { PersistedTab } from '@shared/state';
 import type { DropTabOutcome } from '@shared/ipc';
 import {
-  CLOSE_DIALOG_BUTTONS,
+  CLOSE_DIALOG_BUTTON_KEYS,
   CLOSE_DIALOG_CANCEL_INDEX,
   closeAnswerFromNative,
   interpretCloseAnswer,
@@ -534,7 +535,7 @@ const sessionManager = new SessionManager(
   (provider, base) =>
     createSessionFor(provider, base, {
       buildAdapter,
-      prepareCwd: cwd => ensureWorkingDirectory(cwd, scratchRoots(), { exists: path => existsSync(path) && statSync(path).isDirectory(), mkdir: path => { mkdirSync(path, { recursive: true }); } }) ? `Se ha recreado vacía la carpeta de borrador ${cwd}. Los archivos anteriores se perdieron.` : null,
+      prepareCwd: cwd => ensureWorkingDirectory(cwd, scratchRoots(), { exists: path => existsSync(path) && statSync(path).isDirectory(), mkdir: path => { mkdirSync(path, { recursive: true }); } }) ? localized('events.workspace.scratchRecreated', { path: cwd }) : null,
       buildRuntime: (id, runtimeBase) => buildRuntimeSession(id, runtimeBase, runtimeEnv()),
     }),
   {
@@ -1404,11 +1405,12 @@ async function approveOutsideFile(event: Electron.IpcMainInvokeEvent, params: Re
     throw new Error(`Mage no abre ficheros de credenciales del CLI: ${path}`);
   }
   if (isApprovedOutside(path)) return true;
+  const translate = getUiLanguageService().translate;
   const options: Electron.MessageBoxOptions = {
     type: 'warning',
-    message: 'Este fichero está fuera de la carpeta de la conversación',
-    detail: `${path}\n\nSi lo abres, podrás leerlo y editarlo desde Mage hasta que cierres la aplicación.`,
-    buttons: ['Abrir', 'Cancelar'],
+    message: translate('dialogs.outsideFile.message'),
+    detail: `${path}\n\n${translate('dialogs.outsideFile.detail')}`,
+    buttons: [translate('dialogs.outsideFile.open'), translate('dialogs.outsideFile.cancel')],
     defaultId: 1,
     cancelId: 1,
     noLink: true,
@@ -1552,7 +1554,13 @@ function getUiLanguageService(): UiLanguageService {
     savedPreference: () => getSettingsStore().load().uiLanguage,
     initialPreference: () => undefined,
     preferredSystemLanguages: () => app.getPreferredSystemLanguages(),
-    broadcast: (resolved) => windowManager.broadcast(UI_LANGUAGE_CHANGED_CHANNEL, resolved),
+    broadcast: (resolved) => {
+      windowManager.broadcast(UI_LANGUAGE_CHANGED_CHANNEL, resolved);
+      widgetWindow?.sendUiLanguage(resolved);
+      // Al cambiar el idioma, main rehace lo que pinta él: el menú de la bandeja y la jump list. Los diálogos nativos y los avisos se traducen al construirse.
+      tray?.setContextMenu(buildTrayMenu());
+      refreshJumpList(true);
+    },
   });
   return uiLanguageServiceSingleton;
 }
@@ -2207,7 +2215,7 @@ function createWorkbenchWindow(windowId: string, placement?: WindowPlacement): B
   window.on('focus', flushPendingUpdatePrompt);
   // La jump list muestra conversaciones recientes: se refresca cuando CUALQUIER ventana recupera el
   // foco, no solo la principal (el propio `refreshJumpList` ya se limita con su intervalo minimo).
-  window.on('focus', refreshJumpList);
+  window.on('focus', () => refreshJumpList());
   // En dev, electron-vite sirve el renderer por URL; en prod, se carga el HTML compilado.
   const devUrl = process.env['ELECTRON_RENDERER_URL'];
   if (devUrl) {
@@ -2324,17 +2332,16 @@ function releaseClosePrompt(window: BrowserWindow): void {
 }
 
 async function askCloseBehaviorNatively(window: BrowserWindow): Promise<void> {
+  const translate = getUiLanguageService().translate;
   try {
     const answer = await dialog.showMessageBox(window, {
       type: 'question',
-      message: '¿Cerrar Mage?',
-      detail:
-        'En segundo plano, Mage sigue en la bandeja del sistema y los agentes siguen trabajando. ' +
-        'Cerrar Mage los para. Puedes cambiarlo después en Configuración › Almacenamiento.',
-      buttons: [...CLOSE_DIALOG_BUTTONS],
+      message: translate('dialogs.closeNative.title'),
+      detail: translate('dialogs.closeNative.detail'),
+      buttons: CLOSE_DIALOG_BUTTON_KEYS.map((key) => translate(key)),
       defaultId: 0,
       cancelId: CLOSE_DIALOG_CANCEL_INDEX,
-      checkboxLabel: 'Recordar mi decisión',
+      checkboxLabel: translate('dialogs.closeNative.remember'),
       noLink: true,
     });
     applyCloseOutcome(window, interpretCloseAnswer(closeAnswerFromNative(answer)));
@@ -2385,6 +2392,20 @@ function buildApplicationMenu(): Menu | null {
   return Menu.buildFromTemplate(template);
 }
 
+// Menú de la bandeja con las etiquetas en el idioma activo; se rehace al cambiar de idioma.
+function buildTrayMenu(): Menu {
+  const translate = getUiLanguageService().translate;
+  return Menu.buildFromTemplate([
+    { label: translate('tray.open'), click: () => focusMainWindow() },
+    // Widget flotante (M3): alterna la ventana y sincroniza la preferencia via el renderer.
+    { label: translate('tray.toggleWidget'), click: () => toggleWidgetFromTray() },
+    // Entrada de debug solo en desarrollo (la ventana no existe en produccion).
+    ...(isDev ? [{ label: translate('tray.debugWindow'), click: () => openDebugWindow() }] : []),
+    { type: 'separator' as const },
+    { label: translate('tray.quit'), click: () => app.quit() },
+  ]);
+}
+
 // Tray con el glifo de la marca; cerrar la ventana no mata la app (patron de app de escritorio).
 // En macOS se usa una imagen TEMPLATE (negra) que la barra de menus invierte segun su tema; en el
 // resto, el glifo blanco. El @2x lo resuelve Electron solo (busca el fichero hermano @2x).
@@ -2395,19 +2416,7 @@ function createTray(): Tray {
   if (isMac) icon.setTemplateImage(true);
   const trayInstance = new Tray(icon);
   trayInstance.setToolTip(isDev ? 'Mage (dev)' : 'Mage');
-  trayInstance.setContextMenu(
-    Menu.buildFromTemplate([
-      { label: 'Abrir Mage', click: () => focusMainWindow() },
-      // Widget flotante (M3): alterna la ventana y sincroniza la preferencia via el renderer.
-      { label: 'Mostrar/ocultar widget flotante', click: () => toggleWidgetFromTray() },
-      // Entrada de debug solo en desarrollo (la ventana no existe en produccion).
-      ...(isDev
-        ? [{ label: 'Ventana de debug (Ctrl+Shift+L)', click: () => openDebugWindow() }]
-        : []),
-      { type: 'separator' as const },
-      { label: 'Salir', click: () => app.quit() },
-    ]),
-  );
+  trayInstance.setContextMenu(buildTrayMenu());
   trayInstance.on('click', () => focusMainWindow());
   return trayInstance;
 }
@@ -2571,7 +2580,7 @@ function createSessionFromIpc(event: Electron.IpcMainInvokeEvent, params: Create
     const effectiveParams = { ...params, accountDir: configDir, projectInstructions };
     const sessionId = sessionCoordinator.create(effectiveParams, (payload) => relaySessionEvent(payload, { sender, configDir, accountDir: params.accountDir }), sender.id);
     stopSessionsWhenDestroyed(sender);
-    return { sessionId, configDir, ...(recreated ? { workspaceWarning: `Se ha recreado vacía la carpeta de borrador ${params.cwd}. La conversación se conserva; los archivos anteriores se perdieron.` } : {}) };
+    return { sessionId, configDir, ...(recreated ? { workspaceWarning: localized('events.workspace.scratchRecreatedKept', { path: params.cwd }) } : {}) };
   }
 
 function registerIpcHandlers(): void {
@@ -3576,10 +3585,10 @@ function openDebugWindow(): void {
 // eso son varias pasadas por segundo sobre un escaneo de disco que cuesta cientos de ms.
 let lastJumpListAtMs = 0;
 
-function refreshJumpList(): void {
+function refreshJumpList(force = false): void {
   if (isDev || process.platform !== 'win32') return;
   const nowMs = Date.now();
-  if (nowMs - lastJumpListAtMs < JUMP_LIST_MIN_INTERVAL_MS) return;
+  if (!force && nowMs - lastJumpListAtMs < JUMP_LIST_MIN_INTERVAL_MS) return;
   lastJumpListAtMs = nowMs;
   try {
     const accounts = accountService.listAccounts().map((account) => ({ configDir: account.configDir, alias: account.name }));
@@ -3610,7 +3619,7 @@ function refreshJumpList(): void {
     const tabAccountIds = windowManager
       .list()
       .flatMap((windowId) => (getWorkspaceStore(windowId).load()?.tabs ?? []).map((tab) => tab.accountId));
-    const categories = buildJumpListCategories({ accounts, conversations, tabAccountIds }, process.execPath);
+    const categories = buildJumpListCategories({ accounts, conversations, tabAccountIds }, process.execPath, getUiLanguageService().translate);
     // Cast: el modulo puro declara su propia forma (sin importar electron) — es estructuralmente la
     // que espera setJumpList, pero con arrays readonly.
     app.setJumpList(categories as unknown as Electron.JumpListCategory[]);
@@ -3676,6 +3685,7 @@ function startHost(mode: HostMode): Promise<void> {
     hostVersion: app.getVersion(),
     log: mainLog,
     newId: randomUUID,
+    translate: getUiLanguageService().translate,
     setTimer: (fn, ms) => {
       const timer = setTimeout(fn, ms);
       return () => clearTimeout(timer);

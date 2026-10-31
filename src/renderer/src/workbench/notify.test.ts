@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { MageEvent } from '@shared/events';
+import { foreignText } from '@shared/i18n/localizedText';
 import { inAppNoticeForEvent, notificationForEvent } from './notify';
 
 describe('notificationForEvent', () => {
@@ -35,7 +36,7 @@ describe('notificationForEvent', () => {
   });
 
   it('error_incluyeElMensaje', () => {
-    const content = notificationForEvent({ kind: 'error', message: 'boom' } as MageEvent, { tabTitle: 'proj' });
+    const content = notificationForEvent({ kind: 'error', localized: foreignText('boom') } as MageEvent, { tabTitle: 'proj' });
 
     expect(content).toEqual({ title: 'Error en la conversación', body: 'proj: boom' });
   });

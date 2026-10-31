@@ -5,7 +5,7 @@ import { CopyButton } from './CopyButton';
 import { Icon } from './Icon';
 import { AgyCommandsDialog } from './AgyCommandsDialog';
 import { isValidAgyRule, parseAgyMcpRule } from '@shared/agyRules';
-import { AGY_PROVIDER_ID, NO_PERMISSION_CONTROL_WARNING, isAutoApprovedProvider } from '@shared/providers';
+import { AGY_PROVIDER_ID, isAutoApprovedProvider } from '@shared/providers';
 import { useWorkbenchStore } from '../workbenchStore';
 import { SPARKLE_WAIST_RATIO } from '../brandMark';
 import { useThinkingStore } from '../thinkingStore';
@@ -268,7 +268,7 @@ function AgyStartNotice(): React.JSX.Element {
     <div className="flex max-w-[420px] flex-col items-start gap-[6px] rounded-[7px] border border-mg-warn-border bg-mg-warn-bg p-[7px_10px] text-left text-[10.5px] text-mg-warn-text">
       <div role="status" className="flex items-start gap-[8px]">
         <Icon name="warning" />
-        <span>{NO_PERMISSION_CONTROL_WARNING}</span>
+        <span>{t('prompt.providers.noPermissionControl')}</span>
       </div>
       <button
         onClick={() => setOpen(true)}

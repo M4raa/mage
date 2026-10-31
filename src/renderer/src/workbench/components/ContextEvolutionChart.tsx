@@ -1,6 +1,7 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import type { ContextSizePoint } from '../contextView';
 import { useT } from '../../i18n/uiLanguage';
+import { formatInteger } from '../../i18n/format';
 
 // Grafico de linea (SVG inline, sin dependencia) de la evolucion del tamano de contexto turno a
 // turno, con marca de evento en las compactaciones. Diseno segun la skill `dataviz` (paleta
@@ -151,7 +152,7 @@ export function ContextEvolutionChart({ points }: { readonly points: readonly Co
         >
           <div className="text-mg-ter">{t('chat.context.chartTurn', { index: hover.point.entryIndex })}</div>
           <div>
-            <span style={{ fontVariantNumeric: 'tabular-nums' }}>{hover.point.contextTokens.toLocaleString('es')}</span> {t('chat.context.chartTokensOfContext')}
+            <span style={{ fontVariantNumeric: 'tabular-nums' }}>{formatInteger(hover.point.contextTokens)}</span> {t('chat.context.chartTokensOfContext')}
           </div>
           {hover.point.isCompaction && <div style={{ color: EVENT }}>{t('chat.context.chartCompaction')}</div>}
         </div>

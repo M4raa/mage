@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { foreignText, UserFacingError } from '@shared/i18n/localizedText';
 import { describeError } from './describeError';
 import { EMPTY_NOTIFICATIONS } from './notifications';
 import { reportActionError, useNotificationStore } from './notificationStore';
@@ -28,6 +29,12 @@ describe('describeError', () => {
     const message = "Fallo: Error invoking remote method 'x:y': Error: z";
 
     expect(describeError(new Error(message))).toBe(message);
+  });
+
+  it('describeError_userFacingErrorPorIpc_textoTraducido', () => {
+    const err = new Error("Error invoking remote method 'a': Error: " + new UserFacingError(foreignText('hola')).message);
+
+    expect(describeError(err)).toBe('hola');
   });
 
   it('describeError_noEsError_dejaElValorRecibido', () => {

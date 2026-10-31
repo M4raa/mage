@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { CreateSessionParams, SessionEventPayload } from '@shared/ipc';
 import type { MageEvent } from '@shared/events';
+import { foreignText, UserFacingError } from '@shared/i18n/localizedText';
 import type { NativeSessionRef } from '@shared/coordination';
 import { CREATE_PR_PROMPT } from '@shared/permissionPolicy';
 import { SessionCoordinator, type ConversationHold, type ConversationIdentityIndex, type CoordinatedSessions, type SequencedSessionEvent } from './sessionCoordinator';
@@ -111,7 +112,7 @@ describe('SessionCoordinator — secuencia e identidades (F2.1)', () => {
   });
 
   it('eventoDuranteElArranque_tieneSecuencia', () => {
-    const h = harness({ emitOnStart: { kind: 'notice', text: 'arrancando' } as MageEvent });
+    const h = harness({ emitOnStart: { kind: 'notice', localized: foreignText('arrancando') } as MageEvent });
 
     h.create();
 
@@ -378,8 +379,24 @@ describe('SessionCoordinator — cola de mensajes en main (F2.2)', () => {
 
     h.emit(id, result);
 
-    expect(h.received.at(-2)?.event).toEqual({ kind: 'queued_message_failed', message: { id: 'b', text: 'BETA', attachments: [] }, error: 'proceso muerto' });
+    expect(h.received.at(-2)?.event).toEqual({ kind: 'queued_message_failed', message: { id: 'b', text: 'BETA', attachments: [] }, localized: foreignText('proceso muerto') });
     expect(h.coordinator.snapshot(id)).toMatchObject({ state: 'idle', queue: [] });
+  });
+
+  it('drain_envioFalla_queuedMessageFailedConLocalized', () => {
+    const own = foreignText('motivo propio');
+    const failureOf = (thrown: Error) => {
+      const h = harness();
+      const id = h.create();
+      h.coordinator.send({ sessionId: id, text: 'ALFA', commandId: 'a' });
+      h.coordinator.send({ sessionId: id, text: 'BETA', commandId: 'b' });
+      vi.mocked(h.sessions.sendMessage).mockImplementationOnce(() => { throw thrown; });
+      h.emit(id, result);
+      return h.received.map((p) => p.event).find((e) => e.kind === 'queued_message_failed');
+    };
+
+    expect(failureOf(new Error('x'))).toMatchObject({ localized: foreignText('x') });
+    expect(failureOf(new UserFacingError(own))).toMatchObject({ localized: own });
   });
 
   it('error_delMotor_dejaDeContarComoTurnoEnMarcha', () => {
@@ -387,7 +404,7 @@ describe('SessionCoordinator — cola de mensajes en main (F2.2)', () => {
     const h = harness();
     const id = h.create();
     h.emit(id, state('running'));
-    h.emit(id, { kind: 'error', message: 'falló' });
+    h.emit(id, { kind: 'error', localized: foreignText('falló') });
 
     expect(h.coordinator.send({ sessionId: id, text: 'otra vez', commandId: 'c' }).status).toBe('accepted');
   });

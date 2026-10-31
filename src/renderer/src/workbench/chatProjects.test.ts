@@ -32,7 +32,7 @@ describe('projectForRow', () => {
 
   it('laPestanaNuevaPermaneceEnSuProyectoAntesDeTenerSesion', () => {
     const projects = [project({})];
-    const open: ConversationRow = { kind: 'tab', tab: { id: 't1', accountId: '.claude', accountAlias: 'Claude', cwd: 'C:/scratch/1', model: 'sonnet', provider: 'claude', title: 'Nuevo chat', privacy: 'shared', projectId: 'p1' } };
+    const open: ConversationRow = { kind: 'tab', tab: { id: 't1', accountId: '.claude', accountAlias: 'Claude', cwd: 'C:/scratch/1', model: 'sonnet', provider: 'claude', title: '', privacy: 'shared', projectId: 'p1' } };
     expect(projectForRow(open, projects, {})?.id).toBe('p1');
   });
 });

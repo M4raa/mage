@@ -1,4 +1,5 @@
 import type { ToolFileInfo } from '@shared/events';
+import { localized, localizedFromError, type LocalizedText } from '@shared/i18n/localizedText';
 import { ChatHttpError, type ChatClient, type ChatMessage, type ChatToolCall, type ChatToolSpec } from './chatClient';
 import type { AssembledToolCall, FinishReason } from './openAiStream';
 import { parseTextToolCalls } from './textToolCalls';
@@ -52,7 +53,7 @@ export type LoopEvent =
   | { readonly kind: 'thinking_delta'; readonly text: string }
   | { readonly kind: 'tool_use'; readonly id: string; readonly name: string; readonly input: Readonly<Record<string, unknown>> }
   | { readonly kind: 'tool_result'; readonly id: string; readonly isError: boolean; readonly output: string; readonly durationMs: number; readonly file?: ToolFileInfo }
-  | { readonly kind: 'notice'; readonly text: string }
+  | { readonly kind: 'notice'; readonly localized: LocalizedText }
   // Una vuelta terminada: lo que el modelo devolvio, para la transcripcion y el presupuesto de contexto.
   // `textual` = las llamadas de la vuelta las escribio el modelo en su texto (sin herramientas nativas):
   // quien reanude tiene que rehacer el historial igual que en memoria (M3 de la revision).
@@ -91,11 +92,10 @@ export interface TurnOutcome {
   readonly status: TurnStatus;
   readonly rounds: number;
   readonly usage: RoundUsage | null; // null = el servidor no reporto uso en ninguna vuelta
-  readonly error: string | null;
+  readonly error: LocalizedText | null;
   readonly toolsEnabled: boolean;
 }
 
-const NO_TOOLS_NOTICE = 'Este modelo no admite herramientas: Mage solo puede conversar con él.';
 const INTERRUPTED_TOOL_OUTPUT = 'Interrumpido por el usuario antes de ejecutarse.';
 
 interface RoundResult {
@@ -109,7 +109,7 @@ interface RoundResult {
 export async function runTurn(input: TurnInput, deps: LoopDeps): Promise<TurnOutcome> {
   const historyStart = input.history.length;
   const state = { rounds: 0, usage: null as RoundUsage | null, toolsEnabled: input.toolsEnabled };
-  const finish = (status: TurnStatus, error: string | null = null): TurnOutcome => ({
+  const finish = (status: TurnStatus, error: LocalizedText | null = null): TurnOutcome => ({
     status,
     rounds: state.rounds,
     usage: state.usage,
@@ -132,18 +132,18 @@ export async function runTurn(input: TurnInput, deps: LoopDeps): Promise<TurnOut
       const plans = calls.map((call, i) => prepareCall(call, ids[i]!, deps));
       deps.emit({ kind: 'round_done', usage: round.usage, requestMessages: round.requestMessages, ...(textual ? { textual } : {}) });
       if (input.signal.aborted) return closeInterrupted(input, textual ? [] : ids, 0, finish);
-      if (round.reason === 'length') return finish('error', 'El modelo cortó la respuesta por longitud (límite de tokens de salida).');
+      if (round.reason === 'length') return finish('error', localized('events.runtime.outputTruncated'));
       if (calls.length === 0) return finish('success');
       const done = await runCalls(plans, input, deps, textual);
       if (done < calls.length) return closeInterrupted(input, textual ? [] : ids, done, finish);
       if (state.rounds >= MAX_TOOL_ROUNDS) {
-        return finish('error', `El modelo superó ${MAX_TOOL_ROUNDS} vueltas de herramientas en un turno; se para aquí.`);
+        return finish('error', localized('events.runtime.tooManyToolRounds', { max: String(MAX_TOOL_ROUNDS) }));
       }
     }
   } catch (err) {
     closeFailedCalls(input.history, historyStart, deps, describeError(err));
     if (input.signal.aborted) return finish('interrupted');
-    return finish('error', describeError(err));
+    return finish('error', localizedFromError(err));
   }
 }
 
@@ -167,7 +167,7 @@ async function streamRound(input: TurnInput, deps: LoopDeps, state: { toolsEnabl
   } catch (err) {
     if (!(err instanceof ChatHttpError) || err.kind !== 'no_tools' || tools.length === 0 || round.text.length > 0) throw err;
     state.toolsEnabled = false;
-    deps.emit({ kind: 'notice', text: NO_TOOLS_NOTICE });
+    deps.emit({ kind: 'notice', localized: localized('events.runtime.noTools') });
     return null;
   }
   return round;

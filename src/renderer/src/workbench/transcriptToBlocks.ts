@@ -10,6 +10,7 @@ import { rateLimitLine } from './rateLimit';
 import { t } from '../i18n/uiLanguage';
 import { classifySystemWrapper } from '@shared/systemWrappers';
 import { EMPTY_SUBAGENT_RUN, withSubagentRun, withSubagentUpdate } from './engineBlocks';
+import { formatClockTime } from '../i18n/format';
 
 // Reconstruye los bloques del chat (M2.5b) a partir de una transcripcion persistida ya cargada, para
 // que una conversacion REANUDADA no arranque con el panel principal vacio. PURO (datos -> datos,
@@ -317,7 +318,7 @@ function blockId(entryIndex: number, slot: number): string {
 // Hora local HH:MM del bloque de usuario (presentacion). Vacio si la entrada no trae timestamp.
 function formatTime(timestampMs: number | null): string {
   if (timestampMs === null) return '';
-  return new Date(timestampMs).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
+  return formatClockTime(timestampMs);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -37,9 +37,9 @@ export function resolveCloseAction(context: CloseContext): CloseAction {
   return 'ask';
 }
 
-// Botones del dialogo NATIVO (la reserva cuando el renderer esta caido o cargando), en este orden. El
+// Claves de los botones del dialogo NATIVO (la reserva cuando el renderer esta caido o cargando), en este orden. El
 // indice de cada uno es lo que devuelve `showMessageBox`.
-export const CLOSE_DIALOG_BUTTONS = ['Mantener en segundo plano', 'Cerrar Mage', 'Cancelar'] as const;
+export const CLOSE_DIALOG_BUTTON_KEYS = ['dialogs.closeNative.background', 'dialogs.closeNative.quit', 'dialogs.closeNative.cancel'] as const;
 export const CLOSE_DIALOG_CANCEL_INDEX = 2;
 
 export interface NativeCloseDialogAnswer {

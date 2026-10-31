@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
+import { localized, renderLocalized } from '@shared/i18n/localizedText';
+import { createTranslator } from '@shared/i18n/translator';
 import { AgentSession, type SpawnFn } from './agentSession';
 import type { ProviderAdapter } from './providerAdapter';
 import { emitLine, fakeAdapter, FakeChild, harness, written } from './agentSession.harness';
@@ -175,8 +177,27 @@ describe('AgentSession protocolo de control (D2/D3)', () => {
     ]);
 
     expect(h.events).toEqual([
-      { kind: 'error', message: 'El CLI rechazo una peticion de control: modelo desconocido' },
+      { kind: 'error', localized: localized('events.cli.controlRejected', { detail: 'modelo desconocido' }) },
     ]);
+  });
+
+  it('emitUnexpectedExit_gaveUp_claveExitGaveUpConIntentos', () => {
+    // La politica del harness se rinde a la tercera muerte seguida.
+    const h = harness();
+    h.session.start();
+    h.children[0]!.exit(1, null);
+    h.runPendingTimer();
+    h.children[1]!.exit(1, null);
+    h.runPendingTimer();
+    h.children[2]!.exit(1, null);
+
+    const error = h.events.filter((e) => e.kind === 'error').at(-1);
+    if (error?.kind !== 'error') throw new Error('se esperaba un evento error');
+    expect(error.localized.key).toBe('events.agent.exitGaveUp');
+    expect(error.localized.values).toMatchObject({ attempts: '3', code: '1', signal: 'none', lastCode: '1', lastSignal: 'none' });
+    expect(renderLocalized(createTranslator('es'), error.localized)).toBe(
+      'El proceso del agente termino inesperadamente (code=1, signal=none) y no se reintenta: el proceso murio 3 veces seguidas sin llegar a arrancar bien (ultimo cierre: code=1, signal=none)',
+    );
   });
 
   it('start_trasStop_vuelveAHabilitarElReinicioAutomatico', () => {

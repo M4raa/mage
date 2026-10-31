@@ -1,5 +1,6 @@
 import type { MageEvent } from '@shared/events';
 import { rateLimitLineText } from './rateLimit';
+import { renderLocalized } from '@shared/i18n/localizedText';
 import { t } from '../i18n/uiLanguage';
 
 // Avisos del propio CLI que van al HILO como linea de sistema tenue (2.5), con su texto en castellano.
@@ -35,7 +36,7 @@ const NOTICEABLE_HOOKS: ReadonlyMap<string, HookNoticeKeys> = new Map([
 export function noticeTextFor(event: MageEvent): string | null {
   switch (event.kind) {
     case 'notice':
-      return event.text;
+      return renderLocalized(t, event.localized);
     case 'compacted':
       return event.trigger === 'auto' ? t('chat.notice.compactedAuto') : t('chat.notice.compactedManual');
     case 'permission_mode':

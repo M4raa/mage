@@ -22,6 +22,7 @@ import { ContextBreakdown } from './ContextBreakdown';
 import { Hint } from './TranscriptHint';
 import { AGY_PROVIDER_ID, CODEX_PROVIDER_ID } from '@shared/providers';
 import { providerUsageCategoryTotals } from '../providerUsage';
+import { formatInteger } from '../../i18n/format';
 
 // Color fijo por categoria (orden fijo, nunca por rango). Tokens `dataviz` slots 1-4 como variables
 // CSS del tema (M3, conmutan claro/oscuro): cada barra ademas lleva su etiqueta -> identidad nunca solo por color.
@@ -129,7 +130,7 @@ function ProviderContextPanel({ provider }: { readonly provider: string }): Reac
         {context !== null && <ContextBreakdown usage={usage} context={context.info} noBreakdownNote={t('chat.context.noBreakdown', { name })} />}
         {context === null && totals !== undefined && (
           <div className="text-mg-body2">
-            {t('chat.context.lastPrompt')} <span style={{ fontVariantNumeric: 'tabular-nums' }}>{totals.lastInputTokens.toLocaleString('es')}</span>{' '}
+            {t('chat.context.lastPrompt')} <span style={{ fontVariantNumeric: 'tabular-nums' }}>{formatInteger(totals.lastInputTokens)}</span>{' '}
             {t('chat.context.windowSizeUnknown', { name })}
           </div>
         )}
@@ -140,7 +141,7 @@ function ProviderContextPanel({ provider }: { readonly provider: string }): Reac
           <span className="text-[9.5px] font-bold tracking-[.08em] text-mg-ter">{t('chat.context.consumedTitle')}</span>
           {totals !== undefined && (
             <span className="text-[10px] text-mg-body" style={{ fontVariantNumeric: 'tabular-nums' }}>
-              {totalTokens.toLocaleString('es')} {t('chat.context.tokensUnit')}
+              {formatInteger(totalTokens)} {t('chat.context.tokensUnit')}
             </span>
           )}
         </div>
@@ -177,7 +178,7 @@ function ConsumedTokens({
         <div className="flex items-center gap-[8px]">
           {hint === null && (
             <span className="text-[10px] text-mg-body" style={{ fontVariantNumeric: 'tabular-nums' }}>
-              {totalTokens.toLocaleString('es')} {t('chat.context.tokensUnit')}
+              {formatInteger(totalTokens)} {t('chat.context.tokensUnit')}
             </span>
           )}
           <button
@@ -259,7 +260,7 @@ function CategoryBar({ share }: { readonly share: TokenCategoryShare }): React.J
           {t(CATEGORY_LABEL_KEY[share.key])}
         </span>
         <span className="text-mg-body" style={{ fontVariantNumeric: 'tabular-nums' }}>
-          {share.pct}% · {share.tokens.toLocaleString('es')}
+          {share.pct}% · {formatInteger(share.tokens)}
         </span>
       </div>
       <div className="h-[4px] rounded-[2px] bg-mg-track">

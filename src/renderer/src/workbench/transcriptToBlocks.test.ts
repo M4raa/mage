@@ -1,3 +1,4 @@
+import { SUBAGENT_STATUS } from './engineBlocks';
 import { describe, expect, it } from 'vitest';
 import type { TranscriptEntry } from '@shared/transcripts';
 import type { Block } from './types';
@@ -271,7 +272,7 @@ describe('transcriptToBlocks — subagentes, pensamiento y lineas de sistema', (
       agentType: 'Explore',
       description: 'buscar',
       agentId: 'agent-7',
-      status: 'completado',
+      status: SUBAGENT_STATUS.completed,
     });
   });
 
@@ -293,7 +294,7 @@ describe('transcriptToBlocks — subagentes, pensamiento y lineas de sistema', (
   it('transcriptToBlocks_asyncLaunchedSinNotificacion_sigueEnSegundoPlano', () => {
     const blocks = transcriptToBlocks([assistantToolUse('tu1', 'Agent', { subagent_type: 'general-purpose', description: 'A' }, 0), launched(1)]);
 
-    expect(blocks[0]).toMatchObject({ kind: 'subagent', agentId: 'ab25', status: 'en segundo plano', model: 'claude-haiku-4-5' });
+    expect(blocks[0]).toMatchObject({ kind: 'subagent', agentId: 'ab25', status: SUBAGENT_STATUS.background, model: 'claude-haiku-4-5' });
   });
 
   it('transcriptToBlocks_notificacionTarea_cierraSubagente', () => {
@@ -303,7 +304,7 @@ describe('transcriptToBlocks — subagentes, pensamiento y lineas de sistema', (
       userMsg(notice, 2),
     ]);
 
-    expect(blocks[0]).toMatchObject({ status: 'completado', tokens: 19906, toolUses: 2, elapsedMs: 1422 });
+    expect(blocks[0]).toMatchObject({ status: SUBAGENT_STATUS.completed, tokens: 19906, toolUses: 2, elapsedMs: 1422 });
     expect(blocks[1]).toMatchObject({ kind: 'system', text: 'Tarea en segundo plano: Agent "A" finished' });
   });
 
@@ -314,7 +315,7 @@ describe('transcriptToBlocks — subagentes, pensamiento y lineas de sistema', (
     const blocks = transcriptToBlocks([assistantToolUse('tu1', 'Agent', { description: 'A' }, 0), launched(1), queued]);
 
     expect(blocks).toHaveLength(1);
-    expect(blocks[0]).toMatchObject({ status: 'completado', tokens: 19906 });
+    expect(blocks[0]).toMatchObject({ status: SUBAGENT_STATUS.completed, tokens: 19906 });
   });
 
   it('transcriptToBlocks_bloqueThinkingVacio_generaBloqueThinkingSinTexto', () => {

@@ -1,4 +1,7 @@
 import { z } from 'zod';
+import type { MageEvent } from '@shared/events';
+import { renderLocalized } from '@shared/i18n/localizedText';
+import type { Translate } from '@shared/i18n/translator';
 import { ELICITATION_ANSWER_SCHEMA } from '@shared/elicitation';
 import { ANSWER_PERMISSION_SCHEMA, SEND_MESSAGE_SCHEMA, SESSION_ID_SCHEMA, MAX_ID_CHARS } from '@shared/sessionInput';
 
@@ -7,7 +10,9 @@ import { ANSWER_PERMISSION_SCHEMA, SEND_MESSAGE_SCHEMA, SESSION_ID_SCHEMA, MAX_I
 // entonces no se atiende nada más. Todo lo que entra se valida con Zod ANTES de tocar el coordinador.
 
 export const HOST_PROTOCOL_MAJOR = 1;
-export const HOST_PROTOCOL_MINOR = 0;
+// 1.1 (F3.3): los eventos `notice`, `error` y `queued_message_failed` llevan `localized` (clave y valores) y, para los
+// clientes 1.0, su campo de siempre ya traducido en el idioma de main.
+export const HOST_PROTOCOL_MINOR = 1;
 export const HOST_PROTOCOL = `${HOST_PROTOCOL_MAJOR}.${HOST_PROTOCOL_MINOR}`;
 
 // Códigos JSON-RPC estándar (-32700…-32603) y propios (-32001…-32099).
@@ -75,6 +80,21 @@ export function protocolMismatch(requested: string): string | null {
   const major = Number(requested.split('.')[0]);
   if (major === HOST_PROTOCOL_MAJOR) return null;
   return `El host habla el protocolo ${HOST_PROTOCOL} y el cliente pidió ${requested}: la versión mayor es distinta. Actualiza el cliente o Mage.`;
+}
+
+// El evento tal como sale al cliente del host: `localized` (1.1) MAS el campo de siempre (`text`, `message` o `error`)
+// ya traducido, para que un cliente 1.0 siga leyendo lo suyo. Los demas eventos no cambian.
+export function withLegacyText(event: MageEvent, translate: Translate): Record<string, unknown> {
+  switch (event.kind) {
+    case 'notice':
+      return { ...event, text: renderLocalized(translate, event.localized) };
+    case 'error':
+      return { ...event, message: renderLocalized(translate, event.localized) };
+    case 'queued_message_failed':
+      return { ...event, error: renderLocalized(translate, event.localized) };
+    default:
+      return event;
+  }
 }
 
 export interface HostErrorBody {

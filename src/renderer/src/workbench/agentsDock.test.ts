@@ -1,3 +1,4 @@
+import { SUBAGENT_STATUS, type SubagentStatus } from './engineBlocks';
 import { describe, expect, it } from 'vitest';
 import { agentsDockRows, agentsDockSummaryText, conversationAgentRows, summarizeAgentsDock } from './agentsDock';
 import type { Block } from './types';
@@ -5,7 +6,7 @@ import type { Block } from './types';
 type ToolBlock = Extract<Block, { kind: 'tool' }>;
 
 const user = (id: string): Block => ({ kind: 'user', id, text: 'hola', time: '', attachments: [] });
-const subagent = (id: string, status: string | null = null, elapsedMs: number | null = null): Block => ({
+const subagent = (id: string, status: SubagentStatus | null = null, elapsedMs: number | null = null): Block => ({
   kind: 'subagent',
   id,
   toolUseId: `u-${id}`,
@@ -42,7 +43,7 @@ describe('agentsDockRows', () => {
   });
 
   it('agentsDockRows_soloElTurnoEnCurso', () => {
-    const rows = agentsDockRows([user('u1'), subagent('viejo', 'completado'), user('u2'), subagent('nuevo')]);
+    const rows = agentsDockRows([user('u1'), subagent('viejo', SUBAGENT_STATUS.completed), user('u2'), subagent('nuevo')]);
 
     expect(rows.map((r) => r.toolUseId)).toEqual(['u-nuevo']);
   });
@@ -60,7 +61,7 @@ describe('agentsDockRows', () => {
   });
 
   it('agentsDockRows_estados_terminadoYError', () => {
-    const rows = agentsDockRows([user('u'), subagent('a', 'completado', 9000), subagent('b', 'error', 0)]);
+    const rows = agentsDockRows([user('u'), subagent('a', SUBAGENT_STATUS.completed, 9000), subagent('b', 'error', 0)]);
 
     expect(rows.map((r) => [r.state, r.currentStep, r.elapsedMs])).toEqual([
       ['done', 'Terminado', 9000],
@@ -76,38 +77,38 @@ describe('agentsDockRows', () => {
 
   it('agentsDockRows_asyncLaunched_running', () => {
     // P-028 37a: lanzado en segundo plano no es «terminado».
-    const rows = agentsDockRows([user('u'), subagent('s', 'en segundo plano')]);
+    const rows = agentsDockRows([user('u'), subagent('s', SUBAGENT_STATUS.background)]);
 
     expect(rows[0]).toMatchObject({ state: 'running', currentStep: 'Pensando…', elapsedMs: null });
   });
 
   it('agentsDockRows_enMarchaDeUnTurnoAnterior_sigueEnElDock', () => {
-    const rows = agentsDockRows([user('u1'), subagent('bg', 'en segundo plano'), subagent('fin', 'completado'), user('u2')]);
+    const rows = agentsDockRows([user('u1'), subagent('bg', SUBAGENT_STATUS.background), subagent('fin', SUBAGENT_STATUS.completed), user('u2')]);
 
     expect(rows.map((r) => r.toolUseId)).toEqual(['u-bg']);
   });
 
   it('agentsDockRows_ocultado_noSale', () => {
-    const rows = agentsDockRows([user('u'), subagent('a', 'completado'), subagent('b', 'completado')], new Set(['u-a']));
+    const rows = agentsDockRows([user('u'), subagent('a', SUBAGENT_STATUS.completed), subagent('b', SUBAGENT_STATUS.completed)], new Set(['u-a']));
 
     expect(rows.map((r) => r.toolUseId)).toEqual(['u-b']);
   });
 
   it('agentsDockRows_ocultadoPeroEnMarcha_sale', () => {
     // Uno reanudado vuelve aunque siguiera en la lista de ocultos.
-    const rows = agentsDockRows([user('u'), subagent('a', 'en segundo plano')], new Set(['u-a']));
+    const rows = agentsDockRows([user('u'), subagent('a', SUBAGENT_STATUS.background)], new Set(['u-a']));
 
     expect(rows).toHaveLength(1);
   });
 
   it('agentsDockRows_detenido_stopped', () => {
-    expect(agentsDockRows([user('u'), subagent('s', 'detenido')])[0]).toMatchObject({ state: 'stopped', currentStep: 'Detenido' });
+    expect(agentsDockRows([user('u'), subagent('s', SUBAGENT_STATUS.stopped)])[0]).toMatchObject({ state: 'stopped', currentStep: 'Detenido' });
   });
 });
 
 describe('linea agregada y lista del panel (P-028 38)', () => {
   it('summarizeAgentsDock_nueveEnMarchaDosParados_cuentaCadaUno', () => {
-    const blocks = [user('u'), ...Array.from({ length: 9 }, (_, i) => subagent(`r${i}`, 'en segundo plano')), subagent('a', 'completado'), subagent('b', 'detenido')];
+    const blocks = [user('u'), ...Array.from({ length: 9 }, (_, i) => subagent(`r${i}`, SUBAGENT_STATUS.background)), subagent('a', SUBAGENT_STATUS.completed), subagent('b', SUBAGENT_STATUS.stopped)];
 
     const summary = summarizeAgentsDock(agentsDockRows(blocks));
 
@@ -124,9 +125,9 @@ describe('linea agregada y lista del panel (P-028 38)', () => {
   });
 
   it('conversationAgentRows_todosLosTurnosYSusDatos', () => {
-    const done = { ...subagent('a', 'completado', 8000), agentId: 'ag1', tokens: 1200, toolUses: 3, model: 'haiku' } as Block;
+    const done = { ...subagent('a', SUBAGENT_STATUS.completed, 8000), agentId: 'ag1', tokens: 1200, toolUses: 3, model: 'haiku' } as Block;
 
-    const rows = conversationAgentRows([user('u1'), done, user('u2'), subagent('b', 'en segundo plano')]);
+    const rows = conversationAgentRows([user('u1'), done, user('u2'), subagent('b', SUBAGENT_STATUS.background)]);
 
     expect(rows.map((r) => [r.toolUseId, r.state])).toEqual([
       ['u-a', 'done'],

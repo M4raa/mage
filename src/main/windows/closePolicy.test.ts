@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { closeAnswerFromNative, interpretCloseAnswer, parseCloseAnswer, resolveCloseAction, type CloseContext } from './closePolicy';
+import { CLOSE_DIALOG_BUTTON_KEYS, closeAnswerFromNative, interpretCloseAnswer, parseCloseAnswer, resolveCloseAction, type CloseContext } from './closePolicy';
 
 function context(overrides: Partial<CloseContext> = {}): CloseContext {
   return { behavior: 'ask', isQuitting: false, isMainWindow: true, visibleWindowCount: 1, platform: 'win32', ...overrides };
@@ -93,5 +93,11 @@ describe('parseCloseAnswer', () => {
     expect(() => parseCloseAnswer({ action: 'hide', remember: false, extra: 1 })).toThrow(/extra/);
     expect(() => parseCloseAnswer({ action: 'hide' })).toThrow(/hide/);
     expect(() => parseCloseAnswer(null)).toThrow(/null/);
+  });
+});
+
+describe('CLOSE_DIALOG_BUTTON_KEYS', () => {
+  it('CLOSE_DIALOG_BUTTON_KEYS_orden_segundoPlanoCerrarCancelar', () => {
+    expect([...CLOSE_DIALOG_BUTTON_KEYS]).toEqual(['dialogs.closeNative.background', 'dialogs.closeNative.quit', 'dialogs.closeNative.cancel']);
   });
 });
