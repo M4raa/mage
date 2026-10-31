@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useWorkbenchStore } from '../workbenchStore';
+import { useT } from '../../i18n/uiLanguage';
+import type { Translate } from '@shared/i18n/translator';
 import { usePaneTabId, usePaneTranscriptStore } from '../paneContext';
 import { useStickToBottom } from '../useStickToBottom';
 import { activityStepLabel, activityTurns, runningStepId, runsText, type ActivityTurn } from '../chatVisibility';
@@ -27,6 +29,7 @@ const LIVE_ROW_BG_PERCENT = 14;
 const LIVE_ICON_BOX_PX = 16;
 
 export function ActivityPanel(): React.JSX.Element {
+  const t = useT();
   const tabId = usePaneTabId();
   const tab = useWorkbenchStore((s) => s.tabs.find((t) => t.id === tabId));
   const blocks = useWorkbenchStore((s) => s.blocksByChat[tabId] ?? EMPTY);
@@ -52,13 +55,13 @@ export function ActivityPanel(): React.JSX.Element {
   // Al cambiar de pestaña o de filtro, la fila de antes ya no esta en la lista.
   useEffect(() => setSelectedId(null), [tabId, filter]);
 
-  if (tab === undefined) return <Hint text="Abre una conversación para ver su actividad." />;
+  if (tab === undefined) return <Hint text={t('chat.activity.noConversation')} />;
   const selected = selectedId === null ? undefined : blocks.find((b) => b.id === selectedId);
   return (
     <div data-panel="activity" className="relative flex h-full min-h-0 flex-col">
       <ActivityHeader tabId={tabId} title={tab.title} subagent={subagent} />
       <div ref={ref} onScroll={onScroll} className="min-h-0 flex-1 overflow-auto py-[4px]">
-        {stepCount === 0 && <Hint text={emptyActivityText({ turnLive, resumed: tab.resumeSessionId !== undefined, transcriptFinal, transcriptError })} />}
+        {stepCount === 0 && <Hint text={emptyActivityText(t, { turnLive, resumed: tab.resumeSessionId !== undefined, transcriptFinal, transcriptError })} />}
         {turns.map((turn) => (
           <TurnSection
             key={turn.turnIndex}
@@ -78,16 +81,19 @@ export function ActivityPanel(): React.JSX.Element {
 }
 
 // Lo que dice Actividad sin pasos que enseñar (#26): nunca «sin actividad» mientras carga o tras un error.
-function emptyActivityText(state: {
+function emptyActivityText(
+  t: Translate,
+  state: {
   readonly turnLive: boolean;
   readonly resumed: boolean;
   readonly transcriptFinal: boolean;
   readonly transcriptError: string | null;
-}): string {
-  if (state.turnLive) return 'Esperando el primer paso…';
-  if (state.resumed && state.transcriptError !== null) return `No se pudo cargar la actividad: ${state.transcriptError}`;
-  if (state.resumed && !state.transcriptFinal) return 'Cargando la actividad…';
-  return 'Sin actividad todavía.';
+  },
+): string {
+  if (state.turnLive) return t('chat.activity.waitingFirstStep');
+  if (state.resumed && state.transcriptError !== null) return t('chat.activity.loadError', { error: state.transcriptError });
+  if (state.resumed && !state.transcriptFinal) return t('chat.activity.loading');
+  return t('chat.activity.empty');
 }
 
 function findSubagent(blocks: readonly Block[], toolUseId: string | null): SubagentBlock | null {
@@ -104,6 +110,7 @@ function blocksOfSubagent(blocks: readonly Block[], toolUseId: string): readonly
 }
 
 function ActivityHeader({ tabId, title, subagent }: { readonly tabId: string; readonly title: string; readonly subagent: SubagentBlock | null }): React.JSX.Element {
+  const t = useT();
   const openActivity = useWorkbenchStore((s) => s.openActivity);
   return (
     <div className="flex shrink-0 items-center gap-[6px] border-b border-mg-border-subtle px-[10px] py-[6px] text-[10.5px]">
@@ -112,10 +119,10 @@ function ActivityHeader({ tabId, title, subagent }: { readonly tabId: string; re
         <button
           onClick={() => openActivity(tabId, null)}
           data-activity-filter
-          data-tip="Ver todos los pasos"
+          data-tip={t('chat.activity.showAllSteps')}
           className="ml-auto flex shrink-0 items-center gap-[4px] rounded-[4px] bg-mg-sel px-[5px] py-[1px] text-[9.5px] text-mg-body hover:bg-mg-hover"
         >
-          <Icon name="toolAgent" size={12} /> {subagent.agentType ?? 'Subagente'} <Icon name="close" size={10} />
+          <Icon name="toolAgent" size={12} /> {subagent.agentType ?? t('chat.activity.subagentFallback')} <Icon name="close" size={10} />
         </button>
       )}
     </div>
@@ -138,6 +145,7 @@ function TurnSection({
   readonly runningId: string | null;
   readonly accent: string;
 }): React.JSX.Element {
+  const t = useT();
   const n = turn.steps.length;
   return (
     <div>
@@ -147,7 +155,7 @@ function TurnSection({
         data-activity-turn
         data-activity-live={live ? 'true' : undefined}
       >
-        Turno {turn.turnIndex} · {n} {n === 1 ? 'paso' : 'pasos'}
+        {t('chat.activity.turnHeader', { turn: turn.turnIndex, count: n })}
         {turn.userPreview.length > 0 && <span className="ml-[6px] font-normal normal-case tracking-normal text-mg-muted">{turn.userPreview}</span>}
       </div>
       {turn.steps.map((step) => (
@@ -199,6 +207,7 @@ function StepRow({
 }
 
 function StepDetail({ block, onClose }: { readonly block: Block; readonly onClose: () => void }): React.JSX.Element {
+  const t = useT();
   const label = activityStepLabel(block);
   return (
     <div className="flex min-h-0 shrink-0 basis-1/2 flex-col border-t border-mg-border bg-mg-code" data-activity-detail>
@@ -208,8 +217,8 @@ function StepDetail({ block, onClose }: { readonly block: Block; readonly onClos
         </span>
         <button
           onClick={onClose}
-          aria-label="Cerrar el detalle del paso"
-          data-tip="Cerrar el detalle"
+          aria-label={t('chat.activity.closeStepDetail')}
+          data-tip={t('chat.activity.closeDetail')}
           className="flex h-4 w-4 shrink-0 items-center justify-center rounded-[4px] text-mg-muted hover:text-mg-body"
         >
           <Icon name="close" size={10} />
@@ -223,6 +232,7 @@ function StepDetail({ block, onClose }: { readonly block: Block; readonly onClos
 }
 
 function StepDetailBody({ block }: { readonly block: Block }): React.JSX.Element {
+  const t = useT();
   switch (block.kind) {
     case 'tool':
       return (
@@ -234,12 +244,16 @@ function StepDetailBody({ block }: { readonly block: Block }): React.JSX.Element
     case 'thinking': {
       const text = runsText(block.runs);
       // Una conversacion reanudada trae el pensamiento vacio (el CLI lo persiste con texto "").
-      return <div className="whitespace-pre-wrap leading-[1.55]">{text.length > 0 ? text : 'Este pensamiento no se guardó: es de antes de que Mage empezara a conservarlos.'}</div>;
+      return <div className="whitespace-pre-wrap leading-[1.55]">{text.length > 0 ? text : t('chat.activity.thoughtNotSaved')}</div>;
     }
     case 'permission':
-      return <PlainFacts facts={[['Pidió', `${block.prompt} ${block.target}`], ['Resumen', block.summary], ['Respuesta', activityStepLabel(block).meta]]} />;
+      return <PlainFacts facts={[
+            [t('chat.activity.factAsked'), `${block.prompt} ${block.target}`],
+            [t('chat.activity.factSummary'), block.summary],
+            [t('chat.activity.factAnswer'), activityStepLabel(block).meta],
+          ]} />;
     case 'question':
-      return <PlainFacts facts={block.questions.map((q) => [q.question, block.answers?.[q.question] ?? 'sin respuesta'] as const)} />;
+      return <PlainFacts facts={block.questions.map((q) => [q.question, block.answers?.[q.question] ?? t('chat.activity.noAnswer')] as const)} />;
     case 'subagent':
       return <SubagentFacts block={block} />;
     default:
@@ -263,23 +277,24 @@ function PlainFacts({ facts }: { readonly facts: readonly (readonly [string, str
 }
 
 function SubagentFacts({ block }: { readonly block: SubagentBlock }): React.JSX.Element {
+  const t = useT();
   const tabId = usePaneTabId();
   const openActivity = useWorkbenchStore((s) => s.openActivity);
   return (
     <div className="flex flex-col gap-[8px]">
       <PlainFacts
         facts={[
-          ['Tipo', block.agentType ?? 'Subagente'],
-          ['Tarea', block.description ?? ''],
-          ['Estado', block.status ?? 'en marcha'],
-          ['Duración', block.elapsedMs === null ? '' : formatElapsed(block.elapsedMs)],
+          [t('chat.activity.factType'), block.agentType ?? t('chat.activity.subagentFallback')],
+          [t('chat.activity.factTask'), block.description ?? ''],
+          [t('chat.activity.factStatus'), block.status ?? t('chat.activity.statusRunning')],
+          [t('chat.activity.factDuration'), block.elapsedMs === null ? '' : formatElapsed(block.elapsedMs)],
         ]}
       />
       <button
         onClick={() => openActivity(tabId, block.toolUseId)}
         className="w-fit rounded-[6px] border border-mg-border-ctrl px-[9px] py-[3px] text-[10.5px] text-mg-body2 hover:bg-mg-hover"
       >
-        Ver solo sus pasos
+        {t('chat.activity.showOnlyItsSteps')}
       </button>
     </div>
   );
@@ -288,8 +303,9 @@ function SubagentFacts({ block }: { readonly block: SubagentBlock }): React.JSX.
 // Filtrado a un subagente con su transcripcion ya localizable (`agentId`): un boton monta el overlay de
 // siempre. El overlay es `absolute inset-0`, por eso el panel es `relative`.
 function SubagentOverlay({ tabId, subagent }: { readonly tabId: string; readonly subagent: SubagentBlock }): React.JSX.Element | null {
+  const t = useT();
   const [open, setOpen] = useState(false);
-  const tab = useWorkbenchStore((s) => s.tabs.find((t) => t.id === tabId));
+  const tab = useWorkbenchStore((s) => s.tabs.find((tb) => tb.id === tabId));
   const sessionId = useWorkbenchStore((s) => (tab === undefined ? undefined : conversationIdOfTab(tab, s.sessionIdByChat[tabId])));
   useEffect(() => setOpen(false), [subagent.toolUseId]);
   if (subagent.agentId === null || tab === undefined || sessionId === undefined) return null;
@@ -299,7 +315,7 @@ function SubagentOverlay({ tabId, subagent }: { readonly tabId: string; readonly
         onClick={() => setOpen(true)}
         className="shrink-0 border-t border-mg-border-subtle px-[10px] py-[5px] text-left text-[10.5px] text-mg-body2 hover:bg-mg-hover"
       >
-        Ver la transcripción completa del subagente ›
+        {t('chat.activity.fullSubagentTranscript')}
       </button>
     );
   }
