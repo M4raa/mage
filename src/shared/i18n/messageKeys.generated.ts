@@ -761,6 +761,16 @@ export interface MessageValues {
   readonly "menu.category.permission": never;
   readonly "menu.category.prompt": never;
   readonly "menu.category.session": never;
+  readonly "menu.dock.resizeBottomLeft": never;
+  readonly "menu.dock.resizeBottomRight": never;
+  readonly "menu.dock.resizeLeftMiddle": never;
+  readonly "menu.dock.resizeLeftTop": never;
+  readonly "menu.dock.resizeRightMiddle": never;
+  readonly "menu.dock.resizeRightTop": never;
+  readonly "menu.dock.resizeSplitBottom": never;
+  readonly "menu.dock.resizeSplitLeft": never;
+  readonly "menu.dock.resizeSplitRight": never;
+  readonly "menu.dock.rightStripeLabel": never;
   readonly "menu.panel.activity": never;
   readonly "menu.panel.agents": never;
   readonly "menu.panel.artifacts": never;
@@ -774,6 +784,7 @@ export interface MessageValues {
   readonly "menu.panel.permissions": never;
   readonly "menu.panel.tools": never;
   readonly "menu.panel.usage": never;
+  readonly "menu.panelLayout.saveError": never;
   readonly "menu.panelZone.bottomLeft": never;
   readonly "menu.panelZone.bottomRight": never;
   readonly "menu.panelZone.leftMiddle": never;

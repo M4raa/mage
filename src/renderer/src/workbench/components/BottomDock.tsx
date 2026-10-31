@@ -1,5 +1,6 @@
 import { resolvePanelDefinitions } from '../panels/panelRegistry';
 import { usePanelLayoutStore } from '../panelLayoutStore';
+import { useT } from '../../i18n/uiLanguage';
 import { SplitZones } from './dock/DockZone';
 
 const BORDER = 'border-t border-mg-border';
@@ -13,6 +14,7 @@ const BORDER = 'border-t border-mg-border';
 // una instalacion nueva este borde ni se pinta; en cuanto el usuario mueva cualquier panel aqui con
 // "Mover a...", aparece de verdad, sin tocar App.tsx.
 export function BottomDock(): React.JSX.Element | null {
+  const t = useT();
   const stripe = usePanelLayoutStore((s) => s.layout.stripes.bottom);
 
   const zoneAPanels = resolvePanelDefinitions(stripe.a.panelIds);
@@ -25,9 +27,9 @@ export function BottomDock(): React.JSX.Element | null {
       stripe={stripe}
       borderClassNameA={BORDER}
       borderClassNameB={BORDER}
-      resizeAriaLabelA="Redimensionar panel inferior izquierdo"
-      resizeAriaLabelB="Redimensionar panel inferior derecho"
-      splitAriaLabel="Redimensionar reparto entre izquierda y derecha, borde inferior"
+      resizeAriaLabelA={t('menu.dock.resizeBottomLeft')}
+      resizeAriaLabelB={t('menu.dock.resizeBottomRight')}
+      splitAriaLabel={t('menu.dock.resizeSplitBottom')}
     />
   );
 }

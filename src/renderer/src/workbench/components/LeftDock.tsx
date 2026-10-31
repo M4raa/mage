@@ -1,4 +1,5 @@
 import { usePanelLayoutStore } from '../panelLayoutStore';
+import { useT } from '../../i18n/uiLanguage';
 import { SplitZones } from './dock/DockZone';
 
 // Un unico borde para las dos zonas. La separacion entre "arriba" y "medio" la da YA el divisor de
@@ -13,6 +14,7 @@ const BORDER = 'border-r border-mg-border';
 // una sola columna de 52px con el selector de cuentas (incluida la tercera posicion "abajo", que
 // apunta al panel COMPARTIDO de abajo, no a este borde — ver ahi).
 export function LeftDock(): React.JSX.Element {
+  const t = useT();
   const stripe = usePanelLayoutStore((s) => s.layout.stripes.left);
 
   return (
@@ -21,9 +23,9 @@ export function LeftDock(): React.JSX.Element {
       stripe={stripe}
       borderClassNameA={BORDER}
       borderClassNameB={BORDER}
-      resizeAriaLabelA="Redimensionar panel izquierdo arriba"
-      resizeAriaLabelB="Redimensionar panel izquierdo medio"
-      splitAriaLabel="Redimensionar reparto entre arriba y medio, borde izquierdo"
+      resizeAriaLabelA={t('menu.dock.resizeLeftTop')}
+      resizeAriaLabelB={t('menu.dock.resizeLeftMiddle')}
+      splitAriaLabel={t('menu.dock.resizeSplitLeft')}
     />
   );
 }
