@@ -1,6 +1,8 @@
 import { useMemo } from 'react';
 import { Icon } from './Icon';
 import { useWorkbenchStore } from '../workbenchStore';
+import { useT } from '../../i18n/uiLanguage';
+import type { Translate } from '@shared/i18n/translator';
 import { usePaneTranscriptStore } from '../paneContext';
 import { useActiveTranscriptSessionId } from '../useActiveTranscript';
 import {
@@ -34,6 +36,7 @@ const CATEGORY_COLOR: Readonly<Record<TokenCategoryKey, string>> = {
 // (b) evolucion del tamano de contexto con marca de compactacion. PRESENTACION PURA: no dispara
 // ninguna lectura (igual que UsagePanel no dispara su propio fetch).
 export function TranscriptContextPanel(): React.JSX.Element {
+  const t = useT();
   // La sesion a MOSTRAR, no la viva: al abrir una conversacion del historial no hay proceso del CLI
   // todavia (arranca perezoso al primer mensaje) y este panel contestaba "Sin conversacion activa"
   // encima de una conversacion llena. Ver `useActiveTranscript.ts`.
@@ -68,7 +71,7 @@ export function TranscriptContextPanel(): React.JSX.Element {
   // Codex y agy no dejan una transcripción de Claude ni dan el desglose de su contexto: el panel se alimenta del uso
   // que informa cada turno (y, en Codex, del tamaño de su ventana), con o sin sesión abierta.
   if (provider === CODEX_PROVIDER_ID || provider === AGY_PROVIDER_ID) return <ProviderContextPanel provider={provider} />;
-  if (!hasSession) return <Hint text="Abre una conversación para ver su contexto." />;
+  if (!hasSession) return <Hint text={t('chat.context.emptyHint')} />;
 
   return (
     <div className="flex flex-col gap-[16px] p-[14px] text-[11px]">
@@ -84,7 +87,7 @@ export function TranscriptContextPanel(): React.JSX.Element {
         />
       )}
       <section data-context-window="true" className="flex flex-col gap-[8px]">
-        <div className="text-[9.5px] font-bold tracking-[.08em] text-mg-ter">VENTANA DE CONTEXTO</div>
+        <div className="text-[9.5px] font-bold tracking-[.08em] text-mg-ter">{t('chat.context.windowTitle')}</div>
         <ContextBreakdown usage={context.estimated ? undefined : usage} context={context.info} estimated={context.estimated} />
       </section>
       <ConsumedTokens entries={entries.length} isFinal={isFinal} errorMessage={errorMessage} refresh={refresh} totalTokens={totals.totalTokens}>
@@ -94,7 +97,7 @@ export function TranscriptContextPanel(): React.JSX.Element {
       </ConsumedTokens>
       {totals.totalTokens > 0 && (
         <section className="flex flex-col gap-[8px] border-t border-mg-border-subtle pt-[12px]">
-          <div className="text-[9.5px] font-bold tracking-[.08em] text-mg-ter">EVOLUCIÓN DEL CONTEXTO</div>
+          <div className="text-[9.5px] font-bold tracking-[.08em] text-mg-ter">{t('chat.context.evolutionTitle')}</div>
           <ContextEvolutionChart points={series} />
           <CompactionNote count={countCompactBoundaries(entries)} />
         </section>
@@ -106,6 +109,7 @@ export function TranscriptContextPanel(): React.JSX.Element {
 // Panel de Contexto de una pestaña de Codex o agy: ocupación de la ventana (solo Codex la informa) y tokens acumulados
 // desde que Mage abrió la conversación.
 function ProviderContextPanel({ provider }: { readonly provider: string }): React.JSX.Element {
+  const t = useT();
   const tabId = useWorkbenchStore((s) => s.activeTabId);
   const usage = useWorkbenchStore((s) => s.contextUsageByChat[tabId]);
   const totals = useWorkbenchStore((s) => s.providerUsageByChat[tabId]);
@@ -120,26 +124,27 @@ function ProviderContextPanel({ provider }: { readonly provider: string }): Reac
         <ContextAdvisor advice={context.advice} canHandoff={false} onHandoff={() => undefined} onCompact={() => undefined} />
       )}
       <section data-context-window="true" className="flex flex-col gap-[8px]">
-        <div className="text-[9.5px] font-bold tracking-[.08em] text-mg-ter">VENTANA DE CONTEXTO</div>
-        {context !== null && <ContextBreakdown usage={usage} context={context.info} noBreakdownNote={`${name} no da el desglose por categorías.`} />}
+        <div className="text-[9.5px] font-bold tracking-[.08em] text-mg-ter">{t('chat.context.windowTitle')}</div>
+        {context !== null && <ContextBreakdown usage={usage} context={context.info} noBreakdownNote={t('chat.context.noBreakdown', { name })} />}
         {context === null && totals !== undefined && (
           <div className="text-mg-body2">
-            Último prompt: <span style={{ fontVariantNumeric: 'tabular-nums' }}>{totals.lastInputTokens.toLocaleString('es')}</span> tokens. {name} no informa el tamaño de su ventana.
+            {t('chat.context.lastPrompt')} <span style={{ fontVariantNumeric: 'tabular-nums' }}>{totals.lastInputTokens.toLocaleString('es')}</span>{' '}
+            {t('chat.context.windowSizeUnknown', { name })}
           </div>
         )}
-        {context === null && totals === undefined && <div className="text-mg-ter">Aún sin turnos: {name} informa el uso al terminar el primero.</div>}
+        {context === null && totals === undefined && <div className="text-mg-ter">{t('chat.context.noTurnsYetProvider', { name })}</div>}
       </section>
       <section className="flex flex-col gap-[10px] border-t border-mg-border-subtle pt-[12px]">
         <div className="flex items-center justify-between">
-          <span className="text-[9.5px] font-bold tracking-[.08em] text-mg-ter">TOKENS CONSUMIDOS (acumulado)</span>
+          <span className="text-[9.5px] font-bold tracking-[.08em] text-mg-ter">{t('chat.context.consumedTitle')}</span>
           {totals !== undefined && (
             <span className="text-[10px] text-mg-body" style={{ fontVariantNumeric: 'tabular-nums' }}>
-              {totalTokens.toLocaleString('es')} tok
+              {totalTokens.toLocaleString('es')} {t('chat.context.tokensUnit')}
             </span>
           )}
         </div>
-        {totals === undefined ? <div className="text-[10.5px] text-mg-ter">Sin turnos todavía en esta conversación.</div> : shares.map((share) => <CategoryBar key={share.key} share={share} />)}
-        <div className="text-[10px] text-mg-muted">Desde que Mage abrió esta conversación: no se reconstruye del historial del CLI.</div>
+        {totals === undefined ? <div className="text-[10.5px] text-mg-ter">{t('chat.context.noTurnsYet')}</div> : shares.map((share) => <CategoryBar key={share.key} share={share} />)}
+        <div className="text-[10px] text-mg-muted">{t('chat.context.sinceOpened')}</div>
       </section>
     </div>
   );
@@ -162,20 +167,21 @@ function ConsumedTokens({
   readonly totalTokens: number;
   readonly children: React.ReactNode;
 }): React.JSX.Element {
-  const hint = consumedTokensHint({ entries, isFinal, errorMessage, totalTokens });
+  const t = useT();
+  const hint = consumedTokensHint(t, { entries, isFinal, errorMessage, totalTokens });
   return (
     <section className="flex flex-col gap-[10px] border-t border-mg-border-subtle pt-[12px]">
       <div className="flex items-center justify-between">
-        <span className="text-[9.5px] font-bold tracking-[.08em] text-mg-ter">TOKENS CONSUMIDOS (acumulado)</span>
+        <span className="text-[9.5px] font-bold tracking-[.08em] text-mg-ter">{t('chat.context.consumedTitle')}</span>
         <div className="flex items-center gap-[8px]">
           {hint === null && (
             <span className="text-[10px] text-mg-body" style={{ fontVariantNumeric: 'tabular-nums' }}>
-              {totalTokens.toLocaleString('es')} tok
+              {totalTokens.toLocaleString('es')} {t('chat.context.tokensUnit')}
             </span>
           )}
           <button
             onClick={refresh}
-            data-tip="Releer transcripción"
+            data-tip={t('chat.transcript.refresh')}
             className="flex h-5 w-5 items-center justify-center rounded-[5px] text-mg-muted hover:bg-mg-hover hover:text-mg-body"
           >
             ⟳
@@ -187,11 +193,14 @@ function ConsumedTokens({
   );
 }
 
-function consumedTokensHint(state: { readonly entries: number; readonly isFinal: boolean; readonly errorMessage: string | null; readonly totalTokens: number }): string | null {
-  if (state.errorMessage !== null) return `No se pudo leer la transcripción: ${state.errorMessage}`;
-  if (!state.isFinal && state.totalTokens === 0) return 'Cargando transcripción…';
-  if (state.entries === 0) return 'Transcripción vacía.';
-  if (state.totalTokens === 0) return 'Sin datos de uso de tokens en esta transcripción.';
+function consumedTokensHint(
+  t: Translate,
+  state: { readonly entries: number; readonly isFinal: boolean; readonly errorMessage: string | null; readonly totalTokens: number },
+): string | null {
+  if (state.errorMessage !== null) return t('chat.transcript.readError', { error: state.errorMessage });
+  if (!state.isFinal && state.totalTokens === 0) return t('chat.transcript.loading');
+  if (state.entries === 0) return t('chat.transcript.empty');
+  if (state.totalTokens === 0) return t('chat.context.noUsageData');
   return null;
 }
 
@@ -208,30 +217,29 @@ function ContextAdvisor({
   readonly onHandoff: () => void;
   readonly onCompact: () => void;
 }): React.JSX.Element {
+  const t = useT();
   const high = advice.level === 'high';
   const skin = high ? 'border-mg-danger-border bg-mg-danger-bg text-mg-danger' : 'border-mg-warn-border bg-mg-warn-bg text-mg-warn-text';
   return (
     <div className={`flex flex-col gap-[8px] rounded-[8px] border p-[10px_12px] ${skin}`}>
       <div className="text-[11px] leading-[1.5]">
-        <span className="font-bold">Contexto al {advice.pct}%.</span>{' '}
-        {high
-          ? 'La ventana está casi llena; crea un handoff para continuar en un chat nuevo sin perder contexto.'
-          : 'Se está llenando; considera un handoff pronto para no perder contexto.'}
+        <span className="font-bold">{t('chat.context.advisorLevel', { pct: advice.pct })}</span>{' '}
+        {high ? t('chat.context.advisorHigh') : t('chat.context.advisorWarn')}
       </div>
       {canHandoff && (
         <div className="flex items-center gap-[8px]">
           <button
             onClick={onCompact}
-            data-tip="Compacta el contexto de la sesión (/compact)"
+            data-tip={t('chat.context.compactTip')}
             className="rounded-[6px] border border-mg-border-emph px-[10px] py-[4px] text-[10.5px] text-mg-body2 hover:bg-mg-hover"
           >
-            <Icon name="compress" size={12} /> Compactar ahora
+            <Icon name="compress" size={12} /> {t('chat.context.compactNow')}
           </button>
           <button
             onClick={onHandoff}
             className="rounded-[6px] border border-mg-border-emph px-[10px] py-[4px] text-[10.5px] text-mg-body2 hover:bg-mg-hover"
           >
-            <Icon name="handshake" size={12} /> Crear handoff
+            <Icon name="handshake" size={12} /> {t('chat.context.createHandoff')}
           </button>
         </div>
       )}
@@ -260,11 +268,12 @@ function CategoryBar({ share }: { readonly share: TokenCategoryShare }): React.J
 }
 
 function CompactionNote({ count }: { readonly count: number }): React.JSX.Element {
-  if (count === 0) return <div className="text-[10px] text-mg-muted">Sin compactaciones detectadas.</div>;
+  const t = useT();
+  if (count === 0) return <div className="text-[10px] text-mg-muted">{t('chat.context.noCompactions')}</div>;
   return (
     <div className="flex items-center gap-[6px] text-[10px] text-mg-ter">
       <span style={{ color: 'var(--mg-chart-event)' }}>⟲</span>
-      {count === 1 ? '1 compactación de contexto detectada' : `${count} compactaciones de contexto detectadas`}
+      {t('chat.context.compactionsDetected', { count })}
     </div>
   );
 }
