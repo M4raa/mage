@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react';
 import { useWorkbenchStore } from '../workbenchStore';
+import { useT } from '../../i18n/uiLanguage';
 import { usePaneTabId } from '../paneContext';
-import { filterTools, groupToolsByOrigin } from '../toolsView';
+import { BUILTIN_GROUP, filterTools, groupToolsByOrigin } from '../toolsView';
 import { Hint } from './TranscriptHint';
 import type { SessionExtensions } from '../types';
 
@@ -15,6 +16,7 @@ import type { SessionExtensions } from '../types';
 const EMPTY: readonly string[] = [];
 
 export function ToolsPanel(): React.JSX.Element {
+  const t = useT();
   const tabId = usePaneTabId();
   const tools = useWorkbenchStore((s) => s.toolsByChat[tabId] ?? EMPTY);
   const extensions = useWorkbenchStore((s) => s.extensionsByChat[tabId]);
@@ -26,7 +28,7 @@ export function ToolsPanel(): React.JSX.Element {
   // servidores MCP que arrancaran en ESTA sesion, asi que una lista de la sesion anterior podria
   // mentir. Antes de arrancar se dice que no se sabe, que es la verdad.
   if (tools.length === 0) {
-    return <Hint text="Las herramientas se conocen al arrancar la sesión: se leen del propio agente, no de la configuración." />;
+    return <Hint text={t('chat.tools.notKnownYet')} />;
   }
 
   return (
@@ -35,20 +37,20 @@ export function ToolsPanel(): React.JSX.Element {
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          aria-label="Buscar herramienta"
-          placeholder="Buscar…"
+          aria-label={t('chat.tools.searchAria')}
+          placeholder={t('chat.tools.searchPlaceholder')}
           className="min-w-0 flex-1 rounded-[6px] border border-mg-border-ctrl bg-mg-code p-[4px_8px] text-[11px] text-mg-text placeholder:text-mg-muted"
         />
         <span className="flex-none text-[10px] text-mg-muted">{tools.length}</span>
       </div>
       <div className="flex min-h-0 flex-col gap-[10px] overflow-y-auto p-[10px]">
         {groups.length === 0 ? (
-          <div className="text-[11px] text-mg-muted">Ninguna herramienta casa con «{query}».</div>
+          <div className="text-[11px] text-mg-muted">{t('chat.tools.noMatch', { query })}</div>
         ) : (
           groups.map((group) => (
             <section key={group.origin} className="flex flex-col gap-[2px]">
               <div className="text-[9.5px] font-bold uppercase tracking-[.07em] text-mg-ter">
-                {group.origin} ({group.tools.length})
+                {group.origin === BUILTIN_GROUP ? t('chat.tools.builtinGroup') : group.origin} ({group.tools.length})
               </div>
               {group.tools.map((tool) => (
                 // `title` con el nombre COMPLETO: dentro de un grupo de MCP se pinta el corto, y el
@@ -70,6 +72,7 @@ export function ToolsPanel(): React.JSX.Element {
 // unica fuente fiable, y es lo que permite ver que una conversacion privada no traia las skills de los
 // plugins de la cuenta. Plegados: son listas largas (155 skills en la cuenta del usuario, medido).
 function ExtensionsSection({ extensions }: { readonly extensions: SessionExtensions }): React.JSX.Element {
+  const t = useT();
   return (
     <section data-session-extensions="true" className="flex flex-col gap-[6px] border-t border-mg-border-subtle pt-[8px]">
       {extensions.pluginErrors.length > 0 && (
@@ -79,21 +82,24 @@ function ExtensionsSection({ extensions }: { readonly extensions: SessionExtensi
           ))}
         </div>
       )}
-      <ExtensionList title="Plugins" items={extensions.plugins.map((plugin) => ({ key: plugin.source ?? plugin.name, label: plugin.name, tip: plugin.source ?? plugin.name }))} />
-      <ExtensionList title="Skills" items={extensions.skills.map((skill) => ({ key: skill, label: skill, tip: skill }))} />
+      <ExtensionList id="Plugins" title={t('chat.tools.plugins')} items={extensions.plugins.map((plugin) => ({ key: plugin.source ?? plugin.name, label: plugin.name, tip: plugin.source ?? plugin.name }))} />
+      <ExtensionList id="Skills" title={t('chat.tools.skills')} items={extensions.skills.map((skill) => ({ key: skill, label: skill, tip: skill }))} />
     </section>
   );
 }
 
 function ExtensionList({
+  id,
   title,
   items,
 }: {
+  // Identificador estable para `data-extension-list`; `title` es el texto traducido que se ve.
+  readonly id: string;
   readonly title: string;
   readonly items: readonly { readonly key: string; readonly label: string; readonly tip: string }[];
 }): React.JSX.Element {
   return (
-    <details data-extension-list={title}>
+    <details data-extension-list={id}>
       <summary className="cursor-pointer text-[9.5px] font-bold uppercase tracking-[.07em] text-mg-ter">
         {title} ({items.length})
       </summary>

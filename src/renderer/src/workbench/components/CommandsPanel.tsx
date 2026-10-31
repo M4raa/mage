@@ -1,8 +1,9 @@
 import { useMemo, useState } from 'react';
 import { useWorkbenchStore } from '../workbenchStore';
+import { useT } from '../../i18n/uiLanguage';
 import { usePaneTabId } from '../paneContext';
 import { useCachedCommandCatalog } from '../commandCatalogStore';
-import { filterCommands, groupCommandsByOrigin } from '../commandCatalogView';
+import { filterCommands, groupCommandsByOrigin, SESSION_GROUP } from '../commandCatalogView';
 import { Hint } from './TranscriptHint';
 import type { SlashCommandInfo } from '@shared/events';
 
@@ -15,6 +16,7 @@ import type { SlashCommandInfo } from '@shared/events';
 const EMPTY: readonly SlashCommandInfo[] = [];
 
 export function CommandsPanel(): React.JSX.Element {
+  const t = useT();
   const tabId = usePaneTabId();
   const sessionCommands = useWorkbenchStore((s) => s.slashCommandsByChat[tabId] ?? EMPTY);
   const cached = useCachedCommandCatalog();
@@ -25,7 +27,7 @@ export function CommandsPanel(): React.JSX.Element {
   const total = commands.length;
 
   if (total === 0) {
-    return <Hint text="Todavía no se conocen los comandos de esta cuenta. Se leen al arrancar la sesión." />;
+    return <Hint text={t('chat.commands.notKnownYet')} />;
   }
 
   return (
@@ -34,20 +36,20 @@ export function CommandsPanel(): React.JSX.Element {
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          aria-label="Buscar comando"
-          placeholder="Buscar…"
+          aria-label={t('chat.commands.searchAria')}
+          placeholder={t('chat.commands.searchPlaceholder')}
           className="min-w-0 flex-1 rounded-[6px] border border-mg-border-ctrl bg-mg-code p-[4px_8px] text-[11px] text-mg-text placeholder:text-mg-muted"
         />
         <span className="flex-none text-[10px] text-mg-muted">{total}</span>
       </div>
       <div className="flex min-h-0 flex-col gap-[10px] overflow-y-auto p-[10px]">
         {groups.length === 0 ? (
-          <div className="text-[11px] text-mg-muted">Ningún comando casa con «{query}».</div>
+          <div className="text-[11px] text-mg-muted">{t('chat.commands.noMatch', { query })}</div>
         ) : (
           groups.map((group) => (
             <section key={group.origin} className="flex flex-col gap-[4px]">
               <div className="text-[9.5px] font-bold uppercase tracking-[.07em] text-mg-ter">
-                {group.origin} ({group.commands.length})
+                {group.origin === SESSION_GROUP ? t('chat.commands.sessionGroup') : group.origin} ({group.commands.length})
               </div>
               {group.commands.map((command) => (
                 <CommandRow key={command.name} command={command} />
