@@ -100,6 +100,12 @@ export class CodexHistoryService {
     return this.rolloutGroups(home).has(threadId);
   }
 
+  // true si el hilo tiene algún segmento (hubo un `thread/revert`): su contenido vigente sale de `thread/turns/list`.
+  hasSegments(home: string, threadId: string): boolean {
+    this.assertSessionId(threadId);
+    return (this.rolloutGroups(home).get(threadId)?.segments.length ?? 0) > 0;
+  }
+
   private assertSessionId(sessionId: string): void {
     if (!SESSION_ID.test(sessionId)) throw new Error(`sessionId de Codex no valido: ${JSON.stringify(sessionId)}`);
   }

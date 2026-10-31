@@ -183,6 +183,30 @@ describe('CodexHistoryService — regla A4 (original y segmentos)', () => {
     expect(() => service.hasThread(HOME, '..\\x')).toThrow('no valido');
   });
 
+  it('hasSegments_originalYSegmento_true', () => {
+    const service = new CodexHistoryService(fakeDeps({ [join(DAY, FILE)]: ROLLOUT, [join(DAY, segmentFile(1))]: segmentMeta('2026-10-06T00:00:00.000Z') }), vi.fn());
+
+    expect(service.hasSegments(HOME, THREAD)).toBe(true);
+  });
+
+  it('hasSegments_soloOriginal_false', () => {
+    const service = new CodexHistoryService(fakeDeps({ [join(DAY, FILE)]: ROLLOUT }), vi.fn());
+
+    expect(service.hasSegments(HOME, THREAD)).toBe(false);
+  });
+
+  it('hasSegments_hiloInexistente_false', () => {
+    const service = new CodexHistoryService(fakeDeps({ [join(DAY, FILE)]: ROLLOUT }), vi.fn());
+
+    expect(service.hasSegments(HOME, 'ffffffff-0000-0000-0000-000000000000')).toBe(false);
+  });
+
+  it('hasSegments_idConSeparadores_lanza', () => {
+    const service = new CodexHistoryService(fakeDeps({}), vi.fn());
+
+    expect(() => service.hasSegments(HOME, '..\\x')).toThrow('no valido');
+  });
+
   it('rolloutName_originalAndSegment_groups', () => {
     expect(ROLLOUT_NAME.exec(FILE)?.[2]).toBe(THREAD);
     expect(ROLLOUT_NAME.exec(FILE)?.[3]).toBeUndefined();

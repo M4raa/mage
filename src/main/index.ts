@@ -165,7 +165,10 @@ import { ConversationsService, type ConversationsDeps } from './conversations/co
 import { CodexHistoryService } from './conversations/codexHistory';
 import { ConversationMigrationService } from './conversations/conversationMigration';
 import { createMigrationEndpoints } from './conversations/migrationEndpoints';
-import { codexThreadDelete } from './conversations/codexRpc';
+import { codexThreadDelete, codexThreadTurnsList } from './conversations/codexRpc';
+import { codexTranscriptSource, codexTurnsBatches } from './conversations/codexTurnsTranscript';
+import type { TranscriptSource } from './transcripts/transcriptSource';
+import type { TranscriptBatch } from '@shared/transcripts';
 import { MIGRATE_CONVERSATION_SCHEMA } from './conversations/migrationParams';
 import { AgyHistoryService } from './conversations/agyHistory';
 import { createAgySqliteStore, writeAgyConversationDb } from './conversations/agySqliteStore';
@@ -174,8 +177,6 @@ import { AgyLoginService } from './accounts/agyLoginService';
 import { sendToConsole } from './accounts/agyConsoleInput';
 import { AGY_FILE_TOKEN_ENV } from './engine/agyProfile';
 import { staticTranscriptBatch } from './transcripts/staticBatch';
-import type { LineAdapter } from './transcripts/transcriptReader';
-import { adaptCodexLine } from '@shared/codexTranscript';
 import { ConversationAdminService } from './conversations/conversationAdminService';
 import { CliLoginService, type CliLoginProcess } from './accounts/cliLoginService';
 import { writeCredentials } from './accounts/credentialsStore';
@@ -3069,11 +3070,8 @@ function registerTranscriptIpc1(): void {
 // transcript del SUBAGENTE (drill-down, M2.2.3b). Los resolvers de Claude validan sus segmentos
 // (anti path-traversal) y su ruta cae bajo projects/; la de Codex sale de su cuenta registrada y de un id.
 // null: la conversación de Codex no existe en esa cuenta (ver `sendMissingConversation`).
-function resolveTranscriptSource(params: OpenTranscriptParams): { readonly filePath: string; readonly adapt?: LineAdapter; readonly activeBranch: boolean } | null {
-  if (params.provider === 'codex') {
-    const rollout = codexRolloutPath(params);
-    return rollout === null ? null : { filePath: rollout, adapt: adaptCodexLine, activeBranch: false };
-  }
+function resolveTranscriptSource(params: OpenTranscriptParams): TranscriptSource | null {
+  if (params.provider === 'codex') return codexSourceOf(params);
   const filePath =
     params.agentId !== undefined
       ? resolveSubagentTranscriptPath(params.accountDir, params.cwd, params.sessionId, params.agentId)
@@ -3082,7 +3080,7 @@ function resolveTranscriptSource(params: OpenTranscriptParams): { readonly fileP
     throw new Error(`Ruta de transcripcion no permitida (debe caer bajo ~/.claude*/projects): ${filePath}`);
   }
   // Solo la conversacion principal de Claude se lee por rama activa (los subagentes son todo isSidechain; Codex trae sus turnos de otro sitio).
-  return { filePath, activeBranch: params.agentId === undefined };
+  return { kind: 'file', filePath, activeBranch: params.agentId === undefined };
 }
 
 // Abre en streaming y empuja lotes por TRANSCRIPT_BATCH_CHANNEL sin bloquear el invoke.
@@ -3092,15 +3090,15 @@ function streamTranscript(sender: Electron.WebContents, transcriptId: string, pa
     sendMissingConversation(sender, transcriptId, `No existe la conversacion de Codex ${params.sessionId}`);
     return;
   }
-  const { filePath, adapt, activeBranch } = source;
   const controller = new AbortController();
   openTranscriptControllers.set(transcriptId, controller);
 
   void (async () => {
     try {
-      const batches = activeBranch
-        ? transcriptService.openBranchStream(filePath, controller.signal, params.resumeFrom, { onMissingParent: (uuid) => mainLog('warn', 'Transcripcion con un padre inexistente: la rama se corta ahi', { transcriptId, uuid }) })
-        : transcriptService.openStream(filePath, controller.signal, params.resumeFrom, adapt);
+      let batches: AsyncIterable<TranscriptBatch>;
+      if (source.kind === 'codexTurns') batches = codexTurnsBatches(() => codexThreadTurnsList({ spawnProbe: codexAccountProbeDeps().spawnProbe, timeoutMs: CLI_PROBE_TIMEOUT_MS }, source.home, source.threadId));
+      else if (source.activeBranch) batches = transcriptService.openBranchStream(source.filePath, controller.signal, params.resumeFrom, { onMissingParent: (uuid) => mainLog('warn', 'Transcripcion con un padre inexistente: la rama se corta ahi', { transcriptId, uuid }) });
+      else batches = transcriptService.openStream(source.filePath, controller.signal, params.resumeFrom, source.adapt);
       for await (const batch of batches) {
         if (sender.isDestroyed()) break;
         sender.send(TRANSCRIPT_BATCH_CHANNEL, { transcriptId, batch });
@@ -3156,12 +3154,12 @@ function openAgyTranscript(sender: Electron.WebContents, transcriptId: string, p
   }
 }
 
-// Rollout de una conversación de Codex: solo de una cuenta registrada y por su id (nunca una ruta del renderer). null si
+// De dónde sale una conversación de Codex: solo de una cuenta registrada y por su id (nunca una ruta del renderer). null si
 // esa cuenta no tiene ninguna conversación con ese id.
-function codexRolloutPath(params: OpenTranscriptParams): string | null {
+function codexSourceOf(params: OpenTranscriptParams): TranscriptSource | null {
   const account = getProviderAccounts().find('codex', params.accountDir);
   if (account === null) throw new Error(`Cuenta de Codex no valida para abrir una transcripcion: ${params.accountDir}`);
-  return codexHistory.findRollout(account.home, params.sessionId);
+  return codexTranscriptSource(codexHistory, account.home, params.sessionId);
 }
 
 // La conversación que se pidió no existe en la cuenta: fallo terminal, marcado `missing` para que el renderer lo distinga
@@ -3248,6 +3246,7 @@ function conversationMigration(): ConversationMigrationService {
       homeOf: (accountDir) => getProviderAccounts().find('codex', accountDir)?.home ?? failMigration(`Cuenta de Codex no valida: ${accountDir}`),
       history: codexHistory,
       deleteThread: (home, threadId) => codexThreadDelete({ spawnProbe: codexAccountProbeDeps().spawnProbe, timeoutMs: CLI_PROBE_TIMEOUT_MS }, home, threadId),
+      listTurns: (home, threadId) => codexThreadTurnsList({ spawnProbe: codexAccountProbeDeps().spawnProbe, timeoutMs: CLI_PROBE_TIMEOUT_MS }, home, threadId),
     },
     agy: { profileOf: (accountDir) => agyProfileOfAccount(accountDir) ?? failMigration(`Cuenta de agy no valida: ${accountDir}`), externalOf: agyExternalProfileOf, history: agyHistory, writeDb: writeAgyConversationDb },
   }));
