@@ -65,7 +65,7 @@ describe('reduceEvent — streaming y bloques', () => {
   it('reduceEvent_errorConLocalized_bloqueErrorEnCastellano', () => {
     const patch = reduceEvent(state(), TAB, { kind: 'error', localized: localized('events.codex.threadWithoutId') });
 
-    expect(blocksOf(patch).at(-1)).toMatchObject({ kind: 'error', message: 'codex abrio el hilo sin id' });
+    expect(blocksOf(patch).at(-1)).toMatchObject({ kind: 'error', message: 'codex abrió el hilo sin id' });
   });
 
   it('reduceEvent_noticeConLocalized_lineaDeSistemaEnCastellano', () => {

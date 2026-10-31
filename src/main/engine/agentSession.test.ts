@@ -196,7 +196,7 @@ describe('AgentSession protocolo de control (D2/D3)', () => {
     expect(error.localized.key).toBe('events.agent.exitGaveUp');
     expect(error.localized.values).toMatchObject({ attempts: '3', code: '1', signal: 'none', lastCode: '1', lastSignal: 'none' });
     expect(renderLocalized(createTranslator('es'), error.localized)).toBe(
-      'El proceso del agente termino inesperadamente (code=1, signal=none) y no se reintenta: el proceso murio 3 veces seguidas sin llegar a arrancar bien (ultimo cierre: code=1, signal=none)',
+      'El proceso del agente terminó inesperadamente (code=1, signal=none) y no se reintenta: el proceso murió 3 veces seguidas sin llegar a arrancar bien (último cierre: code=1, signal=none)',
     );
   });
 

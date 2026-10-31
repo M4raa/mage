@@ -36,10 +36,10 @@ describe('formatos con la interfaz en inglés', () => {
     expect(formatResetAbsolute(resetsAt, now, true).startsWith(formatWeekdayShort(resetsAt, 'en-US'))).toBe(true);
   });
 
-  it('relativeTime_enUS_caeAlCastellano', () => {
+  it('relativeTime_enUS_usaElCatalogoIngles', () => {
     const now = Date.now();
 
-    // en.json aún no tiene format.time.*: al compilar cae al texto `es`. Es lo esperado hasta F3.5.
-    expect(relativeTime(now - 5 * 60_000, now)).toBe('hace 5 min');
+    // F3.5: en.json trae format.time.*, así que en inglés ya no cae al castellano.
+    expect(relativeTime(now - 5 * 60_000, now)).toBe('5 min ago');
   });
 });
