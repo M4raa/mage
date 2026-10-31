@@ -106,3 +106,73 @@ function parseLine(line: string): Rec | null {
     return null;
   }
 }
+
+// Un turno de `thread/turns/list` con `itemsView: "full"` (medido con codex-cli 0.164.0): sus items tienen la misma forma
+// que los ThreadItem que llegan en directo.
+export interface CodexTurn {
+  readonly id: string;
+  readonly items: readonly unknown[];
+}
+
+const FAILED_ITEM_STATUSES: readonly string[] = ['failed', 'declined'];
+
+// Los turnos vigentes de un hilo → líneas con la forma de transcripción de Claude, como `adaptCodexLine`. Una herramienta
+// da dos líneas (llamada y resultado); lo que no es conversación sale como `codex-<tipo>`, que el hilo ignora.
+export function codexTurnsToLines(turns: readonly CodexTurn[]): Rec[] {
+  return turns.flatMap((turn) => turn.items.flatMap(codexItemLines));
+}
+
+function codexItemLines(item: unknown): Rec[] {
+  if (!isRec(item) || typeof item.id !== 'string' || typeof item.type !== 'string') return [{ type: 'codex-unknown' }];
+  const base = { uuid: `codex-${item.id}`, isSidechain: false };
+  if (item.type === 'userMessage') {
+    const text = codexContentText(item.content);
+    return [{ ...base, type: 'user', isMeta: isCodexInjectedContext(text), message: { role: 'user', content: text } }];
+  }
+  if (item.type === 'agentMessage') {
+    return [{ ...base, type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: typeof item.text === 'string' ? item.text : '' }] } }];
+  }
+  const tool = codexItemTool(item);
+  if (tool === null) return [{ ...base, type: `codex-${item.type}` }];
+  return [
+    { ...base, type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: item.id, name: tool.name, input: tool.input }] } },
+    { ...base, uuid: `codex-${item.id}-result`, type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: item.id, content: codexItemOutput(item), is_error: isFailedItem(item) }] } },
+  ];
+}
+
+// Los mismos nombres con los que se pinta el item en directo (`toolOf` de src/main/engine/codexProtocol.ts).
+function codexItemTool(item: Rec): { readonly name: string; readonly input: Rec } | null {
+  switch (item.type) {
+    case 'commandExecution':
+      return { name: 'Bash', input: { command: item.command, cwd: item.cwd } };
+    case 'fileChange':
+      return { name: 'apply_patch', input: { changes: item.changes } };
+    case 'mcpToolCall':
+      return { name: `mcp__${String(item.server)}__${String(item.tool)}`, input: isRec(item.arguments) ? item.arguments : {} };
+    case 'webSearch':
+      return { name: 'WebSearch', input: { query: item.query } };
+    default:
+      return null;
+  }
+}
+
+// El mismo resultado que en directo (`itemOutput` de codexProtocol.ts). Una llamada MCP fallida queda sin texto: su
+// estado ya la marca como error.
+function codexItemOutput(item: Rec): string {
+  if (typeof item.aggregatedOutput === 'string') return item.aggregatedOutput;
+  if (item.type === 'mcpToolCall') return codexMcpOutput(item);
+  if (item.type === 'fileChange' && Array.isArray(item.changes)) {
+    return item.changes.map((change) => (isRec(change) && typeof change.diff === 'string' ? change.diff : '')).join('\n');
+  }
+  return '';
+}
+
+function codexMcpOutput(item: Rec): string {
+  if (!isRec(item.result) || !Array.isArray(item.result.content)) return '';
+  return item.result.content.flatMap((block: unknown) => (isRec(block) && block.type === 'text' && typeof block.text === 'string' ? [block.text] : [])).join('\n');
+}
+
+function isFailedItem(item: Rec): boolean {
+  const status = typeof item.status === 'string' ? item.status : '';
+  return FAILED_ITEM_STATUSES.includes(status) || (typeof item.exitCode === 'number' && item.exitCode !== 0);
+}
