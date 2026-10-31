@@ -694,6 +694,11 @@ export interface MessageValues {
   readonly "events.runtime.unexpectedFailure": { readonly "detail": string | number };
   readonly "events.workspace.scratchRecreated": { readonly "path": string | number };
   readonly "events.workspace.scratchRecreatedKept": { readonly "path": string | number };
+  readonly "format.reset.past": never;
+  readonly "format.time.daysAgo": { readonly "count": string | number };
+  readonly "format.time.hoursAgo": { readonly "count": string | number };
+  readonly "format.time.minutesAgo": { readonly "count": string | number };
+  readonly "format.time.now": never;
   readonly "history.background.done": never;
   readonly "history.background.moveBlocked": never;
   readonly "history.background.needsAction": never;
