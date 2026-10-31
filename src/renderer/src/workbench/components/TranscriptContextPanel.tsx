@@ -6,6 +6,7 @@ import type { Translate } from '@shared/i18n/translator';
 import { usePaneTranscriptStore } from '../paneContext';
 import { useActiveTranscriptSessionId } from '../useActiveTranscript';
 import {
+  CATEGORY_LABEL_KEY,
   aggregateTokenUsage,
   buildContextSizeSeries,
   countCompactBoundaries,
@@ -248,13 +249,14 @@ function ContextAdvisor({
 }
 
 function CategoryBar({ share }: { readonly share: TokenCategoryShare }): React.JSX.Element {
+  const t = useT();
   const color = CATEGORY_COLOR[share.key];
   return (
     <div className="flex flex-col gap-[5px]">
       <div className="flex items-center justify-between text-[10.5px]">
         <span className="flex items-center gap-[6px] truncate text-mg-ter">
           <span className="h-[8px] w-[8px] shrink-0 rounded-[2px]" style={{ background: color }} />
-          {share.label}
+          {t(CATEGORY_LABEL_KEY[share.key])}
         </span>
         <span className="text-mg-body" style={{ fontVariantNumeric: 'tabular-nums' }}>
           {share.pct}% · {share.tokens.toLocaleString('es')}

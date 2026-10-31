@@ -51,17 +51,17 @@ export type TokenCategoryKey = 'input' | 'output' | 'cacheCreation' | 'cacheRead
 
 export interface TokenCategoryShare {
   readonly key: TokenCategoryKey;
-  readonly label: string;
   readonly tokens: number;
   readonly pct: number; // % entero [0,100] sobre el total; 0 en todas si el total es 0
 }
 
-const CATEGORY_LABELS: Readonly<Record<TokenCategoryKey, string>> = {
-  input: 'Entrada',
-  output: 'Salida',
-  cacheCreation: 'Escritura de caché',
-  cacheRead: 'Lectura de caché',
-};
+// Etiqueta de cada categoría: guarda la CLAVE y se traduce donde se pinta (la barra de la categoría).
+export const CATEGORY_LABEL_KEY = {
+  input: 'chat.context.categoryInput',
+  output: 'chat.context.categoryOutput',
+  cacheCreation: 'chat.context.categoryCacheCreation',
+  cacheRead: 'chat.context.categoryCacheRead',
+} as const satisfies Readonly<Record<TokenCategoryKey, string>>;
 
 // Convierte los totales en 4 barras (orden fijo: input, output, cacheCreation, cacheRead). Si el
 // total es 0, todas devuelven pct 0 (evita division por 0; nunca NaN).
@@ -74,7 +74,6 @@ export function toTokenCategoryShares(totals: TokenCategoryTotals): readonly Tok
   ];
   return rows.map(({ key, tokens }) => ({
     key,
-    label: CATEGORY_LABELS[key],
     tokens,
     pct: totals.totalTokens === 0 ? 0 : Math.round((tokens / totals.totalTokens) * 100),
   }));

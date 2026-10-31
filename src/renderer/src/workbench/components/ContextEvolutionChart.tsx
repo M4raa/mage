@@ -1,5 +1,6 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import type { ContextSizePoint } from '../contextView';
+import { useT } from '../../i18n/uiLanguage';
 
 // Grafico de linea (SVG inline, sin dependencia) de la evolucion del tamano de contexto turno a
 // turno, con marca de evento en las compactaciones. Diseno segun la skill `dataviz` (paleta
@@ -32,6 +33,7 @@ interface Geometry {
 }
 
 export function ContextEvolutionChart({ points }: { readonly points: readonly ContextSizePoint[] }): React.JSX.Element {
+  const t = useT();
   const containerRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(FALLBACK_WIDTH);
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
@@ -86,7 +88,7 @@ export function ContextEvolutionChart({ points }: { readonly points: readonly Co
 
   return (
     <div ref={containerRef} className="relative w-full">
-      <svg width={width} height={HEIGHT} role="img" aria-label="Evolución del tamaño de contexto por turno">
+      <svg width={width} height={HEIGHT} role="img" aria-label={t('chat.context.chartAria')}>
         {/* Grid horizontal superior (max) + baseline (0): hairline recesivo, solido. */}
         <line x1={MARGIN.left} y1={MARGIN.top} x2={width - MARGIN.right} y2={MARGIN.top} stroke={GRID} strokeWidth={1} />
         <line x1={MARGIN.left} y1={baselineY} x2={width - MARGIN.right} y2={baselineY} stroke={BASELINE} strokeWidth={1} />
@@ -96,7 +98,7 @@ export function ContextEvolutionChart({ points }: { readonly points: readonly Co
           {formatCompact(maxContext)}
         </text>
         <text x={MARGIN.left} y={baselineY + 12} fill={AXIS_TEXT} fontSize={9}>
-          0 tok · {points.length} turnos
+          {t('chat.context.chartAxisBottom', { count: points.length })}
         </text>
 
         {/* Anotaciones de compactacion: linea de referencia + icono, color de estado. */}
@@ -147,11 +149,11 @@ export function ContextEvolutionChart({ points }: { readonly points: readonly Co
           className="pointer-events-none absolute z-10 rounded-[6px] border border-mg-border-pop bg-mg-tooltip px-[8px] py-[5px] text-[10px] text-mg-tooltip-ink shadow-lg"
           style={{ left: clampTooltipLeft(hover.x, width), top: 2 }}
         >
-          <div className="text-mg-ter">Turno #{hover.point.entryIndex}</div>
+          <div className="text-mg-ter">{t('chat.context.chartTurn', { index: hover.point.entryIndex })}</div>
           <div>
-            <span style={{ fontVariantNumeric: 'tabular-nums' }}>{hover.point.contextTokens.toLocaleString('es')}</span> tok de contexto
+            <span style={{ fontVariantNumeric: 'tabular-nums' }}>{hover.point.contextTokens.toLocaleString('es')}</span> {t('chat.context.chartTokensOfContext')}
           </div>
-          {hover.point.isCompaction && <div style={{ color: EVENT }}>⟲ compactación</div>}
+          {hover.point.isCompaction && <div style={{ color: EVENT }}>{t('chat.context.chartCompaction')}</div>}
         </div>
       )}
     </div>
