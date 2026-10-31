@@ -251,6 +251,22 @@ describe('installOwnedFiles', () => {
     expect(hasLeftovers(files)).toBe(false);
   });
 
+  it('installOwnedFiles_moveToPreviousFails_keepsInstalledVersion', () => {
+    // Arrange
+    const { failNext, text, install, fs, files } = setup();
+    install(v1());
+    const registryBefore = text(REGISTRY_PATH);
+    failNext('rename', '.prev-demo-skill');
+    // Act / Assert
+    expect(() => install(v2())).toThrow(/fallida/);
+    expect(text(join(TARGET_ROOT, 'SKILL.md'))).toBe('hola v1');
+    expect(fs.exists(join(TARGET_ROOT, 'scripts/run.sh'))).toBe(true);
+    expect(text(REGISTRY_PATH)).toBe(registryBefore);
+    expect(fs.exists(STAGE)).toBe(false);
+    expect(fs.exists(PREVIOUS)).toBe(false);
+    expect(hasLeftovers(files)).toBe(false);
+  });
+
   it('installOwnedFiles_corruptRegistry_throwsWithoutWriting', () => {
     // Arrange
     const { put, text, install, fs } = setup();
