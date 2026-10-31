@@ -192,6 +192,8 @@
   "chat.artifact.openWithPickerAria": "Abrir con… el artifact {title}",
   "chat.artifact.openWithTip": "Se abrirá con la cuenta {alias}",
   "chat.artifact.pickAccountAria": "Elegir cuenta con la que abrir",
+  "chat.artifacts.empty": "Esta conversación todavía no ha publicado ningún artifact.",
+  "chat.artifacts.title": "ARTIFACTS ({count})",
   "chat.code.copy": "Copiar código",
   "chat.collapsible.showFullMessage": "Ver mensaje completo",
   "chat.collapsible.showFullResult": "Ver resultado completo",
@@ -1282,5 +1284,9 @@
   "usage.popover.apiTotals": "API · {tokens} tokens · {cost}",
   "usage.popover.noData": "sin dato",
   "usage.popover.title": "USO GENERAL",
-  "usage.popover.windowLine": "{percent} % · reset {reset}"
+  "usage.popover.windowLine": "{percent} % · reset {reset}",
+  "usage.view.noApiBilling": "{amount} $ · no factura API",
+  "usage.view.projectionDepleting": "A este ritmo se agota en {duration}",
+  "usage.view.projectionSafe": "A este ritmo no se agota antes del reset",
+  "usage.view.windowExhausted": "Ventana agotada"
 }

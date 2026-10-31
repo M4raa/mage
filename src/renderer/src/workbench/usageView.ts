@@ -1,5 +1,6 @@
 import type { UsageInfo } from '@shared/usage';
 import type { UsageWindow } from './types';
+import { t } from '../i18n/uiLanguage';
 
 // Mapeo PURO del uso de dominio (UsageInfo, seguro) a la presentacion que consume la UI. Sin efectos
 // ni dependencia del reloj global: `now` se inyecta (para la cuenta atras hasta el reset).
@@ -56,7 +57,7 @@ export function perModelBars(info: UsageInfo, thresholds: UsageThresholds = DEFA
 export function formatApiCredits(amountMinor: number | null): string {
   if (amountMinor === null) return '—';
   const major = (amountMinor / 100).toFixed(2);
-  return amountMinor === 0 ? `${major} $ · no factura API` : `${major} $`;
+  return amountMinor === 0 ? t('usage.view.noApiBilling', { amount: major }) : `${major} $`;
 }
 
 // --- Proyeccion de agotamiento -------------------------------------------------------------------
@@ -110,9 +111,9 @@ export function projectWindowExhaustion(
 // Texto corto para la UI. `null` cuando no hay nada util que decir (no se pinta la linea).
 export function formatProjection(projection: UsageProjection): string | null {
   if (projection.kind === 'unknown') return null;
-  if (projection.kind === 'safe') return 'A este ritmo no se agota antes del reset';
-  if (projection.kind === 'exhausted') return 'Ventana agotada';
-  return `A este ritmo se agota en ${formatDuration(projection.etaMs)}`;
+  if (projection.kind === 'safe') return t('usage.view.projectionSafe');
+  if (projection.kind === 'exhausted') return t('usage.view.windowExhausted');
+  return t('usage.view.projectionDepleting', { duration: formatDuration(projection.etaMs) });
 }
 
 // Duracion legible a partir de ms (misma escala que la cuenta atras del reset, para que las dos

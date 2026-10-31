@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import { useWorkbenchStore } from '../workbenchStore';
+import { useT } from '../../i18n/uiLanguage';
 import { usePaneTabId } from '../paneContext';
 import { artifactCardsOf } from '../artifactView';
 import { ArtifactCard } from './ArtifactCard';
@@ -19,18 +20,19 @@ import type { Block } from '../types';
 const EMPTY_BLOCKS: readonly Block[] = [];
 
 export function ArtifactsPanel(): React.JSX.Element {
+  const t = useT();
   const tabId = usePaneTabId();
   const blocks = useWorkbenchStore((s) => s.blocksByChat[tabId] ?? EMPTY_BLOCKS);
   const cards = useMemo(() => artifactCardsOf(blocks), [blocks]);
 
   if (cards.length === 0) {
-    return <Hint text="Esta conversación todavía no ha publicado ningún artifact." />;
+    return <Hint text={t('chat.artifacts.empty')} />;
   }
 
   return (
     <div className="flex min-h-0 flex-col">
       <div className="flex shrink-0 items-center justify-between border-b border-mg-border-subtle px-[10px] py-[6px] text-[10px] text-mg-ter">
-        <span className="font-bold tracking-[.06em]">ARTIFACTS ({cards.length})</span>
+        <span className="font-bold tracking-[.06em]">{t('chat.artifacts.title', { count: cards.length })}</span>
       </div>
       <div className="flex min-h-0 flex-col gap-[8px] overflow-y-auto p-[10px]">
         {cards.map((card) => (

@@ -194,6 +194,8 @@ export interface MessageValues {
   readonly "chat.artifact.openWithPickerAria": { readonly "title": string | number };
   readonly "chat.artifact.openWithTip": { readonly "alias": string | number };
   readonly "chat.artifact.pickAccountAria": never;
+  readonly "chat.artifacts.empty": never;
+  readonly "chat.artifacts.title": { readonly "count": string | number };
   readonly "chat.code.copy": never;
   readonly "chat.collapsible.showFullMessage": never;
   readonly "chat.collapsible.showFullResult": never;
@@ -1285,6 +1287,10 @@ export interface MessageValues {
   readonly "usage.popover.noData": never;
   readonly "usage.popover.title": never;
   readonly "usage.popover.windowLine": { readonly "percent": string | number; readonly "reset": string | number };
+  readonly "usage.view.noApiBilling": { readonly "amount": string | number };
+  readonly "usage.view.projectionDepleting": { readonly "duration": string | number };
+  readonly "usage.view.projectionSafe": never;
+  readonly "usage.view.windowExhausted": never;
 }
 
 export type MessageKey = keyof MessageValues;
