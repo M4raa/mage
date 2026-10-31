@@ -2,9 +2,11 @@
 // Lo que lanza un handler de main llega envuelto por Electron: «Error invoking remote method '<canal>': Error: <mensaje
 // de main>». Se quita SOLO ese prefijo conocido, al principio; el mensaje de main queda intacto (un tipo distinto de
 // `Error`, p. ej. `TypeError: …`, se conserva porque dice algo). Contrato de error: si no es un Error, el valor recibido.
+import { t } from '../i18n/uiLanguage';
+
 const IPC_ERROR_PREFIX = /^Error invoking remote method '[^']*': (?:Error: )?/;
 
 export function describeError(err: unknown): string {
-  if (!(err instanceof Error)) return `Error desconocido: ${String(err)}`;
+  if (!(err instanceof Error)) return t('errors.workbench.unknownError', { value: String(err) });
   return err.message.replace(IPC_ERROR_PREFIX, '');
 }

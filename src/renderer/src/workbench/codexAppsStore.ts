@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { CodexAccountMetadata } from '@shared/mcp';
+import { t } from '../i18n/uiLanguage';
 
 export interface CodexAppsApi { readonly readCodexApps: (home: string) => Promise<CodexAccountMetadata> }
 interface CodexAppsState {
@@ -31,7 +32,7 @@ function storeResult(set: SetAppsState, home: string, value: CodexAccountMetadat
 
 async function queryAccounts(api: CodexAppsApi, homes: readonly string[], receive: (home: string, value: CodexAccountMetadata) => void): Promise<void> {
   for (const home of homes) {
-    const value = await api.readCodexApps(home).catch((): CodexAccountMetadata => ({ authenticated: null, apps: null, error: 'No se pudieron consultar las Apps de esta cuenta.' }));
+    const value = await api.readCodexApps(home).catch((): CodexAccountMetadata => ({ authenticated: null, apps: null, error: t('errors.codexApps.queryFailed') }));
     receive(home, value);
   }
 }

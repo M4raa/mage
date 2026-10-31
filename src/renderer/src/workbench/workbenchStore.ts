@@ -133,6 +133,7 @@ import { recentProjects, RECENT_PROJECTS_LIMIT } from './recentProjects';
 import { projectForRow } from './chatProjects';
 import { isWindowsPlatform } from './keybindings/platform';
 import { describeError } from './describeError';
+import { t } from '../i18n/uiLanguage';
 
 // Contexto en placeholder hasta M1.3 (el uso/contexto real llega con UsageService).
 const CONTEXT_PLACEHOLDER: ContextInfo = { usedTokens: '—', maxTokens: '200k', usedPct: 0, tokensOut: '—' };
@@ -656,9 +657,9 @@ function schedulePersist(mage: MageClient, getState: () => WorkbenchState): void
     try {
       void Promise.resolve(
         mage.saveWorkspace(toPersistedWorkspace(s.tabs, s.activeTabId, s.sessionIdByChat, s.splitLayout)),
-      ).catch((err: unknown) => reportActionError('No se pudo guardar el workspace', err, 'persist', SAVE_FAILED_KEY.workspace));
+      ).catch((err: unknown) => reportActionError(t('errors.workbench.saveWorkspaceFailed'), err, 'persist', SAVE_FAILED_KEY.workspace));
     } catch (err: unknown) {
-      reportActionError('No se pudo guardar el workspace', err, 'persist', SAVE_FAILED_KEY.workspace);
+      reportActionError(t('errors.workbench.saveWorkspaceFailed'), err, 'persist', SAVE_FAILED_KEY.workspace);
     }
   }, PERSIST_DEBOUNCE_MS);
 }
@@ -782,10 +783,10 @@ function scheduleSettingsPersist(mage: MageClient, getState: () => WorkbenchStat
     // lanzar en sincrono) y esto corre desde un timer; se normaliza y se traza, nunca se traga.
     try {
       void Promise.resolve(mage.saveSettings(getState().settings)).catch((err: unknown) =>
-        reportActionError('No se pudo guardar la configuración', err, 'persist', SAVE_FAILED_KEY.settings),
+        reportActionError(t('errors.workbench.saveSettingsFailed'), err, 'persist', SAVE_FAILED_KEY.settings),
       );
     } catch (err: unknown) {
-      reportActionError('No se pudo guardar la configuración', err, 'persist', SAVE_FAILED_KEY.settings);
+      reportActionError(t('errors.workbench.saveSettingsFailed'), err, 'persist', SAVE_FAILED_KEY.settings);
     }
   }, PERSIST_DEBOUNCE_MS);
 }
@@ -797,7 +798,7 @@ function persistSettingsNow(mage: MageClient, getState: () => WorkbenchState): v
   settingsPersistTimer = null;
   void mage
     .saveSettings(getState().settings)
-    .catch((err: unknown) => reportActionError('No se pudo guardar la configuración', err, 'persist', SAVE_FAILED_KEY.settings));
+    .catch((err: unknown) => reportActionError(t('errors.workbench.saveSettingsFailed'), err, 'persist', SAVE_FAILED_KEY.settings));
 }
 
 // A14: como `persistSettingsNow`, pero ESPERA a que main confirme el guardado y propaga su fallo. Lo
@@ -944,7 +945,7 @@ async function closeSessionInMain(mage: MageClient, sessionId: string): Promise<
   try {
     return (await mage.closeSession(sessionId)).background;
   } catch (err) {
-    if (!describeError(err).includes(`Sesion inexistente: ${sessionId}`)) reportActionError('No se pudo cerrar la sesión', err, 'chat');
+    if (!describeError(err).includes(`Sesion inexistente: ${sessionId}`)) reportActionError(t('errors.workbench.closeSessionFailed'), err, 'chat');
     return false;
   }
 }
@@ -1698,7 +1699,7 @@ export function createWorkbenchStore(mage: MageClient) {
           settingsReady = true;
           get().assignAccountAccents();
         })
-        .catch((err: unknown) => reportActionError('No se pudieron asignar los colores de las cuentas', err, 'accounts'));
+        .catch((err: unknown) => reportActionError(t('errors.workbench.assignAccentsFailed'), err, 'accounts'));
       void Promise.all([workspaceRestored, settingsLoaded])
         .then(() => get().showReleaseNotesIfUpdated(isReleaseNotesDevRun()))
         .catch((err: unknown) => console.warn('No se pudieron comprobar las novedades:', describeError(err)));
@@ -2061,7 +2062,7 @@ export function createWorkbenchStore(mage: MageClient) {
       try {
         await mage.deleteConversation({ accountDir, sessionId, cwd, privacy });
       } catch (err) {
-        reportActionError('No se pudo eliminar la conversación', err, 'history');
+        reportActionError(t('errors.workbench.deleteConversationFailed'), err, 'history');
       }
       await get().loadConversationHistory();
     },
@@ -2216,10 +2217,10 @@ export function createWorkbenchStore(mage: MageClient) {
     dismissUpdatePrompt: () => set({ updatePromptVersion: null }),
     installUpdate: () => {
       set({ updatePromptVersion: null });
-      void mage.installUpdate().catch((err: unknown) => reportActionError('No se pudo instalar la actualización', err, 'update'));
+      void mage.installUpdate().catch((err: unknown) => reportActionError(t('errors.workbench.installUpdateFailed'), err, 'update'));
     },
     checkForUpdates: () => {
-      void mage.checkForUpdates().catch((err: unknown) => reportActionError('No se pudo buscar actualizaciones', err, 'update'));
+      void mage.checkForUpdates().catch((err: unknown) => reportActionError(t('errors.workbench.checkUpdatesFailed'), err, 'update'));
     },
 
     showReleaseNotesIfUpdated: async (isDev) => {
@@ -2942,7 +2943,7 @@ export function reduceEvent(state: WorkbenchState, tabId: string, event: MageEve
     // F2.4: main contesto solo. Una regla no deja rastro (el usuario ya dijo que si); la barrera del turno de PR
     // deja la linea del comando denegado.
     case 'permission_auto_answered':
-      return event.blocked === null ? {} : withBlocks(state, tabId, [...blocks, { kind: 'system', id: nextBlockId(), text: `Bloqueado durante «Crear PR»: ${event.blocked}` }]);
+      return event.blocked === null ? {} : withBlocks(state, tabId, [...blocks, { kind: 'system', id: nextBlockId(), text: t('chat.system.blockedDuringPr', { command: event.blocked }) }]);
     case 'permission_cancelled': {
       // Si no habia tarjeta para ese requestId, `cancelQuestionBlock` devuelve el MISMO array y no se
       // emite parche de bloques: un parche vacio tiene que seguir siendo vacio.
@@ -3037,7 +3038,7 @@ export function reduceEvent(state: WorkbenchState, tabId: string, event: MageEve
     // en el historial. El desglose de contexto era de la vieja: fuera hasta el siguiente.
     case 'conversation_reset':
       return {
-        blocksByChat: { ...state.blocksByChat, [tabId]: appendSystemBlock(EMPTY_BLOCKS, CONVERSATION_RESET_TEXT, nextBlockId()) },
+        blocksByChat: { ...state.blocksByChat, [tabId]: appendSystemBlock(EMPTY_BLOCKS, conversationResetText(), nextBlockId()) },
         streamingIdByChat: { ...state.streamingIdByChat, [tabId]: null },
         sessionIdByChat: { ...state.sessionIdByChat, [tabId]: event.newSessionId },
         contextUsageByChat: without(state.contextUsageByChat, tabId),
@@ -3203,10 +3204,10 @@ function wantsNewWorktree(tab: Tab, snapshot: GitSnapshot | undefined): snapshot
   return tab.resumeSessionId === undefined && tab.worktreeOff !== true && snapshot?.kind === 'repo' && snapshot.branch !== null;
 }
 
-const KEPT_WORKTREE_REASON: Readonly<Record<'dirty' | 'unknown', string>> = {
-  dirty: 'tiene cambios sin confirmar',
-  unknown: 'no se pudo comprobar si tenía cambios',
-};
+const KEPT_WORKTREE_REASON = {
+  dirty: 'notifications.worktree.reasonDirty',
+  unknown: 'notifications.worktree.reasonUnknown',
+} as const;
 
 // Con cambios (o sin poder comprobarlo) el worktree se queda, y se avisa con una notificacion: la pestaña
 // que lo explicaria ya no existe. No se pierde nada: vuelve al reabrir la conversacion.
@@ -3218,22 +3219,23 @@ function archiveWorktree(mage: MageClient, tab: Tab): void {
     .worktreeRemove({ cwd: path, accountDir: tab.accountId })
     .then((result) => {
       if (result.removed) return;
-      console.warn(`Worktree conservado (${KEPT_WORKTREE_REASON[result.reason]}): ${path}`);
+      const reason = t(KEPT_WORKTREE_REASON[result.reason]);
+      console.warn(`Worktree conservado (${reason}): ${path}`);
       notify({
         level: 'warning',
-        title: `Worktree conservado: ${KEPT_WORKTREE_REASON[result.reason]}`,
+        title: t('notifications.worktree.keptTitle', { reason }),
         body: path,
         source: 'worktree',
         dedupeKey,
         actions: [
-          { label: 'Abrir carpeta', run: () => mage.openPath(path) },
-          { label: 'Copiar ruta', run: () => navigator.clipboard.writeText(path) },
+          { label: t('notifications.worktree.openFolder'), run: () => mage.openPath(path) },
+          { label: t('notifications.worktree.copyPath'), run: () => navigator.clipboard.writeText(path) },
         ],
       });
     })
     .catch((err: unknown) => {
       console.warn('No se pudo archivar el worktree:', describeError(err));
-      notify({ level: 'error', title: 'No se pudo archivar el worktree', body: `${path}: ${describeError(err)}`, source: 'worktree', dedupeKey });
+      notify({ level: 'error', title: t('notifications.worktree.archiveFailed'), body: `${path}: ${describeError(err)}`, source: 'worktree', dedupeKey });
     });
 }
 
@@ -3257,7 +3259,7 @@ function toastIfHidden(get: () => WorkbenchState, event: MageEvent, context: Hid
     body: notice.content.body,
     source: 'conversation',
     dedupeKey: `conversation:${context.target.sessionId}:${notice.content.title}`,
-    actions: [{ label: 'Ir a la conversación', run: () => get().focusNotificationTarget(target) }],
+    actions: [{ label: t('notifications.conversation.goTo'), run: () => get().focusNotificationTarget(target) }],
   });
 }
 
@@ -3394,9 +3396,9 @@ function newTabForProviderAccount(
 export function notifyMcpLogin(mage: Pick<MageClient, 'openMcpLogin'>, server: string, loginId: string): void {
   notify({
     level: 'warning',
-    title: `El servidor MCP ${server} pide iniciar sesión`,
-    body: 'Sus herramientas llegarán cuando termines en el navegador.',
-    actions: [{ label: 'Iniciar sesión', run: () => mage.openMcpLogin(loginId) }],
+    title: t('notifications.mcpLogin.title', { server }),
+    body: t('notifications.mcpLogin.body'),
+    actions: [{ label: t('notifications.mcpLogin.action'), run: () => mage.openMcpLogin(loginId) }],
     timeoutMs: null,
     dedupeKey: `mcp-login:${loginId}`,
     source: 'mcp-login',
@@ -3432,7 +3434,7 @@ function currentTime(): string {
 const EMPTY_BLOCKS: readonly Block[] = [];
 
 // Linea que deja `/clear` en el chat vaciado (P-028).
-export const CONVERSATION_RESET_TEXT = 'Conversación reiniciada';
+export const conversationResetText = (): string => t('chat.system.conversationReset');
 
 export function selectAccount(state: WorkbenchState, accountId: string): Account | undefined {
   return state.accounts.find((a) => a.id === accountId);
