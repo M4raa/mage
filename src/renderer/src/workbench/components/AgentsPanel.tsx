@@ -42,7 +42,7 @@ export function AgentsPanel(): React.JSX.Element {
   });
   // 4.1: los paneles globales siguen a la pestaña ACTIVA (`usePaneTabId` devuelve la activa fuera del centro).
   const blocks = useWorkbenchStore((s) => s.blocksByChat[tabId] ?? NO_BLOCKS);
-  const invocations = useMemo(() => conversationAgentRows(blocks), [blocks]);
+  const invocations = useMemo(() => conversationAgentRows(blocks, t), [blocks, t]);
   const elapsedOf = useAgentElapsed(invocations);
   const [drilled, setDrilled] = useState<SubagentInvocation | null>(null);
 

@@ -30,7 +30,7 @@ export function AgentsDock(): React.JSX.Element {
   const blocks = useWorkbenchStore((s) => s.blocksByChat[tabId] ?? EMPTY);
   const status = useWorkbenchStore((s) => s.statusByChat[tabId] ?? 'idle');
   const dismissed = useWorkbenchStore((s) => s.dismissedSubagentsByChat[tabId] ?? NO_DISMISSED);
-  const rows = useMemo(() => agentsDockRows(blocks, new Set(dismissed)), [blocks, dismissed]);
+  const rows = useMemo(() => agentsDockRows(blocks, new Set(dismissed), t), [blocks, dismissed, t]);
   // Con la pestaña `idle` sigue a la vista mientras quede alguno en marcha (segundo plano, P-028 37a).
   const busy = status === 'streaming' || status === 'needs_permission';
   const visible = rows.length > 0 && (busy || rows.some((r) => r.state === 'running'));
@@ -56,7 +56,7 @@ function AgentsDockBody({ tabId, rows }: { readonly tabId: string; readonly rows
           >
             <Icon name="chevron" size={10} className={`flex-none transition-transform ${expanded ? 'rotate-90' : ''}`} />
             <span aria-hidden="true" className={`h-[7px] w-[7px] flex-none rounded-full ${AGENT_STATE_DOT[summary.running > 0 ? 'running' : 'done']}`} />
-            <span className="truncate font-semibold">{agentsDockSummaryText(summary)}</span>
+            <span className="truncate font-semibold">{agentsDockSummaryText(summary, t)}</span>
           </button>
           {finishedIds.length > 0 && (
             <DockAction onClick={() => dismissSubagents(tabId, finishedIds)} attr="data-agents-dock-clear" tip={t('chat.agents.dockClearTip')}>

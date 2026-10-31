@@ -174,8 +174,15 @@ export interface MessageValues {
   readonly "chat.agents.stateError": never;
   readonly "chat.agents.stateRunning": never;
   readonly "chat.agents.stateStopped": never;
+  readonly "chat.agents.stepDone": never;
+  readonly "chat.agents.stepError": never;
+  readonly "chat.agents.stepRunningTool": { readonly "tool": string | number };
+  readonly "chat.agents.stepStopped": never;
+  readonly "chat.agents.stepThinking": never;
   readonly "chat.agents.stopAria": { readonly "name": string | number };
   readonly "chat.agents.stopTip": never;
+  readonly "chat.agents.summaryFinished": { readonly "count": number };
+  readonly "chat.agents.summaryRunning": { readonly "count": string | number };
   readonly "chat.agents.tokensCount": { readonly "count": string | number };
   readonly "chat.agents.toolsCount": { readonly "count": string | number };
   readonly "chat.agents.viewTranscript": never;
