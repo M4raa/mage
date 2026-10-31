@@ -1,5 +1,6 @@
 import type { StartupWarning } from '@shared/ipc';
 import type { NotifyInput } from './notifications';
+import { t } from '../i18n/uiLanguage';
 
 // Avisos de inicio de main (F2.6, D-AppImage): se enseñan PERSISTENTES (hasta la ✕) y una sola vez por id, aunque
 // la ventana recargue. Si main no responde, el fallo se ve como cualquier otra acción fallida.
@@ -14,7 +15,7 @@ export async function showStartupWarnings({ fetchWarnings, notify, reportError }
   try {
     warnings = await fetchWarnings();
   } catch (err) {
-    reportError('No se pudieron leer los avisos de inicio', err, 'startup');
+    reportError(t('notifications.startup.readFailed'), err, 'startup');
     return;
   }
   for (const warning of warnings) {

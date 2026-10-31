@@ -10,6 +10,7 @@ import {
   type NotifyInput,
 } from './notifications';
 import { describeError } from './describeError';
+import { t } from '../i18n/uiLanguage';
 
 // Store propio de las notificaciones de Mage, aparte del `workbenchStore`. Por ventana (cada ventana es
 // su renderer) y en memoria: el centro no se persiste. `notify()` es funcion de modulo para poder
@@ -43,7 +44,7 @@ export function runNotificationAction(id: string, action: NotifyAction): void {
   dismissToast(id);
   void Promise.resolve()
     .then(() => action.run())
-    .catch((err: unknown) => reportActionError(`No se pudo «${action.label}»`, err, 'notification-action'));
+    .catch((err: unknown) => reportActionError(t('notifications.store.actionFailed', { action: action.label }), err, 'notification-action'));
 }
 
 // Fallo de una accion del usuario: se queda en el log (como antes) y ademas se ve. `dedupeKey` agrupa

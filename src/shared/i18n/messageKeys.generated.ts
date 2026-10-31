@@ -891,6 +891,16 @@ export interface MessageValues {
   readonly "notifications.center.markRead": never;
   readonly "notifications.center.panelLabel": never;
   readonly "notifications.center.unreadMark": never;
+  readonly "notifications.event.conversationError": never;
+  readonly "notifications.event.mcpFormPending": never;
+  readonly "notifications.event.needsAttention": never;
+  readonly "notifications.event.permissionRequired": never;
+  readonly "notifications.event.rateLimit": never;
+  readonly "notifications.event.ruleMatch": { readonly "label": string | number };
+  readonly "notifications.event.subagentDone": never;
+  readonly "notifications.event.turnComplete": never;
+  readonly "notifications.startup.readFailed": never;
+  readonly "notifications.store.actionFailed": { readonly "action": string | number };
   readonly "notifications.toasts.dismiss": never;
   readonly "notifications.toasts.regionLabel": never;
   readonly "prompt.actions.compact": never;

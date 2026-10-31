@@ -2,6 +2,7 @@ import type { MageEvent } from '@shared/events';
 import type { NotificationRule } from '@shared/settings';
 import type { NotificationTarget, NotifyParams } from '@shared/ipc';
 import type { NotifyLevel } from './notifications';
+import { t } from '../i18n/uiLanguage';
 
 // Contenido de una notificacion del SO derivado de un evento del motor (M2.3). PURO y testeable: la
 // decision de MOSTRARLA (solo si la ventana no tiene el foco) vive en main; aqui solo el "que decir".
@@ -28,7 +29,7 @@ export interface InAppConversationNotice {
 export function inAppNoticeForEvent(event: MageEvent, context: NotificationContext): InAppConversationNotice | null {
   if (event.kind === 'rate_limit') {
     const body = event.summary.trim().length === 0 ? context.tabTitle : `${context.tabTitle}: ${excerpt(event.summary)}`;
-    return { level: 'warning', content: { title: 'Límite de uso alcanzado', body } };
+    return { level: 'warning', content: { title: t('notifications.event.rateLimit'), body } };
   }
   const content = notificationForEvent(event, context);
   return content === null ? null : { level: inAppLevelFor(event), content };
@@ -53,9 +54,11 @@ const SUBAGENT_STOP_HOOK = 'SubagentStop';
 // el CLI dice cuando necesita atencion, en vez de deducirlo de su texto con una regex.
 // Deliberadamente FUERA: `Stop` (ya se avisa con el evento `result`; notificar los dos seria spam),
 // `UserPromptSubmit` (lo acaba de hacer el usuario) y `PreCompact`/`SessionEnd` (ruido).
-const NOTIFIABLE_HOOKS: ReadonlyMap<string, string> = new Map([
-  ['Notification', 'Claude necesita tu atención'],
-  [SUBAGENT_STOP_HOOK, 'Subagente terminado'],
+// El valor es la CLAVE del título: se traduce al avisar, no al importar.
+type HookTitleKey = 'notifications.event.needsAttention' | 'notifications.event.subagentDone';
+const NOTIFIABLE_HOOKS: ReadonlyMap<string, HookTitleKey> = new Map<string, HookTitleKey>([
+  ['Notification', 'notifications.event.needsAttention'],
+  [SUBAGENT_STOP_HOOK, 'notifications.event.subagentDone'],
 ]);
 
 // Eventos que merecen avisar al usuario cuando no esta mirando: fin de turno, permiso pendiente
@@ -72,14 +75,14 @@ export function notificationForEvent(event: MageEvent, context: NotificationCont
     case 'result':
       // Un turno que abrio el CLI solo al terminar un subagente en segundo plano (P-028 37a): con nueve
       // agentes serian nueve «Turno completado» que el usuario no pidio. Ya avisa `SubagentStop`.
-      return event.result.origin === TASK_NOTIFICATION_ORIGIN ? null : { title: 'Turno completado', body: tabTitle };
+      return event.result.origin === TASK_NOTIFICATION_ORIGIN ? null : { title: t('notifications.event.turnComplete'), body: tabTitle };
     case 'permission_request':
       // Lo que contesta main sola (regla o barrera de PR, F2.4) no llega como peticion: esta SI pide al usuario.
-      return { title: 'Permiso requerido', body: `${tabTitle}: ${event.request.toolName}` };
+      return { title: t('notifications.event.permissionRequired'), body: `${tabTitle}: ${event.request.toolName}` };
     case 'elicitation_request':
-      return { title: 'Formulario MCP pendiente', body: `${tabTitle}: ${event.request.server}` };
+      return { title: t('notifications.event.mcpFormPending'), body: `${tabTitle}: ${event.request.server}` };
     case 'error':
-      return { title: 'Error en la conversación', body: `${tabTitle}: ${event.message}` };
+      return { title: t('notifications.event.conversationError'), body: `${tabTitle}: ${event.message}` };
     case 'assistant_text':
       return matchAgainstRules(event.text, tabTitle, rules);
     case 'hook_fired':
@@ -92,8 +95,9 @@ export function notificationForEvent(event: MageEvent, context: NotificationCont
 // Notificacion de un hook del CLI. El cuerpo usa el `detail` cuando lo hay (el mensaje que manda el
 // propio CLI en Notification); si no, el titulo de la pestana basta para saber de donde viene.
 function notificationForHook(hookEvent: string, detail: string | null, tabTitle: string): NotificationContent | null {
-  const title = NOTIFIABLE_HOOKS.get(hookEvent);
-  if (title === undefined) return null;
+  const titleKey = NOTIFIABLE_HOOKS.get(hookEvent);
+  if (titleKey === undefined) return null;
+  const title = t(titleKey);
   const body = detail === null || detail.trim().length === 0 ? tabTitle : `${tabTitle}: ${excerpt(detail)}`;
   return hookEvent === SUBAGENT_STOP_HOOK ? { title, body, opensActivity: true } : { title, body };
 }
@@ -108,7 +112,7 @@ function matchAgainstRules(
   for (const rule of rules) {
     if (!rule.enabled) continue;
     if (compileSafely(rule.pattern)?.test(text) === true) {
-      return { title: `Coincidencia: ${rule.label}`, body: `${tabTitle}: ${excerpt(text)}` };
+      return { title: t('notifications.event.ruleMatch', { label: rule.label }), body: `${tabTitle}: ${excerpt(text)}` };
     }
   }
   return null;
