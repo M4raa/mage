@@ -57,5 +57,10 @@ export function formatWeekdayShort(epochMs: number, locale: string): string {
 
 export function formatDayMonth(epochMs: number, locale: string): string {
   assertFinite('formatDayMonth', epochMs);
-  return dateFormat(locale, { day: '2-digit', month: '2-digit' }).format(epochMs);
+  // ICU en es-ES ignora '2-digit' en este patrón y da «5/10»; se rellenan día y mes a mano conservando el orden y el
+  // separador del locale (es-ES «05/10», en-US «10/05»).
+  return dateFormat(locale, { day: '2-digit', month: '2-digit' })
+    .formatToParts(epochMs)
+    .map((part) => (part.type === 'day' || part.type === 'month' ? part.value.padStart(2, '0') : part.value))
+    .join('');
 }

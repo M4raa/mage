@@ -11,6 +11,7 @@ import { codexChangeView } from './codexChanges';
 import { t } from '../i18n/uiLanguage';
 import type { MessageKey } from '@shared/i18n/messageKeys.generated';
 import type { Translate } from '@shared/i18n/translator';
+import { formatInteger } from '../i18n/format';
 
 // Mapeo PURO del modelo de eventos comun (MageEvent) a los bloques/permiso de la UI. Sin React ni
 // zustand: solo funciones de datos -> datos (testeable en Vitest, env node). Los ids de bloque los
@@ -471,7 +472,7 @@ function pushCounter(parts: string[], value: number | null, label: string): void
   if (!Number.isInteger(value) || value < 0) {
     throw new Error(`Contador de tokens invalido para "${label}": ${JSON.stringify(value)}`);
   }
-  parts.push(`${value.toLocaleString('es-ES')} ${label}`);
+  parts.push(`${formatInteger(value)} ${label}`);
 }
 
 // Texto del marcador de reinicio automatico (C1). El proceso del agente se cayo y Mage lo esta

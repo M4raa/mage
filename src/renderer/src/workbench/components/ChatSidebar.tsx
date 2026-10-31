@@ -17,6 +17,7 @@ import { accountRecovery } from '../accountRecovery';
 import { CliLoginPanel, useCliLogin } from './CliLoginPanel';
 import { t as translate, useT } from '../../i18n/uiLanguage';
 import { displayTitle } from '../conversationTitle';
+import { formatInteger } from '../../i18n/format';
 
 // Estado del menu contextual abierto (posicion + conversacion objetivo).
 interface MenuState {
@@ -606,7 +607,7 @@ function HistoryItem({
           {background === undefined && item.sizeBytes > 0 && (
             <>
               <span aria-hidden="true"> · </span>
-              <span title={t('sidebar.history.sizeOnDisk', { bytes: item.sizeBytes.toLocaleString('es-ES') })}>{formatSize(item.sizeBytes)}</span>
+              <span title={t('sidebar.history.sizeOnDisk', { bytes: formatInteger(item.sizeBytes) })}>{formatSize(item.sizeBytes)}</span>
             </>
           )}
         </span>

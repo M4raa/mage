@@ -4,6 +4,7 @@ import { useMcpStore } from '../../mcpStore';
 import { Icon } from '../Icon';
 import { MCP_BUTTON_CLASS as BUTTON_CLASS, MCP_DIALOG_PANEL_CLASS, MCP_DIALOG_SCRIM_CLASS, MCP_PRIMARY_BUTTON_CLASS, stopEscape } from './mcpStyles';
 import { useT } from '../../../i18n/uiLanguage';
+import { formatDateTime } from '../../../i18n/format';
 
 // «Sincronizar con agy» (C3-j): agy no carga nada por sesion, asi que los comunes y las extensiones se
 // le EXPORTAN a su mcp_config.json. Mage solo toca lo que exporto, hace copia antes y enseña el cambio
@@ -51,7 +52,7 @@ export function McpAgySyncPanel(): React.JSX.Element {
         <input type="checkbox" checked={agy?.auto ?? false} disabled={agy === null} onChange={(e) => void setAgyAuto(e.target.checked).catch((err: unknown) => setError(describe(err)))} />
         {t('mcp.agy.auto')}
       </label>
-      {agy?.lastSyncAt != null && <span>{t('mcp.agy.lastSync', { date: new Date(agy.lastSyncAt).toLocaleString() })}</span>}
+      {agy?.lastSyncAt != null && <span>{t('mcp.agy.lastSync', { date: formatDateTime(new Date(agy.lastSyncAt).getTime()) })}</span>}
       {(error ?? agy?.lastError ?? null) !== null && (
         <span role="alert" className="text-mg-danger">
           {error ?? agy?.lastError}

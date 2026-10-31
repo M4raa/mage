@@ -136,6 +136,7 @@ import { isWindowsPlatform } from './keybindings/platform';
 import { describeError } from './describeError';
 import { renderLocalized } from '@shared/i18n/localizedText';
 import { t } from '../i18n/uiLanguage';
+import { formatClockTime } from '../i18n/format';
 
 // Contexto en placeholder hasta M1.3 (el uso/contexto real llega con UsageService).
 const CONTEXT_PLACEHOLDER: ContextInfo = { usedTokens: '—', maxTokens: '200k', usedPct: 0, tokensOut: '—' };
@@ -3430,7 +3431,7 @@ function deriveTitle(cwd: string): string {
 
 // Hora local HH:MM para el bloque de usuario (presentacion; el store no depende de esto para logica).
 function currentTime(): string {
-  return new Date().toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
+  return formatClockTime(Date.now());
 }
 
 const EMPTY_BLOCKS: readonly Block[] = [];

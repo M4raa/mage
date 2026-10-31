@@ -3,6 +3,7 @@ import { useWorkbenchStore } from '../workbenchStore';
 import { formatResetAbsolute } from '../usageView';
 import type { Account } from '../types';
 import { useT } from '../../i18n/uiLanguage';
+import { formatInteger } from '../../i18n/format';
 
 // Popover «Uso general» con el uso de TODAS las cuentas. Se ancla SOLO desde el resumen de la status
 // bar (hover/foco); el posicionamiento lo pone el contenedor. P-028, punto 22: por cuenta, las dos
@@ -51,7 +52,7 @@ function AccountUsageRow({
         {agy !== undefined && !account.apiBilled && (agy === null || agy.status !== 'ok') && <span className="ml-auto text-mg-muted">{t('usage.popover.noData')}</span>}
       </div>
       {account.apiBilled && <div className="text-mg-ter">{info?.apiUsage === undefined ? t('usage.popover.apiNoTurns') :
-        t('usage.popover.apiTotals', { tokens: info.apiUsage.totals.totalTokens.toLocaleString('es-ES'), cost: formatMicroUsd(info.apiUsage.totals.costMicroUsd) })}</div>}
+        t('usage.popover.apiTotals', { tokens: formatInteger(info.apiUsage.totals.totalTokens), cost: formatMicroUsd(info.apiUsage.totals.costMicroUsd) })}</div>}
       {agy?.status === 'ok' && !account.apiBilled && agy.groups.flatMap((group) => group.buckets.map((bucket) => (
         <WindowLine key={bucket.id} label={bucket.window === '5h' ? '5 h' : '7 d'} pct={bucket.usedPercent} accent={account.accent.base}
           reset={`${group.name} · ${formatResetAbsolute(bucket.resetsAt, now, bucket.window !== '5h')}`} />

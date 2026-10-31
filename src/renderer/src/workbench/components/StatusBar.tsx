@@ -9,6 +9,7 @@ import { providerLabel } from '../accountView';
 import type { Account } from '../types';
 import type { StatusIndicator, StatusInfo } from '@shared/status';
 import { formatMicroUsd } from '@shared/usage';
+import { formatInteger } from '../../i18n/format';
 
 type StatusTextKey = 'app.statusBar.statusOperational' | 'app.statusBar.statusMinor' | 'app.statusBar.statusMajor' | 'app.statusBar.statusCritical' | 'app.statusBar.statusMaintenance';
 
@@ -147,7 +148,7 @@ function AccountStatus({ account, provider }: { readonly account: Account; reado
         >
           {severity !== 'ok' && <Icon name={severity === 'critical' ? 'error' : 'warning'} size={12} className="mr-[4px]" />}
           {account.apiBilled ? (apiUsage === undefined ? t('app.statusBar.apiNoTurns')
-            : t('app.statusBar.apiUsage', { tokens: apiUsage.totals.totalTokens.toLocaleString('es-ES'), cost: formatMicroUsd(apiUsage.totals.costMicroUsd) }))
+            : t('app.statusBar.apiUsage', { tokens: formatInteger(apiUsage.totals.totalTokens), cost: formatMicroUsd(apiUsage.totals.costMicroUsd) }))
             : t('app.statusBar.windows', { fiveHour: fiveHour.pct, weekly: weekly.pct, reset: fiveHour.label })}
         </span>
         <div className="pointer-events-none absolute bottom-[calc(100%_+_8px)] left-0 opacity-0 transition-opacity duration-150 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100">

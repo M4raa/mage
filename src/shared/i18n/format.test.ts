@@ -63,6 +63,15 @@ describe('formatDayMonth', () => {
   });
 });
 
+describe('formatDayMonth con un solo dígito', () => {
+  it('formatDayMonth_esES_rellenaDiaYMesDeUnDigito', () => {
+    expect(formatDayMonth(new Date(2026, 9, 5, 9, 0).getTime(), ES)).toBe('05/10');
+  });
+  it('formatDayMonth_enUS_rellenaDiaYMesDeUnDigito', () => {
+    expect(formatDayMonth(new Date(2026, 0, 5, 9, 0).getTime(), EN)).toBe('01/05');
+  });
+});
+
 describe('formatDateTime', () => {
   it('formatDateTime_esES_igualQueToLocaleString', () => {
     expect(formatDateTime(NINE_FIVE, ES)).toBe(new Date(NINE_FIVE).toLocaleString(ES));

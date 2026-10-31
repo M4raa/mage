@@ -30,6 +30,7 @@ import { CHANGELOG_ENTRIES } from '../releaseNotesContent';
 import { useT } from '../../i18n/uiLanguage';
 import type { MessageKey } from '@shared/i18n/messageKeys.generated';
 import type { Translate } from '@shared/i18n/translator';
+import { formatInteger } from '../../i18n/format';
 
 // Secciones de Configuracion (crece por secciones). Cada una tiene su glifo+etiqueta en la nav y su
 // titulo de cabecera.
@@ -662,8 +663,8 @@ function ImportedContextControl(): React.JSX.Element {
       </label>
       <span className="text-[10.5px] leading-[1.45] text-mg-ter">
         {t('settings.storage.importedContext.hint', {
-          min: IMPORTED_CONTEXT_LIMITS.min.toLocaleString('es-ES'),
-          max: IMPORTED_CONTEXT_LIMITS.max.toLocaleString('es-ES'),
+          min: formatInteger(IMPORTED_CONTEXT_LIMITS.min),
+          max: formatInteger(IMPORTED_CONTEXT_LIMITS.max),
         })}
       </span>
     </div>

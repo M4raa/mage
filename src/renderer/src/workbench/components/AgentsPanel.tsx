@@ -11,6 +11,7 @@ import { Hint } from './TranscriptHint';
 import type { SubagentInfo } from '@shared/events';
 import type { Block } from '../types';
 import { conversationIdOfTab } from '../conversationId';
+import { formatInteger } from '../../i18n/format';
 
 // Panel "Subagentes" (2.9.b), con las dos mitades que el usuario pidio:
 //   - ARRIBA: los subagentes que el CLI DECLARA en su `initialize` (los abrio la Fase B; antes se
@@ -125,7 +126,7 @@ function SubagentRow({
       </span>
       <span className="flex w-full gap-[10px] pl-[13px] font-mono text-[10px] text-mg-muted" style={{ fontVariantNumeric: 'tabular-nums' }}>
         <span>{formatElapsed(elapsedMs)}</span>
-        <span>{t('chat.agents.tokensCount', { count: row.tokens === null ? MISSING : row.tokens.toLocaleString('es-ES') })}</span>
+        <span>{t('chat.agents.tokensCount', { count: row.tokens === null ? MISSING : formatInteger(row.tokens) })}</span>
         <span>{t('chat.agents.toolsCount', { count: row.toolUses === null ? MISSING : String(row.toolUses) })}</span>
         <span className="truncate">{row.model ?? MISSING}</span>
       </span>

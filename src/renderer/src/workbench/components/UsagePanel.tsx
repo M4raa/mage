@@ -18,6 +18,7 @@ import {
 import { formatMicroUsd, type AgyUsageSnapshot, type ApiUsageAmounts, type ApiUsageSnapshot, type UsageInfo } from '@shared/usage';
 import type { Account } from '../types';
 import type { Translate } from '@shared/i18n/translator';
+import { formatInteger } from '../../i18n/format';
 
 // Colores de severidad (inline: el sistema de diseno mantiene lo cromatico fuera del CSS). El estado
 // "ok" usa el acento de la cuenta; aviso ambar y critico rojo son transversales a la cuenta.
@@ -95,7 +96,7 @@ function ApiUsageSection({ snapshot }: { readonly snapshot: ApiUsageSnapshot | n
 
 function ApiAmounts({ title, amounts }: { readonly title: string; readonly amounts: ApiUsageAmounts }): React.JSX.Element {
   const t = useT();
-  const count = (value: number): string => value.toLocaleString('es-ES');
+  const count = (value: number): string => formatInteger(value);
   return (
     <div className="flex flex-col gap-[5px] text-mg-body">
       <div className="font-semibold text-mg-text">{title}</div>
