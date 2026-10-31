@@ -11,7 +11,7 @@ const CONVERSATION: NeutralConversation = {
 const PARAMS: MigrateConversationParams = { sourceAccountDir: 'A', sourceProvider: 'codex', sessionId: 's1', cwd: 'C:\\p', privacy: 'shared', destAccountDir: 'B', destProvider: 'claude' };
 
 function endpoints(over: { source?: Partial<ConversationSource>; sink?: Partial<ConversationSink> } = {}): MigrationEndpoints {
-  const source: ConversationSource = { read: () => CONVERSATION, remove: vi.fn().mockResolvedValue(undefined), ...over.source };
+  const source: ConversationSource = { read: async () => CONVERSATION, remove: vi.fn().mockResolvedValue(undefined), ...over.source };
   const sink: ConversationSink = { write: vi.fn(() => ({ sessionId: 'nuevo', configDir: 'B' })), discard: vi.fn().mockResolvedValue(undefined), ...over.sink };
   return { source, sink };
 }
@@ -34,7 +34,7 @@ describe('ConversationMigrationService.migrate', () => {
 
   it('migrate_laVerificacionLeeMenosMensajes_deshaceElDestinoYNoTocaElOrigen', async () => {
     const origin = endpoints();
-    const target = endpoints({ source: { read: () => ({ ...CONVERSATION, items: [CONVERSATION.items[0]!] }) } });
+    const target = endpoints({ source: { read: async () => ({ ...CONVERSATION, items: [CONVERSATION.items[0]!] }) } });
 
     await expect(service(origin, target).migrate(PARAMS)).rejects.toThrow('solo se leyeron 1 de 2');
 
@@ -44,7 +44,7 @@ describe('ConversationMigrationService.migrate', () => {
 
   it('migrate_laVerificacionFalla_deshaceElDestinoConElMotivo', async () => {
     const origin = endpoints();
-    const target = endpoints({ source: { read: () => { throw new Error('base corrupta'); } } });
+    const target = endpoints({ source: { read: async () => { throw new Error('base corrupta'); } } });
 
     await expect(service(origin, target).migrate(PARAMS)).rejects.toThrow('base corrupta');
 
@@ -53,7 +53,7 @@ describe('ConversationMigrationService.migrate', () => {
   });
 
   it('migrate_conversacionVacia_noEscribeNada', async () => {
-    const origin = endpoints({ source: { read: () => ({ ...CONVERSATION, items: [] }) } });
+    const origin = endpoints({ source: { read: async () => ({ ...CONVERSATION, items: [] }) } });
     const target = endpoints();
 
     await expect(service(origin, target).migrate(PARAMS)).rejects.toThrow('no tiene mensajes');
@@ -81,8 +81,20 @@ describe('ConversationMigrationService.migrate', () => {
     expect(result.provider).toBe('codex');
   });
 
+  it('migrate_mismoProveedorSinCopiaPosible_leeYEscribe', async () => {
+    const copyFrom = vi.fn(() => null);
+    const origin = endpoints();
+    const target = endpoints({ sink: { copyFrom } });
+
+    const result = await new ConversationMigrationService({ codex: { source: origin.source, sink: target.sink }, claude: endpoints(), agy: endpoints() }).migrate({ ...PARAMS, destProvider: 'codex' });
+
+    expect(copyFrom).toHaveBeenCalledTimes(1);
+    expect(target.sink.write).toHaveBeenCalledWith(CONVERSATION, { accountDir: 'B', privacy: 'shared' });
+    expect(result).toEqual({ sessionId: 'nuevo', configDir: 'B', provider: 'codex' });
+  });
+
   it('migrate_origenSinCwd_usaElDeLosParametrosAlEscribir', async () => {
-    const origin = endpoints({ source: { read: () => ({ ...CONVERSATION, cwd: '' }) } });
+    const origin = endpoints({ source: { read: async () => ({ ...CONVERSATION, cwd: '' }) } });
     const target = endpoints();
 
     await service(origin, target).migrate(PARAMS);

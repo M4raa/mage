@@ -65,6 +65,15 @@ describe('CodexAdapter: arranque (codex app-server, sin verificar)', () => {
     }
   });
 
+  it('buildSpawnPlan_conSpawnCommand_usaSuComandoArgsYEntorno', () => {
+    const plan = new CodexAdapter({ spawnCommand: (args) => ({ command: 'C:\\electron.exe', args: ['C:\\fake.mjs', ...args], env: { ELECTRON_RUN_AS_NODE: '1' } }) }).buildSpawnPlan(launch);
+
+    expect(plan.command).toBe('C:\\electron.exe');
+    expect(plan.args[0]).toBe('C:\\fake.mjs');
+    expect(plan.args[1]).toBe('app-server');
+    expect(plan.env.ELECTRON_RUN_AS_NODE).toBe('1');
+  });
+
   // Medido: el app-server no lee CODEX_API_KEY del entorno; un proveedor con env_key si.
   it('buildSpawnPlan_cuentaDeApi_proveedorConEnvKeySuClaveYSuCodexHome', () => {
     const adapter = new CodexAdapter({ resolveBinary: () => 'codex.exe', resolveAccount: () => ({ home: 'C:\\Users\\u\\.codex-api', apiKey: 'sk-cuenta' }) });

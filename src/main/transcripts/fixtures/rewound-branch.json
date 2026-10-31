@@ -1,0 +1,233 @@
+[
+ {
+  "type": "queue-operation"
+ },
+ {
+  "type": "queue-operation"
+ },
+ {
+  "type": "user",
+  "uuid": "b5a2033b-1007-4f19-8d8b-0582cd688bbe",
+  "parentUuid": null,
+  "isSidechain": false,
+  "role": "user",
+  "text": "ECO uno"
+ },
+ {
+  "type": "attachment",
+  "uuid": "8978badf-07f8-4d9d-8d54-ed95cdc9b5ef",
+  "parentUuid": "b5a2033b-1007-4f19-8d8b-0582cd688bbe",
+  "isSidechain": false
+ },
+ {
+  "type": "attachment",
+  "uuid": "b8c0daa7-590d-4f76-ba11-2610589a4f05",
+  "parentUuid": "8978badf-07f8-4d9d-8d54-ed95cdc9b5ef",
+  "isSidechain": false
+ },
+ {
+  "type": "attachment",
+  "uuid": "87d6aeef-e90f-492e-a732-65fa8706f81a",
+  "parentUuid": "b8c0daa7-590d-4f76-ba11-2610589a4f05",
+  "isSidechain": false
+ },
+ {
+  "type": "attachment",
+  "uuid": "b6e4e54c-b570-4a57-b623-d0907a3457c5",
+  "parentUuid": "87d6aeef-e90f-492e-a732-65fa8706f81a",
+  "isSidechain": false
+ },
+ {
+  "type": "attachment",
+  "uuid": "46c28d3b-6129-43a5-af5b-7165773daa90",
+  "parentUuid": "b6e4e54c-b570-4a57-b623-d0907a3457c5",
+  "isSidechain": false
+ },
+ {
+  "type": "attachment",
+  "uuid": "bd05238a-9bcd-48a3-9286-0765e2b32ada",
+  "parentUuid": "46c28d3b-6129-43a5-af5b-7165773daa90",
+  "isSidechain": false
+ },
+ {
+  "type": "file-history-snapshot"
+ },
+ {
+  "type": "atis-latch"
+ },
+ {
+  "type": "attachment",
+  "uuid": "ce2b4ff9-74ab-4a0d-9626-872a6ed1d766",
+  "parentUuid": "bd05238a-9bcd-48a3-9286-0765e2b32ada",
+  "isSidechain": false
+ },
+ {
+  "type": "attachment",
+  "uuid": "cd47381e-f3e6-44f4-99ce-3b19cbbee697",
+  "parentUuid": "ce2b4ff9-74ab-4a0d-9626-872a6ed1d766",
+  "isSidechain": false
+ },
+ {
+  "type": "attachment",
+  "uuid": "08ffceb1-f29a-486b-b35e-6a1b837b9be0",
+  "parentUuid": "cd47381e-f3e6-44f4-99ce-3b19cbbee697",
+  "isSidechain": false
+ },
+ {
+  "type": "attachment",
+  "uuid": "ccb67dcf-8a7c-4378-9f7b-3d4ef28e7a6e",
+  "parentUuid": "08ffceb1-f29a-486b-b35e-6a1b837b9be0",
+  "isSidechain": false
+ },
+ {
+  "type": "attachment",
+  "uuid": "532185c9-e550-4c02-8647-cab3b684edb2",
+  "parentUuid": "ccb67dcf-8a7c-4378-9f7b-3d4ef28e7a6e",
+  "isSidechain": false
+ },
+ {
+  "type": "api-request-shape"
+ },
+ {
+  "type": "api-request-blob",
+  "role": "user"
+ },
+ {
+  "type": "api-request-blob",
+  "role": "system"
+ },
+ {
+  "type": "api-request"
+ },
+ {
+  "type": "assistant",
+  "uuid": "43915501-d3fe-4c50-aa75-0a55568ac8a3",
+  "parentUuid": "532185c9-e550-4c02-8647-cab3b684edb2",
+  "isSidechain": false,
+  "role": "assistant"
+ },
+ {
+  "type": "attachment",
+  "uuid": "9e7c5f9f-0edd-409b-bbfb-2e6791597865",
+  "parentUuid": "43915501-d3fe-4c50-aa75-0a55568ac8a3",
+  "isSidechain": false
+ },
+ {
+  "type": "last-prompt"
+ },
+ {
+  "type": "atis-latch"
+ },
+ {
+  "type": "queue-operation"
+ },
+ {
+  "type": "queue-operation"
+ },
+ {
+  "type": "user",
+  "uuid": "618ec005-b086-43c6-8849-4b307b2564ba",
+  "parentUuid": "9e7c5f9f-0edd-409b-bbfb-2e6791597865",
+  "isSidechain": false,
+  "role": "user",
+  "text": "ECO dos"
+ },
+ {
+  "type": "attachment",
+  "uuid": "824039ae-7ae0-43ef-bb92-dd8383d1526a",
+  "parentUuid": "618ec005-b086-43c6-8849-4b307b2564ba",
+  "isSidechain": false
+ },
+ {
+  "type": "file-history-snapshot"
+ },
+ {
+  "type": "api-request-blob",
+  "role": "system"
+ },
+ {
+  "type": "api-request"
+ },
+ {
+  "type": "assistant",
+  "uuid": "a6d96c1e-1491-4226-9e68-cb8955e2a8c5",
+  "parentUuid": "824039ae-7ae0-43ef-bb92-dd8383d1526a",
+  "isSidechain": false,
+  "role": "assistant"
+ },
+ {
+  "type": "queue-operation"
+ },
+ {
+  "type": "queue-operation"
+ },
+ {
+  "type": "user",
+  "uuid": "302dadbb-addd-4d9a-a0d3-e552ed76026b",
+  "parentUuid": "a6d96c1e-1491-4226-9e68-cb8955e2a8c5",
+  "isSidechain": false,
+  "role": "user",
+  "text": "ECO tres"
+ },
+ {
+  "type": "attachment",
+  "uuid": "56be02d6-434e-427d-906a-43c234865945",
+  "parentUuid": "302dadbb-addd-4d9a-a0d3-e552ed76026b",
+  "isSidechain": false
+ },
+ {
+  "type": "file-history-snapshot"
+ },
+ {
+  "type": "api-request"
+ },
+ {
+  "type": "assistant",
+  "uuid": "1cb7ef04-754a-4eff-8538-2db233cc6047",
+  "parentUuid": "56be02d6-434e-427d-906a-43c234865945",
+  "isSidechain": false,
+  "role": "assistant"
+ },
+ {
+  "type": "last-prompt"
+ },
+ {
+  "type": "queue-operation"
+ },
+ {
+  "type": "queue-operation"
+ },
+ {
+  "type": "user",
+  "uuid": "6e4416c6-9364-49e5-b2d1-b5692199b2f0",
+  "parentUuid": "9e7c5f9f-0edd-409b-bbfb-2e6791597865",
+  "isSidechain": false,
+  "role": "user",
+  "text": "ECO cuatro"
+ },
+ {
+  "type": "attachment",
+  "uuid": "bfb8ef4d-ad81-44aa-9966-9827916323fd",
+  "parentUuid": "6e4416c6-9364-49e5-b2d1-b5692199b2f0",
+  "isSidechain": false
+ },
+ {
+  "type": "file-history-snapshot"
+ },
+ {
+  "type": "api-request"
+ },
+ {
+  "type": "assistant",
+  "uuid": "4723684c-92a4-49c7-9259-d40f2bcf4bf7",
+  "parentUuid": "bfb8ef4d-ad81-44aa-9966-9827916323fd",
+  "isSidechain": false,
+  "role": "assistant"
+ },
+ {
+  "type": "last-prompt"
+ },
+ {
+  "type": "cost-state"
+ }
+]

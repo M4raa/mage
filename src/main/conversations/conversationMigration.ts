@@ -16,7 +16,7 @@ export interface ConversationRef {
 }
 
 export interface ConversationSource {
-  read(ref: ConversationRef): NeutralConversation;
+  read(ref: ConversationRef): Promise<NeutralConversation>;
   remove(ref: ConversationRef): Promise<void>;
 }
 
@@ -24,8 +24,10 @@ export interface ConversationSink {
   write(conversation: NeutralConversation, dest: { readonly accountDir: string; readonly privacy: ConversationPrivacy }): { readonly sessionId: string; readonly configDir: string };
   // Deshace lo escrito por `write` (verificación fallida).
   discard(ref: ConversationRef): Promise<void>;
-  // Copia sin pérdida entre cuentas del MISMO proveedor, si el CLI lo permite (Codex: el rollout, medido).
-  copyFrom?(source: ConversationRef, dest: { readonly accountDir: string; readonly privacy: ConversationPrivacy }): { readonly sessionId: string; readonly configDir: string };
+  // Copia sin pérdida entre cuentas del MISMO proveedor, si el CLI lo permite (Codex: el rollout, medido). null: esa
+  // conversación no se puede copiar sin pérdida (Codex con revert: el rollout guarda el turno descartado) y se migra
+  // leyendo y escribiendo, como entre proveedores.
+  copyFrom?(source: ConversationRef, dest: { readonly accountDir: string; readonly privacy: ConversationPrivacy }): { readonly sessionId: string; readonly configDir: string } | null;
 }
 
 export interface MigrationEndpoints {
@@ -41,11 +43,11 @@ export class ConversationMigrationService {
     const origin = this.endpoints[params.sourceProvider];
     const target = this.endpoints[params.destProvider];
     const ref: ConversationRef = { accountDir: params.sourceAccountDir, sessionId: params.sessionId, cwd: params.cwd, privacy: params.privacy };
-    const conversation = origin.source.read(ref);
+    const conversation = await origin.source.read(ref);
     if (conversation.items.length === 0) throw new Error(`La conversacion ${params.sessionId} no tiene mensajes que migrar`);
     const dest = { accountDir: params.destAccountDir, privacy: params.privacy };
-    const sameProvider = params.sourceProvider === params.destProvider && target.sink.copyFrom !== undefined;
-    const written = sameProvider ? target.sink.copyFrom!(ref, dest) : target.sink.write({ ...conversation, cwd: conversation.cwd || params.cwd }, dest);
+    const copied = params.sourceProvider === params.destProvider ? target.sink.copyFrom?.(ref, dest) : undefined;
+    const written = copied ?? target.sink.write({ ...conversation, cwd: conversation.cwd || params.cwd }, dest);
     // `configDir` ya es el directorio EFECTIVO (cuenta o perfil privado): no se vuelve a resolver la privacidad.
     const writtenRef: ConversationRef = { accountDir: written.configDir, sessionId: written.sessionId, cwd: conversation.cwd || params.cwd, privacy: 'shared' };
     await this.verifyOrDiscard(target, writtenRef, conversation.items.length);
@@ -68,7 +70,7 @@ export class ConversationMigrationService {
     let found = 0;
     let failure: unknown = null;
     try {
-      found = target.source.read(written).items.length;
+      found = (await target.source.read(written)).items.length;
     } catch (err) {
       failure = err;
     }

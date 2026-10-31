@@ -3,7 +3,7 @@ import type { MageEvent, PermissionDecision } from '@shared/events';
 import { localized } from '@shared/i18n/localizedText';
 import { parseElicitationRequest, validateElicitationAnswer, type ElicitationAnswer, type ElicitationRequest } from '@shared/elicitation';
 import { parseCodexPermissionPreset } from '@shared/codexPermissions';
-import { resolveCodexBinary } from '../os/codexBinaryResolver';
+import { resolveCodexBinary, type CodexSpawnCommand } from '../os/codexBinaryResolver';
 import { scrubAgentEnv } from '../os/agentEnv';
 import { toCodexOverrides } from '../config/mcpProviderTranslate';
 import { bridgeDocument, type BridgedFile } from '../instructions/instructionsBridge';
@@ -41,6 +41,8 @@ export interface CodexAccount {
 
 export interface CodexAdapterDeps {
   readonly resolveBinary?: () => string;
+  // Cómo lanzar `codex <args>` (main pasa `codexSpawnCommand`, con la guarda de `app.isPackaged`). Sin él, `resolveBinary`.
+  readonly spawnCommand?: (args: readonly string[]) => CodexSpawnCommand;
   // La cuenta de Codex cuyo CODEX_HOME es `accountDir`, o null (la sesion por defecto, `~/.codex`).
   readonly resolveAccount?: (accountDir: string) => CodexAccount | null;
   // Puente de instrucciones (grupo H): los CLAUDE.md que codex no tiene como suyos, para el cwd y el
@@ -131,7 +133,8 @@ export class CodexAdapter implements ProviderAdapter {
     };
     // 0.160.0 rechaza thread/start.permissions sin esta capacidad: perfiles y MCP son experimentales.
     this.request('initialize', { clientInfo: CLIENT_INFO, capabilities: { experimentalApi: true } }, 'initialize');
-    return { command: (this.deps.resolveBinary ?? resolveCodexBinary)(), args, env };
+    const launch = this.deps.spawnCommand?.(args) ?? { command: (this.deps.resolveBinary ?? resolveCodexBinary)(), args, env: {} };
+    return { command: launch.command, args: launch.args, env: { ...env, ...launch.env } };
   }
 
   private resetProcess(params: LaunchParams): void {

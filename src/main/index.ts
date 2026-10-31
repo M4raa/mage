@@ -129,7 +129,7 @@ import {
   probePermissionModes,
   type PermissionModesByProvider,
 } from './engine/permissionModes';
-import { findCodexBinary, resolveCodexBinary } from './os/codexBinaryResolver';
+import { codexSpawnCommand, findCodexBinary, type CodexSpawnCommand } from './os/codexBinaryResolver';
 import { resolveAgyBinary } from './os/agyBinaryResolver';
 import { ProviderAccountService } from './accounts/providerAccounts';
 import { CodexLoginService, type CodexLoginResult } from './accounts/codexLoginService';
@@ -166,7 +166,10 @@ import { ConversationsService, type ConversationsDeps } from './conversations/co
 import { CodexHistoryService } from './conversations/codexHistory';
 import { ConversationMigrationService } from './conversations/conversationMigration';
 import { createMigrationEndpoints } from './conversations/migrationEndpoints';
-import { codexThreadDelete } from './conversations/codexRpc';
+import { codexThreadDelete, codexThreadTurnsList } from './conversations/codexRpc';
+import { codexTranscriptSource, codexTurnsBatches } from './conversations/codexTurnsTranscript';
+import type { TranscriptSource } from './transcripts/transcriptSource';
+import type { TranscriptBatch } from '@shared/transcripts';
 import { MIGRATE_CONVERSATION_SCHEMA } from './conversations/migrationParams';
 import { AgyHistoryService } from './conversations/agyHistory';
 import { createAgySqliteStore, writeAgyConversationDb } from './conversations/agySqliteStore';
@@ -175,8 +178,6 @@ import { AgyLoginService } from './accounts/agyLoginService';
 import { sendToConsole } from './accounts/agyConsoleInput';
 import { AGY_FILE_TOKEN_ENV } from './engine/agyProfile';
 import { staticTranscriptBatch } from './transcripts/staticBatch';
-import type { LineAdapter } from './transcripts/transcriptReader';
-import { adaptCodexLine } from '@shared/codexTranscript';
 import { ConversationAdminService } from './conversations/conversationAdminService';
 import { CliLoginService, type CliLoginProcess } from './accounts/cliLoginService';
 import { writeCredentials } from './accounts/credentialsStore';
@@ -826,6 +827,7 @@ function buildAgyAdapter(): AgyAdapter {
 
 function buildCodexAdapter(): CodexAdapter {
   return new CodexAdapter({
+    spawnCommand: codexSpawn,
     resolveAccount: (dir) => {
       const entry = getProviderAccounts().find('codex', dir);
       if (entry === null) return null;
@@ -920,13 +922,20 @@ function isKnownPermissionMode(provider: string, mode: string): boolean {
   return isKnownPermissionModeFor(provider, mode, permissionModesProbed);
 }
 
+// Cómo lanzar el CLI de Codex desde main: `MAGE_CODEX_BIN` puede ser el app-server falso de verify:gui, nunca con la app
+// empaquetada.
+function codexSpawn(args: readonly string[]): CodexSpawnCommand {
+  return codexSpawnCommand(args, { isPackaged: app.isPackaged, execPath: process.execPath, log: mainLog });
+}
+
 // `permissionProfile/list` de un app-server de codex con un CODEX_HOME de Mage (nunca el del usuario):
 // los perfiles integrados no dependen de la cuenta (medido sin cuenta). null si no hay codex o no contesta.
 async function readCodexPermissionProfiles(): Promise<unknown> {
   if (findCodexBinary() === null) return null;
   const home = join(app.getPath('userData'), 'codex-probe');
   mkdirSync(home, { recursive: true });
-  const child = spawn(resolveCodexBinary(), ['app-server'], { env: { ...scrubAgentEnv(process.env), CODEX_HOME: home }, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+  const codex = codexSpawn(['app-server']);
+  const child = spawn(codex.command, codex.args, { env: { ...scrubAgentEnv(process.env), ...codex.env, CODEX_HOME: home }, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
   return new Promise((resolveList) => {
     let buffer = '';
     const done = (value: unknown): void => {
@@ -966,8 +975,10 @@ function safeJson(line: string): { id?: unknown; result?: unknown } | null {
 let codexLoginSingleton: CodexLoginService | null = null;
 function getCodexLogin(): CodexLoginService {
   codexLoginSingleton ??= new CodexLoginService({
-    spawnAppServer: (codexHome) =>
-      spawn(resolveCodexBinary(), ['app-server'], { env: { ...scrubAgentEnv(process.env), CODEX_HOME: codexHome }, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true }),
+    spawnAppServer: (codexHome) => {
+      const codex = codexSpawn(['app-server']);
+      return spawn(codex.command, codex.args, { env: { ...scrubAgentEnv(process.env), ...codex.env, CODEX_HOME: codexHome }, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+    },
     openUrl: (url) => openWithService.openExternal(url),
     killTree: (child) => {
       killProcessTree(child, defaultKillTreeDeps());
@@ -1024,8 +1035,9 @@ function getCodexAccountCatalog(): CodexAccountCatalog {
 
 function codexAccountProbeDeps(): import('./accounts/codexAccountProbe').CodexAccountProbeDeps {
   return { timeoutMs: CLI_PROBE_TIMEOUT_MS, spawnProbe: (home) => {
-    const child = spawn(resolveCodexBinary(), ['app-server'], {
-      env: { ...scrubAgentEnv(process.env), CODEX_HOME: home }, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true,
+    const codex = codexSpawn(['app-server']);
+    const child = spawn(codex.command, codex.args, {
+      env: { ...scrubAgentEnv(process.env), ...codex.env, CODEX_HOME: home }, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true,
     });
     child.stderr.resume(); // Consumir sin registrar: puede llevar detalles OAuth.
     return {
@@ -1149,7 +1161,7 @@ const conversationFsDeps: ConversationsDeps = {
 };
 const conversationsService = new ConversationsService(conversationFsDeps);
 // Historial de las cuentas de Codex: sus rollouts, medidos con codex-cli 0.160.0.
-const codexHistory = new CodexHistoryService(conversationFsDeps);
+const codexHistory = new CodexHistoryService(conversationFsDeps, mainLog);
 // Historial de agy: las bases SQLite de los perfiles con los que Mage lo lanza (resumibles con `--conversation`).
 const agyHistory = new AgyHistoryService(createAgySqliteStore());
 
@@ -3067,11 +3079,8 @@ function registerTranscriptIpc1(): void {
 // transcript del SUBAGENTE (drill-down, M2.2.3b). Los resolvers de Claude validan sus segmentos
 // (anti path-traversal) y su ruta cae bajo projects/; la de Codex sale de su cuenta registrada y de un id.
 // null: la conversación de Codex no existe en esa cuenta (ver `sendMissingConversation`).
-function resolveTranscriptSource(params: OpenTranscriptParams): { readonly filePath: string; readonly adapt?: LineAdapter } | null {
-  if (params.provider === 'codex') {
-    const rollout = codexRolloutPath(params);
-    return rollout === null ? null : { filePath: rollout, adapt: adaptCodexLine };
-  }
+function resolveTranscriptSource(params: OpenTranscriptParams): TranscriptSource | null {
+  if (params.provider === 'codex') return codexSourceOf(params);
   const filePath =
     params.agentId !== undefined
       ? resolveSubagentTranscriptPath(params.accountDir, params.cwd, params.sessionId, params.agentId)
@@ -3079,7 +3088,8 @@ function resolveTranscriptSource(params: OpenTranscriptParams): { readonly fileP
   if (!isUnderManagedProjects(filePath)) {
     throw new Error(`Ruta de transcripcion no permitida (debe caer bajo ~/.claude*/projects): ${filePath}`);
   }
-  return { filePath };
+  // Solo la conversacion principal de Claude se lee por rama activa (los subagentes son todo isSidechain; Codex trae sus turnos de otro sitio).
+  return { kind: 'file', filePath, activeBranch: params.agentId === undefined };
 }
 
 // Abre en streaming y empuja lotes por TRANSCRIPT_BATCH_CHANNEL sin bloquear el invoke.
@@ -3089,13 +3099,16 @@ function streamTranscript(sender: Electron.WebContents, transcriptId: string, pa
     sendMissingConversation(sender, transcriptId, `No existe la conversacion de Codex ${params.sessionId}`);
     return;
   }
-  const { filePath, adapt } = source;
   const controller = new AbortController();
   openTranscriptControllers.set(transcriptId, controller);
 
   void (async () => {
     try {
-      for await (const batch of transcriptService.openStream(filePath, controller.signal, params.resumeFrom, adapt)) {
+      let batches: AsyncIterable<TranscriptBatch>;
+      if (source.kind === 'codexTurns') batches = codexTurnsBatches(() => codexThreadTurnsList({ spawnProbe: codexAccountProbeDeps().spawnProbe, timeoutMs: CLI_PROBE_TIMEOUT_MS }, source.home, source.threadId));
+      else if (source.activeBranch) batches = transcriptService.openBranchStream(source.filePath, controller.signal, params.resumeFrom, { onMissingParent: (uuid) => mainLog('warn', 'Transcripcion con un padre inexistente: la rama se corta ahi', { transcriptId, uuid }) });
+      else batches = transcriptService.openStream(source.filePath, controller.signal, params.resumeFrom, source.adapt);
+      for await (const batch of batches) {
         if (sender.isDestroyed()) break;
         sender.send(TRANSCRIPT_BATCH_CHANNEL, { transcriptId, batch });
       }
@@ -3150,12 +3163,12 @@ function openAgyTranscript(sender: Electron.WebContents, transcriptId: string, p
   }
 }
 
-// Rollout de una conversación de Codex: solo de una cuenta registrada y por su id (nunca una ruta del renderer). null si
+// De dónde sale una conversación de Codex: solo de una cuenta registrada y por su id (nunca una ruta del renderer). null si
 // esa cuenta no tiene ninguna conversación con ese id.
-function codexRolloutPath(params: OpenTranscriptParams): string | null {
+function codexSourceOf(params: OpenTranscriptParams): TranscriptSource | null {
   const account = getProviderAccounts().find('codex', params.accountDir);
   if (account === null) throw new Error(`Cuenta de Codex no valida para abrir una transcripcion: ${params.accountDir}`);
-  return codexHistory.findRollout(account.home, params.sessionId);
+  return codexTranscriptSource(codexHistory, account.home, params.sessionId);
 }
 
 // La conversación que se pidió no existe en la cuenta: fallo terminal, marcado `missing` para que el renderer lo distinga
@@ -3242,6 +3255,7 @@ function conversationMigration(): ConversationMigrationService {
       homeOf: (accountDir) => getProviderAccounts().find('codex', accountDir)?.home ?? failMigration(`Cuenta de Codex no valida: ${accountDir}`),
       history: codexHistory,
       deleteThread: (home, threadId) => codexThreadDelete({ spawnProbe: codexAccountProbeDeps().spawnProbe, timeoutMs: CLI_PROBE_TIMEOUT_MS }, home, threadId),
+      listTurns: (home, threadId) => codexThreadTurnsList({ spawnProbe: codexAccountProbeDeps().spawnProbe, timeoutMs: CLI_PROBE_TIMEOUT_MS }, home, threadId),
     },
     agy: { profileOf: (accountDir) => agyProfileOfAccount(accountDir) ?? failMigration(`Cuenta de agy no valida: ${accountDir}`), externalOf: agyExternalProfileOf, history: agyHistory, writeDb: writeAgyConversationDb },
   }));
