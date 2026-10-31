@@ -4,10 +4,11 @@ import { motion } from 'motion/react';
 import type { MoveDestination } from '../../panels/panelLayoutOps';
 import { POPOVER_VARIANTS } from '../../motionPresets';
 import { Icon } from '../Icon';
+import { useT } from '../../../i18n/uiLanguage';
 
 const STEP_ITEMS = [
-  { direction: -1, key: 'up', label: 'Subir', icon: 'arrowUp' },
-  { direction: 1, key: 'down', label: 'Bajar', icon: 'arrowDown' },
+  { direction: -1, key: 'up', label: 'menu.dock.moveUp', icon: 'arrowUp' },
+  { direction: 1, key: 'down', label: 'menu.dock.moveDown', icon: 'arrowDown' },
 ] as const;
 
 // Menu contextual "Mover a..." de un icono de stripe (F6 Fase 4, PLAN-F6-PANELES.md §6). MISMO patron
@@ -40,6 +41,7 @@ export function PanelMoveMenu({
   readonly stepOptions: { readonly up: boolean; readonly down: boolean };
   readonly onStep: (direction: -1 | 1) => void;
 }): React.JSX.Element {
+  const t = useT();
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -67,11 +69,11 @@ export function PanelMoveMenu({
         exit="exit"
         ref={menuRef}
         role="menu"
-        aria-label={`Mover panel ${panelTitle}`}
+        aria-label={t('menu.dock.movePanelLabel', { title: panelTitle })}
         style={{ position: 'fixed', left, top, zIndex: 9999 }}
         className="w-[190px] overflow-hidden rounded-[8px] border border-mg-border-pop bg-mg-popover py-[4px] text-[11.5px] text-mg-body mg-shadow-pop"
       >
-        <div className="truncate px-[10px] py-[5px] text-[10px] text-mg-muted">Mover «{panelTitle}»</div>
+        <div className="truncate px-[10px] py-[5px] text-[10px] text-mg-muted">{t('menu.dock.movePanelHeading', { title: panelTitle })}</div>
         <div className="my-[3px] h-px bg-mg-border-subtle" />
         {STEP_ITEMS.map((item) => (
           <button
@@ -85,7 +87,7 @@ export function PanelMoveMenu({
             className="flex w-full items-center gap-[6px] px-[10px] py-[5px] text-left transition-colors duration-150 ease-out hover:bg-mg-hover disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
           >
             <Icon name={item.icon} size={12} />
-            {item.label}
+            {t(item.label)}
           </button>
         ))}
         <div className="my-[3px] h-px bg-mg-border-subtle" />
@@ -114,8 +116,8 @@ export function PanelMoveMenu({
           }}
           className="block w-full px-[10px] py-[5px] text-left transition-colors duration-150 ease-out hover:bg-mg-hover"
         >
-          Esconder icono
-          <span className="block text-[10px] text-mg-muted">Volverá a estar en «Añadir panel»</span>
+          {t('menu.dock.hideIcon')}
+          <span className="block text-[10px] text-mg-muted">{t('menu.dock.hideIconHint')}</span>
         </button>
       </motion.div>
     </>,

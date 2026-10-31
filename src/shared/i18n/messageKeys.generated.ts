@@ -761,6 +761,14 @@ export interface MessageValues {
   readonly "menu.category.permission": never;
   readonly "menu.category.prompt": never;
   readonly "menu.category.session": never;
+  readonly "menu.dock.addPanelHeading": never;
+  readonly "menu.dock.addPanelLabel": never;
+  readonly "menu.dock.hideIcon": never;
+  readonly "menu.dock.hideIconHint": never;
+  readonly "menu.dock.moveDown": never;
+  readonly "menu.dock.movePanelHeading": { readonly "title": string | number };
+  readonly "menu.dock.movePanelLabel": { readonly "title": string | number };
+  readonly "menu.dock.moveUp": never;
   readonly "menu.dock.resizeBottomLeft": never;
   readonly "menu.dock.resizeBottomRight": never;
   readonly "menu.dock.resizeLeftMiddle": never;
