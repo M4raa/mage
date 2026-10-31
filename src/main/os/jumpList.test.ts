@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { createTranslator } from '@shared/i18n/translator';
 import {
   accountsByUsage,
   buildJumpListCategories,
@@ -7,6 +8,7 @@ import {
 } from './jumpList';
 
 const PROGRAM = 'C:\\Mage\\mage.exe';
+const translate = createTranslator('es');
 
 function source(overrides: Partial<JumpListSource> = {}): JumpListSource {
   return {
@@ -82,38 +84,38 @@ describe('accountsByUsage', () => {
 
 describe('buildJumpListCategories', () => {
   it('buildJumpListCategories_conDatos_devuelveRecientesYCuentas', () => {
-    const categories = buildJumpListCategories(source(), PROGRAM);
+    const categories = buildJumpListCategories(source(), PROGRAM, translate);
 
     expect(categories.map((c) => c.name)).toEqual(['Recientes', 'Cuentas']);
   });
 
   it('buildJumpListCategories_recientes_vanDeMasNuevaAMasVieja', () => {
-    const categories = buildJumpListCategories(source(), PROGRAM);
+    const categories = buildJumpListCategories(source(), PROGRAM, translate);
 
     expect(categories[0]?.items.map((i) => i.title)).toEqual(['Migrar la base', 'Arreglar el login']);
   });
 
   it('buildJumpListCategories_unaConversacion_llevaSuCuentaYSuSesionEnLosArgumentos', () => {
-    const item = buildJumpListCategories(source(), PROGRAM)[0]?.items[0];
+    const item = buildJumpListCategories(source(), PROGRAM, translate)[0]?.items[0];
 
     expect(item?.program).toBe(PROGRAM);
     expect(item?.args).toBe('--mage-account="C:\\Users\\u\\.claude-b" --mage-session="s2"');
   });
 
   it('buildJumpListCategories_itemDeCuenta_soloLlevaLaCuenta', () => {
-    const item = buildJumpListCategories(source({ conversations: [] }), PROGRAM)[0]?.items[0];
+    const item = buildJumpListCategories(source({ conversations: [] }), PROGRAM, translate)[0]?.items[0];
 
     expect(item?.args).toBe('--mage-account="C:\\Users\\u\\.claude"');
   });
 
   it('buildJumpListCategories_sinConversaciones_omiteEsaCategoria', () => {
-    const categories = buildJumpListCategories(source({ conversations: [] }), PROGRAM);
+    const categories = buildJumpListCategories(source({ conversations: [] }), PROGRAM, translate);
 
     expect(categories.map((c) => c.name)).toEqual(['Cuentas']);
   });
 
   it('buildJumpListCategories_sinNadaQueOfrecer_devuelveVacio', () => {
-    expect(buildJumpListCategories({ accounts: [], conversations: [], tabAccountIds: [] }, PROGRAM)).toEqual([]);
+    expect(buildJumpListCategories({ accounts: [], conversations: [], tabAccountIds: [] }, PROGRAM, translate)).toEqual([]);
   });
 
   it('buildJumpListCategories_masDeOchoConversaciones_seQuedaConLasOchoMasRecientes', () => {
@@ -124,7 +126,7 @@ describe('buildJumpListCategories', () => {
       updatedAtMs: i,
     }));
 
-    const items = buildJumpListCategories(source({ conversations }), PROGRAM)[0]?.items ?? [];
+    const items = buildJumpListCategories(source({ conversations }), PROGRAM, translate)[0]?.items ?? [];
 
     expect(items).toHaveLength(8);
     expect(items[0]?.title).toBe('c11');
@@ -133,23 +135,27 @@ describe('buildJumpListCategories', () => {
   it('buildJumpListCategories_tituloLarguisimo_seRecorta', () => {
     const conversations = [{ sessionId: 's', title: 'x'.repeat(200), accountDir: 'C:\\a', updatedAtMs: 1 }];
 
-    const title = buildJumpListCategories(source({ conversations }), PROGRAM)[0]?.items[0]?.title ?? '';
+    const title = buildJumpListCategories(source({ conversations }), PROGRAM, translate)[0]?.items[0]?.title ?? '';
 
     expect(title).toHaveLength(60);
     expect(title.endsWith('…')).toBe(true);
   });
 
-  it('buildJumpListCategories_tituloVacio_usaUnTextoDeRespaldo', () => {
-    const conversations = [{ sessionId: 's', title: '   ', accountDir: 'C:\\a', updatedAtMs: 1 }];
+  it('buildJumpListCategories_conversacionSinTitulo_nuevoChat', () => {
+    const titleOf = (title: string): string | undefined => {
+      const conversations = [{ sessionId: 's', title, accountDir: 'C:\a', updatedAtMs: 1 }];
+      return buildJumpListCategories(source({ conversations }), PROGRAM, translate)[0]?.items[0]?.title;
+    };
 
-    expect(buildJumpListCategories(source({ conversations }), PROGRAM)[0]?.items[0]?.title).toBe('Sin título');
+    expect(titleOf('')).toBe('Nuevo chat');
+    expect(titleOf('Nuevo chat')).toBe('Nuevo chat');
   });
 
   it('buildJumpListCategories_valorConComillas_noRompeElArgumento', () => {
     // Una comilla suelta partiria el argumento en dos al releerlo desde argv.
     const conversations = [{ sessionId: 's"1', title: 't', accountDir: 'C:\\a', updatedAtMs: 1 }];
 
-    const args = buildJumpListCategories(source({ conversations }), PROGRAM)[0]?.items[0]?.args ?? '';
+    const args = buildJumpListCategories(source({ conversations }), PROGRAM, translate)[0]?.items[0]?.args ?? '';
 
     expect(args).toBe('--mage-account="C:\\a" --mage-session="s1"');
   });

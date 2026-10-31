@@ -1557,6 +1557,9 @@ function getUiLanguageService(): UiLanguageService {
     broadcast: (resolved) => {
       windowManager.broadcast(UI_LANGUAGE_CHANGED_CHANNEL, resolved);
       widgetWindow?.sendUiLanguage(resolved);
+      // Al cambiar el idioma, main rehace lo que pinta él: el menú de la bandeja y la jump list. Los diálogos nativos y los avisos se traducen al construirse.
+      tray?.setContextMenu(buildTrayMenu());
+      refreshJumpList(true);
     },
   });
   return uiLanguageServiceSingleton;
@@ -2212,7 +2215,7 @@ function createWorkbenchWindow(windowId: string, placement?: WindowPlacement): B
   window.on('focus', flushPendingUpdatePrompt);
   // La jump list muestra conversaciones recientes: se refresca cuando CUALQUIER ventana recupera el
   // foco, no solo la principal (el propio `refreshJumpList` ya se limita con su intervalo minimo).
-  window.on('focus', refreshJumpList);
+  window.on('focus', () => refreshJumpList());
   // En dev, electron-vite sirve el renderer por URL; en prod, se carga el HTML compilado.
   const devUrl = process.env['ELECTRON_RENDERER_URL'];
   if (devUrl) {
@@ -3582,10 +3585,10 @@ function openDebugWindow(): void {
 // eso son varias pasadas por segundo sobre un escaneo de disco que cuesta cientos de ms.
 let lastJumpListAtMs = 0;
 
-function refreshJumpList(): void {
+function refreshJumpList(force = false): void {
   if (isDev || process.platform !== 'win32') return;
   const nowMs = Date.now();
-  if (nowMs - lastJumpListAtMs < JUMP_LIST_MIN_INTERVAL_MS) return;
+  if (!force && nowMs - lastJumpListAtMs < JUMP_LIST_MIN_INTERVAL_MS) return;
   lastJumpListAtMs = nowMs;
   try {
     const accounts = accountService.listAccounts().map((account) => ({ configDir: account.configDir, alias: account.name }));
@@ -3616,7 +3619,7 @@ function refreshJumpList(): void {
     const tabAccountIds = windowManager
       .list()
       .flatMap((windowId) => (getWorkspaceStore(windowId).load()?.tabs ?? []).map((tab) => tab.accountId));
-    const categories = buildJumpListCategories({ accounts, conversations, tabAccountIds }, process.execPath);
+    const categories = buildJumpListCategories({ accounts, conversations, tabAccountIds }, process.execPath, getUiLanguageService().translate);
     // Cast: el modulo puro declara su propia forma (sin importar electron) — es estructuralmente la
     // que espera setJumpList, pero con arrays readonly.
     app.setJumpList(categories as unknown as Electron.JumpListCategory[]);

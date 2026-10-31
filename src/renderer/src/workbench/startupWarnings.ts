@@ -1,5 +1,6 @@
 import type { StartupWarning } from '@shared/ipc';
 import type { NotifyInput } from './notifications';
+import { renderLocalized } from '@shared/i18n/localizedText';
 import { t } from '../i18n/uiLanguage';
 
 // Avisos de inicio de main (F2.6, D-AppImage): se enseñan PERSISTENTES (hasta la ✕) y una sola vez por id, aunque
@@ -19,6 +20,6 @@ export async function showStartupWarnings({ fetchWarnings, notify, reportError }
     return;
   }
   for (const warning of warnings) {
-    notify({ level: 'warning', title: warning.title, body: warning.body, timeoutMs: null, dedupeKey: `startup:${warning.id}`, source: 'startup' });
+    notify({ level: 'warning', title: renderLocalized(t, warning.title), body: renderLocalized(t, warning.body), timeoutMs: null, dedupeKey: `startup:${warning.id}`, source: 'startup' });
   }
 }

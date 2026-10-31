@@ -1015,6 +1015,10 @@ export interface MessageValues {
   readonly "notifications.mcpLogin.body": never;
   readonly "notifications.mcpLogin.title": { readonly "server": string | number };
   readonly "notifications.pr.ciFinished": never;
+  readonly "notifications.startup.hostUnavailable.body": { readonly "reason": string | number };
+  readonly "notifications.startup.hostUnavailable.title": never;
+  readonly "notifications.startup.noSandbox.body": never;
+  readonly "notifications.startup.noSandbox.title": never;
   readonly "notifications.startup.readFailed": never;
   readonly "notifications.store.actionFailed": { readonly "action": string | number };
   readonly "notifications.toasts.dismiss": never;
@@ -1621,6 +1625,10 @@ export interface MessageValues {
   readonly "tabs.releaseNotes.title": never;
   readonly "tabs.untitled": never;
   readonly "tray.debugWindow": never;
+  readonly "tray.jumpList.accounts": never;
+  readonly "tray.jumpList.newConversationIn": { readonly "alias": string | number };
+  readonly "tray.jumpList.openConversation": never;
+  readonly "tray.jumpList.recent": never;
   readonly "tray.open": never;
   readonly "tray.quit": never;
   readonly "tray.toggleWidget": never;

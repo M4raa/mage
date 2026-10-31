@@ -611,8 +611,8 @@ export const JUMP_LIST_OPEN_CHANNEL = 'jumpList:open';
 // Aviso persistente que main pide enseñar al abrirse la interfaz (F2.6: Linux arrancado sin el sandbox de Chromium).
 export interface StartupWarning {
   readonly id: string;
-  readonly title: string;
-  readonly body: string;
+  readonly title: LocalizedText;
+  readonly body: LocalizedText;
 }
 
 export interface AboutInfo {

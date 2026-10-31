@@ -3,6 +3,9 @@
 // importan —que entra en la lista y en que orden, y como se vuelve a leer el clic— se prueban sin
 // arrancar la app. `main/index.ts` recoge los datos, llama aqui y pasa el resultado a `app.setJumpList`.
 
+import { isPlaceholderTitle } from '@shared/conversationTitle';
+import type { Translate } from '@shared/i18n/translator';
+
 // Forma de los items que acepta Electron (subconjunto que usamos: solo tareas). Se declara aqui en vez
 // de importar los tipos de electron para que este modulo siga siendo puro y testeable en Node.
 export interface JumpListTask {
@@ -86,7 +89,7 @@ export function accountsByUsage(
 
 // Las dos categorias de la jump list. Vacias las que no tengan nada: Windows no pinta una categoria
 // sin items, y devolver [] borra la lista entera (que es justo lo que se quiere sin datos).
-export function buildJumpListCategories(source: JumpListSource, program: string): readonly JumpListCategory[] {
+export function buildJumpListCategories(source: JumpListSource, program: string, translate: Translate): readonly JumpListCategory[] {
   const categories: JumpListCategory[] = [];
 
   const recent = [...source.conversations]
@@ -95,13 +98,13 @@ export function buildJumpListCategories(source: JumpListSource, program: string)
   if (recent.length > 0) {
     categories.push({
       type: 'custom',
-      name: 'Recientes',
+      name: translate('tray.jumpList.recent'),
       items: recent.map((conversation) => ({
         type: 'task',
         program,
         args: `${quoted(JUMP_LIST_ACCOUNT_FLAG, conversation.accountDir)} ${quoted(JUMP_LIST_SESSION_FLAG, conversation.sessionId)}`,
-        title: shorten(conversation.title),
-        description: 'Abrir esta conversación en Mage',
+        title: shortenTitle(conversation.title, translate),
+        description: translate('tray.jumpList.openConversation'),
       })),
     });
   }
@@ -110,13 +113,13 @@ export function buildJumpListCategories(source: JumpListSource, program: string)
   if (accounts.length > 0) {
     categories.push({
       type: 'custom',
-      name: 'Cuentas',
+      name: translate('tray.jumpList.accounts'),
       items: accounts.map((account) => ({
         type: 'task',
         program,
         args: quoted(JUMP_LIST_ACCOUNT_FLAG, account.configDir),
-        title: shorten(account.alias),
-        description: `Nueva conversación en ${account.alias}`,
+        title: shortenLabel(account.alias),
+        description: translate('tray.jumpList.newConversationIn', { alias: account.alias }),
       })),
     });
   }
@@ -130,8 +133,14 @@ function quoted(flag: string, value: string): string {
   return `${flag}"${value.replace(/"/g, '')}"`;
 }
 
-function shorten(text: string): string {
+// Título de una conversación: sin título se llama igual que su pestaña.
+function shortenTitle(text: string, translate: Translate): string {
+  if (isPlaceholderTitle(text)) return translate('tabs.untitled');
+  return shortenLabel(text);
+}
+
+// Alias de una cuenta (nunca vacío): aplana espacios y recorta.
+function shortenLabel(text: string): string {
   const flat = text.replace(/\s+/g, ' ').trim();
-  if (flat.length === 0) return 'Sin título';
   return flat.length <= MAX_TITLE_CHARS ? flat : `${flat.slice(0, MAX_TITLE_CHARS - 1)}…`;
 }
