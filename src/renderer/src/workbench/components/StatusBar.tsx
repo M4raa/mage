@@ -132,7 +132,9 @@ function AccountStatus({ account, provider }: { readonly account: Account; reado
           consultaba la activa y las demas enseñaban un 0 % que no era verdad. main cachea 180 s y
           tiene lockout, asi que pasar el raton varias veces no dispara peticiones de mas. */}
       <div className="group relative" onMouseEnter={refreshAll} onFocus={refreshAll}>
+        {/* data-volatile-text: uso y estado del servicio REALES de la cuenta; verify:gui --dump-dom-text no los vuelca */}
         <span
+          data-volatile-text="true"
           tabIndex={0}
           className="cursor-default border-b border-dotted border-mg-idle"
           style={severity !== 'ok' ? { color: SEVERITY_COLOR[severity] } : undefined}
@@ -162,7 +164,7 @@ function ServiceStatus({ status }: { readonly status: StatusInfo | null }): Reac
       .catch((err: unknown) => reportActionError('No se pudo abrir la página de estado', err, 'status'));
   };
   return (
-    <div className="group relative ml-auto">
+    <div className="group relative ml-auto" data-volatile-text="true">
       {/* role="status": anuncia el estado del servicio de Claude cuando cambia. Al ser un boton ya es
           enfocable, asi que el popover tambien se abre con teclado (focus-within) sin tabIndex. */}
       <button

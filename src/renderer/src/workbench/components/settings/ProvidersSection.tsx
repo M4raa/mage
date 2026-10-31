@@ -479,13 +479,14 @@ function DefaultPicker({
 
 // A donde apunta: ruta del ejecutable detectada o URL consultada. Si el sondeo no la encontro, se dice
 // con todas las letras en vez de dejar el hueco vacio.
+// data-volatile-text: la ruta real del ejecutable o «Localizando…», según el momento.
 function EndpointLine({ entry, probe }: { readonly entry: ProviderEntry; readonly probe: ProbeState }): React.JSX.Element {
   const t = useT();
   const fallback = entry.baseUrl ?? (probe.loading ? t('settings.providers.endpoint.locating') : t('settings.providers.endpoint.noPath'));
   const endpoint = probe.result?.endpoint ?? fallback;
   const notFound = !probe.loading && probe.result !== null && probe.result.endpoint === null;
   return (
-    <div className={`truncate font-mono text-[10.5px] ${notFound ? 'text-mg-danger' : 'text-mg-ter'}`} title={endpoint}>
+    <div className={`truncate font-mono text-[10.5px] ${notFound ? 'text-mg-danger' : 'text-mg-ter'}`} title={endpoint} data-volatile-text="true">
       {notFound ? t('settings.providers.endpoint.notFound') : endpoint}
     </div>
   );

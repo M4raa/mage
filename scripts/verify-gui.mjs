@@ -7622,8 +7622,8 @@ const CHECKS = [
         // Unicode clasifica varios de ellos como pictograficos, asi que sin esta lista la comprobacion
         // marcaria como defecto justo lo que la regla del repo manda usar.
         const VOCABULARIO = new Set([...'☰◇◔«»⌕⇲▸▾']);
-        // Zonas cuyo texto NO es iconografia de Mage: lo escribe el usuario o lo devuelve el agente.
-        const AJENO = ['[data-transcript]', '[role="log"]', '.mg-markdown', '[data-artifact-favicon]', '[contenteditable="true"]'];
+        // Zonas cuyo texto NO es iconografia de Mage: lo escribe el usuario o lo devuelve el agente (los títulos del historial son de las conversaciones del usuario).
+        const AJENO = ['[data-transcript]', '[role="log"]', '.mg-markdown', '[data-artifact-favicon]', '[contenteditable="true"]', '[data-history-session]'];
         const esAjeno = (nodo) => {
           for (let el = nodo.parentElement; el !== null; el = el.parentElement) {
             if (AJENO.some((sel) => el.matches(sel))) return true;

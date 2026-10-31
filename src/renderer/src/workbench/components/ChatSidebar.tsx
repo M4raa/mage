@@ -444,7 +444,8 @@ function ConversationSection({
   return (
     <section className="flex flex-col gap-px">
       <SectionLabel icon={icon} text={title} hint={`${rows.length}`} />
-      {rows.length === 0 && <div className="p-[8px_9px] text-[11px] text-mg-muted">{emptyHint}</div>}
+      {/* data-volatile-text: el vacío y «Mostrar N más» dependen del historial REAL de la cuenta; verify:gui --dump-dom-text no los vuelca */}
+      {rows.length === 0 && <div className="p-[8px_9px] text-[11px] text-mg-muted" data-volatile-text="true">{emptyHint}</div>}
       {visible.map((row) =>
         row.kind === 'tab' ? (
           <TabItem
@@ -489,6 +490,7 @@ function ConversationSection({
       {!showAll && hidden > 0 && (
         <button
           onClick={() => setLimit((current) => current + REVEAL_STEP)}
+          data-volatile-text="true"
           className="mx-[2px] mt-[2px] rounded-[6px] p-[5px_9px] text-left text-[11px] text-mg-icon transition-colors duration-150 ease-out hover:bg-mg-hover hover:text-mg-body"
         >
           {t('sidebar.section.showMore', { count: nextStep })} <span className="text-mg-muted">{t('sidebar.section.remaining', { count: hidden })}</span>
@@ -497,6 +499,7 @@ function ConversationSection({
       {!showAll && limit > COLLAPSED_LIMIT && (
         <button
           onClick={() => setLimit(COLLAPSED_LIMIT)}
+          data-volatile-text="true"
           className="mx-[2px] mt-[2px] rounded-[6px] p-[5px_9px] text-left text-[11px] text-mg-icon transition-colors duration-150 ease-out hover:bg-mg-hover hover:text-mg-body"
         >
           {t('sidebar.section.showLess')}

@@ -45,7 +45,8 @@ export function UsagePanel(): React.JSX.Element {
     // h-full (F6: ahora es un panel acoplable mas, no contenido de un popover con su propio tamaño
     // fijo) — sin el, el fondo del panel no llega al suelo de su zona, mismo bug que ya se corrigio en
     // ChatSidebar.tsx.
-    <div className="flex h-full flex-col gap-[14px] p-[14px] text-[11px]">
+    // data-volatile-text: todo el panel es el uso real de la cuenta (verify:gui --dump-dom-text no lo vuelca).
+    <div className="flex h-full flex-col gap-[14px] p-[14px] text-[11px]" data-volatile-text="true">
       <div className="flex items-center justify-between">
         <div className="min-w-0">
           <div className="truncate text-[12px] font-bold text-mg-text">{account.alias}</div>

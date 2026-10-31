@@ -11,7 +11,10 @@ export const DUMPED_ATTRIBUTES = ['aria-label', 'title', 'placeholder', 'alt', '
 // Datos que vienen de las cuentas REALES del usuario (el perfil del harness es aislado, pero el historial y el uso se
 // leen de sus cuentas): títulos y tamaños de sus conversaciones, sus carpetas recientes y su uso. No son textos de
 // Mage, cambian entre tandas y NO se guardan en el volcado.
-export const EXCLUDED_SUBTREES = ['[data-history-session]', '[data-recent-project]', '[data-usage-popover]', '[data-usage-account]'];
+// Y todo nodo marcado con data-volatile-text: texto de Mage cuyo valor sale del uso, del historial o del entorno reales
+// (la barra de estado, el panel Uso, la ruta de agy, el vacío y «Mostrar N más» de la barra lateral). Límite conocido:
+// esos textos no se comparan en F3.2.
+export const EXCLUDED_SUBTREES = ['[data-history-session]', '[data-recent-projects]', '[data-usage-popover]', '[data-usage-account]', '[data-volatile-text]'];
 
 // Se ejecuta EN la página: cada texto visible (un nodo de texto por línea, en orden del documento) y los atributos
 // traducibles, saltando los subárboles excluidos. Los alias de las cuentas y cualquier correo se sustituyen por una
