@@ -5,6 +5,8 @@ import { useWorkbenchStore } from '../workbenchStore';
 import { ghNoticeView, prBarView } from '../chatInfoView';
 import { worktreeOfCwd } from '@shared/worktree';
 import { reportActionError } from '../notificationStore';
+import { t as translate, useT } from '../../i18n/uiLanguage';
+import type { MessageKey } from '@shared/i18n/messageKeys.generated';
 
 // Barra de PR/CI de la sesion (grupo D, como Claude Desktop): el PR vinculado con sus checks, y al
 // desplegarla los que fallan, los runs (relanzar/cancelar), el auto-merge y el auto-fix. Sin PR en la
@@ -17,10 +19,11 @@ const BUTTON = `${CHIP} text-mg-body2 transition-colors duration-150 ease-out ho
 const TONES = { add: 'text-mg-diff-add', del: 'text-mg-diff-del', muted: 'text-mg-muted' } as const;
 
 function openExternal(url: string): void {
-  void window.mage.openExternal(url).catch((err: unknown) => reportActionError('No se pudo abrir el enlace', err, 'pr'));
+  void window.mage.openExternal(url).catch((err: unknown) => reportActionError(translate('app.prBar.openLinkFailed'), err, 'pr'));
 }
 
 export function PrBar({ tabId }: { readonly tabId: string }): React.JSX.Element | null {
+  const t = useT();
   const tab = useWorkbenchStore((s) => s.tabs.find((t) => t.id === tabId));
   const snapshot = useWorkbenchStore((s) => s.prByTab[tabId]);
   const noticeDismissed = useWorkbenchStore((s) => s.settings.ghNoticeDismissed);
@@ -37,7 +40,7 @@ export function PrBar({ tabId }: { readonly tabId: string }): React.JSX.Element 
         <button data-tip={notice.title} aria-label={notice.title} onClick={() => notice.url !== null && openExternal(notice.url)} className={notice.url === null ? 'cursor-help' : 'hover:text-mg-body'}>
           {notice.label}
         </button>
-        <button aria-label="No volver a avisar de gh" data-tip="No volver a avisar (se recupera en Configuración › General)" onClick={() => setGhNoticeDismissed(true)} className="hover:text-mg-body">
+        <button aria-label={t('app.prBar.dismissNoticeLabel')} data-tip={t('app.prBar.dismissNoticeTip')} onClick={() => setGhNoticeDismissed(true)} className="hover:text-mg-body">
           <Icon name="close" size={10} />
         </button>
       </span>
@@ -45,8 +48,8 @@ export function PrBar({ tabId }: { readonly tabId: string }): React.JSX.Element 
   }
   if (snapshot.kind === 'no-pr' && tab.prNumber === undefined) {
     return (
-      <button data-pr-create onClick={() => insertCreatePrPrompt(tabId)} data-tip="Deja en el input un prompt para que el agente suba la rama y abra el PR con gh; lo envías tú" className={BUTTON}>
-        Crear PR
+      <button data-pr-create onClick={() => insertCreatePrPrompt(tabId)} data-tip={t('app.prBar.createPrTip')} className={BUTTON}>
+        {t('app.prBar.createPr')}
       </button>
     );
   }
@@ -62,7 +65,7 @@ export function PrBar({ tabId }: { readonly tabId: string }): React.JSX.Element 
           <span key={c.glyph} className={`font-mono ${TONES[c.tone]}`}>{`${c.glyph}${c.count}`}</span>
         ))}
       </button>
-      <button aria-label={`Dejar de seguir el PR #${snapshot.pr.number}`} data-tip="Dejar de seguir este PR (el PR no se toca)" onClick={() => unbindPr(tabId)} className="text-mg-muted hover:text-mg-body">
+      <button aria-label={t('app.prBar.unbindLabel', { number: snapshot.pr.number })} data-tip={t('app.prBar.unbindTip')} onClick={() => unbindPr(tabId)} className="text-mg-muted hover:text-mg-body">
         <Icon name="close" size={10} />
       </button>
       {open && <PrDetails tabId={tabId} pr={snapshot.pr} autoFix={tab.prAutoFix === true} details={view.details} inWorktree={worktreeOfCwd(tab.cwd) !== null} />}
@@ -82,6 +85,7 @@ interface DetailsProps {
 type Pending = { readonly kind: 'run'; readonly run: GhRun; readonly action: 'rerun' | 'cancel' } | { readonly kind: 'merge'; readonly enabled: boolean };
 
 function PrDetails({ tabId, pr, autoFix, details, inWorktree }: DetailsProps): React.JSX.Element {
+  const t = useT();
   const runs = useWorkbenchStore((s) => s.ghRunsByTab[tabId]);
   const loadGhRuns = useWorkbenchStore((s) => s.loadGhRuns);
   const setPrAutoFix = useWorkbenchStore((s) => s.setPrAutoFix);
@@ -98,18 +102,18 @@ function PrDetails({ tabId, pr, autoFix, details, inWorktree }: DetailsProps): R
   };
   const failing = pr.checks.filter((check) => check.state === 'fail');
   return (
-    <div data-pr-details role="region" aria-label={`PR #${pr.number}`} className="flex basis-full flex-col gap-[6px] rounded-[8px] border border-mg-border-subtle p-[8px_10px] text-[10.5px]">
+    <div data-pr-details role="region" aria-label={t('app.prBar.regionLabel', { number: pr.number })} className="flex basis-full flex-col gap-[6px] rounded-[8px] border border-mg-border-subtle p-[8px_10px] text-[10.5px]">
       <div className="flex flex-wrap items-center gap-[8px]">
         <span className="font-semibold text-mg-body">{pr.title}</span>
         {details.map((detail) => (
           <span key={detail} className="text-mg-ter">{detail}</span>
         ))}
         <button onClick={() => openExternal(pr.url)} className="ml-auto inline-flex items-center gap-[4px] hover:text-mg-body">
-          Abrir en GitHub <Icon name="external" size={10} />
+          {t('app.prBar.openOnGithub')} <Icon name="external" size={10} />
         </button>
       </div>
       {failing.length > 0 && (
-        <ul data-pr-failing aria-label="Checks que fallan" className="flex flex-col gap-[2px] text-mg-danger">
+        <ul data-pr-failing aria-label={t('app.prBar.failingLabel')} className="flex flex-col gap-[2px] text-mg-danger">
           {failing.map((check) => (
             <li key={check.name}>✗ {check.name}</li>
           ))}
@@ -131,42 +135,51 @@ function PrDetails({ tabId, pr, autoFix, details, inWorktree }: DetailsProps): R
 // «Traer la base» (como Desktop): fetch de la rama base y merge en la del worktree, nunca rebase. Con
 // cambios sin confirmar main se niega; los conflictos se quedan para el agente.
 function MergeBaseButton({ tabId, base, onError }: { readonly tabId: string; readonly base: string; readonly onError: (error: string | null) => void }): React.JSX.Element {
+  const t = useT();
   const mergeBaseIntoWorktree = useWorkbenchStore((s) => s.mergeBaseIntoWorktree);
   const [result, setResult] = useState<string | null>(null);
   const run = (): void => {
     onError(null);
     void mergeBaseIntoWorktree(tabId, base)
-      .then((outcome) => setResult(outcome === 'merged' ? `${base} fusionada en la rama` : `Conflictos con ${base}: pídele al agente que los resuelva`))
+      .then((outcome) => setResult(outcome === 'merged' ? t('app.prBar.mergedIntoBranch', { base }) : t('app.prBar.mergeConflicts', { base })))
       .catch((err: unknown) => onError(err instanceof Error ? err.message : String(err)));
   };
   return (
     <div className="flex items-center gap-[8px]">
-      <button onClick={run} data-tip={`Trae ${base} a esta rama (fetch y merge, nunca rebase)`} className="hover:text-mg-body">
-        Traer {base}
+      <button onClick={run} data-tip={t('app.prBar.pullBaseTip', { base })} className="hover:text-mg-body">
+        {t('app.prBar.pullBase', { base })}
       </button>
       {result !== null && <span className="text-mg-ter">{result}</span>}
     </div>
   );
 }
 
-const RUN_LABELS = { pending: 'en marcha', pass: 'pasa', fail: 'falla', skip: 'omitido', cancel: 'cancelado' } as const;
+// Guarda la CLAVE del estado: se traduce al pintar.
+const RUN_LABELS = {
+  pending: 'app.prBar.runPending',
+  pass: 'app.prBar.runPass',
+  fail: 'app.prBar.runFail',
+  skip: 'app.prBar.runSkip',
+  cancel: 'app.prBar.runCancel',
+} as const satisfies Readonly<Record<GhRun['state'], MessageKey>>;
 
 function RunList({ runs, onAsk }: { readonly runs: readonly GhRun[]; readonly onAsk: (run: GhRun, action: 'rerun' | 'cancel') => void }): React.JSX.Element {
-  if (runs.length === 0) return <span className="text-mg-ter">Sin runs en esta rama</span>;
+  const t = useT();
+  if (runs.length === 0) return <span className="text-mg-ter">{t('app.prBar.noRuns')}</span>;
   return (
-    <ul data-pr-runs aria-label="Runs de la rama" className="flex flex-col gap-[2px]">
+    <ul data-pr-runs aria-label={t('app.prBar.runsLabel')} className="flex flex-col gap-[2px]">
       {runs.map((run) => (
         <li key={run.id} className="flex items-center gap-[8px]">
           <span className="text-mg-body2">{run.name}</span>
-          <span className="text-mg-ter">{RUN_LABELS[run.state]}</span>
+          <span className="text-mg-ter">{t(RUN_LABELS[run.state])}</span>
           {(run.state === 'fail' || run.state === 'cancel') && (
             <button onClick={() => onAsk(run, 'rerun')} className="hover:text-mg-body">
-              Relanzar
+              {t('app.prBar.rerun')}
             </button>
           )}
           {run.state === 'pending' && (
             <button onClick={() => onAsk(run, 'cancel')} className="hover:text-mg-body">
-              Cancelar run
+              {t('app.prBar.cancelRun')}
             </button>
           )}
         </li>
@@ -183,27 +196,32 @@ interface TogglesProps {
 }
 
 function AutoToggles({ pr, autoFix, onAutoFix, onAutoMerge }: TogglesProps): React.JSX.Element {
+  const t = useT();
   return (
     <div className="flex flex-wrap items-center gap-[14px] text-mg-body2">
-      <label className="inline-flex items-center gap-[5px]" data-tip="Con el CI roto o un conflicto, Mage abre un turno para que el agente lo arregle y haga push sin preguntar">
+      <label className="inline-flex items-center gap-[5px]" data-tip={t('app.prBar.autoFixTip')}>
         <input type="checkbox" checked={autoFix} onChange={(e) => onAutoFix(e.target.checked)} />
-        Auto-fix
+        {t('app.prBar.autoFix')}
       </label>
-      <label className="inline-flex items-center gap-[5px]" data-tip="Auto-merge nativo de GitHub (squash): fusiona solo cuando pasen los checks obligatorios">
+      <label className="inline-flex items-center gap-[5px]" data-tip={t('app.prBar.autoMergeTip')}>
         <input type="checkbox" checked={pr.autoMerge} disabled={pr.state !== 'open'} onChange={(e) => onAutoMerge(e.target.checked)} />
-        Auto-merge
+        {t('app.prBar.autoMerge')}
       </label>
     </div>
   );
 }
 
 function confirmText(pending: Pending): string {
-  if (pending.kind === 'run') return pending.action === 'rerun' ? `¿Relanzar los jobs que fallaron de «${pending.run.name}»?` : `¿Cancelar el run «${pending.run.name}»?`;
-  if (pending.enabled) return 'Activar el auto-merge: GitHub fusionará el PR (squash) en cuanto pasen los checks, sin otra mirada.';
-  return '¿Desactivar el auto-merge de este PR?';
+  if (pending.kind === 'run') {
+    const name = pending.run.name;
+    return pending.action === 'rerun' ? translate('app.prBar.confirmRerun', { name }) : translate('app.prBar.confirmCancelRun', { name });
+  }
+  if (pending.enabled) return translate('app.prBar.confirmEnableAutoMerge');
+  return translate('app.prBar.confirmDisableAutoMerge');
 }
 
 function Confirm({ tabId, pending, onDone }: { readonly tabId: string; readonly pending: Pending; readonly onDone: (error: string | null) => void }): React.JSX.Element {
+  const t = useT();
   const ghRunAction = useWorkbenchStore((s) => s.ghRunAction);
   const setPrAutoMerge = useWorkbenchStore((s) => s.setPrAutoMerge);
   const [busy, setBusy] = useState(false);
@@ -222,10 +240,10 @@ function Confirm({ tabId, pending, onDone }: { readonly tabId: string; readonly 
     <div data-pr-confirm role="alertdialog" aria-label={text} className="flex flex-wrap items-center gap-[8px] rounded-[6px] bg-mg-hover p-[6px_8px] text-mg-body">
       <span>{text}</span>
       <button disabled={busy} onClick={() => void run()} className="font-semibold hover:underline">
-        Confirmar
+        {t('app.prBar.confirm')}
       </button>
       <button disabled={busy} onClick={() => onDone(null)} className="hover:underline">
-        No
+        {t('app.prBar.no')}
       </button>
     </div>
   );
