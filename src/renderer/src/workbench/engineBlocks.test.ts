@@ -1,3 +1,4 @@
+import { createTranslator } from '@shared/i18n/translator';
 import { describe, expect, it } from 'vitest';
 import type { PermissionRequest, ToolResult, ToolUse, TurnUsage } from '@shared/events';
 import {
@@ -22,6 +23,8 @@ import {
   resolvePermissionBlock,
   pendingToolName,
   restartingText,
+  SUBAGENT_STATUS,
+  subagentStatusLabel,
   turnUsageText,
 } from './engineBlocks';
 import type { Block } from './types';
@@ -515,7 +518,7 @@ describe('subagentes y pensamiento (2.5)', () => {
 
     const next = applySubagentResult(blocks, { toolUseId: 'tu1', isError: false, output: 'Async agent launched successfully.', durationMs: 4, subagent });
 
-    expect(next[0]).toMatchObject({ status: 'en segundo plano', agentId: 'ab25', model: 'claude-haiku-4-5', elapsedMs: null });
+    expect(next[0]).toMatchObject({ status: SUBAGENT_STATUS.background, agentId: 'ab25', model: 'claude-haiku-4-5', elapsedMs: null });
     expect(isSubagentRunning(next[0] as Extract<Block, { kind: 'subagent' }>)).toBe(true);
   });
 
@@ -525,7 +528,7 @@ describe('subagentes y pensamiento (2.5)', () => {
 
     const next = applySubagentResult(blocks, { toolUseId: 'tu1', isError: false, output: '', durationMs: 8100, subagent });
 
-    expect(next[0]).toMatchObject({ status: 'completado', tokens: 1200, toolUses: 3, elapsedMs: 8000 });
+    expect(next[0]).toMatchObject({ status: SUBAGENT_STATUS.completed, tokens: 1200, toolUses: 3, elapsedMs: 8000 });
   });
 
   it('applySubagentResult_textoMedidoSinComillas_extraeElAgentId', () => {
@@ -534,7 +537,7 @@ describe('subagentes y pensamiento (2.5)', () => {
 
     const next = applySubagentResult(blocks, { toolUseId: 'tu1', isError: false, output: 'Done.\nagentId: af3b49b855c7f949e (internal ID - do not mention)', durationMs: null });
 
-    expect(next[0]).toMatchObject({ agentId: 'af3b49b855c7f949e', status: 'completado' });
+    expect(next[0]).toMatchObject({ agentId: 'af3b49b855c7f949e', status: SUBAGENT_STATUS.completed });
   });
 
   it('applySubagentUpdate_progreso_sigueEnMarchaConContadores', () => {
@@ -542,12 +545,12 @@ describe('subagentes y pensamiento (2.5)', () => {
 
     const next = applySubagentUpdate(blocks, { toolUseId: 'tu1', status: 'running', tokens: 19954, toolUses: 1, durationMs: 5228 });
 
-    expect(next[0]).toMatchObject({ status: 'en segundo plano', tokens: 19954, toolUses: 1, elapsedMs: null });
+    expect(next[0]).toMatchObject({ status: SUBAGENT_STATUS.background, tokens: 19954, toolUses: 1, elapsedMs: null });
   });
 
   it.each([
-    ['completed', 'completado'],
-    ['stopped', 'detenido'],
+    ['completed', SUBAGENT_STATUS.completed],
+    ['stopped', SUBAGENT_STATUS.stopped],
     ['failed', 'error'],
   ])('applySubagentUpdate_notificacion_%s_cierraComo_%s', (status, expected) => {
     const blocks = appendSubagentBlock([], task, 's1');
@@ -573,7 +576,7 @@ describe('subagentes y pensamiento (2.5)', () => {
       durationMs: null,
     });
 
-    expect(next[0]).toMatchObject({ agentId: 'agent-42', status: 'completado' });
+    expect(next[0]).toMatchObject({ agentId: 'agent-42', status: SUBAGENT_STATUS.completed });
   });
 
   it('applySubagentResult_conDuracion_laGuarda', () => {
@@ -685,5 +688,15 @@ describe('commandOutputLayout', () => {
 
   it('commandOutputLayout_columnasConEspacios_pre', () => {
     expect(commandOutputLayout('Skill      Tokens\ncaveman    1200')).toBe('pre');
+  });
+});
+
+describe('subagentStatusLabel', () => {
+  it('subagentStatusLabel_cadaEstado_textoCastellano', () => {
+    const translate = createTranslator('es');
+
+    const labels = Object.values(SUBAGENT_STATUS).map((status) => subagentStatusLabel(status, translate));
+
+    expect(labels).toEqual(['en segundo plano', 'completado', 'error', 'detenido']);
   });
 });

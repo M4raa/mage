@@ -9,6 +9,8 @@ import { completeArtifactPublication, parseArtifactDraft } from '@shared/artifac
 import { formatToolMeta, summarizeToolInput } from './toolSummary';
 import { codexChangeView } from './codexChanges';
 import { t } from '../i18n/uiLanguage';
+import type { MessageKey } from '@shared/i18n/messageKeys.generated';
+import type { Translate } from '@shared/i18n/translator';
 
 // Mapeo PURO del modelo de eventos comun (MageEvent) a los bloques/permiso de la UI. Sin React ni
 // zustand: solo funciones de datos -> datos (testeable en Vitest, env node). Los ids de bloque los
@@ -208,14 +210,27 @@ export function appendSubagentBlock(blocks: readonly Block[], tool: ToolUse, id:
   ];
 }
 
-// Estados de un bloque de subagente (ademas de null = lanzandose). Texto en castellano porque es lo que
-// se pinta en Actividad y en el panel.
+// Estados de un bloque de subagente (además de null = lanzándose). Son IDENTIFICADORES: se comparan con
+// ellos y se traducen al pintar con `subagentStatusLabel`.
 export const SUBAGENT_STATUS = {
-  background: 'en segundo plano',
-  completed: 'completado',
+  background: 'background',
+  completed: 'completed',
   error: 'error',
-  stopped: 'detenido',
+  stopped: 'stopped',
 } as const;
+
+export type SubagentStatus = (typeof SUBAGENT_STATUS)[keyof typeof SUBAGENT_STATUS];
+
+const SUBAGENT_STATUS_LABEL = {
+  background: 'chat.subagent.status.background',
+  completed: 'chat.subagent.status.completed',
+  error: 'chat.subagent.status.error',
+  stopped: 'chat.subagent.status.stopped',
+} as const satisfies Record<SubagentStatus, MessageKey>;
+
+export function subagentStatusLabel(status: SubagentStatus, translate: Translate = t): string {
+  return translate(SUBAGENT_STATUS_LABEL[status]);
+}
 
 type SubagentBlock = Extract<Block, { kind: 'subagent' }>;
 
@@ -276,7 +291,7 @@ export function withSubagentUpdate(block: SubagentBlock, update: SubagentUpdate)
 }
 
 // Medido: 'completed' y 'stopped' (lo mato un interrupt). 'failed' lo usa el CLI para las tareas MCP.
-function statusFromNotification(status: string): string {
+function statusFromNotification(status: string): SubagentStatus {
   if (status === 'completed') return SUBAGENT_STATUS.completed;
   if (status === 'stopped' || status === 'killed') return SUBAGENT_STATUS.stopped;
   return SUBAGENT_STATUS.error;

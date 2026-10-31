@@ -1,3 +1,4 @@
+import { SUBAGENT_STATUS, type SubagentStatus } from './engineBlocks';
 import { describe, expect, it } from 'vitest';
 import { activityStepLabel, activityTurns, chatRows, currentTurnSummary, isChatBlock, runningStepId, stickResetKey } from './chatVisibility';
 import type { Block } from './types';
@@ -35,7 +36,7 @@ const permission = (id: string, state: 'pending' | 'allowed'): Block => ({
   summary: '',
   state,
 });
-const subagent = (id: string, status: string | null = null): Block => ({
+const subagent = (id: string, status: SubagentStatus | null = null): Block => ({
   kind: 'subagent',
   id,
   toolUseId: `u-${id}`,
@@ -186,11 +187,11 @@ describe('runningStepId', () => {
 
   it('runningStepId_subagentePendienteOAsincrono_estaEnMarcha', () => {
     expect(runningStepId(turnOf(subagent('s1', null)), true)).toBe('s1');
-    expect(runningStepId(turnOf(subagent('s2', 'en segundo plano')), true)).toBe('s2');
+    expect(runningStepId(turnOf(subagent('s2', SUBAGENT_STATUS.background)), true)).toBe('s2');
   });
 
   it('runningStepId_subagenteTerminado_noCuenta', () => {
-    expect(runningStepId(turnOf(subagent('s', 'completado')), true)).toBeNull();
+    expect(runningStepId(turnOf(subagent('s', SUBAGENT_STATUS.completed)), true)).toBeNull();
   });
 
   it('runningStepId_variosEnMarcha_devuelveElUltimo', () => {

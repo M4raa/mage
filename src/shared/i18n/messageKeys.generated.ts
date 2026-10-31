@@ -510,6 +510,10 @@ export interface MessageValues {
   readonly "chat.subagent.noDescription": never;
   readonly "chat.subagent.readFailed": { readonly "error": string | number };
   readonly "chat.subagent.reloadTip": never;
+  readonly "chat.subagent.status.background": never;
+  readonly "chat.subagent.status.completed": never;
+  readonly "chat.subagent.status.error": never;
+  readonly "chat.subagent.status.stopped": never;
   readonly "chat.subagents.done": { readonly "count": number };
   readonly "chat.subagents.doneElapsed": { readonly "count": number; readonly "elapsed": string | number };
   readonly "chat.subagents.failed": { readonly "count": string | number };

@@ -6,6 +6,7 @@ import { usePaneTabId, usePaneTranscriptStore } from '../paneContext';
 import { useStickToBottom } from '../useStickToBottom';
 import { activityStepLabel, activityTurns, runningStepId, runsText, type ActivityTurn } from '../chatVisibility';
 import { formatElapsed } from '../thinkingStatus';
+import { subagentStatusLabel } from '../engineBlocks';
 import { Hint } from './TranscriptHint';
 import { Icon } from './Icon';
 import { ToolBody } from './ToolDetail';
@@ -286,7 +287,7 @@ function SubagentFacts({ block }: { readonly block: SubagentBlock }): React.JSX.
         facts={[
           [t('chat.activity.factType'), block.agentType ?? t('chat.activity.subagentFallback')],
           [t('chat.activity.factTask'), block.description ?? ''],
-          [t('chat.activity.factStatus'), block.status ?? t('chat.activity.statusRunning')],
+          [t('chat.activity.factStatus'), block.status === null ? t('chat.activity.statusRunning') : subagentStatusLabel(block.status, t)],
           [t('chat.activity.factDuration'), block.elapsedMs === null ? '' : formatElapsed(block.elapsedMs)],
         ]}
       />
