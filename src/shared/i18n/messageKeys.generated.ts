@@ -641,6 +641,7 @@ export interface MessageValues {
   readonly "errors.workbench.saveSettingsFailed": never;
   readonly "errors.workbench.saveWorkspaceFailed": never;
   readonly "errors.workbench.unknownError": { readonly "value": string | number };
+  readonly "events.detailOnly": { readonly "detail": string | number };
   readonly "history.background.done": never;
   readonly "history.background.moveBlocked": never;
   readonly "history.background.needsAction": never;

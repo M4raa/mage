@@ -639,6 +639,7 @@
   "errors.workbench.saveSettingsFailed": "No se pudo guardar la configuración",
   "errors.workbench.saveWorkspaceFailed": "No se pudo guardar el workspace",
   "errors.workbench.unknownError": "Error desconocido: {value}",
+  "events.detailOnly": "{detail}",
   "history.background.done": "pendiente de revisión",
   "history.background.moveBlocked": "Sigue trabajando en segundo plano: espera a que termine para abrirla en otra ventana.",
   "history.background.needsAction": "pendiente de acción",
