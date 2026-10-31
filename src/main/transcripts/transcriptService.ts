@@ -1,5 +1,6 @@
-import type { TranscriptBatch, TranscriptTailPosition } from '@shared/transcripts';
+import type { TranscriptBatch, TranscriptEntry, TranscriptParseError, TranscriptTailPosition } from '@shared/transcripts';
 import { TRANSCRIPT_TAIL_START } from '@shared/transcripts';
+import { computeActiveBranch, extendActiveBranch, type ActiveBranchState } from './activeBranch';
 import { readTranscriptBatches, type LineAdapter } from './transcriptReader';
 
 // Espera por defecto a que el fichero aparezca: el CLI vuelca el .jsonl al arrancar el primer turno,
@@ -7,6 +8,10 @@ import { readTranscriptBatches, type LineAdapter } from './transcriptReader';
 // Sondeo acotado (no cuelga indefinidamente) y cancelable por el AbortSignal (cierre de pestana).
 const DEFAULT_POLL_INTERVAL_MS = 400;
 const DEFAULT_MAX_WAIT_MS = 30_000;
+
+// Ficheros cuyo estado de rama se recuerda en memoria; al pasar, se olvida el mas antiguo y ese fichero
+// se relee entero la proxima vez.
+export const BRANCH_CACHE_LIMIT = 64;
 
 // Dependencias inyectables -> modulo testable sin tocar el FS real ni timers reales.
 export interface TranscriptDeps {
@@ -26,6 +31,31 @@ export interface TranscriptServiceOptions {
   readonly maxWaitMs?: number;
 }
 
+export interface BranchReadOptions {
+  // Uuid del mensaje objetivo de un rewind que aun no tiene mensaje nuevo (F4.4 lo guardara en el indice v2).
+  readonly pendingCutUuid?: string;
+  readonly onMissingParent: (uuid: string) => void;
+}
+
+interface CollectedRead {
+  readonly entries: readonly TranscriptEntry[];
+  readonly errors: readonly TranscriptParseError[];
+  readonly last: TranscriptBatch;
+  readonly reset: boolean;
+}
+
+function branchBatch(entries: readonly TranscriptEntry[], errors: readonly TranscriptParseError[], last: TranscriptBatch, reset: boolean): TranscriptBatch {
+  return {
+    entries,
+    errors,
+    isFinal: true,
+    totalLinesSoFar: last.totalLinesSoFar,
+    bytesReadSoFar: last.bytesReadSoFar,
+    rawLineNumber: last.rawLineNumber,
+    ...(reset ? { reset: true } : {}),
+  };
+}
+
 // Orquesta la apertura y lectura en streaming de una transcripcion persistida. No conoce IPC: el
 // llamador (registerIpcHandlers en main/index.ts) conecta el generator con webContents.send y con
 // la cancelacion del usuario.
@@ -33,6 +63,7 @@ export class TranscriptService {
   private readonly delay: (ms: number) => Promise<void>;
   private readonly pollIntervalMs: number;
   private readonly maxWaitMs: number;
+  private readonly branchCache = new Map<string, { readonly bytesRead: number; readonly state: ActiveBranchState }>();
 
   constructor(
     private readonly deps: TranscriptDeps,
@@ -132,6 +163,75 @@ export class TranscriptService {
       // No dejar el descriptor leyendo tras cancelar o devolver el generador antes de EOF.
       (stream as NodeJS.ReadableStream & { destroy?: () => void }).destroy?.();
     }
+  }
+
+  // Lectura de la conversacion PRINCIPAL de Claude por rama activa (A8+). La rama no se conoce hasta el
+  // final del fichero, asi que entrega UN solo lote final (isFinal) en vez de lotes progresivos. Main
+  // recuerda en memoria el estado de la rama por fichero (`branchCache`, acotada): si la lectura es
+  // incremental (el renderer pide solo lo nuevo desde donde quedo) y lo nuevo continua la rama, se
+  // anade. Si no (rewind entre dos lecturas, sin estado recordado o con un corte pendiente), se relee
+  // entero y el lote sale con `reset: true`, que el renderer aplica sustituyendo en vez de anadir.
+  async *openBranchStream(filePath: string, signal: AbortSignal, from: TranscriptTailPosition = TRANSCRIPT_TAIL_START, options: BranchReadOptions): AsyncGenerator<TranscriptBatch> {
+    if (signal.aborted) return;
+    const cached = this.branchCache.get(filePath);
+    const incremental = options.pendingCutUuid === undefined && from.bytesRead > 0 && cached !== undefined && cached.bytesRead === from.bytesRead;
+    if (incremental) {
+      const done = yield* this.incrementalBranchRead(filePath, signal, from, cached.state, options);
+      if (done) return;
+    }
+    yield* this.fullBranchRead(filePath, signal, from, options);
+  }
+
+  // true si ya entrego el lote (o se cancelo); false si hay que releer entero.
+  private async *incrementalBranchRead(filePath: string, signal: AbortSignal, from: TranscriptTailPosition, state: ActiveBranchState, options: BranchReadOptions): AsyncGenerator<TranscriptBatch, boolean> {
+    const read = await this.collectRead(filePath, signal, from);
+    if (read === null) return true;
+    if (read.reset) {
+      // openStream detecto un fichero truncado y ya releyo desde 0.
+      const result = computeActiveBranch(read.entries, options);
+      this.remember(filePath, read.last.bytesReadSoFar, result.state);
+      yield branchBatch(result.entries, read.errors, read.last, true);
+      return true;
+    }
+    const ext = extendActiveBranch(state, read.entries, options.onMissingParent);
+    if (ext.kind === 'rebuild') return false;
+    this.remember(filePath, read.last.bytesReadSoFar, ext.state);
+    yield branchBatch(ext.entries, read.errors, read.last, false);
+    return true;
+  }
+
+  private async *fullBranchRead(filePath: string, signal: AbortSignal, from: TranscriptTailPosition, options: BranchReadOptions): AsyncGenerator<TranscriptBatch> {
+    const read = await this.collectRead(filePath, signal, TRANSCRIPT_TAIL_START);
+    if (read === null) return;
+    const result = computeActiveBranch(read.entries, options);
+    this.remember(filePath, read.last.bytesReadSoFar, result.state);
+    yield branchBatch(result.entries, read.errors, read.last, from.bytesRead > 0);
+  }
+
+  // Acumula los lotes de openStream: un lote con `reset` sustituye lo acumulado, los demas anaden.
+  private async collectRead(filePath: string, signal: AbortSignal, from: TranscriptTailPosition): Promise<CollectedRead | null> {
+    let entries: readonly TranscriptEntry[] = [];
+    let errors: readonly TranscriptParseError[] = [];
+    let last: TranscriptBatch | undefined;
+    let reset = false;
+    for await (const batch of this.openStream(filePath, signal, from)) {
+      entries = batch.reset === true ? batch.entries : [...entries, ...batch.entries];
+      errors = batch.reset === true ? batch.errors : [...errors, ...batch.errors];
+      reset ||= batch.reset === true;
+      last = batch;
+    }
+    if (signal.aborted) return null;
+    if (last === undefined) throw new Error(`Lectura sin lote final: "${filePath}"`);
+    return { entries, errors, last, reset };
+  }
+
+  // Borra y reinserta la clave para que quede la ultima en el orden de insercion; expulsa la mas antigua.
+  private remember(filePath: string, bytesRead: number, state: ActiveBranchState): void {
+    this.branchCache.delete(filePath);
+    this.branchCache.set(filePath, { bytesRead, state });
+    if (this.branchCache.size <= BRANCH_CACHE_LIMIT) return;
+    const oldest = this.branchCache.keys().next().value;
+    if (oldest !== undefined) this.branchCache.delete(oldest);
   }
 
   // Sondea la existencia del fichero hasta que aparece, se aborta la senal, o se agota `maxWaitMs`.

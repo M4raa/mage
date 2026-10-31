@@ -3058,10 +3058,10 @@ function registerTranscriptIpc1(): void {
 // transcript del SUBAGENTE (drill-down, M2.2.3b). Los resolvers de Claude validan sus segmentos
 // (anti path-traversal) y su ruta cae bajo projects/; la de Codex sale de su cuenta registrada y de un id.
 // null: la conversación de Codex no existe en esa cuenta (ver `sendMissingConversation`).
-function resolveTranscriptSource(params: OpenTranscriptParams): { readonly filePath: string; readonly adapt?: LineAdapter } | null {
+function resolveTranscriptSource(params: OpenTranscriptParams): { readonly filePath: string; readonly adapt?: LineAdapter; readonly activeBranch: boolean } | null {
   if (params.provider === 'codex') {
     const rollout = codexRolloutPath(params);
-    return rollout === null ? null : { filePath: rollout, adapt: adaptCodexLine };
+    return rollout === null ? null : { filePath: rollout, adapt: adaptCodexLine, activeBranch: false };
   }
   const filePath =
     params.agentId !== undefined
@@ -3070,7 +3070,8 @@ function resolveTranscriptSource(params: OpenTranscriptParams): { readonly fileP
   if (!isUnderManagedProjects(filePath)) {
     throw new Error(`Ruta de transcripcion no permitida (debe caer bajo ~/.claude*/projects): ${filePath}`);
   }
-  return { filePath };
+  // Solo la conversacion principal de Claude se lee por rama activa (los subagentes son todo isSidechain; Codex trae sus turnos de otro sitio).
+  return { filePath, activeBranch: params.agentId === undefined };
 }
 
 // Abre en streaming y empuja lotes por TRANSCRIPT_BATCH_CHANNEL sin bloquear el invoke.
@@ -3080,13 +3081,16 @@ function streamTranscript(sender: Electron.WebContents, transcriptId: string, pa
     sendMissingConversation(sender, transcriptId, `No existe la conversacion de Codex ${params.sessionId}`);
     return;
   }
-  const { filePath, adapt } = source;
+  const { filePath, adapt, activeBranch } = source;
   const controller = new AbortController();
   openTranscriptControllers.set(transcriptId, controller);
 
   void (async () => {
     try {
-      for await (const batch of transcriptService.openStream(filePath, controller.signal, params.resumeFrom, adapt)) {
+      const batches = activeBranch
+        ? transcriptService.openBranchStream(filePath, controller.signal, params.resumeFrom, { onMissingParent: (uuid) => mainLog('warn', 'Transcripcion con un padre inexistente: la rama se corta ahi', { transcriptId, uuid }) })
+        : transcriptService.openStream(filePath, controller.signal, params.resumeFrom, adapt);
+      for await (const batch of batches) {
         if (sender.isDestroyed()) break;
         sender.send(TRANSCRIPT_BATCH_CHANNEL, { transcriptId, batch });
       }
