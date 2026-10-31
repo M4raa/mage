@@ -209,6 +209,12 @@ function findLeaf(nodes: ReadonlyMap<string, NodeEntry>, options: ActiveBranchOp
   return { leaf, limit: target.index };
 }
 
+// Un enlace lógico (parentUuid null, se sigue logicalParentUuid) solo puede apuntar hacia atrás. Medido en
+// transcripciones reales: un límite de compactación apuntaba a una entrada posterior que descendía de él (ciclo).
+function isForwardLogicalLink(entry: NodeEntry, parent: NodeEntry): boolean {
+  return entry.parentUuid === null && parent.index >= entry.index;
+}
+
 // Sube por parentUuid desde la hoja. Un padre ausente o no elegible corta con aviso (no lanza).
 function walkPath(
   leaf: NodeEntry,
@@ -226,7 +232,7 @@ function walkPath(
     const parent = parentOf(current);
     if (parent === null) break;
     const next = nodes.get(parent);
-    if (next === undefined || next.index >= limit) {
+    if (next === undefined || next.index >= limit || isForwardLogicalLink(current, next)) {
       onMissingParent(parent);
       break;
     }
@@ -261,6 +267,7 @@ function walkNewPath(state: ActiveBranchState, newNodes: ReadonlyMap<string, Nod
     const parent = parentOf(current);
     if (parent === null) return null;
     const next = newNodes.get(parent);
+    if (next !== undefined && isForwardLogicalLink(current, next)) return null;
     if (next === undefined) return attachesToBranch(state, parent) ? path : null;
     current = next;
   }

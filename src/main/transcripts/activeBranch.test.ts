@@ -38,6 +38,10 @@ function attachment(uuid: string, parent: string | null): Line {
   return { type: 'attachment', uuid, parentUuid: parent, isSidechain: false };
 }
 
+function compactBoundary(uuid: string, logicalParent: string): Line {
+  return { type: 'system', subtype: 'compact_boundary', uuid, parentUuid: null, logicalParentUuid: logicalParent, isSidechain: false };
+}
+
 function meta(type: string): Line {
   return { type };
 }
@@ -146,6 +150,33 @@ describe('computeActiveBranch', () => {
     expect(() => computeActiveBranch(entries, { onMissingParent: noop })).toThrow(/u1|a1/);
   });
 
+  it('computeActiveBranch_forwardLogicalParent_cutsWithWarning', () => {
+    const entries = entriesOf([compactBoundary('s1', 'at1'), attachment('at1', 's1'), user('u1', 'at1', 'hola'), assistant('a1', 'u1', 'm1', 'ok')]);
+    const onMissingParent = vi.fn();
+
+    const result = computeActiveBranch(entries, { onMissingParent });
+
+    expect(uuidsOf(result.entries)).toEqual(['s1', 'at1', 'u1', 'a1']);
+    expect(onMissingParent).toHaveBeenCalledTimes(1);
+    expect(onMissingParent).toHaveBeenCalledWith('at1');
+  });
+
+  it('computeActiveBranch_backwardLogicalParent_followsIt', () => {
+    const entries = entriesOf([
+      user('u0', null, 'antes'),
+      assistant('a0', 'u0', 'm0', 'ok'),
+      compactBoundary('s1', 'a0'),
+      user('u1', 's1', 'despues'),
+      assistant('a1', 'u1', 'm1', 'ok'),
+    ]);
+    const onMissingParent = vi.fn();
+
+    const result = computeActiveBranch(entries, { onMissingParent });
+
+    expect(uuidsOf(result.entries)).toEqual(['u0', 'a0', 's1', 'u1', 'a1']);
+    expect(onMissingParent).not.toHaveBeenCalled();
+  });
+
   it('computeActiveBranch_empty_returnsEmptyWithoutLeaf', () => {
     const result = computeActiveBranch([], { onMissingParent: noop });
 
@@ -202,6 +233,15 @@ describe('extendActiveBranch', () => {
     const state = computeActiveBranch(first, { onMissingParent: noop }).state;
 
     const result = extendActiveBranch(state, entriesOf([user('u3', 'a1', 'rewind')], 4), noop);
+
+    expect(result.kind).toBe('rebuild');
+  });
+
+  it('extendActiveBranch_forwardLogicalParentInNew_requestsRebuild', () => {
+    const state = computeActiveBranch(entriesOf([user('u1', null, 'hola'), assistant('a1', 'u1', 'm1', 'ok')]), { onMissingParent: noop }).state;
+    const next = entriesOf([compactBoundary('s2', 'at2'), attachment('at2', 's2'), user('u2', 'at2', 'sigue')], 2);
+
+    const result = extendActiveBranch(state, next, noop);
 
     expect(result.kind).toBe('rebuild');
   });
