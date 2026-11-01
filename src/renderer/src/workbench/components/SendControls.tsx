@@ -72,9 +72,16 @@ function SplitSend(props: SendControlsProps): React.JSX.Element {
     setOpen(false);
     props.onSendNow();
   };
+  const closeOnEscape = (e: React.KeyboardEvent): void => {
+    if (e.key !== 'Escape' || !open) return;
+    // El Escape que cierra el menú es SUYO: sin esto llega al atajo global (window) e interrumpe el turno.
+    e.stopPropagation();
+    e.preventDefault();
+    setOpen(false);
+  };
   const menuTip = t('prompt.sendMenu.ariaLabel');
   return (
-    <div className="relative flex shrink-0 self-center" data-send-split="true" onKeyDown={(e) => e.key === 'Escape' && open && setOpen(false)}>
+    <div className="relative flex shrink-0 self-center" data-send-split="true" onKeyDown={closeOnEscape}>
       <button
         data-send-queue="true"
         onClick={props.onSend}
