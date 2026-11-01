@@ -7,6 +7,9 @@ import type { Translate } from '@shared/i18n/translator';
 import type { SessionLogFn } from '../engine/agentSession';
 import type { SequencedSessionEvent } from '../coordination/sessionCoordinator';
 import { MAX_LINE_BYTES, NdjsonFramer } from './ndjsonFramer';
+import { TrustRequiredError, UnknownAccountError, UnknownConversationError, UnsupportedMethodError } from './hostErrors';
+import type { HostControl } from './hostControl';
+import type { HostMode } from './hostServer';
 import {
   CHALLENGE_METHOD,
   CHALLENGE_PARAMS_SCHEMA,
@@ -22,8 +25,10 @@ import {
   REQUEST_ENVELOPE_SCHEMA,
   resultResponse,
   withLegacyText,
+  type HostCreateRequest,
   type HostErrorBody,
   type HostMethod,
+  type HostOptionKey,
   type RequestEnvelope,
   type RequestId,
 } from './hostProtocol';
@@ -52,6 +57,7 @@ export interface HostSessions {
   subscribe(sessionId: string, listener: { readonly sink: (event: SequencedSessionEvent) => void; readonly onClosed: () => void }): SessionSubscription;
   send(params: SendMessageParams): SendReceipt;
   interrupt(sessionId: string): readonly QueuedMessage[];
+  removeQueued(sessionId: string, messageId: string): QueuedMessage | null;
   answerPermission(sessionId: string, requestId: string, decision: PermissionDecision): AnswerReceipt;
   answerElicitation(answer: ElicitationAnswer): AnswerReceipt;
 }
@@ -67,6 +73,8 @@ export interface HostConnectionDeps {
   readonly maxLineBytes?: number;
   // Idioma de main: con él se traduce el campo de siempre de los eventos con `localized` (clientes 1.0).
   readonly translate: Translate;
+  readonly mode: HostMode;
+  readonly control: HostControl;
 }
 
 // Una conexión que no se identifica en este tiempo se cierra: no puede retener un socket sin dar el token.
@@ -221,7 +229,37 @@ export class HostConnection {
         return sessions.answerPermission(answer.sessionId, answer.requestId, answer.decision);
       }
       case 'session.answerElicitation': return sessions.answerElicitation(params as ElicitationAnswer);
+      default: return this.runV12(method, params);
     }
+  }
+
+  // Métodos del host 1.2 (F7.2): los que no pasan solo por el coordinador.
+  private runV12(method: HostMethod, params: unknown): unknown {
+    const { sessions, control } = this.deps;
+    switch (method) {
+      case 'host.info': return { protocol: HOST_PROTOCOL, mode: this.deps.mode, capabilities: HOST_CAPABILITIES };
+      case 'projects.list': return { projects: control.listProjects() };
+      case 'accounts.list': return { accounts: control.listAccounts() };
+      case 'session.create': return control.createSession(params as HostCreateRequest);
+      case 'session.resume': return this.resume((params as { conversationId: string }).conversationId);
+      case 'session.setOption': {
+        const option = params as { sessionId: string; key: HostOptionKey; value: string };
+        control.setOption(option.sessionId, option.key, option.value);
+        return { applied: true };
+      }
+      case 'session.cancelQueued': {
+        const target = params as { sessionId: string; queuedId: string };
+        return { removed: sessions.removeQueued(target.sessionId, target.queuedId) };
+      }
+      default: throw new UnsupportedMethodError(method);
+    }
+  }
+
+  // Solo conversaciones con sesión VIVA en este host (reanudar una cerrada no entra todavía).
+  private resume(conversationId: string): ConversationSnapshot {
+    const live = this.deps.sessions.listSessions().find((snapshot) => snapshot.conversationId === conversationId);
+    if (live === undefined) throw new UnknownConversationError(conversationId);
+    return live;
   }
 
   // La instantánea y los eventos siguientes van juntos: todo lo posterior a `snapshot.lastSeq` llega como
@@ -288,10 +326,20 @@ function describeIssues(issues: readonly { readonly path: readonly (string | num
   return issues.map((issue) => `${issue.path.join('.') || '(raíz)'}: ${issue.message}`).join('; ');
 }
 
+// Errores propios del host 1.2 y su código JSON-RPC.
+const OWN_ERROR_CODES: readonly (readonly [abstract new (...args: never[]) => Error, number])[] = [
+  [TrustRequiredError, HostErrorCode.TrustRequired],
+  [UnknownAccountError, HostErrorCode.UnknownAccount],
+  [UnknownConversationError, HostErrorCode.UnknownConversation],
+  [UnsupportedMethodError, HostErrorCode.Unsupported],
+];
+
 // Un fallo del coordinador: sesión inexistente es un error propio; el resto es interno (el mensaje llega al
 // cliente, que es de confianza: ya presentó el token).
 function toErrorBody(err: unknown): HostErrorBody {
   const message = err instanceof Error ? err.message : String(err);
+  const own = OWN_ERROR_CODES.find(([errorClass]) => err instanceof errorClass);
+  if (own !== undefined) return { code: own[1], message };
   if (message.startsWith('Sesion inexistente')) return { code: HostErrorCode.UnknownSession, message };
   return { code: HostErrorCode.Internal, message };
 }

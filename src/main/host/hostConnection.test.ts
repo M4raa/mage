@@ -4,6 +4,8 @@ import { localized } from '@shared/i18n/localizedText';
 import { createTranslator } from '@shared/i18n/translator';
 import type { SequencedSessionEvent } from '../coordination/sessionCoordinator';
 import { HELLO_DEADLINE_MS, HostConnection, MAX_BUFFERED_BYTES, type HostSessions, type HostTransport } from './hostConnection';
+import type { HostControl } from './hostControl';
+import { TrustRequiredError, UnknownAccountError } from './hostErrors';
 import { HOST_PROTOCOL, HostErrorCode } from './hostProtocol';
 import { challengeProof } from './hostToken';
 
@@ -12,7 +14,7 @@ const NONCE = '0'.repeat(64);
 const SNAPSHOT: ConversationSnapshot = { sessionId: 's1', provider: 'claude', conversationId: 'c1', nativeRef: null, lastSeq: 7, state: 'idle', queue: [], pending: [], background: false };
 const EVENT: SequencedSessionEvent = { sessionId: 's1', conversationId: 'c1', seq: 8, at: 1, event: { kind: 'result', result: { isError: false, subtype: 'success', numTurns: 1 } } };
 
-function harness(options: { sessions?: Partial<HostSessions>; maxLineBytes?: number } = {}) {
+function harness(options: { sessions?: Partial<HostSessions>; control?: Partial<HostControl>; maxLineBytes?: number } = {}) {
   const written: string[] = [];
   let buffered = 0;
   let ended = false;
@@ -25,15 +27,23 @@ function harness(options: { sessions?: Partial<HostSessions>; maxLineBytes?: num
     subscribe: vi.fn((_id, listener) => { sinks.push(listener); return { snapshot: SNAPSHOT, unsubscribe }; }),
     send: vi.fn(() => ({ status: 'accepted' as const, commandId: 'k' })),
     interrupt: vi.fn(() => []),
+    removeQueued: vi.fn(() => null),
     answerPermission: vi.fn(() => ({ status: 'accepted' as const })),
     answerElicitation: vi.fn(() => ({ status: 'accepted' as const })),
     ...options.sessions,
+  };
+  const control: HostControl = {
+    createSession: vi.fn(() => ({ sessionId: 's9', conversationId: null })),
+    setOption: vi.fn(),
+    listProjects: vi.fn(() => []),
+    listAccounts: vi.fn(() => []),
+    ...options.control,
   };
   const timers: { fn: () => void; ms: number; cancelled: boolean }[] = [];
   const log = vi.fn();
   let ids = 0;
   const connection = new HostConnection(transport, {
-    sessions, token: TOKEN, hostVersion: '0.1.3', log, newId: () => `sub-${++ids}`, translate: createTranslator('es'),
+    sessions, control, mode: 'gui', token: TOKEN, hostVersion: '0.1.3', log, newId: () => `sub-${++ids}`, translate: createTranslator('es'),
     setTimer: (fn, ms) => { const timer = { fn, ms, cancelled: false }; timers.push(timer); return () => { timer.cancelled = true; }; },
     ...(options.maxLineBytes === undefined ? {} : { maxLineBytes: options.maxLineBytes }),
   });
@@ -41,7 +51,7 @@ function harness(options: { sessions?: Partial<HostSessions>; maxLineBytes?: num
   const lines = () => written.join('').split('\n').filter((line) => line.length > 0).map((line) => JSON.parse(line) as Record<string, any>);
   const hello = (overrides: Record<string, unknown> = {}) =>
     send({ jsonrpc: '2.0', id: 1, method: 'hello', params: { protocol: HOST_PROTOCOL, client: { kind: 'terminal', version: '1' }, token: TOKEN, ...overrides } });
-  return { connection, sessions, send, lines, written, hello, sinks, unsubscribe, timers, log, isEnded: () => ended, setBuffered: (n: number) => { buffered = n; } };
+  return { connection, sessions, control, send, lines, written, hello, sinks, unsubscribe, timers, log, isEnded: () => ended, setBuffered: (n: number) => { buffered = n; } };
 }
 
 describe('HostConnection — autenticación', () => {
@@ -443,5 +453,139 @@ describe('HostConnection — reto (F7.1)', () => {
     h.hello();
 
     expect(h.lines()[0]!.result.protocol).toBe(HOST_PROTOCOL);
+  });
+});
+
+describe('HostConnection — métodos 1.2', () => {
+  const CREATE = { commandId: '6f1c2b3a-4d5e-4f60-8a7b-9c0d1e2f3a4b', provider: 'claude', accountId: '/h/.claude', cwd: '/x', trust: { acknowledged: false } };
+  const call = (h: ReturnType<typeof harness>, method: string, params?: unknown) => {
+    h.send({ jsonrpc: '2.0', id: 2, method, ...(params === undefined ? {} : { params }) });
+    return h.lines()[1]!;
+  };
+
+  it('hostInfo_devuelveProtocoloModoYCapacidades', () => {
+    const h = harness();
+    h.hello();
+
+    const reply = call(h, 'host.info');
+
+    expect(reply.result).toMatchObject({ protocol: HOST_PROTOCOL, mode: 'gui' });
+    expect(reply.result.capabilities).toContain('session.create');
+    expect(reply.result.capabilities).not.toContain('session.rewind');
+  });
+
+  it('sessionCreate_llegaAlControlYDevuelveSuResultado', () => {
+    const h = harness();
+    h.hello();
+
+    const reply = call(h, 'session.create', CREATE);
+
+    expect(h.control.createSession).toHaveBeenCalledWith(CREATE);
+    expect(reply.result).toEqual({ sessionId: 's9', conversationId: null });
+  });
+
+  it('sessionCreate_trustRequired_codigoPropioYSigueAbierta', () => {
+    const h = harness({ control: { createSession: vi.fn(() => { throw new TrustRequiredError('/x'); }) } });
+    h.hello();
+
+    const reply = call(h, 'session.create', CREATE);
+
+    expect(reply.error.code).toBe(HostErrorCode.TrustRequired);
+    expect(reply.error.message).toContain('/x');
+    expect(h.isEnded()).toBe(false);
+  });
+
+  it('sessionCreate_unknownAccount_codigoPropio', () => {
+    const h = harness({ control: { createSession: vi.fn(() => { throw new UnknownAccountError('/h/.claude', 'claude'); }) } });
+    h.hello();
+
+    const reply = call(h, 'session.create', CREATE);
+
+    expect(reply.error.code).toBe(HostErrorCode.UnknownAccount);
+  });
+
+  it('sessionCreate_parametrosInvalidos_invalidParamsSinLlamarAlControl', () => {
+    const h = harness();
+    h.hello();
+
+    const reply = call(h, 'session.create', { ...CREATE, provider: 'agy' });
+
+    expect(reply.error.code).toBe(HostErrorCode.InvalidParams);
+    expect(h.control.createSession).not.toHaveBeenCalled();
+  });
+
+  it('sessionResume_conversacionViva_devuelveSuInstantanea', () => {
+    const h = harness();
+    h.hello();
+
+    const reply = call(h, 'session.resume', { conversationId: 'c1' });
+
+    expect(reply.result).toEqual(SNAPSHOT);
+  });
+
+  it('sessionResume_conversacionNoAbierta_unknownConversation', () => {
+    const h = harness();
+    h.hello();
+
+    const reply = call(h, 'session.resume', { conversationId: 'otra' });
+
+    expect(reply.error.code).toBe(HostErrorCode.UnknownConversation);
+    expect(h.isEnded()).toBe(false);
+  });
+
+  it('sessionSetOption_llegaAlControl', () => {
+    const h = harness();
+    h.hello();
+
+    const reply = call(h, 'session.setOption', { sessionId: 's1', key: 'model', value: 'opus' });
+
+    expect(h.control.setOption).toHaveBeenCalledWith('s1', 'model', 'opus');
+    expect(reply.result).toEqual({ applied: true });
+  });
+
+  it('sessionCancelQueued_llegaARemoveQueued', () => {
+    const h = harness();
+    h.hello();
+
+    const reply = call(h, 'session.cancelQueued', { sessionId: 's1', queuedId: 'q1' });
+
+    expect(h.sessions.removeQueued).toHaveBeenCalledWith('s1', 'q1');
+    expect(reply.result).toEqual({ removed: null });
+  });
+
+  it.each([
+    ['session.rewind', { sessionId: 's1', targetMessageId: 'm1', scope: 'both' }],
+    ['session.updateQueued', { sessionId: 's1', queuedId: 'q1', text: 'nuevo' }],
+  ])('sessionRewindYUpdateQueued_unsupportedYSigueAbierta_%s', (method, params) => {
+    const h = harness();
+    h.hello();
+
+    const reply = call(h, method, params);
+
+    expect(reply.error.code).toBe(HostErrorCode.Unsupported);
+    expect(h.isEnded()).toBe(false);
+  });
+
+  it('projectsYAccountsList_devuelvenLoDelControl', () => {
+    const project = { id: 'p1', name: 'P', cwd: '/x' };
+    const account = { id: '/h/.claude', name: '.claude', provider: 'claude' as const, billing: 'subscription' as const };
+    const h = harness({ control: { listProjects: vi.fn(() => [project]), listAccounts: vi.fn(() => [account]) } });
+    h.hello();
+
+    const projects = call(h, 'projects.list');
+    h.send({ jsonrpc: '2.0', id: 3, method: 'accounts.list' });
+
+    expect(projects.result).toEqual({ projects: [project] });
+    expect(h.lines()[2]!.result).toEqual({ accounts: [account] });
+  });
+
+  it('sinHello_metodos12_notAuthenticated', () => {
+    const h = harness();
+
+    h.send({ jsonrpc: '2.0', id: 2, method: 'session.create', params: CREATE });
+
+    expect(h.lines()[0]!.error.code).toBe(HostErrorCode.NotAuthenticated);
+    expect(h.isEnded()).toBe(true);
+    expect(h.control.createSession).not.toHaveBeenCalled();
   });
 });

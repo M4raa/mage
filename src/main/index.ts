@@ -206,6 +206,7 @@ import { ConversationIndexStore } from './state/conversationIndexStore';
 import { registerSessionIpc } from './coordination/sessionIpc';
 import { canControlSession } from './coordination/sessionAccess';
 import { readHostMode, startLocalHost } from './host/hostBootstrap';
+import { createHostControl } from './host/hostControl';
 import type { HostMode, HostServerHandle } from './host/hostServer';
 import { HEADLESS_GUI_UNAVAILABLE, isHeadlessHost, lockFailureMessage, startupWarnings } from './startupMode';
 import { registerConversationPrefsIpc } from './coordination/conversationPrefsIpc';
@@ -2518,7 +2519,7 @@ function stopSessionsWhenDestroyed(sender: Electron.WebContents): void {
 // Registro de handlers IPC: puentean el renderer con el SessionManager. Los eventos del motor se
 // empujan al webContents que creo la sesion (guardando contra un renderer ya destruido).
 function relaySessionEvent(payload: { readonly sessionId: string; readonly event: MageEvent },
-  { sender, configDir, accountDir }: { sender: Electron.WebContents; configDir: string; accountDir: string }): void {
+  { sender, configDir, accountDir }: { sender: Electron.WebContents | null; configDir: string; accountDir: string }): void {
       // Cache del catalogo "/" (2.2): la sesion es la UNICA fuente del catalogo real, y una
       // conversacion recien abierta no tiene sesion. Se escribe con el config dir EFECTIVO (para una
       // conversacion privada, el perfil `mage-private`), nunca con el de la cuenta: si no, la cache de
@@ -2550,11 +2551,11 @@ function relaySessionEvent(payload: { readonly sessionId: string; readonly event
         try { apiUsageStore.record(accountDir, payload.event.result); }
         catch (err) { mainLog('warn', `No se pudo guardar el uso API de ${accountDir}: ${err instanceof Error ? err.message : String(err)}`); }
       }
-      if (!sender.isDestroyed()) sender.send(EVENT_CHANNEL, payload);
+      if (sender !== null && !sender.isDestroyed()) sender.send(EVENT_CHANNEL, payload);
     }
 
-function createSessionFromIpc(event: Electron.IpcMainInvokeEvent, params: CreateSessionParams): CreateSessionResult {
-    const sender = event.sender;
+// Sin ventana (sender null) la crea el host local (F7.2): nadie es su dueño, no muere con ninguna ventana y sus eventos no van a ningún renderer; las guardas son las mismas.
+function launchSession(params: CreateSessionParams, sender: Electron.WebContents | null): CreateSessionResult {
     // FRONTERA DE CONFIANZA. Lanzar el CLI en una carpeta ejecuta lo que esa carpeta traiga (hooks,
     // `.claude/settings.json`, servidores MCP del repo), asi que abrir un repositorio ajeno es ejecutar
     // codigo ajeno. La guarda va AQUI y no en el selector de carpeta porque este es el unico punto por
@@ -2578,10 +2579,14 @@ function createSessionFromIpc(event: Electron.IpcMainInvokeEvent, params: Create
     const projectInstructions = [project?.instructions.trim().slice(0, 8000), params.contextImport?.slice(0, IMPORTED_CONTEXT_LIMITS.max)]
       .filter((text): text is string => text !== undefined && text.length > 0).join('\n\n') || undefined;
     const effectiveParams = { ...params, accountDir: configDir, projectInstructions };
-    const sessionId = sessionCoordinator.create(effectiveParams, (payload) => relaySessionEvent(payload, { sender, configDir, accountDir: params.accountDir }), sender.id);
-    stopSessionsWhenDestroyed(sender);
+    const sessionId = sessionCoordinator.create(effectiveParams, (payload) => relaySessionEvent(payload, { sender, configDir, accountDir: params.accountDir }), sender?.id);
+    if (sender !== null) stopSessionsWhenDestroyed(sender);
     return { sessionId, configDir, ...(recreated ? { workspaceWarning: localized('events.workspace.scratchRecreatedKept', { path: params.cwd }) } : {}) };
   }
+
+function createSessionFromIpc(event: Electron.IpcMainInvokeEvent, params: CreateSessionParams): CreateSessionResult {
+  return launchSession(params, event.sender);
+}
 
 function registerIpcHandlers(): void {
   registerConversationLockIpc(ipcMain, getConversationLocks);
@@ -3682,6 +3687,15 @@ function startHost(mode: HostMode): Promise<void> {
     fs: { mkdirSync, chmodSync, statSync, writeFileSync, rmSync },
     getuid: process.getuid?.bind(process),
     sessions: sessionCoordinator,
+    control: createHostControl({
+      listAccounts: listAllAccounts,
+      listProjects: () => getSettingsStore().load().chatProjects,
+      defaultModels: () => getSettingsStore().load().defaultModelByProvider,
+      isTrusted: isFolderTrusted,
+      launch: (params) => launchSession(params, null).sessionId,
+      conversationIdOf: (sessionId) => sessionCoordinator.conversationIdOf(sessionId),
+      options: sessionManager,
+    }),
     hostVersion: app.getVersion(),
     log: mainLog,
     newId: randomUUID,

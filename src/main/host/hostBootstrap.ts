@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import type { Translate } from '@shared/i18n/translator';
 import type { SessionLogFn } from '../engine/agentSession';
 import type { HostSessions } from './hostConnection';
+import type { HostControl } from './hostControl';
 import { endpointFilePath, modeFilePath, resolveHostEndpoint, tokenFilePath, type HostEndpointDeps } from './hostEndpoint';
 import { startHostServer, type HostFs, type HostMode, type HostServerHandle } from './hostServer';
 import { createHostToken } from './hostToken';
@@ -17,6 +18,7 @@ export interface HostBootstrapDeps {
   readonly fs: HostFs;
   readonly getuid: (() => number) | undefined;
   readonly sessions: HostSessions;
+  readonly control: HostControl;
   readonly hostVersion: string;
   readonly log: SessionLogFn;
   readonly newId: () => string;
@@ -40,7 +42,7 @@ export async function startLocalHost(deps: HostBootstrapDeps): Promise<HostServe
     token: createHostToken({ randomBytes: deps.randomBytes ?? randomBytes }),
     fs: deps.fs,
     getuid: deps.getuid,
-    connection: { sessions: deps.sessions, hostVersion: deps.hostVersion, log: deps.log, newId: deps.newId, setTimer: deps.setTimer, translate: deps.translate },
+    connection: { sessions: deps.sessions, hostVersion: deps.hostVersion, log: deps.log, newId: deps.newId, setTimer: deps.setTimer, translate: deps.translate, mode: deps.mode, control: deps.control },
   });
   deps.log('info', 'Host local escuchando', { kind: endpoint.kind, mode: deps.mode });
   return handle;
