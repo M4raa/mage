@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MageApi } from '@shared/ipc';
 import type { ConversationSummary } from '@shared/conversations';
-import { foreignText, localized, type LocalizedText } from '@shared/i18n/localizedText';
+import { foreignText, localized, UserFacingError, type LocalizedText } from '@shared/i18n/localizedText';
 import { createWorkbenchStore, type ConversationFolderChoice } from './workbenchStore';
 import { findLeafPath, singleLeaf } from './splitLayout';
 import { useNotificationStore } from './notificationStore';
@@ -225,6 +225,31 @@ describe('closeTab', () => {
     resolverStop?.();
     await cierre;
     expect(cerrado).toBe(true);
+  });
+
+  it('closeTab_mainDiceSesionInexistente_noAvisaPorqueEsUnaAusenciaIdempotente', async () => {
+    // F3.3b-2: el error ya es un UserFacingError y se pinta en el idioma de la interfaz; se reconoce por su castellano base, no por lo pintado.
+    const missing = new UserFacingError(localized('errors.engine.sessionMissing', { sessionId: 's-a' }));
+    const closeSession = vi.fn().mockRejectedValue(new Error(`Error invoking remote method 'session:close': Error: ${missing.message}`));
+    const store = createWorkbenchStore(fakeMage({ closeSession, saveWorkspace: vi.fn().mockResolvedValue(undefined), listConversations: vi.fn().mockResolvedValue([]) }));
+    store.setState({ tabs: [tab('a')], activeTabId: 'a', splitLayout: singleLeaf('a'), sessionIdByChat: { a: 's-a' } });
+    const before = useNotificationStore.getState().toasts.length;
+
+    await store.getState().closeTab('a');
+
+    expect(store.getState().tabs).toEqual([]);
+    expect(useNotificationStore.getState().toasts).toHaveLength(before);
+  });
+
+  it('closeTab_mainFallaPorOtraCausa_avisa', async () => {
+    const closeSession = vi.fn().mockRejectedValue(new Error('el CLI no responde'));
+    const store = createWorkbenchStore(fakeMage({ closeSession, saveWorkspace: vi.fn().mockResolvedValue(undefined), listConversations: vi.fn().mockResolvedValue([]) }));
+    store.setState({ tabs: [tab('a')], activeTabId: 'a', splitLayout: singleLeaf('a'), sessionIdByChat: { a: 's-a' } });
+    const before = useNotificationStore.getState().toasts.length;
+
+    await store.getState().closeTab('a');
+
+    expect(useNotificationStore.getState().toasts).toHaveLength(before + 1);
   });
 
   it('closeTab_conTrabajoEnVuelo_noParaElCliYLaDejaEnSegundoPlano', async () => {

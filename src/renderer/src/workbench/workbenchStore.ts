@@ -953,7 +953,9 @@ async function closeSessionInMain(mage: MageClient, sessionId: string): Promise<
   try {
     return (await mage.closeSession(sessionId)).background;
   } catch (err) {
-    if (!describeError(err).includes(`Sesion inexistente: ${sessionId}`)) reportActionError(t('errors.workbench.closeSessionFailed'), err, 'chat');
+    // Se mira el `message` crudo, que lleva el castellano base antes de la marca (no el texto pintado, que cambia con el idioma).
+    const raw = err instanceof Error ? err.message : String(err);
+    if (!raw.includes(`Sesion inexistente: ${sessionId}`)) reportActionError(t('errors.workbench.closeSessionFailed'), err, 'chat');
     return false;
   }
 }

@@ -1,6 +1,6 @@
 import type { CreateSessionParams, SendMessageParams, SessionEventPayload } from '@shared/ipc';
 import type { MageEvent, PermissionDecision, PermissionRequest } from '@shared/events';
-import { foreignText, localizedFromError, UserFacingError } from '@shared/i18n/localizedText';
+import { foreignText, localized, localizedFromError, UserFacingError } from '@shared/i18n/localizedText';
 import { isUuid } from '@shared/sessionInput';
 import type { ElicitationAnswer } from '@shared/elicitation';
 import type { AnswerReceipt, CloseReceipt, ConversationId, ConversationSnapshot, CoordinatedState, MessageDelivery, NativeSessionRef, PendingRequest, QueuedMessage, SendReceipt } from '@shared/coordination';
@@ -550,7 +550,7 @@ export class SessionCoordinator {
 
   private require(sessionId: string): Tracked {
     const tracked = this.tracked.get(sessionId);
-    if (tracked === undefined) throw new Error(`Sesion inexistente: ${sessionId}`);
+    if (tracked === undefined) throw new UserFacingError(localized('errors.engine.sessionMissing', { sessionId }));
     return tracked;
   }
 }

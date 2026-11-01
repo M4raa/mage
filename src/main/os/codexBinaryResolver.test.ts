@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { codexCommandName, codexSpawnCommand, findCodexBinary, type CodexResolverDeps } from './codexBinaryResolver';
+import { UserFacingError } from '@shared/i18n/localizedText';
+import { codexCommandName, codexSpawnCommand, findCodexBinary, resolveCodexBinary, type CodexResolverDeps } from './codexBinaryResolver';
 
 // Mismo contrato que los resolutores de Claude y `agy`: override -> candidato por SO -> PATH -> null.
 // El `null` importa tanto como el hallazgo: es lo que decide que Proveedores NO liste Codex.
@@ -22,6 +23,17 @@ describe('codexCommandName', () => {
   it('posix_devuelveElNombreDesnudo', () => {
     expect(codexCommandName('linux')).toBe('codex');
     expect(codexCommandName('darwin')).toBe('codex');
+  });
+});
+
+describe('resolveCodexBinary', () => {
+  it('resolveCodexBinary_noEstaInstalado_lanzaLaClaveConElNombreDelEjecutable', () => {
+    expect(() => resolveCodexBinary(WIN)).toThrow(UserFacingError);
+    try {
+      resolveCodexBinary(WIN);
+    } catch (err) {
+      expect((err as UserFacingError).localized).toEqual({ key: 'errors.os.codexNotFound', values: { command: 'codex.exe' } });
+    }
   });
 });
 

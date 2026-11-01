@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs';
 import { homedir, platform } from 'node:os';
 import { win32 } from 'node:path';
+import { localized, UserFacingError } from '@shared/i18n/localizedText';
 import type { LogFn } from '../debug/logBus';
 import { firstExistingPath } from './agentBinaryResolver';
 import { isCommandOnPath } from './commandOnPath';
@@ -49,10 +50,7 @@ export function findCodexBinary(deps: CodexResolverDeps = defaultCodexDeps()): s
 export function resolveCodexBinary(deps: CodexResolverDeps = defaultCodexDeps()): string {
   const found = findCodexBinary(deps);
   if (found !== null) return found;
-  throw new Error(
-    `No se encontro el CLI de Codex (${codexCommandName(deps.platform)}) ni en las rutas de instalacion ni en el PATH. ` +
-      'Instalalo, o fija MAGE_CODEX_BIN con su ruta.',
-  );
+  throw new UserFacingError(localized('errors.os.codexNotFound', { command: codexCommandName(deps.platform) }));
 }
 
 // Cómo lanzar `codex <args>`: el comando, sus argumentos y lo que hay que AÑADIR al entorno ya saneado.

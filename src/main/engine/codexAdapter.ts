@@ -1,6 +1,6 @@
 import type { ImageAttachment } from '@shared/ipc';
 import type { MageEvent, PermissionDecision } from '@shared/events';
-import { localized } from '@shared/i18n/localizedText';
+import { localized, UserFacingError } from '@shared/i18n/localizedText';
 import { parseElicitationRequest, validateElicitationAnswer, type ElicitationAnswer, type ElicitationRequest } from '@shared/elicitation';
 import { parseCodexPermissionPreset } from '@shared/codexPermissions';
 import { resolveCodexBinary, type CodexSpawnCommand } from '../os/codexBinaryResolver';
@@ -195,14 +195,14 @@ export class CodexAdapter implements ProviderAdapter {
 
   encodePermissionResponse(ref: PermissionRef, decision: PermissionDecision): unknown {
     const pending = this.approvals.get(ref.requestId);
-    if (pending === undefined) throw new Error(`Aprobacion de codex desconocida o ya resuelta: ${ref.requestId}`);
+    if (pending === undefined) throw new UserFacingError(localized('errors.engine.codexApprovalUnknown', { requestId: ref.requestId }));
     this.approvals.delete(ref.requestId);
     return { jsonrpc: '2.0', id: pending.rawId, result: approvalResult(pending.method, pending.params, decision.behavior === 'allow') };
   }
 
   encodeElicitationResponse(answer: ElicitationAnswer): unknown {
     const pending = this.elicitations.get(answer.requestId);
-    if (pending === undefined) throw new Error(`Elicitation desconocida o resuelta: ${answer.requestId}`);
+    if (pending === undefined) throw new UserFacingError(localized('errors.engine.elicitationUnknown', { requestId: answer.requestId }));
     if (!validateElicitationAnswer(pending.request, answer)) throw new Error('Respuesta de elicitation inválida');
     this.elicitations.delete(answer.requestId);
     return { jsonrpc: '2.0', id: pending.rawId, result: { action: answer.action,

@@ -231,6 +231,15 @@ describe('SessionCoordinator — secuencia e identidades (F2.1)', () => {
   it('snapshot_sesionDesconocida_lanzaConElId', () => {
     expect(() => harness().coordinator.snapshot('nadie')).toThrow('Sesion inexistente: nadie');
   });
+
+  it('snapshot_sesionDesconocida_lanzaUnErrorDeCaraAlUsuarioConLaClave', () => {
+    const act = (): unknown => harness().coordinator.snapshot('nadie');
+
+    expect(act).toThrow(UserFacingError);
+    try { act(); } catch (err) {
+      expect((err as UserFacingError).localized).toEqual({ key: 'errors.engine.sessionMissing', values: { sessionId: 'nadie' } });
+    }
+  });
 });
 
 describe('SessionCoordinator — cola de mensajes en main (F2.2)', () => {

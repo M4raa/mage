@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { UserFacingError } from '@shared/i18n/localizedText';
 import { CODEX_API_KEY_ENV, CodexAdapter } from './codexAdapter';
 import type { LaunchParams } from './providerAdapter';
 
@@ -409,6 +410,24 @@ describe('CodexAdapter: aprobaciones (forma del esquema)', () => {
 
   it('encodePermissionResponse_desconocida_lanzaConElId', () => {
     expect(() => codex().encodePermissionResponse({ requestId: 'codex-99', toolUseId: 'i' }, { behavior: 'allow' })).toThrow(/codex-99/);
+  });
+
+  it('encodePermissionResponse_desconocida_lanzaUnErrorDeCaraAlUsuarioConLaClave', () => {
+    const act = (): unknown => codex().encodePermissionResponse({ requestId: 'codex-99', toolUseId: 'i' }, { behavior: 'allow' });
+
+    expect(act).toThrow(UserFacingError);
+    try { act(); } catch (err) {
+      expect((err as UserFacingError).localized).toEqual({ key: 'errors.engine.codexApprovalUnknown', values: { requestId: 'codex-99' } });
+    }
+  });
+
+  it('encodeElicitationResponse_desconocida_lanzaUnErrorDeCaraAlUsuarioConLaClave', () => {
+    const act = (): unknown => codex().encodeElicitationResponse({ requestId: 'nope', action: 'cancel' } as never);
+
+    expect(act).toThrow(UserFacingError);
+    try { act(); } catch (err) {
+      expect((err as UserFacingError).localized).toEqual({ key: 'errors.engine.elicitationUnknown', values: { requestId: 'nope' } });
+    }
   });
 
   it('normalize_peticionQueMageNoImplementa_contestaConError', () => {

@@ -729,11 +729,13 @@ export interface MessageValues {
   readonly "errors.conversations.transcriptToMoveMissing": { readonly "path": string | number };
   readonly "errors.engine.accountNoLogin": { readonly "accountDir": string | number; readonly "credentialsFile": string | number };
   readonly "errors.engine.agyLoginMissing": { readonly "profileDir": string | number };
+  readonly "errors.engine.codexApprovalUnknown": { readonly "requestId": string | number };
   readonly "errors.engine.conversationAlreadyOpen": { readonly "sessionId": string | number };
   readonly "errors.engine.elicitationUnknown": { readonly "requestId": string | number };
   readonly "errors.engine.noClaudeAccount": { readonly "homeDir": string | number };
   readonly "errors.engine.permissionUnknown": { readonly "requestId": string | number };
   readonly "errors.engine.probeHttpStatus": { readonly "status": string | number; readonly "statusText": string | number; readonly "url": string | number };
+  readonly "errors.engine.sessionMissing": { readonly "sessionId": string | number };
   readonly "errors.engine.sessionNotActive": { readonly "sessionId": string | number };
   readonly "errors.files.changedOnDisk": { readonly "actual": string | number; readonly "expected": string | number };
   readonly "errors.files.writeNotApproved": { readonly "path": string | number };
@@ -755,6 +757,7 @@ export interface MessageValues {
   readonly "errors.git.worktreeCreateRejected": { readonly "detail": string | number };
   readonly "errors.locks.cannotCreate": { readonly "nativeId": string | number; readonly "path": string | number };
   readonly "errors.os.agyNotFound": { readonly "command": string | number };
+  readonly "errors.os.codexNotFound": { readonly "command": string | number };
   readonly "errors.os.httpsOnly": { readonly "url": string | number };
   readonly "errors.os.linkNotDirectory": { readonly "link": string | number; readonly "target": string | number };
   readonly "errors.os.renameFailed": { readonly "attempts": string | number; readonly "detail": string | number; readonly "path": string | number };
