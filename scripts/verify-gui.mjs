@@ -4759,6 +4759,89 @@ const CHECKS = [
     },
   },
   {
+    // Carril G (F4.1, G-U1): con un turno en marcha, «Parar» y el botón dividido «A la cola ▾ Enviar ahora»; «Enviar
+    // ahora» se desactiva con su motivo (borrador vacío, agy, turno de revisión) y sin turno vuelve el ⏎. Solo
+    // interfaz, con una sesión de mentira: no envía nada ni pulsa Enter. El atajo Ctrl/Cmd+Enter lo prueban los tests
+    // del resolver (resolver.test.ts); aquí se mide que el menú enseña el atajo efectivo.
+    name: 'G F4.1: botón dividido «A la cola ▾ Enviar ahora» con turno en marcha, desactivado con su motivo, y ⏎ sin turno',
+    async run(page) {
+      const previo = await captureTurnState(page);
+      let abierto = null;
+      try {
+        await openTemporaryConversation(page);
+        abierto = await page.evaluate(() => {
+          const dev = window.__mageDev;
+          const s = dev.store.getState();
+          const tabId = s.activeTabId;
+          const previos = { sessionIdByChat: s.sessionIdByChat, statusByChat: s.statusByChat, notSteerableByChat: s.notSteerableByChat, tabs: s.tabs };
+          dev.store.setState((st) => ({
+            sessionIdByChat: { ...st.sessionIdByChat, [tabId]: 'verify-steer-session' },
+            statusByChat: { ...st.statusByChat, [tabId]: 'streaming' },
+            tabs: st.tabs.map((t) => (t.id === tabId ? { ...t, provider: 'claude' } : t)),
+          }));
+          return { tabId, previos };
+        });
+        const { tabId } = abierto;
+        const setProvider = (provider) => page.evaluate(({ id, p }) => window.__mageDev.store.setState((st) => ({ tabs: st.tabs.map((t) => (t.id === id ? { ...t, provider: p } : t)) })), { id: tabId, p: provider });
+        const measureNow = () => page.evaluate(() => {
+          const el = document.querySelector('[data-send-now]');
+          return { desactivado: el.disabled, tip: el.getAttribute('data-tip'), atajo: el.textContent };
+        });
+        // Abre el menú, mide «Enviar ahora» y lo cierra con Escape (foco en el menú).
+        const openMeasureClose = async () => {
+          await page.locator('[data-send-menu]').click();
+          await page.locator('[data-send-now]').waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+          const medido = await measureNow();
+          await page.keyboard.press('Escape');
+          await page.locator('[data-send-now]').waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+          return medido;
+        };
+        await page.locator('[data-send-split]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const inicial = await page.evaluate(() => {
+          const withLabel = (label) => [...document.querySelectorAll('[aria-label]')].filter((n) => n.getAttribute('aria-label') === label).length;
+          const queue = document.querySelector('[data-send-queue]');
+          return { parar: withLabel('Parar la acción en curso'), cola: queue?.textContent, colaDesactivado: queue?.disabled, retorno: withLabel('Enviar mensaje') };
+        });
+        await page.evaluate((id) => window.__mageDev.store.getState().setDraft(id, { text: 'hola', attachments: [] }), tabId);
+        const claude = await openMeasureClose();
+        await setProvider('agy');
+        const agy = await openMeasureClose();
+        await setProvider('claude');
+        await page.evaluate((id) => window.__mageDev.store.setState((st) => ({ notSteerableByChat: { ...st.notSteerableByChat, [id]: 'review' } })), tabId);
+        const review = await openMeasureClose();
+        await page.evaluate((id) => {
+          const dev = window.__mageDev;
+          dev.store.getState().setDraft(id, null);
+          dev.store.setState((st) => {
+            const { [id]: _quitado, ...resto } = st.notSteerableByChat;
+            return { notSteerableByChat: resto };
+          });
+        }, tabId);
+        const vacio = await openMeasureClose();
+        await page.evaluate((id) => window.__mageDev.store.setState((st) => ({ statusByChat: { ...st.statusByChat, [id]: 'idle' } })), tabId);
+        await page.locator('[data-send-split]').first().waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+        const reposo = await page.evaluate(() => ({
+          retorno: [...document.querySelectorAll('[aria-label]')].filter((n) => n.getAttribute('aria-label') === 'Enviar mensaje').length,
+          split: document.querySelectorAll('[data-send-split]').length,
+        }));
+        const mac = process.platform === 'darwin';
+        const atajo = mac ? /⌘/ : /Ctrl\+Enter/;
+        const atajoTip = mac ? /Enviar ahora \(.*⌘.*\)/ : /Enviar ahora \(Ctrl\+Enter\)/;
+        const ok =
+          inicial.parar === 1 && inicial.cola === 'A la cola' && inicial.colaDesactivado === true && inicial.retorno === 0 &&
+          claude.desactivado === false && atajoTip.test(claude.tip ?? '') && atajo.test(claude.atajo ?? '') &&
+          agy.desactivado === true && /agy no permite enviar durante un turno/.test(agy.tip ?? '') &&
+          review.desactivado === true && /turno de revisión no admite mensajes directos/.test(review.tip ?? '') &&
+          vacio.desactivado === true &&
+          reposo.retorno === 1 && reposo.split === 0;
+        return { ok, detail: JSON.stringify({ inicial, claude, agy, review, vacio, reposo }) };
+      } finally {
+        if (abierto !== null) await page.evaluate(({ previos }) => window.__mageDev.store.setState(previos), abierto);
+        await restoreTurnState(page, previo);
+      }
+    },
+  },
+  {
     // P-028 39: al abrir un subagente, su transcripcion se pinta SOLA en el panel (la lista no queda
     // debajo) y la capa no se sale del panel. Sin fichero en disco el cuerpo es el aviso de error: lo que
     // se mide es la caja, que era lo roto.
@@ -8825,10 +8908,10 @@ const CHECKS = [
   },
   {
     // F2.2: la cola vive en main. Un turno del runtime propio contra el servidor falso (escenario `cola`, ~4 s,
-    // sin CLI ni cuota) y, con el en marcha, tres envios por la accion del store (nunca Enter): esperan en
-    // main, quitar y editar van a main, y al acabar sale UNO como turno propio. Cierra su pestaña y borra su
+    // sin CLI ni cuota) y, con el en marcha, tres envios por la accion del store (nunca Enter en el prompt): esperan en
+    // main, quitar y editar (en la fila) van a main, y al acabar sale UNO como turno propio. Cierra su pestaña y borra su
     // proveedor; va justo antes del turno minimo porque deja una transcripcion del runtime en el perfil.
-    name: 'F2.2: la cola vive en main: espera con el turno en marcha, quitar y editar van a main, y sale de uno en uno',
+    name: 'F2.2: la cola vive en main: espera con el turno en marcha, quitar y editar en la fila van a main, y sale de uno en uno',
     async run(page, { userDataDir }) {
       const fake = await startFakeOpenAiServer();
       try {
@@ -8846,17 +8929,22 @@ const CHECKS = [
         // Quitar el ultimo y editar el del medio: los dos van a main, y main devuelve la cola nueva.
         await page.locator('[data-queued-message]').nth(2).locator('[data-queued-remove]').click();
         await page.locator('[data-queued-message]').nth(1).locator('[data-queued-edit]').click();
-        await page.waitForFunction((id) => (window.__mageDev.store.getState().queuedByChat[id]?.length ?? 0) === 1, tabId, { timeout: CONFIG.actionTimeoutMs });
+        const campo = page.locator('[data-queued-message]').nth(1).locator('[data-queued-edit-field]');
+        await campo.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        await campo.fill('tercero bis');
+        // Enter en el campo de edición de la COLA (no en el prompt): guarda el texto en main sin enviar nada.
+        await campo.press('Enter');
+        await page.waitForFunction((id) => window.__mageDev.store.getState().queuedByChat[id]?.[1]?.text === 'tercero bis', tabId, { timeout: CONFIG.actionTimeoutMs });
         const trasEditar = await page.evaluate(async ({ id, sessionId }) => ({
           enMain: (await window.mage.getSessionSnapshot(sessionId)).queue.map((m) => m.text),
           borrador: window.__mageDev.store.getState().draftByChat[id]?.text ?? null,
         }), { id: tabId, sessionId: recibos.sessionId });
-        // Al acabar el primero sale `segundo` como turno propio; al acabar ese, nada mas.
+        // Al acabar el primero sale `segundo` como turno propio y luego `tercero bis`; al acabar ese, nada mas.
         await page.waitForFunction((id) => {
           const s = window.__mageDev.store.getState();
           const users = (s.blocksByChat[id] ?? []).filter((b) => b.kind === 'user').length;
-          return users === 2 && s.statusByChat[id] === 'idle' && (s.queuedByChat[id]?.length ?? 0) === 0;
-        }, tabId, { timeout: 30_000 });
+          return users === 3 && s.statusByChat[id] === 'idle' && (s.queuedByChat[id]?.length ?? 0) === 0;
+        }, tabId, { timeout: 45_000 });
         const final = await page.evaluate(async ({ id, sessionId }) => {
           const s = window.__mageDev.store.getState();
           const snapshot = await window.mage.getSessionSnapshot(sessionId);
@@ -8869,11 +8957,11 @@ const CHECKS = [
         const ok =
           JSON.stringify(recibos.cola) === JSON.stringify(['segundo', 'tercero', 'cuarto']) &&
           filas === 3 &&
-          JSON.stringify(trasEditar.enMain) === JSON.stringify(['segundo']) &&
-          trasEditar.borrador === 'tercero' &&
-          JSON.stringify(final.burbujas) === JSON.stringify(['primero', 'segundo']) &&
+          JSON.stringify(trasEditar.enMain) === JSON.stringify(['segundo', 'tercero bis']) &&
+          trasEditar.borrador === null &&
+          JSON.stringify(final.burbujas) === JSON.stringify(['primero', 'segundo', 'tercero bis']) &&
           final.estado === 'idle' && final.colaMain === 0 &&
-          fake.stats.completions === 2;
+          fake.stats.completions === 3;
         return { ok, detail: JSON.stringify({ recibos: recibos.cola, filas, trasEditar, final, peticionesAlFalso: fake.stats.completions }) };
       } finally {
         await page.evaluate((id) => window.__mageDev.store.getState().removeCustomProvider(id), QUEUE_TURN_PROVIDER.id);
