@@ -2339,7 +2339,7 @@ export function createWorkbenchStore(mage: MageClient) {
       if ((trimmed.length === 0 && attachments.length === 0) || tabId.length === 0) return;
       // #55: en solo lectura no se escribe en la conversación (la tiene otra instancia de Mage).
       const lock = get().lockByChat[tabId];
-      if (lock !== undefined && !lock.owner) throw new Error(readOnlyLockMessage(renderLocalized(t, lock.profile)));
+      if (lock !== undefined && !lock.owner) throw new Error(renderLocalized(t, readOnlyLockMessage(lock.profile)));
       // Un `/rename` tecleado es el nombre mas nuevo: el pendiente de la UI ya no debe pisarlo al
       // acabar el turno (gana el ultimo, D3). Tambien si espera en la cola: saldria detras del pendiente.
       if (get().tabs.find((t) => t.id === tabId)?.pendingCliTitle !== undefined && /^\/rename\b/.test(trimmed)) {

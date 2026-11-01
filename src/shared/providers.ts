@@ -11,6 +11,8 @@
 // asume que el usuario tenga ninguna IA local instalada, asi que de serie no existe ninguna entrada
 // local (decision del usuario, ROADMAP E2). Cambiar host/puerto es editar su proveedor, no el codigo.
 
+import { foreignText, localized, UserFacingError, type LocalizedText } from './i18n/localizedText';
+
 export interface ProviderModel {
   readonly id: string; // id que se manda al proveedor (--model y payload OpenAI)
   readonly label: string; // texto visible en los selectores
@@ -37,7 +39,7 @@ export interface CustomProvider {
 // Proveedor de serie: siempre un CLI nativo.
 export interface BuiltInProvider {
   readonly id: string;
-  readonly label: string;
+  readonly label: LocalizedText;
   readonly models: readonly ProviderModel[];
 }
 
@@ -129,7 +131,7 @@ export function ownsConversation(providerId: string): boolean {
 export const BUILT_IN_PROVIDERS: readonly BuiltInProvider[] = [
   {
     id: 'claude',
-    label: 'Claude (Anthropic)',
+    label: foreignText('Claude (Anthropic)'),
     // Los ids son ALIAS del CLI (`sonnet`, `opus`, `haiku`): apuntan siempre a la ultima version de esa
     // familia, y por eso no se ponen ids con version — quedarian clavados en un modelo viejo. La
     // VERSION si va en la etiqueta, que era lo unico que faltaba (reporte del usuario: "la lista de
@@ -161,7 +163,7 @@ export const BUILT_IN_PROVIDERS: readonly BuiltInProvider[] = [
     // lo que se ofrece sin `agy` instalado o sin conexion (y estuvo un mes desfasada: la cuenta ya
     // ofrecia Gemini 3.8 y 3.7 cuando aqui seguian el 3.6 y un 3.5 que ya no existe).
     id: AGY_PROVIDER_ID,
-    label: 'Antigravity · el CLI de Google (agy) · sin permisos',
+    label: localized('prompt.providers.agyLabel'),
     models: [
       { id: 'gemini-3.8-flash-high', label: 'Gemini 3.8 Flash (High)' },
       { id: 'gemini-3.8-flash-medium', label: 'Gemini 3.8 Flash (Medium)' },
@@ -185,7 +187,7 @@ export const BUILT_IN_PROVIDERS: readonly BuiltInProvider[] = [
     // sin ocultos, con etiquetas y esfuerzos por modelo. Sin cuenta también aparece GPT-5.5;
     // no pertenece al catálogo de esta cuenta. El sondeo vivo manda sobre esta reserva.
     id: CODEX_PROVIDER_ID,
-    label: 'Codex (OpenAI)',
+    label: foreignText('Codex (OpenAI)'),
     models: [
       { id: 'gpt-6.1-sol', label: 'GPT-6.1-Sol', supportedEfforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'] },
       { id: 'gpt-6-astra', label: 'GPT-6-Astra', supportedEfforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'] },
@@ -236,15 +238,15 @@ export function modelsUrl(baseUrl: string): string {
 // protocolo que no es http(s) lanzan con el valor recibido (el formulario pinta ese mensaje tal cual).
 function endpointUrl(baseUrl: string, path: string): string {
   const trimmed = baseUrl.trim();
-  if (trimmed.length === 0) throw new Error('La URL base del proveedor esta vacia');
+  if (trimmed.length === 0) throw new UserFacingError(localized('settings.providers.baseUrlEmpty'));
   let url: URL;
   try {
     url = new URL(trimmed);
   } catch {
-    throw new Error(`URL base del proveedor no valida: ${JSON.stringify(baseUrl)}`);
+    throw new UserFacingError(localized('settings.providers.baseUrlInvalid', { value: JSON.stringify(baseUrl) }));
   }
   if (url.protocol !== 'http:' && url.protocol !== 'https:') {
-    throw new Error(`La URL base del proveedor debe ser http o https: ${JSON.stringify(baseUrl)}`);
+    throw new UserFacingError(localized('settings.providers.baseUrlNotHttp', { value: JSON.stringify(baseUrl) }));
   }
   url.search = '';
   url.hash = '';

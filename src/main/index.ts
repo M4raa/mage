@@ -97,7 +97,7 @@ import type { MemoryFile } from '@shared/memory';
 import type { MageEvent, SlashCommandInfo } from '@shared/events';
 import { localized, localizedWithParts, renderForLog, UserFacingError, type LocalizedText } from '@shared/i18n/localizedText';
 import type { ImageAttachment, ProviderProbeParams } from '@shared/ipc';
-import { base64ByteLength, validateAttachmentSet } from '@shared/attachments';
+import { base64ByteLength, ERROR_FORMAT_LOCALE, validateAttachmentSet } from '@shared/attachments';
 import type { EffectiveSettings, InstructionsFile, ProjectFileContent, ReadProjectFileParams, WriteProjectFileParams } from '@shared/ipc';
 import type { ConversationSummary, DeleteConversationParams, MigrateConversationResult, MoveConversationParams, MoveConversationResult } from '@shared/conversations';
 import type { PersistedWorkspace } from '@shared/state';
@@ -613,9 +613,8 @@ function assertConversationNotLockedElsewhere(params: CreateSessionParams): void
   if (params.resumeSessionId === undefined) return;
   const status = getConversationLocks().peek({ provider: params.provider, accountDir: params.accountDir, nativeId: params.resumeSessionId });
   if (status === null || status.owner) return;
-  // `lock` queda en castellano hasta que F08 convierta `readOnlyLockMessage` (shared); el resto sí viaja como dato.
   const hint = localized(status.orphan ? 'errors.app.lockedElsewhereTakeOver' : 'errors.app.lockedElsewhereClose');
-  throw new UserFacingError(localizedWithParts('errors.app.lockedElsewhere', { lock: readOnlyLockMessage(renderForLog(status.profile)) }, { hint }));
+  throw new UserFacingError(localizedWithParts('errors.app.lockedElsewhere', {}, { lock: readOnlyLockMessage(status.profile), hint }));
 }
 
 // Lo que el runtime propio necesita de main: el proveedor de los ajustes, su clave de la boveda (en
@@ -1891,6 +1890,7 @@ function validateAttachments(attachments: readonly ImageAttachment[] | undefined
   validateAttachmentSet(
     [],
     attachments.map((attachment) => ({ mediaType: attachment.mediaType, byteLength: base64ByteLength(attachment.data) })),
+    ERROR_FORMAT_LOCALE,
   );
   return attachments;
 }

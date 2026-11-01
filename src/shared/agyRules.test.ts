@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { createTranslator } from './i18n/translator';
+import { renderLocalized } from './i18n/localizedText';
 import {
   agyLinkedPaths,
   agyMcpServerNames,
@@ -12,12 +14,16 @@ import {
 } from './agyRules';
 
 describe('validateAgyCommand', () => {
+  it('validateAgyCommand_prefijoRegex_devuelveClaveYPrefijo', () => {
+    expect(validateAgyCommand('regex:^rm .*')).toEqual({ ok: false, message: { key: 'settings.agy.commandRegexPrefix', values: { prefix: 'regex:' } } });
+  });
+
   it('validateAgyCommand_conEspacios_recortaYConservaLaLineaExacta', () => {
     expect(validateAgyCommand('  git status > s.txt ')).toEqual({ ok: true, command: 'git status > s.txt' });
   });
 
   it.each(['', '   ', 'git status\nrm -rf /', 'regex:^rm .*'])('validateAgyCommand_invalido_%#_loRechazaConMotivo', (input) => {
-    expect(validateAgyCommand(input)).toMatchObject({ ok: false, message: expect.any(String) as unknown as string });
+    expect(validateAgyCommand(input)).toMatchObject({ ok: false, message: { key: expect.stringContaining('settings.agy.') as unknown as string } });
   });
 });
 
@@ -56,6 +62,13 @@ describe('toAgyPermissionRules', () => {
 });
 
 describe('validateAgyLinkPath', () => {
+  it('validateAgyLinkPath_rutaAbsoluta_devuelveClaveYTextoEnCastellano', () => {
+    const checked = validateAgyLinkPath('/etc');
+
+    expect(checked).toEqual({ ok: false, message: { key: 'settings.agy.linkPathNotRelative' } });
+    expect(checked.ok ? '' : renderLocalized(createTranslator('es'), checked.message)).toBe('Escríbela relativa a tu carpeta de usuario, p. ej. .aws');
+  });
+
   it.each([
     ['.aws', '.aws'],
     ['.config\\gcloud', '.config/gcloud'],
@@ -103,7 +116,7 @@ describe('reglas MCP (fase 3)', () => {
     ['srv', 'con espacio'],
     ['srv', 'x)'],
   ])('validateAgyMcpTool_invalido_%s_%s_loRechazaConMotivo', (server, tool) => {
-    expect(validateAgyMcpTool(server, tool)).toMatchObject({ ok: false, message: expect.any(String) as unknown as string });
+    expect(validateAgyMcpTool(server, tool)).toMatchObject({ ok: false, message: { key: expect.stringContaining('settings.agy.mcp') as unknown as string } });
   });
 
   it('parseAgyMcpRule_reglaMcp_devuelveServidorYHerramienta', () => {

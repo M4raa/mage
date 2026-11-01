@@ -1,12 +1,13 @@
 import type { ImageAttachment } from './ipc';
 import { localizeDecimalPoint } from './i18n/format';
+import { localized, UserFacingError } from './i18n/localizedText';
 
-// Los errores de este módulo siguen en castellano hasta su paquete de F3.3b: sus cifras, con el formato castellano.
-const ERROR_FORMAT_LOCALE = 'es-ES';
+// Locale de las cifras cuando quien valida no conoce el de la interfaz (validación de defensa en main: el renderer ya validó antes).
+export const ERROR_FORMAT_LOCALE = 'es-ES';
 
 // Validacion de los adjuntos del prompt (2.12.1), EN LA FRONTERA. Adjuntar es una funcion de ENVIO: un
 // adjunto que se cae en silencio es peor que un error, porque el usuario cree que mando algo que no
-// mando. Por eso todo lanza `Error` con el valor recibido en el mensaje y no hay ningun default.
+// mando. Por eso todo lanza `Error` (`UserFacingError`) con el valor recibido en el mensaje y no hay ningun default.
 //
 // PURO y COMPARTIDO (vive en `shared` justamente por esto): lo usa el renderer para dar el error bonito
 // y `main` porque es la frontera de verdad — el renderer valida por cortesia, main valida porque es lo
@@ -32,18 +33,20 @@ export interface AttachmentCandidate {
   readonly byteLength: number;
 }
 
-export function validateAttachment(candidate: AttachmentCandidate): ImageAttachmentMeta {
+export function validateAttachment(candidate: AttachmentCandidate, formatLocale: string): ImageAttachmentMeta {
   const mediaType = candidate.mediaType.trim().toLowerCase();
   if (!ALLOWED_IMAGE_TYPES.has(mediaType)) {
-    throw new Error(
-      `Tipo de imagen no admitido: ${JSON.stringify(candidate.mediaType)}. Admitidos: ${[...ALLOWED_IMAGE_TYPES].join(', ')}`,
+    throw new UserFacingError(
+      localized('errors.attachments.unsupportedType', { type: JSON.stringify(candidate.mediaType), allowed: [...ALLOWED_IMAGE_TYPES].join(', ') }),
     );
   }
   if (!Number.isInteger(candidate.byteLength) || candidate.byteLength <= 0) {
-    throw new Error(`Tamaño de imagen invalido: ${candidate.byteLength}`);
+    throw new UserFacingError(localized('errors.attachments.invalidSize', { size: String(candidate.byteLength) }));
   }
   if (candidate.byteLength > MAX_ATTACHMENT_BYTES) {
-    throw new Error(`La imagen ocupa ${formatBytes(candidate.byteLength, ERROR_FORMAT_LOCALE)} y el maximo es ${formatBytes(MAX_ATTACHMENT_BYTES, ERROR_FORMAT_LOCALE)}`);
+    throw new UserFacingError(
+      localized('errors.attachments.imageTooLarge', { size: formatBytes(candidate.byteLength, formatLocale), max: formatBytes(MAX_ATTACHMENT_BYTES, formatLocale) }),
+    );
   }
   return { mediaType: mediaType as ImageAttachment['mediaType'], byteLength: candidate.byteLength };
 }
@@ -54,15 +57,18 @@ export function validateAttachment(candidate: AttachmentCandidate): ImageAttachm
 export function validateAttachmentSet(
   existing: readonly ImageAttachmentMeta[],
   incoming: readonly AttachmentCandidate[],
+  formatLocale: string,
 ): readonly ImageAttachmentMeta[] {
-  const validated = incoming.map(validateAttachment);
+  const validated = incoming.map((candidate) => validateAttachment(candidate, formatLocale));
   const all = [...existing, ...validated];
   if (all.length > MAX_ATTACHMENTS) {
-    throw new Error(`No se pueden adjuntar mas de ${MAX_ATTACHMENTS} imagenes (intentabas dejar ${all.length})`);
+    throw new UserFacingError(localized('errors.attachments.tooMany', { max: String(MAX_ATTACHMENTS), count: String(all.length) }));
   }
   const total = all.reduce((sum, attachment) => sum + attachment.byteLength, 0);
   if (total > MAX_TOTAL_ATTACHMENT_BYTES) {
-    throw new Error(`Los adjuntos suman ${formatBytes(total, ERROR_FORMAT_LOCALE)} y el maximo por mensaje es ${formatBytes(MAX_TOTAL_ATTACHMENT_BYTES, ERROR_FORMAT_LOCALE)}`);
+    throw new UserFacingError(
+      localized('errors.attachments.totalTooLarge', { total: formatBytes(total, formatLocale), max: formatBytes(MAX_TOTAL_ATTACHMENT_BYTES, formatLocale) }),
+    );
   }
   return all;
 }

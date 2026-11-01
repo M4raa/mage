@@ -1,3 +1,5 @@
+import { localized, type LocalizedText } from './i18n/localizedText';
+
 // Control de acceso POR MODELO a las herramientas del runtime propio (§8.1 D10 de P-032): conceder o
 // restringir, por proveedor del usuario. Vive en `shared` porque lo edita el renderer (Ajustes) y lo
 // aplica main. PURO.
@@ -17,26 +19,26 @@ export interface ToolAccessRule {
 
 export interface ToolAccessParse {
   readonly rules: readonly ToolAccessRule[];
-  readonly errors: readonly string[];
+  readonly errors: readonly LocalizedText[];
 }
 
 const ALL_MODELS = '*';
 
 export function parseToolAccessText(text: string): ToolAccessParse {
   const rules: ToolAccessRule[] = [];
-  const errors: string[] = [];
+  const errors: LocalizedText[] = [];
   text.split(/\r?\n/).forEach((raw, index) => {
     const line = raw.trim();
     if (line.length === 0 || line.startsWith('#')) return;
     const colon = line.indexOf(':');
-    if (colon <= 0) return void errors.push(`Línea ${index + 1}: falta «modelo:» delante (${line})`);
+    if (colon <= 0) return void errors.push(localized('settings.providers.toolAccessMissingModel', { line: String(index + 1), text: line }));
     const model = line.slice(0, colon).trim();
     const items = line
       .slice(colon + 1)
       .split(',')
       .map((item) => item.trim())
       .filter((item) => item.length > 0);
-    if (items.length === 0) return void errors.push(`Línea ${index + 1}: no nombra ninguna herramienta (${line})`);
+    if (items.length === 0) return void errors.push(localized('settings.providers.toolAccessNoTools', { line: String(index + 1), text: line }));
     const deny = items.filter((item) => item.startsWith('-')).map((item) => item.slice(1).trim()).filter((item) => item.length > 0);
     const allow = items.filter((item) => !item.startsWith('-'));
     rules.push({ model, allow: allow.length === 0 ? null : allow, deny });

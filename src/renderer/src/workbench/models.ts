@@ -7,6 +7,7 @@ import { AGY_EFFORT_LEVELS, AGY_PROVIDER_ID, BUILT_IN_PROVIDERS, CODEX_PROVIDER_
 import { EFFORT_LEVELS, type RuntimeProbeResult } from '@shared/ipc';
 import { renderLocalized, type LocalizedText } from '@shared/i18n/localizedText';
 import { t } from '../i18n/uiLanguage';
+import { describeError } from './describeError';
 
 export type ModelOption = ProviderModel;
 
@@ -25,7 +26,7 @@ export function providerOptions(customProviders: readonly CustomProvider[]): rea
   // Todos los de serie tienen adapter desde la 0.1.2 (Codex sobre `codex app-server`, sin verificar).
   const options: ProviderOption[] = BUILT_IN_PROVIDERS.map((provider) => ({
     id: provider.id,
-    label: provider.label,
+    label: renderLocalized(t, provider.label),
   }));
   const seen = new Set(options.map((option) => option.id));
   for (const provider of customProviders) {
@@ -280,7 +281,7 @@ function describeBaseUrlError(baseUrl: string): string | null {
     chatCompletionsUrl(baseUrl);
     return null;
   } catch (err) {
-    const detail = err instanceof Error ? err.message : String(err);
+    const detail = err instanceof Error ? describeError(err) : String(err);
     return t('prompt.models.baseUrlInvalid', { detail });
   }
 }
@@ -323,7 +324,7 @@ export function effortLevelsForProvider(providerId: string): readonly string[] {
 export function providerEntries(customProviders: readonly CustomProvider[]): readonly ProviderEntry[] {
   const builtIn: ProviderEntry[] = BUILT_IN_PROVIDERS.map((provider) => ({
     id: provider.id,
-    label: provider.label,
+    label: renderLocalized(t, provider.label),
     kind: 'cli',
     baseUrl: null,
     models: provider.models,

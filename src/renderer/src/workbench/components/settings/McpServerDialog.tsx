@@ -72,7 +72,7 @@ export function McpServerDialog({ row, onClose }: { readonly row: McpInventoryRo
   };
   const save = (): void => {
     const problem = validateServerDraft(draft);
-    if (problem !== null) return setError(problem);
+    if (problem !== null) return setError(renderLocalized(t, problem));
     setBusy(true);
     mutate({ op: 'upsert', originalName: row?.name ?? null, draft })
       .then((result) => (result.status === 'saved' ? onClose() : setError(renderLocalized(t, result.message))))

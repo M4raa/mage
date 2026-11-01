@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { AGY_DEFAULT_LINKED_PATHS, validateAgyLinkPath } from '@shared/agyRules';
+import { renderLocalized } from '@shared/i18n/localizedText';
 import { useWorkbenchStore } from '../../workbenchStore';
 import { Icon } from '../Icon';
 import { useT } from '../../../i18n/uiLanguage';
@@ -17,7 +18,7 @@ export function AgyProfileLinks(): React.JSX.Element {
   const add = (): void => {
     const checked = validateAgyLinkPath(draft);
     if (!checked.ok) {
-      setError(checked.message);
+      setError(renderLocalized(t, checked.message));
       return;
     }
     if (![...AGY_DEFAULT_LINKED_PATHS, ...extra].includes(checked.path)) setPaths([...extra, checked.path]);

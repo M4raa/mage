@@ -103,7 +103,7 @@ function measureInlineEditorWidth(row: HTMLElement | null, controls: HTMLElement
 }
 
 function promptPlaceholder(tabId: string, readOnlyLock: { readonly profile: LocalizedText } | null): string {
-  if (readOnlyLock !== null) return translate('prompt.placeholder.readOnly', { lock: readOnlyLockMessage(renderLocalized(translate, readOnlyLock.profile)) });
+  if (readOnlyLock !== null) return translate('prompt.placeholder.readOnly', { lock: renderLocalized(translate, readOnlyLockMessage(readOnlyLock.profile)) });
   return tabId.length === 0 ? translate('prompt.placeholder.noTab') : translate('prompt.placeholder.default');
 }
 
@@ -116,7 +116,7 @@ function ReadOnlyLockNotice({ tabId, profile, orphan }: { readonly tabId: string
   return (
     <div role="status" data-conversation-lock="read-only" className="mb-[6px] flex items-center gap-[8px] rounded-[7px] border border-mg-warn-border bg-mg-warn-bg px-[10px] py-[5px] text-[11px] text-mg-warn-text">
       <span className="min-w-0 flex-1">
-        {readOnlyLockMessage(renderLocalized(t, profile))}. {orphan ? t('prompt.lock.orphan') : t('prompt.lock.readOnly')}
+        {renderLocalized(t, readOnlyLockMessage(profile))}. {orphan ? t('prompt.lock.orphan') : t('prompt.lock.readOnly')}
         {error !== null && <span className="ml-[6px] text-mg-danger">{error}</span>}
       </span>
       {orphan && (
@@ -509,9 +509,9 @@ export function PromptBar(): React.JSX.Element {
     const current = draftOf(tabId);
     try {
       const metas = current.attachments.map((a) => ({ mediaType: a.attachment.mediaType, byteLength: a.byteLength }));
-      validateAttachmentSet(metas, files.map((file) => ({ mediaType: file.type, byteLength: file.size })));
+      validateAttachmentSet(metas, files.map((file) => ({ mediaType: file.type, byteLength: file.size })), activeFormatLocale());
     } catch (err) {
-      setError(t('prompt.attach.failed', { error: err instanceof Error ? err.message : String(err) }));
+      setError(t('prompt.attach.failed', { error: err instanceof Error ? describeError(err) : String(err) }));
       return;
     }
     setError(null);

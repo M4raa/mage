@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { LocalizedText } from './i18n/localizedText';
+import { localizedWithParts, type LocalizedText } from './i18n/localizedText';
 import { MAX_ID_CHARS } from './sessionInput';
 
 // Bloqueo de conversación entre instancias de Mage (#55, F2.8; §4 de INFORME-019 con H4 de la devolución 13). Una
@@ -31,6 +31,6 @@ export const CONVERSATION_LOCK_PARAMS_SCHEMA = z.object({
 
 export type ConversationLockParams = z.infer<typeof CONVERSATION_LOCK_PARAMS_SCHEMA>;
 
-export function readOnlyLockMessage(profile: string): string {
-  return `Abierta en otra instancia de Mage (${profile})`;
+export function readOnlyLockMessage(profile: LocalizedText): LocalizedText {
+  return localizedWithParts('prompt.lock.openElsewhere', {}, { profile });
 }

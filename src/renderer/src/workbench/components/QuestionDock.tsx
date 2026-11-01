@@ -6,6 +6,7 @@ import { headPermission, isPermissionSending, useWorkbenchStore } from '../workb
 import { usePaneTabId } from '../paneContext';
 import { DISCLOSURE_VARIANTS } from '../motionPresets';
 import { t as translate, useT } from '../../i18n/uiLanguage';
+import { describeError } from '../describeError';
 import type { Block } from '../types';
 import {
   canAdvance,
@@ -82,7 +83,7 @@ function QuestionDockBody({ block, tabId }: { readonly block: QuestionBlock; rea
     try {
       answerQuestion(block.requestId, toAnswers(state, block.questions));
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(err instanceof Error ? describeError(err) : String(err));
     }
   };
   // Omitir la ULTIMA contesta en el acto: no queda nada mas que recorrer.
@@ -92,7 +93,7 @@ function QuestionDockBody({ block, tabId }: { readonly block: QuestionBlock; rea
     try {
       answerQuestion(block.requestId, toAnswers(skipped, block.questions));
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(err instanceof Error ? describeError(err) : String(err));
     }
   };
   const run = (action: FlowKeyAction): void => {

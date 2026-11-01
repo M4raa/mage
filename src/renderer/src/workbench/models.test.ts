@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { renderForLog } from '@shared/i18n/localizedText';
 import type { CustomProvider } from '@shared/providers';
 import {
   AGY_PROVIDER_ID,
@@ -97,6 +98,10 @@ describe('modelOptionsForProvider', () => {
 
 describe('providerOptions', () => {
   // Desde la 0.1.2 todos los de serie tienen adapter (Codex sobre `codex app-server`, sin verificar).
+  it('providerOptions_agy_pintaLaEtiquetaEnCastellano', () => {
+    expect(providerOptions([]).find((p) => p.id === AGY_PROVIDER_ID)?.label).toBe('Antigravity · el CLI de Google (agy) · sin permisos');
+  });
+
   it('providerOptions_sinProveedoresDelUsuario_devuelveLosDeSerie', () => {
     expect(providerOptions([]).map((p) => p.id)).toEqual(BUILT_IN_PROVIDERS.map((p) => p.id));
   });
@@ -182,7 +187,7 @@ describe('nextCustomProviderId', () => {
 
   it('nextCustomProviderId_siempreLlevaPrefijo_nuncaColisionaConUnoDeSerie', () => {
     for (const builtIn of BUILT_IN_PROVIDERS) {
-      expect(nextCustomProviderId(builtIn.label, [])).not.toBe(builtIn.id);
+      expect(nextCustomProviderId(renderForLog(builtIn.label), [])).not.toBe(builtIn.id);
     }
   });
 });

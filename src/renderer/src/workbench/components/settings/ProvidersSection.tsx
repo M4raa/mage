@@ -35,6 +35,7 @@ import { Dropdown } from '../Dropdown';
 import { StepSlider } from '../StepSlider';
 import { Icon } from '../Icon';
 import { describeError } from '../../describeError';
+import { renderLocalized } from '@shared/i18n/localizedText';
 import { useT } from '../../../i18n/uiLanguage';
 
 // Seccion UNICA "Proveedores y modelos" (D2). Antes eran dos: "Proveedores" (alta de endpoints
@@ -349,7 +350,7 @@ function ToolAccessEditor({ providerId, label }: { readonly providerId: string; 
   const t = useT();
   const save = (): void => {
     const parsed = parseToolAccessText(text);
-    setErrors(parsed.errors);
+    setErrors(parsed.errors.map((error) => renderLocalized(t, error)));
     if (parsed.errors.length === 0) setAccess(providerId, parsed.rules);
   };
   return (
