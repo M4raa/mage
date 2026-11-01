@@ -19,3 +19,7 @@ export function removeQueuedMessage(queue: readonly QueuedMessage[], id: string)
   return queue.filter((message) => message.id !== id);
 }
 
+// Cambia un mensaje por su id sin moverlo (F4.2, U5: la cola se edita y se cancela, no se reordena).
+export function updateQueuedMessage(queue: readonly QueuedMessage[], message: QueuedMessage): readonly QueuedMessage[] {
+  return queue.map((queued) => (queued.id === message.id ? message : queued));
+}

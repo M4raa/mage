@@ -11,6 +11,13 @@ export const MAX_MESSAGE_CHARS = 8_000_000;
 export const MAX_DENY_MESSAGE_CHARS = 20_000;
 export const MAX_MODE_CHARS = 128;
 
+// Forma de un UUID (T2, F4.1): el id de un directo es el `uuid` del mensaje para el CLI de Claude.
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export function isUuid(value: string): boolean {
+  return UUID_PATTERN.test(value);
+}
+
 const id = z.string().min(1).max(MAX_ID_CHARS);
 const label = z.string().min(1).max(MAX_MODE_CHARS);
 
@@ -35,6 +42,9 @@ export const SEND_MESSAGE_SCHEMA = z.object({
 
 export const ANSWER_PERMISSION_SCHEMA = z.object({ sessionId: id, requestId: id, decision: PERMISSION_DECISION_SCHEMA }).strict();
 export const QUEUED_MESSAGE_SCHEMA = z.object({ sessionId: id, messageId: id }).strict();
+// Envío desde el renderer (F4.1): el de siempre más el modo. Esquema APARTE para no cambiar el del host.
+export const RENDERER_SEND_MESSAGE_SCHEMA = SEND_MESSAGE_SCHEMA.extend({ mode: z.enum(['queue', 'steer']).optional() });
+export const UPDATE_QUEUED_SCHEMA = z.object({ sessionId: id, messageId: id, text: z.string().max(MAX_MESSAGE_CHARS) }).strict();
 export const SET_PERMISSION_MODE_SCHEMA = z.object({ sessionId: id, mode: label }).strict();
 export const SET_MODEL_SCHEMA = z.object({ sessionId: id, model: label }).strict();
 // El esfuerzo vacío es «el del modelo por defecto»: único campo de modo que admite cadena vacía.

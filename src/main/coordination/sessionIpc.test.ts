@@ -14,6 +14,7 @@ function setup(over: Partial<SessionIpcDeps> = {}) {
     send: vi.fn().mockReturnValue({ status: 'queued', commandId: 'c1' }),
     interrupt: vi.fn().mockReturnValue([{ id: 'q1', text: 'luego', attachments: [] }]),
     removeQueued: vi.fn().mockReturnValue(null),
+    updateQueued: vi.fn().mockReturnValue(null),
     takeQueue: vi.fn().mockReturnValue([]),
     answerPermission: vi.fn().mockReturnValue({ status: 'accepted' }),
     answerElicitation: vi.fn().mockReturnValue({ status: 'rejected', reason: 'already_answered' }),
@@ -49,7 +50,7 @@ describe('registerSessionIpc', () => {
 
     expect([...handlers.keys()].sort()).toEqual([
       IpcChannel.SessionAnswerElicitation, IpcChannel.SessionAnswerPermission, IpcChannel.SessionClose, IpcChannel.SessionCreate, IpcChannel.SessionGetScratchDir,
-      IpcChannel.SessionInterrupt, IpcChannel.SessionQueueRemove, IpcChannel.SessionQueueTake, IpcChannel.SessionSendMessage, IpcChannel.SessionSetEffort, IpcChannel.SessionSetModel,
+      IpcChannel.SessionInterrupt, IpcChannel.SessionQueueRemove, IpcChannel.SessionQueueTake, IpcChannel.SessionQueueUpdate, IpcChannel.SessionSendMessage, IpcChannel.SessionSetEffort, IpcChannel.SessionSetModel,
       IpcChannel.SessionSetPermissionMode, IpcChannel.SessionSnapshot, IpcChannel.SessionStop, IpcChannel.SessionStopTask,
     ].sort());
   });
@@ -206,5 +207,35 @@ describe('registerSessionIpc — frontera de entrada (F2.6, H3 de la devolución
     invoke(IpcChannel.SessionSetEffort, { sessionId: 's1', effort: '' });
 
     expect(sessions.setEffort).toHaveBeenCalledWith('s1', '');
+  });
+});
+
+describe('registerSessionIpc — directo y edición de la cola (F4.1, F4.2)', () => {
+  it('sendMessage_conModoSteer_llegaALaCoordinacionConElModo', () => {
+    const { coordinator, invoke } = setup();
+
+    invoke(IpcChannel.SessionSendMessage, { sessionId: 's1', text: 'x', mode: 'steer' });
+
+    expect(coordinator.send).toHaveBeenCalledWith(expect.objectContaining({ mode: 'steer' }));
+  });
+
+  it('queueUpdate_vaALaCoordinacionYDevuelveSuResultado', () => {
+    const updated = { id: 'm1', text: 'nuevo', attachments: [] };
+    const { coordinator, invoke } = setup();
+    vi.mocked(coordinator.updateQueued).mockReturnValue(updated as never);
+
+    const result = invoke(IpcChannel.SessionQueueUpdate, { sessionId: 's1', messageId: 'm1', text: 'nuevo' });
+
+    expect(coordinator.updateQueued).toHaveBeenCalledWith('s1', 'm1', 'nuevo');
+    expect(result).toBe(updated);
+  });
+
+  it('queueUpdate_ventanaQueNoControlaLaSesion_lanzaSinLlegarALaCoordinacion', () => {
+    const { coordinator, deps, invoke } = setup({ canControl: vi.fn().mockReturnValue(false) });
+
+    expect(() => invoke(IpcChannel.SessionQueueUpdate, { sessionId: 's1', messageId: 'm1', text: 'x' })).toThrow(/no controla la sesión s1/);
+
+    expect(deps.canControl).toHaveBeenCalledWith(7, 's1');
+    expect(coordinator.updateQueued).not.toHaveBeenCalled();
   });
 });

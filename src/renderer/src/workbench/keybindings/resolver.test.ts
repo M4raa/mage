@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { resolveKeyEvent } from './resolver';
+import { resolveKeyEvent, shortcutText } from './resolver';
 import { KEYBINDING_ACTIONS, type GuardContext, type KeybindingAction } from './actionCatalog';
-import type { KeyEventLike } from './keyParser';
+import { displayKeyCombo, parseKeyCombo, type KeyEventLike } from './keyParser';
 
 const NO_MODS: Omit<KeyEventLike, 'code'> = { ctrlKey: false, metaKey: false, altKey: false, shiftKey: false };
 const NO_GUARD_CONTEXT: GuardContext = {
@@ -234,5 +234,49 @@ describe('resolveKeyEvent', () => {
       baseParams({ catalog, event, focusInEditableText: true, guardContext: { ...NO_GUARD_CONTEXT, focusInEditableText: true } }),
     );
     expect(result).toBeNull();
+  });
+});
+
+describe('shortcutText', () => {
+  it('shortcutText_sendNowPorDefectoEnWindows_ctrlEnter', () => {
+    const expected = displayKeyCombo(parseKeyCombo('CmdOrCtrl+Enter')!, false);
+
+    const text = shortcutText('prompt.sendNow', [], false);
+
+    expect(text).toBe(expected);
+    expect(text).toContain('Ctrl');
+  });
+
+  it('shortcutText_sendNowEnMac_usaCmd', () => {
+    const expected = displayKeyCombo(parseKeyCombo('CmdOrCtrl+Enter')!, true);
+
+    const text = shortcutText('prompt.sendNow', [], true);
+
+    expect(text).toBe(expected);
+    expect(text).not.toContain('Ctrl');
+  });
+
+  it('shortcutText_conOverride_usaElDelUsuario', () => {
+    const expected = displayKeyCombo(parseKeyCombo('Alt+Enter')!, false);
+
+    const text = shortcutText('prompt.sendNow', [{ actionId: 'prompt.sendNow', keys: 'Alt+Enter' }], false);
+
+    expect(text).toBe(expected);
+  });
+
+  it('shortcutText_accionDesconocida_lanzaConElId', () => {
+    expect(() => shortcutText('nope', [], false)).toThrow('nope');
+  });
+});
+
+describe('resolveKeyEvent con el prompt (G-U1)', () => {
+  it('resolveKeyEvent_ctrlEnterEnElPrompt_esSendNowYEnterSigueSiendoSend', () => {
+    const inPrompt = (event: KeyEventLike) => resolveKeyEvent(baseParams({ event, activeScopes: ['prompt'], focusInEditableText: true }));
+
+    const ctrlEnter = inPrompt({ ...NO_MODS, code: 'Enter', ctrlKey: true });
+    const enter = inPrompt({ ...NO_MODS, code: 'Enter' });
+
+    expect(ctrlEnter).toBe('prompt.sendNow');
+    expect(enter).toBe('prompt.send');
   });
 });

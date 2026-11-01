@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { ImageAttachment } from './ipc';
 import type { QueuedMessage } from './coordination';
-import { enqueueMessage, removeQueuedMessage, takeNextMessage } from './messageQueue';
+import { enqueueMessage, removeQueuedMessage, takeNextMessage, updateQueuedMessage } from './messageQueue';
 
 const img = (data: string): ImageAttachment => ({ mediaType: 'image/png', data });
 const msg = (id: string, text: string, attachments: readonly ImageAttachment[] = []): QueuedMessage => ({ id, text, attachments });
@@ -44,5 +44,21 @@ describe('removeQueuedMessage', () => {
     const queue = [msg('a', 'uno')];
 
     expect(removeQueuedMessage(queue, 'zz')).toEqual(queue);
+  });
+});
+
+describe('updateQueuedMessage', () => {
+  it('updateQueuedMessage_idPresente_cambiaSoloEseYConservaElOrden', () => {
+    const queue = [msg('a', 'uno'), msg('b', 'dos'), msg('c', 'tres')];
+
+    const updated = updateQueuedMessage(queue, msg('b', 'DOS'));
+
+    expect(updated.map((m) => [m.id, m.text])).toEqual([['a', 'uno'], ['b', 'DOS'], ['c', 'tres']]);
+  });
+
+  it('updateQueuedMessage_idAusente_devuelveLaMismaCola', () => {
+    const queue = [msg('a', 'uno')];
+
+    expect(updateQueuedMessage(queue, msg('z', 'x'))).toEqual(queue);
   });
 });

@@ -229,6 +229,19 @@ export class AgentSession {
     this.writePayload(this.deps.adapter.encodeUserMessage(text, attachments));
   }
 
+  // Directo en el turno en marcha (F4.1). Sin proceso no hay turno al que entrar: se resuelve aqui como
+  // `no_active_turn` y quien lo pidio lo manda como mensaje normal (que relanza si hace falta).
+  steerUserMessage(messageId: string, text: string, attachments: readonly ImageAttachment[] = []): void {
+    const encode = this.deps.adapter.encodeSteer;
+    if (encode === undefined) throw new Error(`El proveedor de la sesion ${this.deps.params.sessionId} no admite mensajes directos (messageId=${messageId})`);
+    const encoding = this.child === null ? null : encode.call(this.deps.adapter, messageId, text, attachments);
+    if (encoding === null || encoding.kind === 'resolved') {
+      this.trackAndEmit({ kind: 'steer_result', messageId, outcome: 'no_active_turn' });
+      return;
+    }
+    this.writePayload(encoding.payload);
+  }
+
   // Params de un relanzado que REANUDA: el id de Mage (o el del ultimo `/clear`) con `resume`, y el id
   // de conversacion del proveedor si ya lo emitio. Si nunca hubo handshake no hay nada que reanudar y se
   // relanza con los params originales (arranque fresco con el mismo id).
@@ -533,6 +546,9 @@ export class AgentSession {
       this.pendingPermissions.delete(event.requestId);
       // El CLI cancela con el mismo `control_cancel_request` una elicitation que un permiso.
       if (this.pendingElicitations.delete(event.requestId)) this.deps.emit({ kind: 'elicitation_cancelled', requestId: event.requestId });
+    } else if (event.kind === 'steer_result' && event.inferred === true) {
+      // Salvaguarda del adapter: se dio por turno propio sin la señal del CLI. Si pasa, el protocolo cambio.
+      this.log('warn', 'Directo resuelto sin command_lifecycle started', { sessionId: this.deps.params.sessionId, messageId: event.messageId });
     } else if (event.kind === 'tool_use') {
       this.toolStartTimes.set(event.tool.toolUseId, this.now());
     } else if (event.kind === 'tool_result') {

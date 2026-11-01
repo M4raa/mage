@@ -4,10 +4,12 @@ import { base64ByteLength, ERROR_FORMAT_LOCALE, validateAttachment } from '@shar
 import { buildUserContentBlocks } from '@shared/imageRefs';
 import type { MageEvent, PermissionDecision } from '@shared/events';
 import { localized } from '@shared/i18n/localizedText';
+import { isUuid } from '@shared/sessionInput';
 import { parseElicitationRequest, type ElicitationAnswer } from '@shared/elicitation';
 import { resolveClaudeBinary } from '../os/claudeBinaryResolver';
 import { normalizeRawEvent } from './normalize';
-import type { AuthModel, LaunchParams, PermissionRef, ProviderAdapter, SpawnPlan } from './providerAdapter';
+import { CommandLifecycleSchema } from './schemas';
+import type { AuthModel, LaunchParams, PermissionRef, ProviderAdapter, SpawnPlan, SteerEncoding } from './providerAdapter';
 import { scrubAgentEnv } from '../os/agentEnv';
 import { claudeSharedLaunch, refuseClaudeMcpConfig, type ClaudeMcpConfigWriter } from '../config/mcpProviderTranslate';
 
@@ -84,6 +86,7 @@ export class ClaudeAdapter implements ProviderAdapter {
   ) {}
 
   buildSpawnPlan(params: LaunchParams): SpawnPlan {
+    this.steers.clear(); // proceso nuevo: los directos del anterior murieron con el
     // Reanudar (`--resume <id>`) continua la conversacion existente y sigue escribiendo en su misma
     // transcripcion; arrancar (`--session-id <id>`) crea una nueva con el id dado. Mutuamente
     // excluyentes: el CLI no acepta ambos.
@@ -141,6 +144,15 @@ export class ClaudeAdapter implements ProviderAdapter {
     // intercalado). Nunca un bloque de texto vacio: un mensaje de SOLO imagen tambien vale.
     const content = buildUserContentBlocks(text, attachments);
     return { type: 'user', message: { role: 'user', content }, parent_tool_use_id: null };
+  }
+
+  // Directo (F4.1): el mensaje normal con `uuid`; el CLI lo mete en el turno en marcha o abre uno propio,
+  // y lo cuenta con `command_lifecycle` (ver normalizeSteer).
+  encodeSteer(messageId: string, text: string, attachments: readonly ImageAttachment[] = []): SteerEncoding {
+    if (!isUuid(messageId)) throw new Error(`El id de un directo de Claude tiene que ser un UUID: ${JSON.stringify(messageId)}`);
+    const message = this.encodeUserMessage(text, attachments) as Record<string, unknown>;
+    this.steers.set(messageId, false);
+    return { kind: 'write', payload: { ...message, uuid: messageId } };
   }
 
   // `updatedInput` REESCRIBE el input de la tool: por ahi viajan las respuestas de AskUserQuestion
@@ -222,6 +234,8 @@ export class ClaudeAdapter implements ProviderAdapter {
 
   // Cancelaciones que hay que mandar al CLI por una elicitation que Mage no sabe mostrar.
   private outgoing: unknown[] = [];
+  // Directos en vuelo: uuid -> true si ya paso un `result` desde que se escribio (su `started` abrira turno propio).
+  private readonly steers = new Map<string, boolean>();
 
   takeOutgoing(): readonly unknown[] {
     const taken = this.outgoing;
@@ -238,7 +252,40 @@ export class ClaudeAdapter implements ProviderAdapter {
 
   normalize(raw: unknown): MageEvent[] {
     const elicitation = this.normalizeElicitation(raw);
-    return elicitation ?? normalizeRawEvent(raw);
+    if (elicitation !== null) return elicitation;
+    const type = (raw as { type?: unknown } | null)?.type;
+    if (type === 'command_lifecycle') return this.normalizeSteer(raw);
+    const events = normalizeRawEvent(raw);
+    return type === 'result' ? [...events, ...this.afterResult()] : events;
+  }
+
+  // `started` antes de un `result` = absorbido en el turno; despues = turno propio. `cancelled` = no llego.
+  // Un uuid que no es un directo nuestro, o una linea malformada, no emite nada.
+  private normalizeSteer(raw: unknown): MageEvent[] {
+    const parsed = CommandLifecycleSchema.safeParse(raw);
+    if (!parsed.success) return [];
+    const { command_uuid: messageId, state } = parsed.data;
+    const afterResult = this.steers.get(messageId);
+    if (afterResult === undefined || (state !== 'started' && state !== 'cancelled')) return [];
+    this.steers.delete(messageId);
+    if (state === 'cancelled') return [{ kind: 'steer_result', messageId, outcome: 'failed' }];
+    return [{ kind: 'steer_result', messageId, outcome: afterResult ? 'new_turn' : 'active_turn' }];
+  }
+
+  // Cierre de turno: los directos sin `started` pasan a «tras result». Salvaguarda: uno que ya lo estaba
+  // y ve OTRO `result` sin haber recibido `started` se da por turno propio (inferido), para que la cola
+  // nunca se quede esperando una señal que no llega.
+  private afterResult(): MageEvent[] {
+    const inferred: MageEvent[] = [];
+    for (const [messageId, afterResult] of this.steers) {
+      if (!afterResult) {
+        this.steers.set(messageId, true);
+        continue;
+      }
+      this.steers.delete(messageId);
+      inferred.push({ kind: 'steer_result', messageId, outcome: 'new_turn', inferred: true });
+    }
+    return inferred;
   }
 
   private normalizeElicitation(raw: unknown): MageEvent[] | null {

@@ -29,3 +29,23 @@ export function mergeIntoDraft(messages: readonly QueuedMessage[], draft: Prompt
 function pushText(texts: string[], text: string): void {
   if (text.trim().length > 0) texts.push(text.trim());
 }
+
+// Tecla en el campo de edición de un mensaje de la cola (F4.2, G-U2): Enter guarda (o sale sin guardar si no
+// cambió), Escape cancela, y un texto vacío sin imágenes no se guarda (se queda editando). null = no es nuestra
+// (Shift+Enter hace un salto de línea en el campo).
+export type QueueEditAction = 'save' | 'cancel' | 'keep';
+
+export interface QueueEditKey {
+  readonly key: string;
+  readonly shiftKey: boolean;
+  readonly value: string;
+  readonly original: string;
+  readonly images: number;
+}
+
+export function queueEditAction(input: QueueEditKey): QueueEditAction | null {
+  if (input.key === 'Escape') return 'cancel';
+  if (input.key !== 'Enter' || input.shiftKey) return null;
+  if (input.value.trim().length === 0 && input.images === 0) return 'keep';
+  return input.value === input.original ? 'cancel' : 'save';
+}

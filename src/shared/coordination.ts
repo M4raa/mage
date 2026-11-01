@@ -4,6 +4,7 @@
 import type { PermissionRequest, SessionState } from './events';
 import type { ElicitationRequest } from './elicitation';
 import type { ImageAttachment } from './ipc';
+import type { LocalizedText } from './i18n/localizedText';
 
 // Identificador de la conversación PARA MAGE. Estable: es la clave de su entrada en
 // `conversation-index.json`. Al crearse coincide con el id nativo de la primera sesión que la escribió
@@ -31,11 +32,29 @@ export interface QueuedMessage {
   readonly attachments: readonly ImageAttachment[];
 }
 
-// Respuesta a un envío (F2.2): lo tomó el motor, o espera en la cola. Un envío inválido se rechaza con
-// error (como cualquier canal), no con un recibo. La finalización llega por eventos.
+// Respuesta a un envío (F2.2, F4.1): lo tomó el motor, espera en la cola o —un directo con turno en marcha—
+// va al turno y su destino real llega después en `message_delivery`. `awaitsAnswer`: hay una petición
+// esperando al usuario, y el directo llegará al modelo cuando la conteste (A3). Un envío inválido se rechaza
+// con error (como cualquier canal), no con un recibo.
 export type SendReceipt =
   | { readonly status: 'accepted'; readonly commandId: string }
-  | { readonly status: 'queued'; readonly commandId: string };
+  | { readonly status: 'queued'; readonly commandId: string }
+  | { readonly status: 'steering'; readonly commandId: string; readonly awaitsAnswer: boolean };
+
+// Cómo se envía (F4.1, U1): a la cola (lo de siempre) o «Enviar ahora» dentro del turno en marcha.
+export type SendMode = 'queue' | 'steer';
+
+// Destino real de un directo: dentro del turno en marcha, como turno nuevo, a la cola (turno que no admite
+// directos: `turnKind`) o fallido. `late`: el turno al que iba ya había terminado (T3).
+export type DeliveryTarget = 'active_turn' | 'new_turn' | 'queue' | 'failed';
+// Alias y no interfaz a proposito: el evento que la lleva sale por el host como `Record<string, unknown>`, y
+// una interfaz no tiene firma de indice implicita (TS2322 en el host).
+export type MessageDelivery = {
+  readonly into: DeliveryTarget;
+  readonly late: boolean;
+  readonly turnKind: string | null;
+  readonly localized?: LocalizedText;
+};
 
 // Respuesta a un permiso, una pregunta o una elicitation (F2.3): se contesta UNA vez, gane quien gane. La
 // segunda respuesta a la misma petición no llega al motor: `rejected` con `already_answered` (también si la

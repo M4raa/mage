@@ -4,7 +4,7 @@
 // src/main/engine/normalize.ts). Es la costura que hace el nucleo provider-agnostic.
 
 import type { UsageWindowInfo } from './usage';
-import type { QueuedMessage } from './coordination';
+import type { MessageDelivery, QueuedMessage } from './coordination';
 import type { ProviderModel } from './providers';
 import type { ElicitationRequest } from './elicitation';
 import type { SubagentRunInfo } from './subagentRun';
@@ -150,6 +150,11 @@ export interface SessionPlugin {
   readonly source: string | null;
 }
 
+// Destino real de un mensaje directo («Enviar ahora», F4.1) segun el CLI: entro en el turno en marcha,
+// abrio un turno propio, no habia turno al que entrar, el turno no admite directos (review/compact de
+// codex) o fallo. Evento INTERNO de main: lo consume la coordinacion.
+export type SteerOutcome = 'active_turn' | 'new_turn' | 'no_active_turn' | 'not_steerable' | 'failed';
+
 // Union discriminada por `kind`. Cada variante es inmutable.
 export type MageEvent =
   // Arranque de sesion. `mcpServers` y `slashCommands` son lo que la sesion cargo DE VERDAD (unica
@@ -294,7 +299,20 @@ export type MageEvent =
   // Una sesion en segundo plano que nadie reclamo caduca (F2.4): main la para justo despues de este evento.
   | { readonly kind: 'background_expired' }
   // Dato/texto ajeno: no se traduce (F3.3, INFORME-033 §4).
-  | { readonly kind: 'permission_auto_answered'; readonly requestId: string; readonly toolName: string; readonly behavior: 'allow' | 'deny'; readonly blocked: string | null };
+  | { readonly kind: 'permission_auto_answered'; readonly requestId: string; readonly toolName: string; readonly behavior: 'allow' | 'deny'; readonly blocked: string | null }
+  // `inferred`: el adapter lo dedujo sin la señal del CLI (salvaguarda); `turnKind`: el tipo de turno que
+  // rechazo el directo; `localized`: el detalle de un fallo.
+  | {
+      readonly kind: 'steer_result';
+      readonly messageId: string;
+      readonly outcome: SteerOutcome;
+      readonly turnKind?: string;
+      readonly inferred?: boolean;
+      readonly localized?: LocalizedText;
+    }
+  // Destino real de un directo (F4.1), para todos los clientes. Lo emite la coordinacion al consumir el
+  // `steer_result` del motor; `message` es el envio, para devolverlo al borrador si fallo.
+  | ({ readonly kind: 'message_delivery'; readonly commandId: string; readonly message: QueuedMessage } & MessageDelivery);
 
 // Decision del usuario ante un permiso (viaja renderer -> main -> CLI).
 //
