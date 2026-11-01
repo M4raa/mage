@@ -2082,7 +2082,8 @@ const CHECKS = [
       const measured = await page.locator('[data-active-panel="usage"]').evaluate((panel) => ({
         api: panel.querySelectorAll('[data-api-usage="true"]').length,
         tokens: panel.textContent?.includes('Tokens: 11') ?? false,
-        cost: panel.textContent?.includes('$0.000019') ?? false,
+        // U16: en castellano el decimal es coma
+        cost: /\$0[.,]000019/.test(panel.textContent ?? ''),
         windows: panel.textContent?.includes('Ventana de 5 h') ?? false,
       }));
       return { ok: measured.api === 1 && measured.tokens && measured.cost && !measured.windows, detail: JSON.stringify(measured) };
