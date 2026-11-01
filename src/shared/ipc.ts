@@ -13,7 +13,7 @@ import type { ProviderModel } from './providers';
 import type { AgyUsageSnapshot } from './usage';
 import type { MageEvent, PermissionDecision, SlashCommandInfo } from './events';
 import type { ArtifactRecord, ConversationPrefs } from './conversationIndex';
-import type { AnswerReceipt, CloseReceipt, ConversationId, ConversationSnapshot, QueuedMessage, SendReceipt } from './coordination';
+import type { AnswerReceipt, CloseReceipt, ConversationId, ConversationSnapshot, QueuedMessage, SendMode, SendReceipt } from './coordination';
 import type { UsageInfo } from './usage';
 import type { StatusInfo } from './status';
 import type { TranscriptBatch, TranscriptTailPosition } from './transcripts';
@@ -100,6 +100,7 @@ export const IpcChannel = {
   // F2.2: la cola vive en main. Quitar un mensaje (editar o descartar) y vaciarla devolviendo sus mensajes.
   SessionQueueRemove: 'session:queueRemove',
   SessionQueueTake: 'session:queueTake',
+  SessionQueueUpdate: 'session:queueUpdate',
   SessionSetModel: 'session:setModel',
   SessionSetEffort: 'session:setEffort',
   SessionSetPermissionMode: 'session:setPermissionMode',
@@ -377,12 +378,21 @@ export interface SendMessageParams {
   // F2.2: id del envío, generado por quien envía. Reenviar el mismo devuelve el mismo recibo sin enviar dos
   // veces; si el mensaje espera en la cola, es su id. Ausente = main genera uno.
   readonly commandId?: string;
+  // F4.1: «Enviar ahora» (`steer`) o a la cola. Ausente = cola. Solo lo manda el renderer (el host no).
+  readonly mode?: SendMode;
 }
 
 // Quitar un mensaje de la cola de main (F2.2) para editarlo o descartarlo.
 export interface QueuedMessageParams {
   readonly sessionId: string;
   readonly messageId: string;
+}
+
+// Editar el texto de un mensaje de la cola sin moverlo (F4.2, U5).
+export interface UpdateQueuedMessageParams {
+  readonly sessionId: string;
+  readonly messageId: string;
+  readonly text: string;
 }
 
 // Imagen adjunta a un mensaje del usuario. Vive en el contrato IPC porque cruza main<->renderer; la
@@ -821,6 +831,8 @@ export interface MageApi {
   interrupt(sessionId: string): Promise<readonly QueuedMessage[]>;
   // Quita un mensaje de la cola de main y lo devuelve (null si ya no estaba: salió o lo quitó otro).
   removeQueuedMessage(params: QueuedMessageParams): Promise<QueuedMessage | null>;
+  // Cambia el texto de un mensaje de la cola sin moverlo y lo devuelve (null si ya no estaba).
+  updateQueuedMessage(params: UpdateQueuedMessageParams): Promise<QueuedMessage | null>;
   // Vacía la cola de main y devuelve sus mensajes.
   takeQueuedMessages(sessionId: string): Promise<readonly QueuedMessage[]>;
   // Cambia el modelo de una sesion viva (M2.4, solo Claude); aplica al siguiente turno.

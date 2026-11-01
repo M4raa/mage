@@ -4,6 +4,7 @@ import { base64ByteLength, validateAttachment } from '@shared/attachments';
 import { buildUserContentBlocks } from '@shared/imageRefs';
 import type { MageEvent, PermissionDecision } from '@shared/events';
 import { localized } from '@shared/i18n/localizedText';
+import { isUuid } from '@shared/sessionInput';
 import { parseElicitationRequest, type ElicitationAnswer } from '@shared/elicitation';
 import { resolveClaudeBinary } from '../os/claudeBinaryResolver';
 import { normalizeRawEvent } from './normalize';
@@ -148,7 +149,7 @@ export class ClaudeAdapter implements ProviderAdapter {
   // Directo (F4.1): el mensaje normal con `uuid`; el CLI lo mete en el turno en marcha o abre uno propio,
   // y lo cuenta con `command_lifecycle` (ver normalizeSteer).
   encodeSteer(messageId: string, text: string, attachments: readonly ImageAttachment[] = []): SteerEncoding {
-    if (!UUID_PATTERN.test(messageId)) throw new Error(`El id de un directo de Claude tiene que ser un UUID: ${JSON.stringify(messageId)}`);
+    if (!isUuid(messageId)) throw new Error(`El id de un directo de Claude tiene que ser un UUID: ${JSON.stringify(messageId)}`);
     const message = this.encodeUserMessage(text, attachments) as Record<string, unknown>;
     this.steers.set(messageId, false);
     return { kind: 'write', payload: { ...message, uuid: messageId } };
@@ -303,9 +304,6 @@ export class ClaudeAdapter implements ProviderAdapter {
 // Variable con la que el CLI autentica por clave de API (medido en 2.1.285: con un config dir vacio,
 // `claude auth status` da `authMethod: "api_key"`, `apiKeySource: "ANTHROPIC_API_KEY"`).
 const ANTHROPIC_API_KEY_ENV = 'ANTHROPIC_API_KEY';
-
-// T2: el id del directo es el `uuid` del mensaje para el CLI, asi que tiene que ser un UUID.
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // Formatea centavos enteros como dolares con 2 decimales (p.ej. 500 -> "5.00"), solo para el arg del
 // CLI. La division entera + resto evita el error de coma flotante de (cents/100).toFixed(2).

@@ -4,7 +4,7 @@
 // src/main/engine/normalize.ts). Es la costura que hace el nucleo provider-agnostic.
 
 import type { UsageWindowInfo } from './usage';
-import type { QueuedMessage } from './coordination';
+import type { MessageDelivery, QueuedMessage } from './coordination';
 import type { ProviderModel } from './providers';
 import type { ElicitationRequest } from './elicitation';
 import type { SubagentRunInfo } from './subagentRun';
@@ -148,12 +148,12 @@ export interface SessionPlugin {
   readonly source: string | null;
 }
 
-// Union discriminada por `kind`. Cada variante es inmutable.
 // Destino real de un mensaje directo («Enviar ahora», F4.1) segun el CLI: entro en el turno en marcha,
 // abrio un turno propio, no habia turno al que entrar, el turno no admite directos (review/compact de
 // codex) o fallo. Evento INTERNO de main: lo consume la coordinacion.
 export type SteerOutcome = 'active_turn' | 'new_turn' | 'no_active_turn' | 'not_steerable' | 'failed';
 
+// Union discriminada por `kind`. Cada variante es inmutable.
 export type MageEvent =
   // Arranque de sesion. `mcpServers` y `slashCommands` son lo que la sesion cargo DE VERDAD (unica
   // fuente fiable: ni el modelo ni `claude mcp list` lo saben). Vacios si el CLI no los reporta.
@@ -307,7 +307,10 @@ export type MageEvent =
       readonly turnKind?: string;
       readonly inferred?: boolean;
       readonly localized?: LocalizedText;
-    };
+    }
+  // Destino real de un directo (F4.1), para todos los clientes. Lo emite la coordinacion al consumir el
+  // `steer_result` del motor; `message` es el envio, para devolverlo al borrador si fallo.
+  | ({ readonly kind: 'message_delivery'; readonly commandId: string; readonly message: QueuedMessage } & MessageDelivery);
 
 // Decision del usuario ante un permiso (viaja renderer -> main -> CLI).
 //

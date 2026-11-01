@@ -4,7 +4,10 @@ import {
   MAX_ID_CHARS,
   PERMISSION_DECISION_SCHEMA,
   parseSessionInput,
+  isUuid,
+  RENDERER_SEND_MESSAGE_SCHEMA,
   SEND_MESSAGE_SCHEMA,
+  UPDATE_QUEUED_SCHEMA,
   SESSION_ID_SCHEMA,
 } from './sessionInput';
 
@@ -61,5 +64,51 @@ describe('parseSessionInput', () => {
     expect(attempt).toThrow(/session:answerPermission/);
     expect(attempt).toThrow(/decision/);
     expect(attempt).not.toThrow(/X-SECRETO/);
+  });
+});
+
+const UUID = '11111111-1111-4111-8111-111111111111';
+
+describe('isUuid', () => {
+  it('isUuid_uuidV4_true', () => {
+    expect(isUuid(UUID)).toBe(true);
+    expect(isUuid(UUID.toUpperCase())).toBe(true);
+  });
+
+  it('isUuid_noUuid_false', () => {
+    expect(isUuid('')).toBe(false);
+    expect(isUuid('abc')).toBe(false);
+    expect(isUuid(UUID.replace('-', ''))).toBe(false);
+    expect(isUuid(`${UUID}0`)).toBe(false);
+  });
+});
+
+describe('RENDERER_SEND_MESSAGE_SCHEMA', () => {
+  it('rendererSendMessage_modoSteer_loAcepta', () => {
+    const parsed = parseSessionInput(RENDERER_SEND_MESSAGE_SCHEMA, { sessionId: 's', text: 'x', mode: 'steer' }, 'canal');
+
+    expect(parsed.mode).toBe('steer');
+  });
+
+  it('rendererSendMessage_modoDesconocido_lanzaNombrandoMode', () => {
+    expect(() => parseSessionInput(RENDERER_SEND_MESSAGE_SCHEMA, { sessionId: 's', text: 'x', mode: 'ahora' }, 'canal')).toThrow(/mode/);
+  });
+
+  it('rendererSendMessage_campoDesconocido_lanza', () => {
+    expect(() => parseSessionInput(RENDERER_SEND_MESSAGE_SCHEMA, { sessionId: 's', text: 'x', x: 1 }, 'canal')).toThrow();
+  });
+
+  it('sendMessage_esquemaDelHost_noAceptaMode', () => {
+    expect(() => parseSessionInput(SEND_MESSAGE_SCHEMA, { sessionId: 's', text: 'x', mode: 'steer' }, 'canal')).toThrow();
+  });
+});
+
+describe('UPDATE_QUEUED_SCHEMA', () => {
+  it('updateQueued_sinTexto_lanza', () => {
+    expect(() => parseSessionInput(UPDATE_QUEUED_SCHEMA, { sessionId: 's', messageId: 'm' }, 'canal')).toThrow();
+  });
+
+  it('updateQueued_completo_loAcepta', () => {
+    expect(parseSessionInput(UPDATE_QUEUED_SCHEMA, { sessionId: 's', messageId: 'm', text: 'nuevo' }, 'canal').text).toBe('nuevo');
   });
 });

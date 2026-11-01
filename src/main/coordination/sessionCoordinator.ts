@@ -1,10 +1,11 @@
 import type { CreateSessionParams, SendMessageParams, SessionEventPayload } from '@shared/ipc';
 import type { MageEvent, PermissionDecision, PermissionRequest } from '@shared/events';
-import { localizedFromError } from '@shared/i18n/localizedText';
+import { foreignText, localizedFromError, UserFacingError } from '@shared/i18n/localizedText';
+import { isUuid } from '@shared/sessionInput';
 import type { ElicitationAnswer } from '@shared/elicitation';
-import type { AnswerReceipt, CloseReceipt, ConversationId, ConversationSnapshot, CoordinatedState, NativeSessionRef, PendingRequest, QueuedMessage, SendReceipt } from '@shared/coordination';
-import { enqueueMessage, removeQueuedMessage, takeNextMessage } from '@shared/messageQueue';
-import { writesClaudeTranscript } from '@shared/providers';
+import type { AnswerReceipt, CloseReceipt, ConversationId, ConversationSnapshot, CoordinatedState, MessageDelivery, NativeSessionRef, PendingRequest, QueuedMessage, SendReceipt } from '@shared/coordination';
+import { enqueueMessage, removeQueuedMessage, takeNextMessage, updateQueuedMessage } from '@shared/messageQueue';
+import { supportsSteer, writesClaudeTranscript } from '@shared/providers';
 import { automaticAnswer, automaticDecision, CREATE_PR_PROMPT, type AutomaticAnswer } from '@shared/permissionPolicy';
 import type { SessionManager } from '../engine/sessionManager';
 import type { SessionLogFn } from '../engine/agentSession';
@@ -49,7 +50,7 @@ export interface ConversationIdentityIndex {
 }
 
 export type CoordinatedSessions = Pick<SessionManager,
-  'create' | 'stop' | 'stopOwnedBy' | 'stopByConfigDir' | 'stopAll' | 'sendMessage' | 'interrupt' | 'answerPermission' | 'answerElicitation'>;
+  'create' | 'stop' | 'stopOwnedBy' | 'stopByConfigDir' | 'stopAll' | 'sendMessage' | 'steerMessage' | 'interrupt' | 'answerPermission' | 'answerElicitation'>;
 
 export interface SessionCoordinatorDeps {
   readonly sessions: CoordinatedSessions;
@@ -82,6 +83,17 @@ export const BACKGROUND_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 // Recibos recordados por sesion para deduplicar reintentos: los ultimos, no todos.
 const MAX_RECEIPTS = 100;
 
+// Directo en vuelo (F4.1), por el id con el que lo conoce el motor. `settled` lo rellena su destino; si llega
+// DURANTE la llamada al motor (codex sin turno contesta en el acto), `send` lo devuelve como recibo.
+interface Steering {
+  readonly commandId: string;
+  readonly message: QueuedMessage;
+  settled: MessageDelivery | null;
+}
+
+// Tipo de turno que rechaza directos cuando el motor no lo dice.
+const UNKNOWN_TURN_KIND = 'unknown';
+
 // Seguimiento mutable de una sesion; hacia fuera solo salen copias (`snapshot`).
 interface Tracked {
   sessionId: string;
@@ -97,6 +109,10 @@ interface Tracked {
   readonly pending: Map<string, PendingRequest>;
   // El turno en marcha lleva el prompt de «Crear PR»: sus barreras estan armadas hasta el `result`.
   prGuard: boolean;
+  // Directos en vuelo, por el id del motor.
+  readonly steering: Map<string, Steering>;
+  // El turno en marcha no admite directos (review/compact, A5): su tipo hasta el `result`. null si los admite.
+  notSteerable: string | null;
   // En segundo plano: cancela su caducidad. null si tiene cliente.
   cancelExpiry: (() => void) | null;
   // Webcontents que la creo (null si no se dijo): solo el y la ventana principal le dan ordenes (F2.6).
@@ -117,7 +133,7 @@ export class SessionCoordinator {
   create(params: CreateSessionParams, sink: SequencedSink, ownerId?: number): string {
     const tracked: Tracked = {
       sessionId: '', provider: params.provider, accountDir: params.accountDir, conversationId: null, nativeRef: null, lastSeq: 0, state: 'starting',
-      queue: [], receipts: new Map(), pending: new Map(), prGuard: false, cancelExpiry: null, ownerId: ownerId ?? null,
+      queue: [], receipts: new Map(), pending: new Map(), prGuard: false, steering: new Map(), notSteerable: null, cancelExpiry: null, ownerId: ownerId ?? null,
       listeners: new Set([{ sink, onClosed: () => undefined }]), emit: () => undefined,
     };
     tracked.emit = (event) => this.relay(tracked, { sessionId: tracked.sessionId, event });
@@ -190,16 +206,56 @@ export class SessionCoordinator {
     return ACCEPTED;
   }
 
-  // Envia, o deja en la cola si hay un turno en marcha: la decision y el cambio de estado van juntos, asi que
-  // dos envios seguidos nunca salen los dos al motor. El mismo `commandId` devuelve el mismo recibo.
+  // Envia, deja en la cola o —«Enviar ahora» con turno en marcha— mete el mensaje en el turno: la decision y el
+  // cambio de estado van juntos, asi que dos envios seguidos nunca salen los dos al motor. El mismo `commandId`
+  // devuelve el mismo recibo.
   send(params: SendMessageParams): SendReceipt {
     const tracked = this.require(params.sessionId);
     const commandId = params.commandId ?? this.deps.newId();
     const previous = tracked.receipts.get(commandId);
     if (previous !== undefined) return previous;
-    const receipt = isBusy(tracked.state) ? this.enqueue(tracked, commandId, params) : this.deliver(tracked, commandId, params);
+    const receipt = this.route(tracked, commandId, params);
     remember(tracked.receipts, commandId, receipt);
     return receipt;
+  }
+
+  // Edita el texto de un mensaje de la cola sin moverlo (F4.2, U5). null si ya no estaba (salio o lo quitaron).
+  updateQueued(sessionId: string, messageId: string, text: string): QueuedMessage | null {
+    const tracked = this.require(sessionId);
+    const current = tracked.queue.find((message) => message.id === messageId);
+    if (current === undefined) return null;
+    if (text.trim().length === 0 && current.attachments.length === 0) throw new Error(`Un mensaje de la cola no puede quedar vacío: ${messageId}`);
+    const updated: QueuedMessage = { ...current, text };
+    this.setQueue(tracked, updateQueuedMessage(tracked.queue, updated));
+    return updated;
+  }
+
+  // Un directo con turno en marcha que lo admite va al turno; lo demas, por la logica de siempre.
+  private route(tracked: Tracked, commandId: string, params: SendMessageParams): SendReceipt {
+    if (params.mode === 'steer' && !supportsSteer(tracked.provider)) throw new Error(`El proveedor ${tracked.provider} no admite mensajes directos`);
+    const steers = params.mode === 'steer' && isBusy(tracked.state) && tracked.notSteerable === null;
+    return steers ? this.steer(tracked, commandId, params) : this.sendNormally(tracked, commandId, params);
+  }
+
+  // Con turno en marcha, o con un directo en vuelo que puede abrir el suyo, espera en la cola; si no, al motor.
+  private sendNormally(tracked: Tracked, commandId: string, params: SendMessageParams): SendReceipt {
+    const waits = isBusy(tracked.state) || tracked.steering.size > 0;
+    return waits ? this.enqueue(tracked, commandId, params) : this.deliver(tracked, commandId, params);
+  }
+
+  // T2: el id del motor es el `commandId` si es un UUID (en Claude es el `uuid` del mensaje); si no, uno nuevo.
+  private steer(tracked: Tracked, commandId: string, params: SendMessageParams): SendReceipt {
+    const engineId = isUuid(commandId) ? commandId : this.deps.newId();
+    const steering: Steering = { commandId, message: { id: commandId, text: params.text, attachments: params.attachments ?? [] }, settled: null };
+    tracked.steering.set(engineId, steering);
+    try {
+      this.deps.sessions.steerMessage(tracked.sessionId, engineId, params.text, params.attachments ?? []);
+    } catch (err) {
+      tracked.steering.delete(engineId);
+      throw err;
+    }
+    if (steering.settled === null) return { status: 'steering', commandId, awaitsAnswer: tracked.pending.size > 0 };
+    return settledReceipt(steering.settled, commandId);
   }
 
   // Un Stop no envia la cola: la vacia ANTES de interrumpir (el `result` del turno parado ya no saca nada) y
@@ -257,6 +313,8 @@ export class SessionCoordinator {
   private relay(tracked: Tracked, payload: SessionEventPayload): void {
     this.follow(tracked, payload.sessionId);
     const { event } = payload;
+    // El destino de un directo es interno: sale a los clientes como `message_delivery`, sin secuencia propia.
+    if (event.kind === 'steer_result') return this.settleSteer(tracked, event);
     if (event.kind === 'permission_request' && this.answerAutomatically(tracked, event.request)) return;
     if (event.kind === 'session_init' && event.sessionId !== tracked.nativeRef?.nativeId) this.bind(tracked, event.sessionId);
     trackPending(tracked.pending, event);
@@ -266,10 +324,12 @@ export class SessionCoordinator {
     if (event.kind === 'conversation_reset') this.rebind(tracked, event.newSessionId);
     if (event.kind === 'result') {
       tracked.prGuard = false;
+      tracked.notSteerable = null;
       this.drain(tracked);
       // En segundo plano y ya sin turno: la conversacion queda libre para otra instancia.
       if (tracked.cancelExpiry !== null) this.deps.conversationHold?.release(tracked.sessionId);
     }
+    if (event.kind === 'session_restarting') this.failSteers(tracked);
   }
 
   // A todos los clientes, sobre una COPIA de la lista (un cliente puede soltarse mientras recibe). Un sumidero que
@@ -337,9 +397,10 @@ export class SessionCoordinator {
     return { status: 'accepted', commandId };
   }
 
-  // Al acabar un turno sale el PRIMERO de la cola como turno propio; el siguiente espera a que acabe ese.
+  // Al acabar un turno sale el PRIMERO de la cola como turno propio; el siguiente espera a que acabe ese. Con un
+  // directo en vuelo no sale nada: puede abrir su propio turno.
   private drain(tracked: Tracked): void {
-    if (isBusy(tracked.state)) return;
+    if (isBusy(tracked.state) || tracked.steering.size > 0) return;
     const { next, rest } = takeNextMessage(tracked.queue);
     if (next === null) return;
     tracked.queue = rest;
@@ -352,6 +413,66 @@ export class SessionCoordinator {
       tracked.emit({ kind: 'queued_message_failed', message: next, localized: localizedFromError(err) });
     }
     tracked.emit({ kind: 'queue_changed', queue: rest });
+  }
+
+  // Consume el destino que da el motor a un directo y lo anuncia. Uno que no esta en vuelo (proceso anterior,
+  // repetido) solo queda en el log.
+  private settleSteer(tracked: Tracked, event: Extract<MageEvent, { kind: 'steer_result' }>): void {
+    const steering = tracked.steering.get(event.messageId);
+    if (steering === undefined) {
+      this.deps.log('warn', 'Destino de un directo que no esta en vuelo', { sessionId: tracked.sessionId, messageId: event.messageId, outcome: event.outcome });
+      return;
+    }
+    tracked.steering.delete(event.messageId);
+    const delivery = this.deliveryOf(tracked, steering, event);
+    steering.settled = delivery;
+    tracked.emit({ kind: 'message_delivery', commandId: steering.commandId, message: steering.message, ...delivery });
+    this.drain(tracked);
+  }
+
+  private deliveryOf(tracked: Tracked, steering: Steering, event: Extract<MageEvent, { kind: 'steer_result' }>): MessageDelivery {
+    switch (event.outcome) {
+      case 'active_turn':
+        armPrGuard(tracked, steering.message.text);
+        return { into: 'active_turn', late: false, turnKind: null };
+      case 'new_turn':
+        // Claude abrio un turno propio para el directo tras el `result` del anterior.
+        tracked.state = 'running';
+        armPrGuard(tracked, steering.message.text);
+        return { into: 'new_turn', late: true, turnKind: null };
+      case 'not_steerable':
+        tracked.notSteerable = event.turnKind ?? UNKNOWN_TURN_KIND;
+        return this.reroute(tracked, steering.message, { late: false, turnKind: tracked.notSteerable });
+      case 'no_active_turn':
+        return this.reroute(tracked, steering.message, { late: true, turnKind: null });
+      case 'failed':
+        return { into: 'failed', late: false, turnKind: null, ...(event.localized === undefined ? {} : { localized: event.localized }) };
+    }
+  }
+
+  // T3 y A5: el directo que no pudo entrar va por la logica de envio normal (cola con turno; si no, al motor).
+  private reroute(tracked: Tracked, message: QueuedMessage, how: Pick<MessageDelivery, 'late' | 'turnKind'>): MessageDelivery {
+    if (isBusy(tracked.state) || tracked.steering.size > 0) {
+      this.setQueue(tracked, enqueueMessage(tracked.queue, message));
+      return { into: 'queue', ...how };
+    }
+    try {
+      this.deliver(tracked, message.id, { sessionId: tracked.sessionId, text: message.text, attachments: message.attachments });
+    } catch (err) {
+      return { into: 'failed', ...how, localized: localizedFromError(err) };
+    }
+    return { into: 'new_turn', ...how };
+  }
+
+  // El proceso se reinicia: los directos en vuelo murieron con el.
+  private failSteers(tracked: Tracked): void {
+    const lost = [...tracked.steering.values()];
+    tracked.steering.clear();
+    tracked.notSteerable = null;
+    for (const steering of lost) {
+      steering.settled = { into: 'failed', late: false, turnKind: null };
+      tracked.emit({ kind: 'message_delivery', commandId: steering.commandId, message: steering.message, ...steering.settled });
+    }
   }
 
   private setQueue(tracked: Tracked, queue: readonly QueuedMessage[]): void {
@@ -499,6 +620,12 @@ function remember(receipts: Map<string, SendReceipt>, commandId: string, receipt
   if (receipts.size <= MAX_RECEIPTS) return;
   const oldest = receipts.keys().next().value;
   if (oldest !== undefined) receipts.delete(oldest);
+}
+
+// Recibo de un directo que se resolvio durante la propia llamada al motor.
+function settledReceipt(delivery: MessageDelivery, commandId: string): SendReceipt {
+  if (delivery.into === 'failed') throw new UserFacingError(delivery.localized ?? foreignText(`No se pudo enviar el mensaje ${commandId}`));
+  return delivery.into === 'queue' ? { status: 'queued', commandId } : { status: 'accepted', commandId };
 }
 
 function describe(err: unknown): string {

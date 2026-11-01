@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { CreateSessionParams, SessionEventPayload } from '@shared/ipc';
-import type { MageEvent } from '@shared/events';
+import type { MageEvent, SteerOutcome } from '@shared/events';
 import { foreignText, UserFacingError } from '@shared/i18n/localizedText';
 import type { NativeSessionRef } from '@shared/coordination';
 import { CREATE_PR_PROMPT } from '@shared/permissionPolicy';
@@ -21,6 +21,7 @@ function harness(options: { index?: Partial<ConversationIdentityIndex>; emitOnSt
     }),
     stop: vi.fn(),
     sendMessage: vi.fn(),
+    steerMessage: vi.fn(),
     interrupt: vi.fn(),
     answerPermission: vi.fn(),
     answerElicitation: vi.fn(),
@@ -989,5 +990,269 @@ describe('SessionCoordinator — varios clientes por sesión (F2.6, H2 de la dev
     h.coordinator.stop(a);
 
     expect(h.coordinator.listSessions().map((s) => s.sessionId)).toEqual([b]);
+  });
+});
+
+describe('SessionCoordinator — directo y cola (F4.1, F4.2)', () => {
+  const C1 = '11111111-1111-4111-8111-111111111111';
+  const C2 = '22222222-2222-4222-8222-222222222222';
+  const result: MageEvent = { kind: 'result', result: { isError: false, subtype: 'success', numTurns: 1 } };
+  const steered = (messageId: string, outcome: SteerOutcome, extra: Partial<Extract<MageEvent, { kind: 'steer_result' }>> = {}): MageEvent => ({ kind: 'steer_result', messageId, outcome, ...extra });
+  const deliveries = (h: ReturnType<typeof harness>) => h.received.filter((p) => p.event.kind === 'message_delivery').map((p) => p.event);
+  // Sesion con un turno en marcha.
+  const running = (h: ReturnType<typeof harness>, provider = 'claude') => { const id = h.create({ provider }); h.emit(id, state('running')); return id; };
+  const steer = (h: ReturnType<typeof harness>, id: string, commandId = C1, text = 'ya') => h.coordinator.send({ sessionId: id, text, commandId, mode: 'steer' });
+
+  it('send_directoEnReposo_vaComoEnvioNormal', () => {
+    const h = harness();
+    const id = h.create();
+
+    const receipt = steer(h, id);
+
+    expect(receipt).toEqual({ status: 'accepted', commandId: C1 });
+    expect(h.sessions.sendMessage).toHaveBeenCalledWith(id, 'ya', []);
+    expect(h.sessions.steerMessage).not.toHaveBeenCalled();
+  });
+
+  it('send_directoConTurno_vaAlMotorConSuCommandIdYDevuelveSteering', () => {
+    const h = harness();
+    const id = running(h);
+
+    const receipt = steer(h, id);
+
+    expect(receipt).toEqual({ status: 'steering', commandId: C1, awaitsAnswer: false });
+    expect(h.sessions.steerMessage).toHaveBeenCalledWith(id, C1, 'ya', []);
+    expect(h.sessions.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('send_directoConCommandIdQueNoEsUuid_usaUnIdNuevoParaElMotor', () => {
+    const h = harness();
+    const id = running(h);
+
+    steer(h, id, 'c1');
+    h.emit(id, steered('cmd-1', 'active_turn'));
+
+    expect(h.sessions.steerMessage).toHaveBeenCalledWith(id, 'cmd-1', 'ya', []);
+    expect(deliveries(h)).toEqual([{ kind: 'message_delivery', commandId: 'c1', message: { id: 'c1', text: 'ya', attachments: [] }, into: 'active_turn', late: false, turnKind: null }]);
+  });
+
+  it('steerResult_activeTurn_anunciaElDestinoYNoReenviaElSteerResult', () => {
+    const h = harness();
+    const id = running(h);
+    steer(h, id);
+
+    h.emit(id, steered(C1, 'active_turn'));
+
+    expect(deliveries(h)).toMatchObject([{ into: 'active_turn' }]);
+    expect(h.received.some((p) => p.event.kind === 'steer_result')).toBe(false);
+  });
+
+  it('steerResult_newTurnTrasElResult_quedaEnMarchaYLaColaEsperaASuResult', () => {
+    const h = harness();
+    const id = running(h);
+    steer(h, id);
+    const queued = h.coordinator.send({ sessionId: id, text: 'B', commandId: 'b' });
+    expect(queued.status).toBe('queued');
+
+    h.emit(id, result);
+    expect(h.sessions.sendMessage).not.toHaveBeenCalled();
+    h.emit(id, state('idle'));
+    expect(h.coordinator.snapshot(id).state).toBe('idle');
+    h.emit(id, steered(C1, 'new_turn'));
+
+    expect(deliveries(h)).toMatchObject([{ into: 'new_turn', late: true }]);
+    expect(h.coordinator.snapshot(id).state).toBe('running');
+    expect(h.sessions.sendMessage).not.toHaveBeenCalled();
+    h.emit(id, result);
+    expect(h.sessions.sendMessage).toHaveBeenCalledWith(id, 'B', []);
+  });
+
+  it('send_normalConDirectoEnVueloSinTurno_esperaEnLaCola', () => {
+    const h = harness();
+    const id = running(h);
+    steer(h, id);
+    h.emit(id, result);
+    h.emit(id, state('idle'));
+
+    const receipt = h.coordinator.send({ sessionId: id, text: 'b', commandId: 'b' });
+
+    expect(receipt).toEqual({ status: 'queued', commandId: 'b' });
+  });
+
+  it('steerResult_noActiveTurnSinTurno_seEnviaComoMensajeNuevoTardio', () => {
+    const h = harness();
+    const id = running(h, 'codex');
+    steer(h, id);
+    h.emit(id, result);
+    h.emit(id, state('idle'));
+
+    h.emit(id, steered(C1, 'no_active_turn'));
+
+    expect(h.sessions.sendMessage).toHaveBeenCalledWith(id, 'ya', []);
+    expect(deliveries(h)).toMatchObject([{ into: 'new_turn', late: true, turnKind: null }]);
+    expect(h.coordinator.snapshot(id).state).toBe('running');
+  });
+
+  it('steerResult_noActiveTurnConTurno_esperaEnLaCola', () => {
+    const h = harness();
+    const id = running(h, 'codex');
+    steer(h, id);
+
+    h.emit(id, steered(C1, 'no_active_turn'));
+
+    expect(h.coordinator.snapshot(id).queue).toEqual([{ id: C1, text: 'ya', attachments: [] }]);
+    expect(deliveries(h)).toMatchObject([{ into: 'queue', late: true }]);
+  });
+
+  it('steerResult_notSteerable_vaALaColaYLosDirectosSiguientesTambienHastaElResult', () => {
+    const h = harness();
+    const id = running(h, 'codex');
+    steer(h, id);
+
+    h.emit(id, steered(C1, 'not_steerable', { turnKind: 'review' }));
+    const second = steer(h, id, C2, 'otro');
+
+    expect(deliveries(h)).toMatchObject([{ into: 'queue', late: false, turnKind: 'review' }]);
+    expect(second).toEqual({ status: 'queued', commandId: C2 });
+    expect(h.sessions.steerMessage).toHaveBeenCalledTimes(1);
+    h.emit(id, result);
+    expect(h.sessions.sendMessage).toHaveBeenCalledWith(id, 'ya', []);
+    h.emit(id, state('running'));
+    expect(steer(h, id, '33333333-3333-4333-8333-333333333333').status).toBe('steering');
+  });
+
+  it('steerResult_notSteerableSinTipo_usaUnknown', () => {
+    const h = harness();
+    const id = running(h, 'codex');
+    steer(h, id);
+
+    h.emit(id, steered(C1, 'not_steerable'));
+
+    expect(deliveries(h)).toMatchObject([{ turnKind: 'unknown' }]);
+  });
+
+  it('send_directoQueSeResuelveEnLaLlamada_devuelveElReciboDeLaCola', () => {
+    const h = harness();
+    const id = running(h, 'codex');
+    vi.mocked(h.sessions.steerMessage).mockImplementation((sessionId, messageId) => { h.emit(sessionId, steered(messageId, 'no_active_turn')); });
+
+    const receipt = steer(h, id);
+
+    expect(receipt).toEqual({ status: 'queued', commandId: C1 });
+    expect(h.coordinator.snapshot(id).queue).toMatchObject([{ id: C1 }]);
+    expect(deliveries(h)).toMatchObject([{ into: 'queue' }]);
+  });
+
+  it('send_directoConPermisoPendiente_seAceptaYAvisaQueEsperaLaRespuesta', () => {
+    const h = harness();
+    const id = running(h);
+    h.emit(id, { kind: 'permission_request', request: { requestId: 'r', toolUseId: 't', toolName: 'Bash', input: {}, description: null, isQuestion: false } } as unknown as MageEvent);
+
+    const receipt = steer(h, id);
+
+    expect(receipt).toEqual({ status: 'steering', commandId: C1, awaitsAnswer: true });
+    expect(h.sessions.steerMessage).toHaveBeenCalled();
+  });
+
+  it('send_mismoDirectoDosVeces_soloLlegaUnaVezAlMotor', () => {
+    const h = harness();
+    const id = running(h);
+
+    const first = steer(h, id);
+    const second = steer(h, id);
+
+    expect(second).toEqual(first);
+    expect(h.sessions.steerMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it('steerResult_failed_anunciaElFalloConElMensaje', () => {
+    const h = harness();
+    const id = running(h);
+    steer(h, id);
+
+    h.emit(id, steered(C1, 'failed', { localized: foreignText('x') }));
+
+    expect(deliveries(h)).toMatchObject([{ into: 'failed', late: false, turnKind: null, localized: foreignText('x'), message: { id: C1, text: 'ya', attachments: [] } }]);
+  });
+
+  it('send_motorRechazaElDirecto_propagaElErrorYNoQuedaEnVuelo', () => {
+    const h = harness();
+    const id = running(h);
+    vi.mocked(h.sessions.steerMessage).mockImplementation(() => { throw new Error('caido'); });
+
+    expect(() => steer(h, id)).toThrow('caido');
+    h.emit(id, result);
+    h.emit(id, state('idle'));
+
+    expect(h.coordinator.send({ sessionId: id, text: 'b', commandId: 'b' })).toEqual({ status: 'accepted', commandId: 'b' });
+  });
+
+  it('sessionRestarting_conDirectoEnVuelo_loDaPorFallido', () => {
+    const h = harness();
+    const id = running(h);
+    steer(h, id);
+
+    h.emit(id, { kind: 'session_restarting', attempt: 1, delayMs: 1000 } as MageEvent);
+    h.emit(id, steered(C1, 'active_turn'));
+
+    expect(deliveries(h)).toMatchObject([{ into: 'failed', late: false, turnKind: null }]);
+    expect(h.log).toHaveBeenCalledWith('warn', expect.any(String), expect.anything());
+  });
+
+  it('send_directoEnProveedorSinDirecto_lanzaConElProveedor', () => {
+    const h = harness();
+    const id = running(h, 'agy');
+
+    expect(() => steer(h, id)).toThrow(/agy/);
+    expect(h.sessions.steerMessage).not.toHaveBeenCalled();
+  });
+
+  it('steerResult_desconocido_soloDejaUnWarn', () => {
+    const h = harness();
+    const id = running(h);
+
+    h.emit(id, steered(C1, 'active_turn'));
+
+    expect(deliveries(h)).toEqual([]);
+    expect(h.log).toHaveBeenCalledWith('warn', expect.any(String), expect.anything());
+  });
+
+  it('updateQueued_mensajeEnCola_cambiaElTextoSinMoverloYAnunciaLaCola', () => {
+    const h = harness();
+    const id = running(h);
+    h.coordinator.send({ sessionId: id, text: 'a', commandId: 'a' });
+    h.coordinator.send({ sessionId: id, text: 'b', commandId: 'b' });
+
+    const updated = h.coordinator.updateQueued(id, 'a', 'A2');
+
+    expect(updated).toEqual({ id: 'a', text: 'A2', attachments: [] });
+    expect(h.coordinator.snapshot(id).queue.map((m) => m.id)).toEqual(['a', 'b']);
+    expect(h.coordinator.snapshot(id).queue.map((m) => m.text)).toEqual(['A2', 'b']);
+    expect(h.received.at(-1)?.event.kind).toBe('queue_changed');
+  });
+
+  it('updateQueued_mensajeQueYaNoEsta_devuelveNull', () => {
+    const h = harness();
+    const id = running(h);
+
+    expect(h.coordinator.updateQueued(id, 'nope', 'x')).toBeNull();
+  });
+
+  it('updateQueued_textoVacioSinAdjuntos_lanzaConElId', () => {
+    const h = harness();
+    const id = running(h);
+    h.coordinator.send({ sessionId: id, text: 'a', commandId: 'a' });
+
+    expect(() => h.coordinator.updateQueued(id, 'a', '   ')).toThrow(/a/);
+    expect(h.coordinator.snapshot(id).queue).toEqual([{ id: 'a', text: 'a', attachments: [] }]);
+  });
+
+  it('updateQueued_textoVacioConAdjuntos_loAcepta', () => {
+    const h = harness();
+    const id = running(h);
+    const attachments = [{ mediaType: 'image/png' as const, data: 'AA==' }];
+    h.coordinator.send({ sessionId: id, text: 'img', commandId: 'a', attachments });
+
+    expect(h.coordinator.updateQueued(id, 'a', '')).toEqual({ id: 'a', text: '', attachments });
   });
 });

@@ -5,12 +5,13 @@ import {
   ANSWER_PERMISSION_SCHEMA,
   parseSessionInput,
   QUEUED_MESSAGE_SCHEMA,
-  SEND_MESSAGE_SCHEMA,
+  RENDERER_SEND_MESSAGE_SCHEMA,
   SESSION_ID_SCHEMA,
   SET_EFFORT_SCHEMA,
   SET_MODEL_SCHEMA,
   SET_PERMISSION_MODE_SCHEMA,
   STOP_TASK_SCHEMA,
+  UPDATE_QUEUED_SCHEMA,
 } from '@shared/sessionInput';
 import { ELICITATION_ANSWER_SCHEMA } from '@shared/elicitation';
 import type { SessionManager } from '../engine/sessionManager';
@@ -36,7 +37,7 @@ export interface SessionIpcDeps {
   readonly handle: IpcRegister;
   readonly sessions: SessionCommands;
   readonly coordinator: Pick<SessionCoordinator,
-    'send' | 'interrupt' | 'removeQueued' | 'takeQueue' | 'answerPermission' | 'answerElicitation' | 'stop' | 'close' | 'snapshot'>;
+    'send' | 'interrupt' | 'removeQueued' | 'updateQueued' | 'takeQueue' | 'answerPermission' | 'answerElicitation' | 'stop' | 'close' | 'snapshot'>;
   readonly createSession: (event: IpcMainInvokeEvent, params: CreateSessionParams) => CreateSessionResult;
   readonly validateAttachments: (attachments: readonly ImageAttachment[] | undefined) => readonly ImageAttachment[];
   // Carpeta scratch AISLADA por conversación (subdir único y vacío), ya creada y canonizada.
@@ -62,7 +63,7 @@ export function registerSessionIpc(deps: SessionIpcDeps): void {
   handle(IpcChannel.SessionCreate, (event, params) => deps.createSession(event, params as CreateSessionParams));
   // Los adjuntos se validan también AQUÍ (el renderer valida por cortesía; esta es la frontera de verdad).
   handle(IpcChannel.SessionSendMessage, (event, arg) => {
-    const params = authorize(event, IpcChannel.SessionSendMessage, parseSessionInput(SEND_MESSAGE_SCHEMA, arg, IpcChannel.SessionSendMessage));
+    const params = authorize(event, IpcChannel.SessionSendMessage, parseSessionInput(RENDERER_SEND_MESSAGE_SCHEMA, arg, IpcChannel.SessionSendMessage));
     return coordinator.send({ ...params, attachments: deps.validateAttachments(params.attachments) });
   });
   handle(IpcChannel.SessionAnswerPermission, (event, arg) => {
@@ -77,6 +78,10 @@ export function registerSessionIpc(deps: SessionIpcDeps): void {
     return coordinator.removeQueued(params.sessionId, params.messageId);
   });
   handle(IpcChannel.SessionQueueTake, (event, sessionId) => coordinator.takeQueue(authorizeId(event, IpcChannel.SessionQueueTake, sessionId)));
+  handle(IpcChannel.SessionQueueUpdate, (event, arg) => {
+    const params = authorize(event, IpcChannel.SessionQueueUpdate, parseSessionInput(UPDATE_QUEUED_SCHEMA, arg, IpcChannel.SessionQueueUpdate));
+    return coordinator.updateQueued(params.sessionId, params.messageId, params.text);
+  });
   registerSessionOptions(deps, authorize);
   handle(IpcChannel.SessionStop, (event, sessionId) => coordinator.stop(authorizeId(event, IpcChannel.SessionStop, sessionId)));
   handle(IpcChannel.SessionClose, (event, sessionId) => coordinator.close(authorizeId(event, IpcChannel.SessionClose, sessionId)));

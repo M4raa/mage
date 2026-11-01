@@ -55,6 +55,15 @@ export const AGY_PROVIDER_ID = 'agy';
 // catalogo y los tests.
 export const CODEX_PROVIDER_ID = 'codex';
 
+// Id del proveedor Claude (F4.1): lo mira `supportsSteer`.
+export const CLAUDE_PROVIDER_ID = 'claude';
+
+// Proveedores con mensaje directo en el turno en marcha (F4.1): Claude (`uuid` + command_lifecycle) y codex
+// (`turn/steer`). agy y el runtime propio no: su «Enviar ahora» se desactiva con su motivo.
+export function supportsSteer(providerId: string): boolean {
+  return providerId === CLAUDE_PROVIDER_ID || providerId === CODEX_PROVIDER_ID;
+}
+
 // Codex corre sobre `codex app-server` (JSON-RPC por stdio), que SI tiene puente de permisos
 // (`item/*/requestApproval`) y catalogo de modelos (`model/list`). Su adapter esta escrito desde el
 // esquema y lo medido con cuenta en codex-cli 0.160.0 (`spike/codex-spike.mjs --verify --real`).
