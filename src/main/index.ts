@@ -95,7 +95,7 @@ import type {
 import { buildAboutInfo } from './about/aboutService';
 import type { MemoryFile } from '@shared/memory';
 import type { MageEvent, SlashCommandInfo } from '@shared/events';
-import { localized, type LocalizedText } from '@shared/i18n/localizedText';
+import { localized, renderForLog, type LocalizedText } from '@shared/i18n/localizedText';
 import type { ImageAttachment, ProviderProbeParams } from '@shared/ipc';
 import { base64ByteLength, validateAttachmentSet } from '@shared/attachments';
 import type { EffectiveSettings, InstructionsFile, ProjectFileContent, ReadProjectFileParams, WriteProjectFileParams } from '@shared/ipc';
@@ -1017,7 +1017,7 @@ let codexAccountCatalog: CodexAccountCatalog | null = null;
 function getCodexAccountCatalog(): CodexAccountCatalog {
   codexAccountCatalog ??= new CodexAccountCatalog({
     probe: (home) => probeCodexAccount(codexAccountProbeDeps(), { home, includeApps: false }), now: Date.now,
-    onError: (reason) => mainLog('warn', 'No se pudo confirmar el login de Codex', { reason }),
+    onError: (reason) => mainLog('warn', 'No se pudo confirmar el login de Codex', { reason: renderForLog(reason) }),
   });
   return codexAccountCatalog;
 }
@@ -1624,7 +1624,7 @@ async function assessVaultOnce(): Promise<void> {
     now: Date.now,
   });
   // El motivo no lleva secretos: estado del llavero y comandos. Solo su primera línea va al log.
-  const reason = vaultStatus.usable ? null : vaultStatus.reason.split('\n')[0];
+  const reason = vaultStatus.usable ? null : renderForLog(vaultStatus.reason).split('\n')[0];
   mainLog(vaultStatus.usable ? 'info' : 'warn', 'Bóveda comprobada al arrancar', { usable: vaultStatus.usable, ms: Date.now() - startedAt, reason });
 }
 

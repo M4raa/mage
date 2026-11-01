@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { foreignText } from '@shared/i18n/localizedText';
+import { jsonMessage, thrownText } from '@testing/localizedText';
 import { SecretStore, type SecretCipher } from './secretStore';
 import type { VaultStatus } from './vaultGate';
 
@@ -125,6 +127,16 @@ describe('SecretStore', () => {
     expect(() => store.set('a', 'x')).toThrow(/no es JSON valido/);
   });
 
+  it('get_ficheroCorrupto_lanzaLaClaveConElMensajeDeJsonComoDetalle', () => {
+    const { store } = memoryStore(fakeCipher(), '{ esto no es json');
+
+    const text = thrownText(() => store.get('a'));
+
+    expect(text.key).toBe('errors.vault.fileInvalidJson');
+    expect(text.values).toEqual({ path: FILE });
+    expect(text.parts?.['detail']).toEqual(foreignText(jsonMessage('{ esto no es json')));
+  });
+
   it('get_formaInesperada_lanza', () => {
     const { store } = memoryStore(fakeCipher(), JSON.stringify({ version: 2, secrets: {} }));
 
@@ -136,6 +148,21 @@ describe('SecretStore', () => {
     const { store } = memoryStore(fakeCipher(), initial);
 
     expect(() => store.get('a')).toThrow(/No se pudo descifrar el secreto "a": no es de este usuario/);
+  });
+
+  it('get_cifradoPorOtroUsuario_lanzaLaClaveConElIdYElErrorDelCifrado', () => {
+    const initial = JSON.stringify({ version: 1, secrets: { a: Buffer.from('ajeno').toString('base64') } });
+    const { store } = memoryStore(fakeCipher(), initial);
+
+    const text = thrownText(() => store.get('a'));
+
+    expect(text).toEqual({ key: 'errors.vault.decryptFailed', values: { id: '"a"' }, parts: { detail: foreignText('no es de este usuario') } });
+  });
+
+  it('set_sinCifradoDisponible_lanzaLaClaveDelCifrado', () => {
+    const { store } = memoryStore(fakeCipher({ isEncryptionAvailable: () => false }));
+
+    expect(thrownText(() => store.set('a', 'x')).key).toBe('errors.vault.cipherUnavailable');
   });
 });
 
@@ -177,7 +204,7 @@ it('A12_backendSeguroSinDisponibilidad_rechazaEscrituraYLectura', () => {
 // D1 (F2.7): sin bóveda usable, todo lo que cifra o descifra lanza el mensaje decidido al arrancar, sin tocar el cifrado.
 describe('SecretStore con la bóveda no usable', () => {
   const D1 = 'No se puede crear ni usar esta cuenta de API: el llavero seguro de Linux está bloqueado.';
-  const unusable = (): VaultStatus => ({ usable: false, reason: D1 });
+  const unusable = (): VaultStatus => ({ usable: false, reason: foreignText(D1) });
 
   it('setYGet_bovedaNoUsable_lanzanElMensajeD1SinCifrarNiDescifrar', () => {
     let calls = 0;

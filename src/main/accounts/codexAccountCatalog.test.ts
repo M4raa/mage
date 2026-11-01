@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { AccountInfo } from '@shared/accounts';
+import { foreignText } from '@shared/i18n/localizedText';
 import { CodexAccountCatalog } from './codexAccountCatalog';
 
 const account: AccountInfo = { configDir: '/codex-test', name: 'test', isMain: false, providerId: 'codex',
@@ -16,12 +17,12 @@ describe('CodexAccountCatalog', () => {
 
   it('confirm_falloSeguro_conservaLaFotoYNotificaLaCategoria', async () => {
     const onError = vi.fn();
-    const catalog = new CodexAccountCatalog({ probe: async () => ({ authenticated: null, apps: [], error: 'timeout' }), now: () => 0, onError });
+    const catalog = new CodexAccountCatalog({ probe: async () => ({ authenticated: null, apps: [], error: foreignText('timeout') }), now: () => 0, onError });
 
     const result = await catalog.confirm([account]);
 
     expect(result).toEqual([account]);
-    expect(onError).toHaveBeenCalledWith('timeout');
+    expect(onError).toHaveBeenCalledWith(foreignText('timeout'));
   });
 
   it('confirm_consultasConcurrentes_reutilizaLaPeticionYLaCacheHastaSuCaducidad', async () => {

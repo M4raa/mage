@@ -1,4 +1,5 @@
 import type { EmbeddedLoginResult } from '@shared/accounts';
+import { localized, UserFacingError } from '@shared/i18n/localizedText';
 
 // Login de cuenta POR EL CLI (Fase 9.2). Mage spawnea `claude auth login`, le saca la URL de su
 // stdout, la abre en ventana privada, relaya el *code* que pegue el usuario por stdin y verifica con
@@ -85,7 +86,7 @@ export class CliLoginService {
   async start(configDir: string, email: string | null): Promise<CliLoginStart> {
     if (configDir.trim().length === 0) throw new Error('Config dir vacio para el login');
     if (!this.deps.validateConfigDir(configDir)) throw new Error(`Cuenta no valida para login: ${configDir}`);
-    if (this.pending !== null) throw new Error(`Ya hay un login en curso para ${this.pending.configDir}`);
+    if (this.pending !== null) throw new UserFacingError(localized('errors.accounts.loginInProgress', { configDir: this.pending.configDir }));
 
     const child = this.deps.spawnLogin(configDir, email);
     const pending: Pending = { configDir, process: child, exited: false, exitCode: null, tail: '', wake: null };
@@ -263,7 +264,7 @@ function waitForAuthorizeUrl(child: CliLoginProcess, timeoutMs: number): Promise
       fn();
     };
     const timer = setTimeout(
-      () => finish(() => reject(new Error(`El CLI no imprimio la URL de login en ${timeoutMs} ms`))),
+      () => finish(() => reject(new UserFacingError(localized('errors.accounts.loginUrlTimeout', { timeoutMs: String(timeoutMs) })))),
       timeoutMs,
     );
     child.onOutput((chunk) => {
@@ -272,7 +273,7 @@ function waitForAuthorizeUrl(child: CliLoginProcess, timeoutMs: number): Promise
       if (url !== null) finish(() => resolve(url));
     });
     // Si el proceso muere antes de imprimir la URL, no hay nada que esperar.
-    child.onExit((code) => finish(() => reject(new Error(`El CLI de login termino (codigo ${code}) sin imprimir la URL`))));
+    child.onExit((code) => finish(() => reject(new UserFacingError(localized('errors.accounts.loginExitedNoUrl', { code: String(code) })))));
   });
 }
 

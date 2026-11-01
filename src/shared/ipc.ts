@@ -622,7 +622,7 @@ export interface AboutInfo {
     readonly chromium: string;
     readonly node: string;
   };
-  readonly notices: string;
+  readonly notices: LocalizedText;
   readonly chromiumLicensesPath: string | null;
 }
 

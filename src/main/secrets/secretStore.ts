@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { localized, UserFacingError, wrapError } from '@shared/i18n/localizedText';
 import { writeAtomic, type AtomicWriteDeps } from '../os/atomicFile';
 import type { VaultStatus } from './vaultGate';
 
@@ -62,7 +63,7 @@ export class SecretStore {
     } catch (err) {
       // Un secreto cifrado por otro usuario de Windows (fichero copiado) no se puede leer: se dice, sin
       // el valor cifrado en el mensaje.
-      throw new Error(`No se pudo descifrar el secreto ${JSON.stringify(id)}: ${err instanceof Error ? err.message : String(err)}`);
+      throw new UserFacingError(wrapError('errors.vault.decryptFailed', { id: JSON.stringify(id) }, err));
     }
   }
 
@@ -93,10 +94,10 @@ export class SecretStore {
     try {
       parsed = JSON.parse(this.deps.readFile(this.deps.filePath));
     } catch (err) {
-      throw new Error(`La boveda ${this.deps.filePath} no es JSON valido: ${err instanceof Error ? err.message : String(err)}`);
+      throw new UserFacingError(wrapError('errors.vault.fileInvalidJson', { path: this.deps.filePath }, err));
     }
     const result = SECRET_FILE_SCHEMA.safeParse(parsed);
-    if (!result.success) throw new Error(`La boveda ${this.deps.filePath} no tiene la forma esperada: ${result.error.message}`);
+    if (!result.success) throw new UserFacingError(wrapError('errors.vault.fileBadShape', { path: this.deps.filePath }, result.error));
     return result.data.secrets;
   }
 
@@ -106,13 +107,13 @@ export class SecretStore {
 
   private requireEncryption(): void {
     const status = this.deps.status?.();
-    if (status !== undefined && !status.usable) throw new Error(status.reason);
+    if (status !== undefined && !status.usable) throw new UserFacingError(status.reason);
     const backend = this.deps.cipher.getSelectedStorageBackend?.();
     if (backend === 'basic_text' || backend === 'unknown') {
-      throw new Error(`El backend de cifrado ${JSON.stringify(backend)} no es seguro: no se puede usar la boveda`);
+      throw new UserFacingError(localized('errors.vault.backendInsecure', { backend: JSON.stringify(backend) }));
     }
     if (!this.deps.cipher.isEncryptionAvailable()) {
-      throw new Error('El cifrado del sistema no esta disponible: no se puede usar la boveda en claro');
+      throw new UserFacingError(localized('errors.vault.cipherUnavailable'));
     }
   }
 }

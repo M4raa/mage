@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { CodexAccountMetadata } from '@shared/mcp';
-import { t } from '../i18n/uiLanguage';
+import { localized, renderLocalized, type LocalizedText } from '@shared/i18n/localizedText';
+import type { Translate } from '@shared/i18n/translator';
 
 export interface CodexAppsApi { readonly readCodexApps: (home: string) => Promise<CodexAccountMetadata> }
 interface CodexAppsState {
@@ -32,9 +33,14 @@ function storeResult(set: SetAppsState, home: string, value: CodexAccountMetadat
 
 async function queryAccounts(api: CodexAppsApi, homes: readonly string[], receive: (home: string, value: CodexAccountMetadata) => void): Promise<void> {
   for (const home of homes) {
-    const value = await api.readCodexApps(home).catch((): CodexAccountMetadata => ({ authenticated: null, apps: null, error: t('errors.codexApps.queryFailed') }));
+    const value = await api.readCodexApps(home).catch((): CodexAccountMetadata => ({ authenticated: null, apps: null, error: localized('errors.codexApps.queryFailed') }));
     receive(home, value);
   }
 }
 
 export const useCodexAppsStore = createCodexAppsStore({ readCodexApps: (home) => window.mage.readCodexApps(home) });
+
+// El aviso de error de una cuenta de Codex en Ajustes: la frase de main o del store, en el idioma de la interfaz.
+export function codexAppsErrorText(error: LocalizedText, t: Translate): string {
+  return t('mcp.codexApps.error', { error: renderLocalized(t, error) });
+}

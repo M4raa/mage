@@ -28,6 +28,7 @@ import { isArrowNavKey, nextIndexForArrow } from '../a11y/keyboardNav';
 import { isMacPlatform } from '../keybindings/platform';
 import { CHANGELOG_ENTRIES } from '../releaseNotesContent';
 import { useT } from '../../i18n/uiLanguage';
+import { aboutNoticesText } from '../aboutView';
 import type { MessageKey } from '@shared/i18n/messageKeys.generated';
 import type { Translate } from '@shared/i18n/translator';
 import { formatInteger } from '../../i18n/format';
@@ -550,7 +551,7 @@ function AboutSection(): React.JSX.Element {
         data-about="notices"
         className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap break-words rounded-[7px] border border-mg-border-subtle bg-mg-code p-[10px] font-mono text-[10.5px] leading-[1.5] text-mg-sec"
       >
-        {about === null ? (error === null ? t('settings.about.noticesLoading') : '') : about.notices}
+        {aboutNoticesText(about, error, t)}
       </pre>
     </div>
   );

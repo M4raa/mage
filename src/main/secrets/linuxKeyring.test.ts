@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
+import { foreignText, localized } from '@shared/i18n/localizedText';
+import { esText } from '@testing/localizedText';
 import { DBUS_QUERY_TIMEOUT_MS, KEYRING_CHECK_BUDGET_MS, detectLinuxKeyring, hasSessionBus, type BusCall, type KeyringDetectorDeps } from './linuxKeyring';
 
 // Respuestas literales de `dbus-send --print-reply` (las de la sonda de F0.5c).
@@ -92,14 +94,15 @@ describe('detectLinuxKeyring', () => {
   it('detect_errorDelBus_errorConSuDetalleYNoAusente', async () => {
     const result = await detectLinuxKeyring(deps({ busCall: bus({ ...UNLOCKED_REPLIES, 'org.freedesktop.Secret.Service.ReadAlias': new Error('org.freedesktop.DBus.Error.NoReply') }) }));
 
-    expect(result).toEqual({ state: 'error', detail: 'org.freedesktop.DBus.Error.NoReply' });
+    expect(result).toEqual({ state: 'error', detail: foreignText('org.freedesktop.DBus.Error.NoReply') });
   });
 
   it('detect_respuestaSinRuta_error', async () => {
     const result = await detectLinuxKeyring(deps({ busCall: bus({ ...UNLOCKED_REPLIES, 'org.freedesktop.Secret.Service.ReadAlias': 'basura' }) }));
 
     expect(result.state).toBe('error');
-    expect(result.detail).toMatch(/ReadAlias sin ruta de objeto: basura/);
+    expect(result.detail).toEqual(localized('errors.vault.readAliasNoPath', { reply: 'basura' }));
+    expect(esText(result.detail)).toMatch(/ReadAlias sin ruta de objeto: basura/);
   });
 
   it('detect_cadaConsulta_500msComoMaximo', async () => {
@@ -132,7 +135,8 @@ describe('detectLinuxKeyring', () => {
     const result = await detectLinuxKeyring(deps({ busCall, now: () => clock }));
 
     expect(result.state).toBe('error');
-    expect(result.detail).toMatch(/3000 ms/);
+    expect(result.detail).toEqual(localized('errors.vault.keyringTimeout', { budgetMs: '3000', method: 'org.freedesktop.Secret.Service.ReadAlias' }));
+    expect(esText(result.detail)).toMatch(/3000 ms/);
     expect(busCall).toHaveBeenCalledTimes(1);
   });
 });
