@@ -17,6 +17,7 @@ export type EventSink = (payload: SessionEventPayload) => void;
 export interface ManagedSession {
   start(): void;
   sendUserMessage(text: string, attachments?: readonly ImageAttachment[]): void;
+  steerUserMessage?(messageId: string, text: string, attachments?: readonly ImageAttachment[]): void;
   answerPermission(requestId: string, decision: PermissionDecision): void;
   answerElicitation?(answer: ElicitationAnswer): void;
   interrupt(): void;
@@ -103,6 +104,13 @@ export class SessionManager {
 
   sendMessage(sessionId: string, text: string, attachments: readonly ImageAttachment[] = []): void {
     this.require(sessionId).sendUserMessage(text, attachments);
+  }
+
+  // Directo (F4.1). Lanza si la sesion no lo admite (agy, runtime propio): la coordinacion no lo pide ahi.
+  steerMessage(sessionId: string, messageId: string, text: string, attachments: readonly ImageAttachment[] = []): void {
+    const session = this.require(sessionId);
+    if (session.steerUserMessage === undefined) throw new Error(`La sesion no admite mensajes directos: ${sessionId}`);
+    session.steerUserMessage(messageId, text, attachments);
   }
 
   answerPermission(sessionId: string, requestId: string, decision: PermissionDecision): void {

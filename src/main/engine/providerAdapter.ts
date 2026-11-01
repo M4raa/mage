@@ -50,6 +50,12 @@ export interface PermissionRef {
   readonly toolUseId: string;
 }
 
+// Lo que devuelve `encodeSteer`: un payload a escribir (null = el adapter lo manda por `takeOutgoing`) o
+// el destino ya resuelto sin escribir nada (no hay turno al que entrar).
+export type SteerEncoding =
+  | { readonly kind: 'write'; readonly payload: unknown }
+  | { readonly kind: 'resolved'; readonly outcome: 'no_active_turn' };
+
 // Layout en disco de las cuentas de un proveedor. Lo DECLARA el adapter y lo recibe `AccountService`
 // inyectado, que asi deja de conocer ningun nombre de proveedor: hasta 9.1 tenia dentro
 // `CONFIG_DIR_PATTERN = /^\.claude(-.*|\d*)$/` y `MAIN_DIR_NAME = '.claude'`, que es exactamente lo
@@ -104,6 +110,9 @@ export interface ProviderAdapter {
   // `attachments` (2.12.1): imagenes del mensaje. SIN adjuntos el payload no cambia ni un byte
   // respecto al de siempre — la forma minima con `content` string esta validada por el spike.
   encodeUserMessage(text: string, attachments?: readonly ImageAttachment[]): unknown;
+  // Mensaje directo en el turno en marcha (F4.1). OPCIONAL: solo Claude y codex lo tienen. `messageId` es
+  // el id con el que el adapter emitira despues su `steer_result`.
+  encodeSteer?(messageId: string, text: string, attachments?: readonly ImageAttachment[]): SteerEncoding;
   encodePermissionResponse(ref: PermissionRef, decision: PermissionDecision): unknown;
   encodeElicitationResponse?(answer: ElicitationAnswer): unknown;
   encodeInterrupt(): unknown;

@@ -7,7 +7,7 @@ import { resolveCodexBinary, type CodexSpawnCommand } from '../os/codexBinaryRes
 import { scrubAgentEnv } from '../os/agentEnv';
 import { toCodexOverrides } from '../config/mcpProviderTranslate';
 import { bridgeDocument, type BridgedFile } from '../instructions/instructionsBridge';
-import type { AuthModel, LaunchParams, PermissionRef, ProviderAdapter, SpawnPlan } from './providerAdapter';
+import type { AuthModel, LaunchParams, PermissionRef, ProviderAdapter, SpawnPlan, SteerEncoding } from './providerAdapter';
 import {
   approvalRequest,
   approvalResult,
@@ -77,8 +77,11 @@ const CLIENT_INFO = { name: 'mage', title: 'Mage', version: '0.1.2' } as const;
 // el sandbox queda en solo lectura, asi que escribir pide permiso).
 const APPROVAL_POLICY = 'on-request';
 const JSONRPC_METHOD_NOT_FOUND = -32601;
+// Rechazo de `turn/steer` (medido en 0.164.0): sin turno activo o con otro turno activo; el turno ya no es el nuestro.
+const JSONRPC_INVALID_REQUEST = -32600;
+const STALE_STEER_MESSAGES: readonly string[] = ['no active turn to steer', 'expected active turn id'];
 // Ids de las peticiones propias de Mage, para reconocer su respuesta.
-type OwnRequest = 'initialize' | 'thread' | 'turn' | 'models' | 'rateLimits' | 'other';
+type OwnRequest = 'initialize' | 'thread' | 'turn' | 'models' | 'rateLimits' | 'steer' | 'other';
 
 interface PendingApproval {
   readonly rawId: unknown;
@@ -98,6 +101,11 @@ export class CodexAdapter implements ProviderAdapter {
   private readonly fileChanges = new Map<string, readonly unknown[]>();
   private threadId: string | null = null;
   private turnId: string | null = null;
+  // `turn/start` mandado y sin respuesta todavia: un directo espera a tener el id del turno.
+  private turnStarting = false;
+  private heldSteers: Array<{ readonly messageId: string; readonly input: unknown[] }> = [];
+  // id JSON-RPC de cada `turn/steer` -> id del directo de Mage.
+  private readonly steerRequests = new Map<number, string>();
   private usage: CodexUsageTracker = EMPTY_USAGE_TRACKER;
   private queuedInputs: unknown[][] = [];
   private params: LaunchParams | null = null;
@@ -149,6 +157,9 @@ export class CodexAdapter implements ProviderAdapter {
     this.fileChanges.clear();
     this.threadId = null;
     this.turnId = null;
+    this.turnStarting = false;
+    this.heldSteers = [];
+    this.steerRequests.clear();
     this.usage = EMPTY_USAGE_TRACKER;
   }
 
@@ -160,14 +171,26 @@ export class CodexAdapter implements ProviderAdapter {
 
   // Sin hilo todavia, el mensaje espera: sale como `turn/start` en cuanto `thread/start` conteste.
   encodeUserMessage(text: string, attachments: readonly ImageAttachment[] = []): unknown {
-    const input: unknown[] = [{ type: 'text', text, text_elements: [] }];
-    for (const attachment of attachments) input.push({ type: 'image', url: `data:${attachment.mediaType};base64,${attachment.data}` });
+    const input = buildInput(text, attachments);
     if (this.threadId === null) {
       this.queuedInputs.push(input);
       return null;
     }
     this.startTurn(input);
     return null;
+  }
+
+  // Directo (F4.1): `turn/steer` contra el turno en marcha. Con `turn/start` aun sin respuesta, espera al
+  // id del turno; sin turno, no hay a donde entrar y lo decide quien lo pidio (T3: va como mensaje normal).
+  encodeSteer(messageId: string, text: string, attachments: readonly ImageAttachment[] = []): SteerEncoding {
+    const input = buildInput(text, attachments);
+    if (this.threadId !== null && this.turnId !== null) {
+      this.sendSteer(messageId, input);
+      return { kind: 'write', payload: null };
+    }
+    if (!this.turnStarting) return { kind: 'resolved', outcome: 'no_active_turn' };
+    this.heldSteers.push({ messageId, input });
+    return { kind: 'write', payload: null };
   }
 
   encodePermissionResponse(ref: PermissionRef, decision: PermissionDecision): unknown {
@@ -227,16 +250,19 @@ export class CodexAdapter implements ProviderAdapter {
     if (raw.method === 'thread/tokenUsage/updated') this.usage = trackTokenUsage(this.usage, raw.params);
     if (raw.method === 'serverRequest/resolved') return this.onResolved(raw.params);
     const events = normalizeNotification(raw.method, raw.params, this.usage.turn);
-    if (raw.method === 'turn/completed') this.closeTurn();
+    const closed = raw.method === 'turn/completed' ? this.closeTurn() : [];
     const context = raw.method === 'thread/tokenUsage/updated' ? contextUsageOf(raw.params) : null;
-    return context === null ? events : [...events, { kind: 'context_usage', usage: context }];
+    const withContext = context === null ? events : [...events, { kind: 'context_usage', usage: context } as MageEvent];
+    return closed.length === 0 ? withContext : [...withContext, ...closed];
   }
 
-  private closeTurn(): void {
+  private closeTurn(): MageEvent[] {
     this.turnId = null;
+    this.turnStarting = false;
     // El total del hilo se conserva: el turno siguiente cuenta desde el.
     this.usage = { ...this.usage, turn: null };
     this.fileChanges.clear();
+    return this.releaseHeldSteers();
   }
 
   // 0.160.0 manda el diff en item/started; requestApproval solo lleva el itemId.
@@ -253,16 +279,16 @@ export class CodexAdapter implements ProviderAdapter {
   private onResponse(raw: Record<string, unknown>): MageEvent[] {
     const kind = typeof raw.id === 'number' ? this.own.get(raw.id) : undefined;
     if (kind === undefined) return [];
-    this.own.delete(raw.id as number);
+    const id = raw.id as number;
+    this.own.delete(id);
+    if (kind === 'steer') return this.afterSteer(id, raw);
+    if (kind === 'turn') return this.afterTurnStart(raw);
     if (isRecord(raw.error)) return this.onError(kind, raw.error);
     switch (kind) {
       case 'initialize':
         return this.afterInitialize();
       case 'thread':
         return this.afterThread(raw.result);
-      case 'turn':
-        this.turnId = isRecord(raw.result) && isRecord(raw.result.turn) && typeof raw.result.turn.id === 'string' ? raw.result.turn.id : null;
-        return [];
       case 'models':
         return modelsEvent(raw.result);
       case 'rateLimits':
@@ -343,6 +369,7 @@ export class CodexAdapter implements ProviderAdapter {
 
   private startTurn(input: readonly unknown[]): void {
     if (this.threadId === null) throw new Error('turn/start sin hilo de codex');
+    this.turnStarting = true;
     // Medido con codex-cli 0.160.0 y Responses local: omitir esfuerzo manda medium; `effort: low`
     // en turn/start llega como reasoning.effort=low. Thread/start no acepta este campo.
     const effort = this.effort;
@@ -351,6 +378,41 @@ export class CodexAdapter implements ProviderAdapter {
       ...(effort === null || effort.length === 0 ? {} : { effort }),
       approvalPolicy: this.approvalPolicy(), ...this.permissionsField(),
     }, 'turn');
+  }
+
+  // Respuesta a `turn/start`: con id de turno salen los directos que esperaban; sin el (error), no hay
+  // turno al que entrar.
+  private afterTurnStart(raw: Record<string, unknown>): MageEvent[] {
+    this.turnStarting = false;
+    const result = raw.result;
+    this.turnId = isRecord(result) && isRecord(result.turn) && typeof result.turn.id === 'string' ? result.turn.id : null;
+    const rejected = isRecord(raw.error) ? this.onError('turn', raw.error) : [];
+    if (this.turnId === null) return [...rejected, ...this.releaseHeldSteers()];
+    const held = this.heldSteers;
+    this.heldSteers = [];
+    for (const steer of held) this.sendSteer(steer.messageId, steer.input);
+    return rejected;
+  }
+
+  private sendSteer(messageId: string, input: readonly unknown[]): void {
+    if (this.threadId === null || this.turnId === null) throw new Error(`turn/steer sin hilo o sin turno de codex: ${messageId}`);
+    this.request('turn/steer', { threadId: this.threadId, expectedTurnId: this.turnId, input }, 'steer');
+    this.steerRequests.set(this.nextId, messageId);
+  }
+
+  // Directos que esperaban un turno que no llego: no hay a donde entrar.
+  private releaseHeldSteers(): MageEvent[] {
+    const held = this.heldSteers;
+    this.heldSteers = [];
+    return held.map(({ messageId }) => ({ kind: 'steer_result', messageId, outcome: 'no_active_turn' }) as MageEvent);
+  }
+
+  private afterSteer(id: number, raw: Record<string, unknown>): MageEvent[] {
+    const messageId = this.steerRequests.get(id);
+    if (messageId === undefined) return [];
+    this.steerRequests.delete(id);
+    if (!isRecord(raw.error)) return [{ kind: 'steer_result', messageId, outcome: 'active_turn' }];
+    return [steerRejection(messageId, raw.error)];
   }
 
   // El modo de permiso de Mage para codex es un perfil de su `permissionProfile/list` (`:workspace`…).
@@ -382,6 +444,27 @@ export class CodexAdapter implements ProviderAdapter {
     if (this.params === null) throw new Error('codex contesto antes de lanzar el proceso');
     return this.params;
   }
+}
+
+function buildInput(text: string, attachments: readonly ImageAttachment[]): unknown[] {
+  const input: unknown[] = [{ type: 'text', text, text_elements: [] }];
+  for (const attachment of attachments) input.push({ type: 'image', url: `data:${attachment.mediaType};base64,${attachment.data}` });
+  return input;
+}
+
+// Traduce el rechazo de `turn/steer` (formas medidas en 0.164.0): review/compact -> not_steerable con su
+// tipo; turno ya acabado o cambiado -> no_active_turn; cualquier otro -> failed con el detalle.
+function steerRejection(messageId: string, error: Record<string, unknown>): MageEvent {
+  const info = isRecord(error.data) && isRecord(error.data.codexErrorInfo) ? error.data.codexErrorInfo : null;
+  const notSteerable = info !== null && isRecord(info.activeTurnNotSteerable) ? info.activeTurnNotSteerable : null;
+  if (notSteerable !== null) {
+    const turnKind = typeof notSteerable.turnKind === 'string' ? notSteerable.turnKind : 'unknown';
+    return { kind: 'steer_result', messageId, outcome: 'not_steerable', turnKind };
+  }
+  const message = String(error.message);
+  const stale = error.code === JSONRPC_INVALID_REQUEST && STALE_STEER_MESSAGES.some((prefix) => message.startsWith(prefix));
+  if (stale) return { kind: 'steer_result', messageId, outcome: 'no_active_turn' };
+  return { kind: 'steer_result', messageId, outcome: 'failed', localized: localized('events.codex.requestRejected', { kind: 'steer', detail: message }) };
 }
 
 // Medido con una clave falsa: OpenAI devuelve la clave en el error («Incorrect API key provided:

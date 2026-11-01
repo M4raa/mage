@@ -250,6 +250,14 @@ export const ConversationResetSchema = z
   .object({ type: z.literal('conversation_reset'), new_conversation_id: z.string().min(1) })
   .passthrough();
 
+// `command_lifecycle` (F4.1). MEDIDO contra 2.1.311 con servidor falso: un mensaje de usuario con `uuid`
+// escrito durante un turno produce `queued`, luego `started` (antes del `result` si se absorbio en ese
+// turno, despues si abrio uno propio) y `completed`; `cancelled` si se retiro. Tolerante en `state`: un
+// estado nuevo se ignora en vez de romper.
+export const CommandLifecycleSchema = z
+  .object({ type: z.literal('command_lifecycle'), command_uuid: z.string().min(1), state: z.string() })
+  .passthrough();
+
 export type InitEvent = z.infer<typeof InitSchema>;
 export type CanUseToolEvent = z.infer<typeof CanUseToolSchema>;
 export type ResultEvent = z.infer<typeof ResultSchema>;

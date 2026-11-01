@@ -390,3 +390,29 @@ describe('SessionManager tras conversation_reset', () => {
     expect(sessionId).not.toBe('id-nuevo');
   });
 });
+
+describe('SessionManager: directo (F4.1)', () => {
+  it('steerMessage_sesionSinSteer_lanzaConElSessionId', () => {
+    const h = harness();
+    const id = h.manager.create(params(), h.sink);
+
+    expect(() => h.manager.steerMessage(id, 'm1', 'x')).toThrow(id);
+  });
+
+  it('steerMessage_sesionConSteer_delegaConMessageIdTextoYAdjuntos', () => {
+    const h = harness();
+    const id = h.manager.create(params(), h.sink);
+    const steer = vi.fn();
+    h.created[0]!.session.steerUserMessage = steer;
+
+    h.manager.steerMessage(id, 'm1', 'x', []);
+
+    expect(steer).toHaveBeenCalledWith('m1', 'x', []);
+  });
+
+  it('steerMessage_sesionInexistente_lanza', () => {
+    const h = harness();
+
+    expect(() => h.manager.steerMessage('nope', 'm1', 'x')).toThrow('nope');
+  });
+});

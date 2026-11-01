@@ -149,6 +149,11 @@ export interface SessionPlugin {
 }
 
 // Union discriminada por `kind`. Cada variante es inmutable.
+// Destino real de un mensaje directo («Enviar ahora», F4.1) segun el CLI: entro en el turno en marcha,
+// abrio un turno propio, no habia turno al que entrar, el turno no admite directos (review/compact de
+// codex) o fallo. Evento INTERNO de main: lo consume la coordinacion.
+export type SteerOutcome = 'active_turn' | 'new_turn' | 'no_active_turn' | 'not_steerable' | 'failed';
+
 export type MageEvent =
   // Arranque de sesion. `mcpServers` y `slashCommands` son lo que la sesion cargo DE VERDAD (unica
   // fuente fiable: ni el modelo ni `claude mcp list` lo saben). Vacios si el CLI no los reporta.
@@ -292,7 +297,17 @@ export type MageEvent =
   // Una sesion en segundo plano que nadie reclamo caduca (F2.4): main la para justo despues de este evento.
   | { readonly kind: 'background_expired' }
   // Dato/texto ajeno: no se traduce (F3.3, INFORME-033 §4).
-  | { readonly kind: 'permission_auto_answered'; readonly requestId: string; readonly toolName: string; readonly behavior: 'allow' | 'deny'; readonly blocked: string | null };
+  | { readonly kind: 'permission_auto_answered'; readonly requestId: string; readonly toolName: string; readonly behavior: 'allow' | 'deny'; readonly blocked: string | null }
+  // `inferred`: el adapter lo dedujo sin la señal del CLI (salvaguarda); `turnKind`: el tipo de turno que
+  // rechazo el directo; `localized`: el detalle de un fallo.
+  | {
+      readonly kind: 'steer_result';
+      readonly messageId: string;
+      readonly outcome: SteerOutcome;
+      readonly turnKind?: string;
+      readonly inferred?: boolean;
+      readonly localized?: LocalizedText;
+    };
 
 // Decision del usuario ante un permiso (viaja renderer -> main -> CLI).
 //

@@ -488,3 +488,149 @@ describe('CodexAdapter: puente de instrucciones', () => {
     expect(seen).toEqual(['C:\\Users\\u\\.codex-b', null]);
   });
 });
+
+describe('CodexAdapter: directo (turn/steer)', () => {
+  // Hilo abierto y `turn/start` mandado. Con `turnId`, ademas contestado con ese id.
+  function inTurn(turnId: string | null): { adapter: CodexAdapter; turnStart: Rpc } {
+    const adapter = codex();
+    const requests = handshake(adapter);
+    answer(adapter, requests, 'thread/start', fixture('thread-start'));
+    adapter.encodeUserMessage('primero');
+    const turnStart = (adapter.takeOutgoing() as Rpc[]).find((r) => r.method === 'turn/start')!;
+    if (turnId !== null) adapter.normalize({ jsonrpc: '2.0', id: turnStart.id, result: { turn: { id: turnId } } });
+    return { adapter, turnStart };
+  }
+  const steerOf = (adapter: CodexAdapter): Rpc => (adapter.takeOutgoing() as Rpc[]).find((r) => r.method === 'turn/steer')!;
+  const threadIdOf = (): string => (fixture('thread-start').result as { thread: { id: string } }).thread.id;
+  const completed = (): unknown => notification('turn/completed', { threadId: 't', turn: { id: 'u', items: [], status: 'completed', error: null } });
+
+  // Manda un directo 'm1' en un turno 't1' y contesta su `turn/steer` con `response`.
+  function steerAnswered(response: Record<string, unknown>): ReturnType<CodexAdapter['normalize']> {
+    const { adapter } = inTurn('t1');
+    adapter.encodeSteer('m1', 'x');
+    const steer = steerOf(adapter);
+    return adapter.normalize({ jsonrpc: '2.0', id: steer.id, ...response });
+  }
+
+  it('encodeSteer_conTurnoActivo_mandaTurnSteerConElTurnoEsperado', () => {
+    const { adapter } = inTurn('t1');
+
+    const encoding = adapter.encodeSteer('m1', 'x');
+
+    expect(encoding).toEqual({ kind: 'write', payload: null });
+    expect(steerOf(adapter)).toMatchObject({
+      method: 'turn/steer',
+      params: { threadId: threadIdOf(), expectedTurnId: 't1', input: [{ type: 'text', text: 'x', text_elements: [] }] },
+    });
+  });
+
+  it('normalize_turnSteerAceptado_emiteActiveTurn', () => {
+    const events = steerAnswered({ result: { turnId: 't1' } });
+
+    expect(events).toEqual([{ kind: 'steer_result', messageId: 'm1', outcome: 'active_turn' }]);
+  });
+
+  it('normalize_turnSteerTardio_emiteNoActiveTurn', () => {
+    const events = steerAnswered({ error: { code: -32600, message: 'no active turn to steer' } });
+
+    expect(events).toEqual([{ kind: 'steer_result', messageId: 'm1', outcome: 'no_active_turn' }]);
+  });
+
+  it('normalize_turnSteerConOtroTurno_emiteNoActiveTurn', () => {
+    const events = steerAnswered({ error: { code: -32600, message: 'expected active turn id `t1` but found `t2`' } });
+
+    expect(events).toEqual([{ kind: 'steer_result', messageId: 'm1', outcome: 'no_active_turn' }]);
+  });
+
+  it('normalize_turnSteerEnReview_emiteNotSteerableConSuTipo', () => {
+    const events = steerAnswered({
+      error: {
+        code: -32600, message: 'cannot steer a review turn',
+        data: { message: 'cannot steer a review turn', codexErrorInfo: { activeTurnNotSteerable: { turnKind: 'review' } }, additionalDetails: null, misalignment: null },
+      },
+    });
+
+    expect(events).toEqual([{ kind: 'steer_result', messageId: 'm1', outcome: 'not_steerable', turnKind: 'review' }]);
+  });
+
+  it('normalize_turnSteerEnCompact_emiteNotSteerableCompact', () => {
+    const events = steerAnswered({
+      error: {
+        code: -32600, message: 'cannot steer a compact turn',
+        data: { message: 'cannot steer a compact turn', codexErrorInfo: { activeTurnNotSteerable: { turnKind: 'compact' } }, additionalDetails: null, misalignment: null },
+      },
+    });
+
+    expect(events).toEqual([{ kind: 'steer_result', messageId: 'm1', outcome: 'not_steerable', turnKind: 'compact' }]);
+  });
+
+  it('normalize_turnSteerOtroError_emiteFailedConDetalle', () => {
+    const events = steerAnswered({ error: { code: -32603, message: 'boom' } });
+
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ kind: 'steer_result', messageId: 'm1', outcome: 'failed', localized: { key: 'events.codex.requestRejected' } });
+  });
+
+  it('encodeSteer_sinTurno_resuelveNoActiveTurnSinEscribir', () => {
+    const adapter = codex();
+    const requests = handshake(adapter);
+    answer(adapter, requests, 'thread/start', fixture('thread-start'));
+
+    const encoding = adapter.encodeSteer('m1', 'x');
+
+    expect(encoding).toEqual({ kind: 'resolved', outcome: 'no_active_turn' });
+    expect((adapter.takeOutgoing() as Rpc[]).some((r) => r.method === 'turn/steer')).toBe(false);
+  });
+
+  it('encodeSteer_turnStartSinRespuesta_esperaYSaleConElTurno', () => {
+    const { adapter, turnStart } = inTurn(null);
+
+    const encoding = adapter.encodeSteer('m1', 'x');
+    const before = (adapter.takeOutgoing() as Rpc[]).some((r) => r.method === 'turn/steer');
+    const events = adapter.normalize({ jsonrpc: '2.0', id: turnStart.id, result: { turn: { id: 't9' } } });
+
+    expect(encoding).toEqual({ kind: 'write', payload: null });
+    expect(before).toBe(false);
+    expect(events).toEqual([]);
+    expect(steerOf(adapter)).toMatchObject({ params: { expectedTurnId: 't9' } });
+  });
+
+  it('normalize_turnStartRechazadoConDirectoEsperando_emiteNoActiveTurn', () => {
+    const { adapter, turnStart } = inTurn(null);
+    adapter.encodeSteer('m1', 'x');
+
+    const events = adapter.normalize({ jsonrpc: '2.0', id: turnStart.id, error: { code: -32603, message: 'x' } });
+
+    expect(events).toContainEqual(expect.objectContaining({ kind: 'error' }));
+    expect(events).toContainEqual({ kind: 'steer_result', messageId: 'm1', outcome: 'no_active_turn' });
+  });
+
+  it('normalize_turnCompletedConDirectoEsperando_emiteNoActiveTurn', () => {
+    const { adapter } = inTurn(null);
+    adapter.encodeSteer('m1', 'x');
+
+    const events = adapter.normalize(completed());
+
+    expect(events).toContainEqual({ kind: 'steer_result', messageId: 'm1', outcome: 'no_active_turn' });
+  });
+
+  it('normalize_turnCompleted_trasElCierreUnDirectoNoTieneTurno', () => {
+    const { adapter } = inTurn('t1');
+    adapter.normalize(completed());
+
+    const encoding = adapter.encodeSteer('m1', 'x');
+
+    expect(encoding).toEqual({ kind: 'resolved', outcome: 'no_active_turn' });
+  });
+
+  it('buildSpawnPlan_conDirectoEsperando_loOlvida', () => {
+    const { adapter } = inTurn(null);
+    adapter.encodeSteer('m1', 'x');
+
+    adapter.buildSpawnPlan(launch);
+    adapter.takeOutgoing();
+    const events = adapter.normalize(completed());
+
+    expect(events.some((event) => event.kind === 'steer_result')).toBe(false);
+  });
+});
