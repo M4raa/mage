@@ -500,9 +500,7 @@ export interface WorkbenchState extends PrState, PrActions {
   renameConversation: (tabId: string, title: string) => void;
   // Guarda el borrador de UNA pestaña (auditoria B.1.2). `null` lo borra: es lo que hace el envio.
   setDraft: (tabId: string, draft: PromptDraft | null) => void;
-  // Cola de mensajes (0.1.1 R2, punto 30): editar lo devuelve al input; quitar lo descarta.
-  // La cola es de main (F2.2): editar la quita de alli y devuelve el mensaje al input; quitar la descarta.
-  editQueuedMessage: (tabId: string, id: string) => Promise<void>;
+  // La cola es de main (F2.2): quitar la descarta.
   removeQueuedMessage: (tabId: string, id: string) => Promise<void>;
   // Cambia el texto de un mensaje de la cola de main sin moverlo (F4.2, U5).
   updateQueuedMessage: (tabId: string, id: string, text: string) => Promise<void>;
@@ -556,7 +554,7 @@ export interface WorkbenchState extends PrState, PrActions {
   ensureSession: (tabId: string) => Promise<string>;
   // `attachments` (2.12.1): imagenes del mensaje. Vacio o ausente = mensaje de solo texto, y
   // entonces el adapter manda EXACTAMENTE el payload de siempre.
-  sendActiveMessage: (text: string, attachments?: readonly ImageAttachment[]) => Promise<void>;
+  sendActiveMessage: (text: string, attachments?: readonly ImageAttachment[], mode?: SendMode) => Promise<void>;
   // Lo mismo contra una pestaña concreta (la activa o no): el continuar automatico (P-028, 20) escribe
   // en pestañas que pueden no estar a la vista.
   sendMessageToTab: (tabId: string, text: string, attachments?: readonly ImageAttachment[], mode?: SendMode) => Promise<void>;
@@ -1945,11 +1943,6 @@ export function createWorkbenchStore(mage: MageClient) {
       set((s) => ({ draftByChat: vacio ? without(s.draftByChat, tabId) : { ...s.draftByChat, [tabId]: draft } }));
     },
 
-    editQueuedMessage: async (tabId, id) => {
-      const message = await takeQueuedMessage(mage, get, set, tabId, id);
-      if (message !== null) get().setDraft(tabId, mergeIntoDraft([message], get().draftByChat[tabId] ?? NO_DRAFT));
-    },
-
     removeQueuedMessage: async (tabId, id) => {
       await takeQueuedMessage(mage, get, set, tabId, id);
     },
@@ -2344,7 +2337,7 @@ export function createWorkbenchStore(mage: MageClient) {
     },
 
     // Envia un mensaje del usuario en la pestana activa: bloque optimista + sesion + envio al motor.
-    sendActiveMessage: (text, attachments = []) => get().sendMessageToTab(get().activeTabId, text, attachments),
+    sendActiveMessage: (text, attachments = [], mode = 'queue') => get().sendMessageToTab(get().activeTabId, text, attachments, mode),
 
     setRateLimitAutoContinue: (tabId, enabled) => {
       const notice = get().rateLimitByChat[tabId];

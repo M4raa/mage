@@ -15,10 +15,14 @@ import { enterAction } from '../promptEnter';
 import { validateAttachmentSet } from '@shared/attachments';
 import type { PromptEditorHandle } from './PromptEditor';
 import { Icon, type IconName } from './Icon';
+import { SendControls } from './SendControls';
+import { sendNowAvailability } from '../sendNow';
+import { providerLabel } from '../accountView';
+import type { SendMode } from '@shared/coordination';
 import type { ImageAttachment, PendingAttachment, PromptDraft } from '../types';
 import { buildSlashCatalog, completionFor, filterSlashCommands, type SlashCommand } from '../slashCommands';
 import { useCachedCommandCatalog } from '../commandCatalogStore';
-import { resolveKeyEvent } from '../keybindings/resolver';
+import { resolveKeyEvent, shortcutText } from '../keybindings/resolver';
 import { isMacPlatform } from '../keybindings/platform';
 import { effortChangeAdvice, modelChangeAdvice, type CostAdvice } from '../costAdvice';
 import { notify } from '../notificationStore';
@@ -170,6 +174,7 @@ export function PromptBar(): React.JSX.Element {
   const keybindingOverrides = useWorkbenchStore((s) => s.settings.keybindingOverrides);
   // Estado del turno de la pestana activa: con el turno en marcha se ofrece "Parar" en vez de ⏎.
   const chatStatus = useWorkbenchStore((s) => s.statusByChat[activeTabId] ?? 'idle');
+  const notSteerable = useWorkbenchStore((s) => s.notSteerableByChat[activeTabId] ?? null);
   // Comandos "/" reales que declaro la sesion en su arranque (D4); vacio -> se usa la lista curada.
   const sessionSlashCommands = useWorkbenchStore((s) => s.slashCommandsByChat[activeTabId] ?? EMPTY_COMMANDS);
   // Peticion de foco desde el store (nueva conversacion / abrir del historial).
@@ -244,6 +249,11 @@ export function PromptBar(): React.JSX.Element {
   // Turno en marcha (generando o esperando permiso): se puede interrumpir.
   const running = chatStatus === 'streaming' || chatStatus === 'needs_permission';
   const canInterrupt = running && sessionId !== undefined;
+  // «Enviar ahora» (F4.1): con turno en marcha, si el proveedor lo admite y el turno no es review/compact.
+  const sendNow = sendNowAvailability({ provider: providerId, providerLabel: providerLabel(providerId), notSteerable });
+  const isMac = isMacPlatform();
+  const queueKeys = shortcutText('prompt.send', keybindingOverrides, isMac);
+  const sendNowKeys = shortcutText('prompt.sendNow', keybindingOverrides, isMac);
   // Catalogo efectivo de comandos "/" (D4): manda lo que la sesion declaro; la lista curada solo
   // aporta descripciones y sirve de fallback mientras no hay init. Memoizado: reconstruirlo en cada
   // tecla pulsada seria ordenar 60 entradas por pulsacion.
@@ -312,7 +322,7 @@ export function PromptBar(): React.JSX.Element {
   // `override` sirve para enviar un texto DISTINTO del que hay en el estado sin pasar por un
   // `setText` (que es asincrono y llegaria tarde): lo usa el envio desde un item de lista vacio, que
   // manda el borrador SIN el marcador huerfano.
-  const submit = (override?: string): void => {
+  const submit = (override?: string, mode: SendMode = 'queue'): void => {
     const trimmed = (override ?? text).trim();
     // Con adjuntos, un mensaje SIN texto es valido (mandar solo una imagen es un caso real).
     if ((trimmed.length === 0 && attachments.length === 0) || disabled) return;
@@ -320,16 +330,21 @@ export function PromptBar(): React.JSX.Element {
     setDraft(activeTabId, null);
     setPreview(null);
     setError(null);
-    void sendActiveMessage(trimmed, sent);
+    void sendActiveMessage(trimmed, sent, mode);
   };
 
   // #24: el botón de enviar hace lo mismo que Enter cuando Enter envía: el borrador entero y, si el cursor
   // está en un item de lista VACÍO, sin su marcador huérfano. Vacío o sin pestaña, no se puede pulsar.
   const canSend = !disabled && (text.trim().length > 0 || attachments.length > 0);
-  const sendFromButton = (): void => {
+  // El borrador tal como lo mandaría Enter: entero y, si el cursor está en un item de lista VACÍO, sin su marcador huérfano.
+  const draftToSend = (): string | undefined => {
     const state = currentTextState();
-    submit(enterAction(state) === 'send' ? continueListOnNewline(state)?.value : undefined);
+    return enterAction(state) === 'send' ? continueListOnNewline(state)?.value : undefined;
   };
+  // #24: el botón hace lo mismo que Enter. «Enviar ahora» (botón o atajo) entra en el turno si se puede; si no
+  // (en reposo, proveedor sin directo o turno review/compact) es el envío de siempre, que main pone en la cola.
+  const sendFromButton = (): void => submit(draftToSend());
+  const sendNowFromUi = (): void => submit(draftToSend(), running && sendNow.enabled ? 'steer' : 'queue');
 
   // Cambio de modelo en caliente + aviso de coste (B1): el usuario ve que Opus muerde mas bolsa que
   // Sonnet y que el cambio aplica al SIGUIENTE turno.
@@ -479,6 +494,9 @@ export function PromptBar(): React.JSX.Element {
     switch (actionId) {
       case 'prompt.send':
         submit();
+        return true;
+      case 'prompt.sendNow':
+        sendNowFromUi();
         return true;
       case 'prompt.indent':
         applyEdit(indentLines(editState));
@@ -806,29 +824,17 @@ export function PromptBar(): React.JSX.Element {
           {activeModel.length > 0 && !isClaude && !isCodex && !isAgy && (
             <span className="shrink-0 self-center rounded-full border border-mg-border-ctrl px-[8px] py-[2px] text-[10.5px] text-mg-sec">{activeModel}</span>
           )}
-          {canInterrupt ? (
-            // Parar la acción en curso (B3): interrumpe el turno (control_request interrupt). El CLI
-            // cierra el turno con su `result` y el chat vuelve a 'idle'.
-            <button
-              onClick={interruptActiveSession}
-              data-tip={t('prompt.stop.tip')}
-              aria-label={t('prompt.stop.ariaLabel')}
-              className="shrink-0 cursor-pointer self-center rounded-full border border-mg-danger-border bg-mg-danger-bg px-[9px] py-[2px] text-[10.5px] font-semibold text-mg-danger hover:opacity-90"
-            >
-              <Icon name="stop" size={11} /> {t('prompt.stop.button')}
-            </button>
-          ) : (
-            // #24: era un ⏎ decorativo. Ahora envía con la MISMA acción que Enter (sendFromButton).
-            <button
-              onClick={sendFromButton}
-              disabled={!canSend}
-              aria-label={t('prompt.send.ariaLabel')}
-              data-tip={t('prompt.send.tip')}
-              className="shrink-0 cursor-pointer self-center rounded-full border border-mg-border-ctrl px-[8px] py-[1px] font-mono text-[10.5px] text-mg-body2 transition-colors duration-150 ease-out hover:bg-mg-hover disabled:cursor-default disabled:text-mg-muted disabled:opacity-60 disabled:hover:bg-transparent"
-            >
-              ⏎
-            </button>
-          )}
+          <SendControls
+            running={running}
+            canInterrupt={canInterrupt}
+            canSend={canSend}
+            sendNow={sendNow}
+            queueKeys={queueKeys}
+            sendNowKeys={sendNowKeys}
+            onSend={sendFromButton}
+            onSendNow={sendNowFromUi}
+            onInterrupt={interruptActiveSession}
+          />
         </motion.div>
       </div>
     </div>

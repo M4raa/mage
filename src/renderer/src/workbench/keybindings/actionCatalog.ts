@@ -41,7 +41,7 @@ export interface KeybindingAction {
 }
 
 // Definicion de una accion tal como se escribe aqui: etiqueta y categoria como CLAVES del catalogo de textos.
-type ActionLabelKey = 'menu.action.promptSend' | 'menu.action.promptIndent' | 'menu.action.promptOutdent' | 'menu.action.promptCyclePermissionMode' | 'menu.action.conversationNew' | 'menu.action.windowNew' | 'menu.action.tabClose' | 'menu.action.tabNext' | 'menu.action.tabPrevious' | 'menu.action.sessionInterrupt' | 'menu.action.sessionCompact' | 'menu.action.appOpenSettings' | 'menu.action.appToggleSidebar' | 'menu.action.appToggleInspector' | 'menu.action.permissionAllow' | 'menu.action.permissionAllowAlways' | 'menu.action.permissionDeny' | 'menu.action.permissionCycleMode';
+type ActionLabelKey = 'menu.action.promptSend' | 'menu.action.promptSendNow' | 'menu.action.promptIndent' | 'menu.action.promptOutdent' | 'menu.action.promptCyclePermissionMode' | 'menu.action.conversationNew' | 'menu.action.windowNew' | 'menu.action.tabClose' | 'menu.action.tabNext' | 'menu.action.tabPrevious' | 'menu.action.sessionInterrupt' | 'menu.action.sessionCompact' | 'menu.action.appOpenSettings' | 'menu.action.appToggleSidebar' | 'menu.action.appToggleInspector' | 'menu.action.permissionAllow' | 'menu.action.permissionAllowAlways' | 'menu.action.permissionDeny' | 'menu.action.permissionCycleMode';
 type ActionCategoryKey = 'menu.category.prompt' | 'menu.category.app' | 'menu.category.session' | 'menu.category.permission' | 'menu.category.panels';
 interface ActionDefinition extends Omit<KeybindingAction, 'label' | 'category'> {
   readonly labelKey: ActionLabelKey;
@@ -66,6 +66,7 @@ function localizeAction(definition: ActionDefinition): KeybindingAction {
 const ACTION_DEFINITIONS: readonly ActionDefinition[] = [
   // --- Prompt (§2.2): ya cableadas hoy a mano, pasan a resolverse por catalogo. ---
   { id: 'prompt.send', labelKey: 'menu.action.promptSend', categoryKey: 'menu.category.prompt', scope: 'prompt', defaultKeys: 'Enter', rebindable: true },
+  { id: 'prompt.sendNow', labelKey: 'menu.action.promptSendNow', categoryKey: 'menu.category.prompt', scope: 'prompt', defaultKeys: 'CmdOrCtrl+Enter', rebindable: true },
   { id: 'prompt.indent', labelKey: 'menu.action.promptIndent', categoryKey: 'menu.category.prompt', scope: 'prompt', defaultKeys: 'Tab', rebindable: true },
   {
     id: 'prompt.outdent',

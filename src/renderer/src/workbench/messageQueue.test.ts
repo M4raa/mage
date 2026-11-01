@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ImageAttachment } from '@shared/ipc';
-import { mergeIntoDraft, type QueuedMessage } from './messageQueue';
+import { mergeIntoDraft, queueEditAction, type QueueEditKey, type QueuedMessage } from './messageQueue';
 
 const img = (data: string): ImageAttachment => ({ mediaType: 'image/png', data });
 const msg = (id: string, text: string, attachments: readonly ImageAttachment[] = []): QueuedMessage => ({ id, text, attachments });
@@ -35,5 +35,37 @@ describe('mergeIntoDraft (Stop y editar devuelven al input)', () => {
     const current = { text: 'hola', attachments: [] };
 
     expect(mergeIntoDraft([], current)).toBe(current);
+  });
+});
+
+describe('queueEditAction (edición en la fila)', () => {
+  const key = (over: Partial<QueueEditKey>): QueueEditKey => ({ key: 'Enter', shiftKey: false, value: 'nuevo', original: 'viejo', images: 0, ...over });
+
+  it('queueEditAction_escape_cancela', () => {
+    expect(queueEditAction(key({ key: 'Escape' }))).toBe('cancel');
+  });
+
+  it('queueEditAction_enterConCambios_guarda', () => {
+    expect(queueEditAction(key({}))).toBe('save');
+  });
+
+  it('queueEditAction_enterSinCambios_saleSinGuardar', () => {
+    expect(queueEditAction(key({ value: 'viejo' }))).toBe('cancel');
+  });
+
+  it('queueEditAction_enterVacioSinImagenes_sigueEditando', () => {
+    expect(queueEditAction(key({ value: '  ', original: 'x', images: 0 }))).toBe('keep');
+  });
+
+  it('queueEditAction_enterVacioConImagenes_guarda', () => {
+    expect(queueEditAction(key({ value: '', original: 'x', images: 1 }))).toBe('save');
+  });
+
+  it('queueEditAction_shiftEnter_noEsNuestra', () => {
+    expect(queueEditAction(key({ shiftKey: true }))).toBeNull();
+  });
+
+  it('queueEditAction_otraTecla_noEsNuestra', () => {
+    expect(queueEditAction(key({ key: 'a' }))).toBeNull();
   });
 });

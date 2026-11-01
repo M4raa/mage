@@ -1804,24 +1804,6 @@ describe('cola de mensajes', () => {
     expect(store.getState().draftByChat.a?.attachments.map((a) => a.attachment)).toEqual([IMG]);
   });
 
-  it('editQueuedMessage_loQuitaDeMainYLoDevuelveAlInput', async () => {
-    const { store, removeQueuedMessage } = mounted('streaming');
-    removeQueuedMessage.mockResolvedValue({ id: 'q1', text: 'uno', attachments: [] });
-
-    await store.getState().editQueuedMessage('a', 'q1');
-
-    expect(removeQueuedMessage).toHaveBeenCalledWith({ sessionId: 's-a', messageId: 'q1' });
-    expect(store.getState().draftByChat.a?.text).toBe('uno');
-  });
-
-  it('editQueuedMessage_yaSalio_noTocaElInput', async () => {
-    const { store } = mounted('streaming');
-
-    await store.getState().editQueuedMessage('a', 'q1');
-
-    expect(store.getState().draftByChat.a).toBeUndefined();
-  });
-
   it('removeQueuedMessage_loQuitaDeMain', async () => {
     const { store, removeQueuedMessage } = mounted('streaming');
 
@@ -1841,6 +1823,14 @@ describe('cola de mensajes', () => {
   const deliver = (store: ReturnType<typeof createWorkbenchStore>, commandId: string, delivery: { into: 'active_turn' | 'new_turn' | 'queue' | 'failed'; late: boolean; turnKind: string | null }) =>
     store.getState().handleEvent('s-a', { kind: 'message_delivery', commandId, message: { id: commandId, text: 'ya', attachments: [] }, ...delivery });
   const TURN_ENDED_TEXT = 'El turno ya había terminado: se envió como mensaje nuevo.';
+
+  it('sendActiveMessage_conModoSteer_loPasaAlEnvio', async () => {
+    const { store, sendMessage } = mounted('streaming', steering());
+
+    await store.getState().sendActiveMessage('ya', [], 'steer');
+
+    expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({ mode: 'steer' }));
+  });
 
   it('sendMessageToTab_enviarAhoraConTurno_mandaModoSteerYPintaLaBurbujaSinReloj', async () => {
     const { store, sendMessage } = mounted('streaming', steering());

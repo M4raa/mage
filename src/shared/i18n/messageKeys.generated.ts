@@ -942,6 +942,7 @@ export interface MessageValues {
   readonly "menu.action.promptIndent": never;
   readonly "menu.action.promptOutdent": never;
   readonly "menu.action.promptSend": never;
+  readonly "menu.action.promptSendNow": never;
   readonly "menu.action.sessionCompact": never;
   readonly "menu.action.sessionInterrupt": never;
   readonly "menu.action.tabClose": never;
@@ -1168,13 +1169,20 @@ export interface MessageValues {
   readonly "prompt.question.skip": never;
   readonly "prompt.question.submit": never;
   readonly "prompt.queue.edit": never;
+  readonly "prompt.queue.editField": never;
+  readonly "prompt.queue.editInline": never;
   readonly "prompt.queue.header": { readonly "count": string | number };
   readonly "prompt.queue.imageCount": { readonly "count": number };
   readonly "prompt.queue.imagesOnly": never;
   readonly "prompt.queue.remove": never;
+  readonly "prompt.queueSend.button": never;
+  readonly "prompt.queueSend.tip": { readonly "keys": string | number };
   readonly "prompt.send.ariaLabel": never;
   readonly "prompt.send.tip": never;
+  readonly "prompt.sendMenu.ariaLabel": never;
+  readonly "prompt.sendNow.label": never;
   readonly "prompt.sendNow.providerUnsupported": { readonly "provider": string | number };
+  readonly "prompt.sendNow.tip": { readonly "keys": string | number };
   readonly "prompt.slash.desc.clear": never;
   readonly "prompt.slash.desc.compact": never;
   readonly "prompt.slash.desc.config": never;
