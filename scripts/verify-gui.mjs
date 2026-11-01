@@ -4795,7 +4795,8 @@ const CHECKS = [
           const medido = await measureNow();
           await page.keyboard.press('Escape');
           await page.locator('[data-send-now]').waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
-          return medido;
+          const status = await page.evaluate((id) => window.__mageDev.store.getState().statusByChat[id], tabId);
+          return { ...medido, seguiaEnMarcha: status === 'streaming' };
         };
         await page.locator('[data-send-split]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
         const inicial = await page.evaluate(() => {
@@ -4830,7 +4831,7 @@ const CHECKS = [
         const atajoTip = mac ? /Enviar ahora \(.*⌘.*\)/ : /Enviar ahora \(Ctrl\+Enter\)/;
         const ok =
           inicial.parar === 1 && inicial.cola === 'A la cola' && inicial.colaDesactivado === true && inicial.retorno === 0 &&
-          claude.desactivado === false && atajoTip.test(claude.tip ?? '') && atajo.test(claude.atajo ?? '') &&
+          claude.desactivado === false && claude.seguiaEnMarcha === true && atajoTip.test(claude.tip ?? '') && atajo.test(claude.atajo ?? '') &&
           agy.desactivado === true && /agy no permite enviar durante un turno/.test(agy.tip ?? '') &&
           review.desactivado === true && /turno de revisión no admite mensajes directos/.test(review.tip ?? '') &&
           vacio.desactivado === true &&
