@@ -1,5 +1,6 @@
 import type { TranscriptBatch, TranscriptEntry, TranscriptParseError, TranscriptTailPosition } from '@shared/transcripts';
 import { TRANSCRIPT_TAIL_START } from '@shared/transcripts';
+import { localized, UserFacingError, wrapError } from '@shared/i18n/localizedText';
 import { computeActiveBranch, extendActiveBranch, type ActiveBranchState } from './activeBranch';
 import { readTranscriptBatches, type LineAdapter } from './transcriptReader';
 
@@ -93,7 +94,7 @@ export class TranscriptService {
     const appeared = await this.waitForFile(filePath, signal);
     if (signal.aborted) return; // cancelado mientras se esperaba al fichero: ni error ni lotes
     if (!appeared) {
-      throw new Error(`No existe la transcripcion en la ruta: "${filePath}"`);
+      throw new UserFacingError(localized('errors.transcripts.fileMissing', { path: filePath }));
     }
 
     const truncated = from.bytesRead > 0 && this.deps.sizeOf(filePath) < from.bytesRead;
@@ -151,7 +152,7 @@ export class TranscriptService {
         if (signal.aborted) return;
         // El checkpoint corresponde a líneas consumidas, también en lotes intermedios.
         if (streamError !== null) {
-          throw new Error(`No se pudo leer la transcripcion "${filePath}": ${(streamError as Error).message}`);
+          throw new UserFacingError(wrapError('errors.transcripts.readFailed', { path: filePath }, streamError));
         }
         yield { ...batch, bytesReadSoFar: bytesRead, rawLineNumber, ...(reset ? { reset: true } : {}) };
         reset = false;

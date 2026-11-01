@@ -795,6 +795,9 @@ export interface MessageValues {
   readonly "errors.runtime.streamChunkNotJson": { readonly "chunk": string | number; readonly "detail": string | number };
   readonly "errors.runtime.urlInvalid": never;
   readonly "errors.theme.openVsxStatus": { readonly "status": string | number; readonly "url": string | number };
+  readonly "errors.transcripts.conversationMissing": { readonly "provider": string | number; readonly "sessionId": string | number };
+  readonly "errors.transcripts.fileMissing": { readonly "path": string | number };
+  readonly "errors.transcripts.readFailed": { readonly "detail": string | number; readonly "path": string | number };
   readonly "errors.update.notStarted": never;
   readonly "errors.usage.badStatus": { readonly "configDir": string | number; readonly "status": string | number; readonly "statusText": string | number };
   readonly "errors.usage.cooldown": { readonly "configDir": string | number; readonly "seconds": string | number };

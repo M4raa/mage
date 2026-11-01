@@ -2,6 +2,8 @@ import { create, type UseBoundStore, type StoreApi } from 'zustand';
 import type { TranscriptEntry, TranscriptParseError, TranscriptTailPosition } from '@shared/transcripts';
 import { TRANSCRIPT_TAIL_START } from '@shared/transcripts';
 import type { OpenTranscriptParams, TranscriptBatchPayload } from '@shared/ipc';
+import { renderLocalized } from '@shared/i18n/localizedText';
+import { t } from '../i18n/uiLanguage';
 import { describeError } from './describeError';
 
 export interface TranscriptStoreState {
@@ -43,7 +45,7 @@ export function applyTranscriptBatch(
 ): Partial<TranscriptStoreState> {
   if (current.transcriptId !== payload.transcriptId) return {};
   // Fallo terminal de lectura (fichero inexistente, error de FS): cierra la carga con el mensaje.
-  if (payload.error !== undefined) return { errorMessage: payload.error, isFinal: true, missing: payload.missing === true };
+  if (payload.error !== undefined) return { errorMessage: renderLocalized(t, payload.error), isFinal: true, missing: payload.missing === true };
   if (payload.batch === undefined) return {};
   const batch = payload.batch;
   return {

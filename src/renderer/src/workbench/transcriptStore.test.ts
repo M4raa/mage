@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { foreignText, USER_FACING_MARK, UserFacingError } from '@shared/i18n/localizedText';
+import { foreignText, localized, USER_FACING_MARK, UserFacingError } from '@shared/i18n/localizedText';
 import type { TranscriptBatch, TranscriptEntry } from '@shared/transcripts';
 import { applyTranscriptBatch, disposeTranscriptStore, transcriptStoreForTab, type TranscriptStoreState } from './transcriptStore';
 import { makeEntry } from '@testing/transcriptEntry';
@@ -47,13 +47,13 @@ describe('applyTranscriptBatch', () => {
   });
 
   it('applyTranscriptBatch_error_cierraLaCargaConElMensaje', () => {
-    const patch = applyTranscriptBatch(EMPTY, { transcriptId: 'lectura-1', error: 'no existe el fichero' });
+    const patch = applyTranscriptBatch(EMPTY, { transcriptId: 'lectura-1', error: foreignText('no existe el fichero') });
 
     expect(patch).toEqual({ errorMessage: 'no existe el fichero', isFinal: true, missing: false });
   });
 
   it('applyTranscriptBatch_conversacionInexistente_loMarcaComoMissing', () => {
-    const patch = applyTranscriptBatch(EMPTY, { transcriptId: 'lectura-1', error: 'No existe la conversacion de Codex x', missing: true });
+    const patch = applyTranscriptBatch(EMPTY, { transcriptId: 'lectura-1', error: localized('errors.transcripts.conversationMissing', { provider: 'Codex', sessionId: 'x' }), missing: true });
 
     expect(patch).toEqual({ errorMessage: 'No existe la conversacion de Codex x', isFinal: true, missing: true });
   });

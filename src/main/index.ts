@@ -3104,7 +3104,7 @@ function resolveTranscriptSource(params: OpenTranscriptParams): TranscriptSource
 function streamTranscript(sender: Electron.WebContents, transcriptId: string, params: OpenTranscriptParams): void {
   const source = resolveTranscriptSource(params);
   if (source === null) {
-    sendMissingConversation(sender, transcriptId, `No existe la conversacion de Codex ${params.sessionId}`);
+    sendMissingConversation(sender, transcriptId, localized('errors.transcripts.conversationMissing', { provider: 'Codex', sessionId: params.sessionId }));
     return;
   }
   const controller = new AbortController();
@@ -3121,8 +3121,8 @@ function streamTranscript(sender: Electron.WebContents, transcriptId: string, pa
         sender.send(TRANSCRIPT_BATCH_CHANNEL, { transcriptId, batch });
       }
     } catch (err) {
-      const error = err instanceof Error ? err.message : String(err);
-      mainLog('error', 'Fallo leyendo transcripcion', { transcriptId, error });
+      const error = localizedFromError(err);
+      mainLog('error', 'Fallo leyendo transcripcion', { transcriptId, error: renderForLog(error) });
       // Propaga el fallo al renderer (no solo al log): sin esto el panel se queda "Cargando…"
       // para siempre. Es terminal (cierra la lectura igual que un lote final).
       if (!sender.isDestroyed()) sender.send(TRANSCRIPT_BATCH_CHANNEL, { transcriptId, error });
@@ -3158,15 +3158,15 @@ function openAgyTranscript(sender: Electron.WebContents, transcriptId: string, p
   if (profile === null) throw new Error(`Cuenta de agy no valida para abrir una transcripcion: ${params.accountDir}`);
   const dbPath = agyHistory.findDb(profile, params.sessionId, agyExternalProfileOf(params.accountDir));
   if (dbPath === null) {
-    sendMissingConversation(sender, transcriptId, `No existe la conversacion de agy ${params.sessionId}`);
+    sendMissingConversation(sender, transcriptId, localized('errors.transcripts.conversationMissing', { provider: 'agy', sessionId: params.sessionId }));
     return;
   }
   try {
     const batch = staticTranscriptBatch(agyHistory.readLines(dbPath));
     if (!sender.isDestroyed()) sender.send(TRANSCRIPT_BATCH_CHANNEL, { transcriptId, batch });
   } catch (err) {
-    const error = err instanceof Error ? err.message : String(err);
-    mainLog('error', 'Fallo leyendo la conversacion de agy', { transcriptId, error });
+    const error = localizedFromError(err);
+    mainLog('error', 'Fallo leyendo la conversacion de agy', { transcriptId, error: renderForLog(error) });
     if (!sender.isDestroyed()) sender.send(TRANSCRIPT_BATCH_CHANNEL, { transcriptId, error });
   }
 }
@@ -3182,8 +3182,8 @@ function codexSourceOf(params: OpenTranscriptParams): TranscriptSource | null {
 // La conversación que se pidió no existe en la cuenta: fallo terminal, marcado `missing` para que el renderer lo distinga
 // de un error de lectura. Es el caso de un workspace de 0.1.2 que guardó el UUID de la sesión de Mage en vez del hilo
 // (devolución 19): la pestaña lo dice y deja de reanudar ese id.
-function sendMissingConversation(sender: Electron.WebContents, transcriptId: string, error: string): void {
-  mainLog('warn', 'Conversacion inexistente al abrir su transcripcion', { transcriptId, error });
+function sendMissingConversation(sender: Electron.WebContents, transcriptId: string, error: LocalizedText): void {
+  mainLog('warn', 'Conversacion inexistente al abrir su transcripcion', { transcriptId, error: renderForLog(error) });
   const payload: TranscriptBatchPayload = { transcriptId, error, missing: true };
   if (!sender.isDestroyed()) sender.send(TRANSCRIPT_BATCH_CHANNEL, payload);
 }
