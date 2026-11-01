@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createTranslator } from '@shared/i18n/translator';
 import { scrubAgentEnv } from '../os/agentEnv';
 import type { HostSessions } from './hostConnection';
+import type { HostControl } from './hostControl';
 import { readHostMode, startLocalHost } from './hostBootstrap';
 import { tokenFilePath } from './hostEndpoint';
 import type { HostServerHandle } from './hostServer';
@@ -19,7 +20,7 @@ afterEach(async () => {
 
 const sessions = (): HostSessions => ({
   listSessions: () => [], snapshot: () => { throw new Error('Sesion inexistente: x'); }, subscribe: () => { throw new Error('no'); },
-  send: () => ({ status: 'accepted', commandId: 'k' }), interrupt: () => [], answerPermission: () => ({ status: 'accepted' }), answerElicitation: () => ({ status: 'accepted' }),
+  send: () => ({ status: 'accepted', commandId: 'k' }), interrupt: () => [], removeQueued: () => null, answerPermission: () => ({ status: 'accepted' }), answerElicitation: () => ({ status: 'accepted' }),
 });
 
 async function start(mode: 'gui' | 'headless' = 'gui', log = vi.fn()) {
@@ -27,7 +28,7 @@ async function start(mode: 'gui' | 'headless' = 'gui', log = vi.fn()) {
   roots.push(userDataDir);
   const handle = await startLocalHost({
     platform: process.platform, userDataDir, xdgRuntimeDir: undefined, mode, fs, getuid: process.getuid?.bind(process),
-    sessions: sessions(), hostVersion: '0.1.3', log, newId: () => 'id', translate: createTranslator('es'), setTimer: (fn, ms) => { const t = setTimeout(fn, ms); return () => clearTimeout(t); },
+    sessions: sessions(), control: { createSession: vi.fn(), setOption: vi.fn(), listProjects: () => [], listAccounts: () => [] } as HostControl, hostVersion: '0.1.3', log, newId: () => 'id', translate: createTranslator('es'), setTimer: (fn, ms) => { const t = setTimeout(fn, ms); return () => clearTimeout(t); },
   });
   handles.push(handle);
   return { userDataDir, handle };

@@ -9,6 +9,7 @@ import { createTranslator } from '@shared/i18n/translator';
 import { endpointFilePath, modeFilePath, resolveHostEndpoint, tokenFilePath } from './hostEndpoint';
 import { startHostServer, type HostFs, type HostServerDeps, type HostServerHandle } from './hostServer';
 import type { HostSessions } from './hostConnection';
+import type { HostControl } from './hostControl';
 
 // Prueba de integración con transporte real: named pipe en Windows, socket Unix en el resto.
 const TOKEN = 'c'.repeat(64);
@@ -30,6 +31,7 @@ function fakeSessions(): HostSessions {
     subscribe: () => ({ snapshot: SNAPSHOT, unsubscribe: () => undefined }),
     send: () => ({ status: 'accepted', commandId: 'k' }),
     interrupt: () => [],
+    removeQueued: () => null,
     answerPermission: () => ({ status: 'accepted' }),
     answerElicitation: () => ({ status: 'accepted' }),
   };
@@ -51,7 +53,7 @@ function serverDeps(userDataDir: string, fsImpl: HostFs = fs): HostServerDeps {
   return {
     endpoint: resolveHostEndpoint(deps), platform: process.platform, tokenFile: tokenFilePath(deps), endpointFile: endpointFilePath(deps), modeFile: modeFilePath(deps), mode: 'headless', token: TOKEN, fs: fsImpl,
     getuid: process.getuid?.bind(process),
-    connection: { sessions: fakeSessions(), hostVersion: '0.1.3', log: vi.fn(), newId: () => 'sub', translate: createTranslator('es'), setTimer: (fn, ms) => { const t = setTimeout(fn, ms); return () => clearTimeout(t); } },
+    connection: { sessions: fakeSessions(), mode: 'headless', control: { createSession: vi.fn(), setOption: vi.fn(), listProjects: () => [], listAccounts: () => [] } as HostControl, hostVersion: '0.1.3', log: vi.fn(), newId: () => 'sub', translate: createTranslator('es'), setTimer: (fn, ms) => { const t = setTimeout(fn, ms); return () => clearTimeout(t); } },
   };
 }
 
