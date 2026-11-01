@@ -1690,12 +1690,18 @@ describe('cola de mensajes', () => {
   const userTexts = (store: ReturnType<typeof createWorkbenchStore>) =>
     (store.getState().blocksByChat.a ?? []).filter((b) => b.kind === 'user').map((b) => b.kind === 'user' && b.text);
 
-  function mounted(status: 'idle' | 'streaming', receipt: { status: 'queued' | 'accepted'; commandId: string } = status === 'streaming' ? queued : accepted) {
+  const steering = (awaitsAnswer = false) => ({ status: 'steering', commandId: 'x', awaitsAnswer }) as const;
+
+  function mounted(
+    status: 'idle' | 'streaming',
+    receipt: { status: 'queued' | 'accepted'; commandId: string } | { status: 'steering'; commandId: string; awaitsAnswer: boolean } = status === 'streaming' ? queued : accepted,
+  ) {
     const sendMessage = vi.fn().mockResolvedValue(receipt);
     const interrupt = vi.fn().mockResolvedValue([]);
     const removeQueuedMessage = vi.fn().mockResolvedValue(null);
+    const updateQueuedMessage = vi.fn().mockResolvedValue(null);
     const store = createWorkbenchStore(
-      fakeMage({ sendMessage, interrupt, removeQueuedMessage, notify: vi.fn().mockResolvedValue(undefined), saveWorkspace: vi.fn().mockResolvedValue(undefined), getUsage: vi.fn().mockResolvedValue(null) }),
+      fakeMage({ sendMessage, interrupt, removeQueuedMessage, updateQueuedMessage, notify: vi.fn().mockResolvedValue(undefined), saveWorkspace: vi.fn().mockResolvedValue(undefined), getUsage: vi.fn().mockResolvedValue(null) }),
     );
     store.setState({
       tabs: [tab('a')],
@@ -1705,7 +1711,7 @@ describe('cola de mensajes', () => {
       statusByChat: { a: status },
       turnStartByChat: { a: 1000 },
     });
-    return { store, sendMessage, interrupt, removeQueuedMessage };
+    return { store, sendMessage, interrupt, removeQueuedMessage, updateQueuedMessage };
   }
 
   it('sendMessageToTab_turnoEnMarcha_loMandaAMainSinBurbujaNiReloj', async () => {
@@ -1822,6 +1828,123 @@ describe('cola de mensajes', () => {
     await store.getState().removeQueuedMessage('a', 'q1');
 
     expect(removeQueuedMessage).toHaveBeenCalledWith({ sessionId: 's-a', messageId: 'q1' });
+  });
+
+  // F4.1: «Enviar ahora». Helpers de lectura de los bloques del hilo.
+  const blocksOfKind = (store: ReturnType<typeof createWorkbenchStore>, kind: 'system' | 'error') =>
+    (store.getState().blocksByChat.a ?? []).filter((b) => b.kind === kind);
+  const lastSystemText = (store: ReturnType<typeof createWorkbenchStore>) => {
+    const last = blocksOfKind(store, 'system').at(-1);
+    return last?.kind === 'system' ? last.text : undefined;
+  };
+  const commandIdOfFirstSend = (sendMessage: ReturnType<typeof vi.fn>) => (sendMessage.mock.calls[0]![0] as { commandId: string }).commandId;
+  const deliver = (store: ReturnType<typeof createWorkbenchStore>, commandId: string, delivery: { into: 'active_turn' | 'new_turn' | 'queue' | 'failed'; late: boolean; turnKind: string | null }) =>
+    store.getState().handleEvent('s-a', { kind: 'message_delivery', commandId, message: { id: commandId, text: 'ya', attachments: [] }, ...delivery });
+  const TURN_ENDED_TEXT = 'El turno ya había terminado: se envió como mensaje nuevo.';
+
+  it('sendMessageToTab_enviarAhoraConTurno_mandaModoSteerYPintaLaBurbujaSinReloj', async () => {
+    const { store, sendMessage } = mounted('streaming', steering());
+
+    await store.getState().sendMessageToTab('a', 'ya', [], 'steer');
+
+    expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({ mode: 'steer' }));
+    expect(userTexts(store)).toEqual(['ya']);
+    expect(store.getState().turnStartByChat.a).toBe(1000);
+    expect(store.getState().statusByChat.a).toBe('streaming');
+  });
+
+  it('sendMessageToTab_aLaCola_noMandaMode', async () => {
+    const { store, sendMessage } = mounted('streaming');
+
+    await store.getState().sendMessageToTab('a', 'luego');
+
+    expect(sendMessage.mock.calls[0]![0]).not.toHaveProperty('mode');
+  });
+
+  it('sendMessageToTab_directoConPermisoPendiente_avisaQueLlegaraAlContestar', async () => {
+    const { store } = mounted('streaming', steering(true));
+
+    await store.getState().sendMessageToTab('a', 'ya', [], 'steer');
+
+    expect(lastSystemText(store)).toBe('Llegará al modelo cuando contestes el permiso');
+  });
+
+  it('messageDelivery_dentroDelTurno_laBurbujaSeQueda', async () => {
+    const { store, sendMessage } = mounted('streaming', steering());
+    await store.getState().sendMessageToTab('a', 'ya', [], 'steer');
+    const commandId = commandIdOfFirstSend(sendMessage);
+
+    deliver(store, commandId, { into: 'active_turn', late: false, turnKind: null });
+
+    expect(userTexts(store)).toEqual(['ya']);
+    expect(store.getState().steeringByChat.a?.[commandId]).toBeUndefined();
+    expect(blocksOfKind(store, 'system')).toEqual([]);
+  });
+
+  it('messageDelivery_turnoNuevoTardio_arrancaElRelojYAvisa', async () => {
+    const { store, sendMessage } = mounted('streaming', steering());
+    await store.getState().sendMessageToTab('a', 'ya', [], 'steer');
+    const commandId = commandIdOfFirstSend(sendMessage);
+
+    deliver(store, commandId, { into: 'new_turn', late: true, turnKind: null });
+
+    expect(store.getState().turnStartByChat.a).not.toBe(1000);
+    expect(userTexts(store)).toEqual(['ya']);
+    expect(lastSystemText(store)).toBe(TURN_ENDED_TEXT);
+  });
+
+  it('messageDelivery_colaPorReview_quitaLaBurbujaAvisaYBloqueaHastaElResult', async () => {
+    const { store, sendMessage } = mounted('streaming', steering());
+    await store.getState().sendMessageToTab('a', 'ya', [], 'steer');
+    const commandId = commandIdOfFirstSend(sendMessage);
+
+    deliver(store, commandId, { into: 'queue', late: false, turnKind: 'review' });
+
+    expect(userTexts(store)).toEqual([]);
+    expect(lastSystemText(store)).toBe('Este turno de revisión no admite mensajes directos: el mensaje espera en la cola.');
+    expect(store.getState().notSteerableByChat.a).toBe('review');
+    store.getState().handleEvent('s-a', { kind: 'result', result: { isError: false, subtype: 'success', numTurns: 1 } });
+    expect(store.getState().notSteerableByChat.a).toBeUndefined();
+  });
+
+  it('messageDelivery_fallido_quitaLaBurbujaDejaElErrorYDevuelveElBorrador', async () => {
+    const { store, sendMessage } = mounted('streaming', steering());
+    await store.getState().sendMessageToTab('a', 'ya', [], 'steer');
+    const commandId = commandIdOfFirstSend(sendMessage);
+
+    deliver(store, commandId, { into: 'failed', late: false, turnKind: null });
+
+    expect(userTexts(store)).toEqual([]);
+    expect(blocksOfKind(store, 'error').map((b) => b.kind === 'error' && b.message)).toContain('No se pudo enviar el mensaje directo.');
+    expect(store.getState().statusByChat.a).toBe('streaming');
+    expect(store.getState().draftByChat.a?.text).toBe('ya');
+  });
+
+  it('messageDelivery_deOtroCliente_soloDejaElAviso', () => {
+    const { store } = mounted('streaming');
+
+    deliver(store, 'otro', { into: 'new_turn', late: true, turnKind: null });
+
+    expect(lastSystemText(store)).toBe(TURN_ENDED_TEXT);
+    expect(store.getState().turnStartByChat.a).toBe(1000);
+    expect(userTexts(store)).toEqual([]);
+  });
+
+  it('updateQueuedMessage_llamaAMainConElTextoNuevo', async () => {
+    const { store, updateQueuedMessage } = mounted('streaming');
+
+    await store.getState().updateQueuedMessage('a', 'q1', 'nuevo');
+
+    expect(updateQueuedMessage).toHaveBeenCalledWith({ sessionId: 's-a', messageId: 'q1', text: 'nuevo' });
+  });
+
+  it('updateQueuedMessage_mainFalla_loPintaComoError', async () => {
+    const { store, updateQueuedMessage } = mounted('streaming');
+    updateQueuedMessage.mockRejectedValue(new Error('caido'));
+
+    await store.getState().updateQueuedMessage('a', 'q1', 'nuevo');
+
+    expect(blocksOfKind(store, 'error').map((b) => b.kind === 'error' && b.message).join(' ')).toContain('caido');
   });
 });
 

@@ -48,7 +48,8 @@ import { isPrCreateCommand, prNumberFromCreatedTag, prNumberFromUrl } from './pr
 import { worktreeOfCwd } from '@shared/worktree';
 import { createdFileFrom } from './createdFilesView';
 import { mergeIntoDraft, type QueuedMessage } from './messageQueue';
-import type { SendReceipt } from '@shared/coordination';
+import type { SendMode, SendReceipt } from '@shared/coordination';
+import { deliveryNotices } from './sendNow';
 import { readOnlyLockMessage, type ConversationLockStatus } from '@shared/conversationLock';
 import { lockRefOf } from './conversationLockSync';
 import { conversationIdOfTab } from './conversationId';
@@ -134,7 +135,7 @@ import { recentProjects, RECENT_PROJECTS_LIMIT } from './recentProjects';
 import { projectForRow } from './chatProjects';
 import { isWindowsPlatform } from './keybindings/platform';
 import { describeError } from './describeError';
-import { renderLocalized } from '@shared/i18n/localizedText';
+import { localized, renderLocalized } from '@shared/i18n/localizedText';
 import { t } from '../i18n/uiLanguage';
 import { formatClockTime } from '../i18n/format';
 
@@ -262,6 +263,10 @@ export interface WorkbenchState extends PrState, PrActions {
   // Mensajes enviados con un turno en marcha, POR PESTAÑA (0.1.1 R2, punto 30): esperan aqui, no en el
   // stdin del CLI, y salen de uno en uno al acabar cada turno. No se persisten, como el borrador.
   readonly queuedByChat: Readonly<Record<string, readonly QueuedMessage[]>>;
+  // Directos de ESTE cliente esperando su destino (F4.1): pestaña -> commandId -> id de su burbuja.
+  readonly steeringByChat: Readonly<Record<string, Readonly<Record<string, string>>>>;
+  // El turno en marcha no admite directos (review/compact) hasta su `result`: su tipo, por pestaña.
+  readonly notSteerableByChat: Readonly<Record<string, string>>;
   // Modelo REAL con el que arranco la sesion (`session_init.model`, p.ej. `claude-sonnet-5`), por
   // pestana. Los ids de Claude son ALIAS que apuntan a la ultima version de su familia, asi que esto es
   // lo unico que dice la version de verdad. Ausente hasta que hay sesion.
@@ -499,6 +504,8 @@ export interface WorkbenchState extends PrState, PrActions {
   // La cola es de main (F2.2): editar la quita de alli y devuelve el mensaje al input; quitar la descarta.
   editQueuedMessage: (tabId: string, id: string) => Promise<void>;
   removeQueuedMessage: (tabId: string, id: string) => Promise<void>;
+  // Cambia el texto de un mensaje de la cola de main sin moverlo (F4.2, U5).
+  updateQueuedMessage: (tabId: string, id: string, text: string) => Promise<void>;
   // Carga el historial de conversaciones en disco de la cuenta activa (M2.6, sidebar = historial).
   loadConversationHistory: () => Promise<void>;
   // Abre (reanuda) una conversacion del historial: activa su pestana si ya esta abierta, o crea una.
@@ -552,7 +559,7 @@ export interface WorkbenchState extends PrState, PrActions {
   sendActiveMessage: (text: string, attachments?: readonly ImageAttachment[]) => Promise<void>;
   // Lo mismo contra una pestaña concreta (la activa o no): el continuar automatico (P-028, 20) escribe
   // en pestañas que pueden no estar a la vista.
-  sendMessageToTab: (tabId: string, text: string, attachments?: readonly ImageAttachment[]) => Promise<void>;
+  sendMessageToTab: (tabId: string, text: string, attachments?: readonly ImageAttachment[], mode?: SendMode) => Promise<void>;
   // Continuar automatico al restablecerse el limite de esa pestaña (opt-in desde el banner).
   setRateLimitAutoContinue: (tabId: string, enabled: boolean) => void;
   // Cambio de modelo de la pestana activa (M2.4, solo Claude). Si hay sesion viva envia set_model
@@ -1282,6 +1289,8 @@ export function createWorkbenchStore(mage: MageClient) {
     gitByCwd: {},
     draftByChat: {},
     queuedByChat: {},
+    steeringByChat: {},
+    notSteerableByChat: {},
     resolvedModelByChat: {},
     scratchDir: null,
     scratchRoots: [],
@@ -1494,6 +1503,8 @@ export function createWorkbenchStore(mage: MageClient) {
           dismissedSubagentsByChat: without(s.dismissedSubagentsByChat, tabId),
           draftByChat: without(s.draftByChat, tabId),
           queuedByChat: without(s.queuedByChat, tabId),
+          steeringByChat: without(s.steeringByChat, tabId),
+          notSteerableByChat: without(s.notSteerableByChat, tabId),
           resolvedModelByChat: without(s.resolvedModelByChat, tabId),
           // B12: estos dos faltaban. Se escriben por evento y se quedaban para siempre al cerrar la
           // pestaña — fuga pequeña, pero que crece con cada conversacion que se cierra.
@@ -1943,6 +1954,16 @@ export function createWorkbenchStore(mage: MageClient) {
       await takeQueuedMessage(mage, get, set, tabId, id);
     },
 
+    updateQueuedMessage: async (tabId, id, text) => {
+      const sessionId = get().sessionIdByChat[tabId];
+      if (sessionId === undefined) return;
+      try {
+        await mage.updateQueuedMessage({ sessionId, messageId: id, text });
+      } catch (err) {
+        failChat(set, tabId, describeError(err));
+      }
+    },
+
     renameTab: (tabId, title) => {
       const clean = title.trim();
       if (clean.length === 0) return;
@@ -2333,7 +2354,7 @@ export function createWorkbenchStore(mage: MageClient) {
       syncAutoContinueTimer(get);
     },
 
-    sendMessageToTab: async (tabId, text, attachments = []) => {
+    sendMessageToTab: async (tabId, text, attachments = [], mode = 'queue') => {
       const trimmed = text.trim();
       // Un mensaje SIN texto pero CON imagen es valido (mandar solo un pantallazo es un caso real).
       if ((trimmed.length === 0 && attachments.length === 0) || tabId.length === 0) return;
@@ -2352,8 +2373,8 @@ export function createWorkbenchStore(mage: MageClient) {
       const optimisticBlockId = isTurnRunning(get().statusByChat[tabId]) ? null : beginTurnLocally(mage, get, set, tabId, trimmed, attachments);
       try {
         const sessionId = await get().ensureSession(tabId);
-        const receipt = await mage.sendMessage({ sessionId, text: trimmed, commandId, ...(attachments.length === 0 ? {} : { attachments }) });
-        reconcileReceipt(mage, get, set, { tabId, receipt, optimisticBlockId, text: trimmed, attachments });
+        const receipt = await mage.sendMessage({ sessionId, text: trimmed, commandId, ...(attachments.length === 0 ? {} : { attachments }), ...(mode === 'steer' ? { mode } : {}) });
+        reconcileReceipt(mage, get, set, { tabId, receipt, optimisticBlockId, text: trimmed, attachments, commandId });
       } catch (err) {
         failChat(set, tabId, describeError(err));
         restoreDraftAfterFailedSend(set, tabId, trimmed, attachments);
@@ -2644,6 +2665,9 @@ export function createWorkbenchStore(mage: MageClient) {
         failChat(set, tabId, renderLocalized(t, event.localized));
         restoreDraftAfterFailedSend(set, tabId, event.message.text, event.message.attachments);
       }
+      // Destino real de un directo (F4.1). Y con el fin del turno, «Enviar ahora» vuelve a estar disponible.
+      if (event.kind === 'message_delivery') settleDelivery(mage, get, set, tabId, event);
+      if (event.kind === 'result') set((s) => ({ notSteerableByChat: without(s.notSteerableByChat, tabId) }));
       // Comandos locales con efecto en la pestaña (P-028): `/rename` la renombra al instante y `/clear`
       // deja persistido el id nuevo, para que reabrir Mage reanude la conversacion de despues.
       if (event.kind === 'local_command_output' && event.command === 'rename') applyCliRename(get, tabId, event);
@@ -2674,6 +2698,34 @@ function restoreDraftAfterFailedSend(set: SetFn, tabId: string, text: string, at
     const restored = attachments.map((attachment) => ({ attachment, byteLength: base64ByteLength(attachment.data) }));
     return { draftByChat: { ...s.draftByChat, [tabId]: { text, attachments: restored } } };
   });
+}
+
+type DeliveryEvent = Extract<MageEvent, { kind: 'message_delivery' }>;
+
+// Avisos para todos los clientes (también los directos que mandó otro); la burbuja, solo si es de este cliente.
+function settleDelivery(mage: MageClient, get: () => WorkbenchState, set: SetFn, tabId: string, event: DeliveryEvent): void {
+  if (event.into === 'queue' && event.turnKind !== null) {
+    const turnKind = event.turnKind;
+    set((s) => ({ notSteerableByChat: { ...s.notSteerableByChat, [tabId]: turnKind } }));
+  }
+  for (const notice of deliveryNotices(event)) patchBlocks(set, tabId, (blocks) => appendSystemBlock(blocks, renderLocalized(t, notice), nextBlockId()));
+  const blockId = get().steeringByChat[tabId]?.[event.commandId];
+  if (blockId === undefined) return;
+  set((s) => ({ steeringByChat: { ...s.steeringByChat, [tabId]: without(s.steeringByChat[tabId] ?? {}, event.commandId) } }));
+  settleOwnSteer(mage, get, set, { tabId, blockId, event });
+}
+
+// Dentro del turno la burbuja se queda; con turno propio arranca el reloj; a la cola sale del hilo (la pinta la
+// cola); fallido sale, deja el error SIN cambiar el estado del turno y el texto vuelve al borrador.
+function settleOwnSteer(mage: MageClient, get: () => WorkbenchState, set: SetFn, own: { readonly tabId: string; readonly blockId: string; readonly event: DeliveryEvent }): void {
+  const { tabId, blockId, event } = own;
+  if (event.into === 'active_turn') return;
+  if (event.into === 'new_turn') return startTurnClock(mage, get, set, tabId);
+  patchBlocks(set, tabId, (blocks) => blocks.filter((b) => b.id !== blockId));
+  if (event.into === 'queue') return;
+  const reason = renderLocalized(t, event.localized ?? localized('chat.steer.failed'));
+  patchBlocks(set, tabId, (blocks) => appendErrorBlock(blocks, reason, nextBlockId()));
+  restoreDraftAfterFailedSend(set, tabId, event.message.text, event.message.attachments);
 }
 
 // #1: aviso de «Omitir permisos» al ACTIVARLO, venga de donde venga (chip, Shift+Tab, atajo o evento del
@@ -3053,6 +3105,7 @@ export function reduceEvent(state: WorkbenchState, tabId: string, event: MageEve
       return { queuedByChat: event.queue.length === 0 ? without(state.queuedByChat, tabId) : { ...state.queuedByChat, [tabId]: event.queue } };
     case 'queued_message_sent':
     case 'queued_message_failed':
+    case 'message_delivery':
       return {};
     // Desglose de contexto del propio CLI (D3): no toca la conversacion, alimenta el Inspector.
     case 'context_usage':
@@ -3276,6 +3329,12 @@ function beginTurnLocally(mage: MageClient, get: () => WorkbenchState, set: SetF
   // El bloque optimista lleva ya los adjuntos, asi que la miniatura se ve al instante.
   const blockId = nextBlockId();
   patchBlocks(set, tabId, (blocks) => appendUserBlock(blocks, { id: blockId, text, time: currentTime(), attachments }));
+  startTurnClock(mage, get, set, tabId);
+  return blockId;
+}
+
+// Marca el inicio de un turno en la pestaña: estado, reloj y actividad (los comentarios que había, aquí).
+function startTurnClock(mage: MageClient, get: () => WorkbenchState, set: SetFn, tabId: string): void {
   setStatus(set, tabId, 'streaming');
   // El aviso de limite se retira al escribir: o la ventana ya se restablecio, o el CLI lo volvera a
   // mandar en este mismo turno. Dejarlo puesto ofreceria mudarse de cuenta por un limite caducado.
@@ -3289,7 +3348,6 @@ function beginTurnLocally(mage: MageClient, get: () => WorkbenchState, set: SetF
     tabs: s.tabs.map((t) => (t.id === tabId ? { ...t, lastMessageAtMs: startedAt } : t)),
   }));
   schedulePersist(mage, get);
-  return blockId;
 }
 
 interface ReceiptContext {
@@ -3298,6 +3356,7 @@ interface ReceiptContext {
   readonly optimisticBlockId: string | null;
   readonly text: string;
   readonly attachments: readonly ImageAttachment[];
+  readonly commandId: string;
 }
 
 // El renderer adelanto lo que creia (burbuja o nada); main decidio. Si no coinciden (un turno que el renderer
@@ -3305,11 +3364,25 @@ interface ReceiptContext {
 // espera en la cola, o se pinta el inicio de uno que salio.
 function reconcileReceipt(mage: MageClient, get: () => WorkbenchState, set: SetFn, context: ReceiptContext): void {
   const { tabId, receipt, optimisticBlockId } = context;
+  if (receipt.status === 'steering') return acceptSteering(set, context, receipt.awaitsAnswer);
   if (receipt.status === 'queued' && optimisticBlockId !== null) {
     patchBlocks(set, tabId, (blocks) => blocks.filter((b) => b.id !== optimisticBlockId));
     return;
   }
   if (receipt.status === 'accepted' && optimisticBlockId === null) beginTurnLocally(mage, get, set, tabId, context.text, context.attachments);
+}
+
+// Directo dentro del turno en marcha (F4.1): su burbuja sale ya, sin reloj nuevo (el turno sigue siendo el mismo),
+// y espera su destino en `steeringByChat`. Si la burbuja optimista ya existía (el renderer creía la pestaña en
+// reposo), es esa. Con un permiso pendiente, el aviso de que llegará al contestarlo (A3).
+function acceptSteering(set: SetFn, context: ReceiptContext, awaitsAnswer: boolean): void {
+  const { tabId, commandId } = context;
+  const blockId = context.optimisticBlockId ?? nextBlockId();
+  if (context.optimisticBlockId === null) {
+    patchBlocks(set, tabId, (blocks) => appendUserBlock(blocks, { id: blockId, text: context.text, time: currentTime(), attachments: context.attachments }));
+  }
+  set((s) => ({ steeringByChat: { ...s.steeringByChat, [tabId]: { ...(s.steeringByChat[tabId] ?? {}), [commandId]: blockId } } }));
+  if (awaitsAnswer) patchBlocks(set, tabId, (blocks) => appendSystemBlock(blocks, t('chat.steer.awaitsAnswer'), nextBlockId()));
 }
 
 // Quita un mensaje de la cola de main y lo devuelve (null si ya no estaba o no hay sesion).

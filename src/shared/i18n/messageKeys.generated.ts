@@ -502,6 +502,10 @@ export interface MessageValues {
   readonly "chat.status.error": never;
   readonly "chat.status.needsPermission": never;
   readonly "chat.status.streaming": never;
+  readonly "chat.steer.awaitsAnswer": never;
+  readonly "chat.steer.failed": never;
+  readonly "chat.steer.late": never;
+  readonly "chat.steer.notSteerable": { readonly "turnKind": string };
   readonly "chat.subagent.back": never;
   readonly "chat.subagent.backTip": never;
   readonly "chat.subagent.defaultType": never;
@@ -1170,6 +1174,7 @@ export interface MessageValues {
   readonly "prompt.queue.remove": never;
   readonly "prompt.send.ariaLabel": never;
   readonly "prompt.send.tip": never;
+  readonly "prompt.sendNow.providerUnsupported": { readonly "provider": string | number };
   readonly "prompt.slash.desc.clear": never;
   readonly "prompt.slash.desc.compact": never;
   readonly "prompt.slash.desc.config": never;
