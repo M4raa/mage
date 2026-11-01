@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { ProbeProcess } from '../engine/modelProbe';
 import { codexThreadDelete, codexThreadTurnsList } from './codexRpc';
+import { UserFacingError } from '@shared/i18n/localizedText';
 
 // La petición siguiente a una respuesta sale en una microtarea: se cede el turno antes de emitir la respuesta siguiente.
 const flush = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
@@ -179,5 +180,46 @@ describe('codexThreadTurnsList', () => {
 
     await expect(codexThreadTurnsList({ spawnProbe: spawn, timeoutMs: 1000 }, 'h', '..\\x')).rejects.toThrow('Parametros invalidos');
     expect(spawn).not.toHaveBeenCalled();
+  });
+});
+
+describe('codexRpc — errores de cara al usuario', () => {
+  it('codexThreadDelete_codexRechazaSinMotivo_lanzaConLaFraseSinMotivoComoParte', async () => {
+    const fake = fakeProcess();
+    const pending = codexThreadDelete({ spawnProbe: () => fake.child, timeoutMs: 1000 }, 'h', 'abc');
+
+    fake.emit(JSON.stringify({ id: 'mage-rpc-init', result: {} }));
+    await flush();
+    fake.emit(JSON.stringify({ id: 'mage-rpc-call', error: {} }));
+
+    const err: unknown = await pending.catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(UserFacingError);
+    expect((err as UserFacingError).localized).toEqual({
+      key: 'errors.conversations.codexRpcRejected',
+      values: { method: 'thread/delete' },
+      parts: { detail: { key: 'errors.conversations.codexRpcNoReason' } },
+    });
+  });
+
+  it('codexThreadDelete_codexRechazaConMotivo_elMotivoEsTextoAjeno', async () => {
+    const fake = fakeProcess();
+    const pending = codexThreadDelete({ spawnProbe: () => fake.child, timeoutMs: 1000 }, 'h', 'abc');
+
+    fake.emit(JSON.stringify({ id: 'mage-rpc-init', result: {} }));
+    await flush();
+    fake.emit(JSON.stringify({ id: 'mage-rpc-call', error: { message: 'no existe' } }));
+
+    const err = (await pending.catch((e: unknown) => e)) as UserFacingError;
+    expect(err.localized.parts).toEqual({ detail: { key: 'events.detailOnly', values: { detail: 'no existe' } } });
+  });
+
+  it('codexThreadDelete_elProcesoMuereAntesDeResponder_lanzaLaClaveConElPropositoDeLaLlamada', async () => {
+    const fake = fakeProcess();
+    const pending = codexThreadDelete({ spawnProbe: () => fake.child, timeoutMs: 1000 }, 'h', 'abc');
+
+    fake.exit();
+
+    const err = (await pending.catch((e: unknown) => e)) as UserFacingError;
+    expect(err.localized).toEqual({ key: 'errors.conversations.codexRpcExited', values: { purpose: 'thread/delete' } });
   });
 });

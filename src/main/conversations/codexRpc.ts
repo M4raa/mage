@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { CodexTurn } from '@shared/codexTranscript';
+import { foreignText, localized, localizedWithParts, UserFacingError, type LocalizedText } from '@shared/i18n/localizedText';
 import type { ProbeProcess } from '../engine/modelProbe';
 
 // Llamadas de UN SOLO USO al app-server de Codex de una cuenta: arranca, se presenta, hace sus peticiones en serie y se
@@ -85,7 +86,7 @@ async function listAllTurns(call: Call, threadId: string): Promise<CodexTurn[]> 
 // tiempo; si muere antes, las peticiones pendientes fallan.
 async function withAppServer<T>(deps: CodexRpcDeps, home: string, purpose: string, run: (call: Call) => Promise<T>): Promise<T> {
   const session = new AppServerSession(deps.spawnProbe(home), purpose);
-  const timer = setTimeout(() => session.fail(new Error(`Codex no respondio a ${purpose} dentro de ${deps.timeoutMs} ms`)), deps.timeoutMs);
+  const timer = setTimeout(() => session.fail(new UserFacingError(localized('errors.conversations.codexRpcTimeout', { purpose, timeoutMs: String(deps.timeoutMs) }))), deps.timeoutMs);
   try {
     await session.request(INIT_ID, 'initialize', { clientInfo: CLIENT_INFO, capabilities: { experimentalApi: true } });
     session.notify('initialized');
@@ -103,8 +104,8 @@ class AppServerSession {
   private failure: Error | null = null;
 
   constructor(private readonly child: ProbeProcess, purpose: string) {
-    child.onError?.(() => this.fail(new Error('Fallo el transporte con el CLI de Codex')));
-    child.onExit(() => this.fail(new Error(`El CLI de Codex termino antes de responder a ${purpose}`)));
+    child.onError?.(() => this.fail(new UserFacingError(localized('errors.conversations.codexRpcTransport'))));
+    child.onExit(() => this.fail(new UserFacingError(localized('errors.conversations.codexRpcExited', { purpose }))));
     child.onStdout((chunk) => this.receive(chunk));
   }
 
@@ -155,8 +156,14 @@ class AppServerSession {
     if (waiting === undefined) return;
     this.pending.delete(reply.id);
     if (reply.error === undefined) waiting.resolve(reply.result);
-    else waiting.reject(new Error(`Codex rechazo ${waiting.method}: ${String(reply.error.message ?? 'sin motivo')}`));
+    else waiting.reject(new UserFacingError(rejection(waiting.method, reply.error.message)));
   }
+}
+
+// El motivo lo da Codex (texto ajeno); si no da ninguno, la frase «sin motivo» es de Mage.
+function rejection(method: string, reason: unknown): LocalizedText {
+  const detail = reason === undefined || reason === null ? localized('errors.conversations.codexRpcNoReason') : foreignText(String(reason));
+  return localizedWithParts('errors.conversations.codexRpcRejected', { method }, { detail });
 }
 
 // Los avisos que no son JSON (o no son una respuesta) se ignoran: el app-server mezcla notificaciones con respuestas.

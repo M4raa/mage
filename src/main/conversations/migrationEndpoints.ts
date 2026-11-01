@@ -2,6 +2,7 @@ import { join } from 'node:path';
 import type { AccountProviderId } from '@shared/accounts';
 import { adaptCodexLine, codexTurnsToLines, type CodexTurn } from '@shared/codexTranscript';
 import type { NeutralConversation } from '@shared/neutralConversation';
+import { localized, UserFacingError } from '@shared/i18n/localizedText';
 import type { ConversationPrivacy } from '@shared/state';
 import { resolveTranscriptPath } from '../transcripts/transcriptPath';
 import type { AgyHistoryService } from './agyHistory';
@@ -53,7 +54,7 @@ export function createMigrationEndpoints(deps: MigrationEndpointDeps): Readonly<
 }
 
 function missing(what: string, id: string): never {
-  throw new Error(`No existe la conversacion de ${what}: ${id}`);
+  throw new UserFacingError(localized('errors.conversations.sourceMissing', { provider: what, id }));
 }
 
 // --- Claude ---------------------------------------------------------------------------------------------------------
@@ -109,7 +110,7 @@ function codexEndpoints(deps: MigrationEndpointDeps): MigrationEndpoints {
       if (deps.codex.history.hasSegments(deps.codex.homeOf(ref.accountDir), ref.sessionId)) return null;
       const from = rolloutOf(ref);
       const home = deps.codex.homeOf(dest.accountDir);
-      if (deps.codex.history.findRollout(home, ref.sessionId) !== null) throw new Error(`La cuenta de destino ya tiene la conversacion ${ref.sessionId}`);
+      if (deps.codex.history.findRollout(home, ref.sessionId) !== null) throw new UserFacingError(localized('errors.conversations.destinationHasConversation', { sessionId: ref.sessionId }));
       deps.copyFile(from, join(home, ...relativeToSessions(from, ref.sessionId)));
       return { sessionId: ref.sessionId, configDir: dest.accountDir };
     },

@@ -4,6 +4,7 @@ import type {
   MoveConversationParams,
   MoveConversationResult,
 } from '@shared/conversations';
+import { localized, UserFacingError } from '@shared/i18n/localizedText';
 import type { ConversationPrivacy } from '@shared/state';
 import { resolveTranscriptPath } from '../transcripts/transcriptPath';
 import { pathEquals } from '../os/pathUtils';
@@ -69,7 +70,7 @@ export class ConversationAdminService {
     const runtime = this.runtimeFile(params.cwd, params.sessionId);
     if (!this.deps.exists(srcFile) && runtime !== null && this.deps.exists(runtime)) return { configDir: destDir };
     if (!this.deps.exists(srcFile)) {
-      throw new Error(`No existe la transcripcion a mover: ${srcFile}`);
+      throw new UserFacingError(localized('errors.conversations.transcriptToMoveMissing', { path: srcFile }));
     }
     // El destino NO se pisa nunca. `rename` no protege de esto y ademas se comporta distinto en cada
     // SO: en POSIX sobrescribe en SILENCIO (se perderia la transcripcion que hubiera en el destino) y
@@ -91,10 +92,7 @@ export class ConversationAdminService {
   // juntos, para no mover el fichero y morir despues con la carpeta).
   private assertFreeDestination(destination: string, source: string): void {
     if (!this.deps.exists(destination)) return;
-    throw new Error(
-      `El destino ya existe y no se sobrescribe: "${destination}" (origen: "${source}"). ` +
-        'Borra o renombra el destino antes de mover la conversacion.',
-    );
+    throw new UserFacingError(localized('errors.conversations.moveDestinationExists', { destination, source }));
   }
 
   private isSameFile(a: string, b: string): boolean {

@@ -1,6 +1,7 @@
 import type { AccountProviderId } from '@shared/accounts';
 import type { MigrateConversationParams, MigrateConversationResult } from '@shared/conversations';
 import type { NeutralConversation } from '@shared/neutralConversation';
+import { localized, localizedWithParts, UserFacingError, wrapError, type LocalizedText } from '@shared/i18n/localizedText';
 import type { ConversationPrivacy } from '@shared/state';
 
 // Migrar una conversación a otra cuenta/proveedor SIN que deje de ser la misma: se lee en el formato del origen, se
@@ -44,7 +45,7 @@ export class ConversationMigrationService {
     const target = this.endpoints[params.destProvider];
     const ref: ConversationRef = { accountDir: params.sourceAccountDir, sessionId: params.sessionId, cwd: params.cwd, privacy: params.privacy };
     const conversation = await origin.source.read(ref);
-    if (conversation.items.length === 0) throw new Error(`La conversacion ${params.sessionId} no tiene mensajes que migrar`);
+    if (conversation.items.length === 0) throw new UserFacingError(localized('errors.conversations.migrationEmpty', { sessionId: params.sessionId }));
     const dest = { accountDir: params.destAccountDir, privacy: params.privacy };
     const copied = params.sourceProvider === params.destProvider ? target.sink.copyFrom?.(ref, dest) : undefined;
     const written = copied ?? target.sink.write({ ...conversation, cwd: conversation.cwd || params.cwd }, dest);
@@ -76,7 +77,13 @@ export class ConversationMigrationService {
     }
     if (failure === null && found >= expectedItems) return;
     await target.sink.discard(written);
-    const reason = failure instanceof Error ? failure.message : `solo se leyeron ${found} de ${expectedItems} mensajes`;
-    throw new Error(`La conversacion migrada no se pudo comprobar en el destino (${reason}); el origen no se ha tocado`);
+    throw new UserFacingError(verifyFailure(failure, found, expectedItems));
   }
+}
+
+// El motivo es el error del lector (de Mage o ajeno) o, si no falló pero faltan mensajes, la cuenta de los que se leyeron.
+function verifyFailure(failure: unknown, found: number, expected: number): LocalizedText {
+  if (failure instanceof Error) return wrapError('errors.conversations.migrationVerifyFailed', {}, failure);
+  const detail = localized('errors.conversations.migrationVerifyShort', { found: String(found), expected: String(expected) });
+  return localizedWithParts('errors.conversations.migrationVerifyFailed', {}, { detail });
 }

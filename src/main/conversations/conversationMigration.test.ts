@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { MigrateConversationParams } from '@shared/conversations';
 import type { NeutralConversation } from '@shared/neutralConversation';
 import { ConversationMigrationService, type ConversationSink, type ConversationSource, type MigrationEndpoints } from './conversationMigration';
+import { UserFacingError } from '@shared/i18n/localizedText';
 
 const CONVERSATION: NeutralConversation = {
   cwd: 'C:\\p',
@@ -100,5 +101,42 @@ describe('ConversationMigrationService.migrate', () => {
     await service(origin, target).migrate(PARAMS);
 
     expect(target.sink.write).toHaveBeenCalledWith(expect.objectContaining({ cwd: 'C:\\p' }), expect.anything());
+  });
+});
+
+describe('ConversationMigrationService — errores de cara al usuario', () => {
+  const failureOf = async (origin: MigrationEndpoints, target: MigrationEndpoints): Promise<UserFacingError> => {
+    const err: unknown = await service(origin, target).migrate(PARAMS).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(UserFacingError);
+    return err as UserFacingError;
+  };
+
+  it('migrate_conversacionVacia_lanzaLaClaveConElId', async () => {
+    const origin = endpoints({ source: { read: async () => ({ ...CONVERSATION, items: [] }) } });
+
+    expect((await failureOf(origin, endpoints())).localized).toEqual({ key: 'errors.conversations.migrationEmpty', values: { sessionId: 's1' } });
+  });
+
+  it('migrate_laVerificacionLeeMenosMensajes_elMotivoEsLaCuentaComoParte', async () => {
+    const target = endpoints({ source: { read: async () => ({ ...CONVERSATION, items: [CONVERSATION.items[0]!] }) } });
+
+    expect((await failureOf(endpoints(), target)).localized).toEqual({
+      key: 'errors.conversations.migrationVerifyFailed',
+      values: {},
+      parts: { detail: { key: 'errors.conversations.migrationVerifyShort', values: { found: '1', expected: '2' } } },
+    });
+  });
+
+  it('migrate_laVerificacionFallaConUnErrorDeMage_parteDetailEsElDeDentro', async () => {
+    const inner = new UserFacingError({ key: 'errors.conversations.sourceMissing', values: { provider: 'Codex', id: 'x' } });
+    const target = endpoints({ source: { read: async () => { throw inner; } } });
+
+    expect((await failureOf(endpoints(), target)).localized.parts).toEqual({ detail: inner.localized });
+  });
+
+  it('migrate_laVerificacionFallaConUnErrorAjeno_parteDetailEsTextoAjeno', async () => {
+    const target = endpoints({ source: { read: async () => { throw new Error('base corrupta'); } } });
+
+    expect((await failureOf(endpoints(), target)).localized.parts).toEqual({ detail: { key: 'events.detailOnly', values: { detail: 'base corrupta' } } });
   });
 });

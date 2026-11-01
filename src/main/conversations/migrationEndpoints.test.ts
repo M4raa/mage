@@ -6,6 +6,7 @@ import type { CodexTurn } from '@shared/codexTranscript';
 import { AgyHistoryService } from './agyHistory';
 import { createAgySqliteStore, writeAgyConversationDb } from './agySqliteStore';
 import { CodexHistoryService } from './codexHistory';
+import { UserFacingError } from '@shared/i18n/localizedText';
 import { ConversationMigrationService } from './conversationMigration';
 import { createMigrationEndpoints } from './migrationEndpoints';
 import { agyDbContent, claudeTranscriptText } from './nativeWriters';
@@ -205,5 +206,30 @@ describe('migración de punta a punta', () => {
     expect(existsSync(join(w.dirs.claudeB, 'projects'))).toBe(false);
     expect(w.codexHistory.findRollout(w.dirs.codexA, THREAD)).not.toBeNull();
     expect(w.deleted).toEqual([]);
+  });
+});
+
+describe('migrationEndpoints — errores de cara al usuario', () => {
+  it('migrate_codexDestinoYaTieneLaConversacion_lanzaLaClaveConElId', async () => {
+    const w = world();
+    seedCodex(w.dirs.codexA);
+    seedCodex(w.dirs.codexB);
+
+    const err: unknown = await w.service
+      .migrate({ sourceAccountDir: w.dirs.codexA, sourceProvider: 'codex', sessionId: THREAD, cwd: CWD, privacy: 'shared', destAccountDir: w.dirs.codexB, destProvider: 'codex' })
+      .catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(UserFacingError);
+    expect((err as UserFacingError).localized).toEqual({ key: 'errors.conversations.destinationHasConversation', values: { sessionId: THREAD } });
+  });
+
+  it('migrate_codexOrigenInexistente_lanzaLaClaveConElProveedorYElId', async () => {
+    const w = world();
+
+    const err: unknown = await w.service
+      .migrate({ sourceAccountDir: w.dirs.codexA, sourceProvider: 'codex', sessionId: THREAD, cwd: CWD, privacy: 'shared', destAccountDir: w.dirs.codexB, destProvider: 'codex' })
+      .catch((e: unknown) => e);
+
+    expect((err as UserFacingError).localized).toEqual({ key: 'errors.conversations.sourceMissing', values: { provider: 'Codex', id: THREAD } });
   });
 });

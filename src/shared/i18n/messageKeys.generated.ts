@@ -715,6 +715,18 @@ export interface MessageValues {
   readonly "errors.config.staleWriteNowLength": { readonly "length": string | number };
   readonly "errors.config.staleWriteWasLength": { readonly "length": string | number };
   readonly "errors.config.staleWriteWasMissing": never;
+  readonly "errors.conversations.codexRpcExited": { readonly "purpose": string | number };
+  readonly "errors.conversations.codexRpcNoReason": never;
+  readonly "errors.conversations.codexRpcRejected": { readonly "detail": string | number; readonly "method": string | number };
+  readonly "errors.conversations.codexRpcTimeout": { readonly "purpose": string | number; readonly "timeoutMs": string | number };
+  readonly "errors.conversations.codexRpcTransport": never;
+  readonly "errors.conversations.destinationHasConversation": { readonly "sessionId": string | number };
+  readonly "errors.conversations.migrationEmpty": { readonly "sessionId": string | number };
+  readonly "errors.conversations.migrationVerifyFailed": { readonly "detail": string | number };
+  readonly "errors.conversations.migrationVerifyShort": { readonly "expected": string | number; readonly "found": string | number };
+  readonly "errors.conversations.moveDestinationExists": { readonly "destination": string | number; readonly "source": string | number };
+  readonly "errors.conversations.sourceMissing": { readonly "id": string | number; readonly "provider": string | number };
+  readonly "errors.conversations.transcriptToMoveMissing": { readonly "path": string | number };
   readonly "errors.engine.accountNoLogin": { readonly "accountDir": string | number; readonly "credentialsFile": string | number };
   readonly "errors.engine.agyLoginMissing": { readonly "profileDir": string | number };
   readonly "errors.engine.conversationAlreadyOpen": { readonly "sessionId": string | number };
