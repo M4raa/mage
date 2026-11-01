@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { renderLocalized } from '@shared/i18n/localizedText';
 import type { McpExtensionInstallPreview, McpExtensionView, McpUserConfigField, McpUserConfigValue } from '@shared/mcp';
 import { useMcpStore } from '../../mcpStore';
 import { Icon } from '../Icon';
@@ -65,7 +66,7 @@ export function McpExtensionsTab(): React.JSX.Element {
           {error ?? loadError}
         </div>
       )}
-      {(list?.warnings ?? []).map((warning) => (
+      {(list?.warnings ?? []).map((warning) => renderLocalized(t, warning)).map((warning) => (
         <div key={warning} role="status" className="text-[10px] text-mg-warn-text">
           {warning}
         </div>
@@ -135,7 +136,7 @@ function ExtensionCard({
       {extension.description.length > 0 && <p className="text-[10.5px] text-mg-body2">{extension.description}</p>}
       {extension.problem !== null && (
         <span role="status" data-mcp-extension-problem="true" className="text-[10.5px] text-mg-warn-text">
-          {extension.problem}
+          {renderLocalized(t, extension.problem)}
         </span>
       )}
       <div className="flex flex-wrap items-center justify-end gap-[4px]">

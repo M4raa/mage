@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { renderLocalized } from '@shared/i18n/localizedText';
 import type { McpAgyChange, McpAgySyncPreview } from '@shared/mcp';
 import { useMcpStore } from '../../mcpStore';
 import { Icon } from '../Icon';
@@ -27,6 +28,7 @@ export function McpAgySyncPanel(): React.JSX.Element {
   const [preview, setPreview] = useState<McpAgySyncPreview | null>(null);
   const [error, setError] = useState<string | null>(null);
   const t = useT();
+  const shownError = error ?? (agy?.lastError == null ? null : renderLocalized(t, agy.lastError));
   useEffect(() => void loadAgy().catch((err: unknown) => setError(describe(err))), [loadAgy]);
   const open = (): void => {
     setError(null);
@@ -54,9 +56,9 @@ export function McpAgySyncPanel(): React.JSX.Element {
         {t('mcp.agy.auto')}
       </label>
       {agy?.lastSyncAt != null && <span>{t('mcp.agy.lastSync', { date: formatDateTime(new Date(agy.lastSyncAt).getTime()) })}</span>}
-      {(error ?? agy?.lastError ?? null) !== null && (
+      {shownError !== null && (
         <span role="alert" className="text-mg-danger">
-          {error ?? agy?.lastError}
+          {shownError}
         </span>
       )}
       {preview !== null && <AgySyncDialog preview={preview} onClose={() => setPreview(null)} />}
@@ -81,7 +83,7 @@ function AgySyncDialog({ preview: initial, onClose }: { readonly preview: McpAgy
   };
   const apply = (): void => {
     applyAgy(preview.expected, preview.secretsConfirmed)
-      .then((result) => (result.status === 'saved' ? onClose() : setMessage(result.message)))
+      .then((result) => (result.status === 'saved' ? onClose() : setMessage(renderLocalized(t, result.message))))
       .catch((err: unknown) => setMessage(describe(err)));
   };
   return (
@@ -96,7 +98,7 @@ function AgySyncDialog({ preview: initial, onClose }: { readonly preview: McpAgy
             {preview.changes.map((change) => (
               <li key={`${change.action}:${change.name}`} data-mcp-agy-change={change.action}>
                 <strong className="text-mg-body">{t(ACTION_LABELS[change.action])}</strong> {change.name}
-                {change.reason !== null && <span className="text-mg-sec"> — {change.reason}</span>}
+                {change.reason !== null && <span className="text-mg-sec"> — {renderLocalized(t, change.reason)}</span>}
               </li>
             ))}
           </ul>

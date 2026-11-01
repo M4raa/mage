@@ -1,5 +1,7 @@
 import { create } from 'zustand';
 import type { SharedConfigFile, SharedConfigSnapshot } from '@shared/ipc';
+import { renderLocalized } from '@shared/i18n/localizedText';
+import { t } from '../i18n/uiLanguage';
 import { describeError } from './describeError';
 
 interface SharedConfigStoreState {
@@ -53,7 +55,7 @@ export const useSharedConfigStore = create<SharedConfigStoreState>((set, get) =>
       const result = await window.mage.saveSharedConfig({ file, text, expected });
       await get().load();
       if (result.status === 'stale') {
-        set((s) => ({ saveErrorByFile: { ...s.saveErrorByFile, [file]: result.message } }));
+        set((s) => ({ saveErrorByFile: { ...s.saveErrorByFile, [file]: renderLocalized(t, result.message) } }));
         return false;
       }
       return true;

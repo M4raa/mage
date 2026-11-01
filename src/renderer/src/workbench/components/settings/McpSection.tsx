@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { McpServerStatus } from '@shared/events';
+import { renderLocalized } from '@shared/i18n/localizedText';
 import type { McpInventoryRow, McpScope } from '@shared/mcp';
 import { useWorkbenchStore } from '../../workbenchStore';
 import { useSharedConfigStore } from '../../sharedConfigStore';
@@ -116,7 +117,7 @@ function ServersTab({ statuses }: { readonly statuses: ReturnType<typeof mergeLi
   const close = (): void => setDialog({ kind: 'none' });
   const saveScope = async (row: McpInventoryRow, onlyIn: McpScope): Promise<void> => {
     const result = await mutate({ op: 'setOnlyIn', name: row.name, onlyIn });
-    if (result.status === 'stale') throw new Error(result.message);
+    if (result.status === 'stale') throw new Error(renderLocalized(t, result.message));
   };
 
   return (
@@ -216,8 +217,8 @@ function McpNotices({ onImport }: { readonly onImport: () => void }): React.JSX.
   const snapshot = useSharedConfigStore((s) => s.snapshot);
   const aliasOf = useAliasOf();
   const t = useT();
-  const importNotes = snapshot?.mcpCommonImportNotes ?? [];
-  const warnings = [...(inventory?.warnings ?? []), ...(snapshot?.mcpCommonWarnings ?? []).map((w) => `mcp-common.json: ${w}`)];
+  const importNotes = (snapshot?.mcpCommonImportNotes ?? []).map((note) => renderLocalized(t, note));
+  const warnings = [...(inventory?.warnings ?? []).map((w) => renderLocalized(t, w)), ...(snapshot?.mcpCommonWarnings ?? []).map((w) => `mcp-common.json: ${renderLocalized(t, w)}`)];
   return (
     <>
       {(inventory?.unshared ?? []).map((account) => (
@@ -417,7 +418,7 @@ function CommonActions({ row, onEdit, onScope }: { readonly row: McpInventoryRow
   const run = (action: Parameters<typeof mutate>[0]): void => {
     setError(null);
     mutate(action)
-      .then((result) => setError(result.status === 'stale' ? result.message : null))
+      .then((result) => setError(result.status === 'stale' ? renderLocalized(t, result.message) : null))
       .catch((err: unknown) => setError(err instanceof Error ? describeError(err) : String(err)));
   };
   return (
@@ -465,7 +466,7 @@ function ForeignActions({ row }: { readonly row: McpInventoryRow }): React.JSX.E
   const copy = (): void => {
     setMessage(null);
     applyImport([{ id: origin.importId, replace: false }], commonVersion)
-      .then((result) => setMessage(result.status === 'stale' ? result.message : null))
+      .then((result) => setMessage(result.status === 'stale' ? renderLocalized(t, result.message) : null))
       .catch((err: unknown) => setMessage(err instanceof Error ? describeError(err) : String(err)));
   };
   return (

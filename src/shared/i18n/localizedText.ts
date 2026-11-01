@@ -60,7 +60,7 @@ export function renderForLog(text: LocalizedText): string {
 
 // El `message` de un UserFacingError es el texto en castellano + esta marca + el JSON de su LocalizedText: así cruza el IPC
 // de Electron (que solo conserva `message`) y sigue legible en el log.
-export const USER_FACING_MARK = '⁣';
+export const USER_FACING_MARK = '\u2063';
 
 export class UserFacingError extends Error {
   constructor(readonly localized: LocalizedText) {

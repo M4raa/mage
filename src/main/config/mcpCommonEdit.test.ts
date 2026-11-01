@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { localized } from '@shared/i18n/localizedText';
 import { toServerDraft } from '@shared/mcp';
+import { esText, jsonMessage, thrownText } from '@testing/localizedText';
 import { applyMcpCommonMutation, revealMcpCommonSecrets } from './mcpCommonEdit';
 
 const LOCAL = { type: 'stdio', command: 'npx', args: ['-y', 'a'], env: { A_TOKEN: 'secreto-a' } };
@@ -67,7 +69,10 @@ describe('applyMcpCommonMutation', () => {
   });
 
   it('applyMcpCommonMutation_textoInvalido_lanzaSinElTexto', () => {
-    expect(() => applyMcpCommonMutation('{"secreto-a"', { op: 'remove', name: 'x' })).toThrow(/caracteres$/);
+    const thrown = thrownText(() => applyMcpCommonMutation('{"secreto-a"', { op: 'remove', name: 'x' }));
+
+    expect(thrown).toMatchObject({ key: 'errors.config.commonJsonInvalid', values: { length: '12' } });
+    expect(esText(thrown)).toBe(`mcp-common.json no es JSON válido (${jsonMessage('{"secreto-a"')}): 12 caracteres`);
     try {
       applyMcpCommonMutation('{"secreto-a"', { op: 'remove', name: 'x' });
     } catch (error) {
@@ -120,6 +125,19 @@ describe('revealMcpCommonSecrets', () => {
 
   it('revealMcpCommonSecrets_desactivado_tambien', () => {
     expect(revealMcpCommonSecrets(text({ mageDisabledServers: { a: LOCAL } }), 'a').env).toEqual(LOCAL.env);
+  });
+
+  it('revealMcpCommonSecrets_noEsComun_lanzaLaClaveConElNombre', () => {
+    expect(thrownText(() => revealMcpCommonSecrets(text({ mcpServers: {} }), 'a'))).toEqual(localized('errors.config.commonServerUnknown', { name: 'a' }));
+  });
+
+  it('applyMcpCommonMutation_renombrarAUnNombreExistente_lanzaLaClaveConElNombre', () => {
+    const draft = { ...toServerDraft('a', LOCAL), name: 'r' };
+
+    const thrown = thrownText(() => applyMcpCommonMutation(text({ mcpServers: { a: LOCAL, r: REMOTE } }), { op: 'upsert', originalName: 'a', draft }));
+
+    expect(thrown).toEqual(localized('errors.config.commonServerDuplicate', { name: 'r' }));
+    expect(esText(thrown)).toBe('Ya hay un servidor común llamado "r"');
   });
 
   it('revealMcpCommonSecrets_noEsComun_lanza', () => {

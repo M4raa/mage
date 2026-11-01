@@ -1,6 +1,8 @@
 import { dirname, join, resolve, sep } from 'node:path';
 import { strToU8, zipSync } from 'fflate';
 import { describe, expect, it } from 'vitest';
+import { foreignText, localized } from '@shared/i18n/localizedText';
+import { esText, jsonMessage, thrownText } from '@testing/localizedText';
 import { McpExtensionService, type ExtensionFs, type ExtensionServiceDeps } from './mcpExtensionService';
 import { toClaudeArgs } from './mcpProviderTranslate';
 
@@ -95,7 +97,8 @@ describe('McpExtensionService', () => {
 
     expect(preview).toMatchObject({ id: 'db', displayName: 'Base de datos', author: 'Gar', replacesVersion: null, fileCount: 2 });
     expect(fs.files.has(join(ROOT, 'db', 'server', 'index.js'))).toBe(true);
-    expect(service.list(NONE, NONE).extensions[0]).toMatchObject({ id: 'db', enabled: true, missingRequired: ['key'], problem: 'Falta configurar: sin eso no arranca.' });
+    expect(service.list(NONE, NONE).extensions[0]).toMatchObject({ id: 'db', enabled: true, missingRequired: ['key'], problem: localized('mcp.main.extensionNeedsConfig') });
+    expect(esText(service.list(NONE, NONE).extensions[0]!.problem)).toBe('Falta configurar: sin eso no arranca.');
   });
 
   it('install_paqueteCambiadoTrasLaVistaPrevia_lanzaYNoInstala', () => {
@@ -104,7 +107,7 @@ describe('McpExtensionService', () => {
     const preview = service.previewInstall(ARCHIVE);
     writeArchive(manifest({ version: '6.6.6' }));
 
-    expect(() => service.install(preview.token)).toThrow(/cambiado/);
+    expect(thrownText(() => service.install(preview.token))).toEqual(localized('errors.config.extensionPackageChanged'));
     expect(fs.exists(join(ROOT, 'db'))).toBe(false);
   });
 
@@ -116,7 +119,10 @@ describe('McpExtensionService', () => {
     const { service, writeArchive } = setup();
     writeArchive(manifest({ compatibility: { platforms: ['darwin'] } }));
 
-    expect(() => service.previewInstall(ARCHIVE)).toThrow(/darwin/);
+    const thrown = thrownText(() => service.previewInstall(ARCHIVE));
+
+    expect(thrown).toMatchObject({ key: 'errors.config.extensionCannotInstall', values: { name: 'Base de datos' }, parts: { problem: localized('mcp.main.extensionPlatformOnly', { platforms: 'darwin' }) } });
+    expect(esText(thrown)).toBe('«Base de datos» no se puede instalar aquí: Solo funciona en darwin.');
   });
 
   it('saveConfig_sensible_vaALaBovedaYNoAlFicheroDeAjustes', () => {
@@ -175,7 +181,7 @@ describe('McpExtensionService', () => {
     service.setEnabled('db', false);
 
     expect(incompleta.servers).toEqual([]);
-    expect(incompleta.warnings[0]).toContain('Clave');
+    expect(incompleta.warnings[0]).toBe('Extensión «db» omitida: Falta configurar «Clave».');
     expect(service.resolveActive()).toEqual({ servers: [], warnings: [] });
   });
 
@@ -184,7 +190,7 @@ describe('McpExtensionService', () => {
     writeArchive(manifest({ user_config: {}, server: { type: 'node', mcp_config: { command: 'node' } } }));
     service.install(service.previewInstall(ARCHIVE).token);
 
-    expect(service.list(NONE, NONE).extensions[0]!.problem).toContain('«node»');
+    expect(service.list(NONE, NONE).extensions[0]!.problem).toEqual(localized('mcp.main.extensionNeedsCommand', { command: 'node' }));
   });
 
   it('list_comunConElMismoNombre_avisaDeQueGanaElComun', () => {
@@ -192,7 +198,7 @@ describe('McpExtensionService', () => {
     writeArchive(manifest({ user_config: {} }));
     service.install(service.previewInstall(ARCHIVE).token);
 
-    expect(service.list(new Set(['db']), NONE).extensions[0]!.problem).toContain('común');
+    expect(service.list(new Set(['db']), NONE).extensions[0]!.problem).toEqual(localized('mcp.main.extensionCommonNameClash', { id: 'db' }));
   });
 
   it('list_proveedores_agySoloSiSeExporto', () => {
@@ -265,7 +271,9 @@ describe('McpExtensionService', () => {
     const list = service.list(NONE, NONE);
 
     expect(list.extensions).toEqual([]);
-    expect(list.warnings[0]).toContain('db');
+    expect(list.warnings[0]).toMatchObject({ key: 'mcp.main.extensionUnreadable', values: { name: 'db' } });
+    expect(list.warnings[0]!.parts?.detail).toMatchObject({ key: 'errors.config.extensionSettingsUnreadable', values: { length: '1' }, parts: { detail: foreignText(jsonMessage('{')) } });
+    expect(esText(list.warnings[0]!)).toBe(`Extensión «db» ilegible: Ajustes de extensión ilegibles (1 caracteres): ${jsonMessage('{')}`);
     expect(dirname(join(SETTINGS, 'db.json'))).toBe(SETTINGS);
   });
 });

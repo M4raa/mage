@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest';
+import { foreignText, localized } from '@shared/i18n/localizedText';
 import type { McpExtensionView, McpInventory, McpInventoryRow } from '@shared/mcp';
 import { mcpAuthMessage, buildClaudeConnectorGroups, buildMcpTable, buildServersTable, describeCheckedAt, filterMcpTable, mcpStatusLabel, mergeLiveStatuses, summarizeStatus, tagSessionServers } from './mcpView';
 
 const row = (patch: Partial<McpInventoryRow>): McpInventoryRow => ({
   name: 'a',
   transport: 'stdio',
-  origins: [{ kind: 'common', label: 'Mage', path: '/m.json', accountDir: null, projectDir: null, importId: 'common|/m.json||a' }],
+  origins: [{ kind: 'common', label: foreignText('Mage'), path: '/m.json', accountDir: null, projectDir: null, importId: 'common|/m.json||a' }],
   accounts: ['/c1', '/c2'],
   envKeys: [],
   headerKeys: [],
@@ -167,7 +168,11 @@ describe('mcpAuthMessage', () => {
     expect(mcpAuthMessage({ kind: 'connected', statuses: null }).ok).toBe(true);
     expect(mcpAuthMessage({ kind: 'opened', statuses: null }).text).toMatch(/Comprobar estado/);
     expect(mcpAuthMessage({ kind: 'timeout', statuses: null })).toMatchObject({ ok: false });
-    expect(mcpAuthMessage({ kind: 'error', message: 'Server not found: x' })).toEqual({ ok: false, text: 'Server not found: x' });
+    expect(mcpAuthMessage({ kind: 'error', message: foreignText('Server not found: x') })).toEqual({ ok: false, text: 'Server not found: x' });
+  });
+
+  it('mcpAuthMessage_errorConFraseDeMage_laPintaEnCastellano', () => {
+    expect(mcpAuthMessage({ kind: 'error', message: localized('mcp.main.authServerNotConnected', { server: 'db', detail: ': boom' }) })).toEqual({ ok: false, text: 'El servidor db no conectó tras autenticar: boom' });
   });
 });
 
@@ -180,6 +185,15 @@ describe('pestaña Servidores', () => {
       ['plugin', 'figma', 'claude'],
     ]);
     expect(rows[0]!.providers).toEqual(['claude', 'codex', 'local']);
+  });
+
+  it('buildMcpTable_origenConFraseDeMage_laInsigniaYElFiltroUsanElTextoTraducido', () => {
+    const origin = { kind: 'account' as const, label: localized('mcp.main.originAccount', { name: 'claude-p' }), path: '/c.json', accountDir: '/c1', projectDir: null, importId: 'account|/c.json||a' };
+
+    const rows = buildMcpTable(inventory([row({ origins: [origin] })]), {});
+
+    expect(rows[0]!.badges).toEqual([{ kind: 'account', label: 'Cuenta claude-p' }]);
+    expect(filterMcpTable(rows, 'cuenta CLAUDE-P')).toHaveLength(1);
   });
 });
 
@@ -232,9 +246,9 @@ describe('pestaña Conectores', () => {
   });
 
   it('buildClaudeConnectorGroups_extensionConProblema_loEnseña', () => {
-    const [c1] = buildClaudeConnectorGroups(input({ extensions: [ext({ problem: 'Falta configurar' })] }));
+    const [c1] = buildClaudeConnectorGroups(input({ extensions: [ext({ problem: localized('mcp.main.extensionNeedsConfig') })] }));
 
-    expect(c1!.rows.find((r) => r.kind === 'extension')!.statusLabel).toBe('Falta configurar');
+    expect(c1!.rows.find((r) => r.kind === 'extension')!.statusLabel).toBe('Falta configurar: sin eso no arranca.');
   });
 
   it('buildClaudeConnectorGroups_sinCuentas_vacio', () => {

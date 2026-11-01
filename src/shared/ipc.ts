@@ -533,12 +533,12 @@ export interface NotificationTarget {
 // viaja el texto crudo (hooks y reglas de permisos) para su editor.
 export interface SharedConfigSnapshot {
   readonly settingsCommonText: string;
-  readonly mcpCommonWarnings: readonly string[];
+  readonly mcpCommonWarnings: readonly LocalizedText[];
   readonly settingsCommonWarnings: readonly string[];
   readonly mcpCommonServerNames: readonly string[];
   // Colisiones de la importacion inicial de mcp-common.json (P-026 2.5), solo en la ejecucion que la
   // hizo. Vacio en las demas.
-  readonly mcpCommonImportNotes: readonly string[];
+  readonly mcpCommonImportNotes: readonly LocalizedText[];
   // Bytes EXACTOS observados en disco cuando se leyo (null = el fichero no existia). Es la base del
   // compare-and-swap al guardar, y NO es lo mismo que `*Text`: ese sustituye el fichero ausente por un
   // JSON valido de arranque para que el editor no muestre un aviso antes de que el usuario toque nada.
@@ -561,7 +561,7 @@ export interface SaveSharedConfigParams {
 // `stale`: el fichero cambio fuera de Mage desde que el editor lo cargo y NO se ha escrito nada.
 export type SaveSharedConfigResult =
   | { readonly status: 'saved'; readonly warnings: readonly string[] }
-  | { readonly status: 'stale'; readonly message: string };
+  | { readonly status: 'stale'; readonly message: LocalizedText };
 
 // Layout de paneles acoplables (F6 Fase 2, PLAN-F6-PANELES.md §5.3/§7): el registro de paneles real
 // (con `render` de React) vive SOLO en el renderer (panelRegistry.ts) — no puede cruzar a main (medido

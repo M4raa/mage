@@ -12,6 +12,7 @@
 
 // Contenido observado de un fichero. `null` significa AUSENTE, que no es lo mismo que vacio: un
 // fichero que no existe y uno de 0 bytes son estados distintos para el compare-and-swap.
+import { localized, localizedWithParts, type LocalizedText } from '@shared/i18n/localizedText';
 import { renameWithRetry, sleepSync } from './renameRetry';
 
 export type FileSnapshot = string | null;
@@ -85,10 +86,10 @@ export function writeAtomicIfUnchanged(
 
 // Mensaje de conflicto para el usuario/log. No incluye el CONTENIDO (puede ser largo o sensible):
 // solo la ruta y en que se diferencia el estado, que es lo accionable.
-export function describeStaleWrite(path: string, expected: FileSnapshot, actual: FileSnapshot): string {
-  const was = expected === null ? 'no existia' : `tenia ${expected.length} caracteres`;
-  const now = actual === null ? 'ha desaparecido' : `tiene ${actual.length} caracteres`;
-  return `El fichero "${path}" cambio fuera de Mage desde que se leyo (${was}, ahora ${now}); no se ha guardado nada.`;
+export function describeStaleWrite(path: string, expected: FileSnapshot, actual: FileSnapshot): LocalizedText {
+  const was = expected === null ? localized('errors.config.staleWriteWasMissing') : localized('errors.config.staleWriteWasLength', { length: String(expected.length) });
+  const now = actual === null ? localized('errors.config.staleWriteNowGone') : localized('errors.config.staleWriteNowLength', { length: String(actual.length) });
+  return localizedWithParts('errors.config.staleWrite', { path }, { was, now });
 }
 
 function tempPathFor(deps: AtomicWriteDeps, path: string): string {

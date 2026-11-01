@@ -1,4 +1,5 @@
 import type { McpServerStatus } from '@shared/events';
+import { renderLocalized } from '@shared/i18n/localizedText';
 import { isInMcpScope } from '@shared/mcp';
 import type {
   McpAuthResult,
@@ -123,7 +124,7 @@ function serverRow(row: McpInventoryRow, reports: readonly StatusReport[]): McpT
     name: row.name,
     kind: 'server',
     typeLabel: t(TRANSPORT_LABELS[row.transport]),
-    badges: row.origins.map((origin) => ({ kind: origin.kind, label: origin.label })),
+    badges: row.origins.map((origin) => ({ kind: origin.kind, label: renderLocalized(t, origin.label) })),
     accounts: row.accounts,
     statusLabel: row.disabled ? mcpStatusLabel('disabled') : summarizeStatus(reports),
     inventory: row,
@@ -230,7 +231,7 @@ export function mcpAuthMessage(result: McpAuthResult): McpAuthMessage {
     case 'timeout':
       return { ok: false, text: t('mcp.auth.timeout') };
     case 'error':
-      return { ok: false, text: result.message };
+      return { ok: false, text: renderLocalized(t, result.message) };
   }
 }
 
@@ -313,7 +314,7 @@ function pluginRow(status: McpLiveStatus): McpConnectorRow | null {
 function extensionRow(ext: McpExtensionView, reported: readonly McpLiveStatus[]): McpConnectorRow {
   const live = reported.find((status) => status.name === ext.id);
   const liveLabel = live === undefined ? t('mcp.connectors.extensionActive') : mcpStatusLabel(live.status);
-  const statusLabel = ext.problem ?? liveLabel;
+  const statusLabel = ext.problem === null ? liveLabel : renderLocalized(t, ext.problem);
   return { key: `ext:${ext.id}`, name: ext.displayName, kind: 'extension', typeLabel: t('mcp.connectors.type.desktop'), statusLabel, cliName: null, needsAuth: false };
 }
 

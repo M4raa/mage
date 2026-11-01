@@ -6,6 +6,8 @@
 // (`McpCommonReveal`). Por eso el borrador del editor representa un valor guardado que no se ha
 // revelado como `null` («se conserva el que hay»), y es main quien lo resuelve al guardar.
 
+import type { LocalizedText } from './i18n/localizedText';
+
 export type McpTransport = 'stdio' | 'http' | 'sse';
 
 // Donde esta declarado un servidor. `common` es el unico que Mage escribe (`mcp-common.json`); el
@@ -23,7 +25,7 @@ export type McpOriginKind =
 export interface McpOrigin {
   readonly kind: McpOriginKind;
   // Texto corto para la insignia: «Mage», «Cuenta claude-p», «Proyecto mage»…
-  readonly label: string;
+  readonly label: LocalizedText;
   // Fichero donde vive la declaracion (para «Ver ubicacion»). Una ruta, nunca contenido.
   readonly path: string;
   readonly accountDir: string | null;
@@ -78,7 +80,7 @@ export interface McpInventory {
   // no puede recibir los bytes (llevan los `env`), asi que devuelve esta huella al guardar.
   readonly commonVersion: string | null;
   // Ficheros que no se pudieron interpretar (sin contenido: solo que fichero y por que).
-  readonly warnings: readonly string[];
+  readonly warnings: readonly LocalizedText[];
 }
 
 export interface McpInventoryParams {
@@ -95,11 +97,11 @@ export interface McpImportCandidate {
   readonly id: string;
   readonly name: string;
   readonly group: McpImportGroup;
-  readonly originLabel: string;
+  readonly originLabel: LocalizedText;
   readonly transport: McpTransport;
   readonly status: McpImportStatus;
   readonly checkedByDefault: boolean;
-  readonly note: string | null;
+  readonly note: LocalizedText | null;
 }
 
 export interface McpImportPreview {
@@ -150,8 +152,8 @@ export interface McpCommonMutateParams {
 }
 
 export type McpWriteResult =
-  | { readonly status: 'saved'; readonly notes: readonly string[] }
-  | { readonly status: 'stale'; readonly message: string };
+  | { readonly status: 'saved'; readonly notes: readonly LocalizedText[] }
+  | { readonly status: 'stale'; readonly message: LocalizedText };
 
 // Valores de un comun, SOLO tras pulsar «mostrar».
 export interface McpRevealedSecrets {
@@ -182,7 +184,7 @@ export interface McpAuthParams {
 // tiempo. `statuses` es el ultimo `mcp_status` de esa cuenta (null si no llego ninguno).
 export type McpAuthResult =
   | { readonly kind: 'connected' | 'opened' | 'timeout'; readonly statuses: readonly McpLiveStatus[] | null }
-  | { readonly kind: 'error'; readonly message: string };
+  | { readonly kind: 'error'; readonly message: LocalizedText };
 
 // --- Proveedores: quien carga que («Solo en…») --------------------------------------------------
 
@@ -268,7 +270,7 @@ export interface McpExtensionView {
   readonly fields: readonly McpUserConfigField[];
   readonly missingRequired: readonly string[];
   // Lo que impide cargarla (runtime ausente, plataforma, colision con un comun…). null = carga.
-  readonly problem: string | null;
+  readonly problem: LocalizedText | null;
   readonly providers: readonly McpProviderFamily[];
   readonly dir: string;
 }
@@ -284,7 +286,7 @@ export interface McpDesktopExtensionCandidate {
 export interface McpExtensionList {
   readonly extensions: readonly McpExtensionView[];
   readonly desktop: readonly McpDesktopExtensionCandidate[];
-  readonly warnings: readonly string[];
+  readonly warnings: readonly LocalizedText[];
 }
 
 // Vista previa de una instalacion desde archivo, para que el usuario confirme con autor y firma.
@@ -342,7 +344,7 @@ export type McpAgyChangeAction = 'add' | 'update' | 'remove' | 'skip';
 export interface McpAgyChange {
   readonly name: string;
   readonly action: McpAgyChangeAction;
-  readonly reason: string | null; // solo en `skip`
+  readonly reason: LocalizedText | null; // solo en `skip`
 }
 
 export interface McpAgySyncPreview {
@@ -360,12 +362,12 @@ export interface McpAgySyncState {
   readonly exported: readonly string[];
   readonly secretsConfirmed: readonly string[];
   readonly lastSyncAt: string | null;
-  readonly lastError: string | null;
+  readonly lastError: LocalizedText | null;
 }
 
 export type McpAgySyncResult =
   | { readonly status: 'saved'; readonly changes: readonly McpAgyChange[]; readonly backupPath: string | null }
-  | { readonly status: 'stale'; readonly message: string };
+  | { readonly status: 'stale'; readonly message: LocalizedText };
 
 // --- Modelo puro del borrador (lo usan el editor del renderer y el guardado de main) -----------
 

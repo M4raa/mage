@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { renderLocalized } from '@shared/i18n/localizedText';
 import type { McpImportCandidate, McpImportGroup, McpImportPreview, McpImportStatus } from '@shared/mcp';
 import { useMcpStore } from '../../mcpStore';
 import { MCP_BUTTON_CLASS, MCP_DIALOG_PANEL_CLASS, MCP_DIALOG_SCRIM_CLASS, MCP_PRIMARY_BUTTON_CLASS, stopEscape } from './mcpStyles';
@@ -72,7 +73,7 @@ export function McpImportDialog({ onClose }: { readonly onClose: () => void }): 
     setBusy(true);
     setError(null);
     applyImport(picks, preview.commonVersion)
-      .then((result) => (result.status === 'saved' ? setNotes(result.notes) : setError(result.message)))
+      .then((result) => (result.status === 'saved' ? setNotes(result.notes.map((note) => renderLocalized(t, note))) : setError(renderLocalized(t, result.message))))
       .catch((err: unknown) => setError(err instanceof Error ? describeError(err) : String(err)))
       .finally(() => setBusy(false));
   };
@@ -163,9 +164,9 @@ function CandidateRow({
   return (
     <li data-mcp-candidate={candidate.name} className="flex flex-col gap-[2px] rounded-[6px] border border-mg-border-subtle px-[8px] py-[5px]">
       <div className="flex items-center gap-[8px] text-[11px]">
-        <input type="checkbox" checked={selectable && checked} disabled={!selectable} onChange={onToggle} aria-label={t('mcp.import.candidateAria', { name: candidate.name, origin: candidate.originLabel })} />
+        <input type="checkbox" checked={selectable && checked} disabled={!selectable} onChange={onToggle} aria-label={t('mcp.import.candidateAria', { name: candidate.name, origin: renderLocalized(t, candidate.originLabel) })} />
         <span className="font-medium text-mg-body">{candidate.name}</span>
-        <span className="text-[10px] text-mg-ter">{candidate.originLabel}</span>
+        <span className="text-[10px] text-mg-ter">{renderLocalized(t, candidate.originLabel)}</span>
         <span className="ml-auto rounded-[4px] bg-mg-hover px-[5px] py-[1px] text-[9px] font-semibold text-mg-body2">{t(STATUS_LABELS[candidate.status])}</span>
       </div>
       {candidate.status === 'different' && selectable && (
@@ -175,7 +176,7 @@ function CandidateRow({
         </label>
       )}
       {candidate.note !== null && (
-        <span className="ml-[22px] text-[10px] text-mg-sec">{candidate.note}</span>
+        <span className="ml-[22px] text-[10px] text-mg-sec">{renderLocalized(t, candidate.note)}</span>
       )}
     </li>
   );

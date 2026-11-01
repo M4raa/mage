@@ -95,7 +95,7 @@ import type {
 import { buildAboutInfo } from './about/aboutService';
 import type { MemoryFile } from '@shared/memory';
 import type { MageEvent, SlashCommandInfo } from '@shared/events';
-import { localized } from '@shared/i18n/localizedText';
+import { localized, type LocalizedText } from '@shared/i18n/localizedText';
 import type { ImageAttachment, ProviderProbeParams } from '@shared/ipc';
 import { base64ByteLength, validateAttachmentSet } from '@shared/attachments';
 import type { EffectiveSettings, InstructionsFile, ProjectFileContent, ReadProjectFileParams, WriteProjectFileParams } from '@shared/ipc';
@@ -393,7 +393,7 @@ function settingsCommonPath(): string {
 // regeneraba el script del usuario) + los MCP de ambito usuario del `.claude.json` de cada cuenta. Las
 // notas (colisiones de nombre) se enseñan en Ajustes -> MCP y conectores en esta ejecucion.
 const LEGACY_SHARED_MCP_FILE = 'mcp-shared.json';
-let mcpImportNotes: readonly string[] = [];
+let mcpImportNotes: readonly LocalizedText[] = [];
 
 function importSharedMcpOnce(): void {
   const readIfExists = (path: string): string | null => (existsSync(path) ? readFileSync(path, 'utf8') : null);
