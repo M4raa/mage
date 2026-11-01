@@ -136,7 +136,7 @@ describe('migración de punta a punta', () => {
     seedCodex(w.dirs.codexB);
 
     await expect(w.service.migrate({ sourceAccountDir: w.dirs.codexA, sourceProvider: 'codex', sessionId: THREAD, cwd: CWD, privacy: 'shared', destAccountDir: w.dirs.codexB, destProvider: 'codex' }))
-      .rejects.toThrow('ya tiene la conversacion');
+      .rejects.toThrow('ya tiene la conversación');
 
     expect(w.codexHistory.findRollout(w.dirs.codexA, THREAD)).not.toBeNull();
   });
@@ -196,12 +196,12 @@ describe('migración de punta a punta', () => {
   });
 
   it('codexConRevert_laRpcFalla_noEscribeNadaYNoTocaElOrigen', async () => {
-    const w = world(async () => { throw new Error('Codex rechazo thread/turns/list: x'); });
+    const w = world(async () => { throw new Error('Codex rechazó thread/turns/list: x'); });
     seedCodex(w.dirs.codexA);
     seedSegment(w.dirs.codexA);
 
     await expect(w.service.migrate({ sourceAccountDir: w.dirs.codexA, sourceProvider: 'codex', sessionId: THREAD, cwd: CWD, privacy: 'shared', destAccountDir: w.dirs.claudeB, destProvider: 'claude' }))
-      .rejects.toThrow('Codex rechazo thread/turns/list');
+      .rejects.toThrow('Codex rechazó thread/turns/list');
 
     expect(existsSync(join(w.dirs.claudeB, 'projects'))).toBe(false);
     expect(w.codexHistory.findRollout(w.dirs.codexA, THREAD)).not.toBeNull();

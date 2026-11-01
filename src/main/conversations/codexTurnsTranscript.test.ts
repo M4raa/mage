@@ -86,9 +86,9 @@ describe('codexTurnsBatches', () => {
   });
 
   it('codexTurnsBatches_rpcFalla_propagaElError', async () => {
-    const failing = codexTurnsBatches(async () => { throw new Error('Codex rechazo thread/turns/list: x'); });
+    const failing = codexTurnsBatches(async () => { throw new Error('Codex rechazó thread/turns/list: x'); });
 
-    await expect(collect(failing)).rejects.toThrow('Codex rechazo thread/turns/list: x');
+    await expect(collect(failing)).rejects.toThrow('Codex rechazó thread/turns/list: x');
   });
 });
 

@@ -54,7 +54,7 @@ describe('codexThreadDelete', () => {
 
     fake.exit();
 
-    await expect(pending).rejects.toThrow('termino antes de responder');
+    await expect(pending).rejects.toThrow('terminó antes de responder');
   });
 
   it('codexThreadDelete_sinRespuesta_lanzaPorTiempo', async () => {
@@ -172,7 +172,7 @@ describe('codexThreadTurnsList', () => {
     await flush();
     fake.emit(JSON.stringify({ id: 'mage-rpc-call', error: { message: 'hilo no encontrado' } }));
 
-    await expect(pending).rejects.toThrow('Codex rechazo thread/turns/list: hilo no encontrado');
+    await expect(pending).rejects.toThrow('Codex rechazó thread/turns/list: hilo no encontrado');
   });
 
   it('codexThreadTurnsList_idConSeparadores_rechazaSinLanzarNada', async () => {

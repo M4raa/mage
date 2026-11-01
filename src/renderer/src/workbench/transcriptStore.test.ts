@@ -55,7 +55,7 @@ describe('applyTranscriptBatch', () => {
   it('applyTranscriptBatch_conversacionInexistente_loMarcaComoMissing', () => {
     const patch = applyTranscriptBatch(EMPTY, { transcriptId: 'lectura-1', error: localized('errors.transcripts.conversationMissing', { provider: 'Codex', sessionId: 'x' }), missing: true });
 
-    expect(patch).toEqual({ errorMessage: 'No existe la conversacion de Codex x', isFinal: true, missing: true });
+    expect(patch).toEqual({ errorMessage: 'No existe la conversación de Codex x', isFinal: true, missing: true });
   });
 
   it('applyTranscriptBatch_sinLoteNiError_noCambiaNada', () => {

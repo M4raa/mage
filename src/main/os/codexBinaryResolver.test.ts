@@ -111,7 +111,7 @@ describe('codexSpawnCommand', () => {
   });
 
   it('codexSpawnCommand_scriptEmpaquetadoSinCodex_lanzaElErrorDeSiempre', () => {
-    expect(() => codexSpawnCommand(['app-server'], { resolver: { ...WIN, binOverride: SCRIPT }, isPackaged: true, execPath: ELECTRON, log: vi.fn() })).toThrow('No se encontro el CLI de Codex');
+    expect(() => codexSpawnCommand(['app-server'], { resolver: { ...WIN, binOverride: SCRIPT }, isPackaged: true, execPath: ELECTRON, log: vi.fn() })).toThrow('No se encontró el CLI de Codex');
   });
 
   it('codexSpawnCommand_exe_igualQueHoy', () => {
