@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MageApi } from '@shared/ipc';
 import type { ConversationSummary } from '@shared/conversations';
-import { foreignText } from '@shared/i18n/localizedText';
+import { foreignText, localized, type LocalizedText } from '@shared/i18n/localizedText';
 import { createWorkbenchStore, type ConversationFolderChoice } from './workbenchStore';
 import { findLeafPath, singleLeaf } from './splitLayout';
 import { useNotificationStore } from './notificationStore';
@@ -2405,7 +2405,7 @@ describe('guardado de ajustes con debounce', () => {
 
 // #55 (F2.8): una conversación que tiene otra instancia de Mage se ve en solo lectura.
 describe('bloqueo entre instancias', () => {
-  function locked(status: { owner: false; profile: string; orphan: boolean }) {
+  function locked(status: { owner: false; profile: LocalizedText; orphan: boolean }) {
     const sendMessage = vi.fn().mockResolvedValue({ status: 'accepted', commandId: 'k' });
     const takeOverConversationLock = vi.fn().mockResolvedValue({ owner: true });
     const store = createWorkbenchStore(fakeMage({ sendMessage, takeOverConversationLock }));
@@ -2414,7 +2414,7 @@ describe('bloqueo entre instancias', () => {
   }
 
   it('sendMessageToTab_soloLectura_lanzaElAvisoYNoEnvia', async () => {
-    const { store, sendMessage } = locked({ owner: false, profile: 'mage', orphan: false });
+    const { store, sendMessage } = locked({ owner: false, profile: foreignText('mage'), orphan: false });
 
     await expect(store.getState().sendMessageToTab('a', 'hola')).rejects.toThrow('Abierta en otra instancia de Mage (mage)');
 
@@ -2422,8 +2422,16 @@ describe('bloqueo entre instancias', () => {
     expect(store.getState().blocksByChat['a'] ?? []).toEqual([]);
   });
 
+  it('sendMessageToTab_soloLecturaConPerfilDeReserva_pintaElPerfilDesconocido', async () => {
+    const { store, sendMessage } = locked({ owner: false, profile: localized('prompt.lock.unknownProfile'), orphan: false });
+
+    await expect(store.getState().sendMessageToTab('a', 'hola')).rejects.toThrow('Abierta en otra instancia de Mage (perfil desconocido)');
+
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
   it('takeOverConversation_huerfana_pasaADuena', async () => {
-    const { store, takeOverConversationLock } = locked({ owner: false, profile: 'mage', orphan: true });
+    const { store, takeOverConversationLock } = locked({ owner: false, profile: foreignText('mage'), orphan: true });
 
     await store.getState().takeOverConversation('a');
 

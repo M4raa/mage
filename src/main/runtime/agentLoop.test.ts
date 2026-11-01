@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { localized } from '@shared/i18n/localizedText';
+import { foreignText, localized, UserFacingError } from '@shared/i18n/localizedText';
 import { z } from 'zod';
 import { MAX_TOOL_ROUNDS, runTurn, type LoopDeps, type LoopEvent } from './agentLoop';
 import { ChatHttpError, type ChatClient, type ChatMessage, type ChatRequest } from './chatClient';
@@ -82,6 +82,18 @@ describe('runTurn con herramientas', () => {
     expect(tools[2]).toBe('contenido de hola.txt');
   });
 
+  it('run_toolLanzaUserFacingError_elModeloRecibeElCastellanoSinMarca', async () => {
+    const chat = client((_r, n) => (n === 1 ? [call('c1', 'Read', '{"file_path":"x"}'), finish('tool_calls')] : [text('ok'), finish('stop')]));
+    const base = deps(chat, [readTool([])]);
+    const failing = { ...base, tools: Object.assign(Object.create(base.tools) as typeof base.tools, { run: async () => { throw new UserFacingError(localized('errors.runtime.sessionStopped', { sessionId: 's1' })); } }) };
+    const turn = input();
+
+    await runTurn(turn, failing);
+
+    const tool = turn.history.find((m) => m.role === 'tool');
+    expect(tool?.content).toBe('La sesion del runtime s1 esta parada');
+  });
+
   it('run_twoParallelReads_runConcurrentlyAndAnswerInOrder', async () => {
     const log: string[] = [];
     const chat = client((_r, n) =>
@@ -121,7 +133,7 @@ describe('runTurn con herramientas', () => {
   it('run_noToolsError_retriesWithoutToolsAndNotices', async () => {
     const events: LoopEvent[] = [];
     const chat = client((request) =>
-      request.tools !== undefined ? new ChatHttpError('400 does not support tools', 'no_tools', 400) : [text('solo chat'), finish('stop')],
+      request.tools !== undefined ? new ChatHttpError(foreignText('400 does not support tools'), 'no_tools', 400) : [text('solo chat'), finish('stop')],
     );
 
     const outcome = await runTurn(input(), deps(chat, [readTool([])], events));

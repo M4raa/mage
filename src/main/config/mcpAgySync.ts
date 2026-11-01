@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { z } from 'zod';
 import type { McpAgyChange, McpAgySyncPreview, McpAgySyncResult, McpAgySyncState } from '@shared/mcp';
+import { foreignText, localized, localizedFromError, parseLocalizedText, UserFacingError, wrapError, type LocalizedText } from '@shared/i18n/localizedText';
 import { writeAtomicIfUnchanged, type AtomicWriteDeps } from '../os/atomicFile';
 import type { ResolvedMcpServer } from './mcpResolved';
 import { hasVaultSecrets, toAgyEntry } from './mcpProviderTranslate';
@@ -16,12 +17,19 @@ import { hasVaultSecrets, toAgyEntry } from './mcpProviderTranslate';
 //  - si el usuario desactivo en agy una entrada exportada (`agy mcp disable`), se respeta.
 // Los valores de `env`/cabeceras quedan en claro en el fichero de agy, igual que con `agy mcp add`.
 
+// agy-sync.json de la 0.1.2 guardaba la frase en castellano: se enseña tal cual (texto ajeno, sin traducir).
+function readStoredError(value: unknown): LocalizedText | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'string') return foreignText(value);
+  return parseLocalizedText(value);
+}
+
 const STATE = z.object({
   auto: z.boolean().catch(false),
   exported: z.array(z.string()).catch([]),
   secretsConfirmed: z.array(z.string()).catch([]),
   lastSyncAt: z.string().nullable().catch(null),
-  lastError: z.string().nullable().catch(null),
+  lastError: z.unknown().transform(readStoredError).catch(null),
 });
 
 const DEFAULT_STATE: McpAgySyncState = { auto: false, exported: [], secretsConfirmed: [], lastSyncAt: null, lastError: null };
@@ -66,7 +74,7 @@ export function planAgySync(
 }
 
 function secretSkip(name: string): McpAgyChange {
-  return { name, action: 'skip', reason: 'lleva valores guardados en la bóveda: solo se copia si lo confirmas, y quedarían en claro en el fichero de agy' };
+  return { name, action: 'skip', reason: localized('mcp.main.agySkipVaultSecrets') };
 }
 
 // Servidores que solo se copian con confirmacion (para el dialogo).
@@ -77,10 +85,10 @@ export function serversNeedingSecretConfirmation(servers: readonly ResolvedMcpSe
 // `none` = ya estaba igual (sigue siendo de Mage, sin cambio que enseñar).
 function planServer(server: ResolvedMcpServer, next: Record<string, unknown>, mine: ReadonlySet<string>): McpAgyChange | { readonly action: 'none' } {
   const entry = toAgyEntry(server);
-  if (entry === null) return { name: server.name, action: 'skip', reason: 'agy no admite servidores SSE' };
+  if (entry === null) return { name: server.name, action: 'skip', reason: localized('mcp.main.agySkipSse') };
   const existing = next[server.name];
   if (existing !== undefined && !mine.has(server.name)) {
-    return { name: server.name, action: 'skip', reason: 'agy ya tiene uno con ese nombre que no puso Mage' };
+    return { name: server.name, action: 'skip', reason: localized('mcp.main.agySkipNameTaken') };
   }
   const disabled = isRecord(existing) && existing.disabled === true;
   const wanted = { ...entry, disabled };
@@ -95,9 +103,9 @@ function parseAgyRoot(text: string | null): Record<string, unknown> {
   try {
     parsed = JSON.parse(text.replace(/^﻿/, ''));
   } catch (error) {
-    throw new Error(`El mcp_config.json de agy no es JSON válido (${text.length} caracteres): ${error instanceof Error ? error.message : String(error)}`);
+    throw new UserFacingError(wrapError('errors.config.agyConfigInvalidJson', { length: String(text.length) }, error));
   }
-  if (!isRecord(parsed)) throw new Error(`El mcp_config.json de agy no es un objeto JSON (${text.length} caracteres)`);
+  if (!isRecord(parsed)) throw new UserFacingError(localized('errors.config.agyConfigNotObject', { length: String(text.length) }));
   return parsed;
 }
 
@@ -133,10 +141,10 @@ export class AgySyncService {
     try {
       parsed = JSON.parse(text);
     } catch (error) {
-      return { ...DEFAULT_STATE, lastError: `agy-sync.json ilegible: ${error instanceof Error ? error.message : String(error)}` };
+      return { ...DEFAULT_STATE, lastError: wrapError('mcp.main.agyStateUnreadable', {}, error) };
     }
     const result = STATE.safeParse(parsed);
-    return result.success ? result.data : { ...DEFAULT_STATE, lastError: "agy-sync.json con forma inesperada" };
+    return result.success ? result.data : { ...DEFAULT_STATE, lastError: localized('mcp.main.agyStateBadShape') };
   }
 
   setAuto(auto: boolean): McpAgySyncState {
@@ -165,7 +173,7 @@ export class AgySyncService {
     if (secretsConfirmed !== undefined) this.writeState({ ...this.state(), secretsConfirmed: [...secretsConfirmed] });
     const text = this.readText(this.deps.configPath);
     if (agyConfigVersion(text) !== expected) {
-      return { status: 'stale', message: 'El mcp_config.json de agy ha cambiado desde la vista previa. Revisa los cambios otra vez.' };
+      return { status: 'stale', message: localized('mcp.main.agyConfigChangedSincePreview') };
     }
     const state = this.state();
     const plan = planAgySync(text, this.deps.servers(), state.exported, new Set(state.secretsConfirmed));
@@ -173,7 +181,7 @@ export class AgySyncService {
     if (plan.text !== null) {
       this.deps.fs.mkdir(dirname(this.deps.configPath));
       const written = writeAtomicIfUnchanged(this.deps.fs, this.deps.configPath, plan.text, text);
-      if (written.status === 'stale') return { status: 'stale', message: 'agy escribió su mcp_config.json mientras Mage sincronizaba. Vuelve a intentarlo.' };
+      if (written.status === 'stale') return { status: 'stale', message: localized('mcp.main.agyConfigWrittenDuringSync') };
     }
     this.writeState({ ...this.state(), exported: plan.exported, lastSyncAt: this.deps.now().toISOString(), lastError: null });
     return { status: 'saved', changes: plan.changes, backupPath };
@@ -189,7 +197,7 @@ export class AgySyncService {
       if (result.status === 'stale') this.writeState({ ...this.state(), lastError: result.message });
       return result;
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = localizedFromError(error);
       this.writeState({ ...this.state(), lastError: message });
       return { status: 'stale', message };
     }

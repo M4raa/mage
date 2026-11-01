@@ -1,5 +1,6 @@
 import { resolve, sep } from 'node:path';
 import { unzipSync } from 'fflate';
+import { localized, UserFacingError, wrapError } from '@shared/i18n/localizedText';
 
 // Lectura de un paquete de extension `.mcpb`/`.dxt` (un zip) con guardas. Todo en main: el zip es
 // codigo ajeno y lo que haga falta rechazar se rechaza ANTES de escribir nada en disco.
@@ -31,7 +32,7 @@ export interface McpbContents {
 
 export function readMcpb(bytes: Uint8Array, limits: McpbLimits = MCPB_LIMITS): McpbContents {
   if (bytes.byteLength > limits.maxArchiveBytes) {
-    throw new Error(`El paquete ocupa ${bytes.byteLength} bytes y el máximo es ${limits.maxArchiveBytes}`);
+    throw new UserFacingError(localized('errors.config.mcpbTooLarge', { bytes: String(bytes.byteLength), max: String(limits.maxArchiveBytes) }));
   }
   let entries = 0;
   let declared = 0;
@@ -42,15 +43,15 @@ export function readMcpb(bytes: Uint8Array, limits: McpbLimits = MCPB_LIMITS): M
       filter: (file) => {
         entries += 1;
         declared += file.originalSize;
-        if (entries > limits.maxEntries) throw new Error(`El paquete tiene más de ${limits.maxEntries} entradas`);
-        if (declared > limits.maxUnpackedBytes) throw new Error(`El paquete descomprimido pasa de ${limits.maxUnpackedBytes} bytes`);
+        if (entries > limits.maxEntries) throw new UserFacingError(localized('errors.config.mcpbTooManyEntries', { max: String(limits.maxEntries) }));
+        if (declared > limits.maxUnpackedBytes) throw new UserFacingError(localized('errors.config.mcpbUnpackedTooLarge', { max: String(limits.maxUnpackedBytes) }));
         const safe = safeEntryPath(file.name);
         if (safe !== null) names.set(file.name, safe);
         return safe !== null;
       },
     });
   } catch (error) {
-    throw new Error(`No se pudo leer el paquete: ${error instanceof Error ? error.message : String(error)}`);
+    throw new UserFacingError(wrapError('errors.config.mcpbReadFailed', {}, error));
   }
   const files = new Map<string, Uint8Array>();
   let unpackedBytes = 0;
@@ -60,7 +61,7 @@ export function readMcpb(bytes: Uint8Array, limits: McpbLimits = MCPB_LIMITS): M
     files.set(safe, data);
     unpackedBytes += data.byteLength;
   }
-  if (!files.has(MCPB_MANIFEST)) throw new Error(`El paquete no tiene ${MCPB_MANIFEST} en la raíz`);
+  if (!files.has(MCPB_MANIFEST)) throw new UserFacingError(localized('errors.config.mcpbNoManifest', { file: MCPB_MANIFEST }));
   return { files, unpackedBytes };
 }
 
@@ -72,7 +73,7 @@ export function safeEntryPath(name: string): string | null {
   const unsafe =
     normalized.startsWith('/') || /^[A-Za-z]:/.test(normalized) || normalized.includes('\0') || normalized.includes(':');
   const segments = normalized.split('/').filter((segment) => segment.length > 0 && segment !== '.');
-  if (unsafe || segments.length === 0 || segments.includes('..')) throw new Error(`Ruta no permitida en el paquete: ${JSON.stringify(name)}`);
+  if (unsafe || segments.length === 0 || segments.includes('..')) throw new UserFacingError(localized('errors.config.mcpbPathNotAllowed', { path: JSON.stringify(name) }));
   return segments.join('/');
 }
 
@@ -80,6 +81,6 @@ export function safeEntryPath(name: string): string | null {
 export function resolveInside(root: string, relative: string): string {
   const base = resolve(root);
   const target = resolve(base, ...relative.split('/'));
-  if (!target.startsWith(`${base}${sep}`)) throw new Error(`Ruta fuera de la carpeta de la extensión: ${JSON.stringify(relative)}`);
+  if (!target.startsWith(`${base}${sep}`)) throw new UserFacingError(localized('errors.config.mcpbPathOutside', { path: JSON.stringify(relative) }));
   return target;
 }

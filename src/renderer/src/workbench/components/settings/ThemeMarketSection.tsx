@@ -15,6 +15,7 @@ import { useWorkbenchStore } from '../../workbenchStore';
 import { Icon } from '../Icon';
 import { useT } from '../../../i18n/uiLanguage';
 import { formatInteger } from '../../../i18n/format';
+import { describeError } from '../../describeError';
 
 // Tienda de temas de VS Code (Open VSX): busqueda, exploracion por paginas, PREVISUALIZAR (aplica en
 // vivo sin guardar) y DESCARGAR (guarda y activa), mas la gestion de los ya descargados.
@@ -107,7 +108,7 @@ export function ThemeMarketSection({
           if (active) setResults(items);
         })
         .catch((err: unknown) => {
-          if (active) setError(err instanceof Error ? err.message : String(err));
+          if (active) setError(err instanceof Error ? describeError(err) : String(err));
         })
         .finally(() => {
           if (active) setLoading(false);

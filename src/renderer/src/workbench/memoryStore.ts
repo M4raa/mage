@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { ReadMemoryParams } from '@shared/ipc';
 import { buildMemoryView, type MemoryView } from './memoryView';
+import { describeError } from './describeError';
 
 interface MemoryStoreState {
   readonly view: MemoryView | null;
@@ -31,7 +32,7 @@ export const useMemoryStore = create<MemoryStoreState>((set, get) => ({
       set({ view: buildMemoryView(files), isLoading: false });
     } catch (err) {
       if (get().lastParams !== params) return;
-      set({ errorMessage: err instanceof Error ? err.message : String(err), isLoading: false });
+      set({ errorMessage: err instanceof Error ? describeError(err) : String(err), isLoading: false });
     }
   },
 

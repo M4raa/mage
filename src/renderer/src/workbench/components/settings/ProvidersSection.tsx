@@ -14,6 +14,7 @@ import {
   defaultModelForProvider,
   effortSettingKey,
   modelsToDraftText,
+  probeErrorText,
   providerEntries,
   validateCustomProviderDraft,
   type ApiKeyUpdate,
@@ -34,6 +35,7 @@ import { Dropdown } from '../Dropdown';
 import { StepSlider } from '../StepSlider';
 import { Icon } from '../Icon';
 import { describeError } from '../../describeError';
+import { renderLocalized } from '@shared/i18n/localizedText';
 import { useT } from '../../../i18n/uiLanguage';
 
 // Seccion UNICA "Proveedores y modelos" (D2). Antes eran dos: "Proveedores" (alta de endpoints
@@ -348,7 +350,7 @@ function ToolAccessEditor({ providerId, label }: { readonly providerId: string; 
   const t = useT();
   const save = (): void => {
     const parsed = parseToolAccessText(text);
-    setErrors(parsed.errors);
+    setErrors(parsed.errors.map((error) => renderLocalized(t, error)));
     if (parsed.errors.length === 0) setAccess(providerId, parsed.rules);
   };
   return (
@@ -504,7 +506,7 @@ function ModelsLine({ count, probe }: { readonly count: number; readonly probe: 
       </div>
     );
   }
-  const reason = probe.result?.error ?? null;
+  const reason = probeErrorText(probe.result?.error ?? null);
   const listed = probe.result?.models !== null && probe.result?.models !== undefined;
   return (
     <div className="text-[10.5px] leading-[1.45] text-mg-muted">
@@ -559,7 +561,7 @@ export function ProviderForm({
     window.mage
       .probeRuntime({ providerId, baseUrl: draft.baseUrl })
       .then((result) => {
-        setTestStatus(result.error ?? runtimeProbeSummary(result));
+        setTestStatus(probeErrorText(result.error) ?? runtimeProbeSummary(result));
         if (result.error === null) onChange(applyRuntimeProbe(draft, result));
       })
       .catch((err: unknown) => setTestStatus(describeError(err)))

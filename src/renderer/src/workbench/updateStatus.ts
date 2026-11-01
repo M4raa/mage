@@ -1,3 +1,4 @@
+import { renderLocalized } from '@shared/i18n/localizedText';
 import type { UpdateState } from '@shared/update';
 import { t } from '../i18n/uiLanguage';
 
@@ -13,7 +14,7 @@ export function updateStatusText(state: UpdateState): string {
     case 'upToDate':
       return t('settings.update.status.upToDate', { version: state.version });
     case 'error':
-      return t('settings.update.status.error', { message: state.message });
+      return t('settings.update.status.error', { message: renderLocalized(t, state.message) });
     case 'downloading':
       return t('settings.update.status.downloading', { version: state.version });
     case 'ready':

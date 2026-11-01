@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { foreignText, localized, type LocalizedText } from '@shared/i18n/localizedText';
 import type { AboutInfo } from '@shared/ipc';
 
 // Datos de la pantalla «Acerca de» (B.2/B.3 de la revision de licencias de terceros): version, versiones
@@ -51,12 +52,12 @@ export function buildAboutInfo(paths: AboutPaths, versions: AboutVersions, files
 // Texto de los avisos de terceros. Si el fichero no esta (alguien empaqueto sin generarlo), se devuelve
 // un mensaje que lo DICE en vez de una pantalla vacia: un hueco en blanco se interpreta como "no hay
 // terceros", que es justo lo contrario de la verdad.
-function readNotices(paths: AboutPaths, files: AboutFs): string {
+function readNotices(paths: AboutPaths, files: AboutFs): LocalizedText {
   const target = path.join(paths.appPath, NOTICES_FILENAME);
   if (!files.existsSync(target)) {
-    return `No se encontró ${NOTICES_FILENAME} en esta instalación. Se genera con \`pnpm notices\` y debe viajar con la aplicación.`;
+    return localized('settings.about.noticesMissing', { file: NOTICES_FILENAME });
   }
-  return files.readFileSync(target, 'utf8');
+  return foreignText(files.readFileSync(target, 'utf8'));
 }
 
 // Primera ubicacion donde exista `LICENSES.chromium.html`: junto al ejecutable (app instalada) o en

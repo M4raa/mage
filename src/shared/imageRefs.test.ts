@@ -192,11 +192,19 @@ describe('reconcileImageTokens', () => {
 
 describe('describeAttachment', () => {
   it('describeAttachment_pngDe245KiB_devuelveNTipoYTamano', () => {
-    expect(describeAttachment(2, 'image/png', 245 * 1024)).toBe('Imagen 2 · png · 245 KiB');
+    expect(describeAttachment(2, 'image/png', 245 * 1024, 'es-ES')).toBe('Imagen 2 · png · 245 KiB');
   });
 
   it('describeAttachment_tipoInvalido_lanzaConElValor', () => {
-    expect(() => describeAttachment(1, 'png', 10)).toThrow(/png/);
+    expect(() => describeAttachment(1, 'png', 10, 'es-ES')).toThrow(/png/);
+  });
+
+  it('describeAttachment_1coma5MiB_esES_conComa', () => {
+    expect(describeAttachment(1, 'image/png', 1.5 * 1024 * 1024, 'es-ES')).toBe('Imagen 1 · png · 1,5 MiB');
+  });
+
+  it('describeAttachment_1coma5MiB_enUS_conPunto', () => {
+    expect(describeAttachment(1, 'image/png', 1.5 * 1024 * 1024, 'en-US')).toBe('Imagen 1 · png · 1.5 MiB');
   });
 });
 

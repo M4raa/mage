@@ -1,5 +1,7 @@
 import { join, sep } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { foreignText, localized, type LocalizedText } from '@shared/i18n/localizedText';
+import { esText, jsonMessage, thrownText } from '@testing/localizedText';
 import { agyConfigVersion, AgySyncService, planAgySync, type AgySyncDeps } from './mcpAgySync';
 import { resolveServerConfig, type ResolvedMcpServer } from './mcpResolved';
 
@@ -29,7 +31,8 @@ describe('planAgySync', () => {
     const plan = planAgySync(text, [local], []);
 
     expect(plan.text).toBeNull();
-    expect(plan.changes).toEqual([{ name: 'db', action: 'skip', reason: expect.stringContaining('no puso Mage') }]);
+    expect(plan.changes).toEqual([{ name: 'db', action: 'skip', reason: localized('mcp.main.agySkipNameTaken') }]);
+    expect(esText(plan.changes[0]!.reason)).toBe('agy ya tiene uno con ese nombre que no puso Mage');
     expect(plan.exported).toEqual([]);
   });
 
@@ -65,7 +68,7 @@ describe('planAgySync', () => {
 
     const plan = planAgySync(null, [local, ext], []);
 
-    expect(plan.changes.find((c) => c.name === 'ext')).toMatchObject({ action: 'skip', reason: expect.stringContaining('bóveda') });
+    expect(plan.changes.find((c) => c.name === 'ext')).toMatchObject({ action: 'skip', reason: localized('mcp.main.agySkipVaultSecrets') });
     expect(plan.text).not.toContain('valor-de-la-boveda');
     expect(plan.exported).toEqual(['db']);
   });
@@ -87,12 +90,25 @@ describe('planAgySync', () => {
   });
 
   it('planAgySync_sse_seSaltaConMotivo', () => {
-    expect(planAgySync(null, [sse], []).changes).toEqual([{ name: 'viejo', action: 'skip', reason: 'agy no admite servidores SSE' }]);
+    expect(planAgySync(null, [sse], []).changes).toEqual([{ name: 'viejo', action: 'skip', reason: localized('mcp.main.agySkipSse') }]);
   });
 
   it('planAgySync_ficheroQueNoEsJson_lanzaSinElContenido', () => {
     expect(() => planAgySync('{"env":"secreto"', [local], [])).toThrow(/caracteres/);
     expect(() => planAgySync('{"env":"secreto"', [local], [])).not.toThrow(/secreto/);
+  });
+
+  it('planAgySync_ficheroQueNoEsJson_lanzaLaClaveConElDetalleDeJsonParse', () => {
+    const text = thrownText(() => planAgySync('{', [local], []));
+
+    expect(text).toMatchObject({ key: 'errors.config.agyConfigInvalidJson', values: { length: '1' } });
+    expect(text.parts?.detail).toEqual(foreignText(jsonMessage('{')));
+  });
+
+  it('planAgySync_ficheroQueNoEsObjeto_lanzaLaClaveConLaLongitud', () => {
+    const text = thrownText(() => planAgySync('[1,2]', [local], []));
+
+    expect(text).toEqual(localized('errors.config.agyConfigNotObject', { length: '5' }));
   });
 });
 
@@ -192,14 +208,50 @@ describe('AgySyncService', () => {
     files.set(deps.configPath, '{');
 
     expect(service.autoSync()?.status).toBe('stale');
-    expect(service.state().lastError).toContain('JSON');
+    expect(service.state().lastError).toMatchObject({ key: 'errors.config.agyConfigInvalidJson' });
+    expect(esText(service.state().lastError)).toContain('El mcp_config.json de agy no es JSON válido (1 caracteres): ');
   });
 
   it('state_ilegible_porDefectoConElErrorDicho', () => {
     const { service, files, deps } = setup([]);
     files.set(deps.statePath, '{');
 
-    expect(service.state()).toMatchObject({ auto: false, exported: [], lastError: expect.stringContaining('ilegible') });
+    expect(service.state()).toMatchObject({ auto: false, exported: [], lastError: { key: 'mcp.main.agyStateUnreadable' } });
+    expect(esText(service.state().lastError)).toContain('agy-sync.json ilegible: ');
+  });
+
+  it('state_lastErrorCadenaDe012_seLeeComoTextoAjeno', () => {
+    const { service, files, deps } = setup([]);
+    files.set(deps.statePath, JSON.stringify({ auto: true, lastError: 'algo' }));
+
+    expect(service.state().lastError).toEqual(foreignText('algo'));
+  });
+
+  it('state_lastErrorLocalizedText_seLeeIgual', () => {
+    const { service, files, deps } = setup([]);
+    const stored = localized('mcp.main.agyConfigWrittenDuringSync');
+    files.set(deps.statePath, JSON.stringify({ auto: true, lastError: stored }));
+
+    expect(service.state().lastError).toEqual(stored);
+  });
+
+  it('state_lastErrorClaveInexistente_null', () => {
+    const { service, files, deps } = setup([]);
+    files.set(deps.statePath, JSON.stringify({ auto: true, lastError: { key: 'no.existe.esta.clave' } }));
+
+    expect(service.state()).toMatchObject({ auto: true, lastError: null });
+  });
+
+  it('autoSync_ficheroRoto_elErrorGuardadoEnDiscoSeLeeDeNuevoSinPerderLaClave', () => {
+    const { service, files, deps } = setup([local]);
+    service.setAuto(true);
+    files.set(deps.configPath, '{');
+
+    service.autoSync();
+    const onDisk = JSON.parse(files.get(deps.statePath)!) as { lastError: LocalizedText };
+
+    expect(onDisk.lastError.key).toBe('errors.config.agyConfigInvalidJson');
+    expect(service.state().lastError).toEqual(onDisk.lastError);
   });
 
   it('agyConfigVersion_ausenteYCambio', () => {

@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
+import { renderLocalized } from '@shared/i18n/localizedText';
 import type { McpExtensionInstallPreview, McpExtensionView, McpUserConfigField, McpUserConfigValue } from '@shared/mcp';
 import { useMcpStore } from '../../mcpStore';
 import { Icon } from '../Icon';
 import { McpScopeDialog, ProviderPills } from './McpScopeDialog';
 import { MCP_BUTTON_CLASS as BUTTON_CLASS, MCP_DIALOG_PANEL_CLASS, MCP_DIALOG_SCRIM_CLASS, MCP_PRIMARY_BUTTON_CLASS, stopEscape } from './mcpStyles';
 import { useT } from '../../../i18n/uiLanguage';
+import { describeError } from '../../describeError';
 
 // Pestaña «Extensiones» (C3-a…d): paquetes .mcpb/.dxt de Mage. Instalar desde archivo (el dialogo lo
 // abre main y el usuario confirma viendo autor y version), importar de Claude Desktop COPIANDO,
@@ -37,14 +39,14 @@ export function McpExtensionsTab(): React.JSX.Element {
   const t = useT();
   const attempt = (action: () => Promise<unknown>): void => {
     setError(null);
-    run(action).catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)));
+    run(action).catch((err: unknown) => setError(err instanceof Error ? describeError(err) : String(err)));
   };
   const pick = (): void => {
     setError(null);
     window.mage
       .pickMcpExtension()
       .then((preview) => preview !== null && setDialog({ kind: 'install', preview }))
-      .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)));
+      .catch((err: unknown) => setError(err instanceof Error ? describeError(err) : String(err)));
   };
   const close = (): void => setDialog({ kind: 'none' });
   return (
@@ -64,7 +66,7 @@ export function McpExtensionsTab(): React.JSX.Element {
           {error ?? loadError}
         </div>
       )}
-      {(list?.warnings ?? []).map((warning) => (
+      {(list?.warnings ?? []).map((warning) => renderLocalized(t, warning)).map((warning) => (
         <div key={warning} role="status" className="text-[10px] text-mg-warn-text">
           {warning}
         </div>
@@ -134,7 +136,7 @@ function ExtensionCard({
       {extension.description.length > 0 && <p className="text-[10.5px] text-mg-body2">{extension.description}</p>}
       {extension.problem !== null && (
         <span role="status" data-mcp-extension-problem="true" className="text-[10.5px] text-mg-warn-text">
-          {extension.problem}
+          {renderLocalized(t, extension.problem)}
         </span>
       )}
       <div className="flex flex-wrap items-center justify-end gap-[4px]">
@@ -201,7 +203,7 @@ function InstallDialog({
   const t = useT();
   const install = (): void => {
     run(() => window.mage.installMcpExtension(preview.token))
-      .catch((err: unknown) => onError(err instanceof Error ? err.message : String(err)))
+      .catch((err: unknown) => onError(err instanceof Error ? describeError(err) : String(err)))
       .finally(onClose);
   };
   return (
@@ -252,7 +254,7 @@ function ExtensionConfigDialog({ extension, onClose }: { readonly extension: Mcp
     setError(null);
     run(() => window.mage.saveMcpExtensionConfig({ id: extension.id, values }))
       .then(onClose)
-      .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)));
+      .catch((err: unknown) => setError(err instanceof Error ? describeError(err) : String(err)));
   };
   return (
     <div className={MCP_DIALOG_SCRIM_CLASS} onClick={onClose}>

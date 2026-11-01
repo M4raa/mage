@@ -6,6 +6,7 @@ import { MODAL_PANEL_VARIANTS, MODAL_SCRIM_VARIANTS } from '../motionPresets';
 import type { AccountSwitchPrompt } from '../types';
 import { useT } from '../../i18n/uiLanguage';
 import { displayTitle } from '../conversationTitle';
+import { describeError } from '../describeError';
 
 // «¿Migrar la conversacion?» al pulsar otra cuenta con una conversacion PARADA abierta (P-026 2.7, D5).
 // Sin «recordar mi eleccion» (D6): se pregunta cada vez. `Esc` cancela: ni se cambia de cuenta.
@@ -44,7 +45,7 @@ function AccountSwitchBody({ prompt }: { readonly prompt: AccountSwitchPrompt })
     setError(null);
     continueWithHistoryIn(prompt.tabId, prompt.destAccountId)
       .then(close)
-      .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)))
+      .catch((err: unknown) => setError(err instanceof Error ? describeError(err) : String(err)))
       .finally(() => setBusy(false));
   };
   const migrate = (): void => {
@@ -52,7 +53,7 @@ function AccountSwitchBody({ prompt }: { readonly prompt: AccountSwitchPrompt })
     setError(null);
     continueInAccount(prompt.tabId, prompt.destAccountId)
       .then(close)
-      .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)))
+      .catch((err: unknown) => setError(err instanceof Error ? describeError(err) : String(err)))
       .finally(() => setBusy(false));
   };
 

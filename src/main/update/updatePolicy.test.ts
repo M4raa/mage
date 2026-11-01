@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { foreignText, localized, renderForLog } from '@shared/i18n/localizedText';
 import { IDLE_UPDATE_STATE, type UpdateState } from '@shared/update';
 import {
   assertInstallable,
@@ -8,6 +9,7 @@ import {
   nextUpdateState,
   normalizeReleaseNotes,
   summarizeUpdaterMessage,
+  summarizeUpdaterError,
 } from './updatePolicy';
 
 // Contexto base valido; cada test cambia solo lo que mide (AAA sin ruido).
@@ -143,14 +145,14 @@ describe('nextUpdateState', () => {
   });
 
   it('nextUpdateState_errorDuranteDescarga_pasaAErrorConElMotivo', () => {
-    expect(nextUpdateState({ kind: 'downloading', version: '0.1.3' }, { kind: 'error', message: 'ECONNRESET' })).toEqual({ kind: 'error', message: 'ECONNRESET' });
+    expect(nextUpdateState({ kind: 'downloading', version: '0.1.3' }, { kind: 'error', message: 'ECONNRESET' })).toEqual({ kind: 'error', message: foreignText('ECONNRESET') });
   });
 
   // F1.3 (#15): «buscando», «al día» y «error» se ven en Configuración.
   it('nextUpdateState_comprobandoDesdeReposoAlDiaOError_pasaABuscando', () => {
     expect(nextUpdateState(IDLE_UPDATE_STATE, { kind: 'checking' })).toEqual({ kind: 'checking' });
     expect(nextUpdateState({ kind: 'upToDate', version: '0.1.2' }, { kind: 'checking' })).toEqual({ kind: 'checking' });
-    expect(nextUpdateState({ kind: 'error', message: 'x' }, { kind: 'checking' })).toEqual({ kind: 'checking' });
+    expect(nextUpdateState({ kind: 'error', message: foreignText('x') }, { kind: 'checking' })).toEqual({ kind: 'checking' });
   });
 
   it('nextUpdateState_comprobandoDuranteDescarga_sigueDescargando', () => {
@@ -162,7 +164,7 @@ describe('nextUpdateState', () => {
   it('nextUpdateState_errorMensajeLargo_seResume', () => {
     const state = nextUpdateState({ kind: 'checking' }, { kind: 'error', message: '404\nSet-Cookie: SECRETO' });
 
-    expect(state).toEqual({ kind: 'error', message: '404' });
+    expect(state).toEqual({ kind: 'error', message: foreignText('404') });
   });
 
   // Mage es residente: 6 h despues vuelve a comprobar. Ni un error de red, ni «al dia», ni volver a
@@ -183,7 +185,7 @@ describe('nextUpdateState', () => {
   });
 
   it('nextUpdateState_errorAlBuscar_pasaAError', () => {
-    expect(nextUpdateState({ kind: 'checking' }, { kind: 'error', message: 'ENOTFOUND' })).toEqual({ kind: 'error', message: 'ENOTFOUND' });
+    expect(nextUpdateState({ kind: 'checking' }, { kind: 'error', message: 'ENOTFOUND' })).toEqual({ kind: 'error', message: foreignText('ENOTFOUND') });
   });
 
   it('nextUpdateState_versionVacia_lanzaConElEvento', () => {
@@ -240,5 +242,24 @@ describe('summarizeUpdaterMessage', () => {
   it('summarizeUpdaterMessage_vacio_diceQueNoHabiaMensaje', () => {
     expect(summarizeUpdaterMessage('')).toBe('error sin mensaje');
     expect(summarizeUpdaterMessage('\n  \n')).toBe('error sin mensaje');
+  });
+});
+
+describe('summarizeUpdaterError', () => {
+  it('summarizeUpdaterError_vacio_devuelveLaClaveDeReserva', () => {
+    expect(summarizeUpdaterError('')).toEqual(localized('app.update.noMessage'));
+    expect(renderForLog(summarizeUpdaterError('\n  \n'))).toBe('error sin mensaje');
+  });
+
+  it('summarizeUpdaterError_mensajeAjeno_vaComoTextoAjeno', () => {
+    expect(summarizeUpdaterError('ENOTFOUND\nresto')).toEqual(foreignText('ENOTFOUND'));
+  });
+
+  it('nextUpdateState_errorConTextoDeMage_usaElTextoYNoElMensaje', () => {
+    const text = localized('app.update.devNoCheck');
+
+    const state = nextUpdateState(IDLE_UPDATE_STATE, { kind: 'error', message: 'en desarrollo', text });
+
+    expect(state).toEqual({ kind: 'error', message: text });
   });
 });

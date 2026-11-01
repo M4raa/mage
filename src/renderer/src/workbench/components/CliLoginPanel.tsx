@@ -2,6 +2,7 @@ import { useCallback, useRef, useState } from 'react';
 import { Icon } from './Icon';
 import type { CliLoginStart, EmbeddedLoginResult } from '@shared/accounts';
 import { t as translate, useT } from '../../i18n/uiLanguage';
+import { describeError } from '../describeError';
 
 // Interaccion de login por CLI (Fase 9.2), compartida por el alta de cuenta y el re-login de una
 // cuenta caducada. Vive aparte porque son DOS dialogos: duplicar el campo del *code*, los avisos y el
@@ -206,5 +207,5 @@ function reasonText(result: EmbeddedLoginResult): string {
 }
 
 function describe(err: unknown): string {
-  return err instanceof Error ? err.message : translate('accounts.error.unknown', { error: String(err) });
+  return err instanceof Error ? describeError(err) : translate('accounts.error.unknown', { error: String(err) });
 }

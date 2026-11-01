@@ -61,6 +61,12 @@ describe('resolveLaunchParams', () => {
     ).toThrow(/login/i);
   });
 
+  it('resolve_noLoggedInAccount_lanzaLaClaveConLaCarpetaPersonal', () => {
+    expect(() => resolveLaunchParams('s1', params, deps({ fileExists: () => false, listHome: () => ['.claude'] }))).toThrow(
+      expect.objectContaining({ localized: { key: 'errors.engine.noClaudeAccount', values: { homeDir: '/home/u' } } }),
+    );
+  });
+
   it('resolve_emptyCwd_defaultsToHome', () => {
     const result = resolveLaunchParams('s1', params, deps({}));
 

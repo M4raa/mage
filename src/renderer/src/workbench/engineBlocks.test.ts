@@ -125,7 +125,7 @@ describe('applyToolResult', () => {
     const next = applyToolResult(blocks, toolResult({ output: 'hola' }));
 
     const tool = next[0] as Extract<Block, { kind: 'tool' }>;
-    expect(tool.meta).toBe('ok · 1.2 s');
+    expect(tool.meta).toBe('ok · 1,2 s');
     expect(tool.output).toEqual([{ code: false, text: 'hola' }]);
   });
 
@@ -134,7 +134,7 @@ describe('applyToolResult', () => {
 
     const next = applyToolResult(blocks, toolResult({ output: 'fallo\nExit code 1', isError: false }));
 
-    expect((next[0] as Extract<Block, { kind: 'tool' }>).meta).toBe('exit 1 · 1.2 s');
+    expect((next[0] as Extract<Block, { kind: 'tool' }>).meta).toBe('exit 1 · 1,2 s');
   });
 
   it('applyToolResult_error_metaShowsError', () => {
@@ -229,6 +229,18 @@ describe('mapPermissionToView', () => {
     expect(view).toMatchObject({ rememberable: false, summary: 'Fuera del proyecto: /etc/hosts' });
   });
 
+  it('mapPermissionToView_outsideTarget_fraseTraducida', () => {
+    const request = { ...permission({ toolName: 'Read', input: { file_path: '/etc/hosts' } }), description: 'texto en otro idioma', outsideProject: true, outsideTarget: '/etc/hosts' };
+
+    expect(mapPermissionToView(request).summary).toBe('Fuera del proyecto: /etc/hosts');
+  });
+
+  it('mapPermissionToView_redSinObjetivo_usaLaDescripcionDelRuntime', () => {
+    const request = { ...permission({ toolName: 'Bash', input: { command: 'curl x' } }), description: 'Red: curl x', outsideProject: true };
+
+    expect(mapPermissionToView(request).summary).toBe('Red: curl x');
+  });
+
   it('mapPermissionToView_normalRequest_rememberable', () => {
     expect(mapPermissionToView(permission({ toolName: 'Read', input: { file_path: 'a' } })).rememberable).toBe(true);
   });
@@ -309,16 +321,16 @@ describe('appendSystemBlock / compactionText', () => {
 
 describe('restartingText', () => {
   it('restartingText_primerIntento_indicaEsperaEnSegundos', () => {
-    expect(restartingText(1, 1_000)).toBe('⟳ El agente se cerró; reanudando la conversación en 1.0 s (intento 1)');
+    expect(restartingText(1, 1_000)).toBe('⟳ El agente se cerró; reanudando la conversación en 1,0 s (intento 1)');
   });
 
   it('restartingText_esperaConDecimas_redondeaADecimas', () => {
-    expect(restartingText(2, 1_540)).toContain('1.5 s');
-    expect(restartingText(2, 1_549)).toContain('1.5 s');
+    expect(restartingText(2, 1_540)).toContain('1,5 s');
+    expect(restartingText(2, 1_549)).toContain('1,5 s');
   });
 
   it('restartingText_esperaCero_muestraCeroSegundos', () => {
-    expect(restartingText(1, 0)).toContain('0.0 s');
+    expect(restartingText(1, 0)).toContain('0,0 s');
   });
 
   it('restartingText_intentoInvalido_lanza', () => {

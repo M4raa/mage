@@ -1,5 +1,6 @@
 import { isAbsolute, relative, resolve } from 'node:path';
 import type { ProjectFileContent } from '@shared/ipc';
+import { localized, UserFacingError } from '@shared/i18n/localizedText';
 import { resolvedPath } from '../os/resolvedPath';
 
 // Lectura y escritura de un fichero que el agente ha creado DENTRO de la carpeta de la conversacion
@@ -86,15 +87,12 @@ export class ProjectFileService {
   write(target: ProjectFileTarget & { readonly content: string; readonly expectedMtimeMs: number | null }): ProjectFileContent {
     const { path, allowed } = this.classify(target);
     if (!allowed) {
-      throw new Error(
-        `El fichero no está en la carpeta de la conversación y no has aprobado abrirlo, así que Mage no lo guarda: ${target.path}`,
-      );
+      throw new UserFacingError(localized('errors.files.writeNotApproved', { path: target.path }));
     }
     const current = this.deps.mtimeMs(path);
     if (current !== target.expectedMtimeMs) {
-      throw new Error(
-        `El fichero cambió en disco desde que se abrió (mtime esperado ${String(target.expectedMtimeMs)}, actual ${String(current)}): ` +
-          `vuelve a cargarlo para no perder ese cambio`,
+      throw new UserFacingError(
+        localized('errors.files.changedOnDisk', { expected: String(target.expectedMtimeMs), actual: String(current) }),
       );
     }
     this.deps.writeFile(path, target.content);

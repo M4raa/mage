@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { IpcChannel } from '@shared/ipc';
+import { localized, type LocalizedText } from '@shared/i18n/localizedText';
 import type {
   McpAgySyncPreview,
   McpAgySyncResult,
@@ -207,12 +208,12 @@ function parseWith<T>(schema: z.ZodType<T>, raw: unknown, what: string): T {
 function writeCommon(
   deps: McpIpcDeps,
   expected: string | null,
-  build: (text: string) => { readonly text: string; readonly notes: readonly string[] },
+  build: (text: string) => { readonly text: string; readonly notes: readonly LocalizedText[] },
 ): McpWriteResult {
   const path = deps.commonPath();
   const baseline = deps.service.readBaseline(path);
   if (mcpCommonVersion(baseline) !== expected) {
-    return { status: 'stale', message: 'mcp-common.json ha cambiado fuera de esta pantalla. Se ha recargado: revisa la lista y repite el cambio.' };
+    return { status: 'stale', message: localized('mcp.main.commonChangedOutside') };
   }
   const next = build(baseline ?? EMPTY_COMMON_TEXT);
   const outcome = deps.service.saveMcpCommonText(path, next.text, baseline);

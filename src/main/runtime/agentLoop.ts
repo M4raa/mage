@@ -1,5 +1,5 @@
 import type { ToolFileInfo } from '@shared/events';
-import { localized, localizedFromError, type LocalizedText } from '@shared/i18n/localizedText';
+import { localized, localizedFromError, renderForLog, UserFacingError, type LocalizedText } from '@shared/i18n/localizedText';
 import { ChatHttpError, type ChatClient, type ChatMessage, type ChatToolCall, type ChatToolSpec } from './chatClient';
 import type { AssembledToolCall, FinishReason } from './openAiStream';
 import { parseTextToolCalls } from './textToolCalls';
@@ -308,6 +308,8 @@ function rawInput(argumentsJson: string): Readonly<Record<string, unknown>> {
   return { argumentos: argumentsJson };
 }
 
+// Lo que lee el MODELO (resultado de herramienta): el castellano de siempre, sin la marca ni el JSON de un UserFacingError.
 function describeError(err: unknown): string {
+  if (err instanceof UserFacingError) return renderForLog(err.localized);
   return err instanceof Error ? err.message : String(err);
 }

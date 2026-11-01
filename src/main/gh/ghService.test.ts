@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
+import { localized } from '@shared/i18n/localizedText';
 import type { GitSnapshot } from '@shared/git';
 import { createGhService, type GhRunner, type GhServiceDeps } from './ghService';
 
@@ -117,6 +118,7 @@ describe('createGhService acciones', () => {
     await service.runs('/r', '/acc', 'prueba/gh-medicion');
 
     await expect(service.runAction('/r', '/acc', 99, 'cancel')).rejects.toThrow('99');
+    await expect(service.runAction('/r', '/acc', 99, 'cancel')).rejects.toThrow(expect.objectContaining({ localized: localized('errors.gh.runNotListed', { runId: '99', cwd: '/r' }) }));
     expect(run).toHaveBeenCalledTimes(1);
   });
 
@@ -125,6 +127,7 @@ describe('createGhService acciones', () => {
     await service.runs('/r', '/acc', 'prueba/gh-medicion');
 
     await expect(service.runAction('/r', '/acc', 36766441586, 'cancel')).rejects.toThrow('salida 1');
+    await expect(service.runAction('/r', '/acc', 36766441586, 'cancel')).rejects.toThrow(expect.objectContaining({ localized: localized('errors.gh.runActionFailed', { action: 'cancel', runId: '36766441586', code: '1' }) }));
   });
 
   it('runs_ramaQueParaceOpcion_lanza', async () => {
@@ -152,6 +155,7 @@ describe('createGhService acciones', () => {
     await service.prByNumber('/r', '/acc', 1);
 
     await expect(service.setAutoMerge('/r', '/acc', 1, true)).rejects.toThrow('Allow auto-merge');
+    await expect(service.setAutoMerge('/r', '/acc', 1, true)).rejects.toThrow(expect.objectContaining({ localized: localized('errors.gh.autoMergeRejected', { number: '1', code: '1' }) }));
   });
 
   it('prByNumber_numeroNoValido_lanza', async () => {

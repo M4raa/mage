@@ -17,6 +17,8 @@ import { Dropdown } from './Dropdown';
 import { Icon } from './Icon';
 import { useT } from '../../i18n/uiLanguage';
 import type { Translate } from '@shared/i18n/translator';
+import { renderLocalized } from '@shared/i18n/localizedText';
+import { describeError } from '../describeError';
 
 // «Comandos de agy» (grupo E, fase 2): los comandos de terminal que agy puede ejecutar, por linea EXACTA.
 // Se conceden o revocan al EMPEZAR la conversacion: agy lee sus reglas al arrancar (medido), asi que lo
@@ -33,7 +35,7 @@ export function AgyCommandsDialog({ onClose }: { readonly onClose: () => void })
   const add = (verdict: AgyCommandVerdict): void => {
     const checked = validateAgyCommand(draft);
     if (!checked.ok) {
-      setError(checked.message);
+      setError(renderLocalized(t, checked.message));
       return;
     }
     setVerdict(checked.command, verdict);
@@ -127,7 +129,7 @@ function useAgyMcpServers(): { readonly servers: readonly string[] | null; reado
     window.mage
       .loadMcpInventory({ projectDirs: [] })
       .then((inventory) => alive && setServers(agyMcpServerNames(inventory.rows)))
-      .catch((err: unknown) => alive && setLoadError(err instanceof Error ? err.message : String(err)));
+      .catch((err: unknown) => alive && setLoadError(err instanceof Error ? describeError(err) : String(err)));
     return () => {
       alive = false;
     };
@@ -146,7 +148,7 @@ function McpToolRules({ entries, onVerdict }: { readonly entries: readonly RuleE
   const add = (verdict: AgyCommandVerdict): void => {
     const checked = validateAgyMcpTool(chosen, tool);
     if (!checked.ok) {
-      setError(checked.message);
+      setError(renderLocalized(t, checked.message));
       return;
     }
     onVerdict(checked.rule, verdict);

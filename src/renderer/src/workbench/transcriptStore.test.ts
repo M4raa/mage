@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { foreignText, USER_FACING_MARK, UserFacingError } from '@shared/i18n/localizedText';
 import type { TranscriptBatch, TranscriptEntry } from '@shared/transcripts';
 import { applyTranscriptBatch, disposeTranscriptStore, transcriptStoreForTab, type TranscriptStoreState } from './transcriptStore';
 import { makeEntry } from '@testing/transcriptEntry';
@@ -134,5 +135,20 @@ describe('A10 — reemplazo de historial truncado', () => {
     expect(patch.errors).toEqual([]);
     expect(patch.totalLinesSoFar).toBe(0);
     expect(patch.tailPosition).toEqual({ bytesRead: 0, rawLineNumber: 0, totalLinesSoFar: 0 });
+  });
+});
+
+describe('open — error de main', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('open_errorUserFacingDeMain_textoSinMarca', async () => {
+    const ipcError = new Error("Error invoking remote method 'x': Error: " + new UserFacingError(foreignText('hola')).message);
+    const store = transcriptStoreForTab('tab-error-main'); // antes del stub: sin `window` no se suscribe al canal
+    vi.stubGlobal('window', { mage: { openTranscript: vi.fn().mockRejectedValue(ipcError), cancelTranscript: vi.fn() } });
+
+    await store.getState().open({ accountDir: 'd', cwd: 'c', sessionId: 's' });
+
+    expect(store.getState().errorMessage).toBe('hola');
+    expect(store.getState().errorMessage).not.toContain(USER_FACING_MARK);
   });
 });

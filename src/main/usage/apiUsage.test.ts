@@ -6,7 +6,8 @@ describe('uso API en enteros', () => {
   it('parseMicroUsd_costeDeHaiku_conservaMicrousd', () => {
     expect(parseMicroUsd(0.000019)).toBe(19);
     expect(parseMicroUsd('1.9e-5')).toBe(19);
-    expect(formatMicroUsd(19)).toBe('$0.000019');
+    expect(formatMicroUsd(19, 'en-US')).toBe('$0.000019');
+    expect(formatMicroUsd(19, 'es-ES')).toBe('$0,000019');
   });
 
   it('parseMicroUsd_valoresInvalidos_noInventanCoste', () => {

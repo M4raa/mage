@@ -11,6 +11,7 @@ import { t as translate, useT } from '../../i18n/uiLanguage';
 import { EMPTY_CUSTOM_PROVIDER_DRAFT, validateCustomProviderDraft, type CustomProviderDraft } from '../models';
 import { CliLoginPanel, useCliLogin } from './CliLoginPanel';
 import { ProviderForm } from './settings/ProvidersSection';
+import { describeError } from '../describeError';
 
 // Dialogo de alta de cuenta (grupo E): cualquier celda de la matriz FABRICANTE × FORMA DE PAGO.
 //   - Claude · suscripcion: crea el dir + enlaces y lanza el login **por el CLI** (Fase 9.2): Mage
@@ -725,5 +726,5 @@ function SecondaryButton({ onClick, children }: { readonly onClick: () => void; 
 }
 
 function describe(err: unknown): string {
-  return err instanceof Error ? err.message : translate('accounts.error.unknown', { error: String(err) });
+  return err instanceof Error ? describeError(err) : translate('accounts.error.unknown', { error: String(err) });
 }

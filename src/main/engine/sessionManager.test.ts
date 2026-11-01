@@ -175,6 +175,15 @@ describe('SessionManager.create', () => {
     expect(h.created).toHaveLength(1); // no se instancio ni arranco una segunda
   });
 
+  it('create_conversacionYaAbierta_lanzaLaClaveConElIdDeLaSesion', () => {
+    const h = harness();
+    h.manager.create(params({ resumeSessionId: 'previa-123' }), h.sink);
+
+    expect(() => h.manager.create(params({ resumeSessionId: 'previa-123' }), h.sink)).toThrow(
+      expect.objectContaining({ localized: { key: 'errors.engine.conversationAlreadyOpen', values: { sessionId: 'previa-123' } } }),
+    );
+  });
+
   it('create_trasCerrarLaPestana_puedeReanudarseDeNuevo', () => {
     // La guarda es sobre sesiones VIVAS: al cerrar la pestana, la conversacion vuelve a ser reanudable.
     const h = harness();

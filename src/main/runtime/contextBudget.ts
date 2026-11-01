@@ -1,4 +1,5 @@
 import type { ContextUsage } from '@shared/events';
+import { localized, UserFacingError, type LocalizedText } from '@shared/i18n/localizedText';
 import type { ChatMessage } from './chatClient';
 
 // Presupuesto de la ventana de contexto de UNA sesion del runtime propio (P-032 §4.7, ficha D14). PURO.
@@ -21,9 +22,9 @@ const MAX_FACTOR = 3;
 // Lo que cuesta un mensaje aparte de su texto (rol, separadores de la plantilla).
 const MESSAGE_OVERHEAD_TOKENS = 4;
 
-export class ContextOverflowError extends Error {
-  constructor(message: string) {
-    super(message);
+export class ContextOverflowError extends UserFacingError {
+  constructor(text: LocalizedText) {
+    super(text);
     this.name = 'ContextOverflowError';
   }
 }
@@ -37,7 +38,7 @@ export class ContextBudget {
     private readonly model: string,
   ) {
     if (!Number.isInteger(window) || window <= RESERVE_TOKENS) {
-      throw new Error(`Ventana de contexto invalida para ${model}: ${window} (tiene que ser un entero mayor que ${RESERVE_TOKENS})`);
+      throw new UserFacingError(localized('errors.runtime.contextWindowInvalid', { model, window: String(window), reserve: String(RESERVE_TOKENS) }));
     }
   }
 
@@ -64,10 +65,7 @@ export class ContextBudget {
     const estimate = this.estimate(current);
     this.lastEstimate = estimate;
     if (estimate > this.limit) {
-      throw new ContextOverflowError(
-        `La conversación no cabe en la ventana de ${this.window} tokens de ${this.model} (ocupa unos ${estimate}). ` +
-          'Usa /clear o sube el contexto del modelo en su proveedor.',
-      );
+      throw new ContextOverflowError(localized('errors.runtime.contextOverflow', { window: String(this.window), model: this.model, estimate: String(estimate) }));
     }
     return current;
   }

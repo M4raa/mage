@@ -13,6 +13,7 @@ import { MODAL_PANEL_VARIANTS, MODAL_SCRIM_VARIANTS } from '../motionPresets';
 import type { Account } from '../types';
 import { CliLoginPanel, useCliLogin } from './CliLoginPanel';
 import { t as translate, useT } from '../../i18n/uiLanguage';
+import { describeError } from '../describeError';
 
 // Referencia ESTABLE para el selector de zustand (un array nuevo por render seria un bucle).
 const NO_MODELS: readonly ProviderModel[] = [];
@@ -407,5 +408,5 @@ function Field({ label, children }: { readonly label: string; readonly children:
 }
 
 function describe(err: unknown): string {
-  return err instanceof Error ? err.message : translate('dialogs.newTab.unknownError', { error: String(err) });
+  return err instanceof Error ? describeError(err) : translate('dialogs.newTab.unknownError', { error: String(err) });
 }

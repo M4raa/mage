@@ -12,6 +12,7 @@ import { DISCLOSURE_VARIANTS } from '../motionPresets';
 import { langFromPath } from '../codeHighlight';
 import type { Block } from '../types';
 import type { ProjectFileContent } from '@shared/ipc';
+import { describeError } from '../describeError';
 
 // Panel "Ficheros" (2.10, peticion del usuario: "si creas un plan .md .txt o lo que sea tiene que
 // aparecer a la derecha como un artifact y así poder ver el plan, poder editarlo").
@@ -165,7 +166,7 @@ function FileViewer({
         // justamente la salida del conflicto ("el fichero cambió, mira lo que hay ahora").
         setDraft(null);
       })
-      .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)));
+      .catch((err: unknown) => setError(err instanceof Error ? describeError(err) : String(err)));
   }, [cwd, file.path]);
 
   useEffect(load, [load]);
@@ -178,7 +179,7 @@ function FileViewer({
       .then((approved) => {
         if (approved) load();
       })
-      .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)));
+      .catch((err: unknown) => setError(err instanceof Error ? describeError(err) : String(err)));
   }, [cwd, file.path, load]);
 
   // Se pregunta UNA vez al abrirlo; despues, solo si el usuario pulsa el boton del aviso.
@@ -199,7 +200,7 @@ function FileViewer({
         setLoaded(content);
         setDraft(null);
       })
-      .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)))
+      .catch((err: unknown) => setError(err instanceof Error ? describeError(err) : String(err)))
       .finally(() => setSaving(false));
   };
 

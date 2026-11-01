@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatClockTime, formatDateTime, formatDayMonth, formatDecimal, formatInteger, formatWeekdayShort } from './format';
+import { formatClockTime, formatDateTime, formatDayMonth, formatDecimal, formatInteger, formatWeekdayShort, localizeDecimalPoint } from './format';
 
 const ES = 'es-ES';
 const EN = 'en-US';
@@ -75,5 +75,24 @@ describe('formatDayMonth con un solo dígito', () => {
 describe('formatDateTime', () => {
   it('formatDateTime_esES_igualQueToLocaleString', () => {
     expect(formatDateTime(NINE_FIVE, ES)).toBe(new Date(NINE_FIVE).toLocaleString(ES));
+  });
+});
+
+describe('localizeDecimalPoint', () => {
+  it('localizeDecimalPoint_esES_cambiaPuntoPorComa', () => {
+    expect(localizeDecimalPoint('12.9', ES)).toBe('12,9');
+  });
+  it('localizeDecimalPoint_enUS_conservaPunto', () => {
+    expect(localizeDecimalPoint('12.9', EN)).toBe('12.9');
+  });
+  it('localizeDecimalPoint_entero_igual', () => {
+    expect(localizeDecimalPoint('245', ES)).toBe('245');
+  });
+  it('localizeDecimalPoint_negativo_cambiaSeparador', () => {
+    expect(localizeDecimalPoint('-0.5', ES)).toBe('-0,5');
+  });
+  it('localizeDecimalPoint_noEsDecimal_lanzaConElValor', () => {
+    expect(() => localizeDecimalPoint('1,2', ES)).toThrow(/1,2/);
+    expect(() => localizeDecimalPoint('', ES)).toThrow();
   });
 });

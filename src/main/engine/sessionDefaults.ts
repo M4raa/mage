@@ -1,5 +1,6 @@
 import { join } from 'node:path';
 import { EFFORT_LEVELS, PERMISSION_MODES, type CreateSessionParams } from '@shared/ipc';
+import { localized, UserFacingError } from '@shared/i18n/localizedText';
 import type { LaunchParams, SharedLaunchConfig } from './providerAdapter';
 import { runsOnMageRuntime } from '@shared/providers';
 
@@ -41,7 +42,7 @@ export function resolveLaunchParams(
   const isClaude = params.provider === 'claude';
   const hasLogin = deps.hasClaudeLogin ?? ((dir: string) => deps.fileExists(join(dir, CREDENTIALS_FILE)));
   if (isClaude && !hasLogin(accountDir)) {
-    throw new Error(`La cuenta no tiene login valido (ni ${CREDENTIALS_FILE} ni clave de API): ${accountDir}`);
+    throw new UserFacingError(localized('errors.engine.accountNoLogin', { credentialsFile: CREDENTIALS_FILE, accountDir }));
   }
 
   const cwd = params.cwd.trim() || deps.homedir;
@@ -111,5 +112,5 @@ function resolveDefaultAccountDir(deps: DefaultsDeps): string {
     const dir = join(deps.homedir, name);
     if (deps.fileExists(join(dir, CREDENTIALS_FILE))) return dir;
   }
-  throw new Error(`No se encontro ninguna cuenta de Claude con login en ${deps.homedir}`);
+  throw new UserFacingError(localized('errors.engine.noClaudeAccount', { homeDir: deps.homedir }));
 }

@@ -1,5 +1,6 @@
 import { lstatSync, readlinkSync, realpathSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
+import { localized, UserFacingError } from '@shared/i18n/localizedText';
 
 // Canoniza también destinos aún inexistentes por su ancestro existente. Un enlace roto NO es un
 // directorio ausente: hay que seguir su destino antes de clasificarlo o permitir crear un fichero.
@@ -18,7 +19,7 @@ export function resolvedPath(target: string, remainingLinks = 40): string {
     if ((err as NodeJS.ErrnoException).code !== 'ENOTDIR') throw err;
   }
   if (entry?.isSymbolicLink()) {
-    if (remainingLinks === 0) throw new Error('Demasiados enlaces al resolver la ruta');
+    if (remainingLinks === 0) throw new UserFacingError(localized('errors.os.tooManyLinks'));
     return resolvedPath(resolve(dirname(absolute), readlinkSync(absolute)), remainingLinks - 1);
   }
   const parent = dirname(absolute);

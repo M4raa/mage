@@ -11,7 +11,7 @@ import { codexChangeView } from './codexChanges';
 import { t } from '../i18n/uiLanguage';
 import type { MessageKey } from '@shared/i18n/messageKeys.generated';
 import type { Translate } from '@shared/i18n/translator';
-import { formatInteger } from '../i18n/format';
+import { formatInteger, localizeDecimalPoint } from '../i18n/format';
 
 // Mapeo PURO del modelo de eventos comun (MageEvent) a los bloques/permiso de la UI. Sin React ni
 // zustand: solo funciones de datos -> datos (testeable en Vitest, env node). Los ids de bloque los
@@ -477,7 +477,7 @@ function pushCounter(parts: string[], value: number | null, label: string): void
 
 // Texto del marcador de reinicio automatico (C1). El proceso del agente se cayo y Mage lo esta
 // relanzando reanudando la conversacion: hay que decirlo, o la pestana parece congelada sin motivo.
-// La espera se redondea a decimas de segundo (un "1.5 s" es mas legible que 1500 ms).
+// La espera se redondea a decimas de segundo (un "1.5 s" es mas legible que 1500 ms), con el separador del idioma (U16).
 export function restartingText(attempt: number, delayMs: number): string {
   if (!Number.isInteger(attempt) || attempt < 1) {
     throw new Error(`Numero de intento invalido para el aviso de reinicio: ${attempt}`);
@@ -485,7 +485,7 @@ export function restartingText(attempt: number, delayMs: number): string {
   if (!Number.isFinite(delayMs) || delayMs < 0) {
     throw new Error(`Espera invalida para el aviso de reinicio: ${delayMs}`);
   }
-  const seconds = (Math.round(delayMs / 100) / 10).toFixed(1);
+  const seconds = localizeDecimalPoint((Math.round(delayMs / 100) / 10).toFixed(1));
   return t('chat.restarting', { seconds, attempt });
 }
 
@@ -500,9 +500,16 @@ export function mapPermissionToView(request: PermissionRequest): PermissionView 
     toolLabel: toolName,
     rememberable: !outside,
     diff: patch?.diff ?? buildDiff(toolName, input),
-    // Fuera del proyecto o red: el motivo que da el runtime («Fuera del proyecto: C:\…»).
-    summary: outside && request.description !== null ? request.description : patch?.summary ?? buildSummary(toolName, input),
+    summary: permissionSummary(request, patch?.summary ?? buildSummary(toolName, input)),
   };
+}
+
+// Fuera del proyecto: la frase se pinta aquí, en el idioma de la interfaz, con el objetivo que manda el runtime. Red: el
+// motivo que da el runtime en `description`. Si no, el resumen de la herramienta.
+function permissionSummary(request: PermissionRequest, toolSummary: string): string {
+  if (request.outsideProject !== true) return toolSummary;
+  if (request.outsideTarget !== undefined) return t('chat.permission.outsideProject', { target: request.outsideTarget });
+  return request.description ?? toolSummary;
 }
 
 // --- Helpers internos -------------------------------------------------------------------------

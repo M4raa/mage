@@ -1,4 +1,5 @@
 import type { FetchThemeParams, FetchedVscodeTheme, ThemeSearchItem, VscodeTokenColor } from '@shared/themeMarket';
+import { localized, UserFacingError } from '@shared/i18n/localizedText';
 import { NOT_A_COLOR_THEME } from '@shared/themeMarket';
 import { parseJsonc } from './vsixJson';
 import { readZipMemberText } from './vsixZip';
@@ -83,7 +84,7 @@ export class ThemeMarketService {
     const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
     try {
       const response = await this.deps.fetch(url, { signal: controller.signal });
-      if (!response.ok) throw new Error(`Open VSX respondio ${response.status} para ${url}`);
+      if (!response.ok) throw new UserFacingError(localized('errors.theme.openVsxStatus', { status: String(response.status), url }));
       return await response.text();
     } finally {
       clearTimeout(timer);

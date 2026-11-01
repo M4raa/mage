@@ -1,6 +1,6 @@
 import type { ImageAttachment } from '@shared/ipc';
 import { RUNTIME_PERMISSION_MODES, type RuntimePermissionMode } from '@shared/providers';
-import { localized, type LocalizedText } from '@shared/i18n/localizedText';
+import { localized, UserFacingError, wrapError, type LocalizedText } from '@shared/i18n/localizedText';
 import type { ContextUsage, MageEvent, McpServerStatus, PermissionDecision, TurnUsage } from '@shared/events';
 import type { ManagedSession } from '../engine/sessionManager';
 import type { ElicitationAnswer } from '@shared/elicitation';
@@ -29,7 +29,7 @@ export function isRuntimePermissionMode(mode: string): mode is RuntimePermission
 // `outside` en un `ask` = fuera del proyecto o red (su motivo, para la tarjeta): nunca se recuerda.
 export type GateVerdict =
   | { readonly verdict: 'allow' }
-  | { readonly verdict: 'ask'; readonly outside?: string }
+  | { readonly verdict: 'ask'; readonly outside?: string; readonly outsideTarget?: string }
   | { readonly verdict: 'deny'; readonly reason: string };
 
 // Lo que el runtime registra de un turno para la transcripcion (R4). Opcional: sin el, nada se escribe.
@@ -146,9 +146,9 @@ export class RuntimeSession implements ManagedSession {
   }
 
   sendUserMessage(text: string, attachments: readonly ImageAttachment[] = []): void {
-    if (this.stopped) throw new Error(`La sesion del runtime ${this.sessionId} esta parada`);
+    if (this.stopped) throw new UserFacingError(localized('errors.runtime.sessionStopped', { sessionId: this.sessionId }));
     if (attachments.length > 0) {
-      throw new Error(`El runtime propio no admite imagenes adjuntas todavia (se intentaron enviar ${attachments.length})`);
+      throw new UserFacingError(localized('errors.runtime.imagesUnsupported', { count: String(attachments.length) }));
     }
     this.queue.push(text);
     if (!this.draining) void this.drain();
@@ -156,7 +156,7 @@ export class RuntimeSession implements ManagedSession {
 
   answerPermission(requestId: string, decision: PermissionDecision): void {
     const entry = this.pending.get(requestId);
-    if (entry === undefined) throw new Error(`Permiso inexistente o ya contestado: ${requestId}`);
+    if (entry === undefined) throw new UserFacingError(localized('errors.runtime.permissionUnknown', { requestId }));
     this.pending.delete(requestId);
     entry.resolve(decision.behavior === 'allow' ? decision : { behavior: 'deny', message: decision.message, byUser: true });
   }
@@ -257,7 +257,7 @@ export class RuntimeSession implements ManagedSession {
       // Un fallo inesperado (no del modelo: del registro, del escritor…) no mata la sesion.
       const message = err instanceof Error ? err.message : String(err);
       this.deps.log?.('error', 'Fallo inesperado en un turno del runtime', { sessionId: this.sessionId, message });
-      this.deps.emit({ kind: 'error', localized: localized('events.runtime.unexpectedFailure', { detail: message }) });
+      this.deps.emit({ kind: 'error', localized: wrapError('events.runtime.unexpectedFailure', {}, err) });
       this.deps.emit({ kind: 'result', result: { isError: true, subtype: 'error_during_execution', numTurns: null } });
     } finally {
       this.turn = null;
@@ -341,7 +341,7 @@ export class RuntimeSession implements ManagedSession {
       if (!(await this.compact('manual', controller.signal))) this.deps.emit({ kind: 'notice', localized: localized('events.runtime.nothingToCompact') });
       this.emitContextUsage();
     } catch (err) {
-      if (!controller.signal.aborted) this.deps.emit({ kind: 'error', localized: localized('events.runtime.compactFailed', { detail: err instanceof Error ? err.message : String(err) }) });
+      if (!controller.signal.aborted) this.deps.emit({ kind: 'error', localized: wrapError('events.runtime.compactFailed', {}, err) });
     } finally {
       this.turn = null;
       this.deps.emit({ kind: 'session_state', state: 'idle' });
@@ -408,6 +408,7 @@ export class RuntimeSession implements ManagedSession {
           requiresUserInteraction: false,
           displayName: null,
           ...(outside === undefined ? {} : { outsideProject: true }),
+          ...(gate.outsideTarget === undefined ? {} : { outsideTarget: gate.outsideTarget }),
         },
       });
       this.deps.emit({ kind: 'session_state', state: 'requires_action' });

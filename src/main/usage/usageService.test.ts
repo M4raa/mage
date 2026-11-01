@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { localized } from '@shared/i18n/localizedText';
 import { UsageService, type UsageDeps } from './usageService';
 
 // Respuesta minima valida del endpoint (con los campos de los que dependemos).
@@ -112,6 +113,7 @@ describe('UsageService.getUsage', () => {
 
     const promise = service.getUsage('/home/u/.claude');
     await expect(promise).rejects.toThrow(/429/);
+    await expect(promise).rejects.toThrow(expect.objectContaining({ localized: localized('errors.usage.badStatus', { status: '429', statusText: 'Too Many Requests', configDir: '/home/u/.claude' }) }));
     await expect(promise).rejects.not.toThrow(new RegExp(TOKEN)); // el token nunca en el error
   });
 
@@ -123,6 +125,7 @@ describe('UsageService.getUsage', () => {
     await expect(service.getUsage('/home/u/.claude')).rejects.toThrow(/429/);
     clock += 1_000; // muy por debajo del cooldown por defecto (60s)
     await expect(service.getUsage('/home/u/.claude')).rejects.toThrow(/cooldown/i);
+    await expect(service.getUsage('/home/u/.claude')).rejects.toThrow(expect.objectContaining({ localized: expect.objectContaining({ key: 'errors.usage.cooldown' }) }));
 
     expect(fetchMock).toHaveBeenCalledTimes(1); // la segunda ni intento la red
   });

@@ -16,6 +16,7 @@
 
 import { app } from 'electron';
 import type { AppUpdater } from 'electron-updater';
+import { localized, renderForLog, UserFacingError, type LocalizedText } from '@shared/i18n/localizedText';
 import { IDLE_UPDATE_STATE, type UpdateState } from '@shared/update';
 import type { LogFn } from '../debug/logBus';
 import {
@@ -83,15 +84,15 @@ export function startAutoUpdate(baseLog: LogFn, updateUi: UpdateUi): void {
 // updater: se dice en el estado en vez de no hacer nada.
 export async function checkForUpdatesNow(): Promise<void> {
   if (!app.isPackaged) {
-    report({ kind: 'error', message: DEV_UPDATE_MESSAGE });
+    report({ kind: 'error', message: renderForLog(DEV_UPDATE_TEXT), text: DEV_UPDATE_TEXT });
     return;
   }
-  if (wiring === null) throw new Error('El actualizador todavía no ha arrancado; vuelve a intentarlo en unos segundos.');
+  if (wiring === null) throw new UserFacingError(localized('errors.update.notStarted'));
   await wiring;
   await runCheck(true);
 }
 
-const DEV_UPDATE_MESSAGE = 'En desarrollo no se buscan actualizaciones: solo lo hace la app instalada.';
+const DEV_UPDATE_TEXT: LocalizedText = localized('app.update.devNoCheck');
 
 // Para una ventana que carga tarde (o se recarga): el estado de ahora.
 export function getUpdateState(): UpdateState {

@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { dirname } from 'node:path';
 import type { ImageAttachment } from '@shared/ipc';
 import type { PermissionDecision } from '@shared/events';
+import { localized, UserFacingError } from '@shared/i18n/localizedText';
 import type { ElicitationAnswer } from '@shared/elicitation';
 import type { CreateSessionParams, SessionEventPayload } from '@shared/ipc';
 import type { AgentSessionDeps, SessionLogFn } from './agentSession';
@@ -69,7 +70,7 @@ export class SessionManager {
     // guarda, el segundo `create` pisaba el registro del primero y los mensajes de la pestana vieja
     // acababan yendo a la sesion nueva.
     if (this.sessions.has(sessionId)) {
-      throw new Error(`Esa conversacion ya esta abierta en otra pestana (sesion ${sessionId})`);
+      throw new UserFacingError(localized('errors.engine.conversationAlreadyOpen', { sessionId }));
     }
     const resolved = resolveLaunchParams(sessionId, params, this.defaults, isResume);
     const launch = resumeId !== null && providerOwnsConversation && (params.provider === CODEX_PROVIDER_ID || params.provider === AGY_PROVIDER_ID) ? { ...resolved, conversationId: resumeId } : resolved;

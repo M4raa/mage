@@ -6,6 +6,8 @@
 // (`McpCommonReveal`). Por eso el borrador del editor representa un valor guardado que no se ha
 // revelado como `null` («se conserva el que hay»), y es main quien lo resuelve al guardar.
 
+import { foreignText, localized, localizedWithParts, UserFacingError, type LocalizedText } from './i18n/localizedText';
+
 export type McpTransport = 'stdio' | 'http' | 'sse';
 
 // Donde esta declarado un servidor. `common` es el unico que Mage escribe (`mcp-common.json`); el
@@ -23,7 +25,7 @@ export type McpOriginKind =
 export interface McpOrigin {
   readonly kind: McpOriginKind;
   // Texto corto para la insignia: «Mage», «Cuenta claude-p», «Proyecto mage»…
-  readonly label: string;
+  readonly label: LocalizedText;
   // Fichero donde vive la declaracion (para «Ver ubicacion»). Una ruta, nunca contenido.
   readonly path: string;
   readonly accountDir: string | null;
@@ -78,7 +80,7 @@ export interface McpInventory {
   // no puede recibir los bytes (llevan los `env`), asi que devuelve esta huella al guardar.
   readonly commonVersion: string | null;
   // Ficheros que no se pudieron interpretar (sin contenido: solo que fichero y por que).
-  readonly warnings: readonly string[];
+  readonly warnings: readonly LocalizedText[];
 }
 
 export interface McpInventoryParams {
@@ -95,11 +97,11 @@ export interface McpImportCandidate {
   readonly id: string;
   readonly name: string;
   readonly group: McpImportGroup;
-  readonly originLabel: string;
+  readonly originLabel: LocalizedText;
   readonly transport: McpTransport;
   readonly status: McpImportStatus;
   readonly checkedByDefault: boolean;
-  readonly note: string | null;
+  readonly note: LocalizedText | null;
 }
 
 export interface McpImportPreview {
@@ -150,8 +152,8 @@ export interface McpCommonMutateParams {
 }
 
 export type McpWriteResult =
-  | { readonly status: 'saved'; readonly notes: readonly string[] }
-  | { readonly status: 'stale'; readonly message: string };
+  | { readonly status: 'saved'; readonly notes: readonly LocalizedText[] }
+  | { readonly status: 'stale'; readonly message: LocalizedText };
 
 // Valores de un comun, SOLO tras pulsar «mostrar».
 export interface McpRevealedSecrets {
@@ -182,7 +184,7 @@ export interface McpAuthParams {
 // tiempo. `statuses` es el ultimo `mcp_status` de esa cuenta (null si no llego ninguno).
 export type McpAuthResult =
   | { readonly kind: 'connected' | 'opened' | 'timeout'; readonly statuses: readonly McpLiveStatus[] | null }
-  | { readonly kind: 'error'; readonly message: string };
+  | { readonly kind: 'error'; readonly message: LocalizedText };
 
 // --- Proveedores: quien carga que («Solo en…») --------------------------------------------------
 
@@ -268,7 +270,7 @@ export interface McpExtensionView {
   readonly fields: readonly McpUserConfigField[];
   readonly missingRequired: readonly string[];
   // Lo que impide cargarla (runtime ausente, plataforma, colision con un comun…). null = carga.
-  readonly problem: string | null;
+  readonly problem: LocalizedText | null;
   readonly providers: readonly McpProviderFamily[];
   readonly dir: string;
 }
@@ -284,7 +286,7 @@ export interface McpDesktopExtensionCandidate {
 export interface McpExtensionList {
   readonly extensions: readonly McpExtensionView[];
   readonly desktop: readonly McpDesktopExtensionCandidate[];
-  readonly warnings: readonly string[];
+  readonly warnings: readonly LocalizedText[];
 }
 
 // Vista previa de una instalacion desde archivo, para que el usuario confirme con autor y firma.
@@ -332,7 +334,7 @@ export interface CodexAppView {
 export interface CodexAccountMetadata {
   readonly authenticated: boolean | null;
   readonly apps: readonly CodexAppView[] | null;
-  readonly error: string | null;
+  readonly error: LocalizedText | null;
 }
 
 // --- Sincronizar con agy ------------------------------------------------------------------------
@@ -342,7 +344,7 @@ export type McpAgyChangeAction = 'add' | 'update' | 'remove' | 'skip';
 export interface McpAgyChange {
   readonly name: string;
   readonly action: McpAgyChangeAction;
-  readonly reason: string | null; // solo en `skip`
+  readonly reason: LocalizedText | null; // solo en `skip`
 }
 
 export interface McpAgySyncPreview {
@@ -360,12 +362,12 @@ export interface McpAgySyncState {
   readonly exported: readonly string[];
   readonly secretsConfirmed: readonly string[];
   readonly lastSyncAt: string | null;
-  readonly lastError: string | null;
+  readonly lastError: LocalizedText | null;
 }
 
 export type McpAgySyncResult =
   | { readonly status: 'saved'; readonly changes: readonly McpAgyChange[]; readonly backupPath: string | null }
-  | { readonly status: 'stale'; readonly message: string };
+  | { readonly status: 'stale'; readonly message: LocalizedText };
 
 // --- Modelo puro del borrador (lo usan el editor del renderer y el guardado de main) -----------
 
@@ -414,15 +416,15 @@ const MANAGED_KEYS: readonly string[] = ['type', ...LOCAL_KEYS, ...REMOTE_KEYS];
 // `timeout`…), que se conservan. Lanza si el borrador no es valido o si un valor enmascarado no existe.
 export function toServerObject(draft: McpServerDraft, previous: unknown): Record<string, unknown> {
   const problem = validateServerDraft(draft);
-  if (problem !== null) throw new Error(problem);
+  if (problem !== null) throw new UserFacingError(problem);
   const base = isRecord(previous) ? previous : {};
   const kept = Object.fromEntries(Object.entries(base).filter(([key]) => !MANAGED_KEYS.includes(key)));
   if (isRemoteTransport(draft.transport)) {
-    const headers = resolveValues(draft.headers, base.headers, `cabecera de "${draft.name}"`);
+    const headers = resolveValues(draft.headers, base.headers, localized('mcp.validation.headerOf', { name: draft.name }));
     return { type: draft.transport, url: draft.url.trim(), ...(Object.keys(headers).length > 0 ? { headers } : {}), ...kept };
   }
   const args = splitLines(draft.argsText);
-  const env = resolveValues(draft.env, base.env, `variable de "${draft.name}"`);
+  const env = resolveValues(draft.env, base.env, localized('mcp.validation.variableOf', { name: draft.name }));
   return {
     type: 'stdio',
     command: draft.command.trim(),
@@ -432,7 +434,7 @@ export function toServerObject(draft: McpServerDraft, previous: unknown): Record
   };
 }
 
-function resolveValues(entries: readonly McpKeyValueDraft[], previous: unknown, what: string): Record<string, string> {
+function resolveValues(entries: readonly McpKeyValueDraft[], previous: unknown, what: LocalizedText): Record<string, string> {
   const stored = isRecord(previous) ? previous : {};
   const result: Record<string, string> = {};
   for (const entry of entries) {
@@ -443,44 +445,44 @@ function resolveValues(entries: readonly McpKeyValueDraft[], previous: unknown, 
     }
     const kept = stored[key];
     // Se nombra la CLAVE, nunca el valor.
-    if (typeof kept !== 'string') throw new Error(`La ${what} "${key}" no tiene valor guardado: escribe uno.`);
+    if (typeof kept !== 'string') throw new UserFacingError(localizedWithParts('mcp.validation.secretMissing', { key }, { what }));
     result[key] = kept;
   }
   return result;
 }
 
 // Primer problema de un borrador, o null. Mensajes para el usuario: nombran campos, nunca valores.
-export function validateServerDraft(draft: McpServerDraft): string | null {
+export function validateServerDraft(draft: McpServerDraft): LocalizedText | null {
   const name = draft.name.trim();
-  if (name.length === 0) return 'El servidor necesita un nombre.';
+  if (name.length === 0) return localized('mcp.validation.nameRequired');
   if (isRemoteTransport(draft.transport)) {
-    if (!isHttpUrl(draft.url.trim())) return `El servidor "${name}" necesita una URL http:// o https://.`;
-    return validateKeys(draft.headers, `las cabeceras de "${name}"`);
+    if (!isHttpUrl(draft.url.trim())) return localized('mcp.validation.needsHttpUrl', { name });
+    return validateKeys(draft.headers, localized('mcp.validation.headersOf', { name }));
   }
-  if (draft.command.trim().length === 0) return `El servidor "${name}" no tiene comando.`;
-  return validateKeys(draft.env, `las variables de entorno de "${name}"`);
+  if (draft.command.trim().length === 0) return localized('mcp.validation.noCommand', { name });
+  return validateKeys(draft.env, localized('mcp.validation.envVarsOf', { name }));
 }
 
 // Validacion de la lista entera: el nombre es la CLAVE del objeto, asi que uno repetido perderia un
 // servidor en silencio al guardar.
-export function validateServers(drafts: readonly McpServerDraft[]): string | null {
+export function validateServers(drafts: readonly McpServerDraft[]): LocalizedText | null {
   const seen = new Set<string>();
   for (const draft of drafts) {
     const problem = validateServerDraft(draft);
     if (problem !== null) return problem;
     const name = draft.name.trim();
-    if (seen.has(name)) return `Hay dos servidores con el nombre "${name}": los nombres deben ser únicos.`;
+    if (seen.has(name)) return foreignText(`Hay dos servidores con el nombre "${name}": los nombres deben ser únicos.`);
     seen.add(name);
   }
   return null;
 }
 
-function validateKeys(entries: readonly McpKeyValueDraft[], what: string): string | null {
+function validateKeys(entries: readonly McpKeyValueDraft[], what: LocalizedText): LocalizedText | null {
   const seen = new Set<string>();
   for (const entry of entries) {
     const key = entry.key.trim();
-    if (key.length === 0) return `Hay una clave vacía en ${what}.`;
-    if (seen.has(key)) return `La clave "${key}" está repetida en ${what}.`;
+    if (key.length === 0) return localizedWithParts('mcp.validation.emptyKey', {}, { what });
+    if (seen.has(key)) return localizedWithParts('mcp.validation.duplicateKey', { key }, { what });
     seen.add(key);
   }
   return null;

@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import path from 'node:path';
+import { foreignText, localized } from '@shared/i18n/localizedText';
+import { esText } from '@testing/localizedText';
 import { buildAboutInfo, CHROMIUM_LICENSES_FILENAME, NOTICES_FILENAME, type AboutFs, type AboutPaths } from './aboutService';
 
 const PATHS: AboutPaths = {
@@ -29,7 +31,8 @@ describe('aboutService', () => {
 
     const info = buildAboutInfo(PATHS, VERSIONS, files);
 
-    expect(info.notices).toBe(notices);
+    expect(info.notices).toEqual(foreignText(notices));
+    expect(esText(info.notices)).toBe(notices);
     expect(info.versions).toEqual(VERSIONS);
   });
 
@@ -38,8 +41,8 @@ describe('aboutService', () => {
   it('buildAboutInfo_sinFicheroDeAvisos_explicaQueFaltaEnVezDeVolverVacio', () => {
     const info = buildAboutInfo(PATHS, VERSIONS, fakeFs({}));
 
-    expect(info.notices).toContain(NOTICES_FILENAME);
-    expect(info.notices).not.toBe('');
+    expect(info.notices).toEqual(localized('settings.about.noticesMissing', { file: NOTICES_FILENAME }));
+    expect(esText(info.notices)).toContain(NOTICES_FILENAME);
   });
 
   it('buildAboutInfo_appInstalada_encuentraLosAvisosDeChromiumJuntoAlEjecutable', () => {

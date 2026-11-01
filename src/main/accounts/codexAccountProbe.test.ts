@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
+import { localized, localizedWithParts } from '@shared/i18n/localizedText';
+import { esText } from '@testing/localizedText';
 import { probeCodexAccount } from './codexAccountProbe';
 
 function setup(includeApps = true) {
@@ -45,7 +47,7 @@ describe('probeCodexAccount', () => {
       await vi.runAllTimersAsync();
       const result = await done;
 
-      expect(result.error).toBe('Parámetros del sondeo de Codex inválidos.');
+      expect(esText(result.error)).toBe('Parámetros del sondeo de Codex inválidos.');
       expect(spawnProbe).not.toHaveBeenCalled();
     } finally { vi.useRealTimers(); }
   });
@@ -55,7 +57,7 @@ describe('probeCodexAccount', () => {
 
     const result = await probeCodexAccount({ timeoutMs: 1_000, spawnProbe }, { home: '', includeApps: false });
 
-    expect(result.error).toBe('Parámetros del sondeo de Codex inválidos.');
+    expect(esText(result.error)).toBe('Parámetros del sondeo de Codex inválidos.');
     expect(spawnProbe).not.toHaveBeenCalled();
   });
 
@@ -67,7 +69,8 @@ describe('probeCodexAccount', () => {
       await vi.advanceTimersByTimeAsync(1_000);
       const result = await probe.done;
 
-      expect(result).toEqual({ authenticated: null, apps: null, error: 'Codex no respondió dentro del plazo.' });
+      expect(result).toEqual({ authenticated: null, apps: null, error: localized('mcp.main.codexProbeTimeout') });
+      expect(esText(result.error)).toBe('Codex no respondió dentro del plazo.');
       expect(probe.killTree).toHaveBeenCalledOnce();
     } finally { vi.useRealTimers(); }
   });
@@ -77,7 +80,8 @@ describe('probeCodexAccount', () => {
 
     const result = await probeCodexAccount({ timeoutMs: 1_000, spawnProbe }, { home: '/isolated', includeApps: true });
 
-    expect(result).toEqual({ authenticated: null, apps: null, error: 'No se pudo arrancar el CLI de Codex.' });
+    expect(result).toEqual({ authenticated: null, apps: null, error: localized('mcp.main.codexProbeStartFailed') });
+    expect(esText(result.error)).toBe('No se pudo arrancar el CLI de Codex.');
   });
 
   it.each(['mage-codex-init', 'mage-codex-account'])('probeCodexAccount_rpcRechazado_%s_conservaCodigoNegativo', async (id) => {
@@ -86,7 +90,7 @@ describe('probeCodexAccount', () => {
     probe.stdout(`${JSON.stringify({ id, error: { code: -32600, message: 'synthetic-private' } })}\n`);
     const result = await probe.done;
 
-    expect(result.error).toBe('Codex rechazó la consulta de cuenta (código -32600).');
+    expect(esText(result.error)).toBe('Codex rechazó la consulta de cuenta (código -32600).');
     expect(probe.killTree).toHaveBeenCalledOnce();
   });
 
@@ -97,7 +101,7 @@ describe('probeCodexAccount', () => {
     probe.reply({ account: 3 });
     const result = await probe.done;
 
-    expect(result.error).toBe('Codex devolvió un estado de cuenta inesperado.');
+    expect(esText(result.error)).toBe('Codex devolvió un estado de cuenta inesperado.');
   });
 
   it('probeCodexAccount_chunkPartido_reconstruyeLaRespuesta', async () => {
@@ -120,7 +124,7 @@ describe('probeCodexAccount', () => {
     output(JSON.stringify({ id: 'mage-codex-init', result: {} }) + '\n');
     const result = await done;
 
-    expect(result.error).toBe('Falló el transporte del sondeo de Codex.');
+    expect(esText(result.error)).toBe('Falló el transporte del sondeo de Codex.');
     expect(child.killTree).toHaveBeenCalledOnce();
   });
 
@@ -134,7 +138,7 @@ describe('probeCodexAccount', () => {
     exit();
     const result = await done;
 
-    expect(result.error).toBe('No se pudo cerrar el sondeo de Codex.');
+    expect(esText(result.error)).toBe('No se pudo cerrar el sondeo de Codex.');
   });
 
   it('probeCodexAccount_escrituraInicialFalla_devuelveErrorSeguroYLimpia', async () => {
@@ -145,7 +149,8 @@ describe('probeCodexAccount', () => {
 
     const result = await probeCodexAccount({ timeoutMs: 1_000, spawnProbe: () => child }, { home: '/isolated', includeApps: false });
 
-    expect(result).toEqual({ authenticated: null, apps: null, error: 'Falló el transporte del sondeo de Codex.' });
+    expect(result).toEqual({ authenticated: null, apps: null, error: localized('mcp.main.codexProbeTransportFailed') });
+    expect(esText(result.error)).toBe('Falló el transporte del sondeo de Codex.');
     expect(killTree).toHaveBeenCalledOnce();
   });
 
@@ -159,7 +164,7 @@ describe('probeCodexAccount', () => {
     onError();
     const result = await done;
 
-    expect(result.error).toBe('Falló el transporte del sondeo de Codex.');
+    expect(esText(result.error)).toBe('Falló el transporte del sondeo de Codex.');
     expect(child.killTree).toHaveBeenCalledOnce();
   });
 
@@ -182,7 +187,9 @@ describe('probeCodexAccount', () => {
     probe.reply({});
     probe.reply({ account: { type: 'chatgpt' } });
     probe.stdout(JSON.stringify({ id: 'mage-codex-apps', error: { code: -32603, message: 'Bearer secret' } }) + '\n');
-    expect(await probe.done).toEqual({ authenticated: true, apps: null, error: 'Codex rechazó la consulta de Apps (código -32603).' });
+    const rejected = await probe.done;
+    expect(rejected).toEqual({ authenticated: true, apps: null, error: localizedWithParts('mcp.main.codexProbeRejected', { code: '-32603' }, { query: localized('mcp.main.codexProbeAppsQuery') }) });
+    expect(esText(rejected.error)).toBe('Codex rechazó la consulta de Apps (código -32603).');
   });
 
   it('probe_sinCuenta_noConsultaApps', async () => {
@@ -215,6 +222,6 @@ describe('probeCodexAccount', () => {
     probe.reply({ account: { type: 'chatgpt' } });
     probe.reply({ data: [], nextCursor: 'same' });
     probe.reply({ data: [], nextCursor: 'same' });
-    expect((await probe.done).error).toContain('cursor');
+    expect(esText((await probe.done).error)).toContain('cursor');
   });
 });

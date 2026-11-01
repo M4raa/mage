@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
+import { localized, localizedWithParts } from '@shared/i18n/localizedText';
+import { esText } from '@testing/localizedText';
 import {
   describeStaleWrite,
   readSnapshot,
@@ -248,16 +250,24 @@ describe('writeAtomicIfUnchanged', () => {
 
 describe('describeStaleWrite', () => {
   it('describe_noFiltraElContenido_soloRutaYTamanos', () => {
-    const message = describeStaleWrite('/data/a.json', 'hola', 'un secreto muy largo');
+    const message = esText(describeStaleWrite('/data/a.json', 'hola', 'un secreto muy largo'));
 
-    expect(message).toContain('/data/a.json');
-    expect(message).toContain('4 caracteres');
-    expect(message).toContain('20 caracteres');
+    expect(message).toBe('El fichero "/data/a.json" cambio fuera de Mage desde que se leyo (tenia 4 caracteres, ahora tiene 20 caracteres); no se ha guardado nada.');
     expect(message).not.toContain('secreto');
   });
 
+  it('describe_conTamanos_devuelveLaClaveConLaRutaYLasDosPartes', () => {
+    const text = describeStaleWrite('/data/a.json', 'hola', 'un secreto muy largo');
+
+    expect(text).toEqual(
+      localizedWithParts('errors.config.staleWrite', { path: '/data/a.json' }, { was: localized('errors.config.staleWriteWasLength', { length: '4' }), now: localized('errors.config.staleWriteNowLength', { length: '20' }) }),
+    );
+  });
+
   it('describe_ausenciaEnCadaLado_seDiceExplicitamente', () => {
-    expect(describeStaleWrite('/a', null, 'x')).toContain('no existia');
-    expect(describeStaleWrite('/a', 'x', null)).toContain('ha desaparecido');
+    expect(esText(describeStaleWrite('/a', null, 'x'))).toContain('no existia');
+    expect(esText(describeStaleWrite('/a', 'x', null))).toContain('ha desaparecido');
+    expect(describeStaleWrite('/a', null, 'x').parts).toMatchObject({ was: localized('errors.config.staleWriteWasMissing') });
+    expect(describeStaleWrite('/a', 'x', null).parts).toMatchObject({ now: localized('errors.config.staleWriteNowGone') });
   });
 });

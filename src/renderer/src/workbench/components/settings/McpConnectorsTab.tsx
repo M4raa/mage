@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { useCodexAppsStore } from '../../codexAppsStore';
+import { codexAppsErrorText, useCodexAppsStore } from '../../codexAppsStore';
 import { useMcpStore } from '../../mcpStore';
 import type { CodexAccountMetadata, McpStatusByAccount } from '@shared/mcp';
 import { buildClaudeConnectorGroups, CLAUDE_AI_CONNECTORS_URL, describeCheckedAt, type McpConnectorGroup, type McpConnectorRow } from '../../mcpView';
@@ -70,7 +70,7 @@ function CodexApps(): React.JSX.Element {
 function CodexAppsResult({ result }: { readonly result: CodexAccountMetadata | undefined }): React.JSX.Element {
   const t = useT();
   if (result === undefined) return <p>{t('mcp.codexApps.notChecked')}</p>;
-  if (result.error !== null) return <p role="status">{t('mcp.codexApps.error', { error: result.error })}</p>;
+  if (result.error !== null) return <p role="status">{codexAppsErrorText(result.error, t)}</p>;
   if (result.authenticated !== true) return <p>{t('mcp.codexApps.signIn')}</p>;
   if (result.apps?.length === 0) return <p>{t('mcp.codexApps.empty')}</p>;
   return <ul>{result.apps?.map((app) => <li key={app.id} className="py-[3px]">

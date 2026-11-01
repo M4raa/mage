@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { foreignText, localized } from '@shared/i18n/localizedText';
 import type { ConversationLockRef } from '@shared/conversationLock';
 import { ConversationLocks, HEARTBEAT_MS, ORPHAN_MS, type LockFs, type LockIdentity } from './conversationLocks';
 import { conversationLocksDir, lockFileName, nodeLockFs, pidAliveCheck, resolveConversationLocksDir, TEST_LOCKS_DIR_ENV } from './conversationLockEnv';
@@ -43,7 +44,7 @@ describe('ConversationLocks', () => {
     const second = dev.acquire(REF, 'tab:1:b');
 
     expect(first).toEqual({ owner: true });
-    expect(second).toEqual({ owner: false, profile: 'mage', orphan: false });
+    expect(second).toEqual({ owner: false, profile: foreignText('mage'), orphan: false });
     expect(files()).toHaveLength(1);
   });
 
@@ -119,11 +120,11 @@ describe('ConversationLocks', () => {
     installed.acquire(REF, 'tab:1:a');
     alive.delete(101);
 
-    expect(dev.acquire(REF, 'tab:1:b')).toEqual({ owner: false, profile: 'mage', orphan: true });
+    expect(dev.acquire(REF, 'tab:1:b')).toEqual({ owner: false, profile: foreignText('mage'), orphan: true });
     expect(dev.takeOver(REF, 'tab:1:b')).toEqual({ owner: true });
     expect(installed.peek(REF)).toEqual({ owner: true }); // la caída no se entera hasta su latido...
     expect(installed.heartbeat()).toEqual({ lost: [REF], failed: [] }); // ...y entonces sabe que la perdió
-    expect(installed.peek(REF)).toEqual({ owner: false, profile: 'mage-dev', orphan: false });
+    expect(installed.peek(REF)).toEqual({ owner: false, profile: foreignText('mage-dev'), orphan: false });
   });
 
   it('acquire_sinLatidoEn90s_huerfanoAunqueElPidViva', () => {
@@ -159,7 +160,7 @@ describe('ConversationLocks', () => {
     const dev = instance('mage-dev', 202);
     installed.acquire(REF, 'tab:1:a');
 
-    expect(dev.takeOver(REF, 'tab:1:b')).toEqual({ owner: false, profile: 'mage', orphan: false });
+    expect(dev.takeOver(REF, 'tab:1:b')).toEqual({ owner: false, profile: foreignText('mage'), orphan: false });
     expect(installed.peek(REF)).toEqual({ owner: true });
   });
 
@@ -184,7 +185,7 @@ describe('ConversationLocks', () => {
     fs.writeFileSync(file, '{"instanceId":');
     fs.utimesSync(file, clock.now / 1000, clock.now / 1000);
 
-    expect(dev.acquire(REF, 'tab:1:b')).toEqual({ owner: false, profile: 'perfil desconocido', orphan: false });
+    expect(dev.acquire(REF, 'tab:1:b')).toEqual({ owner: false, profile: localized('prompt.lock.unknownProfile'), orphan: false });
     clock.now += ORPHAN_MS + 1;
     expect(dev.acquire(REF, 'tab:1:b')).toMatchObject({ orphan: true });
   });
@@ -329,5 +330,20 @@ describe('pidAliveCheck', () => {
 
   it('pidAlive_procesoRealDeEsteTest_true', () => {
     expect(pidAliveCheck((pid, signal) => { process.kill(pid, signal); })(process.pid)).toBe(true);
+  });
+});
+
+describe('ConversationLocks.acquire con un fichero que aparece y desaparece', () => {
+  it('acquire_noSePuedeCrearNiLeer_lanzaLaClaveConElNativeIdYLaRuta', () => {
+    const { dir, clock } = world();
+    const vanishing: LockFs = { ensureDir: () => undefined, createExclusive: () => false, read: () => null, replace: () => undefined, remove: () => undefined, mtimeMs: () => null };
+    const locks = new ConversationLocks({
+      dir, identity: { instanceId: 'mage-101', profile: 'mage', profileHash: 'mage', pid: 101 }, now: () => clock.now,
+      isPidAlive: () => true, fileNameOf: (ref) => lockFileName(ref, (p) => p), fs: vanishing,
+    });
+
+    expect(() => locks.acquire(REF, 'tab:1:a')).toThrow(
+      expect.objectContaining({ localized: localized('errors.locks.cannotCreate', { nativeId: 'c0ffee', path: path.join(dir, lockFileName(REF, (p) => p)) }) }),
+    );
   });
 });

@@ -3,7 +3,7 @@ import type { ImageAttachment } from '@shared/ipc';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import type { LogLevel } from '@shared/debug';
 import type { MageEvent, PermissionDecision } from '@shared/events';
-import { localized, type LocalizedText } from '@shared/i18n/localizedText';
+import { localized, UserFacingError, type LocalizedText } from '@shared/i18n/localizedText';
 import { validateElicitationAnswer, type ElicitationAnswer, type ElicitationRequest } from '@shared/elicitation';
 import type { LaunchParams, ProviderAdapter } from './providerAdapter';
 import { DEFAULT_RESTART_POLICY, decideRestart, type RestartDecision, type RestartPolicy } from './restartPolicy';
@@ -264,7 +264,7 @@ export class AgentSession {
   answerPermission(requestId: string, decision: PermissionDecision): void {
     const toolUseId = this.pendingPermissions.get(requestId);
     if (toolUseId === undefined) {
-      throw new Error(`Permiso desconocido o ya resuelto: requestId=${requestId}`);
+      throw new UserFacingError(localized('errors.engine.permissionUnknown', { requestId }));
     }
     this.pendingPermissions.delete(requestId);
     this.log('info', 'Respuesta de permiso', {
@@ -277,7 +277,7 @@ export class AgentSession {
 
   answerElicitation(answer: ElicitationAnswer): void {
     const request = this.pendingElicitations.get(answer.requestId);
-    if (request === undefined) throw new Error(`Elicitation desconocida o resuelta: ${answer.requestId}`);
+    if (request === undefined) throw new UserFacingError(localized('errors.engine.elicitationUnknown', { requestId: answer.requestId }));
     if (!validateElicitationAnswer(request, answer)) throw new Error('Respuesta de elicitation inválida');
     const encode = this.deps.adapter.encodeElicitationResponse;
     if (encode === undefined) throw new Error('Este proveedor no admite elicitation');
@@ -444,7 +444,7 @@ export class AgentSession {
   }
 
   private writeLine(obj: unknown): void {
-    if (this.child === null) throw new Error(`Sesion ${this.deps.params.sessionId} no esta activa`);
+    if (this.child === null) throw new UserFacingError(localized('errors.engine.sessionNotActive', { sessionId: this.deps.params.sessionId }));
     this.child.stdin.write(`${JSON.stringify(obj)}\n`);
   }
 

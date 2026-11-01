@@ -4,6 +4,7 @@ import { useSharedConfigStore } from '../../sharedConfigStore';
 import { CommonRulesEditor } from './CommonRulesEditor';
 import type { EffectiveSettings, HookEntry, PermissionRule, SettingsOrigin } from '@shared/ipc';
 import { useT } from '../../../i18n/uiLanguage';
+import { describeError } from '../../describeError';
 
 // Seccion "Hooks y permisos" (2.9.b). Los dos salen del MISMO fichero y por eso comparten pantalla:
 // `settings-common.json` esta restringido por forma a exactamente `hooks` y `permissions.allow/deny`.
@@ -50,7 +51,7 @@ export function HooksPermissionsSection(): React.JSX.Element {
         if (!cancelled) setSettings(result);
       })
       .catch((err: unknown) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : String(err));
+        if (!cancelled) setError(err instanceof Error ? describeError(err) : String(err));
       });
     return () => {
       cancelled = true;

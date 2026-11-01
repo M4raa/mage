@@ -196,6 +196,15 @@ describe('AgentSession reinicio automatico (C1)', () => {
     expect(written(h.children[0]!)).toHaveLength(trasLaPrimera);
   });
 
+  it('answerPermission_requestIdDesconocido_lanzaLaClaveConElRequestId', () => {
+    const h = harness();
+    h.session.start();
+
+    expect(() => h.session.answerPermission('nope', { behavior: 'allow' })).toThrow(
+      expect.objectContaining({ localized: { key: 'errors.engine.permissionUnknown', values: { requestId: 'nope' } } }),
+    );
+  });
+
   it('answerPermission_conVariosPendientes_respondeSoloAlQueSeLePide', () => {
     const h = harness();
     h.session.start();

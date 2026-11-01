@@ -1,3 +1,4 @@
+import { localized, localizedWithParts, wrapError, type LocalizedText } from '@shared/i18n/localizedText';
 import type { KeyringDiagnosis, KeyringState } from './linuxKeyring';
 import type { SecretCipher } from './secretStore';
 
@@ -9,7 +10,7 @@ import type { SecretCipher } from './secretStore';
 // `safeStorage` (síncrono, no se puede interrumpir). Después, en todas las plataformas, disponibilidad y un round trip
 // con texto sintético: que el backend tenga nombre no demuestra que cifre.
 
-export type VaultStatus = { readonly usable: true } | { readonly usable: false; readonly reason: string };
+export type VaultStatus = { readonly usable: true } | { readonly usable: false; readonly reason: LocalizedText };
 
 // Texto sintético del round trip. Nunca un secreto real.
 export const VAULT_ROUND_TRIP_TEXT = 'mage: comprobación de la bóveda';
@@ -37,7 +38,7 @@ export async function assessVault(deps: VaultGateDeps): Promise<VaultStatus> {
     const blocked = await linuxBlocker(deps);
     if (blocked !== null) return blocked;
   }
-  if (!deps.cipher.isEncryptionAvailable()) return unusable(deps, 'sin cifrado disponible');
+  if (!deps.cipher.isEncryptionAvailable()) return unusable(deps, localized('errors.vault.stateNoCipher'));
   return roundTrip(deps);
 }
 
@@ -48,67 +49,65 @@ async function linuxBlocker(deps: VaultGateDeps): Promise<VaultStatus | null> {
   const diagnosis = await deps.detectKeyring();
   if (diagnosis.state !== 'unlocked') return unusable(deps, describeKeyringState(diagnosis));
   // Llavero desbloqueado pero Electron eligió un backend en claro: no se usa (nunca basic_text ni unknown).
-  if (INSECURE_BACKENDS.includes(backend)) return unusable(deps, `sin usar: Electron eligió el backend inseguro «${backend}»`);
+  if (INSECURE_BACKENDS.includes(backend)) return unusable(deps, localized('errors.vault.stateInsecureBackend', { backend }));
   return null;
 }
 
 function roundTrip(deps: VaultGateDeps): VaultStatus {
   try {
     const back = deps.cipher.decryptString(deps.cipher.encryptString(VAULT_ROUND_TRIP_TEXT));
-    if (back !== VAULT_ROUND_TRIP_TEXT) return unusable(deps, 'inaccesible: el cifrado no devuelve el texto de prueba');
+    if (back !== VAULT_ROUND_TRIP_TEXT) return unusable(deps, localized('errors.vault.stateRoundTripMismatch'));
     return { usable: true };
   } catch (err) {
-    return unusable(deps, `inaccesible: ${err instanceof Error ? err.message : String(err)}`);
+    return unusable(deps, wrapError('errors.vault.stateRoundTripFailed', {}, err));
   }
 }
 
-const STATE_TEXT: Readonly<Record<Exclude<KeyringState, 'unlocked' | 'error'>, string>> = {
-  absent: 'ausente (no hay ningún proveedor instalado)',
-  'not-running': 'sin arrancar',
-  locked: 'bloqueado',
-  'no-collection': 'sin colección por defecto',
+type SimpleStateKey = 'errors.vault.stateAbsent' | 'errors.vault.stateNotRunning' | 'errors.vault.stateLocked' | 'errors.vault.stateNoCollection';
+
+const STATE_TEXT: Readonly<Record<Exclude<KeyringState, 'unlocked' | 'error'>, SimpleStateKey>> = {
+  absent: 'errors.vault.stateAbsent',
+  'not-running': 'errors.vault.stateNotRunning',
+  locked: 'errors.vault.stateLocked',
+  'no-collection': 'errors.vault.stateNoCollection',
 };
 
-export function describeKeyringState(diagnosis: KeyringDiagnosis): string {
-  if (diagnosis.state === 'unlocked') return 'desbloqueado';
-  if (diagnosis.state === 'error') return `inaccesible (${diagnosis.detail ?? 'error sin detalle'})`;
-  return STATE_TEXT[diagnosis.state];
+export function describeKeyringState(diagnosis: KeyringDiagnosis): LocalizedText {
+  if (diagnosis.state === 'unlocked') return localized('errors.vault.stateUnlocked');
+  if (diagnosis.state === 'error') {
+    const detail = diagnosis.detail ?? localized('errors.vault.stateErrorNoDetail');
+    return localizedWithParts('errors.vault.stateError', {}, { detail });
+  }
+  return localized(STATE_TEXT[diagnosis.state]);
 }
 
-function unusable(deps: VaultGateDeps, state: string): VaultStatus {
+function unusable(deps: VaultGateDeps, state: LocalizedText): VaultStatus {
   return { usable: false, reason: deps.platform === 'linux' ? linuxKeyringMessage(state, deps.osRelease()) : systemCipherMessage(state) };
 }
 
 // El mensaje D1, literal del plan, con los comandos de la distribución y el enlace a la guía.
-export function linuxKeyringMessage(state: string, os: OsRelease | null): string {
-  return [
-    `No se puede crear ni usar esta cuenta de API: el llavero seguro de Linux está ${state}. Las cuentas de suscripción siguen disponibles. ` +
-      'Sigue las instrucciones de instalación, arranque y desbloqueo del llavero para tu distribución; después cierra y vuelve a abrir Mage para habilitar la bóveda.',
-    distroInstructions(os),
-    `Guía: ${LINUX_KEYRING_GUIDE_URL}`,
-  ].join('\n');
+export function linuxKeyringMessage(state: LocalizedText, os: OsRelease | null): LocalizedText {
+  return localizedWithParts('errors.vault.linuxUnavailable', { guideUrl: LINUX_KEYRING_GUIDE_URL }, { state, instructions: distroInstructions(os) });
 }
 
-function systemCipherMessage(state: string): string {
-  return `No se puede crear ni usar esta cuenta de API: el cifrado del sistema está ${state}. Las cuentas de suscripción siguen disponibles.`;
+function systemCipherMessage(state: LocalizedText): LocalizedText {
+  return localizedWithParts('errors.vault.systemCipherUnavailable', {}, { state });
 }
-
-const UNLOCK_INSTRUCTIONS =
-  "Arranque y desbloqueo sin escritorio: dbus-run-session -- bash; después read -r -s keyring_password; printf '%s' \"$keyring_password\" | gnome-keyring-daemon --unlock --components=secrets; unset keyring_password; y arranca Mage desde esa shell.";
-
-const INSTALL_BY_FAMILY: Readonly<Record<string, string>> = {
-  debian: 'Ubuntu/Debian: sudo apt update && sudo apt install gnome-keyring libsecret-tools dbus-daemon',
-  arch: 'Arch: sudo pacman -S --needed gnome-keyring libsecret dbus',
-};
 
 // Comandos de la distribución detectada por ID/ID_LIKE. Una desconocida lo dice, sin inventar un comando.
-function distroInstructions(os: OsRelease | null): string {
-  const family = os === null ? null : distroFamily(os);
-  const install = family === null ? `Distribución no reconocida (ID=${os?.id ?? 'desconocido'}): la guía explica qué instalar.` : INSTALL_BY_FAMILY[family];
-  return `Instalación: ${install}\n${UNLOCK_INSTRUCTIONS}`;
+function distroInstructions(os: OsRelease | null): LocalizedText {
+  return localizedWithParts('errors.vault.installInstructions', {}, { install: installLine(os), unlock: localized('errors.vault.unlockInstructions') });
 }
 
-function distroFamily(os: OsRelease): string | null {
+function installLine(os: OsRelease | null): LocalizedText {
+  if (os === null) return localized('errors.vault.installUnknownNoId');
+  const family = distroFamily(os);
+  if (family === 'debian') return localized('errors.vault.installDebian');
+  if (family === 'arch') return localized('errors.vault.installArch');
+  return localized('errors.vault.installUnknown', { id: os.id });
+}
+
+function distroFamily(os: OsRelease): 'debian' | 'arch' | null {
   const ids = [os.id, ...os.idLike];
   if (ids.some((id) => id === 'debian' || id === 'ubuntu')) return 'debian';
   if (ids.includes('arch')) return 'arch';

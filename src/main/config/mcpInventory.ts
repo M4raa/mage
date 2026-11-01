@@ -16,6 +16,7 @@ import {
   type McpScope,
   type McpUnsharedAccount,
 } from '@shared/mcp';
+import { foreignText, localized, localizedWithParts, UserFacingError, wrapError, type LocalizedText } from '@shared/i18n/localizedText';
 import type { CodexMcpServer } from './codexMcp';
 
 // Inventario de TODAS las fuentes de servidores MCP que conoce la maquina (P-028, punto 5) y la
@@ -71,7 +72,7 @@ export interface McpSourceEntry {
 
 export interface McpSourceRead {
   readonly entries: readonly McpSourceEntry[];
-  readonly warnings: readonly string[];
+  readonly warnings: readonly LocalizedText[];
 }
 
 // Clave propia de Mage en mcp-common.json para los comunes DESACTIVADOS: fuera de `mcpServers`, asi que
@@ -137,59 +138,59 @@ export function readMcpSources(deps: McpInventoryDeps, locations: McpSourceLocat
 
 class SourceReader {
   readonly entries: McpSourceEntry[] = [];
-  readonly warnings: string[] = [];
+  readonly warnings: LocalizedText[] = [];
 
   constructor(private readonly deps: McpInventoryDeps) {}
 
   readCommon(path: string): void {
-    const root = this.readJson(path, 'mcp-common.json');
+    const root = this.readJson(path, foreignText('mcp-common.json'));
     if (root === null) return;
-    const origin = (name: string): McpOrigin => makeOrigin('common', name, { label: 'Mage', path });
+    const origin = (name: string): McpOrigin => makeOrigin('common', name, { label: foreignText('Mage'), path });
     const onlyIn = isRecord(root[ONLY_IN_SERVERS_KEY]) ? root[ONLY_IN_SERVERS_KEY] : {};
     this.addServers(root.mcpServers, origin, false, onlyIn);
     this.addServers(root[DISABLED_SERVERS_KEY], origin, true, onlyIn);
   }
 
   readAccount(account: McpAccountLocation): void {
-    const root = this.readJson(account.stateFile, `.claude.json de ${account.label}`);
+    const root = this.readJson(account.stateFile, localized('mcp.main.accountStateFileLabel', { name: account.label }));
     if (root === null) return;
     const base = { path: account.stateFile, accountDir: account.configDir };
-    this.addServers(root.mcpServers, (name) => makeOrigin('account', name, { ...base, label: `Cuenta ${account.label}` }), false);
+    this.addServers(root.mcpServers, (name) => makeOrigin('account', name, { ...base, label: localized('mcp.main.originAccount', { name: account.label }) }), false);
     if (!isRecord(root.projects)) return;
     for (const [projectDir, project] of Object.entries(root.projects)) {
       if (!isRecord(project)) continue;
-      const label = `Local de ${projectName(projectDir)}`;
+      const label = localized('mcp.main.originLocal', { name: projectName(projectDir) });
       this.addServers(project.mcpServers, (name) => makeOrigin('projectLocal', name, { ...base, label, projectDir }), false);
     }
   }
 
   readProjectFile(dir: string): void {
     const path = join(dir, PROJECT_MCP_FILE);
-    const root = this.readJson(path, path);
+    const root = this.readJson(path, foreignText(path));
     if (root === null) return;
-    const label = `Proyecto ${projectName(dir)}`;
+    const label = localized('mcp.main.originProject', { name: projectName(dir) });
     this.addServers(root.mcpServers, (name) => makeOrigin('project', name, { label, path, projectDir: dir }), false);
   }
 
   readLegacy(path: string): void {
-    const root = this.readJson(path, basename(path));
+    const root = this.readJson(path, foreignText(basename(path)));
     if (root === null) return;
-    this.addServers(root.mcpServers, (name) => makeOrigin('legacy', name, { label: basename(path), path }), false);
+    this.addServers(root.mcpServers, (name) => makeOrigin('legacy', name, { label: foreignText(basename(path)), path }), false);
   }
 
   readDesktopConfig(dir: string): void {
     const path = join(dir, DESKTOP_CONFIG_FILE);
-    const root = this.readJson(path, DESKTOP_CONFIG_FILE);
+    const root = this.readJson(path, foreignText(DESKTOP_CONFIG_FILE));
     if (root === null) return;
-    this.addServers(root.mcpServers, (name) => makeOrigin('desktop', name, { label: 'Claude Desktop', path }), false);
+    this.addServers(root.mcpServers, (name) => makeOrigin('desktop', name, { label: foreignText('Claude Desktop'), path }), false);
   }
 
   // mcp_config.json de agy: `serverUrl`/`httpUrl` en los remotos (medido en 1.2.14). Lo que exporto Mage
   // no es de agy: se salta.
   readAgy(path: string, exported: ReadonlySet<string>): void {
-    const root = this.readJson(path, 'mcp_config.json de agy');
+    const root = this.readJson(path, localized('mcp.main.agyConfigFileLabel'));
     if (root === null || !isRecord(root.mcpServers)) return;
-    const origin = (name: string): McpOrigin => makeOrigin('agy', name, { label: 'mcp_config.json de agy', path });
+    const origin = (name: string): McpOrigin => makeOrigin('agy', name, { label: localized('mcp.main.originAgyConfig'), path });
     for (const [name, raw] of Object.entries(root.mcpServers)) {
       if (!isRecord(raw) || exported.has(name)) continue;
       this.entries.push({ name, config: fromAgyEntry(raw), origin: origin(name), disabled: raw.disabled === true, onlyIn: null });
@@ -198,7 +199,7 @@ class SourceReader {
 
   addCodex(source: CodexInventorySource): void {
     for (const server of source.servers) {
-      const fields = { label: source.label, path: source.path, ...(source.accountDir === null ? {} : { accountDir: source.accountDir }) };
+      const fields = { label: foreignText(source.label), path: source.path, ...(source.accountDir === null ? {} : { accountDir: source.accountDir }) };
       this.entries.push({ name: server.name, config: server.config ?? {}, origin: makeOrigin('codex', server.name, fields), disabled: !server.enabled, onlyIn: null });
     }
   }
@@ -213,21 +214,21 @@ class SourceReader {
 
   // Ausente -> null sin aviso (es lo normal). Ilegible o JSON invalido -> null CON aviso que nombra el
   // fichero y su tamaño, nunca el contenido (lleva los `env`).
-  private readJson(path: string, label: string): Record<string, unknown> | null {
+  private readJson(path: string, label: LocalizedText): Record<string, unknown> | null {
     if (!this.deps.exists(path)) return null;
     let text: string;
     try {
       text = this.deps.readFile(path);
     } catch (error) {
-      this.warnings.push(`No se pudo leer ${label} (${path}): ${describeError(error)}`);
+      this.warnings.push(localizedWithParts('mcp.main.inventoryReadFailed', { path }, { label, detail: foreignText(describeError(error)) }));
       return null;
     }
     try {
       const parsed: unknown = JSON.parse(text.replace(UTF8_BOM, ''));
       if (isRecord(parsed)) return parsed;
-      this.warnings.push(`${label} (${path}) no es un objeto JSON; se ignora.`);
+      this.warnings.push(localizedWithParts('mcp.main.inventoryNotObject', { path }, { label }));
     } catch {
-      this.warnings.push(`${label} (${path}) no es JSON válido (${text.length} caracteres); se ignora.`);
+      this.warnings.push(localizedWithParts('mcp.main.inventoryInvalidJson', { path, length: String(text.length) }, { label }));
     }
     return null;
   }
@@ -236,7 +237,7 @@ class SourceReader {
 function makeOrigin(
   kind: McpOriginKind,
   name: string,
-  fields: { readonly label: string; readonly path: string; readonly accountDir?: string; readonly projectDir?: string },
+  fields: { readonly label: LocalizedText; readonly path: string; readonly accountDir?: string; readonly projectDir?: string },
 ): McpOrigin {
   return {
     kind,
@@ -405,8 +406,8 @@ export function buildImportCandidates(entries: readonly McpSourceEntry[]): reado
     });
 }
 
-function candidateNote(entry: McpSourceEntry): string | null {
-  if (entry.origin.kind === 'projectLocal') return `Era de proyecto ${entry.origin.projectDir ?? ''}`;
+function candidateNote(entry: McpSourceEntry): LocalizedText | null {
+  if (entry.origin.kind === 'projectLocal') return localized('mcp.main.importWasProject', { dir: entry.origin.projectDir ?? '' });
   return null;
 }
 
@@ -416,7 +417,7 @@ function isDesktopOrigin(kind: McpOriginKind): boolean {
 
 export interface McpImportApplied {
   readonly text: string;
-  readonly notes: readonly string[];
+  readonly notes: readonly LocalizedText[];
 }
 
 // Aplica lo elegido sobre el texto ACTUAL de mcp-common.json. Gana lo que existe salvo que la fila pida
@@ -429,12 +430,12 @@ export function applyImportPicks(commonText: string, entries: readonly McpSource
   const disabled = { ...recordOrEmpty(root[DISABLED_SERVERS_KEY]) };
   const byId = new Map(entries.map((entry) => [entry.origin.importId, entry]));
   const taken = new Set<string>();
-  const notes: string[] = [];
+  const notes: LocalizedText[] = [];
   for (const pick of picks) {
     const entry = byId.get(pick.id);
-    if (entry === undefined) throw new Error(`El servidor a importar ya no está en su origen: ${pick.id}`);
+    if (entry === undefined) throw new UserFacingError(localized('errors.config.importSourceGone', { id: pick.id }));
     if (taken.has(entry.name)) {
-      notes.push(`«${entry.name}» venía de dos sitios: se queda el primero elegido.`);
+      notes.push(localized('mcp.main.importDuplicatePick', { name: entry.name }));
       continue;
     }
     taken.add(entry.name);
@@ -455,9 +456,9 @@ export function parseCommonRoot(text: string): Record<string, unknown> {
   try {
     parsed = JSON.parse(text.replace(UTF8_BOM, ''));
   } catch (error) {
-    throw new Error(`mcp-common.json no es JSON válido (${describeError(error)}): ${text.length} caracteres`);
+    throw new UserFacingError(wrapError('errors.config.commonJsonInvalid', { length: String(text.length) }, error));
   }
-  if (!isRecord(parsed)) throw new Error(`mcp-common.json no es un objeto JSON: ${text.length} caracteres`);
+  if (!isRecord(parsed)) throw new UserFacingError(localized('errors.config.commonJsonNotObject', { length: String(text.length) }));
   return parsed;
 }
 

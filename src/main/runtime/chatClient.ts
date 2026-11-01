@@ -1,4 +1,5 @@
 import { chatCompletionsUrl } from '@shared/providers';
+import { foreignText, localized, localizedWithParts, UserFacingError, type LocalizedText } from '@shared/i18n/localizedText';
 import { ChatStreamParser, parseChatChunk, SseDecoder, type StreamPart } from './openAiStream';
 
 // Cliente de Chat Completions (OpenAI-compatible) del runtime propio: hace el `fetch` en streaming y
@@ -38,13 +39,13 @@ export interface ChatClient {
 // (texto de Ollama: «… does not support tools», medido en el spike); el bucle reintenta sin `tools`.
 export type ChatErrorKind = 'no_tools' | 'auth' | 'model_not_found' | 'server' | 'idle_timeout' | 'other';
 
-export class ChatHttpError extends Error {
+export class ChatHttpError extends UserFacingError {
   constructor(
-    message: string,
+    text: LocalizedText,
     readonly kind: ChatErrorKind,
     readonly status: number | null,
   ) {
-    super(message);
+    super(text);
     this.name = 'ChatHttpError';
   }
 }
@@ -83,10 +84,10 @@ export class HttpChatClient implements ChatClient {
     try {
       const response = await this.post(request, apiKey, idle.signal);
       if (!response.ok) throw await this.httpError(response, apiKey);
-      if (response.body === null) throw new ChatHttpError(`Respuesta sin cuerpo de ${redactUrl(this.url)}`, 'other', response.status);
+      if (response.body === null) throw new ChatHttpError(localizedWithParts('errors.runtime.chatNoBody', {}, { url: urlPart(this.url) }), 'other', response.status);
       yield* readStream(response.body, idle);
     } catch (err) {
-      if (idle.fired) throw new ChatHttpError(`El servidor no mandó nada en ${idle.ms / 1000} s (${redactUrl(this.url)})`, 'idle_timeout', null);
+      if (idle.fired) throw new ChatHttpError(localizedWithParts('errors.runtime.chatIdleTimeout', { seconds: String(idle.ms / 1000) }, { url: urlPart(this.url) }), 'idle_timeout', null);
       throw scrubError(err, apiKey);
     } finally {
       idle.stop();
@@ -109,7 +110,7 @@ export class HttpChatClient implements ChatClient {
   private async httpError(response: Response, apiKey: string | null): Promise<ChatHttpError> {
     const text = filterSecret(await response.text().catch((err: unknown) => `(cuerpo ilegible: ${String(err)})`), apiKey);
     const excerpt = text.length > ERROR_BODY_MAX_CHARS ? `${text.slice(0, ERROR_BODY_MAX_CHARS)}…` : text;
-    const message = `El servidor respondió ${response.status} en ${redactUrl(this.url)}: ${excerpt}`;
+    const message = localizedWithParts('errors.runtime.chatHttpError', { status: String(response.status), detail: excerpt }, { url: urlPart(this.url) });
     return new ChatHttpError(message, classifyStatus(response.status, text), response.status);
   }
 }
@@ -199,11 +200,18 @@ function scrubError(err: unknown, apiKey: string | null): unknown {
 
 // URL sin usuario, contraseña ni query (una base `http://user:pass@host` o un `?api-key=…`, que piden
 // algunos servidores compatibles, no deben acabar en un mensaje).
-export function redactUrl(url: string): string {
-  if (!URL.canParse(url)) return '(URL no válida)';
+// null = no es una URL.
+export function redactUrl(url: string): string | null {
+  if (!URL.canParse(url)) return null;
   const parsed = new URL(url);
   parsed.username = '';
   parsed.password = '';
   parsed.search = '';
   return parsed.toString();
+}
+
+// La URL sin credenciales como texto para un mensaje: la propia URL (ajena) o la frase «(URL no válida)».
+export function urlPart(url: string): LocalizedText {
+  const redacted = redactUrl(url);
+  return redacted === null ? localized('errors.runtime.urlInvalid') : foreignText(redacted);
 }

@@ -9,9 +9,13 @@
 //   - ausente, sin arrancar, bloqueado, sin colección y error se distinguen; un error no se lee como «no instalado».
 // Puro: el bus y el reloj se inyectan.
 
+import { localized, localizedFromError, UserFacingError, type LocalizedText } from '@shared/i18n/localizedText';
+
 export const DBUS_QUERY_TIMEOUT_MS = 500;
 export const KEYRING_CHECK_BUDGET_MS = 3000;
 
+// Lo que se cita de una respuesta ajena de D-Bus en un mensaje.
+const MAX_REPLY_CHARS = 200;
 const SECRET_SERVICE = 'org.freedesktop.secrets';
 
 export type KeyringState = 'absent' | 'not-running' | 'locked' | 'no-collection' | 'error' | 'unlocked';
@@ -26,7 +30,7 @@ export function hasSessionBus(env: Readonly<Record<string, string | undefined>>)
 export interface KeyringDiagnosis {
   readonly state: KeyringState;
   // Qué falló, solo en `error` (sin datos del llavero: el mensaje de dbus-send o el plazo).
-  readonly detail: string | null;
+  readonly detail: LocalizedText | null;
 }
 
 // Una llamada D-Bus con plazo: la salida de `dbus-send --print-reply`, o rechaza (error o plazo agotado).
@@ -52,7 +56,7 @@ export async function detectLinuxKeyring(deps: KeyringDetectorDeps): Promise<Key
     const locked = await query(SECRET_SERVICE, collection, 'org.freedesktop.DBus.Properties.Get', ['string:org.freedesktop.Secret.Collection', 'string:Locked']);
     return { state: isTrue(locked) ? 'locked' : 'unlocked', detail: null };
   } catch (err) {
-    return { state: 'error', detail: err instanceof Error ? err.message : String(err) };
+    return { state: 'error', detail: localizedFromError(err) };
   }
 }
 
@@ -61,7 +65,7 @@ function budgetedQuery(deps: KeyringDetectorDeps): (destination: string, objectP
   const deadline = deps.now() + KEYRING_CHECK_BUDGET_MS;
   return (destination, objectPath, method, args) => {
     const remaining = deadline - deps.now();
-    if (remaining <= 0) return Promise.reject(new Error(`se agotó el plazo de ${KEYRING_CHECK_BUDGET_MS} ms antes de ${method}`));
+    if (remaining <= 0) return Promise.reject(new UserFacingError(localized('errors.vault.keyringTimeout', { budgetMs: String(KEYRING_CHECK_BUDGET_MS), method })));
     return deps.busCall(destination, objectPath, method, args, Math.min(DBUS_QUERY_TIMEOUT_MS, remaining));
   };
 }
@@ -73,6 +77,6 @@ function isTrue(reply: string): boolean {
 // `ReadAlias` devuelve la ruta de la colección por defecto, o `/` si no hay ninguna.
 function defaultCollection(reply: string): string | null {
   const found = /object path "([^"]+)"/.exec(reply);
-  if (found === null) throw new Error(`Respuesta de ReadAlias sin ruta de objeto: ${reply.trim().slice(0, 200)}`);
+  if (found === null) throw new UserFacingError(localized('errors.vault.readAliasNoPath', { reply: reply.trim().slice(0, MAX_REPLY_CHARS) }));
   return found[1] === '/' ? null : found[1]!;
 }

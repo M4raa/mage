@@ -2,6 +2,8 @@
 // una ruta con espacios, tabuladores o saltos de linea no rompe nada. Tolerante a lo que no entiende
 // (una linea desconocida se salta), estricto con los numeros (un contador que no es entero lanza).
 
+import { foreignText, localized, type LocalizedText } from '@shared/i18n/localizedText';
+
 export interface GitStatusSummary {
   readonly branch: string | null;
   readonly detached: boolean;
@@ -94,10 +96,11 @@ export function parseBranches(stdout: string): readonly string[] {
 
 // Solo se cambia a una rama que ESTA en la lista que main acaba de leer, y nunca a algo que git
 // pudiera leer como opcion. Devuelve el motivo del rechazo, o null si vale.
-export function switchTargetError(name: string, branches: readonly string[]): string | null {
-  if (name.length === 0) return 'rama vacía';
-  if (name.startsWith('-')) return `rama no válida: "${name}"`;
-  if (!branches.includes(name)) return `la rama "${name}" no existe en este repositorio`;
+// Los dos primeros motivos son de contrato (C, el renderer no los provoca): castellano fijo como texto ajeno.
+export function switchTargetError(name: string, branches: readonly string[]): LocalizedText | null {
+  if (name.length === 0) return foreignText('rama vacía');
+  if (name.startsWith('-')) return foreignText(`rama no válida: "${name}"`);
+  if (!branches.includes(name)) return localized('errors.git.branchMissing', { name });
   return null;
 }
 

@@ -95,9 +95,9 @@ import type {
 import { buildAboutInfo } from './about/aboutService';
 import type { MemoryFile } from '@shared/memory';
 import type { MageEvent, SlashCommandInfo } from '@shared/events';
-import { localized } from '@shared/i18n/localizedText';
+import { localized, localizedWithParts, renderForLog, UserFacingError, type LocalizedText } from '@shared/i18n/localizedText';
 import type { ImageAttachment, ProviderProbeParams } from '@shared/ipc';
-import { base64ByteLength, validateAttachmentSet } from '@shared/attachments';
+import { base64ByteLength, ERROR_FORMAT_LOCALE, validateAttachmentSet } from '@shared/attachments';
 import type { EffectiveSettings, InstructionsFile, ProjectFileContent, ReadProjectFileParams, WriteProjectFileParams } from '@shared/ipc';
 import type { ConversationSummary, DeleteConversationParams, MigrateConversationResult, MoveConversationParams, MoveConversationResult } from '@shared/conversations';
 import type { PersistedWorkspace } from '@shared/state';
@@ -395,7 +395,7 @@ function settingsCommonPath(): string {
 // regeneraba el script del usuario) + los MCP de ambito usuario del `.claude.json` de cada cuenta. Las
 // notas (colisiones de nombre) se enseñan en Ajustes -> MCP y conectores en esta ejecucion.
 const LEGACY_SHARED_MCP_FILE = 'mcp-shared.json';
-let mcpImportNotes: readonly string[] = [];
+let mcpImportNotes: readonly LocalizedText[] = [];
 
 function importSharedMcpOnce(): void {
   const readIfExists = (path: string): string | null => (existsSync(path) ? readFileSync(path, 'utf8') : null);
@@ -573,7 +573,7 @@ const sessionCoordinator = new SessionCoordinator({
   conversationHold: {
     hold: (sessionId, ref) => {
       const status = getConversationLocks().acquire(ref, `session:${sessionId}`);
-      if (!status.owner) mainLog('warn', 'La sesion en segundo plano no pudo sujetar su conversacion', { sessionId, profile: status.profile });
+      if (!status.owner) mainLog('warn', 'La sesion en segundo plano no pudo sujetar su conversacion', { sessionId, profile: renderForLog(status.profile) });
     },
     release: (sessionId) => getConversationLocks().releaseWhere((holder) => holder === `session:${sessionId}`),
   },
@@ -615,7 +615,8 @@ function assertConversationNotLockedElsewhere(params: CreateSessionParams): void
   if (params.resumeSessionId === undefined) return;
   const status = getConversationLocks().peek({ provider: params.provider, accountDir: params.accountDir, nativeId: params.resumeSessionId });
   if (status === null || status.owner) return;
-  throw new Error(`${readOnlyLockMessage(status.profile)}: no se puede continuar aquí. ${status.orphan ? 'Usa «Tomar el control» para continuarla en esta instancia.' : 'Ciérrala en la otra instancia para continuarla en esta.'}`);
+  const hint = localized(status.orphan ? 'errors.app.lockedElsewhereTakeOver' : 'errors.app.lockedElsewhereClose');
+  throw new UserFacingError(localizedWithParts('errors.app.lockedElsewhere', {}, { lock: readOnlyLockMessage(status.profile), hint }));
 }
 
 // Lo que el runtime propio necesita de main: el proveedor de los ajustes, su clave de la boveda (en
@@ -660,6 +661,7 @@ function runtimeEnv(): RuntimeEnv {
         baseEnv: () => scrubAgentEnv(process.env),
         cwd,
         elicit: (server, params, signal) => broker.request(server, params, signal),
+        translate: getUiLanguageService().translate,
       }),
     toolAccess: (id) => getSettingsStore().load().runtimeToolAccess[id] ?? [],
   };
@@ -1029,7 +1031,7 @@ let codexAccountCatalog: CodexAccountCatalog | null = null;
 function getCodexAccountCatalog(): CodexAccountCatalog {
   codexAccountCatalog ??= new CodexAccountCatalog({
     probe: (home) => probeCodexAccount(codexAccountProbeDeps(), { home, includeApps: false }), now: Date.now,
-    onError: (reason) => mainLog('warn', 'No se pudo confirmar el login de Codex', { reason }),
+    onError: (reason) => mainLog('warn', 'No se pudo confirmar el login de Codex', { reason: renderForLog(reason) }),
   });
   return codexAccountCatalog;
 }
@@ -1063,7 +1065,7 @@ function isLaunchableAccountDir(dir: string): boolean {
 function assertLaunchable(params: CreateSessionParams): void {
   if (runsOnMageRuntime(params.provider)) {
     if (!getSettingsStore().load().customProviders.some((provider) => provider.id === params.provider)) {
-      throw new Error(`Proveedor no configurado: ${params.provider}`);
+      throw new UserFacingError(localized('errors.app.providerNotConfigured', { provider: params.provider }));
     }
   } else if (!isLaunchableAccountDir(params.accountDir)) {
     throw new Error(`Cuenta no valida para lanzar un agente: ${params.accountDir}`);
@@ -1071,7 +1073,7 @@ function assertLaunchable(params: CreateSessionParams): void {
   // Sin cuenta de Claude detras no hay confianzas del CLI que leer: solo las de Mage.
   const ownOnly = runsOnMageRuntime(params.provider) && !isManagedAccountConfigDir(params.accountDir);
   const trusted = isFolderTrusted(params.cwd, ownOnly ? '' : params.accountDir);
-  if (!trusted) throw new Error(`Carpeta no autorizada para lanzar un agente: ${params.cwd}`);
+  if (!trusted) throw new UserFacingError(localized('errors.app.folderNotTrusted', { cwd: params.cwd }));
 }
 
 // ¿Tiene la cuenta de Claude con que autenticar? Login del CLI (.credentials.json) o clave de API en la
@@ -1415,7 +1417,7 @@ async function approveOutsideFile(event: Electron.IpcMainInvokeEvent, params: Re
   }
   const path = resolvedPath(resolveProjectFilePath(params));
   if (NEVER_APPROVED_FILE_NAMES.has(basename(path).toLowerCase())) {
-    throw new Error(`Mage no abre ficheros de credenciales del CLI: ${path}`);
+    throw new UserFacingError(localized('errors.app.credentialFileBlocked', { path }));
   }
   if (isApprovedOutside(path)) return true;
   const translate = getUiLanguageService().translate;
@@ -1516,7 +1518,7 @@ function readAccessToken(configDir: string): string {
       ? (parsed as { claudeAiOauth?: { accessToken?: unknown } }).claudeAiOauth?.accessToken
       : undefined;
   if (typeof token !== 'string' || token.length === 0) {
-    throw new Error(`Sin token OAuth valido en la cuenta (falta .credentials.json o login): ${configDir}`);
+    throw new UserFacingError(localized('errors.app.noOauthToken', { configDir }));
   }
   return token;
 }
@@ -1637,7 +1639,7 @@ async function assessVaultOnce(): Promise<void> {
     now: Date.now,
   });
   // El motivo no lleva secretos: estado del llavero y comandos. Solo su primera línea va al log.
-  const reason = vaultStatus.usable ? null : vaultStatus.reason.split('\n')[0];
+  const reason = vaultStatus.usable ? null : renderForLog(vaultStatus.reason).split('\n')[0];
   mainLog(vaultStatus.usable ? 'info' : 'warn', 'Bóveda comprobada al arrancar', { usable: vaultStatus.usable, ms: Date.now() - startedAt, reason });
 }
 
@@ -1901,6 +1903,7 @@ function validateAttachments(attachments: readonly ImageAttachment[] | undefined
   validateAttachmentSet(
     [],
     attachments.map((attachment) => ({ mediaType: attachment.mediaType, byteLength: base64ByteLength(attachment.data) })),
+    ERROR_FORMAT_LOCALE,
   );
   return attachments;
 }
@@ -2710,7 +2713,7 @@ function createIpcPromptService() {
             pid: child.pid,
             outcome,
           });
-          rejectPromise(new Error(`Se agotó el plazo de ${PROMPT_RUN_TIMEOUT_MS} ms. Se canceló la petición; la conversación original se conserva y puedes volver a intentarlo.`));
+          rejectPromise(new UserFacingError(localized('errors.app.promptTimeout', { ms: String(PROMPT_RUN_TIMEOUT_MS) })));
         }, PROMPT_RUN_TIMEOUT_MS);
         // El CLI espera datos por stdin unos segundos antes de seguir ("no stdin data received in 3s"):
         // no le vamos a mandar nada, asi que se cierra ya y arranca sin esperar.
@@ -3380,7 +3383,7 @@ function registerArtifactIpc1(deps: IpcDependencies): void {
   ipcMain.handle(IpcChannel.ArtifactOpen, (_e, params: OpenArtifactParams): void => {
     const accountDir = params.accountDir ?? getConversationIndexStore().loadArtifact(params.url)?.accountDir;
     if (accountDir === undefined || accountDir.length === 0) {
-      throw new Error(`No se sabe con que cuenta abrir el artifact ${JSON.stringify(params.url)}`);
+      throw new UserFacingError(localized('errors.app.artifactAccountUnknown', { url: JSON.stringify(params.url) }));
     }
     if (!isManagedAccountConfigDir(accountDir)) {
       throw new Error(`Cuenta no gestionada por Mage para abrir un artifact: ${JSON.stringify(accountDir)}`);
@@ -3473,7 +3476,7 @@ function registerPromptIpc1(deps: IpcDependencies): void {
     agySync: getMcpServices().agySync,
     loadStatusCache: () => getMcpServices().loadStatusCache(),
     saveStatuses: (fresh) => getMcpServices().saveStatuses(fresh),
-    pickArchive: () => pickNativeFile([{ name: 'Extensión MCP', extensions: ['mcpb', 'dxt'] }]),
+    pickArchive: () => pickNativeFile([{ name: getUiLanguageService().translate('dialogs.mcpExtensionFilter'), extensions: ['mcpb', 'dxt'] }]),
     pickFile: () => pickNativeFile([]),
     onSharedChanged: onSharedMcpChanged,
     probeStatuses: () => {

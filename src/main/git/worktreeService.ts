@@ -1,5 +1,6 @@
 import { appendFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
+import { localized, localizedWithParts, UserFacingError } from '@shared/i18n/localizedText';
 import { worktreeOfCwd, type WorktreeRef, type WorktreeRemoveResult } from '@shared/worktree';
 import type { GitRunner } from './gitService';
 import { parseBranches, parseWorktreeList, switchTargetError, worktreeSlug } from './gitParse';
@@ -95,7 +96,7 @@ class GitWorktreeService implements WorktreeService {
     const git = this.gate(cwd, accountDir);
     const branches = parseBranches(await this.git(git, cwd, [...READ_FLAGS, 'for-each-ref', '--format=%(refname:short)', 'refs/heads']));
     const rejected = switchTargetError(base, branches);
-    if (rejected !== null) throw new Error(`No se crea el worktree: ${rejected}`);
+    if (rejected !== null) throw new UserFacingError(localizedWithParts('errors.git.worktreeCreateRejected', {}, { detail: rejected }));
     const name = this.freeName(cwd, worktreeSlug(firstMessage), new Set(branches));
     const path = join(cwd, ...WORKTREES_DIR, name);
     const branch = `claude/${name}`;
@@ -113,7 +114,7 @@ class GitWorktreeService implements WorktreeService {
     if (this.deps.fs.exists(cwd)) return;
     const git = this.gate(ref.repoRoot, accountDir);
     const branches = parseBranches(await this.git(git, ref.repoRoot, [...READ_FLAGS, 'for-each-ref', '--format=%(refname:short)', 'refs/heads']));
-    if (!branches.includes(ref.branch)) throw new Error(`La rama ${ref.branch} ya no existe en ${ref.repoRoot}: no se puede recrear el worktree`);
+    if (!branches.includes(ref.branch)) throw new UserFacingError(localized('errors.git.worktreeBranchGone', { branch: ref.branch, repoRoot: ref.repoRoot }));
     const flags = await this.safeFlags(git, ref.repoRoot);
     await this.git(git, ref.repoRoot, ['worktree', 'prune']);
     await this.git(git, ref.repoRoot, [...flags, 'worktree', 'add', '--no-checkout', cwd, ref.branch]);
@@ -148,7 +149,7 @@ class GitWorktreeService implements WorktreeService {
     if (!/^[\w.][\w./-]*$/.test(base)) throw new Error(`Rama base no valida: "${base}"`);
     const git = this.gate(cwd, accountDir);
     const dirty = await this.git(git, cwd, [...READ_FLAGS, 'status', '--porcelain']);
-    if (hasUserChanges(dirty)) throw new Error(`No se trae ${base} con cambios sin confirmar en ${cwd}`);
+    if (hasUserChanges(dirty)) throw new UserFacingError(localized('errors.git.mergeBaseDirty', { base, cwd }));
     await this.git(git, cwd, ['fetch', 'origin', base]);
     try {
       await this.git(git, cwd, ['merge', '--no-edit', 'FETCH_HEAD']);
@@ -162,7 +163,7 @@ class GitWorktreeService implements WorktreeService {
 
   private gate(cwd: string, accountDir: string): string {
     const git = this.deps.findBin();
-    if (git === null) throw new Error('No hay git para crear el worktree');
+    if (git === null) throw new UserFacingError(localized('errors.git.noGitForWorktree'));
     if (!this.deps.isTrusted(cwd, accountDir)) throw new Error(`Carpeta no autorizada para git: ${cwd}`);
     return git;
   }
@@ -179,7 +180,7 @@ class GitWorktreeService implements WorktreeService {
     const listed = parseWorktreeList(await this.git(git, ref.repoRoot, ['worktree', 'list', '--porcelain']));
     const wanted = this.normalize(cwd);
     if (!listed.some((entry) => this.normalize(entry.path) === wanted && entry.branch === ref.branch)) {
-      throw new Error(`${cwd} no es un worktree de Mage registrado en ${ref.repoRoot}`);
+      throw new UserFacingError(localized('errors.git.notRegisteredWorktree', { cwd, repoRoot: ref.repoRoot }));
     }
   }
 
@@ -193,7 +194,7 @@ class GitWorktreeService implements WorktreeService {
       const name = attempt === 1 ? slug : `${slug}-${attempt}`;
       if (!branches.has(`claude/${name}`) && !this.deps.fs.exists(join(repoRoot, ...WORKTREES_DIR, name))) return name;
     }
-    throw new Error(`No hay un nombre libre para el worktree «${slug}» tras ${MAX_NAME_ATTEMPTS} intentos`);
+    throw new UserFacingError(localized('errors.git.noFreeWorktreeName', { slug, attempts: String(MAX_NAME_ATTEMPTS) }));
   }
 
   // Sin hooks, sin fsmonitor y con cada filtro del repo (y del usuario) anulado. `config --list` sale con

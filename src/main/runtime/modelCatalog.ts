@@ -1,7 +1,7 @@
 import { modelsUrl } from '@shared/providers';
-import { localized, type LocalizedText } from '@shared/i18n/localizedText';
+import { localized, localizedWithParts, UserFacingError, type LocalizedText } from '@shared/i18n/localizedText';
 import { LMSTUDIO_MODELS_SCHEMA, MODELS_LIST_SCHEMA, OLLAMA_SHOW_SCHEMA } from './chatSchemas';
-import { redactUrl } from './chatClient';
+import { urlPart } from './chatClient';
 
 // Lo que Mage sabe de un modelo de un endpoint OpenAI-compatible: su ventana de contexto y si admite
 // herramientas. Fuentes por prioridad (P-032 §4.7):
@@ -59,9 +59,9 @@ export class ModelCatalog {
   async listModels(endpoint: CatalogEndpoint): Promise<string[]> {
     const url = modelsUrl(endpoint.baseUrl);
     const response = await this.deps.fetch(url, { headers: authHeaders(endpoint.apiKey) });
-    if (!response.ok) throw new Error(`El servidor respondió ${response.status} en ${redactUrl(url)}`);
+    if (!response.ok) throw new UserFacingError(localizedWithParts('errors.runtime.catalogHttpStatus', { status: String(response.status) }, { url: urlPart(url) }));
     const parsed = MODELS_LIST_SCHEMA.safeParse(await response.json());
-    if (!parsed.success) throw new Error(`Catálogo de modelos con forma inesperada en ${redactUrl(url)}`);
+    if (!parsed.success) throw new UserFacingError(localizedWithParts('errors.runtime.catalogUnexpectedShape', {}, { url: urlPart(url) }));
     return parsed.data.data.map((entry) => entry.id);
   }
 
@@ -70,7 +70,7 @@ export class ModelCatalog {
     const supportsTools = endpoint.supportsTools ?? probe?.supportsTools ?? null;
     if (endpoint.contextWindow !== undefined) {
       if (!Number.isInteger(endpoint.contextWindow) || endpoint.contextWindow <= 0) {
-        throw new Error(`Ventana de contexto invalida en el proveedor ${endpoint.id}: ${endpoint.contextWindow}`);
+        throw new UserFacingError(localized('errors.runtime.contextWindowInvalidProvider', { provider: endpoint.id, window: String(endpoint.contextWindow) }));
       }
       return { contextWindow: endpoint.contextWindow, contextSource: 'manual', supportsTools, warning: null };
     }

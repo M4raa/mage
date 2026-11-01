@@ -12,6 +12,8 @@ import { useMcpStore } from '../../mcpStore';
 import { Icon } from '../Icon';
 import { MCP_BUTTON_CLASS as BUTTON_CLASS, MCP_DIALOG_PANEL_CLASS, MCP_DIALOG_SCRIM_CLASS, MCP_PRIMARY_BUTTON_CLASS, stopEscape } from './mcpStyles';
 import { useT } from '../../../i18n/uiLanguage';
+import { renderLocalized } from '@shared/i18n/localizedText';
+import { describeError } from '../../describeError';
 
 // Editor de UN servidor comun, en dialogo y por tipo (P-028 punto 5): local = comando, argumentos y
 // variables; remoto = URL y cabeceras. Los valores guardados de env/headers llegan ENMASCARADOS
@@ -66,15 +68,15 @@ export function McpServerDialog({ row, onClose }: { readonly row: McpInventoryRo
         setDraft((current) => ({ ...current, env: withRevealed(current.env, secrets.env), headers: withRevealed(current.headers, secrets.headers) }));
         setRevealed(true);
       })
-      .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)));
+      .catch((err: unknown) => setError(err instanceof Error ? describeError(err) : String(err)));
   };
   const save = (): void => {
     const problem = validateServerDraft(draft);
-    if (problem !== null) return setError(problem);
+    if (problem !== null) return setError(renderLocalized(t, problem));
     setBusy(true);
     mutate({ op: 'upsert', originalName: row?.name ?? null, draft })
-      .then((result) => (result.status === 'saved' ? onClose() : setError(result.message)))
-      .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)))
+      .then((result) => (result.status === 'saved' ? onClose() : setError(renderLocalized(t, result.message))))
+      .catch((err: unknown) => setError(err instanceof Error ? describeError(err) : String(err)))
       .finally(() => setBusy(false));
   };
   const remote = isRemoteTransport(draft.transport);

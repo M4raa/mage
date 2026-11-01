@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { ImageAttachment } from '@shared/ipc';
-import { base64ByteLength, validateAttachment } from '@shared/attachments';
+import { base64ByteLength, ERROR_FORMAT_LOCALE, validateAttachment } from '@shared/attachments';
 import { buildUserContentBlocks } from '@shared/imageRefs';
 import type { MageEvent, PermissionDecision } from '@shared/events';
 import { localized } from '@shared/i18n/localizedText';
@@ -135,7 +135,7 @@ export class ClaudeAdapter implements ProviderAdapter {
     // Segunda validacion, la de verdad: esto es lo que llega por IPC. `data.length` NO es el tamaño
     // (base64 abulta ~4/3), asi que se decodifica el tamaño real.
     for (const attachment of attachments) {
-      validateAttachment({ mediaType: attachment.mediaType, byteLength: base64ByteLength(attachment.data) });
+      validateAttachment({ mediaType: attachment.mediaType, byteLength: base64ByteLength(attachment.data) }, ERROR_FORMAT_LOCALE);
     }
     // Cada imagen justo detras de su token `[Imagen N]` (P-026 3.2; MEDIDO en S3: el CLI respeta el orden
     // intercalado). Nunca un bloque de texto vacio: un mensaje de SOLO imagen tambien vale.

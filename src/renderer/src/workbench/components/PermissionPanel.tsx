@@ -7,6 +7,7 @@ import { PermissionDecisionButtons } from './PermissionDecisionButtons';
 import type { PermissionRule, SettingsOrigin } from '@shared/ipc';
 import type { PermissionView } from '../types';
 import { useT } from '../../i18n/uiLanguage';
+import { describeError } from '../describeError';
 
 // Panel "Permiso" del inspector. Tiene DOS trabajos, y el segundo es nuevo (2.3b):
 //
@@ -164,7 +165,7 @@ function ConfiguredPermissions({
         if (!cancelled) setRules(settings.rules);
       })
       .catch((err: unknown) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : String(err));
+        if (!cancelled) setError(err instanceof Error ? describeError(err) : String(err));
       });
     return () => {
       cancelled = true;

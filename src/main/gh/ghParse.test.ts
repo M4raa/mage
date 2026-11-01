@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import { foreignText, localized, UserFacingError } from '@shared/i18n/localizedText';
 import { classifyGhExit, normalizeCheckState, parsePrView, parseRunList, pickBranchPr, summarizeChecks } from './ghParse';
 
 // Fixtures MEDIDOS con gh 2.102.0 (`spike/gh-spike.mjs` con MAGE_GH_FIXTURES), anonimizados a acme/demo.
@@ -49,6 +50,20 @@ describe('pickBranchPr', () => {
 
   it('pickBranchPr_noEsJson_lanzaConElTexto', () => {
     expect(() => pickBranchPr('no json', 'acme')).toThrow('no json');
+  });
+
+  it('pickBranchPr_noEsJson_envuelveElErrorDeAnalisisComoTextoAjeno', () => {
+    const thrown = (() => { try { pickBranchPr('no json', 'acme'); } catch (err) { return err; } })();
+
+    expect(thrown).toBeInstanceOf(UserFacingError);
+    const text = (thrown as UserFacingError).localized;
+    expect(text.key).toBe('errors.gh.invalidJson');
+    expect(text.values).toEqual({ what: 'gh pr list', output: 'no json' });
+    expect(text.parts?.['detail']?.key).toBe(foreignText('x').key);
+  });
+
+  it('parseRunList_noEsLista_lanzaLaClaveConLaSalida', () => {
+    expect(() => parseRunList('{}')).toThrow(expect.objectContaining({ localized: localized('errors.gh.unexpectedRunList', { output: '{}' }) }));
   });
 });
 

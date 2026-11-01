@@ -7,6 +7,8 @@
 // `ok`/`error` a pelo en la otra. Un solo modulo puro, y un test que fija que las dos rutas dan lo
 // mismo.
 
+import { localizeDecimalPoint } from '../i18n/format';
+
 const SUMMARY_MAX_LENGTH = 120;
 
 // Nombres del tool de subagente segun la version del CLI (`Agent` en las recientes, `Task` en otras).
@@ -52,7 +54,7 @@ export function formatToolMeta(status: ToolStatus): string {
 }
 
 function formatDuration(ms: number): string {
-  return ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(1)} s`;
+  return ms < 1000 ? `${ms} ms` : `${localizeDecimalPoint((ms / 1000).toFixed(1))} s`;
 }
 
 function stringField(input: Readonly<Record<string, unknown>>, key: string): string {

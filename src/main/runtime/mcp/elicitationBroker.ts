@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { MageEvent } from '@shared/events';
-import { localized } from '@shared/i18n/localizedText';
+import { localized, UserFacingError } from '@shared/i18n/localizedText';
 import { parseElicitationRequest, validateElicitationAnswer, type ElicitationAnswer, type ElicitationRequest } from '@shared/elicitation';
 
 export type McpElicitationResult = { readonly action: 'accept' | 'decline' | 'cancel'; readonly content?: Readonly<Record<string, string | number | boolean>> };
@@ -27,7 +27,7 @@ export class ElicitationBroker {
 
   answer(answer: ElicitationAnswer): void {
     const pending = this.pending.get(answer.requestId);
-    if (pending === undefined) throw new Error(`Elicitation desconocida o resuelta: ${answer.requestId}`);
+    if (pending === undefined) throw new UserFacingError(localized('errors.runtime.elicitationUnknown', { requestId: answer.requestId }));
     if (!validateElicitationAnswer(pending.request, answer)) throw new Error('Respuesta de elicitation inválida');
     this.pending.delete(answer.requestId);
     pending.resolve({ action: answer.action, ...(answer.action === 'accept' && pending.request.mode === 'form' ? { content: answer.content ?? {} } : {}) });

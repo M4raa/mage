@@ -324,7 +324,7 @@ describe('reduceEvent — reinicio automatico (C1)', () => {
 
     const marker = blocksOf(patch).at(-1);
     expect(marker).toMatchObject({ kind: 'system' });
-    expect(marker?.kind === 'system' && marker.text).toContain('2.0 s');
+    expect(marker?.kind === 'system' && marker.text).toContain('2,0 s');
     expect(marker?.kind === 'system' && marker.text).toContain('intento 2');
     // Ni 'error' ni 'streaming': el motor esta reanudando por su cuenta.
     expect(patch.statusByChat?.[TAB]).toBe('idle');
