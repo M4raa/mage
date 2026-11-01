@@ -3,6 +3,7 @@ import type { PermissionDecision } from '@shared/events';
 import type { ElicitationAnswer } from '@shared/elicitation';
 import type { AnswerReceipt, ConversationSnapshot, QueuedMessage, SendReceipt } from '@shared/coordination';
 import type { SendMessageParams } from '@shared/ipc';
+import { UserFacingError, renderForLog } from '@shared/i18n/localizedText';
 import type { Translate } from '@shared/i18n/translator';
 import type { SessionLogFn } from '../engine/agentSession';
 import type { SequencedSessionEvent } from '../coordination/sessionCoordinator';
@@ -334,10 +335,16 @@ const OWN_ERROR_CODES: readonly (readonly [abstract new (...args: never[]) => Er
   [UnsupportedMethodError, HostErrorCode.Unsupported],
 ];
 
+// Un UserFacingError lleva marca y JSON tras el castellano: al cliente solo le llega el castellano limpio.
+function errorMessageOf(err: unknown): string {
+  if (err instanceof UserFacingError) return renderForLog(err.localized);
+  return err instanceof Error ? err.message : String(err);
+}
+
 // Un fallo del coordinador: sesión inexistente es un error propio; el resto es interno (el mensaje llega al
 // cliente, que es de confianza: ya presentó el token).
 function toErrorBody(err: unknown): HostErrorBody {
-  const message = err instanceof Error ? err.message : String(err);
+  const message = errorMessageOf(err);
   const own = OWN_ERROR_CODES.find(([errorClass]) => err instanceof errorClass);
   if (own !== undefined) return { code: own[1], message };
   if (message.startsWith('Sesion inexistente')) return { code: HostErrorCode.UnknownSession, message };

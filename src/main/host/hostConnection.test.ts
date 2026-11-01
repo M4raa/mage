@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { ConversationSnapshot } from '@shared/coordination';
-import { localized } from '@shared/i18n/localizedText';
+import { UserFacingError, localized } from '@shared/i18n/localizedText';
 import { createTranslator } from '@shared/i18n/translator';
 import type { SequencedSessionEvent } from '../coordination/sessionCoordinator';
 import { HELLO_DEADLINE_MS, HostConnection, MAX_BUFFERED_BYTES, type HostSessions, type HostTransport } from './hostConnection';
@@ -229,6 +229,19 @@ describe('HostConnection — frontera de entrada', () => {
 
     expect(h.lines()[1]!.error).toEqual({ code: HostErrorCode.UnknownSession, message: 'Sesion inexistente: zz' });
     expect(h.isEnded()).toBe(false);
+  });
+
+  it('toErrorBody_userFacingError_mensajeLimpioSinMarca', () => {
+    const h = harness({ sessions: { snapshot: vi.fn(() => { throw new UserFacingError(localized('errors.engine.sessionMissing', { sessionId: 'zz' })); }) } });
+    h.hello();
+
+    h.send({ jsonrpc: '2.0', id: 2, method: 'session.snapshot', params: { sessionId: 'zz' } });
+
+    const error = h.lines()[1]!.error as { code: number; message: string };
+    expect(error.code).toBe(HostErrorCode.UnknownSession);
+    expect(error.message.startsWith('Sesion inexistente:')).toBe(true);
+    expect(error.message).not.toContain('{');
+    expect(error.message).not.toContain('⁣');
   });
 
   it('dispatch_falloDelCoordinador_internalConSuMensaje', () => {
