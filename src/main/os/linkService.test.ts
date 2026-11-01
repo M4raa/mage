@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { localized } from '@shared/i18n/localizedText';
 import { LinkService, type LinkDeps, type LinkStat } from './linkService';
 
 // Stat de mentira: controla isSymbolicLink/isDirectory por test.
@@ -141,6 +142,7 @@ describe('LinkService.createDirLink', () => {
     );
 
     expect(() => service.createDirLink('/t', '/l')).toThrow(/\/l/);
+    expect(() => service.createDirLink('/t', '/l')).toThrow(expect.objectContaining({ localized: localized('errors.os.linkNotDirectory', { link: '/l', target: '/t' }) }));
     expect(symlink).not.toHaveBeenCalled();
   });
 });

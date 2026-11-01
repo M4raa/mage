@@ -1,4 +1,5 @@
 import { basename } from 'node:path';
+import { localized, UserFacingError } from '@shared/i18n/localizedText';
 import {
   buildOpenEditorCommand,
   buildOpenTerminalCommand,
@@ -65,7 +66,7 @@ export class OpenWithService {
   // reales de ejecucion. Que hoy solo se llame con una constante fija no es una garantia: la garantia
   // es esta comprobacion.
   async openExternal(url: string): Promise<void> {
-    if (!isHttpsUrl(url)) throw new Error(`Solo se pueden abrir URLs https: ${JSON.stringify(url)}`);
+    if (!isHttpsUrl(url)) throw new UserFacingError(localized('errors.os.httpsOnly', { url: JSON.stringify(url) }));
     await this.deps.openExternal(url);
   }
 

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { LocalizedText } from './i18n/localizedText';
 import { MAX_ID_CHARS } from './sessionInput';
 
 // Bloqueo de conversación entre instancias de Mage (#55, F2.8; §4 de INFORME-019 con H4 de la devolución 13). Una
@@ -15,7 +16,7 @@ export interface ConversationLockRef {
 // Lo que ve un cliente: la tiene esta instancia, o la tiene otra (y si esa otra parece muerta: «Tomar el control»).
 export type ConversationLockStatus =
   | { readonly owner: true }
-  | { readonly owner: false; readonly profile: string; readonly orphan: boolean };
+  | { readonly owner: false; readonly profile: LocalizedText; readonly orphan: boolean };
 
 // Una ruta de cuenta razonable cabe de sobra; acotada como cualquier entrada.
 const MAX_ACCOUNT_DIR_CHARS = 4096;

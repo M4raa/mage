@@ -26,6 +26,7 @@ import { Dropdown } from './Dropdown';
 import { StepSlider } from './StepSlider';
 import { CODEX_DEFAULT_PROFILE, CODEX_WRITE_PROFILE, agyPermissionSteps, codexPermissionSteps, defaultModeOf, effectiveCodexMode, effortStepLabel, effortSteps, permissionModeLabel, permissionStepsFor } from '../stepSliderModel';
 import { usePaneTabId } from '../paneContext';
+import { renderLocalized, type LocalizedText } from '@shared/i18n/localizedText';
 import { t as translate, useT } from '../../i18n/uiLanguage';
 import { activeFormatLocale } from '../../i18n/format';
 import type { PermissionMode } from '@shared/ipc';
@@ -101,21 +102,21 @@ function measureInlineEditorWidth(row: HTMLElement | null, controls: HTMLElement
   return Number.isFinite(width) ? width : null;
 }
 
-function promptPlaceholder(tabId: string, readOnlyLock: { readonly profile: string } | null): string {
-  if (readOnlyLock !== null) return translate('prompt.placeholder.readOnly', { lock: readOnlyLockMessage(readOnlyLock.profile) });
+function promptPlaceholder(tabId: string, readOnlyLock: { readonly profile: LocalizedText } | null): string {
+  if (readOnlyLock !== null) return translate('prompt.placeholder.readOnly', { lock: readOnlyLockMessage(renderLocalized(translate, readOnlyLock.profile)) });
   return tabId.length === 0 ? translate('prompt.placeholder.noTab') : translate('prompt.placeholder.default');
 }
 
 // Solo lectura por el bloqueo entre instancias (#55): quién la tiene y, solo si esa instancia parece muerta (pid caído o
 // sin latido en 90 s), «Tomar el control».
-function ReadOnlyLockNotice({ tabId, profile, orphan }: { readonly tabId: string; readonly profile: string; readonly orphan: boolean }): React.JSX.Element {
+function ReadOnlyLockNotice({ tabId, profile, orphan }: { readonly tabId: string; readonly profile: LocalizedText; readonly orphan: boolean }): React.JSX.Element {
   const t = useT();
   const takeOver = useWorkbenchStore((s) => s.takeOverConversation);
   const [error, setError] = useState<string | null>(null);
   return (
     <div role="status" data-conversation-lock="read-only" className="mb-[6px] flex items-center gap-[8px] rounded-[7px] border border-mg-warn-border bg-mg-warn-bg px-[10px] py-[5px] text-[11px] text-mg-warn-text">
       <span className="min-w-0 flex-1">
-        {readOnlyLockMessage(profile)}. {orphan ? t('prompt.lock.orphan') : t('prompt.lock.readOnly')}
+        {readOnlyLockMessage(renderLocalized(t, profile))}. {orphan ? t('prompt.lock.orphan') : t('prompt.lock.readOnly')}
         {error !== null && <span className="ml-[6px] text-mg-danger">{error}</span>}
       </span>
       {orphan && (

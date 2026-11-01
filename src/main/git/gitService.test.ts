@@ -1,5 +1,6 @@
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
+import { localized, localizedWithParts } from '@shared/i18n/localizedText';
 import { createGitService, findRepoRootWith, type GitRunner, type GitServiceDeps } from './gitService';
 
 const Z = '\u0000';
@@ -110,6 +111,7 @@ describe('createGitService.switchBranch', () => {
     const run = fakeRunner({ 'for-each-ref': 'main\n' });
 
     await expect(createGitService(deps({ run })).switchBranch('/r', '/acc', 'otra')).rejects.toThrow('"otra"');
+    await expect(createGitService(deps({ run })).switchBranch('/r', '/acc', 'otra')).rejects.toThrow(expect.objectContaining({ localized: localizedWithParts('errors.git.switchRejected', {}, { detail: localized('errors.git.branchMissing', { name: 'otra' }) }) }));
     expect(run.mock.calls.some(([, args]) => args[0] === 'switch')).toBe(false);
   });
 
@@ -117,6 +119,7 @@ describe('createGitService.switchBranch', () => {
     const run = fakeRunner({ status: DIRTY_STATUS, diff: '', 'for-each-ref': 'main\nfeature\n' });
 
     await expect(createGitService(deps({ run })).switchBranch('/r', '/acc', 'feature')).rejects.toThrow('cambios sin confirmar');
+    await expect(createGitService(deps({ run })).switchBranch('/r', '/acc', 'feature')).rejects.toThrow(expect.objectContaining({ localized: localized('errors.git.switchDirty', { cwd: '/r' }) }));
   });
 
   it('switchBranch_sinConfianza_lanza', async () => {

@@ -1,5 +1,6 @@
 import { existsSync, lstatSync, mkdirSync, realpathSync, rmdirSync, symlinkSync, unlinkSync } from 'node:fs';
 import { platform as osPlatform } from 'node:os';
+import { localized, UserFacingError } from '@shared/i18n/localizedText';
 import { pathEquals } from './pathUtils';
 
 // Clasificacion de una carpeta compartida: enlace (symlink/junction), dir privado real, o ausente.
@@ -68,7 +69,7 @@ export class LinkService {
     // reconoce dirs). Un fichero donde deberia ir la carpeta compartida es un estado corrupto: se
     // lanza con la ruta en vez de dejar que el symlink falle con un EEXIST sin contexto.
     if (this.deps.exists(link)) {
-      throw new Error(`La ruta del enlace existe y no es un directorio: "${link}" (target "${target}")`);
+      throw new UserFacingError(localized('errors.os.linkNotDirectory', { link, target }));
     }
     const type = this.deps.platform === 'win32' ? 'junction' : 'dir';
     this.deps.symlink(target, link, type);

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { localized } from '@shared/i18n/localizedText';
 import { agyCommandName, findAgyBinary, resolveAgyBinary, type AgyResolverDeps } from './agyBinaryResolver';
 
 // Ruta MEDIDA en Windows el 2026-08-11: %LOCALAPPDATA%\agy\bin\agy.exe.
@@ -83,5 +84,6 @@ describe('agyBinaryResolver', () => {
   it('resolveAgyBinary_noInstalado_lanzaDiciendoComoArreglarlo', () => {
     expect(() => resolveAgyBinary(deps())).toThrow(/MAGE_AGY_BIN/);
     expect(() => resolveAgyBinary(deps())).toThrow(/agy\.exe/);
+    expect(() => resolveAgyBinary(deps())).toThrow(expect.objectContaining({ localized: localized('errors.os.agyNotFound', { command: agyCommandName('win32') }) }));
   });
 });

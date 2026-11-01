@@ -7,6 +7,7 @@
 // solo se traducen.
 
 import type { LogLevel } from '@shared/debug';
+import { foreignText, localized, renderForLog, type LocalizedText } from '@shared/i18n/localizedText';
 import type { UpdateState } from '@shared/update';
 
 // Intervalo minimo entre comprobaciones. La app es residente en el tray (puede estar dias abierta),
@@ -24,11 +25,17 @@ export const FIRST_CHECK_DELAY_MS = 20_000;
 const MAX_MESSAGE_CHARS = 200;
 
 // Resume un mensaje del updater: primera linea, recortada. Frontera de entrada (el texto viene de
-// electron-updater / de la red), asi que se normaliza aqui y no en cada punto de log.
-export function summarizeUpdaterMessage(raw: string): string {
+// electron-updater / de la red), asi que se normaliza aqui y no en cada punto de log. El texto es AJENO; solo
+// el de reserva (mensaje vacio) es de Mage.
+export function summarizeUpdaterError(raw: string): LocalizedText {
   const firstLine = (raw.split('\n')[0] ?? '').trim();
-  if (firstLine.length === 0) return 'error sin mensaje';
-  return firstLine.length <= MAX_MESSAGE_CHARS ? firstLine : `${firstLine.slice(0, MAX_MESSAGE_CHARS)}…`;
+  if (firstLine.length === 0) return localized('app.update.noMessage');
+  return foreignText(firstLine.length <= MAX_MESSAGE_CHARS ? firstLine : `${firstLine.slice(0, MAX_MESSAGE_CHARS)}…`);
+}
+
+// Lo mismo para el log (castellano, como siempre).
+export function summarizeUpdaterMessage(raw: string): string {
+  return renderForLog(summarizeUpdaterError(raw));
 }
 
 export interface CheckContext {
@@ -75,7 +82,8 @@ export type UpdateEvent =
   | { readonly kind: 'available'; readonly version: string }
   | { readonly kind: 'notAvailable'; readonly version: string }
   | { readonly kind: 'downloaded'; readonly version: string; readonly releaseNotes: string | null }
-  | { readonly kind: 'error'; readonly message: string };
+  // `text`: el texto de pantalla cuando es una frase de Mage y no el mensaje del updater (p. ej. «en desarrollo»).
+  | { readonly kind: 'error'; readonly message: string; readonly text?: LocalizedText };
 
 // Lo que provoca cada evento en el log: una entrada SIEMPRE (nada en silencio). Lo que ve el usuario
 // sale de `nextUpdateState`, no de aqui.
@@ -125,7 +133,7 @@ export function nextUpdateState(state: UpdateState, event: UpdateEvent): UpdateS
     case 'downloaded':
       return { kind: 'ready', version: requireVersion(event.version, event.kind), releaseNotes: event.releaseNotes };
     case 'error':
-      return { kind: 'error', message: summarizeUpdaterMessage(event.message) };
+      return { kind: 'error', message: event.text ?? summarizeUpdaterError(event.message) };
   }
 }
 

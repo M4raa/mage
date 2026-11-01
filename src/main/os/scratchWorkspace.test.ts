@@ -2,6 +2,7 @@ import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { isTrusted } from './workspaceTrust';
 import { describe, expect, it } from 'vitest';
+import { localized } from '@shared/i18n/localizedText';
 import { join, resolve } from 'node:path';
 import { ensureWorkingDirectory, localScratchRoot, workspaceTrusted } from './scratchWorkspace';
 
@@ -23,6 +24,7 @@ describe('R32 / D4', () => {
  it('carpetaUsuarioAusente_noLaCreaYNombraRuta', () => {
    const created: string[] = [];
    expect(() => ensureWorkingDirectory('/usuario/proyecto', ['/legacy/mage-scratch'], { exists: () => false, mkdir: p => { created.push(p); } })).toThrow('/usuario/proyecto');
+   expect(() => ensureWorkingDirectory('/usuario/proyecto', ['/legacy/mage-scratch'], { exists: () => false, mkdir: () => undefined })).toThrow(expect.objectContaining({ localized: localized('errors.os.workingDirectoryGone', { cwd: '/usuario/proyecto' }) }));
    expect(created).toEqual([]);
  });
 });

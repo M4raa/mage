@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { localized, UserFacingError, wrapError } from '@shared/i18n/localizedText';
 import {
   EMPTY_CHECK_SUMMARY,
   type GhCheck,
@@ -157,7 +158,7 @@ function parseJson(stdout: string, what: string): unknown {
   try {
     return JSON.parse(stdout);
   } catch (err) {
-    throw new Error(`JSON no valido de ${what}: ${String(err)} (${stdout.slice(0, 80)})`);
+    throw new UserFacingError(wrapError('errors.gh.invalidJson', { what, output: stdout.slice(0, 80) }, err));
   }
 }
 
@@ -186,7 +187,7 @@ export function pickBranchPr(stdout: string, owner: string): GhPullRequest | nul
 // `gh run list --json RUN_FIELDS`. Mismo criterio: una entrada rota se salta.
 export function parseRunList(stdout: string): readonly GhRun[] {
   const list = z.array(z.unknown()).safeParse(parseJson(stdout, 'gh run list'));
-  if (!list.success) throw new Error(`Lista de runs de gh con forma inesperada: ${stdout.slice(0, 80)}`);
+  if (!list.success) throw new UserFacingError(localized('errors.gh.unexpectedRunList', { output: stdout.slice(0, 80) }));
   const runs: GhRun[] = [];
   for (const entry of list.data) {
     const run = RUN_SCHEMA.safeParse(entry);

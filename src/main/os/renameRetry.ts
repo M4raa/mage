@@ -4,6 +4,8 @@
 // abierto microsegundos, así que unos pocos reintentos cortos bastan. Es síncrono porque lo son sus llamantes
 // (`writeAtomic` y el latido de los locks); la espera máxima total es (RENAME_ATTEMPTS - 1) × RENAME_RETRY_DELAY_MS.
 
+import { UserFacingError, wrapError } from '@shared/i18n/localizedText';
+
 export const RENAME_ATTEMPTS = 5;
 export const RENAME_RETRY_DELAY_MS = 10;
 const TRANSIENT_RENAME_CODES: readonly string[] = ['EPERM', 'EBUSY'];
@@ -18,7 +20,7 @@ export function renameWithRetry(deps: RenameRetryDeps, from: string, to: string)
     const failure = tryRename(deps, from, to);
     if (failure === null) return;
     if (attempt >= RENAME_ATTEMPTS) {
-      throw new Error(`No se pudo sustituir "${to}" tras ${RENAME_ATTEMPTS} intentos: ${failure.message}`, { cause: failure });
+      throw new UserFacingError(wrapError('errors.os.renameFailed', { path: to, attempts: String(RENAME_ATTEMPTS) }, failure));
     }
     deps.sleep(RENAME_RETRY_DELAY_MS);
   }

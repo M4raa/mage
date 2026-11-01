@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { localized } from '@shared/i18n/localizedText';
 import { isHttpsUrl, OpenWithService, type OpenWithDeps } from './openWithService';
 
 function deps(overrides: Partial<OpenWithDeps> = {}): OpenWithDeps {
@@ -52,6 +53,7 @@ describe('OpenWithService', () => {
     const d = deps();
 
     await expect(new OpenWithService(d).openExternal('file:///C:/x.exe')).rejects.toThrow(/file:/);
+    await expect(new OpenWithService(d).openExternal('file:///C:/x.exe')).rejects.toThrow(expect.objectContaining({ localized: localized('errors.os.httpsOnly', { url: JSON.stringify('file:///C:/x.exe') }) }));
     expect(d.openExternal).not.toHaveBeenCalled();
   });
 

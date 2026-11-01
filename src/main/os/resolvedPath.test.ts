@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from 'node:
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { localized } from '@shared/i18n/localizedText';
 import { resolvedPath } from './resolvedPath';
 
 const roots: string[] = [];
@@ -27,6 +28,7 @@ describe('resolvedPath — F1.9b', () => {
     const root = fixture(); const link = join(root, 'broken');
     symlinkSync(join(root, 'missing'), link, process.platform === 'win32' ? 'junction' : 'dir');
     expect(() => resolvedPath(link, 0)).toThrow(/Demasiados enlaces/);
+    expect(() => resolvedPath(link, 0)).toThrow(expect.objectContaining({ localized: localized('errors.os.tooManyLinks') }));
   });
 
   it('cicloDeEnlaces_lanzaSinRecursionInfinita', () => {

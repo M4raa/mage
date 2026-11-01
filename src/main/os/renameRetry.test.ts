@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { foreignText, UserFacingError } from '@shared/i18n/localizedText';
 import { RENAME_ATTEMPTS, RENAME_RETRY_DELAY_MS, renameWithRetry, sleepSync } from './renameRetry';
 
 // Windows rechaza el rename sobre un fichero que otro proceso tiene abierto para leerlo (EPERM/EBUSY, medido por
@@ -37,6 +38,17 @@ describe('renameWithRetry', () => {
     expect(() => renameWithRetry(deps, 'a.tmp', 'C:/locks/a.lock')).toThrow(/C:\/locks\/a\.lock.*EPERM/);
     expect(calls).toHaveLength(RENAME_ATTEMPTS);
     expect(sleeps).toHaveLength(RENAME_ATTEMPTS - 1);
+  });
+
+  it('renameWithRetry_EPERMSiempre_envuelveElErrorDelSistemaComoTextoAjeno', () => {
+    const { deps } = renameFailing(Number.POSITIVE_INFINITY, 'EPERM');
+    const thrown = (() => { try { renameWithRetry(deps, 'a.tmp', 'C:/locks/a.lock'); } catch (err) { return err; } })();
+
+    expect(thrown).toBeInstanceOf(UserFacingError);
+    const text = (thrown as UserFacingError).localized;
+    expect(text.key).toBe('errors.os.renameFailed');
+    expect(text.values).toEqual({ path: 'C:/locks/a.lock', attempts: String(RENAME_ATTEMPTS) });
+    expect(text.parts?.['detail']?.key).toBe(foreignText('x').key);
   });
 
   it('renameWithRetry_otroError_sePropagaSinReintentar', () => {

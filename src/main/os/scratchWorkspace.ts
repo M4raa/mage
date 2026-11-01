@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { join, relative, isAbsolute } from 'node:path';
+import { localized, UserFacingError } from '@shared/i18n/localizedText';
 import { resolvedPath } from './resolvedPath';
 import { isTrusted } from './workspaceTrust';
 
@@ -22,7 +23,7 @@ export function ensureWorkingDirectory(cwd: string, roots: readonly string[], fs
   if (fs.exists(cwd)) return false;
   const canonical = resolvedPath(cwd);
   if (roots.some(root => { const part = relative(resolvedPath(root), canonical); return /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i.test(part); })) { fs.mkdir(canonical); return true; }
-  throw new Error(`La carpeta de trabajo "${cwd}" ya no existe. Selecciona una carpeta existente.`);
+  throw new UserFacingError(localized('errors.os.workingDirectoryGone', { cwd }));
 }
 
 function within(target: string, root: string): boolean { const part = relative(root, target); return part === '' || (!part.startsWith('..') && !isAbsolute(part)); }

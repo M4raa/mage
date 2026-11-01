@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createStore } from 'zustand/vanilla';
 import type { ConversationLockRef, ConversationLockStatus } from '@shared/conversationLock';
+import { foreignText } from '@shared/i18n/localizedText';
 import { lockRefOf, RECLAIMED_NOTICE_MS, startConversationLockSync, type LockSyncMage, type LockSyncState } from './conversationLockSync';
 import type { Tab } from './types';
 
@@ -52,12 +53,12 @@ describe('lockRefOf', () => {
 
 describe('startConversationLockSync', () => {
   it('pestanaReanudada_laPideYGuardaElResultado', async () => {
-    const h = setup({ tabs: [tab('a', { resumeSessionId: 'c1' })] }, { owner: false, profile: 'mage', orphan: false });
+    const h = setup({ tabs: [tab('a', { resumeSessionId: 'c1' })] }, { owner: false, profile: foreignText('mage'), orphan: false });
 
     await h.answerAll();
 
     expect(h.mage.acquireConversationLock).toHaveBeenCalledWith({ ...REF, tabId: 'a' });
-    expect(h.store.getState().lockByChat).toEqual({ a: { owner: false, profile: 'mage', orphan: false } });
+    expect(h.store.getState().lockByChat).toEqual({ a: { owner: false, profile: foreignText('mage'), orphan: false } });
   });
 
   it('chatNuevo_seLaPideAlConocerSuIdNativo', async () => {
@@ -106,23 +107,23 @@ describe('startConversationLockSync', () => {
     await h.answerAll();
 
     h.lose(REF);
-    await h.answerAll({ owner: false, profile: 'mage-dev', orphan: false });
+    await h.answerAll({ owner: false, profile: foreignText('mage-dev'), orphan: false });
 
     expect(h.mage.acquireConversationLock).toHaveBeenCalledTimes(3);
-    expect(h.store.getState().lockByChat).toEqual({ a: { owner: false, profile: 'mage-dev', orphan: false }, b: { owner: true } });
+    expect(h.store.getState().lockByChat).toEqual({ a: { owner: false, profile: foreignText('mage-dev'), orphan: false }, b: { owner: true } });
   });
 
   it('revision_soloLectura_vuelveAPreguntarCada30sYVeElHuerfano', async () => {
     const h = setup({ tabs: [tab('a', { resumeSessionId: 'c1' }), tab('b', { resumeSessionId: 'mia' })] });
     await h.answerAll();
-    h.store.setState({ lockByChat: { a: { owner: false, profile: 'mage', orphan: false }, b: { owner: true } } });
+    h.store.setState({ lockByChat: { a: { owner: false, profile: foreignText('mage'), orphan: false }, b: { owner: true } } });
 
     h.tick();
-    await h.answerAll({ owner: false, profile: 'mage', orphan: true });
+    await h.answerAll({ owner: false, profile: foreignText('mage'), orphan: true });
 
     expect(h.every.mock.calls[0]?.[1]).toBe(30_000);
     expect(h.mage.acquireConversationLock).toHaveBeenCalledTimes(3);
-    expect(h.store.getState().lockByChat.a).toEqual({ owner: false, profile: 'mage', orphan: true });
+    expect(h.store.getState().lockByChat.a).toEqual({ owner: false, profile: foreignText('mage'), orphan: true });
     expect(h.store.getState().lockByChat.b).toEqual({ owner: true });
   });
 
@@ -138,7 +139,7 @@ describe('startConversationLockSync', () => {
 
   // Respuesta 4 de la devolución 17: la otra instancia SOLTÓ la conversación → esta pasa a ser la dueña sin botón y la
   // pestaña lo dice un momento; la revisión se hace también al enfocar la pestaña o la ventana.
-  const READ_ONLY: ConversationLockStatus = { owner: false, profile: 'mage', orphan: false };
+  const READ_ONLY: ConversationLockStatus = { owner: false, profile: foreignText('mage'), orphan: false };
 
   it('soltadaPorLaOtra_alRevisarPasaADuenaConAvisoQueSeVaSolo', async () => {
     const h = setup({ tabs: [tab('a', { resumeSessionId: 'c1' })] });

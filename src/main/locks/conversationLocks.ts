@@ -1,6 +1,7 @@
 import { join } from 'node:path';
 import { z } from 'zod';
 import type { ConversationLockRef, ConversationLockStatus } from '@shared/conversationLock';
+import { foreignText, localized, UserFacingError } from '@shared/i18n/localizedText';
 
 // Bloqueo de conversación entre instancias (#55, F2.8; §4 de INFORME-019 con H4 de la devolución 13). Un fichero por
 // conversación en un directorio de Mage COMPARTIDO por todos sus perfiles y fuera de ellos (nunca en el config dir de
@@ -57,7 +58,6 @@ const RECORD_SCHEMA = z.object({
 });
 type LockRecord = z.infer<typeof RECORD_SCHEMA>;
 
-const UNKNOWN_PROFILE = 'perfil desconocido';
 // Si el fichero desaparece entre «no pude crearlo» y «leerlo» (la otra lo soltó justo entonces), se reintenta.
 const CREATE_ATTEMPTS = 2;
 
@@ -97,7 +97,7 @@ export class ConversationLocks {
       const other = this.describeOther(path);
       if (other !== null) return other;
     }
-    throw new Error(`No se pudo crear ni leer el bloqueo de la conversación ${ref.nativeId}: ${path}`);
+    throw new UserFacingError(localized('errors.locks.cannotCreate', { nativeId: ref.nativeId, path }));
   }
 
   // «Tomar el control»: solo si el lock de la otra instancia es huérfano (pid muerto o sin latido en 90 s).
@@ -185,10 +185,10 @@ export class ConversationLocks {
     const record = parseRecord(text);
     if (record === null) {
       const mtime = this.deps.fs.mtimeMs(path);
-      return { owner: false, profile: UNKNOWN_PROFILE, orphan: mtime !== null && this.deps.now() - mtime > ORPHAN_MS };
+      return { owner: false, profile: localized('prompt.lock.unknownProfile'), orphan: mtime !== null && this.deps.now() - mtime > ORPHAN_MS };
     }
     const orphan = !this.deps.isPidAlive(record.pid) || this.deps.now() - record.heartbeatAt > ORPHAN_MS;
-    return { owner: false, profile: record.profile.length > 0 ? record.profile : UNKNOWN_PROFILE, orphan };
+    return { owner: false, profile: record.profile.length > 0 ? foreignText(record.profile) : localized('prompt.lock.unknownProfile'), orphan };
   }
 
   private pathOf(ref: ConversationLockRef): string {
