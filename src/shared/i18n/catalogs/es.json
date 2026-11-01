@@ -1399,7 +1399,6 @@
   "prompt.question.prevAria": "Pregunta anterior",
   "prompt.question.skip": "Omitir",
   "prompt.question.submit": "Responder",
-  "prompt.queue.edit": "Editar: devolver al input",
   "prompt.queue.editField": "Editar el mensaje en cola (Enter guarda, Escape cancela)",
   "prompt.queue.editInline": "Editar",
   "prompt.queue.header": "En cola ({count}) · se enviará al terminar el turno",

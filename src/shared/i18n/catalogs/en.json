@@ -1188,7 +1188,6 @@
   "prompt.question.prevAria": "Previous question",
   "prompt.question.skip": "Skip",
   "prompt.question.submit": "Submit",
-  "prompt.queue.edit": "Edit: return to the input",
   "prompt.queue.editField": "Edit the queued message (Enter saves, Escape cancels)",
   "prompt.queue.editInline": "Edit",
   "prompt.queue.header": "Queued ({count}) · will be sent when the turn ends",

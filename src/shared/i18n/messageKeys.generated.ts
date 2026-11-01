@@ -1401,7 +1401,6 @@ export interface MessageValues {
   readonly "prompt.question.prevAria": never;
   readonly "prompt.question.skip": never;
   readonly "prompt.question.submit": never;
-  readonly "prompt.queue.edit": never;
   readonly "prompt.queue.editField": never;
   readonly "prompt.queue.editInline": never;
   readonly "prompt.queue.header": { readonly "count": string | number };
