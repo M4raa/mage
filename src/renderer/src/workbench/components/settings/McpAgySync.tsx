@@ -5,6 +5,7 @@ import { Icon } from '../Icon';
 import { MCP_BUTTON_CLASS as BUTTON_CLASS, MCP_DIALOG_PANEL_CLASS, MCP_DIALOG_SCRIM_CLASS, MCP_PRIMARY_BUTTON_CLASS, stopEscape } from './mcpStyles';
 import { useT } from '../../../i18n/uiLanguage';
 import { formatDateTime } from '../../../i18n/format';
+import { describeError } from '../../describeError';
 
 // «Sincronizar con agy» (C3-j): agy no carga nada por sesion, asi que los comunes y las extensiones se
 // le EXPORTAN a su mcp_config.json. Mage solo toca lo que exporto, hace copia antes y enseña el cambio
@@ -138,5 +139,5 @@ function AgySyncDialog({ preview: initial, onClose }: { readonly preview: McpAgy
 }
 
 function describe(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
+  return err instanceof Error ? describeError(err) : String(err);
 }

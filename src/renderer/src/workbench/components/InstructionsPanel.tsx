@@ -6,6 +6,7 @@ import { Markdown } from './Markdown';
 import { Hint } from './TranscriptHint';
 import type { InstructionsFile } from '@shared/ipc';
 import { AGY_PROVIDER_ID } from '@shared/providers';
+import { describeError } from '../describeError';
 
 // Panel "Instrucciones" (2.9.b): el `CLAUDE.md` del PROYECTO y el del USUARIO, que son las
 // instrucciones que el CLI aplica de verdad a esta conversacion.
@@ -45,7 +46,7 @@ export function InstructionsPanel(): React.JSX.Element {
         if (!cancelled) setFiles(result);
       })
       .catch((err: unknown) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : String(err));
+        if (!cancelled) setError(err instanceof Error ? describeError(err) : String(err));
       });
     return () => {
       cancelled = true;

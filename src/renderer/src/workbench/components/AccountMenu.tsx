@@ -8,6 +8,7 @@ import type { Account } from '../types';
 import { ColorSwatches, MenuItem } from './TabContextMenu';
 import { useT } from '../../i18n/uiLanguage';
 import type { Translate } from '@shared/i18n/translator';
+import { describeError } from '../describeError';
 
 // Menu contextual del avatar de una cuenta en la cabecera (P-028, puntos 2 y 30): el color de la
 // cuenta (PERS-3) y «Eliminar cuenta…». Mismo patron que TabContextMenu (portal, clamp, Escape/clic
@@ -109,7 +110,7 @@ export function DeleteAccountDialog({
     setError(null);
     deleteAccount(account.id)
       .then(onClose)
-      .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)))
+      .catch((err: unknown) => setError(err instanceof Error ? describeError(err) : String(err)))
       .finally(() => setBusy(false));
   };
 
@@ -179,7 +180,7 @@ function usePrivateConversationCount(configDir: string, providerId: string): num
     window.mage
       .listConversations(configDir)
       .then((list) => alive && setCount(list.filter((c) => c.privacy === 'private').length))
-      .catch((err: unknown) => alive && setCount(err instanceof Error ? err.message : String(err)));
+      .catch((err: unknown) => alive && setCount(err instanceof Error ? describeError(err) : String(err)));
     return () => {
       alive = false;
     };

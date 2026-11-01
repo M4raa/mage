@@ -3,6 +3,7 @@ import { Icon } from './Icon';
 import { useWorkbenchStore } from '../workbenchStore';
 import type { ArtifactCard as ArtifactCardModel } from '../artifactView';
 import { useT } from '../../i18n/uiLanguage';
+import { describeError } from '../describeError';
 
 // Tarjeta de un artifact publicado (2.4). Lo que resuelve, y que un navegador no puede: abrirlo con la
 // MISMA cuenta que lo publico, aunque la conversacion se este mirando con otra.
@@ -39,7 +40,7 @@ export function ArtifactCard({ card }: { readonly card: ArtifactCardModel }): Re
     setPickerOpen(false);
     void window.mage
       .openArtifact(accountDir === undefined ? { url: card.url } : { url: card.url, accountDir })
-      .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)));
+      .catch((err: unknown) => setError(err instanceof Error ? describeError(err) : String(err)));
   };
 
   const copy = (): void => {

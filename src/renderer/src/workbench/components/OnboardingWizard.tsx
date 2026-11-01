@@ -9,6 +9,7 @@ import { essentialShortcuts, installCommandFor, shouldShowOnboarding, stepAfter,
 import { Icon } from './Icon';
 import { useT } from '../../i18n/uiLanguage';
 import type { MessageKey } from '@shared/i18n/messageKeys.generated';
+import { describeError } from '../describeError';
 
 // Asistente de PRIMER ARRANQUE. Lo que resuelve, y por lo que existe: Mage no instala el motor —es el
 // CLI real de Claude Code— asi que una instalacion limpia puede quedarse en una pantalla que no
@@ -202,7 +203,7 @@ function useProviderProbe(providerId: string): { readonly probe: ProviderProbeRe
       .catch((err: unknown) => {
         // El sondeo no puede tumbar el asistente: se enseña como "no instalado" con el motivo, que es
         // lo mismo que ve el usuario y ademas es accionable.
-        if (!cancelled) setResult({ kind: 'cli', endpoint: null, models: null, error: err instanceof Error ? err.message : String(err) });
+        if (!cancelled) setResult({ kind: 'cli', endpoint: null, models: null, error: err instanceof Error ? describeError(err) : String(err) });
       });
     return () => {
       cancelled = true;

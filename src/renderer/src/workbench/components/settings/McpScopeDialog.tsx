@@ -3,6 +3,7 @@ import { MCP_FAMILY_LABELS, MCP_PROVIDER_FAMILIES, mcpScopeKey, type McpProvider
 import { useWorkbenchStore } from '../../workbenchStore';
 import { MCP_BUTTON_CLASS as BUTTON_CLASS, MCP_DIALOG_PANEL_CLASS, MCP_DIALOG_SCRIM_CLASS, MCP_PRIMARY_BUTTON_CLASS, stopEscape } from './mcpStyles';
 import { useT } from '../../../i18n/uiLanguage';
+import { describeError } from '../../describeError';
 
 // «Solo en…» de un comun o de una extension (respuestas 22 y 27, C3-n): una lista de proveedores y,
 // en Claude, de cuentas. Por defecto, todos los compatibles. Es el control de acceso por modelo que
@@ -66,7 +67,7 @@ export function McpScopeDialog({
     if (!all && picked.size === 0) return setError(t('mcp.scope.emptyError'));
     onSave(all ? null : [...picked])
       .then(onClose)
-      .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)));
+      .catch((err: unknown) => setError(err instanceof Error ? describeError(err) : String(err)));
   };
   return (
     <div className={MCP_DIALOG_SCRIM_CLASS} onClick={onClose}>

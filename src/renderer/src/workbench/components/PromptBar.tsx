@@ -29,6 +29,7 @@ import { usePaneTabId } from '../paneContext';
 import { t as translate, useT } from '../../i18n/uiLanguage';
 import { activeFormatLocale } from '../../i18n/format';
 import type { PermissionMode } from '@shared/ipc';
+import { describeError } from '../describeError';
 
 // Referencia ESTABLE para el selector de zustand (un array nuevo por render seria un bucle).
 const NO_MODELS: readonly ProviderModel[] = [];
@@ -119,7 +120,7 @@ function ReadOnlyLockNotice({ tabId, profile, orphan }: { readonly tabId: string
       </span>
       {orphan && (
         <button
-          onClick={() => takeOver(tabId).catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)))}
+          onClick={() => takeOver(tabId).catch((err: unknown) => setError(err instanceof Error ? describeError(err) : String(err)))}
           className="shrink-0 rounded-[6px] border border-mg-border-emph px-[9px] py-[2px] text-[11px] text-mg-body2 hover:bg-mg-hover"
         >
           {t('prompt.lock.takeOver')}
@@ -356,7 +357,7 @@ export function PromptBar(): React.JSX.Element {
       const improved = await window.mage.improvePrompt({ draft: text, accountDir: activeTab.accountId });
       setPreview(improved);
     } catch (err) {
-      setError(t('prompt.improve.failed', { error: err instanceof Error ? err.message : String(err) }));
+      setError(t('prompt.improve.failed', { error: err instanceof Error ? describeError(err) : String(err) }));
     } finally {
       setBusy(false);
     }

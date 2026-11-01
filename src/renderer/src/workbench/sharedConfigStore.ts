@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { SharedConfigFile, SharedConfigSnapshot } from '@shared/ipc';
+import { describeError } from './describeError';
 
 interface SharedConfigStoreState {
   readonly snapshot: SharedConfigSnapshot | null;
@@ -32,7 +33,7 @@ export const useSharedConfigStore = create<SharedConfigStoreState>((set, get) =>
       const snapshot = await window.mage.loadSharedConfig();
       set({ snapshot, isLoading: false });
     } catch (err) {
-      set({ loadError: err instanceof Error ? err.message : String(err), isLoading: false });
+      set({ loadError: err instanceof Error ? describeError(err) : String(err), isLoading: false });
     }
   },
 
@@ -58,7 +59,7 @@ export const useSharedConfigStore = create<SharedConfigStoreState>((set, get) =>
       return true;
     } catch (err) {
       set((s) => ({
-        saveErrorByFile: { ...s.saveErrorByFile, [file]: err instanceof Error ? err.message : String(err) },
+        saveErrorByFile: { ...s.saveErrorByFile, [file]: err instanceof Error ? describeError(err) : String(err) },
       }));
       return false;
     } finally {

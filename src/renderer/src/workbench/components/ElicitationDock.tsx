@@ -6,6 +6,7 @@ import { usePaneTabId } from '../paneContext';
 import { DISCLOSURE_VARIANTS } from '../motionPresets';
 import { formErrors, initialValues, toContent, type FormValues } from '../elicitationForm';
 import { useT } from '../../i18n/uiLanguage';
+import { describeError } from '../describeError';
 
 // Formulario de un servidor MCP (elicitation) anclado encima del input, como la pregunta del agente.
 // Se genera del esquema acotado de `@shared/elicitation`; los valores solo viajan por IPC a main.
@@ -44,7 +45,7 @@ function ElicitationBody({ request, tabId }: { readonly request: ElicitationRequ
     setError(null);
     const content = action === 'accept' && request.mode === 'form' ? toContent(request.schema, values) : undefined;
     answer(tabId, { requestId: request.requestId, action, ...(content === undefined ? {} : { content }) }).catch((err: unknown) =>
-      setError(err instanceof Error ? err.message : String(err)),
+      setError(err instanceof Error ? describeError(err) : String(err)),
     );
   };
 

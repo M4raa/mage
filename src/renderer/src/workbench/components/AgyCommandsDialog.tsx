@@ -17,6 +17,7 @@ import { Dropdown } from './Dropdown';
 import { Icon } from './Icon';
 import { useT } from '../../i18n/uiLanguage';
 import type { Translate } from '@shared/i18n/translator';
+import { describeError } from '../describeError';
 
 // «Comandos de agy» (grupo E, fase 2): los comandos de terminal que agy puede ejecutar, por linea EXACTA.
 // Se conceden o revocan al EMPEZAR la conversacion: agy lee sus reglas al arrancar (medido), asi que lo
@@ -127,7 +128,7 @@ function useAgyMcpServers(): { readonly servers: readonly string[] | null; reado
     window.mage
       .loadMcpInventory({ projectDirs: [] })
       .then((inventory) => alive && setServers(agyMcpServerNames(inventory.rows)))
-      .catch((err: unknown) => alive && setLoadError(err instanceof Error ? err.message : String(err)));
+      .catch((err: unknown) => alive && setLoadError(err instanceof Error ? describeError(err) : String(err)));
     return () => {
       alive = false;
     };

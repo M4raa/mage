@@ -7,6 +7,7 @@ import { worktreeOfCwd } from '@shared/worktree';
 import { reportActionError } from '../notificationStore';
 import { t as translate, useT } from '../../i18n/uiLanguage';
 import type { MessageKey } from '@shared/i18n/messageKeys.generated';
+import { describeError } from '../describeError';
 
 // Barra de PR/CI de la sesion (grupo D, como Claude Desktop): el PR vinculado con sus checks, y al
 // desplegarla los que fallan, los runs (relanzar/cancelar), el auto-merge y el auto-fix. Sin PR en la
@@ -93,7 +94,7 @@ function PrDetails({ tabId, pr, autoFix, details, inWorktree }: DetailsProps): R
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    void loadGhRuns(tabId).catch((err: unknown) => setError(String(err)));
+    void loadGhRuns(tabId).catch((err: unknown) => setError(describeError(err)));
   }, [tabId, pr.headSha, loadGhRuns]);
 
   const finish = (err: string | null): void => {
@@ -142,7 +143,7 @@ function MergeBaseButton({ tabId, base, onError }: { readonly tabId: string; rea
     onError(null);
     void mergeBaseIntoWorktree(tabId, base)
       .then((outcome) => setResult(outcome === 'merged' ? t('app.prBar.mergedIntoBranch', { base }) : t('app.prBar.mergeConflicts', { base })))
-      .catch((err: unknown) => onError(err instanceof Error ? err.message : String(err)));
+      .catch((err: unknown) => onError(err instanceof Error ? describeError(err) : String(err)));
   };
   return (
     <div className="flex items-center gap-[8px]">
@@ -233,7 +234,7 @@ function Confirm({ tabId, pending, onDone }: { readonly tabId: string; readonly 
       else await setPrAutoMerge(tabId, pending.enabled);
       onDone(null);
     } catch (err) {
-      onDone(err instanceof Error ? err.message : String(err));
+      onDone(err instanceof Error ? describeError(err) : String(err));
     }
   };
   return (

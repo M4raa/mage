@@ -5,6 +5,7 @@ import { useDialogA11y } from '../a11y/useDialogA11y';
 import { MODAL_PANEL_VARIANTS, MODAL_SCRIM_VARIANTS } from '../motionPresets';
 import { conversationIdOfTab } from '../conversationId';
 import { t as translate, useT } from '../../i18n/uiLanguage';
+import { describeError } from '../describeError';
 
 // Modal de PROMPT HANDOFF (M2.3): al abrirse genera —reanudando la sesion de la pestana activa— un
 // prompt autocontenido para arrancar un chat nuevo que continue el trabajo. Muestra la preview
@@ -79,7 +80,7 @@ function HandoffBody({
         if (!cancelled) setPrompt(result);
       })
       .catch((err: unknown) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : String(err));
+        if (!cancelled) setError(err instanceof Error ? describeError(err) : String(err));
       })
       .finally(() => {
         if (!cancelled) setBusy(false);

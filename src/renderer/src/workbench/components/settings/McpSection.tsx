@@ -14,6 +14,7 @@ import { McpExtensionsTab } from './McpExtensionsTab';
 import { McpScopeDialog, OwnedByBadge, ProviderPills } from './McpScopeDialog';
 import { MCP_BUTTON_CLASS as BUTTON_CLASS } from './mcpStyles';
 import { t, useT } from '../../../i18n/uiLanguage';
+import { describeError } from '../../describeError';
 
 // Seccion «MCP y conectores» (P-028 punto 5). Antes era «Config. compartida»: solo enseñaba y editaba
 // mcp-common.json, mezclado con el editor de hooks (que ya vive en «Hooks y permisos»). Ahora es el
@@ -417,7 +418,7 @@ function CommonActions({ row, onEdit, onScope }: { readonly row: McpInventoryRow
     setError(null);
     mutate(action)
       .then((result) => setError(result.status === 'stale' ? result.message : null))
-      .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)));
+      .catch((err: unknown) => setError(err instanceof Error ? describeError(err) : String(err)));
   };
   return (
     <div className="flex flex-col items-end gap-[3px]">
@@ -465,7 +466,7 @@ function ForeignActions({ row }: { readonly row: McpInventoryRow }): React.JSX.E
     setMessage(null);
     applyImport([{ id: origin.importId, replace: false }], commonVersion)
       .then((result) => setMessage(result.status === 'stale' ? result.message : null))
-      .catch((err: unknown) => setMessage(err instanceof Error ? err.message : String(err)));
+      .catch((err: unknown) => setMessage(err instanceof Error ? describeError(err) : String(err)));
   };
   return (
     <div className="flex flex-col items-end gap-[3px]">

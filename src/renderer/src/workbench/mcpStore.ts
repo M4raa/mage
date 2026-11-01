@@ -14,6 +14,7 @@ import type {
 } from '@shared/mcp';
 import { useSharedConfigStore } from './sharedConfigStore';
 import { mcpAuthKey, mcpAuthMessage, type McpAuthMessage } from './mcpView';
+import { describeError } from './describeError';
 
 // Store de «MCP y conectores» (P-028 puntos 5 y 34). Dominio propio, como sharedConfigStore. Lo que
 // guarda nunca lleva valores de env/headers: el inventario trae nombres de clave, y los valores que
@@ -73,7 +74,7 @@ export const useMcpStore = create<McpStoreState>((set, get) => ({
     try {
       set({ inventory: await window.mage.loadMcpInventory({ projectDirs }) });
     } catch (err) {
-      set({ loadError: err instanceof Error ? err.message : String(err) });
+      set({ loadError: err instanceof Error ? describeError(err) : String(err) });
     }
   },
 
@@ -101,7 +102,7 @@ export const useMcpStore = create<McpStoreState>((set, get) => ({
     try {
       set(withCache(await window.mage.probeMcpStatus()));
     } catch (err) {
-      set({ probeError: err instanceof Error ? err.message : String(err) });
+      set({ probeError: err instanceof Error ? describeError(err) : String(err) });
     } finally {
       set({ probing: false });
     }
@@ -111,7 +112,7 @@ export const useMcpStore = create<McpStoreState>((set, get) => ({
     try {
       set(withCache(await window.mage.loadMcpStatusCache()));
     } catch (err) {
-      set({ probeError: err instanceof Error ? err.message : String(err) });
+      set({ probeError: err instanceof Error ? describeError(err) : String(err) });
     }
   },
 
@@ -119,7 +120,7 @@ export const useMcpStore = create<McpStoreState>((set, get) => ({
     try {
       set({ extensions: await window.mage.listMcpExtensions(), extensionsError: null });
     } catch (err) {
-      set({ extensionsError: err instanceof Error ? err.message : String(err) });
+      set({ extensionsError: err instanceof Error ? describeError(err) : String(err) });
     }
   },
 
@@ -164,7 +165,7 @@ export const useMcpStore = create<McpStoreState>((set, get) => ({
       if (statuses !== null) await get().loadCache();
       message = mcpAuthMessage(result);
     } catch (err) {
-      message = { ok: false, text: err instanceof Error ? err.message : String(err) };
+      message = { ok: false, text: err instanceof Error ? describeError(err) : String(err) };
     }
     set((s) => ({ authenticating: null, authMessages: { ...s.authMessages, [key]: message } }));
   },

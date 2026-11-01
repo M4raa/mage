@@ -2,6 +2,7 @@ import { create, type UseBoundStore, type StoreApi } from 'zustand';
 import type { TranscriptEntry, TranscriptParseError, TranscriptTailPosition } from '@shared/transcripts';
 import { TRANSCRIPT_TAIL_START } from '@shared/transcripts';
 import type { OpenTranscriptParams, TranscriptBatchPayload } from '@shared/ipc';
+import { describeError } from './describeError';
 
 export interface TranscriptStoreState {
   // Id de la lectura activa; lo genera el renderer y ES la identidad (filtra los mensajes del canal).
@@ -120,7 +121,7 @@ function createTranscriptStore(): TranscriptStoreHandle {
       } catch (err) {
         // Si otra apertura ya reemplazo esta (el transcriptId cambio), ignora este fallo tardio.
         if (get().transcriptId !== transcriptId) return;
-        set({ errorMessage: err instanceof Error ? err.message : String(err), isFinal: true });
+        set({ errorMessage: err instanceof Error ? describeError(err) : String(err), isFinal: true });
       }
     },
 
@@ -135,7 +136,7 @@ function createTranscriptStore(): TranscriptStoreHandle {
       set({ transcriptId, isFinal: false, errorMessage: null, missing: false });
       void window.mage.openTranscript(transcriptId, { ...lastParams, resumeFrom: tailPosition }).catch((err: unknown) => {
         if (get().transcriptId !== transcriptId) return;
-        set({ errorMessage: err instanceof Error ? err.message : String(err), isFinal: true });
+        set({ errorMessage: err instanceof Error ? describeError(err) : String(err), isFinal: true });
       });
     },
 

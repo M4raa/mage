@@ -3,6 +3,7 @@ import type { McpImportCandidate, McpImportGroup, McpImportPreview, McpImportSta
 import { useMcpStore } from '../../mcpStore';
 import { MCP_BUTTON_CLASS, MCP_DIALOG_PANEL_CLASS, MCP_DIALOG_SCRIM_CLASS, MCP_PRIMARY_BUTTON_CLASS, stopEscape } from './mcpStyles';
 import { useT } from '../../../i18n/uiLanguage';
+import { describeError } from '../../describeError';
 
 // «Importar…» con vista previa (P-028 punto 34). Origen elegible: Claude Desktop, Claude Code CLI o los
 // dos. Cada fila dice si es nueva, si ya esta igual o si existe con otra configuracion (en ese caso se
@@ -60,7 +61,7 @@ export function McpImportDialog({ onClose }: { readonly onClose: () => void }): 
         setPreview(result);
         setSelection(initialSelection(result.candidates));
       })
-      .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)));
+      .catch((err: unknown) => setError(err instanceof Error ? describeError(err) : String(err)));
   }, []);
 
   const visible = useMemo(() => (preview?.candidates ?? []).filter((c) => filter === 'all' || c.group === filter), [preview, filter]);
@@ -72,7 +73,7 @@ export function McpImportDialog({ onClose }: { readonly onClose: () => void }): 
     setError(null);
     applyImport(picks, preview.commonVersion)
       .then((result) => (result.status === 'saved' ? setNotes(result.notes) : setError(result.message)))
-      .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)))
+      .catch((err: unknown) => setError(err instanceof Error ? describeError(err) : String(err)))
       .finally(() => setBusy(false));
   };
 

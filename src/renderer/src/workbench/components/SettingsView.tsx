@@ -31,6 +31,7 @@ import { useT } from '../../i18n/uiLanguage';
 import type { MessageKey } from '@shared/i18n/messageKeys.generated';
 import type { Translate } from '@shared/i18n/translator';
 import { formatInteger } from '../../i18n/format';
+import { describeError } from '../describeError';
 
 // Secciones de Configuracion (crece por secciones). Cada una tiene su glifo+etiqueta en la nav y su
 // titulo de cabecera.
@@ -492,7 +493,7 @@ function AboutSection(): React.JSX.Element {
         if (!cancelled) setAbout(info);
       })
       .catch((err: unknown) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : String(err));
+        if (!cancelled) setError(err instanceof Error ? describeError(err) : String(err));
       });
     return () => {
       cancelled = true;

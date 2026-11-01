@@ -19,6 +19,7 @@ import { formatMicroUsd, type AgyUsageSnapshot, type ApiUsageAmounts, type ApiUs
 import type { Account } from '../types';
 import type { Translate } from '@shared/i18n/translator';
 import { activeFormatLocale, formatInteger } from '../../i18n/format';
+import { describeError } from '../describeError';
 
 // Colores de severidad (inline: el sistema de diseno mantiene lo cromatico fuera del CSS). El estado
 // "ok" usa el acento de la cuenta; aviso ambar y critico rojo son transversales a la cuenta.
@@ -211,7 +212,7 @@ function AgyUsageSection({ accountId, okColor }: { readonly accountId: string; r
     window.mage
       .readAgyUsage(accountId)
       .then(setSnapshot)
-      .catch((err: unknown) => setSnapshot({ status: 'unavailable', reason: err instanceof Error ? err.message : String(err), fetchedAt: Date.now() }));
+      .catch((err: unknown) => setSnapshot({ status: 'unavailable', reason: err instanceof Error ? describeError(err) : String(err), fetchedAt: Date.now() }));
   };
   useEffect(load, [accountId]);
   if (snapshot === null || snapshot.status !== 'ok' || snapshot.groups.length === 0) return null;
