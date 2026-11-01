@@ -27,7 +27,7 @@ describe('validateAttachment', () => {
   });
 
   it('validateAttachment_masDe5MiB_lanzaConElTamanoRecibido', () => {
-    expect(() => validateAttachment({ mediaType: 'image/png', byteLength: MAX_ATTACHMENT_BYTES + 1 })).toThrow(/5\.0 MiB/);
+    expect(() => validateAttachment({ mediaType: 'image/png', byteLength: MAX_ATTACHMENT_BYTES + 1 })).toThrow(/5,0 MiB/);
   });
 
   it('validateAttachment_exactamente5MiB_loAcepta', () => {

@@ -1,4 +1,8 @@
 import type { ImageAttachment } from './ipc';
+import { localizeDecimalPoint } from './i18n/format';
+
+// Los errores de este módulo siguen en castellano hasta su paquete de F3.3b: sus cifras, con el formato castellano.
+const ERROR_FORMAT_LOCALE = 'es-ES';
 
 // Validacion de los adjuntos del prompt (2.12.1), EN LA FRONTERA. Adjuntar es una funcion de ENVIO: un
 // adjunto que se cae en silencio es peor que un error, porque el usuario cree que mando algo que no
@@ -39,7 +43,7 @@ export function validateAttachment(candidate: AttachmentCandidate): ImageAttachm
     throw new Error(`Tamaño de imagen invalido: ${candidate.byteLength}`);
   }
   if (candidate.byteLength > MAX_ATTACHMENT_BYTES) {
-    throw new Error(`La imagen ocupa ${formatBytes(candidate.byteLength)} y el maximo es ${formatBytes(MAX_ATTACHMENT_BYTES)}`);
+    throw new Error(`La imagen ocupa ${formatBytes(candidate.byteLength, ERROR_FORMAT_LOCALE)} y el maximo es ${formatBytes(MAX_ATTACHMENT_BYTES, ERROR_FORMAT_LOCALE)}`);
   }
   return { mediaType: mediaType as ImageAttachment['mediaType'], byteLength: candidate.byteLength };
 }
@@ -58,7 +62,7 @@ export function validateAttachmentSet(
   }
   const total = all.reduce((sum, attachment) => sum + attachment.byteLength, 0);
   if (total > MAX_TOTAL_ATTACHMENT_BYTES) {
-    throw new Error(`Los adjuntos suman ${formatBytes(total)} y el maximo por mensaje es ${formatBytes(MAX_TOTAL_ATTACHMENT_BYTES)}`);
+    throw new Error(`Los adjuntos suman ${formatBytes(total, ERROR_FORMAT_LOCALE)} y el maximo por mensaje es ${formatBytes(MAX_TOTAL_ATTACHMENT_BYTES, ERROR_FORMAT_LOCALE)}`);
   }
   return all;
 }
@@ -70,6 +74,6 @@ export function base64ByteLength(data: string): number {
   return Math.max(0, Math.floor((data.length * 3) / 4) - padding);
 }
 
-export function formatBytes(bytes: number): string {
-  return bytes >= 1024 * 1024 ? `${(bytes / (1024 * 1024)).toFixed(1)} MiB` : `${Math.round(bytes / 1024)} KiB`;
+export function formatBytes(bytes: number, locale: string): string {
+  return bytes >= 1024 * 1024 ? `${localizeDecimalPoint((bytes / (1024 * 1024)).toFixed(1), locale)} MiB` : `${Math.round(bytes / 1024)} KiB`;
 }

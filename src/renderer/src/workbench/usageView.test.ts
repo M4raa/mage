@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { UsageInfo } from '@shared/usage';
+import { useUiLanguageStore } from '../i18n/uiLanguage';
 import {
   formatResetAbsolute,
   FIVE_HOUR_WINDOW_MS,
@@ -105,11 +106,21 @@ describe('perModelBars', () => {
 
 describe('formatApiCredits', () => {
   it('credits_zero_clarifiesNoApiBilling', () => {
-    expect(formatApiCredits(0)).toBe('0.00 $ · no factura API');
+    expect(formatApiCredits(0)).toBe('0,00 $ · no factura API');
   });
 
   it('credits_positive_showsAmount', () => {
-    expect(formatApiCredits(1234)).toBe('12.34 $');
+    expect(formatApiCredits(1234)).toBe('12,34 $');
+  });
+
+  it('formatApiCredits_formatoEnUS_conPunto', () => {
+    const previous = useUiLanguageStore.getState().resolved;
+    useUiLanguageStore.setState({ resolved: { language: 'en', systemLanguage: 'en', formatLocale: 'en-US' } });
+    try {
+      expect(formatApiCredits(1234)).toBe('12.34 $');
+    } finally {
+      useUiLanguageStore.setState({ resolved: previous });
+    }
   });
 
   it('credits_null_showsDash', () => {

@@ -1,7 +1,7 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import type { ContextSizePoint } from '../contextView';
 import { useT } from '../../i18n/uiLanguage';
-import { formatInteger } from '../../i18n/format';
+import { formatInteger, localizeDecimalPoint } from '../../i18n/format';
 
 // Grafico de linea (SVG inline, sin dependencia) de la evolucion del tamano de contexto turno a
 // turno, con marca de evento en las compactaciones. Diseno segun la skill `dataviz` (paleta
@@ -167,9 +167,9 @@ function clampTooltipLeft(x: number, width: number): number {
   return Math.max(0, Math.min(x - TOOLTIP_W / 2, width - TOOLTIP_W));
 }
 
-// Formato compacto de tokens (12.9K / 1.2M). Enteros; nunca decimales para <1000.
+// Formato compacto de tokens (12.9K / 1.2M; coma en castellano, U16). Enteros; nunca decimales para <1000.
 function formatCompact(n: number): string {
   if (n < 1000) return `${n} tok`;
-  if (n < 1_000_000) return `${(n / 1000).toFixed(1)}K tok`;
-  return `${(n / 1_000_000).toFixed(1)}M tok`;
+  if (n < 1_000_000) return `${localizeDecimalPoint((n / 1000).toFixed(1))}K tok`;
+  return `${localizeDecimalPoint((n / 1_000_000).toFixed(1))}M tok`;
 }

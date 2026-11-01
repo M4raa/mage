@@ -64,3 +64,18 @@ export function formatDayMonth(epochMs: number, locale: string): string {
     .map((part) => (part.type === 'day' || part.type === 'month' ? part.value.padStart(2, '0') : part.value))
     .join('');
 }
+
+const FIXED_DECIMAL = /^-?\d+(\.\d+)?$/;
+
+// U16 (01-11): las cifras que se escriben con `toFixed` (unidades compactas, segundos, dinero) conservan sus dígitos y
+// solo cambian el punto por el separador decimal del locale (coma en es-ES, punto en en-US).
+export function localizeDecimalPoint(fixed: string, locale: string): string {
+  if (!FIXED_DECIMAL.test(fixed)) throw new Error(`localizeDecimalPoint: no es un decimal de toFixed: ${JSON.stringify(fixed)}`);
+  return fixed.replace('.', decimalSeparator(locale));
+}
+
+function decimalSeparator(locale: string): string {
+  const part = numberFormat(locale, { minimumFractionDigits: 1 }).formatToParts(1.5).find((p) => p.type === 'decimal');
+  if (part === undefined) throw new Error(`decimalSeparator: el locale no da separador decimal: ${locale}`);
+  return part.value;
+}

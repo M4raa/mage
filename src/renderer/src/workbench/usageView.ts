@@ -1,7 +1,7 @@
 import type { UsageInfo } from '@shared/usage';
 import type { UsageWindow } from './types';
 import { t } from '../i18n/uiLanguage';
-import { formatClockTime, formatDayMonth, formatWeekdayShort } from '../i18n/format';
+import { formatClockTime, formatDayMonth, formatWeekdayShort, localizeDecimalPoint } from '../i18n/format';
 
 // Mapeo PURO del uso de dominio (UsageInfo, seguro) a la presentacion que consume la UI. Sin efectos
 // ni dependencia del reloj global: `now` se inyecta (para la cuenta atras hasta el reset).
@@ -57,7 +57,7 @@ export function perModelBars(info: UsageInfo, thresholds: UsageThresholds = DEFA
 // factura API. Nunca usa float para el dinero: divide por 100 solo en la presentacion final.
 export function formatApiCredits(amountMinor: number | null): string {
   if (amountMinor === null) return '—';
-  const major = (amountMinor / 100).toFixed(2);
+  const major = localizeDecimalPoint((amountMinor / 100).toFixed(2));
   return amountMinor === 0 ? t('usage.view.noApiBilling', { amount: major }) : `${major} $`;
 }
 

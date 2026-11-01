@@ -27,6 +27,7 @@ import { StepSlider } from './StepSlider';
 import { CODEX_DEFAULT_PROFILE, CODEX_WRITE_PROFILE, agyPermissionSteps, codexPermissionSteps, defaultModeOf, effectiveCodexMode, effortStepLabel, effortSteps, permissionModeLabel, permissionStepsFor } from '../stepSliderModel';
 import { usePaneTabId } from '../paneContext';
 import { t as translate, useT } from '../../i18n/uiLanguage';
+import { activeFormatLocale } from '../../i18n/format';
 import type { PermissionMode } from '@shared/ipc';
 
 // Referencia ESTABLE para el selector de zustand (un array nuevo por render seria un bucle).
@@ -585,7 +586,7 @@ export function PromptBar(): React.JSX.Element {
               <img
                 src={`data:${item.attachment.mediaType};base64,${item.attachment.data}`}
                 alt={t('prompt.attach.thumbAlt', { n: index + 1 })}
-                title={describeAttachment(index + 1, item.attachment.mediaType, item.byteLength)}
+                title={describeAttachment(index + 1, item.attachment.mediaType, item.byteLength, activeFormatLocale())}
                 data-attachment="thumb"
                 className="h-[56px] w-auto rounded-[6px] border border-mg-border-ctrl"
               />

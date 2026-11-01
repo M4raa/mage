@@ -132,8 +132,8 @@ export function reconcileImageTokens<T>(
 }
 
 // «Imagen 2 · png · 245 KiB»: lo que dice el tooltip de una miniatura (sin nombre de fichero ni dimensiones).
-export function describeAttachment(n: number, mediaType: string, byteLength: number): string {
+export function describeAttachment(n: number, mediaType: string, byteLength: number, locale: string): string {
   const subtype = mediaType.split('/')[1];
   if (subtype === undefined || subtype.length === 0) throw new Error(`Tipo de imagen invalido: ${JSON.stringify(mediaType)}`);
-  return `${imageToken(n).slice(1, -1)} · ${subtype} · ${formatBytes(byteLength)}`;
+  return `${imageToken(n).slice(1, -1)} · ${subtype} · ${formatBytes(byteLength, locale)}`;
 }
