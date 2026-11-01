@@ -14,6 +14,7 @@ import {
   defaultModelForProvider,
   effortSettingKey,
   modelsToDraftText,
+  probeErrorText,
   providerEntries,
   validateCustomProviderDraft,
   type ApiKeyUpdate,
@@ -504,7 +505,7 @@ function ModelsLine({ count, probe }: { readonly count: number; readonly probe: 
       </div>
     );
   }
-  const reason = probe.result?.error ?? null;
+  const reason = probeErrorText(probe.result?.error ?? null);
   const listed = probe.result?.models !== null && probe.result?.models !== undefined;
   return (
     <div className="text-[10.5px] leading-[1.45] text-mg-muted">
@@ -559,7 +560,7 @@ export function ProviderForm({
     window.mage
       .probeRuntime({ providerId, baseUrl: draft.baseUrl })
       .then((result) => {
-        setTestStatus(result.error ?? runtimeProbeSummary(result));
+        setTestStatus(probeErrorText(result.error) ?? runtimeProbeSummary(result));
         if (result.error === null) onChange(applyRuntimeProbe(draft, result));
       })
       .catch((err: unknown) => setTestStatus(describeError(err)))

@@ -56,6 +56,8 @@ export interface PermissionRequest {
   // Solo el runtime propio: la peticion es por algo FUERA del proyecto o por red (su motivo va en
   // `description`). «Permitir siempre» no se ofrece ni se aplica a estas (D2 de P-033).
   readonly outsideProject?: boolean;
+  // Runtime propio: lo que queda fuera del proyecto (ruta o comando); el renderer pinta la frase en su idioma (F3.3b).
+  readonly outsideTarget?: string;
 }
 
 // Uso de una llamada a tool ya emitida por el asistente (para render de tool calls).

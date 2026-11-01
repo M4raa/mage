@@ -1,5 +1,5 @@
 import type { McpServerStatus } from '@shared/events';
-import { localized, type LocalizedText } from '@shared/i18n/localizedText';
+import { localized, localizedFromError, renderForLog, UserFacingError, wrapError, type LocalizedText } from '@shared/i18n/localizedText';
 import type { ResolvedMcpServer } from '../../config/mcpResolved';
 import type { RuntimeTool } from '../tools/types';
 import { mcpRuntimeTool, type McpCallResult, type McpToolInfo } from './mcpTools';
@@ -105,9 +105,8 @@ export class McpPool {
       // vivía hasta salir de Mage. Si `connect` fue lo que falló, no hay cliente y ya se ha avisado.
       void connecting.then((late) => this.closeClient(late), () => undefined);
       if (this.closed) return;
-      const message = err instanceof Error ? err.message : String(err);
-      this.deps.log?.('warn', 'Servidor MCP del runtime sin conectar', { server: server.name, message });
-      this.deps.notify(localized('events.mcp.connectFailed', { server: server.name, detail: message }));
+      this.deps.log?.('warn', 'Servidor MCP del runtime sin conectar', { server: server.name, message: renderForLog(localizedFromError(err)) });
+      this.deps.notify(wrapError('events.mcp.connectFailed', { server: server.name }, err));
     } finally {
       if (!this.closed) this.deps.onChange();
     }
@@ -131,7 +130,7 @@ export class McpPool {
       () => (this.closed ? undefined : this.connectOne(server)),
       (err: unknown) => {
         entry.status = 'failed';
-        this.deps.notify(localized('events.mcp.loginIncomplete', { server: server.name, detail: err instanceof Error ? err.message : String(err) }));
+        this.deps.notify(wrapError('events.mcp.loginIncomplete', { server: server.name }, err));
         if (!this.closed) this.deps.onChange();
       },
     );
@@ -145,7 +144,7 @@ export class McpPool {
 function withTimeout<T>(promise: Promise<T>, ms: number, server: string): Promise<T> {
   let timer: NodeJS.Timeout | null = null;
   const timeout = new Promise<never>((_resolve, reject) => {
-    timer = setTimeout(() => reject(new Error(`no contestó en ${Math.round(ms / 1000)} s (${server})`)), ms);
+    timer = setTimeout(() => reject(new UserFacingError(localized('errors.runtime.mcpNoResponse', { seconds: String(Math.round(ms / 1000)), server }))), ms);
   });
   return Promise.race([promise, timeout]).finally(() => {
     if (timer !== null) clearTimeout(timer);

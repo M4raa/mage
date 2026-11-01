@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { renderLocalized } from '@shared/i18n/localizedText';
+import { createTranslator } from '@shared/i18n/translator';
 import { ModelCatalog } from './modelCatalog';
 import { parseRuntimeProbeParams, probeRuntimeEndpoint } from './runtimeProbe';
 
@@ -80,7 +82,23 @@ describe('probeRuntimeEndpoint', () => {
     const result = await probeRuntimeEndpoint({ providerId: 'custom:a', baseUrl: 'http://127.0.0.1:1234/v1' }, { catalog: catalogWith([], true), apiKeyFor: () => KEY, savedBaseUrlFor: () => SAVED });
 
     expect(result.models).toBeNull();
-    expect(result.error).toMatch(/401/);
+    expect(result.error === null ? null : renderLocalized(createTranslator('es'), result.error)).toMatch(/401/);
     expect(JSON.stringify(result)).not.toContain(KEY);
+  });
+
+  it('probe_serverRejects_errorEnvuelveLaFraseDeMageConLaClave', async () => {
+    const result = await probeRuntimeEndpoint({ providerId: 'custom:a', baseUrl: 'http://127.0.0.1:1234/v1' }, { catalog: catalogWith([], true), apiKeyFor: () => KEY, savedBaseUrlFor: () => SAVED });
+
+    expect(result.error?.key).toBe('settings.providers.runtimeProbeConnectFailed');
+    expect(result.error?.parts?.detail?.key).toBe('errors.runtime.catalogHttpStatus');
+    expect(result.error?.parts?.detail?.values).toEqual({ status: '401' });
+  });
+
+  it('probe_fallaAjena_ladetalleAjenoPasaPorScrubSinLaClave', async () => {
+    const catalog = { listModels: () => Promise.reject(new Error(`fallo con ${KEY}`)) } as unknown as ModelCatalog;
+
+    const result = await probeRuntimeEndpoint({ providerId: 'custom:a', baseUrl: SAVED }, { catalog, apiKeyFor: () => KEY, savedBaseUrlFor: () => SAVED });
+
+    expect(result.error?.parts?.detail).toEqual({ key: 'events.detailOnly', values: { detail: 'fallo con ***' } });
   });
 });

@@ -21,6 +21,14 @@ describe('ContextBudget', () => {
     expect(() => budget.fit([user(5_000)])).toThrow(/2048 tokens de qwen/);
   });
 
+  it('fit_oneAbove_throwsTheKeyWithWindowAndModel', () => {
+    const budget = new ContextBudget(2_048, 'qwen');
+
+    expect(() => budget.fit([user(5_000)])).toThrow(
+      expect.objectContaining({ localized: { key: 'errors.runtime.contextOverflow', values: expect.objectContaining({ window: '2048', model: 'qwen' }) } }),
+    );
+  });
+
   it('fit_oldToolOutputs_trimmedToFit', () => {
     const budget = new ContextBudget(4_096, 'm');
     const tool = (id: string, chars: number): ChatMessage => ({ role: 'tool', tool_call_id: id, content: `linea uno\n${text(chars)}` });
@@ -35,6 +43,12 @@ describe('ContextBudget', () => {
   it('constructor_windowZeroOrTiny_throwsWithValue', () => {
     expect(() => new ContextBudget(0, 'm')).toThrow(/0/);
     expect(() => new ContextBudget(RESERVE_TOKENS, 'm')).toThrow(String(RESERVE_TOKENS));
+  });
+
+  it('constructor_windowTiny_throwsTheKeyWithValues', () => {
+    expect(() => new ContextBudget(10, 'm')).toThrow(
+      expect.objectContaining({ localized: { key: 'errors.runtime.contextWindowInvalid', values: { model: 'm', window: '10', reserve: String(RESERVE_TOKENS) } } }),
+    );
   });
 
   it('recalibrate_realUsage_scalesEstimates', () => {

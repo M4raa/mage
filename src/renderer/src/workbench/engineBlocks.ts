@@ -500,9 +500,16 @@ export function mapPermissionToView(request: PermissionRequest): PermissionView 
     toolLabel: toolName,
     rememberable: !outside,
     diff: patch?.diff ?? buildDiff(toolName, input),
-    // Fuera del proyecto o red: el motivo que da el runtime («Fuera del proyecto: C:\…»).
-    summary: outside && request.description !== null ? request.description : patch?.summary ?? buildSummary(toolName, input),
+    summary: permissionSummary(request, patch?.summary ?? buildSummary(toolName, input)),
   };
+}
+
+// Fuera del proyecto: la frase se pinta aquí, en el idioma de la interfaz, con el objetivo que manda el runtime. Red: el
+// motivo que da el runtime en `description`. Si no, el resumen de la herramienta.
+function permissionSummary(request: PermissionRequest, toolSummary: string): string {
+  if (request.outsideProject !== true) return toolSummary;
+  if (request.outsideTarget !== undefined) return t('chat.permission.outsideProject', { target: request.outsideTarget });
+  return request.description ?? toolSummary;
 }
 
 // --- Helpers internos -------------------------------------------------------------------------

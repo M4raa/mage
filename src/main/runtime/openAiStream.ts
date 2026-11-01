@@ -1,3 +1,4 @@
+import { localized, UserFacingError } from '@shared/i18n/localizedText';
 import { CHAT_CHUNK_SCHEMA, type ChatChunk, type ToolCallDelta } from './chatSchemas';
 
 // Lectura PURA del stream SSE de Chat Completions (OpenAI-compatible): partir el SSE, parsear cada
@@ -77,10 +78,10 @@ export function parseChatChunk(data: string): ChatChunk {
   try {
     raw = JSON.parse(data);
   } catch (err) {
-    throw new Error(`Trozo del stream que no es JSON valido: ${JSON.stringify(data)} (${(err as Error).message})`);
+    throw new UserFacingError(localized('errors.runtime.streamChunkNotJson', { chunk: JSON.stringify(data), detail: (err as Error).message }));
   }
   const result = CHAT_CHUNK_SCHEMA.safeParse(raw);
-  if (!result.success) throw new Error(`Trozo del stream con forma inesperada: ${JSON.stringify(data)}`);
+  if (!result.success) throw new UserFacingError(localized('errors.runtime.streamChunkBadShape', { chunk: JSON.stringify(data) }));
   return result.data;
 }
 

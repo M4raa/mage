@@ -1,3 +1,5 @@
+import { localized, UserFacingError } from '@shared/i18n/localizedText';
+
 // Logins OAuth PENDIENTES de los servidores MCP del runtime propio, a nivel de APP (D3 de P-033, M2 de
 // la revision): uno por servidor, compartido por todas las sesiones que lo usan. Mage ya no abre el
 // navegador solo: la sesion avisa con un boton «Iniciar sesión» y es el usuario quien lo abre (`open`).
@@ -57,7 +59,7 @@ export class McpLoginRegistry implements McpLogins {
   // (cada vez que se pulse, por si el usuario cerro la pestaña del navegador).
   async open(id: string): Promise<void> {
     const entry = this.byId.get(id);
-    if (entry === undefined) throw new Error(`Inicio de sesión MCP inexistente o ya terminado: ${JSON.stringify(id)}`);
+    if (entry === undefined) throw new UserFacingError(localized('errors.runtime.mcpLoginUnknown', { id: JSON.stringify(id) }));
     if (!entry.started) {
       entry.started = true;
       entry

@@ -1,3 +1,4 @@
+import { localized, UserFacingError, wrapError } from '@shared/i18n/localizedText';
 import { buildHandoffPrompt, buildImprovePrompt } from './promptText';
 import { scrubAgentEnv } from '../os/agentEnv';
 
@@ -45,7 +46,7 @@ export class PromptService {
 
     const stdout = await this.deps.run(this.deps.resolveBinary(), args, env);
     const improved = stdout.trim();
-    if (improved.length === 0) throw new Error('La mejora de prompt devolvio una respuesta vacia');
+    if (improved.length === 0) throw new UserFacingError(localized('errors.prompt.improveEmpty'));
     return improved;
   }
 
@@ -64,9 +65,9 @@ export class PromptService {
 
     let stdout: string;
     try { stdout = await this.deps.run(this.deps.resolveBinary(), args, env, cwd); }
-    catch (err) { throw new Error(`No se pudo preparar el handoff; la conversación original se conserva. Puedes volver a intentarlo. ${err instanceof Error ? err.message : String(err)}`); }
+    catch (err) { throw new UserFacingError(wrapError('errors.prompt.handoffFailed', {}, err)); }
     const handoff = stdout.trim();
-    if (handoff.length === 0) throw new Error('El handoff devolvio una respuesta vacia');
+    if (handoff.length === 0) throw new UserFacingError(localized('errors.prompt.handoffEmpty'));
     return handoff;
   }
 }

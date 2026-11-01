@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { foreignText } from '@shared/i18n/localizedText';
 import { buildHandoffPrompt, buildImprovePrompt } from './promptText';
 import { PromptService, type PromptServiceDeps } from './promptService';
 
@@ -56,6 +57,10 @@ describe('PromptService.improve', () => {
 
   it('stdoutVacio_lanza', async () => {
     await expect(build(async () => '   ').improve('draft', '/acc')).rejects.toThrow(/vacia/i);
+  });
+
+  it('stdoutVacio_lanzaLaClave', async () => {
+    await expect(build(async () => '   ').improve('draft', '/acc')).rejects.toThrow(expect.objectContaining({ localized: { key: 'errors.prompt.improveEmpty' } }));
   });
 });
 
@@ -117,6 +122,16 @@ describe('PromptService.handoff', () => {
 
   it('stdoutVacio_lanza', async () => {
     await expect(build(async () => '  ').handoff(request)).rejects.toThrow(/vacia/i);
+  });
+
+  it('cliFalla_lanzaLaFraseConElErrorDeDentroComoDetalleAjeno', async () => {
+    const failing = build(async () => {
+      throw new Error('el CLI murió');
+    });
+
+    await expect(failing.handoff(request)).rejects.toThrow(
+      expect.objectContaining({ localized: { key: 'errors.prompt.handoffFailed', values: {}, parts: { detail: foreignText('el CLI murió') } } }),
+    );
   });
 });
 

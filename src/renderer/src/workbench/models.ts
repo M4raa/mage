@@ -5,7 +5,7 @@
 import type { CustomProvider, ProviderModel } from '@shared/providers';
 import { AGY_EFFORT_LEVELS, AGY_PROVIDER_ID, BUILT_IN_PROVIDERS, CODEX_PROVIDER_ID, CUSTOM_PROVIDER_ID_PREFIX, chatCompletionsUrl } from '@shared/providers';
 import { EFFORT_LEVELS, type RuntimeProbeResult } from '@shared/ipc';
-import { renderLocalized } from '@shared/i18n/localizedText';
+import { renderLocalized, type LocalizedText } from '@shared/i18n/localizedText';
 import { t } from '../i18n/uiLanguage';
 
 export type ModelOption = ProviderModel;
@@ -239,6 +239,11 @@ export function validateCustomProviderDraft(
     },
     apiKeyUpdate,
   };
+}
+
+// El motivo de un sondeo (de proveedor o de «Probar conexión») en el idioma de la interfaz; null si no hubo fallo.
+export function probeErrorText(error: LocalizedText | null): string | null {
+  return error === null ? null : renderLocalized(t, error);
 }
 
 // Linea de resultado de «Probar conexión».

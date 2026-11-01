@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { THEME_PREFERENCES, UI_SCALE_MAX, UI_SCALE_MIN, UI_SCALE_STEP, type ThemePreference } from '@shared/settings';
 import type { ProviderProbeResult } from '@shared/ipc';
 import { useWorkbenchStore } from '../workbenchStore';
-import { providerOptions } from '../models';
+import { probeErrorText, providerOptions } from '../models';
 import { isMacPlatform } from '../keybindings/platform';
 import { useDialogA11y } from '../a11y/useDialogA11y';
 import { essentialShortcuts, installCommandFor, shouldShowOnboarding, stepAfter, stepBefore, type OnboardingStep } from '../onboarding';
@@ -10,6 +10,7 @@ import { Icon } from './Icon';
 import { useT } from '../../i18n/uiLanguage';
 import type { MessageKey } from '@shared/i18n/messageKeys.generated';
 import { describeError } from '../describeError';
+import { foreignText } from '@shared/i18n/localizedText';
 
 // Asistente de PRIMER ARRANQUE. Lo que resuelve, y por lo que existe: Mage no instala el motor —es el
 // CLI real de Claude Code— asi que una instalacion limpia puede quedarse en una pantalla que no
@@ -157,7 +158,7 @@ function EngineStep(): React.JSX.Element {
           <div className="flex flex-col gap-[7px]">
             <div className="text-[11.5px] font-semibold text-mg-warn-text">{t('dialogs.onboarding.notInstalled')}</div>
             <div className="text-[11px] leading-[1.5] text-mg-sec">
-              {probe.error ?? t('dialogs.onboarding.binaryNotFound')}
+              {probeErrorText(probe.error) ?? t('dialogs.onboarding.binaryNotFound')}
               {installCommand !== null && ` ${t('dialogs.onboarding.installHint')}`}
             </div>
             {installCommand !== null && <CommandToCopy command={installCommand} />}
@@ -203,7 +204,7 @@ function useProviderProbe(providerId: string): { readonly probe: ProviderProbeRe
       .catch((err: unknown) => {
         // El sondeo no puede tumbar el asistente: se enseña como "no instalado" con el motivo, que es
         // lo mismo que ve el usuario y ademas es accionable.
-        if (!cancelled) setResult({ kind: 'cli', endpoint: null, models: null, error: err instanceof Error ? describeError(err) : String(err) });
+        if (!cancelled) setResult({ kind: 'cli', endpoint: null, models: null, error: foreignText(err instanceof Error ? describeError(err) : String(err)) });
       });
     return () => {
       cancelled = true;

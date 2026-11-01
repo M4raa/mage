@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { foreignText, localizedWithParts, UserFacingError, wrapError, type LocalizedText } from '@shared/i18n/localizedText';
 import type { RuntimeProbeParams, RuntimeProbeResult } from '@shared/ipc';
 import { CUSTOM_PROVIDER_ID_PREFIX } from '@shared/providers';
 import type { ModelCatalog } from './modelCatalog';
@@ -38,7 +39,7 @@ export async function probeRuntimeEndpoint(params: RuntimeProbeParams, deps: Run
   try {
     models = await deps.catalog.listModels(endpoint);
   } catch (err) {
-    return { models: null, contextWindow: null, supportsTools: null, warning: null, error: `No se pudo conectar: ${scrub(err, apiKey)}` };
+    return { models: null, contextWindow: null, supportsTools: null, warning: null, error: probeFailure(err, apiKey) };
   }
   const first = models[0];
   if (first === undefined) return { models, contextWindow: null, supportsTools: null, warning: null, error: null };
@@ -68,6 +69,13 @@ function sameEndpoint(a: string, b: string): boolean {
     return `${url.protocol}//${url.host}${url.pathname.replace(/\/+$/, '')}`;
   };
   return norm(a) === norm(b);
+}
+
+// El texto de un fallo al conectar: si es de Mage se envuelve tal cual; si es ajeno (red, servidor) pasa antes por
+// `scrub`, que le quita la clave.
+function probeFailure(err: unknown, apiKey: string | null): LocalizedText {
+  if (err instanceof UserFacingError) return wrapError('settings.providers.runtimeProbeConnectFailed', {}, err);
+  return localizedWithParts('settings.providers.runtimeProbeConnectFailed', {}, { detail: foreignText(scrub(err, apiKey)) });
 }
 
 function scrub(err: unknown, apiKey: string | null): string {

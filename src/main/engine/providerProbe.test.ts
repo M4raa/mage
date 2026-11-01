@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { modelsUrl } from '@shared/providers';
+import { renderLocalized, type LocalizedText } from '@shared/i18n/localizedText';
+import { createTranslator } from '@shared/i18n/translator';
 import { parseAgyModelsOutput, parseOpenAiModels, probeProvider, type ProbeDeps } from './providerProbe';
+
+// El motivo del sondeo como lo pinta el renderer en castellano.
+const shown = (error: LocalizedText | null): string | null => (error === null ? null : renderLocalized(createTranslator('es'), error));
 
 // Deps de sondeo con todo apagado; cada test enciende SOLO lo que mide.
 function deps(overrides: Partial<ProbeDeps> = {}): ProbeDeps {
@@ -88,7 +93,7 @@ describe('probeProvider', () => {
     expect(result.kind).toBe('cli');
     expect(result.endpoint).toBe('/home/u/.local/bin/claude');
     expect(result.models).toBeNull();
-    expect(result.error).toMatch(/Todavía no se ha sondeado/);
+    expect(shown(result.error)).toMatch(/Todavía no se ha sondeado/);
   });
 
   it('probeProvider_agyInstalado_listaLosModelosQueDiceElCli', async () => {
@@ -112,7 +117,7 @@ describe('probeProvider', () => {
 
     expect(result.endpoint).toBeNull();
     expect(result.models).toBeNull();
-    expect(result.error).toMatch(/agy install/);
+    expect(shown(result.error)).toMatch(/agy install/);
   });
 
   it('probeProvider_agyFallaElCli_devuelveElMotivoEnVezDeInventarLista', async () => {
@@ -122,7 +127,17 @@ describe('probeProvider', () => {
     );
 
     expect(result.models).toBeNull();
-    expect(result.error).toBe('No se pudo listar: sin login');
+    expect(shown(result.error)).toBe('No se pudo listar: sin login');
+  });
+
+  it('probeProvider_agyFallaElCli_errorEsLaFraseConElDetalleAjeno', async () => {
+    const result = await probeProvider(
+      { providerId: 'agy', baseUrl: null },
+      deps({ findAgyBinary: () => 'agy', runCli: () => Promise.reject(new Error('sin login')) }),
+    );
+
+    expect(result.error?.key).toBe('settings.providers.listFailed');
+    expect(result.error?.parts?.detail).toEqual({ key: 'events.detailOnly', values: { detail: 'sin login' } });
   });
 
   it('probeProvider_proveedorDelUsuario_consultaSuEndpointDeModelos', async () => {
@@ -147,7 +162,13 @@ describe('probeProvider', () => {
     const result = await probeProvider({ providerId: 'openai', baseUrl: null }, deps());
 
     expect(result.models).toBeNull();
-    expect(result.error).toMatch(/URL base/);
+    expect(shown(result.error)).toMatch(/URL base/);
+  });
+
+  it('probeProvider_proveedorSinUrlBase_claveYProveedorEntreComillas', async () => {
+    const result = await probeProvider({ providerId: 'custom:sin-url', baseUrl: '  ' }, deps());
+
+    expect(result.error).toEqual({ key: 'settings.providers.baseUrlMissing', values: { provider: '"custom:sin-url"' } });
   });
 
   it('probeProvider_proveedorDelUsuarioConClave_laSacaDeLaBovedaPorSuId', async () => {
@@ -179,7 +200,7 @@ describe('probeProvider', () => {
     );
 
     expect(result.endpoint).toBe('http://localhost:11434/v1');
-    expect(result.error).toBe('No se pudo listar: fetch failed');
+    expect(shown(result.error)).toBe('No se pudo listar: fetch failed');
   });
 });
 
@@ -215,7 +236,7 @@ describe('probeProvider — codex', () => {
     // El catalogo lo pide cada sesion (`model/list`): Ajustes no lanza el app-server. No es un fallo:
     // la UI lo distingue por el endpoint, que no es null.
     expect(result.models).toBeNull();
-    expect(result.error).toContain('model/list');
+    expect(shown(result.error)).toContain('model/list');
   });
 
   it('codexNoInstalado_endpointNuloParaQueAjustesNoLoListe', async () => {
@@ -223,6 +244,6 @@ describe('probeProvider — codex', () => {
 
     // `endpoint === null` es la senal UNICA con la que Proveedores decide no mostrar un proveedor.
     expect(result.endpoint).toBeNull();
-    expect(result.error).toContain('MAGE_CODEX_BIN');
+    expect(shown(result.error)).toContain('MAGE_CODEX_BIN');
   });
 });

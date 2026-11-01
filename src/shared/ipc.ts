@@ -70,7 +70,7 @@ export interface RuntimeProbeResult {
   readonly contextWindow: number | null;
   readonly supportsTools: boolean | null;
   readonly warning: LocalizedText | null;
-  readonly error: string | null;
+  readonly error: LocalizedText | null;
 }
 
 // Guardar la api key de un proveedor DEL USUARIO en la boveda de main. Sube una vez y no vuelve.
@@ -86,7 +86,7 @@ export interface ProviderProbeResult {
   readonly kind: 'cli' | 'http';
   readonly endpoint: string | null;
   readonly models: readonly ProviderModel[] | null;
-  readonly error: string | null;
+  readonly error: LocalizedText | null;
 }
 
 // --- Canales renderer -> main (request/response via ipcRenderer.invoke) -----------------------

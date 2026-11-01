@@ -229,6 +229,18 @@ describe('mapPermissionToView', () => {
     expect(view).toMatchObject({ rememberable: false, summary: 'Fuera del proyecto: /etc/hosts' });
   });
 
+  it('mapPermissionToView_outsideTarget_fraseTraducida', () => {
+    const request = { ...permission({ toolName: 'Read', input: { file_path: '/etc/hosts' } }), description: 'texto en otro idioma', outsideProject: true, outsideTarget: '/etc/hosts' };
+
+    expect(mapPermissionToView(request).summary).toBe('Fuera del proyecto: /etc/hosts');
+  });
+
+  it('mapPermissionToView_redSinObjetivo_usaLaDescripcionDelRuntime', () => {
+    const request = { ...permission({ toolName: 'Bash', input: { command: 'curl x' } }), description: 'Red: curl x', outsideProject: true };
+
+    expect(mapPermissionToView(request).summary).toBe('Red: curl x');
+  });
+
   it('mapPermissionToView_normalRequest_rememberable', () => {
     expect(mapPermissionToView(permission({ toolName: 'Read', input: { file_path: 'a' } })).rememberable).toBe(true);
   });

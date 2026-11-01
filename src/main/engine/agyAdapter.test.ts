@@ -158,6 +158,14 @@ describe('AgyAdapter (sesion persistente, agy 1.2.14)', () => {
     expect(() => own.buildSpawnPlan({ ...launch, accountDir: '/data/agy-accounts/personal' })).toThrow('no tiene la sesión iniciada');
   });
 
+  it('buildSpawnPlan_cuentaSinSesion_lanzaLaClaveConElPerfil', () => {
+    const own = new AgyAdapter({ resolveBinary: () => 'agy.exe', resolveSubscriptionAccount: (dir) => ({ profileDir: dir }), hasSubscriptionLogin: () => false });
+
+    expect(() => own.buildSpawnPlan({ ...launch, accountDir: '/data/agy-accounts/personal' })).toThrow(
+      expect.objectContaining({ localized: { key: 'errors.engine.agyLoginMissing', values: { profileDir: '/data/agy-accounts/personal' } } }),
+    );
+  });
+
   it('buildSpawnPlan_cuentaSinPerfilPropio_noPoneElMarcadorSsh', () => {
     const plan = new AgyAdapter({ resolveBinary: () => 'agy.exe', resolveApiAccount: () => null, subscriptionProfileDir: () => '/data/agy-profile', prepareProfile: vi.fn() }).buildSpawnPlan(launch);
 

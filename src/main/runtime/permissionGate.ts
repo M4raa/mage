@@ -1,3 +1,4 @@
+import { localized, renderForLog } from '@shared/i18n/localizedText';
 import type { PreparedCall, ToolKind } from './agentLoop';
 import type { GateVerdict, RuntimePermissionMode } from './runtimeSession';
 import { resolveToolPath, type PathClass, type PathScope } from './tools/pathGuard';
@@ -101,7 +102,8 @@ const CD_PROGRAMS = new Set(['cd', 'chdir', 'set-location', 'sl', 'pushd', 'popd
 export function decidePermission(input: GateInput): GateVerdict {
   const outside = outsideReason(input);
   if (outside !== null) {
-    return input.mode === 'plan' && input.kind !== 'read' ? { verdict: 'deny', reason: PLAN_DENY_REASON } : { verdict: 'ask', outside };
+    if (input.mode === 'plan' && input.kind !== 'read') return { verdict: 'deny', reason: PLAN_DENY_REASON };
+    return { verdict: 'ask', outside: renderForLog(localized('chat.permission.outsideProject', { target: outside })), outsideTarget: outside };
   }
   if (input.kind === 'read') return { verdict: 'allow' };
   const ask = askVerdict(input.command);
@@ -119,9 +121,10 @@ export function decidePermission(input: GateInput): GateVerdict {
   }
 }
 
-function outsideReason(input: GateInput): string | null {
-  if (input.pathClass === 'outside') return `Fuera del proyecto: ${input.target ?? input.command ?? ''}`;
-  if (input.command !== null && referencesOutside(input.command, input.scope)) return `Fuera del proyecto: ${input.command}`;
+// El objetivo (ruta o comando) que queda fuera del proyecto, o null si no sale de él. La frase la pinta el renderer.
+export function outsideReason(input: GateInput): string | null {
+  if (input.pathClass === 'outside') return input.target ?? input.command ?? '';
+  if (input.command !== null && referencesOutside(input.command, input.scope)) return input.command;
   return null;
 }
 

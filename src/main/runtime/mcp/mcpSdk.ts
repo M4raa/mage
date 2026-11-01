@@ -12,6 +12,8 @@ import { materializeSecrets, mcpOAuthTokenId, type ResolvedMcpServer, type Resol
 import type { McpLogins } from './mcpLogins';
 import { McpNeedsAuth, type McpClientLike, type McpConnector } from './mcpPool';
 import type { McpElicitationResult } from './elicitationBroker';
+import type { Translate } from '@shared/i18n/translator';
+import { localized, UserFacingError } from '@shared/i18n/localizedText';
 
 // Conector real del runtime propio con el SDK oficial de MCP (ficha D10): stdio, streamable HTTP y SSE,
 // y OAuth para los remotos (§8.1 D10, C3-l) con los tokens en la BOVEDA de main, nunca en un fichero.
@@ -34,6 +36,8 @@ export interface McpSdkDeps {
   readonly baseEnv: () => Readonly<Record<string, string | undefined>>;
   readonly cwd: string;
   readonly elicit: (server: string, params: unknown, signal?: AbortSignal) => Promise<McpElicitationResult>;
+  // Traductor del idioma de la interfaz: la página que el navegador enseña al volver del login (F3.3b).
+  readonly translate: Translate;
 }
 
 function elicitingClient(server: string, deps: McpSdkDeps): Client {
@@ -68,7 +72,7 @@ async function connectRemote(server: ResolvedRemoteServer, deps: McpSdkDeps): Pr
   const pending = deps.logins.pendingFor(server.oauth.tokenStoreId);
   if (pending !== null) throw new McpNeedsAuth(server.name, pending.id, pending.authorized);
   const state = randomUUID();
-  const callback = await LoopbackCallback.listen(server.oauth.callbackPort, state);
+  const callback = await LoopbackCallback.listen(server.oauth.callbackPort, state, deps.translate);
   const provider = new VaultOAuthProvider(server, callback, deps, state);
   const headers = Object.fromEntries(Object.entries(server.headers).map(([key, value]) => [key, materializeSecrets(value, server.secrets)]));
   const url = new URL(server.url);
@@ -204,6 +208,7 @@ export class LoopbackCallback {
   private constructor(
     private readonly server: Server,
     expectedState: string,
+    translate: Translate,
   ) {
     this.received = new Promise((resolve) => (this.resolveCode = resolve));
     server.on('request', (req, res) => {
@@ -213,11 +218,11 @@ export class LoopbackCallback {
         return;
       }
       if (url.searchParams.get('state') !== expectedState) {
-        res.writeHead(400, { 'content-type': 'text/plain; charset=utf-8' }).end('state no reconocido');
+        res.writeHead(400, { 'content-type': 'text/plain; charset=utf-8' }).end(translate('mcp.main.oauthPageBadState'));
         return;
       }
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-      res.end('<!doctype html><meta charset="utf-8"><title>Mage</title><p>Listo: puedes cerrar esta ventana y volver a Mage.</p>');
+      res.end(oauthPage(translate('mcp.main.oauthPageDone')));
       this.resolveCode?.(url.searchParams);
     });
   }
@@ -225,17 +230,17 @@ export class LoopbackCallback {
   // A13: un puerto efímero puede caer en la lista de puertos bloqueados del navegador (en Windows el rango
   // dinámico empieza en 1024, medido por dirección) y el redirect fallaría con «bad port». Se suelta y se
   // pide otro, con intentos acotados. Un `callbackPort` explícito nunca se sustituye: error claro.
-  static async listen(port: number | null, expectedState: string, listen: LoopbackListen = listenLoopback): Promise<LoopbackCallback> {
+  static async listen(port: number | null, expectedState: string, translate: Translate, listen: LoopbackListen = listenLoopback): Promise<LoopbackCallback> {
     if (port !== null && FETCH_BLOCKED_PORTS.has(port)) {
-      throw new Error(`El puerto OAuth ${port} (callbackPort del servidor) está bloqueado por el navegador; configura otro.`);
+      throw new UserFacingError(localized('errors.runtime.mcpCallbackPortBlocked', { port: String(port) }));
     }
-    if (port !== null) return new LoopbackCallback(await listen(port), expectedState);
+    if (port !== null) return new LoopbackCallback(await listen(port), expectedState, translate);
     for (let attempt = 0; attempt < MAX_CALLBACK_LISTEN_ATTEMPTS; attempt++) {
       const server = await listen(EPHEMERAL_PORT);
-      if (!FETCH_BLOCKED_PORTS.has((server.address() as AddressInfo).port)) return new LoopbackCallback(server, expectedState);
+      if (!FETCH_BLOCKED_PORTS.has((server.address() as AddressInfo).port)) return new LoopbackCallback(server, expectedState, translate);
       await closeServer(server);
     }
-    throw new Error(`No se encontró un puerto OAuth permitido por el navegador tras ${MAX_CALLBACK_LISTEN_ATTEMPTS} intentos.`);
+    throw new UserFacingError(localized('errors.runtime.mcpCallbackNoPort', { attempts: String(MAX_CALLBACK_LISTEN_ATTEMPTS) }));
   }
 
   get redirectUrl(): string {
@@ -245,14 +250,14 @@ export class LoopbackCallback {
   async waitForCode(timeoutMs: number): Promise<string> {
     let timer: NodeJS.Timeout | null = null;
     const stop = new Promise<never>((_resolve, reject) => {
-      timer = setTimeout(() => reject(new Error(`no se completó en ${Math.round(timeoutMs / 60_000)} min`)), timeoutMs);
+      timer = setTimeout(() => reject(new UserFacingError(localized('errors.runtime.mcpLoginTimeout', { minutes: String(Math.round(timeoutMs / 60_000)) }))), timeoutMs);
     });
     try {
       const query = await Promise.race([this.received, stop]);
       const error = query.get('error');
-      if (error !== null) throw new Error(`el servidor de autorización respondió ${error}`);
+      if (error !== null) throw new UserFacingError(localized('errors.runtime.mcpAuthServerResponded', { error }));
       const code = query.get('code');
-      if (code === null || code.length === 0) throw new Error('el callback no trae código');
+      if (code === null || code.length === 0) throw new UserFacingError(localized('errors.runtime.mcpCallbackNoCode'));
       return code;
     } finally {
       if (timer !== null) clearTimeout(timer);
@@ -262,6 +267,15 @@ export class LoopbackCallback {
   close(): void {
     this.server.close();
   }
+}
+
+// La página que ve el usuario en el navegador al volver del login: el texto ya traducido, escapado.
+function oauthPage(text: string): string {
+  return '<!doctype html><meta charset="utf-8"><title>Mage</title><p>' + escapeHtml(text) + '</p>';
+}
+
+function escapeHtml(text: string): string {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
 // Puertos que Fetch/Chromium rechazan («bad port»). Fetch Standard, «port blocking», consultado el

@@ -21,6 +21,7 @@ import {
   providerOptions,
   validateCustomProviderDraft,
   applyRuntimeProbe,
+  probeErrorText,
   draftFromProvider,
   type CustomProviderDraft,
 } from './models';
@@ -438,5 +439,15 @@ describe('borrador de proveedor del runtime', () => {
     const result = validateCustomProviderDraft(draftFromProvider(provider), [provider], provider.id);
 
     expect(result.ok && result.provider).toMatchObject({ contextWindow: 16000, supportsTools: true, models: provider.models });
+  });
+});
+
+describe('probeErrorText', () => {
+  it('probeErrorText_textoDeMain_pintaElCastellano', () => {
+    expect(probeErrorText({ key: 'settings.providers.listFailed', parts: { detail: { key: 'events.detailOnly', values: { detail: 'fetch failed' } } } })).toBe('No se pudo listar: fetch failed');
+  });
+
+  it('probeErrorText_sinFallo_devuelveNull', () => {
+    expect(probeErrorText(null)).toBeNull();
   });
 });

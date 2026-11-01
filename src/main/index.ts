@@ -658,6 +658,7 @@ function runtimeEnv(): RuntimeEnv {
         baseEnv: () => scrubAgentEnv(process.env),
         cwd,
         elicit: (server, params, signal) => broker.request(server, params, signal),
+        translate: getUiLanguageService().translate,
       }),
     toolAccess: (id) => getSettingsStore().load().runtimeToolAccess[id] ?? [],
   };
