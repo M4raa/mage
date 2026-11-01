@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { UserFacingError } from '@shared/i18n/localizedText';
 import { MAX_UNIX_SOCKET_PATH_BYTES, profileHash, resolveHostEndpoint, tokenFilePath } from './hostEndpoint';
 
 describe('profileHash', () => {
@@ -55,6 +56,18 @@ describe('resolveHostEndpoint', () => {
     expect(() => resolveHostEndpoint({ platform: 'linux', userDataDir, xdgRuntimeDir: undefined })).toThrow(
       new RegExp(`máximo es ${MAX_UNIX_SOCKET_PATH_BYTES}.*${'a'.repeat(120)}`),
     );
+  });
+
+  it('resolveHostEndpoint_rutaDemasiadoLarga_lanzaLaClaveConBytesTopeYRuta', () => {
+    const userDataDir = `/home/${'a'.repeat(120)}/Mage`;
+    const act = (): unknown => resolveHostEndpoint({ platform: 'linux', userDataDir, xdgRuntimeDir: undefined });
+
+    expect(act).toThrow(UserFacingError);
+    try { act(); } catch (err) {
+      const { key, values } = (err as UserFacingError).localized;
+      expect(key).toBe('errors.host.socketPathTooLong');
+      expect(values).toMatchObject({ max: String(MAX_UNIX_SOCKET_PATH_BYTES), address: expect.stringContaining('a'.repeat(120)) });
+    }
   });
 
   it('resolveHostEndpoint_rutaDeExactamenteElTope_seAcepta', () => {

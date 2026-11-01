@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { foreignText } from '@shared/i18n/localizedText';
 import { ANOTHER_INSTANCE_MESSAGE, HEADLESS_FLAG, HEADLESS_GUI_UNAVAILABLE, HOST_UNAVAILABLE_WARNING_ID, hostUnavailableWarning, isHeadlessHost, lockFailureMessage, NO_SANDBOX_WARNING, startupWarnings } from './startupMode';
 
 const linux = { platform: 'linux' as const, argv: ['electron', '.'], env: {} };
@@ -44,11 +45,11 @@ describe('startupWarnings', () => {
   });
 
   it.each(['win32', 'linux', 'darwin'] as const)('startupWarnings_%sHostSinArrancar_avisaConElMotivo', (platform) => {
-    const warnings = startupWarnings({ platform, hasNoSandboxSwitch: false, hostFailure: 'listen EADDRINUSE' });
+    const warnings = startupWarnings({ platform, hasNoSandboxSwitch: false, hostFailure: foreignText('listen EADDRINUSE') });
 
-    expect(warnings).toEqual([hostUnavailableWarning('listen EADDRINUSE')]);
+    expect(warnings).toEqual([hostUnavailableWarning(foreignText('listen EADDRINUSE'))]);
     expect(warnings[0]!.id).toBe(HOST_UNAVAILABLE_WARNING_ID);
-    expect(warnings[0]!.body).toEqual({ key: 'notifications.startup.hostUnavailable.body', values: { reason: 'listen EADDRINUSE' } });
+    expect(warnings[0]!.body).toEqual({ key: 'notifications.startup.hostUnavailable.body', values: {}, parts: { reason: { key: 'events.detailOnly', values: { detail: 'listen EADDRINUSE' } } } });
   });
 });
 

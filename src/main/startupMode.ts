@@ -1,4 +1,4 @@
-import { localized } from '@shared/i18n/localizedText';
+import { localized, localizedWithParts, type LocalizedText } from '@shared/i18n/localizedText';
 import type { StartupWarning } from '@shared/ipc';
 
 // Cómo arranca el proceso propietario (F2.6, §3.4 del plan). Puro: recibe plataforma, argumentos y entorno, así
@@ -46,11 +46,11 @@ export const NO_SANDBOX_WARNING: StartupWarning = {
 export const HOST_UNAVAILABLE_WARNING_ID = 'host-unavailable';
 
 // El host local no arrancó (H1 de la devolución 16): la interfaz sigue, pero ningún cliente local podrá conectarse.
-export function hostUnavailableWarning(reason: string): StartupWarning {
+export function hostUnavailableWarning(reason: LocalizedText): StartupWarning {
   return {
     id: HOST_UNAVAILABLE_WARNING_ID,
     title: localized('notifications.startup.hostUnavailable.title'),
-    body: localized('notifications.startup.hostUnavailable.body', { reason }),
+    body: localizedWithParts('notifications.startup.hostUnavailable.body', {}, { reason }),
   };
 }
 
@@ -58,7 +58,7 @@ export interface StartupWarningsInput {
   readonly platform: NodeJS.Platform;
   readonly hasNoSandboxSwitch: boolean;
   // Motivo por el que no arrancó el host local, o null si escucha.
-  readonly hostFailure: string | null;
+  readonly hostFailure: LocalizedText | null;
 }
 
 // Avisos persistentes que el renderer enseña al abrirse: Linux arrancado con el switch no-sandbox y host caído.

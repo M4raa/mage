@@ -1,6 +1,7 @@
 import net from 'node:net';
 import { dirname } from 'node:path';
 import type { Stats } from 'node:fs';
+import { localized, localizedFromError, localizedWithParts, UserFacingError } from '@shared/i18n/localizedText';
 import { HostConnection, type HostConnectionDeps } from './hostConnection';
 import type { HostEndpoint } from './hostEndpoint';
 import { TOKEN_FILE_MODE } from './hostToken';
@@ -98,7 +99,7 @@ function ensurePrivateDirectory(directory: string, deps: HostServerDeps): void {
   const mode = stat.mode & PERMISSION_BITS;
   const uid = deps.getuid?.();
   if (!stat.isDirectory() || mode !== PRIVATE_DIR_MODE || (uid !== undefined && stat.uid !== uid)) {
-    throw new Error(`El directorio del host no es privado (modo ${mode.toString(8)}, dueño ${stat.uid}, se esperaba 700 y el usuario ${String(uid)}): ${directory}`);
+    throw new UserFacingError(localized('errors.host.directoryNotPrivate', { mode: mode.toString(8), owner: String(stat.uid), user: String(uid), directory }));
   }
 }
 
@@ -145,9 +146,8 @@ function removeFilesKeepingCause(deps: HostServerDeps, cause: unknown): void {
   try {
     removeFiles(deps);
   } catch (cleanupErr) {
-    const reason = cause instanceof Error ? cause.message : String(cause);
-    const cleanup = cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr);
-    throw new Error(`El host no arrancó (${reason}) y no se pudieron borrar sus ficheros: ${cleanup}`, { cause });
+    const text = localizedWithParts('errors.host.startFailedCleanup', {}, { reason: localizedFromError(cause), detail: localizedFromError(cleanupErr) });
+    throw new UserFacingError(text);
   }
 }
 

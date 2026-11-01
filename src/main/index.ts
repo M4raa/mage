@@ -95,7 +95,7 @@ import type {
 import { buildAboutInfo } from './about/aboutService';
 import type { MemoryFile } from '@shared/memory';
 import type { MageEvent, SlashCommandInfo } from '@shared/events';
-import { localized, localizedWithParts, renderForLog, UserFacingError, type LocalizedText } from '@shared/i18n/localizedText';
+import { localized, localizedFromError, localizedWithParts, renderForLog, UserFacingError, type LocalizedText } from '@shared/i18n/localizedText';
 import type { ImageAttachment, ProviderProbeParams } from '@shared/ipc';
 import { base64ByteLength, ERROR_FORMAT_LOCALE, validateAttachmentSet } from '@shared/attachments';
 import type { EffectiveSettings, InstructionsFile, ProjectFileContent, ReadProjectFileParams, WriteProjectFileParams } from '@shared/ipc';
@@ -3694,7 +3694,7 @@ if (runsHeadless && process.platform === 'linux' && !app.commandLine.hasSwitch('
 // El host local (F2.6): terminal, widget y MCP hablan con el por un socket privado. Vive en los dos modos.
 let localHost: HostServerHandle | null = null;
 // Motivo por el que el host no arrancó (null si escucha): el renderer lo enseña como aviso persistente (H1, devolución 16).
-let hostFailure: Promise<string | null> = Promise.resolve(null);
+let hostFailure: Promise<LocalizedText | null> = Promise.resolve(null);
 function startHost(mode: HostMode): Promise<void> {
   return startLocalHost({
     platform: process.platform,
@@ -3764,7 +3764,7 @@ app.whenReady().then(async () => {
     mainLog('info', 'Mage arrancado sin pantalla', { platform: process.platform });
     await assessVaultOnce();
     await startHost('headless').catch((err: unknown) => {
-      mainLog('error', 'No se pudo arrancar el host local; se cierra el proceso sin pantalla', { error: err instanceof Error ? err.message : String(err) });
+      mainLog('error', 'No se pudo arrancar el host local; se cierra el proceso sin pantalla', { error: renderForLog(localizedFromError(err)) });
       app.exit(1);
     });
     return;
@@ -3797,8 +3797,8 @@ app.whenReady().then(async () => {
   hostFailure = startHost('gui').then(
     () => null,
     (err: unknown) => {
-      const reason = err instanceof Error ? err.message : String(err);
-      mainLog('error', 'No se pudo arrancar el host local', { error: reason });
+      const reason = localizedFromError(err);
+      mainLog('error', 'No se pudo arrancar el host local', { error: renderForLog(reason) });
       return reason;
     },
   );

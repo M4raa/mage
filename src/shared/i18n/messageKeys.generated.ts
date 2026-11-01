@@ -755,6 +755,9 @@ export interface MessageValues {
   readonly "errors.git.unavailable": { readonly "cwd": string | number; readonly "reason": string | number };
   readonly "errors.git.worktreeBranchGone": { readonly "branch": string | number; readonly "repoRoot": string | number };
   readonly "errors.git.worktreeCreateRejected": { readonly "detail": string | number };
+  readonly "errors.host.directoryNotPrivate": { readonly "directory": string | number; readonly "mode": string | number; readonly "owner": string | number; readonly "user": string | number };
+  readonly "errors.host.socketPathTooLong": { readonly "address": string | number; readonly "bytes": string | number; readonly "max": string | number };
+  readonly "errors.host.startFailedCleanup": { readonly "detail": string | number; readonly "reason": string | number };
   readonly "errors.locks.cannotCreate": { readonly "nativeId": string | number; readonly "path": string | number };
   readonly "errors.os.agyNotFound": { readonly "command": string | number };
   readonly "errors.os.codexNotFound": { readonly "command": string | number };

@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ConversationSnapshot } from '@shared/coordination';
+import { UserFacingError } from '@shared/i18n/localizedText';
 import { HostErrorCode, HOST_PROTOCOL } from './hostProtocol';
 import { createTranslator } from '@shared/i18n/translator';
 import { endpointFilePath, modeFilePath, resolveHostEndpoint, tokenFilePath } from './hostEndpoint';
@@ -151,6 +152,36 @@ describe('startHostServer', () => {
 
     await new Promise<void>((resolve) => { squatter.close(() => resolve()); });
     expect([deps.tokenFile, deps.endpointFile, deps.modeFile].filter((file) => fs.existsSync(file))).toEqual([]);
+  });
+
+  it('start_fallaYLaLimpiezaTambien_lanzaLaClaveConLasDosCausasComoPartes', async () => {
+    const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mage-host-'));
+    roots.push(userDataDir);
+    const token = tokenFilePath({ platform: process.platform, userDataDir, xdgRuntimeDir: undefined });
+    const deps = serverDeps(userDataDir, {
+      ...fs,
+      writeFileSync: () => { throw new Error('EACCES'); },
+      rmSync: (target, options) => { if (target === token) throw new Error('EBUSY'); fs.rmSync(target, options); },
+    });
+
+    const err: unknown = await startHostServer(deps).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(UserFacingError);
+    expect((err as UserFacingError).localized).toEqual({
+      key: 'errors.host.startFailedCleanup',
+      values: {},
+      parts: { reason: { key: 'events.detailOnly', values: { detail: 'EACCES' } }, detail: { key: 'events.detailOnly', values: { detail: 'EBUSY' } } },
+    });
+  });
+
+  it('start_directorioAjenoOConModoAncho_lanzaLaClaveConElModoYElDueño', async () => {
+    const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mage-host-'));
+    roots.push(userDataDir);
+    const deps = serverDeps(userDataDir, { ...fs, chmodSync: () => undefined, statSync: () => ({ mode: 0o40755, uid: 1000, isDirectory: () => true }) });
+
+    const err: unknown = await startHostServer({ ...deps, platform: 'linux', getuid: () => 1000 }).catch((e: unknown) => e);
+
+    expect((err as UserFacingError).localized).toMatchObject({ key: 'errors.host.directoryNotPrivate', values: { mode: '755', owner: '1000', user: '1000' } });
   });
 
   posixOnly('start_fichero_token0600_directorio0700_socket0600', async () => {

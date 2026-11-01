@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { posix, win32 } from 'node:path';
+import { localized, UserFacingError } from '@shared/i18n/localizedText';
 
 // Dónde escucha el host local (F2.6, H6 de la devolución 13). Windows: named pipe. Linux y macOS: socket Unix en
 // `$XDG_RUNTIME_DIR/mage/<hash>.sock` o, sin esa variable, en `<userData>/run/`. La ruta de un socket Unix tiene
@@ -53,7 +54,7 @@ export function resolveHostEndpoint(deps: HostEndpointDeps): HostEndpoint {
   const address = join(base, `${hash}.sock`);
   const bytes = Buffer.byteLength(address, 'utf8');
   if (bytes > MAX_UNIX_SOCKET_PATH_BYTES) {
-    throw new Error(`La ruta del socket del host mide ${bytes} bytes y el máximo es ${MAX_UNIX_SOCKET_PATH_BYTES}: ${address}. Arranca Mage con un --user-data-dir más corto o define XDG_RUNTIME_DIR.`);
+    throw new UserFacingError(localized('errors.host.socketPathTooLong', { bytes: String(bytes), max: String(MAX_UNIX_SOCKET_PATH_BYTES), address }));
   }
   return { kind: 'unix', address, directory: base };
 }
