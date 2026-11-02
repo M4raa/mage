@@ -651,12 +651,13 @@ describe('ensureSession', () => {
 });
 
 describe('hydrateBlocks', () => {
-  const bloque = (id: string): { kind: 'user'; id: string; text: string; time: string; attachments: readonly never[] } => ({
+  const bloque = (id: string): { kind: 'user'; id: string; text: string; time: string; attachments: readonly never[]; nativeId: null } => ({
     kind: 'user',
     id,
     text: id,
     time: '12:00',
     attachments: [],
+    nativeId: null,
   });
 
   it('hydrateBlocks_conUnMensajeYaEscrito_anteponeElHistorialEnVezDeDescartarlo', () => {
@@ -1484,7 +1485,7 @@ describe('requestAccountSwitch y continueInAccount', () => {
   it('continueWithHistoryIn_haciaOtroProveedor_abreChatNuevoConElHistorialYNoMigra', async () => {
     const migrateConversation = vi.fn();
     const store = mounted({ migrateConversation, getScratchDir: vi.fn(() => new Promise<string>(() => undefined)) });
-    store.setState({ blocksByChat: { a: [{ kind: 'user', id: 'u1', text: 'arregla el login', time: '', attachments: [] }] } });
+    store.setState({ blocksByChat: { a: [{ kind: 'user', id: 'u1', text: 'arregla el login', time: '', attachments: [], nativeId: null }] } });
 
     await store.getState().continueWithHistoryIn('a', 'C:/Users/u/.codex-x');
 
@@ -1738,6 +1739,16 @@ describe('cola de mensajes', () => {
     });
     return { store, sendMessage, interrupt, removeQueuedMessage, updateQueuedMessage };
   }
+
+  it('sendMessageToTab_optimisticBlockNativeIdIsCommandId', async () => {
+    const { store, sendMessage } = mounted('idle');
+
+    await store.getState().sendMessageToTab('a', 'hola');
+
+    const sent = sendMessage.mock.calls[0]?.[0] as { commandId: string };
+    const block = (store.getState().blocksByChat.a ?? []).find((b) => b.kind === 'user');
+    expect(block).toMatchObject({ kind: 'user', nativeId: sent.commandId });
+  });
 
   it('sendMessageToTab_turnoEnMarcha_loMandaAMainSinBurbujaNiReloj', async () => {
     const { store, sendMessage } = mounted('streaming');
@@ -2256,7 +2267,7 @@ describe('worktree de la pestaña (grupo D)', () => {
       activeTabId: 'a',
       splitLayout: singleLeaf('a'),
       gitByCwd: { 'C:/proyecto': { snapshot: REPO_SNAPSHOT, branches: ['main'], error: null } },
-      blocksByChat: { a: [{ kind: 'user', id: 'b1', text: 'Arreglar el login', time: '10:00', attachments: [] }] },
+      blocksByChat: { a: [{ kind: 'user', id: 'b1', text: 'Arreglar el login', time: '10:00', attachments: [], nativeId: null }] },
     });
     return store;
   }

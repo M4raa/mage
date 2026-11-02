@@ -2365,7 +2365,7 @@ export function createWorkbenchStore(mage: MageClient) {
       // se ve: con un turno en marcha no hay burbuja ni reloj nuevo (la cola se pinta con `queue_changed`);
       // sin el, la burbuja sale al instante. Si main decide otra cosa, `reconcileReceipt` lo corrige.
       const commandId = crypto.randomUUID();
-      const optimisticBlockId = isTurnRunning(get().statusByChat[tabId]) ? null : beginTurnLocally(mage, get, set, tabId, trimmed, attachments);
+      const optimisticBlockId = isTurnRunning(get().statusByChat[tabId]) ? null : beginTurnLocally(mage, get, set, tabId, { text: trimmed, attachments, nativeId: commandId });
       try {
         const sessionId = await get().ensureSession(tabId);
         const receipt = await mage.sendMessage({ sessionId, text: trimmed, commandId, ...(attachments.length === 0 ? {} : { attachments }), ...(mode === 'steer' ? { mode } : {}) });
@@ -2655,7 +2655,7 @@ export function createWorkbenchStore(mage: MageClient) {
       if (event.kind === 'result') flushPendingCliTitle(mage, get, set, tabId);
       // Main saco de su cola el primero como turno propio (F2.2): se pinta como si se acabara de enviar. Si no
       // pudo enviarlo, vuelve al input con el error.
-      if (event.kind === 'queued_message_sent') beginTurnLocally(mage, get, set, tabId, event.message.text, event.message.attachments);
+      if (event.kind === 'queued_message_sent') beginTurnLocally(mage, get, set, tabId, { text: event.message.text, attachments: event.message.attachments, nativeId: event.message.id });
       if (event.kind === 'queued_message_failed') {
         failChat(set, tabId, renderLocalized(t, event.localized));
         restoreDraftAfterFailedSend(set, tabId, event.message.text, event.message.attachments);
@@ -3316,14 +3316,15 @@ function toastIfHidden(get: () => WorkbenchState, event: MageEvent, context: Hid
 
 // Lo que se ve al EMPEZAR un turno del usuario: auto-titulo, burbuja, estado, reloj y avisos que caducan.
 // Lo usan el envio directo y el mensaje que main saca de su cola. Devuelve el id de la burbuja.
-function beginTurnLocally(mage: MageClient, get: () => WorkbenchState, set: SetFn, tabId: string, text: string, attachments: readonly ImageAttachment[]): string {
+function beginTurnLocally(mage: MageClient, get: () => WorkbenchState, set: SetFn, tabId: string, message: { readonly text: string; readonly attachments: readonly ImageAttachment[]; readonly nativeId: string | null }): string {
+  const { text, attachments, nativeId } = message;
   // Auto-titulo (M2.6): el primer mensaje de una conversacion aun sin titulo lo fija desde el prompt.
   // Un comando "/" no titula (P-028): la pestaña sigue «Nuevo chat» hasta el primer prompt real.
   const tab = get().tabs.find((t) => t.id === tabId);
   if (tab !== undefined && shouldAutoTitle(tab, get().blocksByChat[tabId] ?? EMPTY_BLOCKS, text)) get().renameTab(tabId, deriveTitleFromPrompt(text));
   // El bloque optimista lleva ya los adjuntos, asi que la miniatura se ve al instante.
   const blockId = nextBlockId();
-  patchBlocks(set, tabId, (blocks) => appendUserBlock(blocks, { id: blockId, text, time: currentTime(), attachments }));
+  patchBlocks(set, tabId, (blocks) => appendUserBlock(blocks, { id: blockId, text, time: currentTime(), attachments, nativeId }));
   startTurnClock(mage, get, set, tabId);
   return blockId;
 }
@@ -3364,7 +3365,7 @@ function reconcileReceipt(mage: MageClient, get: () => WorkbenchState, set: SetF
     patchBlocks(set, tabId, (blocks) => blocks.filter((b) => b.id !== optimisticBlockId));
     return;
   }
-  if (receipt.status === 'accepted' && optimisticBlockId === null) beginTurnLocally(mage, get, set, tabId, context.text, context.attachments);
+  if (receipt.status === 'accepted' && optimisticBlockId === null) beginTurnLocally(mage, get, set, tabId, { text: context.text, attachments: context.attachments, nativeId: context.commandId });
 }
 
 // Directo dentro del turno en marcha (F4.1): su burbuja sale ya, sin reloj nuevo (el turno sigue siendo el mismo),
@@ -3374,7 +3375,7 @@ function acceptSteering(set: SetFn, context: ReceiptContext, awaitsAnswer: boole
   const { tabId, commandId } = context;
   const blockId = context.optimisticBlockId ?? nextBlockId();
   if (context.optimisticBlockId === null) {
-    patchBlocks(set, tabId, (blocks) => appendUserBlock(blocks, { id: blockId, text: context.text, time: currentTime(), attachments: context.attachments }));
+    patchBlocks(set, tabId, (blocks) => appendUserBlock(blocks, { id: blockId, text: context.text, time: currentTime(), attachments: context.attachments, nativeId: commandId }));
   }
   set((s) => ({ steeringByChat: { ...s.steeringByChat, [tabId]: { ...(s.steeringByChat[tabId] ?? {}), [commandId]: blockId } } }));
   if (awaitsAnswer) patchBlocks(set, tabId, (blocks) => appendSystemBlock(blocks, t('chat.steer.awaitsAnswer'), nextBlockId()));

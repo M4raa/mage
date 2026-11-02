@@ -66,6 +66,8 @@ export interface NewUserBlock {
   // Imagenes del mensaje. La ruta VIVA todavia manda siempre [] (enviar imagenes es de la Fase E);
   // existe aqui para que el bloque optimista y el reconstruido desde la transcripcion sean el mismo.
   readonly attachments: readonly ImageAttachment[];
+  // Id del mensaje ante su CLI (ver `Block`): null si no se conoce.
+  readonly nativeId: string | null;
 }
 
 // Bloque de usuario (optimista: lo anadimos al enviar; el CLI no reemite el mensaje del usuario).

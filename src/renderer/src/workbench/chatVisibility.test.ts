@@ -5,7 +5,7 @@ import type { Block } from './types';
 
 type ToolBlock = Extract<Block, { kind: 'tool' }>;
 
-const user = (id: string, text = 'hola'): Block => ({ kind: 'user', id, text, time: '', attachments: [] });
+const user = (id: string, text = 'hola'): Block => ({ kind: 'user', id, text, time: '', attachments: [], nativeId: null });
 const agent = (id: string): Block => ({ kind: 'agent', id, runs: [{ code: false, text: 'Voy a revisar X' }], streaming: false });
 const thinking = (id: string): Block => ({ kind: 'thinking', id, runs: [], streaming: false, elapsedMs: null });
 const tool = (id: string, over: Partial<ToolBlock> = {}): Block => ({
