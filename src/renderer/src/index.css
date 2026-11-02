@@ -3,7 +3,7 @@
 /* Sistema de diseno de Mage — Workbench. Base neutra en gris; tema conmutable claro/oscuro (M3).
    Los tokens `mg-*` viven como variables CSS: el bloque @theme son los valores OSCUROS por defecto
    (Tailwind v4 genera las utilidades `bg-mg-*`/`text-mg-*`/... que resuelven var(--color-mg-*) en
-   runtime). El tema claro SOLO sobrescribe esas variables bajo `:root[data-theme='light']`, sin tocar
+   runtime). El tema claro SOLO sobrescribe esas variables bajo `:root:where([data-theme='light'])`, sin tocar
    ninguna className. Los unicos colores cromaticos siguen siendo acentos POR CUENTA (inline, data-driven)
    y las series de graficas/estado (variables `--mg-*` mas abajo). NO usar `@theme inline` (inlinearia
    los valores y romperia el override por variable). */
@@ -41,6 +41,10 @@
   --color-mg-focus: #d8d8d8;
   /* Anillo de foco (a11y): tono sutil, NO el acento casi-blanco de --color-mg-focus (rectangulo feo). */
   --color-mg-focus-ring: #5a6072;
+  /* Texto sobre la selección y marca de 2 px de la fila seleccionada. Un tema importado los fija desde
+     themeFallbacks; la marca, solo cuando su selección se confunde con el hover. */
+  --color-mg-sel-ink: #dcdcdc;
+  --color-mg-sel-mark: transparent;
   --color-mg-track: #2c2c2c;
   --color-mg-fill: #8f8f8f;
   --color-mg-primary: #e6e6e6;
@@ -126,7 +130,11 @@
 }
 
 /* --- Tema CLARO: override de todas las variables (mg-* de @theme + las --mg-* de JS) ------------- */
-:root[data-theme='light'] {
+/* `:where` deja el selector con la especificidad de `:root`: gana al bloque oscuro de arriba por orden y
+   pierde ante el `:root{…}` que inyecta un tema importado claro (theme.ts), que va después. Con
+   `:root[data-theme='light']` el bloque claro ganaba por especificidad y un tema importado claro no
+   aplicaba ninguno de sus colores (medido en Chromium 156, 2026-11-02). */
+:root:where([data-theme='light']) {
   color-scheme: light;
 
   /* Fondos */
@@ -161,6 +169,7 @@
   --color-mg-idle: #c6c6cb;
   --color-mg-focus: #27272a;
   --color-mg-focus-ring: #9aa0b4;
+  --color-mg-sel-ink: #27272a;
   --color-mg-track: #e3e3e7;
   --color-mg-fill: #71717a;
   --color-mg-primary: #18181b;

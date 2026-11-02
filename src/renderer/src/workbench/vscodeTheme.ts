@@ -1,4 +1,5 @@
 import type { FetchedVscodeTheme, VscodeTokenColor } from '@shared/themeMarket';
+import { canDerive, deriveStructuralTokens, type StructuralTokens } from '../theme/themeFallbacks';
 
 // Mapeo PURO de un tema de color de VS Code (colores de su fichero) a los tokens de Mage
 // (--color-mg-*). VS Code tiene cientos de claves de UI que Mage no usa; se mapea un SUBCONJUNTO
@@ -22,7 +23,9 @@ const TOKEN_MAP: readonly (readonly [string, readonly string[]])[] = [
   ['--color-mg-tool', ['textCodeBlock.background', 'editorWidget.background', 'sideBar.background', 'editor.background']],
   ['--color-mg-code', ['textCodeBlock.background', 'editorWidget.background', 'editor.background']],
   ['--color-mg-popover', ['editorWidget.background', 'dropdown.background', 'menu.background', 'quickInput.background', 'editor.background']],
-  ['--color-mg-sel', ['list.activeSelectionBackground', 'list.inactiveSelectionBackground', 'quickInputList.focusBackground', 'menu.selectionBackground', 'editor.selectionBackground', 'editor.lineHighlightBackground']],
+  // Sin `menu.selectionBackground` ni `editor.selectionBackground`: son de menú y de texto, no de una
+  // fila de lista (en Dark Modern el primero es un azul de acento).
+  ['--color-mg-sel', ['list.activeSelectionBackground', 'list.inactiveSelectionBackground', 'quickInputList.focusBackground', 'editor.lineHighlightBackground']],
   ['--color-mg-hover', ['list.hoverBackground', 'toolbar.hoverBackground', 'menubar.selectionBackground', 'list.inactiveSelectionBackground', 'editor.lineHighlightBackground']],
   // Bordes
   ['--color-mg-border', ['panel.border', 'editorGroup.border', 'sideBar.border', 'editorGroupHeader.tabsBorder', 'tab.border', 'contrastBorder', 'input.border']],
@@ -41,7 +44,8 @@ const TOKEN_MAP: readonly (readonly [string, readonly string[]])[] = [
   ['--color-mg-disabled', ['disabledForeground', 'editorLineNumber.foreground', 'descriptionForeground']],
   // Neutros funcionales / acento
   ['--color-mg-activity', ['foreground', 'editor.foreground', 'activityBar.foreground']],
-  ['--color-mg-focus', ['focusBorder', 'button.background', 'textLink.foreground', 'activityBarBadge.background', 'progressBar.background', 'editorCursor.foreground']],
+  // Sin `editorCursor.foreground`: es el color del texto, no un acento.
+  ['--color-mg-focus', ['focusBorder', 'button.background', 'textLink.foreground', 'activityBarBadge.background', 'progressBar.background']],
   ['--color-mg-fill', ['progressBar.background', 'button.background', 'activityBarBadge.background', 'focusBorder']],
   ['--color-mg-primary', ['button.background', 'textLink.foreground', 'activityBarBadge.background', 'focusBorder']],
   ['--color-mg-primary-ink', ['button.foreground', 'activityBarBadge.foreground', 'editor.background']],
@@ -73,14 +77,34 @@ export function hasReliableThumbnail(tokens: Readonly<Record<string, string>>): 
   return THUMBNAIL_TOKENS.filter((token) => tokens[token] !== undefined).length >= MIN_RESOLVED_THUMBNAIL_TOKENS;
 }
 
-// Mapea un tema resuelto a { type, tokens }. Solo emite los tokens con color valido de origen.
+// Mapea un tema resuelto a { type, tokens }. Solo emite los tokens con color valido de origen. Si el
+// tema trae panel y primer plano, los tokens estructurales salen de themeFallbacks y pisan los del
+// TOKEN_MAP: el primer color del autor que se distingue del panel o, si ninguno, uno derivado.
 export function mapVscodeTheme(theme: FetchedVscodeTheme): MappedTheme {
   const tokens: Record<string, string> = {};
   for (const [token, candidates] of TOKEN_MAP) {
     const value = firstColor(theme.colors, candidates);
     if (value !== null) tokens[token] = value;
   }
+  if (canDerive(theme.colors)) Object.assign(tokens, structuralTokenVars(deriveStructuralTokens(theme.colors)));
   return { type: resolveType(theme), tokens };
+}
+
+// Variables CSS de los tokens estructurales. El foco va también al anillo de :focus-visible. La marca
+// de selección solo se emite cuando la selección se confunde con el hover; si no, queda el
+// `transparent` por defecto de index.css.
+function structuralTokenVars(structural: StructuralTokens): Record<string, string> {
+  const vars: Record<string, string> = {
+    '--color-mg-border-subtle': structural.separatorWeak.value,
+    '--color-mg-border-ctrl': structural.controlBorder.value,
+    '--color-mg-hover': structural.hover.value,
+    '--color-mg-sel': structural.selection.value,
+    '--color-mg-focus': structural.focusRing.value,
+    '--color-mg-focus-ring': structural.focusRing.value,
+    '--color-mg-sel-ink': structural.selectionInk.value,
+  };
+  if (structural.selectionMark.needed) vars['--color-mg-sel-mark'] = structural.focusRing.value;
+  return vars;
 }
 
 // Tipo del tema: el declarado en el fichero manda; si no, se deduce del uiTheme del manifest.
