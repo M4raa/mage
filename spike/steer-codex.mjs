@@ -8,6 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
+import { linguiCatalogPlugin } from '../scripts/lib/linguiEsbuildPlugin.mjs';
 
 const self = fileURLToPath(import.meta.url);
 const repo = path.resolve(path.dirname(self), '..');
@@ -17,23 +18,13 @@ const option = (name) => {
   return index === -1 ? undefined : args[index + 1];
 };
 
-// El adapter arrastra el traductor de la interfaz, que importa los catálogos compilados por Lingui (`?lingui`). El spike
-// solo mide outcomes y nunca pinta un texto: un catálogo vacío basta.
-const emptyCatalogs = {
-  name: 'empty-lingui-catalogs',
-  setup(build) {
-    build.onResolve({ filter: /\.json\?lingui$/ }, (resolved) => ({ path: resolved.path, namespace: 'empty-lingui' }));
-    build.onLoad({ filter: /.*/, namespace: 'empty-lingui' }, () => ({ contents: 'export const messages = {};', loader: 'js' }));
-  },
-};
-
 async function build(outDir) {
   const require = createRequire(path.join(repo, 'package.json'));
   const esbuild = require(path.join(repo, 'node_modules/.pnpm/esbuild@0.25.12/node_modules/esbuild'));
   const outfile = path.join(outDir, 'steer-codex-bundle.cjs');
   await esbuild.build({
     entryPoints: [path.join(repo, 'spike/steer-codex-entry.ts')], bundle: true, platform: 'node', format: 'cjs', outfile,
-    alias: { '@shared': path.join(repo, 'src/shared') }, plugins: [emptyCatalogs], logLevel: 'error',
+    alias: { '@shared': path.join(repo, 'src/shared') }, plugins: [linguiCatalogPlugin(repo)], logLevel: 'error',
   });
   return outfile;
 }
