@@ -10,6 +10,7 @@ import readline from 'node:readline';
 import { parseChatArgs, defaultUserDataDir } from './chatArgs.mjs';
 import { ChatController } from './chatController.mjs';
 import { connectVerified } from './hostLink.mjs';
+import { installMute } from './hiddenInput.mjs';
 import { createMessages, pickLanguage } from './messages.mjs';
 import { reconnectWithRetries } from './reconnect.mjs';
 import { resolveTarget } from './targetPicker.mjs';
@@ -75,6 +76,7 @@ async function main() {
   writeOut(`${messages.connected(link.hello.hostVersion, info.mode)}\n`);
 
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout, terminal: process.stdin.isTTY === true });
+  const setMuted = installMute(rl);
   const sessionId = await resolveTarget({
     rpc: link.rpc, target: args.target, cwd: process.cwd(), ask: createAsk(rl), write: writeOut, messages, newCommandId: randomUUID,
   });
@@ -93,7 +95,7 @@ async function main() {
     controller.link.rpc.close();
     process.exit(code);
   };
-  controller = new ChatController({ link, sessionId, messages, write: writeOut, now: Date.now, exit, reconnect });
+  controller = new ChatController({ link, sessionId, messages, write: writeOut, now: Date.now, exit, reconnect, setMuted });
   watchSocket(link);
 
   rl.on('line', (text) => guardPromise(controller.onLine(text)));

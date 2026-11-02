@@ -3,11 +3,13 @@
 // un host falso. Sin dependencias: solo `node:*`.
 import { randomUUID } from 'node:crypto';
 import { PendingSends } from './pendingSends.mjs';
+import { PromptDesk } from './promptDesk.mjs';
+import { promptFromPending, promptIsSecret, promptText, replyToPrompt } from './promptFlow.mjs';
 import { renderEvent } from './render.mjs';
 import { decideCtrlC, decideLine, decidePermissionAnswer, isTurnActive } from './signals.mjs';
 
 const UNKNOWN_SESSION_CODE = -32004;
-const DENIED_FROM_TERMINAL = 'Denegado desde la terminal';
+const RESOLVED_ELSEWHERE_KINDS = new Set(['permission_resolved', 'elicitation_resolved', 'elicitation_cancelled']);
 
 // Un error con `code` numérico es la respuesta JSON-RPC del host; sin él (o con código de socket en texto) la
 // conexión se cayó y lo trata `onDisconnected`.
@@ -21,7 +23,10 @@ export class ChatController {
   #lastInterruptAt = null;
   #lastSeq = 0;
   #subscriptionId = null;
-  #pendingPermission = null;
+  #desk = new PromptDesk();
+  #setMuted;
+  #reconnecting = false;
+  #unsent = [];
   #resendQueue = [];
   #pending = new PendingSends();
   #closing = false;
@@ -29,6 +34,7 @@ export class ChatController {
   constructor(deps) {
     this.#deps = deps;
     this.link = deps.link;
+    this.#setMuted = deps.setMuted ?? (() => undefined);
   }
 
   // `announce: false` en la resuscripción tras reconectar: no se repite la ayuda.
@@ -55,8 +61,9 @@ export class ChatController {
   }
 
   async onLine(text) {
+    if (this.#reconnecting) return this.#holdUnsent(text);
     if (this.#resendQueue.length > 0) return this.#handleResendAnswer(text);
-    if (this.#pendingPermission !== null) return this.#handlePermissionAnswer(text);
+    if (this.#desk.active() !== null) return this.#answerPrompt(text);
     const decision = decideLine(text);
     if (decision === 'exit') return this.leave();
     if (decision === 'empty') return undefined;
@@ -98,16 +105,40 @@ export class ChatController {
     if (this.#closing) return;
     const { messages } = this.#deps;
     this.#say(messages.connectionLost());
+    this.#reconnecting = true;
     // Los inciertos pasan a la cola de preguntas: al reenviar, `track` los vuelve a registrar.
     this.#resendQueue.push(...this.#pending.markAllUncertain());
     this.#pending.takeUncertain();
-    this.#pendingPermission = null;
+    this.#desk.clear();
+    this.#setMuted(false);
     const previousSeq = this.#lastSeq;
     if (!(await this.#reconnect())) return;
     if (!(await this.attach({ announce: false }))) return;
+    this.#reconnecting = false;
     this.#say(messages.reconnected(Math.max(0, this.#lastSeq - previousSeq)));
+    this.#queueUnsentForResend();
     // NUNCA reenvía sin respuesta del usuario.
-    if (this.#resendQueue.length > 0) this.#say(messages.resendAsk(this.#resendQueue[0].text));
+    if (this.#resendQueue.length > 0) this.#askResend(this.#resendQueue[0]);
+  }
+
+  // Lo escrito sin conexión nunca llegó al host: se ofrece después de los inciertos, con su commandId nuevo.
+  #queueUnsentForResend() {
+    if (this.#unsent.length === 0) return;
+    this.#say(this.#deps.messages.unsentDuringReconnect(this.#unsent.length));
+    this.#resendQueue.push(...this.#unsent.splice(0).map((item) => ({ ...item, unsent: true })));
+  }
+
+  #askResend(item) {
+    const { messages } = this.#deps;
+    this.#say(item.unsent === true ? messages.resendUnsentAsk(item.text) : messages.resendAsk(item.text));
+  }
+
+  // Mientras se reconecta no se envía nada por el enlace caído: se guarda y se avisa.
+  #holdUnsent(text) {
+    if (decideLine(text) === 'empty') return undefined;
+    this.#unsent.push({ commandId: randomUUID(), text });
+    this.#say(this.#deps.messages.notSentOffline());
+    return undefined;
   }
 
   async #reconnect() {
@@ -127,27 +158,90 @@ export class ChatController {
   }
 
   #onNotification(method, params) {
-    if (method !== 'event' || params.subscriptionId !== this.#subscriptionId) return;
+    if (method === 'subscription.closed') return this.#onSubscriptionClosed(params);
+    if (method !== 'event' || params.subscriptionId !== this.#subscriptionId) return undefined;
     this.#lastSeq = params.seq;
     const { event } = params;
     if (event.kind === 'session_state') this.#turnActive = isTurnActive(event.state);
-    if (event.kind === 'permission_request') this.#showPending({ kind: 'permission', request: event.request });
-    if (event.kind === 'permission_resolved' && this.#pendingPermission?.requestId === event.requestId) this.#pendingPermission = null;
     const text = renderEvent(event, this.#deps.messages);
     if (text !== null) this.#deps.write(text);
+    return this.#onPendingEvent(event);
   }
 
-  // Los permisos se contestan en la terminal; las preguntas y elicitations, solo en la ventana de Mage.
+  #onSubscriptionClosed(params) {
+    if (params?.subscriptionId !== this.#subscriptionId) return undefined;
+    this.#closing = true;
+    this.#say(this.#deps.messages.sessionClosed());
+    this.#deps.exit(0);
+    return undefined;
+  }
+
+  #onPendingEvent(event) {
+    if (event.kind === 'permission_request') this.#showPending({ kind: 'permission', request: event.request });
+    if (event.kind === 'elicitation_request') this.#showPending({ kind: 'elicitation', request: event.request });
+    if (RESOLVED_ELSEWHERE_KINDS.has(event.kind)) this.#resolvedElsewhere(event);
+  }
+
+  // Lo contestó otro cliente (o caducó): se quita de la mesa y se pasa a la siguiente. Si lo acaba de contestar
+  // esta terminal, #settlePrompt ya lo quitó y no hay nada que decir.
+  #resolvedElsewhere(event) {
+    const { wasActive, next } = this.#desk.resolve(event.requestId);
+    if (!wasActive) return;
+    this.#setMuted(false);
+    if (event.kind !== 'permission_resolved') this.#say(this.#deps.messages.answeredElsewhere());
+    if (next !== null) this.#present(next);
+  }
+
+  // Lo que la terminal sabe pintar se contesta aquí, de una en una; lo demás se contesta en la ventana de Mage.
   #showPending(pending) {
-    const { messages } = this.#deps;
-    // Una elicitation en vivo ya la anuncia `renderEvent`: aquí solo llegan las de la instantánea.
-    if (pending.kind !== 'permission' || pending.request.requiresUserInteraction) {
-      this.#say(messages.answerInMage());
+    const prompt = promptFromPending(pending);
+    if (prompt === null) {
+      this.#say(this.#deps.messages.answerInMage());
       return;
     }
-    const { request } = pending;
-    this.#pendingPermission = { requestId: request.requestId };
-    this.#say(messages.permissionAsk(request.displayName ?? request.toolName, request.description));
+    if (this.#desk.offer(prompt) === 'shown') this.#present(prompt);
+  }
+
+  #present(prompt) {
+    this.#say(promptText(prompt, this.#deps.messages));
+    this.#setMuted(promptIsSecret(prompt));
+  }
+
+  #invalidText(reason) {
+    const { messages } = this.#deps;
+    if (reason === 'yesNo') return messages.answerYesNo();
+    if (reason === 'question') return messages.questionInvalid();
+    return messages.elicitationInvalid(reason);
+  }
+
+  async #answerPrompt(text) {
+    this.#setMuted(false);
+    const active = this.#desk.active();
+    const outcome = replyToPrompt(active, text);
+    if (outcome.kind === 'invalid') {
+      this.#say(this.#invalidText(outcome.reason));
+      return this.#present(active);
+    }
+    if (outcome.kind === 'continue') {
+      this.#desk.replaceActive(outcome.prompt);
+      return this.#present(outcome.prompt);
+    }
+    await this.#hostCall(...this.#answerCall(active, outcome));
+    return this.#settlePrompt(active.requestId);
+  }
+
+  #answerCall(active, outcome) {
+    const base = { sessionId: this.#deps.sessionId, requestId: active.requestId };
+    if (outcome.kind === 'answerPermission') return ['session.answerPermission', { ...base, decision: outcome.decision }];
+    const content = outcome.content === undefined ? {} : { content: outcome.content };
+    return ['session.answerElicitation', { ...base, action: outcome.action, ...content }];
+  }
+
+  #settlePrompt(requestId) {
+    const { wasActive, next } = this.#desk.resolve(requestId);
+    if (!wasActive) return;
+    if (next === null) this.#setMuted(false);
+    else this.#present(next);
   }
 
   async #handleResendAnswer(text) {
@@ -155,17 +249,7 @@ export class ChatController {
     if (answer === null) return this.#say(this.#deps.messages.answerYesNo());
     const [first] = this.#resendQueue.splice(0, 1);
     if (answer === 'allow') await this.#send(first.commandId, first.text);
-    if (this.#resendQueue.length > 0) this.#say(this.#deps.messages.resendAsk(this.#resendQueue[0].text));
-    return undefined;
-  }
-
-  async #handlePermissionAnswer(text) {
-    const answer = decidePermissionAnswer(text);
-    if (answer === null) return this.#say(this.#deps.messages.answerYesNo());
-    const { requestId } = this.#pendingPermission;
-    this.#pendingPermission = null;
-    const decision = answer === 'allow' ? { behavior: 'allow' } : { behavior: 'deny', message: DENIED_FROM_TERMINAL };
-    await this.#hostCall('session.answerPermission', { sessionId: this.#deps.sessionId, requestId, decision });
+    if (this.#resendQueue.length > 0) this.#askResend(this.#resendQueue[0]);
     return undefined;
   }
 
