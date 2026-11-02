@@ -199,6 +199,9 @@ export const IpcChannel = {
   ConversationsDelete: 'conversations:delete',
   ConversationsMove: 'conversations:move',
   ConversationsMigrate: 'conversations:migrate',
+  // Conversaciones de Codex en formato legacy (K06, U13): si lo son y actualizarlas (con copia previa).
+  ConversationsCodexLegacyStatus: 'conversations:codexLegacyStatus',
+  ConversationsCodexLegacyUpdate: 'conversations:codexLegacyUpdate',
   StateLoad: 'state:load',
   StateSave: 'state:save',
   SettingsLoad: 'settings:load',
@@ -501,6 +504,20 @@ export interface OpenTranscriptParams {
   // I5: reanuda desde esta posicion en vez de leer desde el principio (lectura incremental/tail).
   // Ausente o `TRANSCRIPT_TAIL_START` = comportamiento de siempre (todo el fichero).
   readonly resumeFrom?: TranscriptTailPosition;
+}
+
+// Un hilo de Codex de una cuenta: main resuelve el CODEX_HOME por la cuenta, nunca una ruta del renderer.
+export interface CodexThreadParams {
+  readonly accountDir: string;
+  readonly threadId: string;
+}
+
+export interface CodexLegacyStatus {
+  readonly legacy: boolean;
+}
+
+export interface CodexLegacyUpdateResult {
+  readonly backupDir: string;
 }
 
 // La memoria es por PROYECTO (cwd), no por sesión: se identifica por la cuenta activa + cwd (main
@@ -1032,6 +1049,9 @@ export interface MageApi {
   moveConversation(params: MoveConversationParams): Promise<MoveConversationResult>;
   // Sigue la MISMA conversación en una cuenta de otro proveedor (formato nativo del destino); la de origen se retira.
   migrateConversation(params: MigrateConversationParams): Promise<MigrateConversationResult>;
+  // ¿Está el hilo de Codex en formato legacy? Y su actualización (copia previa en la carpeta de copias de Mage).
+  codexLegacyStatus(params: CodexThreadParams): Promise<CodexLegacyStatus>;
+  updateLegacyCodexConversation(params: CodexThreadParams): Promise<CodexLegacyUpdateResult>;
   // Persistencia del workspace (M2.5): lista de pestanas + activa. null si nunca se guardo o el
   // fichero esta corrupto (arranque limpio). El contenido de las conversaciones NO se guarda aqui.
   loadWorkspace(): Promise<PersistedWorkspace | null>;

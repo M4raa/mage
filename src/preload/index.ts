@@ -70,6 +70,7 @@ import type {
   SetPermissionModeParams,
   TranscriptBatchPayload,
   MoveTabToWindowParams,
+  CodexThreadParams,
 } from '@shared/ipc';
 import type { WidgetSnapshot } from '@shared/widget';
 import type { FetchThemeParams } from '@shared/themeMarket';
@@ -207,6 +208,8 @@ const api: MageApi = {
   deleteConversation: (params: DeleteConversationParams) => ipcRenderer.invoke(IpcChannel.ConversationsDelete, params),
   moveConversation: (params: MoveConversationParams) => ipcRenderer.invoke(IpcChannel.ConversationsMove, params),
   migrateConversation: (params: MigrateConversationParams) => ipcRenderer.invoke(IpcChannel.ConversationsMigrate, params),
+  codexLegacyStatus: (params: CodexThreadParams) => ipcRenderer.invoke(IpcChannel.ConversationsCodexLegacyStatus, params),
+  updateLegacyCodexConversation: (params: CodexThreadParams) => ipcRenderer.invoke(IpcChannel.ConversationsCodexLegacyUpdate, params),
   loadWorkspace: () => ipcRenderer.invoke(IpcChannel.StateLoad),
   saveWorkspace: (state: PersistedWorkspace) => ipcRenderer.invoke(IpcChannel.StateSave, state),
   loadCommandCatalog: (accountDir: string) => ipcRenderer.invoke(IpcChannel.CommandCatalogLoad, accountDir),

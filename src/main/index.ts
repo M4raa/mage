@@ -81,6 +81,9 @@ import type {
   LoginStartParams,
   OpenEditorParams,
   OpenTranscriptParams,
+  CodexThreadParams,
+  CodexLegacyStatus,
+  CodexLegacyUpdateResult,
   TranscriptBatchPayload,
   ReadInstructionsParams,
   ReadMemoryParams,
@@ -164,6 +167,8 @@ import { mcpFamilyOf } from '@shared/mcp';
 import { AccountService } from './accounts/accountService';
 import { ConversationsService, type ConversationsDeps } from './conversations/conversationsService';
 import { CodexHistoryService } from './conversations/codexHistory';
+import { deleteCodexConversation } from './conversations/codexDeletion';
+import { updateLegacyCodexThread } from './conversations/codexLegacyUpdate';
 import { ConversationMigrationService } from './conversations/conversationMigration';
 import { createMigrationEndpoints } from './conversations/migrationEndpoints';
 import { codexThreadDelete, codexThreadTurnsList } from './conversations/codexRpc';
@@ -1179,7 +1184,8 @@ const conversationFsDeps: ConversationsDeps = {
 };
 const conversationsService = new ConversationsService(conversationFsDeps);
 // Historial de las cuentas de Codex: sus rollouts, medidos con codex-cli 0.160.0.
-const codexHistory = new CodexHistoryService(conversationFsDeps, mainLog);
+// El tercer argumento titula una copia de «Guardar una copia antes» (U3) como «Copia de …»; `getRewindState` es lazy y solo se llama al listar.
+const codexHistory = new CodexHistoryService(conversationFsDeps, mainLog, (id, title) => (getRewindState().copyOrigin(id) === null ? title : getUiLanguageService().translate('chat.rewind.copyTitle', { title })));
 // Historial de agy: las bases SQLite de los perfiles con los que Mage lo lanza (resumibles con `--conversation`).
 const agyHistory = new AgyHistoryService(createAgySqliteStore());
 
@@ -2798,6 +2804,7 @@ function registerApplicationIpc(deps: IpcDependencies): void {
   registerTranscriptIpc2(deps);
   registerConversationsIpc1(deps);
   registerConversationMigrationIpc();
+  registerCodexLegacyIpc(deps.requireSafeConversation);
   registerSettingsIpc1(deps);
   registerThinkingIpc1();
   registerArtifactIpc1(deps);
@@ -3284,14 +3291,69 @@ function registerTranscriptIpc2(deps: IpcDependencies): void {
     }
     return conversationsService.listConversations(accountDir);
   });
-  ipcMain.handle(IpcChannel.ConversationsDelete, (_e, params: DeleteConversationParams): void => {
+  ipcMain.handle(IpcChannel.ConversationsDelete, async (_e, params: DeleteConversationParams): Promise<void> => {
     requireSafeConversation(params.accountDir, params.sessionId);
-    conversationAdminService.deleteConversation(params);
-    // Y su entrada del indice (2.1): sin esto el fichero crece para siempre con preferencias de
-    // conversaciones que ya no existen.
-    getConversationIndexStore().forgetConversation(params.sessionId);
-    // Y sus pensamientos, por lo mismo: si no, queda un `.jsonl` huerfano por cada conversacion borrada.
-    getThinkingStore().forget(params.sessionId);
+    const codex = getProviderAccounts().find('codex', params.accountDir);
+    // Codex borra por su app-server (y primero los hijos de review); el resto, por los ficheros de Claude.
+    if (codex === null) conversationAdminService.deleteConversation(params);
+    else await deleteCodexConversation(codexDeletionDeps(), codex.home, params.sessionId);
+    forgetDeletedConversation(params.sessionId);
+  });
+}
+
+// Lo que Mage guarda de una conversación borrada: su entrada del indice (2.1; sin esto el fichero crece para siempre con
+// preferencias de conversaciones que ya no existen) y sus pensamientos (si no, queda un `.jsonl` huerfano por cada una).
+function forgetDeletedConversation(sessionId: string): void {
+  getConversationIndexStore().forgetConversation(sessionId);
+  getThinkingStore().forget(sessionId);
+}
+
+function codexDeletionDeps(): Parameters<typeof deleteCodexConversation>[0] {
+  return {
+    history: codexHistory,
+    deleteThread: (home, id) => codexThreadDelete({ spawnProbe: codexAccountProbeDeps().spawnProbe, timeoutMs: CLI_PROBE_TIMEOUT_MS }, home, id),
+    forget: (id) => getRewindState().forgetThread(id),
+    log: mainLog,
+  };
+}
+
+// `codex migrate-rollouts` (U13): tope de 60 s, al vencer mata SU árbol de procesos.
+const CODEX_MIGRATE_TIMEOUT_MS = 60_000;
+function runCodex(home: string, args: readonly string[]): Promise<{ readonly exitCode: number | null; readonly stderr: string }> {
+  const launch = codexSpawn(args);
+  const child = spawn(launch.command, launch.args, { env: { ...scrubAgentEnv(process.env), ...launch.env, CODEX_HOME: home }, stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true });
+  return new Promise((resolveRun, rejectRun) => {
+    let stderr = '';
+    const timer = setTimeout(() => killProcessTree(child, defaultKillTreeDeps()), CODEX_MIGRATE_TIMEOUT_MS);
+    child.stderr.setEncoding('utf8');
+    child.stderr.on('data', (chunk: string) => { stderr += chunk; });
+    child.on('error', (error) => { clearTimeout(timer); rejectRun(error); });
+    child.on('close', (exitCode) => { clearTimeout(timer); resolveRun({ exitCode, stderr }); });
+  });
+}
+
+// Cuenta de Codex de un hilo pedido por el renderer: solo cuentas registradas y ids validados.
+function codexHomeOfThread(params: CodexThreadParams): string {
+  const codex = getProviderAccounts().find('codex', params.accountDir);
+  if (codex === null) throw new Error(`La cuenta no es de Codex: ${params.accountDir}`);
+  return codex.home;
+}
+
+function registerCodexLegacyIpc(requireSafeConversation: (accountDir: string, sessionId: string) => void): void {
+  ipcMain.handle(IpcChannel.ConversationsCodexLegacyStatus, (_e, params: CodexThreadParams): CodexLegacyStatus => {
+    requireSafeConversation(params.accountDir, params.threadId);
+    return { legacy: codexHistory.historyModeOf(codexHomeOfThread(params), params.threadId) === 'legacy' };
+  });
+  ipcMain.handle(IpcChannel.ConversationsCodexLegacyUpdate, (_e, params: CodexThreadParams): Promise<CodexLegacyUpdateResult> => {
+    requireSafeConversation(params.accountDir, params.threadId);
+    return updateLegacyCodexThread({
+      history: codexHistory,
+      backupRoot: join(app.getPath('userData'), 'codex-backups'),
+      mkdir: (dir) => { mkdirSync(dir, { recursive: true }); },
+      copyFile: copyFileSync,
+      runCodex,
+      now: Date.now,
+    }, codexHomeOfThread(params), params.threadId);
   });
 }
 
