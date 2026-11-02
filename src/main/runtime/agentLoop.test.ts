@@ -91,7 +91,7 @@ describe('runTurn con herramientas', () => {
     await runTurn(turn, failing);
 
     const tool = turn.history.find((m) => m.role === 'tool');
-    expect(tool?.content).toBe('La sesion del runtime s1 esta parada');
+    expect(tool?.content).toBe('La sesión del runtime s1 está parada');
   });
 
   it('run_twoParallelReads_runConcurrentlyAndAnswerInOrder', async () => {

@@ -171,7 +171,7 @@ describe('SessionManager.create', () => {
     const h = harness();
     h.manager.create(params({ resumeSessionId: 'previa-123' }), h.sink);
 
-    expect(() => h.manager.create(params({ resumeSessionId: 'previa-123' }), h.sink)).toThrow(/ya esta abierta/i);
+    expect(() => h.manager.create(params({ resumeSessionId: 'previa-123' }), h.sink)).toThrow(/ya está abierta/i);
     expect(h.created).toHaveLength(1); // no se instancio ni arranco una segunda
   });
 

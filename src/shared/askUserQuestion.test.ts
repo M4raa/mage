@@ -99,8 +99,8 @@ describe('buildAnswers / buildUpdatedInput', () => {
   });
 
   it('buildAnswers_respuestaVacia_lanzaConElValorRecibido', () => {
-    expect(() => buildAnswers(questions, [[]])).toThrow(/respuesta vacia.*color rojo o el azul/i);
-    expect(() => buildAnswers(questions, [['   ']])).toThrow(/respuesta vacia/i);
+    expect(() => buildAnswers(questions, [[]])).toThrow(/respuesta vacía.*color rojo o el azul/i);
+    expect(() => buildAnswers(questions, [['   ']])).toThrow(/respuesta vacía/i);
   });
 
   it('buildAnswers_respuestaVacia_lanzaUserFacingErrorConClaveYPregunta', () => {

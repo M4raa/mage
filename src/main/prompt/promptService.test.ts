@@ -56,7 +56,7 @@ describe('PromptService.improve', () => {
   });
 
   it('stdoutVacio_lanza', async () => {
-    await expect(build(async () => '   ').improve('draft', '/acc')).rejects.toThrow(/vacia/i);
+    await expect(build(async () => '   ').improve('draft', '/acc')).rejects.toThrow(/vacía/i);
   });
 
   it('stdoutVacio_lanzaLaClave', async () => {
@@ -121,7 +121,7 @@ describe('PromptService.handoff', () => {
   });
 
   it('stdoutVacio_lanza', async () => {
-    await expect(build(async () => '  ').handoff(request)).rejects.toThrow(/vacia/i);
+    await expect(build(async () => '  ').handoff(request)).rejects.toThrow(/vacía/i);
   });
 
   it('cliFalla_lanzaLaFraseConElErrorDeDentroComoDetalleAjeno', async () => {

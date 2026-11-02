@@ -96,7 +96,7 @@ describe('AccountService: fallos del sistema (7.8)', () => {
 
     // Un nombre con separadores de ruta es el caso peligroso: acabaria creando dirs fuera de HOME.
     for (const malo of ['', '   ', '1empieza-por-numero', 'con espacio', '../fuera', 'con/barra']) {
-      expect(() => service.createAccount(malo)).toThrow(/invalido/i);
+      expect(() => service.createAccount(malo)).toThrow(/inválido/i);
     }
   });
 
@@ -196,7 +196,7 @@ describe('AccountService.adoptLogin (9.2)', () => {
   it('adoptLogin_origenSinFicheroDeCredenciales_lanzaYNoCopia', () => {
     const { service: svc, copy } = service({ exists: (path) => !path.endsWith('.credentials.json') });
 
-    expect(() => svc.adoptLogin(SOURCE, TARGET)).toThrow(/sesion utilizable/i);
+    expect(() => svc.adoptLogin(SOURCE, TARGET)).toThrow(/sesión utilizable/i);
     expect(copy).not.toHaveBeenCalled();
   });
 
@@ -206,7 +206,7 @@ describe('AccountService.adoptLogin (9.2)', () => {
     const vacio = { claudeAiOauth: { accessToken: '', refreshToken: '', expiresAt: 0 } };
     const { service: svc, copy } = service({ readJson: jsonFrom({ [join(SOURCE, '.credentials.json')]: vacio }) });
 
-    expect(() => svc.adoptLogin(SOURCE, TARGET)).toThrow(/sesion utilizable/i);
+    expect(() => svc.adoptLogin(SOURCE, TARGET)).toThrow(/sesión utilizable/i);
     expect(copy).not.toHaveBeenCalled();
   });
 
@@ -422,9 +422,9 @@ describe('AccountService.createAccount', () => {
   it('createAccount_invalidName_throws', () => {
     const service = new AccountService(deps({}));
 
-    expect(() => service.createAccount('9bad')).toThrow(/invalido/i);
-    expect(() => service.createAccount('-x')).toThrow(/invalido/i);
-    expect(() => service.createAccount('')).toThrow(/invalido/i);
+    expect(() => service.createAccount('9bad')).toThrow(/inválido/i);
+    expect(() => service.createAccount('-x')).toThrow(/inválido/i);
+    expect(() => service.createAccount('')).toThrow(/inválido/i);
   });
 
   it('createAccount_existingDir_throws', () => {

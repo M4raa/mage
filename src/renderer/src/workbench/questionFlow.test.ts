@@ -70,7 +70,7 @@ describe('questionFlow', () => {
   });
 
   it('toAnswers_faltaUna_lanza', () => {
-    expect(() => toAnswers(initialFlow(QUESTIONS), QUESTIONS)).toThrow(/vacia/i);
+    expect(() => toAnswers(initialFlow(QUESTIONS), QUESTIONS)).toThrow(/vacía/i);
   });
 
   it('keyToAction_numeroFueraDeRango_null', () => {

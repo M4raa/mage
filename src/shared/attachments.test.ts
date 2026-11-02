@@ -65,8 +65,8 @@ describe('validateAttachment', () => {
   });
 
   it('validateAttachment_ceroBytes_lanza', () => {
-    expect(() => validateAttachment({ mediaType: 'image/png', byteLength: 0 }, ES)).toThrow(/tamaño de imagen invalido: 0/i);
-    expect(() => validateAttachment({ mediaType: 'image/png', byteLength: -5 }, ES)).toThrow(/invalido: -5/i);
+    expect(() => validateAttachment({ mediaType: 'image/png', byteLength: 0 }, ES)).toThrow(/tamaño de imagen inválido: 0/i);
+    expect(() => validateAttachment({ mediaType: 'image/png', byteLength: -5 }, ES)).toThrow(/inválido: -5/i);
   });
 });
 
@@ -84,13 +84,13 @@ describe('validateAttachmentSet', () => {
   it('validateAttachmentSet_undecimoAdjunto_lanza', () => {
     const existing = Array.from({ length: MAX_ATTACHMENTS }, () => png(10));
 
-    expect(() => validateAttachmentSet(existing, [{ mediaType: 'image/png', byteLength: 10 }], ES)).toThrow(/no mas de 10|no se pueden adjuntar mas de 10/i);
+    expect(() => validateAttachmentSet(existing, [{ mediaType: 'image/png', byteLength: 10 }], ES)).toThrow(/no más de 10|no se pueden adjuntar más de 10/i);
   });
 
   it('validateAttachmentSet_sumaSuperaElTotal_lanza', () => {
     const existing = [png(MAX_ATTACHMENT_BYTES), png(MAX_ATTACHMENT_BYTES), png(MAX_ATTACHMENT_BYTES)];
 
-    expect(() => validateAttachmentSet(existing, [{ mediaType: 'image/png', byteLength: 1024 }], ES)).toThrow(/maximo por mensaje/i);
+    expect(() => validateAttachmentSet(existing, [{ mediaType: 'image/png', byteLength: 1024 }], ES)).toThrow(/máximo por mensaje/i);
   });
 
   it('validateAttachmentSet_unoInvalidoEnElLote_lanzaYNoAdjuntaNinguno', () => {

@@ -103,7 +103,7 @@ describe('ProviderAccountService', () => {
   it.each([
     [{ providerId: 'claude', authKind: 'subscription', name: 'x' }, /no se da de alta/],
     [{ providerId: 'codex', authKind: 'api-key', name: 'x' }, /Falta la clave/],
-    [{ providerId: 'codex', authKind: 'api-key', name: '1mal' }, /Nombre de cuenta invalido/],
+    [{ providerId: 'codex', authKind: 'api-key', name: '1mal' }, /Nombre de cuenta inválido/],
   ] as const)('create_entradaInvalida_lanza_%#', (params, error) => {
     expect(() => setup().service.create(params)).toThrow(error);
   });
@@ -205,6 +205,6 @@ describe('ProviderAccountService', () => {
     const { service, files, deps } = setup();
     files.set(deps.filePath, '{roto');
 
-    expect(() => service.list([])).toThrow(/no es JSON valido/);
+    expect(() => service.list([])).toThrow(/no es JSON válido/);
   });
 });

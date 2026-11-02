@@ -103,7 +103,7 @@ describe('SecretStore', () => {
   it('set_sinCifradoDisponible_lanzaYNoEscribe', () => {
     const { store, files } = memoryStore(fakeCipher({ isEncryptionAvailable: () => false }));
 
-    expect(() => store.set('a', 'sk')).toThrow(/cifrado del sistema no esta disponible/);
+    expect(() => store.set('a', 'sk')).toThrow(/cifrado del sistema no está disponible/);
     expect(files.has(FILE)).toBe(false);
   });
 
@@ -123,8 +123,8 @@ describe('SecretStore', () => {
     // Leerlo como vacio haria que el siguiente set lo sobrescribiera: se perderian todos los secretos.
     const { store } = memoryStore(fakeCipher(), '{ esto no es json');
 
-    expect(() => store.get('a')).toThrow(/no es JSON valido/);
-    expect(() => store.set('a', 'x')).toThrow(/no es JSON valido/);
+    expect(() => store.get('a')).toThrow(/no es JSON válido/);
+    expect(() => store.set('a', 'x')).toThrow(/no es JSON válido/);
   });
 
   it('get_ficheroCorrupto_lanzaLaClaveConElMensajeDeJsonComoDetalle', () => {
@@ -196,8 +196,8 @@ it('A12_backendSeguroSinDisponibilidad_rechazaEscrituraYLectura', () => {
   store.set('fixture', 'dato artificial');
   const before = files.get(FILE);
   available = false;
-  expect(() => store.set('otro', 'otro dato artificial')).toThrow(/cifrado del sistema no esta disponible/);
-  expect(() => store.get('fixture')).toThrow(/cifrado del sistema no esta disponible/);
+  expect(() => store.set('otro', 'otro dato artificial')).toThrow(/cifrado del sistema no está disponible/);
+  expect(() => store.get('fixture')).toThrow(/cifrado del sistema no está disponible/);
   expect(files.get(FILE)).toBe(before);
 });
 

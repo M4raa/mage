@@ -252,7 +252,7 @@ describe('describeStaleWrite', () => {
   it('describe_noFiltraElContenido_soloRutaYTamanos', () => {
     const message = esText(describeStaleWrite('/data/a.json', 'hola', 'un secreto muy largo'));
 
-    expect(message).toBe('El fichero "/data/a.json" cambio fuera de Mage desde que se leyo (tenia 4 caracteres, ahora tiene 20 caracteres); no se ha guardado nada.');
+    expect(message).toBe('El fichero "/data/a.json" cambió fuera de Mage desde que se leyó (tenía 4 caracteres, ahora tiene 20 caracteres); no se ha guardado nada.');
     expect(message).not.toContain('secreto');
   });
 
@@ -265,7 +265,7 @@ describe('describeStaleWrite', () => {
   });
 
   it('describe_ausenciaEnCadaLado_seDiceExplicitamente', () => {
-    expect(esText(describeStaleWrite('/a', null, 'x'))).toContain('no existia');
+    expect(esText(describeStaleWrite('/a', null, 'x'))).toContain('no existía');
     expect(esText(describeStaleWrite('/a', 'x', null))).toContain('ha desaparecido');
     expect(describeStaleWrite('/a', null, 'x').parts).toMatchObject({ was: localized('errors.config.staleWriteWasMissing') });
     expect(describeStaleWrite('/a', 'x', null).parts).toMatchObject({ now: localized('errors.config.staleWriteNowGone') });

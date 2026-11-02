@@ -28,7 +28,7 @@ describe('BUILT_IN_PROVIDERS labels', () => {
 describe('chatCompletionsUrl', () => {
   it('chatCompletionsUrl_urlVacia_lanzaUserFacingErrorConLaClave', () => {
     expect(() => chatCompletionsUrl('  ')).toThrow(UserFacingError);
-    expect(() => chatCompletionsUrl('  ')).toThrow(/URL base del proveedor esta vacia/);
+    expect(() => chatCompletionsUrl('  ')).toThrow(/URL base del proveedor está vacía/);
   });
 
   it('chatCompletionsUrl_protocoloFtp_lanzaConClaveYValorRecibido', () => {

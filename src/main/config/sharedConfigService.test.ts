@@ -210,7 +210,7 @@ describe('parseMcpCommonJson (puro)', () => {
 
     expect(result.value).toBeNull();
     expect(result.warnings[0]).toMatchObject({ key: 'settings.sharedConfig.commonJsonInvalid', parts: { detail: foreignText(jsonMessage('{not json')) } });
-    expect(esText(result.warnings[0]!)).toBe(`JSON invalido: ${jsonMessage('{not json')}`);
+    expect(esText(result.warnings[0]!)).toBe(`JSON inválido: ${jsonMessage('{not json')}`);
   });
 
   it('parseMcpCommonJson_sinLaFormaEsperada_avisaConLasLlavesLiterales', () => {
@@ -288,7 +288,7 @@ describe('SharedConfigService.saveMcpCommonText', () => {
     const writeFile = vi.fn();
     const service = new SharedConfigService(deps({ writeFile }));
 
-    expect(() => service.saveMcpCommonText(MCP_PATH, '{not json', '{}')).toThrow(/invalido/i);
+    expect(() => service.saveMcpCommonText(MCP_PATH, '{not json', '{}')).toThrow(/inválido/i);
     expect(writeFile).not.toHaveBeenCalled();
   });
 
@@ -298,14 +298,14 @@ describe('SharedConfigService.saveMcpCommonText', () => {
     const thrown = thrownText(() => service.saveMcpCommonText(MCP_PATH, '{"foo":1}', '{}'));
 
     expect(thrown).toEqual({ key: 'errors.config.commonSaveInvalid', values: { length: '9' }, parts: { reason: localized('settings.sharedConfig.commonWrongShape') } });
-    expect(esText(thrown)).toBe('mcp-common.json invalido, no se guarda (No tiene la forma {"mcpServers": {...}}; se ignora entero): 9 caracteres');
+    expect(esText(thrown)).toBe('mcp-common.json inválido, no se guarda (No tiene la forma {"mcpServers": {...}}; se ignora entero): 9 caracteres');
   });
 
   it('saveMcpCommonText_sinFormaEsperada_lanzaSinEscribir', () => {
     const writeFile = vi.fn();
     const service = new SharedConfigService(deps({ writeFile }));
 
-    expect(() => service.saveMcpCommonText(MCP_PATH, '{"foo":1}', '{}')).toThrow(/invalido/i);
+    expect(() => service.saveMcpCommonText(MCP_PATH, '{"foo":1}', '{}')).toThrow(/inválido/i);
     expect(writeFile).not.toHaveBeenCalled();
   });
 
@@ -341,7 +341,7 @@ describe('SharedConfigService compare-and-swap al guardar', () => {
     if (outcome.status !== 'stale') throw new Error('se esperaba stale');
     expect(outcome.message.key).toBe('settings.sharedConfig.staleKeepEditing');
     expect(outcome.message.parts?.stale).toEqual({ key: 'errors.config.staleWrite', values: { path: MCP_PATH }, parts: { was: localized('errors.config.staleWriteWasLength', { length: '17' }), now: localized('errors.config.staleWriteNowLength', { length: '26' }) } });
-    expect(esText(outcome.message)).toBe(`El fichero "${MCP_PATH}" cambio fuera de Mage desde que se leyo (tenia 17 caracteres, ahora tiene 26 caracteres); no se ha guardado nada. Tu texto sigue en el editor sin guardar: revisa el contenido nuevo antes de volver a pulsar Guardar, porque el segundo intento SI lo sobrescribira.`);
+    expect(esText(outcome.message)).toBe(`El fichero "${MCP_PATH}" cambió fuera de Mage desde que se leyó (tenía 17 caracteres, ahora tiene 26 caracteres); no se ha guardado nada. Tu texto sigue en el editor sin guardar: revisa el contenido nuevo antes de volver a pulsar Guardar, porque el segundo intento SÍ lo sobrescribirá.`);
     expect(rename).not.toHaveBeenCalled();
     expect(log).toHaveBeenCalledWith('warn', esText(outcome.message));
   });
@@ -386,7 +386,7 @@ describe('SharedConfigService compare-and-swap al guardar', () => {
     expect(outcome.status).toBe('stale');
     if (outcome.status !== 'stale') throw new Error('se esperaba stale');
     expect(outcome.message).toEqual({ key: 'settings.sharedConfig.staleCheckFailed', values: { path: MCP_PATH }, parts: { detail: foreignText('EACCES: permission denied') } });
-    expect(esText(outcome.message)).toBe(`No se pudo comprobar si "${MCP_PATH}" habia cambiado, no se ha guardado nada: EACCES: permission denied`);
+    expect(esText(outcome.message)).toBe(`No se pudo comprobar si "${MCP_PATH}" había cambiado, no se ha guardado nada: EACCES: permission denied`);
     expect(rename).not.toHaveBeenCalled();
   });
 });
@@ -428,7 +428,7 @@ describe('SharedConfigService.saveSettingsCommonText', () => {
     const writeFile = vi.fn();
     const service = new SharedConfigService(deps({ writeFile }));
 
-    expect(() => service.saveSettingsCommonText(SETTINGS_PATH, 'nope', '{}')).toThrow(/invalido/i);
+    expect(() => service.saveSettingsCommonText(SETTINGS_PATH, 'nope', '{}')).toThrow(/inválido/i);
     expect(writeFile).not.toHaveBeenCalled();
   });
 
