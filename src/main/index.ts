@@ -218,6 +218,7 @@ import { ProjectFileService, resolveProjectFilePath } from './files/projectFileS
 import { resolvedPath } from './os/resolvedPath';
 import { writeAtomic, type AtomicWriteDeps } from './os/atomicFile';
 import { SettingsStore } from './state/settingsStore';
+import { INSTALLER_LANGUAGE_FILE, readInstallerLanguage } from './i18n/installerLanguage';
 import { UiLanguageService } from './i18n/uiLanguageService';
 import { SecretStore } from './secrets/secretStore';
 import type { VaultStatus } from './secrets/vaultGate';
@@ -1569,7 +1570,11 @@ let uiLanguageServiceSingleton: UiLanguageService | null = null;
 function getUiLanguageService(): UiLanguageService {
   uiLanguageServiceSingleton ??= new UiLanguageService({
     savedPreference: () => getSettingsStore().load().uiLanguage,
-    initialPreference: () => undefined,
+    initialPreference: () => readInstallerLanguage({
+      filePath: join(app.getPath('userData'), INSTALLER_LANGUAGE_FILE),
+      readFile: (file) => (existsSync(file) ? readFileSync(file, 'utf8') : null),
+      log: mainLog,
+    }),
     preferredSystemLanguages: () => app.getPreferredSystemLanguages(),
     broadcast: (resolved) => {
       windowManager.broadcast(UI_LANGUAGE_CHANGED_CHANNEL, resolved);
@@ -3677,11 +3682,6 @@ function focusMainWindow(): void {
   windowManager.focus(MAIN_WINDOW_ID);
 }
 
-// INSTANCIA UNICA (grupo G). Dos instancias de Mage escriben a la vez los mismos ficheros de estado
-// bajo userData (workspace-state.json, app-settings.json): la ultima en renombrar gana y el usuario
-// pierde pestanas o configuracion sin ver un error. Ademas duplicaria tray y widget. Si ya hay una
-// instancia, esta se cierra y la existente se enfoca (comportamiento estandar de escritorio).
-// El lock se pide ANTES de whenReady: cuanto menos haya arrancado la segunda instancia, mejor.
 // El cliente hereda la terminal (stdin, stdout y stderr) y su código de salida es el de este proceso.
 function runCliRelay(args: readonly string[]): void {
   const plan = cliRelayPlan({ execPath: process.execPath, resourcesPath: process.resourcesPath, args, env: process.env });
@@ -3696,6 +3696,12 @@ function runCliRelay(args: readonly string[]): void {
 // `Mage.AppImage --cli …` (F7.4): solo releva al cliente de terminal; no pide el lock ni arranca nada más.
 const cliRelay = cliRelayArgs(process.argv);
 if (cliRelay !== null) runCliRelay(cliRelay);
+
+// INSTANCIA UNICA (grupo G). Dos instancias de Mage escriben a la vez los mismos ficheros de estado
+// bajo userData (workspace-state.json, app-settings.json): la ultima en renombrar gana y el usuario
+// pierde pestanas o configuracion sin ver un error. Ademas duplicaria tray y widget. Si ya hay una
+// instancia, esta se cierra y la existente se enfoca (comportamiento estandar de escritorio).
+// El lock se pide ANTES de whenReady: cuanto menos haya arrancado la segunda instancia, mejor.
 const gotSingleInstanceLock = cliRelay === null && app.requestSingleInstanceLock();
 // Host sin pantalla (F2.6, §3.4): Linux sin DISPLAY ni WAYLAND_DISPLAY, o `--headless`. No crea ventanas.
 const runsHeadless = isHeadlessHost({ platform: process.platform, argv: process.argv, env: process.env });
