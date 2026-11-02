@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Translate } from '@shared/i18n/translator';
-import { canOfferRewind, divergeTitle, rewindPointOf, type RewindOfferInput } from './rewindActions';
+import { canOfferRewind, divergeTitle, rewindPointOf, unavailableText, type RewindOfferInput } from './rewindActions';
 import type { Block } from './types';
 
 const user = (id: string, text: string, nativeId: string | null = null): Block => ({ kind: 'user', id, text, time: '', attachments: [], nativeId });
@@ -67,6 +67,16 @@ describe('canOfferRewind', () => {
 
   it('canOfferRewind_wrapper_false', () => {
     expect(canOfferRewind(offer({ isWrapper: true }))).toBe(false);
+  });
+});
+
+describe('unavailableText', () => {
+  it('unavailableText_unsupported_carriesProvider', () => {
+    expect(unavailableText(fakeT, 'unsupported', 'agy')).toBe('errors.rewind.unsupported:{"provider":"agy"}');
+  });
+
+  it('unavailableText_legacy_legacyKey', () => {
+    expect(unavailableText(fakeT, 'legacy', 'Codex')).toBe('errors.rewind.legacy');
   });
 });
 

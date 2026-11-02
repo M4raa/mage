@@ -7,6 +7,11 @@ import type { Account } from '../types';
 import type { ChatProject } from '@shared/settings';
 import { POPOVER_VARIANTS } from '../motionPresets';
 import { useT } from '../../i18n/uiLanguage';
+import { CODEX_PROVIDER_ID } from '@shared/providers';
+import { useWorkbenchStore } from '../workbenchStore';
+import { conversationIdOfTab } from '../conversationId';
+import { describeError } from '../describeError';
+import { notify, reportActionError } from '../notificationStore';
 
 // Descriptor de la conversacion sobre la que se abrio el menu (clic derecho). sessionId puede faltar
 // si la pestana aun no ha arrancado sesion (no hay nada en disco -> eliminar/mover deshabilitados).
@@ -56,6 +61,8 @@ export function ConversationContextMenu({
 }): React.JSX.Element {
   const t = useT();
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [confirmingUpdate, setConfirmingUpdate] = useState(false);
+  const legacy = useLegacyCodexUpdate(target.sessionId, activeAccountId);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
@@ -135,6 +142,31 @@ export function ConversationContextMenu({
           </>
         )}
 
+        {/* Actualizar una conversacion de Codex de una version anterior (K07), con su confirmacion aqui mismo. */}
+        {legacy.isLegacy && (
+          <>
+            <div className="my-[3px] h-px bg-mg-border-subtle" />
+            {!confirmingUpdate ? (
+              <MenuItem onClick={() => setConfirmingUpdate(true)}>{t('history.legacyCodex.update')}</MenuItem>
+            ) : (
+              <div data-legacy-update-confirm="true" className="px-[10px] py-[6px]">
+                <div className="mb-[6px] text-[10.5px] text-mg-body">{t('history.legacyCodex.confirm')}</div>
+                <div className="flex justify-end gap-[6px]">
+                  <button onClick={onClose} className="rounded-[5px] border border-mg-border-emph px-[8px] py-[3px] text-[10.5px] text-mg-body2 hover:bg-mg-hover">
+                    {t('chat.rewind.cancel')}
+                  </button>
+                  <button
+                    onClick={() => { onClose(); legacy.update(); }}
+                    className="rounded-[5px] bg-mg-sel px-[8px] py-[3px] text-[10.5px] font-semibold text-mg-text hover:bg-mg-hover"
+                  >
+                    {t('history.legacyCodex.update')}
+                  </button>
+                </div>
+              </div>
+            )}
+          </>
+        )}
+
         <div className="my-[3px] h-px bg-mg-border-subtle" />
 
         {/* Eliminar (con confirmacion en el propio menu). */}
@@ -165,6 +197,36 @@ export function ConversationContextMenu({
     </>,
     document.body,
   );
+}
+
+// «Actualizar esta conversación» (K07): solo para una conversación de Codex de una versión anterior. El menú
+// pregunta a main al abrirse; la entrada sale solo si la respuesta es «legacy».
+function useLegacyCodexUpdate(sessionId: string | undefined, accountDir: string): { readonly isLegacy: boolean; readonly update: () => void } {
+  const t = useT();
+  const isCodex = useWorkbenchStore((s) => s.conversationHistory.some((item) => item.sessionId === sessionId && item.providerId === CODEX_PROVIDER_ID));
+  const openTabId = useWorkbenchStore((s) => s.tabs.find((tab) => conversationIdOfTab(tab, s.sessionIdByChat[tab.id]) === sessionId)?.id ?? null);
+  const updateLegacyCodex = useWorkbenchStore((s) => s.updateLegacyCodex);
+  const [isLegacy, setIsLegacy] = useState(false);
+
+  useEffect(() => {
+    if (!isCodex || sessionId === undefined || sessionId.length === 0) return;
+    let cancelled = false;
+    window.mage.codexLegacyStatus({ accountDir, threadId: sessionId }).then(
+      (status) => { if (!cancelled) setIsLegacy(status.legacy); },
+      // No se oculta el fallo: se queda en la consola de la ventana, y la entrada no sale.
+      (err: unknown) => console.warn(`No se pudo comprobar si la conversación ${JSON.stringify(sessionId)} de Codex es antigua:`, describeError(err)),
+    );
+    return () => { cancelled = true; };
+  }, [isCodex, sessionId, accountDir]);
+
+  const update = (): void => {
+    if (sessionId === undefined) return;
+    updateLegacyCodex(openTabId, accountDir, sessionId).then(
+      (backupDir) => notify({ level: 'success', title: t('history.legacyCodex.done', { backupDir }), source: 'history' }),
+      (err: unknown) => reportActionError(t('history.legacyCodex.update'), err, 'history'),
+    );
+  };
+  return { isLegacy, update };
 }
 
 function MenuItem({
