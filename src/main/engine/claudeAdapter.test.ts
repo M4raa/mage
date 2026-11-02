@@ -448,3 +448,73 @@ describe('ClaudeAdapter: id propio del mensaje (F4.4)', () => {
     expect(payload).toEqual({ type: 'user', message: { role: 'user', content: 'hola' }, parent_tool_use_id: null });
   });
 });
+
+describe('ClaudeAdapter: peticiones al motor (F4.4/F4.5)', () => {
+  const U1 = '0b1c2d3e-4f50-4612-8a7b-9c0d1e2f3a4b';
+  const U2 = '1c2d3e4f-5061-4723-9b8c-0d1e2f3a4b5c';
+  const fresh = () => new ClaudeAdapter(() => 'claude');
+  const respond = (response: Record<string, unknown>) => ({ type: 'control_response', response });
+
+  it('encodeEngineRequest_rewindConversation_buildsControlRequest', () => {
+    const payload = fresh().encodeEngineRequest('r1', { kind: 'rewind_conversation', targetUuid: U1, lastSeenUuid: U2 });
+
+    expect(payload).toEqual({
+      type: 'control_request',
+      request_id: 'r1',
+      request: { subtype: 'rewind_conversation', target_message_uuid: U1, last_seen_user_message_uuid: U2 },
+    });
+  });
+
+  it('encodeEngineRequest_rewindFilesDryRun_buildsControlRequest', () => {
+    const payload = fresh().encodeEngineRequest('r2', { kind: 'rewind_files', userMessageUuid: U1, dryRun: true });
+
+    expect(payload).toEqual({
+      type: 'control_request',
+      request_id: 'r2',
+      request: { subtype: 'rewind_files', user_message_id: U1, dry_run: true },
+    });
+  });
+
+  it('encodeEngineRequest_nonUuidTarget_throwsWithValue', () => {
+    expect(() => fresh().encodeEngineRequest('r1', { kind: 'rewind_conversation', targetUuid: 'raro', lastSeenUuid: U2 })).toThrow('"raro"');
+  });
+
+  it('encodeEngineRequest_threadRevert_throws', () => {
+    expect(() => fresh().encodeEngineRequest('r1', { kind: 'thread_revert', beforeTurnId: 't1' })).toThrow('thread_revert');
+  });
+
+  it('normalize_successResponseOfEngineRequest_emitsEngineResponseOk', () => {
+    const adapter = fresh();
+    adapter.encodeEngineRequest('r1', { kind: 'rewind_conversation', targetUuid: U1, lastSeenUuid: U2 });
+    const body = { rewound: true, targetMessageUuid: U1, prefillText: 'x', precedingAssistantUuid: U2 };
+
+    const events = adapter.normalize(respond({ subtype: 'success', request_id: 'r1', response: body }));
+
+    expect(events).toEqual([{ kind: 'engine_response', requestId: 'r1', ok: true, result: body, error: null }]);
+  });
+
+  it('normalize_errorResponseOfEngineRequest_emitsEngineResponseErrorAndNoControlError', () => {
+    const adapter = fresh();
+    adapter.encodeEngineRequest('r1', { kind: 'rewind_conversation', targetUuid: U1, lastSeenUuid: U2 });
+
+    const events = adapter.normalize(respond({ subtype: 'error', request_id: 'r1', error: 'stale_target' }));
+
+    expect(events).toEqual([{ kind: 'engine_response', requestId: 'r1', ok: false, result: null, error: 'stale_target' }]);
+  });
+
+  it('normalize_controlResponseOfOtherRequest_unchanged', () => {
+    const adapter = fresh();
+    const raw = respond({ subtype: 'error', request_id: 'otra', error: 'x' });
+
+    expect(adapter.normalize(raw)).toEqual(normalizeRawEvent(raw));
+  });
+
+  it('buildSpawnPlan_afterEngineRequest_forgetsPending', () => {
+    const adapter = fresh();
+    adapter.encodeEngineRequest('r1', { kind: 'rewind_files', userMessageUuid: U1, dryRun: false });
+    adapter.buildSpawnPlan(launch);
+    const raw = respond({ subtype: 'success', request_id: 'r1', response: {} });
+
+    expect(adapter.normalize(raw)).toEqual(normalizeRawEvent(raw));
+  });
+});

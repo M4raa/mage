@@ -9,7 +9,7 @@ import { parseElicitationRequest, type ElicitationAnswer } from '@shared/elicita
 import { resolveClaudeBinary } from '../os/claudeBinaryResolver';
 import { normalizeRawEvent } from './normalize';
 import { CommandLifecycleSchema } from './schemas';
-import type { AuthModel, LaunchParams, PermissionRef, ProviderAdapter, SpawnPlan, SteerEncoding } from './providerAdapter';
+import type { AuthModel, EngineRequest, LaunchParams, PermissionRef, ProviderAdapter, SpawnPlan, SteerEncoding } from './providerAdapter';
 import { scrubAgentEnv } from '../os/agentEnv';
 import { claudeSharedLaunch, refuseClaudeMcpConfig, type ClaudeMcpConfigWriter } from '../config/mcpProviderTranslate';
 
@@ -87,6 +87,7 @@ export class ClaudeAdapter implements ProviderAdapter {
 
   buildSpawnPlan(params: LaunchParams): SpawnPlan {
     this.steers.clear(); // proceso nuevo: los directos del anterior murieron con el
+    this.engineRequests.clear(); // y las peticiones al motor sin respuesta tambien
     // Reanudar (`--resume <id>`) continua la conversacion existente y sigue escribiendo en su misma
     // transcripcion; arrancar (`--session-id <id>`) crea una nueva con el id dado. Mutuamente
     // excluyentes: el CLI no acepta ambos.
@@ -239,10 +240,38 @@ export class ClaudeAdapter implements ProviderAdapter {
     };
   }
 
+  // Peticiones de rewind (F4.4/F4.5). MEDIDO en 2.1.311 (INFORME-040; Mage corre con 2.1.314):
+  //  - C-2 `rewind_conversation` contesta `{ rewound, targetMessageUuid, prefillText, precedingAssistantUuid }`;
+  //    sus rechazos son `stale_target`, `target_not_found` y `turn_running`.
+  //  - C-5 `rewind_files` con `dry_run` contesta `{ canRewind, filesChanged, insertions, deletions }`.
+  // El resto de `kind` son de Codex.
+  encodeEngineRequest(requestId: string, request: EngineRequest): unknown {
+    const body = this.engineRequestBody(request);
+    this.engineRequests.add(requestId);
+    return { type: 'control_request', request_id: requestId, request: body };
+  }
+
+  private engineRequestBody(request: EngineRequest): Record<string, unknown> {
+    switch (request.kind) {
+      case 'rewind_conversation':
+        return {
+          subtype: 'rewind_conversation',
+          target_message_uuid: requireUuid(request.targetUuid),
+          last_seen_user_message_uuid: requireUuid(request.lastSeenUuid),
+        };
+      case 'rewind_files':
+        return { subtype: 'rewind_files', user_message_id: requireUuid(request.userMessageUuid), dry_run: request.dryRun };
+      default:
+        throw new Error(`Claude no admite la peticion al motor: ${request.kind}`);
+    }
+  }
+
   // Cancelaciones que hay que mandar al CLI por una elicitation que Mage no sabe mostrar.
   private outgoing: unknown[] = [];
   // Directos en vuelo: uuid -> true si ya paso un `result` desde que se escribio (su `started` abrira turno propio).
   private readonly steers = new Map<string, boolean>();
+  // request_id de las peticiones al motor sin respuesta (`encodeEngineRequest`).
+  private readonly engineRequests = new Set<string>();
 
   takeOutgoing(): readonly unknown[] {
     const taken = this.outgoing;
@@ -260,10 +289,24 @@ export class ClaudeAdapter implements ProviderAdapter {
   normalize(raw: unknown): MageEvent[] {
     const elicitation = this.normalizeElicitation(raw);
     if (elicitation !== null) return elicitation;
+    const engine = this.normalizeEngineResponse(raw);
+    if (engine !== null) return engine;
     const type = (raw as { type?: unknown } | null)?.type;
     if (type === 'command_lifecycle') return this.normalizeSteer(raw);
     const events = normalizeRawEvent(raw);
     return type === 'result' ? [...events, ...this.afterResult()] : events;
+  }
+
+  // La respuesta a una peticion al motor sale como `engine_response` (exito o rechazo): un rechazo NO pasa ademas
+  // por `control_error`. Una respuesta de otra peticion sigue su camino.
+  private normalizeEngineResponse(raw: unknown): MageEvent[] | null {
+    if ((raw as { type?: unknown } | null)?.type !== 'control_response') return null;
+    const response = (raw as { response?: Record<string, unknown> }).response;
+    const requestId = response?.request_id;
+    if (response === undefined || response === null || typeof requestId !== 'string' || !this.engineRequests.delete(requestId)) return null;
+    const ok = response.subtype === 'success';
+    const error = typeof response.error === 'string' ? response.error : JSON.stringify(response.error);
+    return [{ kind: 'engine_response', requestId, ok, result: ok ? (response.response ?? null) : null, error: ok ? null : error }];
   }
 
   // `started` antes de un `result` = absorbido en el turno; despues = turno propio. `cancelled` = no llego.
@@ -306,6 +349,11 @@ export class ClaudeAdapter implements ProviderAdapter {
     this.outgoing.push({ type: 'control_response', response: { subtype: 'success', request_id: requestId, response: { action: 'cancel' } } });
     return [{ kind: 'notice', localized: localized('events.mcp.elicitationUnsupported', { server }) }];
   }
+}
+
+function requireUuid(value: string): string {
+  if (!isUuid(value)) throw new Error(`Se esperaba un UUID: ${JSON.stringify(value)}`);
+  return value;
 }
 
 // Variable con la que el CLI autentica por clave de API (medido en 2.1.285: con un config dir vacio,

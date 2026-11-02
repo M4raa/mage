@@ -705,3 +705,88 @@ describe('CodexAdapter: id propio del mensaje (F4.4)', () => {
     expect(steer?.params?.clientUserMessageId).toBe('m-3');
   });
 });
+
+describe('CodexAdapter: peticiones al motor (F4.4/F4.5)', () => {
+  function withThread(): CodexAdapter {
+    const adapter = codex();
+    answer(adapter, handshake(adapter), 'thread/start', fixture('thread-start'));
+    return adapter;
+  }
+  const THREAD = (fixture('thread-start').result as { thread: { id: string } }).thread.id;
+
+  it('encodeEngineRequest_threadRevert_buildsJsonRpc', () => {
+    const adapter = withThread();
+
+    const message = adapter.encodeEngineRequest('r1', { kind: 'thread_revert', beforeTurnId: 't9' }) as Rpc;
+
+    expect(message).toMatchObject({ method: 'thread/revert', params: { threadId: THREAD, beforeTurnId: 't9' } });
+  });
+
+  it('encodeEngineRequest_threadForkExcludesTurns', () => {
+    const adapter = withThread();
+
+    const message = adapter.encodeEngineRequest('r1', { kind: 'thread_fork', lastTurnId: 't3' }) as Rpc;
+
+    expect(message).toMatchObject({ method: 'thread/fork', params: { threadId: THREAD, lastTurnId: 't3', excludeTurns: true } });
+  });
+
+  it('encodeEngineRequest_threadTurnsWithCursor_includesCursor', () => {
+    const adapter = withThread();
+
+    const first = adapter.encodeEngineRequest('r1', { kind: 'thread_turns', cursor: null }) as Rpc;
+    const next = adapter.encodeEngineRequest('r2', { kind: 'thread_turns', cursor: 'c1' }) as Rpc;
+
+    expect(first).toMatchObject({ method: 'thread/turns/list', params: { threadId: THREAD, itemsView: 'full', sortDirection: 'asc' } });
+    expect(first.params).not.toHaveProperty('cursor');
+    expect(next.params?.cursor).toBe('c1');
+  });
+
+  it('encodeEngineRequest_withoutThread_throws', () => {
+    const adapter = codex();
+    handshake(adapter);
+
+    expect(() => adapter.encodeEngineRequest('r1', { kind: 'thread_turns', cursor: null })).toThrow('r1');
+  });
+
+  it('encodeEngineRequest_claudeOnlyKind_throws', () => {
+    expect(() => withThread().encodeEngineRequest('r1', { kind: 'rewind_files', userMessageUuid: 'u', dryRun: true })).toThrow('rewind_files');
+  });
+
+  it('normalize_engineResponseOk_carriesResult', () => {
+    const adapter = withThread();
+    const message = adapter.encodeEngineRequest('r1', { kind: 'thread_turns', cursor: null }) as Rpc;
+
+    const events = adapter.normalize({ jsonrpc: '2.0', id: message.id, result: { data: [] } });
+
+    expect(events).toEqual([{ kind: 'engine_response', requestId: 'r1', ok: true, result: { data: [] }, error: null }]);
+  });
+
+  it('normalize_engineResponseError_carriesCodeAndMessage', () => {
+    const adapter = withThread();
+    const message = adapter.encodeEngineRequest('r1', { kind: 'thread_revert', beforeTurnId: 't9' }) as Rpc;
+
+    const events = adapter.normalize({ jsonrpc: '2.0', id: message.id, error: { code: -32600, message: 'forked history still references it' } });
+
+    expect(events).toEqual([{ kind: 'engine_response', requestId: 'r1', ok: false, result: null, error: '-32600 forked history still references it' }]);
+  });
+
+  it('afterThread_historyModeLegacy_emitsThreadHistoryLegacy', () => {
+    const adapter = codex();
+    const requests = handshake(adapter);
+
+    const events = answer(adapter, requests, 'thread/start', fixture('thread-start'));
+
+    expect(events).toContainEqual({ kind: 'thread_history', mode: 'legacy' });
+  });
+
+  it('afterThread_historyModeMissing_emitsThreadHistoryNull', () => {
+    const adapter = codex();
+    const requests = handshake(adapter);
+    const response = structuredClone(fixture('thread-start')) as { result: { thread: Record<string, unknown> } };
+    delete response.result.thread.historyMode;
+
+    const events = answer(adapter, requests, 'thread/start', response);
+
+    expect(events).toContainEqual({ kind: 'thread_history', mode: null });
+  });
+});

@@ -6,6 +6,7 @@ import { localized, UserFacingError } from '@shared/i18n/localizedText';
 import type { ElicitationAnswer } from '@shared/elicitation';
 import type { CreateSessionParams, SessionEventPayload } from '@shared/ipc';
 import type { AgentSessionDeps, SessionLogFn } from './agentSession';
+import type { EngineRequest } from './providerAdapter';
 import { resolveLaunchParams, type DefaultsDeps } from './sessionDefaults';
 import { pathEquals } from '../os/pathUtils';
 import { AGY_PROVIDER_ID, CODEX_PROVIDER_ID, ownsConversation } from '@shared/providers';
@@ -26,6 +27,7 @@ export interface ManagedSession {
   setEffort?(effort: string): void;
   setPermissionMode(mode: string): void;
   stopTask(taskId: string): void;
+  engineRequest?(requestId: string, request: EngineRequest): void;
   stop(): void;
 }
 
@@ -115,6 +117,13 @@ export class SessionManager {
     const session = this.require(sessionId);
     if (session.steerUserMessage === undefined) throw new Error(`La sesion no admite mensajes directos: ${sessionId}`);
     session.steerUserMessage(messageId, text, attachments);
+  }
+
+  // Peticion al motor con respuesta (rewind/fork, F4.4/F4.5). Lanza si la sesion no la admite (runtime propio, agy).
+  engineRequest(sessionId: string, requestId: string, request: EngineRequest): void {
+    const session = this.require(sessionId);
+    if (session.engineRequest === undefined) throw new Error(`La sesion no admite peticiones al motor: ${sessionId}`);
+    session.engineRequest(requestId, request);
   }
 
   answerPermission(sessionId: string, requestId: string, decision: PermissionDecision): void {

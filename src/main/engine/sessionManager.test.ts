@@ -425,3 +425,23 @@ describe('SessionManager: directo (F4.1)', () => {
     expect(() => h.manager.steerMessage('nope', 'm1', 'x')).toThrow('nope');
   });
 });
+
+describe('SessionManager.engineRequest', () => {
+  it('engineRequest_sessionWithout_throws', () => {
+    const h = harness();
+    const sessionId = h.manager.create(params(), h.sink);
+
+    expect(() => h.manager.engineRequest(sessionId, 'r1', { kind: 'thread_turns', cursor: null })).toThrow(sessionId);
+  });
+
+  it('engineRequest_sessionWithSupport_delegates', () => {
+    const h = harness();
+    const sessionId = h.manager.create(params(), h.sink);
+    const engineRequest = vi.fn();
+    h.created[0]!.session.engineRequest = engineRequest;
+
+    h.manager.engineRequest(sessionId, 'r1', { kind: 'thread_turns', cursor: null });
+
+    expect(engineRequest).toHaveBeenCalledWith('r1', { kind: 'thread_turns', cursor: null });
+  });
+});

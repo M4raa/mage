@@ -298,6 +298,13 @@ export type MageEvent =
   // (`blocked`: el comando denegado; null si lo permitió una regla). Ese permiso NO se anunció a los clientes.
   // Una sesion en segundo plano que nadie reclamo caduca (F2.4): main la para justo despues de este evento.
   | { readonly kind: 'background_expired' }
+  // Respuesta del motor a una peticion de Mage con `requestId` (rewind/fork, F4.4/F4.5): la emite el adapter al
+  // reconocer la respuesta del CLI. `result` es el cuerpo TAL CUAL (su forma depende de la peticion); `error`
+  // lleva el motivo cuando `ok` es false (o `process_not_running`/`process_exited` si no hubo proceso).
+  | { readonly kind: 'engine_response'; readonly requestId: string; readonly ok: boolean; readonly result: unknown; readonly error: string | null }
+  // Como guarda Codex el historial del hilo que acaba de abrir (`thread.historyMode`); null = no lo dijo.
+  // Solo un hilo `paginated` admite `thread/revert`.
+  | { readonly kind: 'thread_history'; readonly mode: 'legacy' | 'paginated' | null }
   // Dato/texto ajeno: no se traduce (F3.3).
   | { readonly kind: 'permission_auto_answered'; readonly requestId: string; readonly toolName: string; readonly behavior: 'allow' | 'deny'; readonly blocked: string | null }
   // `inferred`: el adapter lo dedujo sin la señal del CLI (salvaguarda); `turnKind`: el tipo de turno que
