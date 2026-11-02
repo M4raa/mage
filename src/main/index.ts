@@ -3758,6 +3758,16 @@ if (!gotSingleInstanceLock) {
   });
 }
 
+// Lo que las sesiones necesitan con ventana y sin ella: el latido de los bloqueos de conversación, las claves de
+// proveedor antiguas ya en la bóveda y los MCP compartidos importados antes de la primera sesión.
+function prepareSessionServices(): void {
+  startConversationLockHeartbeat();
+  migrateLegacyProviderKeysOnce();
+  importSharedMcpOnce();
+  // Y a agy, lo que haya cambiado mientras Mage estaba cerrado (si la sincronizacion automatica esta activa).
+  onSharedMcpChanged();
+}
+
 app.whenReady().then(async () => {
   // Guarda: si no se obtuvo el lock ya se llamo a app.quit(); no se arranca nada mas (registrar IPC o
   // ventanas desde una instancia que se esta cerrando solo crea efectos a medias).
@@ -3766,6 +3776,7 @@ app.whenReady().then(async () => {
     // Solo el host: sin ventanas, ni tray, ni widget, ni actualizador, ni IPC del renderer (no hay renderer).
     mainLog('info', 'Mage arrancado sin pantalla', { platform: process.platform });
     await assessVaultOnce();
+    prepareSessionServices();
     await startHost('headless').catch((err: unknown) => {
       mainLog('error', 'No se pudo arrancar el host local; se cierra el proceso sin pantalla', { error: renderForLog(localizedFromError(err)) });
       app.exit(1);
@@ -3781,13 +3792,9 @@ app.whenReady().then(async () => {
   Menu.setApplicationMenu(buildApplicationMenu());
   // La bóveda, antes de admitir sesiones y de migrar nada a ella (D1).
   await assessVaultOnce();
-  startConversationLockHeartbeat();
-  migrateLegacyProviderKeysOnce();
-  registerIpcHandlers();
   // Antes de la primera ventana: la primera sesion ya tiene que recibir los MCP importados.
-  importSharedMcpOnce();
-  // Y a agy, lo que haya cambiado mientras Mage estaba cerrado (si la sincronizacion automatica esta activa).
-  onSharedMcpChanged();
+  prepareSessionServices();
+  registerIpcHandlers();
 
   const mainWindow = windowManager.ensureMain();
   tray = createTray();
