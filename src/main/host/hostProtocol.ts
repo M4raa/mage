@@ -122,9 +122,8 @@ export function isHostMethod(method: string): method is HostMethod {
   return Object.prototype.hasOwnProperty.call(HOST_METHOD_SCHEMAS, method);
 }
 
-// Métodos con esquema pero sin implementar todavía: responden `Unsupported` y no se anuncian. `session.rewind` llega
-// con el rebobinado (F4.4); `session.updateQueued`, cuando el coordinador sepa editar la cola.
-export const UNSUPPORTED_METHODS: ReadonlySet<HostMethod> = new Set<HostMethod>(['session.rewind', 'session.updateQueued']);
+// Métodos con esquema pero sin implementar todavía: responden `Unsupported` y no se anuncian. `session.rewind` llega con el rebobinado (F4.4).
+export const UNSUPPORTED_METHODS: ReadonlySet<HostMethod> = new Set<HostMethod>(['session.rewind']);
 export const HOST_CAPABILITIES: readonly HostMethod[] = (Object.keys(HOST_METHOD_SCHEMAS) as HostMethod[]).filter((method) => !UNSUPPORTED_METHODS.has(method));
 
 // La versión MAYOR distinta se rechaza; la menor se tolera en los dos sentidos.
@@ -165,3 +164,6 @@ export function resultResponse(id: RequestId, result: unknown): string {
 export function notification(method: string, params: unknown): string {
   return `${JSON.stringify({ jsonrpc: '2.0', method, params })}\n`;
 }
+
+// Notificación aditiva (1.3): la sesión de una suscripción terminó en el host y la suscripción ya no existe.
+export const SUBSCRIPTION_CLOSED_NOTIFICATION = 'subscription.closed';

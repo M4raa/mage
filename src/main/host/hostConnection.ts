@@ -25,6 +25,7 @@ import {
   protocolMismatch,
   REQUEST_ENVELOPE_SCHEMA,
   resultResponse,
+  SUBSCRIPTION_CLOSED_NOTIFICATION,
   withLegacyText,
   type HostCreateRequest,
   type HostErrorBody,
@@ -59,6 +60,7 @@ export interface HostSessions {
   send(params: SendMessageParams): SendReceipt;
   interrupt(sessionId: string): readonly QueuedMessage[];
   removeQueued(sessionId: string, messageId: string): QueuedMessage | null;
+  updateQueued(sessionId: string, messageId: string, text: string): QueuedMessage | null;
   answerPermission(sessionId: string, requestId: string, decision: PermissionDecision): AnswerReceipt;
   answerElicitation(answer: ElicitationAnswer): AnswerReceipt;
 }
@@ -252,6 +254,10 @@ export class HostConnection {
         const target = params as { sessionId: string; queuedId: string };
         return { removed: sessions.removeQueued(target.sessionId, target.queuedId) };
       }
+      case 'session.updateQueued': {
+        const target = params as { sessionId: string; queuedId: string; text: string };
+        return { updated: sessions.updateQueued(target.sessionId, target.queuedId, target.text) };
+      }
       default: throw new UnsupportedMethodError(method);
     }
   }
@@ -269,7 +275,7 @@ export class HostConnection {
     const subscriptionId = this.deps.newId();
     const { snapshot, unsubscribe } = this.deps.sessions.subscribe(sessionId, {
       sink: (event) => this.pushEvent(subscriptionId, event),
-      onClosed: () => this.endSubscription(subscriptionId),
+      onClosed: () => this.onSessionClosed(subscriptionId),
     });
     this.subscriptions.set(subscriptionId, unsubscribe);
     return { subscriptionId, snapshot };
@@ -285,6 +291,14 @@ export class HostConnection {
     this.subscriptions.delete(subscriptionId);
     unsubscribe();
     return true;
+  }
+
+  // La sesión terminó en el host: se suelta la suscripción y se avisa al cliente (1.3), que si no se enteraría
+  // solo al siguiente envío. Una suscripción ya soltada no avisa dos veces.
+  private onSessionClosed(subscriptionId: string): void {
+    if (!this.endSubscription(subscriptionId)) return;
+    if (this.phase !== 'ready') return;
+    this.transport.write(notification(SUBSCRIPTION_CLOSED_NOTIFICATION, { subscriptionId }));
   }
 
   private pushEvent(subscriptionId: string, event: SequencedSessionEvent): void {

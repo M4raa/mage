@@ -28,6 +28,7 @@ function harness(options: { sessions?: Partial<HostSessions>; control?: Partial<
     send: vi.fn(() => ({ status: 'accepted' as const, commandId: 'k' })),
     interrupt: vi.fn(() => []),
     removeQueued: vi.fn(() => null),
+    updateQueued: vi.fn(() => null),
     answerPermission: vi.fn(() => ({ status: 'accepted' as const })),
     answerElicitation: vi.fn(() => ({ status: 'accepted' as const })),
     ...options.sessions,
@@ -359,6 +360,51 @@ describe('HostConnection — métodos', () => {
     expect(h.unsubscribe).toHaveBeenCalledTimes(1);
   });
 
+  it('onClosed_laSesionTermina_notificaSubscriptionClosed', () => {
+    const h = harness();
+    h.hello();
+    h.send({ jsonrpc: '2.0', id: 2, method: 'session.subscribe', params: { sessionId: 's1' } });
+
+    h.sinks[0]!.onClosed();
+
+    expect(h.lines().at(-1)).toEqual({ jsonrpc: '2.0', method: 'subscription.closed', params: { subscriptionId: 'sub-1' } });
+    expect(h.isEnded()).toBe(false);
+  });
+
+  it('onClosed_dosVeces_notificaUnaSola', () => {
+    const h = harness();
+    h.hello();
+    h.send({ jsonrpc: '2.0', id: 2, method: 'session.subscribe', params: { sessionId: 's1' } });
+
+    h.sinks[0]!.onClosed();
+    h.sinks[0]!.onClosed();
+
+    expect(h.lines().filter((line) => line.method === 'subscription.closed')).toHaveLength(1);
+  });
+
+  it('onClosed_trasUnsubscribe_noNotifica', () => {
+    const h = harness();
+    h.hello();
+    h.send({ jsonrpc: '2.0', id: 2, method: 'session.subscribe', params: { sessionId: 's1' } });
+    h.send({ jsonrpc: '2.0', id: 3, method: 'session.unsubscribe', params: { subscriptionId: 'sub-1' } });
+
+    h.sinks[0]!.onClosed();
+
+    expect(h.lines().filter((line) => line.method === 'subscription.closed')).toHaveLength(0);
+  });
+
+  it('onClosed_conexionYaCerrada_noEscribe', () => {
+    const h = harness();
+    h.hello();
+    h.send({ jsonrpc: '2.0', id: 2, method: 'session.subscribe', params: { sessionId: 's1' } });
+    h.connection.closed();
+    const before = h.written.length;
+
+    h.sinks[0]!.onClosed();
+
+    expect(h.written.length).toBe(before);
+  });
+
   it('pushEvent_consumidorLento_cierraLaConexion', () => {
     const h = harness();
     h.hello();
@@ -568,8 +614,7 @@ describe('HostConnection — métodos 1.2', () => {
 
   it.each([
     ['session.rewind', { sessionId: 's1', targetMessageId: 'm1', scope: 'both' }],
-    ['session.updateQueued', { sessionId: 's1', queuedId: 'q1', text: 'nuevo' }],
-  ])('sessionRewindYUpdateQueued_unsupportedYSigueAbierta_%s', (method, params) => {
+  ])('sessionRewind_unsupportedYSigueAbierta_%s', (method, params) => {
     const h = harness();
     h.hello();
 
@@ -577,6 +622,25 @@ describe('HostConnection — métodos 1.2', () => {
 
     expect(reply.error.code).toBe(HostErrorCode.Unsupported);
     expect(h.isEnded()).toBe(false);
+  });
+
+  it('sessionUpdateQueued_llegaAlCoordinadorYDevuelveElMensaje', () => {
+    const h = harness({ sessions: { updateQueued: vi.fn(() => ({ id: 'q1', text: 'nuevo' }) as never) } });
+    h.hello();
+
+    const reply = call(h, 'session.updateQueued', { sessionId: 's1', queuedId: 'q1', text: 'nuevo' });
+
+    expect(h.sessions.updateQueued).toHaveBeenCalledWith('s1', 'q1', 'nuevo');
+    expect(reply.result).toEqual({ updated: { id: 'q1', text: 'nuevo' } });
+  });
+
+  it('sessionUpdateQueued_noEstaEnLaCola_devuelveUpdatedNull', () => {
+    const h = harness();
+    h.hello();
+
+    const reply = call(h, 'session.updateQueued', { sessionId: 's1', queuedId: 'q1', text: 'nuevo' });
+
+    expect(reply.result).toEqual({ updated: null });
   });
 
   it('projectsYAccountsList_devuelvenLoDelControl', () => {

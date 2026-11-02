@@ -42,9 +42,9 @@ describe('HOST_PROTOCOL', () => {
 describe('host 1.2 — capacidades y esquemas', () => {
   const CREATE = { commandId: '6f1c2b3a-4d5e-4f60-8a7b-9c0d1e2f3a4b', provider: 'claude', accountId: 'C:\\Users\\u\\.claude', cwd: 'C:\\tmp\\x', trust: { acknowledged: false } };
 
-  it('capabilities_noAnuncianRewindNiUpdateQueued', () => {
+  it('capabilities_anuncianUpdateQueuedYNoRewind', () => {
     expect(HOST_CAPABILITIES).not.toContain('session.rewind');
-    expect(HOST_CAPABILITIES).not.toContain('session.updateQueued');
+    expect(HOST_CAPABILITIES).toContain('session.updateQueued');
   });
 
   it('capabilities_anuncianLosMetodosDe12', () => {

@@ -33,6 +33,7 @@ function fakeSessions(): HostSessions {
     send: () => ({ status: 'accepted', commandId: 'k' }),
     interrupt: () => [],
     removeQueued: () => null,
+    updateQueued: () => null,
     answerPermission: () => ({ status: 'accepted' }),
     answerElicitation: () => ({ status: 'accepted' }),
   };

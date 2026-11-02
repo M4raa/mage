@@ -20,7 +20,7 @@ afterEach(async () => {
 
 const sessions = (): HostSessions => ({
   listSessions: () => [], snapshot: () => { throw new Error('Sesion inexistente: x'); }, subscribe: () => { throw new Error('no'); },
-  send: () => ({ status: 'accepted', commandId: 'k' }), interrupt: () => [], removeQueued: () => null, answerPermission: () => ({ status: 'accepted' }), answerElicitation: () => ({ status: 'accepted' }),
+  send: () => ({ status: 'accepted', commandId: 'k' }), interrupt: () => [], removeQueued: () => null, updateQueued: () => null, answerPermission: () => ({ status: 'accepted' }), answerElicitation: () => ({ status: 'accepted' }),
 });
 
 async function start(mode: 'gui' | 'headless' = 'gui', log = vi.fn()) {
