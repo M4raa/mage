@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { hasReliableThumbnail, mapVscodeTheme, normalizeColor, pickPreviewSyntaxColors } from './vscodeTheme';
 import type { FetchedVscodeTheme } from '@shared/themeMarket';
+import themes from '../theme/__fixtures__/vscodeThemes.json';
 
 function theme(overrides: Partial<FetchedVscodeTheme> = {}): FetchedVscodeTheme {
   return { label: 'T', uiTheme: 'vs-dark', type: null, colors: {}, tokenColors: [], ...overrides };
@@ -88,6 +89,85 @@ describe('mapVscodeTheme', () => {
     );
     expect(result.tokens['--color-mg-focus']).toBe('#4488ff');
     expect(result.tokens['--color-mg-border']).toBe('#333333');
+  });
+
+  it('mapVscodeTheme_soloColoresDeMenuYDeTexto_noMapeanLaSeleccion', () => {
+    const result = mapVscodeTheme(theme({ colors: { 'menu.selectionBackground': '#0078d4', 'editor.selectionBackground': '#264f78' } }));
+
+    expect(result.tokens['--color-mg-sel']).toBeUndefined();
+  });
+
+  it('mapVscodeTheme_soloColorDelCursor_noMapeaElFoco', () => {
+    const result = mapVscodeTheme(theme({ colors: { 'editorCursor.foreground': '#aeafad' } }));
+
+    expect(result.tokens['--color-mg-focus']).toBeUndefined();
+  });
+
+  it('mapVscodeTheme_sinPrimerPlano_noEmiteTokensDerivados', () => {
+    const result = mapVscodeTheme(theme({ colors: { 'editor.background': '#101114', focusBorder: '#101114' } }));
+
+    expect(result.tokens['--color-mg-focus']).toBe('#101114');
+    expect(result.tokens['--color-mg-focus-ring']).toBeUndefined();
+    expect(result.tokens['--color-mg-sel-ink']).toBeUndefined();
+  });
+});
+
+// Tokens estructurales de cuatro temas reales (fixtures de themeFallbacks). Los valores son los de
+// themeFallbacks.test.ts; aquí se comprueba a qué variable CSS va cada uno.
+describe('mapVscodeTheme con temas reales', () => {
+  const STRUCTURAL: Readonly<Record<keyof typeof themes, Readonly<Record<string, string | undefined>>>> = {
+    nord: {
+      '--color-mg-border-subtle': '#3b4252',
+      '--color-mg-border-ctrl': '#484e59',
+      '--color-mg-hover': '#3b4252',
+      '--color-mg-sel': '#88c0d0',
+      '--color-mg-focus': '#82b7c6',
+      '--color-mg-focus-ring': '#82b7c6',
+      '--color-mg-sel-ink': '#2e3440',
+      '--color-mg-sel-mark': undefined,
+    },
+    oneDarkPro: {
+      '--color-mg-border-subtle': '#3e4452',
+      '--color-mg-border-ctrl': '#3e4452',
+      '--color-mg-hover': '#2c313a',
+      '--color-mg-sel': '#323842',
+      '--color-mg-focus': '#61afef',
+      '--color-mg-focus-ring': '#61afef',
+      '--color-mg-sel-ink': '#d7dae0',
+      '--color-mg-sel-mark': '#61afef',
+    },
+    solarizedLight: {
+      '--color-mg-border-subtle': '#ddd6c1',
+      '--color-mg-border-ctrl': '#d3af86',
+      '--color-mg-hover': '#eae0c0',
+      '--color-mg-sel': '#dfca88',
+      '--color-mg-focus': '#75888d',
+      '--color-mg-focus-ring': '#75888d',
+      '--color-mg-sel-ink': '#000000',
+      '--color-mg-sel-mark': undefined,
+    },
+    darkModern: {
+      '--color-mg-border-subtle': '#2b2b2b',
+      '--color-mg-border-ctrl': '#3c3c3c',
+      '--color-mg-hover': '#1d1d1d',
+      '--color-mg-sel': '#2c2c2c',
+      '--color-mg-focus': '#0078d4',
+      '--color-mg-focus-ring': '#0078d4',
+      '--color-mg-sel-ink': '#cccccc',
+      '--color-mg-sel-mark': undefined,
+    },
+  };
+
+  it.each(Object.keys(STRUCTURAL) as (keyof typeof themes)[])('mapVscodeTheme_%s_tokensEstructuralesDeThemeFallbacks', (id) => {
+    // Arrange
+    const expected = STRUCTURAL[id];
+
+    // Act
+    const { tokens } = mapVscodeTheme(theme({ colors: themes[id] }));
+
+    // Assert
+    const actual = Object.fromEntries(Object.keys(expected).map((name) => [name, tokens[name]]));
+    expect(actual).toEqual(expected);
   });
 });
 
