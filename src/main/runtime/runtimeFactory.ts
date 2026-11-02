@@ -1,6 +1,7 @@
 import type { ChildProcess, SpawnOptions } from 'node:child_process';
 import { join } from 'node:path';
 import type { CustomProvider } from '@shared/providers';
+import { localized, UserFacingError } from '@shared/i18n/localizedText';
 import type { SessionBase } from '../engine/sessionFactory';
 import type { KillableChild, KillOutcome } from '../os/processTree';
 import type { ResolvedShell } from '../os/shellResolver';
@@ -36,6 +37,8 @@ export interface RuntimeEnv {
   readonly now: () => number;
   readonly newId: () => string;
   readonly platform: string;
+  readonly enumerationPlatform: string;
+  readonly readDirectory: (path: string) => readonly string[];
   // Ruta real (sigue symlinks y junctions) o null si no existe: la puerta y Glob/Grep clasifican con ella.
   readonly realpath: (path: string) => string | null;
   readonly fs: ReadToolsFs;
@@ -98,7 +101,7 @@ interface SessionBuild {
 
 export function buildRuntimeSession(providerId: string, base: SessionBase, env: RuntimeEnv): RuntimeSession {
   const provider = env.findProvider(providerId);
-  if (provider === null) throw new Error(`Proveedor no configurado: ${JSON.stringify(providerId)}. Añádelo en Configuración > Proveedores.`);
+  if (provider === null) throw new UserFacingError(localized('errors.runtime.providerNotConfigured', { provider: JSON.stringify(providerId) }));
   const { params } = base;
   let session: RuntimeSession | null = null;
   const elicitation = new ElicitationBroker(base.emit);
@@ -113,7 +116,8 @@ export function buildRuntimeSession(providerId: string, base: SessionBase, env: 
     permissionMode: initialMode(params.permissionMode),
     client: new HttpChatClient({ baseUrl: provider.baseUrl, apiKey: () => env.apiKeyFor(providerId), fetch: env.fetch, timers: env.timers }),
     tools,
-    gate: createRuntimeGate({ cwd: params.cwd, extraDirs: [], platform: env.platform, realpath: env.realpath }),
+    gate: createRuntimeGate({ cwd: params.cwd, extraDirs: [], platform: env.platform, realpath: env.realpath,
+      enumerationPlatform: env.enumerationPlatform, readDirectory: env.readDirectory }),
     systemPrompt: buildSystemPromptFn(build, shell, tools),
     emit: base.emit,
     now: env.now,
@@ -204,7 +208,7 @@ function createPool({ base, env, session, elicitation }: SessionBuild, registry:
 // entre una conversacion y otra).
 async function prepareModel(providerId: string, model: string, env: RuntimeEnv): Promise<PreparedModel> {
   const provider = env.findProvider(providerId);
-  if (provider === null) throw new Error(`Proveedor no configurado: ${JSON.stringify(providerId)}`);
+  if (provider === null) throw new UserFacingError(localized('errors.runtime.providerNotConfiguredShort', { provider: JSON.stringify(providerId) }));
   const info = await env.catalog.info(
     {
       id: provider.id,

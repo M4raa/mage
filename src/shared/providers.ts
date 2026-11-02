@@ -11,6 +11,8 @@
 // asume que el usuario tenga ninguna IA local instalada, asi que de serie no existe ninguna entrada
 // local (decision del usuario, ROADMAP E2). Cambiar host/puerto es editar su proveedor, no el codigo.
 
+import { foreignText, localized, UserFacingError, type LocalizedText } from './i18n/localizedText';
+
 export interface ProviderModel {
   readonly id: string; // id que se manda al proveedor (--model y payload OpenAI)
   readonly label: string; // texto visible en los selectores
@@ -37,7 +39,7 @@ export interface CustomProvider {
 // Proveedor de serie: siempre un CLI nativo.
 export interface BuiltInProvider {
   readonly id: string;
-  readonly label: string;
+  readonly label: LocalizedText;
   readonly models: readonly ProviderModel[];
 }
 
@@ -55,14 +57,21 @@ export const AGY_PROVIDER_ID = 'agy';
 // catalogo y los tests.
 export const CODEX_PROVIDER_ID = 'codex';
 
+// Id del proveedor Claude (F4.1): lo mira `supportsSteer`.
+export const CLAUDE_PROVIDER_ID = 'claude';
+
+// Proveedores con mensaje directo en el turno en marcha (F4.1): Claude (`uuid` + command_lifecycle) y codex
+// (`turn/steer`). agy y el runtime propio no: su «Enviar ahora» se desactiva con su motivo.
+export function supportsSteer(providerId: string): boolean {
+  return providerId === CLAUDE_PROVIDER_ID || providerId === CODEX_PROVIDER_ID;
+}
+
 // Codex corre sobre `codex app-server` (JSON-RPC por stdio), que SI tiene puente de permisos
 // (`item/*/requestApproval`) y catalogo de modelos (`model/list`). Su adapter esta escrito desde el
 // esquema y lo medido con cuenta en codex-cli 0.160.0 (`spike/codex-spike.mjs --verify --real`).
 // Se conserva el mecanismo de aviso para proveedores que se incorporen sin haber sido medidos.
 export const UNVERIFIED_PROVIDER_IDS: readonly string[] = [];
-export const UNVERIFIED_PROVIDER_NOTE =
-  'Sin verificar: Mage habla con Codex según su documentación y su esquema, pero aún no se ha probado ' +
-  'un turno con una cuenta real.';
+// El aviso que se pinta es la clave `prompt.providers.unverifiedNote`.
 
 export function isUnverifiedProvider(providerId: string): boolean {
   return UNVERIFIED_PROVIDER_IDS.includes(providerId);
@@ -78,16 +87,11 @@ export function isUnverifiedProvider(providerId: string): boolean {
 export const AUTO_APPROVED_PROVIDER_IDS: readonly string[] = [AGY_PROVIDER_ID];
 
 // Auto en el runtime propio (D1 de P-033, M5): una lista blanca, no el sandbox de Codex. Lo dicen el
-// aviso al entrar en el modo (main) y la nota del deslizador (renderer).
-export const RUNTIME_AUTO_MODE_NOTE =
-  'Auto no es un sandbox: edita dentro del proyecto y ejecuta sin preguntar solo comandos de una lista corta (lectura, git sin red, test y build). Esos comandos ejecutan código del proyecto; todo lo demás pregunta.';
+// aviso al entrar en el modo (main) y la nota del deslizador (renderer): clave
+// `prompt.providers.runtimeAutoModeNote`.
 
-// Texto UNICO del aviso (no se duplica por componente: si cambia, cambia en todos a la vez).
-export const NO_PERMISSION_CONTROL_WARNING =
-  'Sin control de permisos: el agente crea y modifica ficheros SIN preguntar dentro de la carpeta del ' +
-  'proyecto, y agy deniega los comandos de terminal salvo los que permitas al empezar la conversación. ' +
-  'Mage no puede preguntarte a mitad de turno (el CLI de agy no ofrece puente de permisos), así que esta ' +
-  'pestaña no pasa por los diálogos de permiso de Mage.';
+// El texto del aviso de agy es la clave `prompt.providers.noPermissionControl` (una sola, para que si
+// cambia, cambie en todos los sitios a la vez).
 
 // Niveles de `--effort` de `agy`, medidos en 1.2.14 (`--help`: low|medium|high|max). Un solo sitio: lo
 // usan su adapter (main) y los selectores (renderer).
@@ -126,10 +130,17 @@ export function writesClaudeTranscript(providerId: string): boolean {
   return providerId !== AGY_PROVIDER_ID && providerId !== CODEX_PROVIDER_ID;
 }
 
+// ¿Es el proveedor el dueño de su conversación? Lo es quien no escribe la transcripción de Claude (Codex y agy):
+// su id de conversación lo da el CLI en el `session_init` (`threadId`, `cascadeId`) y la sesión de Mage lleva otro,
+// un UUID propio. Única fuente de la regla para main y el renderer (devolución 19).
+export function ownsConversation(providerId: string): boolean {
+  return !writesClaudeTranscript(providerId);
+}
+
 export const BUILT_IN_PROVIDERS: readonly BuiltInProvider[] = [
   {
     id: 'claude',
-    label: 'Claude (Anthropic)',
+    label: foreignText('Claude (Anthropic)'),
     // Los ids son ALIAS del CLI (`sonnet`, `opus`, `haiku`): apuntan siempre a la ultima version de esa
     // familia, y por eso no se ponen ids con version — quedarian clavados en un modelo viejo. La
     // VERSION si va en la etiqueta, que era lo unico que faltaba (reporte del usuario: "la lista de
@@ -161,7 +172,7 @@ export const BUILT_IN_PROVIDERS: readonly BuiltInProvider[] = [
     // lo que se ofrece sin `agy` instalado o sin conexion (y estuvo un mes desfasada: la cuenta ya
     // ofrecia Gemini 3.8 y 3.7 cuando aqui seguian el 3.6 y un 3.5 que ya no existe).
     id: AGY_PROVIDER_ID,
-    label: 'Antigravity · el CLI de Google (agy) · sin permisos',
+    label: localized('prompt.providers.agyLabel'),
     models: [
       { id: 'gemini-3.8-flash-high', label: 'Gemini 3.8 Flash (High)' },
       { id: 'gemini-3.8-flash-medium', label: 'Gemini 3.8 Flash (Medium)' },
@@ -185,7 +196,7 @@ export const BUILT_IN_PROVIDERS: readonly BuiltInProvider[] = [
     // sin ocultos, con etiquetas y esfuerzos por modelo. Sin cuenta también aparece GPT-5.5;
     // no pertenece al catálogo de esta cuenta. El sondeo vivo manda sobre esta reserva.
     id: CODEX_PROVIDER_ID,
-    label: 'Codex (OpenAI)',
+    label: foreignText('Codex (OpenAI)'),
     models: [
       { id: 'gpt-6.1-sol', label: 'GPT-6.1-Sol', supportedEfforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'] },
       { id: 'gpt-6-astra', label: 'GPT-6-Astra', supportedEfforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'] },
@@ -236,15 +247,15 @@ export function modelsUrl(baseUrl: string): string {
 // protocolo que no es http(s) lanzan con el valor recibido (el formulario pinta ese mensaje tal cual).
 function endpointUrl(baseUrl: string, path: string): string {
   const trimmed = baseUrl.trim();
-  if (trimmed.length === 0) throw new Error('La URL base del proveedor esta vacia');
+  if (trimmed.length === 0) throw new UserFacingError(localized('settings.providers.baseUrlEmpty'));
   let url: URL;
   try {
     url = new URL(trimmed);
   } catch {
-    throw new Error(`URL base del proveedor no valida: ${JSON.stringify(baseUrl)}`);
+    throw new UserFacingError(localized('settings.providers.baseUrlInvalid', { value: JSON.stringify(baseUrl) }));
   }
   if (url.protocol !== 'http:' && url.protocol !== 'https:') {
-    throw new Error(`La URL base del proveedor debe ser http o https: ${JSON.stringify(baseUrl)}`);
+    throw new UserFacingError(localized('settings.providers.baseUrlNotHttp', { value: JSON.stringify(baseUrl) }));
   }
   url.search = '';
   url.hash = '';

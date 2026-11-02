@@ -1,6 +1,7 @@
 import { basename, dirname, join } from 'node:path';
 import type { AccountInfo, LoginStatus } from '@shared/accounts';
 import type { LogLevel } from '@shared/debug';
+import { localized, UserFacingError } from '@shared/i18n/localizedText';
 import type { AccountLayout } from '../engine/providerAdapter';
 import type { LinkService } from '../os/linkService';
 import { pathEquals } from '../os/pathUtils';
@@ -95,10 +96,10 @@ export class AccountService {
   createAccount(name: string): AccountInfo {
     const clean = name.trim();
     if (!ACCOUNT_NAME_PATTERN.test(clean)) {
-      throw new Error(`Nombre de cuenta invalido (letra inicial + letras/numeros/-/_): "${name}"`);
+      throw new UserFacingError(localized('errors.accounts.nameInvalid', { name }));
     }
     const dir = join(this.deps.homedir, `${this.deps.layout.mainDirName}-${clean}`);
-    if (this.deps.exists(dir)) throw new Error(`La cuenta ya existe: ${dir}`);
+    if (this.deps.exists(dir)) throw new UserFacingError(localized('errors.accounts.alreadyExists', { path: dir }));
 
     this.deps.mkdir(dir);
     for (const folder of SHARED_FOLDERS) {
@@ -121,7 +122,7 @@ export class AccountService {
     if (this.isMainDir(configDir)) {
       throw new Error(`No se puede eliminar la cuenta principal (${this.mainDir}): ${configDir}`);
     }
-    if (!this.deps.exists(configDir)) throw new Error(`La cuenta no existe: ${configDir}`);
+    if (!this.deps.exists(configDir)) throw new UserFacingError(localized('errors.accounts.notFound', { path: configDir }));
     if (!this.isManagedAccountDir(configDir)) {
       throw new Error(`Ruta de cuenta no valida (debe ser ${this.mainDir}-* bajo HOME): ${configDir}`);
     }
@@ -136,7 +137,7 @@ export class AccountService {
     }
     for (const linkPath of linkPaths) {
       if (this.deps.linkService.classifyLink(linkPath) === 'link') {
-        throw new Error(`No se pudo desenlazar "${linkPath}"; se aborta el borrado para no tocar datos compartidos`);
+        throw new UserFacingError(localized('errors.accounts.unlinkFailed', { path: linkPath }));
       }
     }
     this.deps.rmrf(configDir);
@@ -148,10 +149,7 @@ export class AccountService {
     for (const path of linkPaths) {
       if (this.deps.linkService.classifyLink(path) !== 'private') continue;
       if (this.deps.listDir(path).length === 0) continue;
-      throw new Error(
-        `"${path}" es una carpeta real con datos, no un enlace a la compartida; se aborta el borrado. ` +
-          'Mueve su contenido a la carpeta comun o borrala a mano.',
-      );
+      throw new UserFacingError(localized('errors.accounts.realFolderWithData', { path }));
     }
   }
 
@@ -211,7 +209,7 @@ export class AccountService {
 
     const side = this.readCredentialsSide(join(source, CREDENTIALS_FILE));
     if (!side.exists || !side.hasTokens || side.expiresAt === null) {
-      throw new Error(`La cuenta de origen no tiene una sesion utilizable: ${source}`);
+      throw new UserFacingError(localized('errors.accounts.sourceNoSession', { path: source }));
     }
     this.deps.copyCredentialsFile(join(source, CREDENTIALS_FILE), join(target, CREDENTIALS_FILE));
     this.deps.log('info', `Login adoptado: "${source}" -> "${target}"`);
@@ -300,7 +298,9 @@ export class AccountService {
     // Se reutiliza el lector de la convergencia (el unico sitio que conoce el formato del fichero de
     // credenciales) en vez de duplicarlo aqui: saca metadata, nunca el token.
     const side = this.readCredentialsSide(join(dir, CREDENTIALS_FILE));
-    if (!side.exists) return { status: 'logged_out', expiresAt: null };
+    // Sin tokens = sin login, aunque el fichero exista: al fallar un refresh el CLI lo deja VACIO, y
+    // darlo por bueno ocultaba el boton de iniciar sesion (el unico camino para recuperar la cuenta).
+    if (!side.exists || !side.hasTokens) return { status: 'logged_out', expiresAt: null };
     const { expiresAt } = side;
     if (expiresAt === null) return { status: 'logged_in', expiresAt: null };
     const status: LoginStatus = expiresAt < this.deps.now() ? 'expired' : 'logged_in';

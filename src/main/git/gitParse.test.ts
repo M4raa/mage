@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { foreignText, localized, renderForLog } from '@shared/i18n/localizedText';
 import { parseBranches, parseNumstat, parseRemoteUrl, parseStatusV2, parseWorktreeList, pickRemoteUrl, switchTargetError, worktreeSlug } from './gitParse';
 
 const Z = '\u0000';
@@ -80,15 +81,16 @@ describe('switchTargetError', () => {
   });
 
   it('switchTargetError_empiezaPorGuion_rechaza', () => {
-    expect(switchTargetError('-f', ['-f'])).toContain('"-f"');
+    expect(renderForLog(switchTargetError('-f', ['-f'])!)).toContain('"-f"');
   });
 
   it('switchTargetError_fueraDeLaLista_rechaza', () => {
-    expect(switchTargetError('otra', ['main'])).toContain('"otra"');
+    expect(switchTargetError('otra', ['main'])).toEqual(localized('errors.git.branchMissing', { name: 'otra' }));
+    expect(renderForLog(switchTargetError('otra', ['main'])!)).toContain('"otra"');
   });
 
   it('switchTargetError_vacia_rechaza', () => {
-    expect(switchTargetError('', [''])).toBe('rama vacía');
+    expect(switchTargetError('', [''])).toEqual(foreignText('rama vacía'));
   });
 });
 

@@ -7,6 +7,8 @@ import type {
 } from '@shared/widget';
 import type { Account, ChatStatus, Tab } from './types';
 import { severityForPct, type UsageSeverity } from './usageView';
+import { t } from '../i18n/uiLanguage';
+import { displayTitle } from './conversationTitle';
 
 // Mapeo PURO del estado del workbench al snapshot compacto del WIDGET FLOTANTE (M3). Sin efectos ni
 // dependencia del reloj (los labels de uso ya vienen formateados en account.usage). Se testea aparte.
@@ -59,7 +61,7 @@ function buildAgents(input: WidgetViewInput): readonly WidgetAgent[] {
 function toAgent(tab: Tab, status: ChatStatus, accentById: ReadonlyMap<string, string>): WidgetAgent {
   return {
     tabId: tab.id,
-    title: tab.title,
+    title: displayTitle(tab.title),
     accountAlias: tab.accountAlias,
     accentBase: accentById.get(tab.accountId) ?? '',
     status,
@@ -76,11 +78,11 @@ function toWidgetUsage(account: Account): WidgetUsage {
 // Alertas ordenadas por urgencia: errores (critical), uso sobre umbral, permisos pendientes (warn).
 function buildAlerts(input: WidgetViewInput, activeAccount: Account | undefined): readonly WidgetAlert[] {
   const errors = tabsWithStatus(input, 'error').map(
-    (tab): WidgetAlert => ({ kind: 'error', severity: 'critical', text: `${tab.title}: error` }),
+    (tab): WidgetAlert => ({ kind: 'error', severity: 'critical', text: t('app.widget.alertError', { title: displayTitle(tab.title) }) }),
   );
   const usage = activeAccount === undefined ? [] : usageAlerts(activeAccount);
   const permissions = tabsWithStatus(input, 'needs_permission').map(
-    (tab): WidgetAlert => ({ kind: 'permission', severity: 'warn', text: `${tab.title}: permiso pendiente` }),
+    (tab): WidgetAlert => ({ kind: 'permission', severity: 'warn', text: t('app.widget.alertPermission', { title: displayTitle(tab.title) }) }),
   );
   return [...errors, ...usage, ...permissions];
 }
@@ -89,13 +91,13 @@ function buildAlerts(input: WidgetViewInput, activeAccount: Account | undefined)
 function usageAlerts(account: Account): readonly WidgetAlert[] {
   const windows: readonly { readonly label: string; readonly pct: number }[] = [
     { label: '5h', pct: account.usage.fiveHour.pct },
-    { label: 'semanal', pct: account.usage.weekly.pct },
+    { label: t('app.widget.weeklyWindow'), pct: account.usage.weekly.pct },
   ];
   const alerts: WidgetAlert[] = [];
   for (const window of windows) {
     const severity = severityForPct(window.pct);
     if (severity !== 'ok') {
-      alerts.push({ kind: 'usage', severity: mapSeverity(severity), text: `Uso ${window.label} ${window.pct}%` });
+      alerts.push({ kind: 'usage', severity: mapSeverity(severity), text: t('app.widget.usageAlert', { window: window.label, pct: window.pct }) });
     }
   }
   return alerts;

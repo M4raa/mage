@@ -26,8 +26,9 @@ export interface ArtifactRecord {
   readonly publishedAtMs: number;
 }
 
-// Version del fichero persistido (userData/conversation-index.json).
-export const CONVERSATION_INDEX_VERSION = 1;
+// Version del fichero persistido (userData/conversation-index.json). La 2 (F2.1) añade a cada entrada su
+// sesion nativa (`nativeRef`) y la ultima secuencia de eventos (`lastSeq`); la 1 se lee y se migra.
+export const CONVERSATION_INDEX_VERSION = 2;
 
 // Tope de artifacts recordados: al pasarse se desaloja el de `publishedAtMs` mas antiguo. Las
 // conversaciones NO se acotan (una entrada son ~80 bytes; 10 000 conversaciones son 800 KB), pero se

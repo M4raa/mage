@@ -38,6 +38,7 @@ graphify-out/
 # >>> privado ---------------------------------------------------------------------------------------
 # No se publica. Lo versiona SOLO el repositorio privado: scripts/sync-private.sh lee esta seccion
 # (entre los dos marcadores, una ruta por linea) y la fuerza en cada push.
+/audit/
 /notes/
 /reference/
 /CLAUDE.local.md

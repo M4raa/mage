@@ -1,4 +1,5 @@
 import type { GhOffReason, GhRunsSnapshot, GhSnapshot } from '@shared/gh';
+import { localized, UserFacingError } from '@shared/i18n/localizedText';
 import type { GitService } from '../git/gitService';
 import { classifyGhExit, parsePrView, parseRunList, pickBranchPr, PR_FIELDS, RUN_FIELDS } from './ghParse';
 
@@ -95,12 +96,12 @@ class CachedGhService implements GhService {
 
   async runAction(cwd: string, accountDir: string, runId: number, action: 'rerun' | 'cancel'): Promise<void> {
     assertPositiveInt(runId, 'id de run');
-    if (!this.knownRuns.get(cwd)?.has(runId)) throw new Error(`El run ${runId} no esta en la ultima lista leida de ${cwd}`);
+    if (!this.knownRuns.get(cwd)?.has(runId)) throw new UserFacingError(localized('errors.gh.runNotListed', { runId: String(runId), cwd }));
     const gated = await this.gate(cwd, accountDir);
-    if ('off' in gated) throw new Error(`gh no disponible en ${cwd}: ${gated.off}`);
+    if ('off' in gated) throw new UserFacingError(localized('errors.gh.unavailable', { cwd, reason: gated.off }));
     const args = action === 'rerun' ? ['run', 'rerun', String(runId), '--failed'] : ['run', 'cancel', String(runId)];
     const result = await this.gh(gated.gh, cwd, args);
-    if (result.code !== 0) throw new Error(`gh run ${action} ${runId} fallo (salida ${result.code})`);
+    if (result.code !== 0) throw new UserFacingError(localized('errors.gh.runActionFailed', { action, runId: String(runId), code: String(result.code) }));
   }
 
   // Auto-merge NATIVO de GitHub, en squash (DN-2): GitHub fusiona solo cuando pasan los checks obligatorios.
@@ -108,10 +109,10 @@ class CachedGhService implements GhService {
     assertPositiveInt(number, 'numero de PR');
     if (!this.knownPrs.get(cwd)?.has(number)) throw new Error(`El PR #${number} no es uno leido en ${cwd}`);
     const gated = await this.gate(cwd, accountDir);
-    if ('off' in gated) throw new Error(`gh no disponible en ${cwd}: ${gated.off}`);
+    if ('off' in gated) throw new UserFacingError(localized('errors.gh.unavailable', { cwd, reason: gated.off }));
     const args = ['pr', 'merge', String(number), ...(enabled ? ['--auto', '--squash'] : ['--disable-auto'])];
     const result = await this.gh(gated.gh, cwd, args);
-    if (result.code !== 0) throw new Error(`GitHub no acepto el auto-merge del PR #${number} (salida ${result.code}): el repositorio tiene que permitirlo en sus ajustes («Allow auto-merge»)`);
+    if (result.code !== 0) throw new UserFacingError(localized('errors.gh.autoMergeRejected', { number: String(number), code: String(result.code) }));
     this.cache.clear();
   }
 

@@ -1,4 +1,5 @@
 import { dirname } from 'node:path';
+import { localized, type LocalizedText } from '@shared/i18n/localizedText';
 import { resolveTranscriptPath } from '../transcripts/transcriptPath';
 import type { SessionLogFn } from '../engine/agentSession';
 import type { LoopEvent, TurnOutcome } from './agentLoop';
@@ -25,7 +26,7 @@ export interface TranscriptWriterDeps {
   readonly log?: SessionLogFn;
   // M6: la primera vez que falla el disco se avisa a la sesion (la conversacion sigue, pero no se podra
   // reabrir y el usuario tiene que saberlo).
-  readonly onWriteFailure?: (message: string) => void;
+  readonly onWriteFailure?: (message: LocalizedText) => void;
 }
 
 interface RoundBuffer {
@@ -150,7 +151,7 @@ export class TranscriptWriter implements TurnRecorder {
       if (!this.failed) {
         const message = (err as Error).message;
         this.deps.log?.('error', 'No se pudo escribir la transcripcion del runtime', { error: message });
-        this.deps.onWriteFailure?.(`No se puede guardar esta conversación en disco (${message}): sigue funcionando, pero no se podrá reabrir.`);
+        this.deps.onWriteFailure?.(localized('events.runtime.transcriptWriteFailed', { detail: message }));
       }
       this.failed = true;
     }

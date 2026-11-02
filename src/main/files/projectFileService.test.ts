@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { localized } from '@shared/i18n/localizedText';
 import { MAX_PROJECT_FILE_BYTES, ProjectFileService, type ProjectFileDeps } from './projectFileService';
 
 const CWD = process.platform === 'win32' ? 'C:\\proj' : '/proj';
@@ -114,6 +115,7 @@ describe('ProjectFileService.write', () => {
     const { svc, writeFile } = service({ [FILE]: { content: 'lo que escribio el agente', mtimeMs: 999 } });
 
     expect(() => svc.write({ cwd: CWD, path: FILE, content: 'lo mio', expectedMtimeMs: 100 })).toThrow(/cambió en disco/);
+    expect(() => svc.write({ cwd: CWD, path: FILE, content: 'lo mio', expectedMtimeMs: 100 })).toThrow(expect.objectContaining({ localized: localized('errors.files.changedOnDisk', { expected: '100', actual: '999' }) }));
     expect(writeFile).not.toHaveBeenCalled();
   });
 
@@ -137,6 +139,7 @@ describe('ProjectFileService.write', () => {
     const { svc, writeFile } = service({});
 
     expect(() => svc.write({ cwd: CWD, path: OUTSIDE, content: 'x', expectedMtimeMs: null })).toThrow(/no está en la carpeta de la conversación/);
+    expect(() => svc.write({ cwd: CWD, path: OUTSIDE, content: 'x', expectedMtimeMs: null })).toThrow(expect.objectContaining({ localized: localized('errors.files.writeNotApproved', { path: OUTSIDE }) }));
     expect(writeFile).not.toHaveBeenCalled();
   });
 });

@@ -15,6 +15,7 @@ import {
   type ZoneKey,
   type ZoneState,
 } from '@shared/panelLayout';
+import { t } from '../../i18n/uiLanguage';
 
 export interface ZoneLocation {
   readonly anchor: Anchor;
@@ -206,6 +207,8 @@ export function resizeSplit(layout: PanelLayoutState, anchor: Anchor, splitPx: n
   return { ...layout, stripes: { ...layout.stripes, [anchor]: { ...layout.stripes[anchor], splitPx: Math.max(splitPx, MIN_ZONE_SIZE_PX) } } };
 }
 
+type DestinationLabelKey = 'menu.panelZone.leftTop' | 'menu.panelZone.leftMiddle' | 'menu.panelZone.rightTop' | 'menu.panelZone.rightMiddle' | 'menu.panelZone.bottomLeft' | 'menu.panelZone.bottomRight';
+
 export interface MoveDestination {
   readonly anchor: Anchor;
   readonly zone: ZoneKey;
@@ -214,16 +217,20 @@ export interface MoveDestination {
 
 // Las 6 zonas posibles con su etiqueta exacta (2026-08-06: 'b' de izquierda/derecha renombrada de
 // "abajo" a "medio" para no confundirla con la zona compartida de abajo, que es un anchor distinto).
-const ALL_DESTINATIONS: readonly MoveDestination[] = [
-  { anchor: 'left', zone: 'a', label: 'Izquierda arriba' },
-  { anchor: 'left', zone: 'b', label: 'Izquierda medio' },
-  { anchor: 'right', zone: 'a', label: 'Derecha arriba' },
-  { anchor: 'right', zone: 'b', label: 'Derecha medio' },
-  { anchor: 'bottom', zone: 'a', label: 'Abajo izquierda' },
-  { anchor: 'bottom', zone: 'b', label: 'Abajo derecha' },
+const ALL_DESTINATIONS: readonly { readonly anchor: Anchor; readonly zone: ZoneKey; readonly labelKey: DestinationLabelKey }[] = [
+  { anchor: 'left', zone: 'a', labelKey: 'menu.panelZone.leftTop' },
+  { anchor: 'left', zone: 'b', labelKey: 'menu.panelZone.leftMiddle' },
+  { anchor: 'right', zone: 'a', labelKey: 'menu.panelZone.rightTop' },
+  { anchor: 'right', zone: 'b', labelKey: 'menu.panelZone.rightMiddle' },
+  { anchor: 'bottom', zone: 'a', labelKey: 'menu.panelZone.bottomLeft' },
+  { anchor: 'bottom', zone: 'b', labelKey: 'menu.panelZone.bottomRight' },
 ];
 
 // Destinos del menu "Mover a..." (§6): las 6 zonas EXCLUYENDO la actual.
 export function moveDestinations(current: ZoneLocation): readonly MoveDestination[] {
-  return ALL_DESTINATIONS.filter((d) => !(d.anchor === current.anchor && d.zone === current.zone));
+  return ALL_DESTINATIONS.filter((d) => !(d.anchor === current.anchor && d.zone === current.zone)).map((d) => ({
+    anchor: d.anchor,
+    zone: d.zone,
+    label: t(d.labelKey),
+  }));
 }

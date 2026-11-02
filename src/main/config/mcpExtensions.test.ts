@@ -1,5 +1,7 @@
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { foreignText, localized } from '@shared/i18n/localizedText';
+import { esText, jsonMessage, thrownText } from '@testing/localizedText';
 import {
   applyUserConfigValues,
   bareCommand,
@@ -75,6 +77,17 @@ describe('parseMcpbManifest', () => {
     expect(() => parseMcpbManifest('{')).toThrow(/JSON/);
   });
 
+  it('parseMcpbManifest_noJson_lanzaLaClaveConElDetalleDeJsonParse', () => {
+    const thrown = thrownText(() => parseMcpbManifest('{'));
+
+    expect(thrown.key).toBe('errors.config.manifestInvalidJson');
+    expect(thrown.parts?.detail).toEqual(foreignText(jsonMessage('{')));
+  });
+
+  it('parseMcpbManifest_sinVersionDeFormato_lanzaLaClave', () => {
+    expect(thrownText(() => parseMcpbManifest(JSON.stringify({ ...RAW, manifest_version: undefined })))).toEqual(localized('errors.config.manifestNoVersion'));
+  });
+
   it('extensionIdOf_nombreConEspacios_slug', () => {
     expect(extensionIdOf(manifest())).toBe('huginn-db');
   });
@@ -84,7 +97,8 @@ describe('parseMcpbManifest', () => {
   });
 
   it('platformProblem_plataformaNoDeclarada_avisa', () => {
-    expect(platformProblem(manifest(), 'linux')).toContain('win32');
+    expect(platformProblem(manifest(), 'linux')).toEqual(localized('mcp.main.extensionPlatformOnly', { platforms: 'win32, darwin' }));
+    expect(esText(platformProblem(manifest(), 'linux'))).toBe('Solo funciona en win32, darwin.');
     expect(platformProblem(manifest(), 'win32')).toBeNull();
   });
 });
@@ -132,6 +146,7 @@ describe('formulario de user_config', () => {
 
   it('parseExtensionSettings_ilegible_lanza', () => {
     expect(() => parseExtensionSettings('{')).toThrow(/ilegibles/);
+    expect(thrownText(() => parseExtensionSettings('{'))).toMatchObject({ key: 'errors.config.extensionSettingsUnreadable', values: { length: '1' }, parts: { detail: foreignText(jsonMessage('{')) } });
   });
 });
 

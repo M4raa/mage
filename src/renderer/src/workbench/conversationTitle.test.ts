@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { deriveTitleFromPrompt, isPlaceholderTitle, isSlashCommandText, latestCustomTitle, NEW_CONVERSATION_TITLE, renamedTitleFrom } from './conversationTitle';
+import { deriveTitleFromPrompt, displayTitle, isSlashCommandText, latestCustomTitle, renamedTitleFrom } from './conversationTitle';
+import { createTranslator } from '@shared/i18n/translator';
 import { makeEntry } from '@testing/transcriptEntry';
 
 describe('deriveTitleFromPrompt', () => {
@@ -7,9 +8,9 @@ describe('deriveTitleFromPrompt', () => {
     expect(deriveTitleFromPrompt('Arregla el bug del login')).toBe('Arregla el bug del login');
   });
 
-  it('promptVacio_devuelveElPlaceholder', () => {
-    expect(deriveTitleFromPrompt('   ')).toBe(NEW_CONVERSATION_TITLE);
-    expect(deriveTitleFromPrompt('')).toBe(NEW_CONVERSATION_TITLE);
+  it('promptVacio_devuelveTituloVacio', () => {
+    expect(deriveTitleFromPrompt('   ')).toBe('');
+    expect(deriveTitleFromPrompt('')).toBe('');
   });
 
   it('promptMultilinea_usaLaPrimeraLineaNoVacia', () => {
@@ -26,19 +27,19 @@ describe('deriveTitleFromPrompt', () => {
   });
 });
 
-describe('isPlaceholderTitle', () => {
-  it('placeholderOVacio_true', () => {
-    expect(isPlaceholderTitle(NEW_CONVERSATION_TITLE)).toBe(true);
-    expect(isPlaceholderTitle('   ')).toBe(true);
+describe('displayTitle', () => {
+  const translate = createTranslator('es');
+
+  it('displayTitle_vacio_tabsUntitledEnCastellano', () => {
+    expect(displayTitle('', translate)).toBe('Nuevo chat');
   });
 
-  it('isPlaceholderTitle_placeholderAnteriorPersistido_true', () => {
-    // Pestañas guardadas antes de P-026 (D19) siguen auto-titulandose con su primer mensaje.
-    expect(isPlaceholderTitle('Nueva conversación')).toBe(true);
+  it('displayTitle_marcadorAntiguo_tabsUntitled', () => {
+    expect(displayTitle('Nueva conversación', translate)).toBe('Nuevo chat');
   });
 
-  it('tituloReal_false', () => {
-    expect(isPlaceholderTitle('Refactor del parser')).toBe(false);
+  it('displayTitle_tituloReal_igual', () => {
+    expect(displayTitle('Refactor del parser', translate)).toBe('Refactor del parser');
   });
 });
 

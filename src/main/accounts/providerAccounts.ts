@@ -1,6 +1,7 @@
 import { basename, dirname, join } from 'node:path';
 import { z } from 'zod';
 import type { AccountAuthKind, AccountCreateParams, AccountInfo, AccountProviderId, LoginStatus } from '@shared/accounts';
+import { localized, UserFacingError, wrapError } from '@shared/i18n/localizedText';
 import { writeAtomic, type AtomicWriteDeps } from '../os/atomicFile';
 import { pathEquals } from '../os/pathUtils';
 import { ACCOUNT_NAME_PATTERN } from './accountService';
@@ -28,6 +29,8 @@ export interface ProviderAccountEntry {
 
 // Lo minimo de la boveda que hace falta (DI: los tests pasan un mapa en memoria).
 export interface AccountKeyVault {
+  // Lanza (D1) si la bóveda no se puede usar en este proceso; se llama antes de crear nada de una cuenta de API.
+  readonly assertUsable: () => void;
   readonly set: (id: string, value: string) => void;
   readonly get: (id: string) => string | null;
   readonly has: (id: string) => boolean;
@@ -87,12 +90,14 @@ export class ProviderAccountService {
   create(params: AccountCreateParams): AccountInfo {
     const name = params.name.trim();
     if (!ACCOUNT_NAME_PATTERN.test(name)) {
-      throw new Error(`Nombre de cuenta invalido (letra inicial + letras/numeros/-/_): ${JSON.stringify(params.name)}`);
+      throw new UserFacingError(localized('errors.accounts.providerNameInvalid', { name: JSON.stringify(params.name) }));
     }
     if (!CREATABLE.includes(`${params.providerId}:${params.authKind}`)) {
       throw new Error(`Esa cuenta no se da de alta aqui: ${params.providerId} · ${params.authKind}`);
     }
     const apiKey = params.authKind === 'api-key' ? requireApiKey(params.apiKey) : null;
+    // Sin bóveda usable, una cuenta de API no deja ni su carpeta ni su entrada a medias.
+    if (apiKey !== null) this.deps.vault.assertUsable();
     const entries = this.read(); // antes de crear nada: un registro corrupto no deja carpetas huerfanas
     const claudeDir = params.providerId === 'claude' ? this.deps.createClaudeDir(name) : null;
     const home = claudeDir?.configDir ?? this.createHome(params.providerId, name);
@@ -130,7 +135,7 @@ export class ProviderAccountService {
     const entry = this.find(providerId, dir);
     if (entry === null || entry.authKind !== 'api-key') return null;
     const key = this.deps.vault.get(accountApiKeySecretId(providerId, entry.home));
-    if (key === null) throw new Error(`La cuenta ${entry.name} es de clave de API y no tiene clave guardada en Mage`);
+    if (key === null) throw new UserFacingError(localized('errors.accounts.apiKeyMissing', { name: entry.name }));
     return key;
   }
 
@@ -139,7 +144,7 @@ export class ProviderAccountService {
       providerId === 'codex'
         ? join(this.deps.homedir, `${CODEX_DIR_PREFIX}${name}`)
         : join(this.deps.userDataDir, AGY_ACCOUNTS_DIR, name);
-    if (this.deps.exists(home)) throw new Error(`La cuenta ya existe: ${home}`);
+    if (this.deps.exists(home)) throw new UserFacingError(localized('errors.accounts.alreadyExists', { path: home }));
     this.deps.mkdir(home);
     return home;
   }
@@ -183,10 +188,10 @@ export class ProviderAccountService {
     try {
       parsed = JSON.parse(this.deps.readFile(this.deps.filePath));
     } catch (err) {
-      throw new Error(`${this.deps.filePath} no es JSON valido: ${err instanceof Error ? err.message : String(err)}`);
+      throw new UserFacingError(wrapError('errors.accounts.fileInvalidJson', { path: this.deps.filePath }, err));
     }
     const result = FILE_SCHEMA.safeParse(parsed);
-    if (!result.success) throw new Error(`${this.deps.filePath} no tiene la forma esperada: ${result.error.message}`);
+    if (!result.success) throw new UserFacingError(wrapError('errors.accounts.fileBadShape', { path: this.deps.filePath }, result.error));
     return result.data.accounts;
   }
 

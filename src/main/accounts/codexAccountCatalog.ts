@@ -1,10 +1,11 @@
 import type { AccountInfo } from '@shared/accounts';
+import type { LocalizedText } from '@shared/i18n/localizedText';
 import type { CodexAccountMetadata } from '@shared/mcp';
 
 export interface CodexAccountCatalogDeps {
   readonly probe: (home: string) => Promise<CodexAccountMetadata>;
   readonly now: () => number;
-  readonly onError: (reason: string) => void;
+  readonly onError: (reason: LocalizedText) => void;
 }
 
 // Descubrimiento y confirmacion separados: el catalogo es la frontera del arranque de cuentas.

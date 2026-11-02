@@ -1,7 +1,8 @@
 import { join } from 'node:path';
 import type { AccountProviderId } from '@shared/accounts';
-import { adaptCodexLine } from '@shared/codexTranscript';
+import { adaptCodexLine, codexTurnsToLines, type CodexTurn } from '@shared/codexTranscript';
 import type { NeutralConversation } from '@shared/neutralConversation';
+import { localized, UserFacingError } from '@shared/i18n/localizedText';
 import type { ConversationPrivacy } from '@shared/state';
 import { resolveTranscriptPath } from '../transcripts/transcriptPath';
 import type { AgyHistoryService } from './agyHistory';
@@ -9,6 +10,7 @@ import { agyStepsToLines } from './agyHistory';
 import type { AgyDbContent } from './nativeWriters';
 import { agyDbContent, claudeTranscriptText, codexRolloutRelativePath, codexRolloutText } from './nativeWriters';
 import { neutralFromLines } from './neutralReader';
+import { codexTranscriptSource } from './codexTurnsTranscript';
 import type { CodexHistoryService } from './codexHistory';
 import type { ConversationRef, ConversationSink, ConversationSource, MigrationEndpoints } from './conversationMigration';
 
@@ -29,7 +31,8 @@ export interface MigrationEndpointDeps {
   };
   readonly codex: {
     readonly homeOf: (accountDir: string) => string;
-    readonly history: Pick<CodexHistoryService, 'findRollout'>;
+    readonly history: Pick<CodexHistoryService, 'findRollout' | 'hasSegments'>;
+    readonly listTurns: (home: string, threadId: string) => Promise<readonly CodexTurn[]>;
     readonly deleteThread: (home: string, threadId: string) => Promise<void>;
   };
   readonly agy: {
@@ -51,7 +54,7 @@ export function createMigrationEndpoints(deps: MigrationEndpointDeps): Readonly<
 }
 
 function missing(what: string, id: string): never {
-  throw new Error(`No existe la conversacion de ${what}: ${id}`);
+  throw new UserFacingError(localized('errors.conversations.sourceMissing', { provider: what, id }));
 }
 
 // --- Claude ---------------------------------------------------------------------------------------------------------
@@ -59,7 +62,7 @@ function missing(what: string, id: string): never {
 function claudeEndpoints(deps: MigrationEndpointDeps): MigrationEndpoints {
   const pathOf = (ref: ConversationRef): string => resolveTranscriptPath(deps.claude.effectiveDir(ref.accountDir, ref.privacy), ref.cwd, ref.sessionId);
   const source: ConversationSource = {
-    read: (ref) => {
+    read: async (ref) => {
       const lines = deps.readText(pathOf(ref)).split('\n').filter((line) => line.trim().length > 0).map((line) => JSON.parse(line) as unknown);
       return neutralFromLines(lines, { cwd: ref.cwd, title: '' });
     },
@@ -81,9 +84,14 @@ function claudeEndpoints(deps: MigrationEndpointDeps): MigrationEndpoints {
 
 function codexEndpoints(deps: MigrationEndpointDeps): MigrationEndpoints {
   const rolloutOf = (ref: ConversationRef): string => deps.codex.history.findRollout(deps.codex.homeOf(ref.accountDir), ref.sessionId) ?? missing('Codex', ref.sessionId);
+  const rolloutLines = (path: string): unknown[] =>
+    deps.readText(path).split('\n').filter((line) => line.trim().length > 0).map((line) => adaptCodexLine(JSON.parse(line)));
   const source: ConversationSource = {
-    read: (ref) => {
-      const lines = deps.readText(rolloutOf(ref)).split('\n').filter((line) => line.trim().length > 0).map((line) => adaptCodexLine(JSON.parse(line)));
+    // Lo mismo que al reabrirla (`codexTranscriptSource`): con revert, los turnos vigentes; sin él, el rollout.
+    read: async (ref) => {
+      const home = deps.codex.homeOf(ref.accountDir);
+      const found = codexTranscriptSource(deps.codex.history, home, ref.sessionId) ?? missing('Codex', ref.sessionId);
+      const lines = found.kind === 'codexTurns' ? codexTurnsToLines(await deps.codex.listTurns(home, ref.sessionId)) : rolloutLines(found.filePath);
       return neutralFromLines(lines, { cwd: ref.cwd, title: '' });
     },
     remove: (ref) => deps.codex.deleteThread(deps.codex.homeOf(ref.accountDir), ref.sessionId),
@@ -97,11 +105,12 @@ function codexEndpoints(deps: MigrationEndpointDeps): MigrationEndpoints {
       deps.writeText(rolloutPath(home, threadId, now), codexRolloutText(conversation, { threadId, clock: { baseMs: now } }));
       return { sessionId: threadId, configDir: dest.accountDir };
     },
-    // Entre cuentas de Codex el rollout se copia tal cual (medido: otro CODEX_HOME vacío lo reanuda), sin pérdida.
+    // Entre cuentas de Codex el rollout se copia tal cual (medido: otro CODEX_HOME vacío lo reanuda), sin pérdida. Con revert no: el original guarda el turno descartado; null → se migra con los turnos vigentes.
     copyFrom: (ref, dest) => {
+      if (deps.codex.history.hasSegments(deps.codex.homeOf(ref.accountDir), ref.sessionId)) return null;
       const from = rolloutOf(ref);
       const home = deps.codex.homeOf(dest.accountDir);
-      if (deps.codex.history.findRollout(home, ref.sessionId) !== null) throw new Error(`La cuenta de destino ya tiene la conversacion ${ref.sessionId}`);
+      if (deps.codex.history.findRollout(home, ref.sessionId) !== null) throw new UserFacingError(localized('errors.conversations.destinationHasConversation', { sessionId: ref.sessionId }));
       deps.copyFile(from, join(home, ...relativeToSessions(from, ref.sessionId)));
       return { sessionId: ref.sessionId, configDir: dest.accountDir };
     },
@@ -129,7 +138,7 @@ function agyEndpoints(deps: MigrationEndpointDeps): MigrationEndpoints {
     for (const suffix of ['', '-wal', '-shm']) deps.removeFile(`${db}${suffix}`);
   };
   const source: ConversationSource = {
-    read: (ref) => neutralFromLines(deps.agy.history.readLines(dbOf(ref)), { cwd: ref.cwd, title: '' }),
+    read: async (ref) => neutralFromLines(deps.agy.history.readLines(dbOf(ref)), { cwd: ref.cwd, title: '' }),
     remove: async (ref) => removeOwned(ref),
   };
   const sink: ConversationSink = {

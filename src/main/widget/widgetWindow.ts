@@ -1,6 +1,7 @@
 import { join } from 'node:path';
 import { BrowserWindow, screen } from 'electron';
-import { WIDGET_SNAPSHOT_CHANNEL } from '@shared/ipc';
+import { UI_LANGUAGE_CHANGED_CHANNEL, WIDGET_SNAPSHOT_CHANNEL } from '@shared/ipc';
+import type { ResolvedUiLanguage } from '@shared/i18n/language';
 import type { WidgetSnapshot } from '@shared/widget';
 
 // Dimensiones y colocacion del widget flotante (sin magic numbers dispersos). El margen lo separa del
@@ -70,6 +71,13 @@ export class WidgetWindowController {
     }
   }
 
+  // Avisa del cambio de idioma de la interfaz: el widget no está en `windowManager`, así que no recibe el
+  // broadcast general.
+  sendUiLanguage(resolved: ResolvedUiLanguage): void {
+    if (this.window === null || this.window.isDestroyed()) return;
+    this.window.webContents.send(UI_LANGUAGE_CHANGED_CHANNEL, resolved);
+  }
+
   // Cierra y limpia (al salir de la app).
   dispose(): void {
     if (this.window !== null && !this.window.isDestroyed()) {
@@ -94,7 +102,7 @@ export class WidgetWindowController {
         preload: this.preloadPath,
         contextIsolation: true,
         nodeIntegration: false,
-        sandbox: false,
+        sandbox: true,
       },
     });
     this.positionTopRight(window);

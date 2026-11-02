@@ -1,14 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { SplitPath } from '../splitLayout';
+import { t, useT } from '../../i18n/uiLanguage';
+import { displayTitle } from '../conversationTitle';
+import type { SplitPath, TabDropSide } from '../splitLayout';
 import { Icon } from './Icon';
 import { AnimatePresence, motion } from 'motion/react';
 import { useWorkbenchStore } from '../workbenchStore';
 import { isArrowNavKey, nextIndexForArrow } from '../a11y/keyboardNav';
 import { TAB_INDICATOR_TRANSITION } from '../motionPresets';
-import { orderTabsForDisplay, TAB_DRAG_MIME, TAB_DRAG_ORIGIN_MIME, tabColorVar, tabsToCloseAll, tabsToCloseInactive } from '../tabActions';
+import { orderTabsForDisplay, TAB_DRAG_MIME, TAB_DRAG_ORIGIN_MIME, tabColorVar, tabDropSide, tabsToCloseAll, tabsToCloseInactive } from '../tabActions';
 import { tabMoveBlockedReason } from '../backgroundWork';
 import { TabContextMenu } from './TabContextMenu';
-import { API_BILLED_LABEL, providerBadge } from '../accountView';
+import { apiBilledLabel, providerBadge } from '../accountView';
 import type { Tab as TabModel } from '../types';
 import { RELEASE_NOTES_TAB_ID } from '../releaseNotes';
 import { reportActionError } from '../notificationStore';
@@ -33,6 +35,7 @@ export function TabBar({
   // Camino del panel en el arbol: lo necesitan "pestaña nueva aqui" y el destino de un arrastre.
   readonly path: SplitPath;
 }): React.JSX.Element {
+  const translate = useT();
   const tabs = useWorkbenchStore((s) => s.tabs);
   const accounts = useWorkbenchStore((s) => s.accounts);
   const activeTabId = useWorkbenchStore((s) => s.activeTabId);
@@ -55,6 +58,7 @@ export function TabBar({
   const setTabColor = useWorkbenchStore((s) => s.setTabColor);
 
   const movePaneTab = useWorkbenchStore((s) => s.movePaneTab);
+  const tabDrop = useTabDrop(useWorkbenchStore((s) => s.dropTabOnTab));
   const listRef = useRef<HTMLDivElement>(null);
   // Menu contextual (Ronda 3, item 12): pestaña objetivo + posicion del clic; null cuando esta cerrado.
   const [menu, setMenu] = useState<{ readonly tab: TabModel; readonly x: number; readonly y: number } | null>(null);
@@ -127,8 +131,11 @@ export function TabBar({
         // Con el workspace dividido hay VARIAS barras a la vez: dos listas de pestañas con el mismo
         // nombre accesible son indistinguibles para un lector de pantalla. El camino del panel es
         // estable y corto, y sirve de desambiguador.
-        aria-label={path.length === 0 ? 'Conversaciones abiertas' : `Conversaciones abiertas (panel ${path.join('')})`}
+        aria-label={path.length === 0 ? translate('tabs.bar.listLabel') : translate('tabs.bar.listPaneLabel', { path: path.join('') })}
         onKeyDown={onListKeyDown}
+        onDragOver={tabDrop.onDragOver}
+        onDragLeave={tabDrop.onDragLeave}
+        onDrop={tabDrop.onDrop}
         className="mg-tabscroll flex min-w-0 flex-1 overflow-x-auto"
       >
         {orderedTabs.map((tab) => (
@@ -150,6 +157,7 @@ export function TabBar({
             }}
             onClose={() => closeTab(tab.id)}
             moveBlockedReason={tabMoveBlockedReason(statusByChat[tab.id])}
+            dropSide={tabDrop.target?.tabId === tab.id ? tabDrop.target.side : null}
             onDragOutOfWindow={() => void dropTabOutside(tab.id).catch(reportMoveError)}
             onContextMenu={(x, y) => {
               setMenu({ tab, x, y });
@@ -180,8 +188,8 @@ export function TabBar({
         }}
         disabled={activeAccountId.length === 0}
         className="flex-none p-[8px_12px] text-mg-icon disabled:opacity-40"
-        data-tip="Nueva pestaña · clic derecho para elegir carpeta y modelo"
-        aria-label="Nueva pestaña"
+        data-tip={translate('tabs.bar.newTip')}
+        aria-label={translate('tabs.bar.newLabel')}
       >
         ＋
       </button>
@@ -189,7 +197,7 @@ export function TabBar({
         {menu !== null && (
           <TabContextMenu
             key="tab-context-menu"
-            title={menu.tab.title}
+            title={displayTitle(menu.tab.title, translate)}
             pinned={menu.tab.pinned === true}
             colorIndex={menu.tab.colorIndex}
             closableCount={tabsToCloseAll(tabs).length}
@@ -222,7 +230,7 @@ export function TabBar({
 // Un movimiento a otra ventana que falla (la ventana destino se cerro, main rechazo la pestaña) se
 // avisa: la pestaña sigue aqui, que es el lado seguro, pero no en silencio.
 function reportMoveError(err: unknown): void {
-  reportActionError('No se pudo mover la pestaña a otra ventana', err, 'window');
+  reportActionError(t('tabs.bar.moveError'), err, 'window');
 }
 
 // La pseudo-pestaña de novedades (no es una conversacion, no esta en `tabs`). Va siempre al final de su
@@ -239,6 +247,7 @@ function ReleaseNotesTab({
   readonly onSelect: () => void;
   readonly onClose: () => void;
 }): React.JSX.Element {
+  const translate = useT();
   return (
     <div
       role="tab"
@@ -266,7 +275,7 @@ function ReleaseNotesTab({
         />
       )}
       <Icon name="sparkles" size={12} className="flex-none text-mg-focus" />
-      <span className="max-w-[220px] truncate">Novedades</span>
+      <span className="max-w-[220px] truncate">{translate('tabs.releaseNotes.title')}</span>
       {active && (
         <button
           onClick={(e) => {
@@ -274,8 +283,8 @@ function ReleaseNotesTab({
             onClose();
           }}
           className="text-mg-muted transition-colors duration-150 ease-out hover:text-mg-body"
-          data-tip="Cerrar pestaña"
-          aria-label="Cerrar pestaña Novedades"
+          data-tip={translate('tabs.close.tip')}
+          aria-label={translate('tabs.releaseNotes.closeLabel')}
         >
           ✕
         </button>
@@ -296,6 +305,7 @@ function Tab({
   onClose,
   onContextMenu,
   onDragOutOfWindow,
+  dropSide,
 }: {
   readonly tab: TabModel;
   readonly accent: string;
@@ -314,7 +324,10 @@ function Tab({
   readonly onContextMenu: (x: number, y: number) => void;
   // Se solto la pestaña fuera de la ventana: sale a una ventana nueva.
   readonly onDragOutOfWindow: () => void;
+  // #47/#22: otra pestaña se va a soltar delante o detras de esta (la marca el borde).
+  readonly dropSide: TabDropSide | null;
 }): React.JSX.Element {
+  const translate = useT();
   const accountAlias = tab.accountAlias;
   const badge = providerBadge(tab.provider);
   // role="tab" sobre un div (no <button>) para poder anidar el boton ✕ sin HTML invalido. Enter/Espacio
@@ -368,6 +381,8 @@ function Tab({
         onDragOutOfWindow();
       }}
       data-tip={moveBlockedReason ?? undefined}
+      data-drop-side={dropSide ?? undefined}
+      style={dropSide === null ? undefined : { boxShadow: `inset ${dropSide === 'before' ? 2 : -2}px 0 0 var(--color-mg-focus)` }}
       className={`relative flex flex-none cursor-pointer items-center gap-[7px] border-r border-mg-border p-[8px_14px] transition-colors duration-150 ease-out ${
         active && !unfocusedPane
           ? 'bg-mg-window text-mg-text'
@@ -406,12 +421,12 @@ function Tab({
       )}
       {apiBilled && (
         <span data-tab-api-billed="true" className="flex-none rounded-[4px] border border-mg-warn px-[4px] text-[9px] leading-[13px] text-mg-warn">
-          {API_BILLED_LABEL}
+          {apiBilledLabel()}
         </span>
       )}
       {tab.pinned === true && <Icon name="pin" size={10} className="flex-none text-mg-ter" />}
 
-      <span className="max-w-[220px] truncate">{tab.title}</span>
+      <span className="max-w-[220px] truncate">{displayTitle(tab.title, translate)}</span>
       {active && (
         <button
           onClick={(e) => {
@@ -419,12 +434,56 @@ function Tab({
             onClose();
           }}
           className="text-mg-muted transition-colors duration-150 ease-out hover:text-mg-body"
-          data-tip="Cerrar pestaña"
-          aria-label={`Cerrar pestaña ${accountAlias} / ${tab.title}`}
+          data-tip={translate('tabs.close.tip')}
+          aria-label={translate('tabs.close.label', { alias: accountAlias, title: displayTitle(tab.title, translate) })}
         >
           ✕
         </button>
       )}
     </div>
   );
+}
+
+// #47/#22: la barra acepta pestañas de ESTA ventana (mismo filtro de origen que ChatPane). Soltar sobre
+// una pestaña la pone delante o detras segun la mitad; en otra barra la mueve alli (reunir paneles). Si
+// la barra no aceptara, el arrastre terminaba en `dropEffect === 'none'` y se trataba como «fuera».
+interface TabDropTarget {
+  readonly tabId: string;
+  readonly side: TabDropSide;
+}
+
+function useTabDrop(drop: (draggedTabId: string, targetTabId: string, side: TabDropSide) => void): {
+  readonly target: TabDropTarget | null;
+  readonly onDragOver: (e: React.DragEvent<HTMLDivElement>) => void;
+  readonly onDragLeave: () => void;
+  readonly onDrop: (e: React.DragEvent<HTMLDivElement>) => void;
+} {
+  const [target, setTarget] = useState<TabDropTarget | null>(null);
+  const targetFromEvent = (e: React.DragEvent<HTMLDivElement>): TabDropTarget | null => {
+    const element = e.target instanceof Element ? e.target.closest<HTMLElement>('[role="tab"][data-tab-id]') : null;
+    const tabId = element?.dataset.tabId;
+    if (element === null || element === undefined || tabId === undefined) return null;
+    const rect = element.getBoundingClientRect();
+    return { tabId, side: tabDropSide(rect.left, rect.width, e.clientX) };
+  };
+  const accepts = (e: React.DragEvent<HTMLDivElement>): boolean =>
+    e.dataTransfer.types.includes(TAB_DRAG_MIME) && e.dataTransfer.types.includes(TAB_DRAG_ORIGIN_MIME);
+  const onDragOver = (e: React.DragEvent<HTMLDivElement>): void => {
+    if (!accepts(e)) return;
+    const next = targetFromEvent(e);
+    if (next === null) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (target?.tabId !== next.tabId || target.side !== next.side) setTarget(next);
+  };
+  const onDrop = (e: React.DragEvent<HTMLDivElement>): void => {
+    setTarget(null);
+    const next = targetFromEvent(e);
+    const dragged = e.dataTransfer.getData(TAB_DRAG_MIME);
+    if (next === null || dragged.length === 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    drop(dragged, next.tabId, next.side);
+  };
+  return { target, onDragOver, onDragLeave: () => setTarget(null), onDrop };
 }

@@ -1,5 +1,7 @@
 import { join, sep } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { foreignText, localized } from '@shared/i18n/localizedText';
+import { esText, thrownText } from '@testing/localizedText';
 import {
   applyImportPicks,
   buildImportCandidates,
@@ -82,7 +84,9 @@ describe('readMcpSources + buildInventory', () => {
     const byName = Object.fromEntries(inventory.rows.map((row) => [row.name, row]));
     expect(Object.keys(byName).sort()).toEqual(['apagado', 'comun', 'escritorio', 'local', 'proyecto', 'solo']);
     expect(byName.comun!.origins.map((o) => o.kind)).toEqual(['common', 'account']);
-    expect(byName.local!.origins[0]).toMatchObject({ kind: 'projectLocal', projectDir: PROJECT, label: 'Local de mage' });
+    expect(byName.local!.origins[0]).toMatchObject({ kind: 'projectLocal', projectDir: PROJECT, label: localized('mcp.main.originLocal', { name: 'mage' }) });
+    expect(esText(byName.local!.origins[0]!.label)).toBe('Local de mage');
+    expect(byName.comun!.origins[0]!.label).toEqual(foreignText('Mage'));
     expect(byName.proyecto!.transport).toBe('http');
     expect(byName.escritorio!.origins[0]!.kind).toBe('desktop');
   });
@@ -174,8 +178,9 @@ describe('readMcpSources + buildInventory', () => {
     const inventory = inventoryOf(files);
 
     expect(inventory.warnings).toHaveLength(1);
-    expect(inventory.warnings[0]).toContain('no es JSON válido');
-    expect(inventory.warnings[0]).not.toContain('secreto');
+    expect(inventory.warnings[0]).toEqual({ key: 'mcp.main.inventoryInvalidJson', values: { path: join(SECOND_DIR, '.claude.json'), length: '23' }, parts: { label: localized('mcp.main.accountStateFileLabel', { name: 'claude-p' }) } });
+    expect(esText(inventory.warnings[0]!)).toBe(`.claude.json de claude-p (${join(SECOND_DIR, '.claude.json')}) no es JSON válido (23 caracteres); se ignora.`);
+    expect(esText(inventory.warnings[0]!)).not.toContain('secreto');
     expect(inventory.rows.length).toBeGreaterThan(0);
   });
 
@@ -236,7 +241,7 @@ describe('buildImportCandidates', () => {
       [join(SECOND_DIR, '.claude.json')]: stateFile({ comun: { ...LOCAL, command: 'node' } }),
     };
 
-    const status = candidatesOf(files).map((c) => `${c.name}@${c.originLabel}:${c.status}`);
+    const status = candidatesOf(files).map((c) => `${c.name}@${esText(c.originLabel)}:${c.status}`);
 
     expect(status).toContain('comun@Cuenta claude:same');
     expect(status).toContain('comun@Cuenta claude-p:different');
@@ -256,7 +261,8 @@ describe('buildImportCandidates', () => {
     const local = candidatesOf(fullMachine()).find((c) => c.name === 'local')!;
 
     expect(local.checkedByDefault).toBe(false);
-    expect(local.note).toBe(`Era de proyecto ${PROJECT}`);
+    expect(local.note).toEqual(localized('mcp.main.importWasProject', { dir: PROJECT }));
+    expect(esText(local.note)).toBe(`Era de proyecto ${PROJECT}`);
   });
 
   it('buildImportCandidates_grupos_desktopYCli', () => {
@@ -319,13 +325,15 @@ describe('applyImportPicks', () => {
     const result = applyImportPicks(text, renamed, picks);
 
     expect(JSON.parse(result.text).mcpServers.local).toEqual(LOCAL);
-    expect(result.notes).toEqual(['«local» venía de dos sitios: se queda el primero elegido.']);
+    expect(result.notes).toEqual([localized('mcp.main.importDuplicatePick', { name: 'local' })]);
+    expect(esText(result.notes[0]!)).toBe('«local» venía de dos sitios: se queda el primero elegido.');
   });
 
   it('applyImportPicks_idDesconocido_lanzaYNoEscribe', () => {
     const { entries, text } = setup();
 
     expect(() => applyImportPicks(text, entries, [{ id: 'no-existe', replace: false }])).toThrow('no-existe');
+    expect(thrownText(() => applyImportPicks(text, entries, [{ id: 'no-existe', replace: false }]))).toEqual(localized('errors.config.importSourceGone', { id: 'no-existe' }));
   });
 
   it('applyImportPicks_sinComunPrevio_creaElFichero', () => {

@@ -7,7 +7,8 @@
 // solo se traducen.
 
 import type { LogLevel } from '@shared/debug';
-import { IDLE_UPDATE_STATE, type UpdateState } from '@shared/update';
+import { foreignText, localized, renderForLog, type LocalizedText } from '@shared/i18n/localizedText';
+import type { UpdateState } from '@shared/update';
 
 // Intervalo minimo entre comprobaciones. La app es residente en el tray (puede estar dias abierta),
 // asi que la comprobacion de arranque no basta; pero tampoco hace falta molestar a GitHub mas de
@@ -24,11 +25,17 @@ export const FIRST_CHECK_DELAY_MS = 20_000;
 const MAX_MESSAGE_CHARS = 200;
 
 // Resume un mensaje del updater: primera linea, recortada. Frontera de entrada (el texto viene de
-// electron-updater / de la red), asi que se normaliza aqui y no en cada punto de log.
-export function summarizeUpdaterMessage(raw: string): string {
+// electron-updater / de la red), asi que se normaliza aqui y no en cada punto de log. El texto es AJENO; solo
+// el de reserva (mensaje vacio) es de Mage.
+export function summarizeUpdaterError(raw: string): LocalizedText {
   const firstLine = (raw.split('\n')[0] ?? '').trim();
-  if (firstLine.length === 0) return 'error sin mensaje';
-  return firstLine.length <= MAX_MESSAGE_CHARS ? firstLine : `${firstLine.slice(0, MAX_MESSAGE_CHARS)}…`;
+  if (firstLine.length === 0) return localized('app.update.noMessage');
+  return foreignText(firstLine.length <= MAX_MESSAGE_CHARS ? firstLine : `${firstLine.slice(0, MAX_MESSAGE_CHARS)}…`);
+}
+
+// Lo mismo para el log (castellano, como siempre).
+export function summarizeUpdaterMessage(raw: string): string {
+  return renderForLog(summarizeUpdaterError(raw));
 }
 
 export interface CheckContext {
@@ -37,6 +44,8 @@ export interface CheckContext {
   readonly lastCheckAtMs: number | null; // null = nunca se comprobo en esta ejecucion
   readonly nowMs: number; // reloj inyectado
   readonly minIntervalMs?: number;
+  // «Buscar actualizaciones» del usuario (F1.3, #15): ignora el intervalo minimo, nunca la comprobacion en vuelo.
+  readonly manual?: boolean;
 }
 
 export type CheckDecision =
@@ -59,7 +68,7 @@ export function decideCheck(context: CheckContext): CheckDecision {
   if (context.checkInFlight) {
     return { check: false, reason: 'ya hay una comprobacion en vuelo' };
   }
-  if (context.lastCheckAtMs === null) return { check: true };
+  if (context.lastCheckAtMs === null || context.manual === true) return { check: true };
   const elapsedMs = context.nowMs - context.lastCheckAtMs;
   if (elapsedMs < minIntervalMs) {
     return { check: false, reason: `se comprobo hace ${elapsedMs} ms (minimo ${minIntervalMs} ms)` };
@@ -73,7 +82,8 @@ export type UpdateEvent =
   | { readonly kind: 'available'; readonly version: string }
   | { readonly kind: 'notAvailable'; readonly version: string }
   | { readonly kind: 'downloaded'; readonly version: string; readonly releaseNotes: string | null }
-  | { readonly kind: 'error'; readonly message: string };
+  // `text`: el texto de pantalla cuando es una frase de Mage y no el mensaje del updater (p. ej. «en desarrollo»).
+  | { readonly kind: 'error'; readonly message: string; readonly text?: LocalizedText };
 
 // Lo que provoca cada evento en el log: una entrada SIEMPRE (nada en silencio). Lo que ve el usuario
 // sale de `nextUpdateState`, no de aqui.
@@ -107,24 +117,27 @@ function requireVersion(version: string, kind: UpdateEvent['kind']): string {
 
 // Estado que ve el usuario tras un evento. Una vez `ready`, solo lo cambia OTRA version: las
 // comprobaciones periodicas siguientes (cada 6 h) no pueden esconder una actualizacion que ya esta en
-// disco y se instalara al salir. Un error solo corta una descarga en curso.
+// disco y se instalara al salir. Tampoco una comprobacion corta una descarga en curso.
 export function nextUpdateState(state: UpdateState, event: UpdateEvent): UpdateState {
+  if (state.kind === 'ready' && event.kind !== 'available' && event.kind !== 'downloaded') return state;
   switch (event.kind) {
     case 'checking':
-      return state;
+      return state.kind === 'downloading' || state.kind === 'checking' ? state : CHECKING_STATE;
     case 'available': {
       const version = requireVersion(event.version, event.kind);
-      if (state.kind !== 'idle' && state.version === version) return state;
+      if ((state.kind === 'downloading' || state.kind === 'ready') && state.version === version) return state;
       return { kind: 'downloading', version };
     }
     case 'notAvailable':
-      return state.kind === 'ready' ? state : IDLE_UPDATE_STATE;
+      return { kind: 'upToDate', version: requireVersion(event.version, event.kind) };
     case 'downloaded':
       return { kind: 'ready', version: requireVersion(event.version, event.kind), releaseNotes: event.releaseNotes };
     case 'error':
-      return state.kind === 'downloading' ? IDLE_UPDATE_STATE : state;
+      return { kind: 'error', message: event.text ?? summarizeUpdaterError(event.message) };
   }
 }
+
+const CHECKING_STATE: UpdateState = { kind: 'checking' };
 
 // `info.releaseNotes` de electron-updater, reducido a lo que el dialogo sabe pintar: Markdown. Llega
 // como texto del `latest.yml` (el Markdown del changelog que mete el workflow de release) o, si el

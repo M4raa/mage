@@ -19,6 +19,7 @@ const VALID: AppSettings = {
     { id: 'custom:ollama', label: 'Ollama', baseUrl: 'http://localhost:11434/v1', hasApiKey: false, models: [{ id: 'llama3', label: 'llama3' }] },
   ],
   trustedFolders: ['C:/sourcecode/mage'],
+  distrustedFolders: [],
   scratchRetention: '30d',
   closeBehavior: 'background',
   newConversationFolder: 'lastProject',
@@ -29,6 +30,7 @@ const VALID: AppSettings = {
   defaultProvider: 'claude',
   accentByAccount: { 'C:/Users/u/.claude-p': 3 },
   claudeAiConnectorsOff: ['C:/Users/u/.claude-p'],
+  artifactEnabled: true,
   ghNoticeDismissed: true,
   autoArchiveOnPrClose: true,
   agyCommandRules: { allow: ['git status'], deny: ['rm -rf build'] },
@@ -43,6 +45,7 @@ function deps(overrides: Partial<SettingsStoreDeps> = {}): SettingsStoreDeps {
     exists: () => true,
     readFile: () => JSON.stringify(VALID),
     writeFile: vi.fn(),
+    removeFile: () => undefined,
     rename: vi.fn(),
     tempSuffix: () => 'suf',
     ...overrides,
@@ -88,6 +91,13 @@ describe('SettingsStore.load', () => {
     const file = JSON.stringify({ ...VALID, lastSeenReleaseNotesVersion: 12 });
 
     expect(new SettingsStore(deps({ readFile: () => file })).load().lastSeenReleaseNotesVersion).toBe('');
+  });
+
+  it('load_uiLanguage_ausenteOBasuraQuedaAusenteYElegidoSeConserva', () => {
+    // F3: ausente es «sin preferencia» (hereda la inicial o sigue al sistema); no se confunde con «Sistema» elegido.
+    const leer = (extra: object) => new SettingsStore(deps({ readFile: () => JSON.stringify({ ...VALID, ...extra }) })).load().uiLanguage;
+
+    expect([leer({}), leer({ uiLanguage: 'fr' }), leer({ uiLanguage: 'system' }), leer({ uiLanguage: 'en' })]).toEqual([undefined, undefined, 'system', 'en']);
   });
 
   it('load_sinAccentByAccount_caeAVacio', () => {
@@ -351,5 +361,26 @@ describe('SettingsStore.save', () => {
 
     expect(() => store.save({ version: 1, notificationRules: [{ id: '' }] } as unknown as AppSettings)).toThrow(/invalida/i);
     expect(writeFile).not.toHaveBeenCalled();
+  });
+});
+
+describe('SettingsStore — Artifact (D5)', () => {
+  it('load_sinCampoArtifact_apagado', () => {
+    const { artifactEnabled: _omitted, ...withoutArtifact } = VALID;
+    const store = new SettingsStore(deps({ readFile: () => JSON.stringify(withoutArtifact) }));
+
+    expect(store.load().artifactEnabled).toBe(false);
+  });
+
+  it('load_artifactBasura_apagado', () => {
+    const store = new SettingsStore(deps({ readFile: () => JSON.stringify({ ...VALID, artifactEnabled: 'sí' }) }));
+
+    expect(store.load().artifactEnabled).toBe(false);
+  });
+
+  it('load_artifactEncendido_seConserva', () => {
+    const store = new SettingsStore(deps({ readFile: () => JSON.stringify(VALID) }));
+
+    expect(store.load().artifactEnabled).toBe(true);
   });
 });

@@ -2,8 +2,12 @@ import type { GhPrUpdate, GhRunsSnapshot, GhSnapshot } from '@shared/gh';
 import type { MageApi } from '@shared/ipc';
 import type { Tab } from './types';
 import type { WorkbenchState } from './workbenchStore';
+import { conversationIdOfTab } from './conversationId';
 import { buildCiMonitorEvent, pendingAutoFix } from './ciMonitorEvent';
 import { prBarView } from './chatInfoView';
+import { CREATE_PR_PROMPT } from '@shared/permissionPolicy';
+import { t as translate } from '../i18n/uiLanguage';
+import { displayTitle } from './conversationTitle';
 
 // PR y CI de una pestaña (grupo D, como Claude Desktop). Las acciones del store que hablan con `gh` por
 // main, fuera de `workbenchStore.ts` para no engordarlo; el store las mezcla tal cual.
@@ -13,8 +17,6 @@ export interface PrState {
   // la de su rama.
   readonly prByTab: Readonly<Record<string, GhSnapshot>>;
   readonly ghRunsByTab: Readonly<Record<string, GhRunsSnapshot>>;
-  // Pestañas cuyo turno en marcha es el de «Crear PR»: sus barreras de permiso estan activas.
-  readonly prGuardByChat: Readonly<Record<string, true>>;
 }
 
 export interface PrActions {
@@ -42,11 +44,6 @@ export interface PrDeps {
   readonly sendToTab: (tabId: string, text: string) => Promise<void>;
   readonly archiveTab: (tabId: string) => Promise<void>;
 }
-
-export const CREATE_PR_PROMPT =
-  'Crea un pull request de esta rama. Revisa el diff y haz commit de lo pendiente con un mensaje descriptivo (si estás en la rama principal, crea antes una rama nueva). ' +
-  'Haz un push normal de la rama a su remoto, sin forzar, y abre el PR con `gh pr create` con un título y una descripción que expliquen el cambio. ' +
-  'Cuando exista, escribe su URL entre <pr-created> y </pr-created>.';
 
 // Checks rotos y conflictos ya mandados al agente, por pestaña: `${sha}:${check}`. Solo en memoria.
 // ponytail: tras reiniciar, un PR que sigue roto vuelve a mandarse una vez (el auto-fix sigue encendido).
@@ -85,10 +82,11 @@ export function createPrActions(deps: PrDeps): PrActions {
     if (snapshot.kind !== 'pr') return;
     const view = prBarView(snapshot.pr);
     const counts = view.counts.map((c) => `${c.glyph}${c.count}`).join(' ');
-    const sessionId = get().sessionIdByChat[tab.id] ?? tab.resumeSessionId;
+    // La conversacion, no la sesion viva: si la pestaña ya no esta, la notificacion lleva a su fila del historial.
+    const sessionId = conversationIdOfTab(tab, get().sessionIdByChat[tab.id]);
     const target = sessionId === undefined ? {} : { target: { tabId: tab.id, sessionId } };
     void mage
-      .notify({ title: 'CI terminado', body: `${tab.title}: ${view.label} ${counts}`, ...target })
+      .notify({ title: translate('notifications.pr.ciFinished'), body: `${displayTitle(tab.title)}: ${view.label} ${counts}`, ...target })
       .catch((err: unknown) => console.warn('No se pudo avisar del fin del CI:', String(err)));
   };
 

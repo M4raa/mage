@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { MageEvent } from '@shared/events';
+import { localized, UserFacingError } from '@shared/i18n/localizedText';
 import { parseElicitationRequest, validateElicitationAnswer, type ElicitationAnswer, type ElicitationRequest } from '@shared/elicitation';
 
 export type McpElicitationResult = { readonly action: 'accept' | 'decline' | 'cancel'; readonly content?: Readonly<Record<string, string | number | boolean>> };
@@ -13,7 +14,7 @@ export class ElicitationBroker {
     const requestId = `mcp-${randomUUID()}`;
     const request = parseElicitationRequest(requestId, server, raw);
     if (request === null) {
-      this.emit({ kind: 'notice', text: `El servidor ${server} pidió un formulario MCP que Mage no puede mostrar; se canceló.` });
+      this.emit({ kind: 'notice', localized: localized('events.mcp.elicitationUnsupported', { server }) });
       return Promise.resolve({ action: 'cancel' });
     }
     if (signal?.aborted) return Promise.resolve({ action: 'cancel' });
@@ -26,7 +27,7 @@ export class ElicitationBroker {
 
   answer(answer: ElicitationAnswer): void {
     const pending = this.pending.get(answer.requestId);
-    if (pending === undefined) throw new Error(`Elicitation desconocida o resuelta: ${answer.requestId}`);
+    if (pending === undefined) throw new UserFacingError(localized('errors.runtime.elicitationUnknown', { requestId: answer.requestId }));
     if (!validateElicitationAnswer(pending.request, answer)) throw new Error('Respuesta de elicitation inválida');
     this.pending.delete(answer.requestId);
     pending.resolve({ action: answer.action, ...(answer.action === 'accept' && pending.request.mode === 'form' ? { content: answer.content ?? {} } : {}) });

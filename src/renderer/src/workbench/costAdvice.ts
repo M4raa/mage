@@ -3,12 +3,13 @@
 // Mage consume SUSCRIPCION, no API: lo que importa es cuanto muerde cada opcion de la bolsa de uso.
 
 import { EFFORT_LEVELS } from '@shared/ipc';
+import { t } from '../i18n/uiLanguage';
 
 // Peso relativo de consumo de cada familia de modelos de Claude (mayor = agota antes la bolsa).
 // Se compara por FAMILIA. El sufijo [1m] ya no avisa de nada: el 1M es el contexto de todos (2026-09-26).
 const MODEL_WEIGHT: Readonly<Record<string, number>> = { haiku: 1, sonnet: 2, opus: 3 };
 
-// Etiqueta legible de una familia (para el texto del aviso).
+// Etiqueta legible de una familia (para el texto del aviso). Nombres de producto: no se traducen.
 const FAMILY_LABEL: Readonly<Record<string, string>> = { haiku: 'Haiku', sonnet: 'Sonnet', opus: 'Opus' };
 
 export type AdviceSeverity = 'info' | 'warn';
@@ -38,10 +39,10 @@ export function modelChangeAdvice(from: string, to: string): CostAdvice | null {
   if (fromWeight !== null && toWeight !== null && toWeight > fromWeight) {
     return {
       severity: 'warn',
-      message: `${toLabel} consume tu bolsa de uso bastante más rápido que ${labelOf(from)}. Aplica al siguiente turno.`,
+      message: t('prompt.costAdvice.heavierModel', { to: toLabel, from: labelOf(from) }),
     };
   }
-  return { severity: 'info', message: `Modelo cambiado a ${toLabel}. Aplica al siguiente turno.` };
+  return { severity: 'info', message: t('prompt.costAdvice.modelChanged', { model: toLabel }) };
 }
 
 // Peso de consumo de un id de modelo (null si la familia no se reconoce).
@@ -64,15 +65,13 @@ export function effortChangeAdvice(level: string, sessionLive: boolean): CostAdv
   if (clean.length > 0 && !levels.includes(clean)) {
     throw new Error(`Nivel de esfuerzo desconocido: ${JSON.stringify(level)}`);
   }
-  const suffix = sessionLive
-    ? ' Se aplicará al reabrir esta conversación (es un parámetro de arranque del CLI).'
-    : ' Se aplicará al arrancar la sesión.';
-  if (clean.length === 0) return { severity: 'info', message: `Esfuerzo por defecto del CLI.${suffix}` };
+  const suffix = sessionLive ? t('prompt.costAdvice.appliesOnReopen') : t('prompt.costAdvice.appliesOnStart');
+  if (clean.length === 0) return { severity: 'info', message: `${t('prompt.costAdvice.effortDefault')} ${suffix}` };
   const index = levels.indexOf(clean);
   const severity: AdviceSeverity = index >= levels.indexOf('xhigh') ? 'warn' : 'info';
   const body =
     severity === 'warn'
-      ? `Esfuerzo "${clean}": el modelo razona mucho más y gasta bastantes más tokens.`
-      : `Esfuerzo "${clean}".`;
-  return { severity, message: `${body}${suffix}` };
+      ? t('prompt.costAdvice.effortHigh', { level: clean })
+      : t('prompt.costAdvice.effortPlain', { level: clean });
+  return { severity, message: `${body} ${suffix}` };
 }

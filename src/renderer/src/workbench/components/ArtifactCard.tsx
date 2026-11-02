@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { Icon } from './Icon';
 import { useWorkbenchStore } from '../workbenchStore';
 import type { ArtifactCard as ArtifactCardModel } from '../artifactView';
+import { useT } from '../../i18n/uiLanguage';
+import { describeError } from '../describeError';
 
 // Tarjeta de un artifact publicado (2.4). Lo que resuelve, y que un navegador no puede: abrirlo con la
 // MISMA cuenta que lo publico, aunque la conversacion se este mirando con otra.
@@ -16,6 +18,7 @@ export function ArtifactCard({ card }: { readonly card: ArtifactCardModel }): Re
   const [pickerOpen, setPickerOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const t = useT();
 
   useEffect(() => {
     let cancelled = false;
@@ -37,18 +40,18 @@ export function ArtifactCard({ card }: { readonly card: ArtifactCardModel }): Re
     setPickerOpen(false);
     void window.mage
       .openArtifact(accountDir === undefined ? { url: card.url } : { url: card.url, accountDir })
-      .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)));
+      .catch((err: unknown) => setError(err instanceof Error ? describeError(err) : String(err)));
   };
 
   const copy = (): void => {
     void navigator.clipboard
       .writeText(card.url)
       .then(() => setCopied(true))
-      .catch(() => setError('No se pudo copiar el enlace'));
+      .catch(() => setError(t('chat.artifact.copyFailed')));
   };
 
   const knownPublisher = typeof publisher === 'string' && publisher.length > 0;
-  const publisherAlias = accounts.find((account) => account.id === publisher)?.alias ?? publisher;
+  const publisherAlias = accounts.find((account) => account.id === publisher)?.alias ?? publisher ?? ''; // solo se pinta con `knownPublisher`
 
   return (
     <div className="flex justify-start">
@@ -73,37 +76,37 @@ export function ArtifactCard({ card }: { readonly card: ArtifactCardModel }): Re
           {knownPublisher ? (
             <button
               onClick={() => open()}
-              data-tip={`Se abrirá con la cuenta ${publisherAlias}`}
-              aria-label={`Abrir el artifact ${card.title}`}
+              data-tip={t('chat.artifact.openWithTip', { alias: publisherAlias })}
+              aria-label={t('chat.artifact.openAria', { title: card.title })}
               className="rounded-[6px] border border-mg-border-ctrl px-[9px] py-[3px] text-mg-body2 hover:bg-mg-hover"
             >
-              Abrir con {publisherAlias}
+              {t('chat.artifact.openWith', { alias: publisherAlias })}
             </button>
           ) : (
             <button
               onClick={() => setPickerOpen((v) => !v)}
               aria-expanded={pickerOpen}
-              aria-label={`Abrir con… el artifact ${card.title}`}
+              aria-label={t('chat.artifact.openWithPickerAria', { title: card.title })}
               className="rounded-[6px] border border-mg-border-ctrl px-[9px] py-[3px] text-mg-body2 hover:bg-mg-hover"
             >
-              Abrir con…
+              {t('chat.artifact.openWithPicker')}
             </button>
           )}
           <button onClick={copy} className="rounded-[6px] border border-mg-border-ctrl px-[9px] py-[3px] text-mg-body2 hover:bg-mg-hover">
-            {copied ? '✓ Copiado' : 'Copiar enlace'}
+            {copied ? t('chat.artifact.copied') : t('chat.artifact.copyLink')}
           </button>
           {card.localPath.length > 0 && (
             <button
-              onClick={() => void window.mage.openPath(card.localPath).catch(() => setError('No se pudo abrir el fichero local'))}
+              onClick={() => void window.mage.openPath(card.localPath).catch(() => setError(t('chat.artifact.openLocalFailed')))}
               className="rounded-[6px] border border-mg-border-ctrl px-[9px] py-[3px] text-mg-body2 hover:bg-mg-hover"
             >
-              Abrir el fichero local
+              {t('chat.artifact.openLocal')}
             </button>
           )}
         </div>
 
         {pickerOpen && (
-          <div role="group" aria-label="Elegir cuenta con la que abrir" className="flex flex-wrap gap-[6px]">
+          <div role="group" aria-label={t('chat.artifact.pickAccountAria')} className="flex flex-wrap gap-[6px]">
             {accounts.map((account) => (
               <button
                 key={account.id}

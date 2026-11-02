@@ -51,7 +51,7 @@ export class DebugWindowController {
         preload: this.preloadPath,
         contextIsolation: true,
         nodeIntegration: false,
-        sandbox: false,
+        sandbox: true,
       },
     });
     window.on('ready-to-show', () => window.showInactive()); // no robar foco a la principal

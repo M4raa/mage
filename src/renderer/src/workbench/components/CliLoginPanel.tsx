@@ -1,6 +1,8 @@
 import { useCallback, useRef, useState } from 'react';
 import { Icon } from './Icon';
 import type { CliLoginStart, EmbeddedLoginResult } from '@shared/accounts';
+import { t as translate, useT } from '../../i18n/uiLanguage';
+import { describeError } from '../describeError';
 
 // Interaccion de login por CLI (Fase 9.2), compartida por el alta de cuenta y el re-login de una
 // cuenta caducada. Vive aparte porque son DOS dialogos: duplicar el campo del *code*, los avisos y el
@@ -85,6 +87,7 @@ export function useCliLogin(onDone: (result: EmbeddedLoginResult) => void): CliL
 // Panel de "autoriza y pega el code". Presentacional: toda la logica vive en el hook.
 export function CliLoginPanel({ login }: { readonly login: CliLogin }): React.JSX.Element | null {
   const [code, setCode] = useState('');
+  const t = useT();
   if (login.phase === 'idle') return null;
 
   if (login.phase === 'starting') {
@@ -92,7 +95,7 @@ export function CliLoginPanel({ login }: { readonly login: CliLogin }): React.JS
       <Box>
         <div className="flex items-center gap-[8px]">
           <Spinner />
-          <span>Abriendo el inicio de sesión…</span>
+          <span>{t('accounts.cliLogin.opening')}</span>
         </div>
       </Box>
     );
@@ -107,7 +110,7 @@ export function CliLoginPanel({ login }: { readonly login: CliLogin }): React.JS
     return (
       <Box>
         <div role="alert" className="text-[11px] text-mg-danger">
-          {login.error ?? 'No se pudo iniciar el inicio de sesión.'}
+          {login.error ?? t('accounts.cliLogin.startFailed')}
         </div>
       </Box>
     );
@@ -120,22 +123,23 @@ export function CliLoginPanel({ login }: { readonly login: CliLogin }): React.JS
         // No es un fallo, es un AVISO: sin navegador con ventana privada se abre el normal, y si ahi
         // ya hay sesion de otra cuenta, autorizar daria de alta la cuenta equivocada.
         <div role="alert" className="text-[10.5px] text-mg-warn">
-          <Icon name="warning" size={12} /> No se encontró ningún navegador con ventana privada, así que se abrió el predeterminado. Si ya
-          tenías la sesión de otra cuenta iniciada, <b>cierra sesión ahí antes de autorizar</b>.
+          <Icon name="warning" size={12} /> {t('accounts.cliLogin.normalBrowser.start')} <b>{t('accounts.cliLogin.normalBrowser.emphasis')}</b>
+          {t('accounts.cliLogin.normalBrowser.end')}
         </div>
       )}
       <div>
-        Autoriza la cuenta en el navegador (elige <b>suscripción</b>) y pega aquí el código que te dé.
+        {t('accounts.cliLogin.authorize.start')} <b>{t('accounts.cliLogin.authorize.emphasis')}</b>
+        {t('accounts.cliLogin.authorize.end')}
       </div>
       <label className="flex flex-col gap-[6px]">
-        <span className="text-[10.5px] font-bold tracking-[.06em] text-mg-ter">CÓDIGO</span>
+        <span className="text-[10.5px] font-bold tracking-[.06em] text-mg-ter">{t('accounts.cliLogin.codeLabel')}</span>
         <input
           value={code}
           autoFocus
           disabled={busy}
           onChange={(e) => setCode(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && code.trim().length > 0 && login.submit(code)}
-          placeholder="pega aquí el código"
+          placeholder={t('accounts.cliLogin.codePlaceholder')}
           className="w-full rounded-[7px] border border-mg-border-ctrl bg-mg-window p-[7px_9px] font-mono text-mg-body outline-none disabled:opacity-50"
         />
       </label>
@@ -145,14 +149,14 @@ export function CliLoginPanel({ login }: { readonly login: CliLogin }): React.JS
           disabled={busy || code.trim().length === 0}
           className="rounded-[7px] bg-mg-primary px-[12px] py-[6px] font-semibold text-mg-primary-ink transition-opacity duration-150 ease-out disabled:opacity-40"
         >
-          {busy ? 'Verificando…' : 'Continuar'}
+          {busy ? t('accounts.cliLogin.verifying') : t('accounts.cliLogin.continue')}
         </button>
         {login.start !== null && (
           <button
             onClick={() => void navigator.clipboard.writeText(login.start?.authorizeUrl ?? '')}
             className="text-[10.5px] text-mg-ter underline hover:text-mg-body"
           >
-            Copiar el enlace de login
+            {t('accounts.cliLogin.copyLink')}
           </button>
         )}
       </div>
@@ -183,25 +187,25 @@ function Spinner(): React.JSX.Element {
 function reasonText(result: EmbeddedLoginResult): string {
   switch (result.reason) {
     case 'bad_code_format':
-      return 'El código pegado no vale (no puede llevar espacios ni saltos de línea).';
+      return translate('accounts.cliLogin.reason.badCodeFormat');
     case 'cli_invalid_code':
       // El CLI sigue esperando otro code (medido, S2 de P-026): se puede volver a pegar sin reintentar.
-      return 'El CLI dice que el código no es válido. Copia el código completo de la página de autorización y pégalo otra vez.';
+      return translate('accounts.cliLogin.reason.invalidCode');
     case 'cli_exchange_timeout':
-      return 'El CLI no respondió a tiempo. Pulsa «Reintentar» para empezar de nuevo.';
+      return translate('accounts.cliLogin.reason.exchangeTimeout');
     case 'auth_status_not_logged_in':
-      return 'El CLI no registró la sesión: puede que el código fuera de otra cuenta o ya estuviera usado.';
+      return translate('accounts.cliLogin.reason.notLoggedIn');
     case 'no_login_in_progress':
-      return 'El login se canceló antes de tiempo. Vuelve a intentarlo.';
+      return translate('accounts.cliLogin.reason.cancelled');
     default:
       // `cli_login_rejected` y `cli_exit_<n>`: el CLI salio sin sesion, asi que el login ya no existe.
       if (result.reason === 'cli_login_rejected' || result.reason?.startsWith('cli_exit_') === true) {
-        return `El CLI rechazó el código (${result.reason}). Pulsa «Reintentar» para empezar de nuevo.`;
+        return translate('accounts.cliLogin.reason.rejected', { reason: result.reason });
       }
-      return `No se completó el inicio de sesión (${result.reason ?? result.status}).`;
+      return translate('accounts.cliLogin.reason.other', { reason: result.reason ?? result.status });
   }
 }
 
 function describe(err: unknown): string {
-  return err instanceof Error ? err.message : `Error desconocido: ${String(err)}`;
+  return err instanceof Error ? describeError(err) : translate('accounts.error.unknown', { error: String(err) });
 }

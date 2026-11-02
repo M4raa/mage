@@ -8,6 +8,7 @@ import {
   type AtomicWriteDeps,
   type FileSnapshot,
 } from '../os/atomicFile';
+import { localized, localizedWithParts, renderForLog, UserFacingError, wrapError, type LocalizedText } from '@shared/i18n/localizedText';
 import type { McpScope } from '@shared/mcp';
 import { ONLY_IN_SERVERS_KEY, scopeOf } from './mcpInventory';
 import { mergeServerLists, resolveCommonServers, type ResolvedMcpList } from './mcpResolved';
@@ -45,9 +46,10 @@ export type SharedConfigLogFn = (level: 'warn', message: string) => void;
 // Resultado de guardar el texto de uno de los dos ficheros comunes. `stale` NO es un error de
 // programacion (no lanza): es el caso normal de que alguien mas tocara el fichero, y el llamante
 // necesita el mensaje para decirselo al usuario.
-export type SaveTextOutcome =
-  | { readonly status: 'saved'; readonly warnings: readonly string[] }
-  | { readonly status: 'stale'; readonly message: string };
+// `W` es el tipo de los avisos: LocalizedText en mcp-common.json, texto plano en settings-common.json (nadie los pinta).
+export type SaveTextOutcome<W = string> =
+  | { readonly status: 'saved'; readonly warnings: readonly W[] }
+  | { readonly status: 'stale'; readonly message: LocalizedText };
 
 // Dependencias inyectables (FS) -> testable sin disco real, mismo patron que LinkService/SettingsStore.
 // Las de escritura (AtomicWriteDeps) + ensureDir solo las usa el guardado del editor (Fase 2); los
@@ -71,7 +73,7 @@ const EMPTY_MCP_COMMON_TEXT = '{"mcpServers": {}}';
 
 export interface McpCommonParseResult {
   readonly value: { readonly mcpServers: Record<string, unknown>; readonly onlyIn: Readonly<Record<string, McpScope>> } | null;
-  readonly warnings: readonly string[];
+  readonly warnings: readonly LocalizedText[];
 }
 
 // Interpreta el TEXTO crudo de mcp-common.json. `value === null` significa "inservible" (JSON
@@ -81,10 +83,10 @@ export function parseMcpCommonJson(raw: string): McpCommonParseResult {
   try {
     parsed = JSON.parse(raw);
   } catch (error) {
-    return { value: null, warnings: [`JSON invalido: ${describeError(error)}`] };
+    return { value: null, warnings: [wrapError('settings.sharedConfig.commonJsonInvalid', {}, error)] };
   }
   if (!isRecord(parsed) || !isRecord(parsed.mcpServers)) {
-    return { value: null, warnings: ['No tiene la forma {"mcpServers": {...}}; se ignora entero'] };
+    return { value: null, warnings: [localized('settings.sharedConfig.commonWrongShape')] };
   }
   const onlyIn = isRecord(parsed[ONLY_IN_SERVERS_KEY]) ? parsed[ONLY_IN_SERVERS_KEY] : {};
   return { value: { mcpServers: parsed.mcpServers, onlyIn: Object.fromEntries(Object.entries(onlyIn).map(([name, raw]) => [name, scopeOf(raw)])) }, warnings: [] };
@@ -182,7 +184,7 @@ export interface McpImportSource {
 
 export interface McpImportResult {
   readonly mcpServers: Record<string, unknown>;
-  readonly notes: readonly string[];
+  readonly notes: readonly LocalizedText[];
 }
 
 // El script de PowerShell escribe `mcp-shared.json` con BOM (medido en la maquina del usuario), y
@@ -192,7 +194,7 @@ const UTF8_BOM = /^﻿/;
 export function buildMcpCommonImport(shared: McpImportSource, accounts: readonly McpImportSource[]): McpImportResult {
   const servers: Record<string, unknown> = {};
   const origin = new Map<string, string>();
-  const notes: string[] = [];
+  const notes: LocalizedText[] = [];
   for (const source of [shared, ...accounts]) {
     for (const [name, config] of Object.entries(mcpServersOf(source))) {
       const previous = origin.get(name);
@@ -200,7 +202,7 @@ export function buildMcpCommonImport(shared: McpImportSource, accounts: readonly
         servers[name] = config;
         origin.set(name, source.label);
       } else if (JSON.stringify(servers[name]) !== JSON.stringify(config)) {
-        notes.push(`«${name}» está en ${previous} y en ${source.label} con otra configuración: se queda la de ${previous}.`);
+        notes.push(localized('settings.sharedConfig.importCollision', { name, first: previous, second: source.label }));
       }
     }
   }
@@ -237,7 +239,7 @@ export class SharedConfigService {
     if (raw === null) return null;
 
     const { value, warnings } = parseMcpCommonJson(raw);
-    for (const warning of warnings) this.deps.log('warn', `mcp-common.json en "${path}": ${warning}`);
+    for (const warning of warnings) this.deps.log('warn', `mcp-common.json en "${path}": ${renderForLog(warning)}`);
     return value === null ? null : { path, ...value };
   }
 
@@ -283,14 +285,15 @@ export class SharedConfigService {
   // se rechaza si es inservible (JSON invalido o sin la forma esperada), porque ESE fichero lo lee
   // CUALQUIER lanzamiento de CUALQUIER cuenta -- una escritura invalida rompe D1 para todos, no solo
   // para quien edito. Devuelve los avisos (formas descartadas) para que la UI los muestre igual.
-  saveMcpCommonText(path: string, text: string, expected: FileSnapshot): SaveTextOutcome {
+  saveMcpCommonText(path: string, text: string, expected: FileSnapshot): SaveTextOutcome<LocalizedText> {
     const { value, warnings } = parseMcpCommonJson(text);
     if (value === null) {
       // El TEXTO no viaja en el mensaje (B10): estos ficheros llevan los `env` de los servidores
       // MCP (GITHUB_TOKEN y compania) y el mensaje sale por stdout del main Y cruza el IPC hasta
       // pintarse en Configuracion. `redact.ts` enmascara por nombre de campo dentro de `data`,
       // nunca dentro de `message`. Se reporta la FORMA, que es lo unico que ayuda a arreglarlo.
-      throw new Error(`mcp-common.json invalido, no se guarda (${warnings.join('; ')}): ${text.length} caracteres`);
+      // Sin valor hay exactamente un aviso (el de JSON invalido o el de forma equivocada).
+      throw new UserFacingError(localizedWithParts('errors.config.commonSaveInvalid', { length: String(text.length) }, { reason: warnings[0]! }));
     }
     return this.writeGuarded(path, text, expected, warnings);
   }
@@ -302,18 +305,18 @@ export class SharedConfigService {
       // MCP (GITHUB_TOKEN y compania) y el mensaje sale por stdout del main Y cruza el IPC hasta
       // pintarse en Configuracion. `redact.ts` enmascara por nombre de campo dentro de `data`,
       // nunca dentro de `message`. Se reporta la FORMA, que es lo unico que ayuda a arreglarlo.
-      throw new Error(`settings-common.json invalido, no se guarda (${warnings.join('; ')}): ${text.length} caracteres`);
+      throw new UserFacingError(localized('errors.config.settingsSaveInvalid', { reason: warnings.join('; '), length: String(text.length) }));
     }
     return this.writeGuarded(path, text, expected, warnings);
   }
 
   // Crea mcp-common.json con la importacion (D10) SOLO si no existe: una vez que existe, aunque este
   // vacio, es del usuario y no se vuelve a importar. Devuelve las notas, o null si no importo nada.
-  importMcpCommonIfMissing(path: string, shared: McpImportSource, accounts: readonly McpImportSource[]): readonly string[] | null {
+  importMcpCommonIfMissing(path: string, shared: McpImportSource, accounts: readonly McpImportSource[]): readonly LocalizedText[] | null {
     if (this.deps.exists(path)) return null;
     const { mcpServers, notes } = buildMcpCommonImport(shared, accounts);
     const outcome = this.writeGuarded(path, JSON.stringify({ mcpServers }, null, 2), null, []);
-    if (outcome.status === 'stale') throw new Error(outcome.message);
+    if (outcome.status === 'stale') throw new UserFacingError(outcome.message);
     return notes;
   }
 
@@ -345,30 +348,28 @@ export class SharedConfigService {
   // A diferencia de los stores propiedad exclusiva de Mage (settings/workspace/panels), estos DOS
   // ficheros los edita tambien el usuario a mano y puede tocarlos otra instancia de Mage, asi que aqui
   // "el ultimo que escribe gana" significa perder trabajo ajeno en silencio.
-  private writeGuarded(
+  private writeGuarded<W>(
     path: string,
     text: string,
     expected: FileSnapshot,
-    warnings: readonly string[],
-  ): SaveTextOutcome {
+    warnings: readonly W[],
+  ): SaveTextOutcome<W> {
     this.deps.ensureDir(dirname(path));
     let result;
     try {
       result = writeAtomicIfUnchanged(this.deps, path, text, expected);
     } catch (error) {
       // No se pudo ni comprobar el estado actual (permisos, disco). Fail-closed: no se escribe.
-      const message = `No se pudo comprobar si "${path}" habia cambiado, no se ha guardado nada: ${describeError(error)}`;
-      this.deps.log('warn', message);
+      const message = wrapError('settings.sharedConfig.staleCheckFailed', { path }, error);
+      this.deps.log('warn', renderForLog(message));
       return { status: 'stale', message };
     }
     if (result.status === 'stale') {
       // Se dice lo que pasa DESPUES a proposito: tras este rechazo el editor recarga la base, asi que
       // un segundo "Guardar" si sobrescribiria el cambio ajeno. Avisar una vez y dejar decidir al
       // usuario es el contrato; que vuelva a pulsar sin saberlo, no.
-      const message =
-        `${describeStaleWrite(path, expected, result.actual)} Tu texto sigue en el editor sin guardar: ` +
-        'revisa el contenido nuevo antes de volver a pulsar Guardar, porque el segundo intento SI lo sobrescribira.';
-      this.deps.log('warn', message);
+      const message = localizedWithParts('settings.sharedConfig.staleKeepEditing', {}, { stale: describeStaleWrite(path, expected, result.actual) });
+      this.deps.log('warn', renderForLog(message));
       return { status: 'stale', message };
     }
     return { status: 'saved', warnings };

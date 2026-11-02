@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { orderTabsForDisplay, tabColorVar, tabsToCloseAll, tabsToCloseInactive } from './tabActions';
+import { orderTabsForDisplay, tabColorVar, tabDropSide, tabsToCloseAll, tabsToCloseInactive } from './tabActions';
 import type { ChatStatus, Tab } from './types';
 
 function tab(id: string, overrides: Partial<Tab> = {}): Tab {
@@ -100,5 +100,22 @@ describe('orderTabsForDisplay', () => {
     const tabs = [tab('t1', { pinned: true }), tab('t2', { pinned: true })];
 
     expect(orderTabsForDisplay(tabs)).toBe(tabs);
+  });
+});
+
+describe('tabDropSide (#47)', () => {
+  it('tabDropSide_mitadIzquierda_delante', () => {
+    expect(tabDropSide(100, 80, 101)).toBe('before');
+    expect(tabDropSide(100, 80, 139)).toBe('before');
+  });
+
+  it('tabDropSide_mitadDerecha_detras', () => {
+    expect(tabDropSide(100, 80, 140)).toBe('after');
+    expect(tabDropSide(100, 80, 179)).toBe('after');
+  });
+
+  it('tabDropSide_anchoCeroONegativo_lanzaConElValor', () => {
+    expect(() => tabDropSide(100, 0, 100)).toThrow('0');
+    expect(() => tabDropSide(100, -5, 100)).toThrow('-5');
   });
 });

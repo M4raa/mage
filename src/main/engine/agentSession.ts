@@ -3,10 +3,14 @@ import type { ImageAttachment } from '@shared/ipc';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import type { LogLevel } from '@shared/debug';
 import type { MageEvent, PermissionDecision } from '@shared/events';
+import { localized, UserFacingError, type LocalizedText } from '@shared/i18n/localizedText';
 import { validateElicitationAnswer, type ElicitationAnswer, type ElicitationRequest } from '@shared/elicitation';
 import type { LaunchParams, ProviderAdapter } from './providerAdapter';
-import { DEFAULT_RESTART_POLICY, decideRestart, type RestartPolicy } from './restartPolicy';
+import { DEFAULT_RESTART_POLICY, decideRestart, type RestartDecision, type RestartPolicy } from './restartPolicy';
 import { defaultKillTreeDeps, killProcessTree, type KillTreeDeps } from '../os/processTree';
+
+// Única decisión que emite error: `none` sale antes y `restart` reprograma.
+type GiveUpDecision = Extract<RestartDecision, { action: 'give_up' }>;
 
 // Funcion de spawn inyectable (default: la de Node) -> testable con un proceso falso.
 export type SpawnFn = (
@@ -29,6 +33,7 @@ export interface AgentSessionDeps {
   readonly params: LaunchParams;
   readonly emit: (event: MageEvent) => void; // eventos comunes hacia el consumidor (IPC/UI)
   readonly spawn?: SpawnFn;
+  readonly prepareCwd?: (cwd: string) => LocalizedText | null;
   readonly log?: SessionLogFn; // stream de debug (dev); nunca recibe credenciales
   // Reinicio automatico (C1). Inyectables para poder testear sin esperas reales ni reloj del sistema.
   readonly restartPolicy?: RestartPolicy;
@@ -64,6 +69,7 @@ export class AgentSession {
   // Reinicio automatico (C1): racha de reinicios seguidos, momento del ultimo arranque y el timer del
   // reinicio programado (para poder cancelarlo si el usuario para la sesion mientras espera).
   private restartStreak = 0;
+  private launchErrorCode: string | undefined;
   private startedAtMs = 0;
   private pendingRestart: TimerHandle | null = null;
   // ¿Llego a haber handshake (system/init) alguna vez? Decide si el relanzado puede usar `--resume`:
@@ -119,11 +125,14 @@ export class AgentSession {
   }
 
   private launch(params: LaunchParams): void {
+    const warning = this.deps.prepareCwd?.(params.cwd);
+    if (warning) this.deps.emit({ kind: 'notice', localized: warning });
     // Buffers del proceso ANTERIOR fuera. Si murio a mitad de una linea NDJSON, ese fragmento se
     // concatenaria con la primera linea del proceso nuevo y daria un JSON invalido -> un evento 'error'
     // espurio en la conversacion justo despues de reanudarla. Y el stderr viejo no debe atribuirse al
     // proceso nuevo si este muere sin decir nada.
     this.stdoutBuffer = '';
+    this.launchErrorCode = undefined;
     this.lastStderr = '';
     this.launchStale = false; // el proceso nuevo ya lleva los ajustes de `currentParams()`
     this.turnActive = false;
@@ -152,7 +161,8 @@ export class AgentSession {
     // `child` que apunta a un proceso muerto y `writeLine` escribia al stdin de un fantasma EN SILENCIO
     // (medido: no lanza). Se reusa el cierre comun para cancelar permisos, limpiar y aplicar C1.
     child.on('error', (err) => {
-      this.deps.emit({ kind: 'error', message: describeSpawnError(err) });
+      this.launchErrorCode = (err as NodeJS.ErrnoException).code;
+      this.deps.emit({ kind: 'error', localized: describeSpawnError(err) });
       if (this.child === child) this.onExit(null, null);
     });
     // Solo se atiende el exit del hijo VIGENTE (B4). Con la interrupcion por corte (`agy`) la secuencia
@@ -219,6 +229,19 @@ export class AgentSession {
     this.writePayload(this.deps.adapter.encodeUserMessage(text, attachments));
   }
 
+  // Directo en el turno en marcha (F4.1). Sin proceso no hay turno al que entrar: se resuelve aqui como
+  // `no_active_turn` y quien lo pidio lo manda como mensaje normal (que relanza si hace falta).
+  steerUserMessage(messageId: string, text: string, attachments: readonly ImageAttachment[] = []): void {
+    const encode = this.deps.adapter.encodeSteer;
+    if (encode === undefined) throw new Error(`El proveedor de la sesion ${this.deps.params.sessionId} no admite mensajes directos (messageId=${messageId})`);
+    const encoding = this.child === null ? null : encode.call(this.deps.adapter, messageId, text, attachments);
+    if (encoding === null || encoding.kind === 'resolved') {
+      this.trackAndEmit({ kind: 'steer_result', messageId, outcome: 'no_active_turn' });
+      return;
+    }
+    this.writePayload(encoding.payload);
+  }
+
   // Params de un relanzado que REANUDA: el id de Mage (o el del ultimo `/clear`) con `resume`, y el id
   // de conversacion del proveedor si ya lo emitio. Si nunca hubo handshake no hay nada que reanudar y se
   // relanza con los params originales (arranque fresco con el mismo id).
@@ -254,7 +277,7 @@ export class AgentSession {
   answerPermission(requestId: string, decision: PermissionDecision): void {
     const toolUseId = this.pendingPermissions.get(requestId);
     if (toolUseId === undefined) {
-      throw new Error(`Permiso desconocido o ya resuelto: requestId=${requestId}`);
+      throw new UserFacingError(localized('errors.engine.permissionUnknown', { requestId }));
     }
     this.pendingPermissions.delete(requestId);
     this.log('info', 'Respuesta de permiso', {
@@ -267,7 +290,7 @@ export class AgentSession {
 
   answerElicitation(answer: ElicitationAnswer): void {
     const request = this.pendingElicitations.get(answer.requestId);
-    if (request === undefined) throw new Error(`Elicitation desconocida o resuelta: ${answer.requestId}`);
+    if (request === undefined) throw new UserFacingError(localized('errors.engine.elicitationUnknown', { requestId: answer.requestId }));
     if (!validateElicitationAnswer(request, answer)) throw new Error('Respuesta de elicitation inválida');
     const encode = this.deps.adapter.encodeElicitationResponse;
     if (encode === undefined) throw new Error('Este proveedor no admite elicitation');
@@ -434,7 +457,7 @@ export class AgentSession {
   }
 
   private writeLine(obj: unknown): void {
-    if (this.child === null) throw new Error(`Sesion ${this.deps.params.sessionId} no esta activa`);
+    if (this.child === null) throw new UserFacingError(localized('errors.engine.sessionNotActive', { sessionId: this.deps.params.sessionId }));
     this.child.stdin.write(`${JSON.stringify(obj)}\n`);
   }
 
@@ -471,7 +494,7 @@ export class AgentSession {
     try {
       events = this.deps.adapter.normalize(JSON.parse(line));
     } catch (err) {
-      this.deps.emit({ kind: 'error', message: `Evento no parseable del CLI: ${describeError(err)}` });
+      this.deps.emit({ kind: 'error', localized: localized('events.cli.unparseableEvent', { detail: describeError(err) }) });
       return;
     }
     for (const event of events) this.trackAndEmit(event);
@@ -523,6 +546,9 @@ export class AgentSession {
       this.pendingPermissions.delete(event.requestId);
       // El CLI cancela con el mismo `control_cancel_request` una elicitation que un permiso.
       if (this.pendingElicitations.delete(event.requestId)) this.deps.emit({ kind: 'elicitation_cancelled', requestId: event.requestId });
+    } else if (event.kind === 'steer_result' && event.inferred === true) {
+      // Salvaguarda del adapter: se dio por turno propio sin la señal del CLI. Si pasa, el protocolo cambio.
+      this.log('warn', 'Directo resuelto sin command_lifecycle started', { sessionId: this.deps.params.sessionId, messageId: event.messageId });
     } else if (event.kind === 'tool_use') {
       this.toolStartTimes.set(event.tool.toolUseId, this.now());
     } else if (event.kind === 'tool_result') {
@@ -565,7 +591,7 @@ export class AgentSession {
       });
       return null;
     }
-    return { kind: 'error', message: `El CLI rechazo una peticion de control: ${event.message}` };
+    return { kind: 'error', localized: localized('events.cli.controlRejected', { detail: event.message }) };
   }
 
   private enrichToolResult(event: Extract<MageEvent, { kind: 'tool_result' }>): MageEvent {
@@ -595,12 +621,12 @@ export class AgentSession {
     });
 
     const decision = decideRestart(
-      { attempt: this.restartStreak, uptimeMs, exitCode: code, signal, intentional: this.stopping },
+      { attempt: this.restartStreak, uptimeMs, exitCode: code, signal, intentional: this.stopping, launchErrorCode: this.launchErrorCode },
       this.policy,
     );
     if (decision.action === 'none') return; // salida intencionada
     if (decision.action === 'give_up') {
-      this.emitUnexpectedExit(code, signal, decision.reason);
+      this.emitUnexpectedExit(code, signal, decision);
       return;
     }
     this.scheduleRestart(decision.attempt, decision.delayMs, decision.streakReset);
@@ -640,7 +666,7 @@ export class AgentSession {
     } catch (err) {
       // Si ni siquiera se puede construir el plan o lanzar el proceso, se reporta y se deja de
       // insistir: no hay nada que un reintento inmediato vaya a mejorar.
-      this.deps.emit({ kind: 'error', message: `No se pudo reanudar la sesion tras el cierre: ${describeError(err)}` });
+      this.deps.emit({ kind: 'error', localized: localized('events.agent.resumeFailed', { detail: describeError(err) }) });
     }
   }
 
@@ -650,15 +676,10 @@ export class AgentSession {
     this.pendingRestart = null;
   }
 
-  private emitUnexpectedExit(code: number | null, signal: NodeJS.Signals | null, reason: string): void {
+  private emitUnexpectedExit(code: number | null, signal: NodeJS.Signals | null, decision: GiveUpDecision): void {
     const detail = this.lastStderr.trim();
-    const suffix = detail.length > 0 ? ` — stderr: ${detail}` : '';
-    this.deps.emit({
-      kind: 'error',
-      message:
-        `El proceso del agente termino inesperadamente (code=${code}, signal=${signal ?? 'none'}) ` +
-        `y no se reintenta: ${reason}${suffix}`,
-    });
+    const common = { code: String(code), signal: signal ?? 'none', stderr: detail.length > 0 ? ` — stderr: ${detail}` : '' };
+    this.deps.emit({ kind: 'error', localized: localized('events.agent.exitGaveUp', { ...common, attempts: String(decision.attempts), lastCode: decision.lastCode, lastSignal: decision.lastSignal }) });
   }
 }
 
@@ -676,8 +697,8 @@ function readControlRequestId(payload: unknown): string | null {
   return typeof value === 'string' && value.length > 0 ? value : null;
 }
 
-function describeSpawnError(err: unknown): string {
-  return `No se pudo arrancar el agente: ${describeError(err)}`;
+function describeSpawnError(err: unknown): LocalizedText {
+  return localized('events.agent.spawnFailed', { detail: describeError(err) });
 }
 
 function describeError(err: unknown): string {

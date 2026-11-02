@@ -2,11 +2,15 @@ import { useEffect, useState } from 'react';
 import { THEME_PREFERENCES, UI_SCALE_MAX, UI_SCALE_MIN, UI_SCALE_STEP, type ThemePreference } from '@shared/settings';
 import type { ProviderProbeResult } from '@shared/ipc';
 import { useWorkbenchStore } from '../workbenchStore';
-import { providerOptions } from '../models';
+import { probeErrorText, providerOptions } from '../models';
 import { isMacPlatform } from '../keybindings/platform';
 import { useDialogA11y } from '../a11y/useDialogA11y';
 import { essentialShortcuts, installCommandFor, shouldShowOnboarding, stepAfter, stepBefore, type OnboardingStep } from '../onboarding';
 import { Icon } from './Icon';
+import { useT } from '../../i18n/uiLanguage';
+import type { MessageKey } from '@shared/i18n/messageKeys.generated';
+import { describeError } from '../describeError';
+import { foreignText } from '@shared/i18n/localizedText';
 
 // Asistente de PRIMER ARRANQUE. Lo que resuelve, y por lo que existe: Mage no instala el motor —es el
 // CLI real de Claude Code— asi que una instalacion limpia puede quedarse en una pantalla que no
@@ -20,19 +24,21 @@ import { Icon } from './Icon';
 // Se enseña una vez (`onboardingCompletedVersion`), y se puede volver a abrir desde
 // Configuracion → Acerca de.
 
-const TITLES: Readonly<Record<OnboardingStep, string>> = {
-  engine: 'El motor',
-  appearance: 'Cómo se ve',
-  shortcuts: 'Para empezar',
-};
+// Las tablas guardan la CLAVE y se traduce al pintar (se evalúan al importar, antes de saber el idioma).
+const TITLES = {
+  engine: 'dialogs.onboarding.stepEngine',
+  appearance: 'dialogs.onboarding.stepAppearance',
+  shortcuts: 'dialogs.onboarding.stepShortcuts',
+} as const satisfies Readonly<Record<OnboardingStep, MessageKey>>;
 
-const THEME_LABELS: Readonly<Record<ThemePreference, string>> = {
-  system: 'Como el sistema',
-  light: 'Claro',
-  dark: 'Oscuro',
-};
+const THEME_LABELS = {
+  system: 'dialogs.onboarding.themeSystem',
+  light: 'dialogs.onboarding.themeLight',
+  dark: 'dialogs.onboarding.themeDark',
+} as const satisfies Readonly<Record<ThemePreference, MessageKey>>;
 
 export function OnboardingWizard(): React.JSX.Element | null {
+  const t = useT();
   const settings = useWorkbenchStore((s) => s.settings);
   const setOnboardingCompleted = useWorkbenchStore((s) => s.setOnboardingCompleted);
   const [step, setStep] = useState<OnboardingStep>('engine');
@@ -63,7 +69,7 @@ export function OnboardingWizard(): React.JSX.Element | null {
         <div className="flex items-center gap-[9px] border-b border-mg-border p-[13px_16px]">
           <Icon name="sparkles" size={15} className="text-mg-focus" />
           <div id="onboarding-title" className="text-[13px] font-semibold text-mg-text">
-            {TITLES[step]}
+            {t(TITLES[step])}
           </div>
           <div className="ml-auto flex items-center gap-[5px]" aria-hidden="true">
             {(['engine', 'appearance', 'shortcuts'] as const).map((candidate) => (
@@ -83,7 +89,7 @@ export function OnboardingWizard(): React.JSX.Element | null {
 
         <div className="flex items-center gap-[8px] border-t border-mg-border p-[11px_16px]">
           <button onClick={finish} data-onboarding="skip" className="text-[11px] text-mg-ter underline underline-offset-2 hover:text-mg-body">
-            Saltar
+            {t('dialogs.onboarding.skip')}
           </button>
           <div className="ml-auto flex items-center gap-[8px]">
             {previous !== null && (
@@ -91,7 +97,7 @@ export function OnboardingWizard(): React.JSX.Element | null {
                 onClick={() => setStep(previous)}
                 className="rounded-[7px] border border-mg-border-ctrl px-[12px] py-[5px] text-[11.5px] text-mg-body2 hover:bg-mg-hover"
               >
-                Atrás
+                {t('dialogs.onboarding.back')}
               </button>
             )}
             <button
@@ -99,7 +105,7 @@ export function OnboardingWizard(): React.JSX.Element | null {
               data-onboarding="next"
               className="rounded-[7px] bg-mg-focus px-[14px] py-[5px] text-[11.5px] font-semibold text-mg-window hover:opacity-90"
             >
-              {stepAfter(step) === null ? 'Empezar' : 'Siguiente'}
+              {stepAfter(step) === null ? t('dialogs.onboarding.start') : t('dialogs.onboarding.next')}
             </button>
           </div>
         </div>
@@ -111,6 +117,7 @@ export function OnboardingWizard(): React.JSX.Element | null {
 // --- Paso 1: el motor ----------------------------------------------------------------------------
 
 function EngineStep(): React.JSX.Element {
+  const t = useT();
   const customProviders = useWorkbenchStore((s) => s.settings.customProviders);
   const defaultProvider = useWorkbenchStore((s) => s.settings.defaultProvider);
   const setDefaultProvider = useWorkbenchStore((s) => s.setDefaultProvider);
@@ -122,11 +129,10 @@ function EngineStep(): React.JSX.Element {
   return (
     <>
       <p className="text-[11.5px] leading-[1.55] text-mg-sec">
-        Mage no lleva el modelo dentro: lanza el <b>CLI real</b> del proveedor que elijas y consume tu
-        suscripción. Elige con cuál quieres empezar; podrás cambiarlo en cada conversación.
+        {t('dialogs.onboarding.engineIntroStart')} <b>{t('dialogs.onboarding.engineIntroEmphasis')}</b> {t('dialogs.onboarding.engineIntroEnd')}
       </p>
       <label className="flex flex-col gap-[4px] text-[11px] text-mg-body2">
-        Proveedor por defecto
+        {t('dialogs.onboarding.defaultProvider')}
         <select
           value={defaultProvider}
           onChange={(e) => setDefaultProvider(e.target.value)}
@@ -142,18 +148,18 @@ function EngineStep(): React.JSX.Element {
 
       <div className="rounded-[7px] border border-mg-border-subtle bg-mg-block p-[10px_12px]" data-onboarding="engine-status">
         {probe === null ? (
-          <div className="text-[11px] text-mg-ter">Comprobando si está instalado…</div>
+          <div className="text-[11px] text-mg-ter">{t('dialogs.onboarding.checking')}</div>
         ) : probe.endpoint !== null ? (
           <div className="flex flex-col gap-[3px]">
-            <div className="text-[11.5px] font-semibold text-mg-diff-add">Instalado y listo</div>
+            <div className="text-[11.5px] font-semibold text-mg-diff-add">{t('dialogs.onboarding.installed')}</div>
             <div className="break-all font-mono text-[10.5px] text-mg-ter">{probe.endpoint}</div>
           </div>
         ) : (
           <div className="flex flex-col gap-[7px]">
-            <div className="text-[11.5px] font-semibold text-mg-warn-text">No está instalado en esta máquina</div>
+            <div className="text-[11.5px] font-semibold text-mg-warn-text">{t('dialogs.onboarding.notInstalled')}</div>
             <div className="text-[11px] leading-[1.5] text-mg-sec">
-              {probe.error ?? 'Mage no ha encontrado su binario.'}
-              {installCommand !== null && ' Instálalo con este comando y vuelve a comprobar:'}
+              {probeErrorText(probe.error) ?? t('dialogs.onboarding.binaryNotFound')}
+              {installCommand !== null && ` ${t('dialogs.onboarding.installHint')}`}
             </div>
             {installCommand !== null && <CommandToCopy command={installCommand} />}
             <button
@@ -161,7 +167,7 @@ function EngineStep(): React.JSX.Element {
               data-onboarding="recheck"
               className="self-start rounded-[6px] border border-mg-border-ctrl px-[9px] py-[4px] text-[11px] text-mg-body2 hover:bg-mg-hover"
             >
-              Volver a comprobar
+              {t('dialogs.onboarding.recheck')}
             </button>
           </div>
         )}
@@ -169,8 +175,7 @@ function EngineStep(): React.JSX.Element {
 
       {accounts.length === 0 && defaultProvider === 'claude' && (
         <div className="rounded-[7px] border border-mg-warn-border bg-mg-warn-bg p-[8px_11px] text-[11px] leading-[1.5] text-mg-warn-text">
-          Tampoco se ha detectado ninguna cuenta. Cuando cierres esto, añade una con <b>＋</b> en la
-          barra de la izquierda: el login lo hace el propio CLI con tu suscripción.
+          {t('dialogs.onboarding.noAccountStart')} <b>＋</b> {t('dialogs.onboarding.noAccountEnd')}
         </div>
       )}
     </>
@@ -199,7 +204,7 @@ function useProviderProbe(providerId: string): { readonly probe: ProviderProbeRe
       .catch((err: unknown) => {
         // El sondeo no puede tumbar el asistente: se enseña como "no instalado" con el motivo, que es
         // lo mismo que ve el usuario y ademas es accionable.
-        if (!cancelled) setResult({ kind: 'cli', endpoint: null, models: null, error: err instanceof Error ? err.message : String(err) });
+        if (!cancelled) setResult({ kind: 'cli', endpoint: null, models: null, error: foreignText(err instanceof Error ? describeError(err) : String(err)) });
       });
     return () => {
       cancelled = true;
@@ -209,13 +214,14 @@ function useProviderProbe(providerId: string): { readonly probe: ProviderProbeRe
   return { probe: result, recheck: () => setAttempt((value) => value + 1) };
 }
 
-const COPY_LABEL: Readonly<Record<'idle' | 'copied' | 'failed', string>> = {
-  idle: 'Copiar',
-  copied: '✓ Copiado',
-  failed: 'No se pudo copiar',
-};
+const COPY_LABEL = {
+  idle: 'dialogs.onboarding.copy',
+  copied: 'dialogs.onboarding.copied',
+  failed: 'dialogs.onboarding.copyFailed',
+} as const satisfies Readonly<Record<'idle' | 'copied' | 'failed', MessageKey>>;
 
 function CommandToCopy({ command }: { readonly command: string }): React.JSX.Element {
+  const t = useT();
   // El asistente va por encima de los toasts (z-[60]): el fallo se dice aqui, en el boton, y queda en el log.
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
   const copy = (): void => {
@@ -234,11 +240,11 @@ function CommandToCopy({ command }: { readonly command: string }): React.JSX.Ele
         onClick={copy}
         className="flex-none rounded-[6px] border border-mg-border-ctrl px-[9px] py-[5px] text-[11px] text-mg-body2 hover:bg-mg-hover"
       >
-        {COPY_LABEL[copyState]}
+        {t(COPY_LABEL[copyState])}
       </button>
       {copyState === 'failed' && (
         <span role="alert" className="sr-only">
-          No se pudo copiar el comando: cópialo a mano.
+          {t('dialogs.onboarding.copyFailedAlert')}
         </span>
       )}
     </div>
@@ -248,6 +254,7 @@ function CommandToCopy({ command }: { readonly command: string }): React.JSX.Ele
 // --- Paso 2: aspecto -----------------------------------------------------------------------------
 
 function AppearanceStep(): React.JSX.Element {
+  const t = useT();
   const theme = useWorkbenchStore((s) => s.settings.theme);
   const setTheme = useWorkbenchStore((s) => s.setTheme);
   const uiScale = useWorkbenchStore((s) => s.settings.uiScale);
@@ -256,11 +263,10 @@ function AppearanceStep(): React.JSX.Element {
   return (
     <>
       <p className="text-[11.5px] leading-[1.55] text-mg-sec">
-        Los dos ajustes que más se notan. Cambian al instante: si algo no te convence, lo ves aquí
-        mismo. Todo lo demás vive en Configuración.
+        {t('dialogs.onboarding.appearanceIntro')}
       </p>
       <div className="flex flex-col gap-[6px]">
-        <div className="text-[11px] font-semibold text-mg-body">Tema</div>
+        <div className="text-[11px] font-semibold text-mg-body">{t('dialogs.onboarding.theme')}</div>
         <div className="flex gap-[7px]">
           {THEME_PREFERENCES.map((preference) => (
             <button
@@ -271,14 +277,14 @@ function AppearanceStep(): React.JSX.Element {
                 theme === preference ? 'border-mg-focus bg-mg-sel text-mg-body' : 'border-mg-border-ctrl text-mg-body2 hover:bg-mg-hover'
               }`}
             >
-              {THEME_LABELS[preference]}
+              {t(THEME_LABELS[preference])}
             </button>
           ))}
         </div>
       </div>
       <div className="flex flex-col gap-[6px]">
         <div className="flex items-center gap-[8px]">
-          <div className="text-[11px] font-semibold text-mg-body">Escala de la interfaz</div>
+          <div className="text-[11px] font-semibold text-mg-body">{t('dialogs.onboarding.uiScale')}</div>
           <div className="ml-auto font-mono text-[11px] text-mg-ter" data-onboarding="scale-value">
             {uiScale} %
           </div>
@@ -289,13 +295,12 @@ function AppearanceStep(): React.JSX.Element {
           max={UI_SCALE_MAX}
           step={UI_SCALE_STEP}
           value={uiScale}
-          aria-label="Escala de la interfaz"
+          aria-label={t('dialogs.onboarding.uiScale')}
           onChange={(e) => setUiScale(Number(e.target.value))}
           className="w-full"
         />
         <div className="text-[10.5px] leading-[1.45] text-mg-ter">
-          Escala todo: texto, iconos y separaciones. En una pantalla 4K sin escalado del sistema, 120 %
-          suele ser lo cómodo.
+          {t('dialogs.onboarding.uiScaleHint')}
         </div>
       </div>
     </>
@@ -305,6 +310,7 @@ function AppearanceStep(): React.JSX.Element {
 // --- Paso 3: atajos ------------------------------------------------------------------------------
 
 function ShortcutsStep(): React.JSX.Element {
+  const t = useT();
   const overrides = useWorkbenchStore((s) => s.settings.keybindingOverrides);
   const openSettings = useWorkbenchStore((s) => s.openSettings);
   const setOnboardingCompleted = useWorkbenchStore((s) => s.setOnboardingCompleted);
@@ -313,8 +319,7 @@ function ShortcutsStep(): React.JSX.Element {
   return (
     <>
       <p className="text-[11.5px] leading-[1.55] text-mg-sec">
-        Con estos seis te mueves desde el primer día. Se pueden cambiar todos en Configuración →
-        Atajos de teclado.
+        {t('dialogs.onboarding.shortcutsIntro')}
       </p>
       <div className="flex flex-col gap-[1px]" data-onboarding="shortcuts">
         {shortcuts.map((shortcut) => (
@@ -335,7 +340,7 @@ function ShortcutsStep(): React.JSX.Element {
         }}
         className="self-start text-[11px] text-mg-icon underline underline-offset-2 hover:text-mg-body"
       >
-        Abrir Configuración ahora
+        {t('dialogs.onboarding.openSettings')}
       </button>
     </>
   );

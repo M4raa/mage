@@ -1,10 +1,11 @@
 import { artifactCardFrom } from './artifactView';
-import { isSubagentRunning } from './engineBlocks';
+import { isSubagentRunning, SUBAGENT_STATUS, subagentStatusLabel } from './engineBlocks';
 import { formatElapsed } from './thinkingStatus';
 import type { IconName } from './components/Icon';
 import { iconForTool } from './toolIcons';
 import { shortToolCommand } from './toolSummary';
 import type { Block } from './types';
+import { t } from '../i18n/uiLanguage';
 
 // Que va al CHAT y que al panel de ACTIVIDAD (P-026 3.4, D21–D24). El chat es el orquestador: lo que se
 // dice (usuario, agente —tambien su texto intermedio, D21b—, errores, avisos), un permiso que espera
@@ -73,7 +74,7 @@ export function isActivityStep(block: Block): boolean {
 
 export function isStepError(block: Block): boolean {
   if (block.kind === 'tool') return block.isError;
-  if (block.kind === 'subagent') return block.status === 'error';
+  if (block.kind === 'subagent') return block.status === SUBAGENT_STATUS.error;
   return false;
 }
 
@@ -130,13 +131,18 @@ export interface ActivityStepLabel {
   readonly nested: boolean;
 }
 
-const DECISION_LABEL: Readonly<Record<string, string>> = {
-  allowed: 'permitido',
-  denied: 'denegado',
-  cancelled: 'cancelado',
-  answered: 'contestada',
-  pending: 'pendiente',
-};
+// Guarda la CLAVE del catálogo: se traduce al montar la etiqueta. Un estado desconocido se pinta crudo.
+const DECISION_LABEL = {
+  allowed: 'chat.activity.decision.allowed',
+  denied: 'chat.activity.decision.denied',
+  cancelled: 'chat.activity.decision.cancelled',
+  answered: 'chat.activity.decision.answered',
+  pending: 'chat.activity.decision.pending',
+} as const;
+
+function decisionLabel(state: string): string {
+  return Object.hasOwn(DECISION_LABEL, state) ? t(DECISION_LABEL[state as keyof typeof DECISION_LABEL]) : state;
+}
 
 export function activityStepLabel(block: Block): ActivityStepLabel {
   const base = { isError: isStepError(block), nested: false };
@@ -151,13 +157,13 @@ export function activityStepLabel(block: Block): ActivityStepLabel {
         nested: block.parentToolUseId !== null,
       };
     case 'thinking':
-      return { ...base, icon: 'brain', name: 'Pensamiento', detail: previewOf(runsText(block.runs)), meta: block.elapsedMs === null ? '' : formatElapsed(block.elapsedMs) };
+      return { ...base, icon: 'brain', name: t('chat.activity.thinking'), detail: previewOf(runsText(block.runs)), meta: block.elapsedMs === null ? '' : formatElapsed(block.elapsedMs) };
     case 'subagent':
-      return { ...base, icon: 'toolAgent', name: block.agentType ?? 'Subagente', detail: block.description ?? '', meta: block.status ?? 'en marcha' };
+      return { ...base, icon: 'toolAgent', name: block.agentType ?? t('chat.activity.subagent'), detail: block.description ?? '', meta: block.status === null ? t('chat.activity.running') : subagentStatusLabel(block.status) };
     case 'permission':
-      return { ...base, icon: 'shield', name: `Permiso · ${block.toolName}`, detail: block.target, meta: DECISION_LABEL[block.state] ?? block.state };
+      return { ...base, icon: 'shield', name: t('chat.activity.permission', { tool: block.toolName }), detail: block.target, meta: decisionLabel(block.state) };
     case 'question':
-      return { ...base, icon: 'question', name: 'Pregunta', detail: previewOf(block.questions[0]?.question ?? ''), meta: DECISION_LABEL[block.state] ?? block.state };
+      return { ...base, icon: 'question', name: t('chat.activity.question'), detail: previewOf(block.questions[0]?.question ?? ''), meta: decisionLabel(block.state) };
     default:
       return { ...base, icon: 'diamond', name: block.kind, detail: '', meta: '' };
   }
@@ -171,7 +177,7 @@ function isStepRunning(block: Block): boolean {
       return block.elapsedMs === null;
     case 'subagent':
       // Sin resultado, o lanzado en segundo plano y sin notificacion (W-J, P-028 37a: el bloque guarda
-      // 'en segundo plano', no el `async_launched` crudo del CLI).
+      // 'background', no el `async_launched` crudo del CLI).
       return isSubagentRunning(block);
     default:
       return false;

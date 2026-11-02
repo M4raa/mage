@@ -16,6 +16,7 @@ import { PanelMoveMenu } from './dock/PanelMoveMenu';
 import { Icon } from './Icon';
 import { AddPanelMenu } from './dock/AddPanelMenu';
 import type { Anchor, PanelId } from '@shared/panelLayout';
+import { useT } from '../../i18n/uiLanguage';
 
 const LEFT_ANCHOR: Anchor = 'left';
 const BOTTOM_ANCHOR: Anchor = 'bottom';
@@ -43,6 +44,7 @@ export function AccountRail(): React.JSX.Element {
   const stepOptions = usePanelLayoutStore((s) => s.stepOptions);
   const [moveMenu, setMoveMenu] = useState<{ readonly panelId: PanelId; readonly x: number; readonly y: number } | null>(null);
   const [addMenu, setAddMenu] = useState<{ readonly x: number; readonly y: number } | null>(null);
+  const t = useT();
 
   // Solo es "añadible" un panel que no esta abierto en NINGUNA zona de NINGUN borde (Ronda 3, item
   // 19): ofrecer aqui uno que ya vive en el borde derecho lo movia sin aviso al pulsarlo.
@@ -75,7 +77,7 @@ export function AccountRail(): React.JSX.Element {
           (STRIPE_WIDTH_CLASS, 37 px) se comeria un tercio del ancho. Se sigue pudiendo desplazar con la
           rueda. */}
       <div data-stripe-scroll="true" className={`flex w-full flex-col items-center gap-[2px] ${STRIPE_SCROLL_CLASS}`}>
-      <DockZoneToolbar ariaLabel="Paneles del borde izquierdo, zona superior">
+      <DockZoneToolbar ariaLabel={t('accounts.rail.zoneTop')}>
         <StripeZoneButtons
           panels={resolvePanelDefinitions(stripe.a.panelIds)}
           activeId={stripe.a.activePanelId}
@@ -89,7 +91,7 @@ export function AccountRail(): React.JSX.Element {
           pegadas arriba con una linea entre medias, no "medio" empujada al fondo). */}
       <StripeSeparator />
 
-      <DockZoneToolbar ariaLabel="Paneles del borde izquierdo, zona media">
+      <DockZoneToolbar ariaLabel={t('accounts.rail.zoneMiddle')}>
         <StripeZoneButtons
           panels={resolvePanelDefinitions(stripe.b.panelIds)}
           activeId={stripe.b.activePanelId}
@@ -113,7 +115,7 @@ export function AccountRail(): React.JSX.Element {
       {/* Posicion "abajo" (2026-08-06): icono aqui, en la barra izquierda, pero panel en el borde
           COMPARTIDO de abajo (bottom/a) — no en un pane de este lado. Vacio por defecto (ningun panel
           del catalogo lo targetea); aparece en cuanto el usuario mueve algo aqui con "Mover a...". */}
-      <DockZoneToolbar ariaLabel="Paneles del borde izquierdo, zona abajo (panel compartido)">
+      <DockZoneToolbar ariaLabel={t('accounts.rail.zoneBottom')}>
         <StripeZoneButtons
           panels={resolvePanelDefinitions(bottomStripe.a.panelIds)}
           activeId={bottomStripe.a.activePanelId}
@@ -127,8 +129,8 @@ export function AccountRail(): React.JSX.Element {
       {addablePanels.length > 0 && (
         <button
           onClick={(e) => setAddMenu({ x: e.clientX, y: e.clientY })}
-          aria-label="Añadir panel al borde izquierdo"
-          data-tip="Añadir panel al borde izquierdo"
+          aria-label={t('accounts.rail.addPanel')}
+          data-tip={t('accounts.rail.addPanel')}
           className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[6px] text-[13px] text-mg-muted hover:bg-mg-hover hover:text-mg-body"
         >
           <Icon name="ellipsis" size={PANEL_ICON_PX} />

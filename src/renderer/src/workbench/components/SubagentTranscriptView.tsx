@@ -4,6 +4,7 @@ import { useSubagentTranscriptStore } from '../transcriptStore';
 import type { SubagentInvocation } from '../subagentView';
 import { TranscriptRow } from './TranscriptRow';
 import { Hint } from './TranscriptHint';
+import { useT } from '../../i18n/uiLanguage';
 
 const ROW_HEIGHT_PX = 28;
 
@@ -29,6 +30,7 @@ export function SubagentTranscriptView({ accountDir, cwd, sessionId, subagent, o
   const totalLinesSoFar = useSubagentTranscriptStore((s) => s.totalLinesSoFar);
 
   const agentId = subagent.agentId;
+  const t = useT();
 
   useEffect(() => {
     // agentId nunca es null aqui (la fila no es clicable sin el), pero el guard mantiene el contrato.
@@ -50,11 +52,11 @@ export function SubagentTranscriptView({ accountDir, cwd, sessionId, subagent, o
   return (
     <div data-subagent-transcript="true" className="absolute inset-0 z-20 flex flex-col overflow-hidden bg-mg-panel">
       <div className="flex shrink-0 items-center gap-[8px] border-b border-mg-border-subtle px-[10px] py-[6px]">
-        <button onClick={onClose} className="shrink-0 rounded-[4px] px-[6px] py-[2px] text-[11px] text-mg-body2 hover:bg-mg-hover" data-tip="Volver a la conversación principal">
-          ◂ Volver
+        <button onClick={onClose} className="shrink-0 rounded-[4px] px-[6px] py-[2px] text-[11px] text-mg-body2 hover:bg-mg-hover" data-tip={t('chat.subagent.backTip')}>
+          {t('chat.subagent.back')}
         </button>
-        <span className="shrink-0 rounded-[4px] bg-mg-sel px-[5px] py-[1px] text-[9px] text-mg-body">{subagent.agentType ?? 'agente'}</span>
-        <span className="truncate text-[10.5px] text-mg-sec">{subagent.description ?? '(sin descripción)'}</span>
+        <span className="shrink-0 rounded-[4px] bg-mg-sel px-[5px] py-[1px] text-[9px] text-mg-body">{subagent.agentType ?? t('chat.subagent.defaultType')}</span>
+        <span className="truncate text-[10.5px] text-mg-sec">{subagent.description ?? t('chat.subagent.noDescription')}</span>
       </div>
       {/* `min-h-0`: sin el, la lista (height:100%) crece al total de filas y se sale de la capa (punto 39). */}
       <div className="min-h-0 flex-1">
@@ -62,9 +64,9 @@ export function SubagentTranscriptView({ accountDir, cwd, sessionId, subagent, o
       </div>
       <div className="flex shrink-0 items-center justify-between border-t border-mg-border-subtle px-[10px] py-[5px] text-[10px] text-mg-ter">
         <span>
-          {totalLinesSoFar} líneas{!isFinal ? ' (cargando…)' : ''}
+          {isFinal ? t('chat.subagent.lines', { count: totalLinesSoFar }) : t('chat.subagent.linesLoading', { count: totalLinesSoFar })}
         </span>
-        <button onClick={refresh} data-tip="Releer transcripción del subagente" className="flex h-4 w-4 items-center justify-center rounded-[4px] text-mg-muted hover:text-mg-body">
+        <button onClick={refresh} data-tip={t('chat.subagent.reloadTip')} className="flex h-4 w-4 items-center justify-center rounded-[4px] text-mg-muted hover:text-mg-body">
           ⟳
         </button>
       </div>
@@ -87,8 +89,9 @@ function Body({
   // pinta aparte, porque las filas de react-window son hermanas absolutas y un desplegable dentro de
   // una de ellas se entremezcla con las siguientes.
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
-  if (errorMessage !== null) return <Hint text={`No se pudo leer el subagente: ${errorMessage}`} onRetry={onRetry} />;
-  if (entries.length === 0) return <Hint text={isFinal ? 'Transcripción del subagente vacía.' : 'Cargando subagente…'} onRetry={onRetry} />;
+  const t = useT();
+  if (errorMessage !== null) return <Hint text={t('chat.subagent.readFailed', { error: errorMessage })} onRetry={onRetry} />;
+  if (entries.length === 0) return <Hint text={isFinal ? t('chat.subagent.empty') : t('chat.subagent.loading')} onRetry={onRetry} />;
   const selected = selectedIndex === null ? undefined : entries[selectedIndex];
   return (
     <div className="flex h-full min-h-0 flex-col">

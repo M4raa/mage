@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { localized, renderLocalized } from '@shared/i18n/localizedText';
+import { createTranslator } from '@shared/i18n/translator';
 import { AgyTurnTracker, normalizeAgyEvent, silentMcpCall } from './agyNormalize';
 
 // Las lineas de estos tests son COPIA de lo que emitio `agy` 1.1.11 el 2026-08-11 (4 turnos reales en
@@ -112,7 +114,7 @@ describe('normalizeAgyEvent', () => {
       },
     });
     expect(events[1]?.kind).toBe('error');
-    expect(events[1]).toMatchObject({ message: expect.stringContaining('write_to_file') as unknown as string });
+    expect(events[1]).toMatchObject({ localized: localized('events.agy.stepFailedTool', { tool: 'write_to_file', index: '9' }) });
   });
 
   it('normalizeAgyEvent_pasoNoToolEnError_devuelveSoloElError', () => {
@@ -178,7 +180,7 @@ describe('normalizeAgyEvent', () => {
 
     const events = normalizeAgyEvent(raw);
 
-    expect(events[0]).toMatchObject({ kind: 'error', message: expect.stringContaining('empty prompt') as unknown as string });
+    expect(events[0]).toMatchObject({ kind: 'error', localized: localized('events.agy.turnFailed', { detail: 'Error: empty prompt. Usage: agy --print "your prompt here"' }) });
     expect(events[1]).toMatchObject({ kind: 'result', result: { isError: true, subtype: 'error' } });
   });
 
@@ -235,7 +237,7 @@ describe('normalizeAgyEvent: comandos denegados', () => {
     const events = normalizeAgyEvent(step('DONE', unlisted));
 
     expect(events[0]).toMatchObject({ kind: 'tool_result', result: { isError: true } });
-    expect(events[1]).toMatchObject({ kind: 'error', message: expect.stringContaining('«whoami > unlisted.txt»') as unknown as string });
+    expect(events[1]).toMatchObject({ kind: 'error', localized: localized('events.agy.deniedCommandHeadless', { command: 'whoami > unlisted.txt' }) });
     expect(events[1]).toMatchObject({ deniedCommand: 'whoami > unlisted.txt' });
   });
 
@@ -251,15 +253,35 @@ describe('normalizeAgyEvent: comandos denegados', () => {
     const events = normalizeAgyEvent(step('ERROR', denyRule));
 
     expect(events).toHaveLength(2);
-    expect(events[1]).toMatchObject({ kind: 'error', message: expect.stringContaining('«hostname > denied.txt»: lo prohíbe una regla deny') as unknown as string });
+    expect(events[1]).toMatchObject({ kind: 'error', localized: localized('events.agy.deniedCommandByRule', { command: 'hostname > denied.txt' }) });
     expect(events[1]).toMatchObject({ deniedCommand: 'hostname > denied.txt' });
   });
 
   it('normalizeAgyEvent_resultConDeniedActions_avisaAunqueSeaSuccess', () => {
     const events = normalizeAgyEvent({ event: 'result', result: { status: 'SUCCESS', denied_actions: [{ action: 'command', display_name: 'RunCommand' }] } });
 
-    expect(events[0]).toMatchObject({ kind: 'error', message: expect.stringContaining('RunCommand') as unknown as string });
+    expect(events[0]).toMatchObject({ kind: 'error', localized: localized('events.agy.deniedActionsHeadless', { count: 1, names: 'RunCommand' }) });
     expect(events[1]).toMatchObject({ kind: 'result' });
+  });
+
+  it('normalizeResult_unaAccionDenegada_singularAccion', () => {
+    const events = normalizeAgyEvent({ event: 'result', result: { status: 'SUCCESS', denied_actions: [{ action: 'command', display_name: 'RunCommand' }] } });
+
+    const text = events[0]?.kind === 'error' ? renderLocalized(createTranslator('es'), events[0].localized) : '';
+    expect(text).toBe('agy denegó 1 acción (RunCommand): sin pantalla no tiene a quién pedir permiso.');
+  });
+
+  it('normalizeResult_dosAccionesDenegadas_pluralAcciones', () => {
+    const events = normalizeAgyEvent({ event: 'result', result: { status: 'SUCCESS', denied_actions: [{ action: 'command', display_name: 'RunCommand' }, { action: 'file', display_name: 'WriteFile' }] } });
+
+    const text = events[0]?.kind === 'error' ? renderLocalized(createTranslator('es'), events[0].localized) : '';
+    expect(text).toBe('agy denegó 2 acciones (RunCommand, WriteFile): sin pantalla no tiene a quién pedir permiso.');
+  });
+
+  it('toolEvents_denegacion_salidaEsElErrorCrudoDeAgy', () => {
+    const events = normalizeAgyEvent(step('DONE', unlisted));
+
+    expect(events[0]).toMatchObject({ kind: 'tool_result', result: { isError: true, output: unlisted } });
   });
 
   it('normalizeAgyEvent_resultConDeniedActionsYaContado_noRepiteElAviso', () => {
@@ -283,7 +305,7 @@ describe('normalizeAgyEvent: herramientas MCP denegadas', () => {
     const events = normalizeAgyEvent(mcpStep('ERROR', { error: { type: 'TOOL_ERROR', message: denyRule } }));
 
     expect(events[0]).toMatchObject({ kind: 'tool_result', result: { isError: true } });
-    expect(events[1]).toMatchObject({ kind: 'error', message: expect.stringContaining('«magespike/mage_echo»: lo prohíbe una regla deny') as unknown as string });
+    expect(events[1]).toMatchObject({ kind: 'error', localized: localized('events.agy.deniedMcpByRule', { tool: 'magespike/mage_echo' }) });
     expect(events[1]).toMatchObject({ deniedCommand: 'mcp(magespike/mage_echo)' });
   });
 
@@ -305,13 +327,13 @@ describe('normalizeAgyEvent: herramientas MCP denegadas', () => {
     const events = normalizeAgyEvent(deniedResult, false, ['magespike/mage_echo']);
 
     expect(events.map((event) => event.kind)).toEqual(['error', 'result']);
-    expect(events[0]).toMatchObject({ message: expect.stringContaining('«magespike/mage_echo»') as unknown as string, deniedCommand: 'mcp(magespike/mage_echo)' });
+    expect(events[0]).toMatchObject({ localized: localized('events.agy.deniedMcpNotAllowed', { tool: 'magespike/mage_echo' }), deniedCommand: 'mcp(magespike/mage_echo)' });
   });
 
   it('normalizeAgyEvent_resultMcpSinToolConocida_caeAlAvisoGenerico', () => {
     const events = normalizeAgyEvent(deniedResult);
 
-    expect(events[0]).toMatchObject({ kind: 'error', message: expect.stringContaining('CallMcpTool') as unknown as string });
+    expect(events[0]).toMatchObject({ kind: 'error', localized: localized('events.agy.deniedActionsHeadless', { count: 1, names: 'CallMcpTool' }) });
     expect(events[0]).not.toHaveProperty('deniedCommand');
   });
 

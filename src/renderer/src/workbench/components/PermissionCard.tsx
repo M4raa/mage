@@ -2,6 +2,7 @@ import { usePanelLayoutStore } from '../panelLayoutStore';
 import { Icon } from './Icon';
 import { PermissionDecisionButtons } from './PermissionDecisionButtons';
 import type { Block } from '../types';
+import { useT } from '../../i18n/uiLanguage';
 
 // Tarjeta de PERMISO en el chat (2.3b, peticion del usuario: "en vez de que me salga un mensaje, quiero
 // que directamente me salga la accion que se quiere realizar y las acciones de permitir, denegar, etc
@@ -14,22 +15,26 @@ import type { Block } from '../types';
 // Contestada, la tarjeta se queda en el hilo con la decision. Es el registro de lo que se autorizo, y
 // releer una conversacion sin el deja agujeros ("¿esto quien lo permitio?").
 
-const ESTADO: Readonly<Record<string, { readonly texto: string; readonly clase: string }>> = {
-  allowed: { texto: 'Permitido', clase: 'text-mg-diff-add' },
-  denied: { texto: 'Denegado', clase: 'text-mg-danger' },
-  cancelled: { texto: 'Cancelado por el agente', clase: 'text-mg-muted' },
+// `texto` es la CLAVE del catálogo: se traduce al pintar.
+type StateKey = 'chat.permission.state.allowed' | 'chat.permission.state.denied' | 'chat.permission.state.cancelled';
+
+const ESTADO: Readonly<Record<string, { readonly texto: StateKey; readonly clase: string }>> = {
+  allowed: { texto: 'chat.permission.state.allowed', clase: 'text-mg-diff-add' },
+  denied: { texto: 'chat.permission.state.denied', clase: 'text-mg-danger' },
+  cancelled: { texto: 'chat.permission.state.cancelled', clase: 'text-mg-muted' },
 };
 
 export function PermissionCard({ block }: { readonly block: Extract<Block, { kind: 'permission' }> }): React.JSX.Element {
   const revealPanel = usePanelLayoutStore((s) => s.revealPanelById);
   const resuelto = ESTADO[block.state];
+  const t = useT();
 
   return (
     <div
       // El `role="group"` con nombre da a la tarjeta una etiqueta propia en el arbol de accesibilidad:
       // sin el, un lector de pantalla lee los tres botones sin decir a que peticion pertenecen.
       role="group"
-      aria-label={`Permiso: ${block.target}`}
+      aria-label={t('chat.permission.cardAria', { target: block.target })}
       data-permission-card={block.state}
       className={`rounded-[9px] border p-[11px_13px] ${
         block.state === 'pending' ? 'border-mg-warn-border bg-mg-warn-bg' : 'border-mg-border-subtle bg-mg-block'
@@ -37,8 +42,8 @@ export function PermissionCard({ block }: { readonly block: Extract<Block, { kin
     >
       <div className="mb-[7px] flex items-center gap-[7px] text-[10px] font-bold uppercase tracking-[.06em] text-mg-ter">
         <Icon name="lock" />
-        <span>Permiso</span>
-        {resuelto !== undefined && <span className={`font-normal normal-case ${resuelto.clase}`}>· {resuelto.texto}</span>}
+        <span>{t('chat.permission.title')}</span>
+        {resuelto !== undefined && <span className={`font-normal normal-case ${resuelto.clase}`}>· {t(resuelto.texto)}</span>}
       </div>
 
       <div className="text-[12px] leading-[1.5] text-mg-body2">{block.prompt}</div>
@@ -55,7 +60,7 @@ export function PermissionCard({ block }: { readonly block: Extract<Block, { kin
             onClick={() => revealPanel('permissions')}
             className="text-[11px] text-mg-sec underline decoration-dotted hover:text-mg-body"
           >
-            Más información
+            {t('chat.permission.moreInfo')}
           </button>
         </div>
       )}

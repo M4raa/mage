@@ -3,6 +3,8 @@
 // el IPC main->renderer sobre uso. El token se lee en main (UsageService) solo para el header
 // Authorization y jamas se emite. Dinero en enteros de "minor units"; porcentajes/tokens enteros.
 
+import { localizeDecimalPoint } from './i18n/format';
+
 // Una ventana de uso de la suscripcion (5h o 7 dias). `utilization` es el % consumido (entero grueso,
 // con lag en el endpoint). `resetsAt` es el epoch ms del proximo reset (null si el endpoint no lo da).
 export interface UsageWindowInfo {
@@ -48,11 +50,11 @@ export interface ApiUsageSnapshot {
   readonly updatedAtMs: number;
 }
 
-export function formatMicroUsd(amount: number): string {
+export function formatMicroUsd(amount: number, locale: string): string {
   if (!Number.isSafeInteger(amount) || amount < 0) throw new Error(`Coste microUSD invalido: ${amount}`);
   const whole = Math.floor(amount / 1_000_000);
   const fraction = String(amount % 1_000_000).padStart(6, '0').replace(/0+$/, '').padEnd(2, '0');
-  return `$${whole}.${fraction}`;
+  return `$${localizeDecimalPoint(`${whole}.${fraction}`, locale)}`;
 }
 
 // Uso de la suscripcion de agy (M9), de su `/usage` (gratis). `usedPercent` = 100 - lo que queda.

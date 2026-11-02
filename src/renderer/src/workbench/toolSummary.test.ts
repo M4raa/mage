@@ -63,7 +63,7 @@ describe('summarizeToolInput', () => {
 
 describe('formatToolMeta', () => {
   it('formatToolMeta_conExitCodeEnLaSalida_loPrefiere', () => {
-    expect(formatToolMeta({ isError: true, output: 'Exit code 1\nboom', durationMs: 2400 })).toBe('exit 1 · 2.4 s');
+    expect(formatToolMeta({ isError: true, output: 'Exit code 1\nboom', durationMs: 2400 })).toBe('exit 1 · 2,4 s');
   });
 
   it('formatToolMeta_ok_conDuracionEnMs', () => {

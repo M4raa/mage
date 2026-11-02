@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { reconcileLayoutWithRegistry, type Anchor, type PanelId, type PanelLayoutState, type PanelPlacement, type ZoneKey } from '@shared/panelLayout';
 import { PANEL_REGISTRY } from './panels/panelRegistry';
 import { reportActionError } from './notificationStore';
+import { t } from '../i18n/uiLanguage';
 import {
   didZoneJustOpen,
   locatePanel,
@@ -17,14 +18,7 @@ import {
   type MoveDestination,
   type ZoneLocation,
 } from './panels/panelLayoutOps';
-
-// Contrato de error del proyecto (mensaje legible con el valor recibido). Copia MINIMA e intencional
-// de workbenchStore.ts (no se importa desde alli): workbenchStore SI necesita importar de este modulo
-// (toggleSidebar/toggleInspector delegan en togglePanelById, ver mas abajo) y una importacion en el
-// otro sentido crearia un ciclo entre los dos stores por un helper de una linea.
-function describeError(err: unknown): string {
-  return err instanceof Error ? err.message : `Error desconocido: ${String(err)}`;
-}
+import { describeError } from './describeError';
 
 // Forma minima (id/defaultAnchor/defaultZone) del registro real, para el UNICO parametro que cruza a
 // main por IPC (loadPanelLayout). Imprescindible: `PANEL_REGISTRY` trae `render` (una funcion) en cada
@@ -90,7 +84,7 @@ export interface PanelLayoutStoreState {
 function persist(layout: PanelLayoutState): void {
   void window.mage
     .savePanelLayout(layout)
-    .catch((err: unknown) => reportActionError('No se pudo guardar la disposición de los paneles', err, 'persist', 'save-failed:layout'));
+    .catch((err: unknown) => reportActionError(t('menu.panelLayout.saveError'), err, 'persist', 'save-failed:layout'));
 }
 
 export const usePanelLayoutStore = create<PanelLayoutStoreState>((set, get) => ({

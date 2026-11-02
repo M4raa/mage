@@ -4,9 +4,11 @@
 // src/main/engine/normalize.ts). Es la costura que hace el nucleo provider-agnostic.
 
 import type { UsageWindowInfo } from './usage';
+import type { MessageDelivery, QueuedMessage } from './coordination';
 import type { ProviderModel } from './providers';
 import type { ElicitationRequest } from './elicitation';
 import type { SubagentRunInfo } from './subagentRun';
+import type { LocalizedText } from './i18n/localizedText';
 
 // Estado del worker de una sesion (espejo neutral de session_state_changed del CLI).
 export type SessionState = 'idle' | 'running' | 'requires_action';
@@ -54,6 +56,8 @@ export interface PermissionRequest {
   // Solo el runtime propio: la peticion es por algo FUERA del proyecto o por red (su motivo va en
   // `description`). «Permitir siempre» no se ofrece ni se aplica a estas (D2 de P-033).
   readonly outsideProject?: boolean;
+  // Runtime propio: lo que queda fuera del proyecto (ruta o comando); el renderer pinta la frase en su idioma (F3.3b).
+  readonly outsideTarget?: string;
 }
 
 // Uso de una llamada a tool ya emitida por el asistente (para render de tool calls).
@@ -146,6 +150,11 @@ export interface SessionPlugin {
   readonly source: string | null;
 }
 
+// Destino real de un mensaje directo («Enviar ahora», F4.1) segun el CLI: entro en el turno en marcha,
+// abrio un turno propio, no habia turno al que entrar, el turno no admite directos (review/compact de
+// codex) o fallo. Evento INTERNO de main: lo consume la coordinacion.
+export type SteerOutcome = 'active_turn' | 'new_turn' | 'no_active_turn' | 'not_steerable' | 'failed';
+
 // Union discriminada por `kind`. Cada variante es inmutable.
 export type MageEvent =
   // Arranque de sesion. `mcpServers` y `slashCommands` son lo que la sesion cargo DE VERDAD (unica
@@ -213,6 +222,7 @@ export type MageEvent =
   // convierte en un error visible; si era telemetria nuestra (registrar hooks, pedir el desglose de
   // contexto) se queda en el log, porque ensuciar la conversacion con un fallo que el usuario no ha
   // provocado —y que en un CLI de otra version pasaria en CADA arranque— seria peor que el fallo.
+  // Dato/texto ajeno: no se traduce (F3.3, INFORME-033 §4).
   | { readonly kind: 'control_error'; readonly requestId: string; readonly message: string }
   // Compactacion de contexto completada (M2.4): system/compact_boundary del CLI. trigger:
   // 'manual' (/compact) o 'auto' (umbral del CLI); string laxo por si aparecen valores nuevos.
@@ -226,6 +236,7 @@ export type MageEvent =
   // `summary` es ESE texto, tal cual: el CLI es el unico que sabe cuando se restablece y en que zona.
   // `resetsAtMs` queda en null mientras no se mida un campo con la marca de tiempo — deducirla del
   // texto seria inventarla.
+  // Dato/texto ajeno: no se traduce (F3.3, INFORME-033 §4).
   | { readonly kind: 'rate_limit'; readonly summary: string; readonly resetsAtMs: number | null }
   // Foto del consumo de la suscripcion que el CLI emite SOLO, sin que Mage pregunte a ningun
   // endpoint. MEDIDO el 2026-09-14 contra el CLI 2.1.270 (Fase 9, S3): llega en un turno normal
@@ -265,14 +276,43 @@ export type MageEvent =
   | { readonly kind: 'conversation_reset'; readonly newSessionId: string }
   // Aviso del runtime propio de Mage (P-032) que va al hilo como linea de sistema: p.ej. «este modelo
   // no admite herramientas». Los CLI no lo emiten: sus avisos llegan por sus propios eventos.
-  | { readonly kind: 'notice'; readonly text: string }
+  | { readonly kind: 'notice'; readonly localized: LocalizedText }
   // Un servidor MCP remoto del runtime propio pide iniciar sesion (D3 de P-033): el renderer avisa con un
   // boton que abre el login (`openMcpLogin(loginId)`). Mage no abre el navegador por su cuenta.
   | { readonly kind: 'mcp_login_required'; readonly server: string; readonly loginId: string }
   | { readonly kind: 'result'; readonly result: ResultInfo }
   // `deniedCommand`: la linea EXACTA de un comando que agy denego (grupo E, fase 2), para ofrecer permitirlo
   // en la conversacion siguiente. Solo cuando el CLI la dice.
-  | { readonly kind: 'error'; readonly message: string; readonly deniedCommand?: string };
+  | { readonly kind: 'error'; readonly localized: LocalizedText; readonly deniedCommand?: string }
+  // Cola de Mage (F2.2): los emite la coordinación de main, no un proveedor. `queue_changed` lleva la cola
+  // ENTERA tras cada cambio; `queued_message_sent`, el primero que acaba de salir como turno propio; y
+  // `queued_message_failed`, el que no se pudo enviar (vuelve al usuario).
+  | { readonly kind: 'queue_changed'; readonly queue: readonly QueuedMessage[] }
+  | { readonly kind: 'queued_message_sent'; readonly message: QueuedMessage }
+  | { readonly kind: 'queued_message_failed'; readonly message: QueuedMessage; readonly localized: LocalizedText }
+  // Un permiso (o pregunta) se contestó (F2.3): lo emite la coordinación de main al aceptar LA respuesta, para
+  // que todo cliente cierre su tarjeta, también el que no contestó.
+  // `answers`: las respuestas de una PREGUNTA (AskUserQuestion), para que otro cliente cierre su tarjeta con ellas.
+  | { readonly kind: 'permission_resolved'; readonly requestId: string; readonly behavior: 'allow' | 'deny'; readonly answers?: Readonly<Record<string, string>> }
+  // Un permiso que main contestó solo (F2.4): una regla «Permitir siempre» o la barrera del turno de «Crear PR»
+  // (`blocked`: el comando denegado; null si lo permitió una regla). Ese permiso NO se anunció a los clientes.
+  // Una sesion en segundo plano que nadie reclamo caduca (F2.4): main la para justo despues de este evento.
+  | { readonly kind: 'background_expired' }
+  // Dato/texto ajeno: no se traduce (F3.3, INFORME-033 §4).
+  | { readonly kind: 'permission_auto_answered'; readonly requestId: string; readonly toolName: string; readonly behavior: 'allow' | 'deny'; readonly blocked: string | null }
+  // `inferred`: el adapter lo dedujo sin la señal del CLI (salvaguarda); `turnKind`: el tipo de turno que
+  // rechazo el directo; `localized`: el detalle de un fallo.
+  | {
+      readonly kind: 'steer_result';
+      readonly messageId: string;
+      readonly outcome: SteerOutcome;
+      readonly turnKind?: string;
+      readonly inferred?: boolean;
+      readonly localized?: LocalizedText;
+    }
+  // Destino real de un directo (F4.1), para todos los clientes. Lo emite la coordinacion al consumir el
+  // `steer_result` del motor; `message` es el envio, para devolverlo al borrador si fallo.
+  | ({ readonly kind: 'message_delivery'; readonly commandId: string; readonly message: QueuedMessage } & MessageDelivery);
 
 // Decision del usuario ante un permiso (viaja renderer -> main -> CLI).
 //

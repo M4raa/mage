@@ -13,6 +13,8 @@
 // modelo responde a un prompt que dice "/status". Revisado contra 2.1.284 (P-028, grupo C): `cost` ya
 // existe, como alias de `usage`; `review` ya no existe y `agents` solo contesta «wizard removed».
 
+import { t } from '../i18n/uiLanguage';
+
 export interface SlashCommand {
   readonly name: string; // sin la barra (p.ej. 'compact')
   readonly description: string;
@@ -27,19 +29,50 @@ export interface SlashCommand {
 // Nº maximo de sugerencias del popover (la lista completa no cabe y no aporta).
 export const SLASH_SUGGESTION_LIMIT = 8;
 
+type CuratedDescriptionKey =
+  | 'prompt.slash.desc.clear'
+  | 'prompt.slash.desc.compact'
+  | 'prompt.slash.desc.config'
+  | 'prompt.slash.desc.context'
+  | 'prompt.slash.desc.doctor'
+  | 'prompt.slash.desc.effort'
+  | 'prompt.slash.desc.init'
+  | 'prompt.slash.desc.mcp'
+  | 'prompt.slash.desc.model'
+  | 'prompt.slash.desc.rename'
+  | 'prompt.slash.desc.securityReview'
+  | 'prompt.slash.desc.usage'
+  | 'prompt.slash.desc.help'
+  | 'prompt.slash.desc.hooks'
+  | 'prompt.slash.desc.memory'
+  | 'prompt.slash.desc.permissions'
+  | 'prompt.slash.desc.status';
+
+// Comando de la lista curada: su descripción se traduce al LEERLA (la lista se evalúa al importar, antes de saber
+// el idioma, y tiene que seguir al idioma activo).
+function curated(name: string, descriptionKey: CuratedDescriptionKey, aliases?: readonly string[]): SlashCommand {
+  return {
+    name,
+    get description() {
+      return t(descriptionKey);
+    },
+    ...(aliases === undefined ? {} : { aliases }),
+  };
+}
+
 export const SLASH_COMMANDS: readonly SlashCommand[] = [
-  { name: 'clear', description: 'Empieza de cero (limpia el contexto)' },
-  { name: 'compact', description: 'Compacta el contexto de la conversación' },
-  { name: 'config', description: 'Configuración del CLI' },
-  { name: 'context', description: 'Muestra en qué se gasta la ventana de contexto' },
-  { name: 'doctor', description: 'Diagnostica la instalación de Claude Code' },
-  { name: 'effort', description: 'Nivel de esfuerzo de la sesión' },
-  { name: 'init', description: 'Genera/actualiza CLAUDE.md del proyecto' },
-  { name: 'mcp', description: 'Servidores MCP conectados' },
-  { name: 'model', description: 'Cambia el modelo de la sesión' },
-  { name: 'rename', description: 'Renombra la conversación' },
-  { name: 'security-review', description: 'Revisión de seguridad de los cambios' },
-  { name: 'usage', description: 'Uso de la suscripción (ventanas 5 h / semanal)', aliases: ['cost', 'stats'] },
+  curated('clear', 'prompt.slash.desc.clear'),
+  curated('compact', 'prompt.slash.desc.compact'),
+  curated('config', 'prompt.slash.desc.config'),
+  curated('context', 'prompt.slash.desc.context'),
+  curated('doctor', 'prompt.slash.desc.doctor'),
+  curated('effort', 'prompt.slash.desc.effort'),
+  curated('init', 'prompt.slash.desc.init'),
+  curated('mcp', 'prompt.slash.desc.mcp'),
+  curated('model', 'prompt.slash.desc.model'),
+  curated('rename', 'prompt.slash.desc.rename'),
+  curated('security-review', 'prompt.slash.desc.securityReview'),
+  curated('usage', 'prompt.slash.desc.usage', ['cost', 'stats']),
 ];
 
 // Los que D4 midio que NO existen en el CLI headless (son de la TUI). FUERA de `SLASH_COMMANDS` a
@@ -49,23 +82,23 @@ export const SLASH_COMMANDS: readonly SlashCommand[] = [
 // encontro el 2026-08-12). Sus descripciones se conservan por si una version futura del CLI headless
 // los declara: entonces vendran de la sesion, que es quien manda, y el texto en castellano seguira ahi.
 const TUI_ONLY_DESCRIPTIONS: readonly SlashCommand[] = [
-  { name: 'help', description: 'Ayuda de Claude Code' },
-  { name: 'hooks', description: 'Gestiona los hooks del proyecto' },
-  { name: 'memory', description: 'Edita los ficheros de memoria (CLAUDE.md)' },
-  { name: 'permissions', description: 'Reglas de permisos del proyecto' },
-  { name: 'status', description: 'Estado de la sesión (cuenta, modelo, versión)' },
+  curated('help', 'prompt.slash.desc.help'),
+  curated('hooks', 'prompt.slash.desc.hooks'),
+  curated('memory', 'prompt.slash.desc.memory'),
+  curated('permissions', 'prompt.slash.desc.permissions'),
+  curated('status', 'prompt.slash.desc.status'),
 ];
 
-// Descripciones curadas indexadas por nombre -> acceso O(1) al construir el catalogo (evita recorrer
-// la lista por cada comando de la sesion).
-const CURATED_DESCRIPTIONS: ReadonlyMap<string, string> = new Map(
-  [...SLASH_COMMANDS, ...TUI_ONLY_DESCRIPTIONS].map((command) => [command.name, command.description]),
+// Comandos curados indexados por nombre -> acceso O(1) al construir el catalogo (evita recorrer la lista por cada
+// comando de la sesion). Guarda el comando, no el texto: la descripcion se lee (y traduce) al construir.
+const CURATED_COMMANDS: ReadonlyMap<string, SlashCommand> = new Map(
+  [...SLASH_COMMANDS, ...TUI_ONLY_DESCRIPTIONS].map((command) => [command.name, command]),
 );
 
 // Descripcion para un comando que la sesion ofrece y no esta en la lista curada. No se inventa lo que
 // hace: se dice de donde viene. Los namespaced (`plugin:comando`) son de plugin/skill.
 function describeDiscovered(name: string): string {
-  return name.includes(':') ? 'Comando de un plugin o skill' : 'Comando propio de esta sesión';
+  return name.includes(':') ? t('prompt.slash.fromPlugin') : t('prompt.slash.fromSession');
 }
 
 // Catalogo EFECTIVO de comandos: los que la sesion declara. Normaliza (quita la barra si viniera,
@@ -85,7 +118,7 @@ export function buildSlashCatalog(sessionCommands: readonly SlashCommand[]): rea
     const fromCli = command.description.trim();
     byName.set(name, {
       name,
-      description: fromCli.length > 0 ? fromCli : (CURATED_DESCRIPTIONS.get(name) ?? describeDiscovered(name)),
+      description: fromCli.length > 0 ? fromCli : (CURATED_COMMANDS.get(name)?.description ?? describeDiscovered(name)),
       // La pista y los alias solo pueden venir del CLI: la lista curada no los tiene.
       argumentHint: emptyToNull(command.argumentHint),
       aliases: normalizeAliases(command.aliases, name),

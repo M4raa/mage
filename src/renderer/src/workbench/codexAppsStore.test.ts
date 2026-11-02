@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
+import { localized, localizedWithParts } from '@shared/i18n/localizedText';
 import type { CodexAccountMetadata } from '@shared/mcp';
-import { createCodexAppsStore } from './codexAppsStore';
+import { createTranslator } from '@shared/i18n/translator';
+import { esText } from '@testing/localizedText';
+import { codexAppsErrorText, createCodexAppsStore } from './codexAppsStore';
 
 describe('createCodexAppsStore', () => {
   it('refresh_consultasRepetidas_noDuplicaElSondeoPendiente', async () => {
@@ -24,8 +27,16 @@ describe('createCodexAppsStore', () => {
 
     await store.getState().refresh(['/first', '/second']);
 
-    expect(store.getState().results['/first']?.error).toBe('No se pudieron consultar las Apps de esta cuenta.');
+    expect(esText(store.getState().results['/first']?.error ?? null)).toBe('No se pudieron consultar las Apps de esta cuenta.');
     expect(store.getState().results['/second']?.error).toBeNull();
     expect(store.getState().loading).toBe(false);
+  });
+});
+
+describe('codexAppsErrorText', () => {
+  it('codexAppsErrorText_errorDeSondeo_pintaLaFraseEnCastellanoConElReintento', () => {
+    const error = localizedWithParts('mcp.main.codexProbeRejected', { code: '-32603' }, { query: localized('mcp.main.codexProbeAppsQuery') });
+
+    expect(codexAppsErrorText(error, createTranslator('es'))).toBe('Codex rechazó la consulta de Apps (código -32603). Puedes volver a intentarlo.');
   });
 });

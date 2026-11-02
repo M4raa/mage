@@ -1,6 +1,7 @@
 import type { GitSnapshot } from '@shared/git';
 import type { GhPullRequest, GhSnapshot } from '@shared/gh';
 import type { IconName } from './components/Icon';
+import { t } from '../i18n/uiLanguage';
 // Modelo de vista de las etiquetas de informacion del chat (la fila que va encima del input). PURO:
 // datos -> etiquetas.
 //
@@ -39,21 +40,21 @@ export function isInside(path: string, parent: string): boolean {
 // Etiqueta de la carpeta de trabajo. Una conversacion "sin friccion" arranca en un subdirectorio del
 // scratchpad con nombre de UUID, y ahi el ultimo segmento no dice NADA (es lo que se veia: `aa691438-
 // 9c76-4efe-…`). En ese caso la etiqueta es "Scratchpad", y la ruta entera sigue en el tooltip.
-export function folderChip(cwd: string, scratchDir: string | null): ChatChip | null {
+export function folderChip(cwd: string, scratchDir: string | readonly string[] | null): ChatChip | null {
   if (cwd.trim().length === 0) return null;
-  const enScratch = scratchDir !== null && scratchDir.length > 0 && isInside(cwd, scratchDir);
+  const enScratch = (typeof scratchDir === 'string' ? [scratchDir] : scratchDir ?? []).some(root => root.length > 0 && isInside(cwd, root));
   const segment = lastPathSegment(cwd);
   return {
     icon: enScratch ? 'note' : 'folder',
-    label: enScratch ? 'Scratchpad' : segment.length > 0 ? segment : cwd,
-    title: `${cwd} · abrir la carpeta`,
+    label: enScratch ? t('chat.info.scratchpad') : segment.length > 0 ? segment : cwd,
+    title: t('chat.info.folderTitle', { cwd }),
   };
 }
 
 export function privacyChip(privacy: 'shared' | 'private'): ChatChip {
   return privacy === 'private'
-    ? { icon: 'lock', label: 'Privado', title: 'Conversación privada: usa el perfil mage-private de la cuenta' }
-    : { icon: 'diamond', label: 'Compartido', title: 'Conversación compartida: usa el pozo común de la cuenta' };
+    ? { icon: 'lock', label: t('chat.info.private'), title: t('chat.info.privateTitle') }
+    : { icon: 'diamond', label: t('chat.info.shared'), title: t('chat.info.sharedTitle') };
 }
 
 // Etiqueta de la rama (P-026 3.5). Sin repo, sin git o sin confianza, no hay etiqueta. Con la HEAD
@@ -63,9 +64,10 @@ export function gitChip(snapshot: GitSnapshot | undefined): ChatChip | null {
   const label = snapshot.branch ?? snapshot.headShort ?? 'HEAD';
   const sync =
     snapshot.upstream === null
-      ? 'sin rama remota'
-      : `${snapshot.ahead} por delante y ${snapshot.behind} por detrás de ${snapshot.upstream}`;
-  return { icon: 'branch', label, title: `${snapshot.detached ? 'HEAD suelta en' : 'Rama'} ${label} · ${sync}` };
+      ? t('chat.git.noUpstream')
+      : t('chat.git.sync', { ahead: snapshot.ahead, behind: snapshot.behind, upstream: snapshot.upstream });
+  const title = snapshot.detached ? t('chat.git.detachedTitle', { branch: label, sync }) : t('chat.git.branchTitle', { branch: label, sync });
+  return { icon: 'branch', label, title };
 }
 
 export interface DiffChip {
@@ -78,11 +80,11 @@ export interface DiffChip {
 // sucio; los ficheros sin seguir no tienen lineas que contar y van al tooltip.
 export function diffChip(snapshot: GitSnapshot | undefined): DiffChip | null {
   if (snapshot?.kind !== 'repo' || !snapshot.dirty) return null;
-  const untracked = snapshot.untracked > 0 ? ` y ${snapshot.untracked} sin seguir` : '';
+  const values = { count: snapshot.changedFiles, untracked: snapshot.untracked, added: snapshot.added, removed: snapshot.removed };
   return {
     added: `+${snapshot.added}`,
     removed: `−${snapshot.removed}`,
-    title: `${snapshot.changedFiles} ${snapshot.changedFiles === 1 ? 'fichero cambiado' : 'ficheros cambiados'}${untracked}: +${snapshot.added} líneas, −${snapshot.removed}`,
+    title: snapshot.untracked > 0 ? t('chat.git.diffTitleUntracked', values) : t('chat.git.diffTitle', values),
   };
 }
 
@@ -96,11 +98,16 @@ export interface PrBarView {
   readonly title: string;
 }
 
-const PR_STATE_LABELS = { open: 'Abierto', merged: 'Fusionado', closed: 'Cerrado' } as const;
-const REVIEW_LABELS = { approved: 'Aprobado', changes_requested: 'Cambios pedidos', review_required: 'Revisión pendiente' } as const;
+// Las dos tablas guardan la CLAVE del catálogo: se traduce al montar la vista.
+const PR_STATE_LABELS = { open: 'chat.pr.state.open', merged: 'chat.pr.state.merged', closed: 'chat.pr.state.closed' } as const;
+const REVIEW_LABELS = {
+  approved: 'chat.pr.review.approved',
+  changes_requested: 'chat.pr.review.changesRequested',
+  review_required: 'chat.pr.review.required',
+} as const;
 
 export function prBarView(pr: GhPullRequest): PrBarView {
-  const state = pr.state === 'open' && pr.isDraft ? 'Borrador' : PR_STATE_LABELS[pr.state];
+  const state = t(pr.state === 'open' && pr.isDraft ? 'chat.pr.state.draft' : PR_STATE_LABELS[pr.state]);
   const { pass, fail, pending } = pr.summary;
   const counts = [
     { glyph: '✓', count: pass, tone: 'add' as const },
@@ -108,13 +115,14 @@ export function prBarView(pr: GhPullRequest): PrBarView {
     { glyph: '●', count: pending, tone: 'muted' as const },
   ].filter((entry) => entry.count > 0);
   const details = [
-    pr.reviewDecision === null ? null : REVIEW_LABELS[pr.reviewDecision],
-    pr.state === 'open' && pr.mergeable === 'conflicting' ? 'Conflicto de fusión' : null,
-    pr.autoMerge ? 'Auto-merge activo' : null,
+    pr.reviewDecision === null ? null : t(REVIEW_LABELS[pr.reviewDecision]),
+    pr.state === 'open' && pr.mergeable === 'conflicting' ? t('chat.pr.conflict') : null,
+    pr.autoMerge ? t('chat.pr.autoMerge') : null,
   ].filter((entry): entry is string => entry !== null);
   const failing = pr.checks.filter((check) => check.state === 'fail').map((check) => check.name);
-  const checks = `${pass} pasan, ${fail} fallan, ${pending} en marcha`;
-  return { label: `#${pr.number} · ${state}`, counts, details, failing, title: `PR #${pr.number}: ${pr.title} · ${checks}` };
+  const checks = t('chat.pr.checks', { pass, fail, pending });
+  const label = t('chat.pr.label', { prNumber: pr.number, state });
+  return { label, counts, details, failing, title: t('chat.pr.title', { prNumber: pr.number, title: pr.title, checks }) };
 }
 
 export interface GhNoticeView {
@@ -128,7 +136,7 @@ const GH_INSTALL_URL = 'https://cli.github.com';
 // DA-3: sin gh o sin sesion, un chip apagado que lo explica, descartable para siempre (Ajustes lo repone).
 export function ghNoticeView(snapshot: GhSnapshot | undefined, dismissed: boolean): GhNoticeView | null {
   if (dismissed || snapshot?.kind !== 'off') return null;
-  if (snapshot.reason === 'no-gh') return { label: 'PR: instala gh', title: 'Para ver el PR y el CI de esta rama hace falta el GitHub CLI (gh). Abre cli.github.com', url: GH_INSTALL_URL };
-  if (snapshot.reason === 'no-auth') return { label: 'PR: inicia sesión en gh', title: 'gh está instalado pero sin sesión: ejecuta «gh auth login» en una terminal', url: null };
+  if (snapshot.reason === 'no-gh') return { label: t('chat.gh.noGh'), title: t('chat.gh.noGhTitle'), url: GH_INSTALL_URL };
+  if (snapshot.reason === 'no-auth') return { label: t('chat.gh.noAuth'), title: t('chat.gh.noAuthTitle'), url: null };
   return null;
 }

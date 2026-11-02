@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
+import { foreignText, localized } from '@shared/i18n/localizedText';
+import { esText, jsonMessage, thrownText } from '@testing/localizedText';
 import {
   mcpCommonServerNames,
   parseMcpCommonJson,
@@ -17,6 +19,7 @@ function deps(overrides: Partial<SharedConfigDeps> = {}): SharedConfigDeps {
     exists: () => true,
     readFile: () => '{}',
     writeFile: () => undefined,
+    removeFile: () => undefined,
     rename: () => undefined,
     ensureDir: () => undefined,
     tempSuffix: () => 'tmp1',
@@ -206,7 +209,15 @@ describe('parseMcpCommonJson (puro)', () => {
     const result = parseMcpCommonJson('{not json');
 
     expect(result.value).toBeNull();
-    expect(result.warnings[0]).toContain('JSON invalido');
+    expect(result.warnings[0]).toMatchObject({ key: 'settings.sharedConfig.commonJsonInvalid', parts: { detail: foreignText(jsonMessage('{not json')) } });
+    expect(esText(result.warnings[0]!)).toBe(`JSON inválido: ${jsonMessage('{not json')}`);
+  });
+
+  it('parseMcpCommonJson_sinLaFormaEsperada_avisaConLasLlavesLiterales', () => {
+    const result = parseMcpCommonJson('{"foo":1}');
+
+    expect(result.warnings).toEqual([localized('settings.sharedConfig.commonWrongShape')]);
+    expect(esText(result.warnings[0]!)).toBe('No tiene la forma {"mcpServers": {...}}; se ignora entero');
   });
 
   it('parseMcpCommonJson_valido_devuelveMcpServersSinWarnings', () => {
@@ -277,15 +288,24 @@ describe('SharedConfigService.saveMcpCommonText', () => {
     const writeFile = vi.fn();
     const service = new SharedConfigService(deps({ writeFile }));
 
-    expect(() => service.saveMcpCommonText(MCP_PATH, '{not json', '{}')).toThrow(/invalido/i);
+    expect(() => service.saveMcpCommonText(MCP_PATH, '{not json', '{}')).toThrow(/inválido/i);
     expect(writeFile).not.toHaveBeenCalled();
+  });
+
+  it('saveMcpCommonText_sinFormaEsperada_lanzaLaClaveConElAvisoDentro', () => {
+    const service = new SharedConfigService(deps({}));
+
+    const thrown = thrownText(() => service.saveMcpCommonText(MCP_PATH, '{"foo":1}', '{}'));
+
+    expect(thrown).toEqual({ key: 'errors.config.commonSaveInvalid', values: { length: '9' }, parts: { reason: localized('settings.sharedConfig.commonWrongShape') } });
+    expect(esText(thrown)).toBe('mcp-common.json inválido, no se guarda (No tiene la forma {"mcpServers": {...}}; se ignora entero): 9 caracteres');
   });
 
   it('saveMcpCommonText_sinFormaEsperada_lanzaSinEscribir', () => {
     const writeFile = vi.fn();
     const service = new SharedConfigService(deps({ writeFile }));
 
-    expect(() => service.saveMcpCommonText(MCP_PATH, '{"foo":1}', '{}')).toThrow(/invalido/i);
+    expect(() => service.saveMcpCommonText(MCP_PATH, '{"foo":1}', '{}')).toThrow(/inválido/i);
     expect(writeFile).not.toHaveBeenCalled();
   });
 
@@ -319,10 +339,11 @@ describe('SharedConfigService compare-and-swap al guardar', () => {
 
     expect(outcome.status).toBe('stale');
     if (outcome.status !== 'stale') throw new Error('se esperaba stale');
-    expect(outcome.message).toContain(MCP_PATH);
-    expect(outcome.message).toContain('cambio fuera de Mage');
+    expect(outcome.message.key).toBe('settings.sharedConfig.staleKeepEditing');
+    expect(outcome.message.parts?.stale).toEqual({ key: 'errors.config.staleWrite', values: { path: MCP_PATH }, parts: { was: localized('errors.config.staleWriteWasLength', { length: '17' }), now: localized('errors.config.staleWriteNowLength', { length: '26' }) } });
+    expect(esText(outcome.message)).toBe(`El fichero "${MCP_PATH}" cambió fuera de Mage desde que se leyó (tenía 17 caracteres, ahora tiene 26 caracteres); no se ha guardado nada. Tu texto sigue en el editor sin guardar: revisa el contenido nuevo antes de volver a pulsar Guardar, porque el segundo intento SÍ lo sobrescribirá.`);
     expect(rename).not.toHaveBeenCalled();
-    expect(log).toHaveBeenCalledWith('warn', expect.stringContaining(MCP_PATH));
+    expect(log).toHaveBeenCalledWith('warn', esText(outcome.message));
   });
 
   it('save_creacionCuandoElFicheroNoExistia_publica', () => {
@@ -364,7 +385,8 @@ describe('SharedConfigService compare-and-swap al guardar', () => {
 
     expect(outcome.status).toBe('stale');
     if (outcome.status !== 'stale') throw new Error('se esperaba stale');
-    expect(outcome.message).toContain('EACCES');
+    expect(outcome.message).toEqual({ key: 'settings.sharedConfig.staleCheckFailed', values: { path: MCP_PATH }, parts: { detail: foreignText('EACCES: permission denied') } });
+    expect(esText(outcome.message)).toBe(`No se pudo comprobar si "${MCP_PATH}" había cambiado, no se ha guardado nada: EACCES: permission denied`);
     expect(rename).not.toHaveBeenCalled();
   });
 });
@@ -406,8 +428,16 @@ describe('SharedConfigService.saveSettingsCommonText', () => {
     const writeFile = vi.fn();
     const service = new SharedConfigService(deps({ writeFile }));
 
-    expect(() => service.saveSettingsCommonText(SETTINGS_PATH, 'nope', '{}')).toThrow(/invalido/i);
+    expect(() => service.saveSettingsCommonText(SETTINGS_PATH, 'nope', '{}')).toThrow(/inválido/i);
     expect(writeFile).not.toHaveBeenCalled();
+  });
+
+  it('saveSettingsCommonText_jsonInvalido_lanzaLaClaveConLosAvisosYLaLongitud', () => {
+    const service = new SharedConfigService(deps({}));
+
+    const thrown = thrownText(() => service.saveSettingsCommonText(SETTINGS_PATH, 'nope', '{}'));
+
+    expect(thrown).toEqual(localized('errors.config.settingsSaveInvalid', { reason: `JSON invalido: ${jsonMessage('nope')}`, length: '4' }));
   });
 
   it('saveSettingsCommonText_conClaveDescartada_escribeYDevuelveElAviso', () => {

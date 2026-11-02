@@ -23,6 +23,7 @@ function buildDeps(overrides: Partial<PanelLayoutStoreDeps> = {}): PanelLayoutSt
     exists: () => true,
     readFile: () => '{}',
     writeFile: () => undefined,
+    removeFile: () => undefined,
     rename: () => undefined,
     tempSuffix: () => 'suf',
     log: () => undefined,

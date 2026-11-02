@@ -4,6 +4,7 @@ import { MotionConfig } from 'motion/react';
 import { App } from './App';
 import { ErrorBoundary } from './ErrorBoundary';
 import { installRendererLogForwarding } from './rendererLogForwarding';
+import { initUiLanguage } from './i18n/uiLanguage';
 import { applyCustomThemeTokens, applyResolvedTheme, readStartupCustomTokens, readStartupTheme } from './workbench/theme';
 import './index.css';
 
@@ -19,6 +20,10 @@ if (startupCustom !== null) applyCustomThemeTokens(startupCustom);
 
 const container = document.getElementById('root');
 if (!container) throw new Error('No se encontro el nodo #root en index.html');
+
+// El idioma se resuelve ANTES de montar: sin esperar, quien tiene la interfaz en inglés vería un primer pintado en
+// castellano. Si main no contesta, se monta igual en castellano y el error queda en la consola (no se traga).
+await initUiLanguage(window.mage).catch((err: unknown) => console.error('[i18n] no se pudo leer el idioma de la interfaz', err));
 
 createRoot(container).render(
   <StrictMode>

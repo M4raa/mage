@@ -77,7 +77,8 @@ export type FlowKeyAction =
   | { readonly type: 'prev' }
   | { readonly type: 'next' }
   | { readonly type: 'submit' }
-  | { readonly type: 'close' };
+  | { readonly type: 'close' }
+  | { readonly type: 'focus-other' };
 
 // Teclado del dock: `1..9` eligen, `↑/↓` mueven el resaltado, `Espacio` elige el resaltado, `←/→`
 // paginan, `Enter` avanza (o contesta en la ultima) y `Esc` cierra. null = la tecla no es del dock.
@@ -89,18 +90,19 @@ export function keyToAction(key: string, state: QuestionFlowState, question: Ask
   }
   switch (key) {
     case 'ArrowDown':
-      return { type: 'cursor', index: Math.min(state.cursor + 1, options.length - 1) };
+      return { type: 'cursor', index: Math.min(state.cursor + 1, options.length) };
     case 'ArrowUp':
       return { type: 'cursor', index: Math.max(state.cursor - 1, 0) };
     case ' ': {
       const option = options[state.cursor];
-      return option === undefined ? null : { type: 'toggle', label: option.label };
+      return option === undefined ? { type: 'focus-other' } : { type: 'toggle', label: option.label };
     }
     case 'ArrowLeft':
       return { type: 'prev' };
     case 'ArrowRight':
       return { type: 'next' };
     case 'Enter':
+      if (state.cursor === options.length) return { type: 'focus-other' };
       return isLast(state) ? { type: 'submit' } : { type: 'next' };
     case 'Escape':
       return { type: 'close' };

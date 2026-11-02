@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
+import { localized } from '@shared/i18n/localizedText';
+import { esText } from '@testing/localizedText';
 import { buildMcpCommonImport, SharedConfigService, type SharedConfigDeps } from './sharedConfigService';
 
 // P-026 2.5 (D10): la primera vez, mcp-common.json se crea con la union de `mcp-shared.json` y los MCP
@@ -33,7 +35,8 @@ describe('buildMcpCommonImport', () => {
     const result = buildMcpCommonImport(shared({ a: SERVER_A }), [account('.claude-p', { a: SERVER_A_OTRO })]);
 
     expect(result.mcpServers).toEqual({ a: SERVER_A });
-    expect(result.notes).toEqual(['«a» está en mcp-shared.json y en .claude-p con otra configuración: se queda la de mcp-shared.json.']);
+    expect(result.notes).toEqual([localized('settings.sharedConfig.importCollision', { name: 'a', first: 'mcp-shared.json', second: '.claude-p' })]);
+    expect(esText(result.notes[0]!)).toBe('«a» está en mcp-shared.json y en .claude-p con otra configuración: se queda la de mcp-shared.json.');
   });
 
   it('buildMcpCommonImport_mismaConfigEnDosSitios_sinNota', () => {
@@ -66,6 +69,7 @@ describe('SharedConfigService.importMcpCommonIfMissing', () => {
       exists: () => false,
       readFile: () => '{}',
       writeFile: () => undefined,
+      removeFile: () => undefined,
       rename: () => undefined,
       ensureDir: () => undefined,
       tempSuffix: () => 'tmp1',

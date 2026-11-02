@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { foreignText, localized } from '@shared/i18n/localizedText';
+import { esText } from '@testing/localizedText';
 import type { ProbeProcess } from '../engine/modelProbe';
 import { authenticateMcp, type McpAuthDeps } from './mcpAuthFlow';
 
@@ -85,7 +87,7 @@ describe('authenticateMcp', () => {
   it('authenticateMcp_cliRechaza_devuelveSuMensaje', async () => {
     const proc = fakeProcess((subtype) => (subtype === 'initialize' ? ok() : { subtype: 'error', error: 'Server not found: nope' }));
 
-    expect(await authenticateMcp(deps(proc), '/c', 'nope')).toEqual({ kind: 'error', message: 'Server not found: nope' });
+    expect(await authenticateMcp(deps(proc), '/c', 'nope')).toEqual({ kind: 'error', message: foreignText('Server not found: nope') });
   });
 
   it('authenticateMcp_servidorFalla_devuelveErrorConElDetalle', async () => {
@@ -93,7 +95,17 @@ describe('authenticateMcp', () => {
 
     const result = await authenticateMcp(deps(proc), '/c', 'plugin:figma:figma');
 
-    expect(result).toEqual({ kind: 'error', message: 'El servidor plugin:figma:figma no conectó tras autenticar: HTTP 500' });
+    expect(result).toEqual({ kind: 'error', message: localized('mcp.main.authServerNotConnected', { server: 'plugin:figma:figma', detail: ': HTTP 500' }) });
+    expect(result.kind === 'error' && esText(result.message)).toBe('El servidor plugin:figma:figma no conectó tras autenticar: HTTP 500');
+  });
+
+  it('authenticateMcp_servidorFallaSinDetalle_elDetalleVaVacio', async () => {
+    const proc = fakeProcess((subtype) => (subtype === 'initialize' ? ok() : subtype === 'mcp_authenticate' ? AUTH_OK : status('failed', {})));
+
+    const result = await authenticateMcp(deps(proc), '/c', 'plugin:figma:figma');
+
+    expect(result).toEqual({ kind: 'error', message: localized('mcp.main.authServerNotConnected', { server: 'plugin:figma:figma', detail: '' }) });
+    expect(result.kind === 'error' && esText(result.message)).toBe('El servidor plugin:figma:figma no conectó tras autenticar');
   });
 
   it('authenticateMcp_navegadorNoAbre_devuelveError', async () => {
@@ -102,7 +114,7 @@ describe('authenticateMcp', () => {
       throw new Error('Esquema no permitido');
     });
 
-    expect(await authenticateMcp(deps(proc, openUrl), '/c', 'plugin:figma:figma')).toEqual({ kind: 'error', message: 'No se pudo abrir el navegador: Esquema no permitido' });
+    expect(await authenticateMcp(deps(proc, openUrl), '/c', 'plugin:figma:figma')).toEqual({ kind: 'error', message: { key: 'mcp.main.authOpenBrowserFailed', values: {}, parts: { detail: foreignText('Esquema no permitido') } } });
   });
 
   it('authenticateMcp_cliMuere_devuelveError', async () => {
@@ -111,7 +123,7 @@ describe('authenticateMcp', () => {
     const pending = authenticateMcp(deps(proc), '/c', 'plugin:figma:figma');
     proc.die();
 
-    expect(await pending).toEqual({ kind: 'error', message: 'El CLI terminó antes de completar la autenticación.' });
+    expect(await pending).toEqual({ kind: 'error', message: localized('mcp.main.authCliExitedEarly') });
   });
 
   it('authenticateMcp_nombreVacio_lanza', async () => {

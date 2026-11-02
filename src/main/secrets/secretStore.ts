@@ -1,5 +1,7 @@
 import { z } from 'zod';
+import { localized, UserFacingError, wrapError } from '@shared/i18n/localizedText';
 import { writeAtomic, type AtomicWriteDeps } from '../os/atomicFile';
+import type { VaultStatus } from './vaultGate';
 
 // Boveda de secretos del proceso main (claves de API de proveedores, secretos de extensiones).
 //
@@ -17,6 +19,8 @@ import { writeAtomic, type AtomicWriteDeps } from '../os/atomicFile';
 // El cifrado del SO. Se inyecta (en produccion, `electron.safeStorage`) para testear sin Electron.
 export interface SecretCipher {
   readonly isEncryptionAvailable: () => boolean;
+  // Solo Linux expone selección de backend; Windows/macOS conservan el cifrado del SO.
+  readonly getSelectedStorageBackend?: () => string;
   readonly encryptString: (plain: string) => Buffer;
   readonly decryptString: (encrypted: Buffer) => string;
 }
@@ -24,6 +28,9 @@ export interface SecretCipher {
 export interface SecretStoreDeps extends AtomicWriteDeps {
   readonly filePath: string;
   readonly cipher: SecretCipher;
+  // Lo que se decidió al arrancar (D1, `assessVault`). Sin bóveda usable, todo uso lanza ESE mensaje, antes de tocar
+  // `safeStorage`: es el borde donde un fallo del llavero se convierte en el texto que ve el usuario.
+  readonly status?: () => VaultStatus;
 }
 
 const SECRET_FILE_VERSION = 1;
@@ -40,9 +47,7 @@ export class SecretStore {
   set(id: string, value: string): void {
     requireId(id);
     if (value.length === 0) throw new Error(`Secreto vacio para ${JSON.stringify(id)}: para quitarlo se usa delete`);
-    if (!this.deps.cipher.isEncryptionAvailable()) {
-      throw new Error(`El cifrado del sistema no esta disponible: no se guarda el secreto ${JSON.stringify(id)} en claro`);
-    }
+    this.requireEncryption();
     const encoded = this.deps.cipher.encryptString(value).toString('base64');
     this.write({ ...this.read(), [id]: encoded });
   }
@@ -52,13 +57,20 @@ export class SecretStore {
     requireId(id);
     const encoded = this.read()[id];
     if (encoded === undefined) return null;
+    this.requireEncryption();
     try {
       return this.deps.cipher.decryptString(Buffer.from(encoded, 'base64'));
     } catch (err) {
       // Un secreto cifrado por otro usuario de Windows (fichero copiado) no se puede leer: se dice, sin
       // el valor cifrado en el mensaje.
-      throw new Error(`No se pudo descifrar el secreto ${JSON.stringify(id)}: ${err instanceof Error ? err.message : String(err)}`);
+      throw new UserFacingError(wrapError('errors.vault.decryptFailed', { id: JSON.stringify(id) }, err));
     }
+  }
+
+  // Lanza el mismo error que daría usarla si la bóveda no se puede usar. Para comprobarlo ANTES de crear nada que
+  // dependa de un secreto (una cuenta de API no deja su carpeta a medias).
+  assertUsable(): void {
+    this.requireEncryption();
   }
 
   has(id: string): boolean {
@@ -82,15 +94,27 @@ export class SecretStore {
     try {
       parsed = JSON.parse(this.deps.readFile(this.deps.filePath));
     } catch (err) {
-      throw new Error(`La boveda ${this.deps.filePath} no es JSON valido: ${err instanceof Error ? err.message : String(err)}`);
+      throw new UserFacingError(wrapError('errors.vault.fileInvalidJson', { path: this.deps.filePath }, err));
     }
     const result = SECRET_FILE_SCHEMA.safeParse(parsed);
-    if (!result.success) throw new Error(`La boveda ${this.deps.filePath} no tiene la forma esperada: ${result.error.message}`);
+    if (!result.success) throw new UserFacingError(wrapError('errors.vault.fileBadShape', { path: this.deps.filePath }, result.error));
     return result.data.secrets;
   }
 
   private write(secrets: EncodedSecrets): void {
     writeAtomic(this.deps, this.deps.filePath, JSON.stringify({ version: SECRET_FILE_VERSION, secrets }, null, 2));
+  }
+
+  private requireEncryption(): void {
+    const status = this.deps.status?.();
+    if (status !== undefined && !status.usable) throw new UserFacingError(status.reason);
+    const backend = this.deps.cipher.getSelectedStorageBackend?.();
+    if (backend === 'basic_text' || backend === 'unknown') {
+      throw new UserFacingError(localized('errors.vault.backendInsecure', { backend: JSON.stringify(backend) }));
+    }
+    if (!this.deps.cipher.isEncryptionAvailable()) {
+      throw new UserFacingError(localized('errors.vault.cipherUnavailable'));
+    }
   }
 }
 

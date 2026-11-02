@@ -1,12 +1,13 @@
 import type { ImageAttachment } from '@shared/ipc';
-import type { MageEvent, PermissionDecision, TurnUsage } from '@shared/events';
+import type { MageEvent, PermissionDecision } from '@shared/events';
+import { localized, UserFacingError } from '@shared/i18n/localizedText';
 import { parseElicitationRequest, validateElicitationAnswer, type ElicitationAnswer, type ElicitationRequest } from '@shared/elicitation';
 import { parseCodexPermissionPreset } from '@shared/codexPermissions';
-import { resolveCodexBinary } from '../os/codexBinaryResolver';
+import { resolveCodexBinary, type CodexSpawnCommand } from '../os/codexBinaryResolver';
 import { scrubAgentEnv } from '../os/agentEnv';
 import { toCodexOverrides } from '../config/mcpProviderTranslate';
 import { bridgeDocument, type BridgedFile } from '../instructions/instructionsBridge';
-import type { AuthModel, LaunchParams, PermissionRef, ProviderAdapter, SpawnPlan } from './providerAdapter';
+import type { AuthModel, LaunchParams, PermissionRef, ProviderAdapter, SpawnPlan, SteerEncoding } from './providerAdapter';
 import {
   approvalRequest,
   approvalResult,
@@ -15,7 +16,9 @@ import {
   normalizeNotification,
   rateLimitEvents,
   contextUsageOf,
-  turnUsageOf,
+  trackTokenUsage,
+  EMPTY_USAGE_TRACKER,
+  type CodexUsageTracker,
 } from './codexProtocol';
 
 // Adapter de Codex (CLI de OpenAI) sobre `codex app-server`: JSON-RPC 2.0 por stdio, una linea por
@@ -38,6 +41,8 @@ export interface CodexAccount {
 
 export interface CodexAdapterDeps {
   readonly resolveBinary?: () => string;
+  // Cómo lanzar `codex <args>` (main pasa `codexSpawnCommand`, con la guarda de `app.isPackaged`). Sin él, `resolveBinary`.
+  readonly spawnCommand?: (args: readonly string[]) => CodexSpawnCommand;
   // La cuenta de Codex cuyo CODEX_HOME es `accountDir`, o null (la sesion por defecto, `~/.codex`).
   readonly resolveAccount?: (accountDir: string) => CodexAccount | null;
   // Puente de instrucciones (grupo H): los CLAUDE.md que codex no tiene como suyos, para el cwd y el
@@ -72,8 +77,11 @@ const CLIENT_INFO = { name: 'mage', title: 'Mage', version: '0.1.2' } as const;
 // el sandbox queda en solo lectura, asi que escribir pide permiso).
 const APPROVAL_POLICY = 'on-request';
 const JSONRPC_METHOD_NOT_FOUND = -32601;
+// Rechazo de `turn/steer` (medido en 0.164.0): sin turno activo o con otro turno activo; el turno ya no es el nuestro.
+const JSONRPC_INVALID_REQUEST = -32600;
+const STALE_STEER_MESSAGES: readonly string[] = ['no active turn to steer', 'expected active turn id'];
 // Ids de las peticiones propias de Mage, para reconocer su respuesta.
-type OwnRequest = 'initialize' | 'thread' | 'turn' | 'models' | 'rateLimits' | 'other';
+type OwnRequest = 'initialize' | 'thread' | 'turn' | 'models' | 'rateLimits' | 'steer' | 'other';
 
 interface PendingApproval {
   readonly rawId: unknown;
@@ -93,7 +101,12 @@ export class CodexAdapter implements ProviderAdapter {
   private readonly fileChanges = new Map<string, readonly unknown[]>();
   private threadId: string | null = null;
   private turnId: string | null = null;
-  private turnUsage: TurnUsage | null = null;
+  // `turn/start` mandado y sin respuesta todavia: un directo espera a tener el id del turno.
+  private turnStarting = false;
+  private heldSteers: Array<{ readonly messageId: string; readonly input: unknown[] }> = [];
+  // id JSON-RPC de cada `turn/steer` -> id del directo de Mage.
+  private readonly steerRequests = new Map<number, string>();
+  private usage: CodexUsageTracker = EMPTY_USAGE_TRACKER;
   private queuedInputs: unknown[][] = [];
   private params: LaunchParams | null = null;
   private model = '';
@@ -128,7 +141,8 @@ export class CodexAdapter implements ProviderAdapter {
     };
     // 0.160.0 rechaza thread/start.permissions sin esta capacidad: perfiles y MCP son experimentales.
     this.request('initialize', { clientInfo: CLIENT_INFO, capabilities: { experimentalApi: true } }, 'initialize');
-    return { command: (this.deps.resolveBinary ?? resolveCodexBinary)(), args, env };
+    const launch = this.deps.spawnCommand?.(args) ?? { command: (this.deps.resolveBinary ?? resolveCodexBinary)(), args, env: {} };
+    return { command: launch.command, args: launch.args, env: { ...env, ...launch.env } };
   }
 
   private resetProcess(params: LaunchParams): void {
@@ -143,7 +157,10 @@ export class CodexAdapter implements ProviderAdapter {
     this.fileChanges.clear();
     this.threadId = null;
     this.turnId = null;
-    this.turnUsage = null;
+    this.turnStarting = false;
+    this.heldSteers = [];
+    this.steerRequests.clear();
+    this.usage = EMPTY_USAGE_TRACKER;
   }
 
   takeOutgoing(): readonly unknown[] {
@@ -154,8 +171,7 @@ export class CodexAdapter implements ProviderAdapter {
 
   // Sin hilo todavia, el mensaje espera: sale como `turn/start` en cuanto `thread/start` conteste.
   encodeUserMessage(text: string, attachments: readonly ImageAttachment[] = []): unknown {
-    const input: unknown[] = [{ type: 'text', text, text_elements: [] }];
-    for (const attachment of attachments) input.push({ type: 'image', url: `data:${attachment.mediaType};base64,${attachment.data}` });
+    const input = buildInput(text, attachments);
     if (this.threadId === null) {
       this.queuedInputs.push(input);
       return null;
@@ -164,16 +180,29 @@ export class CodexAdapter implements ProviderAdapter {
     return null;
   }
 
+  // Directo (F4.1): `turn/steer` contra el turno en marcha. Con `turn/start` aun sin respuesta, espera al
+  // id del turno; sin turno, no hay a donde entrar y lo decide quien lo pidio (T3: va como mensaje normal).
+  encodeSteer(messageId: string, text: string, attachments: readonly ImageAttachment[] = []): SteerEncoding {
+    const input = buildInput(text, attachments);
+    if (this.threadId !== null && this.turnId !== null) {
+      this.sendSteer(messageId, input);
+      return { kind: 'write', payload: null };
+    }
+    if (!this.turnStarting) return { kind: 'resolved', outcome: 'no_active_turn' };
+    this.heldSteers.push({ messageId, input });
+    return { kind: 'write', payload: null };
+  }
+
   encodePermissionResponse(ref: PermissionRef, decision: PermissionDecision): unknown {
     const pending = this.approvals.get(ref.requestId);
-    if (pending === undefined) throw new Error(`Aprobacion de codex desconocida o ya resuelta: ${ref.requestId}`);
+    if (pending === undefined) throw new UserFacingError(localized('errors.engine.codexApprovalUnknown', { requestId: ref.requestId }));
     this.approvals.delete(ref.requestId);
     return { jsonrpc: '2.0', id: pending.rawId, result: approvalResult(pending.method, pending.params, decision.behavior === 'allow') };
   }
 
   encodeElicitationResponse(answer: ElicitationAnswer): unknown {
     const pending = this.elicitations.get(answer.requestId);
-    if (pending === undefined) throw new Error(`Elicitation desconocida o resuelta: ${answer.requestId}`);
+    if (pending === undefined) throw new UserFacingError(localized('errors.engine.elicitationUnknown', { requestId: answer.requestId }));
     if (!validateElicitationAnswer(pending.request, answer)) throw new Error('Respuesta de elicitation inválida');
     this.elicitations.delete(answer.requestId);
     return { jsonrpc: '2.0', id: pending.rawId, result: { action: answer.action,
@@ -218,18 +247,22 @@ export class CodexAdapter implements ProviderAdapter {
     if (hasId) return this.onResponse(raw);
     if (typeof raw.method !== 'string') return [];
     this.trackFileChanges(raw.method, raw.params);
-    if (raw.method === 'thread/tokenUsage/updated') this.turnUsage = turnUsageOf(raw.params) ?? this.turnUsage;
+    if (raw.method === 'thread/tokenUsage/updated') this.usage = trackTokenUsage(this.usage, raw.params);
     if (raw.method === 'serverRequest/resolved') return this.onResolved(raw.params);
-    const events = normalizeNotification(raw.method, raw.params, this.turnUsage);
-    if (raw.method === 'turn/completed') this.closeTurn();
+    const events = normalizeNotification(raw.method, raw.params, this.usage.turn);
+    const closed = raw.method === 'turn/completed' ? this.closeTurn() : [];
     const context = raw.method === 'thread/tokenUsage/updated' ? contextUsageOf(raw.params) : null;
-    return context === null ? events : [...events, { kind: 'context_usage', usage: context }];
+    const withContext = context === null ? events : [...events, { kind: 'context_usage', usage: context } as MageEvent];
+    return closed.length === 0 ? withContext : [...withContext, ...closed];
   }
 
-  private closeTurn(): void {
+  private closeTurn(): MageEvent[] {
     this.turnId = null;
-    this.turnUsage = null;
+    this.turnStarting = false;
+    // El total del hilo se conserva: el turno siguiente cuenta desde el.
+    this.usage = { ...this.usage, turn: null };
     this.fileChanges.clear();
+    return this.releaseHeldSteers();
   }
 
   // 0.160.0 manda el diff en item/started; requestApproval solo lleva el itemId.
@@ -246,16 +279,16 @@ export class CodexAdapter implements ProviderAdapter {
   private onResponse(raw: Record<string, unknown>): MageEvent[] {
     const kind = typeof raw.id === 'number' ? this.own.get(raw.id) : undefined;
     if (kind === undefined) return [];
-    this.own.delete(raw.id as number);
+    const id = raw.id as number;
+    this.own.delete(id);
+    if (kind === 'steer') return this.afterSteer(id, raw);
+    if (kind === 'turn') return this.afterTurnStart(raw);
     if (isRecord(raw.error)) return this.onError(kind, raw.error);
     switch (kind) {
       case 'initialize':
         return this.afterInitialize();
       case 'thread':
         return this.afterThread(raw.result);
-      case 'turn':
-        this.turnId = isRecord(raw.result) && isRecord(raw.result.turn) && typeof raw.result.turn.id === 'string' ? raw.result.turn.id : null;
-        return [];
       case 'models':
         return modelsEvent(raw.result);
       case 'rateLimits':
@@ -269,7 +302,7 @@ export class CodexAdapter implements ProviderAdapter {
   // conversacion; uno del arranque o del turno si se pinta.
   private onError(kind: OwnRequest, error: Record<string, unknown>): MageEvent[] {
     if (kind === 'models' || kind === 'rateLimits' || kind === 'other') return [];
-    return [{ kind: 'error', message: `codex rechazo la peticion (${kind}): ${String(error.message)}` }];
+    return [{ kind: 'error', localized: localized('events.codex.requestRejected', { kind, detail: String(error.message) }) }];
   }
 
   private afterInitialize(): MageEvent[] {
@@ -286,7 +319,7 @@ export class CodexAdapter implements ProviderAdapter {
 
   private afterThread(result: unknown): MageEvent[] {
     const thread = isRecord(result) && isRecord(result.thread) ? result.thread : null;
-    if (thread === null || typeof thread.id !== 'string') return [{ kind: 'error', message: 'codex abrio el hilo sin id' }];
+    if (thread === null || typeof thread.id !== 'string') return [{ kind: 'error', localized: localized('events.codex.threadWithoutId') }];
     this.threadId = thread.id;
     const model = isRecord(result) && typeof result.model === 'string' ? result.model : this.model;
     const queued = this.queuedInputs;
@@ -306,7 +339,7 @@ export class CodexAdapter implements ProviderAdapter {
       const request = parseElicitationRequest(requestId, server, params);
       if (request === null) {
         this.outgoing.push({ jsonrpc: '2.0', id: rawId, result: { action: 'cancel', content: null } });
-        return [{ kind: 'notice', text: `El servidor ${server} pidió un formulario MCP que Mage no puede mostrar; se canceló.` }];
+        return [{ kind: 'notice', localized: localized('events.mcp.elicitationUnsupported', { server }) }];
       }
       this.elicitations.set(requestId, { rawId, request });
       return [{ kind: 'elicitation_request', request }];
@@ -336,6 +369,7 @@ export class CodexAdapter implements ProviderAdapter {
 
   private startTurn(input: readonly unknown[]): void {
     if (this.threadId === null) throw new Error('turn/start sin hilo de codex');
+    this.turnStarting = true;
     // Medido con codex-cli 0.160.0 y Responses local: omitir esfuerzo manda medium; `effort: low`
     // en turn/start llega como reasoning.effort=low. Thread/start no acepta este campo.
     const effort = this.effort;
@@ -344,6 +378,41 @@ export class CodexAdapter implements ProviderAdapter {
       ...(effort === null || effort.length === 0 ? {} : { effort }),
       approvalPolicy: this.approvalPolicy(), ...this.permissionsField(),
     }, 'turn');
+  }
+
+  // Respuesta a `turn/start`: con id de turno salen los directos que esperaban; sin el (error), no hay
+  // turno al que entrar.
+  private afterTurnStart(raw: Record<string, unknown>): MageEvent[] {
+    this.turnStarting = false;
+    const result = raw.result;
+    this.turnId = isRecord(result) && isRecord(result.turn) && typeof result.turn.id === 'string' ? result.turn.id : null;
+    const rejected = isRecord(raw.error) ? this.onError('turn', raw.error) : [];
+    if (this.turnId === null) return [...rejected, ...this.releaseHeldSteers()];
+    const held = this.heldSteers;
+    this.heldSteers = [];
+    for (const steer of held) this.sendSteer(steer.messageId, steer.input);
+    return rejected;
+  }
+
+  private sendSteer(messageId: string, input: readonly unknown[]): void {
+    if (this.threadId === null || this.turnId === null) throw new Error(`turn/steer sin hilo o sin turno de codex: ${messageId}`);
+    this.request('turn/steer', { threadId: this.threadId, expectedTurnId: this.turnId, input }, 'steer');
+    this.steerRequests.set(this.nextId, messageId);
+  }
+
+  // Directos que esperaban un turno que no llego: no hay a donde entrar.
+  private releaseHeldSteers(): MageEvent[] {
+    const held = this.heldSteers;
+    this.heldSteers = [];
+    return held.map(({ messageId }) => ({ kind: 'steer_result', messageId, outcome: 'no_active_turn' }) as MageEvent);
+  }
+
+  private afterSteer(id: number, raw: Record<string, unknown>): MageEvent[] {
+    const messageId = this.steerRequests.get(id);
+    if (messageId === undefined) return [];
+    this.steerRequests.delete(id);
+    if (!isRecord(raw.error)) return [{ kind: 'steer_result', messageId, outcome: 'active_turn' }];
+    return [steerRejection(messageId, raw.error)];
   }
 
   // El modo de permiso de Mage para codex es un perfil de su `permissionProfile/list` (`:workspace`…).
@@ -375,6 +444,27 @@ export class CodexAdapter implements ProviderAdapter {
     if (this.params === null) throw new Error('codex contesto antes de lanzar el proceso');
     return this.params;
   }
+}
+
+function buildInput(text: string, attachments: readonly ImageAttachment[]): unknown[] {
+  const input: unknown[] = [{ type: 'text', text, text_elements: [] }];
+  for (const attachment of attachments) input.push({ type: 'image', url: `data:${attachment.mediaType};base64,${attachment.data}` });
+  return input;
+}
+
+// Traduce el rechazo de `turn/steer` (formas medidas en 0.164.0): review/compact -> not_steerable con su
+// tipo; turno ya acabado o cambiado -> no_active_turn; cualquier otro -> failed con el detalle.
+function steerRejection(messageId: string, error: Record<string, unknown>): MageEvent {
+  const info = isRecord(error.data) && isRecord(error.data.codexErrorInfo) ? error.data.codexErrorInfo : null;
+  const notSteerable = info !== null && isRecord(info.activeTurnNotSteerable) ? info.activeTurnNotSteerable : null;
+  if (notSteerable !== null) {
+    const turnKind = typeof notSteerable.turnKind === 'string' ? notSteerable.turnKind : 'unknown';
+    return { kind: 'steer_result', messageId, outcome: 'not_steerable', turnKind };
+  }
+  const message = String(error.message);
+  const stale = error.code === JSONRPC_INVALID_REQUEST && STALE_STEER_MESSAGES.some((prefix) => message.startsWith(prefix));
+  if (stale) return { kind: 'steer_result', messageId, outcome: 'no_active_turn' };
+  return { kind: 'steer_result', messageId, outcome: 'failed', localized: localized('events.codex.requestRejected', { kind: 'steer', detail: message }) };
 }
 
 // Medido con una clave falsa: OpenAI devuelve la clave en el error («Incorrect API key provided:

@@ -6,6 +6,7 @@ import { NEEDS_AUTH, tagSessionServers } from '../mcpView';
 import { McpAuthActions, OriginBadge } from './settings/McpSection';
 import { Hint } from './TranscriptHint';
 import { AGY_PROVIDER_ID } from '@shared/providers';
+import { useT } from '../../i18n/uiLanguage';
 
 // Referencia ESTABLE para el fallback del selector: un array NUEVO en cada render (`?? []`) rompe la
 // igualdad referencial que espera Zustand y provoca un bucle infinito de renders (mismo patron que
@@ -26,6 +27,7 @@ export function McpPanel(): React.JSX.Element {
   const provider = useWorkbenchStore((s) => s.tabs.find((t) => t.id === s.activeTabId)?.provider);
   const snapshot = useSharedConfigStore((s) => s.snapshot);
   const loadSharedConfig = useSharedConfigStore((s) => s.load);
+  const t = useT();
 
   // Carga el snapshot (para saber qué nombres son "comunes") si nadie lo pidió aún en esta sesión de
   // la app — p.ej. el usuario nunca abrió Configuración. Barato: dos ficheros pequeños.
@@ -35,29 +37,21 @@ export function McpPanel(): React.JSX.Element {
 
   // agy no reporta sus MCP en el stream (medido en 1.2.14: su `init` no trae `mcpServers`).
   if (provider === AGY_PROVIDER_ID) {
-    return <Hint text="agy no informa del estado de sus MCP. Los que tiene (incluidos los que le sincroniza Mage) se ven en Configuración › MCP y conectores." />;
+    return <Hint text={t('mcp.inspector.agyNoStatus')} />;
   }
 
   if (mcpServers.length === 0) {
     // Distinguir "no cargo ninguno" de "todavia no hay a quien preguntar". Los servidores MCP los
     // reporta el CLI en su `session_init`, asi que sin sesion viva no hay dato — y decir "esta sesion
     // no cargo ninguno" sobre una conversacion recien abierta del historial es sencillamente falso.
-    return (
-      <Hint
-        text={
-          hasLiveSession
-            ? 'Esta sesión no cargó ningún servidor MCP.'
-            : 'Los servidores MCP los reporta el agente al arrancar. Envía un mensaje para saber cuáles carga esta conversación.'
-        }
-      />
-    );
+    return <Hint text={hasLiveSession ? t('mcp.inspector.noServers') : t('mcp.inspector.noSessionYet')} />;
   }
 
   const tagged = tagSessionServers(mcpServers, snapshot?.mcpCommonServerNames ?? []);
   return (
     <div className="flex h-full flex-col">
       <div className="flex shrink-0 items-center justify-between border-b border-mg-border-subtle px-[10px] py-[6px] text-[10px] text-mg-ter">
-        <span className="font-bold tracking-[.06em]">SERVIDORES MCP ({tagged.length})</span>
+        <span className="font-bold tracking-[.06em]">{t('mcp.inspector.title', { count: tagged.length })}</span>
       </div>
       <ul className="flex flex-1 flex-col gap-[6px] overflow-y-auto px-[10px] py-[8px]">
         {tagged.map((server) => (

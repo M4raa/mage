@@ -1,4 +1,5 @@
 import type { McpAuthResult, McpLiveStatus } from '@shared/mcp';
+import { foreignText, localized, wrapError, type LocalizedText } from '@shared/i18n/localizedText';
 import type { ProbeProcess } from '../engine/modelProbe';
 import { closeGracefully, controlResponse, isRecord, statusesOf, type ControlResponse } from './mcpStatusProbe';
 
@@ -57,7 +58,7 @@ export function authenticateMcp(deps: McpAuthDeps, configDir: string, serverName
     const flow: FlowContext = { deps, serverName, state, child, settle, askStatus };
     child.onExit(() => {
       state.exited = true;
-      settle({ kind: 'error', message: 'El CLI terminó antes de completar la autenticación.' });
+      settle({ kind: 'error', message: localized('mcp.main.authCliExitedEarly') });
     });
     child.onStdout((chunk) => {
       state.buffer += chunk;
@@ -93,7 +94,7 @@ async function onAuthResponse(flow: FlowContext, body: unknown): Promise<void> {
     try {
       await flow.deps.openUrl(auth.authUrl);
     } catch (err) {
-      return flow.settle({ kind: 'error', message: `No se pudo abrir el navegador: ${err instanceof Error ? err.message : String(err)}` });
+      return flow.settle({ kind: 'error', message: wrapError('mcp.main.authOpenBrowserFailed', {}, err) });
     }
   }
   // Se completa fuera (claude.ai): el CLI no espera nada y el estado se ve al volver a comprobar.
@@ -107,7 +108,7 @@ function onStatusResponse(flow: FlowContext, body: unknown): void {
   if (server?.status === CONNECTED) return flow.settle({ kind: 'connected', statuses: flow.state.last });
   if (server?.status === FAILED) {
     const detail = typeof server.error === 'string' ? `: ${server.error}` : '';
-    return flow.settle({ kind: 'error', message: `El servidor ${flow.serverName} no conectó tras autenticar${detail}` });
+    return flow.settle({ kind: 'error', message: localized('mcp.main.authServerNotConnected', { server: flow.serverName, detail }) });
   }
   flow.state.poll = setTimeout(flow.askStatus, flow.deps.pollMs);
 }
@@ -118,6 +119,7 @@ function rawServer(body: unknown, name: string): Record<string, unknown> | null 
   return isRecord(found) ? found : null;
 }
 
-function errorText(response: ControlResponse): string {
-  return typeof response.error === 'string' && response.error.length > 0 ? response.error : `El CLI rechazó la petición (${String(response.id)}).`;
+function errorText(response: ControlResponse): LocalizedText {
+  if (typeof response.error === 'string' && response.error.length > 0) return foreignText(response.error);
+  return localized('mcp.main.authCliRejected', { id: String(response.id) });
 }

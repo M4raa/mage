@@ -1,5 +1,6 @@
 import type { MageEvent } from '@shared/events';
 import type { ChatStatus } from './types';
+import { t } from '../i18n/uiLanguage';
 
 // Cerrar una conversacion con trabajo en vuelo NO la corta (decision del usuario, 2026-09-15): la
 // sesion del CLI sigue viva "en segundo plano" y la conversacion reaparece en el panel de
@@ -12,20 +13,15 @@ export type BackgroundState =
   | 'done'; // el turno acabo: pendiente de revision
 
 export interface BackgroundSession {
-  readonly sessionId: string;
+  readonly sessionId: string; // la sesion VIVA de Mage: con la que se habla con main (parar, eventos)
+  // La CONVERSACION (conversationIdOfTab al cerrar), con la que pregunta el historial. En Codex y agy es el
+  // hilo y no coincide con `sessionId`; sin hilo todavia no hay conversacion que buscar (H3, devolucion 18).
+  readonly conversationId: string | undefined;
   readonly title: string; // el de la pestaña al cerrarla (la fila del historial puede tardar en refrescarse)
   readonly accountId: string;
   readonly state: BackgroundState;
-  readonly sinceMs: number; // cuando se mando a segundo plano; base del TTL
-  // Las reglas «Permitir siempre aqui» de la pestaña al cerrarla (P-026, 1.8): sin ellas, un permiso
-  // ya concedido dejaba la sesion «pendiente de accion» y avisaba «Permiso requerido».
-  readonly alwaysAllowTools: readonly string[];
+  readonly sinceMs: number; // cuando se mando a segundo plano (la caducidad la lleva main, F2.4)
 }
-
-// Se mata la sesion huerfana a la semana de mandarla a segundo plano (decision del usuario): si nadie
-// ha vuelto en ese plazo, el proceso del CLI ya no le sirve a nadie. Cabe en un setTimeout (el tope de
-// los temporizadores del navegador son ~24,8 dias).
-export const BACKGROUND_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 // Solo se manda a segundo plano lo que TIENE trabajo vivo. Una conversacion parada se cierra como
 // siempre (su proceso se para): dejarla viva seria pagar un CLI por cada pestaña que se cierra.
@@ -38,14 +34,24 @@ export function shouldBackgroundOnClose(status: ChatStatus | undefined): boolean
 // plano con el CLI vivo— y la otra ventana no podria reanudarla. No hay traspaso en vivo de la sesion.
 export function tabMoveBlockedReason(status: ChatStatus | undefined): string | null {
   if (!shouldBackgroundOnClose(status)) return null;
-  return 'Tiene un turno en marcha: espera a que termine para moverla a otra ventana.';
+  return t('history.background.tabMoveBlocked');
+}
+
+// La entrada de segundo plano de una conversacion del historial. La UNICA busqueda por conversacion: el mapa
+// va por la sesion viva y el historial no la conoce. Recorre las entradas: son las pocas que se cerraron
+// trabajando, nunca el historial entero.
+export function backgroundOfConversation(
+  sessions: Readonly<Record<string, BackgroundSession>>,
+  conversationId: string,
+): BackgroundSession | undefined {
+  return Object.values(sessions).find((b) => b.conversationId === conversationId);
 }
 
 // Lo mismo para una fila del historial que sigue viva en segundo plano. Terminada ('done') si se puede:
 // solo queda revisarla, y abrirla en otra ventana corta su sesion como abrirla aqui.
 export function backgroundMoveBlockedReason(background: BackgroundSession | undefined): string | null {
   if (background === undefined || background.state === 'done') return null;
-  return 'Sigue trabajando en segundo plano: espera a que termine para abrirla en otra ventana.';
+  return t('history.background.moveBlocked');
 }
 
 // Transicion de estado al llegar un evento de una sesion SIN pestaña. Devuelve el estado actual si el
@@ -63,8 +69,8 @@ export function nextBackgroundState(current: BackgroundState, event: MageEvent):
 
 // Etiqueta de la fila del panel de Conversaciones.
 export function backgroundLabel(state: BackgroundState): string {
-  if (state === 'working') return 'en segundo plano';
-  return state === 'needs_action' ? 'pendiente de acción' : 'pendiente de revisión';
+  if (state === 'working') return t('history.background.working');
+  return state === 'needs_action' ? t('history.background.needsAction') : t('history.background.done');
 }
 
 // Conversaciones que un «Cerrar Mage» cortaria: las pestañas con un turno en marcha (o esperando un

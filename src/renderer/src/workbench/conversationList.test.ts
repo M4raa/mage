@@ -46,6 +46,16 @@ describe('mergeConversationRows', () => {
     expect(rows.map((r) => r.kind)).toEqual(['tab', 'history']);
   });
 
+  // Devolución 19: con sesión viva, la pestaña de Codex se empareja con su hilo y no sale dos veces.
+  it('mergeConversationRows_pestañaCodexConSesionViva_absorbeLaFilaDeSuHilo', () => {
+    const tabs = [tab({ id: 'tA', accountId: '.codex-a', provider: 'codex', resumeSessionId: 'thread-7' })];
+    const history = [hist({ sessionId: 'thread-7', configDir: '.codex-a' })];
+
+    const rows = mergeConversationRows(tabs, history, { tA: 'mage-uuid-1' }, '.codex-a', 'shared');
+
+    expect(rows.map((r) => r.kind)).toEqual(['tab']);
+  });
+
   it('pestanaAbiertaSinEscribir_mantieneSuSitioPorMtimeDelHistorial', () => {
     // Abrir una conversacion antigua NO debe subirla al principio (A6): su sitio lo da su mtime.
     const tabs = [tab({ id: 'tA', resumeSessionId: 'sVieja' })];
@@ -166,6 +176,13 @@ describe('planOpenConversation', () => {
 
   it('planOpenConversation_noEstaAbierta_creaPestanaNueva', () => {
     expect(planOpenConversation({ ...CTX, tabs: [], sessionIdByChat: {} })).toEqual({ action: 'create' });
+  });
+
+  // Devolución 19: antes no la encontraba (casaba el UUID de Mage) y abría OTRA pestaña con el mismo hilo.
+  it('planOpenConversation_codexConSesionViva_activaLaPestaña', () => {
+    const tabs = [tab({ id: 'tA', accountId: '.claude-p', provider: 'codex', resumeSessionId: 's1' })];
+
+    expect(planOpenConversation({ ...CTX, tabs, sessionIdByChat: { tA: 'mage-uuid-1' } })).toEqual({ action: 'activate', tabId: 'tA' });
   });
 
   it('planOpenConversation_abiertaEnLaCuentaActiva_soloLaActiva', () => {

@@ -13,6 +13,7 @@ import {
   UI_SCALE_MAX,
   UI_SCALE_MIN,
 } from '@shared/settings';
+import { UI_LANGUAGE_PREFERENCES } from '@shared/i18n/language';
 import { writeAtomic, type AtomicWriteDeps } from '../os/atomicFile';
 
 // Persistencia de la configuracion de la app (M2.3) en userData/app-settings.json. Mismo patron que
@@ -124,6 +125,7 @@ const APP_SETTINGS_SCHEMA = z.object({
   // una version anterior no la trae y cae a []. Que caiga a [] y no a "todo confiado" es el punto: al
   // perderse el dato se vuelve a PREGUNTAR, que es el lado seguro de equivocarse.
   trustedFolders: z.array(z.string().min(1)).catch([]),
+  distrustedFolders: z.array(z.string().min(1)).catch([]),
   // Retencion de scratchpads (B.4.2). Ausente o basura -> 'never', que es el lado que NO borra nada:
   // equivocarse hacia el borrado seria destruir trabajo por un fichero corrupto.
   scratchRetention: z.enum(SCRATCH_RETENTIONS).catch('never'),
@@ -151,6 +153,8 @@ const APP_SETTINGS_SCHEMA = z.object({
   accentByAccount: z.record(z.string(), z.number().int().min(0).max(ACCOUNT_ACCENT_COUNT - 1)).catch({}),
   // Conectores de claude.ai apagados por cuenta. Ausente o basura -> [] (encendidos, como antes de existir).
   claudeAiConnectorsOff: z.array(z.string().min(1)).catch([]),
+  // D5: Artifact. Ausente o basura -> false: el lado que no publica nada.
+  artifactEnabled: z.boolean().catch(false),
   // Aviso de gh descartado (DA-3). Ausente o basura -> false: el lado que vuelve a avisar.
   ghNoticeDismissed: z.boolean().catch(false),
   // Auto-archivar al cerrarse el PR. Ausente o basura -> false: no se cierra nada solo.
@@ -166,6 +170,8 @@ const APP_SETTINGS_SCHEMA = z.object({
       z.array(z.object({ model: z.string().min(1), allow: z.array(z.string().min(1)).nullable(), deny: z.array(z.string().min(1)) })),
     )
     .catch({}),
+  // Idioma (F3). Ausente o basura -> ausente: «sin preferencia», que hereda la inicial o sigue al sistema.
+  uiLanguage: z.enum(UI_LANGUAGE_PREFERENCES).optional().catch(undefined),
 });
 
 export class SettingsStore {

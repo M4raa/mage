@@ -1,6 +1,7 @@
 import { EFFORT_LEVELS, isPermissionMode, PERMISSION_MODES, type PermissionMode } from '@shared/ipc';
 import { AGY_PERMISSION_MODES, AGY_PROVIDER_ID, RUNTIME_PERMISSION_MODES, runsOnMageRuntime } from '@shared/providers';
 import { codexPermissionPreset } from '@shared/codexPermissions';
+import { t } from '../i18n/uiLanguage';
 
 // Datos PUROS de los selectores de pasos (P-028 32/33): modo de permiso y esfuerzo se eligen con un
 // deslizador de pasos (`StepSlider`); aqui viven sus pasos, etiquetas y el mapeo posicion <-> valor, sin
@@ -9,6 +10,17 @@ import { codexPermissionPreset } from '@shared/codexPermissions';
 export interface SliderStep {
   readonly value: string;
   readonly label: string;
+}
+
+// Paso cuya etiqueta se traduce al LEERLA: hay pasos que son constantes del módulo (o que PromptBar memoiza) y su
+// etiqueta tiene que seguir al idioma activo, no al del momento en que se crearon.
+function translatedStep(value: string, label: () => string): SliderStep {
+  return {
+    value,
+    get label() {
+      return label();
+    },
+  };
 }
 
 // Posicion de un valor en los pasos, o -1 si no esta (un modo desconocido que reporta el CLI).
@@ -25,31 +37,48 @@ export function stepValueAt(steps: readonly SliderStep[], index: number): string
 
 // --- Esfuerzo -------------------------------------------------------------------------------------
 
-// '' = sin fijar -> default del CLI ("Auto"), siempre a la izquierda del todo.
-export const EFFORT_STEP_LABEL: Readonly<Record<string, string>> = {
-  '': 'Auto',
-  low: 'Bajo',
-  medium: 'Medio',
-  high: 'Alto',
-  xhigh: 'Muy alto',
-  max: 'Máximo',
-  ultra: 'Ultra',
+type EffortStepLabelKey =
+  | 'prompt.effort.step.auto'
+  | 'prompt.effort.step.low'
+  | 'prompt.effort.step.medium'
+  | 'prompt.effort.step.high'
+  | 'prompt.effort.step.xhigh'
+  | 'prompt.effort.step.max'
+  | 'prompt.effort.step.ultra';
+
+// '' = sin fijar -> default del CLI ("Auto"), siempre a la izquierda del todo. Guarda la CLAVE: se traduce al pintar.
+const EFFORT_STEP_LABEL_KEY: Readonly<Record<string, EffortStepLabelKey>> = {
+  '': 'prompt.effort.step.auto',
+  low: 'prompt.effort.step.low',
+  medium: 'prompt.effort.step.medium',
+  high: 'prompt.effort.step.high',
+  xhigh: 'prompt.effort.step.xhigh',
+  max: 'prompt.effort.step.max',
+  ultra: 'prompt.effort.step.ultra',
 };
+
+// Etiqueta de un nivel de esfuerzo; un nivel que Mage no conoce se enseña con su nombre crudo.
+export function effortStepLabel(value: string): string {
+  const key = EFFORT_STEP_LABEL_KEY[value];
+  return key === undefined ? value : t(key);
+}
 
 // Pasos de esfuerzo de un proveedor: 'Auto' y sus niveles (Claude, los cinco de `EFFORT_LEVELS`; `agy`, tres).
 export function effortSteps(levels: readonly string[] = EFFORT_LEVELS): readonly SliderStep[] {
-  return ['', ...levels].map((value) => ({ value, label: EFFORT_STEP_LABEL[value] ?? value }));
+  return ['', ...levels].map((value) => ({ value, label: effortStepLabel(value) }));
 }
 
 // --- Modo de permiso ------------------------------------------------------------------------------
 
-// Etiqueta corta de cada modo (chip, slider y Ajustes).
-export const PERMISSION_MODE_LABEL: Readonly<Record<PermissionMode, string>> = {
-  default: 'Manual',
-  acceptEdits: 'Aceptar ediciones',
-  plan: 'Plan',
-  auto: 'Auto',
-  bypassPermissions: 'Omitir permisos',
+// Etiqueta corta de cada modo (chip, slider y Ajustes). Guarda la CLAVE: se traduce al pintar.
+const PERMISSION_MODE_LABEL_KEY: Readonly<
+  Record<PermissionMode, 'prompt.permission.mode.default' | 'prompt.permission.mode.acceptEdits' | 'prompt.permission.mode.plan' | 'prompt.permission.mode.auto' | 'prompt.permission.mode.bypassPermissions'>
+> = {
+  default: 'prompt.permission.mode.default',
+  acceptEdits: 'prompt.permission.mode.acceptEdits',
+  plan: 'prompt.permission.mode.plan',
+  auto: 'prompt.permission.mode.auto',
+  bypassPermissions: 'prompt.permission.mode.bypassPermissions',
 };
 
 // De «mas control» a «mas autonomia». NO es el orden del ciclo de Shift+Tab (`PERMISSION_MODES`): ahi el
@@ -61,22 +90,22 @@ if (PERMISSION_SLIDER_ORDER.length !== PERMISSION_MODES.length) {
   throw new Error(`PERMISSION_SLIDER_ORDER (${PERMISSION_SLIDER_ORDER.length}) no casa con PERMISSION_MODES (${PERMISSION_MODES.length})`);
 }
 
-export const permissionSteps: readonly SliderStep[] = PERMISSION_SLIDER_ORDER.map((mode) => ({
-  value: mode,
-  label: PERMISSION_MODE_LABEL[mode],
-}));
+export const permissionSteps: readonly SliderStep[] = PERMISSION_SLIDER_ORDER.map((mode) => translatedStep(mode, () => permissionModeLabel(mode)));
 
 // Etiqueta del modo por defecto de Ajustes: '' = el de la cuenta, y despues los cinco modos del chat.
-export const DEFAULT_PERMISSION_MODE_ACCOUNT_LABEL = 'De la cuenta';
-export const defaultPermissionSteps: readonly SliderStep[] = [{ value: '', label: DEFAULT_PERMISSION_MODE_ACCOUNT_LABEL }, ...permissionSteps];
+export function defaultPermissionModeAccountLabel(): string {
+  return t('prompt.permission.mode.fromAccount');
+}
+export const defaultPermissionSteps: readonly SliderStep[] = [translatedStep('', defaultPermissionModeAccountLabel), ...permissionSteps];
 
 // Un modo que Mage no ofrece (el CLI puede estar en `dontAsk`) se enseña con su nombre crudo.
 export function permissionModeLabel(mode: string): string {
-  if (isPermissionMode(mode)) return PERMISSION_MODE_LABEL[mode];
-  if (mode === codexPermissionPreset(':workspace', 'never')) return 'Aprobar automáticamente';
-  if (mode === codexPermissionPreset(':danger-full-access', 'never')) return 'Acceso completo';
-  if (mode === ':workspace') return 'Solicitar aprobación';
-  return CODEX_PROFILE_LABEL[mode] ?? mode;
+  if (isPermissionMode(mode)) return t(PERMISSION_MODE_LABEL_KEY[mode]);
+  if (mode === codexPermissionPreset(':workspace', 'never')) return t('prompt.permission.codex.autoApprove');
+  if (mode === codexPermissionPreset(':danger-full-access', 'never')) return t('prompt.permission.codex.fullAccess');
+  if (mode === ':workspace') return t('prompt.permission.codex.requestApproval');
+  const key = CODEX_PROFILE_LABEL_KEY[mode];
+  return key === undefined ? mode : t(key);
 }
 
 // --- Modos leidos del CLI (respuesta 18) ----------------------------------------------------------
@@ -98,14 +127,24 @@ export function defaultModeOf(providerId: string): string {
   return providerId === AGY_PROVIDER_ID ? 'acceptEdits' : 'default';
 }
 
+// Codex sin modo elegido: Mage no le manda `permissions` y el hilo arranca en `:read-only` (medido en
+// `spike/codex-sandbox-spike.mjs`, codex-cli 0.164.0). Respuesta 1 de la devolución 16: se queda así por defecto,
+// como Claude, que también pregunta antes de editar, y la pestaña lo enseña con un clic para pasar a `:workspace`.
+export const CODEX_DEFAULT_PROFILE = ':read-only';
+export const CODEX_WRITE_PROFILE = ':workspace';
+
+export function effectiveCodexMode(mode: string | undefined): string {
+  return mode === undefined || mode === '' ? CODEX_DEFAULT_PROFILE : mode;
+}
+
 // Pasos de agy: su `--mode` solo admite `accept-edits` y `plan`.
-export const agyPermissionSteps: readonly SliderStep[] = AGY_PERMISSION_MODES.map((mode) => ({ value: mode, label: permissionModeLabel(mode) }));
+export const agyPermissionSteps: readonly SliderStep[] = AGY_PERMISSION_MODES.map((mode) => translatedStep(mode, () => permissionModeLabel(mode)));
 
 // Perfiles integrados de `codex app-server` (`permissionProfile/list`, medido en 0.144.4).
-const CODEX_PROFILE_LABEL: Readonly<Record<string, string>> = {
-  ':read-only': 'Solo lectura',
-  ':workspace': 'Espacio de trabajo',
-  ':danger-full-access': 'Acceso total',
+const CODEX_PROFILE_LABEL_KEY: Readonly<Record<string, 'prompt.permission.codex.readOnly' | 'prompt.permission.codex.workspace' | 'prompt.permission.codex.dangerFullAccess'>> = {
+  ':read-only': 'prompt.permission.codex.readOnly',
+  ':workspace': 'prompt.permission.codex.workspace',
+  ':danger-full-access': 'prompt.permission.codex.dangerFullAccess',
 };
 
 // Pasos del deslizador con los modos QUE EXPONE el CLI: los conocidos en su escala de siempre y los
@@ -114,7 +153,7 @@ export function permissionStepsFor(cliModes: readonly string[] | null): readonly
   if (cliModes === null) return permissionSteps;
   const known = PERMISSION_SLIDER_ORDER.filter((mode) => cliModes.includes(mode));
   const unknown = cliModes.filter((mode) => !isPermissionMode(mode));
-  return [...known, ...unknown].map((mode) => ({ value: mode, label: permissionModeLabel(mode) }));
+  return [...known, ...unknown].map((mode) => translatedStep(mode, () => permissionModeLabel(mode)));
 }
 
 // Orden del ciclo de Shift+Tab con los modos del CLI (el historico, y los nuevos al final).
@@ -126,10 +165,10 @@ export function permissionCycleFor(cliModes: readonly string[] | null): readonly
 // Pasos de Codex: sus perfiles, en el orden que los da (de menos a mas acceso). Sin sondeo, ninguno.
 export function codexPermissionSteps(profiles: readonly string[] | null): readonly SliderStep[] {
   return (profiles ?? []).flatMap((profile) => {
-    const step = { value: profile, label: permissionModeLabel(profile) };
+    const step = translatedStep(profile, () => permissionModeLabel(profile));
     if (profile !== ':workspace' && profile !== ':danger-full-access') return [step];
     const value = codexPermissionPreset(profile, 'never');
-    return [step, { value, label: permissionModeLabel(value) }];
+    return [step, translatedStep(value, () => permissionModeLabel(value))];
   });
 }
 

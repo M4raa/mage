@@ -37,8 +37,8 @@ describe('pathEquals', () => {
     expect(pathEquals('C:\\', 'C:')).toBe(false);
   });
 
-  it('pathEquals_mayusculas_seIgnoran', () => {
-    expect(pathEquals('/Home/U/.Claude', '/home/u/.claude')).toBe(true);
+  it('pathEquals_mayusculas_soloSeIgnoranEnWindows', () => {
+    expect(pathEquals('/Home/U/.Claude', '/home/u/.claude')).toBe(process.platform === 'win32');
   });
 
   it('pathEquals_segmentosRedundantes_seResuelven', () => {

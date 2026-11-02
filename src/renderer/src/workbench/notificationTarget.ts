@@ -1,4 +1,5 @@
 import type { NotificationTarget } from '@shared/ipc';
+import { conversationIdOfTab } from './conversationId';
 
 // A donde lleva el clic en una notificacion del SO (P-028 40). PURO: recibe lo que sabe el store.
 //   1. La pestaña que la pidio, si sigue abierta en esta ventana (por id o por la sesion que corre).
@@ -11,7 +12,7 @@ export type NotificationDestination =
   | { readonly kind: 'none' };
 
 export interface NotificationTargetContext {
-  readonly tabs: readonly { readonly id: string; readonly accountId: string; readonly resumeSessionId?: string }[];
+  readonly tabs: readonly { readonly id: string; readonly accountId: string; readonly provider: string; readonly resumeSessionId?: string }[];
   readonly sessionIdByChat: Readonly<Record<string, string>>;
   // Cuenta de las sesiones en segundo plano (pestaña cerrada con trabajo en vuelo).
   readonly backgroundAccountBySession: Readonly<Record<string, string>>;
@@ -33,6 +34,10 @@ function findTab(target: NotificationTarget, context: NotificationTargetContext)
     const byId = context.tabs.find((tab) => tab.id === target.tabId);
     if (byId !== undefined) return byId;
   }
-  // En otra ventana los ids de pestaña no significan nada: se busca por la sesion.
-  return context.tabs.find((tab) => (context.sessionIdByChat[tab.id] ?? tab.resumeSessionId) === target.sessionId);
+  // En otra ventana los ids de pestaña no significan nada: se busca por la sesion. Los eventos avisan con la sesion
+  // VIVA de Mage y el CI con la CONVERSACION; en Codex y agy son ids distintos, asi que vale cualquiera de los dos.
+  return context.tabs.find((tab) => {
+    const live = context.sessionIdByChat[tab.id];
+    return live === target.sessionId || conversationIdOfTab(tab, live) === target.sessionId;
+  });
 }

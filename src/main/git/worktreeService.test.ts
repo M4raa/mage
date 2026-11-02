@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { localized } from '@shared/i18n/localizedText';
 import { findRepoRootWith, type GitRunner } from './gitService';
 import { createWorktreeService, hasUserChanges, nodeWorktreeFs, type WorktreeServiceDeps } from './worktreeService';
 
@@ -64,6 +65,7 @@ describe('createWorktreeService (guardas)', () => {
     const run = vi.fn<GitRunner>(async () => 'worktree /r/.claude/worktrees/agent-1\nHEAD 1\nbranch refs/heads/worktree-agent-1\n');
 
     await expect(createWorktreeService(deps({ run, fs: { ...nodeWorktreeFs, removeTree } })).remove('/r/.claude/worktrees/agent-1', '/acc')).rejects.toThrow('no es un worktree de Mage');
+    await expect(createWorktreeService(deps({ run, fs: { ...nodeWorktreeFs, removeTree } })).remove('/r/.claude/worktrees/agent-1', '/acc')).rejects.toThrow(expect.objectContaining({ localized: localized('errors.git.notRegisteredWorktree', { cwd: '/r/.claude/worktrees/agent-1', repoRoot: '/r' }) }));
     expect(removeTree).not.toHaveBeenCalled();
   });
 

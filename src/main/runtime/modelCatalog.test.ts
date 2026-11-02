@@ -46,7 +46,7 @@ describe('ModelCatalog.info', () => {
     const info = await catalog.info({ ...ENDPOINT, baseUrl: 'http://127.0.0.1:11434/v1' }, 'qwen');
 
     expect(info).toMatchObject({ contextWindow: OLLAMA_DEFAULT_CTX, contextSource: 'ollama', supportsTools: false });
-    expect(info.warning).toMatch(/OLLAMA_CONTEXT_LENGTH/);
+    expect(info.warning).toEqual({ key: 'events.runtime.ollamaContextLimited', values: { model: 'qwen', declared: '32768', loaded: String(OLLAMA_DEFAULT_CTX) } });
   });
 
   it('info_ollamaSmallModel_noWarning', async () => {
@@ -94,6 +94,12 @@ describe('ModelCatalog.info', () => {
   it('info_invalidManualWindow_throwsWithValue', async () => {
     await expect(new ModelCatalog({ fetch: fakeFetch({}), now: () => 0 }).info({ ...ENDPOINT, contextWindow: 0 }, 'm')).rejects.toThrow(/0/);
   });
+
+  it('info_invalidManualWindow_throwsTheKeyWithProviderAndWindow', async () => {
+    await expect(new ModelCatalog({ fetch: fakeFetch({}), now: () => 0 }).info({ ...ENDPOINT, contextWindow: 0 }, 'm')).rejects.toThrow(
+      expect.objectContaining({ localized: { key: 'errors.runtime.contextWindowInvalidProvider', values: { provider: ENDPOINT.id, window: '0' } } }),
+    );
+  });
 });
 
 describe('ModelCatalog.listModels', () => {
@@ -105,6 +111,12 @@ describe('ModelCatalog.listModels', () => {
 
   it('list_serverError_throwsWithStatus', async () => {
     await expect(new ModelCatalog({ fetch: fakeFetch({}), now: () => 0 }).listModels(ENDPOINT)).rejects.toThrow(/404/);
+  });
+
+  it('list_serverError_throwsTheKeyWithStatus', async () => {
+    await expect(new ModelCatalog({ fetch: fakeFetch({}), now: () => 0 }).listModels(ENDPOINT)).rejects.toThrow(
+      expect.objectContaining({ localized: expect.objectContaining({ key: 'errors.runtime.catalogHttpStatus', values: { status: '404' } }) }),
+    );
   });
 });
 

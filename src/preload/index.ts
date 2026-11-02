@@ -1,3 +1,4 @@
+import type { ConversationLockParams, ConversationLockRef } from '@shared/conversationLock';
 import { contextBridge, ipcRenderer, webFrame } from 'electron';
 import {
   EVENT_CHANNEL,
@@ -9,15 +10,18 @@ import {
   NOTIFICATION_CLICKED_CHANNEL,
   WIDGET_SNAPSHOT_CHANNEL,
   SETTINGS_CHANGED_CHANNEL,
+  UI_LANGUAGE_CHANGED_CHANNEL,
   MODEL_CATALOG_CHANGED_CHANNEL,
   GH_PR_UPDATE_CHANNEL,
   WINDOW_TAB_RECEIVED_CHANNEL,
   CLOSE_PROMPT_CHANNEL,
   UPDATE_PROMPT_CHANNEL,
   UPDATE_STATE_CHANNEL,
+  CONVERSATION_LOCK_LOST_CHANNEL,
   type CloseAnswer,
 } from '@shared/ipc';
 import type { UpdateState } from '@shared/update';
+import type { ResolvedUiLanguage } from '@shared/i18n/language';
 import type { GhPrUpdate } from '@shared/gh';
 import type {
   McpAuthParams,
@@ -54,6 +58,8 @@ import type {
   SaveConversationPrefsParams,
   SaveSharedConfigParams,
   SendMessageParams,
+  QueuedMessageParams,
+  UpdateQueuedMessageParams,
   SessionEventPayload,
   SetModelParams,
   SetEffortParams,
@@ -74,20 +80,28 @@ import type { DeleteConversationParams, MigrateConversationParams, MoveConversat
 // Puente unico entre renderer y main. El renderer solo ve esta API tipada (window.mage);
 // no tiene acceso a Node, FS ni procesos. Cada metodo reenvia por un canal del contrato IPC.
 const api: MageApi = {
+  sandboxed: process.sandboxed === true,
+  isDevelopment: process.argv.includes('--mage-development'),
   createSession: (params: CreateSessionParams) => ipcRenderer.invoke(IpcChannel.SessionCreate, params),
   sendMessage: (params: SendMessageParams) => ipcRenderer.invoke(IpcChannel.SessionSendMessage, params),
   answerPermission: (params: AnswerPermissionParams) =>
     ipcRenderer.invoke(IpcChannel.SessionAnswerPermission, params),
   answerElicitation: (params) => ipcRenderer.invoke(IpcChannel.SessionAnswerElicitation, params),
   interrupt: (sessionId: string) => ipcRenderer.invoke(IpcChannel.SessionInterrupt, sessionId),
+  removeQueuedMessage: (params: QueuedMessageParams) => ipcRenderer.invoke(IpcChannel.SessionQueueRemove, params),
+  updateQueuedMessage: (params: UpdateQueuedMessageParams) => ipcRenderer.invoke(IpcChannel.SessionQueueUpdate, params),
+  takeQueuedMessages: (sessionId: string) => ipcRenderer.invoke(IpcChannel.SessionQueueTake, sessionId),
   setModel: (params: SetModelParams) => ipcRenderer.invoke(IpcChannel.SessionSetModel, params),
   setEffort: (params: SetEffortParams) => ipcRenderer.invoke(IpcChannel.SessionSetEffort, params),
   setPermissionMode: (params: SetPermissionModeParams) =>
     ipcRenderer.invoke(IpcChannel.SessionSetPermissionMode, params),
   stopTask: (params: StopTaskParams) => ipcRenderer.invoke(IpcChannel.SessionStopTask, params),
   stop: (sessionId: string) => ipcRenderer.invoke(IpcChannel.SessionStop, sessionId),
+  closeSession: (sessionId: string) => ipcRenderer.invoke(IpcChannel.SessionClose, sessionId),
+  getSessionSnapshot: (sessionId: string) => ipcRenderer.invoke(IpcChannel.SessionSnapshot, sessionId),
   getScratchDir: () => ipcRenderer.invoke(IpcChannel.SessionGetScratchDir),
   getScratchRoot: () => ipcRenderer.invoke(IpcChannel.SessionGetScratchRoot),
+  getScratchRoots: () => ipcRenderer.invoke(IpcChannel.SessionGetScratchRoots),
   existsDirs: (paths: readonly string[]) => ipcRenderer.invoke(IpcChannel.FsExistsDirs, paths),
   isAgyInstalled: () => ipcRenderer.invoke(IpcChannel.AgyInstalled),
   probeProvider: (params: ProviderProbeParams) => ipcRenderer.invoke(IpcChannel.ProviderProbe, params),
@@ -146,7 +160,22 @@ const api: MageApi = {
   getUsage: (configDir: string) => ipcRenderer.invoke(IpcChannel.UsageGet, configDir),
   getStatus: () => ipcRenderer.invoke(IpcChannel.StatusGet),
   getAppVersion: () => ipcRenderer.invoke(IpcChannel.AppVersionGet),
+  getUiLanguage: () => ipcRenderer.invoke(IpcChannel.UiLanguageGet),
+  onUiLanguageChanged: (listener: (resolved: ResolvedUiLanguage) => void) => {
+    const handler = (_: unknown, resolved: ResolvedUiLanguage) => listener(resolved);
+    ipcRenderer.on(UI_LANGUAGE_CHANGED_CHANNEL, handler);
+    return () => ipcRenderer.removeListener(UI_LANGUAGE_CHANGED_CHANNEL, handler);
+  },
   getAbout: () => ipcRenderer.invoke(IpcChannel.AboutGet),
+  getStartupWarnings: () => ipcRenderer.invoke(IpcChannel.StartupWarningsGet),
+  acquireConversationLock: (params: ConversationLockParams) => ipcRenderer.invoke(IpcChannel.ConversationLockAcquire, params),
+  takeOverConversationLock: (params: ConversationLockParams) => ipcRenderer.invoke(IpcChannel.ConversationLockTakeOver, params),
+  releaseConversationLock: (params: ConversationLockParams) => ipcRenderer.invoke(IpcChannel.ConversationLockRelease, params),
+  onConversationLockLost: (listener: (ref: ConversationLockRef) => void) => {
+    const handler = (_: unknown, ref: ConversationLockRef) => listener(ref);
+    ipcRenderer.on(CONVERSATION_LOCK_LOST_CHANNEL, handler);
+    return () => ipcRenderer.removeListener(CONVERSATION_LOCK_LOST_CHANNEL, handler);
+  },
   setWindowOpacity: (percent: number) => ipcRenderer.invoke(IpcChannel.WindowOpacitySet, percent),
   // Escala de la interfaz: el zoom propio de Chromium. Va por `webFrame` y no por IPC porque es del
   // frame que lo pide — asi cada ventana (principal, widget, artifact) escala la suya sin coordinar
@@ -249,6 +278,7 @@ const api: MageApi = {
   savePanelLayout: (state: PanelLayoutState) => ipcRenderer.invoke(IpcChannel.PanelsSave, state),
   // Varias ventanas del workbench. `loadWorkspace`/`saveWorkspace` NO cambian de firma: main resuelve
   // por el `event.sender` a que ventana pertenece cada llamada y le sirve SU workspace.
+  closeWindow: () => ipcRenderer.invoke(IpcChannel.WindowClose),
   openWindow: () => ipcRenderer.invoke(IpcChannel.WindowsOpen),
   listWindows: () => ipcRenderer.invoke(IpcChannel.WindowsList),
   moveTabToWindow: (params: MoveTabToWindowParams) => ipcRenderer.invoke(IpcChannel.WindowsMoveTab, params),
@@ -288,6 +318,7 @@ const api: MageApi = {
     return () => ipcRenderer.removeListener(UPDATE_PROMPT_CHANNEL, handler);
   },
   installUpdate: () => ipcRenderer.invoke(IpcChannel.UpdateInstall),
+  checkForUpdates: () => ipcRenderer.invoke(IpcChannel.UpdateCheck),
 };
 
 contextBridge.exposeInMainWorld('mage', api);

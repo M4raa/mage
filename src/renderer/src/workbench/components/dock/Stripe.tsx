@@ -5,6 +5,7 @@ import type { PanelId, ZoneKey } from '@shared/panelLayout';
 import { usePanelDragStore } from '../../panels/dragState';
 import { resolveDropBeforeId } from '../../panels/panelLayoutOps';
 import { Icon } from '../Icon';
+import { useT } from '../../../i18n/uiLanguage';
 
 // Mime propio para el arrastre de iconos entre zonas/bordes (F6, feedback del usuario: arrastrar Y
 // PUNTO, sin un boton "⋮" dedicado por icono — el menu "Mover a..." de un icono existente solo se abre
@@ -160,6 +161,7 @@ export function Stripe({
   onRequestMoveThird,
   onDropThird,
 }: StripeProps): React.JSX.Element | null {
+  const t = useT();
   // El hook va ANTES de la guarda: React exige el mismo numero de hooks en cada render del mismo
   // componente, y esta stripe pasa de pintar a no pintar EN UNA ACTUALIZACION (mover su ultimo icono a
   // otro borde), no en un remontaje — con la llamada detras del `return null` eso era un
@@ -228,8 +230,8 @@ export function Stripe({
         <button
           data-stripe-btn="true"
           onClick={(e) => onRequestAdd(e.clientX, e.clientY)}
-          aria-label="Añadir panel a este borde"
-          data-tip="Añadir panel a este borde"
+          aria-label={t('menu.dock.addPanelLabel')}
+          data-tip={t('menu.dock.addPanelLabel')}
           className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[6px] text-[13px] text-mg-muted hover:bg-mg-hover hover:text-mg-body"
         >
           <Icon name="ellipsis" size={PANEL_ICON_PX} />

@@ -10,6 +10,7 @@ import {
   type McpScope,
   type McpUserConfigValue,
 } from '@shared/mcp';
+import { localized, localizedFromError, localizedWithParts, renderForLog, UserFacingError, wrapError, type LocalizedText } from '@shared/i18n/localizedText';
 import { MCPB_MANIFEST, readMcpb, resolveInside } from './mcpbArchive';
 import {
   applyUserConfigValues,
@@ -88,7 +89,7 @@ export class McpExtensionService {
   // Lo instalado (con su estado) y lo que hay en Claude Desktop para importar. `commonNames`: comunes
   // con los que puede chocar; `exportedToAgy`: ids que la ultima sincronizacion dejo en agy.
   list(commonNames: ReadonlySet<string>, exportedToAgy: ReadonlySet<string>): McpExtensionList {
-    const warnings: string[] = [];
+    const warnings: LocalizedText[] = [];
     const installed = this.readInstalled(warnings);
     const ids = new Set(installed.map((item) => item.id));
     return {
@@ -106,7 +107,7 @@ export class McpExtensionService {
     const manifest = parseMcpbManifest(new TextDecoder().decode(contents.files.get(MCPB_MANIFEST)));
     const id = extensionIdOf(manifest);
     const problem = platformProblem(manifest, this.deps.platform);
-    if (problem !== null) throw new Error(`«${manifest.display_name ?? manifest.name}» no se puede instalar aquí: ${problem}`);
+    if (problem !== null) throw new UserFacingError(localizedWithParts('errors.config.extensionCannotInstall', { name: manifest.display_name ?? manifest.name }, { problem }));
     const token = this.deps.newToken();
     this.pending.set(token, { archivePath, sha256: sha256(bytes) });
     const previous = this.readOne(id);
@@ -131,7 +132,7 @@ export class McpExtensionService {
     if (pending === undefined) throw new Error(`Instalación caducada o desconocida: ${JSON.stringify(token)}`);
     this.pending.delete(token);
     const bytes = this.deps.fs.readBytes(pending.archivePath);
-    if (sha256(bytes) !== pending.sha256) throw new Error('El paquete ha cambiado desde la vista previa: vuelve a elegirlo.');
+    if (sha256(bytes) !== pending.sha256) throw new UserFacingError(localized('errors.config.extensionPackageChanged'));
     const contents = readMcpb(bytes);
     const manifest = parseMcpbManifest(new TextDecoder().decode(contents.files.get(MCPB_MANIFEST)));
     const id = extensionIdOf(manifest);
@@ -152,7 +153,7 @@ export class McpExtensionService {
       .desktopDirs()
       .map((dir) => join(dir, DESKTOP_EXTENSIONS_DIR, dirName))
       .find((dir) => this.deps.fs.exists(join(dir, MCPB_MANIFEST)));
-    if (source === undefined) throw new Error(`No hay ninguna extensión «${dirName}» en Claude Desktop`);
+    if (source === undefined) throw new UserFacingError(localized('errors.config.desktopExtensionNotFound', { name: dirName }));
     const manifest = parseMcpbManifest(this.deps.fs.readText(join(source, MCPB_MANIFEST)));
     const id = extensionIdOf(manifest);
     this.replaceDir(id, (staging) => this.deps.fs.copyTree(source, staging));
@@ -190,22 +191,23 @@ export class McpExtensionService {
 
   // Las activas y completas, ya resueltas. Una que no se puede lanzar se omite con su motivo.
   resolveActive(): ResolvedMcpList {
+    const unreadable: LocalizedText[] = [];
     const warnings: string[] = [];
     const servers: ResolvedMcpServer[] = [];
-    for (const item of this.readInstalled(warnings)) {
+    for (const item of this.readInstalled(unreadable)) {
       if (!item.settings.isEnabled) continue;
       try {
         servers.push(this.resolve(item));
       } catch (error) {
-        warnings.push(`Extensión «${item.id}» omitida: ${describeError(error)}`);
+        warnings.push(`Extensión «${item.id}» omitida: ${renderForLog(localizedFromError(error))}`);
       }
     }
-    return { servers, warnings };
+    return { servers, warnings: [...unreadable.map(renderForLog), ...warnings] };
   }
 
   private resolve(item: Installed): ResolvedStdioServer {
     const platform = platformProblem(item.manifest, this.deps.platform);
-    if (platform !== null) throw new Error(platform);
+    if (platform !== null) throw new UserFacingError(platform);
     return resolveExtensionServer(
       {
         id: item.id,
@@ -243,23 +245,23 @@ export class McpExtensionService {
     };
   }
 
-  private problemOf(item: Installed, commonNames: ReadonlySet<string>, missingRequired: readonly string[]): string | null {
+  private problemOf(item: Installed, commonNames: ReadonlySet<string>, missingRequired: readonly string[]): LocalizedText | null {
     const platform = platformProblem(item.manifest, this.deps.platform);
     if (platform !== null) return platform;
-    if (missingRequired.length > 0) return 'Falta configurar: sin eso no arranca.';
-    if (commonNames.has(item.id)) return `Un común se llama «${item.id}»: se carga el común, no esta extensión.`;
+    if (missingRequired.length > 0) return localized('mcp.main.extensionNeedsConfig');
+    if (commonNames.has(item.id)) return localized('mcp.main.extensionCommonNameClash', { id: item.id });
     let command: string;
     try {
       command = this.resolve(item).command;
     } catch (error) {
-      return describeError(error);
+      return localizedFromError(error);
     }
     const bare = bareCommand(command);
-    if (bare !== null && !this.deps.isCommandAvailable(bare)) return `Necesita «${bare}» en el PATH: Claude Desktop trae el suyo, Mage no.`;
+    if (bare !== null && !this.deps.isCommandAvailable(bare)) return localized('mcp.main.extensionNeedsCommand', { command: bare });
     return null;
   }
 
-  private desktopCandidates(installedIds: ReadonlySet<string>, warnings: string[]): readonly McpDesktopExtensionCandidate[] {
+  private desktopCandidates(installedIds: ReadonlySet<string>, warnings: LocalizedText[]): readonly McpDesktopExtensionCandidate[] {
     const candidates: McpDesktopExtensionCandidate[] = [];
     for (const desktopDir of this.deps.desktopDirs()) {
       const root = join(desktopDir, DESKTOP_EXTENSIONS_DIR);
@@ -272,14 +274,14 @@ export class McpExtensionService {
           const displayName = manifest.display_name ?? manifest.name;
           candidates.push({ dirName, displayName, version: manifest.version, installed: installedIds.has(extensionIdOf(manifest)) });
         } catch (error) {
-          warnings.push(`Extensión de Claude Desktop «${dirName}» ilegible: ${describeError(error)}`);
+          warnings.push(wrapError('mcp.main.extensionDesktopUnreadable', { name: dirName }, error));
         }
       }
     }
     return candidates;
   }
 
-  private readInstalled(warnings: string[]): readonly Installed[] {
+  private readInstalled(warnings: LocalizedText[]): readonly Installed[] {
     if (!this.deps.fs.exists(this.deps.root)) return [];
     const items: Installed[] = [];
     for (const id of this.deps.fs.listDir(this.deps.root)) {
@@ -288,7 +290,7 @@ export class McpExtensionService {
         const item = this.readOne(id);
         if (item !== null) items.push(item);
       } catch (error) {
-        warnings.push(`Extensión «${id}» ilegible: ${describeError(error)}`);
+        warnings.push(wrapError('mcp.main.extensionUnreadable', { name: id }, error));
       }
     }
     return items;
@@ -306,7 +308,7 @@ export class McpExtensionService {
 
   private require(id: string): Installed {
     const item = this.readOne(id);
-    if (item === null) throw new Error(`No hay ninguna extensión «${id}» instalada`);
+    if (item === null) throw new UserFacingError(localized('errors.config.extensionNotInstalled', { name: id }));
     return item;
   }
 
@@ -340,6 +342,3 @@ function sha256(bytes: Uint8Array): string {
   return createHash('sha256').update(bytes).digest('hex');
 }
 
-function describeError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}

@@ -70,7 +70,7 @@ describe('questionFlow', () => {
   });
 
   it('toAnswers_faltaUna_lanza', () => {
-    expect(() => toAnswers(initialFlow(QUESTIONS), QUESTIONS)).toThrow(/vacia/i);
+    expect(() => toAnswers(initialFlow(QUESTIONS), QUESTIONS)).toThrow(/vacía/i);
   });
 
   it('keyToAction_numeroFueraDeRango_null', () => {
@@ -95,5 +95,20 @@ describe('questionFlow', () => {
     expect(keyToAction('ArrowLeft', state, single)).toEqual({ type: 'prev' });
     expect(keyToAction('Escape', state, single)).toEqual({ type: 'close' });
     expect(keyToAction('a', state, single)).toBeNull();
+  });
+
+  it('keyToAction_flechaAbajoEnLaUltimaOpcion_llegaAOtraCosaYNoPasa', () => {
+    const last = { ...initialFlow([single]), cursor: single.options.length - 1 };
+    const other = { ...last, cursor: single.options.length };
+
+    expect(keyToAction('ArrowDown', last, single)).toEqual({ type: 'cursor', index: single.options.length });
+    expect(keyToAction('ArrowDown', other, single)).toEqual({ type: 'cursor', index: single.options.length });
+  });
+
+  it('keyToAction_enterOEspacioEnOtraCosa_enfocaSuInput', () => {
+    const other = { ...initialFlow([single]), cursor: single.options.length };
+
+    expect(keyToAction('Enter', other, single)).toEqual({ type: 'focus-other' });
+    expect(keyToAction(' ', other, single)).toEqual({ type: 'focus-other' });
   });
 });

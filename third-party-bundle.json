@@ -1,5 +1,6 @@
 {
   "main": [
+    "@lingui/core",
     "@modelcontextprotocol/sdk",
     "ajv",
     "ajv-formats",
@@ -44,6 +45,7 @@
     "@codemirror/view",
     "@lezer/common",
     "@lezer/highlight",
+    "@lingui/core",
     "@marijn/find-cluster-break",
     "@shikijs/core",
     "@shikijs/engine-javascript",

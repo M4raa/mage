@@ -17,7 +17,7 @@ describe('decideRestart', () => {
   it('decideRestart_intentionalStop_returnsNone', () => {
     const decision = decideRestart(context({ intentional: true }), POLICY);
 
-    expect(decision).toEqual({ action: 'none', reason: expect.stringContaining('proposito') });
+    expect(decision).toEqual({ action: 'none', reason: 'intentional' });
   });
 
   it('decideRestart_firstEarlyCrash_restartsWithBaseDelay', () => {
@@ -47,9 +47,7 @@ describe('decideRestart', () => {
 
     expect(decision.action).toBe('give_up');
     if (decision.action !== 'give_up') throw new Error('se esperaba give_up');
-    expect(decision.reason).toContain('137');
-    expect(decision.reason).toContain('SIGKILL');
-    expect(decision.reason).toContain('4 veces'); // attempt 3 consumidos + la muerte actual
+    expect(decision).toEqual({ action: 'give_up', attempts: 4, lastCode: '137', lastSignal: 'SIGKILL' }); // attempt 3 consumidos + la muerte actual
   });
 
   it('decideRestart_healthyProcessDies_resetsTheStreak', () => {
@@ -98,4 +96,9 @@ describe('decideRestart', () => {
     expect(DEFAULT_RESTART_POLICY.maxAttempts).toBeGreaterThan(0);
     expect(decideRestart(context()).action).toBe('restart');
   });
+});
+
+
+it('R50_ENOENT_noProgramaReintentoDeterminista', () => {
+  expect(decideRestart({ attempt: 0, uptimeMs: 0, exitCode: null, signal: null, intentional: false, launchErrorCode: 'ENOENT' }).action).toBe('none');
 });

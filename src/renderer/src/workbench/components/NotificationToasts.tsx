@@ -5,6 +5,7 @@ import { useDialogA11y } from '../a11y/useDialogA11y';
 import { TOAST_VARIANTS } from '../motionPresets';
 import { MAX_VISIBLE_TOASTS, tickRemaining, type AppNotification, type NotifyLevel } from '../notifications';
 import { dismissToast, runNotificationAction, useNotificationStore } from '../notificationStore';
+import { useT } from '../../i18n/uiLanguage';
 
 export const LEVEL_ICON: Readonly<Record<NotifyLevel, IconName>> = {
   info: 'info',
@@ -24,11 +25,12 @@ const LEVEL_SKIN: Readonly<Record<NotifyLevel, string>> = {
 // modales (z-50). Las dos regiones vivas existen SIEMPRE, aunque esten vacias: un lector de pantalla solo
 // anuncia lo que se inserta en una region que ya estaba. Nunca roba el foco.
 export function NotificationToasts(): React.JSX.Element {
+  const t = useT();
   const toasts = useNotificationStore((s) => s.toasts);
   const visible = toasts.slice(0, MAX_VISIBLE_TOASTS);
   return (
     <section
-      aria-label="Notificaciones"
+      aria-label={t('notifications.toasts.regionLabel')}
       data-notification-toasts="true"
       className="pointer-events-none fixed top-[40px] right-[8px] z-40 flex w-[340px] max-w-[calc(100vw-16px)] flex-col gap-[6px]"
     >
@@ -95,6 +97,7 @@ export function NotificationContent({
   readonly titleId: string;
   readonly onDismiss?: () => void;
 }): React.JSX.Element {
+  const t = useT();
   const { title, body, count, actions } = notification;
   return (
     <div className="flex items-start gap-[8px]">
@@ -127,7 +130,7 @@ export function NotificationContent({
         )}
       </div>
       {onDismiss !== undefined && (
-        <button onClick={onDismiss} aria-label="Descartar notificación" className="shrink-0 cursor-pointer opacity-70 hover:opacity-100">
+        <button onClick={onDismiss} aria-label={t('notifications.toasts.dismiss')} className="shrink-0 cursor-pointer opacity-70 hover:opacity-100">
           <Icon name="close" size={11} />
         </button>
       )}

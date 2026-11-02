@@ -4,6 +4,7 @@ import type { MageEvent } from '@shared/events';
 import type { LoopTools, ToolOutcome } from './agentLoop';
 import type { ChatClient, ChatMessage, ChatRequest } from './chatClient';
 import type { StreamPart } from './openAiStream';
+import { foreignText, localized, wrapError } from '@shared/i18n/localizedText';
 import { AUTO_MODE_NOTICE, RuntimeSession, type GateVerdict, type ModelBudget, type RuntimeSessionDeps } from './runtimeSession';
 
 // ChatClient falso: cada peticion consume el siguiente guion. Un guion puede esperar a una promesa
@@ -164,7 +165,7 @@ describe('RuntimeSession turno', () => {
     session.sendUserMessage('dos');
     await settle();
 
-    expect(events).toContainEqual({ kind: 'error', message: 'conexion rechazada: ECONNREFUSED' });
+    expect(events).toContainEqual({ kind: 'error', localized: foreignText('conexion rechazada: ECONNREFUSED') });
     const results = events.filter((e): e is Extract<MageEvent, { kind: 'result' }> => e.kind === 'result');
     expect(results.map((r) => r.result.isError)).toEqual([true, false]);
   });
@@ -177,7 +178,7 @@ describe('RuntimeSession turno', () => {
     session.sendUserMessage('uno');
     await settle();
 
-    expect(events).toContainEqual({ kind: 'error', message: 'Fallo inesperado del runtime: disco lleno' });
+    expect(events).toContainEqual({ kind: 'error', localized: wrapError('events.runtime.unexpectedFailure', {}, new Error('disco lleno')) });
     expect(events.at(-1)).toEqual({ kind: 'session_state', state: 'idle' });
   });
 
@@ -189,6 +190,14 @@ describe('RuntimeSession turno', () => {
     session.stop();
 
     expect(() => session.sendUserMessage('x')).toThrow(/parada/);
+  });
+
+  it('sendUserMessage_sesionParada_lanzaLaClave', () => {
+    const { session } = setup([]);
+    session.start();
+    session.stop();
+
+    expect(() => session.sendUserMessage('x')).toThrow(expect.objectContaining({ localized: expect.objectContaining({ key: 'errors.runtime.sessionStopped' }) }));
   });
 
   it('sendUserMessage_withAttachments_throwsWithCount', () => {
@@ -229,7 +238,7 @@ describe('RuntimeSession turno', () => {
     session.setPermissionMode('auto');
     session.setPermissionMode('auto');
 
-    expect(events.filter((e) => e.kind === 'notice')).toEqual([{ kind: 'notice', text: AUTO_MODE_NOTICE }]);
+    expect(events.filter((e) => e.kind === 'notice')).toEqual([{ kind: 'notice', localized: AUTO_MODE_NOTICE }]);
   });
 
   it('setPermissionMode_unknown_throwsWithValue', () => {
@@ -327,6 +336,21 @@ describe('RuntimeSession permisos', () => {
     session.answerPermission(requestId, { behavior: 'allow' });
 
     expect(() => session.answerPermission(requestId, { behavior: 'allow' })).toThrow(requestId);
+    expect(() => session.answerPermission(requestId, { behavior: 'allow' })).toThrow(
+      expect.objectContaining({ localized: { key: 'errors.runtime.permissionUnknown', values: { requestId } } }),
+    );
+  });
+
+  it('permissionRequest_fueraDelProyecto_llevaElObjetivoYLaFraseEnCastellano', async () => {
+    const outside = () => ({ verdict: 'ask' as const, outside: 'Fuera del proyecto: /etc/x', outsideTarget: '/etc/x' });
+    const { session, events } = setup([toolCallReply('Write', '{"file_path":"a"}'), textReply('x')], { gate: outside });
+    session.start();
+    session.sendUserMessage('escribe');
+    await settle();
+
+    const request = events.find((e): e is Extract<MageEvent, { kind: 'permission_request' }> => e.kind === 'permission_request')!.request;
+
+    expect(request).toMatchObject({ outsideProject: true, outsideTarget: '/etc/x', description: 'Fuera del proyecto: /etc/x' });
   });
 
   it('gateDeny_planMode_reasonReachesModel', async () => {
@@ -356,11 +380,11 @@ describe('RuntimeSession y el modelo (R5)', () => {
     await settle();
 
     expect(client.requests[0]!.tools).toBeUndefined();
-    expect(events).toContainEqual({ kind: 'notice', text: expect.stringContaining('no admite herramientas') });
+    expect(events).toContainEqual({ kind: 'notice', localized: localized('events.runtime.noTools') });
   });
 
   it('prepare_warning_isNoticedOncePerModel', async () => {
-    const prepareModel = vi.fn(async () => ({ budget: budget(), supportsTools: null, warning: 'Ollama carga menos' }));
+    const prepareModel = vi.fn(async () => ({ budget: budget(), supportsTools: null, warning: foreignText('Ollama carga menos') }));
     const { session, events } = setup([textReply('uno'), textReply('dos')], { prepareModel });
     session.start();
 
@@ -396,7 +420,7 @@ describe('RuntimeSession y el modelo (R5)', () => {
     session.sendUserMessage('lee');
     await settle();
 
-    expect(events).toContainEqual({ kind: 'notice', text: expect.stringContaining('no la ejecutó') });
+    expect(events).toContainEqual({ kind: 'notice', localized: localized('events.runtime.toolCallAsText') });
   });
 
   it('result_callWrittenAsTextWithNativeTools_notExecuted', async () => {
@@ -409,7 +433,7 @@ describe('RuntimeSession y el modelo (R5)', () => {
     await settle();
 
     expect(tools.ran).toEqual([]);
-    expect(events).toContainEqual({ kind: 'notice', text: expect.stringContaining('no la ejecutó') });
+    expect(events).toContainEqual({ kind: 'notice', localized: localized('events.runtime.toolCallAsText') });
   });
 
   it('result_callWrittenAsTextWithoutNativeTools_isExecutedAndAnsweredAsUser', async () => {
@@ -435,7 +459,7 @@ describe('RuntimeSession compactacion a mitad de turno (B4)', () => {
       fit: (messages) => {
         if (overflowed) return messages;
         overflowed = true;
-        throw new ContextOverflowError('no cabe');
+        throw new ContextOverflowError(foreignText('no cabe'));
       },
       recalibrate: () => undefined,
       estimate: (messages) => messages.length * 10,

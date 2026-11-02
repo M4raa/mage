@@ -4,6 +4,71 @@ Lo que cambia de una versión a otra, contado para quien usa la app. La más rec
 enseña estas mismas notas en su pestaña de novedades al actualizarse, y en Configuración › Notas de
 versión.
 
+## 0.1.3 — 2026-11-02
+
+### Corregido
+- Una conversación de Claude que se rebobinó en el CLI ya no enseña, al reabrirla, la parte que se descartó: Mage lee solo la rama que sigue viva, con todas sus herramientas, también las que se lanzaron en paralelo.
+- Una conversación de Codex rebobinada aparece una sola vez en el historial, y al reabrirla o al migrarla a otra cuenta ya no reaparece lo que se descartó.
+- Los mensajes de error ya no empiezan por «Error invoking remote method…».
+- El aviso de coste al cambiar de modelo o de esfuerzo dice de qué pestaña es también en una pestaña sin título («Nuevo chat»).
+- El aviso de «Omitir permisos» sale al activarlo, no al volver a un chat que ya lo tenía ni al reabrir Mage.
+- Los avisos largos del chat (rutas sin espacios incluidas) se parten y no desbordan el panel.
+- Configuración › Notas de versión tiene «Buscar actualizaciones», que consulta al momento y dice si busca, si Mage está al día, si hay error o si hay una versión lista.
+- Una cuenta de Claude sin login válido, la principal incluida, ofrece «Iniciar sesión» desde la barra lateral sin recrearla.
+- Al cerrar una pestaña se activa la siguiente (o la anterior), no la primera.
+- Las pestañas se reordenan arrastrándolas en su barra, y soltar una sobre la barra de otro panel lo reúne.
+- El ⏎ del prompt es un botón que envía; si el envío falla, el mensaje vuelve a la caja.
+- Actividad dice que está cargando, o el motivo del error, al reabrir una conversación en vez de «sin actividad».
+- El login OAuth de MCP evita puertos bloqueados por el navegador y explica los puertos fijos no válidos.
+- Los avatares toman la inicial del nombre de cuenta. Cada cuenta nueva recibe el color menos usado y lo conserva al añadir otras, así que no se repiten mientras queden colores libres. El color por defecto de las cuentas existentes puede cambiar una vez con esta versión; los elegidos a mano se conservan.
+- Dar de alta un proveedor propio y abrir enseguida una conversación con él ya no falla con «Proveedor no configurado».
+- Las conversaciones muestran un indicador mientras cargan y el motivo si no se pueden leer.
+- Con la ventana dividida, una pregunta en el otro panel ya no roba el foco, y el chat sigue mostrando el final cuando aparece una pregunta. «Otra cosa» se alcanza con las flechas.
+- Configuración › Almacenamiento tiene «Permitir Artifact (publica en claude.ai)», apagado por defecto: con él, las sesiones de Claude Code pueden usar la herramienta Artifact (se aplica al reabrir la conversación).
+- Los nuevos chats empiezan con worktree desactivado; la elección de cada pestaña se conserva al reiniciar.
+- Las viñetas del prompt siguen siendo viñetas en la línea del cursor.
+- Los borradores nuevos se guardan fuera del temporal. Si desaparece un borrador antiguo, se recrea su carpeta y se avisa de los archivos perdidos.
+- La confianza reconoce rutas equivalentes, permite autorizar la carpeta superior y respeta las revocaciones. Los borradores de Mage son de confianza por defecto.
+- El handoff usa una bifurcación sin persistencia y no añade su instrucción interna a la conversación original.
+- Un ejecutable ausente no provoca reintentos repetidos de arranque.
+- Traer la base de un worktree admite las copias locales de Mage y sigue rechazando cambios sin confirmar.
+- El panel de Contexto ya no cuenta como compactación una caché caducada tras una pausa: solo las compactaciones reales del CLI.
+- El uso de tokens de un turno de Codex cuenta todas las llamadas al modelo del turno, no solo la última.
+- Una conversación de Codex o agy recupera su modelo y su esfuerzo al reabrirla desde el historial.
+- Las pestañas de Codex y agy ya no salen vacías al reiniciar Mage: se reabren con su conversación. Una pestaña guardada por la 0.1.2 cuya conversación no se encuentra lo dice («Ábrela desde el historial de la cuenta») y su primer mensaje empieza una nueva.
+- Una conversación de Codex o agy que sigue trabajando en segundo plano ya no se puede abrir en otra ventana desde el historial, y borrarla, moverla o reabrirla para su agente antes de tocarla.
+- El historial ordena y fecha las conversaciones de Codex por su último mensaje: Codex no actualiza la fecha de modificación de sus ficheros y una conversación larga se quedaba con la hora en que empezó.
+- Durante «Crear PR», un push forzado o saltarse los hooks se deniega aunque la conversación tenga «Permitir siempre Bash», también con la pestaña cerrada.
+- Consultar el estado de Git revalida los permisos de la cuenta antes de devolver datos de caché.
+- La bóveda rechaza explícitamente los backends Linux inseguros, incluso si anuncian cifrado disponible.
+- Refrescar una transcripción truncada sustituye el historial anterior y sus errores.
+- Las lecturas incrementales conservan los índices tras líneas en blanco y esperan a que termine una línea parcial.
+- El runtime propio recupera las herramientas al cambiar a un modelo que las admite.
+- Un error al comprobar un permiso conserva un historial válido para continuar la conversación.
+- Cerrar una sesión libera el cliente MCP aunque todavía esté consultando sus herramientas.
+- Auto permite comodines sobre archivos internos aunque haya otros nombres con caracteres Unicode.
+- Al contestar un permiso, la tarjeta queda en «Enviando…» con los botones desactivados y se cierra con la decisión que acepta Mage. Si otra ventana o cliente contestó antes, se cierra con su decisión sin dar error; si el envío falla, se ve el error y el permiso sigue pendiente.
+- Los errores que vienen del proceso principal se ven sin el prefijo técnico «Error invoking remote method…».
+- En Linux sin `which` (Arch), Mage encuentra los programas del PATH: los CLI de los agentes, `gh`, `git`, los editores y la shell ya no salen como no instalados.
+- En Windows, renovar el bloqueo de una conversación o guardar un ajuste mientras otro proceso lee ese fichero ya no falla: se reintenta un momento.
+- Una conversación nueva de Codex enseña que arranca en solo lectura (pide permiso antes de escribir), con «Permitir escribir» para que escriba dentro de su carpeta.
+
+### Añadido
+- Mage habla **inglés**. En Configuración › Apariencia › **Idioma** eliges **Sistema**, **Español** o **English**, y la interfaz cambia al momento, sin reiniciar. Las fechas, los números y los plurales siguen el idioma elegido; en castellano los decimales llevan coma («1,2 s», «12,50 $»). Lo que envías al modelo no cambia con el idioma de la interfaz.
+- **Enviar ahora o a la cola.** Con un turno en marcha, **Enter** deja el mensaje en la cola, que sale al terminar el turno, y **Ctrl+Enter** (**Cmd+Enter** en macOS) lo envía ahora, para corregir al agente mientras trabaja. El botón de enviar se divide en **A la cola ▾ Enviar ahora**. Si el agente está esperando un permiso, el mensaje directo le llega al contestarlo. Un mensaje de la cola se edita en su propia fila (Enter guarda y Escape cancela) y se puede quitar.
+- Mage deja un host local para otros clientes (terminal, widget, MCP): un socket privado que solo abre quien tiene el token de esa ejecución, con el protocolo versionado. Ve el mismo flujo de eventos que la ventana, contesta permisos y preguntas (se contestan una sola vez, gane quien gane) y puede enviar mensajes. Puede crear sesiones en una carpeta que ya sea de confianza; no concede confianza por su cuenta.
+- Una conversación abierta en otra instancia de Mage (la instalada, la de desarrollo u otro perfil) se ve en solo lectura, con el aviso «Abierta en otra instancia de Mage (<perfil>)». Si esa instancia la suelta o se cierra, esta pasa a ser la dueña sin pulsar nada (también al volver a la pestaña o a la ventana) y lo dice con «Ya puedes continuar aquí»; si se cae, aparece «Tomar el control». Un `claude` lanzado a mano en una terminal no se puede bloquear desde Mage.
+- En Linux sin escritorio, Mage arranca como host sin ventanas (con `--headless` o sin `DISPLAY`). Pedir la interfaz gráfica a ese host dice que no está disponible y no lo reinicia ni toca sus sesiones.
+
+### Seguridad
+- Un cliente del host local comprueba que el host es el de Mage, con un reto firmado con el token de la sesión, antes de enviarle el token. Un programa que ocupe el nombre del host antes que Mage no puede quedárselo.
+- Crear una sesión desde el host local exige que la carpeta sea de confianza, igual que desde la ventana.
+- La interfaz corre en el sandbox de Chromium en las tres ventanas (principal, widget y depuración).
+- Las órdenes sobre una sesión (enviar, contestar, parar, cambiar modelo…) se validan antes de llegar al motor y solo las acepta la ventana que la creó o la principal.
+- En Linux, si Mage se inicia sin el sandbox de Chromium (el AppImage lo hace cuando el sistema no permite los espacios de nombres de usuario), avisa de forma persistente con el motivo y recomienda el paquete .deb o activar esos espacios.
+- Si el host local no arranca, la ventana lo avisa de forma persistente con el motivo; la interfaz sigue funcionando. Un arranque fallido no deja el token ni la dirección del host en disco.
+- En Linux, Mage comprueba el llavero al arrancar sin activar servicios y en menos de 3 segundos. Si no está instalado, arrancado o desbloqueado, las cuentas de suscripción siguen funcionando, y crear o usar una cuenta de API da un error con el estado del llavero, los comandos de tu distribución y el enlace a la guía; ese intento ya no deja la carpeta de la cuenta creada. Sin escritorio, Mage pide el Secret Service para poder usar la bóveda.
+
 ## 0.1.2 — 2026-10-08
 
 ### Añadido

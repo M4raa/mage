@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { renderForLog } from '@shared/i18n/localizedText';
 import type { CustomProvider } from '@shared/providers';
 import {
   AGY_PROVIDER_ID,
@@ -21,6 +22,7 @@ import {
   providerOptions,
   validateCustomProviderDraft,
   applyRuntimeProbe,
+  probeErrorText,
   draftFromProvider,
   type CustomProviderDraft,
 } from './models';
@@ -96,6 +98,10 @@ describe('modelOptionsForProvider', () => {
 
 describe('providerOptions', () => {
   // Desde la 0.1.2 todos los de serie tienen adapter (Codex sobre `codex app-server`, sin verificar).
+  it('providerOptions_agy_pintaLaEtiquetaEnCastellano', () => {
+    expect(providerOptions([]).find((p) => p.id === AGY_PROVIDER_ID)?.label).toBe('Antigravity · el CLI de Google (agy) · sin permisos');
+  });
+
   it('providerOptions_sinProveedoresDelUsuario_devuelveLosDeSerie', () => {
     expect(providerOptions([]).map((p) => p.id)).toEqual(BUILT_IN_PROVIDERS.map((p) => p.id));
   });
@@ -181,7 +187,7 @@ describe('nextCustomProviderId', () => {
 
   it('nextCustomProviderId_siempreLlevaPrefijo_nuncaColisionaConUnoDeSerie', () => {
     for (const builtIn of BUILT_IN_PROVIDERS) {
-      expect(nextCustomProviderId(builtIn.label, [])).not.toBe(builtIn.id);
+      expect(nextCustomProviderId(renderForLog(builtIn.label), [])).not.toBe(builtIn.id);
     }
   });
 });
@@ -438,5 +444,15 @@ describe('borrador de proveedor del runtime', () => {
     const result = validateCustomProviderDraft(draftFromProvider(provider), [provider], provider.id);
 
     expect(result.ok && result.provider).toMatchObject({ contextWindow: 16000, supportsTools: true, models: provider.models });
+  });
+});
+
+describe('probeErrorText', () => {
+  it('probeErrorText_textoDeMain_pintaElCastellano', () => {
+    expect(probeErrorText({ key: 'settings.providers.listFailed', parts: { detail: { key: 'events.detailOnly', values: { detail: 'fetch failed' } } } })).toBe('No se pudo listar: fetch failed');
+  });
+
+  it('probeErrorText_sinFallo_devuelveNull', () => {
+    expect(probeErrorText(null)).toBeNull();
   });
 });

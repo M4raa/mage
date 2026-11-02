@@ -21,15 +21,23 @@ function claudeAccount(configDir: string): AccountInfo {
   };
 }
 
-function setup(): { service: ProviderAccountService; files: Map<string, string>; secrets: Map<string, string>; deps: ProviderAccountDeps } {
+function setup(vaultError: string | null = null): { service: ProviderAccountService; files: Map<string, string>; secrets: Map<string, string>; deps: ProviderAccountDeps } {
   const files = new Map<string, string>();
   const secrets = new Map<string, string>();
+  // Bóveda no usable (D1): todo lo que cifra o descifra lanza su mensaje; has/delete no lo necesitan.
+  const requireUsable = (): void => {
+    if (vaultError !== null) throw new Error(vaultError);
+  };
   const deps: ProviderAccountDeps = {
     filePath: join(USER_DATA, 'provider-accounts.json'),
     homedir: HOME,
     userDataDir: USER_DATA,
     vault: {
-      set: (id, value) => secrets.set(id, value),
+      assertUsable: requireUsable,
+      set: (id, value) => {
+        requireUsable();
+        secrets.set(id, value);
+      },
       get: (id) => secrets.get(id) ?? null,
       has: (id) => secrets.has(id),
       delete: (id) => secrets.delete(id),
@@ -37,6 +45,7 @@ function setup(): { service: ProviderAccountService; files: Map<string, string>;
     exists: (path) => files.has(path),
     readFile: (path) => files.get(path) ?? '',
     writeFile: (path, data) => files.set(path, data),
+    removeFile: () => undefined,
     rename: (from, to) => {
       files.set(to, files.get(from) ?? '');
       files.delete(from);
@@ -94,9 +103,29 @@ describe('ProviderAccountService', () => {
   it.each([
     [{ providerId: 'claude', authKind: 'subscription', name: 'x' }, /no se da de alta/],
     [{ providerId: 'codex', authKind: 'api-key', name: 'x' }, /Falta la clave/],
-    [{ providerId: 'codex', authKind: 'api-key', name: '1mal' }, /Nombre de cuenta invalido/],
+    [{ providerId: 'codex', authKind: 'api-key', name: '1mal' }, /Nombre de cuenta inválido/],
   ] as const)('create_entradaInvalida_lanza_%#', (params, error) => {
     expect(() => setup().service.create(params)).toThrow(error);
+  });
+
+  it.each(['claude', 'codex', 'agy'] as const)('create_%sPorApiConBovedaNoUsable_lanzaElMensajeD1SinCrearCarpetaNiEntrada', (providerId) => {
+    const { service, files, deps } = setup('No se puede crear ni usar esta cuenta de API: el llavero seguro de Linux está bloqueado.');
+    const createClaudeDir = vi.fn(deps.createClaudeDir);
+    const strict = new ProviderAccountService({ ...deps, createClaudeDir });
+
+    expect(() => strict.create({ providerId, authKind: 'api-key', name: 'api', apiKey: 'k' })).toThrow(/^No se puede crear ni usar esta cuenta de API: el llavero seguro de Linux está bloqueado\.$/);
+
+    expect(createClaudeDir).not.toHaveBeenCalled();
+    expect([...files.keys()]).toEqual([]);
+    expect(service.list([])).toEqual([]);
+  });
+
+  it('create_suscripcionConBovedaNoUsable_seCreaIgual', () => {
+    const { service } = setup('No se puede crear ni usar esta cuenta de API: el llavero seguro de Linux está bloqueado.');
+
+    const account = service.create({ providerId: 'codex', authKind: 'subscription', name: 'chatgpt' });
+
+    expect(account).toMatchObject({ providerId: 'codex', authKind: 'subscription' });
   });
 
   it('create_errorDeClave_noCitaLaClave', () => {
@@ -176,6 +205,6 @@ describe('ProviderAccountService', () => {
     const { service, files, deps } = setup();
     files.set(deps.filePath, '{roto');
 
-    expect(() => service.list([])).toThrow(/no es JSON valido/);
+    expect(() => service.list([])).toThrow(/no es JSON válido/);
   });
 });

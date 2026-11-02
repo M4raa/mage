@@ -5,6 +5,9 @@
 import type { CustomProvider, ProviderModel } from '@shared/providers';
 import { AGY_EFFORT_LEVELS, AGY_PROVIDER_ID, BUILT_IN_PROVIDERS, CODEX_PROVIDER_ID, CUSTOM_PROVIDER_ID_PREFIX, chatCompletionsUrl } from '@shared/providers';
 import { EFFORT_LEVELS, type RuntimeProbeResult } from '@shared/ipc';
+import { renderLocalized, type LocalizedText } from '@shared/i18n/localizedText';
+import { t } from '../i18n/uiLanguage';
+import { describeError } from './describeError';
 
 export type ModelOption = ProviderModel;
 
@@ -23,7 +26,7 @@ export function providerOptions(customProviders: readonly CustomProvider[]): rea
   // Todos los de serie tienen adapter desde la 0.1.2 (Codex sobre `codex app-server`, sin verificar).
   const options: ProviderOption[] = BUILT_IN_PROVIDERS.map((provider) => ({
     id: provider.id,
-    label: provider.label,
+    label: renderLocalized(t, provider.label),
   }));
   const seen = new Set(options.map((option) => option.id));
   for (const provider of customProviders) {
@@ -202,18 +205,18 @@ export function validateCustomProviderDraft(
   editingId: string | null,
 ): CustomProviderValidation {
   const label = draft.label.trim();
-  if (label.length === 0) return { ok: false, message: 'Ponle un nombre al proveedor.' };
+  if (label.length === 0) return { ok: false, message: t('prompt.models.nameRequired') };
 
   const urlError = describeBaseUrlError(draft.baseUrl);
   if (urlError !== null) return { ok: false, message: urlError };
 
   const modelIds = parseModelIds(draft.models);
   if (modelIds.length === 0) {
-    return { ok: false, message: 'Indica al menos un modelo (ids separados por comas), p. ej. llama3, mistral.' };
+    return { ok: false, message: t('prompt.models.modelsRequired') };
   }
   const contextWindow = parseContextWindow(draft.contextWindow);
   if (contextWindow === null) {
-    return { ok: false, message: `La ventana de contexto tiene que ser un número entero de tokens mayor que ${MIN_CONTEXT_WINDOW - 1} (o vacía).` };
+    return { ok: false, message: t('prompt.models.contextWindowInvalid', { min: MIN_CONTEXT_WINDOW - 1 }) };
   }
 
   // Ids ya cogidos (de serie + del usuario) para generar uno nuevo que no colisione. Al editar, el id
@@ -239,15 +242,20 @@ export function validateCustomProviderDraft(
   };
 }
 
+// El motivo de un sondeo (de proveedor o de «Probar conexión») en el idioma de la interfaz; null si no hubo fallo.
+export function probeErrorText(error: LocalizedText | null): string | null {
+  return error === null ? null : renderLocalized(t, error);
+}
+
 // Linea de resultado de «Probar conexión».
 export function runtimeProbeSummary(result: RuntimeProbeResult): string {
   const models = result.models?.length ?? 0;
   const parts = [
-    `${models} modelo${models === 1 ? '' : 's'}`,
-    result.contextWindow === null ? 'ventana: la del servidor no se supo' : `ventana de ${result.contextWindow} tokens`,
-    result.supportsTools === null ? 'herramientas: sin saber' : result.supportsTools ? 'con herramientas' : 'sin herramientas',
+    t('prompt.models.probe.modelCount', { count: models }),
+    result.contextWindow === null ? t('prompt.models.probe.windowUnknown') : t('prompt.models.probe.window', { tokens: result.contextWindow }),
+    result.supportsTools === null ? t('prompt.models.probe.toolsUnknown') : result.supportsTools ? t('prompt.models.probe.withTools') : t('prompt.models.probe.withoutTools'),
   ];
-  return `Conectado: ${parts.join(' · ')}.${result.warning === null ? '' : ` ${result.warning}`}`;
+  return `${t('prompt.models.probe.summary', { parts: parts.join(' · ') })}${result.warning === null ? '' : ` ${renderLocalized(t, result.warning)}`}`;
 }
 
 // '' = sin fijar (undefined); un numero valido; null = invalido.
@@ -273,8 +281,8 @@ function describeBaseUrlError(baseUrl: string): string | null {
     chatCompletionsUrl(baseUrl);
     return null;
   } catch (err) {
-    const detail = err instanceof Error ? err.message : String(err);
-    return `${detail}. Ejemplo: http://localhost:11434/v1`;
+    const detail = err instanceof Error ? describeError(err) : String(err);
+    return t('prompt.models.baseUrlInvalid', { detail });
   }
 }
 
@@ -316,7 +324,7 @@ export function effortLevelsForProvider(providerId: string): readonly string[] {
 export function providerEntries(customProviders: readonly CustomProvider[]): readonly ProviderEntry[] {
   const builtIn: ProviderEntry[] = BUILT_IN_PROVIDERS.map((provider) => ({
     id: provider.id,
-    label: provider.label,
+    label: renderLocalized(t, provider.label),
     kind: 'cli',
     baseUrl: null,
     models: provider.models,

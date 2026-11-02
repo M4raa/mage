@@ -1,0 +1,18 @@
+import type { z } from 'zod';
+import type * as schemas from './schemas';
+export { MAGE_MCP_CONTRACT_VERSION, DEFAULT_MAX_RESULT_BYTES } from './schemas';
+export type SessionState = z.infer<typeof schemas.stateSchema>;
+export type CreatedBy = z.infer<typeof schemas.createdBySchema>;
+export type PublicMessage = z.infer<typeof schemas.publicMessageSchema>;
+export type ListInput = z.infer<typeof schemas.listInputSchema>;
+export type CreateInput = z.infer<typeof schemas.createInputSchema>;
+export type StatusInput = z.infer<typeof schemas.statusInputSchema>;
+export type ReadInput = z.infer<typeof schemas.readInputSchema>;
+export type SendInput = z.infer<typeof schemas.sendInputSchema>;
+export type CancelInput = z.infer<typeof schemas.cancelInputSchema>;
+export type ListOutput = z.infer<typeof schemas.listOutputSchema>;
+export type CreateOutput = z.infer<typeof schemas.createOutputSchema>;
+export type StatusOutput = z.infer<typeof schemas.statusOutputSchema>;
+export type ReadOutput = z.infer<typeof schemas.readOutputSchema>;
+export type SendOutput = z.infer<typeof schemas.sendOutputSchema>;
+export type CancelOutput = z.infer<typeof schemas.cancelOutputSchema>;

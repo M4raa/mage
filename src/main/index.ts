@@ -1,8 +1,17 @@
-import { randomUUID } from 'node:crypto';
+import { resolvedPath as canonicalPath } from './os/resolvedPath';
+import { localMageRoot, localScratchRoot, workspaceTrusted, ensureWorkingDirectory } from './os/scratchWorkspace';
+import { ConversationLocks, HEARTBEAT_MS } from './locks/conversationLocks';
+import { runLockHeartbeatTick } from './locks/conversationLockHeartbeat';
+import { lockFileName, nodeLockFs, pidAliveCheck, resolveConversationLocksDir } from './locks/conversationLockEnv';
+import { registerConversationLockIpc } from './locks/conversationLockIpc';
+import { readOnlyLockMessage } from '@shared/conversationLock';
+import { createHash, randomUUID } from 'node:crypto';
 import { execFile, spawn, spawnSync, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import {
   appendFileSync,
   chmodSync,
+  accessSync,
+  constants as fsConstants,
   copyFileSync,
   closeSync,
   createReadStream,
@@ -49,15 +58,16 @@ import {
   GH_PR_UPDATE_CHANNEL,
   NOTIFICATION_CLICKED_CHANNEL,
   SETTINGS_CHANGED_CHANNEL,
+  UI_LANGUAGE_CHANGED_CHANNEL,
   TRANSCRIPT_BATCH_CHANNEL,
   WIDGET_ENABLED_CHANGED_CHANNEL,
   WIDGET_FOCUS_TAB_CHANNEL,
   WINDOW_TAB_RECEIVED_CHANNEL,
   UPDATE_PROMPT_CHANNEL,
   UPDATE_STATE_CHANNEL,
+  CONVERSATION_LOCK_LOST_CHANNEL,
 } from '@shared/ipc';
 import type {
-  AnswerPermissionParams,
   ModelCatalogChange,
   CreateSessionParams,
   CreateSessionResult,
@@ -71,18 +81,13 @@ import type {
   LoginStartParams,
   OpenEditorParams,
   OpenTranscriptParams,
+  TranscriptBatchPayload,
   ReadInstructionsParams,
   ReadMemoryParams,
   OpenArtifactParams,
   RecordArtifactParams,
-  SaveConversationPrefsParams,
   SaveSharedConfigParams,
   SaveSharedConfigResult,
-  SendMessageParams,
-  SetModelParams,
-  SetEffortParams,
-  SetPermissionModeParams,
-  StopTaskParams,
   SharedConfigSnapshot,
   MageWindowInfo,
   MoveTabToWindowParams,
@@ -90,10 +95,10 @@ import type {
 import { buildAboutInfo } from './about/aboutService';
 import type { MemoryFile } from '@shared/memory';
 import type { MageEvent, SlashCommandInfo } from '@shared/events';
+import { localized, localizedFromError, localizedWithParts, renderForLog, UserFacingError, type LocalizedText } from '@shared/i18n/localizedText';
 import type { ImageAttachment, ProviderProbeParams } from '@shared/ipc';
-import { base64ByteLength, validateAttachmentSet } from '@shared/attachments';
+import { base64ByteLength, ERROR_FORMAT_LOCALE, validateAttachmentSet } from '@shared/attachments';
 import type { EffectiveSettings, InstructionsFile, ProjectFileContent, ReadProjectFileParams, WriteProjectFileParams } from '@shared/ipc';
-import type { ConversationPrefs } from '@shared/conversationIndex';
 import type { ConversationSummary, DeleteConversationParams, MigrateConversationResult, MoveConversationParams, MoveConversationResult } from '@shared/conversations';
 import type { PersistedWorkspace } from '@shared/state';
 import type { AppSettings } from '@shared/settings';
@@ -124,7 +129,7 @@ import {
   probePermissionModes,
   type PermissionModesByProvider,
 } from './engine/permissionModes';
-import { findCodexBinary, resolveCodexBinary } from './os/codexBinaryResolver';
+import { codexSpawnCommand, findCodexBinary, type CodexSpawnCommand } from './os/codexBinaryResolver';
 import { resolveAgyBinary } from './os/agyBinaryResolver';
 import { ProviderAccountService } from './accounts/providerAccounts';
 import { CodexLoginService, type CodexLoginResult } from './accounts/codexLoginService';
@@ -161,7 +166,10 @@ import { ConversationsService, type ConversationsDeps } from './conversations/co
 import { CodexHistoryService } from './conversations/codexHistory';
 import { ConversationMigrationService } from './conversations/conversationMigration';
 import { createMigrationEndpoints } from './conversations/migrationEndpoints';
-import { codexThreadDelete } from './conversations/codexRpc';
+import { codexThreadDelete, codexThreadTurnsList } from './conversations/codexRpc';
+import { codexTranscriptSource, codexTurnsBatches } from './conversations/codexTurnsTranscript';
+import type { TranscriptSource } from './transcripts/transcriptSource';
+import type { TranscriptBatch } from '@shared/transcripts';
 import { MIGRATE_CONVERSATION_SCHEMA } from './conversations/migrationParams';
 import { AgyHistoryService } from './conversations/agyHistory';
 import { createAgySqliteStore, writeAgyConversationDb } from './conversations/agySqliteStore';
@@ -170,8 +178,6 @@ import { AgyLoginService } from './accounts/agyLoginService';
 import { sendToConsole } from './accounts/agyConsoleInput';
 import { AGY_FILE_TOKEN_ENV } from './engine/agyProfile';
 import { staticTranscriptBatch } from './transcripts/staticBatch';
-import type { LineAdapter } from './transcripts/transcriptReader';
-import { adaptCodexLine } from '@shared/codexTranscript';
 import { ConversationAdminService } from './conversations/conversationAdminService';
 import { CliLoginService, type CliLoginProcess } from './accounts/cliLoginService';
 import { writeCredentials } from './accounts/credentialsStore';
@@ -195,14 +201,26 @@ import { WorkspaceStore } from './state/workspaceStore';
 import { CommandCatalogStore } from './state/commandCatalogStore';
 import { openArtifactWindow } from './artifacts/artifactWindow';
 import { InstructionsService } from './instructions/instructionsService';
-import { ELICITATION_ANSWER_SCHEMA } from '@shared/elicitation';
 import { agyBridgeSpec, bridgeDocument, codexBridgeSpec, resolveBridge, type BridgeFs, type BridgeSpec } from './instructions/instructionsBridge';
 import { EffectiveSettingsService } from './config/effectiveSettingsService';
 import { ConversationIndexStore } from './state/conversationIndexStore';
+import { registerSessionIpc } from './coordination/sessionIpc';
+import { canControlSession } from './coordination/sessionAccess';
+import { readHostMode, startLocalHost } from './host/hostBootstrap';
+import { createHostControl } from './host/hostControl';
+import type { HostMode, HostServerHandle } from './host/hostServer';
+import { HEADLESS_GUI_UNAVAILABLE, isHeadlessHost, lockFailureMessage, startupWarnings } from './startupMode';
+import { registerConversationPrefsIpc } from './coordination/conversationPrefsIpc';
+import { SessionCoordinator } from './coordination/sessionCoordinator';
 import { ProjectFileService, resolveProjectFilePath } from './files/projectFileService';
+import { resolvedPath } from './os/resolvedPath';
 import { writeAtomic, type AtomicWriteDeps } from './os/atomicFile';
 import { SettingsStore } from './state/settingsStore';
+import { UiLanguageService } from './i18n/uiLanguageService';
 import { SecretStore } from './secrets/secretStore';
+import type { VaultStatus } from './secrets/vaultGate';
+import { assessVaultForProcess } from './secrets/vaultBootstrap';
+import { isCommandOnPath, isExecutableFile } from './os/commandOnPath';
 import {
   migrateLegacyProviderKeys,
   parseApiKeySetParams,
@@ -231,7 +249,7 @@ import { WidgetWindowController } from './widget/widgetWindow';
 import type { WidgetSnapshot } from '@shared/widget';
 import { ThemeMarketService } from './theme/themeMarketService';
 import type { FetchThemeParams } from '@shared/themeMarket';
-import { flushPendingUpdatePrompt, getUpdateState, installUpdate, startAutoUpdate } from './update/autoUpdate';
+import { checkForUpdatesNow, flushPendingUpdatePrompt, getUpdateState, installUpdate, startAutoUpdate } from './update/autoUpdate';
 import { isPathUnder, pathEquals } from './os/pathUtils';
 import { isWindowId, MAIN_WINDOW_ID, WindowManager, type WindowPlacement } from './windows/windowManager';
 import { installExternalLinkHandler, type ExternalLinkDeps } from './windows/externalLinks';
@@ -240,7 +258,7 @@ import { PERSISTED_TAB_SCHEMA } from '@shared/stateSchema';
 import type { PersistedTab } from '@shared/state';
 import type { DropTabOutcome } from '@shared/ipc';
 import {
-  CLOSE_DIALOG_BUTTONS,
+  CLOSE_DIALOG_BUTTON_KEYS,
   CLOSE_DIALOG_CANCEL_INDEX,
   closeAnswerFromNative,
   interpretCloseAnswer,
@@ -252,6 +270,11 @@ import type { CloseBehavior } from '@shared/settings';
 import { fitSavedBounds, WindowBoundsStore, type SavedWindowBounds } from './windows/windowBounds';
 import { NotificationCenter } from './notifications/notificationCenter';
 import { parseNotifyParams } from './notifications/notifyParams';
+import { developmentUserData } from './os/developmentProfile';
+
+// Antes de construir servicios y de pedir el lock: nunca abrir el perfil de la instalada en dev.
+const developmentProfile = developmentUserData(app.isPackaged, process.argv, app.getPath('appData'));
+if (developmentProfile !== null) app.setPath('userData', developmentProfile);
 
 // __dirname no existe en modulos ESM: lo derivamos de import.meta.url.
 const currentDir = dirname(fileURLToPath(import.meta.url));
@@ -273,7 +296,7 @@ const AGY_PROBE_TTL_MS = 60_000;
 
 // Entorno de desarrollo (no empaquetado): habilita la ventana de debug y una CSP relajada para HMR.
 const isDev = !app.isPackaged;
-const preloadPath = join(currentDir, '../preload/index.mjs');
+const preloadPath = join(currentDir, '../preload/index.cjs');
 const rendererDir = join(currentDir, '../renderer');
 
 // Dimensiones iniciales de la ventana (sin magic numbers dispersos).
@@ -372,7 +395,7 @@ function settingsCommonPath(): string {
 // regeneraba el script del usuario) + los MCP de ambito usuario del `.claude.json` de cada cuenta. Las
 // notas (colisiones de nombre) se enseñan en Ajustes -> MCP y conectores en esta ejecucion.
 const LEGACY_SHARED_MCP_FILE = 'mcp-shared.json';
-let mcpImportNotes: readonly string[] = [];
+let mcpImportNotes: readonly LocalizedText[] = [];
 
 function importSharedMcpOnce(): void {
   const readIfExists = (path: string): string | null => (existsSync(path) ? readFileSync(path, 'utf8') : null);
@@ -514,6 +537,7 @@ const sessionManager = new SessionManager(
   (provider, base) =>
     createSessionFor(provider, base, {
       buildAdapter,
+      prepareCwd: cwd => ensureWorkingDirectory(cwd, scratchRoots(), { exists: path => existsSync(path) && statSync(path).isDirectory(), mkdir: path => { mkdirSync(path, { recursive: true }); } }) ? localized('events.workspace.scratchRecreated', { path: cwd }) : null,
       buildRuntime: (id, runtimeBase) => buildRuntimeSession(id, runtimeBase, runtimeEnv()),
     }),
   {
@@ -527,6 +551,74 @@ const sessionManager = new SessionManager(
   logBus.loggerFor('engine'),
 );
 
+// Coordinacion de sesiones (F2.1): crear y parar pasan por aqui; da a cada evento su conversacion y su
+// secuencia y guarda la instantanea de cada sesion viva. El indice se resuelve perezoso (userData).
+const sessionCoordinator = new SessionCoordinator({
+  sessions: sessionManager,
+  index: {
+    resolveConversation: (ref) => getConversationIndexStore().resolveConversation(ref),
+    recordLastSeq: (conversationId, seq) => getConversationIndexStore().recordLastSeq(conversationId, seq),
+  },
+  now: () => Date.now(),
+  log: logBus.loggerFor('engine'),
+  newId: () => randomUUID(),
+  // Las reglas «Permitir siempre» viven en las preferencias de la conversacion (las guarda el renderer).
+  alwaysAllowTools: (key) => getConversationIndexStore().loadPrefs(key)?.alwaysAllowTools ?? [],
+  defer: (fn) => queueMicrotask(fn),
+  setTimer: (fn, ms) => {
+    const timer = setTimeout(fn, ms);
+    return () => clearTimeout(timer);
+  },
+  // #55 (F2.8): una sesion en segundo plano con turno sigue teniendo su conversacion frente a otras instancias.
+  conversationHold: {
+    hold: (sessionId, ref) => {
+      const status = getConversationLocks().acquire(ref, `session:${sessionId}`);
+      if (!status.owner) mainLog('warn', 'La sesion en segundo plano no pudo sujetar su conversacion', { sessionId, profile: renderForLog(status.profile) });
+    },
+    release: (sessionId) => getConversationLocks().releaseWhere((holder) => holder === `session:${sessionId}`),
+  },
+});
+
+// Bloqueo de conversacion entre instancias (#55, F2.8): un fichero por conversacion abierta en `<raiz local>/mage/locks`,
+// compartido por todos los perfiles. Perezoso: necesita userData. El instanceId es nuevo en cada arranque.
+let conversationLocksSingleton: ConversationLocks | null = null;
+function getConversationLocks(): ConversationLocks {
+  if (conversationLocksSingleton === null) {
+    const userData = app.getPath('userData');
+    conversationLocksSingleton = new ConversationLocks({
+      dir: resolveConversationLocksDir({ localMageRoot: localMageRoot({ platform: process.platform, home: homedir(), env: process.env }), packaged: app.isPackaged, env: process.env }),
+      identity: { instanceId: randomUUID(), profile: basename(userData), profileHash: createHash('sha256').update(userData).digest('hex').slice(0, 16), pid: process.pid },
+      fileNameOf: (ref) => lockFileName(ref, canonicalPath),
+      now: Date.now,
+      isPidAlive: pidAliveCheck((pid, signal) => { process.kill(pid, signal); }),
+      fs: nodeLockFs({ mkdirSync, writeFileSync, readFileSync, renameSync, rmSync, statSync }, randomUUID),
+    });
+  }
+  return conversationLocksSingleton;
+}
+
+// El latido de las conversaciones de esta instancia; las que haya PERDIDO se avisan a las ventanas (solo lectura). El
+// tick nunca deja escapar una excepcion (H1 de la devolucion 17).
+function startConversationLockHeartbeat(): void {
+  setInterval(() => {
+    runLockHeartbeatTick({
+      heartbeat: () => getConversationLocks().heartbeat(),
+      log: mainLog,
+      notifyLost: (ref) => windowManager.broadcast(CONVERSATION_LOCK_LOST_CHANNEL, ref),
+    });
+  }, HEARTBEAT_MS).unref();
+}
+
+// Una conversacion que tiene OTRA instancia no se reanuda aqui (la pestaña ya esta en solo lectura; esto lo hace
+// cierto aunque el renderer se salte el paso).
+function assertConversationNotLockedElsewhere(params: CreateSessionParams): void {
+  if (params.resumeSessionId === undefined) return;
+  const status = getConversationLocks().peek({ provider: params.provider, accountDir: params.accountDir, nativeId: params.resumeSessionId });
+  if (status === null || status.owner) return;
+  const hint = localized(status.orphan ? 'errors.app.lockedElsewhereTakeOver' : 'errors.app.lockedElsewhereClose');
+  throw new UserFacingError(localizedWithParts('errors.app.lockedElsewhere', {}, { lock: readOnlyLockMessage(status.profile), hint }));
+}
+
 // Lo que el runtime propio necesita de main: el proveedor de los ajustes, su clave de la boveda (en
 // cada peticion, nunca al renderer) y la red.
 function runtimeEnv(): RuntimeEnv {
@@ -539,6 +631,8 @@ function runtimeEnv(): RuntimeEnv {
     newId: randomUUID,
     platform: process.platform,
     realpath: nodeRealpath,
+    enumerationPlatform: process.platform,
+    readDirectory: (dir) => readdirSync(dir),
     fs: runtimeFs,
     editFs: { readFile, writeFile, mkdir, stat },
     shell: () =>
@@ -567,6 +661,7 @@ function runtimeEnv(): RuntimeEnv {
         baseEnv: () => scrubAgentEnv(process.env),
         cwd,
         elicit: (server, params, signal) => broker.request(server, params, signal),
+        translate: getUiLanguageService().translate,
       }),
     toolAccess: (id) => getSettingsStore().load().runtimeToolAccess[id] ?? [],
   };
@@ -618,7 +713,7 @@ function buildAdapter(provider: string): ProviderAdapter {
   const writeMcpConfig = getMcpServices().writeClaudeMcpConfig;
   // La clave de una cuenta por API la pone SOLO el adapter de su CLI, y solo en el hijo de esa cuenta
   // (agentEnv.ts, excepcion 2). Las de suscripcion resuelven null.
-  if (provider === 'claude') return new ClaudeAdapter(undefined, writeMcpConfig, claudeApiKeyFor);
+  if (provider === 'claude') return new ClaudeAdapter(undefined, writeMcpConfig, claudeApiKeyFor, () => getSettingsStore().load().artifactEnabled);
   if (provider === AGY_PROVIDER_ID) return buildAgyAdapter();
   if (provider === CODEX_PROVIDER_ID) return buildCodexAdapter();
   throw new Error(`Proveedor sin CLI: ${JSON.stringify(provider)}`);
@@ -735,6 +830,7 @@ function buildAgyAdapter(): AgyAdapter {
 
 function buildCodexAdapter(): CodexAdapter {
   return new CodexAdapter({
+    spawnCommand: codexSpawn,
     resolveAccount: (dir) => {
       const entry = getProviderAccounts().find('codex', dir);
       if (entry === null) return null;
@@ -829,13 +925,20 @@ function isKnownPermissionMode(provider: string, mode: string): boolean {
   return isKnownPermissionModeFor(provider, mode, permissionModesProbed);
 }
 
+// Cómo lanzar el CLI de Codex desde main: `MAGE_CODEX_BIN` puede ser el app-server falso de verify:gui, nunca con la app
+// empaquetada.
+function codexSpawn(args: readonly string[]): CodexSpawnCommand {
+  return codexSpawnCommand(args, { isPackaged: app.isPackaged, execPath: process.execPath, log: mainLog });
+}
+
 // `permissionProfile/list` de un app-server de codex con un CODEX_HOME de Mage (nunca el del usuario):
 // los perfiles integrados no dependen de la cuenta (medido sin cuenta). null si no hay codex o no contesta.
 async function readCodexPermissionProfiles(): Promise<unknown> {
   if (findCodexBinary() === null) return null;
   const home = join(app.getPath('userData'), 'codex-probe');
   mkdirSync(home, { recursive: true });
-  const child = spawn(resolveCodexBinary(), ['app-server'], { env: { ...scrubAgentEnv(process.env), CODEX_HOME: home }, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+  const codex = codexSpawn(['app-server']);
+  const child = spawn(codex.command, codex.args, { env: { ...scrubAgentEnv(process.env), ...codex.env, CODEX_HOME: home }, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
   return new Promise((resolveList) => {
     let buffer = '';
     const done = (value: unknown): void => {
@@ -875,8 +978,10 @@ function safeJson(line: string): { id?: unknown; result?: unknown } | null {
 let codexLoginSingleton: CodexLoginService | null = null;
 function getCodexLogin(): CodexLoginService {
   codexLoginSingleton ??= new CodexLoginService({
-    spawnAppServer: (codexHome) =>
-      spawn(resolveCodexBinary(), ['app-server'], { env: { ...scrubAgentEnv(process.env), CODEX_HOME: codexHome }, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true }),
+    spawnAppServer: (codexHome) => {
+      const codex = codexSpawn(['app-server']);
+      return spawn(codex.command, codex.args, { env: { ...scrubAgentEnv(process.env), ...codex.env, CODEX_HOME: codexHome }, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+    },
     openUrl: (url) => openWithService.openExternal(url),
     killTree: (child) => {
       killProcessTree(child, defaultKillTreeDeps());
@@ -899,6 +1004,7 @@ function getProviderAccounts(): ProviderAccountService {
       readFile: (path) => readFileSync(path, 'utf8'),
       writeFile: (path, data) => writeFileSync(path, data, 'utf8'),
       rename: renameSync,
+      removeFile: (path) => rmSync(path, { force: true }),
       tempSuffix: () => randomUUID(),
       mkdir: (path) => mkdirSync(path, { recursive: true }),
       rmrf: (path) => rmSync(path, { recursive: true, force: true, maxRetries: RMRF_RETRIES, retryDelay: RMRF_RETRY_DELAY_MS }),
@@ -925,15 +1031,16 @@ let codexAccountCatalog: CodexAccountCatalog | null = null;
 function getCodexAccountCatalog(): CodexAccountCatalog {
   codexAccountCatalog ??= new CodexAccountCatalog({
     probe: (home) => probeCodexAccount(codexAccountProbeDeps(), { home, includeApps: false }), now: Date.now,
-    onError: (reason) => mainLog('warn', 'No se pudo confirmar el login de Codex', { reason }),
+    onError: (reason) => mainLog('warn', 'No se pudo confirmar el login de Codex', { reason: renderForLog(reason) }),
   });
   return codexAccountCatalog;
 }
 
 function codexAccountProbeDeps(): import('./accounts/codexAccountProbe').CodexAccountProbeDeps {
   return { timeoutMs: CLI_PROBE_TIMEOUT_MS, spawnProbe: (home) => {
-    const child = spawn(resolveCodexBinary(), ['app-server'], {
-      env: { ...scrubAgentEnv(process.env), CODEX_HOME: home }, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true,
+    const codex = codexSpawn(['app-server']);
+    const child = spawn(codex.command, codex.args, {
+      env: { ...scrubAgentEnv(process.env), ...codex.env, CODEX_HOME: home }, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true,
     });
     child.stderr.resume(); // Consumir sin registrar: puede llevar detalles OAuth.
     return {
@@ -958,15 +1065,15 @@ function isLaunchableAccountDir(dir: string): boolean {
 function assertLaunchable(params: CreateSessionParams): void {
   if (runsOnMageRuntime(params.provider)) {
     if (!getSettingsStore().load().customProviders.some((provider) => provider.id === params.provider)) {
-      throw new Error(`Proveedor no configurado: ${params.provider}`);
+      throw new UserFacingError(localized('errors.app.providerNotConfigured', { provider: params.provider }));
     }
   } else if (!isLaunchableAccountDir(params.accountDir)) {
     throw new Error(`Cuenta no valida para lanzar un agente: ${params.accountDir}`);
   }
   // Sin cuenta de Claude detras no hay confianzas del CLI que leer: solo las de Mage.
   const ownOnly = runsOnMageRuntime(params.provider) && !isManagedAccountConfigDir(params.accountDir);
-  const trusted = ownOnly ? isTrusted(params.cwd, getSettingsStore().load().trustedFolders) : isFolderTrusted(params.cwd, params.accountDir);
-  if (!trusted) throw new Error(`Carpeta no autorizada para lanzar un agente: ${params.cwd}`);
+  const trusted = isFolderTrusted(params.cwd, ownOnly ? '' : params.accountDir);
+  if (!trusted) throw new UserFacingError(localized('errors.app.folderNotTrusted', { cwd: params.cwd }));
 }
 
 // ¿Tiene la cuenta de Claude con que autenticar? Login del CLI (.credentials.json) o clave de API en la
@@ -1001,14 +1108,6 @@ const openWithService = new OpenWithService({
   },
   isCommandAvailable: isCommandOnPath,
 });
-
-// Detecta si un comando existe en el PATH con where (Windows) / which (POSIX). Sincrona y rapida; solo
-// se consulta en acciones puntuales del usuario (listar editores, listar extensiones), no en caliente.
-function isCommandOnPath(bin: string): boolean {
-  const finder = process.platform === 'win32' ? 'where' : 'which';
-  const result = spawnSync(finder, [bin], { stdio: 'ignore', windowsHide: true, timeout: 5_000 });
-  return result.status === 0;
-}
 
 // Dialogo nativo de abrir fichero (la ruta la elige main, nunca el renderer). null = cancelado.
 async function pickNativeFile(filters: Electron.FileFilter[]): Promise<string | null> {
@@ -1065,7 +1164,7 @@ const conversationFsDeps: ConversationsDeps = {
 };
 const conversationsService = new ConversationsService(conversationFsDeps);
 // Historial de las cuentas de Codex: sus rollouts, medidos con codex-cli 0.160.0.
-const codexHistory = new CodexHistoryService(conversationFsDeps);
+const codexHistory = new CodexHistoryService(conversationFsDeps, mainLog);
 // Historial de agy: las bases SQLite de los perfiles con los que Mage lo lanza (resumibles con `--conversation`).
 const agyHistory = new AgyHistoryService(createAgySqliteStore());
 
@@ -1200,7 +1299,8 @@ const usageService = new UsageService({
   // uso conocido. Sin traza, esa degradacion seria invisible — y es justo la que explica por que el
   // panel no se actualiza.
   log: (level, message) => mainLog(level, message),
-  refreshSession: (configDir) => tokenRefreshService.refresh(configDir),
+  // Dev no añade otro renovador de Mage a los tokens de HOME compartidos con la instalada.
+  refreshSession: isDev ? undefined : (configDir) => tokenRefreshService.refresh(configDir),
 });
 const apiUsageStore = new ApiUsageStore({
   read: () => {
@@ -1315,16 +1415,17 @@ async function approveOutsideFile(event: Electron.IpcMainInvokeEvent, params: Re
   if (params.cwd.trim().length === 0 || params.path.trim().length === 0) {
     throw new Error(`Carpeta o ruta vacia al aprobar un fichero: ${JSON.stringify(params)}`);
   }
-  const path = resolveProjectFilePath(params);
+  const path = resolvedPath(resolveProjectFilePath(params));
   if (NEVER_APPROVED_FILE_NAMES.has(basename(path).toLowerCase())) {
-    throw new Error(`Mage no abre ficheros de credenciales del CLI: ${path}`);
+    throw new UserFacingError(localized('errors.app.credentialFileBlocked', { path }));
   }
   if (isApprovedOutside(path)) return true;
+  const translate = getUiLanguageService().translate;
   const options: Electron.MessageBoxOptions = {
     type: 'warning',
-    message: 'Este fichero está fuera de la carpeta de la conversación',
-    detail: `${path}\n\nSi lo abres, podrás leerlo y editarlo desde Mage hasta que cierres la aplicación.`,
-    buttons: ['Abrir', 'Cancelar'],
+    message: translate('dialogs.outsideFile.message'),
+    detail: `${path}\n\n${translate('dialogs.outsideFile.detail')}`,
+    buttons: [translate('dialogs.outsideFile.open'), translate('dialogs.outsideFile.cancel')],
     defaultId: 1,
     cancelId: 1,
     noLink: true,
@@ -1342,23 +1443,6 @@ async function approveOutsideFile(event: Electron.IpcMainInvokeEvent, params: Re
 // es. `realpathSync.native` resuelve el 8.3, pero EXIGE QUE LA RUTA EXISTA, y aqui llegan tambien
 // ficheros que aun no existen (un guardado nuevo), asi que se canonicaliza el ancestro mas profundo que
 // SI exista y se le vuelve a pegar el resto. El bucle esta acotado por la profundidad de la ruta.
-function canonicalPath(target: string): string {
-  const resolved = resolve(target);
-  const tail: string[] = [];
-  let current = resolved;
-  for (;;) {
-    try {
-      return join(realpathSync.native(current), ...tail);
-    } catch {
-      // No existe todavia: se sube un nivel y se reintenta con el padre.
-    }
-    const parent = dirname(current);
-    // Raiz alcanzada sin encontrar nada que exista: se devuelve lo resuelto, que es lo mejor que hay.
-    if (parent === current) return resolved;
-    tail.unshift(basename(current));
-    current = parent;
-  }
-}
 
 // Segunda raiz permitida fuera del cwd, junto a los planes: el SCRATCHPAD del CLI (reporte del usuario
 // del 2026-09-21). La decision de que forma vale vive en `files/cliScratchpad.ts`, que es puro y tiene
@@ -1434,7 +1518,7 @@ function readAccessToken(configDir: string): string {
       ? (parsed as { claudeAiOauth?: { accessToken?: unknown } }).claudeAiOauth?.accessToken
       : undefined;
   if (typeof token !== 'string' || token.length === 0) {
-    throw new Error(`Sin token OAuth valido en la cuenta (falta .credentials.json o login): ${configDir}`);
+    throw new UserFacingError(localized('errors.app.noOauthToken', { configDir }));
   }
   return token;
 }
@@ -1477,6 +1561,25 @@ function chmod600(path: string): void {
   chmodSync(path, 0o600);
 }
 
+// Idioma de la interfaz (F3.1). Lazy por lo mismo que el SettingsStore. La preferencia inicial (la del instalador
+// de Windows, U3) la aporta F3.7: hasta entonces no hay ninguna.
+let uiLanguageServiceSingleton: UiLanguageService | null = null;
+function getUiLanguageService(): UiLanguageService {
+  uiLanguageServiceSingleton ??= new UiLanguageService({
+    savedPreference: () => getSettingsStore().load().uiLanguage,
+    initialPreference: () => undefined,
+    preferredSystemLanguages: () => app.getPreferredSystemLanguages(),
+    broadcast: (resolved) => {
+      windowManager.broadcast(UI_LANGUAGE_CHANGED_CHANNEL, resolved);
+      widgetWindow?.sendUiLanguage(resolved);
+      // Al cambiar el idioma, main rehace lo que pinta él: el menú de la bandeja y la jump list. Los diálogos nativos y los avisos se traducen al construirse.
+      tray?.setContextMenu(buildTrayMenu());
+      refreshJumpList(true);
+    },
+  });
+  return uiLanguageServiceSingleton;
+}
+
 // SettingsStore compartido (M3): lo usan el IPC de settings y createMainWindow (para el tema de
 // arranque). Lazy: app.getPath('userData') solo esta disponible tras app.whenReady.
 let settingsStoreSingleton: SettingsStore | null = null;
@@ -1488,6 +1591,7 @@ function getSettingsStore(): SettingsStore {
       readFile: (path) => readFileSync(path, 'utf8'),
       writeFile: (path, data) => writeFileSync(path, data, 'utf8'),
       rename: renameSync,
+      removeFile: (path) => rmSync(path, { force: true }),
       tempSuffix: () => randomUUID(),
       mtimeMs: (path) => statSync(path).mtimeMs,
     });
@@ -1503,14 +1607,40 @@ function getSecretStore(): SecretStore {
     secretStoreSingleton = new SecretStore({
       filePath: join(app.getPath('userData'), 'secrets.json'),
       cipher: safeStorage,
+      status: currentVaultStatus,
       exists: existsSync,
       readFile: (path) => readFileSync(path, 'utf8'),
       writeFile: (path, data) => writeFileSync(path, data, 'utf8'),
       rename: renameSync,
+      removeFile: (path) => rmSync(path, { force: true }),
       tempSuffix: () => randomUUID(),
     });
   }
   return secretStoreSingleton;
+}
+
+// Si la bóveda se puede usar en ESTE proceso (D1, F2.7). Se decide una vez, tras `ready` y antes de admitir sesiones
+// (IPC y host); no cambia mientras el proceso viva: para habilitarla después hay que cerrar y volver a abrir Mage.
+let vaultStatus: VaultStatus | null = null;
+function currentVaultStatus(): VaultStatus {
+  if (vaultStatus === null) throw new Error('La bóveda se ha usado antes de comprobarla al arrancar');
+  return vaultStatus;
+}
+
+async function assessVaultOnce(): Promise<void> {
+  const startedAt = Date.now();
+  vaultStatus = await assessVaultForProcess({
+    platform: process.platform,
+    env: process.env,
+    cipher: safeStorage,
+    execFile,
+    isExecutableFile,
+    readTextFile: (path) => (existsSync(path) ? readFileSync(path, 'utf8') : null),
+    now: Date.now,
+  });
+  // El motivo no lleva secretos: estado del llavero y comandos. Solo su primera línea va al log.
+  const reason = vaultStatus.usable ? null : renderForLog(vaultStatus.reason).split('\n')[0];
+  mainLog(vaultStatus.usable ? 'info' : 'warn', 'Bóveda comprobada al arrancar', { usable: vaultStatus.usable, ms: Date.now() - startedAt, reason });
 }
 
 function readCustomProviderApiKey(providerId: string): string {
@@ -1761,6 +1891,7 @@ function fileSystemDeps(): Omit<AtomicWriteDeps, never> {
     readFile: (path: string) => readFileSync(path, 'utf8'),
     writeFile: (path: string, data: string) => writeFileSync(path, data, 'utf8'),
     rename: renameSync,
+    removeFile: (path) => rmSync(path, { force: true }),
     tempSuffix: () => randomUUID(),
   };
 }
@@ -1772,6 +1903,7 @@ function validateAttachments(attachments: readonly ImageAttachment[] | undefined
   validateAttachmentSet(
     [],
     attachments.map((attachment) => ({ mediaType: attachment.mediaType, byteLength: base64ByteLength(attachment.data) })),
+    ERROR_FORMAT_LOCALE,
   );
   return attachments;
 }
@@ -1917,6 +2049,7 @@ function getWindowBoundsStore(): WindowBoundsStore {
     readFile: (path) => readFileSync(path, 'utf8'),
     writeFile: (path, data) => writeFileSync(path, data, 'utf8'),
     rename: renameSync,
+    removeFile: (path) => rmSync(path, { force: true }),
     tempSuffix: () => randomUUID(),
   });
   return windowBoundsStoreSingleton;
@@ -1970,6 +2103,7 @@ function getWorkspaceStore(windowId: string = MAIN_WINDOW_ID): WorkspaceStore {
     readFile: (path) => readFileSync(path, 'utf8'),
     writeFile: (path, data) => writeFileSync(path, data, 'utf8'),
     rename: renameSync,
+    removeFile: (path) => rmSync(path, { force: true }),
     tempSuffix: () => randomUUID(),
   });
   workspaceStoresByWindow.set(windowId, store);
@@ -1995,6 +2129,7 @@ function getPanelLayoutStore(windowId: string = MAIN_WINDOW_ID): PanelLayoutStor
     readFile: (path) => readFileSync(path, 'utf8'),
     writeFile: (path, data) => writeFileSync(path, data, 'utf8'),
     rename: renameSync,
+    removeFile: (path) => rmSync(path, { force: true }),
     tempSuffix: () => randomUUID(),
     log: (level, message) => mainLog(level, message),
   });
@@ -2043,6 +2178,7 @@ function createWorkbenchWindow(windowId: string, placement?: WindowPlacement): B
   // recuperan sus bounds guardados.
   const saved = placement === undefined ? restoredWindowBounds(windowId) : null;
   const window = new BrowserWindow({
+    title: isDev ? 'Mage (dev)' : 'Mage',
     ...windowGeometry(saved, placement),
     minWidth: WINDOW.minWidth,
     minHeight: WINDOW.minHeight,
@@ -2067,13 +2203,22 @@ function createWorkbenchWindow(windowId: string, placement?: WindowPlacement): B
     // TitleBar.tsx a la izquierda.
     ...(process.platform === 'darwin' ? {} : { titleBarOverlay: titleBarOverlayFromTheme() }),
     webPreferences: {
-      preload: join(currentDir, '../preload/index.mjs'),
+      additionalArguments: isDev ? ['--mage-development'] : [],
+      preload: preloadPath,
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false, // el preload necesita 'require' de electron; sigue sin exponer Node al renderer
+      // F2.6: el renderer corre en el sandbox de Chromium. El preload es un unico fichero CommonJS que solo pide
+      // `electron` (contextBridge, ipcRenderer, webFrame) y habla con main por IPC: no necesita Node.
+      sandbox: true,
     },
   });
 
+  if (isDev) {
+    window.on('page-title-updated', (event, title) => {
+      event.preventDefault();
+      window.setTitle(`${title.replace(/ \(dev\)$/, '')} (dev)`);
+    });
+  }
   window.on('ready-to-show', () => {
     if (saved?.maximized === true) window.maximize();
     window.show();
@@ -2086,7 +2231,7 @@ function createWorkbenchWindow(windowId: string, placement?: WindowPlacement): B
   window.on('focus', flushPendingUpdatePrompt);
   // La jump list muestra conversaciones recientes: se refresca cuando CUALQUIER ventana recupera el
   // foco, no solo la principal (el propio `refreshJumpList` ya se limita con su intervalo minimo).
-  window.on('focus', refreshJumpList);
+  window.on('focus', () => refreshJumpList());
   // En dev, electron-vite sirve el renderer por URL; en prod, se carga el HTML compilado.
   const devUrl = process.env['ELECTRON_RENDERER_URL'];
   if (devUrl) {
@@ -2203,17 +2348,16 @@ function releaseClosePrompt(window: BrowserWindow): void {
 }
 
 async function askCloseBehaviorNatively(window: BrowserWindow): Promise<void> {
+  const translate = getUiLanguageService().translate;
   try {
     const answer = await dialog.showMessageBox(window, {
       type: 'question',
-      message: '¿Cerrar Mage?',
-      detail:
-        'En segundo plano, Mage sigue en la bandeja del sistema y los agentes siguen trabajando. ' +
-        'Cerrar Mage los para. Puedes cambiarlo después en Configuración › Almacenamiento.',
-      buttons: [...CLOSE_DIALOG_BUTTONS],
+      message: translate('dialogs.closeNative.title'),
+      detail: translate('dialogs.closeNative.detail'),
+      buttons: CLOSE_DIALOG_BUTTON_KEYS.map((key) => translate(key)),
       defaultId: 0,
       cancelId: CLOSE_DIALOG_CANCEL_INDEX,
-      checkboxLabel: 'Recordar mi decisión',
+      checkboxLabel: translate('dialogs.closeNative.remember'),
       noLink: true,
     });
     applyCloseOutcome(window, interpretCloseAnswer(closeAnswerFromNative(answer)));
@@ -2264,6 +2408,20 @@ function buildApplicationMenu(): Menu | null {
   return Menu.buildFromTemplate(template);
 }
 
+// Menú de la bandeja con las etiquetas en el idioma activo; se rehace al cambiar de idioma.
+function buildTrayMenu(): Menu {
+  const translate = getUiLanguageService().translate;
+  return Menu.buildFromTemplate([
+    { label: translate('tray.open'), click: () => focusMainWindow() },
+    // Widget flotante (M3): alterna la ventana y sincroniza la preferencia via el renderer.
+    { label: translate('tray.toggleWidget'), click: () => toggleWidgetFromTray() },
+    // Entrada de debug solo en desarrollo (la ventana no existe en produccion).
+    ...(isDev ? [{ label: translate('tray.debugWindow'), click: () => openDebugWindow() }] : []),
+    { type: 'separator' as const },
+    { label: translate('tray.quit'), click: () => app.quit() },
+  ]);
+}
+
 // Tray con el glifo de la marca; cerrar la ventana no mata la app (patron de app de escritorio).
 // En macOS se usa una imagen TEMPLATE (negra) que la barra de menus invierte segun su tema; en el
 // resto, el glifo blanco. El @2x lo resuelve Electron solo (busca el fichero hermano @2x).
@@ -2273,20 +2431,8 @@ function createTray(): Tray {
   const icon = nativeImage.createFromPath(join(brandDir, isMac ? 'tray-template.png' : 'tray-32.png'));
   if (isMac) icon.setTemplateImage(true);
   const trayInstance = new Tray(icon);
-  trayInstance.setToolTip('Mage');
-  trayInstance.setContextMenu(
-    Menu.buildFromTemplate([
-      { label: 'Abrir Mage', click: () => focusMainWindow() },
-      // Widget flotante (M3): alterna la ventana y sincroniza la preferencia via el renderer.
-      { label: 'Mostrar/ocultar widget flotante', click: () => toggleWidgetFromTray() },
-      // Entrada de debug solo en desarrollo (la ventana no existe en produccion).
-      ...(isDev
-        ? [{ label: 'Ventana de debug (Ctrl+Shift+L)', click: () => openDebugWindow() }]
-        : []),
-      { type: 'separator' as const },
-      { label: 'Salir', click: () => app.quit() },
-    ]),
-  );
+  trayInstance.setToolTip(isDev ? 'Mage (dev)' : 'Mage');
+  trayInstance.setContextMenu(buildTrayMenu());
   trayInstance.on('click', () => focusMainWindow());
   return trayInstance;
 }
@@ -2305,12 +2451,15 @@ function toggleWidgetFromTray(): void {
 //    esta ahi para no volver a preguntar lo que el usuario ya autorizo.
 // La comprobacion sube por los directorios padre en las dos, igual que hace el CLI.
 function isFolderTrusted(cwd: string, accountDir: string): boolean {
-  const own = getSettingsStore().load().trustedFolders;
-  if (isTrusted(cwd, own)) return true;
+  const settings = getSettingsStore().load();
+  if (workspaceTrusted(cwd, [], scratchRoots())) return true;
+  if (workspaceTrusted(cwd, settings.distrustedFolders ?? [], [])) return false;
+  const own = settings.trustedFolders;
+  if (workspaceTrusted(cwd, own, scratchRoots())) return true;
   // Una pestaña del runtime sin cuenta (A6): no hay config del CLI que leer, solo las confianzas de Mage.
   if (accountDir.length === 0) return false;
   const fromCli = readCliTrustedFolders(accountDir, { exists: existsSync, readFile: (path) => readFileSync(path, 'utf8') });
-  return isTrusted(cwd, fromCli);
+  return workspaceTrusted(cwd, fromCli, []);
 }
 
 // Cuantas rutas acepta `existsDirs` de una vez: el renderer pide las tarjetas de proyectos recientes
@@ -2329,8 +2478,9 @@ function existsDirs(paths: unknown): readonly boolean[] {
 // Raiz de los directorios de borrador. Un solo sitio: si la calculan dos, un dia divergen y la fila de
 // informacion deja de reconocer el scratchpad sin que nada falle.
 function scratchRoot(): string {
-  return join(app.getPath('temp'), 'mage-scratch');
+  return localScratchRoot({ platform: process.platform, home: homedir(), userData: app.getPath('userData'), temp: app.getPath('temp'), env: process.env });
 }
+function scratchRoots(): readonly string[] { return [scratchRoot(), join(app.getPath('temp'), 'mage-scratch'), join(app.getPath('userData'), 'mage-scratch')].map(root => canonicalPath(root)); }
 
 // Barrido de scratchpads (auditoria B.4.2). La POLITICA la elige el usuario y por defecto es 'never':
 // esto borra ficheros de su disco, asi que no puede pasar sin que lo haya pedido. Quien decide QUE
@@ -2376,7 +2526,7 @@ function stopSessionsWhenDestroyed(sender: Electron.WebContents): void {
   const ownerId = sender.id;
   sender.once('destroyed', () => {
     sessionOwnersWatched.delete(ownerId);
-    const stopped = sessionManager.stopOwnedBy(ownerId);
+    const stopped = sessionCoordinator.stopOwnedBy(ownerId).length;
     if (stopped > 0) mainLog('info', 'Sesiones paradas al cerrarse su ventana', { stopped });
   });
 }
@@ -2384,7 +2534,7 @@ function stopSessionsWhenDestroyed(sender: Electron.WebContents): void {
 // Registro de handlers IPC: puentean el renderer con el SessionManager. Los eventos del motor se
 // empujan al webContents que creo la sesion (guardando contra un renderer ya destruido).
 function relaySessionEvent(payload: { readonly sessionId: string; readonly event: MageEvent },
-  { sender, configDir, accountDir }: { sender: Electron.WebContents; configDir: string; accountDir: string }): void {
+  { sender, configDir, accountDir }: { sender: Electron.WebContents | null; configDir: string; accountDir: string }): void {
       // Cache del catalogo "/" (2.2): la sesion es la UNICA fuente del catalogo real, y una
       // conversacion recien abierta no tiene sesion. Se escribe con el config dir EFECTIVO (para una
       // conversacion privada, el perfil `mage-private`), nunca con el de la cuenta: si no, la cache de
@@ -2416,11 +2566,11 @@ function relaySessionEvent(payload: { readonly sessionId: string; readonly event
         try { apiUsageStore.record(accountDir, payload.event.result); }
         catch (err) { mainLog('warn', `No se pudo guardar el uso API de ${accountDir}: ${err instanceof Error ? err.message : String(err)}`); }
       }
-      if (!sender.isDestroyed()) sender.send(EVENT_CHANNEL, payload);
+      if (sender !== null && !sender.isDestroyed()) sender.send(EVENT_CHANNEL, payload);
     }
 
-function createSessionFromIpc(event: Electron.IpcMainInvokeEvent, params: CreateSessionParams): CreateSessionResult {
-    const sender = event.sender;
+// Sin ventana (sender null) la crea el host local (F7.2): nadie es su dueño, no muere con ninguna ventana y sus eventos no van a ningún renderer; las guardas son las mismas.
+function launchSession(params: CreateSessionParams, sender: Electron.WebContents | null): CreateSessionResult {
     // FRONTERA DE CONFIANZA. Lanzar el CLI en una carpeta ejecuta lo que esa carpeta traiga (hooks,
     // `.claude/settings.json`, servidores MCP del repo), asi que abrir un repositorio ajeno es ejecutar
     // codigo ajeno. La guarda va AQUI y no en el selector de carpeta porque este es el unico punto por
@@ -2430,7 +2580,9 @@ function createSessionFromIpc(event: Electron.IpcMainInvokeEvent, params: Create
     // Y la CUENTA se valida como en el resto de canales con ruta (`UsageGet`, `ConversationsList`…):
     // este es el unico que LANZA UN PROCESO, asi que un `accountDir` arbitrario seria un CLI corriendo
     // contra un config dir ajeno —con sus credenciales y sus hooks— por un solo mensaje IPC.
+    const recreated = ensureWorkingDirectory(params.cwd, scratchRoots(), { exists: path => existsSync(path) && statSync(path).isDirectory(), mkdir: path => { mkdirSync(path, { recursive: true }); } });
     assertLaunchable(params);
+    assertConversationNotLockedElsewhere(params);
     prepareAgyResume(params);
     // M2.6: una conversacion privada se lanza bajo el perfil privado de la cuenta (mismo login,
     // projects propio). Compartida (default) usa la cuenta tal cual. El config dir efectivo vuelve al
@@ -2442,12 +2594,17 @@ function createSessionFromIpc(event: Electron.IpcMainInvokeEvent, params: Create
     const projectInstructions = [project?.instructions.trim().slice(0, 8000), params.contextImport?.slice(0, IMPORTED_CONTEXT_LIMITS.max)]
       .filter((text): text is string => text !== undefined && text.length > 0).join('\n\n') || undefined;
     const effectiveParams = { ...params, accountDir: configDir, projectInstructions };
-    const sessionId = sessionManager.create(effectiveParams, (payload) => relaySessionEvent(payload, { sender, configDir, accountDir: params.accountDir }), sender.id);
-    stopSessionsWhenDestroyed(sender);
-    return { sessionId, configDir };
+    const sessionId = sessionCoordinator.create(effectiveParams, (payload) => relaySessionEvent(payload, { sender, configDir, accountDir: params.accountDir }), sender?.id);
+    if (sender !== null) stopSessionsWhenDestroyed(sender);
+    return { sessionId, configDir, ...(recreated ? { workspaceWarning: localized('events.workspace.scratchRecreatedKept', { path: params.cwd }) } : {}) };
   }
 
+function createSessionFromIpc(event: Electron.IpcMainInvokeEvent, params: CreateSessionParams): CreateSessionResult {
+  return launchSession(params, event.sender);
+}
+
 function registerIpcHandlers(): void {
+  registerConversationLockIpc(ipcMain, getConversationLocks);
   const deps = createIpcDependencies();
   registerEngineIpc(deps);
   registerApplicationIpc(deps);
@@ -2556,7 +2713,7 @@ function createIpcPromptService() {
             pid: child.pid,
             outcome,
           });
-          rejectPromise(new Error(`El CLI no respondio en ${PROMPT_RUN_TIMEOUT_MS} ms`));
+          rejectPromise(new UserFacingError(localized('errors.app.promptTimeout', { ms: String(PROMPT_RUN_TIMEOUT_MS) })));
         }, PROMPT_RUN_TIMEOUT_MS);
         // El CLI espera datos por stdin unos segundos antes de seguir ("no stdin data received in 3s"):
         // no le vamos a mandar nada, asi que se cierra ya y arranca sin esperar.
@@ -2594,40 +2751,24 @@ function registerApplicationIpc(deps: IpcDependencies): void {
 }
 
 function registerSessionIpc1(): void {
-  ipcMain.handle(IpcChannel.SessionCreate, createSessionFromIpc);
-  ipcMain.handle(IpcChannel.SessionSendMessage, (_e, params: SendMessageParams) =>
-    // Los adjuntos se validan tambien AQUI (el renderer valida por cortesia; esta es la frontera de
-    // verdad). El adapter vuelve a validarlos antes de codificarlos: es barato y es el ultimo punto
-    // donde se puede impedir que algo raro llegue al CLI.
-    sessionManager.sendMessage(params.sessionId, params.text, validateAttachments(params.attachments)),
-  );
-  ipcMain.handle(IpcChannel.SessionAnswerPermission, (_e, params: AnswerPermissionParams) =>
-    sessionManager.answerPermission(params.sessionId, params.requestId, params.decision),
-  );
-  ipcMain.handle(IpcChannel.SessionAnswerElicitation, (_e, input: unknown) =>
-    sessionManager.answerElicitation(ELICITATION_ANSWER_SCHEMA.parse(input)),
-  );
-  ipcMain.handle(IpcChannel.SessionInterrupt, (_e, sessionId: string) =>
-    sessionManager.interrupt(sessionId),
-  );
-  ipcMain.handle(IpcChannel.SessionSetPermissionMode, (_e, params: SetPermissionModeParams) =>
-    sessionManager.setPermissionMode(params.sessionId, params.mode),
-  );
-  ipcMain.handle(IpcChannel.SessionSetModel, (_e, params: SetModelParams) =>
-    sessionManager.setModel(params.sessionId, params.model),
-  );
-  ipcMain.handle(IpcChannel.SessionSetEffort, (_e, params: SetEffortParams) =>
-    sessionManager.setEffort(params.sessionId, params.effort),
-  );
-  ipcMain.handle(IpcChannel.SessionStopTask, (_e, params: StopTaskParams) => sessionManager.stopTask(params.sessionId, params.taskId));
-  ipcMain.handle(IpcChannel.SessionStop, (_e, sessionId: string) => sessionManager.stop(sessionId));
-  // Carpeta scratch AISLADA por conversacion (subdir unico y vacio): asi crear un archivo nuevo
-  // funciona a la primera, sin el "read first" de Claude Code por ficheros preexistentes. Fase B;
-  // en M1.2 el cwd sera un proyecto real elegido por el usuario. Cross-platform.
-  ipcMain.handle(IpcChannel.SessionGetScratchDir, () => {
-    const dir = join(scratchRoot(), randomUUID());
-    mkdirSync(dir, { recursive: true });
-    return dir;
+  registerSessionIpc({
+    handle: (channel, listener) => ipcMain.handle(channel, listener),
+    sessions: sessionManager,
+    coordinator: sessionCoordinator,
+    createSession: createSessionFromIpc,
+    validateAttachments,
+    // Solo la ventana que creo la sesion y la principal le dan ordenes (F2.6, H3 de la devolucion 14).
+    canControl: (senderId, sessionId) => canControlSession({
+      ownerOf: (id) => sessionCoordinator.ownerOf(id),
+      isMainWindow: (webContentsId) => windowManager.windowIdOf(webContentsId) === MAIN_WINDOW_ID,
+    }, senderId, sessionId),
+    // Carpeta scratch AISLADA por conversacion (subdir unico y vacio): asi crear un archivo nuevo
+    // funciona a la primera, sin el "read first" de Claude Code por ficheros preexistentes.
+    newScratchDir: () => {
+      const dir = join(scratchRoot(), randomUUID());
+      mkdirSync(dir, { recursive: true });
+      return canonicalPath(dir);
+    },
   });
 }
 
@@ -2637,6 +2778,7 @@ function registerSessionIpc2(): void {
   // hermano del que se buscaba —y de paso dejaba una carpeta vacia por cada arranque—. La usa la fila
   // de informacion del chat para saber si la conversacion vive en el scratchpad.
   ipcMain.handle(IpcChannel.SessionGetScratchRoot, () => scratchRoot());
+  ipcMain.handle(IpcChannel.SessionGetScratchRoots, () => scratchRoots());
   ipcMain.handle(IpcChannel.FsExistsDirs, (_e, paths: unknown): readonly boolean[] => existsDirs(paths));
   ipcMain.handle(IpcChannel.CodexInstalled, (): boolean => findCodexBinary() !== null);
   // Uso de la suscripcion de agy (`/usage`, gratis: 0 turnos, medido en 1.2.14), con TTL.
@@ -2834,7 +2976,7 @@ function registerAccountsIpc2(): void {
     }
     // Un login de agy a medias tiene el CLI vivo en el perfil que se va a borrar: se espera a que salga.
     if (getProviderAccounts().find('agy', configDir) !== null) await getAgyLogin().cancel();
-    const stopped = sessionManager.stopByConfigDir(configDir);
+    const stopped = sessionCoordinator.stopByConfigDir(configDir).length;
     if (stopped > 0) mainLog('info', `Paradas ${stopped} sesiones antes de borrar la cuenta "${configDir}"`);
     // Una cuenta del registro (API, Codex) se borra con su clave; una suscripcion de Claude, como siempre.
     if (!getProviderAccounts().delete(configDir)) accountService.deleteAccount(configDir);
@@ -2875,15 +3017,21 @@ function registerDialogIpc1(): void {
   // `app.getVersion()` lee el package.json de la app EMPAQUETADA, que es la version que el usuario
   // tiene instalada — no la del arbol de fuentes.
   ipcMain.handle(IpcChannel.AppVersionGet, () => app.getVersion());
+  ipcMain.handle(IpcChannel.UiLanguageGet, () => getUiLanguageService().current());
   // Grupo B: dialogos propios de cierre y de actualizacion.
   ipcMain.handle(IpcChannel.CloseAnswer, (event, answer: unknown) => answerClosePrompt(event, answer));
   ipcMain.handle(IpcChannel.UpdateGetState, () => getUpdateState());
   ipcMain.handle(IpcChannel.UpdateInstall, () => installUpdate());
+  ipcMain.handle(IpcChannel.UpdateCheck, () => checkForUpdatesNow());
 }
 
 function registerAboutIpc1(): void {
   // «Acerca de» (B.2/B.3): versiones del runtime y los avisos de terceros. Las rutas se calculan aqui
   // —es lo unico que sabe de Electron— y el servicio decide que existe y que se puede enseñar.
+  // Avisos persistentes de inicio (F2.6, D-AppImage): hoy, Linux arrancado con el switch `no-sandbox`.
+  // Espera a que el host local arranque o falle: así su aviso no depende de quién llega antes.
+  ipcMain.handle(IpcChannel.StartupWarningsGet, async () =>
+    startupWarnings({ platform: process.platform, hasNoSandboxSwitch: app.commandLine.hasSwitch('no-sandbox'), hostFailure: await hostFailure }));
   ipcMain.handle(IpcChannel.AboutGet, () =>
     buildAboutInfo(
       {
@@ -2938,8 +3086,9 @@ function registerTranscriptIpc1(): void {
 // Ruta de la transcripción y, si el CLI no es Claude, cómo traducir sus líneas. Con `agentId` se abre el
 // transcript del SUBAGENTE (drill-down, M2.2.3b). Los resolvers de Claude validan sus segmentos
 // (anti path-traversal) y su ruta cae bajo projects/; la de Codex sale de su cuenta registrada y de un id.
-function resolveTranscriptSource(params: OpenTranscriptParams): { readonly filePath: string; readonly adapt?: LineAdapter } {
-  if (params.provider === 'codex') return { filePath: codexRolloutPath(params), adapt: adaptCodexLine };
+// null: la conversación de Codex no existe en esa cuenta (ver `sendMissingConversation`).
+function resolveTranscriptSource(params: OpenTranscriptParams): TranscriptSource | null {
+  if (params.provider === 'codex') return codexSourceOf(params);
   const filePath =
     params.agentId !== undefined
       ? resolveSubagentTranscriptPath(params.accountDir, params.cwd, params.sessionId, params.agentId)
@@ -2947,24 +3096,33 @@ function resolveTranscriptSource(params: OpenTranscriptParams): { readonly fileP
   if (!isUnderManagedProjects(filePath)) {
     throw new Error(`Ruta de transcripcion no permitida (debe caer bajo ~/.claude*/projects): ${filePath}`);
   }
-  return { filePath };
+  // Solo la conversacion principal de Claude se lee por rama activa (los subagentes son todo isSidechain; Codex trae sus turnos de otro sitio).
+  return { kind: 'file', filePath, activeBranch: params.agentId === undefined };
 }
 
 // Abre en streaming y empuja lotes por TRANSCRIPT_BATCH_CHANNEL sin bloquear el invoke.
 function streamTranscript(sender: Electron.WebContents, transcriptId: string, params: OpenTranscriptParams): void {
-  const { filePath, adapt } = resolveTranscriptSource(params);
+  const source = resolveTranscriptSource(params);
+  if (source === null) {
+    sendMissingConversation(sender, transcriptId, localized('errors.transcripts.conversationMissing', { provider: 'Codex', sessionId: params.sessionId }));
+    return;
+  }
   const controller = new AbortController();
   openTranscriptControllers.set(transcriptId, controller);
 
   void (async () => {
     try {
-      for await (const batch of transcriptService.openStream(filePath, controller.signal, params.resumeFrom, adapt)) {
+      let batches: AsyncIterable<TranscriptBatch>;
+      if (source.kind === 'codexTurns') batches = codexTurnsBatches(() => codexThreadTurnsList({ spawnProbe: codexAccountProbeDeps().spawnProbe, timeoutMs: CLI_PROBE_TIMEOUT_MS }, source.home, source.threadId));
+      else if (source.activeBranch) batches = transcriptService.openBranchStream(source.filePath, controller.signal, params.resumeFrom, { onMissingParent: (uuid) => mainLog('warn', 'Transcripcion con un padre inexistente: la rama se corta ahi', { transcriptId, uuid }) });
+      else batches = transcriptService.openStream(source.filePath, controller.signal, params.resumeFrom, source.adapt);
+      for await (const batch of batches) {
         if (sender.isDestroyed()) break;
         sender.send(TRANSCRIPT_BATCH_CHANNEL, { transcriptId, batch });
       }
     } catch (err) {
-      const error = err instanceof Error ? err.message : String(err);
-      mainLog('error', 'Fallo leyendo transcripcion', { transcriptId, error });
+      const error = localizedFromError(err);
+      mainLog('error', 'Fallo leyendo transcripcion', { transcriptId, error: renderForLog(error) });
       // Propaga el fallo al renderer (no solo al log): sin esto el panel se queda "Cargando…"
       // para siempre. Es terminal (cierra la lectura igual que un lote final).
       if (!sender.isDestroyed()) sender.send(TRANSCRIPT_BATCH_CHANNEL, { transcriptId, error });
@@ -2999,24 +3157,35 @@ function openAgyTranscript(sender: Electron.WebContents, transcriptId: string, p
   const profile = agyProfileOfAccount(params.accountDir);
   if (profile === null) throw new Error(`Cuenta de agy no valida para abrir una transcripcion: ${params.accountDir}`);
   const dbPath = agyHistory.findDb(profile, params.sessionId, agyExternalProfileOf(params.accountDir));
-  if (dbPath === null) throw new Error(`No existe la conversacion de agy ${params.sessionId} en ${profile}`);
+  if (dbPath === null) {
+    sendMissingConversation(sender, transcriptId, localized('errors.transcripts.conversationMissing', { provider: 'agy', sessionId: params.sessionId }));
+    return;
+  }
   try {
     const batch = staticTranscriptBatch(agyHistory.readLines(dbPath));
     if (!sender.isDestroyed()) sender.send(TRANSCRIPT_BATCH_CHANNEL, { transcriptId, batch });
   } catch (err) {
-    const error = err instanceof Error ? err.message : String(err);
-    mainLog('error', 'Fallo leyendo la conversacion de agy', { transcriptId, error });
+    const error = localizedFromError(err);
+    mainLog('error', 'Fallo leyendo la conversacion de agy', { transcriptId, error: renderForLog(error) });
     if (!sender.isDestroyed()) sender.send(TRANSCRIPT_BATCH_CHANNEL, { transcriptId, error });
   }
 }
 
-// Rollout de una conversación de Codex: solo de una cuenta registrada y por su id (nunca una ruta del renderer).
-function codexRolloutPath(params: OpenTranscriptParams): string {
+// De dónde sale una conversación de Codex: solo de una cuenta registrada y por su id (nunca una ruta del renderer). null si
+// esa cuenta no tiene ninguna conversación con ese id.
+function codexSourceOf(params: OpenTranscriptParams): TranscriptSource | null {
   const account = getProviderAccounts().find('codex', params.accountDir);
   if (account === null) throw new Error(`Cuenta de Codex no valida para abrir una transcripcion: ${params.accountDir}`);
-  const path = codexHistory.findRollout(account.home, params.sessionId);
-  if (path === null) throw new Error(`No existe la conversacion de Codex ${params.sessionId} en ${account.home}`);
-  return path;
+  return codexTranscriptSource(codexHistory, account.home, params.sessionId);
+}
+
+// La conversación que se pidió no existe en la cuenta: fallo terminal, marcado `missing` para que el renderer lo distinga
+// de un error de lectura. Es el caso de un workspace de 0.1.2 que guardó el UUID de la sesión de Mage en vez del hilo
+// (devolución 19): la pestaña lo dice y deja de reanudar ese id.
+function sendMissingConversation(sender: Electron.WebContents, transcriptId: string, error: LocalizedText): void {
+  mainLog('warn', 'Conversacion inexistente al abrir su transcripcion', { transcriptId, error: renderForLog(error) });
+  const payload: TranscriptBatchPayload = { transcriptId, error, missing: true };
+  if (!sender.isDestroyed()) sender.send(TRANSCRIPT_BATCH_CHANNEL, payload);
 }
 
 function registerTranscriptIpc2(deps: IpcDependencies): void {
@@ -3094,6 +3263,7 @@ function conversationMigration(): ConversationMigrationService {
       homeOf: (accountDir) => getProviderAccounts().find('codex', accountDir)?.home ?? failMigration(`Cuenta de Codex no valida: ${accountDir}`),
       history: codexHistory,
       deleteThread: (home, threadId) => codexThreadDelete({ spawnProbe: codexAccountProbeDeps().spawnProbe, timeoutMs: CLI_PROBE_TIMEOUT_MS }, home, threadId),
+      listTurns: (home, threadId) => codexThreadTurnsList({ spawnProbe: codexAccountProbeDeps().spawnProbe, timeoutMs: CLI_PROBE_TIMEOUT_MS }, home, threadId),
     },
     agy: { profileOf: (accountDir) => agyProfileOfAccount(accountDir) ?? failMigration(`Cuenta de agy no valida: ${accountDir}`), externalOf: agyExternalProfileOf, history: agyHistory, writeDb: writeAgyConversationDb },
   }));
@@ -3141,12 +3311,24 @@ function registerSettingsIpc1(deps: IpcDependencies): void {
   // Se excluye a la que lo origino —ya lo tiene aplicado— para no devolverle un eco que pisaria una
   // edicion en curso suya. Esto es el nucleo de "que no surjan discrepancias entre configuraciones".
   ipcMain.handle(IpcChannel.SettingsSave, (event, settings: AppSettings) => {
-    settingsStore.save(settings);
+    const trustedFolders = settings.trustedFolders.filter(folder => folder.trim().length > 0).map(folder => canonicalPath(folder));
+    const distrustedFolders = (settings.distrustedFolders ?? []).map(folder => canonicalPath(folder)).filter(folder => !trustedFolders.some(own => (process.platform === 'win32' ? own.toLowerCase() === folder.toLowerCase() : own === folder)));
+    settingsStore.save({ ...settings, trustedFolders, distrustedFolders });
     windowManager.broadcast(SETTINGS_CHANGED_CHANNEL, settings, event.sender.id);
+    getUiLanguageService().refresh();
   });
-  // --- Varias ventanas del workbench ----------------------------------------------------------
+  registerWindowsIpc();
+}
+
+// Varias ventanas del workbench: abrir, cerrar, listar y mover pestañas entre ellas.
+function registerWindowsIpc(): void {
   // Abrir una ventana NUEVA: misma instancia, mismo main, mismos ajustes; workspace propio.
   ipcMain.handle(IpcChannel.WindowsOpen, (): string => windowManager.open().windowId);
+  // Solo la ventana del workbench que lo pide, y solo ELLA (nunca la principal por defecto, como `senderWindowId`).
+  ipcMain.handle(IpcChannel.WindowClose, (event): void => {
+    const windowId = windowManager.windowIdOf(event.sender.id);
+    if (windowId === null || !windowManager.close(windowId)) throw new Error(`Esta ventana no es del workbench y no se puede cerrar por aqui (webContents ${event.sender.id})`);
+  });
   // Ventanas abiertas, marcando cual es la que pregunta (para que el menu de "mover a..." no se
   // ofrezca a si misma).
   ipcMain.handle(IpcChannel.WindowsList, (event): readonly MageWindowInfo[] => {
@@ -3188,12 +3370,7 @@ function registerThinkingIpc1(): void {
   ipcMain.handle(IpcChannel.CommandCatalogLoad, (_e, accountDir: string): readonly SlashCommandInfo[] =>
     getCommandCatalogStore().load(accountDir),
   );
-  ipcMain.handle(IpcChannel.ConversationPrefsLoad, (_e, sessionId: string): ConversationPrefs | null =>
-    getConversationIndexStore().loadPrefs(sessionId),
-  );
-  ipcMain.handle(IpcChannel.ConversationPrefsSave, (_e, params: SaveConversationPrefsParams): void =>
-    getConversationIndexStore().savePrefs(params.sessionId, params.prefs),
-  );
+  registerConversationPrefsIpc({ handle: (channel, listener) => ipcMain.handle(channel, listener), index: getConversationIndexStore, coordinator: sessionCoordinator });
   ipcMain.handle(IpcChannel.ArtifactRecordSave, (_e, params: RecordArtifactParams): void =>
     getConversationIndexStore().recordArtifact(params.url, params.record),
   );
@@ -3206,7 +3383,7 @@ function registerArtifactIpc1(deps: IpcDependencies): void {
   ipcMain.handle(IpcChannel.ArtifactOpen, (_e, params: OpenArtifactParams): void => {
     const accountDir = params.accountDir ?? getConversationIndexStore().loadArtifact(params.url)?.accountDir;
     if (accountDir === undefined || accountDir.length === 0) {
-      throw new Error(`No se sabe con que cuenta abrir el artifact ${JSON.stringify(params.url)}`);
+      throw new UserFacingError(localized('errors.app.artifactAccountUnknown', { url: JSON.stringify(params.url) }));
     }
     if (!isManagedAccountConfigDir(accountDir)) {
       throw new Error(`Cuenta no gestionada por Mage para abrir un artifact: ${JSON.stringify(accountDir)}`);
@@ -3299,7 +3476,7 @@ function registerPromptIpc1(deps: IpcDependencies): void {
     agySync: getMcpServices().agySync,
     loadStatusCache: () => getMcpServices().loadStatusCache(),
     saveStatuses: (fresh) => getMcpServices().saveStatuses(fresh),
-    pickArchive: () => pickNativeFile([{ name: 'Extensión MCP', extensions: ['mcpb', 'dxt'] }]),
+    pickArchive: () => pickNativeFile([{ name: getUiLanguageService().translate('dialogs.mcpExtensionFilter'), extensions: ['mcpb', 'dxt'] }]),
     pickFile: () => pickNativeFile([]),
     onSharedChanged: onSharedMcpChanged,
     probeStatuses: () => {
@@ -3430,10 +3607,10 @@ function openDebugWindow(): void {
 // eso son varias pasadas por segundo sobre un escaneo de disco que cuesta cientos de ms.
 let lastJumpListAtMs = 0;
 
-function refreshJumpList(): void {
-  if (process.platform !== 'win32') return;
+function refreshJumpList(force = false): void {
+  if (isDev || process.platform !== 'win32') return;
   const nowMs = Date.now();
-  if (nowMs - lastJumpListAtMs < JUMP_LIST_MIN_INTERVAL_MS) return;
+  if (!force && nowMs - lastJumpListAtMs < JUMP_LIST_MIN_INTERVAL_MS) return;
   lastJumpListAtMs = nowMs;
   try {
     const accounts = accountService.listAccounts().map((account) => ({ configDir: account.configDir, alias: account.name }));
@@ -3464,7 +3641,7 @@ function refreshJumpList(): void {
     const tabAccountIds = windowManager
       .list()
       .flatMap((windowId) => (getWorkspaceStore(windowId).load()?.tabs ?? []).map((tab) => tab.accountId));
-    const categories = buildJumpListCategories({ accounts, conversations, tabAccountIds }, process.execPath);
+    const categories = buildJumpListCategories({ accounts, conversations, tabAccountIds }, process.execPath, getUiLanguageService().translate);
     // Cast: el modulo puro declara su propia forma (sin importar electron) — es estructuralmente la
     // que espera setJumpList, pero con arrays readonly.
     app.setJumpList(categories as unknown as Electron.JumpListCategory[]);
@@ -3504,23 +3681,75 @@ function focusMainWindow(): void {
 // instancia, esta se cierra y la existente se enfoca (comportamiento estandar de escritorio).
 // El lock se pide ANTES de whenReady: cuanto menos haya arrancado la segunda instancia, mejor.
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
+// Host sin pantalla (F2.6, §3.4): Linux sin DISPLAY ni WAYLAND_DISPLAY, o `--headless`. No crea ventanas.
+const runsHeadless = isHeadlessHost({ platform: process.platform, argv: process.argv, env: process.env });
+// Linux sin pantalla: sin `--password-store`, Chromium elige basic_text aunque haya un llavero desbloqueado (medido en
+// INFORME-006 y en la validación de F2.7), y la bóveda no se podría usar nunca. Se pide el Secret Service salvo que el
+// usuario haya elegido otro; antes de `ready`, que es cuando Chromium lo lee (medido: vale para este switch). Con
+// pantalla, Chromium elige como siempre (kwallet en KDE): forzarlo dejaría ilegibles las bóvedas que ya existen.
+if (runsHeadless && process.platform === 'linux' && !app.commandLine.hasSwitch('password-store')) {
+  app.commandLine.appendSwitch('password-store', 'gnome-libsecret');
+}
+
+// El host local (F2.6): terminal, widget y MCP hablan con el por un socket privado. Vive en los dos modos.
+let localHost: HostServerHandle | null = null;
+// Motivo por el que el host no arrancó (null si escucha): el renderer lo enseña como aviso persistente (H1, devolución 16).
+let hostFailure: Promise<LocalizedText | null> = Promise.resolve(null);
+function startHost(mode: HostMode): Promise<void> {
+  return startLocalHost({
+    platform: process.platform,
+    userDataDir: app.getPath('userData'),
+    xdgRuntimeDir: process.env['XDG_RUNTIME_DIR'],
+    mode,
+    fs: { mkdirSync, chmodSync, statSync, writeFileSync, rmSync },
+    getuid: process.getuid?.bind(process),
+    sessions: sessionCoordinator,
+    control: createHostControl({
+      listAccounts: listAllAccounts,
+      listProjects: () => getSettingsStore().load().chatProjects,
+      defaultModels: () => getSettingsStore().load().defaultModelByProvider,
+      isTrusted: isFolderTrusted,
+      launch: (params) => launchSession(params, null).sessionId,
+      conversationIdOf: (sessionId) => sessionCoordinator.conversationIdOf(sessionId),
+      options: sessionManager,
+    }),
+    hostVersion: app.getVersion(),
+    log: mainLog,
+    newId: randomUUID,
+    translate: getUiLanguageService().translate,
+    setTimer: (fn, ms) => {
+      const timer = setTimeout(fn, ms);
+      return () => clearTimeout(timer);
+    },
+  }).then((handle) => { localHost = handle; });
+}
+
+// Con qué modo corre el Mage que tiene el lock de este perfil (lo deja dicho su host).
+function lockHolderMode(): HostMode | null {
+  return readHostMode({
+    platform: process.platform,
+    userDataDir: app.getPath('userData'),
+    readFile: (file) => (existsSync(file) ? readFileSync(file, 'utf8').trim() : null),
+  });
+}
+
 if (!gotSingleInstanceLock) {
   // Se dice EN VOZ ALTA por que se cierra. Sin esta linea, la segunda instancia se rendia en silencio y
   // lo unico que se veia era la ventana de la instancia VIEJA saltando al frente: quien lanzaba
   // `pnpm dev` con la app instalada abierta concluia "el dev no aplica mis cambios" (paso de verdad).
-  // Dev y la version instalada comparten `userData` (%APPDATA%/mage, y Windows no distingue mayusculas),
-  // asi que comparten tambien este lock.
-  console.error(
-    '[mage] Ya hay otra instancia de Mage con este perfil: esta se cierra y se enfoca la existente. ' +
-      'Si esperabas ver tus cambios, cierra la otra (incluido el icono del tray) o arranca con ' +
-      '--user-data-dir=<carpeta propia>.',
-  );
+  // El perfil dev por defecto es propio; dos arranques con el MISMO perfil siguen compartiendo lock.
+  console.error(lockFailureMessage(lockHolderMode()));
   app.quit();
 } else {
   app.on('second-instance', (_event, argv) => {
     // Otro proceso intento arrancar Mage: traer al frente la ventana de esta instancia (restaurando
     // si estaba minimizada, y recreandola si el usuario la habia cerrado al tray). Si ademas venia de
     // la jump list, su argv dice QUE abrir.
+    // Sin pantalla NO se crea una ventana, no se reinicia y no se mata ninguna sesion por esta peticion (§3.4).
+    if (runsHeadless) {
+      mainLog('warn', HEADLESS_GUI_UNAVAILABLE);
+      return;
+    }
     focusMainWindow();
     handleJumpListArgv(argv);
   });
@@ -3530,6 +3759,16 @@ app.whenReady().then(async () => {
   // Guarda: si no se obtuvo el lock ya se llamo a app.quit(); no se arranca nada mas (registrar IPC o
   // ventanas desde una instancia que se esta cerrando solo crea efectos a medias).
   if (!gotSingleInstanceLock) return;
+  if (runsHeadless) {
+    // Solo el host: sin ventanas, ni tray, ni widget, ni actualizador, ni IPC del renderer (no hay renderer).
+    mainLog('info', 'Mage arrancado sin pantalla', { platform: process.platform });
+    await assessVaultOnce();
+    await startHost('headless').catch((err: unknown) => {
+      mainLog('error', 'No se pudo arrancar el host local; se cierra el proceso sin pantalla', { error: renderForLog(localizedFromError(err)) });
+      app.exit(1);
+    });
+    return;
+  }
 
   if (process.platform === 'win32') app.setAppUserModelId(app.isPackaged ? WINDOWS_APP_USER_MODEL_ID : process.execPath);
   applyContentSecurityPolicy();
@@ -3537,6 +3776,9 @@ app.whenReady().then(async () => {
   // navegador del sistema y nunca crea otra ventana. El artifact pone despues su propio `deny` y manda.
   app.on('web-contents-created', (_event, contents) => installExternalLinkHandler(contents, externalLinkDeps));
   Menu.setApplicationMenu(buildApplicationMenu());
+  // La bóveda, antes de admitir sesiones y de migrar nada a ella (D1).
+  await assessVaultOnce();
+  startConversationLockHeartbeat();
   migrateLegacyProviderKeysOnce();
   registerIpcHandlers();
   // Antes de la primera ventana: la primera sesion ya tiene que recibir los MCP importados.
@@ -3550,6 +3792,16 @@ app.whenReady().then(async () => {
   // `pnpm verify:gui` lo apaga: su contrato es no lanzar nunca el CLI.
   if (process.env.MAGE_SKIP_MODEL_PROBE !== '1') setTimeout(probeLoggedInAccounts, MODEL_PROBE_START_DELAY_MS).unref();
   mainLog('info', 'Mage arrancado', { isDev, platform: process.platform });
+  // El host local de este perfil. Si no arranca (ruta del socket demasiado larga, dirección ocupada...) la interfaz
+  // sigue funcionando: el motivo queda en el log y la ventana lo enseña como aviso persistente.
+  hostFailure = startHost('gui').then(
+    () => null,
+    (err: unknown) => {
+      const reason = localizedFromError(err);
+      mainLog('error', 'No se pudo arrancar el host local', { error: renderForLog(reason) });
+      return reason;
+    },
+  );
 
   // Widget flotante (M3): reabrir al arrancar si la preferencia persistida estaba activa.
   if (getSettingsStore().load().widgetEnabled) getWidgetWindow().open();
@@ -3600,7 +3852,12 @@ app.on('before-quit', () => {
   prMonitor.dispose();
   // Lo primero: a partir de aqui ninguna ventana pregunta al cerrarse (ver `resolveCloseAction`).
   isQuitting = true;
-  sessionManager.stopAll();
+  // El token, la direccion y el socket salen del disco ya: `before-quit` no espera a nada asincrono.
+  localHost?.closeFilesSync();
+  void localHost?.close().catch((err: unknown) => mainLog('warn', 'El host local no cerro limpio', { error: err instanceof Error ? err.message : String(err) }));
+  sessionCoordinator.stopAll();
+  // #55: las conversaciones de esta instancia quedan libres para las demas (despues de parar las sesiones).
+  conversationLocksSingleton?.releaseAll();
   // Incognito ('session'): las carpetas de trabajo no sobreviven a la ejecucion. Se barre aqui ADEMAS
   // de al arrancar, porque si no quedarian en el temp todo el tiempo que la app este cerrada — que es
   // justo lo que esa politica promete evitar.

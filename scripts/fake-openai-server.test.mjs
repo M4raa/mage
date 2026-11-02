@@ -221,8 +221,9 @@ describe('runtime propio contra el servidor falso', () => {
     }
 
     const error = events.find((e) => e.kind === 'error');
-    expect(error?.message).toMatch(/no cabe en la ventana de 2048 tokens de fake:contexto-2048/);
-    expect(events.some((e) => e.kind === 'notice' && /se acerca al límite/.test(e.text))).toBe(true);
+    expect(error?.localized.key).toBe('errors.runtime.contextOverflow');
+    expect(error?.localized.values).toMatchObject({ window: '2048', model: 'fake:contexto-2048' });
+    expect(events.some((e) => e.kind === 'notice' && e.localized.key === 'events.runtime.nearContextLimit')).toBe(true);
     const usage = events.filter((e) => e.kind === 'context_usage').at(-1)?.usage;
     expect(usage?.maxTokens).toBe(2048);
   });
@@ -283,7 +284,7 @@ describe('runtime propio contra el servidor falso', () => {
     await waitFor(events, (e) => e.kind === 'result');
 
     expect(fake.stats.requests.every((request) => request.tools === undefined)).toBe(true);
-    expect(events.some((e) => e.kind === 'notice' && /no admite herramientas/.test(e.text))).toBe(true);
+    expect(events.some((e) => e.kind === 'notice' && e.localized.key === 'events.runtime.noTools')).toBe(true);
   });
 
   it('mcp_servidorComun_apareceEnSessionInitYSeLlama', async () => {

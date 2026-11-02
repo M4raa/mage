@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
+import { join, resolve } from 'node:path';
 import { InstructionsService, type InstructionsDeps } from './instructionsService';
 
-const CWD = 'C:\\sourcecode\\mage';
-const ACCOUNT = 'C:\\Users\\u\\.claude';
-const PROJECT_FILE = 'C:\\sourcecode\\mage\\CLAUDE.md';
-const USER_FILE = 'C:\\Users\\u\\.claude\\CLAUDE.md';
+const CWD = resolve('fixture-project');
+const ACCOUNT = resolve('fixture-user', '.claude');
+const PROJECT_FILE = join(CWD, 'CLAUDE.md');
+const USER_FILE = join(ACCOUNT, 'CLAUDE.md');
 
 function service(files: Readonly<Record<string, string>>, overrides: Partial<InstructionsDeps> = {}): InstructionsService {
   return new InstructionsService({
@@ -68,8 +69,8 @@ describe('InstructionsService.read', () => {
 });
 
 describe('InstructionsService.read con puente (grupo H)', () => {
-  const OWN_PROJECT = 'C:\\sourcecode\\mage\\AGENTS.md';
-  const spec = { target: 'AGENTS.md', projectOwnFiles: ['AGENTS.md'], userOwnPaths: ['C:\\Users\\u\\.codex\\AGENTS.md'] } as const;
+  const OWN_PROJECT = join(CWD, 'AGENTS.md');
+  const spec = { target: 'AGENTS.md', projectOwnFiles: ['AGENTS.md'], userOwnPaths: [resolve('fixture-user', '.codex', 'AGENTS.md')] } as const;
   const bridged = (files: Readonly<Record<string, string>>): InstructionsService =>
     service(files, { bridgeSpecFor: (provider) => (provider === 'codex' ? spec : null), claudeUserDir: ACCOUNT });
 

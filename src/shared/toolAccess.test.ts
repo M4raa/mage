@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { createTranslator } from './i18n/translator';
+import { renderLocalized } from './i18n/localizedText';
 import { formatToolAccessRules, isToolAllowed, parseToolAccessText } from './toolAccess';
 
 describe('parseToolAccessText', () => {
@@ -16,7 +18,14 @@ describe('parseToolAccessText', () => {
   it('parse_badLines_reportedWithNumber', () => {
     const { errors } = parseToolAccessText('sin dos puntos\nqwen:   ');
 
-    expect(errors).toEqual([expect.stringContaining('Línea 1'), expect.stringContaining('Línea 2')]);
+    expect(errors).toEqual([
+      { key: 'settings.providers.toolAccessMissingModel', values: { line: '1', text: 'sin dos puntos' } },
+      { key: 'settings.providers.toolAccessNoTools', values: { line: '2', text: 'qwen:' } },
+    ]);
+    expect(errors.map((error) => renderLocalized(createTranslator('es'), error))).toEqual([
+      'Línea 1: falta «modelo:» delante (sin dos puntos)',
+      'Línea 2: no nombra ninguna herramienta (qwen:)',
+    ]);
   });
 
   it('format_roundTrip', () => {

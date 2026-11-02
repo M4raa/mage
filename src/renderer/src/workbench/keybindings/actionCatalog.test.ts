@@ -24,3 +24,11 @@ describe('KEYBINDING_ACTIONS — panel.toggle.<id> (I10b)', () => {
     expect(ids.length).toBe(new Set(ids).size);
   });
 });
+
+describe('prompt.sendNow (G-U1)', () => {
+  it('catalogo_sendNow_esCmdOrCtrlEnterEnElScopePrompt', () => {
+    const action = KEYBINDING_ACTIONS.find((a) => a.id === 'prompt.sendNow');
+
+    expect(action).toMatchObject({ scope: 'prompt', defaultKeys: 'CmdOrCtrl+Enter', rebindable: true });
+  });
+});

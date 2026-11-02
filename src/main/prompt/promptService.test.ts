@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { foreignText } from '@shared/i18n/localizedText';
 import { buildHandoffPrompt, buildImprovePrompt } from './promptText';
 import { PromptService, type PromptServiceDeps } from './promptService';
 
@@ -55,7 +56,11 @@ describe('PromptService.improve', () => {
   });
 
   it('stdoutVacio_lanza', async () => {
-    await expect(build(async () => '   ').improve('draft', '/acc')).rejects.toThrow(/vacia/i);
+    await expect(build(async () => '   ').improve('draft', '/acc')).rejects.toThrow(/vacía/i);
+  });
+
+  it('stdoutVacio_lanzaLaClave', async () => {
+    await expect(build(async () => '   ').improve('draft', '/acc')).rejects.toThrow(expect.objectContaining({ localized: { key: 'errors.prompt.improveEmpty' } }));
   });
 });
 
@@ -116,6 +121,26 @@ describe('PromptService.handoff', () => {
   });
 
   it('stdoutVacio_lanza', async () => {
-    await expect(build(async () => '  ').handoff(request)).rejects.toThrow(/vacia/i);
+    await expect(build(async () => '  ').handoff(request)).rejects.toThrow(/vacía/i);
   });
+
+  it('cliFalla_lanzaLaFraseConElErrorDeDentroComoDetalleAjeno', async () => {
+    const failing = build(async () => {
+      throw new Error('el CLI murió');
+    });
+
+    await expect(failing.handoff(request)).rejects.toThrow(
+      expect.objectContaining({ localized: { key: 'errors.prompt.handoffFailed', values: {}, parts: { detail: foreignText('el CLI murió') } } }),
+    );
+  });
+});
+
+
+it('R49_handoff_noPersisteNiModificaLaSesionOriginal', async () => {
+  const run = vi.fn(async () => 'handoff');
+  await new PromptService({ resolveBinary: () => 'claude', run }).handoff({ sessionId: 'fixture', accountDir: '/fixture', model: 'haiku', cwd: '/project' });
+  const args = run.mock.calls[0] as unknown as [string, readonly string[]];
+  expect(args[1]).toContain('--fork-session');
+  expect(args[1]).toContain('--no-session-persistence');
+  expect(args[1]).toContain('--max-turns');
 });

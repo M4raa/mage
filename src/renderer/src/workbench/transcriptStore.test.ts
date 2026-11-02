@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { foreignText, localized, USER_FACING_MARK, UserFacingError } from '@shared/i18n/localizedText';
 import type { TranscriptBatch, TranscriptEntry } from '@shared/transcripts';
 import { applyTranscriptBatch, disposeTranscriptStore, transcriptStoreForTab, type TranscriptStoreState } from './transcriptStore';
 import { makeEntry } from '@testing/transcriptEntry';
@@ -46,9 +47,15 @@ describe('applyTranscriptBatch', () => {
   });
 
   it('applyTranscriptBatch_error_cierraLaCargaConElMensaje', () => {
-    const patch = applyTranscriptBatch(EMPTY, { transcriptId: 'lectura-1', error: 'no existe el fichero' });
+    const patch = applyTranscriptBatch(EMPTY, { transcriptId: 'lectura-1', error: foreignText('no existe el fichero') });
 
-    expect(patch).toEqual({ errorMessage: 'no existe el fichero', isFinal: true });
+    expect(patch).toEqual({ errorMessage: 'no existe el fichero', isFinal: true, missing: false });
+  });
+
+  it('applyTranscriptBatch_conversacionInexistente_loMarcaComoMissing', () => {
+    const patch = applyTranscriptBatch(EMPTY, { transcriptId: 'lectura-1', error: localized('errors.transcripts.conversationMissing', { provider: 'Codex', sessionId: 'x' }), missing: true });
+
+    expect(patch).toEqual({ errorMessage: 'No existe la conversación de Codex x', isFinal: true, missing: true });
   });
 
   it('applyTranscriptBatch_sinLoteNiError_noCambiaNada', () => {
@@ -104,5 +111,44 @@ describe('transcriptStoreForTab', () => {
 
   it('disposeTranscriptStore_pestanaDesconocida_noLanza', () => {
     expect(() => disposeTranscriptStore('nunca-existio')).not.toThrow();
+  });
+});
+
+
+describe('A10 — reemplazo de historial truncado', () => {
+  it('reset_reemplazaEntradasYErrores_yElLoteSiguienteAcumula', () => {
+    const current: Accumulated = { transcriptId: 'lectura-1', entries: [entry(7)], errors: [{ lineNumber: 9, message: 'anterior' }] };
+    const reset = { transcriptId: 'lectura-1', batch: batch([entry(0)], false, { reset: true, bytesReadSoFar: 42, rawLineNumber: 1 }) };
+    expect(applyTranscriptBatch(current, { ...reset, transcriptId: 'otra' })).toEqual({});
+    const patch = applyTranscriptBatch(current, reset);
+    expect(patch.entries).toEqual([entry(0)]);
+    expect(patch.errors).toEqual([]);
+    expect(patch.tailPosition).toEqual({ bytesRead: 42, rawLineNumber: 1, totalLinesSoFar: 1 });
+    const next = applyTranscriptBatch({ ...current, ...patch }, { transcriptId: 'lectura-1', batch: batch([entry(1)]) });
+    expect(next.entries).toEqual([entry(0), entry(1)]);
+  });
+
+  it('resetAVacio_borraTambienErroresYCheckpoint', () => {
+    const current: Accumulated = { transcriptId: 'lectura-1', entries: [entry(7)], errors: [{ lineNumber: 9, message: 'anterior' }] };
+    const patch = applyTranscriptBatch(current, { transcriptId: 'lectura-1', batch: batch([], true, { reset: true }) });
+    expect(patch.entries).toEqual([]);
+    expect(patch.errors).toEqual([]);
+    expect(patch.totalLinesSoFar).toBe(0);
+    expect(patch.tailPosition).toEqual({ bytesRead: 0, rawLineNumber: 0, totalLinesSoFar: 0 });
+  });
+});
+
+describe('open — error de main', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('open_errorUserFacingDeMain_textoSinMarca', async () => {
+    const ipcError = new Error("Error invoking remote method 'x': Error: " + new UserFacingError(foreignText('hola')).message);
+    const store = transcriptStoreForTab('tab-error-main'); // antes del stub: sin `window` no se suscribe al canal
+    vi.stubGlobal('window', { mage: { openTranscript: vi.fn().mockRejectedValue(ipcError), cancelTranscript: vi.fn() } });
+
+    await store.getState().open({ accountDir: 'd', cwd: 'c', sessionId: 's' });
+
+    expect(store.getState().errorMessage).toBe('hola');
+    expect(store.getState().errorMessage).not.toContain(USER_FACING_MARK);
   });
 });

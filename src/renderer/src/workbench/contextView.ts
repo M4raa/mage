@@ -1,10 +1,11 @@
 import type { ContextCategory, ContextUsage } from '@shared/events';
 import type { TranscriptEntry } from '@shared/transcripts';
 import type { ContextInfo } from './types';
+import { formatDecimal } from '../i18n/format';
 
 // Mapeo PURO del historial de tokens (TranscriptEntry[]) a las dos vistas de la pestana "Contexto":
 // (a) atribucion por categorias (cuanto se gasto en input/output/cache) y (b) evolucion del tamano
-// de contexto turno a turno con deteccion de compactacion. Sin efectos ni dependencia de reloj/red:
+// de contexto turno a turno con las compactaciones que registra el CLI. Sin efectos ni dependencia de reloj/red:
 // opera sobre los datos ya cargados por el transcriptStore.
 
 // ---------------------------------------------------------------------------------------------
@@ -51,17 +52,17 @@ export type TokenCategoryKey = 'input' | 'output' | 'cacheCreation' | 'cacheRead
 
 export interface TokenCategoryShare {
   readonly key: TokenCategoryKey;
-  readonly label: string;
   readonly tokens: number;
   readonly pct: number; // % entero [0,100] sobre el total; 0 en todas si el total es 0
 }
 
-const CATEGORY_LABELS: Readonly<Record<TokenCategoryKey, string>> = {
-  input: 'Entrada',
-  output: 'Salida',
-  cacheCreation: 'Escritura de caché',
-  cacheRead: 'Lectura de caché',
-};
+// Etiqueta de cada categoría: guarda la CLAVE y se traduce donde se pinta (la barra de la categoría).
+export const CATEGORY_LABEL_KEY = {
+  input: 'chat.context.categoryInput',
+  output: 'chat.context.categoryOutput',
+  cacheCreation: 'chat.context.categoryCacheCreation',
+  cacheRead: 'chat.context.categoryCacheRead',
+} as const satisfies Readonly<Record<TokenCategoryKey, string>>;
 
 // Convierte los totales en 4 barras (orden fijo: input, output, cacheCreation, cacheRead). Si el
 // total es 0, todas devuelven pct 0 (evita division por 0; nunca NaN).
@@ -74,14 +75,13 @@ export function toTokenCategoryShares(totals: TokenCategoryTotals): readonly Tok
   ];
   return rows.map(({ key, tokens }) => ({
     key,
-    label: CATEGORY_LABELS[key],
     tokens,
     pct: totals.totalTokens === 0 ? 0 : Math.round((tokens / totals.totalTokens) * 100),
   }));
 }
 
 // ---------------------------------------------------------------------------------------------
-// (b) Evolucion del contexto + deteccion de compactacion
+// (b) Evolucion del contexto + compactaciones (marcador compact_boundary del CLI)
 // ---------------------------------------------------------------------------------------------
 
 export interface ContextSizePoint {
@@ -90,26 +90,42 @@ export interface ContextSizePoint {
   // input+cacheCreation+cacheRead: magnitud del contexto vivo para el eje del grafico. NO incluye
   // output (los tokens generados no forman parte del contexto de entrada del siguiente turno).
   readonly contextTokens: number;
-  readonly cacheReadInputTokens: number; // serie sobre la que se detecta la compactacion
   readonly isCompaction: boolean;
 }
 
-// Umbral de caida relativa de cache_read para marcar una compactacion (40%): tras compactar, la
-// caché de lectura del turno cae bruscamente aunque el TOTAL de contexto apenas cambie.
-export const COMPACTION_DROP_RATIO = 0.4;
+// El CLI deja en la transcripcion una linea {"type":"system","subtype":"compact_boundary",...} cada vez que compacta
+// (auto o manual). Es la UNICA fuente: una caida de cache_read no lo es (una cache caducada tras una pausa de horas
+// cae igual y no compacta nada; medido: 7 "compactaciones" falsas y 0 reales en una conversacion real).
+export function isCompactBoundary(entry: TranscriptEntry): boolean {
+  if (entry.kind !== 'system') return false;
+  const raw = entry.raw;
+  return typeof raw === 'object' && raw !== null && (raw as { subtype?: unknown }).subtype === 'compact_boundary';
+}
 
-// Construye la serie de tamano de contexto (un punto por entrada assistant con usage) y marca las
-// compactaciones. Orden preservado (el archivo ya viene en orden cronologico).
+export function countCompactBoundaries(entries: readonly TranscriptEntry[]): number {
+  return entries.filter(isCompactBoundary).length;
+}
+
+// Construye la serie de tamano de contexto (un punto por entrada con usage). El primer punto tras un marcador
+// compact_boundary es la compactacion. Orden preservado (el archivo ya viene en orden cronologico).
 export function buildContextSizeSeries(entries: readonly TranscriptEntry[]): readonly ContextSizePoint[] {
-  const points = entries
-    .filter((entry): entry is TranscriptEntry & { tokenUsage: NonNullable<TranscriptEntry['tokenUsage']> } => entry.tokenUsage !== null)
-    .map((entry) => ({
+  const points: ContextSizePoint[] = [];
+  let pendingCompaction = false;
+  for (const entry of entries) {
+    if (isCompactBoundary(entry)) {
+      pendingCompaction = true;
+      continue;
+    }
+    if (entry.tokenUsage === null) continue;
+    points.push({
       entryIndex: entry.index,
       timestampMs: entry.timestampMs,
       contextTokens: entry.tokenUsage.inputTokens + entry.tokenUsage.cacheCreationInputTokens + entry.tokenUsage.cacheReadInputTokens,
-      cacheReadInputTokens: entry.tokenUsage.cacheReadInputTokens,
-    }));
-  return markCompactions(points, COMPACTION_DROP_RATIO);
+      isCompaction: pendingCompaction,
+    });
+    pendingCompaction = false;
+  }
+  return points;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -134,8 +150,8 @@ export function contextWindowForModel(model: string): number {
 export function formatTokensShort(tokens: number): string {
   const safe = tokens > 0 ? Math.round(tokens) : 0;
   if (safe < 1000) return String(safe);
-  if (safe < MILLION_CONTEXT_WINDOW_TOKENS) return `${(safe / 1000).toFixed(1).replace('.', ',')}k`;
-  return `${(safe / MILLION_CONTEXT_WINDOW_TOKENS).toFixed(1).replace('.', ',')}M`;
+  if (safe < MILLION_CONTEXT_WINDOW_TOKENS) return `${formatDecimal(safe / 1000, 1)}k`;
+  return `${formatDecimal(safe / MILLION_CONTEXT_WINDOW_TOKENS, 1)}M`;
 }
 
 // Etiqueta de la ventana ("200k" / "1M") para el footer de contexto.
@@ -245,21 +261,4 @@ export function resolveContext(usage: ContextUsage | undefined, estimate: Contex
 // Tamano de contexto vivo actual = contextTokens del ultimo punto de la serie (0 si no hay puntos).
 export function currentContextTokens(points: readonly ContextSizePoint[]): number {
   return points.length === 0 ? 0 : (points[points.length - 1]?.contextTokens ?? 0);
-}
-
-// Marca como compactacion todo punto cuyo cache_read cae por debajo de (1-dropRatio) del punto
-// anterior. HALLAZGO VERIFICADO con numeros reales: en una compactacion el TOTAL de contexto apenas
-// cambia (incluso sube) — la caida SOLO es visible en cacheReadInputTokens, asi que se compara
-// SIEMPRE contra cacheReadInputTokens[i-1], NUNCA contra el total. Comparacion por multiplicacion
-// (nunca division): si cacheReadInputTokens[i-1] === 0, no hay caida posible -> no se marca.
-export function markCompactions(
-  points: readonly Omit<ContextSizePoint, 'isCompaction'>[],
-  dropRatio: number = COMPACTION_DROP_RATIO,
-): readonly ContextSizePoint[] {
-  return points.map((point, i) => {
-    const previous = points[i - 1];
-    if (previous === undefined) return { ...point, isCompaction: false };
-    const threshold = previous.cacheReadInputTokens * (1 - dropRatio);
-    return { ...point, isCompaction: point.cacheReadInputTokens < threshold };
-  });
 }

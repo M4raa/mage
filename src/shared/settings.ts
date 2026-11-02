@@ -4,6 +4,7 @@
 
 import { EMPTY_AGY_COMMAND_RULES, type AgyCommandRules } from './agyRules';
 import type { CustomProvider } from './providers';
+import type { UiLanguagePreference } from './i18n/language';
 import type { VscodeTokenColor } from './themeMarket';
 import type { ToolAccessRule } from './toolAccess';
 
@@ -132,6 +133,7 @@ export interface AppSettings {
   // los padres, igual que hace el CLI: confiar en `C:/sourcecode` cubre todo lo que hay debajo.
   // Default []: no se estrena confiando en nada.
   readonly trustedFolders: readonly string[];
+  readonly distrustedFolders?: readonly string[];
   // Retencion de los scratchpads (auditoria B.4.2). Default 'never': borrar ficheros del disco es una
   // decision del usuario, no un defecto.
   readonly scratchRetention: ScratchRetention;
@@ -166,6 +168,9 @@ export interface AppSettings {
   // `ENABLE_CLAUDEAI_MCP_SERVERS=false` (medido en 2.1.285: 0 conectores). No se escribe nada en su
   // config dir. Default []: todas los usan, como siempre.
   readonly claudeAiConnectorsOff: readonly string[];
+  // D5 (#53): permitir la herramienta Artifact de Claude Code, que publica en claude.ai. Apagada por defecto;
+  // se aplica al siguiente arranque de cada sesión.
+  readonly artifactEnabled: boolean;
   // Aviso «PR: instala gh / inicia sesión en gh» (grupo D, DA-3) descartado para siempre. Ajustes ›
   // General lo vuelve a encender. Default false.
   readonly ghNoticeDismissed: boolean;
@@ -184,6 +189,10 @@ export interface AppSettings {
   // Acceso a herramientas por modelo de cada proveedor del usuario (§8.1 D10 de P-032), por id de
   // proveedor. Default {} (todo permitido).
   readonly runtimeToolAccess: Readonly<Record<string, readonly ToolAccessRule[]>>;
+  // Idioma de la interfaz (F3). AUSENTE = el usuario no ha elegido nada: main usa la preferencia inicial (la del
+  // instalador de Windows, U3/F3.7) y, sin ella, «Sistema». Elegir «Sistema» en Configuración lo guarda explícito y
+  // ya no se hereda nada. Default: ausente.
+  readonly uiLanguage?: UiLanguagePreference;
 }
 
 // Nº de acentos del tema (--mg-accent-<i>-* en index.css); lo comparten cuentas y pestañas.
@@ -229,6 +238,7 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   keybindingOverrides: [],
   customProviders: [],
   trustedFolders: [],
+  distrustedFolders: [],
   scratchRetention: 'never',
   closeBehavior: 'ask',
   newConversationFolder: 'scratch',
@@ -239,6 +249,7 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   defaultProvider: 'claude',
   accentByAccount: {},
   claudeAiConnectorsOff: [],
+  artifactEnabled: false,
   ghNoticeDismissed: false,
   autoArchiveOnPrClose: false,
   agyCommandRules: EMPTY_AGY_COMMAND_RULES,

@@ -1,3 +1,4 @@
+import { localized, UserFacingError } from '@shared/i18n/localizedText';
 import { toServerObject, type McpCommonMutation, type McpRevealedSecrets, type McpScope } from '@shared/mcp';
 import { DISABLED_SERVERS_KEY, ONLY_IN_SERVERS_KEY, parseCommonRoot } from './mcpInventory';
 
@@ -31,7 +32,7 @@ export function applyMcpCommonMutation(text: string, mutation: McpCommonMutation
 export function revealMcpCommonSecrets(text: string, name: string): McpRevealedSecrets {
   const root = parseCommonRoot(text);
   const config = recordOrEmpty(root.mcpServers)[name] ?? recordOrEmpty(root[DISABLED_SERVERS_KEY])[name];
-  if (!isRecord(config)) throw new Error(`"${name}" no es un servidor común de Mage`);
+  if (!isRecord(config)) throw new UserFacingError(localized('errors.config.commonServerUnknown', { name }));
   return { env: stringValues(config.env), headers: stringValues(config.headers) };
 }
 
@@ -50,7 +51,7 @@ function upsert(maps: CommonMaps, originalName: string | null, draft: Parameters
   const name = draft.name.trim();
   const holder = originalName === null ? null : holderOf(maps, originalName);
   if (originalName !== null && holder === null) throw new Error(`"${originalName}" ya no está en mcp-common.json`);
-  if (name !== originalName && holderOf(maps, name) !== null) throw new Error(`Ya hay un servidor común llamado "${name}"`);
+  if (name !== originalName && holderOf(maps, name) !== null) throw new UserFacingError(localized('errors.config.commonServerDuplicate', { name }));
   const previous = holder === null || originalName === null ? null : holder[originalName];
   const object = toServerObject({ ...draft, name }, previous);
   const target = holder ?? maps.active;

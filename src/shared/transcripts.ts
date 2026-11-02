@@ -62,6 +62,8 @@ export const TRANSCRIPT_TAIL_START: TranscriptTailPosition = { bytesRead: 0, raw
 
 // Lote de entradas entregado progresivamente main -> renderer mientras se lee el archivo.
 export interface TranscriptBatch {
+  // Primer lote tras detectar truncado: sustituye la lectura anterior, incluidos sus errores.
+  readonly reset?: boolean;
   readonly entries: readonly TranscriptEntry[];
   readonly errors: readonly TranscriptParseError[];
   readonly isFinal: boolean; // true en el ultimo lote (fin de archivo)

@@ -1,3 +1,5 @@
+import { localized, renderForLog, type LocalizedText } from './i18n/localizedText';
+
 // Reglas de comandos de agy y carpetas que Mage enlaza en su perfil (grupo E, fase 2). Puro: lo usan
 // el renderer (dialogo de comandos, Ajustes) y main (settings.json del perfil, enlaces).
 //
@@ -24,14 +26,14 @@ export type AgyCommandVerdict = 'allow' | 'deny';
 const REGEX_RULE_PREFIX = 'regex:';
 
 // Linea de comando valida para una regla, o el motivo por el que no lo es.
-export function validateAgyCommand(input: string): { readonly ok: true; readonly command: string } | { readonly ok: false; readonly message: string } {
+export function validateAgyCommand(input: string): { readonly ok: true; readonly command: string } | { readonly ok: false; readonly message: LocalizedText } {
   const command = input.trim();
-  if (command.length === 0) return { ok: false, message: 'Escribe el comando exacto.' };
-  if (/[\r\n]/.test(command)) return { ok: false, message: 'Un comando por regla, en una sola línea.' };
+  if (command.length === 0) return { ok: false, message: localized('settings.agy.commandEmpty') };
+  if (/[\r\n]/.test(command)) return { ok: false, message: localized('settings.agy.commandMultiline') };
   if (command.startsWith(REGEX_RULE_PREFIX)) {
-    return { ok: false, message: `Un comando que empieza por «${REGEX_RULE_PREFIX}» agy lo leería como expresión regular.` };
+    return { ok: false, message: localized('settings.agy.commandRegexPrefix', { prefix: REGEX_RULE_PREFIX }) };
   }
-  if (command.startsWith(MCP_RULE_PREFIX)) return { ok: false, message: 'Las herramientas MCP van en su propia lista, más abajo.' };
+  if (command.startsWith(MCP_RULE_PREFIX)) return { ok: false, message: localized('settings.agy.commandIsMcpRule') };
   return { ok: true, command };
 }
 
@@ -48,13 +50,13 @@ export interface AgyMcpTool {
 }
 
 // Regla `mcp(<servidor>/<tool>)` para un servidor y una herramienta, o el motivo por el que no vale.
-export function validateAgyMcpTool(server: string, tool: string): { readonly ok: true; readonly rule: string } | { readonly ok: false; readonly message: string } {
+export function validateAgyMcpTool(server: string, tool: string): { readonly ok: true; readonly rule: string } | { readonly ok: false; readonly message: LocalizedText } {
   const cleanServer = server.trim();
   const cleanTool = tool.trim();
-  if (cleanServer.length === 0) return { ok: false, message: 'Elige el servidor MCP.' };
-  if (!MCP_NAME.test(cleanServer) || cleanServer === AGY_MCP_ANY_TOOL) return { ok: false, message: `Servidor MCP no válido: «${cleanServer}».` };
-  if (cleanTool.length === 0) return { ok: false, message: `Escribe la herramienta exacta, o «${AGY_MCP_ANY_TOOL}» para todas las del servidor.` };
-  if (!MCP_NAME.test(cleanTool)) return { ok: false, message: 'La herramienta va sin espacios, «/» ni paréntesis.' };
+  if (cleanServer.length === 0) return { ok: false, message: localized('settings.agy.mcpServerMissing') };
+  if (!MCP_NAME.test(cleanServer) || cleanServer === AGY_MCP_ANY_TOOL) return { ok: false, message: localized('settings.agy.mcpServerInvalid', { server: cleanServer }) };
+  if (cleanTool.length === 0) return { ok: false, message: localized('settings.agy.mcpToolMissing', { wildcard: AGY_MCP_ANY_TOOL }) };
+  if (!MCP_NAME.test(cleanTool)) return { ok: false, message: localized('settings.agy.mcpToolInvalid') };
   return { ok: true, rule: `${MCP_RULE_PREFIX}${cleanServer}/${cleanTool})` };
 }
 
@@ -81,7 +83,7 @@ export function agyMcpServerNames(rows: readonly { readonly name: string; readon
 export function setAgyCommandVerdict(rules: AgyCommandRules, input: string, verdict: AgyCommandVerdict | null): AgyCommandRules {
   const trimmed = input.trim();
   const checked = parseAgyMcpRule(trimmed) === null ? validateAgyCommand(input) : ({ ok: true, command: trimmed } as const);
-  if (!checked.ok) throw new Error(`Comando de agy invalido ${JSON.stringify(input)}: ${checked.message}`);
+  if (!checked.ok) throw new Error(`Comando de agy invalido ${JSON.stringify(input)}: ${renderForLog(checked.message)}`);
   const { command } = checked;
   const allow = rules.allow.filter((entry) => entry !== command);
   const deny = rules.deny.filter((entry) => entry !== command);
@@ -104,16 +106,16 @@ export const AGY_DEFAULT_LINKED_PATHS: readonly string[] = ['.gemini/config', '.
 const AGY_CLI_DIR = ['.gemini', 'antigravity-cli'] as const;
 
 // Ruta extra para enlazar (relativa a la casa del usuario, con `/`), o el motivo por el que no vale.
-export function validateAgyLinkPath(input: string): { readonly ok: true; readonly path: string } | { readonly ok: false; readonly message: string } {
+export function validateAgyLinkPath(input: string): { readonly ok: true; readonly path: string } | { readonly ok: false; readonly message: LocalizedText } {
   const trimmed = input.trim();
-  if (trimmed.length === 0) return { ok: false, message: 'Escribe una carpeta.' };
-  if (/^([A-Za-z]:|[\\/]|~)/.test(trimmed)) return { ok: false, message: 'Escríbela relativa a tu carpeta de usuario, p. ej. .aws' };
+  if (trimmed.length === 0) return { ok: false, message: localized('settings.agy.linkPathEmpty') };
+  if (/^([A-Za-z]:|[\\/]|~)/.test(trimmed)) return { ok: false, message: localized('settings.agy.linkPathNotRelative') };
   const segments = trimmed.split(/[\\/]+/).filter((segment) => segment.length > 0 && segment !== '.');
-  if (segments.length === 0) return { ok: false, message: 'Escribe una carpeta.' };
-  if (segments.includes('..')) return { ok: false, message: 'La carpeta tiene que estar dentro de tu carpeta de usuario.' };
+  if (segments.length === 0) return { ok: false, message: localized('settings.agy.linkPathEmpty') };
+  if (segments.includes('..')) return { ok: false, message: localized('settings.agy.linkPathOutsideHome') };
   const [first, second] = segments;
   if (first === AGY_CLI_DIR[0] && (second === undefined || second === AGY_CLI_DIR[1])) {
-    return { ok: false, message: 'Esa carpeta es la del propio perfil de agy: no se puede enlazar.' };
+    return { ok: false, message: localized('settings.agy.linkPathIsProfile') };
   }
   return { ok: true, path: segments.join('/') };
 }

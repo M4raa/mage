@@ -151,7 +151,7 @@ describe('CliLoginService.start', () => {
     const child = fakeProcess();
     const service = new CliLoginService(deps({ spawnLogin: () => child, urlTimeoutMs: 10 }));
 
-    await expect(service.start(DIR, null)).rejects.toThrow(/no imprimio la URL/i);
+    await expect(service.start(DIR, null)).rejects.toThrow(/no imprimió la URL/i);
     expect(child.kill).toHaveBeenCalled();
   });
 
@@ -162,7 +162,7 @@ describe('CliLoginService.start', () => {
     const started = service.start(DIR, null);
     child.exit(1);
 
-    await expect(started).rejects.toThrow(/termino \(codigo 1\)/i);
+    await expect(started).rejects.toThrow(/terminó \(código 1\)/i);
   });
 
   it('start_conOtroLoginEnCurso_lanza', async () => {

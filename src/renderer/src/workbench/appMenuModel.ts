@@ -1,6 +1,7 @@
 import { KEYBINDING_ACTIONS, type GuardContext, type KeybindingAction } from './keybindings/actionCatalog';
 import { displayKeyCombo, parseKeyCombo } from './keybindings/keyParser';
 import type { KeybindingOverride } from '@shared/settings';
+import { t } from '../i18n/uiLanguage';
 
 // Modelo PURO del menu de aplicacion (2.9.b). El menu se GENERA del catalogo de acciones, no se escribe
 // a mano: si mañana una accion cambia de atajo o de etiqueta, el menu cambia con ella. Escribirlo a mano
@@ -26,28 +27,40 @@ export interface AppMenu {
   readonly items: readonly AppMenuItem[];
 }
 
+// Identificador interno de cada menu: no se ve; la etiqueta se traduce al construir el modelo.
+type MenuId = 'conversation' | 'session' | 'edit';
+
 export type EditCommandName = 'undo' | 'redo' | 'cut' | 'copy' | 'paste' | 'selectAll';
 
 // De categoria del catalogo a menu. `Permiso` NO aparece: sus acciones son de un panel (permitir /
 // denegar el permiso pendiente), no de la aplicacion, y en un menu serian cuatro items en gris el 99 %
 // del tiempo. Las de scope `prompt` tampoco: no son acciones de menu (Enter, Tab…).
-const MENU_BY_CATEGORY: ReadonlyMap<string, string> = new Map([
-  ['Aplicación', 'Conversación'],
-  ['Sesión', 'Sesión'],
-]);
+// La categoria llega ya traducida (la etiqueta del catalogo es un getter), asi que se compara con la del idioma activo.
+function menuIdForCategory(category: string): MenuId | undefined {
+  if (category === t('menu.category.app')) return 'conversation';
+  if (category === t('menu.category.session')) return 'session';
+  return undefined;
+}
 
 // Orden FIJO de los menus (no el de aparicion en el catalogo, que cambiaria al reordenarlo).
-const MENU_ORDER: readonly string[] = ['Conversación', 'Sesión', 'Editar', 'Ayuda'];
+const MENU_ORDER: readonly MenuId[] = ['conversation', 'session', 'edit'];
+
+function menuLabel(id: MenuId): string {
+  if (id === 'conversation') return t('menu.appMenu.conversation');
+  if (id === 'session') return t('menu.appMenu.session');
+  return t('menu.appMenu.edit');
+}
 
 // El menu Editar: no sale del catalogo porque no son acciones de Mage sino de `webContents` (las
 // mismas que daban los `role:` del menu nativo). Con el menu propio hay que reponerlas a mano.
-const EDIT_ITEMS: readonly { readonly label: string; readonly command: EditCommandName; readonly keys: string }[] = [
-  { label: 'Deshacer', command: 'undo', keys: 'CmdOrCtrl+Z' },
-  { label: 'Rehacer', command: 'redo', keys: 'CmdOrCtrl+Shift+Z' },
-  { label: 'Cortar', command: 'cut', keys: 'CmdOrCtrl+X' },
-  { label: 'Copiar', command: 'copy', keys: 'CmdOrCtrl+C' },
-  { label: 'Pegar', command: 'paste', keys: 'CmdOrCtrl+V' },
-  { label: 'Seleccionar todo', command: 'selectAll', keys: 'CmdOrCtrl+A' },
+type EditLabelKey = 'menu.appMenu.undo' | 'menu.appMenu.redo' | 'menu.appMenu.cut' | 'menu.appMenu.copy' | 'menu.appMenu.paste' | 'menu.appMenu.selectAll';
+const EDIT_ITEMS: readonly { readonly label: EditLabelKey; readonly command: EditCommandName; readonly keys: string }[] = [
+  { label: 'menu.appMenu.undo', command: 'undo', keys: 'CmdOrCtrl+Z' },
+  { label: 'menu.appMenu.redo', command: 'redo', keys: 'CmdOrCtrl+Shift+Z' },
+  { label: 'menu.appMenu.cut', command: 'cut', keys: 'CmdOrCtrl+X' },
+  { label: 'menu.appMenu.copy', command: 'copy', keys: 'CmdOrCtrl+C' },
+  { label: 'menu.appMenu.paste', command: 'paste', keys: 'CmdOrCtrl+V' },
+  { label: 'menu.appMenu.selectAll', command: 'selectAll', keys: 'CmdOrCtrl+A' },
 ];
 
 export interface AppMenuParams {
@@ -59,27 +72,27 @@ export interface AppMenuParams {
 
 export function buildAppMenuModel(params: AppMenuParams): readonly AppMenu[] {
   const catalog = params.catalog ?? KEYBINDING_ACTIONS;
-  const byMenu = new Map<string, AppMenuItem[]>();
+  const byMenu = new Map<MenuId, AppMenuItem[]>();
 
   for (const action of catalog) {
     if (action.scope !== 'global') continue; // las de `prompt` no son acciones de menu
-    const menuLabel = MENU_BY_CATEGORY.get(action.category);
-    if (menuLabel === undefined) continue; // `Permiso` y cualquier categoria futura sin menu
-    const items = byMenu.get(menuLabel) ?? [];
+    const menuId = menuIdForCategory(action.category);
+    if (menuId === undefined) continue; // `Permiso` y cualquier categoria futura sin menu
+    const items = byMenu.get(menuId) ?? [];
     items.push({
       actionId: action.id,
       label: action.label,
       shortcut: shortcutFor(action, params.overrides, params.isMac),
       enabled: action.guard === undefined || action.guard(params.guardContext),
     });
-    byMenu.set(menuLabel, items);
+    byMenu.set(menuId, items);
   }
 
   byMenu.set(
-    'Editar',
+    'edit',
     EDIT_ITEMS.map((item) => ({
       actionId: null,
-      label: item.label,
+      label: t(item.label),
       shortcut: formatKeys(item.keys, params.isMac),
       enabled: true,
       editCommand: item.command,
@@ -87,9 +100,9 @@ export function buildAppMenuModel(params: AppMenuParams): readonly AppMenu[] {
   );
 
   // Un menu sin items es un desplegable vacio: no se emite (invariante testeado).
-  return MENU_ORDER.filter((label) => (byMenu.get(label)?.length ?? 0) > 0).map((label) => ({
-    label,
-    items: byMenu.get(label) ?? [],
+  return MENU_ORDER.filter((id) => (byMenu.get(id)?.length ?? 0) > 0).map((id) => ({
+    label: menuLabel(id),
+    items: byMenu.get(id) ?? [],
   }));
 }
 

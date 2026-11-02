@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createRuntimeGate, decidePermission, isContainedCommand, referencesOutside } from './permissionGate';
+import { createRuntimeGate, decidePermission, isContainedCommand, outsideReason, referencesOutside } from './permissionGate';
 import type { RuntimePermissionMode } from './runtimeSession';
 import type { ToolKind } from './agentLoop';
 
@@ -76,6 +76,7 @@ describe('decidePermission', () => {
     expect(decidePermission({ mode: 'default', kind: 'read', pathClass: 'outside', target: '/etc/x', command: null, scope: SCOPE })).toEqual({
       verdict: 'ask',
       outside: 'Fuera del proyecto: /etc/x',
+      outsideTarget: '/etc/x',
     });
   });
 
@@ -117,7 +118,7 @@ describe('decidePermission', () => {
   it('decide_gitConRutaDeFuera_preguntaMarcadoComoFuera', () => {
     const command = '"C:\\Program Files\\Git\\cmd\\git.exe" -C sub pull';
 
-    expect(decidePermission({ mode: 'default', kind: 'exec', pathClass: null, target: null, command, scope: WIN })).toEqual({ verdict: 'ask', outside: `Fuera del proyecto: ${command}` });
+    expect(decidePermission({ mode: 'default', kind: 'exec', pathClass: null, target: null, command, scope: WIN })).toEqual({ verdict: 'ask', outside: `Fuera del proyecto: ${command}`, outsideTarget: command });
   });
 
   it.each(['git -C sub status', 'git -c core.pager=cat log', 'git --no-pager diff', 'git commit -m "push the fix"', 'git log --grep=fetch'])(
@@ -151,6 +152,20 @@ describe('decidePermission', () => {
     const verdicts = allowed.map((command) => decidePermission({ mode: 'bypassPermissions', kind: 'exec', pathClass: null, target: null, command, scope: WIN }).verdict);
 
     expect(verdicts).toEqual(allowed.map(() => 'allow'));
+  });
+});
+
+describe('outsideReason', () => {
+  it('outsideReason_rutaFuera_devuelveElObjetivo', () => {
+    expect(outsideReason({ mode: 'default', kind: 'read', pathClass: 'outside', target: '/etc/x', command: null, scope: SCOPE })).toBe('/etc/x');
+  });
+
+  it('outsideReason_comandoQueSale_devuelveElComando', () => {
+    expect(outsideReason({ mode: 'default', kind: 'exec', pathClass: null, target: null, command: 'cat /etc/hosts', scope: SCOPE })).toBe('cat /etc/hosts');
+  });
+
+  it('outsideReason_dentroDelProyecto_devuelveNull', () => {
+    expect(outsideReason({ mode: 'default', kind: 'read', pathClass: 'inside', target: 'a.ts', command: null, scope: SCOPE })).toBeNull();
   });
 });
 
@@ -190,7 +205,7 @@ describe('createRuntimeGate', () => {
   it('gate_readOutsideCwd_asks', () => {
     const gate = createRuntimeGate(SCOPE);
 
-    expect(gate({ id: '1', name: 'Read', kind: 'read', input: { file_path: '/etc/hosts' } }, 'bypassPermissions')).toEqual({ verdict: 'ask', outside: 'Fuera del proyecto: /etc/hosts' });
+    expect(gate({ id: '1', name: 'Read', kind: 'read', input: { file_path: '/etc/hosts' } }, 'bypassPermissions')).toEqual({ verdict: 'ask', outside: 'Fuera del proyecto: /etc/hosts', outsideTarget: '/etc/hosts' });
   });
 
   it('gate_bashWhitelistedInAuto_allows', () => {

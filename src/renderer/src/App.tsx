@@ -39,9 +39,13 @@ const UpdateReadyDialog = lazy(() => import('./workbench/components/UpdateReadyD
 const ReleaseNotesPane = lazy(() => import('./workbench/components/ReleaseNotesPane').then((m) => ({ default: m.ReleaseNotesPane })));
 
 import { useWorkbenchStore } from './workbench/workbenchStore';
+import { notify, reportActionError } from './workbench/notificationStore';
+import { showStartupWarnings } from './workbench/startupWarnings';
+import { startConversationLockSync } from './workbench/conversationLockSync';
 import { RELEASE_NOTES_TAB_ID } from './workbench/releaseNotes';
 import { usePanelLayoutStore } from './workbench/panelLayoutStore';
 import { useGlobalKeybindings } from './workbench/keybindings/useGlobalKeybindings';
+import { useT } from './i18n/uiLanguage';
 
 // Asidero de desarrollo para `pnpm verify:gui` (deja hidratar el chat sin gastar un turno real). El
 // import es DINAMICO y bajo `import.meta.env.DEV`, que Vite reemplaza por `false` al construir: la rama
@@ -98,6 +102,7 @@ function SplitLayoutView({
   readonly activeTabId: string;
   readonly hasSplit: boolean;
 }): React.JSX.Element {
+  const t = useT();
   const resizeSplitAt = useWorkbenchStore((s) => s.resizeSplitAt);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -159,7 +164,7 @@ function SplitLayoutView({
           const total = caja === undefined ? 0 : layout.direction === 'row' ? caja.width : caja.height;
           resizeSplitAt(path, ratio, total);
         }}
-        ariaLabel="Redimensionar la división de paneles"
+        ariaLabel={t('app.splitLayout.resizeHandleLabel')}
       />
       <div className={paneClass} style={{ ...paneMin, flexGrow: `var(${SPLIT_B_VAR})`, flexBasis: 0 }}>
         <SplitLayoutView layout={layout.b} path={[...path, 'b']} activeTabId={activeTabId} hasSplit={hasSplit} />
@@ -197,6 +202,13 @@ export function App(): React.JSX.Element {
     media.addEventListener('change', onChange);
     return () => media.removeEventListener('change', onChange);
   }, [themePref]);
+  // Avisos de inicio de main (F2.6): hoy, Linux arrancado sin el sandbox de Chromium. Una vez por ventana.
+  useEffect(() => {
+    void showStartupWarnings({ fetchWarnings: () => window.mage.getStartupWarnings(), notify, reportError: reportActionError });
+  }, []);
+  // Bloqueo entre instancias (#55, F2.8): cada pestaña con conversación la pide a main; la que tiene otra instancia
+  // de Mage queda en solo lectura.
+  useEffect(() => startConversationLockSync({ store: useWorkbenchStore, mage: window.mage, reportError: (title, err) => reportActionError(title, err, 'conversation-lock') }), []);
   // Al recuperar el foco (p.ej. tras el login en la terminal externa), re-descubre las cuentas para
   // reflejar el nuevo estado de login sin pulsar Refrescar, y refresca uso/estado. getState evita
   // re-suscribir el listener.

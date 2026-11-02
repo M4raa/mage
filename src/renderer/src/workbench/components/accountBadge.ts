@@ -1,4 +1,5 @@
 import type { Account } from '../types';
+import { t } from '../../i18n/uiLanguage';
 
 // Insignia de login de una cuenta, compartida por sus DOS representaciones: el avatar compacto de la
 // cabecera (`AccountSwitcher`) y el que pinta el rail. Vivia dentro de `AccountRail`; se saca aqui al
@@ -12,7 +13,7 @@ export function loginDot(account: Account): { className: string; style?: React.C
 }
 
 export function loginLabel(account: Account): string {
-  if (account.loginStatus === 'logged_in') return 'con login';
-  if (account.loginStatus === 'expired') return 'login expirado';
-  return 'sin login';
+  if (account.loginStatus === 'logged_in') return t('accounts.login.loggedIn');
+  if (account.loginStatus === 'expired') return t('accounts.login.expired');
+  return t('accounts.login.none');
 }

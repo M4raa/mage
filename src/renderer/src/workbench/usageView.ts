@@ -1,5 +1,7 @@
 import type { UsageInfo } from '@shared/usage';
 import type { UsageWindow } from './types';
+import { t } from '../i18n/uiLanguage';
+import { formatClockTime, formatDayMonth, formatWeekdayShort, localizeDecimalPoint } from '../i18n/format';
 
 // Mapeo PURO del uso de dominio (UsageInfo, seguro) a la presentacion que consume la UI. Sin efectos
 // ni dependencia del reloj global: `now` se inyecta (para la cuenta atras hasta el reset).
@@ -55,8 +57,8 @@ export function perModelBars(info: UsageInfo, thresholds: UsageThresholds = DEFA
 // factura API. Nunca usa float para el dinero: divide por 100 solo en la presentacion final.
 export function formatApiCredits(amountMinor: number | null): string {
   if (amountMinor === null) return '—';
-  const major = (amountMinor / 100).toFixed(2);
-  return amountMinor === 0 ? `${major} $ · no factura API` : `${major} $`;
+  const major = localizeDecimalPoint((amountMinor / 100).toFixed(2));
+  return amountMinor === 0 ? t('usage.view.noApiBilling', { amount: major }) : `${major} $`;
 }
 
 // --- Proyeccion de agotamiento -------------------------------------------------------------------
@@ -110,9 +112,9 @@ export function projectWindowExhaustion(
 // Texto corto para la UI. `null` cuando no hay nada util que decir (no se pinta la linea).
 export function formatProjection(projection: UsageProjection): string | null {
   if (projection.kind === 'unknown') return null;
-  if (projection.kind === 'safe') return 'A este ritmo no se agota antes del reset';
-  if (projection.kind === 'exhausted') return 'Ventana agotada';
-  return `A este ritmo se agota en ${formatDuration(projection.etaMs)}`;
+  if (projection.kind === 'safe') return t('usage.view.projectionSafe');
+  if (projection.kind === 'exhausted') return t('usage.view.windowExhausted');
+  return t('usage.view.projectionDepleting', { duration: formatDuration(projection.etaMs) });
 }
 
 // Duracion legible a partir de ms (misma escala que la cuenta atras del reset, para que las dos
@@ -138,31 +140,25 @@ function clampPct(value: number): number {
 // se quedaba congelado mintiendo durante horas. Una hora absoluta no caduca.
 export function formatResetTime(resetsAt: number): string {
   if (!Number.isFinite(resetsAt)) throw new Error(`resetsAt invalido al formatear la hora de reset: ${resetsAt}`);
-  return new Date(resetsAt).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
+  return formatClockTime(resetsAt);
 }
 
 // Hora ABSOLUTA del reset para el popover «Uso general» (P-028, punto 22), que esta siempre montado:
 // una cuenta atras se quedaba congelada. Hoy -> «15:00»; en los proximos 6 dias (o siempre que se
 // pida el dia, como en la ventana de 7 d) -> «lun 09:00»; mas lejos, la fecha «12/10 09:00» (un dia
 // de la semana seria ambiguo). Sin dato -> «—»; ya pasado -> «ya». Hora local; `now` inyectado.
-const WEEKDAYS_ES = ['dom', 'lun', 'mar', 'mié', 'jue', 'vie', 'sáb'] as const;
 const WEEKDAY_HORIZON_DAYS = 6;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 export function formatResetAbsolute(resetsAt: number | null, now: number, withWeekday: boolean): string {
   if (resetsAt === null) return '—';
   if (!Number.isFinite(resetsAt)) throw new Error(`resetsAt invalido al formatear el reset: ${resetsAt}`);
-  if (resetsAt <= now) return 'ya';
-  const date = new Date(resetsAt);
-  const time = `${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
-  const sameDay = new Date(now).toDateString() === date.toDateString();
+  if (resetsAt <= now) return t('format.reset.past');
+  const time = formatClockTime(resetsAt);
+  const sameDay = new Date(now).toDateString() === new Date(resetsAt).toDateString();
   if (sameDay && !withWeekday) return time;
-  if (resetsAt - now <= WEEKDAY_HORIZON_DAYS * DAY_MS) return `${WEEKDAYS_ES[date.getDay()]} ${time}`;
-  return `${pad2(date.getDate())}/${pad2(date.getMonth() + 1)} ${time}`;
-}
-
-function pad2(value: number): string {
-  return String(value).padStart(2, '0');
+  if (resetsAt - now <= WEEKDAY_HORIZON_DAYS * DAY_MS) return `${formatWeekdayShort(resetsAt)} ${time}`;
+  return `${formatDayMonth(resetsAt)} ${time}`;
 }
 
 // Cuenta atras legible desde un epoch ms de reset. null => "—"; <=0 => "ahora"; si no, la unidad
@@ -170,7 +166,7 @@ function pad2(value: number): string {
 export function formatCountdown(resetsAt: number | null, now: number): string {
   if (resetsAt === null) return '—';
   const remainingMs = resetsAt - now;
-  if (remainingMs <= 0) return 'ahora';
+  if (remainingMs <= 0) return t('format.time.now');
 
   const totalMinutes = Math.floor(remainingMs / 60_000);
   const days = Math.floor(totalMinutes / 1440);

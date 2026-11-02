@@ -10,7 +10,14 @@ on:
 
 jobs:
   check:
-    runs-on: windows-latest # el unico SO donde hoy se empaqueta y se verifica; los otros dos siguen sin maquina
+    strategy:
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      # Limitar workers por timeouts bajo carga con la concurrencia por defecto. No ampliar timeouts.
+      VITEST_MAX_THREADS: 2
+      VITEST_MIN_THREADS: 1
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -24,4 +31,5 @@ jobs:
       # `build` ademas atrapa fallos de bundle, que el typecheck no ve: es como se descubrio que zod
       # externalizado rompia el .exe empaquetado.
       - run: pnpm check
-      - run: pnpm build
+      - if: runner.os == 'Windows'
+        run: pnpm build

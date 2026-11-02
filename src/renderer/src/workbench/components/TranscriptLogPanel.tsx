@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { List } from 'react-window';
 import { useWorkbenchStore } from '../workbenchStore';
+import { useT } from '../../i18n/uiLanguage';
 import { usePaneTranscriptStore } from '../paneContext';
 import { useActiveTranscriptSessionId } from '../useActiveTranscript';
 import { TranscriptRow } from './TranscriptRow';
@@ -16,6 +17,7 @@ const ROW_HEIGHT_PX = 28;
 // Ya NO lista los subagentes: esa mitad se movio al panel "Subagentes" (2.9.b), que es donde el usuario
 // los busca — aqui estaban escondidos dentro del panel de Logs.
 export function TranscriptLogPanel(): React.JSX.Element {
+  const t = useT();
   const tab = useWorkbenchStore((s) => s.tabs.find((t) => t.id === s.activeTabId));
   // La sesion a MOSTRAR, no la viva (ver `useActiveTranscript.ts`): una conversacion abierta del
   // historial tiene su .jsonl entero en disco y ninguna sesion viva hasta el primer mensaje.
@@ -38,13 +40,13 @@ export function TranscriptLogPanel(): React.JSX.Element {
   useEffect(() => setSelectedIndex(null), [sessionId]);
 
   if (tab === undefined || sessionId === undefined) {
-    return <Hint text="Abre una conversación para ver sus registros." />;
+    return <Hint text={t('chat.logs.noConversation')} />;
   }
   if (errorMessage !== null) {
-    return <Hint text={`No se pudo leer la transcripción: ${errorMessage}`} onRetry={refresh} />;
+    return <Hint text={t('chat.transcript.readError', { error: errorMessage })} onRetry={refresh} />;
   }
   if (entries.length === 0) {
-    return <Hint text={isFinal ? 'Transcripción vacía.' : 'Cargando transcripción…'} onRetry={refresh} />;
+    return <Hint text={isFinal ? t('chat.transcript.empty') : t('chat.transcript.loading')} onRetry={refresh} />;
   }
 
   const selected = selectedIndex === null ? undefined : entries[selectedIndex];
@@ -71,12 +73,12 @@ export function TranscriptLogPanel(): React.JSX.Element {
         <div className="flex min-h-0 shrink-0 basis-1/2 flex-col border-t border-mg-border bg-mg-code">
           <div className="flex shrink-0 items-center justify-between gap-[8px] border-b border-mg-border-subtle px-[10px] py-[5px] text-[10px] text-mg-ter">
             <span className="truncate font-mono">
-              Línea {selected.index + 1} · {selected.kind}
+              {t('chat.logs.lineTitle', { line: selected.index + 1, kind: selected.kind })}
             </span>
             <button
               onClick={() => setSelectedIndex(null)}
-              aria-label="Cerrar el detalle de la línea"
-              data-tip="Cerrar el detalle"
+              aria-label={t('chat.logs.closeLineDetail')}
+              data-tip={t('chat.activity.closeDetail')}
               className="flex h-4 w-4 shrink-0 items-center justify-center rounded-[4px] text-mg-muted hover:text-mg-body"
             >
               ✕
@@ -87,7 +89,7 @@ export function TranscriptLogPanel(): React.JSX.Element {
               <>
                 <ToolCallDetail entry={selected} />
                 <details className="mt-[8px]">
-                  <summary className="cursor-pointer text-mg-muted hover:text-mg-body">JSON crudo</summary>
+                  <summary className="cursor-pointer text-mg-muted hover:text-mg-body">{t('chat.logs.rawJson')}</summary>
                   <pre className="mt-[4px] whitespace-pre-wrap break-all font-mono text-mg-sec">{JSON.stringify(selected.raw, null, 2)}</pre>
                 </details>
               </>
@@ -100,9 +102,9 @@ export function TranscriptLogPanel(): React.JSX.Element {
 
       <div className="flex shrink-0 items-center justify-between border-t border-mg-border-subtle px-[10px] py-[5px] text-[10px] text-mg-ter">
         <span>
-          {totalLinesSoFar} líneas{!isFinal ? ' (cargando…)' : ''}
+          {isFinal ? t('chat.logs.lineCount', { count: totalLinesSoFar }) : t('chat.logs.lineCountLoading', { count: totalLinesSoFar })}
         </span>
-        <button onClick={refresh} data-tip="Releer transcripción" className="flex h-4 w-4 items-center justify-center rounded-[4px] text-mg-muted hover:text-mg-body">
+        <button onClick={refresh} data-tip={t('chat.transcript.refresh')} className="flex h-4 w-4 items-center justify-center rounded-[4px] text-mg-muted hover:text-mg-body">
           ⟳
         </button>
       </div>

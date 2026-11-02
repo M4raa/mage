@@ -1,4 +1,4 @@
-import { normalize, resolve } from 'node:path';
+import { normalize, resolve, win32, posix } from 'node:path';
 
 // Confianza por CARPETA antes de lanzar un agente en ella.
 //
@@ -14,9 +14,11 @@ import { normalize, resolve } from 'node:path';
 // Clave canonica de una carpeta. MISMA forma que usa el CLI en su config (`normalizePathForConfigKey`:
 // normalizar y pasar todo a barras normales), para que las dos hablen de la misma carpeta y Mage pueda
 // leer lo que el usuario ya autorizo alli. En Windows ademas se compara sin distinguir mayusculas.
-export function trustKey(folder: string): string {
+export function trustKey(folder: string, platform: NodeJS.Platform = process.platform): string {
   if (folder.trim().length === 0) throw new Error(`Carpeta vacia: ${JSON.stringify(folder)}`);
-  const forward = normalize(folder).replace(/\\/g, '/');
+  const normalized = (platform === 'win32' ? win32 : posix).normalize(folder);
+  // En POSIX una barra invertida puede formar parte del nombre de una carpeta.
+  const forward = platform === 'win32' ? normalized.replace(/\\/g, '/') : normalized;
   const trimmed = forward.replace(/\/+$/, '');
   // La barra final se quita SALVO en una raiz. `C:/` -> `C:` seria una ruta relativa a la unidad en
   // Windows (`C:` significa "el directorio actual de C:"), y `/` -> `` dejaria la raiz POSIX sin clave.
@@ -26,28 +28,28 @@ export function trustKey(folder: string): string {
 
 // La carpeta y todos sus padres hasta la raiz, en claves canonicas. Es lo que permite que confiar una
 // vez en `C:/sourcecode` valga para los veinte repos que cuelgan de ahi, igual que hace el CLI.
-export function ancestorKeys(folder: string): readonly string[] {
+export function ancestorKeys(folder: string, platform: NodeJS.Platform = process.platform): readonly string[] {
   const keys: string[] = [];
   // Se sube por la ruta NATIVA y solo se convierte a clave al emitir. Subir por la clave ya normalizada
   // era un bug: `resolve` interpreta `C:` (sin barra) como "el directorio actual de la unidad C:", asi
   // que el ascenso saltaba al cwd del proceso en vez de parar en la raiz — y desde ahi seguia subiendo,
   // dando por confiada cualquier carpeta que colgase del padre del cwd.
-  let current = normalize(folder);
+  const paths = platform === 'win32' ? win32 : posix;
+  let current = paths.normalize(folder);
   // Tope duro ademas de la condicion de parada: una ruta con un ciclo de enlaces no puede colgar el
   // proceso principal. 64 niveles es mas hondo que cualquier arbol real.
   for (let i = 0; i < 64; i += 1) {
-    keys.push(trustKey(current));
-    const parent = resolve(current, '..');
+    keys.push(trustKey(current, platform));
+    const parent = paths.resolve(current, '..');
     if (parent === current) break;
     current = parent;
   }
   return keys;
 }
 
-// Comparacion insensible a mayusculas: en Windows `C:/Repo` y `c:/repo` son la MISMA carpeta, y una
-// confianza que no se reconoce a si misma segun como se escribiera la ruta no es una confianza.
-function sameKey(a: string, b: string): boolean {
-  return a.toLowerCase() === b.toLowerCase();
+// Windows ignora mayusculas; en POSIX autorizar Repo nunca debe autorizar tambien repo.
+function sameKey(a: string, b: string, platform: NodeJS.Platform): boolean {
+  return platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b;
 }
 
 // Confia esta carpeta, o cualquiera de sus padres, en `trusted`?
@@ -55,9 +57,9 @@ function sameKey(a: string, b: string): boolean {
 // comparten este codigo —los ajustes, que escribe el renderer con la ruta tal cual la dio el selector
 // de carpeta (con barras invertidas en Windows), y el config del CLI—, y una confianza que no se
 // reconoce a si misma segun quien la escribiera no sirve de nada.
-export function isTrusted(folder: string, trusted: readonly string[]): boolean {
-  const keys = ancestorKeys(folder);
-  return trusted.some((entry) => entry.trim().length > 0 && keys.some((key) => sameKey(key, trustKey(entry))));
+export function isTrusted(folder: string, trusted: readonly string[], platform: NodeJS.Platform = process.platform): boolean {
+  const keys = ancestorKeys(folder, platform);
+  return trusted.some((entry) => entry.trim().length > 0 && keys.some((key) => sameKey(key, trustKey(entry, platform), platform)));
 }
 
 export interface CliTrustDeps {

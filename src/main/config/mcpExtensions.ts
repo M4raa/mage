@@ -1,5 +1,6 @@
 import { join } from 'node:path';
 import { z } from 'zod';
+import { localized, UserFacingError, wrapError, type LocalizedText } from '@shared/i18n/localizedText';
 import type { McpScope, McpUserConfigField, McpUserConfigType, McpUserConfigValue } from '@shared/mcp';
 import { secretRef, secretVarName, type ResolvedStdioServer } from './mcpResolved';
 
@@ -63,14 +64,14 @@ export function parseMcpbManifest(text: string): McpbManifest {
   try {
     parsed = JSON.parse(text.replace(/^﻿/, ''));
   } catch (error) {
-    throw new Error(`manifest.json no es JSON válido: ${error instanceof Error ? error.message : String(error)}`);
+    throw new UserFacingError(wrapError('errors.config.manifestInvalidJson', {}, error));
   }
   const result = MANIFEST.safeParse(parsed);
   if (!result.success) {
-    throw new Error(`manifest.json no es un manifest MCPB: ${result.error.issues.map((issue) => issue.path.join('.') || issue.message).join(', ')}`);
+    throw new UserFacingError(localized('errors.config.manifestNotMcpb', { detail: result.error.issues.map((issue) => issue.path.join('.') || issue.message).join(', ') }));
   }
   if (result.data.manifest_version === undefined && result.data.dxt_version === undefined) {
-    throw new Error('manifest.json no declara manifest_version ni dxt_version');
+    throw new UserFacingError(localized('errors.config.manifestNoVersion'));
   }
   return result.data;
 }
@@ -82,14 +83,14 @@ export function extensionIdOf(manifest: McpbManifest): string {
     .toLowerCase()
     .replace(/[^a-z0-9_-]+/g, '-')
     .replace(/^-+|-+$/g, '');
-  if (id.length === 0) throw new Error(`El nombre de la extensión no sirve como id: ${JSON.stringify(manifest.name)}`);
+  if (id.length === 0) throw new UserFacingError(localized('errors.config.extensionIdInvalid', { name: JSON.stringify(manifest.name) }));
   return id;
 }
 
-export function platformProblem(manifest: McpbManifest, platform: NodeJS.Platform): string | null {
+export function platformProblem(manifest: McpbManifest, platform: NodeJS.Platform): LocalizedText | null {
   const platforms = manifest.compatibility?.platforms;
   if (platforms === undefined || platforms.length === 0 || platforms.includes(platform)) return null;
-  return `Solo funciona en ${platforms.join(', ')}.`;
+  return localized('mcp.main.extensionPlatformOnly', { platforms: platforms.join(', ') });
 }
 
 // --- Ajustes de una extension (extensions-settings/<id>.json) -----------------------------------
@@ -114,10 +115,10 @@ export function parseExtensionSettings(text: string | null): ExtensionSettings {
   try {
     parsed = JSON.parse(text);
   } catch (error) {
-    throw new Error(`Ajustes de extensión ilegibles (${text.length} caracteres): ${error instanceof Error ? error.message : String(error)}`);
+    throw new UserFacingError(wrapError('errors.config.extensionSettingsUnreadable', { length: String(text.length) }, error));
   }
   const result = SETTINGS.safeParse(parsed);
-  if (!result.success) throw new Error(`Ajustes de extensión con forma inesperada: ${result.error.message}`);
+  if (!result.success) throw new UserFacingError(wrapError('errors.config.extensionSettingsBadShape', {}, result.error));
   return result.data;
 }
 
@@ -238,7 +239,7 @@ function userValues(ctx: ExtensionResolveContext, secrets: Record<string, string
   const values = new Map<string, McpUserConfigValue>();
   for (const [key, spec] of Object.entries(ctx.manifest.user_config)) {
     const value = spec.sensitive ? ctx.secret(key) : (ctx.settings.userConfig[key] ?? defaultOf(spec));
-    if (spec.required && !isFilled(value)) throw new Error(`Falta configurar «${spec.title.length > 0 ? spec.title : key}».`);
+    if (spec.required && !isFilled(value)) throw new UserFacingError(localized('mcp.main.extensionSettingMissing', { title: spec.title.length > 0 ? spec.title : key }));
     values.set(key, spec.sensitive && isFilled(value) ? secretReference(ctx.id, key, String(value), secrets) : value);
   }
   return values;
@@ -261,11 +262,11 @@ function expandArg(arg: string, ctx: ExtensionResolveContext, values: ReadonlyMa
 function resolveToken(name: string, ctx: ExtensionResolveContext, values: ReadonlyMap<string, McpUserConfigValue>): McpUserConfigValue {
   if (name.startsWith(USER_CONFIG_PREFIX)) {
     const key = name.slice(USER_CONFIG_PREFIX.length);
-    if (!values.has(key)) throw new Error(`Usa \${${name}}, que el manifest no declara.`);
+    if (!values.has(key)) throw new UserFacingError(localized('mcp.main.extensionVariableUndeclared', { variable: `\${${name}}` }));
     return values.get(key) ?? '';
   }
   const fixed = fixedVariables(ctx)[name];
-  if (fixed === undefined) throw new Error(`Usa \${${name}}, que Mage no sabe resolver.`);
+  if (fixed === undefined) throw new UserFacingError(localized('mcp.main.extensionVariableUnknown', { variable: `\${${name}}` }));
   return fixed;
 }
 

@@ -1,3 +1,4 @@
+import { localized, UserFacingError, type LocalizedText } from '@shared/i18n/localizedText';
 import type { UsageInfo, UsageWindowInfo } from '@shared/usage';
 import { toUsageInfo, UsageResponseSchema } from './schemas';
 import { clearLockout, EMPTY_LOCKOUT_STATE, isLockedOut, lockOut, remainingLockoutMs, type LockoutState } from './lockoutPolicy';
@@ -131,7 +132,7 @@ export class UsageService {
 
     if (isLockedOut(this.lockouts, configDir, nowMs)) {
       const remainingMs = remainingLockoutMs(this.lockouts, configDir, nowMs);
-      return this.staleOrThrow(configDir, `El endpoint de uso esta en cooldown (quedan ${Math.ceil(remainingMs / 1000)} s) para ${configDir}`);
+      return this.staleOrThrow(configDir, localized('errors.usage.cooldown', { seconds: String(Math.ceil(remainingMs / 1000)), configDir }));
     }
 
     const first = await this.requestUsage(this.deps.readAccessToken(configDir));
@@ -142,7 +143,7 @@ export class UsageService {
         this.lockouts = lockOut(this.lockouts, configDir, nowMs, rateLimitCooldownMsFrom(response));
       }
       // Mensaje sin token: solo status/statusText y la cuenta afectada.
-      throw new Error(`El endpoint de uso respondio ${response.status} ${response.statusText} para ${configDir}`);
+      throw new UserFacingError(localized('errors.usage.badStatus', { status: String(response.status), statusText: response.statusText, configDir }));
     }
     this.lockouts = clearLockout(this.lockouts, configDir);
 
@@ -180,18 +181,18 @@ export class UsageService {
   private onUnauthorized(configDir: string, nowMs: number): UsageInfo {
     this.lockouts = lockOut(this.lockouts, configDir, nowMs, UNAUTHORIZED_COOLDOWN_MS);
     this.deps.log?.('warn', `Sesion caducada al consultar el uso de ${configDir}; el CLI la renovara en el siguiente turno de esa cuenta`);
-    return this.staleOrThrow(configDir, `La sesion de la cuenta ha caducado (401) y no hay uso previo que mostrar para ${configDir}`);
+    return this.staleOrThrow(configDir, localized('errors.usage.sessionExpired', { configDir }));
   }
 
   // Ultimo valor conocido cuando no se puede preguntar (cooldown o sesion caducada). Desde 9.3 hay
   // DOS fuentes de "ultimo valor": la del endpoint y la del stream, que no gasta red y por tanto
   // sigue llegando aunque el endpoint este caido o la sesion del panel de uso no valga. Sin ninguna
   // de las dos no hay nada que degradar: se lanza con el motivo, nunca un default silencioso.
-  private staleOrThrow(configDir: string, reason: string): UsageInfo {
+  private staleOrThrow(configDir: string, reason: LocalizedText): UsageInfo {
     const stale = this.cache.get(configDir);
     if (stale !== undefined) return this.withStreamWindows(configDir, stale.data);
     const stream = this.streamCache.get(configDir);
-    if (stream === undefined) throw new Error(reason);
+    if (stream === undefined) throw new UserFacingError(reason);
     // Solo ventanas: `limits` y `apiCreditsMinor` no los sabe el stream, y fingirlos seria peor que
     // decir que no hay. Vacio/null es lo que ya significa "sin dato" en este tipo.
     return {

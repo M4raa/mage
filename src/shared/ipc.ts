@@ -2,6 +2,9 @@
 // El preload expone estos canales como `window.mage.*`; si cambia una firma, el compilador
 // rompe en ambos lados. El renderer NUNCA accede a Node/procesos: todo pasa por aqui.
 
+import type { ConversationLockParams, ConversationLockRef, ConversationLockStatus } from './conversationLock';
+import type { ResolvedUiLanguage } from './i18n/language';
+import type { LocalizedText } from './i18n/localizedText';
 import type { GitParams, GitSnapshot, GitSwitchParams } from './git';
 import type { WorktreeCreateParams, WorktreeMergeBaseParams, WorktreeRemoveResult } from './worktree';
 import type { GhAutoMergeParams, GhPrUpdate, GhRunActionParams, GhRunsParams, GhRunsSnapshot, GhSnapshot, GhWatchParams } from './gh';
@@ -10,6 +13,7 @@ import type { ProviderModel } from './providers';
 import type { AgyUsageSnapshot } from './usage';
 import type { MageEvent, PermissionDecision, SlashCommandInfo } from './events';
 import type { ArtifactRecord, ConversationPrefs } from './conversationIndex';
+import type { AnswerReceipt, CloseReceipt, ConversationId, ConversationSnapshot, QueuedMessage, SendMode, SendReceipt } from './coordination';
 import type { UsageInfo } from './usage';
 import type { StatusInfo } from './status';
 import type { TranscriptBatch, TranscriptTailPosition } from './transcripts';
@@ -65,8 +69,8 @@ export interface RuntimeProbeResult {
   readonly models: readonly string[] | null;
   readonly contextWindow: number | null;
   readonly supportsTools: boolean | null;
-  readonly warning: string | null;
-  readonly error: string | null;
+  readonly warning: LocalizedText | null;
+  readonly error: LocalizedText | null;
 }
 
 // Guardar la api key de un proveedor DEL USUARIO en la boveda de main. Sube una vez y no vuelve.
@@ -82,7 +86,7 @@ export interface ProviderProbeResult {
   readonly kind: 'cli' | 'http';
   readonly endpoint: string | null;
   readonly models: readonly ProviderModel[] | null;
-  readonly error: string | null;
+  readonly error: LocalizedText | null;
 }
 
 // --- Canales renderer -> main (request/response via ipcRenderer.invoke) -----------------------
@@ -93,15 +97,23 @@ export const IpcChannel = {
   SessionAnswerPermission: 'session:answerPermission',
   SessionAnswerElicitation: 'session:answerElicitation',
   SessionInterrupt: 'session:interrupt',
+  // F2.2: la cola vive en main. Quitar un mensaje (editar o descartar) y vaciarla devolviendo sus mensajes.
+  SessionQueueRemove: 'session:queueRemove',
+  SessionQueueTake: 'session:queueTake',
+  SessionQueueUpdate: 'session:queueUpdate',
   SessionSetModel: 'session:setModel',
   SessionSetEffort: 'session:setEffort',
   SessionSetPermissionMode: 'session:setPermissionMode',
   // Parar UN subagente en segundo plano (0.1.1 R2, punto 29, solo Claude).
   SessionStopTask: 'session:stopTask',
   SessionStop: 'session:stop',
+  SessionClose: 'session:close',
+  // F2.1: instantanea de solo lectura de una sesion viva (identidad, estado y ultima secuencia).
+  SessionSnapshot: 'session:snapshot',
   SessionGetScratchDir: 'session:getScratchDir',
   // La RAIZ de los borradores, sin crear nada (a diferencia de la de arriba, que acuña una carpeta).
   SessionGetScratchRoot: 'session:getScratchRoot',
+  SessionGetScratchRoots: 'session:getScratchRoots',
   FsExistsDirs: 'fs:existsDirs',
   // ¿Esta instalado el CLI de Antigravity (E3)? Solo main puede mirar el disco/PATH.
   AgyInstalled: 'engine:agyInstalled',
@@ -156,9 +168,16 @@ export const IpcChannel = {
   StatusGet: 'status:get',
   // Version de la app (la del package.json empaquetado). Constante durante toda la vida del proceso.
   AppVersionGet: 'app:version',
+  // Idioma de la interfaz ya resuelto por main (F3.1).
+  UiLanguageGet: 'i18n:language',
   // Datos de la pantalla «Acerca de»: versiones del runtime y los avisos de terceros (B.2/B.3 de la
   // revision legal). Bajo demanda: el texto son ~124 kB que no pinta nadie hasta abrir la seccion.
   AboutGet: 'app:about',
+  StartupWarningsGet: 'app:startup-warnings',
+  // Bloqueo de conversación entre instancias (#55, F2.8): tenerla, tomar el control de una huérfana y soltarla.
+  ConversationLockAcquire: 'conversation-lock:acquire',
+  ConversationLockTakeOver: 'conversation-lock:take-over',
+  ConversationLockRelease: 'conversation-lock:release',
   // Opacidad de fondo: main activa/desactiva el material translucido de la ventana (Windows 11).
   WindowOpacitySet: 'window:opacity',
   TranscriptOpen: 'transcript:open',
@@ -266,6 +285,7 @@ export const IpcChannel = {
   // objetos de main para todas; lo que cambia por ventana es el workspace (pestañas, paneles, cuenta
   // activa y conversaciones abiertas).
   WindowsOpen: 'windows:open',
+  WindowClose: 'window:close',
   WindowsList: 'windows:list',
   // Mover una pestaña a otra ventana. El ARRASTRE es del renderer (DOM); esto es solo el transporte.
   WindowsMoveTab: 'windows:moveTab',
@@ -280,6 +300,7 @@ export const IpcChannel = {
   // Estado de la actualizacion (para una ventana que carga tarde) e instalarla ya descargada.
   UpdateGetState: 'update:getState',
   UpdateInstall: 'update:install',
+  UpdateCheck: 'update:check',
 } as const;
 
 export type IpcChannel = (typeof IpcChannel)[keyof typeof IpcChannel];
@@ -343,6 +364,7 @@ export interface CreateSessionParams {
 // Resultado de crear una sesion: el id y el config dir EFECTIVO con el que se lanzo (la cuenta o su
 // perfil privado). El renderer guarda el configDir en la pestana para localizar sus transcripciones.
 export interface CreateSessionResult {
+  readonly workspaceWarning?: LocalizedText;
   readonly sessionId: string;
   readonly configDir: string;
 }
@@ -353,6 +375,24 @@ export interface SendMessageParams {
   // Imagenes adjuntas (2.12.1). `data` es base64 SIN el prefijo `data:`. AUSENTE o [] = mensaje de solo
   // texto, y entonces el adapter manda EXACTAMENTE el payload de siempre (`content` como string).
   readonly attachments?: readonly ImageAttachment[];
+  // F2.2: id del envío, generado por quien envía. Reenviar el mismo devuelve el mismo recibo sin enviar dos
+  // veces; si el mensaje espera en la cola, es su id. Ausente = main genera uno.
+  readonly commandId?: string;
+  // F4.1: «Enviar ahora» (`steer`) o a la cola. Ausente = cola. Solo lo manda el renderer (el host no).
+  readonly mode?: SendMode;
+}
+
+// Quitar un mensaje de la cola de main (F2.2) para editarlo o descartarlo.
+export interface QueuedMessageParams {
+  readonly sessionId: string;
+  readonly messageId: string;
+}
+
+// Editar el texto de un mensaje de la cola sin moverlo (F4.2, U5).
+export interface UpdateQueuedMessageParams {
+  readonly sessionId: string;
+  readonly messageId: string;
+  readonly text: string;
 }
 
 // Imagen adjunta a un mensaje del usuario. Vive en el contrato IPC porque cruza main<->renderer; la
@@ -503,12 +543,12 @@ export interface NotificationTarget {
 // viaja el texto crudo (hooks y reglas de permisos) para su editor.
 export interface SharedConfigSnapshot {
   readonly settingsCommonText: string;
-  readonly mcpCommonWarnings: readonly string[];
+  readonly mcpCommonWarnings: readonly LocalizedText[];
   readonly settingsCommonWarnings: readonly string[];
   readonly mcpCommonServerNames: readonly string[];
   // Colisiones de la importacion inicial de mcp-common.json (P-026 2.5), solo en la ejecucion que la
   // hizo. Vacio en las demas.
-  readonly mcpCommonImportNotes: readonly string[];
+  readonly mcpCommonImportNotes: readonly LocalizedText[];
   // Bytes EXACTOS observados en disco cuando se leyo (null = el fichero no existia). Es la base del
   // compare-and-swap al guardar, y NO es lo mismo que `*Text`: ese sustituye el fichero ausente por un
   // JSON valido de arranque para que el editor no muestre un aviso antes de que el usuario toque nada.
@@ -531,7 +571,7 @@ export interface SaveSharedConfigParams {
 // `stale`: el fichero cambio fuera de Mage desde que el editor lo cargo y NO se ha escrito nada.
 export type SaveSharedConfigResult =
   | { readonly status: 'saved'; readonly warnings: readonly string[] }
-  | { readonly status: 'stale'; readonly message: string };
+  | { readonly status: 'stale'; readonly message: LocalizedText };
 
 // Layout de paneles acoplables (F6 Fase 2, PLAN-F6-PANELES.md §5.3/§7): el registro de paneles real
 // (con `render` de React) vive SOLO en el renderer (panelRegistry.ts) — no puede cruzar a main (medido
@@ -549,6 +589,11 @@ export const EVENT_CHANNEL = 'session:event';
 export interface SessionEventPayload {
   readonly sessionId: string;
   readonly event: MageEvent;
+  // F2.1 (coordinacion): conversacion de Mage (null mientras el proveedor no dice su id nativo), secuencia
+  // monotona por conversacion y hora de emision. Un cliente que ve un hueco en `seq` pide la instantanea.
+  readonly conversationId?: ConversationId | null;
+  readonly seq?: number;
+  readonly at?: number;
 }
 
 // Canal DEDICADO para lotes de transcripcion (dominio distinto de EVENT_CHANNEL: transcripciones
@@ -573,6 +618,13 @@ export const JUMP_LIST_OPEN_CHANNEL = 'jumpList:open';
 // Datos de la pantalla «Acerca de». `notices` es el texto COMPLETO de `THIRD-PARTY-NOTICES.txt` (lo
 // que conserva los avisos de copyright que el bundle borra) y `chromiumLicensesPath` es la ruta al
 // fichero de avisos de Chromium que instala Electron, o null si no esta donde se le espera.
+// Aviso persistente que main pide enseñar al abrirse la interfaz (F2.6: Linux arrancado sin el sandbox de Chromium).
+export interface StartupWarning {
+  readonly id: string;
+  readonly title: LocalizedText;
+  readonly body: LocalizedText;
+}
+
 export interface AboutInfo {
   readonly versions: {
     readonly app: string;
@@ -580,7 +632,7 @@ export interface AboutInfo {
     readonly chromium: string;
     readonly node: string;
   };
-  readonly notices: string;
+  readonly notices: LocalizedText;
   readonly chromiumLicensesPath: string | null;
 }
 
@@ -686,7 +738,9 @@ export interface JumpListOpenPayload {
 export interface TranscriptBatchPayload {
   readonly transcriptId: string;
   readonly batch?: TranscriptBatch;
-  readonly error?: string;
+  readonly error?: LocalizedText;
+  // Con `error`: la conversación pedida no existe en la cuenta (Codex o agy), no un fallo de lectura (devolución 19).
+  readonly missing?: true;
 }
 
 // --- Varias ventanas del workbench ------------------------------------------------------------
@@ -696,6 +750,10 @@ export interface TranscriptBatchPayload {
 // tambien tiene que cambiar"). Se excluye al emisor a proposito: ya tiene el valor aplicado, y
 // devolverselo pisaria una edicion en curso suya.
 export const SETTINGS_CHANGED_CHANNEL = 'settings:changed';
+
+// main -> TODAS las ventanas, la que lo cambio incluida: el idioma resuelto de la interfaz cambio (F3.1). Se repinta
+// sin reiniciar.
+export const UI_LANGUAGE_CHANGED_CHANNEL = 'i18n:languageChanged';
 
 // main -> UNA ventana: le llega una pestaña movida desde otra. La ventana de origen la quita de su
 // estado; esta la adopta.
@@ -721,6 +779,9 @@ export interface CloseAnswer {
 
 // main -> TODAS las ventanas: cambio el estado de la actualizacion (indicador de la barra de estado).
 export const UPDATE_STATE_CHANNEL = 'update:state';
+// Bloqueo de conversación (#55, F2.8): main avisa de que esta instancia PERDIÓ una conversación (otra tomó el control
+// mientras esta no latía, p. ej. con el equipo suspendido). El renderer la vuelve a preguntar y queda en solo lectura.
+export const CONVERSATION_LOCK_LOST_CHANNEL = 'conversation-lock:lost';
 // main -> UNA ventana (la enfocada): enseña el dialogo de «lista para instalar» de esa version.
 export const UPDATE_PROMPT_CHANNEL = 'update:prompt';
 
@@ -756,11 +817,24 @@ export type DropTabOutcome = 'moved' | 'none';
 // --- API tipada que el preload expone en window.mage ------------------------------------------
 
 export interface MageApi {
+  // ¿Corre este renderer en el sandbox de Chromium? (`process.sandboxed` del preload; F2.6). Solo lo lee verify:gui.
+  readonly sandboxed: boolean;
+  readonly isDevelopment: boolean;
   createSession(params: CreateSessionParams): Promise<CreateSessionResult>; // sessionId + configDir efectivo
-  sendMessage(params: SendMessageParams): Promise<void>;
-  answerPermission(params: AnswerPermissionParams): Promise<void>;
-  answerElicitation(params: ElicitationAnswer): Promise<void>;
-  interrupt(sessionId: string): Promise<void>;
+  // Envía, o deja en la cola de main si hay un turno en marcha (F2.2): el recibo dice cuál de las dos.
+  sendMessage(params: SendMessageParams): Promise<SendReceipt>;
+  // Contesta UNA vez (F2.3): una segunda respuesta a la misma petición devuelve `rejected` sin llegar al motor.
+  answerPermission(params: AnswerPermissionParams): Promise<AnswerReceipt>;
+  answerElicitation(params: ElicitationAnswer): Promise<AnswerReceipt>;
+  // Para el turno en curso y devuelve los mensajes que esperaban en la cola (un Stop no los envía: vuelven
+  // al input). Se vacía ANTES de interrumpir, así que el `result` del turno parado ya no saca ninguno.
+  interrupt(sessionId: string): Promise<readonly QueuedMessage[]>;
+  // Quita un mensaje de la cola de main y lo devuelve (null si ya no estaba: salió o lo quitó otro).
+  removeQueuedMessage(params: QueuedMessageParams): Promise<QueuedMessage | null>;
+  // Cambia el texto de un mensaje de la cola sin moverlo y lo devuelve (null si ya no estaba).
+  updateQueuedMessage(params: UpdateQueuedMessageParams): Promise<QueuedMessage | null>;
+  // Vacía la cola de main y devuelve sus mensajes.
+  takeQueuedMessages(sessionId: string): Promise<readonly QueuedMessage[]>;
   // Cambia el modelo de una sesion viva (M2.4, solo Claude); aplica al siguiente turno.
   setModel(params: SetModelParams): Promise<void>;
   setEffort(params: SetEffortParams): Promise<void>;
@@ -769,11 +843,16 @@ export interface MageApi {
   // Para UN subagente en segundo plano (0.1.1 R2, punto 29, solo Claude).
   stopTask(params: StopTaskParams): Promise<void>;
   stop(sessionId: string): Promise<void>;
+  // Cierra la conversacion de esta ventana (F2.4): main decide si se para o queda en segundo plano.
+  closeSession(sessionId: string): Promise<CloseReceipt>;
+  // Instantanea de una sesion viva (F2.1). Rechaza si la sesion no existe.
+  getSessionSnapshot(sessionId: string): Promise<ConversationSnapshot>;
   // Carpeta scratch temporal (cross-platform) para el cwd de la sesion de prueba (Fase B).
   getScratchDir(): Promise<string>;
   // Raiz de los directorios de borrador. NO crea nada: `getScratchDir` acuña una carpeta nueva en cada
   // llamada, asi que no vale para averiguar la raiz — devolveria un hermano, no el padre.
   getScratchRoot(): Promise<string>;
+  getScratchRoots?(): Promise<readonly string[]>;
   // ¿Existe cada carpeta, en el mismo orden? Para no ofrecer proyectos recientes borrados (P-028, 16).
   existsDirs(paths: readonly string[]): Promise<readonly boolean[]>;
   // ¿Esta instalado el CLI `agy` (E3)? El renderer no puede mirar el PATH ni el disco, y ofrecer un
@@ -794,6 +873,13 @@ export interface MageApi {
   setUiScale(percent: number): void;
   // Datos de «Acerca de» (versiones + avisos de terceros). Se pide al abrir la seccion, no al arrancar.
   getAbout(): Promise<AboutInfo>;
+  getStartupWarnings(): Promise<readonly StartupWarning[]>;
+  // Bloqueo de conversación entre instancias (#55, F2.8). `tabId` identifica a la pestaña que la sujeta.
+  acquireConversationLock(params: ConversationLockParams): Promise<ConversationLockStatus>;
+  takeOverConversationLock(params: ConversationLockParams): Promise<ConversationLockStatus>;
+  releaseConversationLock(params: ConversationLockParams): Promise<void>;
+  // Esta instancia perdió una conversación (otra tomó el control mientras esta no latía).
+  onConversationLockLost(listener: (ref: ConversationLockRef) => void): () => void;
   // Revela un archivo en el gestor de archivos del SO.
   revealFile(path: string): Promise<void>;
   // Abre "Guardar como" y copia el archivo; devuelve false si el usuario cancela.
@@ -877,6 +963,9 @@ export interface MageApi {
   getStatus(): Promise<StatusInfo>;
   // Version de Mage, para pintarla en la barra de estado. No cambia en caliente.
   getAppVersion(): Promise<string>;
+  // Idioma de la interfaz resuelto por main (preferencia guardada, inicial o sistema) y el locale de formato.
+  getUiLanguage(): Promise<ResolvedUiLanguage>;
+  onUiLanguageChanged(listener: (resolved: ResolvedUiLanguage) => void): () => void;
   // Avisa a main del cambio de opacidad para que ajuste el material de la ventana.
   setWindowOpacity(percent: number): Promise<void>;
   // Abre una transcripcion persistida en streaming. El `transcriptId` lo GENERA el renderer y lo
@@ -1033,6 +1122,9 @@ export interface MageApi {
 
   // --- Varias ventanas del workbench ----------------------------------------------------------
   // Abre una ventana NUEVA de Mage (misma instancia, mismo main, mismos ajustes) y devuelve su id.
+  // Cierra ESTA ventana como lo haría su X: pasa por el mismo `close` de main, que puede preguntar o esconderla.
+  // (Con `sandbox: true`, `window.close()` de la página destruye la ventana sin pasar por ese `close`.)
+  closeWindow(): Promise<void>;
   openWindow(): Promise<string>;
   // Ventanas abiertas, en el orden en que se abrieron, con `isCurrent` marcando la que pregunta.
   listWindows(): Promise<readonly MageWindowInfo[]>;
@@ -1064,4 +1156,6 @@ export interface MageApi {
   onUpdatePrompt(listener: (version: string) => void): () => void;
   // Reinicia e instala la actualizacion descargada. Lanza si no hay ninguna lista.
   installUpdate(): Promise<void>;
+  // «Buscar actualizaciones» (F1.3, #15): el resultado llega por `onUpdateState`.
+  checkForUpdates(): Promise<void>;
 }

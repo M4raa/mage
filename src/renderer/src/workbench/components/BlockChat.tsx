@@ -5,7 +5,7 @@ import { CopyButton } from './CopyButton';
 import { Icon } from './Icon';
 import { AgyCommandsDialog } from './AgyCommandsDialog';
 import { isValidAgyRule, parseAgyMcpRule } from '@shared/agyRules';
-import { NO_PERMISSION_CONTROL_WARNING, isAutoApprovedProvider } from '@shared/providers';
+import { AGY_PROVIDER_ID, isAutoApprovedProvider } from '@shared/providers';
 import { useWorkbenchStore } from '../workbenchStore';
 import { SPARKLE_WAIST_RATIO } from '../brandMark';
 import { useThinkingStore } from '../thinkingStore';
@@ -25,6 +25,9 @@ import { classifySystemWrapper } from '@shared/systemWrappers';
 import { useStickToBottom } from '../useStickToBottom';
 import { RecentProjects } from './RecentProjects';
 import { reportActionError } from '../notificationStore';
+import { conversationIdOfTab } from '../conversationId';
+import { useT } from '../../i18n/uiLanguage';
+import type { Translate } from '@shared/i18n/translator';
 
 // Referencia ESTABLE para el caso "todavia no hay pensamientos de esta sesion": un `[]` nuevo en cada
 // render haria que el efecto de hidratacion se disparase en bucle.
@@ -35,6 +38,12 @@ export function BlockChat(): React.JSX.Element {
   // La pestaña de ESTE panel del centro (item 13): con el workspace dividido no tiene por que ser la
   // activa global. Sin division, `usePaneTabId` devuelve exactamente `activeTabId`.
   const activeTabId = usePaneTabId();
+  // #48: una conversacion reabierta sin bloques todavia esta leyendo su transcripcion: se dice.
+  const resumed = useWorkbenchStore((s) => s.tabs.find((tab) => tab.id === activeTabId)?.resumeSessionId !== undefined);
+  const useTranscript = usePaneTranscriptStore();
+  const transcriptFinal = useTranscript((s) => s.isFinal);
+  const transcriptError = useTranscript((s) => s.errorMessage);
+  const missingProvider = useWorkbenchStore((s) => s.missingConversationByChat[activeTabId]);
   const allBlocks = useWorkbenchStore((s) => s.blocksByChat[activeTabId] ?? EMPTY);
   useHydrateFromTranscript();
   const accent = useWorkbenchStore((s) => {
@@ -58,6 +67,7 @@ export function BlockChat(): React.JSX.Element {
   // El texto en streaming crece DENTRO del ultimo bloque (no cambia el numero de bloques): el tamaño
   // de la cola es lo que hace que el auto-scroll siga el typing.
   const tailSize = useMemo(() => tailContentSize(rows), [rows]);
+  const t = useT();
   // Lo que cuenta es lo que se PINTA: las filas, no los bloques (casi todos van al panel de Actividad).
   const { ref: scrollRef, onScroll } = useStickToBottom(
     [rows.length, tailSize, turnLive, activeTabId],
@@ -66,6 +76,9 @@ export function BlockChat(): React.JSX.Element {
 
   if (blocks.length === 0 && !turnLive) {
     if (activeTabId.length === 0) return <NoConversationState />;
+    if (missingProvider !== undefined) return <ConversationLoadState text={missingConversationText(t, missingProvider)} />;
+    if (resumed && transcriptError !== null) return <ConversationLoadState text={t('chat.load.failed', { error: transcriptError })} />;
+    if (resumed && !transcriptFinal) return <ConversationLoadState text={t('chat.load.loading')} loading />;
     return <EmptyConversation />;
   }
 
@@ -74,7 +87,7 @@ export function BlockChat(): React.JSX.Element {
       {/* Region viva (solo lectores): anuncia el CAMBIO de estado del turno, no cada delta (evita
           ruido). El texto solo cambia en las transiciones, que es cuando el SR lo lee. */}
       <div className="sr-only" role="status" aria-live="polite">
-        {statusAnnouncement(status)}
+        {statusAnnouncement(t, status)}
       </div>
       {rows.map((row) => (
         <ChatRowView key={rowKey(row)} row={row} accent={accent} />
@@ -82,6 +95,11 @@ export function BlockChat(): React.JSX.Element {
       {turnLive && <ThinkingIndicator accent={accent} tool={runningTool} steps={turnSummary.steps} errors={turnSummary.errors} />}
     </div>
   );
+}
+
+// Aviso de una pestaña restaurada cuya conversación no existe en su cuenta (devolución 19). El primer turno abre una nueva.
+function missingConversationText(t: Translate, provider: string): string {
+  return t('chat.load.missing', { provider: provider === AGY_PROVIDER_ID ? 'agy' : 'Codex' });
 }
 
 // Tamaño del contenido de la ULTIMA fila del hilo (caracteres). Cambia con cada delta de streaming ->
@@ -98,16 +116,16 @@ function tailContentSize(rows: readonly ChatRow[]): number {
 }
 
 // Texto para la region aria-live segun el estado del turno de la pestana activa.
-function statusAnnouncement(status: string): string {
+function statusAnnouncement(t: Translate, status: string): string {
   switch (status) {
     case 'streaming':
-      return 'Generando respuesta…';
+      return t('chat.status.streaming');
     case 'needs_permission':
-      return 'El agente requiere un permiso.';
+      return t('chat.status.needsPermission');
     case 'error':
-      return 'Se produjo un error en la conversación.';
+      return t('chat.status.error');
     default:
-      return 'Respuesta completada.';
+      return t('chat.status.done');
   }
 }
 
@@ -121,7 +139,7 @@ function useHydrateFromTranscript(): void {
   const activeTabId = usePaneTabId();
   const sessionId = useWorkbenchStore((s) => {
     const tab = s.tabs.find((t) => t.id === activeTabId);
-    return s.sessionIdByChat[activeTabId] ?? tab?.resumeSessionId;
+    return tab === undefined ? undefined : conversationIdOfTab(tab, s.sessionIdByChat[activeTabId]);
   });
   const hydrateBlocks = useWorkbenchStore((s) => s.hydrateBlocks);
   // 4.1/4.3: el store de la pestaña de ESTE panel. Con el store global, en un split el panel no
@@ -192,6 +210,20 @@ function BrandConstellation(): React.JSX.Element {
   );
 }
 
+// Estado de lectura de una conversacion reabierta (#48): nunca una superficie muda mientras carga o si falla.
+function ConversationLoadState({ text, loading = false }: { readonly text: string; readonly loading?: boolean }): React.JSX.Element {
+  return (
+    <div role="status" className="flex flex-1 items-center justify-center gap-2 p-[16px_22px] text-center text-mg-muted">
+      {loading && (
+        <span aria-hidden="true" className="animate-spin motion-reduce:animate-none">
+          <Icon name="refresh" size={16} />
+        </span>
+      )}
+      {text}
+    </div>
+  );
+}
+
 // Estado vacio de una conversacion ya abierta (M2.6): una constelacion de chispas de la marca que
 // titilan. Monocromo, y con prefers-reduced-motion pierde la escala y se queda en el latido de
 // opacidad. Reemplaza el texto plano "Sin mensajes todavia en este chat.".
@@ -203,21 +235,22 @@ function EmptyConversation(): React.JSX.Element {
     const provider = s.tabs.find((t) => t.id === activeTabId)?.provider;
     return provider !== undefined && isAutoApprovedProvider(provider);
   });
+  const t = useT();
   return (
     <div className={EMPTY_STATE_CLASS}>
       <BrandConstellation />
       <div className="flex flex-col items-center gap-[12px]">
-        <div className="text-[13px] font-medium text-mg-text">Escribe una instrucción para empezar</div>
+        <div className="text-[13px] font-medium text-mg-text">{t('chat.empty.title')}</div>
         <WorkingFolder />
         {autoApproved ? (
           <AgyStartNotice />
         ) : (
           <div className="flex items-center gap-[7px] text-[10.5px] text-mg-muted">
             <Kbd>/</Kbd>
-            <span>comandos</span>
+            <span>{t('chat.empty.hintCommands')}</span>
             <span className="opacity-50">·</span>
             <Kbd>Shift+Tab</Kbd>
-            <span>modo</span>
+            <span>{t('chat.empty.hintMode')}</span>
           </div>
         )}
       </div>
@@ -230,18 +263,19 @@ function EmptyConversation(): React.JSX.Element {
 function AgyStartNotice(): React.JSX.Element {
   const [open, setOpen] = useState(false);
   const count = useWorkbenchStore((s) => s.settings.agyCommandRules.allow.length);
+  const t = useT();
   return (
     <div className="flex max-w-[420px] flex-col items-start gap-[6px] rounded-[7px] border border-mg-warn-border bg-mg-warn-bg p-[7px_10px] text-left text-[10.5px] text-mg-warn-text">
       <div role="status" className="flex items-start gap-[8px]">
         <Icon name="warning" />
-        <span>{NO_PERMISSION_CONTROL_WARNING}</span>
+        <span>{t('prompt.providers.noPermissionControl')}</span>
       </div>
       <button
         onClick={() => setOpen(true)}
         data-agy-commands-open="true"
         className="ml-[22px] rounded-[6px] border border-mg-warn-border px-[8px] py-[2px] text-[10.5px] font-semibold hover:bg-mg-hover"
       >
-        Comandos permitidos ({count})…
+        {t('chat.agyNotice.allowedCommands', { count })}
       </button>
       {/* Al body: el estado vacio puede ir dentro de un panel con transform, que romperia el `fixed`. */}
       {createPortal(<AnimatePresence>{open && <AgyCommandsDialog key="agy-commands" onClose={() => setOpen(false)} />}</AnimatePresence>, document.body)}
@@ -285,6 +319,7 @@ function ProjectPicker({
   readonly reason?: string;
   readonly onPick: (cwd: string) => void;
 }): React.JSX.Element {
+  const t = useT();
   const pickFolder = (): void => {
     void window.mage
       .pickDirectory()
@@ -292,7 +327,7 @@ function ProjectPicker({
         if (picked === null) return; // el usuario cancelo el dialogo del SO
         onPick(picked);
       })
-      .catch((err: unknown) => reportActionError('No se pudo abrir el selector de carpeta', err, 'chat'));
+      .catch((err: unknown) => reportActionError(t('chat.project.pickFailed'), err, 'chat'));
   };
 
   return (
@@ -301,12 +336,12 @@ function ProjectPicker({
         <button
           onClick={pickFolder}
           disabled={!allowed}
-          data-tip={allowed ? 'Elegir la carpeta de trabajo' : reason}
-          aria-label="Elegir proyecto"
+          data-tip={allowed ? t('chat.project.pickTip') : reason}
+          aria-label={t('chat.project.pickAria')}
           className="flex items-center gap-[7px] rounded-[8px] bg-mg-primary px-[16px] py-[8px] text-[12px] font-semibold text-mg-primary-ink disabled:cursor-default disabled:opacity-40"
         >
           <Icon name="folderOpen" />
-          Elegir proyecto…
+          {t('chat.project.pick')}
         </button>
         {/* La ruta completa en el title: lo que se pinta va acortado para no romper el centrado. */}
         {cwd !== undefined && (
@@ -334,31 +369,30 @@ function Kbd({ children }: { readonly children: React.ReactNode }): React.JSX.El
 // —constelacion y selector de proyecto—, pero elegir un proyecto CREA la conversacion en esa carpeta.
 // Debajo, los dos botones de siempre para quien no quiera elegir: esos crean SIEMPRE en una carpeta
 // temporal, diga lo que diga el ajuste «carpeta de los chats nuevos». La cuenta es la activa del rail.
-const NO_ACCOUNT_REASON = 'Añade una cuenta para empezar';
-
 function NoConversationState(): React.JSX.Element {
+  const t = useT();
   const createConversation = useWorkbenchStore((s) => s.createConversation);
   const hasAccount = useWorkbenchStore((s) => s.activeAccountId.length > 0);
   return (
     <div data-no-conversation="true" className={EMPTY_STATE_CLASS}>
       <BrandConstellation />
       <div className="flex w-full flex-col items-center gap-[12px]">
-        <div className="text-[13px] font-medium text-mg-text">Elige un proyecto para empezar</div>
-        <ProjectPicker allowed={hasAccount} reason={NO_ACCOUNT_REASON} onPick={(cwd) => void createConversation('shared', { cwd })} />
+        <div className="text-[13px] font-medium text-mg-text">{t('chat.noConversation.title')}</div>
+        <ProjectPicker allowed={hasAccount} reason={t('chat.noConversation.noAccount')} onPick={(cwd) => void createConversation('shared', { cwd })} />
         <div className="flex gap-[10px]">
           <button
             onClick={() => void createConversation('shared', { scratch: true })}
             disabled={!hasAccount}
             className="rounded-[8px] border border-mg-border-emph px-[16px] py-[9px] text-[12px] text-mg-body2 hover:bg-mg-hover disabled:opacity-40"
           >
-            ＋ Nuevo chat
+            {t('chat.noConversation.newChat')}
           </button>
           <button
             onClick={() => void createConversation('private', { scratch: true })}
             disabled={!hasAccount}
             className="rounded-[8px] border border-mg-border-emph px-[16px] py-[9px] text-[12px] text-mg-body2 hover:bg-mg-hover disabled:opacity-40"
           >
-            <Icon name="lock" size={12} /> Nuevo chat privado
+            <Icon name="lock" size={12} /> {t('chat.noConversation.newPrivateChat')}
           </button>
         </div>
       </div>
@@ -384,6 +418,7 @@ function ThinkingIndicator({
   const openActivity = useWorkbenchStore((s) => s.openActivity);
   const turnStart = useWorkbenchStore((s) => s.turnStartByChat[paneTabId]);
   const lastActivity = useWorkbenchStore((s) => s.lastActivityByChat[paneTabId]);
+  const t = useT();
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 1000);
@@ -391,24 +426,24 @@ function ThinkingIndicator({
   }, []);
   const status = computeThinkingStatus(now - (turnStart ?? now), now - (lastActivity ?? now), turnStart ?? 0);
   // Con una tool en curso se dice QUE esta haciendo; si no, el verbo del turno (uno fijo, como el CLI).
-  const label = tool === null ? status.label : `Ejecutando ${tool}`;
+  const label = tool === null ? status.label : t('chat.thinking.runningTool', { tool });
   // Es un BOTON (P-026 3.4): lleva al panel de Actividad, donde esta cada paso de este turno.
   return (
     <button
       onClick={() => openActivity(paneTabId, null)}
       data-turn-status="true"
-      aria-label={`${label}, ${steps} pasos${errors > 0 ? `, ${errors} con error` : ''}: ver la actividad`}
+      aria-label={t('chat.thinking.aria', { label, steps, errors })}
       className="flex w-fit items-center gap-[9px] rounded-[7px] px-[4px] py-[2px] text-left text-[12px] text-mg-ter hover:bg-mg-hover hover:text-mg-body2"
     >
       <span className="h-[7px] w-[7px] flex-none rounded-full mg-pulse" style={{ background: accent }} />
       <span>{label}…</span>
-      <span className="text-[10.5px] text-mg-muted">· {steps} {steps === 1 ? 'paso' : 'pasos'}</span>
+      <span className="text-[10.5px] text-mg-muted">· {t('chat.thinking.steps', { count: steps })}</span>
       <span className="font-mono text-[10.5px] text-mg-muted" style={{ fontVariantNumeric: 'tabular-nums' }}>
         · {status.elapsedText}
       </span>
-      {errors > 0 && <span className="text-[10.5px] font-semibold text-mg-danger">· {errors} {errors === 1 ? 'error' : 'errores'}</span>}
+      {errors > 0 && <span className="text-[10.5px] font-semibold text-mg-danger">· {t('chat.thinking.errors', { count: errors })}</span>}
       {status.stalled && (
-        <span className="text-[10.5px] text-mg-warn-text">· sin respuesta hace {status.sinceActivityText}</span>
+        <span className="text-[10.5px] text-mg-warn-text">· {t('chat.thinking.stalled', { since: status.sinceActivityText })}</span>
       )}
       <span aria-hidden="true" className="text-mg-muted">›</span>
     </button>
@@ -432,13 +467,14 @@ function ChatRowView({ row, accent }: { readonly row: ChatRow; readonly accent: 
 function ToolFailedLine({ block }: { readonly block: Extract<Block, { kind: 'tool' }> }): React.JSX.Element {
   const paneTabId = usePaneTabId();
   const openActivity = useWorkbenchStore((s) => s.openActivity);
+  const t = useT();
   return (
     <div className="shrink-0" data-block="tool-failed">
       <button
         onClick={() => openActivity(paneTabId, null)}
         className="flex items-center gap-[6px] rounded-[7px] px-[4px] py-[2px] text-[11.5px] text-mg-danger hover:bg-mg-hover"
       >
-        <Icon name="warning" size={12} /> {block.tool} falló · ver en Actividad
+        <Icon name="warning" size={12} /> {t('chat.toolFailed.line', { tool: block.tool })}
       </button>
     </div>
   );
@@ -452,10 +488,8 @@ function SubagentsLine({ blocks }: { readonly blocks: readonly Extract<Block, { 
   const running = blocks.some(isSubagentRunning);
   const failed = blocks.filter((b) => b.status === 'error').length;
   const slowest = Math.max(0, ...blocks.map((b) => b.elapsedMs ?? 0));
-  const n = blocks.length;
-  const text = running
-    ? `Lanzó ${n} ${n === 1 ? 'subagente' : 'subagentes'}`
-    : `${n} ${n === 1 ? 'terminado' : 'terminados'}${slowest > 0 ? ` · ${formatElapsed(slowest)}` : ''}`;
+  const t = useT();
+  const text = subagentsLineText(t, { running, count: blocks.length, slowest });
   return (
     <div className="shrink-0" data-block="subagents">
       <button
@@ -464,10 +498,16 @@ function SubagentsLine({ blocks }: { readonly blocks: readonly Extract<Block, { 
       >
         <span aria-hidden="true">⇲</span>
         <span>{text}</span>
-        {failed > 0 && <span className="font-semibold text-mg-danger">· {failed} con error</span>}
+        {failed > 0 && <span className="font-semibold text-mg-danger">· {t('chat.subagents.failed', { count: failed })}</span>}
       </button>
     </div>
   );
+}
+
+function subagentsLineText(t: Translate, line: { readonly running: boolean; readonly count: number; readonly slowest: number }): string {
+  if (line.running) return t('chat.subagents.launched', { count: line.count });
+  if (line.slowest > 0) return t('chat.subagents.doneElapsed', { count: line.count, elapsed: formatElapsed(line.slowest) });
+  return t('chat.subagents.done', { count: line.count });
 }
 
 // `memo` NO es decorativo aqui, es LA optimizacion del streaming (P2). Cada delta produce un array
@@ -510,14 +550,16 @@ function SystemBlock({ block }: { readonly block: Extract<Block, { kind: 'system
 }
 
 // `tip`: texto secundario en el tooltip (P-028, 20: el aviso del CLI tras la linea de limite de Mage).
+// #14: el texto encoge y parte por donde haga falta (rutas sin espacios incluidas) y se lee entero; las
+// rayas conservan un minimo para que siga pareciendo una linea de sistema.
 function SystemLine({ text, tip }: { readonly text: string; readonly tip?: string }): React.JSX.Element {
   return (
-    <div className="flex items-center gap-[10px] px-[4px] text-[10.5px] text-mg-muted">
-      <span className="h-px flex-1 bg-mg-border-subtle" />
-      <span className="flex-none" {...(tip === undefined ? {} : { 'data-tip': tip })}>
+    <div className="flex min-w-0 items-center gap-[10px] px-[4px] text-[10.5px] text-mg-muted">
+      <span className="h-px min-w-[16px] flex-1 bg-mg-border-subtle" />
+      <span className="min-w-0 text-center [overflow-wrap:anywhere]" {...(tip === undefined ? {} : { 'data-tip': tip })}>
         {text}
       </span>
-      <span className="h-px flex-1 bg-mg-border-subtle" />
+      <span className="h-px min-w-[16px] flex-1 bg-mg-border-subtle" />
     </div>
   );
 }
@@ -528,11 +570,12 @@ const COMMAND_OUTPUT_MAX_HEIGHT_PX = 320;
 
 function CommandOutputBlock({ block }: { readonly block: Extract<Block, { kind: 'command-output' }> }): React.JSX.Element {
   const layout = useMemo(() => commandOutputLayout(block.text), [block.text]);
+  const t = useT();
   if (layout === 'line') return <div data-command-output="line"><SystemLine text={block.text} /></div>;
   return (
     <div data-command-output={layout} className="min-w-0 rounded-[9px] border border-mg-border-subtle bg-mg-block p-[8px_12px] text-[12px]">
       {block.command !== null && <div className="mb-[6px] font-mono text-[11px] text-mg-sec">/{block.command}</div>}
-      <Collapsible maxHeightPx={COMMAND_OUTPUT_MAX_HEIGHT_PX} label="resultado">
+      <Collapsible maxHeightPx={COMMAND_OUTPUT_MAX_HEIGHT_PX} expandLabel={t('chat.collapsible.showFullResult')}>
         {layout === 'markdown' ? (
           <div className="min-w-0 text-mg-text">
             <Markdown text={block.text} />
@@ -559,12 +602,13 @@ function ErrorBlock({ block }: { readonly block: Extract<Block, { kind: 'error' 
 function AllowDeniedCommand({ command }: { readonly command: string }): React.JSX.Element | null {
   const allowed = useWorkbenchStore((s) => s.settings.agyCommandRules.allow.includes(command));
   const setVerdict = useWorkbenchStore((s) => s.setAgyCommandVerdict);
+  const t = useT();
   if (!isValidAgyRule(command)) return null;
-  const what = parseAgyMcpRule(command) === null ? 'este comando' : 'esta herramienta';
+  const isTool = parseAgyMcpRule(command) !== null;
   if (allowed) {
     return (
       <div data-agy-command-allowed="true" className="mt-[6px] text-[11px] text-mg-sec">
-        Permitido para la próxima conversación.
+        {t('chat.agyDenied.allowed')}
       </div>
     );
   }
@@ -574,7 +618,7 @@ function AllowDeniedCommand({ command }: { readonly command: string }): React.JS
       data-agy-allow-command="true"
       className="mt-[6px] block rounded-[6px] border border-mg-danger-border px-[8px] py-[2px] text-[11px] font-semibold hover:bg-mg-hover"
     >
-      Permitir {what} para la próxima conversación
+      {isTool ? t('chat.agyDenied.allowTool') : t('chat.agyDenied.allowCommand')}
     </button>
   );
 }
@@ -589,6 +633,7 @@ function UserBlock({ block }: { readonly block: Extract<Block, { kind: 'user' }>
   // (`/rename X`) es un chip, y una tarea programada una tarjeta con el cuerpo plegado, en vez de la
   // burbuja con el XML crudo. Los avisos que no se pintan ya los quito `transcriptToBlocks`.
   const wrapper = useMemo(() => classifySystemWrapper(block.text), [block.text]);
+  const t = useT();
   if (wrapper.kind === 'command' && block.attachments.length === 0) return <CommandChip command={wrapper.command} />;
   // En directo el comando llega tal cual se tecleo (P-028): mismo chip que al reabrir.
   if (block.attachments.length === 0 && isSlashCommandText(block.text)) return <CommandChip command={block.text.trim()} />;
@@ -598,7 +643,7 @@ function UserBlock({ block }: { readonly block: Extract<Block, { kind: 'user' }>
       <div className="group relative flex max-w-[80%] min-w-0 flex-col gap-[3px] rounded-[12px] rounded-br-[4px] border border-mg-border-emph bg-mg-sel p-[9px_13px] leading-[1.55]">
         <CopyButton
           text={block.text}
-          label="Copiar mensaje"
+          label={t('chat.copy.userMessage')}
           className="absolute right-[4px] top-[-10px] z-[1] border border-mg-border-subtle bg-mg-block opacity-0 focus-visible:opacity-100 group-hover:opacity-100"
         />
         {/* Sin cabecera "TU" y SIN HORA (buzon del usuario, punto 1): el lado, el ancho y el fondo ya
@@ -610,7 +655,7 @@ function UserBlock({ block }: { readonly block: Extract<Block, { kind: 'user' }>
             enviados se veian en crudo en la burbuja (reporte del usuario). Mismo render que el del
             agente — y `Markdown` conserva los saltos de linea dentro del parrafo, que era lo unico
             que aportaba el texto plano. */}
-        <Collapsible maxHeightPx={USER_MESSAGE_MAX_HEIGHT_PX} label="mensaje">
+        <Collapsible maxHeightPx={USER_MESSAGE_MAX_HEIGHT_PX} expandLabel={t('chat.collapsible.showFullMessage')}>
           <div className="min-w-0 break-words text-mg-text">
             <Markdown text={block.text} />
           </div>
@@ -637,14 +682,15 @@ function CommandChip({ command }: { readonly command: string }): React.JSX.Eleme
 // `<details>` nativo: el cuerpo de una tarea programada es el prompt de la tarea, largo y repetido en
 // cada ejecucion, asi que va plegado.
 function ScheduledTaskCard({ name, body }: { readonly name: string; readonly body: string }): React.JSX.Element {
+  const t = useT();
   return (
     <div className="flex justify-end">
       <details data-scheduled-task="true" className="max-w-[80%] min-w-0 rounded-[9px] border border-mg-border-subtle bg-mg-block p-[6px_11px] text-[11.5px]">
         <summary className="cursor-pointer text-mg-sec">
-          Tarea programada: <span className="font-semibold text-mg-text">{name.length > 0 ? name : 'sin nombre'}</span>
+          {t('chat.scheduledTask.label')} <span className="font-semibold text-mg-text">{name.length > 0 ? name : t('chat.scheduledTask.unnamed')}</span>
         </summary>
         <p className="mt-[6px] text-mg-sec">
-          Las tareas programadas las lanza la app de escritorio de Claude; Mage solo las muestra.
+          {t('chat.scheduledTask.note')}
         </p>
         <div className="mt-[6px] whitespace-pre-wrap break-words text-mg-muted">{body}</div>
       </details>
@@ -657,13 +703,14 @@ function ScheduledTaskCard({ name, body }: { readonly name: string; readonly bod
 // `data:` inline: la CSP de Mage declara `img-src 'self' data:` en dev y en produccion (medido), que es
 // donde suele aparecer el "funciona en dev y no empaquetado".
 function UserAttachments({ attachments }: { readonly attachments: readonly ImageAttachment[] }): React.JSX.Element {
+  const t = useT();
   return (
     <div className="flex flex-wrap gap-[6px] pt-[2px]">
       {attachments.map((attachment, index) => (
         <img
           key={index}
           src={`data:${attachment.mediaType};base64,${attachment.data}`}
-          alt="Imagen adjunta"
+          alt={t('chat.user.imageAlt')}
           className="max-h-[220px] max-w-full rounded-[8px]"
         />
       ))}
@@ -675,18 +722,19 @@ function UserAttachments({ attachments }: { readonly attachments: readonly Image
 // prompt sin que un pegote de texto ocupe la pantalla entera.
 const USER_MESSAGE_MAX_HEIGHT_PX = 160;
 
-// Contenedor que PLIEGA su contenido a una altura maxima y ofrece "Ver … completo" si no cabe. El boton
-// solo aparece cuando de verdad hay contenido recortado (se mide el alto real del contenido y se
-// re-mide si cambia el ancho, p.ej. al abrir/cerrar paneles laterales).
+// Contenedor que PLIEGA su contenido a una altura maxima y ofrece «Ver … completo» (`expandLabel`, ya
+// traducido) si no cabe. El boton solo aparece cuando de verdad hay contenido recortado (se mide el alto
+// real del contenido y se re-mide si cambia el ancho, p.ej. al abrir/cerrar paneles laterales).
 function Collapsible({
   maxHeightPx,
-  label,
+  expandLabel,
   children,
 }: {
   readonly maxHeightPx: number;
-  readonly label: string; // sustantivo para el boton: "Ver <label> completo"
+  readonly expandLabel: string;
   readonly children: React.ReactNode;
 }): React.JSX.Element {
+  const t = useT();
   const [expanded, setExpanded] = useState(false);
   const [overflowing, setOverflowing] = useState(false);
   const contentRef = useRef<HTMLDivElement>(null);
@@ -724,7 +772,7 @@ function Collapsible({
           aria-expanded={expanded}
           className="mt-[2px] self-start text-[10.5px] text-mg-icon underline underline-offset-2 hover:text-mg-body"
         >
-          {expanded ? 'Ver menos' : `Ver ${label} completo`}
+          {expanded ? t('chat.collapsible.showLess') : expandLabel}
         </button>
       )}
     </>
@@ -752,6 +800,7 @@ function AgentBlock({
   // El texto del agente es Markdown: se une el run unico (siempre es uno, code=false) y se renderiza
   // con el parser propio. El cursor de streaming va al final del ultimo bloque.
   const text = block.runs.map((run) => run.text).join('');
+  const t = useT();
   // Mensaje del AGENTE: burbuja alineada a la IZQUIERDA, mas ancha que la del usuario y con fondo/borde
   // propios (el punto lleva el color de la cuenta y late mientras hay streaming). El par
   // izquierda/derecha + los dos fondos distintos es lo que separa visualmente los turnos.
@@ -760,7 +809,7 @@ function AgentBlock({
       <div className="group relative flex min-w-0 max-w-[92%] gap-[10px] rounded-[12px] rounded-bl-[4px] border border-mg-sel bg-mg-block p-[10px_14px]">
         <CopyButton
           text={text}
-          label="Copiar respuesta"
+          label={t('chat.copy.agentReply')}
           className="absolute right-[4px] top-[-10px] z-[1] border border-mg-border-subtle bg-mg-block opacity-0 focus-visible:opacity-100 group-hover:opacity-100"
         />
         <span

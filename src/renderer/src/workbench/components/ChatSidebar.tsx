@@ -2,15 +2,22 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Icon } from './Icon';
 import { AnimatePresence } from 'motion/react';
 import { selectAccount, useWorkbenchStore } from '../workbenchStore';
+import { selectChatStatus, selectIsActiveTab, useConversation } from '../conversationSelectors';
 import type { Account, ChatStatus, Tab } from '../types';
 import type { ConversationSummary } from '@shared/conversations';
 import { filterConversationRows, formatSize, mergeConversationRows, relativeTime, rowRecency, type ConversationRow } from '../conversationList';
-import { backgroundLabel, backgroundMoveBlockedReason, type BackgroundSession } from '../backgroundWork';
+import { backgroundLabel, backgroundMoveBlockedReason, backgroundOfConversation, type BackgroundSession } from '../backgroundWork';
 import { ConversationContextMenu, type ConversationTarget } from './ConversationContextMenu';
 import type { ConversationPrivacy } from '@shared/state';
 import { reportActionError } from '../notificationStore';
 import type { ChatProject } from '@shared/settings';
 import { projectForRow } from '../chatProjects';
+import { conversationIdOfTab } from '../conversationId';
+import { accountRecovery } from '../accountRecovery';
+import { CliLoginPanel, useCliLogin } from './CliLoginPanel';
+import { t as translate, useT } from '../../i18n/uiLanguage';
+import { displayTitle } from '../conversationTitle';
+import { formatInteger } from '../../i18n/format';
 
 // Estado del menu contextual abierto (posicion + conversacion objetivo).
 interface MenuState {
@@ -33,13 +40,14 @@ const REVEAL_STEP = 10;
 // cuenta activa. El resumen de uso vive solo en el panel "Uso" del dock y en el hover de la StatusBar
 // (feedback del usuario: repetirlo aqui tambien era redundante). Una pestana = una conversacion real.
 export function ChatSidebar(): React.JSX.Element {
+  const t = useT();
   const account = useWorkbenchStore((s) => selectAccount(s, s.activeAccountId));
   // Estado bruto (referencias estables) + useMemo para derivar. Nunca pasar a useWorkbenchStore un
   // selector que devuelva un array nuevo por render (bucle infinito en Zustand v5).
   const tabs = useWorkbenchStore((s) => s.tabs);
   const activeAccountId = useWorkbenchStore((s) => s.activeAccountId);
-  const activeTabId = useWorkbenchStore((s) => s.activeTabId);
-  const statusByChat = useWorkbenchStore((s) => s.statusByChat);
+  // Ni `activeTabId` ni `statusByChat` aqui: cada fila lee los suyos (`useConversation`), y la lista no se
+  // re-renderiza entera al cambiar de pestaña ni con cada cambio de estado de una conversacion (F2.5).
   const sessionIdByChat = useWorkbenchStore((s) => s.sessionIdByChat);
   const conversationHistory = useWorkbenchStore((s) => s.conversationHistory);
   // Sesiones que siguen vivas sin pestaña (cerrar con trabajo en vuelo no lo corta): su fila del
@@ -84,7 +92,7 @@ export function ChatSidebar(): React.JSX.Element {
   if (account === undefined) {
     return (
       <div className="flex h-full w-full items-center justify-center bg-mg-panel p-4 text-center text-[11px] text-mg-muted">
-        Descubriendo cuentas…
+        {t('sidebar.discoveringAccounts')}
       </div>
     );
   }
@@ -103,15 +111,13 @@ export function ChatSidebar(): React.JSX.Element {
         <div className="min-w-0 flex-1">
           <div className="truncate text-[12.5px] font-bold text-mg-text">{account.alias}</div>
           <div className="truncate text-[10px] text-mg-ter">
-            {account.email ?? 'sin email'} · {account.defaultModel}
+            {account.email ?? t('sidebar.header.noEmail')} · {account.defaultModel}
           </div>
         </div>
       </header>
 
-      {/* Cuenta huérfana (sin login y no principal): permitir eliminarla para no dejarla a medias. */}
-      {!account.isMain && account.loginStatus !== 'logged_in' && (
-        <OrphanBanner account={account} onDelete={deleteAccount} />
-      )}
+      {/* Cuenta sin login válido (#18): iniciar sesión otra vez (Claude) y, si no es la principal, eliminarla. */}
+      <OrphanBanner key={account.id} account={account} onDelete={deleteAccount} />
 
       <div className="border-b border-mg-border-subtle p-[8px_10px]">
         <div className="flex items-center gap-[6px] rounded-[7px] border border-mg-border-ctrl bg-mg-window px-[8px] py-[5px] focus-within:border-mg-border-pop">
@@ -119,14 +125,14 @@ export function ChatSidebar(): React.JSX.Element {
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Buscar conversaciones…"
-            aria-label="Buscar conversaciones"
+            placeholder={t('sidebar.search.placeholder')}
+            aria-label={t('sidebar.search.label')}
             className="min-w-0 flex-1 bg-transparent text-[11.5px] text-mg-body placeholder:text-mg-muted outline-none"
           />
           {search.length > 0 && (
             <button
               onClick={() => setSearch('')}
-              aria-label="Limpiar búsqueda"
+              aria-label={t('sidebar.search.clear')}
               className="flex-none text-[11px] text-mg-muted hover:text-mg-body"
             >
               ✕
@@ -138,39 +144,37 @@ export function ChatSidebar(): React.JSX.Element {
       <div className="flex flex-1 flex-col gap-[10px] overflow-y-auto p-[6px] text-[12px]">
         <section data-chat-projects="true">
           <div className="flex items-center justify-between">
-            <SectionLabel icon={<Icon name="folder" size={12} />} text="PROYECTOS" hint={`${projects.length}`} />
-            <button onClick={() => setEditingProject('new')} aria-label="Crear proyecto de chats" className="rounded-[5px] px-[7px] text-mg-icon hover:bg-mg-hover">＋</button>
+            <SectionLabel icon={<Icon name="folder" size={12} />} text={t('sidebar.projects.title')} hint={`${projects.length}`} />
+            <button onClick={() => setEditingProject('new')} aria-label={t('sidebar.projects.create')} className="rounded-[5px] px-[7px] text-mg-icon hover:bg-mg-hover">＋</button>
           </div>
           {editingProject !== null && <ProjectEditor project={editingProject === 'new' ? null : editingProject}
             onSave={async (project) => { await saveChatProject(project); setEditingProject(null); }} onCancel={() => setEditingProject(null)} />}
           {projects.map((project) => (
             <div key={project.id} data-chat-project={project.id}>
               <div className="flex justify-end gap-[4px] pr-[5px]">
-                <button onClick={() => setEditingProject(project)} aria-label={`Editar proyecto ${project.name}`} className="text-[10px] text-mg-muted hover:text-mg-body">Editar</button>
-                <button onClick={() => deleteChatProject(project.id)} aria-label={`Eliminar proyecto ${project.name}`} className="text-[10px] text-mg-muted hover:text-mg-danger">Quitar</button>
+                <button onClick={() => setEditingProject(project)} aria-label={t('sidebar.projects.editAria', { name: project.name })} className="text-[10px] text-mg-muted hover:text-mg-body">{t('sidebar.projects.edit')}</button>
+                <button onClick={() => deleteChatProject(project.id)} aria-label={t('sidebar.projects.removeAria', { name: project.name })} className="text-[10px] text-mg-muted hover:text-mg-danger">{t('sidebar.projects.remove')}</button>
               </div>
               <ConversationSection
                 icon={<Icon name="folder" size={12} />} title={project.name.toUpperCase()}
                 rows={allRows.filter((row) => projectForRow(row, projects, sessionIdByChat)?.id === project.id)}
-                expandedByDefault={search.length > 0} account={account} activeTabId={activeTabId}
-                statusByChat={statusByChat} sessionIdByChat={sessionIdByChat} backgroundSessions={backgroundSessions}
+                expandedByDefault={search.length > 0} account={account}
+                sessionIdByChat={sessionIdByChat} backgroundSessions={backgroundSessions}
                 onSelect={setActiveTab} onOpen={openConversation}
                 onDragOutside={(item) => void dropConversationOutside(item).catch(reportNewWindowError)}
                 onRename={renameConversation} onContextMenu={openMenu}
                 onCreate={() => void createConversation('shared', { projectId: project.id, ...(project.cwd === null ? { scratch: true } : { cwd: project.cwd }) })}
-                onCreateWithOptions={openNewTabDialog} emptyHint="Sin chats en este proyecto." />
+                onCreateWithOptions={openNewTabDialog} emptyHint={t('sidebar.projects.empty')} />
             </div>
           ))}
         </section>
-        <SectionLabel icon="◷" text="RECIENTES" hint={`${ungroupedShared.length + ungroupedPrivate.length}`} />
+        <SectionLabel icon="◷" text={t('sidebar.recent.title')} hint={`${ungroupedShared.length + ungroupedPrivate.length}`} />
         <ConversationSection
           icon="◇"
-          title="COMPARTIDO"
+          title={t('sidebar.shared.title')}
           rows={ungroupedShared}
           expandedByDefault={search.length > 0}
           account={account}
-          activeTabId={activeTabId}
-          statusByChat={statusByChat}
           sessionIdByChat={sessionIdByChat}
           backgroundSessions={backgroundSessions}
           onSelect={setActiveTab}
@@ -180,16 +184,14 @@ export function ChatSidebar(): React.JSX.Element {
           onContextMenu={openMenu}
           onCreate={() => void createConversation('shared')}
           onCreateWithOptions={openNewTabDialog}
-          emptyHint={search.length > 0 ? 'Sin coincidencias.' : 'Sin conversaciones compartidas.'}
+          emptyHint={search.length > 0 ? t('sidebar.search.noMatches') : t('sidebar.shared.empty')}
         />
         <ConversationSection
           icon={<Icon name="lock" size={12} />}
-          title="PRIVADO"
+          title={t('sidebar.private.title')}
           rows={ungroupedPrivate}
           expandedByDefault={search.length > 0}
           account={account}
-          activeTabId={activeTabId}
-          statusByChat={statusByChat}
           sessionIdByChat={sessionIdByChat}
           backgroundSessions={backgroundSessions}
           onSelect={setActiveTab}
@@ -199,7 +201,7 @@ export function ChatSidebar(): React.JSX.Element {
           onContextMenu={openMenu}
           onCreate={() => void createConversation('private')}
           onCreateWithOptions={openNewTabDialog}
-          emptyHint={search.length > 0 ? 'Sin coincidencias.' : 'Sin conversaciones privadas.'}
+          emptyHint={search.length > 0 ? t('sidebar.search.noMatches') : t('sidebar.private.empty')}
         />
       </div>
 
@@ -236,7 +238,7 @@ export function ChatSidebar(): React.JSX.Element {
                     setMenu(null);
                   }
             }
-            newWindowBlockedReason={menu.item === undefined ? null : backgroundMoveBlockedReason(backgroundSessions[menu.item.sessionId])}
+            newWindowBlockedReason={menu.item === undefined ? null : backgroundMoveBlockedReason(backgroundOfConversation(backgroundSessions, menu.item.sessionId))}
             onDelete={() => {
               void deleteConversation(menu.target.sessionId ?? '', menu.target.cwd, menu.target.privacy);
               setMenu(null);
@@ -257,7 +259,7 @@ export function ChatSidebar(): React.JSX.Element {
 // Abrir en otra ventana puede fallar (main rechaza la pestaña, sigue trabajando en segundo plano): se
 // avisa en vez de tragarse; la conversacion sigue aqui.
 function reportNewWindowError(err: unknown): void {
-  reportActionError('No se pudo abrir la conversación en otra ventana', err, 'window');
+  reportActionError(translate('sidebar.newWindowFailed'), err, 'window');
 }
 
 function ProjectEditor({ project, onSave, onCancel }: {
@@ -265,6 +267,7 @@ function ProjectEditor({ project, onSave, onCancel }: {
   readonly onSave: (project: ChatProject) => Promise<void>;
   readonly onCancel: () => void;
 }): React.JSX.Element {
+  const t = useT();
   const [name, setName] = useState(project?.name ?? '');
   const [instructions, setInstructions] = useState(project?.instructions ?? '');
   const [cwd, setCwd] = useState<string | null>(project?.cwd ?? null);
@@ -273,73 +276,105 @@ function ProjectEditor({ project, onSave, onCancel }: {
       event.preventDefault();
       if (name.trim().length === 0) return;
       void onSave({ id: project?.id ?? crypto.randomUUID(), name: name.trim(), instructions, cwd, sessionIds: project?.sessionIds ?? [] })
-        .catch((err: unknown) => reportActionError('No se pudo guardar el proyecto', err, 'projects'));
+        .catch((err: unknown) => reportActionError(t('sidebar.projectEditor.saveFailed'), err, 'projects'));
     }} className="mx-[3px] flex flex-col gap-[6px] rounded-[7px] border border-mg-border-ctrl bg-mg-window p-[8px] text-[11px]">
-      <label className="flex flex-col gap-[2px]">Nombre del proyecto
+      <label className="flex flex-col gap-[2px]">{t('sidebar.projectEditor.name')}
         <input autoFocus value={name} onChange={(event) => setName(event.target.value)} maxLength={80}
           className="rounded-[5px] border border-mg-border-ctrl bg-mg-panel p-[5px] text-mg-body outline-none focus:border-mg-border-pop" />
       </label>
-      <label className="flex flex-col gap-[2px]">Reglas del proyecto
+      <label className="flex flex-col gap-[2px]">{t('sidebar.projectEditor.rules')}
         <textarea value={instructions} onChange={(event) => setInstructions(event.target.value)} rows={4} maxLength={8000}
-          placeholder="Instrucciones para los chats de este proyecto (al abrir la sesión)"
+          placeholder={t('sidebar.projectEditor.rulesPlaceholder')}
           className="resize-y rounded-[5px] border border-mg-border-ctrl bg-mg-panel p-[5px] text-mg-body outline-none focus:border-mg-border-pop" />
       </label>
       <div className="flex items-center gap-[5px]">
         <button type="button" onClick={() => void window.mage.pickDirectory().then((picked) => { if (picked !== null) setCwd(picked); })}
-          className="rounded-[5px] border border-mg-border-ctrl px-[6px] py-[3px] hover:bg-mg-hover">Vincular aplicación…</button>
-        {cwd !== null && <button type="button" onClick={() => setCwd(null)} aria-label="Desvincular aplicación">✕</button>}
+          className="rounded-[5px] border border-mg-border-ctrl px-[6px] py-[3px] hover:bg-mg-hover">{t('sidebar.projectEditor.linkApp')}</button>
+        {cwd !== null && <button type="button" onClick={() => setCwd(null)} aria-label={t('sidebar.projectEditor.unlinkApp')}>✕</button>}
       </div>
       {cwd !== null && <span className="break-all font-mono text-[10px] text-mg-muted">{cwd}</span>}
       <div className="flex justify-end gap-[6px]">
-        <button type="button" onClick={onCancel} className="rounded-[5px] px-[7px] py-[4px] hover:bg-mg-hover">Cancelar</button>
-        <button type="submit" disabled={name.trim().length === 0} className="rounded-[5px] bg-mg-activity px-[7px] py-[4px] text-mg-window disabled:opacity-40">Guardar</button>
+        <button type="button" onClick={onCancel} className="rounded-[5px] px-[7px] py-[4px] hover:bg-mg-hover">{t('sidebar.projectEditor.cancel')}</button>
+        <button type="submit" disabled={name.trim().length === 0} className="rounded-[5px] bg-mg-activity px-[7px] py-[4px] text-mg-window disabled:opacity-40">{t('sidebar.projectEditor.save')}</button>
       </div>
     </form>
   );
 }
 
-// Aviso de cuenta huérfana (sin login) con confirmación EN LA APP (no dialogo nativo del SO).
+// Aviso de cuenta sin login válido, con confirmación EN LA APP (no dialogo nativo del SO). #18: ofrece
+// iniciar sesión de nuevo con el CLI oficial sobre la MISMA cuenta (conserva sus conversaciones); el
+// siguiente arranque de sus sesiones ya lee las credenciales nuevas de su config dir.
 function OrphanBanner({
   account,
   onDelete,
 }: {
   readonly account: Account;
   readonly onDelete: (configDir: string) => Promise<void>;
-}): React.JSX.Element {
+}): React.JSX.Element | null {
+  const t = useT();
   const [confirming, setConfirming] = useState(false);
+  const refreshAccounts = useWorkbenchStore((s) => s.refreshAccounts);
+  const login = useCliLogin(() => {
+    void refreshAccounts().catch((err: unknown) => reportActionError(t('sidebar.orphan.refreshFailed'), err, 'accounts'));
+  });
+  const recovery = accountRecovery(account);
+  if (recovery === null) return null;
+  if (confirming) return <DeleteAccountConfirm account={account} onCancel={() => setConfirming(false)} onDelete={onDelete} />;
 
-  if (!confirming) {
-    return (
-      <div className="flex items-center justify-between gap-[8px] border-b border-mg-border-subtle bg-mg-danger-bg p-[7px_12px] text-[10.5px] text-mg-danger">
-        <span>Cuenta sin login válido.</span>
-        <button
-          onClick={() => setConfirming(true)}
-          className="rounded-[6px] border border-mg-danger-border px-[8px] py-[3px] text-mg-danger hover:bg-mg-danger-bg"
-        >
-          Eliminar
-        </button>
+  return (
+    <div data-account-recovery="true" className="flex flex-col gap-[6px] border-b border-mg-border-subtle bg-mg-danger-bg p-[7px_12px] text-[10.5px] text-mg-danger">
+      <div className="flex items-center justify-between gap-[8px]">
+        <span>{t('sidebar.orphan.message')}</span>
+        <div className="flex gap-[6px]">
+          {recovery.relogin && (
+            <button
+              onClick={() => login.begin(account.id, account.email)}
+              disabled={login.phase === 'starting' || login.phase === 'submitting'}
+              className="rounded-[6px] border border-mg-danger-border px-[8px] py-[3px] text-mg-danger hover:bg-mg-danger-bg disabled:opacity-50"
+            >
+              {t('sidebar.orphan.login')}
+            </button>
+          )}
+          {recovery.remove && (
+            <button onClick={() => setConfirming(true)} className="rounded-[6px] border border-mg-danger-border px-[8px] py-[3px] text-mg-danger hover:bg-mg-danger-bg">
+              {t('sidebar.orphan.delete')}
+            </button>
+          )}
+        </div>
       </div>
-    );
-  }
+      <CliLoginPanel login={login} />
+    </div>
+  );
+}
 
+function DeleteAccountConfirm({
+  account,
+  onCancel,
+  onDelete,
+}: {
+  readonly account: Account;
+  readonly onCancel: () => void;
+  readonly onDelete: (configDir: string) => Promise<void>;
+}): React.JSX.Element {
+  const t = useT();
   return (
     <div className="flex flex-col gap-[7px] border-b border-mg-border-subtle bg-mg-danger-bg p-[8px_12px] text-[10.5px] text-mg-danger">
       <span>
-        ¿Eliminar <b>{account.alias}</b>? Se borra su carpeta entera, incluidas sus conversaciones
-        privadas; las compartidas NO se tocan.
+        {t('sidebar.deleteAccount.confirmStart')} <b>{account.alias}</b>
+        {t('sidebar.deleteAccount.confirmEnd')}
       </span>
       <div className="flex justify-end gap-[6px]">
         <button
-          onClick={() => setConfirming(false)}
+          onClick={onCancel}
           className="rounded-[6px] border border-mg-border-emph px-[8px] py-[3px] text-mg-body2 hover:bg-mg-hover"
         >
-          Cancelar
+          {t('sidebar.deleteAccount.cancel')}
         </button>
         <button
           onClick={() => void onDelete(account.id)}
           className="rounded-[6px] bg-mg-danger-strong px-[8px] py-[3px] font-semibold text-mg-danger-ink hover:bg-mg-danger-strong-hover"
         >
-          Sí, eliminar
+          {t('sidebar.deleteAccount.confirm')}
         </button>
       </div>
     </div>
@@ -372,8 +407,6 @@ function ConversationSection({
   rows,
   expandedByDefault,
   account,
-  activeTabId,
-  statusByChat,
   sessionIdByChat,
   backgroundSessions,
   onSelect,
@@ -390,8 +423,6 @@ function ConversationSection({
   readonly rows: readonly ConversationRow[];
   readonly expandedByDefault: boolean; // al buscar, se muestran todas las coincidencias sin cap
   readonly account: Account;
-  readonly activeTabId: string;
-  readonly statusByChat: Readonly<Record<string, ChatStatus>>;
   readonly sessionIdByChat: Readonly<Record<string, string>>;
   readonly backgroundSessions: Readonly<Record<string, BackgroundSession>>;
   readonly onSelect: (tabId: string) => void;
@@ -404,6 +435,7 @@ function ConversationSection({
   readonly onCreateWithOptions: () => void;
   readonly emptyHint: string;
 }): React.JSX.Element {
+  const t = useT();
   // Tope inicial de 5 y luego +10 por pulsacion (#1 + A1). Al buscar se muestran todas las
   // coincidencias sin tope (el filtro ya reduce la lista).
   const [limit, setLimit] = useState(COLLAPSED_LIMIT);
@@ -414,7 +446,8 @@ function ConversationSection({
   return (
     <section className="flex flex-col gap-px">
       <SectionLabel icon={icon} text={title} hint={`${rows.length}`} />
-      {rows.length === 0 && <div className="p-[8px_9px] text-[11px] text-mg-muted">{emptyHint}</div>}
+      {/* data-volatile-text: el vacío y «Mostrar N más» dependen del historial REAL de la cuenta; verify:gui --dump-dom-text no los vuelca */}
+      {rows.length === 0 && <div className="p-[8px_9px] text-[11px] text-mg-muted" data-volatile-text="true">{emptyHint}</div>}
       {visible.map((row) =>
         row.kind === 'tab' ? (
           <TabItem
@@ -422,15 +455,13 @@ function ConversationSection({
             tab={row.tab}
             history={row.history}
             recencyMs={rowRecency(row)}
-            status={statusByChat[row.tab.id] ?? 'idle'}
             account={account}
-            selected={row.tab.id === activeTabId}
             onClick={() => onSelect(row.tab.id)}
             onRename={onRename}
             onContextMenu={(e) => {
               e.preventDefault();
               onContextMenu(
-                { sessionId: sessionIdByChat[row.tab.id] ?? row.tab.resumeSessionId, cwd: row.tab.cwd, privacy: row.tab.privacy, title: row.tab.title },
+                { sessionId: conversationIdOfTab(row.tab, sessionIdByChat[row.tab.id]), cwd: row.tab.cwd, privacy: row.tab.privacy, title: displayTitle(row.tab.title, t) },
                 e.clientX,
                 e.clientY,
                 undefined,
@@ -443,13 +474,13 @@ function ConversationSection({
             key={`h:${row.item.sessionId}`}
             item={row.item}
             account={account}
-            background={backgroundSessions[row.item.sessionId]}
+            background={backgroundOfConversation(backgroundSessions, row.item.sessionId)}
             onOpen={() => onOpen(row.item)}
             onDragOutside={() => onDragOutside(row.item)}
             onContextMenu={(e) => {
               e.preventDefault();
               onContextMenu(
-                { sessionId: row.item.sessionId, cwd: row.item.cwd, privacy: row.item.privacy, title: row.item.title },
+                { sessionId: row.item.sessionId, cwd: row.item.cwd, privacy: row.item.privacy, title: displayTitle(row.item.title, t) },
                 e.clientX,
                 e.clientY,
                 row.item,
@@ -461,17 +492,19 @@ function ConversationSection({
       {!showAll && hidden > 0 && (
         <button
           onClick={() => setLimit((current) => current + REVEAL_STEP)}
+          data-volatile-text="true"
           className="mx-[2px] mt-[2px] rounded-[6px] p-[5px_9px] text-left text-[11px] text-mg-icon transition-colors duration-150 ease-out hover:bg-mg-hover hover:text-mg-body"
         >
-          Mostrar {nextStep} más… <span className="text-mg-muted">({hidden} restantes)</span>
+          {t('sidebar.section.showMore', { count: nextStep })} <span className="text-mg-muted">{t('sidebar.section.remaining', { count: hidden })}</span>
         </button>
       )}
       {!showAll && limit > COLLAPSED_LIMIT && (
         <button
           onClick={() => setLimit(COLLAPSED_LIMIT)}
+          data-volatile-text="true"
           className="mx-[2px] mt-[2px] rounded-[6px] p-[5px_9px] text-left text-[11px] text-mg-icon transition-colors duration-150 ease-out hover:bg-mg-hover hover:text-mg-body"
         >
-          Mostrar menos
+          {t('sidebar.section.showLess')}
         </button>
       )}
       {/* Camino POR DEFECTO: carpeta temporal y valores por defecto, sin formulario. El dialogo de
@@ -483,11 +516,11 @@ function ConversationSection({
           e.preventDefault();
           onCreateWithOptions();
         }}
-        data-tip="Nueva conversación · clic derecho para elegir carpeta y modelo"
-        aria-label="Nueva conversación (clic derecho: elegir carpeta y modelo)"
+        data-tip={t('sidebar.section.newTip')}
+        aria-label={t('sidebar.section.newAria')}
         className="mx-[2px] mt-[6px] rounded-[7px] border border-dashed border-mg-border-emph p-[6px_10px] text-center text-[11px] text-mg-icon transition-colors duration-150 ease-out hover:bg-mg-hover"
       >
-        ＋ nueva conversación
+        {t('sidebar.section.new')}
       </button>
     </section>
   );
@@ -526,6 +559,7 @@ function HistoryItem({
   readonly onDragOutside: () => void;
   readonly onContextMenu: (e: React.MouseEvent) => void;
 }): React.JSX.Element {
+  const t = useT();
   const state = background?.state;
   // Arrastrarla fuera de Mage la abre en otra ventana (P-028, 36); trabajando en segundo plano, no.
   const draggableOut = backgroundMoveBlockedReason(background) === null;
@@ -546,8 +580,8 @@ function HistoryItem({
         if (e.dataTransfer.dropEffect === 'none') onDragOutside();
       }}
       data-history-highlighted={highlighted.on ? 'true' : undefined}
-      data-tip={background === undefined ? item.title : `${item.title} · ${backgroundLabel(background.state)} (se corta y se reanuda al abrirla)`}
-      aria-label={background === undefined ? item.title : `${item.title}, ${backgroundLabel(background.state)}`}
+      data-tip={background === undefined ? displayTitle(item.title, t) : t('sidebar.history.backgroundTip', { title: displayTitle(item.title, t), state: backgroundLabel(background.state) })}
+      aria-label={background === undefined ? displayTitle(item.title, t) : `${displayTitle(item.title, t)}, ${backgroundLabel(background.state)}`}
       className={`flex items-center gap-2 rounded-[6px] p-[7px_9px] text-left transition-colors duration-150 ease-out hover:bg-mg-hover ${highlighted.on ? 'bg-mg-sel ring-1 ring-mg-border-emph' : ''}`}
     >
       <span
@@ -557,11 +591,11 @@ function HistoryItem({
       />
       <span className="min-w-0 flex-1">
         <span className="flex min-w-0 items-center gap-[5px]">
-          <span className="truncate text-mg-sec">{item.title}</span>
+          <span className="truncate text-mg-sec">{displayTitle(item.title, t)}</span>
           {/* La empezo una tarea programada, no el usuario (P-026, D20). */}
           {item.isScheduled && (
             <span data-scheduled-badge="true" className="flex-none rounded-full border border-mg-border-subtle px-[5px] text-[9px] text-mg-muted">
-              programada
+              {t('sidebar.history.scheduled')}
             </span>
           )}
         </span>
@@ -573,7 +607,7 @@ function HistoryItem({
           {background === undefined && item.sizeBytes > 0 && (
             <>
               <span aria-hidden="true"> · </span>
-              <span title={`${item.sizeBytes.toLocaleString('es-ES')} bytes en disco`}>{formatSize(item.sizeBytes)}</span>
+              <span title={t('sidebar.history.sizeOnDisk', { bytes: formatInteger(item.sizeBytes) })}>{formatSize(item.sizeBytes)}</span>
             </>
           )}
         </span>
@@ -587,7 +621,7 @@ function HistoryItem({
             state === 'needs_action' ? 'border-mg-warn-border text-mg-warn-text' : 'border-mg-focus text-mg-text'
           }`}
         >
-          {state === 'needs_action' ? 'ACCIÓN' : 'REVISAR'}
+          {state === 'needs_action' ? t('sidebar.history.badgeAction') : t('sidebar.history.badgeReview')}
         </span>
       )}
     </button>
@@ -598,9 +632,7 @@ function TabItem({
   tab,
   history,
   recencyMs,
-  status,
   account,
-  selected,
   onClick,
   onRename,
   onContextMenu,
@@ -609,13 +641,15 @@ function TabItem({
   // Resumen de su transcripcion en disco; undefined en una conversacion que aun no tiene fichero.
   readonly history: ConversationSummary | undefined;
   readonly recencyMs: number;
-  readonly status: ChatStatus; // estado real del motor para esa pestana
   readonly account: Account;
-  readonly selected: boolean;
   readonly onClick: () => void;
   readonly onRename: (tabId: string, title: string) => void;
   readonly onContextMenu: (e: React.MouseEvent) => void;
 }): React.JSX.Element {
+  const t = useT();
+  // Estado real del motor y seleccion de ESTA pestaña, por selector propio (F2.5).
+  const status = useConversation(tab.id, selectChatStatus);
+  const selected = useConversation(tab.id, selectIsActiveTab);
   const active = status === 'streaming' || status === 'needs_permission';
   const [editing, setEditing] = useState(false);
   const commit = (value: string): void => {
@@ -633,13 +667,13 @@ function TabItem({
         <span aria-hidden="true" className="h-[6px] w-[6px] flex-none rounded-full bg-mg-idle" />
         <input
           autoFocus
-          defaultValue={tab.title}
+          defaultValue={displayTitle(tab.title, t)}
           onKeyDown={(e) => {
             if (e.key === 'Enter') commit((e.target as HTMLInputElement).value);
             else if (e.key === 'Escape') setEditing(false);
           }}
           onBlur={(e) => commit(e.target.value)}
-          aria-label="Renombrar conversación"
+          aria-label={t('sidebar.tab.renameAria')}
           className="min-w-0 flex-1 bg-transparent text-[12px] font-semibold text-mg-text outline-none"
         />
       </div>
@@ -652,15 +686,15 @@ function TabItem({
       onDoubleClick={() => setEditing(true)}
       onContextMenu={onContextMenu}
       aria-current={selected}
-      aria-label={`${tab.title}, ${tab.provider} ${tab.model}, ${statusLabel(status)}`}
-      data-tip={`${tab.provider} · ${tab.model} · doble clic para renombrar · clic derecho para más`}
+      aria-label={`${displayTitle(tab.title, t)}, ${tab.provider} ${tab.model}, ${t(statusLabel(status))}`}
+      data-tip={t('sidebar.tab.tip', { provider: tab.provider, model: tab.model })}
       style={selected ? { borderLeft: `2px solid ${account.accent.base}` } : undefined}
       className={`flex items-center gap-2 rounded-[6px] p-[7px_9px] text-left transition-colors duration-150 ease-out ${selected ? 'bg-mg-sel' : 'hover:bg-mg-hover'}`}
     >
       <span aria-hidden="true" className={`h-[6px] w-[6px] flex-none rounded-full ${active ? 'bg-mg-activity mg-pulse' : 'bg-mg-idle'}`} />
       <span className="min-w-0 flex-1">
         <span className={`block truncate font-semibold ${selected ? 'text-mg-text' : 'text-mg-body2'}`}>
-          {tab.title}
+          {displayTitle(tab.title, t)}
         </span>
         {/* La MISMA linea que una conversacion cerrada (P-026, D19): cuando y cuanto pesa. Proveedor y
             modelo van al tooltip y al nombre accesible. Sin fichero todavia, solo el tiempo («ahora»). */}
@@ -670,22 +704,25 @@ function TabItem({
         </span>
       </span>
       {status === 'needs_permission' && (
-        <span className="rounded-full border border-mg-focus px-[6px] py-px text-[9.5px] font-bold text-mg-text">PERMISO</span>
+        <span className="rounded-full border border-mg-focus px-[6px] py-px text-[9.5px] font-bold text-mg-text">{t('sidebar.tab.permissionBadge')}</span>
       )}
     </button>
   );
 }
 
-// Estado de la conversacion en palabras (para el nombre accesible de la pestaña del sidebar).
-function statusLabel(status: ChatStatus): string {
+// Estado de la conversacion en palabras (para el nombre accesible de la pestaña del sidebar). Devuelve la
+// clave: se traduce donde se pinta.
+type StatusLabelKey = 'sidebar.tab.status.streaming' | 'sidebar.tab.status.needsPermission' | 'sidebar.tab.status.error' | 'sidebar.tab.status.idle';
+
+function statusLabel(status: ChatStatus): StatusLabelKey {
   switch (status) {
     case 'streaming':
-      return 'generando';
+      return 'sidebar.tab.status.streaming';
     case 'needs_permission':
-      return 'permiso pendiente';
+      return 'sidebar.tab.status.needsPermission';
     case 'error':
-      return 'error';
+      return 'sidebar.tab.status.error';
     default:
-      return 'en espera';
+      return 'sidebar.tab.status.idle';
   }
 }

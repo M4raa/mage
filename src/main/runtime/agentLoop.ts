@@ -1,4 +1,5 @@
 import type { ToolFileInfo } from '@shared/events';
+import { localized, localizedFromError, renderForLog, UserFacingError, type LocalizedText } from '@shared/i18n/localizedText';
 import { ChatHttpError, type ChatClient, type ChatMessage, type ChatToolCall, type ChatToolSpec } from './chatClient';
 import type { AssembledToolCall, FinishReason } from './openAiStream';
 import { parseTextToolCalls } from './textToolCalls';
@@ -52,7 +53,7 @@ export type LoopEvent =
   | { readonly kind: 'thinking_delta'; readonly text: string }
   | { readonly kind: 'tool_use'; readonly id: string; readonly name: string; readonly input: Readonly<Record<string, unknown>> }
   | { readonly kind: 'tool_result'; readonly id: string; readonly isError: boolean; readonly output: string; readonly durationMs: number; readonly file?: ToolFileInfo }
-  | { readonly kind: 'notice'; readonly text: string }
+  | { readonly kind: 'notice'; readonly localized: LocalizedText }
   // Una vuelta terminada: lo que el modelo devolvio, para la transcripcion y el presupuesto de contexto.
   // `textual` = las llamadas de la vuelta las escribio el modelo en su texto (sin herramientas nativas):
   // quien reanude tiene que rehacer el historial igual que en memoria (M3 de la revision).
@@ -91,11 +92,10 @@ export interface TurnOutcome {
   readonly status: TurnStatus;
   readonly rounds: number;
   readonly usage: RoundUsage | null; // null = el servidor no reporto uso en ninguna vuelta
-  readonly error: string | null;
+  readonly error: LocalizedText | null;
   readonly toolsEnabled: boolean;
 }
 
-const NO_TOOLS_NOTICE = 'Este modelo no admite herramientas: Mage solo puede conversar con él.';
 const INTERRUPTED_TOOL_OUTPUT = 'Interrumpido por el usuario antes de ejecutarse.';
 
 interface RoundResult {
@@ -107,8 +107,9 @@ interface RoundResult {
 }
 
 export async function runTurn(input: TurnInput, deps: LoopDeps): Promise<TurnOutcome> {
+  const historyStart = input.history.length;
   const state = { rounds: 0, usage: null as RoundUsage | null, toolsEnabled: input.toolsEnabled };
-  const finish = (status: TurnStatus, error: string | null = null): TurnOutcome => ({
+  const finish = (status: TurnStatus, error: LocalizedText | null = null): TurnOutcome => ({
     status,
     rounds: state.rounds,
     usage: state.usage,
@@ -131,17 +132,18 @@ export async function runTurn(input: TurnInput, deps: LoopDeps): Promise<TurnOut
       const plans = calls.map((call, i) => prepareCall(call, ids[i]!, deps));
       deps.emit({ kind: 'round_done', usage: round.usage, requestMessages: round.requestMessages, ...(textual ? { textual } : {}) });
       if (input.signal.aborted) return closeInterrupted(input, textual ? [] : ids, 0, finish);
-      if (round.reason === 'length') return finish('error', 'El modelo cortó la respuesta por longitud (límite de tokens de salida).');
+      if (round.reason === 'length') return finish('error', localized('events.runtime.outputTruncated'));
       if (calls.length === 0) return finish('success');
       const done = await runCalls(plans, input, deps, textual);
       if (done < calls.length) return closeInterrupted(input, textual ? [] : ids, done, finish);
       if (state.rounds >= MAX_TOOL_ROUNDS) {
-        return finish('error', `El modelo superó ${MAX_TOOL_ROUNDS} vueltas de herramientas en un turno; se para aquí.`);
+        return finish('error', localized('events.runtime.tooManyToolRounds', { max: String(MAX_TOOL_ROUNDS) }));
       }
     }
   } catch (err) {
+    closeFailedCalls(input.history, historyStart, deps, describeError(err));
     if (input.signal.aborted) return finish('interrupted');
-    return finish('error', describeError(err));
+    return finish('error', localizedFromError(err));
   }
 }
 
@@ -165,7 +167,7 @@ async function streamRound(input: TurnInput, deps: LoopDeps, state: { toolsEnabl
   } catch (err) {
     if (!(err instanceof ChatHttpError) || err.kind !== 'no_tools' || tools.length === 0 || round.text.length > 0) throw err;
     state.toolsEnabled = false;
-    deps.emit({ kind: 'notice', text: NO_TOOLS_NOTICE });
+    deps.emit({ kind: 'notice', localized: localized('events.runtime.noTools') });
     return null;
   }
   return round;
@@ -190,12 +192,19 @@ async function runCalls(prepared: readonly CallPlan[], input: TurnInput, deps: L
   while (done < prepared.length) {
     if (input.signal.aborted) break;
     const batch = readBatch(prepared, done);
-    const results = await Promise.all(batch.map((call) => executeCall(call, input.signal, deps)));
+    // Esperar también las lecturas hermanas: ninguna puede emitir resultados después de cerrar turno.
+    const results = await Promise.allSettled(batch.map((call) => executeCall(call, input.signal, deps)));
     for (const [i, result] of results.entries()) {
-      if (textual) written.push(textualToolResult(batch[i]!.name, result));
-      else input.history.push({ role: 'tool', tool_call_id: batch[i]!.id, content: result });
+      const output = result.status === 'fulfilled' ? result.value : describeError(result.reason);
+      if (textual) written.push(textualToolResult(batch[i]!.name, output));
+      else input.history.push({ role: 'tool', tool_call_id: batch[i]!.id, content: output });
     }
     done += batch.length;
+    const failed = results.find((result) => result.status === 'rejected');
+    if (failed?.status === 'rejected') {
+      if (textual) input.history.push({ role: 'user', content: written.join('\n') });
+      throw failed.reason;
+    }
   }
   if (textual && written.length > 0) input.history.push({ role: 'user', content: written.join('\n') });
   return done;
@@ -231,6 +240,11 @@ async function executeCall(plan: CallPlan, signal: AbortSignal, deps: LoopDeps):
     deps.emit({ kind: 'tool_result', id: plan.id, ...outcome, durationMs: deps.now() - started });
     return outcome.output;
   };
+  try { return await executeAuthorizedCall(plan, signal, deps, report); }
+  catch (error) { report({ isError: true, output: describeError(error) }); throw error; }
+}
+
+async function executeAuthorizedCall(plan: CallPlan, signal: AbortSignal, deps: LoopDeps, report: (outcome: ToolOutcome) => string): Promise<string> {
   if (!plan.prepared.ok) return report({ isError: true, output: plan.prepared.error });
   const call: PreparedCall = { id: plan.id, name: plan.name, kind: plan.prepared.kind, input: plan.prepared.input };
   const decision = await deps.authorize(call, signal);
@@ -241,6 +255,19 @@ async function executeCall(plan: CallPlan, signal: AbortSignal, deps: LoopDeps):
   const finalInput = resolveUpdatedInput(plan.name, call.input, decision.updatedInput, deps.tools);
   if (!finalInput.ok) return report({ isError: true, output: finalInput.error });
   return report(await deps.tools.run(plan.name, finalInput.input, signal));
+}
+
+// Cerrar solo las llamadas de ESTE turno aún sin respuesta, incluidas las que no llegaron a ejecutarse.
+function closeFailedCalls(history: ChatMessage[], start: number, deps: LoopDeps, message: string): void {
+  const pending = new Set<string>();
+  for (const entry of history.slice(start)) {
+    if (entry.role === 'assistant') for (const call of entry.tool_calls ?? []) pending.add(call.id);
+    if (entry.role === 'tool') pending.delete(entry.tool_call_id);
+  }
+  for (const id of pending) {
+    history.push({ role: 'tool', tool_call_id: id, content: message });
+    deps.emit({ kind: 'tool_result', id, isError: true, output: message, durationMs: 0 });
+  }
 }
 
 // `updatedInput` ausente o vacio = el input original (mismo contrato que el CLI de Claude).
@@ -281,6 +308,8 @@ function rawInput(argumentsJson: string): Readonly<Record<string, unknown>> {
   return { argumentos: argumentsJson };
 }
 
+// Lo que lee el MODELO (resultado de herramienta): el castellano de siempre, sin la marca ni el JSON de un UserFacingError.
 function describeError(err: unknown): string {
+  if (err instanceof UserFacingError) return renderForLog(err.localized);
   return err instanceof Error ? err.message : String(err);
 }

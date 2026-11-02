@@ -139,6 +139,12 @@ describe('parseChatChunk', () => {
     expect(() => parseChatChunk('{"choices": [')).toThrow(/\{\\"choices\\": \[/);
   });
 
+  it('parse_invalidJson_throwsTheKeyWithTheChunk', () => {
+    expect(() => parseChatChunk('{"a": ')).toThrow(
+      expect.objectContaining({ localized: { key: 'errors.runtime.streamChunkNotJson', values: expect.objectContaining({ chunk: JSON.stringify('{"a": ') }) } }),
+    );
+  });
+
   it('parse_notAnObject_throwsWithChunk', () => {
     expect(() => parseChatChunk('42')).toThrow(/42/);
   });

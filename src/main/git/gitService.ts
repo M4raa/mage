@@ -1,5 +1,6 @@
 import { dirname, join } from 'node:path';
 import type { GitRepoState, GitSnapshot } from '@shared/git';
+import { localized, localizedWithParts, UserFacingError } from '@shared/i18n/localizedText';
 import { parseBranches, parseNumstat, parseRemoteUrl, parseStatusV2, pickRemoteUrl, switchTargetError, type GitRemoteRef } from './gitParse';
 
 // Git de la carpeta de una conversacion (P-026 3.5, fase A): estado, ramas y cambio de rama. Todo
@@ -52,6 +53,9 @@ class CachedGitService implements GitService {
   }
 
   status(cwd: string, accountDir: string): Promise<GitSnapshot> {
+    // La caché comparte datos del repo, nunca una autorización de otra cuenta o ya revocada.
+    const gated = this.gate(cwd, accountDir);
+    if (!('git' in gated)) return Promise.resolve(gated);
     const hit = this.cache.get(cwd);
     if (hit !== undefined && this.deps.now() - hit.at < STATUS_FRESH_MS) return hit.promise;
     const promise = this.readStatus(cwd, accountDir);
@@ -70,12 +74,12 @@ class CachedGitService implements GitService {
 
   async switchBranch(cwd: string, accountDir: string, name: string): Promise<void> {
     const gated = this.gate(cwd, accountDir);
-    if (!('git' in gated)) throw new Error(`Git no disponible en ${cwd}: ${gated.kind}`);
+    if (!('git' in gated)) throw new UserFacingError(localized('errors.git.unavailable', { cwd, reason: gated.kind }));
     // Se revalida TODO aqui: el renderer ya lo comprobo, pero main no se fia (D26 y el nombre).
     const rejected = switchTargetError(name, await this.listBranches(gated.git, cwd));
-    if (rejected !== null) throw new Error(`No se cambia de rama: ${rejected}`);
+    if (rejected !== null) throw new UserFacingError(localizedWithParts('errors.git.switchRejected', {}, { detail: rejected }));
     const current = await this.readStatus(cwd, accountDir);
-    if (current.kind === 'repo' && current.dirty) throw new Error(`No se cambia de rama con cambios sin confirmar en ${cwd}`);
+    if (current.kind === 'repo' && current.dirty) throw new UserFacingError(localized('errors.git.switchDirty', { cwd }));
     this.cache.delete(cwd);
     await this.deps.run(gated.git, ['switch', name], { cwd, env: this.env });
     this.cache.delete(cwd);

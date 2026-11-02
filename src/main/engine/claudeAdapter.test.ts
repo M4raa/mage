@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ClaudeAdapter } from './claudeAdapter';
+import { normalizeRawEvent } from './normalize';
 
 const launch = { sessionId: 's1', accountDir: '/home/u/.claude-p', model: 'haiku', cwd: '/proj' };
 
@@ -193,6 +194,32 @@ describe('ClaudeAdapter', () => {
       expect(plan.env.CLAUDE_CONFIG_DIR).toBe('/home/u/.claude-p');
     });
 
+    // D5 (#53): Artifact es una opción del usuario, apagada por defecto. El ajuste manda sobre lo que el
+    // usuario exportara en su entorno: apagado es `0` explícito (el CLI lo enciende con cualquier valor verdadero).
+    const withExportedArtifact = (value: string | undefined, run: () => void): void => {
+      const original = process.env.CLAUDE_CODE_ARTIFACT;
+      if (value === undefined) delete process.env.CLAUDE_CODE_ARTIFACT;
+      else process.env.CLAUDE_CODE_ARTIFACT = value;
+      try { run(); } finally {
+        if (original === undefined) delete process.env.CLAUDE_CODE_ARTIFACT;
+        else process.env.CLAUDE_CODE_ARTIFACT = original;
+      }
+    };
+
+    it('buildSpawnPlan_ajustePorDefecto_apagaArtifact', () => {
+      withExportedArtifact(undefined, () => expect(adapter.buildSpawnPlan(launch).env.CLAUDE_CODE_ARTIFACT).toBe('0'));
+    });
+
+    it('buildSpawnPlan_ajusteApagadoYUsuarioExportaUno_sigueApagado', () => {
+      withExportedArtifact('1', () => expect(adapter.buildSpawnPlan(launch).env.CLAUDE_CODE_ARTIFACT).toBe('0'));
+    });
+
+    it('buildSpawnPlan_ajusteEncendido_activaArtifact', () => {
+      const enabled = new ClaudeAdapter(() => 'claude', undefined, undefined, () => true);
+
+      withExportedArtifact('0', () => expect(enabled.buildSpawnPlan(launch).env.CLAUDE_CODE_ARTIFACT).toBe('1'));
+    });
+
     it('buildSpawnPlan_args_includeSessionModelAndVerbose', () => {
       const plan = adapter.buildSpawnPlan(launch);
 
@@ -293,5 +320,110 @@ describe('ClaudeAdapter', () => {
       expect(plan.args).not.toContain('--mcp-config');
       expect(plan.args).not.toContain('--settings');
     });
+  });
+});
+
+describe('ClaudeAdapter: directo (F4.1)', () => {
+  const U = '0b1c2d3e-4f50-4612-8a7b-9c0d1e2f3a4b';
+  const RESULT = { type: 'result', subtype: 'success', num_turns: 1 };
+  const lifecycle = (state: string, uuid = U) => ({ type: 'command_lifecycle', command_uuid: uuid, state });
+  const fresh = () => new ClaudeAdapter(() => 'claude');
+
+  it('encodeSteer_uuidValido_escribeElMensajeDeUsuarioConEseUuid', () => {
+    const adapter = fresh();
+
+    const encoding = adapter.encodeSteer(U, 'hola');
+
+    expect(encoding).toEqual({
+      kind: 'write',
+      payload: { type: 'user', message: { role: 'user', content: 'hola' }, parent_tool_use_id: null, uuid: U },
+    });
+  });
+
+  it('encodeSteer_idQueNoEsUuid_lanzaConElValor', () => {
+    const adapter = fresh();
+
+    expect(() => adapter.encodeSteer('abc', 'hola')).toThrow('abc');
+  });
+
+  it('normalize_startedAntesDelResult_emiteActiveTurn', () => {
+    const adapter = fresh();
+    adapter.encodeSteer(U, 'x');
+
+    const queued = adapter.normalize(lifecycle('queued'));
+    const started = adapter.normalize(lifecycle('started'));
+
+    expect(queued).toEqual([]);
+    expect(started).toEqual([{ kind: 'steer_result', messageId: U, outcome: 'active_turn' }]);
+  });
+
+  it('normalize_startedTrasElResult_emiteNewTurn', () => {
+    const adapter = fresh();
+    adapter.encodeSteer(U, 'x');
+
+    const afterResult = adapter.normalize(RESULT);
+    const started = adapter.normalize(lifecycle('started'));
+
+    expect(afterResult.some((event) => event.kind === 'steer_result')).toBe(false);
+    expect(started).toEqual([{ kind: 'steer_result', messageId: U, outcome: 'new_turn' }]);
+  });
+
+  it('normalize_cancelled_emiteFailed', () => {
+    const adapter = fresh();
+    adapter.encodeSteer(U, 'x');
+
+    const events = adapter.normalize(lifecycle('cancelled'));
+
+    expect(events).toEqual([{ kind: 'steer_result', messageId: U, outcome: 'failed' }]);
+  });
+
+  it('normalize_segundoResultSinStarted_emiteNewTurnInferido', () => {
+    const adapter = fresh();
+    adapter.encodeSteer(U, 'x');
+
+    adapter.normalize(RESULT);
+    const second = adapter.normalize(RESULT);
+    const late = adapter.normalize(lifecycle('started'));
+
+    expect(second).toContainEqual({ kind: 'steer_result', messageId: U, outcome: 'new_turn', inferred: true });
+    expect(late).toEqual([]);
+  });
+
+  it('normalize_startedRepetido_soloEmiteUnaVez', () => {
+    const adapter = fresh();
+    adapter.encodeSteer(U, 'x');
+
+    const first = adapter.normalize(lifecycle('started'));
+    const again = adapter.normalize(lifecycle('started'));
+
+    expect(first).toHaveLength(1);
+    expect(again).toEqual([]);
+  });
+
+  it('normalize_lifecycleDeUuidAjeno_noEmiteNada', () => {
+    const adapter = fresh();
+
+    expect(adapter.normalize(lifecycle('started'))).toEqual([]);
+  });
+
+  it('normalize_lifecycleSinCommandUuid_noEmiteNada', () => {
+    const adapter = fresh();
+
+    expect(adapter.normalize({ type: 'command_lifecycle', state: 'started' })).toEqual([]);
+  });
+
+  it('buildSpawnPlan_conDirectoEnVuelo_loOlvida', () => {
+    const adapter = fresh();
+    adapter.encodeSteer(U, 'x');
+
+    adapter.buildSpawnPlan(launch);
+
+    expect(adapter.normalize(lifecycle('started'))).toEqual([]);
+  });
+
+  it('normalize_resultSinDirectos_devuelveLoDeSiempre', () => {
+    const adapter = fresh();
+
+    expect(adapter.normalize(RESULT)).toEqual(normalizeRawEvent(RESULT));
   });
 });

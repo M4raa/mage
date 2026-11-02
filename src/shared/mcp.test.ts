@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import { createTranslator } from './i18n/translator';
+import { renderLocalized, UserFacingError, type LocalizedText } from './i18n/localizedText';
 import { familiesInScope, isInMcpScope, mcpFamilyOf, toServerDraft, toServerObject, transportOf, validateServerDraft, validateServers, type McpServerDraft } from './mcp';
+
+const es = (text: LocalizedText | null): string | null => (text === null ? null : renderLocalized(createTranslator('es'), text));
 
 // P-028 punto 5, bug HTTP/SSE: el editor antiguo exigia `command` a todos y lo escribia siempre, asi
 // que un servidor remoto no se podia guardar. Y `env` viajaba en claro al renderer.
@@ -16,6 +20,15 @@ const draft = (patch: Partial<McpServerDraft>): McpServerDraft => ({
   headers: [],
   ...patch,
 });
+
+function catchError(action: () => unknown): unknown {
+  try {
+    action();
+  } catch (err) {
+    return err;
+  }
+  throw new Error('la acción no lanzó');
+}
 
 describe('transportOf', () => {
   it('transportOf_typeConocido_loRespeta', () => {
@@ -90,6 +103,17 @@ describe('toServerObject', () => {
     expect(toServerObject({ ...toServerDraft('srv', LOCAL), env: [] }, LOCAL)).not.toHaveProperty('env');
   });
 
+  it('toServerObject_valorOcultoSinGuardado_lanzaUserFacingErrorConClaveYFragmento', () => {
+    const thrown = catchError(() => toServerObject(draft({ env: [{ key: 'NUEVA', value: null }] }), LOCAL));
+
+    expect(thrown).toBeInstanceOf(UserFacingError);
+    expect((thrown as UserFacingError).localized).toEqual({
+      key: 'mcp.validation.secretMissing',
+      values: { key: 'NUEVA' },
+      parts: { what: { key: 'mcp.validation.variableOf', values: { name: 'srv' } } },
+    });
+  });
+
   it('toServerObject_valorOcultoSinGuardado_lanzaNombrandoLaClave', () => {
     expect(() => toServerObject(draft({ env: [{ key: 'NUEVA', value: null }] }), LOCAL)).toThrow('"NUEVA"');
   });
@@ -100,33 +124,43 @@ describe('toServerObject', () => {
 });
 
 describe('validateServerDraft', () => {
+  it('validateServerDraft_claveRepetida_devuelveClaveValoresYFragmentoComoParte', () => {
+    const repeated = [{ key: 'A', value: 'x' }, { key: 'A', value: 'y' }];
+
+    expect(validateServerDraft(draft({ env: repeated }))).toEqual({
+      key: 'mcp.validation.duplicateKey',
+      values: { key: 'A' },
+      parts: { what: { key: 'mcp.validation.envVarsOf', values: { name: 'srv' } } },
+    });
+  });
+
   it('validateServerDraft_remotoSinCommand_esValido', () => {
     expect(validateServerDraft(draft({ transport: 'http', command: '', url: 'https://x.dev' }))).toBeNull();
   });
 
   it('validateServerDraft_remotoSinUrlOConOtroProtocolo_loDice', () => {
-    expect(validateServerDraft(draft({ transport: 'http', url: '' }))).toContain('URL');
-    expect(validateServerDraft(draft({ transport: 'sse', url: 'ftp://x' }))).toContain('URL');
+    expect(es(validateServerDraft(draft({ transport: 'http', url: '' })))).toContain('URL');
+    expect(es(validateServerDraft(draft({ transport: 'sse', url: 'ftp://x' })))).toContain('URL');
   });
 
   it('validateServerDraft_localSinComando_loDice', () => {
-    expect(validateServerDraft(draft({ command: '' }))).toContain('no tiene comando');
+    expect(es(validateServerDraft(draft({ command: '' })))).toContain('no tiene comando');
   });
 
   it('validateServerDraft_sinNombre_loDice', () => {
-    expect(validateServerDraft(draft({ name: ' ' }))).toContain('nombre');
+    expect(es(validateServerDraft(draft({ name: ' ' })))).toContain('nombre');
   });
 
   it('validateServerDraft_claveVaciaORepetida_loDice', () => {
-    expect(validateServerDraft(draft({ env: [{ key: '', value: 'x' }] }))).toContain('clave vacía');
+    expect(es(validateServerDraft(draft({ env: [{ key: '', value: 'x' }] })))).toContain('clave vacía');
     const repeated = [{ key: 'A', value: '1' }, { key: 'A', value: '2' }];
-    expect(validateServerDraft(draft({ transport: 'http', url: 'https://x', headers: repeated }))).toContain('repetida');
+    expect(es(validateServerDraft(draft({ transport: 'http', url: 'https://x', headers: repeated })))).toContain('repetida');
   });
 });
 
 describe('validateServers', () => {
   it('validateServers_nombresRepetidos_loDice', () => {
-    expect(validateServers([draft({}), draft({})])).toContain('dos servidores');
+    expect(es(validateServers([draft({}), draft({})]))).toContain('dos servidores');
   });
 
   it('validateServers_listaVacia_esValida', () => {

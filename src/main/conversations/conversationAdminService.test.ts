@@ -1,6 +1,7 @@
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { ConversationAdminService, type ConversationAdminDeps } from './conversationAdminService';
+import { UserFacingError } from '@shared/i18n/localizedText';
 import { resolveTranscriptPath } from '../transcripts/transcriptPath';
 
 // Deps falsas: un set de rutas existentes + espias de las operaciones destructivas.
@@ -186,5 +187,33 @@ describe('ConversationAdminService con el runtime propio (P-032 R4)', () => {
 
     expect(move).not.toHaveBeenCalled();
     expect(result).toEqual({ configDir: ACC2 });
+  });
+});
+
+describe('ConversationAdminService — errores de cara al usuario', () => {
+  const PARAMS = { accountDir: ACC, sessionId: SID, cwd: CWD, privacy: 'shared', destAccountDir: ACC2, destPrivacy: 'shared' } as const;
+
+  it('moveConversation_origenInexistente_lanzaLaClaveConLaRuta', () => {
+    const { deps } = makeDeps([]);
+
+    const act = (): void => { new ConversationAdminService(deps).moveConversation(PARAMS); };
+
+    expect(act).toThrow(UserFacingError);
+    try { act(); } catch (err) {
+      expect((err as UserFacingError).localized).toEqual({ key: 'errors.conversations.transcriptToMoveMissing', values: { path: resolveTranscriptPath(ACC, CWD, SID) } });
+    }
+  });
+
+  it('moveConversation_destinoYaExiste_lanzaLaClaveConLasDosRutas', () => {
+    const src = resolveTranscriptPath(ACC, CWD, SID);
+    const dest = resolveTranscriptPath(ACC2, CWD, SID);
+    const { deps } = makeDeps([src, dest]);
+
+    try {
+      new ConversationAdminService(deps).moveConversation(PARAMS);
+      expect.unreachable();
+    } catch (err) {
+      expect((err as UserFacingError).localized).toEqual({ key: 'errors.conversations.moveDestinationExists', values: { destination: dest, source: src } });
+    }
   });
 });

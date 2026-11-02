@@ -7,6 +7,8 @@
 // El fichero en disco sigue siendo el MISMO JSON que lee el CLI: lo que cambia es como se edita. Por
 // eso todo serializador parte del texto actual y solo SUSTITUYE su clave, preservando cualquier otra.
 
+import { t } from '../../../i18n/uiLanguage';
+
 // --- Hooks y permisos (settings-common.json) ----------------------------------------------------
 
 export interface HookDraft {
@@ -129,15 +131,15 @@ function parseJsonObject(text: string): JsonObjectParse {
   try {
     parsed = JSON.parse(text);
   } catch (error) {
-    return { value: null, error: `JSON inválido: ${error instanceof Error ? error.message : String(error)}` };
+    return { value: null, error: t('settings.sharedConfig.invalidJson', { detail: error instanceof Error ? error.message : String(error) }) };
   }
-  if (!isRecord(parsed)) return { value: null, error: `el contenido no es un objeto JSON: ${describeType(parsed)}` };
+  if (!isRecord(parsed)) return { value: null, error: t('settings.sharedConfig.notAnObject', { type: describeType(parsed) }) };
   return { value: parsed, error: null };
 }
 
 function requireJsonObject(text: string, label: string): Record<string, unknown> {
   const { value, error } = parseJsonObject(text);
-  if (value === null) throw new Error(`No se puede editar ${label}: ${error ?? 'contenido desconocido'}`);
+  if (value === null) throw new Error(t('settings.sharedConfig.cannotEdit', { file: label, reason: error ?? t('settings.sharedConfig.unknownContent') }));
   return value;
 }
 
@@ -149,6 +151,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+// Tipo tecnico (`array` o el de `typeof`); el articulo lo pone el mensaje del catalogo.
 function describeType(value: unknown): string {
-  return Array.isArray(value) ? 'un array' : `un ${typeof value}`;
+  return Array.isArray(value) ? 'array' : typeof value;
 }

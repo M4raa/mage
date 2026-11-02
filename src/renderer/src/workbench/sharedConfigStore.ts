@@ -1,5 +1,8 @@
 import { create } from 'zustand';
 import type { SharedConfigFile, SharedConfigSnapshot } from '@shared/ipc';
+import { renderLocalized } from '@shared/i18n/localizedText';
+import { t } from '../i18n/uiLanguage';
+import { describeError } from './describeError';
 
 interface SharedConfigStoreState {
   readonly snapshot: SharedConfigSnapshot | null;
@@ -32,7 +35,7 @@ export const useSharedConfigStore = create<SharedConfigStoreState>((set, get) =>
       const snapshot = await window.mage.loadSharedConfig();
       set({ snapshot, isLoading: false });
     } catch (err) {
-      set({ loadError: err instanceof Error ? err.message : String(err), isLoading: false });
+      set({ loadError: err instanceof Error ? describeError(err) : String(err), isLoading: false });
     }
   },
 
@@ -52,13 +55,13 @@ export const useSharedConfigStore = create<SharedConfigStoreState>((set, get) =>
       const result = await window.mage.saveSharedConfig({ file, text, expected });
       await get().load();
       if (result.status === 'stale') {
-        set((s) => ({ saveErrorByFile: { ...s.saveErrorByFile, [file]: result.message } }));
+        set((s) => ({ saveErrorByFile: { ...s.saveErrorByFile, [file]: renderLocalized(t, result.message) } }));
         return false;
       }
       return true;
     } catch (err) {
       set((s) => ({
-        saveErrorByFile: { ...s.saveErrorByFile, [file]: err instanceof Error ? err.message : String(err) },
+        saveErrorByFile: { ...s.saveErrorByFile, [file]: err instanceof Error ? describeError(err) : String(err) },
       }));
       return false;
     } finally {

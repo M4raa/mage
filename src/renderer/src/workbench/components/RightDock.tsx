@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useT } from '../../i18n/uiLanguage';
 import { AnimatePresence } from 'motion/react';
 import { headPermission, useWorkbenchStore } from '../workbenchStore';
 import { allAssignedPanelIds, type MoveDestination } from '../panels/panelLayoutOps';
@@ -20,6 +21,7 @@ const BOTTOM_ANCHOR: Anchor = 'bottom';
 // islas, mientras que la stripe es parte del marco y toca la barra de titulo y la de estado. Separarlos
 // no cuesta estado: `SplitZones` lo lee todo del store, no de `RightDock`.
 export function RightDockPanes(): React.JSX.Element {
+  const t = useT();
   const stripe = usePanelLayoutStore((s) => s.layout.stripes.right);
 
   return (
@@ -29,9 +31,9 @@ export function RightDockPanes(): React.JSX.Element {
         stripe={stripe}
         borderClassNameA={BORDER}
         borderClassNameB={BORDER}
-        resizeAriaLabelA="Redimensionar panel derecho arriba"
-        resizeAriaLabelB="Redimensionar panel derecho medio"
-        splitAriaLabel="Redimensionar reparto entre arriba y medio, borde derecho"
+        resizeAriaLabelA={t('menu.dock.resizeRightTop')}
+        resizeAriaLabelB={t('menu.dock.resizeRightMiddle')}
+        splitAriaLabel={t('menu.dock.resizeSplitRight')}
         className="flex-1"
       />
     </div>
@@ -47,6 +49,7 @@ export function RightDockPanes(): React.JSX.Element {
 //   COMPARTIDO de abajo (bottom/b) — no en un pane de este borde. `BottomDock.tsx` ya no pinta su
 //   propio stripe de iconos: viven aqui y en AccountRail.tsx (bottom/a), uno por lado.
 export function RightDock(): React.JSX.Element {
+  const t = useT();
   const layout = usePanelLayoutStore((s) => s.layout);
   const stripe = layout.stripes.right;
   const bottomStripe = layout.stripes.bottom;
@@ -75,7 +78,7 @@ export function RightDock(): React.JSX.Element {
   return (
     <>
       <Stripe
-        ariaLabel="Paneles del borde derecho"
+        ariaLabel={t('menu.dock.rightStripeLabel')}
         zoneAPanels={resolvePanelDefinitions(stripe.a.panelIds)}
         zoneAActiveId={stripe.a.activePanelId}
         zoneBPanels={resolvePanelDefinitions(stripe.b.panelIds)}

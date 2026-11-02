@@ -1,5 +1,7 @@
 import type { Block } from './types';
 import { isSubagentRunning, SUBAGENT_STATUS } from './engineBlocks';
+import { t } from '../i18n/uiLanguage';
+import type { Translate } from '@shared/i18n/translator';
 
 // Estado de los subagentes del turno EN CURSO para el dock de encima del input (P-026 3.4, paso C). Sale
 // de los bloques del store y no del panel «Subagentes» (ese lista definiciones, no ejecuciones). PURO y
@@ -39,10 +41,11 @@ export function summarizeAgentsDock(rows: readonly AgentDockRow[]): AgentsDockSu
 }
 
 // «9 en ejecución · 2 terminados»; se omite la parte que vale cero.
-export function agentsDockSummaryText({ running, finished }: AgentsDockSummary): string {
+// `translate` se inyecta para que quien memoriza el resultado lo rehaga al cambiar el idioma; por defecto, el activo.
+export function agentsDockSummaryText({ running, finished }: AgentsDockSummary, translate: Translate = t): string {
   const parts: string[] = [];
-  if (running > 0) parts.push(`${running} en ejecución`);
-  if (finished > 0) parts.push(`${finished} ${finished === 1 ? 'terminado' : 'terminados'}`);
+  if (running > 0) parts.push(translate('chat.agents.summaryRunning', { count: running }));
+  if (finished > 0) parts.push(translate('chat.agents.summaryFinished', { count: finished }));
   return parts.join(' · ');
 }
 
@@ -50,35 +53,35 @@ export function agentsDockSummaryText({ running, finished }: AgentsDockSummary):
 // solo se filtran los que ya pararon.
 const NONE: ReadonlySet<string> = new Set();
 
-export function agentsDockRows(blocks: readonly Block[], dismissed: ReadonlySet<string> = NONE): readonly AgentDockRow[] {
+export function agentsDockRows(blocks: readonly Block[], dismissed: ReadonlySet<string> = NONE, translate: Translate = t): readonly AgentDockRow[] {
   const turnStart = lastUserIndex(blocks) + 1;
-  return collectRows(blocks, (block, index) => isDockable(block, index >= turnStart, dismissed));
+  return collectRows(blocks, (block, index) => isDockable(block, index >= turnStart, dismissed), translate);
 }
 
 // TODOS los subagentes de la conversacion, en orden de lanzamiento: la lista del panel de agentes (P-028
 // 38), que sustituye a la que se leia de disco. Tras la hidratacion dice lo mismo que en vivo.
-export function conversationAgentRows(blocks: readonly Block[]): readonly AgentDockRow[] {
-  return collectRows(blocks, () => true);
+export function conversationAgentRows(blocks: readonly Block[], translate: Translate = t): readonly AgentDockRow[] {
+  return collectRows(blocks, () => true, translate);
 }
 
-function collectRows(blocks: readonly Block[], include: (block: SubagentBlock, index: number) => boolean): readonly AgentDockRow[] {
+function collectRows(blocks: readonly Block[], include: (block: SubagentBlock, index: number) => boolean, translate: Translate): readonly AgentDockRow[] {
   const subagents: SubagentBlock[] = [];
   const lastToolByParent = new Map<string, ToolBlock>();
   blocks.forEach((block, index) => {
     if (block.kind === 'subagent' && include(block, index)) subagents.push(block);
     if (block.kind === 'tool' && block.parentToolUseId !== null) lastToolByParent.set(block.parentToolUseId, block);
   });
-  return subagents.map((sub) => toRow(sub, lastToolByParent.get(sub.toolUseId)));
+  return subagents.map((sub) => toRow(sub, lastToolByParent.get(sub.toolUseId), translate));
 }
 
-function toRow(sub: SubagentBlock, lastTool: ToolBlock | undefined): AgentDockRow {
+function toRow(sub: SubagentBlock, lastTool: ToolBlock | undefined, translate: Translate): AgentDockRow {
   const state = runStateOf(sub);
   return {
     toolUseId: sub.toolUseId,
-    name: sub.agentType ?? 'Subagente',
+    name: sub.agentType ?? translate('chat.activity.subagentFallback'),
     description: sub.description,
     state,
-    currentStep: currentStepOf(state, lastTool),
+    currentStep: currentStepOf(state, lastTool, translate),
     elapsedMs: sub.elapsedMs,
     agentId: sub.agentId,
     tokens: sub.tokens,
@@ -106,10 +109,10 @@ function runStateOf(block: SubagentBlock): AgentRunState {
 
 // Una herramienta sin `meta` todavia no tiene resultado: es lo que esta haciendo ahora. Entre una y
 // otra, el subagente esta pensando (sus pasos llegan como mensajes enteros, sin deltas: medido).
-function currentStepOf(state: AgentRunState, lastTool: ToolBlock | undefined): string {
-  if (state === 'done') return 'Terminado';
-  if (state === 'error') return 'Falló';
-  if (state === 'stopped') return 'Detenido';
-  if (lastTool !== undefined && lastTool.meta.length === 0) return `Ejecutando ${lastTool.tool}…`;
-  return 'Pensando…';
+function currentStepOf(state: AgentRunState, lastTool: ToolBlock | undefined, translate: Translate): string {
+  if (state === 'done') return translate('chat.agents.stepDone');
+  if (state === 'error') return translate('chat.agents.stepError');
+  if (state === 'stopped') return translate('chat.agents.stepStopped');
+  if (lastTool !== undefined && lastTool.meta.length === 0) return translate('chat.agents.stepRunningTool', { tool: lastTool.tool });
+  return translate('chat.agents.stepThinking');
 }

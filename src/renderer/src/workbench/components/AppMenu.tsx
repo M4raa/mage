@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { useT } from '../../i18n/uiLanguage';
 import { headPermission, useWorkbenchStore } from '../workbenchStore';
 import { buildAppMenuModel, type AppMenu as AppMenuModel, type AppMenuItem } from '../appMenuModel';
 import { nextIndexForArrow } from '../a11y/keyboardNav';
@@ -21,6 +22,7 @@ export function AppMenu({
   readonly expanded: boolean;
   readonly onExpandedChange: (value: boolean) => void;
 }): React.JSX.Element {
+  const t = useT();
   const overrides = useWorkbenchStore((s) => s.settings.keybindingOverrides);
   // Un selector por VALOR PRIMITIVO, nunca uno que devuelva un objeto nuevo: zustand compara el
   // resultado por identidad, y un objeto recien creado en cada llamada es un re-render infinito (la app
@@ -43,7 +45,8 @@ export function AppMenu({
           focusInEditableText: false,
         },
       }),
-    [overrides, permissionPending, questionPending, status, dialogOpen],
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `t` solo fuerza rehacer el modelo al cambiar de idioma
+    [overrides, permissionPending, questionPending, status, dialogOpen, t],
   );
   // PLEGADO por defecto (peticion del usuario, estilo IntelliJ). El estado lo lleva la CABECERA, no
   // este componente: al desplegarse, la barra de menus SUSTITUYE al resto del contenido (cuentas,
@@ -107,11 +110,11 @@ export function AppMenu({
   if (!expanded) {
     return (
       <button
-        aria-label="Menú de la aplicación"
+        aria-label={t('menu.appMenu.label')}
         aria-haspopup="menu"
         aria-expanded={false}
         data-app-menu-toggle="true"
-        data-tip="Menú de la aplicación"
+        data-tip={t('menu.appMenu.label')}
         onClick={(event) => {
           expandPointRef.current = { x: event.clientX, y: event.clientY };
           setExpanded(true);
@@ -130,7 +133,7 @@ export function AppMenu({
     <div
       ref={barRef}
       role="menubar"
-      aria-label="Menú de la aplicación"
+      aria-label={t('menu.appMenu.label')}
       onKeyDown={onBarKeyDown}
       className="flex items-center gap-[2px]"
       style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}

@@ -19,6 +19,7 @@
 // esta en su bundle (invariante medido en la Fase A: `grep zod out/renderer/assets` = 0). El dato ya
 // paso ademas por `CanUseToolSchema` en main. Lo que queda aqui es una comprobacion de FORMA con guard
 // clauses — que valida igual de estricto y no arrastra 100 KB al renderer.
+import { localized, UserFacingError } from './i18n/localizedText';
 
 export interface AskQuestionOption {
   readonly label: string;
@@ -90,7 +91,7 @@ export function buildAnswers(
   for (const [index, question] of questions.entries()) {
     const labels = (chosen[index] ?? []).map((label) => label.trim()).filter((label) => label.length > 0);
     if (labels.length === 0) {
-      throw new Error(`Respuesta vacia para la pregunta ${JSON.stringify(question.question)}`);
+      throw new UserFacingError(localized('errors.question.emptyAnswer', { question: JSON.stringify(question.question) }));
     }
     answers[question.question] = labels.join(', ');
   }

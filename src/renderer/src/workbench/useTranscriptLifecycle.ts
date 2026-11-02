@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
-import { AGY_PROVIDER_ID, CODEX_PROVIDER_ID, writesClaudeTranscript } from '@shared/providers';
+import { AGY_PROVIDER_ID, CODEX_PROVIDER_ID, ownsConversation, writesClaudeTranscript } from '@shared/providers';
+import { conversationIdOfTab } from './conversationId';
 import { useWorkbenchStore } from './workbenchStore';
 import { transcriptStoreForTab } from './transcriptStore';
 import { useThinkingStore } from './thinkingStore';
@@ -36,10 +37,11 @@ export function useTranscriptLifecycle(tabId: string): void {
   // vacio (la hidratacion de BlockChat depende de estas entradas).
   const sessionId = useWorkbenchStore((s) => {
     const tab = s.tabs.find((t) => t.id === tabId);
-    // Codex y agy: la conversación es su id (`resumeSessionId`), no el de la sesión de Mage, y solo se relee
-    // su historial de una conversación SIN sesión viva (reabierta): la viva ya pinta sus eventos.
-    if (tab?.provider === CODEX_PROVIDER_ID || tab?.provider === AGY_PROVIDER_ID) return s.sessionIdByChat[tabId] === undefined ? tab.resumeSessionId : undefined;
-    return s.sessionIdByChat[tabId] ?? tab?.resumeSessionId;
+    if (tab === undefined) return undefined;
+    const live = s.sessionIdByChat[tabId];
+    // Codex y agy: solo se relee el historial de una conversación SIN sesión viva (reabierta): la viva ya pinta sus eventos.
+    if (ownsConversation(tab.provider) && live !== undefined) return undefined;
+    return conversationIdOfTab(tab, live);
   });
   const chatStatus = useWorkbenchStore((s) => s.statusByChat[tabId]);
   // ¿Hay transcripcion que leer para esta pestaña? Solo la escriben los proveedores cuyo motor es el
@@ -57,6 +59,9 @@ export function useTranscriptLifecycle(tabId: string): void {
   const openTranscript = useTranscriptStore((s) => s.open);
   const cancelTranscript = useTranscriptStore((s) => s.cancel);
   const refreshTranscript = useTranscriptStore((s) => s.refresh);
+  // La conversación pedida no existe en la cuenta (devolución 19): su id, para olvidarlo en la pestaña.
+  const missingId = useTranscriptStore((s) => (s.missing ? s.lastParams?.sessionId : undefined));
+  const forgetMissingConversation = useWorkbenchStore((s) => s.forgetMissingConversation);
   const loadThinking = useThinkingStore((s) => s.load);
   // Nombre que la conversacion tiene en el CLI (`/rename`, P-026 1.6). Selector a una CADENA: zustand
   // compara por valor, asi que la pestaña solo se re-renderiza cuando el nombre cambia de verdad.
@@ -87,6 +92,10 @@ export function useTranscriptLifecycle(tabId: string): void {
     // que se abre. `openTranscript`/`cancelTranscript` entran en las deps porque con un store por
     // pestaña su identidad ya no es constante.
   }, [configDir, cwd, sessionId, hasTranscript, ownProvider, openTranscript, cancelTranscript, loadThinking]);
+
+  useEffect(() => {
+    if (ownProvider !== undefined && missingId !== undefined) forgetMissingConversation(tabId, missingId);
+  }, [tabId, ownProvider, missingId, forgetMissingConversation]);
 
   // Auto-refresco al TERMINAR cada interaccion: el CLI escribe la transcripcion mientras trabaja, asi
   // que releerla al pasar a `idle` es lo que hace que Logs/Contexto vean el turno recien acabado.

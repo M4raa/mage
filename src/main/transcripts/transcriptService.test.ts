@@ -3,6 +3,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Readable } from 'node:stream';
 import { describe, expect, it } from 'vitest';
+import { UserFacingError } from '@shared/i18n/localizedText';
 import type { TranscriptBatch } from '@shared/transcripts';
 import { TranscriptService, type TranscriptDeps, type TranscriptServiceOptions } from './transcriptService';
 
@@ -50,6 +51,15 @@ describe('TranscriptService.openStream', () => {
     await expect(collect(service.openStream('C:\\no\\existe.jsonl', controller.signal))).rejects.toThrow(
       'C:\\no\\existe.jsonl',
     );
+  });
+
+  it('archivoNoExiste_lanzaLaClaveConLaRuta', async () => {
+    const service = buildService(() => false, { maxWaitMs: 0 });
+
+    const err: unknown = await collect(service.openStream('C:\\no\\existe.jsonl', new AbortController().signal)).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(UserFacingError);
+    expect((err as UserFacingError).localized).toEqual({ key: 'errors.transcripts.fileMissing', values: { path: 'C:\\no\\existe.jsonl' } });
   });
 
   it('archivoApareceTrasVariosSondeos_esperaYLuegoEntregaLotes', async () => {

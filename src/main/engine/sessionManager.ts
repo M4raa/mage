@@ -2,12 +2,13 @@ import { randomUUID } from 'node:crypto';
 import { dirname } from 'node:path';
 import type { ImageAttachment } from '@shared/ipc';
 import type { PermissionDecision } from '@shared/events';
+import { localized, UserFacingError } from '@shared/i18n/localizedText';
 import type { ElicitationAnswer } from '@shared/elicitation';
 import type { CreateSessionParams, SessionEventPayload } from '@shared/ipc';
 import type { AgentSessionDeps, SessionLogFn } from './agentSession';
 import { resolveLaunchParams, type DefaultsDeps } from './sessionDefaults';
 import { pathEquals } from '../os/pathUtils';
-import { AGY_PROVIDER_ID, CODEX_PROVIDER_ID, writesClaudeTranscript } from '@shared/providers';
+import { AGY_PROVIDER_ID, CODEX_PROVIDER_ID, ownsConversation } from '@shared/providers';
 
 // Sumidero de eventos hacia el consumidor (en produccion, webContents.send del renderer).
 export type EventSink = (payload: SessionEventPayload) => void;
@@ -17,6 +18,7 @@ export type EventSink = (payload: SessionEventPayload) => void;
 export interface ManagedSession {
   start(): void;
   sendUserMessage(text: string, attachments?: readonly ImageAttachment[]): void;
+  steerUserMessage?(messageId: string, text: string, attachments?: readonly ImageAttachment[]): void;
   answerPermission(requestId: string, decision: PermissionDecision): void;
   answerElicitation?(answer: ElicitationAnswer): void;
   interrupt(): void;
@@ -58,7 +60,7 @@ export class SessionManager {
   create(params: CreateSessionParams, sink: EventSink, ownerId?: number): string {
     const resumeId = typeof params.resumeSessionId === 'string' && params.resumeSessionId.length > 0 ? params.resumeSessionId : null;
     // Codex y agy llevan su propia conversacion: `resumeSessionId` es ese id y la sesion de Mage es nueva.
-    const providerOwnsConversation = !writesClaudeTranscript(params.provider);
+    const providerOwnsConversation = ownsConversation(params.provider);
     const isResume = resumeId !== null && !providerOwnsConversation;
     const sessionId = isResume ? resumeId : randomUUID();
     // Una conversacion NO puede estar viva dos veces: serian dos procesos del CLI escribiendo la misma
@@ -69,7 +71,7 @@ export class SessionManager {
     // guarda, el segundo `create` pisaba el registro del primero y los mensajes de la pestana vieja
     // acababan yendo a la sesion nueva.
     if (this.sessions.has(sessionId)) {
-      throw new Error(`Esa conversacion ya esta abierta en otra pestana (sesion ${sessionId})`);
+      throw new UserFacingError(localized('errors.engine.conversationAlreadyOpen', { sessionId }));
     }
     const resolved = resolveLaunchParams(sessionId, params, this.defaults, isResume);
     const launch = resumeId !== null && providerOwnsConversation && (params.provider === CODEX_PROVIDER_ID || params.provider === AGY_PROVIDER_ID) ? { ...resolved, conversationId: resumeId } : resolved;
@@ -103,6 +105,13 @@ export class SessionManager {
 
   sendMessage(sessionId: string, text: string, attachments: readonly ImageAttachment[] = []): void {
     this.require(sessionId).sendUserMessage(text, attachments);
+  }
+
+  // Directo (F4.1). Lanza si la sesion no lo admite (agy, runtime propio): la coordinacion no lo pide ahi.
+  steerMessage(sessionId: string, messageId: string, text: string, attachments: readonly ImageAttachment[] = []): void {
+    const session = this.require(sessionId);
+    if (session.steerUserMessage === undefined) throw new Error(`La sesion no admite mensajes directos: ${sessionId}`);
+    session.steerUserMessage(messageId, text, attachments);
   }
 
   answerPermission(sessionId: string, requestId: string, decision: PermissionDecision): void {
@@ -147,21 +156,22 @@ export class SessionManager {
     this.accountDirs.delete(sessionId);
   }
 
-  // Para las sesiones de un dueño (la ventana que se destruye). Devuelve cuantas paro.
-  stopOwnedBy(ownerId: number): number {
+  // Para las sesiones de un dueño (la ventana que se destruye). Devuelve los ids que paro (la coordinacion
+  // cierra su seguimiento con ellos).
+  stopOwnedBy(ownerId: number): readonly string[] {
     const owned = [...this.owners].filter(([, owner]) => owner === ownerId).map(([sessionId]) => sessionId);
     for (const sessionId of owned) this.stop(sessionId);
-    return owned.length;
+    return owned;
   }
 
   // Para todas las sesiones que corren bajo `configDir` o bajo su perfil privado (hijo directo).
-  // Devuelve cuantas paro. Antes de borrar una cuenta: un CLI vivo sobre un dir borrado lo recrearia.
-  stopByConfigDir(configDir: string): number {
+  // Devuelve los ids que paro. Antes de borrar una cuenta: un CLI vivo sobre un dir borrado lo recrearia.
+  stopByConfigDir(configDir: string): readonly string[] {
     const ids = [...this.accountDirs]
       .filter(([, dir]) => pathEquals(dir, configDir) || pathEquals(dirname(dir), configDir))
       .map(([id]) => id);
     for (const id of ids) this.stop(id);
-    return ids.length;
+    return ids;
   }
 
   // Mueve la sesion `from` al id `to`. Devuelve el id con el que queda: `from` si `to` no sirve (vacio,

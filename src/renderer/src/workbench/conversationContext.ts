@@ -6,6 +6,10 @@ import type { Block } from './types';
 
 import { IMPORTED_CONTEXT_LIMITS } from '@shared/settings';
 
+// Lo recibe el MODELO en el contexto importado: no se traduce (regla de la casa). Es el texto que recibía
+// antes de F3.3.
+export const MODEL_UNTITLED_TITLE = 'Nuevo chat';
+
 const TOOL_COMMAND_MAX_CHARS = 160;
 // Extracto de la salida de cada herramienta que acompaña a su línea.
 const TOOL_OUTPUT_MAX_CHARS = 300;

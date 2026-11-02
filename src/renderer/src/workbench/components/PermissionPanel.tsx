@@ -6,6 +6,8 @@ import { Hint } from './TranscriptHint';
 import { PermissionDecisionButtons } from './PermissionDecisionButtons';
 import type { PermissionRule, SettingsOrigin } from '@shared/ipc';
 import type { PermissionView } from '../types';
+import { useT } from '../../i18n/uiLanguage';
+import { describeError } from '../describeError';
 
 // Panel "Permiso" del inspector. Tiene DOS trabajos, y el segundo es nuevo (2.3b):
 //
@@ -18,26 +20,34 @@ import type { PermissionView } from '../types';
 // Los botones de decidir viven en `PermissionDecisionButtons`, compartidos con la tarjeta del chat: son
 // la misma decision sobre el mismo can_use_tool y ya habian divergido una vez.
 
-const ORIGIN_LABEL: Readonly<Record<SettingsOrigin, string>> = {
-  account: 'cuenta',
-  project: 'proyecto',
-  projectLocal: 'proyecto (local)',
-  mageCommon: 'Mage (común)',
-};
+// Las tres tablas guardan la CLAVE del catálogo: se traduce al pintar.
+const ORIGIN_LABEL = {
+  account: 'chat.permissions.origin.account',
+  project: 'chat.permissions.origin.project',
+  projectLocal: 'chat.permissions.origin.projectLocal',
+  mageCommon: 'chat.permissions.origin.mageCommon',
+} as const satisfies Readonly<Record<SettingsOrigin, string>>;
 
-const EFFECT_SKIN: Readonly<Record<PermissionRule['effect'], { readonly label: string; readonly clase: string }>> = {
-  deny: { label: 'denegar', clase: 'text-mg-danger' },
-  ask: { label: 'preguntar', clase: 'text-mg-warn-text' },
-  allow: { label: 'permitir', clase: 'text-mg-diff-add' },
-};
+const EFFECT_SKIN = {
+  deny: { label: 'chat.permissions.effect.deny', clase: 'text-mg-danger' },
+  ask: { label: 'chat.permissions.effect.ask', clase: 'text-mg-warn-text' },
+  allow: { label: 'chat.permissions.effect.allow', clase: 'text-mg-diff-add' },
+} as const satisfies Readonly<Record<PermissionRule['effect'], { readonly label: string; readonly clase: string }>>;
 
-const MODE_LABEL: Readonly<Record<string, string>> = {
-  default: 'Manual: pide permiso para cada acción',
-  acceptEdits: 'Aceptar ediciones: acepta ediciones dentro de la carpeta',
-  plan: 'Plan: el agente no ejecuta escrituras',
-  auto: 'Auto: el CLI decide qué acciones necesitan permiso',
-  bypassPermissions: 'Omitir permisos: el agente ejecuta todo sin preguntar',
-};
+const MODE_LABEL = {
+  default: 'chat.permissions.mode.default',
+  acceptEdits: 'chat.permissions.mode.acceptEdits',
+  plan: 'chat.permissions.mode.plan',
+  auto: 'chat.permissions.mode.auto',
+  bypassPermissions: 'chat.permissions.mode.bypassPermissions',
+} as const;
+
+type ModeLabelKey = (typeof MODE_LABEL)[keyof typeof MODE_LABEL];
+
+// Etiqueta de un modo de permiso; uno que Mage no conoce se pinta con su nombre crudo.
+function modeLabelKey(mode: string): ModeLabelKey | undefined {
+  return Object.hasOwn(MODE_LABEL, mode) ? MODE_LABEL[mode as keyof typeof MODE_LABEL] : undefined;
+}
 
 export function PermissionPanel(): React.JSX.Element {
   // La pestaña de ESTE panel, no la activa: con el centro dividido, el inspector de la derecha describe
@@ -52,6 +62,7 @@ export function PermissionPanel(): React.JSX.Element {
   // `AgentSession.answerPermission` lance ("Permiso desconocido o ya resuelto") y la pestaña se vaya a
   // error. Esto es lo que hace ESTRUCTURALMENTE imposible la doble respuesta, no una convencion.
   const pendingQuestion = useWorkbenchStore((s) => hasPendingQuestion(headPermission(s, tabId), s.blocksByChat[tabId] ?? []));
+  const t = useT();
 
   return (
     // Ancla ESTABLE para `pnpm verify:gui`: la tarjeta del chat y el panel ofrecen los MISMOS botones
@@ -62,13 +73,14 @@ export function PermissionPanel(): React.JSX.Element {
       {permission !== null && pendingQuestion && (
         <div className="flex flex-col gap-[10px] border-b border-mg-border-subtle p-[14px] text-[12px] leading-[1.5] text-mg-body2">
           <div>
-            El agente ha hecho una <strong>pregunta</strong>: se contesta encima del input.
+            {t('chat.permissions.question.start')} <strong>{t('chat.permissions.question.emphasis')}</strong>
+            {t('chat.permissions.question.end')}
           </div>
           <button
             onClick={focusChat}
             className="self-start rounded-[7px] border border-mg-border-emph px-[11px] py-[5px] text-[11.5px] text-mg-body2 hover:bg-mg-hover"
           >
-            Ir a la conversación
+            {t('chat.permissions.goToChat')}
           </button>
         </div>
       )}
@@ -81,7 +93,7 @@ export function PermissionPanel(): React.JSX.Element {
         </div>
       )}
 
-      {permission === null && <Hint text="Sin permisos pendientes. Abajo, lo que esta conversación tiene configurado." />}
+      {permission === null && <Hint text={t('chat.permissions.nonePending')} />}
 
       {tab !== undefined && (
         <ConfiguredPermissions
@@ -137,6 +149,8 @@ function ConfiguredPermissions({
 }): React.JSX.Element {
   const [rules, setRules] = useState<readonly PermissionRule[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const t = useT();
+  const modeKey = modeLabelKey(permissionMode);
 
   // Se leen al abrir el panel y al cambiar de conversacion. No hay refresco automatico: son ficheros
   // que cambian a mano, y sondearlos seria I/O constante para un dato casi inmovil — por eso hay boton.
@@ -151,7 +165,7 @@ function ConfiguredPermissions({
         if (!cancelled) setRules(settings.rules);
       })
       .catch((err: unknown) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : String(err));
+        if (!cancelled) setError(err instanceof Error ? describeError(err) : String(err));
       });
     return () => {
       cancelled = true;
@@ -160,20 +174,20 @@ function ConfiguredPermissions({
 
   return (
     <div className="flex flex-col gap-[14px] p-[14px]">
-      {provider !== 'claude' && <p className="text-[11px] text-mg-muted">Los ajustes de permisos del CLI de {provider} se gestionan en ese proveedor.</p>}
+      {provider !== 'claude' && <p className="text-[11px] text-mg-muted">{t('chat.permissions.otherProvider', { provider })}</p>}
       <section className="flex flex-col gap-[5px]">
-        <h3 className="text-[10px] font-bold uppercase tracking-[.07em] text-mg-ter">Modo de permiso</h3>
-        <p className="text-[11.5px] leading-[1.5] text-mg-body2">{MODE_LABEL[permissionMode] ?? permissionMode}</p>
-        <p className="text-[10.5px] text-mg-muted">Se cambia con el chip del input o con Shift+Tab.</p>
+        <h3 className="text-[10px] font-bold uppercase tracking-[.07em] text-mg-ter">{t('chat.permissions.mode.title')}</h3>
+        <p className="text-[11.5px] leading-[1.5] text-mg-body2">{modeKey === undefined ? permissionMode : t(modeKey)}</p>
+        <p className="text-[10.5px] text-mg-muted">{t('chat.permissions.mode.hint')}</p>
       </section>
 
       <section className="flex flex-col gap-[5px]">
         <h3 className="text-[10px] font-bold uppercase tracking-[.07em] text-mg-ter">
-          Permitido siempre en esta conversación ({alwaysAllowTools.length})
+          {t('chat.permissions.alwaysAllowed.title', { count: alwaysAllowTools.length })}
         </h3>
         {alwaysAllowTools.length === 0 ? (
           <p className="text-[11.5px] text-mg-muted">
-            Nada. Con «Permitir siempre» en una tarjeta de permiso, esa herramienta deja de preguntar aquí (lo de fuera del proyecto sigue preguntando).
+            {t('chat.permissions.alwaysAllowed.empty')}
           </p>
         ) : (
           <ul className="flex flex-col gap-[3px]">
@@ -182,10 +196,10 @@ function ConfiguredPermissions({
                 <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-mg-body">{toolName}</span>
                 <button
                   onClick={() => onRevoke(toolName)}
-                  aria-label={`Revocar el permiso permanente de ${toolName}`}
+                  aria-label={t('chat.permissions.alwaysAllowed.revokeAria', { tool: toolName })}
                   className="shrink-0 rounded-[6px] border border-mg-border-emph px-[7px] py-[1px] text-[10.5px] text-mg-body2 hover:bg-mg-hover"
                 >
-                  Revocar
+                  {t('chat.permissions.alwaysAllowed.revoke')}
                 </button>
               </li>
             ))}
@@ -195,30 +209,30 @@ function ConfiguredPermissions({
 
       <section className="flex flex-col gap-[5px]">
         <h3 className="text-[10px] font-bold uppercase tracking-[.07em] text-mg-ter">
-          Reglas del CLI{rules === null ? '' : ` (${rules.length})`}
+          {rules === null ? t('chat.permissions.cliRules.title') : t('chat.permissions.cliRules.titleCount', { count: rules.length })}
         </h3>
         {error !== null && (
           <div role="alert" className="text-[11.5px] text-mg-danger">
             {error}
           </div>
         )}
-        {error === null && rules === null && <p className="text-[11.5px] text-mg-muted">Cargando…</p>}
+        {error === null && rules === null && <p className="text-[11.5px] text-mg-muted">{t('chat.permissions.cliRules.loading')}</p>}
         {rules !== null && rules.length === 0 && (
-          <p className="text-[11.5px] text-mg-muted">Ninguna en los settings de la cuenta, del proyecto ni de Mage.</p>
+          <p className="text-[11.5px] text-mg-muted">{t('chat.permissions.cliRules.empty')}</p>
         )}
         {rules !== null && rules.length > 0 && (
           <ul className="flex flex-col gap-[3px]">
             {rules.map((rule, index) => (
               <li key={`${rule.origin}-${rule.effect}-${rule.pattern}-${index}`} className="flex items-baseline gap-[7px] text-[11px]">
-                <span className={`shrink-0 font-semibold ${EFFECT_SKIN[rule.effect].clase}`}>{EFFECT_SKIN[rule.effect].label}</span>
+                <span className={`shrink-0 font-semibold ${EFFECT_SKIN[rule.effect].clase}`}>{t(EFFECT_SKIN[rule.effect].label)}</span>
                 <span className="min-w-0 flex-1 break-all font-mono text-mg-body2">{rule.pattern}</span>
-                <span className="shrink-0 text-[10px] text-mg-muted">{ORIGIN_LABEL[rule.origin]}</span>
+                <span className="shrink-0 text-[10px] text-mg-muted">{t(ORIGIN_LABEL[rule.origin])}</span>
               </li>
             ))}
           </ul>
         )}
         <p className="text-[10.5px] text-mg-muted">
-          Salen de los <span className="font-mono">settings.json</span> del CLI. Mage no los reescribe; se editan en Ajustes.
+          {t('chat.permissions.cliRules.sourceStart')} <span className="font-mono">settings.json</span> {t('chat.permissions.cliRules.sourceEnd')}
         </p>
       </section>
     </div>

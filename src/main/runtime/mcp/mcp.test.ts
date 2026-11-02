@@ -1,8 +1,12 @@
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { foreignText, renderLocalized, UserFacingError, type LocalizedText } from '@shared/i18n/localizedText';
+import type { Translate } from '@shared/i18n/translator';
+import { createTranslator } from '@shared/i18n/translator';
 import type { ResolvedMcpServer, ResolvedRemoteServer } from '../../config/mcpResolved';
 import { McpNeedsAuth, McpPool, type McpClientLike } from './mcpPool';
 import { McpLoginRegistry } from './mcpLogins';
+import { ElicitationBroker } from './elicitationBroker';
 import { createMcpConnector, LoopbackCallback, VaultOAuthProvider } from './mcpSdk';
 import { flattenResult, mcpToolName } from './mcpTools';
 
@@ -18,9 +22,9 @@ afterEach(async () => {
   pools.length = 0;
 });
 
-function pool(servers: readonly ResolvedMcpServer[], connect = createMcpConnector({ vault: { get: () => null, set: () => undefined }, logins: new McpLoginRegistry({ openUrl: async () => undefined, newId: () => 'l1' }), baseEnv: () => ({ PATH: process.env.PATH }), cwd: process.cwd(), elicit: async () => ({ action: 'cancel' }) })) {
+function pool(servers: readonly ResolvedMcpServer[], connect = createMcpConnector({ vault: { get: () => null, set: () => undefined }, logins: new McpLoginRegistry({ openUrl: async () => undefined, newId: () => 'l1' }), baseEnv: () => ({ PATH: process.env.PATH }), cwd: process.cwd(), elicit: async () => ({ action: 'cancel' }), translate: createTranslator('es') })) {
   const notices: string[] = [];
-  const created = new McpPool(servers, { connect, notify: (text) => notices.push(text), loginRequired: () => undefined, onChange: () => undefined, connectTimeoutMs: 10_000 });
+  const created = new McpPool(servers, { connect, notify: (text) => notices.push(renderLocalized(createTranslator('es'), text)), loginRequired: () => undefined, onChange: () => undefined, connectTimeoutMs: 10_000 });
   pools.push(created);
   return { pool: created, notices };
 }
@@ -161,7 +165,7 @@ describe('OAuth del runtime', () => {
   });
 
   it('callback_rightState_returnsCode', async () => {
-    const callback = await LoopbackCallback.listen(null, 'estado-1');
+    const callback = await LoopbackCallback.listen(null, 'estado-1', createTranslator('es'));
     const code = callback.waitForCode(5_000);
 
     await fetch(`${callback.redirectUrl}?code=abc&state=estado-1`);
@@ -170,9 +174,41 @@ describe('OAuth del runtime', () => {
     callback.close();
   });
 
+  it('callback_pagina_textoEnElIdiomaDelTraductor', async () => {
+    const callback = await LoopbackCallback.listen(null, 'estado-1', createTranslator('es'));
+    const code = callback.waitForCode(5_000);
+
+    const page = await fetch(`${callback.redirectUrl}?code=abc&state=estado-1`);
+
+    expect(await page.text()).toBe('<!doctype html><meta charset="utf-8"><title>Mage</title><p>Listo: puedes cerrar esta ventana y volver a Mage.</p>');
+    await code;
+    callback.close();
+  });
+
+  it('callback_paginaConTextoConHtml_loEscapa', async () => {
+    const hostile = ((key: string) => (key === 'mcp.main.oauthPageDone' ? '<b>"a" & b</b>' : key)) as Translate;
+    const callback = await LoopbackCallback.listen(null, 'estado-1', hostile);
+    const code = callback.waitForCode(5_000);
+
+    const page = await fetch(`${callback.redirectUrl}?code=abc&state=estado-1`);
+
+    expect(await page.text()).toContain('<p>&lt;b&gt;&quot;a&quot; &amp; b&lt;/b&gt;</p>');
+    await code;
+    callback.close();
+  });
+
+  it('callback_estadoAjeno_respondeElTextoDelTraductor', async () => {
+    const callback = await LoopbackCallback.listen(null, 'estado-1', createTranslator('es'));
+
+    const forged = await fetch(`${callback.redirectUrl}?code=malo&state=otro`);
+
+    expect(await forged.text()).toBe('state no reconocido');
+    callback.close();
+  });
+
   it('callback_wrongStateFirst_ignoredAndKeepsWaiting', async () => {
     // M2: cualquier web puede pedir el callback; un golpe con otro `state` ya no aborta el login.
-    const callback = await LoopbackCallback.listen(null, 'estado-1');
+    const callback = await LoopbackCallback.listen(null, 'estado-1', createTranslator('es'));
     const code = callback.waitForCode(5_000);
 
     const forged = await fetch(`${callback.redirectUrl}?code=malo&state=otro`);
@@ -233,5 +269,36 @@ describe('McpLoginRegistry (D3)', () => {
 
   it('open_unknownId_throwsWithId', async () => {
     await expect(new McpLoginRegistry({ openUrl: async () => undefined, newId: () => 'x' }).open('nada')).rejects.toThrow(/nada/);
+  });
+
+  it('answer_requestIdDesconocido_lanzaLaClaveConElRequestId', () => {
+    expect(() => new ElicitationBroker(() => undefined).answer({ sessionId: 's', requestId: 'nope', action: 'cancel' })).toThrow(
+      expect.objectContaining({ localized: { key: 'errors.runtime.elicitationUnknown', values: { requestId: 'nope' } } }),
+    );
+  });
+
+  it('open_unknownId_throwsTheKeyWithTheQuotedId', async () => {
+    await expect(new McpLoginRegistry({ openUrl: async () => undefined, newId: () => 'x' }).open('nada')).rejects.toThrow(
+      expect.objectContaining({ localized: { key: 'errors.runtime.mcpLoginUnknown', values: { id: '"nada"' } } }),
+    );
+  });
+
+  it('start_connectFalla_avisaConLaFraseDeMageYElErrorDeDentro', async () => {
+    const notices: LocalizedText[] = [];
+    const inner = new UserFacingError({ key: 'errors.runtime.mcpCallbackNoCode' });
+    const failing = new McpPool([stdio('roto')], { connect: () => Promise.reject(inner), notify: (text) => notices.push(text), loginRequired: () => undefined, onChange: () => undefined, connectTimeoutMs: 10_000 });
+
+    await failing.start();
+
+    expect(notices).toEqual([{ key: 'events.mcp.connectFailed', values: { server: 'roto' }, parts: { detail: inner.localized } }]);
+  });
+
+  it('start_connectFallaConErrorAjeno_elDetalleEsTextoAjeno', async () => {
+    const notices: LocalizedText[] = [];
+    const failing = new McpPool([stdio('roto')], { connect: () => Promise.reject(new Error('boom')), notify: (text) => notices.push(text), loginRequired: () => undefined, onChange: () => undefined, connectTimeoutMs: 10_000 });
+
+    await failing.start();
+
+    expect(notices[0]?.parts?.detail).toEqual(foreignText('boom'));
   });
 });

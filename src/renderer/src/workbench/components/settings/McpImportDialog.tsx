@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
+import { renderLocalized } from '@shared/i18n/localizedText';
 import type { McpImportCandidate, McpImportGroup, McpImportPreview, McpImportStatus } from '@shared/mcp';
 import { useMcpStore } from '../../mcpStore';
 import { MCP_BUTTON_CLASS, MCP_DIALOG_PANEL_CLASS, MCP_DIALOG_SCRIM_CLASS, MCP_PRIMARY_BUTTON_CLASS, stopEscape } from './mcpStyles';
+import { useT } from '../../../i18n/uiLanguage';
+import { describeError } from '../../describeError';
 
 // «Importar…» con vista previa (P-028 punto 34). Origen elegible: Claude Desktop, Claude Code CLI o los
 // dos. Cada fila dice si es nueva, si ya esta igual o si existe con otra configuracion (en ese caso se
@@ -10,12 +13,17 @@ import { MCP_BUTTON_CLASS, MCP_DIALOG_PANEL_CLASS, MCP_DIALOG_SCRIM_CLASS, MCP_P
 
 type GroupFilter = 'all' | McpImportGroup;
 
-const FILTERS: readonly { readonly id: GroupFilter; readonly label: string }[] = [
-  { id: 'all', label: 'Los dos' },
-  { id: 'desktop', label: 'Claude Desktop' },
-  { id: 'cli', label: 'Claude Code CLI' },
+// `product` es un nombre de producto (no se traduce); null = «Los dos», que sale del catalogo al pintar.
+const FILTERS: readonly { readonly id: GroupFilter; readonly product: string | null }[] = [
+  { id: 'all', product: null },
+  { id: 'desktop', product: 'Claude Desktop' },
+  { id: 'cli', product: 'Claude Code CLI' },
 ];
-const STATUS_LABELS: Readonly<Record<McpImportStatus, string>> = { new: 'Nuevo', same: 'Ya está igual', different: 'Existe con otra config' };
+const STATUS_LABELS = {
+  new: 'mcp.import.status.new',
+  same: 'mcp.import.status.same',
+  different: 'mcp.import.status.different',
+} as const satisfies Readonly<Record<McpImportStatus, string>>;
 
 interface Selection {
   readonly checked: ReadonlySet<string>;
@@ -46,6 +54,7 @@ export function McpImportDialog({ onClose }: { readonly onClose: () => void }): 
   const [error, setError] = useState<string | null>(null);
   const [notes, setNotes] = useState<readonly string[] | null>(null);
   const [busy, setBusy] = useState(false);
+  const t = useT();
 
   useEffect(() => {
     previewImport()
@@ -53,7 +62,7 @@ export function McpImportDialog({ onClose }: { readonly onClose: () => void }): 
         setPreview(result);
         setSelection(initialSelection(result.candidates));
       })
-      .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)));
+      .catch((err: unknown) => setError(err instanceof Error ? describeError(err) : String(err)));
   }, []);
 
   const visible = useMemo(() => (preview?.candidates ?? []).filter((c) => filter === 'all' || c.group === filter), [preview, filter]);
@@ -64,8 +73,8 @@ export function McpImportDialog({ onClose }: { readonly onClose: () => void }): 
     setBusy(true);
     setError(null);
     applyImport(picks, preview.commonVersion)
-      .then((result) => (result.status === 'saved' ? setNotes(result.notes) : setError(result.message)))
-      .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)))
+      .then((result) => (result.status === 'saved' ? setNotes(result.notes.map((note) => renderLocalized(t, note))) : setError(renderLocalized(t, result.message))))
+      .catch((err: unknown) => setError(err instanceof Error ? describeError(err) : String(err)))
       .finally(() => setBusy(false));
   };
 
@@ -81,16 +90,16 @@ export function McpImportDialog({ onClose }: { readonly onClose: () => void }): 
         className={MCP_DIALOG_PANEL_CLASS}
       >
         <div id="mcp-import-title" className="text-[12.5px] font-bold text-mg-text">
-          Importar servidores MCP a los comunes
+          {t('mcp.import.title')}
         </div>
         <p className="text-[10.5px] leading-[1.5] text-mg-sec">
-          Se copian a <code>mcp-common.json</code> y los verán todas tus cuentas. El original no se toca.
+          {t('mcp.import.intro.start')} <code>mcp-common.json</code> {t('mcp.import.intro.end')}
         </p>
         {notes !== null ? (
           <ImportDone notes={notes} count={picks.length} onClose={onClose} />
         ) : (
           <>
-            <div role="radiogroup" aria-label="Origen" className="flex gap-[4px]">
+            <div role="radiogroup" aria-label={t('mcp.import.originAria')} className="flex gap-[4px]">
               {FILTERS.map((option) => (
                 <button
                   key={option.id}
@@ -99,12 +108,12 @@ export function McpImportDialog({ onClose }: { readonly onClose: () => void }): 
                   onClick={() => setFilter(option.id)}
                   className={`rounded-[6px] border px-[9px] py-[3px] text-[10.5px] ${filter === option.id ? 'border-mg-focus bg-mg-sel text-mg-body' : 'border-mg-border-subtle text-mg-body2 hover:bg-mg-hover'}`}
                 >
-                  {option.label}
+                  {option.product ?? t('mcp.import.filter.both')}
                 </button>
               ))}
             </div>
-            {preview === null && error === null && <p className="text-[11px] text-mg-muted">Leyendo las fuentes…</p>}
-            {preview !== null && visible.length === 0 && <p className="text-[11px] text-mg-muted">No hay nada que importar de este origen.</p>}
+            {preview === null && error === null && <p className="text-[11px] text-mg-muted">{t('mcp.import.loading')}</p>}
+            {preview !== null && visible.length === 0 && <p className="text-[11px] text-mg-muted">{t('mcp.import.empty')}</p>}
             <ul className="flex flex-col gap-[4px]">
               {visible.map((candidate) => (
                 <CandidateRow
@@ -124,10 +133,10 @@ export function McpImportDialog({ onClose }: { readonly onClose: () => void }): 
             )}
             <div className="flex justify-end gap-[8px]">
               <button onClick={onClose} className={MCP_BUTTON_CLASS}>
-                Cancelar
+                {t('mcp.common.cancel')}
               </button>
               <button onClick={apply} disabled={busy || picks.length === 0} className={MCP_PRIMARY_BUTTON_CLASS}>
-                {busy ? 'Importando…' : `Importar ${picks.length}`}
+                {busy ? t('mcp.import.running') : t('mcp.import.apply', { count: picks.length })}
               </button>
             </div>
           </>
@@ -151,31 +160,33 @@ function CandidateRow({
   readonly onToggleReplace: () => void;
 }): React.JSX.Element {
   const selectable = isSelectable(candidate);
+  const t = useT();
   return (
     <li data-mcp-candidate={candidate.name} className="flex flex-col gap-[2px] rounded-[6px] border border-mg-border-subtle px-[8px] py-[5px]">
       <div className="flex items-center gap-[8px] text-[11px]">
-        <input type="checkbox" checked={selectable && checked} disabled={!selectable} onChange={onToggle} aria-label={`Importar ${candidate.name} de ${candidate.originLabel}`} />
+        <input type="checkbox" checked={selectable && checked} disabled={!selectable} onChange={onToggle} aria-label={t('mcp.import.candidateAria', { name: candidate.name, origin: renderLocalized(t, candidate.originLabel) })} />
         <span className="font-medium text-mg-body">{candidate.name}</span>
-        <span className="text-[10px] text-mg-ter">{candidate.originLabel}</span>
-        <span className="ml-auto rounded-[4px] bg-mg-hover px-[5px] py-[1px] text-[9px] font-semibold text-mg-body2">{STATUS_LABELS[candidate.status]}</span>
+        <span className="text-[10px] text-mg-ter">{renderLocalized(t, candidate.originLabel)}</span>
+        <span className="ml-auto rounded-[4px] bg-mg-hover px-[5px] py-[1px] text-[9px] font-semibold text-mg-body2">{t(STATUS_LABELS[candidate.status])}</span>
       </div>
       {candidate.status === 'different' && selectable && (
         <label className="ml-[22px] flex items-center gap-[5px] text-[10px] text-mg-sec">
-          <input type="checkbox" checked={replace} onChange={onToggleReplace} aria-label={`Sustituir el común ${candidate.name}`} />
-          Sustituir el común actual (si no, se queda el que hay)
+          <input type="checkbox" checked={replace} onChange={onToggleReplace} aria-label={t('mcp.import.replaceAria', { name: candidate.name })} />
+          {t('mcp.import.replace')}
         </label>
       )}
       {candidate.note !== null && (
-        <span className="ml-[22px] text-[10px] text-mg-sec">{candidate.note}</span>
+        <span className="ml-[22px] text-[10px] text-mg-sec">{renderLocalized(t, candidate.note)}</span>
       )}
     </li>
   );
 }
 
 function ImportDone({ notes, count, onClose }: { readonly notes: readonly string[]; readonly count: number; readonly onClose: () => void }): React.JSX.Element {
+  const t = useT();
   return (
     <div role="status" className="flex flex-col gap-[6px] text-[11px] text-mg-body2">
-      <span>Importación hecha ({count}).</span>
+      <span>{t('mcp.import.done', { count })}</span>
       {notes.map((note) => (
         <span key={note} className="text-[10.5px] text-mg-sec">
           {note}
@@ -183,7 +194,7 @@ function ImportDone({ notes, count, onClose }: { readonly notes: readonly string
       ))}
       <div className="flex justify-end">
         <button onClick={onClose} className={MCP_PRIMARY_BUTTON_CLASS}>
-          Cerrar
+          {t('mcp.import.close')}
         </button>
       </div>
     </div>

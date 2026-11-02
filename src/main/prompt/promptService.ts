@@ -1,3 +1,4 @@
+import { localized, UserFacingError, wrapError } from '@shared/i18n/localizedText';
 import { buildHandoffPrompt, buildImprovePrompt } from './promptText';
 import { scrubAgentEnv } from '../os/agentEnv';
 
@@ -45,13 +46,13 @@ export class PromptService {
 
     const stdout = await this.deps.run(this.deps.resolveBinary(), args, env);
     const improved = stdout.trim();
-    if (improved.length === 0) throw new Error('La mejora de prompt devolvio una respuesta vacia');
+    if (improved.length === 0) throw new UserFacingError(localized('errors.prompt.improveEmpty'));
     return improved;
   }
 
   // Genera un prompt de handoff autocontenido reanudando la sesion (`claude --resume <id> -p ...`):
   // el modelo ya tiene el contexto de la conversacion, asi que resume objetivo/decisiones/estado/
-  // proximos pasos. NOTA: al reanudar, esto anade un turno a la transcripcion de la sesion.
+  // proximos pasos en un fork sin persistencia; nunca añade el encargo interno al historial original.
   // El hijo se lanza EN EL cwd de la conversacion: `--resume` resuelve el id dentro de
   // projects/<cwd-codificado>, asi que lanzarlo desde otro sitio da "No conversation found".
   async handoff({ sessionId, accountDir, model, cwd }: HandoffRequest): Promise<string> {
@@ -59,12 +60,14 @@ export class PromptService {
     if (accountDir.trim().length === 0) throw new Error(`accountDir vacio para el handoff: ${JSON.stringify(accountDir)}`);
     if (cwd.trim().length === 0) throw new Error(`cwd vacio para el handoff: ${JSON.stringify(cwd)}`);
     const env: NodeJS.ProcessEnv = { ...scrubAgentEnv(process.env), CLAUDE_CONFIG_DIR: accountDir };
-    const args = ['--resume', sessionId, '-p', buildHandoffPrompt(), '--output-format', 'text'];
+    const args = ['--resume', sessionId, '--fork-session', '--no-session-persistence', '-p', buildHandoffPrompt(), '--output-format', 'text', '--tools', '', '--max-turns', '1', '--effort', 'low'];
     if (model.trim().length > 0) args.push('--model', model.trim());
 
-    const stdout = await this.deps.run(this.deps.resolveBinary(), args, env, cwd);
+    let stdout: string;
+    try { stdout = await this.deps.run(this.deps.resolveBinary(), args, env, cwd); }
+    catch (err) { throw new UserFacingError(wrapError('errors.prompt.handoffFailed', {}, err)); }
     const handoff = stdout.trim();
-    if (handoff.length === 0) throw new Error('El handoff devolvio una respuesta vacia');
+    if (handoff.length === 0) throw new UserFacingError(localized('errors.prompt.handoffEmpty'));
     return handoff;
   }
 }

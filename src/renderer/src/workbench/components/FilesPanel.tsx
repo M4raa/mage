@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { HighlightedLines } from './Markdown';
 import { useWorkbenchStore } from '../workbenchStore';
+import { useT } from '../../i18n/uiLanguage';
 import { usePaneTabId } from '../paneContext';
 import { createdFilesOf, type CreatedFile } from '../createdFilesView';
 import { Markdown } from './Markdown';
@@ -11,6 +12,7 @@ import { DISCLOSURE_VARIANTS } from '../motionPresets';
 import { langFromPath } from '../codeHighlight';
 import type { Block } from '../types';
 import type { ProjectFileContent } from '@shared/ipc';
+import { describeError } from '../describeError';
 
 // Panel "Ficheros" (2.10, peticion del usuario: "si creas un plan .md .txt o lo que sea tiene que
 // aparecer a la derecha como un artifact y así poder ver el plan, poder editarlo").
@@ -37,6 +39,7 @@ function isMarkdown(name: string): boolean {
 }
 
 export function FilesPanel(): React.JSX.Element {
+  const t = useT();
   const tabId = usePaneTabId();
   const blocks = useWorkbenchStore((s) => s.blocksByChat[tabId] ?? EMPTY_BLOCKS);
   const cwd = useWorkbenchStore((s) => s.tabs.find((t) => t.id === tabId)?.cwd ?? null);
@@ -59,9 +62,9 @@ export function FilesPanel(): React.JSX.Element {
   // Pulsar el que ya esta abierto lo CIERRA; pulsar otro cambia de fichero.
   const toggle = (path: string): void => setSelectedPath(selected?.path === path ? null : path);
 
-  if (cwd === null) return <Hint text="Abre una conversación para ver los ficheros que ha creado." />;
+  if (cwd === null) return <Hint text={t('chat.files.noConversation')} />;
   if (files.length === 0) {
-    return <Hint text="Esta conversación todavía no ha creado ningún fichero." />;
+    return <Hint text={t('chat.files.noFiles')} />;
   }
 
   return (
@@ -70,7 +73,7 @@ export function FilesPanel(): React.JSX.Element {
     // error de un adjunto rechazado de tres comprobaciones antes. No la usa ningun codigo de produccion.
     <div data-files-panel="true" className="flex min-h-0 flex-col">
       <div className="flex shrink-0 items-center justify-between border-b border-mg-border-subtle px-[10px] py-[6px] text-[10px] text-mg-ter">
-        <span className="font-bold tracking-[.06em]">FICHEROS CREADOS ({files.length})</span>
+        <span className="font-bold tracking-[.06em]">{t('chat.files.title', { count: files.length })}</span>
       </div>
       {/* La lista ES el panel: `flex-1` en vez del `max-h-[35%]` de antes. El visor se pinta DENTRO del
           <li> del fichero elegido (2026-09-21, feedback del usuario: "el archivo que clico se renderiza
@@ -92,8 +95,8 @@ export function FilesPanel(): React.JSX.Element {
               <span className="flex w-full items-center gap-[6px]">
                 <span className="min-w-0 flex-1 truncate text-[11.5px] text-mg-body">{file.name}</span>
                 {file.failed && (
-                  <span className="shrink-0 text-[10px] text-mg-danger" title="La escritura falló">
-                    falló
+                  <span className="shrink-0 text-[10px] text-mg-danger" title={t('chat.files.writeFailedTip')}>
+                    {t('chat.files.writeFailed')}
                   </span>
                 )}
               </span>
@@ -146,6 +149,7 @@ function FileViewer({
   readonly cwd: string;
   readonly askOutside: boolean;
 }): React.JSX.Element {
+  const t = useT();
   const [loaded, setLoaded] = useState<ProjectFileContent | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [draft, setDraft] = useState<string | null>(null); // null = no se esta editando
@@ -162,7 +166,7 @@ function FileViewer({
         // justamente la salida del conflicto ("el fichero cambió, mira lo que hay ahora").
         setDraft(null);
       })
-      .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)));
+      .catch((err: unknown) => setError(err instanceof Error ? describeError(err) : String(err)));
   }, [cwd, file.path]);
 
   useEffect(load, [load]);
@@ -175,7 +179,7 @@ function FileViewer({
       .then((approved) => {
         if (approved) load();
       })
-      .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)));
+      .catch((err: unknown) => setError(err instanceof Error ? describeError(err) : String(err)));
   }, [cwd, file.path, load]);
 
   // Se pregunta UNA vez al abrirlo; despues, solo si el usuario pulsa el boton del aviso.
@@ -196,7 +200,7 @@ function FileViewer({
         setLoaded(content);
         setDraft(null);
       })
-      .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)))
+      .catch((err: unknown) => setError(err instanceof Error ? describeError(err) : String(err)))
       .finally(() => setSaving(false));
   };
 
@@ -212,27 +216,27 @@ function FileViewer({
         </span>
         {draft === null ? (
           <>
-            <PanelButton onClick={load} label="Recargar del disco">
+            <PanelButton onClick={load} label={t('chat.files.reloadFromDisk')}>
               ⟳
             </PanelButton>
             <PanelButton
               onClick={() => setDraft(loaded?.content ?? '')}
-              label={`Editar ${file.name}`}
+              label={t('chat.files.editFile', { name: file.name })}
               disabled={loaded === null || loaded.tooLarge || loaded.outsideCwd === true}
             >
-              Editar
+              {t('chat.files.edit')}
             </PanelButton>
-            <PanelButton onClick={openFolder} label="Abrir la carpeta del fichero">
-              Carpeta
+            <PanelButton onClick={openFolder} label={t('chat.files.openFolder')}>
+              {t('chat.files.folder')}
             </PanelButton>
           </>
         ) : (
           <>
-            <PanelButton onClick={save} label={`Guardar ${file.name}`} disabled={saving} primary>
-              {saving ? 'Guardando…' : 'Guardar'}
+            <PanelButton onClick={save} label={t('chat.files.saveFile', { name: file.name })} disabled={saving} primary>
+              {saving ? t('chat.files.saving') : t('chat.files.save')}
             </PanelButton>
-            <PanelButton onClick={() => setDraft(null)} label="Descartar los cambios" disabled={saving}>
-              Cancelar
+            <PanelButton onClick={() => setDraft(null)} label={t('chat.files.discard')} disabled={saving}>
+              {t('chat.files.cancel')}
             </PanelButton>
           </>
         )}
@@ -242,7 +246,7 @@ function FileViewer({
         <div role="alert" className="flex shrink-0 items-start gap-[8px] border-b border-mg-danger-border bg-mg-danger-bg p-[8px_10px] text-[10.5px] text-mg-danger-ink">
           <span className="min-w-0 flex-1">{error}</span>
           <button onClick={load} className="shrink-0 underline decoration-dotted">
-            Recargar
+            {t('chat.files.reload')}
           </button>
         </div>
       )}
@@ -270,27 +274,28 @@ function FileBody({
   readonly onDraftChange: (value: string) => void;
   readonly onApproveOutside: () => void;
 }): React.JSX.Element {
+  const t = useT();
   if (draft !== null) {
     return (
       <textarea
         value={draft}
         onChange={(e) => onDraftChange(e.target.value)}
-        aria-label={`Contenido de ${file.name}`}
+        aria-label={t('chat.files.contentOf', { name: file.name })}
         spellCheck={false}
         className="min-h-0 flex-1 resize-none bg-mg-code p-[10px_12px] font-mono text-[11.5px] leading-[1.6] text-mg-body outline-none"
       />
     );
   }
   if (error !== null && loaded === null) return <div className="flex-1" />;
-  if (loaded === null) return <Hint text="Cargando…" />;
+  if (loaded === null) return <Hint text={t('chat.files.loading')} />;
   if (loaded.outsideCwd === true) return <OutsideCwdHint path={loaded.path} onApprove={onApproveOutside} />;
   if (loaded.tooLarge) {
-    return <Hint text="El fichero es demasiado grande para verlo aquí. Ábrelo en tu editor." />;
+    return <Hint text={t('chat.files.tooLarge')} />;
   }
   if (loaded.content === null) {
-    return <Hint text="El fichero ya no está en disco (se movió o se borró después de crearlo)." />;
+    return <Hint text={t('chat.files.missing')} />;
   }
-  if (loaded.content.trim().length === 0) return <Hint text="El fichero está vacío." />;
+  if (loaded.content.trim().length === 0) return <Hint text={t('chat.files.empty')} />;
   return (
     <div className="min-h-0 flex-1 overflow-auto p-[10px_12px] text-[12px] leading-[1.6]">
       {isMarkdown(file.name) ? (
@@ -304,15 +309,16 @@ function FileBody({
 
 // Aviso de un fichero de fuera de la carpeta de la conversacion que el usuario aun no ha aprobado.
 function OutsideCwdHint({ path, onApprove }: { readonly path: string; readonly onApprove: () => void }): React.JSX.Element {
+  const t = useT();
   return (
     <div data-outside-cwd="true" className="flex flex-col items-start gap-[8px] p-[14px] text-[11px] text-mg-muted">
-      <span>Este fichero está fuera de la carpeta de la conversación:</span>
+      <span>{t('chat.files.outsideCwd')}</span>
       <span className="break-all font-mono text-[10.5px] text-mg-sec">{path}</span>
       <button
         onClick={onApprove}
         className="rounded-[6px] border border-mg-border-emph px-[10px] py-[4px] text-[10.5px] text-mg-body2 hover:bg-mg-hover"
       >
-        Abrir de todos modos…
+        {t('chat.files.openAnyway')}
       </button>
     </div>
   );

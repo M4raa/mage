@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { AccountInfo } from '@shared/accounts';
-import { applyAccentOverrides, providerBadge, providerLabel, toAccountView } from './accountView';
+import { applyAccentOverrides, assignMissingAccents, providerBadge, providerLabel, toAccountView } from './accountView';
 
 function info(overrides: Partial<AccountInfo>): AccountInfo {
   return {
@@ -20,58 +20,60 @@ function info(overrides: Partial<AccountInfo>): AccountInfo {
 
 describe('toAccountView', () => {
   it('toAccountView_mapsCoreFields_fromConfigDir', () => {
-    const account = toAccountView(info({ configDir: '/home/u/.claude-p', name: '.claude-p' }), 0);
+    const account = toAccountView(info({ configDir: '/home/u/.claude-p', name: '.claude-p' }));
 
     expect(account.id).toBe('/home/u/.claude-p');
     expect(account.alias).toBe('claude-p'); // sin el punto inicial
     expect(account.provider).toBe('Claude');
   });
 
-  it('toAccountView_emailPresent_monogramFromEmail', () => {
-    const account = toAccountView(info({ email: 'cuenta-dos@ejemplo.com', name: '.claude-p' }), 0);
+  it('toAccountView_nombreConPrefijoYEmail_monogramaDelNombreSinPrefijo', () => {
+    const account = toAccountView(info({ email: 'cuenta-dos@ejemplo.com', name: '.claude-p' }));
 
-    expect(account.monogram).toBe('C');
+    expect(account.monogram).toBe('P');
     expect(account.email).toBe('cuenta-dos@ejemplo.com');
   });
 
-  it('toAccountView_noEmail_monogramFromAlias', () => {
-    const account = toAccountView(info({ email: null, name: '.claude-work' }), 0);
+  it('toAccountView_sinEmail_monogramaDelNombreSinPrefijo', () => {
+    expect(toAccountView(info({ email: null, name: '.claude-work' })).monogram).toBe('W');
+    expect(toAccountView(info({ email: null, name: '.codex-xati', providerId: 'codex' })).monogram).toBe('X');
+    expect(toAccountView(info({ email: null, name: 'agy-casa', providerId: 'agy' })).monogram).toBe('C');
+  });
 
-    expect(account.monogram).toBe('C'); // primera letra alfanumerica de "claude-work" -> 'C'
+  it('toAccountView_principalSoloPrefijo_usaEmailYSiNoElPrefijo', () => {
+    expect(toAccountView(info({ email: 'zeta@ejemplo.com', name: '.claude' })).monogram).toBe('Z');
+    expect(toAccountView(info({ email: null, name: '.claude' })).monogram).toBe('C');
+  });
+
+  it('toAccountView_nombreSinLetras_interrogacion', () => {
+    expect(toAccountView(info({ email: null, name: '.__' })).monogram).toBe('?');
   });
 
   it('toAccountView_defaultModelNull_fallsBackToSonnet', () => {
-    const account = toAccountView(info({ defaultModel: null }), 0);
+    const account = toAccountView(info({ defaultModel: null }));
 
     expect(account.defaultModel).toBe('sonnet');
   });
 
   it('toAccountView_defaultModelSet_usesIt', () => {
-    const account = toAccountView(info({ defaultModel: 'opus[1m]' }), 0);
+    const account = toAccountView(info({ defaultModel: 'opus[1m]' }));
 
     expect(account.defaultModel).toBe('opus[1m]');
   });
 
-  it('toAccountView_accentCyclesByIndex', () => {
-    const a0 = toAccountView(info({}), 0);
-    const a6 = toAccountView(info({}), 6); // 6 acentos -> vuelve al primero
-
-    expect(a6.accent.base).toBe(a0.accent.base);
-  });
-
   it('toAccountView_passesLoginStatus', () => {
-    const account = toAccountView(info({ loginStatus: 'expired' }), 0);
+    const account = toAccountView(info({ loginStatus: 'expired' }));
 
     expect(account.loginStatus).toBe('expired');
   });
 
   it('toAccountView_passesIsMain', () => {
-    expect(toAccountView(info({ isMain: true }), 0).isMain).toBe(true);
-    expect(toAccountView(info({ isMain: false }), 0).isMain).toBe(false);
+    expect(toAccountView(info({ isMain: true })).isMain).toBe(true);
+    expect(toAccountView(info({ isMain: false })).isMain).toBe(false);
   });
 
   it('toAccountView_usageIsPlaceholder', () => {
-    const account = toAccountView(info({}), 0);
+    const account = toAccountView(info({}));
 
     expect(account.usage.fiveHour.pct).toBe(0);
     expect(account.usage.fiveHour.label).toBe('—');
@@ -80,21 +82,22 @@ describe('toAccountView', () => {
 
 describe('accentos elegidos por el usuario (PERS-3) y marca de proveedor (P-028, 2)', () => {
   it('toAccountView_conOverride_usaElAcentoElegido', () => {
-    expect(toAccountView(info({}), 0, 4).accent.base).toBe('var(--mg-accent-4-base)');
+    expect(toAccountView(info({}), 4).accent.base).toBe('var(--mg-accent-4-base)');
   });
 
   it('applyAccentOverrides_soloCambiaLasCuentasConColorPropio', () => {
-    const accounts = [toAccountView(info({ configDir: '/h/.claude' }), 0), toAccountView(info({ configDir: '/h/.claude-p' }), 1)];
+    const accounts = [toAccountView(info({ configDir: '/h/.claude' })), toAccountView(info({ configDir: '/h/.claude-p' }))];
 
     const result = applyAccentOverrides(accounts, { '/h/.claude-p': 5 });
 
-    expect(result.map((a) => a.accent.base)).toEqual(['var(--mg-accent-0-base)', 'var(--mg-accent-5-base)']);
+    expect(result[0]?.accent).toEqual(accounts[0]?.accent);
+    expect(result[1]?.accent.base).toBe('var(--mg-accent-5-base)');
   });
 
-  it('applyAccentOverrides_sinOverrides_vuelveAlDeSuPosicion', () => {
-    const accounts = [toAccountView(info({ configDir: '/h/.claude-p' }), 1, 3)];
+  it('applyAccentOverrides_sinOverrides_vuelveAlEstableDeSuIdentificador', () => {
+    const accounts = [toAccountView(info({ configDir: '/h/.claude-p' }), 3)];
 
-    expect(applyAccentOverrides(accounts, {})[0]?.accent.base).toBe('var(--mg-accent-0-base)');
+    expect(applyAccentOverrides(accounts, {})[0]?.accent).toEqual(toAccountView(info({ configDir: '/h/.claude-p' })).accent);
   });
 
   it('providerBadge_claudeTambienSeMarca_vacioNo', () => {
@@ -112,5 +115,56 @@ describe('accentos elegidos por el usuario (PERS-3) y marca de proveedor (P-028,
   it('providerLabel_claudeYOtros', () => {
     expect(providerLabel('claude')).toBe('Claude');
     expect(providerLabel('agy')).toBe('agy');
+  });
+});
+describe('R46 — avatares', () => {
+  it('applyAccentOverrides_otraCuentaDelanteAlAnadir_colorDeLaExistenteNoCambia', () => {
+    const existing = toAccountView(info({ configDir: '/fixture/.claude-work', name: '.claude-work', email: 'otro@example.invalid' }));
+    const added = toAccountView(info({ configDir: '/fixture/.claude-aaa', name: '.claude-aaa' }));
+
+    const before = applyAccentOverrides([existing], {});
+    const after = applyAccentOverrides([added, existing], {});
+
+    expect(existing.monogram).toBe('W');
+    expect(after[1]?.accent).toEqual(before[0]?.accent);
+  });
+});
+
+describe('assignMissingAccents (#46, H3)', () => {
+  it('assignMissingAccents_seisCuentasSinGuardar_seisColoresDistintos', () => {
+    const ids = ['a', 'b', 'c', 'd', 'e', 'f'];
+
+    const result = assignMissingAccents(ids, {});
+
+    expect(new Set(ids.map((id) => result[id])).size).toBe(6);
+  });
+
+  it('assignMissingAccents_anadirCuentas_noCambiaLasExistentes', () => {
+    const first = assignMissingAccents(['a', 'b'], {});
+
+    const later = assignMissingAccents(['nueva', 'a', 'b'], first);
+
+    expect(later.a).toBe(first.a);
+    expect(later.b).toBe(first.b);
+    expect([first.a, first.b]).not.toContain(later.nueva);
+  });
+
+  it('assignMissingAccents_eleccionManual_seRespetaYNoSeRepite', () => {
+    const result = assignMissingAccents(['manual', 'x'], { manual: 0 });
+
+    expect(result.manual).toBe(0);
+    expect(result.x).toBe(1);
+  });
+
+  it('assignMissingAccents_nadaQueAsignar_mismaReferencia', () => {
+    const saved = { a: 2 };
+
+    expect(assignMissingAccents(['a'], saved)).toBe(saved);
+  });
+
+  it('assignMissingAccents_sieteCuentas_reutilizaElMenosUsado', () => {
+    const result = assignMissingAccents(['a', 'b', 'c', 'd', 'e', 'f', 'g'], {});
+
+    expect(result.g).toBe(0);
   });
 });

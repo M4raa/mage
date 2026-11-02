@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
+import { localized, localizedWithParts } from '@shared/i18n/localizedText';
+import { esText } from '@testing/localizedText';
 import {
   describeStaleWrite,
   readSnapshot,
@@ -45,6 +47,7 @@ function fakeFs(initial: Record<string, string> = {}) {
       files.delete(path);
     },
     tempSuffix: () => 'suf',
+    sleep: () => undefined,
   };
 
   return {
@@ -104,6 +107,60 @@ describe('writeAtomic', () => {
     });
 
     expect(() => writeAtomic({ ...fs.deps, rename }, '/data/a.json', 'x')).toThrow(/EPERM/);
+    expect(fs.removed).toEqual(['/data/a.json.suf.tmp']);
+  });
+
+  // H3 de la devolución 19: con el disco lleno la escritura del temporal falla y dejaba un `.tmp` de 0 bytes.
+  it('writeAtomic_escrituraDelTemporalFalla_loBorraYPropagaElError', () => {
+    const fs = fakeFs({ '/data/a.json': 'viejo' });
+    const writeFile = vi.fn((path: string) => {
+      fs.files.set(path, '');
+      throw Object.assign(new Error('ENOSPC: no space left on device, write'), { code: 'ENOSPC' });
+    });
+
+    expect(() => writeAtomic({ ...fs.deps, writeFile }, '/data/a.json', 'nuevo')).toThrow(/ENOSPC/);
+    expect(fs.removed).toEqual(['/data/a.json.suf.tmp']);
+    expect([...fs.files.keys()]).toEqual(['/data/a.json']);
+    expect(fs.files.get('/data/a.json')).toBe('viejo');
+  });
+
+  it('writeAtomicIfUnchanged_escrituraDelTemporalFalla_loBorraYPropagaElError', () => {
+    const fs = fakeFs({ '/data/a.json': 'viejo' });
+    const writeFile = vi.fn((path: string) => {
+      fs.files.set(path, '');
+      throw Object.assign(new Error('ENOSPC: no space left on device, write'), { code: 'ENOSPC' });
+    });
+
+    expect(() => writeAtomicIfUnchanged({ ...fs.deps, writeFile }, '/data/a.json', 'nuevo', 'viejo')).toThrow(/ENOSPC/);
+    expect([...fs.files.keys()]).toEqual(['/data/a.json']);
+  });
+});
+
+// H1 de la devolución 17: en Windows el rename falla con EPERM mientras otro proceso lee el destino (el CLI leyendo
+// sus ajustes, otra instancia leyendo el índice). Se reintenta unas pocas veces antes de rendirse.
+describe('writeAtomic ante el bloqueo transitorio de Windows', () => {
+  const eperm = () => Object.assign(new Error('EPERM: operation not permitted, rename'), { code: 'EPERM' });
+
+  it('write_renameEPERMUnaVez_reintentaYPublica', () => {
+    const fs = fakeFs({ '/data/a.json': 'viejo' });
+    let failures = 1;
+    const rename = (from: string, to: string): void => {
+      if (failures > 0) { failures -= 1; throw eperm(); }
+      fs.deps.rename(from, to);
+    };
+
+    writeAtomic({ ...fs.deps, rename }, '/data/a.json', 'nuevo');
+
+    expect(fs.files.get('/data/a.json')).toBe('nuevo');
+    expect(fs.leftoverTemps()).toEqual([]);
+  });
+
+  it('write_renameEPERMSiempre_lanzaConLaRutaYLimpiaElTemporal', () => {
+    const fs = fakeFs({ '/data/a.json': 'viejo' });
+    const rename = (): void => { throw eperm(); };
+
+    expect(() => writeAtomic({ ...fs.deps, rename }, '/data/a.json', 'nuevo')).toThrow('/data/a.json');
+    expect(fs.files.get('/data/a.json')).toBe('viejo');
     expect(fs.removed).toEqual(['/data/a.json.suf.tmp']);
   });
 });
@@ -178,17 +235,6 @@ describe('writeAtomicIfUnchanged', () => {
     expect(result).toEqual({ status: 'stale', actual: null });
   });
 
-  it('cas_sinRemoveFile_noRompeAunqueDejeElTemporal', () => {
-    const fs = fakeFs({ '/data/a.json': 'v1' });
-    const { removeFile: _omitted, ...withoutRemove } = fs.deps;
-    fs.interposeWrite('/data/a.json', 'otro');
-
-    const result = writeAtomicIfUnchanged(withoutRemove, '/data/a.json', 'v2', 'v1');
-
-    expect(result.status).toBe('stale');
-    expect(fs.leftoverTemps()).toEqual(['/data/a.json.suf.tmp']); // documentado: queda residuo
-  });
-
   it('cas_removeFileFalla_noTapaElResultado', () => {
     const fs = fakeFs({ '/data/a.json': 'v1' });
     const removeFile = () => {
@@ -204,16 +250,24 @@ describe('writeAtomicIfUnchanged', () => {
 
 describe('describeStaleWrite', () => {
   it('describe_noFiltraElContenido_soloRutaYTamanos', () => {
-    const message = describeStaleWrite('/data/a.json', 'hola', 'un secreto muy largo');
+    const message = esText(describeStaleWrite('/data/a.json', 'hola', 'un secreto muy largo'));
 
-    expect(message).toContain('/data/a.json');
-    expect(message).toContain('4 caracteres');
-    expect(message).toContain('20 caracteres');
+    expect(message).toBe('El fichero "/data/a.json" cambió fuera de Mage desde que se leyó (tenía 4 caracteres, ahora tiene 20 caracteres); no se ha guardado nada.');
     expect(message).not.toContain('secreto');
   });
 
+  it('describe_conTamanos_devuelveLaClaveConLaRutaYLasDosPartes', () => {
+    const text = describeStaleWrite('/data/a.json', 'hola', 'un secreto muy largo');
+
+    expect(text).toEqual(
+      localizedWithParts('errors.config.staleWrite', { path: '/data/a.json' }, { was: localized('errors.config.staleWriteWasLength', { length: '4' }), now: localized('errors.config.staleWriteNowLength', { length: '20' }) }),
+    );
+  });
+
   it('describe_ausenciaEnCadaLado_seDiceExplicitamente', () => {
-    expect(describeStaleWrite('/a', null, 'x')).toContain('no existia');
-    expect(describeStaleWrite('/a', 'x', null)).toContain('ha desaparecido');
+    expect(esText(describeStaleWrite('/a', null, 'x'))).toContain('no existía');
+    expect(esText(describeStaleWrite('/a', 'x', null))).toContain('ha desaparecido');
+    expect(describeStaleWrite('/a', null, 'x').parts).toMatchObject({ was: localized('errors.config.staleWriteWasMissing') });
+    expect(describeStaleWrite('/a', 'x', null).parts).toMatchObject({ now: localized('errors.config.staleWriteNowGone') });
   });
 });

@@ -6,9 +6,11 @@ import { classifyTool } from './toolClassify';
 import { completeArtifactPublication, parseArtifactDraft } from '@shared/artifacts';
 import { SUBAGENT_TOOL_NAMES } from './toolSummary';
 import { noticeTextFor } from './cliNotices';
-import { RATE_LIMIT_LINE } from './rateLimit';
+import { rateLimitLine } from './rateLimit';
+import { t } from '../i18n/uiLanguage';
 import { classifySystemWrapper } from '@shared/systemWrappers';
 import { EMPTY_SUBAGENT_RUN, withSubagentRun, withSubagentUpdate } from './engineBlocks';
+import { formatClockTime } from '../i18n/format';
 
 // Reconstruye los bloques del chat (M2.5b) a partir de una transcripcion persistida ya cargada, para
 // que una conversacion REANUDADA no arranque con el panel principal vacio. PURO (datos -> datos,
@@ -142,7 +144,7 @@ function precedingCommandName(blocks: readonly Block[]): string | null {
 }
 
 function taskNotificationText(summary: string): string {
-  return summary.length === 0 ? 'Tarea en segundo plano terminada' : `Tarea en segundo plano: ${summary}`;
+  return summary.length === 0 ? t('chat.notice.backgroundTaskDone') : t('chat.notice.backgroundTask', { summary });
 }
 
 // Una linea `assistant` puede traer texto y/o varios tool_use. Emite el bloque de texto (si lo hay) y
@@ -160,7 +162,7 @@ function appendAssistant(entry: TranscriptEntry, blocks: Block[], toolIndexById:
   // del agente: se pinta como la misma linea de sistema que en vivo, con su texto en el tooltip (P-028, 20).
   if (isRecord(entry.raw) && entry.raw.error === 'rate_limit') {
     const tip = assistantText(entry.raw).trim();
-    blocks.push({ kind: 'system', id: blockId(entry.index, 0), text: RATE_LIMIT_LINE, ...(tip.length === 0 ? {} : { tip }) });
+    blocks.push({ kind: 'system', id: blockId(entry.index, 0), text: rateLimitLine(), ...(tip.length === 0 ? {} : { tip }) });
     return;
   }
   let slot = 0;
@@ -316,7 +318,7 @@ function blockId(entryIndex: number, slot: number): string {
 // Hora local HH:MM del bloque de usuario (presentacion). Vacio si la entrada no trae timestamp.
 function formatTime(timestampMs: number | null): string {
   if (timestampMs === null) return '';
-  return new Date(timestampMs).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
+  return formatClockTime(timestampMs);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

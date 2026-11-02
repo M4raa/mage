@@ -1,4 +1,5 @@
 import type { ElicitationFormSchema } from '@shared/elicitation';
+import { t } from '../i18n/uiLanguage';
 
 // Estado de un formulario de elicitation: el texto crudo de cada campo (los booleanos, 'true'/'false').
 // Lógica pura: el componente solo pinta y llama aquí.
@@ -18,17 +19,17 @@ export function initialValues(schema: ElicitationFormSchema): FormValues {
 
 function fieldError(field: Field, raw: string, required: boolean): string | null {
   if (field.type === 'boolean') return null;
-  if (raw.trim().length === 0) return required ? 'Obligatorio' : null;
+  if (raw.trim().length === 0) return required ? t('prompt.elicitation.field.required') : null;
   if (field.type === 'string') {
-    if (field.minLength !== undefined && raw.length < field.minLength) return `Mínimo ${field.minLength} caracteres`;
-    if (field.maxLength !== undefined && raw.length > field.maxLength) return `Máximo ${field.maxLength} caracteres`;
+    if (field.minLength !== undefined && raw.length < field.minLength) return t('prompt.elicitation.field.minLength', { min: field.minLength });
+    if (field.maxLength !== undefined && raw.length > field.maxLength) return t('prompt.elicitation.field.maxLength', { max: field.maxLength });
     return null;
   }
   const value = Number(raw);
-  if (!Number.isFinite(value)) return 'Número no válido';
-  if (field.type === 'integer' && !Number.isInteger(value)) return 'Debe ser un entero';
-  if (field.minimum !== undefined && value < field.minimum) return `Mínimo ${field.minimum}`;
-  if (field.maximum !== undefined && value > field.maximum) return `Máximo ${field.maximum}`;
+  if (!Number.isFinite(value)) return t('prompt.elicitation.field.notANumber');
+  if (field.type === 'integer' && !Number.isInteger(value)) return t('prompt.elicitation.field.notAnInteger');
+  if (field.minimum !== undefined && value < field.minimum) return t('prompt.elicitation.field.minimum', { min: field.minimum });
+  if (field.maximum !== undefined && value > field.maximum) return t('prompt.elicitation.field.maximum', { max: field.maximum });
   return null;
 }
 

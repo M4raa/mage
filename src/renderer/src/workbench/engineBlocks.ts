@@ -8,6 +8,10 @@ import { classifyTool } from './toolClassify';
 import { completeArtifactPublication, parseArtifactDraft } from '@shared/artifacts';
 import { formatToolMeta, summarizeToolInput } from './toolSummary';
 import { codexChangeView } from './codexChanges';
+import { t } from '../i18n/uiLanguage';
+import type { MessageKey } from '@shared/i18n/messageKeys.generated';
+import type { Translate } from '@shared/i18n/translator';
+import { formatInteger, localizeDecimalPoint } from '../i18n/format';
 
 // Mapeo PURO del modelo de eventos comun (MageEvent) a los bloques/permiso de la UI. Sin React ni
 // zustand: solo funciones de datos -> datos (testeable en Vitest, env node). Los ids de bloque los
@@ -207,14 +211,27 @@ export function appendSubagentBlock(blocks: readonly Block[], tool: ToolUse, id:
   ];
 }
 
-// Estados de un bloque de subagente (ademas de null = lanzandose). Texto en castellano porque es lo que
-// se pinta en Actividad y en el panel.
+// Estados de un bloque de subagente (además de null = lanzándose). Son IDENTIFICADORES: se comparan con
+// ellos y se traducen al pintar con `subagentStatusLabel`.
 export const SUBAGENT_STATUS = {
-  background: 'en segundo plano',
-  completed: 'completado',
+  background: 'background',
+  completed: 'completed',
   error: 'error',
-  stopped: 'detenido',
+  stopped: 'stopped',
 } as const;
+
+export type SubagentStatus = (typeof SUBAGENT_STATUS)[keyof typeof SUBAGENT_STATUS];
+
+const SUBAGENT_STATUS_LABEL = {
+  background: 'chat.subagent.status.background',
+  completed: 'chat.subagent.status.completed',
+  error: 'chat.subagent.status.error',
+  stopped: 'chat.subagent.status.stopped',
+} as const satisfies Record<SubagentStatus, MessageKey>;
+
+export function subagentStatusLabel(status: SubagentStatus, translate: Translate = t): string {
+  return translate(SUBAGENT_STATUS_LABEL[status]);
+}
 
 type SubagentBlock = Extract<Block, { kind: 'subagent' }>;
 
@@ -275,7 +292,7 @@ export function withSubagentUpdate(block: SubagentBlock, update: SubagentUpdate)
 }
 
 // Medido: 'completed' y 'stopped' (lo mato un interrupt). 'failed' lo usa el CLI para las tareas MCP.
-function statusFromNotification(status: string): string {
+function statusFromNotification(status: string): SubagentStatus {
   if (status === 'completed') return SUBAGENT_STATUS.completed;
   if (status === 'stopped' || status === 'killed') return SUBAGENT_STATUS.stopped;
   return SUBAGENT_STATUS.error;
@@ -422,11 +439,12 @@ export function pendingToolName(blocks: readonly Block[]): string | null {
 export function turnUsageText(usage: TurnUsage): string | null {
   const parts: string[] = [];
   pushInput(parts, usage);
-  pushCounter(parts, usage.outputTokens, 'salida');
-  pushCounter(parts, usage.thinkingTokens, 'pensamiento');
-  pushCounter(parts, usage.totalTokens, 'total');
+  pushCounter(parts, usage.outputTokens, t('chat.turnUsage.output'));
+  pushCounter(parts, usage.thinkingTokens, t('chat.turnUsage.thinking'));
+  pushCounter(parts, usage.totalTokens, t('chat.turnUsage.total'));
   if (parts.length === 0) return null;
-  return `◷ Tokens del turno${usage.estimated === true ? ' (estimados)' : ''}: ${parts.join(' · ')}`;
+  const counters = parts.join(' · ');
+  return usage.estimated === true ? t('chat.turnUsage.lineEstimated', { counters }) : t('chat.turnUsage.line', { counters });
 }
 
 // «Entrada» significa lo mismo en los tres proveedores: TODO lo que se mando al modelo, con su caché dentro. Codex y
@@ -440,26 +458,26 @@ function pushInput(parts: string[], usage: TurnUsage): void {
   const written = usage.cacheCreationTokens ?? null;
   const input = separate ? usage.inputTokens + (read ?? 0) + (written ?? 0) : usage.inputTokens;
   const detail: string[] = [];
-  pushCounter(detail, read, 'en caché');
-  if (written !== null && written > 0) pushCounter(detail, written, 'escritos en caché');
+  pushCounter(detail, read, t('chat.turnUsage.cacheRead'));
+  if (written !== null && written > 0) pushCounter(detail, written, t('chat.turnUsage.cacheWrite'));
   const text: string[] = [];
-  pushCounter(text, input, 'entrada');
+  pushCounter(text, input, t('chat.turnUsage.input'));
   parts.push(detail.length === 0 ? (text[0] ?? '') : `${text[0] ?? ''} (${detail.join(' · ')})`);
 }
 
-// Anade "<n> <etiqueta>" si el contador viene. Un contador negativo o no entero es dato corrupto de la
+// Anade "<n> <etiqueta>" si el contador viene (la etiqueta llega ya traducida). Un contador negativo o no entero es dato corrupto de la
 // frontera: se lanza con el valor recibido en vez de pintar un numero sin sentido.
 function pushCounter(parts: string[], value: number | null, label: string): void {
   if (value === null) return;
   if (!Number.isInteger(value) || value < 0) {
     throw new Error(`Contador de tokens invalido para "${label}": ${JSON.stringify(value)}`);
   }
-  parts.push(`${value.toLocaleString('es-ES')} ${label}`);
+  parts.push(`${formatInteger(value)} ${label}`);
 }
 
 // Texto del marcador de reinicio automatico (C1). El proceso del agente se cayo y Mage lo esta
 // relanzando reanudando la conversacion: hay que decirlo, o la pestana parece congelada sin motivo.
-// La espera se redondea a decimas de segundo (un "1.5 s" es mas legible que 1500 ms).
+// La espera se redondea a decimas de segundo (un "1.5 s" es mas legible que 1500 ms), con el separador del idioma (U16).
 export function restartingText(attempt: number, delayMs: number): string {
   if (!Number.isInteger(attempt) || attempt < 1) {
     throw new Error(`Numero de intento invalido para el aviso de reinicio: ${attempt}`);
@@ -467,8 +485,8 @@ export function restartingText(attempt: number, delayMs: number): string {
   if (!Number.isFinite(delayMs) || delayMs < 0) {
     throw new Error(`Espera invalida para el aviso de reinicio: ${delayMs}`);
   }
-  const seconds = (Math.round(delayMs / 100) / 10).toFixed(1);
-  return `⟳ El agente se cerró; reanudando la conversación en ${seconds} s (intento ${attempt})`;
+  const seconds = localizeDecimalPoint((Math.round(delayMs / 100) / 10).toFixed(1));
+  return t('chat.restarting', { seconds, attempt });
 }
 
 // Peticion de permiso -> vista del Inspector (prompt + tarjeta target/diff + resumen).
@@ -482,9 +500,16 @@ export function mapPermissionToView(request: PermissionRequest): PermissionView 
     toolLabel: toolName,
     rememberable: !outside,
     diff: patch?.diff ?? buildDiff(toolName, input),
-    // Fuera del proyecto o red: el motivo que da el runtime («Fuera del proyecto: C:\…»).
-    summary: outside && request.description !== null ? request.description : patch?.summary ?? buildSummary(toolName, input),
+    summary: permissionSummary(request, patch?.summary ?? buildSummary(toolName, input)),
   };
+}
+
+// Fuera del proyecto: la frase se pinta aquí, en el idioma de la interfaz, con el objetivo que manda el runtime. Red: el
+// motivo que da el runtime en `description`. Si no, el resumen de la herramienta.
+function permissionSummary(request: PermissionRequest, toolSummary: string): string {
+  if (request.outsideProject !== true) return toolSummary;
+  if (request.outsideTarget !== undefined) return t('chat.permission.outsideProject', { target: request.outsideTarget });
+  return request.description ?? toolSummary;
 }
 
 // --- Helpers internos -------------------------------------------------------------------------
@@ -502,9 +527,9 @@ function growRuns(runs: readonly TextRun[], text: string): readonly TextRun[] {
 
 
 function buildPrompt(toolName: string): string {
-  if (isWriteTool(toolName)) return 'El agente quiere escribir en el proyecto:';
-  if (toolName === 'Bash') return 'El agente quiere ejecutar un comando:';
-  return `El agente quiere usar ${toolName}:`;
+  if (isWriteTool(toolName)) return t('chat.permission.prompt.write');
+  if (toolName === 'Bash') return t('chat.permission.prompt.command');
+  return t('chat.permission.prompt.tool', { tool: toolName });
 }
 
 function buildTarget(toolName: string, input: Readonly<Record<string, unknown>>): string {

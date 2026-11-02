@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react';
+import { useEffect } from 'react';
 import { Icon } from './Icon';
 import { useWorkbenchStore } from '../workbenchStore';
 import { usePaneTabId } from '../paneContext';
@@ -8,6 +8,7 @@ import { Dropdown } from './Dropdown';
 import { PrBar } from './PrBar';
 import { worktreeOfCwd } from '@shared/worktree';
 import { reportActionError } from '../notificationStore';
+import { useT } from '../../i18n/uiLanguage';
 
 // Fila de informacion del chat, encima del input (peticion del usuario).
 //
@@ -23,7 +24,10 @@ export function ChatInfoBar(): React.JSX.Element | null {
   const tabId = usePaneTabId();
   const tab = useWorkbenchStore((s) => s.tabs.find((t) => t.id === tabId));
   const scratchDir = useWorkbenchStore((s) => s.scratchDir);
+  const scratchRoots = useWorkbenchStore((s) => s.scratchRoots);
   const ensureScratchDir = useWorkbenchStore((s) => s.ensureScratchDir);
+  // Suscribe la fila al idioma: las etiquetas salen de `chatInfoView`, que traduce al llamarse.
+  useT();
 
   useEffect(() => {
     void ensureScratchDir();
@@ -46,13 +50,8 @@ export function ChatInfoBar(): React.JSX.Element | null {
     return () => window.removeEventListener('focus', onFocus);
   }, [tabId, cwd, refreshGit, refreshPr]);
 
-  const chips = useMemo((): readonly ChatChip[] => {
-    if (tab === undefined) return [];
-    const folder = folderChip(tab.cwd, scratchDir);
-    // Sin el chip del modelo (P-026, D18): salia aqui, en el selector del input y en la barra de estado.
-    // Se queda solo en el selector, que es donde se puede cambiar.
-    return [...(folder === null ? [] : [folder]), privacyChip(tab.privacy)];
-  }, [tab, scratchDir]);
+  // Sin `useMemo`: son dos objetos pequeños y así siguen al idioma activo sin depender de él.
+  const chips = infoChips(tab, scratchRoots.length > 0 ? scratchRoots : scratchDir);
 
   // Sin pestaña no hay nada que contar, y una fila vacia solo roba alto al hilo.
   if (tab === undefined || chips.length === 0) return null;
@@ -88,6 +87,14 @@ export function ChatInfoBar(): React.JSX.Element | null {
   );
 }
 
+function infoChips(tab: { readonly cwd: string; readonly privacy: 'shared' | 'private' } | undefined, scratch: string | readonly string[] | null): readonly ChatChip[] {
+  if (tab === undefined) return [];
+  const folder = folderChip(tab.cwd, scratch);
+  // Sin el chip del modelo (P-026, D18): salia aqui, en el selector del input y en la barra de estado.
+  // Se queda solo en el selector, que es donde se puede cambiar.
+  return [...(folder === null ? [] : [folder]), privacyChip(tab.privacy)];
+}
+
 const CHIP_CLASS = 'inline-flex max-w-[280px] items-center gap-[5px] rounded-full border border-mg-border-ctrl px-[8px] py-[2px]';
 
 // Rama, cambios y «Pedir commit al agente» (P-026 3.5, D25–D27; el nombre es el de DA-1). Sin repo, sin
@@ -97,6 +104,7 @@ function GitChips({ tabId, cwd }: { readonly tabId: string; readonly cwd: string
   const turnActive = useWorkbenchStore((s) => s.tabs.some((t) => t.cwd === cwd && isTurnLive(s.statusByChat[t.id])));
   const switchGitBranch = useWorkbenchStore((s) => s.switchGitBranch);
   const insertCommitPrompt = useWorkbenchStore((s) => s.insertCommitPrompt);
+  const t = useT();
   const snapshot = view?.snapshot;
   const branch = gitChip(snapshot);
   if (view === undefined || branch === null || snapshot?.kind !== 'repo') return null;
@@ -105,7 +113,7 @@ function GitChips({ tabId, cwd }: { readonly tabId: string; readonly cwd: string
   const verdict = canSwitchBranch({ turnActive, dirty: snapshot.dirty, detached: snapshot.detached, worktree: worktree !== null });
   const onSwitch = (name: string): void => {
     if (name === snapshot.branch) return;
-    void switchGitBranch(tabId, name).catch((err: unknown) => reportActionError('No se pudo cambiar de rama', err, 'git'));
+    void switchGitBranch(tabId, name).catch((err: unknown) => reportActionError(t('chat.git.switchBranchFailed'), err, 'git'));
   };
   return (
     <>
@@ -114,13 +122,13 @@ function GitChips({ tabId, cwd }: { readonly tabId: string; readonly cwd: string
           value={snapshot.branch ?? ''}
           options={view.branches.map((name) => ({ value: name, label: name }))}
           onChange={onSwitch}
-          ariaLabel="Cambiar de rama"
+          ariaLabel={t('chat.git.switchBranchAria')}
           tip={branch.title}
           leading={<Icon name="branch" size={12} />}
           triggerClassName="max-w-[280px] self-auto text-mg-muted"
         />
       ) : (
-        <span data-tip={`${branch.title} · ${verdict.reason}`} aria-label={`Cambiar de rama: ${verdict.reason}`} aria-disabled="true" className={`${CHIP_CLASS} cursor-not-allowed`}>
+        <span data-tip={`${branch.title} · ${verdict.reason}`} aria-label={t('chat.git.switchBranchBlockedAria', { reason: verdict.reason })} aria-disabled="true" className={`${CHIP_CLASS} cursor-not-allowed`}>
           <Icon name="branch" size={12} />
           <span className="truncate">{branch.label}</span>
         </span>
@@ -136,10 +144,10 @@ function GitChips({ tabId, cwd }: { readonly tabId: string; readonly cwd: string
         <button
           onClick={() => insertCommitPrompt(tabId)}
           data-git-commit
-          data-tip="Deja en el input un prompt para que el agente haga el commit; lo envías tú"
+          data-tip={t('chat.git.askCommitTip')}
           className={`${CHIP_CLASS} text-mg-body2 transition-colors duration-150 ease-out hover:bg-mg-hover hover:text-mg-body`}
         >
-          Pedir commit al agente
+          {t('chat.git.askCommit')}
         </button>
       )}
       {view.error !== null && (
@@ -157,20 +165,21 @@ function WorktreeToggle({ tabId, isWorktree, canBranch }: { readonly tabId: stri
   const tab = useWorkbenchStore((s) => s.tabs.find((t) => t.id === tabId));
   const started = useWorkbenchStore((s) => s.sessionIdByChat[tabId] !== undefined || (s.blocksByChat[tabId]?.length ?? 0) > 0);
   const setWorktreeOff = useWorkbenchStore((s) => s.setWorktreeOff);
+  const t = useT();
   if (tab === undefined) return null;
   if (isWorktree) {
-    const tip = 'Trabaja en su propio worktree (.claude/worktrees). Al cerrar la pestaña se borra si no tiene cambios; con cambios se conserva y vuelve al reabrir la conversación. La rama se queda.';
+    const tip = t('chat.worktree.chipTip');
     return (
       <span data-worktree-chip data-tip={tip} aria-label={tip} className={`${CHIP_CLASS} cursor-help`}>
-        worktree
+        {t('chat.worktree.chip')}
       </span>
     );
   }
   if (started || tab.resumeSessionId !== undefined || !canBranch) return null;
   return (
-    <label data-worktree-toggle data-tip="Trabajar en una copia aparte del repo, en la rama claude/<tema del primer mensaje>, sin tocar esta carpeta" className={`${CHIP_CLASS} cursor-pointer`}>
+    <label data-worktree-toggle data-tip={t('chat.worktree.toggleTip')} className={`${CHIP_CLASS} cursor-pointer`}>
       <input type="checkbox" checked={tab.worktreeOff !== true} onChange={(e) => setWorktreeOff(tabId, !e.target.checked)} />
-      Worktree
+      {t('chat.worktree.toggle')}
     </label>
   );
 }

@@ -1,12 +1,15 @@
 import { randomUUID } from 'node:crypto';
 import type { ImageAttachment } from '@shared/ipc';
-import { base64ByteLength, validateAttachment } from '@shared/attachments';
+import { base64ByteLength, ERROR_FORMAT_LOCALE, validateAttachment } from '@shared/attachments';
 import { buildUserContentBlocks } from '@shared/imageRefs';
 import type { MageEvent, PermissionDecision } from '@shared/events';
+import { localized } from '@shared/i18n/localizedText';
+import { isUuid } from '@shared/sessionInput';
 import { parseElicitationRequest, type ElicitationAnswer } from '@shared/elicitation';
 import { resolveClaudeBinary } from '../os/claudeBinaryResolver';
 import { normalizeRawEvent } from './normalize';
-import type { AuthModel, LaunchParams, PermissionRef, ProviderAdapter, SpawnPlan } from './providerAdapter';
+import { CommandLifecycleSchema } from './schemas';
+import type { AuthModel, LaunchParams, PermissionRef, ProviderAdapter, SpawnPlan, SteerEncoding } from './providerAdapter';
 import { scrubAgentEnv } from '../os/agentEnv';
 import { claudeSharedLaunch, refuseClaudeMcpConfig, type ClaudeMcpConfigWriter } from '../config/mcpProviderTranslate';
 
@@ -78,9 +81,12 @@ export class ClaudeAdapter implements ProviderAdapter {
     private readonly resolveBinary: () => string = resolveClaudeBinary,
     private readonly writeMcpConfig: ClaudeMcpConfigWriter = refuseClaudeMcpConfig,
     private readonly resolveApiKey: (accountDir: string) => string | null = () => null,
+    // D5 (#53): ajuste del usuario «Permitir Artifact», apagado por defecto. Se lee en cada arranque.
+    private readonly artifactEnabled: () => boolean = () => false,
   ) {}
 
   buildSpawnPlan(params: LaunchParams): SpawnPlan {
+    this.steers.clear(); // proceso nuevo: los directos del anterior murieron con el
     // Reanudar (`--resume <id>`) continua la conversacion existente y sigue escribiendo en su misma
     // transcripcion; arrancar (`--session-id <id>`) crea una nueva con el id dado. Mutuamente
     // excluyentes: el CLI no acepta ambos.
@@ -108,8 +114,12 @@ export class ClaudeAdapter implements ProviderAdapter {
     // escrita alli: la clave de una cuenta de Claude por API se pone DESPUES del saneado y solo en el hijo
     // de esa cuenta; las de suscripcion no reciben ninguna.
     const apiKey = this.resolveApiKey(params.accountDir);
+    // #53/D5 (medido en 2.1.309, spike/f1-artifact.mjs): en modo SDK el CLI apaga Artifact salvo con
+    // CLAUDE_CODE_ARTIFACT verdadero. Publica en claude.ai, así que es opción del usuario, apagada por
+    // defecto; el valor va DESPUÉS del env heredado: manda el ajuste, no lo que el usuario exportara.
     const env: NodeJS.ProcessEnv = {
       ...scrubAgentEnv(process.env),
+      CLAUDE_CODE_ARTIFACT: this.artifactEnabled() ? '1' : '0',
       CLAUDE_CONFIG_DIR: params.accountDir,
       ...shared.env,
       ...(apiKey === null ? {} : { [ANTHROPIC_API_KEY_ENV]: apiKey }),
@@ -128,12 +138,21 @@ export class ClaudeAdapter implements ProviderAdapter {
     // Segunda validacion, la de verdad: esto es lo que llega por IPC. `data.length` NO es el tamaño
     // (base64 abulta ~4/3), asi que se decodifica el tamaño real.
     for (const attachment of attachments) {
-      validateAttachment({ mediaType: attachment.mediaType, byteLength: base64ByteLength(attachment.data) });
+      validateAttachment({ mediaType: attachment.mediaType, byteLength: base64ByteLength(attachment.data) }, ERROR_FORMAT_LOCALE);
     }
     // Cada imagen justo detras de su token `[Imagen N]` (P-026 3.2; MEDIDO en S3: el CLI respeta el orden
     // intercalado). Nunca un bloque de texto vacio: un mensaje de SOLO imagen tambien vale.
     const content = buildUserContentBlocks(text, attachments);
     return { type: 'user', message: { role: 'user', content }, parent_tool_use_id: null };
+  }
+
+  // Directo (F4.1): el mensaje normal con `uuid`; el CLI lo mete en el turno en marcha o abre uno propio,
+  // y lo cuenta con `command_lifecycle` (ver normalizeSteer).
+  encodeSteer(messageId: string, text: string, attachments: readonly ImageAttachment[] = []): SteerEncoding {
+    if (!isUuid(messageId)) throw new Error(`El id de un directo de Claude tiene que ser un UUID: ${JSON.stringify(messageId)}`);
+    const message = this.encodeUserMessage(text, attachments) as Record<string, unknown>;
+    this.steers.set(messageId, false);
+    return { kind: 'write', payload: { ...message, uuid: messageId } };
   }
 
   // `updatedInput` REESCRIBE el input de la tool: por ahi viajan las respuestas de AskUserQuestion
@@ -215,6 +234,8 @@ export class ClaudeAdapter implements ProviderAdapter {
 
   // Cancelaciones que hay que mandar al CLI por una elicitation que Mage no sabe mostrar.
   private outgoing: unknown[] = [];
+  // Directos en vuelo: uuid -> true si ya paso un `result` desde que se escribio (su `started` abrira turno propio).
+  private readonly steers = new Map<string, boolean>();
 
   takeOutgoing(): readonly unknown[] {
     const taken = this.outgoing;
@@ -231,7 +252,40 @@ export class ClaudeAdapter implements ProviderAdapter {
 
   normalize(raw: unknown): MageEvent[] {
     const elicitation = this.normalizeElicitation(raw);
-    return elicitation ?? normalizeRawEvent(raw);
+    if (elicitation !== null) return elicitation;
+    const type = (raw as { type?: unknown } | null)?.type;
+    if (type === 'command_lifecycle') return this.normalizeSteer(raw);
+    const events = normalizeRawEvent(raw);
+    return type === 'result' ? [...events, ...this.afterResult()] : events;
+  }
+
+  // `started` antes de un `result` = absorbido en el turno; despues = turno propio. `cancelled` = no llego.
+  // Un uuid que no es un directo nuestro, o una linea malformada, no emite nada.
+  private normalizeSteer(raw: unknown): MageEvent[] {
+    const parsed = CommandLifecycleSchema.safeParse(raw);
+    if (!parsed.success) return [];
+    const { command_uuid: messageId, state } = parsed.data;
+    const afterResult = this.steers.get(messageId);
+    if (afterResult === undefined || (state !== 'started' && state !== 'cancelled')) return [];
+    this.steers.delete(messageId);
+    if (state === 'cancelled') return [{ kind: 'steer_result', messageId, outcome: 'failed' }];
+    return [{ kind: 'steer_result', messageId, outcome: afterResult ? 'new_turn' : 'active_turn' }];
+  }
+
+  // Cierre de turno: los directos sin `started` pasan a «tras result». Salvaguarda: uno que ya lo estaba
+  // y ve OTRO `result` sin haber recibido `started` se da por turno propio (inferido), para que la cola
+  // nunca se quede esperando una señal que no llega.
+  private afterResult(): MageEvent[] {
+    const inferred: MageEvent[] = [];
+    for (const [messageId, afterResult] of this.steers) {
+      if (!afterResult) {
+        this.steers.set(messageId, true);
+        continue;
+      }
+      this.steers.delete(messageId);
+      inferred.push({ kind: 'steer_result', messageId, outcome: 'new_turn', inferred: true });
+    }
+    return inferred;
   }
 
   private normalizeElicitation(raw: unknown): MageEvent[] | null {
@@ -243,7 +297,7 @@ export class ClaudeAdapter implements ProviderAdapter {
     });
     if (parsed !== null) return [{ kind: 'elicitation_request', request: parsed }];
     this.outgoing.push({ type: 'control_response', response: { subtype: 'success', request_id: requestId, response: { action: 'cancel' } } });
-    return [{ kind: 'notice', text: `El servidor ${server} pidió un formulario MCP que Mage no puede mostrar; se canceló.` }];
+    return [{ kind: 'notice', localized: localized('events.mcp.elicitationUnsupported', { server }) }];
   }
 }
 

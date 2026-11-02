@@ -1,12 +1,13 @@
-import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { z } from 'zod';
 import type { ProviderProbeParams, ProviderProbeResult } from '@shared/ipc';
 import type { ProviderModel } from '@shared/providers';
+import { localized, UserFacingError, wrapError, type LocalizedText } from '@shared/i18n/localizedText';
 import { AGY_PROVIDER_ID, BUILT_IN_PROVIDERS, CODEX_PROVIDER_ID, modelsUrl } from '@shared/providers';
 import { resolveClaudeBinary } from '../os/claudeBinaryResolver';
 import { findAgyBinary } from '../os/agyBinaryResolver';
 import { findCodexBinary } from '../os/codexBinaryResolver';
+import { isCommandOnPath } from '../os/commandOnPath';
 import { execCapturingStdout } from '../os/execCapture';
 
 // Sondeo de un proveedor para la seccion "Proveedores y modelos" de Configuracion (D2): a donde apunta
@@ -31,13 +32,9 @@ import { execCapturingStdout } from '../os/execCapture';
 // token OAuth de la cuenta SOLO para la cabecera Authorization y jamas lo cachea ni lo loguea.
 //
 // Esa llamada NO se hace: seria el Bearer FUERA del camino del CLI. El catalogo sale del propio CLI, por `initialize` (P-026 2.4).
-export const CLAUDE_NO_CATALOG_REASON =
-  'Todavía no se ha sondeado el catálogo de esta cuenta (se pide al CLI al arrancar Mage): mientras, ' +
-  'la lista de reserva de Mage. Puedes escribir cualquier id de modelo a mano.';
+export const CLAUDE_NO_CATALOG_REASON = localized('settings.providers.claudeCatalogPending');
 
-export const CODEX_CATALOG_REASON =
-  'El catálogo lo pide cada conversación a codex (`model/list` de `codex app-server`, ' +
-  'responde sin cuenta). Mientras, la lista de reserva de Mage.';
+export const CODEX_CATALOG_REASON = localized('settings.providers.codexCatalogPending');
 
 // Tiempos: un sondeo es interactivo, no puede colgar la pantalla de Configuracion.
 const CLI_TIMEOUT_MS = 20_000;
@@ -80,7 +77,7 @@ export async function probeProvider(
 function probeClaude(deps: ProbeDeps): ProviderProbeResult {
   const bin = deps.findClaudeBinary();
   if (bin === null) {
-    return { kind: 'cli', endpoint: null, models: null, error: 'No se encontró el binario de Claude Code. Fija MAGE_CLAUDE_BIN con su ruta.' };
+    return { kind: 'cli', endpoint: null, models: null, error: localized('settings.providers.claudeBinaryNotFound') };
   }
   const models = deps.loadClaudeModels();
   return models.length === 0
@@ -96,14 +93,14 @@ async function probeAgy(deps: ProbeDeps): Promise<ProviderProbeResult> {
       kind: 'cli',
       endpoint: null,
       models: null,
-      error: 'No se encontró el CLI de Antigravity. Instálalo y ejecuta `agy install`, o fija MAGE_AGY_BIN.',
+      error: localized('settings.providers.agyCliNotFound'),
     };
   }
   try {
     const stdout = await deps.runCli(bin, ['models']);
     return { kind: 'cli', endpoint: bin, models: parseAgyModelsOutput(stdout), error: null };
   } catch (err) {
-    return { kind: 'cli', endpoint: bin, models: null, error: `No se pudo listar: ${describe(err)}` };
+    return { kind: 'cli', endpoint: bin, models: null, error: wrapError('settings.providers.listFailed', {}, err) };
   }
 }
 
@@ -118,7 +115,7 @@ function probeCodex(deps: ProbeDeps): ProviderProbeResult {
     models: null,
     error:
       bin === null
-        ? 'No se encontró el CLI de Codex. Instálalo, o fija MAGE_CODEX_BIN con su ruta.'
+        ? localized('settings.providers.codexCliNotFound')
         : CODEX_CATALOG_REASON,
   };
 }
@@ -130,12 +127,12 @@ async function probeHttp(
   deps: ProbeDeps,
 ): Promise<ProviderProbeResult> {
   const target = resolveHttpTarget(providerId, params, deps);
-  if (typeof target === 'string') return { kind: 'http', endpoint: null, models: null, error: target };
+  if (!('baseUrl' in target)) return { kind: 'http', endpoint: null, models: null, error: target };
   try {
     const url = modelsUrl(target.baseUrl);
     return { kind: 'http', endpoint: url, models: parseOpenAiModels(await deps.fetchJson(url, target.apiKey)), error: null };
   } catch (err) {
-    return { kind: 'http', endpoint: target.baseUrl, models: null, error: `No se pudo listar: ${describe(err)}` };
+    return { kind: 'http', endpoint: target.baseUrl, models: null, error: wrapError('settings.providers.listFailed', {}, err) };
   }
 }
 
@@ -145,14 +142,14 @@ interface HttpTarget {
 }
 
 // URL y credencial con las que sondear: la URL viene en la peticion y la clave sale de la boveda (la key
-// nunca viaja por IPC). Los de serie son todos CLI y no tienen endpoint. Devuelve el MOTIVO (una cadena)
+// nunca viaja por IPC). Los de serie son todos CLI y no tienen endpoint. Devuelve el MOTIVO (un texto)
 // cuando no hay con que sondear, que es informacion para la UI y no un fallo del programa.
-function resolveHttpTarget(providerId: string, params: ProviderProbeParams, deps: ProbeDeps): HttpTarget | string {
+function resolveHttpTarget(providerId: string, params: ProviderProbeParams, deps: ProbeDeps): HttpTarget | LocalizedText {
   if (BUILT_IN_PROVIDERS.some((provider) => provider.id === providerId)) {
-    return `El proveedor ${JSON.stringify(providerId)} es nativo y no tiene endpoint HTTP`;
+    return localized('settings.providers.builtInNoEndpoint', { provider: JSON.stringify(providerId) });
   }
   const baseUrl = (params.baseUrl ?? '').trim();
-  if (baseUrl.length === 0) return `El proveedor ${JSON.stringify(providerId)} no declara URL base.`;
+  if (baseUrl.length === 0) return localized('settings.providers.baseUrlMissing', { provider: JSON.stringify(providerId) });
   return { baseUrl, apiKey: deps.readCustomApiKey(providerId).trim() };
 }
 
@@ -189,10 +186,6 @@ function preview(body: unknown): string {
   return (text ?? String(body)).slice(0, BODY_IN_ERROR_MAX);
 }
 
-function describe(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
-
 // Los reales, salvo el catalogo de Claude: vive en un store de main que este modulo no conoce.
 export function defaultProbeDeps(
   loadClaudeModels: () => readonly ProviderModel[],
@@ -216,13 +209,7 @@ export function defaultProbeDeps(
 function findInstalledClaudeBinary(): string | null {
   const resolved = resolveClaudeBinary();
   if (existsSync(resolved)) return resolved;
-  return commandInPath(resolved) ? resolved : null;
-}
-
-function commandInPath(bin: string): boolean {
-  const finder = process.platform === 'win32' ? 'where' : 'which';
-  const result = spawnSync(finder, [bin], { stdio: 'ignore', windowsHide: true, timeout: 5_000 });
-  return result.status === 0;
+  return isCommandOnPath(resolved) ? resolved : null;
 }
 
 // Ejecuta un CLI y devuelve su stdout. Lanza (con el mensaje del propio proceso) si falla o si tarda
@@ -238,7 +225,7 @@ async function fetchJsonBody(url: string, apiKey: string): Promise<unknown> {
   if (apiKey.length > 0) headers['Authorization'] = `Bearer ${apiKey}`;
   const response = await fetch(url, { method: 'GET', headers, signal: AbortSignal.timeout(HTTP_TIMEOUT_MS) });
   if (!response.ok) {
-    throw new Error(`${url} respondió ${response.status} ${response.statusText}`);
+    throw new UserFacingError(localized('errors.engine.probeHttpStatus', { url, status: String(response.status), statusText: response.statusText }));
   }
   return await response.json();
 }

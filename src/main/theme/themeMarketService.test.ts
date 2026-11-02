@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { localized } from '@shared/i18n/localizedText';
 import { ThemeMarketService } from './themeMarketService';
 
 // Respuesta minima de busqueda de Open VSX (solo lo que el servicio necesita).
@@ -75,5 +76,6 @@ describe('ThemeMarketService.search', () => {
     const service = new ThemeMarketService({ fetch: fetchMock as unknown as typeof globalThis.fetch });
 
     await expect(service.search('dracula')).rejects.toThrow(/503/);
+    await expect(service.search('dracula')).rejects.toThrow(expect.objectContaining({ localized: expect.objectContaining({ key: 'errors.theme.openVsxStatus', values: expect.objectContaining({ status: '503' }) }) }));
   });
 });

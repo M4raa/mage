@@ -1,4 +1,5 @@
 import type { McpServerStatus } from '@shared/events';
+import { localized, localizedFromError, renderForLog, UserFacingError, wrapError, type LocalizedText } from '@shared/i18n/localizedText';
 import type { ResolvedMcpServer } from '../../config/mcpResolved';
 import type { RuntimeTool } from '../tools/types';
 import { mcpRuntimeTool, type McpCallResult, type McpToolInfo } from './mcpTools';
@@ -38,7 +39,7 @@ export class McpNeedsAuth extends Error {
 export interface McpPoolDeps {
   readonly connect: McpConnector;
   // Avisos para el hilo de la conversacion (un servidor que pide login, uno que falla).
-  readonly notify: (text: string) => void;
+  readonly notify: (text: LocalizedText) => void;
   // Un remoto pide iniciar sesion: la sesion lo dice con un aviso que lleva el boton (D3 de P-033).
   readonly loginRequired: (server: string, loginId: string) => void;
   // Se llama cuando cambian las herramientas o el estado (para volver a anunciar `session_init`).
@@ -57,6 +58,7 @@ export class McpPool {
   private readonly entries = new Map<string, Entry>();
   private readonly controller = new AbortController();
   private closed = false;
+  private readonly closing = new WeakMap<McpClientLike, Promise<void>>();
 
   constructor(
     private readonly servers: readonly ResolvedMcpServer[],
@@ -82,7 +84,7 @@ export class McpPool {
     if (this.closed) return;
     this.closed = true;
     this.controller.abort();
-    await Promise.all([...this.entries.values()].map((entry) => closeQuietly(entry.client, this.deps.log)));
+    await Promise.all([...this.entries.values()].map((entry) => this.closeClient(entry.client)));
   }
 
   private async connectOne(server: ResolvedMcpServer): Promise<void> {
@@ -90,23 +92,34 @@ export class McpPool {
     const connecting = this.deps.connect(server, this.controller.signal);
     try {
       const client = await withTimeout(connecting, this.deps.connectTimeoutMs ?? MCP_CONNECT_TIMEOUT_MS, server.name);
-      if (this.closed) return void (await closeQuietly(client, this.deps.log));
-      const { tools } = await client.listTools();
+      if (this.closed) return void (await this.closeClient(client));
       entry.client = client;
+      const { tools } = await client.listTools();
+      if (this.closed) return;
       entry.tools = tools.map((tool) => mcpRuntimeTool(server.name, tool, (name, args, signal) => this.call(client, name, args, signal)));
       entry.status = 'connected';
     } catch (err) {
-      if (err instanceof McpNeedsAuth) return this.awaitAuth(server, entry, err);
+      if (err instanceof McpNeedsAuth && !this.closed) return this.awaitAuth(server, entry, err);
       entry.status = 'failed';
       // M1: si venció el tope (o falló `listTools`), el cliente que llegue se cierra: si no, su proceso
       // vivía hasta salir de Mage. Si `connect` fue lo que falló, no hay cliente y ya se ha avisado.
-      void connecting.then((late) => closeQuietly(late, this.deps.log), () => undefined);
-      const message = err instanceof Error ? err.message : String(err);
-      this.deps.log?.('warn', 'Servidor MCP del runtime sin conectar', { server: server.name, message });
-      this.deps.notify(`El servidor MCP ${server.name} no se pudo conectar: ${message}`);
+      void connecting.then((late) => this.closeClient(late), () => undefined);
+      if (this.closed) return;
+      this.deps.log?.('warn', 'Servidor MCP del runtime sin conectar', { server: server.name, message: renderForLog(localizedFromError(err)) });
+      this.deps.notify(wrapError('events.mcp.connectFailed', { server: server.name }, err));
     } finally {
       if (!this.closed) this.deps.onChange();
     }
+  }
+
+  private closeClient(client: McpClientLike | null): Promise<void> {
+    if (client === null) return Promise.resolve();
+    let pending = this.closing.get(client);
+    if (pending === undefined) {
+      pending = closeQuietly(client, this.deps.log);
+      this.closing.set(client, pending);
+    }
+    return pending;
   }
 
   // OAuth en segundo plano: el usuario abre el login desde el aviso; al volver se reintenta la conexion.
@@ -117,7 +130,7 @@ export class McpPool {
       () => (this.closed ? undefined : this.connectOne(server)),
       (err: unknown) => {
         entry.status = 'failed';
-        this.deps.notify(`No se completó el inicio de sesión de ${server.name}: ${err instanceof Error ? err.message : String(err)}`);
+        this.deps.notify(wrapError('events.mcp.loginIncomplete', { server: server.name }, err));
         if (!this.closed) this.deps.onChange();
       },
     );
@@ -131,7 +144,7 @@ export class McpPool {
 function withTimeout<T>(promise: Promise<T>, ms: number, server: string): Promise<T> {
   let timer: NodeJS.Timeout | null = null;
   const timeout = new Promise<never>((_resolve, reject) => {
-    timer = setTimeout(() => reject(new Error(`no contestó en ${Math.round(ms / 1000)} s (${server})`)), ms);
+    timer = setTimeout(() => reject(new UserFacingError(localized('errors.runtime.mcpNoResponse', { seconds: String(Math.round(ms / 1000)), server }))), ms);
   });
   return Promise.race([promise, timeout]).finally(() => {
     if (timer !== null) clearTimeout(timer);

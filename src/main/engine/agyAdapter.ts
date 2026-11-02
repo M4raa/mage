@@ -1,6 +1,7 @@
 import { homedir } from 'node:os';
 import type { ImageAttachment } from '@shared/ipc';
 import type { MageEvent, PermissionDecision } from '@shared/events';
+import { localized, UserFacingError } from '@shared/i18n/localizedText';
 import { AGY_EFFORT_LEVELS, AGY_PERMISSION_MODES } from '@shared/providers';
 import { resolveAgyBinary } from '../os/agyBinaryResolver';
 import { AgyTurnTracker } from './agyNormalize';
@@ -156,7 +157,7 @@ export class AgyAdapter implements ProviderAdapter {
   // Cuenta de suscripcion con perfil PROPIO: su login vive en un fichero de ese perfil (ver AGY_FILE_TOKEN_ENV).
   private subscriptionLaunch(profileDir: string, params: LaunchParams, env: NodeJS.ProcessEnv): ChildLaunch {
     if (this.deps.hasSubscriptionLogin?.(profileDir) === false) {
-      throw new Error(`La cuenta de agy (${profileDir}) no tiene la sesión iniciada: inicia sesión desde «Añadir cuenta» antes de abrir una conversación`);
+      throw new UserFacingError(localized('errors.engine.agyLoginMissing', { profileDir }));
     }
     this.deps.prepareProfile?.(profileDir, params.cwd, 'subscription');
     return { env: { ...env, USERPROFILE: profileDir, HOME: homedir(), ...AGY_FILE_TOKEN_ENV }, profileDir };

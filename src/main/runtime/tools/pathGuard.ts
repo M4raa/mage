@@ -1,5 +1,6 @@
-import { realpathSync } from 'node:fs';
+import { lstatSync, realpathSync } from 'node:fs';
 import { posix, win32 } from 'node:path';
+import { resolvedPath } from '../../os/resolvedPath';
 
 // Resuelve una ruta que manda el modelo contra el cwd y decide si cae dentro del cwd (o de un
 // directorio añadido) o fuera. El modulo de rutas se elige por plataforma, asi se prueba win32 desde
@@ -16,6 +17,9 @@ export interface PathScope {
   readonly platform: string;
   // Ruta real de algo que existe; null si no existe. Ausente = clasificacion lexica.
   readonly realpath?: (path: string) => string | null;
+  // Expansión de palabras del shell; inyectable para denegaciones/errores de enumeración.
+  readonly readDirectory?: (path: string) => readonly string[];
+  readonly enumerationPlatform?: string;
 }
 
 export interface ResolvedPath {
@@ -59,7 +63,11 @@ export function nodeRealpath(path: string): string | null {
     return realpathSync.native(path);
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
-    if (code === 'ENOENT' || code === 'ENOTDIR') return null;
+    if (code === 'ENOTDIR') return null;
+    if (code === 'ENOENT') {
+      // Un enlace colgante conserva un destino real, aunque no exista todavía.
+      return lstatSync(path, { throwIfNoEntry: false })?.isSymbolicLink() ? resolvedPath(path) : null;
+    }
     throw err;
   }
 }

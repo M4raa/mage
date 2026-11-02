@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { UserFacingError } from './i18n/localizedText';
 import { buildAnswers, buildUpdatedInput, parseAskUserQuestion } from './askUserQuestion';
 
 // El input LITERAL medido en el control_request del CLI (PLAN-NO-TOCAR.md §2.3). Un fixture inventado
@@ -98,8 +99,21 @@ describe('buildAnswers / buildUpdatedInput', () => {
   });
 
   it('buildAnswers_respuestaVacia_lanzaConElValorRecibido', () => {
-    expect(() => buildAnswers(questions, [[]])).toThrow(/respuesta vacia.*color rojo o el azul/i);
-    expect(() => buildAnswers(questions, [['   ']])).toThrow(/respuesta vacia/i);
+    expect(() => buildAnswers(questions, [[]])).toThrow(/respuesta vacía.*color rojo o el azul/i);
+    expect(() => buildAnswers(questions, [['   ']])).toThrow(/respuesta vacía/i);
+  });
+
+  it('buildAnswers_respuestaVacia_lanzaUserFacingErrorConClaveYPregunta', () => {
+    const thrown = (() => {
+      try {
+        return buildAnswers(questions, [[]]);
+      } catch (err) {
+        return err;
+      }
+    })();
+
+    expect(thrown).toBeInstanceOf(UserFacingError);
+    expect((thrown as UserFacingError).localized).toEqual({ key: 'errors.question.emptyAnswer', values: { question: JSON.stringify('¿Prefieres el color rojo o el azul?') } });
   });
 
   it('buildAnswers_numeroDeRespuestasDistinto_lanza', () => {

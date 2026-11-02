@@ -13,6 +13,9 @@ import {
 } from '../../theme';
 import { useWorkbenchStore } from '../../workbenchStore';
 import { Icon } from '../Icon';
+import { useT } from '../../../i18n/uiLanguage';
+import { formatInteger } from '../../../i18n/format';
+import { describeError } from '../../describeError';
 
 // Tienda de temas de VS Code (Open VSX): busqueda, exploracion por paginas, PREVISUALIZAR (aplica en
 // vivo sin guardar) y DESCARGAR (guarda y activa), mas la gestion de los ya descargados.
@@ -78,6 +81,7 @@ export function ThemeMarketSection({
   const [visibleCount, setVisibleCount] = useState(INITIAL_VISIBLE_CARDS);
   const thumbnails = useThemeThumbnails();
   const preview = useThemePreview(backgroundOpacity);
+  const t = useT();
 
   // Busqueda con debounce; se cancela el resultado si el query cambia (guard `active`). Con menos de
   // THEME_SEARCH_MIN_CHARS se busca en VACIO -> el servicio devuelve los mas descargados. Una query ya
@@ -104,7 +108,7 @@ export function ThemeMarketSection({
           if (active) setResults(items);
         })
         .catch((err: unknown) => {
-          if (active) setError(err instanceof Error ? err.message : String(err));
+          if (active) setError(err instanceof Error ? describeError(err) : String(err));
         })
         .finally(() => {
           if (active) setLoading(false);
@@ -121,23 +125,23 @@ export function ThemeMarketSection({
   // Se caen de la lista en cuanto se sabe que no traen tema de color.
   const listed = results.filter((item) => !thumbnails.notAThemeIds.includes(ovsxId(item)));
   const shown = listed.slice(0, visibleCount);
-  const installedIds = new Set(importedThemes.map((t) => t.id));
+  const installedIds = new Set(importedThemes.map((theme) => theme.id));
   // Se liga a una constante para no perder el estrechamiento dentro de los callbacks del aviso.
   const previewed = preview.previewed;
 
   return (
     <div className="flex flex-col gap-[8px]">
-      <span className="text-[10.5px] font-bold tracking-[.06em] text-mg-ter">TEMAS DE VS CODE (OPEN VSX)</span>
+      <span className="text-[10.5px] font-bold tracking-[.06em] text-mg-ter">{t('settings.themeMarket.heading')}</span>
       <p className="text-[10.5px] leading-[1.5] text-mg-sec">
-        Temas de color de VS Code adaptados a la interfaz de Mage (aproximación: no es un editor de
-        código, así que solo se usan los colores de UI). <b className="font-semibold text-mg-body2">Previsualizar</b> lo
-        aplica al momento sin guardar nada; <b className="font-semibold text-mg-body2">Descargar</b> lo guarda y lo deja activo.
+        {t('settings.themeMarket.intro.start')} <b className="font-semibold text-mg-body2">{t('settings.themeMarket.preview')}</b>{' '}
+        {t('settings.themeMarket.intro.middle')} <b className="font-semibold text-mg-body2">{t('settings.themeMarket.download')}</b>{' '}
+        {t('settings.themeMarket.intro.end')}
       </p>
       <input
         value={query}
         onChange={(e) => setQuery(e.target.value)}
-        placeholder="Buscar temas: dracula, solarized, github…"
-        aria-label="Buscar temas en Open VSX"
+        placeholder={t('settings.themeMarket.searchPlaceholder')}
+        aria-label={t('settings.themeMarket.searchAria')}
         className="w-full rounded-[7px] border border-mg-border-ctrl bg-mg-window p-[7px_9px] text-[11.5px] text-mg-body outline-none placeholder:text-mg-muted"
       />
 
@@ -153,12 +157,12 @@ export function ThemeMarketSection({
       )}
 
       {error !== null && <div role="alert" className="text-[10.5px] text-mg-danger">{error}</div>}
-      {loading && <div className="text-[10.5px] text-mg-muted">Buscando…</div>}
+      {loading && <div className="text-[10.5px] text-mg-muted">{t('settings.themeMarket.searching')}</div>}
       {!loading && listed.length === 0 && error === null && (
-        <div className="text-[10.5px] text-mg-muted">Sin resultados.</div>
+        <div className="text-[10.5px] text-mg-muted">{t('settings.themeMarket.noResults')}</div>
       )}
       {query.trim().length < THEME_SEARCH_MIN_CHARS && listed.length > 0 && (
-        <span className="text-[10px] text-mg-ter">Más descargados</span>
+        <span className="text-[10px] text-mg-ter">{t('settings.themeMarket.mostDownloaded')}</span>
       )}
 
       {shown.length > 0 && (
@@ -187,13 +191,13 @@ export function ThemeMarketSection({
           onClick={() => setVisibleCount((n) => n + VISIBLE_CARDS_STEP)}
           className="self-center rounded-[7px] border border-mg-border-emph px-[14px] py-[6px] text-[11px] text-mg-body2 hover:bg-mg-hover"
         >
-          Mostrar más ({listed.length - visibleCount} restantes)
+          {t('settings.themeMarket.showMore', { count: listed.length - visibleCount })}
         </button>
       )}
 
       {importedThemes.length > 0 && (
         <div className="mt-[6px] flex flex-col gap-[8px]">
-          <span className="text-[10px] font-bold tracking-[.06em] text-mg-ter">DESCARGADOS</span>
+          <span className="text-[10px] font-bold tracking-[.06em] text-mg-ter">{t('settings.themeMarket.downloadedHeading')}</span>
           {/* Los descargados YA traen sus `tokens`, asi que su miniatura es exactamente la misma que la
               de la tienda y no cuesta ni una descarga. */}
           <ul className="grid gap-[12px] [grid-template-columns:repeat(auto-fill,minmax(300px,1fr))]">
@@ -286,23 +290,24 @@ function PreviewBanner({
   readonly onKeep: () => void;
   readonly onDiscard: () => void;
 }): React.JSX.Element {
+  const t = useT();
   return (
     <div className="flex items-center gap-[8px] rounded-[7px] border border-mg-focus bg-mg-sel p-[7px_9px]">
       <Icon name="wand" size={13} className="text-mg-focus" />
       <span className="min-w-0 flex-1 truncate text-[11px] text-mg-body">
-        Previsualizando <b className="font-semibold">{theme.label}</b> — todavía no se ha guardado.
+        {t('settings.themeMarket.banner.start')} <b className="font-semibold">{theme.label}</b> {t('settings.themeMarket.banner.end')}
       </span>
       <button
         onClick={onKeep}
         className="shrink-0 rounded-[6px] border border-mg-focus px-[9px] py-[3px] text-[10.5px] text-mg-text hover:bg-mg-hover"
       >
-        Descargar
+        {t('settings.themeMarket.download')}
       </button>
       <button
         onClick={onDiscard}
         className="shrink-0 rounded-[6px] border border-mg-border-ctrl px-[9px] py-[3px] text-[10.5px] text-mg-body2 hover:bg-mg-hover"
       >
-        Descartar
+        {t('settings.themeMarket.discard')}
       </button>
     </div>
   );
@@ -441,6 +446,7 @@ function ThemeCard({
   // previa" es mas honesto que fingir una miniatura que no se parece al tema (Ronda 3, item 3). Se
   // sigue pudiendo aplicar: lo que falta es el preview, no el tema.
   const reliable = thumbnail !== null && hasReliableThumbnail(thumbnail.tokens);
+  const t = useT();
   return (
     <li
       ref={(el) => observe(el, item)}
@@ -452,13 +458,13 @@ function ThemeCard({
         <ThemePreviewMock theme={thumbnail} />
       ) : (
         <div className="flex h-[176px] items-center justify-center rounded-[6px] border border-dashed border-mg-border-subtle text-[10px] text-mg-muted">
-          {thumbnail === null && !failed ? 'cargando…' : failed ? 'no se pudo leer este tema' : 'sin vista previa'}
+          {t(thumbnailStateKey(thumbnail !== null, failed))}
         </div>
       )}
       <span className="min-w-0">
         <span className="block truncate text-[11.5px] text-mg-body">{item.displayName}</span>
         <span className="block truncate text-[9.5px] text-mg-ter">
-          {item.downloadCount.toLocaleString('es-ES')} descargas
+          {t('settings.themeMarket.downloads', { downloads: formatInteger(item.downloadCount) })}
           {thumbnail !== null && ` · ${thumbnail.type}`}
         </span>
       </span>
@@ -466,23 +472,30 @@ function ThemeCard({
         <button
           onClick={() => thumbnail !== null && onPreview(thumbnail)}
           disabled={thumbnail === null}
-          data-tip="Aplica el tema al momento; no se guarda hasta que lo descargues"
+          data-tip={t('settings.themeMarket.previewTip')}
           className="flex-1 rounded-[6px] border border-mg-border-ctrl px-[8px] py-[4px] text-[10.5px] text-mg-body2 hover:bg-mg-hover disabled:cursor-default disabled:text-mg-disabled disabled:hover:bg-transparent"
         >
-          Previsualizar
+          {t('settings.themeMarket.preview')}
         </button>
         <button
           onClick={() => thumbnail !== null && onDownload(thumbnail)}
           disabled={thumbnail === null}
-          data-tip={installed ? 'Ya descargado: vuelve a activarlo' : 'Guarda el tema y lo deja activo'}
+          data-tip={installed ? t('settings.themeMarket.redownloadTip') : t('settings.themeMarket.downloadTip')}
           className="flex flex-1 items-center justify-center gap-[4px] rounded-[6px] border border-mg-focus px-[8px] py-[4px] text-[10.5px] text-mg-text hover:bg-mg-hover disabled:cursor-default disabled:border-mg-border-ctrl disabled:text-mg-disabled disabled:hover:bg-transparent"
         >
           {installed && <Icon name="check" size={11} className="text-mg-focus" />}
-          {installed ? 'Descargado' : 'Descargar'}
+          {installed ? t('settings.themeMarket.downloaded') : t('settings.themeMarket.download')}
         </button>
       </div>
     </li>
   );
+}
+
+// Texto del hueco sin miniatura: cargando, ilegible o sin colores suficientes para una vista previa fiable.
+function thumbnailStateKey(loaded: boolean, failed: boolean): 'settings.themeMarket.thumbnail.loading' | 'settings.themeMarket.thumbnail.failed' | 'settings.themeMarket.thumbnail.none' {
+  if (failed) return 'settings.themeMarket.thumbnail.failed';
+  if (!loaded) return 'settings.themeMarket.thumbnail.loading';
+  return 'settings.themeMarket.thumbnail.none';
 }
 
 // Tarjeta de un tema YA DESCARGADO. Misma vista previa que la tienda —los tokens ya estan guardados,
@@ -503,6 +516,7 @@ function ImportedThemeCard({
 }): React.JSX.Element {
   const [confirming, setConfirming] = useState(false);
   const reliable = hasReliableThumbnail(theme.tokens);
+  const t = useT();
   return (
     <li
       className={`flex flex-col gap-[7px] rounded-[8px] border p-[8px] ${
@@ -512,14 +526,14 @@ function ImportedThemeCard({
       <button
         onClick={onToggle}
         aria-pressed={active}
-        aria-label={active ? `Dejar de usar el tema ${theme.label}` : `Usar el tema ${theme.label}`}
+        aria-label={active ? t('settings.themeMarket.stopUsingAria', { theme: theme.label }) : t('settings.themeMarket.useAria', { theme: theme.label })}
         className="flex flex-col gap-[6px] text-left"
       >
         {reliable ? (
           <ThemePreviewMock theme={theme} />
         ) : (
           <div className="flex h-[176px] items-center justify-center rounded-[6px] border border-dashed border-mg-border-subtle text-[10px] text-mg-muted">
-            declara muy pocos colores
+            {t('settings.themeMarket.fewColors')}
           </div>
         )}
         <span className="flex min-w-0 items-center gap-[6px]">
@@ -530,28 +544,28 @@ function ImportedThemeCard({
       </button>
       {confirming ? (
         <div className="flex items-center gap-[6px] text-[10.5px]">
-          <span className="min-w-0 flex-1 truncate text-mg-sec">¿Eliminar?</span>
+          <span className="min-w-0 flex-1 truncate text-mg-sec">{t('settings.themeMarket.confirmRemove')}</span>
           <button
             onClick={onRemove}
             className="rounded-[6px] border border-mg-danger px-[8px] py-[3px] text-mg-danger hover:bg-mg-hover"
           >
-            Eliminar
+            {t('settings.themeMarket.remove')}
           </button>
           <button
             onClick={() => setConfirming(false)}
             className="rounded-[6px] border border-mg-border-ctrl px-[8px] py-[3px] text-mg-body2 hover:bg-mg-hover"
           >
-            Cancelar
+            {t('settings.themeMarket.cancel')}
           </button>
         </div>
       ) : (
         <button
           onClick={() => setConfirming(true)}
-          aria-label={`Eliminar el tema ${theme.label}`}
+          aria-label={t('settings.themeMarket.removeAria', { theme: theme.label })}
           className="flex items-center gap-[5px] self-start rounded-[6px] px-[6px] py-[3px] text-[10.5px] text-mg-muted transition-colors duration-150 ease-out hover:bg-mg-hover hover:text-mg-danger"
         >
           <Icon name="trash" size={12} />
-          Eliminar
+          {t('settings.themeMarket.remove')}
         </button>
       )}
     </li>

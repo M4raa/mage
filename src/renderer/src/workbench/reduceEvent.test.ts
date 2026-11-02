@@ -1,5 +1,7 @@
+import { SUBAGENT_STATUS } from './engineBlocks';
 import { describe, expect, it } from 'vitest';
 import type { ContextUsage, MageEvent } from '@shared/events';
+import { foreignText, localized } from '@shared/i18n/localizedText';
 import { reduceEvent, type WorkbenchState } from './workbenchStore';
 import type { Block, Tab } from './types';
 
@@ -60,8 +62,20 @@ describe('reduceEvent — streaming y bloques', () => {
     expect(patch).toEqual({});
   });
 
+  it('reduceEvent_errorConLocalized_bloqueErrorEnCastellano', () => {
+    const patch = reduceEvent(state(), TAB, { kind: 'error', localized: localized('events.codex.threadWithoutId') });
+
+    expect(blocksOf(patch).at(-1)).toMatchObject({ kind: 'error', message: 'codex abrió el hilo sin id' });
+  });
+
+  it('reduceEvent_noticeConLocalized_lineaDeSistemaEnCastellano', () => {
+    const patch = reduceEvent(state(), TAB, { kind: 'notice', localized: localized('events.runtime.nothingToCompact') });
+
+    expect(blocksOf(patch).at(-1)).toMatchObject({ kind: 'system', text: 'No hay nada que compactar todavía.' });
+  });
+
   it('reduceEvent_error_pintaBloqueDeErrorYDejaLaPestanaEnError', () => {
-    const patch = reduceEvent(state(), TAB, { kind: 'error', message: 'boom' });
+    const patch = reduceEvent(state(), TAB, { kind: 'error', localized: foreignText('boom') });
 
     expect(blocksOf(patch).at(-1)).toMatchObject({ kind: 'error', message: 'boom' });
     expect(patch.statusByChat?.[TAB]).toBe('error');
@@ -110,9 +124,17 @@ describe('reduceEvent — permisos', () => {
     expect(second.blocksByChat).toBeUndefined();
   });
 
-  it('reduceEvent_permissionRequestDeToolConReglaSiempre_niTarjetaNiEstadoDePermiso', () => {
-    // "Permitir siempre Write aqui": NADA en el estado — ni tarjeta, ni cola, ni panel, ni "necesita
-    // permiso". La respuesta la manda `handleEvent` con el requestId del propio evento.
+  it('reduceEvent_permissionAutoAnsweredPorRegla_niTarjetaNiEstadoDePermiso', () => {
+    // F2.4: «Permitir siempre Write aqui» lo aplica main; aqui solo llega su respuesta, que no deja rastro.
+    const current = state({ tabs: [tab({ alwaysAllowTools: ['Write'] })] });
+
+    const patch = reduceEvent(current, TAB, { kind: 'permission_auto_answered', requestId: 'r9', toolName: 'Write', behavior: 'allow', blocked: null });
+
+    expect(patch).toEqual({});
+  });
+
+  it('reduceEvent_permissionRequestConRegla_yaNoSeAutoPermiteAqui', () => {
+    // Si una peticion llega al renderer es porque main decidio preguntar: lleva tarjeta aunque la pestaña tenga regla.
     const current = state({ tabs: [tab({ alwaysAllowTools: ['Write'] })] });
 
     const patch = reduceEvent(current, TAB, {
@@ -120,7 +142,7 @@ describe('reduceEvent — permisos', () => {
       request: { requestId: 'r9', toolUseId: 't9', toolName: 'Write', input: {}, description: null, requiresUserInteraction: false, displayName: null },
     });
 
-    expect(patch).toEqual({});
+    expect(patch.pendingByChat?.[TAB]).toHaveLength(1);
   });
 
   it('reduceEvent_permissionCancelled_cierraLaTarjetaDePermisoComoCancelada', () => {
@@ -131,6 +153,33 @@ describe('reduceEvent — permisos', () => {
     const patch = reduceEvent(current, TAB, { kind: 'permission_cancelled', requestId: 'r1' });
 
     expect(blocksOf(patch)).toMatchObject([{ kind: 'permission', state: 'cancelled' }]);
+  });
+
+  // F2.3: main anuncia la respuesta que aceptó, también si la dio otro cliente.
+  it('reduceEvent_permissionResolvedPorOtroCliente_cierraLaTarjetaYQuitaElPendiente', () => {
+    const conTarjeta = reduceEvent(state(), TAB, { kind: 'permission_request', request: request('r1') });
+    const current = state({ blocksByChat: { [TAB]: blocksOf(conTarjeta) }, pendingByChat: conTarjeta.pendingByChat ?? {}, statusByChat: { [TAB]: 'needs_permission' } });
+
+    const patch = reduceEvent(current, TAB, { kind: 'permission_resolved', requestId: 'r1', behavior: 'deny' });
+
+    expect(blocksOf(patch)).toMatchObject([{ kind: 'permission', state: 'denied' }]);
+    expect(patch.pendingByChat?.[TAB]).toEqual([]);
+    expect(patch.statusByChat?.[TAB]).toBe('streaming');
+  });
+
+  it('reduceEvent_permissionResolvedYaContestadaAqui_noCambiaNada', () => {
+    const current = state({ blocksByChat: { [TAB]: [{ kind: 'permission', id: 'b', requestId: 'r1', toolName: 'Write', prompt: '', target: '', summary: '', rememberable: true, state: 'allowed' } as Block] } });
+
+    expect(reduceEvent(current, TAB, { kind: 'permission_resolved', requestId: 'r1', behavior: 'allow' })).toEqual({});
+  });
+
+  it('reduceEvent_permissionResolvedDeUnaPregunta_laCierraConSusRespuestas', () => {
+    const question = { kind: 'question', id: 'q', requestId: 'r1', questions: [], state: 'pending' } as unknown as Block;
+    const current = state({ blocksByChat: { [TAB]: [question] }, pendingByChat: { [TAB]: [pendingEntry('r1')] } });
+
+    const patch = reduceEvent(current, TAB, { kind: 'permission_resolved', requestId: 'r1', behavior: 'allow', answers: { '¿Color?': 'Azul' } });
+
+    expect(blocksOf(patch)).toMatchObject([{ kind: 'question', state: 'answered', answers: { '¿Color?': 'Azul' } }]);
   });
 
   it('reduceEvent_permissionCancelledDelPermisoEnCurso_limpiaElDialogo', () => {
@@ -275,7 +324,7 @@ describe('reduceEvent — reinicio automatico (C1)', () => {
 
     const marker = blocksOf(patch).at(-1);
     expect(marker).toMatchObject({ kind: 'system' });
-    expect(marker?.kind === 'system' && marker.text).toContain('2.0 s');
+    expect(marker?.kind === 'system' && marker.text).toContain('2,0 s');
     expect(marker?.kind === 'system' && marker.text).toContain('intento 2');
     // Ni 'error' ni 'streaming': el motor esta reanudando por su cuenta.
     expect(patch.statusByChat?.[TAB]).toBe('idle');
@@ -487,12 +536,12 @@ describe('reduceEvent — catalogo de modelos', () => {
 });
 
 describe('reduceEvent — subagentes en segundo plano (P-028 37a/37c)', () => {
-  const sub: Block = { kind: 'subagent', id: 's', toolUseId: 'tu1', agentType: 'general-purpose', description: 'A', agentId: 'ab25', status: 'completado', elapsedMs: 10, tokens: 5, toolUses: 0, model: null };
+  const sub: Block = { kind: 'subagent', id: 's', toolUseId: 'tu1', agentType: 'general-purpose', description: 'A', agentId: 'ab25', status: SUBAGENT_STATUS.completed, elapsedMs: 10, tokens: 5, toolUses: 0, model: null };
 
   it('reduceEvent_subagentUpdate_actualizaElBloque', () => {
     const patch = reduceEvent(state({ blocksByChat: { [TAB]: [sub] } }), TAB, { kind: 'subagent_update', toolUseId: 'tu1', status: 'running', tokens: 99, toolUses: 1, durationMs: 3 });
 
-    expect(blocksOf(patch)[0]).toMatchObject({ status: 'en segundo plano', tokens: 99, toolUses: 1 });
+    expect(blocksOf(patch)[0]).toMatchObject({ status: SUBAGENT_STATUS.background, tokens: 99, toolUses: 1 });
   });
 
   it('reduceEvent_subagentOcultoQueSeReanuda_vuelveAlDock', () => {

@@ -1,12 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
+import { join, resolve } from 'node:path';
 import { EffectiveSettingsService } from './effectiveSettingsService';
 
-const CWD = 'C:\\proj';
-const ACCOUNT = 'C:\\Users\\u\\.claude';
-const ACCOUNT_FILE = 'C:\\Users\\u\\.claude\\settings.json';
-const PROJECT_FILE = 'C:\\proj\\.claude\\settings.json';
-const LOCAL_FILE = 'C:\\proj\\.claude\\settings.local.json';
-const COMMON_FILE = 'C:\\userData\\shared-config\\settings-common.json';
+const CWD = resolve('fixture-project');
+const ACCOUNT = resolve('fixture-user', '.claude');
+const ACCOUNT_FILE = join(ACCOUNT, 'settings.json');
+const PROJECT_FILE = join(CWD, '.claude', 'settings.json');
+const LOCAL_FILE = join(CWD, '.claude', 'settings.local.json');
+const COMMON_FILE = resolve('fixture-userData', 'shared-config', 'settings-common.json');
 
 const hookFile = (event: string, command: string): string =>
   JSON.stringify({ hooks: { [event]: [{ matcher: 'Bash', hooks: [{ type: 'command', command }] }] } });

@@ -1,9 +1,12 @@
 import { resolve } from 'node:path';
 import { defineConfig } from 'vitest/config';
+import { lingui } from '@lingui/vite-plugin';
 
 // Tests de logica de negocio en Node (parser, resolver, defaults, adapter). El alias @shared
 // replica el del build para que los tests importen el contrato compartido.
 export default defineConfig({
+  // Los catálogos de i18n se importan compilados (`?lingui`), igual que en el build.
+  plugins: [lingui()],
   // @testing son fixtures COMPARTIDAS entre tests (7.11). No entra en ningun bundle: nada de
   // produccion la importa, y por eso no esta en electron.vite.config.ts.
   resolve: { alias: { '@shared': resolve('src/shared'), '@testing': resolve('src/testing') } },

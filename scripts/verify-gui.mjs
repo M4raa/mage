@@ -7,7 +7,9 @@
 //   1. `--user-data-dir` AISLADO: la verificacion no toca el %APPDATA%/Mage real del usuario. De paso
 //      arranca sin pestañas persistidas, asi que ninguna comprobacion spawnea el CLI salvo la ULTIMA (el
 //      turno minimo de verdad, con su guarda de uso), y no
-//      hereda el "residuo de maquina" (panels-layout.json viejo) que ya disfrazo un bug dos veces.
+//      hereda el "residuo de maquina" (panels-layout.json viejo) que ya disfrazo un bug dos veces. Los locks de
+//      conversacion (#55) tampoco van a la carpeta real compartida (`%LOCALAPPDATA%/mage/locks`): cada tanda fija la
+//      suya con MAGE_TEST_CONVERSATION_LOCKS_DIR, que solo lee una app sin empaquetar.
 //   2. Un ARTEFACTO revisable por ejecucion (`session.md` + capturas), en vez de un parrafo de ROADMAP
 //      que nadie puede volver a comprobar. Idea tomada de playwright-core/src/tools/backend/sessionLog.
 //   3. Terminacion del ARBOL de procesos al acabar (electron-vite -> electron -> renderers/GPU): con
@@ -24,6 +26,7 @@
 //   pnpm verify:gui --trace-layout # guarda geometria/animaciones antes y despues de cada caso
 //   pnpm verify:gui --inspect-running # lee el estado de la tanda en curso, sin otra instancia
 //   pnpm verify:gui --initial-close-prompt --only=2.7: # prueba el aislamiento con la pregunta de cierre
+//   pnpm verify:gui --dump-dom-text=f.jsonl # SOLO F3 (T4): texto del DOM al final de cada caso, para compare-dom-text
 //
 // UN TURNO REAL POR EJECUCION: la ultima comprobacion envia un mensaje minimo a Claude (modelo y
 // esfuerzo mas bajos). Antes mira el uso de la cuenta; con mas del 70 % gastado avisa y deja elegir
@@ -33,11 +36,13 @@
 // humano sigue siendo del usuario (ver .claude/skills/verificacion-gui).
 
 import { spawn, spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
-import { AGY_FIXTURE_ID, AGY_FIXTURE_TITLE, CODEX_FIXTURE_ID, CODEX_FIXTURE_TITLE, seedProviderHistory } from './lib/providerHistoryFixtures.mjs';
+import { AGY_FIXTURE_ID, AGY_FIXTURE_TITLE, CODEX_FIXTURE_ID, CODEX_FIXTURE_TITLE, CODEX_REVERT_DROPPED, CODEX_REVERT_FIXTURE_ID, CODEX_REVERT_FIXTURE_TITLE, CODEX_REVERT_KEPT, seedProviderHistory } from './lib/providerHistoryFixtures.mjs';
 import readline from 'node:readline/promises';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
@@ -45,12 +50,31 @@ import { FAKE_SCENARIOS, startFakeOpenAiServer } from './fake-openai-server.mjs'
 import { decideTurnTarget, parseTurnAnswer, spentPercent } from './lib/usageGuard.mjs';
 import { withGuiState } from './lib/guiState.mjs';
 import { closeCheckOverlays, runGuiCheck } from './lib/guiCheckState.mjs';
+import { runPerfBaseline } from './lib/perfBaseline.mjs';
+import { runMageBench } from './lib/benchMage.mjs';
+import { appendDomText } from './lib/domTextDump.mjs';
+import { redactUserData } from './lib/redactUserData.mjs';
+import { cleanupProfile, credentialDigest } from '../spike/f0-profile-cleanup.mjs';
+import { claudeUsage, codexRateLimits, guardedUsage, prepareCodexHome } from '../spike/bench/headless.mjs';
 
 const repoRoot = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 // Version de Mage que corre (la de package.json): la usan el seed de ajustes y las notas de version.
 const APP_VERSION = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf-8')).version;
 // El paquete `electron` exporta la RUTA a su binario cuando se carga desde node (no desde Electron).
 const requireFromHere = createRequire(import.meta.url);
+
+// `--prod`: arranca el build de produccion (`electron-vite preview`). Sin puente de desarrollo, asi que
+// solo vale para medir (--perf-baseline), nunca para las comprobaciones.
+const PROD_BUILD = process.argv.includes('--prod');
+if (PROD_BUILD && !process.argv.includes('--perf-baseline')) throw new Error('--prod solo se admite con --perf-baseline');
+
+// H3 de la devolución 17: la carpeta de locks de conversación (#55) de las instancias que lanza esta tanda. La real del
+// usuario la comparte con su Mage instalado y el harness no la toca. Se borra al salir.
+const HARNESS_LOCKS_ENV = 'MAGE_TEST_CONVERSATION_LOCKS_DIR';
+const HARNESS_LOCKS_DIR = path.join(os.tmpdir(), `mage-verify-locks-${process.pid}`);
+// En el entorno del propio harness, para que la herede CUALQUIER instancia que lance (G5, bench, segunda instancia…).
+process.env[HARNESS_LOCKS_ENV] = HARNESS_LOCKS_DIR;
+process.on('exit', () => fs.rmSync(HARNESS_LOCKS_DIR, { recursive: true, force: true }));
 
 const CONFIG = {
   port: 9222,
@@ -161,7 +185,7 @@ const CHECKS = [
     // suya (arrastrable, con el boton "Editar" que despliega el Menu nativo) y que hereda los tokens
     // del tema en vez de un color fijo del SO.
     name: 'Cabecera propia: existe, es arrastrable y hereda el tema',
-    async run(page) {
+    async run(page, { runDir }) {
       // Ancla: el icono de la app. El boton "Preferencias" que se usaba antes ya no existe — su accion
       // vive en el menu de tres puntos (donde el catalogo la generaba desde el principio) y en el propio
       // icono, que desde 2026-09-07 es quien abre los ajustes.
@@ -182,6 +206,10 @@ const CHECKS = [
           // siendo el del menu — era el unico que tenia la cabecera.
           menuPlegado: document.querySelectorAll('[data-app-menu-toggle="true"]').length,
           nombreDelMenu: document.querySelector('[data-app-menu-toggle="true"]')?.getAttribute('aria-label') ?? null,
+          development: window.mage.isDevelopment,
+          marcaDevVisible: [...bar.querySelectorAll('span')].some((node) =>
+            node.textContent === 'Mage (dev)' && node.getBoundingClientRect().width > 0),
+          regionMenu: getComputedStyle(document.querySelector('[data-app-menu-toggle="true"]')).getPropertyValue('-webkit-app-region').trim(),
         };
       });
       const ok =
@@ -190,8 +218,10 @@ const CHECKS = [
         measured.height === 32 &&
         measured.appRegion === 'drag' &&
         measured.menuPlegado === 1 &&
+        measured.development === true && measured.marcaDevVisible && measured.regionMenu === 'no-drag' &&
         measured.nombreDelMenu === 'Menú de la aplicación' &&
         measured.background !== 'rgba(0, 0, 0, 0)';
+      await page.locator('[data-titlebar]').screenshot({ path: path.join(runDir, 'barra-titulo-dev.png') });
       return { ok, detail: `cabecera=${JSON.stringify(measured)}` };
     },
   },
@@ -549,6 +579,110 @@ const CHECKS = [
       const dark = await page.evaluate(() => document.documentElement.dataset.theme);
       const ok = light === 'light' && dark === 'dark';
       return { ok, detail: `inicial=${before} tras Claro=${light} tras Oscuro=${dark}` };
+    },
+  },
+  {
+    // F3.1: elegir «English» repinta la interfaz SIN recargar (una marca en `window` sobrevive), se guarda en disco y
+    // sigue en inglés tras recargar el renderer. Al final se deja el ajuste como estaba (ausente o el que hubiera).
+    name: 'F3.1: cambiar el idioma repinta sin reiniciar y persiste tras recargar',
+    state: { settingsSection: 'Apariencia' },
+    async run(page, { userDataDir }) {
+      await openSection(page, /Apariencia/);
+      const label = page.locator('[data-setting="ui-language"] > span').first();
+      const previo = await page.evaluate(() => {
+        window.__mageF31Marca = true;
+        return window.__mageDev.store.getState().settings.uiLanguage ?? null;
+      });
+      const inicial = await label.textContent();
+      await page.locator('[data-setting="ui-language"] [data-language="en"]').click();
+      await page.waitForFunction(() => document.querySelector('[data-setting="ui-language"] > span')?.textContent === 'LANGUAGE', null, { timeout: CONFIG.actionTimeoutMs }).catch(() => undefined);
+      const enCaliente = await page.evaluate(() => ({
+        texto: document.querySelector('[data-setting="ui-language"] > span')?.textContent ?? null,
+        lang: document.documentElement.lang,
+        sinRecargar: window.__mageF31Marca === true,
+      }));
+      const file = path.join(userDataDir, 'app-settings.json');
+      const enDisco = await waitForFile(file, (text) => JSON.parse(text).uiLanguage === 'en');
+      await page.reload();
+      await page.locator('[role="toolbar"]').first().waitFor({ state: 'attached', timeout: CONFIG.bootTimeoutMs });
+      const trasRecargar = await page.evaluate(async () => ({ lang: document.documentElement.lang, main: (await window.mage.getUiLanguage()).language }));
+      await page.evaluate(async (pref) => {
+        const store = window.__mageDev.store;
+        const { uiLanguage: _actual, ...resto } = store.getState().settings;
+        const settings = pref === null ? resto : { ...resto, uiLanguage: pref };
+        store.setState({ settings });
+        await window.mage.saveSettings(settings);
+      }, previo);
+      await page.waitForFunction((pref) => document.documentElement.lang === (pref ?? document.documentElement.lang), previo, { timeout: CONFIG.actionTimeoutMs }).catch(() => undefined);
+      const restaurado = await page.evaluate(async () => (await window.mage.getUiLanguage()).language);
+      const ok =
+        enCaliente.texto === 'LANGUAGE' && enCaliente.lang === 'en' && enCaliente.sinRecargar &&
+        inicial !== 'LANGUAGE' && enDisco !== null && trasRecargar.lang === 'en' && trasRecargar.main === 'en';
+      return { ok, detail: JSON.stringify({ inicial, enCaliente, guardadoEnDisco: enDisco !== null, trasRecargar, previo, restaurado }) };
+    },
+  },
+  {
+    // F3.3/F3.4 (carril A): con la interfaz en inglés, ni el hilo (avisos y errores de main, que llegan con clave) ni la
+    // barra lateral ni Configuración pintan una clave del catálogo en crudo. Lo que aún no tiene traducción cae al
+    // castellano (fallbackLocales de Lingui) hasta F3.5. Al final deja el idioma como estaba.
+    name: 'F3.3: en inglés no se pinta ningún identificador de clave en crudo',
+    async run(page) {
+      const setLanguage = (pref) =>
+        page.evaluate(async (value) => {
+          const store = window.__mageDev.store;
+          const { uiLanguage: _actual, ...resto } = store.getState().settings;
+          const settings = value === null ? resto : { ...resto, uiLanguage: value };
+          store.setState({ settings });
+          await window.mage.saveSettings(settings);
+        }, pref);
+      const previo = await page.evaluate(() => window.__mageDev.store.getState().settings.uiLanguage ?? null);
+      let lang = null;
+      let eventosVisibles = false;
+      let coincidencias = [];
+      try {
+        await setLanguage('en');
+        await page.waitForFunction(() => document.documentElement.lang === 'en', null, { timeout: CONFIG.actionTimeoutMs }).catch(() => undefined);
+        lang = await page.evaluate(() => document.documentElement.lang);
+        // Autosuficiente: con `--only` no hay pestaña de una comprobacion anterior.
+        if ((await page.locator('[data-pane-tab-id]').count()) === 0) await openTemporaryConversation(page);
+        await page.evaluate(() => {
+          const dev = window.__mageDev;
+          const tabId = dev.store.getState().activeTabId;
+          const sessionId = 'verify-f33-session';
+          dev.store.setState((state) => ({ sessionIdByChat: { ...state.sessionIdByChat, [tabId]: sessionId } }));
+          const handle = (event) => dev.store.getState().handleEvent(sessionId, event);
+          handle({ kind: 'notice', localized: { key: 'events.runtime.nothingToCompact' } });
+          handle({ kind: 'error', localized: { key: 'events.cli.unparseableEvent', values: { detail: 'verify-detail' } } });
+        });
+        eventosVisibles = await page
+          .waitForFunction(() => document.body.innerText.includes('verify-detail'), null, { timeout: CONFIG.actionTimeoutMs })
+          .then(() => true, () => false);
+        // Texto visible + aria-label/title/data-tip/placeholder de cada zona.
+        const recoger = (raiz) => {
+          const attrs = ['aria-label', 'title', 'data-tip', 'placeholder'];
+          const nodos = [raiz, ...raiz.querySelectorAll('*')];
+          const valores = nodos.flatMap((n) => attrs.map((a) => n.getAttribute(a)).filter((v) => v !== null));
+          return [raiz.innerText, ...valores].join('\n');
+        };
+        const zonas = {};
+        zonas.hilo = await page.evaluate(`(${recoger})(document.querySelector('[data-pane-tab-id="' + window.__mageDev.store.getState().activeTabId + '"]'))`);
+        zonas.barraLateral = await page.evaluate(`(${recoger})(document.querySelector('[data-chat-projects]').parentElement.parentElement)`);
+        await openSettingsDialog(page);
+        // Por id (no depende del idioma): en inglés la pestaña se llama «Appearance».
+        await page.locator('#settings-tab-appearance').click();
+        await page.waitForTimeout(150);
+        zonas.configuracion = await page.evaluate(`(${recoger})(document.querySelector('${MODAL}'))`);
+        await closeDialog(page);
+        const CLAVE = /\b(?:app|chat|prompt|tabs|sidebar|settings|accounts|usage|mcp|history|notifications|dialogs|menu|tray|events|errors|host|format|a11y)\.[a-z][A-Za-z0-9]*(?:\.[A-Za-z0-9]+)+\b/g;
+        coincidencias = Object.entries(zonas)
+          .flatMap(([zona, texto]) => (texto.match(CLAVE) ?? []).map((clave) => ({ zona, clave })))
+          .slice(0, 10);
+      } finally {
+        await setLanguage(previo);
+        await page.waitForFunction((pref) => document.documentElement.lang === (pref ?? document.documentElement.lang), previo, { timeout: CONFIG.actionTimeoutMs }).catch(() => undefined);
+      }
+      const ok = lang === 'en' && coincidencias.length === 0 && eventosVisibles;
+      return { ok, detail: JSON.stringify({ lang, coincidencias, eventosVisibles }) };
     },
   },
   {
@@ -1486,6 +1620,10 @@ const CHECKS = [
     name: 'P-028 16: el estado vacio ofrece los proyectos recientes y fija la carpeta al pulsar',
     state: { tabs: 1 },
     async run(page) {
+      // La carga inicial del historial REAL (disco de la cuenta) puede aterrizar después de sembrar el del caso
+      // y pisarlo: con un historial grande ocurría siempre y la tarjeta se desmontaba bajo el clic (medido
+      // 2026-10-26, también en 5e22826). Se espera a que esa carga acabe ANTES de sembrar.
+      await page.evaluate(() => window.__mageDev.store.getState().loadConversationHistory());
       const previo = await page.evaluate(() => {
         const s = window.__mageDev.store.getState();
         return { conversationHistory: s.conversationHistory, tabs: s.tabs };
@@ -1765,6 +1903,41 @@ const CHECKS = [
     },
   },
   {
+    // F4.3: una conversación de Codex con revert (rollout original con el turno descartado y un segmento) se reabre con los
+    // turnos VIGENTES de `thread/turns/list`, servidos por el app-server falso (MAGE_CODEX_BIN, solo sin empaquetar), y
+    // migrarla a otra cuenta de Codex no se lleva el turno descartado. Otra instancia con perfil propio; sin CLI real.
+    name: 'Historial: una conversación de Codex con revert reabre y migra solo sus turnos vigentes (app-server falso)',
+    async run(page, { runDir }) {
+      if (!fs.existsSync(path.join(repoRoot, 'out', 'main', 'index.js'))) return { ok: false, detail: 'falta out/main: la otra instancia arranca del main construido' };
+      const rendererUrl = page.url().split('#')[0];
+      const { profile, fx } = seedRestartProfile();
+      let instance = null;
+      try {
+        instance = await startRestartInstance(profile, rendererUrl, { MAGE_CODEX_BIN: path.join(repoRoot, 'scripts', 'fake-codex-app-server.mjs') });
+        const reabierta = await measureProviderHistory(instance.page, { home: fx.codexHome, sessionId: CODEX_REVERT_FIXTURE_ID, title: CODEX_REVERT_FIXTURE_TITLE, provider: 'codex' });
+        const chat = await instance.page.evaluate((id) => {
+          const s = window.__mageDev.store.getState();
+          const tab = s.tabs.find((t) => t.resumeSessionId === id);
+          return JSON.stringify(s.blocksByChat[tab.id] ?? []);
+        }, CODEX_REVERT_FIXTURE_ID);
+        await instance.page.screenshot({ path: path.join(runDir, 'historial-codex-revert.png') });
+        const migrada = await instance.page.evaluate(({ from, to, id }) => window.mage.migrateConversation({
+          sourceAccountDir: from, sourceProvider: 'codex', sessionId: id, cwd: 'C:\\proyecto', privacy: 'shared', destAccountDir: to, destProvider: 'codex',
+        }), { from: fx.codexHome, to: fx.codexHome2, id: CODEX_REVERT_FIXTURE_ID });
+        const escrito = readCodexRolloutText(fx.codexHome2, migrada.sessionId);
+        const medido = {
+          reabierta: reabierta.ok, vigenteEnChat: chat.includes(CODEX_REVERT_KEPT), descartadoEnChat: chat.includes(CODEX_REVERT_DROPPED),
+          idNuevo: migrada.sessionId !== CODEX_REVERT_FIXTURE_ID, vigenteMigrado: escrito.includes(CODEX_REVERT_KEPT), descartadoMigrado: escrito.includes(CODEX_REVERT_DROPPED),
+        };
+        const ok = medido.reabierta && medido.vigenteEnChat && !medido.descartadoEnChat && medido.idNuevo && medido.vigenteMigrado && !medido.descartadoMigrado;
+        return { ok, detail: JSON.stringify({ ...medido, chat: reabierta.detail }) };
+      } finally {
+        if (instance !== null) await stopRestartInstance(instance);
+        fs.rmSync(profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 500 });
+      }
+    },
+  },
+  {
     // Migración REAL (IPC, ficheros y SQLite reales de la carpeta aislada): una conversación de agy pasa a una cuenta de
     // Codex como la MISMA conversación (su rollout nativo, con los mismos mensajes) y desaparece de agy. No se lanza
     // ningún CLI: agy se retira borrando su base, y Codex solo se escribe.
@@ -1909,7 +2082,8 @@ const CHECKS = [
       const measured = await page.locator('[data-active-panel="usage"]').evaluate((panel) => ({
         api: panel.querySelectorAll('[data-api-usage="true"]').length,
         tokens: panel.textContent?.includes('Tokens: 11') ?? false,
-        cost: panel.textContent?.includes('$0.000019') ?? false,
+        // U16: en castellano el decimal es coma
+        cost: /\$0[.,]000019/.test(panel.textContent ?? ''),
         windows: panel.textContent?.includes('Ventana de 5 h') ?? false,
       }));
       return { ok: measured.api === 1 && measured.tokens && measured.cost && !measured.windows, detail: JSON.stringify(measured) };
@@ -1944,6 +2118,37 @@ const CHECKS = [
       return { ok: measured.model === 1 && measured.effort === 1 && measured.permission === 1
         && selected.model === 'gpt-6-astra' && selected.effort === 'medium' && selected.permissionMode === ':workspace|never',
         detail: JSON.stringify({ ...measured, selected }) };
+    },
+  },
+  {
+    // Respuesta 1 de la devolución 16: una pestaña NUEVA de Codex (sin modo elegido) corre en `:read-only` y lo dice;
+    // un clic la pasa a `:workspace`. Se crea por `newTab`, el camino de todas las pestañas, con una cuenta de Codex
+    // ficticia y SIN sondeo de perfiles (verify:gui no lanza ningún CLI): la pastilla tiene que salir igual. No se
+    // envía nada, así que no hay sesión ni CLI.
+    name: 'D16: una pestaña nueva de Codex enseña «Solo lectura» y un clic la pasa a :workspace',
+    state: { tabs: 1 },
+    async run(page) {
+      const creada = await page.evaluate(async () => {
+        const store = window.__mageDev.store;
+        const codex = { ...store.getState().accounts[0], id: 'C:\\vg\\.codex-d16', alias: 'Codex D16', providerId: 'codex', provider: 'Codex', defaultModel: 'gpt-6.1-sol' };
+        store.setState((state) => ({ accounts: [...state.accounts, codex], permissionModes: { claude: null, codex: null } }));
+        const cwd = store.getState().tabs.find((tab) => tab.id === store.getState().activeTabId)?.cwd ?? '';
+        await store.getState().newTab({ accountId: codex.id, cwd, model: 'gpt-6.1-sol', provider: 'codex' });
+        const tab = store.getState().tabs.find((item) => item.id === store.getState().activeTabId);
+        return { provider: tab?.provider ?? null, modo: tab?.permissionMode ?? null };
+      });
+      const pastilla = page.locator('[data-codex-read-only="true"]');
+      await pastilla.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      const antes = { pastillas: await pastilla.count(), texto: ((await pastilla.textContent()) ?? '').trim() };
+      await pastilla.click();
+      await pastilla.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+      const despues = await page.evaluate(() => {
+        const state = window.__mageDev.store.getState();
+        return { modo: state.tabs.find((tab) => tab.id === state.activeTabId)?.permissionMode ?? null, pastillas: document.querySelectorAll('[data-codex-read-only="true"]').length };
+      });
+      const ok = creada.provider === 'codex' && creada.modo === null && antes.pastillas === 1 && antes.texto.startsWith('Solo lectura')
+        && despues.modo === ':workspace' && despues.pastillas === 0;
+      return { ok, detail: JSON.stringify({ creada, antes, despues }) };
     },
   },
   {
@@ -2087,6 +2292,194 @@ const CHECKS = [
         const tab = await page.locator('[data-mcp-tab="extensions"]').getAttribute('aria-selected');
         return { ok: tab === 'true', detail: JSON.stringify({ conservaExtensiones: tab === 'true' }) };
       } finally { await restoreSettingsPosition(page, { ownDialog, settings: previous }); }
+    },
+  },
+  {
+    // #55 (F2.8): dos perfiles AISLADOS de Mage sobre la MISMA conversación, del runtime propio (sin CLI ni cuota). La
+    // segunda instancia (otro perfil, arrancada del build en `out/`) la abre primero por su IPC real; esta la abre
+    // después en una pestaña y tiene que quedar en solo lectura (aviso, editor no editable, envío rechazado). Se mata la
+    // segunda POR SU PID: el lock queda huérfano y, en la revisión periódica (30 s), aparece «Tomar el control»; al
+    // pulsarlo esta pasa a ser la dueña. Al cerrar la pestaña, el fichero del lock desaparece.
+    name: 'F2.8: una conversación abierta en otra instancia se ve en solo lectura y, muerta esa, se puede tomar el control',
+    state: { tabs: 1 },
+    async run(page) {
+      if (!fs.existsSync(path.join(repoRoot, 'out', 'main', 'index.js'))) return { ok: false, detail: 'falta out/ (pnpm build): la segunda instancia arranca del build' };
+      const ref = { provider: 'custom:vg-lock', accountDir: '', nativeId: `vg-lock-${Date.now()}` };
+      const lockFile = conversationLockFileFor(ref);
+      const second = await startSecondInstance();
+      try {
+        const segunda = await second.page.evaluate((params) => window.mage.acquireConversationLock(params), { ...ref, tabId: 'vg-segunda' });
+        const ficheroConLaSegunda = fs.existsSync(lockFile);
+        const enLaCarpetaReal = fs.existsSync(conversationLockFileFor(ref, userConversationLocksDir()));
+        await openTemporaryConversation(page);
+        const tabId = await page.evaluate((r) => {
+          const store = window.__mageDev.store;
+          const id = store.getState().activeTabId;
+          store.setState((st) => ({ tabs: st.tabs.map((t) => (t.id === id ? { ...t, provider: r.provider, accountId: '', resumeSessionId: r.nativeId } : t)) }));
+          return id;
+        }, ref);
+        const aviso = page.locator('[data-conversation-lock="read-only"]');
+        await aviso.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const soloLectura = await page.evaluate(async (id) => {
+          const store = window.__mageDev.store;
+          const envio = await store.getState().sendMessageToTab(id, 'no debe salir').then(() => 'enviado', (err) => err.message);
+          return {
+            aviso: document.querySelector('[data-conversation-lock="read-only"]')?.textContent?.trim() ?? null,
+            tomar: [...document.querySelectorAll('button')].filter((b) => b.textContent?.trim() === 'Tomar el control').length,
+            editable: document.querySelector(`[data-pane-tab-id="${id}"] .cm-content`)?.getAttribute('contenteditable') ?? null,
+            estado: store.getState().lockByChat[id] ?? null,
+            envio,
+          };
+        }, tabId);
+        killTree(second.child);
+        const tomar = page.getByRole('button', { name: 'Tomar el control', exact: true });
+        await tomar.waitFor({ state: 'visible', timeout: 45_000 });
+        await tomar.click();
+        await aviso.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+        const duena = await page.evaluate((id) => ({
+          estado: window.__mageDev.store.getState().lockByChat[id] ?? null,
+          editable: document.querySelector(`[data-pane-tab-id="${id}"] .cm-content`)?.getAttribute('contenteditable') ?? null,
+        }), tabId);
+        await page.evaluate((id) => window.__mageDev.store.getState().closeTab(id), tabId);
+        const liberado = await waitForCondition(() => !fs.existsSync(lockFile), CONFIG.actionTimeoutMs);
+        const ok = segunda.owner === true && ficheroConLaSegunda && !enLaCarpetaReal && soloLectura.estado?.owner === false && soloLectura.estado.orphan === false
+          && soloLectura.aviso?.includes(`Abierta en otra instancia de Mage (${second.profileName})`) === true && soloLectura.tomar === 0
+          && soloLectura.editable === 'false' && soloLectura.envio.startsWith('Abierta en otra instancia de Mage')
+          && duena.estado?.owner === true && duena.editable === 'true' && liberado;
+        return { ok, detail: JSON.stringify({ segunda, ficheroConLaSegunda, enLaCarpetaReal, soloLectura, duena, liberado }) };
+      } finally {
+        killTree(second.child);
+        await second.browser.close().catch(() => undefined);
+        fs.rmSync(second.profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 500 });
+        fs.rmSync(lockFile, { force: true });
+      }
+    },
+  },
+  {
+    // Respuesta 4 de la devolución 17: si la otra instancia SOLTÓ la conversación (no murió), esta pasa a ser la dueña
+    // sin botón y la pestaña lo dice un momento («Ya puedes continuar aquí»). La revisión se hace también al recuperar
+    // el foco, así que se mide que llega MUY por debajo de la revisión periódica de 30 s.
+    name: 'D17: la otra instancia suelta la conversación y, al enfocar, esta pasa a ser la dueña con un aviso',
+    state: { tabs: 1 },
+    async run(page) {
+      if (!fs.existsSync(path.join(repoRoot, 'out', 'main', 'index.js'))) return { ok: false, detail: 'falta out/ (pnpm build): la segunda instancia arranca del build' };
+      const ref = { provider: 'custom:vg-lock', accountDir: '', nativeId: `vg-suelta-${Date.now()}` };
+      const lockFile = conversationLockFileFor(ref);
+      const second = await startSecondInstance();
+      try {
+        const params = { ...ref, tabId: 'vg-segunda' };
+        const segunda = await second.page.evaluate((p) => window.mage.acquireConversationLock(p), params);
+        await openTemporaryConversation(page);
+        const tabId = await page.evaluate((r) => {
+          const store = window.__mageDev.store;
+          const id = store.getState().activeTabId;
+          store.setState((st) => ({ tabs: st.tabs.map((t) => (t.id === id ? { ...t, provider: r.provider, accountId: '', resumeSessionId: r.nativeId } : t)) }));
+          return id;
+        }, ref);
+        await page.locator('[data-conversation-lock="read-only"]').waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        await second.page.evaluate((p) => window.mage.releaseConversationLock(p), params);
+        const soltadoEnDisco = await waitForCondition(() => !fs.existsSync(lockFile), CONFIG.actionTimeoutMs);
+        const enfocadaEn = Date.now();
+        await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+        const aviso = page.locator('[data-conversation-lock="reclaimed"]');
+        await aviso.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const msHastaDuena = Date.now() - enfocadaEn;
+        const duena = await page.evaluate((id) => ({
+          estado: window.__mageDev.store.getState().lockByChat[id] ?? null,
+          aviso: document.querySelector('[data-conversation-lock="reclaimed"]')?.textContent?.trim() ?? null,
+          soloLectura: document.querySelectorAll('[data-conversation-lock="read-only"]').length,
+          editable: document.querySelector(`[data-pane-tab-id="${id}"] .cm-content`)?.getAttribute('contenteditable') ?? null,
+        }), tabId);
+        const ficheroDeEsta = fs.existsSync(lockFile);
+        await aviso.waitFor({ state: 'detached', timeout: 15_000 });
+        await page.evaluate((id) => window.__mageDev.store.getState().closeTab(id), tabId);
+        const liberado = await waitForCondition(() => !fs.existsSync(lockFile), CONFIG.actionTimeoutMs);
+        const ok = segunda.owner === true && soltadoEnDisco && msHastaDuena < READ_ONLY_RECHECK_MS_FOR_CHECK
+          && duena.estado?.owner === true && duena.aviso?.startsWith('Ya puedes continuar aquí') === true && duena.soloLectura === 0
+          && duena.editable === 'true' && ficheroDeEsta && liberado;
+        return { ok, detail: JSON.stringify({ segunda, soltadoEnDisco, msHastaDuena, duena, ficheroDeEsta, liberado }) };
+      } finally {
+        killTree(second.child);
+        await second.browser.close().catch(() => undefined);
+        fs.rmSync(second.profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 500 });
+        fs.rmSync(lockFile, { force: true });
+      }
+    },
+  },
+  {
+    // Devolución 19 (H1): en Codex la sesión viva de Mage es un UUID propio y lo que se reanuda es el hilo. Se abre del
+    // historial una conversación de Codex (rollout sintético), se le pone una sesión viva sintética, se fuerza el guardado
+    // del workspace, se cierra Mage y se vuelve a abrir sobre el MISMO perfil: la pestaña guarda el hilo y se hidrata
+    // con sus mensajes. Otra instancia con su perfil propio (el renderer es el de la tanda); sin CLI.
+    name: 'D19: una pestaña de Codex con sesión viva guarda su hilo y, tras reiniciar Mage, se reabre con sus mensajes',
+    async run(page, { runDir }) {
+      if (!fs.existsSync(path.join(repoRoot, 'out', 'main', 'index.js'))) return { ok: false, detail: 'falta out/main: la otra instancia arranca del main construido' };
+      const rendererUrl = page.url().split('#')[0];
+      const { profile, fx } = seedRestartProfile();
+      let instance = null;
+      try {
+        instance = await startRestartInstance(profile, rendererUrl);
+        await measureProviderHistory(instance.page, { home: fx.codexHome, sessionId: CODEX_FIXTURE_ID, title: CODEX_FIXTURE_TITLE, provider: 'codex' });
+        const tabId = await instance.page.evaluate(({ id, live }) => {
+          const store = window.__mageDev.store;
+          const tab = store.getState().tabs.find((t) => t.resumeSessionId === id);
+          store.setState((s) => ({ sessionIdByChat: { ...s.sessionIdByChat, [tab.id]: live } }));
+          store.getState().setTabColor(tab.id, 3); // guardado del workspace por el camino de siempre (`schedulePersist`)
+          return tab.id;
+        }, { id: CODEX_FIXTURE_ID, live: D19_MAGE_SESSION_ID });
+        const file = path.join(profile, 'workspace-state.json');
+        const texto = await waitForFile(file, (t) => JSON.parse(t).tabs?.find((x) => x.id === tabId)?.colorIndex === 3);
+        const guardada = texto === null ? null : (JSON.parse(texto).tabs.find((x) => x.id === tabId)?.sessionId ?? null);
+        // Lo que hace un cierre normal; matar el proceso deja el lock con el pid muerto (solo lectura al reabrir).
+        await instance.page.evaluate((p) => window.mage.releaseConversationLock(p), { provider: 'codex', accountDir: fx.codexHome, nativeId: CODEX_FIXTURE_ID, tabId });
+        await stopRestartInstance(instance);
+        instance = await startRestartInstance(profile, rendererUrl);
+        await instance.page.evaluate((home) => window.__mageDev.store.getState().setActiveAccount(home), fx.codexHome);
+        await instance.page.waitForFunction((id) => (window.__mageDev.store.getState().blocksByChat[id] ?? []).length > 0, tabId, { timeout: CONFIG.actionTimeoutMs }).catch(() => undefined);
+        const restaurada = await readRestoredTab(instance.page, tabId);
+        await instance.page.screenshot({ path: path.join(runDir, 'd19-codex-restaurada.png') });
+        const ok = guardada === CODEX_FIXTURE_ID && restaurada.provider === 'codex' && restaurada.resumeSessionId === CODEX_FIXTURE_ID
+          && ['agent', 'tool', 'user'].every((k) => restaurada.tipos.includes(k)) && !restaurada.aviso;
+        return { ok, detail: JSON.stringify({ guardada, restaurada }) };
+      } finally {
+        if (instance !== null) await stopRestartInstance(instance);
+        fs.rmSync(profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 500 });
+      }
+    },
+  },
+  {
+    // Devolución 19 (H1.4): un workspace de 0.1.2 guardó el UUID de Mage, que no es de ninguna conversación de la cuenta.
+    // La pestaña lo dice, deja de reanudar ese id (el primer turno abre un hilo nuevo), el workspace deja de guardarlo y el
+    // editor sigue usable. Nada de emparejar con un rollout por heurística.
+    name: 'D19: una pestaña de Codex restaurada con el UUID de Mage avisa de que no encuentra la conversación y lo olvida',
+    async run(page, { runDir }) {
+      if (!fs.existsSync(path.join(repoRoot, 'out', 'main', 'index.js'))) return { ok: false, detail: 'falta out/main: la otra instancia arranca del main construido' };
+      const rendererUrl = page.url().split('#')[0];
+      const { profile, fx } = seedRestartProfile();
+      const tabId = 'vg-d19-huerfana';
+      const file = path.join(profile, 'workspace-state.json');
+      fs.writeFileSync(file, JSON.stringify({ version: 1, activeTabId: tabId, tabs: [{
+        id: tabId, accountId: fx.codexHome, accountAlias: 'vgfixture', cwd: 'C:\\proyecto', model: 'gpt-6-luna', provider: 'codex',
+        title: 'Huérfana', privacy: 'shared', sessionId: D19_ORPHAN_ID,
+      }] }));
+      let instance = null;
+      try {
+        instance = await startRestartInstance(profile, rendererUrl);
+        await instance.page.evaluate((home) => window.__mageDev.store.getState().setActiveAccount(home), fx.codexHome);
+        await instance.page.getByText(D19_MISSING_NOTICE, { exact: true }).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        // El aviso sale antes de que CodeMirror monte: sin esta espera, editable se leía a veces como null (carrera).
+        await instance.page.locator(`[data-pane-tab-id="${tabId}"] .cm-content`).waitFor({ state: 'attached', timeout: CONFIG.actionTimeoutMs });
+        const medido = await readRestoredTab(instance.page, tabId);
+        const editable = await instance.page.evaluate((id) => document.querySelector(`[data-pane-tab-id="${id}"] .cm-content`)?.getAttribute('contenteditable') ?? null, tabId);
+        const texto = await waitForFile(file, (t) => { const tab = JSON.parse(t).tabs?.find((x) => x.id === tabId); return tab !== undefined && tab.sessionId === undefined; });
+        await instance.page.screenshot({ path: path.join(runDir, 'd19-codex-huerfana.png') });
+        const ok = medido.existe && medido.provider === 'codex' && medido.resumeSessionId === null && medido.faltaConversacion === 'codex'
+          && medido.aviso && editable === 'true' && texto !== null;
+        return { ok, detail: JSON.stringify({ ...medido, editable, workspaceSinUuid: texto !== null }) };
+      } finally {
+        if (instance !== null) await stopRestartInstance(instance);
+        fs.rmSync(profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 500 });
+      }
     },
   },
   {
@@ -3156,11 +3549,13 @@ const CHECKS = [
   },
   {
     // Decision del usuario (2026-09-15): cerrar una conversacion con trabajo en vuelo NO lo corta — se
-    // va a segundo plano y su fila del panel de Conversaciones lo dice. Se mide en DOS tramos porque
-    // cada uno falla por su cuenta: (a) `closeTab` con estado 'streaming' NO para el CLI y apunta la
-    // sesion; (b) con la sesion ya en 'done', la fila del historial pinta la pastilla REVISAR. La
-    // sesion es FALSA (un id inventado, nunca se spawnea el CLI) y el estado previo se restaura.
-    name: 'Segundo plano: cerrar con trabajo en vuelo no corta, y la fila queda pendiente de revisar',
+    // va a segundo plano y su fila del panel de Conversaciones lo dice. Desde F2.4 quien decide si se va a
+    // segundo plano es MAIN (`closeSession`), y eso lo mide de punta a punta «F2.4: segundo plano en main» con
+    // una sesion real del runtime propio. Aqui queda la parte del renderer: con la sesion apuntada en segundo
+    // plano (como la deja `closeTab` cuando main dice `background`), la pestaña se ha ido y la fila del
+    // historial pinta la pastilla REVISAR al terminar. La sesion es FALSA (un id inventado, nunca se spawnea
+    // el CLI) y el estado previo se restaura.
+    name: 'Segundo plano: la conversacion cerrada con trabajo en vuelo queda en su fila, pendiente de revisar',
     async run(page) {
       const originalState = await page.evaluate(() => {
         const s = window.__mageDev.store.getState();
@@ -3179,11 +3574,15 @@ const CHECKS = [
         const store = window.__mageDev.store;
         const tabId = store.getState().activeTabId;
         const { cwd, title, privacy } = store.getState().tabs.find((t) => t.id === tabId);
-        store.setState({
-          sessionIdByChat: { ...store.getState().sessionIdByChat, [tabId]: 'vg-fondo' },
-          statusByChat: { ...store.getState().statusByChat, [tabId]: 'streaming' },
-        });
+        // Sin sesion en el store, `closeTab` no llama a main; la fila de segundo plano es la que apunta cuando
+        // main contesta `background: true`.
         await store.getState().closeTab(tabId);
+        store.setState({
+          backgroundSessions: {
+            ...store.getState().backgroundSessions,
+            'vg-fondo': { sessionId: 'vg-fondo', conversationId: 'vg-fondo', title, accountId: store.getState().activeAccountId, state: 'working', sinceMs: Date.now() },
+          },
+        });
         const entry = store.getState().backgroundSessions['vg-fondo'];
         return { estado: entry?.state ?? null, cwd, title, privacy, sigueAbierta: store.getState().tabs.some((t) => t.id === tabId) };
       });
@@ -4313,14 +4712,14 @@ const CHECKS = [
     },
   },
   {
-    // 0.1.1 R2, punto 30: con un turno en marcha la cola es de Mage. Se encola por la ACCION del store
-    // (nunca Enter con texto), y el `result` se inyecta por `handleEvent` con una sesion de mentira; el
-    // envio que sale de la cola se intercepta sustituyendo `sendMessageToTab`, asi no arranca ningun CLI.
-    name: 'R2 30: cola de Mage: «En cola» encima del input, sin burbuja ni reloj nuevo, y sale de uno en uno',
+    // 0.1.1 R2, punto 30 (F2.2: la cola es de main y el renderer la PINTA). Aqui solo la interfaz: la cola
+    // llega como la manda main (`queue_changed`) a una sesion de mentira, sin turno ni proceso. Quitar,
+    // editar y que salga de uno en uno se miden de punta a punta en «F2.2: la cola vive en main».
+    name: 'R2 30: cola de Mage: «En cola» encima del input, sin burbuja ni reloj nuevo, y desaparece al vaciarse',
     async run(page) {
       const previo = await captureTurnState(page);
       await openTemporaryConversation(page);
-      const antes = await page.evaluate(async () => {
+      const antes = await page.evaluate(() => {
         const dev = window.__mageDev;
         const tabId = dev.store.getState().activeTabId;
         const previos = { sessionIdByChat: dev.store.getState().sessionIdByChat, turnStartByChat: dev.store.getState().turnStartByChat };
@@ -4329,9 +4728,8 @@ const CHECKS = [
           statusByChat: { ...s.statusByChat, [tabId]: 'streaming' },
           turnStartByChat: { ...s.turnStartByChat, [tabId]: 1234 },
         }));
-        await dev.store.getState().sendMessageToTab(tabId, 'primero en cola');
-        await dev.store.getState().sendMessageToTab(tabId, 'segundo en cola');
-        await dev.store.getState().sendMessageToTab(tabId, 'tercero en cola');
+        const queue = ['primero', 'segundo', 'tercero'].map((t, i) => ({ id: `vq${i}`, text: `${t} en cola`, attachments: [] }));
+        dev.store.getState().handleEvent('verify-queue-session', { kind: 'queue_changed', queue });
         return { tabId, previos };
       });
       await page.locator('[data-queued-messages]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
@@ -4350,42 +4748,101 @@ const CHECKS = [
           y: [dock?.getBoundingClientRect().top, dock?.getBoundingClientRect().bottom, input?.getBoundingClientRect().top, document.querySelectorAll('[data-prompt-editor="true"]').length],
         };
       }, antes.tabId);
-      // Quitar el tercero y editar el segundo (vuelve al input).
-      await page.locator('[data-queued-message]').nth(2).locator('[data-queued-remove]').click();
-      await page.locator('[data-queued-message]').nth(1).locator('[data-queued-edit]').click();
-      await page.waitForTimeout(CONFIG.settleMs);
-      const trasEditar = await page.evaluate((tabId) => ({
-        filas: document.querySelectorAll('[data-queued-message]').length,
-        borrador: window.__mageDev.store.getState().draftByChat[tabId]?.text ?? null,
-      }), antes.tabId);
-      // Fin del turno: sale SOLO el primero.
-      const enviados = await page.evaluate((tabId) => {
-        const dev = window.__mageDev;
-        const original = dev.store.getState().sendMessageToTab;
-        const llamadas = [];
-        dev.store.setState({ sendMessageToTab: async (id, text) => { llamadas.push([id === tabId, text]); } });
-        dev.store.getState().handleEvent('verify-queue-session', { kind: 'result', result: { isError: false, subtype: 'success', numTurns: 1 } });
-        dev.store.setState({ sendMessageToTab: original });
-        return { llamadas, cola: dev.store.getState().queuedByChat[tabId]?.length ?? 0 };
-      }, antes.tabId);
+      await page.evaluate(() => window.__mageDev.store.getState().handleEvent('verify-queue-session', { kind: 'queue_changed', queue: [] }));
       await page.locator('[data-queued-messages]').first().waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
-      await page.evaluate(({ tabId, previos }) => {
-        const dev = window.__mageDev;
-        dev.store.getState().setDraft(tabId, null);
-        dev.store.setState(previos);
-      }, antes);
+      await page.evaluate(({ previos }) => window.__mageDev.store.setState(previos), antes);
       await restoreTurnState(page, previo);
       const ok =
         encolado.filas.length === 3 &&
         encolado.filas[0]?.startsWith('primero en cola') === true &&
         encolado.burbujas === 0 &&
         encolado.reloj === 1234 &&
-        encolado.encimaDelInput &&
-        trasEditar.filas === 1 &&
-        trasEditar.borrador === 'segundo en cola' &&
-        JSON.stringify(enviados.llamadas) === JSON.stringify([[true, 'primero en cola']]) &&
-        enviados.cola === 0;
-      return { ok, detail: `encolado=${JSON.stringify(encolado)} layoutEvidence=${JSON.stringify(layoutEvidence)} trasEditar=${JSON.stringify(trasEditar)} enviados=${JSON.stringify(enviados)}` };
+        encolado.encimaDelInput;
+      return { ok, detail: `encolado=${JSON.stringify(encolado)} layoutEvidence=${JSON.stringify(layoutEvidence)}` };
+    },
+  },
+  {
+    // Carril G (F4.1, G-U1): con un turno en marcha, «Parar» y el botón dividido «A la cola ▾ Enviar ahora»; «Enviar
+    // ahora» se desactiva con su motivo (borrador vacío, agy, turno de revisión) y sin turno vuelve el ⏎. Solo
+    // interfaz, con una sesión de mentira: no envía nada ni pulsa Enter. El atajo Ctrl/Cmd+Enter lo prueban los tests
+    // del resolver (resolver.test.ts); aquí se mide que el menú enseña el atajo efectivo.
+    name: 'G F4.1: botón dividido «A la cola ▾ Enviar ahora» con turno en marcha, desactivado con su motivo, y ⏎ sin turno',
+    async run(page) {
+      const previo = await captureTurnState(page);
+      let abierto = null;
+      try {
+        await openTemporaryConversation(page);
+        abierto = await page.evaluate(() => {
+          const dev = window.__mageDev;
+          const s = dev.store.getState();
+          const tabId = s.activeTabId;
+          const previos = { sessionIdByChat: s.sessionIdByChat, statusByChat: s.statusByChat, notSteerableByChat: s.notSteerableByChat, tabs: s.tabs };
+          dev.store.setState((st) => ({
+            sessionIdByChat: { ...st.sessionIdByChat, [tabId]: 'verify-steer-session' },
+            statusByChat: { ...st.statusByChat, [tabId]: 'streaming' },
+            tabs: st.tabs.map((t) => (t.id === tabId ? { ...t, provider: 'claude' } : t)),
+          }));
+          return { tabId, previos };
+        });
+        const { tabId } = abierto;
+        const setProvider = (provider) => page.evaluate(({ id, p }) => window.__mageDev.store.setState((st) => ({ tabs: st.tabs.map((t) => (t.id === id ? { ...t, provider: p } : t)) })), { id: tabId, p: provider });
+        const measureNow = () => page.evaluate(() => {
+          const el = document.querySelector('[data-send-now]');
+          return { desactivado: el.disabled, tip: el.getAttribute('data-tip'), atajo: el.textContent };
+        });
+        // Abre el menú, mide «Enviar ahora» y lo cierra con Escape (foco en el menú).
+        const openMeasureClose = async () => {
+          await page.locator('[data-send-menu]').click();
+          await page.locator('[data-send-now]').waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+          const medido = await measureNow();
+          await page.keyboard.press('Escape');
+          await page.locator('[data-send-now]').waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+          const status = await page.evaluate((id) => window.__mageDev.store.getState().statusByChat[id], tabId);
+          return { ...medido, seguiaEnMarcha: status === 'streaming' };
+        };
+        await page.locator('[data-send-split]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const inicial = await page.evaluate(() => {
+          const withLabel = (label) => [...document.querySelectorAll('[aria-label]')].filter((n) => n.getAttribute('aria-label') === label).length;
+          const queue = document.querySelector('[data-send-queue]');
+          return { parar: withLabel('Parar la acción en curso'), cola: queue?.textContent, colaDesactivado: queue?.disabled, retorno: withLabel('Enviar mensaje') };
+        });
+        await page.evaluate((id) => window.__mageDev.store.getState().setDraft(id, { text: 'hola', attachments: [] }), tabId);
+        const claude = await openMeasureClose();
+        await setProvider('agy');
+        const agy = await openMeasureClose();
+        await setProvider('claude');
+        await page.evaluate((id) => window.__mageDev.store.setState((st) => ({ notSteerableByChat: { ...st.notSteerableByChat, [id]: 'review' } })), tabId);
+        const review = await openMeasureClose();
+        await page.evaluate((id) => {
+          const dev = window.__mageDev;
+          dev.store.getState().setDraft(id, null);
+          dev.store.setState((st) => {
+            const { [id]: _quitado, ...resto } = st.notSteerableByChat;
+            return { notSteerableByChat: resto };
+          });
+        }, tabId);
+        const vacio = await openMeasureClose();
+        await page.evaluate((id) => window.__mageDev.store.setState((st) => ({ statusByChat: { ...st.statusByChat, [id]: 'idle' } })), tabId);
+        await page.locator('[data-send-split]').first().waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+        const reposo = await page.evaluate(() => ({
+          retorno: [...document.querySelectorAll('[aria-label]')].filter((n) => n.getAttribute('aria-label') === 'Enviar mensaje').length,
+          split: document.querySelectorAll('[data-send-split]').length,
+        }));
+        const mac = process.platform === 'darwin';
+        const atajo = mac ? /⌘/ : /Ctrl\+Enter/;
+        const atajoTip = mac ? /Enviar ahora \(.*⌘.*\)/ : /Enviar ahora \(Ctrl\+Enter\)/;
+        const ok =
+          inicial.parar === 1 && inicial.cola === 'A la cola' && inicial.colaDesactivado === true && inicial.retorno === 0 &&
+          claude.desactivado === false && claude.seguiaEnMarcha === true && atajoTip.test(claude.tip ?? '') && atajo.test(claude.atajo ?? '') &&
+          agy.desactivado === true && /agy no permite enviar durante un turno/.test(agy.tip ?? '') &&
+          review.desactivado === true && /turno de revisión no admite mensajes directos/.test(review.tip ?? '') &&
+          vacio.desactivado === true &&
+          reposo.retorno === 1 && reposo.split === 0;
+        return { ok, detail: JSON.stringify({ inicial, claude, agy, review, vacio, reposo }) };
+      } finally {
+        if (abierto !== null) await page.evaluate(({ previos }) => window.__mageDev.store.setState(previos), abierto);
+        await restoreTurnState(page, previo);
+      }
     },
   },
   {
@@ -4624,8 +5081,8 @@ const CHECKS = [
       await clearPrompt(page);
       await typeInPrompt(page, '- uno');
       const enLaLineaDelCursor = await page.evaluate(() => ({
-        // En la linea del CURSOR el marcador se VE (comportamiento Obsidian: se puede editar).
-        marcadorVisible: document.querySelectorAll('[data-prompt-editor="true"] .cm-mg-bullet').length,
+        // #54 (F1.11): tambien en la linea del CURSOR la viñeta se pinta como `•` (antes, el «-» crudo).
+        pintadaEnElCursor: document.querySelectorAll('[data-prompt-editor="true"] .cm-mg-bullet-painted').length,
         ocultos: document.querySelectorAll('[data-prompt-editor="true"] .cm-mg-marker-hidden').length,
       }));
       // Se baja de linea con Shift+Enter (NO Enter: eso enviaria) para que la primera deje de ser la
@@ -4642,7 +5099,7 @@ const CHECKS = [
       const documento = await promptText(page);
       await clearPrompt(page);
       const ok =
-        enLaLineaDelCursor.marcadorVisible === 1 &&
+        enLaLineaDelCursor.pintadaEnElCursor === 1 &&
         enLaLineaDelCursor.ocultos === 0 &&
         trasBajar.pintadas >= 1 &&
         trasBajar.vineta === '"•"' &&
@@ -5002,10 +5459,11 @@ const CHECKS = [
   {
     // 2.3b: "Permitir siempre <tool> aqui" tiene que RECORDAR. La regla se concede por la accion real
     // del store y no por un clic: sin sesion viva la respuesta no llega a main, que es justo lo que deja
-    // medir la regla sin tocar el CLI ni gastar un turno. Lo que se comprueba es lo unico que importa:
-    // que la SIGUIENTE peticion de esa tool no pinta tarjeta ni pone la pestana en "necesita permiso",
-    // que otra tool sigue preguntando, que la regla se ve en el panel y que revocarla la quita.
-    name: '2.3b: "Permitir siempre" recuerda la tool y el panel la deja revocar',
+    // medir la regla sin tocar el CLI ni gastar un turno. Desde F2.4 la regla la APLICA main antes de
+    // anunciar el permiso (lo mide «F2.4: segundo plano en main» con una sesion real); aqui se comprueba la
+    // parte del renderer: la regla queda en la pestaña, se ve en el panel, una peticion que si llega (main
+    // decidio preguntar) lleva su tarjeta, y revocar la quita.
+    name: '2.3b: "Permitir siempre" guarda la tool y el panel la deja revocar',
     async run(page) {
       const previoStore = await page.evaluate(() => {
         const s = window.__mageDev.store.getState();
@@ -5033,18 +5491,7 @@ const CHECKS = [
       // mismo camino que el CLI para dejar el hilo limpio antes de medir la segunda.
       await cancelInjectedPermission(page, 'verify-always-1');
 
-      // Segunda peticion de la MISMA tool: ni tarjeta, ni panel, ni estado de espera.
-      await injectPermissionRequest(page, { file_path: 'C:/proj/b.ts', content: 'b' }, 'verify-always-2', 'Write');
-      const segunda = await page.evaluate(() => {
-        const s = window.__mageDev.store.getState();
-        const tabId = s.activeTabId;
-        return {
-          tarjetasPendientes: document.querySelectorAll('[data-permission-card="pending"]').length,
-          estado: s.statusByChat[tabId] ?? null,
-          panelConPeticion: (s.pendingByChat[tabId] ?? []).length > 0,
-        };
-      });
-      // Una tool DISTINTA sigue preguntando: la regla es por tool, no un "permitir todo".
+      // Una peticion que llega al renderer es una que main decidio preguntar: lleva su tarjeta.
       await injectPermissionRequest(page, { command: 'ls' }, 'verify-always-3', 'Bash');
       const otraTool = await page.evaluate(() => document.querySelectorAll('[data-permission-card="pending"]').length);
 
@@ -5070,13 +5517,10 @@ const CHECKS = [
       const ok =
         conRegla.regla.includes('Write') &&
         conRegla.enElPanel &&
-        segunda.tarjetasPendientes === 0 &&
-        segunda.estado !== 'needs_permission' &&
-        segunda.panelConPeticion === false &&
         otraTool === 1 &&
         trasRevocar.reglas === 0 &&
         trasRevocar.enElPanel === false;
-      return { ok, detail: `conRegla=${JSON.stringify(conRegla)} segunda=${JSON.stringify(segunda)} otraTool=${otraTool} trasRevocar=${JSON.stringify(trasRevocar)}` };
+      return { ok, detail: `conRegla=${JSON.stringify(conRegla)} otraTool=${otraTool} trasRevocar=${JSON.stringify(trasRevocar)}` };
     },
   },
   {
@@ -6246,7 +6690,7 @@ const CHECKS = [
     // nada: en una conversacion nueva en la raiz del repo la casilla «Worktree» sale marcada; el worktree
     // se crea por el mismo IPC que usa el arranque de la sesion; dentro, la fila enseña el chip y bloquea
     // el cambio de rama; y archivar (cerrar la pestaña) lo borra limpio y lo conserva con cambios.
-    name: 'Grupo D: worktree: casilla marcada, chip y rama bloqueada dentro, y archivar borra el limpio y conserva el sucio',
+    name: 'Grupo D: worktree: casilla desmarcada por defecto, chip y rama bloqueada dentro, y archivar borra el limpio y conserva el sucio',
     async run(page) {
       const repo = createTempGhRepo('main');
       if (repo === null) return { ok: true, detail: 'saltada: no hay git en esta maquina' };
@@ -6284,7 +6728,7 @@ const CHECKS = [
         const archivadoLimpio = await archivar(limpio.path);
         const ramas = spawnSync('git', ['branch', '--list', 'claude/*'], { cwd: repo, encoding: 'utf8', windowsHide: true }).stdout.trim();
         const ok =
-          casilla &&
+          !casilla &&
           limpio.branch === 'claude/arreglar-el-login' &&
           sucio.branch === 'claude/arreglar-el-login-2' &&
           rama.texto.includes('claude/arreglar-el-login') &&
@@ -6836,6 +7280,347 @@ const CHECKS = [
     },
   },
   {
+    // F1.1 (#1): el aviso de «Omitir permisos» es de la ACTIVACION, no de la visita. Se activa en A, se
+    // pasa a B y se vuelve a A, y se abre una C que ya venia en ese modo (como al restaurar o reabrir):
+    // solo la activacion avisa. Desactivar y reactivar es una activacion nueva.
+    name: 'F1.1 #1: omitir permisos avisa al activarlo, no al volver al chat ni al abrir uno que ya lo tenía',
+    async run(page) {
+      const AVISO = 'Omitir permisos: el modelo podrá ejecutar cualquier comando y modificar cualquier fichero sin preguntar. Úsalo solo con proyectos y contenido de confianza.';
+      await openTemporaryConversation(page);
+      const a = await page.evaluate(() => window.__mageDev.store.getState().activeTabId);
+      await openTemporaryConversation(page);
+      const b = await page.evaluate(() => window.__mageDev.store.getState().activeTabId);
+      await clearNotifications(page);
+      const count = () => page.evaluate((text) => window.__mageDev.notifications.getState().history.filter((n) => n.title === text).length, AVISO);
+      const activate = (id, mode) => page.evaluate(([tabId, next]) => { const store = window.__mageDev.store; store.getState().setActiveTab(tabId); store.getState().setActivePermissionMode(next); }, [id, mode]);
+      // Cada paso cuenta SUS avisos: se limpia entre pasos (un toast ya caducado no deduplica el siguiente).
+      const step = async (action) => { await clearNotifications(page); await action(); await page.waitForTimeout(CONFIG.settleMs); return count(); };
+      const alActivar = await step(() => activate(a, 'bypassPermissions'));
+      await page.evaluate((id) => window.__mageDev.store.getState().setActiveTab(id), b);
+      await page.waitForTimeout(CONFIG.settleMs);
+      const alVolver = await step(() => page.evaluate((id) => window.__mageDev.store.getState().setActiveTab(id), a));
+      const alAbrirActivo = await step(() => page.evaluate(() => { const store = window.__mageDev.store; const base = store.getState().tabs.find((t) => t.id === store.getState().activeTabId); store.setState((s) => ({ tabs: [...s.tabs, { ...base, id: 'vg-bypass-ya-activo', permissionMode: 'bypassPermissions' }], activeTabId: 'vg-bypass-ya-activo' })); }));
+      await activate(a, 'default');
+      const alReactivar = await step(() => activate(a, 'bypassPermissions'));
+      await clearNotifications(page);
+      const ok = alActivar === 1 && alVolver === 0 && alAbrirActivo === 0 && alReactivar === 1;
+      return { ok, detail: JSON.stringify({ alActivar, alVolver, alAbrirActivo, alReactivar }) };
+    },
+  },
+  {
+    // F1.2 (#14): un aviso de sistema largo (ruta de 300 caracteres sin espacios y un parrafo) no puede
+    // desbordar el chat: ni scroll horizontal ni texto por fuera, en ventana estrecha y con zoom.
+    name: 'F1.2 #14: los avisos largos no desbordan el chat estrecho ni con zoom',
+    async run(page) {
+      await openTemporaryConversation(page);
+      const ruta = 'C:/' + 'carpeta-sin-espacios-'.repeat(15);
+      const parrafo = 'Aviso de prueba con un párrafo largo que tiene que partirse en varias líneas sin salirse del panel. '.repeat(4);
+      await page.evaluate(({ ruta, parrafo }) => {
+        const store = window.__mageDev.store;
+        const id = store.getState().activeTabId;
+        store.setState({ blocksByChat: { ...store.getState().blocksByChat, [id]: [{ kind: 'system', id: 'vg-largo-ruta', text: ruta }, { kind: 'system', id: 'vg-largo-parrafo', text: parrafo }] } });
+      }, { ruta, parrafo });
+      const measure = () => page.evaluate((texts) => {
+        const scroller = document.querySelector('[data-pane-tab-id] .overflow-y-auto');
+        const box = scroller.getBoundingClientRect();
+        const spans = texts.map((text) => [...scroller.querySelectorAll('span')].find((el) => el.textContent === text));
+        return {
+          horizontalOverflow: scroller.scrollWidth - scroller.clientWidth,
+          outside: spans.map((el) => (el === undefined ? 'ausente' : Math.round(el.getBoundingClientRect().right - box.right))),
+        };
+      }, [ruta, parrafo]);
+      await page.setViewportSize({ width: 760, height: 800 });
+      await page.waitForTimeout(CONFIG.settleMs);
+      const estrecho = await measure();
+      await page.evaluate(() => { document.body.style.zoom = '1.5'; });
+      await page.waitForTimeout(CONFIG.settleMs);
+      const zoom = await measure();
+      await page.evaluate(() => { document.body.style.zoom = ''; });
+      const fits = (m) => m.horizontalOverflow <= 1 && m.outside.every((d) => typeof d === 'number' && d <= 1);
+      return { ok: fits(estrecho) && fits(zoom), detail: JSON.stringify({ estrecho, zoom }) };
+    },
+  },
+  {
+    // F1.3 (#15): «Buscar actualizaciones» cruza el IPC hasta main y el estado vuelve por la difusion a
+    // las ventanas. En dev main contesta con su motivo (no hay updater); una version lista se abre en el
+    // dialogo de siempre. Abre Configuración y la deja cerrada (la cierra «Ver y reiniciar»).
+    name: 'F1.3 #15: Buscar actualizaciones responde con su estado y una versión lista abre su diálogo',
+    async run(page) {
+      await openSettingsDialog(page);
+      await openSection(page, /Notas de versión/);
+      const check = page.locator('[data-update-check="true"]');
+      await check.getByRole('button', { name: 'Buscar actualizaciones', exact: true }).click();
+      const status = check.getByRole('status');
+      await page.waitForFunction(() => document.querySelector('[data-update-check="true"] [role="status"]')?.textContent?.includes('En desarrollo'), undefined, { timeout: CONFIG.actionTimeoutMs });
+      const alBuscar = await status.textContent();
+      await page.evaluate(() => window.__mageDev.store.setState({ updateState: { kind: 'checking' } }));
+      const deshabilitado = await check.getByRole('button', { name: 'Buscar actualizaciones', exact: true }).isDisabled();
+      await page.evaluate(() => window.__mageDev.store.setState({ updateState: { kind: 'ready', version: '9.9.9', releaseNotes: null } }));
+      await check.getByRole('button', { name: 'Ver y reiniciar', exact: true }).click();
+      const dialogo = page.getByRole('dialog').filter({ hasText: '9.9.9' });
+      await dialogo.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      await page.evaluate(() => { const store = window.__mageDev.store; store.getState().dismissUpdatePrompt(); store.setState({ updateState: { kind: 'idle' } }); });
+      await dialogo.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+      const ok = alBuscar?.includes('En desarrollo') === true && deshabilitado;
+      return { ok, detail: JSON.stringify({ alBuscar, deshabilitadoBuscando: deshabilitado, dialogo: true }) };
+    },
+  },
+  {
+    // F1.4 (#18): una cuenta de Claude sin login válido, la principal incluida, ofrece iniciar sesión
+    // otra vez desde el sidebar. NO se pulsa: lanzaria el login real del CLI y abriria el navegador.
+    name: 'F1.4 #18: una cuenta de Claude caducada ofrece iniciar sesión sin recrearla',
+    async run(page) {
+      const previo = await page.evaluate(() => window.__mageDev.store.getState().accounts);
+      const medir = () => page.evaluate(() => {
+        const banner = document.querySelector('[data-account-recovery="true"]');
+        const botones = banner === null ? [] : [...banner.querySelectorAll('button')].map((b) => b.textContent?.trim());
+        return { visible: banner !== null, botones };
+      });
+      try {
+        await page.evaluate(() => {
+          const store = window.__mageDev.store;
+          const id = store.getState().activeAccountId;
+          store.setState((s) => ({ accounts: s.accounts.map((a) => (a.id === id ? { ...a, isMain: true, loginStatus: 'expired', providerId: 'claude', apiBilled: false } : a)) }));
+        });
+        await page.waitForTimeout(CONFIG.settleMs);
+        const principal = await medir();
+        await page.evaluate(() => {
+          const store = window.__mageDev.store;
+          const id = store.getState().activeAccountId;
+          store.setState((s) => ({ accounts: s.accounts.map((a) => (a.id === id ? { ...a, isMain: false } : a)) }));
+        });
+        await page.waitForTimeout(CONFIG.settleMs);
+        const secundaria = await medir();
+        const ok = principal.visible && principal.botones.join('|') === 'Iniciar sesión' && secundaria.botones.join('|') === 'Iniciar sesión|Eliminar';
+        return { ok, detail: JSON.stringify({ principal, secundaria }) };
+      } finally {
+        await page.evaluate((accounts) => window.__mageDev.store.setState({ accounts }), previo);
+      }
+    },
+  },
+  {
+    // F1.5 (#47 y #22): arrastres REALES sobre la barra de pestañas. #47: soltar C sobre la mitad
+    // izquierda de A la pone delante en la misma barra. #22: dividir y luego soltar la pestaña del panel
+    // nuevo sobre la barra del otro la reúne: vuelve a haber un solo panel, sin duplicados y con ella activa.
+    name: 'F1.5 #47 #22: la barra de pestañas reordena y reúne paneles al soltar una pestaña',
+    async run(page) {
+      const previo = await page.evaluate(() => { const s = window.__mageDev.store.getState(); return { tabs: s.tabs, activeTabId: s.activeTabId, splitLayout: s.splitLayout }; });
+      const ids = [];
+      for (let i = 0; i < 3; i++) { await openTemporaryConversation(page); ids.push(await page.evaluate(() => window.__mageDev.store.getState().activeTabId)); }
+      const [a, b, c] = ids;
+      const tabEl = (id) => page.locator(`[role="tab"][data-tab-id="${id}"]`);
+      const leafOrder = () => page.evaluate((mine) => { const l = window.__mageDev.store.getState().splitLayout; return l.kind === 'leaf' ? l.tabIds.filter((id) => mine.includes(id)) : null; }, ids);
+      try {
+        const boxA = await tabEl(a).boundingBox();
+        await tabEl(c).dragTo(tabEl(a), { targetPosition: { x: 3, y: Math.round(boxA.height / 2) } });
+        await page.waitForTimeout(CONFIG.settleMs);
+        const reordenado = await leafOrder();
+        const pane = page.locator(`[data-pane-tab-id="${await page.evaluate(() => window.__mageDev.store.getState().activeTabId)}"]`);
+        const paneBox = await pane.boundingBox();
+        await tabEl(b).dragTo(pane, { targetPosition: { x: Math.round(paneBox.width * 0.9), y: Math.round(paneBox.height / 2) } });
+        await page.waitForTimeout(CONFIG.settleMs);
+        const dividido = await page.evaluate(() => window.__mageDev.store.getState().splitLayout.kind);
+        const destino = ids.find((id) => id !== b);
+        const boxDestino = await tabEl(destino).boundingBox();
+        await tabEl(b).dragTo(tabEl(destino), { targetPosition: { x: Math.round(boxDestino.width - 3), y: Math.round(boxDestino.height / 2) } });
+        await page.waitForTimeout(CONFIG.settleMs);
+        const reunido = await page.evaluate((dragged) => { const s = window.__mageDev.store.getState(); const l = s.splitLayout; return { kind: l.kind, active: s.activeTabId === dragged, copias: l.kind === 'leaf' ? l.tabIds.filter((id) => id === dragged).length : null }; }, b);
+        const ok = JSON.stringify(reordenado) === JSON.stringify([c, a, b]) && dividido === 'split' && reunido.kind === 'leaf' && reunido.active && reunido.copias === 1;
+        return { ok, detail: JSON.stringify({ reordenado, esperado: [c, a, b], dividido, reunido }) };
+      } finally {
+        await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
+      }
+    },
+  },
+  {
+    // F1.6 (#24): el ⏎ del prompt es un botón que envía con la misma acción que Enter. El envío se
+    // sustituye por un espía (ninguna comprobación salvo la última lanza un turno) y se restaura.
+    name: 'F1.6 #24: el botón de enviar envía una vez, y vacío no se puede pulsar',
+    async run(page) {
+      await openTemporaryConversation(page);
+      const send = page.getByRole('button', { name: 'Enviar mensaje', exact: true });
+      const original = await page.evaluate(() => {
+        const store = window.__mageDev.store;
+        window.__vgSent = [];
+        const previous = store.getState().sendActiveMessage;
+        store.setState({ sendActiveMessage: async (text, attachments) => { window.__vgSent.push({ text, attachments: attachments?.length ?? 0 }); } });
+        window.__vgRestoreSend = () => store.setState({ sendActiveMessage: previous });
+        return true;
+      });
+      try {
+        const vacioDeshabilitado = await send.isDisabled();
+        await page.getByRole('textbox', { name: 'Escribe una instrucción para el agente' }).click();
+        await page.keyboard.type('Mensaje desde el botón');
+        await send.dblclick();
+        await page.waitForTimeout(CONFIG.settleMs);
+        const enviados = await page.evaluate(() => window.__vgSent);
+        const borrador = await page.evaluate(() => { const s = window.__mageDev.store.getState(); return s.draftByChat[s.activeTabId]?.text ?? ''; });
+        const trasEnviarDeshabilitado = await send.isDisabled();
+        const ok = original && vacioDeshabilitado && enviados.length === 1 && enviados[0].text === 'Mensaje desde el botón' && borrador === '' && trasEnviarDeshabilitado;
+        return { ok, detail: JSON.stringify({ vacioDeshabilitado, enviados, borrador, trasEnviarDeshabilitado }) };
+      } finally {
+        await page.evaluate(() => window.__vgRestoreSend?.());
+      }
+    },
+  },
+  {
+    // F1.7 (#26): Actividad nunca es una superficie muda. En vivo, con el panel a la DERECHA y ABAJO, se
+    // ven sus filas con altura real; con una conversación reabierta que aún lee su transcripción dice
+    // «cargando», y si la lectura falla, el motivo (no «sin actividad»). El panel vuelve a su sitio.
+    name: 'F1.7 #26: Actividad muestra datos a la derecha y abajo, y carga o error en una conversación reabierta',
+    async run(page) {
+      const sitio = await page.evaluate(() => { const l = window.__mageDev.panelStore.getState().layout; for (const anchor of ['left', 'right', 'bottom']) for (const zone of ['a', 'b']) if (l.stripes[anchor][zone].panelIds.includes('activity')) return { anchor, zone }; return null; });
+      const previo = await captureTurnState(page);
+      try {
+        await openTemporaryConversation(page);
+        await injectTurn(page, [
+          { kind: 'tool_use', tool: { toolUseId: 'v26-t1', toolName: 'Bash', input: { command: 'ls' } } },
+          { kind: 'tool_result', result: { toolUseId: 'v26-t1', isError: false, output: 'a.ts', durationMs: 3 } },
+        ]);
+        const medir = () => page.evaluate(() => {
+          const panel = document.querySelector('[data-panel="activity"]');
+          if (panel === null) return { montado: false };
+          return { montado: true, alto: Math.round(panel.getBoundingClientRect().height), filas: panel.querySelectorAll('[data-activity-row]').length, texto: panel.textContent?.slice(0, 80) ?? '' };
+        });
+        const enAncla = async (anchor) => {
+          await page.evaluate((a) => { const store = window.__mageDev.panelStore.getState(); store.movePanel('activity', a, 'a'); window.__mageDev.panelStore.getState().revealPanelById('activity'); }, anchor);
+          await page.locator('[data-panel="activity"]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+          await page.waitForTimeout(CONFIG.settleMs);
+          return medir();
+        };
+        const derecha = await enAncla('right');
+        const abajo = await enAncla('bottom');
+        await page.evaluate(() => {
+          const dev = window.__mageDev;
+          const id = dev.store.getState().activeTabId;
+          dev.store.setState((s) => ({ tabs: s.tabs.map((t) => (t.id === id ? { ...t, resumeSessionId: 'vg-actividad-reabierta' } : t)), blocksByChat: { ...s.blocksByChat, [id]: [] }, statusByChat: { ...s.statusByChat, [id]: 'idle' } }));
+          dev.transcriptStoreFor(id).setState({ isFinal: false, errorMessage: null });
+        });
+        await page.waitForTimeout(CONFIG.settleMs);
+        const cargando = await medir();
+        await page.evaluate(() => { const dev = window.__mageDev; dev.transcriptStoreFor(dev.store.getState().activeTabId).setState({ isFinal: true, errorMessage: 'vg-lectura-fallida' }); });
+        await page.waitForTimeout(CONFIG.settleMs);
+        const error = await medir();
+        const ok = derecha.filas >= 1 && derecha.alto > 40 && abajo.filas >= 1 && abajo.alto > 40 && /Cargando/.test(cargando.texto ?? '') && /vg-lectura-fallida/.test(error.texto ?? '');
+        return { ok, detail: JSON.stringify({ derecha, abajo, cargando, error }) };
+      } finally {
+        if (sitio !== null) await page.evaluate((s) => window.__mageDev.panelStore.getState().movePanel('activity', s.anchor, s.zone), sitio);
+        await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
+      }
+    },
+  },
+  {
+    // F1.12 H1 (D5, #53): «Permitir Artifact» es una opción apagada por defecto que main recibe guardada.
+    // Abre Configuración y la cierra; deja el ajuste como lo encontró.
+    name: 'F1.12 D5: Permitir Artifact está apagado por defecto y se guarda en main',
+    async run(page) {
+      await openSettingsDialog(page);
+      await openSection(page, /Almacenamiento/);
+      const casilla = page.locator('[data-setting="artifact"] input[type="checkbox"]');
+      const porDefecto = await casilla.isChecked();
+      // El guardado lleva debounce: se sondea main hasta que el valor llega (o se agota el plazo).
+      const enMain = (esperado) => page.evaluate(async ({ esperado, plazo }) => {
+        const fin = Date.now() + plazo;
+        let valor = (await window.mage.loadSettings()).artifactEnabled;
+        while (valor !== esperado && Date.now() < fin) { await new Promise((r) => setTimeout(r, 100)); valor = (await window.mage.loadSettings()).artifactEnabled; }
+        return valor;
+      }, { esperado, plazo: CONFIG.actionTimeoutMs });
+      await casilla.check();
+      const encendido = await enMain(true);
+      await casilla.uncheck();
+      const apagado = await enMain(false);
+      await page.keyboard.press('Escape');
+      await page.locator(MODAL).first().waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+      return { ok: porDefecto === false && encendido === true && apagado === false, detail: JSON.stringify({ porDefecto, encendido, apagado }) };
+    },
+  },
+  {
+    name: 'F1.11 R48: una conversación pendiente de cargar muestra indicador y, si falla, el error',
+    async run(page) {
+      await openTemporaryConversation(page);
+      await page.evaluate(() => { const dev = window.__mageDev; const id = dev.store.getState().activeTabId; dev.store.setState(s => ({ tabs: s.tabs.map(t => t.id === id ? { ...t, resumeSessionId: 'vg-carga-pendiente' } : t), blocksByChat: { ...s.blocksByChat, [id]: [] } })); dev.transcriptStoreFor(id).setState({ isFinal: false }); });
+      await page.getByRole('status').filter({ hasText: 'Cargando conversación' }).waitFor({ state: 'visible', timeout: 2500 });
+      // Un fallo de lectura se dice, no se disfraza de conversación vacía.
+      await page.evaluate(() => { const dev = window.__mageDev; dev.transcriptStoreFor(dev.store.getState().activeTabId).setState({ isFinal: true, errorMessage: 'vg-lectura-fallida' }); });
+      await page.getByRole('status').filter({ hasText: 'No se pudo cargar la conversación: vg-lectura-fallida' }).waitFor({ state: 'visible', timeout: 2500 });
+      return { ok: true, detail: 'Indicador visible mientras la lectura no es final y error visible si falla.' };
+    },
+  },
+  {
+    name: 'F1.11 R58: pregunta en otro split no roba el foco',
+    async run(page) {
+      await openTemporaryConversation(page);
+      await page.evaluate(() => { const store = window.__mageDev.store; const base = store.getState().tabs.find(t => t.id === store.getState().activeTabId); store.setState({ tabs: [{ ...base, id: 'vg-focus-a' }, { ...base, id: 'vg-focus-b' }], activeTabId: 'vg-focus-a', splitLayout: { kind: 'split', direction: 'row', ratio: 0.5, a: { kind: 'leaf', tabIds: ['vg-focus-a'], activeTabId: 'vg-focus-a' }, b: { kind: 'leaf', tabIds: ['vg-focus-b'], activeTabId: 'vg-focus-b' } } }); });
+      await page.locator('[data-pane-tab-id="vg-focus-a"] .cm-content').focus();
+      await page.keyboard.type('borrador en primer panel');
+      await page.evaluate(input => { const dev = window.__mageDev; dev.store.setState(state => dev.reduceEvent(state, 'vg-focus-b', { kind: 'permission_request', request: { requestId: 'vg-focus-question', toolUseId: 'vg-focus-tool', toolName: 'AskUserQuestion', input, description: null, requiresUserInteraction: true, displayName: 'AskUserQuestion' } })); }, ASK_USER_QUESTION_INPUT);
+      await waitForDockReady(page, '[data-question-dock="true"]');
+      const pane = await page.evaluate(() => document.activeElement?.closest('[data-pane-tab-id]')?.getAttribute('data-pane-tab-id'));
+      return { ok: pane === 'vg-focus-a', detail: JSON.stringify({ focusedPane: pane }) };
+    },
+  },
+  {
+    name: 'F1.11 R59: la pregunta conserva visible el final seguido del chat',
+    async run(page) {
+      await openTemporaryConversation(page);
+      await page.evaluate(() => { const store = window.__mageDev.store; const id = store.getState().activeTabId; store.setState(s => ({ blocksByChat: { ...s.blocksByChat, [id]: Array.from({ length: 32 }, (_, i) => ({ kind: 'user', id: 'vg-tail-' + i, text: 'Fila ' + i + '\n' + 'Contenido largo de prueba. '.repeat(20), time: '12:00', attachments: [] })) } })); });
+      await page.waitForTimeout(CONFIG.settleMs);
+      await page.evaluate(() => { const element = document.querySelector('[data-pane-tab-id] .overflow-y-auto'); element.scrollTop = element.scrollHeight; element.dispatchEvent(new Event('scroll')); });
+      await injectPermissionRequest(page, ASK_USER_QUESTION_INPUT, 'vg-tail-question');
+      await waitForDockReady(page, '[data-question-dock="true"]');
+      const gap = await page.evaluate(() => { const element = document.querySelector('[data-pane-tab-id] .overflow-y-auto'); return element.scrollHeight - element.scrollTop - element.clientHeight; });
+      return { ok: gap <= 3, detail: JSON.stringify({ bottomGap: gap }) };
+    },
+  },
+  {
+    name: 'F1.11 R60: Otra cosa participa en la navegación con flechas',
+    async run(page) {
+      await openTemporaryConversation(page);
+      await injectPermissionRequest(page, ASK_USER_QUESTION_INPUT, 'vg-other-keyboard');
+      await waitForDockReady(page, '[data-question-dock="true"]');
+      const dock = page.locator('[data-question-dock="true"]'); await dock.focus();
+      for (let i = 0; i < ASK_USER_QUESTION_INPUT.questions[0].options.length; i++) await page.keyboard.press('ArrowDown');
+      const other = await dock.getByRole('textbox', { name: 'Otra cosa' }).evaluate(element => element === document.activeElement);
+      await page.keyboard.press('ArrowUp');
+      const back = await dock.evaluate(element => element === document.activeElement);
+      return { ok: other && back, detail: JSON.stringify({ otherFocused: other, backToOptions: back }) };
+    },
+  },
+  ...(process.argv.some(arg => arg.startsWith('--trust-stage=')) ? [{
+    name: 'F1.10: confianza persistida entre reinicios completos',
+    persistSettings: true,
+    async run(page, { userDataDir }) {
+      const stage = process.argv.find(arg => arg.startsWith('--trust-stage=')).split('=')[1];
+      const folder = path.join(userDataDir, 'trust-fixture', 'project');
+      fs.mkdirSync(folder, { recursive: true });
+      const measured = await page.evaluate(async ({ folder, stage }) => {
+        const store = window.__mageDev.store;
+        const params = { cwd: folder, accountDir: '' };
+        const before = await window.mage.isFolderTrusted(params);
+        if (stage === 'write') await store.getState().answerTrustRequest(folder, true, true);
+        if (stage === 'read') await store.getState().revokeTrustedFolder(folder);
+        const after = await window.mage.isFolderTrusted(params);
+        return { before, after };
+      }, { folder, stage });
+      return { ok: stage === 'write' ? measured.after : stage === 'read' ? measured.before && !measured.after : !measured.before && !measured.after, detail: JSON.stringify({ stage, ...measured }) };
+    },
+  }] : []),
+  {
+    name: 'F1.10: el aviso de carpeta recreada permanece visible en el chat',
+    async run(page) {
+      await openTemporaryConversation(page);
+      const tabId = await page.evaluate(() => window.__mageDev.store.getState().activeTabId);
+      const notice = 'Se ha recreado vacía la carpeta de borrador de prueba. La conversación se conserva; los archivos anteriores se perdieron.';
+      await page.evaluate(({ tabId, notice }) => {
+        const store = window.__mageDev.store;
+        store.setState({ blocksByChat: { ...store.getState().blocksByChat, [tabId]: [{ kind: 'system', id: 'vg-recreated', text: notice }] } });
+      }, { tabId, notice });
+      const visible = await page.getByText(notice, { exact: true }).isVisible();
+      await page.evaluate(id => window.__mageDev.store.getState().closeTab(id), tabId);
+      return { ok: visible, detail: 'Aviso sintético visible; recuperación y cableado cubiertos con fixtures main/store.' };
+    },
+  },
+  {
     // Frontera de confianza: lanzar un agente dentro de una carpeta ejecuta lo que esa carpeta traiga
     // (hooks, `.claude/settings.json`, MCP del repo), y el CLI en headless —el unico modo que usa
     // Mage— NO pregunta. Se comprueba que el dialogo aparece, que nombra la carpeta, y sobre todo que
@@ -6855,6 +7640,8 @@ const CHECKS = [
       await page.waitForTimeout(CONFIG.settleMs);
 
       const dialogo = page.getByRole('dialog').filter({ hasText: 'Confías en los archivos' });
+      const focoSeguro = await dialogo.getByRole('button', { name: 'No confiar' }).evaluate(button => button === document.activeElement);
+      const opcionPadre = await dialogo.getByRole('checkbox', { name: 'Confiar también en la carpeta superior' }).count();
       const visible = await dialogo.isVisible().catch(() => false);
       const nombraLaCarpeta = visible ? (await dialogo.innerText()).includes(CARPETA) : false;
 
@@ -6874,13 +7661,13 @@ const CHECKS = [
       }));
 
       await page.evaluate((trustRequests) => window.__mageDev.store.setState({ trustRequests }), previo);
-      const medido = { visible, nombraLaCarpeta, sigueTrasDescartar, botones, ...trasResponder };
+      const medido = { visible, focoSeguro, opcionPadre, nombraLaCarpeta, sigueTrasDescartar, botones, ...trasResponder };
       // La otra mitad de la frontera: lo que se autoriza se tiene que poder RETIRAR. Una lista de
       // confianza que solo crece es una puerta de un solo sentido, y se autoriza al vuelo en un
       // dialogo. Se comprueba que la seccion existe y que lista lo que hay en los ajustes.
       medido.enAjustes = await medirSeccionDeConfianza(page, CARPETA);
       const ok =
-        medido.visible &&
+        medido.visible && medido.focoSeguro && medido.opcionPadre === 1 &&
         medido.nombraLaCarpeta &&
         medido.sigueTrasDescartar === 1 &&
         medido.botones.length === 2 &&
@@ -7021,8 +7808,8 @@ const CHECKS = [
         // Unicode clasifica varios de ellos como pictograficos, asi que sin esta lista la comprobacion
         // marcaria como defecto justo lo que la regla del repo manda usar.
         const VOCABULARIO = new Set([...'☰◇◔«»⌕⇲▸▾']);
-        // Zonas cuyo texto NO es iconografia de Mage: lo escribe el usuario o lo devuelve el agente.
-        const AJENO = ['[data-transcript]', '[role="log"]', '.mg-markdown', '[data-artifact-favicon]', '[contenteditable="true"]'];
+        // Zonas cuyo texto NO es iconografia de Mage: lo escribe el usuario o lo devuelve el agente (los títulos del historial son de las conversaciones del usuario).
+        const AJENO = ['[data-transcript]', '[role="log"]', '.mg-markdown', '[data-artifact-favicon]', '[contenteditable="true"]', '[data-history-session]'];
         const esAjeno = (nodo) => {
           for (let el = nodo.parentElement; el !== null; el = el.parentElement) {
             if (AJENO.some((sel) => el.matches(sel))) return true;
@@ -7489,12 +8276,12 @@ const CHECKS = [
   },
   {
     // Grupo B (0.1.2, respuesta 21): la X de la ultima ventana, con «Preguntar», pinta el dialogo PROPIO
-    // (no el de Windows) y dice cuantas conversaciones trabajan. Se provoca con `window.close()` (entra
+    // (no el de Windows) y dice cuantas conversaciones trabajan. Se provoca con `window.mage.closeWindow()` (entra
     // por el mismo `close` que la X) y se contesta SIEMPRE Cancelar o Escape: «Cerrar Mage» mataria la
     // instancia medida. Tres rondas: con una conversacion marcada como trabajando (cuenta 1 mas), con
     // Escape, y tras RECARGAR el renderer con el dialogo abierto —la trampa del informe: si main no
     // libera la pregunta pendiente, la X queda muerta para siempre—. Sin dos ventanas: con otra visible,
-    // `window.close()` cerraria de verdad esta.
+    // `closeWindow()` cerraria de verdad esta.
     name: 'Grupo B: la X pregunta con el diálogo propio, cuenta las que trabajan y sobrevive a una recarga',
     async run(page) {
       const previo = await page.evaluate(() => window.__mageDev.store.getState().settings.closeBehavior);
@@ -7520,7 +8307,7 @@ const CHECKS = [
       });
       const conEscape = await askCloseAndAnswer(page, 'Escape');
       // Recarga con el dialogo abierto: el renderer que tenia que contestar desaparece.
-      await page.evaluate(() => window.close());
+      await page.evaluate(() => window.mage.closeWindow());
       await page.locator(CLOSE_DIALOG).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
       await page.reload();
       await page.locator('[role="toolbar"]').first().waitFor({ state: 'attached', timeout: CONFIG.bootTimeoutMs });
@@ -7586,8 +8373,10 @@ const CHECKS = [
       await page.evaluate(() => window.__mageDev.store.setState({ updateState: { kind: 'idle' }, updatePromptVersion: null }));
       const alLimpiar = await indicador.count();
       const ok =
-        principal.kind === 'idle' &&
-        /idle/.test(guarda) &&
+        // F1.3: en dev main puede estar en `error` (lo deja «Buscar actualizaciones»); lo que importa es
+        // que no hay nada listo y la guarda rechaza instalar.
+        principal.kind !== 'ready' &&
+        /No hay ninguna actualizacion lista/.test(guarda) &&
         alAbrir.titulo === 'Mage 9.9.9 está lista para instalarse' &&
         alAbrir.notas.includes('Nota de prueba de verify:gui') &&
         alAbrir.enfocado === 'Reiniciar ahora' &&
@@ -7888,13 +8677,14 @@ const CHECKS = [
         const medido = await page.evaluate(async ({ provider }) => {
           const store = window.__mageDev.store;
           await store.getState().saveCustomProvider({ id: provider.id, label: provider.label, baseUrl: 'http://127.0.0.1:9/v1', hasApiKey: false, models: [{ id: 'fake:eco', label: 'fake:eco' }] });
+          // A14: `saveCustomProvider` resuelve cuando main YA tiene el proveedor; aquí no se espera nada más.
           store.setState({ accounts: [], activeAccountId: '' });
           const antes = store.getState().tabs.length;
           await store.getState().createConversation('shared', { scratch: true });
           const tab = store.getState().tabs.at(-1);
           if (tab === undefined || store.getState().tabs.length === antes) return { abierta: false };
-          // Sin cuenta no hay confianzas del CLI: la carpeta temporal se pregunta. No se espera aqui (el
-          // dialogo se contesta fuera); el resultado queda en `__vgSinCuenta`.
+          // D4 (F1.10): la carpeta de borrador es raiz de Mage y es de confianza sin preguntar, tambien sin
+          // cuenta. El resultado queda en `__vgSinCuenta`.
           window.__vgSinCuenta = null;
           store
             .getState()
@@ -7903,15 +8693,12 @@ const CHECKS = [
           return { abierta: true, tabId: tab.id, provider: tab.provider, cuenta: tab.accountId, alias: tab.accountAlias };
         }, { provider });
         if (!medido.abierta) return { ok: false, detail: JSON.stringify(medido) };
-        const dialogo = page.locator(TRUST_DIALOG);
-        await dialogo.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
-        await dialogo.getByRole('button', { name: 'Confiar en esta carpeta', exact: true }).click();
-        await dialogo.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
         await page.waitForFunction(() => window.__vgSinCuenta !== null, null, { timeout: CONFIG.actionTimeoutMs });
+        const pidioConfianza = (await page.locator(TRUST_DIALOG).count()) > 0;
         const sesion = await page.evaluate(() => window.__vgSinCuenta);
         await page.evaluate((id) => window.__mageDev.store.getState().closeTab(id), medido.tabId);
-        const ok = medido.provider === provider.id && medido.cuenta === '' && typeof sesion.sessionId === 'string' && sesion.error === null;
-        return { ok, detail: JSON.stringify({ ...medido, pidioConfianza: true, ...sesion }) };
+        const ok = medido.provider === provider.id && medido.cuenta === '' && !pidioConfianza && typeof sesion.sessionId === 'string' && sesion.error === null;
+        return { ok, detail: JSON.stringify({ ...medido, pidioConfianza, ...sesion }) };
       } finally {
         await page.evaluate((id) => window.__mageDev.store.getState().removeCustomProvider(id), provider.id);
         await page.evaluate(() => window.__mageDev.store.getState().refreshAccounts());
@@ -7959,6 +8746,234 @@ const CHECKS = [
     },
   },
   {
+    // F2.6: el renderer corre en el sandbox de Chromium (`sandbox: true`, preload CommonJS de un solo fichero). Se
+    // mide en el propio renderer: el preload lee `process.sandboxed` y el mundo de la página no ve `require` ni
+    // `process`. Todo el resto de esta tanda corre con el sandbox puesto: si algo lo necesitara, fallaría.
+    name: 'F2.6: el renderer corre en el sandbox de Chromium y sigue sin ver Node',
+    async run(page) {
+      const medido = await page.evaluate(() => ({ sandboxed: window.mage.sandboxed, require: typeof require, process: typeof process, montado: window.__mageDev !== undefined }));
+      return { ok: medido.sandboxed === true && medido.require === 'undefined' && medido.process === 'undefined' && medido.montado, detail: JSON.stringify(medido) };
+    },
+  },
+  {
+    // F2.6: el host local. Un turno del runtime propio contra el servidor falso (escenario `cola`, ~4 s, sin CLI ni
+    // cuota) y un cliente EXTERNO (`scripts/host-client.mjs`, otro proceso) que lee el token y la dirección de
+    // `<userData>/run`, se presenta con `hello`, lee la instantánea y se suscribe a la sesión. Tiene que recibir la
+    // MISMA secuencia (seq y tipo de evento) que el renderer desde la instantánea hasta el `result`, sin huecos. Un
+    // hello con otro token se rechaza. Va antes de la comprobación F2.4 y del turno mínimo por la transcripción que deja.
+    name: 'F2.6: host local: un cliente externo recibe la misma secuencia que el renderer y un token malo se rechaza',
+    async run(page, { userDataDir }) {
+      const fake = await startFakeOpenAiServer();
+      let client = null;
+      try {
+        const { tabId } = await openRuntimeTab(page, { fake, userDataDir, provider: HOST_TURN_PROVIDER, model: QUEUE_TURN_MODEL });
+        const sessionId = await page.evaluate((id) => window.__mageDev.store.getState().ensureSession(id), tabId);
+        await recordSequencedEvents(page);
+        client = startHostClient(userDataDir, sessionId);
+        await waitUntil(() => client.lines.some((line) => line.kind === 'snapshot'), 30_000, () => `el cliente no llegó a suscribirse: ${client.stderr()} ${JSON.stringify(client.lines)}`);
+        const rechazo = await helloWithWrongToken(userDataDir);
+        await page.evaluate((id) => window.__mageDev.store.getState().sendMessageToTab(id, 'hola host'), tabId);
+        const code = await client.exited;
+        const renderer = await page.evaluate((sid) => window.__vgSequenced.filter((e) => e.sessionId === sid).map((e) => [e.seq, e.kind]), sessionId);
+        const snapshotLine = client.lines.find((line) => line.kind === 'snapshot');
+        const lastSeqAtSubscribe = snapshotLine.snapshot.lastSeq;
+        const external = client.lines.filter((line) => line.kind === 'event').map((line) => [line.seq, line.event.kind]);
+        const expected = renderer.filter(([seq]) => seq > lastSeqAtSubscribe);
+        const contiguous = external.every(([seq], i) => seq === lastSeqAtSubscribe + 1 + i);
+        const hello = client.lines.find((line) => line.kind === 'hello');
+        const list = client.lines.find((line) => line.kind === 'list');
+        const ok =
+          // 1.x: el host sube de versión menor de forma aditiva (1.1 en F3.3, 1.2 en F7); un cliente 1.0 sigue valiendo
+          code === 0 && /^1\.\d+$/.test(hello?.protocol ?? '') && list.sessions.some((entry) => entry.sessionId === sessionId) &&
+          // El cliente sale al ver `result`: los eventos que llegan en el mismo trozo (el `session_state` de después) también se imprimen.
+          external.length > 0 && JSON.stringify(external) === JSON.stringify(expected.slice(0, external.length)) && contiguous &&
+          external.some(([, kind]) => kind === 'result') &&
+          rechazo?.error?.code === -32002 && !JSON.stringify(rechazo).includes('f'.repeat(64)) &&
+          !client.lines.some((line) => JSON.stringify(line).includes(fs.readFileSync(path.join(userDataDir, 'run', 'host-token'), 'utf8').trim()));
+        return { ok, detail: JSON.stringify({ code, hello, lastSeqAtSubscribe, externos: external.length, renderer: expected.length, contiguous, tieneResult: external.some(([, kind]) => kind === 'result'), rechazo: rechazo?.error?.code }) };
+      } finally {
+        if (client !== null) client.child.kill();
+        await page.evaluate((id) => window.__mageDev.store.getState().closeTab(id), (await page.evaluate(() => window.__mageDev.store.getState().activeTabId)));
+        await page.evaluate((id) => window.__mageDev.store.getState().removeCustomProvider(id), HOST_TURN_PROVIDER.id);
+        await fake.close();
+      }
+    },
+  },
+  {
+    // F2.4: con la pestaña CERRADA, main sigue decidiendo los permisos. Turno del runtime propio contra el servidor
+    // falso (escenario `pr-barrera`, modo Manual), sin CLI ni cuota: se envía el prompt de «Crear PR»; el agente
+    // pide un `git push --force` (la barrera lo deniega) y un `mkdir` que SÍ pregunta. La regla se crea por la
+    // acción del store `allowAlwaysAndAnswer` (la cadena entera: acción → persistConversationPrefs → main), se
+    // cierra la pestaña con el turno en marcha (segundo plano en main) y el segundo `mkdir` lo contesta la regla.
+    // Va antes del turno mínimo por la transcripción que deja en el perfil.
+    name: 'F2.4: segundo plano en main: con la pestaña cerrada, la barrera de PR deniega y la regla creada desde la interfaz permite',
+    async run(page, { userDataDir }) {
+      const fake = await startFakeOpenAiServer();
+      let sessionId = null;
+      try {
+        const { tabId, cwd } = await openRuntimeTab(page, { fake, userDataDir, provider: PR_BARRIER_PROVIDER, model: 'fake:pr-barrera', permissionMode: 'default' });
+        sessionId = await page.evaluate(async (id) => {
+          const state = () => window.__mageDev.store.getState();
+          const sid = await state().ensureSession(id);
+          state().insertCreatePrPrompt(id);
+          await state().sendMessageToTab(id, state().draftByChat[id].text);
+          return sid;
+        }, tabId);
+        // Sin regla, el `mkdir` llega al usuario: la barrera ya denegó el push forzado sin preguntar.
+        await page.waitForFunction((id) => (window.__mageDev.store.getState().pendingByChat[id] ?? []).some((p) => p.view.toolLabel === 'Bash'), tabId, { timeout: CONFIG.actionTimeoutMs });
+        const preguntaba = await page.evaluate((id) => window.__mageDev.store.getState().pendingByChat[id].map((p) => p.view.rememberable), tabId);
+        await page.evaluate((id) => window.__mageDev.store.getState().allowAlwaysAndAnswer('Bash', id), tabId);
+        // El guardado es asíncrono: se espera a que main tenga la regla ANTES de cerrar la pestaña.
+        await page.waitForFunction(async (sid) => ((await window.mage.loadConversationPrefs(sid))?.alwaysAllowTools ?? []).includes('Bash'), sessionId, { timeout: CONFIG.actionTimeoutMs });
+        await page.waitForFunction((id) => window.__mageDev.store.getState().statusByChat[id] === 'streaming', tabId, { timeout: CONFIG.actionTimeoutMs });
+        const cierre = await page.evaluate(async ({ id, sid }) => {
+          await window.__mageDev.store.getState().closeTab(id);
+          const states = [];
+          window.__vgBgOff?.();
+          window.__vgBgStates = states;
+          window.__vgBgOff = window.__mageDev.store.subscribe((s) => { const st = s.backgroundSessions[sid]?.state; if (st !== undefined && states.at(-1) !== st) states.push(st); });
+          return { fila: window.__mageDev.store.getState().backgroundSessions[sid]?.state ?? null, enMain: (await window.mage.getSessionSnapshot(sid)).background };
+        }, { id: tabId, sid: sessionId });
+        await page.waitForFunction((sid) => window.__mageDev.store.getState().backgroundSessions[sid]?.state === 'done', sessionId, { timeout: 30_000 });
+        const final = await page.evaluate(async (sid) => {
+          window.__vgBgOff?.();
+          const snapshot = await window.mage.getSessionSnapshot(sid);
+          return { estados: window.__vgBgStates, pendientesMain: snapshot.pending.length };
+        }, sessionId);
+        const toolText = (request) => String(request?.messages.filter((m) => m.role === 'tool').at(-1)?.content ?? '');
+        const denegado = toolText(fake.stats.requests[1]);
+        const preguntado = toolText(fake.stats.requests[2]);
+        const porRegla = toolText(fake.stats.requests[3]);
+        const carpetas = ['vg-pregunta', 'vg-regla'].map((name) => fs.existsSync(path.join(cwd, name)));
+        const ok =
+          preguntaba.length === 1 && preguntaba[0] === true &&
+          cierre.fila === 'working' && cierre.enMain === true &&
+          denegado.includes('Mage no permite') && denegado.includes('git push --force') &&
+          !preguntado.includes('Mage no permite') && !porRegla.includes('Mage no permite') && carpetas.every(Boolean) &&
+          !final.estados.includes('needs_action') && final.pendientesMain === 0 &&
+          fake.stats.completions === 4;
+        return { ok, detail: JSON.stringify({ preguntaba, cierre, final, denegado: denegado.slice(0, 160), preguntado: preguntado.slice(0, 80), porRegla: porRegla.slice(0, 80), carpetas, peticionesAlFalso: fake.stats.completions }) };
+      } finally {
+        if (sessionId !== null) await page.evaluate((sid) => window.__mageDev.store.getState().discardBackgroundSession(sid), sessionId);
+        await page.evaluate((id) => window.__mageDev.store.getState().removeCustomProvider(id), PR_BARRIER_PROVIDER.id);
+        await fake.close();
+      }
+    },
+  },
+  {
+    // F2.3: un permiso se contesta UNA vez, gane quien gane. Turno del runtime propio contra el servidor falso
+    // (escenario `write`, modo Manual: pide permiso para un Write), sin CLI ni cuota. Dos respuestas a la vez
+    // por el IPC (como dos clientes): main acepta la primera y rechaza la segunda sin llegar al motor; la
+    // tarjeta queda con la decision ganadora y el fichero se escribe una vez. Va antes del turno minimo por
+    // la transcripcion que deja en el perfil.
+    name: 'F2.3: un permiso se contesta una vez: dos respuestas a la vez, un solo efecto',
+    async run(page, { userDataDir }) {
+      const fake = await startFakeOpenAiServer();
+      try {
+        const { tabId, cwd } = await openRuntimeTab(page, { fake, userDataDir, provider: PERMISSION_TURN_PROVIDER, model: 'fake:write', permissionMode: 'default' });
+        await page.evaluate((id) => window.__mageDev.store.getState().sendMessageToTab(id, 'Escribe el fichero.'), tabId);
+        await page.waitForFunction((id) => (window.__mageDev.store.getState().pendingByChat[id]?.length ?? 0) === 1, tabId, { timeout: CONFIG.actionTimeoutMs });
+        const respuestas = await page.evaluate(async (id) => {
+          const s = window.__mageDev.store.getState();
+          const sessionId = s.sessionIdByChat[id];
+          const requestId = s.pendingByChat[id][0].requestId;
+          const recibos = await Promise.all([
+            window.mage.answerPermission({ sessionId, requestId, decision: { behavior: 'allow' } }),
+            window.mage.answerPermission({ sessionId, requestId, decision: { behavior: 'deny', message: 'segundo cliente' } }),
+          ]);
+          return { sessionId, recibos };
+        }, tabId);
+        await page.waitForFunction((id) => window.__mageDev.store.getState().statusByChat[id] === 'idle', tabId, { timeout: 30_000 });
+        const final = await page.evaluate(async ({ id, sessionId }) => {
+          const s = window.__mageDev.store.getState();
+          const blocks = s.blocksByChat[id] ?? [];
+          const snapshot = await window.mage.getSessionSnapshot(sessionId);
+          return {
+            tarjetas: blocks.filter((b) => b.kind === 'permission').map((b) => b.state),
+            errores: blocks.filter((b) => b.kind === 'error').length,
+            pendientes: s.pendingByChat[id]?.length ?? 0,
+            pendientesMain: snapshot.pending.length,
+          };
+        }, { id: tabId, sessionId: respuestas.sessionId });
+        const fichero = fs.existsSync(path.join(cwd, 'vg-runtime.txt')) ? fs.readFileSync(path.join(cwd, 'vg-runtime.txt'), 'utf8') : null;
+        await page.evaluate((id) => window.__mageDev.store.getState().closeTab(id), tabId);
+        const ok =
+          JSON.stringify(respuestas.recibos) === JSON.stringify([{ status: 'accepted' }, { status: 'rejected', reason: 'already_answered' }]) &&
+          JSON.stringify(final.tarjetas) === JSON.stringify(['allowed']) &&
+          final.errores === 0 && final.pendientes === 0 && final.pendientesMain === 0 &&
+          fichero === 'hola desde el runtime\n' &&
+          fake.stats.completions === 2;
+        return { ok, detail: JSON.stringify({ recibos: respuestas.recibos, final, fichero, peticionesAlFalso: fake.stats.completions }) };
+      } finally {
+        await page.evaluate((id) => window.__mageDev.store.getState().removeCustomProvider(id), PERMISSION_TURN_PROVIDER.id);
+        await fake.close();
+      }
+    },
+  },
+  {
+    // F2.2: la cola vive en main. Un turno del runtime propio contra el servidor falso (escenario `cola`, ~4 s,
+    // sin CLI ni cuota) y, con el en marcha, tres envios por la accion del store (nunca Enter en el prompt): esperan en
+    // main, quitar y editar (en la fila) van a main, y al acabar sale UNO como turno propio. Cierra su pestaña y borra su
+    // proveedor; va justo antes del turno minimo porque deja una transcripcion del runtime en el perfil.
+    name: 'F2.2: la cola vive en main: espera con el turno en marcha, quitar y editar en la fila van a main, y sale de uno en uno',
+    async run(page, { userDataDir }) {
+      const fake = await startFakeOpenAiServer();
+      try {
+        const tabId = await openQueueTab(page, { fake, userDataDir });
+        const recibos = await page.evaluate(async (id) => {
+          const state = () => window.__mageDev.store.getState();
+          await state().sendMessageToTab(id, 'primero');
+          const sessionId = state().sessionIdByChat[id];
+          for (const text of ['segundo', 'tercero', 'cuarto']) await state().sendMessageToTab(id, text);
+          return { sessionId, cola: (await window.mage.getSessionSnapshot(sessionId)).queue.map((m) => m.text) };
+        }, tabId);
+        await page.locator('[data-queued-messages]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        await waitForDockReady(page, '[data-queued-messages]');
+        const filas = await page.locator('[data-queued-message]').count();
+        // Quitar el ultimo y editar el del medio: los dos van a main, y main devuelve la cola nueva.
+        await page.locator('[data-queued-message]').nth(2).locator('[data-queued-remove]').click();
+        await page.locator('[data-queued-message]').nth(1).locator('[data-queued-edit]').click();
+        const campo = page.locator('[data-queued-message]').nth(1).locator('[data-queued-edit-field]');
+        await campo.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        await campo.fill('tercero bis');
+        // Enter en el campo de edición de la COLA (no en el prompt): guarda el texto en main sin enviar nada.
+        await campo.press('Enter');
+        await page.waitForFunction((id) => window.__mageDev.store.getState().queuedByChat[id]?.[1]?.text === 'tercero bis', tabId, { timeout: CONFIG.actionTimeoutMs });
+        const trasEditar = await page.evaluate(async ({ id, sessionId }) => ({
+          enMain: (await window.mage.getSessionSnapshot(sessionId)).queue.map((m) => m.text),
+          borrador: window.__mageDev.store.getState().draftByChat[id]?.text ?? null,
+        }), { id: tabId, sessionId: recibos.sessionId });
+        // Al acabar el primero sale `segundo` como turno propio y luego `tercero bis`; al acabar ese, nada mas.
+        await page.waitForFunction((id) => {
+          const s = window.__mageDev.store.getState();
+          const users = (s.blocksByChat[id] ?? []).filter((b) => b.kind === 'user').length;
+          return users === 3 && s.statusByChat[id] === 'idle' && (s.queuedByChat[id]?.length ?? 0) === 0;
+        }, tabId, { timeout: 45_000 });
+        const final = await page.evaluate(async ({ id, sessionId }) => {
+          const s = window.__mageDev.store.getState();
+          const snapshot = await window.mage.getSessionSnapshot(sessionId);
+          return { burbujas: (s.blocksByChat[id] ?? []).filter((b) => b.kind === 'user').map((b) => b.text), estado: snapshot.state, colaMain: snapshot.queue.length };
+        }, { id: tabId, sessionId: recibos.sessionId });
+        await page.evaluate((id) => {
+          window.__mageDev.store.getState().setDraft(id, null);
+          return window.__mageDev.store.getState().closeTab(id);
+        }, tabId);
+        const ok =
+          JSON.stringify(recibos.cola) === JSON.stringify(['segundo', 'tercero', 'cuarto']) &&
+          filas === 3 &&
+          JSON.stringify(trasEditar.enMain) === JSON.stringify(['segundo', 'tercero bis']) &&
+          trasEditar.borrador === null &&
+          JSON.stringify(final.burbujas) === JSON.stringify(['primero', 'segundo', 'tercero bis']) &&
+          final.estado === 'idle' && final.colaMain === 0 &&
+          fake.stats.completions === 3;
+        return { ok, detail: JSON.stringify({ recibos: recibos.cola, filas, trasEditar, final, peticionesAlFalso: fake.stats.completions }) };
+      } finally {
+        await page.evaluate((id) => window.__mageDev.store.getState().removeCustomProvider(id), QUEUE_TURN_PROVIDER.id);
+        await fake.close();
+      }
+    },
+  },
+  {
     // Grupo 0 (0.1.2, ficha D11 de P-032): UN turno minimo de verdad, de punta a punta — teclear, Enter,
     // proceso del CLI, respuesta pintada. Es la unica comprobacion que envia: todas las demas miden sin
     // gastar. Contra Claude con el modelo y el esfuerzo mas bajos; si la cuenta lleva gastado mas del
@@ -7972,7 +8987,12 @@ const CHECKS = [
       const fake = decision.target === 'local' ? await startFakeOpenAiServer() : null;
       try {
         const expected = await openTurnTab(page, { target: decision.target, fake, userDataDir });
+        await recordSequencedEvents(page);
         const outcome = await sendMinimalTurn(page, expected);
+        // F2.1: los eventos del turno llegan con secuencia contigua y su conversacion, y la instantanea
+        // de main coincide. Antes de cerrar la pestaña: despues la sesion ya no existe.
+        const secuencia = outcome.tab === null ? null : await readSequencedEvents(page, outcome.tab.id);
+        const secuenciaOk = secuencia !== null && secuencia.ok;
         if (outcome.tab !== null) await page.evaluate((tabId) => window.__mageDev.store.getState().closeTab(tabId), outcome.tab.id);
         const viaFake =
           fake === null || (fake.stats.completions === 2 && outcome.tools.includes('Read') && outcome.agentText.includes(FAKE_TURN_FINAL_TEXT));
@@ -7980,7 +9000,7 @@ const CHECKS = [
         // enviar nada: la hidratacion sale de la transcripcion de userData/runtime).
         const reabierta = fake !== null && outcome.sent ? await reopenTurnFromHistory(page, outcome.tab) : null;
         const reabiertaOk = reabierta === null || (reabierta.tools.includes('Read') && reabierta.agentText.includes(FAKE_TURN_FINAL_TEXT));
-        const ok = outcome.sent && outcome.status === 'idle' && outcome.agentText.trim().length > 0 && outcome.errors.length === 0 && viaFake && reabiertaOk;
+        const ok = outcome.sent && outcome.status === 'idle' && outcome.agentText.trim().length > 0 && outcome.errors.length === 0 && viaFake && reabiertaOk && secuenciaOk;
         const detail = {
           modo: decision.target,
           motivo: decision.reason,
@@ -7992,6 +9012,7 @@ const CHECKS = [
           errores: outcome.errors,
           bloques: outcome.kinds,
           ms: outcome.ms,
+          secuencia,
           ...(fake === null ? {} : { peticionesAlFalso: fake.stats.completions, conStream: fake.stats.streamed, herramientas: outcome.tools, reabierta }),
         };
         return { ok, detail: JSON.stringify(detail) };
@@ -8032,7 +9053,7 @@ const UPDATE_PROBE_NOTES = '### Añadido\n- Nota de prueba de verify:gui\n- Otra
 // Provoca el cierre de la ventana (el mismo `close` que la X), mide el dialogo propio y lo contesta con
 // `how` ('Cancelar' o 'Escape': nunca «Cerrar Mage»). Espera al DESMONTAJE (error n.º 6 de la skill).
 async function askCloseAndAnswer(page, how) {
-  await page.evaluate(() => window.close());
+  await page.evaluate(() => window.mage.closeWindow());
   const dialogo = page.locator(CLOSE_DIALOG);
   const aparecio = await dialogo.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs }).then(
     () => true,
@@ -8543,6 +9564,12 @@ async function measureProviderHistory(page, { home, sessionId, title, provider }
   await page.evaluate((id) => window.__mageDev.store.getState().setActiveAccount(id), home);
   await page.locator(`[data-history-session="${sessionId}"]`).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
   const listada = await page.evaluate((id) => document.querySelector(`[data-history-session="${id}"]`)?.textContent ?? '', sessionId);
+  const search = page.getByRole('textbox', { name: 'Buscar conversaciones', exact: true });
+  await search.fill(title);
+  await page.locator(`[data-history-session="${sessionId}"]`).waitFor({ state: 'visible' });
+  await search.fill('vg-sin-coincidencias-imposible');
+  await page.locator(`[data-history-session="${sessionId}"]`).waitFor({ state: 'hidden' });
+  await search.fill('');
   await page.evaluate((id) => {
     const store = window.__mageDev.store.getState();
     store.openConversation(store.conversationHistory.find((c) => c.sessionId === id));
@@ -8559,6 +9586,14 @@ async function measureProviderHistory(page, { home, sessionId, title, provider }
   }, sessionId);
   const ok = listada.includes(title) && medido.provider === provider && medido.cuenta === home && ['agent', 'tool', 'user'].every((k) => medido.tipos.includes(k));
   return { ok, detail: JSON.stringify({ listada: listada.slice(0, 60), ...medido }) };
+}
+
+// Texto del rollout de un hilo en un CODEX_HOME (lo que escribió una migración), o '' si no está.
+function readCodexRolloutText(codexHome, threadId) {
+  const root = path.join(codexHome, 'sessions');
+  if (!fs.existsSync(root)) return '';
+  const file = fs.readdirSync(root, { recursive: true }).map(String).find((name) => name.endsWith(`${threadId}.jsonl`));
+  return file === undefined ? '' : fs.readFileSync(path.join(root, file), 'utf8');
 }
 
 async function withNewTabDialog(page, measure) {
@@ -9529,7 +10564,101 @@ async function measureTabContextMenuClamp(page) {
   return measured;
 }
 
+// --- F2.2: la cola de main, de punta a punta (runtime propio + servidor falso) ----------------------------
+
+const QUEUE_TURN_PROVIDER = { id: 'custom:vg-cola', label: 'VG cola' };
+const QUEUE_TURN_MODEL = 'fake:cola';
+
+// Proveedor del usuario hacia el servidor falso y pestaña nueva en un borrador (confianza automatica, D4).
+// El runtime lee los proveedores del DISCO: se espera a que el guardado llegue.
+async function openRuntimeTab(page, { fake, userDataDir, provider, model, permissionMode }) {
+  const opened = await page.evaluate(async ({ provider, baseUrl, model, permissionMode }) => {
+    const state = window.__mageDev.store.getState();
+    await state.saveCustomProvider({ id: provider.id, label: provider.label, baseUrl, hasApiKey: false, models: [{ id: model, label: model }] });
+    const cwd = await window.mage.getScratchDir();
+    await state.newTab({ accountId: state.activeAccountId, cwd, model, provider: provider.id, title: provider.label, privacy: 'shared', ...(permissionMode === undefined ? {} : { permissionMode }) });
+    return { tabId: window.__mageDev.store.getState().activeTabId, cwd };
+  }, { provider, baseUrl: fake.baseUrl, model, permissionMode });
+  await waitForFile(path.join(userDataDir, 'app-settings.json'), (text) => text.includes(provider.id));
+  return opened;
+}
+
+async function openQueueTab(page, { fake, userDataDir }) {
+  return (await openRuntimeTab(page, { fake, userDataDir, provider: QUEUE_TURN_PROVIDER, model: QUEUE_TURN_MODEL })).tabId;
+}
+
+const PERMISSION_TURN_PROVIDER = { id: 'custom:vg-permiso', label: 'VG permiso' };
+const PR_BARRIER_PROVIDER = { id: 'custom:vg-barrera-pr', label: 'VG barrera PR' };
+const HOST_TURN_PROVIDER = { id: 'custom:vg-host', label: 'VG host' };
+
+// F2.6: el cliente mínimo del host (`scripts/host-client.mjs`) como proceso hijo PROPIO: sus líneas JSON se acumulan y
+// se para por su PID (nunca por nombre).
+function startHostClient(userDataDir, sessionId) {
+  const child = spawn(process.execPath, [path.join(repoRoot, 'scripts', 'host-client.mjs'), '--user-data-dir', userDataDir, '--session', sessionId, '--until', 'result', '--timeout', '60000'], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+  const lines = [];
+  let stderr = '';
+  let buffer = '';
+  child.stdout.on('data', (chunk) => {
+    buffer += chunk.toString('utf8');
+    const parts = buffer.split('\n');
+    buffer = parts.pop() ?? '';
+    for (const part of parts) if (part.length > 0) lines.push(JSON.parse(part));
+  });
+  child.stderr.on('data', (chunk) => { stderr += chunk.toString('utf8'); });
+  const exited = new Promise((resolve) => child.once('exit', (code) => resolve(code)));
+  return { child, lines, exited, stderr: () => stderr };
+}
+
+// Espera a que `predicate` sea cierta o lanza con el motivo que da `describe()` (nunca devuelve en silencio).
+async function waitUntil(predicate, timeoutMs, describe) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, CONFIG.pollIntervalMs));
+  }
+  throw new Error(describe());
+}
+
+// Un hello con un token que no es el del host: el servidor tiene que contestar `BadToken` y cerrar.
+function helloWithWrongToken(userDataDir) {
+  const address = fs.readFileSync(path.join(userDataDir, 'run', 'host-endpoint'), 'utf8').trim();
+  return new Promise((resolve, reject) => {
+    const socket = net.createConnection(address);
+    let received = '';
+    socket.on('connect', () => socket.write(`${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'hello', params: { protocol: '1.0', client: { kind: 'terminal', version: 'verify' }, token: 'f'.repeat(64) } })}\n`));
+    socket.on('data', (chunk) => { received += chunk.toString('utf8'); });
+    socket.on('close', () => resolve(received.length === 0 ? null : JSON.parse(received.split('\n')[0])));
+    socket.on('error', reject);
+  });
+}
+
 // --- Grupo 0: el turno minimo de verdad -----------------------------------------------------------
+
+// F2.1: escucha en la pagina los eventos de sesion tal cual llegan por el IPC (con `seq` y `conversationId`).
+async function recordSequencedEvents(page) {
+  await page.evaluate(() => {
+    window.__vgSequenced = [];
+    window.__vgSequencedOff?.();
+    window.__vgSequencedOff = window.mage.onSessionEvent((p) => window.__vgSequenced.push({ sessionId: p.sessionId, seq: p.seq, conversationId: p.conversationId ?? null, kind: p.event.kind }));
+  });
+}
+
+// Secuencia de la sesion de la pestaña: contigua y creciente, una sola conversacion (no nula) y la misma
+// ultima secuencia en la instantanea de main.
+async function readSequencedEvents(page, tabId) {
+  return page.evaluate(async (id) => {
+    window.__vgSequencedOff?.();
+    const sessionId = window.__mageDev.store.getState().sessionIdByChat[id];
+    const events = window.__vgSequenced.filter((e) => e.sessionId === sessionId);
+    const snapshot = await window.mage.getSessionSnapshot(sessionId);
+    const seqs = events.map((e) => e.seq);
+    const contiguous = seqs.every((seq, i) => typeof seq === 'number' && (i === 0 || seq === seqs[i - 1] + 1));
+    const conversations = [...new Set(events.map((e) => e.conversationId))];
+    const ok = events.length > 0 && contiguous && conversations.length === 1 && conversations[0] !== null
+      && snapshot.conversationId === conversations[0] && snapshot.lastSeq === seqs.at(-1) && snapshot.state === 'idle';
+    return { ok, eventos: events.length, primera: seqs[0], ultima: seqs.at(-1), contigua: contiguous, conversaciones: conversations.length, instantanea: { estado: snapshot.state, lastSeq: snapshot.lastSeq, conConversacion: snapshot.conversationId !== null } };
+  }, tabId);
+}
 
 // Lo mas barato que acepta el CLI: el modelo pequeño, el esfuerzo minimo y una respuesta de una palabra.
 const MINIMAL_TURN = {
@@ -9680,9 +10809,114 @@ function readTurnState(page, tab) {
   }, tab);
 }
 
+// --- Segunda instancia (F2.8) -------------------------------------------------------------------------
+
+// La revisión periódica de una pestaña en solo lectura (`READ_ONLY_RECHECK_MS` del renderer): D17 mide que al enfocar
+// no hace falta esperarla.
+const READ_ONLY_RECHECK_MS_FOR_CHECK = 30_000;
+
+// El fichero del lock de una conversación, como lo nombra main (`conversationLockEnv.ts`): el hash de (proveedor,
+// cuenta canonizada, id nativo) dentro de `dir`. Solo para conversaciones sin cuenta (runtime propio).
+function conversationLockFileFor(ref, dir = HARNESS_LOCKS_DIR) {
+  if (ref.accountDir !== '') throw new Error(`Solo conversaciones sin cuenta: ${JSON.stringify(ref.accountDir)}`);
+  const hash = createHash('sha256').update(JSON.stringify([ref.provider, '', ref.nativeId])).digest('hex').slice(0, 32);
+  return path.join(dir, `${hash}.lock`);
+}
+
+// La carpeta REAL de locks del usuario (`<raíz local>/mage/locks`, compartida con su Mage instalado). El harness nunca
+// escribe en ella: solo se mira para afirmar que no aparece ahí el lock de la comprobación.
+function userConversationLocksDir() {
+  const local = process.platform === 'win32'
+    ? process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local')
+    : process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share');
+  return path.join(local, 'mage', 'locks');
+}
+
+// Otra instancia de Mage con un perfil AISLADO propio, del build en `out/` (el dev server ya es de la primera) y con su
+// propio puerto de depuración. Sin CLI: el sondeo de modelos, MCP y gh, falsos o apagados, como la primera.
+// `profile` reutiliza un perfil ya sembrado (D19: reiniciar sobre el MISMO); `rendererUrl`, el renderer del servidor de
+// desarrollo de la tanda, que trae `__mageDev` (el del build no lo tiene). `extraEnv`, variables solo para esa instancia
+// (el app-server falso de Codex).
+async function startSecondInstance({ profile = fs.mkdtempSync(path.join(os.tmpdir(), 'mage-verify-segunda-')), rendererUrl, extraEnv = {} } = {}) {
+  const port = CONFIG.port + 1;
+  // Sin ELECTRON_RUN_AS_NODE: con esa variable presente Electron arranca como Node.
+  const { ELECTRON_RUN_AS_NODE: _asNode, ...inherited } = process.env;
+  const dev = rendererUrl === undefined ? {} : { ELECTRON_RENDERER_URL: rendererUrl, MAGE_MCP_FAKE_SOURCES: mcpFakeSourcesDir(profile) };
+  const child = spawn(requireFromHere('electron'), ['.', `--user-data-dir=${profile}`, `--remote-debugging-port=${port}`], {
+    cwd: repoRoot,
+    env: { ...inherited, MAGE_SKIP_MODEL_PROBE: '1', MAGE_MCP_FAKE_CLI: '1', MAGE_GH_FAKE: '1', [HARNESS_LOCKS_ENV]: HARNESS_LOCKS_DIR, ...dev, ...extraEnv },
+    windowsHide: true,
+    stdio: 'ignore',
+    detached: process.platform !== 'win32',
+  });
+  const deadline = Date.now() + CONFIG.bootTimeoutMs;
+  while (Date.now() < deadline) {
+    const response = await fetch(`http://127.0.0.1:${port}/json/version`).catch(() => null);
+    if (response?.ok) break;
+    await new Promise((resolve) => setTimeout(resolve, CONFIG.pollIntervalMs));
+  }
+  const browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`);
+  const secondPage = await findMainPage(browser);
+  await secondPage.waitForFunction(() => typeof window.mage?.acquireConversationLock === 'function', undefined, { timeout: CONFIG.bootTimeoutMs });
+  return { child, browser, page: secondPage, profile, profileName: path.basename(profile) };
+}
+
+// --- D19: pestañas de Codex tras reiniciar Mage ---------------------------------------------------
+// Id sintético de la sesión VIVA de Mage (un UUID propio, distinto del hilo de Codex). Ninguna sesión de main lo tiene.
+const D19_MAGE_SESSION_ID = 'd19d19d1-9999-4999-8999-d19d19d19d19';
+// Lo que guardó 0.1.2 en el workspace: un UUID de Mage que no es de ninguna conversación de la cuenta.
+const D19_ORPHAN_ID = 'd19aaaaa-0000-4000-8000-0000000000d1';
+const D19_MISSING_NOTICE = 'No se encontró esta conversación de Codex. Ábrela desde el historial de la cuenta.';
+
+// Perfil aislado propio (fuera del de la tanda) con el asistente hecho, MCP falso y una cuenta de Codex con un rollout
+// sintético (`seedProviderHistory`, la misma forma que lee `adaptCodexLine`). Sin datos del usuario ni CLI.
+function seedRestartProfile() {
+  const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'mage-verify-d19-'));
+  seedOnboardingDone(profile);
+  seedMcpCommon(profile);
+  return { profile, fx: seedProviderHistory({ userDataDir: profile, repoRoot }) };
+}
+
+// Arranca Mage sobre `profile` con el renderer de la tanda y espera a que monte el workbench con las cuentas cargadas.
+async function startRestartInstance(profile, rendererUrl, extraEnv = {}) {
+  const instance = await startSecondInstance({ profile, rendererUrl, extraEnv });
+  await instance.page.waitForFunction(() => window.__mageDev?.store.getState().accounts.length > 0, undefined, { timeout: CONFIG.bootTimeoutMs });
+  return instance;
+}
+
+// Cierra la instancia por su PID (árbol entero) y espera a que Electron suelte el perfil antes de reabrirlo.
+async function stopRestartInstance(instance) {
+  killTree(instance.child);
+  await instance.browser.close().catch(() => undefined);
+  await new Promise((resolve) => setTimeout(resolve, 3000));
+}
+
+// La pestaña restaurada del workspace: su id de conversación, sus bloques y el aviso de conversación inexistente.
+function readRestoredTab(page, tabId) {
+  return page.evaluate(({ id, notice }) => {
+    const s = window.__mageDev.store.getState();
+    const tab = s.tabs.find((t) => t.id === id);
+    return {
+      existe: tab !== undefined, provider: tab?.provider ?? null, resumeSessionId: tab?.resumeSessionId ?? null,
+      tipos: [...new Set((s.blocksByChat[id] ?? []).map((b) => b.kind))].sort(),
+      faltaConversacion: s.missingConversationByChat[id] ?? null,
+      aviso: [...document.querySelectorAll('[role="status"]')].some((n) => n.textContent?.trim() === notice),
+    };
+  }, { id: tabId, notice: D19_MISSING_NOTICE });
+}
+
+async function waitForCondition(condition, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (condition()) return true;
+    await new Promise((resolve) => setTimeout(resolve, CONFIG.pollIntervalMs));
+  }
+  return condition();
+}
+
 // --- Arranque y conexion -------------------------------------------------------------------------
 
-function launchApp(userDataDir) {
+function launchApp(userDataDir, extraEnv = {}) {
   // electron-vite reenvia a Electron lo que va tras `--`. `--user-data-dir` es un switch nativo de
   // Electron/Chromium, asi que no hace falta nada en el codigo de Mage para aislarlo.
   // Se lanza el JS de electron-vite con el propio node, NO `pnpm`/`pnpm.cmd`: en Windows, `pnpm` es
@@ -9691,7 +10925,8 @@ function launchApp(userDataDir) {
   // hay ni shell ni .cmd, y ademas funciona igual en los tres SO.
   const args = [
     path.join(repoRoot, 'node_modules', 'electron-vite', 'bin', 'electron-vite.js'),
-    'dev',
+    // `--prod` (solo con --perf-baseline): el build ya hecho (`pnpm build`), con React de produccion.
+    PROD_BUILD ? 'preview' : 'dev',
     '--',
     `--remote-debugging-port=${CONFIG.port}`,
     `--user-data-dir=${userDataDir}`,
@@ -9714,6 +10949,10 @@ function launchApp(userDataDir) {
       // MAGE_AGY_USAGE_FAKE: el uso de agy del panel sale de su salida medida; nunca se lanza agy.
       MAGE_AGY_USAGE_FAKE: path.join(repoRoot, 'src', 'main', 'usage', '__fixtures__', 'agy-usage.json'),
       VITE_MAGE_RELEASE_NOTES_IN_DEV: '1',
+      // Los locks de conversación (#55) van a la carpeta de la tanda, nunca a la real del usuario (H3 de la devolución 17).
+      [HARNESS_LOCKS_ENV]: HARNESS_LOCKS_DIR,
+      // --bench: la casa temporal con las credenciales COPIADAS (nunca las reales del usuario).
+      ...extraEnv,
     },
     windowsHide: true,
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -9809,6 +11048,7 @@ function writeReport(runDir, results, consoleErrors) {
 // --- Main ----------------------------------------------------------------------------------------
 
 async function main() {
+  if (process.argv.includes('--bench')) return runBenchMode();
   // Diagnostico reutilizable de una tanda bloqueada, sin arrancar otra instancia ni mutar sus stores.
   if (process.argv.includes('--inspect-running')) {
     const browser = await chromium.connectOverCDP(`http://127.0.0.1:${CONFIG.port}`);
@@ -9831,18 +11071,22 @@ async function main() {
   // Perfil NUEVO por ejecucion (no uno fijo que se borra): Electron mantiene el lock del perfil un
   // rato despues de morir, asi que un `rm` al arrancar fallaba con EPERM y tumbaba la verificacion
   // entera antes de empezar. Con un directorio por ejecucion no hay nada que borrar en caliente.
-  const userDataDir = path.join(CONFIG.outDir, 'user-data', stamp);
+  const reuseProfile = process.argv.find(arg => arg.startsWith('--fixture-profile='))?.slice('--fixture-profile='.length);
+  const userDataDir = reuseProfile === undefined ? path.join(CONFIG.outDir, 'user-data', stamp) : path.resolve(reuseProfile);
+  if (reuseProfile !== undefined && !userDataDir.startsWith(path.join(CONFIG.outDir, 'user-data') + path.sep)) throw new Error('El perfil de fixture debe estar dentro de .verify-out/user-data');
   fs.mkdirSync(runDir, { recursive: true });
   fs.mkdirSync(userDataDir, { recursive: true });
   prunePreviousProfiles(userDataDir);
   seedCommandCatalog(userDataDir);
-  seedOnboardingDone(userDataDir);
+  if (reuseProfile === undefined || !fs.existsSync(path.join(userDataDir, 'app-settings.json'))) seedOnboardingDone(userDataDir);
   seedMcpCommon(userDataDir);
 
   console.log(`[verify:gui] perfil aislado: ${userDataDir}`);
   const { child, log } = launchApp(userDataDir);
   let browser = null;
   const results = [];
+  // H1 de DEVOLUCION-022: alias de las cuentas reales del perfil; enmascaran los detalles antes de que lleguen al informe.
+  let accountAliases = [];
   const consoleErrors = [];
 
   try {
@@ -9853,6 +11097,7 @@ async function main() {
     // DESPUES del primer render. Sin esperarlas, la primera comprobacion medía una UI a medio montar
     // y daba un falso negativo (toolbars=0 con la app perfectamente arrancada).
     await page.locator('[role="toolbar"]').first().waitFor({ state: 'attached', timeout: CONFIG.bootTimeoutMs });
+    accountAliases = await page.evaluate(() => (window.__mageDev?.store.getState().accounts ?? []).map((a) => a.alias));
     // Control negativo reproducible: la cadencia medida con la ventana tapada, antes de importar Motion.
     if (process.argv.includes('--slow-frames')) {
       await page.addInitScript((intervalMs) => {
@@ -9867,26 +11112,36 @@ async function main() {
     });
     page.on('pageerror', (error) => consoleErrors.push(String(error)));
 
+    // #40 (baseline de interfaz, SOLO medicion): en vez de las comprobaciones, mide y deja el JSON.
+    if (process.argv.includes('--perf-baseline')) {
+      const medido = await runPerfBaseline(page, { openConversation: openTemporaryConversation, devBridge: !PROD_BUILD });
+      fs.writeFileSync(path.join(runDir, 'perf-baseline.json'), JSON.stringify(medido, null, 2), 'utf-8');
+      console.log(`[verify:gui] baseline: ${path.join(runDir, 'perf-baseline.json')}`);
+      results.push({ name: 'Baseline de interfaz #40', ok: true, detail: redactUserData('medido', accountAliases) });
+      return;
+    }
     const baselinePanels = await page.evaluate(() => window.__mageDev.panelStore.getState().layout);
     if (process.argv.includes('--initial-close-prompt')) {
-      await page.evaluate(() => window.close());
+      await page.evaluate(() => window.mage.closeWindow());
       await page.locator(CLOSE_DIALOG).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
     }
     for (const [index, check] of checks.entries()) {
       const fileName = `${String(index + 1).padStart(2, '0')}-${slug(check.name)}.png`;
       try {
         const before = process.argv.includes('--trace-layout') ? await captureLayoutEvidence(page) : null;
-        const outcome = await runGuiCheck({ page, check,
+        const outcome = await runGuiCheck({ page, check: withDomTextDump(check),
           context: { userDataDir, runDir, screenshot: path.join(runDir, fileName) },
           prepare: () => prepareGuiCheck(page, check.state ?? {}, baselinePanels),
           settle: () => settleGuiState(page),
         });
         if (before !== null) fs.appendFileSync(path.join(runDir, 'layout-evidence.jsonl'), JSON.stringify({ name: check.name, before, after: await captureLayoutEvidence(page), outcome }) + '\n');
-        results.push({ name: check.name, ...outcome });
-        console.log(`  ${outcome.ok ? '✓' : '✗'} ${check.name} — ${outcome.detail}`);
+        const detail = redactUserData(outcome.detail, accountAliases);
+        results.push({ name: check.name, ...outcome, detail });
+        console.log(`  ${outcome.ok ? '✓' : '✗'} ${check.name} — ${detail}`);
       } catch (error) {
-        results.push({ name: check.name, ok: false, detail: `excepcion: ${error.message}` });
-        console.log(`  ✗ ${check.name} — excepcion: ${error.message}`);
+        const detail = redactUserData(`excepcion: ${error.message}`, accountAliases);
+        results.push({ name: check.name, ok: false, detail });
+        console.log(`  ✗ ${check.name} — ${detail}`);
 
       }
       // El INDICE va delante del slug: `slug()` trunca a 60 caracteres y ya hay nombres de comprobacion
@@ -9897,7 +11152,7 @@ async function main() {
 
     }
   } catch (error) {
-    results.push({ name: 'Arranque', ok: false, detail: error.message });
+    results.push({ name: 'Arranque', ok: false, detail: redactUserData(error.message, accountAliases) });
     console.error(`[verify:gui] ${error.message}`);
     fs.writeFileSync(path.join(runDir, 'launch.log'), log.join(''), 'utf-8');
   } finally {
@@ -9911,6 +11166,72 @@ async function main() {
   console.log(`\n[verify:gui] informe: ${path.join(runDir, 'session.md')}`);
   console.log(`[verify:gui] ${results.length - failed.length}/${results.length} comprobaciones en verde`);
   process.exit(failed.length === 0 ? 0 : 1);
+}
+
+// T4 (DEVOLUCION-018), solo durante F3 y con la opción explícita: tras el `run` de cada caso, ANTES de restaurar, se
+// guarda el texto del DOM. Sin la opción, el caso queda tal cual.
+const DOM_TEXT_DUMP = process.argv.find((arg) => arg.startsWith('--dump-dom-text='))?.slice('--dump-dom-text='.length);
+function withDomTextDump(check) {
+  if (DOM_TEXT_DUMP === undefined) return check;
+  return { ...check, run: async (page, context) => {
+    const outcome = await check.run(page, context);
+    await appendDomText(page, path.resolve(DOM_TEXT_DUMP), check.name);
+    return outcome;
+  } };
+}
+
+// Benchmark F0-B, ruta R3 (`--bench --provider=claude|codex --rep=<n> --out=<fichero> [--tasks=T1,..]`):
+// Mage con perfil aislado y una CASA temporal (USERPROFILE/HOME) con copia de la credencial del
+// proveedor, retirada en finally con su comprobación de token. Gasta turnos reales (autorizados para el baseline).
+async function runBenchMode() {
+  const arg = (name) => process.argv.find((a) => a.startsWith(`--${name}=`))?.split('=')[1];
+  const provider = arg('provider');
+  const out = arg('out');
+  const rep = Number(arg('rep'));
+  if (!['claude', 'codex'].includes(provider) || out === undefined || !Number.isInteger(rep)) throw new Error('--bench exige --provider, --rep y --out');
+  const tasks = arg('tasks')?.split(',');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), `mage-f0-bench-r3-${provider}-`));
+  const home = path.join(root, 'home');
+  const credential = prepareBenchHome(home, provider);
+  const initial = credentialDigest(credential);
+  const userDataDir = path.join(root, 'user-data');
+  fs.mkdirSync(userDataDir);
+  seedOnboardingDone(userDataDir);
+  if (provider === 'codex') fs.writeFileSync(path.join(userDataDir, 'provider-accounts.json'), JSON.stringify({ version: 1, accounts: [{ providerId: 'codex', authKind: 'subscription', name: 'bench', home: path.join(home, '.codex') }] }));
+  // APPDATA también dentro de la casa: con USERPROFILE cambiado, Electron no resolvía 'appData'. LOCALAPPDATA
+  // se queda el real: ahí localiza Mage el ejecutable de Codex.
+  const appData = path.join(home, 'AppData', 'Roaming');
+  fs.mkdirSync(appData, { recursive: true });
+  const { child, log } = launchApp(userDataDir, { USERPROFILE: home, HOME: home, APPDATA: appData });
+  let browser = null;
+  try {
+    browser = await chromium.connectOverCDP(await waitForCdp());
+    const page = await findMainPage(browser);
+    await page.locator('[role="toolbar"]').first().waitFor({ state: 'attached', timeout: CONFIG.bootTimeoutMs });
+    await page.waitForFunction(() => window.__mageDev?.store.getState().accounts.length > 0, undefined, { timeout: CONFIG.bootTimeoutMs });
+    const usageAllows = guardedUsage(() => (provider === 'claude' ? claudeUsage(credential) : codexRateLimits(path.join(home, '.codex'))));
+    await runMageBench(page, { provider, rep, tasks, root, usageAllows, out, claudeConfigDir: path.join(home, '.claude') });
+  } catch (error) {
+    fs.writeFileSync(`${out}.arranque.log`, log.join('').slice(-20_000), 'utf-8');
+    throw error;
+  } finally {
+    if (browser !== null) await browser.close().catch(() => {});
+    killTree(child);
+    await new Promise((r) => setTimeout(r, 3000)); // Electron suelta el perfil antes de borrarlo
+    cleanupProfile(root, credential, initial);
+  }
+}
+
+// Casa temporal del benchmark: solo la credencial del proveedor medido, copiada.
+function prepareBenchHome(home, provider) {
+  if (provider === 'codex') {
+    prepareCodexHome(path.join(home, '.codex'));
+    return path.join(home, '.codex', 'auth.json');
+  }
+  fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
+  fs.copyFileSync(path.join(os.homedir(), '.claude', '.credentials.json'), path.join(home, '.claude', '.credentials.json'));
+  fs.writeFileSync(path.join(home, '.claude.json'), JSON.stringify({ hasCompletedOnboarding: true }));
+  return path.join(home, '.claude', '.credentials.json');
 }
 
 // Borra los perfiles de ejecuciones anteriores. Best-effort: si Electron aun tiene el lock, se deja

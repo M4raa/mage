@@ -1,6 +1,7 @@
 import { extractToolResult, extractToolUses, type ToolResultView, type ToolUseView } from '../toolView';
 import { DiffView } from './DiffView';
 import type { TranscriptEntry } from '@shared/transcripts';
+import { useT } from '../../i18n/uiLanguage';
 
 // Detalle expandido de una fila de transcripcion: si la entrada es una llamada a tool (assistant
 // con tool_use) o su resultado (user con tool_result), lo renderiza de forma legible (comando /
@@ -42,11 +43,12 @@ function ToolUseCard({ use }: { readonly use: ToolUseView }): React.JSX.Element 
 }
 
 function ToolResultCard({ result }: { readonly result: ToolResultView }): React.JSX.Element {
+  const t = useT();
   return (
     <div className={`overflow-hidden rounded-[6px] border ${result.isError ? 'border-mg-danger-border' : 'border-mg-border-subtle'}`}>
       <div className="flex items-center gap-[6px] bg-mg-hover px-[8px] py-[4px]">
         <span className={result.isError ? 'font-bold text-mg-danger' : 'font-bold text-mg-body'}>
-          {result.isError ? 'resultado (error)' : 'resultado'}
+          {result.isError ? t('chat.toolDetail.resultError') : t('chat.toolDetail.result')}
         </span>
         {result.filePath !== null && <span className="truncate text-mg-sec">{result.filePath}</span>}
       </div>
@@ -60,6 +62,7 @@ function ToolResultCard({ result }: { readonly result: ToolResultView }): React.
 
 
 function OutputPre({ text }: { readonly text: string }): React.JSX.Element {
-  const clipped = text.length > OUTPUT_MAX_CHARS ? `${text.slice(0, OUTPUT_MAX_CHARS)}\n… (${text.length - OUTPUT_MAX_CHARS} car. más)` : text;
+  const t = useT();
+  const clipped = text.length > OUTPUT_MAX_CHARS ? `${text.slice(0, OUTPUT_MAX_CHARS)}\n${t('chat.toolDetail.clipped', { count: text.length - OUTPUT_MAX_CHARS })}` : text;
   return <pre className="whitespace-pre-wrap break-all bg-mg-code p-[8px] text-[10px] leading-[1.55] text-mg-sec">{clipped}</pre>;
 }

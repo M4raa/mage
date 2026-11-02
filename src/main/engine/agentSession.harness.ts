@@ -7,7 +7,7 @@
 import { EventEmitter } from 'node:events';
 import { vi } from 'vitest';
 import type { MageEvent, PermissionDecision } from '@shared/events';
-import { AgentSession, type SpawnFn, type TimerHandle } from './agentSession';
+import { AgentSession, type AgentSessionDeps, type SpawnFn, type TimerHandle } from './agentSession';
 import type { LaunchParams, PermissionRef, ProviderAdapter, SpawnPlan } from './providerAdapter';
 import type { RestartPolicy } from './restartPolicy';
 
@@ -90,7 +90,7 @@ export interface Harness {
 }
 
 // `custom` permite inyectar otro adapter (p.ej. uno que interrumpe por corte) sin duplicar el arnes entero.
-export function harness(custom?: { readonly adapter: ProviderAdapter; readonly plans: LaunchParams[] }): Harness {
+export function harness(custom?: { readonly adapter: ProviderAdapter; readonly plans: LaunchParams[] }, log?: AgentSessionDeps['log']): Harness {
   const { adapter, plans } = custom ?? fakeAdapter();
   const events: MageEvent[] = [];
   const children: FakeChild[] = [];
@@ -109,6 +109,7 @@ export function harness(custom?: { readonly adapter: ProviderAdapter; readonly p
     adapter,
     params: { sessionId: 's1', accountDir: '/home/u/.claude', model: 'sonnet', cwd: '/proj' },
     emit: (event) => events.push(event),
+    log,
     spawn,
     // Windows a proposito: es el SO donde la terminacion del arbol NO es lo mismo que kill().
     killTree: {

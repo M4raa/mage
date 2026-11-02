@@ -49,6 +49,7 @@ export const PERSISTED_TAB_SCHEMA = z.object({
   alwaysAllowTools: z.array(z.string().min(1)).optional(),
   // Ronda 3, item 12: estaban en el TIPO pero no aqui, asi que Zod los borraba al cargar Y al guardar.
   pinned: z.boolean().optional(),
+  worktreeOff: z.boolean().optional(),
   colorIndex: z.number().int().min(0).optional(), // indice de acento del tema (0..5)
   // Nombre puesto en Mage que aun no llego al CLI como `/rename` (P-026, D3). Opcional: un estado
   // anterior sin el campo parsea igual.

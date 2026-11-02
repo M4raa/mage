@@ -7,6 +7,7 @@ import type { SessionPlugin } from '@shared/events';
 import type { ArtifactDraft, ArtifactPublication } from '@shared/artifacts';
 import type { DiffLine } from './diffLines';
 import type { ToolClass } from './toolClassify';
+import type { SubagentStatus } from './engineBlocks';
 import type { LoginStatus } from '@shared/accounts';
 import type { ConversationPrivacy } from '@shared/state';
 
@@ -190,8 +191,8 @@ export type Block =
       readonly description: string | null;
       readonly agentId: string | null;
       // null = lanzandose; `SUBAGENT_STATUS` (engineBlocks.ts) para el resto. Un Agent en segundo plano
-      // sigue en marcha con 'en segundo plano' hasta que llega su notificacion (P-028 37a).
-      readonly status: string | null;
+      // sigue en marcha con 'background' hasta que llega su notificacion (P-028 37a).
+      readonly status: SubagentStatus | null;
       // Cuanto tardo, cuando termina (del CLI o de AgentSession). null en curso o si no se sabe.
       readonly elapsedMs: number | null;
       // Lo que cuenta el CLI del subagente (P-028 38): tokens y herramientas (en vivo con

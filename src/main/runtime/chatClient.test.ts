@@ -2,7 +2,9 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { AddressInfo } from 'node:net';
 import { getEventListeners } from 'node:events';
 import { afterEach, describe, expect, it } from 'vitest';
-import { ChatHttpError, classifyStatus, HttpChatClient, redactUrl, type TimerDeps } from './chatClient';
+import { ChatHttpError, classifyStatus, HttpChatClient, redactUrl, urlPart, type TimerDeps } from './chatClient';
+import { foreignText, localized, renderLocalized } from '@shared/i18n/localizedText';
+import { createTranslator } from '@shared/i18n/translator';
 import type { StreamPart } from './openAiStream';
 
 // Servidor real en 127.0.0.1:0, como gatewayHttp.test.ts.
@@ -88,6 +90,22 @@ describe('HttpChatClient', () => {
     expect((error as ChatHttpError).message).toContain('400');
   });
 
+  it('streamChat_400_lanzaLaClaveConElEstadoLaUrlYElCuerpoAjeno', async () => {
+    const baseUrl = await serve((_req, res) => {
+      res.writeHead(400, { 'content-type': 'text/plain' });
+      res.end('cuerpo del servidor');
+    });
+
+    const error = (await collect(client(baseUrl).streamChat(REQUEST, new AbortController().signal)).catch((err: unknown) => err)) as ChatHttpError;
+
+    expect(error.localized).toEqual({
+      key: 'errors.runtime.chatHttpError',
+      values: { status: '400', detail: 'cuerpo del servidor' },
+      parts: { url: foreignText(`${baseUrl}/chat/completions`) },
+    });
+    expect(renderLocalized(createTranslator('es'), error.localized)).toBe(`El servidor respondió 400 en ${baseUrl}/chat/completions: cuerpo del servidor`);
+  });
+
   it('streamChat_401WithKeyInBody_keyNeverInMessage', async () => {
     const baseUrl = await serve((_req, res) => {
       res.writeHead(401, { 'content-type': 'application/json' });
@@ -142,6 +160,7 @@ describe('HttpChatClient', () => {
 
     expect(error.kind).toBe('idle_timeout');
     expect(error.message).toContain('1.234 s');
+    expect(error.localized).toMatchObject({ key: 'errors.runtime.chatIdleTimeout', values: { seconds: '1.234' } });
   });
 });
 
@@ -167,7 +186,15 @@ describe('redactUrl', () => {
   });
 
   it('redact_invalidUrl_saysSo', () => {
-    expect(redactUrl('no es url')).toBe('(URL no válida)');
+    expect(redactUrl('no es url')).toBeNull();
+  });
+
+  it('urlPart_urlInvalida_esLaFraseDeMage', () => {
+    expect(urlPart('no es url')).toEqual(localized('errors.runtime.urlInvalid'));
+  });
+
+  it('urlPart_urlConCredenciales_esTextoAjenoSinCredenciales', () => {
+    expect(urlPart('http://user:pass@host:1/v1')).toEqual(foreignText('http://host:1/v1'));
   });
 });
 

@@ -1,5 +1,7 @@
 import { isAbsolute, relative, resolve } from 'node:path';
 import type { ProjectFileContent } from '@shared/ipc';
+import { localized, UserFacingError } from '@shared/i18n/localizedText';
+import { resolvedPath } from '../os/resolvedPath';
 
 // Lectura y escritura de un fichero que el agente ha creado DENTRO de la carpeta de la conversacion
 // (2.10, panel "Ficheros"). Es la primera vez que el renderer puede escribir un fichero cualquiera del
@@ -85,15 +87,12 @@ export class ProjectFileService {
   write(target: ProjectFileTarget & { readonly content: string; readonly expectedMtimeMs: number | null }): ProjectFileContent {
     const { path, allowed } = this.classify(target);
     if (!allowed) {
-      throw new Error(
-        `El fichero no está en la carpeta de la conversación y no has aprobado abrirlo, así que Mage no lo guarda: ${target.path}`,
-      );
+      throw new UserFacingError(localized('errors.files.writeNotApproved', { path: target.path }));
     }
     const current = this.deps.mtimeMs(path);
     if (current !== target.expectedMtimeMs) {
-      throw new Error(
-        `El fichero cambió en disco desde que se abrió (mtime esperado ${String(target.expectedMtimeMs)}, actual ${String(current)}): ` +
-          `vuelve a cargarlo para no perder ese cambio`,
+      throw new UserFacingError(
+        localized('errors.files.changedOnDisk', { expected: String(target.expectedMtimeMs), actual: String(current) }),
       );
     }
     this.deps.writeFile(path, target.content);
@@ -106,7 +105,8 @@ export class ProjectFileService {
     if (target.cwd.trim().length === 0) throw new Error('Carpeta de la conversación vacía al abrir un fichero');
     if (target.path.trim().length === 0) throw new Error('Ruta de fichero vacía');
     const path = resolveProjectFilePath(target);
-    const allowed = isInside(resolve(target.cwd), path) || this.deps.isAllowedOutsideCwd(path) || this.deps.isApprovedOutside(path);
+    const realPath = resolvedPath(path);
+    const allowed = isInside(resolvedPath(target.cwd), realPath) || this.deps.isAllowedOutsideCwd(realPath) || this.deps.isApprovedOutside(realPath);
     return { path, allowed };
   }
 }

@@ -6,7 +6,7 @@
 import type { GuardContext, KeybindingAction, KeybindingScope } from './actionCatalog';
 import { KEYBINDING_ACTIONS } from './actionCatalog';
 import type { KeyEventLike, ParsedKeyCombo } from './keyParser';
-import { isBareAlphanumeric, matchesKeyboardEvent, parseKeyCombo } from './keyParser';
+import { displayKeyCombo, isBareAlphanumeric, matchesKeyboardEvent, parseKeyCombo } from './keyParser';
 
 export interface KeybindingOverride {
   readonly actionId: string;
@@ -36,6 +36,14 @@ function effectiveCombo(action: KeybindingAction, overrides: readonly Keybinding
   const fromOverride = override === undefined ? null : parseKeyCombo(override.keys);
   if (fromOverride !== null) return fromOverride;
   return action.defaultKeys === null ? null : parseKeyCombo(action.defaultKeys);
+}
+
+// Texto del atajo EFECTIVO de una accion para la interfaz (override valido o default), o null si no tiene.
+export function shortcutText(actionId: string, overrides: readonly KeybindingOverride[], isMac: boolean, catalog: readonly KeybindingAction[] = KEYBINDING_ACTIONS): string | null {
+  const action = catalog.find((candidate) => candidate.id === actionId);
+  if (action === undefined) throw new Error(`Accion de teclado desconocida: ${actionId}`);
+  const combo = effectiveCombo(action, overrides);
+  return combo === null ? null : displayKeyCombo(combo, isMac);
 }
 
 export function resolveKeyEvent(params: ResolveKeyEventParams): string | null {

@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { UserFacingError } from '@shared/i18n/localizedText';
 import { CODEX_API_KEY_ENV, CodexAdapter } from './codexAdapter';
 import type { LaunchParams } from './providerAdapter';
 
@@ -63,6 +64,15 @@ describe('CodexAdapter: arranque (codex app-server, sin verificar)', () => {
       if (previous === undefined) delete process.env.OPENAI_API_KEY;
       else process.env.OPENAI_API_KEY = previous;
     }
+  });
+
+  it('buildSpawnPlan_conSpawnCommand_usaSuComandoArgsYEntorno', () => {
+    const plan = new CodexAdapter({ spawnCommand: (args) => ({ command: 'C:\\electron.exe', args: ['C:\\fake.mjs', ...args], env: { ELECTRON_RUN_AS_NODE: '1' } }) }).buildSpawnPlan(launch);
+
+    expect(plan.command).toBe('C:\\electron.exe');
+    expect(plan.args[0]).toBe('C:\\fake.mjs');
+    expect(plan.args[1]).toBe('app-server');
+    expect(plan.env.ELECTRON_RUN_AS_NODE).toBe('1');
   });
 
   // Medido: el app-server no lee CODEX_API_KEY del entorno; un proveedor con env_key si.
@@ -232,10 +242,56 @@ describe('CodexAdapter: turno', () => {
     expect(events[3]).toMatchObject({ result: { usage: { inputTokens: 10, outputTokens: 2, thinkingTokens: 1, cacheReadTokens: 4 } } });
   });
 
+  // F2.1 (respuesta 5 de la devolución 13): el uso del TURNO es lo que crece el total del hilo durante el
+  // turno. `last` es solo la última llamada al modelo: un turno con herramientas hace varias.
+  describe('uso de tokens por turno', () => {
+    const usage = (last: [number, number, number], total: [number, number, number]) => notification('thread/tokenUsage/updated', {
+      threadId: 't', turnId: 'u',
+      tokenUsage: {
+        last: { inputTokens: last[0], cachedInputTokens: last[1], outputTokens: last[2], reasoningOutputTokens: 0, totalTokens: last[0] + last[2] },
+        total: { inputTokens: total[0], cachedInputTokens: total[1], outputTokens: total[2], reasoningOutputTokens: 0, totalTokens: total[0] + total[2] },
+      },
+    });
+    const completed = notification('turn/completed', { threadId: 't', turn: { id: 'u', items: [], status: 'completed', error: null } });
+    const resultUsage = (adapter: CodexAdapter, raws: unknown[]) => {
+      const result = raws.flatMap((raw) => adapter.normalize(raw)).find((e) => e.kind === 'result');
+      return result?.kind === 'result' ? result.result.usage : undefined;
+    };
+
+    it('normalize_dosLlamadasEnUnTurno_sumaLasDos', () => {
+      const adapter = codex();
+
+      const turn = resultUsage(adapter, [usage([25_000, 20_000, 30], [25_000, 20_000, 30]), usage([41_000, 38_000, 25], [66_000, 58_000, 55]), completed]);
+
+      expect(turn).toMatchObject({ inputTokens: 66_000, cacheReadTokens: 58_000, outputTokens: 55 });
+    });
+
+    it('normalize_notificacionRepetida_noCuentaDosVeces', () => {
+      const adapter = codex();
+      const same = usage([25_000, 20_000, 30], [25_000, 20_000, 30]);
+
+      expect(resultUsage(adapter, [same, same, completed])).toMatchObject({ inputTokens: 25_000, outputTokens: 30 });
+    });
+
+    it('normalize_segundoTurno_soloLoQueCrecioEnEse', () => {
+      const adapter = codex();
+      resultUsage(adapter, [usage([25_000, 20_000, 30], [25_000, 20_000, 30]), completed]);
+
+      expect(resultUsage(adapter, [usage([27_000, 25_000, 10], [52_000, 45_000, 40]), completed])).toMatchObject({ inputTokens: 27_000, cacheReadTokens: 25_000, outputTokens: 10 });
+    });
+
+    it('normalize_hiloReanudado_noCuentaElHistorialDelTotal', () => {
+      // Primer dato del proceso: el total arrastra lo de antes de reanudar; del turno solo es la llamada.
+      const adapter = codex();
+
+      expect(resultUsage(adapter, [usage([30_000, 28_000, 12], [500_000, 400_000, 900]), completed])).toMatchObject({ inputTokens: 30_000, outputTokens: 12 });
+    });
+  });
+
   it('normalize_turnoFallido_errorVisibleYResultDeError', () => {
     const events = codex().normalize(notification('turn/completed', { threadId: 't', turn: { id: 'u', items: [], status: 'failed', error: { message: 'cuota' } } }));
 
-    expect(events[0]).toMatchObject({ kind: 'error', message: expect.stringContaining('cuota') as unknown as string });
+    expect(events[0]).toMatchObject({ kind: 'error', localized: { key: 'events.codex.turnFailed', values: { detail: 'cuota' } } });
     expect(events[1]).toMatchObject({ kind: 'result', result: { isError: true, subtype: 'failed' } });
   });
 
@@ -356,6 +412,24 @@ describe('CodexAdapter: aprobaciones (forma del esquema)', () => {
     expect(() => codex().encodePermissionResponse({ requestId: 'codex-99', toolUseId: 'i' }, { behavior: 'allow' })).toThrow(/codex-99/);
   });
 
+  it('encodePermissionResponse_desconocida_lanzaUnErrorDeCaraAlUsuarioConLaClave', () => {
+    const act = (): unknown => codex().encodePermissionResponse({ requestId: 'codex-99', toolUseId: 'i' }, { behavior: 'allow' });
+
+    expect(act).toThrow(UserFacingError);
+    try { act(); } catch (err) {
+      expect((err as UserFacingError).localized).toEqual({ key: 'errors.engine.codexApprovalUnknown', values: { requestId: 'codex-99' } });
+    }
+  });
+
+  it('encodeElicitationResponse_desconocida_lanzaUnErrorDeCaraAlUsuarioConLaClave', () => {
+    const act = (): unknown => codex().encodeElicitationResponse({ requestId: 'nope', action: 'cancel' } as never);
+
+    expect(act).toThrow(UserFacingError);
+    try { act(); } catch (err) {
+      expect((err as UserFacingError).localized).toEqual({ key: 'errors.engine.elicitationUnknown', values: { requestId: 'nope' } });
+    }
+  });
+
   it('normalize_peticionQueMageNoImplementa_contestaConError', () => {
     const adapter = codex();
 
@@ -431,5 +505,151 @@ describe('CodexAdapter: puente de instrucciones', () => {
     new CodexAdapter({ resolveBinary: () => 'codex', resolveInstructions: record }).buildSpawnPlan(launch);
 
     expect(seen).toEqual(['C:\\Users\\u\\.codex-b', null]);
+  });
+});
+
+describe('CodexAdapter: directo (turn/steer)', () => {
+  // Hilo abierto y `turn/start` mandado. Con `turnId`, ademas contestado con ese id.
+  function inTurn(turnId: string | null): { adapter: CodexAdapter; turnStart: Rpc } {
+    const adapter = codex();
+    const requests = handshake(adapter);
+    answer(adapter, requests, 'thread/start', fixture('thread-start'));
+    adapter.encodeUserMessage('primero');
+    const turnStart = (adapter.takeOutgoing() as Rpc[]).find((r) => r.method === 'turn/start')!;
+    if (turnId !== null) adapter.normalize({ jsonrpc: '2.0', id: turnStart.id, result: { turn: { id: turnId } } });
+    return { adapter, turnStart };
+  }
+  const steerOf = (adapter: CodexAdapter): Rpc => (adapter.takeOutgoing() as Rpc[]).find((r) => r.method === 'turn/steer')!;
+  const threadIdOf = (): string => (fixture('thread-start').result as { thread: { id: string } }).thread.id;
+  const completed = (): unknown => notification('turn/completed', { threadId: 't', turn: { id: 'u', items: [], status: 'completed', error: null } });
+
+  // Manda un directo 'm1' en un turno 't1' y contesta su `turn/steer` con `response`.
+  function steerAnswered(response: Record<string, unknown>): ReturnType<CodexAdapter['normalize']> {
+    const { adapter } = inTurn('t1');
+    adapter.encodeSteer('m1', 'x');
+    const steer = steerOf(adapter);
+    return adapter.normalize({ jsonrpc: '2.0', id: steer.id, ...response });
+  }
+
+  it('encodeSteer_conTurnoActivo_mandaTurnSteerConElTurnoEsperado', () => {
+    const { adapter } = inTurn('t1');
+
+    const encoding = adapter.encodeSteer('m1', 'x');
+
+    expect(encoding).toEqual({ kind: 'write', payload: null });
+    expect(steerOf(adapter)).toMatchObject({
+      method: 'turn/steer',
+      params: { threadId: threadIdOf(), expectedTurnId: 't1', input: [{ type: 'text', text: 'x', text_elements: [] }] },
+    });
+  });
+
+  it('normalize_turnSteerAceptado_emiteActiveTurn', () => {
+    const events = steerAnswered({ result: { turnId: 't1' } });
+
+    expect(events).toEqual([{ kind: 'steer_result', messageId: 'm1', outcome: 'active_turn' }]);
+  });
+
+  it('normalize_turnSteerTardio_emiteNoActiveTurn', () => {
+    const events = steerAnswered({ error: { code: -32600, message: 'no active turn to steer' } });
+
+    expect(events).toEqual([{ kind: 'steer_result', messageId: 'm1', outcome: 'no_active_turn' }]);
+  });
+
+  it('normalize_turnSteerConOtroTurno_emiteNoActiveTurn', () => {
+    const events = steerAnswered({ error: { code: -32600, message: 'expected active turn id `t1` but found `t2`' } });
+
+    expect(events).toEqual([{ kind: 'steer_result', messageId: 'm1', outcome: 'no_active_turn' }]);
+  });
+
+  it('normalize_turnSteerEnReview_emiteNotSteerableConSuTipo', () => {
+    const events = steerAnswered({
+      error: {
+        code: -32600, message: 'cannot steer a review turn',
+        data: { message: 'cannot steer a review turn', codexErrorInfo: { activeTurnNotSteerable: { turnKind: 'review' } }, additionalDetails: null, misalignment: null },
+      },
+    });
+
+    expect(events).toEqual([{ kind: 'steer_result', messageId: 'm1', outcome: 'not_steerable', turnKind: 'review' }]);
+  });
+
+  it('normalize_turnSteerEnCompact_emiteNotSteerableCompact', () => {
+    const events = steerAnswered({
+      error: {
+        code: -32600, message: 'cannot steer a compact turn',
+        data: { message: 'cannot steer a compact turn', codexErrorInfo: { activeTurnNotSteerable: { turnKind: 'compact' } }, additionalDetails: null, misalignment: null },
+      },
+    });
+
+    expect(events).toEqual([{ kind: 'steer_result', messageId: 'm1', outcome: 'not_steerable', turnKind: 'compact' }]);
+  });
+
+  it('normalize_turnSteerOtroError_emiteFailedConDetalle', () => {
+    const events = steerAnswered({ error: { code: -32603, message: 'boom' } });
+
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ kind: 'steer_result', messageId: 'm1', outcome: 'failed', localized: { key: 'events.codex.requestRejected' } });
+  });
+
+  it('encodeSteer_sinTurno_resuelveNoActiveTurnSinEscribir', () => {
+    const adapter = codex();
+    const requests = handshake(adapter);
+    answer(adapter, requests, 'thread/start', fixture('thread-start'));
+
+    const encoding = adapter.encodeSteer('m1', 'x');
+
+    expect(encoding).toEqual({ kind: 'resolved', outcome: 'no_active_turn' });
+    expect((adapter.takeOutgoing() as Rpc[]).some((r) => r.method === 'turn/steer')).toBe(false);
+  });
+
+  it('encodeSteer_turnStartSinRespuesta_esperaYSaleConElTurno', () => {
+    const { adapter, turnStart } = inTurn(null);
+
+    const encoding = adapter.encodeSteer('m1', 'x');
+    const before = (adapter.takeOutgoing() as Rpc[]).some((r) => r.method === 'turn/steer');
+    const events = adapter.normalize({ jsonrpc: '2.0', id: turnStart.id, result: { turn: { id: 't9' } } });
+
+    expect(encoding).toEqual({ kind: 'write', payload: null });
+    expect(before).toBe(false);
+    expect(events).toEqual([]);
+    expect(steerOf(adapter)).toMatchObject({ params: { expectedTurnId: 't9' } });
+  });
+
+  it('normalize_turnStartRechazadoConDirectoEsperando_emiteNoActiveTurn', () => {
+    const { adapter, turnStart } = inTurn(null);
+    adapter.encodeSteer('m1', 'x');
+
+    const events = adapter.normalize({ jsonrpc: '2.0', id: turnStart.id, error: { code: -32603, message: 'x' } });
+
+    expect(events).toContainEqual(expect.objectContaining({ kind: 'error' }));
+    expect(events).toContainEqual({ kind: 'steer_result', messageId: 'm1', outcome: 'no_active_turn' });
+  });
+
+  it('normalize_turnCompletedConDirectoEsperando_emiteNoActiveTurn', () => {
+    const { adapter } = inTurn(null);
+    adapter.encodeSteer('m1', 'x');
+
+    const events = adapter.normalize(completed());
+
+    expect(events).toContainEqual({ kind: 'steer_result', messageId: 'm1', outcome: 'no_active_turn' });
+  });
+
+  it('normalize_turnCompleted_trasElCierreUnDirectoNoTieneTurno', () => {
+    const { adapter } = inTurn('t1');
+    adapter.normalize(completed());
+
+    const encoding = adapter.encodeSteer('m1', 'x');
+
+    expect(encoding).toEqual({ kind: 'resolved', outcome: 'no_active_turn' });
+  });
+
+  it('buildSpawnPlan_conDirectoEsperando_loOlvida', () => {
+    const { adapter } = inTurn(null);
+    adapter.encodeSteer('m1', 'x');
+
+    adapter.buildSpawnPlan(launch);
+    adapter.takeOutgoing();
+    const events = adapter.normalize(completed());
+
+    expect(events.some((event) => event.kind === 'steer_result')).toBe(false);
   });
 });

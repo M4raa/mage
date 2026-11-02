@@ -1,51 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { ImageAttachment } from '@shared/ipc';
-import { enqueueMessage, mergeIntoDraft, removeQueuedMessage, takeNextMessage, type QueuedMessage } from './messageQueue';
+import { mergeIntoDraft, queueEditAction, type QueueEditKey, type QueuedMessage } from './messageQueue';
 
 const img = (data: string): ImageAttachment => ({ mediaType: 'image/png', data });
 const msg = (id: string, text: string, attachments: readonly ImageAttachment[] = []): QueuedMessage => ({ id, text, attachments });
 const EMPTY_DRAFT = { text: '', attachments: [] };
-
-describe('enqueueMessage / takeNextMessage', () => {
-  it('enqueue_variosMensajes_salenEnOrdenDeUnoEnUno', () => {
-    const queue = enqueueMessage(enqueueMessage([], msg('a', 'uno')), msg('b', 'dos'));
-
-    const first = takeNextMessage(queue);
-    const second = takeNextMessage(first.rest);
-
-    expect(first.next?.text).toBe('uno');
-    expect(second.next?.text).toBe('dos');
-    expect(second.rest).toEqual([]);
-  });
-
-  it('takeNextMessage_colaVacia_devuelveNull', () => {
-    expect(takeNextMessage([])).toEqual({ next: null, rest: [] });
-  });
-
-  it('enqueue_conAdjuntos_losConserva', () => {
-    const queue = enqueueMessage([], msg('a', '[Imagen 1]', [img('AAAA')]));
-
-    expect(takeNextMessage(queue).next?.attachments).toEqual([img('AAAA')]);
-  });
-
-  it('enqueue_sinId_lanza', () => {
-    expect(() => enqueueMessage([], msg('', 'hola'))).toThrow(/hola/);
-  });
-});
-
-describe('removeQueuedMessage', () => {
-  it('remove_porId_quitaSoloEse', () => {
-    const queue = [msg('a', 'uno'), msg('b', 'dos'), msg('c', 'tres')];
-
-    expect(removeQueuedMessage(queue, 'b').map((m) => m.id)).toEqual(['a', 'c']);
-  });
-
-  it('remove_idQueNoEsta_dejaLaCola', () => {
-    const queue = [msg('a', 'uno')];
-
-    expect(removeQueuedMessage(queue, 'zz')).toEqual(queue);
-  });
-});
 
 describe('mergeIntoDraft (Stop y editar devuelven al input)', () => {
   it('merge_variosMensajes_seConcatenanEnOrdenDelanteDelBorrador', () => {
@@ -76,5 +35,37 @@ describe('mergeIntoDraft (Stop y editar devuelven al input)', () => {
     const current = { text: 'hola', attachments: [] };
 
     expect(mergeIntoDraft([], current)).toBe(current);
+  });
+});
+
+describe('queueEditAction (edición en la fila)', () => {
+  const key = (over: Partial<QueueEditKey>): QueueEditKey => ({ key: 'Enter', shiftKey: false, value: 'nuevo', original: 'viejo', images: 0, ...over });
+
+  it('queueEditAction_escape_cancela', () => {
+    expect(queueEditAction(key({ key: 'Escape' }))).toBe('cancel');
+  });
+
+  it('queueEditAction_enterConCambios_guarda', () => {
+    expect(queueEditAction(key({}))).toBe('save');
+  });
+
+  it('queueEditAction_enterSinCambios_saleSinGuardar', () => {
+    expect(queueEditAction(key({ value: 'viejo' }))).toBe('cancel');
+  });
+
+  it('queueEditAction_enterVacioSinImagenes_sigueEditando', () => {
+    expect(queueEditAction(key({ value: '  ', original: 'x', images: 0 }))).toBe('keep');
+  });
+
+  it('queueEditAction_enterVacioConImagenes_guarda', () => {
+    expect(queueEditAction(key({ value: '', original: 'x', images: 1 }))).toBe('save');
+  });
+
+  it('queueEditAction_shiftEnter_noEsNuestra', () => {
+    expect(queueEditAction(key({ shiftKey: true }))).toBeNull();
+  });
+
+  it('queueEditAction_otraTecla_noEsNuestra', () => {
+    expect(queueEditAction(key({ key: 'a' }))).toBeNull();
   });
 });

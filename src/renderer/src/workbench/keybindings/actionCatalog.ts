@@ -4,6 +4,7 @@
 // accesibilidad y los componentes las siguen manejando directamente, intocables por el usuario.
 
 import { PANEL_REGISTRY } from '../panels/panelRegistry';
+import { t } from '../../i18n/uiLanguage';
 
 // Zonas de la UI que puede tener el foco, apiladas de mas a menos especifica por el caller (resolver.ts
 // itera esa pila buscando la primera con una accion para la tecla pulsada).
@@ -39,22 +40,46 @@ export interface KeybindingAction {
   readonly guard?: (ctx: GuardContext) => boolean;
 }
 
-export const KEYBINDING_ACTIONS: readonly KeybindingAction[] = [
+// Definicion de una accion tal como se escribe aqui: etiqueta y categoria como CLAVES del catalogo de textos.
+type ActionLabelKey = 'menu.action.promptSend' | 'menu.action.promptSendNow' | 'menu.action.promptIndent' | 'menu.action.promptOutdent' | 'menu.action.promptCyclePermissionMode' | 'menu.action.conversationNew' | 'menu.action.windowNew' | 'menu.action.tabClose' | 'menu.action.tabNext' | 'menu.action.tabPrevious' | 'menu.action.sessionInterrupt' | 'menu.action.sessionCompact' | 'menu.action.appOpenSettings' | 'menu.action.appToggleSidebar' | 'menu.action.appToggleInspector' | 'menu.action.permissionAllow' | 'menu.action.permissionAllowAlways' | 'menu.action.permissionDeny' | 'menu.action.permissionCycleMode';
+type ActionCategoryKey = 'menu.category.prompt' | 'menu.category.app' | 'menu.category.session' | 'menu.category.permission' | 'menu.category.panels';
+interface ActionDefinition extends Omit<KeybindingAction, 'label' | 'category'> {
+  readonly labelKey: ActionLabelKey;
+  readonly categoryKey: ActionCategoryKey;
+}
+
+// `label` y `category` son GETTERS: se traducen al LEERLOS, no al importar el modulo (el idioma aun no se conoce) y
+// siguen siendo un `string` para quien las lee (Configuracion, el menu, la bienvenida).
+function localizeAction(definition: ActionDefinition): KeybindingAction {
+  const { labelKey, categoryKey, ...rest } = definition;
+  return {
+    ...rest,
+    get label() {
+      return t(labelKey);
+    },
+    get category() {
+      return t(categoryKey);
+    },
+  };
+}
+
+const ACTION_DEFINITIONS: readonly ActionDefinition[] = [
   // --- Prompt (§2.2): ya cableadas hoy a mano, pasan a resolverse por catalogo. ---
-  { id: 'prompt.send', label: 'Enviar mensaje', category: 'Prompt', scope: 'prompt', defaultKeys: 'Enter', rebindable: true },
-  { id: 'prompt.indent', label: 'Indentar selección', category: 'Prompt', scope: 'prompt', defaultKeys: 'Tab', rebindable: true },
+  { id: 'prompt.send', labelKey: 'menu.action.promptSend', categoryKey: 'menu.category.prompt', scope: 'prompt', defaultKeys: 'Enter', rebindable: true },
+  { id: 'prompt.sendNow', labelKey: 'menu.action.promptSendNow', categoryKey: 'menu.category.prompt', scope: 'prompt', defaultKeys: 'CmdOrCtrl+Enter', rebindable: true },
+  { id: 'prompt.indent', labelKey: 'menu.action.promptIndent', categoryKey: 'menu.category.prompt', scope: 'prompt', defaultKeys: 'Tab', rebindable: true },
   {
     id: 'prompt.outdent',
-    label: 'Desindentar selección',
-    category: 'Prompt',
+    labelKey: 'menu.action.promptOutdent',
+    categoryKey: 'menu.category.prompt',
     scope: 'prompt',
     defaultKeys: 'Shift+Tab',
     rebindable: true,
   },
   {
     id: 'prompt.cyclePermissionMode',
-    label: 'Ciclar modo de permiso',
-    category: 'Prompt',
+    labelKey: 'menu.action.promptCyclePermissionMode',
+    categoryKey: 'menu.category.prompt',
     scope: 'prompt',
     defaultKeys: 'Shift+Tab',
     rebindable: true,
@@ -66,24 +91,24 @@ export const KEYBINDING_ACTIONS: readonly KeybindingAction[] = [
   // universal de "salto de linea" de cualquier editor; permitir rebindarla confunde mas de lo que ahorra.
 
   // --- Aplicacion / sesion (§2.3): hoy solo con raton o inexistentes. ---
-  { id: 'conversation.new', label: 'Nueva conversación', category: 'Aplicación', scope: 'global', defaultKeys: 'CmdOrCtrl+N', rebindable: true },
+  { id: 'conversation.new', labelKey: 'menu.action.conversationNew', categoryKey: 'menu.category.app', scope: 'global', defaultKeys: 'CmdOrCtrl+N', rebindable: true },
   // Id NUEVO al final de su bloque: las preferencias de atajo se guardan POR id, asi que añadir no
   // rompe nada de lo ya persistido (lo que si rompe es renombrar o reordenar — ver la skill tocar-main).
-  { id: 'window.new', label: 'Nueva ventana', category: 'Aplicación', scope: 'global', defaultKeys: 'CmdOrCtrl+Shift+N', rebindable: true },
-  { id: 'tab.close', label: 'Cerrar pestaña', category: 'Aplicación', scope: 'global', defaultKeys: 'CmdOrCtrl+W', rebindable: true },
-  { id: 'tab.next', label: 'Siguiente pestaña', category: 'Aplicación', scope: 'global', defaultKeys: 'CmdOrCtrl+Tab', rebindable: true },
+  { id: 'window.new', labelKey: 'menu.action.windowNew', categoryKey: 'menu.category.app', scope: 'global', defaultKeys: 'CmdOrCtrl+Shift+N', rebindable: true },
+  { id: 'tab.close', labelKey: 'menu.action.tabClose', categoryKey: 'menu.category.app', scope: 'global', defaultKeys: 'CmdOrCtrl+W', rebindable: true },
+  { id: 'tab.next', labelKey: 'menu.action.tabNext', categoryKey: 'menu.category.app', scope: 'global', defaultKeys: 'CmdOrCtrl+Tab', rebindable: true },
   {
     id: 'tab.previous',
-    label: 'Pestaña anterior',
-    category: 'Aplicación',
+    labelKey: 'menu.action.tabPrevious',
+    categoryKey: 'menu.category.app',
     scope: 'global',
     defaultKeys: 'CmdOrCtrl+Shift+Tab',
     rebindable: true,
   },
   {
     id: 'session.interrupt',
-    label: 'Interrumpir turno',
-    category: 'Sesión',
+    labelKey: 'menu.action.sessionInterrupt',
+    categoryKey: 'menu.category.session',
     scope: 'global',
     defaultKeys: 'Escape',
     rebindable: true,
@@ -93,33 +118,33 @@ export const KEYBINDING_ACTIONS: readonly KeybindingAction[] = [
   },
   {
     id: 'session.compact',
-    label: 'Compactar contexto',
-    category: 'Sesión',
+    labelKey: 'menu.action.sessionCompact',
+    categoryKey: 'menu.category.session',
     scope: 'global',
     defaultKeys: null, // sin tecla por defecto a proposito: no es una accion para gatillo facil
     rebindable: true,
   },
-  { id: 'app.openSettings', label: 'Abrir configuración', category: 'Aplicación', scope: 'global', defaultKeys: 'CmdOrCtrl+,', rebindable: true },
+  { id: 'app.openSettings', labelKey: 'menu.action.appOpenSettings', categoryKey: 'menu.category.app', scope: 'global', defaultKeys: 'CmdOrCtrl+,', rebindable: true },
   {
     id: 'app.toggleSidebar',
-    label: 'Mostrar/ocultar barra lateral',
-    category: 'Aplicación',
+    labelKey: 'menu.action.appToggleSidebar',
+    categoryKey: 'menu.category.app',
     scope: 'global',
     defaultKeys: 'CmdOrCtrl+B',
     rebindable: true,
   },
   {
     id: 'app.toggleInspector',
-    label: 'Mostrar/ocultar inspector',
-    category: 'Aplicación',
+    labelKey: 'menu.action.appToggleInspector',
+    categoryKey: 'menu.category.app',
     scope: 'global',
     defaultKeys: 'CmdOrCtrl+I',
     rebindable: true,
   },
   {
     id: 'permission.allow',
-    label: 'Permitir',
-    category: 'Permiso',
+    labelKey: 'menu.action.permissionAllow',
+    categoryKey: 'menu.category.permission',
     scope: 'global',
     defaultKeys: '1',
     rebindable: true,
@@ -127,8 +152,8 @@ export const KEYBINDING_ACTIONS: readonly KeybindingAction[] = [
   },
   {
     id: 'permission.allowAlways',
-    label: 'Permitir siempre',
-    category: 'Permiso',
+    labelKey: 'menu.action.permissionAllowAlways',
+    categoryKey: 'menu.category.permission',
     scope: 'global',
     defaultKeys: '2',
     rebindable: true,
@@ -136,8 +161,8 @@ export const KEYBINDING_ACTIONS: readonly KeybindingAction[] = [
   },
   {
     id: 'permission.deny',
-    label: 'Denegar',
-    category: 'Permiso',
+    labelKey: 'menu.action.permissionDeny',
+    categoryKey: 'menu.category.permission',
     scope: 'global',
     defaultKeys: '3',
     rebindable: true,
@@ -145,8 +170,8 @@ export const KEYBINDING_ACTIONS: readonly KeybindingAction[] = [
   },
   {
     id: 'permission.cycleMode',
-    label: 'Ciclar modo de permiso (en cualquier parte de la app)',
-    category: 'Permiso',
+    labelKey: 'menu.action.permissionCycleMode',
+    categoryKey: 'menu.category.permission',
     scope: 'global',
     defaultKeys: 'Shift+Tab',
     rebindable: true,
@@ -161,14 +186,21 @@ export const KEYBINDING_ACTIONS: readonly KeybindingAction[] = [
   // (app.toggleSidebar/app.toggleInspector, con menu y CmdOrCtrl+B/I); el resto del registro de F6 se
   // queda sin ninguno. Generado desde PANEL_REGISTRY (no una lista escrita a mano) para que un panel
   // nuevo aparezca aqui solo, sin otra copia de sus ids que mantener sincronizada.
-  ...PANEL_REGISTRY.filter((p) => p.id !== 'conversations' && p.id !== 'permissions').map(
-    (p): KeybindingAction => ({
-      id: `panel.toggle.${p.id}`,
-      label: `Mostrar/ocultar panel: ${p.title}`,
-      category: 'Paneles',
-      scope: 'global',
-      defaultKeys: null, // sin default: 8 atajos nuevos de golpe pisarian teclas del SO/navegador
-      rebindable: true,
-    }),
-  ),
 ];
+
+const PANEL_TOGGLE_ACTIONS: readonly KeybindingAction[] = PANEL_REGISTRY.filter((p) => p.id !== 'conversations' && p.id !== 'permissions').map(
+  (p): KeybindingAction => ({
+    id: `panel.toggle.${p.id}`,
+    scope: 'global',
+    defaultKeys: null, // sin default: 8 atajos nuevos de golpe pisarian teclas del SO/navegador
+    rebindable: true,
+    get label() {
+      return t('menu.action.togglePanel', { title: p.title });
+    },
+    get category() {
+      return t('menu.category.panels');
+    },
+  }),
+);
+
+export const KEYBINDING_ACTIONS: readonly KeybindingAction[] = [...ACTION_DEFINITIONS.map(localizeAction), ...PANEL_TOGGLE_ACTIONS];

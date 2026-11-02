@@ -3,15 +3,17 @@ import type { PersistedTab, PersistedWorkspace, SplitLayout } from '@shared/stat
 import { WORKSPACE_STATE_VERSION } from '@shared/state';
 import { isPermissionMode } from '@shared/ipc';
 import { RETIRED_PROVIDER_IDS } from '@shared/providers';
+import { isPlaceholderTitle } from '@shared/conversationTitle';
 import type { Tab } from './types';
+import { conversationIdOfTab } from './conversationId';
 import { findLeafPath, fromLegacySplit, singleLeaf, pruneSplitLayout } from './splitLayout';
 
 // Mapeo PURO entre el estado del workbench y el workspace persistido (M2.5). Sin IPC ni store: el
 // store llama a estas funciones y delega el I/O en window.mage.{load,save}Workspace.
 
-// Construye el snapshot a persistir. El sessionId de cada pestana es el de su sesion VIVA si existe
-// (sessionIdByChat), o el `resumeSessionId` heredado de un arranque anterior (para no perder la
-// posibilidad de reanudar una pestana restaurada que aun no se ha usado en esta sesion).
+// Construye el snapshot a persistir. El sessionId de cada pestana es el id de su CONVERSACIÓN
+// (`conversationIdOfTab`): en Claude y el runtime propio, el de su sesion viva o el `resumeSessionId`
+// heredado de un arranque anterior; en Codex y agy, el del hilo, nunca el UUID de la sesion de Mage.
 export function toPersistedWorkspace(
   tabs: readonly Tab[],
   activeTabId: string,
@@ -19,11 +21,12 @@ export function toPersistedWorkspace(
   splitLayout: SplitLayout = singleLeaf(activeTabId),
 ): PersistedWorkspace {
   const persistedTabs = tabs.map((tab): PersistedTab => {
-    const sessionId = sessionIdByChat[tab.id] ?? tab.resumeSessionId;
+    const sessionId = conversationIdOfTab(tab, sessionIdByChat[tab.id]);
     return {
       id: tab.id,
       accountId: tab.accountId,
       accountAlias: tab.accountAlias,
+      ...(tab.worktreeOff === undefined ? {} : { worktreeOff: tab.worktreeOff }),
       cwd: tab.cwd,
       model: tab.model,
       provider: tab.provider,
@@ -81,12 +84,13 @@ export function restoreTabs(
       id: t.id,
       accountId: t.accountId,
       accountAlias: t.accountAlias,
+      ...(t.worktreeOff === undefined ? {} : { worktreeOff: t.worktreeOff }),
       cwd: t.cwd,
       // Un proveedor retirado (P-032 R6: `openai`/`gemini`, que iban por el gateway) reabre con Claude y su
       // modelo por defecto. Su transcripcion la escribio el CLI de Claude, asi que se reanuda igual.
       model: RETIRED_PROVIDER_IDS.includes(t.provider) ? RETIRED_PROVIDER_FALLBACK_MODEL : t.model,
       provider: RETIRED_PROVIDER_IDS.includes(t.provider) ? 'claude' : t.provider,
-      title: t.title,
+      title: isPlaceholderTitle(t.title) ? '' : t.title,
       ...(t.projectId === undefined ? {} : { projectId: t.projectId }),
       privacy: t.privacy,
       ...(t.resolvedConfigDir === undefined ? {} : { resolvedConfigDir: t.resolvedConfigDir }),

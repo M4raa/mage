@@ -5,6 +5,7 @@ import type { PanelDefinition } from '../../panels/panelRegistry';
 import type { PanelId } from '@shared/panelLayout';
 import { POPOVER_VARIANTS } from '../../motionPresets';
 import { Icon } from '../Icon';
+import { useT } from '../../../i18n/uiLanguage';
 import { PANEL_ICON_PX } from './Stripe';
 
 // Menu "Añadir panel" del boton "⋮" al final de una stripe (F6, feedback del usuario tras ver la
@@ -24,6 +25,7 @@ export function AddPanelMenu({
   readonly onClose: () => void;
   readonly onSelect: (panelId: PanelId) => void;
 }): React.JSX.Element {
+  const t = useT();
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -48,11 +50,11 @@ export function AddPanelMenu({
         exit="exit"
         ref={menuRef}
         role="menu"
-        aria-label="Añadir panel a este borde"
+        aria-label={t('menu.dock.addPanelLabel')}
         style={{ position: 'fixed', left, top, zIndex: 9999 }}
         className="w-[200px] overflow-hidden rounded-[8px] border border-mg-border-pop bg-mg-popover py-[4px] text-[11.5px] text-mg-body mg-shadow-pop"
       >
-        <div className="truncate px-[10px] py-[5px] text-[10px] text-mg-muted">Añadir panel</div>
+        <div className="truncate px-[10px] py-[5px] text-[10px] text-mg-muted">{t('menu.dock.addPanelHeading')}</div>
         <div className="my-[3px] h-px bg-mg-border-subtle" />
         {panels.map((p) => (
           <button

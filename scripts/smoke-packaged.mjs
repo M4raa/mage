@@ -1,4 +1,4 @@
-// Humo del EMPAQUETADO: arranca `release/win-unpacked/Mage.exe` con un perfil aislado y comprueba por
+// Humo del EMPAQUETADO: arranca el ejecutable de Windows o Linux con un perfil aislado y comprueba por
 // CDP que la app montada de verdad funciona.
 //
 // POR QUE EXISTE, y por que no vale `pnpm build`: un bundle en verde NO prueba que el .exe arranque.
@@ -11,21 +11,30 @@
 // de esa cadena arrastraria a todas las siguientes. Aqui el proceso es nuestro y el perfil esta
 // aislado, asi que la multiventana se puede verificar sin efectos colaterales.
 //
-// Uso: `pnpm dist:win` primero (necesita `release/win-unpacked`), luego `pnpm smoke:packaged`.
-import { spawn } from 'node:child_process';
-import { existsSync, mkdtempSync } from 'node:fs';
+// Uso: `pnpm dist:win` o `pnpm dist:linux`, luego `pnpm smoke:packaged`.
+// `--executable=/ruta/mage` comprueba tambien la instalacion .deb o un AppImage real.
+import { spawn, spawnSync } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { chromium } from 'playwright-core';
 
 const CDP_PORT = 9333;
 const ARRANQUE_MAX_S = 40;
 const PROPAGACION_MAX_MS = 10_000;
 
-const exe = join(process.cwd(), 'release', 'win-unpacked', 'Mage.exe');
-if (!existsSync(exe)) {
-  throw new Error(`No hay app empaquetada en ${exe}. Ejecuta \`pnpm dist:win\` antes de este humo.`);
+const explicitExe = process.argv.find((arg) => arg.startsWith('--executable='))?.slice('--executable='.length);
+const packagedPaths = { win32: ['win-unpacked', 'Mage.exe'], linux: ['linux-unpacked', 'mage'] };
+if (explicitExe === undefined && packagedPaths[process.platform] === undefined) {
+  throw new Error(`Indica --executable para verificar un paquete en ${process.platform}`);
 }
+const exe = explicitExe === undefined ? join(process.cwd(), 'release', ...packagedPaths[process.platform]) : resolve(explicitExe);
+if (!existsSync(exe)) {
+  throw new Error(`No hay app empaquetada en ${exe}. Construye primero el instalador de ${process.platform}.`);
+}
+const outDir = join(process.cwd(), '.verify-out', `packaged-${Date.now()}`);
+mkdirSync(outDir, { recursive: true });
+const expectedVersion = JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'utf8')).version;
 
 const esperar = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const paginasReales = (ctx) => (ctx?.pages() ?? []).filter((p) => !p.url().startsWith('devtools://'));
@@ -33,8 +42,12 @@ const paginasReales = (ctx) => (ctx?.pages() ?? []).filter((p) => !p.url().start
 const perfil = mkdtempSync(join(tmpdir(), 'mage-smoke-'));
 const proc = spawn(exe, [`--remote-debugging-port=${CDP_PORT}`, `--user-data-dir=${perfil}`], {
   stdio: ['ignore', 'pipe', 'pipe'],
+  env: { ...process.env, MAGE_SKIP_MODEL_PROBE: '1' },
+  detached: process.platform !== 'win32',
+  windowsHide: true,
 });
 let salida = '';
+proc.on('error', (error) => { salida += `\n${error.message}`; });
 proc.stdout.on('data', (d) => {
   salida += String(d);
 });
@@ -68,6 +81,14 @@ try {
     conVersion: document.body.innerText.includes('v'),
   }));
   console.log('OK empaquetado:', JSON.stringify(arranque));
+  await page.screenshot({ path: join(outDir, 'arranque.png') });
+
+  // La pantalla de Acerca de debe poder leer las licencias DENTRO del paquete instalado.
+  const about = await page.evaluate(() => window.mage.getAbout());
+  if (about.versions.app !== expectedVersion || !about.notices.includes('Permission is hereby granted') || about.chromiumLicensesPath === null) {
+    throw new Error(`Version o licencias incompletas en el paquete: ${JSON.stringify({ versions: about.versions, chromium: about.chromiumLicensesPath })}`);
+  }
+  console.log('OK version y licencias:', JSON.stringify(about.versions));
 
   // --- 2. Multiventana --------------------------------------------------------------------------
   const ventanasAntes = paginasReales(ctx).length;
@@ -93,6 +114,9 @@ try {
   const previas = await page.evaluate(() => window.mage.loadSettings());
   const objetivo = previas.backgroundOpacity === 80 ? 70 : 80;
   await page.evaluate((s) => window.mage.saveSettings(s), { ...previas, backgroundOpacity: objetivo });
+  const persisted = JSON.parse(readFileSync(join(perfil, 'app-settings.json'), 'utf8'));
+  if (persisted.backgroundOpacity !== objetivo) throw new Error(`La opacidad no se guardo en el perfil aislado: ${persisted.backgroundOpacity}`);
+  console.log('OK persistencia:', JSON.stringify({ backgroundOpacity: persisted.backgroundOpacity }));
 
   const opaco = (texto) => /^rgb\(\d+, \d+, \d+\)$/.test(texto);
   let fondoSegunda = null;
@@ -115,8 +139,16 @@ try {
   };
 
   await page.evaluate((s) => window.mage.saveSettings(s), previas);
+  await segunda.screenshot({ path: join(outDir, 'segunda-ventana.png') });
   console.log('OK multiventana:', JSON.stringify({ ventanas: paginas.length, fondoSegunda, pestanas }));
+  console.log('Capturas:', outDir);
 } finally {
   await browser?.close().catch(() => undefined);
-  proc.kill();
+  if (proc.pid !== undefined && proc.exitCode === null && proc.signalCode === null) {
+    if (process.platform === 'win32') spawnSync('taskkill', ['/PID', String(proc.pid), '/T', '/F'], { windowsHide: true });
+    else {
+      try { process.kill(-proc.pid, 'SIGTERM'); }
+      catch (error) { if (error.code !== 'ESRCH') throw error; }
+    }
+  }
 }

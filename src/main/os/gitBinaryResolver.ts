@@ -1,8 +1,8 @@
 import { existsSync } from 'node:fs';
 import { platform } from 'node:os';
 import { join } from 'node:path';
-import { spawnSync } from 'node:child_process';
 import { firstExistingPath } from './agentBinaryResolver';
+import { isCommandOnPath } from './commandOnPath';
 
 // Localizacion del binario `git` (P-026 3.5). Mismo patron que `codexBinaryResolver`: TODA la
 // diferencia de SO queda aqui, y `null` (no una excepcion) cuando no hay git, que es lo que decide que
@@ -41,17 +41,8 @@ function defaultGitDeps(): GitResolverDeps {
   return {
     platform: platform(),
     fileExists: existsSync,
-    commandInPath: isCommandInPath,
+    commandInPath: isCommandOnPath,
     binOverride: process.env.MAGE_GIT_BIN,
     programFiles: process.env.ProgramFiles,
   };
-}
-
-const FINDER_TIMEOUT_MS = 5_000;
-
-// `where`/`which` con timeout, como los otros resolutores: un fallo del buscador es «no esta».
-function isCommandInPath(bin: string): boolean {
-  const finder = process.platform === 'win32' ? 'where' : 'which';
-  const result = spawnSync(finder, [bin], { stdio: 'ignore', windowsHide: true, timeout: FINDER_TIMEOUT_MS });
-  return result.status === 0;
 }

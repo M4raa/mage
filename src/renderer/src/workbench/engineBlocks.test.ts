@@ -1,3 +1,4 @@
+import { createTranslator } from '@shared/i18n/translator';
 import { describe, expect, it } from 'vitest';
 import type { PermissionRequest, ToolResult, ToolUse, TurnUsage } from '@shared/events';
 import {
@@ -22,6 +23,8 @@ import {
   resolvePermissionBlock,
   pendingToolName,
   restartingText,
+  SUBAGENT_STATUS,
+  subagentStatusLabel,
   turnUsageText,
 } from './engineBlocks';
 import type { Block } from './types';
@@ -122,7 +125,7 @@ describe('applyToolResult', () => {
     const next = applyToolResult(blocks, toolResult({ output: 'hola' }));
 
     const tool = next[0] as Extract<Block, { kind: 'tool' }>;
-    expect(tool.meta).toBe('ok · 1.2 s');
+    expect(tool.meta).toBe('ok · 1,2 s');
     expect(tool.output).toEqual([{ code: false, text: 'hola' }]);
   });
 
@@ -131,7 +134,7 @@ describe('applyToolResult', () => {
 
     const next = applyToolResult(blocks, toolResult({ output: 'fallo\nExit code 1', isError: false }));
 
-    expect((next[0] as Extract<Block, { kind: 'tool' }>).meta).toBe('exit 1 · 1.2 s');
+    expect((next[0] as Extract<Block, { kind: 'tool' }>).meta).toBe('exit 1 · 1,2 s');
   });
 
   it('applyToolResult_error_metaShowsError', () => {
@@ -226,6 +229,18 @@ describe('mapPermissionToView', () => {
     expect(view).toMatchObject({ rememberable: false, summary: 'Fuera del proyecto: /etc/hosts' });
   });
 
+  it('mapPermissionToView_outsideTarget_fraseTraducida', () => {
+    const request = { ...permission({ toolName: 'Read', input: { file_path: '/etc/hosts' } }), description: 'texto en otro idioma', outsideProject: true, outsideTarget: '/etc/hosts' };
+
+    expect(mapPermissionToView(request).summary).toBe('Fuera del proyecto: /etc/hosts');
+  });
+
+  it('mapPermissionToView_redSinObjetivo_usaLaDescripcionDelRuntime', () => {
+    const request = { ...permission({ toolName: 'Bash', input: { command: 'curl x' } }), description: 'Red: curl x', outsideProject: true };
+
+    expect(mapPermissionToView(request).summary).toBe('Red: curl x');
+  });
+
   it('mapPermissionToView_normalRequest_rememberable', () => {
     expect(mapPermissionToView(permission({ toolName: 'Read', input: { file_path: 'a' } })).rememberable).toBe(true);
   });
@@ -306,16 +321,16 @@ describe('appendSystemBlock / compactionText', () => {
 
 describe('restartingText', () => {
   it('restartingText_primerIntento_indicaEsperaEnSegundos', () => {
-    expect(restartingText(1, 1_000)).toBe('⟳ El agente se cerró; reanudando la conversación en 1.0 s (intento 1)');
+    expect(restartingText(1, 1_000)).toBe('⟳ El agente se cerró; reanudando la conversación en 1,0 s (intento 1)');
   });
 
   it('restartingText_esperaConDecimas_redondeaADecimas', () => {
-    expect(restartingText(2, 1_540)).toContain('1.5 s');
-    expect(restartingText(2, 1_549)).toContain('1.5 s');
+    expect(restartingText(2, 1_540)).toContain('1,5 s');
+    expect(restartingText(2, 1_549)).toContain('1,5 s');
   });
 
   it('restartingText_esperaCero_muestraCeroSegundos', () => {
-    expect(restartingText(1, 0)).toContain('0.0 s');
+    expect(restartingText(1, 0)).toContain('0,0 s');
   });
 
   it('restartingText_intentoInvalido_lanza', () => {
@@ -515,7 +530,7 @@ describe('subagentes y pensamiento (2.5)', () => {
 
     const next = applySubagentResult(blocks, { toolUseId: 'tu1', isError: false, output: 'Async agent launched successfully.', durationMs: 4, subagent });
 
-    expect(next[0]).toMatchObject({ status: 'en segundo plano', agentId: 'ab25', model: 'claude-haiku-4-5', elapsedMs: null });
+    expect(next[0]).toMatchObject({ status: SUBAGENT_STATUS.background, agentId: 'ab25', model: 'claude-haiku-4-5', elapsedMs: null });
     expect(isSubagentRunning(next[0] as Extract<Block, { kind: 'subagent' }>)).toBe(true);
   });
 
@@ -525,7 +540,7 @@ describe('subagentes y pensamiento (2.5)', () => {
 
     const next = applySubagentResult(blocks, { toolUseId: 'tu1', isError: false, output: '', durationMs: 8100, subagent });
 
-    expect(next[0]).toMatchObject({ status: 'completado', tokens: 1200, toolUses: 3, elapsedMs: 8000 });
+    expect(next[0]).toMatchObject({ status: SUBAGENT_STATUS.completed, tokens: 1200, toolUses: 3, elapsedMs: 8000 });
   });
 
   it('applySubagentResult_textoMedidoSinComillas_extraeElAgentId', () => {
@@ -534,7 +549,7 @@ describe('subagentes y pensamiento (2.5)', () => {
 
     const next = applySubagentResult(blocks, { toolUseId: 'tu1', isError: false, output: 'Done.\nagentId: af3b49b855c7f949e (internal ID - do not mention)', durationMs: null });
 
-    expect(next[0]).toMatchObject({ agentId: 'af3b49b855c7f949e', status: 'completado' });
+    expect(next[0]).toMatchObject({ agentId: 'af3b49b855c7f949e', status: SUBAGENT_STATUS.completed });
   });
 
   it('applySubagentUpdate_progreso_sigueEnMarchaConContadores', () => {
@@ -542,12 +557,12 @@ describe('subagentes y pensamiento (2.5)', () => {
 
     const next = applySubagentUpdate(blocks, { toolUseId: 'tu1', status: 'running', tokens: 19954, toolUses: 1, durationMs: 5228 });
 
-    expect(next[0]).toMatchObject({ status: 'en segundo plano', tokens: 19954, toolUses: 1, elapsedMs: null });
+    expect(next[0]).toMatchObject({ status: SUBAGENT_STATUS.background, tokens: 19954, toolUses: 1, elapsedMs: null });
   });
 
   it.each([
-    ['completed', 'completado'],
-    ['stopped', 'detenido'],
+    ['completed', SUBAGENT_STATUS.completed],
+    ['stopped', SUBAGENT_STATUS.stopped],
     ['failed', 'error'],
   ])('applySubagentUpdate_notificacion_%s_cierraComo_%s', (status, expected) => {
     const blocks = appendSubagentBlock([], task, 's1');
@@ -573,7 +588,7 @@ describe('subagentes y pensamiento (2.5)', () => {
       durationMs: null,
     });
 
-    expect(next[0]).toMatchObject({ agentId: 'agent-42', status: 'completado' });
+    expect(next[0]).toMatchObject({ agentId: 'agent-42', status: SUBAGENT_STATUS.completed });
   });
 
   it('applySubagentResult_conDuracion_laGuarda', () => {
@@ -685,5 +700,15 @@ describe('commandOutputLayout', () => {
 
   it('commandOutputLayout_columnasConEspacios_pre', () => {
     expect(commandOutputLayout('Skill      Tokens\ncaveman    1200')).toBe('pre');
+  });
+});
+
+describe('subagentStatusLabel', () => {
+  it('subagentStatusLabel_cadaEstado_textoCastellano', () => {
+    const translate = createTranslator('es');
+
+    const labels = Object.values(SUBAGENT_STATUS).map((status) => subagentStatusLabel(status, translate));
+
+    expect(labels).toEqual(['en segundo plano', 'completado', 'error', 'detenido']);
   });
 });

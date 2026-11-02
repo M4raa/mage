@@ -6,6 +6,9 @@ import { useDialogA11y } from '../a11y/useDialogA11y';
 import { MODAL_PANEL_VARIANTS, MODAL_SCRIM_VARIANTS, POPOVER_VARIANTS } from '../motionPresets';
 import type { Account } from '../types';
 import { ColorSwatches, MenuItem } from './TabContextMenu';
+import { useT } from '../../i18n/uiLanguage';
+import type { Translate } from '@shared/i18n/translator';
+import { describeError } from '../describeError';
 
 // Menu contextual del avatar de una cuenta en la cabecera (P-028, puntos 2 y 30): el color de la
 // cuenta (PERS-3) y «Eliminar cuenta…». Mismo patron que TabContextMenu (portal, clamp, Escape/clic
@@ -27,6 +30,7 @@ export function AccountMenu({
   const [size, setSize] = useState({ width: MENU_WIDTH_PX, height: 0 });
   const colorIndex = useWorkbenchStore((s) => s.settings.accentByAccount[account.id]);
   const setAccountAccent = useWorkbenchStore((s) => s.setAccountAccent);
+  const t = useT();
 
   useLayoutEffect(() => {
     const menu = menuRef.current;
@@ -55,15 +59,15 @@ export function AccountMenu({
         exit="exit"
         ref={menuRef}
         role="menu"
-        aria-label={`Acciones de la cuenta ${account.alias}`}
+        aria-label={t('accounts.menu.aria', { alias: account.alias })}
         data-account-menu="true"
         style={{ position: 'fixed', left, top, zIndex: 9999, width: MENU_WIDTH_PX }}
         className="overflow-hidden rounded-[8px] border border-mg-border-pop bg-mg-popover py-[4px] text-[11.5px] text-mg-body mg-shadow-pop"
       >
-        <div className="px-[10px] pt-[2px] text-[9.5px] font-bold tracking-[.06em] text-mg-ter">COLOR</div>
+        <div className="px-[10px] pt-[2px] text-[9.5px] font-bold tracking-[.06em] text-mg-ter">{t('accounts.menu.colorHeading')}</div>
         <ColorSwatches
-          label="Color de la cuenta"
-          autoTip="Color automático, según su posición"
+          label={t('accounts.menu.colorLabel')}
+          autoTip={t('accounts.menu.colorAuto')}
           selected={colorIndex}
           onPick={(index) => { setAccountAccent(account.id, index); onClose(); }}
         />
@@ -71,7 +75,7 @@ export function AccountMenu({
           <>
             <div className="my-[3px] h-px bg-mg-border-subtle" />
             <MenuItem danger onClick={() => { onRequestDelete(); onClose(); }}>
-              Eliminar cuenta…
+              {t('accounts.menu.delete')}
             </MenuItem>
           </>
         )}
@@ -99,13 +103,14 @@ export function DeleteAccountDialog({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const dialogRef = useDialogA11y({ onClose });
+  const t = useT();
 
   const confirm = (): void => {
     setBusy(true);
     setError(null);
     deleteAccount(account.id)
       .then(onClose)
-      .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)))
+      .catch((err: unknown) => setError(err instanceof Error ? describeError(err) : String(err)))
       .finally(() => setBusy(false));
   };
 
@@ -129,19 +134,19 @@ export function DeleteAccountDialog({
         className="flex w-[440px] flex-col gap-[12px] rounded-[11px] border border-mg-border-pop bg-mg-panel p-[18px] text-[12px] mg-shadow-modal"
       >
         <div id="delete-account-title" className="text-[13px] font-bold text-mg-text">
-          Eliminar la cuenta {account.alias}
+          {t('accounts.delete.title', { alias: account.alias })}
         </div>
         <div className="leading-[1.5] text-mg-body2">
-          Se borra entera la carpeta <code className="break-all text-mg-body">{account.id}</code>:
+          {t('accounts.delete.folder')}{' '}<code className="break-all text-mg-body">{account.id}</code>:
           <ul className="mt-[4px] list-disc pl-[18px]">
-            <li>su login y sus ajustes;</li>
-            <li>{privateLine(privateCount)}</li>
+            <li>{t('accounts.delete.loginAndSettings')}</li>
+            <li>{privateLine(t, privateCount)}</li>
           </ul>
-          <p className="mt-[6px]">Las conversaciones compartidas no se tocan. No se puede deshacer.</p>
+          <p className="mt-[6px]">{t('accounts.delete.sharedUntouched')}</p>
         </div>
         {error !== null && (
           <div role="alert" className="text-[11px] text-mg-danger">
-            No se pudo eliminar: {error}
+            {t('accounts.delete.error', { error })}
           </div>
         )}
         <div className="mt-[2px] flex justify-end gap-[8px]">
@@ -150,14 +155,14 @@ export function DeleteAccountDialog({
             disabled={busy}
             className="rounded-[7px] border border-mg-border-emph px-[12px] py-[6px] text-mg-body2 hover:bg-mg-hover disabled:opacity-50"
           >
-            Cancelar
+            {t('accounts.delete.cancel')}
           </button>
           <button
             onClick={confirm}
             disabled={busy}
             className="rounded-[7px] bg-mg-danger-strong px-[12px] py-[6px] font-semibold text-mg-danger-ink hover:bg-mg-danger-strong-hover disabled:opacity-50"
           >
-            {busy ? 'Eliminando…' : 'Eliminar la cuenta'}
+            {busy ? t('accounts.delete.deleting') : t('accounts.delete.confirm')}
           </button>
         </div>
       </motion.div>
@@ -175,7 +180,7 @@ function usePrivateConversationCount(configDir: string, providerId: string): num
     window.mage
       .listConversations(configDir)
       .then((list) => alive && setCount(list.filter((c) => c.privacy === 'private').length))
-      .catch((err: unknown) => alive && setCount(err instanceof Error ? err.message : String(err)));
+      .catch((err: unknown) => alive && setCount(err instanceof Error ? describeError(err) : String(err)));
     return () => {
       alive = false;
     };
@@ -183,9 +188,8 @@ function usePrivateConversationCount(configDir: string, providerId: string): num
   return count;
 }
 
-function privateLine(count: number | string | null): string {
-  if (count === null) return 'sus conversaciones privadas (contando…);';
-  if (typeof count === 'string') return `sus conversaciones privadas (no se pudieron contar: ${count});`;
-  if (count === 0) return 'sus conversaciones privadas (no tiene ninguna);';
-  return count === 1 ? 'su conversación privada (1);' : `sus ${count} conversaciones privadas;`;
+function privateLine(t: Translate, count: number | string | null): string {
+  if (count === null) return t('accounts.delete.privateCounting');
+  if (typeof count === 'string') return t('accounts.delete.privateCountFailed', { error: count });
+  return t('accounts.delete.privateCount', { count });
 }

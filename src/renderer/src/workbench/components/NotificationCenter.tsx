@@ -4,17 +4,18 @@ import { Icon } from './Icon';
 import { NotificationContent } from './NotificationToasts';
 import { useDialogA11y } from '../a11y/useDialogA11y';
 import { POPOVER_VARIANTS } from '../motionPresets';
+import { useT } from '../../i18n/uiLanguage';
 import { unreadCount } from '../notifications';
 import { clearNotificationHistory, markNotificationsRead, useNotificationStore } from '../notificationStore';
-
-const TIME_FORMAT = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' });
+import { formatClockTime } from '../../i18n/format';
 
 // Campana de la cabecera con el centro de notificaciones: las ultimas de esta ventana (en
 // memoria, no se persisten), marcar como leidas y limpiar. Descartar un toast no lo quita de aqui.
 export function NotificationBell(): React.JSX.Element {
+  const t = useT();
   const [open, setOpen] = useState(false);
   const unread = useNotificationStore(unreadCount);
-  const label = unread === 0 ? 'Notificaciones' : `Notificaciones (${unread} sin leer)`;
+  const label = unread === 0 ? t('notifications.center.bellLabel') : t('notifications.center.bellLabelUnread', { count: unread });
   return (
     <div className="relative flex items-center" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
       <button
@@ -22,7 +23,7 @@ export function NotificationBell(): React.JSX.Element {
         aria-label={label}
         aria-expanded={open}
         aria-haspopup="dialog"
-        data-tip="Notificaciones"
+        data-tip={t('notifications.center.bellTip')}
         data-notification-bell="true"
         className="flex cursor-pointer items-center gap-[3px] rounded-[5px] px-[4px] py-[1px] hover:bg-mg-hover hover:text-mg-body"
       >
@@ -46,6 +47,7 @@ export function NotificationBell(): React.JSX.Element {
 }
 
 function CenterPanel({ onClose }: { readonly onClose: () => void }): React.JSX.Element {
+  const t = useT();
   // Con Tab atrapado, como un modal: el velo de detras ya cierra al pulsar fuera, y asi Escape sigue
   // valiendo cuando «Limpiar» se deshabilita bajo el foco (Chromium lo manda a <body>).
   const panelRef = useDialogA11y({ onClose });
@@ -59,30 +61,30 @@ function CenterPanel({ onClose }: { readonly onClose: () => void }): React.JSX.E
       animate="animate"
       exit="exit"
       role="dialog"
-      aria-label="Centro de notificaciones"
+      aria-label={t('notifications.center.panelLabel')}
       data-notification-center="true"
       style={{ zIndex: 9999 }}
       className="absolute top-[calc(100%_+_10px)] right-0 flex max-h-[min(420px,70vh)] w-[340px] flex-col rounded-[9px] border border-mg-border-pop bg-mg-popover text-[11px] text-mg-body mg-shadow-pop"
     >
       <div className="flex items-center gap-[6px] border-b border-mg-border-subtle p-[8px_10px]">
-        <span className="flex-1 text-[9.5px] font-bold tracking-[.08em] text-mg-ter">NOTIFICACIONES</span>
+        <span className="flex-1 text-[9.5px] font-bold tracking-[.08em] text-mg-ter">{t('notifications.center.heading')}</span>
         <button onClick={markNotificationsRead} disabled={!anyUnread} className="cursor-pointer rounded-[5px] px-[6px] py-[1px] text-mg-sec hover:bg-mg-hover disabled:cursor-default disabled:opacity-40">
-          Marcar como leídas
+          {t('notifications.center.markRead')}
         </button>
         <button onClick={clearNotificationHistory} disabled={history.length === 0} className="cursor-pointer rounded-[5px] px-[6px] py-[1px] text-mg-sec hover:bg-mg-hover disabled:cursor-default disabled:opacity-40">
-          Limpiar
+          {t('notifications.center.clear')}
         </button>
       </div>
       {history.length === 0 ? (
-        <p className="p-[14px_10px] text-center text-mg-ter">No hay notificaciones.</p>
+        <p className="p-[14px_10px] text-center text-mg-ter">{t('notifications.center.empty')}</p>
       ) : (
         <ul className="flex flex-col overflow-y-auto">
           {history.map((n) => (
             <li key={n.id} data-notification-entry={n.id} data-read={n.read} className="flex flex-col gap-[2px] border-b border-mg-border-subtle p-[8px_10px] last:border-b-0">
               <NotificationContent notification={n} titleId={`notification-entry-${n.id}`} />
               <span className="pl-[22px] text-[9.5px] text-mg-muted">
-                {!n.read && <span className="mr-[5px] inline-block h-[5px] w-[5px] rounded-full bg-mg-activity" aria-label="Sin leer" />}
-                {TIME_FORMAT.format(n.createdAtMs)}
+                {!n.read && <span className="mr-[5px] inline-block h-[5px] w-[5px] rounded-full bg-mg-activity" aria-label={t('notifications.center.unreadMark')} />}
+                {formatClockTime(n.createdAtMs)}
               </span>
             </li>
           ))}

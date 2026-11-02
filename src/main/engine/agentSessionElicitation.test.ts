@@ -38,6 +38,14 @@ describe('AgentSession elicitation', () => {
     expect(() => h.session.answerElicitation({ sessionId: 's', requestId: 'nope', action: 'cancel' })).toThrow('nope');
   });
 
+  it('answerElicitation_desconocida_lanzaLaClaveConElRequestId', () => {
+    const h = withElicitation();
+
+    expect(() => h.session.answerElicitation({ sessionId: 's', requestId: 'nope', action: 'cancel' })).toThrow(
+      expect.objectContaining({ localized: { key: 'errors.engine.elicitationUnknown', values: { requestId: 'nope' } } }),
+    );
+  });
+
   it('exit_conElicitationPendiente_emiteCancelled', () => {
     const h = withElicitation();
 

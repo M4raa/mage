@@ -17,7 +17,6 @@
 // donde puede estar mal.
 
 export type DecorationKind =
-  | 'bullet'
   | 'bullet-painted'
   | 'ordinal'
   | 'marker-hidden'
@@ -93,19 +92,14 @@ function appendLineRanges(ranges: DecorationRange[], line: string, offset: numbe
     const markerTo = markerFrom + marker.length + space.length;
     if (indent.length > 0) ranges.push({ from: offset, to: markerFrom, kind: 'list-indent' });
     // El NUMERO de una lista se ve siempre: ocultarlo fuera del cursor dejaba un «6.» suelto en el
-    // parrafo activo y ninguno en los demas (P-026, 1.5). La viñeta `-`/`*`/`+` se ve tal cual en la
-    // linea del cursor (se esta editando) y en las demas se pinta como `•`.
-    ranges.push({ from: markerFrom, to: markerTo, kind: listMarkerKind(list[2] !== undefined, isCursorLine) });
+    // parrafo activo y ninguno en los demas (P-026, 1.5). La viñeta `-`/`*`/`+` se pinta como `•` en
+    // TODAS las lineas, tambien en la del cursor (#54: ahi mostraba el «-» crudo).
+    ranges.push({ from: markerFrom, to: markerTo, kind: list[2] === undefined ? 'ordinal' : 'bullet-painted' });
     appendInlineRanges(ranges, line.slice(markerTo - offset), markerTo);
     return;
   }
 
   appendInlineRanges(ranges, line, offset);
-}
-
-function listMarkerKind(isBullet: boolean, isCursorLine: boolean): DecorationKind {
-  if (!isBullet) return 'ordinal';
-  return isCursorLine ? 'bullet' : 'bullet-painted';
 }
 
 // Inline: codigo primero (lo que hay dentro de backticks no es enfasis), luego `**`/`__` y luego `_`/`*`

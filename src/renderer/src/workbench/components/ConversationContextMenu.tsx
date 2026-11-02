@@ -6,6 +6,7 @@ import type { ConversationPrivacy } from '@shared/state';
 import type { Account } from '../types';
 import type { ChatProject } from '@shared/settings';
 import { POPOVER_VARIANTS } from '../motionPresets';
+import { useT } from '../../i18n/uiLanguage';
 
 // Descriptor de la conversacion sobre la que se abrio el menu (clic derecho). sessionId puede faltar
 // si la pestana aun no ha arrancado sesion (no hay nada en disco -> eliminar/mover deshabilitados).
@@ -53,6 +54,7 @@ export function ConversationContextMenu({
   readonly projects?: readonly ChatProject[];
   readonly onAssignProject?: (projectId: string | null) => void;
 }): React.JSX.Element {
+  const t = useT();
   const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   useEffect(() => {
@@ -91,11 +93,11 @@ export function ConversationContextMenu({
         {onOpenInNewTab !== undefined && (
           <>
             <MenuItem disabled={!hasSession} onClick={onOpenInNewTab}>
-              Abrir en una pestaña nueva
+              {t('sidebar.contextMenu.openInNewTab')}
             </MenuItem>
             {onOpenInNewWindow !== undefined && (
               <MenuItem disabled={!hasSession || newWindowBlockedReason !== null} tip={newWindowBlockedReason} onClick={onOpenInNewWindow}>
-                Abrir en una ventana nueva
+                {t('sidebar.contextMenu.openInNewWindow')}
               </MenuItem>
             )}
             <div className="my-[3px] h-px bg-mg-border-subtle" />
@@ -105,9 +107,9 @@ export function ConversationContextMenu({
         {/* Mover a la otra seccion de la MISMA cuenta. */}
         {onAssignProject !== undefined && (
           <>
-            <div className="px-[10px] pt-[5px] text-[9.5px] font-bold tracking-[.06em] text-mg-ter">PROYECTO</div>
+            <div className="px-[10px] pt-[5px] text-[9.5px] font-bold tracking-[.06em] text-mg-ter">{t('sidebar.contextMenu.projectHeader')}</div>
             {projects.map((project) => <MenuItem key={project.id} onClick={() => onAssignProject(project.id)}>{project.name}</MenuItem>)}
-            <MenuItem onClick={() => onAssignProject(null)}>Quitar del proyecto</MenuItem>
+            <MenuItem onClick={() => onAssignProject(null)}>{t('sidebar.contextMenu.removeFromProject')}</MenuItem>
             <div className="my-[3px] h-px bg-mg-border-subtle" />
           </>
         )}
@@ -115,13 +117,13 @@ export function ConversationContextMenu({
           disabled={!hasSession}
           onClick={() => onMove(activeAccountId, oppositePrivacy)}
         >
-          Mover a {oppositePrivacy === 'private' ? 'Privado' : 'Compartido'}
+          {oppositePrivacy === 'private' ? t('sidebar.contextMenu.moveToPrivate') : t('sidebar.contextMenu.moveToShared')}
         </MenuItem>
 
         {/* Mover a otra cuenta (conserva la privacidad de origen). */}
         {otherAccounts.length > 0 && (
           <>
-            <div className="px-[10px] pt-[5px] text-[9.5px] font-bold tracking-[.06em] text-mg-ter">MOVER A OTRA CUENTA</div>
+            <div className="px-[10px] pt-[5px] text-[9.5px] font-bold tracking-[.06em] text-mg-ter">{t('sidebar.contextMenu.moveToAccountHeader')}</div>
             {otherAccounts.map((account) => (
               <MenuItem key={account.id} disabled={!hasSession} onClick={() => onMove(account.id, target.privacy)}>
                 <span className="inline-flex items-center gap-[7px]">
@@ -138,23 +140,23 @@ export function ConversationContextMenu({
         {/* Eliminar (con confirmacion en el propio menu). */}
         {!confirmingDelete ? (
           <MenuItem disabled={!hasSession} danger onClick={() => setConfirmingDelete(true)}>
-            <Icon name="trash" size={12} /> Eliminar conversación
+            <Icon name="trash" size={12} /> {t('sidebar.contextMenu.delete')}
           </MenuItem>
         ) : (
           <div className="px-[10px] py-[6px]">
-            <div className="mb-[6px] text-[10.5px] text-mg-danger">¿Eliminar de forma permanente?</div>
+            <div className="mb-[6px] text-[10.5px] text-mg-danger">{t('sidebar.contextMenu.deleteConfirm')}</div>
             <div className="flex justify-end gap-[6px]">
               <button
                 onClick={onClose}
                 className="rounded-[5px] border border-mg-border-emph px-[8px] py-[3px] text-[10.5px] text-mg-body2 hover:bg-mg-hover"
               >
-                Cancelar
+                {t('sidebar.contextMenu.deleteCancel')}
               </button>
               <button
                 onClick={onDelete}
                 className="rounded-[5px] bg-mg-danger-strong px-[8px] py-[3px] text-[10.5px] font-semibold text-mg-danger-ink hover:bg-mg-danger-strong-hover"
               >
-                Eliminar
+                {t('sidebar.contextMenu.deleteAccept')}
               </button>
             </div>
           </div>
