@@ -9,7 +9,7 @@ export interface UiLanguageDeps {
   // Preferencia inicial para cuando no hay nada guardado: la elegida en el instalador de Windows (U3). La aporta
   // F3.7; hasta entonces no hay ninguna y se sigue al sistema.
   readonly initialPreference: () => UiLanguagePreference | undefined;
-  // `app.getPreferredSystemLanguages()` (respeta LANGUAGE en Linux, medido en INFORME-033).
+  // `app.getPreferredSystemLanguages()` (respeta LANGUAGE en Linux, medido).
   readonly preferredSystemLanguages: () => readonly string[];
   readonly broadcast: (resolved: ResolvedUiLanguage) => void;
 }

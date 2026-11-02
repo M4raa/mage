@@ -7,7 +7,7 @@ import { PERMISSION_MODES } from '@shared/ipc';
 import { ANSWER_PERMISSION_SCHEMA, SEND_MESSAGE_SCHEMA, SESSION_ID_SCHEMA, MAX_ID_CHARS, MAX_MESSAGE_CHARS, MAX_MODE_CHARS } from '@shared/sessionInput';
 import { CHALLENGE_NONCE_BYTES } from './hostToken';
 
-// Protocolo del host local (F2.6, §2 de INFORME-019 con las enmiendas H6, H2 y H3): JSON-RPC 2.0 sobre NDJSON.
+// Protocolo del host local (F2.6): JSON-RPC 2.0 sobre NDJSON.
 // Una línea = un mensaje. El primero de cada conexión tiene que ser `hello` con el token y la versión, salvo un
 // `host.challenge` previo (F7.1); hasta el `hello` no se atiende nada más. Todo lo que entra se valida con Zod ANTES de tocar el coordinador.
 

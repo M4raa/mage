@@ -4,7 +4,7 @@ import { messages as esMessages } from './catalogs/es.json?lingui';
 import type { UiLanguage } from './language';
 import type { MessageArgs, MessageKey } from './messageKeys.generated';
 
-// El envoltorio ÚNICO sobre la biblioteca (T1 de DEVOLUCION-018: Lingui; si hubiera que cambiarla, solo cambia este
+// El envoltorio ÚNICO sobre la biblioteca (Lingui; si hubiera que cambiarla, solo cambia este
 // fichero). Lo usan main y renderer y, en F7, la terminal. Los catálogos llegan YA compilados por
 // `@lingui/vite-plugin` (sufijo `?lingui`): en el build no viaja ningún compilador de mensajes.
 

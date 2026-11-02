@@ -598,7 +598,7 @@ function getConversationLocks(): ConversationLocks {
 }
 
 // El latido de las conversaciones de esta instancia; las que haya PERDIDO se avisan a las ventanas (solo lectura). El
-// tick nunca deja escapar una excepcion (H1 de la devolucion 17).
+// tick nunca deja escapar una excepcion.
 function startConversationLockHeartbeat(): void {
   setInterval(() => {
     runLockHeartbeatTick({
@@ -2757,7 +2757,7 @@ function registerSessionIpc1(): void {
     coordinator: sessionCoordinator,
     createSession: createSessionFromIpc,
     validateAttachments,
-    // Solo la ventana que creo la sesion y la principal le dan ordenes (F2.6, H3 de la devolucion 14).
+    // Solo la ventana que creo la sesion y la principal le dan ordenes (F2.6).
     canControl: (senderId, sessionId) => canControlSession({
       ownerOf: (id) => sessionCoordinator.ownerOf(id),
       isMainWindow: (webContentsId) => windowManager.windowIdOf(webContentsId) === MAIN_WINDOW_ID,
@@ -3683,8 +3683,8 @@ function focusMainWindow(): void {
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
 // Host sin pantalla (F2.6, §3.4): Linux sin DISPLAY ni WAYLAND_DISPLAY, o `--headless`. No crea ventanas.
 const runsHeadless = isHeadlessHost({ platform: process.platform, argv: process.argv, env: process.env });
-// Linux sin pantalla: sin `--password-store`, Chromium elige basic_text aunque haya un llavero desbloqueado (medido en
-// INFORME-006 y en la validación de F2.7), y la bóveda no se podría usar nunca. Se pide el Secret Service salvo que el
+// Linux sin pantalla: sin `--password-store`, Chromium elige basic_text aunque haya un llavero desbloqueado (medido en la
+// validación de F2.7), y la bóveda no se podría usar nunca. Se pide el Secret Service salvo que el
 // usuario haya elegido otro; antes de `ready`, que es cuando Chromium lo lee (medido: vale para este switch). Con
 // pantalla, Chromium elige como siempre (kwallet en KDE): forzarlo dejaría ilegibles las bóvedas que ya existen.
 if (runsHeadless && process.platform === 'linux' && !app.commandLine.hasSwitch('password-store')) {

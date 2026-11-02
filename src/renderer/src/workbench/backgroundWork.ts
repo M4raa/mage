@@ -15,7 +15,7 @@ export type BackgroundState =
 export interface BackgroundSession {
   readonly sessionId: string; // la sesion VIVA de Mage: con la que se habla con main (parar, eventos)
   // La CONVERSACION (conversationIdOfTab al cerrar), con la que pregunta el historial. En Codex y agy es el
-  // hilo y no coincide con `sessionId`; sin hilo todavia no hay conversacion que buscar (H3, devolucion 18).
+  // hilo y no coincide con `sessionId`; sin hilo todavia no hay conversacion que buscar.
   readonly conversationId: string | undefined;
   readonly title: string; // el de la pestaña al cerrarla (la fila del historial puede tardar en refrescarse)
   readonly accountId: string;

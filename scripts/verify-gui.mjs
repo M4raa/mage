@@ -11085,7 +11085,7 @@ async function main() {
   const { child, log } = launchApp(userDataDir);
   let browser = null;
   const results = [];
-  // H1 de DEVOLUCION-022: alias de las cuentas reales del perfil; enmascaran los detalles antes de que lleguen al informe.
+  // Alias de las cuentas reales del perfil; enmascaran los detalles antes de que lleguen al informe.
   let accountAliases = [];
   const consoleErrors = [];
 
@@ -11168,7 +11168,7 @@ async function main() {
   process.exit(failed.length === 0 ? 0 : 1);
 }
 
-// T4 (DEVOLUCION-018), solo durante F3 y con la opción explícita: tras el `run` de cada caso, ANTES de restaurar, se
+// Solo durante F3 y con la opción explícita: tras el `run` de cada caso, ANTES de restaurar, se
 // guarda el texto del DOM. Sin la opción, el caso queda tal cual.
 const DOM_TEXT_DUMP = process.argv.find((arg) => arg.startsWith('--dump-dom-text='))?.slice('--dump-dom-text='.length);
 function withDomTextDump(check) {

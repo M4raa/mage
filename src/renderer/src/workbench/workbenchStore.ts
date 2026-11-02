@@ -684,7 +684,7 @@ function applyBackgroundEvent(
 ): void {
   const entry = get().backgroundSessions[sessionId];
   if (entry === undefined) return; // sesion ya parada: evento rezagado, se ignora
-  // Cerrada antes de que Codex o agy dieran su hilo: la conversacion se conoce ahora (H3, devolucion 18).
+  // Cerrada antes de que Codex o agy dieran su hilo: la conversacion se conoce ahora.
   if (event.kind === 'session_init' && entry.conversationId === undefined) {
     set((s) => ({ backgroundSessions: { ...s.backgroundSessions, [sessionId]: { ...entry, conversationId: event.sessionId } } }));
     return;

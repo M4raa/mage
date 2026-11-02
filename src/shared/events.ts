@@ -222,7 +222,7 @@ export type MageEvent =
   // convierte en un error visible; si era telemetria nuestra (registrar hooks, pedir el desglose de
   // contexto) se queda en el log, porque ensuciar la conversacion con un fallo que el usuario no ha
   // provocado —y que en un CLI de otra version pasaria en CADA arranque— seria peor que el fallo.
-  // Dato/texto ajeno: no se traduce (F3.3, INFORME-033 §4).
+  // Dato/texto ajeno: no se traduce (F3.3).
   | { readonly kind: 'control_error'; readonly requestId: string; readonly message: string }
   // Compactacion de contexto completada (M2.4): system/compact_boundary del CLI. trigger:
   // 'manual' (/compact) o 'auto' (umbral del CLI); string laxo por si aparecen valores nuevos.
@@ -236,7 +236,7 @@ export type MageEvent =
   // `summary` es ESE texto, tal cual: el CLI es el unico que sabe cuando se restablece y en que zona.
   // `resetsAtMs` queda en null mientras no se mida un campo con la marca de tiempo — deducirla del
   // texto seria inventarla.
-  // Dato/texto ajeno: no se traduce (F3.3, INFORME-033 §4).
+  // Dato/texto ajeno: no se traduce (F3.3).
   | { readonly kind: 'rate_limit'; readonly summary: string; readonly resetsAtMs: number | null }
   // Foto del consumo de la suscripcion que el CLI emite SOLO, sin que Mage pregunte a ningun
   // endpoint. MEDIDO el 2026-09-14 contra el CLI 2.1.270 (Fase 9, S3): llega en un turno normal
@@ -298,7 +298,7 @@ export type MageEvent =
   // (`blocked`: el comando denegado; null si lo permitió una regla). Ese permiso NO se anunció a los clientes.
   // Una sesion en segundo plano que nadie reclamo caduca (F2.4): main la para justo despues de este evento.
   | { readonly kind: 'background_expired' }
-  // Dato/texto ajeno: no se traduce (F3.3, INFORME-033 §4).
+  // Dato/texto ajeno: no se traduce (F3.3).
   | { readonly kind: 'permission_auto_answered'; readonly requestId: string; readonly toolName: string; readonly behavior: 'allow' | 'deny'; readonly blocked: string | null }
   // `inferred`: el adapter lo dedujo sin la señal del CLI (salvaguarda); `turnKind`: el tipo de turno que
   // rechazo el directo; `localized`: el detalle de un fallo.

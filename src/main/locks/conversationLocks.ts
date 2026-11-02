@@ -3,7 +3,7 @@ import { z } from 'zod';
 import type { ConversationLockRef, ConversationLockStatus } from '@shared/conversationLock';
 import { foreignText, localized, UserFacingError } from '@shared/i18n/localizedText';
 
-// Bloqueo de conversación entre instancias (#55, F2.8; §4 de INFORME-019 con H4 de la devolución 13). Un fichero por
+// Bloqueo de conversación entre instancias (#55, F2.8). Un fichero por
 // conversación en un directorio de Mage COMPARTIDO por todos sus perfiles y fuera de ellos (nunca en el config dir de
 // la cuenta, que es del CLI). Creación exclusiva: de dos instancias que abren la misma conversación, solo una crea el
 // fichero; la otra la ve en solo lectura. La dueña late cada 30 s; un lock con el pid muerto o sin latido en 90 s es

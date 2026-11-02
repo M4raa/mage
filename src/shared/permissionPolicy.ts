@@ -1,4 +1,4 @@
-// Politica de respuesta automatica a los permisos (H1 de la devolucion 14). PURO, en shared: hoy la aplica
+// Politica de respuesta automatica a los permisos. PURO, en shared: hoy la aplica
 // el renderer y en F2.4 la aplica main antes de anunciar el permiso a los clientes.
 
 import type { PermissionDecision, PermissionRequest } from './events';
@@ -56,7 +56,7 @@ export function prTurnDenyMessage(blocked: string): string {
   return `Mage no permite \`${blocked}\` en el turno de crear el PR: haz un push normal de la rama, sin forzar ni saltar los hooks, y abre el PR en este repositorio.`;
 }
 
-// --- Respuesta automatica a un permiso (H1 de la devolucion 14) --------------------------------------
+// --- Respuesta automatica a un permiso --------------------------------------
 // Orden fijo: barrera del turno de PR > fuera del proyecto > regla «Permitir siempre» > preguntar (null).
 // La barrera va primero porque una regla «Permitir siempre Bash» no puede abrirle paso a un push forzado:
 // antes salia el allow, main lo aceptaba y el deny llegaba tarde. Una PREGUNTA no se auto-permite nunca:

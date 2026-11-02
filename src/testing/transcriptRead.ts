@@ -8,7 +8,7 @@ export interface TranscriptStreamSource {
 // Una lectura entera de `openStream`, plegada lote a lote con la misma regla que `applyTranscriptBatch`
 // del renderer. El lector corta los lotes también por TIEMPO (BATCH_FLUSH_MS): bajo carga una lectura de
 // una sola línea sale en dos lotes, `reset` va en el PRIMERO y el último puede llegar vacío. Los tests que
-// miraban solo el último lote fallaban de vez en cuando por eso (H1 de DEVOLUCION-018); el producto no.
+// miraban solo el último lote fallaban de vez en cuando por eso; el producto no.
 export interface FoldedTranscriptRead {
   readonly last: TranscriptBatch;
   readonly entries: TranscriptBatch['entries'];

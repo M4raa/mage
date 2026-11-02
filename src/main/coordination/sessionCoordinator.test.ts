@@ -708,7 +708,7 @@ describe('SessionCoordinator — cierre y segundo plano en main (F2.4)', () => {
   });
 
   it('close_conTurnoEnMarcha_segundoPlanoYLaColaNoSaleAlAcabar', () => {
-    // Cierra la ventana de INFORME-022 (decisión 3): descartar la cola y pasar a segundo plano es un solo paso.
+    // Cierra la ventana: descartar la cola y pasar a segundo plano es un solo paso.
     const h = harness();
     const id = h.create();
     h.coordinator.send({ sessionId: id, text: 'primero' });

@@ -12,7 +12,7 @@ const SESSIONS_DIR = 'sessions';
 const ROLLOUT_PREFIX = 'rollout-';
 const ROLLOUT_EXT = '.jsonl';
 // Nombre de un rollout: grupo 2 = hilo, grupo 3 = segmento (solo tras un `thread/revert`). Medida con
-// codex-cli 0.164.0, INFORME-046 A4.
+// codex-cli 0.164.0.
 export const ROLLOUT_NAME = /^rollout-(\d{4}-\d\d-\d\dT[\d-]+)-([0-9a-f-]{36})(?:_([0-9a-f-]{36}))?\.jsonl$/;
 const SESSION_ID = /^[A-Za-z0-9-]+$/;
 // El `session_meta` lleva las instrucciones base enteras (decenas de KB): hace falta más cabeza que en Claude

@@ -1,4 +1,4 @@
-// Registro de propiedad de los ficheros que Mage escribe por su cuenta (decisión C3 de INFORME-046): qué ficheros
+// Registro de propiedad de los ficheros que Mage escribe por su cuenta (decisión de diseño): qué ficheros
 // son de qué paquete, con el hash que tenían al escribirlos. Es la única forma de borrar solo lo propio y de
 // detectar colisiones antes de escribir. El esquema es ESTRICTO: es nuestro propio fichero y un registro mal leído
 // acabaría borrando ficheros ajenos, así que un registro corrupto lanza y nunca se sustituye por uno vacío.

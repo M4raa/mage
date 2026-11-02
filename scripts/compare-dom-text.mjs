@@ -1,4 +1,4 @@
-// Compara dos volcados de `verify:gui --dump-dom-text` (T4 de DEVOLUCION-018, criterio de F3.2): el texto del DOM en
+// Compara dos volcados de `verify:gui --dump-dom-text` (criterio de F3.2): el texto del DOM en
 // «es» tiene que ser idéntico antes y después de extraer las claves.
 //   node scripts/compare-dom-text.mjs antes.jsonl despues.jsonl [--ref2=segunda-referencia.jsonl] [--ignore=ruido.json] [--json]
 // Por caso compara el TEXTO UNIDO (sin espacios: el reparto en nodos no cuenta) y los atributos aparte.

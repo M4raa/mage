@@ -1,8 +1,8 @@
 // Comandos de los gestores NATIVOS de cada CLI para instalar, quitar y listar MCP y plugins. Mage no edita nunca
 // `.claude.json` ni `config.toml`: llama a estos comandos.
 //
-// Qué se midió y contra qué: `mcp add|remove|list` y `plugin list` con Claude Code 2.1.311 y Codex 0.164.0
-// (INFORME-046 C2/H4). El `--scope` de `plugin install|uninstall` de Claude y los `plugin add|remove` y
+// Qué se midió y contra qué: `mcp add|remove|list` y `plugin list` con Claude Code 2.1.311 y Codex 0.164.0.
+// El `--scope` de `plugin install|uninstall` de Claude y los `plugin add|remove` y
 // `marketplace add` de Codex salen del `--help` de Claude Code 2.1.314 y Codex 0.164.0, SIN medir de punta a punta.
 //
 // El `--` separa el comando del servidor MCP del resto: ningún argumento suyo se lee como opción del CLI.

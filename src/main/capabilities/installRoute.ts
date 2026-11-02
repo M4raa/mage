@@ -28,7 +28,7 @@ export function installRouteFor(pkg: CapabilityPackage, engine: CapabilityEngine
 function skillRoute(pkg: CapabilityPackage, engine: CapabilityEngine): InstallRoute {
   if (engine === 'claude') return 'ownedFiles';
   throw new Error(
-    `No está medido dónde lee Codex las skills sueltas (INFORME-046 C2): el paquete ${pkg.id} no se instala en Codex`,
+    `No está medido dónde lee Codex las skills sueltas: el paquete ${pkg.id} no se instala en Codex`,
   );
 }
 

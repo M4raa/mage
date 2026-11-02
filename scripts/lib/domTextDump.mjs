@@ -1,4 +1,4 @@
-// T4 de DEVOLUCION-018: volcado del texto del DOM por comprobación de `verify:gui`, SOLO durante F3 y solo con la
+// Volcado del texto del DOM por comprobación de `verify:gui`, SOLO durante F3 y solo con la
 // opción explícita `--dump-dom-text=<fichero.jsonl>`. No es una comprobación permanente: daría falsos fallos con cada
 // cambio de texto intencionado. Sirve para el criterio de F3.2: el texto en «es» es idéntico antes y después de
 // extraer las claves. Se compara con `node scripts/compare-dom-text.mjs antes.jsonl despues.jsonl`.
@@ -116,7 +116,7 @@ export function diffAttrs(before, after) {
   return diffByName(before, after, (a, b) => diffLines(attrsOf(a), attrsOf(b)));
 }
 
-// Fragmento de cada lado alrededor de la primera posición que difiere (como en la sonda de INFORME-037).
+// Fragmento de cada lado alrededor de la primera posición que difiere.
 const FRAGMENT_BEFORE_CHARS = 60;
 const FRAGMENT_AFTER_CHARS = 80;
 function fragmentsAroundFirstDifference(a, b) {

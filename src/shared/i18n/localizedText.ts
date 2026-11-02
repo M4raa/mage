@@ -2,7 +2,7 @@ import { z } from 'zod';
 import type { MessageArgs, MessageKey, MessageValues } from './messageKeys.generated';
 import { COMPILED_CATALOGS, createTranslator, type Translate } from './translator';
 
-// Un texto de Mage que viaja como DATO (clave + valores) y lo pinta quien lo enseña, en su idioma (F3.3, INFORME-033 §4).
+// Un texto de Mage que viaja como DATO (clave + valores) y lo pinta quien lo enseña, en su idioma (F3.3).
 export interface LocalizedText {
   readonly key: MessageKey;
   readonly values?: Readonly<Record<string, string | number>>;

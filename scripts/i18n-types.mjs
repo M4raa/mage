@@ -1,10 +1,10 @@
 // Genera `src/shared/i18n/messageKeys.generated.ts` a partir del catálogo base (`catalogs/es.json`): la unión de
 // claves (`MessageKey`) y el tipo de las variables de cada mensaje ICU. Así una clave que no existe o una variable
-// que falta NO compila (F3.1, INFORME-033 §3).
+// que falta NO compila (F3.1).
 //   node scripts/i18n-types.mjs           escribe el fichero
 //   node scripts/i18n-types.mjs --check   falla si el fichero no está al día, si las claves de es.json no están
 //                                         ordenadas o si algún catálogo tiene claves que es.json no tiene
-// Lo ejecuta `pnpm check` con --check (DEVOLUCION-018: los tipos generados se comprueban).
+// Lo ejecuta `pnpm check` con --check (los tipos generados se comprueban).
 import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';

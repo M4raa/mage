@@ -1,5 +1,5 @@
 // Instalador de los ficheros que Mage escribe por su cuenta (las skills sueltas de Claude, que no tienen gestor
-// nativo), con el registro de propiedad de la decisión C3 de INFORME-046:
+// nativo), con el registro de propiedad:
 // - una colisión (ruta de otro paquete o fichero ajeno) se detecta ANTES de escribir nada;
 // - desinstalar borra solo lo propio con el hash intacto: si el usuario lo tocó, no se borra NADA;
 // - instalar y actualizar son la misma operación, transaccional: `.stage-<id>` → renombrar conservando la versión
