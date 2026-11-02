@@ -2467,6 +2467,8 @@ const CHECKS = [
         instance = await startRestartInstance(profile, rendererUrl);
         await instance.page.evaluate((home) => window.__mageDev.store.getState().setActiveAccount(home), fx.codexHome);
         await instance.page.getByText(D19_MISSING_NOTICE, { exact: true }).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        // El aviso sale antes de que CodeMirror monte: sin esta espera, editable se leía a veces como null (carrera).
+        await instance.page.locator(`[data-pane-tab-id="${tabId}"] .cm-content`).waitFor({ state: 'attached', timeout: CONFIG.actionTimeoutMs });
         const medido = await readRestoredTab(instance.page, tabId);
         const editable = await instance.page.evaluate((id) => document.querySelector(`[data-pane-tab-id="${id}"] .cm-content`)?.getAttribute('contenteditable') ?? null, tabId);
         const texto = await waitForFile(file, (t) => { const tab = JSON.parse(t).tabs?.find((x) => x.id === tabId); return tab !== undefined && tab.sessionId === undefined; });
