@@ -290,6 +290,10 @@ export type MageEvent =
   | { readonly kind: 'queue_changed'; readonly queue: readonly QueuedMessage[] }
   | { readonly kind: 'queued_message_sent'; readonly message: QueuedMessage }
   | { readonly kind: 'queued_message_failed'; readonly message: QueuedMessage; readonly localized: LocalizedText }
+  // Rewind (K04): la cola vuelve a borradores SIN ejecutarse (acompaña al `queue_changed` vacío), y la
+  // conversacion quedo rebobinada al mensaje `targetNativeId` (`retry`: reintento del mismo mensaje).
+  | { readonly kind: 'queue_returned'; readonly messages: readonly QueuedMessage[] }
+  | { readonly kind: 'conversation_rewound'; readonly targetNativeId: string; readonly action: 'rewind' | 'retry' }
   // Un permiso (o pregunta) se contestó (F2.3): lo emite la coordinación de main al aceptar LA respuesta, para
   // que todo cliente cierre su tarjeta, también el que no contestó.
   // `answers`: las respuestas de una PREGUNTA (AskUserQuestion), para que otro cliente cierre su tarjeta con ellas.

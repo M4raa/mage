@@ -9,6 +9,7 @@ import { supportsSteer, writesClaudeTranscript } from '@shared/providers';
 import { automaticAnswer, automaticDecision, CREATE_PR_PROMPT, type AutomaticAnswer } from '@shared/permissionPolicy';
 import type { SessionManager } from '../engine/sessionManager';
 import type { SessionLogFn } from '../engine/agentSession';
+import type { EngineRequest } from '../engine/providerAdapter';
 
 // Coordinacion de sesiones, primer paso (F2.1, §3.5 del plan): un unico propietario en main que da a cada
 // evento su conversacion de Mage y una secuencia monotona, y mantiene una instantanea consultable de cada
@@ -50,7 +51,10 @@ export interface ConversationIdentityIndex {
 }
 
 export type CoordinatedSessions = Pick<SessionManager,
-  'create' | 'stop' | 'stopOwnedBy' | 'stopByConfigDir' | 'stopAll' | 'sendMessage' | 'steerMessage' | 'interrupt' | 'answerPermission' | 'answerElicitation'>;
+  'create' | 'stop' | 'stopOwnedBy' | 'stopByConfigDir' | 'stopAll' | 'sendMessage' | 'steerMessage' | 'interrupt' | 'answerPermission' | 'answerElicitation' | 'engineRequest'>;
+
+// Respuesta del motor a una peticion de Mage (`engineRequest`).
+export type EngineResponse = Extract<MageEvent, { kind: 'engine_response' }>;
 
 export interface SessionCoordinatorDeps {
   readonly sessions: CoordinatedSessions;
@@ -69,6 +73,10 @@ export interface SessionCoordinatorDeps {
   // Bloqueo entre instancias (#55, F2.8): una sesion en segundo plano CON turno sigue teniendo su conversacion aunque
   // ya no tenga pestaña; la suelta al acabar el turno (segundo plano sin turno) o al parar.
   readonly conversationHold?: ConversationHold;
+  // Se llama, si la sesion tiene su referencia nativa, justo despues de que un envio (directo o de la cola) llegue al
+  // motor sin lanzar. Con ella main borra el corte pendiente de esa conversacion (A8): desde ese mensaje la hoja
+  // nueva basta.
+  readonly onUserMessageSent?: (nativeRef: NativeSessionRef) => void;
 }
 
 export interface ConversationHold {
@@ -99,6 +107,7 @@ interface Tracked {
   sessionId: string;
   readonly provider: string;
   readonly accountDir: string;
+  readonly cwd: string;
   conversationId: ConversationId | null;
   nativeRef: NativeSessionRef | null;
   lastSeq: number;
@@ -119,8 +128,27 @@ interface Tracked {
   readonly ownerId: number | null;
   // Clientes suscritos: el que la creo y los que se sumen despues.
   readonly listeners: Set<SessionListener>;
+  // Como guarda Codex el historial del hilo (`thread_history`); null hasta que lo dice.
+  historyMode: 'legacy' | 'paginated' | null;
+  // Peticiones al motor esperando su respuesta, por requestId.
+  readonly engineWaiters: Map<string, (response: EngineResponse) => void>;
+  // Quien espera a que la sesion quede en reposo (`waitForIdle`).
+  readonly idleWaiters: Set<() => void>;
   // Emite un evento propio de la coordinacion por el mismo camino que los del motor (con secuencia).
   emit: (event: MageEvent) => void;
+}
+
+// Lo que necesita el rewind de una sesion viva (`rewindContext`).
+export interface RewindContext {
+  readonly provider: string;
+  readonly accountDir: string;
+  readonly cwd: string;
+  readonly nativeId: string | null;
+  readonly busy: boolean;
+  readonly background: boolean;
+  readonly queueLength: number;
+  readonly pendingCount: number;
+  readonly historyMode: 'legacy' | 'paginated' | null;
 }
 
 export class SessionCoordinator {
@@ -132,9 +160,9 @@ export class SessionCoordinator {
   // El registro existe antes del arranque: un evento emitido durante `start()` ya lleva su secuencia.
   create(params: CreateSessionParams, sink: SequencedSink, ownerId?: number): string {
     const tracked: Tracked = {
-      sessionId: '', provider: params.provider, accountDir: params.accountDir, conversationId: null, nativeRef: null, lastSeq: 0, state: 'starting',
+      sessionId: '', provider: params.provider, accountDir: params.accountDir, cwd: params.cwd, conversationId: null, nativeRef: null, lastSeq: 0, state: 'starting',
       queue: [], receipts: new Map(), pending: new Map(), prGuard: false, steering: new Map(), notSteerable: null, cancelExpiry: null, ownerId: ownerId ?? null,
-      listeners: new Set([{ sink, onClosed: () => undefined }]), emit: () => undefined,
+      listeners: new Set([{ sink, onClosed: () => undefined }]), historyMode: null, engineWaiters: new Map(), idleWaiters: new Set(), emit: () => undefined,
     };
     tracked.emit = (event) => this.relay(tracked, { sessionId: tracked.sessionId, event });
     const sessionId = this.deps.sessions.create(params, (payload) => this.relay(tracked, payload), ownerId);
@@ -281,6 +309,73 @@ export class SessionCoordinator {
     return taken;
   }
 
+  // Lo que necesita el rewind de una sesion viva. Lanza `sessionMissing` (como `require`) si no se sigue.
+  rewindContext(sessionId: string): RewindContext {
+    const tracked = this.require(sessionId);
+    return {
+      provider: tracked.provider, accountDir: tracked.accountDir, cwd: tracked.cwd, nativeId: tracked.nativeRef?.nativeId ?? null,
+      busy: isBusy(tracked.state), background: tracked.cancelExpiry !== null, queueLength: tracked.queue.length,
+      pendingCount: tracked.pending.size, historyMode: tracked.historyMode,
+    };
+  }
+
+  // Peticion al motor con su respuesta. Rechaza con `engine_request_timeout <kind>` si no llega en `timeoutMs`; si
+  // el motor la rechaza al enviarla, con ese error (y sin dejar el waiter).
+  engineRequest(sessionId: string, request: EngineRequest, timeoutMs: number): Promise<EngineResponse> {
+    const tracked = this.require(sessionId);
+    const requestId = this.deps.newId();
+    return new Promise<EngineResponse>((resolve, reject) => {
+      const cancelTimer = this.deps.setTimer(() => {
+        tracked.engineWaiters.delete(requestId);
+        reject(new Error(`engine_request_timeout ${request.kind}`));
+      }, timeoutMs);
+      tracked.engineWaiters.set(requestId, (response) => {
+        cancelTimer();
+        resolve(response);
+      });
+      try {
+        this.deps.sessions.engineRequest(tracked.sessionId, requestId, request);
+      } catch (err) {
+        cancelTimer();
+        tracked.engineWaiters.delete(requestId);
+        reject(err);
+      }
+    });
+  }
+
+  // Resuelve cuando la sesion queda en reposo (idle o error); si ya lo esta, en el acto. Rechaza con `idle_timeout`.
+  waitForIdle(sessionId: string, timeoutMs: number): Promise<void> {
+    const tracked = this.require(sessionId);
+    if (isAtRest(tracked.state)) return Promise.resolve();
+    return new Promise<void>((resolve, reject) => {
+      const cancelTimer = this.deps.setTimer(() => {
+        tracked.idleWaiters.delete(onIdle);
+        reject(new Error('idle_timeout'));
+      }, timeoutMs);
+      const onIdle = (): void => {
+        cancelTimer();
+        resolve();
+      };
+      tracked.idleWaiters.add(onIdle);
+    });
+  }
+
+  // Vacia la cola en el mismo paso y la anuncia como `queue_returned` (ademas del `queue_changed` de siempre): al
+  // rebobinar, sus mensajes vuelven a borradores sin ejecutarse. Cola vacia: no anuncia nada.
+  returnQueueToDrafts(sessionId: string): readonly QueuedMessage[] {
+    const tracked = this.require(sessionId);
+    const taken = tracked.queue;
+    if (taken.length === 0) return taken;
+    this.setQueue(tracked, []);
+    tracked.emit({ kind: 'queue_returned', messages: taken });
+    return taken;
+  }
+
+  // Emite un evento de coordinacion por el camino secuenciado (lo usa el rewind para `conversation_rewound`).
+  announce(sessionId: string, event: MageEvent): void {
+    this.require(sessionId).emit(event);
+  }
+
   // ConversationId de una sesion viva, o null si no se sigue o aun no se conoce su id nativo.
   conversationIdOf(sessionId: string): ConversationId | null {
     return this.tracked.get(sessionId)?.conversationId ?? null;
@@ -315,10 +410,14 @@ export class SessionCoordinator {
     const { event } = payload;
     // El destino de un directo es interno: sale a los clientes como `message_delivery`, sin secuencia propia.
     if (event.kind === 'steer_result') return this.settleSteer(tracked, event);
+    // La respuesta a una peticion al motor es interna: va a quien la pidio, no a los clientes.
+    if (event.kind === 'engine_response') return this.settleEngineRequest(tracked, event);
     if (event.kind === 'permission_request' && this.answerAutomatically(tracked, event.request)) return;
     if (event.kind === 'session_init' && event.sessionId !== tracked.nativeRef?.nativeId) this.bind(tracked, event.sessionId);
     trackPending(tracked.pending, event);
     tracked.state = nextState(tracked.state, event, tracked.pending.size);
+    if (event.kind === 'thread_history') tracked.historyMode = event.mode;
+    if (isAtRest(tracked.state)) this.releaseIdleWaiters(tracked);
     tracked.lastSeq += 1;
     this.fanOut(tracked, { ...payload, conversationId: tracked.conversationId, seq: tracked.lastSeq, at: this.deps.now() });
     if (event.kind === 'conversation_reset') this.rebind(tracked, event.newSessionId);
@@ -391,9 +490,10 @@ export class SessionCoordinator {
 
   // Al motor. Si lanza, el estado no cambia y el error llega a quien envio.
   private deliver(tracked: Tracked, commandId: string, params: SendMessageParams): SendReceipt {
-    this.deps.sessions.sendMessage(tracked.sessionId, params.text, params.attachments ?? []);
+    this.deps.sessions.sendMessage(tracked.sessionId, params.text, params.attachments ?? [], messageIdOf(commandId));
     tracked.state = 'running';
     armPrGuard(tracked, params.text);
+    this.notifyUserMessageSent(tracked);
     return { status: 'accepted', commandId };
   }
 
@@ -405,14 +505,42 @@ export class SessionCoordinator {
     if (next === null) return;
     tracked.queue = rest;
     try {
-      this.deps.sessions.sendMessage(tracked.sessionId, next.text, next.attachments);
+      this.deps.sessions.sendMessage(tracked.sessionId, next.text, next.attachments, messageIdOf(next.id));
       tracked.state = 'running';
       armPrGuard(tracked, next.text);
+      this.notifyUserMessageSent(tracked);
       tracked.emit({ kind: 'queued_message_sent', message: next });
     } catch (err) {
       tracked.emit({ kind: 'queued_message_failed', message: next, localized: localizedFromError(err) });
     }
     tracked.emit({ kind: 'queue_changed', queue: rest });
+  }
+
+  // Entrega la respuesta a quien la pidio. Una que nadie espera (caducada, repetida) solo queda en el log.
+  private settleEngineRequest(tracked: Tracked, event: EngineResponse): void {
+    const waiter = tracked.engineWaiters.get(event.requestId);
+    if (waiter === undefined) {
+      this.deps.log('warn', 'Respuesta del motor que nadie espera', { sessionId: tracked.sessionId, requestId: event.requestId });
+      return;
+    }
+    tracked.engineWaiters.delete(event.requestId);
+    waiter(event);
+  }
+
+  private releaseIdleWaiters(tracked: Tracked): void {
+    const waiters = [...tracked.idleWaiters];
+    tracked.idleWaiters.clear();
+    for (const waiter of waiters) waiter();
+  }
+
+  // El corte pendiente de un rewind sobra desde que sale un mensaje nuevo. Un fallo del llamante no deshace el envio.
+  private notifyUserMessageSent(tracked: Tracked): void {
+    if (tracked.nativeRef === null || this.deps.onUserMessageSent === undefined) return;
+    try {
+      this.deps.onUserMessageSent(tracked.nativeRef);
+    } catch (err) {
+      this.deps.log('warn', 'onUserMessageSent fallo', { sessionId: tracked.sessionId, error: describe(err) });
+    }
   }
 
   // Consume el destino que da el motor a un directo y lo anuncia. Uno que no esta en vuelo (proceso anterior,
@@ -613,6 +741,16 @@ function armPrGuard(tracked: Tracked, text: string): void {
 
 function isBusy(state: CoordinatedState): boolean {
   return state === 'running' || state === 'requires_action';
+}
+
+// En reposo: sin turno y sin nada que esperar (tras un error tampoco hay turno en marcha).
+function isAtRest(state: CoordinatedState): boolean {
+  return state === 'idle' || state === 'error';
+}
+
+// D-K1: el id del envio llega al motor solo si es un UUID (el `uuid` del mensaje en Claude, el `clientId` en Codex).
+function messageIdOf(commandId: string): string | undefined {
+  return isUuid(commandId) ? commandId : undefined;
 }
 
 function remember(receipts: Map<string, SendReceipt>, commandId: string, receipt: SendReceipt): void {
