@@ -498,6 +498,7 @@ export interface MessageValues {
   readonly "chat.rateLimit.noOtherAccount": never;
   readonly "chat.rateLimit.noResetTime": never;
   readonly "chat.restarting": { readonly "attempt": string | number; readonly "seconds": string | number };
+  readonly "chat.rewind.copyTitle": { readonly "title": string | number };
   readonly "chat.scheduledTask.label": never;
   readonly "chat.scheduledTask.note": never;
   readonly "chat.scheduledTask.unnamed": never;
@@ -777,9 +778,13 @@ export interface MessageValues {
   readonly "errors.rewind.copyFailed": { readonly "detail": string | number };
   readonly "errors.rewind.filesFailed": { readonly "detail": string | number };
   readonly "errors.rewind.forkFailed": { readonly "detail": string | number };
+  readonly "errors.rewind.hasCopies": never;
   readonly "errors.rewind.legacy": never;
+  readonly "errors.rewind.legacyUpdateFailed": { readonly "detail": string | number };
+  readonly "errors.rewind.legacyUpdateUnverified": { readonly "backupDir": string | number };
   readonly "errors.rewind.midTurn": never;
   readonly "errors.rewind.notFound": never;
+  readonly "errors.rewind.notLegacy": never;
   readonly "errors.rewind.turnDidNotStop": never;
   readonly "errors.rewind.unsupported": { readonly "provider": string | number };
   readonly "errors.runtime.catalogHttpStatus": { readonly "status": string | number; readonly "url": string | number };
