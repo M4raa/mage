@@ -135,7 +135,9 @@ export class ChatController {
 
   // Mientras se reconecta no se envía nada por el enlace caído: se guarda y se avisa.
   #holdUnsent(text) {
-    if (decideLine(text) === 'empty') return undefined;
+    const decision = decideLine(text);
+    if (decision === 'empty') return undefined;
+    if (decision === 'exit') return this.leave();
     this.#unsent.push({ commandId: randomUUID(), text });
     this.#say(this.#deps.messages.notSentOffline());
     return undefined;

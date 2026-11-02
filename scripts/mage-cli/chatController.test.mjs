@@ -418,6 +418,18 @@ describe('ChatController: mensajes escritos durante una reconexión', () => {
     expect(callsTo(newLink, 'session.send')[0][1].text).toBe('hola');
   });
 
+  it('exitDuranteLaReconexion_saleSinGuardarlo', async () => {
+    const { controller, link, deps, text } = withManualReconnect();
+    await controller.attach();
+    void controller.onDisconnected();
+
+    await controller.onLine('exit');
+
+    expect(deps.exit).toHaveBeenCalledWith(0);
+    expect(text()).not.toContain(messages.notSentOffline());
+    expect(callsTo(link, 'session.send')).toHaveLength(0);
+  });
+
   it('lineaDuranteLaReconexion_respuestaN_noEnvia', async () => {
     const { controller, newLink, finish } = withManualReconnect();
     await controller.attach();
