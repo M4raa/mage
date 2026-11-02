@@ -770,6 +770,18 @@ export interface MessageValues {
   readonly "errors.prompt.handoffFailed": { readonly "detail": string | number };
   readonly "errors.prompt.improveEmpty": never;
   readonly "errors.question.emptyAnswer": { readonly "question": string | number };
+  readonly "errors.rewind.background": never;
+  readonly "errors.rewind.busy": never;
+  readonly "errors.rewind.conversationFailed": { readonly "detail": string | number };
+  readonly "errors.rewind.conversationFailedFilesRestored": { readonly "detail": string | number };
+  readonly "errors.rewind.copyFailed": { readonly "detail": string | number };
+  readonly "errors.rewind.filesFailed": { readonly "detail": string | number };
+  readonly "errors.rewind.forkFailed": { readonly "detail": string | number };
+  readonly "errors.rewind.legacy": never;
+  readonly "errors.rewind.midTurn": never;
+  readonly "errors.rewind.notFound": never;
+  readonly "errors.rewind.turnDidNotStop": never;
+  readonly "errors.rewind.unsupported": { readonly "provider": string | number };
   readonly "errors.runtime.catalogHttpStatus": { readonly "status": string | number; readonly "url": string | number };
   readonly "errors.runtime.catalogUnexpectedShape": { readonly "url": string | number };
   readonly "errors.runtime.chatHttpError": { readonly "detail": string | number; readonly "status": string | number; readonly "url": string | number };

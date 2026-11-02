@@ -101,6 +101,10 @@ export const IpcChannel = {
   SessionQueueRemove: 'session:queueRemove',
   SessionQueueTake: 'session:queueTake',
   SessionQueueUpdate: 'session:queueUpdate',
+  // Rewind (F4.4/F4.5): planificar, rebobinar (o reintentar) y divergir desde una burbuja de usuario.
+  SessionRewindPlan: 'session:rewindPlan',
+  SessionRewindApply: 'session:rewindApply',
+  SessionDiverge: 'session:diverge',
   SessionSetModel: 'session:setModel',
   SessionSetEffort: 'session:setEffort',
   SessionSetPermissionMode: 'session:setPermissionMode',
@@ -397,6 +401,40 @@ export interface UpdateQueuedMessageParams {
   readonly messageId: string;
   readonly text: string;
 }
+
+// Burbuja de usuario que el renderer quiere rebobinar, reintentar o divergir (D-K2 de DISENO-K).
+export interface RewindPointRef { readonly userIndex: number; readonly text: string; readonly nativeId: string | null }
+export type RewindAction = 'rewind' | 'retry' | 'diverge';
+export type RewindUnavailableReason = 'unsupported' | 'background' | 'legacy' | 'notFound' | 'midTurn' | 'busy';
+export interface RewindPlanParams { readonly sessionId: string; readonly point: RewindPointRef; readonly action: RewindAction }
+export interface RewindFilesPlan { readonly available: boolean; readonly changed: readonly string[]; readonly insertions: number; readonly deletions: number }
+export interface RewindPlan {
+  readonly provider: string;
+  readonly unavailable: RewindUnavailableReason | null;   // null = se puede
+  readonly discardedMessages: number;                      // mensajes de usuario desde el punto (incluido)
+  readonly files: RewindFilesPlan | null;                  // solo Claude y no en 'diverge'; null en Codex
+  readonly recoverable: boolean;                           // Claude: lo descartado sigue en la transcripcion; Codex: no
+  readonly turnRunning: boolean;
+  readonly queuedCount: number;
+  readonly pendingCount: number;
+  readonly canSaveCopy: boolean;                           // Codex, no en 'diverge' (U3)
+}
+export interface RewindApplyParams {
+  readonly sessionId: string; readonly point: RewindPointRef; readonly action: 'rewind' | 'retry';
+  readonly restoreFiles: boolean; readonly saveCopy: boolean; readonly attachments?: readonly ImageAttachment[];
+}
+export interface RewindApplyResult {
+  readonly draft: string;                                  // texto para el cuadro de texto ('' en retry)
+  readonly returnedQueue: readonly QueuedMessage[];        // la cola que vuelve a borradores
+  readonly filesRestored: boolean;
+  readonly copyThreadId: string | null;                    // Codex con «Guardar una copia antes»
+  readonly projection: TranscriptBatch | null;             // la conversacion vigente tras rebobinar (Claude: su rama activa; Codex: sus turnos); null si no se pudo releer
+  readonly retried: SendReceipt | null;
+}
+export interface DivergeParams { readonly sessionId: string; readonly point: RewindPointRef }
+export type DivergeResult =
+  | { readonly kind: 'claude'; readonly forkFrom: { readonly sessionId: string; readonly atUuid: string } }
+  | { readonly kind: 'codex'; readonly threadId: string };
 
 // Imagen adjunta a un mensaje del usuario. Vive en el contrato IPC porque cruza main<->renderer; la
 // validacion (tipos permitidos y topes de tamaño) es del modulo puro `attachments.ts`, y se aplica en
@@ -836,6 +874,10 @@ export interface MageApi {
   removeQueuedMessage(params: QueuedMessageParams): Promise<QueuedMessage | null>;
   // Cambia el texto de un mensaje de la cola sin moverlo y lo devuelve (null si ya no estaba).
   updateQueuedMessage(params: UpdateQueuedMessageParams): Promise<QueuedMessage | null>;
+  // Rewind (F4.4/F4.5): lo que se descartaria, la aplicacion (rebobinar o reintentar) y la rama nueva.
+  rewindPlan(params: RewindPlanParams): Promise<RewindPlan>;
+  rewindApply(params: RewindApplyParams): Promise<RewindApplyResult>;
+  divergeConversation(params: DivergeParams): Promise<DivergeResult>;
   // Vacía la cola de main y devuelve sus mensajes.
   takeQueuedMessages(sessionId: string): Promise<readonly QueuedMessage[]>;
   // Cambia el modelo de una sesion viva (M2.4, solo Claude); aplica al siguiente turno.
