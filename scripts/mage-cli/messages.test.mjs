@@ -16,7 +16,7 @@ describe('messages', () => {
     const en = Object.keys(createMessages('en')).sort();
 
     expect(en).toEqual(es);
-    expect(es).toHaveLength(45);
+    expect(es).toHaveLength(56);
   });
 
   it('createMessages_permissionAsk_sinDescripcion_noPoneParentesis', () => {
@@ -42,5 +42,27 @@ describe('messages', () => {
 
   it('createMessages_idiomaDesconocido_lanza', () => {
     expect(() => createMessages('fr')).toThrow('fr');
+  });
+
+  it.each(['es', 'en'])('stopActive_unaLineaPorSesion (%s)', (language) => {
+    const sessions = [
+      { sessionId: 's1', conversationId: 'c1', provider: 'claude', state: 'running' },
+      { sessionId: 's2', conversationId: null, provider: 'codex', state: 'idle' },
+    ];
+
+    const lines = createMessages(language).stopActive(sessions).split('\n');
+
+    expect(lines).toHaveLength(3);
+    expect(lines[1]).toBe('  claude · running · c1');
+    expect(lines[2]).toBe('  codex · idle · s2');
+  });
+
+  it.each(['es', 'en'])('help_nombraLosTresComandos (%s)', (language) => {
+    const help = createMessages(language).help();
+
+    expect(help).toContain('mage chat');
+    expect(help).toContain('mage stop');
+    expect(help).toContain('mage account add');
+    expect(help.endsWith('\n')).toBe(false);
   });
 });

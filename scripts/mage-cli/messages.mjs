@@ -67,6 +67,38 @@ function questionHintWith(multiSelect, texts) {
   return texts.single;
 }
 
+const HELP_ES = [
+  'Uso: mage <comando>',
+  '',
+  '  mage chat [opciones]        conversa con una sesión de Mage desde la terminal («mage chat --help» no existe: mira las opciones abajo)',
+  '  mage stop [--force]         cierra el Mage sin ventanas de este perfil (con trabajo activo pide confirmación)',
+  '  mage account add --provider claude|codex --name <nombre>',
+  '                              da de alta una cuenta de API; la clave se pide sin eco o se lee de la entrada estándar',
+  '  mage help                   esta ayuda',
+  '',
+  'Opciones de chat: --session <id> | --conversation <id> | --new --account <id> --provider claude|codex [--cwd <dir>] [--model <m>] [--effort <e>] [--permission-mode <p>]',
+  'Todos los comandos admiten --user-data-dir <dir> para otro perfil de Mage.',
+].join('\n');
+
+const HELP_EN = [
+  'Usage: mage <command>',
+  '',
+  '  mage chat [options]         talk to a Mage session from the terminal ("mage chat --help" does not exist: see the options below)',
+  "  mage stop [--force]         closes this profile's windowless Mage (asks for confirmation if there is active work)",
+  '  mage account add --provider claude|codex --name <name>',
+  '                              adds an API account; the key is asked without echo or read from standard input',
+  '  mage help                   this help',
+  '',
+  'Chat options: --session <id> | --conversation <id> | --new --account <id> --provider claude|codex [--cwd <dir>] [--model <m>] [--effort <e>] [--permission-mode <p>]',
+  'Every command accepts --user-data-dir <dir> for another Mage profile.',
+].join('\n');
+
+// Primera línea y una por sesión, sin salto final.
+function stopActiveWith(title, sessions) {
+  const lines = sessions.map((s) => `  ${s.provider} · ${s.state} · ${s.conversationId ?? s.sessionId}`);
+  return [title, ...lines].join('\n');
+}
+
 const ES = {
   connected: (hostVersion, mode) => `Conectado a Mage ${hostVersion} (${mode}).`,
   sessionsHeader: () => 'Sesiones abiertas:',
@@ -116,6 +148,17 @@ const ES = {
   unsentDuringReconnect: (count) => `[${count} mensaje(s) escritos sin conexión no se enviaron]`,
   resendUnsentAsk: (text) => `No se envió: «${text}». ¿Enviarlo ahora? [s/n]`,
   answeredElsewhere: () => '[ya contestada en otro sitio]',
+  help: () => HELP_ES,
+  startingHeadless: () => '[no había ningún Mage con este perfil: lo arranco sin ventanas]',
+  startedHeadless: () => '[Mage corre sin ventanas para esta terminal. Mientras siga así, el acceso directo no abrirá la ventana: ciérralo con «mage stop» cuando termines]',
+  stopping: () => 'Mage se está cerrando.',
+  stopGui: () => 'Este Mage tiene ventana: ciérralo desde la ventana o desde el icono de la bandeja. «mage stop» solo cierra el Mage sin ventanas.',
+  stopActive: (sessions) => stopActiveWith('Hay trabajo en marcha en estas sesiones:', sessions),
+  stopConfirm: () => '¿Cerrar Mage igualmente y detenerlas? [s/n]',
+  stopUseForce: () => 'No se cierra. Para cerrarlo igualmente: mage stop --force',
+  nothingToStop: () => 'No hay ningún Mage en marcha con este perfil.',
+  accountKeyPrompt: () => 'Clave de API (no se verá al escribir):',
+  accountAdded: (account) => `Cuenta dada de alta: ${account.provider} · ${account.name} · ${account.billing}`,
 };
 
 const EN = {
@@ -164,6 +207,17 @@ const EN = {
   unsentDuringReconnect: (count) => `[${count} message(s) typed while offline were not sent]`,
   resendUnsentAsk: (text) => `Not sent: "${text}". Send it now? [y/n]`,
   answeredElsewhere: () => '[already answered elsewhere]',
+  help: () => HELP_EN,
+  startingHeadless: () => '[no Mage was running with this profile: starting it without windows]',
+  startedHeadless: () => '[Mage is running without windows for this terminal. While it does, the shortcut will not open the window: close it with "mage stop" when you are done]',
+  stopping: () => 'Mage is shutting down.',
+  stopGui: () => 'This Mage has a window: close it from the window or the tray icon. "mage stop" only closes the windowless Mage.',
+  stopActive: (sessions) => stopActiveWith('There is work in progress in these sessions:', sessions),
+  stopConfirm: () => 'Close Mage anyway and stop them? [y/n]',
+  stopUseForce: () => 'Not closing. To close it anyway: mage stop --force',
+  nothingToStop: () => 'No Mage is running with this profile.',
+  accountKeyPrompt: () => 'API key (hidden while typing):',
+  accountAdded: (account) => `Account added: ${account.provider} · ${account.name} · ${account.billing}`,
 };
 
 export function createMessages(language) {
