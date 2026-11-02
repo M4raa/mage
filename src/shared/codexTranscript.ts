@@ -75,6 +75,10 @@ export interface CodexRolloutHead {
   readonly cwd: string;
   readonly startedAtMs: number | null;
   readonly title: string;
+  // `history_mode` del `session_meta`: solo 'legacy' o 'paginated'; ausente o cualquier otro valor, null.
+  readonly historyMode: 'legacy' | 'paginated' | null;
+  // Hilo padre de un hijo de `review/start` (medido, INFORME-046 A5); null si no es hijo.
+  readonly parentThreadId: string | null;
 }
 
 const TITLE_MAX_CHARS = 80;
@@ -95,7 +99,9 @@ export function readCodexRolloutHead(lines: readonly string[]): CodexRolloutHead
   }
   if (meta === null || typeof meta.id !== 'string') return null;
   const started = typeof meta.timestamp === 'string' ? Date.parse(meta.timestamp) : Number.NaN;
-  return { sessionId: meta.id, cwd: typeof meta.cwd === 'string' ? meta.cwd : '', startedAtMs: Number.isFinite(started) ? started : null, title };
+  const historyMode = meta.history_mode === 'legacy' || meta.history_mode === 'paginated' ? meta.history_mode : null;
+  const parentThreadId = typeof meta.parent_thread_id === 'string' && meta.parent_thread_id.length > 0 ? meta.parent_thread_id : null;
+  return { sessionId: meta.id, cwd: typeof meta.cwd === 'string' ? meta.cwd : '', startedAtMs: Number.isFinite(started) ? started : null, title, historyMode, parentThreadId };
 }
 
 function parseLine(line: string): Rec | null {
