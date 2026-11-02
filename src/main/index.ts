@@ -1564,8 +1564,8 @@ function chmod600(path: string): void {
   chmodSync(path, 0o600);
 }
 
-// Idioma de la interfaz (F3.1). Lazy por lo mismo que el SettingsStore. La preferencia inicial (la del instalador
-// de Windows, U3) la aporta F3.7: hasta entonces no hay ninguna.
+// Idioma de la interfaz (F3.1). Lazy por lo mismo que el SettingsStore. La preferencia inicial es la del instalador
+// de Windows (U3, F3.7): `installerLanguage.ts` la lee de userData mientras no haya una guardada en Ajustes.
 let uiLanguageServiceSingleton: UiLanguageService | null = null;
 function getUiLanguageService(): UiLanguageService {
   uiLanguageServiceSingleton ??= new UiLanguageService({
