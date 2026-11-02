@@ -15,6 +15,8 @@ import {
 } from '@shared/sessionInput';
 import { ELICITATION_ANSWER_SCHEMA } from '@shared/elicitation';
 import type { SessionManager } from '../engine/sessionManager';
+import { parseDiverge, parseRewindApply, parseRewindPlan } from './rewindInput';
+import type { RewindCoordinator } from './rewindCoordinator';
 import type { SessionCoordinator } from './sessionCoordinator';
 
 // Registro IPC del dominio de sesiones (F2, H7 de la devolución 13): sale de `index.ts` con sus
@@ -38,6 +40,8 @@ export interface SessionIpcDeps {
   readonly sessions: SessionCommands;
   readonly coordinator: Pick<SessionCoordinator,
     'send' | 'interrupt' | 'removeQueued' | 'updateQueued' | 'takeQueue' | 'answerPermission' | 'answerElicitation' | 'stop' | 'close' | 'snapshot'>;
+  // Rewind, Reintentar y Divergir (F4.4/F4.5): planifica y aplica el orquestador de main.
+  readonly rewind: Pick<RewindCoordinator, 'plan' | 'apply' | 'diverge'>;
   readonly createSession: (event: IpcMainInvokeEvent, params: CreateSessionParams) => CreateSessionResult;
   readonly validateAttachments: (attachments: readonly ImageAttachment[] | undefined) => readonly ImageAttachment[];
   // Carpeta scratch AISLADA por conversación (subdir único y vacío), ya creada y canonizada.
@@ -82,6 +86,7 @@ export function registerSessionIpc(deps: SessionIpcDeps): void {
     const params = authorize(event, IpcChannel.SessionQueueUpdate, parseSessionInput(UPDATE_QUEUED_SCHEMA, arg, IpcChannel.SessionQueueUpdate));
     return coordinator.updateQueued(params.sessionId, params.messageId, params.text);
   });
+  registerRewind(deps, authorize);
   registerSessionOptions(deps, authorize);
   handle(IpcChannel.SessionStop, (event, sessionId) => coordinator.stop(authorizeId(event, IpcChannel.SessionStop, sessionId)));
   handle(IpcChannel.SessionClose, (event, sessionId) => coordinator.close(authorizeId(event, IpcChannel.SessionClose, sessionId)));
@@ -90,6 +95,18 @@ export function registerSessionIpc(deps: SessionIpcDeps): void {
 }
 
 type Authorize = <T extends { readonly sessionId: string }>(event: IpcMainInvokeEvent, channel: string, value: T) => T;
+
+// Los tres canales del rewind: validan con `rewindInput`, comprueban al emisor y, en `apply`, los adjuntos.
+function registerRewind({ handle, rewind, validateAttachments }: SessionIpcDeps, authorize: Authorize): void {
+  handle(IpcChannel.SessionRewindPlan, (event, arg) =>
+    rewind.plan(authorize(event, IpcChannel.SessionRewindPlan, parseRewindPlan(arg, IpcChannel.SessionRewindPlan))));
+  handle(IpcChannel.SessionRewindApply, (event, arg) => {
+    const params = authorize(event, IpcChannel.SessionRewindApply, parseRewindApply(arg, IpcChannel.SessionRewindApply));
+    return rewind.apply({ ...params, attachments: validateAttachments(params.attachments) });
+  });
+  handle(IpcChannel.SessionDiverge, (event, arg) =>
+    rewind.diverge(authorize(event, IpcChannel.SessionDiverge, parseDiverge(arg, IpcChannel.SessionDiverge))));
+}
 
 function registerSessionOptions({ handle, sessions }: SessionIpcDeps, authorize: Authorize): void {
   handle(IpcChannel.SessionSetPermissionMode, (event, arg) => {

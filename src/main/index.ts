@@ -194,7 +194,7 @@ import { StatusService } from './status/statusService';
 import { claudeUserAgent } from './os/claudeVersion';
 import { LogBus } from './debug/logBus';
 import { DebugWindowController } from './debug/debugWindow';
-import { TranscriptService } from './transcripts/transcriptService';
+import { TranscriptService, type BranchReadOptions } from './transcripts/transcriptService';
 import { resolveSubagentTranscriptPath, resolveTranscriptPath } from './transcripts/transcriptPath';
 import { MemoryService, resolveMemoryDir } from './memory/memoryService';
 import { WorkspaceStore } from './state/workspaceStore';
@@ -205,6 +205,10 @@ import { agyBridgeSpec, bridgeDocument, codexBridgeSpec, resolveBridge, type Bri
 import { EffectiveSettingsService } from './config/effectiveSettingsService';
 import { ConversationIndexStore } from './state/conversationIndexStore';
 import { registerSessionIpc } from './coordination/sessionIpc';
+import { isUuid } from '@shared/sessionInput';
+import { RewindCoordinator } from './coordination/rewindCoordinator';
+import { RewindStateStore } from './conversations/rewindStateStore';
+import { readActiveBranchEntries } from './transcripts/activeBranchReader';
 import { canControlSession } from './coordination/sessionAccess';
 import { readHostMode, startLocalHost } from './host/hostBootstrap';
 import { createHostControl } from './host/hostControl';
@@ -577,6 +581,8 @@ const sessionCoordinator = new SessionCoordinator({
     },
     release: (sessionId) => getConversationLocks().releaseWhere((holder) => holder === `session:${sessionId}`),
   },
+  // A8: el corte pendiente de un rewind de Claude se borra en cuanto sale el siguiente mensaje.
+  onUserMessageSent: (ref) => { if (ref.provider === 'claude') getRewindState().clearPendingCut(ref.nativeId); },
 });
 
 // Bloqueo de conversacion entre instancias (#55, F2.8): un fichero por conversacion abierta en `<raiz local>/mage/locks`,
@@ -1608,6 +1614,39 @@ function getSettingsStore(): SettingsStore {
   return settingsStoreSingleton;
 }
 
+// Estado propio del rewind (corte pendiente, forks y copias de Codex). Lazy como SettingsStore: `userData` solo existe tras `ready`.
+let rewindStateSingleton: RewindStateStore | null = null;
+function getRewindState(): RewindStateStore {
+  if (rewindStateSingleton === null) {
+    rewindStateSingleton = new RewindStateStore({
+      filePath: join(app.getPath('userData'), 'rewind-state.json'),
+      exists: existsSync,
+      readFile: (path) => readFileSync(path, 'utf8'),
+      writeFile: (path, data) => writeFileSync(path, data, 'utf8'),
+      rename: renameSync,
+      removeFile: (path) => rmSync(path, { force: true }),
+      tempSuffix: () => randomUUID(),
+      log: (level, message, data) => mainLog(level, message, data),
+    });
+  }
+  return rewindStateSingleton;
+}
+
+// Rewind, Reintentar y Divergir (F4.4/F4.5): sobre la coordinacion, con la rama activa leida como la ve el renderer.
+function createRewindCoordinator(): RewindCoordinator {
+  return new RewindCoordinator({
+    coordinator: sessionCoordinator,
+    readClaudeBranch: ({ accountDir, cwd, sessionId, pendingCutUuid }) => readActiveBranchEntries(transcriptService, conversationTranscriptPath(accountDir, cwd, sessionId), {
+      ...(pendingCutUuid === null ? {} : { pendingCutUuid }),
+      onMissingParent: (uuid) => mainLog('warn', 'Transcripcion con un padre inexistente al rebobinar', { uuid }),
+    }),
+    state: getRewindState(),
+    newId: randomUUID,
+    now: Date.now,
+    log: (level, message, data) => mainLog(level, message, data),
+  });
+}
+
 // Boveda de secretos (claves de API de proveedores): cifrada con `safeStorage` (DPAPI en Windows).
 // Lazy por el mismo motivo que SettingsStore, y ademas porque `safeStorage` no cifra antes de `ready`.
 let secretStoreSingleton: SecretStore | null = null;
@@ -2604,9 +2643,19 @@ function launchSession(params: CreateSessionParams, sender: Electron.WebContents
       .filter((text): text is string => text !== undefined && text.length > 0).join('\n\n') || undefined;
     const effectiveParams = { ...params, accountDir: configDir, projectInstructions };
     const sessionId = sessionCoordinator.create(effectiveParams, (payload) => relaySessionEvent(payload, { sender, configDir, accountDir: params.accountDir }), sender?.id);
+    if (params.forkFrom !== undefined) recordClaudeFork(sessionId, params.forkFrom.sessionId);
     if (sender !== null) stopSessionsWhenDestroyed(sender);
     return { sessionId, configDir, ...(recreated ? { workspaceWarning: localized('events.workspace.scratchRecreatedKept', { path: params.cwd }) } : {}) };
   }
+
+// Divergir: la sesion ya esta creada; anotar de quien nacio no debe tumbarla si el disco falla.
+function recordClaudeFork(childId: string, parentId: string): void {
+  try {
+    getRewindState().recordFork(childId, parentId, 'claude', Date.now());
+  } catch (err) {
+    mainLog('warn', 'No se pudo anotar el fork', { childId, parentId, error: err instanceof Error ? err.message : String(err) });
+  }
+}
 
 function createSessionFromIpc(event: Electron.IpcMainInvokeEvent, params: CreateSessionParams): CreateSessionResult {
   return launchSession(params, event.sender);
@@ -2764,6 +2813,7 @@ function registerSessionIpc1(): void {
     handle: (channel, listener) => ipcMain.handle(channel, listener),
     sessions: sessionManager,
     coordinator: sessionCoordinator,
+    rewind: createRewindCoordinator(),
     createSession: createSessionFromIpc,
     validateAttachments,
     // Solo la ventana que creo la sesion y la principal le dan ordenes (F2.6).
@@ -3109,6 +3159,15 @@ function resolveTranscriptSource(params: OpenTranscriptParams): TranscriptSource
   return { kind: 'file', filePath, activeBranch: params.agentId === undefined };
 }
 
+// Opciones de la lectura por rama activa: respeta el corte pendiente de un rewind de Claude (A8).
+function branchOptions(sessionId: string, transcriptId: string): BranchReadOptions {
+  const pendingCutUuid = isUuid(sessionId) ? getRewindState().pendingCut(sessionId) : null;
+  return {
+    ...(pendingCutUuid === null ? {} : { pendingCutUuid }),
+    onMissingParent: (uuid) => mainLog('warn', 'Transcripcion con un padre inexistente: la rama se corta ahi', { transcriptId, uuid }),
+  };
+}
+
 // Abre en streaming y empuja lotes por TRANSCRIPT_BATCH_CHANNEL sin bloquear el invoke.
 function streamTranscript(sender: Electron.WebContents, transcriptId: string, params: OpenTranscriptParams): void {
   const source = resolveTranscriptSource(params);
@@ -3123,7 +3182,7 @@ function streamTranscript(sender: Electron.WebContents, transcriptId: string, pa
     try {
       let batches: AsyncIterable<TranscriptBatch>;
       if (source.kind === 'codexTurns') batches = codexTurnsBatches(() => codexThreadTurnsList({ spawnProbe: codexAccountProbeDeps().spawnProbe, timeoutMs: CLI_PROBE_TIMEOUT_MS }, source.home, source.threadId));
-      else if (source.activeBranch) batches = transcriptService.openBranchStream(source.filePath, controller.signal, params.resumeFrom, { onMissingParent: (uuid) => mainLog('warn', 'Transcripcion con un padre inexistente: la rama se corta ahi', { transcriptId, uuid }) });
+      else if (source.activeBranch) batches = transcriptService.openBranchStream(source.filePath, controller.signal, params.resumeFrom, branchOptions(params.sessionId, transcriptId));
       else batches = transcriptService.openStream(source.filePath, controller.signal, params.resumeFrom, source.adapt);
       for await (const batch of batches) {
         if (sender.isDestroyed()) break;
