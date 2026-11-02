@@ -95,7 +95,7 @@ function describeOnlyUsable(loser: CredentialsSide): string {
 export interface CredentialsFileMeta {
   readonly path: string;
   readonly exists: boolean;
-  readonly json: unknown; // ya leido y parseado; null si no existe / ilegible / JSON invalido
+  readonly json: unknown; // ya leido y parseado; null si no existe / ilegible / JSON inválido
 }
 
 // Construye el CredentialsSide validando el JSON externo (nunca se confia en su forma). PURA.

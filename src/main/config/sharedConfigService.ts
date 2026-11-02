@@ -63,7 +63,7 @@ const HOOKS_FIELD_SCHEMA = z.record(z.string(), z.unknown());
 const PERMISSIONS_RULE_LIST_SCHEMA = z.array(z.string());
 
 // Texto con el que arranca el editor cuando el fichero todavia no existe: JSON valido y vacio, para
-// que "Guardar" sin tocar nada no falle por JSON invalido.
+// que "Guardar" sin tocar nada no falle por JSON inválido.
 const EMPTY_JSON_TEXT = '{}';
 // mcp-common.json exige la forma {mcpServers:{...}} incluso vacio: "{}" a secas dispararia el aviso
 // de forma invalida ya en el primer render, antes de que el usuario toque nada.
@@ -105,7 +105,7 @@ export function parseSettingsCommonJson(raw: string): SettingsCommonParseResult 
   try {
     parsed = JSON.parse(raw);
   } catch (error) {
-    return { value: null, warnings: [`JSON invalido: ${describeError(error)}`] };
+    return { value: null, warnings: [`JSON inválido: ${describeError(error)}`] };
   }
   if (!isRecord(parsed)) {
     return { value: null, warnings: ['No es un objeto JSON; se ignora entero'] };
@@ -209,7 +209,7 @@ export function buildMcpCommonImport(shared: McpImportSource, accounts: readonly
   return { mcpServers: servers, notes };
 }
 
-// `mcpServers` de una fuente. Ausente o sin ese campo -> ninguno. JSON invalido o `mcpServers` que no es
+// `mcpServers` de una fuente. Ausente o sin ese campo -> ninguno. JSON inválido o `mcpServers` que no es
 // un objeto -> LANZA con la fuente y su tamaño (nunca el texto: lleva los `env` de los servidores).
 function mcpServersOf(source: McpImportSource): Record<string, unknown> {
   if (source.text === null) return {};
@@ -231,7 +231,7 @@ function mcpServersOf(source: McpImportSource): Record<string, unknown> {
 export class SharedConfigService {
   constructor(private readonly deps: SharedConfigDeps) {}
 
-  // Tolerante por diseno: fichero ausente, JSON invalido o forma equivocada -> null, NUNCA lanza (D1
+  // Tolerante por diseno: fichero ausente, JSON inválido o forma equivocada -> null, NUNCA lanza (D1
   // Fase 1 §5.1). Un fichero comun mal escrito no puede tirar abajo el arranque de una sesion.
   loadMcpCommon(path: string): McpCommonConfig | null {
     if (!this.deps.exists(path)) return null;
@@ -282,7 +282,7 @@ export class SharedConfigService {
   }
 
   // Guarda mcp-common.json TAL CUAL lo escribio el usuario (nunca se reescribe/filtra el JSON): solo
-  // se rechaza si es inservible (JSON invalido o sin la forma esperada), porque ESE fichero lo lee
+  // se rechaza si es inservible (JSON inválido o sin la forma esperada), porque ESE fichero lo lee
   // CUALQUIER lanzamiento de CUALQUIER cuenta -- una escritura invalida rompe D1 para todos, no solo
   // para quien edito. Devuelve los avisos (formas descartadas) para que la UI los muestre igual.
   saveMcpCommonText(path: string, text: string, expected: FileSnapshot): SaveTextOutcome<LocalizedText> {
@@ -292,7 +292,7 @@ export class SharedConfigService {
       // MCP (GITHUB_TOKEN y compania) y el mensaje sale por stdout del main Y cruza el IPC hasta
       // pintarse en Configuracion. `redact.ts` enmascara por nombre de campo dentro de `data`,
       // nunca dentro de `message`. Se reporta la FORMA, que es lo unico que ayuda a arreglarlo.
-      // Sin valor hay exactamente un aviso (el de JSON invalido o el de forma equivocada).
+      // Sin valor hay exactamente un aviso (el de JSON inválido o el de forma equivocada).
       throw new UserFacingError(localizedWithParts('errors.config.commonSaveInvalid', { length: String(text.length) }, { reason: warnings[0]! }));
     }
     return this.writeGuarded(path, text, expected, warnings);
@@ -320,7 +320,7 @@ export class SharedConfigService {
     return notes;
   }
 
-  // Lectura+parseo tolerante compartida por los dos loaders: I/O -> warn + null (JSON invalido lo
+  // Lectura+parseo tolerante compartida por los dos loaders: I/O -> warn + null (JSON inválido lo
   // decide el parser puro, que necesita el texto completo para explicar el motivo).
   private readFileTolerant(path: string): string | null {
     try {
