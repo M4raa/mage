@@ -24,6 +24,8 @@ export interface TurnUsage {
   readonly thinkingTokens: number | null;
   readonly cacheReadTokens: number | null;
   readonly cacheCreationTokens?: number | null;
+  // TTL de la caché que pidió el CLI en el turno (segundos); null si el `result` no lo dice.
+  readonly cacheTtlSeconds?: number | null;
   // true = el proveedor no dio el uso y Mage lo ESTIMO (runtime propio, ficha D14 de P-032).
   readonly estimated?: boolean;
 }

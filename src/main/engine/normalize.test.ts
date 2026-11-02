@@ -201,6 +201,29 @@ describe('normalizeRawEvent: el turno', () => {
       usage: { inputTokens: 9, outputTokens: 2, totalTokens: 11, cacheReadTokens: 0, cacheCreationTokens: 0 } } }]);
   });
 
+  // TTL de la caché que pidió el CLI (medido en 2.1.314, desglose `usage.cache_creation`).
+  const ttlOf = (cacheCreation?: Record<string, number>): number | null | undefined => {
+    const usage = { input_tokens: 1, output_tokens: 1, ...(cacheCreation === undefined ? {} : { cache_creation: cacheCreation }) };
+    const [event] = normalizeRawEvent({ type: 'result', subtype: 'success', usage });
+    return event?.kind === 'result' ? event.result.usage?.cacheTtlSeconds : undefined;
+  };
+
+  it('normalizeResult_cacheCreation1h_ttl3600', () => {
+    expect(ttlOf({ ephemeral_1h_input_tokens: 500, ephemeral_5m_input_tokens: 0 })).toBe(3600);
+  });
+
+  it('normalizeResult_cacheCreation5mOnly_ttl300', () => {
+    expect(ttlOf({ ephemeral_5m_input_tokens: 500 })).toBe(300);
+  });
+
+  it('normalizeResult_noCacheCreation_ttlNull', () => {
+    expect(ttlOf()).toBeNull();
+  });
+
+  it('normalizeResult_bothZero_ttlNull', () => {
+    expect(ttlOf({ ephemeral_1h_input_tokens: 0, ephemeral_5m_input_tokens: 0 })).toBeNull();
+  });
+
   it('normalize_resultErrorSubtype_returnsResultIsError', () => {
     const raw = { type: 'result', subtype: 'error_max_turns' };
 
