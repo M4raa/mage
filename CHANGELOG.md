@@ -9,7 +9,6 @@ versión.
 ### Corregido
 - Una conversación de Claude que se rebobinó en el CLI ya no enseña, al reabrirla, la parte que se descartó: Mage lee solo la rama que sigue viva, con todas sus herramientas, también las que se lanzaron en paralelo.
 - Una conversación de Codex rebobinada aparece una sola vez en el historial, y al reabrirla o al migrarla a otra cuenta ya no reaparece lo que se descartó.
-- Los mensajes de error ya no empiezan por «Error invoking remote method…».
 - El aviso de coste al cambiar de modelo o de esfuerzo dice de qué pestaña es también en una pestaña sin título («Nuevo chat»).
 - El aviso de «Omitir permisos» sale al activarlo, no al volver a un chat que ya lo tenía ni al reabrir Mage.
 - Los avisos largos del chat (rutas sin espacios incluidas) se parten y no desbordan el panel.
@@ -56,12 +55,12 @@ versión.
 ### Añadido
 - Mage habla **inglés**. En Configuración › Apariencia › **Idioma** eliges **Sistema**, **Español** o **English**, y la interfaz cambia al momento, sin reiniciar. Las fechas, los números y los plurales siguen el idioma elegido; en castellano los decimales llevan coma («1,2 s», «12,50 $»). Lo que envías al modelo no cambia con el idioma de la interfaz.
 - **Enviar ahora o a la cola.** Con un turno en marcha, **Enter** deja el mensaje en la cola, que sale al terminar el turno, y **Ctrl+Enter** (**Cmd+Enter** en macOS) lo envía ahora, para corregir al agente mientras trabaja. El botón de enviar se divide en **A la cola ▾ Enviar ahora**. Si el agente está esperando un permiso, el mensaje directo le llega al contestarlo. Un mensaje de la cola se edita en su propia fila (Enter guarda y Escape cancela) y se puede quitar.
-- Mage deja un host local para otros clientes (terminal, widget, MCP): un socket privado que solo abre quien tiene el token de esa ejecución, con el protocolo versionado. Ve el mismo flujo de eventos que la ventana, contesta permisos y preguntas (se contestan una sola vez, gane quien gane) y puede enviar mensajes. Puede crear sesiones en una carpeta que ya sea de confianza; no concede confianza por su cuenta.
+- Mage deja un host local para otros clientes: un socket privado que solo abre quien tiene el token de esa ejecución, con el protocolo versionado. Ve el mismo flujo de eventos que la ventana, contesta permisos y preguntas (se contestan una sola vez, gane quien gane) y puede enviar mensajes. Puede crear sesiones en una carpeta que ya sea de confianza; no concede confianza por su cuenta.
 - Una conversación abierta en otra instancia de Mage (la instalada, la de desarrollo u otro perfil) se ve en solo lectura, con el aviso «Abierta en otra instancia de Mage (<perfil>)». Si esa instancia la suelta o se cierra, esta pasa a ser la dueña sin pulsar nada (también al volver a la pestaña o a la ventana) y lo dice con «Ya puedes continuar aquí»; si se cae, aparece «Tomar el control». Un `claude` lanzado a mano en una terminal no se puede bloquear desde Mage.
 - En Linux sin escritorio, Mage arranca como host sin ventanas (con `--headless` o sin `DISPLAY`). Pedir la interfaz gráfica a ese host dice que no está disponible y no lo reinicia ni toca sus sesiones.
 
 ### Seguridad
-- Un cliente del host local comprueba que el host es el de Mage, con un reto firmado con el token de la sesión, antes de enviarle el token. Un programa que ocupe el nombre del host antes que Mage no puede quedárselo.
+- El host local responde a un reto firmado con el token de la sesión, para que un cliente compruebe que habla con Mage antes de enviarle el token. Un programa que ocupe el nombre del host antes que Mage no puede hacerse pasar por él: sin el token no sabe firmar la respuesta.
 - Crear una sesión desde el host local exige que la carpeta sea de confianza, igual que desde la ventana.
 - La interfaz corre en el sandbox de Chromium en las tres ventanas (principal, widget y depuración).
 - Las órdenes sobre una sesión (enviar, contestar, parar, cambiar modelo…) se validan antes de llegar al motor y solo las acepta la ventana que la creó o la principal.
