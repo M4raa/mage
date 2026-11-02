@@ -51,7 +51,9 @@ describe('CodexAdapter: arranque (codex app-server, sin verificar)', () => {
 
   it('buildSpawnPlan_suscripcionPorDefecto_appServerSinCodexHomeNiClaves', () => {
     const previous = process.env.OPENAI_API_KEY;
+    const previousHome = process.env.CODEX_HOME;
     process.env.OPENAI_API_KEY = 'sk-del-usuario';
+    delete process.env.CODEX_HOME;
     try {
       const plan = new CodexAdapter({ resolveBinary: () => 'codex.exe' }).buildSpawnPlan(launch);
 
@@ -63,6 +65,8 @@ describe('CodexAdapter: arranque (codex app-server, sin verificar)', () => {
     } finally {
       if (previous === undefined) delete process.env.OPENAI_API_KEY;
       else process.env.OPENAI_API_KEY = previous;
+      if (previousHome === undefined) delete process.env.CODEX_HOME;
+      else process.env.CODEX_HOME = previousHome;
     }
   });
 
