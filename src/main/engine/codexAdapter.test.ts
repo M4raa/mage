@@ -657,3 +657,51 @@ describe('CodexAdapter: directo (turn/steer)', () => {
     expect(events.some((event) => event.kind === 'steer_result')).toBe(false);
   });
 });
+
+describe('CodexAdapter: id propio del mensaje (F4.4)', () => {
+  function withThread(): { adapter: CodexAdapter; requests: Rpc[] } {
+    const adapter = codex();
+    const requests = handshake(adapter);
+    answer(adapter, requests, 'thread/start', fixture('thread-start'));
+    return { adapter, requests };
+  }
+
+  it('encodeUserMessage_withMessageId_turnStartCarriesClientUserMessageId', () => {
+    const { adapter } = withThread();
+
+    adapter.encodeUserMessage('hola', [], 'm-1');
+
+    expect((adapter.takeOutgoing() as Rpc[])[0]?.params?.clientUserMessageId).toBe('m-1');
+  });
+
+  it('encodeUserMessage_beforeThread_keepsMessageIdUntilTurnStart', () => {
+    const adapter = codex();
+    const requests = handshake(adapter);
+
+    adapter.encodeUserMessage('hola', [], 'm-2');
+    answer(adapter, requests, 'thread/start', fixture('thread-start'));
+
+    const turnStart = (adapter.takeOutgoing() as Rpc[]).find((r) => r.method === 'turn/start');
+    expect(turnStart?.params?.clientUserMessageId).toBe('m-2');
+  });
+
+  it('encodeUserMessage_withoutMessageId_turnStartHasNoClientUserMessageId', () => {
+    const { adapter } = withThread();
+
+    adapter.encodeUserMessage('hola');
+
+    expect((adapter.takeOutgoing() as Rpc[])[0]?.params).not.toHaveProperty('clientUserMessageId');
+  });
+
+  it('encodeSteer_carriesClientUserMessageId', () => {
+    const { adapter } = withThread();
+    adapter.encodeUserMessage('primero');
+    const turnStart = (adapter.takeOutgoing() as Rpc[]).find((r) => r.method === 'turn/start')!;
+    adapter.normalize({ jsonrpc: '2.0', id: turnStart.id, result: { turn: { id: 't1' } } });
+
+    adapter.encodeSteer('m-3', 'x');
+
+    const steer = (adapter.takeOutgoing() as Rpc[]).find((r) => r.method === 'turn/steer');
+    expect(steer?.params?.clientUserMessageId).toBe('m-3');
+  });
+});

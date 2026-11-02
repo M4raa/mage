@@ -427,3 +427,24 @@ describe('ClaudeAdapter: directo (F4.1)', () => {
     expect(adapter.normalize(RESULT)).toEqual(normalizeRawEvent(RESULT));
   });
 });
+
+describe('ClaudeAdapter: id propio del mensaje (F4.4)', () => {
+  const U = '0b1c2d3e-4f50-4612-8a7b-9c0d1e2f3a4b';
+  const fresh = () => new ClaudeAdapter(() => 'claude');
+
+  it('encodeUserMessage_withUuidMessageId_addsUuid', () => {
+    const payload = fresh().encodeUserMessage('hola', [], U);
+
+    expect(payload).toEqual({ type: 'user', message: { role: 'user', content: 'hola' }, parent_tool_use_id: null, uuid: U });
+  });
+
+  it('encodeUserMessage_withNonUuidMessageId_throwsWithValue', () => {
+    expect(() => fresh().encodeUserMessage('hola', [], 'no-uuid')).toThrow('"no-uuid"');
+  });
+
+  it('encodeUserMessage_withoutMessageId_payloadUnchanged', () => {
+    const payload = fresh().encodeUserMessage('hola');
+
+    expect(payload).toEqual({ type: 'user', message: { role: 'user', content: 'hola' }, parent_tool_use_id: null });
+  });
+});

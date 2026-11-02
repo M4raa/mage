@@ -219,14 +219,14 @@ export class AgentSession {
 
   // Envia un mensaje de usuario. Precondicion: proceso vivo, o un turno cortado matando el proceso
   // (entonces se relanza aqui, reanudando la conversacion del proveedor).
-  sendUserMessage(text: string, attachments: readonly ImageAttachment[] = []): void {
+  sendUserMessage(text: string, attachments: readonly ImageAttachment[] = [], messageId?: string): void {
     if (this.launchStale && this.child !== null && !this.turnActive) this.recycleForLaunchSettings();
     if (this.child === null && this.relaunchOnNextMessage && !this.stopping) {
       this.relaunchOnNextMessage = false;
       this.launch(this.resumeParams());
     }
     this.turnActive = true;
-    this.writePayload(this.deps.adapter.encodeUserMessage(text, attachments));
+    this.writePayload(this.deps.adapter.encodeUserMessage(text, attachments, messageId));
   }
 
   // Directo en el turno en marcha (F4.1). Sin proceso no hay turno al que entrar: se resuelve aqui como

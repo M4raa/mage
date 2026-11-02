@@ -107,7 +107,7 @@ export class CodexAdapter implements ProviderAdapter {
   // id JSON-RPC de cada `turn/steer` -> id del directo de Mage.
   private readonly steerRequests = new Map<number, string>();
   private usage: CodexUsageTracker = EMPTY_USAGE_TRACKER;
-  private queuedInputs: unknown[][] = [];
+  private queuedInputs: Array<{ readonly input: unknown[]; readonly messageId: string | undefined }> = [];
   private params: LaunchParams | null = null;
   private model = '';
   private effort: string | null = null;
@@ -170,13 +170,13 @@ export class CodexAdapter implements ProviderAdapter {
   }
 
   // Sin hilo todavia, el mensaje espera: sale como `turn/start` en cuanto `thread/start` conteste.
-  encodeUserMessage(text: string, attachments: readonly ImageAttachment[] = []): unknown {
+  encodeUserMessage(text: string, attachments: readonly ImageAttachment[] = [], messageId?: string): unknown {
     const input = buildInput(text, attachments);
     if (this.threadId === null) {
-      this.queuedInputs.push(input);
+      this.queuedInputs.push({ input, messageId });
       return null;
     }
-    this.startTurn(input);
+    this.startTurn(input, messageId);
     return null;
   }
 
@@ -324,7 +324,7 @@ export class CodexAdapter implements ProviderAdapter {
     const model = isRecord(result) && typeof result.model === 'string' ? result.model : this.model;
     const queued = this.queuedInputs;
     this.queuedInputs = [];
-    for (const input of queued) this.startTurn(input);
+    for (const { input, messageId } of queued) this.startTurn(input, messageId);
     return [
       { kind: 'session_init', sessionId: thread.id, model, tools: [], mcpServers: [], slashCommands: [], skills: [], plugins: [], pluginErrors: [] },
     ];
@@ -367,7 +367,8 @@ export class CodexAdapter implements ProviderAdapter {
 
   // --- Envio --------------------------------------------------------------------------------------
 
-  private startTurn(input: readonly unknown[]): void {
+  // `messageId` (F4.4): se manda como `clientUserMessageId` para que el item de usuario lo lleve de vuelta.
+  private startTurn(input: readonly unknown[], messageId?: string): void {
     if (this.threadId === null) throw new Error('turn/start sin hilo de codex');
     this.turnStarting = true;
     // Medido con codex-cli 0.160.0 y Responses local: omitir esfuerzo manda medium; `effort: low`
@@ -375,6 +376,7 @@ export class CodexAdapter implements ProviderAdapter {
     const effort = this.effort;
     this.request('turn/start', {
       threadId: this.threadId, input, model: this.model,
+      ...(messageId === undefined ? {} : { clientUserMessageId: messageId }),
       ...(effort === null || effort.length === 0 ? {} : { effort }),
       approvalPolicy: this.approvalPolicy(), ...this.permissionsField(),
     }, 'turn');
@@ -396,7 +398,7 @@ export class CodexAdapter implements ProviderAdapter {
 
   private sendSteer(messageId: string, input: readonly unknown[]): void {
     if (this.threadId === null || this.turnId === null) throw new Error(`turn/steer sin hilo o sin turno de codex: ${messageId}`);
-    this.request('turn/steer', { threadId: this.threadId, expectedTurnId: this.turnId, input }, 'steer');
+    this.request('turn/steer', { threadId: this.threadId, expectedTurnId: this.turnId, input, clientUserMessageId: messageId }, 'steer');
     this.steerRequests.set(this.nextId, messageId);
   }
 

@@ -17,7 +17,7 @@ export type EventSink = (payload: SessionEventPayload) => void;
 // arrancar procesos de verdad; AgentSession lo satisface estructuralmente.
 export interface ManagedSession {
   start(): void;
-  sendUserMessage(text: string, attachments?: readonly ImageAttachment[]): void;
+  sendUserMessage(text: string, attachments?: readonly ImageAttachment[], messageId?: string): void;
   steerUserMessage?(messageId: string, text: string, attachments?: readonly ImageAttachment[]): void;
   answerPermission(requestId: string, decision: PermissionDecision): void;
   answerElicitation?(answer: ElicitationAnswer): void;
@@ -103,8 +103,11 @@ export class SessionManager {
     return sessionId;
   }
 
-  sendMessage(sessionId: string, text: string, attachments: readonly ImageAttachment[] = []): void {
-    this.require(sessionId).sendUserMessage(text, attachments);
+  sendMessage(sessionId: string, text: string, attachments: readonly ImageAttachment[] = [], messageId?: string): void {
+    const session = this.require(sessionId);
+    // Sin id, la llamada es la de siempre (un doble o un RuntimeSession no ven un argumento de mas).
+    if (messageId === undefined) session.sendUserMessage(text, attachments);
+    else session.sendUserMessage(text, attachments, messageId);
   }
 
   // Directo (F4.1). Lanza si la sesion no lo admite (agy, runtime propio): la coordinacion no lo pide ahi.

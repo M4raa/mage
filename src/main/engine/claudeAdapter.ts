@@ -131,7 +131,14 @@ export class ClaudeAdapter implements ProviderAdapter {
   // viable validada en el spike. Con adjuntos pasa a array de bloques, que es como el protocolo lleva
   // imagenes: [{type:'text'}, {type:'image', source:{type:'base64', media_type, data}}].
   // `parent_tool_use_id`: clave requerida, nullable.
-  encodeUserMessage(text: string, attachments: readonly ImageAttachment[] = []): unknown {
+  // Con `messageId` (un UUID) el mensaje lleva `uuid`: el CLI lo usa como id propio (rewind, directos).
+  encodeUserMessage(text: string, attachments: readonly ImageAttachment[] = [], messageId?: string): unknown {
+    if (messageId === undefined) return this.encodeUserPayload(text, attachments);
+    if (!isUuid(messageId)) throw new Error(`El id de un mensaje de Claude tiene que ser un UUID: ${JSON.stringify(messageId)}`);
+    return { ...this.encodeUserPayload(text, attachments), uuid: messageId };
+  }
+
+  private encodeUserPayload(text: string, attachments: readonly ImageAttachment[]): Record<string, unknown> {
     if (attachments.length === 0) {
       return { type: 'user', message: { role: 'user', content: text }, parent_tool_use_id: null };
     }
@@ -150,9 +157,9 @@ export class ClaudeAdapter implements ProviderAdapter {
   // y lo cuenta con `command_lifecycle` (ver normalizeSteer).
   encodeSteer(messageId: string, text: string, attachments: readonly ImageAttachment[] = []): SteerEncoding {
     if (!isUuid(messageId)) throw new Error(`El id de un directo de Claude tiene que ser un UUID: ${JSON.stringify(messageId)}`);
-    const message = this.encodeUserMessage(text, attachments) as Record<string, unknown>;
+    const payload = this.encodeUserMessage(text, attachments, messageId);
     this.steers.set(messageId, false);
-    return { kind: 'write', payload: { ...message, uuid: messageId } };
+    return { kind: 'write', payload };
   }
 
   // `updatedInput` REESCRIBE el input de la tool: por ahi viajan las respuestas de AskUserQuestion

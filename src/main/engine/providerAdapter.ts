@@ -109,7 +109,9 @@ export interface ProviderAdapter {
   // Objetos que se serializan como lineas NDJSON hacia stdin del hijo.
   // `attachments` (2.12.1): imagenes del mensaje. SIN adjuntos el payload no cambia ni un byte
   // respecto al de siempre — la forma minima con `content` string esta validada por el spike.
-  encodeUserMessage(text: string, attachments?: readonly ImageAttachment[]): unknown;
+  // `messageId` (F4.4): con el, el adapter identifica el mensaje ante su CLI (Claude: `uuid`; Codex:
+  // `clientUserMessageId`); sin el, el payload no cambia ni un byte.
+  encodeUserMessage(text: string, attachments?: readonly ImageAttachment[], messageId?: string): unknown;
   // Mensaje directo en el turno en marcha (F4.1). OPCIONAL: solo Claude y codex lo tienen. `messageId` es
   // el id con el que el adapter emitira despues su `steer_result`.
   encodeSteer?(messageId: string, text: string, attachments?: readonly ImageAttachment[]): SteerEncoding;
