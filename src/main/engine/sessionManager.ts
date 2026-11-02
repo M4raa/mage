@@ -9,7 +9,18 @@ import type { AgentSessionDeps, SessionLogFn } from './agentSession';
 import type { EngineRequest } from './providerAdapter';
 import { resolveLaunchParams, type DefaultsDeps } from './sessionDefaults';
 import { pathEquals } from '../os/pathUtils';
-import { AGY_PROVIDER_ID, CODEX_PROVIDER_ID, ownsConversation } from '@shared/providers';
+import { AGY_PROVIDER_ID, CLAUDE_PROVIDER_ID, CODEX_PROVIDER_ID, ownsConversation } from '@shared/providers';
+import { isUuid } from '@shared/sessionInput';
+
+// Divergir (A2): solo Claude, sin `resumeSessionId` y con dos UUID. Es una frontera IPC: se valida aqui.
+function validateForkFrom(params: CreateSessionParams, resumeId: string | null): NonNullable<CreateSessionParams['forkFrom']> {
+  const fork = params.forkFrom;
+  const received = JSON.stringify({ provider: params.provider, resumeSessionId: params.resumeSessionId, forkFrom: fork });
+  if (fork === undefined || params.provider !== CLAUDE_PROVIDER_ID || resumeId !== null || !isUuid(fork.sessionId) || !isUuid(fork.atUuid)) {
+    throw new Error(`forkFrom no valido (solo Claude, sin resumeSessionId y con dos UUID): ${received}`);
+  }
+  return fork;
+}
 
 // Sumidero de eventos hacia el consumidor (en produccion, webContents.send del renderer).
 export type EventSink = (payload: SessionEventPayload) => void;
@@ -62,6 +73,7 @@ export class SessionManager {
   create(params: CreateSessionParams, sink: EventSink, ownerId?: number): string {
     const resumeId = typeof params.resumeSessionId === 'string' && params.resumeSessionId.length > 0 ? params.resumeSessionId : null;
     // Codex y agy llevan su propia conversacion: `resumeSessionId` es ese id y la sesion de Mage es nueva.
+    const fork = params.forkFrom === undefined ? null : validateForkFrom(params, resumeId);
     const providerOwnsConversation = ownsConversation(params.provider);
     const isResume = resumeId !== null && !providerOwnsConversation;
     const sessionId = isResume ? resumeId : randomUUID();
@@ -76,7 +88,8 @@ export class SessionManager {
       throw new UserFacingError(localized('errors.engine.conversationAlreadyOpen', { sessionId }));
     }
     const resolved = resolveLaunchParams(sessionId, params, this.defaults, isResume);
-    const launch = resumeId !== null && providerOwnsConversation && (params.provider === CODEX_PROVIDER_ID || params.provider === AGY_PROVIDER_ID) ? { ...resolved, conversationId: resumeId } : resolved;
+    const withConversation = resumeId !== null && providerOwnsConversation && (params.provider === CODEX_PROVIDER_ID || params.provider === AGY_PROVIDER_ID) ? { ...resolved, conversationId: resumeId } : resolved;
+    const launch = fork === null ? withConversation : { ...withConversation, forkFrom: fork };
     // `/clear` (P-028) abre OTRA conversacion en el mismo proceso: a partir de su `conversation_reset`
     // la sesion se etiqueta con el id nuevo, que es el que usan la transcripcion, la persistencia y el
     // `--resume`. El evento del reset aun sale con el id viejo, para que el renderer sepa de que pestaña es.

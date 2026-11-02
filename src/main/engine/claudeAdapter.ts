@@ -91,8 +91,7 @@ export class ClaudeAdapter implements ProviderAdapter {
     // Reanudar (`--resume <id>`) continua la conversacion existente y sigue escribiendo en su misma
     // transcripcion; arrancar (`--session-id <id>`) crea una nueva con el id dado. Mutuamente
     // excluyentes: el CLI no acepta ambos.
-    const sessionArgs = params.resume === true ? ['--resume', params.sessionId] : ['--session-id', params.sessionId];
-    const args = [...BASE_ARGS, ...sessionArgs, '--model', params.model];
+    const args = [...BASE_ARGS, ...sessionArgsOf(params), '--model', params.model];
     // Effort opcional (M2.4): solo se anade si viene (ya validado en la frontera); sin el, default CLI.
     if (params.effort !== undefined && params.effort.length > 0) args.push('--effort', params.effort);
     // Tope de gasto opcional (M2.4): centavos enteros -> dolares con 2 decimales SOLO en la frontera
@@ -120,6 +119,7 @@ export class ClaudeAdapter implements ProviderAdapter {
     // defecto; el valor va DESPUÉS del env heredado: manda el ajuste, no lo que el usuario exportara.
     const env: NodeJS.ProcessEnv = {
       ...scrubAgentEnv(process.env),
+      [FILE_CHECKPOINTING_ENV]: 'true',
       CLAUDE_CODE_ARTIFACT: this.artifactEnabled() ? '1' : '0',
       CLAUDE_CONFIG_DIR: params.accountDir,
       ...shared.env,
@@ -354,6 +354,26 @@ export class ClaudeAdapter implements ProviderAdapter {
 function requireUuid(value: string): string {
   if (!isUuid(value)) throw new Error(`Se esperaba un UUID: ${JSON.stringify(value)}`);
   return value;
+}
+
+// Checkpoints de ficheros (T1 de INFORME-040, C-5, medido en 2.1.311): sin esta variable `rewind_files` contesta
+// «File rewinding is not enabled.». Las copias van al `file-history/` del config dir de la cuenta, que es del CLI;
+// no cubre lo escrito con Bash. Va DESPUES del saneado del entorno.
+const FILE_CHECKPOINTING_ENV = 'CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING';
+
+// Argumentos de sesion. Reanudar (`--resume <id>`) continua la conversacion; arrancar (`--session-id <id>`) crea una.
+// Divergir (A2 de INFORME-046, medido en 2.1.311) = `--resume <origen> --resume-session-at <at> --fork-session
+// --session-id <nuevo>`; el original no cambia (C-3b). Fork y resume son excluyentes.
+function sessionArgsOf(params: LaunchParams): string[] {
+  const fork = params.forkFrom;
+  if (fork === undefined) return params.resume === true ? ['--resume', params.sessionId] : ['--session-id', params.sessionId];
+  if (params.resume === true) throw new Error(`forkFrom y resume son excluyentes: sessionId=${JSON.stringify(params.sessionId)}`);
+  return [
+    '--resume', requireUuid(fork.sessionId),
+    '--resume-session-at', requireUuid(fork.atUuid),
+    '--fork-session',
+    '--session-id', requireUuid(params.sessionId),
+  ];
 }
 
 // Variable con la que el CLI autentica por clave de API (medido en 2.1.285: con un config dir vacio,

@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { EngineRequest } from './providerAdapter';
-import { emitLine, fakeAdapter, harness, written } from './agentSession.harness';
+import type { MageEvent } from '@shared/events';
+import { AgentSession, type SpawnFn } from './agentSession';
+import { emitLine, FakeChild, fakeAdapter, harness, POLICY, written } from './agentSession.harness';
 
 const REQUEST: EngineRequest = { kind: 'rewind_files', userMessageUuid: 'u', dryRun: true };
 
@@ -81,5 +83,57 @@ describe('AgentSession: peticiones al motor (F4.4/F4.5)', () => {
     h.session.start();
 
     expect(() => h.session.engineRequest('r1', REQUEST)).toThrow('rewind_files');
+  });
+});
+
+describe('AgentSession: relanzado de un fork (A2)', () => {
+  const FORK = { sessionId: 'origen', atUuid: 'corte' };
+  const INIT = { kind: 'session_init', sessionId: 's1', model: 'sonnet', tools: [], mcpServers: [], slashCommands: [], skills: [], plugins: [], pluginErrors: [] } as const;
+
+  // Sesion con `forkFrom` en sus params; el arnes compartido no deja elegirlos.
+  function forkSession() {
+    const { adapter, plans } = fakeAdapter();
+    const children: FakeChild[] = [];
+    const timers: Array<() => void> = [];
+    const events: MageEvent[] = [];
+    const session = new AgentSession({
+      adapter,
+      params: { sessionId: 's1', accountDir: '/home/u/.claude', model: 'sonnet', cwd: '/proj', forkFrom: FORK },
+      emit: (event) => events.push(event),
+      spawn: () => {
+        const child = new FakeChild();
+        children.push(child);
+        return child as unknown as ReturnType<SpawnFn>;
+      },
+      killTree: { platform: 'win32', spawnKiller: () => ({ on: () => undefined }) },
+      restartPolicy: POLICY,
+      setTimer: (callback) => timers.push(callback) - 1,
+      clearTimer: () => undefined,
+    });
+    return { session, plans, children, timers };
+  }
+
+  it('restart_afterForkHandshake_resumesWithoutForkFrom', () => {
+    const f = forkSession();
+    f.session.start();
+    emitLine(f.children[0]!, [INIT]);
+
+    f.children[0]!.exit(1, null);
+    f.timers[0]!();
+
+    expect(f.plans[0]).toMatchObject({ forkFrom: FORK });
+    expect(f.plans[1]).toMatchObject({ sessionId: 's1', resume: true });
+    expect(f.plans[1]).not.toHaveProperty('forkFrom');
+  });
+
+  it('restart_forkBeforeHandshake_repeatsFork', () => {
+    const f = forkSession();
+    f.session.start();
+
+    f.children[0]!.exit(1, null);
+    f.timers[0]!();
+
+    expect(f.plans[1]).toMatchObject({ forkFrom: FORK });
+    expect(f.plans[1]?.resume).not.toBe(true);
   });
 });

@@ -271,8 +271,10 @@ export class AgentSession {
   // relanza con los params originales (arranque fresco con el mismo id).
   private resumeParams(): LaunchParams {
     if (!this.handshaked) return this.currentParams();
+    // Tras el `init` del fork la conversacion nueva ya existe y se reanuda por su id; repetir el fork crearia otra.
+    const { forkFrom: _alreadyForked, ...params } = this.currentParams();
     return {
-      ...this.currentParams(),
+      ...params,
       sessionId: this.resetConversationId ?? this.deps.params.sessionId,
       resume: true,
       ...(this.providerConversationId === null ? {} : { conversationId: this.providerConversationId }),

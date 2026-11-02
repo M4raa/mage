@@ -35,6 +35,9 @@ export interface LaunchParams {
   // (reanuda por `sessionId`). Medido en `agy` 1.1.11: un id arbitrario NO sirve (`warning:
   // conversation "…" not found` y arranca otra), hay que devolverle el que emitio.
   readonly conversationId?: string;
+  // Divergir en Claude (A2 de INFORME-046, medido en 2.1.311): `--resume <origen> --resume-session-at <at>
+  // --fork-session --session-id <nuevo>`; la conversacion original no cambia (C-3b). Excluyente con `resume`.
+  readonly forkFrom?: { readonly sessionId: string; readonly atUuid: string };
 }
 
 // Plan de spawn resuelto: comando, argumentos y entorno del proceso hijo.

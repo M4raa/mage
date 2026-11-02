@@ -445,3 +445,45 @@ describe('SessionManager.engineRequest', () => {
     expect(engineRequest).toHaveBeenCalledWith('r1', { kind: 'thread_turns', cursor: null });
   });
 });
+
+describe('SessionManager.create: fork (A2)', () => {
+  const ORIGIN = '0b1c2d3e-4f50-4612-8a7b-9c0d1e2f3a4b';
+  const AT = '1c2d3e4f-5061-4723-9b8c-0d1e2f3a4b5c';
+  const forkFrom = { sessionId: ORIGIN, atUuid: AT };
+
+  it('create_forkFromClaude_launchesWithForkFrom', () => {
+    const h = harness();
+
+    const sessionId = h.manager.create(params({ forkFrom }), h.sink);
+
+    expect(sessionId).not.toBe(ORIGIN);
+    expect(h.launchOf(0)).toMatchObject({ sessionId, resume: false, forkFrom });
+  });
+
+  it('create_forkFromCodex_throws', () => {
+    const h = harness();
+
+    expect(() => h.manager.create(params({ provider: 'codex', forkFrom }), h.sink)).toThrow('codex');
+  });
+
+  it('create_forkFromWithResume_throws', () => {
+    const h = harness();
+
+    expect(() => h.manager.create(params({ resumeSessionId: ORIGIN, forkFrom }), h.sink)).toThrow(ORIGIN);
+  });
+
+  it('create_forkFromNonUuid_throws', () => {
+    const h = harness();
+
+    expect(() => h.manager.create(params({ forkFrom: { sessionId: ORIGIN, atUuid: 'no-uuid' } }), h.sink)).toThrow('no-uuid');
+    expect(h.created).toHaveLength(0);
+  });
+
+  it('create_withoutForkFrom_launchHasNoForkFrom', () => {
+    const h = harness();
+
+    h.manager.create(params(), h.sink);
+
+    expect(h.launchOf(0)).not.toHaveProperty('forkFrom');
+  });
+});

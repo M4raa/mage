@@ -359,6 +359,9 @@ export interface CreateSessionParams {
   readonly projectInstructions?: string;
   // Historial de otra conversación (de otro proveedor) con el que arranca esta; main lo suma a las instrucciones.
   readonly contextImport?: string;
+  // Divergir (solo Claude): la conversacion nueva sale de `sessionId` cortada en el mensaje `atUuid`. Lo rellena el
+  // renderer con lo que devuelve main al Divergir; excluyente con `resumeSessionId`.
+  readonly forkFrom?: { readonly sessionId: string; readonly atUuid: string };
 }
 
 // Resultado de crear una sesion: el id y el config dir EFECTIVO con el que se lanzo (la cuenta o su

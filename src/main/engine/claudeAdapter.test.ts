@@ -518,3 +518,49 @@ describe('ClaudeAdapter: peticiones al motor (F4.4/F4.5)', () => {
     expect(adapter.normalize(raw)).toEqual(normalizeRawEvent(raw));
   });
 });
+
+describe('ClaudeAdapter: checkpoints de ficheros y fork (T1, A2)', () => {
+  const ORIGIN = '0b1c2d3e-4f50-4612-8a7b-9c0d1e2f3a4b';
+  const AT = '1c2d3e4f-5061-4723-9b8c-0d1e2f3a4b5c';
+  const NEW = '2d3e4f50-6172-4834-8c9d-1e2f3a4b5c6d';
+  const adapter = new ClaudeAdapter(() => 'claude');
+  const fork = { sessionId: ORIGIN, atUuid: AT };
+  const base = { ...launch, sessionId: NEW };
+
+  it('buildSpawnPlan_setsFileCheckpointingEnv', () => {
+    const original = process.env.ANTHROPIC_API_KEY;
+    process.env.ANTHROPIC_API_KEY = 'sk-should-be-removed';
+    try {
+      const plan = adapter.buildSpawnPlan(launch);
+
+      expect(plan.env.CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING).toBe('true');
+      expect('ANTHROPIC_API_KEY' in plan.env).toBe(false);
+    } finally {
+      if (original === undefined) delete process.env.ANTHROPIC_API_KEY;
+      else process.env.ANTHROPIC_API_KEY = original;
+    }
+  });
+
+  it('buildSpawnPlan_forkFrom_buildsForkArgs', () => {
+    const { args } = adapter.buildSpawnPlan({ ...base, forkFrom: fork });
+
+    expect(args.slice(args.indexOf('--resume'), args.indexOf('--resume') + 7)).toEqual([
+      '--resume', ORIGIN, '--resume-session-at', AT, '--fork-session', '--session-id', NEW,
+    ]);
+  });
+
+  it('buildSpawnPlan_withoutForkFrom_unchangedSessionArgs', () => {
+    const { args } = adapter.buildSpawnPlan(launch);
+
+    expect(args).toContain('--session-id');
+    expect(args).not.toContain('--fork-session');
+  });
+
+  it('buildSpawnPlan_forkFromWithResume_throws', () => {
+    expect(() => adapter.buildSpawnPlan({ ...base, resume: true, forkFrom: fork })).toThrow('excluyentes');
+  });
+
+  it('buildSpawnPlan_forkFromNonUuid_throwsWithValue', () => {
+    expect(() => adapter.buildSpawnPlan({ ...base, forkFrom: { sessionId: ORIGIN, atUuid: 'no-uuid' } })).toThrow('"no-uuid"');
+  });
+});
