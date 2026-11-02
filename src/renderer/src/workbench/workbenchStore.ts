@@ -4,7 +4,10 @@ import type { PersistedTab } from '@shared/state';
 import { disposeTranscriptStore, transcriptStoreForTab } from './transcriptStore';
 import type { ContextUsage, MageEvent, McpServerStatus, PermissionDecision, PermissionRequest, SlashCommandInfo, SubagentInfo, TurnUsage } from '@shared/events';
 import { buildUpdatedInput, parseAskUserQuestion } from '@shared/askUserQuestion';
-import type { CloseAnswer, NotificationTarget, PermissionMode, PermissionModesByProviderView, SessionEventPayload } from '@shared/ipc';
+import type { CloseAnswer, DivergeResult, NotificationTarget, PermissionMode, PermissionModesByProviderView, RewindAction, RewindPlan, RewindPointRef, SessionEventPayload } from '@shared/ipc';
+import type { TranscriptBatch } from '@shared/transcripts';
+import { divergeTitle, rewindPointOf } from './rewindActions';
+import { transcriptToBlocks } from './transcriptToBlocks';
 import { defaultModeOf, hasPermissionModes, permissionCycleForProvider } from './stepSliderModel';
 import { IDLE_UPDATE_STATE, type UpdateState } from '@shared/update';
 import { isPermissionMode, MAIN_WINDOW_ID, PERMISSION_MODES } from '@shared/ipc';
@@ -504,6 +507,17 @@ export interface WorkbenchState extends PrState, PrActions {
   removeQueuedMessage: (tabId: string, id: string) => Promise<void>;
   // Cambia el texto de un mensaje de la cola de main sin moverlo (F4.2, U5).
   updateQueuedMessage: (tabId: string, id: string, text: string) => Promise<void>;
+  // Rebobinar / Reintentar / Divergir desde una burbuja del usuario (K07). El diálogo pide el plan SIEMPRE por
+  // `getRewindPlan` y nunca a `mage` directamente: así verify:gui (K10) puede sustituirla con
+  // `__mageDev.store.setState` por un plan sintético, sin CLI (INFORME-040 §5, F4.4).
+  getRewindPlan: (tabId: string, blockId: string, action: RewindAction) => Promise<RewindPlan>;
+  // Aplica «rewind» o «retry». Si falla avisa y RELANZA, para que el diálogo no se cierre.
+  rewindTo: (tabId: string, blockId: string, options: RewindOptions) => Promise<void>;
+  // Abre una pestaña nueva con la conversación hasta ese mensaje y su respuesta; la original no cambia.
+  divergeFrom: (tabId: string, blockId: string) => Promise<void>;
+  // Actualiza una conversación legacy de Codex (copia previa incluida) y devuelve la carpeta de la copia. Si
+  // tenía pestaña, la cierra antes y la reabre después.
+  updateLegacyCodex: (tabId: string | null, accountDir: string, threadId: string) => Promise<string>;
   // Carga el historial de conversaciones en disco de la cuenta activa (M2.6, sidebar = historial).
   loadConversationHistory: () => Promise<void>;
   // Abre (reanuda) una conversacion del historial: activa su pestana si ya esta abierta, o crea una.
@@ -614,6 +628,15 @@ export interface NewTabParams {
   readonly permissionMode?: PermissionMode;
   readonly projectId?: string;
   readonly importedContext?: string;
+  // «Divergir» en Claude (K07): la PRIMERA sesión de la pestaña se crea como fork de esta conversación, y solo
+  // esa. Después es una conversación normal.
+  readonly forkFrom?: { readonly sessionId: string; readonly atUuid: string };
+}
+
+export interface RewindOptions {
+  readonly restoreFiles: boolean;
+  readonly saveCopy: boolean;
+  readonly action: 'rewind' | 'retry';
 }
 
 // Contadores monotonos (no usamos Date.now/random para ids de bloque ni de pestana).
@@ -946,6 +969,11 @@ export type MageClient = MageApi;
 // no es estado de UI: nadie lo pinta, y meterlo en el store obligaria a que cada `set` lo arrastrase.
 const sessionCreationInFlight = new Map<string, Promise<string>>();
 
+// `forkFrom` pendiente de la primera sesión de una pestaña abierta con «Divergir» (K07). Mismo motivo que el
+// de arriba para vivir a nivel de módulo: nadie lo pinta. Se consume al crear la sesión con éxito, así que
+// solo viaja en el PRIMER `createSession`; si éste falla, el reintento lo vuelve a llevar.
+const forkFromByTab = new Map<string, NonNullable<NewTabParams['forkFrom']>>();
+
 // Main decide si la sesion se para o queda en segundo plano, y lleva su caducidad (F2.4). Un id que main ya no
 // sigue (sesion parada o sintetica) es una ausencia idempotente; cualquier otro fallo se avisa y la pestaña se
 // cierra igual.
@@ -1128,6 +1156,7 @@ async function createSessionFor(
     // Pestana restaurada de un arranque anterior: reanuda su conversacion (`claude --resume`) en vez
     // de arrancar una fresca; el id de sesion resultante es el mismo (misma transcripcion).
     const projectId = projectForRow({ kind: 'tab', tab }, get().settings.chatProjects, get().sessionIdByChat)?.id;
+    const forkFrom = forkFromByTab.get(tabId);
     const { sessionId, configDir, workspaceWarning } = await mage.createSession({
       accountDir: tab.accountId,
       model: tab.model,
@@ -1140,7 +1169,9 @@ async function createSessionFor(
       ...(isPermissionMode(tab.permissionMode) ? { permissionMode: tab.permissionMode } : {}),
       ...(projectId === undefined ? {} : { projectId }),
       ...(tab.importedContext === undefined || tab.resumeSessionId !== undefined ? {} : { contextImport: tab.importedContext }),
+      ...(forkFrom === undefined ? {} : { forkFrom }),
     });
+    forkFromByTab.delete(tabId);
   // La pestaña puede haberse CERRADO mientras iba el round-trip (B16, segunda mitad). Sin esta
   // guarda se resucitaba `sessionIdByChat` de una pestaña que ya no existe, y el proceso del CLI se
   // quedaba sin nadie que lo parase: `closeTab` ya habia pasado por ahi.
@@ -1846,7 +1877,7 @@ export function createWorkbenchStore(mage: MageClient) {
 
     // Abre una pestana real ligada a {cuenta, proyecto, modelo}. La sesion del motor se crea perezosa
     // al primer mensaje (ensureSession) para no lanzar procesos hasta que se use.
-    newTab: async ({ accountId, cwd, model, provider, title, effort, maxBudgetUsdCents, privacy, permissionMode, projectId, importedContext }) => {
+    newTab: async ({ accountId, cwd, model, provider, title, effort, maxBudgetUsdCents, privacy, permissionMode, projectId, importedContext, forkFrom }) => {
       // El runtime propio no necesita cuenta (A6 de la revision de P-032): una pestaña de Ollama abre
       // aunque no haya ninguna cuenta de Claude, Codex ni agy.
       const accountRequired = !runsOnMageRuntime(provider);
@@ -1880,6 +1911,7 @@ export function createWorkbenchStore(mage: MageClient) {
         ...(effort === undefined || effort.length === 0 ? {} : { effort }),
         ...(maxBudgetUsdCents === undefined ? {} : { maxBudgetUsdCents }),
       };
+      if (forkFrom !== undefined) forkFromByTab.set(tab.id, forkFrom);
       // La pestaña nueva ocupa el sitio EXACTO del panel enfocado (I11): igual que `setActiveTab` con un
       // tabId que no estaba visible en ningun lado — nunca resetea una division que hubiera.
       set((s) => ({
@@ -1958,6 +1990,30 @@ export function createWorkbenchStore(mage: MageClient) {
         failChat(set, tabId, describeError(err));
       }
     },
+
+    getRewindPlan: (tabId, blockId, action) => {
+      const { sessionId, point } = rewindTargetOf(get(), tabId, blockId);
+      return mage.rewindPlan({ sessionId, point, action });
+    },
+
+    rewindTo: async (tabId, blockId, options) => {
+      try {
+        await applyRewind(mage, get, set, tabId, blockId, options);
+      } catch (err) {
+        reportActionError(t('chat.rewind.failed'), err, 'chat');
+        throw err;
+      }
+    },
+
+    divergeFrom: async (tabId, blockId) => {
+      const { sessionId, point } = rewindTargetOf(get(), tabId, blockId);
+      const origin = get().tabs.find((tab) => tab.id === tabId);
+      if (origin === undefined) throw new Error(`No hay ninguna pestaña con id ${JSON.stringify(tabId)} desde la que divergir`);
+      const result = await mage.divergeConversation({ sessionId, point });
+      await openDivergedTab(get, set, origin, result, divergeTitle(origin.title, t));
+    },
+
+    updateLegacyCodex: (tabId, accountDir, threadId) => updateLegacyCodexConversation(mage, get, { tabId, accountDir, threadId }),
 
     renameTab: (tabId, title) => {
       const clean = title.trim();
@@ -3102,6 +3158,12 @@ export function reduceEvent(state: WorkbenchState, tabId: string, event: MageEve
     case 'queued_message_failed':
     case 'message_delivery':
       return {};
+    // Rebobinar (K07): quien rebobina recibe la cola y la proyección en el resultado de `rewindApply`, y solo hay
+    // una pestaña por conversación; no hay nada que hacer con estos avisos. `thread_history` lo usa main en el plan.
+    case 'queue_returned':
+    case 'conversation_rewound':
+    case 'thread_history':
+      return {};
     // Desglose de contexto del propio CLI (D3): no toca la conversacion, alimenta el Inspector.
     case 'context_usage':
       return { contextUsageByChat: { ...state.contextUsageByChat, [tabId]: event.usage } };
@@ -3441,6 +3503,114 @@ async function closeMatchingTab(get: () => WorkbenchState, sessionId: string): P
   const state = get();
   const tab = state.tabs.find((t) => conversationIdOfTab(t, state.sessionIdByChat[t.id]) === sessionId);
   if (tab !== undefined) await state.closeTab(tab.id);
+}
+
+// --- Rebobinar, Reintentar y Divergir (K07) ---
+
+interface RewindTarget {
+  readonly sessionId: string;
+  readonly point: RewindPointRef;
+  readonly attachments: readonly ImageAttachment[];
+}
+
+// Sesión, punto y adjuntos de la burbuja pulsada. Sin sesión viva o sin burbuja de usuario no hay a qué aplicarlo.
+function rewindTargetOf(state: WorkbenchState, tabId: string, blockId: string): RewindTarget {
+  const sessionId = state.sessionIdByChat[tabId];
+  const blocks = blocksOf(state, tabId);
+  const point = rewindPointOf(blocks, blockId);
+  const block = blocks.find((candidate) => candidate.id === blockId);
+  if (sessionId === undefined || point === null || block?.kind !== 'user') {
+    throw new Error(`No se puede rebobinar: pestaña=${JSON.stringify(tabId)} bloque=${JSON.stringify(blockId)} sesión=${JSON.stringify(sessionId)}`);
+  }
+  return { sessionId, point, attachments: block.attachments };
+}
+
+// La conversación vigente tras rebobinar SUSTITUYE a los bloques (no `hydrateBlocks`, que solo antepone y no
+// quitaría lo descartado). Sin proyección, main no pudo releerla: se pide otra lectura a la transcripción.
+function adoptProjection(set: SetFn, tabId: string, projection: TranscriptBatch | null): void {
+  if (projection === null) {
+    transcriptStoreForTab(tabId).getState().refresh();
+    return;
+  }
+  set((s) => ({
+    ...withBlocks(s, tabId, transcriptToBlocks(projection.entries)),
+    streamingIdByChat: { ...s.streamingIdByChat, [tabId]: null },
+  }));
+}
+
+function pendingAttachmentsOf(attachments: readonly ImageAttachment[]): PromptDraft['attachments'] {
+  return attachments.map((attachment) => ({ attachment, byteLength: base64ByteLength(attachment.data) }));
+}
+
+async function applyRewind(mage: MageClient, get: () => WorkbenchState, set: SetFn, tabId: string, blockId: string, options: RewindOptions): Promise<void> {
+  const { sessionId, point, attachments } = rewindTargetOf(get(), tabId, blockId);
+  const { action, restoreFiles, saveCopy } = options;
+  const result = await mage.rewindApply({
+    sessionId, point, action, restoreFiles, saveCopy,
+    ...(action === 'retry' && attachments.length > 0 ? { attachments } : {}),
+  });
+  adoptProjection(set, tabId, result.projection);
+  // En `rewind` el mensaje vuelve al cuadro de texto; en `retry` ya salió, salvo que main no pudiera enviarlo
+  // (`retried` null): entonces su texto también vuelve, para no perderlo.
+  if (action === 'rewind' || result.retried === null) get().setDraft(tabId, { text: result.draft, attachments: pendingAttachmentsOf(attachments) });
+  returnMessagesToDraft(get, tabId, result.returnedQueue);
+  if (result.retried === null) return;
+  // `reconcileReceipt` pinta la burbuja del reintento (y el reloj del turno) si el recibo es `accepted`: no se
+  // añade aparte, saldría dos veces. La proyección se leyó ANTES de enviarlo.
+  reconcileReceipt(mage, get, set, { tabId, receipt: result.retried, optimisticBlockId: null, text: point.text, attachments, commandId: result.retried.commandId });
+}
+
+// «Divergir»: Claude abre una pestaña nueva cuya primera sesión es un fork; Codex abre el hilo nuevo del historial.
+async function openDivergedTab(get: () => WorkbenchState, set: SetFn, origin: Tab, result: DivergeResult, title: string): Promise<void> {
+  if (result.kind === 'codex') {
+    await openCodexThread(get, result.threadId);
+    get().renameTab(get().activeTabId, title);
+    return;
+  }
+  await get().newTab({
+    accountId: origin.accountId, cwd: origin.cwd, model: origin.model, provider: origin.provider, title, privacy: origin.privacy,
+    forkFrom: result.forkFrom,
+    ...(origin.effort === undefined ? {} : { effort: origin.effort }),
+    ...(isPermissionMode(origin.permissionMode) ? { permissionMode: origin.permissionMode } : {}),
+    ...(origin.projectId === undefined ? {} : { projectId: origin.projectId }),
+  });
+  // `newTab` deja la pestaña nueva como activa. Se arranca ya su sesión: es el fork, y con su id la pestaña se
+  // reanuda como una conversación normal.
+  const forkTabId = get().activeTabId;
+  const forkSessionId = await get().ensureSession(forkTabId);
+  set((s) => ({ tabs: s.tabs.map((tab) => (tab.id === forkTabId ? { ...tab, resumeSessionId: forkSessionId } : tab)) }));
+}
+
+// Abre una conversación de Codex por su id: la busca en el historial (recién cargado) y la reabre como lo
+// haría un clic en él. Sin ella, `Error` con el id.
+async function openCodexThread(get: () => WorkbenchState, threadId: string): Promise<void> {
+  await get().loadConversationHistory();
+  const item = get().conversationHistory.find((candidate) => candidate.sessionId === threadId);
+  if (item === undefined) throw new Error(`No se encontró la conversación ${JSON.stringify(threadId)} en el historial`);
+  // `openConversation` está tipada como void pero es async: se espera a que la pestaña exista.
+  await Promise.resolve(get().openConversation(item));
+}
+
+interface LegacyCodexTarget {
+  readonly tabId: string | null;
+  readonly accountDir: string;
+  readonly threadId: string;
+}
+
+// Actualiza una conversación legacy de Codex. Con pestaña abierta, primero para su sesión (cerrar SIN dejarla en
+// segundo plano: dos procesos no pueden tocar el mismo hilo, mismo orden que «borrar conversación») y después la
+// reabre, aunque la actualización falle: el hilo original sigue intacto.
+async function updateLegacyCodexConversation(mage: MageClient, get: () => WorkbenchState, target: LegacyCodexTarget): Promise<string> {
+  const { tabId, accountDir, threadId } = target;
+  const wasOpen = tabId !== null || tabOfConversation(get(), threadId) !== undefined;
+  if (tabId === null) await closeMatchingTab(get, threadId);
+  else await get().closeTab(tabId);
+  await get().discardBackgroundConversation(threadId);
+  try {
+    return (await mage.updateLegacyCodexConversation({ accountDir, threadId })).backupDir;
+  } finally {
+    if (wasOpen) await openCodexThread(get, threadId);
+  }
 }
 
 // Pestaña nueva en una cuenta de otro CLI: su proveedor, el modelo por defecto de ese proveedor (o el
