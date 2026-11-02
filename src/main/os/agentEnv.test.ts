@@ -67,6 +67,12 @@ describe('scrubAgentEnv', () => {
     expect(env).toEqual({ PATH: '/usr/bin' });
   });
 
+  it('scrubAgentEnv_testBaseUrlVar_removed', () => {
+    const env = scrubAgentEnv({ MAGE_TEST_ANTHROPIC_BASE_URL: 'http://127.0.0.1:1234', PATH: '/usr/bin' });
+
+    expect(env).toEqual({ PATH: '/usr/bin' });
+  });
+
   it('scrubAgentEnv_conVariablesInocentes_lasConserva', () => {
     // La lista es NEGRA (decision A3): lo que el entorno necesite para funcionar tiene que pasar.
     const base: NodeJS.ProcessEnv = { PATH: '/usr/bin', HOME: '/home/u', HTTPS_PROXY: 'http://proxy:8080', LANG: 'es_ES.UTF-8' };
