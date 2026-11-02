@@ -85,7 +85,9 @@ try {
 
   // La pantalla de Acerca de debe poder leer las licencias DENTRO del paquete instalado.
   const about = await page.evaluate(() => window.mage.getAbout());
-  if (about.versions.app !== expectedVersion || !about.notices.includes('Permission is hereby granted') || about.chromiumLicensesPath === null) {
+  // F3.3b: `notices` es un LocalizedText; el texto de THIRD-PARTY-NOTICES.txt va en `values.detail`.
+  const noticesText = typeof about.notices === 'string' ? about.notices : (about.notices?.values?.detail ?? '');
+  if (about.versions.app !== expectedVersion || !noticesText.includes('Permission is hereby granted') || about.chromiumLicensesPath === null) {
     throw new Error(`Version o licencias incompletas en el paquete: ${JSON.stringify({ versions: about.versions, chromium: about.chromiumLicensesPath })}`);
   }
   console.log('OK version y licencias:', JSON.stringify(about.versions));
