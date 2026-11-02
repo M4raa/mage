@@ -207,6 +207,7 @@ import { ConversationIndexStore } from './state/conversationIndexStore';
 import { registerSessionIpc } from './coordination/sessionIpc';
 import { canControlSession } from './coordination/sessionAccess';
 import { readHostMode, startLocalHost } from './host/hostBootstrap';
+import { cliRelayArgs, cliRelayPlan } from './host/cliRelay';
 import { createHostControl } from './host/hostControl';
 import type { HostMode, HostServerHandle } from './host/hostServer';
 import { HOST_STOP_DELAY_MS } from './host/hostStop';
@@ -3681,7 +3682,21 @@ function focusMainWindow(): void {
 // pierde pestanas o configuracion sin ver un error. Ademas duplicaria tray y widget. Si ya hay una
 // instancia, esta se cierra y la existente se enfoca (comportamiento estandar de escritorio).
 // El lock se pide ANTES de whenReady: cuanto menos haya arrancado la segunda instancia, mejor.
-const gotSingleInstanceLock = app.requestSingleInstanceLock();
+// El cliente hereda la terminal (stdin, stdout y stderr) y su código de salida es el de este proceso.
+function runCliRelay(args: readonly string[]): void {
+  const plan = cliRelayPlan({ execPath: process.execPath, resourcesPath: process.resourcesPath, args, env: process.env });
+  const child = spawn(plan.command, [...plan.args], { stdio: 'inherit', env: plan.env });
+  child.on('error', (err) => {
+    console.error(`[mage] No se pudo ejecutar el cliente de terminal: ${err.message}`);
+    app.exit(1);
+  });
+  child.on('exit', (code) => app.exit(code ?? 1));
+}
+
+// `Mage.AppImage --cli …` (F7.4): solo releva al cliente de terminal; no pide el lock ni arranca nada más.
+const cliRelay = cliRelayArgs(process.argv);
+if (cliRelay !== null) runCliRelay(cliRelay);
+const gotSingleInstanceLock = cliRelay === null && app.requestSingleInstanceLock();
 // Host sin pantalla (F2.6, §3.4): Linux sin DISPLAY ni WAYLAND_DISPLAY, o `--headless`. No crea ventanas.
 const runsHeadless = isHeadlessHost({ platform: process.platform, argv: process.argv, env: process.env });
 // Linux sin pantalla: sin `--password-store`, Chromium elige basic_text aunque haya un llavero desbloqueado (medido en la
@@ -3736,7 +3751,9 @@ function lockHolderMode(): HostMode | null {
   });
 }
 
-if (!gotSingleInstanceLock) {
+if (cliRelay !== null) {
+  // El relevo sale con el código del cliente (`runCliRelay`).
+} else if (!gotSingleInstanceLock) {
   // Se dice EN VOZ ALTA por que se cierra. Sin esta linea, la segunda instancia se rendia en silencio y
   // lo unico que se veia era la ventana de la instancia VIEJA saltando al frente: quien lanzaba
   // `pnpm dev` con la app instalada abierta concluia "el dev no aplica mis cambios" (paso de verdad).

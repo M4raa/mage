@@ -40,6 +40,13 @@ files:
   # externalizado, habra que dejarlo fuera del bundle y quitarlo de esta exclusion.
   - '!node_modules/**'
 
+# Cliente de terminal (F7.4) FUERA del asar, en `resources/cli`: lo ejecuta el propio Electron en modo Node
+# (`ELECTRON_RUN_AS_NODE`) y no depende de que ese modo cargue ESM desde dentro del asar. Sin tests ni spikes.
+extraResources:
+  - from: scripts/mage-cli
+    to: cli
+    filter: ['*.mjs', '!*.test.mjs', '!spikes/**']
+
 # Auto-update por GitHub Releases (B2). Esto hace dos cosas: genera `latest.yml` junto al instalador
 # (los metadatos que electron-updater consulta) y mete `app-update.yml` en el bundle (de donde el
 # updater saca owner/repo en runtime).
@@ -68,6 +75,11 @@ win:
       arch: [x64]
   # .ico MULTI-TAMAÑO: los tamaños pequeños llevan el glifo simplificado, nitido a 16 px.
   icon: resources/brand/icon.ico
+  # Lanzador `mage` (F7.4): `resources\bin` es la carpeta que el instalador NSIS añade al PATH del usuario.
+  extraResources:
+    - from: resources/bin
+      to: bin
+      filter: ['mage.cmd']
 
 msi:
   oneClick: false
@@ -117,9 +129,21 @@ linux:
   icon: resources/brand/linux
   synopsis: Wrapper multiagentico y multi-proveedor sobre agentes de codigo
   artifactName: mage-${version}-${arch}.${ext}
+  # Lanzador `mage` (F7.4): el deb enlaza /usr/bin/mage a este script (after-install propio, abajo). El AppImage
+  # no tiene PATH: `Mage.AppImage --cli <argumentos>`.
+  extraResources:
+    - from: resources/bin
+      to: bin
+      filter: ['mage']
 
 # F1.8 (H4 b): el `Exec` del AppImage SIN `--no-sandbox` (sin esto electron-builder lo pone por defecto en
 # la toolset heredada). Ojo: su `AppRun` generado lo sigue añadiendo SOLO si `unshare -Ur true` falla
 # (namespaces de usuario restringidos); no es configurable.
 appImage:
   executableArgs: []
+
+# /usr/bin/mage = lanzador de la terminal, no la app gráfica (F7.4). El rpm se genera sin garantía, con el mismo script.
+deb:
+  afterInstall: resources/bin/linux-after-install.tpl
+rpm:
+  afterInstall: resources/bin/linux-after-install.tpl
