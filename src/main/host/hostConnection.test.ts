@@ -5,6 +5,7 @@ import { createTranslator } from '@shared/i18n/translator';
 import type { SequencedSessionEvent } from '../coordination/sessionCoordinator';
 import { HELLO_DEADLINE_MS, HostConnection, MAX_BUFFERED_BYTES, type HostSessions, type HostTransport } from './hostConnection';
 import type { HostControl } from './hostControl';
+import type { HostMode } from './hostServer';
 import { TrustRequiredError, UnknownAccountError } from './hostErrors';
 import { HOST_PROTOCOL, HostErrorCode } from './hostProtocol';
 import { challengeProof } from './hostToken';
@@ -14,7 +15,7 @@ const NONCE = '0'.repeat(64);
 const SNAPSHOT: ConversationSnapshot = { sessionId: 's1', provider: 'claude', conversationId: 'c1', nativeRef: null, lastSeq: 7, state: 'idle', queue: [], pending: [], background: false };
 const EVENT: SequencedSessionEvent = { sessionId: 's1', conversationId: 'c1', seq: 8, at: 1, event: { kind: 'result', result: { isError: false, subtype: 'success', numTurns: 1 } } };
 
-function harness(options: { sessions?: Partial<HostSessions>; control?: Partial<HostControl>; maxLineBytes?: number } = {}) {
+function harness(options: { sessions?: Partial<HostSessions>; control?: Partial<HostControl>; maxLineBytes?: number; mode?: HostMode } = {}) {
   const written: string[] = [];
   let buffered = 0;
   let ended = false;
@@ -38,13 +39,15 @@ function harness(options: { sessions?: Partial<HostSessions>; control?: Partial<
     setOption: vi.fn(),
     listProjects: vi.fn(() => []),
     listAccounts: vi.fn(() => []),
+    createApiAccount: vi.fn(() => ({ id: '/h/k', name: 'K', provider: 'claude' as const, billing: 'api-key' as const })),
+    requestQuit: vi.fn(),
     ...options.control,
   };
   const timers: { fn: () => void; ms: number; cancelled: boolean }[] = [];
   const log = vi.fn();
   let ids = 0;
   const connection = new HostConnection(transport, {
-    sessions, control, mode: 'gui', token: TOKEN, hostVersion: '0.1.3', log, newId: () => `sub-${++ids}`, translate: createTranslator('es'),
+    sessions, control, mode: options.mode ?? 'gui', token: TOKEN, hostVersion: '0.1.3', log, newId: () => `sub-${++ids}`, translate: createTranslator('es'),
     setTimer: (fn, ms) => { const timer = { fn, ms, cancelled: false }; timers.push(timer); return () => { timer.cancelled = true; }; },
     ...(options.maxLineBytes === undefined ? {} : { maxLineBytes: options.maxLineBytes }),
   });
@@ -664,5 +667,112 @@ describe('HostConnection — métodos 1.2', () => {
     expect(h.lines()[0]!.error.code).toBe(HostErrorCode.NotAuthenticated);
     expect(h.isEnded()).toBe(true);
     expect(h.control.createSession).not.toHaveBeenCalled();
+  });
+});
+
+describe('HostConnection — métodos 1.3', () => {
+  const KEY = 'sk-ant-SECRETA';
+  const call = (h: ReturnType<typeof harness>, method: string, params?: unknown) => {
+    h.send({ jsonrpc: '2.0', id: 2, method, ...(params === undefined ? {} : { params }) });
+    return h.lines()[1]!;
+  };
+  const running = { listSessions: vi.fn(() => [{ ...SNAPSHOT, state: 'running' as const }]) };
+
+  it('hostStop_conVentana_rechazaYNoSale', () => {
+    const h = harness();
+    h.hello();
+
+    const reply = call(h, 'host.stop');
+
+    expect(reply.result).toEqual({ outcome: 'refused', reason: 'gui' });
+    expect(h.control.requestQuit).not.toHaveBeenCalled();
+    expect(h.isEnded()).toBe(false);
+  });
+
+  it('hostStop_sinVentanaSinTrabajo_contestaStoppingYPideSalir', () => {
+    const h = harness({ mode: 'headless' });
+    h.hello();
+
+    const reply = call(h, 'host.stop');
+
+    expect(reply.result).toEqual({ outcome: 'stopping' });
+    expect(h.control.requestQuit).toHaveBeenCalledTimes(1);
+  });
+
+  it('hostStop_sinVentanaConTurno_rechazaListandoSinSalir', () => {
+    const h = harness({ mode: 'headless', sessions: running });
+    h.hello();
+
+    const reply = call(h, 'host.stop');
+
+    expect(reply.result.outcome).toBe('refused');
+    expect(reply.result.reason).toBe('active');
+    expect(reply.result.sessions[0].sessionId).toBe('s1');
+    expect(h.control.requestQuit).not.toHaveBeenCalled();
+  });
+
+  it('hostStop_sinVentanaConTurnoYForce_pideSalir', () => {
+    const h = harness({ mode: 'headless', sessions: running });
+    h.hello();
+
+    const reply = call(h, 'host.stop', { force: true });
+
+    expect(reply.result).toEqual({ outcome: 'stopping' });
+    expect(h.control.requestQuit).toHaveBeenCalledTimes(1);
+  });
+
+  it('hostStop_parametroDesconocido_invalidParams', () => {
+    const h = harness({ mode: 'headless' });
+    h.hello();
+
+    const reply = call(h, 'host.stop', { forzar: true });
+
+    expect(reply.error.code).toBe(HostErrorCode.InvalidParams);
+    expect(h.control.requestQuit).not.toHaveBeenCalled();
+  });
+
+  it('accountsCreate_devuelveLaCuentaSinLaClave', () => {
+    const h = harness();
+    h.hello();
+    const params = { provider: 'claude', name: 'K', apiKey: KEY };
+
+    const reply = call(h, 'accounts.create', params);
+
+    expect(h.control.createApiAccount).toHaveBeenCalledWith(params);
+    expect(reply.result).toEqual({ account: { id: '/h/k', name: 'K', provider: 'claude', billing: 'api-key' } });
+    expect(h.written.join('')).not.toContain(KEY);
+  });
+
+  it('accountsCreate_laBovedaFalla_errorSinLaClave', () => {
+    const failing = vi.fn(() => { throw new UserFacingError(localized('errors.accounts.providerNameInvalid', { name: '"K"' })); });
+    const h = harness({ control: { createApiAccount: failing } });
+    h.hello();
+
+    const reply = call(h, 'accounts.create', { provider: 'claude', name: 'K', apiKey: KEY });
+
+    expect(reply.error.code).toBe(HostErrorCode.Internal);
+    expect(h.isEnded()).toBe(false);
+    expect(h.written.join('')).not.toContain(KEY);
+    expect(JSON.stringify(h.log.mock.calls)).not.toContain(KEY);
+  });
+
+  it('accountsCreate_proveedorAgy_invalidParamsSinCrear', () => {
+    const h = harness();
+    h.hello();
+
+    const reply = call(h, 'accounts.create', { provider: 'agy', name: 'K', apiKey: KEY });
+
+    expect(reply.error.code).toBe(HostErrorCode.InvalidParams);
+    expect(h.control.createApiAccount).not.toHaveBeenCalled();
+    expect(reply.error.message).not.toContain(KEY);
+  });
+
+  it('accountsCreate_claveVacia_invalidParams', () => {
+    const h = harness();
+    h.hello();
+
+    const reply = call(h, 'accounts.create', { provider: 'claude', name: 'K', apiKey: '' });
+
+    expect(reply.error.code).toBe(HostErrorCode.InvalidParams);
   });
 });

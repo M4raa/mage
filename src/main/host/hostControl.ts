@@ -1,10 +1,10 @@
 import { isAbsolute } from 'node:path';
-import type { AccountInfo } from '@shared/accounts';
+import type { AccountCreateParams, AccountInfo } from '@shared/accounts';
 import type { ConversationId } from '@shared/coordination';
 import type { CreateSessionParams } from '@shared/ipc';
 import type { ChatProject } from '@shared/settings';
 import { TrustRequiredError, UnknownAccountError } from './hostErrors';
-import type { HostCreateRequest, HostOptionKey } from './hostProtocol';
+import type { HostAccountCreateRequest, HostCreateRequest, HostOptionKey } from './hostProtocol';
 
 // Lo que el host 1.2 (F7.2) hace fuera del coordinador: crear una sesión con la frontera de confianza de main,
 // cambiar sus opciones y listar proyectos y cuentas. Toda la E/S llega inyectada desde index.ts; aquí no se lanza
@@ -19,6 +19,8 @@ export interface HostControl {
   setOption(sessionId: string, key: HostOptionKey, value: string): void;
   listProjects(): readonly HostProject[];
   listAccounts(): readonly HostAccount[];
+  createApiAccount(request: HostAccountCreateRequest): HostAccount;
+  requestQuit(): void;
 }
 
 export interface HostOptionSetters {
@@ -38,12 +40,17 @@ export interface HostControlDeps {
   readonly launch: (params: CreateSessionParams) => string;
   readonly conversationIdOf: (sessionId: string) => ConversationId | null;
   readonly options: HostOptionSetters;
+  // `ProviderAccounts.create` de main: guarda la clave en la bóveda y nunca la devuelve.
+  readonly createAccount: (params: AccountCreateParams) => AccountInfo;
+  // Cierra main un poco después de contestar (`HOST_STOP_DELAY_MS`).
+  readonly requestQuit: () => void;
 }
 
 // Recibos de `session.create` recordados para deduplicar reintentos: los últimos, no todos.
 export const MAX_CREATE_RECEIPTS = 100;
 export const EFFORT_KEY_SUFFIX = '#effort';
 
+const toHostAccount = (account: AccountInfo): HostAccount => ({ id: account.configDir, name: account.name, provider: account.providerId, billing: account.authKind });
 const nonEmpty = (value: string | undefined): string | undefined => (value === undefined || value.length === 0 ? undefined : value);
 
 export function createHostControl(deps: HostControlDeps): HostControl {
@@ -52,7 +59,9 @@ export function createHostControl(deps: HostControlDeps): HostControl {
     createSession: (request) => createOnce(deps, receipts, request),
     setOption: (sessionId, key, value) => applyOption(deps.options, sessionId, key, value),
     listProjects: () => deps.listProjects().map(({ id, name, cwd }) => ({ id, name, cwd })),
-    listAccounts: () => deps.listAccounts().map((account) => ({ id: account.configDir, name: account.name, provider: account.providerId, billing: account.authKind })),
+    listAccounts: () => deps.listAccounts().map(toHostAccount),
+    createApiAccount: (request) => toHostAccount(deps.createAccount({ providerId: request.provider, authKind: 'api-key', name: request.name, apiKey: request.apiKey })),
+    requestQuit: () => deps.requestQuit(),
   };
 }
 

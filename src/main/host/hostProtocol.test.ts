@@ -35,7 +35,7 @@ describe('withLegacyText', () => {
 
 describe('HOST_PROTOCOL', () => {
   it('HOST_PROTOCOL_igualA12', () => {
-    expect(HOST_PROTOCOL).toBe('1.2');
+    expect(HOST_PROTOCOL).toBe('1.3');
   });
 });
 
@@ -45,6 +45,10 @@ describe('host 1.2 — capacidades y esquemas', () => {
   it('capabilities_anuncianUpdateQueuedYNoRewind', () => {
     expect(HOST_CAPABILITIES).not.toContain('session.rewind');
     expect(HOST_CAPABILITIES).toContain('session.updateQueued');
+  });
+
+  it('capabilities_anuncianLosMetodosDe13', () => {
+    expect(HOST_CAPABILITIES).toEqual(expect.arrayContaining(['host.stop', 'accounts.create', 'session.updateQueued']));
   });
 
   it('capabilities_anuncianLosMetodosDe12', () => {

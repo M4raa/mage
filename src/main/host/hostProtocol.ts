@@ -15,7 +15,8 @@ export const HOST_PROTOCOL_MAJOR = 1;
 // 1.1 (F3.3): los eventos `notice`, `error` y `queued_message_failed` llevan `localized` (clave y valores) y, para los
 // clientes 1.0, su campo de siempre ya traducido en el idioma de main.
 // 1.2 (F7): `host.challenge` antes de `hello` y los métodos de la terminal.
-export const HOST_PROTOCOL_MINOR = 2;
+// 1.3 (F7): `host.stop`, `accounts.create`, `session.updateQueued` y la notificación `subscription.closed`.
+export const HOST_PROTOCOL_MINOR = 3;
 export const HOST_PROTOCOL = `${HOST_PROTOCOL_MAJOR}.${HOST_PROTOCOL_MINOR}`;
 
 // Códigos JSON-RPC estándar (-32700…-32603) y propios (-32001…-32099).
@@ -74,6 +75,17 @@ export const HOST_SESSION_PROVIDERS = ['claude', 'codex'] as const;
 export const HOST_OPTION_KEYS = ['model', 'effort', 'permissionMode'] as const;
 export type HostOptionKey = (typeof HOST_OPTION_KEYS)[number];
 const MAX_PATH_CHARS = 4096;
+// Las claves de API reales miden menos de 200 caracteres; el tope solo impide líneas absurdas.
+const MAX_API_KEY_CHARS = 4096;
+const MAX_ACCOUNT_NAME_CHARS = 128;
+const HOST_STOP_SCHEMA = z.object({ force: z.boolean().optional() }).strict().optional();
+// Solo cuentas de API: las de suscripción necesitan el login del navegador y se dan de alta en la ventana.
+const ACCOUNTS_CREATE_SCHEMA = z.object({
+  provider: z.enum(HOST_SESSION_PROVIDERS),
+  name: z.string().min(1).max(MAX_ACCOUNT_NAME_CHARS),
+  apiKey: z.string().min(1).max(MAX_API_KEY_CHARS),
+}).strict();
+export type HostAccountCreateRequest = z.infer<typeof ACCOUNTS_CREATE_SCHEMA>;
 const hostId = z.string().min(1).max(MAX_ID_CHARS);
 
 const SESSION_CREATE_SCHEMA = z.object({
@@ -115,6 +127,8 @@ export const HOST_METHOD_SCHEMAS = {
   'session.rewind': REWIND_SCHEMA,
   'session.cancelQueued': CANCEL_QUEUED_SCHEMA,
   'session.updateQueued': UPDATE_QUEUED_SCHEMA,
+  'host.stop': HOST_STOP_SCHEMA,
+  'accounts.create': ACCOUNTS_CREATE_SCHEMA,
 } as const;
 export type HostMethod = keyof typeof HOST_METHOD_SCHEMAS;
 

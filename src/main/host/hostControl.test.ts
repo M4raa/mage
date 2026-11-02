@@ -1,6 +1,6 @@
 import { resolve } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import type { AccountInfo } from '@shared/accounts';
+import type { AccountCreateParams, AccountInfo } from '@shared/accounts';
 import type { ChatProject } from '@shared/settings';
 import { createHostControl, MAX_CREATE_RECEIPTS, type HostControlDeps } from './hostControl';
 import { TrustRequiredError, UnknownAccountError } from './hostErrors';
@@ -21,6 +21,8 @@ function harness(overrides: Partial<HostControlDeps> = {}) {
     launch: vi.fn(() => 's-1'),
     conversationIdOf: vi.fn(() => null),
     options: { setModel: vi.fn(), setEffort: vi.fn(), setPermissionMode: vi.fn() },
+    createAccount: vi.fn((params: AccountCreateParams): AccountInfo => ({ ...CODEX, configDir: '/h/codex-nueva', name: params.name, providerId: params.providerId, authKind: 'api-key' })),
+    requestQuit: vi.fn(),
     ...overrides,
   };
   return { deps, control: createHostControl(deps) };
@@ -156,5 +158,29 @@ describe('HostControl — opciones y catálogos', () => {
     const result = h.control.listProjects();
 
     expect(result).toEqual([{ id: 'p1', name: 'P', cwd: '/x' }]);
+  });
+
+  it('createApiAccount_pasaClaveYTipoApiKeyYDevuelveLaProyeccion', () => {
+    const h = harness();
+
+    const result = h.control.createApiAccount({ provider: 'codex', name: 'Trabajo', apiKey: 'sk-SECRETA-123' });
+
+    expect(h.deps.createAccount).toHaveBeenCalledWith({ providerId: 'codex', authKind: 'api-key', name: 'Trabajo', apiKey: 'sk-SECRETA-123' });
+    expect(result).toEqual({ id: '/h/codex-nueva', name: 'Trabajo', provider: 'codex', billing: 'api-key' });
+    expect(JSON.stringify(result)).not.toContain('sk-SECRETA-123');
+  });
+
+  it('createApiAccount_laCreacionFalla_propagaElError', () => {
+    const h = harness({ createAccount: vi.fn(() => { throw new Error('bóveda no disponible'); }) });
+
+    expect(() => h.control.createApiAccount({ provider: 'claude', name: 'K', apiKey: 'sk-x' })).toThrow('bóveda no disponible');
+  });
+
+  it('requestQuit_delegaEnLaDependencia', () => {
+    const h = harness();
+
+    h.control.requestQuit();
+
+    expect(h.deps.requestQuit).toHaveBeenCalledTimes(1);
   });
 });

@@ -209,6 +209,7 @@ import { canControlSession } from './coordination/sessionAccess';
 import { readHostMode, startLocalHost } from './host/hostBootstrap';
 import { createHostControl } from './host/hostControl';
 import type { HostMode, HostServerHandle } from './host/hostServer';
+import { HOST_STOP_DELAY_MS } from './host/hostStop';
 import { HEADLESS_GUI_UNAVAILABLE, isHeadlessHost, lockFailureMessage, startupWarnings } from './startupMode';
 import { registerConversationPrefsIpc } from './coordination/conversationPrefsIpc';
 import { SessionCoordinator } from './coordination/sessionCoordinator';
@@ -3712,6 +3713,8 @@ function startHost(mode: HostMode): Promise<void> {
       launch: (params) => launchSession(params, null).sessionId,
       conversationIdOf: (sessionId) => sessionCoordinator.conversationIdOf(sessionId),
       options: sessionManager,
+      createAccount: (params) => getProviderAccounts().create(params),
+      requestQuit: () => { setTimeout(() => app.quit(), HOST_STOP_DELAY_MS); },
     }),
     hostVersion: app.getVersion(),
     log: mainLog,

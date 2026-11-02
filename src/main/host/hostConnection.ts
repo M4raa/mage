@@ -11,6 +11,7 @@ import { MAX_LINE_BYTES, NdjsonFramer } from './ndjsonFramer';
 import { TrustRequiredError, UnknownAccountError, UnknownConversationError, UnsupportedMethodError } from './hostErrors';
 import type { HostControl } from './hostControl';
 import type { HostMode } from './hostServer';
+import { decideStop, type HostStopResult } from './hostStop';
 import {
   CHALLENGE_METHOD,
   CHALLENGE_PARAMS_SCHEMA,
@@ -27,6 +28,7 @@ import {
   resultResponse,
   SUBSCRIPTION_CLOSED_NOTIFICATION,
   withLegacyText,
+  type HostAccountCreateRequest,
   type HostCreateRequest,
   type HostErrorBody,
   type HostMethod,
@@ -258,6 +260,8 @@ export class HostConnection {
         const target = params as { sessionId: string; queuedId: string; text: string };
         return { updated: sessions.updateQueued(target.sessionId, target.queuedId, target.text) };
       }
+      case 'host.stop': return this.stop((params as { force?: boolean } | undefined)?.force === true);
+      case 'accounts.create': return { account: control.createApiAccount(params as HostAccountCreateRequest) };
       default: throw new UnsupportedMethodError(method);
     }
   }
@@ -267,6 +271,13 @@ export class HostConnection {
     const live = this.deps.sessions.listSessions().find((snapshot) => snapshot.conversationId === conversationId);
     if (live === undefined) throw new UnknownConversationError(conversationId);
     return live;
+  }
+
+  // `mage stop` (U18, tabla D4): la decisión es pura; aquí solo se pide la salida si toca.
+  private stop(force: boolean): HostStopResult {
+    const result = decideStop({ mode: this.deps.mode, force, sessions: this.deps.sessions.listSessions() });
+    if (result.outcome === 'stopping') this.deps.control.requestQuit();
+    return result;
   }
 
   // La instantánea y los eventos siguientes van juntos: todo lo posterior a `snapshot.lastSeq` llega como

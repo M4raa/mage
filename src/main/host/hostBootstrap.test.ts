@@ -28,7 +28,7 @@ async function start(mode: 'gui' | 'headless' = 'gui', log = vi.fn()) {
   roots.push(userDataDir);
   const handle = await startLocalHost({
     platform: process.platform, userDataDir, xdgRuntimeDir: undefined, mode, fs, getuid: process.getuid?.bind(process),
-    sessions: sessions(), control: { createSession: vi.fn(), setOption: vi.fn(), listProjects: () => [], listAccounts: () => [] } as HostControl, hostVersion: '0.1.3', log, newId: () => 'id', translate: createTranslator('es'), setTimer: (fn, ms) => { const t = setTimeout(fn, ms); return () => clearTimeout(t); },
+    sessions: sessions(), control: { createSession: vi.fn(), setOption: vi.fn(), listProjects: () => [], listAccounts: () => [], createApiAccount: () => ({ id: '/h/k', name: 'K', provider: 'claude' as const, billing: 'api-key' as const }), requestQuit: () => undefined } as HostControl, hostVersion: '0.1.3', log, newId: () => 'id', translate: createTranslator('es'), setTimer: (fn, ms) => { const t = setTimeout(fn, ms); return () => clearTimeout(t); },
   });
   handles.push(handle);
   return { userDataDir, handle };
