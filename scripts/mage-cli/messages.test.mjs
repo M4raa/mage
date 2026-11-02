@@ -16,7 +16,7 @@ describe('messages', () => {
     const en = Object.keys(createMessages('en')).sort();
 
     expect(en).toEqual(es);
-    expect(es).toHaveLength(29);
+    expect(es).toHaveLength(45);
   });
 
   it('createMessages_permissionAsk_sinDescripcion_noPoneParentesis', () => {
@@ -24,6 +24,20 @@ describe('messages', () => {
 
     expect(messages.permissionAsk('Bash', null)).toBe('¿Permitir Bash? [s/n]');
     expect(messages.permissionAsk('Bash', 'ls')).toBe('¿Permitir Bash? (ls) [s/n]');
+  });
+
+  it.each([
+    ['boolean', { type: 'boolean' }, '[s/n]'],
+    ['integerConRango', { type: 'integer', minimum: 1, maximum: 10 }, '(número entre 1 y 10)'],
+    ['enum', { type: 'string', enum: ['a', 'b'] }, '(1) a, 2) b)'],
+    ['password', { type: 'string', format: 'password' }, '(no se verá al escribir)'],
+    ['stringLibre', { type: 'string' }, ''],
+  ])('fieldHint_%s', (_name, field, expected) => {
+    expect(createMessages('es').fieldHint(field)).toBe(expected);
+  });
+
+  it('elicitationInvalid_motivoDesconocido_lanza', () => {
+    expect(() => createMessages('es').elicitationInvalid('raro')).toThrow('Motivo de dato no válido desconocido: raro');
   });
 
   it('createMessages_idiomaDesconocido_lanza', () => {

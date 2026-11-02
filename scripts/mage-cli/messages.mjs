@@ -18,6 +18,55 @@ function parenthesized(description) {
   return ` (${description})`;
 }
 
+// Pista de formato de un campo de elicitation; `''` si no hace falta ninguna.
+function numberHint(field, words) {
+  if (field.minimum !== undefined && field.maximum !== undefined) return words.range(field.minimum, field.maximum);
+  return words.number;
+}
+
+function stringHint(field, words) {
+  if (field.enum !== undefined) return `(${field.enum.map((v, i) => `${i + 1}) ${v}`).join(', ')})`;
+  if (field.format === 'password') return words.hidden;
+  return '';
+}
+
+function fieldHintWith(field, words) {
+  if (field.type === 'boolean') return words.yesNo;
+  if (field.type === 'number' || field.type === 'integer') return numberHint(field, words);
+  if (field.type === 'string') return stringHint(field, words);
+  return '';
+}
+
+function invalidReasonWith(table, reason) {
+  if (!Object.hasOwn(table, reason)) throw new Error(`Motivo de dato no válido desconocido: ${reason}`);
+  return table[reason];
+}
+
+const INVALID_ES = { required: 'Este dato es obligatorio.', boolean: 'Contesta «s» o «n».', number: 'Escribe un número.', integer: 'Escribe un número entero.', range: 'El número está fuera del rango permitido.', enum: 'Elige una de las opciones.', length: 'La longitud no es la permitida.' };
+const INVALID_EN = { required: 'This field is required.', boolean: 'Answer "y" or "n".', number: 'Type a number.', integer: 'Type a whole number.', range: 'The number is out of the allowed range.', enum: 'Pick one of the options.', length: 'The length is not allowed.' };
+const HINT_ES = { yesNo: '[s/n]', number: '(número)', range: (min, max) => `(número entre ${min} y ${max})`, hidden: '(no se verá al escribir)' };
+const HINT_EN = { yesNo: '[y/n]', number: '(number)', range: (min, max) => `(number from ${min} to ${max})`, hidden: '(hidden while typing)' };
+
+function optionalSuffix(required, text) {
+  if (required) return '';
+  return text;
+}
+
+function spaced(hint) {
+  if (hint === '') return '';
+  return ` ${hint}`;
+}
+
+function optionLine(n, label, description) {
+  if (description === '') return `  ${n}) ${label}`;
+  return `  ${n}) ${label} — ${description}`;
+}
+
+function questionHintWith(multiSelect, texts) {
+  if (multiSelect) return texts.multiple;
+  return texts.single;
+}
+
 const ES = {
   connected: (hostVersion, mode) => `Conectado a Mage ${hostVersion} (${mode}).`,
   sessionsHeader: () => 'Sesiones abiertas:',
@@ -48,6 +97,25 @@ const ES = {
   queuedFailed: (text) => `[no se pudo enviar desde la cola: ${text}]`,
   expired: () => '[la sesión caducó en segundo plano]',
   sessionClosed: () => '[la sesión terminó en Mage]',
+  questionAsk: (n, total, header, question) => `[pregunta ${n} de ${total}] ${header}: ${question}`,
+  questionOption: optionLine,
+  questionHint: (multiSelect) => questionHintWith(multiSelect, {
+    multiple: 'Escribe uno o varios números separados por comas, o tu propia respuesta; «/cancelar» para no contestar.',
+    single: 'Escribe un número, o tu propia respuesta; «/cancelar» para no contestar.',
+  }),
+  questionInvalid: () => 'Respuesta no válida para esta pregunta.',
+  elicitationHeader: (server, message) => `[${server} pide datos] ${message}`,
+  elicitationCancelHint: () => '(«/rechazar» para no darlos, «/cancelar» para cancelar)',
+  elicitationField: (label, description, hint, required) => `${label}${parenthesized(description)}${spaced(hint)}${optionalSuffix(required, ' [opcional: Enter para omitir]')}:`,
+  fieldHint: (field) => fieldHintWith(field, HINT_ES),
+  elicitationInvalid: (reason) => invalidReasonWith(INVALID_ES, reason),
+  elicitationUrl: (url) => `Abre esta dirección en el navegador: ${url}`,
+  elicitationUrlAsk: () => '¿Lo has completado? [s/n] («/cancelar» para cancelar)',
+  elicitationEmptyForm: () => 'No pide ningún dato: pulsa Enter para aceptar.',
+  notSentOffline: () => '[sin conexión: este mensaje NO se ha enviado; te lo ofreceré al reconectar]',
+  unsentDuringReconnect: (count) => `[${count} mensaje(s) escritos sin conexión no se enviaron]`,
+  resendUnsentAsk: (text) => `No se envió: «${text}». ¿Enviarlo ahora? [s/n]`,
+  answeredElsewhere: () => '[ya contestada en otro sitio]',
 };
 
 const EN = {
@@ -78,6 +146,24 @@ const EN = {
   queuedFailed: (text) => `[could not send from the queue: ${text}]`,
   expired: () => '[the session expired in the background]',
   sessionClosed: () => '[the session ended in Mage]',
+  questionAsk: (n, total, header, question) => `[question ${n} of ${total}] ${header}: ${question}`,
+  questionHint: (multiSelect) => questionHintWith(multiSelect, {
+    multiple: 'Type one or more numbers separated by commas, or your own answer; "/cancel" to skip answering.',
+    single: 'Type a number, or your own answer; "/cancel" to skip answering.',
+  }),
+  questionInvalid: () => 'Not a valid answer for this question.',
+  elicitationHeader: (server, message) => `[${server} asks for input] ${message}`,
+  elicitationCancelHint: () => '("/decline" to refuse, "/cancel" to cancel)',
+  elicitationField: (label, description, hint, required) => `${label}${parenthesized(description)}${spaced(hint)}${optionalSuffix(required, ' [optional: Enter to skip]')}:`,
+  fieldHint: (field) => fieldHintWith(field, HINT_EN),
+  elicitationInvalid: (reason) => invalidReasonWith(INVALID_EN, reason),
+  elicitationUrl: (url) => `Open this address in your browser: ${url}`,
+  elicitationUrlAsk: () => 'Done? [y/n] ("/cancel" to cancel)',
+  elicitationEmptyForm: () => 'It asks for no data: press Enter to accept.',
+  notSentOffline: () => '[offline: this message was NOT sent; you will be offered to send it on reconnect]',
+  unsentDuringReconnect: (count) => `[${count} message(s) typed while offline were not sent]`,
+  resendUnsentAsk: (text) => `Not sent: "${text}". Send it now? [y/n]`,
+  answeredElsewhere: () => '[already answered elsewhere]',
 };
 
 export function createMessages(language) {
