@@ -36,8 +36,8 @@ graphify-out/
 .claude/worktrees/
 
 # >>> privado ---------------------------------------------------------------------------------------
-# No se publica. Lo versiona SOLO el repositorio privado: scripts/sync-private.sh lee esta seccion
-# (entre los dos marcadores, una ruta por linea) y la fuerza en cada push.
+# No se publica y no tiene copia en ningún repositorio: desde el 2026-11-02 solo existe el público.
+# Lo que no deba publicarse se añade aquí, una ruta por línea, entre los dos marcadores.
 /audit/
 /notes/
 /reference/
