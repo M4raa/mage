@@ -10,7 +10,7 @@ import { resolveClaudeBinary } from '../os/claudeBinaryResolver';
 import { normalizeRawEvent } from './normalize';
 import { CommandLifecycleSchema } from './schemas';
 import type { AuthModel, EngineRequest, LaunchParams, PermissionRef, ProviderAdapter, SpawnPlan, SteerEncoding } from './providerAdapter';
-import { scrubAgentEnv } from '../os/agentEnv';
+import { decideTestAnthropicBaseUrl, scrubAgentEnv, TEST_ANTHROPIC_BASE_URL_ENV } from '../os/agentEnv';
 import { claudeSharedLaunch, refuseClaudeMcpConfig, type ClaudeMcpConfigWriter } from '../config/mcpProviderTranslate';
 
 // Argumentos fijos del CLI headless stream-json (confirmados en el spike M1.0).
@@ -55,6 +55,23 @@ const HOOK_CALLBACK_ID = 'mage-observer';
 // de observacion nunca debe retrasar una conversacion.
 const HOOK_TIMEOUT_SECONDS = 5;
 
+// Dependencias inyectables del adapter (testear el plan de spawn sin tocar el FS ni el entorno).
+export interface ClaudeAdapterDeps {
+  readonly resolveBinary?: () => string; // por defecto resolveClaudeBinary
+  // Escribe el fichero de `--mcp-config` de la cuenta (con los secretos, en la carpeta de Mage): lo pone main.
+  readonly writeMcpConfig?: ClaudeMcpConfigWriter; // por defecto refuseClaudeMcpConfig
+  // Clave de API de la cuenta SI Y SOLO SI es una cuenta de Claude por API (grupo E); null para las de
+  // suscripcion. La lee main de su boveda: nunca viene del renderer.
+  readonly resolveApiKey?: (accountDir: string) => string | null; // por defecto () => null
+  // D5 (#53): ajuste del usuario «Permitir Artifact», apagado por defecto. Se lee en cada arranque.
+  readonly artifactEnabled?: () => boolean; // por defecto () => false
+  // T6: valor crudo de MAGE_TEST_ANTHROPIC_BASE_URL y si la app esta empaquetada. Por defecto: sin variable y
+  // EMPAQUETADA (lo seguro: nunca redirige).
+  readonly testBaseUrl?: () => string | undefined;
+  readonly isPackaged?: () => boolean;
+  readonly log?: (level: 'warn', message: string, data?: unknown) => void;
+}
+
 // Adapter de Claude: unica implementacion de ProviderAdapter en el MVP. Conoce el comando, sus
 // flags, el NDJSON de entrada y el protocolo de permisos; nada de esto escapa de aqui.
 export class ClaudeAdapter implements ProviderAdapter {
@@ -73,17 +90,23 @@ export class ClaudeAdapter implements ProviderAdapter {
     },
   };
 
-  // Resolver inyectable para testear el plan de spawn sin tocar el FS. `writeMcpConfig` escribe el
-  // fichero de `--mcp-config` de la cuenta (con los secretos, en la carpeta de Mage): lo pone main.
-  // `resolveApiKey` devuelve la clave de API de la cuenta SI Y SOLO SI es una cuenta de Claude por API
-  // (grupo E); null para las de suscripcion. La lee main de su boveda: nunca viene del renderer.
-  constructor(
-    private readonly resolveBinary: () => string = resolveClaudeBinary,
-    private readonly writeMcpConfig: ClaudeMcpConfigWriter = refuseClaudeMcpConfig,
-    private readonly resolveApiKey: (accountDir: string) => string | null = () => null,
-    // D5 (#53): ajuste del usuario «Permitir Artifact», apagado por defecto. Se lee en cada arranque.
-    private readonly artifactEnabled: () => boolean = () => false,
-  ) {}
+  private readonly resolveBinary: () => string;
+  private readonly writeMcpConfig: ClaudeMcpConfigWriter;
+  private readonly resolveApiKey: (accountDir: string) => string | null;
+  private readonly artifactEnabled: () => boolean;
+  private readonly testBaseUrl: () => string | undefined;
+  private readonly isPackaged: () => boolean;
+  private readonly log: ClaudeAdapterDeps['log'];
+
+  constructor(deps: ClaudeAdapterDeps = {}) {
+    this.resolveBinary = deps.resolveBinary ?? resolveClaudeBinary;
+    this.writeMcpConfig = deps.writeMcpConfig ?? refuseClaudeMcpConfig;
+    this.resolveApiKey = deps.resolveApiKey ?? (() => null);
+    this.artifactEnabled = deps.artifactEnabled ?? (() => false);
+    this.testBaseUrl = deps.testBaseUrl ?? (() => undefined);
+    this.isPackaged = deps.isPackaged ?? (() => true); // lo seguro: sin dato, nunca redirige
+    this.log = deps.log;
+  }
 
   buildSpawnPlan(params: LaunchParams): SpawnPlan {
     this.steers.clear(); // proceso nuevo: los directos del anterior murieron con el
@@ -117,6 +140,8 @@ export class ClaudeAdapter implements ProviderAdapter {
     // #53/D5 (medido en 2.1.309, spike/f1-artifact.mjs): en modo SDK el CLI apaga Artifact salvo con
     // CLAUDE_CODE_ARTIFACT verdadero. Publica en claude.ai, así que es opción del usuario, apagada por
     // defecto; el valor va DESPUÉS del env heredado: manda el ajuste, no lo que el usuario exportara.
+    const testEndpoint = decideTestAnthropicBaseUrl({ value: this.testBaseUrl(), isPackaged: this.isPackaged(), isApiKeyAccount: apiKey !== null });
+    if (testEndpoint.kind === 'ignored') this.log?.('warn', `${TEST_ANTHROPIC_BASE_URL_ENV} ignorada`, { reason: testEndpoint.reason });
     const env: NodeJS.ProcessEnv = {
       ...scrubAgentEnv(process.env),
       [FILE_CHECKPOINTING_ENV]: 'true',
@@ -124,6 +149,7 @@ export class ClaudeAdapter implements ProviderAdapter {
       CLAUDE_CONFIG_DIR: params.accountDir,
       ...shared.env,
       ...(apiKey === null ? {} : { [ANTHROPIC_API_KEY_ENV]: apiKey }),
+      ...(testEndpoint.kind === 'use' ? { ANTHROPIC_BASE_URL: testEndpoint.url } : {}),
     };
     return { command: this.resolveBinary(), args, env };
   }

@@ -185,7 +185,7 @@ import { TokenRefreshService } from './accounts/tokenRefreshService';
 import { parseStoredOauth } from './accounts/oauthFlow';
 import { defaultLinkDeps, LinkService } from './os/linkService';
 import { resolveClaudeBinary } from './os/claudeBinaryResolver';
-import { scrubAgentEnv } from './os/agentEnv';
+import { scrubAgentEnv, TEST_ANTHROPIC_BASE_URL_ENV } from './os/agentEnv';
 import { OpenWithService } from './os/openWithService';
 import { buildJumpListCategories, parseJumpListArgs } from './os/jumpList';
 import { UsageService } from './usage/usageService';
@@ -713,7 +713,16 @@ function buildAdapter(provider: string): ProviderAdapter {
   const writeMcpConfig = getMcpServices().writeClaudeMcpConfig;
   // La clave de una cuenta por API la pone SOLO el adapter de su CLI, y solo en el hijo de esa cuenta
   // (agentEnv.ts, excepcion 2). Las de suscripcion resuelven null.
-  if (provider === 'claude') return new ClaudeAdapter(undefined, writeMcpConfig, claudeApiKeyFor, () => getSettingsStore().load().artifactEnabled);
+  if (provider === 'claude') {
+    return new ClaudeAdapter({
+      writeMcpConfig,
+      resolveApiKey: claudeApiKeyFor,
+      artifactEnabled: () => getSettingsStore().load().artifactEnabled,
+      testBaseUrl: () => process.env[TEST_ANTHROPIC_BASE_URL_ENV],
+      isPackaged: () => app.isPackaged,
+      log: mainLog,
+    });
+  }
   if (provider === AGY_PROVIDER_ID) return buildAgyAdapter();
   if (provider === CODEX_PROVIDER_ID) return buildCodexAdapter();
   throw new Error(`Proveedor sin CLI: ${JSON.stringify(provider)}`);

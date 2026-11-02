@@ -5,7 +5,7 @@ import { normalizeRawEvent } from './normalize';
 const launch = { sessionId: 's1', accountDir: '/home/u/.claude-p', model: 'haiku', cwd: '/proj' };
 
 describe('ClaudeAdapter', () => {
-  const adapter = new ClaudeAdapter(() => 'claude');
+  const adapter = new ClaudeAdapter({ resolveBinary: () => 'claude' });
 
   it('aplicaReglasDelProyectoComoPromptDeSistemaAdicional', () => {
     const plan = adapter.buildSpawnPlan({ ...launch, projectInstructions: 'Eres experto en Python' });
@@ -215,9 +215,26 @@ describe('ClaudeAdapter', () => {
     });
 
     it('buildSpawnPlan_ajusteEncendido_activaArtifact', () => {
-      const enabled = new ClaudeAdapter(() => 'claude', undefined, undefined, () => true);
+      const enabled = new ClaudeAdapter({ resolveBinary: () => 'claude', artifactEnabled: () => true });
 
       withExportedArtifact('0', () => expect(enabled.buildSpawnPlan(launch).env.CLAUDE_CODE_ARTIFACT).toBe('1'));
+    });
+
+    it('buildSpawnPlan_testBaseUrlIgnored_logsReasonWithoutKey', () => {
+      const logged: unknown[][] = [];
+      const withKey = new ClaudeAdapter({
+        resolveBinary: () => 'claude',
+        resolveApiKey: () => 'sk-ant-secreta',
+        testBaseUrl: () => 'http://127.0.0.1:4567',
+        isPackaged: () => true,
+        log: (...args) => logged.push(args),
+      });
+
+      const env = withKey.buildSpawnPlan(launch).env;
+
+      expect(logged).toEqual([['warn', 'MAGE_TEST_ANTHROPIC_BASE_URL ignorada', { reason: 'packaged' }]]);
+      expect(JSON.stringify(logged)).not.toContain('sk-ant-secreta');
+      expect(env.ANTHROPIC_BASE_URL).toBeUndefined();
     });
 
     it('buildSpawnPlan_args_includeSessionModelAndVerbose', () => {
@@ -279,13 +296,13 @@ describe('ClaudeAdapter', () => {
 
     it('buildSpawnPlan_conCompartido_escribeElMcpConfigDeLaCuentaYLoAnadeAlFinal', () => {
       const written: [string, string][] = [];
-      const withWriter = new ClaudeAdapter(
-        () => 'claude',
-        (accountDir, text) => {
+      const withWriter = new ClaudeAdapter({
+        resolveBinary: () => 'claude',
+        writeMcpConfig: (accountDir, text) => {
           written.push([accountDir, text]);
           return '/gen/claude-p.mcp.json';
         },
-      );
+      });
       const server = { name: 'db', source: 'common', onlyIn: null, extra: {}, secrets: {}, transport: 'stdio', command: 'db', args: [], env: { K: 'secreto' }, cwd: null } as const;
       const shared = { mcpServers: [server], settingsFragment: { hooks: {} }, claudeAiConnectors: true };
 
@@ -327,7 +344,7 @@ describe('ClaudeAdapter: directo (F4.1)', () => {
   const U = '0b1c2d3e-4f50-4612-8a7b-9c0d1e2f3a4b';
   const RESULT = { type: 'result', subtype: 'success', num_turns: 1 };
   const lifecycle = (state: string, uuid = U) => ({ type: 'command_lifecycle', command_uuid: uuid, state });
-  const fresh = () => new ClaudeAdapter(() => 'claude');
+  const fresh = () => new ClaudeAdapter({ resolveBinary: () => 'claude' });
 
   it('encodeSteer_uuidValido_escribeElMensajeDeUsuarioConEseUuid', () => {
     const adapter = fresh();
@@ -430,7 +447,7 @@ describe('ClaudeAdapter: directo (F4.1)', () => {
 
 describe('ClaudeAdapter: id propio del mensaje (F4.4)', () => {
   const U = '0b1c2d3e-4f50-4612-8a7b-9c0d1e2f3a4b';
-  const fresh = () => new ClaudeAdapter(() => 'claude');
+  const fresh = () => new ClaudeAdapter({ resolveBinary: () => 'claude' });
 
   it('encodeUserMessage_withUuidMessageId_addsUuid', () => {
     const payload = fresh().encodeUserMessage('hola', [], U);
@@ -452,7 +469,7 @@ describe('ClaudeAdapter: id propio del mensaje (F4.4)', () => {
 describe('ClaudeAdapter: peticiones al motor (F4.4/F4.5)', () => {
   const U1 = '0b1c2d3e-4f50-4612-8a7b-9c0d1e2f3a4b';
   const U2 = '1c2d3e4f-5061-4723-9b8c-0d1e2f3a4b5c';
-  const fresh = () => new ClaudeAdapter(() => 'claude');
+  const fresh = () => new ClaudeAdapter({ resolveBinary: () => 'claude' });
   const respond = (response: Record<string, unknown>) => ({ type: 'control_response', response });
 
   it('encodeEngineRequest_rewindConversation_buildsControlRequest', () => {
@@ -523,7 +540,7 @@ describe('ClaudeAdapter: checkpoints de ficheros y fork (T1, A2)', () => {
   const ORIGIN = '0b1c2d3e-4f50-4612-8a7b-9c0d1e2f3a4b';
   const AT = '1c2d3e4f-5061-4723-9b8c-0d1e2f3a4b5c';
   const NEW = '2d3e4f50-6172-4834-8c9d-1e2f3a4b5c6d';
-  const adapter = new ClaudeAdapter(() => 'claude');
+  const adapter = new ClaudeAdapter({ resolveBinary: () => 'claude' });
   const fork = { sessionId: ORIGIN, atUuid: AT };
   const base = { ...launch, sessionId: NEW };
 

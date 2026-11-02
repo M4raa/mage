@@ -1,5 +1,43 @@
 import { describe, expect, it } from 'vitest';
-import { BLOCKED_AGENT_ENV_VARS, scrubAgentEnv } from './agentEnv';
+import { BLOCKED_AGENT_ENV_VARS, decideTestAnthropicBaseUrl, scrubAgentEnv } from './agentEnv';
+
+describe('decideTestAnthropicBaseUrl', () => {
+  const base = { value: 'http://127.0.0.1:4567', isPackaged: false, isApiKeyAccount: true };
+
+  it('decideTestAnthropicBaseUrl_missing_none', () => {
+    expect(decideTestAnthropicBaseUrl({ ...base, value: undefined })).toEqual({ kind: 'none' });
+    expect(decideTestAnthropicBaseUrl({ ...base, value: '  ' })).toEqual({ kind: 'none' });
+  });
+
+  it('decideTestAnthropicBaseUrl_packaged_ignored', () => {
+    expect(decideTestAnthropicBaseUrl({ ...base, isPackaged: true })).toEqual({ kind: 'ignored', reason: 'packaged' });
+  });
+
+  it('decideTestAnthropicBaseUrl_remoteHost_ignoredNotLoopback', () => {
+    expect(decideTestAnthropicBaseUrl({ ...base, value: 'http://example.com:8080' })).toEqual({ kind: 'ignored', reason: 'not_loopback' });
+  });
+
+  it('decideTestAnthropicBaseUrl_https_ignoredNotLoopback', () => {
+    expect(decideTestAnthropicBaseUrl({ ...base, value: 'https://127.0.0.1:4567' })).toEqual({ kind: 'ignored', reason: 'not_loopback' });
+  });
+
+  it('decideTestAnthropicBaseUrl_garbage_ignoredNotLoopback', () => {
+    expect(decideTestAnthropicBaseUrl({ ...base, value: 'no es una url' })).toEqual({ kind: 'ignored', reason: 'not_loopback' });
+  });
+
+  it('decideTestAnthropicBaseUrl_subscription_ignoredNotApiAccount', () => {
+    expect(decideTestAnthropicBaseUrl({ ...base, isApiKeyAccount: false })).toEqual({ kind: 'ignored', reason: 'not_api_account' });
+  });
+
+  it('decideTestAnthropicBaseUrl_loopbackApiAccount_useOrigin', () => {
+    expect(decideTestAnthropicBaseUrl({ ...base, value: 'http://127.0.0.1:4567/v1/' })).toEqual({ kind: 'use', url: 'http://127.0.0.1:4567' });
+  });
+
+  it('decideTestAnthropicBaseUrl_localhostAndIpv6_use', () => {
+    expect(decideTestAnthropicBaseUrl({ ...base, value: 'http://localhost:1234' })).toEqual({ kind: 'use', url: 'http://localhost:1234' });
+    expect(decideTestAnthropicBaseUrl({ ...base, value: 'http://[::1]:1234' })).toEqual({ kind: 'use', url: 'http://[::1]:1234' });
+  });
+});
 
 describe('scrubAgentEnv', () => {
   it('scrubAgentEnv_conCredencialesDeProveedor_lasBorraTodas', () => {
