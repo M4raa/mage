@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { localized } from '@shared/i18n/localizedText';
+import { GIT_REAL_TIMEOUT_MS } from '@testing/realProcess';
 import { findRepoRootWith, type GitRunner } from './gitService';
 import { createWorktreeService, hasUserChanges, nodeWorktreeFs, type WorktreeServiceDeps } from './worktreeService';
 
@@ -79,7 +80,7 @@ const HAS_GIT = spawnSync('git', ['--version'], { windowsHide: true }).status ==
 const ID = ['-c', 'user.name=t', '-c', 'user.email=t@example.invalid', '-c', 'commit.gpgsign=false'];
 const realRun: GitRunner = async (bin, args, options) => execFileSync(bin, [...args], { cwd: options.cwd, env: options.env, encoding: 'utf8', windowsHide: true });
 
-describe.skipIf(!HAS_GIT)('createWorktreeService (git real)', () => {
+describe.skipIf(!HAS_GIT)('createWorktreeService (git real)', { timeout: GIT_REAL_TIMEOUT_MS }, () => {
   let base = '';
   afterEach(() => rmSync(base, { recursive: true, force: true }));
 
