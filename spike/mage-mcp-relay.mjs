@@ -136,7 +136,7 @@ async function main() {
   const profile = mkdtempSync(join(tmpdir(), PROFILE_PREFIX));
   const mageCommand = packaged === null
     ? { command: requireFromRepo('electron'), args: [MAIN_ENTRY, '--headless', `--user-data-dir=${profile}`] }
-    : { command: packaged.executable, args: ['--headless', '--user-data-dir', profile] };
+    : { command: packaged.executable, args: ['--headless', `--user-data-dir=${profile}`] };
   const mage = spawn(mageCommand.command, mageCommand.args, {
     stdio: 'ignore', detached: process.platform !== 'win32', windowsHide: true,
   });
