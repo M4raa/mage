@@ -116,4 +116,52 @@ describe('RewindStateStore', () => {
     expect(reopened.pendingCut(SESSION)).toBe(TARGET);
     expect(reopened.copyOrigin('copy-1')).toBe('origin-1');
   });
+
+  it('recordKeepAlive_accumulates', () => {
+    const { deps } = memoryDeps();
+    const store = new RewindStateStore(deps);
+
+    store.recordKeepAlive(SESSION, { cacheReadTokens: 100, cacheCreationTokens: 5, costMicroUsd: 40 });
+    store.recordKeepAlive(SESSION, { cacheReadTokens: 200, cacheCreationTokens: 0, costMicroUsd: 60 });
+
+    expect(store.keepAliveTotals()).toEqual({ count: 2, cacheReadTokens: 300, cacheCreationTokens: 5, costMicroUsd: 100 });
+  });
+
+  it('recordKeepAlive_nullFieldsOnlyCount', () => {
+    const { deps } = memoryDeps();
+    const store = new RewindStateStore(deps);
+
+    store.recordKeepAlive(SESSION, { cacheReadTokens: null, cacheCreationTokens: null, costMicroUsd: null });
+
+    expect(store.keepAliveTotals()).toEqual({ count: 1, cacheReadTokens: 0, cacheCreationTokens: 0, costMicroUsd: 0 });
+  });
+
+  it('recordKeepAlive_negative_throws', () => {
+    const { deps } = memoryDeps();
+    const store = new RewindStateStore(deps);
+
+    expect(() => store.recordKeepAlive(SESSION, { cacheReadTokens: -1, cacheCreationTokens: null, costMicroUsd: null })).toThrow('-1');
+    expect(() => store.recordKeepAlive(SESSION, { cacheReadTokens: null, cacheCreationTokens: null, costMicroUsd: 1.5 })).toThrow('1.5');
+    expect(store.keepAliveTotals().count).toBe(0);
+  });
+
+  it('keepAliveTotals_sumsAll', () => {
+    const { deps } = memoryDeps();
+    const store = new RewindStateStore(deps);
+
+    store.recordKeepAlive(SESSION, { cacheReadTokens: 10, cacheCreationTokens: 1, costMicroUsd: 7 });
+    store.recordKeepAlive(TARGET, { cacheReadTokens: 20, cacheCreationTokens: 2, costMicroUsd: 8 });
+
+    expect(store.keepAliveTotals()).toEqual({ count: 2, cacheReadTokens: 30, cacheCreationTokens: 3, costMicroUsd: 15 });
+  });
+
+  it('forgetThread_withKeepAlive_removesIt', () => {
+    const { deps } = memoryDeps();
+    const store = new RewindStateStore(deps);
+    store.recordKeepAlive(SESSION, { cacheReadTokens: 10, cacheCreationTokens: 1, costMicroUsd: 7 });
+
+    store.forgetThread(SESSION);
+
+    expect(store.keepAliveTotals().count).toBe(0);
+  });
 });

@@ -9,7 +9,8 @@ import { writeAtomic, type AtomicWriteDeps } from '../os/atomicFile';
 // tres cosas que Mage debe recordar entre arranques:
 //   - `pendingCuts`: el corte de un rewind de Claude que aun no tiene mensaje nuevo (sessionId -> uuid objetivo);
 //   - `forks`: de que conversacion nacio cada hijo (id nativo del hijo -> padre);
-//   - `copies`: las copias de hilos de Codex y su origen.
+//   - `copies`: las copias de hilos de Codex y su origen;
+//   - `keepAlive`: cuantos keep-alive de la cache se hicieron por conversacion de Claude y cuanto costaron (F4.6, D-K7).
 // El esquema es tolerante (`.catch`) en cada mapa; un fichero ilegible o de otra version empieza vacio y no se
 // sobrescribe hasta la primera escritura.
 
@@ -18,15 +19,29 @@ const STATE_VERSION = 1;
 const forkSchema = z.object({ parent: z.string(), provider: z.string(), atMs: z.number() });
 const copySchema = z.object({ origin: z.string(), atMs: z.number() });
 
+const COUNTER = z.number().int().nonnegative();
+const keepAliveSchema = z.object({ count: COUNTER, cacheReadTokens: COUNTER, cacheCreationTokens: COUNTER, costMicroUsd: COUNTER });
+
 const stateSchema = z.object({
   version: z.literal(STATE_VERSION),
   pendingCuts: z.record(z.string(), z.string()).catch({}),
   forks: z.record(z.string(), forkSchema).catch({}),
   copies: z.record(z.string(), copySchema).catch({}),
+  keepAlive: z.record(z.string(), keepAliveSchema).catch({}),
 });
 
 type RewindState = z.infer<typeof stateSchema>;
 export type ForkRecord = z.infer<typeof forkSchema>;
+export type KeepAliveTotals = z.infer<typeof keepAliveSchema>;
+
+// Lo que un keep-alive dejo medido; null = el `result` no lo dijo (solo suma al contador).
+export interface KeepAliveSample {
+  readonly cacheReadTokens: number | null;
+  readonly cacheCreationTokens: number | null;
+  readonly costMicroUsd: number | null;
+}
+
+const SAMPLE_FIELDS = ['cacheReadTokens', 'cacheCreationTokens', 'costMicroUsd'] as const;
 
 export interface RewindStateStoreDeps extends AtomicWriteDeps {
   readonly filePath: string;
@@ -34,7 +49,7 @@ export interface RewindStateStoreDeps extends AtomicWriteDeps {
 }
 
 function emptyState(): RewindState {
-  return { version: STATE_VERSION, pendingCuts: {}, forks: {}, copies: {} };
+  return { version: STATE_VERSION, pendingCuts: {}, forks: {}, copies: {}, keepAlive: {} };
 }
 
 function requireId(value: string, label: string): void {
@@ -43,6 +58,11 @@ function requireId(value: string, label: string): void {
 
 function requireUuid(value: string, label: string): void {
   if (typeof value !== 'string' || !isUuid(value)) throw new Error(`${label} no es un uuid: ${JSON.stringify(value)}`);
+}
+
+function requireCounter(value: number | null, label: string): void {
+  if (value === null) return;
+  if (!Number.isInteger(value) || value < 0) throw new Error(`${label} no es un entero >= 0: ${value}`);
 }
 
 export class RewindStateStore {
@@ -103,12 +123,39 @@ export class RewindStateStore {
     return this.load().copies[threadId]?.origin ?? null;
   }
 
-  // Quita el hilo de los tres mapas (al borrarlo). Sin rastro, no escribe.
+  // Suma un keep-alive a la conversacion: +1 al contador y cada medida que no sea null. Enteros >= 0 o lanza.
+  recordKeepAlive(sessionId: string, sample: KeepAliveSample): void {
+    requireId(sessionId, 'sessionId');
+    for (const field of SAMPLE_FIELDS) requireCounter(sample[field], field);
+    const state = this.load();
+    const entry = state.keepAlive[sessionId] ?? { count: 0, cacheReadTokens: 0, cacheCreationTokens: 0, costMicroUsd: 0 };
+    state.keepAlive[sessionId] = {
+      count: entry.count + 1,
+      cacheReadTokens: entry.cacheReadTokens + (sample.cacheReadTokens ?? 0),
+      cacheCreationTokens: entry.cacheCreationTokens + (sample.cacheCreationTokens ?? 0),
+      costMicroUsd: entry.costMicroUsd + (sample.costMicroUsd ?? 0),
+    };
+    this.persist(state);
+  }
+
+  // La suma de todas las conversaciones.
+  keepAliveTotals(): KeepAliveTotals {
+    const total: KeepAliveTotals = { count: 0, cacheReadTokens: 0, cacheCreationTokens: 0, costMicroUsd: 0 };
+    return Object.values(this.load().keepAlive).reduce((acc, e) => ({
+      count: acc.count + e.count,
+      cacheReadTokens: acc.cacheReadTokens + e.cacheReadTokens,
+      cacheCreationTokens: acc.cacheCreationTokens + e.cacheCreationTokens,
+      costMicroUsd: acc.costMicroUsd + e.costMicroUsd,
+    }), total);
+  }
+
+  // Quita el hilo de los cuatro mapas (al borrarlo). Sin rastro, no escribe.
   forgetThread(threadId: string): void {
     requireId(threadId, 'threadId');
     const state = this.load();
-    const found = threadId in state.copies || threadId in state.forks || threadId in state.pendingCuts;
+    const found = threadId in state.copies || threadId in state.forks || threadId in state.pendingCuts || threadId in state.keepAlive;
     if (!found) return;
+    delete state.keepAlive[threadId];
     delete state.copies[threadId];
     delete state.forks[threadId];
     delete state.pendingCuts[threadId];
