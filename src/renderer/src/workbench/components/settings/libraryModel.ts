@@ -46,45 +46,45 @@ export function selectedAccount(view: LibraryView, accountDir: string | null): L
   return chosen ?? view.accounts[0] ?? null;
 }
 
-const BLOCK_KEYS: Record<LibraryBlock, MessageKey> = {
+const BLOCK_KEYS = {
   engineNotDeclared: 'library.block.engineNotDeclared',
   platformUnsupported: 'library.block.platformUnsupported',
   needsSecrets: 'library.block.needsSecrets',
   kindNotInstallable: 'library.block.kindNotInstallable',
   codexSkillsUnmeasured: 'library.block.codexSkillsUnmeasured',
-};
-const RESULT_KEYS: Record<LibraryActionResult['status'], MessageKey> = {
+} as const satisfies Record<LibraryBlock, MessageKey>;
+const RESULT_KEYS = {
   done: 'library.result.done',
   collision: 'library.result.collision',
   modifiedByUser: 'library.result.modifiedByUser',
   rolledBack: 'library.result.rolledBack',
-};
-const KIND_KEYS: Record<LibraryKind, MessageKey> = {
+} as const satisfies Record<LibraryActionResult['status'], MessageKey>;
+const KIND_KEYS = {
   skill: 'library.kind.skill',
   agent: 'library.kind.agent',
   mcp: 'library.kind.mcp',
   hook: 'library.kind.hook',
   plugin: 'library.kind.plugin',
-};
-const COMPONENT_KEYS: Record<LibraryComponentView['kind'], MessageKey> = {
+} as const satisfies Record<LibraryKind, MessageKey>;
+const COMPONENT_KEYS = {
   skill: 'library.component.skill',
   agent: 'library.component.agent',
   command: 'library.component.command',
   hook: 'library.component.hook',
   mcp: 'library.component.mcp',
   plugin: 'library.component.plugin',
-};
-const PLATFORM_KEYS: Readonly<Record<string, MessageKey>> = {
+} as const satisfies Record<LibraryComponentView['kind'], MessageKey>;
+const PLATFORM_KEYS: Readonly<Record<string, 'library.platform.win32' | 'library.platform.darwin' | 'library.platform.linux'>> = {
   win32: 'library.platform.win32',
   darwin: 'library.platform.darwin',
   linux: 'library.platform.linux',
 };
 
-export const blockKey = (block: LibraryBlock): MessageKey => BLOCK_KEYS[block];
-export const resultKey = (result: LibraryActionResult): MessageKey => RESULT_KEYS[result.status];
-export const kindKey = (kind: LibraryKind): MessageKey => KIND_KEYS[kind];
-export const componentKey = (kind: LibraryComponentView['kind']): MessageKey => COMPONENT_KEYS[kind];
-export const platformKey = (platform: string): MessageKey | null => PLATFORM_KEYS[platform] ?? null;
+export const blockKey = (block: LibraryBlock) => BLOCK_KEYS[block];
+export const resultKey = (result: LibraryActionResult) => RESULT_KEYS[result.status];
+export const kindKey = (kind: LibraryKind) => KIND_KEYS[kind];
+export const componentKey = (kind: LibraryComponentView['kind']) => COMPONENT_KEYS[kind];
+export const platformKey = (platform: string) => PLATFORM_KEYS[platform] ?? null;
 
 export function shortCommit(commit: string | null): string | null {
   return commit === null ? null : commit.slice(0, COMMIT_PREFIX_LENGTH);
