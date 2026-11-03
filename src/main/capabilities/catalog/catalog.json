@@ -1,0 +1,839 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "title": "tdd-workflow",
+      "summary": "Test-driven development workflow: write a failing test first, watch it fail, implement the smallest change to green, then refactor with 80%+ coverage across unit, integration, and E2E tests. Use when writing a new feature, fixing a bug, refactoring, or when told to write failing tests first.",
+      "publisher": "ECC (Affaan Mustafa)",
+      "provenance": {
+        "repo": "https://github.com/affaan-m/ECC",
+        "ref": "v2.2.3",
+        "commit": "c05b2d6614f62f6db0047669aa4eefb223d478f9",
+        "path": "skills/tdd-workflow",
+        "retrievedAt": "2026-11-03"
+      },
+      "license": {
+        "spdx": "MIT",
+        "url": "https://github.com/affaan-m/ECC/blob/c05b2d6614f62f6db0047669aa4eefb223d478f9/LICENSE"
+      },
+      "distribution": "copied",
+      "platforms": [
+        "win32",
+        "darwin",
+        "linux"
+      ],
+      "scopes": [
+        "user",
+        "project"
+      ],
+      "runsCode": false,
+      "components": [
+        {
+          "engine": "both",
+          "kind": "skill",
+          "count": 1
+        }
+      ],
+      "contentPrefix": "skills/tdd-workflow/",
+      "package": {
+        "id": "ecc-tdd-workflow",
+        "version": "2.2.3",
+        "source": {
+          "url": "https://github.com/affaan-m/ECC/tree/c05b2d6614f62f6db0047669aa4eefb223d478f9/skills/tdd-workflow",
+          "sha256": "8887afa786ef30de834e7567115d3df71934b343c3d9d849714f8ea43f979ee0"
+        },
+        "license": "MIT",
+        "kind": "skill",
+        "engines": [
+          "claude",
+          "codex"
+        ],
+        "files": [
+          {
+            "relPath": "SKILL.md",
+            "sha256": "8887afa786ef30de834e7567115d3df71934b343c3d9d849714f8ea43f979ee0"
+          },
+          {
+            "relPath": "LICENSE",
+            "sha256": "326146379f01bb137c0a5d3c54770c1aa31076705c8b88a7f6b26a460f6221b2"
+          }
+        ],
+        "requires": {}
+      }
+    },
+    {
+      "title": "security-review",
+      "summary": "Use this skill when adding authentication, handling user input, working with secrets, creating API endpoints, or implementing payment/sensitive features. Provides comprehensive security checklist and patterns.",
+      "publisher": "ECC (Affaan Mustafa)",
+      "provenance": {
+        "repo": "https://github.com/affaan-m/ECC",
+        "ref": "v2.2.3",
+        "commit": "c05b2d6614f62f6db0047669aa4eefb223d478f9",
+        "path": "skills/security-review",
+        "retrievedAt": "2026-11-03"
+      },
+      "license": {
+        "spdx": "MIT",
+        "url": "https://github.com/affaan-m/ECC/blob/c05b2d6614f62f6db0047669aa4eefb223d478f9/LICENSE"
+      },
+      "distribution": "copied",
+      "platforms": [
+        "win32",
+        "darwin",
+        "linux"
+      ],
+      "scopes": [
+        "user",
+        "project"
+      ],
+      "runsCode": false,
+      "components": [
+        {
+          "engine": "both",
+          "kind": "skill",
+          "count": 1
+        }
+      ],
+      "contentPrefix": "skills/security-review/",
+      "package": {
+        "id": "ecc-security-review",
+        "version": "2.2.3",
+        "source": {
+          "url": "https://github.com/affaan-m/ECC/tree/c05b2d6614f62f6db0047669aa4eefb223d478f9/skills/security-review",
+          "sha256": "b9eb6416eebc8dda046674f0a2dbb3be88aff526d182b60a0f55998d3d6d0d8d"
+        },
+        "license": "MIT",
+        "kind": "skill",
+        "engines": [
+          "claude",
+          "codex"
+        ],
+        "files": [
+          {
+            "relPath": "SKILL.md",
+            "sha256": "b9eb6416eebc8dda046674f0a2dbb3be88aff526d182b60a0f55998d3d6d0d8d"
+          },
+          {
+            "relPath": "cloud-infrastructure-security.md",
+            "sha256": "7d9a83852475a9396e04c59c73df84ac24ee0f41322016de7c11c62138c2a8ca"
+          },
+          {
+            "relPath": "LICENSE",
+            "sha256": "326146379f01bb137c0a5d3c54770c1aa31076705c8b88a7f6b26a460f6221b2"
+          }
+        ],
+        "requires": {}
+      }
+    },
+    {
+      "title": "verification-loop",
+      "summary": "Run a six-phase verification of a Claude Code session's work — build, type check, lint, tests with coverage, security grep, and diff review — then produce a PASS/FAIL verification report. Use when verifying work after completing a feature or refactor, before creating a PR, or when quality gates must pass.",
+      "publisher": "ECC (Affaan Mustafa)",
+      "provenance": {
+        "repo": "https://github.com/affaan-m/ECC",
+        "ref": "v2.2.3",
+        "commit": "c05b2d6614f62f6db0047669aa4eefb223d478f9",
+        "path": "skills/verification-loop",
+        "retrievedAt": "2026-11-03"
+      },
+      "license": {
+        "spdx": "MIT",
+        "url": "https://github.com/affaan-m/ECC/blob/c05b2d6614f62f6db0047669aa4eefb223d478f9/LICENSE"
+      },
+      "distribution": "copied",
+      "platforms": [
+        "win32",
+        "darwin",
+        "linux"
+      ],
+      "scopes": [
+        "user",
+        "project"
+      ],
+      "runsCode": false,
+      "components": [
+        {
+          "engine": "both",
+          "kind": "skill",
+          "count": 1
+        }
+      ],
+      "contentPrefix": "skills/verification-loop/",
+      "package": {
+        "id": "ecc-verification-loop",
+        "version": "2.2.3",
+        "source": {
+          "url": "https://github.com/affaan-m/ECC/tree/c05b2d6614f62f6db0047669aa4eefb223d478f9/skills/verification-loop",
+          "sha256": "503aebee7d414f559c4874600081a40b1e7aea269b58073c5c9660c6641b00a0"
+        },
+        "license": "MIT",
+        "kind": "skill",
+        "engines": [
+          "claude",
+          "codex"
+        ],
+        "files": [
+          {
+            "relPath": "SKILL.md",
+            "sha256": "503aebee7d414f559c4874600081a40b1e7aea269b58073c5c9660c6641b00a0"
+          },
+          {
+            "relPath": "LICENSE",
+            "sha256": "326146379f01bb137c0a5d3c54770c1aa31076705c8b88a7f6b26a460f6221b2"
+          }
+        ],
+        "requires": {}
+      }
+    },
+    {
+      "title": "architecture-decision-records",
+      "summary": "Capture architectural decisions as numbered ADR markdown files in docs/adr/ with context, alternatives considered, consequences, and an index README. Use when the user says 'record this decision' or 'ADR this', chooses between frameworks or databases, discusses trade-offs, or asks why the codebase is shaped this way.",
+      "publisher": "ECC (Affaan Mustafa)",
+      "provenance": {
+        "repo": "https://github.com/affaan-m/ECC",
+        "ref": "v2.2.3",
+        "commit": "c05b2d6614f62f6db0047669aa4eefb223d478f9",
+        "path": "skills/architecture-decision-records",
+        "retrievedAt": "2026-11-03"
+      },
+      "license": {
+        "spdx": "MIT",
+        "url": "https://github.com/affaan-m/ECC/blob/c05b2d6614f62f6db0047669aa4eefb223d478f9/LICENSE"
+      },
+      "distribution": "copied",
+      "platforms": [
+        "win32",
+        "darwin",
+        "linux"
+      ],
+      "scopes": [
+        "user",
+        "project"
+      ],
+      "runsCode": false,
+      "components": [
+        {
+          "engine": "both",
+          "kind": "skill",
+          "count": 1
+        }
+      ],
+      "contentPrefix": "skills/architecture-decision-records/",
+      "package": {
+        "id": "ecc-architecture-decision-records",
+        "version": "2.2.3",
+        "source": {
+          "url": "https://github.com/affaan-m/ECC/tree/c05b2d6614f62f6db0047669aa4eefb223d478f9/skills/architecture-decision-records",
+          "sha256": "263b20e81801aa5fa7e75eaec6c38345c0ac028ca0edbd67b1b9071c5fcbe11f"
+        },
+        "license": "MIT",
+        "kind": "skill",
+        "engines": [
+          "claude",
+          "codex"
+        ],
+        "files": [
+          {
+            "relPath": "SKILL.md",
+            "sha256": "263b20e81801aa5fa7e75eaec6c38345c0ac028ca0edbd67b1b9071c5fcbe11f"
+          },
+          {
+            "relPath": "LICENSE",
+            "sha256": "326146379f01bb137c0a5d3c54770c1aa31076705c8b88a7f6b26a460f6221b2"
+          }
+        ],
+        "requires": {}
+      }
+    },
+    {
+      "title": "codebase-onboarding",
+      "summary": "Analyze an unfamiliar codebase and generate a structured onboarding guide with architecture map, key entry points, conventions, and a starter CLAUDE.md. Use when joining a new project or setting up Claude Code for the first time in a repo.",
+      "publisher": "ECC (Affaan Mustafa)",
+      "provenance": {
+        "repo": "https://github.com/affaan-m/ECC",
+        "ref": "v2.2.3",
+        "commit": "c05b2d6614f62f6db0047669aa4eefb223d478f9",
+        "path": "skills/codebase-onboarding",
+        "retrievedAt": "2026-11-03"
+      },
+      "license": {
+        "spdx": "MIT",
+        "url": "https://github.com/affaan-m/ECC/blob/c05b2d6614f62f6db0047669aa4eefb223d478f9/LICENSE"
+      },
+      "distribution": "copied",
+      "platforms": [
+        "win32",
+        "darwin",
+        "linux"
+      ],
+      "scopes": [
+        "user",
+        "project"
+      ],
+      "runsCode": false,
+      "components": [
+        {
+          "engine": "both",
+          "kind": "skill",
+          "count": 1
+        }
+      ],
+      "contentPrefix": "skills/codebase-onboarding/",
+      "package": {
+        "id": "ecc-codebase-onboarding",
+        "version": "2.2.3",
+        "source": {
+          "url": "https://github.com/affaan-m/ECC/tree/c05b2d6614f62f6db0047669aa4eefb223d478f9/skills/codebase-onboarding",
+          "sha256": "ef88873a4b0d0fe155c0a196ffecd5c7b5e28edd00fbbdb5c1fd2ca8fd0eb6f0"
+        },
+        "license": "MIT",
+        "kind": "skill",
+        "engines": [
+          "claude",
+          "codex"
+        ],
+        "files": [
+          {
+            "relPath": "SKILL.md",
+            "sha256": "ef88873a4b0d0fe155c0a196ffecd5c7b5e28edd00fbbdb5c1fd2ca8fd0eb6f0"
+          },
+          {
+            "relPath": "LICENSE",
+            "sha256": "326146379f01bb137c0a5d3c54770c1aa31076705c8b88a7f6b26a460f6221b2"
+          }
+        ],
+        "requires": {}
+      }
+    },
+    {
+      "title": "git-workflow",
+      "summary": "Git workflow patterns including branching strategies, commit conventions, keeping history clean and readable, tidying local commits before merging, merge vs rebase, conflict resolution, and collaborative development best practices for teams of all sizes. Use when choosing a branching strategy, writing commit conventions, cleaning up history before a pull request, deciding merge versus rebase, or resolving conflicts.",
+      "publisher": "ECC (Affaan Mustafa)",
+      "provenance": {
+        "repo": "https://github.com/affaan-m/ECC",
+        "ref": "v2.2.3",
+        "commit": "c05b2d6614f62f6db0047669aa4eefb223d478f9",
+        "path": "skills/git-workflow",
+        "retrievedAt": "2026-11-03"
+      },
+      "license": {
+        "spdx": "MIT",
+        "url": "https://github.com/affaan-m/ECC/blob/c05b2d6614f62f6db0047669aa4eefb223d478f9/LICENSE"
+      },
+      "distribution": "copied",
+      "platforms": [
+        "win32",
+        "darwin",
+        "linux"
+      ],
+      "scopes": [
+        "user",
+        "project"
+      ],
+      "runsCode": false,
+      "components": [
+        {
+          "engine": "both",
+          "kind": "skill",
+          "count": 1
+        }
+      ],
+      "contentPrefix": "skills/git-workflow/",
+      "package": {
+        "id": "ecc-git-workflow",
+        "version": "2.2.3",
+        "source": {
+          "url": "https://github.com/affaan-m/ECC/tree/c05b2d6614f62f6db0047669aa4eefb223d478f9/skills/git-workflow",
+          "sha256": "7094ab94802d7e839dc33c6ea230020327260518b1b1ce62b42d56d051c1d7c5"
+        },
+        "license": "MIT",
+        "kind": "skill",
+        "engines": [
+          "claude",
+          "codex"
+        ],
+        "files": [
+          {
+            "relPath": "SKILL.md",
+            "sha256": "7094ab94802d7e839dc33c6ea230020327260518b1b1ce62b42d56d051c1d7c5"
+          },
+          {
+            "relPath": "LICENSE",
+            "sha256": "326146379f01bb137c0a5d3c54770c1aa31076705c8b88a7f6b26a460f6221b2"
+          }
+        ],
+        "requires": {}
+      }
+    },
+    {
+      "title": "market-research",
+      "summary": "Conduct market research, competitive analysis, investor due diligence, and industry intelligence with source attribution and decision-oriented summaries. Use when the user wants market sizing, competitor comparisons, fund research, technology scans, or research that informs business decisions.",
+      "publisher": "ECC (Affaan Mustafa)",
+      "provenance": {
+        "repo": "https://github.com/affaan-m/ECC",
+        "ref": "v2.2.3",
+        "commit": "c05b2d6614f62f6db0047669aa4eefb223d478f9",
+        "path": "skills/market-research",
+        "retrievedAt": "2026-11-03"
+      },
+      "license": {
+        "spdx": "MIT",
+        "url": "https://github.com/affaan-m/ECC/blob/c05b2d6614f62f6db0047669aa4eefb223d478f9/LICENSE"
+      },
+      "distribution": "copied",
+      "platforms": [
+        "win32",
+        "darwin",
+        "linux"
+      ],
+      "scopes": [
+        "user",
+        "project"
+      ],
+      "runsCode": false,
+      "components": [
+        {
+          "engine": "both",
+          "kind": "skill",
+          "count": 1
+        }
+      ],
+      "contentPrefix": "skills/market-research/",
+      "package": {
+        "id": "ecc-market-research",
+        "version": "2.2.3",
+        "source": {
+          "url": "https://github.com/affaan-m/ECC/tree/c05b2d6614f62f6db0047669aa4eefb223d478f9/skills/market-research",
+          "sha256": "8cfc36dc8a93476d092115f3fc70c631dcab14fcd6e04371160fc4fb29547800"
+        },
+        "license": "MIT",
+        "kind": "skill",
+        "engines": [
+          "claude",
+          "codex"
+        ],
+        "files": [
+          {
+            "relPath": "SKILL.md",
+            "sha256": "8cfc36dc8a93476d092115f3fc70c631dcab14fcd6e04371160fc4fb29547800"
+          },
+          {
+            "relPath": "LICENSE",
+            "sha256": "326146379f01bb137c0a5d3c54770c1aa31076705c8b88a7f6b26a460f6221b2"
+          }
+        ],
+        "requires": {}
+      }
+    },
+    {
+      "title": "article-writing",
+      "summary": "Write articles, guides, blog posts, tutorials, newsletter issues, and other long-form content in a distinctive voice derived from supplied examples or brand guidance. Use when the user wants polished written content longer than a paragraph, especially when voice consistency, structure, and credibility matter.",
+      "publisher": "ECC (Affaan Mustafa)",
+      "provenance": {
+        "repo": "https://github.com/affaan-m/ECC",
+        "ref": "v2.2.3",
+        "commit": "c05b2d6614f62f6db0047669aa4eefb223d478f9",
+        "path": "skills/article-writing",
+        "retrievedAt": "2026-11-03"
+      },
+      "license": {
+        "spdx": "MIT",
+        "url": "https://github.com/affaan-m/ECC/blob/c05b2d6614f62f6db0047669aa4eefb223d478f9/LICENSE"
+      },
+      "distribution": "copied",
+      "platforms": [
+        "win32",
+        "darwin",
+        "linux"
+      ],
+      "scopes": [
+        "user",
+        "project"
+      ],
+      "runsCode": false,
+      "components": [
+        {
+          "engine": "both",
+          "kind": "skill",
+          "count": 1
+        }
+      ],
+      "contentPrefix": "skills/article-writing/",
+      "package": {
+        "id": "ecc-article-writing",
+        "version": "2.2.3",
+        "source": {
+          "url": "https://github.com/affaan-m/ECC/tree/c05b2d6614f62f6db0047669aa4eefb223d478f9/skills/article-writing",
+          "sha256": "4aa61709450a2148ef4036896d870da748e93ad68528bb7679b74f3597ffb021"
+        },
+        "license": "MIT",
+        "kind": "skill",
+        "engines": [
+          "claude",
+          "codex"
+        ],
+        "files": [
+          {
+            "relPath": "SKILL.md",
+            "sha256": "4aa61709450a2148ef4036896d870da748e93ad68528bb7679b74f3597ffb021"
+          },
+          {
+            "relPath": "LICENSE",
+            "sha256": "326146379f01bb137c0a5d3c54770c1aa31076705c8b88a7f6b26a460f6221b2"
+          }
+        ],
+        "requires": {}
+      }
+    },
+    {
+      "title": "research-ops",
+      "summary": "Evidence-first current-state research workflow for ECC. Use when the user wants fresh facts, comparisons, enrichment, or a recommendation built from current public evidence and any supplied local context.",
+      "publisher": "ECC (Affaan Mustafa)",
+      "provenance": {
+        "repo": "https://github.com/affaan-m/ECC",
+        "ref": "v2.2.3",
+        "commit": "c05b2d6614f62f6db0047669aa4eefb223d478f9",
+        "path": "skills/research-ops",
+        "retrievedAt": "2026-11-03"
+      },
+      "license": {
+        "spdx": "MIT",
+        "url": "https://github.com/affaan-m/ECC/blob/c05b2d6614f62f6db0047669aa4eefb223d478f9/LICENSE"
+      },
+      "distribution": "copied",
+      "platforms": [
+        "win32",
+        "darwin",
+        "linux"
+      ],
+      "scopes": [
+        "user",
+        "project"
+      ],
+      "runsCode": false,
+      "components": [
+        {
+          "engine": "both",
+          "kind": "skill",
+          "count": 1
+        }
+      ],
+      "contentPrefix": "skills/research-ops/",
+      "package": {
+        "id": "ecc-research-ops",
+        "version": "2.2.3",
+        "source": {
+          "url": "https://github.com/affaan-m/ECC/tree/c05b2d6614f62f6db0047669aa4eefb223d478f9/skills/research-ops",
+          "sha256": "114d0e5480ce3ad263316c639ce0c401396e1d9fbec3cf15b3c962ae16f376db"
+        },
+        "license": "MIT",
+        "kind": "skill",
+        "engines": [
+          "claude",
+          "codex"
+        ],
+        "files": [
+          {
+            "relPath": "SKILL.md",
+            "sha256": "114d0e5480ce3ad263316c639ce0c401396e1d9fbec3cf15b3c962ae16f376db"
+          },
+          {
+            "relPath": "LICENSE",
+            "sha256": "326146379f01bb137c0a5d3c54770c1aa31076705c8b88a7f6b26a460f6221b2"
+          }
+        ],
+        "requires": {}
+      }
+    },
+    {
+      "title": "ECC",
+      "summary": "Harness-native ECC plugin for engineering teams - 68 agents, 293 skills, 94 legacy command shims, reusable hooks, rules, MCP conventions, and operator workflows for Claude Code plus adjacent agent harnesses",
+      "publisher": "ECC (Affaan Mustafa)",
+      "provenance": {
+        "repo": "https://github.com/affaan-m/ECC",
+        "ref": "v2.2.3",
+        "commit": "c05b2d6614f62f6db0047669aa4eefb223d478f9",
+        "path": ".claude-plugin/plugin.json",
+        "retrievedAt": "2026-11-03"
+      },
+      "license": {
+        "spdx": "MIT",
+        "url": "https://github.com/affaan-m/ECC/blob/c05b2d6614f62f6db0047669aa4eefb223d478f9/LICENSE"
+      },
+      "distribution": "linked",
+      "platforms": [
+        "win32",
+        "darwin",
+        "linux"
+      ],
+      "scopes": [
+        "user",
+        "project"
+      ],
+      "runsCode": true,
+      "components": [
+        {
+          "engine": "claude",
+          "kind": "skill",
+          "count": 293
+        },
+        {
+          "engine": "claude",
+          "kind": "agent",
+          "count": 68
+        },
+        {
+          "engine": "claude",
+          "kind": "command",
+          "count": 94
+        },
+        {
+          "engine": "claude",
+          "kind": "hook",
+          "names": [
+            "hooks/hooks.json"
+          ]
+        },
+        {
+          "engine": "codex",
+          "kind": "skill",
+          "count": 293
+        },
+        {
+          "engine": "codex",
+          "kind": "mcp",
+          "names": [
+            "chrome-devtools"
+          ]
+        },
+        {
+          "engine": "codex",
+          "kind": "hook",
+          "names": [
+            "hooks/codex-hooks.json"
+          ]
+        }
+      ],
+      "package": {
+        "id": "ecc",
+        "version": "2.2.3",
+        "source": {
+          "url": "https://github.com/affaan-m/ECC/tree/v2.2.3",
+          "sha256": "6f05156aa6d7e5db31aff7411c00dbd89b4723dafc3f9eaab0897e79b3546eed"
+        },
+        "license": "MIT",
+        "kind": "plugin",
+        "engines": [
+          "claude",
+          "codex"
+        ],
+        "files": [],
+        "requires": {},
+        "native": {
+          "type": "plugin",
+          "name": "ecc",
+          "marketplace": {
+            "name": "ecc",
+            "source": "https://github.com/affaan-m/ECC.git",
+            "ref": "v2.2.3"
+          }
+        }
+      }
+    },
+    {
+      "title": "Context7",
+      "summary": "Up-to-date library and framework documentation for the model, fetched from Context7 instead of training data.",
+      "publisher": "Upstash",
+      "provenance": {
+        "repo": "https://github.com/upstash/context7",
+        "ref": "@upstash/context7-mcp@4.4.2",
+        "retrievedAt": "2026-11-03"
+      },
+      "license": {
+        "spdx": "MIT",
+        "url": "https://github.com/upstash/context7/blob/master/LICENSE"
+      },
+      "distribution": "linked",
+      "platforms": [
+        "win32",
+        "darwin",
+        "linux"
+      ],
+      "scopes": [
+        "user",
+        "project"
+      ],
+      "runsCode": true,
+      "components": [
+        {
+          "engine": "both",
+          "kind": "mcp",
+          "names": [
+            "context7"
+          ]
+        }
+      ],
+      "package": {
+        "id": "context7",
+        "version": "4.4.2",
+        "source": {
+          "url": "https://registry.npmjs.org/@upstash/context7-mcp/-/context7-mcp-4.4.2.tgz",
+          "sha256": "aaaa96e8b6fbeb63f496ef560f0dd96c6774a6a97580378d53ab63ccc5850d2e"
+        },
+        "license": "MIT",
+        "kind": "mcp",
+        "engines": [
+          "claude",
+          "codex"
+        ],
+        "files": [],
+        "requires": {
+          "commands": [
+            "npx"
+          ]
+        },
+        "native": {
+          "type": "mcpStdio",
+          "name": "context7",
+          "command": "npx",
+          "args": [
+            "-y",
+            "@upstash/context7-mcp@4.4.2"
+          ]
+        }
+      }
+    },
+    {
+      "title": "Exa",
+      "summary": "Web search and page retrieval through the Exa API.",
+      "publisher": "Exa Labs",
+      "provenance": {
+        "repo": "https://github.com/exa-labs/exa-mcp-server",
+        "ref": "exa-mcp-server@3.4.3",
+        "retrievedAt": "2026-11-03"
+      },
+      "license": {
+        "spdx": "MIT",
+        "url": "https://github.com/exa-labs/exa-mcp-server/blob/main/LICENSE"
+      },
+      "distribution": "linked",
+      "platforms": [
+        "win32",
+        "darwin",
+        "linux"
+      ],
+      "scopes": [
+        "user",
+        "project"
+      ],
+      "runsCode": true,
+      "components": [
+        {
+          "engine": "both",
+          "kind": "mcp",
+          "names": [
+            "exa"
+          ]
+        }
+      ],
+      "package": {
+        "id": "exa-mcp",
+        "version": "3.4.3",
+        "source": {
+          "url": "https://registry.npmjs.org/exa-mcp-server/-/exa-mcp-server-3.4.3.tgz",
+          "sha256": "b6366fc84097732847096e48d2118864310738d380aabf4f37d308f14f48f81f"
+        },
+        "license": "MIT",
+        "kind": "mcp",
+        "engines": [
+          "claude",
+          "codex"
+        ],
+        "files": [],
+        "requires": {
+          "commands": [
+            "npx"
+          ],
+          "secrets": [
+            "EXA_API_KEY"
+          ]
+        },
+        "native": {
+          "type": "mcpStdio",
+          "name": "exa",
+          "command": "npx",
+          "args": [
+            "-y",
+            "exa-mcp-server@3.4.3"
+          ]
+        }
+      }
+    },
+    {
+      "title": "Firecrawl",
+      "summary": "Web scraping, crawling and search through the Firecrawl API.",
+      "publisher": "Firecrawl",
+      "provenance": {
+        "repo": "https://github.com/firecrawl/firecrawl-mcp-server",
+        "ref": "firecrawl-mcp@3.36.0",
+        "retrievedAt": "2026-11-03"
+      },
+      "license": {
+        "spdx": "MIT",
+        "url": "https://github.com/firecrawl/firecrawl-mcp-server/blob/main/LICENSE"
+      },
+      "distribution": "linked",
+      "platforms": [
+        "win32",
+        "darwin",
+        "linux"
+      ],
+      "scopes": [
+        "user",
+        "project"
+      ],
+      "runsCode": true,
+      "components": [
+        {
+          "engine": "both",
+          "kind": "mcp",
+          "names": [
+            "firecrawl"
+          ]
+        }
+      ],
+      "package": {
+        "id": "firecrawl-mcp",
+        "version": "3.36.0",
+        "source": {
+          "url": "https://registry.npmjs.org/firecrawl-mcp/-/firecrawl-mcp-3.36.0.tgz",
+          "sha256": "300d46120ee53f550899e2ecab194ed706c9996af0a71d1ad5260a6241d771a5"
+        },
+        "license": "MIT",
+        "kind": "mcp",
+        "engines": [
+          "claude",
+          "codex"
+        ],
+        "files": [],
+        "requires": {
+          "commands": [
+            "npx"
+          ],
+          "secrets": [
+            "FIRECRAWL_API_KEY"
+          ]
+        },
+        "native": {
+          "type": "mcpStdio",
+          "name": "firecrawl",
+          "command": "npx",
+          "args": [
+            "-y",
+            "firecrawl-mcp@3.36.0"
+          ]
+        }
+      }
+    }
+  ]
+}

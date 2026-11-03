@@ -16,6 +16,10 @@ export interface NativeCommand {
   readonly args: readonly string[];
 }
 
+export function configDirEnvVar(engine: CapabilityEngine): 'CLAUDE_CONFIG_DIR' | 'CODEX_HOME' {
+  return engine === 'claude' ? 'CLAUDE_CONFIG_DIR' : 'CODEX_HOME';
+}
+
 const USER_SCOPE = ['--scope', 'user'] as const;
 
 type ArgsList = readonly (readonly string[])[];
