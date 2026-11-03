@@ -16,6 +16,10 @@ export interface WidgetAgent {
   readonly accountAlias: string;
   readonly accentBase: string; // color de acento (puede ser un var(--mg-accent-*) de index.css)
   readonly status: WidgetAgentStatus;
+  // Sesión viva de Mage de la pestaña; ausente si aún no tiene.
+  readonly sessionId?: string;
+  // La conversación la tiene otra instancia de Mage (#55): solo lectura.
+  readonly readOnly?: boolean;
 }
 
 // Ventana de uso en el widget (forma minima compartida; equivale a UsageWindow del renderer).

@@ -940,7 +940,7 @@ function pushWidgetSnapshotNow(mage: MageClient, state: WorkbenchState): void {
   const resolved = active !== null ? active.type : resolveTheme(state.settings.theme, systemPrefersDark());
   mage.pushWidgetSnapshot(
     toWidgetSnapshot(
-      { tabs: state.tabs, accounts: state.accounts, activeAccountId: state.activeAccountId, statusByChat: state.statusByChat },
+      { tabs: state.tabs, accounts: state.accounts, activeAccountId: state.activeAccountId, statusByChat: state.statusByChat, sessionIdByChat: state.sessionIdByChat, lockByChat: state.lockByChat },
       resolved,
       active?.tokens,
     ),
