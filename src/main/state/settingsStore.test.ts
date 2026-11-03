@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { DEFAULT_APP_SETTINGS } from '@shared/settings';
+import { DEFAULT_APP_SETTINGS, DEFAULT_KEEP_ALIVE } from '@shared/settings';
 import type { AppSettings } from '@shared/settings';
 import { SettingsStore, type SettingsStoreDeps } from './settingsStore';
 
@@ -37,6 +37,7 @@ const VALID: AppSettings = {
   agyLinkedPaths: ['.aws'],
   runtimeShell: 'powershell',
   runtimeToolAccess: { 'custom:lm': [{ model: '*', allow: null, deny: ['Bash'] }] },
+  keepAlive: { subscriptionEnabled: false, apiKeyEnabled: true, minContextTokens: 50_000, maxPauseHours: 4 },
 };
 
 function deps(overrides: Partial<SettingsStoreDeps> = {}): SettingsStoreDeps {
@@ -104,6 +105,20 @@ describe('SettingsStore.load', () => {
     const { accentByAccount: _ausente, ...previo } = VALID;
 
     expect(new SettingsStore(deps({ readFile: () => JSON.stringify(previo) })).load().accentByAccount).toEqual({});
+  });
+
+  it('settingsStore_legacyFileWithoutKeepAlive_loadsDefaults', () => {
+    const { keepAlive: _omitted, ...legacy } = VALID;
+
+    expect(new SettingsStore(deps({ readFile: () => JSON.stringify(legacy) })).load().keepAlive).toEqual(DEFAULT_KEEP_ALIVE);
+  });
+
+  it('settingsStore_keepAliveOutOfRange_fallsBackToDefault', () => {
+    const outOfRange = { ...VALID, keepAlive: { subscriptionEnabled: false, apiKeyEnabled: 'si', minContextTokens: 5_000_000, maxPauseHours: 0 } };
+
+    const loaded = new SettingsStore(deps({ readFile: () => JSON.stringify(outOfRange) })).load().keepAlive;
+
+    expect(loaded).toEqual({ ...DEFAULT_KEEP_ALIVE, subscriptionEnabled: false });
   });
 
   it('load_ficheroValido_devuelveLaConfiguracion', () => {

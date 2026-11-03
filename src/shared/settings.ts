@@ -193,7 +193,29 @@ export interface AppSettings {
   // instalador de Windows, U3/F3.7) y, sin ella, «Sistema». Elegir «Sistema» en Configuración lo guarda explícito y
   // ya no se hereda nada. Default: ausente.
   readonly uiLanguage?: UiLanguagePreference;
+  // Keep-alive de la caché de Claude (F4.6, D-K4): un mensaje oculto que la mantiene caliente mientras la pestaña
+  // sigue abierta. Default: activado en suscripción, apagado en cuentas por clave de API.
+  readonly keepAlive: KeepAliveSettings;
 }
+
+export interface KeepAliveSettings {
+  // U11: activado por defecto en las cuentas de suscripción.
+  readonly subscriptionEnabled: boolean;
+  // U15: apagado por defecto en las cuentas por clave de API (cada keep-alive se factura).
+  readonly apiKeyEnabled: boolean;
+  // Solo se mantiene la caché de conversaciones con al menos estos tokens de contexto (U11: 100 000).
+  readonly minContextTokens: number;
+  // Horas máximas de pausa del usuario durante las que se sigue manteniendo (plan: 8).
+  readonly maxPauseHours: number;
+}
+
+// Límites de `keepAlive`, compartidos por Configuración y el store.
+export const KEEP_ALIVE_MIN_CONTEXT_MIN = 0;
+export const KEEP_ALIVE_MIN_CONTEXT_MAX = 2_000_000;
+export const KEEP_ALIVE_MAX_PAUSE_MIN = 1;
+export const KEEP_ALIVE_MAX_PAUSE_MAX = 24;
+
+export const DEFAULT_KEEP_ALIVE: KeepAliveSettings = { subscriptionEnabled: true, apiKeyEnabled: false, minContextTokens: 100_000, maxPauseHours: 8 };
 
 // Nº de acentos del tema (--mg-accent-<i>-* en index.css); lo comparten cuentas y pestañas.
 export const ACCOUNT_ACCENT_COUNT = 6;
@@ -256,4 +278,5 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   agyLinkedPaths: [],
   runtimeShell: 'auto',
   runtimeToolAccess: {},
+  keepAlive: DEFAULT_KEEP_ALIVE,
 };

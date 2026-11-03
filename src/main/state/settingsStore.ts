@@ -4,8 +4,13 @@ import {
   ACCOUNT_ACCENT_COUNT,
   CLOSE_BEHAVIORS,
   DEFAULT_APP_SETTINGS,
+  DEFAULT_KEEP_ALIVE,
   DEFAULT_PERMISSION_MODES,
   IMPORTED_CONTEXT_LIMITS,
+  KEEP_ALIVE_MAX_PAUSE_MAX,
+  KEEP_ALIVE_MAX_PAUSE_MIN,
+  KEEP_ALIVE_MIN_CONTEXT_MAX,
+  KEEP_ALIVE_MIN_CONTEXT_MIN,
   NEW_CONVERSATION_FOLDERS,
   RUNTIME_SHELLS,
   SCRATCH_RETENTIONS,
@@ -90,6 +95,15 @@ const CUSTOM_PROVIDER_SCHEMA = z.object({
   supportsTools: z.boolean().optional().catch(undefined),
 });
 
+// Keep-alive de la caché (F4.6). Ausente (fichero anterior) o basura -> el default, sin subir la versión; cada campo
+// cae a su default por separado y los enteros se acotan aquí también (el fichero es editable a mano).
+const KEEP_ALIVE_SCHEMA = z.object({
+  subscriptionEnabled: z.boolean().catch(DEFAULT_KEEP_ALIVE.subscriptionEnabled),
+  apiKeyEnabled: z.boolean().catch(DEFAULT_KEEP_ALIVE.apiKeyEnabled),
+  minContextTokens: z.number().int().min(KEEP_ALIVE_MIN_CONTEXT_MIN).max(KEEP_ALIVE_MIN_CONTEXT_MAX).catch(DEFAULT_KEEP_ALIVE.minContextTokens),
+  maxPauseHours: z.number().int().min(KEEP_ALIVE_MAX_PAUSE_MIN).max(KEEP_ALIVE_MAX_PAUSE_MAX).catch(DEFAULT_KEEP_ALIVE.maxPauseHours),
+}).catch(DEFAULT_KEEP_ALIVE);
+
 const APP_SETTINGS_SCHEMA = z.object({
   version: z.number(),
   notificationRules: z.array(NOTIFICATION_RULE_SCHEMA),
@@ -172,6 +186,7 @@ const APP_SETTINGS_SCHEMA = z.object({
     .catch({}),
   // Idioma (F3). Ausente o basura -> ausente: «sin preferencia», que hereda la inicial o sigue al sistema.
   uiLanguage: z.enum(UI_LANGUAGE_PREFERENCES).optional().catch(undefined),
+  keepAlive: KEEP_ALIVE_SCHEMA,
 });
 
 export class SettingsStore {
