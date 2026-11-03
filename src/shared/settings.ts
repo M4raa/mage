@@ -196,7 +196,18 @@ export interface AppSettings {
   // Keep-alive de la caché de Claude (F4.6, D-K4): un mensaje oculto que la mantiene caliente mientras la pestaña
   // sigue abierta. Default: activado en suscripción, apagado en cuentas por clave de API.
   readonly keepAlive: KeepAliveSettings;
+  // Delegacion entre conversaciones (U10): profundidad maxima de la cadena de creadoras.
+  readonly delegation: DelegationSettings;
 }
+
+export interface DelegationSettings {
+  readonly maxDepth: number;
+}
+
+// Limites de `delegation.maxDepth` (U10): coinciden con los del nucleo MCP (src/main/mcpServer/delegation.ts).
+export const DELEGATION_DEPTH_MIN = 1;
+export const DELEGATION_DEPTH_MAX = 5;
+export const DEFAULT_DELEGATION: DelegationSettings = { maxDepth: 3 };
 
 export interface KeepAliveSettings {
   // U11: activado por defecto en las cuentas de suscripción.
@@ -279,4 +290,5 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   runtimeShell: 'auto',
   runtimeToolAccess: {},
   keepAlive: DEFAULT_KEEP_ALIVE,
+  delegation: DEFAULT_DELEGATION,
 };

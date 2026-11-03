@@ -4,7 +4,10 @@ import {
   ACCOUNT_ACCENT_COUNT,
   CLOSE_BEHAVIORS,
   DEFAULT_APP_SETTINGS,
+  DEFAULT_DELEGATION,
   DEFAULT_KEEP_ALIVE,
+  DELEGATION_DEPTH_MAX,
+  DELEGATION_DEPTH_MIN,
   DEFAULT_PERMISSION_MODES,
   IMPORTED_CONTEXT_LIMITS,
   KEEP_ALIVE_MAX_PAUSE_MAX,
@@ -97,6 +100,10 @@ const CUSTOM_PROVIDER_SCHEMA = z.object({
 
 // Keep-alive de la caché (F4.6). Ausente (fichero anterior) o basura -> el default, sin subir la versión; cada campo
 // cae a su default por separado y los enteros se acotan aquí también (el fichero es editable a mano).
+const DELEGATION_SCHEMA = z.object({
+  maxDepth: z.number().int().min(DELEGATION_DEPTH_MIN).max(DELEGATION_DEPTH_MAX).catch(DEFAULT_DELEGATION.maxDepth),
+}).catch(DEFAULT_DELEGATION);
+
 const KEEP_ALIVE_SCHEMA = z.object({
   subscriptionEnabled: z.boolean().catch(DEFAULT_KEEP_ALIVE.subscriptionEnabled),
   apiKeyEnabled: z.boolean().catch(DEFAULT_KEEP_ALIVE.apiKeyEnabled),
@@ -187,6 +194,7 @@ const APP_SETTINGS_SCHEMA = z.object({
   // Idioma (F3). Ausente o basura -> ausente: «sin preferencia», que hereda la inicial o sigue al sistema.
   uiLanguage: z.enum(UI_LANGUAGE_PREFERENCES).optional().catch(undefined),
   keepAlive: KEEP_ALIVE_SCHEMA,
+  delegation: DELEGATION_SCHEMA,
 });
 
 export class SettingsStore {

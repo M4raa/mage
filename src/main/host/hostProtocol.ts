@@ -57,6 +57,8 @@ export const HELLO_PARAMS_SCHEMA = z.object({
   protocol: z.string().regex(/^\d+\.\d+$/, 'se esperaba «major.minor»'),
   client: z.object({ kind: z.enum(['terminal', 'mcp', 'widget']), version: z.string().max(MAX_VERSION_CHARS) }).strict(),
   token: z.string().min(1).max(MAX_TOKEN_CHARS),
+  // Credencial MCP_CALLER de la sesion que lanzo a un cliente `mcp` (D-M6); los demas clientes no la mandan.
+  caller: z.string().regex(/^[0-9a-f]{64}$/).optional(),
 }).strict();
 export type HelloParams = z.infer<typeof HELLO_PARAMS_SCHEMA>;
 

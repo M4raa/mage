@@ -159,6 +159,24 @@ export type SteerOutcome = 'active_turn' | 'new_turn' | 'no_active_turn' | 'not_
 
 // Union discriminada por `kind`. Cada variante es inmutable.
 export type MageEvent =
+  // Delegacion (D-M9), en la conversacion creadora: nace una hija por la peticion `requestId`.
+  | { readonly kind: 'delegation_created'; readonly childId: string; readonly requestId: string }
+  // Delegacion: un mensaje entre conversaciones. H3 lo llama `kind`, pero `kind` ya es el discriminante
+  // del evento.
+  | {
+      readonly kind: 'delegation_message';
+      readonly fromId: string;
+      readonly toId: string;
+      readonly messageKind: 'instruction' | 'question' | 'answer' | 'result';
+      readonly text: string;
+    }
+  // Delegacion: estado de la hija (los de `mage_get_status`, src/main/mcpServer/schemas.ts; shared no
+  // importa de main, por eso la union se repite aqui).
+  | {
+      readonly kind: 'delegation_state';
+      readonly childId: string;
+      readonly state: 'working' | 'waiting_answer' | 'permission_pending' | 'done' | 'interrupted';
+    }
   // Arranque de sesion. `mcpServers` y `slashCommands` son lo que la sesion cargo DE VERDAD (unica
   // fuente fiable: ni el modelo ni `claude mcp list` lo saben). Vacios si el CLI no los reporta.
   | {

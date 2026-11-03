@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { DEFAULT_APP_SETTINGS, DEFAULT_KEEP_ALIVE } from '@shared/settings';
+import { DEFAULT_APP_SETTINGS, DEFAULT_DELEGATION, DEFAULT_KEEP_ALIVE } from '@shared/settings';
 import type { AppSettings } from '@shared/settings';
 import { SettingsStore, type SettingsStoreDeps } from './settingsStore';
 
@@ -38,6 +38,7 @@ const VALID: AppSettings = {
   runtimeShell: 'powershell',
   runtimeToolAccess: { 'custom:lm': [{ model: '*', allow: null, deny: ['Bash'] }] },
   keepAlive: { subscriptionEnabled: false, apiKeyEnabled: true, minContextTokens: 50_000, maxPauseHours: 4 },
+  delegation: DEFAULT_DELEGATION,
 };
 
 function deps(overrides: Partial<SettingsStoreDeps> = {}): SettingsStoreDeps {
@@ -119,6 +120,27 @@ describe('SettingsStore.load', () => {
     const loaded = new SettingsStore(deps({ readFile: () => JSON.stringify(outOfRange) })).load().keepAlive;
 
     expect(loaded).toEqual({ ...DEFAULT_KEEP_ALIVE, subscriptionEnabled: false });
+  });
+
+  describe('delegation (U10)', () => {
+    const loadDepth = (delegation: unknown): number => {
+      const { delegation: _omitted, ...rest } = VALID;
+      const file = delegation === undefined ? rest : { ...rest, delegation };
+      return new SettingsStore(deps({ readFile: () => JSON.stringify(file) })).load().delegation.maxDepth;
+    };
+
+    it('load_noDelegation_defaultsTo3', () => {
+      expect(loadDepth(undefined)).toBe(3);
+    });
+    it('load_depth0_defaultsTo3', () => {
+      expect(loadDepth({ maxDepth: 0 })).toBe(3);
+    });
+    it('load_depth6_defaultsTo3', () => {
+      expect(loadDepth({ maxDepth: 6 })).toBe(3);
+    });
+    it('load_depth5_kept', () => {
+      expect(loadDepth({ maxDepth: 5 })).toBe(5);
+    });
   });
 
   it('load_ficheroValido_devuelveLaConfiguracion', () => {

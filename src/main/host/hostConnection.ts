@@ -95,6 +95,8 @@ type Phase = 'handshake' | 'ready' | 'closed';
 export class HostConnection {
   private phase: Phase = 'handshake';
   private challenged = false;
+  // Credencial MCP_CALLER del `hello` (D-M6): es un secreto, no se loguea ni se devuelve.
+  private caller: string | null = null;
   private readonly framer: NdjsonFramer;
   private readonly subscriptions = new Map<string, () => void>();
   private readonly cancelHelloTimer: () => void;
@@ -155,6 +157,11 @@ export class HostConnection {
     return parsed.data;
   }
 
+  // Para la M06: la credencial con la que se presento el cliente, o null.
+  get callerCredential(): string | null {
+    return this.caller;
+  }
+
   private handleHello(id: RequestId | undefined, method: string, params: unknown): void {
     if (method === CHALLENGE_METHOD) {
       this.handleChallenge(id, params);
@@ -180,6 +187,7 @@ export class HostConnection {
       return;
     }
     this.cancelHelloTimer();
+    this.caller = hello.data.caller ?? null;
     this.phase = 'ready';
     if (id !== undefined) this.transport.write(resultResponse(id, { protocol: HOST_PROTOCOL, hostVersion: this.deps.hostVersion, capabilities: HOST_CAPABILITIES }));
   }

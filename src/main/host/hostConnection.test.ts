@@ -128,6 +128,46 @@ describe('HostConnection — autenticación', () => {
     expect(h.isEnded()).toBe(true);
   });
 
+  describe('caller (D-M6)', () => {
+    const CALLER = 'ab'.repeat(32);
+
+    it('hello_withCaller_accepted', () => {
+      const h = harness();
+
+      h.hello({ caller: CALLER });
+
+      expect(h.lines()[0]!.result).toMatchObject({ protocol: HOST_PROTOCOL });
+      expect(h.connection.callerCredential).toBe(CALLER);
+    });
+
+    it('hello_callerNotHex_invalidParams', () => {
+      const h = harness();
+
+      h.hello({ caller: 'Z'.repeat(64) });
+
+      expect(h.lines()[0]!.error.code).toBe(HostErrorCode.InvalidParams);
+      expect(h.isEnded()).toBe(true);
+    });
+
+    it('hello_withoutCaller_accepted', () => {
+      const h = harness();
+
+      h.hello();
+
+      expect(h.lines()[0]!.result).toBeDefined();
+      expect(h.connection.callerCredential).toBeNull();
+    });
+
+    it('hello_withCaller_credentialNotInAnyWrite', () => {
+      const h = harness();
+
+      h.hello({ caller: CALLER });
+      h.send({ jsonrpc: '2.0', id: 2, method: 'no.existe' });
+
+      expect(h.written.join('')).not.toContain(CALLER);
+    });
+  });
+
   it('plazoDelHello_sinPresentarse_cierra', () => {
     const h = harness();
 
