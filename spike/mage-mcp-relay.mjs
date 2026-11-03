@@ -1,5 +1,5 @@
 // cp/M-03: `mage mcp` contra un Mage REAL sin ventanas (el main construido), SIN turnos de modelo (0 turnos reales).
-// Mide: las seis herramientas `mage_*`, el rechazo de un cliente sin sesión de Mage (M-U2) con y sin credencial
+// Mide: las siete herramientas `mage_*`, el rechazo de un cliente sin sesión de Mage (M-U2) con y sin credencial
 // inventada, que con Mage parado `mage mcp` sale con 1 sin arrancar nada, y los tiempos de initialize y listTools.
 // Requiere `pnpm build` antes (out/main/index.js). Medido contra: protocolo del host 1.5, SDK MCP del repo.
 // Uso: node spike/mage-mcp-relay.mjs --out <fichero.json> [--packaged <carpeta de win-unpacked>]
@@ -24,7 +24,7 @@ const HOST_WAIT_MS = 30_000;
 const POLL_MS = 250;
 const EXIT_TIMEOUT_MS = 15_000;
 const PROFILE_PREFIX = 'mage-m-mcp-';
-const EXPECTED_TOOLS = ['mage_cancel', 'mage_create_session', 'mage_get_status', 'mage_list_sessions', 'mage_read_result', 'mage_send'];
+const EXPECTED_TOOLS = ['mage_ask_creator', 'mage_cancel', 'mage_create_session', 'mage_get_status', 'mage_list_sessions', 'mage_read_result', 'mage_send'];
 const FAKE_CALLER = 'ab'.repeat(32);
 const NO_HOST_TEXT_ES = 'Mage no está abierto: `mage mcp` solo funciona desde una sesión de Mage.';
 const NO_HOST_TEXT_EN = 'Mage is not open: `mage mcp` only works from a Mage session.';

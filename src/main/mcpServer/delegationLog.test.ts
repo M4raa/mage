@@ -23,10 +23,11 @@ function setup(options: { creatorAlive?: boolean } = {}) {
   let listener: SessionListener | null = null;
   let unsubscribed = 0;
   const announced: MageEvent[] = [];
+  const announcedTo: { sessionId: string; event: MageEvent }[] = [];
   const coordinator = {
     subscribe: (_id: string, l: SessionListener) => { listener = l; return { snapshot: current, unsubscribe: () => { unsubscribed += 1; } }; },
     snapshot: () => current,
-    announce: (_id: string, event: MageEvent) => { announced.push(event); },
+    announce: (id: string, event: MageEvent) => { announced.push(event); announcedTo.push({ sessionId: id, event }); },
     ownerOf: () => (options.creatorAlive === false ? undefined : 1),
   };
   const log = new DelegationLog({ coordinator, now: () => Date.parse('2026-11-03T10:00:00.000Z') });
@@ -35,7 +36,7 @@ function setup(options: { creatorAlive?: boolean } = {}) {
     const payload: SequencedSessionEvent = { sessionId: 'child', event, conversationId: 'conv-child', seq: 1, at: Date.parse('2026-11-03T10:05:00.000Z') };
     listener?.sink(payload);
   };
-  return { log, emit, announced, close: () => listener?.onClosed(), unsubscribed: () => unsubscribed };
+  return { log, emit, announced, announcedTo, close: () => listener?.onClosed(), unsubscribed: () => unsubscribed };
 }
 const result = { kind: 'result', result: {} } as unknown as MageEvent;
 
@@ -54,6 +55,17 @@ describe('mcpStateOf', () => {
     ['idleWithoutTurns', snap('idle'), false, 0, 'working'],
   ] as const)('mcpStateOf_eachCase_asSpecified_%s', (_name, snapshot, closed, turnCount, expected) => {
     expect(mcpStateOf({ snapshot, closed, turnCount })).toBe(expected);
+  });
+});
+
+describe('mcpStateOf_awaitingCreator', () => {
+  it.each([
+    ['idleWithTurn', snap('idle'), false, 1, 'waiting_answer'],
+    ['running', snap('running'), false, 0, 'waiting_answer'],
+    ['requiresActionWithPermission', snap('requires_action', [permission()]), false, 1, 'permission_pending'],
+    ['closed', null, true, 1, 'interrupted'],
+  ] as const)('mcpStateOf_awaitingCreator_asSpecified_%s', (_name, snapshot, closed, turnCount, expected) => {
+    expect(mcpStateOf({ snapshot, closed, turnCount, awaitingCreator: true })).toBe(expected);
   });
 });
 
@@ -131,5 +143,94 @@ describe('DelegationLog', () => {
     const message = announced.find((e) => e.kind === 'delegation_message');
     expect(message).toMatchObject({ messageKind: 'result' });
     expect((message as { text: string }).text).toHaveLength(MAX_ANNOUNCED_TEXT_CHARS);
+  });
+  describe('mage_ask_creator', () => {
+    const waitingOf = (announcedTo: { sessionId: string; event: MageEvent }[]) => announcedTo
+      .filter((item) => item.sessionId === 'child' && item.event.kind === 'delegation_waiting')
+      .map((item) => (item.event as { waiting: boolean }).waiting);
+    const queuedSent = { kind: 'queued_message_sent', message: {} } as unknown as MageEvent;
+
+    it('recordQuestion_creatorAlive_recordsQuestionAnnouncesAndWaits', () => {
+      const { log, announced, announcedTo } = setup();
+      log.watch(CHILD);
+      const outcome = log.recordQuestion('child', '¿Cuál?');
+      expect(outcome).toBe('recorded');
+      expect(log.messagesAfter('conv-child', 0).at(-1)).toEqual({ seq: 1, role: 'question', text: '¿Cuál?' });
+      expect(announced).toContainEqual({ kind: 'delegation_message', fromId: 'conv-child', toId: 'conv-parent', messageKind: 'question', text: '¿Cuál?' });
+      expect(announcedTo).toContainEqual({ sessionId: 'child', event: { kind: 'delegation_waiting', creatorId: 'conv-parent', waiting: true } });
+      expect(log.get('conv-child')!.state).toBe('waiting_answer');
+      expect(announced).toContainEqual({ kind: 'delegation_state', childId: 'conv-child', state: 'waiting_answer' });
+    });
+    it('recordQuestion_creatorClosed_returnsCreatorClosedAndRecordsNothing', () => {
+      const { log, announcedTo } = setup({ creatorAlive: false });
+      log.watch(CHILD);
+      const outcome = log.recordQuestion('child', '¿Cuál?');
+      expect(outcome).toBe('creator_closed');
+      expect(log.messagesAfter('conv-child', 0).filter((m) => m.role === 'question')).toEqual([]);
+      expect(waitingOf(announcedTo)).toEqual([]);
+    });
+    it('recordQuestion_unknownSession_throwsWithValue', () => {
+      expect(() => setup().log.recordQuestion('nope', 'x')).toThrow('nope');
+    });
+    it('settleQuestion_waiting_returnsTrueAndStopsWaiting', () => {
+      const { log, announcedTo } = setup();
+      log.watch(CHILD);
+      log.recordQuestion('child', '¿Cuál?');
+      const settled = log.settleQuestion('child');
+      expect(settled).toBe(true);
+      expect(waitingOf(announcedTo)).toEqual([true, false]);
+      expect(log.get('conv-child')!.state).not.toBe('waiting_answer');
+    });
+    it('settleQuestion_notWaiting_returnsFalse', () => {
+      const { log, announcedTo } = setup();
+      log.watch(CHILD);
+      const settled = log.settleQuestion('child');
+      expect(settled).toBe(false);
+      expect(waitingOf(announcedTo)).toEqual([]);
+    });
+    it('settleQuestion_twice_secondReturnsFalse', () => {
+      const { log } = setup();
+      log.watch(CHILD);
+      log.recordQuestion('child', '¿Cuál?');
+      const results = [log.settleQuestion('child'), log.settleQuestion('child')];
+      expect(results).toEqual([true, false]);
+    });
+    it('onEvent_eventsInsideQuestionTurn_keepsWaiting', () => {
+      const { log, emit, announcedTo } = setup();
+      log.watch(CHILD);
+      log.recordQuestion('child', '¿Cuál?');
+      emit({ kind: 'assistant_text', text: 'pregunto' }, snap('running'));
+      emit({ kind: 'tool_use', tool: {} } as unknown as MageEvent, snap('running'));
+      expect(log.get('conv-child')!.state).toBe('waiting_answer');
+      expect(waitingOf(announcedTo)).toEqual([true]);
+    });
+    it('onEvent_newTurnAfterQuestionTurn_clearsWaitingOnce', () => {
+      const { log, emit, announcedTo } = setup();
+      log.watch(CHILD);
+      log.recordQuestion('child', '¿Cuál?');
+      emit(result, snap('idle'));
+      expect(log.get('conv-child')!.state).toBe('waiting_answer');
+      emit({ kind: 'request_started' }, snap('running'));
+      expect(log.get('conv-child')!.state).toBe('working');
+      expect(waitingOf(announcedTo)).toEqual([true, false]);
+      expect(log.settleQuestion('child')).toBe(false);
+    });
+    it('onEvent_queuedMessageSentAfterResult_clearsWaiting', () => {
+      const { log, emit, announcedTo } = setup();
+      log.watch(CHILD);
+      log.recordQuestion('child', '¿Cuál?');
+      emit(result, snap('idle'));
+      emit(queuedSent, snap('running'));
+      expect(log.get('conv-child')!.state).toBe('working');
+      expect(waitingOf(announcedTo)).toEqual([true, false]);
+    });
+    it('onClosed_whileWaiting_interruptedWithoutWaitingAnnounce', () => {
+      const { log, close, announcedTo } = setup();
+      log.watch(CHILD);
+      log.recordQuestion('child', '¿Cuál?');
+      close();
+      expect(log.get('conv-child')!.state).toBe('interrupted');
+      expect(waitingOf(announcedTo)).toEqual([true]);
+    });
   });
 });

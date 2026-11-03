@@ -9,7 +9,7 @@ import { TrustRequiredError, UnknownAccountError } from '../host/hostErrors';
 import type { HostCreateRequest } from '../host/hostProtocol';
 import type { DelegationLog, DelegationView } from './delegationLog';
 import { MagePolicyError } from './errors';
-import type { CancelInput, CancelOutput, CreateOutput, ListInput, PublicMessage, SendInput, SendOutput, StatusOutput } from './types';
+import type { AskCreatorInput, AskCreatorOutput, CancelInput, CancelOutput, CreateOutput, ListInput, PublicMessage, SendInput, SendOutput, StatusOutput } from './types';
 import type { CreateSessionCommand, CreationRequest, CreationTarget, MageSessionsPort, SessionMetadata } from './sessionsPort';
 
 // El puerto REAL del MCP en main: UNO por conexión, con la sesión que llama ya resuelta. Solo ve a sus
@@ -22,7 +22,7 @@ const CANCELLABLE_STATES: ReadonlySet<string> = new Set(['working', 'permission_
 
 export interface HostSessionsPortDeps {
   readonly caller: { readonly sessionId: string; readonly conversationId: string; readonly accountId: string };
-  readonly log: Pick<DelegationLog, 'watch' | 'get' | 'list' | 'messagesAfter' | 'recordInstruction'>;
+  readonly log: Pick<DelegationLog, 'watch' | 'get' | 'list' | 'messagesAfter' | 'recordInstruction' | 'recordQuestion' | 'settleQuestion'>;
   readonly index: Pick<ConversationIndexStore, 'recordDelegation'>;
   readonly coordinator: Pick<SessionCoordinator, 'subscribe' | 'snapshot' | 'send' | 'interrupt' | 'answerPermission' | 'announce'>;
   // Cuentas de Claude y Codex de Mage (M-U4: también las de API).
@@ -104,6 +104,15 @@ export class HostSessionsPort implements MageSessionsPort {
     return { cancelled: true };
   }
 
+  // U26: solo una delegada (está en el registro) pregunta a su creadora; cualquier otra sesión, `not_delegated`.
+  async askCreator(input: AskCreatorInput): Promise<AskCreatorOutput> {
+    const { caller, log } = this.deps;
+    const view = log.get(caller.conversationId);
+    if (view === null) throw new MagePolicyError(`not_delegated: ${caller.conversationId}`);
+    if (log.recordQuestion(view.child.sessionId, input.text) === 'creator_closed') throw new MagePolicyError(`creator_closed: ${view.child.creatorConversationId}`);
+    return { receipt: 'accepted' };
+  }
+
   private pickAccount(provider: string, accountId: string | undefined): string {
     const accounts = this.deps.accounts();
     if (accountId !== undefined) {
@@ -161,8 +170,9 @@ export class HostSessionsPort implements MageSessionsPort {
     const sent: SendReceipt = coordinator.send({
       sessionId, text: input.text, commandId: input.requestId, ...(input.mode === 'direct' ? { mode: 'steer' as const } : {}),
     });
+    const answered = log.settleQuestion(sessionId);
     log.recordInstruction(sessionId, input.text);
-    this.announceMessage(sessionId, conversationId, 'instruction', input.text);
+    this.announceMessage(sessionId, conversationId, answered ? 'answer' : 'instruction', input.text);
     return { receipt: sent.status === 'queued' ? 'queued' : 'accepted' };
   }
 
@@ -193,6 +203,7 @@ export class ExternalSessionsPort implements MageSessionsPort {
   readResult(): Promise<never> { return reject(); }
   send(): Promise<never> { return reject(); }
   cancel(): Promise<never> { return reject(); }
+  askCreator(): Promise<never> { return reject(); }
 }
 function reject(): Promise<never> {
   return Promise.reject(new MagePolicyError('mage_external_caller: las herramientas de Mage solo funcionan desde una sesión lanzada por Mage'));

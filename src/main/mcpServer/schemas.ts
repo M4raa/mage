@@ -38,7 +38,8 @@ export const sendInputSchema = z.object({
 export const cancelInputSchema = z.object({
   conversationId: id('conversationId'), scope: z.literal('turn', { errorMap: diagnostic('scope') }),
 }).strict();
-export const listOutputSchema = z.object({ sessions: z.array(z.object({
+export const askCreatorInputSchema = z.object({ requestId: uuid, text: text.min(1) }).strict();
+export const listOutputSchema =z.object({ sessions: z.array(z.object({
   conversationId: id('conversationId'), title: text, provider: id('provider'), state: stateSchema, createdBy: id('createdBy').optional(),
 }).strict()) }).strict();
 export const createOutputSchema = z.object({ conversationId: id('conversationId'), state: z.enum(['queued', 'running']) }).strict();
@@ -48,5 +49,6 @@ export const readOutputSchema = z.object({
 }).strict();
 export const sendOutputSchema = z.object({ receipt: z.enum(['accepted', 'queued', 'rejected']), reason: text.optional() }).strict();
 export const cancelOutputSchema = z.object({ cancelled: z.boolean() }).strict();
+export const askCreatorOutputSchema = z.object({ receipt: z.literal('accepted') }).strict();
 
 export const creationTargetSchema = z.object({ projectId: id('projectId'), accountId: id('accountId'), provider, cwd: id('cwd') }).strict();

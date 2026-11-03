@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { startMageMcpServer } from './server';
+import { ASK_CREATOR_DESCRIPTION, startMageMcpServer } from './server';
 import { MemorySessionsPort } from './memorySessionsPort';
 import { MemoryIdempotencyStore } from './idempotencyStore';
 import type { ConnectionScope } from './scope';
@@ -59,16 +59,34 @@ afterEach(async () => {
 });
 
 describe('Mage MCP server', () => {
-  it('listTools_conexionReal_seisHerramientasConAmbosEsquemas', async () => {
+  it('listTools_conexionReal_sieteHerramientasConAmbosEsquemas', async () => {
     const { client } = await connect();
     const result = await client.listTools();
-    expect(result.tools.map((tool) => tool.name).sort()).toEqual(['mage_cancel', 'mage_create_session', 'mage_get_status', 'mage_list_sessions', 'mage_read_result', 'mage_send']);
+    expect(result.tools.map((tool) => tool.name).sort()).toEqual(['mage_ask_creator', 'mage_cancel', 'mage_create_session', 'mage_get_status', 'mage_list_sessions', 'mage_read_result', 'mage_send']);
     for (const tool of result.tools) {
       expect(tool.inputSchema.type).toBe('object');
       expect(tool.inputSchema.additionalProperties).toBe(false);
       expect(tool.outputSchema?.type).toBe('object');
     }
     expect(client.getServerVersion()).toEqual({ name: 'mage', version: '1' });
+  });
+  it('listTools_askCreator_descripcionPideTerminarElTurno', async () => {
+    const { client } = await connect();
+    const tool = (await client.listTools()).tools.find((item) => item.name === 'mage_ask_creator');
+    expect(tool?.description).toBe(ASK_CREATOR_DESCRIPTION);
+    expect(tool?.description).toContain('termina tu turno');
+  });
+  it('callTool_askCreator_memoryPort_acceptedYRegistrada', async () => {
+    const { call, port } = await connect();
+    const result = await call('ask_creator', { requestId: REQUEST, text: 'hola' });
+    expect(result.structuredContent).toEqual({ receipt: 'accepted' });
+    expect(port.questions).toEqual([{ requestId: REQUEST, text: 'hola' }]);
+  });
+  it('callTool_askCreator_textoVacio_isError', async () => {
+    const { call, port } = await connect();
+    const result = await call('ask_creator', { requestId: REQUEST, text: '' });
+    expect(result.isError).toBe(true);
+    expect(port.questions).toEqual([]);
   });
   it('tools_caminosNominales_devuelvenContratoH1', async () => {
     const { call } = await connect();

@@ -435,6 +435,24 @@ describe('reduceEvent — estado de sesion y compactacion', () => {
 
     expect(reduceEvent(current, TAB, { kind: 'permission_mode', mode: 'auto' }).tabs?.[0]?.permissionMode).toBe('auto');
   });
+
+  it('reduceEvent_delegationWaiting_marcaYDesmarcaLaPestana', () => {
+    const current = state({ tabs: [tab({ id: TAB, createdBy: { conversationId: 'c', sessionId: 's' } })] });
+
+    const waiting = reduceEvent(current, TAB, { kind: 'delegation_waiting', creatorId: 'c', waiting: true });
+    const stopped = reduceEvent(state({ tabs: waiting.tabs }), TAB, { kind: 'delegation_waiting', creatorId: 'c', waiting: false });
+
+    expect(waiting.tabs?.[0]?.awaitingCreator).toBe(true);
+    expect(stopped.tabs?.[0]?.awaitingCreator).toBe(false);
+  });
+
+  it('reduceEvent_delegationWaiting_otraPestana_noLaToca', () => {
+    const current = state({ tabs: [tab({ id: 'otra' })] });
+
+    const patch = reduceEvent(current, TAB, { kind: 'delegation_waiting', creatorId: 'c', waiting: true });
+
+    expect(patch.tabs?.[0]?.awaitingCreator).toBeUndefined();
+  });
 });
 
 // Uso real en el terminador del turno (E3, `agy`): se deja como marcador de sistema en la conversacion.

@@ -1,5 +1,5 @@
 import type { CreationRequest, CreationTarget, CreateSessionCommand, MageSessionsPort, SessionMetadata } from './sessionsPort';
-import type { CancelInput, CancelOutput, CreateOutput, ListInput, PublicMessage, SendInput, SendOutput, StatusOutput } from './types';
+import type { AskCreatorInput, AskCreatorOutput, CancelInput, CancelOutput, CreateOutput, ListInput, PublicMessage, SendInput, SendOutput, StatusOutput } from './types';
 import { createdBySchema, publicMessageSchema, statusOutputSchema, utcSchema } from './schemas';
 
 export interface MemorySessionSeed {
@@ -18,6 +18,7 @@ interface MemorySession { metadata: SessionMetadata; status: StatusOutput; messa
 export class MemorySessionsPort implements MageSessionsPort {
   private readonly targets: readonly CreationTarget[];
   private readonly sessions = new Map<string, MemorySession>();
+  readonly questions: AskCreatorInput[] = [];
   constructor(private readonly options: MemorySessionsOptions) {
     this.targets = options.targets.map((target) => ({ ...target }));
     for (const seed of options.sessions ?? []) this.seedSession(seed);
@@ -77,6 +78,10 @@ export class MemorySessionsPort implements MageSessionsPort {
     session.metadata = { ...session.metadata, state: 'interrupted' };
     session.status = { ...session.status, state: 'interrupted', lastEventAt };
     return { cancelled: true };
+  }
+  async askCreator(input: AskCreatorInput): Promise<AskCreatorOutput> {
+    this.questions.push({ ...input });
+    return { receipt: 'accepted' };
   }
   private findSession(conversationId: string): MemorySession {
     const session = this.sessions.get(conversationId);
