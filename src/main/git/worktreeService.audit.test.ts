@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { findRepoRootWith, type GitRunner } from './gitService';
+import { GIT_REAL_TIMEOUT_MS } from '@testing/realProcess';
 import { createWorktreeService, hasUserChanges, nodeWorktreeFs } from './worktreeService';
 
 const temporaryDirs: string[] = [];
@@ -43,7 +44,7 @@ describe('A09 — traer la base con copias de Mage', () => {
     expect(hasUserChanges(status)).toBe(false);
     try { await service.mergeBase(created!.path, 'account', 'main'); } catch { /* Se comprueba el punto al que llegó. */ }
     expect(fetched).toBe(true);
-  });
+  }, GIT_REAL_TIMEOUT_MS);
 });
 
 
@@ -72,7 +73,7 @@ it('A09_fetchLocalYMergeReal_conservanCopiasEIncorporanBase', async () => {
   expect(readFileSync(join(created!.path, 'CLAUDE.local.md'), 'utf8')).toBe('instrucciones locales');
   expect(readFileSync(join(created!.path, '.mcp.json'), 'utf8')).toBe('{}');
   expect(readFileSync(join(created!.path, '.claude', 'settings.local.json'), 'utf8')).toBe('{}');
-});
+}, GIT_REAL_TIMEOUT_MS);
 
 it.each([' M a.txt\n', '?? nuevo.ts\n', ' M CLAUDE.md\n'])('A09_cambiosReales_%j_bloqueanAntesDeFetch', async status => {
   let fetched = false;

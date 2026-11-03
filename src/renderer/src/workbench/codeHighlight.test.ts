@@ -187,7 +187,11 @@ describe('buildImportedShikiTheme + shiki real', () => {
       engine: createJavaScriptRegexEngine({ forgiving: true }),
     });
 
-    const tokens = shiki.codeToTokens('const x = 1; // hola', { lang: 'typescript', theme: theme?.name ?? '' }).tokens[0] ?? [];
+    // `tokenizeTimeLimit: 0` (sin tope): shiki corta cada linea a los 500 ms y devuelve el resto SIN
+    // tokenizar; la primera linea compila las expresiones de la gramatica y con la maquina cargada pasaba
+    // de ese tope (carril T: el comentario salia '#DCDCDC'; con un tope de 1 ms falla igual). Lo que se
+    // comprueba son los colores del tema, no el presupuesto de tiempo.
+    const tokens = shiki.codeToTokens('const x = 1; // hola', { lang: 'typescript', theme: theme?.name ?? '', tokenizeTimeLimit: 0 }).tokens[0] ?? [];
 
     expect(tokens.find((t) => t.content.includes('// hola'))?.color).toBe('#6A9955');
     expect(tokens.find((t) => t.content.trim() === 'const')?.color).toBe('#569CD6');
