@@ -60,6 +60,9 @@ import type {
   SendMessageParams,
   QueuedMessageParams,
   UpdateQueuedMessageParams,
+  RewindPlanParams,
+  RewindApplyParams,
+  DivergeParams,
   SessionEventPayload,
   SetModelParams,
   SetEffortParams,
@@ -67,6 +70,7 @@ import type {
   SetPermissionModeParams,
   TranscriptBatchPayload,
   MoveTabToWindowParams,
+  CodexThreadParams,
 } from '@shared/ipc';
 import type { WidgetSnapshot } from '@shared/widget';
 import type { FetchThemeParams } from '@shared/themeMarket';
@@ -90,6 +94,10 @@ const api: MageApi = {
   interrupt: (sessionId: string) => ipcRenderer.invoke(IpcChannel.SessionInterrupt, sessionId),
   removeQueuedMessage: (params: QueuedMessageParams) => ipcRenderer.invoke(IpcChannel.SessionQueueRemove, params),
   updateQueuedMessage: (params: UpdateQueuedMessageParams) => ipcRenderer.invoke(IpcChannel.SessionQueueUpdate, params),
+  rewindPlan: (params: RewindPlanParams) => ipcRenderer.invoke(IpcChannel.SessionRewindPlan, params),
+  rewindApply: (params: RewindApplyParams) => ipcRenderer.invoke(IpcChannel.SessionRewindApply, params),
+  keepAliveStats: () => ipcRenderer.invoke(IpcChannel.KeepAliveStats),
+  divergeConversation: (params: DivergeParams) => ipcRenderer.invoke(IpcChannel.SessionDiverge, params),
   takeQueuedMessages: (sessionId: string) => ipcRenderer.invoke(IpcChannel.SessionQueueTake, sessionId),
   setModel: (params: SetModelParams) => ipcRenderer.invoke(IpcChannel.SessionSetModel, params),
   setEffort: (params: SetEffortParams) => ipcRenderer.invoke(IpcChannel.SessionSetEffort, params),
@@ -201,6 +209,8 @@ const api: MageApi = {
   deleteConversation: (params: DeleteConversationParams) => ipcRenderer.invoke(IpcChannel.ConversationsDelete, params),
   moveConversation: (params: MoveConversationParams) => ipcRenderer.invoke(IpcChannel.ConversationsMove, params),
   migrateConversation: (params: MigrateConversationParams) => ipcRenderer.invoke(IpcChannel.ConversationsMigrate, params),
+  codexLegacyStatus: (params: CodexThreadParams) => ipcRenderer.invoke(IpcChannel.ConversationsCodexLegacyStatus, params),
+  updateLegacyCodexConversation: (params: CodexThreadParams) => ipcRenderer.invoke(IpcChannel.ConversationsCodexLegacyUpdate, params),
   loadWorkspace: () => ipcRenderer.invoke(IpcChannel.StateLoad),
   saveWorkspace: (state: PersistedWorkspace) => ipcRenderer.invoke(IpcChannel.StateSave, state),
   loadCommandCatalog: (accountDir: string) => ipcRenderer.invoke(IpcChannel.CommandCatalogLoad, accountDir),

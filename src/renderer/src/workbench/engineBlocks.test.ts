@@ -86,7 +86,7 @@ describe('closeStreaming', () => {
   });
 
   it('closeStreaming_nullId_returnsSameBlocks', () => {
-    const blocks: readonly Block[] = [{ kind: 'user', id: 'u1', text: 'hi', time: '10:00', attachments: [] }];
+    const blocks: readonly Block[] = [{ kind: 'user', id: 'u1', text: 'hi', time: '10:00', attachments: [], nativeId: null }];
 
     expect(closeStreaming(blocks, null)).toBe(blocks);
   });
@@ -285,8 +285,8 @@ describe('mapPermissionToView', () => {
 
 describe('appendUserBlock / appendErrorBlock', () => {
   it('appendUserBlock_addsUserBlock', () => {
-    expect(appendUserBlock([], { id: 'u1', text: 'hola', time: '14:31', attachments: [] })).toEqual([
-      { kind: 'user', id: 'u1', text: 'hola', time: '14:31', attachments: [] },
+    expect(appendUserBlock([], { id: 'u1', text: 'hola', time: '14:31', attachments: [], nativeId: null })).toEqual([
+      { kind: 'user', id: 'u1', text: 'hola', time: '14:31', attachments: [], nativeId: null },
     ]);
   });
 
@@ -295,9 +295,9 @@ describe('appendUserBlock / appendErrorBlock', () => {
     // construye la ruta hidratada desde la transcripcion.
     const attachments = [{ mediaType: 'image/png', data: 'AAAA' }] as const;
 
-    const blocks = appendUserBlock([], { id: 'u1', text: 'mira', time: '14:31', attachments });
+    const blocks = appendUserBlock([], { id: 'u1', text: 'mira', time: '14:31', attachments, nativeId: null });
 
-    expect(blocks[0]).toEqual({ kind: 'user', id: 'u1', text: 'mira', time: '14:31', attachments });
+    expect(blocks[0]).toEqual({ kind: 'user', id: 'u1', text: 'mira', time: '14:31', attachments, nativeId: null });
   });
 
   it('appendErrorBlock_addsErrorBlock', () => {
@@ -307,7 +307,7 @@ describe('appendUserBlock / appendErrorBlock', () => {
 
 describe('appendSystemBlock / compactionText', () => {
   it('appendSystemBlock_anadeMarcadorAlFinal', () => {
-    const existing = appendUserBlock([], { id: 'u1', text: 'hola', time: '14:31', attachments: [] });
+    const existing = appendUserBlock([], { id: 'u1', text: 'hola', time: '14:31', attachments: [], nativeId: null });
 
     const blocks = appendSystemBlock(existing, '🗜 Contexto compactado (manual)', 's1');
 
@@ -347,14 +347,14 @@ describe('restartingText', () => {
 
 describe('hasVisibleContent', () => {
   it('bloquesConTexto_seMuestran', () => {
-    expect(hasVisibleContent({ kind: 'user', id: 'u', text: 'hola', time: '10:00', attachments: [] })).toBe(true);
+    expect(hasVisibleContent({ kind: 'user', id: 'u', text: 'hola', time: '10:00', attachments: [], nativeId: null })).toBe(true);
     expect(hasVisibleContent({ kind: 'error', id: 'e', message: 'boom' })).toBe(true);
     expect(hasVisibleContent({ kind: 'system', id: 's', text: 'compactado' })).toBe(true);
     expect(hasVisibleContent({ kind: 'agent', id: 'a', runs: [{ code: false, text: 'texto' }], streaming: false })).toBe(true);
   });
 
   it('bloquesVacios_seOcultan_evitaRayasFantasma', () => {
-    expect(hasVisibleContent({ kind: 'user', id: 'u', text: '   ', time: '', attachments: [] })).toBe(false);
+    expect(hasVisibleContent({ kind: 'user', id: 'u', text: '   ', time: '', attachments: [], nativeId: null })).toBe(false);
     expect(hasVisibleContent({ kind: 'error', id: 'e', message: '' })).toBe(false);
     expect(hasVisibleContent({ kind: 'system', id: 's', text: '' })).toBe(false);
     expect(hasVisibleContent({ kind: 'agent', id: 'a', runs: [{ code: false, text: '\n\n' }], streaming: false })).toBe(false);
@@ -366,13 +366,13 @@ describe('hasVisibleContent', () => {
 
   it('hasVisibleContent_usuarioSinTextoConAdjunto_seMuestra', () => {
     // Un mensaje que era SOLO una imagen: con la condicion anterior (solo texto) desaparecia del hilo.
-    const block: Block = { kind: 'user', id: 'u', text: '', time: '10:00', attachments: [{ mediaType: 'image/png', data: 'AAAA' }] };
+    const block: Block = { kind: 'user', id: 'u', text: '', time: '10:00', attachments: [{ mediaType: 'image/png', data: 'AAAA' }], nativeId: null };
 
     expect(hasVisibleContent(block)).toBe(true);
   });
 
   it('hasVisibleContent_usuarioSinTextoNiAdjuntos_seOculta', () => {
-    expect(hasVisibleContent({ kind: 'user', id: 'u', text: '', time: '10:00', attachments: [] })).toBe(false);
+    expect(hasVisibleContent({ kind: 'user', id: 'u', text: '', time: '10:00', attachments: [], nativeId: null })).toBe(false);
   });
 
   it('toolSinNombre_seOculta', () => {
@@ -628,7 +628,7 @@ describe('subagentes y pensamiento (2.5)', () => {
   });
 
   it('closeThinking_sinBloqueEnCurso_noCambiaNada', () => {
-    const blocks = appendUserBlock([], { id: 'u1', text: 'hola', time: '', attachments: [] });
+    const blocks = appendUserBlock([], { id: 'u1', text: 'hola', time: '', attachments: [], nativeId: null });
 
     expect(closeThinking(blocks, 1)).toBe(blocks);
   });

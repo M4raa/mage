@@ -11,6 +11,7 @@ import { homedir, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { randomUUID } from 'node:crypto';
+import { linguiCatalogPlugin } from '../scripts/lib/linguiEsbuildPlugin.mjs';
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const requireFromRepo = createRequire(join(repo, 'package.json'));
@@ -29,7 +30,7 @@ const clip = (text) => String(text).trim().slice(0, PREVIEW_CHARS);
 const errText = (err) => (err instanceof Error ? err.message : String(err));
 
 // Compila los módulos TS de producción a un .mjs temporal (alias @shared como en el proyecto).
-function build() {
+async function build() {
   const buildDir = mkdtempSync(join(tmpdir(), 'mage-cap-spike-build-'));
   const outfile = join(buildDir, 'capabilities.mjs');
   const contents = [
@@ -41,10 +42,10 @@ function build() {
     "export { resolveCodexBinary } from './src/main/os/codexBinaryResolver.ts';",
     "export { parseCodexMcpList } from './src/main/config/codexMcp.ts';",
   ].join(' ');
-  esbuild.buildSync({
+  await esbuild.build({
     stdin: { contents, resolveDir: repo, loader: 'ts' },
     bundle: true, format: 'esm', platform: 'node', outfile, alias: { '@shared': join(repo, 'src', 'shared') },
-    external: ['node:*'], logLevel: 'error',
+    external: ['node:*'], plugins: [linguiCatalogPlugin(repo)], logLevel: 'error',
   });
   return { buildDir, outfile };
 }
@@ -190,7 +191,7 @@ function prepareEnv(lib, engines) {
 
 async function main() {
   const argv = process.argv.slice(2);
-  const { buildDir, outfile } = build();
+  const { buildDir, outfile } = await build();
   try {
     const lib = await import(pathToFileURL(outfile).href);
     if (argv.includes('--build-only')) return checkBuildOnly(lib);

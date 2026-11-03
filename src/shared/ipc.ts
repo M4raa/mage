@@ -101,6 +101,10 @@ export const IpcChannel = {
   SessionQueueRemove: 'session:queueRemove',
   SessionQueueTake: 'session:queueTake',
   SessionQueueUpdate: 'session:queueUpdate',
+  // Rewind (F4.4/F4.5): planificar, rebobinar (o reintentar) y divergir desde una burbuja de usuario.
+  SessionRewindPlan: 'session:rewindPlan',
+  SessionRewindApply: 'session:rewindApply',
+  SessionDiverge: 'session:diverge',
   SessionSetModel: 'session:setModel',
   SessionSetEffort: 'session:setEffort',
   SessionSetPermissionMode: 'session:setPermissionMode',
@@ -195,6 +199,9 @@ export const IpcChannel = {
   ConversationsDelete: 'conversations:delete',
   ConversationsMove: 'conversations:move',
   ConversationsMigrate: 'conversations:migrate',
+  // Conversaciones de Codex en formato legacy (K06, U13): si lo son y actualizarlas (con copia previa).
+  ConversationsCodexLegacyStatus: 'conversations:codexLegacyStatus',
+  ConversationsCodexLegacyUpdate: 'conversations:codexLegacyUpdate',
   StateLoad: 'state:load',
   StateSave: 'state:save',
   SettingsLoad: 'settings:load',
@@ -301,6 +308,8 @@ export const IpcChannel = {
   UpdateGetState: 'update:getState',
   UpdateInstall: 'update:install',
   UpdateCheck: 'update:check',
+  // Keep-alive de la cache de Claude (F4.6): cuantos se hicieron y cuanto costaron.
+  KeepAliveStats: 'keepAlive:stats',
 } as const;
 
 export type IpcChannel = (typeof IpcChannel)[keyof typeof IpcChannel];
@@ -359,6 +368,9 @@ export interface CreateSessionParams {
   readonly projectInstructions?: string;
   // Historial de otra conversación (de otro proveedor) con el que arranca esta; main lo suma a las instrucciones.
   readonly contextImport?: string;
+  // Divergir (solo Claude): la conversacion nueva sale de `sessionId` cortada en el mensaje `atUuid`. Lo rellena el
+  // renderer con lo que devuelve main al Divergir; excluyente con `resumeSessionId`.
+  readonly forkFrom?: { readonly sessionId: string; readonly atUuid: string };
 }
 
 // Resultado de crear una sesion: el id y el config dir EFECTIVO con el que se lanzo (la cuenta o su
@@ -394,6 +406,40 @@ export interface UpdateQueuedMessageParams {
   readonly messageId: string;
   readonly text: string;
 }
+
+// Burbuja de usuario que el renderer quiere rebobinar, reintentar o divergir (D-K2 de DISENO-K).
+export interface RewindPointRef { readonly userIndex: number; readonly text: string; readonly nativeId: string | null }
+export type RewindAction = 'rewind' | 'retry' | 'diverge';
+export type RewindUnavailableReason = 'unsupported' | 'background' | 'legacy' | 'notFound' | 'midTurn' | 'busy';
+export interface RewindPlanParams { readonly sessionId: string; readonly point: RewindPointRef; readonly action: RewindAction }
+export interface RewindFilesPlan { readonly available: boolean; readonly changed: readonly string[]; readonly insertions: number; readonly deletions: number }
+export interface RewindPlan {
+  readonly provider: string;
+  readonly unavailable: RewindUnavailableReason | null;   // null = se puede
+  readonly discardedMessages: number;                      // mensajes de usuario desde el punto (incluido)
+  readonly files: RewindFilesPlan | null;                  // solo Claude y no en 'diverge'; null en Codex
+  readonly recoverable: boolean;                           // Claude: lo descartado sigue en la transcripcion; Codex: no
+  readonly turnRunning: boolean;
+  readonly queuedCount: number;
+  readonly pendingCount: number;
+  readonly canSaveCopy: boolean;                           // Codex, no en 'diverge' (U3)
+}
+export interface RewindApplyParams {
+  readonly sessionId: string; readonly point: RewindPointRef; readonly action: 'rewind' | 'retry';
+  readonly restoreFiles: boolean; readonly saveCopy: boolean; readonly attachments?: readonly ImageAttachment[];
+}
+export interface RewindApplyResult {
+  readonly draft: string;                                  // texto para el cuadro de texto ('' en retry)
+  readonly returnedQueue: readonly QueuedMessage[];        // la cola que vuelve a borradores
+  readonly filesRestored: boolean;
+  readonly copyThreadId: string | null;                    // Codex con «Guardar una copia antes»
+  readonly projection: TranscriptBatch | null;             // la conversacion vigente tras rebobinar (Claude: su rama activa; Codex: sus turnos); null si no se pudo releer
+  readonly retried: SendReceipt | null;
+}
+export interface DivergeParams { readonly sessionId: string; readonly point: RewindPointRef }
+export type DivergeResult =
+  | { readonly kind: 'claude'; readonly forkFrom: { readonly sessionId: string; readonly atUuid: string } }
+  | { readonly kind: 'codex'; readonly threadId: string };
 
 // Imagen adjunta a un mensaje del usuario. Vive en el contrato IPC porque cruza main<->renderer; la
 // validacion (tipos permitidos y topes de tamaño) es del modulo puro `attachments.ts`, y se aplica en
@@ -460,6 +506,20 @@ export interface OpenTranscriptParams {
   // I5: reanuda desde esta posicion en vez de leer desde el principio (lectura incremental/tail).
   // Ausente o `TRANSCRIPT_TAIL_START` = comportamiento de siempre (todo el fichero).
   readonly resumeFrom?: TranscriptTailPosition;
+}
+
+// Un hilo de Codex de una cuenta: main resuelve el CODEX_HOME por la cuenta, nunca una ruta del renderer.
+export interface CodexThreadParams {
+  readonly accountDir: string;
+  readonly threadId: string;
+}
+
+export interface CodexLegacyStatus {
+  readonly legacy: boolean;
+}
+
+export interface CodexLegacyUpdateResult {
+  readonly backupDir: string;
 }
 
 // La memoria es por PROYECTO (cwd), no por sesión: se identifica por la cuenta activa + cwd (main
@@ -816,6 +876,14 @@ export type DropTabOutcome = 'moved' | 'none';
 
 // --- API tipada que el preload expone en window.mage ------------------------------------------
 
+// Lo que Mage lleva gastado en keep-alive de la cache (suma de todas las conversaciones; coste en micro-USD enteros).
+export interface KeepAliveStats {
+  readonly count: number;
+  readonly cacheReadTokens: number;
+  readonly cacheCreationTokens: number;
+  readonly costMicroUsd: number;
+}
+
 export interface MageApi {
   // ¿Corre este renderer en el sandbox de Chromium? (`process.sandboxed` del preload; F2.6). Solo lo lee verify:gui.
   readonly sandboxed: boolean;
@@ -833,6 +901,12 @@ export interface MageApi {
   removeQueuedMessage(params: QueuedMessageParams): Promise<QueuedMessage | null>;
   // Cambia el texto de un mensaje de la cola sin moverlo y lo devuelve (null si ya no estaba).
   updateQueuedMessage(params: UpdateQueuedMessageParams): Promise<QueuedMessage | null>;
+  // Rewind (F4.4/F4.5): lo que se descartaria, la aplicacion (rebobinar o reintentar) y la rama nueva.
+  rewindPlan(params: RewindPlanParams): Promise<RewindPlan>;
+  rewindApply(params: RewindApplyParams): Promise<RewindApplyResult>;
+  // Keep-alive de la cache de Claude (F4.6): totales de lo que se hizo y lo que costo.
+  keepAliveStats(): Promise<KeepAliveStats>;
+  divergeConversation(params: DivergeParams): Promise<DivergeResult>;
   // Vacía la cola de main y devuelve sus mensajes.
   takeQueuedMessages(sessionId: string): Promise<readonly QueuedMessage[]>;
   // Cambia el modelo de una sesion viva (M2.4, solo Claude); aplica al siguiente turno.
@@ -987,6 +1061,9 @@ export interface MageApi {
   moveConversation(params: MoveConversationParams): Promise<MoveConversationResult>;
   // Sigue la MISMA conversación en una cuenta de otro proveedor (formato nativo del destino); la de origen se retira.
   migrateConversation(params: MigrateConversationParams): Promise<MigrateConversationResult>;
+  // ¿Está el hilo de Codex en formato legacy? Y su actualización (copia previa en la carpeta de copias de Mage).
+  codexLegacyStatus(params: CodexThreadParams): Promise<CodexLegacyStatus>;
+  updateLegacyCodexConversation(params: CodexThreadParams): Promise<CodexLegacyUpdateResult>;
   // Persistencia del workspace (M2.5): lista de pestanas + activa. null si nunca se guardo o el
   // fichero esta corrupto (arranque limpio). El contenido de las conversaciones NO se guarda aqui.
   loadWorkspace(): Promise<PersistedWorkspace | null>;

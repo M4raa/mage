@@ -81,6 +81,9 @@ import type {
   LoginStartParams,
   OpenEditorParams,
   OpenTranscriptParams,
+  CodexThreadParams,
+  CodexLegacyStatus,
+  CodexLegacyUpdateResult,
   TranscriptBatchPayload,
   ReadInstructionsParams,
   ReadMemoryParams,
@@ -96,7 +99,7 @@ import { buildAboutInfo } from './about/aboutService';
 import type { MemoryFile } from '@shared/memory';
 import type { MageEvent, SlashCommandInfo } from '@shared/events';
 import { localized, localizedFromError, localizedWithParts, renderForLog, UserFacingError, type LocalizedText } from '@shared/i18n/localizedText';
-import type { ImageAttachment, ProviderProbeParams } from '@shared/ipc';
+import type { ImageAttachment, KeepAliveStats, ProviderProbeParams } from '@shared/ipc';
 import { base64ByteLength, ERROR_FORMAT_LOCALE, validateAttachmentSet } from '@shared/attachments';
 import type { EffectiveSettings, InstructionsFile, ProjectFileContent, ReadProjectFileParams, WriteProjectFileParams } from '@shared/ipc';
 import type { ConversationSummary, DeleteConversationParams, MigrateConversationResult, MoveConversationParams, MoveConversationResult } from '@shared/conversations';
@@ -164,6 +167,8 @@ import { mcpFamilyOf } from '@shared/mcp';
 import { AccountService } from './accounts/accountService';
 import { ConversationsService, type ConversationsDeps } from './conversations/conversationsService';
 import { CodexHistoryService } from './conversations/codexHistory';
+import { deleteCodexConversation } from './conversations/codexDeletion';
+import { updateLegacyCodexThread } from './conversations/codexLegacyUpdate';
 import { ConversationMigrationService } from './conversations/conversationMigration';
 import { createMigrationEndpoints } from './conversations/migrationEndpoints';
 import { codexThreadDelete, codexThreadTurnsList } from './conversations/codexRpc';
@@ -185,7 +190,7 @@ import { TokenRefreshService } from './accounts/tokenRefreshService';
 import { parseStoredOauth } from './accounts/oauthFlow';
 import { defaultLinkDeps, LinkService } from './os/linkService';
 import { resolveClaudeBinary } from './os/claudeBinaryResolver';
-import { scrubAgentEnv } from './os/agentEnv';
+import { scrubAgentEnv, TEST_ANTHROPIC_BASE_URL_ENV } from './os/agentEnv';
 import { OpenWithService } from './os/openWithService';
 import { buildJumpListCategories, parseJumpListArgs } from './os/jumpList';
 import { UsageService } from './usage/usageService';
@@ -194,7 +199,7 @@ import { StatusService } from './status/statusService';
 import { claudeUserAgent } from './os/claudeVersion';
 import { LogBus } from './debug/logBus';
 import { DebugWindowController } from './debug/debugWindow';
-import { TranscriptService } from './transcripts/transcriptService';
+import { TranscriptService, type BranchReadOptions } from './transcripts/transcriptService';
 import { resolveSubagentTranscriptPath, resolveTranscriptPath } from './transcripts/transcriptPath';
 import { MemoryService, resolveMemoryDir } from './memory/memoryService';
 import { WorkspaceStore } from './state/workspaceStore';
@@ -205,6 +210,10 @@ import { agyBridgeSpec, bridgeDocument, codexBridgeSpec, resolveBridge, type Bri
 import { EffectiveSettingsService } from './config/effectiveSettingsService';
 import { ConversationIndexStore } from './state/conversationIndexStore';
 import { registerSessionIpc } from './coordination/sessionIpc';
+import { isUuid } from '@shared/sessionInput';
+import { RewindCoordinator } from './coordination/rewindCoordinator';
+import { RewindStateStore } from './conversations/rewindStateStore';
+import { readActiveBranchEntries } from './transcripts/activeBranchReader';
 import { canControlSession } from './coordination/sessionAccess';
 import { readHostMode, startLocalHost } from './host/hostBootstrap';
 import { createHostControl } from './host/hostControl';
@@ -577,6 +586,18 @@ const sessionCoordinator = new SessionCoordinator({
     },
     release: (sessionId) => getConversationLocks().releaseWhere((holder) => holder === `session:${sessionId}`),
   },
+  // A8: el corte pendiente de un rewind de Claude se borra en cuanto sale el siguiente mensaje.
+  onUserMessageSent: (ref) => { if (ref.provider === 'claude') getRewindState().clearPendingCut(ref.nativeId); },
+  // Keep-alive de la cache (F4.6). Para saber si una cuenta es de API basta su ficha: no se lee la clave de la boveda.
+  keepAliveSettings: () => getSettingsStore().load().keepAlive,
+  isApiKeyAccount: (dir) => getProviderAccounts().find('claude', dir)?.authKind === 'api-key',
+  onKeepAliveDone: (ref, sample, rewound, kaUuid) => {
+    getRewindState().recordKeepAlive(ref.nativeId, sample);
+    // Tras el rewind el fichero sigue terminando en la respuesta del keep-alive: el corte pendiente (A8) hace que
+    // reabrir la conversacion no la ensene; se borra con el siguiente mensaje real.
+    if (rewound) getRewindState().setPendingCut(ref.nativeId, kaUuid);
+    mainLog('info', 'Keep-alive hecho', { sessionId: ref.nativeId, rewound, ...sample });
+  },
 });
 
 // Bloqueo de conversacion entre instancias (#55, F2.8): un fichero por conversacion abierta en `<raiz local>/mage/locks`,
@@ -713,7 +734,16 @@ function buildAdapter(provider: string): ProviderAdapter {
   const writeMcpConfig = getMcpServices().writeClaudeMcpConfig;
   // La clave de una cuenta por API la pone SOLO el adapter de su CLI, y solo en el hijo de esa cuenta
   // (agentEnv.ts, excepcion 2). Las de suscripcion resuelven null.
-  if (provider === 'claude') return new ClaudeAdapter(undefined, writeMcpConfig, claudeApiKeyFor, () => getSettingsStore().load().artifactEnabled);
+  if (provider === 'claude') {
+    return new ClaudeAdapter({
+      writeMcpConfig,
+      resolveApiKey: claudeApiKeyFor,
+      artifactEnabled: () => getSettingsStore().load().artifactEnabled,
+      testBaseUrl: () => process.env[TEST_ANTHROPIC_BASE_URL_ENV],
+      isPackaged: () => app.isPackaged,
+      log: mainLog,
+    });
+  }
   if (provider === AGY_PROVIDER_ID) return buildAgyAdapter();
   if (provider === CODEX_PROVIDER_ID) return buildCodexAdapter();
   throw new Error(`Proveedor sin CLI: ${JSON.stringify(provider)}`);
@@ -1164,7 +1194,8 @@ const conversationFsDeps: ConversationsDeps = {
 };
 const conversationsService = new ConversationsService(conversationFsDeps);
 // Historial de las cuentas de Codex: sus rollouts, medidos con codex-cli 0.160.0.
-const codexHistory = new CodexHistoryService(conversationFsDeps, mainLog);
+// El tercer argumento titula una copia de «Guardar una copia antes» (U3) como «Copia de …»; `getRewindState` es lazy y solo se llama al listar.
+const codexHistory = new CodexHistoryService(conversationFsDeps, mainLog, (id, title) => (getRewindState().copyOrigin(id) === null ? title : getUiLanguageService().translate('chat.rewind.copyTitle', { title })));
 // Historial de agy: las bases SQLite de los perfiles con los que Mage lo lanza (resumibles con `--conversation`).
 const agyHistory = new AgyHistoryService(createAgySqliteStore());
 
@@ -1597,6 +1628,39 @@ function getSettingsStore(): SettingsStore {
     });
   }
   return settingsStoreSingleton;
+}
+
+// Estado propio del rewind (corte pendiente, forks y copias de Codex). Lazy como SettingsStore: `userData` solo existe tras `ready`.
+let rewindStateSingleton: RewindStateStore | null = null;
+function getRewindState(): RewindStateStore {
+  if (rewindStateSingleton === null) {
+    rewindStateSingleton = new RewindStateStore({
+      filePath: join(app.getPath('userData'), 'rewind-state.json'),
+      exists: existsSync,
+      readFile: (path) => readFileSync(path, 'utf8'),
+      writeFile: (path, data) => writeFileSync(path, data, 'utf8'),
+      rename: renameSync,
+      removeFile: (path) => rmSync(path, { force: true }),
+      tempSuffix: () => randomUUID(),
+      log: (level, message, data) => mainLog(level, message, data),
+    });
+  }
+  return rewindStateSingleton;
+}
+
+// Rewind, Reintentar y Divergir (F4.4/F4.5): sobre la coordinacion, con la rama activa leida como la ve el renderer.
+function createRewindCoordinator(): RewindCoordinator {
+  return new RewindCoordinator({
+    coordinator: sessionCoordinator,
+    readClaudeBranch: ({ accountDir, cwd, sessionId, pendingCutUuid }) => readActiveBranchEntries(transcriptService, conversationTranscriptPath(accountDir, cwd, sessionId), {
+      ...(pendingCutUuid === null ? {} : { pendingCutUuid }),
+      onMissingParent: (uuid) => mainLog('warn', 'Transcripcion con un padre inexistente al rebobinar', { uuid }),
+    }),
+    state: getRewindState(),
+    newId: randomUUID,
+    now: Date.now,
+    log: (level, message, data) => mainLog(level, message, data),
+  });
 }
 
 // Boveda de secretos (claves de API de proveedores): cifrada con `safeStorage` (DPAPI en Windows).
@@ -2595,9 +2659,19 @@ function launchSession(params: CreateSessionParams, sender: Electron.WebContents
       .filter((text): text is string => text !== undefined && text.length > 0).join('\n\n') || undefined;
     const effectiveParams = { ...params, accountDir: configDir, projectInstructions };
     const sessionId = sessionCoordinator.create(effectiveParams, (payload) => relaySessionEvent(payload, { sender, configDir, accountDir: params.accountDir }), sender?.id);
+    if (params.forkFrom !== undefined) recordClaudeFork(sessionId, params.forkFrom.sessionId);
     if (sender !== null) stopSessionsWhenDestroyed(sender);
     return { sessionId, configDir, ...(recreated ? { workspaceWarning: localized('events.workspace.scratchRecreatedKept', { path: params.cwd }) } : {}) };
   }
+
+// Divergir: la sesion ya esta creada; anotar de quien nacio no debe tumbarla si el disco falla.
+function recordClaudeFork(childId: string, parentId: string): void {
+  try {
+    getRewindState().recordFork(childId, parentId, 'claude', Date.now());
+  } catch (err) {
+    mainLog('warn', 'No se pudo anotar el fork', { childId, parentId, error: err instanceof Error ? err.message : String(err) });
+  }
+}
 
 function createSessionFromIpc(event: Electron.IpcMainInvokeEvent, params: CreateSessionParams): CreateSessionResult {
   return launchSession(params, event.sender);
@@ -2740,6 +2814,7 @@ function registerApplicationIpc(deps: IpcDependencies): void {
   registerTranscriptIpc2(deps);
   registerConversationsIpc1(deps);
   registerConversationMigrationIpc();
+  registerCodexLegacyIpc(deps.requireSafeConversation);
   registerSettingsIpc1(deps);
   registerThinkingIpc1();
   registerArtifactIpc1(deps);
@@ -2748,6 +2823,7 @@ function registerApplicationIpc(deps: IpcDependencies): void {
   registerPromptIpc1(deps);
   registerPromptIpc2(deps);
   registerThemeIpc1();
+  ipcMain.handle(IpcChannel.KeepAliveStats, (): KeepAliveStats => getRewindState().keepAliveTotals());
 }
 
 function registerSessionIpc1(): void {
@@ -2755,6 +2831,7 @@ function registerSessionIpc1(): void {
     handle: (channel, listener) => ipcMain.handle(channel, listener),
     sessions: sessionManager,
     coordinator: sessionCoordinator,
+    rewind: createRewindCoordinator(),
     createSession: createSessionFromIpc,
     validateAttachments,
     // Solo la ventana que creo la sesion y la principal le dan ordenes (F2.6).
@@ -3100,6 +3177,15 @@ function resolveTranscriptSource(params: OpenTranscriptParams): TranscriptSource
   return { kind: 'file', filePath, activeBranch: params.agentId === undefined };
 }
 
+// Opciones de la lectura por rama activa: respeta el corte pendiente de un rewind de Claude (A8).
+function branchOptions(sessionId: string, transcriptId: string): BranchReadOptions {
+  const pendingCutUuid = isUuid(sessionId) ? getRewindState().pendingCut(sessionId) : null;
+  return {
+    ...(pendingCutUuid === null ? {} : { pendingCutUuid }),
+    onMissingParent: (uuid) => mainLog('warn', 'Transcripcion con un padre inexistente: la rama se corta ahi', { transcriptId, uuid }),
+  };
+}
+
 // Abre en streaming y empuja lotes por TRANSCRIPT_BATCH_CHANNEL sin bloquear el invoke.
 function streamTranscript(sender: Electron.WebContents, transcriptId: string, params: OpenTranscriptParams): void {
   const source = resolveTranscriptSource(params);
@@ -3114,7 +3200,7 @@ function streamTranscript(sender: Electron.WebContents, transcriptId: string, pa
     try {
       let batches: AsyncIterable<TranscriptBatch>;
       if (source.kind === 'codexTurns') batches = codexTurnsBatches(() => codexThreadTurnsList({ spawnProbe: codexAccountProbeDeps().spawnProbe, timeoutMs: CLI_PROBE_TIMEOUT_MS }, source.home, source.threadId));
-      else if (source.activeBranch) batches = transcriptService.openBranchStream(source.filePath, controller.signal, params.resumeFrom, { onMissingParent: (uuid) => mainLog('warn', 'Transcripcion con un padre inexistente: la rama se corta ahi', { transcriptId, uuid }) });
+      else if (source.activeBranch) batches = transcriptService.openBranchStream(source.filePath, controller.signal, params.resumeFrom, branchOptions(params.sessionId, transcriptId));
       else batches = transcriptService.openStream(source.filePath, controller.signal, params.resumeFrom, source.adapt);
       for await (const batch of batches) {
         if (sender.isDestroyed()) break;
@@ -3216,14 +3302,69 @@ function registerTranscriptIpc2(deps: IpcDependencies): void {
     }
     return conversationsService.listConversations(accountDir);
   });
-  ipcMain.handle(IpcChannel.ConversationsDelete, (_e, params: DeleteConversationParams): void => {
+  ipcMain.handle(IpcChannel.ConversationsDelete, async (_e, params: DeleteConversationParams): Promise<void> => {
     requireSafeConversation(params.accountDir, params.sessionId);
-    conversationAdminService.deleteConversation(params);
-    // Y su entrada del indice (2.1): sin esto el fichero crece para siempre con preferencias de
-    // conversaciones que ya no existen.
-    getConversationIndexStore().forgetConversation(params.sessionId);
-    // Y sus pensamientos, por lo mismo: si no, queda un `.jsonl` huerfano por cada conversacion borrada.
-    getThinkingStore().forget(params.sessionId);
+    const codex = getProviderAccounts().find('codex', params.accountDir);
+    // Codex borra por su app-server (y primero los hijos de review); el resto, por los ficheros de Claude.
+    if (codex === null) conversationAdminService.deleteConversation(params);
+    else await deleteCodexConversation(codexDeletionDeps(), codex.home, params.sessionId);
+    forgetDeletedConversation(params.sessionId);
+  });
+}
+
+// Lo que Mage guarda de una conversación borrada: su entrada del indice (2.1; sin esto el fichero crece para siempre con
+// preferencias de conversaciones que ya no existen) y sus pensamientos (si no, queda un `.jsonl` huerfano por cada una).
+function forgetDeletedConversation(sessionId: string): void {
+  getConversationIndexStore().forgetConversation(sessionId);
+  getThinkingStore().forget(sessionId);
+}
+
+function codexDeletionDeps(): Parameters<typeof deleteCodexConversation>[0] {
+  return {
+    history: codexHistory,
+    deleteThread: (home, id) => codexThreadDelete({ spawnProbe: codexAccountProbeDeps().spawnProbe, timeoutMs: CLI_PROBE_TIMEOUT_MS }, home, id),
+    forget: (id) => getRewindState().forgetThread(id),
+    log: mainLog,
+  };
+}
+
+// `codex migrate-rollouts` (U13): tope de 60 s, al vencer mata SU árbol de procesos.
+const CODEX_MIGRATE_TIMEOUT_MS = 60_000;
+function runCodex(home: string, args: readonly string[]): Promise<{ readonly exitCode: number | null; readonly stderr: string }> {
+  const launch = codexSpawn(args);
+  const child = spawn(launch.command, launch.args, { env: { ...scrubAgentEnv(process.env), ...launch.env, CODEX_HOME: home }, stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true });
+  return new Promise((resolveRun, rejectRun) => {
+    let stderr = '';
+    const timer = setTimeout(() => killProcessTree(child, defaultKillTreeDeps()), CODEX_MIGRATE_TIMEOUT_MS);
+    child.stderr.setEncoding('utf8');
+    child.stderr.on('data', (chunk: string) => { stderr += chunk; });
+    child.on('error', (error) => { clearTimeout(timer); rejectRun(error); });
+    child.on('close', (exitCode) => { clearTimeout(timer); resolveRun({ exitCode, stderr }); });
+  });
+}
+
+// Cuenta de Codex de un hilo pedido por el renderer: solo cuentas registradas y ids validados.
+function codexHomeOfThread(params: CodexThreadParams): string {
+  const codex = getProviderAccounts().find('codex', params.accountDir);
+  if (codex === null) throw new Error(`La cuenta no es de Codex: ${params.accountDir}`);
+  return codex.home;
+}
+
+function registerCodexLegacyIpc(requireSafeConversation: (accountDir: string, sessionId: string) => void): void {
+  ipcMain.handle(IpcChannel.ConversationsCodexLegacyStatus, (_e, params: CodexThreadParams): CodexLegacyStatus => {
+    requireSafeConversation(params.accountDir, params.threadId);
+    return { legacy: codexHistory.historyModeOf(codexHomeOfThread(params), params.threadId) === 'legacy' };
+  });
+  ipcMain.handle(IpcChannel.ConversationsCodexLegacyUpdate, (_e, params: CodexThreadParams): Promise<CodexLegacyUpdateResult> => {
+    requireSafeConversation(params.accountDir, params.threadId);
+    return updateLegacyCodexThread({
+      history: codexHistory,
+      backupRoot: join(app.getPath('userData'), 'codex-backups'),
+      mkdir: (dir) => { mkdirSync(dir, { recursive: true }); },
+      copyFile: copyFileSync,
+      runCodex,
+      now: Date.now,
+    }, codexHomeOfThread(params), params.threadId);
   });
 }
 

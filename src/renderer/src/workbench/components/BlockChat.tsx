@@ -2,8 +2,11 @@ import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'rea
 import { createPortal } from 'react-dom';
 import { AnimatePresence } from 'motion/react';
 import { CopyButton } from './CopyButton';
-import { Icon } from './Icon';
+import { Icon, type IconName } from './Icon';
 import { AgyCommandsDialog } from './AgyCommandsDialog';
+import { RewindDialog } from './RewindDialog';
+import { canOfferRewind } from '../rewindActions';
+import type { RewindAction } from '@shared/ipc';
 import { isValidAgyRule, parseAgyMcpRule } from '@shared/agyRules';
 import { AGY_PROVIDER_ID, isAutoApprovedProvider } from '@shared/providers';
 import { useWorkbenchStore } from '../workbenchStore';
@@ -634,6 +637,9 @@ function UserBlock({ block }: { readonly block: Extract<Block, { kind: 'user' }>
   // burbuja con el XML crudo. Los avisos que no se pintan ya los quito `transcriptToBlocks`.
   const wrapper = useMemo(() => classifySystemWrapper(block.text), [block.text]);
   const t = useT();
+  const tabId = usePaneTabId();
+  const offersRewind = useRewindOffer(tabId, block.nativeId);
+  const [rewindAction, setRewindAction] = useState<RewindAction | null>(null);
   if (wrapper.kind === 'command' && block.attachments.length === 0) return <CommandChip command={wrapper.command} />;
   // En directo el comando llega tal cual se tecleo (P-028): mismo chip que al reabrir.
   if (block.attachments.length === 0 && isSlashCommandText(block.text)) return <CommandChip command={block.text.trim()} />;
@@ -641,11 +647,11 @@ function UserBlock({ block }: { readonly block: Extract<Block, { kind: 'user' }>
   return (
     <div className="flex justify-end">
       <div className="group relative flex max-w-[80%] min-w-0 flex-col gap-[3px] rounded-[12px] rounded-br-[4px] border border-mg-border-emph bg-mg-sel p-[9px_13px] leading-[1.55]">
-        <CopyButton
-          text={block.text}
-          label={t('chat.copy.userMessage')}
-          className="absolute right-[4px] top-[-10px] z-[1] border border-mg-border-subtle bg-mg-block opacity-0 focus-visible:opacity-100 group-hover:opacity-100"
-        />
+        <div className="absolute right-[4px] top-[-10px] z-[1] flex items-center gap-[2px] opacity-0 focus-within:opacity-100 group-hover:opacity-100">
+          <CopyButton text={block.text} label={t('chat.copy.userMessage')} className="border border-mg-border-subtle bg-mg-block" />
+          {offersRewind && <BubbleActions onPick={setRewindAction} />}
+        </div>
+        {rewindAction !== null && <RewindDialog tabId={tabId} blockId={block.id} action={rewindAction} onClose={() => setRewindAction(null)} />}
         {/* Sin cabecera "TU" y SIN HORA (buzon del usuario, punto 1): el lado, el ancho y el fondo ya
             dicen de quien es la burbuja, y una hora por mensaje es ruido en una conversacion que se lee
             de arriba abajo — esto no es una app de mensajeria. `block.time` se conserva en el modelo:
@@ -663,6 +669,56 @@ function UserBlock({ block }: { readonly block: Extract<Block, { kind: 'user' }>
         {block.attachments.length > 0 && <UserAttachments attachments={block.attachments} />}
       </div>
     </div>
+  );
+}
+
+// ¿Ofrece esta burbuja Reintentar, Divergir y Rebobinar? Solo si su pestaña lo admite (ver `canOfferRewind`). Las
+// burbujas que son envoltorios (chip de comando, tarea programada) salen antes de llegar a pintar los botones.
+function useRewindOffer(tabId: string, nativeId: string | null): boolean {
+  return useWorkbenchStore((s) => {
+    const tab = s.tabs.find((candidate) => candidate.id === tabId);
+    if (tab === undefined) return false;
+    const lock = s.lockByChat[tabId];
+    return canOfferRewind({
+      provider: tab.provider,
+      hasLiveSession: s.sessionIdByChat[tabId] !== undefined,
+      readOnly: lock !== undefined && !lock.owner,
+      isWrapper: false,
+      nativeIdKnown: typeof nativeId === 'string',
+    });
+  });
+}
+
+// Los tres botones de icono de la burbuja, con el mismo aspecto que «Copiar». No hay icono de deshacer en el
+// set de Mage: Rebobinar usa la flecha hacia arriba (lo anterior queda arriba).
+function BubbleActions({ onPick }: { readonly onPick: (action: RewindAction) => void }): React.JSX.Element {
+  const t = useT();
+  return (
+    <>
+      <BubbleButton icon="refresh" label={t('chat.retry.action')} dataAttr="data-bubble-retry" onClick={() => onPick('retry')} />
+      <BubbleButton icon="branch" label={t('chat.diverge.action')} dataAttr="data-bubble-diverge" onClick={() => onPick('diverge')} />
+      <BubbleButton icon="arrowUp" label={t('chat.rewind.action')} dataAttr="data-bubble-rewind" onClick={() => onPick('rewind')} />
+    </>
+  );
+}
+
+function BubbleButton({ icon, label, dataAttr, onClick }: {
+  readonly icon: IconName;
+  readonly label: string;
+  readonly dataAttr: 'data-bubble-retry' | 'data-bubble-diverge' | 'data-bubble-rewind';
+  readonly onClick: () => void;
+}): React.JSX.Element {
+  return (
+    <button
+      type="button"
+      {...{ [dataAttr]: 'true' }}
+      onClick={onClick}
+      title={label}
+      aria-label={label}
+      className="flex cursor-pointer items-center rounded-[5px] border border-mg-border-subtle bg-mg-block p-[4px] text-mg-muted hover:bg-mg-hover hover:text-mg-body2"
+    >
+      <Icon name={icon} size={12} />
+    </button>
   );
 }
 

@@ -6,9 +6,21 @@ import { localized, UserFacingError } from '@shared/i18n/localizedText';
 import type { ElicitationAnswer } from '@shared/elicitation';
 import type { CreateSessionParams, SessionEventPayload } from '@shared/ipc';
 import type { AgentSessionDeps, SessionLogFn } from './agentSession';
+import type { EngineRequest } from './providerAdapter';
 import { resolveLaunchParams, type DefaultsDeps } from './sessionDefaults';
 import { pathEquals } from '../os/pathUtils';
-import { AGY_PROVIDER_ID, CODEX_PROVIDER_ID, ownsConversation } from '@shared/providers';
+import { AGY_PROVIDER_ID, CLAUDE_PROVIDER_ID, CODEX_PROVIDER_ID, ownsConversation } from '@shared/providers';
+import { isUuid } from '@shared/sessionInput';
+
+// Divergir (A2): solo Claude, sin `resumeSessionId` y con dos UUID. Es una frontera IPC: se valida aqui.
+function validateForkFrom(params: CreateSessionParams, resumeId: string | null): NonNullable<CreateSessionParams['forkFrom']> {
+  const fork = params.forkFrom;
+  const received = JSON.stringify({ provider: params.provider, resumeSessionId: params.resumeSessionId, forkFrom: fork });
+  if (fork === undefined || params.provider !== CLAUDE_PROVIDER_ID || resumeId !== null || !isUuid(fork.sessionId) || !isUuid(fork.atUuid)) {
+    throw new Error(`forkFrom no valido (solo Claude, sin resumeSessionId y con dos UUID): ${received}`);
+  }
+  return fork;
+}
 
 // Sumidero de eventos hacia el consumidor (en produccion, webContents.send del renderer).
 export type EventSink = (payload: SessionEventPayload) => void;
@@ -17,7 +29,7 @@ export type EventSink = (payload: SessionEventPayload) => void;
 // arrancar procesos de verdad; AgentSession lo satisface estructuralmente.
 export interface ManagedSession {
   start(): void;
-  sendUserMessage(text: string, attachments?: readonly ImageAttachment[]): void;
+  sendUserMessage(text: string, attachments?: readonly ImageAttachment[], messageId?: string): void;
   steerUserMessage?(messageId: string, text: string, attachments?: readonly ImageAttachment[]): void;
   answerPermission(requestId: string, decision: PermissionDecision): void;
   answerElicitation?(answer: ElicitationAnswer): void;
@@ -26,6 +38,7 @@ export interface ManagedSession {
   setEffort?(effort: string): void;
   setPermissionMode(mode: string): void;
   stopTask(taskId: string): void;
+  engineRequest?(requestId: string, request: EngineRequest): void;
   stop(): void;
 }
 
@@ -60,6 +73,7 @@ export class SessionManager {
   create(params: CreateSessionParams, sink: EventSink, ownerId?: number): string {
     const resumeId = typeof params.resumeSessionId === 'string' && params.resumeSessionId.length > 0 ? params.resumeSessionId : null;
     // Codex y agy llevan su propia conversacion: `resumeSessionId` es ese id y la sesion de Mage es nueva.
+    const fork = params.forkFrom === undefined ? null : validateForkFrom(params, resumeId);
     const providerOwnsConversation = ownsConversation(params.provider);
     const isResume = resumeId !== null && !providerOwnsConversation;
     const sessionId = isResume ? resumeId : randomUUID();
@@ -74,7 +88,8 @@ export class SessionManager {
       throw new UserFacingError(localized('errors.engine.conversationAlreadyOpen', { sessionId }));
     }
     const resolved = resolveLaunchParams(sessionId, params, this.defaults, isResume);
-    const launch = resumeId !== null && providerOwnsConversation && (params.provider === CODEX_PROVIDER_ID || params.provider === AGY_PROVIDER_ID) ? { ...resolved, conversationId: resumeId } : resolved;
+    const withConversation = resumeId !== null && providerOwnsConversation && (params.provider === CODEX_PROVIDER_ID || params.provider === AGY_PROVIDER_ID) ? { ...resolved, conversationId: resumeId } : resolved;
+    const launch = fork === null ? withConversation : { ...withConversation, forkFrom: fork };
     // `/clear` (P-028) abre OTRA conversacion en el mismo proceso: a partir de su `conversation_reset`
     // la sesion se etiqueta con el id nuevo, que es el que usan la transcripcion, la persistencia y el
     // `--resume`. El evento del reset aun sale con el id viejo, para que el renderer sepa de que pestaña es.
@@ -103,8 +118,11 @@ export class SessionManager {
     return sessionId;
   }
 
-  sendMessage(sessionId: string, text: string, attachments: readonly ImageAttachment[] = []): void {
-    this.require(sessionId).sendUserMessage(text, attachments);
+  sendMessage(sessionId: string, text: string, attachments: readonly ImageAttachment[] = [], messageId?: string): void {
+    const session = this.require(sessionId);
+    // Sin id, la llamada es la de siempre (un doble o un RuntimeSession no ven un argumento de mas).
+    if (messageId === undefined) session.sendUserMessage(text, attachments);
+    else session.sendUserMessage(text, attachments, messageId);
   }
 
   // Directo (F4.1). Lanza si la sesion no lo admite (agy, runtime propio): la coordinacion no lo pide ahi.
@@ -112,6 +130,13 @@ export class SessionManager {
     const session = this.require(sessionId);
     if (session.steerUserMessage === undefined) throw new Error(`La sesion no admite mensajes directos: ${sessionId}`);
     session.steerUserMessage(messageId, text, attachments);
+  }
+
+  // Peticion al motor con respuesta (rewind/fork, F4.4/F4.5). Lanza si la sesion no la admite (runtime propio, agy).
+  engineRequest(sessionId: string, requestId: string, request: EngineRequest): void {
+    const session = this.require(sessionId);
+    if (session.engineRequest === undefined) throw new Error(`La sesion no admite peticiones al motor: ${sessionId}`);
+    session.engineRequest(requestId, request);
   }
 
   answerPermission(sessionId: string, requestId: string, decision: PermissionDecision): void {

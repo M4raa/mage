@@ -5,7 +5,7 @@ import { normalizeRawEvent } from './normalize';
 const launch = { sessionId: 's1', accountDir: '/home/u/.claude-p', model: 'haiku', cwd: '/proj' };
 
 describe('ClaudeAdapter', () => {
-  const adapter = new ClaudeAdapter(() => 'claude');
+  const adapter = new ClaudeAdapter({ resolveBinary: () => 'claude' });
 
   it('aplicaReglasDelProyectoComoPromptDeSistemaAdicional', () => {
     const plan = adapter.buildSpawnPlan({ ...launch, projectInstructions: 'Eres experto en Python' });
@@ -215,9 +215,26 @@ describe('ClaudeAdapter', () => {
     });
 
     it('buildSpawnPlan_ajusteEncendido_activaArtifact', () => {
-      const enabled = new ClaudeAdapter(() => 'claude', undefined, undefined, () => true);
+      const enabled = new ClaudeAdapter({ resolveBinary: () => 'claude', artifactEnabled: () => true });
 
       withExportedArtifact('0', () => expect(enabled.buildSpawnPlan(launch).env.CLAUDE_CODE_ARTIFACT).toBe('1'));
+    });
+
+    it('buildSpawnPlan_testBaseUrlIgnored_logsReasonWithoutKey', () => {
+      const logged: unknown[][] = [];
+      const withKey = new ClaudeAdapter({
+        resolveBinary: () => 'claude',
+        resolveApiKey: () => 'sk-ant-secreta',
+        testBaseUrl: () => 'http://127.0.0.1:4567',
+        isPackaged: () => true,
+        log: (...args) => logged.push(args),
+      });
+
+      const env = withKey.buildSpawnPlan(launch).env;
+
+      expect(logged).toEqual([['warn', 'MAGE_TEST_ANTHROPIC_BASE_URL ignorada', { reason: 'packaged' }]]);
+      expect(JSON.stringify(logged)).not.toContain('sk-ant-secreta');
+      expect(env.ANTHROPIC_BASE_URL).toBeUndefined();
     });
 
     it('buildSpawnPlan_args_includeSessionModelAndVerbose', () => {
@@ -279,13 +296,13 @@ describe('ClaudeAdapter', () => {
 
     it('buildSpawnPlan_conCompartido_escribeElMcpConfigDeLaCuentaYLoAnadeAlFinal', () => {
       const written: [string, string][] = [];
-      const withWriter = new ClaudeAdapter(
-        () => 'claude',
-        (accountDir, text) => {
+      const withWriter = new ClaudeAdapter({
+        resolveBinary: () => 'claude',
+        writeMcpConfig: (accountDir, text) => {
           written.push([accountDir, text]);
           return '/gen/claude-p.mcp.json';
         },
-      );
+      });
       const server = { name: 'db', source: 'common', onlyIn: null, extra: {}, secrets: {}, transport: 'stdio', command: 'db', args: [], env: { K: 'secreto' }, cwd: null } as const;
       const shared = { mcpServers: [server], settingsFragment: { hooks: {} }, claudeAiConnectors: true };
 
@@ -327,7 +344,7 @@ describe('ClaudeAdapter: directo (F4.1)', () => {
   const U = '0b1c2d3e-4f50-4612-8a7b-9c0d1e2f3a4b';
   const RESULT = { type: 'result', subtype: 'success', num_turns: 1 };
   const lifecycle = (state: string, uuid = U) => ({ type: 'command_lifecycle', command_uuid: uuid, state });
-  const fresh = () => new ClaudeAdapter(() => 'claude');
+  const fresh = () => new ClaudeAdapter({ resolveBinary: () => 'claude' });
 
   it('encodeSteer_uuidValido_escribeElMensajeDeUsuarioConEseUuid', () => {
     const adapter = fresh();
@@ -425,5 +442,142 @@ describe('ClaudeAdapter: directo (F4.1)', () => {
     const adapter = fresh();
 
     expect(adapter.normalize(RESULT)).toEqual(normalizeRawEvent(RESULT));
+  });
+});
+
+describe('ClaudeAdapter: id propio del mensaje (F4.4)', () => {
+  const U = '0b1c2d3e-4f50-4612-8a7b-9c0d1e2f3a4b';
+  const fresh = () => new ClaudeAdapter({ resolveBinary: () => 'claude' });
+
+  it('encodeUserMessage_withUuidMessageId_addsUuid', () => {
+    const payload = fresh().encodeUserMessage('hola', [], U);
+
+    expect(payload).toEqual({ type: 'user', message: { role: 'user', content: 'hola' }, parent_tool_use_id: null, uuid: U });
+  });
+
+  it('encodeUserMessage_withNonUuidMessageId_throwsWithValue', () => {
+    expect(() => fresh().encodeUserMessage('hola', [], 'no-uuid')).toThrow('"no-uuid"');
+  });
+
+  it('encodeUserMessage_withoutMessageId_payloadUnchanged', () => {
+    const payload = fresh().encodeUserMessage('hola');
+
+    expect(payload).toEqual({ type: 'user', message: { role: 'user', content: 'hola' }, parent_tool_use_id: null });
+  });
+});
+
+describe('ClaudeAdapter: peticiones al motor (F4.4/F4.5)', () => {
+  const U1 = '0b1c2d3e-4f50-4612-8a7b-9c0d1e2f3a4b';
+  const U2 = '1c2d3e4f-5061-4723-9b8c-0d1e2f3a4b5c';
+  const fresh = () => new ClaudeAdapter({ resolveBinary: () => 'claude' });
+  const respond = (response: Record<string, unknown>) => ({ type: 'control_response', response });
+
+  it('encodeEngineRequest_rewindConversation_buildsControlRequest', () => {
+    const payload = fresh().encodeEngineRequest('r1', { kind: 'rewind_conversation', targetUuid: U1, lastSeenUuid: U2 });
+
+    expect(payload).toEqual({
+      type: 'control_request',
+      request_id: 'r1',
+      request: { subtype: 'rewind_conversation', target_message_uuid: U1, last_seen_user_message_uuid: U2 },
+    });
+  });
+
+  it('encodeEngineRequest_rewindFilesDryRun_buildsControlRequest', () => {
+    const payload = fresh().encodeEngineRequest('r2', { kind: 'rewind_files', userMessageUuid: U1, dryRun: true });
+
+    expect(payload).toEqual({
+      type: 'control_request',
+      request_id: 'r2',
+      request: { subtype: 'rewind_files', user_message_id: U1, dry_run: true },
+    });
+  });
+
+  it('encodeEngineRequest_nonUuidTarget_throwsWithValue', () => {
+    expect(() => fresh().encodeEngineRequest('r1', { kind: 'rewind_conversation', targetUuid: 'raro', lastSeenUuid: U2 })).toThrow('"raro"');
+  });
+
+  it('encodeEngineRequest_threadRevert_throws', () => {
+    expect(() => fresh().encodeEngineRequest('r1', { kind: 'thread_revert', beforeTurnId: 't1' })).toThrow('thread_revert');
+  });
+
+  it('normalize_successResponseOfEngineRequest_emitsEngineResponseOk', () => {
+    const adapter = fresh();
+    adapter.encodeEngineRequest('r1', { kind: 'rewind_conversation', targetUuid: U1, lastSeenUuid: U2 });
+    const body = { rewound: true, targetMessageUuid: U1, prefillText: 'x', precedingAssistantUuid: U2 };
+
+    const events = adapter.normalize(respond({ subtype: 'success', request_id: 'r1', response: body }));
+
+    expect(events).toEqual([{ kind: 'engine_response', requestId: 'r1', ok: true, result: body, error: null }]);
+  });
+
+  it('normalize_errorResponseOfEngineRequest_emitsEngineResponseErrorAndNoControlError', () => {
+    const adapter = fresh();
+    adapter.encodeEngineRequest('r1', { kind: 'rewind_conversation', targetUuid: U1, lastSeenUuid: U2 });
+
+    const events = adapter.normalize(respond({ subtype: 'error', request_id: 'r1', error: 'stale_target' }));
+
+    expect(events).toEqual([{ kind: 'engine_response', requestId: 'r1', ok: false, result: null, error: 'stale_target' }]);
+  });
+
+  it('normalize_controlResponseOfOtherRequest_unchanged', () => {
+    const adapter = fresh();
+    const raw = respond({ subtype: 'error', request_id: 'otra', error: 'x' });
+
+    expect(adapter.normalize(raw)).toEqual(normalizeRawEvent(raw));
+  });
+
+  it('buildSpawnPlan_afterEngineRequest_forgetsPending', () => {
+    const adapter = fresh();
+    adapter.encodeEngineRequest('r1', { kind: 'rewind_files', userMessageUuid: U1, dryRun: false });
+    adapter.buildSpawnPlan(launch);
+    const raw = respond({ subtype: 'success', request_id: 'r1', response: {} });
+
+    expect(adapter.normalize(raw)).toEqual(normalizeRawEvent(raw));
+  });
+});
+
+describe('ClaudeAdapter: checkpoints de ficheros y fork (T1, A2)', () => {
+  const ORIGIN = '0b1c2d3e-4f50-4612-8a7b-9c0d1e2f3a4b';
+  const AT = '1c2d3e4f-5061-4723-9b8c-0d1e2f3a4b5c';
+  const NEW = '2d3e4f50-6172-4834-8c9d-1e2f3a4b5c6d';
+  const adapter = new ClaudeAdapter({ resolveBinary: () => 'claude' });
+  const fork = { sessionId: ORIGIN, atUuid: AT };
+  const base = { ...launch, sessionId: NEW };
+
+  it('buildSpawnPlan_setsFileCheckpointingEnv', () => {
+    const original = process.env.ANTHROPIC_API_KEY;
+    process.env.ANTHROPIC_API_KEY = 'sk-should-be-removed';
+    try {
+      const plan = adapter.buildSpawnPlan(launch);
+
+      expect(plan.env.CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING).toBe('true');
+      expect('ANTHROPIC_API_KEY' in plan.env).toBe(false);
+    } finally {
+      if (original === undefined) delete process.env.ANTHROPIC_API_KEY;
+      else process.env.ANTHROPIC_API_KEY = original;
+    }
+  });
+
+  it('buildSpawnPlan_forkFrom_buildsForkArgs', () => {
+    const { args } = adapter.buildSpawnPlan({ ...base, forkFrom: fork });
+
+    expect(args.slice(args.indexOf('--resume'), args.indexOf('--resume') + 7)).toEqual([
+      '--resume', ORIGIN, '--resume-session-at', AT, '--fork-session', '--session-id', NEW,
+    ]);
+  });
+
+  it('buildSpawnPlan_withoutForkFrom_unchangedSessionArgs', () => {
+    const { args } = adapter.buildSpawnPlan(launch);
+
+    expect(args).toContain('--session-id');
+    expect(args).not.toContain('--fork-session');
+  });
+
+  it('buildSpawnPlan_forkFromWithResume_throws', () => {
+    expect(() => adapter.buildSpawnPlan({ ...base, resume: true, forkFrom: fork })).toThrow('excluyentes');
+  });
+
+  it('buildSpawnPlan_forkFromNonUuid_throwsWithValue', () => {
+    expect(() => adapter.buildSpawnPlan({ ...base, forkFrom: { sessionId: ORIGIN, atUuid: 'no-uuid' } })).toThrow('"no-uuid"');
   });
 });

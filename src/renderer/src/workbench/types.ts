@@ -155,6 +155,10 @@ export type Block =
       // estado viejo que tolerar, y un array obligatorio convierte en error de compilacion cualquier
       // constructor que se lo olvide.
       readonly attachments: readonly ImageAttachment[];
+      // Id del mensaje ante su CLI (Claude: el `uuid` que Mage mandó o el de la transcripción; Codex: el
+      // id del item o el `clientUserMessageId`); null si no se conoce, y entonces la burbuja no ofrece
+      // rebobinar.
+      readonly nativeId: string | null;
     }
   | {
       readonly kind: 'tool';

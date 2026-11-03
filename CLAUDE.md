@@ -37,6 +37,7 @@ multicuenta, análisis de uso/logs y más.
   la de por defecto y sus pestañas dicen «Factura API». La clave de un proveedor del runtime propio
   también vive en la bóveda y solo viaja en la cabecera `Authorization` de sus peticiones (nunca a un
   hijo ni al renderer). Test: `src/main/engine/apiKeyInvariant.test.ts`.
+  Única excepción de prueba (T6): `MAGE_TEST_ANTHROPIC_BASE_URL` apunta el hijo de una cuenta de Claude POR CLAVE DE API a un servidor Messages falso local; solo sin empaquetar y en loopback (`decideTestAnthropicBaseUrl`, `agentEnv.ts`); una cuenta de suscripción nunca la recibe.
 - **Multiplataforma (crítico):** Windows/macOS/Linux. Nada de rutas/comandos hardcodeados por SO;
   todo tras abstracción (`LinkService`, `OpenWithService` y los tres resolutores de binario:
   `claudeBinaryResolver`, `agyBinaryResolver` y su núcleo común `agentBinaryResolver`); usar

@@ -2,7 +2,7 @@ import { SUBAGENT_STATUS } from './engineBlocks';
 import { describe, expect, it } from 'vitest';
 import type { TranscriptEntry } from '@shared/transcripts';
 import type { Block } from './types';
-import { transcriptToBlocks } from './transcriptToBlocks';
+import { nativeIdOf, transcriptToBlocks } from './transcriptToBlocks';
 import { makeEntry } from '@testing/transcriptEntry';
 
 // Construye una entrada normalizada minima: solo `kind`, `index`, `raw` (y lo que se sobrescriba)
@@ -62,11 +62,31 @@ const userTextAndImage = (index: number, mediaType = 'image/png', data = TINY_PN
     index,
   );
 
+describe('nativeIdOf', () => {
+  it('nativeIdOf_codexPrefix_stripped', () => {
+    expect(nativeIdOf('codex-item-7')).toBe('item-7');
+  });
+
+  it('nativeIdOf_claudeUuid_unchanged', () => {
+    expect(nativeIdOf('9253933c-a6b0')).toBe('9253933c-a6b0');
+  });
+
+  it('nativeIdOf_null_null', () => {
+    expect(nativeIdOf(null)).toBeNull();
+  });
+});
+
 describe('transcriptToBlocks', () => {
+  it('transcriptToBlocks_userEntry_carriesNativeId', () => {
+    const blocks = transcriptToBlocks([userMsg('hola', 3)]);
+
+    expect(blocks[0]).toMatchObject({ kind: 'user', nativeId: 'u3' });
+  });
+
   it('mensajeUsuario_generaBloqueUser', () => {
     const blocks = transcriptToBlocks([userMsg('hola', 0)]);
 
-    expect(blocks).toEqual([{ kind: 'user', id: 'tb-0-0', text: 'hola', time: '', attachments: [] }]);
+    expect(blocks).toEqual([{ kind: 'user', id: 'tb-0-0', text: 'hola', time: '', attachments: [], nativeId: 'u0' }]);
   });
 
   it('transcriptToBlocks_assistantErrorRateLimit_lineaDeSistema', () => {
@@ -214,6 +234,7 @@ describe('transcriptToBlocks — adjuntos de imagen', () => {
         text: 'he hecho:',
         time: '',
         attachments: [{ mediaType: 'image/png', data: TINY_PNG_BASE64 }],
+        nativeId: 'u5',
       },
     ]);
   });
@@ -234,7 +255,7 @@ describe('transcriptToBlocks — adjuntos de imagen', () => {
   it('transcriptToBlocks_imagenConMediaTypeNoSoportado_descartaElAdjuntoYConservaElTexto', () => {
     const blocks = transcriptToBlocks([userTextAndImage(5, 'image/tiff')]);
 
-    expect(blocks[0]).toEqual({ kind: 'user', id: 'tb-5-0', text: 'he hecho:', time: '', attachments: [] });
+    expect(blocks[0]).toEqual({ kind: 'user', id: 'tb-5-0', text: 'he hecho:', time: '', attachments: [], nativeId: 'u5' });
   });
 
   it('transcriptToBlocks_bloqueImageSinSourceBase64_noLanza', () => {

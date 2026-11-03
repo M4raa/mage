@@ -75,6 +75,10 @@ export interface CodexRolloutHead {
   readonly cwd: string;
   readonly startedAtMs: number | null;
   readonly title: string;
+  // `history_mode` del `session_meta`: solo 'legacy' o 'paginated'; ausente o cualquier otro valor, null.
+  readonly historyMode: 'legacy' | 'paginated' | null;
+  // Hilo padre de un hijo de `review/start` (medido, INFORME-046 A5); null si no es hijo.
+  readonly parentThreadId: string | null;
 }
 
 const TITLE_MAX_CHARS = 80;
@@ -95,7 +99,9 @@ export function readCodexRolloutHead(lines: readonly string[]): CodexRolloutHead
   }
   if (meta === null || typeof meta.id !== 'string') return null;
   const started = typeof meta.timestamp === 'string' ? Date.parse(meta.timestamp) : Number.NaN;
-  return { sessionId: meta.id, cwd: typeof meta.cwd === 'string' ? meta.cwd : '', startedAtMs: Number.isFinite(started) ? started : null, title };
+  const historyMode = meta.history_mode === 'legacy' || meta.history_mode === 'paginated' ? meta.history_mode : null;
+  const parentThreadId = typeof meta.parent_thread_id === 'string' && meta.parent_thread_id.length > 0 ? meta.parent_thread_id : null;
+  return { sessionId: meta.id, cwd: typeof meta.cwd === 'string' ? meta.cwd : '', startedAtMs: Number.isFinite(started) ? started : null, title, historyMode, parentThreadId };
 }
 
 function parseLine(line: string): Rec | null {
@@ -136,12 +142,13 @@ function codexItemLines(item: unknown): Rec[] {
   if (tool === null) return [{ ...base, type: `codex-${item.type}` }];
   return [
     { ...base, type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: item.id, name: tool.name, input: tool.input }] } },
-    { ...base, uuid: `codex-${item.id}-result`, type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: item.id, content: codexItemOutput(item), is_error: isFailedItem(item) }] } },
+    { ...base, uuid: `codex-${item.id}-result`, type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: item.id, content: codexItemOutput(item), is_error: isFailedCodexItem(item) }] } },
   ];
 }
 
-// Los mismos nombres con los que se pinta el item en directo (`toolOf` de src/main/engine/codexProtocol.ts).
-function codexItemTool(item: Rec): { readonly name: string; readonly input: Rec } | null {
+// El ÚNICO sitio que traduce un item de Codex a herramienta (nombre y entrada): lo usan al reabrir `codexItemLines`
+// y en directo `src/main/engine/codexProtocol.ts`. `null` si el item no es una herramienta.
+export function codexItemTool(item: Readonly<Rec>): { readonly name: string; readonly input: Readonly<Rec> } | null {
   switch (item.type) {
     case 'commandExecution':
       return { name: 'Bash', input: { command: item.command, cwd: item.cwd } };
@@ -156,23 +163,24 @@ function codexItemTool(item: Rec): { readonly name: string; readonly input: Rec 
   }
 }
 
-// El mismo resultado que en directo (`itemOutput` de codexProtocol.ts). Una llamada MCP fallida queda sin texto: su
-// estado ya la marca como error.
-function codexItemOutput(item: Rec): string {
+// El ÚNICO sitio que extrae el texto de resultado de un item de Codex (reabrir y directo). Una llamada MCP con
+// `error` queda sin texto: su estado ya la marca como error y el directo le pone encima su propio aviso
+// (`liveItemOutput` de codexProtocol.ts).
+export function codexItemOutput(item: Readonly<Rec>): string {
   if (typeof item.aggregatedOutput === 'string') return item.aggregatedOutput;
-  if (item.type === 'mcpToolCall') return codexMcpOutput(item);
+  if (item.type === 'mcpToolCall') return item.error !== undefined && item.error !== null ? '' : codexMcpOutput(item);
   if (item.type === 'fileChange' && Array.isArray(item.changes)) {
     return item.changes.map((change) => (isRec(change) && typeof change.diff === 'string' ? change.diff : '')).join('\n');
   }
   return '';
 }
 
-function codexMcpOutput(item: Rec): string {
+function codexMcpOutput(item: Readonly<Rec>): string {
   if (!isRec(item.result) || !Array.isArray(item.result.content)) return '';
   return item.result.content.flatMap((block: unknown) => (isRec(block) && block.type === 'text' && typeof block.text === 'string' ? [block.text] : [])).join('\n');
 }
 
-function isFailedItem(item: Rec): boolean {
+export function isFailedCodexItem(item: Readonly<Rec>): boolean {
   const status = typeof item.status === 'string' ? item.status : '';
   return FAILED_ITEM_STATUSES.includes(status) || (typeof item.exitCode === 'number' && item.exitCode !== 0);
 }

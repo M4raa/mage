@@ -1,5 +1,16 @@
 import type { MageApi } from '@shared/ipc';
-import { clampUiScale, DEFAULT_PERMISSION_MODES, IMPORTED_CONTEXT_LIMITS, ONBOARDING_VERSION, RUNTIME_SHELLS } from '@shared/settings';
+import {
+  clampUiScale,
+  DEFAULT_PERMISSION_MODES,
+  IMPORTED_CONTEXT_LIMITS,
+  KEEP_ALIVE_MAX_PAUSE_MAX,
+  KEEP_ALIVE_MAX_PAUSE_MIN,
+  KEEP_ALIVE_MIN_CONTEXT_MAX,
+  KEEP_ALIVE_MIN_CONTEXT_MIN,
+  ONBOARDING_VERSION,
+  RUNTIME_SHELLS,
+  type KeepAliveSettings,
+} from '@shared/settings';
 import { setAgyCommandVerdict } from '@shared/agyRules';
 import { applyAccentOverrides } from './accountView';
 import { effortSettingKey } from './models';
@@ -23,6 +34,7 @@ export type SettingsActionName =
   | 'setAgyLinkedPaths'
   | 'setDefaultProvider'
   | 'setArtifactEnabled'
+  | 'setKeepAlive'
   | 'setDefaultPermissionMode'
   | 'setRuntimeToolAccess'
   | 'setRuntimeShell'
@@ -55,6 +67,23 @@ export interface SettingsDeps {
   readonly pushWidgetSnapshot: () => void;
   // Si las novedades no se abren en esta ejecucion (dev sin la variable del harness).
   readonly isReleaseNotesDevRun: () => boolean;
+}
+
+// Precondicion de `setKeepAlive`: cada campo que venga es del tipo y del rango que acepta main.
+function assertKeepAlivePatch(patch: Partial<KeepAliveSettings>): void {
+  assertIntInRange('minContextTokens', patch.minContextTokens, KEEP_ALIVE_MIN_CONTEXT_MIN, KEEP_ALIVE_MIN_CONTEXT_MAX);
+  assertIntInRange('maxPauseHours', patch.maxPauseHours, KEEP_ALIVE_MAX_PAUSE_MIN, KEEP_ALIVE_MAX_PAUSE_MAX);
+  for (const field of ['subscriptionEnabled', 'apiKeyEnabled'] as const) {
+    const value = patch[field];
+    if (value !== undefined && typeof value !== 'boolean') throw new Error(`Keep-alive: ${field} debe ser booleano, recibido ${JSON.stringify(value)}`);
+  }
+}
+
+function assertIntInRange(field: string, value: number | undefined, min: number, max: number): void {
+  if (value === undefined) return;
+  if (!Number.isInteger(value) || value < min || value > max) {
+    throw new Error(`Keep-alive: ${field} debe ser un entero entre ${min} y ${max}, recibido ${JSON.stringify(value)}`);
+  }
 }
 
 export function createSettingsActions(deps: SettingsDeps): SettingsActions {
@@ -125,6 +154,12 @@ export function createSettingsActions(deps: SettingsDeps): SettingsActions {
 
     setArtifactEnabled: (enabled) => {
       set((s) => ({ settings: { ...s.settings, artifactEnabled: enabled } }));
+      deps.persistSettings();
+    },
+
+    setKeepAlive: (patch) => {
+      assertKeepAlivePatch(patch);
+      set((s) => ({ settings: { ...s.settings, keepAlive: { ...s.settings.keepAlive, ...patch } } }));
       deps.persistSettings();
     },
 

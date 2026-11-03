@@ -35,6 +35,9 @@ export interface LaunchParams {
   // (reanuda por `sessionId`). Medido en `agy` 1.1.11: un id arbitrario NO sirve (`warning:
   // conversation "…" not found` y arranca otra), hay que devolverle el que emitio.
   readonly conversationId?: string;
+  // Divergir en Claude (A2 de INFORME-046, medido en 2.1.311): `--resume <origen> --resume-session-at <at>
+  // --fork-session --session-id <nuevo>`; la conversacion original no cambia (C-3b). Excluyente con `resume`.
+  readonly forkFrom?: { readonly sessionId: string; readonly atUuid: string };
 }
 
 // Plan de spawn resuelto: comando, argumentos y entorno del proceso hijo.
@@ -55,6 +58,15 @@ export interface PermissionRef {
 export type SteerEncoding =
   | { readonly kind: 'write'; readonly payload: unknown }
   | { readonly kind: 'resolved'; readonly outcome: 'no_active_turn' };
+
+// Peticion de Mage al motor con respuesta (rewind y fork, F4.4/F4.5). Cada proveedor entiende solo los
+// `kind` de su CLI.
+export type EngineRequest =
+  | { readonly kind: 'rewind_conversation'; readonly targetUuid: string; readonly lastSeenUuid: string }
+  | { readonly kind: 'rewind_files'; readonly userMessageUuid: string; readonly dryRun: boolean }
+  | { readonly kind: 'thread_revert'; readonly beforeTurnId: string }
+  | { readonly kind: 'thread_fork'; readonly lastTurnId: string }
+  | { readonly kind: 'thread_turns'; readonly cursor: string | null };
 
 // Layout en disco de las cuentas de un proveedor. Lo DECLARA el adapter y lo recibe `AccountService`
 // inyectado, que asi deja de conocer ningun nombre de proveedor: hasta 9.1 tenia dentro
@@ -109,10 +121,15 @@ export interface ProviderAdapter {
   // Objetos que se serializan como lineas NDJSON hacia stdin del hijo.
   // `attachments` (2.12.1): imagenes del mensaje. SIN adjuntos el payload no cambia ni un byte
   // respecto al de siempre — la forma minima con `content` string esta validada por el spike.
-  encodeUserMessage(text: string, attachments?: readonly ImageAttachment[]): unknown;
+  // `messageId` (F4.4): con el, el adapter identifica el mensaje ante su CLI (Claude: `uuid`; Codex:
+  // `clientUserMessageId`); sin el, el payload no cambia ni un byte.
+  encodeUserMessage(text: string, attachments?: readonly ImageAttachment[], messageId?: string): unknown;
   // Mensaje directo en el turno en marcha (F4.1). OPCIONAL: solo Claude y codex lo tienen. `messageId` es
   // el id con el que el adapter emitira despues su `steer_result`.
   encodeSteer?(messageId: string, text: string, attachments?: readonly ImageAttachment[]): SteerEncoding;
+  // Peticion de Mage al motor con respuesta (F4.4/F4.5). OPCIONAL: solo Claude y Codex. Lanza Error si el
+  // proveedor no admite ese `kind`. La respuesta llega como evento `engine_response` con el mismo `requestId`.
+  encodeEngineRequest?(requestId: string, request: EngineRequest): unknown;
   encodePermissionResponse(ref: PermissionRef, decision: PermissionDecision): unknown;
   encodeElicitationResponse?(answer: ElicitationAnswer): unknown;
   encodeInterrupt(): unknown;

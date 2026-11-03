@@ -22,6 +22,7 @@ function harness(options: { index?: Partial<ConversationIdentityIndex>; emitOnSt
     stop: vi.fn(),
     sendMessage: vi.fn(),
     steerMessage: vi.fn(),
+    engineRequest: vi.fn(),
     interrupt: vi.fn(),
     answerPermission: vi.fn(),
     answerElicitation: vi.fn(),
@@ -253,7 +254,7 @@ describe('SessionCoordinator — cola de mensajes en main (F2.2)', () => {
     const receipt = h.coordinator.send({ sessionId: id, text: 'hola', commandId: 'c1' });
 
     expect(receipt).toEqual({ status: 'accepted', commandId: 'c1' });
-    expect(h.sessions.sendMessage).toHaveBeenCalledWith(id, 'hola', []);
+    expect(h.sessions.sendMessage).toHaveBeenCalledWith(id, 'hola', [], undefined);
     expect(h.coordinator.snapshot(id).state).toBe('running');
   });
 
@@ -1019,7 +1020,7 @@ describe('SessionCoordinator — directo y cola (F4.1, F4.2)', () => {
     const receipt = steer(h, id);
 
     expect(receipt).toEqual({ status: 'accepted', commandId: C1 });
-    expect(h.sessions.sendMessage).toHaveBeenCalledWith(id, 'ya', []);
+    expect(h.sessions.sendMessage).toHaveBeenCalledWith(id, 'ya', [], C1);
     expect(h.sessions.steerMessage).not.toHaveBeenCalled();
   });
 
@@ -1073,7 +1074,7 @@ describe('SessionCoordinator — directo y cola (F4.1, F4.2)', () => {
     expect(h.coordinator.snapshot(id).state).toBe('running');
     expect(h.sessions.sendMessage).not.toHaveBeenCalled();
     h.emit(id, result);
-    expect(h.sessions.sendMessage).toHaveBeenCalledWith(id, 'B', []);
+    expect(h.sessions.sendMessage).toHaveBeenCalledWith(id, 'B', [], undefined);
   });
 
   it('send_normalConDirectoEnVueloSinTurno_esperaEnLaCola', () => {
@@ -1097,7 +1098,7 @@ describe('SessionCoordinator — directo y cola (F4.1, F4.2)', () => {
 
     h.emit(id, steered(C1, 'no_active_turn'));
 
-    expect(h.sessions.sendMessage).toHaveBeenCalledWith(id, 'ya', []);
+    expect(h.sessions.sendMessage).toHaveBeenCalledWith(id, 'ya', [], C1);
     expect(deliveries(h)).toMatchObject([{ into: 'new_turn', late: true, turnKind: null }]);
     expect(h.coordinator.snapshot(id).state).toBe('running');
   });
@@ -1125,7 +1126,7 @@ describe('SessionCoordinator — directo y cola (F4.1, F4.2)', () => {
     expect(second).toEqual({ status: 'queued', commandId: C2 });
     expect(h.sessions.steerMessage).toHaveBeenCalledTimes(1);
     h.emit(id, result);
-    expect(h.sessions.sendMessage).toHaveBeenCalledWith(id, 'ya', []);
+    expect(h.sessions.sendMessage).toHaveBeenCalledWith(id, 'ya', [], C1);
     h.emit(id, state('running'));
     expect(steer(h, id, '33333333-3333-4333-8333-333333333333').status).toBe('steering');
   });

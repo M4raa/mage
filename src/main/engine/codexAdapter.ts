@@ -7,7 +7,7 @@ import { resolveCodexBinary, type CodexSpawnCommand } from '../os/codexBinaryRes
 import { scrubAgentEnv } from '../os/agentEnv';
 import { toCodexOverrides } from '../config/mcpProviderTranslate';
 import { bridgeDocument, type BridgedFile } from '../instructions/instructionsBridge';
-import type { AuthModel, LaunchParams, PermissionRef, ProviderAdapter, SpawnPlan, SteerEncoding } from './providerAdapter';
+import type { AuthModel, EngineRequest, LaunchParams, PermissionRef, ProviderAdapter, SpawnPlan, SteerEncoding } from './providerAdapter';
 import {
   approvalRequest,
   approvalResult,
@@ -81,7 +81,7 @@ const JSONRPC_METHOD_NOT_FOUND = -32601;
 const JSONRPC_INVALID_REQUEST = -32600;
 const STALE_STEER_MESSAGES: readonly string[] = ['no active turn to steer', 'expected active turn id'];
 // Ids de las peticiones propias de Mage, para reconocer su respuesta.
-type OwnRequest = 'initialize' | 'thread' | 'turn' | 'models' | 'rateLimits' | 'steer' | 'other';
+type OwnRequest = 'initialize' | 'thread' | 'turn' | 'models' | 'rateLimits' | 'steer' | 'engine' | 'other';
 
 interface PendingApproval {
   readonly rawId: unknown;
@@ -106,8 +106,10 @@ export class CodexAdapter implements ProviderAdapter {
   private heldSteers: Array<{ readonly messageId: string; readonly input: unknown[] }> = [];
   // id JSON-RPC de cada `turn/steer` -> id del directo de Mage.
   private readonly steerRequests = new Map<number, string>();
+  // id JSON-RPC de cada peticion al motor -> requestId de Mage.
+  private readonly engineRequests = new Map<number, string>();
   private usage: CodexUsageTracker = EMPTY_USAGE_TRACKER;
-  private queuedInputs: unknown[][] = [];
+  private queuedInputs: Array<{ readonly input: unknown[]; readonly messageId: string | undefined }> = [];
   private params: LaunchParams | null = null;
   private model = '';
   private effort: string | null = null;
@@ -160,6 +162,7 @@ export class CodexAdapter implements ProviderAdapter {
     this.turnStarting = false;
     this.heldSteers = [];
     this.steerRequests.clear();
+    this.engineRequests.clear();
     this.usage = EMPTY_USAGE_TRACKER;
   }
 
@@ -170,13 +173,13 @@ export class CodexAdapter implements ProviderAdapter {
   }
 
   // Sin hilo todavia, el mensaje espera: sale como `turn/start` en cuanto `thread/start` conteste.
-  encodeUserMessage(text: string, attachments: readonly ImageAttachment[] = []): unknown {
+  encodeUserMessage(text: string, attachments: readonly ImageAttachment[] = [], messageId?: string): unknown {
     const input = buildInput(text, attachments);
     if (this.threadId === null) {
-      this.queuedInputs.push(input);
+      this.queuedInputs.push({ input, messageId });
       return null;
     }
-    this.startTurn(input);
+    this.startTurn(input, messageId);
     return null;
   }
 
@@ -212,6 +215,31 @@ export class CodexAdapter implements ProviderAdapter {
   encodeInterrupt(): unknown {
     if (this.threadId === null || this.turnId === null) return null; // ningun turno en marcha
     return this.requestMessage('turn/interrupt', { threadId: this.threadId, turnId: this.turnId }, 'other');
+  }
+
+  // Peticiones de rewind/fork (F4.4/F4.5) sobre el hilo abierto. Devuelve el mensaje JSON-RPC (como `encodeInterrupt`).
+  encodeEngineRequest(requestId: string, request: EngineRequest): unknown {
+    if (this.threadId === null) throw new Error(`Peticion al motor de codex sin hilo: requestId=${JSON.stringify(requestId)}`);
+    const { method, params } = this.engineCall(this.threadId, request);
+    const message = this.requestMessage(method, params, 'engine');
+    this.engineRequests.set(this.nextId, requestId);
+    return message;
+  }
+
+  private engineCall(threadId: string, request: EngineRequest): { readonly method: string; readonly params: Record<string, unknown> } {
+    switch (request.kind) {
+      case 'thread_revert':
+        return { method: 'thread/revert', params: { threadId, beforeTurnId: request.beforeTurnId } };
+      case 'thread_fork':
+        return { method: 'thread/fork', params: { threadId, lastTurnId: request.lastTurnId, excludeTurns: true } };
+      case 'thread_turns':
+        return {
+          method: 'thread/turns/list',
+          params: { threadId, itemsView: 'full', sortDirection: 'asc', ...(request.cursor === null ? {} : { cursor: request.cursor }) },
+        };
+      default:
+        throw new Error(`Codex no admite la peticion al motor: ${request.kind}`);
+    }
   }
 
   // Codex fija modelo y permisos POR TURNO (`turn/start`): el cambio aplica al siguiente sin mandar nada.
@@ -283,6 +311,7 @@ export class CodexAdapter implements ProviderAdapter {
     this.own.delete(id);
     if (kind === 'steer') return this.afterSteer(id, raw);
     if (kind === 'turn') return this.afterTurnStart(raw);
+    if (kind === 'engine') return this.afterEngineRequest(id, raw);
     if (isRecord(raw.error)) return this.onError(kind, raw.error);
     switch (kind) {
       case 'initialize':
@@ -296,6 +325,14 @@ export class CodexAdapter implements ProviderAdapter {
       default:
         return [];
     }
+  }
+
+  private afterEngineRequest(id: number, raw: Record<string, unknown>): MageEvent[] {
+    const requestId = this.engineRequests.get(id);
+    if (requestId === undefined) return [];
+    this.engineRequests.delete(id);
+    const failed = isRecord(raw.error);
+    return [{ kind: 'engine_response', requestId, ok: !failed, result: raw.result ?? null, error: failed ? describeRpcError(raw.error as Record<string, unknown>) : null }];
   }
 
   // Un fallo de la telemetria (limites sin cuenta: «authentication required», medido) no ensucia la
@@ -324,9 +361,14 @@ export class CodexAdapter implements ProviderAdapter {
     const model = isRecord(result) && typeof result.model === 'string' ? result.model : this.model;
     const queued = this.queuedInputs;
     this.queuedInputs = [];
-    for (const input of queued) this.startTurn(input);
+    for (const { input, messageId } of queued) this.startTurn(input, messageId);
+    // El esquema 0.164.0 pone `default: "legacy"`, pero un campo AUSENTE no se trata como legacy: los hilos que abre
+    // Mage son `paginated` (X-4 de INFORME-040). El revert de un legacy se rechaza con `-32600 thread/revert only
+    // supports paginated threads` (A6 de INFORME-046).
+    const mode = thread.historyMode === 'legacy' || thread.historyMode === 'paginated' ? thread.historyMode : null;
     return [
       { kind: 'session_init', sessionId: thread.id, model, tools: [], mcpServers: [], slashCommands: [], skills: [], plugins: [], pluginErrors: [] },
+      { kind: 'thread_history', mode },
     ];
   }
 
@@ -367,7 +409,8 @@ export class CodexAdapter implements ProviderAdapter {
 
   // --- Envio --------------------------------------------------------------------------------------
 
-  private startTurn(input: readonly unknown[]): void {
+  // `messageId` (F4.4): se manda como `clientUserMessageId` para que el item de usuario lo lleve de vuelta.
+  private startTurn(input: readonly unknown[], messageId?: string): void {
     if (this.threadId === null) throw new Error('turn/start sin hilo de codex');
     this.turnStarting = true;
     // Medido con codex-cli 0.160.0 y Responses local: omitir esfuerzo manda medium; `effort: low`
@@ -375,6 +418,7 @@ export class CodexAdapter implements ProviderAdapter {
     const effort = this.effort;
     this.request('turn/start', {
       threadId: this.threadId, input, model: this.model,
+      ...(messageId === undefined ? {} : { clientUserMessageId: messageId }),
       ...(effort === null || effort.length === 0 ? {} : { effort }),
       approvalPolicy: this.approvalPolicy(), ...this.permissionsField(),
     }, 'turn');
@@ -396,7 +440,7 @@ export class CodexAdapter implements ProviderAdapter {
 
   private sendSteer(messageId: string, input: readonly unknown[]): void {
     if (this.threadId === null || this.turnId === null) throw new Error(`turn/steer sin hilo o sin turno de codex: ${messageId}`);
-    this.request('turn/steer', { threadId: this.threadId, expectedTurnId: this.turnId, input }, 'steer');
+    this.request('turn/steer', { threadId: this.threadId, expectedTurnId: this.turnId, input, clientUserMessageId: messageId }, 'steer');
     this.steerRequests.set(this.nextId, messageId);
   }
 
@@ -444,6 +488,12 @@ export class CodexAdapter implements ProviderAdapter {
     if (this.params === null) throw new Error('codex contesto antes de lanzar el proceso');
     return this.params;
   }
+}
+
+// `"-32600 mensaje"` si el error trae codigo numerico; solo el mensaje si no.
+function describeRpcError(error: Record<string, unknown>): string {
+  const message = String(error.message);
+  return typeof error.code === 'number' ? `${error.code} ${message}` : message;
 }
 
 function buildInput(text: string, attachments: readonly ImageAttachment[]): unknown[] {

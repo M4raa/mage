@@ -462,6 +462,16 @@ function toStreamWindow(window: { utilization?: number | null; resetsAt?: number
   return { utilization: Math.round(fraction * 100), resetsAt: parseEpochMs(window?.resetsAt) };
 }
 
+// TTL de la caché según el desglose de `cache_creation`: gana el de 1 h si hubo escritura con él.
+const CACHE_TTL_1H_SECONDS = 3600;
+const CACHE_TTL_5M_SECONDS = 300;
+
+function cacheTtlSeconds(creation: { ephemeral_1h_input_tokens?: number; ephemeral_5m_input_tokens?: number } | undefined): number | null {
+  if ((creation?.ephemeral_1h_input_tokens ?? 0) > 0) return CACHE_TTL_1H_SECONDS;
+  if ((creation?.ephemeral_5m_input_tokens ?? 0) > 0) return CACHE_TTL_5M_SECONDS;
+  return null;
+}
+
 function normalizeResult(raw: Record<string, unknown>): MageEvent[] {
   const parsed = ResultSchema.parse(raw);
   const isError = parsed.is_error ?? parsed.subtype !== 'success';
@@ -480,6 +490,7 @@ function normalizeResult(raw: Record<string, unknown>): MageEvent[] {
           outputTokens: usage.output_tokens,
           cacheReadTokens: usage.cache_read_input_tokens ?? null,
           cacheCreationTokens: usage.cache_creation_input_tokens ?? null,
+          cacheTtlSeconds: cacheTtlSeconds(usage.cache_creation),
           thinkingTokens: usage.output_tokens_details?.thinking_tokens ?? null,
           totalTokens: usage.input_tokens + usage.output_tokens + (usage.cache_read_input_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0),
         } }),

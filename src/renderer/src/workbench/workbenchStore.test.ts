@@ -8,6 +8,7 @@ import { useNotificationStore } from './notificationStore';
 import { EMPTY_NOTIFICATIONS } from './notifications';
 import type { Account, Tab } from './types';
 import type { AccountInfo } from '@shared/accounts';
+import { makeEntry } from '@testing/transcriptEntry';
 
 // El store alcanzaba `window.mage` directamente en 18 sitios, asi que estas 850 lineas de orquestacion
 // no tenian una sola red — y ahi vivia el bug de `closeTab`. Con el cliente inyectado (decision A1) se
@@ -651,12 +652,13 @@ describe('ensureSession', () => {
 });
 
 describe('hydrateBlocks', () => {
-  const bloque = (id: string): { kind: 'user'; id: string; text: string; time: string; attachments: readonly never[] } => ({
+  const bloque = (id: string): { kind: 'user'; id: string; text: string; time: string; attachments: readonly never[]; nativeId: null } => ({
     kind: 'user',
     id,
     text: id,
     time: '12:00',
     attachments: [],
+    nativeId: null,
   });
 
   it('hydrateBlocks_conUnMensajeYaEscrito_anteponeElHistorialEnVezDeDescartarlo', () => {
@@ -1484,7 +1486,7 @@ describe('requestAccountSwitch y continueInAccount', () => {
   it('continueWithHistoryIn_haciaOtroProveedor_abreChatNuevoConElHistorialYNoMigra', async () => {
     const migrateConversation = vi.fn();
     const store = mounted({ migrateConversation, getScratchDir: vi.fn(() => new Promise<string>(() => undefined)) });
-    store.setState({ blocksByChat: { a: [{ kind: 'user', id: 'u1', text: 'arregla el login', time: '', attachments: [] }] } });
+    store.setState({ blocksByChat: { a: [{ kind: 'user', id: 'u1', text: 'arregla el login', time: '', attachments: [], nativeId: null }] } });
 
     await store.getState().continueWithHistoryIn('a', 'C:/Users/u/.codex-x');
 
@@ -1705,6 +1707,107 @@ describe('stopSubagent', () => {
   });
 });
 
+// K07: Rebobinar, Reintentar y Divergir desde la burbuja del usuario.
+describe('rebobinar, reintentar y divergir', () => {
+  const userBlock = (id: string, text: string, nativeId: string | null) => ({ kind: 'user', id, text, time: '', attachments: [], nativeId }) as const;
+  const entry = (index: number, text: string) =>
+    makeEntry({ kind: 'user', index, uuid: `n${index}`, raw: { type: 'user', message: { role: 'user', content: text } } });
+  const projectionOf = (...texts: string[]) => ({ entries: texts.map((text, index) => entry(index, text)), errors: [], isFinal: true, totalLinesSoFar: texts.length, bytesReadSoFar: 0, rawLineNumber: 0 });
+  const applied = (over: Record<string, unknown> = {}) => ({ draft: 'dos', returnedQueue: [], filesRestored: false, copyThreadId: null, projection: projectionOf('uno'), retried: null, ...over });
+
+  function mounted(rewindApply: unknown, over: Partial<MageApi> = {}) {
+    const store = createWorkbenchStore(fakeMage({ rewindApply: rewindApply as MageApi['rewindApply'], saveWorkspace: vi.fn().mockResolvedValue(undefined), ...over }));
+    store.setState({
+      tabs: [tab('a')],
+      activeTabId: 'a',
+      splitLayout: singleLeaf('a'),
+      sessionIdByChat: { a: 's-a' },
+      blocksByChat: { a: [userBlock('b1', 'uno', 'n0'), userBlock('b2', 'dos', 'n1')] },
+    });
+    return store;
+  }
+
+  it('getRewindPlan_blockWithoutSession_throws', () => {
+    const store = mounted(vi.fn());
+    store.setState({ sessionIdByChat: {} });
+
+    expect(() => void store.getState().getRewindPlan('a', 'b2', 'rewind')).toThrow('sesión');
+  });
+
+  it('getRewindPlan_secondBubble_sendsPointWithIndex1', async () => {
+    const rewindPlan = vi.fn().mockResolvedValue({ unavailable: null });
+    const store = mounted(vi.fn(), { rewindPlan });
+
+    await store.getState().getRewindPlan('a', 'b2', 'diverge');
+
+    expect(rewindPlan).toHaveBeenCalledWith({ sessionId: 's-a', point: { userIndex: 1, text: 'dos', nativeId: 'n1' }, action: 'diverge' });
+  });
+
+  it('rewindTo_rewind_replacesBlocksAndFillsDraft', async () => {
+    const store = mounted(vi.fn().mockResolvedValue(applied()));
+
+    await store.getState().rewindTo('a', 'b2', { restoreFiles: false, saveCopy: false, action: 'rewind' });
+
+    expect(store.getState().blocksByChat.a?.map((b) => b.kind === 'user' && b.text)).toEqual(['uno']);
+    expect(store.getState().draftByChat.a).toEqual({ text: 'dos', attachments: [] });
+  });
+
+  it('rewindTo_rewindWithQueue_queueGoesInFrontOfDraft', async () => {
+    const queue = [{ id: 'q1', text: 'encolado', attachments: [] }];
+    const store = mounted(vi.fn().mockResolvedValue(applied({ returnedQueue: queue })));
+
+    await store.getState().rewindTo('a', 'b2', { restoreFiles: false, saveCopy: false, action: 'rewind' });
+
+    expect(store.getState().draftByChat.a?.text).toBe('encolado\n\ndos');
+  });
+
+  it('rewindTo_retryAccepted_paintsOneRetryBubble', async () => {
+    const store = mounted(vi.fn().mockResolvedValue(applied({ draft: '', retried: { status: 'accepted', commandId: 'c9' } })));
+
+    await store.getState().rewindTo('a', 'b2', { restoreFiles: false, saveCopy: false, action: 'retry' });
+
+    const users = (store.getState().blocksByChat.a ?? []).filter((b) => b.kind === 'user');
+    expect(users.map((b) => b.kind === 'user' && [b.text, b.nativeId])).toEqual([['uno', 'n0'], ['dos', 'c9']]);
+    expect(store.getState().draftByChat.a).toBeUndefined();
+  });
+
+  it('rewindTo_mainFails_rethrowsAndKeepsBlocks', async () => {
+    const store = mounted(vi.fn().mockRejectedValue(new Error('sin CLI')));
+
+    await expect(store.getState().rewindTo('a', 'b2', { restoreFiles: true, saveCopy: false, action: 'rewind' })).rejects.toThrow('sin CLI');
+
+    expect(store.getState().blocksByChat.a).toHaveLength(2);
+  });
+
+  it('updateLegacyCodex_noOpenTab_updatesWithoutReopening', async () => {
+    const update = vi.fn().mockResolvedValue({ backupDir: 'C:\\copias\\t1' });
+    const store = mounted(vi.fn(), { updateLegacyCodexConversation: update });
+
+    const backupDir = await store.getState().updateLegacyCodex(null, 'C:\\codex', 't1');
+
+    expect(backupDir).toBe('C:\\copias\\t1');
+    expect(update).toHaveBeenCalledWith({ accountDir: 'C:\\codex', threadId: 't1' });
+    expect(store.getState().tabs).toHaveLength(1);
+  });
+
+  it('divergeFrom_claude_forkTravelsOnlyInFirstCreateSession', async () => {
+    const forkFrom = { sessionId: 'orig', atUuid: 'n1' };
+    const createSession = vi.fn().mockResolvedValue({ sessionId: 'fork-1', configDir: 'C:\\cfg' });
+    const store = mounted(vi.fn(), {
+      divergeConversation: vi.fn().mockResolvedValue({ kind: 'claude', forkFrom }),
+      createSession, isFolderTrusted: vi.fn().mockResolvedValue(true), saveConversationPrefs: vi.fn().mockResolvedValue(undefined),
+    });
+    store.setState({ accounts: [{ id: tab('a').accountId, alias: 'principal', providerId: 'claude', loginStatus: 'logged_in' } as unknown as Account] });
+
+    await store.getState().divergeFrom('a', 'b2');
+
+    expect(createSession).toHaveBeenCalledTimes(1);
+    expect(createSession).toHaveBeenCalledWith(expect.objectContaining({ forkFrom }));
+    const forkTab = store.getState().tabs.find((candidate) => candidate.id === store.getState().activeTabId);
+    expect(forkTab).toMatchObject({ id: expect.not.stringMatching(/^a$/) as unknown, resumeSessionId: 'fork-1', title: 'Rama de Conversacion a' });
+  });
+});
+
 // 0.1.1 R2, punto 30: con un turno en marcha la cola es de Mage. Nada va al stdin hasta que acaba.
 // F2.2: la cola es de main. El renderer envía siempre (con su commandId), adelanta lo que se ve, pinta la
 // cola que llega en `queue_changed` y reacciona a lo que main saca de ella.
@@ -1738,6 +1841,16 @@ describe('cola de mensajes', () => {
     });
     return { store, sendMessage, interrupt, removeQueuedMessage, updateQueuedMessage };
   }
+
+  it('sendMessageToTab_optimisticBlockNativeIdIsCommandId', async () => {
+    const { store, sendMessage } = mounted('idle');
+
+    await store.getState().sendMessageToTab('a', 'hola');
+
+    const sent = sendMessage.mock.calls[0]?.[0] as { commandId: string };
+    const block = (store.getState().blocksByChat.a ?? []).find((b) => b.kind === 'user');
+    expect(block).toMatchObject({ kind: 'user', nativeId: sent.commandId });
+  });
 
   it('sendMessageToTab_turnoEnMarcha_loMandaAMainSinBurbujaNiReloj', async () => {
     const { store, sendMessage } = mounted('streaming');
@@ -2256,7 +2369,7 @@ describe('worktree de la pestaña (grupo D)', () => {
       activeTabId: 'a',
       splitLayout: singleLeaf('a'),
       gitByCwd: { 'C:/proyecto': { snapshot: REPO_SNAPSHOT, branches: ['main'], error: null } },
-      blocksByChat: { a: [{ kind: 'user', id: 'b1', text: 'Arreglar el login', time: '10:00', attachments: [] }] },
+      blocksByChat: { a: [{ kind: 'user', id: 'b1', text: 'Arreglar el login', time: '10:00', attachments: [], nativeId: null }] },
     });
     return store;
   }

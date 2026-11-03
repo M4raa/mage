@@ -5,7 +5,7 @@ import type { LogLevel } from '@shared/debug';
 import type { MageEvent, PermissionDecision } from '@shared/events';
 import { localized, UserFacingError, type LocalizedText } from '@shared/i18n/localizedText';
 import { validateElicitationAnswer, type ElicitationAnswer, type ElicitationRequest } from '@shared/elicitation';
-import type { LaunchParams, ProviderAdapter } from './providerAdapter';
+import type { EngineRequest, LaunchParams, ProviderAdapter } from './providerAdapter';
 import { DEFAULT_RESTART_POLICY, decideRestart, type RestartDecision, type RestartPolicy } from './restartPolicy';
 import { defaultKillTreeDeps, killProcessTree, type KillTreeDeps } from '../os/processTree';
 
@@ -63,6 +63,8 @@ export class AgentSession {
   // Permisos abiertos: request_id -> tool_use_id (para construir el control_response).
   private readonly pendingPermissions = new Map<string, string>();
   private readonly pendingElicitations = new Map<string, ElicitationRequest>();
+  // Peticiones al motor (`engineRequest`) sin respuesta: si el proceso muere, se contestan con error.
+  private readonly pendingEngineRequests = new Set<string>();
   // Inicio de cada tool en curso: tool_use_id -> epoch ms (para medir la duracion en tool_result).
   private readonly toolStartTimes = new Map<string, number>();
   private readonly spawnFn: SpawnFn;
@@ -219,14 +221,14 @@ export class AgentSession {
 
   // Envia un mensaje de usuario. Precondicion: proceso vivo, o un turno cortado matando el proceso
   // (entonces se relanza aqui, reanudando la conversacion del proveedor).
-  sendUserMessage(text: string, attachments: readonly ImageAttachment[] = []): void {
+  sendUserMessage(text: string, attachments: readonly ImageAttachment[] = [], messageId?: string): void {
     if (this.launchStale && this.child !== null && !this.turnActive) this.recycleForLaunchSettings();
     if (this.child === null && this.relaunchOnNextMessage && !this.stopping) {
       this.relaunchOnNextMessage = false;
       this.launch(this.resumeParams());
     }
     this.turnActive = true;
-    this.writePayload(this.deps.adapter.encodeUserMessage(text, attachments));
+    this.writePayload(this.deps.adapter.encodeUserMessage(text, attachments, messageId));
   }
 
   // Directo en el turno en marcha (F4.1). Sin proceso no hay turno al que entrar: se resuelve aqui como
@@ -242,13 +244,37 @@ export class AgentSession {
     this.writePayload(encoding.payload);
   }
 
+  // Peticion de Mage al motor con respuesta (F4.4/F4.5): llega como `engine_response` con este `requestId`.
+  // Sin proceso se contesta aqui mismo con error, para que quien espera no se quede colgado.
+  engineRequest(requestId: string, request: EngineRequest): void {
+    const encode = this.deps.adapter.encodeEngineRequest;
+    if (encode === undefined) throw new Error(`El proveedor de la sesion ${this.deps.params.sessionId} no admite peticiones al motor (kind=${request.kind})`);
+    if (this.child === null) {
+      this.deps.emit({ kind: 'engine_response', requestId, ok: false, result: null, error: 'process_not_running' });
+      return;
+    }
+    const payload = encode.call(this.deps.adapter, requestId, request);
+    this.pendingEngineRequests.add(requestId);
+    this.writePayload(payload);
+  }
+
+  // Las peticiones al motor sin respuesta mueren con el proceso (salida, corte o parada).
+  private failPendingEngineRequests(): void {
+    for (const requestId of this.pendingEngineRequests) {
+      this.deps.emit({ kind: 'engine_response', requestId, ok: false, result: null, error: 'process_exited' });
+    }
+    this.pendingEngineRequests.clear();
+  }
+
   // Params de un relanzado que REANUDA: el id de Mage (o el del ultimo `/clear`) con `resume`, y el id
   // de conversacion del proveedor si ya lo emitio. Si nunca hubo handshake no hay nada que reanudar y se
   // relanza con los params originales (arranque fresco con el mismo id).
   private resumeParams(): LaunchParams {
     if (!this.handshaked) return this.currentParams();
+    // Tras el `init` del fork la conversacion nueva ya existe y se reanuda por su id; repetir el fork crearia otra.
+    const { forkFrom: _alreadyForked, ...params } = this.currentParams();
     return {
-      ...this.currentParams(),
+      ...params,
       sessionId: this.resetConversationId ?? this.deps.params.sessionId,
       resume: true,
       ...(this.providerConversationId === null ? {} : { conversationId: this.providerConversationId }),
@@ -338,6 +364,7 @@ export class AgentSession {
     }
     this.pendingPermissions.clear();
     this.cancelPendingElicitations();
+    this.failPendingEngineRequests();
     this.toolStartTimes.clear();
   }
 
@@ -401,6 +428,7 @@ export class AgentSession {
     this.child = null;
     this.pendingPermissions.clear();
     this.cancelPendingElicitations();
+    this.failPendingEngineRequests();
     this.toolStartTimes.clear();
   }
 
@@ -528,6 +556,8 @@ export class AgentSession {
       // mitad de sesion aparece SIN reiniciar nada. Medido: un segundo `initialize` responde con los
       // 159 comandos y NO duplica los hooks (un turno de prueba recibio un solo hook_callback de Stop).
       this.requestCommandCatalog();
+    } else if (event.kind === 'engine_response') {
+      this.pendingEngineRequests.delete(event.requestId);
     } else if (event.kind === 'conversation_reset') {
       this.resetConversationId = event.newSessionId;
     } else if (event.kind === 'hook_fired') {
@@ -611,6 +641,7 @@ export class AgentSession {
     }
     this.pendingPermissions.clear();
     this.cancelPendingElicitations();
+    this.failPendingEngineRequests();
     this.toolStartTimes.clear();
     this.log(this.stopping ? 'info' : 'error', 'Exit del proceso del agente', {
       sessionId: this.deps.params.sessionId,

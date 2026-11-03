@@ -213,3 +213,49 @@ describe('CodexHistoryService — regla A4 (original y segmentos)', () => {
     expect(ROLLOUT_NAME.exec(segmentFile(1))?.[3]).toBe('aaaaaaaa-0000-0000-0000-000000000001');
   });
 });
+
+// El rollout de la fixture con campos añadidos al `session_meta` (y, si se pide, otro id de hilo).
+function rolloutWithMeta(extra: Record<string, unknown>, id = THREAD): string {
+  const [first, ...rest] = ROLLOUT.split('\n');
+  const meta = JSON.parse(first!) as { payload: Record<string, unknown> };
+  return [JSON.stringify({ ...meta, payload: { ...meta.payload, id, ...extra } }), ...rest].join('\n');
+}
+
+describe('CodexHistoryService (K06: modo, hijos y ficheros)', () => {
+  const CHILD = '99999999-2222-3333-4444-555555555555';
+  const childFile = `rollout-2026-10-05T11-00-00-${CHILD}.jsonl`;
+
+  it('historyModeOf_legacyOriginal', () => {
+    const service = new CodexHistoryService(fakeDeps({ [join(DAY, FILE)]: rolloutWithMeta({ history_mode: 'legacy' }) }), vi.fn());
+
+    expect(service.historyModeOf(HOME, THREAD)).toBe('legacy');
+    expect(service.historyModeOf(HOME, CHILD)).toBeNull();
+  });
+
+  it('childThreadsOf_reviewChild_found', () => {
+    const service = new CodexHistoryService(fakeDeps({
+      [join(DAY, FILE)]: ROLLOUT,
+      [join(DAY, childFile)]: rolloutWithMeta({ parent_thread_id: THREAD }, CHILD),
+    }), vi.fn());
+
+    expect(service.childThreadsOf(HOME, THREAD)).toEqual([CHILD]);
+    expect(service.childThreadsOf(HOME, CHILD)).toEqual([]);
+  });
+
+  it('threadFiles_originalAndSegments', () => {
+    const service = new CodexHistoryService(fakeDeps({
+      [join(DAY, FILE)]: ROLLOUT,
+      [join(DAY, segmentFile(1))]: segmentMeta('2026-10-05T10:00:00.000Z'),
+    }), vi.fn());
+
+    expect(service.threadFiles(HOME, THREAD)).toEqual([join(DAY, FILE), join(DAY, segmentFile(1))]);
+    expect(service.threadFiles(HOME, CHILD)).toEqual([]);
+  });
+
+  it('list_decorateTitle_applied', () => {
+    const decorate = (id: string, title: string): string => `Copia de ${title} (${id.slice(0, 2)})`;
+    const service = new CodexHistoryService(fakeDeps({ [join(DAY, FILE)]: ROLLOUT }), vi.fn(), decorate);
+
+    expect(service.list(HOME)[0]?.title).toBe('Copia de Lista los ficheros (11)');
+  });
+});

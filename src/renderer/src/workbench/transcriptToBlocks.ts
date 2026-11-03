@@ -80,7 +80,16 @@ function appendUserOrResult(entry: TranscriptEntry, blocks: Block[], toolIndexBy
   // desaparecia del hilo.
   if (text.length === 0 && attachments.length === 0) return;
   if (attachments.length === 0 && appendWrapperNotice(entry, text, blocks, toolIndexById)) return;
-  blocks.push({ kind: 'user', id: blockId(entry.index, 0), text, time: formatTime(entry.timestampMs), attachments });
+  blocks.push({ kind: 'user', id: blockId(entry.index, 0), text, time: formatTime(entry.timestampMs), attachments, nativeId: nativeIdOf(entry.uuid) });
+}
+
+const CODEX_UUID_PREFIX = 'codex-';
+
+// Id del mensaje ante su CLI a partir del uuid de la entrada: el uuid tal cual (Claude) o sin el
+// prefijo `codex-` con el que la transcripción de Codex lo envuelve; null si no hay.
+export function nativeIdOf(uuid: string | null): string | null {
+  if (uuid === null) return null;
+  return uuid.startsWith(CODEX_UUID_PREFIX) ? uuid.slice(CODEX_UUID_PREFIX.length) : uuid;
 }
 
 // Envoltorios de sistema que el CLI guarda como mensaje del usuario (P-026, D20): los avisos y los
@@ -232,7 +241,7 @@ function appendSystemNotice(entry: TranscriptEntry, blocks: Block[]): void {
   // lineas `system/local_command`, con los MISMOS envoltorios que en una linea de usuario.
   if (raw.subtype === 'local_command' && typeof raw.content === 'string') {
     if (!appendWrapperNotice(entry, raw.content, blocks) && classifySystemWrapper(raw.content).kind === 'command') {
-      blocks.push({ kind: 'user', id: blockId(entry.index, 0), text: raw.content, time: formatTime(entry.timestampMs), attachments: [] });
+      blocks.push({ kind: 'user', id: blockId(entry.index, 0), text: raw.content, time: formatTime(entry.timestampMs), attachments: [], nativeId: null });
     }
     return;
   }

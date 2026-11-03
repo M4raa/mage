@@ -230,6 +230,11 @@ export const ResultSchema = z.object({
     cache_creation_input_tokens: z.number().int().nonnegative().optional(),
     cache_read_input_tokens: z.number().int().nonnegative().optional(),
     output_tokens_details: z.object({ thinking_tokens: z.number().int().nonnegative().optional() }).passthrough().optional(),
+    // Desglose por TTL de la caché que pidió el CLI. Medido en 2.1.314 (`evidencias-048/salidas/a1-s1.json`, `resultUsage`).
+    cache_creation: z.object({
+      ephemeral_1h_input_tokens: z.number().int().nonnegative().optional(),
+      ephemeral_5m_input_tokens: z.number().int().nonnegative().optional(),
+    }).passthrough().optional(),
   }).passthrough().optional(),
   total_cost_usd: z.union([z.number().nonnegative(), z.string()]).optional(),
 });
