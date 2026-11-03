@@ -18,9 +18,16 @@ export default defineConfig({
     // Y los modulos PUROS de los scripts del repo (p. ej. la guarda de uso de `verify:gui`), que son .mjs
     // porque el harness corre en node sin el pipeline de TS.
     include: ['src/**/*.test.{ts,tsx}', 'scripts/**/*.test.mjs'],
-    // `threads` en vez del default `forks` (7.1). Medido sobre la suite completa: 4,99 s -> 4,14 s
-    // sin tocar el aislamiento por fichero, que se mantiene. El coste de la suite NO esta en los tests
-    // (2,7 s) sino en arrancar workers: `prepare` era 16,5 s de los 5 s de reloj de pared.
+    // `forks` (el default), NO `threads` (carril T, 0.1.4). Con `threads` todos los ficheros comparten UN
+    // proceso, y en Windows libuv crea el extremo hijo de cada tuberia de stdio como heredable y lanza con
+    // `bInheritHandles`: si un hilo esta en un `execFileSync` (git real de worktreeService) y otro hilo lanza
+    // a la vez un hijo, ese hijo hereda la tuberia del primero, que no ve el EOF hasta que el heredero sale.
+    // Medido: 17 de 150 `execFileSync` de un hijo instantaneo tardaron 8,16 s con hijos de 8 s lanzados
+    // desde otro hilo. Si el heredero es el servicio de esbuild (linguiEsbuildPlugin.test), que vive hasta el
+    // final, el hilo se queda bloqueado para siempre y vitest no termina (el cuelgue «todo verde y sin
+    // resumen»: matar ese esbuild lo desbloqueo al momento). Con herederos cortos, los tests de git pasaban de
+    // 0,7 s a mas de 5 s con carga. Con `forks` cada proceso tiene un solo hilo que lanza: no hay carrera.
+    // Coste medido (3 pasadas de cada): 6,0 s -> 8,1 s de reloj de pared.
     //
     // `isolate: false`: ACTIVADO el 2026-09-16 (decision 7.2, cerrada en la auditoria B.6.3). Medido
     // aqui con la suite de 2.122 tests: 5,1 s -> 1,8 s, en verde con tres pasadas de --sequence.shuffle.
@@ -34,7 +41,7 @@ export default defineConfig({
     // y parar en sus propios hooks) o volver a poner `isolate: true` — un intermitente por estado
     // compartido cuesta mas que los 3 segundos que esto ahorra.
     isolate: false,
-    pool: 'threads',
+    pool: 'forks',
     coverage: {
       provider: 'v8',
       // Solo la logica de negocio: los entrypoints, los .tsx (que no se testean por diseño — la GUI se
