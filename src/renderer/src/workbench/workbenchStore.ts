@@ -2195,6 +2195,8 @@ export function createWorkbenchStore(mage: MageClient) {
         }));
         get().focusPrompt();
         schedulePersist(mage, get);
+        // La cuenta con la que se reasigna queda apuntada en el índice (lateral de todas las cuentas).
+        persistConversationPrefs(mage, get(), plan.tabId);
         return;
       }
       // Indice propio de Mage (2.1): modelo, esfuerzo y modo de permiso con los que se dejo ESTA
@@ -2224,6 +2226,7 @@ export function createWorkbenchStore(mage: MageClient) {
       }));
       get().focusPrompt();
       schedulePersist(mage, get);
+      persistConversationPrefs(mage, get(), tab.id);
     },
 
     // Cierra la pestana abierta de una conversacion (por sessionId) para que ningun proceso siga

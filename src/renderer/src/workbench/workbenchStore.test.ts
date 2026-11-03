@@ -1419,6 +1419,7 @@ describe('requestAccountSwitch y continueInAccount', () => {
         saveWorkspace: vi.fn().mockResolvedValue(undefined),
         getUsage: vi.fn().mockResolvedValue(null),
         listConversations: vi.fn().mockResolvedValue([]),
+        saveConversationPrefs: vi.fn().mockResolvedValue(undefined),
         ...over,
       }),
     );

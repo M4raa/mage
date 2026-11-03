@@ -7,6 +7,8 @@ const VALID: AppSettings = {
   version: 1,
   notificationRules: [{ id: 'r1', label: 'Deploy', pattern: 'deploy (ok|listo)', enabled: true }],
   chatProjects: [],
+  pinnedConversations: [],
+  archivedConversations: [],
   theme: 'light',
   widgetEnabled: true,
   backgroundOpacity: 80,
@@ -157,6 +159,18 @@ describe('SettingsStore.load', () => {
     const project = { id: 'p1', name: 'Python', instructions: 'Experto en Python', cwd: 'C:/apps/Python', sessionIds: ['s1'] };
     const store = new SettingsStore(deps({ readFile: () => JSON.stringify({ ...VALID, chatProjects: [project] }) }));
     expect(store.load().chatProjects).toEqual([project]);
+  });
+
+  it('load_conversacionesFijadasYArchivadas_sePersisten', () => {
+    const store = new SettingsStore(deps({ readFile: () => JSON.stringify({ ...VALID, pinnedConversations: ['a'], archivedConversations: ['b', 'c'] }) }));
+    expect(store.load().pinnedConversations).toEqual(['a']);
+    expect(store.load().archivedConversations).toEqual(['b', 'c']);
+  });
+
+  it('load_conversacionesFijadasInvalidas_caenAVacio', () => {
+    const store = new SettingsStore(deps({ readFile: () => JSON.stringify({ ...VALID, pinnedConversations: 'x', archivedConversations: ['ok', ''] }) }));
+    expect(store.load().pinnedConversations).toEqual([]);
+    expect(store.load().archivedConversations).toEqual([]);
   });
 
   it('load_jsonCorrupto_devuelveDefaults', () => {

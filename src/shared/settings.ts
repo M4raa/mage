@@ -93,6 +93,10 @@ export interface AppSettings {
   readonly version: number;
   readonly notificationRules: readonly NotificationRule[];
   readonly chatProjects: readonly ChatProject[];
+  // Ids de conversación fijadas en el lateral (grupo «Fijadas»). Una pestaña fijada y su conversación van a la par.
+  readonly pinnedConversations: readonly string[];
+  // Ids de conversación archivadas: salen del lateral salvo con el chip «Archivadas».
+  readonly archivedConversations: readonly string[];
   // Preferencia de tema base (claro/oscuro/sistema). Default 'dark' para preservar el aspecto actual.
   readonly theme: ThemePreference;
   // Widget flotante always-on-top (M3): si esta activo, se abre al arrancar. Default false (opt-in).
@@ -261,6 +265,8 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   version: APP_SETTINGS_VERSION,
   notificationRules: [],
   chatProjects: [],
+  pinnedConversations: [],
+  archivedConversations: [],
   theme: 'dark',
   widgetEnabled: false,
   backgroundOpacity: 100,

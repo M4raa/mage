@@ -88,6 +88,30 @@ describe('ConversationIndexStore — preferencias (2.1)', () => {
     expect(store.loadPrefs(SESSION)).toEqual({ model: 'opus' });
   });
 
+  it('savePrefs_withAccountId_persistsIt', () => {
+    const store = memoryStore();
+
+    store.savePrefs(SESSION, { model: 'opus', accountId: 'acc-1' });
+
+    expect(store.loadPrefs(SESSION)).toEqual({ model: 'opus', accountId: 'acc-1' });
+  });
+
+  it('loadPrefs_invalidAccountId_dropsField', () => {
+    const file = JSON.stringify({ version: 2, conversations: { [SESSION]: { model: 'opus', accountId: 42 } }, artifacts: {} });
+    const store = new ConversationIndexStore(buildDeps({ readFile: () => file }));
+
+    expect(store.loadPrefs(SESSION)).toEqual({ model: 'opus' });
+  });
+
+  it('savePrefs_emptyAccountId_removesIt', () => {
+    const store = memoryStore();
+    store.savePrefs(SESSION, { model: 'opus', accountId: 'acc-1' });
+
+    store.savePrefs(SESSION, { accountId: '' });
+
+    expect(store.loadPrefs(SESSION)).toEqual({ model: 'opus' });
+  });
+
   it('savePrefs_sessionIdVacio_lanzaConElValorRecibido', () => {
     const writeFile = vi.fn();
     const store = new ConversationIndexStore(buildDeps({ writeFile }));

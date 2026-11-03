@@ -15,6 +15,9 @@ export interface ConversationPrefs {
   // Proveedor con el que se abrio (P-032 R4): al reabrir del historial decide el runtime. Ausente =
   // Claude (todo lo anterior, y las transcripciones antiguas del gateway).
   readonly provider?: string;
+  // Última cuenta con la que se usó la conversación (id de cuenta de Mage). El lateral de todas las cuentas
+  // la usa para decidir de quién es una conversación compartida de Claude.
+  readonly accountId?: string;
 }
 
 // Artifact publicado: pertenece a la cuenta que lo publico y NO cambia de dueño al abrir la

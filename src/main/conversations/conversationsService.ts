@@ -17,6 +17,18 @@ const PREFIX_BYTES = 64 * 1024; // prefijo por fichero para derivar cwd/titulo (
 const SUFFIX_BYTES = 64 * 1024;
 const MAX_CONVERSATIONS = 300; // tope del payload: las mas recientes (evita listas gigantes)
 
+// Añade a cada conversación la última cuenta con la que se usó (la sabe el índice de Mage, no el disco).
+// Sin dato, el objeto queda igual.
+export function withLastAccount(
+  items: readonly ConversationSummary[],
+  accountOf: (sessionId: string) => string | undefined,
+): ConversationSummary[] {
+  return items.map((item) => {
+    const lastAccountId = accountOf(item.sessionId);
+    return lastAccountId === undefined ? item : { ...item, lastAccountId };
+  });
+}
+
 export interface ConversationsDeps {
   readonly exists: (path: string) => boolean;
   readonly listDir: (path: string) => string[];
