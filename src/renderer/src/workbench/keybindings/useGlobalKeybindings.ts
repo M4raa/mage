@@ -10,6 +10,7 @@ import type { PanelId } from '@shared/panelLayout';
 import { resolveKeyEvent } from './resolver';
 import type { KeyEventLike } from './keyParser';
 import { isMacPlatform } from './platform';
+import { focusSidebarSearch } from '../sidebarFocus';
 import { hasPendingQuestion } from '../engineBlocks';
 import { reportActionError } from '../notificationStore';
 import { t } from '../../i18n/uiLanguage';
@@ -76,6 +77,12 @@ export function runGlobalAction(actionId: string): void {
     case 'app.toggleInspector':
       store.toggleInspector();
       return;
+    case 'sidebar.focusSearch': {
+      const panels = usePanelLayoutStore.getState();
+      if (!panels.isPanelOpen('conversations')) panels.togglePanelById('conversations');
+      focusSidebarSearch();
+      return;
+    }
     case 'permission.allow':
       store.answerActivePermission({ behavior: 'allow' });
       return;

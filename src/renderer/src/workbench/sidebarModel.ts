@@ -268,3 +268,15 @@ export function accountToOpenWith(row: SidebarRow, active: { readonly id: string
   if (isSharedClaudeHistory && active !== undefined && active.providerId === DEFAULT_PROVIDER) return active.id;
   return row.accountId;
 }
+
+// Índice id de conversación -> peso en disco, memoizado por la referencia del historial (que solo cambia al
+// recargarlo): la barra de estado lo consulta en cada cambio del store y no recorre la lista cada vez.
+const sizeIndexCache = new WeakMap<readonly AccountConversation[], ReadonlyMap<string, number>>();
+
+export function conversationSizeById(history: readonly AccountConversation[]): ReadonlyMap<string, number> {
+  const cached = sizeIndexCache.get(history);
+  if (cached !== undefined) return cached;
+  const index = new Map(history.map((entry) => [entry.item.sessionId, entry.item.sizeBytes]));
+  sizeIndexCache.set(history, index);
+  return index;
+}

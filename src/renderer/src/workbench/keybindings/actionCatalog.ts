@@ -41,7 +41,7 @@ export interface KeybindingAction {
 }
 
 // Definicion de una accion tal como se escribe aqui: etiqueta y categoria como CLAVES del catalogo de textos.
-type ActionLabelKey = 'menu.action.promptSend' | 'menu.action.promptSendNow' | 'menu.action.promptIndent' | 'menu.action.promptOutdent' | 'menu.action.promptCyclePermissionMode' | 'menu.action.conversationNew' | 'menu.action.windowNew' | 'menu.action.tabClose' | 'menu.action.tabNext' | 'menu.action.tabPrevious' | 'menu.action.sessionInterrupt' | 'menu.action.sessionCompact' | 'menu.action.appOpenSettings' | 'menu.action.appToggleSidebar' | 'menu.action.appToggleInspector' | 'menu.action.permissionAllow' | 'menu.action.permissionAllowAlways' | 'menu.action.permissionDeny' | 'menu.action.permissionCycleMode';
+type ActionLabelKey = 'menu.action.promptSend' | 'menu.action.promptSendNow' | 'menu.action.promptIndent' | 'menu.action.promptOutdent' | 'menu.action.promptCyclePermissionMode' | 'menu.action.conversationNew' | 'menu.action.windowNew' | 'menu.action.tabClose' | 'menu.action.tabNext' | 'menu.action.tabPrevious' | 'menu.action.sessionInterrupt' | 'menu.action.sessionCompact' | 'menu.action.appOpenSettings' | 'menu.action.appToggleSidebar' | 'menu.action.appToggleInspector' | 'menu.action.permissionAllow' | 'menu.action.permissionAllowAlways' | 'menu.action.permissionDeny' | 'menu.action.permissionCycleMode' | 'menu.action.sidebarFocusSearch';
 type ActionCategoryKey = 'menu.category.prompt' | 'menu.category.app' | 'menu.category.session' | 'menu.category.permission' | 'menu.category.panels';
 interface ActionDefinition extends Omit<KeybindingAction, 'label' | 'category'> {
   readonly labelKey: ActionLabelKey;
@@ -141,6 +141,8 @@ const ACTION_DEFINITIONS: readonly ActionDefinition[] = [
     defaultKeys: 'CmdOrCtrl+I',
     rebindable: true,
   },
+  // Enfoca el buscador del lateral de conversaciones (abre el panel si está oculto).
+  { id: 'sidebar.focusSearch', labelKey: 'menu.action.sidebarFocusSearch', categoryKey: 'menu.category.app', scope: 'global', defaultKeys: 'CmdOrCtrl+K', rebindable: true },
   {
     id: 'permission.allow',
     labelKey: 'menu.action.permissionAllow',

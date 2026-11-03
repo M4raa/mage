@@ -64,7 +64,8 @@ export function createHistoryActions(deps: HistoryDeps): HistoryActions {
     // Fija o desfija una conversación en el lateral. Si hay pestaña abierta de esa conversación, su `pinned` queda
     // igual al nuevo valor.
     togglePinnedConversation: (sessionId) => {
-      const pin = !get().settings.pinnedConversations.includes(sessionId);
+      const openTabPinned = get().tabs.some((t) => t.pinned === true && conversationIdOfTab(t, get().sessionIdByChat[t.id]) === sessionId);
+      const pin = !(get().settings.pinnedConversations.includes(sessionId) || openTabPinned);
       set((s) => ({
         settings: { ...s.settings, pinnedConversations: withIdPresence(s.settings.pinnedConversations, sessionId, pin) },
         tabs: s.tabs.map((t) => (conversationIdOfTab(t, s.sessionIdByChat[t.id]) === sessionId ? { ...t, pinned: pin } : t)),

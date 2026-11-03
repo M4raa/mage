@@ -20,6 +20,8 @@ export interface ConversationTarget {
   readonly cwd: string;
   readonly privacy: ConversationPrivacy;
   readonly title: string;
+  // Cuenta de la fila (el lateral enseña todas las cuentas): borrar y mover actúan sobre ELLA, no sobre la activa.
+  readonly accountId: string;
 }
 
 // Menu contextual de una conversacion (#2 de AJUSTES): eliminar y mover (entre Compartido/Privado y a
@@ -39,6 +41,10 @@ export function ConversationContextMenu({
   newWindowBlockedReason = null,
   projects = [],
   onAssignProject,
+  pinned = false,
+  archived = false,
+  onTogglePinned,
+  onToggleArchived,
 }: {
   readonly target: ConversationTarget;
   readonly x: number;
@@ -58,6 +64,11 @@ export function ConversationContextMenu({
   readonly newWindowBlockedReason?: string | null;
   readonly projects?: readonly ChatProject[];
   readonly onAssignProject?: (projectId: string | null) => void;
+  // Fijar y archivar (lateral): el estado actual decide el texto de cada entrada.
+  readonly pinned?: boolean;
+  readonly archived?: boolean;
+  readonly onTogglePinned?: () => void;
+  readonly onToggleArchived?: () => void;
 }): React.JSX.Element {
   const t = useT();
   const [confirmingDelete, setConfirmingDelete] = useState(false);
@@ -110,6 +121,18 @@ export function ConversationContextMenu({
             <div className="my-[3px] h-px bg-mg-border-subtle" />
           </>
         )}
+
+        {onTogglePinned !== undefined && (
+          <MenuItem disabled={!hasSession} onClick={onTogglePinned}>
+            {pinned ? t('sidebar.contextMenu.unpin') : t('sidebar.contextMenu.pin')}
+          </MenuItem>
+        )}
+        {onToggleArchived !== undefined && (
+          <MenuItem disabled={!hasSession} onClick={onToggleArchived}>
+            {archived ? t('sidebar.contextMenu.unarchive') : t('sidebar.contextMenu.archive')}
+          </MenuItem>
+        )}
+        {(onTogglePinned !== undefined || onToggleArchived !== undefined) && <div className="my-[3px] h-px bg-mg-border-subtle" />}
 
         {/* Mover a la otra seccion de la MISMA cuenta. */}
         {onAssignProject !== undefined && (

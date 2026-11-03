@@ -6,6 +6,7 @@ import {
   accountToOpenWith,
   applySidebarFilter,
   buildSidebarRows,
+  conversationSizeById,
   EMPTY_SIDEBAR_FILTER,
   folderProjectName,
   groupSidebarRows,
@@ -299,5 +300,20 @@ describe('accountToOpenWith', () => {
 
   it('accountToOpenWith_private_usesRowAccount', () => {
     expect(accountToOpenWith(historyRow({ privacy: 'private' }, 'acc-b'), active)).toBe('acc-b');
+  });
+});
+
+describe('conversationSizeById', () => {
+  it('conversationSizeById_sameHistory_returnsSameMapWithSizes', () => {
+    const history: AccountConversation[] = [{ item: summary({ sessionId: 'a', sizeBytes: 5 }), accountId: 'acc-a' }];
+
+    const first = conversationSizeById(history);
+
+    expect(first.get('a')).toBe(5);
+    expect(conversationSizeById(history)).toBe(first);
+  });
+
+  it('conversationSizeById_empty_returnsEmptyMap', () => {
+    expect(conversationSizeById([]).size).toBe(0);
   });
 });

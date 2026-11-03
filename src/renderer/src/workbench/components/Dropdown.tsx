@@ -7,6 +7,8 @@ import { POPOVER_VARIANTS } from '../motionPresets';
 export interface DropdownOption {
   readonly value: string;
   readonly label: string;
+  // Color de acento (punto delante de la etiqueta), p. ej. el de una cuenta.
+  readonly accent?: string;
 }
 
 const MENU_WIDTH_PX = 170;
@@ -54,6 +56,7 @@ export function Dropdown({
   tip,
   triggerClassName = '',
   leading,
+  triggerData,
 }: {
   readonly value: string;
   readonly options: readonly DropdownOption[];
@@ -63,6 +66,8 @@ export function Dropdown({
   readonly triggerClassName?: string;
   // Algo que va delante de la etiqueta en el disparador (el icono de la rama de git, P-026 3.5).
   readonly leading?: React.ReactNode;
+  // Atributos `data-*` del disparador (los usa la verificación de la interfaz para localizarlo).
+  readonly triggerData?: Readonly<Record<`data-${string}`, string>>;
 }): React.JSX.Element {
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -109,6 +114,7 @@ export function Dropdown({
         aria-expanded={open}
         aria-label={ariaLabel}
         data-tip={tip}
+        {...triggerData}
         className={`shrink-0 cursor-pointer self-center rounded-full border border-mg-border-ctrl bg-transparent px-[8px] py-[2px] text-[10.5px] text-mg-sec outline-none transition-colors duration-150 ease-out hover:text-mg-body ${triggerClassName}`}
       >
         {leading === undefined ? (
@@ -159,7 +165,12 @@ export function Dropdown({
                       o.value === value ? 'font-bold text-mg-focus' : ''
                     }`}
                   >
-                    {o.label}
+                    {o.accent === undefined ? o.label : (
+                      <span className="inline-flex items-center gap-[6px]">
+                        <span aria-hidden="true" className="h-[7px] w-[7px] flex-none rounded-full" style={{ background: o.accent }} />
+                        <span className="truncate">{o.label}</span>
+                      </span>
+                    )}
                   </button>
                 ))}
               </motion.div>
