@@ -53,6 +53,7 @@ import { decideTurnTarget, parseTurnAnswer, spentPercent } from './lib/usageGuar
 import { withGuiState } from './lib/guiState.mjs';
 import { closeCheckOverlays, runGuiCheck } from './lib/guiCheckState.mjs';
 import { runPerfBaseline } from './lib/perfBaseline.mjs';
+import { writeLongTranscript } from './lib/longTranscriptFixture.mjs';
 import { runMageBench } from './lib/benchMage.mjs';
 import { appendDomText } from './lib/domTextDump.mjs';
 import { redactUserData } from './lib/redactUserData.mjs';
@@ -2973,14 +2974,14 @@ const CHECKS = [
         const nombre = (el) => `${el.tagName.toLowerCase()}${el.dataset?.block ? `[data-block=${el.dataset.block}]` : ''}${el.className && typeof el.className === 'string' ? `.${el.className.split(/\s+/).slice(0, 3).join('.')}` : ''}`;
         const bloque = document.querySelector('[data-block]');
         if (bloque === null) return { sinBloque: true };
-        const hilo = bloque.parentElement;
+        const hilo = bloque.closest('[data-chat-scroller]');
         const cadena = [];
         for (let el = bloque.parentElement; el !== null && el !== document.documentElement; el = el.parentElement) {
           const p = [pintado(el), pintado(el, '::before'), pintado(el, '::after')];
           if (p.some((x) => Object.keys(x).length > 0)) cadena.push({ el: nombre(el), p });
         }
         // Lo que cuelga del hilo y no es un bloque (relleno, indicadores, sentinelas).
-        const sueltos = [...(hilo?.querySelectorAll(':scope > :not([data-block])') ?? [])]
+        const sueltos = [...(hilo?.querySelectorAll('[data-chat-row] > :not([data-block])') ?? [])]
           .map((el) => ({ el: nombre(el), p: pintado(el) }))
           .filter((x) => Object.keys(x.p).length > 0);
         // Dentro de cada bloque: solo los elementos de nivel 1-2 (la burbuja y su envoltorio).
@@ -3751,12 +3752,46 @@ const CHECKS = [
       const measured = await measureBlockHeights(page);
       const ok =
         measured !== null &&
-        measured.bloques === hydrated &&
-        measured.tools >= 12 &&
+        measured.bloques >= 1 &&
+        measured.bloques <= hydrated &&
+        measured.tools >= 1 &&
         measured.desborda &&
         measured.pordebajode8 === 0 &&
         measured.minAltura >= 8;
       return { ok, detail: `hidratados=${hydrated} ${JSON.stringify(measured)}` };
+    },
+  },
+  {
+    // Q01 (U23): el hilo es una lista virtual (react-virtuoso). Con 3000 bloques solo hay un puñado montados,
+    // abre por el final y la ultima fila esta en el DOM. El mismo patron de inyeccion que `measureLongConversation`.
+    name: 'Q01: el chat largo está virtualizado y abre por el final',
+    state: { tabs: 1 },
+    async run(page) {
+      const previo = await page.evaluate(() => window.__mageDev.store.getState().blocksByChat);
+      await page.evaluate((n) => {
+        const store = window.__mageDev.store;
+        const id = store.getState().activeTabId;
+        const text = 'Párrafo de prueba con **negrita**, `código` y una lista:\n\n- uno\n- dos\n\n' + 'Texto largo de relleno. '.repeat(20);
+        const blocks = Array.from({ length: n }, (_, i) => (i % 2 === 0
+          ? { kind: 'user', id: `pb-u${i}`, text: `Mensaje ${i}: ${text}`, time: '12:00', attachments: [] }
+          : { kind: 'agent', id: `pb-a${i}`, runs: [{ code: false, text: `Respuesta ${i}: ${text}` }], streaming: false }));
+        store.setState((s) => ({ blocksByChat: { ...s.blocksByChat, [id]: blocks } }));
+      }, LONG_TRANSCRIPT_BLOCKS);
+      const lastBlockId = `pb-a${LONG_TRANSCRIPT_BLOCKS - 1}`;
+      await page.waitForSelector('[data-last-row="true"]', { timeout: CONFIG.actionTimeoutMs });
+      await page.waitForTimeout(CONFIG.settleMs);
+      const medido = await page.evaluate((lastId) => {
+        const scroller = document.querySelector('[data-last-row="true"]')?.closest('[data-chat-scroller]') ?? null;
+        return {
+          enDom: scroller === null ? -1 : scroller.querySelectorAll('[data-block]').length,
+          distanciaAlFondo: scroller === null ? null : scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight,
+          ultimoEnDom: scroller?.querySelector(`[data-row-key="${lastId}"]`) != null,
+        };
+      }, lastBlockId);
+      await page.evaluate((estado) => window.__mageDev.store.setState({ blocksByChat: estado }), previo);
+      await page.waitForTimeout(CONFIG.settleMs);
+      const ok = medido.enDom > 0 && medido.enDom < VIRTUAL_DOM_MAX_BLOCKS && medido.distanciaAlFondo !== null && medido.distanciaAlFondo <= 2 && medido.ultimoEnDom;
+      return { ok, detail: JSON.stringify(medido) };
     },
   },
   {
@@ -10280,6 +10315,9 @@ function seedCommandCatalog(userDataDir) {
 // Cuantos bloques hidrata la comprobacion de 2.6. El colapso a 2 px SOLO aparece con desbordamiento:
 // con pocos bloques la medida seria verde con el bug puesto.
 const HYDRATED_BLOCK_COUNT = 60;
+// Q01: bloques de la conversacion larga (T3) y tope de los que la lista virtual puede tener montados.
+const LONG_TRANSCRIPT_BLOCKS = 3000;
+const VIRTUAL_DOM_MAX_BLOCKS = 200;
 
 // Las dos conversaciones reanudadas de la comprobacion de 4.3. Los ids son inventados a proposito (no
 // hay fichero en disco: la transcripcion se inyecta), y los textos son DISTINTOS porque la mitad de la
@@ -10594,14 +10632,14 @@ async function hydrateFromEntries(page, entries) {
   return blocks;
 }
 
-// Alturas reales de los bloques del hilo. Se anclan por `data-block` y no por "hijos del contenedor":
-// el primer hijo es la region aria-live (1 px), que daria un falso negativo eterno.
+// Alturas reales de los bloques del hilo MONTADOS (la lista es virtual: no estan todos). Se anclan por
+// `data-block` dentro del scroller de la lista (`data-chat-scroller`) y no por "hijos del contenedor".
 function measureBlockHeights(page) {
   return page.evaluate(() => {
     const first = document.querySelector('[data-block]');
-    const scroller = first?.parentElement ?? null;
+    const scroller = first?.closest('[data-chat-scroller]') ?? null;
     if (scroller === null) return null;
-    const items = [...scroller.querySelectorAll(':scope > [data-block]')];
+    const items = [...scroller.querySelectorAll('[data-block]')];
     const heights = items.map((node) => node.offsetHeight);
     return {
       bloques: items.length,
@@ -11739,6 +11777,10 @@ async function main() {
   seedCommandCatalog(userDataDir);
   if (reuseProfile === undefined || !fs.existsSync(path.join(userDataDir, 'app-settings.json'))) seedOnboardingDone(userDataDir);
   seedMcpCommon(userDataDir);
+  // Q01: la conversacion larga del runtime propio que `--perf-baseline` abre desde el historial (en produccion no hay puente).
+  const longTranscript = process.argv.includes('--perf-baseline')
+    ? writeLongTranscript(userDataDir, { cwd: path.join(userDataDir, 'vg-t3-cwd'), blocks: LONG_TRANSCRIPT_BLOCKS })
+    : null;
 
   console.log(`[verify:gui] perfil aislado: ${userDataDir}`);
   const { child, log } = launchApp(userDataDir);
@@ -11773,7 +11815,7 @@ async function main() {
 
     // #40 (baseline de interfaz, SOLO medicion): en vez de las comprobaciones, mide y deja el JSON.
     if (process.argv.includes('--perf-baseline')) {
-      const medido = await runPerfBaseline(page, { openConversation: openTemporaryConversation, devBridge: !PROD_BUILD });
+      const medido = await runPerfBaseline(page, { openConversation: openTemporaryConversation, devBridge: !PROD_BUILD, longTranscriptTitle: longTranscript.title });
       fs.writeFileSync(path.join(runDir, 'perf-baseline.json'), JSON.stringify(medido, null, 2), 'utf-8');
       console.log(`[verify:gui] baseline: ${path.join(runDir, 'perf-baseline.json')}`);
       results.push({ name: 'Baseline de interfaz #40', ok: true, detail: redactUserData('medido', accountAliases) });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { summarize, topSelfTime } from './perfBaseline.mjs';
+import { summarize, tabSwitchReadyExpr, topSelfTime } from './perfBaseline.mjs';
 
 describe('perfBaseline (#40)', () => {
   it('summarize_muestras_medianaP90YMaximo', () => {
@@ -39,5 +39,13 @@ describe('perfBaseline (#40)', () => {
     };
 
     expect(topSelfTime(profile, 1).map((e) => e.fn)).toEqual(['caro · src/a.ts:1', 'HistoryItem · src/workbench/components/ChatSidebar.tsx:1']);
+  });
+
+  it('tabSwitchReadyExpr_destino_pideLaUltimaFilaSoloSiHayListaVirtual', () => {
+    const expr = tabSwitchReadyExpr('t7');
+
+    expect(expr).toContain('[data-pane-tab-id="t7"]');
+    expect(expr).toContain('[data-chat-scroller]');
+    expect(expr).toContain('[data-last-row="true"]');
   });
 });
