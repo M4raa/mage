@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { toWidgetSnapshot, type WidgetViewInput } from './widgetView';
+import { foreignText } from '@shared/i18n/localizedText';
 import type { Account, ChatStatus, Tab } from './types';
 
 // --- Fixtures -----------------------------------------------------------------------------------
@@ -88,6 +89,7 @@ describe('toWidgetSnapshot', () => {
       accountAlias: 'claude-p',
       accentBase: 'var(--mg-accent-0-base)',
       status: 'streaming',
+      readOnly: false,
     });
   });
 
@@ -176,5 +178,31 @@ describe('toWidgetSnapshot', () => {
 
     // error (critical) antes que la alerta de uso.
     expect(snapshot.alerts[0]?.kind).toBe('error');
+  });
+
+  it('toWidgetSnapshot_tabWithLiveSession_carriesSessionId', () => {
+    const snapshot = toWidgetSnapshot(makeInput({ sessionIdByChat: { tab1: 's1' } }), 'dark');
+
+    expect(snapshot.agents[0]?.sessionId).toBe('s1');
+  });
+
+  it('toWidgetSnapshot_tabWithoutSession_omitsSessionId', () => {
+    const snapshot = toWidgetSnapshot(makeInput(), 'dark');
+
+    expect('sessionId' in (snapshot.agents[0] ?? {})).toBe(false);
+  });
+
+  it('toWidgetSnapshot_lockOwnedByOther_readOnlyTrue', () => {
+    const lockByChat = { tab1: { owner: false as const, profile: foreignText('otro'), orphan: false } };
+
+    const snapshot = toWidgetSnapshot(makeInput({ lockByChat }), 'dark');
+
+    expect(snapshot.agents[0]?.readOnly).toBe(true);
+  });
+
+  it('toWidgetSnapshot_noLock_readOnlyFalse', () => {
+    const snapshot = toWidgetSnapshot(makeInput(), 'dark');
+
+    expect(snapshot.agents[0]?.readOnly).toBe(false);
   });
 });

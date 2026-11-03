@@ -23,7 +23,7 @@ import type { ConversationPrivacy, PersistedWorkspace } from './state';
 import type { AppSettings } from './settings';
 import type { ElicitationAnswer } from './elicitation';
 import type { UpdateState } from './update';
-import type { WidgetSnapshot } from './widget';
+import type { WidgetAnswer, WidgetPrefs, WidgetSessionsPayload, WidgetSnapshot } from './widget';
 import type { FetchThemeParams, FetchedVscodeTheme, ThemeSearchItem } from './themeMarket';
 import type { PanelLayoutState, PanelPlacement } from './panelLayout';
 import type {
@@ -232,6 +232,12 @@ export const IpcChannel = {
   WidgetSetEnabled: 'widget:setEnabled',
   WidgetUpdate: 'widget:update',
   WidgetActivateTab: 'widget:activateTab',
+  // Widget acompañante (F9): contestar una petición, detener, ir a la conversación y preferencias propias.
+  WidgetAnswer: 'widget:answer',
+  WidgetInterrupt: 'widget:interrupt',
+  WidgetOpenSession: 'widget:openSession',
+  WidgetGetPrefs: 'widget:getPrefs',
+  WidgetSetPrefs: 'widget:setPrefs',
   // Mercado de temas Open VSX (M3): buscar y traer un tema de color de VS Code.
   ThemeMarketSearch: 'themeMarket:search',
   ThemeMarketFetch: 'themeMarket:fetch',
@@ -668,6 +674,10 @@ export const TRANSCRIPT_BATCH_CHANNEL = 'transcript:batch';
 // pintar). WIDGET_FOCUS_TAB: main -> renderer principal (activar la pestana clicada en el widget).
 export const WIDGET_SNAPSHOT_CHANNEL = 'widget:snapshot';
 export const WIDGET_FOCUS_TAB_CHANNEL = 'widget:focusTab';
+// main -> ventana del widget: las sesiones vivas del coordinador con sus peticiones (F9).
+export const WIDGET_SESSIONS_CHANNEL = 'widget:sessions';
+// main -> widget y todas las ventanas (Ajustes): las preferencias del widget cambiaron (F9).
+export const WIDGET_PREFS_CHANNEL = 'widget:prefs';
 // main -> renderer: el usuario pulso una notificacion de Mage; payload `NotificationTarget` (P-028 40).
 export const NOTIFICATION_CLICKED_CHANNEL = 'notification:clicked';
 // main -> renderer principal: la preferencia del widget cambio FUERA del renderer (toggle del tray o
@@ -1136,6 +1146,19 @@ export interface MageApi {
   // Suscripcion al cambio de preferencia hecho fuera del renderer (toggle del tray / cierre de la
   // ventana). El renderer principal actualiza su estado y persiste (unico escritor de settings).
   onWidgetEnabledChanged(listener: (enabled: boolean) => void): () => void;
+  // Widget acompañante (F9). Contesta una petición pendiente; la respuesta única la garantiza el coordinador de main.
+  answerFromWidget(answer: WidgetAnswer): Promise<AnswerReceipt>;
+  // Detiene el turno de una sesión desde el widget (main lo rechaza si hay mensajes en cola).
+  interruptFromWidget(sessionId: string): Promise<void>;
+  // Lleva a la ventana de Mage a la conversación de esa sesión (fire-and-forget).
+  openSessionFromWidget(sessionId: string): void;
+  // Preferencias propias del widget (vista expandida y No molestar).
+  getWidgetPrefs(): Promise<WidgetPrefs>;
+  setWidgetPrefs(patch: Partial<WidgetPrefs>): Promise<WidgetPrefs>;
+  // Suscripción a las sesiones que main empuja al widget. Devuelve función para desuscribir.
+  onWidgetSessions(listener: (payload: WidgetSessionsPayload) => void): () => void;
+  // Suscripción a los cambios de preferencias del widget. Devuelve función para desuscribir.
+  onWidgetPrefs(listener: (prefs: WidgetPrefs) => void): () => void;
 
   // --- Mercado de temas Open VSX (M3) ---------------------------------------------------------
   // Busca temas de color de VS Code en Open VSX. Lanza si la red falla.

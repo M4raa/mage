@@ -62,6 +62,7 @@ import {
   TRANSCRIPT_BATCH_CHANNEL,
   WIDGET_ENABLED_CHANGED_CHANNEL,
   WIDGET_FOCUS_TAB_CHANNEL,
+  WIDGET_PREFS_CHANNEL,
   WINDOW_TAB_RECEIVED_CHANNEL,
   UPDATE_PROMPT_CHANNEL,
   UPDATE_STATE_CHANNEL,
@@ -265,7 +266,10 @@ import type { WorktreeCreateParams, WorktreeMergeBaseParams, WorktreeRemoveResul
 import { PanelLayoutStore } from './state/panelLayoutStore';
 import { PromptService } from './prompt/promptService';
 import { WidgetWindowController } from './widget/widgetWindow';
-import type { WidgetSnapshot } from '@shared/widget';
+import { registerWidgetIpc } from './widget/widgetIpc';
+import { WidgetPrefsStore } from './widget/widgetPrefsStore';
+import { WidgetSessionTracker } from './widget/widgetSessionTracker';
+import type { WidgetPrefs, WidgetSnapshot } from '@shared/widget';
 import { ThemeMarketService } from './theme/themeMarketService';
 import type { FetchThemeParams } from '@shared/themeMarket';
 import { checkForUpdatesNow, flushPendingUpdatePrompt, getUpdateState, installUpdate, startAutoUpdate } from './update/autoUpdate';
@@ -374,6 +378,9 @@ const WINDOWS_APP_USER_MODEL_ID = 'com.m4raa.mage';
 let tray: Tray | null = null;
 // Controlador del widget flotante (M3): lazy (necesita app.whenReady para userData/preload).
 let widgetWindow: WidgetWindowController | null = null;
+// Seguimiento de las sesiones vivas para el widget acompañante (F9) y sus preferencias: también perezosos.
+let widgetSessionTracker: WidgetSessionTracker | null = null;
+let widgetPrefsSingleton: WidgetPrefsStore | null = null;
 
 // Tope de una peticion PUNTUAL al CLI (mejora de prompt / handoff). No es una sesion: si tarda mas
 // que esto, algo va mal y se termina el arbol de procesos.
@@ -2518,7 +2525,9 @@ function createTray(): Tray {
 // Alterna el widget desde el tray y avisa al renderer del nuevo estado (para sincronizar el checkbox
 // de Configuracion y que lo persista; el renderer es el unico escritor de settings).
 function toggleWidgetFromTray(): void {
-  const enabled = getWidgetWindow().toggle();
+  const enabled = !getWidgetWindow().isOpen();
+  if (enabled) openWidget();
+  else closeWidget();
   notifyWidgetEnabledChanged(enabled);
 }
 
@@ -3703,8 +3712,8 @@ function registerPromptIpc2(deps: IpcDependencies): void {
   // Update recibe el snapshot del renderer principal y lo empuja a la ventana (no-op si no existe).
   // ActivateTab (desde el widget) enfoca la principal y le reenvia el tabId para activar la pestana.
   ipcMain.handle(IpcChannel.WidgetSetEnabled, (_e, enabled: boolean) => {
-    if (enabled) getWidgetWindow().open();
-    else getWidgetWindow().close();
+    if (enabled) openWidget();
+    else closeWidget();
     // Se avisa SIEMPRE del nuevo estado, no solo cuando la ventana se cierra por fuera: el ✕ del propio
     // widget llega por aqui, y sin este eco Configuracion seguia mostrando el widget como activo (E4).
     notifyWidgetEnabledChanged(enabled);
@@ -3717,6 +3726,93 @@ function registerPromptIpc2(deps: IpcDependencies): void {
     if (!windowManager.focus(MAIN_WINDOW_ID)) return;
     liveMainWindow()?.webContents.send(WIDGET_FOCUS_TAB_CHANNEL, tabId);
   });
+  registerWidgetCompanionIpc();
+}
+
+// Widget acompañante (F9): contestar, detener, ir a la conversación y preferencias (lógica en widgetIpc.ts).
+// Función aparte para que `registerPromptIpc2` no supere las 40 líneas del estándar.
+function registerWidgetCompanionIpc(): void {
+  registerWidgetIpc({
+    handle: ipcMain.handle.bind(ipcMain),
+    on: ipcMain.on.bind(ipcMain),
+    sessions: sessionCoordinator,
+    prefs: { load: () => getWidgetPrefs().load(), update: (patch) => getWidgetPrefs().update(patch) },
+    isWidget: (id) => widgetWindow?.webContentsId() === id,
+    openSession: openSessionFromWidget,
+    onPrefsChanged: applyWidgetPrefs,
+  });
+}
+
+// Preferencias propias del widget (vista expandida, No molestar). Lazy: `userData` solo existe tras `ready`.
+function getWidgetPrefs(): WidgetPrefsStore {
+  if (widgetPrefsSingleton === null) {
+    widgetPrefsSingleton = new WidgetPrefsStore({
+      filePath: join(app.getPath('userData'), 'widget-prefs.json'),
+      exists: existsSync,
+      readFile: (path) => readFileSync(path, 'utf8'),
+      writeFile: (path, data) => writeFileSync(path, data, 'utf8'),
+      rename: renameSync,
+      removeFile: (path) => rmSync(path, { force: true }),
+      tempSuffix: () => randomUUID(),
+      log: (level, message, data) => mainLog(level, message, data),
+    });
+  }
+  return widgetPrefsSingleton;
+}
+
+// Seguimiento de las sesiones vivas del coordinador para el widget. Una petición nueva lo expande sin foco.
+function getWidgetSessionTracker(): WidgetSessionTracker {
+  if (widgetSessionTracker === null) {
+    widgetSessionTracker = new WidgetSessionTracker({
+      sessions: sessionCoordinator,
+      defer: queueMicrotask,
+      every: (fn, ms) => {
+        const timer = setInterval(fn, ms);
+        return () => clearInterval(timer);
+      },
+      onChange: (payload) => widgetWindow?.pushSessions(payload),
+      onNewRequest: () => revealWidgetForRequest(),
+    });
+  }
+  return widgetSessionTracker;
+}
+
+// U-N3: al llegar un permiso o pregunta el widget se expande SIN foco; con «No molestar» no se toca.
+function revealWidgetForRequest(): void {
+  const prefs = getWidgetPrefs().load();
+  if (prefs.doNotDisturb) return;
+  if (!prefs.expanded) applyWidgetPrefs(getWidgetPrefs().update({ expanded: true }));
+  widgetWindow?.reveal();
+}
+
+// Aplica unas preferencias nuevas: tamaño de la ventana, widget y Ajustes de cada ventana.
+function applyWidgetPrefs(prefs: WidgetPrefs): void {
+  widgetWindow?.setExpanded(prefs.expanded);
+  widgetWindow?.pushPrefs(prefs);
+  windowManager.broadcast(WIDGET_PREFS_CHANNEL, prefs);
+}
+
+// Abre el widget y arranca el seguimiento de sesiones; lo usan el IPC, el tray y el arranque.
+function openWidget(): void {
+  const widget = getWidgetWindow();
+  widget.open();
+  getWidgetSessionTracker().start();
+  widget.pushPrefs(getWidgetPrefs().load());
+}
+
+// Cierra el widget y para el seguimiento; lo usan el IPC, el tray, el cierre por fuera y la salida.
+function closeWidget(): void {
+  widgetWindow?.close();
+  widgetSessionTracker?.stop();
+}
+
+// Lleva a la ventana de Mage a la conversación de esa sesión (el renderer sabe llevar el aviso a su pestaña).
+function openSessionFromWidget(sessionId: string): void {
+  getWidgetSessionTracker().acknowledge(sessionId);
+  const owner = sessionCoordinator.ownerOf(sessionId);
+  const windowId = owner === null || owner === undefined ? MAIN_WINDOW_ID : (windowManager.windowIdOf(owner) ?? MAIN_WINDOW_ID);
+  if (!windowManager.focus(windowId)) return;
+  windowManager.sendTo(windowId, NOTIFICATION_CLICKED_CHANNEL, { sessionId });
 }
 
 function registerThemeIpc1(): void {
@@ -3757,13 +3853,17 @@ function applyContentSecurityPolicy(): void {
 // de settings). El fondo se resuelve por tema (sin re-fijar la UI nativa, ya lo hace la principal).
 function getWidgetWindow(): WidgetWindowController {
   if (widgetWindow === null) {
-    widgetWindow = new WidgetWindowController(
+    widgetWindow = new WidgetWindowController({
       preloadPath,
-      process.env['ELECTRON_RENDERER_URL'],
+      rendererBaseUrl: process.env['ELECTRON_RENDERER_URL'],
       rendererDir,
-      () => resolveThemeBackgroundColor(),
-      () => notifyWidgetEnabledChanged(false),
-    );
+      resolveBackgroundColor: () => resolveThemeBackgroundColor(),
+      onClosed: () => {
+        widgetSessionTracker?.stop();
+        notifyWidgetEnabledChanged(false);
+      },
+      initiallyExpanded: () => getWidgetPrefs().load().expanded,
+    });
   }
   return widgetWindow;
 }
@@ -4023,7 +4123,7 @@ app.whenReady().then(async () => {
   );
 
   // Widget flotante (M3): reabrir al arrancar si la preferencia persistida estaba activa.
-  if (getSettingsStore().load().widgetEnabled) getWidgetWindow().open();
+  if (getSettingsStore().load().widgetEnabled) openWidget();
 
   if (isDev) {
     // La ventana de debug NO se auto-abre al arrancar (molesta); se abre a demanda con el atajo.
@@ -4084,6 +4184,7 @@ app.on('before-quit', () => {
   for (const controller of openTranscriptControllers.values()) controller.abort();
   openTranscriptControllers.clear();
   debugWindow?.dispose();
+  widgetSessionTracker?.stop();
   widgetWindow?.dispose();
   if (isDev) globalShortcut.unregisterAll();
 });

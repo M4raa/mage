@@ -8960,6 +8960,167 @@ const CHECKS = [
     },
   },
   {
+    // F9 (a): geometria del widget. Abre plegado en la esquina superior derecha del area de trabajo (margen 24),
+    // se expande creciendo hacia la izquierda y hacia abajo sin moverse del borde derecho, y recuerda la vista
+    // en widget-prefs.json. Margen de ±2 px (T). Sin servidor falso ni turno.
+    name: 'F9: el widget abre plegado en la esquina, se expande sin moverse del borde derecho y recuerda la vista',
+    async run(page, { userDataDir }) {
+      const T = 2;
+      const medir = (w) => w.evaluate(() => ({ x: window.screenX, y: window.screenY, w: window.outerWidth, h: window.outerHeight, ax: screen.availLeft, ay: screen.availTop, aw: screen.availWidth, foco: document.hasFocus(), zoom: window.devicePixelRatio }));
+      try {
+        await page.evaluate(() => window.mage.setWidgetPrefs({ expanded: false, doNotDisturb: false }));
+        await page.evaluate(() => window.__mageDev.store.getState().setWidgetEnabled(true));
+        const widget = await widgetPageOf(page);
+        await widget.locator('[data-widget-pill]').waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const plegado = await medir(widget);
+        await widget.locator('[data-widget-toggle-view]').click();
+        await widget.locator('[data-widget-pill]').waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+        await widget.waitForFunction(() => window.outerWidth >= 318, null, { timeout: CONFIG.actionTimeoutMs });
+        const expandido = await medir(widget);
+        const guardado = JSON.parse(fs.readFileSync(path.join(userDataDir, 'widget-prefs.json'), 'utf8'));
+        await widget.locator('[data-widget-toggle-view]').click();
+        await widget.locator('[data-widget-pill]').waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const detail = JSON.stringify({ plegado, expandido, guardado });
+        if (plegado.zoom !== 1) return { ok: false, detail: `zoom distinto de 1: medir a mano. ${detail}` };
+        const ok =
+          plegado.foco === false &&
+          Math.abs(plegado.w - 232) <= T && Math.abs(plegado.h - 52) <= T &&
+          Math.abs((plegado.x + plegado.w) - (plegado.ax + plegado.aw - 24)) <= T &&
+          Math.abs(plegado.y - (plegado.ay + 24)) <= T &&
+          Math.abs(expandido.w - 320) <= T && Math.abs(expandido.h - 460) <= T &&
+          Math.abs((expandido.x + expandido.w) - (plegado.x + plegado.w)) <= T &&
+          Math.abs(expandido.y - plegado.y) <= T &&
+          guardado.expanded === true;
+        return { ok, detail };
+      } finally {
+        await page.evaluate(() => window.__mageDev.store.getState().setWidgetEnabled(false));
+        await waitForWidgetPages(page, 0);
+        await page.evaluate(() => window.mage.setWidgetPrefs({ expanded: false, doNotDisturb: false }));
+      }
+    },
+  },
+  {
+    // F9 (b): un permiso del runtime propio llega al widget (expandido sin clic, sin quitar el foco), se contesta
+    // desde el widget UNA vez y la pestaña lo refleja; una respuesta tardia desde el widget se rechaza. Envia con la
+    // accion del store (nunca Enter en el prompt), como F2.3.
+    name: 'F9: un permiso llega al widget sin quitar el foco, se contesta desde él una vez y la pestaña lo refleja; la respuesta tardía se rechaza',
+    async run(page, { userDataDir }) {
+      const fake = await startFakeOpenAiServer();
+      let tabId = null;
+      try {
+        const opened = await openRuntimeTab(page, { fake, userDataDir, provider: PERMISSION_TURN_PROVIDER, model: 'fake:write', permissionMode: 'default' });
+        tabId = opened.tabId;
+        await page.evaluate(() => window.mage.setWidgetPrefs({ expanded: false, doNotDisturb: false }));
+        await page.evaluate(() => window.__mageDev.store.getState().setWidgetEnabled(true));
+        const widget = await widgetPageOf(page);
+        await widget.locator('[data-widget-pill]').waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        await page.evaluate((id) => window.__mageDev.store.getState().sendMessageToTab(id, 'Escribe el fichero.'), tabId);
+        await page.waitForFunction((id) => (window.__mageDev.store.getState().pendingByChat[id]?.length ?? 0) === 1, tabId, { timeout: CONFIG.actionTimeoutMs });
+        const { sessionId, requestId } = await page.evaluate((id) => {
+          const s = window.__mageDev.store.getState();
+          return { sessionId: s.sessionIdByChat[id], requestId: s.pendingByChat[id][0].requestId };
+        }, tabId);
+        const peticion = widget.locator(`[data-widget-request-id="${requestId}"]`);
+        await peticion.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const antes = await widget.evaluate((sid) => ({
+          pildora: document.querySelectorAll('[data-widget-pill]').length,
+          estado: document.querySelector(`[data-widget-row][data-widget-session-id="${sid}"]`)?.getAttribute('data-widget-status') ?? null,
+          foco: document.hasFocus(),
+        }), sessionId);
+        await peticion.locator('[data-widget-allow]').click();
+        await peticion.waitFor({ state: 'detached', timeout: 30_000 });
+        await page.waitForFunction((id) => window.__mageDev.store.getState().statusByChat[id] === 'idle', tabId, { timeout: 30_000 });
+        const tardia = await widget.evaluate(({ sid, rid }) => window.mage.answerFromWidget({ sessionId: sid, requestId: rid, choice: { kind: 'deny' } }), { sid: sessionId, rid: requestId });
+        const final = await page.evaluate(async ({ id, sid }) => {
+          const s = window.__mageDev.store.getState();
+          const blocks = s.blocksByChat[id] ?? [];
+          const snapshot = await window.mage.getSessionSnapshot(sid);
+          return {
+            tarjetas: blocks.filter((b) => b.kind === 'permission').map((b) => b.state),
+            errores: blocks.filter((b) => b.kind === 'error').length,
+            pendientes: s.pendingByChat[id]?.length ?? 0,
+            pendientesMain: snapshot.pending.length,
+          };
+        }, { id: tabId, sid: sessionId });
+        const fichero = fs.existsSync(path.join(opened.cwd, 'vg-runtime.txt')) ? fs.readFileSync(path.join(opened.cwd, 'vg-runtime.txt'), 'utf8') : null;
+        const ok =
+          antes.pildora === 0 && antes.estado === 'attention' && antes.foco === false &&
+          JSON.stringify(tardia) === JSON.stringify({ status: 'rejected', reason: 'already_answered' }) &&
+          JSON.stringify(final.tarjetas) === JSON.stringify(['allowed']) &&
+          final.errores === 0 && final.pendientes === 0 && final.pendientesMain === 0 &&
+          fichero === 'hola desde el runtime\n' &&
+          fake.stats.completions === 2;
+        return { ok, detail: JSON.stringify({ antes, tardia, final, fichero, peticionesAlFalso: fake.stats.completions }) };
+      } finally {
+        if (tabId !== null) await page.evaluate((id) => window.__mageDev.store.getState().closeTab(id), tabId);
+        await page.evaluate((id) => window.__mageDev.store.getState().removeCustomProvider(id), PERMISSION_TURN_PROVIDER.id);
+        await fake.close();
+        await page.evaluate(() => window.__mageDev.store.getState().setWidgetEnabled(false));
+        await waitForWidgetPages(page, 0);
+        await page.evaluate(() => window.mage.setWidgetPrefs({ expanded: false, doNotDisturb: false }));
+      }
+    },
+  },
+  {
+    // F9 (c): con No molestar el widget sigue plegado (la píldora cuenta 1 y no hay filas); el permiso se contesta
+    // en la PESTAÑA (la principal), desaparece del widget y la respuesta tardia desde el widget se rechaza.
+    name: 'F9: con No molestar el widget sigue plegado; un permiso contestado en la pestaña desaparece del widget y su respuesta tardía se rechaza',
+    async run(page, { userDataDir }) {
+      const fake = await startFakeOpenAiServer();
+      let tabId = null;
+      try {
+        const opened = await openRuntimeTab(page, { fake, userDataDir, provider: PERMISSION_TURN_PROVIDER, model: 'fake:write', permissionMode: 'default' });
+        tabId = opened.tabId;
+        await page.evaluate(() => window.mage.setWidgetPrefs({ expanded: false, doNotDisturb: true }));
+        await page.evaluate(() => window.__mageDev.store.getState().setWidgetEnabled(true));
+        const widget = await widgetPageOf(page);
+        await widget.locator('[data-widget-pill]').waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        await page.evaluate((id) => window.__mageDev.store.getState().sendMessageToTab(id, 'Escribe el fichero.'), tabId);
+        await page.waitForFunction((id) => (window.__mageDev.store.getState().pendingByChat[id]?.length ?? 0) === 1, tabId, { timeout: CONFIG.actionTimeoutMs });
+        const { sessionId, requestId } = await page.evaluate((id) => {
+          const s = window.__mageDev.store.getState();
+          return { sessionId: s.sessionIdByChat[id], requestId: s.pendingByChat[id][0].requestId };
+        }, tabId);
+        await widget.waitForFunction(() => document.querySelector('[data-widget-pill]')?.textContent?.includes('1') === true, null, { timeout: CONFIG.actionTimeoutMs });
+        const plegado = await widget.evaluate(() => ({ pildora: document.querySelectorAll('[data-widget-pill]').length, filas: document.querySelectorAll('[data-widget-row]').length, foco: document.hasFocus() }));
+        const reciboPrincipal = await page.evaluate(({ sid, rid }) => window.mage.answerPermission({ sessionId: sid, requestId: rid, decision: { behavior: 'allow' } }), { sid: sessionId, rid: requestId });
+        await page.waitForFunction((id) => window.__mageDev.store.getState().statusByChat[id] === 'idle', tabId, { timeout: 30_000 });
+        await widget.locator('[data-widget-toggle-view]').click();
+        const filasConPeticion = await widget.locator(`[data-widget-request-id="${requestId}"]`).count();
+        const tardia = await widget.evaluate(({ sid, rid }) => window.mage.answerFromWidget({ sessionId: sid, requestId: rid, choice: { kind: 'allow' } }), { sid: sessionId, rid: requestId });
+        const final = await page.evaluate(async ({ id, sid }) => {
+          const s = window.__mageDev.store.getState();
+          const blocks = s.blocksByChat[id] ?? [];
+          const snapshot = await window.mage.getSessionSnapshot(sid);
+          return {
+            tarjetas: blocks.filter((b) => b.kind === 'permission').map((b) => b.state),
+            errores: blocks.filter((b) => b.kind === 'error').length,
+            pendientes: s.pendingByChat[id]?.length ?? 0,
+            pendientesMain: snapshot.pending.length,
+          };
+        }, { id: tabId, sid: sessionId });
+        const fichero = fs.existsSync(path.join(opened.cwd, 'vg-runtime.txt')) ? fs.readFileSync(path.join(opened.cwd, 'vg-runtime.txt'), 'utf8') : null;
+        const ok =
+          plegado.pildora === 1 && plegado.filas === 0 && plegado.foco === false &&
+          JSON.stringify(reciboPrincipal) === JSON.stringify({ status: 'accepted' }) &&
+          filasConPeticion === 0 &&
+          JSON.stringify(tardia) === JSON.stringify({ status: 'rejected', reason: 'already_answered' }) &&
+          JSON.stringify(final.tarjetas) === JSON.stringify(['allowed']) &&
+          final.errores === 0 && final.pendientes === 0 && final.pendientesMain === 0 &&
+          fichero === 'hola desde el runtime\n' &&
+          fake.stats.completions === 2;
+        return { ok, detail: JSON.stringify({ plegado, reciboPrincipal, filasConPeticion, tardia, final, fichero, peticionesAlFalso: fake.stats.completions }) };
+      } finally {
+        if (tabId !== null) await page.evaluate((id) => window.__mageDev.store.getState().closeTab(id), tabId);
+        await page.evaluate((id) => window.__mageDev.store.getState().removeCustomProvider(id), PERMISSION_TURN_PROVIDER.id);
+        await fake.close();
+        await page.evaluate(() => window.__mageDev.store.getState().setWidgetEnabled(false));
+        await waitForWidgetPages(page, 0);
+        await page.evaluate(() => window.mage.setWidgetPrefs({ expanded: false, doNotDisturb: false }));
+      }
+    },
+  },
+  {
     // F2.2: la cola vive en main. Un turno del runtime propio contra el servidor falso (escenario `cola`, ~4 s,
     // sin CLI ni cuota) y, con el en marcha, tres envios por la accion del store (nunca Enter en el prompt): esperan en
     // main, quitar y editar (en la fila) van a main, y al acabar sale UNO como turno propio. Cierra su pestaña y borra su
@@ -9426,6 +9587,20 @@ async function waitForWidgetPages(page, expected) {
     await page.waitForTimeout(200);
   }
   return false;
+}
+
+// La página de la ventana del widget (la abre MAIN tras el IPC): espera a que exista y la devuelve, o lanza con el motivo.
+async function widgetPageOf(page) {
+  const deadline = Date.now() + CONFIG.actionTimeoutMs;
+  while (Date.now() < deadline) {
+    const found = page.context().browser().contexts().flatMap((context) => context.pages()).find((candidate) => candidate.url().includes('widget.html'));
+    if (found !== undefined) {
+      await found.waitForLoadState('domcontentloaded');
+      return found;
+    }
+    await page.waitForTimeout(200);
+  }
+  throw new Error('No apareció la ventana del widget (widget.html)');
 }
 
 // Areas de prompt montadas ahora mismo: 1 normalmente, 2 con el workspace dividido. Desde 2.7 el
