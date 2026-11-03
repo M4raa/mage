@@ -8974,6 +8974,165 @@ const CHECKS = [
     },
   },
   {
+    // Carril K (F4.4, K-U1): Reintentar, Divergir y Rebobinar hasta aquí son acciones de la burbuja del usuario en Claude y Codex, y no
+    // aparecen en agy ni en un mensaje de Claude sin id nativo (sin uuid no hay punto). Solo interfaz, con una sesión de mentira: no envía
+    // nada ni pulsa Enter ni lanza ningún CLI.
+    name: 'K F4.4: la burbuja ofrece Reintentar, Divergir y Rebobinar hasta aquí en Claude y Codex, y no en agy',
+    async run(page) {
+      const previo = await captureTurnState(page);
+      let abierto = null;
+      try {
+        await openTemporaryConversation(page);
+        abierto = await seedRewindBubble(page, 'claude');
+        const medir = async () => {
+          await page.locator('[data-block="user"]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+          await page.locator('[data-block="user"] div.group').first().hover();
+          return page.evaluate(() => ({
+            burbujas: document.querySelectorAll('[data-block="user"]').length,
+            reintentar: document.querySelectorAll('[data-bubble-retry]').length,
+            divergir: document.querySelectorAll('[data-bubble-diverge]').length,
+            rebobinar: document.querySelectorAll('[data-bubble-rewind]').length,
+          }));
+        };
+        const claude = await medir();
+        await setRewindTabProvider(page, abierto.tabId, 'codex');
+        const codex = await medir();
+        await setRewindTabProvider(page, abierto.tabId, 'agy');
+        const agy = await medir();
+        await setRewindTabProvider(page, abierto.tabId, 'claude');
+        await page.evaluate((id) => window.__mageDev.store.setState((st) => ({ blocksByChat: { ...st.blocksByChat, [id]: st.blocksByChat[id].map((b) => ({ ...b, nativeId: null })) } })), abierto.tabId);
+        const sinId = await medir();
+        const tres = (m) => m.burbujas === 1 && m.reintentar === 1 && m.divergir === 1 && m.rebobinar === 1;
+        const ninguna = (m) => m.burbujas === 1 && m.reintentar === 0 && m.divergir === 0 && m.rebobinar === 0;
+        return { ok: tres(claude) && tres(codex) && ninguna(agy) && ninguna(sinId), detail: JSON.stringify({ claude, codex, agy, sinId }) };
+      } finally {
+        await restoreRewindBubble(page, abierto);
+        await restoreTurnState(page, previo);
+      }
+    },
+  },
+  {
+    // Carril K (F4.4): el diálogo de Rebobinar de Claude pinta el plan que le da el store (aquí uno sintético: ni main ni el CLI), con la
+    // casilla de ficheros apagada (K-U2), el aviso de Bash, el turno en marcha y la cola; «Cancelar» no aplica nada.
+    name: 'K F4.4: el diálogo de Claude pinta el plan sintético, con ficheros apagados, y Cancelar no aplica nada',
+    async run(page) {
+      const previo = await captureTurnState(page);
+      let abierto = null;
+      try {
+        await openTemporaryConversation(page);
+        abierto = await seedRewindBubble(page, 'claude');
+        const plan = {
+          provider: 'claude', unavailable: null, discardedMessages: 2, files: { available: true, changed: ['a.txt'], insertions: 1, deletions: 1 }, recoverable: true,
+          turnRunning: true, queuedCount: 2, pendingCount: 0, canSaveCopy: false,
+        };
+        await stubRewindActions(page, plan);
+        const dialog = await openRewindDialog(page);
+        const medido = await page.evaluate(() => {
+          const root = document.querySelector('[data-rewind-dialog]');
+          const ficheros = root.querySelector('[data-rewind-files]');
+          const text = root.textContent ?? '';
+          return {
+            descartados: root.querySelector('[data-rewind-discarded]')?.textContent ?? null,
+            ficherosMarcados: ficheros?.checked ?? null,
+            ficherosHabilitados: ficheros !== null && !ficheros.disabled,
+            lista: root.querySelector('[data-rewind-files-list]')?.textContent ?? null,
+            avisoBash: text.includes('(Bash)'),
+            detieneElTurno: text.includes('El turno en marcha se detendrá.'),
+            cola: root.querySelector('[data-rewind-affected]')?.textContent ?? null,
+            confirmar: root.querySelectorAll('[data-rewind-confirm]').length,
+          };
+        });
+        await dialog.getByRole('button', { name: 'Cancelar', exact: true }).click();
+        await dialog.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+        const llamadas = await page.evaluate(() => window.__vgKRewindCalls.length);
+        const ok =
+          /Se descartan 2 mensajes/.test(medido.descartados ?? '') && medido.ficherosMarcados === false && medido.ficherosHabilitados === true &&
+          /a\.txt/.test(medido.lista ?? '') && medido.avisoBash && medido.detieneElTurno && /Los 2 mensajes de la cola/.test(medido.cola ?? '') &&
+          medido.confirmar === 1 && llamadas === 0;
+        return { ok, detail: JSON.stringify({ medido, llamadas }) };
+      } finally {
+        await restoreRewindBubble(page, abierto);
+        await restoreTurnState(page, previo);
+      }
+    },
+  },
+  {
+    // Carril K (F4.4, U3, U13): el diálogo de Codex avisa de que no restaura ficheros y ofrece «Guardar una copia antes» apagada; un hilo legacy
+    // enseña su motivo y «Actualizar esta conversación», que aquí NO se pulsa (copiaría ficheros y lanzaría `codex migrate-rollouts`).
+    name: 'K F4.4: el diálogo de Codex avisa de los ficheros, guarda copia apagada y legacy ofrece Actualizar',
+    async run(page) {
+      const previo = await captureTurnState(page);
+      let abierto = null;
+      try {
+        await openTemporaryConversation(page);
+        abierto = await seedRewindBubble(page, 'codex');
+        const plan = {
+          provider: 'codex', unavailable: null, discardedMessages: 1, files: null, recoverable: false, turnRunning: false, queuedCount: 0, pendingCount: 0, canSaveCopy: true,
+        };
+        await stubRewindActions(page, plan);
+        const normal = await openRewindDialog(page);
+        const medidoNormal = await page.evaluate(() => {
+          const root = document.querySelector('[data-rewind-dialog]');
+          return {
+            copiaMarcada: root.querySelector('[data-rewind-save-copy]')?.checked ?? null,
+            casillaFicheros: root.querySelectorAll('[data-rewind-files]').length,
+            avisoFicheros: (root.textContent ?? '').includes('no restaura ficheros'),
+          };
+        });
+        await normal.getByRole('button', { name: 'Cancelar', exact: true }).click();
+        await normal.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+        await stubRewindActions(page, { ...plan, unavailable: 'legacy', canSaveCopy: false });
+        const legacy = await openRewindDialog(page, '[data-rewind-unavailable]');
+        const medidoLegacy = await page.evaluate(() => {
+          const root = document.querySelector('[data-rewind-dialog]');
+          return {
+            motivo: root.querySelector('[data-rewind-unavailable]')?.getAttribute('data-rewind-unavailable') ?? null,
+            texto: root.querySelector('[data-rewind-unavailable]')?.textContent ?? null,
+            actualizar: [...root.querySelectorAll('button')].filter((b) => b.textContent?.trim() === 'Actualizar esta conversación').length,
+            confirmar: root.querySelectorAll('[data-rewind-confirm]').length,
+          };
+        });
+        await legacy.getByRole('button', { name: 'Cerrar', exact: true }).click();
+        await legacy.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+        const llamadas = await page.evaluate(() => window.__vgKRewindCalls.length);
+        const ok =
+          medidoNormal.copiaMarcada === false && medidoNormal.casillaFicheros === 0 && medidoNormal.avisoFicheros &&
+          medidoLegacy.motivo === 'legacy' && /versión anterior de Codex/.test(medidoLegacy.texto ?? '') && medidoLegacy.actualizar === 1 && medidoLegacy.confirmar === 0 &&
+          llamadas === 0;
+        return { ok, detail: JSON.stringify({ medidoNormal, medidoLegacy, llamadas }) };
+      } finally {
+        await restoreRewindBubble(page, abierto);
+        await restoreTurnState(page, previo);
+      }
+    },
+  },
+  {
+    // Carril K (F4.6, U11, U15): Ajustes › Almacenamiento enseña «Mantener la caché de Claude» con sus valores por defecto: suscripción sí, clave de
+    // API no, 100 000 tokens y 8 horas. Solo lee (el perfil es aislado, pero no escribe ajustes); abre Configuración y la cierra.
+    name: 'K F4.6: Ajustes › Mantener la caché de Claude enseña los valores por defecto (suscripción sí, API no, 100000, 8)',
+    async run(page) {
+      await openSettingsDialog(page);
+      try {
+        await openSection(page, /Almacenamiento/);
+        const seccion = page.locator('[data-setting="keep-alive"]');
+        await seccion.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const medido = await page.evaluate(() => {
+          const root = document.querySelector('[data-setting="keep-alive"]');
+          return {
+            secciones: document.querySelectorAll('[data-setting="keep-alive"]').length,
+            casillas: [...root.querySelectorAll('input[type="checkbox"]')].map((input) => input.checked),
+            numeros: [...root.querySelectorAll('input[type="number"]')].map((input) => input.value),
+          };
+        });
+        const ok = medido.secciones === 1 && JSON.stringify(medido.casillas) === '[true,false]' && JSON.stringify(medido.numeros) === '["100000","8"]';
+        return { ok, detail: JSON.stringify(medido) };
+      } finally {
+        await page.keyboard.press('Escape');
+        await page.locator(MODAL).first().waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+      }
+    },
+  },
+  {
     // Grupo 0 (0.1.2, ficha D11 de P-032): UN turno minimo de verdad, de punta a punta — teclear, Enter,
     // proceso del CLI, respuesta pintada. Es la unica comprobacion que envia: todas las demas miden sin
     // gastar. Contra Claude con el modelo y el esfuerzo mas bajos; si la cuenta lleva gastado mas del
@@ -10447,6 +10606,68 @@ function seedMigrationTarget(page) {
 async function restoreTurnState(page, previo) {
   await page.evaluate((state) => window.__mageDev.store.setState(state), previo);
   await page.waitForTimeout(CONFIG.settleMs);
+}
+
+// --- Carril K (F4.4): la burbuja y el diálogo de Rebobinar con una sesión de mentira ----------------
+
+// uuid con el que la burbuja de mentira identifica su mensaje ante el CLI (el `nativeId` del bloque).
+const K_REWIND_NATIVE_ID = '11111111-2222-4333-8444-555555555555';
+
+// En la pestaña ACTIVA: una sesión de mentira en reposo, un bloque `user` con `nativeId` y el proveedor pedido. Guarda en la página las dos acciones
+// del store que `stubRewindActions` sustituye; devuelve el id de la pestaña y lo que `restoreRewindBubble` repone.
+async function seedRewindBubble(page, provider) {
+  return page.evaluate(({ nativeId, provider: wanted }) => {
+    const dev = window.__mageDev;
+    const s = dev.store.getState();
+    const tabId = s.activeTabId;
+    window.__vgKRewindPrev = { getRewindPlan: s.getRewindPlan, rewindTo: s.rewindTo };
+    window.__vgKRewindCalls = [];
+    const previos = { sessionIdByChat: s.sessionIdByChat, blocksByChat: s.blocksByChat, statusByChat: s.statusByChat, tabs: s.tabs };
+    dev.store.setState((st) => ({
+      sessionIdByChat: { ...st.sessionIdByChat, [tabId]: 'verify-k-rewind-session' },
+      statusByChat: { ...st.statusByChat, [tabId]: 'idle' },
+      blocksByChat: { ...st.blocksByChat, [tabId]: [{ kind: 'user', id: 'vg-k-user', text: 'Reescribe el título', time: '12:00', attachments: [], nativeId }] },
+      tabs: st.tabs.map((t) => (t.id === tabId ? { ...t, provider: wanted, resumeSessionId: 'vg-k-thread' } : t)),
+    }));
+    return { tabId, previos };
+  }, { nativeId: K_REWIND_NATIVE_ID, provider });
+}
+
+function setRewindTabProvider(page, tabId, provider) {
+  return page.evaluate(({ id, p }) => window.__mageDev.store.setState((st) => ({ tabs: st.tabs.map((t) => (t.id === id ? { ...t, provider: p } : t)) })), { id: tabId, p: provider });
+}
+
+// `getRewindPlan` devuelve `plan` y `rewindTo` solo anota sus llamadas en `window.__vgKRewindCalls`: ni main ni ningún CLI.
+function stubRewindActions(page, plan) {
+  return page.evaluate((synthetic) => {
+    window.__mageDev.store.setState({
+      getRewindPlan: async () => synthetic,
+      rewindTo: async (...args) => { window.__vgKRewindCalls.push(args); },
+    });
+  }, plan);
+}
+
+// Pasa el ratón por la burbuja, pulsa «Rebobinar hasta aquí» y espera a que el diálogo pinte el plan (`anchor`: lo que lo identifica).
+async function openRewindDialog(page, anchor = '[data-rewind-discarded]') {
+  if ((await page.locator('[data-bubble-rewind]').count()) !== 1) throw new Error('Se esperaba exactamente una burbuja con «Rebobinar hasta aquí»');
+  await page.locator('[data-block="user"] div.group').first().hover();
+  await page.locator('[data-bubble-rewind]').click();
+  const dialog = page.locator('[data-rewind-dialog]');
+  await dialog.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+  await dialog.locator(anchor).first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+  return dialog;
+}
+
+// Devuelve las dos acciones y lo que sembró `seedRewindBubble` (nada si no llegó a abrir).
+async function restoreRewindBubble(page, abierto) {
+  if (abierto === null) return;
+  await page.evaluate(({ previos }) => {
+    const store = window.__mageDev.store;
+    store.setState(window.__vgKRewindPrev);
+    store.setState(previos);
+    delete window.__vgKRewindPrev;
+    delete window.__vgKRewindCalls;
+  }, abierto);
 }
 
 // Un mensaje del usuario y detras los eventos del motor, por el reducer REAL, en la pestaña activa.
