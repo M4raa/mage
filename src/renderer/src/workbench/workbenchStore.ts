@@ -117,7 +117,7 @@ import type {
   ScratchRetention,
   ThemePreference,
 } from '@shared/settings';
-import { DEFAULT_APP_SETTINGS, type RuntimeShell } from '@shared/settings';
+import { DEFAULT_APP_SETTINGS, type KeepAliveSettings, type RuntimeShell } from '@shared/settings';
 import type { UiLanguagePreference } from '@shared/i18n/language';
 import type { ToolAccessRule } from '@shared/toolAccess';
 import type { AgyCommandVerdict } from '@shared/agyRules';
@@ -461,6 +461,8 @@ export interface WorkbenchState extends PrState, PrActions {
   setDefaultPermissionMode: (mode: DefaultPermissionMode) => void;
   // D5 (#53): permitir Artifact en las sesiones de Claude Code (publica en claude.ai). Siguiente arranque.
   setArtifactEnabled: (enabled: boolean) => void;
+  // Keep-alive de la caché de Claude (U11, U15): fusiona el parche con los ajustes; valida tipos y rangos.
+  setKeepAlive: (patch: Partial<KeepAliveSettings>) => void;
   // Shell de `Bash` en los proveedores del runtime propio (P-032, ficha D4). Aplica a sesiones nuevas.
   setRuntimeShell: (shell: RuntimeShell) => void;
   // Reglas de acceso a herramientas por modelo de un proveedor del runtime (§8.1 D10). [] las borra.
