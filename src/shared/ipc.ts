@@ -1236,3 +1236,40 @@ export interface MageApi {
   // «Buscar actualizaciones» (F1.3, #15): el resultado llega por `onUpdateState`.
   checkForUpdates(): Promise<void>;
 }
+
+// --- Biblioteca de capacidades (F6) ----------------------------------------------------------------
+// Lo que viaja por IPC entre el servicio de la biblioteca (main) y su pantalla. Solo strings, números y booleanos.
+export type LibraryEngine = 'claude' | 'codex';
+export type LibraryKind = 'skill' | 'agent' | 'mcp' | 'hook' | 'plugin';
+export type LibraryBlock = 'engineNotDeclared' | 'platformUnsupported' | 'needsSecrets' | 'kindNotInstallable' | 'codexSkillsUnmeasured';
+export type LibraryAction = 'install' | 'enable' | 'disable' | 'update' | 'remove';
+export interface LibraryTarget { readonly packageId: string; readonly engine: LibraryEngine; readonly accountDir: string }
+export interface LibraryApplyParams extends LibraryTarget { readonly action: LibraryAction }
+export interface LibraryComponentView { readonly engine: LibraryEngine | 'both'; readonly kind: LibraryKind | 'command'; readonly count: number | null; readonly names: readonly string[] }
+export interface LibraryEntryView {
+  readonly id: string; readonly title: string; readonly summary: string; readonly publisher: string;
+  readonly kind: LibraryKind; readonly version: string; readonly engines: readonly LibraryEngine[];
+  readonly platforms: readonly string[]; readonly scopes: readonly ('user' | 'project')[];
+  readonly provenance: { readonly repo: string; readonly ref: string; readonly commit: string | null; readonly path: string | null; readonly retrievedAt: string };
+  readonly license: { readonly spdx: string; readonly url: string };
+  readonly distribution: 'copied' | 'linked'; readonly runsCode: boolean;
+  readonly components: readonly LibraryComponentView[];
+  readonly requiresCommands: readonly string[]; readonly missingCommands: readonly string[]; readonly requiresSecrets: readonly string[];
+  readonly blocks: { readonly claude: LibraryBlock | null; readonly codex: LibraryBlock | null };
+}
+export interface LibraryInstallView { readonly packageId: string; readonly engine: LibraryEngine; readonly accountDir: string; readonly version: string; readonly enabled: boolean; readonly inCatalog: boolean; readonly updateAvailable: boolean }
+export interface LibraryAccountView { readonly accountDir: string; readonly engine: LibraryEngine; readonly label: string }
+export interface LibraryView { readonly platform: string; readonly accounts: readonly LibraryAccountView[]; readonly entries: readonly LibraryEntryView[]; readonly installs: readonly LibraryInstallView[] }
+export interface LibraryPreviewView {
+  readonly packageId: string; readonly version: string; readonly engine: LibraryEngine; readonly accountDir: string;
+  readonly block: LibraryBlock | null; readonly route: 'native' | 'ownedFiles' | null;
+  readonly files: readonly { readonly absPath: string; readonly bytes: number; readonly sha256: string }[];
+  readonly commands: readonly string[]; readonly envVar: 'CLAUDE_CONFIG_DIR' | 'CODEX_HOME';
+  readonly components: readonly LibraryComponentView[]; readonly runsCode: boolean;
+  readonly requiresCommands: readonly string[]; readonly requiresSecrets: readonly string[];
+}
+export type LibraryActionResult =
+  | { readonly status: 'done'; readonly appliesOnNextSession: true }
+  | { readonly status: 'collision'; readonly items: readonly string[] }
+  | { readonly status: 'modifiedByUser'; readonly items: readonly string[] }
+  | { readonly status: 'rolledBack'; readonly detail: string };

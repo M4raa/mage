@@ -715,6 +715,16 @@ export interface MessageValues {
   readonly "errors.attachments.tooMany": { readonly "count": string | number; readonly "max": string | number };
   readonly "errors.attachments.totalTooLarge": { readonly "max": string | number; readonly "total": string | number };
   readonly "errors.attachments.unsupportedType": { readonly "allowed": string | number; readonly "type": string | number };
+  readonly "errors.capabilities.alreadyDisabled": { readonly "packageId": string | number };
+  readonly "errors.capabilities.alreadyEnabled": { readonly "packageId": string | number };
+  readonly "errors.capabilities.alreadyInstalled": { readonly "packageId": string | number };
+  readonly "errors.capabilities.blocked": { readonly "engine": string | number; readonly "packageId": string | number };
+  readonly "errors.capabilities.cliMissing": { readonly "engine": string | number };
+  readonly "errors.capabilities.missingCommand": { readonly "command": string | number; readonly "packageId": string | number };
+  readonly "errors.capabilities.notInstalled": { readonly "packageId": string | number };
+  readonly "errors.capabilities.unknownAccount": { readonly "accountDir": string | number; readonly "engine": string | number };
+  readonly "errors.capabilities.unknownPackage": { readonly "packageId": string | number };
+  readonly "errors.capabilities.upToDate": { readonly "packageId": string | number; readonly "version": string | number };
   readonly "errors.codexApps.queryFailed": never;
   readonly "errors.config.agyConfigInvalidJson": { readonly "detail": string | number; readonly "length": string | number };
   readonly "errors.config.agyConfigNotObject": { readonly "length": string | number };
