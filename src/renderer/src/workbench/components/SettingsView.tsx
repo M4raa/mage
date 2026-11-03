@@ -34,6 +34,7 @@ import type { MessageKey } from '@shared/i18n/messageKeys.generated';
 import type { Translate } from '@shared/i18n/translator';
 import { formatInteger } from '../../i18n/format';
 import { describeError } from '../describeError';
+import { useWidgetPrefs } from '../../widget/useWidgetPrefs';
 
 // Secciones de Configuracion (crece por secciones). Cada una tiene su glifo+etiqueta en la nav y su
 // titulo de cabecera.
@@ -383,13 +384,25 @@ function WidgetSection({
   readonly onChange: (enabled: boolean) => void;
 }): React.JSX.Element {
   const t = useT();
+  const { prefs, update } = useWidgetPrefs(window.mage);
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-[12px] overflow-y-auto p-[14px_16px]">
-      <p className="text-[11px] leading-[1.5] text-mg-sec">{t('settings.widget.description')}</p>
+      <p className="text-[11px] leading-[1.5] text-mg-sec">{t('settings.widget.descriptionCompanion')}</p>
       <label className="flex items-center gap-[8px] text-[11.5px] text-mg-body">
         <input type="checkbox" checked={enabled} onChange={(e) => onChange(e.target.checked)} />
         {t('settings.widget.toggle')}
       </label>
+      <label className="flex items-center gap-[8px] text-[11.5px] text-mg-body">
+        <input
+          type="checkbox"
+          data-widget-settings-dnd
+          checked={prefs?.doNotDisturb ?? false}
+          disabled={prefs === null}
+          onChange={(e) => update({ doNotDisturb: e.target.checked })}
+        />
+        {t('settings.widget.doNotDisturb')}
+      </label>
+      <p className="text-[10.5px] leading-[1.5] text-mg-muted">{t('settings.widget.doNotDisturbHint')}</p>
     </div>
   );
 }

@@ -1895,6 +1895,9 @@ export interface MessageValues {
   readonly "settings.update.status.upToDate": { readonly "version": string | number };
   readonly "settings.update.viewAndRestart": never;
   readonly "settings.widget.description": never;
+  readonly "settings.widget.descriptionCompanion": never;
+  readonly "settings.widget.doNotDisturb": never;
+  readonly "settings.widget.doNotDisturbHint": never;
   readonly "settings.widget.toggle": never;
   readonly "sidebar.contextMenu.delete": never;
   readonly "sidebar.contextMenu.deleteAccept": never;
