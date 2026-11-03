@@ -14,6 +14,8 @@ const SHA256_HEX = /^[0-9a-f]{64}$/;
 const PACKAGE_ID = /^[a-z0-9][a-z0-9._-]{0,127}$/;
 // Nombre de un servidor MCP, de un plugin o de un marketplace: va como argumento a un CLI, nunca empieza por «-».
 const NATIVE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+// Rama o etiqueta git de un marketplace (versión fijada). Va como argumento: nunca empieza por «-».
+const MARKETPLACE_REF = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/;
 const PREVIEW_MAX_CHARS = 300;
 
 // Una ruta relativa es segura si no puede salir del directorio al que se resuelve en ningún sistema operativo.
@@ -39,6 +41,7 @@ const plugin = z.object({
       .string()
       .min(1)
       .refine((s) => !s.startsWith('-'), 'source no puede empezar por «-»'),
+    ref: z.string().regex(MARKETPLACE_REF).optional(),
   }),
 });
 const native = z.discriminatedUnion('type', [mcpStdio, plugin]);
