@@ -313,6 +313,10 @@ export const IpcChannel = {
   UpdateCheck: 'update:check',
   // Keep-alive de la cache de Claude (F4.6): cuantos se hicieron y cuanto costaron.
   KeepAliveStats: 'keepAlive:stats',
+  // Registro del servidor MCP de Mage en las cuentas de Claude y Codex (H4).
+  McpRegistrationStatus: 'mcp:registrationStatus',
+  McpRegister: 'mcp:register',
+  McpUnregister: 'mcp:unregister',
 } as const;
 
 export type IpcChannel = (typeof IpcChannel)[keyof typeof IpcChannel];
@@ -906,6 +910,19 @@ export interface KeepAliveStats {
   readonly costMicroUsd: number;
 }
 
+// Registro del servidor MCP de Mage en una cuenta (H4).
+export interface McpRegistrationEntry {
+  readonly accountId: string;
+  readonly accountName: string;
+  readonly provider: 'claude' | 'codex';
+  readonly registered: boolean;
+}
+
+export interface McpRegistrationResult {
+  readonly entries: readonly McpRegistrationEntry[];
+  readonly failures: readonly { readonly accountId: string; readonly message: string }[];
+}
+
 export interface MageApi {
   // ¿Corre este renderer en el sandbox de Chromium? (`process.sandboxed` del preload; F2.6). Solo lo lee verify:gui.
   readonly sandboxed: boolean;
@@ -928,6 +945,10 @@ export interface MageApi {
   rewindApply(params: RewindApplyParams): Promise<RewindApplyResult>;
   // Keep-alive de la cache de Claude (F4.6): totales de lo que se hizo y lo que costo.
   keepAliveStats(): Promise<KeepAliveStats>;
+  // Servidor MCP de Mage (H4): estado por cuenta, registrar y quitar en todas.
+  mcpRegistrationStatus(): Promise<McpRegistrationResult>;
+  registerMageMcp(): Promise<McpRegistrationResult>;
+  unregisterMageMcp(): Promise<McpRegistrationResult>;
   divergeConversation(params: DivergeParams): Promise<DivergeResult>;
   // Vacía la cola de main y devuelve sus mensajes.
   takeQueuedMessages(sessionId: string): Promise<readonly QueuedMessage[]>;

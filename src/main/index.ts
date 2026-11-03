@@ -8,6 +8,8 @@ import { readOnlyLockMessage } from '@shared/conversationLock';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { McpCallers } from './host/mcpCallers';
 import { codexHomeHasMageServer } from './mcpServer/registrationStatus';
+import { mageMcpLaunch } from './mcpServer/registration';
+import { McpRegistrationService, type McpRegistrationDeps } from './mcpServer/registrationService';
 import { DelegationLog } from './mcpServer/delegationLog';
 import { HostSessionsPort } from './mcpServer/hostSessionsPort';
 import { MemoryIdempotencyStore } from './mcpServer/idempotencyStore';
@@ -107,7 +109,7 @@ import { buildAboutInfo } from './about/aboutService';
 import type { MemoryFile } from '@shared/memory';
 import type { MageEvent, SlashCommandInfo } from '@shared/events';
 import { localized, localizedFromError, localizedWithParts, renderForLog, UserFacingError, type LocalizedText } from '@shared/i18n/localizedText';
-import type { ImageAttachment, KeepAliveStats, ProviderProbeParams } from '@shared/ipc';
+import type { ImageAttachment, KeepAliveStats, McpRegistrationResult, ProviderProbeParams } from '@shared/ipc';
 import { base64ByteLength, ERROR_FORMAT_LOCALE, validateAttachmentSet } from '@shared/attachments';
 import type { EffectiveSettings, InstructionsFile, ProjectFileContent, ReadProjectFileParams, WriteProjectFileParams } from '@shared/ipc';
 import type { ConversationSummary, DeleteConversationParams, MigrateConversationResult, MoveConversationParams, MoveConversationResult } from '@shared/conversations';
@@ -2898,6 +2900,7 @@ function registerApplicationIpc(deps: IpcDependencies): void {
   registerPromptIpc2(deps);
   registerThemeIpc1();
   ipcMain.handle(IpcChannel.KeepAliveStats, (): KeepAliveStats => getRewindState().keepAliveTotals());
+  registerMcpRegistrationIpc();
 }
 
 function registerSessionIpc1(): void {
@@ -3409,19 +3412,67 @@ function codexDeletionDeps(): Parameters<typeof deleteCodexConversation>[0] {
   };
 }
 
-// `codex migrate-rollouts` (U13): tope de 60 s, al vencer mata SU árbol de procesos.
-const CODEX_MIGRATE_TIMEOUT_MS = 60_000;
-function runCodex(home: string, args: readonly string[]): Promise<{ readonly exitCode: number | null; readonly stderr: string }> {
-  const launch = codexSpawn(args);
-  const child = spawn(launch.command, launch.args, { env: { ...scrubAgentEnv(process.env), ...launch.env, CODEX_HOME: home }, stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true });
+// Un CLI de una sola pasada (U13, H4): tope de 60 s, al vencer mata SU árbol de procesos. Solo captura stderr.
+const CLI_ONESHOT_TIMEOUT_MS = 60_000;
+function runCliForStderr(command: string, args: readonly string[], env: NodeJS.ProcessEnv): Promise<{ readonly exitCode: number | null; readonly stderr: string }> {
+  const child = spawn(command, args, { env, stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true });
   return new Promise((resolveRun, rejectRun) => {
     let stderr = '';
-    const timer = setTimeout(() => killProcessTree(child, defaultKillTreeDeps()), CODEX_MIGRATE_TIMEOUT_MS);
+    const timer = setTimeout(() => killProcessTree(child, defaultKillTreeDeps()), CLI_ONESHOT_TIMEOUT_MS);
     child.stderr.setEncoding('utf8');
     child.stderr.on('data', (chunk: string) => { stderr += chunk; });
     child.on('error', (error) => { clearTimeout(timer); rejectRun(error); });
     child.on('close', (exitCode) => { clearTimeout(timer); resolveRun({ exitCode, stderr }); });
   });
+}
+
+// `codex migrate-rollouts` (U13).
+function runCodex(home: string, args: readonly string[]): Promise<{ readonly exitCode: number | null; readonly stderr: string }> {
+  const launch = codexSpawn(args);
+  return runCliForStderr(launch.command, launch.args, { ...scrubAgentEnv(process.env), ...launch.env, CODEX_HOME: home });
+}
+
+// `claude mcp add|remove` (H4) en el config dir de una cuenta.
+function runClaudeCli(configDir: string, args: readonly string[]): Promise<{ readonly exitCode: number | null; readonly stderr: string }> {
+  return runCliForStderr(resolveClaudeBinary(), args, { ...scrubAgentEnv(process.env), CLAUDE_CONFIG_DIR: configDir });
+}
+
+// Registro del servidor MCP de Mage en las cuentas de Claude y Codex (H4, D-M10). Nunca perfiles privados.
+type McpAccount = ReturnType<McpRegistrationDeps['accounts']>[number];
+function mcpRegistrationAccounts(): readonly McpAccount[] {
+  const result: McpAccount[] = [];
+  for (const account of listAllAccounts()) {
+    const base = { id: account.configDir, name: account.name };
+    if (account.providerId === 'claude') result.push({ ...base, provider: 'claude', configHome: account.configDir });
+    const codex = account.providerId === 'codex' ? getProviderAccounts().find('codex', account.configDir) : null;
+    if (codex !== null) result.push({ ...base, provider: 'codex', configHome: codex.home });
+  }
+  return result;
+}
+
+let mcpRegistrationSingleton: McpRegistrationService | null = null;
+function getMcpRegistration(): McpRegistrationService {
+  mcpRegistrationSingleton ??= new McpRegistrationService({
+    accounts: mcpRegistrationAccounts,
+    readText: (path) => (existsSync(path) ? readFileSync(path, 'utf8') : null),
+    runCli: (provider, configHome, args) => (provider === 'codex' ? runCodex(configHome, args) : runClaudeCli(configHome, args)),
+    launch: () => mageMcpLaunch({
+      isPackaged: app.isPackaged, execPath: process.execPath, resourcesPath: process.resourcesPath,
+      appPath: app.getAppPath(), appImage: process.env['APPIMAGE'], userDataDir: app.getPath('userData'),
+    }),
+    log: (level, message, data) => mainLog(level, message, data),
+  });
+  return mcpRegistrationSingleton;
+}
+
+function registerMcpRegistrationIpc(): void {
+  const requireMain = (event: Electron.IpcMainInvokeEvent): void => {
+    const windowId = senderWindowId(event);
+    if (windowId !== MAIN_WINDOW_ID) throw new Error(`Solo la ventana principal puede cambiar el registro MCP: ${windowId}`);
+  };
+  ipcMain.handle(IpcChannel.McpRegistrationStatus, (): McpRegistrationResult => getMcpRegistration().status());
+  ipcMain.handle(IpcChannel.McpRegister, (event): Promise<McpRegistrationResult> => { requireMain(event); return getMcpRegistration().registerAll(); });
+  ipcMain.handle(IpcChannel.McpUnregister, (event): Promise<McpRegistrationResult> => { requireMain(event); return getMcpRegistration().unregisterAll(); });
 }
 
 // Cuenta de Codex de un hilo pedido por el renderer: solo cuentas registradas y ids validados.
