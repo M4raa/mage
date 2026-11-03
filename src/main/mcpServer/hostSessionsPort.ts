@@ -29,7 +29,7 @@ export interface HostSessionsPortDeps {
   readonly accounts: () => readonly { readonly id: string; readonly provider: string }[];
   readonly projects: () => readonly { readonly id: string; readonly cwd: string | null }[];
   // Lanza por la frontera del host (`resolveHostLaunchParams` + `launchHostSession(…, 'mcp', createdBy)`); devuelve el sessionId.
-  readonly launch: (request: HostCreateRequest, createdBy: { readonly conversationId: string }) => string;
+  readonly launch: (request: HostCreateRequest, createdBy: { readonly conversationId: string; readonly sessionId: string }) => string;
   readonly setTimer: (fn: () => void, ms: number) => () => void;
 }
 
@@ -119,7 +119,7 @@ export class HostSessionsPort implements MageSessionsPort {
 
   private launchTranslated(launch: HostSessionsPortDeps['launch'], request: HostCreateRequest): string {
     try {
-      return launch(request, { conversationId: this.deps.caller.conversationId });
+      return launch(request, { conversationId: this.deps.caller.conversationId, sessionId: this.deps.caller.sessionId });
     } catch (error) {
       if (error instanceof TrustRequiredError) throw new MagePolicyError(`trust_required: ${error.cwd}`, { cause: error });
       if (error instanceof UnknownAccountError) throw new MagePolicyError(`unknown_account: ${error.accountId}`, { cause: error });

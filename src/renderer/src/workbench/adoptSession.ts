@@ -42,6 +42,7 @@ export function adoptedTab(session: AdoptableSession, ids: AdoptedTabIds): Tab {
     title: ids.title,
     privacy: 'shared',
     resolvedConfigDir: session.configDir,
+    ...(session.createdBy === null ? {} : { createdBy: session.createdBy }),
     ...(session.nativeId === null ? {} : { resumeSessionId: session.nativeId }),
     ...(session.effort === undefined ? {} : { effort: session.effort }),
     ...(session.permissionMode === undefined ? {} : { permissionMode: session.permissionMode }),
@@ -71,4 +72,15 @@ export function snapshotEvents(snapshot: ConversationSnapshot): readonly MageEve
   );
   if (snapshot.queue.length > 0) events.push({ kind: 'queue_changed', queue: snapshot.queue });
   return events;
+}
+
+// #29: la pestaña de la sesión que encargó esta (la de `createdBy.sessionId`), o null si no hay marca o ya se cerró.
+export function creatorTabOf(
+  state: Pick<WorkbenchState, 'tabs' | 'sessionIdByChat'>,
+  tab: Tab,
+): { readonly tabId: string; readonly title: string } | null {
+  if (tab.createdBy === undefined) return null;
+  const { sessionId } = tab.createdBy;
+  const creator = state.tabs.find((t) => state.sessionIdByChat[t.id] === sessionId);
+  return creator === undefined ? null : { tabId: creator.id, title: creator.title };
 }

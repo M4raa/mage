@@ -326,6 +326,8 @@
   "chat.copy.error": "Error",
   "chat.copy.failed": "No se pudo copiar: {error}",
   "chat.copy.userMessage": "Copiar mensaje",
+  "chat.delegation.createdBy": "Encargada por «{title}»",
+  "chat.delegation.creatorClosed": "Encargada por otra sesión, que ya no está abierta",
   "chat.diverge.action": "Divergir",
   "chat.diverge.confirm": "Divergir",
   "chat.diverge.explain": "Se abrirá una conversación nueva con todo hasta este mensaje y su respuesta. La original no cambia.",

@@ -96,7 +96,7 @@ describe('HostSessionsPort.createSession', () => {
     const result = await port.createSession(command({ model: 'm1' }));
     expect(result).toEqual({ conversationId: 'child-c', state: 'running' });
     expect(deps.launch).toHaveBeenCalledWith(
-      { commandId: REQUEST, provider: 'claude', accountId: 'acc1', cwd: CWD, model: 'm1', trust: { acknowledged: false } }, { conversationId: 'caller-c' });
+      { commandId: REQUEST, provider: 'claude', accountId: 'acc1', cwd: CWD, model: 'm1', trust: { acknowledged: false } }, { conversationId: 'caller-c', sessionId: 'caller-s' });
     expect(deps.index.recordDelegation).toHaveBeenCalledWith('child-c', { createdBy: command().createdBy, creatorChain: ['caller-c'] });
     expect(deps.log.watch).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 'child-s', conversationId: 'child-c', creatorSessionId: 'caller-s', title: 'Haz algo' }));
     expect(deps.coordinator.send).toHaveBeenCalledWith({ sessionId: 'child-s', text: 'Haz algo\nsegunda línea', commandId: REQUEST });

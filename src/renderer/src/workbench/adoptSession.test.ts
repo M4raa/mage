@@ -3,7 +3,7 @@ import type { ConversationSnapshot, CoordinatedState } from '@shared/coordinatio
 import type { AdoptableSession } from '@shared/ipc';
 import type { PermissionRequest } from '@shared/events';
 import type { ElicitationRequest } from '@shared/elicitation';
-import { adoptedTab, adoptionTarget, chatStatusOf, snapshotEvents } from './adoptSession';
+import { adoptedTab, adoptionTarget, chatStatusOf, creatorTabOf, snapshotEvents } from './adoptSession';
 import type { Tab } from './types';
 
 const ACCOUNT = '/home/u/.claude';
@@ -62,6 +62,38 @@ describe('adoptedTab', () => {
     expect('resumeSessionId' in result).toBe(false);
     expect('effort' in result).toBe(false);
     expect('permissionMode' in result).toBe(false);
+  });
+});
+
+describe('adoptedTab createdBy', () => {
+  const ids = { tabId: 'tab7', accountAlias: 'principal', title: 'app', nowMs: 1234 };
+  const by = { conversationId: 'cv', sessionId: 'creator-s' };
+
+  it('adoptedTab_createdBy_copied', () => {
+    expect(adoptedTab(session({ createdBy: by }), ids).createdBy).toEqual(by);
+  });
+
+  it('adoptedTab_nullCreatedBy_absent', () => {
+    expect('createdBy' in adoptedTab(session({ createdBy: null }), ids)).toBe(false);
+  });
+});
+
+describe('creatorTabOf', () => {
+  const child = tab('child', { createdBy: { conversationId: 'cv', sessionId: 'creator-s' } });
+
+  it('creatorTabOf_open_returnsTabAndTitle', () => {
+    const state = { tabs: [tab('boss', { title: 'Jefa' }), child], sessionIdByChat: { boss: 'creator-s' } };
+    expect(creatorTabOf(state, child)).toEqual({ tabId: 'boss', title: 'Jefa' });
+  });
+
+  it('creatorTabOf_closed_null', () => {
+    const state = { tabs: [tab('boss'), child], sessionIdByChat: { boss: 'otra' } };
+    expect(creatorTabOf(state, child)).toBeNull();
+  });
+
+  it('creatorTabOf_noCreatedBy_null', () => {
+    const plain = tab('plain');
+    expect(creatorTabOf({ tabs: [plain], sessionIdByChat: { plain: 'creator-s' } }, plain)).toBeNull();
   });
 });
 

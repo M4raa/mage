@@ -669,7 +669,7 @@ export interface AdoptableSession {
   readonly effort?: string;
   readonly permissionMode?: PermissionMode;
   readonly origin: 'terminal' | 'mcp';
-  readonly createdBy: { readonly conversationId: string } | null;  // la M05 lo rellena para el MCP; hoy null
+  readonly createdBy: { readonly conversationId: string; readonly sessionId: string } | null;  // la M05 lo rellena para el MCP; `sessionId` es el VIVO de la creadora
 }
 
 export interface SessionEventPayload {

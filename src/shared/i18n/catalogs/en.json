@@ -326,6 +326,8 @@
   "chat.copy.error": "Error",
   "chat.copy.failed": "Could not copy: {error}",
   "chat.copy.userMessage": "Copy message",
+  "chat.delegation.createdBy": "Requested by “{title}”",
+  "chat.delegation.creatorClosed": "Requested by another session that is no longer open",
   "chat.diverge.action": "Branch",
   "chat.diverge.confirm": "Branch",
   "chat.diverge.explain": "A new conversation will open with everything up to this message and its reply. The original stays as it is.",

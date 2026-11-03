@@ -1,6 +1,8 @@
 import { useEffect } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { Icon } from './Icon';
 import { useWorkbenchStore } from '../workbenchStore';
+import { creatorTabOf } from '../adoptSession';
 import { usePaneTabId } from '../paneContext';
 import { diffChip, folderChip, gitChip, privacyChip, type ChatChip } from '../chatInfoView';
 import { canSwitchBranch } from '../canSwitchBranch';
@@ -68,6 +70,7 @@ export function ChatInfoBar(): React.JSX.Element | null {
         <Icon name={folder!.icon} size={12} />
         <span className="truncate">{folder!.label}</span>
       </button>
+      <CreatorChip tabId={tabId} />
       <GitChips tabId={tabId} cwd={tab.cwd} />
       <PrBar tabId={tabId} />
       {rest.map((chip) => (
@@ -93,6 +96,32 @@ function infoChips(tab: { readonly cwd: string; readonly privacy: 'shared' | 'pr
   // Sin el chip del modelo (P-026, D18): salia aqui, en el selector del input y en la barra de estado.
   // Se queda solo en el selector, que es donde se puede cambiar.
   return [...(folder === null ? [] : [folder]), privacyChip(tab.privacy)];
+}
+
+// #29: «Encargada por …» en la pestaña de una sesión delegada por el MCP. Con la creadora abierta lleva a su
+// pestaña (activa su cuenta primero, como `onWidgetFocusTab`); sin ella, solo informa.
+function CreatorChip({ tabId }: { readonly tabId: string }): React.JSX.Element | null {
+  const tab = useWorkbenchStore((s) => s.tabs.find((t) => t.id === tabId));
+  const creator = useWorkbenchStore(useShallow((s) => (tab === undefined ? null : creatorTabOf(s, tab))));
+  const t = useT();
+  if (tab?.createdBy === undefined) return null;
+  if (creator === null) {
+    const closed = t('chat.delegation.creatorClosed');
+    return <span data-creator-chip aria-label={closed} data-tip={closed} className={`${CHIP_CLASS} cursor-help border-mg-border-subtle`}>{closed}</span>;
+  }
+  const label = t('chat.delegation.createdBy', { title: creator.title });
+  const goToCreator = (): void => {
+    const state = useWorkbenchStore.getState();
+    const target = state.tabs.find((candidate) => candidate.id === creator.tabId);
+    if (target === undefined) return;
+    state.setActiveAccount(target.accountId);
+    state.setActiveTab(creator.tabId);
+  };
+  return (
+    <button onClick={goToCreator} data-creator-chip data-tip={label} aria-label={label} className={`${CHIP_CLASS} transition-colors duration-150 ease-out hover:bg-mg-hover hover:text-mg-body`}>
+      <span className="truncate">{label}</span>
+    </button>
+  );
 }
 
 const CHIP_CLASS = 'inline-flex max-w-[280px] items-center gap-[5px] rounded-full border border-mg-border-ctrl px-[8px] py-[2px]';

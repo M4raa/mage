@@ -2720,7 +2720,7 @@ function liveIdsOf(sessionId: string): { conversationId: string | null; nativeId
 }
 
 // Una sesión del host (sin ventana): se lanza como siempre y queda adoptable por la ventana principal (U17).
-function launchHostSession(params: CreateSessionParams, origin: AdoptableSession['origin'], createdBy: { conversationId: string } | null = null): string {
+function launchHostSession(params: CreateSessionParams, origin: AdoptableSession['origin'], createdBy: AdoptableSession['createdBy'] = null): string {
   const { sessionId, configDir } = launchSession(params, null);
   const entry = {
     sessionId, provider: params.provider, accountId: params.accountDir, configDir, cwd: params.cwd, model: params.model,
