@@ -509,6 +509,7 @@ async function c8KeepAliveFalso(accountDir: string, stateDir: string): Promise<R
       const done = await attempt(() => rig.until(() => rig.state.keepAliveTotals().count === 1, 'registro del keep-alive', KA_DONE_WAIT_MS));
       await sleep(POLL_MS * 5);
       const eventsDuringKa = live.events.length - eventsBefore;
+      const eventKindsDuringKa = live.events.slice(eventsBefore).map((e) => e.event.kind);
       await live.turn('ECO despues');
       const after = textOf(lastFor(fake, 'ECO despues'));
       const kaPrompt = 'T(Responde solo: ok)';
@@ -517,6 +518,7 @@ async function c8KeepAliveFalso(accountDir: string, stateDir: string): Promise<R
         keepAliveRecorded: done.ok,
         doneError: done.ok ? null : done.error,
         eventsDuringKa,
+        eventKindsDuringKa,
         fakeReceivedKa: fake.requests.filter((request) => request.messages.some((message) => message.includes(kaPrompt))).length,
         afterRequestHasKa: after.includes('Responde solo: ok'),
         totalsCount: rig.state.keepAliveTotals().count,

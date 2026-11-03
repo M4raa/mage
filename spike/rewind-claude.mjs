@@ -53,7 +53,8 @@ function failures(out) {
     ['c7.sinError', c.c7ReabrirTrasRewind?.applyError === null], ['c7.corteGuardado', c.c7ReabrirTrasRewind?.pendingCutSaved === true],
     ['c7.ramaSinElSegundo', c.c7ReabrirTrasRewind?.branchHasSecond === false],
     ['c8.temporizador', c.c8KeepAliveFalso?.timerRegistered === true], ['c8.registrado', c.c8KeepAliveFalso?.keepAliveRecorded === true],
-    ['c8.oyenteSinEventos', c.c8KeepAliveFalso?.eventsDuringKa === 0], ['c8.unaPeticionDeKa', c.c8KeepAliveFalso?.fakeReceivedKa === 1],
+    // Medido 03-11: tras el rewind del keep-alive el CLI vuelve a contar el contexto (context_usage, mismo valor); nada más sale a la pestaña.
+    ['c8.oyenteSinEventos', (c.c8KeepAliveFalso?.eventKindsDuringKa ?? ['?']).every((kind) => kind === 'context_usage')], ['c8.unaPeticionDeKa', c.c8KeepAliveFalso?.fakeReceivedKa === 1],
     ['c8.siguienteSinKa', c.c8KeepAliveFalso?.afterRequestHasKa === false], ['c8.contador', c.c8KeepAliveFalso?.totalsCount === 1],
   ];
   return checks.filter(([, passed]) => !passed).map(([name]) => name);
