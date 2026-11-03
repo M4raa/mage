@@ -44,7 +44,8 @@ import {
 } from './engineBlocks';
 import { addAlwaysAllow, removeAlwaysAllow } from './permissionRules';
 import { createSettingsActions } from './settingsActions';
-import { createHistoryActions } from './historyActions';
+import { createHistoryActions, withIdPresence } from './historyActions';
+import type { AccountConversation } from './sidebarModel';
 import { createAccountsActions } from './accountsActions';
 import { createPrActions, resetPrActionsState, type PrActions, type PrState } from './prActions';
 import { isPrCreateCommand, prNumberFromCreatedTag, prNumberFromUrl } from './prBinding';
@@ -292,6 +293,8 @@ export interface WorkbenchState extends PrState, PrActions {
 
   // --- Historial de conversaciones en disco (M2.6, sidebar = historial) ---
   readonly conversationHistory: readonly ConversationSummary[];
+  // Historial de TODAS las cuentas con historial, fusionado (lateral D6): cada conversación una vez, con su cuenta.
+  readonly allConversationHistory: readonly AccountConversation[];
   readonly elicitationsByChat: Readonly<Record<string, readonly { readonly request: ElicitationRequest; readonly state: 'pending' | 'accept' | 'decline' | 'cancel' }[]>>;
   answerElicitation: (tabId: string, answer: Omit<ElicitationAnswer, 'sessionId'>) => Promise<void>;
   // «Tomar el control» de una conversación cuya otra instancia parece muerta (#55): solo si su lock es huérfano.
@@ -528,10 +531,16 @@ export interface WorkbenchState extends PrState, PrActions {
   // Carga el historial de conversaciones en disco de la cuenta activa (M2.6, sidebar = historial).
   loadConversationHistory: () => Promise<void>;
   // Abre (reanuda) una conversacion del historial: activa su pestana si ya esta abierta, o crea una.
-  openConversation: (item: ConversationSummary) => void;
+  // `accountId` (opcional) sustituye a la cuenta activa: el lateral de todas las cuentas abre con la de la fila.
+  openConversation: (item: ConversationSummary, accountId?: string) => void;
   // Elimina una conversacion en disco (#2): cierra su pestana si esta abierta, borra el .jsonl y
   // refresca el historial. accountDir = cuenta activa.
-  deleteConversation: (sessionId: string, cwd: string, privacy: ConversationPrivacy) => Promise<void>;
+  // `accountDir` (opcional) sustituye a la cuenta activa: la cuenta de la fila del lateral.
+  deleteConversation: (sessionId: string, cwd: string, privacy: ConversationPrivacy, accountDir?: string) => Promise<void>;
+  // Fija o desfija una conversación del lateral (y su pestaña abierta, si la hay).
+  togglePinnedConversation: (sessionId: string) => void;
+  // Archiva o desarchiva una conversación del lateral.
+  setConversationArchived: (sessionId: string, archived: boolean) => void;
   // Mueve una conversacion (#2) entre secciones (compartido/privado) y/o cuentas: cierra su pestana si
   // esta abierta, reubica el .jsonl y refresca el historial.
   moveConversation: (
@@ -1418,6 +1427,7 @@ export function createWorkbenchStore(mage: MageClient) {
     trustRequests: [],
     mcpServersByChat: {},
     conversationHistory: [],
+    allConversationHistory: [],
     elicitationsByChat: {},
     backgroundSessions: {},
     closePromptOpen: false,
@@ -1703,8 +1713,17 @@ export function createWorkbenchStore(mage: MageClient) {
     },
 
     toggleTabPinned: (tabId) => {
-      set((s) => ({ tabs: s.tabs.map((t) => (t.id === tabId ? { ...t, pinned: t.pinned !== true } : t)) }));
+      const target = get().tabs.find((t) => t.id === tabId);
+      if (target === undefined) return;
+      const pinned = target.pinned !== true;
+      const conversationId = conversationIdOfTab(target, get().sessionIdByChat[tabId]);
+      set((s) => ({
+        tabs: s.tabs.map((t) => (t.id === tabId ? { ...t, pinned } : t)),
+        // La pestaña fijada y su conversación van a la par (grupo «Fijadas» del lateral).
+        ...(conversationId === undefined ? {} : { settings: { ...s.settings, pinnedConversations: withIdPresence(s.settings.pinnedConversations, conversationId, pinned) } }),
+      }));
       schedulePersist(mage, get);
+      if (conversationId !== undefined) scheduleSettingsPersist(mage, get);
     },
 
     setTabColor: (tabId, colorIndex) => {
@@ -2153,13 +2172,13 @@ export function createWorkbenchStore(mage: MageClient) {
     // excepcion es que ya este VIVA bajo otra cuenta: ahi se va a donde esta, porque dos procesos del CLI
     // sobre la misma transcripcion la corromperian. La decision vive en planOpenConversation (pura).
     // La sesion arranca perezosa al primer mensaje (ensureSession con --resume). Solo Claude.
-    openConversation: async (item) => {
+    openConversation: async (item, accountIdOverride) => {
       // Reabrir una conversacion que quedo en segundo plano CORTA su sesion viva y la reanuda con
       // `--resume` (decision del usuario, 2026-09-15): dos procesos del CLI no pueden escribir la misma
       // transcripcion, y re-engancharse a la viva era el camino caro. Si estaba esperando un permiso,
       // ese turno se pierde y hay que repetir la orden.
       await get().discardBackgroundConversation(item.sessionId);
-      const accountId = get().activeAccountId;
+      const accountId = accountIdOverride ?? get().activeAccountId;
       const account = get().accounts.find((a) => a.id === accountId);
       const plan = planOpenConversation({
         tabs: get().tabs,
@@ -2231,8 +2250,8 @@ export function createWorkbenchStore(mage: MageClient) {
 
     // Cierra la pestana abierta de una conversacion (por sessionId) para que ningun proceso siga
     // escribiendo su .jsonl antes de borrarlo/moverlo. No-op si no esta abierta.
-    deleteConversation: async (sessionId, cwd, privacy) => {
-      const accountDir = get().activeAccountId;
+    deleteConversation: async (sessionId, cwd, privacy, accountDirOverride) => {
+      const accountDir = accountDirOverride ?? get().activeAccountId;
       if (accountDir.length === 0 || sessionId.length === 0) return;
       // ORDEN: primero cerrar la pestaña, DESPUES parar la sesion. Al reves no valia: `closeTab` manda
       // a segundo plano (sin parar el CLI) la conversacion que este trabajando, asi que el `discard`
@@ -2244,6 +2263,14 @@ export function createWorkbenchStore(mage: MageClient) {
       } catch (err) {
         reportActionError(t('errors.workbench.deleteConversationFailed'), err, 'history');
       }
+      set((s) => ({
+        settings: {
+          ...s.settings,
+          pinnedConversations: withIdPresence(s.settings.pinnedConversations, sessionId, false),
+          archivedConversations: withIdPresence(s.settings.archivedConversations, sessionId, false),
+        },
+      }));
+      scheduleSettingsPersist(mage, get);
       await get().loadConversationHistory();
     },
 
