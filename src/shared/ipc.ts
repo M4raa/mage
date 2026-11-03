@@ -308,6 +308,8 @@ export const IpcChannel = {
   UpdateGetState: 'update:getState',
   UpdateInstall: 'update:install',
   UpdateCheck: 'update:check',
+  // Keep-alive de la cache de Claude (F4.6): cuantos se hicieron y cuanto costaron.
+  KeepAliveStats: 'keepAlive:stats',
 } as const;
 
 export type IpcChannel = (typeof IpcChannel)[keyof typeof IpcChannel];
@@ -874,6 +876,14 @@ export type DropTabOutcome = 'moved' | 'none';
 
 // --- API tipada que el preload expone en window.mage ------------------------------------------
 
+// Lo que Mage lleva gastado en keep-alive de la cache (suma de todas las conversaciones; coste en micro-USD enteros).
+export interface KeepAliveStats {
+  readonly count: number;
+  readonly cacheReadTokens: number;
+  readonly cacheCreationTokens: number;
+  readonly costMicroUsd: number;
+}
+
 export interface MageApi {
   // ¿Corre este renderer en el sandbox de Chromium? (`process.sandboxed` del preload; F2.6). Solo lo lee verify:gui.
   readonly sandboxed: boolean;
@@ -894,6 +904,8 @@ export interface MageApi {
   // Rewind (F4.4/F4.5): lo que se descartaria, la aplicacion (rebobinar o reintentar) y la rama nueva.
   rewindPlan(params: RewindPlanParams): Promise<RewindPlan>;
   rewindApply(params: RewindApplyParams): Promise<RewindApplyResult>;
+  // Keep-alive de la cache de Claude (F4.6): totales de lo que se hizo y lo que costo.
+  keepAliveStats(): Promise<KeepAliveStats>;
   divergeConversation(params: DivergeParams): Promise<DivergeResult>;
   // Vacía la cola de main y devuelve sus mensajes.
   takeQueuedMessages(sessionId: string): Promise<readonly QueuedMessage[]>;

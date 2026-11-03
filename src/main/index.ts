@@ -99,7 +99,7 @@ import { buildAboutInfo } from './about/aboutService';
 import type { MemoryFile } from '@shared/memory';
 import type { MageEvent, SlashCommandInfo } from '@shared/events';
 import { localized, localizedFromError, localizedWithParts, renderForLog, UserFacingError, type LocalizedText } from '@shared/i18n/localizedText';
-import type { ImageAttachment, ProviderProbeParams } from '@shared/ipc';
+import type { ImageAttachment, KeepAliveStats, ProviderProbeParams } from '@shared/ipc';
 import { base64ByteLength, ERROR_FORMAT_LOCALE, validateAttachmentSet } from '@shared/attachments';
 import type { EffectiveSettings, InstructionsFile, ProjectFileContent, ReadProjectFileParams, WriteProjectFileParams } from '@shared/ipc';
 import type { ConversationSummary, DeleteConversationParams, MigrateConversationResult, MoveConversationParams, MoveConversationResult } from '@shared/conversations';
@@ -588,6 +588,16 @@ const sessionCoordinator = new SessionCoordinator({
   },
   // A8: el corte pendiente de un rewind de Claude se borra en cuanto sale el siguiente mensaje.
   onUserMessageSent: (ref) => { if (ref.provider === 'claude') getRewindState().clearPendingCut(ref.nativeId); },
+  // Keep-alive de la cache (F4.6). Para saber si una cuenta es de API basta su ficha: no se lee la clave de la boveda.
+  keepAliveSettings: () => getSettingsStore().load().keepAlive,
+  isApiKeyAccount: (dir) => getProviderAccounts().find('claude', dir)?.authKind === 'api-key',
+  onKeepAliveDone: (ref, sample, rewound, kaUuid) => {
+    getRewindState().recordKeepAlive(ref.nativeId, sample);
+    // Tras el rewind el fichero sigue terminando en la respuesta del keep-alive: el corte pendiente (A8) hace que
+    // reabrir la conversacion no la ensene; se borra con el siguiente mensaje real.
+    if (rewound) getRewindState().setPendingCut(ref.nativeId, kaUuid);
+    mainLog('info', 'Keep-alive hecho', { sessionId: ref.nativeId, rewound, ...sample });
+  },
 });
 
 // Bloqueo de conversacion entre instancias (#55, F2.8): un fichero por conversacion abierta en `<raiz local>/mage/locks`,
@@ -2813,6 +2823,7 @@ function registerApplicationIpc(deps: IpcDependencies): void {
   registerPromptIpc1(deps);
   registerPromptIpc2(deps);
   registerThemeIpc1();
+  ipcMain.handle(IpcChannel.KeepAliveStats, (): KeepAliveStats => getRewindState().keepAliveTotals());
 }
 
 function registerSessionIpc1(): void {

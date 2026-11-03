@@ -96,6 +96,7 @@ const api: MageApi = {
   updateQueuedMessage: (params: UpdateQueuedMessageParams) => ipcRenderer.invoke(IpcChannel.SessionQueueUpdate, params),
   rewindPlan: (params: RewindPlanParams) => ipcRenderer.invoke(IpcChannel.SessionRewindPlan, params),
   rewindApply: (params: RewindApplyParams) => ipcRenderer.invoke(IpcChannel.SessionRewindApply, params),
+  keepAliveStats: () => ipcRenderer.invoke(IpcChannel.KeepAliveStats),
   divergeConversation: (params: DivergeParams) => ipcRenderer.invoke(IpcChannel.SessionDiverge, params),
   takeQueuedMessages: (sessionId: string) => ipcRenderer.invoke(IpcChannel.SessionQueueTake, sessionId),
   setModel: (params: SetModelParams) => ipcRenderer.invoke(IpcChannel.SessionSetModel, params),
