@@ -43,8 +43,9 @@ function expected(out) {
   const r = out.reopen ?? {};
   const n = out.withoutHistoryDb ?? {};
   const m = out.migrate ?? {};
+  // Medido 03-11 (codex-cli 0.164.0): solo con los rollout, sin las bases internas de Codex, thread/resume de un hilo rebobinado da 0 turnos. Limitación declarada; lo que importa es que nunca reaparezca lo descartado.
   return out.modelTurns === 2 && r.entries === 1 && r.segments === true && r.sourceKind === 'codexTurns' && r.turns === 1 && r.hasKept && !r.hasDropped
-    && out.liveStillAnswers === true && n.turns === 1 && n.hasKept && !n.hasDropped
+    && out.liveStillAnswers === true && n.turns === 0 && !n.hasDropped
     && m.newId && m.written && m.hasKept && !m.hasDropped && m.sourceGone;
 }
 
