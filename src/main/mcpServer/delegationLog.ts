@@ -1,5 +1,6 @@
 import { parseAskUserQuestion } from '@shared/askUserQuestion';
 import type { ConversationSnapshot } from '@shared/coordination';
+import type { MageEvent } from '@shared/events';
 import type { SequencedSessionEvent, SessionCoordinator } from '../coordination/sessionCoordinator';
 import type { CreatedBy, PublicMessage, SessionState } from './types';
 
@@ -48,14 +49,22 @@ interface Entry {
   state: McpState;
   closed: boolean;
   lastAssistant: string | null;
+  // U26: la delegada preguntó a su creadora con `mage_ask_creator`; `turnEnded` marca que el turno que preguntó ya acabó.
+  awaiting: { turnEnded: boolean } | null;
   readonly unsubscribe: () => void;
 }
 
-export function mcpStateOf(input: { readonly snapshot: ConversationSnapshot | null; readonly closed: boolean; readonly turnCount: number }): McpState {
-  const { snapshot, closed, turnCount } = input;
+// Un evento de estos DESPUÉS del result del turno que preguntó es un turno nuevo: la pregunta queda contestada (U26).
+const TURN_START_KINDS: ReadonlySet<MageEvent['kind']> = new Set(['request_started', 'stream_delta', 'thinking_delta', 'tool_use', 'assistant_text', 'queued_message_sent']);
+
+export function mcpStateOf(input: {
+  readonly snapshot: ConversationSnapshot | null; readonly closed: boolean; readonly turnCount: number; readonly awaitingCreator?: boolean;
+}): McpState {
+  const { snapshot, closed, turnCount, awaitingCreator } = input;
   if (closed || snapshot === null) return 'interrupted';
   if (snapshot.pending.some(isQuestionRequest)) return 'waiting_answer';
   if (snapshot.pending.length > 0) return 'permission_pending';
+  if (awaitingCreator === true) return 'waiting_answer';
   switch (snapshot.state) {
     case 'running': case 'starting': case 'restarting': return 'working';
     case 'requires_action': return 'permission_pending';
@@ -84,7 +93,7 @@ export class DelegationLog {
     });
     const entry: Entry = {
       child, messages: [], nextSeq: 1, turnCount: 0, lastEventAt: new Date(now()).toISOString(),
-      state: mcpStateOf({ snapshot: subscription.snapshot, closed: false, turnCount: 0 }), closed: false, lastAssistant: null, unsubscribe: subscription.unsubscribe,
+      state: mcpStateOf({ snapshot: subscription.snapshot, closed: false, turnCount: 0 }), closed: false, lastAssistant: null, awaiting: null, unsubscribe: subscription.unsubscribe,
     };
     holder.entry = entry;
     this.entries.set(child.sessionId, entry);
@@ -94,6 +103,24 @@ export class DelegationLog {
 
   recordInstruction(sessionId: string, text: string): void {
     this.push(this.require(sessionId), 'user', text);
+  }
+
+  // U26: la delegada pregunta a su creadora. Sin creadora viva no se registra nada.
+  recordQuestion(sessionId: string, text: string): 'recorded' | 'creator_closed' {
+    const entry = this.require(sessionId);
+    if (this.deps.coordinator.ownerOf(entry.child.creatorSessionId) === undefined) return 'creator_closed';
+    this.push(entry, 'question', text);
+    this.announceToCreator(entry, { kind: 'delegation_message', fromId: entry.child.conversationId, toId: entry.child.creatorConversationId, messageKind: 'question', text: text.slice(0, MAX_ANNOUNCED_TEXT_CHARS) });
+    this.setAwaiting(entry, { turnEnded: false });
+    return 'recorded';
+  }
+
+  // U26: la creadora contesta (mage_send). true si había una pregunta esperando: entonces es su respuesta, y ya no espera.
+  settleQuestion(sessionId: string): boolean {
+    const entry = this.require(sessionId);
+    if (entry.awaiting === null) return false;
+    this.setAwaiting(entry, null);
+    return true;
   }
 
   get(conversationId: string): DelegationView | null {
@@ -120,12 +147,16 @@ export class DelegationLog {
   private onEvent(entry: Entry, payload: SequencedSessionEvent): void {
     entry.lastEventAt = new Date(payload.at).toISOString();
     const { event } = payload;
+    if (entry.awaiting?.turnEnded === true && TURN_START_KINDS.has(event.kind)) this.setAwaiting(entry, null);
     if (event.kind === 'assistant_text') {
       this.push(entry, 'assistant', event.text);
       entry.lastAssistant = event.text;
     }
     if (event.kind === 'permission_request') this.onPermission(entry, event.request.input);
-    if (event.kind === 'result') this.onResult(entry);
+    if (event.kind === 'result') {
+      this.onResult(entry);
+      if (entry.awaiting !== null) entry.awaiting.turnEnded = true;
+    }
     this.refreshState(entry, false);
   }
 
@@ -148,12 +179,23 @@ export class DelegationLog {
   private onClosed(entry: Entry): void {
     entry.closed = true;
     entry.unsubscribe();
+    entry.awaiting = null;
     this.refreshState(entry, true);
+  }
+
+  // Avisa a la pestaña de la delegada solo cuando cambia «espera / no espera»; con la sesión cerrada no hay a quién.
+  private setAwaiting(entry: Entry, awaiting: Entry['awaiting']): void {
+    const changed = (entry.awaiting === null) !== (awaiting === null);
+    entry.awaiting = awaiting;
+    if (changed && !entry.closed) {
+      this.deps.coordinator.announce(entry.child.sessionId, { kind: 'delegation_waiting', creatorId: entry.child.creatorConversationId, waiting: awaiting !== null });
+    }
+    this.refreshState(entry, entry.closed);
   }
 
   private refreshState(entry: Entry, closed: boolean): void {
     const snapshot = closed ? null : this.deps.coordinator.snapshot(entry.child.sessionId);
-    const state = mcpStateOf({ snapshot, closed, turnCount: entry.turnCount });
+    const state = mcpStateOf({ snapshot, closed, turnCount: entry.turnCount, awaitingCreator: entry.awaiting !== null });
     if (state === entry.state) return;
     entry.state = state;
     this.announceToCreator(entry, { kind: 'delegation_state', childId: entry.child.conversationId, state });

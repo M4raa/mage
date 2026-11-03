@@ -30,7 +30,7 @@ const child = (overrides: Partial<DelegatedSession> = {}): DelegatedSession => (
 const view = (overrides: Partial<DelegationView> & { child?: DelegatedSession } = {}): DelegationView => (
   { child: child(), state: 'working', turnCount: 0, lastEventAt: AT, closed: false, ...overrides });
 
-function setup(options: { views?: DelegationView[]; snapshot?: ConversationSnapshot; launch?: HostSessionsPortDeps['launch']; accounts?: HostSessionsPortDeps['accounts'] } = {}) {
+function setup(options: { views?: DelegationView[]; snapshot?: ConversationSnapshot; launch?: HostSessionsPortDeps['launch']; accounts?: HostSessionsPortDeps['accounts']; log?: Partial<HostSessionsPortDeps['log']> } = {}) {
   const views = options.views ?? [view()];
   const listeners: SessionListener[] = [];
   const announced: { sessionId: string; event: MageEvent }[] = [];
@@ -42,6 +42,8 @@ function setup(options: { views?: DelegationView[]; snapshot?: ConversationSnaps
     log: {
       watch: vi.fn(), recordInstruction: vi.fn(), messagesAfter: vi.fn(() => []),
       get: (id: string) => views.find((v) => v.child.conversationId === id) ?? null, list: () => views,
+      recordQuestion: vi.fn((): 'recorded' | 'creator_closed' => 'recorded'), settleQuestion: vi.fn(() => false),
+      ...options.log,
     },
     index: { recordDelegation: vi.fn() },
     coordinator: {
@@ -186,6 +188,46 @@ describe('HostSessionsPort.send', () => {
   });
 });
 
+describe('HostSessionsPort.send con pregunta a la creadora', () => {
+  it('send_childAwaitingCreator_announcesAnswer', async () => {
+    const { port, deps, announced } = setup({ log: { settleQuestion: vi.fn(() => true) } });
+    const outcome = await port.send(sendInput());
+    expect(outcome).toEqual({ receipt: 'accepted' });
+    expect(deps.coordinator.send).toHaveBeenCalled();
+    expect(announced).toEqual([{ sessionId: 'child-s', event: { kind: 'delegation_message', fromId: 'caller-c', toId: 'child-c', messageKind: 'answer', text: 'sí' } }]);
+  });
+  it('send_childNotAwaiting_announcesInstruction', async () => {
+    const { port, announced } = setup();
+    await port.send(sendInput());
+    expect(announced).toEqual([{ sessionId: 'child-s', event: { kind: 'delegation_message', fromId: 'caller-c', toId: 'child-c', messageKind: 'instruction', text: 'sí' } }]);
+  });
+});
+
+describe('HostSessionsPort.askCreator', () => {
+  const asDelegate = () => [view({ child: child({
+    sessionId: 'caller-s', conversationId: 'caller-c', creatorSessionId: 'root-s', creatorConversationId: 'root-c', creatorChain: ['root-c'],
+  }) })];
+  const ask = { requestId: REQUEST, text: '¿Rojo?' };
+  it('askCreator_callerIsDelegate_recordsQuestionAndAccepted', async () => {
+    const { port, deps } = setup({ views: asDelegate() });
+    const outcome = await port.askCreator(ask);
+    expect(outcome).toEqual({ receipt: 'accepted' });
+    expect(deps.log.recordQuestion).toHaveBeenCalledWith('caller-s', '¿Rojo?');
+  });
+  it('askCreator_callerNotDelegated_notDelegatedWithValue', async () => {
+    const { port, deps } = setup();
+    await expect(port.askCreator(ask)).rejects.toThrow('not_delegated: caller-c');
+    expect(deps.log.recordQuestion).not.toHaveBeenCalled();
+  });
+  it('askCreator_creatorClosed_creatorClosedWithValue', async () => {
+    const { port } = setup({ views: asDelegate(), log: { recordQuestion: vi.fn((): 'recorded' | 'creator_closed' => 'creator_closed') } });
+    await expect(port.askCreator(ask)).rejects.toThrow('creator_closed: root-c');
+  });
+  it('askCreator_externalCaller_mageExternalCaller', async () => {
+    await expect(new ExternalSessionsPort().askCreator()).rejects.toThrow(/^mage_external_caller:/);
+  });
+});
+
 describe('HostSessionsPort.cancel', () => {
   it('cancel_working_interrupts', async () => {
     const { port, deps } = setup();
@@ -205,6 +247,28 @@ describe('ExternalSessionsPort', () => {
     await expect(port.listSessions()).rejects.toThrow(/^mage_external_caller:/);
     await expect(port.createSession()).rejects.toThrow(/^mage_external_caller:/);
     await expect(port.cancel()).rejects.toThrow(/^mage_external_caller:/);
+  });
+});
+
+describe('MageToolHandlers.askCreator con el puerto de main', () => {
+  const ask = { requestId: REQUEST, text: '¿Rojo?' };
+  const delegateHandlers = () => {
+    const delegate = view({ child: child({ sessionId: 'caller-s', conversationId: 'caller-c', creatorSessionId: 'root-s', creatorConversationId: 'root-c', creatorChain: ['root-c'] }) });
+    const { port, deps } = setup({ views: [delegate] });
+    const scope = snapshotScope({ accountIds: ['acc1'], caller: { conversationId: 'caller-c', creatorChain: ['root-c'] } });
+    return { deps, handlers: new MageToolHandlers({ port, scope, store: new MemoryIdempotencyStore(), now: () => AT }) };
+  };
+  it('askCreatorHandler_sameRequestIdTwice_recordsOnce', async () => {
+    const { handlers, deps } = delegateHandlers();
+    const first = await handlers.askCreator(ask);
+    const second = await handlers.askCreator(ask);
+    expect([first, second]).toEqual([{ receipt: 'accepted' }, { receipt: 'accepted' }]);
+    expect(deps.log.recordQuestion).toHaveBeenCalledTimes(1);
+  });
+  it('askCreatorHandler_sameRequestIdOtherText_idempotencyConflict', async () => {
+    const { handlers } = delegateHandlers();
+    await handlers.askCreator(ask);
+    await expect(handlers.askCreator({ ...ask, text: 'otra' })).rejects.toThrow(/idempotency/i);
   });
 });
 

@@ -1,4 +1,4 @@
-import type { CancelInput, CancelOutput, CreatedBy, CreateInput, CreateOutput, ListInput, PublicMessage, SendInput, SendOutput, SessionState, StatusOutput } from './types';
+import type { AskCreatorInput, AskCreatorOutput, CancelInput, CancelOutput, CreatedBy, CreateInput, CreateOutput, ListInput, PublicMessage, SendInput, SendOutput, SessionState, StatusOutput } from './types';
 
 export type CreationRequest = Pick<CreateInput, 'provider' | 'accountId' | 'cwd'>;
 export interface CreationTarget {
@@ -38,4 +38,6 @@ export interface MageSessionsPort {
   readResult(input: { conversationId: string; afterSeq: number }): Promise<readonly PublicMessage[]>;
   send(input: SendInput): Promise<SendOutput>;
   cancel(input: CancelInput): Promise<CancelOutput>;
+  // U26: la sesión que llama (una delegada) pregunta a su creadora; resuelve al registrar, no espera la respuesta.
+  askCreator(input: AskCreatorInput): Promise<AskCreatorOutput>;
 }

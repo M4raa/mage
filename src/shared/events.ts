@@ -177,6 +177,9 @@ export type MageEvent =
       readonly childId: string;
       readonly state: 'working' | 'waiting_answer' | 'permission_pending' | 'done' | 'interrupted';
     }
+  // Delegacion (U26): en la propia DELEGADA, si espera la respuesta de su creadora tras `mage_ask_creator`.
+  // `creatorId` es la conversacion creadora. Lo pinta el chip de su pestana; no se persiste.
+  | { readonly kind: 'delegation_waiting'; readonly creatorId: string; readonly waiting: boolean }
   // Arranque de sesion. `mcpServers` y `slashCommands` son lo que la sesion cargo DE VERDAD (unica
   // fuente fiable: ni el modelo ni `claude mcp list` lo saben). Vacios si el CLI no los reporta.
   | {
