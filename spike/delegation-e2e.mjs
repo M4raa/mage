@@ -12,6 +12,7 @@
 // (una sesión solo crea sesiones NUEVAS): lo cubren los tests unitarios de `src/main/mcpServer/delegation.test.ts`.
 // Medidas (e1-e5, `turnos`; en el modo de rechazo, d1-d2): ver `failures`. La salida solo lleva booleanos, recuentos, ids de sesión y los
 // textos de ESTE spike. Turnos reales: los de `turnos` (típicamente haiku 1 + gpt-6-luna 2). Medido contra: protocolo del host 1.5.
+// U26 (carril M2): la hija pregunta con mage_ask_creator; e4 exige question y waiting_answer en la creadora y answer y el fin de la espera en la hija.
 import { randomBytes, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import net from 'node:net';
@@ -39,7 +40,7 @@ const CODEX_MODEL = 'gpt-6-luna';
 const EFFORT = 'low';
 const EXPECTED_CHILD_TURNS = 2;
 const EXPECTED_FINAL_NUMBER = '8';
-const MAGE_TOOL = /(^|__|\.|\/)mage_(create_session|get_status|read_result|send|list_sessions|cancel)$/;
+const MAGE_TOOL = /(^|__|\.|\/)mage_(create_session|get_status|read_result|send|list_sessions|cancel|ask_creator)$/;
 const CALLER_LEAK = /MAGE_MCP_CALLER|\b[0-9a-f]{64}\b/;
 const DEPTH_TEXT = 'delegation_depth_exceeded';
 
@@ -49,10 +50,10 @@ const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
 function promptFor({ provider, model, cwd }) {
   const providerName = provider === 'codex' ? 'Codex' : 'Claude';
   return `Usa la herramienta mage_create_session para crear una sesión de ${providerName} (provider ${provider}, model ${model}, cwd ${cwd}) con este prompt: `
-    + '"Antes de hacer nada, pregúntale a quien te encargó esto qué número entero del 1 al 9 prefiere, y termina tu respuesta con esa pregunta. '
+    + '"Antes de hacer nada, usa la herramienta mage_ask_creator para preguntarle a quien te encargó esto qué número entero del 1 al 9 prefiere, y termina tu turno. '
     + 'Cuando te conteste, responde solo con ese número multiplicado por 2." '
-    + 'Después consulta mage_get_status y mage_read_result hasta que la sesión de ' + providerName + ' termine su turno, contéstale con mage_send (mode queue) '
-    + 'que prefieres el 4, espera a que vuelva a terminar y dime solo el número final.';
+    + 'Después consulta mage_get_status hasta que su estado sea waiting_answer, lee su pregunta con mage_read_result, contéstale con mage_send (mode queue) '
+    + 'que prefieres el 4, consulta mage_get_status hasta que su estado sea done y dime solo el número final.';
 }
 
 function connectSocket(address) {
@@ -223,13 +224,23 @@ async function measureNormal(spike, options, run, deadline) {
   };
   const finalText = parentWatch.lastText;
   report.e3 = { ok: childWatch?.results === EXPECTED_CHILD_TURNS && finalText.includes(EXPECTED_FINAL_NUMBER), turnosDelHijo: childWatch?.results ?? 0, textoFinalCreadora: finalText.slice(0, EXCERPT_CHARS) };
+  report.e4 = measureQuestion(parentWatch, childWatch);
+  return report;
+}
+
+// U26: la hija pregunta con mage_ask_creator; la creadora ve question y waiting_answer, la hija ve answer y el fin de la espera.
+function measureQuestion(parentWatch, childWatch) {
   const delegationEvents = parentWatch.delegation;
   const messageKinds = delegationEvents.filter((event) => event.kind === 'delegation_message').map((event) => event.messageKind);
-  report.e4 = {
-    ok: ['delegation_created', 'delegation_state'].every((kind) => delegationEvents.some((event) => event.kind === kind)) && ['question', 'result'].every((kind) => messageKinds.includes(kind)),
-    kinds: [...new Set(delegationEvents.map((event) => event.kind))], messageKinds,
+  const states = delegationEvents.filter((event) => event.kind === 'delegation_state').map((event) => event.state);
+  const childEvents = childWatch?.delegation ?? [];
+  const childMessageKinds = childEvents.filter((event) => event.kind === 'delegation_message').map((event) => event.messageKind);
+  const childWaiting = childEvents.filter((event) => event.kind === 'delegation_waiting').map((event) => event.waiting);
+  return {
+    ok: delegationEvents.some((event) => event.kind === 'delegation_created') && states.includes('waiting_answer')
+      && ['question', 'result'].every((kind) => messageKinds.includes(kind)) && childMessageKinds.includes('answer') && childWaiting.includes(false),
+    kinds: [...new Set(delegationEvents.map((event) => event.kind))], messageKinds, estados: states, hija: { messageKinds: childMessageKinds, esperando: childWaiting },
   };
-  return report;
 }
 
 function measureDepthRejection(spike, run) {
