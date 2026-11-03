@@ -1644,6 +1644,16 @@ export interface MessageValues {
   readonly "settings.language.label": never;
   readonly "settings.language.system": never;
   readonly "settings.language.systemHint": { readonly "language": string | number };
+  readonly "settings.mcpServer.depthHelp": never;
+  readonly "settings.mcpServer.depthLabel": never;
+  readonly "settings.mcpServer.failed": { readonly "account": string | number; readonly "detail": string | number };
+  readonly "settings.mcpServer.intro": never;
+  readonly "settings.mcpServer.notRegistered": never;
+  readonly "settings.mcpServer.onlyFromMage": never;
+  readonly "settings.mcpServer.registerAll": never;
+  readonly "settings.mcpServer.registered": never;
+  readonly "settings.mcpServer.statusUnavailable": never;
+  readonly "settings.mcpServer.unregisterAll": never;
   readonly "settings.notifications.addRule": never;
   readonly "settings.notifications.contentEmphasis": never;
   readonly "settings.notifications.empty": never;
@@ -1765,6 +1775,7 @@ export interface MessageValues {
   readonly "settings.sections.keybindings.title": never;
   readonly "settings.sections.mcp.nav": never;
   readonly "settings.sections.mcp.title": never;
+  readonly "settings.sections.mcpServer.title": never;
   readonly "settings.sections.notifications.nav": never;
   readonly "settings.sections.notifications.title": never;
   readonly "settings.sections.providers.nav": never;

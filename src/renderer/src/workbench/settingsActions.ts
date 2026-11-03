@@ -1,6 +1,8 @@
 import type { MageApi } from '@shared/ipc';
 import {
   clampUiScale,
+  DELEGATION_DEPTH_MAX,
+  DELEGATION_DEPTH_MIN,
   DEFAULT_PERMISSION_MODES,
   IMPORTED_CONTEXT_LIMITS,
   KEEP_ALIVE_MAX_PAUSE_MAX,
@@ -35,6 +37,7 @@ export type SettingsActionName =
   | 'setDefaultProvider'
   | 'setArtifactEnabled'
   | 'setKeepAlive'
+  | 'setDelegationDepth'
   | 'setDefaultPermissionMode'
   | 'setRuntimeToolAccess'
   | 'setRuntimeShell'
@@ -160,6 +163,14 @@ export function createSettingsActions(deps: SettingsDeps): SettingsActions {
     setKeepAlive: (patch) => {
       assertKeepAlivePatch(patch);
       set((s) => ({ settings: { ...s.settings, keepAlive: { ...s.settings.keepAlive, ...patch } } }));
+      deps.persistSettings();
+    },
+
+    setDelegationDepth: (depth) => {
+      if (!Number.isInteger(depth) || depth < DELEGATION_DEPTH_MIN || depth > DELEGATION_DEPTH_MAX) {
+        throw new Error(`Profundidad de delegación inválida: ${JSON.stringify(depth)}`);
+      }
+      set((s) => ({ settings: { ...s.settings, delegation: { maxDepth: depth } } }));
       deps.persistSettings();
     },
 

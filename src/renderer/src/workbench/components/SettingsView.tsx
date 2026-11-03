@@ -16,6 +16,7 @@ import { useWorkbenchStore } from '../workbenchStore';
 import { usePanelLayoutStore } from '../panelLayoutStore';
 import { HooksPermissionsSection } from './settings/HooksPermissionsSection';
 import { KeepAliveSection } from './settings/KeepAliveSection';
+import { McpServerSection } from './settings/McpServerSection';
 import { McpSection } from './settings/McpSection';
 import { ProvidersSection } from './settings/ProvidersSection';
 import { ThemeMarketSection } from './settings/ThemeMarketSection';
@@ -597,6 +598,7 @@ function StorageSection({
       <GhNoticeControl />
       <ArtifactControl />
       <KeepAliveSection />
+      <McpServerSection />
     </div>
   );
 }

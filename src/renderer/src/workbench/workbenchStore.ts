@@ -466,6 +466,8 @@ export interface WorkbenchState extends PrState, PrActions {
   setArtifactEnabled: (enabled: boolean) => void;
   // Keep-alive de la caché de Claude (U11, U15): fusiona el parche con los ajustes; valida tipos y rangos.
   setKeepAlive: (patch: Partial<KeepAliveSettings>) => void;
+  // Profundidad máxima de delegación entre sesiones (U10): entero entre DELEGATION_DEPTH_MIN y _MAX.
+  setDelegationDepth: (depth: number) => void;
   // Shell de `Bash` en los proveedores del runtime propio (P-032, ficha D4). Aplica a sesiones nuevas.
   setRuntimeShell: (shell: RuntimeShell) => void;
   // Reglas de acceso a herramientas por modelo de un proveedor del runtime (§8.1 D10). [] las borra.
