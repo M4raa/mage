@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { MageApi } from '@shared/ipc';
+import { MAIN_WINDOW_ID, type AdoptableSession, type MageApi } from '@shared/ipc';
+import type { ConversationSnapshot } from '@shared/coordination';
+import type { PermissionRequest } from '@shared/events';
+import { disposeTranscriptStore, transcriptStoreForTab } from './transcriptStore';
 import type { ConversationSummary } from '@shared/conversations';
 import { foreignText, localized, UserFacingError, type LocalizedText } from '@shared/i18n/localizedText';
 import { createWorkbenchStore, type ConversationFolderChoice } from './workbenchStore';
@@ -2688,5 +2691,167 @@ describe('bloqueo entre instancias', () => {
 
     expect(takeOverConversationLock).toHaveBeenCalledWith({ provider: 'claude', accountDir: expect.any(String), nativeId: 's-a', tabId: 'a' });
     expect(store.getState().lockByChat['a']).toEqual({ owner: true });
+  });
+});
+
+// U17: una sesión viva creada por el host entra como pestaña en segundo plano; un rewind de fuera la relee.
+describe('adoptLiveSession (U17)', () => {
+  const hostAccount = { id: tab('x').accountId, alias: 'principal', providerId: 'claude', loginStatus: 'logged_in' } as unknown as Account;
+  const hostSession = (over: Partial<AdoptableSession> = {}): AdoptableSession => ({
+    sessionId: 's-host', conversationId: 'c1', nativeId: 'n1', provider: 'claude', accountId: hostAccount.id, configDir: hostAccount.id,
+    cwd: '/proj/app', model: 'sonnet', origin: 'terminal', createdBy: null, ...over,
+  });
+  const snapshotOf = (over: Partial<ConversationSnapshot> = {}): ConversationSnapshot => ({
+    sessionId: 's-host', provider: 'claude', conversationId: 'c1', nativeRef: null, lastSeq: 0, state: 'idle', queue: [], pending: [], background: false, ...over,
+  });
+  const permission = { requestId: 'p1', toolUseId: 't1', toolName: 'Bash', input: { command: 'ls' }, description: null, requiresUserInteraction: false, displayName: null } as PermissionRequest;
+
+  function mountedHost(attachSession: unknown, over: Partial<MageApi> = {}) {
+    const store = createWorkbenchStore(fakeMage({ attachSession: attachSession as MageApi['attachSession'], saveWorkspace: vi.fn().mockResolvedValue(undefined), ...over }));
+    store.setState({ accounts: [hostAccount], tabs: [tab('tab1')], activeTabId: 'tab1', splitLayout: singleLeaf('tab1') });
+    return store;
+  }
+
+  it('adoptLiveSession_newSession_addsBackgroundTabWithoutChangingActive', async () => {
+    const store = mountedHost(vi.fn().mockResolvedValue(snapshotOf({ state: 'running' })));
+
+    await store.getState().adoptLiveSession(hostSession());
+
+    const adopted = store.getState().tabs.find((t) => t.id !== 'tab1');
+    expect(adopted).toMatchObject({ title: 'app', resumeSessionId: 'n1', privacy: 'shared', resolvedConfigDir: hostAccount.id });
+    expect(store.getState().activeTabId).toBe('tab1');
+    expect(store.getState().sessionIdByChat[adopted?.id ?? '']).toBe('s-host');
+    expect(store.getState().statusByChat[adopted?.id ?? '']).toBe('streaming');
+    expect(findLeafPath(store.getState().splitLayout, adopted?.id ?? '')).not.toBeNull();
+  });
+
+  it('adoptLiveSession_alreadyBound_doesNothing', async () => {
+    const attachSession = vi.fn().mockResolvedValue(snapshotOf());
+    const store = mountedHost(attachSession);
+    store.setState({ sessionIdByChat: { tab1: 's-host' } });
+
+    await store.getState().adoptLiveSession(hostSession());
+
+    expect(attachSession).not.toHaveBeenCalled();
+    expect(store.getState().tabs).toHaveLength(1);
+  });
+
+  it('adoptLiveSession_restoredTab_reusesItAndNeverCreatesSession', async () => {
+    const createSession = vi.fn();
+    const store = mountedHost(vi.fn().mockResolvedValue(snapshotOf()), { createSession });
+    store.setState({ tabs: [tab('tab1'), tab('tab2', { resumeSessionId: 'n1' })] });
+
+    await store.getState().adoptLiveSession(hostSession());
+
+    expect(store.getState().tabs.map((t) => t.id)).toEqual(['tab1', 'tab2']);
+    expect(store.getState().sessionIdByChat.tab2).toBe('s-host');
+    expect(createSession).not.toHaveBeenCalled();
+  });
+
+  it('adoptLiveSession_pendingPermission_showsCard', async () => {
+    const store = mountedHost(vi.fn().mockResolvedValue(snapshotOf({ state: 'requires_action', pending: [{ kind: 'permission', request: permission }] })), { notify: vi.fn().mockResolvedValue(undefined) });
+
+    await store.getState().adoptLiveSession(hostSession());
+
+    const adoptedId = store.getState().tabs.find((t) => t.id !== 'tab1')?.id ?? '';
+    expect(store.getState().pendingByChat[adoptedId]?.map((p) => p.requestId)).toEqual(['p1']);
+    expect(store.getState().statusByChat[adoptedId]).toBe('needs_permission');
+  });
+
+  it('adoptLiveSession_attachFails_removesNewTab', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const store = mountedHost(vi.fn().mockRejectedValue(new Error('sesión desaparecida')));
+
+    await store.getState().adoptLiveSession(hostSession());
+
+    expect(store.getState().tabs.map((t) => t.id)).toEqual(['tab1']);
+    expect(store.getState().sessionIdByChat).toEqual({});
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it('adoptLiveSession_unknownAccount_noTab', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const attachSession = vi.fn();
+    const store = mountedHost(attachSession);
+
+    await store.getState().adoptLiveSession(hostSession({ accountId: 'otra-cuenta' }));
+
+    expect(store.getState().tabs).toHaveLength(1);
+    expect(attachSession).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  describe('conversation_rewound', () => {
+    const userBlock = (id: string, text: string, nativeId: string | null) => ({ kind: 'user', id, text, time: '', attachments: [], nativeId }) as const;
+    const rewound = { kind: 'conversation_rewound', targetNativeId: 'n0', action: 'rewind' } as const;
+
+    function mountedRewind(rewindApply: unknown) {
+      const store = createWorkbenchStore(fakeMage({ rewindApply: rewindApply as MageApi['rewindApply'], saveWorkspace: vi.fn().mockResolvedValue(undefined) }));
+      store.setState({ tabs: [tab('rw')], activeTabId: 'rw', splitLayout: singleLeaf('rw'), sessionIdByChat: { rw: 's-rw' }, blocksByChat: { rw: [userBlock('b1', 'uno', 'n0')] } });
+      const refresh = vi.fn();
+      transcriptStoreForTab('rw').setState({ refresh });
+      return { store, refresh };
+    }
+
+    afterEach(() => disposeTranscriptStore('rw'));
+
+    it('conversationRewound_notInitiatedHere_refreshesTranscript', () => {
+      const { store, refresh } = mountedRewind(vi.fn());
+
+      store.getState().handleEvent('s-rw', rewound);
+
+      expect(refresh).toHaveBeenCalledTimes(1);
+    });
+
+    it('conversationRewound_initiatedHere_noRefresh', async () => {
+      let emitDuringRewind: () => void = () => undefined;
+      const rewindApply = vi.fn().mockImplementation(async () => {
+        emitDuringRewind();
+        return { draft: 'uno', returnedQueue: [], filesRestored: false, copyThreadId: null, projection: { entries: [], errors: [], isFinal: true, totalLinesSoFar: 0, bytesReadSoFar: 0, rawLineNumber: 0 }, retried: null };
+      });
+      const { store, refresh } = mountedRewind(rewindApply);
+      emitDuringRewind = () => store.getState().handleEvent('s-rw', rewound);
+
+      await store.getState().rewindTo('rw', 'b1', { restoreFiles: false, saveCopy: false, action: 'rewind' });
+
+      expect(refresh).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('init', () => {
+    function initStore(windowId: string) {
+      const listAdoptableSessions = vi.fn().mockResolvedValue([hostSession(), hostSession({ sessionId: 's-2' })]);
+      const api = new Proxy({ loadSettings: () => Promise.reject(new Error('sin ajustes')), loadWorkspace: async () => null, listWindows: async () => [{ windowId, isCurrent: true }], listAdoptableSessions } as unknown as MageApi, {
+        get: (target, prop: string) => {
+          if (prop in target) return (target as unknown as Record<string, unknown>)[prop];
+          if (prop.startsWith('on')) return () => () => {};
+          return async () => [];
+        },
+      });
+      const store = createWorkbenchStore(api);
+      const adoptLiveSession = vi.fn().mockResolvedValue(undefined);
+      store.setState({ adoptLiveSession });
+      return { store, adoptLiveSession, listAdoptableSessions };
+    }
+
+    it('init_secondaryWindow_doesNotAdopt', async () => {
+      const { store, adoptLiveSession, listAdoptableSessions } = initStore('w2');
+
+      store.getState().init();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(listAdoptableSessions).not.toHaveBeenCalled();
+      expect(adoptLiveSession).not.toHaveBeenCalled();
+    });
+
+    it('init_mainWindow_adoptsListedSessions', async () => {
+      const { store, adoptLiveSession } = initStore(MAIN_WINDOW_ID);
+
+      store.getState().init();
+
+      await vi.waitFor(() => expect(adoptLiveSession).toHaveBeenCalledTimes(2));
+      expect(adoptLiveSession.mock.calls.map(([s]) => (s as AdoptableSession).sessionId)).toEqual(['s-host', 's-2']);
+    });
   });
 });
