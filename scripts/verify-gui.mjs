@@ -8991,17 +8991,17 @@ const CHECKS = [
     name: 'F9: el widget abre plegado en la esquina, se expande sin moverse del borde derecho y recuerda la vista',
     async run(page, { userDataDir }) {
       const T = 2;
-      const medir = (w) => w.evaluate(() => ({ x: window.screenX, y: window.screenY, w: window.outerWidth, h: window.outerHeight, ax: screen.availLeft, ay: screen.availTop, aw: screen.availWidth, foco: document.hasFocus(), zoom: window.devicePixelRatio }));
+      const medir = (w) => w.evaluate(() => ({ x: window.screenX + Math.round((window.outerWidth - window.innerWidth) / 2), y: window.screenY, w: window.innerWidth, h: window.innerHeight, ax: screen.availLeft, ay: screen.availTop, aw: screen.availWidth, zoom: window.devicePixelRatio }));
       try {
         await page.evaluate(() => window.mage.setWidgetPrefs({ expanded: false, doNotDisturb: false }));
         await page.evaluate(() => window.__mageDev.store.getState().setWidgetEnabled(true));
         const widget = await widgetPageOf(page);
         await widget.locator('[data-widget-pill]').waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
-        const plegado = await medir(widget);
+        const plegado = { ...(await medir(widget)), foco: await realFocusOf(widget) };
         await widget.locator('[data-widget-toggle-view]').click();
         await widget.locator('[data-widget-pill]').waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
-        await widget.waitForFunction(() => window.outerWidth >= 318, null, { timeout: CONFIG.actionTimeoutMs });
-        const expandido = await medir(widget);
+        await widget.waitForFunction(() => window.innerWidth >= 318, null, { timeout: CONFIG.actionTimeoutMs });
+        const expandido = { ...(await medir(widget)), foco: await realFocusOf(widget) };
         const guardado = JSON.parse(fs.readFileSync(path.join(userDataDir, 'widget-prefs.json'), 'utf8'));
         await widget.locator('[data-widget-toggle-view]').click();
         await widget.locator('[data-widget-pill]').waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
@@ -9050,8 +9050,8 @@ const CHECKS = [
         const antes = await widget.evaluate((sid) => ({
           pildora: document.querySelectorAll('[data-widget-pill]').length,
           estado: document.querySelector(`[data-widget-row][data-widget-session-id="${sid}"]`)?.getAttribute('data-widget-status') ?? null,
-          foco: document.hasFocus(),
         }), sessionId);
+        antes.foco = await realFocusOf(widget);
         await peticion.locator('[data-widget-allow]').click();
         await peticion.waitFor({ state: 'detached', timeout: 30_000 });
         await page.waitForFunction((id) => window.__mageDev.store.getState().statusByChat[id] === 'idle', tabId, { timeout: 30_000 });
@@ -9107,7 +9107,8 @@ const CHECKS = [
           return { sessionId: s.sessionIdByChat[id], requestId: s.pendingByChat[id][0].requestId };
         }, tabId);
         await widget.waitForFunction(() => document.querySelector('[data-widget-pill]')?.textContent?.includes('1') === true, null, { timeout: CONFIG.actionTimeoutMs });
-        const plegado = await widget.evaluate(() => ({ pildora: document.querySelectorAll('[data-widget-pill]').length, filas: document.querySelectorAll('[data-widget-row]').length, foco: document.hasFocus() }));
+        const plegado = await widget.evaluate(() => ({ pildora: document.querySelectorAll('[data-widget-pill]').length, filas: document.querySelectorAll('[data-widget-row]').length }));
+        plegado.foco = await realFocusOf(widget);
         const reciboPrincipal = await page.evaluate(({ sid, rid }) => window.mage.answerPermission({ sessionId: sid, requestId: rid, decision: { behavior: 'allow' } }), { sid: sessionId, rid: requestId });
         await page.waitForFunction((id) => window.__mageDev.store.getState().statusByChat[id] === 'idle', tabId, { timeout: 30_000 });
         await widget.locator('[data-widget-toggle-view]').click();
@@ -9612,6 +9613,18 @@ async function waitForWidgetPages(page, expected) {
     await page.waitForTimeout(200);
   }
   return false;
+}
+
+// Playwright emula el foco en cada página que controla (Emulation.setFocusEmulationEnabled: true), así que
+// document.hasFocus() da true siempre. Para medir si el widget robó el foco hay que apagar esa emulación.
+async function realFocusOf(widget) {
+  const cdp = await widget.context().newCDPSession(widget);
+  try {
+    await cdp.send('Emulation.setFocusEmulationEnabled', { enabled: false });
+    return await widget.evaluate(() => document.hasFocus());
+  } finally {
+    await cdp.detach();
+  }
 }
 
 // La página de la ventana del widget (la abre MAIN tras el IPC): espera a que exista y la devuelve, o lanza con el motivo.
