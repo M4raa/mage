@@ -20,6 +20,7 @@ export interface HostBootstrapDeps {
   readonly sessions: HostSessions;
   readonly control: HostControl;
   readonly rewind: HostConnectionDeps['rewind'];
+  readonly mcp: HostConnectionDeps['mcp'];
   readonly hostVersion: string;
   readonly log: SessionLogFn;
   readonly newId: () => string;
@@ -43,7 +44,7 @@ export async function startLocalHost(deps: HostBootstrapDeps): Promise<HostServe
     token: createHostToken({ randomBytes: deps.randomBytes ?? randomBytes }),
     fs: deps.fs,
     getuid: deps.getuid,
-    connection: { sessions: deps.sessions, hostVersion: deps.hostVersion, log: deps.log, newId: deps.newId, setTimer: deps.setTimer, translate: deps.translate, mode: deps.mode, control: deps.control, rewind: deps.rewind },
+    connection: { sessions: deps.sessions, hostVersion: deps.hostVersion, log: deps.log, newId: deps.newId, setTimer: deps.setTimer, translate: deps.translate, mode: deps.mode, control: deps.control, rewind: deps.rewind, mcp: deps.mcp },
   });
   deps.log('info', 'Host local escuchando', { kind: endpoint.kind, mode: deps.mode });
   return handle;

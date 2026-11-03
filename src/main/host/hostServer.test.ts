@@ -55,7 +55,7 @@ function serverDeps(userDataDir: string, fsImpl: HostFs = fs): HostServerDeps {
   return {
     endpoint: resolveHostEndpoint(deps), platform: process.platform, tokenFile: tokenFilePath(deps), endpointFile: endpointFilePath(deps), modeFile: modeFilePath(deps), mode: 'headless', token: TOKEN, fs: fsImpl,
     getuid: process.getuid?.bind(process),
-    connection: { sessions: fakeSessions(), mode: 'headless', control: { createSession: vi.fn(), setOption: vi.fn(), listProjects: () => [], listAccounts: () => [], createApiAccount: () => ({ id: '/h/k', name: 'K', provider: 'claude' as const, billing: 'api-key' as const }), requestQuit: () => undefined } as HostControl, rewind: { points: vi.fn(), plan: vi.fn(), apply: vi.fn() }, hostVersion: '0.1.3', log: vi.fn(), newId: () => 'sub', translate: createTranslator('es'), setTimer: (fn, ms) => { const t = setTimeout(fn, ms); return () => clearTimeout(t); } },
+    connection: { sessions: fakeSessions(), mode: 'headless', control: { createSession: vi.fn(), setOption: vi.fn(), listProjects: () => [], listAccounts: () => [], createApiAccount: () => ({ id: '/h/k', name: 'K', provider: 'claude' as const, billing: 'api-key' as const }), requestQuit: () => undefined } as HostControl, rewind: { points: vi.fn(), plan: vi.fn(), apply: vi.fn() }, mcp: { open: vi.fn() }, hostVersion: '0.1.3', log: vi.fn(), newId: () => 'sub', translate: createTranslator('es'), setTimer: (fn, ms) => { const t = setTimeout(fn, ms); return () => clearTimeout(t); } },
   };
 }
 

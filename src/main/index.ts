@@ -10,6 +10,8 @@ import { McpCallers } from './host/mcpCallers';
 import { codexHomeHasMageServer } from './mcpServer/registrationStatus';
 import { DelegationLog } from './mcpServer/delegationLog';
 import { HostSessionsPort } from './mcpServer/hostSessionsPort';
+import { MemoryIdempotencyStore } from './mcpServer/idempotencyStore';
+import { createMcpConnector as createHostMcpConnector } from './mcpServer/mcpConnector';
 import { execFile, spawn, spawnSync, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import {
   appendFileSync,
@@ -2705,6 +2707,8 @@ const mcpCallers = new McpCallers({ randomBytes, isLive: (id) => sessionCoordina
 const windowAttachments = new WindowAttachments({ coordinator: sessionCoordinator, eventChannel: EVENT_CHANNEL });
 // D-M11: registro de main de las delegadas del MCP (uno para todas las conexiones).
 const delegationLog = new DelegationLog({ coordinator: sessionCoordinator, now: Date.now });
+// D-M11: UN almacén de idempotencia para todas las conexiones MCP.
+const mcpIdempotency = new MemoryIdempotencyStore();
 
 // Los ids vivos de una sesión del host; null si el coordinador ya no la sigue.
 function liveIdsOf(sessionId: string): { conversationId: string | null; nativeId: string | null } | null {
@@ -3974,6 +3978,20 @@ function startHost(mode: HostMode): Promise<void> {
     sessions: sessionCoordinator,
     rewind: createRewindCoordinator(),
     control: createHostControl(hostControlDeps()),
+    mcp: createHostMcpConnector({
+      resolveCaller: (credential) => mcpCallers.resolve(credential ?? undefined),
+      createPort: (sessionId) => {
+        const port = createHostSessionsPort(sessionId);
+        const conversationId = sessionCoordinator.conversationIdOf(sessionId);
+        return port === null || conversationId === null ? null : { port, conversationId };
+      },
+      creatorChainOf: (conversationId) => getConversationIndexStore().delegationOf(conversationId).creatorChain,
+      accountIds: () => listAllAccounts().filter((account) => account.providerId === 'claude' || account.providerId === 'codex').map((account) => account.configDir),
+      maxDepth: () => getSettingsStore().load().delegation.maxDepth,
+      store: mcpIdempotency,
+      now: () => new Date().toISOString(),
+      log: mainLog,
+    }),
     hostVersion: app.getVersion(),
     log: mainLog,
     newId: randomUUID,

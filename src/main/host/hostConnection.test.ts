@@ -3,7 +3,7 @@ import type { ConversationSnapshot } from '@shared/coordination';
 import { UserFacingError, localized, renderForLog } from '@shared/i18n/localizedText';
 import { createTranslator } from '@shared/i18n/translator';
 import type { SequencedSessionEvent } from '../coordination/sessionCoordinator';
-import { HELLO_DEADLINE_MS, HostConnection, MAX_BUFFERED_BYTES, type HostConnectionDeps, type HostSessions, type HostTransport } from './hostConnection';
+import { HELLO_DEADLINE_MS, HostConnection, MAX_BUFFERED_BYTES, type HostConnectionDeps, type McpTunnelHandle, type HostSessions, type HostTransport } from './hostConnection';
 import type { HostControl } from './hostControl';
 import type { HostMode } from './hostServer';
 import { TrustRequiredError, UnknownAccountError } from './hostErrors';
@@ -44,11 +44,14 @@ function harness(options: { sessions?: Partial<HostSessions>; control?: Partial<
     ...options.control,
   };
   const rewind: HostConnectionDeps['rewind'] = { points: vi.fn(async () => []), plan: vi.fn(), apply: vi.fn(), ...options.rewind };
+  const tunnel = { receive: vi.fn(), close: vi.fn() } satisfies McpTunnelHandle;
+  const mcpSends: { send: (message: Record<string, unknown>) => void }[] = [];
+  const mcp: HostConnectionDeps['mcp'] = { open: vi.fn((context) => { mcpSends.push(context); return tunnel; }) };
   const timers: { fn: () => void; ms: number; cancelled: boolean }[] = [];
   const log = vi.fn();
   let ids = 0;
   const connection = new HostConnection(transport, {
-    sessions, control, rewind, mode: options.mode ?? 'gui', token: TOKEN, hostVersion: '0.1.3', log, newId: () => `sub-${++ids}`, translate: createTranslator('es'),
+    sessions, control, rewind, mcp, mode: options.mode ?? 'gui', token: TOKEN, hostVersion: '0.1.3', log, newId: () => `sub-${++ids}`, translate: createTranslator('es'),
     setTimer: (fn, ms) => { const timer = { fn, ms, cancelled: false }; timers.push(timer); return () => { timer.cancelled = true; }; },
     ...(options.maxLineBytes === undefined ? {} : { maxLineBytes: options.maxLineBytes }),
   });
@@ -56,7 +59,7 @@ function harness(options: { sessions?: Partial<HostSessions>; control?: Partial<
   const lines = () => written.join('').split('\n').filter((line) => line.length > 0).map((line) => JSON.parse(line) as Record<string, any>);
   const hello = (overrides: Record<string, unknown> = {}) =>
     send({ jsonrpc: '2.0', id: 1, method: 'hello', params: { protocol: HOST_PROTOCOL, client: { kind: 'terminal', version: '1' }, token: TOKEN, ...overrides } });
-  return { connection, sessions, control, rewind, send, lines, written, hello, sinks, unsubscribe, timers, log, isEnded: () => ended, setBuffered: (n: number) => { buffered = n; } };
+  return { connection, sessions, control, rewind, mcp, tunnel, mcpSends, send, lines, written, hello, sinks, unsubscribe, timers, log, isEnded: () => ended, setBuffered: (n: number) => { buffered = n; } };
 }
 
 describe('HostConnection — autenticación', () => {
@@ -885,5 +888,88 @@ describe('rewind (1.4)', () => {
     await flush();
 
     expect(h.written.length).toBe(before);
+  });
+});
+
+describe('HostConnection — túnel MCP (1.5)', () => {
+  const CALLER = 'cd'.repeat(32);
+  const mcpHello = (h: ReturnType<typeof harness>, overrides: Record<string, unknown> = {}) => h.hello({ client: { kind: 'mcp', version: '1' }, ...overrides });
+
+  it('hello_mcpClient_opensTunnelWithCaller', () => {
+    const h = harness();
+
+    mcpHello(h, { caller: CALLER });
+
+    expect(h.mcp.open).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(h.mcp.open).mock.calls[0]![0].callerCredential).toBe(CALLER);
+  });
+
+  it('hello_terminalClient_noTunnel', () => {
+    const h = harness();
+
+    h.hello();
+
+    expect(h.mcp.open).not.toHaveBeenCalled();
+  });
+
+  it('mcpMessage_fromMcpClient_reachesTunnel', () => {
+    const h = harness();
+    mcpHello(h);
+
+    h.send({ jsonrpc: '2.0', id: 2, method: 'mcp.message', params: { message: { jsonrpc: '2.0', id: 1, method: 'tools/list' } } });
+
+    expect(h.tunnel.receive).toHaveBeenCalledWith({ jsonrpc: '2.0', id: 1, method: 'tools/list' });
+    expect(h.lines()[1]).toMatchObject({ id: 2, result: {} });
+  });
+
+  it('mcpMessage_fromTerminal_rejected', () => {
+    const h = harness();
+    h.hello();
+
+    h.send({ jsonrpc: '2.0', id: 2, method: 'mcp.message', params: { message: {} } });
+
+    expect(h.lines()[1]!.error.message).toMatch(/solo vale para clientes mcp/);
+    expect(h.tunnel.receive).not.toHaveBeenCalled();
+  });
+
+  it('tunnelSend_writesMcpMessageNotification', () => {
+    const h = harness();
+    mcpHello(h);
+
+    h.mcpSends[0]!.send({ jsonrpc: '2.0', id: 1, result: {} });
+
+    expect(h.lines()[1]).toEqual({ jsonrpc: '2.0', method: 'mcp.message', params: { message: { jsonrpc: '2.0', id: 1, result: {} } } });
+  });
+
+  it('tunnelSend_afterClose_writesNothing', () => {
+    const h = harness();
+    mcpHello(h);
+    h.connection.closed();
+    const before = h.written.length;
+
+    h.mcpSends[0]!.send({ jsonrpc: '2.0', id: 1, result: {} });
+
+    expect(h.written.length).toBe(before);
+  });
+
+  it('tunnelSend_slowConsumer_closesConnection', () => {
+    const h = harness();
+    mcpHello(h);
+    h.setBuffered(MAX_BUFFERED_BYTES + 1);
+
+    h.mcpSends[0]!.send({ jsonrpc: '2.0', id: 1, result: {} });
+
+    expect(h.lines()[1]!.error.code).toBe(HostErrorCode.SlowConsumer);
+    expect(h.isEnded()).toBe(true);
+  });
+
+  it('closed_mcpClient_closesTunnelOnce', () => {
+    const h = harness();
+    mcpHello(h);
+
+    h.connection.closed();
+    h.connection.closed();
+
+    expect(h.tunnel.close).toHaveBeenCalledTimes(1);
   });
 });

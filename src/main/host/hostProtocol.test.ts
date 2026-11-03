@@ -34,8 +34,14 @@ describe('withLegacyText', () => {
 });
 
 describe('HOST_PROTOCOL', () => {
-  it('hostProtocol_version_is14', () => {
-    expect(HOST_PROTOCOL).toBe('1.4');
+  it('hostProtocol_version_is15', () => {
+    expect(HOST_PROTOCOL).toBe('1.5');
+  });
+
+  it('mcpMessageSchema_nonObjectMessage_rejected', () => {
+    expect(HOST_METHOD_SCHEMAS['mcp.message'].safeParse({ message: 'texto' }).success).toBe(false);
+    expect(HOST_METHOD_SCHEMAS['mcp.message'].safeParse({ message: [] }).success).toBe(false);
+    expect(HOST_METHOD_SCHEMAS['mcp.message'].safeParse({ message: { jsonrpc: '2.0' } }).success).toBe(true);
   });
 });
 

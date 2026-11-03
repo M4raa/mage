@@ -18,7 +18,8 @@ export const HOST_PROTOCOL_MAJOR = 1;
 // 1.2 (F7): `host.challenge` antes de `hello` y los métodos de la terminal.
 // 1.3 (F7): `host.stop`, `accounts.create`, `session.updateQueued` y la notificación `subscription.closed`.
 // 1.4 (0.1.4): `session.rewindPoints`, `session.rewindPlan` y `session.rewind` (el orquestador de la ventana).
-export const HOST_PROTOCOL_MINOR = 4;
+// 1.5 (0.1.4): `hello.caller` y el túnel MCP `mcp.message` para los clientes `mcp` (D-M5).
+export const HOST_PROTOCOL_MINOR = 5;
 export const HOST_PROTOCOL = `${HOST_PROTOCOL_MAJOR}.${HOST_PROTOCOL_MINOR}`;
 
 // Códigos JSON-RPC estándar (-32700…-32603) y propios (-32001…-32099).
@@ -115,6 +116,8 @@ const REWIND_PLAN_SCHEMA = z.object({ sessionId: SESSION_ID_SCHEMA, point: REWIN
 const REWIND_APPLY_SCHEMA = z.object({ sessionId: SESSION_ID_SCHEMA, point: REWIND_POINT_SCHEMA, action: REWIND_ACTION_SCHEMA, restoreFiles: z.boolean(), saveCopy: z.boolean() }).strict();
 const CANCEL_QUEUED_SCHEMA = z.object({ sessionId: SESSION_ID_SCHEMA, queuedId: hostId }).strict();
 const UPDATE_QUEUED_SCHEMA = z.object({ sessionId: SESSION_ID_SCHEMA, queuedId: hostId, text: z.string().min(1).max(MAX_MESSAGE_CHARS) }).strict();
+// Un mensaje JSON-RPC de MCP dentro del túnel (1.5): lo valida el transporte del servidor MCP, no el host.
+const MCP_MESSAGE_SCHEMA = z.object({ message: z.record(z.unknown()) }).strict();
 
 // Esquema de los parámetros de cada método posterior al `hello`.
 export const HOST_METHOD_SCHEMAS = {
@@ -139,6 +142,7 @@ export const HOST_METHOD_SCHEMAS = {
   'session.updateQueued': UPDATE_QUEUED_SCHEMA,
   'host.stop': HOST_STOP_SCHEMA,
   'accounts.create': ACCOUNTS_CREATE_SCHEMA,
+  'mcp.message': MCP_MESSAGE_SCHEMA,
 } as const;
 export type HostMethod = keyof typeof HOST_METHOD_SCHEMAS;
 
