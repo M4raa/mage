@@ -57,6 +57,8 @@ export interface Tab {
   readonly model: string; // id de modelo (--model)
   readonly provider: string; // 'claude' | 'openai' | 'gemini' | 'ollama' | 'lmstudio'
   readonly title: string;
+  // #29: la sesión que la encargó por el MCP. No se persiste: tras reiniciar, la creadora ya no está viva.
+  readonly createdBy?: { readonly conversationId: string; readonly sessionId: string };
   readonly projectId?: string;
   // Historial de otra conversación (de otro proveedor) con el que arranca esta; se entrega UNA vez, al crear la sesión.
   readonly importedContext?: string;

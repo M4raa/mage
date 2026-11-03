@@ -11,7 +11,7 @@ export interface DefaultsDeps {
   readonly listHome: () => string[];
   // Resuelve lo comun (MCP de mcp-common.json y extensiones, settings-common.json) para ESTE proveedor y
   // cuenta; se llama en cada sesion nueva para leerlo fresco (nunca se cachea).
-  readonly resolveShared: (provider: string, accountDir: string) => SharedLaunchConfig;
+  readonly resolveShared: (provider: string, accountDir: string, sessionId: string) => SharedLaunchConfig;
   // ¿Puede autenticar esta cuenta de Claude? Login del CLI o, en una cuenta de API, clave en la boveda
   // (grupo E). Ausente = solo el login del CLI (`.credentials.json`).
   readonly hasClaudeLogin?: (accountDir: string) => boolean;
@@ -55,7 +55,7 @@ export function resolveLaunchParams(
     model,
     cwd,
     resume,
-    shared: deps.resolveShared(params.provider, accountDir),
+    shared: deps.resolveShared(params.provider, accountDir, sessionId),
     ...(params.projectInstructions === undefined ? {} : { projectInstructions: params.projectInstructions }),
     ...(effort === undefined ? {} : { effort }),
     ...(maxBudgetUsdCents === undefined ? {} : { maxBudgetUsdCents }),

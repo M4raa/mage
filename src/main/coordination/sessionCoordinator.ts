@@ -224,6 +224,11 @@ export class SessionCoordinator {
     return { snapshot: this.snapshot(sessionId), unsubscribe: () => { tracked.listeners.delete(listener); } };
   }
 
+  // Clientes suscritos ademas del que la creo (U17: la terminal, el MCP o una ventana que la adopto).
+  subscriberCount(sessionId: string): number {
+    return this.require(sessionId).listeners.size - 1;
+  }
+
   snapshot(sessionId: string): ConversationSnapshot {
     const tracked = this.require(sessionId);
     const { sessionId: id, provider, conversationId, nativeRef, lastSeq, state, queue } = tracked;

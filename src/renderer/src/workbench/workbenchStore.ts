@@ -4,7 +4,7 @@ import type { PersistedTab } from '@shared/state';
 import { disposeTranscriptStore, transcriptStoreForTab } from './transcriptStore';
 import type { ContextUsage, MageEvent, McpServerStatus, PermissionDecision, PermissionRequest, SlashCommandInfo, SubagentInfo, TurnUsage } from '@shared/events';
 import { buildUpdatedInput, parseAskUserQuestion } from '@shared/askUserQuestion';
-import type { CloseAnswer, DivergeResult, NotificationTarget, PermissionMode, PermissionModesByProviderView, RewindAction, RewindPlan, RewindPointRef, SessionEventPayload } from '@shared/ipc';
+import type { AdoptableSession, CloseAnswer, DivergeResult, NotificationTarget, PermissionMode, PermissionModesByProviderView, RewindAction, RewindPlan, RewindPointRef, SessionEventPayload } from '@shared/ipc';
 import type { TranscriptBatch } from '@shared/transcripts';
 import { divergeTitle, rewindPointOf } from './rewindActions';
 import { transcriptToBlocks } from './transcriptToBlocks';
@@ -51,7 +51,8 @@ import { isPrCreateCommand, prNumberFromCreatedTag, prNumberFromUrl } from './pr
 import { worktreeOfCwd } from '@shared/worktree';
 import { createdFileFrom } from './createdFilesView';
 import { mergeIntoDraft, type QueuedMessage } from './messageQueue';
-import type { SendMode, SendReceipt } from '@shared/coordination';
+import type { ConversationSnapshot, SendMode, SendReceipt } from '@shared/coordination';
+import { adoptedTab, adoptionTarget, chatStatusOf, snapshotEvents } from './adoptSession';
 import { deliveryNotices } from './sendNow';
 import { readOnlyLockMessage, type ConversationLockStatus } from '@shared/conversationLock';
 import { lockRefOf } from './conversationLockSync';
@@ -391,6 +392,8 @@ export interface WorkbenchState extends PrState, PrActions {
   openInNewWindow: (tabId: string) => Promise<void>;
   moveTabToWindow: (tabId: string, targetWindowId: string) => Promise<void>;
   adoptTab: (persisted: PersistedTab) => void;
+  // U17: una sesión viva creada por el host (terminal o MCP) entra como pestaña en segundo plano, con su historial y la sesión de main; nunca arranca otra.
+  adoptLiveSession: (session: AdoptableSession) => Promise<void>;
   // P-028, 36. Se solto la pestaña fuera de su ventana: main decide por el cursor (otra ventana, una
   // nueva o nada) y, si se movio, se cierra aqui.
   dropTabOutside: (tabId: string) => Promise<void>;
@@ -463,6 +466,8 @@ export interface WorkbenchState extends PrState, PrActions {
   setArtifactEnabled: (enabled: boolean) => void;
   // Keep-alive de la caché de Claude (U11, U15): fusiona el parche con los ajustes; valida tipos y rangos.
   setKeepAlive: (patch: Partial<KeepAliveSettings>) => void;
+  // Profundidad máxima de delegación entre sesiones (U10): entero entre DELEGATION_DEPTH_MIN y _MAX.
+  setDelegationDepth: (depth: number) => void;
   // Shell de `Bash` en los proveedores del runtime propio (P-032, ficha D4). Aplica a sesiones nuevas.
   setRuntimeShell: (shell: RuntimeShell) => void;
   // Reglas de acceso a herramientas por modelo de un proveedor del runtime (§8.1 D10). [] las borra.
@@ -658,6 +663,7 @@ function advanceTabSeqPast(tabs: readonly Tab[]): void {
 
 // Guard de suscripcion unica al stream del motor (evita listeners duplicados en HMR).
 let engineSubscribed = false;
+let adoptableSubscribed = false;
 
 // Persistencia del workspace (M2.5) con debounce: agrupa rafagas de cambios (abrir/cerrar/cambiar
 // pestana) en una sola escritura. La escritura en main es atomica; un fallo NO es critico (se
@@ -1251,6 +1257,87 @@ function applyCliRename(get: () => WorkbenchState, tabId: string, output: { read
   get().renameTab(tabId, title);
 }
 
+// Solo la ventana principal adopta las sesiones del host que ya existían al arrancar (U17). Un fallo se dice, no rompe el arranque.
+async function adoptHostSessionsIfMain(mage: MageClient, get: () => WorkbenchState): Promise<void> {
+  try {
+    const windows = await mage.listWindows();
+    if (windows.find((w) => w.isCurrent)?.windowId !== MAIN_WINDOW_ID) return;
+    for (const session of await mage.listAdoptableSessions()) await get().adoptLiveSession(session);
+  } catch (err) {
+    console.warn('No se pudieron listar las sesiones del host:', describeError(err));
+  }
+}
+
+// Pestañas con un rewind pedido desde aquí: su `conversation_rewound` ya lo trata `applyRewind` con la proyección.
+const rewindsInFlight = new Set<string>();
+
+// Alta de la pestaña adoptada SIN robar el foco: entra en el panel enfocado pero ni su pestaña activa ni
+// la cuenta activa cambian. Sin ninguna pestaña, pasa a ser la activa como cualquier pestaña de un panel vacío.
+function addBackgroundTab(s: WorkbenchState, tab: Tab): Partial<WorkbenchState> {
+  if (s.activeTabId === '') return { tabs: [...s.tabs, tab], activeTabId: tab.id, splitLayout: singleLeaf(tab.id) };
+  const path = findLeafPath(s.splitLayout, s.activeTabId) ?? firstLeafPath(s.splitLayout);
+  const layout = addTabToLeaf(s.splitLayout, path, tab.id);
+  return { tabs: [...s.tabs, tab], splitLayout: activateTab(layout, s.activeTabId) };
+}
+
+// Deshace el alta de una pestaña adoptada cuyo `attachSession` falló: como `closeTab`, pero sin cerrar la
+// sesión de main (sigue viva para la terminal).
+function removeAdoptedTab(set: SetFn, tabId: string): void {
+  disposeTranscriptStore(tabId);
+  set((s) => {
+    const activeTabId = s.activeTabId === tabId ? nextActiveAfterClose(s.tabs, s.splitLayout, tabId) : s.activeTabId;
+    return {
+      tabs: s.tabs.filter((t) => t.id !== tabId),
+      activeTabId,
+      splitLayout: reconcileSplitLayoutAfterClose(s.splitLayout, tabId, activeTabId),
+      ...clearedSessionState(s, tabId),
+    };
+  });
+}
+
+function clearedSessionState(s: WorkbenchState, tabId: string): Partial<WorkbenchState> {
+  return {
+    sessionIdByChat: without(s.sessionIdByChat, tabId),
+    blocksByChat: without(s.blocksByChat, tabId),
+    statusByChat: without(s.statusByChat, tabId),
+    pendingByChat: without(s.pendingByChat, tabId),
+    elicitationsByChat: without(s.elicitationsByChat, tabId),
+  };
+}
+
+// U17: una sesión viva del host entra como pestaña. `sessionIdByChat` se pone ANTES de pedir la instantánea
+// para que los eventos que lleguen entretanto ya se enruten a la pestaña. Nunca crea otra sesión.
+async function adoptLiveSessionInto(mage: MageClient, get: () => WorkbenchState, set: SetFn, session: AdoptableSession): Promise<void> {
+  const target = adoptionTarget(get(), session);
+  if (target.kind === 'bound') return;
+  const account = get().accounts.find((a) => a.id === session.accountId);
+  if (account === undefined) {
+    console.warn('Sesión del host de una cuenta que esta ventana no conoce:', session.accountId);
+    return;
+  }
+  const isNew = target.kind === 'new';
+  let tabId = isNew ? '' : target.tabId;
+  if (isNew) {
+    advanceTabSeqPast(get().tabs);
+    const tab = adoptedTab(session, { tabId: nextTabId(), accountAlias: account.alias, title: deriveTitle(session.cwd), nowMs: Date.now() });
+    tabId = tab.id;
+    set((s) => addBackgroundTab(s, tab));
+  }
+  set((s) => ({ sessionIdByChat: { ...s.sessionIdByChat, [tabId]: session.sessionId } }));
+  let snapshot: ConversationSnapshot;
+  try {
+    snapshot = await mage.attachSession(session.sessionId);
+  } catch (err) {
+    console.warn('No se pudo adoptar la sesión del host:', describeError(err));
+    if (isNew) removeAdoptedTab(set, tabId);
+    else set((s) => ({ sessionIdByChat: without(s.sessionIdByChat, tabId) }));
+    return;
+  }
+  set((s) => ({ statusByChat: { ...s.statusByChat, [tabId]: chatStatusOf(snapshot.state) } }));
+  for (const event of snapshotEvents(snapshot)) get().handleEvent(session.sessionId, event);
+  schedulePersist(mage, get);
+}
+
 function withoutPendingCliTitle(tab: Tab): Tab {
   const { pendingCliTitle: _sent, ...rest } = tab;
   return rest;
@@ -1685,6 +1772,13 @@ export function createWorkbenchStore(mage: MageClient) {
           get().handleEvent(payload.sessionId, payload.event),
         );
       }
+      // U17: main solo anuncia las sesiones del host a la ventana principal.
+      if (!adoptableSubscribed) {
+        adoptableSubscribed = true;
+        mage.onSessionAdoptable((session) => {
+          void get().adoptLiveSession(session);
+        });
+      }
       // Widget flotante (M3): cablea una sola vez el espejo de estado. (a) empuja un snapshot al widget
       // ante cualquier cambio del store (debounce); (b) el clic en un agente del widget activa su pestana
       // (y cuenta); (c) si la preferencia cambia fuera del renderer (tray/cierre), la refleja y persiste
@@ -1719,7 +1813,8 @@ export function createWorkbenchStore(mage: MageClient) {
         .then(() => get().restoreWorkspace()) // reabre las pestanas guardadas (tras conocer las cuentas)
         // Y DESPUES lo que otra ventana le mando al abrirla (P-028, 36): con las cuentas ya cargadas,
         // que es lo que `adoptTab` necesita para no descartarla.
-        .then(() => get().adoptPendingTabs());
+        .then(() => get().adoptPendingTabs())
+        .then(() => adoptHostSessionsIfMain(mage, get));
       void workspaceRestored
         .then(() => get().refreshActiveUsage())
         .then(() => get().loadConversationHistory()); // historial de la cuenta activa (M2.6)
@@ -1825,6 +1920,8 @@ export function createWorkbenchStore(mage: MageClient) {
       const pending = await mage.takePendingTabs();
       for (const persisted of pending) get().adoptTab(persisted);
     },
+
+    adoptLiveSession: (session) => adoptLiveSessionInto(mage, get, set, session),
 
     adoptTab: (persisted) => {
       const { accounts } = get();
@@ -1999,11 +2096,14 @@ export function createWorkbenchStore(mage: MageClient) {
     },
 
     rewindTo: async (tabId, blockId, options) => {
+      rewindsInFlight.add(tabId);
       try {
         await applyRewind(mage, get, set, tabId, blockId, options);
       } catch (err) {
         reportActionError(t('chat.rewind.failed'), err, 'chat');
         throw err;
+      } finally {
+        rewindsInFlight.delete(tabId);
       }
     },
 
@@ -2724,6 +2824,8 @@ export function createWorkbenchStore(mage: MageClient) {
       // Comandos locales con efecto en la pestaña (P-028): `/rename` la renombra al instante y `/clear`
       // deja persistido el id nuevo, para que reabrir Mage reanude la conversacion de despues.
       if (event.kind === 'local_command_output' && event.command === 'rename') applyCliRename(get, tabId, event);
+      // U17: la terminal (u otra vista) rebobinó esta conversación; la pestaña relee su rama vigente.
+      if (event.kind === 'conversation_rewound' && !rewindsInFlight.has(tabId)) transcriptStoreForTab(tabId).getState().refresh();
       if (event.kind === 'conversation_reset') {
         schedulePersist(mage, get);
         persistConversationPrefs(mage, get(), tabId);

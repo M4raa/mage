@@ -2,7 +2,9 @@ import { z } from 'zod';
 import {
   CONVERSATION_INDEX_VERSION,
   MAX_ARTIFACTS,
+  MAX_CREATOR_CHAIN,
   type ArtifactRecord,
+  type DelegationRecord,
   type ConversationPrefs,
 } from '@shared/conversationIndex';
 import type { ConversationId, NativeSessionRef } from '@shared/coordination';
@@ -26,6 +28,8 @@ import { writeAtomic, type AtomicWriteDeps } from '../os/atomicFile';
 export interface ConversationEntry extends ConversationPrefs {
   readonly nativeRef?: NativeSessionRef;
   readonly lastSeq?: number;
+  readonly createdBy?: NonNullable<DelegationRecord['createdBy']>;
+  readonly creatorChain?: readonly string[];
 }
 
 export interface ConversationIndexFile {
@@ -56,6 +60,8 @@ const NATIVE_REF_SCHEMA = z.object({ provider: z.string().min(1), accountDir: z.
 const ENTRY_SCHEMA = PREFS_SCHEMA.extend({
   nativeRef: NATIVE_REF_SCHEMA.optional().catch(undefined),
   lastSeq: z.number().int().nonnegative().optional().catch(undefined),
+  createdBy: z.object({ conversationId: z.string().min(1), requestId: z.string().min(1), at: z.string().datetime() }).optional().catch(undefined),
+  creatorChain: z.array(z.string().min(1)).max(MAX_CREATOR_CHAIN).optional().catch(undefined),
 });
 
 const ARTIFACT_SCHEMA = z.object({
@@ -139,6 +145,25 @@ export class ConversationIndexStore {
 
   nativeRefOf(conversationId: ConversationId): NativeSessionRef | null {
     return this.read().conversations[conversationId]?.nativeRef ?? null;
+  }
+
+  // Quien creo esta conversacion por delegacion (H3). Escribe los dos campos en la entrada, que crea si no
+  // existe; las preferencias de la entrada siguen.
+  recordDelegation(conversationId: ConversationId, record: DelegationRecord): void {
+    if (record.creatorChain.length > MAX_CREATOR_CHAIN) {
+      throw new Error(`creatorChain demasiado larga (${record.creatorChain.length} > ${MAX_CREATOR_CHAIN}) en ${conversationId}`);
+    }
+    const index = this.read();
+    const entry = { ...index.conversations[conversationId], creatorChain: [...record.creatorChain] };
+    const { createdBy: _previous, ...rest } = entry;
+    const next: ConversationEntry = record.createdBy === null ? rest : { ...rest, createdBy: record.createdBy };
+    this.write({ ...index, conversations: { ...index.conversations, [conversationId]: next } });
+  }
+
+  // Lo guardado, o conversacion manual si no hay nada.
+  delegationOf(conversationId: ConversationId): DelegationRecord {
+    const entry = this.read().conversations[conversationId];
+    return { createdBy: entry?.createdBy ?? null, creatorChain: entry?.creatorChain ?? [] };
   }
 
   recordArtifact(url: string, record: ArtifactRecord): void {

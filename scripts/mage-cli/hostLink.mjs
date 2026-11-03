@@ -6,7 +6,7 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { posix, win32 } from 'node:path';
 
-export const HOST_PROTOCOL = '1.3';
+export const HOST_PROTOCOL = '1.5';
 export const CHALLENGE_CONTEXT = 'mage-host-challenge-v1:';
 export const CHALLENGE_NONCE_BYTES = 32;
 export const NOT_MAGE_SERVER = 'El servidor del pipe no es el de Mage';
@@ -134,6 +134,10 @@ export function createRpc(socket) {
         socket.write(`${JSON.stringify(request)}\n`);
       });
     },
+    // Notificación JSON-RPC: sin `id`, el host no contesta.
+    notify(method, params) {
+      socket.write(`${JSON.stringify({ jsonrpc: '2.0', method, params })}\n`);
+    },
     onNotification(listener) {
       listeners.push(listener);
     },
@@ -164,7 +168,15 @@ export async function verifyServer(rpc, token, randomBytes) {
   if (!proofMatches(result, token, nonce)) throw new Error(NOT_MAGE_SERVER);
 }
 
-export async function connectVerified({ userDataDir, clientVersion, deps }) {
+const CALLER_PATTERN = /^[0-9a-f]{64}$/;
+
+// `client.caller` (la credencial MAGE_MCP_CALLER) solo viaja si tiene la forma esperada; nunca se escribe en un mensaje.
+function helloClient(client, clientVersion) {
+  const caller = typeof client.caller === 'string' && CALLER_PATTERN.test(client.caller) ? { caller: client.caller } : {};
+  return { client: { kind: client.kind, version: clientVersion }, ...caller };
+}
+
+export async function connectVerified({ userDataDir, clientVersion, deps, client = { kind: 'terminal' } }) {
   const { address, token } = readHostFiles(userDataDir, deps);
   verifyUnixEndpoint(address, deps);
   const socket = await deps.connect(address);
@@ -175,6 +187,6 @@ export async function connectVerified({ userDataDir, clientVersion, deps }) {
     socket.destroy();
     throw error;
   }
-  const hello = await rpc.call('hello', { protocol: HOST_PROTOCOL, client: { kind: 'terminal', version: clientVersion }, token });
+  const hello = await rpc.call('hello', { protocol: HOST_PROTOCOL, ...helloClient(client, clientVersion), token });
   return { rpc, socket, hello };
 }

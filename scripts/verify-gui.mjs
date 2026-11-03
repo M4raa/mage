@@ -44,6 +44,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { AGY_FIXTURE_ID, AGY_FIXTURE_TITLE, CODEX_FIXTURE_ID, CODEX_FIXTURE_TITLE, CODEX_REVERT_DROPPED, CODEX_REVERT_FIXTURE_ID, CODEX_REVERT_FIXTURE_TITLE, CODEX_REVERT_KEPT, seedProviderHistory } from './lib/providerHistoryFixtures.mjs';
 import readline from 'node:readline/promises';
+import { randomBytes, randomUUID } from 'node:crypto';
+import { connectVerified } from './mage-cli/hostLink.mjs';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
 import { FAKE_SCENARIOS, startFakeOpenAiServer } from './fake-openai-server.mjs';
@@ -1981,6 +1983,29 @@ const CHECKS = [
         const ok = medido.reabierta && medido.vigenteEnChat && !medido.descartadoEnChat && medido.idNuevo && medido.vigenteMigrado && !medido.descartadoMigrado;
         return { ok, detail: JSON.stringify({ ...medido, chat: reabierta.detail }) };
       } finally {
+        if (instance !== null) await stopRestartInstance(instance);
+        fs.rmSync(profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 500 });
+      }
+    },
+  },
+  {
+    // U17 (host-tab): una sesión de Codex que crea un cliente del host (terminal) entra en la ventana como pestaña, sin
+    // robar el foco, y un permiso se contesta UNA vez desde cualquiera de los dos lados: lo que se contesta en uno se
+    // cierra en el otro. Otra instancia con perfil propio y SOLO el app-server falso de Codex (MAGE_CODEX_BIN con el
+    // escenario `approval`): sin CLI real, sin Enter en el prompt y sin turnos reales.
+    name: 'U17: host-tab: una sesión creada por el host entra como pestaña y un permiso contestado en un lado se cierra en el otro',
+    async run(page, { runDir }) {
+      if (!fs.existsSync(path.join(repoRoot, 'out', 'main', 'index.js'))) return { ok: false, detail: 'falta out/main: la otra instancia arranca del main construido' };
+      const rendererUrl = page.url().split('#')[0];
+      const { profile, fx } = seedRestartProfile();
+      let instance = null;
+      let client = null;
+      try {
+        instance = await startRestartInstance(profile, rendererUrl, { MAGE_CODEX_BIN: path.join(repoRoot, 'scripts', 'fake-codex-app-server.mjs'), MAGE_FAKE_CODEX_SCENARIO: 'approval' });
+        const medido = await measureHostTab(instance, { profile, codexHome: fx.codexHome, runDir, setClient: (c) => { client = c; } });
+        return { ok: hostTabPassed(medido), detail: JSON.stringify(medido) };
+      } finally {
+        client?.rpc.close();
         if (instance !== null) await stopRestartInstance(instance);
         fs.rmSync(profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 500 });
       }
@@ -11138,6 +11163,116 @@ function helloWithWrongToken(userDataDir) {
     socket.on('close', () => resolve(received.length === 0 ? null : JSON.parse(received.split('\n')[0])));
     socket.on('error', reject);
   });
+}
+
+// --- U17 host-tab: un cliente del host (terminal) y la ventana contestan permisos del app-server falso de Codex ---
+
+const HOST_TAB_MODEL = 'gpt-6-luna';
+
+// Cliente del host con el enlace verificado de la terminal (`hostLink.mjs`): reto HMAC, `hello` como `terminal` y los
+// eventos del host recogidos en `events`. Nunca guarda ni imprime el token.
+async function connectHostTabClient(userDataDir) {
+  const deps = {
+    platform: process.platform,
+    readFile: (p) => fs.readFileSync(p, 'utf8'),
+    lstat: fs.lstatSync,
+    getuid: process.getuid?.bind(process) ?? (() => -1),
+    connect: (address) => new Promise((resolve, reject) => {
+      const socket = net.createConnection(address);
+      socket.once('connect', () => resolve(socket));
+      socket.once('error', reject);
+    }),
+    randomBytes,
+  };
+  const { rpc } = await connectVerified({ userDataDir, clientVersion: 'verify-host-tab', deps });
+  const events = [];
+  rpc.onNotification((method, params) => { if (method === 'event') events.push(params.event); });
+  const call = (method, params) => Promise.race([
+    rpc.call(method, params),
+    new Promise((_, reject) => setTimeout(() => reject(new Error(`el host no contestó a ${method}`)), CONFIG.actionTimeoutMs * 3)),
+  ]);
+  return { rpc, events, call };
+}
+
+const hostEventOf = (client, kind, requestId) => client.events.some((e) => e?.kind === kind && (e.request?.requestId ?? e.requestId) === requestId);
+const hostRequestIds = (client) => client.events.filter((e) => e?.kind === 'permission_request').map((e) => e.request.requestId);
+
+// Espera (en el lado del verificador) a que el cliente del host reciba la petición número `count` y devuelve su id.
+async function waitForHostPermission(client, count) {
+  await waitUntil(() => hostRequestIds(client).length >= count, CONFIG.actionTimeoutMs * 3, () => `el cliente del host no recibió la petición de permiso ${count}`);
+  return hostRequestIds(client)[count - 1];
+}
+
+const waitPendingInWindow = (page, tabId, requestId, present) => page.waitForFunction(
+  ({ id, request, expected }) => ((window.__mageDev.store.getState().pendingByChat[id] ?? []).some((p) => p.requestId === request)) === expected,
+  { id: tabId, request: requestId, expected: present }, { timeout: CONFIG.actionTimeoutMs },
+);
+
+// Un turno enviado por el host: el permiso aparece en la pestaña y en el cliente (devuelve su requestId).
+async function sendHostTurn(ctx, text, count) {
+  const { client, page, sessionId, tabId } = ctx;
+  await client.call('session.send', { sessionId, text, commandId: randomUUID() });
+  const requestId = await waitForHostPermission(client, count);
+  await waitPendingInWindow(page, tabId, requestId, true);
+  return requestId;
+}
+
+// Pasos 1 a 9 de la comprobación; cada resultado, por nombre y sin tokens.
+async function measureHostTab(instance, { profile, codexHome, runDir, setClient }) {
+  const { page } = instance;
+  const cwd = await page.evaluate(() => window.mage.getScratchDir());
+  await page.evaluate((folder) => window.__mageDev.store.getState().answerTrustRequest(folder, true), cwd);
+  const activaAntes = await page.evaluate(() => window.__mageDev.store.getState().activeTabId);
+  const client = await connectHostTabClient(profile);
+  setClient(client);
+  const created = await client.call('session.create', { commandId: randomUUID(), provider: 'codex', accountId: codexHome, cwd, model: HOST_TAB_MODEL, trust: { acknowledged: true } });
+  const { sessionId } = created;
+  await client.call('session.subscribe', { sessionId });
+  await page.waitForFunction((sid) => Object.values(window.__mageDev.store.getState().sessionIdByChat).includes(sid), sessionId, { timeout: CONFIG.actionTimeoutMs });
+  const adoptada = await page.evaluate((sid) => {
+    const s = window.__mageDev.store.getState();
+    const tabId = s.tabs.map((t) => t.id).find((id) => s.sessionIdByChat[id] === sid) ?? null;
+    return { tabId, activa: s.activeTabId, pestanas: s.tabs.length };
+  }, sessionId);
+  await page.screenshot({ path: path.join(runDir, 'host-tab.png') });
+  const ctx = { client, page, sessionId, tabId: adoptada.tabId };
+  const primero = await answerFromHost(ctx);
+  const segundo = await answerFromWindow(ctx, primero.requestId);
+  await page.evaluate((id) => window.__mageDev.store.getState().closeTab(id), adoptada.tabId);
+  const lista = await client.call('sessions.list');
+  return {
+    adoptada: adoptada.tabId !== null, activaAntes, activaDespues: adoptada.activa, pestanas: adoptada.pestanas,
+    sinRobarFoco: activaAntes === '' || adoptada.activa === activaAntes,
+    ...primero, ...segundo, sesionViva: lista.sessions.some((entry) => entry.sessionId === sessionId),
+  };
+}
+
+// Pasos 5 y 6: el permiso 1 se contesta por el host y la pestaña lo retira.
+async function answerFromHost(ctx) {
+  const requestId = await sendHostTurn(ctx, 'uno', 1);
+  const recibo = await ctx.client.call('session.answerPermission', { sessionId: ctx.sessionId, requestId, decision: { behavior: 'allow' } });
+  await waitPendingInWindow(ctx.page, ctx.tabId, requestId, false);
+  return { requestId, reciboHost: recibo?.status ?? null, permiso1RetiradoEnVentana: true };
+}
+
+// Paso 7: el permiso 2 se contesta desde la ventana (la acción de la tarjeta), el host lo ve resuelto y una respuesta
+// tardía del host se rechaza (recibo `rejected` o error: se anota tal cual).
+async function answerFromWindow(ctx, firstRequestId) {
+  const requestId = await sendHostTurn(ctx, 'dos', 2);
+  await ctx.page.evaluate(({ id, request }) => window.__mageDev.store.getState().answerPermissionFor(id, { behavior: 'allow' }, request), { id: ctx.tabId, request: requestId });
+  await waitUntil(() => hostEventOf(ctx.client, 'permission_resolved', requestId), CONFIG.actionTimeoutMs * 3, () => `el cliente del host no recibió permission_resolved de ${requestId}`);
+  const tardia = await ctx.client.call('session.answerPermission', { sessionId: ctx.sessionId, requestId, decision: { behavior: 'allow' } })
+    .then((recibo) => ({ recibo: recibo?.status ?? null, razon: recibo?.reason ?? null, error: null }), (err) => ({ recibo: null, razon: null, error: err.message }));
+  return {
+    segundaPeticionDistinta: requestId !== firstRequestId, permiso2ResueltoEnHost: true,
+    tardia, tardiaRechazada: tardia.recibo === 'rejected' || tardia.error !== null,
+  };
+}
+
+// `ok` = adoptada + sin robar el foco + permiso 1 retirado + permiso 2 resuelto + respuesta tardía rechazada + sesión viva.
+function hostTabPassed(m) {
+  return m.adoptada && m.sinRobarFoco && m.reciboHost === 'accepted' && m.permiso1RetiradoEnVentana && m.segundaPeticionDistinta
+    && m.permiso2ResueltoEnHost && m.tardiaRechazada && m.sesionViva;
 }
 
 // --- Grupo 0: el turno minimo de verdad -----------------------------------------------------------

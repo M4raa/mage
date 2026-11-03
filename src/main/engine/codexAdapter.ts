@@ -4,6 +4,7 @@ import { localized, UserFacingError } from '@shared/i18n/localizedText';
 import { parseElicitationRequest, validateElicitationAnswer, type ElicitationAnswer, type ElicitationRequest } from '@shared/elicitation';
 import { parseCodexPermissionPreset } from '@shared/codexPermissions';
 import { resolveCodexBinary, type CodexSpawnCommand } from '../os/codexBinaryResolver';
+import { MAGE_MCP_CALLER_ENV } from '../host/mcpCallers';
 import { scrubAgentEnv } from '../os/agentEnv';
 import { toCodexOverrides } from '../config/mcpProviderTranslate';
 import { bridgeDocument, type BridgedFile } from '../instructions/instructionsBridge';
@@ -126,7 +127,8 @@ export class CodexAdapter implements ProviderAdapter {
     const account = this.deps.resolveAccount?.(params.accountDir) ?? null;
     this.apiKey = account?.apiKey ?? null;
     const mcp = toCodexOverrides(params.shared?.mcpServers ?? []);
-    this.secrets = [...new Set([this.apiKey ?? '', ...Object.values(mcp.env)].filter((value) => value.length > 0))];
+    const caller = params.shared?.mageCaller;
+    this.secrets = [...new Set([this.apiKey ?? '', caller?.credential ?? '', ...Object.values(mcp.env)].filter((value) => value.length > 0))];
     const bridged = this.deps.resolveInstructions?.(params.cwd, account?.home ?? null) ?? [];
     const userFiles = bridged.filter((file) => file.scope === 'user');
     this.developerInstructions = [
@@ -134,10 +136,15 @@ export class CodexAdapter implements ProviderAdapter {
       ...(params.projectInstructions === undefined ? [] : [`# Mage project instructions\n${params.projectInstructions}`]),
     ].join('\n\n') || null;
     const fallback = bridged.some((file) => file.scope === 'project') ? PROJECT_FALLBACK_ARGS : [];
-    const args = ['app-server', ...mcp.args, ...fallback, ...(this.apiKey === null ? [] : API_PROVIDER_ARGS)];
+    // Codex solo pasa a un servidor MCP stdio las variables de su lista `env_vars` (lo mismo que hace
+    // `toCodexOverrides` con los secretos de los MCP compartidos). Sin `mage` registrado no se anade: un
+    // `mcp_servers.mage` sin comando haria fallar el arranque.
+    const callerArgs = caller?.forwardToCodexMcp === true ? ['-c', `mcp_servers.mage.env_vars=["${MAGE_MCP_CALLER_ENV}"]`] : [];
+    const args = ['app-server', ...mcp.args, ...callerArgs, ...fallback, ...(this.apiKey === null ? [] : API_PROVIDER_ARGS)];
     const env: NodeJS.ProcessEnv = {
       ...scrubAgentEnv(process.env),
       ...mcp.env,
+      ...(caller === undefined ? {} : { [MAGE_MCP_CALLER_ENV]: caller.credential }),
       ...(account === null ? {} : { CODEX_HOME: account.home }),
       ...(this.apiKey === null ? {} : { [CODEX_API_KEY_ENV]: this.apiKey }),
     };

@@ -4,6 +4,7 @@ import { renderLocalized } from '@shared/i18n/localizedText';
 import type { Translate } from '@shared/i18n/translator';
 import { ELICITATION_ANSWER_SCHEMA } from '@shared/elicitation';
 import { PERMISSION_MODES } from '@shared/ipc';
+import { REWIND_POINT_SCHEMA } from '../coordination/rewindInput';
 import { ANSWER_PERMISSION_SCHEMA, SEND_MESSAGE_SCHEMA, SESSION_ID_SCHEMA, MAX_ID_CHARS, MAX_MESSAGE_CHARS, MAX_MODE_CHARS } from '@shared/sessionInput';
 import { CHALLENGE_NONCE_BYTES } from './hostToken';
 
@@ -16,7 +17,9 @@ export const HOST_PROTOCOL_MAJOR = 1;
 // clientes 1.0, su campo de siempre ya traducido en el idioma de main.
 // 1.2 (F7): `host.challenge` antes de `hello` y los métodos de la terminal.
 // 1.3 (F7): `host.stop`, `accounts.create`, `session.updateQueued` y la notificación `subscription.closed`.
-export const HOST_PROTOCOL_MINOR = 3;
+// 1.4 (0.1.4): `session.rewindPoints`, `session.rewindPlan` y `session.rewind` (el orquestador de la ventana).
+// 1.5 (0.1.4): `hello.caller` y el túnel MCP `mcp.message` para los clientes `mcp` (D-M5).
+export const HOST_PROTOCOL_MINOR = 5;
 export const HOST_PROTOCOL = `${HOST_PROTOCOL_MAJOR}.${HOST_PROTOCOL_MINOR}`;
 
 // Códigos JSON-RPC estándar (-32700…-32603) y propios (-32001…-32099).
@@ -55,6 +58,8 @@ export const HELLO_PARAMS_SCHEMA = z.object({
   protocol: z.string().regex(/^\d+\.\d+$/, 'se esperaba «major.minor»'),
   client: z.object({ kind: z.enum(['terminal', 'mcp', 'widget']), version: z.string().max(MAX_VERSION_CHARS) }).strict(),
   token: z.string().min(1).max(MAX_TOKEN_CHARS),
+  // Credencial MCP_CALLER de la sesion que lanzo a un cliente `mcp` (D-M6); los demas clientes no la mandan.
+  caller: z.string().regex(/^[0-9a-f]{64}$/).optional(),
 }).strict();
 export type HelloParams = z.infer<typeof HELLO_PARAMS_SCHEMA>;
 
@@ -104,9 +109,15 @@ const SESSION_RESUME_SCHEMA = z.object({ conversationId: hostId }).strict();
 // El esfuerzo vacío es «el del modelo»; modelo y modo de permiso no pueden ir vacíos (igual que el IPC).
 const SET_OPTION_SCHEMA = z.object({ sessionId: SESSION_ID_SCHEMA, key: z.enum(HOST_OPTION_KEYS), value: z.string().max(MAX_MODE_CHARS) }).strict()
   .refine((option) => option.key === 'effort' || option.value.length > 0, { message: 'el valor solo puede ir vacío en «effort»', path: ['value'] });
-const REWIND_SCHEMA = z.object({ sessionId: SESSION_ID_SCHEMA, targetMessageId: hostId, scope: z.enum(['conversation', 'files', 'both']) }).strict();
+const REWIND_ACTION_SCHEMA = z.enum(['rewind', 'retry']);
+const REWIND_POINTS_SCHEMA = z.object({ sessionId: SESSION_ID_SCHEMA }).strict();
+const REWIND_PLAN_SCHEMA = z.object({ sessionId: SESSION_ID_SCHEMA, point: REWIND_POINT_SCHEMA, action: REWIND_ACTION_SCHEMA }).strict();
+// Sin `attachments`: el host no admite adjuntos.
+const REWIND_APPLY_SCHEMA = z.object({ sessionId: SESSION_ID_SCHEMA, point: REWIND_POINT_SCHEMA, action: REWIND_ACTION_SCHEMA, restoreFiles: z.boolean(), saveCopy: z.boolean() }).strict();
 const CANCEL_QUEUED_SCHEMA = z.object({ sessionId: SESSION_ID_SCHEMA, queuedId: hostId }).strict();
 const UPDATE_QUEUED_SCHEMA = z.object({ sessionId: SESSION_ID_SCHEMA, queuedId: hostId, text: z.string().min(1).max(MAX_MESSAGE_CHARS) }).strict();
+// Un mensaje JSON-RPC de MCP dentro del túnel (1.5): lo valida el transporte del servidor MCP, no el host.
+const MCP_MESSAGE_SCHEMA = z.object({ message: z.record(z.unknown()) }).strict();
 
 // Esquema de los parámetros de cada método posterior al `hello`.
 export const HOST_METHOD_SCHEMAS = {
@@ -124,11 +135,14 @@ export const HOST_METHOD_SCHEMAS = {
   'session.create': SESSION_CREATE_SCHEMA,
   'session.resume': SESSION_RESUME_SCHEMA,
   'session.setOption': SET_OPTION_SCHEMA,
-  'session.rewind': REWIND_SCHEMA,
+  'session.rewindPoints': REWIND_POINTS_SCHEMA,
+  'session.rewindPlan': REWIND_PLAN_SCHEMA,
+  'session.rewind': REWIND_APPLY_SCHEMA,
   'session.cancelQueued': CANCEL_QUEUED_SCHEMA,
   'session.updateQueued': UPDATE_QUEUED_SCHEMA,
   'host.stop': HOST_STOP_SCHEMA,
   'accounts.create': ACCOUNTS_CREATE_SCHEMA,
+  'mcp.message': MCP_MESSAGE_SCHEMA,
 } as const;
 export type HostMethod = keyof typeof HOST_METHOD_SCHEMAS;
 
@@ -136,8 +150,8 @@ export function isHostMethod(method: string): method is HostMethod {
   return Object.prototype.hasOwnProperty.call(HOST_METHOD_SCHEMAS, method);
 }
 
-// Métodos con esquema pero sin implementar todavía: responden `Unsupported` y no se anuncian. `session.rewind` llega con el rebobinado (F4.4).
-export const UNSUPPORTED_METHODS: ReadonlySet<HostMethod> = new Set<HostMethod>(['session.rewind']);
+// Métodos con esquema pero sin implementar: responden `Unsupported` y no se anuncian. Hoy, ninguno.
+export const UNSUPPORTED_METHODS: ReadonlySet<HostMethod> = new Set<HostMethod>();
 export const HOST_CAPABILITIES: readonly HostMethod[] = (Object.keys(HOST_METHOD_SCHEMAS) as HostMethod[]).filter((method) => !UNSUPPORTED_METHODS.has(method));
 
 // La versión MAYOR distinta se rechaza; la menor se tolera en los dos sentidos.

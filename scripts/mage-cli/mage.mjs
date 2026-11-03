@@ -13,6 +13,7 @@ import { ChatController } from './chatController.mjs';
 import { parseCliArgs } from './cliArgs.mjs';
 import { runAccountAdd, runStop } from './commands.mjs';
 import { connectVerified } from './hostLink.mjs';
+import { runMcpRelay } from './mcpRelay.mjs';
 import { ensureHost, headlessLaunch, isNoHostError } from './hostStarter.mjs';
 import { installMute } from './hiddenInput.mjs';
 import { createMessages, pickLanguage } from './messages.mjs';
@@ -125,7 +126,7 @@ async function runChat(args, ctx) {
     controller.link.rpc.close();
     process.exit(code);
   };
-  controller = new ChatController({ link, sessionId, messages, write: writeOut, now: Date.now, exit, reconnect, setMuted });
+  controller = new ChatController({ link, sessionId, messages, write: writeOut, now: Date.now, exit, reconnect, setMuted, prefill: (text) => rl.write(text) });
   watchSocket(link);
 
   rl.on('line', (text) => guardPromise(controller.onLine(text)));
@@ -202,7 +203,16 @@ async function runAccountAddCommand(args, ctx) {
   process.exit(code);
 }
 
-const COMMANDS = { chat: runChat, stop: runStopCommand, accountAdd: runAccountAddCommand };
+// `mage mcp` (D-M5): relevo stdio <-> host. stdout solo lleva mensajes MCP y nunca arranca Mage.
+function runMcpCommand(args, ctx) {
+  const userDataDir = args.userDataDir ?? defaultUserDataDir({ platform: process.platform, env: process.env, homedir: os.homedir() });
+  return runMcpRelay({
+    connect: (client) => connectVerified({ userDataDir, clientVersion: CLIENT_VERSION, deps: linkDeps, client }),
+    stdin: process.stdin, stdout: process.stdout, stderr: process.stderr, env: process.env, messages: ctx.messages, exit: process.exit,
+  });
+}
+
+const COMMANDS = { chat: runChat, stop: runStopCommand, accountAdd: runAccountAddCommand, mcp: runMcpCommand };
 
 async function main() {
   const args = parseArgsOrExit();

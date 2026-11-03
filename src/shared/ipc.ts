@@ -114,6 +114,9 @@ export const IpcChannel = {
   SessionClose: 'session:close',
   // F2.1: instantanea de solo lectura de una sesion viva (identidad, estado y ultima secuencia).
   SessionSnapshot: 'session:snapshot',
+  // U17: sesiones del host (terminal/MCP) sin ventana, y adoptar una como pestaña.
+  SessionsAdoptable: 'sessions:adoptable',
+  SessionAttach: 'session:attach',
   SessionGetScratchDir: 'session:getScratchDir',
   // La RAIZ de los borradores, sin crear nada (a diferencia de la de arriba, que acuña una carpeta).
   SessionGetScratchRoot: 'session:getScratchRoot',
@@ -320,6 +323,10 @@ export const IpcChannel = {
   LibraryView: 'library:view',
   LibraryPreview: 'library:preview',
   LibraryApply: 'library:apply',
+  // Registro del servidor MCP de Mage en las cuentas de Claude y Codex (H4).
+  McpRegistrationStatus: 'mcp:registrationStatus',
+  McpRegister: 'mcp:register',
+  McpUnregister: 'mcp:unregister',
 } as const;
 
 export type IpcChannel = (typeof IpcChannel)[keyof typeof IpcChannel];
@@ -656,6 +663,25 @@ export interface LoadPanelLayoutParams {
 
 export const EVENT_CHANNEL = 'session:event';
 
+// Main avisa a la ventana principal de una sesión nueva sin ventana (U17).
+export const SESSION_ADOPTABLE_CHANNEL = 'session:adoptable';
+
+// Sesión viva sin ventana (la creó el host: la terminal o el MCP) que la ventana principal puede adoptar como pestaña (U17).
+export interface AdoptableSession {
+  readonly sessionId: string;
+  readonly conversationId: string | null;   // null hasta que el proveedor dice su id nativo
+  readonly nativeId: string | null;         // id de la transcripción (Claude) o del hilo (Codex); null hasta entonces
+  readonly provider: string;
+  readonly accountId: string;               // la cuenta (su config dir), como `Tab.accountId`
+  readonly configDir: string;               // el config dir EFECTIVO con el que se lanzó
+  readonly cwd: string;
+  readonly model: string;
+  readonly effort?: string;
+  readonly permissionMode?: PermissionMode;
+  readonly origin: 'terminal' | 'mcp';
+  readonly createdBy: { readonly conversationId: string; readonly sessionId: string } | null;  // la M05 lo rellena para el MCP; `sessionId` es el VIVO de la creadora
+}
+
 export interface SessionEventPayload {
   readonly sessionId: string;
   readonly event: MageEvent;
@@ -898,6 +924,19 @@ export interface KeepAliveStats {
   readonly costMicroUsd: number;
 }
 
+// Registro del servidor MCP de Mage en una cuenta (H4).
+export interface McpRegistrationEntry {
+  readonly accountId: string;
+  readonly accountName: string;
+  readonly provider: 'claude' | 'codex';
+  readonly registered: boolean;
+}
+
+export interface McpRegistrationResult {
+  readonly entries: readonly McpRegistrationEntry[];
+  readonly failures: readonly { readonly accountId: string; readonly message: string }[];
+}
+
 export interface MageApi {
   // ¿Corre este renderer en el sandbox de Chromium? (`process.sandboxed` del preload; F2.6). Solo lo lee verify:gui.
   readonly sandboxed: boolean;
@@ -920,6 +959,10 @@ export interface MageApi {
   rewindApply(params: RewindApplyParams): Promise<RewindApplyResult>;
   // Keep-alive de la cache de Claude (F4.6): totales de lo que se hizo y lo que costo.
   keepAliveStats(): Promise<KeepAliveStats>;
+  // Servidor MCP de Mage (H4): estado por cuenta, registrar y quitar en todas.
+  mcpRegistrationStatus(): Promise<McpRegistrationResult>;
+  registerMageMcp(): Promise<McpRegistrationResult>;
+  unregisterMageMcp(): Promise<McpRegistrationResult>;
   divergeConversation(params: DivergeParams): Promise<DivergeResult>;
   // Vacía la cola de main y devuelve sus mensajes.
   takeQueuedMessages(sessionId: string): Promise<readonly QueuedMessage[]>;
@@ -990,6 +1033,12 @@ export interface MageApi {
   openEditor(params: OpenEditorParams): Promise<void>;
   // Suscripcion a eventos; devuelve funcion para desuscribir.
   onSessionEvent(listener: (payload: SessionEventPayload) => void): () => void;
+  // Sesiones del host sin ventana que esta ventana puede adoptar (U17).
+  listAdoptableSessions(): Promise<readonly AdoptableSession[]>;
+  // Adopta una sesión del host: suscribe esta ventana a sus eventos y devuelve la instantánea (U17).
+  attachSession(sessionId: string): Promise<ConversationSnapshot>;
+  // Aviso de una sesión del host nueva y adoptable; devuelve función para desuscribir (U17).
+  onSessionAdoptable(listener: (session: AdoptableSession) => void): () => void;
   // Cuentas: descubrir en disco, crear una nueva, y lanzar el login interactivo (terminal externa).
   listAccounts(): Promise<readonly AccountInfo[]>;
   confirmCodexAccounts(): Promise<readonly AccountInfo[]>;

@@ -74,9 +74,11 @@ const HELP_ES = [
   '  mage stop [--force]         cierra el Mage sin ventanas de este perfil (con trabajo activo pide confirmación)',
   '  mage account add --provider claude|codex --name <nombre>',
   '                              da de alta una cuenta de API; la clave se pide sin eco o se lee de la entrada estándar',
+  '  mage mcp [--user-data-dir <dir>]  servidor MCP de Mage por stdio (lo lanzan Claude y Codex)',
   '  mage help                   esta ayuda',
   '',
   'Opciones de chat: --session <id> | --conversation <id> | --new --account <id> --provider claude|codex [--cwd <dir>] [--model <m>] [--effort <e>] [--permission-mode <p>]',
+  'En el chat: /rewind [--files] [--copy]  rebobina la conversación desde un mensaje tuyo',
   'Todos los comandos admiten --user-data-dir <dir> para otro perfil de Mage.',
 ].join('\n');
 
@@ -87,11 +89,61 @@ const HELP_EN = [
   "  mage stop [--force]         closes this profile's windowless Mage (asks for confirmation if there is active work)",
   '  mage account add --provider claude|codex --name <name>',
   '                              adds an API account; the key is asked without echo or read from standard input',
+  '  mage mcp [--user-data-dir <dir>]  Mage MCP server over stdio (launched by Claude and Codex)',
   '  mage help                   this help',
   '',
   'Chat options: --session <id> | --conversation <id> | --new --account <id> --provider claude|codex [--cwd <dir>] [--model <m>] [--effort <e>] [--permission-mode <p>]',
+  'In chat: /rewind [--files] [--copy]  rewinds the conversation from a message of yours',
   'Every command accepts --user-data-dir <dir> for another Mage profile.',
 ].join('\n');
+
+const REWIND_REASON_ES = {
+  unsupported: 'Este proveedor no permite rebobinar.',
+  background: 'La conversación está en segundo plano: ábrela en Mage para rebobinarla.',
+  legacy: 'Esta conversación de Codex usa el historial antiguo y no se puede rebobinar.',
+  notFound: 'No se encuentra ese mensaje en la conversación.',
+  midTurn: 'Ese mensaje está a mitad de un turno de Codex: elige otro.',
+  busy: 'Hay un turno en marcha: espera a que termine.',
+};
+const REWIND_REASON_EN = {
+  unsupported: 'This provider cannot be rewound.',
+  background: 'The conversation is in the background: open it in Mage to rewind it.',
+  legacy: 'This Codex conversation uses the old history and cannot be rewound.',
+  notFound: 'That message is not in the conversation.',
+  midTurn: 'That message is in the middle of a Codex turn: pick another one.',
+  busy: 'A turn is running: wait for it to end.',
+};
+const REWIND_SUMMARY_ES = {
+  discarded: (n) => `Se descartarán ${n} mensajes.`,
+  running: 'Se parará el turno en marcha.',
+  queued: (n) => `Los ${n} mensajes de la cola vuelven a ti.`,
+};
+const REWIND_SUMMARY_EN = {
+  discarded: (n) => `${n} messages will be discarded.`,
+  running: 'The running turn will be stopped.',
+  queued: (n) => `The ${n} queued messages come back to you.`,
+};
+const REWIND_DONE_ES = { done: 'Conversación rebobinada.', files: 'Ficheros restaurados.', copy: (id) => `Copia guardada en el hilo ${id}.` };
+const REWIND_DONE_EN = { done: 'Conversation rewound.', files: 'Files restored.', copy: (id) => `Copy saved in thread ${id}.` };
+
+function rewindReasonWith(table, reason) {
+  if (!Object.hasOwn(table, reason)) throw new Error(`Motivo de rebobinado desconocido: ${String(reason)}`);
+  return table[reason];
+}
+
+function rewindSummaryWith(words, plan) {
+  const lines = [words.discarded(plan.discardedMessages)];
+  if (plan.turnRunning) lines.push(words.running);
+  if (plan.queuedCount > 0) lines.push(words.queued(plan.queuedCount));
+  return lines.join('\n');
+}
+
+function rewindDoneWith(words, filesRestored, copyThreadId) {
+  const parts = [words.done];
+  if (filesRestored) parts.push(words.files);
+  if (copyThreadId !== null) parts.push(words.copy(copyThreadId));
+  return parts.join(' ');
+}
 
 // Primera línea y una por sesión, sin salto final.
 function stopActiveWith(title, sessions) {
@@ -149,6 +201,21 @@ const ES = {
   resendUnsentAsk: (text) => `No se envió: «${text}». ¿Enviarlo ahora? [s/n]`,
   answeredElsewhere: () => '[ya contestada en otro sitio]',
   help: () => HELP_ES,
+  rewindUsage: () => 'Uso: /rewind [--files] [--copy]',
+  rewindUnknownOption: (word) => `Opción desconocida: ${word}`,
+  rewindNoPoints: () => 'Esta conversación no tiene mensajes tuyos que rebobinar.',
+  rewindPointLine: (n, text, rewindable) => `  ${n}) ${text}${rewindable ? '' : ' (no rebobinable)'}`,
+  rewindAskNumber: () => 'Número del mensaje desde el que rebobinar (vacío = cancelar): ',
+  rewindInvalidNumber: () => 'Escribe el número de uno de los mensajes de la lista.',
+  rewindNotRewindable: () => 'Ese mensaje está a mitad de un turno de Codex: elige otro.',
+  rewindCancelled: () => '[rebobinado cancelado]',
+  rewindUnavailable: (reason) => rewindReasonWith(REWIND_REASON_ES, reason),
+  rewindPlanSummary: (plan) => rewindSummaryWith(REWIND_SUMMARY_ES, plan),
+  rewindFilesUnavailable: () => 'No se pueden restaurar los ficheros desde ese punto: se rebobina solo la conversación.',
+  rewindCopyUnavailable: () => 'No se puede guardar una copia en esta conversación: se rebobina sin copia.',
+  rewindConfirm: () => '¿Rebobinar? (s/n) ',
+  rewindDone: (filesRestored, copyThreadId) => rewindDoneWith(REWIND_DONE_ES, filesRestored, copyThreadId),
+  rewindReturnedQueue: (count) => `Los ${count} mensajes de la cola vuelven a ti.`,
   startingHeadless: () => '[no había ningún Mage con este perfil: lo arranco sin ventanas]',
   startedHeadless: () => '[Mage corre sin ventanas para esta terminal. Mientras siga así, el acceso directo no abrirá la ventana: ciérralo con «mage stop» cuando termines]',
   stopping: () => 'Mage se está cerrando.',
@@ -157,6 +224,10 @@ const ES = {
   stopConfirm: () => '¿Cerrar Mage igualmente y detenerlas? [s/n]',
   stopUseForce: () => 'No se cierra. Para cerrarlo igualmente: mage stop --force',
   nothingToStop: () => 'No hay ningún Mage en marcha con este perfil.',
+  mcpNoHost: () => 'Mage no está abierto: `mage mcp` solo funciona desde una sesión de Mage.',
+  mcpConnectFailed: (detail) => `No se pudo conectar con Mage: ${detail}`,
+  mcpBadLine: () => 'Línea de entrada que no es JSON: se ignora.',
+  mcpHostClosed: () => 'Mage cerró la conexión.',
   accountKeyPrompt: () => 'Clave de API (no se verá al escribir):',
   accountAdded: (account) => `Cuenta dada de alta: ${account.provider} · ${account.name} · ${account.billing}`,
 };
@@ -208,6 +279,21 @@ const EN = {
   resendUnsentAsk: (text) => `Not sent: "${text}". Send it now? [y/n]`,
   answeredElsewhere: () => '[already answered elsewhere]',
   help: () => HELP_EN,
+  rewindUsage: () => 'Usage: /rewind [--files] [--copy]',
+  rewindUnknownOption: (word) => `Unknown option: ${word}`,
+  rewindNoPoints: () => 'This conversation has no messages of yours to rewind.',
+  rewindPointLine: (n, text, rewindable) => `  ${n}) ${text}${rewindable ? '' : ' (not rewindable)'}`,
+  rewindAskNumber: () => 'Number of the message to rewind from (empty = cancel): ',
+  rewindInvalidNumber: () => 'Type the number of one of the listed messages.',
+  rewindNotRewindable: () => 'That message is in the middle of a Codex turn: pick another one.',
+  rewindCancelled: () => '[rewind cancelled]',
+  rewindUnavailable: (reason) => rewindReasonWith(REWIND_REASON_EN, reason),
+  rewindPlanSummary: (plan) => rewindSummaryWith(REWIND_SUMMARY_EN, plan),
+  rewindFilesUnavailable: () => 'Files cannot be restored from that point: only the conversation is rewound.',
+  rewindCopyUnavailable: () => 'A copy cannot be saved for this conversation: it is rewound without a copy.',
+  rewindConfirm: () => 'Rewind? (y/n) ',
+  rewindDone: (filesRestored, copyThreadId) => rewindDoneWith(REWIND_DONE_EN, filesRestored, copyThreadId),
+  rewindReturnedQueue: (count) => `The ${count} queued messages are back with you.`,
   startingHeadless: () => '[no Mage was running with this profile: starting it without windows]',
   startedHeadless: () => '[Mage is running without windows for this terminal. While it does, the shortcut will not open the window: close it with "mage stop" when you are done]',
   stopping: () => 'Mage is shutting down.',
@@ -216,6 +302,10 @@ const EN = {
   stopConfirm: () => 'Close Mage anyway and stop them? [y/n]',
   stopUseForce: () => 'Not closing. To close it anyway: mage stop --force',
   nothingToStop: () => 'No Mage is running with this profile.',
+  mcpNoHost: () => 'Mage is not open: `mage mcp` only works from a Mage session.',
+  mcpConnectFailed: (detail) => `Could not connect to Mage: ${detail}`,
+  mcpBadLine: () => 'Input line is not JSON: ignored.',
+  mcpHostClosed: () => 'Mage closed the connection.',
   accountKeyPrompt: () => 'API key (hidden while typing):',
   accountAdded: (account) => `Account added: ${account.provider} · ${account.name} · ${account.billing}`,
 };

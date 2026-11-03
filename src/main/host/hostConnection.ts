@@ -2,10 +2,11 @@ import type { ZodTypeAny } from 'zod';
 import type { PermissionDecision } from '@shared/events';
 import type { ElicitationAnswer } from '@shared/elicitation';
 import type { AnswerReceipt, ConversationSnapshot, QueuedMessage, SendReceipt } from '@shared/coordination';
-import type { SendMessageParams } from '@shared/ipc';
+import type { RewindApplyParams, RewindApplyResult, RewindPlanParams, SendMessageParams } from '@shared/ipc';
 import { UserFacingError, renderForLog } from '@shared/i18n/localizedText';
 import type { Translate } from '@shared/i18n/translator';
 import type { SessionLogFn } from '../engine/agentSession';
+import type { RewindCoordinator } from '../coordination/rewindCoordinator';
 import type { SequencedSessionEvent } from '../coordination/sessionCoordinator';
 import { MAX_LINE_BYTES, NdjsonFramer } from './ndjsonFramer';
 import { TrustRequiredError, UnknownAccountError, UnknownConversationError, UnsupportedMethodError } from './hostErrors';
@@ -67,6 +68,16 @@ export interface HostSessions {
   answerElicitation(answer: ElicitationAnswer): AnswerReceipt;
 }
 
+// El túnel MCP de una conexión `mcp` (1.5, D-M5): lo que llega por `mcp.message` entra por `receive`; lo que el
+// servidor MCP responde sale por `send`.
+export interface McpTunnelHandle {
+  receive(message: Record<string, unknown>): void;
+  close(): void;
+}
+export interface McpConnector {
+  open(context: { readonly callerCredential: string | null; readonly send: (message: Record<string, unknown>) => void }): McpTunnelHandle;
+}
+
 export interface HostConnectionDeps {
   readonly sessions: HostSessions;
   readonly token: string;
@@ -80,6 +91,10 @@ export interface HostConnectionDeps {
   readonly translate: Translate;
   readonly mode: HostMode;
   readonly control: HostControl;
+  // El orquestador del rewind de la ventana (1.4): mismas reglas, sin adjuntos.
+  readonly rewind: Pick<RewindCoordinator, 'points' | 'plan' | 'apply'>;
+  // El servidor MCP de Mage por conexión (1.5): solo se abre para los clientes `mcp`.
+  readonly mcp: McpConnector;
 }
 
 // Una conexión que no se identifica en este tiempo se cierra: no puede retener un socket sin dar el token.
@@ -92,6 +107,9 @@ type Phase = 'handshake' | 'ready' | 'closed';
 export class HostConnection {
   private phase: Phase = 'handshake';
   private challenged = false;
+  // Credencial MCP_CALLER del `hello` (D-M6): es un secreto, no se loguea ni se devuelve.
+  private caller: string | null = null;
+  private tunnel: McpTunnelHandle | null = null;
   private readonly framer: NdjsonFramer;
   private readonly subscriptions = new Map<string, () => void>();
   private readonly cancelHelloTimer: () => void;
@@ -152,6 +170,11 @@ export class HostConnection {
     return parsed.data;
   }
 
+  // Para la M06: la credencial con la que se presento el cliente, o null.
+  get callerCredential(): string | null {
+    return this.caller;
+  }
+
   private handleHello(id: RequestId | undefined, method: string, params: unknown): void {
     if (method === CHALLENGE_METHOD) {
       this.handleChallenge(id, params);
@@ -177,8 +200,10 @@ export class HostConnection {
       return;
     }
     this.cancelHelloTimer();
+    this.caller = hello.data.caller ?? null;
     this.phase = 'ready';
     if (id !== undefined) this.transport.write(resultResponse(id, { protocol: HOST_PROTOCOL, hostVersion: this.deps.hostVersion, capabilities: HOST_CAPABILITIES }));
+    if (hello.data.client.kind === 'mcp') this.tunnel = this.deps.mcp.open({ callerCredential: this.caller, send: (message) => this.sendTunnel(message) });
   }
 
   // Reto del cliente (F7.1): solo antes de `hello` y una vez por conexión. La fase no cambia: después hay que
@@ -214,10 +239,25 @@ export class HostConnection {
     }
     try {
       const result = this.run(method, parsed.data);
+      if (result instanceof Promise) {
+        // Un método asíncrono (el rewind) contesta cuando acaba; si la conexión se cerró entretanto, no se escribe nada.
+        result.then((value: unknown) => this.replyAsync(id, value), (err: unknown) => this.replyAsyncError(id, err));
+        return;
+      }
       if (id !== undefined) this.transport.write(resultResponse(id, result));
     } catch (err) {
       this.reply(id, toErrorBody(err));
     }
+  }
+
+  private replyAsync(id: RequestId | undefined, value: unknown): void {
+    if (this.phase !== 'ready' || id === undefined) return;
+    this.transport.write(resultResponse(id, value));
+  }
+
+  private replyAsyncError(id: RequestId | undefined, err: unknown): void {
+    if (this.phase !== 'ready') return;
+    this.reply(id, toErrorBody(err));
   }
 
   private run(method: HostMethod, params: unknown): unknown {
@@ -234,8 +274,16 @@ export class HostConnection {
         return sessions.answerPermission(answer.sessionId, answer.requestId, answer.decision);
       }
       case 'session.answerElicitation': return sessions.answerElicitation(params as ElicitationAnswer);
+      case 'mcp.message': return this.tunnelReceive((params as { message: Record<string, unknown> }).message);
       default: return this.runV12(method, params);
     }
+  }
+
+  // Un mensaje del cliente `mcp` hacia su servidor MCP (1.5).
+  private tunnelReceive(message: Record<string, unknown>): Record<string, never> {
+    if (this.tunnel === null) throw new Error('«mcp.message» solo vale para clientes mcp');
+    this.tunnel.receive(message);
+    return {};
   }
 
   // Métodos del host 1.2 (F7.2): los que no pasan solo por el coordinador.
@@ -262,7 +310,21 @@ export class HostConnection {
       }
       case 'host.stop': return this.stop((params as { force?: boolean } | undefined)?.force === true);
       case 'accounts.create': return { account: control.createApiAccount(params as HostAccountCreateRequest) };
+      case 'session.rewindPoints':
+      case 'session.rewindPlan':
+      case 'session.rewind': return this.runRewind(method, params);
       default: throw new UnsupportedMethodError(method);
+    }
+  }
+
+  // Rewind desde un cliente del host (1.4): el mismo orquestador y las mismas reglas que la ventana.
+  private runRewind(method: HostMethod, params: unknown): Promise<unknown> {
+    const { rewind } = this.deps;
+    switch (method) {
+      case 'session.rewindPoints': return rewind.points((params as { sessionId: string }).sessionId).then((points) => ({ points }));
+      case 'session.rewindPlan': return rewind.plan(params as RewindPlanParams);
+      case 'session.rewind': return rewind.apply(params as RewindApplyParams).then(withoutProjection);
+      default: return Promise.reject(new UnsupportedMethodError(method));
     }
   }
 
@@ -314,12 +376,22 @@ export class HostConnection {
 
   private pushEvent(subscriptionId: string, event: SequencedSessionEvent): void {
     if (this.phase !== 'ready') return;
-    if (this.transport.bufferedBytes() > MAX_BUFFERED_BYTES) {
-      this.deps.log('warn', 'Cliente del host demasiado lento: se cierra su conexión', { buffered: this.transport.bufferedBytes() });
-      this.fail(null, { code: HostErrorCode.SlowConsumer, message: 'No lees los eventos a tiempo: se cierra la conexión' });
-      return;
-    }
+    if (this.isSlowConsumer()) return;
     this.transport.write(notification('event', { subscriptionId, ...event, event: withLegacyText(event.event, this.deps.translate) }));
+  }
+
+  // Lo que el servidor MCP manda al cliente: mismo control de consumidor lento que los eventos.
+  private sendTunnel(message: Record<string, unknown>): void {
+    if (this.phase !== 'ready') return;
+    if (this.isSlowConsumer()) return;
+    this.transport.write(notification('mcp.message', { message }));
+  }
+
+  private isSlowConsumer(): boolean {
+    if (this.transport.bufferedBytes() <= MAX_BUFFERED_BYTES) return false;
+    this.deps.log('warn', 'Cliente del host demasiado lento: se cierra su conexión', { buffered: this.transport.bufferedBytes() });
+    this.fail(null, { code: HostErrorCode.SlowConsumer, message: 'No lees los eventos a tiempo: se cierra la conexión' });
+    return true;
   }
 
   private reply(id: RequestId | undefined, error: HostErrorBody): void {
@@ -342,10 +414,19 @@ export class HostConnection {
   private shutdown(): void {
     this.phase = 'closed';
     this.cancelHelloTimer();
+    const tunnel = this.tunnel;
+    this.tunnel = null;
+    tunnel?.close();
     const pending = [...this.subscriptions.values()];
     this.subscriptions.clear();
     for (const unsubscribe of pending) unsubscribe();
   }
+}
+
+// La terminal no pinta el hilo: la proyección (el lote entero de la conversación) no viaja por el host.
+function withoutProjection(result: RewindApplyResult): Omit<RewindApplyResult, 'projection'> {
+  const { projection: _projection, ...rest } = result;
+  return rest;
 }
 
 function describeIssues(issues: readonly { readonly path: readonly (string | number)[]; readonly message: string }[]): string {

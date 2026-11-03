@@ -34,3 +34,14 @@ export const CONVERSATION_INDEX_VERSION = 2;
 // conversaciones NO se acotan (una entrada son ~80 bytes; 10 000 conversaciones son 800 KB), pero se
 // borran cuando se borra la conversacion — si no, el fichero crece para siempre con basura.
 export const MAX_ARTIFACTS = 500;
+
+// Cadena de creadoras de una conversacion delegada (U10/H3): como mucho tantas como la profundidad
+// maxima de delegacion (DELEGATION_DEPTH_MAX).
+export const MAX_CREATOR_CHAIN = 5;
+
+// Quien creo una conversacion por delegacion. `createdBy` null y cadena vacia = conversacion manual;
+// `at` en ISO UTC.
+export interface DelegationRecord {
+  readonly createdBy: { readonly conversationId: string; readonly requestId: string; readonly at: string } | null;
+  readonly creatorChain: readonly string[];
+}

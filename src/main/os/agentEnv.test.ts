@@ -73,6 +73,12 @@ describe('scrubAgentEnv', () => {
     expect(env).toEqual({ PATH: '/usr/bin' });
   });
 
+  it('scrubAgentEnv_mageMcpCaller_removed', () => {
+    const env = scrubAgentEnv({ MAGE_MCP_CALLER: 'a'.repeat(64), PATH: '/usr/bin' });
+
+    expect(env).toEqual({ PATH: '/usr/bin' });
+  });
+
   it('scrubAgentEnv_conVariablesInocentes_lasConserva', () => {
     // La lista es NEGRA (decision A3): lo que el entorno necesite para funcionar tiene que pasar.
     const base: NodeJS.ProcessEnv = { PATH: '/usr/bin', HOME: '/home/u', HTTPS_PROXY: 'http://proxy:8080', LANG: 'es_ES.UTF-8' };

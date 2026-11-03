@@ -6,6 +6,7 @@ import { PendingSends } from './pendingSends.mjs';
 import { PromptDesk } from './promptDesk.mjs';
 import { promptFromPending, promptIsSecret, promptText, replyToPrompt } from './promptFlow.mjs';
 import { renderEvent } from './render.mjs';
+import { parseRewindCommand, RewindPrompt } from './rewindFlow.mjs';
 import { decideCtrlC, decideLine, decidePermissionAnswer, isTurnActive } from './signals.mjs';
 
 const UNKNOWN_SESSION_CODE = -32004;
@@ -30,11 +31,13 @@ export class ChatController {
   #resendQueue = [];
   #pending = new PendingSends();
   #closing = false;
+  #rewind;
 
   constructor(deps) {
     this.#deps = deps;
     this.link = deps.link;
     this.#setMuted = deps.setMuted ?? (() => undefined);
+    this.#rewind = new RewindPrompt({ hostCall: (method, params) => this.#hostCall(method, params), say: (text) => this.#say(text), prefill: deps.prefill, sessionId: deps.sessionId, messages: deps.messages });
   }
 
   // `announce: false` en la resuscripción tras reconectar: no se repite la ayuda.
@@ -64,6 +67,9 @@ export class ChatController {
     if (this.#reconnecting) return this.#holdUnsent(text);
     if (this.#resendQueue.length > 0) return this.#handleResendAnswer(text);
     if (this.#desk.active() !== null) return this.#answerPrompt(text);
+    if (this.#rewind.active) return this.#rewind.answer(text);
+    const rewindCommand = parseRewindCommand(text);
+    if (rewindCommand !== null) return this.#rewind.start(rewindCommand);
     const decision = decideLine(text);
     if (decision === 'exit') return this.leave();
     if (decision === 'empty') return undefined;

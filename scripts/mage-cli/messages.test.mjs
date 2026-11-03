@@ -16,7 +16,7 @@ describe('messages', () => {
     const en = Object.keys(createMessages('en')).sort();
 
     expect(en).toEqual(es);
-    expect(es).toHaveLength(56);
+    expect(es).toHaveLength(75);
   });
 
   it('createMessages_permissionAsk_sinDescripcion_noPoneParentesis', () => {
@@ -64,5 +64,29 @@ describe('messages', () => {
     expect(help).toContain('mage stop');
     expect(help).toContain('mage account add');
     expect(help.endsWith('\n')).toBe(false);
+  });
+});
+
+describe('messages: rewind', () => {
+  const KEYS = ['rewindUsage', 'rewindUnknownOption', 'rewindNoPoints', 'rewindPointLine', 'rewindAskNumber', 'rewindInvalidNumber', 'rewindNotRewindable',
+    'rewindCancelled', 'rewindUnavailable', 'rewindPlanSummary', 'rewindFilesUnavailable', 'rewindCopyUnavailable', 'rewindConfirm', 'rewindDone', 'rewindReturnedQueue'];
+
+  it('messages_rewindKeys_presentInBothLanguages', () => {
+    for (const language of ['es', 'en']) {
+      const messages = createMessages(language);
+      for (const key of KEYS) expect(typeof messages[key]).toBe('function');
+    }
+    expect(createMessages('en').rewindNoPoints()).not.toBe(createMessages('es').rewindNoPoints());
+    expect(createMessages('en').rewindPointLine(1, 'a', false)).toBe('  1) a (not rewindable)');
+  });
+
+  it('rewindUnavailable_unknownReason_throws', () => {
+    expect(() => createMessages('es').rewindUnavailable('raro')).toThrow('raro');
+  });
+
+  it('rewindPlanSummary_runningAndQueue_addsLines', () => {
+    const text = createMessages('es').rewindPlanSummary({ discardedMessages: 3, turnRunning: true, queuedCount: 2 });
+
+    expect(text.split('\n')).toEqual(['Se descartarán 3 mensajes.', 'Se parará el turno en marcha.', 'Los 2 mensajes de la cola vuelven a ti.']);
   });
 });

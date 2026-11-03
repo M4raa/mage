@@ -5,7 +5,15 @@ import { runLockHeartbeatTick } from './locks/conversationLockHeartbeat';
 import { lockFileName, nodeLockFs, pidAliveCheck, resolveConversationLocksDir } from './locks/conversationLockEnv';
 import { registerConversationLockIpc } from './locks/conversationLockIpc';
 import { readOnlyLockMessage } from '@shared/conversationLock';
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { McpCallers } from './host/mcpCallers';
+import { codexHomeHasMageServer } from './mcpServer/registrationStatus';
+import { mageMcpLaunch } from './mcpServer/registration';
+import { McpRegistrationService, type McpRegistrationDeps } from './mcpServer/registrationService';
+import { DelegationLog } from './mcpServer/delegationLog';
+import { HostSessionsPort } from './mcpServer/hostSessionsPort';
+import { MemoryIdempotencyStore } from './mcpServer/idempotencyStore';
+import { createMcpConnector as createHostMcpConnector } from './mcpServer/mcpConnector';
 import { execFile, spawn, spawnSync, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import {
   appendFileSync,
@@ -52,6 +60,7 @@ import {
 import {
   CLOSE_PROMPT_CHANNEL,
   EVENT_CHANNEL,
+  SESSION_ADOPTABLE_CHANNEL,
   IpcChannel,
   JUMP_LIST_OPEN_CHANNEL,
   MODEL_CATALOG_CHANGED_CHANNEL,
@@ -71,6 +80,7 @@ import {
 import type {
   ModelCatalogChange,
   CreateSessionParams,
+  AdoptableSession,
   CreateSessionResult,
   HandoffPromptParams,
   JumpListOpenPayload,
@@ -100,7 +110,7 @@ import { buildAboutInfo } from './about/aboutService';
 import type { MemoryFile } from '@shared/memory';
 import type { MageEvent, SlashCommandInfo } from '@shared/events';
 import { localized, localizedFromError, localizedWithParts, renderForLog, UserFacingError, type LocalizedText } from '@shared/i18n/localizedText';
-import type { ImageAttachment, KeepAliveStats, ProviderProbeParams } from '@shared/ipc';
+import type { ImageAttachment, KeepAliveStats, McpRegistrationResult, ProviderProbeParams } from '@shared/ipc';
 import { base64ByteLength, ERROR_FORMAT_LOCALE, validateAttachmentSet } from '@shared/attachments';
 import type { EffectiveSettings, InstructionsFile, ProjectFileContent, ReadProjectFileParams, WriteProjectFileParams } from '@shared/ipc';
 import type { ConversationSummary, DeleteConversationParams, MigrateConversationResult, MoveConversationParams, MoveConversationResult } from '@shared/conversations';
@@ -223,9 +233,14 @@ import { RewindCoordinator } from './coordination/rewindCoordinator';
 import { RewindStateStore } from './conversations/rewindStateStore';
 import { readActiveBranchEntries } from './transcripts/activeBranchReader';
 import { canControlSession } from './coordination/sessionAccess';
+import type { ConversationSnapshot } from '@shared/coordination';
+import { AdoptableSessions } from './host/adoptableSessions';
+import { closeFromWindow as closeSessionFromWindow, toAttachTarget, WindowAttachments } from './host/windowAttachments';
 import { readHostMode, startLocalHost } from './host/hostBootstrap';
 import { cliRelayArgs, cliRelayPlan } from './host/cliRelay';
-import { createHostControl } from './host/hostControl';
+import { createHostControl, resolveHostLaunchParams } from './host/hostControl';
+import type { HostControlDeps } from './host/hostControl';
+import { HOST_SESSION_PROVIDERS } from './host/hostProtocol';
 import type { HostMode, HostServerHandle } from './host/hostServer';
 import { HOST_STOP_DELAY_MS } from './host/hostStop';
 import { HEADLESS_GUI_UNAVAILABLE, isHeadlessHost, lockFailureMessage, startupWarnings } from './startupMode';
@@ -476,7 +491,7 @@ const MCP_FAKE_CLI = process.env.MAGE_MCP_FAKE_CLI === '1';
 // --settings y el interruptor de conectores): es lo que carga una sesion.
 function spawnMcpStatusProbe(configDir: string): ProbeProcess {
   if (MCP_FAKE_CLI) return spawnFakeMcpCli(configDir);
-  const shared = claudeSharedLaunch(loadSharedLaunch('claude', configDir), configDir, getMcpServices().writeClaudeMcpConfig);
+  const shared = claudeSharedLaunch(loadSharedLaunch('claude', configDir, null), configDir, getMcpServices().writeClaudeMcpConfig);
   return spawnModelProbe(configDir, shared.args, shared.env);
 }
 
@@ -543,7 +558,7 @@ const PRIVATE_PROFILE_DIR_NAME = 'mage-private';
 
 // Lo comun de UN lanzamiento (proveedor + cuenta). Se re-lee en CADA lanzamiento (nunca se cachea):
 // son ficheros que el usuario puede editar entre una sesion y la siguiente.
-function loadSharedLaunch(provider: string, accountDir: string): SharedLaunchConfig {
+function loadSharedLaunch(provider: string, accountDir: string, sessionId: string | null): SharedLaunchConfig {
   const family = mcpFamilyOf(provider);
   const account = basename(accountDir) === PRIVATE_PROFILE_DIR_NAME ? dirname(accountDir) : accountDir;
   const shared = getMcpServices().sharedMcp();
@@ -553,7 +568,23 @@ function loadSharedLaunch(provider: string, accountDir: string): SharedLaunchCon
     mcpServers: selectForTarget(shared.servers, { family, accountId: family === 'claude' ? account : null }),
     settingsFragment: buildSettingsFragment(settingsCommon),
     claudeAiConnectors: !getSettingsStore().load().claudeAiConnectorsOff.includes(account),
+    ...mageCallerFor(provider, accountDir, sessionId),
   };
+}
+
+// D-M6: solo Claude y Codex hablan con `mage mcp`; los demas proveedores no reciben credencial.
+// Sin sesion (sondeos de estado de MCP) no hay llamante: `sessionId` null -> sin credencial.
+function mageCallerFor(provider: string, accountDir: string, sessionId: string | null): Pick<SharedLaunchConfig, 'mageCaller'> {
+  if (sessionId === null) return {};
+  if (provider !== 'claude' && provider !== 'codex') return {};
+  const codexHome = provider === 'codex' ? getProviderAccounts().find('codex', accountDir)?.home : undefined;
+  const forwardToCodexMcp = codexHome !== undefined && codexHomeHasMageServer(codexHome, {
+    exists: existsSync,
+    read: (path) => readFileSync(path, 'utf8'),
+    join,
+    warn: (message, data) => mainLog('warn', message, data),
+  });
+  return { mageCaller: { credential: mcpCallers.mint(sessionId), forwardToCodexMcp } };
 }
 
 // Gestor de sesiones del motor. La fabrica elige el runtime por proveedor (`sessionFactory.ts`): los
@@ -2687,6 +2718,44 @@ function launchSession(params: CreateSessionParams, sender: Electron.WebContents
     return { sessionId, configDir, ...(recreated ? { workspaceWarning: localized('events.workspace.scratchRecreatedKept', { path: params.cwd }) } : {}) };
   }
 
+// U17: sesiones del host (sin ventana) que la ventana principal puede adoptar, y quién sigue cuál.
+const adoptableSessions = new AdoptableSessions();
+// D-M6: credencial por sesion que identifica al hijo ante `mage mcp`.
+const mcpCallers = new McpCallers({ randomBytes, isLive: (id) => sessionCoordinator.ownerOf(id) !== undefined });
+const windowAttachments = new WindowAttachments({ coordinator: sessionCoordinator, eventChannel: EVENT_CHANNEL });
+// D-M11: registro de main de las delegadas del MCP (uno para todas las conexiones).
+const delegationLog = new DelegationLog({ coordinator: sessionCoordinator, now: Date.now });
+// D-M11: UN almacén de idempotencia para todas las conexiones MCP.
+const mcpIdempotency = new MemoryIdempotencyStore();
+
+// Los ids vivos de una sesión del host; null si el coordinador ya no la sigue.
+function liveIdsOf(sessionId: string): { conversationId: string | null; nativeId: string | null } | null {
+  if (sessionCoordinator.ownerOf(sessionId) === undefined) return null;
+  const snapshot = sessionCoordinator.snapshot(sessionId);
+  return { conversationId: snapshot.conversationId, nativeId: snapshot.nativeRef?.nativeId ?? null };
+}
+
+// Una sesión del host (sin ventana): se lanza como siempre y queda adoptable por la ventana principal (U17).
+function launchHostSession(params: CreateSessionParams, origin: AdoptableSession['origin'], createdBy: AdoptableSession['createdBy'] = null): string {
+  const { sessionId, configDir } = launchSession(params, null);
+  const entry = {
+    sessionId, provider: params.provider, accountId: params.accountDir, configDir, cwd: params.cwd, model: params.model,
+    ...(params.effort === undefined ? {} : { effort: params.effort }),
+    ...(params.permissionMode === undefined ? {} : { permissionMode: params.permissionMode }),
+    origin, createdBy,
+  };
+  adoptableSessions.add(entry);
+  const ids = liveIdsOf(sessionId);
+  if (ids !== null) liveMainWindow()?.webContents.send(SESSION_ADOPTABLE_CHANNEL, { ...entry, ...ids });
+  return sessionId;
+}
+
+// Adoptar solo vale para sesiones del host: una con ventana ya tiene su dueño.
+function attachWindowToHostSession(sender: Electron.WebContents, sessionId: string): ConversationSnapshot {
+  if (!adoptableSessions.has(sessionId)) throw new Error(`SessionAttach: la sesión ${sessionId} no es del host`);
+  return windowAttachments.attach(toAttachTarget(sender), sessionId);
+}
+
 // Divergir: la sesion ya esta creada; anotar de quien nacio no debe tumbarla si el disco falla.
 function recordClaudeFork(childId: string, parentId: string): void {
   try {
@@ -2847,6 +2916,7 @@ function registerApplicationIpc(deps: IpcDependencies): void {
   registerPromptIpc2(deps);
   registerThemeIpc1();
   ipcMain.handle(IpcChannel.KeepAliveStats, (): KeepAliveStats => getRewindState().keepAliveTotals());
+  registerMcpRegistrationIpc();
 }
 
 function registerSessionIpc1(): void {
@@ -2857,6 +2927,13 @@ function registerSessionIpc1(): void {
     rewind: createRewindCoordinator(),
     createSession: createSessionFromIpc,
     validateAttachments,
+    listAdoptable: () => adoptableSessions.list(liveIdsOf),
+    attachWindow: (event, sessionId) => attachWindowToHostSession(event.sender, sessionId),
+    // D-M11: el registro de delegaciones es un suscriptor más del coordinador; no cuenta como cliente que mantenga viva la sesión.
+    closeFromWindow: (event, sessionId) => closeSessionFromWindow({
+      attachments: windowAttachments,
+      coordinator: { subscriberCount: (id) => sessionCoordinator.subscriberCount(id) - delegationLog.watchCount(id), close: (id) => sessionCoordinator.close(id) },
+    }, event.sender.id, sessionId),
     // Solo la ventana que creo la sesion y la principal le dan ordenes (F2.6).
     canControl: (senderId, sessionId) => canControlSession({
       ownerOf: (id) => sessionCoordinator.ownerOf(id),
@@ -3351,19 +3428,67 @@ function codexDeletionDeps(): Parameters<typeof deleteCodexConversation>[0] {
   };
 }
 
-// `codex migrate-rollouts` (U13): tope de 60 s, al vencer mata SU árbol de procesos.
-const CODEX_MIGRATE_TIMEOUT_MS = 60_000;
-function runCodex(home: string, args: readonly string[]): Promise<{ readonly exitCode: number | null; readonly stderr: string }> {
-  const launch = codexSpawn(args);
-  const child = spawn(launch.command, launch.args, { env: { ...scrubAgentEnv(process.env), ...launch.env, CODEX_HOME: home }, stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true });
+// Un CLI de una sola pasada (U13, H4): tope de 60 s, al vencer mata SU árbol de procesos. Solo captura stderr.
+const CLI_ONESHOT_TIMEOUT_MS = 60_000;
+function runCliForStderr(command: string, args: readonly string[], env: NodeJS.ProcessEnv): Promise<{ readonly exitCode: number | null; readonly stderr: string }> {
+  const child = spawn(command, args, { env, stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true });
   return new Promise((resolveRun, rejectRun) => {
     let stderr = '';
-    const timer = setTimeout(() => killProcessTree(child, defaultKillTreeDeps()), CODEX_MIGRATE_TIMEOUT_MS);
+    const timer = setTimeout(() => killProcessTree(child, defaultKillTreeDeps()), CLI_ONESHOT_TIMEOUT_MS);
     child.stderr.setEncoding('utf8');
     child.stderr.on('data', (chunk: string) => { stderr += chunk; });
     child.on('error', (error) => { clearTimeout(timer); rejectRun(error); });
     child.on('close', (exitCode) => { clearTimeout(timer); resolveRun({ exitCode, stderr }); });
   });
+}
+
+// `codex migrate-rollouts` (U13).
+function runCodex(home: string, args: readonly string[]): Promise<{ readonly exitCode: number | null; readonly stderr: string }> {
+  const launch = codexSpawn(args);
+  return runCliForStderr(launch.command, launch.args, { ...scrubAgentEnv(process.env), ...launch.env, CODEX_HOME: home });
+}
+
+// `claude mcp add|remove` (H4) en el config dir de una cuenta.
+function runClaudeCli(configDir: string, args: readonly string[]): Promise<{ readonly exitCode: number | null; readonly stderr: string }> {
+  return runCliForStderr(resolveClaudeBinary(), args, { ...scrubAgentEnv(process.env), CLAUDE_CONFIG_DIR: configDir });
+}
+
+// Registro del servidor MCP de Mage en las cuentas de Claude y Codex (H4, D-M10). Nunca perfiles privados.
+type McpAccount = ReturnType<McpRegistrationDeps['accounts']>[number];
+function mcpRegistrationAccounts(): readonly McpAccount[] {
+  const result: McpAccount[] = [];
+  for (const account of listAllAccounts()) {
+    const base = { id: account.configDir, name: account.name };
+    if (account.providerId === 'claude') result.push({ ...base, provider: 'claude', configHome: account.configDir });
+    const codex = account.providerId === 'codex' ? getProviderAccounts().find('codex', account.configDir) : null;
+    if (codex !== null) result.push({ ...base, provider: 'codex', configHome: codex.home });
+  }
+  return result;
+}
+
+let mcpRegistrationSingleton: McpRegistrationService | null = null;
+function getMcpRegistration(): McpRegistrationService {
+  mcpRegistrationSingleton ??= new McpRegistrationService({
+    accounts: mcpRegistrationAccounts,
+    readText: (path) => (existsSync(path) ? readFileSync(path, 'utf8') : null),
+    runCli: (provider, configHome, args) => (provider === 'codex' ? runCodex(configHome, args) : runClaudeCli(configHome, args)),
+    launch: () => mageMcpLaunch({
+      isPackaged: app.isPackaged, execPath: process.execPath, resourcesPath: process.resourcesPath,
+      appPath: app.getAppPath(), appImage: process.env['APPIMAGE'], userDataDir: app.getPath('userData'),
+    }),
+    log: (level, message, data) => mainLog(level, message, data),
+  });
+  return mcpRegistrationSingleton;
+}
+
+function registerMcpRegistrationIpc(): void {
+  const requireMain = (event: Electron.IpcMainInvokeEvent): void => {
+    const windowId = senderWindowId(event);
+    if (windowId !== MAIN_WINDOW_ID) throw new Error(`Solo la ventana principal puede cambiar el registro MCP: ${windowId}`);
+  };
+  ipcMain.handle(IpcChannel.McpRegistrationStatus, (): McpRegistrationResult => getMcpRegistration().status());
+  ipcMain.handle(IpcChannel.McpRegister, (event): Promise<McpRegistrationResult> => { requireMain(event); return getMcpRegistration().registerAll(); });
+  ipcMain.handle(IpcChannel.McpUnregister, (event): Promise<McpRegistrationResult> => { requireMain(event); return getMcpRegistration().unregisterAll(); });
 }
 
 // Cuenta de Codex de un hilo pedido por el renderer: solo cuentas registradas y ids validados.
@@ -4001,6 +4126,41 @@ if (runsHeadless && process.platform === 'linux' && !app.commandLine.hasSwitch('
 
 // El host local (F2.6): terminal, widget y MCP hablan con el por un socket privado. Vive en los dos modos.
 let localHost: HostServerHandle | null = null;
+// Las dependencias del host (terminal y MCP): la frontera de `session.create` es la misma para los dos.
+function hostControlDeps(): HostControlDeps {
+  return {
+    listAccounts: listAllAccounts,
+    listProjects: () => getSettingsStore().load().chatProjects,
+    defaultModels: () => getSettingsStore().load().defaultModelByProvider,
+    isTrusted: isFolderTrusted,
+    launch: (params) => launchHostSession(params, 'terminal'),
+    conversationIdOf: (sessionId) => sessionCoordinator.conversationIdOf(sessionId),
+    options: sessionManager,
+    createAccount: (params) => getProviderAccounts().create(params),
+    requestQuit: () => { setTimeout(() => app.quit(), HOST_STOP_DELAY_MS); },
+  };
+}
+
+// El puerto del MCP de UNA conexión (la M07 lo conecta): null si la sesión que llama aún no tiene conversationId.
+export function createHostSessionsPort(callerSessionId: string): HostSessionsPort | null {
+  const conversationId = sessionCoordinator.conversationIdOf(callerSessionId);
+  if (conversationId === null) return null;
+  const deps = hostControlDeps();
+  return new HostSessionsPort({
+    caller: { sessionId: callerSessionId, conversationId, accountId: sessionCoordinator.rewindContext(callerSessionId).accountDir },
+    log: delegationLog,
+    index: getConversationIndexStore(),
+    coordinator: sessionCoordinator,
+    accounts: () => listAllAccounts().filter((account) => (HOST_SESSION_PROVIDERS as readonly string[]).includes(account.providerId))
+      .map((account) => ({ id: account.configDir, provider: account.providerId })),
+    projects: () => getSettingsStore().load().chatProjects,
+    launch: (request, createdBy) => launchHostSession(resolveHostLaunchParams(deps, request), 'mcp', createdBy),
+    setTimer: (fn, ms) => {
+      const timer = setTimeout(fn, ms);
+      return () => clearTimeout(timer);
+    },
+  });
+}
 // Motivo por el que el host no arrancó (null si escucha): el renderer lo enseña como aviso persistente (H1, devolución 16).
 let hostFailure: Promise<LocalizedText | null> = Promise.resolve(null);
 function startHost(mode: HostMode): Promise<void> {
@@ -4012,16 +4172,21 @@ function startHost(mode: HostMode): Promise<void> {
     fs: { mkdirSync, chmodSync, statSync, writeFileSync, rmSync },
     getuid: process.getuid?.bind(process),
     sessions: sessionCoordinator,
-    control: createHostControl({
-      listAccounts: listAllAccounts,
-      listProjects: () => getSettingsStore().load().chatProjects,
-      defaultModels: () => getSettingsStore().load().defaultModelByProvider,
-      isTrusted: isFolderTrusted,
-      launch: (params) => launchSession(params, null).sessionId,
-      conversationIdOf: (sessionId) => sessionCoordinator.conversationIdOf(sessionId),
-      options: sessionManager,
-      createAccount: (params) => getProviderAccounts().create(params),
-      requestQuit: () => { setTimeout(() => app.quit(), HOST_STOP_DELAY_MS); },
+    rewind: createRewindCoordinator(),
+    control: createHostControl(hostControlDeps()),
+    mcp: createHostMcpConnector({
+      resolveCaller: (credential) => mcpCallers.resolve(credential ?? undefined),
+      createPort: (sessionId) => {
+        const port = createHostSessionsPort(sessionId);
+        const conversationId = sessionCoordinator.conversationIdOf(sessionId);
+        return port === null || conversationId === null ? null : { port, conversationId };
+      },
+      creatorChainOf: (conversationId) => getConversationIndexStore().delegationOf(conversationId).creatorChain,
+      accountIds: () => listAllAccounts().filter((account) => account.providerId === 'claude' || account.providerId === 'codex').map((account) => account.configDir),
+      maxDepth: () => getSettingsStore().load().delegation.maxDepth,
+      store: mcpIdempotency,
+      now: () => new Date().toISOString(),
+      log: mainLog,
     }),
     hostVersion: app.getVersion(),
     log: mainLog,

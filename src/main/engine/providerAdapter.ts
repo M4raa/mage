@@ -11,6 +11,9 @@ export interface SharedLaunchConfig {
   readonly settingsFragment: Readonly<Record<string, unknown>> | null;
   // Conectores de claude.ai de la cuenta (C3-f). false -> `ENABLE_CLAUDEAI_MCP_SERVERS=false`.
   readonly claudeAiConnectors: boolean;
+  // Identidad de esta sesion ante el servidor MCP `mage` (D-M6). `forwardToCodexMcp`: `mage` esta
+  // registrado en el CODEX_HOME de la cuenta y Codex tiene que reenviarle la variable.
+  readonly mageCaller?: { readonly credential: string; readonly forwardToCodexMcp: boolean };
 }
 
 // Parametros para arrancar una sesion de agente (neutros de proveedor).

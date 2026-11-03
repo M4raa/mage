@@ -92,6 +92,41 @@ describe('CodexAdapter: arranque (codex app-server, sin verificar)', () => {
     expect(plan.args.join(' ')).not.toContain('sk-cuenta');
   });
 
+  describe('mageCaller (D-M6)', () => {
+    const credential = 'd'.repeat(64);
+    const withCaller = (forwardToCodexMcp: boolean): LaunchParams => ({
+      ...launch,
+      shared: { mcpServers: [], settingsFragment: null, claudeAiConnectors: true, mageCaller: { credential, forwardToCodexMcp } },
+    });
+
+    it('buildSpawnPlan_mageCallerRegistered_envAndEnvVarsOverride', () => {
+      const plan = codex().buildSpawnPlan(withCaller(true));
+
+      expect(plan.env.MAGE_MCP_CALLER).toBe(credential);
+      expect(plan.args).toContain('mcp_servers.mage.env_vars=["MAGE_MCP_CALLER"]');
+    });
+
+    it('buildSpawnPlan_mageCallerNotRegistered_envWithoutOverride', () => {
+      const plan = codex().buildSpawnPlan(withCaller(false));
+
+      expect(plan.env.MAGE_MCP_CALLER).toBe(credential);
+      expect(plan.args.join(' ')).not.toContain('mcp_servers.mage');
+    });
+
+    it('buildSpawnPlan_mageCaller_credentialRedactedAsSecret', () => {
+      const adapter = codex();
+      adapter.buildSpawnPlan(withCaller(true));
+      const raw = notification('item/completed', { item: { id: 'm', type: 'mcpToolCall', server: 's', tool: 't',
+        status: 'completed', result: { content: [{ type: 'text', text: `respuesta ${credential}` }] },
+      } });
+
+      const serialized = JSON.stringify(adapter.normalize(raw));
+
+      expect(serialized.includes(credential)).toBe(false);
+      expect(serialized).toContain('[clave oculta]');
+    });
+  });
+
   it('buildSpawnPlan_siempre_encolaInitializeConClientInfo', () => {
     const adapter = codex();
     adapter.buildSpawnPlan(launch);

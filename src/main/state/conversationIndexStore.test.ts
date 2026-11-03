@@ -311,3 +311,42 @@ describe('ConversationIndexStore — identidades y migración v2 (F2.1)', () => 
     expect(() => memoryDisk().store.resolveConversation({ ...CODEX_REF, nativeId: '' })).toThrow(/nativeId vacio/);
   });
 });
+
+describe('ConversationIndexStore — delegación (H3)', () => {
+  const record = { createdBy: { conversationId: 'parent', requestId: 'req-1', at: '2026-11-03T10:00:00.000Z' }, creatorChain: ['root', 'parent'] };
+
+  it('recordDelegation_thenDelegationOf_roundTrip', () => {
+    const { store } = memoryDisk();
+
+    store.recordDelegation('child', record);
+
+    expect(store.delegationOf('child')).toEqual(record);
+  });
+
+  it('delegationOf_unknown_returnsManual', () => {
+    expect(memoryDisk().store.delegationOf('nada')).toEqual({ createdBy: null, creatorChain: [] });
+  });
+
+  it('recordDelegation_keepsPrefs', () => {
+    const { store } = memoryDisk();
+    store.savePrefs('child', { model: 'opus' });
+
+    store.recordDelegation('child', record);
+
+    expect(store.loadPrefs('child')).toEqual({ model: 'opus' });
+  });
+
+  it('load_corruptCreatedBy_ignoredOthersKept', () => {
+    const file = JSON.stringify({ version: 2, conversations: { c: { model: 'opus', createdBy: { conversationId: '', requestId: 'r', at: 'ayer' }, creatorChain: ['a'] } }, artifacts: {} });
+    const { store } = memoryDisk({ [FILE]: file });
+
+    expect(store.delegationOf('c')).toEqual({ createdBy: null, creatorChain: ['a'] });
+    expect(store.loadPrefs('c')).toEqual({ model: 'opus' });
+  });
+
+  it('recordDelegation_chainTooLong_throwsWithLength', () => {
+    const { store } = memoryDisk();
+
+    expect(() => store.recordDelegation('c', { createdBy: null, creatorChain: ['1', '2', '3', '4', '5', '6'] })).toThrow('6');
+  });
+});

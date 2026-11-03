@@ -61,6 +61,13 @@ const FORKED_THREAD_SCHEMA = z.object({ thread: z.object({ id: z.string() }).pas
 
 // ---------------------------------------------------------------- Puntos resueltos
 
+export interface RewindPointSummary {
+  readonly userIndex: number;
+  readonly text: string;
+  readonly nativeId: string | null;
+  readonly rewindable: boolean;
+}
+
 interface ClaudeTarget {
   readonly provider: 'claude';
   readonly nativeId: string;
@@ -157,6 +164,22 @@ export class RewindCoordinator {
       recoverable: ctx.provider === CLAUDE_PROVIDER_ID, turnRunning: ctx.busy, queuedCount: ctx.queueLength, pendingCount: ctx.pendingCount,
       canSaveCopy: ctx.provider === CODEX_PROVIDER_ID && action !== 'diverge',
     };
+  }
+
+  // Las burbujas de usuario de la rama vigente, para un cliente sin vista del hilo (la terminal, host 1.4). Solo lee: no cambia nada.
+  async points(sessionId: string): Promise<readonly RewindPointSummary[]> {
+    const ctx = this.deps.coordinator.rewindContext(sessionId);
+    const blocked = unavailableReason(ctx, 'rewind');
+    if (blocked !== null) throw new UserFacingError(reasonText(blocked, ctx.provider));
+    if (ctx.nativeId === null) throw new UserFacingError(reasonText('notFound', ctx.provider));
+    if (ctx.provider === CLAUDE_PROVIDER_ID) return this.claudePoints(ctx, ctx.nativeId);
+    const messages = codexUserMessages(await this.listCodexTurns(sessionId));
+    return messages.map((m, userIndex) => ({ userIndex, text: m.text, nativeId: m.clientId ?? m.itemId, rewindable: m.opensTurn }));
+  }
+
+  private async claudePoints(ctx: RewindContext, nativeId: string): Promise<readonly RewindPointSummary[]> {
+    const entries = await this.deps.readClaudeBranch({ accountDir: ctx.accountDir, cwd: ctx.cwd, sessionId: nativeId, pendingCutUuid: this.deps.state.pendingCut(nativeId) });
+    return claudePrompts(entries).map((p, userIndex) => ({ userIndex, text: p.text, nativeId: p.uuid, rewindable: true }));
   }
 
   // Rebobina (o rebobina y reenvia, `retry`). Orden de INFORME-040 §3.2: cola, parar el turno, ficheros, conversacion.
