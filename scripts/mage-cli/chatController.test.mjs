@@ -23,7 +23,7 @@ function setup({ snapshot, responses, reconnect } = {}) {
   let clock = 0;
   const deps = {
     link, sessionId: 's1', messages, write: (text) => output.push(text), now: () => clock, exit: vi.fn(),
-    reconnect: reconnect ?? vi.fn(), setMuted: vi.fn(),
+    reconnect: reconnect ?? vi.fn(), setMuted: vi.fn(), prefill: vi.fn(),
   };
   const controller = new ChatController(deps);
   return { controller, link, deps, output, setNow: (ms) => { clock = ms; }, text: () => output.join('') };
@@ -456,5 +456,60 @@ describe('ChatController: mensajes escritos durante una reconexión', () => {
     expect(callsTo(newLink, 'session.answerPermission')).toHaveLength(0);
     expect(callsTo(newLink, 'session.send')).toHaveLength(1);
     expect(callsTo(newLink, 'session.send')[0][1].text).toBe('s');
+  });
+});
+
+describe('ChatController: /rewind', () => {
+  const POINTS = { points: [{ userIndex: 0, text: 'uno', nativeId: 'u1', rewindable: true }, { userIndex: 1, text: 'dos', nativeId: 'u2', rewindable: true }] };
+  const PLAN = { provider: 'claude', unavailable: null, discardedMessages: 2, files: { available: true, changed: [], insertions: 0, deletions: 0 }, turnRunning: false, queuedCount: 0, canSaveCopy: false };
+  const RESULT = { draft: 'dos', returnedQueue: [], filesRestored: true, copyThreadId: null, retried: null };
+  const responses = (over = {}) => ({ 'session.rewindPoints': POINTS, 'session.rewindPlan': PLAN, 'session.rewind': RESULT, ...over });
+
+  it('rewind_fullFlow_callsPlanThenApplyAndPrefills', async () => {
+    const { controller, link, deps, text } = setup({ responses: responses() });
+    await controller.attach();
+
+    await controller.onLine('/rewind --files');
+    await controller.onLine('2');
+    await controller.onLine('s');
+
+    const point = { userIndex: 1, text: 'dos', nativeId: 'u2' };
+    expect(callsTo(link, 'session.rewindPlan')).toEqual([['session.rewindPlan', { sessionId: 's1', point, action: 'rewind' }]]);
+    expect(callsTo(link, 'session.rewind')).toEqual([['session.rewind', { sessionId: 's1', point, action: 'rewind', restoreFiles: true, saveCopy: false }]]);
+    expect(deps.prefill).toHaveBeenCalledWith('dos');
+    expect(text()).toContain('Se descartarán 2 mensajes.');
+    expect(text()).toContain('Conversación rebobinada. Ficheros restaurados.');
+  });
+
+  it('rewind_unavailablePlan_saysReasonAndDoesNotApply', async () => {
+    const { controller, link, text } = setup({ responses: responses({ 'session.rewindPlan': { ...PLAN, unavailable: 'background' } }) });
+    await controller.attach();
+
+    await controller.onLine('/rewind');
+    await controller.onLine('1');
+
+    expect(text()).toContain('segundo plano');
+    expect(callsTo(link, 'session.rewind')).toHaveLength(0);
+  });
+
+  it('rewind_confirmNo_cancelsWithoutApply', async () => {
+    const { controller, link, text } = setup({ responses: responses() });
+    await controller.attach();
+
+    await controller.onLine('/rewind');
+    await controller.onLine('1');
+    await controller.onLine('n');
+
+    expect(callsTo(link, 'session.rewind')).toHaveLength(0);
+    expect(text()).toContain('[rebobinado cancelado]');
+  });
+
+  it('rewind_textIsNotSentToSession', async () => {
+    const { controller, link } = setup({ responses: responses() });
+    await controller.attach();
+
+    for (const line of ['/rewind', 'x', '1', 's']) await controller.onLine(line);
+
+    expect(callsTo(link, 'session.send')).toHaveLength(0);
   });
 });

@@ -125,7 +125,7 @@ async function runChat(args, ctx) {
     controller.link.rpc.close();
     process.exit(code);
   };
-  controller = new ChatController({ link, sessionId, messages, write: writeOut, now: Date.now, exit, reconnect, setMuted });
+  controller = new ChatController({ link, sessionId, messages, write: writeOut, now: Date.now, exit, reconnect, setMuted, prefill: (text) => rl.write(text) });
   watchSocket(link);
 
   rl.on('line', (text) => guardPromise(controller.onLine(text)));
