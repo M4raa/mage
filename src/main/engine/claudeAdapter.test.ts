@@ -194,6 +194,31 @@ describe('ClaudeAdapter', () => {
       expect(plan.env.CLAUDE_CONFIG_DIR).toBe('/home/u/.claude-p');
     });
 
+    it('buildSpawnPlan_mageCaller_setsEnvAfterScrub', () => {
+      const inherited = process.env.MAGE_MCP_CALLER;
+      process.env.MAGE_MCP_CALLER = 'heredada';
+      try {
+        const shared = { mcpServers: [], settingsFragment: null, claudeAiConnectors: true, mageCaller: { credential: 'c'.repeat(64), forwardToCodexMcp: false } };
+        const plan = adapter.buildSpawnPlan({ ...launch, shared });
+
+        expect(plan.env.MAGE_MCP_CALLER).toBe('c'.repeat(64));
+      } finally {
+        if (inherited === undefined) delete process.env.MAGE_MCP_CALLER;
+        else process.env.MAGE_MCP_CALLER = inherited;
+      }
+    });
+
+    it('buildSpawnPlan_noMageCaller_noVariable', () => {
+      const inherited = process.env.MAGE_MCP_CALLER;
+      process.env.MAGE_MCP_CALLER = 'heredada';
+      try {
+        expect('MAGE_MCP_CALLER' in adapter.buildSpawnPlan(launch).env).toBe(false);
+      } finally {
+        if (inherited === undefined) delete process.env.MAGE_MCP_CALLER;
+        else process.env.MAGE_MCP_CALLER = inherited;
+      }
+    });
+
     // D5 (#53): Artifact es una opción del usuario, apagada por defecto. El ajuste manda sobre lo que el
     // usuario exportara en su entorno: apagado es `0` explícito (el CLI lo enciende con cualquier valor verdadero).
     const withExportedArtifact = (value: string | undefined, run: () => void): void => {

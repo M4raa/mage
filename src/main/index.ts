@@ -5,7 +5,9 @@ import { runLockHeartbeatTick } from './locks/conversationLockHeartbeat';
 import { lockFileName, nodeLockFs, pidAliveCheck, resolveConversationLocksDir } from './locks/conversationLockEnv';
 import { registerConversationLockIpc } from './locks/conversationLockIpc';
 import { readOnlyLockMessage } from '@shared/conversationLock';
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { McpCallers } from './host/mcpCallers';
+import { codexHomeHasMageServer } from './mcpServer/registrationStatus';
 import { execFile, spawn, spawnSync, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import {
   appendFileSync,
@@ -467,7 +469,7 @@ const MCP_FAKE_CLI = process.env.MAGE_MCP_FAKE_CLI === '1';
 // --settings y el interruptor de conectores): es lo que carga una sesion.
 function spawnMcpStatusProbe(configDir: string): ProbeProcess {
   if (MCP_FAKE_CLI) return spawnFakeMcpCli(configDir);
-  const shared = claudeSharedLaunch(loadSharedLaunch('claude', configDir), configDir, getMcpServices().writeClaudeMcpConfig);
+  const shared = claudeSharedLaunch(loadSharedLaunch('claude', configDir, null), configDir, getMcpServices().writeClaudeMcpConfig);
   return spawnModelProbe(configDir, shared.args, shared.env);
 }
 
@@ -534,7 +536,7 @@ const PRIVATE_PROFILE_DIR_NAME = 'mage-private';
 
 // Lo comun de UN lanzamiento (proveedor + cuenta). Se re-lee en CADA lanzamiento (nunca se cachea):
 // son ficheros que el usuario puede editar entre una sesion y la siguiente.
-function loadSharedLaunch(provider: string, accountDir: string): SharedLaunchConfig {
+function loadSharedLaunch(provider: string, accountDir: string, sessionId: string | null): SharedLaunchConfig {
   const family = mcpFamilyOf(provider);
   const account = basename(accountDir) === PRIVATE_PROFILE_DIR_NAME ? dirname(accountDir) : accountDir;
   const shared = getMcpServices().sharedMcp();
@@ -544,7 +546,23 @@ function loadSharedLaunch(provider: string, accountDir: string): SharedLaunchCon
     mcpServers: selectForTarget(shared.servers, { family, accountId: family === 'claude' ? account : null }),
     settingsFragment: buildSettingsFragment(settingsCommon),
     claudeAiConnectors: !getSettingsStore().load().claudeAiConnectorsOff.includes(account),
+    ...mageCallerFor(provider, accountDir, sessionId),
   };
+}
+
+// D-M6: solo Claude y Codex hablan con `mage mcp`; los demas proveedores no reciben credencial.
+// Sin sesion (sondeos de estado de MCP) no hay llamante: `sessionId` null -> sin credencial.
+function mageCallerFor(provider: string, accountDir: string, sessionId: string | null): Pick<SharedLaunchConfig, 'mageCaller'> {
+  if (sessionId === null) return {};
+  if (provider !== 'claude' && provider !== 'codex') return {};
+  const codexHome = provider === 'codex' ? getProviderAccounts().find('codex', accountDir)?.home : undefined;
+  const forwardToCodexMcp = codexHome !== undefined && codexHomeHasMageServer(codexHome, {
+    exists: existsSync,
+    read: (path) => readFileSync(path, 'utf8'),
+    join,
+    warn: (message, data) => mainLog('warn', message, data),
+  });
+  return { mageCaller: { credential: mcpCallers.mint(sessionId), forwardToCodexMcp } };
 }
 
 // Gestor de sesiones del motor. La fabrica elige el runtime por proveedor (`sessionFactory.ts`): los
@@ -2678,6 +2696,8 @@ function launchSession(params: CreateSessionParams, sender: Electron.WebContents
 
 // U17: sesiones del host (sin ventana) que la ventana principal puede adoptar, y quién sigue cuál.
 const adoptableSessions = new AdoptableSessions();
+// D-M6: credencial por sesion que identifica al hijo ante `mage mcp`.
+const mcpCallers = new McpCallers({ randomBytes, isLive: (id) => sessionCoordinator.ownerOf(id) !== undefined });
 const windowAttachments = new WindowAttachments({ coordinator: sessionCoordinator, eventChannel: EVENT_CHANNEL });
 
 // Los ids vivos de una sesión del host; null si el coordinador ya no la sigue.

@@ -39,6 +39,9 @@ const BLOCKED_ENV_VARS = [
   // OpenAI: `codex` lee las dos del entorno y con cualquiera factura la API en vez de la cuenta.
   'OPENAI_API_KEY',
   'CODEX_API_KEY',
+  // La credencial MCP de una sesion de Mage (D-M6): un Mage lanzado desde una sesion no se la hereda a
+  // sus hijos; cada adapter pone la SUYA despues del saneado.
+  'MAGE_MCP_CALLER',
 ] as const;
 
 // Devuelve una copia de `baseEnv` sin las variables prohibidas. No muta la entrada: quien llama suele

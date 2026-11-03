@@ -10,6 +10,7 @@ import { resolveClaudeBinary } from '../os/claudeBinaryResolver';
 import { normalizeRawEvent } from './normalize';
 import { CommandLifecycleSchema } from './schemas';
 import type { AuthModel, EngineRequest, LaunchParams, PermissionRef, ProviderAdapter, SpawnPlan, SteerEncoding } from './providerAdapter';
+import { MAGE_MCP_CALLER_ENV } from '../host/mcpCallers';
 import { decideTestAnthropicBaseUrl, scrubAgentEnv, TEST_ANTHROPIC_BASE_URL_ENV } from '../os/agentEnv';
 import { claudeSharedLaunch, refuseClaudeMcpConfig, type ClaudeMcpConfigWriter } from '../config/mcpProviderTranslate';
 
@@ -149,6 +150,8 @@ export class ClaudeAdapter implements ProviderAdapter {
       CLAUDE_CONFIG_DIR: params.accountDir,
       ...shared.env,
       ...(apiKey === null ? {} : { [ANTHROPIC_API_KEY_ENV]: apiKey }),
+      // D-M6: identidad de esta sesion ante `mage mcp`, tambien DESPUES del saneado.
+      ...(params.shared?.mageCaller === undefined ? {} : { [MAGE_MCP_CALLER_ENV]: params.shared.mageCaller.credential }),
       ...(testEndpoint.kind === 'use' ? { ANTHROPIC_BASE_URL: testEndpoint.url } : {}),
     };
     return { command: this.resolveBinary(), args, env };
