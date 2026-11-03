@@ -151,7 +151,12 @@ appImage:
   executableArgs: []
 
 # /usr/bin/mage = lanzador de la terminal, no la app gráfica (F7.4). El rpm se genera sin garantía, con el mismo script.
+# U25: el paquete se llama mage-desktop porque Debian y Ubuntu ya tienen un paquete `mage` (la herramienta de Go) con su /usr/bin/mage. Los scripts nunca pisan ni borran un /usr/bin/mage que no sea nuestro.
 deb:
+  packageName: mage-desktop
   afterInstall: resources/bin/linux-after-install.tpl
+  afterRemove: resources/bin/linux-after-remove.tpl
 rpm:
+  packageName: mage-desktop
   afterInstall: resources/bin/linux-after-install.tpl
+  afterRemove: resources/bin/linux-after-remove.tpl

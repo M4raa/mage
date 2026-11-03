@@ -1,15 +1,14 @@
 #!/bin/bash
-# Copia del after-install de electron-builder (app-builder-lib 26.15.3) con UN cambio: /usr/bin/mage apunta al lanzador de
-# la terminal (resources/bin/mage), no a la app gráfica; el .desktop usa /opt/Mage/mage directamente. Revisar al actualizar electron-builder.
+# Copia del after-install de electron-builder (app-builder-lib 26.15.3) con UN cambio: /usr/bin/mage apunta al lanzador de la terminal (resources/bin/mage) solo si está libre o ya es nuestro, sin update-alternatives (U25); el .desktop usa /opt/Mage/mage directamente. Revisar al actualizar electron-builder.
 
-if type update-alternatives >/dev/null 2>&1; then
-    # Remove previous link if it doesn't use update-alternatives
-    if [ -L '/usr/bin/${executable}' -a -e '/usr/bin/${executable}' -a "`readlink '/usr/bin/${executable}'`" != '/etc/alternatives/${executable}' ]; then
-        rm -f '/usr/bin/${executable}'
-    fi
-    update-alternatives --install '/usr/bin/${executable}' '${executable}' '/opt/${sanitizedProductName}/resources/bin/${executable}' 100 || ln -sf '/opt/${sanitizedProductName}/resources/bin/${executable}' '/usr/bin/${executable}'
-else
-    ln -sf '/opt/${sanitizedProductName}/resources/bin/${executable}' '/usr/bin/${executable}'
+# /usr/bin/${executable} es el lanzador de la terminal (resources/bin), y solo si está libre o ya es nuestro: Debian y
+# Ubuntu tienen otro paquete `mage` (la herramienta de Go) con su propio /usr/bin/mage, que nunca se pisa (U25).
+MAGE_LAUNCHER='/opt/${sanitizedProductName}/resources/bin/${executable}'
+MAGE_LINK='/usr/bin/${executable}'
+if [ ! -e "$MAGE_LINK" ] && [ ! -L "$MAGE_LINK" ]; then
+    ln -s "$MAGE_LAUNCHER" "$MAGE_LINK"
+elif [ "$(readlink "$MAGE_LINK")" != "$MAGE_LAUNCHER" ]; then
+    echo "Mage: $MAGE_LINK ya es de otro programa y no se toca. Para la terminal de Mage usa $MAGE_LAUNCHER" >&2
 fi
 
 # Check if user namespaces are supported by the kernel and working with a quick test:
