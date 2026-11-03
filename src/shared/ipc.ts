@@ -310,6 +310,10 @@ export const IpcChannel = {
   UpdateCheck: 'update:check',
   // Keep-alive de la cache de Claude (F4.6): cuantos se hicieron y cuanto costaron.
   KeepAliveStats: 'keepAlive:stats',
+  // Biblioteca de capacidades (F6).
+  LibraryView: 'library:view',
+  LibraryPreview: 'library:preview',
+  LibraryApply: 'library:apply',
 } as const;
 
 export type IpcChannel = (typeof IpcChannel)[keyof typeof IpcChannel];
@@ -1235,6 +1239,11 @@ export interface MageApi {
   installUpdate(): Promise<void>;
   // «Buscar actualizaciones» (F1.3, #15): el resultado llega por `onUpdateState`.
   checkForUpdates(): Promise<void>;
+
+  // --- Biblioteca de capacidades (F6) ---
+  libraryView(): Promise<LibraryView>;
+  libraryPreview(target: LibraryTarget): Promise<LibraryPreviewView>;
+  libraryApply(params: LibraryApplyParams): Promise<LibraryActionResult>;
 }
 
 // --- Biblioteca de capacidades (F6) ----------------------------------------------------------------
