@@ -718,7 +718,7 @@ const CHECKS = [
         };
         const zonas = {};
         zonas.hilo = await page.evaluate(`(${recoger})(document.querySelector('[data-pane-tab-id="' + window.__mageDev.store.getState().activeTabId + '"]'))`);
-        zonas.barraLateral = await page.evaluate(`(${recoger})(document.querySelector('[data-chat-projects]').parentElement.parentElement)`);
+        zonas.barraLateral = await page.evaluate(`(${recoger})(document.querySelector('[data-chat-sidebar]'))`);
         await openSettingsDialog(page);
         // Por id (no depende del idioma): en inglés la pestaña se llama «Appearance».
         await page.locator('#settings-tab-appearance').click();
@@ -3641,6 +3641,7 @@ const CHECKS = [
           sessionIdByChat: s.sessionIdByChat,
           statusByChat: s.statusByChat,
           conversationHistory: s.conversationHistory,
+          allConversationHistory: s.allConversationHistory,
           backgroundSessions: s.backgroundSessions,
         };
       });
@@ -3672,15 +3673,16 @@ const CHECKS = [
         const entry = store.getState().backgroundSessions['vg-fondo'];
         store.setState({
           backgroundSessions: { ...store.getState().backgroundSessions, 'vg-fondo': { ...entry, state: 'done' } },
-          conversationHistory: [
-            { sessionId: 'vg-fondo', title: info.title, cwd: info.cwd, privacy: info.privacy, updatedAtMs: Date.now(), configDir: '' },
+          // El lateral lee el historial de TODAS las cuentas (`allConversationHistory`, Q02).
+          allConversationHistory: [
+            { accountId: store.getState().activeAccountId, item: { sessionId: 'vg-fondo', title: info.title, cwd: info.cwd, privacy: info.privacy, updatedAtMs: Date.now(), configDir: '', sizeBytes: 0, isScheduled: false } },
           ],
         });
       }, cerrado);
       await page.waitForTimeout(CONFIG.settleMs);
       const fila = await page.evaluate(() => {
         const badge = document.querySelector('[data-background-badge]');
-        const row = badge?.closest('button');
+        const row = badge?.closest('[data-sidebar-row]');
         return {
           pastillas: document.querySelectorAll('[data-background-badge]').length,
           estado: badge?.getAttribute('data-background-badge') ?? null,
@@ -4349,11 +4351,11 @@ const CHECKS = [
     // P-026, 1.7 (D19): la fila de una pestaña ABIERTA dice lo mismo que la de una cerrada —cuando y
     // cuanto pesa—, no `claude · opus[1m]`. Pestaña propia con un `resumeSessionId` falso y su fila de
     // historial inyectada; nada se spawnea.
-    name: 'Historial lateral: la fila de una pestaña abierta dice tiempo y peso, no proveedor y modelo',
+    name: 'Historial lateral: la fila de una pestaña abierta dice proveedor, cuenta y tiempo, sin peso ni modelo',
     async run(page) {
       const previo = await page.evaluate(() => {
         const s = window.__mageDev.store.getState();
-        return { tabs: s.tabs, activeTabId: s.activeTabId, splitLayout: s.splitLayout, conversationHistory: s.conversationHistory };
+        return { tabs: s.tabs, activeTabId: s.activeTabId, splitLayout: s.splitLayout, conversationHistory: s.conversationHistory, allConversationHistory: s.allConversationHistory };
       });
       await openTemporaryConversation(page);
       for (let intento = 0; intento < 3; intento += 1) {
@@ -4363,19 +4365,20 @@ const CHECKS = [
           const tab = tabs.find((t) => t.id === activeTabId);
           store.setState({
             tabs: tabs.map((t) => (t.id === activeTabId ? { ...t, resumeSessionId: 'vg-fila' } : t)),
-            conversationHistory: [
-              { sessionId: 'vg-fila', title: tab.title, cwd: tab.cwd, privacy: tab.privacy, updatedAtMs: Date.now() - 3 * 60_000, configDir: '', sizeBytes: 2_200_000, isScheduled: false },
+            allConversationHistory: [
+              { accountId: tab.accountId, item: { sessionId: 'vg-fila', title: tab.title, cwd: tab.cwd, privacy: tab.privacy, updatedAtMs: Date.now() - 3 * 60_000, configDir: '', sizeBytes: 2_200_000, isScheduled: false } },
             ],
           });
         });
         await page.waitForTimeout(CONFIG.settleMs * 2);
-        const aguanta = await page.evaluate(() => window.__mageDev.store.getState().conversationHistory.some((c) => c.sessionId === 'vg-fila'));
+        const aguanta = await page.evaluate(() => window.__mageDev.store.getState().allConversationHistory.some((c) => c.item.sessionId === 'vg-fila'));
         if (aguanta) break;
       }
       const linea = await page.evaluate(() => document.querySelector('button[aria-current="true"] [data-row-meta]')?.textContent?.trim() ?? null);
       await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
       await page.waitForTimeout(CONFIG.settleMs);
-      const ok = linea !== null && /(hace|ahora).*(B|kB|MB)/.test(linea) && !/· (opus|sonnet|haiku)/.test(linea);
+      // Q02: la fila ya NO lleva el peso (va a la barra de estado): dice monograma del proveedor, cuenta y tiempo.
+      const ok = linea !== null && /(hace|ahora)/.test(linea) && !/\b(B|kB|MB)\b/.test(linea) && !/· (opus|sonnet|haiku)/.test(linea);
       return { ok, detail: `segunda linea=${JSON.stringify(linea)}` };
     },
   },
@@ -4387,7 +4390,7 @@ const CHECKS = [
     async run(page) {
       const previo = await page.evaluate(() => {
         const s = window.__mageDev.store.getState();
-        return { blocksByChat: s.blocksByChat, conversationHistory: s.conversationHistory };
+        return { blocksByChat: s.blocksByChat, conversationHistory: s.conversationHistory, allConversationHistory: s.allConversationHistory };
       });
       const rename = '<command-name>/rename</command-name>\n            <command-message>rename</command-message>\n            <command-args>REVISION-MAGE</command-args>';
       const tarea = '<scheduled-task name="say-hello" file="C:\\Users\\x\\SKILL.md">\nThis is an automated run of a scheduled task.\n\nSay .\n</scheduled-task>';
@@ -4400,14 +4403,14 @@ const CHECKS = [
       // la fila aguanta en el store, con un tope.
       for (let intento = 0; intento < 3; intento += 1) {
         await page.evaluate(() =>
-          window.__mageDev.store.setState({
-            conversationHistory: [
-              { sessionId: 'vg-prog', title: 'say-hello', cwd: '', privacy: 'shared', updatedAtMs: Date.now(), configDir: '', sizeBytes: 1024, isScheduled: true },
+          window.__mageDev.store.setState((s) => ({
+            allConversationHistory: [
+              { accountId: s.activeAccountId, item: { sessionId: 'vg-prog', title: 'say-hello', cwd: '', privacy: 'shared', updatedAtMs: Date.now(), configDir: '', sizeBytes: 1024, isScheduled: true } },
             ],
-          }),
+          })),
         );
         await page.waitForTimeout(CONFIG.settleMs * 2);
-        const aguanta = await page.evaluate(() => window.__mageDev.store.getState().conversationHistory.some((c) => c.sessionId === 'vg-prog'));
+        const aguanta = await page.evaluate(() => window.__mageDev.store.getState().allConversationHistory.some((c) => c.item.sessionId === 'vg-prog'));
         if (aguanta) break;
       }
       const medido = await page.evaluate(() => {
@@ -8684,7 +8687,7 @@ const CHECKS = [
   {
     name: 'I: Historial agrupa chats en proyectos con reglas y aplicación',
     async run(page) {
-      await page.locator('[data-chat-projects] [aria-label="Crear proyecto de chats"]').click();
+      await page.locator('[data-chat-sidebar] [aria-label="Crear proyecto de chats"]').click();
       const editor = page.locator('[data-chat-project-editor]');
       await editor.getByLabel('Nombre del proyecto').fill('Python');
       await editor.getByLabel('Reglas del proyecto').fill('Eres experto en Python');
@@ -8694,13 +8697,18 @@ const CHECKS = [
       const id = await project.getAttribute('data-chat-project');
       await page.waitForTimeout(500);
       await page.evaluate(() => {
-        window.__mageDev.store.setState({ conversationHistory: [{ sessionId: 'verify-project-chat', configDir: '.claude', cwd: 'C:/proyecto/python', title: 'Chat Python de prueba', privacy: 'shared', updatedAtMs: Date.now(), sizeBytes: 100, isScheduled: false }] });
+        const item = { sessionId: 'verify-project-chat', configDir: '.claude', cwd: 'C:/proyecto/python', title: 'Chat Python de prueba', privacy: 'shared', updatedAtMs: Date.now(), sizeBytes: 100, isScheduled: false };
+        window.__mageDev.store.setState((s) => ({ conversationHistory: [item], allConversationHistory: [{ accountId: s.activeAccountId, item }] }));
       });
+      // Q02: el lateral agrupa por carpeta y los grupos nacen plegados: se despliega el de la carpeta de la fila.
+      await page.locator('[data-project-key$="/proyecto/python"]').click();
       const history = page.locator('[data-history-session="verify-project-chat"]');
       await history.waitFor({ state: 'visible' });
       await waitForStillBox(page, '[data-history-session="verify-project-chat"]');
       await history.click({ button: 'right' });
       await page.getByRole('menuitem', { name: 'Python' }).click();
+      // La fila pasa al proyecto del usuario, que también nace plegado.
+      await project.locator('[data-project-key]').click();
       const assigned = await project.locator('[data-history-session="verify-project-chat"]').count();
       const saved = await page.evaluate(() => window.__mageDev.store.getState().settings.chatProjects[0]);
       await project.getByRole('button', { name: /Nueva conversación/ }).click();
@@ -8711,6 +8719,131 @@ const CHECKS = [
       const ok = id === saved.id && saved.instructions === 'Eres experto en Python' &&
         saved.sessionIds.includes('verify-project-chat') && assigned === 1 && tabProject === id;
       return { ok, detail: JSON.stringify({ id, saved, assigned, tabProject }) };
+    },
+  },
+  // --- Q02: el lateral de todas las cuentas (D6) ------------------------------------------------------
+  //
+  // Sin turno ni CLI: el historial se inyecta en `allConversationHistory` por el puente `__mageDev` (dos
+  // cuentas, una real y una ficticia) y el estado previo se restaura. Mientras se mide, la recarga del
+  // historial por IPC se apaga (pisaría las filas sintéticas); el restaurado la repone.
+  {
+    name: 'Q02: el lateral va Fijadas → Proyectos → Sin proyecto → Privadas',
+    async run(page) {
+      const previo = await seedSidebar(page);
+      try {
+        // Los grupos por carpeta nacen plegados: se despliega el de proyecto-a para medir sus filas.
+        const cabecera = page.locator('[data-project-key$="/proyecto-a"]');
+        await cabecera.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        if ((await cabecera.getAttribute('aria-expanded')) !== 'true') await cabecera.click();
+        const medido = await page.evaluate(() => {
+          const grupos = [...document.querySelectorAll('[data-sidebar-group]')].map((n) => n.getAttribute('data-sidebar-group'));
+          const sinRepetir = grupos.filter((g, i) => g !== grupos[i - 1]);
+          const proyecto = document.querySelector('[data-project-key$="/proyecto-a"]');
+          const filas = [...document.querySelectorAll('[data-sidebar-row]')].map((n) => n.textContent ?? '');
+          return {
+            orden: sinRepetir,
+            archivadaPresente: document.querySelector('[data-history-session="vg-q02-arch"]') !== null,
+            proyecto: (proyecto?.parentElement?.textContent ?? '').trim(),
+            filasConPeso: filas.filter((t) => /\b(MB|kB)\b/.test(t)).length,
+            filas: filas.length,
+          };
+        });
+        const ok =
+          medido.orden.join(',') === 'pinned,project,unassigned,private' &&
+          !medido.archivadaPresente &&
+          /^proyecto-a\s*2$/.test(medido.proyecto) &&
+          medido.filasConPeso === 0 &&
+          medido.filas >= 5;
+        return { ok, detail: JSON.stringify(medido) };
+      } finally {
+        await restoreSidebar(page, previo);
+      }
+    },
+  },
+  {
+    name: 'Q02: un filtro que oculta filas lo dice y se quita',
+    async run(page) {
+      const previo = await seedSidebar(page);
+      try {
+        await page.locator('[data-sidebar-row]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const antes = await page.locator('[data-sidebar-row]').count();
+        // Una fila sembrada es de Codex: el filtro «Claude» la deja fuera (más las pestañas que no sean de Claude).
+        const esperadas = await page.evaluate(() => 1 + window.__mageDev.store.getState().tabs.filter((t) => t.provider !== 'claude').length);
+        await page.locator('[data-filter-chip="provider"]').click();
+        await page.getByRole('option', { name: 'Claude', exact: true }).click();
+        const aviso = page.locator('[data-filter-hidden]');
+        await aviso.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const oculto = await aviso.getAttribute('data-filter-hidden');
+        await aviso.getByRole('button', { name: 'Quitar filtros' }).click();
+        await page.waitForTimeout(CONFIG.settleMs);
+        const despues = await page.locator('[data-sidebar-row]').count();
+        const avisoQueda = await page.locator('[data-filter-hidden]').count();
+        const ok = oculto === String(esperadas) && avisoQueda === 0 && despues === antes;
+        return { ok, detail: JSON.stringify({ antes, esperadas, oculto, avisoQueda, despues }) };
+      } finally {
+        await restoreSidebar(page, previo);
+      }
+    },
+  },
+  {
+    name: 'Q02: Archivadas enseña solo las archivadas',
+    async run(page) {
+      const previo = await seedSidebar(page);
+      try {
+        await page.locator('[data-sidebar-row]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        await page.locator('[data-filter-chip="archived"]').click();
+        await page.waitForTimeout(CONFIG.settleMs);
+        const filas = await page.locator('[data-sidebar-row]').count();
+        const pulsado = await page.locator('[data-filter-chip="archived"]').getAttribute('aria-pressed');
+        await page.locator('[data-filter-chip="archived"]').click();
+        return { ok: filas === 1 && pulsado === 'true', detail: JSON.stringify({ filas, pulsado }) };
+      } finally {
+        await restoreSidebar(page, previo);
+      }
+    },
+  },
+  {
+    name: 'Q02: Ctrl+K enfoca el buscador del lateral',
+    async run(page) {
+      await page.evaluate(() => window.__mageDev.store.getState().focusPrompt());
+      await page.waitForTimeout(CONFIG.settleMs);
+      const antes = await page.evaluate(() => document.activeElement?.hasAttribute('data-sidebar-search') ?? false);
+      await page.keyboard.press('ControlOrMeta+KeyK');
+      await page.waitForTimeout(CONFIG.settleMs);
+      const despues = await page.evaluate(() => document.activeElement?.hasAttribute('data-sidebar-search') ?? false);
+      await page.evaluate(() => window.__mageDev.store.getState().focusPrompt());
+      return { ok: !antes && despues, detail: JSON.stringify({ buscadorAntes: antes, buscadorDespues: despues }) };
+    },
+  },
+  {
+    name: 'Q02: el tamaño de la conversación va a la barra de estado',
+    async run(page) {
+      const previo = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return { tabs: s.tabs, activeTabId: s.activeTabId, splitLayout: s.splitLayout, allConversationHistory: s.allConversationHistory, loadConversationHistory: s.loadConversationHistory };
+      });
+      await openTemporaryConversation(page);
+      try {
+        await page.evaluate(() => {
+          const store = window.__mageDev.store;
+          const { activeTabId, tabs } = store.getState();
+          const tab = tabs.find((t) => t.id === activeTabId);
+          store.setState({
+            loadConversationHistory: async () => undefined,
+            tabs: tabs.map((t) => (t.id === activeTabId ? { ...t, resumeSessionId: 'vg-q02-size' } : t)),
+            allConversationHistory: [
+              { accountId: tab.accountId, item: { sessionId: 'vg-q02-size', title: tab.title, cwd: tab.cwd, privacy: tab.privacy, updatedAtMs: Date.now(), configDir: '', sizeBytes: 3_900_000, isScheduled: false } },
+            ],
+          });
+        });
+        const barra = page.locator('[data-status-size]');
+        await barra.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const texto = ((await barra.textContent()) ?? '').trim();
+        return { ok: texto.includes('3,7 MB'), detail: `barra de estado=${JSON.stringify(texto)}` };
+      } finally {
+        await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
+        await page.waitForTimeout(CONFIG.settleMs);
+      }
     },
   },
   {
@@ -10081,10 +10214,11 @@ async function refreshAccountsUntil(page, home) {
 async function measureProviderHistory(page, { home, sessionId, title, provider }) {
   await refreshAccountsUntil(page, home);
   await page.evaluate((id) => window.__mageDev.store.getState().setActiveAccount(id), home);
-  await page.locator(`[data-history-session="${sessionId}"]`).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
-  const listada = await page.evaluate((id) => document.querySelector(`[data-history-session="${id}"]`)?.textContent ?? '', sessionId);
+  // Q02: los grupos por carpeta nacen plegados; con el buscador activo se despliegan todos, así que se busca primero.
   const search = page.getByRole('textbox', { name: 'Buscar conversaciones', exact: true });
   await search.fill(title);
+  await page.locator(`[data-history-session="${sessionId}"]`).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+  const listada = await page.evaluate((id) => document.querySelector(`[data-history-session="${id}"]`)?.textContent ?? '', sessionId);
   await page.locator(`[data-history-session="${sessionId}"]`).waitFor({ state: 'visible' });
   await search.fill('vg-sin-coincidencias-imposible');
   await page.locator(`[data-history-session="${sessionId}"]`).waitFor({ state: 'hidden' });
@@ -10586,6 +10720,43 @@ async function walkStepSlider(page, caso) {
     vuelveAlInicio: final === inicio.value,
     valuetext: inicio.valuetext,
   };
+}
+
+// Siembra el lateral de Q02 con 6 conversaciones sintéticas de dos cuentas (una real y una ficticia): 1 fijada, 2
+// en C:\vg\proyecto-a, 1 de Codex dentro de la carpeta temporal (Sin proyecto), 1 privada y 1 archivada. Devuelve el
+// estado previo para `restoreSidebar`.
+async function seedSidebar(page) {
+  const previo = await page.evaluate(() => {
+    const s = window.__mageDev.store.getState();
+    return { allConversationHistory: s.allConversationHistory, settings: s.settings, loadConversationHistory: s.loadConversationHistory };
+  });
+  await page.evaluate(() => {
+    const store = window.__mageDev.store;
+    const s = store.getState();
+    const real = s.activeAccountId;
+    const scratch = s.scratchRoots[0] ?? s.scratchDir ?? '';
+    const base = { configDir: '', title: 'fila', privacy: 'shared', sizeBytes: 3_900_000, isScheduled: false };
+    const row = (accountId, over) => ({ accountId, item: { ...base, ...over } });
+    store.setState({
+      loadConversationHistory: async () => undefined,
+      allConversationHistory: [
+        row(real, { sessionId: 'vg-q02-pin', title: 'Fijada', cwd: 'C:\\vg\\otra', updatedAtMs: Date.now() - 1000 }),
+        row(real, { sessionId: 'vg-q02-p1', title: 'Proyecto uno', cwd: 'C:\\vg\\proyecto-a', updatedAtMs: Date.now() - 2000 }),
+        row('vg-q02-cuenta-b', { sessionId: 'vg-q02-p2', title: 'Proyecto dos', cwd: 'C:\\vg\\proyecto-a', updatedAtMs: Date.now() - 3000 }),
+        row('vg-q02-cuenta-b', { sessionId: 'vg-q02-un', title: 'Sin proyecto', cwd: `${scratch}/vg-q02`, providerId: 'codex', updatedAtMs: Date.now() - 4000 }),
+        row(real, { sessionId: 'vg-q02-priv', title: 'Privada', cwd: 'C:\\vg\\priv', privacy: 'private', updatedAtMs: Date.now() - 5000 }),
+        row(real, { sessionId: 'vg-q02-arch', title: 'Archivada', cwd: 'C:\\vg\\arch', updatedAtMs: Date.now() - 6000 }),
+      ],
+      settings: { ...s.settings, pinnedConversations: ['vg-q02-pin'], archivedConversations: ['vg-q02-arch'] },
+    });
+  });
+  await page.waitForTimeout(CONFIG.settleMs * 2);
+  return previo;
+}
+
+async function restoreSidebar(page, previo) {
+  await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
+  await page.waitForTimeout(CONFIG.settleMs);
 }
 
 async function openTemporaryConversation(page) {
