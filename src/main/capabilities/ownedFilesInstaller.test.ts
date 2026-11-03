@@ -19,7 +19,7 @@ const SKILLS_DIR = join(ROOT, 'cfg', 'skills');
 const TARGET_ROOT = join(SKILLS_DIR, 'demo-skill');
 const STAGE = join(SKILLS_DIR, '.stage-demo-skill');
 const PREVIOUS = join(SKILLS_DIR, '.prev-demo-skill');
-const REF: OwnedFilesRef & { readonly targetRoot: string } = {
+const REF: OwnedFilesRef = {
   packageId: 'demo-skill',
   engine: 'claude',
   scope: 'user',
@@ -59,6 +59,10 @@ function setup(caseInsensitivePaths = false) {
     installOwnedFiles(ctx, targetFor(built[0], overrides), built[1]);
   return { ...mem, ctx, text, install };
 }
+
+const ROOT_A = join(ROOT, 'cfgA', 'skills', 'demo-skill');
+const ROOT_B = join(ROOT, 'cfgB', 'skills', 'demo-skill');
+const refFor = (targetRoot: string): OwnedFilesRef => ({ packageId: 'demo-skill', engine: 'claude', scope: 'user', targetRoot });
 
 function hasLeftovers(files: Map<string, Buffer>): boolean {
   return [...files.keys()].some((key) => key.includes('.stage-') || key.includes('.prev-'));
@@ -276,6 +280,23 @@ describe('installOwnedFiles', () => {
     expect(fs.exists(TARGET_ROOT)).toBe(false);
     expect(text(REGISTRY_PATH)).toBe('{roto');
   });
+
+  it('installOwnedFiles_samePackageInTwoAccounts_keepsBothRegistryEntries', () => {
+    // Arrange
+    const { ctx, install, text } = setup();
+    // Act
+    install(v1(), { targetRoot: ROOT_A });
+    install(v1(), { targetRoot: ROOT_B });
+    // Assert
+    const paths = loadOwnershipRegistry(ctx.fs, REGISTRY_PATH).entries.map((e) => e.absPath);
+    expect(paths).toHaveLength(4);
+    for (const root of [ROOT_A, ROOT_B]) {
+      expect(paths).toContain(join(root, 'SKILL.md'));
+      expect(paths).toContain(join(root, 'scripts/run.sh'));
+    }
+    expect(text(join(ROOT_A, 'SKILL.md'))).toBe('hola v1');
+    expect(text(join(ROOT_A, 'scripts/run.sh'))).toBe('echo v1');
+  });
 });
 
 describe('uninstallOwnedFiles', () => {
@@ -344,6 +365,37 @@ describe('uninstallOwnedFiles', () => {
     // Assert
     expect(result).toEqual({ status: 'notInstalled' });
     expect(fs.exists(join(TARGET_ROOT, 'SKILL.md'))).toBe(true);
+  });
+
+  it('uninstallOwnedFiles_samePackageInTwoAccounts_removesOnlyThatAccountFiles', () => {
+    // Arrange
+    const { ctx, install, fs } = setup();
+    install(v1(), { targetRoot: ROOT_A });
+    install(v1(), { targetRoot: ROOT_B });
+    // Act
+    const result = uninstallOwnedFiles(ctx, refFor(ROOT_B));
+    // Assert
+    expect(result).toEqual({
+      status: 'uninstalled',
+      removed: [join(ROOT_B, 'SKILL.md'), join(ROOT_B, 'scripts/run.sh')],
+    });
+    expect(fs.exists(join(ROOT_A, 'SKILL.md'))).toBe(true);
+    expect(fs.exists(join(ROOT_A, 'scripts/run.sh'))).toBe(true);
+    const paths = loadOwnershipRegistry(ctx.fs, REGISTRY_PATH).entries.map((e) => e.absPath);
+    expect(paths).toEqual([join(ROOT_A, 'SKILL.md'), join(ROOT_A, 'scripts/run.sh')]);
+  });
+
+  it('uninstallOwnedFiles_otherAccountModified_ignoresIt', () => {
+    // Arrange
+    const { ctx, install, put, text } = setup();
+    install(v1(), { targetRoot: ROOT_A });
+    install(v1(), { targetRoot: ROOT_B });
+    put(join(ROOT_A, 'SKILL.md'), 'texto del usuario');
+    // Act
+    const result = uninstallOwnedFiles(ctx, refFor(ROOT_B));
+    // Assert
+    expect(result.status).toBe('uninstalled');
+    expect(text(join(ROOT_A, 'SKILL.md'))).toBe('texto del usuario');
   });
 });
 

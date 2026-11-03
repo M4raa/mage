@@ -27,6 +27,8 @@ import { fileURLToPath } from 'node:url';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const OUTPUT = path.join(ROOT, 'THIRD-PARTY-NOTICES.txt');
 const BUNDLE_MANIFEST = path.join(ROOT, 'third-party-bundle.json');
+// Contenido que la biblioteca de capacidades COPIA dentro de la app (F6.1): su licencia viaja aquí igual que la de un paquete.
+const LIBRARY_CONTENT = path.join(ROOT, 'src', 'main', 'capabilities', 'catalog', 'eccContent.json');
 // Nombres de fichero de licencia, en orden de preferencia. `LICENSE` antes que `README` siempre: un
 // README puede citar la licencia de otra cosa.
 const LICENSE_FILES = ['LICENSE', 'LICENSE.md', 'LICENSE.txt', 'LICENCE', 'LICENCE.md', 'license', 'license.md', 'license.txt', 'COPYING', 'COPYING.txt'];
@@ -123,7 +125,7 @@ function renderNotices(packages) {
   // Finales de linea LF SIEMPRE: los ficheros de licencia vienen unos con CRLF y otros con LF, y el
   // repo normaliza a LF (.gitattributes). Sin esto, `--check` compara lo que se acaba de generar en
   // Windows con lo que dejo el checkout y falla por los retornos de carro, no por las dependencias.
-  return `${header}${bodies}`.replace(/\r\n/g, '\n');
+  return `${header}${bodies}${renderLibraryContent()}`.replace(/\r\n/g, '\n');
 }
 
 function renderPackage(pkg) {
@@ -133,6 +135,37 @@ function renderPackage(pkg) {
   // declarada y quien es el autor, que es exactamente lo que se sabe. Callarlo seria peor.
   const cuerpo = pkg.text.length > 0 ? pkg.text : `Licencia declarada: ${pkg.license}. El paquete no incluye fichero de licencia.`;
   return `${'='.repeat(100)}\n${pkg.name}${version} — ${pkg.license}\n${autor}${'='.repeat(100)}\n\n${cuerpo}\n\n`;
+}
+
+// Las skills que la biblioteca copia (`skills/<nombre>/…`), con su licencia. Un fichero ausente o incompleto lanza: no
+// se omite en silencio, porque entonces la app copiaría contenido sin su aviso.
+function renderLibraryContent() {
+  const content = readLibraryContent();
+  const { source, license, files } = content;
+  const skills = [...new Set(Object.keys(files).map((file) => file.split('/')[1]))].sort();
+  const rule = '='.repeat(100);
+  return [
+    rule,
+    'CONTENIDO DE LA BIBLIOTECA DE CAPACIDADES',
+    rule,
+    '',
+    'Mage lleva dentro una copia de estas skills y solo las instala si el usuario lo pide, junto a su licencia.',
+    `ECC ${source.tag} (${source.repo}, commit ${source.commit}) — ${license.spdx}`,
+    `Skills: ${skills.join(', ')}`,
+    '',
+    license.text.trimEnd(),
+    '',
+    '',
+  ].join('\n');
+}
+
+function readLibraryContent() {
+  if (!fs.existsSync(LIBRARY_CONTENT)) throw new Error(`Falta el contenido de la biblioteca: ${LIBRARY_CONTENT}`);
+  const content = JSON.parse(fs.readFileSync(LIBRARY_CONTENT, 'utf8'));
+  for (const field of ['source', 'license', 'files']) {
+    if (content[field] === undefined) throw new Error(`Al contenido de la biblioteca le falta «${field}»: ${LIBRARY_CONTENT}`);
+  }
+  return content;
 }
 
 main();

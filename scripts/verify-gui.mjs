@@ -171,6 +171,55 @@ const PROMPT_EDITOR_MIN_PX = 120;
 // alto a las columnas de iconos y el ancho a los paneles del dock, que es quien estruja al centro.
 const VENTANAS_PEQUENAS = [{ etiqueta: 'minima', width: 900, height: 600 }];
 
+// Biblioteca (carril P): la cuenta de prueba vive en `library-fixture` dentro del perfil aislado.
+const LIBRARY_FIXTURE_ACCOUNT_SUFFIX = '.claude-vglib';
+const LIBRARY_SKILL_ID = 'ecc-tdd-workflow';
+const LIBRARY_SKILL_SHA256 = '8887afa786ef30de834e7567115d3df71934b343c3d9d849714f8ea43f979ee0';
+const LIBRARY_LICENSE_SHA256 = '326146379f01bb137c0a5d3c54770c1aa31076705c8b88a7f6b26a460f6221b2';
+const LIBRARY_MIN_ENTRIES = 13;
+
+// Lista recursiva «ruta relativa:tamaño» de una carpeta (vacía si no existe), ordenada para poder compararla.
+function listTreeWithSizes(root) {
+  if (!fs.existsSync(root)) return [];
+  return fs.readdirSync(root, { recursive: true, withFileTypes: true })
+    .filter((item) => item.isFile())
+    .map((item) => {
+      const file = path.join(item.parentPath, item.name);
+      return `${path.relative(root, file).split(path.sep).join('/')}:${fs.statSync(file).size}`;
+    })
+    .sort();
+}
+
+function sha256OfFile(file) {
+  return fs.existsSync(file) ? createHash('sha256').update(fs.readFileSync(file)).digest('hex') : null;
+}
+
+// Mide las fichas de la Biblioteca que importan para la comprobación (todo en una sola lectura del DOM).
+function measureLibraryCards(page) {
+  return page.evaluate((skillId) => {
+    const card = (id) => document.querySelector(`[data-library-entry="${id}"]`);
+    const skill = card(skillId);
+    return {
+      entradas: document.querySelectorAll('[data-library-entry]').length,
+      tipo: skill?.querySelector('[data-library-kind]')?.textContent?.trim() ?? null,
+      version: (skill?.textContent ?? '').includes('2.2.3'),
+      licencia: (skill?.textContent ?? '').includes('MIT'),
+      codexBloqueo: skill?.querySelector('[data-library-engine="codex"]')?.getAttribute('data-library-block') ?? null,
+      exaClaude: card('exa-mcp')?.querySelector('[data-library-engine="claude"]')?.getAttribute('data-library-block') ?? null,
+      eccEjecutaCodigo: card('ecc')?.querySelector('[data-library-runs-code]') != null,
+    };
+  }, LIBRARY_SKILL_ID);
+}
+
+// Abre la vista previa de la skill, espera al diálogo y devuelve las rutas de los ficheros que enseña.
+async function openLibraryPreview(page) {
+  const dialog = page.locator(`[data-library-preview="${LIBRARY_SKILL_ID}"]`);
+  await page.locator(`[data-library-entry="${LIBRARY_SKILL_ID}"] [data-library-action="preview"]`).click();
+  await dialog.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+  await dialog.locator('[data-library-preview-file]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+  return dialog.locator('[data-library-preview-file]').evaluateAll((nodes) => nodes.map((node) => node.getAttribute('data-library-preview-file') ?? ''));
+}
+
 const CHECKS = [
   {
     name: 'La ventana principal arranca',
@@ -9133,6 +9182,69 @@ const CHECKS = [
     },
   },
   {
+    // Carril P (P03): la sección «Biblioteca» de Configuración, contra una cuenta de Claude de PRUEBA dentro del perfil
+    // aislado (MAGE_TEST_LIBRARY_CLAUDE_DIR). Mide las fichas, que la vista previa no escribe nada, y que instalar y
+    // quitar una skill deja en disco lo esperado y lo borra. No lanza ningún CLI ni pulsa Enter. Abre Configuración y la
+    // cierra (error 5 de la skill); autosuficiente con --only=Biblioteca (error 8).
+    name: 'Biblioteca: fichas, vista previa sin efectos, instalar y quitar en una cuenta de prueba',
+    async run(page, { userDataDir }) {
+      const fixtureRoot = path.join(userDataDir, 'library-fixture');
+      const capabilitiesRoot = path.join(userDataDir, 'capabilities');
+      const skillDir = path.join(fixtureRoot, LIBRARY_FIXTURE_ACCOUNT_SUFFIX, 'skills', LIBRARY_SKILL_ID);
+      const entry = page.locator(`[data-library-entry="${LIBRARY_SKILL_ID}"]`);
+      await openSettingsDialog(page);
+      try {
+        await page.locator(MODAL).first().getByRole('tab', { name: /Biblioteca/ }).click();
+        const picker = page.locator('[data-library-account]');
+        await picker.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const fixtureValue = await picker.locator('option').evaluateAll(
+          (options, suffix) => options.map((option) => option.value).find((value) => value.endsWith(suffix)) ?? null,
+          LIBRARY_FIXTURE_ACCOUNT_SUFFIX,
+        );
+        if (fixtureValue === null) return { ok: false, detail: 'sin cuenta de prueba: falta MAGE_TEST_LIBRARY_CLAUDE_DIR' };
+        await picker.selectOption(fixtureValue);
+        await entry.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const fichas = await measureLibraryCards(page);
+        const fichasOk = fichas.entradas >= LIBRARY_MIN_ENTRIES && fichas.tipo === 'Skill' && fichas.version && fichas.licencia
+          && fichas.codexBloqueo === 'codexSkillsUnmeasured' && fichas.exaClaude === 'needsSecrets' && fichas.eccEjecutaCodigo;
+
+        // Sin efectos: abrir la vista previa y cancelarla no cambia ni un fichero.
+        const antes = [...listTreeWithSizes(fixtureRoot), '--', ...listTreeWithSizes(capabilitiesRoot)];
+        const rutas = (await openLibraryPreview(page)).map((ruta) => ruta.split('\\').join('/'));
+        const previewFiles = rutas.length === 2 && rutas.some((r) => r.endsWith(`${LIBRARY_SKILL_ID}/SKILL.md`)) && rutas.some((r) => r.endsWith('/LICENSE'));
+        const despues = [...listTreeWithSizes(fixtureRoot), '--', ...listTreeWithSizes(capabilitiesRoot)];
+        const dialog = page.locator(`[data-library-preview="${LIBRARY_SKILL_ID}"]`);
+        await dialog.getByRole('button', { name: 'Cancelar', exact: true }).click();
+        await dialog.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+        const sinEfectos = JSON.stringify(antes) === JSON.stringify(despues);
+
+        // Instalar: solo desde dentro de la vista previa.
+        await openLibraryPreview(page);
+        await dialog.locator('[data-library-action="install"]').click();
+        await page.locator('[data-library-notice="done"]').waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        await dialog.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+        await page.locator(`[data-library-entry="${LIBRARY_SKILL_ID}"][data-library-status="installed"]`).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const skillSha = sha256OfFile(path.join(skillDir, 'SKILL.md'));
+        const licenseSha = sha256OfFile(path.join(skillDir, 'LICENSE'));
+        const instalada = skillSha === LIBRARY_SKILL_SHA256 && licenseSha === LIBRARY_LICENSE_SHA256;
+
+        // Quitar: el estado de la ficha llega tras recargar la vista, o sea con la acción ya aplicada.
+        await entry.locator('[data-library-action="remove"]').click();
+        await page.locator(`[data-library-entry="${LIBRARY_SKILL_ID}"][data-library-status="none"]`).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const registro = readIfExists(path.join(capabilitiesRoot, 'library.json'));
+        const instalaciones = registro === null ? null : JSON.parse(registro).installs;
+        const quitada = !fs.existsSync(path.join(skillDir, 'SKILL.md')) && !fs.existsSync(path.join(skillDir, 'LICENSE'))
+          && Array.isArray(instalaciones) && instalaciones.length === 0;
+
+        const ok = fichasOk && previewFiles && sinEfectos && instalada && quitada;
+        return { ok, detail: `fichas=${JSON.stringify(fichas)} previewFicheros=${previewFiles} sinEfectos=${sinEfectos} instalada=${instalada} skillSha=${skillSha} licenseSha=${licenseSha} quitada=${quitada} installs=${JSON.stringify(instalaciones)}` };
+      } finally {
+        await page.keyboard.press('Escape');
+        await page.locator(MODAL).first().waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+      }
+    },
+  },
+  {
     // Grupo 0 (0.1.2, ficha D11 de P-032): UN turno minimo de verdad, de punta a punta — teclear, Enter,
     // proceso del CLI, respuesta pintada. Es la unica comprobacion que envia: todas las demas miden sin
     // gastar. Contra Claude con el modelo y el esfuerzo mas bajos; si la cuenta lleva gastado mas del
@@ -11163,6 +11275,9 @@ function launchApp(userDataDir, extraEnv = {}) {
     env: {
       ...process.env,
       MAGE_SKIP_MODEL_PROBE: '1',
+      // La biblioteca instala en una cuenta de Claude de PRUEBA dentro del perfil aislado, nunca en una real (el harness no
+      // aísla el HOME). Solo la lee una app sin empaquetar.
+      MAGE_TEST_LIBRARY_CLAUDE_DIR: path.join(userDataDir, 'library-fixture', '.claude-vglib'),
       MAGE_MCP_FAKE_SOURCES: mcpFakeSourcesDir(userDataDir),
       MAGE_MCP_FAKE_CLI: '1',
       // MAGE_GH_FAKE: el PR y el CI salen de un `gh` falso en proceso; nunca se lanza el real.

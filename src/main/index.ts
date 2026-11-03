@@ -114,6 +114,13 @@ import type { AccountCreateParams, AccountInfo, AccountProviderId, AgyLoginStart
 import { BASE_ARGS as CLAUDE_BASE_ARGS, ClaudeAdapter } from './engine/claudeAdapter';
 import { probeModelCatalogs, type ProbeProcess } from './engine/modelProbe';
 import { registerMcpIpc } from './config/mcpIpc';
+import { execFileRunner } from './capabilities/commandRunner';
+import { nodeCapabilityFs } from './capabilities/capabilityFs';
+import type { CapabilityEngine } from './capabilities/capabilityPackage';
+import { bundledContents, loadBundledCatalog } from './capabilities/catalog/libraryCatalog';
+import { registerLibraryIpc } from './capabilities/library/libraryIpc';
+import { LibraryService, type LibraryAccount } from './capabilities/library/libraryService';
+import { decideTestLibraryClaudeDir, testLibraryAccounts } from './capabilities/library/testLibraryAccount';
 import { resolveClaudeDesktopDirs, type McpAccountLocation } from './config/mcpInventory';
 import { probeMcpStatuses } from './config/mcpStatusProbe';
 import { authenticateMcp } from './config/mcpAuthFlow';
@@ -3608,6 +3615,40 @@ function registerSharedIpc1(): void {
   });
 }
 
+// Biblioteca de capacidades (F6): perezosa porque depende de app.getPath('userData').
+let librarySingleton: LibraryService | null = null;
+
+function codexBinaryOrThrow(): string {
+  const binary = findCodexBinary();
+  if (binary === null) throw new UserFacingError(localized('errors.capabilities.cliMissing', { engine: 'codex' }));
+  return binary;
+}
+
+function libraryAccounts(): readonly LibraryAccount[] {
+  const real = listAllAccounts().flatMap((a): LibraryAccount[] =>
+    a.providerId === 'claude' || a.providerId === 'codex' ? [{ configDir: a.configDir, engine: a.providerId satisfies CapabilityEngine }] : [],
+  );
+  const userDataDir = app.getPath('userData');
+  return [...real, ...testLibraryAccounts(decideTestLibraryClaudeDir({ env: process.env, isPackaged: app.isPackaged, userDataDir }))];
+}
+
+function getLibraryService(): LibraryService {
+  librarySingleton ??= new LibraryService({
+    catalog: loadBundledCatalog(),
+    contentsOf: bundledContents,
+    fs: nodeCapabilityFs(),
+    userDataDir: app.getPath('userData'),
+    platform: process.platform,
+    caseInsensitivePaths: process.platform === 'win32' || process.platform === 'darwin',
+    listAccounts: libraryAccounts,
+    binaryFor: (engine) => (engine === 'claude' ? resolveClaudeBinary() : codexBinaryOrThrow()),
+    runner: execFileRunner,
+    baseEnv: () => process.env,
+    isCommandAvailable: isCommandOnPath,
+  });
+  return librarySingleton;
+}
+
 function registerPromptIpc1(deps: IpcDependencies): void {
   const { promptService } = deps;
   // MCP y conectores (P-028 puntos 5 y 34).
@@ -3633,6 +3674,10 @@ function registerPromptIpc1(deps: IpcDependencies): void {
     },
     authenticate: (accountDir, serverName) =>
       authenticateMcp({ spawnProbe: spawnMcpStatusProbe, openUrl: openMcpAuthUrl, timeoutMs: MCP_AUTH_TIMEOUT_MS, pollMs: MCP_AUTH_POLL_MS, exitGraceMs: MODEL_PROBE_EXIT_GRACE_MS }, accountDir, serverName),
+  });
+  registerLibraryIpc({
+    handle: (channel, listener) => ipcMain.handle(channel, listener as Parameters<typeof ipcMain.handle>[1]),
+    service: getLibraryService,
   });
   ipcMain.handle(IpcChannel.PromptImprove, (_e, params: ImprovePromptParams): Promise<string> =>
     promptService.improve(params.draft, params.accountDir),

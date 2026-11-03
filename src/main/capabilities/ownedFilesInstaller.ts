@@ -5,7 +5,7 @@
 // - instalar y actualizar son la misma operación, transaccional: `.stage-<id>` → renombrar conservando la versión
 //   anterior en `.prev-<id>` hasta verificar y guardar el registro.
 import { createHash } from 'node:crypto';
-import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { renameWithRetry } from '../os/renameRetry';
 import type { CapabilityFs } from './capabilityFs';
 import type { CapabilityEngine, CapabilityPackage } from './capabilityPackage';
@@ -28,6 +28,7 @@ export interface OwnedFilesRef {
   readonly packageId: string;
   readonly engine: CapabilityEngine;
   readonly scope: OwnershipScope;
+  readonly targetRoot: string;
 }
 
 export interface OwnedFilesTarget {
@@ -74,8 +75,21 @@ function pathKey(ctx: OwnedFilesContext, p: string): string {
   return ctx.caseInsensitivePaths ? resolved.toLowerCase() : resolved;
 }
 
-function isOwnEntry(entry: OwnershipEntry, ref: OwnedFilesRef): boolean {
-  return entry.packageId === ref.packageId && entry.engine === ref.engine && entry.scope === ref.scope;
+// Una entrada es de esta instalación solo si su fichero cuelga de la raíz de ESTA cuenta (H1 de la P01): la misma
+// skill instalada en dos cuentas comparte packageId, engine y scope.
+function isInsideRoot(ctx: OwnedFilesContext, root: string, absPath: string): boolean {
+  const rootKey = pathKey(ctx, root);
+  const prefix = rootKey.endsWith(sep) ? rootKey : `${rootKey}${sep}`;
+  return pathKey(ctx, absPath).startsWith(prefix);
+}
+
+function isOwnEntry(ctx: OwnedFilesContext, entry: OwnershipEntry, ref: OwnedFilesRef): boolean {
+  return (
+    entry.packageId === ref.packageId &&
+    entry.engine === ref.engine &&
+    entry.scope === ref.scope &&
+    isInsideRoot(ctx, ref.targetRoot, entry.absPath)
+  );
 }
 
 function errorMessage(cause: unknown): string {
@@ -136,7 +150,12 @@ function indexByPathKey(ctx: OwnedFilesContext, entries: readonly OwnershipEntry
 function findCollisions(ctx: OwnedFilesContext, registry: OwnershipRegistry, target: OwnedFilesTarget): OwnershipCollision[] {
   const index = indexByPathKey(ctx, registry.entries);
   const found = new Map<string, OwnershipCollision>();
-  const ref: OwnedFilesRef = { packageId: target.pkg.id, engine: target.engine, scope: target.scope };
+  const ref: OwnedFilesRef = {
+    packageId: target.pkg.id,
+    engine: target.engine,
+    scope: target.scope,
+    targetRoot: target.targetRoot,
+  };
   const check = (absPath: string, isExisting: boolean): void => {
     const key = pathKey(ctx, absPath);
     if (found.has(key)) return;
@@ -155,7 +174,7 @@ function findCollisions(ctx: OwnedFilesContext, registry: OwnershipRegistry, tar
 
 function isOwnAndIntact(ctx: OwnedFilesContext, entries: readonly OwnershipEntry[], ref: OwnedFilesRef, absPath: string): boolean {
   const hash = sha256Hex(ctx.fs.readFile(absPath));
-  return entries.some((entry) => isOwnEntry(entry, ref) && entry.sha256 === hash);
+  return entries.some((entry) => isOwnEntry(ctx, entry, ref) && entry.sha256 === hash);
 }
 
 function writeStage(ctx: OwnedFilesContext, stage: string, pkg: CapabilityPackage, contents: ReadonlyMap<string, Buffer>): void {
@@ -232,7 +251,7 @@ export function installOwnedFiles(
   const ref = { packageId: target.pkg.id, engine: target.engine, scope: target.scope, targetRoot: target.targetRoot };
   recoverInterruptedUpdate(ctx, ref);
   const registry = loadOwnershipRegistry(ctx.fs, ctx.registryPath);
-  const modified = findModified(ctx, registry.entries.filter((e) => isOwnEntry(e, ref)));
+  const modified = findModified(ctx, registry.entries.filter((e) => isOwnEntry(ctx, e, ref)));
   if (modified.length > 0) return { status: 'modifiedByUser', paths: modified };
   const collisions = findCollisions(ctx, registry, target);
   if (collisions.length > 0) return { status: 'collision', collisions };
@@ -240,14 +259,14 @@ export function installOwnedFiles(
   const paths = stagingPaths(target.targetRoot, target.pkg.id);
   prepareStage(ctx, paths, target, contents);
   const entries = buildEntries(target);
-  const kept = registry.entries.filter((e) => !isOwnEntry(e, ref));
+  const kept = registry.entries.filter((e) => !isOwnEntry(ctx, e, ref));
   commit(ctx, target, paths, { ...registry, entries: [...kept, ...entries] });
   return { status: 'installed', entries };
 }
 
 export function uninstallOwnedFiles(ctx: OwnedFilesContext, ref: OwnedFilesRef): UninstallOwnedResult {
   const registry = loadOwnershipRegistry(ctx.fs, ctx.registryPath);
-  const own = registry.entries.filter((e) => isOwnEntry(e, ref));
+  const own = registry.entries.filter((e) => isOwnEntry(ctx, e, ref));
   if (own.length === 0) return { status: 'notInstalled' };
   const modified = findModified(ctx, own);
   if (modified.length > 0) return { status: 'modifiedByUser', paths: modified };
@@ -255,19 +274,19 @@ export function uninstallOwnedFiles(ctx: OwnedFilesContext, ref: OwnedFilesRef):
   // Los directorios que queden vacíos no se borran: lo propio son los ficheros.
   const removed = own.map((e) => e.absPath).filter((p) => ctx.fs.exists(p));
   for (const path of removed) ctx.fs.removeFile(path);
-  saveOwnershipRegistry(ctx.fs, ctx.registryPath, { ...registry, entries: registry.entries.filter((e) => !isOwnEntry(e, ref)) });
+  saveOwnershipRegistry(ctx.fs, ctx.registryPath, { ...registry, entries: registry.entries.filter((e) => !isOwnEntry(ctx, e, ref)) });
   return { status: 'uninstalled', removed };
 }
 
 // Limpia los restos de una actualización interrumpida: un stage nunca se publicó; un `.prev` con el registro y los
 // ficheros nuevos intactos es una actualización ya confirmada, y sin ellos hay que volver a la versión anterior.
-export function recoverInterruptedUpdate(ctx: OwnedFilesContext, ref: OwnedFilesRef & { readonly targetRoot: string }): RecoveryOutcome {
+export function recoverInterruptedUpdate(ctx: OwnedFilesContext, ref: OwnedFilesRef): RecoveryOutcome {
   const paths = stagingPaths(ref.targetRoot, ref.packageId);
   if (ctx.fs.exists(paths.stage)) ctx.fs.removeTree(paths.stage);
   if (!ctx.fs.exists(paths.previous)) return 'clean';
 
   const registry = loadOwnershipRegistry(ctx.fs, ctx.registryPath);
-  const own = registry.entries.filter((e) => isOwnEntry(e, ref));
+  const own = registry.entries.filter((e) => isOwnEntry(ctx, e, ref));
   if (own.length > 0 && own.every((e) => isIntact(ctx, e))) {
     ctx.fs.removeTree(paths.previous);
     return 'committed';

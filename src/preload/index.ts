@@ -329,6 +329,9 @@ const api: MageApi = {
   },
   installUpdate: () => ipcRenderer.invoke(IpcChannel.UpdateInstall),
   checkForUpdates: () => ipcRenderer.invoke(IpcChannel.UpdateCheck),
+  libraryView: () => ipcRenderer.invoke(IpcChannel.LibraryView),
+  libraryPreview: (target) => ipcRenderer.invoke(IpcChannel.LibraryPreview, target),
+  libraryApply: (params) => ipcRenderer.invoke(IpcChannel.LibraryApply, params),
 };
 
 contextBridge.exposeInMainWorld('mage', api);

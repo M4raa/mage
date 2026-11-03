@@ -16,6 +16,7 @@ import { useWorkbenchStore } from '../workbenchStore';
 import { usePanelLayoutStore } from '../panelLayoutStore';
 import { HooksPermissionsSection } from './settings/HooksPermissionsSection';
 import { KeepAliveSection } from './settings/KeepAliveSection';
+import { LibrarySection } from './settings/LibrarySection';
 import { McpSection } from './settings/McpSection';
 import { ProvidersSection } from './settings/ProvidersSection';
 import { ThemeMarketSection } from './settings/ThemeMarketSection';
@@ -43,6 +44,7 @@ type SectionKey =
   | 'appearance'
   | 'widget'
   | 'mcp'
+  | 'library'
   | 'hooksPermissions'
   | 'trustedFolders'
   | 'keybindings'
@@ -69,6 +71,7 @@ const SECTIONS = [
   { key: 'keybindings', group: 'settings.groups.appearance', icon: 'keyboard', nav: 'settings.sections.keybindings.nav', title: 'settings.sections.keybindings.title' },
   { key: 'providers', group: 'settings.groups.agents', icon: 'plug', nav: 'settings.sections.providers.nav', title: 'settings.sections.providers.title' },
   { key: 'mcp', group: 'settings.groups.agents', icon: 'puzzle', nav: 'settings.sections.mcp.nav', title: 'settings.sections.mcp.title' },
+  { key: 'library', group: 'settings.groups.agents', icon: 'import', nav: 'settings.sections.library.nav', title: 'settings.sections.library.title' },
   { key: 'hooksPermissions', group: 'settings.groups.security', icon: 'hook', nav: 'settings.sections.hooksPermissions.nav', title: 'settings.sections.hooksPermissions.title' },
   { key: 'trustedFolders', group: 'settings.groups.security', icon: 'shield', nav: 'settings.sections.trustedFolders.nav', title: 'settings.sections.trustedFolders.title' },
   // «Acerca de» va la ULTIMA y en su propio grupo: no es un ajuste, es donde viven los avisos de
@@ -218,6 +221,7 @@ function SettingsDialog(): React.JSX.Element {
             {section === 'providers' && <ProvidersSection />}
             {section === 'widget' && <WidgetSection enabled={widgetEnabled} onChange={setWidgetEnabled} />}
             {section === 'mcp' && <McpSection />}
+            {section === 'library' && <LibrarySection />}
             {section === 'hooksPermissions' && <HooksPermissionsSection />}
             {section === 'trustedFolders' && <TrustedFoldersSection />}
             {section === 'storage' && <StorageSection retention={scratchRetention} onChange={setScratchRetention} />}

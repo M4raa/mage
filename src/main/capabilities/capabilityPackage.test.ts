@@ -176,6 +176,32 @@ describe('parseCapabilityPackage', () => {
     expect(() => parseCapabilityPackage(raw)).toThrow(/source no puede empezar/);
   });
 
+  it('parseCapabilityPackage_pluginWithRef_keepsRef', () => {
+    // Arrange
+    const raw = {
+      ...validSkill(),
+      kind: 'plugin',
+      files: [],
+      native: { type: 'plugin', name: 'p', marketplace: { name: 'm', source: 'https://example.com/m.git', ref: 'v2.2.3' } },
+    };
+    // Act
+    const pkg = parseCapabilityPackage(raw);
+    // Assert
+    expect(pkg.native?.type === 'plugin' && pkg.native.marketplace.ref).toBe('v2.2.3');
+  });
+
+  it('parseCapabilityPackage_refStartingWithDash_throws', () => {
+    // Arrange
+    const raw = {
+      ...validSkill(),
+      kind: 'plugin',
+      files: [],
+      native: { type: 'plugin', name: 'p', marketplace: { name: 'm', source: 'owner/repo', ref: '-x' } },
+    };
+    // Act / Assert
+    expect(() => parseCapabilityPackage(raw)).toThrow();
+  });
+
   it('parseCapabilityPackage_longValue_truncatesPreview', () => {
     // Arrange
     const raw = { id: 'x'.repeat(1000) };

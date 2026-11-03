@@ -16,9 +16,24 @@ export interface NativeCommand {
   readonly args: readonly string[];
 }
 
+export function configDirEnvVar(engine: CapabilityEngine): 'CLAUDE_CONFIG_DIR' | 'CODEX_HOME' {
+  return engine === 'claude' ? 'CLAUDE_CONFIG_DIR' : 'CODEX_HOME';
+}
+
 const USER_SCOPE = ['--scope', 'user'] as const;
 
 type ArgsList = readonly (readonly string[])[];
+type PluginMarketplace = Extract<NativeInstall, { type: 'plugin' }>['marketplace'];
+
+// Claude fija la versión de un marketplace git con «#<ref>» al final de la URL (sin medir de punta a punta en
+// 2.1.314: lo confirma el punto de control de la biblioteca).
+function marketplaceSourceForClaude(m: PluginMarketplace): string {
+  return m.ref === undefined ? m.source : `${m.source}#${m.ref}`;
+}
+
+function refFlag(m: PluginMarketplace): readonly string[] {
+  return m.ref === undefined ? [] : ['--ref', m.ref];
+}
 
 function selector(native: Extract<NativeInstall, { type: 'plugin' }>): string {
   return `${native.name}@${native.marketplace.name}`;
@@ -30,7 +45,7 @@ function claudeInstall(native: NativeInstall): ArgsList {
       return [['mcp', 'add', ...USER_SCOPE, '--transport', 'stdio', native.name, '--', native.command, ...native.args]];
     case 'plugin':
       return [
-        ['plugin', 'marketplace', 'add', native.marketplace.source],
+        ['plugin', 'marketplace', 'add', marketplaceSourceForClaude(native.marketplace)],
         ['plugin', 'install', selector(native), ...USER_SCOPE],
       ];
   }
@@ -42,7 +57,7 @@ function codexInstall(native: NativeInstall): ArgsList {
       return [['mcp', 'add', native.name, '--', native.command, ...native.args]];
     case 'plugin':
       return [
-        ['plugin', 'marketplace', 'add', native.marketplace.source],
+        ['plugin', 'marketplace', 'add', native.marketplace.source, ...refFlag(native.marketplace)],
         ['plugin', 'add', selector(native)],
       ];
   }
@@ -82,4 +97,13 @@ export function nativeListCommand(engine: CapabilityEngine, type: NativeInstall[
   if (type === 'plugin') return { engine, args: ['plugin', 'list', '--json'] };
   if (engine === 'codex') return { engine, args: CODEX_MCP_LIST_ARGS };
   return { engine, args: ['mcp', 'list'] };
+}
+
+// En Windows `npx` es un `npx.cmd`, y ni Claude ni Codex lanzan un .cmd por su nombre a secas: el servidor se
+// envuelve en `cmd /c`. Solo para los comandos de esta lista; el resto se lanza tal cual en cualquier sistema.
+const WINDOWS_CMD_SHIMS: ReadonlySet<string> = new Set(['npx']);
+
+export function withPlatformLauncher(native: NativeInstall, platform: NodeJS.Platform): NativeInstall {
+  if (native.type !== 'mcpStdio' || platform !== 'win32' || !WINDOWS_CMD_SHIMS.has(native.command)) return native;
+  return { ...native, command: 'cmd', args: ['/c', native.command, ...native.args] };
 }
