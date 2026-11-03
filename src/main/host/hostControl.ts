@@ -68,7 +68,7 @@ export function createHostControl(deps: HostControlDeps): HostControl {
 function createOnce(deps: HostControlDeps, receipts: Map<string, HostCreateResult>, request: HostCreateRequest): HostCreateResult {
   const previous = receipts.get(request.commandId);
   if (previous !== undefined) return previous;
-  const sessionId = deps.launch(resolveLaunchParams(deps, request));
+  const sessionId = deps.launch(resolveHostLaunchParams(deps, request));
   const result = { sessionId, conversationId: deps.conversationIdOf(sessionId) };
   receipts.set(request.commandId, result);
   if (receipts.size > MAX_CREATE_RECEIPTS) receipts.delete(receipts.keys().next().value as string);
@@ -76,7 +76,8 @@ function createOnce(deps: HostControlDeps, receipts: Map<string, HostCreateResul
 }
 
 // Valida la petición y resuelve cuenta, modelo y esfuerzo. La confianza la decide main, nunca `trust.acknowledged`.
-function resolveLaunchParams(deps: HostControlDeps, request: HostCreateRequest): CreateSessionParams {
+// La frontera de `session.create` (cuenta, modelo por defecto y confianza decidida por main), también para el MCP.
+export function resolveHostLaunchParams(deps: HostControlDeps, request: HostCreateRequest): CreateSessionParams {
   if (!isAbsolute(request.cwd)) throw new Error(`La carpeta tiene que ser una ruta absoluta: ${request.cwd}`);
   const account = deps.listAccounts().find((a) => a.configDir === request.accountId && a.providerId === request.provider);
   if (account === undefined) throw new UnknownAccountError(request.accountId, request.provider);

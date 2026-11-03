@@ -8,6 +8,8 @@ import { readOnlyLockMessage } from '@shared/conversationLock';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { McpCallers } from './host/mcpCallers';
 import { codexHomeHasMageServer } from './mcpServer/registrationStatus';
+import { DelegationLog } from './mcpServer/delegationLog';
+import { HostSessionsPort } from './mcpServer/hostSessionsPort';
 import { execFile, spawn, spawnSync, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import {
   appendFileSync,
@@ -224,7 +226,9 @@ import { AdoptableSessions } from './host/adoptableSessions';
 import { closeFromWindow as closeSessionFromWindow, toAttachTarget, WindowAttachments } from './host/windowAttachments';
 import { readHostMode, startLocalHost } from './host/hostBootstrap';
 import { cliRelayArgs, cliRelayPlan } from './host/cliRelay';
-import { createHostControl } from './host/hostControl';
+import { createHostControl, resolveHostLaunchParams } from './host/hostControl';
+import type { HostControlDeps } from './host/hostControl';
+import { HOST_SESSION_PROVIDERS } from './host/hostProtocol';
 import type { HostMode, HostServerHandle } from './host/hostServer';
 import { HOST_STOP_DELAY_MS } from './host/hostStop';
 import { HEADLESS_GUI_UNAVAILABLE, isHeadlessHost, lockFailureMessage, startupWarnings } from './startupMode';
@@ -2699,6 +2703,8 @@ const adoptableSessions = new AdoptableSessions();
 // D-M6: credencial por sesion que identifica al hijo ante `mage mcp`.
 const mcpCallers = new McpCallers({ randomBytes, isLive: (id) => sessionCoordinator.ownerOf(id) !== undefined });
 const windowAttachments = new WindowAttachments({ coordinator: sessionCoordinator, eventChannel: EVENT_CHANNEL });
+// D-M11: registro de main de las delegadas del MCP (uno para todas las conexiones).
+const delegationLog = new DelegationLog({ coordinator: sessionCoordinator, now: Date.now });
 
 // Los ids vivos de una sesión del host; null si el coordinador ya no la sigue.
 function liveIdsOf(sessionId: string): { conversationId: string | null; nativeId: string | null } | null {
@@ -2708,13 +2714,13 @@ function liveIdsOf(sessionId: string): { conversationId: string | null; nativeId
 }
 
 // Una sesión del host (sin ventana): se lanza como siempre y queda adoptable por la ventana principal (U17).
-function launchHostSession(params: CreateSessionParams, origin: AdoptableSession['origin']): string {
+function launchHostSession(params: CreateSessionParams, origin: AdoptableSession['origin'], createdBy: { conversationId: string } | null = null): string {
   const { sessionId, configDir } = launchSession(params, null);
   const entry = {
     sessionId, provider: params.provider, accountId: params.accountDir, configDir, cwd: params.cwd, model: params.model,
     ...(params.effort === undefined ? {} : { effort: params.effort }),
     ...(params.permissionMode === undefined ? {} : { permissionMode: params.permissionMode }),
-    origin, createdBy: null,
+    origin, createdBy,
   };
   adoptableSessions.add(entry);
   const ids = liveIdsOf(sessionId);
@@ -2900,7 +2906,11 @@ function registerSessionIpc1(): void {
     validateAttachments,
     listAdoptable: () => adoptableSessions.list(liveIdsOf),
     attachWindow: (event, sessionId) => attachWindowToHostSession(event.sender, sessionId),
-    closeFromWindow: (event, sessionId) => closeSessionFromWindow({ attachments: windowAttachments, coordinator: sessionCoordinator }, event.sender.id, sessionId),
+    // D-M11: el registro de delegaciones es un suscriptor más del coordinador; no cuenta como cliente que mantenga viva la sesión.
+    closeFromWindow: (event, sessionId) => closeSessionFromWindow({
+      attachments: windowAttachments,
+      coordinator: { subscriberCount: (id) => sessionCoordinator.subscriberCount(id) - delegationLog.watchCount(id), close: (id) => sessionCoordinator.close(id) },
+    }, event.sender.id, sessionId),
     // Solo la ventana que creo la sesion y la principal le dan ordenes (F2.6).
     canControl: (senderId, sessionId) => canControlSession({
       ownerOf: (id) => sessionCoordinator.ownerOf(id),
@@ -3916,6 +3926,41 @@ if (runsHeadless && process.platform === 'linux' && !app.commandLine.hasSwitch('
 
 // El host local (F2.6): terminal, widget y MCP hablan con el por un socket privado. Vive en los dos modos.
 let localHost: HostServerHandle | null = null;
+// Las dependencias del host (terminal y MCP): la frontera de `session.create` es la misma para los dos.
+function hostControlDeps(): HostControlDeps {
+  return {
+    listAccounts: listAllAccounts,
+    listProjects: () => getSettingsStore().load().chatProjects,
+    defaultModels: () => getSettingsStore().load().defaultModelByProvider,
+    isTrusted: isFolderTrusted,
+    launch: (params) => launchHostSession(params, 'terminal'),
+    conversationIdOf: (sessionId) => sessionCoordinator.conversationIdOf(sessionId),
+    options: sessionManager,
+    createAccount: (params) => getProviderAccounts().create(params),
+    requestQuit: () => { setTimeout(() => app.quit(), HOST_STOP_DELAY_MS); },
+  };
+}
+
+// El puerto del MCP de UNA conexión (la M07 lo conecta): null si la sesión que llama aún no tiene conversationId.
+export function createHostSessionsPort(callerSessionId: string): HostSessionsPort | null {
+  const conversationId = sessionCoordinator.conversationIdOf(callerSessionId);
+  if (conversationId === null) return null;
+  const deps = hostControlDeps();
+  return new HostSessionsPort({
+    caller: { sessionId: callerSessionId, conversationId, accountId: sessionCoordinator.rewindContext(callerSessionId).accountDir },
+    log: delegationLog,
+    index: getConversationIndexStore(),
+    coordinator: sessionCoordinator,
+    accounts: () => listAllAccounts().filter((account) => (HOST_SESSION_PROVIDERS as readonly string[]).includes(account.providerId))
+      .map((account) => ({ id: account.configDir, provider: account.providerId })),
+    projects: () => getSettingsStore().load().chatProjects,
+    launch: (request, createdBy) => launchHostSession(resolveHostLaunchParams(deps, request), 'mcp', createdBy),
+    setTimer: (fn, ms) => {
+      const timer = setTimeout(fn, ms);
+      return () => clearTimeout(timer);
+    },
+  });
+}
 // Motivo por el que el host no arrancó (null si escucha): el renderer lo enseña como aviso persistente (H1, devolución 16).
 let hostFailure: Promise<LocalizedText | null> = Promise.resolve(null);
 function startHost(mode: HostMode): Promise<void> {
@@ -3928,17 +3973,7 @@ function startHost(mode: HostMode): Promise<void> {
     getuid: process.getuid?.bind(process),
     sessions: sessionCoordinator,
     rewind: createRewindCoordinator(),
-    control: createHostControl({
-      listAccounts: listAllAccounts,
-      listProjects: () => getSettingsStore().load().chatProjects,
-      defaultModels: () => getSettingsStore().load().defaultModelByProvider,
-      isTrusted: isFolderTrusted,
-      launch: (params) => launchHostSession(params, 'terminal'),
-      conversationIdOf: (sessionId) => sessionCoordinator.conversationIdOf(sessionId),
-      options: sessionManager,
-      createAccount: (params) => getProviderAccounts().create(params),
-      requestQuit: () => { setTimeout(() => app.quit(), HOST_STOP_DELAY_MS); },
-    }),
+    control: createHostControl(hostControlDeps()),
     hostVersion: app.getVersion(),
     log: mainLog,
     newId: randomUUID,
