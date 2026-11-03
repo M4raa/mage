@@ -2,7 +2,10 @@
 // Mide: las seis herramientas `mage_*`, el rechazo de un cliente sin sesión de Mage (M-U2) con y sin credencial
 // inventada, que con Mage parado `mage mcp` sale con 1 sin arrancar nada, y los tiempos de initialize y listTools.
 // Requiere `pnpm build` antes (out/main/index.js). Medido contra: protocolo del host 1.5, SDK MCP del repo.
-// Uso: node spike/mage-mcp-relay.mjs --out <fichero.json>
+// Uso: node spike/mage-mcp-relay.mjs --out <fichero.json> [--packaged <carpeta de win-unpacked>]
+// cp/M-06: con `--packaged` mide lo MISMO (r1-r4) desde el paquete: lanza `<carpeta>\Mage.exe --headless --user-data-dir <tmp>` y `mage mcp` como
+// `<carpeta>\Mage.exe <carpeta>\resources\cli\mage.mjs mcp --user-data-dir <tmp>` con ELECTRON_RUN_AS_NODE=1 (lo que registra `mageMcpLaunch`
+// empaquetado). Sin la opción, nada cambia.
 import { spawn, execFileSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -16,6 +19,7 @@ const repo = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const requireFromRepo = createRequire(join(repo, 'package.json'));
 const MAIN_ENTRY = join(repo, 'out', 'main', 'index.js');
 const MAGE_CLI = join(repo, 'scripts', 'mage-cli', 'mage.mjs');
+const PACKAGED_ENV = { ELECTRON_RUN_AS_NODE: '1' };
 const HOST_WAIT_MS = 30_000;
 const POLL_MS = 250;
 const EXIT_TIMEOUT_MS = 15_000;
@@ -28,6 +32,27 @@ const NO_HOST_TEXT_EN = 'Mage is not open: `mage mcp` only works from a Mage ses
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
 const nowMs = () => Number(process.hrtime.bigint() / 1_000_000n);
 
+// `--packaged <carpeta>`: el ejecutable del paquete (`Mage.exe` en Windows) y su `mage.mjs`; null sin la opción.
+function packagedLayout() {
+  const position = process.argv.indexOf('--packaged');
+  if (position === -1) return null;
+  const folder = process.argv[position + 1];
+  if (folder === undefined || folder.startsWith('--')) throw new Error('Uso: --packaged <carpeta de win-unpacked>');
+  const root = resolve(folder);
+  const executable = join(root, process.platform === 'win32' ? 'Mage.exe' : 'mage');
+  const cli = join(root, 'resources', 'cli', 'mage.mjs');
+  const missing = [executable, cli].filter((file) => !existsSync(file));
+  if (missing.length > 0) throw new Error(`El paquete no tiene: ${missing.join(', ')}`);
+  return { executable, cli };
+}
+
+// Cómo se lanza `mage mcp`: el script del repo con el node actual, o el del paquete con su Mage.exe como Node.
+function relayCommand(packaged, profile) {
+  const tail = ['mcp', '--user-data-dir', profile];
+  if (packaged === null) return { command: process.execPath, args: [MAGE_CLI, ...tail], env: {} };
+  return { command: packaged.executable, args: [packaged.cli, ...tail], env: PACKAGED_ENV };
+}
+
 function outPath() {
   const position = process.argv.indexOf('--out');
   const value = position === -1 ? undefined : process.argv[position + 1];
@@ -38,7 +63,8 @@ function outPath() {
 // PID de los procesos Electron cuyo perfil es `dir` (la línea de órdenes lleva --user-data-dir=<dir>).
 function profilePids(dir) {
   if (process.platform === 'win32') {
-    const script = `Get-CimInstance Win32_Process -Filter "Name='electron.exe'" | Where-Object { $_.CommandLine -like '*${dir.replaceAll("'", "''")}*' } | ForEach-Object { $_.ProcessId }`;
+    // El paquete se llama Mage.exe; el Electron del repo, electron.exe.
+    const script = `Get-CimInstance Win32_Process -Filter "Name='electron.exe' OR Name='Mage.exe'" | Where-Object { $_.CommandLine -like '*${dir.replaceAll("'", "''")}*' } | ForEach-Object { $_.ProcessId }`;
     const out = execFileSync('powershell', ['-NoProfile', '-Command', script], { encoding: 'utf8' });
     return out.split(/\r?\n/).filter(Boolean).map(Number).sort((a, b) => a - b);
   }
@@ -60,8 +86,9 @@ async function waitForHostFiles(runDir) {
   throw new Error(`El host no escribió sus ficheros en ${runDir} en ${HOST_WAIT_MS} ms`);
 }
 
-async function withMcpClient(profile, env, body) {
-  const transport = new StdioClientTransport({ command: process.execPath, args: [MAGE_CLI, 'mcp', '--user-data-dir', profile], env, stderr: 'pipe' });
+async function withMcpClient(packaged, profile, env, body) {
+  const relay = relayCommand(packaged, profile);
+  const transport = new StdioClientTransport({ command: relay.command, args: relay.args, env: { ...env, ...relay.env }, stderr: 'pipe' });
   const client = new Client({ name: 'mage-spike', version: '1' });
   const startedAt = nowMs();
   await client.connect(transport);
@@ -75,8 +102,8 @@ async function withMcpClient(profile, env, body) {
 
 const isExternalRejection = (result) => result.isError === true && JSON.stringify(result).includes('mage_external_caller');
 
-async function measureOpen(profile, env) {
-  return withMcpClient(profile, env, async (client, initializeMs) => {
+async function measureOpen(packaged, profile, env) {
+  return withMcpClient(packaged, profile, env, async (client, initializeMs) => {
     const listStart = nowMs();
     const { tools } = await client.listTools();
     const listToolsMs = nowMs() - listStart;
@@ -86,9 +113,10 @@ async function measureOpen(profile, env) {
 }
 
 // `mage mcp` con Mage parado: debe salir con 1, con el texto de mcpNoHost, sin crear procesos.
-function runRelayWithoutHost(profile) {
+function runRelayWithoutHost(packaged, profile) {
   return new Promise((resolveRun) => {
-    const child = spawn(process.execPath, [MAGE_CLI, 'mcp', '--user-data-dir', profile], { stdio: ['pipe', 'pipe', 'pipe'] });
+    const relay = relayCommand(packaged, profile);
+    const child = spawn(relay.command, relay.args, { env: { ...process.env, ...relay.env }, stdio: ['pipe', 'pipe', 'pipe'] });
     let stderr = '';
     let stdout = '';
     child.stderr.on('data', (chunk) => { stderr += chunk; });
@@ -100,30 +128,33 @@ function runRelayWithoutHost(profile) {
 
 async function main() {
   const out = outPath();
-  if (!existsSync(MAIN_ENTRY)) {
+  const packaged = packagedLayout();
+  if (packaged === null && !existsSync(MAIN_ENTRY)) {
     console.error(`No existe ${MAIN_ENTRY}: ejecuta «pnpm build» antes.`);
     process.exit(1);
   }
   const profile = mkdtempSync(join(tmpdir(), PROFILE_PREFIX));
-  const electron = requireFromRepo('electron');
-  const mage = spawn(electron, [MAIN_ENTRY, '--headless', `--user-data-dir=${profile}`], {
+  const mageCommand = packaged === null
+    ? { command: requireFromRepo('electron'), args: [MAIN_ENTRY, '--headless', `--user-data-dir=${profile}`] }
+    : { command: packaged.executable, args: ['--headless', '--user-data-dir', profile] };
+  const mage = spawn(mageCommand.command, mageCommand.args, {
     stdio: 'ignore', detached: process.platform !== 'win32', windowsHide: true,
   });
-  const report = { spike: 'mage-mcp-relay', checkpoint: 'cp/M-03', realTurns: 0, at: new Date().toISOString() };
+  const report = { spike: 'mage-mcp-relay', checkpoint: packaged === null ? 'cp/M-03' : 'cp/M-06', packaged: packaged !== null, realTurns: 0, at: new Date().toISOString() };
   try {
     await waitForHostFiles(join(profile, 'run'));
     const clean = { ...process.env };
     delete clean.MAGE_MCP_CALLER;
-    const known = await measureOpen(profile, clean);
+    const known = await measureOpen(packaged, profile, clean);
     report.r1 = { ok: JSON.stringify(known.toolNames) === JSON.stringify(EXPECTED_TOOLS), toolNames: known.toolNames };
     report.r2 = { ok: known.externalRejection };
-    const forged = await measureOpen(profile, { ...clean, MAGE_MCP_CALLER: FAKE_CALLER });
+    const forged = await measureOpen(packaged, profile, { ...clean, MAGE_MCP_CALLER: FAKE_CALLER });
     report.r3 = { ok: forged.externalRejection };
     report.tiempos = { initializeMs: known.initializeMs, listToolsMs: known.listToolsMs };
     killTree(mage.pid);
     await sleep(POLL_MS * 4);
     const before = profilePids(profile);
-    const run = await runRelayWithoutHost(profile);
+    const run = await runRelayWithoutHost(packaged, profile);
     const after = profilePids(profile);
     const textOk = run.stderr === NO_HOST_TEXT_ES || run.stderr === NO_HOST_TEXT_EN;
     report.r4 = { ok: run.code === 1 && textOk && run.stdout === '' && JSON.stringify(before) === JSON.stringify(after), exitCode: run.code, stderr: run.stderr, pidsBefore: before, pidsAfter: after };
