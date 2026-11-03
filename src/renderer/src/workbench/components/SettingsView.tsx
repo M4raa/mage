@@ -15,6 +15,7 @@ import type { AboutInfo } from '@shared/ipc';
 import { useWorkbenchStore } from '../workbenchStore';
 import { usePanelLayoutStore } from '../panelLayoutStore';
 import { HooksPermissionsSection } from './settings/HooksPermissionsSection';
+import { KeepAliveSection } from './settings/KeepAliveSection';
 import { McpSection } from './settings/McpSection';
 import { ProvidersSection } from './settings/ProvidersSection';
 import { ThemeMarketSection } from './settings/ThemeMarketSection';
@@ -595,6 +596,7 @@ function StorageSection({
       <CloseBehaviorControl />
       <GhNoticeControl />
       <ArtifactControl />
+      <KeepAliveSection />
     </div>
   );
 }

@@ -1614,6 +1614,18 @@ export interface MessageValues {
   readonly "settings.hooks.rulesHeading": { readonly "count": string | number };
   readonly "settings.hooks.storedIn.end": never;
   readonly "settings.hooks.storedIn.start": never;
+  readonly "settings.keepAlive.apiKey": never;
+  readonly "settings.keepAlive.apiKeyHint": never;
+  readonly "settings.keepAlive.label": never;
+  readonly "settings.keepAlive.maxPause": never;
+  readonly "settings.keepAlive.maxPauseHint": never;
+  readonly "settings.keepAlive.minContext": never;
+  readonly "settings.keepAlive.minContextHint": never;
+  readonly "settings.keepAlive.stats": { readonly "cost": string | number; readonly "count": number; readonly "read": string | number; readonly "written": string | number };
+  readonly "settings.keepAlive.statsNone": never;
+  readonly "settings.keepAlive.statsUnavailable": never;
+  readonly "settings.keepAlive.subscription": never;
+  readonly "settings.keepAlive.subscriptionHint": never;
   readonly "settings.keybindings.cancel": never;
   readonly "settings.keybindings.capturing": never;
   readonly "settings.keybindings.change": never;
