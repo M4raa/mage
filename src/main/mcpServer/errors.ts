@@ -8,6 +8,8 @@ export async function callPort<T>(operation: string, call: () => Promise<T>): Pr
   try {
     return await call();
   } catch (cause) {
+    // Un error de política que decide el puerto (alcance, confianza, llamante externo) llega al agente con su código.
+    if (cause instanceof MagePolicyError) throw cause;
     throw new MagePolicyError(`port_error: ${operation}`, { cause });
   }
 }

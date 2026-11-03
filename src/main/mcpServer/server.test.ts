@@ -7,6 +7,8 @@ import { MemorySessionsPort } from './memorySessionsPort';
 import { MemoryIdempotencyStore } from './idempotencyStore';
 import type { ConnectionScope } from './scope';
 import type { SessionMetadata } from './sessionsPort';
+import { MagePolicyError, callPort } from './errors';
+import { authorizeTarget, isSessionAllowed, scopeIdentity, snapshotScope } from './scope';
 
 const NOW = '2026-10-31T12:00:00.000Z';
 const REQUEST = '11111111-1111-4111-8111-111111111111';
@@ -293,5 +295,33 @@ describe('Mage MCP server', () => {
     await vi.waitFor(() => expect(acceptSend).toBeTypeOf('function'));
     acceptSend({ receipt: 'accepted' });
     expect((await delivery).structuredContent).toEqual({ receipt: 'accepted' });
+  });
+});
+
+describe('alcance sin restricción de proyecto (D-M7)', () => {
+  const anyProject = () => snapshotScope({ accountIds: ['a'] });
+  it('isSessionAllowed_nullProjects_anyProject', () => {
+    expect(isSessionAllowed(anyProject(), metadata({ projectId: 'whatever' }))).toBe(true);
+    expect(isSessionAllowed(anyProject(), metadata({ accountId: 'foreign' }))).toBe(false);
+  });
+  it('authorizeTarget_nullProjects_onlyAccountAndProvider', () => {
+    const target = { projectId: 'x', accountId: 'a', provider: 'claude' as const, cwd: '/c' };
+    expect(() => authorizeTarget(anyProject(), target, 'claude')).not.toThrow();
+    expect(() => authorizeTarget(anyProject(), { ...target, accountId: 'b' }, 'claude')).toThrow('scope_denied');
+    expect(() => authorizeTarget(anyProject(), target, 'codex')).toThrow('scope_denied');
+  });
+  it('scopeIdentity_nullProjects_keepsNull', () => {
+    expect(scopeIdentity(anyProject())).toMatchObject({ projectIds: null });
+    expect(scopeIdentity(snapshotScope({ projectIds: ['b', 'a'], accountIds: ['a'] }))).toMatchObject({ projectIds: ['a', 'b'] });
+  });
+});
+
+describe('callPort', () => {
+  it('callPort_policyError_rethrownAsIs', async () => {
+    const policy = new MagePolicyError('trust_required: /c');
+    await expect(callPort('op', () => Promise.reject(policy))).rejects.toBe(policy);
+  });
+  it('callPort_otherError_portError', async () => {
+    await expect(callPort('op', () => Promise.reject(new Error('boom')))).rejects.toThrow('port_error: op');
   });
 });
