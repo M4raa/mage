@@ -392,6 +392,7 @@
   "chat.instructions.open": "Open",
   "chat.instructions.scopeProject": "Project",
   "chat.instructions.scopeUser": "User",
+  "chat.keepAlive.rewindFailed": "A cache keep-alive message couldn't be removed; keep-alive is now off for this conversation.",
   "chat.load.failed": "Could not load the conversation: {error}",
   "chat.load.loading": "Loading conversation…",
   "chat.load.missing": "This {provider} conversation was not found. Open it from the account history.",

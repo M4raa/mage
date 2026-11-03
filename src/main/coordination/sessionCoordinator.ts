@@ -1,15 +1,21 @@
 import type { CreateSessionParams, SendMessageParams, SessionEventPayload } from '@shared/ipc';
 import type { MageEvent, PermissionDecision, PermissionRequest } from '@shared/events';
 import { foreignText, localized, localizedFromError, UserFacingError } from '@shared/i18n/localizedText';
+import { z } from 'zod';
 import { isUuid } from '@shared/sessionInput';
 import type { ElicitationAnswer } from '@shared/elicitation';
 import type { AnswerReceipt, CloseReceipt, ConversationId, ConversationSnapshot, CoordinatedState, MessageDelivery, NativeSessionRef, PendingRequest, QueuedMessage, SendReceipt } from '@shared/coordination';
 import { enqueueMessage, removeQueuedMessage, takeNextMessage, updateQueuedMessage } from '@shared/messageQueue';
 import { supportsSteer, writesClaudeTranscript } from '@shared/providers';
+import type { KeepAliveSettings } from '@shared/settings';
 import { automaticAnswer, automaticDecision, CREATE_PR_PROMPT, type AutomaticAnswer } from '@shared/permissionPolicy';
 import type { SessionManager } from '../engine/sessionManager';
 import type { SessionLogFn } from '../engine/agentSession';
 import type { EngineRequest } from '../engine/providerAdapter';
+import type { KeepAliveSample } from '../conversations/rewindStateStore';
+import { decideKeepAlive, KEEP_ALIVE_PROMPT, type KeepAliveDecision } from './keepAlivePolicy';
+import { keepAliveStep, type KeepAliveRun, type KeepAliveStep } from './keepAliveRun';
+import { ENGINE_REQUEST_TIMEOUT_MS } from './rewindCoordinator';
 
 // Coordinacion de sesiones, primer paso (F2.1, §3.5 del plan): un unico propietario en main que da a cada
 // evento su conversacion de Mage y una secuencia monotona, y mantiene una instantanea consultable de cada
@@ -77,6 +83,12 @@ export interface SessionCoordinatorDeps {
   // motor sin lanzar. Con ella main borra el corte pendiente de esa conversacion (A8): desde ese mensaje la hoja
   // nueva basta.
   readonly onUserMessageSent?: (nativeRef: NativeSessionRef) => void;
+  // Keep-alive de la cache de Claude (F4.6). Sin `keepAliveSettings` el keep-alive no existe.
+  readonly keepAliveSettings?: () => KeepAliveSettings;
+  // true si la cuenta (su config dir) factura por clave de API (U15: el keep-alive viene apagado para ellas).
+  readonly isApiKeyAccount?: (accountDir: string) => boolean;
+  // Un keep-alive acabo: lo que midio, si su rewind salio bien y el uuid del mensaje oculto (el corte pendiente).
+  readonly onKeepAliveDone?: (nativeRef: NativeSessionRef, sample: KeepAliveSample, rewound: boolean, kaUuid: string) => void;
 }
 
 export interface ConversationHold {
@@ -91,6 +103,8 @@ export const BACKGROUND_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 // Recibos recordados por sesion para deduplicar reintentos: los ultimos, no todos.
 const MAX_RECEIPTS = 100;
 
+const MS_PER_SECOND = 1_000;
+
 // Directo en vuelo (F4.1), por el id con el que lo conoce el motor. `settled` lo rellena su destino; si llega
 // DURANTE la llamada al motor (codex sin turno contesta en el acto), `send` lo devuelve como recibo.
 interface Steering {
@@ -98,6 +112,15 @@ interface Steering {
   readonly message: QueuedMessage;
   settled: MessageDelivery | null;
 }
+
+// Lo que lee el modelo cuando el keep-alive le deniega una herramienta (en castellano, como F-0293).
+const KEEP_ALIVE_TOOL_DENIED = 'El mantenimiento de la caché no usa herramientas.';
+
+// Respuesta de `rewind_conversation`: solo importa si se aplico.
+const REWIND_RESULT_SCHEMA = z.object({ rewound: z.boolean().optional() }).passthrough();
+
+// Eventos tras los que puede cambiar el plazo o la elegibilidad del keep-alive.
+const KEEP_ALIVE_RESCHEDULE_EVENTS: ReadonlySet<MageEvent['kind']> = new Set(['result', 'context_usage', 'queue_changed']);
 
 // Tipo de turno que rechaza directos cuando el motor no lo dice.
 const UNKNOWN_TURN_KIND = 'unknown';
@@ -136,6 +159,15 @@ interface Tracked {
   readonly idleWaiters: Set<() => void>;
   // Emite un evento propio de la coordinacion por el mismo camino que los del motor (con secuencia).
   emit: (event: MageEvent) => void;
+  // Keep-alive de la cache (F4.6): el que esta en vuelo (null si ninguno), si la sesion lo desactivo, su temporizador
+  // y lo ultimo que se sabe para decidir el siguiente.
+  keepAlive: KeepAliveRun | null;
+  keepAliveDisabled: boolean;
+  cancelKeepAlive: (() => void) | null;
+  lastRequestStartMs: number | null;
+  lastRealRequestStartMs: number | null;
+  cacheTtlMs: number | null;
+  contextTokens: number | null;
 }
 
 // Lo que necesita el rewind de una sesion viva (`rewindContext`).
@@ -163,6 +195,7 @@ export class SessionCoordinator {
       sessionId: '', provider: params.provider, accountDir: params.accountDir, cwd: params.cwd, conversationId: null, nativeRef: null, lastSeq: 0, state: 'starting',
       queue: [], receipts: new Map(), pending: new Map(), prGuard: false, steering: new Map(), notSteerable: null, cancelExpiry: null, ownerId: ownerId ?? null,
       listeners: new Set([{ sink, onClosed: () => undefined }]), historyMode: null, engineWaiters: new Map(), idleWaiters: new Set(), emit: () => undefined,
+      keepAlive: null, keepAliveDisabled: false, cancelKeepAlive: null, lastRequestStartMs: null, lastRealRequestStartMs: null, cacheTtlMs: null, contextTokens: null,
     };
     tracked.emit = (event) => this.relay(tracked, { sessionId: tracked.sessionId, event });
     const sessionId = this.deps.sessions.create(params, (payload) => this.relay(tracked, payload), ownerId);
@@ -207,6 +240,8 @@ export class SessionCoordinator {
     }
     if (tracked.queue.length > 0) this.setQueue(tracked, []);
     tracked.cancelExpiry?.();
+    tracked.cancelKeepAlive?.();
+    tracked.cancelKeepAlive = null;
     tracked.cancelExpiry = this.deps.setTimer(() => this.expire(tracked), BACKGROUND_TTL_MS);
     if (tracked.nativeRef !== null) this.deps.conversationHold?.hold(sessionId, tracked.nativeRef);
     return { background: true };
@@ -412,10 +447,14 @@ export class SessionCoordinator {
     if (event.kind === 'steer_result') return this.settleSteer(tracked, event);
     // La respuesta a una peticion al motor es interna: va a quien la pidio, no a los clientes.
     if (event.kind === 'engine_response') return this.settleEngineRequest(tracked, event);
+    // Un keep-alive en vuelo es oculto: sus eventos no salen, no tienen secuencia ni cambian el estado (salvo que muera).
+    if (tracked.keepAlive !== null && this.onKeepAliveEvent(tracked, event)) return;
     if (event.kind === 'permission_request' && this.answerAutomatically(tracked, event.request)) return;
     if (event.kind === 'session_init' && event.sessionId !== tracked.nativeRef?.nativeId) this.bind(tracked, event.sessionId);
     trackPending(tracked.pending, event);
+    const previousState = tracked.state;
     tracked.state = nextState(tracked.state, event, tracked.pending.size);
+    this.trackKeepAliveFacts(tracked, event);
     if (event.kind === 'thread_history') tracked.historyMode = event.mode;
     if (isAtRest(tracked.state)) this.releaseIdleWaiters(tracked);
     tracked.lastSeq += 1;
@@ -429,6 +468,150 @@ export class SessionCoordinator {
       if (tracked.cancelExpiry !== null) this.deps.conversationHold?.release(tracked.sessionId);
     }
     if (event.kind === 'session_restarting') this.failSteers(tracked);
+    const becameIdle = tracked.state === 'idle' && previousState !== 'idle';
+    if (becameIdle || KEEP_ALIVE_RESCHEDULE_EVENTS.has(event.kind)) this.scheduleKeepAlive(tracked);
+  }
+
+  // Lo que el keep-alive necesita saber de un turno real: cuando empezo su peticion, el TTL de su cache y el contexto.
+  private trackKeepAliveFacts(tracked: Tracked, event: MageEvent): void {
+    if (event.kind === 'request_started') {
+      tracked.lastRequestStartMs = this.deps.now();
+      tracked.lastRealRequestStartMs = tracked.lastRequestStartMs;
+    }
+    if (event.kind === 'result' && event.result.usage !== undefined) {
+      const ttlSeconds = event.result.usage.cacheTtlSeconds ?? null;
+      tracked.cacheTtlMs = ttlSeconds === null ? null : ttlSeconds * MS_PER_SECOND;
+    }
+    if (event.kind === 'context_usage') tracked.contextTokens = event.usage.totalTokens;
+  }
+
+  // Un evento del keep-alive en vuelo. true = consumido (no sigue el camino normal); false = el keep-alive murio y el
+  // evento (reinicio o error, reales) sigue a los clientes.
+  private onKeepAliveEvent(tracked: Tracked, event: MageEvent): boolean {
+    const run = tracked.keepAlive;
+    if (run === null) return false;
+    if (event.kind === 'request_started') {
+      // El keep-alive refresca la cache (INFORME-048), pero no es una peticion del usuario.
+      tracked.lastRequestStartMs = this.deps.now();
+      return true;
+    }
+    const { step, run: next } = keepAliveStep(run, event);
+    tracked.keepAlive = next;
+    this.applyKeepAliveStep(tracked, step);
+    return step.kind !== 'abort';
+  }
+
+  private applyKeepAliveStep(tracked: Tracked, step: KeepAliveStep): void {
+    switch (step.kind) {
+      case 'deny_permission':
+        this.guardKeepAlive(tracked, 'No se pudo denegar un permiso del keep-alive', () => this.deps.sessions.answerPermission(tracked.sessionId, step.requestId, { behavior: 'deny', message: KEEP_ALIVE_TOOL_DENIED }));
+        return;
+      case 'interrupt':
+        this.guardKeepAlive(tracked, 'No se pudo interrumpir el keep-alive', () => this.deps.sessions.interrupt(tracked.sessionId));
+        return;
+      case 'finish':
+        void this.finishKeepAlive(tracked, step);
+        return;
+      case 'abort':
+        tracked.keepAlive = null;
+        return;
+      case 'ignore':
+        return;
+    }
+  }
+
+  private guardKeepAlive(tracked: Tracked, message: string, action: () => void): void {
+    try {
+      action();
+    } catch (err) {
+      this.deps.log('warn', message, { sessionId: tracked.sessionId, error: describe(err) });
+    }
+  }
+
+  // El keep-alive acabo: se retira su par del historial con un rewind (objetivo y «ultimo visto» son su propio uuid).
+  // Un fallo apaga el keep-alive de la sesion y se avisa. Pase lo que pase, el turno oculto termina y la cola sigue.
+  private async finishKeepAlive(tracked: Tracked, step: Extract<KeepAliveStep, { kind: 'finish' }>): Promise<void> {
+    const run = tracked.keepAlive;
+    if (run === null || this.tracked.get(tracked.sessionId) !== tracked) return;
+    const rewound = await this.rewindKeepAlive(tracked, run.uuid);
+    const { usage, costMicroUsd } = step;
+    tracked.keepAlive = null;
+    tracked.state = 'idle';
+    if (!rewound) this.disableKeepAlive(tracked);
+    const sample: KeepAliveSample = { cacheReadTokens: usage?.cacheReadTokens ?? null, cacheCreationTokens: usage?.cacheCreationTokens ?? null, costMicroUsd };
+    this.notifyKeepAliveDone(tracked, sample, rewound, run.uuid);
+    this.drain(tracked);
+    this.scheduleKeepAlive(tracked);
+  }
+
+  private async rewindKeepAlive(tracked: Tracked, uuid: string): Promise<boolean> {
+    try {
+      const response = await this.engineRequest(tracked.sessionId, { kind: 'rewind_conversation', targetUuid: uuid, lastSeenUuid: uuid }, ENGINE_REQUEST_TIMEOUT_MS);
+      return response.ok && REWIND_RESULT_SCHEMA.parse(response.result).rewound === true;
+    } catch (err) {
+      this.deps.log('error', 'No se pudo retirar el mensaje del keep-alive', { sessionId: tracked.sessionId, error: describe(err) });
+      return false;
+    }
+  }
+
+  private disableKeepAlive(tracked: Tracked): void {
+    tracked.keepAliveDisabled = true;
+    this.deps.log('error', 'Keep-alive apagado en la sesion: su rewind fallo', { sessionId: tracked.sessionId });
+    tracked.emit({ kind: 'notice', localized: localized('chat.keepAlive.rewindFailed') });
+  }
+
+  private notifyKeepAliveDone(tracked: Tracked, sample: KeepAliveSample, rewound: boolean, kaUuid: string): void {
+    const { nativeRef } = tracked;
+    if (nativeRef === null || this.deps.onKeepAliveDone === undefined) return;
+    this.guardKeepAlive(tracked, 'onKeepAliveDone fallo', () => this.deps.onKeepAliveDone?.(nativeRef, sample, rewound, kaUuid));
+  }
+
+  // Programa el siguiente keep-alive (o lo envia ya si toca); siempre cancela el temporizador anterior. Sin ajustes
+  // inyectados, o con la sesion ya parada, no hay keep-alive.
+  private scheduleKeepAlive(tracked: Tracked): void {
+    tracked.cancelKeepAlive?.();
+    tracked.cancelKeepAlive = null;
+    if (this.tracked.get(tracked.sessionId) !== tracked) return;
+    const decision = this.decideKeepAliveFor(tracked);
+    if (decision?.kind === 'send') this.sendKeepAlive(tracked);
+    if (decision?.kind === 'wait') tracked.cancelKeepAlive = this.deps.setTimer(() => this.fireKeepAlive(tracked), decision.dueAtMs - this.deps.now());
+  }
+
+  // Solo con la sesion en reposo (`idle`): reiniciando, arrancando o en error tampoco se manda nada oculto.
+  private decideKeepAliveFor(tracked: Tracked): KeepAliveDecision | null {
+    const settings = this.deps.keepAliveSettings?.();
+    if (settings === undefined) return null;
+    return decideKeepAlive({
+      settings, provider: tracked.provider, isApiKeyAccount: this.deps.isApiKeyAccount?.(tracked.accountDir) ?? false,
+      hasClient: tracked.cancelExpiry === null, busy: tracked.state !== 'idle', queueLength: tracked.queue.length, pendingCount: tracked.pending.size,
+      steeringCount: tracked.steering.size, running: tracked.keepAlive !== null, disabled: tracked.keepAliveDisabled, contextTokens: tracked.contextTokens,
+      lastRequestStartMs: tracked.lastRequestStartMs, lastRealRequestStartMs: tracked.lastRealRequestStartMs, cacheTtlMs: tracked.cacheTtlMs, nowMs: this.deps.now(),
+    });
+  }
+
+  // Vencio el temporizador: se decide de nuevo (pudo cambiar algo) y solo con `send` se envia.
+  private fireKeepAlive(tracked: Tracked): void {
+    tracked.cancelKeepAlive = null;
+    if (this.tracked.get(tracked.sessionId) !== tracked) return;
+    if (this.decideKeepAliveFor(tracked)?.kind !== 'send') return this.scheduleKeepAlive(tracked);
+    this.sendKeepAlive(tracked);
+  }
+
+  // El mensaje oculto: con su propio uuid; el estado pasa a `running` para que un envio del usuario espere en la cola.
+  // No pasa por `notifyUserMessageSent`: no es un mensaje del usuario y no debe borrar el corte pendiente.
+  private sendKeepAlive(tracked: Tracked): void {
+    const uuid = this.deps.newId();
+    tracked.keepAlive = { uuid, interrupted: false };
+    tracked.state = 'running';
+    try {
+      this.deps.sessions.sendMessage(tracked.sessionId, KEEP_ALIVE_PROMPT, [], uuid);
+    } catch (err) {
+      tracked.keepAlive = null;
+      tracked.state = 'idle';
+      this.deps.log('warn', 'No se pudo enviar el keep-alive', { sessionId: tracked.sessionId, error: describe(err) });
+      return;
+    }
+    this.deps.log('info', 'Keep-alive enviado', { sessionId: tracked.sessionId, contextTokens: tracked.contextTokens, cacheTtlMs: tracked.cacheTtlMs });
   }
 
   // A todos los clientes, sobre una COPIA de la lista (un cliente puede soltarse mientras recibe). Un sumidero que
@@ -649,6 +832,8 @@ export class SessionCoordinator {
     if (tracked === undefined) return;
     tracked.cancelExpiry?.();
     tracked.cancelExpiry = null;
+    tracked.cancelKeepAlive?.();
+    tracked.cancelKeepAlive = null;
     this.tracked.delete(sessionId);
     this.deps.conversationHold?.release(sessionId);
     this.persist(tracked);

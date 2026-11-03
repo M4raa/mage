@@ -394,6 +394,7 @@ export interface MessageValues {
   readonly "chat.instructions.open": never;
   readonly "chat.instructions.scopeProject": never;
   readonly "chat.instructions.scopeUser": never;
+  readonly "chat.keepAlive.rewindFailed": never;
   readonly "chat.load.failed": { readonly "error": string | number };
   readonly "chat.load.loading": never;
   readonly "chat.load.missing": { readonly "provider": string | number };
