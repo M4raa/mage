@@ -18,6 +18,15 @@ describe('parseCliArgs', () => {
     expect(parseCliArgs(['stop'])).toEqual({ command: 'stop', force: false, userDataDir: null });
   });
 
+  it('parse_mcp_withUserDataDir', () => {
+    expect(parseCliArgs(['mcp', '--user-data-dir', '/tmp/p'])).toEqual({ command: 'mcp', userDataDir: '/tmp/p' });
+    expect(parseCliArgs(['mcp'])).toEqual({ command: 'mcp', userDataDir: null });
+  });
+
+  it('parse_mcp_unknownOption_error', () => {
+    expect(() => parseCliArgs(['mcp', '--force'])).toThrow('Opción desconocida: --force');
+  });
+
   it('parseCliArgs_stopForceYPerfil', () => {
     expect(parseCliArgs(['stop', '--force', '--user-data-dir', '/tmp/p'])).toEqual({ command: 'stop', force: true, userDataDir: '/tmp/p' });
   });

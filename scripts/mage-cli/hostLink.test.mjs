@@ -169,6 +169,43 @@ describe('verifyUnixEndpoint', () => {
   });
 });
 
+describe('createRpc.notify', () => {
+  it('notify_writesWithoutId', () => {
+    const socket = new FakeSocket();
+    const rpc = createRpc(socket);
+
+    rpc.notify('mcp.message', { message: { a: 1 } });
+
+    expect(JSON.parse(socket.writes[0])).toEqual({ jsonrpc: '2.0', method: 'mcp.message', params: { message: { a: 1 } } });
+  });
+});
+
+describe('connectVerified — cliente mcp', () => {
+  const CALLER = 'cd'.repeat(32);
+  const helloOf = async (client) => {
+    const socket = new FakeSocket();
+    socket.respond = (request) => {
+      if (request.method === 'host.challenge') socket.reply({ jsonrpc: '2.0', id: request.id, result: { proof: computeProof(TOKEN, request.params.nonce) } });
+      else socket.reply({ jsonrpc: '2.0', id: request.id, result: HELLO_RESULT });
+    };
+    await connectVerified({ userDataDir: 'C:\\perfil', clientVersion: 't', deps: deps(socket), client });
+    return JSON.parse(socket.writes[1]).params;
+  };
+
+  it('connectVerified_mcpClientWithCaller_helloHasCaller', async () => {
+    const params = await helloOf({ kind: 'mcp', caller: CALLER });
+
+    expect(params.client).toEqual({ kind: 'mcp', version: 't' });
+    expect(params.caller).toBe(CALLER);
+  });
+
+  it.each(['XYZ', 'AB'.repeat(32), undefined])('connectVerified_badCaller_omitted_%s', async (caller) => {
+    const params = await helloOf({ kind: 'mcp', caller });
+
+    expect(params).not.toHaveProperty('caller');
+  });
+});
+
 describe('createRpc', () => {
   it('createRpc_mensajeMultibytePartidoEnDosTrozos_seLeeEntero', async () => {
     const socket = new FakeSocket();

@@ -3,6 +3,7 @@ import { parseChatArgs } from './chatArgs.mjs';
 
 const PROVIDERS = ['claude', 'codex'];
 const STOP_USAGE = 'Uso: mage stop [--force] [--user-data-dir <dir>]';
+const MCP_USAGE = 'Uso: mage mcp [--user-data-dir <dir>]';
 const ACCOUNT_USAGE = 'Uso: mage account add --provider claude|codex --name <nombre> [--user-data-dir <dir>]';
 const HELP_WORDS = new Set(['help', '--help', '-h']);
 
@@ -34,6 +35,11 @@ function parseStop(rest) {
   return { command: 'stop', force: options.force === true, userDataDir: options.userDataDir ?? null };
 }
 
+function parseMcp(rest) {
+  const options = readOptions(rest, { valueOptions: new Map([['--user-data-dir', 'userDataDir']]), flags: new Map(), usage: MCP_USAGE });
+  return { command: 'mcp', userDataDir: options.userDataDir ?? null };
+}
+
 function parseAccountAdd(rest) {
   const options = readOptions(rest, {
     valueOptions: new Map([['--provider', 'provider'], ['--name', 'name'], ['--user-data-dir', 'userDataDir']]),
@@ -51,6 +57,7 @@ export function parseCliArgs(argv) {
   if (first === undefined || HELP_WORDS.has(first)) return { command: 'help' };
   if (first === 'chat') return { command: 'chat', ...parseChatArgs(argv) };
   if (first === 'stop') return parseStop(argv.slice(1));
+  if (first === 'mcp') return parseMcp(argv.slice(1));
   if (first === 'account' && second === 'add') return parseAccountAdd(argv.slice(2));
   if (first === 'account') throw new Error(`Uso: mage account add --provider claude|codex --name <nombre>; se recibió «${String(second)}»`);
   throw new Error(`Comando desconocido: ${first}. Escribe «mage help».`);
