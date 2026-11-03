@@ -2,6 +2,7 @@ import type { ConversationLockParams, ConversationLockRef } from '@shared/conver
 import { contextBridge, ipcRenderer, webFrame } from 'electron';
 import {
   EVENT_CHANNEL,
+  SESSION_ADOPTABLE_CHANNEL,
   IpcChannel,
   JUMP_LIST_OPEN_CHANNEL,
   TRANSCRIPT_BATCH_CHANNEL,
@@ -64,6 +65,7 @@ import type {
   RewindApplyParams,
   DivergeParams,
   SessionEventPayload,
+  AdoptableSession,
   SetModelParams,
   SetEffortParams,
   StopTaskParams,
@@ -107,6 +109,8 @@ const api: MageApi = {
   stop: (sessionId: string) => ipcRenderer.invoke(IpcChannel.SessionStop, sessionId),
   closeSession: (sessionId: string) => ipcRenderer.invoke(IpcChannel.SessionClose, sessionId),
   getSessionSnapshot: (sessionId: string) => ipcRenderer.invoke(IpcChannel.SessionSnapshot, sessionId),
+  listAdoptableSessions: () => ipcRenderer.invoke(IpcChannel.SessionsAdoptable),
+  attachSession: (sessionId: string) => ipcRenderer.invoke(IpcChannel.SessionAttach, sessionId),
   getScratchDir: () => ipcRenderer.invoke(IpcChannel.SessionGetScratchDir),
   getScratchRoot: () => ipcRenderer.invoke(IpcChannel.SessionGetScratchRoot),
   getScratchRoots: () => ipcRenderer.invoke(IpcChannel.SessionGetScratchRoots),
@@ -196,6 +200,11 @@ const api: MageApi = {
     const handler = (_: unknown, payload: SessionEventPayload) => listener(payload);
     ipcRenderer.on(EVENT_CHANNEL, handler);
     return () => ipcRenderer.removeListener(EVENT_CHANNEL, handler);
+  },
+  onSessionAdoptable: (listener: (session: AdoptableSession) => void) => {
+    const handler = (_: unknown, session: AdoptableSession) => listener(session);
+    ipcRenderer.on(SESSION_ADOPTABLE_CHANNEL, handler);
+    return () => ipcRenderer.removeListener(SESSION_ADOPTABLE_CHANNEL, handler);
   },
   openTranscript: (transcriptId: string, params: OpenTranscriptParams) => ipcRenderer.invoke(IpcChannel.TranscriptOpen, transcriptId, params),
   cancelTranscript: (transcriptId: string) => ipcRenderer.invoke(IpcChannel.TranscriptCancel, transcriptId),

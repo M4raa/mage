@@ -869,6 +869,29 @@ describe('SessionCoordinator — varios clientes por sesión (F2.6, H2 de la dev
     expect(other.events.map((e) => e.seq)).toEqual([2]);
   });
 
+  it('subscriberCount_afterCreate_isZero', () => {
+    const h = harness();
+
+    expect(h.coordinator.subscriberCount(h.create())).toBe(0);
+  });
+
+  it('subscriberCount_twoSubscribersThenOneLeaves_isOne', () => {
+    const h = harness();
+    const id = h.create();
+    const first = h.coordinator.subscribe(id, listener().listener);
+    h.coordinator.subscribe(id, listener().listener);
+
+    first.unsubscribe();
+
+    expect(h.coordinator.subscriberCount(id)).toBe(1);
+  });
+
+  it('subscriberCount_unknownSession_throws', () => {
+    const h = harness();
+
+    expect(() => h.coordinator.subscriberCount('nope')).toThrow();
+  });
+
   it('unsubscribe_dejaDeRecibir_yEsIdempotente', () => {
     const h = harness();
     const id = h.create();

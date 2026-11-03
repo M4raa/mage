@@ -52,6 +52,7 @@ import {
 import {
   CLOSE_PROMPT_CHANNEL,
   EVENT_CHANNEL,
+  SESSION_ADOPTABLE_CHANNEL,
   IpcChannel,
   JUMP_LIST_OPEN_CHANNEL,
   MODEL_CATALOG_CHANGED_CHANNEL,
@@ -70,6 +71,7 @@ import {
 import type {
   ModelCatalogChange,
   CreateSessionParams,
+  AdoptableSession,
   CreateSessionResult,
   HandoffPromptParams,
   JumpListOpenPayload,
@@ -215,6 +217,9 @@ import { RewindCoordinator } from './coordination/rewindCoordinator';
 import { RewindStateStore } from './conversations/rewindStateStore';
 import { readActiveBranchEntries } from './transcripts/activeBranchReader';
 import { canControlSession } from './coordination/sessionAccess';
+import type { ConversationSnapshot } from '@shared/coordination';
+import { AdoptableSessions } from './host/adoptableSessions';
+import { closeFromWindow as closeSessionFromWindow, toAttachTarget, WindowAttachments } from './host/windowAttachments';
 import { readHostMode, startLocalHost } from './host/hostBootstrap';
 import { cliRelayArgs, cliRelayPlan } from './host/cliRelay';
 import { createHostControl } from './host/hostControl';
@@ -2671,6 +2676,38 @@ function launchSession(params: CreateSessionParams, sender: Electron.WebContents
     return { sessionId, configDir, ...(recreated ? { workspaceWarning: localized('events.workspace.scratchRecreatedKept', { path: params.cwd }) } : {}) };
   }
 
+// U17: sesiones del host (sin ventana) que la ventana principal puede adoptar, y quién sigue cuál.
+const adoptableSessions = new AdoptableSessions();
+const windowAttachments = new WindowAttachments({ coordinator: sessionCoordinator, eventChannel: EVENT_CHANNEL });
+
+// Los ids vivos de una sesión del host; null si el coordinador ya no la sigue.
+function liveIdsOf(sessionId: string): { conversationId: string | null; nativeId: string | null } | null {
+  if (sessionCoordinator.ownerOf(sessionId) === undefined) return null;
+  const snapshot = sessionCoordinator.snapshot(sessionId);
+  return { conversationId: snapshot.conversationId, nativeId: snapshot.nativeRef?.nativeId ?? null };
+}
+
+// Una sesión del host (sin ventana): se lanza como siempre y queda adoptable por la ventana principal (U17).
+function launchHostSession(params: CreateSessionParams, origin: AdoptableSession['origin']): string {
+  const { sessionId, configDir } = launchSession(params, null);
+  const entry = {
+    sessionId, provider: params.provider, accountId: params.accountDir, configDir, cwd: params.cwd, model: params.model,
+    ...(params.effort === undefined ? {} : { effort: params.effort }),
+    ...(params.permissionMode === undefined ? {} : { permissionMode: params.permissionMode }),
+    origin, createdBy: null,
+  };
+  adoptableSessions.add(entry);
+  const ids = liveIdsOf(sessionId);
+  if (ids !== null) liveMainWindow()?.webContents.send(SESSION_ADOPTABLE_CHANNEL, { ...entry, ...ids });
+  return sessionId;
+}
+
+// Adoptar solo vale para sesiones del host: una con ventana ya tiene su dueño.
+function attachWindowToHostSession(sender: Electron.WebContents, sessionId: string): ConversationSnapshot {
+  if (!adoptableSessions.has(sessionId)) throw new Error(`SessionAttach: la sesión ${sessionId} no es del host`);
+  return windowAttachments.attach(toAttachTarget(sender), sessionId);
+}
+
 // Divergir: la sesion ya esta creada; anotar de quien nacio no debe tumbarla si el disco falla.
 function recordClaudeFork(childId: string, parentId: string): void {
   try {
@@ -2841,6 +2878,9 @@ function registerSessionIpc1(): void {
     rewind: createRewindCoordinator(),
     createSession: createSessionFromIpc,
     validateAttachments,
+    listAdoptable: () => adoptableSessions.list(liveIdsOf),
+    attachWindow: (event, sessionId) => attachWindowToHostSession(event.sender, sessionId),
+    closeFromWindow: (event, sessionId) => closeSessionFromWindow({ attachments: windowAttachments, coordinator: sessionCoordinator }, event.sender.id, sessionId),
     // Solo la ventana que creo la sesion y la principal le dan ordenes (F2.6).
     canControl: (senderId, sessionId) => canControlSession({
       ownerOf: (id) => sessionCoordinator.ownerOf(id),
@@ -3873,7 +3913,7 @@ function startHost(mode: HostMode): Promise<void> {
       listProjects: () => getSettingsStore().load().chatProjects,
       defaultModels: () => getSettingsStore().load().defaultModelByProvider,
       isTrusted: isFolderTrusted,
-      launch: (params) => launchSession(params, null).sessionId,
+      launch: (params) => launchHostSession(params, 'terminal'),
       conversationIdOf: (sessionId) => sessionCoordinator.conversationIdOf(sessionId),
       options: sessionManager,
       createAccount: (params) => getProviderAccounts().create(params),

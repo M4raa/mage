@@ -1,6 +1,7 @@
 import type { IpcMainInvokeEvent } from 'electron';
 import { IpcChannel } from '@shared/ipc';
-import type { CreateSessionParams, CreateSessionResult, ImageAttachment } from '@shared/ipc';
+import type { AdoptableSession, CreateSessionParams, CreateSessionResult, ImageAttachment } from '@shared/ipc';
+import type { CloseReceipt, ConversationSnapshot } from '@shared/coordination';
 import {
   ANSWER_PERMISSION_SCHEMA,
   parseSessionInput,
@@ -39,7 +40,7 @@ export interface SessionIpcDeps {
   readonly handle: IpcRegister;
   readonly sessions: SessionCommands;
   readonly coordinator: Pick<SessionCoordinator,
-    'send' | 'interrupt' | 'removeQueued' | 'updateQueued' | 'takeQueue' | 'answerPermission' | 'answerElicitation' | 'stop' | 'close' | 'snapshot'>;
+    'send' | 'interrupt' | 'removeQueued' | 'updateQueued' | 'takeQueue' | 'answerPermission' | 'answerElicitation' | 'stop' | 'snapshot'>;
   // Rewind, Reintentar y Divergir (F4.4/F4.5): planifica y aplica el orquestador de main.
   readonly rewind: Pick<RewindCoordinator, 'plan' | 'apply' | 'diverge'>;
   readonly createSession: (event: IpcMainInvokeEvent, params: CreateSessionParams) => CreateSessionResult;
@@ -50,6 +51,10 @@ export interface SessionIpcDeps {
   // que la coordinación no sigue se deja pasar: el coordinador contesta «Sesion inexistente», que es la
   // ausencia idempotente que ya esperan los clientes.
   readonly canControl: (senderId: number, sessionId: string) => boolean;
+  // U17: sesiones del host que la ventana puede adoptar, adoptar una y cerrar su pestaña sin cortar a otros clientes.
+  readonly listAdoptable: () => readonly AdoptableSession[];
+  readonly attachWindow: (event: IpcMainInvokeEvent, sessionId: string) => ConversationSnapshot;
+  readonly closeFromWindow: (event: IpcMainInvokeEvent, sessionId: string) => CloseReceipt;
 }
 
 export function registerSessionIpc(deps: SessionIpcDeps): void {
@@ -89,7 +94,9 @@ export function registerSessionIpc(deps: SessionIpcDeps): void {
   registerRewind(deps, authorize);
   registerSessionOptions(deps, authorize);
   handle(IpcChannel.SessionStop, (event, sessionId) => coordinator.stop(authorizeId(event, IpcChannel.SessionStop, sessionId)));
-  handle(IpcChannel.SessionClose, (event, sessionId) => coordinator.close(authorizeId(event, IpcChannel.SessionClose, sessionId)));
+  handle(IpcChannel.SessionClose, (event, sessionId) => deps.closeFromWindow(event, authorizeId(event, IpcChannel.SessionClose, sessionId)));
+  handle(IpcChannel.SessionsAdoptable, () => deps.listAdoptable());
+  handle(IpcChannel.SessionAttach, (event, sessionId) => deps.attachWindow(event, authorizeId(event, IpcChannel.SessionAttach, sessionId)));
   handle(IpcChannel.SessionSnapshot, (event, sessionId) => coordinator.snapshot(authorizeId(event, IpcChannel.SessionSnapshot, sessionId)));
   handle(IpcChannel.SessionGetScratchDir, () => deps.newScratchDir());
 }

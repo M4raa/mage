@@ -39,6 +39,9 @@ function setup(over: Partial<SessionIpcDeps> = {}) {
     validateAttachments: vi.fn().mockReturnValue([]),
     newScratchDir: vi.fn().mockReturnValue('/scratch/x'),
     canControl: vi.fn().mockReturnValue(true),
+    listAdoptable: vi.fn().mockReturnValue([]),
+    attachWindow: vi.fn().mockReturnValue({ sessionId: 's1', lastSeq: 3 }),
+    closeFromWindow: vi.fn((_event: IpcMainInvokeEvent, sessionId: string) => coordinator.close(sessionId)),
     ...over,
   };
   registerSessionIpc(deps);
@@ -55,9 +58,9 @@ describe('registerSessionIpc', () => {
     const { handlers } = setup();
 
     expect([...handlers.keys()].sort()).toEqual([
-      IpcChannel.SessionAnswerElicitation, IpcChannel.SessionAnswerPermission, IpcChannel.SessionClose, IpcChannel.SessionCreate, IpcChannel.SessionDiverge, IpcChannel.SessionGetScratchDir,
+      IpcChannel.SessionAnswerElicitation, IpcChannel.SessionAnswerPermission, IpcChannel.SessionClose, IpcChannel.SessionAttach, IpcChannel.SessionCreate, IpcChannel.SessionDiverge, IpcChannel.SessionGetScratchDir,
       IpcChannel.SessionInterrupt, IpcChannel.SessionQueueRemove, IpcChannel.SessionQueueTake, IpcChannel.SessionQueueUpdate, IpcChannel.SessionRewindApply, IpcChannel.SessionRewindPlan, IpcChannel.SessionSendMessage, IpcChannel.SessionSetEffort, IpcChannel.SessionSetModel,
-      IpcChannel.SessionSetPermissionMode, IpcChannel.SessionSnapshot, IpcChannel.SessionStop, IpcChannel.SessionStopTask,
+      IpcChannel.SessionSetPermissionMode, IpcChannel.SessionSnapshot, IpcChannel.SessionStop, IpcChannel.SessionStopTask, IpcChannel.SessionsAdoptable,
     ].sort());
   });
 
@@ -146,6 +149,43 @@ describe('registerSessionIpc', () => {
     expect(invoke(IpcChannel.SessionClose, 's1')).toEqual({ background: true });
     expect(coordinator.close).toHaveBeenCalledWith('s1');
   });
+
+  it('sessionClose_routesThroughCloseFromWindow', () => {
+    const closeFromWindow = vi.fn().mockReturnValue({ background: false });
+    const { coordinator, invoke } = setup({ closeFromWindow });
+
+    expect(invoke(IpcChannel.SessionClose, 's1')).toEqual({ background: false });
+    expect(closeFromWindow).toHaveBeenCalledWith(expect.objectContaining({ sender: { id: 7 } }), 's1');
+    expect(coordinator.close).not.toHaveBeenCalled();
+  });
+
+  it('sessionAttach_mainWindow_callsAttachWindow', () => {
+    const { deps, invoke } = setup();
+
+    expect(invoke(IpcChannel.SessionAttach, 's1')).toEqual({ sessionId: 's1', lastSeq: 3 });
+    expect(deps.attachWindow).toHaveBeenCalledWith(expect.objectContaining({ sender: { id: 7 } }), 's1');
+  });
+
+  it('sessionAttach_otherWindowOnUnownedSession_rejected', () => {
+    const { deps, invoke } = setup({ canControl: vi.fn().mockReturnValue(false) });
+
+    expect(() => invoke(IpcChannel.SessionAttach, 's1')).toThrow(/no controla la sesión s1/);
+    expect(deps.attachWindow).not.toHaveBeenCalled();
+  });
+
+  it('sessionAttach_invalidId_rejected', () => {
+    const { deps, invoke } = setup();
+
+    expect(() => invoke(IpcChannel.SessionAttach, { sessionId: 's1' })).toThrow(new RegExp(IpcChannel.SessionAttach));
+    expect(deps.attachWindow).not.toHaveBeenCalled();
+  });
+
+  it('sessionsAdoptable_returnsList', () => {
+    const list = [{ sessionId: 's1' }];
+    const { invoke } = setup({ listAdoptable: vi.fn().mockReturnValue(list) });
+
+    expect(invoke(IpcChannel.SessionsAdoptable)).toBe(list);
+  });
 });
 
 describe('registerSessionIpc — frontera de entrada (F2.6, H3 de la devolución 14)', () => {
@@ -163,6 +203,7 @@ describe('registerSessionIpc — frontera de entrada (F2.6, H3 de la devolución
     [IpcChannel.SessionStop, 's1'],
     [IpcChannel.SessionClose, 's1'],
     [IpcChannel.SessionSnapshot, 's1'],
+    [IpcChannel.SessionAttach, 's1'],
   ] as const;
 
   it.each(LISTENING)('%s_sesionDeOtraVentana_lanzaSinLlegarAlCoordinador', (channel, arg) => {
