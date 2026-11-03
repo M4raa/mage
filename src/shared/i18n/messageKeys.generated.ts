@@ -346,6 +346,9 @@ export interface MessageValues {
   readonly "chat.copy.error": never;
   readonly "chat.copy.failed": { readonly "error": string | number };
   readonly "chat.copy.userMessage": never;
+  readonly "chat.delegation.awaitingCreator": { readonly "title": string | number };
+  readonly "chat.delegation.awaitingCreatorClosed": never;
+  readonly "chat.delegation.awaitingCreatorTip": never;
   readonly "chat.delegation.createdBy": { readonly "title": string | number };
   readonly "chat.delegation.creatorClosed": never;
   readonly "chat.diverge.action": never;

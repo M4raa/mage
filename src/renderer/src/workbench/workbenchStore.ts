@@ -3200,6 +3200,9 @@ export function reduceEvent(state: WorkbenchState, tabId: string, event: MageEve
     // la pestaña dijera «Manual» con el CLI en otro modo (P-026 2.3).
     case 'permission_mode':
       return { tabs: state.tabs.map((t) => (t.id === tabId ? { ...t, permissionMode: event.mode } : t)) };
+    // U26: la delegada espera (o ya no) la respuesta de su creadora; lo pinta el chip de ChatInfoBar.
+    case 'delegation_waiting':
+      return { tabs: state.tabs.map((t) => (t.id === tabId ? { ...t, awaitingCreator: event.waiting } : t)) };
     case 'error': {
       const next = appendErrorBlock(closeStreaming(blocks, streamingId), renderLocalized(t, event.localized), nextBlockId(), event.deniedCommand);
       return {

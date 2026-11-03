@@ -71,6 +71,7 @@ export function ChatInfoBar(): React.JSX.Element | null {
         <span className="truncate">{folder!.label}</span>
       </button>
       <CreatorChip tabId={tabId} />
+      <AwaitingCreatorChip tabId={tabId} />
       <GitChips tabId={tabId} cwd={tab.cwd} />
       <PrBar tabId={tabId} />
       {rest.map((chip) => (
@@ -121,6 +122,21 @@ function CreatorChip({ tabId }: { readonly tabId: string }): React.JSX.Element |
     <button onClick={goToCreator} data-creator-chip data-tip={label} aria-label={label} className={`${CHIP_CLASS} transition-colors duration-150 ease-out hover:bg-mg-hover hover:text-mg-body`}>
       <span className="truncate">{label}</span>
     </button>
+  );
+}
+
+// U26: la delegada preguntó a su creadora y espera. Solo informa: el usuario puede contestar aquí (mensaje normal).
+function AwaitingCreatorChip({ tabId }: { readonly tabId: string }): React.JSX.Element | null {
+  const tab = useWorkbenchStore((s) => s.tabs.find((t) => t.id === tabId));
+  const creator = useWorkbenchStore(useShallow((s) => (tab === undefined ? null : creatorTabOf(s, tab))));
+  const t = useT();
+  if (tab?.awaitingCreator !== true) return null;
+  const label = creator === null ? t('chat.delegation.awaitingCreatorClosed') : t('chat.delegation.awaitingCreator', { title: creator.title });
+  const tip = t('chat.delegation.awaitingCreatorTip');
+  return (
+    <span data-awaiting-creator-chip aria-label={label} data-tip={tip} className={`${CHIP_CLASS} cursor-help border-mg-border-subtle`}>
+      <span className="truncate">{label}</span>
+    </span>
   );
 }
 
