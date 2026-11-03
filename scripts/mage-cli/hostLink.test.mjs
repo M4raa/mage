@@ -64,7 +64,7 @@ describe('hostLink', () => {
     expect(first.method).toBe('host.challenge');
     expect(second.method).toBe('hello');
     expect(second.params.token).toBe(TOKEN);
-    expect(second.params.protocol).toBe('1.2');
+    expect(second.params.protocol).toBe('1.3');
     expect(hello).toEqual(HELLO_RESULT);
   });
 

@@ -40,6 +40,13 @@ files:
   # externalizado, habra que dejarlo fuera del bundle y quitarlo de esta exclusion.
   - '!node_modules/**'
 
+# Cliente de terminal (F7.4) FUERA del asar, en `resources/cli`: lo ejecuta el propio Electron en modo Node
+# (`ELECTRON_RUN_AS_NODE`) y no depende de que ese modo cargue ESM desde dentro del asar. Sin tests ni spikes.
+extraResources:
+  - from: scripts/mage-cli
+    to: cli
+    filter: ['*.mjs', '!*.test.mjs', '!spikes/**']
+
 # Auto-update por GitHub Releases (B2). Esto hace dos cosas: genera `latest.yml` junto al instalador
 # (los metadatos que electron-updater consulta) y mete `app-update.yml` en el bundle (de donde el
 # updater saca owner/repo en runtime).
@@ -68,6 +75,15 @@ win:
       arch: [x64]
   # .ico MULTI-TAMAÑO: los tamaños pequeños llevan el glifo simplificado, nitido a 16 px.
   icon: resources/brand/icon.ico
+  # Lanzador `mage` (F7.4): `resources\bin` es la carpeta que el instalador NSIS añade al PATH del usuario.
+  extraResources:
+    - from: resources/bin
+      to: bin
+      filter: ['mage.cmd']
+    # Lo usa el instalador NSIS para añadir o quitar `resources\bin` del PATH del usuario (U9).
+    - from: resources/installer
+      to: installer
+      filter: ['mage-path.ps1']
 
 msi:
   oneClick: false
@@ -75,6 +91,8 @@ msi:
   createDesktopShortcut: true
   createStartMenuShortcut: true
   shortcutName: Mage
+  # Sin PATH (F7.4): la plantilla WiX de electron-builder no tiene enganche para variables de entorno; el .msi es para
+  # despliegues por directiva, donde el PATH lo pone el administrador. Lleva igualmente resources\bin\mage.cmd.
   artifactName: mage-${version}.${ext}
 
 nsis:
@@ -89,9 +107,11 @@ nsis:
   artifactName: mage-${version}.${ext}
   # Aspecto de Mage (grupo B de la 0.1.2): `installerSidebar.bmp`, `installerHeader.bmp` (los genera
   # `pnpm icons`) e `installer.nsh` (colores y textos propios) se recogen solos de resources/brand por su
-  # nombre. Solo en castellano, como la app: sin esto el asistente sigue al idioma de Windows. Ojo, NO
-  # `multiLanguageInstaller: false`: electron-builder 26 lo traduce a «solo en_US» e ignora la lista.
-  installerLanguages: [es_ES]
+  # nombre. Castellano e inglés (F3.7): el asistente pregunta el idioma al empezar (`displayLanguageSelector`) y Mage
+  # hereda esa elección en su primer arranque. Ojo, NO `multiLanguageInstaller: false`: electron-builder 26 lo
+  # traduce a «solo en_US» e ignora la lista.
+  installerLanguages: [es_ES, en_US]
+  displayLanguageSelector: true
 
 mac:
   target:
@@ -117,9 +137,21 @@ linux:
   icon: resources/brand/linux
   synopsis: Wrapper multiagentico y multi-proveedor sobre agentes de codigo
   artifactName: mage-${version}-${arch}.${ext}
+  # Lanzador `mage` (F7.4): el deb enlaza /usr/bin/mage a este script (after-install propio, abajo). El AppImage
+  # no tiene PATH: `Mage.AppImage --cli <argumentos>`.
+  extraResources:
+    - from: resources/bin
+      to: bin
+      filter: ['mage']
 
 # F1.8 (H4 b): el `Exec` del AppImage SIN `--no-sandbox` (sin esto electron-builder lo pone por defecto en
 # la toolset heredada). Ojo: su `AppRun` generado lo sigue añadiendo SOLO si `unshare -Ur true` falla
 # (namespaces de usuario restringidos); no es configurable.
 appImage:
   executableArgs: []
+
+# /usr/bin/mage = lanzador de la terminal, no la app gráfica (F7.4). El rpm se genera sin garantía, con el mismo script.
+deb:
+  afterInstall: resources/bin/linux-after-install.tpl
+rpm:
+  afterInstall: resources/bin/linux-after-install.tpl

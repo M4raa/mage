@@ -11,6 +11,7 @@ import { MAX_LINE_BYTES, NdjsonFramer } from './ndjsonFramer';
 import { TrustRequiredError, UnknownAccountError, UnknownConversationError, UnsupportedMethodError } from './hostErrors';
 import type { HostControl } from './hostControl';
 import type { HostMode } from './hostServer';
+import { decideStop, type HostStopResult } from './hostStop';
 import {
   CHALLENGE_METHOD,
   CHALLENGE_PARAMS_SCHEMA,
@@ -25,7 +26,9 @@ import {
   protocolMismatch,
   REQUEST_ENVELOPE_SCHEMA,
   resultResponse,
+  SUBSCRIPTION_CLOSED_NOTIFICATION,
   withLegacyText,
+  type HostAccountCreateRequest,
   type HostCreateRequest,
   type HostErrorBody,
   type HostMethod,
@@ -59,6 +62,7 @@ export interface HostSessions {
   send(params: SendMessageParams): SendReceipt;
   interrupt(sessionId: string): readonly QueuedMessage[];
   removeQueued(sessionId: string, messageId: string): QueuedMessage | null;
+  updateQueued(sessionId: string, messageId: string, text: string): QueuedMessage | null;
   answerPermission(sessionId: string, requestId: string, decision: PermissionDecision): AnswerReceipt;
   answerElicitation(answer: ElicitationAnswer): AnswerReceipt;
 }
@@ -252,6 +256,12 @@ export class HostConnection {
         const target = params as { sessionId: string; queuedId: string };
         return { removed: sessions.removeQueued(target.sessionId, target.queuedId) };
       }
+      case 'session.updateQueued': {
+        const target = params as { sessionId: string; queuedId: string; text: string };
+        return { updated: sessions.updateQueued(target.sessionId, target.queuedId, target.text) };
+      }
+      case 'host.stop': return this.stop((params as { force?: boolean } | undefined)?.force === true);
+      case 'accounts.create': return { account: control.createApiAccount(params as HostAccountCreateRequest) };
       default: throw new UnsupportedMethodError(method);
     }
   }
@@ -263,13 +273,20 @@ export class HostConnection {
     return live;
   }
 
+  // `mage stop` (U18, tabla D4): la decisión es pura; aquí solo se pide la salida si toca.
+  private stop(force: boolean): HostStopResult {
+    const result = decideStop({ mode: this.deps.mode, force, sessions: this.deps.sessions.listSessions() });
+    if (result.outcome === 'stopping') this.deps.control.requestQuit();
+    return result;
+  }
+
   // La instantánea y los eventos siguientes van juntos: todo lo posterior a `snapshot.lastSeq` llega como
   // notificación `event`, sin huecos ni repeticiones (el coordinador entrega síncrono).
   private subscribe(sessionId: string): { subscriptionId: string; snapshot: ConversationSnapshot } {
     const subscriptionId = this.deps.newId();
     const { snapshot, unsubscribe } = this.deps.sessions.subscribe(sessionId, {
       sink: (event) => this.pushEvent(subscriptionId, event),
-      onClosed: () => this.endSubscription(subscriptionId),
+      onClosed: () => this.onSessionClosed(subscriptionId),
     });
     this.subscriptions.set(subscriptionId, unsubscribe);
     return { subscriptionId, snapshot };
@@ -285,6 +302,14 @@ export class HostConnection {
     this.subscriptions.delete(subscriptionId);
     unsubscribe();
     return true;
+  }
+
+  // La sesión terminó en el host: se suelta la suscripción y se avisa al cliente (1.3), que si no se enteraría
+  // solo al siguiente envío. Una suscripción ya soltada no avisa dos veces.
+  private onSessionClosed(subscriptionId: string): void {
+    if (!this.endSubscription(subscriptionId)) return;
+    if (this.phase !== 'ready') return;
+    this.transport.write(notification(SUBSCRIPTION_CLOSED_NOTIFICATION, { subscriptionId }));
   }
 
   private pushEvent(subscriptionId: string, event: SequencedSessionEvent): void {

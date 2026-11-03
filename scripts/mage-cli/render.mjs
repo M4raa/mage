@@ -1,5 +1,5 @@
 // Pintado de los eventos del host en la terminal (F7.3): evento -> texto para stdout, o `null` si no se pinta.
-// Puro. `permission_request` lo trata el controlador, no esta tabla.
+// Puro. `permission_request` y `elicitation_request` los trata el controlador, no esta tabla.
 
 const RENDERERS = {
   stream_delta: (event) => event.text,
@@ -11,7 +11,6 @@ const RENDERERS = {
   queued_message_failed: (event, m) => `${m.queuedFailed(event.error ?? '')}\n`,
   permission_resolved: (event, m) => `${m.permissionAnswered(event.behavior)}\n`,
   background_expired: (_event, m) => `${m.expired()}\n`,
-  elicitation_request: (_event, m) => `${m.answerInMage()}\n`,
 };
 
 export function renderEvent(event, messages) {

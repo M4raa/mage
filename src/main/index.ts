@@ -216,8 +216,10 @@ import { RewindStateStore } from './conversations/rewindStateStore';
 import { readActiveBranchEntries } from './transcripts/activeBranchReader';
 import { canControlSession } from './coordination/sessionAccess';
 import { readHostMode, startLocalHost } from './host/hostBootstrap';
+import { cliRelayArgs, cliRelayPlan } from './host/cliRelay';
 import { createHostControl } from './host/hostControl';
 import type { HostMode, HostServerHandle } from './host/hostServer';
+import { HOST_STOP_DELAY_MS } from './host/hostStop';
 import { HEADLESS_GUI_UNAVAILABLE, isHeadlessHost, lockFailureMessage, startupWarnings } from './startupMode';
 import { registerConversationPrefsIpc } from './coordination/conversationPrefsIpc';
 import { SessionCoordinator } from './coordination/sessionCoordinator';
@@ -225,6 +227,7 @@ import { ProjectFileService, resolveProjectFilePath } from './files/projectFileS
 import { resolvedPath } from './os/resolvedPath';
 import { writeAtomic, type AtomicWriteDeps } from './os/atomicFile';
 import { SettingsStore } from './state/settingsStore';
+import { INSTALLER_LANGUAGE_FILE, readInstallerLanguage } from './i18n/installerLanguage';
 import { UiLanguageService } from './i18n/uiLanguageService';
 import { SecretStore } from './secrets/secretStore';
 import type { VaultStatus } from './secrets/vaultGate';
@@ -1592,13 +1595,17 @@ function chmod600(path: string): void {
   chmodSync(path, 0o600);
 }
 
-// Idioma de la interfaz (F3.1). Lazy por lo mismo que el SettingsStore. La preferencia inicial (la del instalador
-// de Windows, U3) la aporta F3.7: hasta entonces no hay ninguna.
+// Idioma de la interfaz (F3.1). Lazy por lo mismo que el SettingsStore. La preferencia inicial es la del instalador
+// de Windows (U3, F3.7): `installerLanguage.ts` la lee de userData mientras no haya una guardada en Ajustes.
 let uiLanguageServiceSingleton: UiLanguageService | null = null;
 function getUiLanguageService(): UiLanguageService {
   uiLanguageServiceSingleton ??= new UiLanguageService({
     savedPreference: () => getSettingsStore().load().uiLanguage,
-    initialPreference: () => undefined,
+    initialPreference: () => readInstallerLanguage({
+      filePath: join(app.getPath('userData'), INSTALLER_LANGUAGE_FILE),
+      readFile: (file) => (existsSync(file) ? readFileSync(file, 'utf8') : null),
+      log: mainLog,
+    }),
     preferredSystemLanguages: () => app.getPreferredSystemLanguages(),
     broadcast: (resolved) => {
       windowManager.broadcast(UI_LANGUAGE_CHANGED_CHANNEL, resolved);
@@ -3816,12 +3823,27 @@ function focusMainWindow(): void {
   windowManager.focus(MAIN_WINDOW_ID);
 }
 
+// El cliente hereda la terminal (stdin, stdout y stderr) y su código de salida es el de este proceso.
+function runCliRelay(args: readonly string[]): void {
+  const plan = cliRelayPlan({ execPath: process.execPath, resourcesPath: process.resourcesPath, args, env: process.env });
+  const child = spawn(plan.command, [...plan.args], { stdio: 'inherit', env: plan.env });
+  child.on('error', (err) => {
+    console.error(`[mage] No se pudo ejecutar el cliente de terminal: ${err.message}`);
+    app.exit(1);
+  });
+  child.on('exit', (code) => app.exit(code ?? 1));
+}
+
+// `Mage.AppImage --cli …` (F7.4): solo releva al cliente de terminal; no pide el lock ni arranca nada más.
+const cliRelay = cliRelayArgs(process.argv);
+if (cliRelay !== null) runCliRelay(cliRelay);
+
 // INSTANCIA UNICA (grupo G). Dos instancias de Mage escriben a la vez los mismos ficheros de estado
 // bajo userData (workspace-state.json, app-settings.json): la ultima en renombrar gana y el usuario
 // pierde pestanas o configuracion sin ver un error. Ademas duplicaria tray y widget. Si ya hay una
 // instancia, esta se cierra y la existente se enfoca (comportamiento estandar de escritorio).
 // El lock se pide ANTES de whenReady: cuanto menos haya arrancado la segunda instancia, mejor.
-const gotSingleInstanceLock = app.requestSingleInstanceLock();
+const gotSingleInstanceLock = cliRelay === null && app.requestSingleInstanceLock();
 // Host sin pantalla (F2.6, §3.4): Linux sin DISPLAY ni WAYLAND_DISPLAY, o `--headless`. No crea ventanas.
 const runsHeadless = isHeadlessHost({ platform: process.platform, argv: process.argv, env: process.env });
 // Linux sin pantalla: sin `--password-store`, Chromium elige basic_text aunque haya un llavero desbloqueado (medido en la
@@ -3853,6 +3875,8 @@ function startHost(mode: HostMode): Promise<void> {
       launch: (params) => launchSession(params, null).sessionId,
       conversationIdOf: (sessionId) => sessionCoordinator.conversationIdOf(sessionId),
       options: sessionManager,
+      createAccount: (params) => getProviderAccounts().create(params),
+      requestQuit: () => { setTimeout(() => app.quit(), HOST_STOP_DELAY_MS); },
     }),
     hostVersion: app.getVersion(),
     log: mainLog,
@@ -3874,7 +3898,9 @@ function lockHolderMode(): HostMode | null {
   });
 }
 
-if (!gotSingleInstanceLock) {
+if (cliRelay !== null) {
+  // El relevo sale con el código del cliente (`runCliRelay`).
+} else if (!gotSingleInstanceLock) {
   // Se dice EN VOZ ALTA por que se cierra. Sin esta linea, la segunda instancia se rendia en silencio y
   // lo unico que se veia era la ventana de la instancia VIEJA saltando al frente: quien lanzaba
   // `pnpm dev` con la app instalada abierta concluia "el dev no aplica mis cambios" (paso de verdad).
@@ -3896,6 +3922,16 @@ if (!gotSingleInstanceLock) {
   });
 }
 
+// Lo que las sesiones necesitan con ventana y sin ella: el latido de los bloqueos de conversación, las claves de
+// proveedor antiguas ya en la bóveda y los MCP compartidos importados antes de la primera sesión.
+function prepareSessionServices(): void {
+  startConversationLockHeartbeat();
+  migrateLegacyProviderKeysOnce();
+  importSharedMcpOnce();
+  // Y a agy, lo que haya cambiado mientras Mage estaba cerrado (si la sincronizacion automatica esta activa).
+  onSharedMcpChanged();
+}
+
 app.whenReady().then(async () => {
   // Guarda: si no se obtuvo el lock ya se llamo a app.quit(); no se arranca nada mas (registrar IPC o
   // ventanas desde una instancia que se esta cerrando solo crea efectos a medias).
@@ -3904,6 +3940,7 @@ app.whenReady().then(async () => {
     // Solo el host: sin ventanas, ni tray, ni widget, ni actualizador, ni IPC del renderer (no hay renderer).
     mainLog('info', 'Mage arrancado sin pantalla', { platform: process.platform });
     await assessVaultOnce();
+    prepareSessionServices();
     await startHost('headless').catch((err: unknown) => {
       mainLog('error', 'No se pudo arrancar el host local; se cierra el proceso sin pantalla', { error: renderForLog(localizedFromError(err)) });
       app.exit(1);
@@ -3919,13 +3956,9 @@ app.whenReady().then(async () => {
   Menu.setApplicationMenu(buildApplicationMenu());
   // La bóveda, antes de admitir sesiones y de migrar nada a ella (D1).
   await assessVaultOnce();
-  startConversationLockHeartbeat();
-  migrateLegacyProviderKeysOnce();
-  registerIpcHandlers();
   // Antes de la primera ventana: la primera sesion ya tiene que recibir los MCP importados.
-  importSharedMcpOnce();
-  // Y a agy, lo que haya cambiado mientras Mage estaba cerrado (si la sincronizacion automatica esta activa).
-  onSharedMcpChanged();
+  prepareSessionServices();
+  registerIpcHandlers();
 
   const mainWindow = windowManager.ensureMain();
   tray = createTray();

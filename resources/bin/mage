@@ -1,0 +1,6 @@
+#!/bin/sh
+# Lanzador de la terminal de Mage (F7.4): el propio binario de Mage en modo Node ejecuta el cliente empaquetado.
+# No hace falta Node instalado. `/usr/bin/mage` es un enlace a este fichero: `readlink -f` llega a la carpeta real.
+set -e
+here=$(dirname "$(readlink -f "$0")")
+ELECTRON_RUN_AS_NODE=1 exec "$here/../../mage" "$here/../cli/mage.mjs" "$@"
