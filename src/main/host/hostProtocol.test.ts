@@ -34,17 +34,29 @@ describe('withLegacyText', () => {
 });
 
 describe('HOST_PROTOCOL', () => {
-  it('HOST_PROTOCOL_igualA12', () => {
-    expect(HOST_PROTOCOL).toBe('1.3');
+  it('hostProtocol_version_is14', () => {
+    expect(HOST_PROTOCOL).toBe('1.4');
   });
 });
 
 describe('host 1.2 — capacidades y esquemas', () => {
   const CREATE = { commandId: '6f1c2b3a-4d5e-4f60-8a7b-9c0d1e2f3a4b', provider: 'claude', accountId: 'C:\\Users\\u\\.claude', cwd: 'C:\\tmp\\x', trust: { acknowledged: false } };
 
-  it('capabilities_anuncianUpdateQueuedYNoRewind', () => {
-    expect(HOST_CAPABILITIES).not.toContain('session.rewind');
-    expect(HOST_CAPABILITIES).toContain('session.updateQueued');
+  it('capabilities_includeRewindMethods', () => {
+    expect(HOST_CAPABILITIES).toEqual(expect.arrayContaining(['session.rewindPoints', 'session.rewindPlan', 'session.rewind']));
+  });
+
+  it('rewindApplySchema_attachments_rejected', () => {
+    const params = { sessionId: 's1', point: { userIndex: 0, text: 'a', nativeId: 'u1' }, action: 'rewind', restoreFiles: false, saveCopy: false };
+
+    expect(HOST_METHOD_SCHEMAS['session.rewind'].safeParse(params).success).toBe(true);
+    expect(HOST_METHOD_SCHEMAS['session.rewind'].safeParse({ ...params, attachments: [] }).success).toBe(false);
+  });
+
+  it('rewindPlanSchema_divergeAction_rejected', () => {
+    const params = { sessionId: 's1', point: { userIndex: 0, text: 'a', nativeId: null }, action: 'diverge' };
+
+    expect(HOST_METHOD_SCHEMAS['session.rewindPlan'].safeParse(params).success).toBe(false);
   });
 
   it('capabilities_anuncianLosMetodosDe13', () => {

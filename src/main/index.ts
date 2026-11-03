@@ -3867,6 +3867,7 @@ function startHost(mode: HostMode): Promise<void> {
     fs: { mkdirSync, chmodSync, statSync, writeFileSync, rmSync },
     getuid: process.getuid?.bind(process),
     sessions: sessionCoordinator,
+    rewind: createRewindCoordinator(),
     control: createHostControl({
       listAccounts: listAllAccounts,
       listProjects: () => getSettingsStore().load().chatProjects,

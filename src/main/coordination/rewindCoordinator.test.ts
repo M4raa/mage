@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { UserFacingError } from '@shared/i18n/localizedText';
 import type { TranscriptEntry } from '@shared/transcripts';
 import type { EngineRequest } from '../engine/providerAdapter';
 import { RewindCoordinator, type RewindCoordinatorDeps } from './rewindCoordinator';
@@ -348,5 +349,41 @@ describe('listCodexTurns', () => {
     const { rc } = setup({ ctx: CODEX_CTX, handler: byKind({ thread_turns: () => ok({ data: 'x' }) }) });
 
     await expect(rc.plan(planParams('c1'))).rejects.toThrow(/thread_turns: respuesta inesperada \(data/);
+  });
+});
+
+// ---------------------------------------------------------------- points
+
+describe('points', () => {
+  it('points_claudeBranch_mapsPromptsWithUuidAndIndex', async () => {
+    const { rc } = setup();
+
+    const points = await rc.points('s1');
+
+    expect(points).toEqual([
+      { userIndex: 0, text: 'uno', nativeId: 'p1', rewindable: true },
+      { userIndex: 1, text: 'dos', nativeId: 'p2', rewindable: true },
+    ]);
+  });
+
+  it('points_codexMidTurnMessage_marksNotRewindable', async () => {
+    const { rc } = setup({ ctx: CODEX_CTX, handler: codexHandler() });
+
+    const points = await rc.points('s1');
+
+    expect(points.map((p) => [p.nativeId, p.rewindable])).toEqual([['c1', true], ['c2', true], ['c3', false]]);
+  });
+
+  it('points_backgroundSession_throwsUserFacingError', async () => {
+    const { rc } = setup({ ctx: { ...CLAUDE_CTX, background: true } });
+
+    await expect(rc.points('s1')).rejects.toBeInstanceOf(UserFacingError);
+  });
+
+  it('points_noNativeId_throwsUserFacingError', async () => {
+    const { rc, readClaudeBranch } = setup({ ctx: { ...CLAUDE_CTX, nativeId: null } });
+
+    await expect(rc.points('s1')).rejects.toBeInstanceOf(UserFacingError);
+    expect(readClaudeBranch).not.toHaveBeenCalled();
   });
 });

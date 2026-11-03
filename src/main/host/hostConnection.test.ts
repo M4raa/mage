@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { ConversationSnapshot } from '@shared/coordination';
-import { UserFacingError, localized } from '@shared/i18n/localizedText';
+import { UserFacingError, localized, renderForLog } from '@shared/i18n/localizedText';
 import { createTranslator } from '@shared/i18n/translator';
 import type { SequencedSessionEvent } from '../coordination/sessionCoordinator';
-import { HELLO_DEADLINE_MS, HostConnection, MAX_BUFFERED_BYTES, type HostSessions, type HostTransport } from './hostConnection';
+import { HELLO_DEADLINE_MS, HostConnection, MAX_BUFFERED_BYTES, type HostConnectionDeps, type HostSessions, type HostTransport } from './hostConnection';
 import type { HostControl } from './hostControl';
 import type { HostMode } from './hostServer';
 import { TrustRequiredError, UnknownAccountError } from './hostErrors';
@@ -15,7 +15,7 @@ const NONCE = '0'.repeat(64);
 const SNAPSHOT: ConversationSnapshot = { sessionId: 's1', provider: 'claude', conversationId: 'c1', nativeRef: null, lastSeq: 7, state: 'idle', queue: [], pending: [], background: false };
 const EVENT: SequencedSessionEvent = { sessionId: 's1', conversationId: 'c1', seq: 8, at: 1, event: { kind: 'result', result: { isError: false, subtype: 'success', numTurns: 1 } } };
 
-function harness(options: { sessions?: Partial<HostSessions>; control?: Partial<HostControl>; maxLineBytes?: number; mode?: HostMode } = {}) {
+function harness(options: { sessions?: Partial<HostSessions>; control?: Partial<HostControl>; rewind?: Partial<HostConnectionDeps['rewind']>; maxLineBytes?: number; mode?: HostMode } = {}) {
   const written: string[] = [];
   let buffered = 0;
   let ended = false;
@@ -43,11 +43,12 @@ function harness(options: { sessions?: Partial<HostSessions>; control?: Partial<
     requestQuit: vi.fn(),
     ...options.control,
   };
+  const rewind: HostConnectionDeps['rewind'] = { points: vi.fn(async () => []), plan: vi.fn(), apply: vi.fn(), ...options.rewind };
   const timers: { fn: () => void; ms: number; cancelled: boolean }[] = [];
   const log = vi.fn();
   let ids = 0;
   const connection = new HostConnection(transport, {
-    sessions, control, mode: options.mode ?? 'gui', token: TOKEN, hostVersion: '0.1.3', log, newId: () => `sub-${++ids}`, translate: createTranslator('es'),
+    sessions, control, rewind, mode: options.mode ?? 'gui', token: TOKEN, hostVersion: '0.1.3', log, newId: () => `sub-${++ids}`, translate: createTranslator('es'),
     setTimer: (fn, ms) => { const timer = { fn, ms, cancelled: false }; timers.push(timer); return () => { timer.cancelled = true; }; },
     ...(options.maxLineBytes === undefined ? {} : { maxLineBytes: options.maxLineBytes }),
   });
@@ -55,7 +56,7 @@ function harness(options: { sessions?: Partial<HostSessions>; control?: Partial<
   const lines = () => written.join('').split('\n').filter((line) => line.length > 0).map((line) => JSON.parse(line) as Record<string, any>);
   const hello = (overrides: Record<string, unknown> = {}) =>
     send({ jsonrpc: '2.0', id: 1, method: 'hello', params: { protocol: HOST_PROTOCOL, client: { kind: 'terminal', version: '1' }, token: TOKEN, ...overrides } });
-  return { connection, sessions, control, send, lines, written, hello, sinks, unsubscribe, timers, log, isEnded: () => ended, setBuffered: (n: number) => { buffered = n; } };
+  return { connection, sessions, control, rewind, send, lines, written, hello, sinks, unsubscribe, timers, log, isEnded: () => ended, setBuffered: (n: number) => { buffered = n; } };
 }
 
 describe('HostConnection — autenticación', () => {
@@ -533,7 +534,7 @@ describe('HostConnection — métodos 1.2', () => {
 
     expect(reply.result).toMatchObject({ protocol: HOST_PROTOCOL, mode: 'gui' });
     expect(reply.result.capabilities).toContain('session.create');
-    expect(reply.result.capabilities).not.toContain('session.rewind');
+    expect(reply.result.capabilities).toContain('session.rewind');
   });
 
   it('sessionCreate_llegaAlControlYDevuelveSuResultado', () => {
@@ -613,18 +614,6 @@ describe('HostConnection — métodos 1.2', () => {
 
     expect(h.sessions.removeQueued).toHaveBeenCalledWith('s1', 'q1');
     expect(reply.result).toEqual({ removed: null });
-  });
-
-  it.each([
-    ['session.rewind', { sessionId: 's1', targetMessageId: 'm1', scope: 'both' }],
-  ])('sessionRewind_unsupportedYSigueAbierta_%s', (method, params) => {
-    const h = harness();
-    h.hello();
-
-    const reply = call(h, method, params);
-
-    expect(reply.error.code).toBe(HostErrorCode.Unsupported);
-    expect(h.isEnded()).toBe(false);
   });
 
   it('sessionUpdateQueued_llegaAlCoordinadorYDevuelveElMensaje', () => {
@@ -774,5 +763,87 @@ describe('HostConnection — métodos 1.3', () => {
     const reply = call(h, 'accounts.create', { provider: 'claude', name: 'K', apiKey: '' });
 
     expect(reply.error.code).toBe(HostErrorCode.InvalidParams);
+  });
+});
+
+describe('rewind (1.4)', () => {
+  const POINT = { userIndex: 0, text: 'uno', nativeId: 'u1' };
+  const APPLY = { sessionId: 's1', point: POINT, action: 'rewind', restoreFiles: false, saveCopy: false };
+  const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
+  const request = async (h: ReturnType<typeof harness>, method: string, params: unknown) => {
+    h.send({ jsonrpc: '2.0', id: 2, method, params });
+    await flush();
+    return h.lines()[1]!;
+  };
+
+  it('rewindPoints_liveSession_repliesWithPoints', async () => {
+    const points = [{ userIndex: 0, text: 'uno', nativeId: 'u1', rewindable: true }];
+    const h = harness({ rewind: { points: vi.fn(async () => points) } });
+    h.hello();
+
+    const reply = await request(h, 'session.rewindPoints', { sessionId: 's1' });
+
+    expect(h.rewind.points).toHaveBeenCalledWith('s1');
+    expect(reply.result).toEqual({ points });
+  });
+
+  it('rewindPlan_validParams_delegatesToCoordinator', async () => {
+    const plan = { provider: 'claude', unavailable: null, discardedMessages: 2 };
+    const h = harness({ rewind: { plan: vi.fn(async () => plan as never) } });
+    h.hello();
+    const params = { sessionId: 's1', point: POINT, action: 'retry' };
+
+    const reply = await request(h, 'session.rewindPlan', params);
+
+    expect(h.rewind.plan).toHaveBeenCalledWith(params);
+    expect(reply.result).toEqual(plan);
+  });
+
+  it('rewind_apply_repliesWithoutProjection', async () => {
+    const result = { draft: 'uno', returnedQueue: [], filesRestored: false, copyThreadId: null, projection: { entries: [] }, retried: null };
+    const h = harness({ rewind: { apply: vi.fn(async () => result as never) } });
+    h.hello();
+
+    const reply = await request(h, 'session.rewind', APPLY);
+
+    expect(reply.result).toEqual({ draft: 'uno', returnedQueue: [], filesRestored: false, copyThreadId: null, retried: null });
+    expect(reply.result).not.toHaveProperty('projection');
+  });
+
+  it('rewind_coordinatorRejectsUserFacing_repliesErrorWithSpanishText', async () => {
+    const text = localized('errors.rewind.background');
+    const h = harness({ rewind: { apply: vi.fn(async () => { throw new UserFacingError(text); }) } });
+    h.hello();
+
+    const reply = await request(h, 'session.rewind', APPLY);
+
+    expect(reply.error.code).toBe(HostErrorCode.Internal);
+    expect(reply.error.message).toBe(renderForLog(text));
+    expect(reply.error.message).not.toContain('{');
+  });
+
+  it('rewind_negativeUserIndex_repliesInvalidParams', async () => {
+    const h = harness();
+    h.hello();
+
+    const reply = await request(h, 'session.rewind', { ...APPLY, point: { ...POINT, userIndex: -1 } });
+
+    expect(reply.error.code).toBe(HostErrorCode.InvalidParams);
+    expect(h.rewind.apply).not.toHaveBeenCalled();
+  });
+
+  it('rewind_connectionClosedBeforeResolve_writesNothing', async () => {
+    let resolve: (value: never) => void = () => undefined;
+    const pending = new Promise<never>((r) => { resolve = r; });
+    const h = harness({ rewind: { apply: vi.fn(() => pending) } });
+    h.hello();
+    h.send({ jsonrpc: '2.0', id: 2, method: 'session.rewind', params: APPLY });
+    h.connection.closed();
+    const before = h.written.length;
+
+    resolve({ draft: '', returnedQueue: [], filesRestored: false, copyThreadId: null, projection: null, retried: null } as never);
+    await flush();
+
+    expect(h.written.length).toBe(before);
   });
 });

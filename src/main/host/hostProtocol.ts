@@ -4,6 +4,7 @@ import { renderLocalized } from '@shared/i18n/localizedText';
 import type { Translate } from '@shared/i18n/translator';
 import { ELICITATION_ANSWER_SCHEMA } from '@shared/elicitation';
 import { PERMISSION_MODES } from '@shared/ipc';
+import { REWIND_POINT_SCHEMA } from '../coordination/rewindInput';
 import { ANSWER_PERMISSION_SCHEMA, SEND_MESSAGE_SCHEMA, SESSION_ID_SCHEMA, MAX_ID_CHARS, MAX_MESSAGE_CHARS, MAX_MODE_CHARS } from '@shared/sessionInput';
 import { CHALLENGE_NONCE_BYTES } from './hostToken';
 
@@ -16,7 +17,8 @@ export const HOST_PROTOCOL_MAJOR = 1;
 // clientes 1.0, su campo de siempre ya traducido en el idioma de main.
 // 1.2 (F7): `host.challenge` antes de `hello` y los métodos de la terminal.
 // 1.3 (F7): `host.stop`, `accounts.create`, `session.updateQueued` y la notificación `subscription.closed`.
-export const HOST_PROTOCOL_MINOR = 3;
+// 1.4 (0.1.4): `session.rewindPoints`, `session.rewindPlan` y `session.rewind` (el orquestador de la ventana).
+export const HOST_PROTOCOL_MINOR = 4;
 export const HOST_PROTOCOL = `${HOST_PROTOCOL_MAJOR}.${HOST_PROTOCOL_MINOR}`;
 
 // Códigos JSON-RPC estándar (-32700…-32603) y propios (-32001…-32099).
@@ -104,7 +106,11 @@ const SESSION_RESUME_SCHEMA = z.object({ conversationId: hostId }).strict();
 // El esfuerzo vacío es «el del modelo»; modelo y modo de permiso no pueden ir vacíos (igual que el IPC).
 const SET_OPTION_SCHEMA = z.object({ sessionId: SESSION_ID_SCHEMA, key: z.enum(HOST_OPTION_KEYS), value: z.string().max(MAX_MODE_CHARS) }).strict()
   .refine((option) => option.key === 'effort' || option.value.length > 0, { message: 'el valor solo puede ir vacío en «effort»', path: ['value'] });
-const REWIND_SCHEMA = z.object({ sessionId: SESSION_ID_SCHEMA, targetMessageId: hostId, scope: z.enum(['conversation', 'files', 'both']) }).strict();
+const REWIND_ACTION_SCHEMA = z.enum(['rewind', 'retry']);
+const REWIND_POINTS_SCHEMA = z.object({ sessionId: SESSION_ID_SCHEMA }).strict();
+const REWIND_PLAN_SCHEMA = z.object({ sessionId: SESSION_ID_SCHEMA, point: REWIND_POINT_SCHEMA, action: REWIND_ACTION_SCHEMA }).strict();
+// Sin `attachments`: el host no admite adjuntos.
+const REWIND_APPLY_SCHEMA = z.object({ sessionId: SESSION_ID_SCHEMA, point: REWIND_POINT_SCHEMA, action: REWIND_ACTION_SCHEMA, restoreFiles: z.boolean(), saveCopy: z.boolean() }).strict();
 const CANCEL_QUEUED_SCHEMA = z.object({ sessionId: SESSION_ID_SCHEMA, queuedId: hostId }).strict();
 const UPDATE_QUEUED_SCHEMA = z.object({ sessionId: SESSION_ID_SCHEMA, queuedId: hostId, text: z.string().min(1).max(MAX_MESSAGE_CHARS) }).strict();
 
@@ -124,7 +130,9 @@ export const HOST_METHOD_SCHEMAS = {
   'session.create': SESSION_CREATE_SCHEMA,
   'session.resume': SESSION_RESUME_SCHEMA,
   'session.setOption': SET_OPTION_SCHEMA,
-  'session.rewind': REWIND_SCHEMA,
+  'session.rewindPoints': REWIND_POINTS_SCHEMA,
+  'session.rewindPlan': REWIND_PLAN_SCHEMA,
+  'session.rewind': REWIND_APPLY_SCHEMA,
   'session.cancelQueued': CANCEL_QUEUED_SCHEMA,
   'session.updateQueued': UPDATE_QUEUED_SCHEMA,
   'host.stop': HOST_STOP_SCHEMA,
@@ -136,8 +144,8 @@ export function isHostMethod(method: string): method is HostMethod {
   return Object.prototype.hasOwnProperty.call(HOST_METHOD_SCHEMAS, method);
 }
 
-// Métodos con esquema pero sin implementar todavía: responden `Unsupported` y no se anuncian. `session.rewind` llega con el rebobinado (F4.4).
-export const UNSUPPORTED_METHODS: ReadonlySet<HostMethod> = new Set<HostMethod>(['session.rewind']);
+// Métodos con esquema pero sin implementar: responden `Unsupported` y no se anuncian. Hoy, ninguno.
+export const UNSUPPORTED_METHODS: ReadonlySet<HostMethod> = new Set<HostMethod>();
 export const HOST_CAPABILITIES: readonly HostMethod[] = (Object.keys(HOST_METHOD_SCHEMAS) as HostMethod[]).filter((method) => !UNSUPPORTED_METHODS.has(method));
 
 // La versión MAYOR distinta se rechaza; la menor se tolera en los dos sentidos.

@@ -6,7 +6,7 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { posix, win32 } from 'node:path';
 
-export const HOST_PROTOCOL = '1.3';
+export const HOST_PROTOCOL = '1.4';
 export const CHALLENGE_CONTEXT = 'mage-host-challenge-v1:';
 export const CHALLENGE_NONCE_BYTES = 32;
 export const NOT_MAGE_SERVER = 'El servidor del pipe no es el de Mage';

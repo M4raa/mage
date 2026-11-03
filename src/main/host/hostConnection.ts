@@ -2,10 +2,11 @@ import type { ZodTypeAny } from 'zod';
 import type { PermissionDecision } from '@shared/events';
 import type { ElicitationAnswer } from '@shared/elicitation';
 import type { AnswerReceipt, ConversationSnapshot, QueuedMessage, SendReceipt } from '@shared/coordination';
-import type { SendMessageParams } from '@shared/ipc';
+import type { RewindApplyParams, RewindApplyResult, RewindPlanParams, SendMessageParams } from '@shared/ipc';
 import { UserFacingError, renderForLog } from '@shared/i18n/localizedText';
 import type { Translate } from '@shared/i18n/translator';
 import type { SessionLogFn } from '../engine/agentSession';
+import type { RewindCoordinator } from '../coordination/rewindCoordinator';
 import type { SequencedSessionEvent } from '../coordination/sessionCoordinator';
 import { MAX_LINE_BYTES, NdjsonFramer } from './ndjsonFramer';
 import { TrustRequiredError, UnknownAccountError, UnknownConversationError, UnsupportedMethodError } from './hostErrors';
@@ -80,6 +81,8 @@ export interface HostConnectionDeps {
   readonly translate: Translate;
   readonly mode: HostMode;
   readonly control: HostControl;
+  // El orquestador del rewind de la ventana (1.4): mismas reglas, sin adjuntos.
+  readonly rewind: Pick<RewindCoordinator, 'points' | 'plan' | 'apply'>;
 }
 
 // Una conexión que no se identifica en este tiempo se cierra: no puede retener un socket sin dar el token.
@@ -214,10 +217,25 @@ export class HostConnection {
     }
     try {
       const result = this.run(method, parsed.data);
+      if (result instanceof Promise) {
+        // Un método asíncrono (el rewind) contesta cuando acaba; si la conexión se cerró entretanto, no se escribe nada.
+        result.then((value: unknown) => this.replyAsync(id, value), (err: unknown) => this.replyAsyncError(id, err));
+        return;
+      }
       if (id !== undefined) this.transport.write(resultResponse(id, result));
     } catch (err) {
       this.reply(id, toErrorBody(err));
     }
+  }
+
+  private replyAsync(id: RequestId | undefined, value: unknown): void {
+    if (this.phase !== 'ready' || id === undefined) return;
+    this.transport.write(resultResponse(id, value));
+  }
+
+  private replyAsyncError(id: RequestId | undefined, err: unknown): void {
+    if (this.phase !== 'ready') return;
+    this.reply(id, toErrorBody(err));
   }
 
   private run(method: HostMethod, params: unknown): unknown {
@@ -262,7 +280,21 @@ export class HostConnection {
       }
       case 'host.stop': return this.stop((params as { force?: boolean } | undefined)?.force === true);
       case 'accounts.create': return { account: control.createApiAccount(params as HostAccountCreateRequest) };
+      case 'session.rewindPoints':
+      case 'session.rewindPlan':
+      case 'session.rewind': return this.runRewind(method, params);
       default: throw new UnsupportedMethodError(method);
+    }
+  }
+
+  // Rewind desde un cliente del host (1.4): el mismo orquestador y las mismas reglas que la ventana.
+  private runRewind(method: HostMethod, params: unknown): Promise<unknown> {
+    const { rewind } = this.deps;
+    switch (method) {
+      case 'session.rewindPoints': return rewind.points((params as { sessionId: string }).sessionId).then((points) => ({ points }));
+      case 'session.rewindPlan': return rewind.plan(params as RewindPlanParams);
+      case 'session.rewind': return rewind.apply(params as RewindApplyParams).then(withoutProjection);
+      default: return Promise.reject(new UnsupportedMethodError(method));
     }
   }
 
@@ -346,6 +378,12 @@ export class HostConnection {
     this.subscriptions.clear();
     for (const unsubscribe of pending) unsubscribe();
   }
+}
+
+// La terminal no pinta el hilo: la proyección (el lote entero de la conversación) no viaja por el host.
+function withoutProjection(result: RewindApplyResult): Omit<RewindApplyResult, 'projection'> {
+  const { projection: _projection, ...rest } = result;
+  return rest;
 }
 
 function describeIssues(issues: readonly { readonly path: readonly (string | number)[]; readonly message: string }[]): string {
