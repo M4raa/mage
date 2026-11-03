@@ -9,6 +9,8 @@ import {
   WIDGET_FOCUS_TAB_CHANNEL,
   NOTIFICATION_CLICKED_CHANNEL,
   WIDGET_SNAPSHOT_CHANNEL,
+  WIDGET_SESSIONS_CHANNEL,
+  WIDGET_PREFS_CHANNEL,
   SETTINGS_CHANGED_CHANNEL,
   UI_LANGUAGE_CHANGED_CHANNEL,
   MODEL_CATALOG_CHANGED_CHANNEL,
@@ -72,7 +74,7 @@ import type {
   MoveTabToWindowParams,
   CodexThreadParams,
 } from '@shared/ipc';
-import type { WidgetSnapshot } from '@shared/widget';
+import type { WidgetAnswer, WidgetPrefs, WidgetSessionsPayload, WidgetSnapshot } from '@shared/widget';
 import type { FetchThemeParams } from '@shared/themeMarket';
 import { DebugChannel } from '@shared/debug';
 import type { LogEntry, MageDebugApi, RendererLogInput } from '@shared/debug';
@@ -242,6 +244,21 @@ const api: MageApi = {
     const handler = (_: unknown, tabId: string) => listener(tabId);
     ipcRenderer.on(WIDGET_FOCUS_TAB_CHANNEL, handler);
     return () => ipcRenderer.removeListener(WIDGET_FOCUS_TAB_CHANNEL, handler);
+  },
+  answerFromWidget: (answer: WidgetAnswer) => ipcRenderer.invoke(IpcChannel.WidgetAnswer, answer),
+  interruptFromWidget: (sessionId: string) => ipcRenderer.invoke(IpcChannel.WidgetInterrupt, sessionId),
+  openSessionFromWidget: (sessionId: string) => ipcRenderer.send(IpcChannel.WidgetOpenSession, sessionId),
+  getWidgetPrefs: () => ipcRenderer.invoke(IpcChannel.WidgetGetPrefs),
+  setWidgetPrefs: (patch: Partial<WidgetPrefs>) => ipcRenderer.invoke(IpcChannel.WidgetSetPrefs, patch),
+  onWidgetSessions: (listener: (payload: WidgetSessionsPayload) => void) => {
+    const handler = (_: unknown, payload: WidgetSessionsPayload) => listener(payload);
+    ipcRenderer.on(WIDGET_SESSIONS_CHANNEL, handler);
+    return () => ipcRenderer.removeListener(WIDGET_SESSIONS_CHANNEL, handler);
+  },
+  onWidgetPrefs: (listener: (prefs: WidgetPrefs) => void) => {
+    const handler = (_: unknown, prefs: WidgetPrefs) => listener(prefs);
+    ipcRenderer.on(WIDGET_PREFS_CHANNEL, handler);
+    return () => ipcRenderer.removeListener(WIDGET_PREFS_CHANNEL, handler);
   },
   onNotificationClicked: (listener: (target: NotificationTarget) => void) => {
     const handler = (_: unknown, target: NotificationTarget) => listener(target);
