@@ -1,4 +1,5 @@
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createContext, forwardRef, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Virtuoso, type Components, type ScrollerProps, type VirtuosoHandle } from 'react-virtuoso';
 import { createPortal } from 'react-dom';
 import { AnimatePresence } from 'motion/react';
 import { CopyButton } from './CopyButton';
@@ -25,7 +26,7 @@ import { chatRows, currentTurnSummary, stickResetKey, type ChatRow } from '../ch
 import { usePaneTabId, usePaneTranscriptStore } from '../paneContext';
 import type { Block, ImageAttachment } from '../types';
 import { classifySystemWrapper } from '@shared/systemWrappers';
-import { useStickToBottom } from '../useStickToBottom';
+import { INITIAL_ANCHOR, nextListAnchor, type ListAnchor } from '../chatListAnchor';
 import { RecentProjects } from './RecentProjects';
 import { reportActionError } from '../notificationStore';
 import { conversationIdOfTab } from '../conversationId';
@@ -71,10 +72,14 @@ export function BlockChat(): React.JSX.Element {
   // de la cola es lo que hace que el auto-scroll siga el typing.
   const tailSize = useMemo(() => tailContentSize(rows), [rows]);
   const t = useT();
-  // Lo que cuenta es lo que se PINTA: las filas, no los bloques (casi todos van al panel de Actividad).
-  const { ref: scrollRef, onScroll } = useStickToBottom(
-    [rows.length, tailSize, turnLive, activeTabId],
-    stickResetKey(activeTabId, blocks),
+  const anchor = useListAnchor(activeTabId, rows);
+  const expandedRows = useExpandedRowsStore(activeTabId);
+  const { virtuosoRef, onAtBottomChange } = useChatAutoScroll({ tailSize, turnLive, resetKey: stickResetKey(activeTabId, blocks) });
+  const lastRow = rows[rows.length - 1];
+  const lastRowKey = lastRow === undefined ? null : rowKey(lastRow);
+  const footerContext = useMemo<ChatListContext>(
+    () => ({ accent, lastRowKey, turnLive, runningTool, steps: turnSummary.steps, errors: turnSummary.errors }),
+    [accent, lastRowKey, turnLive, runningTool, turnSummary.steps, turnSummary.errors],
   );
 
   if (blocks.length === 0 && !turnLive) {
@@ -86,18 +91,148 @@ export function BlockChat(): React.JSX.Element {
   }
 
   return (
-    <div ref={scrollRef} onScroll={onScroll} className="flex min-h-0 flex-1 flex-col gap-[14px] overflow-y-auto p-[16px_22px]">
+    <div className="flex min-h-0 flex-1 flex-col">
       {/* Region viva (solo lectores): anuncia el CAMBIO de estado del turno, no cada delta (evita
-          ruido). El texto solo cambia en las transiciones, que es cuando el SR lo lee. */}
+          ruido). El texto solo cambia en las transiciones, que es cuando el SR lo lee. Va FUERA del
+          scroller de la lista virtual. */}
       <div className="sr-only" role="status" aria-live="polite">
         {statusAnnouncement(t, status)}
       </div>
-      {rows.map((row) => (
-        <ChatRowView key={rowKey(row)} row={row} accent={accent} />
-      ))}
-      {turnLive && <ThinkingIndicator accent={accent} tool={runningTool} steps={turnSummary.steps} errors={turnSummary.errors} />}
+      <ExpandedRowsContext.Provider value={expandedRows}>
+        <Virtuoso<ChatRow, ChatListContext>
+          key={`${activeTabId}:${anchor.generation}`}
+          ref={virtuosoRef}
+          className="min-h-0 flex-1"
+          data={rows}
+          computeItemKey={(_, row) => rowKey(row)}
+          firstItemIndex={anchor.firstIndex}
+          initialTopMostItemIndex={{ index: 'LAST', align: 'end' }}
+          increaseViewportBy={{ top: VIEWPORT_OVERSCAN_PX, bottom: VIEWPORT_OVERSCAN_PX }}
+          atBottomThreshold={STICK_TO_BOTTOM_PX}
+          followOutput={(atBottom) => (atBottom ? 'auto' : false)}
+          atBottomStateChange={onAtBottomChange}
+          components={CHAT_LIST_COMPONENTS}
+          context={footerContext}
+          itemContent={renderChatItem}
+        />
+      </ExpandedRowsContext.Provider>
     </div>
   );
+}
+
+// Mismo valor que `useStickToBottom` (que sigue usando el panel de Actividad): por debajo de este margen
+// el usuario cuenta como «pegado» al final.
+const STICK_TO_BOTTOM_PX = 80;
+// Filas que Virtuoso mantiene montadas por encima y por debajo de lo visible.
+const VIEWPORT_OVERSCAN_PX = 600;
+
+// Contexto que Virtuoso pasa al pie y a cada fila (referencia estable mientras no cambien sus valores).
+interface ChatListContext {
+  readonly accent: string;
+  readonly lastRowKey: string | null;
+  readonly turnLive: boolean;
+  readonly runningTool: string | null;
+  readonly steps: number;
+  readonly errors: number;
+}
+
+// `data-last-row` es el ancla del harness para saber que la ultima fila ya esta pintada; `data-row-key`, para
+// seguir una fila concreta al anteponer historial.
+function renderChatItem(_index: number, row: ChatRow, context: ChatListContext): React.JSX.Element {
+  const key = rowKey(row);
+  return (
+    <div data-chat-row="true" data-row-key={key} {...(key === context.lastRowKey ? { 'data-last-row': 'true' } : {})} className="px-[22px] pb-[14px]">
+      <ChatRowView row={row} accent={context.accent} />
+    </div>
+  );
+}
+
+// A nivel de modulo: Virtuoso remonta la lista si la referencia de `components` cambia.
+const CHAT_LIST_COMPONENTS: Components<ChatRow, ChatListContext> = {
+  // La clase `overflow-y-auto` la buscan las comprobaciones de verify:gui.
+  Scroller: forwardRef<HTMLDivElement, ScrollerProps>(function ChatScroller(props, ref) {
+    return <div {...props} ref={ref} data-chat-scroller="true" className="overflow-y-auto" />;
+  }),
+  Header: () => <div className="h-[16px]" />,
+  Footer: ({ context }) => (
+    <div className="px-[22px] pb-[16px]">
+      {context.turnLive && <ThinkingIndicator accent={context.accent} tool={context.runningTool} steps={context.steps} errors={context.errors} />}
+    </div>
+  ),
+};
+
+// Ancla de la lista: sube `firstItemIndex` al anteponer historial y cuenta una «generacion» cuando el
+// contenido se sustituye (la lista se remonta). Cambiar de pestaña la reinicia.
+function useListAnchor(activeTabId: string, rows: readonly ChatRow[]): ListAnchor {
+  const anchorRef = useRef<ListAnchor>(INITIAL_ANCHOR);
+  const tabRef = useRef(activeTabId);
+  return useMemo(() => {
+    if (tabRef.current !== activeTabId) {
+      tabRef.current = activeTabId;
+      anchorRef.current = INITIAL_ANCHOR;
+    }
+    anchorRef.current = nextListAnchor(anchorRef.current, rows, rowKey);
+    return anchorRef.current;
+  }, [activeTabId, rows]);
+}
+
+// Seguir el final: `followOutput` ve filas nuevas, pero el texto en streaming crece DENTRO de la ultima
+// fila; ese caso (y enviar un mensaje, que vuelve al final aunque se hubiera subido a leer) se resuelve aqui.
+function useChatAutoScroll({ tailSize, turnLive, resetKey }: { readonly tailSize: number; readonly turnLive: boolean; readonly resetKey: string }): {
+  readonly virtuosoRef: React.RefObject<VirtuosoHandle | null>;
+  readonly onAtBottomChange: (atBottom: boolean) => void;
+} {
+  const virtuosoRef = useRef<VirtuosoHandle>(null);
+  const stuckRef = useRef(true);
+  const onAtBottomChange = useCallback((atBottom: boolean): void => {
+    stuckRef.current = atBottom;
+  }, []);
+  useLayoutEffect(() => {
+    if (stuckRef.current) scrollToLastRow(virtuosoRef.current);
+  }, [tailSize, turnLive]);
+  useLayoutEffect(() => {
+    stuckRef.current = true;
+    scrollToLastRow(virtuosoRef.current);
+  }, [resetKey]);
+  return { virtuosoRef, onAtBottomChange };
+}
+
+function scrollToLastRow(handle: VirtuosoHandle | null): void {
+  handle?.scrollToIndex({ index: 'LAST', align: 'end', behavior: 'auto' });
+}
+
+// Estado «desplegado» de los plegados del hilo. Con la lista virtual una fila sale del DOM al alejarse, asi
+// que ese estado no puede vivir en el componente: vive aqui, por pestaña y clave de fila.
+interface ExpandedRows {
+  isExpanded(key: string): boolean;
+  setExpanded(key: string, value: boolean): void;
+}
+
+const ExpandedRowsContext = createContext<ExpandedRows | null>(null);
+
+function useExpandedRows(): ExpandedRows {
+  const value = useContext(ExpandedRowsContext);
+  if (value === null) throw new Error('useExpandedRows se uso fuera de ExpandedRowsContext.Provider');
+  return value;
+}
+
+function useExpandedRowsStore(tabId: string): ExpandedRows {
+  const expandedRef = useRef(new Set<string>());
+  const [version, setVersion] = useState(0);
+  // `version` fuerza un valor nuevo del contexto para que los plegados se repinten al cambiar el conjunto.
+  return useMemo<ExpandedRows>(() => {
+    const scoped = (key: string): string => `${tabId}\u0000${key}`;
+    return {
+      isExpanded: (key) => expandedRef.current.has(scoped(key)),
+      setExpanded: (key, value) => {
+        if (expandedRef.current.has(scoped(key)) === value) return;
+        if (value) expandedRef.current.add(scoped(key));
+        else expandedRef.current.delete(scoped(key));
+        setVersion((v) => v + 1);
+      },
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `version` es el disparador del repintado
+  }, [tabId, version]);
 }
 
 // Aviso de una pestaña restaurada cuya conversación no existe en su cuenta (devolución 19). El primer turno abre una nueva.
@@ -578,7 +713,7 @@ function CommandOutputBlock({ block }: { readonly block: Extract<Block, { kind: 
   return (
     <div data-command-output={layout} className="min-w-0 rounded-[9px] border border-mg-border-subtle bg-mg-block p-[8px_12px] text-[12px]">
       {block.command !== null && <div className="mb-[6px] font-mono text-[11px] text-mg-sec">/{block.command}</div>}
-      <Collapsible maxHeightPx={COMMAND_OUTPUT_MAX_HEIGHT_PX} expandLabel={t('chat.collapsible.showFullResult')}>
+      <Collapsible stateKey={block.id} maxHeightPx={COMMAND_OUTPUT_MAX_HEIGHT_PX} expandLabel={t('chat.collapsible.showFullResult')}>
         {layout === 'markdown' ? (
           <div className="min-w-0 text-mg-text">
             <Markdown text={block.text} />
@@ -643,7 +778,7 @@ function UserBlock({ block }: { readonly block: Extract<Block, { kind: 'user' }>
   if (wrapper.kind === 'command' && block.attachments.length === 0) return <CommandChip command={wrapper.command} />;
   // En directo el comando llega tal cual se tecleo (P-028): mismo chip que al reabrir.
   if (block.attachments.length === 0 && isSlashCommandText(block.text)) return <CommandChip command={block.text.trim()} />;
-  if (wrapper.kind === 'scheduled-task') return <ScheduledTaskCard name={wrapper.name} body={wrapper.body} />;
+  if (wrapper.kind === 'scheduled-task') return <ScheduledTaskCard id={block.id} name={wrapper.name} body={wrapper.body} />;
   return (
     <div className="flex justify-end">
       <div className="group relative flex max-w-[80%] min-w-0 flex-col gap-[3px] rounded-[12px] rounded-br-[4px] border border-mg-border-emph bg-mg-sel p-[9px_13px] leading-[1.55]">
@@ -661,7 +796,7 @@ function UserBlock({ block }: { readonly block: Extract<Block, { kind: 'user' }>
             enviados se veian en crudo en la burbuja (reporte del usuario). Mismo render que el del
             agente — y `Markdown` conserva los saltos de linea dentro del parrafo, que era lo unico
             que aportaba el texto plano. */}
-        <Collapsible maxHeightPx={USER_MESSAGE_MAX_HEIGHT_PX} expandLabel={t('chat.collapsible.showFullMessage')}>
+        <Collapsible stateKey={block.id} maxHeightPx={USER_MESSAGE_MAX_HEIGHT_PX} expandLabel={t('chat.collapsible.showFullMessage')}>
           <div className="min-w-0 break-words text-mg-text">
             <Markdown text={block.text} />
           </div>
@@ -737,11 +872,16 @@ function CommandChip({ command }: { readonly command: string }): React.JSX.Eleme
 
 // `<details>` nativo: el cuerpo de una tarea programada es el prompt de la tarea, largo y repetido en
 // cada ejecucion, asi que va plegado.
-function ScheduledTaskCard({ name, body }: { readonly name: string; readonly body: string }): React.JSX.Element {
+function ScheduledTaskCard({ id, name, body }: { readonly id: string; readonly name: string; readonly body: string }): React.JSX.Element {
   const t = useT();
+  const { isExpanded, setExpanded } = useExpandedRows();
   return (
     <div className="flex justify-end">
-      <details data-scheduled-task="true" className="max-w-[80%] min-w-0 rounded-[9px] border border-mg-border-subtle bg-mg-block p-[6px_11px] text-[11.5px]">
+      <details
+        data-scheduled-task="true"
+        open={isExpanded(`${id}:task`)}
+        onToggle={(event) => setExpanded(`${id}:task`, event.currentTarget.open)}
+        className="max-w-[80%] min-w-0 rounded-[9px] border border-mg-border-subtle bg-mg-block p-[6px_11px] text-[11.5px]">
         <summary className="cursor-pointer text-mg-sec">
           {t('chat.scheduledTask.label')} <span className="font-semibold text-mg-text">{name.length > 0 ? name : t('chat.scheduledTask.unnamed')}</span>
         </summary>
@@ -782,16 +922,19 @@ const USER_MESSAGE_MAX_HEIGHT_PX = 160;
 // traducido) si no cabe. El boton solo aparece cuando de verdad hay contenido recortado (se mide el alto
 // real del contenido y se re-mide si cambia el ancho, p.ej. al abrir/cerrar paneles laterales).
 function Collapsible({
+  stateKey,
   maxHeightPx,
   expandLabel,
   children,
 }: {
+  readonly stateKey: string;
   readonly maxHeightPx: number;
   readonly expandLabel: string;
   readonly children: React.ReactNode;
 }): React.JSX.Element {
   const t = useT();
-  const [expanded, setExpanded] = useState(false);
+  const { isExpanded, setExpanded } = useExpandedRows();
+  const expanded = isExpanded(stateKey);
   const [overflowing, setOverflowing] = useState(false);
   const contentRef = useRef<HTMLDivElement>(null);
 
@@ -824,7 +967,7 @@ function Collapsible({
       </div>
       {overflowing && (
         <button
-          onClick={() => setExpanded((v) => !v)}
+          onClick={() => setExpanded(stateKey, !expanded)}
           aria-expanded={expanded}
           className="mt-[2px] self-start text-[10.5px] text-mg-icon underline underline-offset-2 hover:text-mg-body"
         >
