@@ -280,6 +280,7 @@ import type { GhAutoMergeParams, GhRunActionParams, GhRunsParams, GhRunsSnapshot
 import { findGhBinary } from './os/ghBinaryResolver';
 import { createGhService, type GhRunner, type GhService } from './gh/ghService';
 import { PrMonitor } from './gh/prMonitor';
+import { PrCatalogStore } from './gh/prCatalogStore';
 import { FAKE_GH_BIN, runFakeGh } from './gh/ghFakeRunner';
 import { createWorktreeService, nodeWorktreeFs, type WorktreeService } from './git/worktreeService';
 import type { WorktreeCreateParams, WorktreeMergeBaseParams, WorktreeRemoveResult } from '@shared/worktree';
@@ -2005,6 +2006,17 @@ function getConversationIndexStore(): ConversationIndexStore {
   return conversationIndexStoreSingleton;
 }
 
+// Catalogo de PR por clave con su vinculo a conversaciones (F5.5).
+let prCatalogStoreSingleton: PrCatalogStore | null = null;
+function getPrCatalogStore(): PrCatalogStore {
+  prCatalogStoreSingleton ??= new PrCatalogStore({
+    filePath: join(app.getPath('userData'), 'pr-catalog.json'),
+    ...fileSystemDeps(),
+    log: (level, message) => mainLog(level, message),
+  });
+  return prCatalogStoreSingleton;
+}
+
 // Dependencias de FS que comparten todos los stores con escritura atomica.
 function fileSystemDeps(): Omit<AtomicWriteDeps, never> {
   return {
@@ -3459,6 +3471,7 @@ function registerTranscriptIpc2(deps: IpcDependencies): void {
 // preferencias de conversaciones que ya no existen) y sus pensamientos (si no, queda un `.jsonl` huerfano por cada una).
 function forgetDeletedConversation(sessionId: string): void {
   getConversationIndexStore().forgetConversation(sessionId);
+  getPrCatalogStore().forgetConversation(sessionId);
   getThinkingStore().forget(sessionId);
 }
 
