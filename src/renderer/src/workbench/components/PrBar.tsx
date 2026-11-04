@@ -18,7 +18,7 @@ import { usePanelLayoutStore } from '../panelLayoutStore';
 // Va en la fila de informacion del chat; el detalle se abre debajo, a lo ancho de la fila.
 
 const CHIP = 'inline-flex max-w-[280px] items-center gap-[5px] rounded-full border border-mg-border-ctrl px-[8px] py-[2px]';
-const BUTTON = `${CHIP} text-mg-body2 transition-colors duration-150 ease-out hover:bg-mg-hover hover:text-mg-body`;
+const BUTTON = `${CHIP} text-mg-body2 transition-colors duration-90 ease-out hover:bg-mg-hover hover:text-mg-body`;
 const TONES = { add: 'text-mg-diff-add', del: 'text-mg-diff-del', muted: 'text-mg-muted' } as const;
 
 function openExternal(url: string): void {

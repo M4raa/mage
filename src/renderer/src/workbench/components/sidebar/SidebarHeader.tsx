@@ -71,7 +71,7 @@ export function SidebarHeader(props: SidebarHeaderProps): React.JSX.Element {
 }
 
 function chipClass(on: boolean): string {
-  return `flex h-[22px] items-center gap-[4px] rounded-full border px-[8px] text-[11px] transition-colors duration-150 ease-out hover:text-mg-body ${
+  return `flex h-[22px] items-center gap-[4px] rounded-full border px-[8px] text-[11px] transition-colors duration-90 ease-out hover:text-mg-body ${
     on ? 'border-mg-border-ctrl bg-mg-sel text-mg-sel-ink relative before:pointer-events-none before:absolute before:inset-y-0 before:left-0 before:w-[2px] before:bg-mg-sel-mark' : 'border-mg-border-subtle text-mg-sec'
   }`;
 }

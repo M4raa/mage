@@ -6,44 +6,55 @@ import type { Transition, Variants } from 'motion/react';
 // variante (mas rapida al salir que al entrar, tabla de decisions.md) para que baste con
 // `variants={...} initial="initial" animate="animate" exit="exit"` en el componente.
 
+// Tokens de duracion y curvas (041 §5). Los MISMOS valores viven en index.css como `--mg-dur-*` y
+// `--mg-ease-*` para lo que se anima con CSS: si cambia uno, cambia el otro.
+export const MOTION_S = { fast: 0.09, base: 0.14, slow: 0.2 } as const;
+// La salida dura la entrada por este factor: lo que se va no debe hacer esperar.
+export const EXIT_FACTOR = 0.65;
+export const EASE_ENTER = [0.22, 0.61, 0.36, 1] as const;
+export const EASE_EXIT = [0.4, 0, 1, 1] as const;
+
+const enter = (duration: number) => ({ duration, ease: EASE_ENTER });
+const exit = (duration: number) => ({ duration: duration * EXIT_FACTOR, ease: EASE_EXIT });
+
 // Modales grandes (AddAccountDialog, HandoffModal, NewTabDialog): velo + panel.
 export const MODAL_SCRIM_VARIANTS: Variants = {
   initial: { opacity: 0 },
-  animate: { opacity: 1, transition: { duration: 0.2, ease: 'easeOut' } },
-  exit: { opacity: 0, transition: { duration: 0.12, ease: 'easeIn' } },
+  animate: { opacity: 1, transition: enter(MOTION_S.slow) },
+  exit: { opacity: 0, transition: exit(MOTION_S.slow) },
 };
 
 export const MODAL_PANEL_VARIANTS: Variants = {
   initial: { opacity: 0, scale: 0.96, y: 8 },
-  animate: { opacity: 1, scale: 1, y: 0, transition: { duration: 0.2, ease: 'easeOut' } },
-  exit: { opacity: 0, scale: 0.97, y: 4, transition: { duration: 0.12, ease: 'easeIn' } },
+  animate: { opacity: 1, scale: 1, y: 0, transition: enter(MOTION_S.slow) },
+  exit: { opacity: 0, scale: 0.97, y: 4, transition: exit(MOTION_S.slow) },
 };
 
 // Popovers/menus contextuales (Dropdown, ConversationContextMenu, PanelMoveMenu, AddPanelMenu): mas
 // pequenos y rapidos que un modal, sin velo opaco.
 export const POPOVER_VARIANTS: Variants = {
   initial: { opacity: 0, scale: 0.97, y: -4 },
-  animate: { opacity: 1, scale: 1, y: 0, transition: { duration: 0.15, ease: 'easeOut' } },
-  exit: { opacity: 0, scale: 0.98, y: -2, transition: { duration: 0.12, ease: 'easeIn' } },
+  animate: { opacity: 1, scale: 1, y: 0, transition: enter(MOTION_S.base) },
+  exit: { opacity: 0, scale: 0.98, y: -2, transition: exit(MOTION_S.base) },
 };
 
 // Los selectores del prompt bajando a su fila cuando el texto salta de linea (P-026 3.1): `layout` de
 // motion (FLIP), mismo registro. Con movimiento reducido, `MotionConfig reducedMotion="user"` lo vuelve
 // un salto instantaneo.
-export const COMPOSER_LAYOUT_TRANSITION: Transition = { duration: 0.18, ease: 'easeOut' };
+export const COMPOSER_LAYOUT_TRANSITION: Transition = enter(MOTION_S.slow);
 
 // Indicador compartido de pestaña activa (TabBar, layoutId + FLIP): mismo registro 120-200ms.
-export const TAB_INDICATOR_TRANSITION: Transition = { duration: 0.2, ease: 'easeOut' };
+export const TAB_INDICATOR_TRANSITION: Transition = enter(MOTION_S.slow);
 
 // Muestras de color del menu contextual de pestañas: realimentacion de hover, mas corta todavia
 // (Type "feedback" de decisions.md — no debe competir con la entrada del propio menu).
-export const TAB_COLOR_SWATCH_TRANSITION: Transition = { duration: 0.12, ease: 'easeOut' };
+export const TAB_COLOR_SWATCH_TRANSITION: Transition = enter(MOTION_S.fast);
 
 // Contenido de una zona de dock (ZonePane): fundido al abrir la zona o al cambiar de panel activo.
 export const PANEL_CONTENT_VARIANTS: Variants = {
   initial: { opacity: 0 },
-  animate: { opacity: 1, transition: { duration: 0.15, ease: 'easeOut' } },
-  exit: { opacity: 0, transition: { duration: 0.1, ease: 'easeIn' } },
+  animate: { opacity: 1, transition: enter(MOTION_S.base) },
+  exit: { opacity: 0, transition: exit(MOTION_S.base) },
 };
 
 // Despliegue EN SU SITIO (FilesPanel: la previsualizacion del fichero elegido, 2026-09-21). A
@@ -55,14 +66,21 @@ export const PANEL_CONTENT_VARIANTS: Variants = {
 // esta encogida. Mismo registro que el resto (120-200 ms, sin bounce).
 export const DISCLOSURE_VARIANTS: Variants = {
   initial: { height: 0, opacity: 0 },
-  animate: { height: 'auto', opacity: 1, transition: { duration: 0.18, ease: 'easeOut' } },
-  exit: { height: 0, opacity: 0, transition: { duration: 0.12, ease: 'easeIn' } },
+  animate: { height: 'auto', opacity: 1, transition: enter(MOTION_S.base) },
+  exit: { height: 0, opacity: 0, transition: exit(MOTION_S.base) },
 };
 
 // Toasts de notificacion (abajo a la derecha): entran desde su borde, sin bounce. Con movimiento
 // reducido `MotionConfig reducedMotion="user"` quita el desplazamiento y deja el fundido.
 export const TOAST_VARIANTS: Variants = {
   initial: { opacity: 0, x: 16 },
-  animate: { opacity: 1, x: 0, transition: { duration: 0.18, ease: 'easeOut' } },
-  exit: { opacity: 0, x: 16, transition: { duration: 0.12, ease: 'easeIn' } },
+  animate: { opacity: 1, x: 0, transition: enter(MOTION_S.slow) },
+  exit: { opacity: 0, x: 16, transition: exit(MOTION_S.slow) },
+};
+
+// Tooltip (TooltipLayer): fundido con un desplazamiento minimo de 3 px.
+export const TOOLTIP_VARIANTS: Variants = {
+  initial: { opacity: 0, y: 3 },
+  animate: { opacity: 1, y: 0, transition: enter(MOTION_S.base) },
+  exit: { opacity: 0, transition: exit(MOTION_S.base) },
 };

@@ -118,7 +118,7 @@ export function RewindDialog({ tabId, blockId, action, onClose }: {
               data-rewind-confirm="true"
               disabled={!canApply}
               onClick={() => void confirm()}
-              className="rounded-[7px] border border-mg-border-emph bg-mg-sel px-[12px] py-[6px] font-bold text-mg-sel-ink transition-colors duration-150 ease-out hover:bg-mg-hover disabled:opacity-50"
+              className="rounded-[7px] border border-mg-border-emph bg-mg-sel px-[12px] py-[6px] font-bold text-mg-sel-ink transition-colors duration-90 ease-out hover:bg-mg-hover disabled:opacity-50"
             >
               {applying ? t('chat.rewind.applying') : confirmLabel(t, action)}
             </button>

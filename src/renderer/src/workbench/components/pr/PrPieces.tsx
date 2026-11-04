@@ -7,7 +7,7 @@ import type { MessageKey } from '@shared/i18n/messageKeys.generated';
 
 // Piezas pequeñas compartidas por el panel de PR y su detalle.
 
-export const BUTTON = 'rounded-[6px] border border-mg-border-ctrl px-[8px] py-[3px] text-[10.5px] text-mg-body2 transition-colors duration-150 ease-out hover:bg-mg-hover hover:text-mg-body disabled:opacity-50';
+export const BUTTON = 'rounded-[6px] border border-mg-border-ctrl px-[8px] py-[3px] text-[10.5px] text-mg-body2 transition-colors duration-90 ease-out hover:bg-mg-hover hover:text-mg-body disabled:opacity-50';
 export const SECTION_TITLE = 'px-[10px] pt-[8px] pb-[2px] text-[10px] font-bold tracking-[.06em] text-mg-ter';
 
 // Guarda la CLAVE del estado: se traduce al pintar.

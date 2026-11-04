@@ -79,7 +79,7 @@ export function RecentProjects({
             aria-pressed={project.cwd === currentCwd}
             data-recent-project={project.cwd}
             title={project.cwd}
-            className={`flex min-w-0 flex-col items-start gap-[2px] rounded-[9px] border p-[8px_10px] text-left transition-colors duration-150 ease-out hover:border-mg-focus hover:bg-mg-hover ${
+            className={`flex min-w-0 flex-col items-start gap-[2px] rounded-[9px] border p-[8px_10px] text-left transition-colors duration-90 ease-out hover:border-mg-focus hover:bg-mg-hover ${
               project.cwd === currentCwd ? 'border-mg-focus bg-mg-sel text-mg-sel-ink relative before:pointer-events-none before:absolute before:inset-y-0 before:left-0 before:w-[2px] before:bg-mg-sel-mark' : 'border-mg-border-emph'
             }`}
           >
@@ -96,7 +96,7 @@ export function RecentProjects({
               onClick={() => onPick(folder.cwd)}
               data-recent-folder={folder.cwd}
               title={folder.cwd}
-              className="flex items-center gap-[8px] rounded-[6px] px-[8px] py-[4px] text-left text-[11.5px] text-mg-body transition-colors duration-150 ease-out hover:bg-mg-hover"
+              className="flex items-center gap-[8px] rounded-[6px] px-[8px] py-[4px] text-left text-[11.5px] text-mg-body transition-colors duration-90 ease-out hover:bg-mg-hover"
             >
               <Icon name="folder" size={12} className="flex-none text-mg-sec" />
               <span className="min-w-0 flex-1 truncate">{folder.name}</span>

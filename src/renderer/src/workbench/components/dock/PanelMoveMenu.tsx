@@ -86,7 +86,7 @@ export function PanelMoveMenu({
               onStep(item.direction);
               onClose();
             }}
-            className="flex w-full items-center gap-[6px] px-[10px] py-[5px] text-left transition-colors duration-150 ease-out hover:bg-mg-hover disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
+            className="flex w-full items-center gap-[6px] px-[10px] py-[5px] text-left transition-colors duration-90 ease-out hover:bg-mg-hover disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
           >
             <Icon name={item.icon} size={12} />
             {t(item.label)}
@@ -101,7 +101,7 @@ export function PanelMoveMenu({
               onSelect(d);
               onClose();
             }}
-            className="block w-full px-[10px] py-[5px] text-left transition-colors duration-150 ease-out hover:bg-mg-hover"
+            className="block w-full px-[10px] py-[5px] text-left transition-colors duration-90 ease-out hover:bg-mg-hover"
           >
             {d.label}
           </button>
@@ -116,7 +116,7 @@ export function PanelMoveMenu({
             onHide();
             onClose();
           }}
-          className="block w-full px-[10px] py-[5px] text-left transition-colors duration-150 ease-out hover:bg-mg-hover"
+          className="block w-full px-[10px] py-[5px] text-left transition-colors duration-90 ease-out hover:bg-mg-hover"
         >
           {t('menu.dock.hideIcon')}
           <span className="block text-[10px] text-mg-muted">{t('menu.dock.hideIconHint')}</span>

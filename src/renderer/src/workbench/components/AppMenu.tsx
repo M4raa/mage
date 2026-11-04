@@ -125,7 +125,7 @@ export function AppMenu({
         style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
         // Mismo alto que los botones de cuenta (26 px en una franja de 32): el primer intento lo dejo
         // en un glifo diminuto que no habia manera de acertar con el raton.
-        className="flex h-[26px] w-[26px] items-center justify-center rounded-[7px] text-[16px] leading-none transition-colors duration-150 ease-out hover:bg-mg-hover hover:text-mg-body"
+        className="flex h-[26px] w-[26px] items-center justify-center rounded-[7px] text-[16px] leading-none transition-colors duration-90 ease-out hover:bg-mg-hover hover:text-mg-body"
       >
         ⋮
       </button>
@@ -202,7 +202,7 @@ function MenuButton({
         aria-expanded={open}
         onClick={onToggle}
         onMouseEnter={onHover}
-        className={`rounded-[5px] px-[8px] py-[2px] transition-colors duration-150 ease-out hover:bg-mg-hover hover:text-mg-body ${open ? 'bg-mg-hover text-mg-body' : ''}`}
+        className={`rounded-[5px] px-[8px] py-[2px] transition-colors duration-90 ease-out hover:bg-mg-hover hover:text-mg-body ${open ? 'bg-mg-hover text-mg-body' : ''}`}
       >
         {menu.label}
       </button>
@@ -295,7 +295,7 @@ function MenuRow({ item, onClose }: { readonly item: AppMenuItem; readonly onClo
       role="menuitem"
       disabled={!item.enabled}
       onClick={activate}
-      className="flex w-full items-center gap-[18px] px-[10px] py-[5px] text-left transition-colors duration-150 ease-out hover:bg-mg-hover disabled:opacity-40 disabled:hover:bg-transparent"
+      className="flex w-full items-center gap-[18px] px-[10px] py-[5px] text-left transition-colors duration-90 ease-out hover:bg-mg-hover disabled:opacity-40 disabled:hover:bg-transparent"
     >
       <span className="flex-1">{item.label}</span>
       {item.shortcut !== null && <span className="flex-none font-mono text-[10px] text-mg-muted">{item.shortcut}</span>}

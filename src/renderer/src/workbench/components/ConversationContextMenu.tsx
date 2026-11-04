@@ -273,7 +273,7 @@ function MenuItem({
       disabled={disabled}
       onClick={onClick}
       data-tip={tip ?? undefined}
-      className={`block w-full px-[10px] py-[5px] text-left transition-colors duration-150 ease-out disabled:opacity-40 ${
+      className={`block w-full px-[10px] py-[5px] text-left transition-colors duration-90 ease-out disabled:opacity-40 ${
         danger ? 'text-mg-danger hover:bg-mg-danger-bg' : 'hover:bg-mg-hover'
       }`}
     >

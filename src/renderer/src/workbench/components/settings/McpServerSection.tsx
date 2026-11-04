@@ -4,7 +4,7 @@ import { useWorkbenchStore } from '../../workbenchStore';
 import { useMcpRegistration } from './useMcpRegistration';
 
 const BUTTON_CLASS =
-  'rounded-[7px] border border-mg-border-emph px-[12px] py-[6px] text-[11.5px] text-mg-body transition-colors duration-150 ease-out hover:bg-mg-hover disabled:opacity-50';
+  'rounded-[7px] border border-mg-border-emph px-[12px] py-[6px] text-[11.5px] text-mg-body transition-colors duration-90 ease-out hover:bg-mg-hover disabled:opacity-50';
 const PROVIDER_LABEL = { claude: 'Claude', codex: 'Codex' } as const;
 const DEPTH_OPTIONS = Array.from({ length: DELEGATION_DEPTH_MAX - DELEGATION_DEPTH_MIN + 1 }, (_, index) => DELEGATION_DEPTH_MIN + index);
 

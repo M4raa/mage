@@ -44,7 +44,7 @@ export function TabSubline(): React.JSX.Element | null {
             onClick={() => void window.mage.openPath(tab.cwd).catch(() => undefined)}
             data-tip={folder.title}
             aria-label={folder.title}
-            className="inline-flex max-w-[280px] items-center gap-[5px] rounded-[4px] px-[3px] transition-colors duration-150 ease-out hover:bg-mg-hover hover:text-mg-body"
+            className="inline-flex max-w-[280px] items-center gap-[5px] rounded-[4px] px-[3px] transition-colors duration-90 ease-out hover:bg-mg-hover hover:text-mg-body"
           >
             <Icon name={folder.icon} size={12} />
             <span className="truncate">{folder.label}</span>

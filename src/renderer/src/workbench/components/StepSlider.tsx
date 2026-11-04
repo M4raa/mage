@@ -109,7 +109,7 @@ export function StepSlider({
         aria-expanded={open}
         aria-label={ariaLabel}
         data-tip={tip}
-        className={`shrink-0 cursor-pointer self-center rounded-full border border-mg-border-ctrl bg-transparent px-[8px] py-[2px] text-[10.5px] text-mg-sec outline-none transition-colors duration-150 ease-out hover:text-mg-body ${triggerClassName}`}
+        className={`shrink-0 cursor-pointer self-center rounded-full border border-mg-border-ctrl bg-transparent px-[8px] py-[2px] text-[10.5px] text-mg-sec outline-none transition-colors duration-90 ease-out hover:text-mg-body ${triggerClassName}`}
       >
         {leading === undefined ? (
           label

@@ -225,7 +225,7 @@ function DockOptions({
             role={question.multiSelect ? 'checkbox' : 'radio'}
             aria-checked={selected}
             onClick={() => onToggle(option.label)}
-            className={`flex items-start gap-[9px] rounded-[8px] border p-[6px_8px] text-left transition-colors duration-150 ${
+            className={`flex items-start gap-[9px] rounded-[8px] border p-[6px_8px] text-left transition-colors duration-90 ${
               selected ? 'border-mg-focus bg-mg-sel text-mg-sel-ink relative before:pointer-events-none before:absolute before:inset-y-0 before:left-0 before:w-[2px] before:bg-mg-sel-mark' : highlighted ? 'border-mg-border-emph' : 'border-transparent hover:bg-mg-hover'
             }`}
           >

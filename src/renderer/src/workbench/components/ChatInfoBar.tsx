@@ -85,7 +85,7 @@ function CreatorChip({ tabId }: { readonly tabId: string }): React.JSX.Element |
     state.setActiveTab(creator.tabId);
   };
   return (
-    <button onClick={goToCreator} data-creator-chip data-tip={label} aria-label={label} className={`${CHIP_CLASS} transition-colors duration-150 ease-out hover:bg-mg-hover hover:text-mg-body`}>
+    <button onClick={goToCreator} data-creator-chip data-tip={label} aria-label={label} className={`${CHIP_CLASS} transition-colors duration-90 ease-out hover:bg-mg-hover hover:text-mg-body`}>
       <span className="truncate">{label}</span>
     </button>
   );

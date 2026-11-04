@@ -55,7 +55,7 @@ function SendButton({ canSend, onSend }: { readonly canSend: boolean; readonly o
       disabled={!canSend}
       aria-label={t('prompt.send.ariaLabel')}
       data-tip={t('prompt.send.tip')}
-      className="shrink-0 cursor-pointer self-center rounded-full border border-mg-border-ctrl px-[8px] py-[1px] font-mono text-[10.5px] text-mg-body2 transition-colors duration-150 ease-out hover:bg-mg-hover disabled:cursor-default disabled:text-mg-muted disabled:opacity-60 disabled:hover:bg-transparent"
+      className="shrink-0 cursor-pointer self-center rounded-full border border-mg-border-ctrl px-[8px] py-[1px] font-mono text-[10.5px] text-mg-body2 transition-colors duration-90 ease-out hover:bg-mg-hover disabled:cursor-default disabled:text-mg-muted disabled:opacity-60 disabled:hover:bg-transparent"
     >
       ⏎
     </button>
@@ -64,7 +64,7 @@ function SendButton({ canSend, onSend }: { readonly canSend: boolean; readonly o
 
 // Mismas clases que el ⏎; cada mitad pone sus esquinas y su relleno.
 const SPLIT_BUTTON_CLASS =
-  'cursor-pointer border border-mg-border-ctrl py-[1px] text-[10.5px] text-mg-body2 transition-colors duration-150 ease-out hover:bg-mg-hover disabled:cursor-default disabled:text-mg-muted disabled:opacity-60 disabled:hover:bg-transparent';
+  'cursor-pointer border border-mg-border-ctrl py-[1px] text-[10.5px] text-mg-body2 transition-colors duration-90 ease-out hover:bg-mg-hover disabled:cursor-default disabled:text-mg-muted disabled:opacity-60 disabled:hover:bg-transparent';
 
 function SplitSend(props: SendControlsProps): React.JSX.Element {
   const t = useT();

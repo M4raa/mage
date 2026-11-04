@@ -72,7 +72,7 @@ export function TitleBar(): React.JSX.Element {
         // aparece el nombre de la app desde que el texto "MAGE" se sustituyo por el logo, y al
         // convertirlo en boton de ajustes se perdio — lo canto la comprobacion de GUI, no el ojo.
         aria-label={t('app.titleBar.settingsLabel')}
-        className="flex shrink-0 items-center rounded-[5px] p-[3px] text-mg-sec transition-colors duration-150 ease-out hover:bg-mg-hover hover:text-mg-body"
+        className="flex shrink-0 items-center rounded-[5px] p-[3px] text-mg-sec transition-colors duration-90 ease-out hover:bg-mg-hover hover:text-mg-body"
       >
         <MageMark size={18} />
       </button>
@@ -112,7 +112,7 @@ function BackgroundCount(): React.JSX.Element | null {
       onClick={reveal}
       data-background-count={count}
       style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
-      className="flex shrink-0 items-center gap-[6px] rounded-[5px] px-[6px] py-[3px] text-[11px] text-mg-sec transition-colors duration-150 ease-out hover:bg-mg-hover hover:text-mg-body"
+      className="flex shrink-0 items-center gap-[6px] rounded-[5px] px-[6px] py-[3px] text-[11px] text-mg-sec transition-colors duration-90 ease-out hover:bg-mg-hover hover:text-mg-body"
     >
       <span aria-hidden="true" className="h-[7px] w-[7px] rounded-full border-[1.5px] border-mg-sec" />
       {t('app.titleBar.background', { count })}
@@ -145,7 +145,7 @@ function TitleBarIssueButton({
       data-tip={tip}
       // Dice que ABRE EL NAVEGADOR: el control se va de la app, y eso se anuncia antes de pulsarlo.
       aria-label={label}
-      className="flex shrink-0 items-center rounded-[5px] p-[3px] text-mg-sec transition-colors duration-150 ease-out hover:bg-mg-hover hover:text-mg-body"
+      className="flex shrink-0 items-center rounded-[5px] p-[3px] text-mg-sec transition-colors duration-90 ease-out hover:bg-mg-hover hover:text-mg-body"
     >
       <Icon name={icon} size={15} />
     </button>

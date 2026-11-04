@@ -61,7 +61,7 @@ export function GitChips({ tabId, cwd, bare = false }: { readonly tabId: string;
           onClick={() => insertCommitPrompt(tabId)}
           data-git-commit
           data-tip={t('chat.git.askCommitTip')}
-          className={`${chipClass} text-mg-body2 transition-colors duration-150 ease-out hover:bg-mg-hover hover:text-mg-body`}
+          className={`${chipClass} text-mg-body2 transition-colors duration-90 ease-out hover:bg-mg-hover hover:text-mg-body`}
         >
           {t('chat.git.askCommit')}
         </button>

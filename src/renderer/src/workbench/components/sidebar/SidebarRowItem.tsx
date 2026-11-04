@@ -58,7 +58,7 @@ export const SidebarRowItem = memo(function SidebarRowItem(props: SidebarRowItem
   return row.kind === 'tab' ? <TabRow {...props} row={row} /> : <HistoryRow {...props} row={row} />;
 });
 
-const ROW_CLASS = 'group relative flex items-center rounded-[6px] transition-colors duration-150 ease-out';
+const ROW_CLASS = 'group relative flex items-center rounded-[6px] transition-colors duration-90 ease-out';
 
 function TabRow(props: SidebarRowItemProps & { readonly row: Extract<SidebarRow, { kind: 'tab' }> }): React.JSX.Element {
   const { row, account, status, indicator, onSelectTab, onRename, onMenu } = props;

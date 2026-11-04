@@ -47,7 +47,7 @@ export function AccountSwitcher({ orientation }: { readonly orientation: 'horizo
         onClick={openAddAccount}
         data-tip={t('accounts.switcher.add')}
         aria-label={t('accounts.switcher.add')}
-        className={`flex shrink-0 items-center justify-center rounded-[7px] text-[13px] text-mg-muted transition-colors duration-150 ease-out hover:bg-mg-hover hover:text-mg-body ${SIZE}`}
+        className={`flex shrink-0 items-center justify-center rounded-[7px] text-[13px] text-mg-muted transition-colors duration-90 ease-out hover:bg-mg-hover hover:text-mg-body ${SIZE}`}
       >
         ＋
       </button>

@@ -108,7 +108,7 @@ export function DialogButton({
     <button
       ref={buttonRef}
       onClick={onClick}
-      className={`rounded-[7px] border border-mg-border-emph px-[12px] py-[6px] transition-colors duration-150 ease-out hover:bg-mg-hover ${tone}`}
+      className={`rounded-[7px] border border-mg-border-emph px-[12px] py-[6px] transition-colors duration-90 ease-out hover:bg-mg-hover ${tone}`}
     >
       {children}
     </button>

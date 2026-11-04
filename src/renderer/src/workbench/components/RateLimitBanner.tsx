@@ -66,7 +66,7 @@ export function RateLimitBanner(): React.JSX.Element | null {
                   .catch((err: unknown) => console.error('No se pudo continuar en la otra cuenta:', err instanceof Error ? err.message : String(err)))
                   .finally(() => setMoving(false));
               }}
-              className="inline-flex items-center gap-[6px] rounded-[6px] border border-mg-border-emph px-[8px] py-[3px] text-mg-body transition-colors duration-150 ease-out hover:bg-mg-hover disabled:opacity-50"
+              className="inline-flex items-center gap-[6px] rounded-[6px] border border-mg-border-emph px-[8px] py-[3px] text-mg-body transition-colors duration-90 ease-out hover:bg-mg-hover disabled:opacity-50"
             >
               <span className="h-[7px] w-[7px] flex-none rounded-[2px]" style={{ background: account.accent.base }} />
               <span className="truncate">{account.alias}</span>

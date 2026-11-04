@@ -583,7 +583,7 @@ function ImportedThemeCard({
         <button
           onClick={() => setConfirming(true)}
           aria-label={t('settings.themeMarket.removeAria', { theme: theme.label })}
-          className="flex items-center gap-[5px] self-start rounded-[6px] px-[6px] py-[3px] text-[10.5px] text-mg-muted transition-colors duration-150 ease-out hover:bg-mg-hover hover:text-mg-danger"
+          className="flex items-center gap-[5px] self-start rounded-[6px] px-[6px] py-[3px] text-[10.5px] text-mg-muted transition-colors duration-90 ease-out hover:bg-mg-hover hover:text-mg-danger"
         >
           <Icon name="trash" size={12} />
           {t('settings.themeMarket.remove')}

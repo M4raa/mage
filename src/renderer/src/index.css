@@ -91,6 +91,14 @@
 :root {
   color-scheme: dark;
 
+  /* Duraciones y curvas del movimiento: los MISMOS valores que MOTION_S, EASE_ENTER y EASE_EXIT de
+     workbench/motionPresets.ts (lo que anima motion y lo que anima CSS van a una). */
+  --mg-dur-fast: 90ms;
+  --mg-dur-base: 140ms;
+  --mg-dur-slow: 200ms;
+  --mg-ease-enter: cubic-bezier(.22, .61, .36, 1);
+  --mg-ease-exit: cubic-bezier(.4, 0, 1, 1);
+
   /* Sombras */
   --mg-shadow-modal: 0 18px 50px rgba(0, 0, 0, 0.6);
   --mg-shadow-pop: 0 10px 30px rgba(0, 0, 0, 0.5);

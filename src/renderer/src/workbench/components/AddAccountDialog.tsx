@@ -584,7 +584,7 @@ function ChoiceGroup({
             aria-pressed={option.key === selected}
             data-account-flow={option.flow}
             onClick={() => onSelect(option.key)}
-            className={`rounded-[6px] border px-[8px] py-[3px] text-[10.5px] transition-colors duration-150 ease-out hover:bg-mg-hover ${
+            className={`rounded-[6px] border px-[8px] py-[3px] text-[10.5px] transition-colors duration-90 ease-out hover:bg-mg-hover ${
               option.key === selected ? 'border-mg-focus text-mg-text' : 'border-mg-border-ctrl text-mg-body2'
             }`}
           >
@@ -639,7 +639,7 @@ function AdoptSection({
             key={account.id}
             disabled={disabled}
             onClick={() => onAdopt(account.id)}
-            className="rounded-[6px] border border-mg-border-ctrl px-[8px] py-[3px] text-[10.5px] text-mg-body2 transition-colors duration-150 ease-out hover:bg-mg-hover disabled:opacity-40"
+            className="rounded-[6px] border border-mg-border-ctrl px-[8px] py-[3px] text-[10.5px] text-mg-body2 transition-colors duration-90 ease-out hover:bg-mg-hover disabled:opacity-40"
           >
             {t('accounts.add.adopt.use', { alias: account.alias })}
           </button>
@@ -719,7 +719,7 @@ function PrimaryButton({ onClick, disabled = false, children }: { readonly onCli
 
 function SecondaryButton({ onClick, children }: { readonly onClick: () => void; readonly children: React.ReactNode }): React.JSX.Element {
   return (
-    <button onClick={onClick} className="rounded-[7px] border border-mg-border-emph px-[12px] py-[7px] text-mg-body2 transition-colors duration-150 ease-out hover:bg-mg-hover">
+    <button onClick={onClick} className="rounded-[7px] border border-mg-border-emph px-[12px] py-[7px] text-mg-body2 transition-colors duration-90 ease-out hover:bg-mg-hover">
       {children}
     </button>
   );

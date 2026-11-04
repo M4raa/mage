@@ -262,7 +262,7 @@ function ReleaseNotesTab({
       onAuxClick={(e) => {
         if (e.button === 1) onClose();
       }}
-      className={`relative flex flex-none cursor-pointer items-center gap-[7px] border-r border-mg-border p-[8px_14px] transition-colors duration-150 ease-out ${
+      className={`relative flex flex-none cursor-pointer items-center gap-[7px] border-r border-mg-border p-[8px_14px] transition-colors duration-90 ease-out ${
         active && !unfocusedPane ? 'bg-mg-window text-mg-text' : unfocusedPane ? 'bg-mg-window/60 text-mg-body2' : 'text-mg-sec hover:bg-mg-hover'
       }`}
     >
@@ -281,7 +281,7 @@ function ReleaseNotesTab({
             e.stopPropagation();
             onClose();
           }}
-          className="text-mg-muted transition-colors duration-150 ease-out hover:text-mg-body"
+          className="text-mg-muted transition-colors duration-90 ease-out hover:text-mg-body"
           data-tip={translate('tabs.close.tip')}
           aria-label={translate('tabs.releaseNotes.closeLabel')}
         >
@@ -380,7 +380,7 @@ function Tab({
       data-tip={moveBlockedReason ?? undefined}
       data-drop-side={dropSide ?? undefined}
       style={dropSide === null ? undefined : { boxShadow: `inset ${dropSide === 'before' ? 2 : -2}px 0 0 var(--color-mg-focus)` }}
-      className={`group relative flex flex-none cursor-pointer items-center gap-[7px] border-r border-mg-border p-[8px_14px] transition-colors duration-150 ease-out ${
+      className={`group relative flex flex-none cursor-pointer items-center gap-[7px] border-r border-mg-border p-[8px_14px] transition-colors duration-90 ease-out ${
         active && !unfocusedPane
           ? 'bg-mg-window text-mg-text'
           : unfocusedPane
@@ -422,7 +422,7 @@ function Tab({
           e.stopPropagation();
           onClose();
         }}
-        className={`text-mg-muted transition-colors duration-150 ease-out hover:text-mg-body ${active ? '' : 'invisible group-hover:visible focus-visible:visible'}`}
+        className={`text-mg-muted transition-colors duration-90 ease-out hover:text-mg-body ${active ? '' : 'invisible group-hover:visible focus-visible:visible'}`}
         data-tip={translate('tabs.close.tip')}
         aria-label={translate('tabs.close.label', { alias: accountAlias, title: displayTitle(tab.title, translate) })}
       >

@@ -32,7 +32,7 @@ export function RowList({ rows, renderRow, unlimited }: RowListProps): React.JSX
   const [limit, setLimit] = useState(COLLAPSED_LIMIT);
   const visible = unlimited ? rows : rows.slice(0, limit);
   const hidden = rows.length - visible.length;
-  const moreClass = 'mx-[2px] mt-[2px] rounded-[6px] p-[4px_9px] text-left text-[11px] text-mg-icon transition-colors duration-150 ease-out hover:bg-mg-hover hover:text-mg-body';
+  const moreClass = 'mx-[2px] mt-[2px] rounded-[6px] p-[4px_9px] text-left text-[11px] text-mg-icon transition-colors duration-90 ease-out hover:bg-mg-hover hover:text-mg-body';
   return (
     <>
       {visible.map(renderRow)}
