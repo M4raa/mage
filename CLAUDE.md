@@ -67,9 +67,9 @@ modo plan para diseñar cada milestone; verifica end-to-end (arranca lo construi
 - **`pnpm verify:gui`** — arranca la app real con **perfil aislado**, mide el DOM por CDP y deja informe
   + capturas en `.verify-out/`. **No escribas un driver CDP desechable: añade una comprobación aquí.**
   Envía **un solo turno real por ejecución**: la última comprobación, contra Claude con el modelo y el
-  esfuerzo más bajos, tras afirmar el proveedor de la pestaña. Antes mira el uso de la cuenta: con más
-  del 70 % gastado avisa y deja elegir real o local (servidor falso); sin terminal interactiva elige
-  local y lo dice en el informe (`--turn=local|real` fuerza uno). Ninguna otra comprobación pulsa
+  esfuerzo más bajos, tras afirmar el proveedor de la pestaña. El perfil usa un HOME de prueba
+  (`MAGE_TEST_HOME`) y no lee las cuentas del usuario, así que el turno es LOCAL (servidor falso) salvo
+  que se pida `--turn=real` de forma explícita, y lo dice en el informe. Ninguna otra comprobación pulsa
   `Enter` en el prompt ni spawnea el CLI.
 - **`spike/`** — spikes reproducibles contra los CLI reales (`engine-spike.mjs`, `agy-spike.mjs`).
   Un CLI nuevo se **mide**, no se deduce de su `--help` (que ya mintió una vez).
