@@ -6966,12 +6966,11 @@ const CHECKS = [
   },
   {
     // Q08 (panel de PR, F5.5), con el montaje de «Grupo D» (repo temporal con remoto github.com/acme/demo y el
-    // `gh` FALSO de MAGE_GH_FAKE=1): el repo de la pestaña lista su PR #7 (borrador, por eso el filtro «Todas») y
+    // `gh` FALSO de MAGE_GH_FAKE=1): el repo de la pestaña lista su PR #7 (borrador; «Abiertas» incluye borradores) y
     // al elegirla abre su detalle.
     name: 'Q08: el panel lista la PR #7 del repo y abre su detalle',
     async run(page) {
       return withQ08Panel(page, async () => {
-        await page.locator('[data-pr-filter="all"]').click();
         await page.locator(`[data-pr-row="${Q08_DEMO}"]`).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
         await page.locator(`[data-pr-row="${Q08_DEMO}"]`).click();
         await page.locator(`[data-pr-detail="${Q08_DEMO}"]`).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });

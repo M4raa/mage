@@ -216,10 +216,10 @@ describe('createGhService panel de PR', () => {
     expect(run.mock.calls[0]![1]).toEqual(expect.arrayContaining(['-R', 'github.com/acme/demo', '--state', 'open', '--limit', '30']));
   });
 
-  it('listPrs_openFilter_excludesDrafts', async () => {
+  it('listPrs_openFilter_includesDrafts', async () => {
     const result = await createGhService(deps({ run: prGh() })).listPrs({ cwd: '/r', accountDir: '/acc', repo: DEMO, state: 'open', limit: 30 });
 
-    expect(result.kind === 'list' && result.prs.map((pr) => pr.number)).toEqual([12]);
+    expect(result.kind === 'list' && result.prs.map((pr) => pr.number)).toEqual([12, 13]);
   });
 
   it('listPrs_otherHost_off', async () => {

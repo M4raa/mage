@@ -318,14 +318,14 @@ function prKeyOfUrl(url: string): string | null {
   return key === null ? null : prKeyToString(key);
 }
 
-// `draft` y `open` piden `open` a gh y se separan aqui por `isDraft`.
+// `draft` pide `open` a gh y se separa aqui por `isDraft`; `open` incluye borradores, como GitHub.
 function ghStateOf(state: PrListState): string {
   return state === 'draft' ? 'open' : state;
 }
 
 function matchesState(pr: PrSnapshot, state: PrListState): boolean {
   if (state === 'draft') return pr.isDraft;
-  return state === 'open' ? !pr.isDraft : true;
+  return true;
 }
 
 function prFailure(cwd: string, action: string, keyStr: string, code: number): UserFacingError {
