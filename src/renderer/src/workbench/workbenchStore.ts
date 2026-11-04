@@ -51,6 +51,15 @@ import { createPrPanelActions, resetPrPanelState, type PrPanelActions, type PrPa
 import { isPrCreateCommand, prNumberFromCreatedTag, prNumberFromUrl } from './prBinding';
 import { worktreeOfCwd } from '@shared/worktree';
 import { createdFileFrom } from './createdFilesView';
+import type { DocAnchor } from './planReferences';
+
+// Destino pedido por una referencia del chat (F5.6, #31). `at` distingue dos pulsaciones seguidas en la misma.
+export interface DocumentTarget {
+  readonly tabId: string;
+  readonly docId: string;
+  readonly key: string;
+  readonly at: number;
+}
 import { mergeIntoDraft, type QueuedMessage } from './messageQueue';
 import type { ConversationSnapshot, SendMode, SendReceipt } from '@shared/coordination';
 import { adoptedTab, adoptionTarget, chatStatusOf, snapshotEvents } from './adoptSession';
@@ -182,6 +191,9 @@ export interface WorkbenchState extends PrState, PrActions, PrPanelStoreState, P
   // Contador que pide FOCO para el input del prompt (extras): cada incremento hace que el PromptBar se
   // enfoque. Un contador (y no un booleano) evita tener que "consumir" el flag.
   promptFocusToken: number;
+  // Punto de un documento al que el usuario pidio ir desde una referencia del chat (F5.6, #31): el panel
+  // Ficheros lo consume (selecciona el documento, desplaza, resalta) y lo limpia.
+  readonly documentTarget: DocumentTarget | null;
 
   // --- Uso y estado (M1.3) ---
   // Uso real por cuenta (keyed por configDir). null mientras no se ha cargado.
@@ -380,6 +392,9 @@ export interface WorkbenchState extends PrState, PrActions, PrPanelStoreState, P
   toggleInspector: () => void;
   // Pide foco para el input del prompt (nueva conversacion, cambio de pestana…).
   focusPrompt: () => void;
+  // Abre el panel Ficheros en el documento de la referencia y fija el destino (F5.6, #31).
+  openDocumentAnchor: (tabId: string, anchor: DocAnchor) => void;
+  clearDocumentTarget: () => void;
   // Clic en una notificacion del SO (P-028 40): lleva a su pestaña y al prompt o, si la pestaña ya no
   // esta, RESALTA su fila del historial (reabrirla cortaria la sesion viva en segundo plano).
   focusNotificationTarget: (target: NotificationTarget) => void;
@@ -1404,6 +1419,7 @@ export function createWorkbenchStore(mage: MageClient) {
     appVersion: '',
     settings: DEFAULT_APP_SETTINGS,
     promptFocusToken: 0,
+    documentTarget: null,
 
     usageByAccount: {},
     usageErrorByAccount: {},
@@ -1794,6 +1810,11 @@ export function createWorkbenchStore(mage: MageClient) {
     toggleSidebar: () => void import('./panelLayoutStore').then((m) => m.usePanelLayoutStore.getState().togglePanelById('conversations')),
     toggleInspector: () => void import('./panelLayoutStore').then((m) => m.usePanelLayoutStore.getState().togglePanelById('permissions')),
     focusPrompt: () => set((s) => ({ promptFocusToken: s.promptFocusToken + 1 })),
+    openDocumentAnchor: (tabId, anchor) => {
+      set({ documentTarget: { tabId, docId: anchor.docId, key: anchor.key, at: Date.now() } });
+      void import('./panelLayoutStore').then((m) => m.usePanelLayoutStore.getState().revealPanelById('files'));
+    },
+    clearDocumentTarget: () => set({ documentTarget: null }),
 
     focusNotificationTarget: (target) => {
       const s = get();

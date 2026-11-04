@@ -18,7 +18,9 @@ import { computeThinkingStatus, formatElapsed } from '../thinkingStatus';
 import { commandOutputLayout, currentTurnCapability, hasVisibleContent, isSubagentRunning, pendingToolName, type TurnCapability } from '../engineBlocks';
 import { isSlashCommandText } from '../conversationTitle';
 import { canChangeCwd, shortenPath } from '../cwdChange';
-import { Markdown } from './Markdown';
+import { Markdown, ReferenceContext, type ReferenceLinks } from './Markdown';
+import { useReferenceIndex } from '../useReferenceIndex';
+import { resolveReference } from '../planReferences';
 import { PermissionCard } from './PermissionCard';
 import { usePanelLayoutStore } from '../panelLayoutStore';
 import { ArtifactCard } from './ArtifactCard';
@@ -74,6 +76,7 @@ export function BlockChat(): React.JSX.Element {
   // de la cola es lo que hace que el auto-scroll siga el typing.
   const tailSize = useMemo(() => tailContentSize(rows), [rows]);
   const t = useT();
+  const referenceLinks = useChatReferenceLinks(activeTabId);
   const anchor = useListAnchor(activeTabId, rows);
   const expandedRows = useExpandedRowsStore(activeTabId);
   const { virtuosoRef, onAtBottomChange } = useChatAutoScroll({ tailSize, turnLive, resetKey: stickResetKey(activeTabId, blocks) });
@@ -100,6 +103,7 @@ export function BlockChat(): React.JSX.Element {
       <div className="sr-only" role="status" aria-live="polite">
         {statusAnnouncement(t, status)}
       </div>
+      <ReferenceContext.Provider value={referenceLinks}>
       <ExpandedRowsContext.Provider value={expandedRows}>
         <Virtuoso<ChatRow, ChatListContext>
           key={`${activeTabId}:${anchor.generation}`}
@@ -118,7 +122,18 @@ export function BlockChat(): React.JSX.Element {
           itemContent={renderChatItem}
         />
       </ExpandedRowsContext.Provider>
+      </ReferenceContext.Provider>
     </div>
+  );
+}
+
+// Referencias del hilo (F5.6, #31): resuelven contra el indice de la pestana y abren el punto en Ficheros.
+function useChatReferenceLinks(tabId: string): ReferenceLinks {
+  const index = useReferenceIndex(tabId);
+  const openDocumentAnchor = useWorkbenchStore((s) => s.openDocumentAnchor);
+  return useMemo(
+    () => ({ resolve: (key) => resolveReference(index, key), open: (anchor) => openDocumentAnchor(tabId, anchor) }),
+    [index, openDocumentAnchor, tabId],
   );
 }
 

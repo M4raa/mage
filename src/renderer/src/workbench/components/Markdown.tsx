@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import type { ThemedToken } from 'shiki/types';
 import { parseMarkdown, type MdBlock, type MdInline } from '../markdown';
 import { useHighlightedCode } from '../highlighter';
@@ -7,6 +7,15 @@ import { Icon } from './Icon';
 import { useCopyToClipboard } from '../useCopyToClipboard';
 import { inlinesToText, tableToMarkdown, tableToTsv } from '../tableCopy';
 import { useT } from '../../i18n/uiLanguage';
+import { extractReferenceTokens, type DocAnchor } from '../planReferences';
+
+// Referencias del chat al plan (F5.6, #31). Sin contexto (todos los Markdown salvo el del chat) el texto
+// se pinta tal cual; con el, cada referencia que resuelve a UN punto de un documento asociado es un boton.
+export interface ReferenceLinks {
+  readonly resolve: (key: string) => DocAnchor | null;
+  readonly open: (anchor: DocAnchor) => void;
+}
+export const ReferenceContext = createContext<ReferenceLinks | null>(null);
 
 // Render de Markdown a React (bloques + inline). El parseo vive en el modulo PURO markdown.ts; aqui
 // solo se mapea AST -> elementos con los tokens de tema `mg-*`. Todo el texto se rende como texto
@@ -268,10 +277,40 @@ function Inlines({ nodes }: { readonly nodes: readonly MdInline[] }): React.JSX.
   );
 }
 
+// Texto plano con las referencias que resuelven convertidas en botones. Solo `text`: ni el codigo en
+// linea ni los bloques de codigo pasan por aqui.
+function TextNode({ text }: { readonly text: string }): React.JSX.Element {
+  const links = useContext(ReferenceContext);
+  if (links === null) return <>{text}</>;
+  const parts: React.ReactNode[] = [];
+  let cursor = 0;
+  for (const token of extractReferenceTokens(text)) {
+    const anchor = links.resolve(token.key);
+    if (anchor === null) continue;
+    parts.push(text.slice(cursor, token.start));
+    parts.push(
+      <button
+        key={token.start}
+        type="button"
+        data-plan-ref={token.key}
+        className="underline decoration-dotted underline-offset-2 hover:text-mg-text"
+        data-tip={anchor.label}
+        onClick={() => links.open(anchor)}
+      >
+        {text.slice(token.start, token.end)}
+      </button>,
+    );
+    cursor = token.end;
+  }
+  if (parts.length === 0) return <>{text}</>;
+  parts.push(text.slice(cursor));
+  return <>{parts}</>;
+}
+
 function InlineNode({ node }: { readonly node: MdInline }): React.JSX.Element {
   switch (node.type) {
     case 'text':
-      return <>{node.text}</>;
+      return <TextNode text={node.text} />;
     case 'strong':
       return (
         <strong className="font-semibold text-mg-text">
@@ -295,7 +334,10 @@ function InlineNode({ node }: { readonly node: MdInline }): React.JSX.Element {
     case 'link':
       return (
         <a href={node.href} target="_blank" rel="noreferrer noopener" className="text-mg-focus underline underline-offset-2 hover:opacity-80">
-          <Inlines nodes={node.children} />
+          {/* Un boton dentro de un enlace no es HTML valido: dentro de un enlace no se enlaza nada. */}
+          <ReferenceContext.Provider value={null}>
+            <Inlines nodes={node.children} />
+          </ReferenceContext.Provider>
         </a>
       );
   }
