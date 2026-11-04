@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { BrowserPenResult } from '@shared/browser';
 import type { ImageAttachment } from '@shared/ipc';
-import type { Translate } from '../../i18n/uiLanguage';
+import type { Translate } from '@shared/i18n/translator';
 import type { PromptDraft } from '../types';
 import { displayToDip, penCaption, replacePenInDraft } from './browserPen';
 

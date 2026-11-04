@@ -2,7 +2,7 @@
 import type { BrowserPenResult } from '@shared/browser';
 import { base64ByteLength, validateAttachmentSet, type ImageAttachmentMeta } from '@shared/attachments';
 import type { ImageAttachment } from '@shared/ipc';
-import type { Translate } from '../../i18n/uiLanguage';
+import type { Translate } from '@shared/i18n/translator';
 import type { PendingAttachment, PromptDraft } from '../types';
 
 export interface PenMemory {
