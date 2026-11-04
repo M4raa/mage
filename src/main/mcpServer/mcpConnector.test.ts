@@ -3,6 +3,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import type { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js';
 import type { McpTunnelHandle } from '../host/hostConnection';
+import type { BrowserToolsPort } from './browserTools';
 import { createMcpConnector, type McpConnectorDeps } from './mcpConnector';
 import { MemoryIdempotencyStore } from './idempotencyStore';
 import { MemorySessionsPort } from './memorySessionsPort';
@@ -97,6 +98,27 @@ describe('createMcpConnector', () => {
     expect(createPort).toHaveBeenCalledWith('session-1');
     expect(creatorChainOf).toHaveBeenCalledWith('C');
     expect(JSON.stringify(result)).toContain('delegation_depth_exceeded');
+  });
+
+  it('open_knownCallerWithBrowser_fourteenToolsAndBrowserForCaller', async () => {
+    const browserFor = vi.fn(() => ({}) as BrowserToolsPort);
+    const client = await connect(makeDeps({ browserFor }), CREDENTIAL);
+
+    const { tools } = await client.listTools();
+
+    expect(tools).toHaveLength(14);
+    expect(tools.filter((tool) => tool.name.startsWith('mage_browser_'))).toHaveLength(7);
+    expect(browserFor).toHaveBeenCalledWith('session-1');
+  });
+
+  it('open_unknownCallerWithBrowser_sevenToolsNoBrowserFor', async () => {
+    const browserFor = vi.fn(() => ({}) as BrowserToolsPort);
+    const client = await connect(makeDeps({ browserFor }), 'ff'.repeat(32));
+
+    const { tools } = await client.listTools();
+
+    expect(tools.map((tool) => tool.name).sort()).toEqual(TOOLS);
+    expect(browserFor).not.toHaveBeenCalled();
   });
 
   it('close_beforeServerStarts_noThrow', () => {

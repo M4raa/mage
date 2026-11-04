@@ -1,5 +1,6 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
+import { registerBrowserTools, type BrowserToolsPort } from './browserTools';
 import { MageToolHandlers, safeToolResult } from './handlers';
 import type { HandlerContext } from './handlers';
 import { snapshotScope } from './scope';
@@ -12,11 +13,15 @@ export const ASK_CREATOR_DESCRIPTION = 'Pregunta a la sesión que te encargó es
 export interface MageMcpServerOptions extends Omit<HandlerContext, 'scope'> {
   readonly scope: ConnectionScope;
   readonly transport: Transport;
+  readonly browser?: BrowserToolsPort;
 }
 export async function startMageMcpServer(options: MageMcpServerOptions): Promise<McpServer> {
   const server = new McpServer({ name: 'mage', version: String(schemas.MAGE_MCP_CONTRACT_VERSION) });
-  const handlers = new MageToolHandlers({ ...options, scope: snapshotScope(options.scope) });
+  const { browser, ...context } = options;
+  const handlers = new MageToolHandlers({ ...context, scope: snapshotScope(options.scope) });
   registerTools(server, handlers);
+  // F11b.2: solo con una sesión de Mage detrás (D-S5); las siete de siempre no cambian.
+  if (browser !== undefined) registerBrowserTools(server, browser);
   await server.connect(options.transport);
   return server;
 }
