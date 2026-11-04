@@ -592,10 +592,22 @@ function loadSharedLaunch(provider: string, accountDir: string, sessionId: strin
   };
 }
 
+// Degradación registrada a propósito: un library.json corrupto no impide lanzar ninguna sesión
+// (la pantalla de la biblioteca sigue mostrando el error).
+function libraryMcpOrNull(family: 'claude' | 'codex', account: string): ReturnType<ReturnType<typeof getMcpServices>['libraryMcp']> | null {
+  try {
+    return getMcpServices().libraryMcp(family, account);
+  } catch (error) {
+    mainLog('warn', 'MCP de la biblioteca omitidos: no se pudo leer su estado', { error: error instanceof Error ? error.message : String(error) });
+    return null;
+  }
+}
+
 // MCP con clave de la biblioteca (tercera fuente): solo Claude y Codex; con el mismo nombre gana lo común.
 function withLibraryServers(servers: readonly ResolvedMcpServer[], family: string, account: string): readonly ResolvedMcpServer[] {
   if (family !== 'claude' && family !== 'codex') return servers;
-  const library = getMcpServices().libraryMcp(family, account);
+  const library = libraryMcpOrNull(family, account);
+  if (library === null) return servers;
   const merged = mergeServerLists({ servers, warnings: [] }, library);
   for (const warning of merged.warnings) mainLog('warn', warning);
   return merged.servers;
