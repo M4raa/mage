@@ -6965,6 +6965,132 @@ const CHECKS = [
     },
   },
   {
+    // Q08 (panel de PR, F5.5), con el montaje de «Grupo D» (repo temporal con remoto github.com/acme/demo y el
+    // `gh` FALSO de MAGE_GH_FAKE=1): el repo de la pestaña lista su PR #7 (borrador, por eso el filtro «Todas») y
+    // al elegirla abre su detalle.
+    name: 'Q08: el panel lista la PR #7 del repo y abre su detalle',
+    async run(page) {
+      return withQ08Panel(page, async () => {
+        await page.locator('[data-pr-filter="all"]').click();
+        await page.locator(`[data-pr-row="${Q08_DEMO}"]`).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        await page.locator(`[data-pr-row="${Q08_DEMO}"]`).click();
+        await page.locator(`[data-pr-detail="${Q08_DEMO}"]`).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const texto = (await page.locator(`[data-pr-detail="${Q08_DEMO}"]`).textContent()) ?? '';
+        const filtros = await page.locator('[data-pr-filter]').evaluateAll((nodes) => nodes.map((n) => n.getAttribute('data-pr-filter')));
+        const ok = texto.includes('VG: PR falso de verify:gui') && filtros.join(',') === 'open,draft,closed,merged,all';
+        return { ok, detail: `detalle=${JSON.stringify(texto.slice(0, 80))} filtros=${JSON.stringify(filtros)}` };
+      });
+    },
+  },
+  {
+    // Q08: dos PR #7 de repos distintos (acme/demo y acme/otro) se vinculan a la misma conversacion y no se
+    // pisan: cada una con su titulo, su detalle y sus comentarios.
+    name: 'Q08: dos PR #7 de repos distintos no se pisan',
+    async run(page) {
+      return withQ08Panel(page, async () => {
+        await page.evaluate((key) => {
+          const st = window.__mageDev.store.getState();
+          return st.linkPrToConversation(st.activeTabId, key, false);
+        }, Q08_OTHER_KEY);
+        const filas = page.locator('[data-pr-section="conversation"] [data-pr-conv-row]');
+        await page.waitForFunction(() => document.querySelectorAll('[data-pr-section="conversation"] [data-pr-conv-row]').length === 2, null, { polling: 50, timeout: CONFIG.actionTimeoutMs });
+        const textos = await filas.allTextContents();
+        await page.locator(`[data-pr-conv-row="${Q08_OTHER}"] button`).first().click();
+        const otro = page.locator(`[data-pr-detail="${Q08_OTHER}"]`);
+        await otro.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        await otro.locator('[data-pr-comment-box]').fill('VG comentario');
+        await otro.locator('[data-pr-action="comment"]').click();
+        await otro.locator('[data-pr-comment]', { hasText: 'VG comentario' }).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        await page.locator(`[data-pr-conv-row="${Q08_DEMO}"] button`).first().click();
+        const demo = page.locator(`[data-pr-detail="${Q08_DEMO}"]`);
+        await demo.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const comentariosDemo = await demo.locator('[data-pr-comment]').allTextContents();
+        const ok =
+          textos.length === 2 &&
+          textos.some((t) => t.includes('VG: PR falso de verify:gui')) &&
+          textos.some((t) => t.includes('VG: otra PR #7')) &&
+          !comentariosDemo.some((t) => t.includes('VG comentario'));
+        return { ok, detail: `filas=${JSON.stringify(textos)} comentariosDemo=${JSON.stringify(comentariosDemo)}` };
+      });
+    },
+  },
+  {
+    // Q08: una accion con el head cambiado no escribe nada y lo dice. El head «visto» se falsea en la store (el
+    // del detalle cargado) y la accion de la store lo manda como `expectedHeadSha`: main lo compara con el del `gh`
+    // falso y contesta `conflict`.
+    name: 'Q08: una acción con el head cambiado no escribe y lo dice',
+    async run(page) {
+      return withQ08Panel(page, async () => {
+        await page.locator(`[data-pr-conv-row="${Q08_DEMO}"] button`).first().click();
+        await page.locator(`[data-pr-detail="${Q08_DEMO}"]`).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const hecho = await page.evaluate(async (key) => {
+          const dev = window.__mageDev;
+          const tabId = dev.store.getState().activeTabId;
+          const visto = dev.store.getState().prDetailByKey['github.com/acme/demo#7'];
+          dev.store.setState((s) => ({ prDetailByKey: { ...s.prDetailByKey, ['github.com/acme/demo#7']: { ...visto, headSha: 'f'.repeat(40) } } }));
+          return dev.store.getState().runPrAction(tabId, key, { kind: 'comment', body: 'VG no debe escribirse' });
+        }, Q08_DEMO_KEY);
+        await page.locator('[data-pr-error]').waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const aviso = (await page.locator('[data-pr-error]').textContent()) ?? '';
+        const trasConflicto = await page.evaluate(() => {
+          const d = window.__mageDev.store.getState().prDetailByKey['github.com/acme/demo#7'];
+          return { estado: d.state, comentarios: d.comments.map((c) => c.body), head: d.headSha };
+        });
+        const ok =
+          hecho === false &&
+          aviso.includes('La PR cambió desde que la cargaste') &&
+          trasConflicto.estado === 'open' &&
+          !trasConflicto.comentarios.some((c) => c.includes('VG no debe escribirse')) &&
+          trasConflicto.head !== 'f'.repeat(40);
+        return { ok, detail: `hecho=${hecho} aviso=${JSON.stringify(aviso)} tras=${JSON.stringify(trasConflicto)}` };
+      });
+    },
+  },
+  {
+    // Q08: fusionar. En acme/otro el rebase no esta permitido (lo dice el `gh` falso): «Fusionar ▾» ofrece solo
+    // squash y merge, pide confirmacion en linea y, al confirmar, la PR sale fusionada tras recargar. El cierre del
+    // montaje la reabre en el falso para no dejarlo fusionado.
+    name: 'Q08: fusionar solo ofrece las estrategias del repo y pide confirmación',
+    async run(page) {
+      return withQ08Panel(page, async () => {
+        await page.evaluate((key) => {
+          const st = window.__mageDev.store.getState();
+          return st.linkPrToConversation(st.activeTabId, key, false);
+        }, Q08_OTHER_KEY);
+        await page.locator(`[data-pr-conv-row="${Q08_OTHER}"] button`).first().click();
+        const otro = page.locator(`[data-pr-detail="${Q08_OTHER}"]`);
+        await otro.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        await otro.locator('[data-pr-action="merge"]').click();
+        await otro.locator('[data-pr-strategies]').waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const estrategias = await otro.locator('[data-pr-strategy]').evaluateAll((nodes) => nodes.map((n) => n.getAttribute('data-pr-strategy')));
+        await otro.locator('[data-pr-strategy="squash"]').click();
+        await otro.locator('[data-pr-confirm]').waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const confirmacion = (await otro.locator('[data-pr-confirm]').textContent()) ?? '';
+        const estadoAntes = await otro.locator('[data-pr-state]').first().getAttribute('data-pr-state');
+        await otro.locator('[data-pr-confirm-yes]').click();
+        await otro.locator('[data-pr-state="merged"]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const ok = estrategias.join(',') === 'squash,merge' && confirmacion.includes('Squash') && estadoAntes === 'open';
+        return { ok, detail: `estrategias=${JSON.stringify(estrategias)} confirmacion=${JSON.stringify(confirmacion.slice(0, 60))} antes=${estadoAntes}` };
+      });
+    },
+  },
+  {
+    // Q08: «Abrir en el panel» de la barra compacta abre el panel de PR con el detalle de la PR de la barra.
+    name: 'Q08: Abrir en el panel desde la barra',
+    async run(page) {
+      return withQ08Panel(page, async () => {
+        await page.evaluate(() => window.__mageDev.panelStore.getState().togglePanelById('pullRequests'));
+        await page.locator('[data-pr-panel="true"]').waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+        await page.locator('[data-pr-open-panel]').first().click();
+        await waitForPanelContent(page, 'pullRequests');
+        await page.locator(`[data-pr-detail="${Q08_DEMO}"]`).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const texto = (await page.locator(`[data-pr-detail="${Q08_DEMO}"]`).textContent()) ?? '';
+        const ok = texto.includes('VG: PR falso de verify:gui');
+        return { ok, detail: `detalle=${JSON.stringify(texto.slice(0, 80))}` };
+      });
+    },
+  },
+  {
     // Grupo D, bloque 3 (worktrees como Claude Desktop), con el git REAL en un repo temporal y sin enviar
     // nada: en una conversacion nueva en la raiz del repo la casilla «Worktree» sale marcada; el worktree
     // se crea por el mismo IPC que usa el arranque de la sesion; dentro, la fila enseña el chip y bloquea
@@ -11646,6 +11772,49 @@ async function restorePrState(page, previo, repo) {
   await page.evaluate((state) => window.__mageDev.store.setState(state), previo);
   await page.waitForTimeout(CONFIG.settleMs);
   fs.rmSync(repo, { recursive: true, force: true });
+}
+
+// Q08 (panel de PR): las dos PR #7 del `gh` falso, la de acme/demo (la de la rama de la pestaña) y la de acme/otro.
+const Q08_DEMO = 'github.com/acme/demo#7';
+const Q08_OTHER = 'github.com/acme/otro#7';
+const Q08_DEMO_KEY = { host: 'github.com', owner: 'acme', repo: 'demo', number: 7 };
+const Q08_OTHER_KEY = { host: 'github.com', owner: 'acme', repo: 'otro', number: 7 };
+
+// Montaje comun de las comprobaciones «Q08»: repo temporal en la rama `vg-pr` (la pestaña vincula sola la #7 de
+// acme/demo), conversacion con id propio (el panel migra ese numero al catalogo) y el panel abierto. Al acabar
+// deja el `gh` falso como estaba (la #7 de acme/otro vuelve a abierta), quita los vinculos del catalogo y repone
+// el estado. `body` devuelve el `{ ok, detail }` de la comprobacion.
+async function withQ08Panel(page, body) {
+  const repo = createTempGhRepo('vg-pr');
+  if (repo === null) return { ok: true, detail: 'saltada: no hay git en esta maquina' };
+  const previo = await capturePrState(page);
+  const conversationId = `vg-q08-${Date.now()}`;
+  try {
+    await pointActiveTabAtTrustedRepo(page, repo);
+    await page.locator('[data-pr-chip]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+    await page.evaluate((id) => {
+      window.__mageDev.store.setState((s) => ({ tabs: s.tabs.map((t) => (t.id === s.activeTabId ? { ...t, resumeSessionId: id } : t)) }));
+    }, conversationId);
+    await page.evaluate(() => window.__mageDev.panelStore.getState().revealPanelById('pullRequests'));
+    await waitForPanelContent(page, 'pullRequests');
+    await page.locator('[data-pr-panel="true"]').waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+    await page.locator(`[data-pr-conv-row="${Q08_DEMO}"]`).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+    return await body();
+  } finally {
+    await restoreQ08(page, previo, repo, conversationId);
+  }
+}
+
+async function restoreQ08(page, previo, repo, conversationId) {
+  await page.evaluate(async ({ cwd, conversation, other, keys }) => {
+    const st = window.__mageDev.store.getState();
+    const folder = { cwd, accountDir: st.tabs.find((t) => t.id === st.activeTabId)?.accountId ?? '' };
+    const detail = await window.mage.prDetail({ ...folder, key: other });
+    if (detail.state !== 'open') await window.mage.writePr({ ...folder, key: other, expectedHeadSha: detail.headSha, action: { kind: 'reopen' } });
+    for (const key of keys) await window.mage.unlinkPr({ key, conversationId: conversation });
+    window.__mageDev.store.setState({ prPanelByTab: {}, prDetailByKey: {}, prDiffByKey: {}, prCatalog: [], prMergeOptionsByRepo: {} });
+  }, { cwd: repo, conversation: conversationId, other: Q08_OTHER_KEY, keys: [Q08_DEMO, Q08_OTHER] });
+  await restorePrState(page, previo, repo);
 }
 
 // Claves del store que tocan las comprobaciones de un turno inyectado (P-026 3.4). Selectivo, como el
