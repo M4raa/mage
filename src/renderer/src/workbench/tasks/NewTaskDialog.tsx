@@ -26,6 +26,7 @@ function realDeps(): StartTaskDeps {
     setActiveAccount: (accountId) => store().setActiveAccount(accountId),
     createConversation: (folder) => store().createConversation('shared', folder),
     activeTabId: () => store().activeTabId,
+    attachTask: (tabId, taskId) => store().attachTaskToTab(tabId, taskId),
     ensureSession: (tabId) => store().ensureSession(tabId),
     tabMentionContext: (tabId) => {
       const tab = store().tabs.find((candidate) => candidate.id === tabId);

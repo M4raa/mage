@@ -4,8 +4,8 @@ import type { TaskDraft, TaskRecord } from '@shared/tasks';
 import { t } from '../../i18n/uiLanguage';
 import { applyResolution, failedMentions } from '../mentionDraft';
 
-// Arranque de una tarea (R3): crea el registro, abre la conversación en la carpeta de trabajo, deja que main
-// reclame la tarea al arrancar la sesión y manda el objetivo con los documentos autorizados como menciones.
+// Arranque de una tarea (R3): crea el registro, abre la conversación en la carpeta de trabajo, pasa a main el id
+// de la tarea con la sesión y manda el objetivo con los documentos autorizados como menciones.
 export interface StartTaskDeps {
   readonly createTask: (draft: TaskDraft) => Promise<TaskRecord>;
   readonly reloadTasks: () => Promise<void>;
@@ -13,6 +13,7 @@ export interface StartTaskDeps {
   readonly setActiveAccount: (accountId: string) => void;
   readonly createConversation: (folder: { readonly cwd: string }) => Promise<void>;
   readonly activeTabId: () => string;
+  readonly attachTask: (tabId: string, taskId: string) => void;
   readonly ensureSession: (tabId: string) => Promise<string>;
   readonly tabMentionContext: (tabId: string) => { readonly accountDir: string; readonly provider: string };
   readonly resolveMentions: (params: MentionResolveParams) => Promise<MentionResolution>;
@@ -55,10 +56,11 @@ async function resolveDocuments(documents: readonly string[], tabId: string, dep
 export async function startTask(draft: TaskDraft, deps: StartTaskDeps): Promise<string> {
   const cwd = draft.folders[0];
   if (cwd === undefined) throw new Error(`La tarea necesita al menos una carpeta: ${JSON.stringify(draft.folders)}`);
-  await deps.createTask(draft);
+  const task = await deps.createTask(draft);
   if (deps.activeAccountId() !== draft.accountDir) deps.setActiveAccount(draft.accountDir);
   await deps.createConversation({ cwd });
   const tabId = deps.activeTabId();
+  deps.attachTask(tabId, task.id);
   await deps.ensureSession(tabId);
   await deps.reloadTasks();
   const resolutions = await resolveDocuments(draft.documents, tabId, deps);

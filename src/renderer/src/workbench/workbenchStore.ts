@@ -612,6 +612,8 @@ export interface WorkbenchState extends PrState, PrActions, PrPanelStoreState, P
   // bloques (no pisa una conversacion viva). Idempotente.
   hydrateBlocks: (tabId: string, blocks: readonly Block[]) => void;
   ensureSession: (tabId: string) => Promise<string>;
+  // F8: apunta el id de la tarea que viajará en el `createSession` de la pestaña (solo el primero).
+  attachTaskToTab: (tabId: string, taskId: string) => void;
   // `attachments` (2.12.1): imagenes del mensaje. Vacio o ausente = mensaje de solo texto, y
   // entonces el adapter manda EXACTAMENTE el payload de siempre.
   sendActiveMessage: (text: string, attachments?: readonly ImageAttachment[], mode?: SendMode) => Promise<void>;
@@ -1021,6 +1023,9 @@ const sessionCreationInFlight = new Map<string, Promise<string>>();
 // solo viaja en el PRIMER `createSession`; si éste falla, el reintento lo vuelve a llevar.
 const forkFromByTab = new Map<string, NonNullable<NewTabParams['forkFrom']>>();
 
+// Id de la tarea (F8) cuya PRIMERA sesión es la de esta pestaña; se consume igual que `forkFromByTab`.
+const taskIdByTab = new Map<string, string>();
+
 // Main decide si la sesion se para o queda en segundo plano, y lleva su caducidad (F2.4). Un id que main ya no
 // sigue (sesion parada o sintetica) es una ausencia idempotente; cualquier otro fallo se avisa y la pestaña se
 // cierra igual.
@@ -1204,6 +1209,7 @@ async function createSessionFor(
     // de arrancar una fresca; el id de sesion resultante es el mismo (misma transcripcion).
     const projectId = projectForRow({ kind: 'tab', tab }, get().settings.chatProjects, get().sessionIdByChat)?.id;
     const forkFrom = forkFromByTab.get(tabId);
+    const taskId = taskIdByTab.get(tabId);
     const { sessionId, configDir, workspaceWarning } = await mage.createSession({
       accountDir: tab.accountId,
       model: tab.model,
@@ -1217,8 +1223,10 @@ async function createSessionFor(
       ...(projectId === undefined ? {} : { projectId }),
       ...(tab.importedContext === undefined || tab.resumeSessionId !== undefined ? {} : { contextImport: tab.importedContext }),
       ...(forkFrom === undefined ? {} : { forkFrom }),
+      ...(taskId === undefined ? {} : { taskId }),
     });
     forkFromByTab.delete(tabId);
+    taskIdByTab.delete(tabId);
   // La pestaña puede haberse CERRADO mientras iba el round-trip (B16, segunda mitad). Sin esta
   // guarda se resucitaba `sessionIdByChat` de una pestaña que ya no existe, y el proceso del CLI se
   // quedaba sin nadie que lo parase: `closeTab` ya habia pasado por ahi.
@@ -1651,6 +1659,7 @@ export function createWorkbenchStore(mage: MageClient) {
       // Su store de transcripcion, con el listener del canal y las entradas ya leidas, se libera con
       // el resto de su estado por pestaña: es la misma fuga que B12, en otro sitio (4.1).
       disposeTranscriptStore(tabId);
+      taskIdByTab.delete(tabId);
       set((s) => {
         const tabs = s.tabs.filter((t) => t.id !== tabId);
         const activeTabId = s.activeTabId === tabId ? nextActiveAfterClose(s.tabs, s.splitLayout, tabId) : s.activeTabId;
@@ -2561,6 +2570,11 @@ export function createWorkbenchStore(mage: MageClient) {
         if (yaHidratado) return {};
         return { blocksByChat: { ...s.blocksByChat, [tabId]: [...blocks, ...vivos] } };
       });
+    },
+
+    attachTaskToTab: (tabId, taskId) => {
+      if (tabId.length === 0 || taskId.length === 0) throw new Error(`attachTaskToTab necesita pestaña e id de tarea: ${JSON.stringify({ tabId, taskId })}`);
+      taskIdByTab.set(tabId, taskId);
     },
 
     ensureSession: (tabId) => {

@@ -9,24 +9,26 @@ const draft = (over: Partial<TaskDraft> = {}): TaskDraft => ({
 
 const okResolution = (text: string): MentionResolution => ({ text, attachments: [], outcomes: [] });
 
-function fakeDeps(over: Partial<StartTaskDeps> = {}): { deps: StartTaskDeps; calls: string[]; sent: { text: string }[]; resolved: MentionResolveParams[] } {
+function fakeDeps(over: Partial<StartTaskDeps> = {}): { deps: StartTaskDeps; calls: string[]; sent: { text: string }[]; resolved: MentionResolveParams[]; attached: { tabId: string; taskId: string }[] } {
   const calls: string[] = [];
   const sent: { text: string }[] = [];
   const resolved: MentionResolveParams[] = [];
+  const attached: { tabId: string; taskId: string }[] = [];
   const deps: StartTaskDeps = {
-    createTask: async () => { calls.push('createTask'); return {} as TaskRecord; },
+    createTask: async () => { calls.push('createTask'); return { id: 'task-9' } as TaskRecord; },
     reloadTasks: async () => { calls.push('reloadTasks'); },
     activeAccountId: () => '/other',
     setActiveAccount: () => { calls.push('setActiveAccount'); },
     createConversation: async () => { calls.push('createConversation'); },
     activeTabId: () => 'tab1',
+    attachTask: (tabId, taskId) => { calls.push('attachTask'); attached.push({ tabId, taskId }); },
     ensureSession: async () => { calls.push('ensureSession'); return 's1'; },
     tabMentionContext: () => ({ accountDir: '/acc', provider: 'claude' }),
     resolveMentions: async (params) => { calls.push('resolveMentions'); resolved.push(params); return okResolution(`[${params.refs.map((r) => r.relPath).join(',')}]`); },
     sendMessageToTab: async (_tabId, text) => { calls.push('send'); sent.push({ text }); },
     ...over,
   };
-  return { deps, calls, sent, resolved };
+  return { deps, calls, sent, resolved, attached };
 }
 
 describe('startTask', () => {
@@ -34,7 +36,13 @@ describe('startTask', () => {
     const { deps, calls } = fakeDeps();
     const tabId = await startTask(draft({ documents: ['/work/a.pdf'] }), deps);
     expect(tabId).toBe('tab1');
-    expect(calls).toEqual(['createTask', 'setActiveAccount', 'createConversation', 'ensureSession', 'reloadTasks', 'resolveMentions', 'send']);
+    expect(calls).toEqual(['createTask', 'setActiveAccount', 'createConversation', 'attachTask', 'ensureSession', 'reloadTasks', 'resolveMentions', 'send']);
+  });
+
+  it('startTask_pasaElIdDeLaTareaAntesDeArrancar', async () => {
+    const { deps, attached } = fakeDeps();
+    await startTask(draft(), deps);
+    expect(attached).toEqual([{ tabId: 'tab1', taskId: 'task-9' }]);
   });
 
   it('startTask_mismaCuenta_noCambiaCuenta', async () => {
