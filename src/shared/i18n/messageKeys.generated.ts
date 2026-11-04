@@ -813,8 +813,10 @@ export interface MessageValues {
   readonly "errors.files.writeNotApproved": { readonly "path": string | number };
   readonly "errors.gh.autoMergeRejected": { readonly "code": string | number; readonly "number": string | number };
   readonly "errors.gh.invalidJson": { readonly "detail": string | number; readonly "output": string | number; readonly "what": string | number };
+  readonly "errors.gh.prActionFailed": { readonly "action": string | number; readonly "code": string | number; readonly "key": string | number };
   readonly "errors.gh.runActionFailed": { readonly "action": string | number; readonly "code": string | number; readonly "runId": string | number };
   readonly "errors.gh.runNotListed": { readonly "cwd": string | number; readonly "runId": string | number };
+  readonly "errors.gh.strategyNotAllowed": { readonly "key": string | number; readonly "strategy": string | number };
   readonly "errors.gh.unavailable": { readonly "cwd": string | number; readonly "reason": string | number };
   readonly "errors.gh.unexpectedRunList": { readonly "output": string | number };
   readonly "errors.git.branchMissing": { readonly "name": string | number };
