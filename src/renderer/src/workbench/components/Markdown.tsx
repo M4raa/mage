@@ -210,8 +210,9 @@ function TableNode({ block }: { readonly block: Extract<MdBlock, { type: 'table'
 // Dos botones pequenos arriba a la derecha, visibles con el raton encima o el foco dentro (#44).
 function TableCopyButtons({ header, rows }: { readonly header: readonly string[]; readonly rows: readonly (readonly string[])[] }): React.JSX.Element {
   const t = useT();
+  // Oculta (`opacity-0`) no recibe el puntero: si no, tapaba y se comía los clics de una tabla pequeña (V6, Q04).
   return (
-    <div className="absolute right-[4px] top-[4px] z-10 flex gap-[2px] rounded-[5px] bg-mg-block opacity-0 group-focus-within:opacity-100 group-hover:opacity-100">
+    <div className="pointer-events-none absolute right-[4px] top-[4px] z-10 flex gap-[2px] rounded-[5px] bg-mg-block opacity-0 group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100">
       <TableCopyButton kind="markdown" label={t('chat.table.copyMarkdown')} text={() => tableToMarkdown(header, rows)} />
       <TableCopyButton kind="tsv" label={t('chat.table.copyTsv')} text={() => tableToTsv(header, rows)} />
     </div>
