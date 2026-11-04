@@ -1981,6 +1981,7 @@ function registerGhHandlers(): void {
     gh: getGhService,
     catalog: getPrCatalogStore,
     migrate: (params) => migrateTabPr(params, { remote: (cwd, accountDir) => getGitService().remote(cwd, accountDir), catalog: getPrCatalogStore() }),
+    remote: (cwd, accountDir) => getGitService().remote(cwd, accountDir),
     assertFolder: assertGitParams,
   });
 }

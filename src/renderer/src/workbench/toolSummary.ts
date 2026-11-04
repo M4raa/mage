@@ -35,6 +35,8 @@ function toolInputText(name: string, input: Readonly<Record<string, unknown>>): 
   if (name === SKILL_TOOL_NAME) return stringField(input, 'skill');
   const filePath = stringField(input, 'file_path');
   if (filePath.length > 0) return filePath;
+  const notebookPath = stringField(input, 'notebook_path');
+  if (notebookPath.length > 0) return notebookPath;
   const path = stringField(input, 'path');
   if (path.length > 0) return path;
   const pattern = stringField(input, 'pattern');

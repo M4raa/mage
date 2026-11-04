@@ -14,6 +14,7 @@ import {
   type PrWriteParams,
   type PrWriteResult,
 } from '@shared/pr';
+import type { GitRemoteRef } from '../git/gitParse';
 import type { IpcRegister } from '../coordination/sessionIpc';
 import type { GhService } from './ghService';
 import type { PrCatalogStore } from './prCatalogStore';
@@ -27,6 +28,7 @@ export interface PrIpcDeps {
   readonly gh: () => Pick<GhService, 'listPrs' | 'prDetail' | 'prDiff' | 'writePr'>;
   readonly catalog: () => Pick<PrCatalogStore, 'list' | 'link' | 'unlink'>;
   readonly migrate: (params: PrMigrateParams) => Promise<string | null>;
+  readonly remote: (cwd: string, accountDir: string) => Promise<GitRemoteRef | null>;
   readonly assertFolder: (params: { readonly cwd: string; readonly accountDir: string }) => void;
 }
 
@@ -136,6 +138,8 @@ function parseMigrateParams(arg: unknown, assertFolder: PrIpcDeps['assertFolder'
   return { ...folder(obj, channel, assertFolder), conversationId: str(obj, 'conversationId', channel), number: int(obj, 'number', channel) };
 }
 
+const GITHUB_HOST = 'github.com';
+
 export function registerPrIpc(deps: PrIpcDeps): void {
   const { handle, assertFolder } = deps;
   handle(IpcChannel.PrList, (_e, arg): Promise<PrListResult> => deps.gh().listPrs(parseListParams(arg, assertFolder)));
@@ -165,6 +169,12 @@ export function registerPrIpc(deps: PrIpcDeps): void {
   handle(IpcChannel.PrCatalogUnlink, (_e, arg): void => {
     const obj = asObject(arg, IpcChannel.PrCatalogUnlink);
     deps.catalog().unlink(keyString(str(obj, 'key', IpcChannel.PrCatalogUnlink), IpcChannel.PrCatalogUnlink), str(obj, 'conversationId', IpcChannel.PrCatalogUnlink));
+  });
+  handle(IpcChannel.PrRepoOf, async (_e, arg): Promise<GitRemoteRef | null> => {
+    const { cwd, accountDir } = folder(asObject(arg, IpcChannel.PrRepoOf), IpcChannel.PrRepoOf, assertFolder);
+    const remote = await deps.remote(cwd, accountDir);
+    if (remote === null || remote.host !== GITHUB_HOST) return null;
+    return { host: remote.host, owner: remote.owner, repo: remote.repo };
   });
   handle(IpcChannel.PrMigrate, (_e, arg): Promise<string | null> => deps.migrate(parseMigrateParams(arg, assertFolder)));
 }

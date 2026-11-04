@@ -6,6 +6,8 @@ const HEAD = 'a'.repeat(40);
 const FOLDER = { cwd: '/r', accountDir: '/acc' };
 const KEY = { host: 'github.com', owner: 'Acme', repo: 'demo', number: 7 };
 
+const remote = vi.fn();
+
 function setup(): { call: (channel: string, arg?: unknown) => unknown; gh: Record<string, ReturnType<typeof vi.fn>>; assertFolder: ReturnType<typeof vi.fn> } {
   const handlers = new Map<string, (e: never, arg: unknown) => unknown>();
   const gh = { listPrs: vi.fn(), prDetail: vi.fn(), prDiff: vi.fn(), writePr: vi.fn() };
@@ -15,6 +17,7 @@ function setup(): { call: (channel: string, arg?: unknown) => unknown; gh: Recor
     gh: () => gh,
     catalog: () => ({ list: vi.fn(() => []), link: vi.fn(), unlink: vi.fn() }),
     migrate: vi.fn(async () => null),
+    remote,
     assertFolder,
   } as unknown as PrIpcDeps;
   registerPrIpc(deps);
@@ -63,5 +66,22 @@ describe('registerPrIpc', () => {
 
     expect(() => call(IpcChannel.PrCatalogLink, { key: 'github.com/../x#1', conversationId: 'c', primary: true })).toThrow('github.com/../x#1');
     expect(() => call(IpcChannel.PrCatalogList, 5)).toThrow('5');
+  });
+
+  it('prRepoOf_github_returnsRepo', async () => {
+    const { call, assertFolder } = setup();
+    remote.mockResolvedValue({ host: 'github.com', owner: 'acme', repo: 'demo' });
+
+    await expect(call(IpcChannel.PrRepoOf, FOLDER)).resolves.toEqual({ host: 'github.com', owner: 'acme', repo: 'demo' });
+    expect(assertFolder).toHaveBeenCalledWith(FOLDER);
+  });
+
+  it('prRepoOf_otherHost_null', async () => {
+    const { call } = setup();
+    remote.mockResolvedValue({ host: 'ghe.example.com', owner: 'acme', repo: 'demo' });
+    await expect(call(IpcChannel.PrRepoOf, FOLDER)).resolves.toBeNull();
+
+    remote.mockResolvedValue(null);
+    await expect(call(IpcChannel.PrRepoOf, FOLDER)).resolves.toBeNull();
   });
 });

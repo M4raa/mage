@@ -173,6 +173,7 @@ const api: MageApi = {
   linkPr: (params) => ipcRenderer.invoke(IpcChannel.PrCatalogLink, params),
   unlinkPr: (params) => ipcRenderer.invoke(IpcChannel.PrCatalogUnlink, params),
   migrateTabPr: (params) => ipcRenderer.invoke(IpcChannel.PrMigrate, params),
+  prRepoOf: (params) => ipcRenderer.invoke(IpcChannel.PrRepoOf, params),
   worktreeCreate: (params) => ipcRenderer.invoke(IpcChannel.WorktreeCreate, params),
   worktreeRestore: (params) => ipcRenderer.invoke(IpcChannel.WorktreeRestore, params),
   worktreeRemove: (params) => ipcRenderer.invoke(IpcChannel.WorktreeRemove, params),

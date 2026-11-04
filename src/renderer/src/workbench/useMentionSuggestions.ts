@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { MentionCandidate } from '@shared/mentions';
 import { t as translate } from '../i18n/uiLanguage';
-import { createdFilesOf } from './createdFilesView';
+import { touchedFilesOf } from './createdFilesView';
 import { describeError } from './describeError';
 import { conversationMatches, mentionQueryAt, mentionRows, type MentionRow } from './mentionDraft';
 import { useWorkbenchStore } from './workbenchStore';
@@ -72,7 +72,7 @@ function useConversationPaths(tab: MentionTabContext | null, query: string | nul
   return useMemo(() => {
     if (tabId === null || cwd === null || query === null) return [];
     const blocks = useWorkbenchStore.getState().blocksByChat[tabId] ?? [];
-    return conversationMatches(createdFilesOf(blocks), cwd, query, CONVERSATION_LIMIT);
+    return conversationMatches(touchedFilesOf(blocks), cwd, query, CONVERSATION_LIMIT);
   }, [tabId, cwd, query]);
 }
 

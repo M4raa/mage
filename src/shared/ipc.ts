@@ -238,6 +238,7 @@ export const IpcChannel = {
   PrCatalogLink: 'pr:catalogLink',
   PrCatalogUnlink: 'pr:catalogUnlink',
   PrMigrate: 'pr:migrate',
+  PrRepoOf: 'pr:repoOf',
   // Worktrees de Mage (grupo D, bloque 3): crear al empezar, recrear al reabrir, archivar y traer la base.
   WorktreeCreate: 'worktree:create',
   WorktreeRestore: 'worktree:restore',
@@ -1111,6 +1112,8 @@ export interface MageApi {
   linkPr(params: PrCatalogLinkParams): Promise<void>;
   unlinkPr(params: PrCatalogUnlinkParams): Promise<void>;
   migrateTabPr(params: PrMigrateParams): Promise<string | null>;
+  // Repo de GitHub de la carpeta de una pestaña (null sin remoto o si no es github.com).
+  prRepoOf(params: GitParams): Promise<{ readonly host: string; readonly owner: string; readonly repo: string } | null>;
   onGhPrUpdate(listener: (update: GhPrUpdate) => void): () => void;
   // Worktrees (grupo D). `worktreeCreate` da null si la carpeta no es la raiz del repo.
   worktreeCreate(params: WorktreeCreateParams): Promise<{ readonly path: string; readonly branch: string } | null>;
