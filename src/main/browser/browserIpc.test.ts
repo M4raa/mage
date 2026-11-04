@@ -72,7 +72,17 @@ describe('registerBrowserIpc', () => {
   it('anyChannel_foreignSender_throws', async () => {
     const { call } = setup();
 
-    await expect(call(IpcChannel.BrowserList, 'A', FOREIGN)).rejects.toThrow('webContents que no es una ventana de Mage: 2');
+    await expect(call(IpcChannel.BrowserList, undefined, FOREIGN)).rejects.toThrow('webContents que no es una ventana de Mage: 2');
+  });
+
+  it('list_noArgument_returnsStates', async () => {
+    const { call, registry } = setup();
+    registry.beginUserAction('A');
+
+    const states = (await call(IpcChannel.BrowserList, undefined)) as { sessionId: string }[];
+
+    expect(states).toEqual(registry.states());
+    expect(states).toHaveLength(1);
   });
 
   it('open_returnsStates', async () => {

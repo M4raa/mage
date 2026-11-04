@@ -103,7 +103,7 @@ export function registerBrowserIpc(deps: BrowserIpcDeps): void {
   const bySession = (channel: string, run: (sessionId: string) => unknown): void =>
     route(channel, (arg) => run(parseWith(sessionIdSchema, arg)));
 
-  bySession(IpcChannel.BrowserList, () => registry.states());
+  route(IpcChannel.BrowserList, () => registry.states());
   bySession(IpcChannel.BrowserOpen, (sessionId) => {
     registry.beginUserAction(sessionId);
     return registry.states();
