@@ -107,8 +107,9 @@ function measureInlineEditorWidth(row: HTMLElement | null, controls: HTMLElement
   return Number.isFinite(width) ? width : null;
 }
 
-function promptPlaceholder(tabId: string, readOnlyLock: { readonly profile: LocalizedText } | null): string {
+function promptPlaceholder(tabId: string, readOnlyLock: { readonly profile: LocalizedText } | null, permissionPending: boolean): string {
   if (readOnlyLock !== null) return translate('prompt.placeholder.readOnly', { lock: renderLocalized(translate, readOnlyLockMessage(readOnlyLock.profile)) });
+  if (permissionPending) return translate('prompt.placeholder.permission');
   return tabId.length === 0 ? translate('prompt.placeholder.noTab') : translate('prompt.placeholder.default');
 }
 
@@ -177,6 +178,8 @@ export function PromptBar(): React.JSX.Element {
   const keybindingOverrides = useWorkbenchStore((s) => s.settings.keybindingOverrides);
   // Estado del turno de la pestana activa: con el turno en marcha se ofrece "Parar" en vez de ⏎.
   const chatStatus = useWorkbenchStore((s) => s.statusByChat[activeTabId] ?? 'idle');
+  // Un permiso sin contestar en esta pestana: el borrador se conserva y el placeholder lo dice.
+  const permissionPending = useWorkbenchStore((s) => (s.pendingByChat[activeTabId]?.length ?? 0) > 0);
   const notSteerable = useWorkbenchStore((s) => s.notSteerableByChat[activeTabId] ?? null);
   // Comandos "/" reales que declaro la sesion en su arranque (D4); vacio -> se usa la lista curada.
   const sessionSlashCommands = useWorkbenchStore((s) => s.slashCommandsByChat[activeTabId] ?? EMPTY_COMMANDS);
@@ -671,7 +674,7 @@ export function PromptBar(): React.JSX.Element {
             value={text}
             disabled={disabled}
             ariaLabel={t('prompt.editor.ariaLabel')}
-            placeholder={promptPlaceholder(activeTabId, readOnlyLock)}
+            placeholder={promptPlaceholder(activeTabId, readOnlyLock, permissionPending)}
             onChange={onChangeText}
             onKeyDown={onKeyDown}
             onPasteImages={addFiles}

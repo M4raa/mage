@@ -1527,6 +1527,7 @@
   "prompt.permission.tip": "Permission mode (slide, or Shift+Tab with an empty input to move to the next one)",
   "prompt.placeholder.default": "Write an instruction…",
   "prompt.placeholder.noTab": "Open a tab to write…",
+  "prompt.placeholder.permission": "Answer the permission to continue; what you type is kept",
   "prompt.placeholder.readOnly": "{lock}: read-only",
   "prompt.provider.unverified": "Unverified",
   "prompt.providers.agyLabel": "Antigravity · Google's CLI (agy) · no permissions",

@@ -1527,6 +1527,7 @@
   "prompt.permission.tip": "Modo de permiso (desliza, o Shift+Tab con el input vacío para pasar al siguiente)",
   "prompt.placeholder.default": "Escribe una instrucción…",
   "prompt.placeholder.noTab": "Abre una pestaña para escribir…",
+  "prompt.placeholder.permission": "Responde al permiso para que siga; lo que escribas se conserva",
   "prompt.placeholder.readOnly": "{lock}: solo lectura",
   "prompt.provider.unverified": "Sin verificar",
   "prompt.providers.agyLabel": "Antigravity · el CLI de Google (agy) · sin permisos",

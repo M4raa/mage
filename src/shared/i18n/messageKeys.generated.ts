@@ -1529,6 +1529,7 @@ export interface MessageValues {
   readonly "prompt.permission.tip": never;
   readonly "prompt.placeholder.default": never;
   readonly "prompt.placeholder.noTab": never;
+  readonly "prompt.placeholder.permission": never;
   readonly "prompt.placeholder.readOnly": { readonly "lock": string | number };
   readonly "prompt.provider.unverified": never;
   readonly "prompt.providers.agyLabel": never;
