@@ -4107,7 +4107,7 @@ const CHECKS = [
           const fila = host.parentElement.getBoundingClientRect();
           return { editorTop: e.top, editorBottom: e.bottom, controlesTop: c.top, anchoEditor: host.offsetWidth, anchoFila: fila.width, disposicion: host.getAttribute('data-prompt-layout') };
         });
-      await page.evaluate((id) => window.__mageDev.store.getState().setDraft(id, { text: 'a'.repeat(400), attachments: [] }), tabId);
+      await page.evaluate((id) => window.__mageDev.store.getState().setDraft(id, { text: 'a'.repeat(400), attachments: [], mentions: [] }), tabId);
       await page.waitForTimeout(CONFIG.settleMs * 3);
       await waitForStillBox(page, '[data-prompt-controls="true"]');
       const largo = await medir();
@@ -4922,7 +4922,7 @@ const CHECKS = [
           const queue = document.querySelector('[data-send-queue]');
           return { parar: withLabel('Parar la acción en curso'), cola: queue?.textContent, colaDesactivado: queue?.disabled, retorno: withLabel('Enviar mensaje') };
         });
-        await page.evaluate((id) => window.__mageDev.store.getState().setDraft(id, { text: 'hola', attachments: [] }), tabId);
+        await page.evaluate((id) => window.__mageDev.store.getState().setDraft(id, { text: 'hola', attachments: [], mentions: [] }), tabId);
         const claude = await openMeasureClose();
         await setProvider('agy');
         const agy = await openMeasureClose();
@@ -5401,7 +5401,7 @@ const CHECKS = [
       });
       await openTemporaryConversation(page);
       const tabId = await page.evaluate(() => window.__mageDev.store.getState().activeTabId);
-      await page.evaluate((id) => window.__mageDev.store.getState().setDraft(id, { text: '1. uno\n2. dos\n3. tres', attachments: [] }), tabId);
+      await page.evaluate((id) => window.__mageDev.store.getState().setDraft(id, { text: '1. uno\n2. dos\n3. tres', attachments: [], mentions: [] }), tabId);
       await page.waitForTimeout(CONFIG.settleMs);
       const numeros = await page.evaluate(() =>
         [...document.querySelectorAll('[data-prompt-editor="true"] .cm-mg-ordinal')].map((node) => ({
@@ -9382,6 +9382,114 @@ const CHECKS = [
     },
   },
   {
+    // Carril Q (Q06): escribir `@` ofrece los ficheros de la carpeta de la conversación (índice de main), elegir uno con Enter deja
+    // `@ruta ` en el texto y su ficha en el borrador. Pestaña del runtime propio contra el servidor falso; no envía nada.
+    name: 'Q06: @ sugiere ficheros de la carpeta y elegir deja token y ficha',
+    async run(page, { userDataDir }) {
+      return withMentionTab(page, userDataDir, async () => {
+        await clearPrompt(page);
+        await typeInPrompt(page, '@not');
+        await page.locator('[data-mention-popover]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        await page.locator('[data-mention-option="notas.md"]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        await page.keyboard.press('Enter');
+        await page.locator('[data-mention-chip="notas.md"]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const texto = (await promptText(page)).replaceAll(NBSP, ' ');
+        const popovers = await page.locator('[data-mention-popover]').count();
+        return { ok: texto === '@notas.md ' && popovers === 0, detail: JSON.stringify({ texto, popovers }) };
+      });
+    },
+  },
+  {
+    // Carril Q (Q06): la ficha vive mientras su `@ruta` esté en el texto; al borrar el texto desaparece sola.
+    name: 'Q06: borrar el token quita la ficha',
+    async run(page, { userDataDir }) {
+      return withMentionTab(page, userDataDir, async () => {
+        await mentionFile(page, 'not', 'notas.md');
+        await clearPrompt(page);
+        await page.locator('[data-mention-chip="notas.md"]').first().waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+        const fichas = await page.locator('[data-mention-chip]').count();
+        return { ok: fichas === 0, detail: JSON.stringify({ fichas }) };
+      });
+    },
+  },
+  {
+    // Carril Q (Q06): al enviar, main resuelve el fichero y el texto mencionado viaja en el mensaje (bloque `// ruta` + contenido).
+    // Es la prueba de punta a punta de `resolveMentions`: lo que ve el servidor falso es lo que recibiría el modelo.
+    name: 'Q06: el texto mencionado llega al modelo',
+    async run(page, { userDataDir }) {
+      return withMentionTab(page, userDataDir, async ({ fake, tabId }) => {
+        await mentionFile(page, 'not', 'notas.md');
+        await sendMentionDraft(page, fake, tabId);
+        const peticion = lastFakeRequestText(fake);
+        const ok = peticion.includes('// notas.md') && peticion.includes('hola desde notas');
+        return { ok, detail: JSON.stringify({ peticiones: fake.stats.completions, peticion: peticion.slice(0, 300) }) };
+      });
+    },
+  },
+  {
+    // Carril Q (Q06): el runtime propio no acepta imágenes, así que la PNG viaja solo como ruta: la ficha lo dice («solo ruta») y la
+    // petición lleva la nota «[Fichero mencionado: …]» y ninguna parte de imagen.
+    name: 'Q06: la imagen en el runtime propio va como solo ruta',
+    async run(page, { userDataDir }) {
+      return withMentionTab(page, userDataDir, async ({ fake, tabId }) => {
+        await mentionFile(page, 'pix', 'pixel.png');
+        const insignias = await page.locator('[data-mention-chip="pixel.png"] [data-mention-path-only]').count();
+        await sendMentionDraft(page, fake, tabId);
+        const peticion = lastFakeRequestText(fake);
+        const ok = insignias === 1 && peticion.includes('[Fichero mencionado:') && !peticion.includes('image_url') && !peticion.includes('base64');
+        return { ok, detail: JSON.stringify({ insignias, peticion: peticion.slice(0, 300) }) };
+      });
+    },
+  },
+  {
+    // Carril Q (Q06): un fichero borrado del disco entre elegirlo y enviar no se envía: la ficha se marca `missing` (borde rojo + aviso),
+    // el borrador se queda y el servidor falso no recibe nada.
+    name: 'Q06: un fichero borrado antes de enviar no se envía',
+    async run(page, { userDataDir }) {
+      return withMentionTab(page, userDataDir, async ({ fake, cwd }) => {
+        await mentionFile(page, 'util', 'src/util.ts');
+        fs.rmSync(path.join(cwd, 'src', 'util.ts'));
+        await page.keyboard.press('Enter');
+        await page.locator('[data-mention-chip="src/util.ts"][data-mention-error="missing"]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        await page.waitForTimeout(CONFIG.settleMs);
+        const texto = (await promptText(page)).replaceAll(NBSP, ' ');
+        const fichas = await page.locator('[data-mention-chip="src/util.ts"]').count();
+        const aviso = (await page.locator('[role="alert"]').allTextContents()).join(' ');
+        const ok = texto === '@src/util.ts ' && fichas === 1 && fake.stats.completions === 0 && aviso.includes('ya no existe');
+        return { ok, detail: JSON.stringify({ texto, fichas, peticiones: fake.stats.completions, aviso }) };
+      });
+    },
+  },
+  {
+    // Carril Q (Q06): Escape con el popover de `@` abierto lo cierra y NO llega al atajo global (que interrumpiría el turno). Mismo montaje
+    // de turno largo que «G F4.1» (sesión de mentira en `streaming`): si Escape llegara al atajo, `session.interrupt` fallaría contra la
+    // sesión inexistente y la pestaña dejaría de estar en `streaming`. No pulsa Enter con el turno en marcha.
+    name: 'Q06: Escape en el popover de @ no interrumpe el turno',
+    async run(page, { userDataDir }) {
+      return withMentionTab(page, userDataDir, async ({ tabId }) => {
+        const setTurn = (running) => page.evaluate(({ id, running: on }) => window.__mageDev.store.setState((st) => {
+          const { [id]: _quitada, ...sesiones } = st.sessionIdByChat;
+          return {
+            sessionIdByChat: on ? { ...st.sessionIdByChat, [id]: 'verify-q06-escape-session' } : sesiones,
+            statusByChat: { ...st.statusByChat, [id]: on ? 'streaming' : 'idle' },
+          };
+        }), { id: tabId, running });
+        await setTurn(true);
+        try {
+          await clearPrompt(page);
+          await typeInPrompt(page, '@not');
+          await page.locator('[data-mention-popover]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+          await page.keyboard.press('Escape');
+          await page.locator('[data-mention-popover]').first().waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+          const estado = await page.evaluate((id) => window.__mageDev.store.getState().statusByChat[id], tabId);
+          return { ok: estado === 'streaming', detail: JSON.stringify({ estado }) };
+        } finally {
+          await setTurn(false);
+        }
+      });
+    },
+  },
+  {
     // F2.6: el renderer corre en el sandbox de Chromium (`sandbox: true`, preload CommonJS de un solo fichero). Se
     // mide en el propio renderer: el preload lee `process.sandboxed` y el mundo de la página no ve `require` ni
     // `process`. Todo el resto de esta tanda corre con el sandbox puesto: si algo lo necesitara, fallaría.
@@ -11811,6 +11919,68 @@ async function openQueueTab(page, { fake, userDataDir }) {
 const PERMISSION_TURN_PROVIDER = { id: 'custom:vg-permiso', label: 'VG permiso' };
 const PR_BARRIER_PROVIDER = { id: 'custom:vg-barrera-pr', label: 'VG barrera PR' };
 const HOST_TURN_PROVIDER = { id: 'custom:vg-host', label: 'VG host' };
+
+// --- Q06: menciones @ con el runtime propio contra el servidor falso --------------------------------------------
+
+const MENTION_PROVIDER = { id: 'custom:vg-menciones', label: 'VG menciones' };
+const MENTION_MODEL = 'fake:eco';
+// PNG de 1×1 píxel.
+const MENTION_PNG_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+const NBSP = String.fromCharCode(160);
+
+// Los ficheros que el harness escribe en la carpeta de trabajo de la pestaña (con `fs`, nunca desde la app).
+function writeMentionFixtures(cwd) {
+  fs.mkdirSync(path.join(cwd, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(cwd, 'notas.md'), 'hola desde notas\n');
+  fs.writeFileSync(path.join(cwd, 'src', 'util.ts'), 'export const util = 1;\n');
+  fs.writeFileSync(path.join(cwd, 'pixel.png'), Buffer.from(MENTION_PNG_BASE64, 'base64'));
+}
+
+// Pestaña del runtime propio contra el servidor falso, con su carpeta y los tres ficheros. Cierra la pestaña, borra el proveedor y
+// para el servidor aunque `body` falle. Cada comprobación monta la suya: ninguna depende de lo que dejó la anterior.
+async function withMentionTab(page, userDataDir, body) {
+  const fake = await startFakeOpenAiServer();
+  let tabId = null;
+  try {
+    const opened = await openRuntimeTab(page, { fake, userDataDir, provider: MENTION_PROVIDER, model: MENTION_MODEL });
+    tabId = opened.tabId;
+    writeMentionFixtures(opened.cwd);
+    return await body({ fake, tabId, cwd: opened.cwd });
+  } finally {
+    if (tabId !== null) {
+      await page.evaluate((id) => {
+        const state = window.__mageDev.store.getState();
+        state.setDraft(id, null);
+        return state.closeTab(id);
+      }, tabId);
+    }
+    await page.evaluate((id) => window.__mageDev.store.getState().removeCustomProvider(id), MENTION_PROVIDER.id);
+    await fake.close();
+  }
+}
+
+// Teclea `@<query>`, espera la opción `relPath` del popover y la elige con Enter; espera su ficha. No envía nada.
+async function mentionFile(page, query, relPath) {
+  await clearPrompt(page);
+  await typeInPrompt(page, `@${query}`);
+  const option = page.locator(`[data-mention-option="${relPath}"]`).first();
+  await option.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+  await page.keyboard.press('Enter');
+  await page.locator(`[data-mention-chip="${relPath}"]`).first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+}
+
+// Última petición que recibió el servidor falso, como texto (mensajes y partes).
+function lastFakeRequestText(fake) {
+  return JSON.stringify(fake.stats.requests.at(-1) ?? null);
+}
+
+// Envía el borrador con Enter y espera a que el servidor falso reciba una petición más y el turno termine.
+async function sendMentionDraft(page, fake, tabId) {
+  const before = fake.stats.completions;
+  await page.keyboard.press('Enter');
+  await waitUntil(() => fake.stats.completions > before, 30_000, () => `el servidor falso no recibió la petición (completions=${fake.stats.completions})`);
+  await page.waitForFunction((id) => window.__mageDev.store.getState().statusByChat[id] === 'idle', tabId, { timeout: 45_000 });
+}
 
 // F2.6: el cliente mínimo del host (`scripts/host-client.mjs`) como proceso hijo PROPIO: sus líneas JSON se acumulan y
 // se para por su PID (nunca por nombre).
