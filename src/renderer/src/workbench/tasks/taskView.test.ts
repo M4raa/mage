@@ -3,7 +3,7 @@ import type { TaskRecord } from '@shared/tasks';
 import type { SidebarRow } from '../sidebarModel';
 import type { Block, Tab } from '../types';
 import {
-  buildTaskIndex, canStartTask, declaredDeliverablesOf, isTaskRow, planOf, shouldVerify, taskOfTab, taskPhase, taskTitle,
+  buildTaskIndex, canStartTask, capabilitiesFor, declaredDeliverablesOf, isTaskRow, planOf, shouldVerify, taskOfTab, taskPhase, taskTitle,
 } from './taskView';
 
 const task = (over: Partial<TaskRecord> = {}): TaskRecord => ({
@@ -108,5 +108,21 @@ describe('canStartTask', () => {
   });
   it('canStartTask_completo_true', () => {
     expect(canStartTask({ goal: 'x', accountDir: '/a', folders: ['/f'] })).toBe(true);
+  });
+});
+
+describe('capabilitiesFor', () => {
+  const view = {
+    platform: 'win32',
+    entries: [{ id: 'p1', title: 'Informes' }],
+    installs: [
+      { packageId: 'p1', engine: 'claude', accountDir: 'C:\Acc', enabled: true },
+      { packageId: 'p2', engine: 'claude', accountDir: 'C:\Acc', enabled: false },
+      { packageId: 'p3', engine: 'codex', accountDir: 'C:\Acc', enabled: true },
+      { packageId: 'p4', engine: 'claude', accountDir: 'C:\Otra', enabled: true },
+    ],
+  } as unknown as Parameters<typeof capabilitiesFor>[0];
+  it('capabilitiesFor_soloActivasDeEsaCuentaYMotor_conTitulo', () => {
+    expect(capabilitiesFor(view, 'claude', 'c:\acc')).toEqual([{ packageId: 'p1', title: 'Informes' }]);
   });
 });

@@ -1,3 +1,4 @@
+import type { LibraryView } from '@shared/ipc';
 import { parseDeliverables, parsePlan, type TaskPlanStep, type TaskRecord } from '@shared/tasks';
 import { conversationIdOfTab } from '../conversationId';
 import { sidebarRowId, type SidebarRow } from '../sidebarModel';
@@ -99,4 +100,23 @@ export interface TaskForm {
 
 export function canStartTask(form: TaskForm): boolean {
   return form.goal.trim().length > 0 && form.accountDir.length > 0 && form.folders.length > 0;
+}
+
+export interface TaskCapability {
+  readonly packageId: string;
+  readonly title: string;
+}
+
+const sameDir = (a: string, b: string, platform: string): boolean => (platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b);
+
+// Capacidades instaladas y activas de ese motor y esa cuenta, con el título legible de su entrada.
+export function capabilitiesFor(
+  view: Pick<LibraryView, 'platform' | 'entries' | 'installs'>,
+  provider: string,
+  accountDir: string,
+): readonly TaskCapability[] {
+  const titles = new Map(view.entries.map((entry) => [entry.id, entry.title]));
+  return view.installs
+    .filter((install) => install.enabled && install.engine === provider && sameDir(install.accountDir, accountDir, view.platform))
+    .map((install) => ({ packageId: install.packageId, title: titles.get(install.packageId) ?? install.packageId }));
 }
