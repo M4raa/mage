@@ -8080,8 +8080,8 @@ const CHECKS = [
       await page.evaluate(() => { const element = document.querySelector('[data-pane-tab-id] .overflow-y-auto'); element.scrollTop = element.scrollHeight; element.dispatchEvent(new Event('scroll')); });
       await injectPermissionRequest(page, ASK_USER_QUESTION_INPUT, 'vg-tail-question');
       await waitForDockReady(page, '[data-question-dock="true"]');
-      const gap = await page.evaluate(() => { const element = document.querySelector('[data-pane-tab-id] .overflow-y-auto'); return element.scrollHeight - element.scrollTop - element.clientHeight; });
-      return { ok: gap <= 3, detail: JSON.stringify({ bottomGap: gap }) };
+      const { gap, footerPx } = await page.evaluate(() => { const element = document.querySelector('[data-pane-tab-id] .overflow-y-auto'); return { gap: element.scrollHeight - element.scrollTop - element.clientHeight, footerPx: document.querySelector('[data-pane-tab-id] [data-chat-footer]')?.getBoundingClientRect().height ?? null }; });
+      return { ok: gap <= 3, detail: JSON.stringify({ bottomGap: gap, footerPx }) };
     },
   },
   {
