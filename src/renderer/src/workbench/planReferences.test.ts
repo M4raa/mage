@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
+  anchorTextMatcher,
   associatedDocumentPaths,
   buildReferenceIndex,
   extractReferenceTokens,
   indexDocumentAnchors,
+  panelEntries,
   planDocuments,
   resolveReference,
 } from './planReferences';
@@ -127,5 +129,33 @@ describe('planDocuments', () => {
     ] as unknown as Block[];
 
     expect(planDocuments(blocks)).toEqual([{ docId: 'plan:b7', title: 'Plan', text: '# Plan\n## 1.1 A' }]);
+  });
+});
+
+describe('anchorTextMatcher', () => {
+  it('anchorTextMatcher_sectionKey_matchesWithOrWithoutMark', () => {
+    const matcher = anchorTextMatcher('§3.4');
+
+    expect([matcher.test('3.4 Identidad'), matcher.test('§3.4 Identidad'), matcher.test('3.45 x'), matcher.test('F3.4')]).toEqual([true, true, false, false]);
+  });
+
+  it('anchorTextMatcher_letterKey_escapesDots', () => {
+    const matcher = anchorTextMatcher('F0.4');
+
+    expect([matcher.test('F0.4 Arranque'), matcher.test('F0x4'), matcher.test('F0.4: x')]).toEqual([true, false, true]);
+  });
+});
+
+describe('panelEntries', () => {
+  it('panelEntries_createdCitedAndPlans_inThatOrderWithoutDuplicates', () => {
+    const blocks = [
+      writeBlock('w1', 'C:/proj/plan.md'),
+      userBlock('u1', 'mira @plan.md y @otro.md'),
+      { kind: 'tool', id: 'p1', tool: 'ExitPlanMode', planText: '# P' },
+    ] as unknown as Block[];
+
+    const entries = panelEntries(blocks, 'C:/proj');
+
+    expect(entries.map((e) => e.docId)).toEqual(['C:/proj/plan.md', 'C:/proj/otro.md', 'plan:p1']);
   });
 });

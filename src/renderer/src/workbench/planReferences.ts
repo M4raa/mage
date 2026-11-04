@@ -1,4 +1,4 @@
-import { createdFilesOf } from './createdFilesView';
+import { createdFilesOf, type CreatedFile } from './createdFilesView';
 import type { Block } from './types';
 
 // Referencias del chat al plan (F5.6, #31): modulo PURO. Una referencia del texto de un mensaje
@@ -136,6 +136,10 @@ function isAbsolutePath(path: string): boolean {
 }
 
 // Ruta absoluta con `/`, o null si no es una ruta de documento dentro de `cwd`.
+export function resolveDocumentPath(rawPath: string, cwd: string): string | null {
+  return resolveInside(rawPath, cwd);
+}
+
 function resolveInside(rawPath: string, cwd: string): string | null {
   const root = normalizeSegments(cwd);
   const body = normalizeSegments(isAbsolutePath(rawPath) ? rawPath : `${cwd}/${rawPath}`);
@@ -197,4 +201,36 @@ export function planDocuments(blocks: readonly Block[]): readonly PlanDocument[]
     docs.push({ docId: `${PLAN_DOC_PREFIX}${block.id}`, title: firstLineTitle(block.planText), text: block.planText });
   }
   return docs;
+}
+
+// Texto con el que empieza, ya pintado, el encabezado o elemento de una ancla: la forma de seccion
+// tambien casa con un encabezado escrito «§3.4». Cierre igual que al indexar.
+export function anchorTextMatcher(key: string): RegExp {
+  const escape = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const body = key.startsWith(SECTION_MARK) ? `${SECTION_MARK}?${escape(key.slice(SECTION_MARK.length))}` : escape(key);
+  return new RegExp(`^${body}(?=$|[\\s.:)—-])`, 'u');
+}
+
+// ---- Lista del panel Ficheros ----
+
+export type PanelEntry =
+  | { readonly kind: 'file'; readonly docId: string; readonly file: CreatedFile }
+  | { readonly kind: 'plan'; readonly docId: string; readonly title: string; readonly text: string };
+
+function citedFile(path: string): CreatedFile {
+  const cut = path.lastIndexOf('/');
+  return { path, name: path.slice(cut + 1), dir: path.slice(0, Math.max(cut, 0)), blockId: '', failed: false };
+}
+
+// Lo que ensena el panel: los ficheros creados (mas reciente primero), los .md citados en el hilo que no
+// se han creado en el y los planes del modo plan. Un fichero y un documento citado comparten `docId`
+// (la ruta resuelta), que es la clave con la que se indexan sus anclas.
+export function panelEntries(blocks: readonly Block[], cwd: string): readonly PanelEntry[] {
+  const created = createdFilesOf(blocks).map((file): PanelEntry => ({ kind: 'file', docId: resolveInside(file.path, cwd) ?? file.path, file }));
+  const known = new Set(created.map((entry) => entry.docId));
+  const cited = associatedDocumentPaths(blocks, cwd)
+    .filter((path) => !known.has(path))
+    .map((path): PanelEntry => ({ kind: 'file', docId: path, file: citedFile(path) }));
+  const plans = planDocuments(blocks).map((doc): PanelEntry => ({ kind: 'plan', docId: doc.docId, title: doc.title, text: doc.text }));
+  return [...created, ...cited, ...plans];
 }

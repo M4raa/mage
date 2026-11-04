@@ -90,7 +90,7 @@ function HeadingNode({ level, children }: { readonly level: number; readonly chi
   const size = HEADING_SIZE[level] ?? 'text-[13px]';
   const rule = level <= 2 ? 'border-b border-mg-border-subtle pb-[3px]' : '';
   return (
-    <div className={`font-semibold text-mg-text ${size} ${rule} mt-[2px] break-words`}>
+    <div data-md-heading="true" className={`font-semibold text-mg-text ${size} ${rule} mt-[2px] break-words`}>
       <Inlines nodes={children} />
     </div>
   );

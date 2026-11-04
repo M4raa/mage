@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { HighlightedLines } from './Markdown';
-import { useWorkbenchStore } from '../workbenchStore';
+import { useWorkbenchStore, type DocumentTarget } from '../workbenchStore';
 import { useT } from '../../i18n/uiLanguage';
 import { usePaneTabId } from '../paneContext';
-import { createdFilesOf, type CreatedFile } from '../createdFilesView';
+import type { CreatedFile } from '../createdFilesView';
+import { anchorTextMatcher, indexDocumentAnchors, panelEntries, type PanelEntry } from '../planReferences';
 import { Markdown } from './Markdown';
 import { Hint } from './TranscriptHint';
 import { useHighlightedCode } from '../highlighter';
@@ -29,6 +30,15 @@ import { describeError } from '../describeError';
 //    el guardado se RECHAZA con un mensaje y un boton de recargar. Nunca se pisa en silencio.
 const EMPTY_BLOCKS: readonly Block[] = [];
 
+// Resaltado de la referencia (F5.6, #31): cuanto dura, cuanto se espera a que termine el despliegue del
+// visor (DISCLOSURE_VARIANTS, 0,18 s) antes de desplazar, cuanto vale un destino sin consumir y cuanto
+// se queda el aviso de «ya no esta».
+const ANCHOR_HIGHLIGHT_MS = 2000;
+const ANCHOR_SCROLL_DELAY_MS = 220;
+const TARGET_TTL_MS = 5000;
+const GONE_NOTICE_MS = 5000;
+const HIGHLIGHT_CLASSES = ['bg-mg-sel', 'text-mg-sel-ink'];
+
 // Extensiones que se pintan como Markdown. El resto va en monospace tal cual: adivinar el formato de un
 // fichero por su contenido es una fuente de sorpresas, y aqui el objetivo es LEER lo que hay.
 const MARKDOWN_EXTENSIONS = ['.md', '.markdown', '.mdx'];
@@ -43,7 +53,9 @@ export function FilesPanel(): React.JSX.Element {
   const tabId = usePaneTabId();
   const blocks = useWorkbenchStore((s) => s.blocksByChat[tabId] ?? EMPTY_BLOCKS);
   const cwd = useWorkbenchStore((s) => s.tabs.find((t) => t.id === tabId)?.cwd ?? null);
-  const files = useMemo(() => createdFilesOf(blocks), [blocks]);
+  const entries = useMemo(() => (cwd === null ? [] : panelEntries(blocks, cwd)), [blocks, cwd]);
+  const target = useWorkbenchStore((s) => s.documentTarget);
+  const clearDocumentTarget = useWorkbenchStore((s) => s.clearDocumentTarget);
   // TRES estados, no dos, y cada uno significa algo distinto:
   //   undefined -> nadie ha elegido todavia; se abre el primero, como ha hecho siempre el panel.
   //   '<ruta>'  -> ese fichero, abierto a mano.
@@ -51,19 +63,29 @@ export function FilesPanel(): React.JSX.Element {
   //                archivo abierto, este no se cierra"). Sin este tercer estado no se puede distinguir
   //                "no ha elegido" de "ha elegido que no haya ninguno", y el `?? files[0]` de abajo
   //                reabria el primero en cuanto se cerraba el que estaba mirando.
-  const [selectedPath, setSelectedPath] = useState<string | null | undefined>(undefined);
+  const [selectedId, setSelectedId] = useState<string | null | undefined>(undefined);
 
   // El seleccionado por defecto es el ULTIMO creado, y cambia solo si el que estaba seleccionado
   // desaparece de la lista (otra conversacion, hilo recargado): reelegirlo en cada escritura del agente
   // sacaria de la pantalla el fichero que el usuario esta leyendo. Cerrado a mano manda sobre todo eso:
   // el panel no vuelve a abrir nada por su cuenta hasta que se pulse otro fichero.
-  const selected = selectedPath === null ? null : (files.find((f) => f.path === selectedPath) ?? files[0] ?? null);
+  const selected = selectedId === null ? null : (entries.find((e) => e.docId === selectedId) ?? entries[0] ?? null);
 
   // Pulsar el que ya esta abierto lo CIERRA; pulsar otro cambia de fichero.
-  const toggle = (path: string): void => setSelectedPath(selected?.path === path ? null : path);
+  // Numero de cada plan cuando hay varios (con uno solo, el titulo va sin numero).
+  const planNumbers = useMemo(() => planNumberByDoc(entries), [entries]);
+  const toggle = (docId: string): void => setSelectedId(selected?.docId === docId ? null : docId);
+
+  // Una referencia del chat pide un documento: se selecciona (los visores consumen el destino). Si ya no
+  // esta en la lista, el destino se descarta.
+  useEffect(() => {
+    if (target === null || target.tabId !== tabId) return;
+    if (entries.some((e) => e.docId === target.docId)) setSelectedId(target.docId);
+    else clearDocumentTarget();
+  }, [target, tabId, entries, clearDocumentTarget]);
 
   if (cwd === null) return <Hint text={t('chat.files.noConversation')} />;
-  if (files.length === 0) {
+  if (entries.length === 0) {
     return <Hint text={t('chat.files.noFiles')} />;
   }
 
@@ -73,7 +95,7 @@ export function FilesPanel(): React.JSX.Element {
     // error de un adjunto rechazado de tres comprobaciones antes. No la usa ningun codigo de produccion.
     <div data-files-panel="true" className="flex min-h-0 flex-col">
       <div className="flex shrink-0 items-center justify-between border-b border-mg-border-subtle px-[10px] py-[6px] text-[10px] text-mg-ter">
-        <span className="font-bold tracking-[.06em]">{t('chat.files.title', { count: files.length })}</span>
+        <span className="font-bold tracking-[.06em]">{t('chat.files.title', { count: entries.length })}</span>
       </div>
       {/* La lista ES el panel: `flex-1` en vez del `max-h-[35%]` de antes. El visor se pinta DENTRO del
           <li> del fichero elegido (2026-09-21, feedback del usuario: "el archivo que clico se renderiza
@@ -81,26 +103,29 @@ export function FilesPanel(): React.JSX.Element {
           que scrollea tiene que ser el conjunto lista+visor, no una cajita del 35% con el visor colgando
           por debajo. */}
       <ul className="flex min-h-0 flex-1 flex-col overflow-y-auto p-[6px]">
-        {files.map((file) => (
-          <li key={file.path} className="flex min-w-0 flex-col">
+        {entries.map((entry) => {
+          const label = entryLabel(entry, planNumbers.get(entry.docId) ?? null, t);
+          const isSelected = entry.docId === selected?.docId;
+          return (
+          <li key={entry.docId} className="flex min-w-0 flex-col">
             <button
-              onClick={() => toggle(file.path)}
-              aria-pressed={file.path === selected?.path}
-              aria-expanded={file.path === selected?.path}
-              data-created-file={file.path}
+              onClick={() => toggle(entry.docId)}
+              aria-pressed={isSelected}
+              aria-expanded={isSelected}
+              {...(entry.kind === 'file' ? { 'data-created-file': entry.file.path } : { 'data-plan-doc': entry.docId })}
               className={`flex w-full flex-col items-start gap-[1px] rounded-[6px] px-[8px] py-[5px] text-left ${
-                file.path === selected?.path ? 'bg-mg-sel text-mg-sel-ink relative before:pointer-events-none before:absolute before:inset-y-0 before:left-0 before:w-[2px] before:bg-mg-sel-mark' : 'hover:bg-mg-hover'
+                isSelected ? 'bg-mg-sel text-mg-sel-ink relative before:pointer-events-none before:absolute before:inset-y-0 before:left-0 before:w-[2px] before:bg-mg-sel-mark' : 'hover:bg-mg-hover'
               }`}
             >
               <span className="flex w-full items-center gap-[6px]">
-                <span className="min-w-0 flex-1 truncate text-[11.5px] text-mg-body">{file.name}</span>
-                {file.failed && (
+                <span className="min-w-0 flex-1 truncate text-[11.5px] text-mg-body">{label.name}</span>
+                {label.failed && (
                   <span className="shrink-0 text-[10px] text-mg-danger" title={t('chat.files.writeFailedTip')}>
                     {t('chat.files.writeFailed')}
                   </span>
                 )}
               </span>
-              <span className="w-full truncate text-[10px] text-mg-muted">{file.dir}</span>
+              <span className="w-full truncate text-[10px] text-mg-muted">{label.dir}</span>
             </button>
             {/* `initial={false}`: al ABRIR el panel, el fichero que ya venia elegido aparece puesto, sin
                 desplegarse solo. La animacion es para lo que el usuario hace, no para lo que se
@@ -114,7 +139,7 @@ export function FilesPanel(): React.JSX.Element {
                 modo de edicion y el error se reinician solos (contrato que ya tenia cuando vivia
                 fuera de la lista). */}
             <AnimatePresence initial={false}>
-              {file.path === selected?.path && (
+              {isSelected && (
                 <motion.div
                   key="viewer"
                   variants={DISCLOSURE_VARIANTS}
@@ -126,14 +151,136 @@ export function FilesPanel(): React.JSX.Element {
                   <div className="mt-[4px] min-w-0 rounded-[6px] border border-mg-border-subtle">
                     {/* Solo pregunta por un fichero de fuera si lo eligio el usuario: el que se abre solo
                         (el ultimo creado, al abrir el panel) no puede saltar con un dialogo. */}
-                    <FileViewer key={file.path} file={file} cwd={cwd} askOutside={selectedPath === file.path} />
+                    {entry.kind === 'file' ? (
+                      <FileViewer key={entry.docId} docId={entry.docId} file={entry.file} cwd={cwd} askOutside={selectedId === entry.docId} />
+                    ) : (
+                      <PlanViewer key={entry.docId} docId={entry.docId} name={label.name} text={entry.text} />
+                    )}
                   </div>
                 </motion.div>
               )}
             </AnimatePresence>
           </li>
-        ))}
+          );
+        })}
       </ul>
+    </div>
+  );
+}
+
+type Translate = ReturnType<typeof useT>;
+
+interface EntryLabel {
+  readonly name: string;
+  readonly dir: string;
+  readonly failed: boolean;
+}
+
+// Con varios planes, cada uno lleva su numero (orden de aparicion en el hilo); con uno, ninguno.
+function planNumberByDoc(entries: readonly PanelEntry[]): ReadonlyMap<string, number> {
+  const plans = entries.filter((entry) => entry.kind === 'plan');
+  if (plans.length < 2) return new Map();
+  return new Map(plans.map((entry, index) => [entry.docId, index + 1]));
+}
+
+function entryLabel(entry: PanelEntry, planNumber: number | null, t: Translate): EntryLabel {
+  if (entry.kind === 'file') return { name: entry.file.name, dir: entry.file.dir, failed: entry.file.failed };
+  const name = planNumber === null ? t('chat.references.planTitle') : t('chat.references.planTitleNumbered', { number: planNumber });
+  return { name, dir: entry.title, failed: false };
+}
+
+// Destino pendiente de ESTE documento en ESTA pestana, o null.
+function useDocumentTarget(docId: string): DocumentTarget | null {
+  const tabId = usePaneTabId();
+  const target = useWorkbenchStore((s) => s.documentTarget);
+  return target !== null && target.tabId === tabId && target.docId === docId ? target : null;
+}
+
+// Primer encabezado (o elemento de lista, salvo para las secciones) pintado cuyo texto empieza por la clave.
+function findAnchorElement(root: HTMLElement, key: string): HTMLElement | null {
+  const matcher = anchorTextMatcher(key);
+  const selector = key.startsWith('§') ? '[data-md-heading]' : '[data-md-heading], li';
+  const candidates = root.querySelectorAll<HTMLElement>(selector);
+  return [...candidates].find((el) => matcher.test((el.textContent ?? '').trim())) ?? null;
+}
+
+function setHighlight(el: HTMLElement, on: boolean): void {
+  if (on) el.setAttribute('data-anchor-highlight', 'true');
+  else el.removeAttribute('data-anchor-highlight');
+  el.classList.toggle(HIGHLIGHT_CLASSES[0] ?? '', on);
+  el.classList.toggle(HIGHLIGHT_CLASSES[1] ?? '', on);
+}
+
+// Desplazar hasta el punto de un documento ya pintado y resaltarlo ANCHOR_HIGHLIGHT_MS; o, si el punto no
+// esta en el texto actual, avisar. Los temporizadores se limpian al desmontar el visor.
+function useAnchorReveal(): {
+  readonly rootRef: React.RefObject<HTMLDivElement | null>;
+  readonly gone: boolean;
+  readonly reveal: (docId: string, text: string, key: string) => void;
+} {
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const [gone, setGone] = useState(false);
+  const timers = useRef<number[]>([]);
+  const highlighted = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    const pending = timers.current;
+    return () => {
+      pending.forEach((id) => window.clearTimeout(id));
+      if (highlighted.current !== null) setHighlight(highlighted.current, false);
+    };
+  }, []);
+
+  const later = useCallback((action: () => void, ms: number) => {
+    timers.current.push(window.setTimeout(action, ms));
+  }, []);
+
+  const reveal = useCallback(
+    (docId: string, text: string, key: string) => {
+      const found = indexDocumentAnchors(docId, text).some((anchor) => anchor.key === key);
+      setGone(!found);
+      if (!found) return later(() => setGone(false), GONE_NOTICE_MS);
+      later(() => {
+        const el = rootRef.current === null ? null : findAnchorElement(rootRef.current, key);
+        if (el === null) return setGone(true);
+        el.scrollIntoView({ block: 'center' });
+        setHighlight(el, true);
+        highlighted.current = el;
+        later(() => setHighlight(el, false), ANCHOR_HIGHLIGHT_MS);
+      }, ANCHOR_SCROLL_DELAY_MS);
+    },
+    [later],
+  );
+  return { rootRef, gone, reveal };
+}
+
+function GoneNotice(): React.JSX.Element {
+  const t = useT();
+  return (
+    <div role="status" data-anchor-gone="true" className="shrink-0 border-b border-mg-border-subtle p-[8px_10px] text-[10.5px] text-mg-muted">
+      {t('chat.references.gone')}
+    </div>
+  );
+}
+
+// Plan del modo plan: documento virtual de solo lectura (sin disco, sin editar, sin guardar).
+function PlanViewer({ docId, name, text }: { readonly docId: string; readonly name: string; readonly text: string }): React.JSX.Element {
+  const target = useDocumentTarget(docId);
+  const clearDocumentTarget = useWorkbenchStore((s) => s.clearDocumentTarget);
+  const { rootRef, gone, reveal } = useAnchorReveal();
+  useEffect(() => {
+    if (target === null) return;
+    clearDocumentTarget();
+    if (Date.now() - target.at <= TARGET_TTL_MS) reveal(docId, text, target.key);
+  }, [target, docId, text, reveal, clearDocumentTarget]);
+  return (
+    <div ref={rootRef} data-plan-viewer={docId} className="flex min-w-0 flex-col">
+      <div className="flex shrink-0 items-center border-b border-mg-border-subtle px-[10px] py-[5px]">
+        <span className="min-w-0 flex-1 truncate font-mono text-[10.5px] text-mg-sec">{name}</span>
+      </div>
+      {gone && <GoneNotice />}
+      <div className="min-h-0 flex-1 overflow-auto p-[10px_12px] text-[12px] leading-[1.6]">
+        <Markdown text={text} />
+      </div>
     </div>
   );
 }
@@ -141,10 +288,12 @@ export function FilesPanel(): React.JSX.Element {
 // Visor/editor de UN fichero. `key={path}` en el caller: al cambiar de fichero se monta uno nuevo, asi
 // que no hace falta reiniciar a mano el borrador, el modo de edicion ni el error.
 function FileViewer({
+  docId,
   file,
   cwd,
   askOutside,
 }: {
+  readonly docId: string;
   readonly file: CreatedFile;
   readonly cwd: string;
   readonly askOutside: boolean;
@@ -170,6 +319,27 @@ function FileViewer({
   }, [cwd, file.path]);
 
   useEffect(load, [load]);
+
+  // Una referencia del chat apunta a este documento: se RELEE de disco (pudo cambiar desde que se
+  // abrio) y, con el contenido nuevo, se busca el punto. En el primer montaje ya hay una lectura en curso.
+  const target = useDocumentTarget(docId);
+  const clearDocumentTarget = useWorkbenchStore((s) => s.clearDocumentTarget);
+  const { rootRef, gone, reveal } = useAnchorReveal();
+  const [awaiting, setAwaiting] = useState<DocumentTarget | null>(null);
+  const hadContent = useRef(false);
+  useEffect(() => {
+    if (target === null) return;
+    clearDocumentTarget();
+    if (Date.now() - target.at > TARGET_TTL_MS) return;
+    if (hadContent.current) load();
+    setAwaiting(target);
+  }, [target, load, clearDocumentTarget]);
+  useEffect(() => {
+    hadContent.current = loaded?.content != null;
+    if (awaiting === null || loaded?.content == null) return;
+    setAwaiting(null);
+    reveal(docId, loaded.content, awaiting.key);
+  }, [awaiting, loaded, docId, reveal]);
 
   // Fuera de la carpeta de la conversacion (P-028, 15): la pregunta la hace main con un dialogo nativo
   // y, si se aprueba, se vuelve a leer. Cancelar deja el aviso con «Abrir de todos modos…».
@@ -209,7 +379,7 @@ function FileViewer({
   return (
     // Sin `flex-1`: aqui dentro el visor mide por su CONTENIDO y empuja hacia abajo los ficheros que
     // vienen detras, que es lo que se pidio. Estirarlo se comeria la lista entera.
-    <div className="flex min-w-0 flex-col">
+    <div ref={rootRef} className="flex min-w-0 flex-col">
       <div className="flex shrink-0 flex-wrap items-center gap-[6px] border-b border-mg-border-subtle px-[10px] py-[5px]">
         <span className="min-w-0 flex-1 truncate font-mono text-[10.5px] text-mg-sec" title={file.path}>
           {file.name}
@@ -241,6 +411,8 @@ function FileViewer({
           </>
         )}
       </div>
+
+      {gone && <GoneNotice />}
 
       {error !== null && (
         <div role="alert" className="flex shrink-0 items-start gap-[8px] border-b border-mg-danger-border bg-mg-danger-bg p-[8px_10px] text-[10.5px] text-mg-danger-ink">

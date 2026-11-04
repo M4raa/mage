@@ -529,6 +529,9 @@ export interface MessageValues {
   readonly "chat.rateLimit.lineWithReset": { readonly "time": string | number };
   readonly "chat.rateLimit.noOtherAccount": never;
   readonly "chat.rateLimit.noResetTime": never;
+  readonly "chat.references.gone": never;
+  readonly "chat.references.planTitle": never;
+  readonly "chat.references.planTitleNumbered": { readonly "number": string | number };
   readonly "chat.restarting": { readonly "attempt": string | number; readonly "seconds": string | number };
   readonly "chat.retry.action": never;
   readonly "chat.retry.confirm": never;
