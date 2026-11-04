@@ -831,6 +831,8 @@ export interface MessageValues {
   readonly "errors.host.socketPathTooLong": { readonly "address": string | number; readonly "bytes": string | number; readonly "max": string | number };
   readonly "errors.host.startFailedCleanup": { readonly "detail": string | number; readonly "reason": string | number };
   readonly "errors.locks.cannotCreate": { readonly "nativeId": string | number; readonly "path": string | number };
+  readonly "errors.mentions.notFound": { readonly "name": string | number };
+  readonly "errors.mentions.searchFailed": { readonly "error": string | number };
   readonly "errors.os.agyNotFound": { readonly "command": string | number };
   readonly "errors.os.codexNotFound": { readonly "command": string | number };
   readonly "errors.os.httpsOnly": { readonly "url": string | number };
@@ -1504,6 +1506,13 @@ export interface MessageValues {
   readonly "prompt.lock.reclaimed": never;
   readonly "prompt.lock.takeOver": never;
   readonly "prompt.lock.unknownProfile": never;
+  readonly "prompt.mentions.empty": never;
+  readonly "prompt.mentions.listLabel": never;
+  readonly "prompt.mentions.searching": never;
+  readonly "prompt.mentions.sectionConversation": never;
+  readonly "prompt.mentions.sectionFiles": never;
+  readonly "prompt.mentions.truncated": never;
+  readonly "prompt.mentions.untrusted": never;
   readonly "prompt.model.ariaLabel": never;
   readonly "prompt.model.tip": never;
   readonly "prompt.model.tipResolved": { readonly "model": string | number };

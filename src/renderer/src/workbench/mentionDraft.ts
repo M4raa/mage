@@ -88,3 +88,22 @@ export function conversationMatches(files: readonly CreatedFile[], cwd: string, 
 }
 
 export const chipDelivery = (kind: MentionKind, bytes: number, provider: string): DeliveryPlan => planDelivery(kind, bytes, provider);
+
+export type MentionSection = 'conversation' | 'files';
+
+// Una fila del popover. `candidate` es null para un fichero de la conversacion que el indice de main no
+// devolvio: antes de mencionarlo hay que pedirle su clase y tamano (busqueda por su ruta exacta).
+export interface MentionRow {
+  readonly relPath: string;
+  readonly section: MentionSection;
+  readonly candidate: MentionCandidate | null;
+}
+
+// Primero «En esta conversacion», despues «Ficheros» sin repetir lo ya listado arriba. Indexado en `Map`.
+export function mentionRows(conversationPaths: readonly string[], candidates: readonly MentionCandidate[]): readonly MentionRow[] {
+  const byRelPath = new Map(candidates.map((candidate) => [candidate.relPath, candidate] as const));
+  const seen = new Set(conversationPaths);
+  const conversation = conversationPaths.map((relPath): MentionRow => ({ relPath, section: 'conversation', candidate: byRelPath.get(relPath) ?? null }));
+  const files = candidates.filter((candidate) => !seen.has(candidate.relPath)).map((candidate): MentionRow => ({ relPath: candidate.relPath, section: 'files', candidate }));
+  return [...conversation, ...files];
+}

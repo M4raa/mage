@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { MentionCandidate } from '@shared/mentions';
 import type { CreatedFile } from './createdFilesView';
-import { addMention, conversationMatches, insertMention, mentionQueryAt, reconcileMentions, removeMentionToken } from './mentionDraft';
+import { addMention, conversationMatches, insertMention, mentionQueryAt, mentionRows, reconcileMentions, removeMentionToken } from './mentionDraft';
 
 const candidate = (relPath: string): MentionCandidate => ({ relPath, absPath: `/p/${relPath}`, kind: 'text', bytes: 1 });
 const created = (path: string, failed = false): CreatedFile => ({ path, name: path, dir: '', blockId: 'b', failed });
@@ -71,5 +71,23 @@ describe('conversationMatches', () => {
 
   it('conversationMatches_siblingFolderSamePrefix_excluded', () => {
     expect(conversationMatches([created('/w/p2/a.md')], '/w/p', '', 5)).toEqual([]);
+  });
+});
+
+describe('mentionRows', () => {
+  it('mentionRows_conversationFirstThenFilesWithoutRepeats', () => {
+    const rows = mentionRows(['b.md'], [candidate('a.md'), candidate('b.md')]);
+
+    expect(rows.map((row) => `${row.section}:${row.relPath}`)).toEqual(['conversation:b.md', 'files:a.md']);
+  });
+
+  it('mentionRows_conversationFileNotInIndex_candidateNull', () => {
+    expect(mentionRows(['x.md'], [])[0]?.candidate).toBeNull();
+  });
+
+  it('mentionRows_conversationFileInIndex_reusesCandidate', () => {
+    const indexed = candidate('b.md');
+
+    expect(mentionRows(['b.md'], [indexed])[0]?.candidate).toBe(indexed);
   });
 });

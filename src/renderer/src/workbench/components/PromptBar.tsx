@@ -38,7 +38,10 @@ import { t as translate, useT } from '../../i18n/uiLanguage';
 import { activeFormatLocale } from '../../i18n/format';
 import type { PermissionMode } from '@shared/ipc';
 import { describeError } from '../describeError';
-import { reconcileMentions } from '../mentionDraft';
+import { addMention, insertMention, mentionQueryAt, reconcileMentions } from '../mentionDraft';
+import { useMentionSuggestions } from '../useMentionSuggestions';
+import { MentionPopover } from './MentionPopover';
+import type { MentionCandidate } from '@shared/mentions';
 
 // Referencia ESTABLE para el selector de zustand (un array nuevo por render seria un bucle).
 const NO_MODELS: readonly ProviderModel[] = [];
@@ -282,6 +285,24 @@ export function PromptBar(): React.JSX.Element {
   const slashOpen = slashSuggestions.length > 0 && !slashDismissed && !disabled;
   useLocalPopover(slashOpen);
   const slashCursor = Math.min(slashIndex, slashSuggestions.length - 1);
+  // Menciones `@` (Q06): el cursor lo avisa el editor; elegir una pone `@ruta ` en el texto y la ficha en el borrador.
+  const [cursor, setCursor] = useState(0);
+  const tabCwd = activeTab?.cwd ?? '';
+  const tabAccountDir = activeTab?.resolvedConfigDir ?? activeTab?.accountId ?? '';
+  const mentionTab = useMemo(() => (tabCwd.length === 0 ? null : { tabId: activeTabId, cwd: tabCwd, accountDir: tabAccountDir }), [activeTabId, tabCwd, tabAccountDir]);
+  const pickMention = (candidate: MentionCandidate): void => {
+    const editor = editorRef.current;
+    if (editor === null) return;
+    const state = editor.getTextState();
+    const at = mentionQueryAt(state.value, state.selectionStart);
+    if (at === null) return;
+    const inserted = insertMention(state.value, at, candidate.relPath);
+    const latest = draftOf(activeTabId);
+    setDraft(activeTabId, { text: inserted.text, attachments: latest.attachments, mentions: addMention(latest.mentions, candidate) });
+    editor.applyTextState({ value: inserted.text, selectionStart: inserted.cursor, selectionEnd: inserted.cursor });
+  };
+  const mentions = useMentionSuggestions({ tab: mentionTab, text, cursor, blocked: slashOpen || disabled, onPick: pickMention, onError: setError });
+  useLocalPopover(mentions.open);
   const canImprove = !disabled && !busy && text.trim().length > 0 && isClaude;
   // Handoff: necesita una sesion reanudable (viva o restaurada) y solo Claude soporta --resume.
   const canHandoff = isClaude && (sessionId !== undefined || activeTab?.resumeSessionId !== undefined);
@@ -458,6 +479,8 @@ export function PromptBar(): React.JSX.Element {
         return true;
       }
     }
+    // 1b. Popover `@` abierto: mismas teclas que el de `/` (Enter elige y no envia).
+    if (mentions.onKeyDown(e)) return true;
     // 2. Shift+Enter: continuar lista si aplica; si no, salto de linea del editor. NO es rebindable
     // (D5 §2.2): es la convencion universal de "salto de linea".
     if (e.key === 'Enter' && e.shiftKey) {
@@ -644,6 +667,7 @@ export function PromptBar(): React.JSX.Element {
       {/* `flex-wrap`: los controles (todos `shrink-0`) bajan a la linea siguiente cuando no caben junto al
           editor, en vez de estrujarlo a 0 px de ancho — ver el comentario del host en PromptEditor.tsx. */}
       <div ref={rowRef} className="relative flex flex-wrap items-end gap-[10px] rounded-[9px] border border-mg-border-ctrl bg-mg-panel p-[10px_14px]">
+        {mentions.open && <MentionPopover suggestions={mentions} />}
         {slashOpen && (
           // Popover de comandos "/" (M2.6): navegable con flechas/Enter/Tab; click completa.
           <div
@@ -683,6 +707,7 @@ export function PromptBar(): React.JSX.Element {
             ariaLabel={t('prompt.editor.ariaLabel')}
             placeholder={promptPlaceholder(activeTabId, readOnlyLock, permissionPending)}
             onChange={onChangeText}
+            onSelectionChange={setCursor}
             onKeyDown={onKeyDown}
             onPasteImages={addFiles}
             onWrapChange={setWraps}
