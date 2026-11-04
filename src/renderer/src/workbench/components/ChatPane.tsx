@@ -10,6 +10,7 @@ import { BlockChat } from './BlockChat';
 import { PromptBar } from './PromptBar';
 import { RateLimitBanner } from './RateLimitBanner';
 import { ChatInfoBar } from './ChatInfoBar';
+import { TabSubline } from './TabSubline';
 import { QuestionDock } from './QuestionDock';
 import { ElicitationDock } from './ElicitationDock';
 import { AgentsDock } from './AgentsDock';
@@ -127,6 +128,8 @@ export function ChatPane({
           split ? (focused ? 'outline outline-1 -outline-offset-1 outline-mg-border-emph' : 'opacity-80') : ''
         }`}
       >
+        {/* Cuenta · carpeta · rama, justo bajo la barra de pestañas de este panel y encima del hilo (Q-U11). */}
+        <TabSubline />
         <BlockChat />
         <RateLimitBanner />
         {/* Encima del input, no dentro: es informacion de la CONVERSACION, no un control del mensaje

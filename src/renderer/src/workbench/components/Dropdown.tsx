@@ -55,6 +55,7 @@ export function Dropdown({
   ariaLabel,
   tip,
   triggerClassName = '',
+  bare = false,
   leading,
   triggerData,
 }: {
@@ -64,6 +65,8 @@ export function Dropdown({
   readonly ariaLabel: string;
   readonly tip?: string;
   readonly triggerClassName?: string;
+  // Sin píldora: sin borde ni relleno de etiqueta, para ir como texto en una línea (la sublínea de la pestaña).
+  readonly bare?: boolean;
   // Algo que va delante de la etiqueta en el disparador (el icono de la rama de git, P-026 3.5).
   readonly leading?: React.ReactNode;
   // Atributos `data-*` del disparador (los usa la verificación de la interfaz para localizarlo).
@@ -115,7 +118,7 @@ export function Dropdown({
         aria-label={ariaLabel}
         data-tip={tip}
         {...triggerData}
-        className={`shrink-0 cursor-pointer self-center rounded-full border border-mg-border-ctrl bg-transparent px-[8px] py-[2px] text-[10.5px] text-mg-sec outline-none transition-colors duration-150 ease-out hover:text-mg-body ${triggerClassName}`}
+        className={`shrink-0 cursor-pointer self-center ${bare ? 'rounded-[4px] px-[3px]' : 'rounded-full border border-mg-border-ctrl px-[8px] py-[2px]'} bg-transparent text-[10.5px] text-mg-sec outline-none transition-colors duration-150 ease-out hover:text-mg-body ${triggerClassName}`}
       >
         {leading === undefined ? (
           selectedLabel

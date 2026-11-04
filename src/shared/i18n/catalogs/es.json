@@ -2100,6 +2100,7 @@
   "tabs.menu.splitRight": "Dividir a la derecha",
   "tabs.menu.splitTop": "Dividir arriba",
   "tabs.menu.unpin": "Desanclar",
+  "tabs.monogram.tip": "{provider} · {account}",
   "tabs.releaseNotes.closeLabel": "Cerrar pestaña Novedades",
   "tabs.releaseNotes.title": "Novedades",
   "tabs.untitled": "Nuevo chat",

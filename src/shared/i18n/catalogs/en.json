@@ -2100,6 +2100,7 @@
   "tabs.menu.splitRight": "Split right",
   "tabs.menu.splitTop": "Split up",
   "tabs.menu.unpin": "Unpin",
+  "tabs.monogram.tip": "{provider} · {account}",
   "tabs.releaseNotes.closeLabel": "Close the What's new tab",
   "tabs.releaseNotes.title": "What's new",
   "tabs.untitled": "New chat",

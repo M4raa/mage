@@ -10,7 +10,8 @@ import { TAB_INDICATOR_TRANSITION } from '../motionPresets';
 import { orderTabsForDisplay, TAB_DRAG_MIME, TAB_DRAG_ORIGIN_MIME, tabColorVar, tabDropSide, tabsToCloseAll, tabsToCloseInactive } from '../tabActions';
 import { tabMoveBlockedReason } from '../backgroundWork';
 import { TabContextMenu } from './TabContextMenu';
-import { apiBilledLabel, providerBadge } from '../accountView';
+import { apiBilledLabel, providerLabel } from '../accountView';
+import { providerMonogram } from '../sidebarModel';
 import type { Tab as TabModel } from '../types';
 import { RELEASE_NOTES_TAB_ID } from '../releaseNotes';
 import { reportActionError } from '../notificationStore';
@@ -79,7 +80,6 @@ export function TabBar({
 
   const accentOf = (accountId: string): string =>
     accounts.find((a) => a.id === accountId)?.accent.base ?? 'transparent';
-  const monogramOf = (accountId: string): string => accounts.find((a) => a.id === accountId)?.monogram ?? '?';
   // Grupo E: la pestaña de una cuenta que factura la API lo dice con texto fijo.
   const apiBilledOf = (accountId: string): boolean => accounts.find((a) => a.id === accountId)?.apiBilled === true;
 
@@ -143,7 +143,6 @@ export function TabBar({
             key={tab.id}
             tab={tab}
             accent={tabColorVar(tab.colorIndex, accentOf(tab.accountId))}
-            monogram={monogramOf(tab.accountId)}
             apiBilled={apiBilledOf(tab.accountId)}
             active={tab.id === paneActiveTabId}
             // Activa de un panel que NO tiene el foco: encendida pero atenuada. Con el workspace dividido
@@ -271,7 +270,7 @@ function ReleaseNotesTab({
         <motion.span
           layoutId={ACTIVE_TAB_INDICATOR_ID}
           transition={TAB_INDICATOR_TRANSITION}
-          className="absolute inset-x-0 top-0 h-[2px] bg-mg-focus"
+          className="absolute inset-x-0 bottom-0 h-[2px] bg-mg-focus"
         />
       )}
       <Icon name="sparkles" size={12} className="flex-none text-mg-focus" />
@@ -296,7 +295,6 @@ function ReleaseNotesTab({
 function Tab({
   tab,
   accent,
-  monogram,
   apiBilled,
   active,
   unfocusedPane,
@@ -309,8 +307,6 @@ function Tab({
 }: {
   readonly tab: TabModel;
   readonly accent: string;
-  // Letra de la cuenta sobre su acento (P-028, 2): distinguir cuentas no puede depender solo del color.
-  readonly monogram: string;
   readonly apiBilled: boolean;
   readonly active: boolean;
   // Se esta viendo en el SEGUNDO panel del centro (item 13): tambien esta a la vista, aunque el foco
@@ -329,7 +325,8 @@ function Tab({
 }): React.JSX.Element {
   const translate = useT();
   const accountAlias = tab.accountAlias;
-  const badge = providerBadge(tab.provider);
+  // Sin proveedor guardado (pestañas antiguas) la pestaña es de Claude, como en `providerLabel`.
+  const monogram = providerMonogram(tab.provider.length === 0 ? 'claude' : tab.provider);
   // role="tab" sobre un div (no <button>) para poder anidar el boton ✕ sin HTML invalido. Enter/Espacio
   // activan; el roving (tabIndex 0 en la activa, -1 en el resto) y las flechas los gestiona el tablist.
   // Shift+F10 / tecla de menu abren el contextual sin raton (mismo contrato que los iconos del dock).
@@ -383,7 +380,7 @@ function Tab({
       data-tip={moveBlockedReason ?? undefined}
       data-drop-side={dropSide ?? undefined}
       style={dropSide === null ? undefined : { boxShadow: `inset ${dropSide === 'before' ? 2 : -2}px 0 0 var(--color-mg-focus)` }}
-      className={`relative flex flex-none cursor-pointer items-center gap-[7px] border-r border-mg-border p-[8px_14px] transition-colors duration-150 ease-out ${
+      className={`group relative flex flex-none cursor-pointer items-center gap-[7px] border-r border-mg-border p-[8px_14px] transition-colors duration-150 ease-out ${
         active && !unfocusedPane
           ? 'bg-mg-window text-mg-text'
           : unfocusedPane
@@ -395,30 +392,21 @@ function Tab({
         <motion.span
           layoutId={ACTIVE_TAB_INDICATOR_ID}
           transition={TAB_INDICATOR_TRANSITION}
-          className="absolute inset-x-0 top-0 h-[2px]"
+          className="absolute inset-x-0 bottom-0 h-[2px]"
           style={{ background: accent }}
         />
       )}
-      {/* Monograma de la cuenta sobre el color de la pestaña (el de su cuenta, o el elegido a mano en el
-          menu contextual, item 12). P-028, 2: antes era un punto de color y nada mas, y dos cuentas de
-          acento parecido no se distinguian. El alias va en el tooltip. */}
+      {/* Marca de la pestaña: la letra del PROVEEDOR (C/X/A/R) sobre el color de la cuenta (o el elegido a
+          mano en el menu contextual, item 12). La cuenta exacta va en el tooltip y en la sublinea. */}
       <span
         aria-hidden="true"
         data-tab-monogram={monogram}
-        data-tip={accountAlias}
+        data-tip={translate('tabs.monogram.tip', { provider: providerLabel(tab.provider), account: accountAlias })}
         className="flex h-[14px] w-[14px] flex-none items-center justify-center rounded-[4px] text-[9px] font-bold leading-none text-mg-window"
         style={{ background: accent }}
       >
         {monogram}
       </span>
-      {badge !== null && (
-        <span
-          data-tab-provider={badge}
-          className="flex-none rounded-[4px] border border-mg-border-emph px-[4px] text-[9px] leading-[13px] text-mg-muted"
-        >
-          {badge}
-        </span>
-      )}
       {apiBilled && (
         <span data-tab-api-billed="true" className="flex-none rounded-[4px] border border-mg-warn px-[4px] text-[9px] leading-[13px] text-mg-warn">
           {apiBilledLabel()}
@@ -427,19 +415,19 @@ function Tab({
       {tab.pinned === true && <Icon name="pin" size={10} className="flex-none text-mg-ter" />}
 
       <span className="max-w-[220px] truncate">{displayTitle(tab.title, translate)}</span>
-      {active && (
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            onClose();
-          }}
-          className="text-mg-muted transition-colors duration-150 ease-out hover:text-mg-body"
-          data-tip={translate('tabs.close.tip')}
-          aria-label={translate('tabs.close.label', { alias: accountAlias, title: displayTitle(tab.title, translate) })}
-        >
-          ✕
-        </button>
-      )}
+      {/* El ✕ ocupa su hueco en TODAS las pestañas (la no activa lo lleva invisible hasta el hover o el foco): la
+          pestaña no cambia de ancho al activarse. */}
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          onClose();
+        }}
+        className={`text-mg-muted transition-colors duration-150 ease-out hover:text-mg-body ${active ? '' : 'invisible group-hover:visible focus-visible:visible'}`}
+        data-tip={translate('tabs.close.tip')}
+        aria-label={translate('tabs.close.label', { alias: accountAlias, title: displayTitle(tab.title, translate) })}
+      >
+        ✕
+      </button>
     </div>
   );
 }

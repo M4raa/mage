@@ -2102,6 +2102,7 @@ export interface MessageValues {
   readonly "tabs.menu.splitRight": never;
   readonly "tabs.menu.splitTop": never;
   readonly "tabs.menu.unpin": never;
+  readonly "tabs.monogram.tip": { readonly "account": string | number; readonly "provider": string | number };
   readonly "tabs.releaseNotes.closeLabel": never;
   readonly "tabs.releaseNotes.title": never;
   readonly "tabs.untitled": never;
