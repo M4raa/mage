@@ -76,6 +76,15 @@ export function validateAttachmentSet(
   return all;
 }
 
+// El pegado del prompt solo adjunta imágenes: el PDF entra por mención (Q05), que decide por motor si viaja.
+export function assertPastedImages(candidates: readonly AttachmentCandidate[]): void {
+  const rejected = candidates.find((candidate) => !ALLOWED_IMAGE_TYPES.has(candidate.mediaType.trim().toLowerCase()));
+  if (rejected === undefined) return;
+  throw new UserFacingError(
+    localized('errors.attachments.unsupportedType', { type: JSON.stringify(rejected.mediaType), allowed: [...ALLOWED_IMAGE_TYPES].join(', ') }),
+  );
+}
+
 // Bytes REALES de un base64. Hace falta porque por IPC viaja la cadena, no el fichero: usar
 // `data.length` como tamaño rechazaria imagenes validas (base64 abulta ~4/3) y colaria otras.
 export function base64ByteLength(data: string): number {
