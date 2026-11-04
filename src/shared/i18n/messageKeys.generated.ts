@@ -1033,7 +1033,12 @@ export interface MessageValues {
   readonly "library.distribution.linked": never;
   readonly "library.engineBlocked": { readonly "engine": string | number };
   readonly "library.engineOk": { readonly "engine": string | number };
+  readonly "library.error.secretsChanged": { readonly "packageId": string | number };
+  readonly "library.error.secretsRequired": { readonly "names": string | number; readonly "packageId": string | number };
   readonly "library.filter.all": never;
+  readonly "library.keyed.badge": never;
+  readonly "library.keyed.explain": never;
+  readonly "library.keyed.fieldAria": { readonly "name": string | number };
   readonly "library.kind.agent": never;
   readonly "library.kind.hook": never;
   readonly "library.kind.mcp": never;

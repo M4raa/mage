@@ -60,6 +60,7 @@ function setup(overrides: Partial<LibraryServiceDeps> = {}, handler?: (args: rea
     runner,
     baseEnv: () => ({ PATH: 'x' }),
     isCommandAvailable: () => true,
+    vault: { get: () => null, set: () => undefined, has: () => false, delete: () => undefined },
     ...overrides,
   };
   const calls = (): RunnerCall[] => runner.mock.calls.map(([bin, args, opts]) => ({ bin, args, env: opts.env }));

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { IpcChannel } from '@shared/ipc';
-import { registerLibraryIpc } from './libraryIpc';
+import { parseLibraryApplyParams, registerLibraryIpc } from './libraryIpc';
+import { redactSecrets } from './librarySecrets';
 import type { LibraryService } from './libraryService';
 
 type Listener = (event: unknown, arg: unknown) => unknown;
@@ -42,6 +43,52 @@ describe('registerLibraryIpc', () => {
 
     await call(IpcChannel.LibraryApply, { ...VALID, action: 'install' });
 
-    expect(service.apply).toHaveBeenCalledWith('install', VALID);
+    expect(service.apply).toHaveBeenCalledWith('install', VALID, undefined);
+  });
+});
+
+describe('parseLibraryApplyParams', () => {
+  it('parseLibraryApplyParams_conSecretos_losPasa', () => {
+    // Arrange
+    const raw = { ...VALID, action: 'install', secrets: { EXA_API_KEY: 'valor-secreto' } };
+    // Act
+    const params = parseLibraryApplyParams(raw);
+    // Assert
+    expect(params.secrets).toEqual({ EXA_API_KEY: 'valor-secreto' });
+  });
+
+  it('parseLibraryApplyParams_invalidoConSecreto_mensajeSinElValor', () => {
+    // Arrange: nombre inválido (minúsculas) con un valor que no debe aparecer
+    const raw = { ...VALID, action: 'install', secrets: { exa_key: 'valor-secreto-123' } };
+    // Act
+    const act = (): unknown => parseLibraryApplyParams(raw);
+    // Assert
+    expect(act).toThrow(/inválida/);
+    expect(act).toThrow(/<oculto>/);
+    expect(act).not.toThrow(/valor-secreto-123/);
+  });
+
+  it('parseLibraryApplyParams_secretosNoRegistro_mensajeSinElValor', () => {
+    // Arrange
+    const raw = { ...VALID, action: 'install', secrets: 'valor-secreto-123' };
+    // Act / Assert
+    expect(() => parseLibraryApplyParams(raw)).not.toThrow(/valor-secreto-123/);
+  });
+});
+
+describe('redactSecrets', () => {
+  it('redactSecrets_noMuta', () => {
+    // Arrange
+    const raw = { ...VALID, secrets: { A: 'uno', B: 'dos' } };
+    // Act
+    const redacted = redactSecrets(raw);
+    // Assert
+    expect(raw.secrets).toEqual({ A: 'uno', B: 'dos' });
+    expect(redacted).toEqual({ ...VALID, secrets: { A: '<oculto>', B: '<oculto>' } });
+  });
+
+  it('redactSecrets_sinSecretos_devuelveIgual', () => {
+    expect(redactSecrets(VALID)).toBe(VALID);
+    expect(redactSecrets(null)).toBeNull();
   });
 });

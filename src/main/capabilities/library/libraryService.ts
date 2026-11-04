@@ -33,6 +33,14 @@ import { ownershipRegistryPath } from '../ownershipRegistry';
 import type { LibraryCatalogEntry, LibraryComponent } from '../catalog/libraryCatalog';
 import { INSTALL_BLOCKS, installBlockFor, previewInstall } from '../catalog/libraryPreview';
 import {
+  clearLibrarySecrets,
+  hasLibrarySecrets,
+  storeLibrarySecrets,
+  validateLibrarySecrets,
+  type LibrarySecretScope,
+  type LibraryVault,
+} from './librarySecrets';
+import {
   findInstall,
   libraryStatePath,
   loadLibraryState,
@@ -65,9 +73,12 @@ export interface LibraryServiceDeps {
   readonly runner: CommandRunner;
   readonly baseEnv: () => NodeJS.ProcessEnv;
   readonly isCommandAvailable: (command: string) => boolean;
+  // La bóveda de main (la misma que las extensiones): ahí viven las claves de los MCP de la biblioteca.
+  readonly vault: LibraryVault;
 }
 
 const DONE: LibraryActionResult = { status: 'done', appliesOnNextSession: true };
+type Secrets = Readonly<Record<string, string>>;
 const ACTIONS_NEEDING_ENTRY: ReadonlySet<LibraryAction> = new Set(['install', 'enable', 'update']);
 
 export function toComponentView(c: LibraryComponent): LibraryComponentView {
@@ -109,10 +120,10 @@ export class LibraryService {
     return { ...result, components: result.components.map(toComponentView) };
   }
 
-  apply(action: LibraryAction, target: LibraryTarget): Promise<LibraryActionResult> {
+  apply(action: LibraryAction, target: LibraryTarget, secrets?: Secrets): Promise<LibraryActionResult> {
     // El `catch` de la cola NO silencia nada: el error sigue en `run`, que es lo que recibe quien llama. Solo evita
     // que una acción fallida deje rechazada la cola y bloquee las siguientes (D-P5).
-    const run = this.tail.then(() => this.applyNow(action, target));
+    const run = this.tail.then(() => this.applyNow(action, target, secrets));
     this.tail = run.catch(() => undefined);
     return run;
   }
@@ -154,13 +165,14 @@ export class LibraryService {
 
   // --- Acciones -------------------------------------------------------------------------------------------
 
-  private async applyNow(action: LibraryAction, target: LibraryTarget): Promise<LibraryActionResult> {
+  private async applyNow(action: LibraryAction, target: LibraryTarget, secrets?: Secrets): Promise<LibraryActionResult> {
     const { key, entry } = this.resolveTarget(target, ACTIONS_NEEDING_ENTRY.has(action));
     const state = loadLibraryState(this.deps.fs, libraryStatePath(this.deps.userDataDir));
     const op: Operation = { key, entry, state, record: findInstall(state, key, this.deps.caseInsensitivePaths) };
+    this.assertSecretsAllowed(action, op, secrets);
     switch (action) {
       case 'install':
-        return this.install(op);
+        return this.install(op, secrets);
       case 'enable':
         return this.enable(op);
       case 'disable':
@@ -184,12 +196,45 @@ export class LibraryService {
     return op.entry;
   }
 
-  private async install(op: Operation): Promise<LibraryActionResult> {
+  // Los secretos solo se aceptan al instalar un MCP con clave. Nunca se menciona un valor en el error.
+  private assertSecretsAllowed(action: LibraryAction, op: Operation, secrets: Secrets | undefined): void {
+    if (secrets === undefined || Object.keys(secrets).length === 0) return;
+    const keyedInstall = action === 'install' && op.entry !== null && installRouteFor(op.entry.package, op.key.engine) === 'mageMcp';
+    if (keyedInstall) return;
+    throw new Error(`Secretos solo al instalar un MCP con clave (paquete ${op.key.packageId}, acción ${action})`);
+  }
+
+  private secretScope(key: LibraryKey): LibrarySecretScope {
+    return { vault: this.deps.vault, key, caseInsensitive: this.deps.caseInsensitivePaths };
+  }
+
+  // Un MCP con clave: la clave a la bóveda y el registro al estado; si el estado no se guarda, la bóveda vuelve atrás.
+  private installKeyed(op: Operation, entry: LibraryCatalogEntry, secrets: Secrets | undefined): LibraryActionResult {
+    const required = entry.package.requires.secrets ?? [];
+    const values = validateLibrarySecrets(required, secrets, op.key.packageId);
+    const scope = this.secretScope(op.key);
+    storeLibrarySecrets(scope, values);
+    try {
+      return this.settle(DONE, op, () => this.recordOf(op.key, entry.package, true));
+    } catch (error) {
+      clearLibrarySecrets(scope, required);
+      throw error;
+    }
+  }
+
+  // enable y update de un MCP con clave no piden la clave otra vez: tiene que seguir en la bóveda.
+  private assertSecretsInVault(pkg: CapabilityPackage, key: LibraryKey): void {
+    if (hasLibrarySecrets(this.secretScope(key), pkg.requires.secrets ?? [])) return;
+    throw new UserFacingError(localized('library.error.secretsChanged', { packageId: pkg.id }));
+  }
+
+  private async install(op: Operation, secrets: Secrets | undefined): Promise<LibraryActionResult> {
     const entry = this.requireEntry(op);
     if (op.record !== null) {
       throw new UserFacingError(localized('errors.capabilities.alreadyInstalled', { packageId: op.key.packageId }));
     }
     this.assertInstallable(entry, op.key.engine);
+    if (installRouteFor(entry.package, op.key.engine) === 'mageMcp') return this.installKeyed(op, entry, secrets);
     const result = await this.installPackage(entry.package, op.key, entry);
     return this.settle(result, op, () => this.recordOf(op.key, entry.package, true));
   }
@@ -201,6 +246,7 @@ export class LibraryService {
       throw new UserFacingError(localized('errors.capabilities.alreadyEnabled', { packageId: op.key.packageId }));
     }
     this.assertInstallable(entry, op.key.engine);
+    if (installRouteFor(entry.package, op.key.engine) === 'mageMcp') this.assertSecretsInVault(entry.package, op.key);
     const result = await this.installPackage(entry.package, op.key, entry);
     return this.settle(result, op, () => this.recordOf(op.key, entry.package, true));
   }
@@ -218,6 +264,9 @@ export class LibraryService {
     const record = this.requireRecord(op);
     const result = record.enabled ? await this.uninstallPackage(record.package, op.key) : DONE;
     if (result.status !== 'done') return result;
+    if (installRouteFor(record.package, op.key.engine) === 'mageMcp') {
+      clearLibrarySecrets(this.secretScope(op.key), record.package.requires.secrets ?? []);
+    }
     saveLibraryState(this.deps.fs, libraryStatePath(this.deps.userDataDir), withoutInstall(op.state, op.key, this.deps.caseInsensitivePaths));
     return DONE;
   }
@@ -231,10 +280,10 @@ export class LibraryService {
       throw new UserFacingError(localized('errors.capabilities.upToDate', { packageId, version: record.version }));
     }
     this.assertInstallable(entry, op.key.engine);
+    const route = installRouteFor(entry.package, op.key.engine);
+    if (route === 'mageMcp') this.assertSecretsInVault(entry.package, op.key);
     const result =
-      installRouteFor(entry.package, op.key.engine) === 'ownedFiles'
-        ? await this.installPackage(entry.package, op.key, entry)
-        : await this.replaceNative(record, op.key, entry);
+      route === 'native' ? await this.replaceNative(record, op.key, entry) : await this.installPackage(entry.package, op.key, entry);
     return this.settle(result, op, () => this.recordOf(op.key, entry.package, true));
   }
 

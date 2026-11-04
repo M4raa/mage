@@ -2,6 +2,7 @@
 import { z } from 'zod';
 import { IpcChannel, type LibraryApplyParams, type LibraryTarget } from '@shared/ipc';
 import { CAPABILITY_ENGINES, describeIssues, previewValue } from '../capabilityPackage';
+import { redactSecrets, SECRET_MAX_CHARS, SECRET_NAME } from './librarySecrets';
 import type { LibraryService } from './libraryService';
 
 export interface LibraryIpcDeps {
@@ -17,12 +18,15 @@ const targetSchema = z.object({
   engine: z.enum(CAPABILITY_ENGINES),
   accountDir: z.string().min(1),
 });
-const applySchema = targetSchema.extend({ action: z.enum(LIBRARY_ACTIONS) });
+const applySchema = targetSchema.extend({
+  action: z.enum(LIBRARY_ACTIONS),
+  secrets: z.record(z.string().regex(SECRET_NAME), z.string().max(SECRET_MAX_CHARS)).optional(),
+});
 
 function parseWith<T>(schema: z.ZodType<T>, raw: unknown): T {
   const result = schema.safeParse(raw);
   if (result.success) return result.data;
-  throw new Error(`Petición de la biblioteca inválida (${describeIssues(result.error)}): ${previewValue(raw)}`);
+  throw new Error(`Petición de la biblioteca inválida (${describeIssues(result.error)}): ${previewValue(redactSecrets(raw))}`);
 }
 
 export function parseLibraryTarget(raw: unknown): LibraryTarget {
@@ -37,7 +41,7 @@ export function registerLibraryIpc(deps: LibraryIpcDeps): void {
   deps.handle(IpcChannel.LibraryView, () => deps.service().view());
   deps.handle(IpcChannel.LibraryPreview, (_event, arg) => deps.service().preview(parseLibraryTarget(arg)));
   deps.handle(IpcChannel.LibraryApply, (_event, arg) => {
-    const { action, ...target } = parseLibraryApplyParams(arg);
-    return deps.service().apply(action, target);
+    const { action, secrets, ...target } = parseLibraryApplyParams(arg);
+    return deps.service().apply(action, target, secrets);
   });
 }

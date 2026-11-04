@@ -3918,6 +3918,7 @@ function getLibraryService(): LibraryService {
     runner: execFileRunner,
     baseEnv: () => process.env,
     isCommandAvailable: isCommandOnPath,
+    vault: getSecretStore(),
   });
   return librarySingleton;
 }
