@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { MentionCandidate } from '@shared/mentions';
 import type { CreatedFile } from './createdFilesView';
-import { addMention, conversationMatches, insertMention, mentionQueryAt, mentionRows, reconcileMentions, removeMentionToken } from './mentionDraft';
+import type { MentionResolution } from '@shared/mentions';
+import { addMention, applyResolution, failedMentions, conversationMatches, insertMention, mentionQueryAt, mentionRows, reconcileMentions, removeMentionToken } from './mentionDraft';
 
 const candidate = (relPath: string): MentionCandidate => ({ relPath, absPath: `/p/${relPath}`, kind: 'text', bytes: 1 });
 const created = (path: string, failed = false): CreatedFile => ({ path, name: path, dir: '', blockId: 'b', failed });
@@ -89,5 +90,34 @@ describe('mentionRows', () => {
     const indexed = candidate('b.md');
 
     expect(mentionRows(['b.md'], [indexed])[0]?.candidate).toBe(indexed);
+  });
+});
+
+const resolution = (outcomes: MentionResolution['outcomes'], text = '', attachments: MentionResolution['attachments'] = []): MentionResolution => ({ text, attachments, outcomes });
+
+describe('failedMentions', () => {
+  it('failedMentions_missingAndOutside_listed', () => {
+    const failed = failedMentions(resolution([
+      { relPath: 'a.md', outcome: 'missing', kind: null },
+      { relPath: 'b.md', outcome: 'outsideFolder', kind: null },
+      { relPath: 'c.md', outcome: 'inline', kind: 'text' },
+    ]));
+
+    expect([...failed]).toEqual([['a.md', 'missing'], ['b.md', 'outsideFolder']]);
+  });
+
+  it('failedMentions_allResolved_empty', () => {
+    expect(failedMentions(resolution([{ relPath: 'c.md', outcome: 'pathOnly', kind: 'binary' }])).size).toBe(0);
+  });
+});
+
+describe('applyResolution', () => {
+  it('applyResolution_appendsTextAndAttachments', () => {
+    const own = { mediaType: 'image/png' as const, data: 'AAAA' };
+    const extra = { mediaType: 'application/pdf' as const, data: 'BBBB' };
+
+    const result = applyResolution('mira @a.md', [own], resolution([], ' BLOQUE', [extra]));
+
+    expect(result).toEqual({ text: 'mira @a.md BLOQUE', attachments: [own, extra] });
   });
 });

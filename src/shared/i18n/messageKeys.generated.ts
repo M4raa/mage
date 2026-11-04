@@ -831,7 +831,10 @@ export interface MessageValues {
   readonly "errors.host.socketPathTooLong": { readonly "address": string | number; readonly "bytes": string | number; readonly "max": string | number };
   readonly "errors.host.startFailedCleanup": { readonly "detail": string | number; readonly "reason": string | number };
   readonly "errors.locks.cannotCreate": { readonly "nativeId": string | number; readonly "path": string | number };
+  readonly "errors.mentions.missing": { readonly "name": string | number };
   readonly "errors.mentions.notFound": { readonly "name": string | number };
+  readonly "errors.mentions.outside": { readonly "name": string | number };
+  readonly "errors.mentions.resolveFailed": { readonly "error": string | number };
   readonly "errors.mentions.searchFailed": { readonly "error": string | number };
   readonly "errors.os.agyNotFound": { readonly "command": string | number };
   readonly "errors.os.codexNotFound": { readonly "command": string | number };
@@ -1508,6 +1511,9 @@ export interface MessageValues {
   readonly "prompt.lock.unknownProfile": never;
   readonly "prompt.mentions.empty": never;
   readonly "prompt.mentions.listLabel": never;
+  readonly "prompt.mentions.pathOnly": never;
+  readonly "prompt.mentions.pdf": { readonly "size": string | number };
+  readonly "prompt.mentions.remove": { readonly "name": string | number };
   readonly "prompt.mentions.searching": never;
   readonly "prompt.mentions.sectionConversation": never;
   readonly "prompt.mentions.sectionFiles": never;

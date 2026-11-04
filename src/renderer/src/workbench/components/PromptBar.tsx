@@ -13,7 +13,7 @@ import { composerLayout, type ComposerLayout } from '../composerLayout';
 import type { ProviderModel } from '@shared/providers';
 import { continueListOnNewline, indentLines, outdentLines, type TextState } from '../promptEditing';
 import { enterAction } from '../promptEnter';
-import { validateAttachmentSet } from '@shared/attachments';
+import { base64ByteLength, validateAttachmentSet } from '@shared/attachments';
 import type { PromptEditorHandle } from './PromptEditor';
 import { Icon, type IconName } from './Icon';
 import { SendControls } from './SendControls';
@@ -38,7 +38,9 @@ import { t as translate, useT } from '../../i18n/uiLanguage';
 import { activeFormatLocale } from '../../i18n/format';
 import type { PermissionMode } from '@shared/ipc';
 import { describeError } from '../describeError';
-import { addMention, insertMention, mentionQueryAt, reconcileMentions } from '../mentionDraft';
+import { addMention, applyResolution, failedMentions, insertMention, mentionQueryAt, reconcileMentions, removeMentionToken, type MentionFailure } from '../mentionDraft';
+import { useMentionPreviews } from '../useMentionPreviews';
+import { MentionChips } from './MentionChips';
 import { useMentionSuggestions } from '../useMentionSuggestions';
 import { MentionPopover } from './MentionPopover';
 import type { MentionCandidate } from '@shared/mentions';
@@ -93,6 +95,15 @@ async function readImageFile(file: File): Promise<PendingAttachment> {
 // Referencia ESTABLE para "esta pestaña no tiene borrador": un objeto nuevo por render haria que el
 // selector de zustand viera un valor distinto siempre y repintara la barra en bucle.
 const EMPTY_DRAFT: PromptDraft = { text: '', attachments: [], mentions: [] };
+const NO_FAILURES: ReadonlyMap<string, MentionFailure> = new Map();
+
+// El aviso de un envio rechazado: una frase por ficha que falla, con el nombre del fichero.
+function mentionFailureMessages(failures: ReadonlyMap<string, MentionFailure>, mentions: readonly MentionCandidate[]): string {
+  const names = new Map(mentions.map((m) => [m.relPath, m.relPath.slice(m.relPath.lastIndexOf('/') + 1)] as const));
+  return [...failures]
+    .map(([relPath, failure]) => translate(failure === 'missing' ? 'errors.mentions.missing' : 'errors.mentions.outside', { name: names.get(relPath) ?? relPath }))
+    .join('. ');
+}
 
 // Borrador ACTUAL de una pestaña, leido del store (no del render): lo usan los callbacks asincronos.
 function draftOf(tabId: string): PromptDraft {
@@ -160,6 +171,7 @@ export function PromptBar(): React.JSX.Element {
   const t = useT();
   const activeTabId = usePaneTabId();
   const sendActiveMessage = useWorkbenchStore((s) => s.sendActiveMessage);
+  const sendMessageToTab = useWorkbenchStore((s) => s.sendMessageToTab);
   const activeTab = useWorkbenchStore((s) => s.tabs.find((t) => t.id === activeTabId));
   const sessionId = useWorkbenchStore((s) => s.sessionIdByChat[activeTabId]);
   // #55 (F2.8): la conversación la tiene otra instancia de Mage; aquí se lee pero no se escribe.
@@ -301,6 +313,13 @@ export function PromptBar(): React.JSX.Element {
     setDraft(activeTabId, { text: inserted.text, attachments: latest.attachments, mentions: addMention(latest.mentions, candidate) });
     editor.applyTextState({ value: inserted.text, selectionStart: inserted.cursor, selectionEnd: inserted.cursor });
   };
+  // Fichas en rojo tras un envio rechazado (`missing` / `outsideFolder`) y envio en curso: la resolucion de main es
+  // asincrona, y solo se hace una peticion por envio.
+  const [mentionFailures, setMentionFailures] = useState(NO_FAILURES);
+  const [resolving, setResolving] = useState(false);
+  const resolvingRef = useRef(false);
+  useEffect(() => setMentionFailures(NO_FAILURES), [activeTabId]);
+  const previews = useMentionPreviews(mentionTab);
   const mentions = useMentionSuggestions({ tab: mentionTab, text, cursor, blocked: slashOpen || disabled, onPick: pickMention, onError: setError });
   useLocalPopover(mentions.open);
   const canImprove = !disabled && !busy && text.trim().length > 0 && isClaude;
@@ -356,17 +375,58 @@ export function PromptBar(): React.JSX.Element {
   const submit = (override?: string, mode: SendMode = 'queue'): void => {
     const trimmed = (override ?? text).trim();
     // Con adjuntos, un mensaje SIN texto es valido (mandar solo una imagen es un caso real).
-    if ((trimmed.length === 0 && attachments.length === 0) || disabled) return;
+    if ((trimmed.length === 0 && attachments.length === 0) || disabled || resolvingRef.current) return;
     const sent = attachments.map((a) => a.attachment);
+    if (draft.mentions.length > 0) {
+      void sendWithMentions(trimmed, sent, mode);
+      return;
+    }
     setDraft(activeTabId, null);
     setPreview(null);
     setError(null);
     void sendActiveMessage(trimmed, sent, mode);
   };
 
+  // Con menciones, main resuelve los ficheros JUSTO ahora (el disco puede haber cambiado desde que se eligieron):
+  // si alguno ya no existe o esta fuera de la carpeta no se envia y el borrador se queda (Q06).
+  const sendWithMentions = async (trimmed: string, sent: readonly ImageAttachment[], mode: SendMode): Promise<void> => {
+    if (activeTab === undefined) return;
+    const tabId = activeTabId;
+    const refs = draft.mentions.map(({ absPath, relPath }) => ({ absPath, relPath }));
+    resolvingRef.current = true;
+    setResolving(true);
+    setError(null);
+    setMentionFailures(NO_FAILURES);
+    try {
+      const resolution = await window.mage.resolveMentions({ cwd: activeTab.cwd, accountDir: activeTab.resolvedConfigDir ?? activeTab.accountId, provider: activeTab.provider, refs });
+      const failures = failedMentions(resolution);
+      if (failures.size > 0) {
+        setMentionFailures(failures);
+        setError(mentionFailureMessages(failures, draft.mentions));
+        return;
+      }
+      const merged = applyResolution(trimmed, sent, resolution);
+      validateAttachmentSet([], merged.attachments.map((a) => ({ mediaType: a.mediaType, byteLength: base64ByteLength(a.data) })), activeFormatLocale());
+      setDraft(tabId, null);
+      setPreview(null);
+      void sendMessageToTab(tabId, merged.text, merged.attachments, mode);
+    } catch (err) {
+      console.warn('No se pudieron resolver las menciones:', describeError(err));
+      setError(t('errors.mentions.resolveFailed', { error: describeError(err) }));
+    } finally {
+      resolvingRef.current = false;
+      setResolving(false);
+    }
+  };
+
+  const removeMention = (mention: MentionCandidate): void => {
+    const latest = draftOf(activeTabId);
+    setDraft(activeTabId, { text: removeMentionToken(latest.text, mention.relPath), attachments: latest.attachments, mentions: latest.mentions.filter((m) => m.absPath !== mention.absPath) });
+  };
+
   // #24: el botón de enviar hace lo mismo que Enter cuando Enter envía: el borrador entero y, si el cursor
   // está en un item de lista VACÍO, sin su marcador huérfano. Vacío o sin pestaña, no se puede pulsar.
-  const canSend = !disabled && (text.trim().length > 0 || attachments.length > 0);
+  const canSend = !disabled && !resolving && (text.trim().length > 0 || attachments.length > 0);
   // El borrador tal como lo mandaría Enter: entero y, si el cursor está en un item de lista VACÍO, sin su marcador huérfano.
   const draftToSend = (): string | undefined => {
     const state = currentTextState();
@@ -633,8 +693,8 @@ export function PromptBar(): React.JSX.Element {
       )}
 
       {/* Tira de adjuntos (2.12.1): las imagenes que se van a enviar con este mensaje. */}
-      {attachments.length > 0 && (
-        <div className="mb-[8px] flex flex-wrap gap-[6px]">
+      {(attachments.length > 0 || draft.mentions.length > 0) && (
+        <div className="mb-[8px] flex flex-wrap items-center gap-[6px]">
           {attachments.map((item, index) => (
             <div key={`${item.attachment.data.slice(0, 24)}-${index}`} className="relative">
               <img
@@ -661,6 +721,7 @@ export function PromptBar(): React.JSX.Element {
               </button>
             </div>
           ))}
+          <MentionChips mentions={draft.mentions} provider={providerId} failures={mentionFailures} previews={previews} onRemove={removeMention} />
         </div>
       )}
 

@@ -1,4 +1,5 @@
-import type { MentionCandidate, MentionKind } from '@shared/mentions';
+import type { ImageAttachment } from '@shared/ipc';
+import type { MentionCandidate, MentionKind, MentionResolution } from '@shared/mentions';
 import { planDelivery, type DeliveryPlan } from '@shared/mentionDelivery';
 import { rankPaths } from '@shared/rankPaths';
 import type { CreatedFile } from './createdFilesView';
@@ -106,4 +107,24 @@ export function mentionRows(conversationPaths: readonly string[], candidates: re
   const conversation = conversationPaths.map((relPath): MentionRow => ({ relPath, section: 'conversation', candidate: byRelPath.get(relPath) ?? null }));
   const files = candidates.filter((candidate) => !seen.has(candidate.relPath)).map((candidate): MentionRow => ({ relPath: candidate.relPath, section: 'files', candidate }));
   return [...conversation, ...files];
+}
+
+export type MentionFailure = 'missing' | 'outsideFolder';
+
+// Las menciones que impiden enviar (el fichero ya no existe o esta fuera de la carpeta), por `relPath`.
+export function failedMentions(resolution: MentionResolution): ReadonlyMap<string, MentionFailure> {
+  const failed = new Map<string, MentionFailure>();
+  for (const { relPath, outcome } of resolution.outcomes) {
+    if (outcome === 'missing' || outcome === 'outsideFolder') failed.set(relPath, outcome);
+  }
+  return failed;
+}
+
+// Lo que sale hacia el modelo: el texto del usuario + lo que main anade, y sus imagenes + los adjuntos de main.
+export function applyResolution(
+  text: string,
+  attachments: readonly ImageAttachment[],
+  resolution: MentionResolution,
+): { readonly text: string; readonly attachments: readonly ImageAttachment[] } {
+  return { text: `${text}${resolution.text}`, attachments: [...attachments, ...resolution.attachments] };
 }
