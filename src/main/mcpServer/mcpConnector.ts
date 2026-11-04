@@ -4,6 +4,7 @@ import { ExternalSessionsPort } from './hostSessionsPort';
 import type { IdempotencyStore } from './idempotencyStore';
 import type { ConnectionScope } from './scope';
 import { startMageMcpServer } from './server';
+import type { BrowserToolsPort } from './browserTools';
 import type { MageSessionsPort } from './sessionsPort';
 import { TunnelTransport } from './tunnelTransport';
 
@@ -12,6 +13,8 @@ import { TunnelTransport } from './tunnelTransport';
 export interface McpConnectorDeps {
   readonly resolveCaller: (credential: string | null) => string | null;
   readonly createPort: (callerSessionId: string) => { readonly port: MageSessionsPort; readonly conversationId: string } | null;
+  // El navegador de la sesión que llama (F11b.2); sin él, las `mage_browser_*` no se registran.
+  readonly browserFor?: (callerSessionId: string) => BrowserToolsPort;
   readonly creatorChainOf: (conversationId: string) => readonly string[];
   readonly accountIds: () => readonly string[];
   readonly maxDepth: () => number;
@@ -21,16 +24,16 @@ export interface McpConnectorDeps {
   readonly log: (level: 'info' | 'warn', message: string, data?: unknown) => void;
 }
 
-interface Binding { readonly port: MageSessionsPort; readonly scope: ConnectionScope }
+interface Binding { readonly port: MageSessionsPort; readonly scope: ConnectionScope; readonly browser: BrowserToolsPort | undefined }
 
 export function createMcpConnector(deps: McpConnectorDeps): McpConnector {
   return {
     open({ callerCredential, send }) {
       const transport = new TunnelTransport(send);
-      const { port, scope } = bindingFor(deps, callerCredential);
+      const { port, scope, browser } = bindingFor(deps, callerCredential);
       let server: McpServer | null = null;
       let closed = false;
-      startMageMcpServer({ port, scope, store: deps.store, now: deps.now, maxDepth: deps.maxDepth(), transport })
+      startMageMcpServer({ port, scope, store: deps.store, now: deps.now, maxDepth: deps.maxDepth(), transport, browser })
         .then((started) => {
           server = started;
           if (closed) void started.close();
@@ -52,9 +55,9 @@ function bindingFor(deps: McpConnectorDeps, credential: string | null): Binding 
   const accountIds = deps.accountIds();
   const callerSessionId = deps.resolveCaller(credential);
   const created = callerSessionId === null ? null : deps.createPort(callerSessionId);
-  if (created === null) {
+  if (callerSessionId === null || created === null) {
     deps.log('info', 'Cliente MCP sin sesión de Mage: sus herramientas se rechazan');
-    return { port: new ExternalSessionsPort(), scope: { accountIds } };
+    return { port: new ExternalSessionsPort(), scope: { accountIds }, browser: undefined };
   }
-  return { port: created.port, scope: { accountIds, caller: { conversationId: created.conversationId, creatorChain: deps.creatorChainOf(created.conversationId) } } };
+  return { port: created.port, scope: { accountIds, caller: { conversationId: created.conversationId, creatorChain: deps.creatorChainOf(created.conversationId) } }, browser: deps.browserFor?.(callerSessionId) };
 }

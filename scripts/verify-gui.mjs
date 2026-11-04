@@ -10447,6 +10447,35 @@ const CHECKS = [
     },
   },
   {
+    // F11b (carril S, S05): el panel «Navegador» con una sesión del RUNTIME PROPIO (servidor falso, sin CLI, sin cuota y sin
+    // pulsar Enter en el prompt). Una página de prueba local (`spike/__fixtures__/browser-test-page.html`) se abre por la barra
+    // de direcciones; la pluma dibuja una caja y adjunta la captura al borrador (una sola por turno); la barra de control se
+    // mide simulando al agente en el estado del renderer y comprobando que Detener y Devolver llegan a main y vuelven con
+    // el estado real; y Cerrar deja la sesión sin navegador. Autosuficiente con `--only=F11b`; cierra pestaña, proveedor y servidores.
+    name: 'F11b: navegador: panel, barra de control (Detener) y pluma con una sesión del runtime propio',
+    async run(page, { userDataDir, runDir }) {
+      const pageServer = await startBrowserPageServer();
+      const fake = await startFakeOpenAiServer();
+      let tabId = null;
+      try {
+        ({ tabId } = await openRuntimeTab(page, { fake, userDataDir, provider: BROWSER_TURN_PROVIDER, model: QUEUE_TURN_MODEL }));
+        const sessionId = await page.evaluate((id) => window.__mageDev.store.getState().ensureSession(id), tabId);
+        const measures = {};
+        measures.abierto = await openBrowserInPanel(page, sessionId, pageServer.url);
+        Object.assign(measures, await measureBrowserPen(page, tabId));
+        Object.assign(measures, await measureBrowserControlBar(page, sessionId, runDir));
+        measures.cerrado = await measureBrowserClose(page, sessionId);
+        const ok = Object.values(measures).every((value) => value === true);
+        return { ok, detail: JSON.stringify(measures) };
+      } finally {
+        if (tabId !== null) await page.evaluate((id) => window.__mageDev.store.getState().closeTab(id), tabId);
+        await page.evaluate((id) => window.__mageDev.store.getState().removeCustomProvider(id), BROWSER_TURN_PROVIDER.id);
+        await fake.close();
+        await pageServer.close();
+      }
+    },
+  },
+  {
     // Grupo 0 (0.1.2, ficha D11 de P-032): UN turno minimo de verdad, de punta a punta — teclear, Enter,
     // proceso del CLI, respuesta pintada. Es la unica comprobacion que envia: todas las demas miden sin
     // gastar. Contra Claude con el modelo y el esfuerzo mas bajos; si la cuenta lleva gastado mas del
@@ -12342,6 +12371,122 @@ async function openQueueTab(page, { fake, userDataDir }) {
 const PERMISSION_TURN_PROVIDER = { id: 'custom:vg-permiso', label: 'VG permiso' };
 const PR_BARRIER_PROVIDER = { id: 'custom:vg-barrera-pr', label: 'VG barrera PR' };
 const HOST_TURN_PROVIDER = { id: 'custom:vg-host', label: 'VG host' };
+
+// --- F11b: el panel del navegador (carril S) ------------------------------------------------------------
+
+const BROWSER_TURN_PROVIDER = { id: 'custom:vg-navegador', label: 'VG navegador' };
+const BROWSER_STATE_WAIT_MS = 15_000;
+const BROWSER_TEST_TITLE = 'Prueba Mage';
+const BROWSER_PEN_FROM = [20, 20];
+const BROWSER_PEN_TO = [120, 80];
+const BROWSER_PEN_DRAG_STEPS = 8;
+const BROWSER_BUTTON_LINE = /button "Pulsar"/;
+
+// Sirve la página de prueba en `/` (y `/segunda`); cualquier POST (los `/evento` de la página) se contesta vacío.
+async function startBrowserPageServer() {
+  const { createServer } = await import('node:http');
+  const pages = {
+    '/': fs.readFileSync(path.join(repoRoot, 'spike', '__fixtures__', 'browser-test-page.html'), 'utf8'),
+    '/segunda': '<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Segunda</title></head><body><p>Segunda</p></body></html>',
+  };
+  const server = createServer((req, res) => {
+    if (req.method === 'POST') {
+      req.resume();
+      res.writeHead(204);
+      res.end();
+      return;
+    }
+    const body = pages[req.url];
+    res.writeHead(body === undefined ? 404 : 200, { 'content-type': 'text/html; charset=utf-8' });
+    res.end(body);
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  return {
+    url: `http://127.0.0.1:${server.address().port}/`,
+    // Chromium mantiene conexiones abiertas: sin cerrarlas, `close` no terminaría.
+    close: () => new Promise((resolve) => { server.close(resolve); server.closeAllConnections(); }),
+  };
+}
+
+// Lo que va antes del `{url}` de la cabecera de la captura de la pluma, en cada idioma del catálogo.
+function browserPenHeaderPrefixes() {
+  return ['es', 'en'].map((locale) => {
+    const catalog = JSON.parse(fs.readFileSync(path.join(repoRoot, 'src', 'shared', 'i18n', 'catalogs', `${locale}.json`), 'utf8'));
+    return catalog['chat.browser.penCaptionHeader'].split('{url}')[0];
+  });
+}
+
+const browserSeen = (locator, state = 'visible') => locator.waitFor({ state, timeout: BROWSER_STATE_WAIT_MS }).then(() => true, () => false);
+
+// Espera a que el estado del navegador de la sesión tenga `field` = `value` (o a que desaparezca, con `field` = null).
+const browserStateReached = (page, sessionId, field, value) =>
+  page.waitForFunction(({ sid, key, expected }) => {
+    const entry = window.__mageBrowserDev.getState().states[sid];
+    return key === null ? entry === undefined : entry?.[key] === expected;
+  }, { sid: sessionId, key: field, expected: value }, { polling: 50, timeout: BROWSER_STATE_WAIT_MS }).then(() => true, () => false);
+
+// Abre el panel «Navegador», escribe la URL en la barra de direcciones y espera a que main informe del título de la página.
+async function openBrowserInPanel(page, sessionId, url) {
+  await page.evaluate(() => window.__mageDev.panelStore.getState().revealPanelById('browser'));
+  await page.locator('[data-browser-panel]').waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+  const address = page.locator('[data-browser-address]');
+  await address.fill(url);
+  await address.press('Enter');
+  return browserStateReached(page, sessionId, 'title', BROWSER_TEST_TITLE);
+}
+
+// Una vuelta de la pluma: abrir, caja de (20,20) a (120,80) sobre la imagen, adjuntar. Devuelve el borrador resultante.
+async function drawAndAttachPen(page, tabId) {
+  await page.locator('[data-browser-pen-button]').click();
+  const img = page.locator('[data-browser-pen] img');
+  await img.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+  await page.waitForFunction(() => (document.querySelector('[data-browser-pen] canvas')?.width ?? 0) > 0, null, { polling: 50, timeout: CONFIG.actionTimeoutMs });
+  await page.locator('[data-browser-pen-tool="box"]').click();
+  const box = await img.boundingBox();
+  await page.mouse.move(box.x + BROWSER_PEN_FROM[0], box.y + BROWSER_PEN_FROM[1]);
+  await page.mouse.down();
+  await page.mouse.move(box.x + BROWSER_PEN_TO[0], box.y + BROWSER_PEN_TO[1], { steps: BROWSER_PEN_DRAG_STEPS });
+  await page.mouse.up();
+  await page.locator('[data-browser-pen-attach]').click();
+  await page.locator('[data-browser-pen]').waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+  return page.evaluate((id) => {
+    const draft = window.__mageDev.store.getState().draftByChat[id];
+    return { attachments: (draft?.attachments ?? []).map((pending) => pending.attachment.mediaType), text: draft?.text ?? '' };
+  }, tabId);
+}
+
+const countOccurrences = (text, needle) => (needle === '' ? 0 : text.split(needle).length - 1);
+
+// `pluma`: 1 adjunto image/png con la cabecera y la línea del botón; `plumaUnaPorTurno`: otra vuelta sigue dejando 1 adjunto y 1 cabecera.
+async function measureBrowserPen(page, tabId) {
+  const prefixes = browserPenHeaderPrefixes();
+  const headers = (text) => prefixes.reduce((total, prefix) => total + countOccurrences(text, prefix), 0);
+  const first = await drawAndAttachPen(page, tabId);
+  const second = await drawAndAttachPen(page, tabId);
+  const onePng = (draft) => draft.attachments.length === 1 && draft.attachments[0] === 'image/png';
+  return {
+    pluma: onePng(first) && headers(first.text) === 1 && BROWSER_BUTTON_LINE.test(first.text),
+    plumaUnaPorTurno: onePng(second) && headers(second.text) === 1,
+  };
+}
+
+// Simula al agente en el estado del renderer; Detener y Devolver sí van a main y su respuesta es el estado real.
+async function measureBrowserControlBar(page, sessionId, runDir) {
+  await page.evaluate((sid) => window.__mageBrowserDev.setState((s) => ({ states: { ...s.states, [sid]: { ...s.states[sid], control: 'agent', lastAction: 'click' } } })), sessionId);
+  const barraAgente = await browserSeen(page.locator('[data-browser-control-bar="agent"]'));
+  await page.screenshot({ path: path.join(runDir, 'f11b-barra.png') });
+  await page.locator('[data-browser-stop]').click();
+  const detener = await browserSeen(page.locator('[data-browser-control-bar="user"]'));
+  await page.locator('[data-browser-return]').click();
+  const barraFuera = await browserSeen(page.locator('[data-browser-control-bar]'), 'detached');
+  const idle = await browserStateReached(page, sessionId, 'control', 'idle');
+  return { barraAgente, detener, devolver: barraFuera && idle };
+}
+
+async function measureBrowserClose(page, sessionId) {
+  await page.locator('[data-browser-close]').click();
+  return browserStateReached(page, sessionId, null, null);
+}
 
 // --- Q06: menciones @ con el runtime propio contra el servidor falso --------------------------------------------
 
