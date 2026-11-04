@@ -130,6 +130,14 @@ import { nodeCapabilityFs } from './capabilities/capabilityFs';
 import type { CapabilityEngine } from './capabilities/capabilityPackage';
 import { bundledContents, loadBundledCatalog } from './capabilities/catalog/libraryCatalog';
 import { registerLibraryIpc } from './capabilities/library/libraryIpc';
+import { BROWSER_STATE_CHANNEL } from '@shared/browser';
+import { registerBrowserIpc } from './browser/browserIpc';
+import { BROWSER_SWEEP_INTERVAL_MS, BrowserRegistry } from './browser/browserRegistry';
+import { createBrowserAgent } from './browser/browserAgent';
+import { electronBrowserDeps, electronImageDeps } from './browser/electronBrowserDeps';
+import { IsolatedBrowser } from './browser/isolatedBrowser';
+import { PenSessions } from './browser/penSession';
+import { ViewPlacement } from './browser/viewPlacement';
 import { LibraryService, type LibraryAccount } from './capabilities/library/libraryService';
 import { decideTestLibraryClaudeDir, testLibraryAccounts } from './capabilities/library/testLibraryAccount';
 import { resolveClaudeDesktopDirs, type McpAccountLocation } from './config/mcpInventory';
@@ -2788,6 +2796,18 @@ function launchSession(params: CreateSessionParams, sender: Electron.WebContents
 const adoptableSessions = new AdoptableSessions();
 // D-M6: credencial por sesion que identifica al hijo ante `mage mcp`.
 const mcpCallers = new McpCallers({ randomBytes, isLive: (id) => sessionCoordinator.ownerOf(id) !== undefined });
+// Navegador de Mage (F11b): uno por sesión viva (D-S1), en la ventana de su panel (D-S3).
+const viewPlacement = new ViewPlacement();
+const browserRegistry = new BrowserRegistry({
+  createBrowser: (instanceId) => new IsolatedBrowser(instanceId, electronBrowserDeps),
+  newId: randomUUID,
+  isLive: (sessionId) => sessionCoordinator.ownerOf(sessionId) !== undefined,
+  onChange: (states) => windowManager.broadcast(BROWSER_STATE_CHANNEL, states),
+  onOpened: (_sessionId, handle) => viewPlacement.ensureHosted(handle, windowManager.get(MAIN_WINDOW_ID)),
+  onClosed: (sessionId, handle) => { viewPlacement.forget(handle); penSessions.discard(sessionId); },
+  log: mainLog,
+});
+const penSessions = new PenSessions({ registry: browserRegistry, imageDeps: electronImageDeps, newId: randomUUID });
 const windowAttachments = new WindowAttachments({ coordinator: sessionCoordinator, eventChannel: EVENT_CHANNEL });
 // D-M11: registro de main de las delegadas del MCP (uno para todas las conexiones).
 const delegationLog = new DelegationLog({ coordinator: sessionCoordinator, now: Date.now });
@@ -3886,6 +3906,13 @@ function registerPromptIpc1(deps: IpcDependencies): void {
     handle: (channel, listener) => ipcMain.handle(channel, listener as Parameters<typeof ipcMain.handle>[1]),
     service: getLibraryService,
   });
+  registerBrowserIpc({
+    handle: (channel, listener) => ipcMain.handle(channel, listener as Parameters<typeof ipcMain.handle>[1]),
+    registry: browserRegistry,
+    placement: viewPlacement,
+    pens: penSessions,
+    windowOf: (id) => { const windowId = windowManager.windowIdOf(id); return windowId === null ? null : windowManager.get(windowId); },
+  });
   ipcMain.handle(IpcChannel.PromptImprove, (_e, params: ImprovePromptParams): Promise<string> =>
     promptService.improve(params.draft, params.accountDir),
   );
@@ -4257,6 +4284,7 @@ function startHost(mode: HostMode): Promise<void> {
       creatorChainOf: (conversationId) => getConversationIndexStore().delegationOf(conversationId).creatorChain,
       accountIds: () => listAllAccounts().filter((account) => account.providerId === 'claude' || account.providerId === 'codex').map((account) => account.configDir),
       maxDepth: () => getSettingsStore().load().delegation.maxDepth,
+      browserFor: (sessionId) => createBrowserAgent({ registry: browserRegistry, sessionId, imageDeps: electronImageDeps }),
       store: mcpIdempotency,
       now: () => new Date().toISOString(),
       log: mainLog,
@@ -4373,6 +4401,7 @@ app.whenReady().then(async () => {
   // defecto ('never'). `unref` para que el temporizador no sea motivo de que el proceso siga vivo.
   sweepScratchDirs();
   setInterval(sweepScratchDirs, SWEEP_INTERVAL_MS).unref();
+  setInterval(() => browserRegistry.sweep(), BROWSER_SWEEP_INTERVAL_MS).unref();
 
   // Auto-update (B2): no-op si la app no esta empaquetada. Comprueba con margen tras el arranque,
   // descarga en segundo plano y solo entonces avisa: indicador en todas las ventanas y dialogo propio
@@ -4413,6 +4442,8 @@ app.on('before-quit', () => {
   localHost?.closeFilesSync();
   void localHost?.close().catch((err: unknown) => mainLog('warn', 'El host local no cerro limpio', { error: err instanceof Error ? err.message : String(err) }));
   sessionCoordinator.stopAll();
+  // Los navegadores mueren con sus sesiones; sus particiones están en memoria.
+  void browserRegistry.closeAll();
   // #55: las conversaciones de esta instancia quedan libres para las demas (despues de parar las sesiones).
   conversationLocksSingleton?.releaseAll();
   // Incognito ('session'): las carpetas de trabajo no sobreviven a la ejecucion. Se barre aqui ADEMAS
