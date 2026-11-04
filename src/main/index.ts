@@ -132,6 +132,12 @@ import { bundledContents, loadBundledCatalog } from './capabilities/catalog/libr
 import { registerLibraryIpc } from './capabilities/library/libraryIpc';
 import { LibraryService, type LibraryAccount } from './capabilities/library/libraryService';
 import { decideTestLibraryClaudeDir, testLibraryAccounts } from './capabilities/library/testLibraryAccount';
+import { registerTaskIpc } from './tasks/taskIpc';
+import { buildTaskInstructions } from './tasks/taskInstructions';
+import { nodeDeliverableFs, nodeIsDirectory, nodeIsFile, nodeTaskStoreFs } from './tasks/taskNodeFs';
+import { TaskService } from './tasks/taskService';
+import { loadTasks, saveTasks } from './tasks/taskStore';
+import { withTaskDirectories } from './tasks/taskLaunch';
 import { resolveClaudeDesktopDirs, type McpAccountLocation } from './config/mcpInventory';
 import { probeMcpStatuses } from './config/mcpStatusProbe';
 import { authenticateMcp } from './config/mcpAuthFlow';
@@ -563,6 +569,10 @@ function onSharedMcpChanged(): void {
 // Perfil privado de una cuenta (AccountService): cuenta como su cuenta (mismo login, mismo «Solo en…»).
 const PRIVATE_PROFILE_DIR_NAME = 'mage-private';
 
+// Carpetas extra de la tarea que se está lanzando (F8); solo vive durante `sessionCoordinator.create`.
+// ponytail: canal por variable de módulo porque create() es síncrono; si deja de serlo, pasar las carpetas por SharedLaunchConfig
+let launchingTaskExtras: readonly string[] = [];
+
 // Lo comun de UN lanzamiento (proveedor + cuenta). Se re-lee en CADA lanzamiento (nunca se cachea):
 // son ficheros que el usuario puede editar entre una sesion y la siguiente.
 function loadSharedLaunch(provider: string, accountDir: string, sessionId: string | null): SharedLaunchConfig {
@@ -573,7 +583,7 @@ function loadSharedLaunch(provider: string, accountDir: string, sessionId: strin
   const settingsCommon = getSharedConfigService().loadSettingsCommon(settingsCommonPath());
   return {
     mcpServers: selectForTarget(shared.servers, { family, accountId: family === 'claude' ? account : null }),
-    settingsFragment: buildSettingsFragment(settingsCommon),
+    settingsFragment: family === 'claude' ? withTaskDirectories(buildSettingsFragment(settingsCommon), launchingTaskExtras) : buildSettingsFragment(settingsCommon),
     claudeAiConnectors: !getSettingsStore().load().claudeAiConnectorsOff.includes(account),
     ...mageCallerFor(provider, accountDir, sessionId),
   };
@@ -2775,10 +2785,20 @@ function launchSession(params: CreateSessionParams, sender: Electron.WebContents
     const configDir =
       params.privacy === 'private' && params.provider === 'claude' ? accountService.ensurePrivateProfile(params.accountDir) : params.accountDir;
     const project = params.projectId === undefined ? undefined : getSettingsStore().load().chatProjects.find((candidate) => candidate.id === params.projectId);
-    const projectInstructions = [project?.instructions.trim().slice(0, 8000), params.contextImport?.slice(0, IMPORTED_CONTEXT_LIMITS.max)]
+    const task = params.provider === 'claude' || params.provider === 'codex'
+      ? getTaskService().claimForLaunch({ provider: params.provider, accountDir: params.accountDir, cwd: params.cwd, resumeSessionId: params.resumeSessionId })
+      : null;
+    const projectInstructions = [task === null ? undefined : buildTaskInstructions(task), project?.instructions.trim().slice(0, 8000), params.contextImport?.slice(0, IMPORTED_CONTEXT_LIMITS.max)]
       .filter((text): text is string => text !== undefined && text.length > 0).join('\n\n') || undefined;
     const effectiveParams = { ...params, accountDir: configDir, projectInstructions };
-    const sessionId = sessionCoordinator.create(effectiveParams, (payload) => relaySessionEvent(payload, { sender, configDir, accountDir: params.accountDir }), sender?.id);
+    launchingTaskExtras = task === null ? [] : getTaskService().launchExtrasFor(task, params.cwd);
+    let sessionId: string;
+    try {
+      sessionId = sessionCoordinator.create(effectiveParams, (payload) => relaySessionEvent(payload, { sender, configDir, accountDir: params.accountDir }), sender?.id);
+    } finally {
+      launchingTaskExtras = [];
+    }
+    if (task !== null) getTaskService().bindSession(task.id, sessionId, task.provider);
     if (params.forkFrom !== undefined) recordClaudeFork(sessionId, params.forkFrom.sessionId);
     if (sender !== null) stopSessionsWhenDestroyed(sender);
     return { sessionId, configDir, ...(recreated ? { workspaceWarning: localized('events.workspace.scratchRecreatedKept', { path: params.cwd }) } : {}) };
@@ -3839,6 +3859,52 @@ function libraryAccounts(): readonly LibraryAccount[] {
   return [...real, ...testLibraryAccounts(decideTestLibraryClaudeDir({ env: process.env, isPackaged: app.isPackaged, userDataDir }))];
 }
 
+// Modo de tareas (F8): perezoso porque depende de app.getPath('userData').
+let taskSingleton: TaskService | null = null;
+
+function getTaskService(): TaskService {
+  if (taskSingleton !== null) return taskSingleton;
+  const file = join(app.getPath('userData'), 'tasks', 'tasks.json');
+  const storeFs = nodeTaskStoreFs((message, data) => mainLog('warn', message, data));
+  taskSingleton = new TaskService({
+    load: () => loadTasks(storeFs, file),
+    save: (tasks) => saveTasks(storeFs, file, tasks),
+    now: Date.now,
+    newId: randomUUID,
+    listAccounts: () => listAllAccounts().flatMap((a) => (a.providerId === 'claude' || a.providerId === 'codex' ? [{ provider: a.providerId, configDir: a.configDir }] : [])),
+    isDirectory: nodeIsDirectory,
+    isFile: nodeIsFile,
+    deliverableFs: nodeDeliverableFs,
+    caseInsensitive: process.platform === 'win32' || process.platform === 'darwin',
+    nativeIdOf: (id) => liveIdsOf(id)?.nativeId ?? null,
+  });
+  return taskSingleton;
+}
+
+// Diálogo nativo de rutas del modo de tareas; cancelado = [].
+async function pickTaskPaths(kind: 'folders' | 'documents'): Promise<readonly string[]> {
+  const options = { properties: [kind === 'folders' ? 'openDirectory' as const : 'openFile' as const, 'multiSelections' as const] };
+  const parent = liveMainWindow();
+  const result = parent !== null ? await dialog.showOpenDialog(parent, options) : await dialog.showOpenDialog(options);
+  return result.canceled ? [] : result.filePaths;
+}
+
+async function pickTaskSavePath(defaultPath: string): Promise<string | null> {
+  const parent = liveMainWindow();
+  const result = parent !== null ? await dialog.showSaveDialog(parent, { defaultPath }) : await dialog.showSaveDialog({ defaultPath });
+  return result.canceled || !result.filePath ? null : result.filePath;
+}
+
+function wireTaskIpc(): void {
+  registerTaskIpc({
+    handle: (channel, listener) => ipcMain.handle(channel, listener as Parameters<typeof ipcMain.handle>[1]),
+    service: getTaskService,
+    pickPaths: pickTaskPaths,
+    showSaveDialog: pickTaskSavePath,
+    copyFile: (from, to) => copyFileSync(from, to),
+  });
+}
+
 function getLibraryService(): LibraryService {
   librarySingleton ??= new LibraryService({
     catalog: loadBundledCatalog(),
@@ -3886,6 +3952,7 @@ function registerPromptIpc1(deps: IpcDependencies): void {
     handle: (channel, listener) => ipcMain.handle(channel, listener as Parameters<typeof ipcMain.handle>[1]),
     service: getLibraryService,
   });
+  wireTaskIpc();
   ipcMain.handle(IpcChannel.PromptImprove, (_e, params: ImprovePromptParams): Promise<string> =>
     promptService.improve(params.draft, params.accountDir),
   );
