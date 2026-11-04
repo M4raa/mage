@@ -2580,7 +2580,7 @@ async function listGitFilesForMentions(cwd: string): Promise<readonly string[] |
       timeoutMs: GIT_TIMEOUT_MS,
       maxBufferBytes: MENTION_INDEX_MAX_BUFFER_BYTES,
     });
-    return stdout.split(' ').filter((file) => file.length > 0);
+    return stdout.split('\0').filter((file) => file.length > 0);
   } catch (err) {
     mainLog('warn', 'git ls-files fallo para las menciones; se recorre la carpeta', { cwd, error: err instanceof Error ? err.message : String(err) });
     return null;
