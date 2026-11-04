@@ -1,7 +1,8 @@
 import { ERROR_FORMAT_LOCALE, validateAttachment } from '@shared/attachments';
 import type { ImageAttachment } from '@shared/ipc';
 import type { MentionKind, MentionOutcome, MentionRef, MentionResolution, MentionResolveParams } from '@shared/mentions';
-import { inlineBlock, pathOnlyNote, planDelivery, type DeliveryPlan } from './mentionDelivery';
+import { planDelivery, type DeliveryPlan } from '@shared/mentionDelivery';
+import { inlineBlock, pathOnlyNote } from './mentionDelivery';
 import { guardMention, type MentionGuardDeps } from './mentionGuard';
 import { classifyMention, SNIFF_BYTES } from './mentionKind';
 

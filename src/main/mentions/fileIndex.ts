@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import type { MentionCandidate, MentionSearchParams, MentionSearchResult } from '@shared/mentions';
 import { classifyMention, SNIFF_BYTES } from './mentionKind';
-import { rankPaths } from './rankPaths';
+import { rankPaths } from '@shared/rankPaths';
 
 export const INDEX_TTL_MS = 30_000;
 export const MAX_INDEXED_FILES = 50_000;
