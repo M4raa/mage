@@ -245,6 +245,11 @@ import type { HostMode, HostServerHandle } from './host/hostServer';
 import { HOST_STOP_DELAY_MS } from './host/hostStop';
 import { HEADLESS_GUI_UNAVAILABLE, isHeadlessHost, lockFailureMessage, startupWarnings } from './startupMode';
 import { registerConversationPrefsIpc } from './coordination/conversationPrefsIpc';
+import { FileIndexService } from './mentions/fileIndex';
+import { previewMention } from './mentions/mentionPreview';
+import { resolveMentions, type MentionResolverDeps } from './mentions/mentionResolver';
+import { registerMentionsIpc } from './mentions/mentionsIpc';
+import { nodeReaddir, readHeadBytes, statBytes, walkFiles } from './mentions/walkFiles';
 import { SessionCoordinator } from './coordination/sessionCoordinator';
 import { ProjectFileService, resolveProjectFilePath } from './files/projectFileService';
 import { resolvedPath } from './os/resolvedPath';
@@ -2562,6 +2567,44 @@ function toggleWidgetFromTray(): void {
   notifyWidgetEnabledChanged(enabled);
 }
 
+// Menciones @ (Q05): el indice de ficheros usa `git ls-files` (respeta .gitignore) y, sin repo, un
+// recorrido propio. Mismo criterio de confianza que git y que el arranque de un agente.
+const MENTION_INDEX_MAX_BUFFER_BYTES = 32 * 1024 * 1024;
+async function listGitFilesForMentions(cwd: string): Promise<readonly string[] | null> {
+  const bin = findGitBinary();
+  if (bin === null) return null;
+  try {
+    const stdout = await execCapturingStdout(bin, ['-c', 'core.fsmonitor=false', 'ls-files', '-z', '--cached', '--others', '--exclude-standard'], {
+      cwd,
+      env: { ...process.env, GIT_OPTIONAL_LOCKS: '0', GIT_TERMINAL_PROMPT: '0' },
+      timeoutMs: GIT_TIMEOUT_MS,
+      maxBufferBytes: MENTION_INDEX_MAX_BUFFER_BYTES,
+    });
+    return stdout.split(' ').filter((file) => file.length > 0);
+  } catch (err) {
+    mainLog('warn', 'git ls-files fallo para las menciones; se recorre la carpeta', { cwd, error: err instanceof Error ? err.message : String(err) });
+    return null;
+  }
+}
+
+let fileIndexSingleton: FileIndexService | null = null;
+function getFileIndexService(): FileIndexService {
+  fileIndexSingleton ??= new FileIndexService({
+    listGitFiles: listGitFilesForMentions,
+    walk: (cwd, maxFiles) =>
+      walkFiles(cwd, maxFiles, { readdir: nodeReaddir, onUnreadable: (dir, err) => mainLog('warn', 'Carpeta ilegible al indexar menciones', { dir, error: String(err) }) }),
+    isTrusted: isFolderTrusted,
+    stat: statBytes,
+    readHead: readHeadBytes,
+    now: Date.now,
+  });
+  return fileIndexSingleton;
+}
+
+function mentionResolverDeps(): MentionResolverDeps {
+  return { isTrusted: isFolderTrusted, realpath: nodeRealpath, platform: process.platform, stat: statBytes, readHead: readHeadBytes, readFile };
+}
+
 // Confia el usuario en esta carpeta? Suman DOS fuentes, y las dos son decisiones suyas:
 //  - `trustedFolders` de los ajustes de Mage: lo que contesto en el dialogo de Mage.
 //  - `projects[<ruta>].hasTrustDialogAccepted` del config del CLI de esa cuenta: lo que ya contesto en
@@ -3660,6 +3703,12 @@ function registerThinkingIpc1(): void {
     getCommandCatalogStore().load(accountDir),
   );
   registerConversationPrefsIpc({ handle: (channel, listener) => ipcMain.handle(channel, listener), index: getConversationIndexStore, coordinator: sessionCoordinator });
+  registerMentionsIpc({
+    handle: (channel, listener) => ipcMain.handle(channel, listener),
+    index: getFileIndexService,
+    resolve: (params) => resolveMentions(params, mentionResolverDeps()),
+    preview: (params) => previewMention(params, mentionResolverDeps()),
+  });
   ipcMain.handle(IpcChannel.ArtifactRecordSave, (_e, params: RecordArtifactParams): void =>
     getConversationIndexStore().recordArtifact(params.url, params.record),
   );
