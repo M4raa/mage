@@ -358,6 +358,9 @@ export interface MessageValues {
   readonly "chat.empty.hintCommands": never;
   readonly "chat.empty.hintMode": never;
   readonly "chat.empty.title": never;
+  readonly "chat.error.openLogs": never;
+  readonly "chat.error.repeat": { readonly "count": string | number };
+  readonly "chat.error.title": never;
   readonly "chat.fileActions.reveal": never;
   readonly "chat.fileActions.saveAs": never;
   readonly "chat.fileActions.saved": never;

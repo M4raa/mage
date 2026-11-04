@@ -96,6 +96,35 @@ describe('chatRows', () => {
   });
 });
 
+describe('chatRows (errores repetidos)', () => {
+  const error = (id: string, message = 'boom', deniedCommand?: string): Block => ({ kind: 'error', id, message, ...(deniedCommand === undefined ? {} : { deniedCommand }) });
+
+  it('chatRows_twoEqualErrors_mergedWithRepeat2', () => {
+    const rows = chatRows([error('e1'), error('e2')]);
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ kind: 'block', repeat: 2 });
+  });
+
+  it('chatRows_equalErrorsWithRowBetween_notMerged', () => {
+    const rows = chatRows([error('e1'), agent('a'), error('e2')]);
+
+    expect(rows.map((r) => (r.kind === 'block' ? r.block.id : r.kind))).toEqual(['e1', 'a', 'e2']);
+    expect(rows.every((r) => r.kind === 'block' && r.repeat === undefined)).toBe(true);
+  });
+
+  it('chatRows_differentErrors_notMerged', () => {
+    expect(chatRows([error('e1', 'a'), error('e2', 'b'), error('e3', 'b', 'ls')])).toHaveLength(3);
+  });
+
+  it('chatRows_threeEqualErrors_repeat3KeepsFirstKey', () => {
+    const rows = chatRows([error('e1'), tool('t'), error('e2'), error('e3')]);
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ kind: 'block', repeat: 3, block: { id: 'e1' } });
+  });
+});
+
 describe('activityTurns', () => {
   it('activityTurns_vacio_vacio', () => {
     expect(activityTurns([])).toEqual([]);

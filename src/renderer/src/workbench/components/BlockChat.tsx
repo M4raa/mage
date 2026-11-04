@@ -20,6 +20,7 @@ import { isSlashCommandText } from '../conversationTitle';
 import { canChangeCwd, shortenPath } from '../cwdChange';
 import { Markdown } from './Markdown';
 import { PermissionCard } from './PermissionCard';
+import { usePanelLayoutStore } from '../panelLayoutStore';
 import { ArtifactCard } from './ArtifactCard';
 import { artifactCardFrom } from '../artifactView';
 import { chatRows, currentTurnSummary, stickResetKey, type ChatRow } from '../chatVisibility';
@@ -597,7 +598,7 @@ function rowKey(row: ChatRow): string {
 // Una fila del hilo (P-026 3.4): un bloque, la linea de una herramienta que fallo (D22) o la de los
 // subagentes de un turno (D21). Las dos lineas llevan al panel de Actividad.
 function ChatRowView({ row, accent }: { readonly row: ChatRow; readonly accent: string }): React.JSX.Element {
-  if (row.kind === 'block') return <BlockView block={row.block} accent={accent} />;
+  if (row.kind === 'block') return <BlockView block={row.block} accent={accent} repeat={row.repeat ?? 1} />;
   if (row.kind === 'tool-failed') return <ToolFailedLine block={row.block} />;
   return <SubagentsLine blocks={row.blocks} />;
 }
@@ -661,19 +662,19 @@ function subagentsLineText(t: Translate, line: { readonly running: boolean; read
 //
 // `data-block` es el ancla del harness (`pnpm verify:gui`): sin el, medir "los hijos del contenedor
 // scrollable" incluye la region aria-live de 1 px y da un falso negativo.
-const BlockView = memo(function BlockView({ block, accent }: { readonly block: Block; readonly accent: string }): React.JSX.Element {
+const BlockView = memo(function BlockView({ block, accent, repeat = 1 }: { readonly block: Block; readonly accent: string; readonly repeat?: number }): React.JSX.Element {
   return (
     <div className="shrink-0" data-block={block.kind}>
-      <BlockBody block={block} accent={accent} />
+      <BlockBody block={block} accent={accent} repeat={repeat} />
     </div>
   );
 });
 
-function BlockBody({ block, accent }: { readonly block: Block; readonly accent: string }): React.JSX.Element | null {
+function BlockBody({ block, accent, repeat }: { readonly block: Block; readonly accent: string; readonly repeat: number }): React.JSX.Element | null {
   if (block.kind === 'user') return <UserBlock block={block} />;
   if (block.kind === 'agent') return <AgentBlock block={block} accent={accent} />;
   if (block.kind === 'tool') return <ToolBlock block={block} />;
-  if (block.kind === 'error') return <ErrorBlock block={block} />;
+  if (block.kind === 'error') return <ErrorBlock block={block} repeat={repeat} />;
   if (block.kind === 'system') return <SystemBlock block={block} />;
   if (block.kind === 'command-output') return <CommandOutputBlock block={block} />;
   if (block.kind === 'permission') return <PermissionCard block={block} />;
@@ -726,11 +727,32 @@ function CommandOutputBlock({ block }: { readonly block: Extract<Block, { kind: 
   );
 }
 
-function ErrorBlock({ block }: { readonly block: Extract<Block, { kind: 'error' }> }): React.JSX.Element {
+// Tarjeta de error (Q-U3): la causa tal cual la dio el motor, `×N` si el mismo fallo llego N veces seguidas,
+// como mucho UNA accion propia (la de agy, si el error la tiene) y «Ver en Logs».
+function ErrorBlock({ block, repeat }: { readonly block: Extract<Block, { kind: 'error' }>; readonly repeat: number }): React.JSX.Element {
+  const t = useT();
+  const revealPanel = usePanelLayoutStore((s) => s.revealPanelById);
   return (
-    <div role="alert" className="rounded-[9px] border border-mg-danger-border bg-mg-danger-bg p-[10px_14px] text-[12px] leading-[1.55] text-mg-danger">
-      {block.message}
-      {block.deniedCommand !== undefined && <AllowDeniedCommand command={block.deniedCommand} />}
+    <div
+      role="alert"
+      data-error-card="true"
+      className="rounded-[9px] border border-mg-danger-border bg-mg-danger-bg p-[10px_14px] text-[12px] leading-[1.55] text-mg-danger"
+    >
+      <div className="text-[11px] font-semibold">
+        {t('chat.error.title')}
+        {repeat > 1 && <span data-error-repeat={repeat}> {t('chat.error.repeat', { count: repeat })}</span>}
+      </div>
+      <div>{block.message}</div>
+      <div className="mt-[6px] flex flex-wrap items-center gap-[10px]">
+        {block.deniedCommand !== undefined && <AllowDeniedCommand command={block.deniedCommand} />}
+        <button
+          onClick={() => revealPanel('logs')}
+          data-error-open-logs="true"
+          className="text-[11px] underline-offset-2 hover:underline"
+        >
+          {t('chat.error.openLogs')}
+        </button>
+      </div>
     </div>
   );
 }
@@ -745,7 +767,7 @@ function AllowDeniedCommand({ command }: { readonly command: string }): React.JS
   const isTool = parseAgyMcpRule(command) !== null;
   if (allowed) {
     return (
-      <div data-agy-command-allowed="true" className="mt-[6px] text-[11px] text-mg-sec">
+      <div data-agy-command-allowed="true" className="text-[11px] text-mg-sec">
         {t('chat.agyDenied.allowed')}
       </div>
     );
@@ -754,7 +776,7 @@ function AllowDeniedCommand({ command }: { readonly command: string }): React.JS
     <button
       onClick={() => setVerdict(command, 'allow')}
       data-agy-allow-command="true"
-      className="mt-[6px] block rounded-[6px] border border-mg-danger-border px-[8px] py-[2px] text-[11px] font-semibold hover:bg-mg-hover"
+      className="block rounded-[6px] border border-mg-danger-border px-[8px] py-[2px] text-[11px] font-semibold hover:bg-mg-hover"
     >
       {isTool ? t('chat.agyDenied.allowTool') : t('chat.agyDenied.allowCommand')}
     </button>
