@@ -10447,6 +10447,162 @@ const CHECKS = [
     },
   },
   {
+    // Carril R (R04): la sección «Tareas» del lateral. Solo mide el DOM: no pulsa Enter ni lanza ningún CLI.
+    name: 'R: el lateral tiene la sección Tareas con Nueva tarea',
+    async run(page) {
+      const medido = await page.evaluate(() => {
+        const sidebar = document.querySelector('[data-chat-sidebar]');
+        const section = sidebar?.querySelector('[data-tasks-section]') ?? null;
+        const boton = section?.querySelector('[data-new-task]') ?? null;
+        const others = [...(sidebar?.querySelector('[data-sidebar-list]')?.children ?? [])].filter((node) => node !== section);
+        return {
+          lateral: document.querySelectorAll('[data-chat-sidebar]').length,
+          secciones: sidebar?.querySelectorAll('[data-tasks-section]').length ?? 0,
+          botones: sidebar?.querySelectorAll('[data-new-task]').length ?? 0,
+          botonDentro: boton !== null,
+          // Antes que cualquier otro grupo del lateral (si no hay ninguno, basta con que exista).
+          otrosGrupos: others.length,
+          antes: section !== null && others.every((node) => (section.compareDocumentPosition(node) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0),
+        };
+      });
+      const ok = medido.lateral === 1 && medido.secciones === 1 && medido.botones === 1 && medido.botonDentro && medido.antes;
+      return { ok, detail: JSON.stringify(medido) };
+    },
+  },
+  {
+    // Carril R (R04): «Nueva tarea» abre el diálogo modal; sin carpeta no deja empezar (el selector nativo no se puede
+    // pulsar desde CDP) y Escape lo cierra. Quien abre el diálogo lo cierra (error 5) y se espera a su desmontaje (error 6).
+    name: 'R: Nueva tarea abre el diálogo, no deja empezar sin carpeta y Escape lo cierra',
+    async run(page) {
+      const nueva = page.locator('[data-chat-sidebar] [data-new-task]');
+      if (await nueva.count() !== 1) return { ok: false, detail: `botones «Nueva tarea»: ${await nueva.count()} (se esperaba 1)` };
+      await nueva.click();
+      const dialogo = page.locator(MODAL).filter({ has: page.locator('[data-task-goal]') });
+      await dialogo.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      try {
+        await dialogo.locator('[data-task-goal]').fill('R verify: objetivo de prueba');
+        const empezar = dialogo.locator('[data-task-start]');
+        const deshabilitado = await empezar.isDisabled();
+        const botones = await empezar.count();
+        await page.keyboard.press('Escape');
+        await dialogo.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+        return { ok: deshabilitado && botones === 1, detail: JSON.stringify({ empezarDeshabilitadoSinCarpeta: deshabilitado, botonesEmpezar: botones, cerradoConEscape: true }) };
+      } finally {
+        // Si algo falló antes de cerrar, no se deja el diálogo abierto a las siguientes.
+        if (await page.locator('[data-task-goal]').count() > 0) {
+          await page.keyboard.press('Escape');
+          await page.locator('[data-task-goal]').first().waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+        }
+      }
+    },
+  },
+  {
+    // Carril R (R04): una tarea sembrada por IPC se lista, su comprobación distingue ok / ausente / fuera de alcance y se
+    // quita. No pulsa Enter ni lanza ningún CLI: `createTask` solo escribe el registro. El store de tareas no está en
+    // `__mageDev`, así que la lista del renderer se recarga con `page.reload()`.
+    name: 'R: una tarea sembrada se lista, su comprobación distingue ok, ausente y fuera de alcance, y se quita',
+    async run(page, { runDir }) {
+      const cuenta = await page.evaluate(() => {
+        const state = window.__mageDev.store.getState();
+        const active = state.accounts.find((account) => account.id === state.activeAccountId);
+        return active === undefined ? null : { id: active.id, providerId: active.providerId };
+      });
+      if (cuenta === null || cuenta.providerId !== 'claude') return { ok: true, detail: 'sin cuenta de Claude: omitida' };
+      const raiz = path.join(runDir, 'r-tarea');
+      const trabajo = path.join(raiz, 'trabajo');
+      fs.mkdirSync(trabajo, { recursive: true });
+      fs.writeFileSync(path.join(trabajo, 'hecho.md'), 'Entregable de la comprobación R.\n');
+      fs.writeFileSync(path.join(raiz, 'fuera.txt'), 'Fuera de las carpetas de la tarea.\n');
+      const reloadList = async () => {
+        await page.reload();
+        await page.waitForFunction(() => window.__mageDev !== undefined);
+        await page.locator('[role="toolbar"]').first().waitFor({ state: 'attached', timeout: CONFIG.bootTimeoutMs });
+        await page.evaluate(() => window.__mageDev.panelStore.getState().revealPanelById('conversations'));
+        await page.locator('[data-tasks-section]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      };
+      let taskId = null;
+      try {
+        const antes = (await page.evaluate(() => window.mage.listTasks())).map((task) => task.id);
+        const creada = await page.evaluate((draft) => window.mage.createTask(draft), {
+          goal: 'R verify', language: 'es', provider: 'claude', accountDir: cuenta.id, folders: [trabajo], documents: [], capabilities: [],
+        });
+        taskId = creada.id;
+        const comprobada = await page.evaluate((params) => window.mage.verifyTask(params), { taskId, declared: ['hecho.md', 'no-existe.md', '../fuera.txt'] });
+        const estados = comprobada.deliverables.map((entry) => entry.status);
+        const listada = (await page.evaluate(() => window.mage.listTasks())).map((task) => task.id);
+        await reloadList();
+        const fila = page.locator(`[data-task-row="${taskId}"]`);
+        await fila.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const fase = await fila.getAttribute('data-task-phase');
+        await page.evaluate((id) => window.mage.removeTask(id), taskId);
+        taskId = null;
+        await reloadList();
+        const filasTrasQuitar = await page.locator(`[data-task-row="${creada.id}"]`).count();
+        const despues = (await page.evaluate(() => window.mage.listTasks())).map((task) => task.id);
+        const ok = JSON.stringify(estados) === '["ok","missing","outsideScope"]' && listada.length === antes.length + 1 && listada.includes(creada.id)
+          && fase === 'needsReview' && filasTrasQuitar === 0 && JSON.stringify(despues) === JSON.stringify(antes);
+        return { ok, detail: JSON.stringify({ estados, fase, tareasAntes: antes.length, tareasConLaSembrada: listada.length, filasTrasQuitar, tareasDespues: despues.length }) };
+      } finally {
+        if (taskId !== null) await page.evaluate((id) => window.mage.removeTask(id), taskId);
+        fs.rmSync(raiz, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
+      }
+    },
+  },
+  {
+    // Carril R (R04): un MCP con clave se instala con la clave en la bóveda de main y esa clave no queda escrita en ningún
+    // fichero del perfil aislado (ni de la cuenta de prueba ni de la carpeta de la tanda). Usa la MISMA cuenta de prueba
+    // que la comprobación de la Biblioteca (`.claude-vglib`, MAGE_TEST_LIBRARY_CLAUDE_DIR). No lanza ningún CLI ni pulsa
+    // Enter. El log de main no llega a las comprobaciones (vive en `main()`), así que se miran los ficheros de log del perfil.
+    name: 'R: Biblioteca: un MCP con clave se instala con la clave en la bóveda y no queda en ningún fichero',
+    async run(page, { userDataDir, runDir }) {
+      const MAX_BYTES = 5 * 1024 * 1024;
+      const BINARY_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.ico', '.woff', '.woff2', '.ttf', '.otf', '.zip', '.gz', '.br', '.pak', '.bin', '.dll', '.exe', '.node', '.db', '.sqlite', '.ldb', '.dat', '.mp4', '.webm']);
+      const NUL_SCAN_BYTES = 8000;
+      const view0 = await page.evaluate(() => window.mage.libraryView());
+      const cuenta = view0.accounts.find((account) => account.engine === 'claude' && account.accountDir.endsWith(LIBRARY_FIXTURE_ACCOUNT_SUFFIX));
+      if (cuenta === undefined) return { ok: true, detail: 'sin cuenta de Claude de prueba de la biblioteca: omitida' };
+      const secret = `mage-r-verify-${Date.now()}`;
+      const params = { packageId: 'exa-mcp', engine: 'claude', accountDir: cuenta.accountDir };
+      const installed = (view) => view.installs.find((item) => item.packageId === params.packageId && item.engine === 'claude' && item.accountDir === params.accountDir);
+      // Recorre los árboles buscando `secret` en los ficheros de texto. Lo que no se puede leer se cuenta (y se dice), no se calla.
+      const scan = (roots) => {
+        const found = { visitados: 0, apariciones: [], omitidos: 0, noLegibles: 0 };
+        const walk = (current) => {
+          for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+            const full = path.join(current, entry.name);
+            if (entry.isDirectory()) { walk(full); continue; }
+            if (!entry.isFile()) continue;
+            if (BINARY_EXTENSIONS.has(path.extname(entry.name).toLowerCase()) || fs.statSync(full).size > MAX_BYTES) { found.omitidos += 1; continue; }
+            let data;
+            try { data = fs.readFileSync(full); } catch { found.noLegibles += 1; continue; } // bloqueado por Chromium/Windows: se cuenta en el detalle
+            if (data.subarray(0, NUL_SCAN_BYTES).includes(0)) { found.omitidos += 1; continue; }
+            found.visitados += 1;
+            if (data.includes(secret)) found.apariciones.push(full);
+          }
+        };
+        // Una raíz dentro de otra (la cuenta de prueba vive en el perfil) no se recorre dos veces.
+        const distinct = roots.filter((dir) => fs.existsSync(dir) && !roots.some((other) => other !== dir && (dir === other || dir.startsWith(other + path.sep))));
+        for (const root of new Set(distinct)) walk(root);
+        return found;
+      };
+      let installedByUs = false;
+      try {
+        const resultado = await page.evaluate((args) => window.mage.libraryApply({ ...args.params, action: 'install', secrets: { EXA_API_KEY: args.secret } }), { params, secret });
+        installedByUs = resultado.status === 'done';
+        const registro = installed(await page.evaluate(() => window.mage.libraryView()));
+        const ficheros = scan([...new Set([userDataDir, params.accountDir, runDir])]);
+        const quitar = await page.evaluate((args) => window.mage.libraryApply({ ...args, action: 'remove' }), params);
+        installedByUs = quitar.status !== 'done';
+        const quedaInstalado = installed(await page.evaluate(() => window.mage.libraryView())) !== undefined;
+        const ok = resultado.status === 'done' && registro?.keyed === true && ficheros.apariciones.length === 0 && ficheros.visitados > 0
+          && quitar.status === 'done' && !quedaInstalado;
+        return { ok, detail: JSON.stringify({ instalar: resultado.status, keyed: registro?.keyed ?? null, ficherosRecorridos: ficheros.visitados, aparicionesDeLaClave: ficheros.apariciones.length, omitidosPorBinarios: ficheros.omitidos, noLegibles: ficheros.noLegibles, quitar: quitar.status, quedaInstalado }) };
+      } finally {
+        if (installedByUs) await page.evaluate((args) => window.mage.libraryApply({ ...args, action: 'remove' }), params);
+      }
+    },
+  },
+  {
     // Grupo 0 (0.1.2, ficha D11 de P-032): UN turno minimo de verdad, de punta a punta — teclear, Enter,
     // proceso del CLI, respuesta pintada. Es la unica comprobacion que envia: todas las demas miden sin
     // gastar. Contra Claude con el modelo y el esfuerzo mas bajos; si la cuenta lleva gastado mas del
