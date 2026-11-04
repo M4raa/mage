@@ -22,6 +22,8 @@ export interface ConversationSummary {
   readonly isScheduled: boolean;
   // CLI al que pertenece (Codex lee sus rollouts, medidos). Ausente = Claude, el historial de siempre.
   readonly providerId?: AccountProviderId;
+  // Última cuenta con la que se usó la conversación, del índice de Mage; solo Claude.
+  readonly lastAccountId?: string;
 }
 
 // Borrado de una conversacion en disco (#2 de AJUSTES). accountDir es la cuenta RAIZ; privacy indica

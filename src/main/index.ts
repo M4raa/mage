@@ -183,7 +183,7 @@ import { claudeSharedLaunch } from './config/mcpProviderTranslate';
 import { selectForTarget } from './config/mcpResolved';
 import { mcpFamilyOf } from '@shared/mcp';
 import { AccountService } from './accounts/accountService';
-import { ConversationsService, type ConversationsDeps } from './conversations/conversationsService';
+import { ConversationsService, withLastAccount, type ConversationsDeps } from './conversations/conversationsService';
 import { CodexHistoryService } from './conversations/codexHistory';
 import { deleteCodexConversation } from './conversations/codexDeletion';
 import { updateLegacyCodexThread } from './conversations/codexLegacyUpdate';
@@ -245,6 +245,11 @@ import type { HostMode, HostServerHandle } from './host/hostServer';
 import { HOST_STOP_DELAY_MS } from './host/hostStop';
 import { HEADLESS_GUI_UNAVAILABLE, isHeadlessHost, lockFailureMessage, startupWarnings } from './startupMode';
 import { registerConversationPrefsIpc } from './coordination/conversationPrefsIpc';
+import { FileIndexService } from './mentions/fileIndex';
+import { previewMention } from './mentions/mentionPreview';
+import { resolveMentions, type MentionResolverDeps } from './mentions/mentionResolver';
+import { registerMentionsIpc } from './mentions/mentionsIpc';
+import { nodeReaddir, readHeadBytes, statBytes, walkFiles } from './mentions/walkFiles';
 import { SessionCoordinator } from './coordination/sessionCoordinator';
 import { ProjectFileService, resolveProjectFilePath } from './files/projectFileService';
 import { resolvedPath } from './os/resolvedPath';
@@ -275,6 +280,8 @@ import type { GhAutoMergeParams, GhRunActionParams, GhRunsParams, GhRunsSnapshot
 import { findGhBinary } from './os/ghBinaryResolver';
 import { createGhService, type GhRunner, type GhService } from './gh/ghService';
 import { PrMonitor } from './gh/prMonitor';
+import { migrateTabPr, PrCatalogStore } from './gh/prCatalogStore';
+import { registerPrIpc } from './gh/prIpc';
 import { FAKE_GH_BIN, runFakeGh } from './gh/ghFakeRunner';
 import { createWorktreeService, nodeWorktreeFs, type WorktreeService } from './git/worktreeService';
 import type { WorktreeCreateParams, WorktreeMergeBaseParams, WorktreeRemoveResult } from '@shared/worktree';
@@ -1847,7 +1854,9 @@ const runRealGh: GhRunner = async (bin, args, options) => {
     return { code: 0, stdout: await execCapturingStdout(bin, args, { ...options, timeoutMs: GIT_TIMEOUT_MS, maxBufferBytes: GIT_MAX_BUFFER_BYTES }) };
   } catch (err) {
     // Ni stderr ni el mensaje (puede llevar la linea de comandos): solo el codigo, que es lo que se clasifica.
-    const code = (err as { code?: unknown }).code;
+    const { code, stdout } = err as { code?: unknown; stdout?: unknown };
+    // `pr diff` pide tolerar el desborde: lo leido hasta el tope vale, el servicio lo corta a su limite.
+    if (options.tolerateOverflow === true && code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' && typeof stdout === 'string') return { code: 0, stdout };
     return { code: typeof code === 'number' ? code : -1, stdout: '' };
   }
 };
@@ -1967,6 +1976,14 @@ function registerGhHandlers(): void {
     if (typeof params.enabled !== 'boolean') throw new Error(`Auto-merge no valido: ${String(params.enabled)}`);
     return getGhService().setAutoMerge(params.cwd, params.accountDir, params.number, params.enabled);
   });
+  registerPrIpc({
+    handle: (channel, listener) => ipcMain.handle(channel, listener),
+    gh: getGhService,
+    catalog: getPrCatalogStore,
+    migrate: (params) => migrateTabPr(params, { remote: (cwd, accountDir) => getGitService().remote(cwd, accountDir), catalog: getPrCatalogStore() }),
+    remote: (cwd, accountDir) => getGitService().remote(cwd, accountDir),
+    assertFolder: assertGitParams,
+  });
 }
 
 let thinkingStoreSingleton: ThinkingStore | null = null;
@@ -1998,6 +2015,17 @@ function getConversationIndexStore(): ConversationIndexStore {
     });
   }
   return conversationIndexStoreSingleton;
+}
+
+// Catalogo de PR por clave con su vinculo a conversaciones (F5.5).
+let prCatalogStoreSingleton: PrCatalogStore | null = null;
+function getPrCatalogStore(): PrCatalogStore {
+  prCatalogStoreSingleton ??= new PrCatalogStore({
+    filePath: join(app.getPath('userData'), 'pr-catalog.json'),
+    ...fileSystemDeps(),
+    log: (level, message) => mainLog(level, message),
+  });
+  return prCatalogStoreSingleton;
 }
 
 // Dependencias de FS que comparten todos los stores con escritura atomica.
@@ -2560,6 +2588,44 @@ function toggleWidgetFromTray(): void {
   if (enabled) openWidget();
   else closeWidget();
   notifyWidgetEnabledChanged(enabled);
+}
+
+// Menciones @ (Q05): el indice de ficheros usa `git ls-files` (respeta .gitignore) y, sin repo, un
+// recorrido propio. Mismo criterio de confianza que git y que el arranque de un agente.
+const MENTION_INDEX_MAX_BUFFER_BYTES = 32 * 1024 * 1024;
+async function listGitFilesForMentions(cwd: string): Promise<readonly string[] | null> {
+  const bin = findGitBinary();
+  if (bin === null) return null;
+  try {
+    const stdout = await execCapturingStdout(bin, ['-c', 'core.fsmonitor=false', 'ls-files', '-z', '--cached', '--others', '--exclude-standard'], {
+      cwd,
+      env: { ...process.env, GIT_OPTIONAL_LOCKS: '0', GIT_TERMINAL_PROMPT: '0' },
+      timeoutMs: GIT_TIMEOUT_MS,
+      maxBufferBytes: MENTION_INDEX_MAX_BUFFER_BYTES,
+    });
+    return stdout.split('\0').filter((file) => file.length > 0);
+  } catch (err) {
+    mainLog('warn', 'git ls-files fallo para las menciones; se recorre la carpeta', { cwd, error: err instanceof Error ? err.message : String(err) });
+    return null;
+  }
+}
+
+let fileIndexSingleton: FileIndexService | null = null;
+function getFileIndexService(): FileIndexService {
+  fileIndexSingleton ??= new FileIndexService({
+    listGitFiles: listGitFilesForMentions,
+    walk: (cwd, maxFiles) =>
+      walkFiles(cwd, maxFiles, { readdir: nodeReaddir, onUnreadable: (dir, err) => mainLog('warn', 'Carpeta ilegible al indexar menciones', { dir, error: String(err) }) }),
+    isTrusted: isFolderTrusted,
+    stat: statBytes,
+    readHead: readHeadBytes,
+    now: Date.now,
+  });
+  return fileIndexSingleton;
+}
+
+function mentionResolverDeps(): MentionResolverDeps {
+  return { isTrusted: isFolderTrusted, realpath: nodeRealpath, platform: process.platform, stat: statBytes, readHead: readHeadBytes, readFile };
 }
 
 // Confia el usuario en esta carpeta? Suman DOS fuentes, y las dos son decisiones suyas:
@@ -3400,7 +3466,7 @@ function registerTranscriptIpc2(deps: IpcDependencies): void {
     if (!isManagedAccountConfigDir(accountDir)) {
       throw new Error(`Cuenta no valida para listar conversaciones: ${accountDir}`);
     }
-    return conversationsService.listConversations(accountDir);
+    return withLastAccount(conversationsService.listConversations(accountDir), (id) => getConversationIndexStore().loadPrefs(id)?.accountId);
   });
   ipcMain.handle(IpcChannel.ConversationsDelete, async (_e, params: DeleteConversationParams): Promise<void> => {
     requireSafeConversation(params.accountDir, params.sessionId);
@@ -3416,6 +3482,7 @@ function registerTranscriptIpc2(deps: IpcDependencies): void {
 // preferencias de conversaciones que ya no existen) y sus pensamientos (si no, queda un `.jsonl` huerfano por cada una).
 function forgetDeletedConversation(sessionId: string): void {
   getConversationIndexStore().forgetConversation(sessionId);
+  getPrCatalogStore().forgetConversation(sessionId);
   getThinkingStore().forget(sessionId);
 }
 
@@ -3660,6 +3727,12 @@ function registerThinkingIpc1(): void {
     getCommandCatalogStore().load(accountDir),
   );
   registerConversationPrefsIpc({ handle: (channel, listener) => ipcMain.handle(channel, listener), index: getConversationIndexStore, coordinator: sessionCoordinator });
+  registerMentionsIpc({
+    handle: (channel, listener) => ipcMain.handle(channel, listener),
+    index: getFileIndexService,
+    resolve: (params) => resolveMentions(params, mentionResolverDeps()),
+    preview: (params) => previewMention(params, mentionResolverDeps()),
+  });
   ipcMain.handle(IpcChannel.ArtifactRecordSave, (_e, params: RecordArtifactParams): void =>
     getConversationIndexStore().recordArtifact(params.url, params.record),
   );

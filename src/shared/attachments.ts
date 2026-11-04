@@ -17,6 +17,9 @@ export const ERROR_FORMAT_LOCALE = 'es-ES';
 // luego no se puede mostrar seria incoherente.
 export const ALLOWED_IMAGE_TYPES: ReadonlySet<string> = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
 
+// Documentos que viajan como adjunto (menciones @, Q05): solo PDF, y solo hacia Claude (bloque `document`).
+export const ALLOWED_DOCUMENT_TYPES: ReadonlySet<string> = new Set(['application/pdf']);
+
 // Topes. La imagen viaja en base64 por IPC, asi que 5 MiB de fichero son ~6,7 MB de string: pasarse de
 // aqui no es "una imagen grande", es congelar la app al enviar.
 export const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
@@ -35,9 +38,9 @@ export interface AttachmentCandidate {
 
 export function validateAttachment(candidate: AttachmentCandidate, formatLocale: string): ImageAttachmentMeta {
   const mediaType = candidate.mediaType.trim().toLowerCase();
-  if (!ALLOWED_IMAGE_TYPES.has(mediaType)) {
+  if (!ALLOWED_IMAGE_TYPES.has(mediaType) && !ALLOWED_DOCUMENT_TYPES.has(mediaType)) {
     throw new UserFacingError(
-      localized('errors.attachments.unsupportedType', { type: JSON.stringify(candidate.mediaType), allowed: [...ALLOWED_IMAGE_TYPES].join(', ') }),
+      localized('errors.attachments.unsupportedType', { type: JSON.stringify(candidate.mediaType), allowed: [...ALLOWED_IMAGE_TYPES, ...ALLOWED_DOCUMENT_TYPES].join(', ') }),
     );
   }
   if (!Number.isInteger(candidate.byteLength) || candidate.byteLength <= 0) {

@@ -28,6 +28,9 @@ import { describeError } from './describeError';
 export type SettingsActionName =
   | 'saveNotificationRules'
   | 'setTheme'
+  | 'setAccountAvatarsPlacement'
+  | 'setSeparatorContrast'
+  | 'setDockDefaultsVersion'
   | 'setUiScale'
   | 'setUiLanguage'
   | 'setAccountAccent'
@@ -48,6 +51,7 @@ export type SettingsActionName =
   | 'setImportedContextMaxChars'
   | 'setBackgroundOpacity'
   | 'applyImportedTheme'
+  | 'replaceImportedTheme'
   | 'removeImportedTheme'
   | 'selectImportedTheme'
   | 'setWidgetEnabled'
@@ -104,6 +108,25 @@ export function createSettingsActions(deps: SettingsDeps): SettingsActions {
       set((s) => ({ settings: { ...s.settings, theme: pref, activeThemeId: null } }));
       applyThemeFromSettings(get().settings, systemPrefersDark());
       deps.persistSettings();
+    },
+
+    // Dónde van los avatares de cuenta (U1). Solo cambia el DOM de la cabecera/rail: basta persistir con debounce.
+    setAccountAvatarsPlacement: (placement) => {
+      set((s) => ({ settings: { ...s.settings, accountAvatarsPlacement: placement } }));
+      deps.persistSettings();
+    },
+
+    // Contraste de separaciones (U7): se guarda y se reaplica el tema, que es quien fija (o quita) las tres propiedades.
+    setSeparatorContrast: (level) => {
+      set((s) => ({ settings: { ...s.settings, separatorContrast: level } }));
+      applyThemeFromSettings(get().settings, systemPrefersDark());
+      deps.persistSettings();
+    },
+
+    // Marca que los defaults del dock ya se aplicaron a este perfil. Se guarda YA: es una decisión de una sola vez.
+    setDockDefaultsVersion: (version) => {
+      set((s) => ({ settings: { ...s.settings, dockDefaultsVersion: version } }));
+      deps.persistSettingsNow();
     },
 
     setUiScale: (percent) => {
@@ -251,6 +274,13 @@ export function createSettingsActions(deps: SettingsDeps): SettingsActions {
         },
       }));
       applyThemeFromSettings(get().settings, systemPrefersDark());
+      deps.persistSettings();
+    },
+
+    // Sustituye un tema importado conservando su id (volver a importar). No lo activa: si ya era el activo, se reaplica.
+    replaceImportedTheme: (imported) => {
+      set((s) => ({ settings: { ...s.settings, importedThemes: s.settings.importedThemes.map((t) => (t.id === imported.id ? imported : t)) } }));
+      if (get().settings.activeThemeId === imported.id) applyThemeFromSettings(get().settings, systemPrefersDark());
       deps.persistSettings();
     },
 

@@ -5,6 +5,7 @@ import type { PanelId, ZoneKey } from '@shared/panelLayout';
 import { usePanelDragStore } from '../../panels/dragState';
 import { resolveDropBeforeId } from '../../panels/panelLayoutOps';
 import { Icon } from '../Icon';
+import { AnimatedIcon } from '../AnimatedIcon';
 import { useT } from '../../../i18n/uiLanguage';
 
 // Mime propio para el arrastre de iconos entre zonas/bordes (F6, feedback del usuario: arrastrar Y
@@ -332,7 +333,7 @@ export function StripeZoneButtons({
       // (28 px de icono en 29 de hueco util), asi que un outline pintado HACIA FUERA se comia el
       // recorte por los dos lados y la marca de suelta salia cortada (reporte del usuario). Dibujado
       // hacia dentro cabe entero sin tocar el ancho de la barra ni el de los iconos.
-      className={`flex flex-col ${minSizeClass} gap-[2px] rounded-[6px] outline outline-2 [outline-offset:-2px] transition-[outline-color,background-color] duration-150 ease-out ${dragOver ? 'bg-mg-sel outline-mg-focus' : 'outline-transparent'}`}
+      className={`flex flex-col ${minSizeClass} gap-[2px] rounded-[6px] outline outline-2 [outline-offset:-2px] transition-[outline-color,background-color] duration-150 ease-out ${dragOver ? 'bg-mg-sel text-mg-sel-ink relative before:pointer-events-none before:absolute before:inset-y-0 before:left-0 before:w-[2px] before:bg-mg-sel-mark outline-mg-focus' : 'outline-transparent'}`}
     >
       {panels.map((p, i) => (
         <StripeIconButton
@@ -437,11 +438,12 @@ function StripeIconButton({
       aria-pressed={active}
       aria-label={panel.title}
       data-tip={panel.title}
+      data-stripe-attention={badged ? 'true' : undefined}
       className={`relative flex h-7 w-7 shrink-0 items-center justify-center rounded-[6px] text-[13px] transition-opacity duration-150 ease-out hover:text-mg-body ${
-        active ? 'bg-mg-sel text-mg-body' : 'text-mg-icon'
+        active ? 'bg-mg-sel text-mg-sel-ink before:pointer-events-none before:absolute before:inset-y-0 before:left-0 before:w-[2px] before:bg-mg-sel-mark' : 'text-mg-icon'
       } ${dragging ? 'opacity-40' : ''}`}
     >
-      <Icon name={panel.icon} size={PANEL_ICON_PX} />
+      <AnimatedIcon name={panel.icon} size={PANEL_ICON_PX} animation={badged ? 'pulse' : null} />
       {dropLine !== null && (
         <span
           aria-hidden="true"
@@ -449,7 +451,7 @@ function StripeIconButton({
           className={`pointer-events-none absolute left-[2px] right-[2px] h-[2px] rounded-full bg-mg-focus ${dropLine === 'top' ? 'top-0' : 'bottom-0'}`}
         />
       )}
-      {badged && <span aria-hidden="true" className="absolute right-[3px] top-[3px] h-[5px] w-[5px] rounded-full bg-mg-focus" />}
+      {badged && <span aria-hidden="true" className="absolute right-[3px] top-[3px] h-[6px] w-[6px] rounded-full bg-mg-warn" />}
     </button>
   );
 }

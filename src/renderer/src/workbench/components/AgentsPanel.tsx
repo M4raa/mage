@@ -12,6 +12,7 @@ import type { SubagentInfo } from '@shared/events';
 import type { Block } from '../types';
 import { conversationIdOfTab } from '../conversationId';
 import { formatInteger } from '../../i18n/format';
+import { ExpandableDescriptionRow, toggleInSet } from './ExpandableDescriptionRow';
 
 // Panel "Subagentes" (2.9.b), con las dos mitades que el usuario pidio:
 //   - ARRIBA: los subagentes que el CLI DECLARA en su `initialize` (los abrio la Fase B; antes se
@@ -46,6 +47,7 @@ export function AgentsPanel(): React.JSX.Element {
   const invocations = useMemo(() => conversationAgentRows(blocks, t), [blocks, t]);
   const elapsedOf = useAgentElapsed(invocations);
   const [drilled, setDrilled] = useState<SubagentInvocation | null>(null);
+  const [expandedAgents, setExpandedAgents] = useState<ReadonlySet<string>>(new Set());
 
   if (tab === undefined) return <Hint text={t('chat.agents.noConversation')} />;
   // Config dir EFECTIVO: en una conversacion privada la transcripcion del subagente vive bajo
@@ -70,15 +72,17 @@ export function AgentsPanel(): React.JSX.Element {
           <div className="text-[11px] text-mg-muted">{t('chat.agents.noneDeclared')}</div>
         ) : (
           declared.map((agent) => (
-            <div key={agent.name} className="flex flex-col gap-[1px] rounded-[6px] p-[4px_6px] hover:bg-mg-hover">
-              <div className="flex items-baseline gap-[7px]">
+            <ExpandableDescriptionRow
+              key={agent.name}
+              description={agent.description}
+              expanded={expandedAgents.has(agent.name)}
+              onToggle={() => setExpandedAgents((set) => toggleInSet(set, agent.name))}
+            >
+              <span className="flex items-baseline gap-[7px]">
                 <span className="text-[11px] font-bold text-mg-body">{agent.name}</span>
                 {agent.model !== null && <span className="font-mono text-[10px] text-mg-muted">{agent.model}</span>}
-              </div>
-              {agent.description.length > 0 && (
-                <span className="text-[10.5px] leading-[1.4] text-mg-sec2">{agent.description}</span>
-              )}
-            </div>
+              </span>
+            </ExpandableDescriptionRow>
           ))
         )}
       </section>
@@ -121,7 +125,7 @@ function SubagentRow({
       <span className="flex w-full items-baseline gap-[6px]">
         <span aria-hidden="true" className={`h-[7px] w-[7px] flex-none self-center rounded-full ${AGENT_STATE_DOT[row.state]}`} />
         <span className="min-w-0 truncate font-semibold text-mg-body2">{row.description ?? t('chat.agents.noDescription')}</span>
-        <span className="shrink-0 rounded-[4px] bg-mg-sel px-[5px] py-[1px] text-[9px] text-mg-body">{row.name}</span>
+        <span className="shrink-0 rounded-[4px] bg-mg-sel px-[5px] py-[1px] text-[9px] text-mg-sel-ink">{row.name}</span>
         <span className="ml-auto shrink-0 text-mg-muted">{t(STATE_LABEL_KEY[row.state])}</span>
       </span>
       <span className="flex w-full gap-[10px] pl-[13px] font-mono text-[10px] text-mg-muted" style={{ fontVariantNumeric: 'tabular-nums' }}>

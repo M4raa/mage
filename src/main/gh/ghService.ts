@@ -1,7 +1,34 @@
 import type { GhOffReason, GhRunsSnapshot, GhSnapshot } from '@shared/gh';
 import { localized, UserFacingError } from '@shared/i18n/localizedText';
 import type { GitService } from '../git/gitService';
-import { classifyGhExit, parsePrView, parseRunList, pickBranchPr, PR_FIELDS, RUN_FIELDS } from './ghParse';
+import {
+  parsePrKey,
+  prKeyToString,
+  type PrDetail,
+  type PrKey,
+  type PrListParams,
+  type PrListResult,
+  type PrListState,
+  type PrSnapshot,
+  type PrWriteParams,
+  type PrWriteResult,
+  type RepoMergeOptions,
+} from '@shared/pr';
+import {
+  classifyGhExit,
+  parseHeadOnly,
+  parseMergeOptions,
+  parsePrDetail,
+  parsePrList,
+  parsePrView,
+  parseRunList,
+  pickBranchPr,
+  PR_DETAIL_FIELDS,
+  PR_FIELDS,
+  PR_LIST_FIELDS,
+  RUN_FIELDS,
+} from './ghParse';
+import { assertBody, buildPrWriteArgs } from './prWriteArgs';
 
 // PR, checks y runs de la rama de una conversacion con el GitHub CLI. Todo inyectado (binario, runner,
 // git) para testear sin procesos.
@@ -17,7 +44,13 @@ export interface GhRunResult {
   readonly stdout: string;
 }
 
-export type GhRunner = (bin: string, args: readonly string[], options: { readonly cwd: string; readonly env: NodeJS.ProcessEnv }) => Promise<GhRunResult>;
+// `tolerateOverflow`: si la salida pasa del buffer del runner, devuelve lo leido con salida 0 en vez de
+// fallar (solo `pr diff`, que se corta igualmente a PR_DIFF_MAX_BYTES).
+export type GhRunner = (
+  bin: string,
+  args: readonly string[],
+  options: { readonly cwd: string; readonly env: NodeJS.ProcessEnv; readonly tolerateOverflow?: boolean },
+) => Promise<GhRunResult>;
 
 export interface GhServiceDeps {
   readonly findBin: () => string | null;
@@ -33,6 +66,11 @@ export interface GhService {
   runs(cwd: string, accountDir: string, branch: string): Promise<GhRunsSnapshot>;
   runAction(cwd: string, accountDir: string, runId: number, action: 'rerun' | 'cancel'): Promise<void>;
   setAutoMerge(cwd: string, accountDir: string, number: number, enabled: boolean): Promise<void>;
+  // Panel de PR (F5.5): por `PrKey`, siempre con `-R host/owner/repo`.
+  listPrs(params: PrListParams): Promise<PrListResult>;
+  prDetail(cwd: string, accountDir: string, key: PrKey): Promise<PrDetail>;
+  prDiff(cwd: string, accountDir: string, key: PrKey): Promise<{ readonly patch: string; readonly truncated: boolean }>;
+  writePr(params: PrWriteParams): Promise<PrWriteResult>;
 }
 
 // Dos pestañas sobre la misma rama, o la barra y el sondeo a la vez: dentro de esta ventana se devuelve la
@@ -40,6 +78,19 @@ export interface GhService {
 const PR_FRESH_MS = 10_000;
 const RUN_LIST_LIMIT = '10';
 const GITHUB_HOST = 'github.com';
+const PR_LIST_MAX_LIMIT = 100;
+const MERGE_OPTIONS_FRESH_MS = 5 * 60_000;
+export const PR_DIFF_MAX_BYTES = 2 * 1024 * 1024;
+const MERGE_OPTIONS_FIELDS = 'mergeCommitAllowed,squashMergeAllowed,rebaseMergeAllowed';
+const SHA_PATTERN = /^[0-9a-f]{40}$/;
+const PR_URL_PATTERN = /^https:\/\/github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)/;
+
+// Una PR validada: su clave normalizada, la serializada y el `-R` de `gh`.
+interface PrTarget {
+  readonly key: PrKey;
+  readonly keyStr: string;
+  readonly repoRef: string;
+}
 
 type Gate = { readonly gh: string; readonly owner: string; readonly branch: string } | { readonly off: GhOffReason };
 
@@ -48,7 +99,11 @@ export function createGhService(deps: GhServiceDeps): GhService {
 }
 
 class CachedGhService implements GhService {
-  private readonly cache = new Map<string, { readonly at: number; readonly promise: Promise<GhSnapshot> }>();
+  // `prKey`: la PR que resolvio la lectura (para que una escritura invalide solo la suya).
+  private readonly cache = new Map<string, { readonly at: number; readonly promise: Promise<GhSnapshot>; prKey: string | null }>();
+  // Claves de PR que main ha LEIDO en esta ejecucion: escribir solo vale sobre una de ellas.
+  private readonly knownKeys = new Set<string>();
+  private readonly mergeOptionsCache = new Map<string, { readonly at: number; readonly options: RepoMergeOptions }>();
   // Ids que main acaba de leer por carpeta: relanzar o cancelar solo vale con uno de ellos.
   private readonly knownRuns = new Map<string, ReadonlySet<number>>();
   private readonly knownPrs = new Map<string, Set<number>>();
@@ -66,9 +121,13 @@ class CachedGhService implements GhService {
     const hit = this.cache.get(key);
     if (hit !== undefined && this.deps.now() - hit.at < PR_FRESH_MS) return hit.promise;
     const promise = this.readBranchPr(cwd, gated);
-    this.cache.set(key, { at: this.deps.now(), promise });
+    const entry = { at: this.deps.now(), promise, prKey: null as string | null };
+    this.cache.set(key, entry);
     const forget = (): void => void this.cache.delete(key);
-    promise.then((snapshot) => (snapshot.kind === 'off' ? forget() : undefined), forget);
+    promise.then((snapshot) => {
+      if (snapshot.kind === 'off') forget();
+      else if (snapshot.kind === 'pr') entry.prKey = prKeyOfUrl(snapshot.pr.url);
+    }, forget);
     return promise;
   }
 
@@ -116,6 +175,93 @@ class CachedGhService implements GhService {
     this.cache.clear();
   }
 
+  async listPrs(params: PrListParams): Promise<PrListResult> {
+    const { cwd, accountDir, repo, state, limit } = params;
+    if (!Number.isInteger(limit) || limit < 1 || limit > PR_LIST_MAX_LIMIT) throw new Error(`limite de PR no valido: ${String(limit)} (1..${PR_LIST_MAX_LIMIT})`);
+    const target = targetOf({ ...repo, number: 1 }, false);
+    const gated = await this.gate(cwd, accountDir);
+    if ('off' in gated) return { kind: 'off', reason: gated.off };
+    if (target.key.host !== GITHUB_HOST) return { kind: 'off', reason: 'not-github' };
+    const args = ['pr', 'list', '-R', target.repoRef, '--state', ghStateOf(state), '--limit', String(limit), '--json', PR_LIST_FIELDS];
+    const result = await this.gh(gated.gh, cwd, args);
+    const off = offReason(result.code);
+    if (off !== null) return { kind: 'off', reason: off };
+    const merge = await this.mergeOptionsOf(gated.gh, cwd, target.repoRef);
+    if ('code' in merge) return { kind: 'off', reason: offReason(merge.code) ?? 'error' };
+    const prs = parsePrList(result.stdout, target.key).filter((pr) => matchesState(pr, state));
+    for (const pr of prs) this.knownKeys.add(prKeyToString(pr.key));
+    return { kind: 'list', prs, mergeOptions: merge.options };
+  }
+
+  async prDetail(cwd: string, accountDir: string, key: PrKey): Promise<PrDetail> {
+    const target = targetOf(key);
+    const gh = await this.requireGh(cwd, accountDir);
+    const result = await this.gh(gh, cwd, ['pr', 'view', String(key.number), '-R', target.repoRef, '--json', PR_DETAIL_FIELDS]);
+    if (result.code !== 0) throw prFailure(cwd, 'view', target.keyStr, result.code);
+    const detail = parsePrDetail(result.stdout, target.key);
+    this.knownKeys.add(target.keyStr);
+    return detail;
+  }
+
+  async prDiff(cwd: string, accountDir: string, key: PrKey): Promise<{ readonly patch: string; readonly truncated: boolean }> {
+    const target = targetOf(key);
+    const gh = await this.requireGh(cwd, accountDir);
+    const args = ['pr', 'diff', String(key.number), '-R', target.repoRef, '--patch'];
+    const result = await this.deps.run(gh, args, { cwd, env: this.env, tolerateOverflow: true });
+    if (result.code !== 0) throw prFailure(cwd, 'diff', target.keyStr, result.code);
+    return capDiff(result.stdout);
+  }
+
+  // Toda escritura va atada al head que el usuario VIO: el merge lo exige a GitHub (`--match-head-commit`) y el
+  // resto lo compara justo antes de actuar. Si cambio, `conflict` y no se escribe nada.
+  async writePr(params: PrWriteParams): Promise<PrWriteResult> {
+    const { cwd, accountDir, key, expectedHeadSha, action } = params;
+    const target = targetOf(key);
+    if (!SHA_PATTERN.test(expectedHeadSha)) throw new Error(`expectedHeadSha no valido: ${JSON.stringify(expectedHeadSha)}`);
+    if (!this.knownKeys.has(target.keyStr)) throw new Error(`La PR ${target.keyStr} no es una leida en esta ejecucion`);
+    assertBody(action);
+    const gh = await this.requireGh(cwd, accountDir);
+    const head = await this.gh(gh, cwd, ['pr', 'view', String(key.number), '-R', target.repoRef, '--json', 'headRefOid,state']);
+    if (head.code !== 0) throw prFailure(cwd, 'head', target.keyStr, head.code);
+    const currentHeadSha = parseHeadOnly(head.stdout).headSha;
+    if (currentHeadSha !== expectedHeadSha) return { kind: 'conflict', currentHeadSha };
+    if (action.kind === 'merge' || (action.kind === 'autoMerge' && action.enabled)) await this.assertStrategyAllowed(gh, cwd, target, action.strategy);
+    const result = await this.gh(gh, cwd, buildPrWriteArgs(action, key.number, target.repoRef, expectedHeadSha));
+    if (result.code !== 0) throw prFailure(cwd, action.kind, target.keyStr, result.code);
+    this.forgetPr(target.keyStr);
+    return { kind: 'ok' };
+  }
+
+  private async assertStrategyAllowed(gh: string, cwd: string, target: PrTarget, strategy: keyof RepoMergeOptions): Promise<void> {
+    const merge = await this.mergeOptionsOf(gh, cwd, target.repoRef);
+    if ('code' in merge) throw prFailure(cwd, 'repoView', target.keyStr, merge.code);
+    if (!merge.options[strategy]) throw new UserFacingError(localized('errors.gh.strategyNotAllowed', { key: target.keyStr, strategy }));
+  }
+
+  // Opciones de fusion del repo, con cache de 5 min por repo. Un fallo no se cachea.
+  private async mergeOptionsOf(gh: string, cwd: string, repoRef: string): Promise<{ readonly options: RepoMergeOptions } | { readonly code: number }> {
+    const hit = this.mergeOptionsCache.get(repoRef);
+    if (hit !== undefined && this.deps.now() - hit.at < MERGE_OPTIONS_FRESH_MS) return { options: hit.options };
+    const result = await this.gh(gh, cwd, ['repo', 'view', repoRef, '--json', MERGE_OPTIONS_FIELDS]);
+    if (result.code !== 0) return { code: result.code };
+    const options = parseMergeOptions(result.stdout);
+    this.mergeOptionsCache.set(repoRef, { at: this.deps.now(), options });
+    return { options };
+  }
+
+  // Tras escribir, olvida las lecturas por rama de ESA PR (y las que aun no se sabe de cual son).
+  private forgetPr(keyStr: string): void {
+    for (const [cacheKey, entry] of this.cache) {
+      if (entry.prKey === null || entry.prKey === keyStr) this.cache.delete(cacheKey);
+    }
+  }
+
+  private async requireGh(cwd: string, accountDir: string): Promise<string> {
+    const gated = await this.gate(cwd, accountDir);
+    if ('off' in gated) throw new UserFacingError(localized('errors.gh.unavailable', { cwd, reason: gated.off }));
+    return gated.gh;
+  }
+
   private async readBranchPr(cwd: string, gated: Exclude<Gate, { off: GhOffReason }>): Promise<GhSnapshot> {
     // `pr list --head` sale con 0 y `[]` sin PR (medido); `pr view` sin numero saldria con 1, como un fallo.
     const result = await this.gh(gated.gh, cwd, ['pr', 'list', `--head=${gated.branch}`, '--state', 'all', '--limit', RUN_LIST_LIMIT, '--json', PR_FIELDS]);
@@ -154,6 +300,44 @@ function offReason(code: number): GhOffReason | null {
   const exit = classifyGhExit(code);
   if (exit === 'ok') return null;
   return exit === 'no-auth' ? 'no-auth' : 'error';
+}
+
+// Valida la clave (formato) y la normaliza; con `requireGithub`, tambien que sea de github.com. `-R` siempre explicito.
+function targetOf(key: PrKey, requireGithub = true): PrTarget {
+  const keyStr = prKeyToString(key);
+  const parsed = parsePrKey(keyStr);
+  if (parsed === null || parsed.number !== key.number) throw new Error(`Clave de PR no valida: ${JSON.stringify(key)}`);
+  if (requireGithub && parsed.host !== GITHUB_HOST) throw new Error(`Solo se gestionan PR de ${GITHUB_HOST}: ${keyStr}`);
+  return { key: parsed, keyStr, repoRef: `${parsed.host}/${parsed.owner}/${parsed.repo}` };
+}
+
+function prKeyOfUrl(url: string): string | null {
+  const match = PR_URL_PATTERN.exec(url);
+  if (match === null) return null;
+  const key = parsePrKey(`${GITHUB_HOST}/${match[1]}/${match[2]}#${match[3]}`);
+  return key === null ? null : prKeyToString(key);
+}
+
+// `draft` pide `open` a gh y se separa aqui por `isDraft`; `open` incluye borradores, como GitHub.
+function ghStateOf(state: PrListState): string {
+  return state === 'draft' ? 'open' : state;
+}
+
+function matchesState(pr: PrSnapshot, state: PrListState): boolean {
+  if (state === 'draft') return pr.isDraft;
+  return true;
+}
+
+function prFailure(cwd: string, action: string, keyStr: string, code: number): UserFacingError {
+  if (classifyGhExit(code) === 'no-auth') return new UserFacingError(localized('errors.gh.unavailable', { cwd, reason: 'no-auth' }));
+  return new UserFacingError(localized('errors.gh.prActionFailed', { action, key: keyStr, code: String(code) }));
+}
+
+// Corta el parche a PR_DIFF_MAX_BYTES (en bytes UTF-8, no en caracteres).
+function capDiff(stdout: string): { readonly patch: string; readonly truncated: boolean } {
+  const bytes = Buffer.from(stdout, 'utf8');
+  if (bytes.length <= PR_DIFF_MAX_BYTES) return { patch: stdout, truncated: false };
+  return { patch: bytes.subarray(0, PR_DIFF_MAX_BYTES).toString('utf8'), truncated: true };
 }
 
 function assertPositiveInt(value: number, what: string): void {

@@ -4,7 +4,7 @@ import { SUPPORTED_IMAGE_MEDIA_TYPES } from './types';
 import { extractToolResult, extractToolUses } from './toolView';
 import { classifyTool } from './toolClassify';
 import { completeArtifactPublication, parseArtifactDraft } from '@shared/artifacts';
-import { SUBAGENT_TOOL_NAMES } from './toolSummary';
+import { planTextField, SUBAGENT_TOOL_NAMES } from './toolSummary';
 import { noticeTextFor } from './cliNotices';
 import { rateLimitLine } from './rateLimit';
 import { t } from '../i18n/uiLanguage';
@@ -226,6 +226,7 @@ function appendAssistant(entry: TranscriptEntry, blocks: Block[], toolIndexById:
       artifactDraft: parseArtifactDraft(use.toolName, use.input),
       // Los pasos de los subagentes viven en su propio `agent-<id>.jsonl`: en el principal, todo es suyo.
       parentToolUseId: null,
+      ...planTextField(use.toolName, use.input),
     });
     toolIndexById.set(use.toolUseId, blocks.length - 1);
   }

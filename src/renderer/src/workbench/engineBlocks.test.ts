@@ -26,6 +26,8 @@ import {
   SUBAGENT_STATUS,
   subagentStatusLabel,
   turnUsageText,
+  turnUsageCounters,
+  currentTurnCapability,
 } from './engineBlocks';
 import type { Block } from './types';
 
@@ -115,6 +117,18 @@ describe('appendToolUse', () => {
         parentToolUseId: null,
       },
     ]);
+  });
+
+  it('appendToolUse_exitPlanMode_keepsPlanText', () => {
+    const blocks = appendToolUse([], { toolUseId: 't2', toolName: 'ExitPlanMode', input: { plan: '## 1 Plan' } }, 'b2');
+
+    expect(blocks[0]).toMatchObject({ kind: 'tool', planText: '## 1 Plan' });
+  });
+
+  it('appendToolUse_otherTool_noPlanText', () => {
+    const blocks = appendToolUse([], { toolUseId: 't3', toolName: 'Bash', input: { command: 'ls', plan: 'x' } }, 'b3');
+
+    expect(blocks[0]).not.toHaveProperty('planText');
   });
 });
 
@@ -394,6 +408,51 @@ describe('hasVisibleContent', () => {
     } as const;
     expect(hasVisibleContent({ ...base, tool: 'Bash' })).toBe(true);
     expect(hasVisibleContent({ ...base, tool: '' })).toBe(false);
+  });
+});
+
+describe('turnUsageCounters', () => {
+  it('turnUsageCounters_sinPrefijo_soloLosContadores', () => {
+    const counters = turnUsageCounters({ inputTokens: 10, outputTokens: 5, totalTokens: 15, thinkingTokens: null, cacheReadTokens: null });
+
+    expect(counters).toBe(turnUsageText({ inputTokens: 10, outputTokens: 5, totalTokens: 15, thinkingTokens: null, cacheReadTokens: null })?.replace(/^[^:]*: /, ''));
+    expect(counters).not.toContain('◷');
+  });
+
+  it('turnUsageCounters_sinNingunContador_devuelveNull', () => {
+    expect(turnUsageCounters({ inputTokens: null, outputTokens: null, totalTokens: null, thinkingTokens: null, cacheReadTokens: null })).toBeNull();
+  });
+});
+
+describe('currentTurnCapability', () => {
+  const user: Block = { kind: 'user', id: 'u', text: 'hola', time: '', attachments: [], nativeId: null };
+  const withTools = (...uses: ToolUse[]): readonly Block[] => uses.reduce<readonly Block[]>((blocks, use, i) => appendToolUse(blocks, use, `t${i}`), []);
+
+  it('currentTurnCapability_skillInTurn_returnsSkill', () => {
+    const blocks = [user, ...withTools(toolUse({ toolName: 'Skill', input: { skill: 'pdf' } }), toolUse({ toolUseId: 't2', toolName: 'Read', input: { file_path: 'a.ts' } }))];
+
+    expect(currentTurnCapability(blocks)).toEqual({ kind: 'skill', name: 'pdf' });
+  });
+
+  it('currentTurnCapability_mcpTool_splitsServerAndTool', () => {
+    const blocks = [user, ...withTools(toolUse({ toolName: 'mcp__my_server__list_items', input: {} }))];
+
+    expect(currentTurnCapability(blocks)).toEqual({ kind: 'mcp', server: 'my_server', tool: 'list_items' });
+  });
+
+  it('currentTurnCapability_previousTurnOnly_null', () => {
+    const blocks = [...withTools(toolUse({ toolName: 'Skill', input: { skill: 'pdf' } })), user];
+
+    expect(currentTurnCapability(blocks)).toBeNull();
+  });
+
+  it('currentTurnCapability_noTools_null', () => {
+    expect(currentTurnCapability([])).toBeNull();
+    expect(currentTurnCapability([user, ...withTools(toolUse())])).toBeNull();
+  });
+
+  it('currentTurnCapability_malformedMcpName_null', () => {
+    expect(currentTurnCapability(withTools(toolUse({ toolName: 'mcp__solo', input: {} })))).toBeNull();
   });
 });
 

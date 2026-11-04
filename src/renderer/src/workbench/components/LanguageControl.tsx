@@ -33,7 +33,7 @@ export function LanguageControl(): React.JSX.Element {
               data-language={option}
               onClick={() => setUiLanguage(option)}
               className={`flex-1 rounded-[8px] border px-[12px] py-[10px] text-left ${
-                selected ? 'border-mg-focus bg-mg-sel text-mg-text' : 'border-mg-border-ctrl text-mg-body2 hover:bg-mg-hover'
+                selected ? 'border-mg-focus bg-mg-sel text-mg-sel-ink relative before:pointer-events-none before:absolute before:inset-y-0 before:left-0 before:w-[2px] before:bg-mg-sel-mark' : 'border-mg-border-ctrl text-mg-body2 hover:bg-mg-hover'
               }`}
             >
               <div className="text-[12px] font-semibold">{t(LABEL[option])}</div>

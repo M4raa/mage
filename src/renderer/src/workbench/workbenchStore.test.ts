@@ -67,8 +67,8 @@ describe('setDraft', () => {
     store.setState({ tabs: [tab('a'), tab('b')], activeTabId: 'a' });
 
     // Act
-    store.getState().setDraft('a', { text: 'para A', attachments: [] });
-    store.getState().setDraft('b', { text: 'para B', attachments: [] });
+    store.getState().setDraft('a', { text: 'para A', attachments: [], mentions: [] });
+    store.getState().setDraft('b', { text: 'para B', attachments: [], mentions: [] });
 
     // Assert
     expect(store.getState().draftByChat['a']?.text).toBe('para A');
@@ -78,10 +78,10 @@ describe('setDraft', () => {
   it('setDraft_borradorVacio_borraLaEntradaEnVezDeGuardarla', () => {
     // Arrange
     const store = createWorkbenchStore(fakeMage());
-    store.setState({ tabs: [tab('a')], activeTabId: 'a', draftByChat: { a: { text: 'a medias', attachments: [] } } });
+    store.setState({ tabs: [tab('a')], activeTabId: 'a', draftByChat: { a: { text: 'a medias', attachments: [], mentions: [] } } });
 
     // Act
-    store.getState().setDraft('a', { text: '', attachments: [] });
+    store.getState().setDraft('a', { text: '', attachments: [], mentions: [] });
 
     // Assert
     expect(store.getState().draftByChat).toEqual({});
@@ -90,7 +90,7 @@ describe('setDraft', () => {
   it('setDraft_null_borraElBorrador', () => {
     // Arrange
     const store = createWorkbenchStore(fakeMage());
-    store.setState({ tabs: [tab('a')], activeTabId: 'a', draftByChat: { a: { text: 'enviado', attachments: [] } } });
+    store.setState({ tabs: [tab('a')], activeTabId: 'a', draftByChat: { a: { text: 'enviado', attachments: [], mentions: [] } } });
 
     // Act
     store.getState().setDraft('a', null);
@@ -104,7 +104,7 @@ describe('setDraft', () => {
     const store = createWorkbenchStore(fakeMage());
 
     // Act
-    store.getState().setDraft('', { text: 'huerfano', attachments: [] });
+    store.getState().setDraft('', { text: 'huerfano', attachments: [], mentions: [] });
 
     // Assert
     expect(store.getState().draftByChat).toEqual({});
@@ -120,12 +120,12 @@ describe('sendMessageToTab — envío fallido (#24)', () => {
 
     await store.getState().sendMessageToTab('a', 'Arregla el login', [image]);
 
-    expect(store.getState().draftByChat.a).toEqual({ text: 'Arregla el login', attachments: [{ attachment: image, byteLength: 5 }] });
+    expect(store.getState().draftByChat.a).toEqual({ text: 'Arregla el login', attachments: [{ attachment: image, byteLength: 5 }], mentions: [] });
   });
 
   it('sendMessageToTab_fallaYaHayOtroBorrador_noLoPisa', async () => {
     const store = createWorkbenchStore(fakeMage({ saveWorkspace: vi.fn().mockResolvedValue(undefined), isFolderTrusted: vi.fn().mockResolvedValue(true), createSession: vi.fn().mockRejectedValue(new Error('sin red')) }));
-    store.setState({ tabs: [tab('a')], activeTabId: 'a', splitLayout: singleLeaf('a'), draftByChat: { a: { text: 'lo nuevo', attachments: [] } } });
+    store.setState({ tabs: [tab('a')], activeTabId: 'a', splitLayout: singleLeaf('a'), draftByChat: { a: { text: 'lo nuevo', attachments: [], mentions: [] } } });
 
     await store.getState().sendMessageToTab('a', 'lo enviado');
 
@@ -188,7 +188,7 @@ describe('closeTab', () => {
       blocksByChat: { a: [] },
       turnStartByChat: { a: 1_000 },
       lastActivityByChat: { a: 2_000 },
-      draftByChat: { a: { text: 'a medias', attachments: [] } },
+      draftByChat: { a: { text: 'a medias', attachments: [], mentions: [] } },
     });
 
     await store.getState().closeTab('a');
@@ -1419,6 +1419,7 @@ describe('requestAccountSwitch y continueInAccount', () => {
         saveWorkspace: vi.fn().mockResolvedValue(undefined),
         getUsage: vi.fn().mockResolvedValue(null),
         listConversations: vi.fn().mockResolvedValue([]),
+        saveConversationPrefs: vi.fn().mockResolvedValue(undefined),
         ...over,
       }),
     );
@@ -1752,7 +1753,7 @@ describe('rebobinar, reintentar y divergir', () => {
     await store.getState().rewindTo('a', 'b2', { restoreFiles: false, saveCopy: false, action: 'rewind' });
 
     expect(store.getState().blocksByChat.a?.map((b) => b.kind === 'user' && b.text)).toEqual(['uno']);
-    expect(store.getState().draftByChat.a).toEqual({ text: 'dos', attachments: [] });
+    expect(store.getState().draftByChat.a).toEqual({ text: 'dos', attachments: [], mentions: [] });
   });
 
   it('rewindTo_rewindWithQueue_queueGoesInFrontOfDraft', async () => {
@@ -1936,7 +1937,7 @@ describe('cola de mensajes', () => {
   it('interrupt_losMensajesQueDevuelveMainVuelvenAlInput', async () => {
     const { store, interrupt } = mounted('streaming');
     interrupt.mockResolvedValue([{ id: 'q1', text: 'uno', attachments: [] }, { id: 'q2', text: 'mira [Imagen 1]', attachments: [IMG] }]);
-    store.getState().setDraft('a', { text: 'borrador', attachments: [] });
+    store.getState().setDraft('a', { text: 'borrador', attachments: [], mentions: [] });
 
     store.getState().interruptActiveSession();
 

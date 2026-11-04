@@ -27,6 +27,7 @@ import { ArtifactsPanel } from '../components/ArtifactsPanel';
 import { FilesPanel } from '../components/FilesPanel';
 import { UsagePanel } from '../components/UsagePanel';
 import { ActivityPanel } from '../components/ActivityPanel';
+import { PullRequestsPanel } from '../components/PullRequestsPanel';
 
 export interface PanelDefinition {
   readonly id: PanelId;
@@ -50,7 +51,7 @@ export interface PanelDefinition {
 // probar el split Permiso+Contexto/Logs+Memoria+MCP en vivo, se prefiere volver al tablist unico (un
 // panel activo a la vez, switch por icono, sin pestañas — ver ZonePane.tsx) y dejar 'b' libre para lo
 // que el usuario decida mover ahi a mano.
-type PanelTitleKey = 'menu.panel.conversations' | 'menu.panel.usage' | 'menu.panel.permissions' | 'menu.panel.context' | 'menu.panel.logs' | 'menu.panel.memory' | 'menu.panel.instructions' | 'menu.panel.commands' | 'menu.panel.agents' | 'menu.panel.tools' | 'menu.panel.artifacts' | 'menu.panel.files' | 'menu.panel.activity';
+type PanelTitleKey = 'menu.panel.conversations' | 'menu.panel.usage' | 'menu.panel.permissions' | 'menu.panel.context' | 'menu.panel.logs' | 'menu.panel.memory' | 'menu.panel.instructions' | 'menu.panel.commands' | 'menu.panel.agents' | 'menu.panel.tools' | 'menu.panel.artifacts' | 'menu.panel.files' | 'menu.panel.activity' | 'menu.panel.pullRequests';
 
 // Como se escribe cada panel aqui: el titulo es una CLAVE del catalogo de textos (o el literal, para «MCP»).
 type PanelSpec = Omit<PanelDefinition, 'title'> & ({ readonly titleKey: PanelTitleKey } | { readonly title: string });
@@ -100,6 +101,9 @@ const PANEL_SPECS: readonly PanelSpec[] = [
   // Lo que el agente HACE, paso a paso (P-026 3.4): las herramientas salieron del chat. Id nuevo en la
   // misma zona: aparece sin abrirse solo; lo abre la linea de estado del chat (`revealPanelById`).
   { id: 'activity', titleKey: 'menu.panel.activity', icon: 'panelActivity', defaultAnchor: 'right', defaultZone: 'a', render: () => createElement(ActivityPanel) },
+  // Las PR del repo de la pestaña y las de la conversacion (F5.5, Q08). Id nuevo en la misma zona: aparece sin
+  // abrirse solo y sin obligar a borrar `panels-layout.json`; lo abre «Abrir en el panel» de la barra de PR.
+  { id: 'pullRequests', titleKey: 'menu.panel.pullRequests', icon: 'panelPullRequests', defaultAnchor: 'right', defaultZone: 'a', render: () => createElement(PullRequestsPanel) },
 ];
 
 export const PANEL_REGISTRY: readonly PanelDefinition[] = PANEL_SPECS.map(definePanel);

@@ -284,3 +284,9 @@ describe('AgyAdapter: puente de instrucciones', () => {
     expect(addDirs(plan.args)).toEqual(['/proj']);
   });
 });
+
+describe('AgyAdapter — adjuntos', () => {
+  it('encodeUserMessage_pdfAttachment_throwsWithType', () => {
+    expect(() => adapter.encodeUserMessage('hola', [{ mediaType: 'application/pdf', data: 'JVBERg==' }])).toThrow('application/pdf');
+  });
+});

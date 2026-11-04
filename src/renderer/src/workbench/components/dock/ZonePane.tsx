@@ -79,7 +79,7 @@ export function ZonePane({ zoneRef, anchor, zone, panels, activePanelId, sizePx,
           un fundido al abrir la zona y al cambiar de panel activo dentro de ella (F6, varios paneles
           por zona) — key=activePanelId hace que AnimatePresence lo trate como "entra uno, sale otro". */}
       <div className="relative min-h-0 flex-1 overflow-hidden">
-        <AnimatePresence>
+        <AnimatePresence mode="popLayout">
           <motion.div
             key={activePanelId}
             variants={PANEL_CONTENT_VARIANTS}

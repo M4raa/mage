@@ -1,3 +1,4 @@
+import { useLocalPopover } from '../localPopovers';
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { AnimatePresence, motion } from 'motion/react';
@@ -7,6 +8,8 @@ import { POPOVER_VARIANTS } from '../motionPresets';
 export interface DropdownOption {
   readonly value: string;
   readonly label: string;
+  // Color de acento (punto delante de la etiqueta), p. ej. el de una cuenta.
+  readonly accent?: string;
 }
 
 const MENU_WIDTH_PX = 170;
@@ -53,7 +56,9 @@ export function Dropdown({
   ariaLabel,
   tip,
   triggerClassName = '',
+  bare = false,
   leading,
+  triggerData,
 }: {
   readonly value: string;
   readonly options: readonly DropdownOption[];
@@ -61,10 +66,15 @@ export function Dropdown({
   readonly ariaLabel: string;
   readonly tip?: string;
   readonly triggerClassName?: string;
+  // Sin píldora: sin borde ni relleno de etiqueta, para ir como texto en una línea (la sublínea de la pestaña).
+  readonly bare?: boolean;
   // Algo que va delante de la etiqueta en el disparador (el icono de la rama de git, P-026 3.5).
   readonly leading?: React.ReactNode;
+  // Atributos `data-*` del disparador (los usa la verificación de la interfaz para localizarlo).
+  readonly triggerData?: Readonly<Record<`data-${string}`, string>>;
 }): React.JSX.Element {
   const [open, setOpen] = useState(false);
+  useLocalPopover(open);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const selectedLabel = options.find((o) => o.value === value)?.label ?? value;
@@ -109,7 +119,8 @@ export function Dropdown({
         aria-expanded={open}
         aria-label={ariaLabel}
         data-tip={tip}
-        className={`shrink-0 cursor-pointer self-center rounded-full border border-mg-border-ctrl bg-transparent px-[8px] py-[2px] text-[10.5px] text-mg-sec outline-none transition-colors duration-150 ease-out hover:text-mg-body ${triggerClassName}`}
+        {...triggerData}
+        className={`shrink-0 cursor-pointer self-center ${bare ? 'rounded-[4px] px-[3px]' : 'rounded-full border border-mg-border-ctrl px-[8px] py-[2px]'} bg-transparent text-[10.5px] text-mg-sec outline-none transition-colors duration-90 ease-out hover:text-mg-body ${triggerClassName}`}
       >
         {leading === undefined ? (
           selectedLabel
@@ -155,11 +166,16 @@ export function Dropdown({
                       if (o.value !== value) onChange(o.value);
                       close();
                     }}
-                    className={`block w-full px-[10px] py-[5px] text-left transition-colors duration-150 ease-out hover:bg-mg-hover ${
+                    className={`block w-full px-[10px] py-[5px] text-left transition-colors duration-90 ease-out hover:bg-mg-hover ${
                       o.value === value ? 'font-bold text-mg-focus' : ''
                     }`}
                   >
-                    {o.label}
+                    {o.accent === undefined ? o.label : (
+                      <span className="inline-flex items-center gap-[6px]">
+                        <span aria-hidden="true" className="h-[7px] w-[7px] flex-none rounded-full" style={{ background: o.accent }} />
+                        <span className="truncate">{o.label}</span>
+                      </span>
+                    )}
                   </button>
                 ))}
               </motion.div>

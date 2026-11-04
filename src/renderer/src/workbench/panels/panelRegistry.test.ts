@@ -6,10 +6,10 @@ import { findPanelDefinition, PANEL_REGISTRY } from './panelRegistry';
 // entorno de vitest.config.ts es 'node' (sin DOM ni renderer) — aqui solo se verifica la FORMA del
 // catalogo, no el contenido visual de cada panel.
 describe('PANEL_REGISTRY', () => {
-  it('panelRegistry_tieneExactamenteCatorcePaneles', () => {
+  it('panelRegistry_tieneExactamenteQuincePaneles', () => {
     // 7 + los tres de 2.9.b (instrucciones, comandos, subagentes) + "Herramientas" + "Artifacts" +
-    // "Ficheros" (2.10) + "Actividad" (P-026 3.4).
-    expect(PANEL_REGISTRY).toHaveLength(14);
+    // "Ficheros" (2.10) + "Actividad" (P-026 3.4) + "Pull requests" (Q08).
+    expect(PANEL_REGISTRY).toHaveLength(15);
   });
 
   it('panelRegistry_catalogoV1_tieneIdsUnicos', () => {
@@ -18,11 +18,11 @@ describe('PANEL_REGISTRY', () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
-  it('panelRegistry_incluyeLosCatorceIdsEsperados', () => {
+  it('panelRegistry_incluyeLosQuinceIdsEsperados', () => {
     const ids = PANEL_REGISTRY.map((p) => p.id);
 
     expect(ids.sort()).toEqual(
-      ['activity', 'agents', 'artifacts', 'commands', 'conversations', 'context', 'files', 'instructions', 'logs', 'mcp', 'memory', 'permissions', 'tools', 'usage'].sort(),
+      ['activity', 'agents', 'artifacts', 'commands', 'conversations', 'context', 'files', 'instructions', 'logs', 'mcp', 'memory', 'permissions', 'pullRequests', 'tools', 'usage'].sort(),
     );
   });
 
@@ -58,13 +58,13 @@ describe('PANEL_REGISTRY', () => {
   // las cinco a compartir una unica zona (tablist sin pestañas, switch por icono — ver ZonePane.tsx);
   // right/b ("medio") queda libre para lo que el usuario decida mover ahi a mano.
   it('panelRegistry_todosLosDelInspector_compartenUnaSolaZona', () => {
-    // Las cinco de siempre MAS las tres de 2.9.b MAS "Herramientas", "Artifacts" y "Ficheros": el
+    // Las cinco de siempre MAS las tres de 2.9.b MAS "Herramientas", "Artifacts", "Ficheros" y "Pull requests": el
     // tablist del Inspector sigue siendo uno solo, y right/b se queda libre para lo que el usuario
     // mueva ahi.
     const zoneA = PANEL_REGISTRY.filter((p) => p.defaultAnchor === 'right' && p.defaultZone === 'a').map((p) => p.id);
     const zoneB = PANEL_REGISTRY.filter((p) => p.defaultAnchor === 'right' && p.defaultZone === 'b').map((p) => p.id);
 
-    expect(zoneA.length).toBe(12);
+    expect(zoneA.length).toBe(13);
     expect(zoneB.length).toBe(0);
   });
 

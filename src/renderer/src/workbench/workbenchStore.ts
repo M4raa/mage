@@ -40,16 +40,26 @@ import {
   mapPermissionToView,
   resolvePermissionBlock,
   restartingText,
-  turnUsageText,
 } from './engineBlocks';
 import { addAlwaysAllow, removeAlwaysAllow } from './permissionRules';
 import { createSettingsActions } from './settingsActions';
-import { createHistoryActions } from './historyActions';
+import { createHistoryActions, withIdPresence } from './historyActions';
+import { EMPTY_SIDEBAR_FILTER, type AccountConversation, type SidebarFilter } from './sidebarModel';
 import { createAccountsActions } from './accountsActions';
 import { createPrActions, resetPrActionsState, type PrActions, type PrState } from './prActions';
+import { createPrPanelActions, resetPrPanelState, type PrPanelActions, type PrPanelStoreState } from './prPanelActions';
 import { isPrCreateCommand, prNumberFromCreatedTag, prNumberFromUrl } from './prBinding';
 import { worktreeOfCwd } from '@shared/worktree';
 import { createdFileFrom } from './createdFilesView';
+import type { DocAnchor } from './planReferences';
+
+// Destino pedido por una referencia del chat (F5.6, #31). `at` distingue dos pulsaciones seguidas en la misma.
+export interface DocumentTarget {
+  readonly tabId: string;
+  readonly docId: string;
+  readonly key: string;
+  readonly at: number;
+}
 import { mergeIntoDraft, type QueuedMessage } from './messageQueue';
 import type { ConversationSnapshot, SendMode, SendReceipt } from '@shared/coordination';
 import { adoptedTab, adoptionTarget, chatStatusOf, snapshotEvents } from './adoptSession';
@@ -117,6 +127,8 @@ import type {
   NotificationRule,
   ScratchRetention,
   ThemePreference,
+  AccountAvatarsPlacement,
+  SeparatorContrast,
 } from '@shared/settings';
 import { DEFAULT_APP_SETTINGS, type KeepAliveSettings, type RuntimeShell } from '@shared/settings';
 import type { UiLanguagePreference } from '@shared/i18n/language';
@@ -151,7 +163,7 @@ const CONTEXT_PLACEHOLDER: ContextInfo = { usedTokens: '—', maxTokens: '200k',
 // {cuenta, proyecto, modelo} con su AgentSession aislada. El estado del motor va keyed por id de
 // pestana (un chat = una pestana): asi anadir pestanas no obliga a refactorizar el reducer.
 // Exportado junto con `reduceEvent` para poder testear el reducer con un estado de mentira.
-export interface WorkbenchState extends PrState, PrActions {
+export interface WorkbenchState extends PrState, PrActions, PrPanelStoreState, PrPanelActions {
   accounts: readonly Account[];
   tabs: readonly Tab[];
   activeAccountId: string;
@@ -179,6 +191,9 @@ export interface WorkbenchState extends PrState, PrActions {
   // Contador que pide FOCO para el input del prompt (extras): cada incremento hace que el PromptBar se
   // enfoque. Un contador (y no un booleano) evita tener que "consumir" el flag.
   promptFocusToken: number;
+  // Punto de un documento al que el usuario pidio ir desde una referencia del chat (F5.6, #31): el panel
+  // Ficheros lo consume (selecciona el documento, desplaza, resalta) y lo limpia.
+  readonly documentTarget: DocumentTarget | null;
 
   // --- Uso y estado (M1.3) ---
   // Uso real por cuenta (keyed por configDir). null mientras no se ha cargado.
@@ -189,6 +204,8 @@ export interface WorkbenchState extends PrState, PrActions {
   readonly agyUsageByAccount: Readonly<Record<string, AgyUsageSnapshot>>;
   // Uso acumulado de las conversaciones de Codex y agy desde que Mage las abrió (sus CLI no dejan transcripción de Claude).
   readonly providerUsageByChat: Readonly<Record<string, ProviderUsageTotals>>;
+  // Uso del ULTIMO turno de cada pestana (lo que reporto su `result`), para la fila del panel Contexto: ya no es un bloque del hilo.
+  readonly lastTurnUsageByChat: Readonly<Record<string, TurnUsage>>;
   // Estado del servicio de Claude (global). null mientras no se ha cargado.
   readonly status: StatusInfo | null;
 
@@ -292,6 +309,8 @@ export interface WorkbenchState extends PrState, PrActions {
 
   // --- Historial de conversaciones en disco (M2.6, sidebar = historial) ---
   readonly conversationHistory: readonly ConversationSummary[];
+  // Historial de TODAS las cuentas con historial, fusionado (lateral D6): cada conversación una vez, con su cuenta.
+  readonly allConversationHistory: readonly AccountConversation[];
   readonly elicitationsByChat: Readonly<Record<string, readonly { readonly request: ElicitationRequest; readonly state: 'pending' | 'accept' | 'decline' | 'cancel' }[]>>;
   answerElicitation: (tabId: string, answer: Omit<ElicitationAnswer, 'sessionId'>) => Promise<void>;
   // «Tomar el control» de una conversación cuya otra instancia parece muerta (#55): solo si su lock es huérfano.
@@ -373,6 +392,9 @@ export interface WorkbenchState extends PrState, PrActions {
   toggleInspector: () => void;
   // Pide foco para el input del prompt (nueva conversacion, cambio de pestana…).
   focusPrompt: () => void;
+  // Abre el panel Ficheros en el documento de la referencia y fija el destino (F5.6, #31).
+  openDocumentAnchor: (tabId: string, anchor: DocAnchor) => void;
+  clearDocumentTarget: () => void;
   // Clic en una notificacion del SO (P-028 40): lleva a su pestaña y al prompt o, si la pestaña ya no
   // esta, RESALTA su fila del historial (reabrirla cortaria la sesion viva en segundo plano).
   focusNotificationTarget: (target: NotificationTarget) => void;
@@ -437,6 +459,11 @@ export interface WorkbenchState extends PrState, PrActions {
   saveNotificationRules: (rules: readonly NotificationRule[]) => void;
   // Cambia la preferencia de tema: aplica al DOM al instante, recalcula resolvedTheme y persiste.
   setTheme: (pref: ThemePreference) => void;
+  setAccountAvatarsPlacement: (placement: AccountAvatarsPlacement) => void;
+  setSeparatorContrast: (level: SeparatorContrast) => void;
+  setDockDefaultsVersion: (version: number) => void;
+  // true cuando ya llegaron los ajustes reales del disco (antes, `settings` son los defaults).
+  settingsLoaded: boolean;
   // Opacidad de los fondos, 50..100 (%). Aplica al DOM al instante y avisa a main para que ajuste el
   // material translucido de la ventana; persiste con el mismo debounce que el resto de ajustes.
   setBackgroundOpacity: (percent: number) => void;
@@ -494,6 +521,8 @@ export interface WorkbenchState extends PrState, PrActions {
   // colores para pintar la miniatura, asi que no hace falta volver a bajar el .vsix). Eliminar o
   // (des)activar uno de los importados.
   applyImportedTheme: (imported: ImportedTheme) => void;
+  // Sustituye un tema ya importado (mismo id) sin activarlo; reaplica el tema si era el activo.
+  replaceImportedTheme: (imported: ImportedTheme) => void;
   removeImportedTheme: (id: string) => void;
   selectImportedTheme: (id: string | null) => void;
   deleteAccount: (configDir: string) => Promise<void>;
@@ -528,10 +557,20 @@ export interface WorkbenchState extends PrState, PrActions {
   // Carga el historial de conversaciones en disco de la cuenta activa (M2.6, sidebar = historial).
   loadConversationHistory: () => Promise<void>;
   // Abre (reanuda) una conversacion del historial: activa su pestana si ya esta abierta, o crea una.
-  openConversation: (item: ConversationSummary) => void;
+  // `accountId` (opcional) sustituye a la cuenta activa: el lateral de todas las cuentas abre con la de la fila.
+  openConversation: (item: ConversationSummary, accountId?: string) => void;
   // Elimina una conversacion en disco (#2): cierra su pestana si esta abierta, borra el .jsonl y
   // refresca el historial. accountDir = cuenta activa.
-  deleteConversation: (sessionId: string, cwd: string, privacy: ConversationPrivacy) => Promise<void>;
+  // `accountDir` (opcional) sustituye a la cuenta activa: la cuenta de la fila del lateral.
+  deleteConversation: (sessionId: string, cwd: string, privacy: ConversationPrivacy, accountDir?: string) => Promise<void>;
+  // Filtro y búsqueda del lateral. Viven aquí (no en el componente) para que la barra de título pueda activar el chip
+  // «Trabajando». No se persisten.
+  sidebarFilter: SidebarFilter;
+  setSidebarFilter: (filter: SidebarFilter) => void;
+  // Fija o desfija una conversación del lateral (y su pestaña abierta, si la hay).
+  togglePinnedConversation: (sessionId: string) => void;
+  // Archiva o desarchiva una conversación del lateral.
+  setConversationArchived: (sessionId: string, archived: boolean) => void;
   // Mueve una conversacion (#2) entre secciones (compartido/privado) y/o cuentas: cierra su pestana si
   // esta abierta, reubica el .jsonl y refresca el historial.
   moveConversation: (
@@ -1141,7 +1180,7 @@ function isTurnLive(status: string | undefined): boolean {
 function insertPromptIntoDraft(get: () => WorkbenchState, tabId: string, prompt: string): void {
   const draft = get().draftByChat[tabId];
   const text = draft === undefined || draft.text.trim().length === 0 ? prompt : `${draft.text.trimEnd()}\n\n${prompt}`;
-  get().setDraft(tabId, { text, attachments: draft?.attachments ?? [] });
+  get().setDraft(tabId, { text, attachments: draft?.attachments ?? [], mentions: draft?.mentions ?? [] });
 }
 
 // Arranca (o reanuda) la sesion del CLI de una pestaña y deja su id en el estado. Extraida de la
@@ -1354,6 +1393,7 @@ export function createWorkbenchStore(mage: MageClient) {
   silentRenamesBySession.clear();
   gitTrustAsked.clear();
   resetPrActionsState();
+  resetPrPanelState();
   prCreateToolUses.clear();
   // Los ajustes reales ya están en el store (los cargó `init`): hasta entonces no se asignan acentos.
   let settingsReady = false;
@@ -1379,11 +1419,13 @@ export function createWorkbenchStore(mage: MageClient) {
     appVersion: '',
     settings: DEFAULT_APP_SETTINGS,
     promptFocusToken: 0,
+    documentTarget: null,
 
     usageByAccount: {},
     usageErrorByAccount: {},
     agyUsageByAccount: {},
     providerUsageByChat: {},
+    lastTurnUsageByChat: {},
     permissionModes: null,
     status: null,
 
@@ -1418,8 +1460,12 @@ export function createWorkbenchStore(mage: MageClient) {
     trustRequests: [],
     mcpServersByChat: {},
     conversationHistory: [],
+    allConversationHistory: [],
     elicitationsByChat: {},
     backgroundSessions: {},
+    sidebarFilter: EMPTY_SIDEBAR_FILTER,
+    settingsLoaded: false,
+    setSidebarFilter: (filter) => set({ sidebarFilter: filter }),
     closePromptOpen: false,
     updateState: IDLE_UPDATE_STATE,
     updatePromptVersion: null,
@@ -1543,6 +1589,17 @@ export function createWorkbenchStore(mage: MageClient) {
       sendToTab: (tabId, text) => get().sendMessageToTab(tabId, text),
       archiveTab: (tabId) => get().closeTab(tabId),
     }),
+    prPanelByTab: {},
+    prDetailByKey: {},
+    prDiffByKey: {},
+    prCatalog: [],
+    prMergeOptionsByRepo: {},
+    ...createPrPanelActions({
+      mage,
+      get,
+      set,
+      insertPrompt: (tabId, prompt) => insertPromptIntoDraft(get, tabId, prompt),
+    }),
 
     setActiveTab: (tabId) => {
       // Invariante de la division (Ronda 3 item 13, generalizado en I11): `activeTabId` es el panel
@@ -1614,6 +1671,7 @@ export function createWorkbenchStore(mage: MageClient) {
           subagentsByChat: without(s.subagentsByChat, tabId),
           contextUsageByChat: without(s.contextUsageByChat, tabId),
           providerUsageByChat: without(s.providerUsageByChat, tabId),
+          lastTurnUsageByChat: without(s.lastTurnUsageByChat, tabId),
           missingConversationByChat: without(s.missingConversationByChat, tabId),
           rateLimitByChat: without(s.rateLimitByChat, tabId),
           mcpServersByChat: without(s.mcpServersByChat, tabId),
@@ -1703,8 +1761,17 @@ export function createWorkbenchStore(mage: MageClient) {
     },
 
     toggleTabPinned: (tabId) => {
-      set((s) => ({ tabs: s.tabs.map((t) => (t.id === tabId ? { ...t, pinned: t.pinned !== true } : t)) }));
+      const target = get().tabs.find((t) => t.id === tabId);
+      if (target === undefined) return;
+      const pinned = target.pinned !== true;
+      const conversationId = conversationIdOfTab(target, get().sessionIdByChat[tabId]);
+      set((s) => ({
+        tabs: s.tabs.map((t) => (t.id === tabId ? { ...t, pinned } : t)),
+        // La pestaña fijada y su conversación van a la par (grupo «Fijadas» del lateral).
+        ...(conversationId === undefined ? {} : { settings: { ...s.settings, pinnedConversations: withIdPresence(s.settings.pinnedConversations, conversationId, pinned) } }),
+      }));
       schedulePersist(mage, get);
+      if (conversationId !== undefined) scheduleSettingsPersist(mage, get);
     },
 
     setTabColor: (tabId, colorIndex) => {
@@ -1743,6 +1810,11 @@ export function createWorkbenchStore(mage: MageClient) {
     toggleSidebar: () => void import('./panelLayoutStore').then((m) => m.usePanelLayoutStore.getState().togglePanelById('conversations')),
     toggleInspector: () => void import('./panelLayoutStore').then((m) => m.usePanelLayoutStore.getState().togglePanelById('permissions')),
     focusPrompt: () => set((s) => ({ promptFocusToken: s.promptFocusToken + 1 })),
+    openDocumentAnchor: (tabId, anchor) => {
+      set({ documentTarget: { tabId, docId: anchor.docId, key: anchor.key, at: Date.now() } });
+      void import('./panelLayoutStore').then((m) => m.usePanelLayoutStore.getState().revealPanelById('files'));
+    },
+    clearDocumentTarget: () => set({ documentTarget: null }),
 
     focusNotificationTarget: (target) => {
       const s = get();
@@ -1830,7 +1902,7 @@ export function createWorkbenchStore(mage: MageClient) {
       const settingsLoaded = mage.loadSettings().then((settings) => {
         applyThemeFromSettings(settings, systemPrefersDark());
         mage.setUiScale(settings.uiScale);
-        set((s) => ({ settings, accounts: applyAccentOverrides(s.accounts, settings.accentByAccount) }));
+        set((s) => ({ settings, settingsLoaded: true, accounts: applyAccentOverrides(s.accounts, settings.accentByAccount) }));
       });
       settingsLoaded.catch((err: unknown) => console.warn('No se pudo cargar la configuracion:', describeError(err)));
       // Novedades: DESPUES de restaurar el workspace (si no, restaurar reescribe `splitLayout` y se come
@@ -2072,7 +2144,7 @@ export function createWorkbenchStore(mage: MageClient) {
       if (tabId.length === 0) return;
       // Un borrador VACIO se borra en vez de guardarse: si no, cada pestaña por la que has pasado
       // dejaria una entrada muerta en el mapa.
-      const vacio = draft === null || (draft.text.length === 0 && draft.attachments.length === 0);
+      const vacio = draft === null || (draft.text.length === 0 && draft.attachments.length === 0 && draft.mentions.length === 0);
       set((s) => ({ draftByChat: vacio ? without(s.draftByChat, tabId) : { ...s.draftByChat, [tabId]: draft } }));
     },
 
@@ -2153,13 +2225,13 @@ export function createWorkbenchStore(mage: MageClient) {
     // excepcion es que ya este VIVA bajo otra cuenta: ahi se va a donde esta, porque dos procesos del CLI
     // sobre la misma transcripcion la corromperian. La decision vive en planOpenConversation (pura).
     // La sesion arranca perezosa al primer mensaje (ensureSession con --resume). Solo Claude.
-    openConversation: async (item) => {
+    openConversation: async (item, accountIdOverride) => {
       // Reabrir una conversacion que quedo en segundo plano CORTA su sesion viva y la reanuda con
       // `--resume` (decision del usuario, 2026-09-15): dos procesos del CLI no pueden escribir la misma
       // transcripcion, y re-engancharse a la viva era el camino caro. Si estaba esperando un permiso,
       // ese turno se pierde y hay que repetir la orden.
       await get().discardBackgroundConversation(item.sessionId);
-      const accountId = get().activeAccountId;
+      const accountId = accountIdOverride ?? get().activeAccountId;
       const account = get().accounts.find((a) => a.id === accountId);
       const plan = planOpenConversation({
         tabs: get().tabs,
@@ -2195,6 +2267,8 @@ export function createWorkbenchStore(mage: MageClient) {
         }));
         get().focusPrompt();
         schedulePersist(mage, get);
+        // La cuenta con la que se reasigna queda apuntada en el índice (lateral de todas las cuentas).
+        persistConversationPrefs(mage, get(), plan.tabId);
         return;
       }
       // Indice propio de Mage (2.1): modelo, esfuerzo y modo de permiso con los que se dejo ESTA
@@ -2224,12 +2298,13 @@ export function createWorkbenchStore(mage: MageClient) {
       }));
       get().focusPrompt();
       schedulePersist(mage, get);
+      persistConversationPrefs(mage, get(), tab.id);
     },
 
     // Cierra la pestana abierta de una conversacion (por sessionId) para que ningun proceso siga
     // escribiendo su .jsonl antes de borrarlo/moverlo. No-op si no esta abierta.
-    deleteConversation: async (sessionId, cwd, privacy) => {
-      const accountDir = get().activeAccountId;
+    deleteConversation: async (sessionId, cwd, privacy, accountDirOverride) => {
+      const accountDir = accountDirOverride ?? get().activeAccountId;
       if (accountDir.length === 0 || sessionId.length === 0) return;
       // ORDEN: primero cerrar la pestaña, DESPUES parar la sesion. Al reves no valia: `closeTab` manda
       // a segundo plano (sin parar el CLI) la conversacion que este trabajando, asi que el `discard`
@@ -2241,6 +2316,14 @@ export function createWorkbenchStore(mage: MageClient) {
       } catch (err) {
         reportActionError(t('errors.workbench.deleteConversationFailed'), err, 'history');
       }
+      set((s) => ({
+        settings: {
+          ...s.settings,
+          pinnedConversations: withIdPresence(s.settings.pinnedConversations, sessionId, false),
+          archivedConversations: withIdPresence(s.settings.archivedConversations, sessionId, false),
+        },
+      }));
+      scheduleSettingsPersist(mage, get);
       await get().loadConversationHistory();
     },
 
@@ -2851,7 +2934,7 @@ function restoreDraftAfterFailedSend(set: SetFn, tabId: string, text: string, at
   set((s) => {
     if (s.draftByChat[tabId] !== undefined) return {};
     const restored = attachments.map((attachment) => ({ attachment, byteLength: base64ByteLength(attachment.data) }));
-    return { draftByChat: { ...s.draftByChat, [tabId]: { text, attachments: restored } } };
+    return { draftByChat: { ...s.draftByChat, [tabId]: { text, attachments: restored, mentions: [] } } };
   });
 }
 
@@ -2974,6 +3057,11 @@ async function migrateToOtherProvider(
 function asAccountProvider(id: string): AccountProviderId {
   if (id === 'claude' || id === 'codex' || id === 'agy') return id;
   throw new Error(`Proveedor de cuenta desconocido: ${JSON.stringify(id)}`);
+}
+
+function lastTurnUsagePatch(state: WorkbenchState, tabId: string, usage: TurnUsage | undefined): Partial<WorkbenchState> {
+  if (usage === undefined) return {};
+  return { lastTurnUsageByChat: { ...state.lastTurnUsageByChat, [tabId]: usage } };
 }
 
 // Acumula el uso del turno de una pestaña de Codex o agy (las de Claude lo leen de su transcripción).
@@ -3163,15 +3251,14 @@ export function reduceEvent(state: WorkbenchState, tabId: string, event: MageEve
         ...clearPermissionIfMatches(state, tabId, event.requestId),
       };
     }
-    // Fin de turno. Si el proveedor reporta uso en su terminador (E3, `agy`), se deja como marcador de
-    // sistema: es el unico sitio donde ese gasto se puede ver (el panel de Uso lee el historial de la
-    // cuenta de Claude y no sabe nada de otros proveedores).
+    // Fin de turno. Si el proveedor reporta uso en su terminador (E3, `agy`), se guarda por pestana y lo
+    // pinta el panel Contexto («Tokens del ultimo turno»): ya no entra al hilo como bloque de sistema.
     case 'result': {
       const closed = closeStreaming(blocks, streamingId);
-      const usageText = event.result.usage === undefined ? null : turnUsageText(event.result.usage);
       return {
         ...providerUsagePatch(state, tabId, event.result.usage),
-        ...withBlocks(state, tabId, usageText === null ? closed : appendSystemBlock(closed, usageText, nextBlockId())),
+        ...lastTurnUsagePatch(state, tabId, event.result.usage),
+        ...withBlocks(state, tabId, closed),
         streamingIdByChat: { ...state.streamingIdByChat, [tabId]: null },
         statusByChat: { ...state.statusByChat, [tabId]: 'idle' },
       };
@@ -3386,7 +3473,7 @@ function isTurnRunning(status: ChatStatus | undefined): boolean {
   return status === 'streaming' || status === 'needs_permission';
 }
 
-const NO_DRAFT: PromptDraft = { text: '', attachments: [] };
+const NO_DRAFT: PromptDraft = { text: '', attachments: [], mentions: [] };
 
 // Al acabar un turno sale el PRIMERO de la cola; el siguiente espera a que acabe ese.
 // Vinculacion del PR (grupo D, `prBinding.ts`): la URL del `gh pr create` o la marca `<pr-created>`.
@@ -3659,7 +3746,7 @@ async function applyRewind(mage: MageClient, get: () => WorkbenchState, set: Set
   adoptProjection(set, tabId, result.projection);
   // En `rewind` el mensaje vuelve al cuadro de texto; en `retry` ya salió, salvo que main no pudiera enviarlo
   // (`retried` null): entonces su texto también vuelve, para no perderlo.
-  if (action === 'rewind' || result.retried === null) get().setDraft(tabId, { text: result.draft, attachments: pendingAttachmentsOf(attachments) });
+  if (action === 'rewind' || result.retried === null) get().setDraft(tabId, { text: result.draft, attachments: pendingAttachmentsOf(attachments), mentions: [] });
   returnMessagesToDraft(get, tabId, result.returnedQueue);
   if (result.retried === null) return;
   // `reconcileReceipt` pinta la burbuja del reintento (y el reloj del turno) si el recibo es `accepted`: no se

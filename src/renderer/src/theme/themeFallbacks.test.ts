@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canDerive, deriveStructuralTokens, type DerivedColor, type StructuralTokens } from './themeFallbacks';
+import { adjustSeparators, canDerive, deriveStructuralTokens, type DerivedColor, type StructuralTokens } from './themeFallbacks';
 import themes from './__fixtures__/vscodeThemes.json';
 
 // Colores crudos de cuatro temas reales de Open VSX (solo las claves que leen el módulo y el TOKEN_MAP),
@@ -147,5 +147,50 @@ describe('canDerive', () => {
 
   it('canDerive_panelYPrimerPlano_true', () => {
     expect(canDerive({ 'editor.background': '#1f1f1f', 'editor.foreground': '#cccccc' })).toBe(true);
+  });
+});
+
+describe('adjustSeparators', () => {
+  const nord = { panel: '#2e3440', foreground: '#d8dee9', weak: '#3b4252', separator: '#3b4252', control: '#3b4252' };
+  const ratio = (a: string, b: string): number => {
+    const lum = (hex: string): number => {
+      const channels = [1, 3, 5].map((i) => Number.parseInt(hex.slice(i, i + 2), 16) / 255);
+      const [r = 0, g = 0, bl = 0] = channels.map((c) => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4));
+      return 0.2126 * r + 0.7152 * g + 0.0722 * bl;
+    };
+    const [hi = 0, lo = 0] = [lum(a), lum(b)].sort((x, y) => y - x);
+    return (hi + 0.05) / (lo + 0.05);
+  };
+
+  it('adjustSeparators_normal_returnsInput', () => {
+    expect(adjustSeparators(nord, 'normal')).toEqual({ weak: '#3b4252', separator: '#3b4252', control: '#3b4252' });
+  });
+
+  it('adjustSeparators_strongNord_raisesWeakAndControl', () => {
+    const result = adjustSeparators(nord, 'strong');
+
+    expect(result).not.toBeNull();
+    expect(ratio(result!.weak, nord.panel)).toBeGreaterThanOrEqual(1.15 * 1.25);
+    expect(ratio(result!.separator, nord.panel)).toBeGreaterThanOrEqual(1.3 * 1.25);
+    expect(ratio(result!.control, nord.panel)).toBeGreaterThanOrEqual(1.45 * 1.25);
+  });
+
+  it('adjustSeparators_strongAlreadyVisible_keepsValue', () => {
+    const result = adjustSeparators({ ...nord, weak: '#ffffff' }, 'strong');
+
+    expect(result?.weak).toBe('#ffffff');
+  });
+
+  it('adjustSeparators_soft_lowersButNotBelowFloor', () => {
+    const result = adjustSeparators({ ...nord, weak: '#ffffff', control: '#ffffff' }, 'soft');
+
+    expect(result).not.toBeNull();
+    expect(ratio(result!.weak, nord.panel)).toBeLessThan(ratio('#ffffff', nord.panel));
+    expect(ratio(result!.weak, nord.panel)).toBeGreaterThanOrEqual(1.02);
+    expect(ratio(result!.control, nord.panel)).toBeGreaterThanOrEqual(1.02);
+  });
+
+  it('adjustSeparators_unreadablePanel_null', () => {
+    expect(adjustSeparators({ ...nord, panel: 'rgb(1,2,3)' }, 'strong')).toBeNull();
   });
 });

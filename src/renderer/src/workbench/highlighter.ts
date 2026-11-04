@@ -110,13 +110,19 @@ function ensureTheme(shiki: HighlighterCore, theme: ShikiThemeSpec): Promise<voi
   return loading;
 }
 
+// Tope de LONGITUD por linea, en lugar del de tiempo de shiki (que cortaba cada linea a los 500 ms y devolvia el
+// resto SIN color si la maquina iba cargada: la primera linea compila la gramatica). Con `tokenizeTimeLimit: 0`
+// no hay tope de tiempo y con esto una linea de mas de 2000 caracteres sale siempre en plano, cargue o no la
+// maquina: el resultado ya no depende de la carga.
+const SHIKI_MAX_LINE_LENGTH = 2000;
+
 // Tokeniza `code` con la gramatica y el tema dados. Devuelve lineas de tokens con color/estilo; el render
 // a React lo hace Markdown.tsx (nunca HTML crudo).
 export async function highlightCode(code: string, lang: HighlightLang, theme: ShikiThemeSpec): Promise<ThemedToken[][]> {
   const shiki = await core();
   await ensureLang(shiki, lang);
   await ensureTheme(shiki, theme);
-  return shiki.codeToTokens(code, { lang, theme: theme.name }).tokens;
+  return shiki.codeToTokens(code, { lang, theme: theme.name, tokenizeTimeLimit: 0, tokenizeMaxLineLength: SHIKI_MAX_LINE_LENGTH }).tokens;
 }
 
 // --- Hooks -------------------------------------------------------------------------------------

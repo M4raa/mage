@@ -86,7 +86,7 @@ function QueueAction({ icon, label, attr, onClick }: { readonly icon: 'pencil' |
       {...{ [attr]: 'true' }}
       aria-label={label}
       data-tip={label}
-      className="flex h-[18px] w-[18px] flex-none items-center justify-center rounded-[4px] text-mg-muted hover:bg-mg-sel hover:text-mg-body"
+      className="flex h-[18px] w-[18px] flex-none items-center justify-center rounded-[4px] text-mg-muted hover:bg-mg-sel hover:text-mg-sel-ink"
     >
       <Icon name={icon} size={10} />
     </button>

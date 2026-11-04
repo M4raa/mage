@@ -64,6 +64,18 @@ describe('validateAttachment', () => {
     expect((thrown as UserFacingError).localized).toEqual({ key: 'errors.attachments.tooMany', values: { max: '10', count: '11' } });
   });
 
+  it('validateAttachment_pdf_accepted', () => {
+    expect(validateAttachment({ mediaType: 'application/pdf', byteLength: 2048 }, ES)).toEqual({ mediaType: 'application/pdf', byteLength: 2048 });
+  });
+
+  it('validateAttachment_docx_rejectedListingAllowed', () => {
+    const type = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+    const thrown = catchError(() => validateAttachment({ mediaType: type, byteLength: 10 }, ES)) as UserFacingError;
+
+    expect(thrown.localized.key).toBe('errors.attachments.unsupportedType');
+    expect(thrown.localized.values?.allowed).toBe('image/png, image/jpeg, image/webp, image/gif, application/pdf');
+  });
+
   it('validateAttachment_ceroBytes_lanza', () => {
     expect(() => validateAttachment({ mediaType: 'image/png', byteLength: 0 }, ES)).toThrow(/tamaño de imagen inválido: 0/i);
     expect(() => validateAttachment({ mediaType: 'image/png', byteLength: -5 }, ES)).toThrow(/inválido: -5/i);
@@ -96,7 +108,7 @@ describe('validateAttachmentSet', () => {
   it('validateAttachmentSet_unoInvalidoEnElLote_lanzaYNoAdjuntaNinguno', () => {
     // Se valida ANTES de devolver nada: no se cuela media tanda.
     expect(() =>
-      validateAttachmentSet([], [{ mediaType: 'image/png', byteLength: 10 }, { mediaType: 'application/pdf', byteLength: 10 }], ES),
+      validateAttachmentSet([], [{ mediaType: 'image/png', byteLength: 10 }, { mediaType: 'application/zip', byteLength: 10 }], ES),
     ).toThrow(/no admitido/i);
   });
 });

@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { foreignText, localized, UserFacingError } from '@shared/i18n/localizedText';
-import { classifyGhExit, normalizeCheckState, parsePrView, parseRunList, pickBranchPr, summarizeChecks } from './ghParse';
+import { classifyGhExit, normalizeCheckState, parseHeadOnly, parseMergeOptions, parsePrDetail, parsePrList, parsePrView, parseRunList, pickBranchPr, summarizeChecks } from './ghParse';
 
 // Fixtures MEDIDOS con gh 2.102.0 (`spike/gh-spike.mjs` con MAGE_GH_FIXTURES), anonimizados a acme/demo.
 const PR_LIST = readFileSync(new URL('./__fixtures__/pr-list-head.json', import.meta.url), 'utf8');
@@ -136,5 +136,54 @@ describe('normalizeCheckState / summarizeChecks / classifyGhExit', () => {
     expect(classifyGhExit(4)).toBe('no-auth');
     expect(classifyGhExit(1)).toBe('error');
     expect(classifyGhExit(-1)).toBe('error');
+  });
+});
+
+describe('panel de PR', () => {
+  const REPO = { host: 'github.com', owner: 'acme', repo: 'demo' };
+  const LIST = readFileSync(new URL('./__fixtures__/pr-list-repo.json', import.meta.url), 'utf8');
+  const DETAIL = readFileSync(new URL('./__fixtures__/pr-detail.json', import.meta.url), 'utf8');
+
+  it('parsePrList_twoPrs_keysFromRepo', () => {
+    const prs = parsePrList(LIST, REPO);
+
+    expect(prs.map((pr) => pr.key)).toEqual([
+      { host: 'github.com', owner: 'acme', repo: 'demo', number: 12 },
+      { host: 'github.com', owner: 'acme', repo: 'demo', number: 13 },
+    ]);
+    expect(prs[0]).toMatchObject({ author: 'vg-dev', updatedAt: '2026-10-01T10:00:00.000Z', reviewDecision: 'approved', headSha: '1'.repeat(40) });
+    expect(prs[1]).toMatchObject({ author: 'app/vg-bot', isDraft: true, updatedAt: '' });
+  });
+
+  it('parsePrList_oneBadEntry_skipped', () => {
+    const list = JSON.parse(LIST) as unknown[];
+
+    const prs = parsePrList(JSON.stringify([{ number: 'x' }, ...list]), REPO);
+
+    expect(prs.map((pr) => pr.number)).toEqual([12, 13]);
+  });
+
+  it('parsePrDetail_reviewsCommentsFiles', () => {
+    const detail = parsePrDetail(DETAIL, REPO);
+
+    expect(detail.body).toBe('Cuerpo de la PR\ncon dos lineas');
+    expect(detail.reviews).toEqual([{ author: 'revisora', state: 'APPROVED', submittedAt: '2026-10-01T12:00:00.000Z', body: 'Bien' }]);
+    expect(detail.comments).toEqual([{ author: 'vg-dev', createdAt: '2026-10-01T11:00:00.000Z', body: 'Un comentario' }]);
+    expect(detail.files).toEqual([
+      { path: 'src/a.ts', additions: 3, deletions: 1 },
+      { path: 'README.md', additions: 10, deletions: 0 },
+    ]);
+  });
+
+  it('parsePrDetail_badShape_throwsWithExcerpt', () => {
+    expect(() => parsePrDetail('{"number":"no"}', REPO)).toThrow('{"number":"no"}');
+  });
+
+  it('parseMergeOptions_missing_false', () => {
+    expect(parseMergeOptions('{"squashMergeAllowed":true}')).toEqual({ merge: false, squash: true, rebase: false });
+  });
+
+  it('parseHeadOnly_ok', () => {
+    expect(parseHeadOnly(`{"headRefOid":"${'A'.repeat(40)}","state":"MERGED"}`)).toEqual({ headSha: 'a'.repeat(40), state: 'merged' });
   });
 });

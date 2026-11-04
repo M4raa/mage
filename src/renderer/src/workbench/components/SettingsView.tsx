@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useRef, useState } from 'react';
 import { LanguageControl } from './LanguageControl';
+import { AvatarsPlacementControl, SeparatorContrastControl } from './AppearanceChoice';
 import { canCheckForUpdates, updateStatusText } from '../updateStatus';
 import type {
   CloseBehavior,
@@ -181,8 +182,8 @@ function SettingsDialog(): React.JSX.Element {
                 aria-controls={`settings-panel-${s.key}`}
                 tabIndex={s.key === section ? 0 : -1}
                 onClick={() => setSection(s.key)}
-                className={`flex items-center gap-[8px] rounded-[7px] px-[10px] py-[6px] text-left text-[11.5px] transition-colors duration-150 ease-out ${
-                  s.key === section ? 'bg-mg-sel text-mg-body' : 'text-mg-body2 hover:bg-mg-hover'
+                className={`flex items-center gap-[8px] rounded-[7px] px-[10px] py-[6px] text-left text-[11.5px] transition-colors duration-90 ease-out ${
+                  s.key === section ? 'bg-mg-sel text-mg-sel-ink relative before:pointer-events-none before:absolute before:inset-y-0 before:left-0 before:w-[2px] before:bg-mg-sel-mark' : 'text-mg-body2 hover:bg-mg-hover'
                 }`}
               >
                 <Icon name={s.icon} className={s.key === section ? 'text-mg-focus' : 'text-mg-ter'} />
@@ -311,6 +312,8 @@ function AppearanceSection({
     <div className="flex min-h-0 flex-1 flex-col gap-[16px] overflow-y-auto p-[14px_16px]">
       <LanguageControl />
       <UiScaleControl />
+      <AvatarsPlacementControl />
+      <SeparatorContrastControl />
       <div className="flex flex-col gap-[8px]">
         <span className="text-[10.5px] font-bold tracking-[.06em] text-mg-ter">{t('settings.appearance.opacityLabel')}</span>
         <div className="flex items-center gap-[12px]">
@@ -343,7 +346,7 @@ function AppearanceSection({
                 data-tip={t(option.hint)}
                 aria-pressed={selected}
                 className={`flex-1 rounded-[8px] border px-[12px] py-[10px] text-left ${
-                  selected ? 'border-mg-focus bg-mg-sel text-mg-text' : 'border-mg-border-ctrl text-mg-body2 hover:bg-mg-hover'
+                  selected ? 'border-mg-focus bg-mg-sel text-mg-sel-ink relative before:pointer-events-none before:absolute before:inset-y-0 before:left-0 before:w-[2px] before:bg-mg-sel-mark' : 'border-mg-border-ctrl text-mg-body2 hover:bg-mg-hover'
                 }`}
               >
                 <div className="text-[12px] font-semibold">{t(option.label)}</div>
@@ -436,7 +439,7 @@ function ReleaseNotesSection(): React.JSX.Element {
       <p className="text-[11px] leading-[1.5] text-mg-sec">{t('settings.releaseNotes.description')}</p>
       <button
         onClick={() => open()}
-        className="self-start rounded-[7px] border border-mg-border-emph px-[12px] py-[6px] text-[11.5px] text-mg-body transition-colors duration-150 ease-out hover:bg-mg-hover"
+        className="self-start rounded-[7px] border border-mg-border-emph px-[12px] py-[6px] text-[11.5px] text-mg-body transition-colors duration-90 ease-out hover:bg-mg-hover"
       >
         {t('settings.releaseNotes.open')}
       </button>
@@ -446,7 +449,7 @@ function ReleaseNotesSection(): React.JSX.Element {
           <li key={entry.version}>
             <button
               onClick={() => open(entry.version)}
-              className="flex w-full items-baseline gap-[10px] rounded-[7px] px-[10px] py-[6px] text-left text-[11.5px] text-mg-body2 transition-colors duration-150 ease-out hover:bg-mg-hover"
+              className="flex w-full items-baseline gap-[10px] rounded-[7px] px-[10px] py-[6px] text-left text-[11.5px] text-mg-body2 transition-colors duration-90 ease-out hover:bg-mg-hover"
             >
               <span className="font-mono text-mg-body">{entry.version}</span>
               <span className="text-mg-ter">{entry.label}</span>
@@ -476,7 +479,7 @@ function UpdateCheck(): React.JSX.Element {
       <button
         onClick={checkForUpdates}
         disabled={!canCheckForUpdates(state)}
-        className="rounded-[7px] border border-mg-border-emph px-[12px] py-[6px] text-[11.5px] text-mg-body transition-colors duration-150 ease-out hover:bg-mg-hover disabled:opacity-50"
+        className="rounded-[7px] border border-mg-border-emph px-[12px] py-[6px] text-[11.5px] text-mg-body transition-colors duration-90 ease-out hover:bg-mg-hover disabled:opacity-50"
       >
         {t('settings.update.check')}
       </button>
@@ -945,7 +948,7 @@ function KeybindingRow({
           <button
             ref={captureRef}
             onKeyDown={onCaptureKeyDown}
-            className="shrink-0 rounded-[6px] border border-mg-focus bg-mg-sel px-[10px] py-[3px] text-[10.5px] text-mg-text outline-none"
+            className="shrink-0 rounded-[6px] border border-mg-focus bg-mg-sel px-[10px] py-[3px] text-[10.5px] text-mg-sel-ink outline-none"
           >
             {t('settings.keybindings.capturing')}
           </button>
@@ -1205,7 +1208,7 @@ function TrustedFoldersSection(): React.JSX.Element {
               <button
                 onClick={() => void revokeTrustedFolder(folder)}
                 aria-label={t('settings.trustedFolders.revokeAria', { folder })}
-                className="flex-none rounded-[5px] border border-mg-border-emph px-[8px] py-[3px] text-[11px] text-mg-body2 transition-colors duration-150 ease-out hover:bg-mg-hover"
+                className="flex-none rounded-[5px] border border-mg-border-emph px-[8px] py-[3px] text-[11px] text-mg-body2 transition-colors duration-90 ease-out hover:bg-mg-hover"
               >
                 {t('settings.trustedFolders.revoke')}
               </button>

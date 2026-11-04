@@ -12,11 +12,20 @@ import { useT } from '../../i18n/uiLanguage';
 // se cuela el numero del atajo ("Permitir1"), que un lector de pantalla lee tal cual y que no hay
 // manera de anclar desde fuera (costo varias tandas de verificacion creyendo que el boton no estaba).
 
+export interface PermissionKeys {
+  readonly allow: string | null;
+  readonly allowAlways: string | null;
+  readonly deny: string | null;
+}
+
+const DEFAULT_KEYS: PermissionKeys = { allow: '1', allowAlways: '2', deny: '3' };
+
 export function PermissionDecisionButtons({
   toolLabel,
   requestId,
   rememberable = true,
   compact = false,
+  keys = DEFAULT_KEYS,
 }: {
   readonly toolLabel: string;
   // false = la peticion es de fuera del proyecto o de red (runtime propio): no se ofrece recordarla.
@@ -24,9 +33,12 @@ export function PermissionDecisionButtons({
   // La peticion que contestan. La tarjeta pasa la SUYA: con varias en cola (tools en paralelo), cada
   // tarjeta decide sobre su can_use_tool. Sin ella (panel), la primera de la cola.
   readonly requestId?: string;
-  // En la tarjeta del chat los botones van en FILA y sin el numero del atajo: es una tarjeta dentro del
-  // hilo, no el contenido de un panel, y ahi el ancho es el recurso escaso.
+  // En la tarjeta del chat los botones van en FILA: una primaria, una secundaria y Denegar como texto.
   readonly compact?: boolean;
+  // Las teclas EFECTIVAS de las tres acciones (las reasignables del catalogo); null = sin tecla. La tarjeta las
+  // pasa (usePermissionKeys); no se leen aqui porque este modulo cuelga del panel de Permisos, que el registro
+  // de paneles importa, y el catalogo de atajos importa ese registro: un ciclo.
+  readonly keys?: PermissionKeys;
 }): React.JSX.Element {
   const tabId = usePaneTabId();
   const answerFor = useWorkbenchStore((s) => s.answerPermissionFor);
@@ -42,14 +54,14 @@ export function PermissionDecisionButtons({
       data-permission-sending={sending ? 'true' : undefined}
       className={compact ? 'flex flex-wrap items-center gap-[6px] text-[11.5px]' : 'flex flex-col gap-[6px] text-[12px]'}
     >
-      <Option shortcut="1" label={t('chat.permission.allow')} primary compact={compact} disabled={sending} onClick={() => answer({ behavior: 'allow' })}>
+      <Option shortcut={keys.allow} label={t('chat.permission.allow')} primary compact={compact} disabled={sending} onClick={() => answer({ behavior: 'allow' })}>
         {t('chat.permission.allow')}
       </Option>
       {/* "Permitir siempre" SI recuerda (2.3b): guarda una regla por conversacion en el indice de Mage y
           los siguientes can_use_tool de esa tool se auto-aprueban. Se lista y se revoca en el panel. */}
       {rememberable && (
         <Option
-          shortcut="2"
+          shortcut={keys.allowAlways}
           label={t('chat.permission.allowAlwaysAria', { tool: toolLabel })}
           compact={compact}
           disabled={sending}
@@ -59,7 +71,8 @@ export function PermissionDecisionButtons({
         </Option>
       )}
       <Option
-        shortcut="3"
+        shortcut={keys.deny}
+        deny
         label={t('chat.permission.denyAria')}
         compact={compact}
         disabled={sending}
@@ -76,30 +89,37 @@ function Option({
   shortcut,
   label,
   primary = false,
+  deny = false,
   compact,
   disabled,
   onClick,
   children,
 }: {
-  readonly shortcut: string;
+  readonly shortcut: string | null;
   readonly label: string;
   readonly primary?: boolean;
+  readonly deny?: boolean;
   readonly compact: boolean;
   readonly disabled: boolean;
   readonly onClick: () => void;
   readonly children: React.ReactNode;
 }): React.JSX.Element {
   const base = compact
-    ? 'flex items-center rounded-[7px] px-[10px] py-[4px]'
+    ? 'flex items-center gap-[6px] rounded-[7px] px-[10px] py-[4px]'
     : 'flex items-center justify-between rounded-[7px] p-[8px_12px]';
-  const skin = primary
-    ? 'bg-mg-primary font-semibold text-mg-primary-ink'
-    : 'border border-mg-border-emph text-mg-body2 hover:bg-mg-hover';
+  // En la tarjeta compacta "Denegar" es un boton de texto: una primaria, una secundaria y esa (Q-U3).
+  const textOnly = compact && deny;
+  const primarySkin = 'bg-mg-primary font-semibold text-mg-primary-ink';
+  const secondarySkin = 'border border-mg-border-emph text-mg-body2 hover:bg-mg-hover';
+  const textSkin = 'text-mg-sec underline-offset-2 hover:text-mg-body hover:underline';
+  const filledSkin = primary ? primarySkin : secondarySkin;
+  const skin = textOnly ? textSkin : filledSkin;
+  const keyClass = compact ? 'font-mono text-[10.5px] opacity-60' : 'font-mono text-[10.5px] opacity-50';
   return (
-    <button onClick={onClick} disabled={disabled} aria-label={label} aria-keyshortcuts={shortcut} className={`${base} ${skin} disabled:cursor-default disabled:opacity-50`}>
+    <button onClick={onClick} disabled={disabled} aria-label={label} aria-keyshortcuts={shortcut ?? undefined} className={`${base} ${skin} disabled:cursor-default disabled:opacity-50`}>
       <span>{children}</span>
-      {!compact && (
-        <span aria-hidden="true" className="font-mono text-[10.5px] opacity-50">
+      {shortcut !== null && (
+        <span aria-hidden="true" className={keyClass}>
           {shortcut}
         </span>
       )}

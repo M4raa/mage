@@ -354,7 +354,7 @@ function DialogBody({
         <div className="mt-[2px] flex justify-end gap-[8px]">
           <button
             onClick={cancelAll}
-            className="rounded-[7px] border border-mg-border-emph px-[12px] py-[7px] text-mg-body2 transition-colors duration-150 ease-out hover:bg-mg-hover"
+            className="rounded-[7px] border border-mg-border-emph px-[12px] py-[7px] text-mg-body2 transition-colors duration-90 ease-out hover:bg-mg-hover"
           >
             {t('dialogs.newTab.cancel')}
           </button>

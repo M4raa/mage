@@ -122,7 +122,7 @@ function ActivityHeader({ tabId, title, subagent }: { readonly tabId: string; re
           onClick={() => openActivity(tabId, null)}
           data-activity-filter
           data-tip={t('chat.activity.showAllSteps')}
-          className="ml-auto flex shrink-0 items-center gap-[4px] rounded-[4px] bg-mg-sel px-[5px] py-[1px] text-[9.5px] text-mg-body hover:bg-mg-hover"
+          className="ml-auto flex shrink-0 items-center gap-[4px] rounded-[4px] bg-mg-sel px-[5px] py-[1px] text-[9.5px] text-mg-sel-ink hover:bg-mg-hover"
         >
           <Icon name="toolAgent" size={12} /> {subagent.agentType ?? t('chat.activity.subagentFallback')} <Icon name="close" size={10} />
         </button>
@@ -189,7 +189,7 @@ function StepRow({
       data-activity-live={running ? 'true' : undefined}
       aria-pressed={selected}
       style={running ? { borderLeft: `2px solid ${accent}`, backgroundColor: `color-mix(in srgb, ${accent} ${LIVE_ROW_BG_PERCENT}%, transparent)` } : undefined}
-      className={`flex h-[24px] w-full items-center gap-[7px] px-[10px] text-left font-mono text-[10.5px] ${running || selected ? (selected ? 'bg-mg-sel' : '') : 'hover:bg-mg-hover'} ${label.nested ? 'pl-[24px]' : ''}`}
+      className={`flex h-[24px] w-full items-center gap-[7px] px-[10px] text-left font-mono text-[10.5px] ${running || selected ? (selected ? 'bg-mg-sel text-mg-sel-ink relative before:pointer-events-none before:absolute before:inset-y-0 before:left-0 before:w-[2px] before:bg-mg-sel-mark' : '') : 'hover:bg-mg-hover'} ${label.nested ? 'pl-[24px]' : ''}`}
     >
       <span
         data-tool-glyph

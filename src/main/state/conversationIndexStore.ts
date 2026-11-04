@@ -44,13 +44,15 @@ const LEGACY_INDEX_VERSION = 1;
 // (comprueba la version), asi que volver atras pierde las preferencias si no hay copia.
 const LEGACY_BACKUP_SUFFIX = '.v1.bak';
 
-const PREF_KEYS = ['model', 'effort', 'permissionMode', 'provider', 'alwaysAllowTools'] as const;
+const PREF_KEYS = ['model', 'effort', 'permissionMode', 'provider', 'accountId', 'alwaysAllowTools'] as const;
 
 const PREFS_SCHEMA = z.object({
   model: z.string().min(1).optional(),
   effort: z.string().min(1).optional(),
   permissionMode: z.enum(['default', 'acceptEdits', 'plan', 'auto', 'bypassPermissions']).optional().catch(undefined),
   provider: z.string().min(1).optional().catch(undefined),
+  // Última cuenta con la que se usó la conversación (lateral de todas las cuentas).
+  accountId: z.string().min(1).optional().catch(undefined),
   // "Permitir siempre <tool> aqui" (2.3b).
   alwaysAllowTools: z.array(z.string().min(1)).optional(),
 });
@@ -249,7 +251,7 @@ function prefsOf(entry: ConversationEntry): ConversationPrefs | null {
 // Fusion campo a campo: `undefined` conserva lo que hubiera; cadena vacia borra.
 function mergePrefs(current: ConversationEntry | undefined, incoming: ConversationPrefs): ConversationEntry {
   const merged: Record<string, unknown> = { ...current };
-  for (const key of ['model', 'effort', 'permissionMode', 'provider'] as const) {
+  for (const key of ['model', 'effort', 'permissionMode', 'provider', 'accountId'] as const) {
     const value = incoming[key];
     if (value === undefined) continue;
     if (value.length === 0) delete merged[key];

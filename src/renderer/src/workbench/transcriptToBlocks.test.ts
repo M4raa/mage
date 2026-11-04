@@ -110,6 +110,12 @@ describe('transcriptToBlocks', () => {
     expect(blocks[0]).toEqual({ kind: 'agent', id: 'tb-1-0', runs: [{ code: false, text: 'respuesta' }], streaming: false });
   });
 
+  it('transcriptToBlocks_exitPlanMode_planText', () => {
+    const blocks = transcriptToBlocks([assistantToolUse('tp1', 'ExitPlanMode', { plan: '## 3.4 Identidad' }, 2)]);
+
+    expect(blocks[0]).toMatchObject({ kind: 'tool', tool: 'ExitPlanMode', planText: '## 3.4 Identidad' });
+  });
+
   it('toolUseYSuResult_emparejaYRellenaElBloqueTool', () => {
     const blocks = transcriptToBlocks([
       assistantToolUse('tu1', 'Bash', { command: 'ls -la' }, 2),
@@ -481,5 +487,29 @@ describe('transcriptToBlocks — imagenes intercaladas', () => {
 
     expect(block).toMatchObject({ kind: 'user', text: 'compara [Imagen 1] con [Imagen 2]' });
     expect(block?.kind === 'user' ? block.attachments.map((a) => a.data) : []).toEqual(['A', 'B']);
+  });
+});
+
+describe('transcriptToBlocks — bloque document', () => {
+  it('transcriptToBlocks_userDocumentBlock_keepsText', () => {
+    const withPdf = entry(
+      'user',
+      {
+        type: 'user',
+        message: {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'lee el pdf' },
+            { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: 'JVBERg==' } },
+          ],
+        },
+      },
+      7,
+    );
+
+    const blocks = transcriptToBlocks([withPdf]);
+
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0]).toMatchObject({ kind: 'user', text: 'lee el pdf' });
   });
 });

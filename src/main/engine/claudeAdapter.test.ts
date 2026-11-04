@@ -606,3 +606,17 @@ describe('ClaudeAdapter: checkpoints de ficheros y fork (T1, A2)', () => {
     expect(() => adapter.buildSpawnPlan({ ...base, forkFrom: { sessionId: ORIGIN, atUuid: 'no-uuid' } })).toThrow('"no-uuid"');
   });
 });
+
+describe('ClaudeAdapter — adjunto PDF', () => {
+  it('encodeUserMessage_pdfAttachment_documentBlock', () => {
+    const adapter = new ClaudeAdapter({ resolveBinary: () => 'claude' });
+    const data = Buffer.from('0123456789').toString('base64');
+
+    const result = adapter.encodeUserMessage('lee esto', [{ mediaType: 'application/pdf', data }]) as { message: { content: unknown } };
+
+    expect(result.message.content).toEqual([
+      { type: 'text', text: 'lee esto' },
+      { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data } },
+    ]);
+  });
+});

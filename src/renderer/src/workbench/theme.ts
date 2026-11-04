@@ -1,4 +1,5 @@
-import type { AppSettings, ImportedTheme, ThemePreference } from '@shared/settings';
+import type { AppSettings, ImportedTheme, SeparatorContrast, ThemePreference } from '@shared/settings';
+import { adjustSeparators } from '../theme/themeFallbacks';
 
 // Tema RESUELTO: siempre concreto (la UI aplica 'light' o 'dark', nunca 'system').
 export type ResolvedTheme = 'light' | 'dark';
@@ -109,13 +110,46 @@ export function applyThemeFromSettings(settings: AppSettings, prefersDark: boole
     applyResolvedTheme(active.type);
     applyCustomThemeTokens(active.tokens);
     applyBackgroundOpacity(settings.backgroundOpacity);
+    applySeparatorContrast(settings.separatorContrast);
     syncTitleBarOverlay();
     return;
   }
   applyResolvedTheme(resolveTheme(settings.theme, prefersDark));
   clearCustomThemeTokens();
   applyBackgroundOpacity(settings.backgroundOpacity);
+  applySeparatorContrast(settings.separatorContrast);
   syncTitleBarOverlay();
+}
+
+// Variables CSS de las tres separaciones, de más débil a más fuerte (en el orden de `adjustSeparators`).
+const SEPARATOR_VARS = { weak: '--color-mg-border-subtle', separator: '--color-mg-border', control: '--color-mg-border-ctrl' } as const;
+const SEPARATOR_PANEL_VAR = '--color-mg-panel';
+const SEPARATOR_FOREGROUND_VAR = '--color-mg-body';
+
+// Contraste de separaciones (U7). El orden importa: primero se QUITAN las tres propiedades en línea (para que mande el
+// tema), después se lee el estado resultante y solo entonces se fijan; si no, se leería el ajuste anterior. Con
+// `normal` se queda en el primer paso.
+export function applySeparatorContrast(level: SeparatorContrast): void {
+  const root = document.documentElement;
+  for (const name of Object.values(SEPARATOR_VARS)) root.style.removeProperty(name);
+  if (level === 'normal') return;
+  const styles = getComputedStyle(root);
+  const read = (name: string): string => styles.getPropertyValue(name).trim();
+  const input = {
+    panel: read(SEPARATOR_PANEL_VAR),
+    foreground: read(SEPARATOR_FOREGROUND_VAR),
+    weak: read(SEPARATOR_VARS.weak),
+    separator: read(SEPARATOR_VARS.separator),
+    control: read(SEPARATOR_VARS.control),
+  };
+  const adjusted = adjustSeparators(input, level);
+  if (adjusted === null) {
+    console.warn('No se pudo ajustar el contraste de separaciones: colores ilegibles', input);
+    return;
+  }
+  root.style.setProperty(SEPARATOR_VARS.weak, adjusted.weak);
+  root.style.setProperty(SEPARATOR_VARS.separator, adjusted.separator);
+  root.style.setProperty(SEPARATOR_VARS.control, adjusted.control);
 }
 
 // Los BOTONES de ventana (minimizar/maximizar/cerrar) los sigue pintando el SO, no el DOM: son la

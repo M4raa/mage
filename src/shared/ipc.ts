@@ -7,12 +7,14 @@ import type { ResolvedUiLanguage } from './i18n/language';
 import type { LocalizedText } from './i18n/localizedText';
 import type { GitParams, GitSnapshot, GitSwitchParams } from './git';
 import type { WorktreeCreateParams, WorktreeMergeBaseParams, WorktreeRemoveResult } from './worktree';
+import type { PrCatalogEntry, PrCatalogLinkParams, PrCatalogUnlinkParams, PrDetail, PrListParams, PrListResult, PrMigrateParams, PrReadParams, PrWriteParams, PrWriteResult } from './pr';
 import type { GhAutoMergeParams, GhPrUpdate, GhRunActionParams, GhRunsParams, GhRunsSnapshot, GhSnapshot, GhWatchParams } from './gh';
 import type { AccountCreateParams, AccountInfo, AccountProviderId, AgyLoginStart, CliLoginStart, CodexLoginOutcome, EmbeddedLoginResult } from './accounts';
 import type { ProviderModel } from './providers';
 import type { AgyUsageSnapshot } from './usage';
 import type { MageEvent, PermissionDecision, SlashCommandInfo } from './events';
 import type { ArtifactRecord, ConversationPrefs } from './conversationIndex';
+import type { MentionPreview, MentionPreviewParams, MentionResolution, MentionResolveParams, MentionSearchParams, MentionSearchResult } from './mentions';
 import type { AnswerReceipt, CloseReceipt, ConversationId, ConversationSnapshot, QueuedMessage, SendMode, SendReceipt } from './coordination';
 import type { UsageInfo } from './usage';
 import type { StatusInfo } from './status';
@@ -198,6 +200,10 @@ export const IpcChannel = {
   ProjectFileApproveOutside: 'projectFile:approveOutside',
   // Historial de conversaciones en disco de una cuenta (M2.6, sidebar = historial).
   ConversationsList: 'conversations:list',
+  // Menciones @ de ficheros de la carpeta (Q05): buscar, resolver al enviar y vista previa; todo en main.
+  MentionsSearch: 'mentions:search',
+  MentionsResolve: 'mentions:resolve',
+  MentionsPreview: 'mentions:preview',
   // Administracion de conversaciones (#2 de AJUSTES): borrar y mover entre secciones/cuentas.
   ConversationsDelete: 'conversations:delete',
   ConversationsMove: 'conversations:move',
@@ -223,6 +229,16 @@ export const IpcChannel = {
   GhRuns: 'gh:runs',
   GhRunAction: 'gh:runAction',
   GhAutoMerge: 'gh:autoMerge',
+  // Panel de PR por clave (F5.5): listado, detalle, diff, escrituras atadas al head esperado y catalogo.
+  PrList: 'pr:list',
+  PrDetail: 'pr:detail',
+  PrDiff: 'pr:diff',
+  PrWrite: 'pr:write',
+  PrCatalogList: 'pr:catalogList',
+  PrCatalogLink: 'pr:catalogLink',
+  PrCatalogUnlink: 'pr:catalogUnlink',
+  PrMigrate: 'pr:migrate',
+  PrRepoOf: 'pr:repoOf',
   // Worktrees de Mage (grupo D, bloque 3): crear al empezar, recrear al reabrir, archivar y traer la base.
   WorktreeCreate: 'worktree:create',
   WorktreeRestore: 'worktree:restore',
@@ -462,7 +478,7 @@ export type DivergeResult =
 // validacion (tipos permitidos y topes de tamaño) es del modulo puro `attachments.ts`, y se aplica en
 // los DOS lados: el renderer para dar un error bonito, main porque es la frontera de verdad.
 export interface ImageAttachment {
-  readonly mediaType: 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif';
+  readonly mediaType: 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif' | 'application/pdf';
   readonly data: string;
 }
 
@@ -1087,6 +1103,17 @@ export interface MageApi {
   ghRuns(params: GhRunsParams): Promise<GhRunsSnapshot>;
   ghRunAction(params: GhRunActionParams): Promise<void>;
   ghAutoMerge(params: GhAutoMergeParams): Promise<void>;
+  // Panel de PR (F5.5). Las escrituras llevan el head que el usuario vio y devuelven `conflict` si cambio.
+  listPrs(params: PrListParams): Promise<PrListResult>;
+  prDetail(params: PrReadParams): Promise<PrDetail>;
+  prDiff(params: PrReadParams): Promise<{ readonly patch: string; readonly truncated: boolean }>;
+  writePr(params: PrWriteParams): Promise<PrWriteResult>;
+  listPrCatalog(conversationId?: string): Promise<readonly PrCatalogEntry[]>;
+  linkPr(params: PrCatalogLinkParams): Promise<void>;
+  unlinkPr(params: PrCatalogUnlinkParams): Promise<void>;
+  migrateTabPr(params: PrMigrateParams): Promise<string | null>;
+  // Repo de GitHub de la carpeta de una pestaña (null sin remoto o si no es github.com).
+  prRepoOf(params: GitParams): Promise<{ readonly host: string; readonly owner: string; readonly repo: string } | null>;
   onGhPrUpdate(listener: (update: GhPrUpdate) => void): () => void;
   // Worktrees (grupo D). `worktreeCreate` da null si la carpeta no es la raiz del repo.
   worktreeCreate(params: WorktreeCreateParams): Promise<{ readonly path: string; readonly branch: string } | null>;
@@ -1120,6 +1147,10 @@ export interface MageApi {
   // Lista las conversaciones EN DISCO de una cuenta (M2.6, sidebar = historial): compartidas (pozo
   // comun) + privadas (perfil mage-private), mas recientes primero. Solo metadatos (sin contenido).
   listConversations(accountDir: string): Promise<readonly ConversationSummary[]>;
+  // Menciones @ (Q05): candidatos de la carpeta, resolucion por motor justo al enviar y vista previa.
+  searchMentions(params: MentionSearchParams): Promise<MentionSearchResult>;
+  resolveMentions(params: MentionResolveParams): Promise<MentionResolution>;
+  previewMention(params: MentionPreviewParams): Promise<MentionPreview>;
   deleteConversation(params: DeleteConversationParams): Promise<void>;
   moveConversation(params: MoveConversationParams): Promise<MoveConversationResult>;
   // Sigue la MISMA conversación en una cuenta de otro proveedor (formato nativo del destino); la de origen se retira.

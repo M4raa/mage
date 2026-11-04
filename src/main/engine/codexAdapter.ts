@@ -1,4 +1,5 @@
 import type { ImageAttachment } from '@shared/ipc';
+import { ALLOWED_IMAGE_TYPES } from '@shared/attachments';
 import type { MageEvent, PermissionDecision } from '@shared/events';
 import { localized, UserFacingError } from '@shared/i18n/localizedText';
 import { parseElicitationRequest, validateElicitationAnswer, type ElicitationAnswer, type ElicitationRequest } from '@shared/elicitation';
@@ -505,7 +506,11 @@ function describeRpcError(error: Record<string, unknown>): string {
 
 function buildInput(text: string, attachments: readonly ImageAttachment[]): unknown[] {
   const input: unknown[] = [{ type: 'text', text, text_elements: [] }];
-  for (const attachment of attachments) input.push({ type: 'image', url: `data:${attachment.mediaType};base64,${attachment.data}` });
+  for (const attachment of attachments) {
+    // Contrato (Q05): Codex solo recibe imagenes; la resolucion de menciones nunca le manda un PDF.
+    if (!ALLOWED_IMAGE_TYPES.has(attachment.mediaType)) throw new Error(`Codex solo admite imagenes como adjunto, llego ${JSON.stringify(attachment.mediaType)}`);
+    input.push({ type: 'image', url: `data:${attachment.mediaType};base64,${attachment.data}` });
+  }
   return input;
 }
 

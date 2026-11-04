@@ -23,7 +23,7 @@ export function mergeIntoDraft(messages: readonly QueuedMessage[], draft: Prompt
     for (const attachment of message.attachments) attachments.push({ attachment, byteLength: base64ByteLength(attachment.data) });
   }
   pushText(texts, shiftImageTokens(draft.text, attachments.length));
-  return { text: texts.join(JOIN), attachments: [...attachments, ...draft.attachments] };
+  return { text: texts.join(JOIN), attachments: [...attachments, ...draft.attachments], mentions: draft.mentions };
 }
 
 function pushText(texts: string[], text: string): void {

@@ -1,4 +1,5 @@
 import type { ConversationLockParams, ConversationLockRef } from '@shared/conversationLock';
+import type { MentionPreviewParams, MentionResolveParams, MentionSearchParams } from '@shared/mentions';
 import { contextBridge, ipcRenderer, webFrame } from 'electron';
 import {
   EVENT_CHANNEL,
@@ -164,6 +165,15 @@ const api: MageApi = {
   ghRuns: (params) => ipcRenderer.invoke(IpcChannel.GhRuns, params),
   ghRunAction: (params) => ipcRenderer.invoke(IpcChannel.GhRunAction, params),
   ghAutoMerge: (params) => ipcRenderer.invoke(IpcChannel.GhAutoMerge, params),
+  listPrs: (params) => ipcRenderer.invoke(IpcChannel.PrList, params),
+  prDetail: (params) => ipcRenderer.invoke(IpcChannel.PrDetail, params),
+  prDiff: (params) => ipcRenderer.invoke(IpcChannel.PrDiff, params),
+  writePr: (params) => ipcRenderer.invoke(IpcChannel.PrWrite, params),
+  listPrCatalog: (conversationId) => ipcRenderer.invoke(IpcChannel.PrCatalogList, conversationId),
+  linkPr: (params) => ipcRenderer.invoke(IpcChannel.PrCatalogLink, params),
+  unlinkPr: (params) => ipcRenderer.invoke(IpcChannel.PrCatalogUnlink, params),
+  migrateTabPr: (params) => ipcRenderer.invoke(IpcChannel.PrMigrate, params),
+  prRepoOf: (params) => ipcRenderer.invoke(IpcChannel.PrRepoOf, params),
   worktreeCreate: (params) => ipcRenderer.invoke(IpcChannel.WorktreeCreate, params),
   worktreeRestore: (params) => ipcRenderer.invoke(IpcChannel.WorktreeRestore, params),
   worktreeRemove: (params) => ipcRenderer.invoke(IpcChannel.WorktreeRemove, params),
@@ -220,6 +230,9 @@ const api: MageApi = {
   },
   readMemory: (params: ReadMemoryParams) => ipcRenderer.invoke(IpcChannel.MemoryRead, params),
   listConversations: (accountDir: string) => ipcRenderer.invoke(IpcChannel.ConversationsList, accountDir),
+  searchMentions: (params: MentionSearchParams) => ipcRenderer.invoke(IpcChannel.MentionsSearch, params),
+  resolveMentions: (params: MentionResolveParams) => ipcRenderer.invoke(IpcChannel.MentionsResolve, params),
+  previewMention: (params: MentionPreviewParams) => ipcRenderer.invoke(IpcChannel.MentionsPreview, params),
   deleteConversation: (params: DeleteConversationParams) => ipcRenderer.invoke(IpcChannel.ConversationsDelete, params),
   moveConversation: (params: MoveConversationParams) => ipcRenderer.invoke(IpcChannel.ConversationsMove, params),
   migrateConversation: (params: MigrateConversationParams) => ipcRenderer.invoke(IpcChannel.ConversationsMigrate, params),

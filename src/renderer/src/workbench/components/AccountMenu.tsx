@@ -1,3 +1,4 @@
+import { useLocalPopover } from '../localPopovers';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { motion } from 'motion/react';
@@ -28,6 +29,7 @@ export function AccountMenu({
 }): React.JSX.Element {
   const menuRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ width: MENU_WIDTH_PX, height: 0 });
+  useLocalPopover(true); // el menu existe solo abierto
   const colorIndex = useWorkbenchStore((s) => s.settings.accentByAccount[account.id]);
   const setAccountAccent = useWorkbenchStore((s) => s.setAccountAccent);
   const t = useT();

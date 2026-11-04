@@ -113,7 +113,7 @@ export function SplitPaneResizeHandle({ direction, ratio, containerRef, onCommit
       tabIndex={0}
       onPointerDown={onPointerDown}
       onKeyDown={onKeyDown}
-      className={`relative z-10 shrink-0 bg-mg-border outline-none after:absolute after:content-[''] hover:bg-mg-focus hover:shadow-[0_0_0_1px_var(--color-mg-focus)] focus-visible:bg-mg-focus focus-visible:shadow-[0_0_0_1px_var(--color-mg-focus)] ${grabArea} ${
+      className={`relative z-10 shrink-0 bg-mg-border outline-none transition-colors duration-90 active:transition-none after:absolute after:content-[''] hover:bg-mg-focus hover:shadow-[0_0_0_1px_var(--color-mg-focus)] focus-visible:bg-mg-focus focus-visible:shadow-[0_0_0_1px_var(--color-mg-focus)] ${grabArea} ${
         direction === 'row' ? 'w-px cursor-col-resize' : 'h-px cursor-row-resize'
       }`}
     />

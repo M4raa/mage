@@ -1,3 +1,4 @@
+import { useLocalPopover } from '../localPopovers';
 import { useEffect, useState } from 'react';
 import { Icon } from './Icon';
 import { createPortal } from 'react-dom';
@@ -20,6 +21,8 @@ export interface ConversationTarget {
   readonly cwd: string;
   readonly privacy: ConversationPrivacy;
   readonly title: string;
+  // Cuenta de la fila (el lateral enseña todas las cuentas): borrar y mover actúan sobre ELLA, no sobre la activa.
+  readonly accountId: string;
 }
 
 // Menu contextual de una conversacion (#2 de AJUSTES): eliminar y mover (entre Compartido/Privado y a
@@ -39,6 +42,10 @@ export function ConversationContextMenu({
   newWindowBlockedReason = null,
   projects = [],
   onAssignProject,
+  pinned = false,
+  archived = false,
+  onTogglePinned,
+  onToggleArchived,
 }: {
   readonly target: ConversationTarget;
   readonly x: number;
@@ -58,9 +65,15 @@ export function ConversationContextMenu({
   readonly newWindowBlockedReason?: string | null;
   readonly projects?: readonly ChatProject[];
   readonly onAssignProject?: (projectId: string | null) => void;
+  // Fijar y archivar (lateral): el estado actual decide el texto de cada entrada.
+  readonly pinned?: boolean;
+  readonly archived?: boolean;
+  readonly onTogglePinned?: () => void;
+  readonly onToggleArchived?: () => void;
 }): React.JSX.Element {
   const t = useT();
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  useLocalPopover(true); // el menu existe solo abierto
   const [confirmingUpdate, setConfirmingUpdate] = useState(false);
   const legacy = useLegacyCodexUpdate(target.sessionId, activeAccountId);
 
@@ -111,6 +124,18 @@ export function ConversationContextMenu({
           </>
         )}
 
+        {onTogglePinned !== undefined && (
+          <MenuItem disabled={!hasSession} onClick={onTogglePinned}>
+            {pinned ? t('sidebar.contextMenu.unpin') : t('sidebar.contextMenu.pin')}
+          </MenuItem>
+        )}
+        {onToggleArchived !== undefined && (
+          <MenuItem disabled={!hasSession} onClick={onToggleArchived}>
+            {archived ? t('sidebar.contextMenu.unarchive') : t('sidebar.contextMenu.archive')}
+          </MenuItem>
+        )}
+        {(onTogglePinned !== undefined || onToggleArchived !== undefined) && <div className="my-[3px] h-px bg-mg-border-subtle" />}
+
         {/* Mover a la otra seccion de la MISMA cuenta. */}
         {onAssignProject !== undefined && (
           <>
@@ -157,7 +182,7 @@ export function ConversationContextMenu({
                   </button>
                   <button
                     onClick={() => { onClose(); legacy.update(); }}
-                    className="rounded-[5px] bg-mg-sel px-[8px] py-[3px] text-[10.5px] font-semibold text-mg-text hover:bg-mg-hover"
+                    className="rounded-[5px] bg-mg-sel px-[8px] py-[3px] text-[10.5px] font-semibold text-mg-sel-ink hover:bg-mg-hover"
                   >
                     {t('history.legacyCodex.update')}
                   </button>
@@ -248,7 +273,7 @@ function MenuItem({
       disabled={disabled}
       onClick={onClick}
       data-tip={tip ?? undefined}
-      className={`block w-full px-[10px] py-[5px] text-left transition-colors duration-150 ease-out disabled:opacity-40 ${
+      className={`block w-full px-[10px] py-[5px] text-left transition-colors duration-90 ease-out disabled:opacity-40 ${
         danger ? 'text-mg-danger hover:bg-mg-danger-bg' : 'hover:bg-mg-hover'
       }`}
     >

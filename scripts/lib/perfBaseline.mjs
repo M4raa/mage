@@ -89,12 +89,18 @@ export async function measureTyping(page, repeats = PERF_REPEATS) {
   return result;
 }
 
+// «Listo» del cambio de pestaña: el panel de destino esta montado y, si es un chat con lista virtual, ya
+// pinto su ultima fila (con lista virtual, «panel montado» no implica «ultima fila pintada»).
+export function tabSwitchReadyExpr(target) {
+  return `(() => { const p = document.querySelector('[data-pane-tab-id="${target}"]'); return p !== null && (p.querySelector('[data-chat-scroller]') === null || p.querySelector('[data-last-row="true"]') !== null); })()`;
+}
+
 // Cambio de pestaña con el raton entre dos pestañas: «listo» = el panel enseña la de destino.
 export async function measureTabSwitch(page, tabIds, repeats = PERF_REPEATS) {
   if (tabIds.length < 2) throw new Error(`Hacen falta dos pestañas para medir el cambio: ${JSON.stringify(tabIds)}`);
   return measureRepeated(repeats, async (i) => {
     const target = tabIds[(i + 1) % 2];
-    return measureInteraction(page, 'pointerdown', `document.querySelector('[data-pane-tab-id="${target}"]') !== null`, () => page.locator(`[role="tab"][data-tab-id="${target}"]`).click());
+    return measureInteraction(page, 'pointerdown', tabSwitchReadyExpr(target), () => page.locator(`[role="tab"][data-tab-id="${target}"]`).click());
   });
 }
 
@@ -111,7 +117,8 @@ export async function measurePanelOpen(page, panelId, repeats = PERF_REPEATS) {
 }
 
 // Render de una conversacion larga ya en memoria (necesita el puente de desarrollo): se inyectan
-// `count` bloques usuario/agente con Markdown y se mide hasta el frame en que estan en el DOM.
+// `count` bloques usuario/agente con Markdown y se mide hasta el frame en que la lista virtual pinto la ultima fila y esta al final (con lista virtual nunca
+// llegan a estar los `count` bloques en el DOM).
 export async function measureLongConversation(page, count) {
   return page.evaluate((n) => new Promise((resolve) => {
     const store = window.__mageDev.store;
@@ -123,11 +130,59 @@ export async function measureLongConversation(page, count) {
     const t0 = performance.now();
     store.setState((s) => ({ blocksByChat: { ...s.blocksByChat, [id]: blocks } }));
     const tick = () => {
-      if (document.querySelectorAll(`[data-pane-tab-id="${id}"] [data-block]`).length < n) return requestAnimationFrame(tick);
+      const pane = document.querySelector(`[data-pane-tab-id="${id}"]`);
+      const scroller = pane?.querySelector('[data-chat-scroller]') ?? null;
+      const atBottom = scroller !== null && scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= 2;
+      if (pane?.querySelector('[data-last-row="true"]') == null || !atBottom) return requestAnimationFrame(tick);
       setTimeout(() => resolve({ bloques: n, ms: Math.round(performance.now() - t0), nodosDom: document.getElementsByTagName('*').length }), 0);
     };
     requestAnimationFrame(tick);
   }), count);
+}
+
+// Ancla al anteponer historial (necesita el puente): con la pestaña activa ya en 3000 bloques, lee una fila
+// a mitad del hilo, antepone 200 bloques y mide cuanto se movio esa fila (debe ser 0 px).
+export async function measurePrependAnchor(page) {
+  return page.evaluate(() => new Promise((resolve) => {
+    const frames = (n, done) => (n === 0 ? done() : requestAnimationFrame(() => frames(n - 1, done)));
+    const store = window.__mageDev.store;
+    const id = store.getState().activeTabId;
+    const scroller = document.querySelector(`[data-pane-tab-id="${id}"] [data-chat-scroller]`);
+    if (scroller === null) return resolve({ anclaAlAnteponerPx: null, motivo: 'no hay lista virtual en la pestaña activa' });
+    scroller.scrollTop = (scroller.scrollHeight - scroller.clientHeight) / 2;
+    frames(2, () => {
+      const box = scroller.getBoundingClientRect();
+      const read = [...scroller.querySelectorAll('[data-block]')].find((el) => { const top = el.getBoundingClientRect().top; return top >= box.top && top <= box.bottom; });
+      const key = read?.closest('[data-row-key]')?.getAttribute('data-row-key') ?? null;
+      if (read === undefined || key === null) return resolve({ anclaAlAnteponerPx: null, motivo: 'ninguna fila de lectura dentro del scroller' });
+      const before = read.getBoundingClientRect().top;
+      const text = 'Párrafo de prueba con **negrita**, `código` y una lista:\n\n- uno\n- dos\n\n' + 'Texto largo de relleno. '.repeat(20);
+      const fresh = Array.from({ length: 200 }, (_, i) => (i % 2 === 0
+        ? { kind: 'user', id: `pb-pre${i}`, text: `Mensaje ${i}: ${text}`, time: '12:00', attachments: [] }
+        : { kind: 'agent', id: `pb-pre${i}`, runs: [{ code: false, text: `Respuesta ${i}: ${text}` }], streaming: false }));
+      store.setState((s) => ({ blocksByChat: { ...s.blocksByChat, [id]: [...fresh, ...s.blocksByChat[id]] } }));
+      frames(2, () => {
+        const after = scroller.querySelector(`[data-row-key="${key}"] [data-block]`);
+        if (after === null) return resolve({ anclaAlAnteponerPx: null, motivo: 'la fila de lectura salió del DOM' });
+        resolve({ anclaAlAnteponerPx: Math.round((after.getBoundingClientRect().top - before) * 10) / 10 });
+      });
+    });
+  }));
+}
+
+// Cambio de pestaña con una conversacion REAL larga abierta desde el historial (vale en produccion, sin
+// puente): busca la del fixture en el lateral, la abre (solo lee su transcripcion), abre una vacia y mide el
+// cambio entre ambas.
+export async function measureLongTranscriptTabSwitch(page, { openConversation, title }) {
+  const before = await tabIdsInBar(page);
+  await page.getByRole('textbox', { name: SIDEBAR_SEARCH_LABEL }).fill(LONG_TRANSCRIPT_SEARCH);
+  await page.locator('[data-history-session]').filter({ hasText: title }).first().click();
+  await page.waitForFunction((count) => document.querySelectorAll('[role="tab"][data-tab-id]').length > count, before.length, { timeout: INTERACTION_TIMEOUT_MS });
+  const longId = (await tabIdsInBar(page)).at(-1);
+  await page.waitForSelector(`[data-pane-tab-id="${longId}"] [data-last-row="true"]`, { timeout: INTERACTION_TIMEOUT_MS });
+  await openConversation(page);
+  const emptyId = (await tabIdsInBar(page)).at(-1);
+  return measureTabSwitch(page, [longId, emptyId]);
 }
 
 // Eco de IPC a main (`getUpdateState`, sin trabajo): mide si el proceso main responde con holgura.
@@ -160,6 +215,9 @@ export async function profileWhile(page, action) {
 }
 
 const LONG_CONVERSATION_SIZES = [200, 1000, 3000];
+// Texto del buscador del lateral (catalogo `sidebar.search.label` de es.json) y lo que se teclea para hallar el fixture.
+const SIDEBAR_SEARCH_LABEL = 'Buscar conversaciones';
+const LONG_TRANSCRIPT_SEARCH = 'VG-T3';
 const PANELS = ['activity', 'context', 'logs'];
 const PROFILE_KEYS = 30;
 
@@ -176,7 +234,7 @@ async function measureLongConversations(page) {
 
 // Toda la medicion del baseline. `openConversation` es el helper del harness (Ctrl+N); con `devBridge`
 // falso (build de produccion) se omite lo que necesita inyectar estado.
-export async function runPerfBaseline(page, { openConversation, devBridge }) {
+export async function runPerfBaseline(page, { openConversation, devBridge, longTranscriptTitle }) {
   await openConversation(page);
   await openConversation(page);
   const tabs = (await tabIdsInBar(page)).slice(-2);
@@ -188,10 +246,17 @@ export async function runPerfBaseline(page, { openConversation, devBridge }) {
   out.ecoIpcMain = await measureIpcEcho(page);
   out.perfilEscritura = await profileWhile(page, async () => { for (let i = 0; i < PROFILE_KEYS; i++) await page.keyboard.press('x'); });
   out.perfilCambioPestana = await profileWhile(page, async () => { for (let i = 0; i < 10; i++) await page.locator(`[role="tab"][data-tab-id="${tabs[i % 2]}"]`).click(); });
-  if (!devBridge) return out;
+  if (devBridge) await measureWithDevBridge(page, out, tabs);
+  // Al final: abrir la conversacion larga cambia la pestaña activa, y las medidas con puente van sobre `tabs`.
+  out.cambioPestanaConTranscripcionLarga = await measureLongTranscriptTabSwitch(page, { openConversation, title: longTranscriptTitle });
+  return out;
+}
+
+// Las medidas que inyectan estado por el puente de desarrollo.
+async function measureWithDevBridge(page, out, tabs) {
   out.conversacionLarga = await measureLongConversations(page);
+  out.anclaAlAnteponer = await measurePrependAnchor(page);
   out.escrituraConConversacionLarga = await measureTyping(page);
   out.cambioPestanaConConversacionLarga = await measureTabSwitch(page, tabs);
   out.perfilEscrituraConConversacionLarga = await profileWhile(page, async () => { for (let i = 0; i < PROFILE_KEYS; i++) await page.keyboard.press('x'); });
-  return out;
 }

@@ -5,6 +5,7 @@
 import type { AskQuestion } from '@shared/askUserQuestion';
 import type { SessionPlugin } from '@shared/events';
 import type { ArtifactDraft, ArtifactPublication } from '@shared/artifacts';
+import type { MentionCandidate } from '@shared/mentions';
 import type { DiffLine } from './diffLines';
 import type { ToolClass } from './toolClassify';
 import type { SubagentStatus } from './engineBlocks';
@@ -188,6 +189,8 @@ export type Block =
       readonly artifactDraft: ArtifactDraft | null;
       // Subagente que la lanzo (`tool_use_id` de su Task/Agent); null en el agente principal (P-026 3.4).
       readonly parentToolUseId: string | null;
+      // Texto del plan de un ExitPlanMode (input.plan). Ausente en cualquier otra herramienta.
+      readonly planText?: string;
     }
   // Subagente (Task/Agent). `agentId` llega con el tool_result; hasta entonces no se puede abrir su
   // transcripcion. La anidacion no se modela (nivel 1), igual que en subagentView.ts.
@@ -308,4 +311,6 @@ export interface PendingAttachment {
 export interface PromptDraft {
   readonly text: string;
   readonly attachments: readonly PendingAttachment[];
+  // Ficheros mencionados con @ (Q06): viven en el texto como `@ruta` y aqui como ficha.
+  readonly mentions: readonly MentionCandidate[];
 }

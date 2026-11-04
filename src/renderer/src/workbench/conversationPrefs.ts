@@ -78,9 +78,11 @@ export function toConversationPrefs(tab: {
   readonly permissionMode?: string;
   readonly alwaysAllowTools?: readonly string[];
   readonly provider?: string;
+  readonly accountId: string;
 }): ConversationPrefs {
   return {
     model: tab.model,
+    accountId: tab.accountId,
     effort: tab.effort ?? '',
     ...(isPermissionMode(tab.permissionMode) ? { permissionMode: tab.permissionMode } : {}),
     // Se manda SIEMPRE que la pestana tenga el campo, aunque este vacio: la lista es el estado completo

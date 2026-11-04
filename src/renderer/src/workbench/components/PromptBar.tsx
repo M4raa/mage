@@ -1,3 +1,4 @@
+import { useLocalPopover } from '../localPopovers';
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { readOnlyLockMessage } from '@shared/conversationLock';
 import { isPermissionMode } from '@shared/ipc';
@@ -12,7 +13,7 @@ import { composerLayout, type ComposerLayout } from '../composerLayout';
 import type { ProviderModel } from '@shared/providers';
 import { continueListOnNewline, indentLines, outdentLines, type TextState } from '../promptEditing';
 import { enterAction } from '../promptEnter';
-import { validateAttachmentSet } from '@shared/attachments';
+import { base64ByteLength, validateAttachmentSet } from '@shared/attachments';
 import type { PromptEditorHandle } from './PromptEditor';
 import { Icon, type IconName } from './Icon';
 import { SendControls } from './SendControls';
@@ -24,6 +25,7 @@ import { buildSlashCatalog, completionFor, filterSlashCommands, type SlashComman
 import { useCachedCommandCatalog } from '../commandCatalogStore';
 import { resolveKeyEvent, shortcutText } from '../keybindings/resolver';
 import { isMacPlatform } from '../keybindings/platform';
+import { ChatInfoBar } from './ChatInfoBar';
 import { effortChangeAdvice, modelChangeAdvice, type CostAdvice } from '../costAdvice';
 import { notify } from '../notificationStore';
 import { displayTitle } from '../conversationTitle';
@@ -36,6 +38,12 @@ import { t as translate, useT } from '../../i18n/uiLanguage';
 import { activeFormatLocale } from '../../i18n/format';
 import type { PermissionMode } from '@shared/ipc';
 import { describeError } from '../describeError';
+import { addMention, applyResolution, failedMentions, insertMention, mentionQueryAt, reconcileMentions, removeMentionToken, type MentionFailure } from '../mentionDraft';
+import { useMentionPreviews } from '../useMentionPreviews';
+import { MentionChips } from './MentionChips';
+import { useMentionSuggestions } from '../useMentionSuggestions';
+import { MentionPopover } from './MentionPopover';
+import type { MentionCandidate } from '@shared/mentions';
 
 // Referencia ESTABLE para el selector de zustand (un array nuevo por render seria un bucle).
 const NO_MODELS: readonly ProviderModel[] = [];
@@ -86,7 +94,16 @@ async function readImageFile(file: File): Promise<PendingAttachment> {
 
 // Referencia ESTABLE para "esta pestaña no tiene borrador": un objeto nuevo por render haria que el
 // selector de zustand viera un valor distinto siempre y repintara la barra en bucle.
-const EMPTY_DRAFT: PromptDraft = { text: '', attachments: [] };
+const EMPTY_DRAFT: PromptDraft = { text: '', attachments: [], mentions: [] };
+const NO_FAILURES: ReadonlyMap<string, MentionFailure> = new Map();
+
+// El aviso de un envio rechazado: una frase por ficha que falla, con el nombre del fichero.
+function mentionFailureMessages(failures: ReadonlyMap<string, MentionFailure>, mentions: readonly MentionCandidate[]): string {
+  const names = new Map(mentions.map((m) => [m.relPath, m.relPath.slice(m.relPath.lastIndexOf('/') + 1)] as const));
+  return [...failures]
+    .map(([relPath, failure]) => translate(failure === 'missing' ? 'errors.mentions.missing' : 'errors.mentions.outside', { name: names.get(relPath) ?? relPath }))
+    .join('. ');
+}
 
 // Borrador ACTUAL de una pestaña, leido del store (no del render): lo usan los callbacks asincronos.
 function draftOf(tabId: string): PromptDraft {
@@ -107,8 +124,9 @@ function measureInlineEditorWidth(row: HTMLElement | null, controls: HTMLElement
   return Number.isFinite(width) ? width : null;
 }
 
-function promptPlaceholder(tabId: string, readOnlyLock: { readonly profile: LocalizedText } | null): string {
+function promptPlaceholder(tabId: string, readOnlyLock: { readonly profile: LocalizedText } | null, permissionPending: boolean): string {
   if (readOnlyLock !== null) return translate('prompt.placeholder.readOnly', { lock: renderLocalized(translate, readOnlyLockMessage(readOnlyLock.profile)) });
+  if (permissionPending) return translate('prompt.placeholder.permission');
   return tabId.length === 0 ? translate('prompt.placeholder.noTab') : translate('prompt.placeholder.default');
 }
 
@@ -153,6 +171,7 @@ export function PromptBar(): React.JSX.Element {
   const t = useT();
   const activeTabId = usePaneTabId();
   const sendActiveMessage = useWorkbenchStore((s) => s.sendActiveMessage);
+  const sendMessageToTab = useWorkbenchStore((s) => s.sendMessageToTab);
   const activeTab = useWorkbenchStore((s) => s.tabs.find((t) => t.id === activeTabId));
   const sessionId = useWorkbenchStore((s) => s.sessionIdByChat[activeTabId]);
   // #55 (F2.8): la conversación la tiene otra instancia de Mage; aquí se lee pero no se escribe.
@@ -177,6 +196,8 @@ export function PromptBar(): React.JSX.Element {
   const keybindingOverrides = useWorkbenchStore((s) => s.settings.keybindingOverrides);
   // Estado del turno de la pestana activa: con el turno en marcha se ofrece "Parar" en vez de ⏎.
   const chatStatus = useWorkbenchStore((s) => s.statusByChat[activeTabId] ?? 'idle');
+  // Un permiso sin contestar en esta pestana: el borrador se conserva y el placeholder lo dice.
+  const permissionPending = useWorkbenchStore((s) => (s.pendingByChat[activeTabId]?.length ?? 0) > 0);
   const notSteerable = useWorkbenchStore((s) => s.notSteerableByChat[activeTabId] ?? null);
   // Comandos "/" reales que declaro la sesion en su arranque (D4); vacio -> se usa la lista curada.
   const sessionSlashCommands = useWorkbenchStore((s) => s.slashCommandsByChat[activeTabId] ?? EMPTY_COMMANDS);
@@ -190,7 +211,7 @@ export function PromptBar(): React.JSX.Element {
   const setDraft = useWorkbenchStore((s) => s.setDraft);
   const text = draft.text;
   const attachments = draft.attachments;
-  const setText = (next: string): void => setDraft(activeTabId, { text: next, attachments });
+  const setText = (next: string): void => setDraft(activeTabId, { text: next, attachments, mentions: reconcileMentions(next, draftOf(activeTabId).mentions) });
   // Autocompletado de comandos "/" (M2.6): indice seleccionado + flag de descartado (Escape).
   const [slashIndex, setSlashIndex] = useState(0);
   const [slashDismissed, setSlashDismissed] = useState(false);
@@ -274,7 +295,33 @@ export function PromptBar(): React.JSX.Element {
   // entradas cuando hay plugins (P16).
   const slashSuggestions = useMemo(() => filterSlashCommands(text, slashCatalog), [text, slashCatalog]);
   const slashOpen = slashSuggestions.length > 0 && !slashDismissed && !disabled;
+  useLocalPopover(slashOpen);
   const slashCursor = Math.min(slashIndex, slashSuggestions.length - 1);
+  // Menciones `@` (Q06): el cursor lo avisa el editor; elegir una pone `@ruta ` en el texto y la ficha en el borrador.
+  const [cursor, setCursor] = useState(0);
+  const tabCwd = activeTab?.cwd ?? '';
+  const tabAccountDir = activeTab?.resolvedConfigDir ?? activeTab?.accountId ?? '';
+  const mentionTab = useMemo(() => (tabCwd.length === 0 ? null : { tabId: activeTabId, cwd: tabCwd, accountDir: tabAccountDir }), [activeTabId, tabCwd, tabAccountDir]);
+  const pickMention = (candidate: MentionCandidate): void => {
+    const editor = editorRef.current;
+    if (editor === null) return;
+    const state = editor.getTextState();
+    const at = mentionQueryAt(state.value, state.selectionStart);
+    if (at === null) return;
+    const inserted = insertMention(state.value, at, candidate.relPath);
+    const latest = draftOf(activeTabId);
+    setDraft(activeTabId, { text: inserted.text, attachments: latest.attachments, mentions: addMention(latest.mentions, candidate) });
+    editor.applyTextState({ value: inserted.text, selectionStart: inserted.cursor, selectionEnd: inserted.cursor });
+  };
+  // Fichas en rojo tras un envio rechazado (`missing` / `outsideFolder`) y envio en curso: la resolucion de main es
+  // asincrona, y solo se hace una peticion por envio.
+  const [mentionFailures, setMentionFailures] = useState(NO_FAILURES);
+  const [resolving, setResolving] = useState(false);
+  const resolvingRef = useRef(false);
+  useEffect(() => setMentionFailures(NO_FAILURES), [activeTabId]);
+  const previews = useMentionPreviews(mentionTab);
+  const mentions = useMentionSuggestions({ tab: mentionTab, text, cursor, blocked: slashOpen || disabled, onPick: pickMention, onError: setError });
+  useLocalPopover(mentions.open);
   const canImprove = !disabled && !busy && text.trim().length > 0 && isClaude;
   // Handoff: necesita una sesion reanudable (viva o restaurada) y solo Claude soporta --resume.
   const canHandoff = isClaude && (sessionId !== undefined || activeTab?.resumeSessionId !== undefined);
@@ -328,17 +375,58 @@ export function PromptBar(): React.JSX.Element {
   const submit = (override?: string, mode: SendMode = 'queue'): void => {
     const trimmed = (override ?? text).trim();
     // Con adjuntos, un mensaje SIN texto es valido (mandar solo una imagen es un caso real).
-    if ((trimmed.length === 0 && attachments.length === 0) || disabled) return;
+    if ((trimmed.length === 0 && attachments.length === 0) || disabled || resolvingRef.current) return;
     const sent = attachments.map((a) => a.attachment);
+    if (draft.mentions.length > 0) {
+      void sendWithMentions(trimmed, sent, mode);
+      return;
+    }
     setDraft(activeTabId, null);
     setPreview(null);
     setError(null);
     void sendActiveMessage(trimmed, sent, mode);
   };
 
+  // Con menciones, main resuelve los ficheros JUSTO ahora (el disco puede haber cambiado desde que se eligieron):
+  // si alguno ya no existe o esta fuera de la carpeta no se envia y el borrador se queda (Q06).
+  const sendWithMentions = async (trimmed: string, sent: readonly ImageAttachment[], mode: SendMode): Promise<void> => {
+    if (activeTab === undefined) return;
+    const tabId = activeTabId;
+    const refs = draft.mentions.map(({ absPath, relPath }) => ({ absPath, relPath }));
+    resolvingRef.current = true;
+    setResolving(true);
+    setError(null);
+    setMentionFailures(NO_FAILURES);
+    try {
+      const resolution = await window.mage.resolveMentions({ cwd: activeTab.cwd, accountDir: activeTab.resolvedConfigDir ?? activeTab.accountId, provider: activeTab.provider, refs });
+      const failures = failedMentions(resolution);
+      if (failures.size > 0) {
+        setMentionFailures(failures);
+        setError(mentionFailureMessages(failures, draft.mentions));
+        return;
+      }
+      const merged = applyResolution(trimmed, sent, resolution);
+      validateAttachmentSet([], merged.attachments.map((a) => ({ mediaType: a.mediaType, byteLength: base64ByteLength(a.data) })), activeFormatLocale());
+      setDraft(tabId, null);
+      setPreview(null);
+      void sendMessageToTab(tabId, merged.text, merged.attachments, mode);
+    } catch (err) {
+      console.warn('No se pudieron resolver las menciones:', describeError(err));
+      setError(t('errors.mentions.resolveFailed', { error: describeError(err) }));
+    } finally {
+      resolvingRef.current = false;
+      setResolving(false);
+    }
+  };
+
+  const removeMention = (mention: MentionCandidate): void => {
+    const latest = draftOf(activeTabId);
+    setDraft(activeTabId, { text: removeMentionToken(latest.text, mention.relPath), attachments: latest.attachments, mentions: latest.mentions.filter((m) => m.absPath !== mention.absPath) });
+  };
+
   // #24: el botón de enviar hace lo mismo que Enter cuando Enter envía: el borrador entero y, si el cursor
   // está en un item de lista VACÍO, sin su marcador huérfano. Vacío o sin pestaña, no se puede pulsar.
-  const canSend = !disabled && (text.trim().length > 0 || attachments.length > 0);
+  const canSend = !disabled && !resolving && (text.trim().length > 0 || attachments.length > 0);
   // El borrador tal como lo mandaría Enter: entero y, si el cursor está en un item de lista VACÍO, sin su marcador huérfano.
   const draftToSend = (): string | undefined => {
     const state = currentTextState();
@@ -413,7 +501,7 @@ export function PromptBar(): React.JSX.Element {
   const removeDeletedImageAttachments = (value: string): void => {
     const latest = draftOf(activeTabId);
     const result = reconcileImageTokens(latest.text, value, latest.attachments);
-    setDraft(activeTabId, { text: result.text, attachments: result.attachments });
+    setDraft(activeTabId, { text: result.text, attachments: result.attachments, mentions: reconcileMentions(result.text, latest.mentions) });
     const editor = editorRef.current;
     if (result.text === value || editor === null) return;
     const caret = Math.min(editor.getTextState().selectionStart, result.text.length);
@@ -451,6 +539,8 @@ export function PromptBar(): React.JSX.Element {
         return true;
       }
     }
+    // 1b. Popover `@` abierto: mismas teclas que el de `/` (Enter elige y no envia).
+    if (mentions.onKeyDown(e)) return true;
     // 2. Shift+Enter: continuar lista si aplica; si no, salto de linea del editor. NO es rebindable
     // (D5 §2.2): es la convencion universal de "salto de linea".
     if (e.key === 'Enter' && e.shiftKey) {
@@ -543,7 +633,7 @@ export function PromptBar(): React.JSX.Element {
       .then((candidates) => {
         // Del store, no del cierre: mientras se leia, el usuario pudo seguir escribiendo.
         const latest = draftOf(tabId);
-        setDraft(tabId, { text: latest.text, attachments: [...latest.attachments, ...candidates] });
+        setDraft(tabId, { text: latest.text, attachments: [...latest.attachments, ...candidates], mentions: latest.mentions });
       })
       .catch((err: unknown) => setError(t('prompt.attach.failed', { error: err instanceof Error ? err.message : String(err) })))
       .finally(() => {
@@ -564,11 +654,14 @@ export function PromptBar(): React.JSX.Element {
   // Quitar la miniatura N quita su token y renumera los de detras (igual que la lista de adjuntos).
   const removeAttachment = (index: number): void => {
     setError(null);
-    setDraft(activeTabId, { text: removeImageToken(text, index + 1), attachments: attachments.filter((_, i) => i !== index) });
+    setDraft(activeTabId, { text: removeImageToken(text, index + 1), attachments: attachments.filter((_, i) => i !== index), mentions: draft.mentions });
   };
 
   return (
     <div className="border-t border-mg-border p-[12px_22px]">
+      {/* La informacion de la CONVERSACION (creadora, PR, privacidad) va justo bajo la linea del input y a 6 px de
+          la caja (#41): la linea es de esta barra, asi que con la fila vacia sigue estando, sin hueco doble. */}
+      <ChatInfoBar />
       {/* Una sola linea de error para toda la barra: cada origen (mejora del prompt, adjuntos) pone su
           propio prefijo, para que el mensaje describa lo que de verdad ha fallado. */}
       {error !== null && (
@@ -600,8 +693,8 @@ export function PromptBar(): React.JSX.Element {
       )}
 
       {/* Tira de adjuntos (2.12.1): las imagenes que se van a enviar con este mensaje. */}
-      {attachments.length > 0 && (
-        <div className="mb-[8px] flex flex-wrap gap-[6px]">
+      {(attachments.length > 0 || draft.mentions.length > 0) && (
+        <div className="mb-[8px] flex flex-wrap items-center gap-[6px]">
           {attachments.map((item, index) => (
             <div key={`${item.attachment.data.slice(0, 24)}-${index}`} className="relative">
               <img
@@ -628,12 +721,14 @@ export function PromptBar(): React.JSX.Element {
               </button>
             </div>
           ))}
+          <MentionChips mentions={draft.mentions} provider={providerId} failures={mentionFailures} previews={previews} onRemove={removeMention} />
         </div>
       )}
 
       {/* `flex-wrap`: los controles (todos `shrink-0`) bajan a la linea siguiente cuando no caben junto al
           editor, en vez de estrujarlo a 0 px de ancho — ver el comentario del host en PromptEditor.tsx. */}
       <div ref={rowRef} className="relative flex flex-wrap items-end gap-[10px] rounded-[9px] border border-mg-border-ctrl bg-mg-panel p-[10px_14px]">
+        {mentions.open && <MentionPopover suggestions={mentions} />}
         {slashOpen && (
           // Popover de comandos "/" (M2.6): navegable con flechas/Enter/Tab; click completa.
           <div
@@ -671,8 +766,9 @@ export function PromptBar(): React.JSX.Element {
             value={text}
             disabled={disabled}
             ariaLabel={t('prompt.editor.ariaLabel')}
-            placeholder={promptPlaceholder(activeTabId, readOnlyLock)}
+            placeholder={promptPlaceholder(activeTabId, readOnlyLock, permissionPending)}
             onChange={onChangeText}
+            onSelectionChange={setCursor}
             onKeyDown={onKeyDown}
             onPasteImages={addFiles}
             onWrapChange={setWraps}
@@ -924,6 +1020,7 @@ interface ActionItem {
 function ActionsMenu({ items, busy }: { readonly items: readonly ActionItem[]; readonly busy: boolean }): React.JSX.Element {
   const t = useT();
   const [open, setOpen] = useState(false);
+  useLocalPopover(open);
   const visible = items.filter((i) => i.hidden !== true);
 
   const run = (item: ActionItem): void => {

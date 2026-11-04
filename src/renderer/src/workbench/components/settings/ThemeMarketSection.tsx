@@ -12,6 +12,8 @@ import {
   systemPrefersDark,
 } from '../../theme';
 import { useWorkbenchStore } from '../../workbenchStore';
+import { reportActionError } from '../../notificationStore';
+import { canReimportTheme, reimportTheme } from './themeReimport';
 import { Icon } from '../Icon';
 import { useT } from '../../../i18n/uiLanguage';
 import { formatInteger } from '../../../i18n/format';
@@ -81,7 +83,13 @@ export function ThemeMarketSection({
   const [visibleCount, setVisibleCount] = useState(INITIAL_VISIBLE_CARDS);
   const thumbnails = useThemeThumbnails();
   const preview = useThemePreview(backgroundOpacity);
+  const replaceImported = useWorkbenchStore((s) => s.replaceImportedTheme);
   const t = useT();
+  const reimport = (theme: ImportedTheme): void => {
+    reimportTheme(theme, window.mage.fetchTheme)
+      .then(replaceImported)
+      .catch((err: unknown) => reportActionError(t('settings.appearance.reimportFailed'), err, 'theme'));
+  };
 
   // Busqueda con debounce; se cancela el resultado si el query cambia (guard `active`). Con menos de
   // THEME_SEARCH_MIN_CHARS se busca en VACIO -> el servicio devuelve los mas descargados. Una query ya
@@ -211,6 +219,7 @@ export function ThemeMarketSection({
                   onSelect(imported.id === activeThemeId ? null : imported.id);
                 }}
                 onRemove={() => onRemove(imported.id)}
+                onReimport={() => reimport(imported)}
               />
             ))}
           </ul>
@@ -292,7 +301,7 @@ function PreviewBanner({
 }): React.JSX.Element {
   const t = useT();
   return (
-    <div className="flex items-center gap-[8px] rounded-[7px] border border-mg-focus bg-mg-sel p-[7px_9px]">
+    <div className="flex items-center gap-[8px] rounded-[7px] border border-mg-focus bg-mg-sel p-[7px_9px] text-mg-sel-ink">
       <Icon name="wand" size={13} className="text-mg-focus" />
       <span className="min-w-0 flex-1 truncate text-[11px] text-mg-body">
         {t('settings.themeMarket.banner.start')} <b className="font-semibold">{theme.label}</b> {t('settings.themeMarket.banner.end')}
@@ -451,7 +460,7 @@ function ThemeCard({
     <li
       ref={(el) => observe(el, item)}
       className={`flex flex-col gap-[7px] rounded-[8px] border p-[8px] ${
-        previewing ? 'border-mg-focus bg-mg-sel' : 'border-mg-border-ctrl'
+        previewing ? 'border-mg-focus bg-mg-sel text-mg-sel-ink relative before:pointer-events-none before:absolute before:inset-y-0 before:left-0 before:w-[2px] before:bg-mg-sel-mark' : 'border-mg-border-ctrl'
       }`}
     >
       {reliable && thumbnail !== null ? (
@@ -508,11 +517,13 @@ function ImportedThemeCard({
   active,
   onToggle,
   onRemove,
+  onReimport,
 }: {
   readonly theme: ImportedTheme;
   readonly active: boolean;
   readonly onToggle: () => void;
   readonly onRemove: () => void;
+  readonly onReimport: () => void;
 }): React.JSX.Element {
   const [confirming, setConfirming] = useState(false);
   const reliable = hasReliableThumbnail(theme.tokens);
@@ -520,7 +531,7 @@ function ImportedThemeCard({
   return (
     <li
       className={`flex flex-col gap-[7px] rounded-[8px] border p-[8px] ${
-        active ? 'border-mg-focus bg-mg-sel' : 'border-mg-border-ctrl'
+        active ? 'border-mg-focus bg-mg-sel text-mg-sel-ink relative before:pointer-events-none before:absolute before:inset-y-0 before:left-0 before:w-[2px] before:bg-mg-sel-mark' : 'border-mg-border-ctrl'
       }`}
     >
       <button
@@ -542,6 +553,16 @@ function ImportedThemeCard({
           <span className="ml-auto shrink-0 text-[9.5px] text-mg-ter">{theme.type}</span>
         </span>
       </button>
+      {canReimportTheme(theme) && (
+        <button
+          onClick={onReimport}
+          data-theme-reimport="true"
+          data-tip={t('settings.appearance.reimportTip')}
+          className="self-start rounded-[6px] border border-mg-focus px-[8px] py-[3px] text-[10.5px] text-mg-body2 hover:bg-mg-hover"
+        >
+          {t('settings.appearance.reimport')}
+        </button>
+      )}
       {confirming ? (
         <div className="flex items-center gap-[6px] text-[10.5px]">
           <span className="min-w-0 flex-1 truncate text-mg-sec">{t('settings.themeMarket.confirmRemove')}</span>
@@ -562,7 +583,7 @@ function ImportedThemeCard({
         <button
           onClick={() => setConfirming(true)}
           aria-label={t('settings.themeMarket.removeAria', { theme: theme.label })}
-          className="flex items-center gap-[5px] self-start rounded-[6px] px-[6px] py-[3px] text-[10.5px] text-mg-muted transition-colors duration-150 ease-out hover:bg-mg-hover hover:text-mg-danger"
+          className="flex items-center gap-[5px] self-start rounded-[6px] px-[6px] py-[3px] text-[10.5px] text-mg-muted transition-colors duration-90 ease-out hover:bg-mg-hover hover:text-mg-danger"
         >
           <Icon name="trash" size={12} />
           {t('settings.themeMarket.remove')}

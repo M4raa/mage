@@ -8,6 +8,9 @@ import { Icon } from './Icon';
 import { buildBugReportUrl, buildIdeaUrl } from '../bugReport';
 import { reportActionError } from '../notificationStore';
 import { NotificationBell } from './NotificationCenter';
+import { countBackgroundWork } from '../backgroundWork';
+import { revealSidebarPanel } from '../sidebarFocus';
+import { EMPTY_SIDEBAR_FILTER } from '../sidebarModel';
 
 // Ancho que reserva Windows para sus tres botones de sistema (minimizar/maximizar/cerrar) en la franja
 // de `titleBarOverlay`. Se deja libre a la derecha: cualquier cosa pintada debajo seria inalcanzable.
@@ -36,6 +39,7 @@ const isMac = navigator.platform.toLowerCase().includes('mac');
 export function TitleBar(): React.JSX.Element {
   const t = useT();
   const openSettings = useWorkbenchStore((s) => s.openSettings);
+  const avatarsOnTop = useWorkbenchStore((s) => s.settings.accountAvatarsPlacement === 'top');
   // El menu desplegado SUSTITUYE al resto de la cabecera (cuentas y Preferencias) en vez de añadirse y
   // empujarlo a la derecha — peticion explicita del usuario tras el primer intento, y es como se
   // comporta IntelliJ: pulsar el boton de menu cambia la barra, no la alarga.
@@ -68,7 +72,7 @@ export function TitleBar(): React.JSX.Element {
         // aparece el nombre de la app desde que el texto "MAGE" se sustituyo por el logo, y al
         // convertirlo en boton de ajustes se perdio — lo canto la comprobacion de GUI, no el ojo.
         aria-label={t('app.titleBar.settingsLabel')}
-        className="flex shrink-0 items-center rounded-[5px] p-[3px] text-mg-sec transition-colors duration-150 ease-out hover:bg-mg-hover hover:text-mg-body"
+        className="flex shrink-0 items-center rounded-[5px] p-[3px] text-mg-sec transition-colors duration-90 ease-out hover:bg-mg-hover hover:text-mg-body"
       >
         <MageMark size={18} />
       </button>
@@ -80,14 +84,39 @@ export function TitleBar(): React.JSX.Element {
           monta: un `hidden` dejaria sus controles alcanzables por teclado detras del menu. */}
       {!menuExpanded && (
         <>
-          <AccountSwitcher />
+          {avatarsOnTop && <AccountSwitcher orientation="horizontal" />}
           <div className="flex-1" />
+          <BackgroundCount />
           <NotificationBell />
           <IdeaButton />
           <BugReportButton />
         </>
       )}
     </div>
+  );
+}
+
+// «N en segundo plano»: conversaciones sin pestaña que siguen trabajando o esperan una acción tuya. Pulsarlo abre el
+// lateral y activa el chip «Trabajando» (las que esperan acción cuentan como trabajando en ese filtro).
+function BackgroundCount(): React.JSX.Element | null {
+  const t = useT();
+  const count = useWorkbenchStore((s) => countBackgroundWork(s.backgroundSessions));
+  const setSidebarFilter = useWorkbenchStore((s) => s.setSidebarFilter);
+  if (count === 0) return null;
+  const reveal = (): void => {
+    revealSidebarPanel();
+    setSidebarFilter({ ...EMPTY_SIDEBAR_FILTER, working: true });
+  };
+  return (
+    <button
+      onClick={reveal}
+      data-background-count={count}
+      style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+      className="flex shrink-0 items-center gap-[6px] rounded-[5px] px-[6px] py-[3px] text-[11px] text-mg-sec transition-colors duration-90 ease-out hover:bg-mg-hover hover:text-mg-body"
+    >
+      <span aria-hidden="true" className="h-[7px] w-[7px] rounded-full border-[1.5px] border-mg-sec" />
+      {t('app.titleBar.background', { count })}
+    </button>
   );
 }
 
@@ -116,7 +145,7 @@ function TitleBarIssueButton({
       data-tip={tip}
       // Dice que ABRE EL NAVEGADOR: el control se va de la app, y eso se anuncia antes de pulsarlo.
       aria-label={label}
-      className="flex shrink-0 items-center rounded-[5px] p-[3px] text-mg-sec transition-colors duration-150 ease-out hover:bg-mg-hover hover:text-mg-body"
+      className="flex shrink-0 items-center rounded-[5px] p-[3px] text-mg-sec transition-colors duration-90 ease-out hover:bg-mg-hover hover:text-mg-body"
     >
       <Icon name={icon} size={15} />
     </button>

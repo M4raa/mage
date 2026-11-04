@@ -216,3 +216,47 @@ function contrastHex(first: string, second: string): number {
   if (a === null || b === null) throw new Error(`colores no comparables: ${first} y ${second}`);
   return contrastRatio(a, b);
 }
+
+export type SeparatorLevel = 'soft' | 'normal' | 'strong';
+
+export interface SeparatorColors {
+  readonly weak: string;
+  readonly separator: string;
+  readonly control: string;
+}
+
+// Umbrales base de las tres fuerzas de separación frente al panel (los de 041 §4; el del separador intermedio es
+// el punto medio entre el débil y el de control) y el factor de «Suave» y «Marcado» (U7).
+const SEPARATOR_THRESHOLDS: Readonly<Record<keyof SeparatorColors, number>> = { weak: 1.15, separator: 1.3, control: 1.45 };
+const SOFT_FACTOR = 0.9;
+const STRONG_FACTOR = 1.25;
+// Con «Suave» una separación nunca baja de aquí: por debajo deja de verse y la interfaz pierde su estructura.
+const MIN_SEPARATOR_RATIO = 1.02;
+
+
+// Ajusta las tres separaciones del tema ya aplicado a la fuerza elegida. `normal` devuelve la entrada tal cual;
+// `strong` sube las que no llegan a umbral × 1,25 y `soft` baja las que superan umbral × 0,9 (con suelo), siempre
+// derivando del primer plano. Un color de separación ilegible se deja como está; si el panel o el primer plano
+// no se leen, devuelve null (no hay nada que medir).
+export function adjustSeparators(
+  input: SeparatorColors & { readonly panel: string; readonly foreground: string },
+  level: SeparatorLevel,
+): SeparatorColors | null {
+  if (level === 'normal') return { weak: input.weak, separator: input.separator, control: input.control };
+  const panelRaw = parseColor(input.panel);
+  const foregroundRaw = parseColor(input.foreground);
+  if (panelRaw === null || foregroundRaw === null) return null;
+  const panel = { ...panelRaw, a: 1 };
+  const foreground = compose(foregroundRaw, panel);
+  const adjusted = (key: keyof SeparatorColors): string => adjustOne(input[key], SEPARATOR_THRESHOLDS[key], level, { panel, foreground });
+  return { weak: adjusted('weak'), separator: adjusted('separator'), control: adjusted('control') };
+}
+
+function adjustOne(value: string, threshold: number, level: 'soft' | 'strong', surfaces: { readonly panel: Rgba; readonly foreground: Rgba }): string {
+  const parsed = parseColor(value);
+  if (parsed === null) return value;
+  const ratio = contrastRatio(compose(parsed, surfaces.panel), surfaces.panel);
+  const target = level === 'strong' ? threshold * STRONG_FACTOR : Math.max(threshold * SOFT_FACTOR, MIN_SEPARATOR_RATIO);
+  const needsChange = level === 'strong' ? ratio < target : ratio > target;
+  return needsChange ? deriveFromForeground(surfaces.foreground, surfaces.panel, target).value : value;
+}

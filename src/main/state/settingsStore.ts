@@ -18,6 +18,8 @@ import {
   RUNTIME_SHELLS,
   SCRATCH_RETENTIONS,
   THEME_PREFERENCES,
+  ACCOUNT_AVATARS_PLACEMENTS,
+  SEPARATOR_CONTRASTS,
   UI_SCALE_MAX,
   UI_SCALE_MIN,
 } from '@shared/settings';
@@ -115,9 +117,17 @@ const APP_SETTINGS_SCHEMA = z.object({
   version: z.number(),
   notificationRules: z.array(NOTIFICATION_RULE_SCHEMA),
   chatProjects: z.array(CHAT_PROJECT_SCHEMA).catch([]),
+  // Ids de conversación fijadas/archivadas: un valor que no sea array de cadenas no vacías cae a [].
+  pinnedConversations: z.array(z.string().min(1)).catch([]),
+  archivedConversations: z.array(z.string().min(1)).catch([]),
   // theme opcional en disco: ficheros antiguos (sin la clave) y valores invalidos caen a 'dark' via
   // .catch (frontera laxa; el default preserva el aspecto oscuro actual).
   theme: z.enum(THEME_PREFERENCES).catch('dark'),
+  // Colocación de los avatares y contraste de separaciones: un valor inválido cae al defecto.
+  accountAvatarsPlacement: z.enum(ACCOUNT_AVATARS_PLACEMENTS).catch('top'),
+  separatorContrast: z.enum(SEPARATOR_CONTRASTS).catch('normal'),
+  // Entero >= 0; cualquier otra cosa cae a 0 (se reaplicarían los defaults del dock una vez).
+  dockDefaultsVersion: z.number().int().min(0).catch(0),
   // widgetEnabled opcional en disco: ficheros antiguos (sin la clave) o valores invalidos caen a
   // false via .catch (widget apagado por defecto, opt-in).
   widgetEnabled: z.boolean().catch(false),

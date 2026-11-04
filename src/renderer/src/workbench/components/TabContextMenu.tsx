@@ -1,3 +1,4 @@
+import { useLocalPopover } from '../localPopovers';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useT } from '../../i18n/uiLanguage';
@@ -77,6 +78,7 @@ export function TabContextMenu({
   const t = useT();
   const menuRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ width: MENU_WIDTH_PX, height: 0 });
+  useLocalPopover(true); // el menu existe solo abierto
 
   useLayoutEffect(() => {
     const menu = menuRef.current;
@@ -239,7 +241,7 @@ export function MenuItem({
       disabled={disabled}
       onClick={onClick}
       data-tip={tip ?? undefined}
-      className={`block w-full px-[10px] py-[5px] text-left transition-colors duration-150 ease-out disabled:opacity-40 ${
+      className={`block w-full px-[10px] py-[5px] text-left transition-colors duration-90 ease-out disabled:opacity-40 ${
         danger ? 'text-mg-danger hover:bg-mg-danger-bg' : 'hover:bg-mg-hover'
       }`}
     >
