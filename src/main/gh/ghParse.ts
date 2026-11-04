@@ -11,14 +11,17 @@ import {
   type GhReviewDecision,
   type GhRun,
 } from '@shared/gh';
+import type { PrDetail, PrKey, PrSnapshot, RepoMergeOptions } from '@shared/pr';
 
 // Parseo PURO del JSON de `gh` (medido con gh 2.102.0, fixtures en `__fixtures__/`). Tolerante con lo que
 // no entiende (un campo nuevo o un valor de enum desconocido no tumba la barra), estricto con lo que
 // identifica (sin `number` o `url` no hay PR).
 
-// Campos que se piden a `gh pr list/view --json`. NUNCA `commits` ni `author`: traen correos.
+// Campos que se piden a `gh pr list/view --json`. NUNCA `commits`: trae correos. `author` solo se lee por su `login`.
 export const PR_FIELDS =
   'number,title,state,isDraft,url,headRefName,headRefOid,baseRefName,headRepositoryOwner,isCrossRepository,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup,autoMergeRequest';
+export const PR_LIST_FIELDS = `${PR_FIELDS},updatedAt,author`;
+export const PR_DETAIL_FIELDS = `${PR_LIST_FIELDS},body,latestReviews,comments,files`;
 export const RUN_FIELDS = 'databaseId,name,workflowName,status,conclusion,url,attempt,event';
 
 // Un check sin terminar trae `completedAt: "0001-01-01T00:00:00Z"`, la fecha cero de Go (medido).
@@ -196,4 +199,90 @@ export function parseRunList(stdout: string): readonly GhRun[] {
     runs.push({ id: databaseId, name: name.length > 0 ? name : workflowName, state: normalizeCheckState(status, conclusion), url, attempt, event });
   }
   return runs;
+}
+
+// --- Panel de PR (F5.5): listado, detalle, opciones de fusion y head ---
+
+const LOGIN = z.object({ login: text }).passthrough().nullable().catch(null);
+
+const PR_LIST_SCHEMA = PR_SCHEMA.extend({ updatedAt: text, author: LOGIN });
+
+const PR_DETAIL_SCHEMA = PR_LIST_SCHEMA.extend({
+  body: text,
+  latestReviews: z.array(z.unknown()).catch([]),
+  comments: z.array(z.unknown()).catch([]),
+  files: z.array(z.unknown()).catch([]),
+});
+
+const REVIEW_SCHEMA = z.object({ author: LOGIN, state: text, submittedAt: text, body: text });
+const COMMENT_SCHEMA = z.object({ author: LOGIN, createdAt: text, body: text });
+const FILE_SCHEMA = z.object({ path: z.string().min(1), additions: z.number().int().nonnegative().catch(0), deletions: z.number().int().nonnegative().catch(0) });
+
+const MERGE_OPTIONS_SCHEMA = z.object({
+  mergeCommitAllowed: z.boolean().catch(false),
+  squashMergeAllowed: z.boolean().catch(false),
+  rebaseMergeAllowed: z.boolean().catch(false),
+});
+
+const HEAD_SCHEMA = z.object({ headRefOid: z.string().regex(/^[0-9a-f]{40}$/i), state: text });
+
+type RepoRef = Pick<PrKey, 'host' | 'owner' | 'repo'>;
+
+// Fecha ISO valida o '' (las del panel se pintan tal cual, sin null).
+function isoOrEmpty(value: string): string {
+  return isoOrNull(value) ?? '';
+}
+
+function toSnapshot(raw: z.infer<typeof PR_LIST_SCHEMA>, repo: RepoRef): PrSnapshot {
+  const key: PrKey = { host: repo.host, owner: repo.owner, repo: repo.repo, number: raw.number };
+  return { ...toPullRequest(raw), key, updatedAt: isoOrEmpty(raw.updatedAt), author: raw.author?.login ?? '' };
+}
+
+// `gh pr list -R … --json PR_LIST_FIELDS`. Una entrada con forma rota se salta; que no sea una lista, no.
+export function parsePrList(stdout: string, repo: RepoRef): PrSnapshot[] {
+  const list = z.array(z.unknown()).safeParse(parseJson(stdout, 'gh pr list'));
+  if (!list.success) throw new Error(`Lista de PR de gh con forma inesperada: ${stdout.slice(0, 80)}`);
+  const prs: PrSnapshot[] = [];
+  for (const entry of list.data) {
+    const pr = PR_LIST_SCHEMA.safeParse(entry);
+    if (pr.success) prs.push(toSnapshot(pr.data, repo));
+  }
+  return prs;
+}
+
+function parseEach<T extends z.ZodTypeAny>(schema: T, entries: readonly unknown[]): z.infer<T>[] {
+  const parsed: z.infer<T>[] = [];
+  for (const entry of entries) {
+    const result = schema.safeParse(entry);
+    if (result.success) parsed.push(result.data);
+  }
+  return parsed;
+}
+
+// `gh pr view N -R … --json PR_DETAIL_FIELDS`.
+export function parsePrDetail(stdout: string, repo: RepoRef): PrDetail {
+  const result = PR_DETAIL_SCHEMA.safeParse(parseJson(stdout, 'gh pr view'));
+  if (!result.success) throw new Error(`Detalle de PR de gh con forma inesperada: ${stdout.slice(0, 80)}`);
+  const raw = result.data;
+  return {
+    ...toSnapshot(raw, repo),
+    body: raw.body,
+    reviews: parseEach(REVIEW_SCHEMA, raw.latestReviews).map((r) => ({ author: r.author?.login ?? '', state: r.state.toUpperCase(), submittedAt: isoOrEmpty(r.submittedAt), body: r.body })),
+    comments: parseEach(COMMENT_SCHEMA, raw.comments).map((c) => ({ author: c.author?.login ?? '', createdAt: isoOrEmpty(c.createdAt), body: c.body })),
+    files: parseEach(FILE_SCHEMA, raw.files),
+  };
+}
+
+// `gh repo view -R … --json mergeCommitAllowed,squashMergeAllowed,rebaseMergeAllowed`: ausente = no permitido.
+export function parseMergeOptions(stdout: string): RepoMergeOptions {
+  const result = MERGE_OPTIONS_SCHEMA.safeParse(parseJson(stdout, 'gh repo view'));
+  if (!result.success) throw new Error(`Opciones de fusion de gh con forma inesperada: ${stdout.slice(0, 80)}`);
+  return { merge: result.data.mergeCommitAllowed, squash: result.data.squashMergeAllowed, rebase: result.data.rebaseMergeAllowed };
+}
+
+// `gh pr view N -R … --json headRefOid,state`: lo justo para comparar el head antes de escribir.
+export function parseHeadOnly(stdout: string): { headSha: string; state: GhPrState } {
+  const result = HEAD_SCHEMA.safeParse(parseJson(stdout, 'gh pr view'));
+  if (!result.success) throw new Error(`Head de PR de gh con forma inesperada: ${stdout.slice(0, 80)}`);
+  return { headSha: result.data.headRefOid.toLowerCase(), state: toPrState(result.data.state) };
 }

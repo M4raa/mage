@@ -1,0 +1,30 @@
+{
+  "author": { "id": "U_1", "is_bot": false, "login": "vg-dev", "name": "Dev Demo" },
+  "autoMergeRequest": null,
+  "baseRefName": "main",
+  "body": "Cuerpo de la PR\ncon dos lineas",
+  "comments": [
+    { "author": { "login": "vg-dev" }, "body": "Un comentario", "createdAt": "2026-10-01T11:00:00Z", "id": "IC_1" }
+  ],
+  "files": [
+    { "additions": 3, "deletions": 1, "path": "src/a.ts" },
+    { "additions": 10, "deletions": 0, "path": "README.md" }
+  ],
+  "headRefName": "feat/uno",
+  "headRefOid": "1111111111111111111111111111111111111111",
+  "headRepositoryOwner": { "login": "acme" },
+  "isCrossRepository": false,
+  "isDraft": false,
+  "latestReviews": [
+    { "author": { "login": "revisora" }, "body": "Bien", "state": "APPROVED", "submittedAt": "2026-10-01T12:00:00Z" }
+  ],
+  "mergeStateStatus": "CLEAN",
+  "mergeable": "MERGEABLE",
+  "number": 12,
+  "reviewDecision": "APPROVED",
+  "state": "OPEN",
+  "statusCheckRollup": [],
+  "title": "Primera PR",
+  "updatedAt": "2026-10-01T12:00:00Z",
+  "url": "https://github.com/acme/demo/pull/12"
+}
