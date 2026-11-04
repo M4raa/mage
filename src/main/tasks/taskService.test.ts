@@ -2,7 +2,7 @@ import { resolve } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { UserFacingError } from '@shared/i18n/localizedText';
 import type { TaskDraft, TaskRecord } from '@shared/tasks';
-import { TASK_ARM_TTL_MS, TaskService, type TaskServiceDeps } from './taskService';
+import { TaskService, type TaskServiceDeps } from './taskService';
 
 const WORK = resolve('/work');
 const EXTRA = resolve('/extra');
@@ -32,25 +32,26 @@ function setup(over: Partial<TaskServiceDeps> = {}, initial: TaskRecord[] = []) 
   return { service: new TaskService(deps), save, advance: (ms: number) => void (clock += ms) };
 }
 
-function errorKey(fn: () => unknown): string {
+function userFacing(fn: () => unknown): UserFacingError {
   try {
     fn();
   } catch (err) {
-    if (err instanceof UserFacingError) return err.localized.key;
+    if (err instanceof UserFacingError) return err;
     throw err;
   }
   throw new Error('no lanzó');
 }
 
+const errorKey = (fn: () => unknown): string => userFacing(fn).localized.key;
+
 describe('TaskService.create', () => {
-  it('create_valido_persisteYArma', () => {
+  it('create_valido_persiste', () => {
     const { service, save } = setup();
 
     const task = service.create(draft());
 
     expect(task).toMatchObject({ id: 't1', goal: 'Haz el informe', verdict: 'pending', sessionId: null, conversationId: null, deliverables: [], verifiedAtMs: null });
     expect(save).toHaveBeenCalledWith([task]);
-    expect(service.claimForLaunch({ provider: 'claude', accountDir: ACCOUNT, cwd: WORK })?.id).toBe('t1');
   });
 
   it('create_objetivoVacio_errorGoalEmpty', () => {
@@ -88,28 +89,56 @@ describe('TaskService.create', () => {
 });
 
 describe('TaskService.claimForLaunch', () => {
-  it('claimForLaunch_armadaCoincide_laDevuelveYDesarma', () => {
+  it('claimForLaunch_taskIdCoincide_laDevuelve', () => {
     const { service } = setup();
     service.create(draft());
-    const launch = { provider: 'claude', accountDir: ACCOUNT, cwd: WORK };
 
-    expect(service.claimForLaunch(launch)?.id).toBe('t1');
-    expect(service.claimForLaunch(launch)).toBeNull();
+    expect(service.claimForLaunch({ provider: 'claude', accountDir: ACCOUNT, cwd: WORK, taskId: 't1' })?.id).toBe('t1');
   });
 
-  it('claimForLaunch_caducada_null', () => {
-    const { service, advance } = setup();
+  it('claimForLaunch_taskIdConOtroCwd_laDevuelve', () => {
+    const { service } = setup();
     service.create(draft());
-    advance(TASK_ARM_TTL_MS + 1);
+
+    expect(service.claimForLaunch({ provider: 'claude', accountDir: ACCOUNT, cwd: EXTRA, taskId: 't1' })?.id).toBe('t1');
+  });
+
+  it('claimForLaunch_sinTaskId_null', () => {
+    const { service } = setup();
+    service.create(draft());
 
     expect(service.claimForLaunch({ provider: 'claude', accountDir: ACCOUNT, cwd: WORK })).toBeNull();
   });
 
-  it('claimForLaunch_otroCwd_null', () => {
+  it('claimForLaunch_taskIdDesconocido_errorUnknownTask', () => {
     const { service } = setup();
     service.create(draft());
 
-    expect(service.claimForLaunch({ provider: 'claude', accountDir: ACCOUNT, cwd: EXTRA })).toBeNull();
+    const err = userFacing(() => service.claimForLaunch({ provider: 'claude', accountDir: ACCOUNT, cwd: WORK, taskId: 'nope' }));
+
+    expect(err.localized.key).toBe('errors.tasks.unknownTask');
+    expect(err.localized.values).toEqual({ taskId: 'nope' });
+  });
+
+  it('claimForLaunch_taskIdDeOtraCuenta_lanzaConLosValores', () => {
+    const { service } = setup();
+    service.create(draft());
+    const other = resolve('/acc/otra');
+
+    expect(() => service.claimForLaunch({ provider: 'claude', accountDir: other, cwd: WORK, taskId: 't1' })).toThrow(JSON.stringify(other).slice(1, -1));
+  });
+
+  it('claimForLaunch_taskIdDeOtroProveedor_lanza', () => {
+    const { service } = setup();
+    service.create(draft());
+
+    expect(() => service.claimForLaunch({ provider: 'codex', accountDir: ACCOUNT, cwd: WORK, taskId: 't1' })).toThrow('codex');
+  });
+
+  it('claimForLaunch_taskIdVacio_lanza', () => {
+    const { service } = setup();
+
+    expect(() => service.claimForLaunch({ provider: 'claude', accountDir: ACCOUNT, cwd: WORK, taskId: '' })).toThrow('""');
   });
 
   it('claimForLaunch_resume_porConversationId', () => {
@@ -179,14 +208,13 @@ describe('TaskService.verify, remove y launchExtrasFor', () => {
     expect(task.deliverables[0]).toMatchObject({ status: 'ok', path: resolve(WORK, 'report.md') });
   });
 
-  it('remove_quitaYDesarma', () => {
+  it('remove_quita', () => {
     const { service } = setup();
     service.create(draft());
 
     service.remove('t1');
 
     expect(service.list()).toEqual([]);
-    expect(service.claimForLaunch({ provider: 'claude', accountDir: ACCOUNT, cwd: WORK })).toBeNull();
   });
 
   it('launchExtrasFor_quitaElCwd', () => {

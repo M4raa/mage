@@ -2818,7 +2818,7 @@ function launchSession(params: CreateSessionParams, sender: Electron.WebContents
       params.privacy === 'private' && params.provider === 'claude' ? accountService.ensurePrivateProfile(params.accountDir) : params.accountDir;
     const project = params.projectId === undefined ? undefined : getSettingsStore().load().chatProjects.find((candidate) => candidate.id === params.projectId);
     const task = params.provider === 'claude' || params.provider === 'codex'
-      ? getTaskService().claimForLaunch({ provider: params.provider, accountDir: params.accountDir, cwd: params.cwd, resumeSessionId: params.resumeSessionId })
+      ? getTaskService().claimForLaunch({ provider: params.provider, accountDir: params.accountDir, cwd: params.cwd, resumeSessionId: params.resumeSessionId, taskId: params.taskId })
       : null;
     const projectInstructions = [task === null ? undefined : buildTaskInstructions(task), project?.instructions.trim().slice(0, 8000), params.contextImport?.slice(0, IMPORTED_CONTEXT_LIMITS.max)]
       .filter((text): text is string => text !== undefined && text.length > 0).join('\n\n') || undefined;

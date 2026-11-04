@@ -1,14 +1,13 @@
 // Servicio de tareas (F8): crea, reclama, enlaza con la sesión y verifica. Todo llega inyectado.
 //
-// Cómo sabe main que una sesión es una tarea: el `projectId` de la pestaña no llega a main, así que al crear la
-// tarea queda ARMADA en memoria 60 s y la primera sesión nueva con su mismo proveedor, cuenta y carpeta la reclama.
-// Al reanudar, el `resumeSessionId` es el `conversationId` guardado.
+// Cómo sabe main que una sesión es una tarea: el renderer manda `taskId` al crear la PRIMERA sesión de la tarea
+// (`startTask`). Al reanudar, el `resumeSessionId` es el `conversationId` guardado.
 import { isAbsolute, resolve } from 'node:path';
 import { localized, UserFacingError } from '@shared/i18n/localizedText';
 import { TASK_LIMITS, taskVerdictOf, type TaskDraft, type TaskProvider, type TaskRecord } from '@shared/tasks';
 import { checkDeliverables, comparablePath, type DeliverableFs } from './deliverableChecker';
 
-export const TASK_ARM_TTL_MS = 60_000;
+const TASK_ID_MAX_CHARS = 256;
 
 export interface TaskServiceDeps {
   readonly load: () => TaskRecord[];
@@ -28,13 +27,13 @@ export interface TaskLaunch {
   readonly accountDir: string;
   readonly cwd: string;
   readonly resumeSessionId?: string;
+  readonly taskId?: string;
 }
 
 const PROVIDERS: readonly string[] = ['claude', 'codex'];
 
 export class TaskService {
   private tasks: TaskRecord[] | null = null;
-  private readonly armed = new Map<string, number>(); // id de tarea -> instante en que se armó
 
   constructor(private readonly deps: TaskServiceDeps) {}
 
@@ -52,7 +51,6 @@ export class TaskService {
       deliverables: [], verifiedAtMs: null, verdict: 'pending',
     };
     this.replaceAll([...this.all(), record]);
-    this.armed.set(record.id, this.deps.now());
     return record;
   }
 
@@ -60,11 +58,8 @@ export class TaskService {
     if (launch.resumeSessionId !== undefined) {
       return this.all().find((task) => task.conversationId === launch.resumeSessionId) ?? null;
     }
-    this.disarmExpired();
-    const match = this.armedMatches(launch).sort((a, b) => this.armedAt(b) - this.armedAt(a))[0];
-    if (match === undefined) return null;
-    this.armed.delete(match.id);
-    return match;
+    if (launch.taskId === undefined) return null;
+    return this.claimById(launch, launch.taskId);
   }
 
   bindSession(taskId: string, sessionId: string, provider: TaskProvider): TaskRecord {
@@ -85,7 +80,6 @@ export class TaskService {
 
   remove(taskId: string): void {
     this.replaceAll(this.all().filter((task) => task.id !== taskId));
-    this.armed.delete(taskId);
   }
 
   // Carpetas de la tarea que NO son la de trabajo: son las que hay que añadir como extras al lanzar.
@@ -119,20 +113,15 @@ export class TaskService {
     return nativeId === null ? task : { ...task, conversationId: nativeId };
   }
 
-  private armedAt(task: TaskRecord): number {
-    return this.armed.get(task.id) ?? 0;
-  }
-
-  private disarmExpired(): void {
-    const now = this.deps.now();
-    for (const [id, armedAt] of this.armed) if (now - armedAt > TASK_ARM_TTL_MS) this.armed.delete(id);
-  }
-
-  private armedMatches(launch: TaskLaunch): TaskRecord[] {
-    const same = (a: string, b: string): boolean => comparablePath(a, this.deps.caseInsensitive) === comparablePath(b, this.deps.caseInsensitive);
-    return this.all().filter((task) =>
-      this.armed.has(task.id) && task.provider === launch.provider && same(task.accountDir, launch.accountDir) && same(task.folders[0] as string, launch.cwd),
-    );
+  private claimById(launch: TaskLaunch, taskId: string): TaskRecord {
+    if (taskId.length === 0 || taskId.length > TASK_ID_MAX_CHARS) throw new Error(`taskId inválido al lanzar: ${JSON.stringify(taskId)}`);
+    const task = this.all().find((candidate) => candidate.id === taskId);
+    if (task === undefined) throw new UserFacingError(localized('errors.tasks.unknownTask', { taskId }));
+    const sameAccount = comparablePath(task.accountDir, this.deps.caseInsensitive) === comparablePath(launch.accountDir, this.deps.caseInsensitive);
+    if (task.provider !== launch.provider || !sameAccount) {
+      throw new Error(`La sesión no casa con la tarea ${taskId}: ${JSON.stringify({ provider: launch.provider, accountDir: launch.accountDir })}`);
+    }
+    return task;
   }
 
   // Valida el borrador y devuelve sus campos limpios (objetivo recortado, sin duplicados).

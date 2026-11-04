@@ -426,6 +426,8 @@ export interface CreateSessionParams {
   // Divergir (solo Claude): la conversacion nueva sale de `sessionId` cortada en el mensaje `atUuid`. Lo rellena el
   // renderer con lo que devuelve main al Divergir; excluyente con `resumeSessionId`.
   readonly forkFrom?: { readonly sessionId: string; readonly atUuid: string };
+  // F8: id de la tarea cuya PRIMERA sesión es esta (lo manda `startTask`); main enlaza por él. Ausente = no es una tarea, o se reanuda (entonces enlaza `resumeSessionId`).
+  readonly taskId?: string;
 }
 
 // Resultado de crear una sesion: el id y el config dir EFECTIVO con el que se lanzo (la cuenta o su
