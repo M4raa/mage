@@ -444,6 +444,9 @@ export interface WorkbenchState extends PrState, PrActions {
   setTheme: (pref: ThemePreference) => void;
   setAccountAvatarsPlacement: (placement: AccountAvatarsPlacement) => void;
   setSeparatorContrast: (level: SeparatorContrast) => void;
+  setDockDefaultsVersion: (version: number) => void;
+  // true cuando ya llegaron los ajustes reales del disco (antes, `settings` son los defaults).
+  settingsLoaded: boolean;
   // Opacidad de los fondos, 50..100 (%). Aplica al DOM al instante y avisa a main para que ajuste el
   // material translucido de la ventana; persiste con el mismo debounce que el resto de ajustes.
   setBackgroundOpacity: (percent: number) => void;
@@ -1439,6 +1442,7 @@ export function createWorkbenchStore(mage: MageClient) {
     elicitationsByChat: {},
     backgroundSessions: {},
     sidebarFilter: EMPTY_SIDEBAR_FILTER,
+    settingsLoaded: false,
     setSidebarFilter: (filter) => set({ sidebarFilter: filter }),
     closePromptOpen: false,
     updateState: IDLE_UPDATE_STATE,
@@ -1859,7 +1863,7 @@ export function createWorkbenchStore(mage: MageClient) {
       const settingsLoaded = mage.loadSettings().then((settings) => {
         applyThemeFromSettings(settings, systemPrefersDark());
         mage.setUiScale(settings.uiScale);
-        set((s) => ({ settings, accounts: applyAccentOverrides(s.accounts, settings.accentByAccount) }));
+        set((s) => ({ settings, settingsLoaded: true, accounts: applyAccentOverrides(s.accounts, settings.accentByAccount) }));
       });
       settingsLoaded.catch((err: unknown) => console.warn('No se pudo cargar la configuracion:', describeError(err)));
       // Novedades: DESPUES de restaurar el workspace (si no, restaurar reescribe `splitLayout` y se come

@@ -126,6 +126,8 @@ const APP_SETTINGS_SCHEMA = z.object({
   // Colocación de los avatares y contraste de separaciones: un valor inválido cae al defecto.
   accountAvatarsPlacement: z.enum(ACCOUNT_AVATARS_PLACEMENTS).catch('top'),
   separatorContrast: z.enum(SEPARATOR_CONTRASTS).catch('normal'),
+  // Entero >= 0; cualquier otra cosa cae a 0 (se reaplicarían los defaults del dock una vez).
+  dockDefaultsVersion: z.number().int().min(0).catch(0),
   // widgetEnabled opcional en disco: ficheros antiguos (sin la clave) o valores invalidos caen a
   // false via .catch (widget apagado por defecto, opt-in).
   widgetEnabled: z.boolean().catch(false),

@@ -30,6 +30,7 @@ export type SettingsActionName =
   | 'setTheme'
   | 'setAccountAvatarsPlacement'
   | 'setSeparatorContrast'
+  | 'setDockDefaultsVersion'
   | 'setUiScale'
   | 'setUiLanguage'
   | 'setAccountAccent'
@@ -119,6 +120,12 @@ export function createSettingsActions(deps: SettingsDeps): SettingsActions {
       set((s) => ({ settings: { ...s.settings, separatorContrast: level } }));
       applyThemeFromSettings(get().settings, systemPrefersDark());
       deps.persistSettings();
+    },
+
+    // Marca que los defaults del dock ya se aplicaron a este perfil. Se guarda YA: es una decisión de una sola vez.
+    setDockDefaultsVersion: (version) => {
+      set((s) => ({ settings: { ...s.settings, dockDefaultsVersion: version } }));
+      deps.persistSettingsNow();
     },
 
     setUiScale: (percent) => {

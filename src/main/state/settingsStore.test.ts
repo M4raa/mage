@@ -12,6 +12,7 @@ const VALID: AppSettings = {
   theme: 'light',
   accountAvatarsPlacement: 'top',
   separatorContrast: 'normal',
+  dockDefaultsVersion: 0,
   widgetEnabled: true,
   backgroundOpacity: 80,
   importedThemes: [{ id: 'ovsx:acme.dark', label: 'Acme Dark', type: 'dark', tokens: { '--color-mg-window': '#101010' } }],
@@ -235,6 +236,20 @@ describe('SettingsStore.load', () => {
     const store = new SettingsStore(deps({ readFile: () => JSON.stringify({ ...VALID, separatorContrast: 'strong' }) }));
 
     expect(store.load().separatorContrast).toBe('strong');
+  });
+
+  it('parseSettings_dockDefaultsVersionInvalid_defaultsZero', () => {
+    for (const bad of [-1, 1.5, 'x', null]) {
+      const store = new SettingsStore(deps({ readFile: () => JSON.stringify({ ...VALID, dockDefaultsVersion: bad }) }));
+
+      expect(store.load().dockDefaultsVersion).toBe(0);
+    }
+  });
+
+  it('parseSettings_dockDefaultsVersionValid_isKept', () => {
+    const store = new SettingsStore(deps({ readFile: () => JSON.stringify({ ...VALID, dockDefaultsVersion: 1 }) }));
+
+    expect(store.load().dockDefaultsVersion).toBe(1);
   });
 
   it('load_modoPorDefectoValido_seConserva', () => {

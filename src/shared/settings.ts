@@ -111,6 +111,9 @@ export interface AppSettings {
   readonly accountAvatarsPlacement: AccountAvatarsPlacement;
   // Fuerza de las separaciones (U7). Default 'normal' = lo que traiga el tema.
   readonly separatorContrast: SeparatorContrast;
+  // Versión de los valores por defecto del dock que ya se aplicaron a este perfil (0 = ninguna). Permite cambiar un
+  // defecto del dock UNA vez por perfil sin pisar después el layout guardado.
+  readonly dockDefaultsVersion: number;
   // Widget flotante always-on-top (M3): si esta activo, se abre al arrancar. Default false (opt-in).
   readonly widgetEnabled: boolean;
   // Opacidad de los FONDOS de la app, 50..100 (%). 100 = opaco, como siempre. Por debajo, las
@@ -282,6 +285,7 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   theme: 'dark',
   accountAvatarsPlacement: 'top',
   separatorContrast: 'normal',
+  dockDefaultsVersion: 0,
   widgetEnabled: false,
   backgroundOpacity: 100,
   importedThemes: [],

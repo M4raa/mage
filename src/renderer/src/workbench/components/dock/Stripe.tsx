@@ -437,6 +437,7 @@ function StripeIconButton({
       aria-pressed={active}
       aria-label={panel.title}
       data-tip={panel.title}
+      data-stripe-attention={badged ? 'true' : undefined}
       className={`relative flex h-7 w-7 shrink-0 items-center justify-center rounded-[6px] text-[13px] transition-opacity duration-150 ease-out hover:text-mg-body ${
         active ? 'bg-mg-sel text-mg-body' : 'text-mg-icon'
       } ${dragging ? 'opacity-40' : ''}`}
@@ -449,7 +450,7 @@ function StripeIconButton({
           className={`pointer-events-none absolute left-[2px] right-[2px] h-[2px] rounded-full bg-mg-focus ${dropLine === 'top' ? 'top-0' : 'bottom-0'}`}
         />
       )}
-      {badged && <span aria-hidden="true" className="absolute right-[3px] top-[3px] h-[5px] w-[5px] rounded-full bg-mg-focus" />}
+      {badged && <span aria-hidden="true" className="absolute right-[3px] top-[3px] h-[6px] w-[6px] rounded-full bg-mg-warn" />}
     </button>
   );
 }

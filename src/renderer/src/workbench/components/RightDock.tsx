@@ -59,7 +59,8 @@ export function RightDock(): React.JSX.Element {
   const destinationsFor = usePanelLayoutStore((s) => s.destinationsFor);
   const stepPanel = usePanelLayoutStore((s) => s.stepPanel);
   const stepOptions = usePanelLayoutStore((s) => s.stepOptions);
-  const permissionPending = useWorkbenchStore((s) => headPermission(s, s.activeTabId) !== null);
+  // Cualquier pestaña esperando permiso (no solo la activa): el icono avisa aunque el dock esté cerrado.
+  const permissionPending = useWorkbenchStore((s) => headPermission(s, s.activeTabId) !== null || s.tabs.some((tab) => s.statusByChat[tab.id] === 'needs_permission'));
   const [moveMenu, setMoveMenu] = useState<{ readonly panelId: PanelId; readonly x: number; readonly y: number } | null>(null);
   const [addMenu, setAddMenu] = useState<{ readonly x: number; readonly y: number } | null>(null);
 
