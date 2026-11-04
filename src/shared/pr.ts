@@ -113,3 +113,15 @@ export interface PrMigrateParams {
   readonly conversationId: string;
   readonly number: number;
 }
+
+// Parametros de las lecturas por clave (detalle y diff).
+export interface PrReadParams {
+  readonly cwd: string;
+  readonly accountDir: string;
+  readonly key: PrKey;
+}
+
+export interface PrCatalogUnlinkParams {
+  readonly key: string;
+  readonly conversationId: string;
+}

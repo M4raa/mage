@@ -280,7 +280,8 @@ import type { GhAutoMergeParams, GhRunActionParams, GhRunsParams, GhRunsSnapshot
 import { findGhBinary } from './os/ghBinaryResolver';
 import { createGhService, type GhRunner, type GhService } from './gh/ghService';
 import { PrMonitor } from './gh/prMonitor';
-import { PrCatalogStore } from './gh/prCatalogStore';
+import { migrateTabPr, PrCatalogStore } from './gh/prCatalogStore';
+import { registerPrIpc } from './gh/prIpc';
 import { FAKE_GH_BIN, runFakeGh } from './gh/ghFakeRunner';
 import { createWorktreeService, nodeWorktreeFs, type WorktreeService } from './git/worktreeService';
 import type { WorktreeCreateParams, WorktreeMergeBaseParams, WorktreeRemoveResult } from '@shared/worktree';
@@ -1853,7 +1854,9 @@ const runRealGh: GhRunner = async (bin, args, options) => {
     return { code: 0, stdout: await execCapturingStdout(bin, args, { ...options, timeoutMs: GIT_TIMEOUT_MS, maxBufferBytes: GIT_MAX_BUFFER_BYTES }) };
   } catch (err) {
     // Ni stderr ni el mensaje (puede llevar la linea de comandos): solo el codigo, que es lo que se clasifica.
-    const code = (err as { code?: unknown }).code;
+    const { code, stdout } = err as { code?: unknown; stdout?: unknown };
+    // `pr diff` pide tolerar el desborde: lo leido hasta el tope vale, el servicio lo corta a su limite.
+    if (options.tolerateOverflow === true && code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' && typeof stdout === 'string') return { code: 0, stdout };
     return { code: typeof code === 'number' ? code : -1, stdout: '' };
   }
 };
@@ -1972,6 +1975,13 @@ function registerGhHandlers(): void {
     assertPositiveInteger(params.number, 'Numero de PR');
     if (typeof params.enabled !== 'boolean') throw new Error(`Auto-merge no valido: ${String(params.enabled)}`);
     return getGhService().setAutoMerge(params.cwd, params.accountDir, params.number, params.enabled);
+  });
+  registerPrIpc({
+    handle: (channel, listener) => ipcMain.handle(channel, listener),
+    gh: getGhService,
+    catalog: getPrCatalogStore,
+    migrate: (params) => migrateTabPr(params, { remote: (cwd, accountDir) => getGitService().remote(cwd, accountDir), catalog: getPrCatalogStore() }),
+    assertFolder: assertGitParams,
   });
 }
 

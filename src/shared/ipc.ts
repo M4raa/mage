@@ -7,6 +7,7 @@ import type { ResolvedUiLanguage } from './i18n/language';
 import type { LocalizedText } from './i18n/localizedText';
 import type { GitParams, GitSnapshot, GitSwitchParams } from './git';
 import type { WorktreeCreateParams, WorktreeMergeBaseParams, WorktreeRemoveResult } from './worktree';
+import type { PrCatalogEntry, PrCatalogLinkParams, PrCatalogUnlinkParams, PrDetail, PrListParams, PrListResult, PrMigrateParams, PrReadParams, PrWriteParams, PrWriteResult } from './pr';
 import type { GhAutoMergeParams, GhPrUpdate, GhRunActionParams, GhRunsParams, GhRunsSnapshot, GhSnapshot, GhWatchParams } from './gh';
 import type { AccountCreateParams, AccountInfo, AccountProviderId, AgyLoginStart, CliLoginStart, CodexLoginOutcome, EmbeddedLoginResult } from './accounts';
 import type { ProviderModel } from './providers';
@@ -228,6 +229,15 @@ export const IpcChannel = {
   GhRuns: 'gh:runs',
   GhRunAction: 'gh:runAction',
   GhAutoMerge: 'gh:autoMerge',
+  // Panel de PR por clave (F5.5): listado, detalle, diff, escrituras atadas al head esperado y catalogo.
+  PrList: 'pr:list',
+  PrDetail: 'pr:detail',
+  PrDiff: 'pr:diff',
+  PrWrite: 'pr:write',
+  PrCatalogList: 'pr:catalogList',
+  PrCatalogLink: 'pr:catalogLink',
+  PrCatalogUnlink: 'pr:catalogUnlink',
+  PrMigrate: 'pr:migrate',
   // Worktrees de Mage (grupo D, bloque 3): crear al empezar, recrear al reabrir, archivar y traer la base.
   WorktreeCreate: 'worktree:create',
   WorktreeRestore: 'worktree:restore',
@@ -1092,6 +1102,15 @@ export interface MageApi {
   ghRuns(params: GhRunsParams): Promise<GhRunsSnapshot>;
   ghRunAction(params: GhRunActionParams): Promise<void>;
   ghAutoMerge(params: GhAutoMergeParams): Promise<void>;
+  // Panel de PR (F5.5). Las escrituras llevan el head que el usuario vio y devuelven `conflict` si cambio.
+  listPrs(params: PrListParams): Promise<PrListResult>;
+  prDetail(params: PrReadParams): Promise<PrDetail>;
+  prDiff(params: PrReadParams): Promise<{ readonly patch: string; readonly truncated: boolean }>;
+  writePr(params: PrWriteParams): Promise<PrWriteResult>;
+  listPrCatalog(conversationId?: string): Promise<readonly PrCatalogEntry[]>;
+  linkPr(params: PrCatalogLinkParams): Promise<void>;
+  unlinkPr(params: PrCatalogUnlinkParams): Promise<void>;
+  migrateTabPr(params: PrMigrateParams): Promise<string | null>;
   onGhPrUpdate(listener: (update: GhPrUpdate) => void): () => void;
   // Worktrees (grupo D). `worktreeCreate` da null si la carpeta no es la raiz del repo.
   worktreeCreate(params: WorktreeCreateParams): Promise<{ readonly path: string; readonly branch: string } | null>;
