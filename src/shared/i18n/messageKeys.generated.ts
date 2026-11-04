@@ -2239,6 +2239,7 @@ export interface MessageValues {
   readonly "tasks.dialog.addFolders": never;
   readonly "tasks.dialog.cancel": never;
   readonly "tasks.dialog.capabilities": never;
+  readonly "tasks.dialog.capabilitiesFailed": { readonly "error": string | number };
   readonly "tasks.dialog.documents": never;
   readonly "tasks.dialog.folders": never;
   readonly "tasks.dialog.goal": never;

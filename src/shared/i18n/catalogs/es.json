@@ -2237,6 +2237,7 @@
   "tasks.dialog.addFolders": "Añadir carpetas",
   "tasks.dialog.cancel": "Cancelar",
   "tasks.dialog.capabilities": "Capacidades instaladas",
+  "tasks.dialog.capabilitiesFailed": "No se pudieron leer las capacidades instaladas: {error}",
   "tasks.dialog.documents": "Documentos autorizados",
   "tasks.dialog.folders": "Carpetas autorizadas",
   "tasks.dialog.goal": "Objetivo",

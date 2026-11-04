@@ -88,6 +88,9 @@ describe('shouldVerify', () => {
   it('shouldVerify_finDeTurnoConManifiestoNuevo_true', () => {
     expect(shouldVerify('streaming', 'idle', ['a.txt', 'b.txt'], checked)).toBe(true);
   });
+  it('shouldVerify_finTrasPermiso_true', () => {
+    expect(shouldVerify('needs_permission', 'idle', ['a.txt', 'b.txt'], checked)).toBe(true);
+  });
   it('shouldVerify_mismoManifiesto_false', () => {
     expect(shouldVerify('streaming', 'idle', ['a.txt'], checked)).toBe(false);
   });

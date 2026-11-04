@@ -88,7 +88,7 @@ export function shouldVerify(
   declared: readonly string[] | null,
   task: TaskRecord,
 ): boolean {
-  if (prev !== 'streaming' || next !== 'idle' || declared === null) return false;
+  if ((prev !== 'streaming' && prev !== 'needs_permission') || next !== 'idle' || declared === null) return false;
   return !sameList(declared, task.deliverables.map((d) => d.declared));
 }
 

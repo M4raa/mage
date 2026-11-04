@@ -44,22 +44,30 @@ function initialAccountId(accounts: readonly Account[], activeId: string): strin
   return (candidates.find((account) => account.id === activeId) ?? candidates[0])?.id ?? '';
 }
 
-function useLibraryView(): LibraryView | null {
-  const [view, setView] = useState<LibraryView | null>(null);
+interface LibraryState {
+  readonly view: LibraryView | null;
+  readonly error: string | null;
+}
+
+function useLibraryView(): LibraryState {
+  const [state, setState] = useState<LibraryState>({ view: null, error: null });
   useEffect(() => {
     let cancelled = false;
-    // Sin biblioteca legible la lista de capacidades queda vacía (se dice en el diálogo); la tarea sigue siendo posible.
-    window.mage.libraryView().then((loaded) => { if (!cancelled) setView(loaded); }).catch((err: unknown) => console.warn('Biblioteca no disponible para las tareas:', describeError(err)));
+    // Sin biblioteca legible la lista de capacidades queda vacía y el diálogo dice por qué; la tarea sigue siendo posible.
+    window.mage.libraryView().then((loaded) => { if (!cancelled) setState({ view: loaded, error: null }); }).catch((err: unknown) => {
+      console.warn('Biblioteca no disponible para las tareas:', describeError(err));
+      if (!cancelled) setState({ view: null, error: describeError(err) });
+    });
     return () => { cancelled = true; };
   }, []);
-  return view;
+  return state;
 }
 
 export function NewTaskDialog({ onClose }: { readonly onClose: () => void }): React.JSX.Element {
   const t = useT();
   const accounts = useWorkbenchStore((s) => s.accounts);
   const activeAccountId = useWorkbenchStore((s) => s.activeAccountId);
-  const library = useLibraryView();
+  const { view: library, error: libraryError } = useLibraryView();
   const [goal, setGoal] = useState('');
   const [accountDir, setAccountDir] = useState(() => initialAccountId(accounts, activeAccountId));
   const [folders, setFolders] = useState<readonly string[]>([]);
@@ -112,7 +120,7 @@ export function NewTaskDialog({ onClose }: { readonly onClose: () => void }): Re
           pick={() => window.mage.pickTaskFolders()} onChange={setFolders} />
         <PathList label={t('tasks.dialog.documents')} addLabel={t('tasks.dialog.addDocuments')} paths={documents}
           pick={() => window.mage.pickTaskDocuments()} onChange={setDocuments} />
-        <Capabilities items={capabilities} chosen={chosen} onToggle={toggle} />
+        <Capabilities items={capabilities} chosen={chosen} onToggle={toggle} loadError={libraryError} />
         {error !== null && <div role="alert" className="text-[11px] text-mg-danger">{error}</div>}
         <div className="flex justify-end gap-[8px]">
           <button onClick={onClose} className={SMALL_BUTTON_CLASS}>{t('tasks.dialog.cancel')}</button>
@@ -167,14 +175,16 @@ interface CapabilitiesProps {
   readonly items: readonly { readonly packageId: string; readonly title: string }[];
   readonly chosen: ReadonlySet<string>;
   readonly onToggle: (packageId: string) => void;
+  readonly loadError: string | null;
 }
 
-function Capabilities({ items, chosen, onToggle }: CapabilitiesProps): React.JSX.Element {
+function Capabilities({ items, chosen, onToggle, loadError }: CapabilitiesProps): React.JSX.Element {
   const t = useT();
   return (
     <div className="flex flex-col gap-[6px]">
       <span className="text-[10.5px] font-bold tracking-[.06em] text-mg-ter">{t('tasks.dialog.capabilities').toUpperCase()}</span>
-      {items.length === 0 && <span className="text-[11px] text-mg-muted">{t('tasks.dialog.noCapabilities')}</span>}
+      {loadError !== null && <span role="alert" className="text-[11px] text-mg-danger">{t('tasks.dialog.capabilitiesFailed', { error: loadError })}</span>}
+      {loadError === null && items.length === 0 && <span className="text-[11px] text-mg-muted">{t('tasks.dialog.noCapabilities')}</span>}
       {items.map((item) => (
         <label key={item.packageId} className="flex items-center gap-[6px] text-mg-body">
           <input type="checkbox" checked={chosen.has(item.packageId)} onChange={() => onToggle(item.packageId)} />

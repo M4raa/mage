@@ -2237,6 +2237,7 @@
   "tasks.dialog.addFolders": "Add folders",
   "tasks.dialog.cancel": "Cancel",
   "tasks.dialog.capabilities": "Installed capabilities",
+  "tasks.dialog.capabilitiesFailed": "Could not read the installed capabilities: {error}",
   "tasks.dialog.documents": "Allowed documents",
   "tasks.dialog.folders": "Allowed folders",
   "tasks.dialog.goal": "Goal",
