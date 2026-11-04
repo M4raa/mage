@@ -3906,6 +3906,14 @@ function registerPromptIpc1(deps: IpcDependencies): void {
     handle: (channel, listener) => ipcMain.handle(channel, listener as Parameters<typeof ipcMain.handle>[1]),
     service: getLibraryService,
   });
+  registerBrowserIpcFromMain();
+  ipcMain.handle(IpcChannel.PromptImprove, (_e, params: ImprovePromptParams): Promise<string> =>
+    promptService.improve(params.draft, params.accountDir),
+  );
+}
+
+// Navegador de Mage (F11b.3): su IPC va aparte para no engordar el registro de arriba.
+function registerBrowserIpcFromMain(): void {
   registerBrowserIpc({
     handle: (channel, listener) => ipcMain.handle(channel, listener as Parameters<typeof ipcMain.handle>[1]),
     registry: browserRegistry,
@@ -3913,9 +3921,6 @@ function registerPromptIpc1(deps: IpcDependencies): void {
     pens: penSessions,
     windowOf: (id) => { const windowId = windowManager.windowIdOf(id); return windowId === null ? null : windowManager.get(windowId); },
   });
-  ipcMain.handle(IpcChannel.PromptImprove, (_e, params: ImprovePromptParams): Promise<string> =>
-    promptService.improve(params.draft, params.accountDir),
-  );
 }
 
 function registerPromptIpc2(deps: IpcDependencies): void {
