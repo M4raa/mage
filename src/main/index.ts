@@ -138,8 +138,15 @@ import { electronBrowserDeps, electronImageDeps } from './browser/electronBrowse
 import { IsolatedBrowser } from './browser/isolatedBrowser';
 import { PenSessions } from './browser/penSession';
 import { ViewPlacement } from './browser/viewPlacement';
+import { libraryStatePath, loadLibraryState } from './capabilities/library/libraryState';
 import { LibraryService, type LibraryAccount } from './capabilities/library/libraryService';
 import { decideTestLibraryClaudeDir, testLibraryAccounts } from './capabilities/library/testLibraryAccount';
+import { registerTaskIpc } from './tasks/taskIpc';
+import { buildTaskInstructions } from './tasks/taskInstructions';
+import { nodeDeliverableFs, nodeIsDirectory, nodeIsFile, nodeTaskStoreFs } from './tasks/taskNodeFs';
+import { TaskService } from './tasks/taskService';
+import { loadTasks, saveTasks } from './tasks/taskStore';
+import { withTaskDirectories } from './tasks/taskLaunch';
 import { resolveClaudeDesktopDirs, type McpAccountLocation } from './config/mcpInventory';
 import { probeMcpStatuses } from './config/mcpStatusProbe';
 import { authenticateMcp } from './config/mcpAuthFlow';
@@ -188,7 +195,7 @@ import {
 } from './config/sharedConfigService';
 import { createMcpServices, type McpServices } from './config/mcpServices';
 import { claudeSharedLaunch } from './config/mcpProviderTranslate';
-import { selectForTarget } from './config/mcpResolved';
+import { mergeServerLists, selectForTarget, type ResolvedMcpServer } from './config/mcpResolved';
 import { mcpFamilyOf } from '@shared/mcp';
 import { AccountService } from './accounts/accountService';
 import { ConversationsService, withLastAccount, type ConversationsDeps } from './conversations/conversationsService';
@@ -542,6 +549,8 @@ function getMcpServices(): McpServices {
       loadCommon: () => getSharedConfigService().loadMcpCommon(mcpCommonPath()),
       accountDirs: () => accountService.listAccounts().map((account) => account.configDir),
       warn: (message) => mainLog('warn', message),
+      loadLibraryInstalls: () => loadLibraryState(nodeCapabilityFs(), libraryStatePath(app.getPath('userData'))).installs,
+      caseInsensitivePaths: process.platform === 'win32' || process.platform === 'darwin',
     });
   }
   return mcpServicesSingleton;
@@ -571,6 +580,10 @@ function onSharedMcpChanged(): void {
 // Perfil privado de una cuenta (AccountService): cuenta como su cuenta (mismo login, mismo «Solo en…»).
 const PRIVATE_PROFILE_DIR_NAME = 'mage-private';
 
+// Carpetas extra de la tarea que se está lanzando (F8); solo vive durante `sessionCoordinator.create`.
+// ponytail: canal por variable de módulo porque create() es síncrono; si deja de serlo, pasar las carpetas por SharedLaunchConfig
+let launchingTaskExtras: readonly string[] = [];
+
 // Lo comun de UN lanzamiento (proveedor + cuenta). Se re-lee en CADA lanzamiento (nunca se cachea):
 // son ficheros que el usuario puede editar entre una sesion y la siguiente.
 function loadSharedLaunch(provider: string, accountDir: string, sessionId: string | null): SharedLaunchConfig {
@@ -580,11 +593,32 @@ function loadSharedLaunch(provider: string, accountDir: string, sessionId: strin
   for (const warning of shared.warnings) mainLog('warn', warning);
   const settingsCommon = getSharedConfigService().loadSettingsCommon(settingsCommonPath());
   return {
-    mcpServers: selectForTarget(shared.servers, { family, accountId: family === 'claude' ? account : null }),
-    settingsFragment: buildSettingsFragment(settingsCommon),
+    mcpServers: withLibraryServers(selectForTarget(shared.servers, { family, accountId: family === 'claude' ? account : null }), family, account),
+    settingsFragment: family === 'claude' ? withTaskDirectories(buildSettingsFragment(settingsCommon), launchingTaskExtras) : buildSettingsFragment(settingsCommon),
     claudeAiConnectors: !getSettingsStore().load().claudeAiConnectorsOff.includes(account),
     ...mageCallerFor(provider, accountDir, sessionId),
   };
+}
+
+// Degradación registrada a propósito: un library.json corrupto no impide lanzar ninguna sesión
+// (la pantalla de la biblioteca sigue mostrando el error).
+function libraryMcpOrNull(family: 'claude' | 'codex', account: string): ReturnType<ReturnType<typeof getMcpServices>['libraryMcp']> | null {
+  try {
+    return getMcpServices().libraryMcp(family, account);
+  } catch (error) {
+    mainLog('warn', 'MCP de la biblioteca omitidos: no se pudo leer su estado', { error: error instanceof Error ? error.message : String(error) });
+    return null;
+  }
+}
+
+// MCP con clave de la biblioteca (tercera fuente): solo Claude y Codex; con el mismo nombre gana lo común.
+function withLibraryServers(servers: readonly ResolvedMcpServer[], family: string, account: string): readonly ResolvedMcpServer[] {
+  if (family !== 'claude' && family !== 'codex') return servers;
+  const library = libraryMcpOrNull(family, account);
+  if (library === null) return servers;
+  const merged = mergeServerLists({ servers, warnings: [] }, library);
+  for (const warning of merged.warnings) mainLog('warn', warning);
+  return merged.servers;
 }
 
 // D-M6: solo Claude y Codex hablan con `mage mcp`; los demas proveedores no reciben credencial.
@@ -2783,10 +2817,20 @@ function launchSession(params: CreateSessionParams, sender: Electron.WebContents
     const configDir =
       params.privacy === 'private' && params.provider === 'claude' ? accountService.ensurePrivateProfile(params.accountDir) : params.accountDir;
     const project = params.projectId === undefined ? undefined : getSettingsStore().load().chatProjects.find((candidate) => candidate.id === params.projectId);
-    const projectInstructions = [project?.instructions.trim().slice(0, 8000), params.contextImport?.slice(0, IMPORTED_CONTEXT_LIMITS.max)]
+    const task = params.provider === 'claude' || params.provider === 'codex'
+      ? getTaskService().claimForLaunch({ provider: params.provider, accountDir: params.accountDir, cwd: params.cwd, resumeSessionId: params.resumeSessionId })
+      : null;
+    const projectInstructions = [task === null ? undefined : buildTaskInstructions(task), project?.instructions.trim().slice(0, 8000), params.contextImport?.slice(0, IMPORTED_CONTEXT_LIMITS.max)]
       .filter((text): text is string => text !== undefined && text.length > 0).join('\n\n') || undefined;
     const effectiveParams = { ...params, accountDir: configDir, projectInstructions };
-    const sessionId = sessionCoordinator.create(effectiveParams, (payload) => relaySessionEvent(payload, { sender, configDir, accountDir: params.accountDir }), sender?.id);
+    launchingTaskExtras = task === null ? [] : getTaskService().launchExtrasFor(task, params.cwd);
+    let sessionId: string;
+    try {
+      sessionId = sessionCoordinator.create(effectiveParams, (payload) => relaySessionEvent(payload, { sender, configDir, accountDir: params.accountDir }), sender?.id);
+    } finally {
+      launchingTaskExtras = [];
+    }
+    if (task !== null) getTaskService().bindSession(task.id, sessionId, task.provider);
     if (params.forkFrom !== undefined) recordClaudeFork(sessionId, params.forkFrom.sessionId);
     if (sender !== null) stopSessionsWhenDestroyed(sender);
     return { sessionId, configDir, ...(recreated ? { workspaceWarning: localized('events.workspace.scratchRecreatedKept', { path: params.cwd }) } : {}) };
@@ -3859,6 +3903,52 @@ function libraryAccounts(): readonly LibraryAccount[] {
   return [...real, ...testLibraryAccounts(decideTestLibraryClaudeDir({ env: process.env, isPackaged: app.isPackaged, userDataDir }))];
 }
 
+// Modo de tareas (F8): perezoso porque depende de app.getPath('userData').
+let taskSingleton: TaskService | null = null;
+
+function getTaskService(): TaskService {
+  if (taskSingleton !== null) return taskSingleton;
+  const file = join(app.getPath('userData'), 'tasks', 'tasks.json');
+  const storeFs = nodeTaskStoreFs((message, data) => mainLog('warn', message, data));
+  taskSingleton = new TaskService({
+    load: () => loadTasks(storeFs, file),
+    save: (tasks) => saveTasks(storeFs, file, tasks),
+    now: Date.now,
+    newId: randomUUID,
+    listAccounts: () => listAllAccounts().flatMap((a) => (a.providerId === 'claude' || a.providerId === 'codex' ? [{ provider: a.providerId, configDir: a.configDir }] : [])),
+    isDirectory: nodeIsDirectory,
+    isFile: nodeIsFile,
+    deliverableFs: nodeDeliverableFs,
+    caseInsensitive: process.platform === 'win32' || process.platform === 'darwin',
+    nativeIdOf: (id) => liveIdsOf(id)?.nativeId ?? null,
+  });
+  return taskSingleton;
+}
+
+// Diálogo nativo de rutas del modo de tareas; cancelado = [].
+async function pickTaskPaths(kind: 'folders' | 'documents'): Promise<readonly string[]> {
+  const options = { properties: [kind === 'folders' ? 'openDirectory' as const : 'openFile' as const, 'multiSelections' as const] };
+  const parent = liveMainWindow();
+  const result = parent !== null ? await dialog.showOpenDialog(parent, options) : await dialog.showOpenDialog(options);
+  return result.canceled ? [] : result.filePaths;
+}
+
+async function pickTaskSavePath(defaultPath: string): Promise<string | null> {
+  const parent = liveMainWindow();
+  const result = parent !== null ? await dialog.showSaveDialog(parent, { defaultPath }) : await dialog.showSaveDialog({ defaultPath });
+  return result.canceled || !result.filePath ? null : result.filePath;
+}
+
+function wireTaskIpc(): void {
+  registerTaskIpc({
+    handle: (channel, listener) => ipcMain.handle(channel, listener as Parameters<typeof ipcMain.handle>[1]),
+    service: getTaskService,
+    pickPaths: pickTaskPaths,
+    showSaveDialog: pickTaskSavePath,
+    copyFile: (from, to) => copyFileSync(from, to),
+  });
+}
+
 function getLibraryService(): LibraryService {
   librarySingleton ??= new LibraryService({
     catalog: loadBundledCatalog(),
@@ -3872,6 +3962,7 @@ function getLibraryService(): LibraryService {
     runner: execFileRunner,
     baseEnv: () => process.env,
     isCommandAvailable: isCommandOnPath,
+    vault: getSecretStore(),
   });
   return librarySingleton;
 }
@@ -3907,6 +3998,7 @@ function registerPromptIpc1(deps: IpcDependencies): void {
     service: getLibraryService,
   });
   registerBrowserIpcFromMain();
+  wireTaskIpc();
   ipcMain.handle(IpcChannel.PromptImprove, (_e, params: ImprovePromptParams): Promise<string> =>
     promptService.improve(params.draft, params.accountDir),
   );

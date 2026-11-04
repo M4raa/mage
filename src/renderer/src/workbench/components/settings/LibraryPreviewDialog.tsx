@@ -3,7 +3,7 @@ import type { LibraryAccountView, LibraryComponentView, LibraryEntryView, Librar
 import { useT } from '../../../i18n/uiLanguage';
 import { formatInteger } from '../../../i18n/format';
 import { describeError } from '../../describeError';
-import { blockKey, componentKey } from './libraryModel';
+import { blockKey, canInstallKeyed, componentKey, keyedFieldsFor } from './libraryModel';
 import { MCP_BUTTON_CLASS, MCP_DIALOG_PANEL_CLASS, MCP_DIALOG_SCRIM_CLASS, MCP_PRIMARY_BUTTON_CLASS, stopEscape } from './mcpStyles';
 
 // Vista previa de una instalación (P-U8): lo que se escribiría y lo que se ejecutaría, ANTES de instalar.
@@ -15,7 +15,8 @@ interface Props {
   readonly entry: LibraryEntryView;
   readonly account: LibraryAccountView;
   readonly busy: boolean;
-  readonly onInstall: () => void;
+  // `secrets` solo viaja en un MCP con clave; la bóveda de Mage la guarda, nunca un fichero.
+  readonly onInstall: (secrets?: Readonly<Record<string, string>>) => void;
   readonly onClose: () => void;
 }
 
@@ -26,6 +27,14 @@ export function LibraryPreviewDialog({ entry, account, busy, onInstall, onClose 
   const panel = useRef<HTMLDivElement | null>(null);
   const state = usePreview(entry, account);
   const preview = state.kind === 'ready' ? state.preview : null;
+  const fields = preview === null ? [] : keyedFieldsFor(preview);
+  const [values, setValues] = useState<Readonly<Record<string, string>>>({});
+  // Los valores se entregan una vez y se borran del estado en el mismo gesto (bien o mal, no se conservan).
+  const install = (): void => {
+    const secrets = values;
+    setValues({});
+    onInstall(fields.length > 0 ? secrets : undefined);
+  };
   useEffect(() => panel.current?.focus(), []);
   const title = t('library.preview.title', { title: entry.title, account: account.label });
   return (
@@ -48,13 +57,14 @@ export function LibraryPreviewDialog({ entry, account, busy, onInstall, onClose 
           </div>
         )}
         {preview !== null && <PreviewBody preview={preview} />}
+        {fields.length > 0 && <KeyedFields fields={fields} values={values} onChange={setValues} />}
         <div className="flex justify-end gap-[8px]">
           <button onClick={onClose} className={MCP_BUTTON_CLASS}>
             {t('library.action.cancel')}
           </button>
           <button
-            onClick={onInstall}
-            disabled={preview === null || preview.block !== null || busy}
+            onClick={install}
+            disabled={preview === null || preview.block !== null || busy || !canInstallKeyed(fields, values)}
             data-library-action="install"
             className={MCP_PRIMARY_BUTTON_CLASS}
           >
@@ -63,6 +73,36 @@ export function LibraryPreviewDialog({ entry, account, busy, onInstall, onClose 
         </div>
       </div>
     </div>
+  );
+}
+
+interface KeyedFieldsProps {
+  readonly fields: readonly string[];
+  readonly values: Readonly<Record<string, string>>;
+  readonly onChange: (values: Readonly<Record<string, string>>) => void;
+}
+
+function KeyedFields({ fields, values, onChange }: KeyedFieldsProps): React.JSX.Element {
+  const t = useT();
+  return (
+    <section data-library-keyed-form className="flex flex-col gap-[6px]">
+      <p className="text-[10.5px] text-mg-sec">{t('library.keyed.explain')}</p>
+      {fields.map((name) => (
+        <label key={name} className="flex flex-col gap-[2px] text-[10.5px] text-mg-sec">
+          {name}
+          <input
+            type="password"
+            autoComplete="off"
+            spellCheck={false}
+            data-library-secret={name}
+            aria-label={t('library.keyed.fieldAria', { name })}
+            value={values[name] ?? ''}
+            onChange={(e) => onChange({ ...values, [name]: e.target.value })}
+            className="rounded-[5px] border border-mg-border-subtle bg-mg-panel px-[7px] py-[3px] font-mono text-[11px] text-mg-body"
+          />
+        </label>
+      ))}
+    </section>
   );
 }
 

@@ -1,4 +1,6 @@
 import { useMemo } from 'react';
+import { useTaskStore } from '../../tasks/taskStore';
+import { buildTaskIndex, isTaskRow } from '../../tasks/taskView';
 import { useWorkbenchStore, type WorkbenchState } from '../../workbenchStore';
 import type { Account, ChatStatus } from '../../types';
 import { backgroundOfConversation, type BackgroundSession } from '../../backgroundWork';
@@ -63,12 +65,14 @@ export function useSidebarModel(filter: SidebarFilter): SidebarView {
   const settings = useWorkbenchStore((s) => s.settings);
   const scratchRoots = useWorkbenchStore((s) => s.scratchRoots);
   const backgroundSessions = useWorkbenchStore((s) => s.backgroundSessions);
+  const tasks = useTaskStore((s) => s.tasks);
   const statusKey = useWorkbenchStore(liveStatusKey);
   const lockKey = useWorkbenchStore(readOnlyKey);
   const statuses = useMemo(() => parseStatuses(statusKey), [statusKey]);
   const readOnlyIds = useMemo(() => new Set(lockKey.length === 0 ? [] : lockKey.split(KEY_SEPARATOR)), [lockKey]);
   const accountById = useMemo(() => new Map(accounts.map((account) => [account.id, account])), [accounts]);
-  const rows = useMemo(() => buildSidebarRows(tabs, history, sessionIdByChat), [tabs, history, sessionIdByChat]);
+  const taskIndex = useMemo(() => buildTaskIndex(tasks), [tasks]);
+  const rows = useMemo(() => buildSidebarRows(tabs, history, sessionIdByChat).filter((row) => !isTaskRow(row, taskIndex, sessionIdByChat)), [tabs, history, sessionIdByChat, taskIndex]);
 
   return useMemo(() => {
     const backgroundOf = (row: SidebarRow): BackgroundSession | undefined => {

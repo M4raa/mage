@@ -1,8 +1,9 @@
 import { isAbsolute, join } from 'node:path';
 import type { CapabilityEngine, CapabilityPackage } from './capabilityPackage';
 
-// 'native' = lo instala el gestor del CLI; 'ownedFiles' = lo escribe el registro de propiedad de Mage.
-export type InstallRoute = 'native' | 'ownedFiles';
+// 'native' = lo instala el gestor del CLI; 'ownedFiles' = lo escribe el registro de propiedad de Mage;
+// 'mageMcp' = un MCP con clave: Mage lo añade en cada lanzamiento y la clave vive en su bóveda.
+export type InstallRoute = 'native' | 'ownedFiles' | 'mageMcp';
 
 export function installRouteFor(pkg: CapabilityPackage, engine: CapabilityEngine): InstallRoute {
   if (!pkg.engines.includes(engine)) {
@@ -10,6 +11,7 @@ export function installRouteFor(pkg: CapabilityPackage, engine: CapabilityEngine
   }
   switch (pkg.kind) {
     case 'mcp':
+      return mcpRoute(pkg);
     case 'plugin':
       return 'native';
     case 'skill':
@@ -23,6 +25,12 @@ export function installRouteFor(pkg: CapabilityPackage, engine: CapabilityEngine
         `Un hook suelto no tiene gestor nativo ni fichero propio: se distribuye dentro de un plugin (${pkg.id})`,
       );
   }
+}
+
+function mcpRoute(pkg: CapabilityPackage): InstallRoute {
+  if ((pkg.requires.secrets ?? []).length === 0) return 'native';
+  if (pkg.native?.type === 'mcpStdio') return 'mageMcp';
+  throw new Error(`Un MCP con clave solo se admite como stdio (${pkg.id})`);
 }
 
 function skillRoute(pkg: CapabilityPackage, engine: CapabilityEngine): InstallRoute {

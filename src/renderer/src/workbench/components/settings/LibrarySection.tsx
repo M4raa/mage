@@ -53,11 +53,11 @@ export function LibrarySection(): React.JSX.Element {
       .then(setView)
       .catch((err: unknown) => setNotice({ kind: 'error', text: describeError(err) }));
   }, []);
-  const apply = (action: CardAction | 'install', packageId: string): void => {
+  const apply = (action: CardAction | 'install', packageId: string, secrets?: Readonly<Record<string, string>>): void => {
     if (account === null || action === 'preview') return;
     setBusy(true);
     window.mage
-      .libraryApply({ action, packageId, engine: account.engine, accountDir: account.accountDir })
+      .libraryApply({ action, packageId, engine: account.engine, accountDir: account.accountDir, ...(secrets === undefined ? {} : { secrets }) })
       .then((result) => setNotice({ kind: 'result', result }))
       .then(() => window.mage.libraryView())
       .then(setView)
@@ -90,7 +90,7 @@ export function LibrarySection(): React.JSX.Element {
         </>
       )}
       {previewEntry !== null && account !== null && (
-        <LibraryPreviewDialog entry={previewEntry} account={account} busy={busy} onInstall={() => apply('install', previewEntry.id)} onClose={() => setPreviewOf(null)} />
+        <LibraryPreviewDialog entry={previewEntry} account={account} busy={busy} onInstall={(secrets) => apply('install', previewEntry.id, secrets)} onClose={() => setPreviewOf(null)} />
       )}
     </div>
   );
@@ -274,6 +274,11 @@ function CardStatus({ entry, install }: { readonly entry: LibraryEntryView; read
     <div>
       {install.enabled ? t('library.status.installed', { version }) : t('library.status.disabled', { version })}
       {install.updateAvailable && ` · ${t('library.status.updateAvailable', { version: entry.version })}`}
+      {install.keyed && (
+        <span data-library-keyed className="ml-[6px] rounded-[4px] border border-mg-border-subtle px-[5px] text-[9.5px]">
+          {t('library.keyed.badge')}
+        </span>
+      )}
     </div>
   );
 }

@@ -3,6 +3,9 @@ import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, r
 import { join } from 'node:path';
 import type { McpStatusByAccount, McpStatusCache } from '@shared/mcp';
 import { writeAtomic, type AtomicWriteDeps } from '../os/atomicFile';
+import type { CapabilityEngine } from '../capabilities/capabilityPackage';
+import { resolveLibraryMcp } from '../capabilities/library/libraryMcpSource';
+import type { LibraryInstallRecord } from '../capabilities/library/libraryState';
 import { AgySyncService } from './mcpAgySync';
 import { McpExtensionService, type ExtensionVault } from './mcpExtensionService';
 import type { ClaudeMcpConfigWriter } from './mcpProviderTranslate';
@@ -27,6 +30,9 @@ export interface McpServicesContext {
   readonly loadCommon: () => McpCommonConfig | null;
   readonly accountDirs: () => readonly string[];
   readonly warn: (message: string) => void;
+  // MCP con clave de la biblioteca (tercera fuente): el estado se re-lee en cada lanzamiento.
+  readonly loadLibraryInstalls: () => readonly LibraryInstallRecord[];
+  readonly caseInsensitivePaths: boolean;
 }
 
 export interface McpServices {
@@ -34,6 +40,8 @@ export interface McpServices {
   readonly agySync: AgySyncService;
   // Comunes activos + extensiones activas, en formato neutro (SIN filtrar por destino).
   readonly sharedMcp: () => ResolvedMcpList;
+  // Los de la biblioteca con clave de UNA cuenta y motor (ya filtrados). No va a agy ni a «Solo en…».
+  readonly libraryMcp: (engine: CapabilityEngine, accountDir: string) => ResolvedMcpList;
   readonly writeClaudeMcpConfig: ClaudeMcpConfigWriter;
   readonly loadStatusCache: () => McpStatusCache;
   readonly saveStatuses: (fresh: McpStatusByAccount) => McpStatusCache;
@@ -78,7 +86,9 @@ export function createMcpServices(ctx: McpServicesContext): McpServices {
     now: () => new Date(),
     servers: () => selectForTarget(sharedMcp().servers, { family: 'agy', accountId: null }),
   });
-  return { extensions, agySync, sharedMcp, writeClaudeMcpConfig: claudeConfigWriter(ctx.userDataDir, atomic), ...statusCacheIo(ctx, atomic) };
+  const libraryMcp = (engine: CapabilityEngine, accountDir: string): ResolvedMcpList =>
+    resolveLibraryMcp(ctx.loadLibraryInstalls(), { engine, accountDir }, { vault: ctx.vault, platform: ctx.platform, caseInsensitive: ctx.caseInsensitivePaths });
+  return { extensions, agySync, sharedMcp, libraryMcp, writeClaudeMcpConfig: claudeConfigWriter(ctx.userDataDir, atomic), ...statusCacheIo(ctx, atomic) };
 }
 
 // Un fichero por cuenta (lo que carga depende de su «Solo en…»), nombrado por la huella de su config

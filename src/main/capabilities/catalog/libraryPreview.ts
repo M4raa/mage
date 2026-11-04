@@ -1,7 +1,7 @@
 // La vista previa dice qué ficheros, comandos y componentes se incorporarían, y por construcción no puede tener
 // efectos: no recibe sistema de ficheros ni ejecutor, solo datos.
 import { isAbsolute, join } from 'node:path';
-import type { CapabilityEngine } from '../capabilityPackage';
+import type { CapabilityEngine, CapabilityPackage } from '../capabilityPackage';
 import { claudeSkillRoot, installRouteFor, type InstallRoute } from '../installRoute';
 import { configDirEnvVar, nativeInstallCommands, withPlatformLauncher, type NativeCommand } from '../nativeCommands';
 import type { LibraryCatalogEntry, LibraryComponent } from './libraryCatalog';
@@ -46,6 +46,11 @@ export interface InstallPreview {
   readonly requiresSecrets: readonly string[];
 }
 
+// Un MCP stdio con clave sí se instala: la ruta `mageMcp` guarda la clave en la bóveda.
+function isKeyedStdioMcp(pkg: CapabilityPackage): boolean {
+  return pkg.kind === 'mcp' && pkg.native?.type === 'mcpStdio';
+}
+
 // El primer bloqueo que se cumpla, en este orden.
 export function installBlockFor(
   entry: LibraryCatalogEntry,
@@ -55,7 +60,7 @@ export function installBlockFor(
   const { package: pkg } = entry;
   if (!pkg.engines.includes(engine)) return 'engineNotDeclared';
   if (!(entry.platforms as readonly string[]).includes(platform)) return 'platformUnsupported';
-  if ((pkg.requires.secrets ?? []).length > 0) return 'needsSecrets';
+  if ((pkg.requires.secrets ?? []).length > 0 && !isKeyedStdioMcp(pkg)) return 'needsSecrets';
   if (pkg.kind === 'agent' || pkg.kind === 'hook') return 'kindNotInstallable';
   if (pkg.kind === 'skill' && engine === 'codex') return 'codexSkillsUnmeasured';
   return null;

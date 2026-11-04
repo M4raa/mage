@@ -10,6 +10,7 @@ import type { GitParams, GitSnapshot, GitSwitchParams } from './git';
 import type { WorktreeCreateParams, WorktreeMergeBaseParams, WorktreeRemoveResult } from './worktree';
 import type { PrCatalogEntry, PrCatalogLinkParams, PrCatalogUnlinkParams, PrDetail, PrListParams, PrListResult, PrMigrateParams, PrReadParams, PrWriteParams, PrWriteResult } from './pr';
 import type { GhAutoMergeParams, GhPrUpdate, GhRunActionParams, GhRunsParams, GhRunsSnapshot, GhSnapshot, GhWatchParams } from './gh';
+import type { TaskDraft, TaskRecord } from './tasks';
 import type { AccountCreateParams, AccountInfo, AccountProviderId, AgyLoginStart, CliLoginStart, CodexLoginOutcome, EmbeddedLoginResult } from './accounts';
 import type { ProviderModel } from './providers';
 import type { AgyUsageSnapshot } from './usage';
@@ -340,6 +341,14 @@ export const IpcChannel = {
   LibraryView: 'library:view',
   LibraryPreview: 'library:preview',
   LibraryApply: 'library:apply',
+  // Modo de tareas (F8).
+  TasksList: 'tasks:list',
+  TasksCreate: 'tasks:create',
+  TasksVerify: 'tasks:verify',
+  TasksRemove: 'tasks:remove',
+  TasksPickFolders: 'tasks:pickFolders',
+  TasksPickDocuments: 'tasks:pickDocuments',
+  TasksSaveCopy: 'tasks:saveCopy',
   // Registro del servidor MCP de Mage en las cuentas de Claude y Codex (H4).
   McpRegistrationStatus: 'mcp:registrationStatus',
   McpRegister: 'mcp:register',
@@ -1375,6 +1384,15 @@ export interface MageApi {
   onBrowserState(listener: (states: readonly BrowserEntryState[]) => void): () => void;
   // El zoom propio de esta ventana: el panel convierte su hueco a DIP de la ventana con él.
   getUiZoomFactor(): number;
+
+  // --- Modo de tareas (F8) ---
+  listTasks(): Promise<readonly TaskRecord[]>;
+  createTask(draft: TaskDraft): Promise<TaskRecord>;
+  verifyTask(params: { taskId: string; declared: readonly string[] }): Promise<TaskRecord>;
+  removeTask(taskId: string): Promise<void>;
+  pickTaskFolders(): Promise<readonly string[]>;
+  pickTaskDocuments(): Promise<readonly string[]>;
+  saveTaskDeliverableCopy(params: { taskId: string; path: string }): Promise<boolean>;
 }
 
 // --- Biblioteca de capacidades (F6) ----------------------------------------------------------------
@@ -1384,7 +1402,7 @@ export type LibraryKind = 'skill' | 'agent' | 'mcp' | 'hook' | 'plugin';
 export type LibraryBlock = 'engineNotDeclared' | 'platformUnsupported' | 'needsSecrets' | 'kindNotInstallable' | 'codexSkillsUnmeasured';
 export type LibraryAction = 'install' | 'enable' | 'disable' | 'update' | 'remove';
 export interface LibraryTarget { readonly packageId: string; readonly engine: LibraryEngine; readonly accountDir: string }
-export interface LibraryApplyParams extends LibraryTarget { readonly action: LibraryAction }
+export interface LibraryApplyParams extends LibraryTarget { readonly action: LibraryAction; readonly secrets?: Readonly<Record<string, string>> }
 export interface LibraryComponentView { readonly engine: LibraryEngine | 'both'; readonly kind: LibraryKind | 'command'; readonly count: number | null; readonly names: readonly string[] }
 export interface LibraryEntryView {
   readonly id: string; readonly title: string; readonly summary: string; readonly publisher: string;
@@ -1397,12 +1415,12 @@ export interface LibraryEntryView {
   readonly requiresCommands: readonly string[]; readonly missingCommands: readonly string[]; readonly requiresSecrets: readonly string[];
   readonly blocks: { readonly claude: LibraryBlock | null; readonly codex: LibraryBlock | null };
 }
-export interface LibraryInstallView { readonly packageId: string; readonly engine: LibraryEngine; readonly accountDir: string; readonly version: string; readonly enabled: boolean; readonly inCatalog: boolean; readonly updateAvailable: boolean }
+export interface LibraryInstallView { readonly packageId: string; readonly engine: LibraryEngine; readonly accountDir: string; readonly version: string; readonly enabled: boolean; readonly inCatalog: boolean; readonly updateAvailable: boolean; readonly keyed: boolean }
 export interface LibraryAccountView { readonly accountDir: string; readonly engine: LibraryEngine; readonly label: string }
 export interface LibraryView { readonly platform: string; readonly accounts: readonly LibraryAccountView[]; readonly entries: readonly LibraryEntryView[]; readonly installs: readonly LibraryInstallView[] }
 export interface LibraryPreviewView {
   readonly packageId: string; readonly version: string; readonly engine: LibraryEngine; readonly accountDir: string;
-  readonly block: LibraryBlock | null; readonly route: 'native' | 'ownedFiles' | null;
+  readonly block: LibraryBlock | null; readonly route: 'native' | 'ownedFiles' | 'mageMcp' | null;
   readonly files: readonly { readonly absPath: string; readonly bytes: number; readonly sha256: string }[];
   readonly commands: readonly string[]; readonly envVar: 'CLAUDE_CONFIG_DIR' | 'CODEX_HOME';
   readonly components: readonly LibraryComponentView[]; readonly runsCode: boolean;

@@ -393,6 +393,13 @@ const api: MageApi = {
     return () => ipcRenderer.removeListener(BROWSER_STATE_CHANNEL, handler);
   },
   getUiZoomFactor: () => webFrame.getZoomFactor(),
+  listTasks: () => ipcRenderer.invoke(IpcChannel.TasksList),
+  createTask: (draft) => ipcRenderer.invoke(IpcChannel.TasksCreate, draft),
+  verifyTask: (params) => ipcRenderer.invoke(IpcChannel.TasksVerify, params),
+  removeTask: (taskId) => ipcRenderer.invoke(IpcChannel.TasksRemove, taskId),
+  pickTaskFolders: () => ipcRenderer.invoke(IpcChannel.TasksPickFolders),
+  pickTaskDocuments: () => ipcRenderer.invoke(IpcChannel.TasksPickDocuments),
+  saveTaskDeliverableCopy: (params) => ipcRenderer.invoke(IpcChannel.TasksSaveCopy, params),
 };
 
 contextBridge.exposeInMainWorld('mage', api);
