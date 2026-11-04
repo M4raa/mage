@@ -73,7 +73,8 @@ export function mcpStateOf(input: {
   }
 }
 function isQuestionRequest(pending: ConversationSnapshot['pending'][number]): boolean {
-  if (pending.kind === 'elicitation') return true;
+  // Una elicitation (Codex pide así la aprobación de cada herramienta MCP) la contesta el usuario, no la creadora (D-M8): es un permiso.
+  if (pending.kind === 'elicitation') return false;
   return parseAskUserQuestion(pending.request.input) !== null;
 }
 

@@ -44,7 +44,7 @@ describe('mcpStateOf', () => {
   it.each([
     ['closed', null, true, 0, 'interrupted'],
     ['snapshotNull', null, false, 0, 'interrupted'],
-    ['elicitation', snap('requires_action', [elicitation]), false, 1, 'waiting_answer'],
+    ['elicitation', snap('requires_action', [elicitation]), false, 1, 'permission_pending'],
     ['questionPermission', snap('requires_action', [permission(QUESTION_INPUT)]), false, 1, 'waiting_answer'],
     ['otherPermission', snap('requires_action', [permission()]), false, 1, 'permission_pending'],
     ['running', snap('running'), false, 0, 'working'],
@@ -223,6 +223,17 @@ describe('DelegationLog', () => {
       emit(queuedSent, snap('running'));
       expect(log.get('conv-child')!.state).toBe('working');
       expect(waitingOf(announcedTo)).toEqual([true, false]);
+    });
+    it('onEvent_elicitacionDeHijaEsperandoCreadora_noAlternaConWaiting', () => {
+      const { log, emit, announced } = setup();
+      log.watch(CHILD);
+      log.recordQuestion('child', '¿?');
+      emit({ kind: 'elicitation_request', request: { requestId: 'e1' } } as unknown as MageEvent, snap('requires_action', [elicitation]));
+      const withElicitation = announced.filter((event) => event.kind === 'delegation_state').map((event) => (event as { state: string }).state);
+      emit({ kind: 'thinking_delta', text: 'x' }, snap('running'));
+      const states = announced.filter((event) => event.kind === 'delegation_state').map((event) => (event as { state: string }).state);
+      expect(withElicitation[withElicitation.length - 1]).toBe('permission_pending');
+      expect(states).not.toContain('working');
     });
     it('onClosed_whileWaiting_interruptedWithoutWaitingAnnounce', () => {
       const { log, close, announcedTo } = setup();

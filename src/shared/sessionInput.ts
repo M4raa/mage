@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { ImageAttachment } from './ipc';
 
 // Esquemas de entrada de las sesiones (F2.6, H3 de la devolución 14). Los comparten el IPC del renderer y el
 // host local: toda entrada se valida AQUÍ, antes de llegar al coordinador. Antes `SessionAnswerPermission` y
@@ -28,10 +29,10 @@ export const PERMISSION_DECISION_SCHEMA = z.discriminatedUnion('behavior', [
   z.object({ behavior: z.literal('deny'), message: z.string().max(MAX_DENY_MESSAGE_CHARS) }).strict(),
 ]);
 
-const ATTACHMENT_SCHEMA = z.object({
-  mediaType: z.enum(['image/png', 'image/jpeg', 'image/webp', 'image/gif']),
-  data: z.string(),
-}).strict();
+// Tipos que viajan como adjunto: las cuatro imágenes y el PDF de las menciones (Q05). Aquí solo la forma: el
+// tipo, el tamaño y el número los valida de verdad `validateAttachments` de main (`@shared/attachments`).
+export const ATTACHMENT_MEDIA_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'application/pdf'] as const satisfies readonly ImageAttachment['mediaType'][];
+export const ATTACHMENT_SCHEMA = z.object({ mediaType: z.enum(ATTACHMENT_MEDIA_TYPES), data: z.string() }).strict();
 
 export const SEND_MESSAGE_SCHEMA = z.object({
   sessionId: id,

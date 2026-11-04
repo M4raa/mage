@@ -3,6 +3,7 @@ import { UserFacingError } from './i18n/localizedText';
 import {
   MAX_ATTACHMENT_BYTES,
   MAX_ATTACHMENTS,
+  assertPastedImages,
   validateAttachment,
   validateAttachmentSet,
   type ImageAttachmentMeta,
@@ -110,5 +111,28 @@ describe('validateAttachmentSet', () => {
     expect(() =>
       validateAttachmentSet([], [{ mediaType: 'image/png', byteLength: 10 }, { mediaType: 'application/zip', byteLength: 10 }], ES),
     ).toThrow(/no admitido/i);
+  });
+});
+
+describe('assertPastedImages', () => {
+  it('assertPastedImages_png_noLanza', () => {
+    expect(() => assertPastedImages([{ mediaType: 'image/png', byteLength: 10 }])).not.toThrow();
+  });
+
+  it('assertPastedImages_listaVacia_noLanza', () => {
+    expect(() => assertPastedImages([])).not.toThrow();
+  });
+
+  it('assertPastedImages_pdf_lanzaConElTipoYSoloImagenes', () => {
+    const thrown = catchError(() => assertPastedImages([{ mediaType: 'application/pdf', byteLength: 10 }])) as UserFacingError;
+
+    expect(thrown).toBeInstanceOf(UserFacingError);
+    expect(thrown.localized.key).toBe('errors.attachments.unsupportedType');
+    expect(thrown.localized.values?.type).toBe('"application/pdf"');
+    expect(thrown.localized.values?.allowed).toBe('image/png, image/jpeg, image/webp, image/gif');
+  });
+
+  it('assertPastedImages_mayusculas_noLanza', () => {
+    expect(() => assertPastedImages([{ mediaType: 'IMAGE/PNG', byteLength: 10 }])).not.toThrow();
   });
 });

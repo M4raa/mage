@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { summarize, tabSwitchReadyExpr, topSelfTime } from './perfBaseline.mjs';
+import { summarize, tabSwitchReadyExpr, topSelfTime, withStep } from './perfBaseline.mjs';
 
 describe('perfBaseline (#40)', () => {
   it('summarize_muestras_medianaP90YMaximo', () => {
@@ -47,5 +47,24 @@ describe('perfBaseline (#40)', () => {
     expect(expr).toContain('[data-pane-tab-id="t7"]');
     expect(expr).toContain('[data-chat-scroller]');
     expect(expr).toContain('[data-last-row="true"]');
+  });
+});
+
+describe('withStep', () => {
+  it('withStep_ok_devuelveElValor', async () => {
+    expect(await withStep('x', async () => 7)).toBe(7);
+  });
+
+  it('withStep_falla_prefijaElPasoYConservaLaCausa', async () => {
+    const error = await withStep('x', async () => { throw new Error('boom'); }).catch((e) => e);
+
+    expect(error.message).toBe('Paso «x»: boom');
+    expect(error.cause.message).toBe('boom');
+  });
+
+  it('withStep_fallaSinPagina_noAnadeOverlays', async () => {
+    const error = await withStep('x', async () => { throw new Error('boom'); }).catch((e) => e);
+
+    expect(error.message).not.toContain('overlays');
   });
 });

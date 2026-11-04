@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { RewindApplyParams, DivergeParams, RewindPlanParams } from '@shared/ipc';
-import { MAX_ID_CHARS, parseSessionInput } from '@shared/sessionInput';
+import { ATTACHMENT_SCHEMA, MAX_ID_CHARS, parseSessionInput } from '@shared/sessionInput';
 
 // Esquemas de entrada de los tres canales del rewind (F4.4/F4.5). Frontera de verdad: todo `.strict()` y acotado.
 
@@ -8,12 +8,6 @@ const MAX_POINT_INDEX = 100_000;
 const MAX_POINT_TEXT_CHARS = 200_000;
 
 const id = z.string().min(1).max(MAX_ID_CHARS);
-
-// El renderer valida los adjuntos por cortesia y `deps.validateAttachments` los comprueba de verdad; aqui solo la forma.
-const ATTACHMENT_SCHEMA = z.object({
-  mediaType: z.enum(['image/png', 'image/jpeg', 'image/webp', 'image/gif']),
-  data: z.string(),
-}).strict();
 
 export const REWIND_POINT_SCHEMA = z.object({
   userIndex: z.number().int().min(0).max(MAX_POINT_INDEX),

@@ -81,12 +81,12 @@ export function BlockChat(): React.JSX.Element {
   const anchor = useListAnchor(activeTabId, rows);
   const enteringKeys = useEnteringRowKeys(`${activeTabId}:${anchor.generation}`, rows);
   const expandedRows = useExpandedRowsStore(activeTabId);
-  const { virtuosoRef, onAtBottomChange } = useChatAutoScroll({ tailSize, turnLive, resetKey: stickResetKey(activeTabId, blocks) });
+  const { virtuosoRef, onAtBottomChange, repinIfStuck } = useChatAutoScroll({ tailSize, turnLive, resetKey: stickResetKey(activeTabId, blocks) });
   const lastRow = rows[rows.length - 1];
   const lastRowKey = lastRow === undefined ? null : rowKey(lastRow);
   const footerContext = useMemo<ChatListContext>(
-    () => ({ accent, lastRowKey, enteringKeys, turnLive, runningTool, capability, steps: turnSummary.steps, errors: turnSummary.errors }),
-    [accent, lastRowKey, enteringKeys, turnLive, runningTool, capability, turnSummary.steps, turnSummary.errors],
+    () => ({ accent, lastRowKey, enteringKeys, turnLive, runningTool, capability, steps: turnSummary.steps, errors: turnSummary.errors, repinIfStuck }),
+    [accent, lastRowKey, enteringKeys, turnLive, runningTool, capability, turnSummary.steps, turnSummary.errors, repinIfStuck],
   );
 
   if (blocks.length === 0 && !turnLive) {
@@ -156,6 +156,8 @@ interface ChatListContext {
   readonly capability: TurnCapability | null;
   readonly steps: number;
   readonly errors: number;
+  // Re-ancla al final si el usuario estaba pegado; lo llama el pie al cambiar de alto.
+  readonly repinIfStuck: () => void;
 }
 
 // `data-last-row` es el ancla del harness para saber que la ultima fila ya esta pintada; `data-row-key`, para
@@ -176,12 +178,27 @@ const CHAT_LIST_COMPONENTS: Components<ChatRow, ChatListContext> = {
     return <div {...props} ref={ref} data-chat-scroller="true" className="overflow-y-auto" />;
   }),
   Header: () => <div className="h-[16px]" />,
-  Footer: ({ context }) => (
-    <div className="px-[22px] pb-[16px]">
+  Footer: ({ context }) => <ChatFooter context={context} />,
+};
+
+// Pie de la lista: la línea de «trabajando». Virtuoso mide el pie DESPUÉS del commit en que aparece el indicador, así que
+// el re-anclaje del cambio de `turnLive` se quedaba corto en su altura (V6, R59): al cambiar de alto se vuelve a anclar.
+function ChatFooter({ context }: { readonly context: ChatListContext }): React.JSX.Element {
+  const ref = useRef<HTMLDivElement>(null);
+  const { repinIfStuck } = context;
+  useLayoutEffect(() => {
+    const element = ref.current;
+    if (element === null) return undefined;
+    const observer = new ResizeObserver(() => repinIfStuck());
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [repinIfStuck]);
+  return (
+    <div ref={ref} data-chat-footer="true" className="px-[22px] pb-[16px]">
       {context.turnLive && <ThinkingIndicator accent={context.accent} tool={context.runningTool} capability={context.capability} steps={context.steps} errors={context.errors} />}
     </div>
-  ),
-};
+  );
+}
 
 // Ancla de la lista: sube `firstItemIndex` al anteponer historial y cuenta una «generacion» cuando el
 // contenido se sustituye (la lista se remonta). Cambiar de pestaña la reinicia.
@@ -232,12 +249,14 @@ function useEnteringRowKeys(resetKey: string, rows: readonly ChatRow[]): Readonl
 function useChatAutoScroll({ tailSize, turnLive, resetKey }: { readonly tailSize: number; readonly turnLive: boolean; readonly resetKey: string }): {
   readonly virtuosoRef: React.RefObject<VirtuosoHandle | null>;
   readonly onAtBottomChange: (atBottom: boolean) => void;
+  readonly repinIfStuck: () => void;
 } {
   const virtuosoRef = useRef<VirtuosoHandle>(null);
   const stuckRef = useRef(true);
   const onAtBottomChange = useCallback((atBottom: boolean): void => {
     stuckRef.current = atBottom;
   }, []);
+  const repinIfStuck = useCallback((): void => { if (stuckRef.current) scrollToLastRow(virtuosoRef.current); }, []);
   useLayoutEffect(() => {
     if (stuckRef.current) scrollToLastRow(virtuosoRef.current);
   }, [tailSize, turnLive]);
@@ -245,7 +264,7 @@ function useChatAutoScroll({ tailSize, turnLive, resetKey }: { readonly tailSize
     stuckRef.current = true;
     scrollToLastRow(virtuosoRef.current);
   }, [resetKey]);
-  return { virtuosoRef, onAtBottomChange };
+  return { virtuosoRef, onAtBottomChange, repinIfStuck };
 }
 
 function scrollToLastRow(handle: VirtuosoHandle | null): void {

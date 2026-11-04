@@ -56,7 +56,7 @@ import { runPerfBaseline } from './lib/perfBaseline.mjs';
 import { writeLongTranscript } from './lib/longTranscriptFixture.mjs';
 import { runMageBench } from './lib/benchMage.mjs';
 import { appendDomText } from './lib/domTextDump.mjs';
-import { redactUserData } from './lib/redactUserData.mjs';
+import { redactLocalUser, redactUserData } from './lib/redactUserData.mjs';
 import { cleanupProfile, credentialDigest } from '../spike/f0-profile-cleanup.mjs';
 import { claudeUsage, codexRateLimits, guardedUsage, prepareCodexHome } from '../spike/bench/headless.mjs';
 
@@ -78,6 +78,8 @@ const HARNESS_LOCKS_DIR = path.join(os.tmpdir(), `mage-verify-locks-${process.pi
 // En el entorno del propio harness, para que la herede CUALQUIER instancia que lance (G5, bench, segunda instancia…).
 process.env[HARNESS_LOCKS_ENV] = HARNESS_LOCKS_DIR;
 process.on('exit', () => fs.rmSync(HARNESS_LOCKS_DIR, { recursive: true, force: true }));
+// HOME que ven la app y el harness: el de prueba de la tanda salvo con `--turn=real` (V6: el lateral D6 enseñaba las cuentas reales).
+let HARNESS_HOME = os.homedir();
 
 const CONFIG = {
   port: 9222,
@@ -2115,7 +2117,7 @@ const CHECKS = [
               const id = dev.store.getState().activeTabId;
               dev.store.setState((s) => ({ tabs: s.tabs.map((t) => (t.id === id ? { ...t, provider, accountId: accountDir, resolvedConfigDir: accountDir } : t)) }));
             },
-            { provider, accountDir: path.join(os.homedir(), '.claude') },
+            { provider, accountDir: path.join(HARNESS_HOME, '.claude') },
           );
         const puente = async (target) => {
           await proyecto.locator(`[data-instructions-bridge="${target}"]`).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
@@ -5898,7 +5900,7 @@ const CHECKS = [
       // esta conversacion) y luego se negaba a abrirlo. Se comprueba con la raiz REAL, porque lo que
       // hay que verificar es que main wire el whitelisting correcto — un test unitario del predicado
       // inyectado no lo demuestra. El fichero lleva nombre inequivoco y se borra al terminar.
-      const plansDir = path.join(os.homedir(), '.claude', 'plans');
+      const plansDir = path.join(HARNESS_HOME, '.claude', 'plans');
       const planPath = path.join(plansDir, 'mage-verify-plan.md');
       const plan = {};
       if (fs.existsSync(path.dirname(plansDir))) {
@@ -6018,6 +6020,8 @@ const CHECKS = [
                 handle({ kind: 'tool_use', tool: { toolUseId: id, toolName: 'Write', input: { file_path: ruta } } });
                 handle({ kind: 'tool_result', result: { toolUseId: id, isError: false, output: 'File created successfully', durationMs: 3, file: { path: ruta, content: '' } } });
               });
+              // Un turno real acaba con `result`: sin él la pestaña sigue en `streaming` y el índice de referencias no se construye (V6).
+              handle({ kind: 'result', result: { isError: false, subtype: 'success', numTurns: 1 } });
               const agente = { kind: 'agent', id: 'q09-agent', runs: [{ code: false, text: 'Mira F0.4, §3.4, H2 y `F0.4`.' }], streaming: false };
               dev.store.setState((state) => ({ blocksByChat: { ...state.blocksByChat, [tabId]: [...(state.blocksByChat[tabId] ?? []), agente] } }));
             },
@@ -8078,8 +8082,8 @@ const CHECKS = [
       await page.evaluate(() => { const element = document.querySelector('[data-pane-tab-id] .overflow-y-auto'); element.scrollTop = element.scrollHeight; element.dispatchEvent(new Event('scroll')); });
       await injectPermissionRequest(page, ASK_USER_QUESTION_INPUT, 'vg-tail-question');
       await waitForDockReady(page, '[data-question-dock="true"]');
-      const gap = await page.evaluate(() => { const element = document.querySelector('[data-pane-tab-id] .overflow-y-auto'); return element.scrollHeight - element.scrollTop - element.clientHeight; });
-      return { ok: gap <= 3, detail: JSON.stringify({ bottomGap: gap }) };
+      const { gap, footerPx } = await page.evaluate(() => { const element = document.querySelector('[data-pane-tab-id] .overflow-y-auto'); return { gap: element.scrollHeight - element.scrollTop - element.clientHeight, footerPx: document.querySelector('[data-pane-tab-id] [data-chat-footer]')?.getBoundingClientRect().height ?? null }; });
+      return { ok: gap <= 3, detail: JSON.stringify({ bottomGap: gap, footerPx }) };
     },
   },
   {
@@ -8125,7 +8129,8 @@ const CHECKS = [
         const store = window.__mageDev.store;
         store.setState({ blocksByChat: { ...store.getState().blocksByChat, [tabId]: [{ kind: 'system', id: 'vg-recreated', text: notice }] } });
       }, { tabId, notice });
-      const visible = await page.getByText(notice, { exact: true }).isVisible();
+      // Con la lista virtual la fila se monta un fotograma después: se espera por condición (V6).
+      const visible = await page.getByText(notice, { exact: true }).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs }).then(() => true, () => false);
       await page.evaluate(id => window.__mageDev.store.getState().closeTab(id), tabId);
       return { ok: visible, detail: 'Aviso sintético visible; recuperación y cableado cubiertos con fixtures main/store.' };
     },
@@ -10200,6 +10205,11 @@ const CHECKS = [
           const users = (s.blocksByChat[id] ?? []).filter((b) => b.kind === 'user').length;
           return users === 3 && s.statusByChat[id] === 'idle' && (s.queuedByChat[id]?.length ?? 0) === 0;
         }, tabId, { timeout: 45_000 });
+        // El renderer ya está en idle, pero main puede seguir un instante en running: se espera también a main (V6).
+        await page.evaluate(async ({ sessionId, plazo }) => {
+          const fin = Date.now() + plazo;
+          while ((await window.mage.getSessionSnapshot(sessionId)).state !== 'idle' && Date.now() < fin) await new Promise((r) => setTimeout(r, 100));
+        }, { sessionId: recibos.sessionId, plazo: CONFIG.actionTimeoutMs });
         const final = await page.evaluate(async ({ id, sessionId }) => {
           const s = window.__mageDev.store.getState();
           const snapshot = await window.mage.getSessionSnapshot(sessionId);
@@ -11450,7 +11460,7 @@ function seedMcpExtensions(userDataDir, fake) {
 }
 
 function seedCommandCatalog(userDataDir) {
-  const home = os.homedir();
+  const home = HARNESS_HOME;
   const accounts = fs
     .readdirSync(home, { withFileTypes: true })
     .filter((entry) => entry.isDirectory() && /^\.claude(-.*|\d*)$/.test(entry.name))
@@ -12365,6 +12375,8 @@ function stubRewindActions(page, plan) {
 
 // Pasa el ratón por la burbuja, pulsa «Rebobinar hasta aquí» y espera a que el diálogo pinte el plan (`anchor`: lo que lo identifica).
 async function openRewindDialog(page, anchor = '[data-rewind-discarded]') {
+  // La lista virtual monta la burbuja después de sembrarla: se espera a que exista antes de contarla (V6).
+  await page.locator('[data-block="user"]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
   if ((await page.locator('[data-bubble-rewind]').count()) !== 1) throw new Error('Se esperaba exactamente una burbuja con «Rebobinar hasta aquí»');
   await page.locator('[data-block="user"] div.group').first().hover();
   await page.locator('[data-bubble-rewind]').click();
@@ -12917,7 +12929,7 @@ async function chooseTurnTarget(page) {
     }
   });
   const spent = spentPercent(read.usage);
-  const decision = decideTurnTarget({ spent, forced: forcedTurnTarget(), interactive: process.stdin.isTTY === true });
+  const decision = decideTurnTarget({ spent, forced: forcedTurnTarget(), interactive: process.stdin.isTTY === true, isolatedHome: HARNESS_HOME !== os.homedir() });
   if (decision.target !== 'ask') return { ...decision, usageError: read.error };
   console.log(`[verify:gui] AVISO: ${decision.reason}.`);
   const terminal = readline.createInterface({ input: process.stdin, output: process.stdout });
@@ -13256,6 +13268,7 @@ function writeReport(runDir, results, consoleErrors) {
   const lines = ['# Verificacion GUI de Mage', ''];
   lines.push(`- Fecha: ${new Date().toISOString()}`);
   lines.push(`- Plataforma: ${process.platform}`);
+  lines.push(`- HOME de prueba: ${HARNESS_HOME !== os.homedir() ? 'sí' : 'no'}`);
   lines.push('');
   lines.push('| Resultado | Comprobacion | Medida |');
   lines.push('|---|---|---|');
@@ -13304,6 +13317,12 @@ async function main() {
   if (reuseProfile !== undefined && !userDataDir.startsWith(path.join(CONFIG.outDir, 'user-data') + path.sep)) throw new Error('El perfil de fixture debe estar dentro de .verify-out/user-data');
   fs.mkdirSync(runDir, { recursive: true });
   fs.mkdirSync(userDataDir, { recursive: true });
+  if (forcedTurnTarget() !== 'real') {
+    // HOME de prueba dentro del perfil de la tanda (V6): la app descubre las cuentas ahí, con la de Claude vacía y sin sesión.
+    HARNESS_HOME = path.join(userDataDir, 'vg-home');
+    fs.mkdirSync(path.join(HARNESS_HOME, '.claude', 'plans'), { recursive: true });
+    process.env.MAGE_TEST_HOME = HARNESS_HOME;
+  }
   prunePreviousProfiles(userDataDir);
   seedCommandCatalog(userDataDir);
   if (reuseProfile === undefined || !fs.existsSync(path.join(userDataDir, 'app-settings.json'))) seedOnboardingDone(userDataDir);
@@ -13346,7 +13365,13 @@ async function main() {
 
     // #40 (baseline de interfaz, SOLO medicion): en vez de las comprobaciones, mide y deja el JSON.
     if (process.argv.includes('--perf-baseline')) {
-      const medido = await runPerfBaseline(page, { openConversation: openTemporaryConversation, devBridge: !PROD_BUILD, longTranscriptTitle: longTranscript.title });
+      let medido;
+      try {
+        medido = await runPerfBaseline(page, { openConversation: openTemporaryConversation, devBridge: !PROD_BUILD, longTranscriptTitle: longTranscript.title });
+      } catch (error) {
+        await page.screenshot({ path: path.join(runDir, 'perf-fallo.png') }).catch((shotError) => console.log(`[verify:gui] sin captura del fallo de perf: ${shotError.message}`));
+        throw error;
+      }
       fs.writeFileSync(path.join(runDir, 'perf-baseline.json'), JSON.stringify(medido, null, 2), 'utf-8');
       console.log(`[verify:gui] baseline: ${path.join(runDir, 'perf-baseline.json')}`);
       results.push({ name: 'Baseline de interfaz #40', ok: true, detail: redactUserData('medido', accountAliases) });
@@ -13386,9 +13411,9 @@ async function main() {
   } catch (error) {
     results.push({ name: 'Arranque', ok: false, detail: redactUserData(error.message, accountAliases) });
     console.error(`[verify:gui] ${error.message}`);
-    fs.writeFileSync(path.join(runDir, 'launch.log'), log.join(''), 'utf-8');
+    fs.writeFileSync(path.join(runDir, 'launch.log'), redactLocalUser(log.join('')), 'utf-8');
   } finally {
-    writeReport(runDir, results, consoleErrors);
+    writeReport(runDir, results, consoleErrors.map((error) => redactUserData(error, accountAliases)));
     if (browser !== null) await browser.close().catch(() => {});
     if (!keepOpen) killTree(child);
     else console.log('[verify:gui] --keep: la app sigue abierta; ciérrala tú.');

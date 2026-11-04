@@ -570,6 +570,30 @@ describe('ensureSession', () => {
     expect(createSession).toHaveBeenCalledTimes(1);
   });
 
+  it('ensureSession_pestanaConTarea_mandaTaskIdUnaVez', async () => {
+    const createSession = vi.fn().mockResolvedValue(sesionCreada);
+    const store = createWorkbenchStore(
+      fakeMage({ createSession, isFolderTrusted: vi.fn().mockResolvedValue(true), saveWorkspace: vi.fn().mockResolvedValue(undefined), saveConversationPrefs: vi.fn().mockResolvedValue(undefined) }),
+    );
+    store.setState({ tabs: [tab('a')], activeTabId: 'a', splitLayout: singleLeaf('a') });
+    store.getState().attachTaskToTab('a', 't1');
+
+    await store.getState().ensureSession('a');
+    store.setState({ sessionIdByChat: {} }); // la sesión se pierde
+    await store.getState().ensureSession('a');
+
+    expect(createSession).toHaveBeenCalledTimes(2);
+    expect(createSession.mock.calls[0]?.[0]).toMatchObject({ taskId: 't1' });
+    expect(createSession.mock.calls[1]?.[0]).not.toHaveProperty('taskId');
+  });
+
+  it('attachTaskToTab_idVacio_lanza', () => {
+    const store = createWorkbenchStore(fakeMage());
+
+    expect(() => store.getState().attachTaskToTab('a', '')).toThrow('"taskId":""');
+    expect(() => store.getState().attachTaskToTab('', 't1')).toThrow('"tabId":""');
+  });
+
   it('ensureSession_conSesionYaViva_noVuelveACrear', async () => {
     const createSession = vi.fn();
     const store = createWorkbenchStore(fakeMage({ createSession }));

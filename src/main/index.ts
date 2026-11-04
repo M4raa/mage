@@ -38,6 +38,7 @@ import {
 } from 'node:fs';
 import { glob, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
+import { accountsHomeFrom, decideTestHome } from './os/testHome';
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { isUnderCliScratchpad as isUnderCliScratchpadPure } from './files/cliScratchpad';
 import { fileURLToPath } from 'node:url';
@@ -342,10 +343,13 @@ const currentDir = dirname(fileURLToPath(import.meta.url));
 // Cada cuanto puede refrescarse la jump list como mucho (P1). El disparador es el foco de ventana, y
 // un alt-tab seguido la llamaria varias veces por segundo sobre un escaneo de disco de cientos de ms.
 // Un minuto es de sobra: lo que muestra son conversaciones recientes, no algo que cambie por segundo.
+// HOME para descubrir y validar cuentas, historial y MCP: el de prueba de verify:gui o el real (ver `os/testHome.ts`).
+const accountsHome = (): string => accountsHomeFrom(decideTestHome({ env: process.env, isPackaged: app.isPackaged }), homedir());
+
 // ¿La ruta cuelga del home del usuario? Se compara segmento a segmento con `pathEquals`, que en
 // win32 ignora mayusculas y en POSIX no (donde SI son directorios distintos).
 function isInsideHome(resolved: string): boolean {
-  const home = homedir();
+  const home = accountsHome();
   return resolved.length > home.length + 1 && pathEquals(resolved.slice(0, home.length), home) && resolved[home.length] === sep;
 }
 
@@ -467,9 +471,9 @@ function importSharedMcpOnce(): void {
     const accounts = accountService.listAccounts().map((account) => ({
       label: account.name,
       // La principal guarda su estado en HOME, no dentro de `~/.claude` (mismo criterio que AccountService).
-      text: readIfExists(account.isMain ? join(homedir(), stateFileName) : join(account.configDir, stateFileName)),
+      text: readIfExists(account.isMain ? join(accountsHome(), stateFileName) : join(account.configDir, stateFileName)),
     }));
-    const shared = { label: LEGACY_SHARED_MCP_FILE, text: readIfExists(join(homedir(), mainDirName, LEGACY_SHARED_MCP_FILE)) };
+    const shared = { label: LEGACY_SHARED_MCP_FILE, text: readIfExists(join(accountsHome(), mainDirName, LEGACY_SHARED_MCP_FILE)) };
     const notes = getSharedConfigService().importMcpCommonIfMissing(mcpCommonPath(), shared, accounts);
     if (notes === null) return;
     mcpImportNotes = notes;
@@ -495,7 +499,7 @@ function mcpAccountLocations(): readonly McpAccountLocation[] {
     configDir: account.configDir,
     label: account.name.replace(/^\./, ''),
     stateFile:
-      mcpFakeSourcesPath(`${account.name}.json`) ?? (account.isMain ? join(homedir(), stateFileName) : join(account.configDir, stateFileName)),
+      mcpFakeSourcesPath(`${account.name}.json`) ?? (account.isMain ? join(accountsHome(), stateFileName) : join(account.configDir, stateFileName)),
   }));
 }
 
@@ -539,7 +543,7 @@ function getMcpServices(): McpServices {
   if (mcpServicesSingleton === null) {
     mcpServicesSingleton = createMcpServices({
       userDataDir: app.getPath('userData'),
-      homedir: homedir(),
+      homedir: accountsHome(),
       platform: process.platform,
       pathSeparator: sep,
       vault: getSecretStore(),
@@ -559,13 +563,13 @@ function getMcpServices(): McpServices {
 // mcp_config.json de agy: su raiz sigue al perfil del usuario (medido en 1.2.14, no hay variable para
 // moverla). En verify:gui, el falso de MAGE_MCP_FAKE_SOURCES.
 function agyMcpConfigPath(): string {
-  return mcpFakeSourcesPath(join('agy', 'mcp_config.json')) ?? join(homedir(), '.gemini', 'config', 'mcp_config.json');
+  return mcpFakeSourcesPath(join('agy', 'mcp_config.json')) ?? join(accountsHome(), '.gemini', 'config', 'mcp_config.json');
 }
 
 function mcpDesktopDirs(): readonly string[] {
   const fake = mcpFakeSourcesPath('Claude');
   if (fake !== null) return existsSync(fake) ? [fake] : [];
-  return resolveClaudeDesktopDirs({ platform: process.platform, env: process.env, homedir: homedir(), exists: existsSync, listDir: (path) => readdirSync(path) });
+  return resolveClaudeDesktopDirs({ platform: process.platform, env: process.env, homedir: accountsHome(), exists: existsSync, listDir: (path) => readdirSync(path) });
 }
 
 // Tras cambiar lo que Mage comparte: sincronizacion automatica con agy (si el usuario la activo). Un
@@ -647,9 +651,9 @@ const sessionManager = new SessionManager(
       buildRuntime: (id, runtimeBase) => buildRuntimeSession(id, runtimeBase, runtimeEnv()),
     }),
   {
-    homedir: homedir(),
+    homedir: accountsHome(),
     fileExists: existsSync,
-    listHome: () => readdirSync(homedir()),
+    listHome: () => readdirSync(accountsHome()),
     resolveShared: loadSharedLaunch,
     hasClaudeLogin,
     isKnownPermissionMode: (provider, mode) => isKnownPermissionMode(provider, mode),
@@ -899,10 +903,10 @@ const instructionsFs: BridgeFs = { exists: existsSync, readFile: (path) => readF
 // El CLAUDE.md global que se puentea: el de la cuenta de Claude principal.
 // ponytail: siempre ~/.claude; si el usuario solo tiene cuentas alternativas con su propio CLAUDE.md,
 // resolver aqui la cuenta por defecto como sessionDefaults.ts.
-const claudeUserDir = (): string => join(homedir(), '.claude');
+const claudeUserDir = (): string => join(accountsHome(), '.claude');
 
 function codexHomeFor(accountDir: string): string {
-  return getProviderAccounts().find('codex', accountDir)?.home ?? join(homedir(), '.codex');
+  return getProviderAccounts().find('codex', accountDir)?.home ?? join(accountsHome(), '.codex');
 }
 
 function agyProfileFor(accountDir: string): string {
@@ -965,7 +969,7 @@ function buildCodexAdapter(): CodexAdapter {
       return { home: entry.home, apiKey: getProviderAccounts().apiKeyFor('codex', dir) };
     },
     resolveInstructions: (cwd, codexHome) =>
-      resolveBridge(instructionsFs, { cwd, claudeUserDir: claudeUserDir(), spec: codexBridgeSpec(codexHome ?? join(homedir(), '.codex')) }),
+      resolveBridge(instructionsFs, { cwd, claudeUserDir: claudeUserDir(), spec: codexBridgeSpec(codexHome ?? join(accountsHome(), '.codex')) }),
   });
 }
 
@@ -1124,7 +1128,7 @@ function getProviderAccounts(): ProviderAccountService {
   if (providerAccountsSingleton === null) {
     providerAccountsSingleton = new ProviderAccountService({
       filePath: join(app.getPath('userData'), 'provider-accounts.json'),
-      homedir: homedir(),
+      homedir: accountsHome(),
       userDataDir: app.getPath('userData'),
       vault: getSecretStore(),
       exists: existsSync,
@@ -1255,8 +1259,8 @@ const accountService = new AccountService({
   // Hoy el unico proveedor con multicuenta gestionada por Mage es Claude; cuando otro la tenga,
   // aqui se elegira el suyo y AccountService no cambia una linea.
   layout: accountLayoutOf(new ClaudeAdapter()),
-  homedir: homedir(),
-  listHome: () => readdirSync(homedir()),
+  homedir: accountsHome(),
+  listHome: () => readdirSync(accountsHome()),
   listDir: (path) => (existsSync(path) ? readdirSync(path) : []),
   isDirectory: (path) => tryIsDirectory(path),
   exists: existsSync,
@@ -1482,7 +1486,7 @@ function isUnderManagedProjects(targetPath: string): boolean {
   // distinguen mayusculas, asi que una ruta con la unidad en minusculas se rechazaba con
   // `bad_request_invalid_config_dir`. `pathEquals` ya resuelve eso, y solo en win32.
   if (!isInsideHome(resolved)) return false;
-  const segments = resolved.slice(homedir().length).split(sep).filter(Boolean);
+  const segments = resolved.slice(accountsHome().length).split(sep).filter(Boolean);
   if (segments.length < 2 || !ACCOUNT_DIR_PATTERN.test(segments[0] ?? '')) return false;
   if (segments[1] === 'projects') return true;
   return segments[1] === PRIVATE_PROFILE_SEGMENT && segments[2] === 'projects';
@@ -1514,7 +1518,7 @@ function isUnderManagedMemory(targetPath: string): boolean {
 function segmentsInsideManagedConfigDir(targetPath: string): readonly string[] | null {
   const resolved = resolve(targetPath);
   if (!isInsideHome(resolved)) return null;
-  const segments = resolved.slice(homedir().length).split(sep).filter(Boolean);
+  const segments = resolved.slice(accountsHome().length).split(sep).filter(Boolean);
   if (!ACCOUNT_DIR_PATTERN.test(segments[0] ?? '')) return null;
   return segments[1] === PRIVATE_PROFILE_SEGMENT ? segments.slice(2) : segments.slice(1);
 }
@@ -1587,7 +1591,7 @@ function isManagedAccountConfigDir(dir: string): boolean {
   // distinguen mayusculas, asi que una ruta con la unidad en minusculas se rechazaba con
   // `bad_request_invalid_config_dir`. `pathEquals` ya resuelve eso, y solo en win32.
   if (!isInsideHome(resolved)) return false;
-  const segments = resolved.slice(homedir().length).split(sep).filter(Boolean);
+  const segments = resolved.slice(accountsHome().length).split(sep).filter(Boolean);
   return segments.length === 1 && ACCOUNT_DIR_PATTERN.test(segments[0] ?? '');
 }
 
@@ -2818,7 +2822,7 @@ function launchSession(params: CreateSessionParams, sender: Electron.WebContents
       params.privacy === 'private' && params.provider === 'claude' ? accountService.ensurePrivateProfile(params.accountDir) : params.accountDir;
     const project = params.projectId === undefined ? undefined : getSettingsStore().load().chatProjects.find((candidate) => candidate.id === params.projectId);
     const task = params.provider === 'claude' || params.provider === 'codex'
-      ? getTaskService().claimForLaunch({ provider: params.provider, accountDir: params.accountDir, cwd: params.cwd, resumeSessionId: params.resumeSessionId })
+      ? getTaskService().claimForLaunch({ provider: params.provider, accountDir: params.accountDir, cwd: params.cwd, resumeSessionId: params.resumeSessionId, taskId: params.taskId })
       : null;
     const projectInstructions = [task === null ? undefined : buildTaskInstructions(task), project?.instructions.trim().slice(0, 8000), params.contextImport?.slice(0, IMPORTED_CONTEXT_LIMITS.max)]
       .filter((text): text is string => text !== undefined && text.length > 0).join('\n\n') || undefined;
@@ -3101,7 +3105,7 @@ function registerSessionIpc2(): void {
   ipcMain.handle(IpcChannel.ProviderProbe, (_e, params: ProviderProbeParams) =>
     probeProvider(
       params,
-      defaultProbeDeps(() => getCommandCatalogStore().loadModels(join(homedir(), cliLogin.accounts.mainDirName)), readCustomProviderApiKey),
+      defaultProbeDeps(() => getCommandCatalogStore().loadModels(join(accountsHome(), cliLogin.accounts.mainDirName)), readCustomProviderApiKey),
     ),
   );
   // «Iniciar sesión» del aviso de un MCP del runtime propio (D3 de P-033).
@@ -3976,7 +3980,7 @@ function registerPromptIpc1(deps: IpcDependencies): void {
     fs: { exists: existsSync, readFile: (path) => readFileSync(path, 'utf8'), listDir: (path) => readdirSync(path) },
     commonPath: mcpCommonPath,
     accounts: mcpAccountLocations,
-    legacySharedPath: () => mcpFakeSourcesPath(LEGACY_SHARED_MCP_FILE) ?? join(homedir(), cliLogin.accounts.mainDirName, LEGACY_SHARED_MCP_FILE),
+    legacySharedPath: () => mcpFakeSourcesPath(LEGACY_SHARED_MCP_FILE) ?? join(accountsHome(), cliLogin.accounts.mainDirName, LEGACY_SHARED_MCP_FILE),
     desktopDirs: mcpDesktopDirs,
     agyConfigPath: agyMcpConfigPath,
     extensions: getMcpServices().extensions,

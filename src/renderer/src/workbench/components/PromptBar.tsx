@@ -13,7 +13,7 @@ import { composerLayout, type ComposerLayout } from '../composerLayout';
 import type { ProviderModel } from '@shared/providers';
 import { continueListOnNewline, indentLines, outdentLines, type TextState } from '../promptEditing';
 import { enterAction } from '../promptEnter';
-import { base64ByteLength, validateAttachmentSet } from '@shared/attachments';
+import { assertPastedImages, base64ByteLength, validateAttachmentSet } from '@shared/attachments';
 import type { PromptEditorHandle } from './PromptEditor';
 import { Icon, type IconName } from './Icon';
 import { SendControls } from './SendControls';
@@ -618,6 +618,7 @@ export function PromptBar(): React.JSX.Element {
     const current = draftOf(tabId);
     try {
       const metas = current.attachments.map((a) => ({ mediaType: a.attachment.mediaType, byteLength: a.byteLength }));
+      assertPastedImages(files.map((file) => ({ mediaType: file.type, byteLength: file.size })));
       validateAttachmentSet(metas, files.map((file) => ({ mediaType: file.type, byteLength: file.size })), activeFormatLocale());
     } catch (err) {
       setError(t('prompt.attach.failed', { error: err instanceof Error ? describeError(err) : String(err) }));
