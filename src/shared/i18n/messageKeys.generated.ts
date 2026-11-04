@@ -1428,6 +1428,10 @@ export interface MessageValues {
   readonly "notifications.worktree.openFolder": never;
   readonly "notifications.worktree.reasonDirty": never;
   readonly "notifications.worktree.reasonUnknown": never;
+  readonly "pr.actionFailed": never;
+  readonly "pr.conflict": never;
+  readonly "pr.migrateFailed": never;
+  readonly "pr.resolveConflictsPrompt": { readonly "base": string | number; readonly "head": string | number; readonly "number": string | number };
   readonly "prompt.actions.compact": never;
   readonly "prompt.actions.compactDisabled": never;
   readonly "prompt.actions.compactTip": never;

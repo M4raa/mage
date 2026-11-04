@@ -47,6 +47,7 @@ import { createHistoryActions, withIdPresence } from './historyActions';
 import { EMPTY_SIDEBAR_FILTER, type AccountConversation, type SidebarFilter } from './sidebarModel';
 import { createAccountsActions } from './accountsActions';
 import { createPrActions, resetPrActionsState, type PrActions, type PrState } from './prActions';
+import { createPrPanelActions, resetPrPanelState, type PrPanelActions, type PrPanelStoreState } from './prPanelActions';
 import { isPrCreateCommand, prNumberFromCreatedTag, prNumberFromUrl } from './prBinding';
 import { worktreeOfCwd } from '@shared/worktree';
 import { createdFileFrom } from './createdFilesView';
@@ -153,7 +154,7 @@ const CONTEXT_PLACEHOLDER: ContextInfo = { usedTokens: '—', maxTokens: '200k',
 // {cuenta, proyecto, modelo} con su AgentSession aislada. El estado del motor va keyed por id de
 // pestana (un chat = una pestana): asi anadir pestanas no obliga a refactorizar el reducer.
 // Exportado junto con `reduceEvent` para poder testear el reducer con un estado de mentira.
-export interface WorkbenchState extends PrState, PrActions {
+export interface WorkbenchState extends PrState, PrActions, PrPanelStoreState, PrPanelActions {
   accounts: readonly Account[];
   tabs: readonly Tab[];
   activeAccountId: string;
@@ -1377,6 +1378,7 @@ export function createWorkbenchStore(mage: MageClient) {
   silentRenamesBySession.clear();
   gitTrustAsked.clear();
   resetPrActionsState();
+  resetPrPanelState();
   prCreateToolUses.clear();
   // Los ajustes reales ya están en el store (los cargó `init`): hasta entonces no se asignan acentos.
   let settingsReady = false;
@@ -1570,6 +1572,16 @@ export function createWorkbenchStore(mage: MageClient) {
       insertPrompt: (tabId, prompt) => insertPromptIntoDraft(get, tabId, prompt),
       sendToTab: (tabId, text) => get().sendMessageToTab(tabId, text),
       archiveTab: (tabId) => get().closeTab(tabId),
+    }),
+    prPanelByTab: {},
+    prDetailByKey: {},
+    prDiffByKey: {},
+    prCatalog: [],
+    ...createPrPanelActions({
+      mage,
+      get,
+      set,
+      insertPrompt: (tabId, prompt) => insertPromptIntoDraft(get, tabId, prompt),
     }),
 
     setActiveTab: (tabId) => {
