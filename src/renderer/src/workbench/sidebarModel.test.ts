@@ -19,6 +19,7 @@ import {
   type FilterContext,
   type GroupContext,
   type SidebarRow,
+  recentFolderProjects,
 } from './sidebarModel';
 
 const tab = (over: Partial<Tab> = {}): Tab => ({
@@ -315,5 +316,31 @@ describe('conversationSizeById', () => {
 
   it('conversationSizeById_empty_returnsEmptyMap', () => {
     expect(conversationSizeById([]).size).toBe(0);
+  });
+});
+
+describe('recentFolderProjects', () => {
+  const entry = (sessionId: string, cwd: string, updatedAtMs: number): AccountConversation => ({ item: summary({ sessionId, cwd, updatedAtMs }), accountId: 'acc-a' });
+
+  it('recentFolderProjects_groupsCountsAndSorts', () => {
+    const history = [entry('1', 'C:\\vg\\a', 10), entry('2', 'C:/vg/b', 50), entry('3', 'c:/vg/a/', 30)];
+
+    const result = recentFolderProjects(history, [], new Set(), 10);
+
+    expect(result.map((p) => [p.name, p.count])).toEqual([['b', 1], ['a', 2]]);
+  });
+
+  it('recentFolderProjects_skipsScratchEmptyAndExcluded', () => {
+    const history = [entry('1', '', 10), entry('2', 'C:\\tmp\\scratch\\uuid', 20), entry('3', 'C:\\vg\\x', 30), entry('4', 'C:/vg/y', 40)];
+
+    const result = recentFolderProjects(history, ['C:/tmp/scratch'], new Set(['c:/vg/x']), 10);
+
+    expect(result.map((p) => p.name)).toEqual(['y']);
+  });
+
+  it('recentFolderProjects_respectsLimit', () => {
+    const history = [entry('1', 'C:/vg/a', 10), entry('2', 'C:\\vg\\b', 20), entry('3', 'C:/vg/c', 30)];
+
+    expect(recentFolderProjects(history, [], new Set(), 2).map((p) => p.name)).toEqual(['c', 'b']);
   });
 });

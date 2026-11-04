@@ -114,6 +114,37 @@ export function normalizeFolderKey(cwd: string): string {
   return /^[a-z]:/i.test(slashed) ? slashed.toLowerCase() : slashed;
 }
 
+export interface FolderProject {
+  readonly cwd: string;
+  readonly name: string;
+  readonly count: number;
+}
+
+// Proyectos por carpeta del historial de todas las cuentas para la lista compacta del estado vacío: agrupa por
+// carpeta (clave normalizada), sin cwd vacíos ni carpetas temporales, quita las ya mostradas (`exclude`, con claves
+// normalizadas), ordena por la conversación más reciente y corta en `limit`.
+export function recentFolderProjects(
+  history: readonly AccountConversation[],
+  scratchRoots: readonly string[],
+  exclude: ReadonlySet<string>,
+  limit: number,
+): readonly FolderProject[] {
+  const byKey = new Map<string, FolderProject & { latest: number }>();
+  for (const { item } of history) {
+    const cwd = item.cwd;
+    if (cwd.trim().length === 0 || scratchRoots.some((root) => root.length > 0 && isInside(cwd, root))) continue;
+    const key = normalizeFolderKey(cwd);
+    if (exclude.has(key)) continue;
+    const known = byKey.get(key);
+    if (known === undefined) byKey.set(key, { cwd, name: folderProjectName(cwd), count: 1, latest: item.updatedAtMs });
+    else byKey.set(key, { ...known, count: known.count + 1, latest: Math.max(known.latest, item.updatedAtMs) });
+  }
+  return [...byKey.values()]
+    .sort((a, b) => b.latest - a.latest)
+    .slice(0, limit)
+    .map(({ cwd, name, count }) => ({ cwd, name, count }));
+}
+
 export interface ProjectGroup {
   readonly key: string;
   readonly name: string;
