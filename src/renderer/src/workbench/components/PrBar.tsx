@@ -8,6 +8,8 @@ import { reportActionError } from '../notificationStore';
 import { t as translate, useT } from '../../i18n/uiLanguage';
 import type { MessageKey } from '@shared/i18n/messageKeys.generated';
 import { describeError } from '../describeError';
+import { prKeyFromUrl } from '../prPanelModel';
+import { usePanelLayoutStore } from '../panelLayoutStore';
 
 // Barra de PR/CI de la sesion (grupo D, como Claude Desktop): el PR vinculado con sus checks, y al
 // desplegarla los que fallan, los runs (relanzar/cancelar), el auto-merge y el auto-fix. Sin PR en la
@@ -31,6 +33,8 @@ export function PrBar({ tabId }: { readonly tabId: string }): React.JSX.Element 
   const setGhNoticeDismissed = useWorkbenchStore((s) => s.setGhNoticeDismissed);
   const insertCreatePrPrompt = useWorkbenchStore((s) => s.insertCreatePrPrompt);
   const unbindPr = useWorkbenchStore((s) => s.unbindPr);
+  const selectPr = useWorkbenchStore((s) => s.selectPr);
+  const revealPanel = usePanelLayoutStore((s) => s.revealPanelById);
   const [open, setOpen] = useState(false);
   if (tab === undefined || snapshot === undefined) return null;
 
@@ -57,6 +61,12 @@ export function PrBar({ tabId }: { readonly tabId: string }): React.JSX.Element 
   if (snapshot.kind !== 'pr' || tab.prNumber !== snapshot.pr.number) return null;
 
   const view = prBarView(snapshot.pr);
+  const panelKey = prKeyFromUrl(snapshot.pr.url);
+  const openInPanel = (): void => {
+    if (panelKey === null) return;
+    revealPanel('pullRequests');
+    void selectPr(tabId, panelKey);
+  };
   return (
     <>
       <button data-pr-chip aria-expanded={open} aria-label={view.title} data-tip={view.title} onClick={() => setOpen((v) => !v)} className={BUTTON}>
@@ -66,6 +76,11 @@ export function PrBar({ tabId }: { readonly tabId: string }): React.JSX.Element 
           <span key={c.glyph} className={`font-mono ${TONES[c.tone]}`}>{`${c.glyph}${c.count}`}</span>
         ))}
       </button>
+      {panelKey !== null && (
+        <button data-pr-open-panel aria-label={t('pr.openInPanel')} data-tip={t('pr.openInPanel')} onClick={openInPanel} className="text-mg-muted hover:text-mg-body">
+          <Icon name="panelPullRequests" size={12} />
+        </button>
+      )}
       <button aria-label={t('app.prBar.unbindLabel', { number: snapshot.pr.number })} data-tip={t('app.prBar.unbindTip')} onClick={() => unbindPr(tabId)} className="text-mg-muted hover:text-mg-body">
         <Icon name="close" size={10} />
       </button>

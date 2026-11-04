@@ -1,9 +1,9 @@
 import type { MageApi } from '@shared/ipc';
-import { prKeyToString, type PrCatalogEntry, type PrDetail, type PrKey, type PrListResult, type PrListState, type PrWriteAction } from '@shared/pr';
+import { prKeyToString, type PrCatalogEntry, type PrDetail, type PrKey, type PrListResult, type PrListState, type PrWriteAction, type RepoMergeOptions } from '@shared/pr';
 import type { Tab } from './types';
 import type { WorkbenchState } from './workbenchStore';
 import { conversationIdOfTab } from './conversationId';
-import { conversationPrKeys, nextLimit, PR_PAGE_SIZE } from './prPanelModel';
+import { conversationPrKeys, nextLimit, PR_PAGE_SIZE, repoKeyOf } from './prPanelModel';
 import { describeError } from './describeError';
 import { reportActionError } from './notificationStore';
 import { t as translate } from '../i18n/uiLanguage';
@@ -33,6 +33,9 @@ export interface PrPanelStoreState {
   readonly prDetailByKey: Readonly<Record<string, PrDetail>>;
   readonly prDiffByKey: Readonly<Record<string, { readonly patch: string; readonly truncated: boolean }>>;
   readonly prCatalog: readonly PrCatalogEntry[];
+  // Estrategias de fusion que permite cada repo (`host/owner/repo`): la de la lista del repo de la pestaña y la de
+  // los repos de las PR vinculadas, que no salen en esa lista.
+  readonly prMergeOptionsByRepo: Readonly<Record<string, RepoMergeOptions>>;
 }
 
 export interface PrPanelActions {
@@ -43,7 +46,8 @@ export interface PrPanelActions {
   loadPrDiff: (tabId: string, key: PrKey) => Promise<void>;
   linkPrToConversation: (tabId: string, key: PrKey, primary: boolean) => Promise<void>;
   unlinkPrFromConversation: (tabId: string, key: PrKey) => Promise<void>;
-  runPrAction: (tabId: string, key: PrKey, action: PrWriteAction) => Promise<void>;
+  // true si la escritura se hizo; false si no (el head cambio, o fallo y se aviso).
+  runPrAction: (tabId: string, key: PrKey, action: PrWriteAction) => Promise<boolean>;
   migratePrOnce: (tabId: string) => Promise<void>;
   // Deja en la caja (sin enviarlo) el prompt para que el agente resuelva los conflictos de la PR.
   insertResolveConflictsPrompt: (tabId: string, key: PrKey) => void;
@@ -79,6 +83,22 @@ export function createPrPanelActions(deps: PrPanelDeps): PrPanelActions {
     set((s) => ({ prDetailByKey: { ...s.prDetailByKey, [prKeyToString(key)]: detail } }));
   };
 
+  const rememberMergeOptions = (repo: PrRepoRef, options: RepoMergeOptions): void =>
+    set((s) => ({ prMergeOptionsByRepo: { ...s.prMergeOptionsByRepo, [repoKeyOf(repo)]: options } }));
+
+  // Las opciones de fusion de un repo que no es el de la pestaña salen de leer una PR de su lista.
+  const ensureMergeOptions = async (tab: Tab, key: PrKey): Promise<void> => {
+    if (get().prMergeOptionsByRepo[repoKeyOf(key)] !== undefined) return;
+    const repo = { host: key.host, owner: key.owner, repo: key.repo };
+    const result = await mage.listPrs({ ...folderOf(tab), repo, state: 'all', limit: 1 });
+    if (result.kind === 'list') rememberMergeOptions(repo, result.mergeOptions);
+  };
+
+  const loadDetailWithOptions = async (tab: Tab, key: PrKey): Promise<void> => {
+    await loadDetail(tab, key);
+    await ensureMergeOptions(tab, key);
+  };
+
   const loadCatalog = async (tab: Tab): Promise<void> => {
     const conversationId = conversationOf(tab);
     const prCatalog = conversationId === undefined ? [] : await mage.listPrCatalog(conversationId);
@@ -90,7 +110,7 @@ export function createPrPanelActions(deps: PrPanelDeps): PrPanelActions {
     const conversationId = conversationOf(tab);
     if (conversationId === undefined) return;
     const linked = conversationPrKeys(get().prCatalog, conversationId);
-    const results = await Promise.allSettled(linked.map((pr) => loadDetail(tab, pr.key)));
+    const results = await Promise.allSettled(linked.map((pr) => loadDetailWithOptions(tab, pr.key)));
     const failed = results.find((result): result is PromiseRejectedResult => result.status === 'rejected');
     if (failed !== undefined) patchPanel(tab.id, { error: describeError(failed.reason) });
   };
@@ -99,6 +119,7 @@ export function createPrPanelActions(deps: PrPanelDeps): PrPanelActions {
     const { repo, state, limit } = panelOf(tab.id);
     if (repo === null) return;
     const list = await mage.listPrs({ ...folderOf(tab), repo, state, limit });
+    if (list.kind === 'list') rememberMergeOptions(repo, list.mergeOptions);
     // Una respuesta de un filtro o limite que ya no es el actual se descarta.
     const current = panelOf(tab.id);
     if (current.state === state && current.limit === limit) patchPanel(tab.id, { list });
@@ -127,17 +148,18 @@ export function createPrPanelActions(deps: PrPanelDeps): PrPanelActions {
     await Promise.all([loadDetail(tab, key), loadList(tab)]);
   };
 
-  const write = async (tab: Tab, key: PrKey, action: PrWriteAction): Promise<void> => {
+  const write = async (tab: Tab, key: PrKey, action: PrWriteAction): Promise<boolean> => {
     const detail = get().prDetailByKey[prKeyToString(key)];
     if (detail === undefined) throw new Error(`Falta el detalle cargado de ${prKeyToString(key)} para escribir ${action.kind}`);
     const result = await mage.writePr({ ...folderOf(tab), key, expectedHeadSha: detail.headSha, action });
     if (result.kind === 'conflict') {
       patchPanel(tab.id, { error: translate('pr.conflict') });
       await loadDetail(tab, key);
-      return;
+      return false;
     }
     patchPanel(tab.id, { error: null });
     await reloadAfterWrite(tab, key);
+    return true;
   };
 
   return {
@@ -155,7 +177,7 @@ export function createPrPanelActions(deps: PrPanelDeps): PrPanelActions {
 
     selectPr: async (tabId, key) => {
       patchPanel(tabId, { selectedKey: key === null ? null : prKeyToString(key) });
-      if (key !== null) await guarded(tabId, (tab) => loadDetail(tab, key));
+      if (key !== null) await guarded(tabId, (tab) => loadDetailWithOptions(tab, key));
     },
 
     loadPrDiff: (tabId, key) =>
@@ -183,11 +205,12 @@ export function createPrPanelActions(deps: PrPanelDeps): PrPanelActions {
 
     runPrAction: async (tabId, key, action) => {
       const tab = findTab(tabId);
-      if (tab === undefined) return;
+      if (tab === undefined) return false;
       try {
-        await write(tab, key, action);
+        return await write(tab, key, action);
       } catch (err) {
         reportActionError(translate('pr.actionFailed'), err, 'pr');
+        return false;
       }
     },
 

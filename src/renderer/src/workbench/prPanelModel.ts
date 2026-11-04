@@ -37,6 +37,11 @@ export function conversationPrKeys(entries: readonly PrCatalogEntry[], conversat
   return [...linked.filter((pr) => pr.primary), ...linked.filter((pr) => !pr.primary)];
 }
 
+// `host/owner/repo` en minusculas: la clave de lo que es propio de un repo (sus estrategias de fusion).
+export function repoKeyOf(repo: { readonly host: string; readonly owner: string; readonly repo: string }): string {
+  return `${repo.host}/${repo.owner}/${repo.repo}`.toLowerCase();
+}
+
 export type PrStateBadge = 'draft' | 'open' | 'merged' | 'closed';
 
 export function prStateBadge(pr: PrSnapshot): PrStateBadge {

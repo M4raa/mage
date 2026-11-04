@@ -20,6 +20,7 @@ function setup(tabOverrides: Record<string, unknown> = {}) {
     prDetailByKey: { [prKeyToString(KEY)]: detail() },
     prDiffByKey: {},
     prCatalog: [],
+    prMergeOptionsByRepo: {},
   } as unknown as WorkbenchState;
   const mage = {
     prRepoOf: vi.fn(async () => ({ host: 'github.com', owner: 'acme', repo: 'demo' })),

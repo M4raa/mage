@@ -1577,6 +1577,7 @@ export function createWorkbenchStore(mage: MageClient) {
     prDetailByKey: {},
     prDiffByKey: {},
     prCatalog: [],
+    prMergeOptionsByRepo: {},
     ...createPrPanelActions({
       mage,
       get,
