@@ -1,3 +1,4 @@
+import { useLocalPopover } from '../localPopovers';
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { AnimatePresence, motion } from 'motion/react';
@@ -73,6 +74,7 @@ export function Dropdown({
   readonly triggerData?: Readonly<Record<`data-${string}`, string>>;
 }): React.JSX.Element {
   const [open, setOpen] = useState(false);
+  useLocalPopover(open);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const selectedLabel = options.find((o) => o.value === value)?.label ?? value;

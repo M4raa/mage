@@ -12,6 +12,7 @@ import type { KeyEventLike } from './keyParser';
 import { isMacPlatform } from './platform';
 import { focusSidebarSearch, revealSidebarPanel } from '../sidebarFocus';
 import { hasPendingQuestion } from '../engineBlocks';
+import { hasOpenLocalPopover } from '../localPopovers';
 import { reportActionError } from '../notificationStore';
 import { t } from '../../i18n/uiLanguage';
 
@@ -121,7 +122,7 @@ export function useGlobalKeybindings(): void {
           permissionPending: headPermission(state, state.activeTabId) !== null,
           questionPending: hasPendingQuestion(headPermission(state, state.activeTabId), state.blocksByChat[state.activeTabId] ?? []),
           turnRunning: status === 'streaming' || status === 'needs_permission',
-          dialogOrPopoverOpen: dialogOpen,
+          dialogOrPopoverOpen: dialogOpen || hasOpenLocalPopover(),
           focusInEditableText,
         },
       });

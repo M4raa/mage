@@ -1,3 +1,4 @@
+import { useLocalPopover } from '../../localPopovers';
 import { memo, useEffect, useRef, useState } from 'react';
 import { Icon } from '../Icon';
 import { selectIsActiveTab, useConversation } from '../../conversationSelectors';
@@ -65,6 +66,7 @@ function TabRow(props: SidebarRowItemProps & { readonly row: Extract<SidebarRow,
   const { tab } = row;
   const selected = useConversation(tab.id, selectIsActiveTab);
   const [editing, setEditing] = useState(false);
+  useLocalPopover(editing); // renombrar en linea: su Escape cancela la edicion, no interrumpe el turno
   const title = displayTitle(tab.title, t);
   const commit = (value: string): void => {
     setEditing(false);

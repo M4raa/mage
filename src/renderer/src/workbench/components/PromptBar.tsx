@@ -1,3 +1,4 @@
+import { useLocalPopover } from '../localPopovers';
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { readOnlyLockMessage } from '@shared/conversationLock';
 import { isPermissionMode } from '@shared/ipc';
@@ -278,6 +279,7 @@ export function PromptBar(): React.JSX.Element {
   // entradas cuando hay plugins (P16).
   const slashSuggestions = useMemo(() => filterSlashCommands(text, slashCatalog), [text, slashCatalog]);
   const slashOpen = slashSuggestions.length > 0 && !slashDismissed && !disabled;
+  useLocalPopover(slashOpen);
   const slashCursor = Math.min(slashIndex, slashSuggestions.length - 1);
   const canImprove = !disabled && !busy && text.trim().length > 0 && isClaude;
   // Handoff: necesita una sesion reanudable (viva o restaurada) y solo Claude soporta --resume.
@@ -931,6 +933,7 @@ interface ActionItem {
 function ActionsMenu({ items, busy }: { readonly items: readonly ActionItem[]; readonly busy: boolean }): React.JSX.Element {
   const t = useT();
   const [open, setOpen] = useState(false);
+  useLocalPopover(open);
   const visible = items.filter((i) => i.hidden !== true);
 
   const run = (item: ActionItem): void => {

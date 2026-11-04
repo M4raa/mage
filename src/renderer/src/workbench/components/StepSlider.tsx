@@ -1,3 +1,4 @@
+import { useLocalPopover } from '../localPopovers';
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { AnimatePresence, motion } from 'motion/react';
@@ -55,6 +56,7 @@ export function StepSlider({
   // Posicion del popover, fijada al abrir (null = cerrado): ver `stepSliderPlacement`.
   const [placement, setPlacement] = useState<StepSliderPlacement | null>(null);
   const open = placement !== null;
+  useLocalPopover(open);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const rangeRef = useRef<HTMLInputElement>(null);
   const index = stepIndexOf(steps, value);

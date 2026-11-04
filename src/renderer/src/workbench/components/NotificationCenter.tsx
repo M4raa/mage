@@ -1,3 +1,4 @@
+import { useLocalPopover } from '../localPopovers';
 import { useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { Icon } from './Icon';
@@ -14,6 +15,7 @@ import { formatClockTime } from '../../i18n/format';
 export function NotificationBell(): React.JSX.Element {
   const t = useT();
   const [open, setOpen] = useState(false);
+  useLocalPopover(open);
   const unread = useNotificationStore(unreadCount);
   const label = unread === 0 ? t('notifications.center.bellLabel') : t('notifications.center.bellLabelUnread', { count: unread });
   return (

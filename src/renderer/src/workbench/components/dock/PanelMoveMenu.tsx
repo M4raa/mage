@@ -1,3 +1,4 @@
+import { useLocalPopover } from '../../localPopovers';
 import { useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { motion } from 'motion/react';
@@ -43,6 +44,7 @@ export function PanelMoveMenu({
 }): React.JSX.Element {
   const t = useT();
   const menuRef = useRef<HTMLDivElement>(null);
+  useLocalPopover(true); // el menu existe solo abierto
 
   useEffect(() => {
     menuRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();

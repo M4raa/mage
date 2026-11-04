@@ -1,3 +1,4 @@
+import { useLocalPopover } from '../localPopovers';
 import { useEffect, useState } from 'react';
 import { Icon } from './Icon';
 import { createPortal } from 'react-dom';
@@ -72,6 +73,7 @@ export function ConversationContextMenu({
 }): React.JSX.Element {
   const t = useT();
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  useLocalPopover(true); // el menu existe solo abierto
   const [confirmingUpdate, setConfirmingUpdate] = useState(false);
   const legacy = useLegacyCodexUpdate(target.sessionId, activeAccountId);
 

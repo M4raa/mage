@@ -1,3 +1,4 @@
+import { useLocalPopover } from '../../localPopovers';
 import { useState } from 'react';
 import { Icon } from '../Icon';
 import { useWorkbenchStore } from '../../workbenchStore';
@@ -118,6 +119,7 @@ export function ProjectGroupView(props: ProjectGroupViewProps): React.JSX.Elemen
 function ProjectActions({ group, onCreate, onEdit, onRemove }: Pick<ProjectGroupViewProps, 'group' | 'onCreate' | 'onEdit' | 'onRemove'>): React.JSX.Element {
   const t = useT();
   const [menuOpen, setMenuOpen] = useState(false);
+  useLocalPopover(menuOpen);
   const reveal = 'opacity-0 transition-opacity duration-100 ease-out group-hover/proj:opacity-100 group-focus-within/proj:opacity-100 focus-visible:opacity-100';
   const btn = `grid h-[20px] w-[20px] flex-none place-items-center rounded-[4px] text-mg-icon hover:bg-mg-sel hover:text-mg-sel-ink ${reveal}`;
   return (

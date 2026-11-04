@@ -1,3 +1,4 @@
+import { useLocalPopover } from '../localPopovers';
 import { useState } from 'react';
 import type { SendNowAvailability } from '../sendNow';
 import { renderLocalized } from '@shared/i18n/localizedText';
@@ -68,6 +69,7 @@ const SPLIT_BUTTON_CLASS =
 function SplitSend(props: SendControlsProps): React.JSX.Element {
   const t = useT();
   const [open, setOpen] = useState(false);
+  useLocalPopover(open);
   const sendNow = (): void => {
     setOpen(false);
     props.onSendNow();

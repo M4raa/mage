@@ -1,3 +1,4 @@
+import { useLocalPopover } from '../localPopovers';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useT } from '../../i18n/uiLanguage';
@@ -53,6 +54,8 @@ export function AppMenu({
   // Preferencias) en vez de añadirse y empujarlo — que fue justo la queja del primer intento.
   const setExpanded = onExpandedChange;
   const [openIndex, setOpenIndex] = useState<number | null>(null);
+  // La barra desplegada y un menu abierto son estado local: Escape los pliega y no debe cortar el turno.
+  useLocalPopover(expanded || openIndex !== null);
   // Punto del cursor en el momento de desplegar. Al hacerlo, las etiquetas aparecen justo DONDE estaba
   // el raton (encima del boton de tres puntos) y el `mouseenter` que provoca ese cambio de layout abria
   // "Conversación" sola — parecia que viniera con un clic ya dado.
@@ -221,6 +224,7 @@ function MenuDropdown({
 }): React.JSX.Element {
   const menuRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ width: MENU_MIN_WIDTH_PX, height: 0 });
+  useLocalPopover(true); // el menu existe solo abierto
 
   useEffect(() => {
     const element = menuRef.current;
