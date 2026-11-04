@@ -1164,7 +1164,7 @@ function isTurnLive(status: string | undefined): boolean {
 function insertPromptIntoDraft(get: () => WorkbenchState, tabId: string, prompt: string): void {
   const draft = get().draftByChat[tabId];
   const text = draft === undefined || draft.text.trim().length === 0 ? prompt : `${draft.text.trimEnd()}\n\n${prompt}`;
-  get().setDraft(tabId, { text, attachments: draft?.attachments ?? [] });
+  get().setDraft(tabId, { text, attachments: draft?.attachments ?? [], mentions: draft?.mentions ?? [] });
 }
 
 // Arranca (o reanuda) la sesion del CLI de una pestaña y deja su id en el estado. Extraida de la
@@ -2110,7 +2110,7 @@ export function createWorkbenchStore(mage: MageClient) {
       if (tabId.length === 0) return;
       // Un borrador VACIO se borra en vez de guardarse: si no, cada pestaña por la que has pasado
       // dejaria una entrada muerta en el mapa.
-      const vacio = draft === null || (draft.text.length === 0 && draft.attachments.length === 0);
+      const vacio = draft === null || (draft.text.length === 0 && draft.attachments.length === 0 && draft.mentions.length === 0);
       set((s) => ({ draftByChat: vacio ? without(s.draftByChat, tabId) : { ...s.draftByChat, [tabId]: draft } }));
     },
 
@@ -2900,7 +2900,7 @@ function restoreDraftAfterFailedSend(set: SetFn, tabId: string, text: string, at
   set((s) => {
     if (s.draftByChat[tabId] !== undefined) return {};
     const restored = attachments.map((attachment) => ({ attachment, byteLength: base64ByteLength(attachment.data) }));
-    return { draftByChat: { ...s.draftByChat, [tabId]: { text, attachments: restored } } };
+    return { draftByChat: { ...s.draftByChat, [tabId]: { text, attachments: restored, mentions: [] } } };
   });
 }
 
@@ -3436,7 +3436,7 @@ function isTurnRunning(status: ChatStatus | undefined): boolean {
   return status === 'streaming' || status === 'needs_permission';
 }
 
-const NO_DRAFT: PromptDraft = { text: '', attachments: [] };
+const NO_DRAFT: PromptDraft = { text: '', attachments: [], mentions: [] };
 
 // Al acabar un turno sale el PRIMERO de la cola; el siguiente espera a que acabe ese.
 // Vinculacion del PR (grupo D, `prBinding.ts`): la URL del `gh pr create` o la marca `<pr-created>`.
@@ -3709,7 +3709,7 @@ async function applyRewind(mage: MageClient, get: () => WorkbenchState, set: Set
   adoptProjection(set, tabId, result.projection);
   // En `rewind` el mensaje vuelve al cuadro de texto; en `retry` ya salió, salvo que main no pudiera enviarlo
   // (`retried` null): entonces su texto también vuelve, para no perderlo.
-  if (action === 'rewind' || result.retried === null) get().setDraft(tabId, { text: result.draft, attachments: pendingAttachmentsOf(attachments) });
+  if (action === 'rewind' || result.retried === null) get().setDraft(tabId, { text: result.draft, attachments: pendingAttachmentsOf(attachments), mentions: [] });
   returnMessagesToDraft(get, tabId, result.returnedQueue);
   if (result.retried === null) return;
   // `reconcileReceipt` pinta la burbuja del reintento (y el reloj del turno) si el recibo es `accepted`: no se

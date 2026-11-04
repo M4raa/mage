@@ -5,6 +5,7 @@
 import type { AskQuestion } from '@shared/askUserQuestion';
 import type { SessionPlugin } from '@shared/events';
 import type { ArtifactDraft, ArtifactPublication } from '@shared/artifacts';
+import type { MentionCandidate } from '@shared/mentions';
 import type { DiffLine } from './diffLines';
 import type { ToolClass } from './toolClassify';
 import type { SubagentStatus } from './engineBlocks';
@@ -306,4 +307,6 @@ export interface PendingAttachment {
 export interface PromptDraft {
   readonly text: string;
   readonly attachments: readonly PendingAttachment[];
+  // Ficheros mencionados con @ (Q06): viven en el texto como `@ruta` y aqui como ficha.
+  readonly mentions: readonly MentionCandidate[];
 }

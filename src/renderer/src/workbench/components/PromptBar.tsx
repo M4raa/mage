@@ -38,6 +38,7 @@ import { t as translate, useT } from '../../i18n/uiLanguage';
 import { activeFormatLocale } from '../../i18n/format';
 import type { PermissionMode } from '@shared/ipc';
 import { describeError } from '../describeError';
+import { reconcileMentions } from '../mentionDraft';
 
 // Referencia ESTABLE para el selector de zustand (un array nuevo por render seria un bucle).
 const NO_MODELS: readonly ProviderModel[] = [];
@@ -88,7 +89,7 @@ async function readImageFile(file: File): Promise<PendingAttachment> {
 
 // Referencia ESTABLE para "esta pestaña no tiene borrador": un objeto nuevo por render haria que el
 // selector de zustand viera un valor distinto siempre y repintara la barra en bucle.
-const EMPTY_DRAFT: PromptDraft = { text: '', attachments: [] };
+const EMPTY_DRAFT: PromptDraft = { text: '', attachments: [], mentions: [] };
 
 // Borrador ACTUAL de una pestaña, leido del store (no del render): lo usan los callbacks asincronos.
 function draftOf(tabId: string): PromptDraft {
@@ -195,7 +196,7 @@ export function PromptBar(): React.JSX.Element {
   const setDraft = useWorkbenchStore((s) => s.setDraft);
   const text = draft.text;
   const attachments = draft.attachments;
-  const setText = (next: string): void => setDraft(activeTabId, { text: next, attachments });
+  const setText = (next: string): void => setDraft(activeTabId, { text: next, attachments, mentions: reconcileMentions(next, draftOf(activeTabId).mentions) });
   // Autocompletado de comandos "/" (M2.6): indice seleccionado + flag de descartado (Escape).
   const [slashIndex, setSlashIndex] = useState(0);
   const [slashDismissed, setSlashDismissed] = useState(false);
@@ -419,7 +420,7 @@ export function PromptBar(): React.JSX.Element {
   const removeDeletedImageAttachments = (value: string): void => {
     const latest = draftOf(activeTabId);
     const result = reconcileImageTokens(latest.text, value, latest.attachments);
-    setDraft(activeTabId, { text: result.text, attachments: result.attachments });
+    setDraft(activeTabId, { text: result.text, attachments: result.attachments, mentions: reconcileMentions(result.text, latest.mentions) });
     const editor = editorRef.current;
     if (result.text === value || editor === null) return;
     const caret = Math.min(editor.getTextState().selectionStart, result.text.length);
@@ -549,7 +550,7 @@ export function PromptBar(): React.JSX.Element {
       .then((candidates) => {
         // Del store, no del cierre: mientras se leia, el usuario pudo seguir escribiendo.
         const latest = draftOf(tabId);
-        setDraft(tabId, { text: latest.text, attachments: [...latest.attachments, ...candidates] });
+        setDraft(tabId, { text: latest.text, attachments: [...latest.attachments, ...candidates], mentions: latest.mentions });
       })
       .catch((err: unknown) => setError(t('prompt.attach.failed', { error: err instanceof Error ? err.message : String(err) })))
       .finally(() => {
@@ -570,7 +571,7 @@ export function PromptBar(): React.JSX.Element {
   // Quitar la miniatura N quita su token y renumera los de detras (igual que la lista de adjuntos).
   const removeAttachment = (index: number): void => {
     setError(null);
-    setDraft(activeTabId, { text: removeImageToken(text, index + 1), attachments: attachments.filter((_, i) => i !== index) });
+    setDraft(activeTabId, { text: removeImageToken(text, index + 1), attachments: attachments.filter((_, i) => i !== index), mentions: draft.mentions });
   };
 
   return (
