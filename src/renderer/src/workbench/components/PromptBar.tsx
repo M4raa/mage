@@ -24,6 +24,7 @@ import { buildSlashCatalog, completionFor, filterSlashCommands, type SlashComman
 import { useCachedCommandCatalog } from '../commandCatalogStore';
 import { resolveKeyEvent, shortcutText } from '../keybindings/resolver';
 import { isMacPlatform } from '../keybindings/platform';
+import { ChatInfoBar } from './ChatInfoBar';
 import { effortChangeAdvice, modelChangeAdvice, type CostAdvice } from '../costAdvice';
 import { notify } from '../notificationStore';
 import { displayTitle } from '../conversationTitle';
@@ -572,6 +573,9 @@ export function PromptBar(): React.JSX.Element {
 
   return (
     <div className="border-t border-mg-border p-[12px_22px]">
+      {/* La informacion de la CONVERSACION (creadora, PR, privacidad) va justo bajo la linea del input y a 6 px de
+          la caja (#41): la linea es de esta barra, asi que con la fila vacia sigue estando, sin hueco doble. */}
+      <ChatInfoBar />
       {/* Una sola linea de error para toda la barra: cada origen (mejora del prompt, adjuntos) pone su
           propio prefijo, para que el mensaje describa lo que de verdad ha fallado. */}
       {error !== null && (

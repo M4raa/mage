@@ -48,7 +48,7 @@ export function ChatInfoBar(): React.JSX.Element | null {
   const privacy = privacyChip(tab.privacy);
 
   return (
-    <div className="flex flex-wrap items-center gap-[6px] px-[22px] pt-[8px] text-[10.5px] text-mg-muted">
+    <div className="mb-[6px] flex flex-wrap items-center gap-[6px] text-[10.5px] text-mg-muted">
       <CreatorChip tabId={tabId} />
       <PrBar tabId={tabId} />
       {/* Informativa: NO es un boton (nada ocurre al pulsarla, y un boton que no hace nada es una promesa

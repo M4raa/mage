@@ -329,6 +329,7 @@ export interface MessageValues {
   readonly "chat.context.estimatedTag": never;
   readonly "chat.context.evolutionTitle": never;
   readonly "chat.context.lastPrompt": never;
+  readonly "chat.context.lastTurnUsage": { readonly "counters": string | number };
   readonly "chat.context.noBreakdown": { readonly "name": string | number };
   readonly "chat.context.noBreakdownNoSession": never;
   readonly "chat.context.noBreakdownYet": never;
@@ -589,7 +590,9 @@ export interface MessageValues {
   readonly "chat.table.copyTsv": never;
   readonly "chat.thinking.aria": { readonly "errors": number; readonly "label": string | number; readonly "steps": string | number };
   readonly "chat.thinking.errors": { readonly "count": number };
+  readonly "chat.thinking.mcp": { readonly "server": string | number; readonly "tool": string | number };
   readonly "chat.thinking.runningTool": { readonly "tool": string | number };
+  readonly "chat.thinking.skill": { readonly "name": string | number };
   readonly "chat.thinking.stalled": { readonly "since": string | number };
   readonly "chat.thinking.steps": { readonly "count": number };
   readonly "chat.toolDetail.clipped": { readonly "count": string | number };

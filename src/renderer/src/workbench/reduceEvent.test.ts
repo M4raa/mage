@@ -441,7 +441,7 @@ describe('reduceEvent — estado de sesion y compactacion', () => {
 describe('reduceEvent — uso del turno (E3)', () => {
   const RESULT_BASE = { isError: false, subtype: 'success', numTurns: 1 };
 
-  it('reduceEvent_resultConUsage_dejaUnMarcadorDeSistemaConLosTokens', () => {
+  it('reduceEvent_resultConUsage_guardaElUsoPorPestanaYNoDejaBloqueEnElHilo', () => {
     const event: MageEvent = {
       kind: 'result',
       result: {
@@ -453,9 +453,8 @@ describe('reduceEvent — uso del turno (E3)', () => {
     const patch = reduceEvent(state(), TAB, event);
     const blocks = blocksOf(patch);
 
-    expect(blocks).toHaveLength(1);
-    expect(blocks[0]).toMatchObject({ kind: 'system' });
-    expect((blocks[0] as Extract<Block, { kind: 'system' }>).text).toContain('Tokens del turno');
+    expect(blocks).toEqual([]);
+    expect(patch.lastTurnUsageByChat?.[TAB]).toMatchObject({ inputTokens: 17533, outputTokens: 7 });
     expect(patch.statusByChat?.[TAB]).toBe('idle');
   });
 
@@ -464,6 +463,7 @@ describe('reduceEvent — uso del turno (E3)', () => {
     const patch = reduceEvent(state(), TAB, { kind: 'result', result: RESULT_BASE });
 
     expect(blocksOf(patch)).toEqual([]);
+    expect(patch.lastTurnUsageByChat).toBeUndefined();
     expect(patch.statusByChat?.[TAB]).toBe('idle');
   });
 });

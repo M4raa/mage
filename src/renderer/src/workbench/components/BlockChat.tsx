@@ -15,7 +15,7 @@ import { SPARKLE_WAIST_RATIO } from '../brandMark';
 import { useThinkingStore } from '../thinkingStore';
 import { transcriptToBlocks } from '../transcriptToBlocks';
 import { computeThinkingStatus, formatElapsed } from '../thinkingStatus';
-import { commandOutputLayout, hasVisibleContent, isSubagentRunning, pendingToolName } from '../engineBlocks';
+import { commandOutputLayout, currentTurnCapability, hasVisibleContent, isSubagentRunning, pendingToolName, type TurnCapability } from '../engineBlocks';
 import { isSlashCommandText } from '../conversationTitle';
 import { canChangeCwd, shortenPath } from '../cwdChange';
 import { Markdown } from './Markdown';
@@ -69,6 +69,7 @@ export function BlockChat(): React.JSX.Element {
   const turnSummary = useMemo(() => currentTurnSummary(allBlocks), [allBlocks]);
   // Tool en curso: el indicador dice QUE esta haciendo ("Ejecutando Write…") en vez de un generico.
   const runningTool = useMemo(() => pendingToolName(allBlocks), [allBlocks]);
+  const capability = useMemo(() => currentTurnCapability(allBlocks), [allBlocks]);
   // El texto en streaming crece DENTRO del ultimo bloque (no cambia el numero de bloques): el tamaño
   // de la cola es lo que hace que el auto-scroll siga el typing.
   const tailSize = useMemo(() => tailContentSize(rows), [rows]);
@@ -79,8 +80,8 @@ export function BlockChat(): React.JSX.Element {
   const lastRow = rows[rows.length - 1];
   const lastRowKey = lastRow === undefined ? null : rowKey(lastRow);
   const footerContext = useMemo<ChatListContext>(
-    () => ({ accent, lastRowKey, turnLive, runningTool, steps: turnSummary.steps, errors: turnSummary.errors }),
-    [accent, lastRowKey, turnLive, runningTool, turnSummary.steps, turnSummary.errors],
+    () => ({ accent, lastRowKey, turnLive, runningTool, capability, steps: turnSummary.steps, errors: turnSummary.errors }),
+    [accent, lastRowKey, turnLive, runningTool, capability, turnSummary.steps, turnSummary.errors],
   );
 
   if (blocks.length === 0 && !turnLive) {
@@ -133,6 +134,7 @@ interface ChatListContext {
   readonly lastRowKey: string | null;
   readonly turnLive: boolean;
   readonly runningTool: string | null;
+  readonly capability: TurnCapability | null;
   readonly steps: number;
   readonly errors: number;
 }
@@ -157,7 +159,7 @@ const CHAT_LIST_COMPONENTS: Components<ChatRow, ChatListContext> = {
   Header: () => <div className="h-[16px]" />,
   Footer: ({ context }) => (
     <div className="px-[22px] pb-[16px]">
-      {context.turnLive && <ThinkingIndicator accent={context.accent} tool={context.runningTool} steps={context.steps} errors={context.errors} />}
+      {context.turnLive && <ThinkingIndicator accent={context.accent} tool={context.runningTool} capability={context.capability} steps={context.steps} errors={context.errors} />}
     </div>
   ),
 };
@@ -545,11 +547,13 @@ function NoConversationState(): React.JSX.Element {
 function ThinkingIndicator({
   accent,
   tool,
+  capability,
   steps,
   errors,
 }: {
   readonly accent: string;
   readonly tool: string | null;
+  readonly capability: TurnCapability | null;
   readonly steps: number;
   readonly errors: number;
 }): React.JSX.Element {
@@ -580,12 +584,24 @@ function ThinkingIndicator({
       <span className="font-mono text-[10.5px] text-mg-muted" style={{ fontVariantNumeric: 'tabular-nums' }}>
         · {status.elapsedText}
       </span>
+      {capability !== null && <TurnCapabilityChip capability={capability} />}
       {errors > 0 && <span className="text-[10.5px] font-semibold text-mg-danger">· {t('chat.thinking.errors', { count: errors })}</span>}
       {status.stalled && (
         <span className="text-[10.5px] text-mg-warn-text">· {t('chat.thinking.stalled', { since: status.sinceActivityText })}</span>
       )}
       <span aria-hidden="true" className="text-mg-muted">›</span>
     </button>
+  );
+}
+
+// Skill o servidor MCP que usa el turno, como chip junto a los pasos (#42).
+function TurnCapabilityChip({ capability }: { readonly capability: TurnCapability }): React.JSX.Element {
+  const t = useT();
+  const text = capability.kind === 'skill' ? t('chat.thinking.skill', { name: capability.name }) : t('chat.thinking.mcp', { server: capability.server, tool: capability.tool });
+  return (
+    <span data-turn-capability={capability.kind} className="rounded-[4px] border border-mg-border-ctrl px-[5px] text-[10px] text-mg-sec">
+      {text}
+    </span>
   );
 }
 

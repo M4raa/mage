@@ -40,7 +40,6 @@ import {
   mapPermissionToView,
   resolvePermissionBlock,
   restartingText,
-  turnUsageText,
 } from './engineBlocks';
 import { addAlwaysAllow, removeAlwaysAllow } from './permissionRules';
 import { createSettingsActions } from './settingsActions';
@@ -192,6 +191,8 @@ export interface WorkbenchState extends PrState, PrActions {
   readonly agyUsageByAccount: Readonly<Record<string, AgyUsageSnapshot>>;
   // Uso acumulado de las conversaciones de Codex y agy desde que Mage las abrió (sus CLI no dejan transcripción de Claude).
   readonly providerUsageByChat: Readonly<Record<string, ProviderUsageTotals>>;
+  // Uso del ULTIMO turno de cada pestana (lo que reporto su `result`), para la fila del panel Contexto: ya no es un bloque del hilo.
+  readonly lastTurnUsageByChat: Readonly<Record<string, TurnUsage>>;
   // Estado del servicio de Claude (global). null mientras no se ha cargado.
   readonly status: StatusInfo | null;
 
@@ -1406,6 +1407,7 @@ export function createWorkbenchStore(mage: MageClient) {
     usageErrorByAccount: {},
     agyUsageByAccount: {},
     providerUsageByChat: {},
+    lastTurnUsageByChat: {},
     permissionModes: null,
     status: null,
 
@@ -1640,6 +1642,7 @@ export function createWorkbenchStore(mage: MageClient) {
           subagentsByChat: without(s.subagentsByChat, tabId),
           contextUsageByChat: without(s.contextUsageByChat, tabId),
           providerUsageByChat: without(s.providerUsageByChat, tabId),
+          lastTurnUsageByChat: without(s.lastTurnUsageByChat, tabId),
           missingConversationByChat: without(s.missingConversationByChat, tabId),
           rateLimitByChat: without(s.rateLimitByChat, tabId),
           mcpServersByChat: without(s.mcpServersByChat, tabId),
@@ -3022,6 +3025,11 @@ function asAccountProvider(id: string): AccountProviderId {
   throw new Error(`Proveedor de cuenta desconocido: ${JSON.stringify(id)}`);
 }
 
+function lastTurnUsagePatch(state: WorkbenchState, tabId: string, usage: TurnUsage | undefined): Partial<WorkbenchState> {
+  if (usage === undefined) return {};
+  return { lastTurnUsageByChat: { ...state.lastTurnUsageByChat, [tabId]: usage } };
+}
+
 // Acumula el uso del turno de una pestaña de Codex o agy (las de Claude lo leen de su transcripción).
 function providerUsagePatch(state: WorkbenchState, tabId: string, usage: TurnUsage | undefined): Partial<WorkbenchState> {
   if (usage === undefined) return {};
@@ -3209,15 +3217,14 @@ export function reduceEvent(state: WorkbenchState, tabId: string, event: MageEve
         ...clearPermissionIfMatches(state, tabId, event.requestId),
       };
     }
-    // Fin de turno. Si el proveedor reporta uso en su terminador (E3, `agy`), se deja como marcador de
-    // sistema: es el unico sitio donde ese gasto se puede ver (el panel de Uso lee el historial de la
-    // cuenta de Claude y no sabe nada de otros proveedores).
+    // Fin de turno. Si el proveedor reporta uso en su terminador (E3, `agy`), se guarda por pestana y lo
+    // pinta el panel Contexto («Tokens del ultimo turno»): ya no entra al hilo como bloque de sistema.
     case 'result': {
       const closed = closeStreaming(blocks, streamingId);
-      const usageText = event.result.usage === undefined ? null : turnUsageText(event.result.usage);
       return {
         ...providerUsagePatch(state, tabId, event.result.usage),
-        ...withBlocks(state, tabId, usageText === null ? closed : appendSystemBlock(closed, usageText, nextBlockId())),
+        ...lastTurnUsagePatch(state, tabId, event.result.usage),
+        ...withBlocks(state, tabId, closed),
         streamingIdByChat: { ...state.streamingIdByChat, [tabId]: null },
         statusByChat: { ...state.statusByChat, [tabId]: 'idle' },
       };

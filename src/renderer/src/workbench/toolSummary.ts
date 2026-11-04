@@ -11,6 +11,9 @@ import { localizeDecimalPoint } from '../i18n/format';
 
 const SUMMARY_MAX_LENGTH = 120;
 
+// La herramienta que invoca una skill; su input lleva el nombre en `skill`.
+export const SKILL_TOOL_NAME = 'Skill';
+
 // Nombres del tool de subagente segun la version del CLI (`Agent` en las recientes, `Task` en otras).
 export const SUBAGENT_TOOL_NAMES: ReadonlySet<string> = new Set(['Agent', 'Task']);
 
@@ -28,6 +31,8 @@ function toolInputText(name: string, input: Readonly<Record<string, unknown>>): 
     return [type, description].filter((value) => value.length > 0).join(' · ');
   }
   if (name === 'Bash') return stringField(input, 'command');
+  // La skill que invoca el agente: su nombre, no la ruta de nada (lo lee tambien el chip del estado del turno).
+  if (name === SKILL_TOOL_NAME) return stringField(input, 'skill');
   const filePath = stringField(input, 'file_path');
   if (filePath.length > 0) return filePath;
   const path = stringField(input, 'path');

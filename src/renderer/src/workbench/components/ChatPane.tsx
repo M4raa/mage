@@ -9,7 +9,6 @@ import { shouldFocusPromptOnClick } from '../promptFocus';
 import { BlockChat } from './BlockChat';
 import { PromptBar } from './PromptBar';
 import { RateLimitBanner } from './RateLimitBanner';
-import { ChatInfoBar } from './ChatInfoBar';
 import { TabSubline } from './TabSubline';
 import { QuestionDock } from './QuestionDock';
 import { ElicitationDock } from './ElicitationDock';
@@ -132,9 +131,6 @@ export function ChatPane({
         <TabSubline />
         <BlockChat />
         <RateLimitBanner />
-        {/* Encima del input, no dentro: es informacion de la CONVERSACION, no un control del mensaje
-            que se esta escribiendo. Ese es tambien el orden en que se lee la pantalla. */}
-        <ChatInfoBar />
         {/* La pregunta pendiente del agente, anclada encima del input (P-026 3.3). */}
         <QuestionDock />
         <ElicitationDock />
