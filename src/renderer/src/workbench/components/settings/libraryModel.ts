@@ -7,6 +7,7 @@ import type {
   LibraryEntryView,
   LibraryInstallView,
   LibraryKind,
+  LibraryPreviewView,
   LibraryView,
 } from '@shared/ipc';
 
@@ -88,4 +89,14 @@ export const platformKey = (platform: string) => PLATFORM_KEYS[platform] ?? null
 
 export function shortCommit(commit: string | null): string | null {
   return commit === null ? null : commit.slice(0, COMMIT_PREFIX_LENGTH);
+}
+
+// Un MCP con clave (ruta mageMcp) pide un campo por cada clave que declara; el resto no pide ninguno.
+export function keyedFieldsFor(preview: Pick<LibraryPreviewView, 'route' | 'block' | 'requiresSecrets'>): readonly string[] {
+  return preview.route === 'mageMcp' && preview.block === null ? preview.requiresSecrets : [];
+}
+
+// Se puede instalar cuando cada campo tiene algo más que espacios.
+export function canInstallKeyed(fields: readonly string[], values: Readonly<Record<string, string>>): boolean {
+  return fields.every((field) => (values[field] ?? '').trim().length > 0);
 }

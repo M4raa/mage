@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { LibraryAccountView, LibraryBlock, LibraryEntryView, LibraryInstallView, LibraryKind, LibraryView } from '@shared/ipc';
-import { blockKey, cardActions, filterEntries, indexInstalls, installKey, kindFilters, resultKey, selectedAccount, shortCommit } from './libraryModel';
+import { blockKey, canInstallKeyed, cardActions, filterEntries, indexInstalls, installKey, keyedFieldsFor, kindFilters, resultKey, selectedAccount, shortCommit } from './libraryModel';
 
 const entry = (id: string, kind: LibraryKind): LibraryEntryView =>
   ({ id, kind, title: id, summary: '', publisher: '', version: '1', engines: [], platforms: [], scopes: ['user'] }) as unknown as LibraryEntryView;
@@ -97,5 +97,34 @@ describe('shortCommit', () => {
 
   it('shortCommit_null_returnsNull', () => {
     expect(shortCommit(null)).toBeNull();
+  });
+});
+
+describe('keyedFieldsFor', () => {
+  it('keyedFieldsFor_mageMcp_nombres', () => {
+    expect(keyedFieldsFor({ route: 'mageMcp', block: null, requiresSecrets: ['EXA_API_KEY'] })).toEqual(['EXA_API_KEY']);
+  });
+
+  it('keyedFieldsFor_native_vacio', () => {
+    expect(keyedFieldsFor({ route: 'native', block: null, requiresSecrets: [] })).toEqual([]);
+    expect(keyedFieldsFor({ route: null, block: 'engineNotDeclared', requiresSecrets: ['EXA_API_KEY'] })).toEqual([]);
+  });
+});
+
+describe('canInstallKeyed', () => {
+  it('canInstallKeyed_faltaUno_false', () => {
+    expect(canInstallKeyed(['A', 'B'], { A: 'x' })).toBe(false);
+  });
+
+  it('canInstallKeyed_soloEspacios_false', () => {
+    expect(canInstallKeyed(['A'], { A: '   ' })).toBe(false);
+  });
+
+  it('canInstallKeyed_todos_true', () => {
+    expect(canInstallKeyed(['A', 'B'], { A: 'x', B: ' y ' })).toBe(true);
+  });
+
+  it('canInstallKeyed_sinCampos_true', () => {
+    expect(canInstallKeyed([], {})).toBe(true);
   });
 });
