@@ -596,8 +596,9 @@ function loadSharedLaunch(provider: string, accountDir: string, sessionId: strin
 function withLibraryServers(servers: readonly ResolvedMcpServer[], family: string, account: string): readonly ResolvedMcpServer[] {
   if (family !== 'claude' && family !== 'codex') return servers;
   const library = getMcpServices().libraryMcp(family, account);
-  for (const warning of library.warnings) mainLog('warn', warning);
-  return mergeServerLists({ servers, warnings: [] }, library).servers;
+  const merged = mergeServerLists({ servers, warnings: [] }, library);
+  for (const warning of merged.warnings) mainLog('warn', warning);
+  return merged.servers;
 }
 
 // D-M6: solo Claude y Codex hablan con `mage mcp`; los demas proveedores no reciben credencial.
