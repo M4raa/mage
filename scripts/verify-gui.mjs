@@ -6018,6 +6018,8 @@ const CHECKS = [
                 handle({ kind: 'tool_use', tool: { toolUseId: id, toolName: 'Write', input: { file_path: ruta } } });
                 handle({ kind: 'tool_result', result: { toolUseId: id, isError: false, output: 'File created successfully', durationMs: 3, file: { path: ruta, content: '' } } });
               });
+              // Un turno real acaba con `result`: sin él la pestaña sigue en `streaming` y el índice de referencias no se construye (V6).
+              handle({ kind: 'result', result: { isError: false, subtype: 'success', numTurns: 1 } });
               const agente = { kind: 'agent', id: 'q09-agent', runs: [{ code: false, text: 'Mira F0.4, §3.4, H2 y `F0.4`.' }], streaming: false };
               dev.store.setState((state) => ({ blocksByChat: { ...state.blocksByChat, [tabId]: [...(state.blocksByChat[tabId] ?? []), agente] } }));
             },
@@ -8125,7 +8127,8 @@ const CHECKS = [
         const store = window.__mageDev.store;
         store.setState({ blocksByChat: { ...store.getState().blocksByChat, [tabId]: [{ kind: 'system', id: 'vg-recreated', text: notice }] } });
       }, { tabId, notice });
-      const visible = await page.getByText(notice, { exact: true }).isVisible();
+      // Con la lista virtual la fila se monta un fotograma después: se espera por condición (V6).
+      const visible = await page.getByText(notice, { exact: true }).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs }).then(() => true, () => false);
       await page.evaluate(id => window.__mageDev.store.getState().closeTab(id), tabId);
       return { ok: visible, detail: 'Aviso sintético visible; recuperación y cableado cubiertos con fixtures main/store.' };
     },
@@ -10200,6 +10203,11 @@ const CHECKS = [
           const users = (s.blocksByChat[id] ?? []).filter((b) => b.kind === 'user').length;
           return users === 3 && s.statusByChat[id] === 'idle' && (s.queuedByChat[id]?.length ?? 0) === 0;
         }, tabId, { timeout: 45_000 });
+        // El renderer ya está en idle, pero main puede seguir un instante en running: se espera también a main (V6).
+        await page.evaluate(async ({ sessionId, plazo }) => {
+          const fin = Date.now() + plazo;
+          while ((await window.mage.getSessionSnapshot(sessionId)).state !== 'idle' && Date.now() < fin) await new Promise((r) => setTimeout(r, 100));
+        }, { sessionId: recibos.sessionId, plazo: CONFIG.actionTimeoutMs });
         const final = await page.evaluate(async ({ id, sessionId }) => {
           const s = window.__mageDev.store.getState();
           const snapshot = await window.mage.getSessionSnapshot(sessionId);
@@ -12365,6 +12373,8 @@ function stubRewindActions(page, plan) {
 
 // Pasa el ratón por la burbuja, pulsa «Rebobinar hasta aquí» y espera a que el diálogo pinte el plan (`anchor`: lo que lo identifica).
 async function openRewindDialog(page, anchor = '[data-rewind-discarded]') {
+  // La lista virtual monta la burbuja después de sembrarla: se espera a que exista antes de contarla (V6).
+  await page.locator('[data-block="user"]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
   if ((await page.locator('[data-bubble-rewind]').count()) !== 1) throw new Error('Se esperaba exactamente una burbuja con «Rebobinar hasta aquí»');
   await page.locator('[data-block="user"] div.group').first().hover();
   await page.locator('[data-bubble-rewind]').click();
