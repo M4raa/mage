@@ -2,6 +2,7 @@
 // El preload expone estos canales como `window.mage.*`; si cambia una firma, el compilador
 // rompe en ambos lados. El renderer NUNCA accede a Node/procesos: todo pasa por aqui.
 
+import type { BrowserBounds, BrowserEntryState, BrowserPenCapture, BrowserPenResult, BrowserPenStroke } from './browser';
 import type { ConversationLockParams, ConversationLockRef, ConversationLockStatus } from './conversationLock';
 import type { ResolvedUiLanguage } from './i18n/language';
 import type { LocalizedText } from './i18n/localizedText';
@@ -343,6 +344,18 @@ export const IpcChannel = {
   McpRegistrationStatus: 'mcp:registrationStatus',
   McpRegister: 'mcp:register',
   McpUnregister: 'mcp:unregister',
+  // Navegador de Mage (F11b.3).
+  BrowserList: 'browser:list',
+  BrowserOpen: 'browser:open',
+  BrowserNavigate: 'browser:navigate',
+  BrowserBack: 'browser:back',
+  BrowserReload: 'browser:reload',
+  BrowserClose: 'browser:close',
+  BrowserSetBounds: 'browser:set-bounds',
+  BrowserTakeControl: 'browser:take-control',
+  BrowserReturnControl: 'browser:return-control',
+  BrowserPenCapture: 'browser:pen-capture',
+  BrowserPenCompose: 'browser:pen-compose',
 } as const;
 
 export type IpcChannel = (typeof IpcChannel)[keyof typeof IpcChannel];
@@ -1347,6 +1360,21 @@ export interface MageApi {
   libraryView(): Promise<LibraryView>;
   libraryPreview(target: LibraryTarget): Promise<LibraryPreviewView>;
   libraryApply(params: LibraryApplyParams): Promise<LibraryActionResult>;
+  // --- Navegador de Mage (F11b.3) ---
+  browserList(): Promise<readonly BrowserEntryState[]>;
+  browserOpen(sessionId: string): Promise<readonly BrowserEntryState[]>;
+  browserNavigate(params: { readonly sessionId: string; readonly url: string }): Promise<void>;
+  browserBack(sessionId: string): Promise<void>;
+  browserReload(sessionId: string): Promise<void>;
+  browserClose(sessionId: string): Promise<void>;
+  browserSetBounds(params: { readonly sessionId: string; readonly bounds: BrowserBounds | null }): Promise<void>;
+  browserTakeControl(sessionId: string): Promise<void>;
+  browserReturnControl(sessionId: string): Promise<void>;
+  browserPenCapture(sessionId: string): Promise<BrowserPenCapture>;
+  browserPenCompose(params: { readonly sessionId: string; readonly captureId: string; readonly strokes: readonly BrowserPenStroke[] }): Promise<BrowserPenResult>;
+  onBrowserState(listener: (states: readonly BrowserEntryState[]) => void): () => void;
+  // El zoom propio de esta ventana: el panel convierte su hueco a DIP de la ventana con él.
+  getUiZoomFactor(): number;
 }
 
 // --- Biblioteca de capacidades (F6) ----------------------------------------------------------------

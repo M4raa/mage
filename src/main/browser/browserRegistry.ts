@@ -1,17 +1,11 @@
 // Un navegador aislado por sesión VIVA de Mage (D-S1) y su estado de control (D-S2). Lo usan las herramientas
 // MCP (la sesión que llama, resuelta por main) y el panel. Sin Electron.
-import type { BrowserPageState, IsolatedBrowser } from './isolatedBrowser';
+import type { BrowserAgentAction, BrowserControl, BrowserEntryState } from '@shared/browser';
+import type { IsolatedBrowser } from './isolatedBrowser';
+
+export type { BrowserAgentAction, BrowserControl, BrowserEntryState } from '@shared/browser';
 
 export const BROWSER_SWEEP_INTERVAL_MS = 30_000;
-
-export type BrowserControl = 'idle' | 'agent' | 'user';
-export type BrowserAgentAction = 'navigate' | 'screenshot' | 'read_dom' | 'click' | 'type' | 'back' | 'close';
-
-export interface BrowserEntryState extends BrowserPageState {
-  readonly sessionId: string;
-  readonly control: BrowserControl;
-  readonly lastAction: BrowserAgentAction | null;
-}
 
 export type BrowserHandle = Pick<
   IsolatedBrowser,

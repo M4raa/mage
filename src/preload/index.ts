@@ -1,3 +1,4 @@
+import { BROWSER_STATE_CHANNEL, type BrowserEntryState } from '@shared/browser';
 import type { ConversationLockParams, ConversationLockRef } from '@shared/conversationLock';
 import type { MentionPreviewParams, MentionResolveParams, MentionSearchParams } from '@shared/mentions';
 import { contextBridge, ipcRenderer, webFrame } from 'electron';
@@ -374,6 +375,24 @@ const api: MageApi = {
   libraryView: () => ipcRenderer.invoke(IpcChannel.LibraryView),
   libraryPreview: (target) => ipcRenderer.invoke(IpcChannel.LibraryPreview, target),
   libraryApply: (params) => ipcRenderer.invoke(IpcChannel.LibraryApply, params),
+  // Navegador de Mage (F11b.3).
+  browserList: () => ipcRenderer.invoke(IpcChannel.BrowserList),
+  browserOpen: (sessionId) => ipcRenderer.invoke(IpcChannel.BrowserOpen, sessionId),
+  browserNavigate: (params) => ipcRenderer.invoke(IpcChannel.BrowserNavigate, params),
+  browserBack: (sessionId) => ipcRenderer.invoke(IpcChannel.BrowserBack, sessionId),
+  browserReload: (sessionId) => ipcRenderer.invoke(IpcChannel.BrowserReload, sessionId),
+  browserClose: (sessionId) => ipcRenderer.invoke(IpcChannel.BrowserClose, sessionId),
+  browserSetBounds: (params) => ipcRenderer.invoke(IpcChannel.BrowserSetBounds, params),
+  browserTakeControl: (sessionId) => ipcRenderer.invoke(IpcChannel.BrowserTakeControl, sessionId),
+  browserReturnControl: (sessionId) => ipcRenderer.invoke(IpcChannel.BrowserReturnControl, sessionId),
+  browserPenCapture: (sessionId) => ipcRenderer.invoke(IpcChannel.BrowserPenCapture, sessionId),
+  browserPenCompose: (params) => ipcRenderer.invoke(IpcChannel.BrowserPenCompose, params),
+  onBrowserState: (listener) => {
+    const handler = (_: unknown, states: readonly BrowserEntryState[]) => listener(states);
+    ipcRenderer.on(BROWSER_STATE_CHANNEL, handler);
+    return () => ipcRenderer.removeListener(BROWSER_STATE_CHANNEL, handler);
+  },
+  getUiZoomFactor: () => webFrame.getZoomFactor(),
 };
 
 contextBridge.exposeInMainWorld('mage', api);
