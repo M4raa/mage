@@ -51,6 +51,7 @@ export type SettingsActionName =
   | 'setImportedContextMaxChars'
   | 'setBackgroundOpacity'
   | 'applyImportedTheme'
+  | 'replaceImportedTheme'
   | 'removeImportedTheme'
   | 'selectImportedTheme'
   | 'setWidgetEnabled'
@@ -273,6 +274,13 @@ export function createSettingsActions(deps: SettingsDeps): SettingsActions {
         },
       }));
       applyThemeFromSettings(get().settings, systemPrefersDark());
+      deps.persistSettings();
+    },
+
+    // Sustituye un tema importado conservando su id (volver a importar). No lo activa: si ya era el activo, se reaplica.
+    replaceImportedTheme: (imported) => {
+      set((s) => ({ settings: { ...s.settings, importedThemes: s.settings.importedThemes.map((t) => (t.id === imported.id ? imported : t)) } }));
+      if (get().settings.activeThemeId === imported.id) applyThemeFromSettings(get().settings, systemPrefersDark());
       deps.persistSettings();
     },
 

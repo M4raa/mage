@@ -1647,6 +1647,9 @@ export interface MessageValues {
   readonly "settings.appearance.panelLayoutHint": never;
   readonly "settings.appearance.panelLayoutLabel": never;
   readonly "settings.appearance.panelLayoutReset": never;
+  readonly "settings.appearance.reimport": never;
+  readonly "settings.appearance.reimportFailed": never;
+  readonly "settings.appearance.reimportTip": never;
   readonly "settings.appearance.separatorContrast.label": never;
   readonly "settings.appearance.separatorContrast.normal": never;
   readonly "settings.appearance.separatorContrast.soft": never;

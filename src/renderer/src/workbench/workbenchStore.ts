@@ -504,6 +504,8 @@ export interface WorkbenchState extends PrState, PrActions {
   // colores para pintar la miniatura, asi que no hace falta volver a bajar el .vsix). Eliminar o
   // (des)activar uno de los importados.
   applyImportedTheme: (imported: ImportedTheme) => void;
+  // Sustituye un tema ya importado (mismo id) sin activarlo; reaplica el tema si era el activo.
+  replaceImportedTheme: (imported: ImportedTheme) => void;
   removeImportedTheme: (id: string) => void;
   selectImportedTheme: (id: string | null) => void;
   deleteAccount: (configDir: string) => Promise<void>;
