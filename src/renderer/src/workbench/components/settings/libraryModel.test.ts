@@ -5,7 +5,7 @@ import { blockKey, cardActions, filterEntries, indexInstalls, installKey, kindFi
 const entry = (id: string, kind: LibraryKind): LibraryEntryView =>
   ({ id, kind, title: id, summary: '', publisher: '', version: '1', engines: [], platforms: [], scopes: ['user'] }) as unknown as LibraryEntryView;
 const install = (over: Partial<LibraryInstallView> = {}): LibraryInstallView => ({
-  packageId: 'p', engine: 'claude', accountDir: '/a', version: '1', enabled: true, inCatalog: true, updateAvailable: false, ...over,
+  packageId: 'p', engine: 'claude', accountDir: '/a', version: '1', enabled: true, inCatalog: true, updateAvailable: false, keyed: false, ...over,
 });
 const account = (accountDir: string): LibraryAccountView => ({ accountDir, engine: 'claude', label: accountDir });
 const viewOf = (accounts: readonly LibraryAccountView[]): LibraryView => ({ platform: 'win32', accounts, entries: [], installs: [] });

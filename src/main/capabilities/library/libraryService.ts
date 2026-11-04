@@ -290,7 +290,9 @@ export class LibraryService {
   }
 
   private async installPackage(pkg: CapabilityPackage, key: LibraryKey, entry: LibraryCatalogEntry | null): Promise<LibraryActionResult> {
-    if (installRouteFor(pkg, key.engine) === 'ownedFiles') return this.installFiles(pkg, key, entry);
+    const route = installRouteFor(pkg, key.engine);
+    if (route === 'mageMcp') return DONE; // lo añade Mage en cada lanzamiento (libraryMcpSource)
+    if (route === 'ownedFiles') return this.installFiles(pkg, key, entry);
     return this.installNative(pkg, key);
   }
 
@@ -322,7 +324,9 @@ export class LibraryService {
   }
 
   private async uninstallPackage(pkg: CapabilityPackage, key: LibraryKey): Promise<LibraryActionResult> {
-    if (installRouteFor(pkg, key.engine) === 'ownedFiles') return this.uninstallFiles(pkg, key);
+    const route = installRouteFor(pkg, key.engine);
+    if (route === 'mageMcp') return DONE;
+    if (route === 'ownedFiles') return this.uninstallFiles(pkg, key);
     if (pkg.native === undefined) throw new Error(`El paquete ${pkg.id} no declara native y su ruta es nativa`);
     await runNativeCommands(this.nativeCtx(key), nativeUninstallCommands(key.engine, pkg.native));
     return DONE;
@@ -374,6 +378,7 @@ export class LibraryService {
       enabled: record.enabled,
       inCatalog,
       updateAvailable: record.enabled && inCatalog && outdated,
+      keyed: installRouteFor(record.package, record.engine) === 'mageMcp',
     };
   }
 }

@@ -33,6 +33,20 @@ describe('installRouteFor', () => {
     expect(installRouteFor(pkg, engine)).toBe('native');
   });
 
+  it.each<CapabilityEngine>(['claude', 'codex'])('installRouteFor_mcpConSecretoStdio_mageMcp', (engine) => {
+    // Arrange
+    const pkg = make('mcp', { engines: BOTH, files: [], native: MCP_NATIVE, requires: { secrets: ['DEMO_KEY'] } });
+    // Act / Assert
+    expect(installRouteFor(pkg, engine)).toBe('mageMcp');
+  });
+
+  it('installRouteFor_mcpSinSecreto_native', () => {
+    // Arrange
+    const pkg = make('mcp', { files: [], native: MCP_NATIVE, requires: { secrets: [] } });
+    // Act / Assert
+    expect(installRouteFor(pkg, 'claude')).toBe('native');
+  });
+
   it('installRouteFor_claudeSkill_returnsOwnedFiles', () => {
     // Arrange
     const pkg = make('skill');

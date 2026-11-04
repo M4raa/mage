@@ -255,15 +255,6 @@ describe('LibraryService.apply (MCP y plugins)', () => {
     expect(calls.every((c) => c.env.CODEX_HOME === CODEX_A)).toBe(true);
   });
 
-  it('apply_installMcpWithSecrets_throwsBlocked', async () => {
-    const h = setup();
-
-    const error = await rejection(h.service.apply('install', target('exa-mcp', CLAUDE_A)));
-
-    expect(keyOf(error)).toBe('errors.capabilities.blocked');
-    expect(h.runner).not.toHaveBeenCalled();
-  });
-
   it('apply_installCodexSkill_throwsBlocked', async () => {
     const h = setup();
 
@@ -399,7 +390,7 @@ describe('LibraryService.view', () => {
     const entries = h.service.view().entries;
 
     expect(entries.find((e) => e.id === SKILL)?.blocks).toEqual({ claude: null, codex: 'codexSkillsUnmeasured' });
-    expect(entries.find((e) => e.id === 'exa-mcp')?.blocks).toEqual({ claude: 'needsSecrets', codex: 'needsSecrets' });
+    expect(entries.find((e) => e.id === 'exa-mcp')?.blocks).toEqual({ claude: null, codex: null });
   });
 
   it('view_accounts_listsEligibleWithLabel', () => {

@@ -42,13 +42,16 @@ describe('previewInstall', () => {
     });
   });
 
-  it('previewInstall_mcpWithSecrets_blockedNeedsSecrets', () => {
+  it('previewInstall_mageMcp_sinComandosNiFicheros', () => {
     // Arrange
     const entry = byId('exa-mcp');
     // Act
     const preview = previewInstall({ entry, engine: 'claude', accountDir, platform: 'linux' }, null);
     // Assert
-    expect(preview.block).toBe('needsSecrets');
+    expect(preview.block).toBeNull();
+    expect(preview.route).toBe('mageMcp');
+    expect(preview.files).toEqual([]);
+    expect(preview.commands).toEqual([]);
     expect(preview.requiresSecrets).toEqual(['EXA_API_KEY']);
   });
 
@@ -135,6 +138,21 @@ describe('installBlockFor', () => {
     const entry = { ...base, package: { ...base.package, engines: ['claude' as const] } };
     // Act / Assert
     expect(installBlockFor(entry, 'codex', 'linux')).toBe('engineNotDeclared');
+  });
+
+  it('installBlockFor_exa_sinBloqueo', () => {
+    // Arrange / Act / Assert
+    expect(installBlockFor(byId('exa-mcp'), 'claude', 'linux')).toBeNull();
+    expect(installBlockFor(byId('exa-mcp'), 'codex', 'linux')).toBeNull();
+  });
+
+  it('installBlockFor_skillConSecreto_needsSecrets', () => {
+    // Arrange
+    const base = byId('context7');
+    const pkg = { ...base.package, kind: 'skill' as const, requires: { secrets: ['TOKEN'] } };
+    const entry = { ...base, package: pkg };
+    // Act / Assert
+    expect(installBlockFor(entry, 'claude', 'linux')).toBe('needsSecrets');
   });
 
   it('installBlockFor_context7Claude_returnsNull', () => {
