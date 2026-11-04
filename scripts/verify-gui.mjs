@@ -9387,6 +9387,120 @@ const CHECKS = [
       }
     },
   },
+  // --- Q10: el movimiento (#40, 041 §5) y los iconos animados (Q-U4) --------------------------------------
+  //
+  // Sin turno ni CLI: los bloques y el estado se inyectan por el puente `__mageDev` y se restauran.
+  {
+    name: 'Q10: los tokens de duración existen y valen 90/140/200 ms',
+    async run(page) {
+      const medido = await page.evaluate(() => {
+        const css = getComputedStyle(document.documentElement);
+        return ['fast', 'base', 'slow'].map((n) => css.getPropertyValue(`--mg-dur-${n}`).trim());
+      });
+      return { ok: medido.join(',') === '90ms,140ms,200ms', detail: JSON.stringify(medido) };
+    },
+  },
+  {
+    name: 'Q10: un bloque añadido en vivo entra con mg-enter y uno montado por scroll no',
+    state: { tabs: 1 },
+    async run(page) {
+      const previo = await page.evaluate(() => window.__mageDev.store.getState().blocksByChat);
+      try {
+        await injectQ10Blocks(page, 300);
+        await page.waitForSelector('[data-last-row="true"]', { timeout: CONFIG.actionTimeoutMs });
+        await page.waitForTimeout(1000);
+        const enVivo = await appendQ10LiveBlock(page);
+        await page.evaluate(() => {
+          const scroller = document.querySelector('[data-chat-scroller]');
+          if (scroller !== null) scroller.scrollTop = 0;
+        });
+        await page.waitForTimeout(1000);
+        const porScroll = await page.evaluate(() => document.querySelectorAll('[data-chat-row].mg-enter').length);
+        return { ok: enVivo.enter && porScroll === 0, detail: JSON.stringify({ enVivo, filasConEntradaTrasScroll: porScroll }) };
+      } finally {
+        await page.evaluate((estado) => window.__mageDev.store.setState({ blocksByChat: estado }), previo);
+        await page.waitForTimeout(CONFIG.settleMs);
+      }
+    },
+  },
+  {
+    name: 'Q10: con movimiento reducido no hay entrada ni pulso rápido',
+    state: { tabs: 1 },
+    async run(page) {
+      const previo = await page.evaluate(() => window.__mageDev.store.getState().blocksByChat);
+      try {
+        await page.emulateMedia({ reducedMotion: 'reduce' });
+        await injectQ10Blocks(page, 4);
+        await page.waitForSelector('[data-last-row="true"]', { timeout: CONFIG.actionTimeoutMs });
+        await page.waitForTimeout(CONFIG.settleMs);
+        const enVivo = await appendQ10LiveBlock(page);
+        const medido = await page.evaluate((key) => {
+          const row = document.querySelector(`[data-row-key="${key}"]`);
+          const probe = document.createElement('span');
+          probe.className = 'mg-pulse';
+          document.body.appendChild(probe);
+          const pulso = getComputedStyle(probe).animationDuration;
+          probe.remove();
+          return { animationName: row === null ? null : getComputedStyle(row).animationName, pulso };
+        }, enVivo.key);
+        return { ok: medido.animationName === 'none' && medido.pulso === '4s', detail: JSON.stringify(medido) };
+      } finally {
+        await page.emulateMedia({ reducedMotion: 'no-preference' });
+        await page.evaluate((estado) => window.__mageDev.store.setState({ blocksByChat: estado }), previo);
+        await page.waitForTimeout(CONFIG.settleMs);
+      }
+    },
+  },
+  {
+    name: 'Q10: el chevron de un proyecto rota al desplegar',
+    async run(page) {
+      const previo = await seedSidebar(page);
+      try {
+        const cabecera = page.locator('[data-project-key$="/proyecto-a"]');
+        await cabecera.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        // Los grupos nacen plegados; si ya estuviera abierto, se pliega antes de medir el despliegue.
+        if ((await cabecera.getAttribute('aria-expanded')) === 'true') {
+          await cabecera.click();
+          await page.waitForTimeout(300);
+        }
+        await cabecera.click();
+        await page.waitForTimeout(300);
+        const medido = await page.evaluate(() => {
+          const chevron = document.querySelector('[data-project-key$="/proyecto-a"] [aria-hidden="true"] > span');
+          if (chevron === null) return { angulo: null };
+          const m = new DOMMatrix(getComputedStyle(chevron).transform);
+          return { angulo: Math.round((Math.atan2(m.b, m.a) * 180) / Math.PI) };
+        });
+        return { ok: medido.angulo === 90, detail: JSON.stringify(medido) };
+      } finally {
+        await restoreSidebar(page, previo);
+      }
+    },
+  },
+  {
+    name: 'Q10: el icono de Permisos late con un permiso pendiente',
+    state: { tabs: 1 },
+    async run(page) {
+      const previo = await page.evaluate(() => window.__mageDev.store.getState().statusByChat);
+      try {
+        await page.evaluate(() => {
+          const s = window.__mageDev.store.getState();
+          window.__mageDev.store.setState({ statusByChat: { ...s.statusByChat, [s.activeTabId]: 'needs_permission' } });
+        });
+        await page.waitForSelector('[data-stripe-attention="true"]', { timeout: CONFIG.actionTimeoutMs });
+        // Tres lecturas separadas 400 ms: dos iguales seguidas serían simetría del latido, no quietud.
+        const lecturas = [];
+        for (let i = 0; i < 3; i += 1) {
+          lecturas.push(await page.evaluate(() => getComputedStyle(document.querySelector('[data-stripe-attention="true"] svg').parentElement).transform));
+          await page.waitForTimeout(400);
+        }
+        return { ok: new Set(lecturas).size > 1, detail: JSON.stringify(lecturas) };
+      } finally {
+        await page.evaluate((estado) => window.__mageDev.store.setState({ statusByChat: estado }), previo);
+        await page.waitForTimeout(CONFIG.settleMs);
+      }
+    },
+  },
   {
     name: 'Q03: vacío con 8 tarjetas como mucho y lista debajo',
     state: { tabs: 1 },
@@ -11458,6 +11572,41 @@ async function walkStepSlider(page, caso) {
 // Siembra el lateral de Q02 con 6 conversaciones sintéticas de dos cuentas (una real y una ficticia): 1 fijada, 2
 // en C:\vg\proyecto-a, 1 de Codex dentro de la carpeta temporal (Sin proyecto), 1 privada y 1 archivada. Devuelve el
 // estado previo para `restoreSidebar`.
+// Q10: inyecta `n` bloques (usuario/agente alternados) en la pestaña activa.
+async function injectQ10Blocks(page, n) {
+  await page.evaluate((count) => {
+    const store = window.__mageDev.store;
+    const id = store.getState().activeTabId;
+    const blocks = Array.from({ length: count }, (_, i) => (i % 2 === 0
+      ? { kind: 'user', id: `q10-u${i}`, text: `Mensaje ${i}`, time: '12:00', attachments: [] }
+      : { kind: 'agent', id: `q10-a${i}`, runs: [{ code: false, text: `Respuesta ${i}` }], streaming: false }));
+    store.setState((s) => ({ blocksByChat: { ...s.blocksByChat, [id]: blocks } }));
+  }, n);
+}
+
+// Q10: añade un bloque al final «en vivo» y dice si su fila llegó a llevar `mg-enter` (la clase dura ~180 ms,
+// así que se observa con un MutationObserver instalado ANTES de añadirlo).
+async function appendQ10LiveBlock(page) {
+  return page.evaluate(async () => {
+    const key = 'q10-live';
+    let enter = false;
+    const watch = () => {
+      if (document.querySelector(`[data-row-key="${key}"].mg-enter`) !== null) enter = true;
+    };
+    const observer = new MutationObserver(watch);
+    observer.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['class'] });
+    const store = window.__mageDev.store;
+    const id = store.getState().activeTabId;
+    store.setState((s) => ({
+      blocksByChat: { ...s.blocksByChat, [id]: [...(s.blocksByChat[id] ?? []), { kind: 'agent', id: key, runs: [{ code: false, text: 'Respuesta en vivo' }], streaming: false }] },
+    }));
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    watch();
+    observer.disconnect();
+    return { key, enter };
+  });
+}
+
 async function seedSidebar(page) {
   const previo = await page.evaluate(() => {
     const s = window.__mageDev.store.getState();
