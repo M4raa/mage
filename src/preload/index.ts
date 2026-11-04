@@ -1,4 +1,5 @@
 import type { ConversationLockParams, ConversationLockRef } from '@shared/conversationLock';
+import type { MentionPreviewParams, MentionResolveParams, MentionSearchParams } from '@shared/mentions';
 import { contextBridge, ipcRenderer, webFrame } from 'electron';
 import {
   EVENT_CHANNEL,
@@ -220,6 +221,9 @@ const api: MageApi = {
   },
   readMemory: (params: ReadMemoryParams) => ipcRenderer.invoke(IpcChannel.MemoryRead, params),
   listConversations: (accountDir: string) => ipcRenderer.invoke(IpcChannel.ConversationsList, accountDir),
+  searchMentions: (params: MentionSearchParams) => ipcRenderer.invoke(IpcChannel.MentionsSearch, params),
+  resolveMentions: (params: MentionResolveParams) => ipcRenderer.invoke(IpcChannel.MentionsResolve, params),
+  previewMention: (params: MentionPreviewParams) => ipcRenderer.invoke(IpcChannel.MentionsPreview, params),
   deleteConversation: (params: DeleteConversationParams) => ipcRenderer.invoke(IpcChannel.ConversationsDelete, params),
   moveConversation: (params: MoveConversationParams) => ipcRenderer.invoke(IpcChannel.ConversationsMove, params),
   migrateConversation: (params: MigrateConversationParams) => ipcRenderer.invoke(IpcChannel.ConversationsMigrate, params),

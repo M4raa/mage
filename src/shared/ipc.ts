@@ -13,6 +13,7 @@ import type { ProviderModel } from './providers';
 import type { AgyUsageSnapshot } from './usage';
 import type { MageEvent, PermissionDecision, SlashCommandInfo } from './events';
 import type { ArtifactRecord, ConversationPrefs } from './conversationIndex';
+import type { MentionPreview, MentionPreviewParams, MentionResolution, MentionResolveParams, MentionSearchParams, MentionSearchResult } from './mentions';
 import type { AnswerReceipt, CloseReceipt, ConversationId, ConversationSnapshot, QueuedMessage, SendMode, SendReceipt } from './coordination';
 import type { UsageInfo } from './usage';
 import type { StatusInfo } from './status';
@@ -198,6 +199,10 @@ export const IpcChannel = {
   ProjectFileApproveOutside: 'projectFile:approveOutside',
   // Historial de conversaciones en disco de una cuenta (M2.6, sidebar = historial).
   ConversationsList: 'conversations:list',
+  // Menciones @ de ficheros de la carpeta (Q05): buscar, resolver al enviar y vista previa; todo en main.
+  MentionsSearch: 'mentions:search',
+  MentionsResolve: 'mentions:resolve',
+  MentionsPreview: 'mentions:preview',
   // Administracion de conversaciones (#2 de AJUSTES): borrar y mover entre secciones/cuentas.
   ConversationsDelete: 'conversations:delete',
   ConversationsMove: 'conversations:move',
@@ -462,7 +467,7 @@ export type DivergeResult =
 // validacion (tipos permitidos y topes de tamaño) es del modulo puro `attachments.ts`, y se aplica en
 // los DOS lados: el renderer para dar un error bonito, main porque es la frontera de verdad.
 export interface ImageAttachment {
-  readonly mediaType: 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif';
+  readonly mediaType: 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif' | 'application/pdf';
   readonly data: string;
 }
 
@@ -1120,6 +1125,10 @@ export interface MageApi {
   // Lista las conversaciones EN DISCO de una cuenta (M2.6, sidebar = historial): compartidas (pozo
   // comun) + privadas (perfil mage-private), mas recientes primero. Solo metadatos (sin contenido).
   listConversations(accountDir: string): Promise<readonly ConversationSummary[]>;
+  // Menciones @ (Q05): candidatos de la carpeta, resolucion por motor justo al enviar y vista previa.
+  searchMentions(params: MentionSearchParams): Promise<MentionSearchResult>;
+  resolveMentions(params: MentionResolveParams): Promise<MentionResolution>;
+  previewMention(params: MentionPreviewParams): Promise<MentionPreview>;
   deleteConversation(params: DeleteConversationParams): Promise<void>;
   moveConversation(params: MoveConversationParams): Promise<MoveConversationResult>;
   // Sigue la MISMA conversación en una cuenta de otro proveedor (formato nativo del destino); la de origen se retira.

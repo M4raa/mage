@@ -66,6 +66,23 @@ describe('removeImageToken', () => {
 });
 
 describe('buildUserContentBlocks', () => {
+  it('buildUserContentBlocks_pdfWithoutToken_documentBlockNoText', () => {
+    const pdf: ImageAttachment = { mediaType: 'application/pdf', data: 'JVBERg==' };
+
+    expect(buildUserContentBlocks('mira', [pdf])).toEqual([
+      { type: 'text', text: 'mira' },
+      { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: 'JVBERg==' } },
+    ]);
+  });
+
+  it('buildUserContentBlocks_imagesUnchanged', () => {
+    expect(buildUserContentBlocks('hola', [img('A')])).toEqual([
+      { type: 'text', text: 'hola' },
+      { type: 'text', text: ' [Imagen 1]' },
+      { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'A' } },
+    ]);
+  });
+
   it('buildUserContentBlocks_intercalado_cadaImagenDetrasDeSuToken', () => {
     const blocks = buildUserContentBlocks('mira [Imagen 1] y compara con [Imagen 2]', [img('A'), img('B')]);
 
