@@ -88,6 +88,35 @@ describe('Mage MCP server', () => {
     expect(result.isError).toBe(true);
     expect(port.questions).toEqual([]);
   });
+  it('callTool_requestIdTexto_createAceptado', async () => {
+    const { call } = await connect();
+    const result = await call('create_session', createArgs({ requestId: 'claude-pref-num-20261104' }));
+    expect(result.isError).not.toBe(true);
+  });
+  it('callTool_requestIdTexto_askCreatorAceptado', async () => {
+    const { call, port } = await connect();
+    const result = await call('ask_creator', { requestId: 'preferred-integer-1-to-9', text: 'hola' });
+    expect(result.isError).not.toBe(true);
+    expect(result.structuredContent).toEqual({ receipt: 'accepted' });
+    expect(port.questions).toEqual([{ requestId: 'preferred-integer-1-to-9', text: 'hola' }]);
+  });
+  it('callTool_requestId128_aceptado', async () => {
+    const { call } = await connect();
+    const result = await call('ask_creator', { requestId: 'a'.repeat(128), text: 'hola' });
+    expect(result.isError).not.toBe(true);
+  });
+  it('callTool_requestId129_isErrorConCampo', async () => {
+    const { call } = await connect();
+    const result = await call('ask_creator', { requestId: 'a'.repeat(129), text: 'hola' });
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result)).toContain('requestId');
+  });
+  it('callTool_requestIdVacio_isErrorConCampo', async () => {
+    const { call } = await connect();
+    const result = await call('ask_creator', { requestId: '', text: 'hola' });
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result)).toContain('requestId');
+  });
   it('tools_caminosNominales_devuelvenContratoH1', async () => {
     const { call } = await connect();
     expect((await call('list_sessions')).structuredContent).toEqual({ sessions: [{ conversationId: 'historical-id', title: 'Public', provider: 'claude', state: 'working' }] });
@@ -260,7 +289,7 @@ describe('Mage MCP server', () => {
     expect(create).not.toHaveBeenCalled();
   });
   it.each([
-    ['create_session', createArgs({ requestId: 'bad-uuid' }), 'requestId', 'bad-uuid'],
+    ['create_session', createArgs({ requestId: 12345 }), 'requestId', '12345'],
     ['create_session', { provider: 'claude', cwd: '/synthetic', prompt: SECRET }, 'requestId', 'undefined'],
     ['get_status', {}, 'conversationId', 'undefined'],
     ['create_session', { requestId: REQUEST, provider: 'claude', prompt: SECRET }, 'cwd', 'undefined'],
