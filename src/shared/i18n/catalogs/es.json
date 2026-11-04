@@ -583,6 +583,8 @@
   "chat.subagents.launched": "Lanzó {count, plural, one {{count} subagente} other {{count} subagentes}}",
   "chat.system.blockedDuringPr": "Bloqueado durante «Crear PR»: {command}",
   "chat.system.conversationReset": "Conversación reiniciada",
+  "chat.table.copyMarkdown": "Copiar Markdown",
+  "chat.table.copyTsv": "Copiar TSV",
   "chat.thinking.aria": "{label}, {steps} pasos{errors, plural, =0 {} other {, {errors} con error}}: ver la actividad",
   "chat.thinking.errors": "{count, plural, one {{count} error} other {{count} errores}}",
   "chat.thinking.runningTool": "Ejecutando {tool}",

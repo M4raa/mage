@@ -585,6 +585,8 @@ export interface MessageValues {
   readonly "chat.subagents.launched": { readonly "count": number };
   readonly "chat.system.blockedDuringPr": { readonly "command": string | number };
   readonly "chat.system.conversationReset": never;
+  readonly "chat.table.copyMarkdown": never;
+  readonly "chat.table.copyTsv": never;
   readonly "chat.thinking.aria": { readonly "errors": number; readonly "label": string | number; readonly "steps": string | number };
   readonly "chat.thinking.errors": { readonly "count": number };
   readonly "chat.thinking.runningTool": { readonly "tool": string | number };

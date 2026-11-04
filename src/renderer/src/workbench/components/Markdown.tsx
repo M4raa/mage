@@ -3,6 +3,9 @@ import type { ThemedToken } from 'shiki/types';
 import { parseMarkdown, type MdBlock, type MdInline } from '../markdown';
 import { useHighlightedCode } from '../highlighter';
 import { CopyButton } from './CopyButton';
+import { Icon } from './Icon';
+import { useCopyToClipboard } from '../useCopyToClipboard';
+import { inlinesToText, tableToMarkdown, tableToTsv } from '../tableCopy';
 import { useT } from '../../i18n/uiLanguage';
 
 // Render de Markdown a React (bloques + inline). El parseo vive en el modulo PURO markdown.ts; aqui
@@ -183,6 +186,48 @@ function ListNode({ block }: { readonly block: Extract<MdBlock, { type: 'list' }
 
 // Tabla GFM con scroll horizontal propio (tablas anchas no arrastran scroll global).
 function TableNode({ block }: { readonly block: Extract<MdBlock, { type: 'table' }> }): React.JSX.Element {
+  const cells = useMemo(
+    () => ({ header: block.header.map(inlinesToText), rows: block.rows.map((row) => row.map(inlinesToText)) }),
+    [block],
+  );
+  return (
+    <div className="group relative">
+      <TableCopyButtons header={cells.header} rows={cells.rows} />
+      <TableGrid block={block} />
+    </div>
+  );
+}
+
+// Dos botones pequenos arriba a la derecha, visibles con el raton encima o el foco dentro (#44).
+function TableCopyButtons({ header, rows }: { readonly header: readonly string[]; readonly rows: readonly (readonly string[])[] }): React.JSX.Element {
+  const t = useT();
+  return (
+    <div className="absolute right-[4px] top-[4px] z-10 flex gap-[2px] rounded-[5px] bg-mg-block opacity-0 group-focus-within:opacity-100 group-hover:opacity-100">
+      <TableCopyButton kind="markdown" label={t('chat.table.copyMarkdown')} text={() => tableToMarkdown(header, rows)} />
+      <TableCopyButton kind="tsv" label={t('chat.table.copyTsv')} text={() => tableToTsv(header, rows)} />
+    </div>
+  );
+}
+
+function TableCopyButton({ kind, label, text }: { readonly kind: 'markdown' | 'tsv'; readonly label: string; readonly text: () => string }): React.JSX.Element {
+  const { copied, error, copy } = useCopyToClipboard();
+  const tone = error === null ? 'text-mg-muted hover:text-mg-body2' : 'text-mg-danger';
+  return (
+    <button
+      type="button"
+      data-table-copy={kind}
+      onClick={() => copy(text())}
+      title={error ?? label}
+      aria-label={error ?? label}
+      className={`flex cursor-pointer items-center gap-[4px] rounded-[5px] px-[5px] py-[2px] text-[10.5px] hover:bg-mg-hover ${tone}`}
+    >
+      <Icon name={copied ? 'check' : 'copy'} size={12} />
+      <span>{label}</span>
+    </button>
+  );
+}
+
+function TableGrid({ block }: { readonly block: Extract<MdBlock, { type: 'table' }> }): React.JSX.Element {
   return (
     <div className="overflow-x-auto rounded-[7px] border border-mg-border-subtle">
       <table className="w-full border-collapse text-[11.5px]">
