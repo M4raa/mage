@@ -78,6 +78,8 @@ const HARNESS_LOCKS_DIR = path.join(os.tmpdir(), `mage-verify-locks-${process.pi
 // En el entorno del propio harness, para que la herede CUALQUIER instancia que lance (G5, bench, segunda instancia…).
 process.env[HARNESS_LOCKS_ENV] = HARNESS_LOCKS_DIR;
 process.on('exit', () => fs.rmSync(HARNESS_LOCKS_DIR, { recursive: true, force: true }));
+// HOME que ven la app y el harness: el de prueba de la tanda salvo con `--turn=real` (V6: el lateral D6 enseñaba las cuentas reales).
+let HARNESS_HOME = os.homedir();
 
 const CONFIG = {
   port: 9222,
@@ -2115,7 +2117,7 @@ const CHECKS = [
               const id = dev.store.getState().activeTabId;
               dev.store.setState((s) => ({ tabs: s.tabs.map((t) => (t.id === id ? { ...t, provider, accountId: accountDir, resolvedConfigDir: accountDir } : t)) }));
             },
-            { provider, accountDir: path.join(os.homedir(), '.claude') },
+            { provider, accountDir: path.join(HARNESS_HOME, '.claude') },
           );
         const puente = async (target) => {
           await proyecto.locator(`[data-instructions-bridge="${target}"]`).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
@@ -5898,7 +5900,7 @@ const CHECKS = [
       // esta conversacion) y luego se negaba a abrirlo. Se comprueba con la raiz REAL, porque lo que
       // hay que verificar es que main wire el whitelisting correcto — un test unitario del predicado
       // inyectado no lo demuestra. El fichero lleva nombre inequivoco y se borra al terminar.
-      const plansDir = path.join(os.homedir(), '.claude', 'plans');
+      const plansDir = path.join(HARNESS_HOME, '.claude', 'plans');
       const planPath = path.join(plansDir, 'mage-verify-plan.md');
       const plan = {};
       if (fs.existsSync(path.dirname(plansDir))) {
@@ -11458,7 +11460,7 @@ function seedMcpExtensions(userDataDir, fake) {
 }
 
 function seedCommandCatalog(userDataDir) {
-  const home = os.homedir();
+  const home = HARNESS_HOME;
   const accounts = fs
     .readdirSync(home, { withFileTypes: true })
     .filter((entry) => entry.isDirectory() && /^\.claude(-.*|\d*)$/.test(entry.name))
@@ -12927,7 +12929,7 @@ async function chooseTurnTarget(page) {
     }
   });
   const spent = spentPercent(read.usage);
-  const decision = decideTurnTarget({ spent, forced: forcedTurnTarget(), interactive: process.stdin.isTTY === true });
+  const decision = decideTurnTarget({ spent, forced: forcedTurnTarget(), interactive: process.stdin.isTTY === true, isolatedHome: HARNESS_HOME !== os.homedir() });
   if (decision.target !== 'ask') return { ...decision, usageError: read.error };
   console.log(`[verify:gui] AVISO: ${decision.reason}.`);
   const terminal = readline.createInterface({ input: process.stdin, output: process.stdout });
@@ -13266,6 +13268,7 @@ function writeReport(runDir, results, consoleErrors) {
   const lines = ['# Verificacion GUI de Mage', ''];
   lines.push(`- Fecha: ${new Date().toISOString()}`);
   lines.push(`- Plataforma: ${process.platform}`);
+  lines.push(`- HOME de prueba: ${HARNESS_HOME !== os.homedir() ? 'sí' : 'no'}`);
   lines.push('');
   lines.push('| Resultado | Comprobacion | Medida |');
   lines.push('|---|---|---|');
@@ -13314,6 +13317,12 @@ async function main() {
   if (reuseProfile !== undefined && !userDataDir.startsWith(path.join(CONFIG.outDir, 'user-data') + path.sep)) throw new Error('El perfil de fixture debe estar dentro de .verify-out/user-data');
   fs.mkdirSync(runDir, { recursive: true });
   fs.mkdirSync(userDataDir, { recursive: true });
+  if (forcedTurnTarget() !== 'real') {
+    // HOME de prueba dentro del perfil de la tanda (V6): la app descubre las cuentas ahí, con la de Claude vacía y sin sesión.
+    HARNESS_HOME = path.join(userDataDir, 'vg-home');
+    fs.mkdirSync(path.join(HARNESS_HOME, '.claude', 'plans'), { recursive: true });
+    process.env.MAGE_TEST_HOME = HARNESS_HOME;
+  }
   prunePreviousProfiles(userDataDir);
   seedCommandCatalog(userDataDir);
   if (reuseProfile === undefined || !fs.existsSync(path.join(userDataDir, 'app-settings.json'))) seedOnboardingDone(userDataDir);
