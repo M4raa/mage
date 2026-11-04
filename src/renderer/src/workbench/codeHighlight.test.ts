@@ -9,6 +9,7 @@ import {
   SHIKI_THEME_DARK,
   SHIKI_THEME_LIGHT,
 } from './codeHighlight';
+import { highlightCode } from './highlighter';
 
 function imported(overrides: Partial<ImportedTheme> = {}): ImportedTheme {
   return { id: 'ovsx:acme.night', label: 'Night', type: 'dark', tokens: {}, ...overrides };
@@ -197,6 +198,43 @@ describe('buildImportedShikiTheme + shiki real', () => {
     expect(tokens.find((t) => t.content.trim() === 'const')?.color).toBe('#569CD6');
     // El texto sin regla propia cae al color derivado de --color-mg-body.
     expect(tokens.find((t) => t.content.trim() === 'x')?.color).toBe('#DCDCDC');
+  }, 20_000);
+});
+
+// Tope de longitud de linea de highlightCode (shiki real, mismo motor y misma llamada que la app).
+describe('highlightCode + shiki real', () => {
+  const THEME = { name: SHIKI_THEME_DARK, registration: null };
+  // Una linea de TypeScript de EXACTAMENTE `length` caracteres: `const x = 1; // ` y relleno de comentario.
+  const tsLine = (length: number): string => {
+    const head = 'const x = 1; // ';
+    return head + 'a'.repeat(length - head.length);
+  };
+
+  it('highlight_lineOver2000Chars_isPlain', async () => {
+    const [line] = await highlightCode(tsLine(2001), 'typescript', THEME);
+
+    expect(line).toHaveLength(1);
+    expect(line?.[0]?.color).toBeFalsy();
+  }, 20_000);
+
+  it('highlight_line1999Chars_isColored', async () => {
+    const [line] = await highlightCode(tsLine(1999), 'typescript', THEME);
+
+    expect(line?.length).toBeGreaterThan(1);
+    expect(line?.find((token) => token.content.trim() === 'const')?.color).toBeTruthy();
+  }, 20_000);
+
+  // Medicion INFORMATIVA (el numero va al informe): el unico tope es holgado, por si algo se cuelga.
+  it('highlight_syntheticFile500Lines_finishesWithinGenerousCap', async () => {
+    const code = Array.from({ length: 500 }, (_, i) => `export function f${i}(a: number, b: string): string { return b + a; } // línea ${i}`).join(String.fromCharCode(10));
+    const start = performance.now();
+
+    const lines = await highlightCode(code, 'typescript', THEME);
+
+    const elapsedMs = performance.now() - start;
+    console.info(`[Q04 shiki] 500 lineas TS: ${elapsedMs.toFixed(0)} ms`);
+    expect(lines).toHaveLength(500);
+    expect(elapsedMs).toBeLessThan(10_000);
   }, 20_000);
 });
 
