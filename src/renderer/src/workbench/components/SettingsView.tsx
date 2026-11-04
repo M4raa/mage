@@ -183,7 +183,7 @@ function SettingsDialog(): React.JSX.Element {
                 tabIndex={s.key === section ? 0 : -1}
                 onClick={() => setSection(s.key)}
                 className={`flex items-center gap-[8px] rounded-[7px] px-[10px] py-[6px] text-left text-[11.5px] transition-colors duration-150 ease-out ${
-                  s.key === section ? 'bg-mg-sel text-mg-body' : 'text-mg-body2 hover:bg-mg-hover'
+                  s.key === section ? 'bg-mg-sel text-mg-sel-ink relative before:pointer-events-none before:absolute before:inset-y-0 before:left-0 before:w-[2px] before:bg-mg-sel-mark' : 'text-mg-body2 hover:bg-mg-hover'
                 }`}
               >
                 <Icon name={s.icon} className={s.key === section ? 'text-mg-focus' : 'text-mg-ter'} />
@@ -346,7 +346,7 @@ function AppearanceSection({
                 data-tip={t(option.hint)}
                 aria-pressed={selected}
                 className={`flex-1 rounded-[8px] border px-[12px] py-[10px] text-left ${
-                  selected ? 'border-mg-focus bg-mg-sel text-mg-text' : 'border-mg-border-ctrl text-mg-body2 hover:bg-mg-hover'
+                  selected ? 'border-mg-focus bg-mg-sel text-mg-sel-ink relative before:pointer-events-none before:absolute before:inset-y-0 before:left-0 before:w-[2px] before:bg-mg-sel-mark' : 'border-mg-border-ctrl text-mg-body2 hover:bg-mg-hover'
                 }`}
               >
                 <div className="text-[12px] font-semibold">{t(option.label)}</div>
@@ -948,7 +948,7 @@ function KeybindingRow({
           <button
             ref={captureRef}
             onKeyDown={onCaptureKeyDown}
-            className="shrink-0 rounded-[6px] border border-mg-focus bg-mg-sel px-[10px] py-[3px] text-[10.5px] text-mg-text outline-none"
+            className="shrink-0 rounded-[6px] border border-mg-focus bg-mg-sel px-[10px] py-[3px] text-[10.5px] text-mg-sel-ink outline-none"
           >
             {t('settings.keybindings.capturing')}
           </button>

@@ -226,7 +226,7 @@ function DockOptions({
             aria-checked={selected}
             onClick={() => onToggle(option.label)}
             className={`flex items-start gap-[9px] rounded-[8px] border p-[6px_8px] text-left transition-colors duration-150 ${
-              selected ? 'border-mg-focus bg-mg-sel' : highlighted ? 'border-mg-border-emph' : 'border-transparent hover:bg-mg-hover'
+              selected ? 'border-mg-focus bg-mg-sel text-mg-sel-ink relative before:pointer-events-none before:absolute before:inset-y-0 before:left-0 before:w-[2px] before:bg-mg-sel-mark' : highlighted ? 'border-mg-border-emph' : 'border-transparent hover:bg-mg-hover'
             }`}
           >
             <span className="flex h-[18px] w-[18px] flex-none items-center justify-center rounded-[5px] bg-mg-block font-mono text-[10px] text-mg-sec">

@@ -103,7 +103,7 @@ export function DialogButton({
   readonly onClick: () => void;
   readonly children: React.ReactNode;
 }): React.JSX.Element {
-  const tone = primary ? 'bg-mg-sel font-bold text-mg-text' : 'text-mg-body';
+  const tone = primary ? 'bg-mg-sel font-bold text-mg-sel-ink' : 'text-mg-body';
   return (
     <button
       ref={buttonRef}

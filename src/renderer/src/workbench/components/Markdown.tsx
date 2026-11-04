@@ -246,7 +246,7 @@ function InlineNode({ node }: { readonly node: MdInline }): React.JSX.Element {
         </del>
       );
     case 'code':
-      return <code className="rounded-[4px] bg-mg-sel px-[5px] py-px font-mono text-[11.5px] break-words">{node.text}</code>;
+      return <code className="rounded-[4px] bg-mg-sel px-[5px] py-px font-mono text-mg-sel-ink text-[11.5px] break-words">{node.text}</code>;
     case 'link':
       return (
         <a href={node.href} target="_blank" rel="noreferrer noopener" className="text-mg-focus underline underline-offset-2 hover:opacity-80">

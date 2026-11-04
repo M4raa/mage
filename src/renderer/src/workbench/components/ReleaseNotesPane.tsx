@@ -38,7 +38,7 @@ export function ReleaseNotesPane({ focused, split }: { readonly focused: boolean
               aria-current={current ? 'page' : undefined}
               onClick={() => openReleaseNotes(candidate.version)}
               className={`flex items-baseline justify-between gap-[6px] rounded-[7px] px-[10px] py-[6px] text-left text-[11.5px] transition-colors duration-150 ease-out ${
-                current ? 'bg-mg-sel text-mg-body' : 'text-mg-body2 hover:bg-mg-hover'
+                current ? 'bg-mg-sel text-mg-sel-ink relative before:pointer-events-none before:absolute before:inset-y-0 before:left-0 before:w-[2px] before:bg-mg-sel-mark' : 'text-mg-body2 hover:bg-mg-hover'
               }`}
             >
               <span className="font-mono">{candidate.version}</span>

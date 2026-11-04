@@ -89,7 +89,7 @@ export function FilesPanel(): React.JSX.Element {
               aria-expanded={file.path === selected?.path}
               data-created-file={file.path}
               className={`flex w-full flex-col items-start gap-[1px] rounded-[6px] px-[8px] py-[5px] text-left ${
-                file.path === selected?.path ? 'bg-mg-sel' : 'hover:bg-mg-hover'
+                file.path === selected?.path ? 'bg-mg-sel text-mg-sel-ink relative before:pointer-events-none before:absolute before:inset-y-0 before:left-0 before:w-[2px] before:bg-mg-sel-mark' : 'hover:bg-mg-hover'
               }`}
             >
               <span className="flex w-full items-center gap-[6px]">

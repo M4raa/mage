@@ -119,7 +119,7 @@ function ProjectActions({ group, onCreate, onEdit, onRemove }: Pick<ProjectGroup
   const t = useT();
   const [menuOpen, setMenuOpen] = useState(false);
   const reveal = 'opacity-0 transition-opacity duration-100 ease-out group-hover/proj:opacity-100 group-focus-within/proj:opacity-100 focus-visible:opacity-100';
-  const btn = `grid h-[20px] w-[20px] flex-none place-items-center rounded-[4px] text-mg-icon hover:bg-mg-sel ${reveal}`;
+  const btn = `grid h-[20px] w-[20px] flex-none place-items-center rounded-[4px] text-mg-icon hover:bg-mg-sel hover:text-mg-sel-ink ${reveal}`;
   return (
     <span className="relative flex flex-none items-center">
       <button onClick={onCreate} aria-label={t('sidebar.projects.newIn', { name: group.name })} className={btn}><Icon name="plus" size={13} /></button>

@@ -83,7 +83,7 @@ export function TrustFolderDialog(): React.JSX.Element {
               </button>
               <button
                 onClick={() => void answerTrustRequest(folder, true, trustParent)}
-                className="rounded-[7px] border border-mg-border-emph bg-mg-sel px-[12px] py-[6px] font-bold text-mg-text transition-colors duration-150 ease-out hover:bg-mg-hover"
+                className="rounded-[7px] border border-mg-border-emph bg-mg-sel px-[12px] py-[6px] font-bold text-mg-sel-ink transition-colors duration-150 ease-out hover:bg-mg-hover"
               >
                 {t('dialogs.trustFolder.trust')}
               </button>

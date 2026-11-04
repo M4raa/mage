@@ -91,7 +91,7 @@ function AgentDockRowView({ tabId, row, elapsedMs }: { readonly tabId: string; r
         <span aria-hidden="true" className={`h-[7px] w-[7px] flex-none rounded-full ${AGENT_STATE_DOT[row.state]}`} />
         {/* 37b: la TAREA en primer plano (nueve «general-purpose» iguales no dicen nada); el tipo, chip. */}
         <span className="min-w-0 truncate font-semibold text-mg-body2" title={row.description ?? undefined}>{row.description ?? row.name}</span>
-        <span className="flex-none rounded-[4px] bg-mg-sel px-[5px] py-[1px] text-[9px] text-mg-body">{row.name}</span>
+        <span className="flex-none rounded-[4px] bg-mg-sel px-[5px] py-[1px] text-[9px] text-mg-sel-ink">{row.name}</span>
         <span className="min-w-0 flex-1 truncate text-mg-sec">{row.currentStep}</span>
         <span className="flex-none font-mono text-[10px] text-mg-muted" style={{ fontVariantNumeric: 'tabular-nums' }}>
           {formatElapsed(elapsedMs)}
@@ -106,7 +106,7 @@ function AgentDockRowView({ tabId, row, elapsedMs }: { readonly tabId: string; r
           data-agents-dock-dismiss="true"
           aria-label={t('chat.agents.dockDismissAria', { name: row.description ?? row.name })}
           data-tip={t('chat.agents.dockDismissTip')}
-          className="mr-[6px] flex h-[18px] w-[18px] flex-none items-center justify-center rounded-[4px] text-mg-muted hover:bg-mg-sel hover:text-mg-body"
+          className="mr-[6px] flex h-[18px] w-[18px] flex-none items-center justify-center rounded-[4px] text-mg-muted hover:bg-mg-sel hover:text-mg-sel-ink"
         >
           <Icon name="close" size={10} />
         </button>

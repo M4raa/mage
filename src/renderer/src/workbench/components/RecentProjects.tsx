@@ -80,7 +80,7 @@ export function RecentProjects({
             data-recent-project={project.cwd}
             title={project.cwd}
             className={`flex min-w-0 flex-col items-start gap-[2px] rounded-[9px] border p-[8px_10px] text-left transition-colors duration-150 ease-out hover:border-mg-focus hover:bg-mg-hover ${
-              project.cwd === currentCwd ? 'border-mg-focus bg-mg-sel' : 'border-mg-border-emph'
+              project.cwd === currentCwd ? 'border-mg-focus bg-mg-sel text-mg-sel-ink relative before:pointer-events-none before:absolute before:inset-y-0 before:left-0 before:w-[2px] before:bg-mg-sel-mark' : 'border-mg-border-emph'
             }`}
           >
             <span className="w-full truncate text-[12px] font-semibold text-mg-text">{project.name}</span>

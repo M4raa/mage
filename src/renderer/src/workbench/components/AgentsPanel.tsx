@@ -121,7 +121,7 @@ function SubagentRow({
       <span className="flex w-full items-baseline gap-[6px]">
         <span aria-hidden="true" className={`h-[7px] w-[7px] flex-none self-center rounded-full ${AGENT_STATE_DOT[row.state]}`} />
         <span className="min-w-0 truncate font-semibold text-mg-body2">{row.description ?? t('chat.agents.noDescription')}</span>
-        <span className="shrink-0 rounded-[4px] bg-mg-sel px-[5px] py-[1px] text-[9px] text-mg-body">{row.name}</span>
+        <span className="shrink-0 rounded-[4px] bg-mg-sel px-[5px] py-[1px] text-[9px] text-mg-sel-ink">{row.name}</span>
         <span className="ml-auto shrink-0 text-mg-muted">{t(STATE_LABEL_KEY[row.state])}</span>
       </span>
       <span className="flex w-full gap-[10px] pl-[13px] font-mono text-[10px] text-mg-muted" style={{ fontVariantNumeric: 'tabular-nums' }}>

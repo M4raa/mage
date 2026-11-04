@@ -122,7 +122,7 @@ function MemoryDetail({
         <button onClick={onBack} className="shrink-0 rounded-[4px] px-[6px] py-[2px] text-[11px] text-mg-body2 hover:bg-mg-hover" data-tip={t('chat.memory.backTip')}>
           {t('chat.memory.back')}
         </button>
-        <span className="shrink-0 rounded-[4px] bg-mg-sel px-[5px] py-[1px] text-[9px] text-mg-body">{t(TYPE_LABEL_KEY[note.type])}</span>
+        <span className="shrink-0 rounded-[4px] bg-mg-sel px-[5px] py-[1px] text-[9px] text-mg-sel-ink">{t(TYPE_LABEL_KEY[note.type])}</span>
       </div>
       <div className="flex-1 overflow-y-auto px-[12px] py-[10px]">
         <div className="text-[12px] font-bold text-mg-text">{note.name}</div>
@@ -154,7 +154,7 @@ function renderBodyNodes(
     const target = linkByRaw.get(raw) ?? null;
     if (target !== null) {
       nodes.push(
-        <button key={key++} onClick={() => onNavigate(target)} className="rounded-[3px] bg-mg-sel px-[3px] text-mg-focus hover:underline">
+        <button key={key++} onClick={() => onNavigate(target)} className="rounded-[3px] bg-mg-sel px-[3px] text-mg-sel-ink hover:underline">
           {raw}
         </button>,
       );

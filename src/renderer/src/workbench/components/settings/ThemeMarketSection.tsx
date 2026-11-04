@@ -292,7 +292,7 @@ function PreviewBanner({
 }): React.JSX.Element {
   const t = useT();
   return (
-    <div className="flex items-center gap-[8px] rounded-[7px] border border-mg-focus bg-mg-sel p-[7px_9px]">
+    <div className="flex items-center gap-[8px] rounded-[7px] border border-mg-focus bg-mg-sel p-[7px_9px] text-mg-sel-ink">
       <Icon name="wand" size={13} className="text-mg-focus" />
       <span className="min-w-0 flex-1 truncate text-[11px] text-mg-body">
         {t('settings.themeMarket.banner.start')} <b className="font-semibold">{theme.label}</b> {t('settings.themeMarket.banner.end')}
@@ -451,7 +451,7 @@ function ThemeCard({
     <li
       ref={(el) => observe(el, item)}
       className={`flex flex-col gap-[7px] rounded-[8px] border p-[8px] ${
-        previewing ? 'border-mg-focus bg-mg-sel' : 'border-mg-border-ctrl'
+        previewing ? 'border-mg-focus bg-mg-sel text-mg-sel-ink relative before:pointer-events-none before:absolute before:inset-y-0 before:left-0 before:w-[2px] before:bg-mg-sel-mark' : 'border-mg-border-ctrl'
       }`}
     >
       {reliable && thumbnail !== null ? (
@@ -520,7 +520,7 @@ function ImportedThemeCard({
   return (
     <li
       className={`flex flex-col gap-[7px] rounded-[8px] border p-[8px] ${
-        active ? 'border-mg-focus bg-mg-sel' : 'border-mg-border-ctrl'
+        active ? 'border-mg-focus bg-mg-sel text-mg-sel-ink relative before:pointer-events-none before:absolute before:inset-y-0 before:left-0 before:w-[2px] before:bg-mg-sel-mark' : 'border-mg-border-ctrl'
       }`}
     >
       <button

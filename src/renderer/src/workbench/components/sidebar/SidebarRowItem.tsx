@@ -72,7 +72,7 @@ function TabRow(props: SidebarRowItemProps & { readonly row: Extract<SidebarRow,
   };
   if (editing) {
     return (
-      <div data-sidebar-row="true" className={`${ROW_CLASS} bg-mg-sel p-[5px_8px]`}>
+      <div data-sidebar-row="true" className={`${ROW_CLASS} bg-mg-sel text-mg-sel-ink before:pointer-events-none before:absolute before:inset-y-0 before:left-0 before:w-[2px] before:bg-mg-sel-mark p-[5px_8px]`}>
         <input
           autoFocus
           defaultValue={title}
@@ -88,7 +88,7 @@ function TabRow(props: SidebarRowItemProps & { readonly row: Extract<SidebarRow,
     );
   }
   return (
-    <div data-sidebar-row="true" className={`${ROW_CLASS} ${selected ? 'bg-mg-sel' : 'hover:bg-mg-hover'}`}>
+    <div data-sidebar-row="true" className={`${ROW_CLASS} ${selected ? 'bg-mg-sel text-mg-sel-ink before:pointer-events-none before:absolute before:inset-y-0 before:left-0 before:w-[2px] before:bg-mg-sel-mark' : 'hover:bg-mg-hover'}`}>
       <button
         onClick={() => onSelectTab(tab.id)}
         onDoubleClick={() => setEditing(true)}
@@ -119,7 +119,7 @@ function HistoryRow(props: SidebarRowItemProps & { readonly row: Extract<Sidebar
   const title = displayTitle(item.title, t);
   const timeText = background === undefined ? relativeTime(item.updatedAtMs) : backgroundLabel(background.state);
   return (
-    <div data-sidebar-row="true" className={`${ROW_CLASS} hover:bg-mg-hover ${highlighted.on ? 'bg-mg-sel ring-1 ring-mg-border-emph' : ''}`}>
+    <div data-sidebar-row="true" className={`${ROW_CLASS} hover:bg-mg-hover ${highlighted.on ? 'bg-mg-sel text-mg-sel-ink before:pointer-events-none before:absolute before:inset-y-0 before:left-0 before:w-[2px] before:bg-mg-sel-mark ring-1 ring-mg-border-emph' : ''}`}>
       <button
         ref={highlighted.ref}
         onClick={() => onOpenHistory(row)}

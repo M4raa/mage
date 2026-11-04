@@ -180,7 +180,7 @@ export function ConversationContextMenu({
                   </button>
                   <button
                     onClick={() => { onClose(); legacy.update(); }}
-                    className="rounded-[5px] bg-mg-sel px-[8px] py-[3px] text-[10.5px] font-semibold text-mg-text hover:bg-mg-hover"
+                    className="rounded-[5px] bg-mg-sel px-[8px] py-[3px] text-[10.5px] font-semibold text-mg-sel-ink hover:bg-mg-hover"
                   >
                     {t('history.legacyCodex.update')}
                   </button>

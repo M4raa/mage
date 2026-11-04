@@ -54,7 +54,7 @@ export function SidebarHeader(props: SidebarHeaderProps): React.JSX.Element {
           }}
           aria-label={t('sidebar.newConversation')}
           data-tip={t('sidebar.newConversation')}
-          className="grid h-[28px] w-[28px] flex-none place-items-center rounded-[6px] bg-mg-sel text-mg-text hover:bg-mg-hover"
+          className="grid h-[28px] w-[28px] flex-none place-items-center rounded-[6px] bg-mg-sel text-mg-sel-ink hover:bg-mg-hover"
         >
           <Icon name="plus" size={14} />
         </button>
@@ -72,7 +72,7 @@ export function SidebarHeader(props: SidebarHeaderProps): React.JSX.Element {
 
 function chipClass(on: boolean): string {
   return `flex h-[22px] items-center gap-[4px] rounded-full border px-[8px] text-[11px] transition-colors duration-150 ease-out hover:text-mg-body ${
-    on ? 'border-mg-border-ctrl bg-mg-sel text-mg-body' : 'border-mg-border-subtle text-mg-sec'
+    on ? 'border-mg-border-ctrl bg-mg-sel text-mg-sel-ink relative before:pointer-events-none before:absolute before:inset-y-0 before:left-0 before:w-[2px] before:bg-mg-sel-mark' : 'border-mg-border-subtle text-mg-sec'
   }`;
 }
 
@@ -98,7 +98,7 @@ function FilterChips({ filter, onFilter, workingCount, providers, accounts }: Si
         onChange={(value) => onFilter({ ...filter, provider: value === ALL ? null : value })}
         ariaLabel={t('sidebar.filters.provider')}
         leading={<span className="text-mg-muted">{t('sidebar.filters.provider')}</span>}
-        triggerClassName={filter.provider === null ? '' : 'bg-mg-sel'}
+        triggerClassName={filter.provider === null ? '' : 'bg-mg-sel !text-mg-sel-ink relative before:pointer-events-none before:absolute before:inset-y-0 before:left-0 before:w-[2px] before:bg-mg-sel-mark'}
         triggerData={{ 'data-filter-chip': 'provider' }}
       />
       <Dropdown
@@ -107,7 +107,7 @@ function FilterChips({ filter, onFilter, workingCount, providers, accounts }: Si
         onChange={(value) => onFilter({ ...filter, accountId: value === ALL ? null : value })}
         ariaLabel={t('sidebar.filters.account')}
         leading={<span className="text-mg-muted">{t('sidebar.filters.account')}</span>}
-        triggerClassName={filter.accountId === null ? '' : 'bg-mg-sel'}
+        triggerClassName={filter.accountId === null ? '' : 'bg-mg-sel !text-mg-sel-ink relative before:pointer-events-none before:absolute before:inset-y-0 before:left-0 before:w-[2px] before:bg-mg-sel-mark'}
         triggerData={{ 'data-filter-chip': 'account' }}
       />
       <button data-filter-chip="archived" aria-pressed={filter.archived} onClick={() => onFilter({ ...filter, archived: !filter.archived })} className={chipClass(filter.archived)}>

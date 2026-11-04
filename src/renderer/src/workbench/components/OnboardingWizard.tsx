@@ -274,7 +274,7 @@ function AppearanceStep(): React.JSX.Element {
               onClick={() => setTheme(preference)}
               aria-pressed={theme === preference}
               className={`flex-1 rounded-[7px] border p-[9px] text-[11.5px] ${
-                theme === preference ? 'border-mg-focus bg-mg-sel text-mg-body' : 'border-mg-border-ctrl text-mg-body2 hover:bg-mg-hover'
+                theme === preference ? 'border-mg-focus bg-mg-sel text-mg-sel-ink relative before:pointer-events-none before:absolute before:inset-y-0 before:left-0 before:w-[2px] before:bg-mg-sel-mark' : 'border-mg-border-ctrl text-mg-body2 hover:bg-mg-hover'
               }`}
             >
               {t(THEME_LABELS[preference])}

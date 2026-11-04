@@ -399,7 +399,7 @@ function buttonText(label: string, alias: string, accounts: number): string {
 }
 
 export function OriginBadge({ badge }: { readonly badge: McpBadge }): React.JSX.Element {
-  const skin = badge.kind === 'common' ? 'bg-mg-sel text-mg-focus' : 'bg-mg-hover text-mg-body2';
+  const skin = badge.kind === 'common' ? 'bg-mg-sel text-mg-sel-ink' : 'bg-mg-hover text-mg-body2';
   return <span className={`rounded-[4px] px-[5px] py-[1px] text-[9px] font-semibold ${skin}`}>{badge.label}</span>;
 }
 
