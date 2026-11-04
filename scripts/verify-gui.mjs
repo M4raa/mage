@@ -56,7 +56,7 @@ import { runPerfBaseline } from './lib/perfBaseline.mjs';
 import { writeLongTranscript } from './lib/longTranscriptFixture.mjs';
 import { runMageBench } from './lib/benchMage.mjs';
 import { appendDomText } from './lib/domTextDump.mjs';
-import { redactUserData } from './lib/redactUserData.mjs';
+import { redactLocalUser, redactUserData } from './lib/redactUserData.mjs';
 import { cleanupProfile, credentialDigest } from '../spike/f0-profile-cleanup.mjs';
 import { claudeUsage, codexRateLimits, guardedUsage, prepareCodexHome } from '../spike/bench/headless.mjs';
 
@@ -13402,9 +13402,9 @@ async function main() {
   } catch (error) {
     results.push({ name: 'Arranque', ok: false, detail: redactUserData(error.message, accountAliases) });
     console.error(`[verify:gui] ${error.message}`);
-    fs.writeFileSync(path.join(runDir, 'launch.log'), log.join(''), 'utf-8');
+    fs.writeFileSync(path.join(runDir, 'launch.log'), redactLocalUser(log.join('')), 'utf-8');
   } finally {
-    writeReport(runDir, results, consoleErrors);
+    writeReport(runDir, results, consoleErrors.map((error) => redactUserData(error, accountAliases)));
     if (browser !== null) await browser.close().catch(() => {});
     if (!keepOpen) killTree(child);
     else console.log('[verify:gui] --keep: la app sigue abierta; ciérrala tú.');
