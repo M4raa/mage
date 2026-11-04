@@ -101,7 +101,7 @@ function TabRow(props: SidebarRowItemProps & { readonly row: Extract<SidebarRow,
         data-tip={t('sidebar.tab.tip', { provider: tab.provider, model: tab.model })}
         className="flex min-w-0 flex-1 flex-col gap-[2px] p-[5px_8px] text-left"
       >
-        <span className={`block truncate ${selected ? 'font-semibold text-mg-text' : 'text-mg-body2'}`}>{title}</span>
+        <span className={`block truncate ${selected ? 'font-semibold text-mg-sel-ink' : 'text-mg-body2'}`}>{title}</span>
         <RowMeta row={row} account={account} timeText={relativeTime(rowRecency(row) === 0 ? Date.now() : rowRecency(row))} />
       </button>
       <RowTail row={row} indicator={indicator} background={undefined} account={account} onMenu={onMenu} />

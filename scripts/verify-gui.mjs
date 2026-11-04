@@ -4144,7 +4144,7 @@ const CHECKS = [
     // P-028, punto 2: cada pestaña lleva el MONOGRAMA de su cuenta y, si no es de Claude, una marca
     // corta del proveedor; la barra de estado dice el proveedor de la pestaña ENFOCADA. Se simula una
     // pestaña de agy cambiando solo su `provider` en el store (no se lanza nada) y se restaura.
-    name: '2: monograma de la cuenta en la pestaña y marca del proveedor (también Claude) en la pestaña y la barra de estado',
+    name: '2: la pestaña lleva el monograma del PROVEEDOR (Q03) y la barra de estado dice el proveedor de la enfocada',
     async run(page) {
       const previo = await page.evaluate(() => {
         const s = window.__mageDev.store.getState();
@@ -4156,28 +4156,32 @@ const CHECKS = [
         const { activeTabId, tabs, accounts } = store.getState();
         const cuenta = accounts.find((a) => a.id === tabs.find((t) => t.id === activeTabId)?.accountId);
         const pestana = () => document.querySelector(`[data-tab-id="${activeTabId}"]`);
-        const monograma = pestana()?.querySelector('[data-tab-monogram]')?.textContent ?? null;
+        const marca = () => pestana()?.querySelector('[data-tab-monogram]') ?? null;
+        const monogramaClaude = marca()?.textContent ?? null;
+        const tipClaude = marca()?.getAttribute('data-tip') ?? null;
         const proveedorAntes = document.querySelector('[data-status-provider]')?.textContent ?? null;
-        const marcaTabClaude = pestana()?.querySelector('[data-tab-provider]')?.textContent ?? null;
+        const marcaProveedorViejaAntes = pestana()?.querySelector('[data-tab-provider]') !== null;
         store.setState({ tabs: tabs.map((t) => (t.id === activeTabId ? { ...t, provider: 'agy' } : t)) });
         await new Promise((resolve) => requestAnimationFrame(resolve));
         return {
-          monograma,
-          esperado: cuenta?.monogram ?? null,
+          monogramaClaude,
+          alias: cuenta?.alias ?? null,
+          tipClaude,
           marcaClaude: proveedorAntes,
-          marcaTabClaude,
-          marcaAgy: pestana()?.querySelector('[data-tab-provider]')?.textContent ?? null,
+          marcaProveedorViejaAntes,
+          monogramaAgy: marca()?.textContent ?? null,
           barraAgy: document.querySelector('[data-status-provider]')?.textContent ?? null,
         };
       });
       await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
       await page.waitForTimeout(CONFIG.settleMs);
       const ok =
-        medido.monograma !== null &&
-        medido.monograma === medido.esperado &&
+        medido.monogramaClaude === 'C' &&
+        medido.alias !== null &&
+        (medido.tipClaude ?? '').includes(medido.alias) && // la cuenta exacta va en el tooltip
         medido.marcaClaude === 'Claude' &&
-        medido.marcaTabClaude === 'claude' && // Claude también se marca (decisión del usuario, 2026-10-08)
-        medido.marcaAgy === 'agy' &&
+        medido.marcaProveedorViejaAntes === false && // el recuadro de texto «claude» ya no existe
+        medido.monogramaAgy === 'A' &&
         medido.barraAgy === 'agy';
       return { ok, detail: JSON.stringify(medido) };
     },
@@ -6533,7 +6537,7 @@ const CHECKS = [
     // segmento no informa de nada.
     //
     // NO se pulsa la carpeta: abriria el explorador de ficheros del sistema.
-    name: 'Chat: las etiquetas de informacion van encima del input y la carpeta es accionable',
+    name: 'Chat: la carpeta va en la sublinea bajo las pestañas (Q03) y es accionable; las etiquetas de encima del input son solo privacidad',
     async run(page) {
       const previo = await page.evaluate(() => {
         const s = window.__mageDev.store.getState();
@@ -6548,7 +6552,7 @@ const CHECKS = [
         const editor = document.querySelector('[data-prompt-editor="true"]');
         const carpeta = [...document.querySelectorAll('button')].find((b) => (b.getAttribute('aria-label') ?? '').includes('abrir la carpeta')) ?? null;
         const fila = carpeta?.parentElement ?? null;
-        const etiquetas = fila === null ? [] : [...fila.children].map((n) => ({
+        const etiquetas = fila === null ? [] : [...fila.children].filter((n) => n.getAttribute('aria-hidden') !== 'true').map((n) => ({
           texto: (n.textContent ?? '').trim(),
           pulsable: n.tagName.toLowerCase() === 'button',
           titulo: n.getAttribute('aria-label'),
@@ -6556,8 +6560,9 @@ const CHECKS = [
         return {
           cwd,
           hayFila: fila !== null,
-          // Encima del input de verdad, medido en pixeles y no por el orden del DOM.
-          encimaDelInput: fila !== null && editor !== null ? fila.getBoundingClientRect().bottom <= editor.getBoundingClientRect().top + 1 : null,
+          esSublinea: fila?.getAttribute('data-tab-subline') === 'true',
+          // La sublinea va ANTES del input (encima del hilo), medido en pixeles y no por el orden del DOM.
+          antesDelInput: fila !== null && editor !== null ? fila.getBoundingClientRect().bottom <= editor.getBoundingClientRect().top + 1 : null,
           etiquetas,
           pulsables: etiquetas.filter((e) => e.pulsable).length,
           // La fila no puede ensanchar el panel: las rutas largas son la norma.
@@ -6566,9 +6571,8 @@ const CHECKS = [
       });
 
       // Una conversacion sin friccion vive DENTRO del scratchpad, asi que la etiqueta tiene que acabar
-      // diciendo "Scratchpad" y no el UUID de su subcarpeta — que es justo el caso en que el ultimo
-      // segmento no informa de nada. Se SONDEA en vez de medir una sola vez: la carpeta de borradores
-      // se resuelve por IPC y llega despues del primer pintado.
+      // diciendo "Scratchpad" y no el UUID de su subcarpeta. Se SONDEA: la carpeta de borradores se
+      // resuelve por IPC y llega despues del primer pintado.
       let etiquetaScratch = null;
       for (let i = 0; i < 25; i += 1) {
         etiquetaScratch = await page.evaluate(
@@ -6585,15 +6589,15 @@ const CHECKS = [
       const todo = { ...medido, scratchResuelto, etiquetaScratch };
       const ok =
         todo.hayFila &&
-        todo.encimaDelInput === true &&
-        // Carpeta + privacidad. El modelo ya NO va aqui (P-026 2.2, D18): solo en el selector del input.
+        todo.esSublinea &&
+        todo.antesDelInput === true &&
+        // Cuenta + carpeta (el scratchpad no es un repositorio: sin rama). El modelo no va (D18).
         todo.etiquetas.length === 2 &&
         // Solo la carpeta hace algo: un boton que no lleva a ningun sitio es una promesa rota.
         todo.pulsables === 1 &&
         todo.desborda === false &&
         // El tooltip de la carpeta lleva la ruta ENTERA, que es lo que la etiqueta corta no puede.
-        (todo.etiquetas[0]?.titulo ?? '').includes(todo.cwd) &&
-        // `textContent` trae tambien el icono, asi que se compara por contenido y no por igualdad.
+        (todo.etiquetas[1]?.titulo ?? '').includes(todo.cwd) &&
         (todo.etiquetaScratch ?? '').includes('Scratchpad');
       return { ok, detail: JSON.stringify(todo) };
     },
@@ -8847,6 +8851,233 @@ const CHECKS = [
     },
   },
   {
+    name: 'Q03: avatares en el lateral',
+    async run(page) {
+      const previo = await page.evaluate(() => window.__mageDev.store.getState().settings.accountAvatarsPlacement);
+      const medir = () => page.evaluate(() => {
+        const lateral = document.querySelector('[data-account-switcher="vertical"]');
+        return {
+          arriba: document.querySelectorAll('[data-account-switcher="horizontal"]').length,
+          lateral: document.querySelectorAll('[data-account-switcher="vertical"]').length,
+          lateralEnRail: lateral !== null && lateral.closest('[data-stripe-scroll]') !== null,
+          avatares: document.querySelectorAll('[data-account-switcher] button[aria-pressed]').length,
+        };
+      });
+      try {
+        await page.evaluate(() => window.__mageDev.store.getState().setAccountAvatarsPlacement('rail'));
+        await page.waitForTimeout(CONFIG.settleMs);
+        const enRail = await medir();
+        await page.evaluate(() => window.__mageDev.store.getState().setAccountAvatarsPlacement('top'));
+        await page.waitForTimeout(CONFIG.settleMs);
+        const enTitulo = await medir();
+        const ok = enRail.lateral === 1 && enRail.lateralEnRail && enRail.arriba === 0 && enRail.avatares > 0
+          && enTitulo.arriba === 1 && enTitulo.lateral === 0 && enTitulo.avatares === enRail.avatares;
+        return { ok, detail: JSON.stringify({ enRail, enTitulo }) };
+      } finally {
+        await page.evaluate((v) => window.__mageDev.store.getState().setAccountAvatarsPlacement(v), previo);
+        await page.waitForTimeout(CONFIG.settleMs);
+      }
+    },
+  },
+  {
+    name: 'Q03: la pestaña lleva el monograma del proveedor y reserva el ✕',
+    state: { tabs: 2 },
+    async run(page) {
+      const previo = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return { tabs: s.tabs, activeTabId: s.activeTabId };
+      });
+      try {
+        await page.mouse.move(1, 1);
+        const ids = await page.evaluate(() => {
+          const s = window.__mageDev.store.getState();
+          const [primera, segunda] = s.tabs;
+          window.__mageDev.store.setState({ tabs: s.tabs.map((t) => (t.id === segunda.id ? { ...t, provider: 'custom:vg-q03' } : t)) });
+          return { primera: primera.id, segunda: segunda.id };
+        });
+        await page.waitForTimeout(CONFIG.settleMs);
+        const medir = (id) => page.evaluate((tabId) => {
+          const tab = document.querySelector('[data-tab-id="' + tabId + '"]');
+          const cerrar = [...(tab?.querySelectorAll('button') ?? [])].find((b) => (b.textContent ?? '').includes('✕')) ?? null;
+          return {
+            monograma: tab?.querySelector('[data-tab-monogram]')?.textContent ?? null,
+            ancho: tab?.getBoundingClientRect().width ?? null,
+            visibilidadCerrar: cerrar === null ? null : getComputedStyle(cerrar).visibility,
+          };
+        }, id);
+        await page.evaluate((id) => window.__mageDev.store.getState().setActiveTab(id), ids.segunda);
+        await page.waitForTimeout(CONFIG.settleMs);
+        const inactivaAntes = await medir(ids.primera);
+        const activaR = await medir(ids.segunda);
+        await page.evaluate((id) => window.__mageDev.store.getState().setActiveTab(id), ids.primera);
+        await page.waitForTimeout(CONFIG.settleMs);
+        const activadaDespues = await medir(ids.primera);
+        const ok = inactivaAntes.monograma === 'C' && activaR.monograma === 'R'
+          && inactivaAntes.visibilidadCerrar === 'hidden' && activadaDespues.visibilidadCerrar === 'visible'
+          && Math.abs((inactivaAntes.ancho ?? 0) - (activadaDespues.ancho ?? 0)) <= 1;
+        return { ok, detail: JSON.stringify({ inactivaAntes, activaR, activadaDespues }) };
+      } finally {
+        await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
+        await page.waitForTimeout(CONFIG.settleMs);
+      }
+    },
+  },
+  {
+    name: 'Q03: la sublínea dice cuenta · carpeta · rama y el input ya no repite carpeta',
+    state: { tabs: 1 },
+    async run(page) {
+      const medido = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        const tab = s.tabs.find((t) => t.id === s.activeTabId);
+        const subline = document.querySelector('[data-tab-subline]');
+        const carpetas = [...document.querySelectorAll('button')].filter((b) => (b.getAttribute('aria-label') ?? '').includes('abrir la carpeta'));
+        return {
+          alias: tab?.accountAlias ?? null,
+          texto: (subline?.textContent ?? '').trim(),
+          carpetas: carpetas.length,
+          carpetaEnSublinea: carpetas.length === 1 && carpetas[0].closest('[data-tab-subline]') !== null,
+        };
+      });
+      const ok = medido.alias !== null && medido.texto.includes(medido.alias) && medido.carpetas === 1 && medido.carpetaEnSublinea;
+      return { ok, detail: JSON.stringify(medido) };
+    },
+  },
+  {
+    name: 'Q03: indicador de segundo plano',
+    state: { tabs: 1 },
+    async run(page) {
+      const previo = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return { backgroundSessions: s.backgroundSessions, sidebarFilter: s.sidebarFilter };
+      });
+      try {
+        await page.evaluate(() => {
+          const s = window.__mageDev.store.getState();
+          window.__mageDev.store.setState({
+            backgroundSessions: { 'vg-q03-bg': { sessionId: 'vg-q03-bg', conversationId: undefined, title: 'VG segundo plano', accountId: s.activeAccountId, state: 'working', sinceMs: Date.now() } },
+          });
+        });
+        const boton = page.locator('[data-background-count="1"]');
+        await boton.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        await boton.click();
+        await page.waitForTimeout(CONFIG.settleMs);
+        const chip = page.locator('[data-filter-chip="working"]');
+        await chip.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const pulsado = await chip.getAttribute('aria-pressed');
+        return { ok: pulsado === 'true', detail: JSON.stringify({ chipTrabajando: pulsado }) };
+      } finally {
+        await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
+        await page.waitForTimeout(CONFIG.settleMs);
+      }
+    },
+  },
+  {
+    name: 'Q03: aviso de permiso en el icono del dock',
+    state: { tabs: 1 },
+    async run(page) {
+      const previo = await page.evaluate(() => window.__mageDev.store.getState().statusByChat);
+      try {
+        await page.evaluate(() => {
+          const s = window.__mageDev.store.getState();
+          window.__mageDev.store.setState({ statusByChat: { ...s.statusByChat, [s.activeTabId]: 'needs_permission' } });
+        });
+        await page.waitForTimeout(CONFIG.settleMs);
+        const medido = await page.evaluate(() => ({
+          marcados: [...document.querySelectorAll('[data-stripe-attention="true"]')].map((b) => b.getAttribute('aria-label')),
+        }));
+        const ok = medido.marcados.length === 1 && medido.marcados[0] === 'Permiso';
+        return { ok, detail: JSON.stringify(medido) };
+      } finally {
+        await page.evaluate((estado) => window.__mageDev.store.setState({ statusByChat: estado }), previo);
+        await page.waitForTimeout(CONFIG.settleMs);
+      }
+    },
+  },
+  {
+    name: 'Q03: vacío con 8 tarjetas como mucho y lista debajo',
+    state: { tabs: 1 },
+    async run(page) {
+      const carpetas = [];
+      for (let i = 0; i < 12; i += 1) carpetas.push(fs.mkdtempSync(path.join(os.tmpdir(), 'mage-verify-q03-')));
+      const previo = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return { conversationHistory: s.conversationHistory, allConversationHistory: s.allConversationHistory, loadConversationHistory: s.loadConversationHistory };
+      });
+      try {
+        await page.evaluate((dirs) => {
+          const s = window.__mageDev.store.getState();
+          const base = { configDir: '', title: 't', privacy: 'shared', sizeBytes: 1, isScheduled: false };
+          const items = dirs.map((cwd, i) => ({ ...base, sessionId: 'vg-q03-' + i, cwd, updatedAtMs: 1000 + i }));
+          window.__mageDev.store.setState({
+            loadConversationHistory: async () => undefined,
+            conversationHistory: items,
+            allConversationHistory: items.map((item) => ({ item, accountId: s.activeAccountId })),
+          });
+        }, carpetas);
+        await page.locator('[data-recent-project]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const medido = await page.evaluate(() => ({
+          tarjetas: document.querySelectorAll('[data-recent-project]').length,
+          lista: document.querySelectorAll('[data-recent-projects-list] [data-recent-folder]').length,
+        }));
+        const ok = medido.tarjetas > 0 && medido.tarjetas <= 8 && medido.lista === 12 - medido.tarjetas;
+        return { ok, detail: JSON.stringify(medido) };
+      } finally {
+        await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
+        for (const dir of carpetas) fs.rmSync(dir, { recursive: true, force: true });
+        await page.waitForTimeout(CONFIG.settleMs);
+      }
+    },
+  },
+  {
+    name: 'Q03: texto sobre la selección legible',
+    state: { tabs: 1 },
+    async run(page) {
+      const previo = await applySyntheticNord(page);
+      try {
+        const colores = await page.evaluate(() => {
+          const fila = [...document.querySelectorAll('[data-sidebar-row="true"]')].find((row) => row.querySelector('[aria-current="true"]') !== null) ?? null;
+          const titulo = fila?.querySelector('button span') ?? null;
+          return {
+            hayFila: fila !== null,
+            texto: titulo === null ? null : getComputedStyle(titulo).color,
+            fondo: fila === null ? null : getComputedStyle(fila).backgroundColor,
+          };
+        });
+        if (!colores.hayFila) return { ok: false, detail: 'no hay fila activa resaltada en el lateral' };
+        const [texto, fondo] = await cssColorsToRgb(page, [colores.texto, colores.fondo]);
+        const contraste = wcagContrast(texto, fondo);
+        return { ok: contraste >= 4.5, detail: JSON.stringify({ ...colores, contraste: Number(contraste.toFixed(2)) }) };
+      } finally {
+        await restoreSyntheticTheme(page, previo);
+      }
+    },
+  },
+  {
+    name: 'Q03: contraste de separaciones Marcado sube el borde',
+    async run(page) {
+      const previo = await applySyntheticNord(page);
+      const nivelPrevio = await page.evaluate(() => window.__mageDev.store.getState().settings.separatorContrast);
+      try {
+        await page.evaluate(() => window.__mageDev.store.getState().setSeparatorContrast('strong'));
+        await page.waitForTimeout(CONFIG.settleMs);
+        const fuerte = await page.evaluate(() => {
+          const estilos = getComputedStyle(document.documentElement);
+          return { borde: estilos.getPropertyValue('--color-mg-border-ctrl').trim(), panel: estilos.getPropertyValue('--color-mg-panel').trim() };
+        });
+        const [borde, panel] = await cssColorsToRgb(page, [fuerte.borde, fuerte.panel]);
+        const contraste = wcagContrast(borde, panel);
+        await page.evaluate(() => window.__mageDev.store.getState().setSeparatorContrast('normal'));
+        await page.waitForTimeout(CONFIG.settleMs);
+        const enLinea = await page.evaluate(() => document.documentElement.style.getPropertyValue('--color-mg-border-ctrl'));
+        const ok = contraste >= 1.8 && enLinea === '';
+        return { ok, detail: JSON.stringify({ ...fuerte, contraste: Number(contraste.toFixed(2)), propiedadEnLineaTrasNormal: enLinea }) };
+      } finally {
+        await page.evaluate((nivel) => window.__mageDev.store.getState().setSeparatorContrast(nivel), nivelPrevio);
+        await restoreSyntheticTheme(page, previo);
+      }
+    },
+  },
+  {
     name: 'I: Notificaciones en cabecera y arriba, progreso pausable y errores sin barra',
     async run(page) {
       await clearNotifications(page);
@@ -10752,6 +10983,78 @@ async function seedSidebar(page) {
   });
   await page.waitForTimeout(CONFIG.settleMs * 2);
   return previo;
+}
+
+// Q03: tema importado sintético con los tokens de Nord que midió J (CHECKPOINTS-J, paso 3). Nunca llega a Open VSX.
+const SYNTHETIC_NORD_ID = 'ovsx:vg.q03-nord';
+const SYNTHETIC_NORD = {
+  id: SYNTHETIC_NORD_ID,
+  label: 'VG Q03 Nord',
+  type: 'dark',
+  tokens: {
+    '--color-mg-window': '#2e3440',
+    '--color-mg-panel': '#2e3440',
+    '--color-mg-rail': '#2e3440',
+    '--color-mg-body': '#d8dee9',
+    '--color-mg-text': '#eceff4',
+    '--color-mg-border-subtle': '#3b4252',
+    '--color-mg-border': '#3b4252',
+    '--color-mg-border-ctrl': '#484e59',
+    '--color-mg-hover': '#3b4252',
+    '--color-mg-sel': '#88c0d0',
+    '--color-mg-focus': '#82b7c6',
+    '--color-mg-sel-ink': '#2e3440',
+    '--color-mg-sel-mark': 'transparent',
+  },
+};
+
+// Aplica el tema sintético y devuelve el tema activo previo, para restaurarlo.
+async function applySyntheticNord(page) {
+  const previo = await page.evaluate((theme) => {
+    const store = window.__mageDev.store;
+    const activo = store.getState().settings.activeThemeId;
+    store.getState().applyImportedTheme(theme);
+    return { activo };
+  }, SYNTHETIC_NORD);
+  await page.waitForTimeout(CONFIG.settleMs);
+  return previo;
+}
+
+async function restoreSyntheticTheme(page, previo) {
+  await page.evaluate(({ id, activo }) => {
+    const state = window.__mageDev.store.getState();
+    state.removeImportedTheme(id);
+    state.selectImportedTheme(activo);
+  }, { id: SYNTHETIC_NORD_ID, activo: previo.activo });
+  await page.waitForTimeout(CONFIG.settleMs);
+}
+
+// Cualquier color CSS (hex, rgb(), color-mix…) a [r, g, b] 0-255, resuelto por el propio navegador con un canvas.
+async function cssColorsToRgb(page, colors) {
+  return page.evaluate((list) => {
+    const ctx = document.createElement('canvas').getContext('2d', { willReadFrequently: true });
+    return list.map((css) => {
+      ctx.clearRect(0, 0, 1, 1);
+      ctx.fillStyle = '#000';
+      ctx.fillStyle = css;
+      ctx.fillRect(0, 0, 1, 1);
+      const [r, g, b] = ctx.getImageData(0, 0, 1, 1).data;
+      return [r, g, b];
+    });
+  }, colors);
+}
+
+// Contraste WCAG 2.x entre dos colores [r, g, b].
+function wcagContrast(first, second) {
+  const luminance = ([r, g, b]) => {
+    const lin = (c) => {
+      const v = c / 255;
+      return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+    };
+    return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+  };
+  const [hi, lo] = [luminance(first), luminance(second)].sort((x, y) => y - x);
+  return (hi + 0.05) / (lo + 0.05);
 }
 
 async function restoreSidebar(page, previo) {

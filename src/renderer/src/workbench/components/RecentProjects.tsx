@@ -83,7 +83,7 @@ export function RecentProjects({
               project.cwd === currentCwd ? 'border-mg-focus bg-mg-sel text-mg-sel-ink relative before:pointer-events-none before:absolute before:inset-y-0 before:left-0 before:w-[2px] before:bg-mg-sel-mark' : 'border-mg-border-emph'
             }`}
           >
-            <span className="w-full truncate text-[12px] font-semibold text-mg-text">{project.name}</span>
+            <span className={`w-full truncate text-[12px] font-semibold ${project.cwd === currentCwd ? 'text-mg-sel-ink' : 'text-mg-text'}`}>{project.name}</span>
             <span className="w-full truncate font-mono text-[10px] text-mg-muted">{shortenPath(project.cwd, 40)}</span>
           </button>
         ))}
