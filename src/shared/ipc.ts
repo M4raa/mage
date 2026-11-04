@@ -9,6 +9,7 @@ import type { GitParams, GitSnapshot, GitSwitchParams } from './git';
 import type { WorktreeCreateParams, WorktreeMergeBaseParams, WorktreeRemoveResult } from './worktree';
 import type { PrCatalogEntry, PrCatalogLinkParams, PrCatalogUnlinkParams, PrDetail, PrListParams, PrListResult, PrMigrateParams, PrReadParams, PrWriteParams, PrWriteResult } from './pr';
 import type { GhAutoMergeParams, GhPrUpdate, GhRunActionParams, GhRunsParams, GhRunsSnapshot, GhSnapshot, GhWatchParams } from './gh';
+import type { TaskDraft, TaskRecord } from './tasks';
 import type { AccountCreateParams, AccountInfo, AccountProviderId, AgyLoginStart, CliLoginStart, CodexLoginOutcome, EmbeddedLoginResult } from './accounts';
 import type { ProviderModel } from './providers';
 import type { AgyUsageSnapshot } from './usage';
@@ -339,6 +340,14 @@ export const IpcChannel = {
   LibraryView: 'library:view',
   LibraryPreview: 'library:preview',
   LibraryApply: 'library:apply',
+  // Modo de tareas (F8).
+  TasksList: 'tasks:list',
+  TasksCreate: 'tasks:create',
+  TasksVerify: 'tasks:verify',
+  TasksRemove: 'tasks:remove',
+  TasksPickFolders: 'tasks:pickFolders',
+  TasksPickDocuments: 'tasks:pickDocuments',
+  TasksSaveCopy: 'tasks:saveCopy',
   // Registro del servidor MCP de Mage en las cuentas de Claude y Codex (H4).
   McpRegistrationStatus: 'mcp:registrationStatus',
   McpRegister: 'mcp:register',
@@ -1347,6 +1356,15 @@ export interface MageApi {
   libraryView(): Promise<LibraryView>;
   libraryPreview(target: LibraryTarget): Promise<LibraryPreviewView>;
   libraryApply(params: LibraryApplyParams): Promise<LibraryActionResult>;
+
+  // --- Modo de tareas (F8) ---
+  listTasks(): Promise<readonly TaskRecord[]>;
+  createTask(draft: TaskDraft): Promise<TaskRecord>;
+  verifyTask(params: { taskId: string; declared: readonly string[] }): Promise<TaskRecord>;
+  removeTask(taskId: string): Promise<void>;
+  pickTaskFolders(): Promise<readonly string[]>;
+  pickTaskDocuments(): Promise<readonly string[]>;
+  saveTaskDeliverableCopy(params: { taskId: string; path: string }): Promise<boolean>;
 }
 
 // --- Biblioteca de capacidades (F6) ----------------------------------------------------------------

@@ -896,6 +896,17 @@ export interface MessageValues {
   readonly "errors.runtime.streamChunkBadShape": { readonly "chunk": string | number };
   readonly "errors.runtime.streamChunkNotJson": { readonly "chunk": string | number; readonly "detail": string | number };
   readonly "errors.runtime.urlInvalid": never;
+  readonly "errors.tasks.documentMissing": { readonly "path": string | number };
+  readonly "errors.tasks.folderMissing": { readonly "path": string | number };
+  readonly "errors.tasks.goalEmpty": never;
+  readonly "errors.tasks.goalTooLong": { readonly "max": string | number };
+  readonly "errors.tasks.noFolders": never;
+  readonly "errors.tasks.notAbsolute": { readonly "path": string | number };
+  readonly "errors.tasks.notADeliverable": { readonly "path": string | number };
+  readonly "errors.tasks.tooMany": { readonly "max": string | number };
+  readonly "errors.tasks.unknownAccount": { readonly "accountDir": string | number };
+  readonly "errors.tasks.unknownProvider": { readonly "provider": string | number };
+  readonly "errors.tasks.unknownTask": { readonly "taskId": string | number };
   readonly "errors.theme.openVsxStatus": { readonly "status": string | number; readonly "url": string | number };
   readonly "errors.transcripts.conversationMissing": { readonly "provider": string | number; readonly "sessionId": string | number };
   readonly "errors.transcripts.fileMissing": { readonly "path": string | number };
