@@ -45,7 +45,7 @@ import {
 import { addAlwaysAllow, removeAlwaysAllow } from './permissionRules';
 import { createSettingsActions } from './settingsActions';
 import { createHistoryActions, withIdPresence } from './historyActions';
-import type { AccountConversation } from './sidebarModel';
+import { EMPTY_SIDEBAR_FILTER, type AccountConversation, type SidebarFilter } from './sidebarModel';
 import { createAccountsActions } from './accountsActions';
 import { createPrActions, resetPrActionsState, type PrActions, type PrState } from './prActions';
 import { isPrCreateCommand, prNumberFromCreatedTag, prNumberFromUrl } from './prBinding';
@@ -118,6 +118,8 @@ import type {
   NotificationRule,
   ScratchRetention,
   ThemePreference,
+  AccountAvatarsPlacement,
+  SeparatorContrast,
 } from '@shared/settings';
 import { DEFAULT_APP_SETTINGS, type KeepAliveSettings, type RuntimeShell } from '@shared/settings';
 import type { UiLanguagePreference } from '@shared/i18n/language';
@@ -440,6 +442,8 @@ export interface WorkbenchState extends PrState, PrActions {
   saveNotificationRules: (rules: readonly NotificationRule[]) => void;
   // Cambia la preferencia de tema: aplica al DOM al instante, recalcula resolvedTheme y persiste.
   setTheme: (pref: ThemePreference) => void;
+  setAccountAvatarsPlacement: (placement: AccountAvatarsPlacement) => void;
+  setSeparatorContrast: (level: SeparatorContrast) => void;
   // Opacidad de los fondos, 50..100 (%). Aplica al DOM al instante y avisa a main para que ajuste el
   // material translucido de la ventana; persiste con el mismo debounce que el resto de ajustes.
   setBackgroundOpacity: (percent: number) => void;
@@ -537,6 +541,10 @@ export interface WorkbenchState extends PrState, PrActions {
   // refresca el historial. accountDir = cuenta activa.
   // `accountDir` (opcional) sustituye a la cuenta activa: la cuenta de la fila del lateral.
   deleteConversation: (sessionId: string, cwd: string, privacy: ConversationPrivacy, accountDir?: string) => Promise<void>;
+  // Filtro y búsqueda del lateral. Viven aquí (no en el componente) para que la barra de título pueda activar el chip
+  // «Trabajando». No se persisten.
+  sidebarFilter: SidebarFilter;
+  setSidebarFilter: (filter: SidebarFilter) => void;
   // Fija o desfija una conversación del lateral (y su pestaña abierta, si la hay).
   togglePinnedConversation: (sessionId: string) => void;
   // Archiva o desarchiva una conversación del lateral.
@@ -1430,6 +1438,8 @@ export function createWorkbenchStore(mage: MageClient) {
     allConversationHistory: [],
     elicitationsByChat: {},
     backgroundSessions: {},
+    sidebarFilter: EMPTY_SIDEBAR_FILTER,
+    setSidebarFilter: (filter) => set({ sidebarFilter: filter }),
     closePromptOpen: false,
     updateState: IDLE_UPDATE_STATE,
     updatePromptVersion: null,

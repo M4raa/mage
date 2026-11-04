@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useRef, useState } from 'react';
 import { LanguageControl } from './LanguageControl';
+import { AvatarsPlacementControl, SeparatorContrastControl } from './AppearanceChoice';
 import { canCheckForUpdates, updateStatusText } from '../updateStatus';
 import type {
   CloseBehavior,
@@ -311,6 +312,8 @@ function AppearanceSection({
     <div className="flex min-h-0 flex-1 flex-col gap-[16px] overflow-y-auto p-[14px_16px]">
       <LanguageControl />
       <UiScaleControl />
+      <AvatarsPlacementControl />
+      <SeparatorContrastControl />
       <div className="flex flex-col gap-[8px]">
         <span className="text-[10.5px] font-bold tracking-[.06em] text-mg-ter">{t('settings.appearance.opacityLabel')}</span>
         <div className="flex items-center gap-[12px]">

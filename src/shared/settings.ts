@@ -46,6 +46,14 @@ export type DefaultPermissionMode = (typeof DEFAULT_PERMISSION_MODES)[number];
 export const THEME_PREFERENCES = ['system', 'light', 'dark'] as const;
 export type ThemePreference = (typeof THEME_PREFERENCES)[number];
 
+// Dónde se pintan los avatares de cuenta: en la barra de título o en la columna del rail izquierdo (U1).
+export const ACCOUNT_AVATARS_PLACEMENTS = ['top', 'rail'] as const;
+export type AccountAvatarsPlacement = (typeof ACCOUNT_AVATARS_PLACEMENTS)[number];
+
+// Fuerza de las separaciones del tema: suave, la del tema o marcada (U7).
+export const SEPARATOR_CONTRASTS = ['soft', 'normal', 'strong'] as const;
+export type SeparatorContrast = (typeof SEPARATOR_CONTRASTS)[number];
+
 // Tema de color importado desde Open VSX (VS Code). Se guarda YA MAPEADO a los tokens de Mage
 // (--color-mg-* -> color), asi aplicarlo en runtime es solo inyectar variables. `type` decide el tema
 // base (data-theme) para los tokens no mapeados.
@@ -99,6 +107,10 @@ export interface AppSettings {
   readonly archivedConversations: readonly string[];
   // Preferencia de tema base (claro/oscuro/sistema). Default 'dark' para preservar el aspecto actual.
   readonly theme: ThemePreference;
+  // Dónde van los avatares de cuenta (U1). Default 'top' (barra de título).
+  readonly accountAvatarsPlacement: AccountAvatarsPlacement;
+  // Fuerza de las separaciones (U7). Default 'normal' = lo que traiga el tema.
+  readonly separatorContrast: SeparatorContrast;
   // Widget flotante always-on-top (M3): si esta activo, se abre al arrancar. Default false (opt-in).
   readonly widgetEnabled: boolean;
   // Opacidad de los FONDOS de la app, 50..100 (%). 100 = opaco, como siempre. Por debajo, las
@@ -268,6 +280,8 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   pinnedConversations: [],
   archivedConversations: [],
   theme: 'dark',
+  accountAvatarsPlacement: 'top',
+  separatorContrast: 'normal',
   widgetEnabled: false,
   backgroundOpacity: 100,
   importedThemes: [],

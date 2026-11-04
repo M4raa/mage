@@ -18,6 +18,8 @@ import {
   RUNTIME_SHELLS,
   SCRATCH_RETENTIONS,
   THEME_PREFERENCES,
+  ACCOUNT_AVATARS_PLACEMENTS,
+  SEPARATOR_CONTRASTS,
   UI_SCALE_MAX,
   UI_SCALE_MIN,
 } from '@shared/settings';
@@ -121,6 +123,9 @@ const APP_SETTINGS_SCHEMA = z.object({
   // theme opcional en disco: ficheros antiguos (sin la clave) y valores invalidos caen a 'dark' via
   // .catch (frontera laxa; el default preserva el aspecto oscuro actual).
   theme: z.enum(THEME_PREFERENCES).catch('dark'),
+  // Colocación de los avatares y contraste de separaciones: un valor inválido cae al defecto.
+  accountAvatarsPlacement: z.enum(ACCOUNT_AVATARS_PLACEMENTS).catch('top'),
+  separatorContrast: z.enum(SEPARATOR_CONTRASTS).catch('normal'),
   // widgetEnabled opcional en disco: ficheros antiguos (sin la clave) o valores invalidos caen a
   // false via .catch (widget apagado por defecto, opt-in).
   widgetEnabled: z.boolean().catch(false),

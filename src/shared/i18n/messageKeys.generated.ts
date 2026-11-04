@@ -179,6 +179,7 @@ export interface MessageValues {
   readonly "app.statusBar.versionShort": { readonly "version": string | number };
   readonly "app.statusBar.versionTitle": { readonly "version": string | number };
   readonly "app.statusBar.windows": { readonly "fiveHour": string | number; readonly "reset": string | number; readonly "weekly": string | number };
+  readonly "app.titleBar.background": { readonly "count": string | number };
   readonly "app.titleBar.bugError": never;
   readonly "app.titleBar.bugLabel": never;
   readonly "app.titleBar.bugTip": never;
@@ -1636,6 +1637,9 @@ export interface MessageValues {
   readonly "settings.agyLinks.intro": never;
   readonly "settings.agyLinks.link": never;
   readonly "settings.agyLinks.unlinkAria": { readonly "path": string | number };
+  readonly "settings.appearance.avatars.label": never;
+  readonly "settings.appearance.avatars.rail": never;
+  readonly "settings.appearance.avatars.top": never;
   readonly "settings.appearance.baseThemeLabel": never;
   readonly "settings.appearance.opacityAria": never;
   readonly "settings.appearance.opacityHint": never;
@@ -1643,6 +1647,10 @@ export interface MessageValues {
   readonly "settings.appearance.panelLayoutHint": never;
   readonly "settings.appearance.panelLayoutLabel": never;
   readonly "settings.appearance.panelLayoutReset": never;
+  readonly "settings.appearance.separatorContrast.label": never;
+  readonly "settings.appearance.separatorContrast.normal": never;
+  readonly "settings.appearance.separatorContrast.soft": never;
+  readonly "settings.appearance.separatorContrast.strong": never;
   readonly "settings.appearance.theme.dark": never;
   readonly "settings.appearance.theme.darkHint": never;
   readonly "settings.appearance.theme.light": never;

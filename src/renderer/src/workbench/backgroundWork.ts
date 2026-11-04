@@ -67,6 +67,12 @@ export function nextBackgroundState(current: BackgroundState, event: MageEvent):
   return current;
 }
 
+// Cuántas sesiones sin pestaña siguen haciendo algo que importa: trabajando o esperando una acción tuya. Las
+// terminadas ('done') solo esperan revisión y no cuentan. Es el número de «N en segundo plano» de la barra de título.
+export function countBackgroundWork(sessions: Readonly<Record<string, BackgroundSession>>): number {
+  return Object.values(sessions).filter((session) => session.state !== 'done').length;
+}
+
 // Etiqueta de la fila del panel de Conversaciones.
 export function backgroundLabel(state: BackgroundState): string {
   if (state === 'working') return t('history.background.working');

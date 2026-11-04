@@ -5,6 +5,7 @@ import {
   backgroundLabel,
   backgroundMoveBlockedReason,
   backgroundOfConversation,
+  countBackgroundWork,
   countWorkingConversations,
   nextBackgroundState,
   shouldBackgroundOnClose,
@@ -153,5 +154,19 @@ describe('countWorkingConversations', () => {
   it('countWorkingConversations_nadaTrabajando_cero', () => {
     expect(countWorkingConversations([], [])).toBe(0);
     expect(countWorkingConversations(['idle'], [session('done')])).toBe(0);
+  });
+});
+
+describe('countBackgroundWork', () => {
+  const entry = (state: BackgroundSession['state']): BackgroundSession => ({ sessionId: state, conversationId: state, title: 't', accountId: 'a', state, sinceMs: 0 });
+
+  it('countBackgroundWork_trabajandoEsperandoYTerminada_soloCuentaLasVivas', () => {
+    const sessions = { w: entry('working'), n: entry('needs_action'), d: entry('done') };
+
+    expect(countBackgroundWork(sessions)).toBe(2);
+  });
+
+  it('countBackgroundWork_vacio_cero', () => {
+    expect(countBackgroundWork({})).toBe(0);
   });
 });

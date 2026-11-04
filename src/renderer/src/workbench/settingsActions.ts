@@ -28,6 +28,8 @@ import { describeError } from './describeError';
 export type SettingsActionName =
   | 'saveNotificationRules'
   | 'setTheme'
+  | 'setAccountAvatarsPlacement'
+  | 'setSeparatorContrast'
   | 'setUiScale'
   | 'setUiLanguage'
   | 'setAccountAccent'
@@ -102,6 +104,19 @@ export function createSettingsActions(deps: SettingsDeps): SettingsActions {
     // (activeThemeId -> null). Aplica al DOM ya (feedback inmediato) y persiste con debounce.
     setTheme: (pref) => {
       set((s) => ({ settings: { ...s.settings, theme: pref, activeThemeId: null } }));
+      applyThemeFromSettings(get().settings, systemPrefersDark());
+      deps.persistSettings();
+    },
+
+    // Dónde van los avatares de cuenta (U1). Solo cambia el DOM de la cabecera/rail: basta persistir con debounce.
+    setAccountAvatarsPlacement: (placement) => {
+      set((s) => ({ settings: { ...s.settings, accountAvatarsPlacement: placement } }));
+      deps.persistSettings();
+    },
+
+    // Contraste de separaciones (U7): se guarda y se reaplica el tema, que es quien fija (o quita) las tres propiedades.
+    setSeparatorContrast: (level) => {
+      set((s) => ({ settings: { ...s.settings, separatorContrast: level } }));
       applyThemeFromSettings(get().settings, systemPrefersDark());
       deps.persistSettings();
     },

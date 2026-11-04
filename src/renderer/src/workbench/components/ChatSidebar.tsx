@@ -13,7 +13,7 @@ import { accountRecovery } from '../accountRecovery';
 import { CliLoginPanel, useCliLogin } from './CliLoginPanel';
 import { t as translate, useT } from '../../i18n/uiLanguage';
 import { displayTitle } from '../conversationTitle';
-import { accountToOpenWith, EMPTY_SIDEBAR_FILTER, sidebarRowId, type SidebarRow } from '../sidebarModel';
+import { accountToOpenWith, sidebarRowId, type SidebarRow } from '../sidebarModel';
 import { SidebarHeader } from './sidebar/SidebarHeader';
 import { SidebarRowItem } from './sidebar/SidebarRowItem';
 import { FlatGroup, ProjectGroupView, SectionLabel } from './sidebar/SidebarGroups';
@@ -56,7 +56,8 @@ export function ChatSidebar(): React.JSX.Element {
   const backgroundSessions = useWorkbenchStore((s) => s.backgroundSessions);
   const sessionIdByChat = useWorkbenchStore((s) => s.sessionIdByChat);
   const actions = useSidebarActions();
-  const [filter, setFilter] = useState(EMPTY_SIDEBAR_FILTER);
+  const filter = useWorkbenchStore((s) => s.sidebarFilter);
+  const setFilter = useWorkbenchStore((s) => s.setSidebarFilter);
   const view = useSidebarModel(filter);
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [editingProject, setEditingProject] = useState<ChatProject | 'new' | null>(null);

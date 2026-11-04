@@ -10,6 +10,8 @@ const VALID: AppSettings = {
   pinnedConversations: [],
   archivedConversations: [],
   theme: 'light',
+  accountAvatarsPlacement: 'top',
+  separatorContrast: 'normal',
   widgetEnabled: true,
   backgroundOpacity: 80,
   importedThemes: [{ id: 'ovsx:acme.dark', label: 'Acme Dark', type: 'dark', tokens: { '--color-mg-window': '#101010' } }],
@@ -209,6 +211,30 @@ describe('SettingsStore.load', () => {
     const store = new SettingsStore(deps({ readFile: () => JSON.stringify({ version: 1, notificationRules: [], theme: 'system' }) }));
 
     expect(store.load().theme).toBe('system');
+  });
+
+  it('parseSettings_avatarsPlacementInvalid_defaultsTop', () => {
+    const store = new SettingsStore(deps({ readFile: () => JSON.stringify({ ...VALID, accountAvatarsPlacement: 'bottom' }) }));
+
+    expect(store.load().accountAvatarsPlacement).toBe('top');
+  });
+
+  it('parseSettings_avatarsPlacementRail_isKept', () => {
+    const store = new SettingsStore(deps({ readFile: () => JSON.stringify({ ...VALID, accountAvatarsPlacement: 'rail' }) }));
+
+    expect(store.load().accountAvatarsPlacement).toBe('rail');
+  });
+
+  it('parseSettings_separatorContrastInvalid_defaultsNormal', () => {
+    const store = new SettingsStore(deps({ readFile: () => JSON.stringify({ ...VALID, separatorContrast: 'loud' }) }));
+
+    expect(store.load().separatorContrast).toBe('normal');
+  });
+
+  it('parseSettings_separatorContrastStrong_isKept', () => {
+    const store = new SettingsStore(deps({ readFile: () => JSON.stringify({ ...VALID, separatorContrast: 'strong' }) }));
+
+    expect(store.load().separatorContrast).toBe('strong');
   });
 
   it('load_modoPorDefectoValido_seConserva', () => {

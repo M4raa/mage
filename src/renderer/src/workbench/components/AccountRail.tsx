@@ -14,6 +14,8 @@ import {
 } from './dock/Stripe';
 import { PanelMoveMenu } from './dock/PanelMoveMenu';
 import { Icon } from './Icon';
+import { AccountSwitcher } from './AccountSwitcher';
+import { useWorkbenchStore } from '../workbenchStore';
 import { AddPanelMenu } from './dock/AddPanelMenu';
 import type { Anchor, PanelId } from '@shared/panelLayout';
 import { useT } from '../../i18n/uiLanguage';
@@ -45,6 +47,7 @@ export function AccountRail(): React.JSX.Element {
   const [moveMenu, setMoveMenu] = useState<{ readonly panelId: PanelId; readonly x: number; readonly y: number } | null>(null);
   const [addMenu, setAddMenu] = useState<{ readonly x: number; readonly y: number } | null>(null);
   const t = useT();
+  const avatarsInRail = useWorkbenchStore((s) => s.settings.accountAvatarsPlacement === 'rail');
 
   // Solo es "añadible" un panel que no esta abierto en NINGUNA zona de NINGUN borde (Ronda 3, item
   // 19): ofrecer aqui uno que ya vive en el borde derecho lo movia sin aviso al pulsarlo.
@@ -77,6 +80,13 @@ export function AccountRail(): React.JSX.Element {
           (STRIPE_WIDTH_CLASS, 37 px) se comeria un tercio del ancho. Se sigue pudiendo desplazar con la
           rueda. */}
       <div data-stripe-scroll="true" className={`flex w-full flex-col items-center gap-[2px] ${STRIPE_SCROLL_CLASS}`}>
+      {/* Avatares de cuenta en el lateral (U1): arriba del todo, solo si el ajuste lo pide. */}
+      {avatarsInRail && (
+        <>
+          <AccountSwitcher orientation="vertical" />
+          <StripeSeparator />
+        </>
+      )}
       <DockZoneToolbar ariaLabel={t('accounts.rail.zoneTop')}>
         <StripeZoneButtons
           panels={resolvePanelDefinitions(stripe.a.panelIds)}
