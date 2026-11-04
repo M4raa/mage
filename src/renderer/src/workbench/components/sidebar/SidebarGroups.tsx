@@ -123,7 +123,7 @@ function ProjectActions({ group, onCreate, onEdit, onRemove }: Pick<ProjectGroup
   const reveal = 'opacity-0 transition-opacity duration-100 ease-out group-hover/proj:opacity-100 group-focus-within/proj:opacity-100 focus-visible:opacity-100';
   const btn = `grid h-[20px] w-[20px] flex-none place-items-center rounded-[4px] text-mg-icon hover:bg-mg-sel hover:text-mg-sel-ink ${reveal}`;
   return (
-    <span className="relative flex flex-none items-center">
+    <span className="relative flex flex-none items-center" onKeyDown={(e) => e.key === 'Escape' && menuOpen && setMenuOpen(false)}>
       <button onClick={onCreate} aria-label={t('sidebar.projects.newIn', { name: group.name })} className={btn}><Icon name="plus" size={13} /></button>
       {onEdit !== null && onRemove !== null && (
         <>

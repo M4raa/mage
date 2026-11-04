@@ -4962,6 +4962,169 @@ const CHECKS = [
     },
   },
   {
+    // Carril Q (Q04, Q-U3): la tarjeta de permiso pendiente lleva UNA acción primaria, «Permitir siempre» como
+    // secundaria y «Denegar» como texto sin borde ni fondo; la tecla que pinta cada botón es la REAL de su acción
+    // (la del catálogo o la reasignada), no un «1/2/3» fijo. No contesta el permiso: lo cancela como el CLI.
+    name: 'Q04: la tarjeta de permiso tiene una primaria, Denegar como texto y la tecla real',
+    state: { tabs: 1 },
+    async run(page) {
+      const requestId = 'vg-q04-perm';
+      const measure = () => page.evaluate(() => {
+        const card = document.querySelector('[data-permission-pending="true"]');
+        const buttons = [...(card?.querySelectorAll('button[aria-label]') ?? [])];
+        const withLabel = (label) => buttons.find((b) => b.getAttribute('aria-label') === label) ?? null;
+        const allow = withLabel('Permitir');
+        const deny = withLabel('Denegar y decir por qué');
+        const denyStyle = deny === null ? null : getComputedStyle(deny);
+        return {
+          hayTarjeta: card !== null,
+          primarias: buttons.filter((b) => b.className.includes('bg-mg-primary')).length,
+          teclaPermitir: allow?.querySelector('[aria-hidden="true"]')?.textContent ?? null,
+          atajoPermitir: allow?.getAttribute('aria-keyshortcuts') ?? null,
+          teclaDenegar: deny?.querySelector('[aria-hidden="true"]')?.textContent ?? null,
+          denegarSinBorde: denyStyle !== null && denyStyle.borderTopWidth === '0px' && denyStyle.backgroundColor === 'rgba(0, 0, 0, 0)',
+          barraAmbar: card === null ? null : getComputedStyle(card).borderLeftWidth,
+        };
+      });
+      try {
+        await injectPermissionRequest(page, { file_path: 'C:/proj/q04.ts', content: 'a' }, requestId, 'Write');
+        await page.locator('[data-permission-pending="true"]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const porDefecto = await measure();
+        await page.evaluate(() => window.__mageDev.store.setState((s) => ({ settings: { ...s.settings, keybindingOverrides: [{ actionId: 'permission.allow', keys: 'CmdOrCtrl+Shift+Y' }] } })));
+        await page.waitForTimeout(CONFIG.settleMs);
+        const reasignada = await measure();
+        const ok =
+          porDefecto.hayTarjeta && porDefecto.primarias === 1 && porDefecto.denegarSinBorde &&
+          porDefecto.teclaPermitir === '1' && porDefecto.teclaDenegar === '3' && porDefecto.barraAmbar === '3px' &&
+          reasignada.teclaPermitir !== '1' && /(Shift|⇧)\+Y$/.test(reasignada.teclaPermitir ?? '') && reasignada.atajoPermitir === reasignada.teclaPermitir;
+        return { ok, detail: JSON.stringify({ porDefecto, reasignada }) };
+      } finally {
+        await page.evaluate(() => window.__mageDev.store.setState((s) => ({ settings: { ...s.settings, keybindingOverrides: [] } })));
+        await cancelInjectedPermission(page, requestId);
+      }
+    },
+  },
+  {
+    // Carril Q (Q04, Q-U3): tres errores IGUALES seguidos se pintan UNA vez con «×3» y la tarjeta lleva «Ver en Logs», que abre el panel de Logs.
+    name: 'Q04: un fallo repetido se pinta una vez con ×N y lleva Ver en Logs',
+    state: { tabs: 1 },
+    async run(page) {
+      const error = (id) => ({ kind: 'error', id, message: 'verify: el motor falló igual' });
+      await hydrateBlocks(page, [error('vg-q04-e1'), error('vg-q04-e2'), error('vg-q04-e3')]);
+      await page.locator('[data-error-card]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      const tarjetas = await page.evaluate(() => [...document.querySelectorAll('[data-error-card]')].map((n) => n.textContent ?? ''));
+      await page.locator('[data-error-open-logs]').first().click();
+      await page.locator('[data-active-panel="logs"]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      const ok = tarjetas.length === 1 && tarjetas[0].includes('×3') && tarjetas[0].includes('No se pudo completar') && tarjetas[0].includes('Ver en Logs');
+      return { ok, detail: JSON.stringify({ tarjetas }) };
+    },
+  },
+  {
+    // Carril Q (Q04): Escape con un menú de ESTADO LOCAL abierto lo cierra y no interrumpe el turno. Mismo montaje de turno largo que «G F4.1»
+    // (sesión de mentira en `streaming`): si Escape llegara al atajo global, `session.interrupt` fallaría contra la sesión inexistente y
+    // la pestaña dejaría de estar en `streaming`. Mide el desplegable de modelo del prompt y el «⋯» de una fila del lateral.
+    // No pulsa Enter en el prompt ni lanza un CLI.
+    name: 'Q04: Escape en un desplegable o en el «⋯» del lateral no interrumpe el turno',
+    state: { tabs: 1 },
+    async run(page) {
+      const previo = await captureTurnState(page);
+      try {
+        const tabId = await page.evaluate(() => {
+          const dev = window.__mageDev;
+          const id = dev.store.getState().activeTabId;
+          dev.store.setState((st) => ({
+            sessionIdByChat: { ...st.sessionIdByChat, [id]: 'verify-q04-escape-session' },
+            statusByChat: { ...st.statusByChat, [id]: 'streaming' },
+            tabs: st.tabs.map((t) => (t.id === id ? { ...t, provider: 'claude' } : t)),
+          }));
+          dev.panelStore.getState().revealPanelById('conversations');
+          return id;
+        });
+        const status = () => page.evaluate((id) => window.__mageDev.store.getState().statusByChat[id], tabId);
+        await page.locator('button[aria-label="Modelo (aplica al siguiente turno)"]').first().click();
+        await page.locator('[role="listbox"]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        await page.keyboard.press('Escape');
+        await page.locator('[role="listbox"]').first().waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+        const trasDesplegable = await status();
+        // Deja que venza el aplazamiento del contador antes de abrir el segundo menú.
+        await page.waitForTimeout(CONFIG.settleMs);
+        const fila = page.locator('[data-sidebar-row] button[aria-label="Más acciones"]').first();
+        await fila.click({ force: true });
+        await page.locator('[role="menu"]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        await page.keyboard.press('Escape');
+        await page.locator('[role="menu"]').first().waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+        const trasMenu = await status();
+        const ok = trasDesplegable === 'streaming' && trasMenu === 'streaming';
+        return { ok, detail: JSON.stringify({ trasDesplegable, trasMenu }) };
+      } finally {
+        await restoreTurnState(page, previo);
+      }
+    },
+  },
+  {
+    // Carril Q (Q04, #44): una tabla del agente ofrece «Copiar Markdown» y «Copiar TSV» al pasar el ratón; el TSV de `| a | b |` / `| 1 | 2 |`
+    // es `a<TAB>b<LF>1<TAB>2`. `writeText` va MOCKEADO (el portapapeles real del SO falla en silencio, ver «P-028 8/12»).
+    name: 'Q04: tablas con copiar Markdown y TSV',
+    state: { tabs: 1 },
+    async run(page) {
+      const tabla = '| a | b |\n| --- | --- |\n| 1 | 2 |';
+      await hydrateBlocks(page, [{ kind: 'agent', id: 'vg-q04-table', runs: [{ code: false, text: tabla }], streaming: false }]);
+      await page.locator('[data-block="agent"] table').first().hover();
+      const botones = page.locator('[data-table-copy]');
+      await botones.nth(1).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      const tipos = await botones.evaluateAll((nodes) => nodes.map((n) => n.getAttribute('data-table-copy')));
+      await page.evaluate(() => {
+        window.__vgQ04Copiados = [];
+        Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async (t) => void window.__vgQ04Copiados.push(t) } });
+      });
+      try {
+        await page.locator('[data-table-copy="tsv"]').first().click();
+        await page.locator('[data-table-copy="markdown"]').first().click();
+        await page.waitForTimeout(CONFIG.settleMs);
+        const copiados = await page.evaluate(() => window.__vgQ04Copiados);
+        const ok = tipos.join(',') === 'markdown,tsv' && copiados[0] === 'a\tb\n1\t2' && copiados[1] === tabla;
+        return { ok, detail: JSON.stringify({ tipos, copiados }) };
+      } finally {
+        await page.evaluate(() => {
+          delete navigator.clipboard;
+          delete window.__vgQ04Copiados;
+        });
+      }
+    },
+  },
+  {
+    // Carril Q (Q04, #39): el uso del turno ya no es un bloque de sistema del hilo; lo pinta el panel Contexto («Tokens del último turno»).
+    // Pestaña de Codex: su panel de Contexto no necesita sesión. El evento entra por el reducer real.
+    name: 'Q04: tokens del último turno en Contexto y no en el hilo',
+    state: { tabs: 1, panel: 'context' },
+    async run(page) {
+      const previo = await captureTurnState(page);
+      try {
+        await page.evaluate(() => {
+          const dev = window.__mageDev;
+          const id = dev.store.getState().activeTabId;
+          dev.store.setState((s) => ({ tabs: s.tabs.map((t) => (t.id === id ? { ...t, provider: 'codex' } : t)) }));
+          const usage = { inputTokens: 1200, outputTokens: 80, totalTokens: 1280, thinkingTokens: 0, cacheReadTokens: 400 };
+          dev.store.setState((s) => dev.reduceEvent(s, id, { kind: 'result', result: { isError: false, subtype: 'success', numTurns: 1, usage } }));
+        });
+        await page.locator('[data-last-turn-usage]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const medido = await page.evaluate(() => {
+          const s = window.__mageDev.store.getState();
+          const blocks = s.blocksByChat[s.activeTabId] ?? [];
+          return {
+            fila: document.querySelector('[data-last-turn-usage]')?.textContent ?? '',
+            bloquesConTokens: blocks.filter((b) => b.kind === 'system' && b.text.includes('Tokens del turno')).length,
+            hiloConTexto: (document.querySelector('[data-chat-scroller]')?.textContent ?? '').includes('Tokens del turno'),
+          };
+        });
+        const ok = medido.fila.startsWith('Tokens del último turno:') && medido.bloquesConTokens === 0 && medido.hiloConTexto === false;
+        return { ok, detail: JSON.stringify(medido) };
+      } finally {
+        await restoreTurnState(page, previo);
+      }
+    },
+  },
+  {
     // P-028 39: al abrir un subagente, su transcripcion se pinta SOLA en el panel (la lista no queda
     // debajo) y la capa no se sale del panel. Sin fichero en disco el cuerpo es el aviso de error: lo que
     // se mide es la caja, que era lo roto.
