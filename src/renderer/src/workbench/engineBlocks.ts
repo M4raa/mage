@@ -6,7 +6,7 @@ import type { DiffLine } from './diffLines';
 import { parseStructuredPatch } from './diffLines';
 import { classifyTool } from './toolClassify';
 import { completeArtifactPublication, parseArtifactDraft } from '@shared/artifacts';
-import { formatToolMeta, SKILL_TOOL_NAME, summarizeToolInput } from './toolSummary';
+import { formatToolMeta, planTextField, SKILL_TOOL_NAME, summarizeToolInput } from './toolSummary';
 import { codexChangeView } from './codexChanges';
 import { t } from '../i18n/uiLanguage';
 import type { MessageKey } from '@shared/i18n/messageKeys.generated';
@@ -193,6 +193,7 @@ export function appendToolUse(blocks: readonly Block[], tool: ToolUse, id: strin
     // ruta): el resto del input no entra en el estado.
     artifactDraft: parseArtifactDraft(tool.toolName, tool.input),
     parentToolUseId: tool.parentToolUseId ?? null,
+    ...planTextField(tool.toolName, tool.input),
   };
   return [...blocks, block];
 }

@@ -118,6 +118,18 @@ describe('appendToolUse', () => {
       },
     ]);
   });
+
+  it('appendToolUse_exitPlanMode_keepsPlanText', () => {
+    const blocks = appendToolUse([], { toolUseId: 't2', toolName: 'ExitPlanMode', input: { plan: '## 1 Plan' } }, 'b2');
+
+    expect(blocks[0]).toMatchObject({ kind: 'tool', planText: '## 1 Plan' });
+  });
+
+  it('appendToolUse_otherTool_noPlanText', () => {
+    const blocks = appendToolUse([], { toolUseId: 't3', toolName: 'Bash', input: { command: 'ls', plan: 'x' } }, 'b3');
+
+    expect(blocks[0]).not.toHaveProperty('planText');
+  });
 });
 
 describe('applyToolResult', () => {

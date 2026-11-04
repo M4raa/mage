@@ -187,6 +187,8 @@ export type Block =
       readonly artifactDraft: ArtifactDraft | null;
       // Subagente que la lanzo (`tool_use_id` de su Task/Agent); null en el agente principal (P-026 3.4).
       readonly parentToolUseId: string | null;
+      // Texto del plan de un ExitPlanMode (input.plan). Ausente en cualquier otra herramienta.
+      readonly planText?: string;
     }
   // Subagente (Task/Agent). `agentId` llega con el tool_result; hasta entonces no se puede abrir su
   // transcripcion. La anidacion no se modela (nivel 1), igual que en subagentView.ts.

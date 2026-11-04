@@ -110,6 +110,12 @@ describe('transcriptToBlocks', () => {
     expect(blocks[0]).toEqual({ kind: 'agent', id: 'tb-1-0', runs: [{ code: false, text: 'respuesta' }], streaming: false });
   });
 
+  it('transcriptToBlocks_exitPlanMode_planText', () => {
+    const blocks = transcriptToBlocks([assistantToolUse('tp1', 'ExitPlanMode', { plan: '## 3.4 Identidad' }, 2)]);
+
+    expect(blocks[0]).toMatchObject({ kind: 'tool', tool: 'ExitPlanMode', planText: '## 3.4 Identidad' });
+  });
+
   it('toolUseYSuResult_emparejaYRellenaElBloqueTool', () => {
     const blocks = transcriptToBlocks([
       assistantToolUse('tu1', 'Bash', { command: 'ls -la' }, 2),

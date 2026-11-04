@@ -44,6 +44,15 @@ function toolInputText(name: string, input: Readonly<Record<string, unknown>>): 
   return stringField(input, 'description');
 }
 
+export const EXIT_PLAN_MODE_TOOL_NAME = 'ExitPlanMode';
+
+// Fragmento para esparcir en el bloque `tool`: solo ExitPlanMode con `plan` string no vacio lleva `planText`.
+export function planTextField(name: string, input: Readonly<Record<string, unknown>>): { readonly planText?: string } {
+  if (name !== EXIT_PLAN_MODE_TOOL_NAME) return {};
+  const plan = stringField(input, 'plan');
+  return plan.length > 0 ? { planText: plan } : {};
+}
+
 export interface ToolStatus {
   readonly isError: boolean;
   readonly output: string;
