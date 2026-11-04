@@ -4,7 +4,7 @@
 // Regla del usuario: con MAS del 70 % gastado se avisa y se deja elegir entre real y local (servidor
 // falso); sin nadie delante (no interactivo) se elige local y el informe lo dice. Un uso que no se ha
 // podido leer se trata igual que uno por encima del umbral: no saber cuanto queda no es permiso para
-// gastar.
+// gastar. Con HOME de prueba (MAGE_TEST_HOME) no hay cuentas reales: el turno es local salvo --turn=real.
 
 export const USAGE_GUARD_THRESHOLD_PERCENT = 70;
 export const TURN_TARGETS = ['real', 'local'];
@@ -21,11 +21,12 @@ export function spentPercent(usage) {
 
 // Decide contra que se lanza el turno. `forced` = lo elegido con `--turn=real|local` (o null).
 // Devuelve `ask` solo si hay alguien delante para contestar.
-export function decideTurnTarget({ spent, forced, interactive }) {
+export function decideTurnTarget({ spent, forced, interactive, isolatedHome = false }) {
   if (forced !== null && forced !== undefined) {
     if (!TURN_TARGETS.includes(forced)) throw new Error(`--turn solo admite real o local: ${JSON.stringify(forced)}`);
     return { target: forced, reason: `elegido con --turn=${forced}${describeSpent(spent)}` };
   }
+  if (isolatedHome) return { target: 'local', reason: 'HOME de prueba (MAGE_TEST_HOME): sin cuentas reales, el turno real pide --turn=real' };
   if (spent !== null && spent <= USAGE_GUARD_THRESHOLD_PERCENT) {
     return { target: 'real', reason: `uso gastado ${spent} % ≤ ${USAGE_GUARD_THRESHOLD_PERCENT} %` };
   }

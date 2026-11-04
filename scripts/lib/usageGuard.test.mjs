@@ -77,3 +77,20 @@ describe('parseTurnAnswer', () => {
     expect(parseTurnAnswer(undefined)).toBe('local');
   });
 });
+
+describe('decideTurnTarget con HOME de prueba', () => {
+  it('decideTurnTarget_homeDePruebaSinForzar_local', () => {
+    const decision = decideTurnTarget({ spent: 10, forced: null, interactive: true, isolatedHome: true });
+
+    expect(decision.target).toBe('local');
+    expect(decision.reason).toContain('HOME de prueba');
+  });
+
+  it('decideTurnTarget_homeDePruebaForzadoLocal_local', () => {
+    expect(decideTurnTarget({ spent: 10, forced: 'local', interactive: true, isolatedHome: true }).target).toBe('local');
+  });
+
+  it('decideTurnTarget_sinHomeDePrueba_comoAntes', () => {
+    expect(decideTurnTarget({ spent: 10, forced: null, interactive: true }).target).toBe('real');
+  });
+});
