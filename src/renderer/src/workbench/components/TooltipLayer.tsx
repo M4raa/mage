@@ -1,5 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { AnimatePresence, motion } from 'motion/react';
+import { TOOLTIP_VARIANTS } from '../motionPresets';
 
 // Capa unica de tooltips (#8 de AJUSTES): sustituye los tooltips nativos del SO (lentos y feos) por
 // una burbuja tematizada. Funciona por DELEGACION de eventos sobre cualquier elemento con `data-tip`
@@ -102,25 +104,33 @@ export function TooltipLayer(): React.JSX.Element | null {
     setRect({ left, top });
   }, [tip]);
 
-  if (tip === null) return null;
-
+  // Mientras no hay burbuja, el portal sigue montado para que AnimatePresence pueda animar la salida.
   const style: React.CSSProperties = {
     position: 'fixed',
-    left: rect?.left ?? tip.x,
-    top: rect?.top ?? tip.top,
-    opacity: rect === null ? 0 : 1,
+    left: rect?.left ?? tip?.x,
+    top: rect?.top ?? tip?.top,
+    // Sin medir todavia: oculta (no `opacity`, que es de motion) para no parpadear en una posicion provisional.
+    visibility: rect === null ? 'hidden' : 'visible',
     pointerEvents: 'none',
     zIndex: 9999,
   };
   return createPortal(
-    <div
-      ref={tipRef}
-      style={style}
-      role="tooltip"
-      className="mg-tip max-w-[280px] rounded-[6px] border border-mg-border-pop bg-mg-tooltip px-[8px] py-[4px] text-[11px] leading-[1.4] text-mg-tooltip-ink mg-shadow-pop"
-    >
-      {tip.text}
-    </div>,
+    <AnimatePresence>
+      {tip !== null && (
+        <motion.div
+          ref={tipRef}
+          style={style}
+          role="tooltip"
+          variants={TOOLTIP_VARIANTS}
+          initial="initial"
+          animate="animate"
+          exit="exit"
+          className="mg-tip max-w-[280px] rounded-[6px] border border-mg-border-pop bg-mg-tooltip px-[8px] py-[4px] text-[11px] leading-[1.4] text-mg-tooltip-ink mg-shadow-pop"
+        >
+          {tip.text}
+        </motion.div>
+      )}
+    </AnimatePresence>,
     document.body,
   );
 }

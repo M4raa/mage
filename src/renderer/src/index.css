@@ -329,7 +329,21 @@ body {
   }
 }
 .mg-pulse {
-  animation: mg-pulse 1.2s infinite;
+  animation: mg-pulse 2s infinite;
+}
+/* Entrada de una fila de chat que llega EN VIVO (BlockChat pone la clase solo entonces). */
+@keyframes mg-enter {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.mg-enter {
+  animation: mg-enter var(--mg-dur-base) var(--mg-ease-enter) both;
 }
 .mg-blink {
   animation: mg-blink 1s steps(1) infinite;

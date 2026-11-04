@@ -29,7 +29,8 @@ import { chatRows, currentTurnSummary, stickResetKey, type ChatRow } from '../ch
 import { usePaneTabId, usePaneTranscriptStore } from '../paneContext';
 import type { Block, ImageAttachment } from '../types';
 import { classifySystemWrapper } from '@shared/systemWrappers';
-import { INITIAL_ANCHOR, nextListAnchor, type ListAnchor } from '../chatListAnchor';
+import { INITIAL_ANCHOR, appendedTailKeys, nextListAnchor, type ListAnchor } from '../chatListAnchor';
+import { MOTION_S } from '../motionPresets';
 import { RecentProjects } from './RecentProjects';
 import { reportActionError } from '../notificationStore';
 import { conversationIdOfTab } from '../conversationId';
@@ -78,13 +79,14 @@ export function BlockChat(): React.JSX.Element {
   const t = useT();
   const referenceLinks = useChatReferenceLinks(activeTabId);
   const anchor = useListAnchor(activeTabId, rows);
+  const enteringKeys = useEnteringRowKeys(`${activeTabId}:${anchor.generation}`, rows);
   const expandedRows = useExpandedRowsStore(activeTabId);
   const { virtuosoRef, onAtBottomChange } = useChatAutoScroll({ tailSize, turnLive, resetKey: stickResetKey(activeTabId, blocks) });
   const lastRow = rows[rows.length - 1];
   const lastRowKey = lastRow === undefined ? null : rowKey(lastRow);
   const footerContext = useMemo<ChatListContext>(
-    () => ({ accent, lastRowKey, turnLive, runningTool, capability, steps: turnSummary.steps, errors: turnSummary.errors }),
-    [accent, lastRowKey, turnLive, runningTool, capability, turnSummary.steps, turnSummary.errors],
+    () => ({ accent, lastRowKey, enteringKeys, turnLive, runningTool, capability, steps: turnSummary.steps, errors: turnSummary.errors }),
+    [accent, lastRowKey, enteringKeys, turnLive, runningTool, capability, turnSummary.steps, turnSummary.errors],
   );
 
   if (blocks.length === 0 && !turnLive) {
@@ -147,6 +149,8 @@ const VIEWPORT_OVERSCAN_PX = 600;
 interface ChatListContext {
   readonly accent: string;
   readonly lastRowKey: string | null;
+  // Filas recién llegadas EN VIVO: llevan `mg-enter` el tiempo que dura la animación.
+  readonly enteringKeys: ReadonlySet<string>;
   readonly turnLive: boolean;
   readonly runningTool: string | null;
   readonly capability: TurnCapability | null;
@@ -159,7 +163,7 @@ interface ChatListContext {
 function renderChatItem(_index: number, row: ChatRow, context: ChatListContext): React.JSX.Element {
   const key = rowKey(row);
   return (
-    <div data-chat-row="true" data-row-key={key} {...(key === context.lastRowKey ? { 'data-last-row': 'true' } : {})} className="px-[22px] pb-[14px]">
+    <div data-chat-row="true" data-row-key={key} {...(key === context.lastRowKey ? { 'data-last-row': 'true' } : {})} className={`px-[22px] pb-[14px]${context.enteringKeys.has(key) ? ' mg-enter' : ''}`}>
       <ChatRowView row={row} accent={context.accent} />
     </div>
   );
@@ -192,6 +196,35 @@ function useListAnchor(activeTabId: string, rows: readonly ChatRow[]): ListAncho
     anchorRef.current = nextListAnchor(anchorRef.current, rows, rowKey);
     return anchorRef.current;
   }, [activeTabId, rows]);
+}
+
+// Margen sobre la animación CSS (`--mg-dur-base`) antes de quitar la clase de entrada.
+const ENTER_CLEAR_MS = MOTION_S.base * 1000 + 40;
+const NO_KEYS: ReadonlySet<string> = new Set();
+
+// Claves de las filas que acaban de llegar al final EN VIVO. El primer pintado de una pestaña (o de una
+// generación del ancla) fija la referencia y nunca anima; la hidratación y el scroll de la lista virtual
+// tampoco pasan por aquí. Se calcula antes de pintar (layout effect) para que no haya un fotograma visible.
+function useEnteringRowKeys(resetKey: string, rows: readonly ChatRow[]): ReadonlySet<string> {
+  const [entering, setEntering] = useState<ReadonlySet<string>>(NO_KEYS);
+  const prevRef = useRef<{ readonly length: number; readonly lastKey: string | null }>({ length: 0, lastKey: null });
+  const resetRef = useRef(resetKey);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const keys = useMemo(() => rows.map(rowKey), [rows]);
+  useLayoutEffect(() => {
+    const reset = resetRef.current !== resetKey;
+    resetRef.current = resetKey;
+    const added = reset ? [] : appendedTailKeys(prevRef.current, keys);
+    prevRef.current = { length: keys.length, lastKey: keys[keys.length - 1] ?? null };
+    if (added.length === 0) return;
+    setEntering((prev) => new Set([...prev, ...added]));
+    if (timerRef.current !== null) clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(() => setEntering(NO_KEYS), ENTER_CLEAR_MS);
+  }, [keys, resetKey]);
+  useEffect(() => () => {
+    if (timerRef.current !== null) clearTimeout(timerRef.current);
+  }, []);
+  return entering;
 }
 
 // Seguir el final: `followOutput` ve filas nuevas, pero el texto en streaming crece DENTRO de la ultima

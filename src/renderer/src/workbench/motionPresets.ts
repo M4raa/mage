@@ -54,7 +54,8 @@ export const TAB_COLOR_SWATCH_TRANSITION: Transition = enter(MOTION_S.fast);
 export const PANEL_CONTENT_VARIANTS: Variants = {
   initial: { opacity: 0 },
   animate: { opacity: 1, transition: enter(MOTION_S.base) },
-  exit: { opacity: 0, transition: exit(MOTION_S.base) },
+  // `pointerEvents` no se anima: el panel que sale no debe recibir clics mientras se desvanece.
+  exit: { opacity: 0, pointerEvents: 'none', transition: exit(MOTION_S.base) },
 };
 
 // Despliegue EN SU SITIO (FilesPanel: la previsualizacion del fichero elegido, 2026-09-21). A

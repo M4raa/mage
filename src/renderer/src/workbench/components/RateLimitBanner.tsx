@@ -1,4 +1,6 @@
 import { useState } from 'react';
+import { AnimatePresence, motion } from 'motion/react';
+import { DISCLOSURE_VARIANTS } from '../motionPresets';
 import { Icon } from './Icon';
 import { useWorkbenchStore } from '../workbenchStore';
 import { usePaneTabId } from '../paneContext';
@@ -11,7 +13,22 @@ import { useT } from '../../i18n/uiLanguage';
 // Va entre el hilo y el prompt, y no dentro del hilo, a proposito: el hilo es el RELATO (ahi ya esta la
 // linea "⏳ Limite de uso alcanzado" que pone `cliNotices`) y esto es una ACCION sobre el estado de
 // ahora. Metida como bloque se iria hacia arriba con el scroll justo cuando hace falta.
-export function RateLimitBanner(): React.JSX.Element | null {
+export function RateLimitBanner(): React.JSX.Element {
+  const tabId = usePaneTabId();
+  const visible = useWorkbenchStore((s) => s.rateLimitByChat[tabId] !== undefined && s.tabs.some((t) => t.id === tabId));
+  // `initial={false}`: al hidratar o cambiar de pestaña con el aviso ya activo no hay entrada.
+  return (
+    <AnimatePresence initial={false}>
+      {visible && (
+        <motion.div variants={DISCLOSURE_VARIANTS} initial="initial" animate="animate" exit="exit" className="overflow-hidden">
+          <RateLimitBannerBody />
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
+}
+
+function RateLimitBannerBody(): React.JSX.Element | null {
   const tabId = usePaneTabId();
   const notice = useWorkbenchStore((s) => s.rateLimitByChat[tabId]);
   const tab = useWorkbenchStore((s) => s.tabs.find((t) => t.id === tabId));

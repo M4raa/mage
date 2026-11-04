@@ -24,3 +24,12 @@ export function nextListAnchor<T>(prev: ListAnchor, items: readonly T[], keyOf: 
   // Contenido sustituido (rebobinar, recarga): se remonta la lista.
   return { firstIndex: FIRST_ITEM_INDEX_BASE, firstKey, generation: prev.generation + 1 };
 }
+
+// Claves añadidas al FINAL de la lista desde el estado anterior (`prev`): son las filas que llegan «en
+// vivo» y las únicas que animan su entrada. Sin ancla (primer pintado), con el final sustituido o con
+// historial antepuesto no hay ninguna: eso es hidratar, y hidratar no se anima.
+export function appendedTailKeys(prev: { readonly length: number; readonly lastKey: string | null }, keys: readonly string[]): readonly string[] {
+  if (prev.lastKey === null) return [];
+  const at = keys.lastIndexOf(prev.lastKey);
+  return at < 0 ? [] : keys.slice(at + 1);
+}
