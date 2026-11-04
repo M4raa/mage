@@ -3,6 +3,7 @@ import { useState } from 'react';
 import type { SendNowAvailability } from '../sendNow';
 import { renderLocalized } from '@shared/i18n/localizedText';
 import { Icon } from './Icon';
+import { AnimatedGlyph } from './AnimatedIcon';
 import { useT } from '../../i18n/uiLanguage';
 
 // Controles de envío de la barra (G-U1, F4.1): sin turno, el ⏎ de siempre; con turno, «Parar» y el botón
@@ -49,15 +50,20 @@ function StopButton({ onInterrupt }: { readonly onInterrupt: () => void }): Reac
 // #24: era un ⏎ decorativo. Ahora envía con la MISMA acción que Enter (sendFromButton).
 function SendButton({ canSend, onSend }: { readonly canSend: boolean; readonly onSend: () => void }): React.JSX.Element {
   const t = useT();
+  // Sube el contador en cada envío: relanza el «salto» del glifo.
+  const [sent, setSent] = useState(0);
   return (
     <button
-      onClick={onSend}
+      onClick={() => {
+        setSent((n) => n + 1);
+        onSend();
+      }}
       disabled={!canSend}
       aria-label={t('prompt.send.ariaLabel')}
       data-tip={t('prompt.send.tip')}
       className="shrink-0 cursor-pointer self-center rounded-full border border-mg-border-ctrl px-[8px] py-[1px] font-mono text-[10.5px] text-mg-body2 transition-colors duration-90 ease-out hover:bg-mg-hover disabled:cursor-default disabled:text-mg-muted disabled:opacity-60 disabled:hover:bg-transparent"
     >
-      ⏎
+      <AnimatedGlyph animation="lift" trigger={sent}>⏎</AnimatedGlyph>
     </button>
   );
 }

@@ -5,6 +5,7 @@ import type { PanelId, ZoneKey } from '@shared/panelLayout';
 import { usePanelDragStore } from '../../panels/dragState';
 import { resolveDropBeforeId } from '../../panels/panelLayoutOps';
 import { Icon } from '../Icon';
+import { AnimatedIcon } from '../AnimatedIcon';
 import { useT } from '../../../i18n/uiLanguage';
 
 // Mime propio para el arrastre de iconos entre zonas/bordes (F6, feedback del usuario: arrastrar Y
@@ -442,7 +443,7 @@ function StripeIconButton({
         active ? 'bg-mg-sel text-mg-sel-ink before:pointer-events-none before:absolute before:inset-y-0 before:left-0 before:w-[2px] before:bg-mg-sel-mark' : 'text-mg-icon'
       } ${dragging ? 'opacity-40' : ''}`}
     >
-      <Icon name={panel.icon} size={PANEL_ICON_PX} />
+      <AnimatedIcon name={panel.icon} size={PANEL_ICON_PX} animation={badged ? 'pulse' : null} />
       {dropLine !== null && (
         <span
           aria-hidden="true"

@@ -1,6 +1,7 @@
 import { useLocalPopover } from '../../localPopovers';
 import { useState } from 'react';
 import { Icon } from '../Icon';
+import { RotatingChevron } from '../AnimatedIcon';
 import { useWorkbenchStore } from '../../workbenchStore';
 import { projectSummary, type ProjectGroup, type RowIndicator, type SidebarRow } from '../../sidebarModel';
 import { useT } from '../../../i18n/uiLanguage';
@@ -97,7 +98,7 @@ export function ProjectGroupView(props: ProjectGroupViewProps): React.JSX.Elemen
           onClick={() => setOverride(!open)}
           className="flex h-full min-w-0 flex-1 items-center gap-[6px] p-[0_6px] text-left font-semibold text-mg-body"
         >
-          <span aria-hidden="true" className={`text-mg-icon ${open ? 'rotate-90' : ''}`}><Icon name="chevron" size={12} /></span>
+          <span aria-hidden="true" className="text-mg-icon"><RotatingChevron open={open} size={12} /></span>
           <Icon name="folder" size={12} />
           <span className="truncate">{group.name}</span>
         </button>

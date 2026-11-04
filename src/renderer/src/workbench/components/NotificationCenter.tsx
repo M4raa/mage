@@ -1,6 +1,7 @@
 import { useLocalPopover } from '../localPopovers';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
+import { AnimatedIcon } from './AnimatedIcon';
 import { Icon } from './Icon';
 import { NotificationContent } from './NotificationToasts';
 import { useDialogA11y } from '../a11y/useDialogA11y';
@@ -17,6 +18,7 @@ export function NotificationBell(): React.JSX.Element {
   const [open, setOpen] = useState(false);
   useLocalPopover(open);
   const unread = useNotificationStore(unreadCount);
+  const ring = useRingCount(unread);
   const label = unread === 0 ? t('notifications.center.bellLabel') : t('notifications.center.bellLabelUnread', { count: unread });
   return (
     <div className="relative flex items-center" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
@@ -29,7 +31,7 @@ export function NotificationBell(): React.JSX.Element {
         data-notification-bell="true"
         className="flex cursor-pointer items-center gap-[3px] rounded-[5px] px-[4px] py-[1px] hover:bg-mg-hover hover:text-mg-body"
       >
-        <Icon name="bell" size={12} />
+        <AnimatedIcon name="bell" size={12} animation="swing" trigger={ring} />
         {unread > 0 && (
           <span className="rounded-full bg-mg-activity px-[4px] font-mono text-[9px] leading-[13px] text-mg-window" data-notification-unread="true">
             {unread}
@@ -94,4 +96,15 @@ function CenterPanel({ onClose }: { readonly onClose: () => void }): React.JSX.E
       )}
     </motion.div>
   );
+}
+
+// Cuenta las veces que SUBE el nº de no leídas (bajar o montar no cuentan): lo que relanza el balanceo.
+function useRingCount(unread: number): number {
+  const [ring, setRing] = useState(0);
+  const previous = useRef(unread);
+  useEffect(() => {
+    if (unread > previous.current) setRing((n) => n + 1);
+    previous.current = unread;
+  }, [unread]);
+  return ring;
 }
