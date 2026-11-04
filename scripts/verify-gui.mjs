@@ -13356,7 +13356,13 @@ async function main() {
 
     // #40 (baseline de interfaz, SOLO medicion): en vez de las comprobaciones, mide y deja el JSON.
     if (process.argv.includes('--perf-baseline')) {
-      const medido = await runPerfBaseline(page, { openConversation: openTemporaryConversation, devBridge: !PROD_BUILD, longTranscriptTitle: longTranscript.title });
+      let medido;
+      try {
+        medido = await runPerfBaseline(page, { openConversation: openTemporaryConversation, devBridge: !PROD_BUILD, longTranscriptTitle: longTranscript.title });
+      } catch (error) {
+        await page.screenshot({ path: path.join(runDir, 'perf-fallo.png') }).catch((shotError) => console.log(`[verify:gui] sin captura del fallo de perf: ${shotError.message}`));
+        throw error;
+      }
       fs.writeFileSync(path.join(runDir, 'perf-baseline.json'), JSON.stringify(medido, null, 2), 'utf-8');
       console.log(`[verify:gui] baseline: ${path.join(runDir, 'perf-baseline.json')}`);
       results.push({ name: 'Baseline de interfaz #40', ok: true, detail: redactUserData('medido', accountAliases) });

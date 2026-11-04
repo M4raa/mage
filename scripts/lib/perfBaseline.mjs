@@ -120,7 +120,7 @@ export async function measurePanelOpen(page, panelId, repeats = PERF_REPEATS) {
 // `count` bloques usuario/agente con Markdown y se mide hasta el frame en que la lista virtual pinto la ultima fila y esta al final (con lista virtual nunca
 // llegan a estar los `count` bloques en el DOM).
 export async function measureLongConversation(page, count) {
-  return page.evaluate((n) => new Promise((resolve) => {
+  return page.evaluate(({ n, timeoutMs }) => new Promise((resolve, reject) => {
     const store = window.__mageDev.store;
     const id = store.getState().activeTabId;
     const text = 'Párrafo de prueba con **negrita**, `código` y una lista:\n\n- uno\n- dos\n\n' + 'Texto largo de relleno. '.repeat(20);
@@ -128,16 +128,24 @@ export async function measureLongConversation(page, count) {
       ? { kind: 'user', id: `pb-u${i}`, text: `Mensaje ${i}: ${text}`, time: '12:00', attachments: [] }
       : { kind: 'agent', id: `pb-a${i}`, runs: [{ code: false, text: `Respuesta ${i}: ${text}` }], streaming: false }));
     const t0 = performance.now();
+    const deadline = t0 + timeoutMs;
     store.setState((s) => ({ blocksByChat: { ...s.blocksByChat, [id]: blocks } }));
     const tick = () => {
       const pane = document.querySelector(`[data-pane-tab-id="${id}"]`);
       const scroller = pane?.querySelector('[data-chat-scroller]') ?? null;
       const atBottom = scroller !== null && scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= 2;
-      if (pane?.querySelector('[data-last-row="true"]') == null || !atBottom) return requestAnimationFrame(tick);
+      if (pane?.querySelector('[data-last-row="true"]') == null || !atBottom) {
+        if (performance.now() > deadline) {
+          const medido = { ultimaFila: pane?.querySelector('[data-last-row="true"]') != null, distanciaAlFondo: scroller === null ? null : Math.round(scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight) };
+          reject(new Error(`Sin la última fila al fondo en ${timeoutMs} ms con ${n} bloques: ${JSON.stringify(medido)}`));
+          return undefined;
+        }
+        return requestAnimationFrame(tick);
+      }
       setTimeout(() => resolve({ bloques: n, ms: Math.round(performance.now() - t0), nodosDom: document.getElementsByTagName('*').length }), 0);
     };
     requestAnimationFrame(tick);
-  }), count);
+  }), { n: count, timeoutMs: LONG_CONVERSATION_TIMEOUT_MS });
 }
 
 // Ancla al anteponer historial (necesita el puente): con la pestaña activa ya en 3000 bloques, lee una fila
@@ -215,11 +223,50 @@ export async function profileWhile(page, action) {
 }
 
 const LONG_CONVERSATION_SIZES = [200, 1000, 3000];
+// Plazo de la espera «última fila al fondo»: `page.evaluate` no tiene plazo propio y, sin él, una condición que no llega cuelga la medición para siempre.
+const LONG_CONVERSATION_TIMEOUT_MS = 60_000;
 // Texto del buscador del lateral (catalogo `sidebar.search.label` de es.json) y lo que se teclea para hallar el fixture.
 const SIDEBAR_SEARCH_LABEL = 'Buscar conversaciones';
 const LONG_TRANSCRIPT_SEARCH = 'VG-T3';
 const PANELS = ['activity', 'context', 'logs'];
 const PROFILE_KEYS = 30;
+
+// Para nombrar el modal que tapa una medida sin copiar texto que pueda ser del usuario: rol, id de su título y nombres de atributos.
+export async function describeOverlays(page) {
+  return page.evaluate(() => {
+    const dataNames = (root, depth, into) => {
+      for (const attr of root.attributes) if (attr.name.startsWith('data-')) into.add(attr.name);
+      if (depth > 0) for (const child of root.children) dataNames(child, depth - 1, into);
+      return into;
+    };
+    return [...document.querySelectorAll('.fixed.inset-0')]
+      .filter((el) => {
+        const box = el.getBoundingClientRect();
+        return getComputedStyle(el).display !== 'none' && box.width > 0 && box.height > 0;
+      })
+      .map((el) => {
+        const withRole = el.getAttribute('role') !== null ? el : el.querySelector('[role]');
+        const withLabel = el.getAttribute('aria-labelledby') !== null ? el : el.querySelector('[aria-labelledby]');
+        return {
+          clase: el.className,
+          rol: withRole?.getAttribute('role') ?? null,
+          labelledby: withLabel?.getAttribute('aria-labelledby') ?? null,
+          datos: [...dataNames(el, 2, new Set())].sort(),
+        };
+      });
+  });
+}
+
+// Ejecuta un paso de la medición con nombre: si falla, el error dice en qué paso fue y, con `page`, qué overlays había encima.
+export async function withStep(name, run, page) {
+  try {
+    return await run();
+  } catch (error) {
+    const overlays = page === undefined ? [] : await describeOverlays(page).catch((overlayError) => [{ error: String(overlayError) }]);
+    const suffix = overlays.length === 0 ? '' : ` · overlays: ${JSON.stringify(overlays)}`;
+    throw new Error(`Paso «${name}»: ${error instanceof Error ? error.message : String(error)}${suffix}`, { cause: error });
+  }
+}
 
 // Ids de las pestañas visibles en la barra, por el DOM (vale tambien sin el puente de desarrollo).
 function tabIdsInBar(page) {
@@ -235,28 +282,27 @@ async function measureLongConversations(page) {
 // Toda la medicion del baseline. `openConversation` es el helper del harness (Ctrl+N); con `devBridge`
 // falso (build de produccion) se omite lo que necesita inyectar estado.
 export async function runPerfBaseline(page, { openConversation, devBridge, longTranscriptTitle }) {
-  await openConversation(page);
-  await openConversation(page);
+  await withStep('abrirConversaciones', async () => { await openConversation(page); await openConversation(page); }, page);
   const tabs = (await tabIdsInBar(page)).slice(-2);
   const out = { modo: devBridge ? 'desarrollo (electron-vite dev, React de desarrollo)' : 'producción (electron-vite preview del build)', repeticiones: PERF_REPEATS };
-  out.escrituraPrompt = await measureTyping(page);
-  out.cambioPestana = await measureTabSwitch(page, tabs);
+  out.escrituraPrompt = await withStep('escrituraPrompt', () => measureTyping(page), page);
+  out.cambioPestana = await withStep('cambioPestana', () => measureTabSwitch(page, tabs), page);
   out.aperturaPanel = {};
-  for (const panel of PANELS) out.aperturaPanel[panel] = await measurePanelOpen(page, panel);
-  out.ecoIpcMain = await measureIpcEcho(page);
-  out.perfilEscritura = await profileWhile(page, async () => { for (let i = 0; i < PROFILE_KEYS; i++) await page.keyboard.press('x'); });
-  out.perfilCambioPestana = await profileWhile(page, async () => { for (let i = 0; i < 10; i++) await page.locator(`[role="tab"][data-tab-id="${tabs[i % 2]}"]`).click(); });
+  for (const panel of PANELS) out.aperturaPanel[panel] = await withStep(`aperturaPanel.${panel}`, () => measurePanelOpen(page, panel), page);
+  out.ecoIpcMain = await withStep('ecoIpcMain', () => measureIpcEcho(page), page);
+  out.perfilEscritura = await withStep('perfilEscritura', () => profileWhile(page, async () => { for (let i = 0; i < PROFILE_KEYS; i++) await page.keyboard.press('x'); }), page);
+  out.perfilCambioPestana = await withStep('perfilCambioPestana', () => profileWhile(page, async () => { for (let i = 0; i < 10; i++) await page.locator(`[role="tab"][data-tab-id="${tabs[i % 2]}"]`).click(); }), page);
   if (devBridge) await measureWithDevBridge(page, out, tabs);
   // Al final: abrir la conversacion larga cambia la pestaña activa, y las medidas con puente van sobre `tabs`.
-  out.cambioPestanaConTranscripcionLarga = await measureLongTranscriptTabSwitch(page, { openConversation, title: longTranscriptTitle });
+  out.cambioPestanaConTranscripcionLarga = await withStep('cambioPestanaConTranscripcionLarga', () => measureLongTranscriptTabSwitch(page, { openConversation, title: longTranscriptTitle }), page);
   return out;
 }
 
 // Las medidas que inyectan estado por el puente de desarrollo.
 async function measureWithDevBridge(page, out, tabs) {
-  out.conversacionLarga = await measureLongConversations(page);
-  out.anclaAlAnteponer = await measurePrependAnchor(page);
-  out.escrituraConConversacionLarga = await measureTyping(page);
-  out.cambioPestanaConConversacionLarga = await measureTabSwitch(page, tabs);
-  out.perfilEscrituraConConversacionLarga = await profileWhile(page, async () => { for (let i = 0; i < PROFILE_KEYS; i++) await page.keyboard.press('x'); });
+  out.conversacionLarga = await withStep('conversacionLarga', () => measureLongConversations(page), page);
+  out.anclaAlAnteponer = await withStep('anclaAlAnteponer', () => measurePrependAnchor(page), page);
+  out.escrituraConConversacionLarga = await withStep('escrituraConConversacionLarga', () => measureTyping(page), page);
+  out.cambioPestanaConConversacionLarga = await withStep('cambioPestanaConConversacionLarga', () => measureTabSwitch(page, tabs), page);
+  out.perfilEscrituraConConversacionLarga = await withStep('perfilEscrituraConConversacionLarga', () => profileWhile(page, async () => { for (let i = 0; i < PROFILE_KEYS; i++) await page.keyboard.press('x'); }), page);
 }
