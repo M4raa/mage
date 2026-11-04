@@ -17,6 +17,9 @@ ensureBrowserStateSync();
 
 const ICON_BUTTON = 'flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-[6px] text-mg-muted hover:bg-mg-hover hover:text-mg-body disabled:opacity-40';
 
+// Cada cuántos ms se vuelve a medir el hueco por si el panel se mueve sin cambiar de tamaño.
+const BOUNDS_POLL_MS = 250;
+
 function warnBounds(err: unknown): void {
   console.warn('No se pudo colocar el navegador', describeError(err));
 }
@@ -37,7 +40,10 @@ function useBrowserBounds(sessionId: string, enabled: boolean, hostRef: React.Re
     const observer = new ResizeObserver(push);
     observer.observe(host);
     window.addEventListener('resize', push);
+    // ponytail: sondeo barato (un getBoundingClientRect y `sameBounds`) para los movimientos sin cambio de tamaño; un observador del layout del dock lo haría sin sondear.
+    const timer = window.setInterval(push, BOUNDS_POLL_MS);
     return () => {
+      window.clearInterval(timer);
       observer.disconnect();
       window.removeEventListener('resize', push);
       window.mage.browserSetBounds({ sessionId, bounds: null }).catch(warnBounds);
