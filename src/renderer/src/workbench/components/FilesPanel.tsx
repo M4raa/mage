@@ -119,6 +119,11 @@ export function FilesPanel(): React.JSX.Element {
             >
               <span className="flex w-full items-center gap-[6px]">
                 <span className="min-w-0 flex-1 truncate text-[11.5px] text-mg-body">{label.name}</span>
+                {label.cited && (
+                  <span data-cited-file="true" className="shrink-0 rounded-[4px] border border-mg-border-subtle px-[4px] text-[9.5px] text-mg-muted">
+                    {t('chat.files.cited')}
+                  </span>
+                )}
                 {label.failed && (
                   <span className="shrink-0 text-[10px] text-mg-danger" title={t('chat.files.writeFailedTip')}>
                     {t('chat.files.writeFailed')}
@@ -174,6 +179,8 @@ interface EntryLabel {
   readonly name: string;
   readonly dir: string;
   readonly failed: boolean;
+  // Documento citado en el hilo que el agente no creo (distintivo en la fila).
+  readonly cited: boolean;
 }
 
 // Con varios planes, cada uno lleva su numero (orden de aparicion en el hilo); con uno, ninguno.
@@ -184,9 +191,9 @@ function planNumberByDoc(entries: readonly PanelEntry[]): ReadonlyMap<string, nu
 }
 
 function entryLabel(entry: PanelEntry, planNumber: number | null, t: Translate): EntryLabel {
-  if (entry.kind === 'file') return { name: entry.file.name, dir: entry.file.dir, failed: entry.file.failed };
+  if (entry.kind === 'file') return { name: entry.file.name, dir: entry.file.dir, failed: entry.file.failed, cited: entry.cited };
   const name = planNumber === null ? t('chat.references.planTitle') : t('chat.references.planTitleNumbered', { number: planNumber });
-  return { name, dir: entry.title, failed: false };
+  return { name, dir: entry.title, failed: false, cited: false };
 }
 
 // Destino pendiente de ESTE documento en ESTA pestana, o null.

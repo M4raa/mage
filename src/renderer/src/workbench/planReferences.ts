@@ -214,7 +214,7 @@ export function anchorTextMatcher(key: string): RegExp {
 // ---- Lista del panel Ficheros ----
 
 export type PanelEntry =
-  | { readonly kind: 'file'; readonly docId: string; readonly file: CreatedFile }
+  | { readonly kind: 'file'; readonly docId: string; readonly file: CreatedFile; readonly cited: boolean }
   | { readonly kind: 'plan'; readonly docId: string; readonly title: string; readonly text: string };
 
 function citedFile(path: string): CreatedFile {
@@ -226,11 +226,11 @@ function citedFile(path: string): CreatedFile {
 // se han creado en el y los planes del modo plan. Un fichero y un documento citado comparten `docId`
 // (la ruta resuelta), que es la clave con la que se indexan sus anclas.
 export function panelEntries(blocks: readonly Block[], cwd: string): readonly PanelEntry[] {
-  const created = createdFilesOf(blocks).map((file): PanelEntry => ({ kind: 'file', docId: resolveInside(file.path, cwd) ?? file.path, file }));
+  const created = createdFilesOf(blocks).map((file): PanelEntry => ({ kind: 'file', docId: resolveInside(file.path, cwd) ?? file.path, file, cited: false }));
   const known = new Set(created.map((entry) => entry.docId));
   const cited = associatedDocumentPaths(blocks, cwd)
     .filter((path) => !known.has(path))
-    .map((path): PanelEntry => ({ kind: 'file', docId: path, file: citedFile(path) }));
+    .map((path): PanelEntry => ({ kind: 'file', docId: path, file: citedFile(path), cited: true }));
   const plans = planDocuments(blocks).map((doc): PanelEntry => ({ kind: 'plan', docId: doc.docId, title: doc.title, text: doc.text }));
   return [...created, ...cited, ...plans];
 }
