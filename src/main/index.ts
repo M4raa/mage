@@ -130,6 +130,7 @@ import { nodeCapabilityFs } from './capabilities/capabilityFs';
 import type { CapabilityEngine } from './capabilities/capabilityPackage';
 import { bundledContents, loadBundledCatalog } from './capabilities/catalog/libraryCatalog';
 import { registerLibraryIpc } from './capabilities/library/libraryIpc';
+import { libraryStatePath, loadLibraryState } from './capabilities/library/libraryState';
 import { LibraryService, type LibraryAccount } from './capabilities/library/libraryService';
 import { decideTestLibraryClaudeDir, testLibraryAccounts } from './capabilities/library/testLibraryAccount';
 import { registerTaskIpc } from './tasks/taskIpc';
@@ -186,7 +187,7 @@ import {
 } from './config/sharedConfigService';
 import { createMcpServices, type McpServices } from './config/mcpServices';
 import { claudeSharedLaunch } from './config/mcpProviderTranslate';
-import { selectForTarget } from './config/mcpResolved';
+import { mergeServerLists, selectForTarget, type ResolvedMcpServer } from './config/mcpResolved';
 import { mcpFamilyOf } from '@shared/mcp';
 import { AccountService } from './accounts/accountService';
 import { ConversationsService, withLastAccount, type ConversationsDeps } from './conversations/conversationsService';
@@ -540,6 +541,8 @@ function getMcpServices(): McpServices {
       loadCommon: () => getSharedConfigService().loadMcpCommon(mcpCommonPath()),
       accountDirs: () => accountService.listAccounts().map((account) => account.configDir),
       warn: (message) => mainLog('warn', message),
+      loadLibraryInstalls: () => loadLibraryState(nodeCapabilityFs(), libraryStatePath(app.getPath('userData'))).installs,
+      caseInsensitivePaths: process.platform === 'win32' || process.platform === 'darwin',
     });
   }
   return mcpServicesSingleton;
@@ -582,11 +585,19 @@ function loadSharedLaunch(provider: string, accountDir: string, sessionId: strin
   for (const warning of shared.warnings) mainLog('warn', warning);
   const settingsCommon = getSharedConfigService().loadSettingsCommon(settingsCommonPath());
   return {
-    mcpServers: selectForTarget(shared.servers, { family, accountId: family === 'claude' ? account : null }),
+    mcpServers: withLibraryServers(selectForTarget(shared.servers, { family, accountId: family === 'claude' ? account : null }), family, account),
     settingsFragment: family === 'claude' ? withTaskDirectories(buildSettingsFragment(settingsCommon), launchingTaskExtras) : buildSettingsFragment(settingsCommon),
     claudeAiConnectors: !getSettingsStore().load().claudeAiConnectorsOff.includes(account),
     ...mageCallerFor(provider, accountDir, sessionId),
   };
+}
+
+// MCP con clave de la biblioteca (tercera fuente): solo Claude y Codex; con el mismo nombre gana lo común.
+function withLibraryServers(servers: readonly ResolvedMcpServer[], family: string, account: string): readonly ResolvedMcpServer[] {
+  if (family !== 'claude' && family !== 'codex') return servers;
+  const library = getMcpServices().libraryMcp(family, account);
+  for (const warning of library.warnings) mainLog('warn', warning);
+  return mergeServerLists({ servers, warnings: [] }, library).servers;
 }
 
 // D-M6: solo Claude y Codex hablan con `mage mcp`; los demas proveedores no reciben credencial.
