@@ -752,6 +752,10 @@ export interface MessageValues {
   readonly "errors.attachments.tooMany": { readonly "count": string | number; readonly "max": string | number };
   readonly "errors.attachments.totalTooLarge": { readonly "max": string | number; readonly "total": string | number };
   readonly "errors.attachments.unsupportedType": { readonly "allowed": string | number; readonly "type": string | number };
+  readonly "errors.browser.browserNotOpen": never;
+  readonly "errors.browser.navigateFailed": { readonly "detail": string | number; readonly "url": string | number };
+  readonly "errors.browser.penCaptureExpired": never;
+  readonly "errors.browser.sessionNotLive": never;
   readonly "errors.capabilities.alreadyDisabled": { readonly "packageId": string | number };
   readonly "errors.capabilities.alreadyEnabled": { readonly "packageId": string | number };
   readonly "errors.capabilities.alreadyInstalled": { readonly "packageId": string | number };
