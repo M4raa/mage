@@ -112,3 +112,29 @@ describe('UPDATE_QUEUED_SCHEMA', () => {
     expect(parseSessionInput(UPDATE_QUEUED_SCHEMA, { sessionId: 's', messageId: 'm', text: 'nuevo' }, 'canal').text).toBe('nuevo');
   });
 });
+
+describe('adjuntos', () => {
+  const base = { sessionId: 's', text: 't' };
+
+  it('SEND_MESSAGE_SCHEMA_adjuntoPdf_loAcepta', () => {
+    const parsed = parseSessionInput(SEND_MESSAGE_SCHEMA, { ...base, attachments: [{ mediaType: 'application/pdf', data: 'JVBERg==' }] }, 'session:sendMessage');
+
+    expect(parsed.attachments?.[0]?.mediaType).toBe('application/pdf');
+  });
+
+  it('RENDERER_SEND_MESSAGE_SCHEMA_adjuntoPdf_loAcepta', () => {
+    const parsed = parseSessionInput(
+      RENDERER_SEND_MESSAGE_SCHEMA,
+      { ...base, mode: 'queue', attachments: [{ mediaType: 'application/pdf', data: 'JVBERg==' }] },
+      'session:sendMessage',
+    );
+
+    expect(parsed.attachments?.[0]?.mediaType).toBe('application/pdf');
+  });
+
+  it('SEND_MESSAGE_SCHEMA_adjuntoZip_lanzaConElCampo', () => {
+    const call = () => parseSessionInput(SEND_MESSAGE_SCHEMA, { ...base, attachments: [{ mediaType: 'application/zip', data: 'x' }] }, 'session:sendMessage');
+
+    expect(call).toThrow(/attachments\.0\.mediaType/);
+  });
+});

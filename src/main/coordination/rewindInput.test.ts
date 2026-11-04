@@ -20,4 +20,18 @@ describe('rewindInput', () => {
 
     expect(() => parseRewindPlan(bad, 'session:rewindPlan')).toThrow(/point\.userIndex/);
   });
+
+  it('parseRewindApply_adjuntoPdf_loAcepta', () => {
+    const input = { ...APPLY, point: { userIndex: 0, text: 'x', nativeId: null }, attachments: [{ mediaType: 'application/pdf', data: 'JVBERg==' }] };
+
+    const parsed = parseRewindApply(input, 'session:rewindApply');
+
+    expect(parsed.attachments?.[0]?.mediaType).toBe('application/pdf');
+  });
+
+  it('parseRewindApply_adjuntoZip_lanza', () => {
+    const input = { ...APPLY, point: { userIndex: 0, text: 'x', nativeId: null }, attachments: [{ mediaType: 'application/zip', data: 'x' }] };
+
+    expect(() => parseRewindApply(input, 'session:rewindApply')).toThrow(/attachments\.0\.mediaType/);
+  });
 });
