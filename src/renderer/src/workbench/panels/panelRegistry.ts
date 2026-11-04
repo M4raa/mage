@@ -28,6 +28,7 @@ import { FilesPanel } from '../components/FilesPanel';
 import { UsagePanel } from '../components/UsagePanel';
 import { ActivityPanel } from '../components/ActivityPanel';
 import { PullRequestsPanel } from '../components/PullRequestsPanel';
+import { BrowserPanel } from '../browser/BrowserPanel';
 
 export interface PanelDefinition {
   readonly id: PanelId;
@@ -51,7 +52,7 @@ export interface PanelDefinition {
 // probar el split Permiso+Contexto/Logs+Memoria+MCP en vivo, se prefiere volver al tablist unico (un
 // panel activo a la vez, switch por icono, sin pestañas — ver ZonePane.tsx) y dejar 'b' libre para lo
 // que el usuario decida mover ahi a mano.
-type PanelTitleKey = 'menu.panel.conversations' | 'menu.panel.usage' | 'menu.panel.permissions' | 'menu.panel.context' | 'menu.panel.logs' | 'menu.panel.memory' | 'menu.panel.instructions' | 'menu.panel.commands' | 'menu.panel.agents' | 'menu.panel.tools' | 'menu.panel.artifacts' | 'menu.panel.files' | 'menu.panel.activity' | 'menu.panel.pullRequests';
+type PanelTitleKey = 'menu.panel.conversations' | 'menu.panel.usage' | 'menu.panel.permissions' | 'menu.panel.context' | 'menu.panel.logs' | 'menu.panel.memory' | 'menu.panel.instructions' | 'menu.panel.commands' | 'menu.panel.agents' | 'menu.panel.tools' | 'menu.panel.artifacts' | 'menu.panel.files' | 'menu.panel.activity' | 'menu.panel.pullRequests' | 'menu.panel.browser';
 
 // Como se escribe cada panel aqui: el titulo es una CLAVE del catalogo de textos (o el literal, para «MCP»).
 type PanelSpec = Omit<PanelDefinition, 'title'> & ({ readonly titleKey: PanelTitleKey } | { readonly title: string });
@@ -104,6 +105,8 @@ const PANEL_SPECS: readonly PanelSpec[] = [
   // Las PR del repo de la pestaña y las de la conversacion (F5.5, Q08). Id nuevo en la misma zona: aparece sin
   // abrirse solo y sin obligar a borrar `panels-layout.json`; lo abre «Abrir en el panel» de la barra de PR.
   { id: 'pullRequests', titleKey: 'menu.panel.pullRequests', icon: 'panelPullRequests', defaultAnchor: 'right', defaultZone: 'a', render: () => createElement(PullRequestsPanel) },
+  // Navegador de la sesion (F11b.3, D-S7). Id nuevo en la misma zona: aparece sin abrirse solo; lo revela el agente al abrirlo.
+  { id: 'browser', titleKey: 'menu.panel.browser', icon: 'globe', defaultAnchor: 'right', defaultZone: 'a', render: () => createElement(BrowserPanel) },
 ];
 
 export const PANEL_REGISTRY: readonly PanelDefinition[] = PANEL_SPECS.map(definePanel);

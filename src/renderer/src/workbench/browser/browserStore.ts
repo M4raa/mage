@@ -1,6 +1,5 @@
 import { create } from 'zustand';
 import type { BrowserEntryState } from '@shared/browser';
-import { usePanelLayoutStore } from '../panelLayoutStore';
 import { describeError } from '../describeError';
 import { useWorkbenchStore } from '../workbenchStore';
 import type { PenMemory } from './browserPen';
@@ -27,7 +26,8 @@ function applyPushedStates(list: readonly BrowserEntryState[]): void {
   const activeSessionId = workbench.sessionIdByChat[workbench.activeTabId];
   const next = indexStates(list);
   if (shouldRevealBrowser(useBrowserStore.getState().states, next, activeSessionId)) {
-    usePanelLayoutStore.getState().revealPanelById('browser');
+    // Import dinámico, como el resto de revelados: panelLayoutStore importa el registro de paneles, que importa este módulo.
+    void import('../panelLayoutStore').then((m) => m.usePanelLayoutStore.getState().revealPanelById('browser'));
   }
   useBrowserStore.getState().setStates(list);
 }
