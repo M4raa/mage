@@ -483,3 +483,27 @@ describe('transcriptToBlocks — imagenes intercaladas', () => {
     expect(block?.kind === 'user' ? block.attachments.map((a) => a.data) : []).toEqual(['A', 'B']);
   });
 });
+
+describe('transcriptToBlocks — bloque document', () => {
+  it('transcriptToBlocks_userDocumentBlock_keepsText', () => {
+    const withPdf = entry(
+      'user',
+      {
+        type: 'user',
+        message: {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'lee el pdf' },
+            { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: 'JVBERg==' } },
+          ],
+        },
+      },
+      7,
+    );
+
+    const blocks = transcriptToBlocks([withPdf]);
+
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0]).toMatchObject({ kind: 'user', text: 'lee el pdf' });
+  });
+});

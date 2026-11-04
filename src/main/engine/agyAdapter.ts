@@ -1,5 +1,6 @@
 import { homedir } from 'node:os';
 import type { ImageAttachment } from '@shared/ipc';
+import { ALLOWED_IMAGE_TYPES } from '@shared/attachments';
 import type { MageEvent, PermissionDecision } from '@shared/events';
 import { localized, UserFacingError } from '@shared/i18n/localizedText';
 import { AGY_EFFORT_LEVELS, AGY_PERMISSION_MODES } from '@shared/providers';
@@ -167,6 +168,10 @@ export class AgyAdapter implements ProviderAdapter {
   // mensaje, junto a su token `[Imagen N]`, para que el agente la abra con `view_file`.
   encodeUserMessage(text: string, attachments: readonly ImageAttachment[] = []): unknown {
     if (attachments.length === 0) return { event: 'user', message: { content: text } };
+    // Contrato (Q05): agy solo recibe imagenes; la resolucion de menciones nunca le manda un PDF.
+    for (const attachment of attachments) {
+      if (!ALLOWED_IMAGE_TYPES.has(attachment.mediaType)) throw new Error(`agy solo admite imagenes como adjunto, llego ${JSON.stringify(attachment.mediaType)}`);
+    }
     const save = this.deps.saveAttachment;
     if (save === undefined) {
       throw new Error(`No hay donde guardar las ${attachments.length} imagenes del mensaje para agy`);

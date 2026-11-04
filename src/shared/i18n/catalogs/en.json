@@ -617,6 +617,7 @@
   "chat.turnUsage.thinking": "thinking",
   "chat.turnUsage.total": "total",
   "chat.user.imageAlt": "Attached image",
+  "chat.user.pdfAttachment": "Attached PDF",
   "chat.worktree.chip": "worktree",
   "chat.worktree.chipTip": "Works in its own worktree (.claude/worktrees). When the tab is closed it is deleted if it has no changes; with changes it is kept and comes back when the conversation is reopened. The branch stays.",
   "chat.worktree.toggle": "Worktree",

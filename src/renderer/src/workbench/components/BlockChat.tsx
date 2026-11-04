@@ -940,14 +940,21 @@ function UserAttachments({ attachments }: { readonly attachments: readonly Image
   const t = useT();
   return (
     <div className="flex flex-wrap gap-[6px] pt-[2px]">
-      {attachments.map((attachment, index) => (
-        <img
-          key={index}
-          src={`data:${attachment.mediaType};base64,${attachment.data}`}
-          alt={t('chat.user.imageAlt')}
-          className="max-h-[220px] max-w-full rounded-[8px]"
-        />
-      ))}
+      {attachments.map((attachment, index) =>
+        attachment.mediaType.startsWith('image/') ? (
+          <img
+            key={index}
+            src={`data:${attachment.mediaType};base64,${attachment.data}`}
+            alt={t('chat.user.imageAlt')}
+            className="max-h-[220px] max-w-full rounded-[8px]"
+          />
+        ) : (
+          <span key={index} data-attachment-document="true" className="inline-flex items-center gap-[6px] rounded-[8px] border border-mg-border-subtle px-[8px] py-[4px] text-[12px]">
+            <Icon name="file" size={14} />
+            {t('chat.user.pdfAttachment')}
+          </span>
+        ),
+      )}
     </div>
   );
 }

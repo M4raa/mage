@@ -619,6 +619,7 @@ export interface MessageValues {
   readonly "chat.turnUsage.thinking": never;
   readonly "chat.turnUsage.total": never;
   readonly "chat.user.imageAlt": never;
+  readonly "chat.user.pdfAttachment": never;
   readonly "chat.worktree.chip": never;
   readonly "chat.worktree.chipTip": never;
   readonly "chat.worktree.toggle": never;

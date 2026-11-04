@@ -553,6 +553,7 @@
   "chat.turnUsage.thinking": { "description": "Marcador de tokens del turno: contador de pensamiento. Va tras el número.", "usage": "src/renderer/src/workbench/engineBlocks.ts:427", "maxLength": 16 },
   "chat.turnUsage.total": { "description": "Marcador de tokens del turno: contador total. Va tras el número.", "usage": "src/renderer/src/workbench/engineBlocks.ts:428", "maxLength": 16 },
   "chat.user.imageAlt": { "description": "Texto alternativo de una imagen que mandó el usuario.", "usage": "src/renderer/src/workbench/components/BlockChat.tsx:713" },
+  "chat.user.pdfAttachment": { "description": "Etiqueta del chip de un PDF adjunto a un mensaje del usuario (menciones @ de ficheros; no se pinta como imagen).", "usage": "src/renderer/src/workbench/components/BlockChat.tsx:939" },
   "chat.worktree.chip": { "description": "Chip de la fila de información: la conversación trabaja en un worktree de git (término de git).", "usage": "src/renderer/src/workbench/components/ChatInfoBar.tsx:174", "maxLength": 16 },
   "chat.worktree.chipTip": { "description": "Tooltip y nombre accesible del chip «worktree». «.claude/worktrees» es una ruta y no se traduce.", "usage": "src/renderer/src/workbench/components/ChatInfoBar.tsx:171" },
   "chat.worktree.toggle": { "description": "Casilla de la fila de información, antes de empezar: trabajar en un worktree de git (término de git).", "usage": "src/renderer/src/workbench/components/ChatInfoBar.tsx:182", "maxLength": 16 },

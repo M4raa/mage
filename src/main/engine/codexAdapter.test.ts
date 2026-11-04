@@ -825,3 +825,9 @@ describe('CodexAdapter: peticiones al motor (F4.4/F4.5)', () => {
     expect(events).toContainEqual({ kind: 'thread_history', mode: null });
   });
 });
+
+describe('CodexAdapter — adjuntos', () => {
+  it('buildInput_pdfAttachment_throwsWithType', () => {
+    expect(() => codex().encodeUserMessage('hola', [{ mediaType: 'application/pdf', data: 'JVBERg==' }])).toThrow('application/pdf');
+  });
+});
