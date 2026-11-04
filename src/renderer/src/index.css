@@ -625,3 +625,20 @@ select:focus-visible,
     transition: none;
   }
 }
+
+/* Movimiento reducido: las señales de estado se RALENTIZAN (siguen diciendo «trabajando»), las entradas de
+   bloque se quitan. Los transform de motion los quita `MotionConfig reducedMotion="user"`. */
+@media (prefers-reduced-motion: reduce) {
+  .mg-pulse {
+    animation-duration: 4s;
+  }
+  .mg-blink {
+    animation-duration: 2s;
+  }
+  .animate-spin {
+    animation-duration: 3s;
+  }
+  .mg-enter {
+    animation: none;
+  }
+}
