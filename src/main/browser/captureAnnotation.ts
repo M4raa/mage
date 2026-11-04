@@ -6,6 +6,7 @@ import type { DomElement } from './elementRegistry';
 export const MAX_IMAGE_SIDE_PX = 1568;
 export const MAX_STROKES = 50;
 export const MAX_STROKE_POINTS = 2000;
+export const MAX_STROKE_COORDINATE_DIP = 20_000;
 
 /** Mapa de bits de 4 bytes por píxel. */
 export interface Bitmap {
@@ -139,6 +140,13 @@ function toPx(point: PointDip, pxPerDip: number): PxPoint {
   return { x: Math.round(point[0] * pxPerDip), y: Math.round(point[1] * pxPerDip) };
 }
 
+function clampToBitmap(bitmap: Bitmap, point: PxPoint): PxPoint {
+  return {
+    x: Math.max(0, Math.min(point.x, bitmap.width - 1)),
+    y: Math.max(0, Math.min(point.y, bitmap.height - 1)),
+  };
+}
+
 function drawArrow(bitmap: Bitmap, from: PxPoint, to: PxPoint): void {
   drawLine(bitmap, from, to);
   const backwards = Math.atan2(from.y - to.y, from.x - to.x);
@@ -158,7 +166,8 @@ function drawBox(bitmap: Bitmap, a: PxPoint, b: PxPoint): void {
 }
 
 function drawStroke(bitmap: Bitmap, stroke: Stroke, pxPerDip: number): void {
-  const points = stroke.pointsDip.map((point) => toPx(point, pxPerDip));
+  // Recortado a la imagen: una línea nunca recorre más que la diagonal.
+  const points = stroke.pointsDip.map((point) => clampToBitmap(bitmap, toPx(point, pxPerDip)));
   const [first, second] = points;
   if (first === undefined) return;
   if (stroke.kind === 'pen') {
@@ -219,7 +228,8 @@ export function annotateBitmap(bitmap: Bitmap, input: AnnotationInput): void {
   for (const element of input.elements) drawLabel(bitmap, element, pxPerDip);
 }
 
-const pointSchema = z.tuple([z.number().finite().min(0), z.number().finite().min(0)]);
+const coordinateSchema = z.number().finite().min(0).max(MAX_STROKE_COORDINATE_DIP);
+const pointSchema = z.tuple([coordinateSchema, coordinateSchema]);
 
 const strokeSchema = z
   .object({

@@ -18,6 +18,7 @@ function createHandle() {
     reload: vi.fn(),
     close: vi.fn(async () => undefined),
     releaseControl: vi.fn(),
+    isUsable: true,
     state: vi.fn(() => ({ url: 'http://localhost/', title: 't', canGoBack: false, loading: false })),
     unsubscribe: vi.fn(),
     listener: undefined as (() => void) | undefined,
@@ -218,6 +219,26 @@ describe('BrowserRegistry close and sweep', () => {
     expect(handles[0]?.close).toHaveBeenCalledTimes(1);
     expect(deps.onClosed).toHaveBeenCalledTimes(1);
     expect(registry.states()).toEqual([]);
+  });
+
+  it('sweep_unusableHandle_closed', () => {
+    const { registry, handles } = setup();
+    registry.open('s1');
+    handles[0]!.isUsable = false;
+
+    registry.sweep();
+
+    expect(handles[0]?.close).toHaveBeenCalledTimes(1);
+    expect(registry.get('s1')).toBeNull();
+  });
+
+  it('states_unusableHandle_omitted', () => {
+    const { registry, handles } = setup(['s1', 's2']);
+    registry.open('s1');
+    registry.open('s2');
+    handles[0]!.isUsable = false;
+
+    expect(registry.states().map((state) => state.sessionId)).toEqual(['s2']);
   });
 
   it('stateChange_fromHandle_emits', () => {

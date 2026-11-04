@@ -109,6 +109,14 @@ describe('annotateBitmap', () => {
     expect(pixelAt(bitmap, 50, 51)).toEqual(GREEN);
   });
 
+  it('annotateBitmap_strokeBeyondImage_clippedNoHang', () => {
+    const bitmap = newBitmap(100, 100);
+
+    annotateBitmap(bitmap, { elements: [], strokes: [stroke('pen', [[0, 50], [19_999, 50]])], pxPerDip: 1 });
+
+    expect(pixelAt(bitmap, 99, 50)).toEqual(GREEN);
+  });
+
   it('annotateBitmap_boxStroke_cornersGreen', () => {
     const bitmap = newBitmap(100, 100);
 
@@ -156,6 +164,12 @@ describe('parseStrokes', () => {
 
   it('parseStrokes_negativeCoordinate_throws', () => {
     const raw = [{ id: 1, kind: 'pen', pointsDip: [[-1, 2], [3, 4]] }];
+
+    expect(() => parseStrokes(raw)).toThrow(/Trazos de la pluma no válidos/);
+  });
+
+  it('parseStrokes_coordinateOverMax_throws', () => {
+    const raw = [{ id: 1, kind: 'pen', pointsDip: [[0, 0], [20_001, 4]] }];
 
     expect(() => parseStrokes(raw)).toThrow(/Trazos de la pluma no válidos/);
   });

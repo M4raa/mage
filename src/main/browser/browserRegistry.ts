@@ -26,6 +26,7 @@ export type BrowserHandle = Pick<
   | 'close'
   | 'releaseControl'
   | 'state'
+  | 'isUsable'
   | 'onStateChange'
   | 'setBounds'
   | 'setVisible'
@@ -144,12 +145,16 @@ export class BrowserRegistry {
   // al cerrar una sesión lo haría inmediato.
   sweep(): void {
     for (const sessionId of [...this.entries.keys()]) {
-      if (!this.deps.isLive(sessionId)) void this.close(sessionId);
+      const entry = this.entries.get(sessionId);
+      if (!this.deps.isLive(sessionId) || entry?.handle.isUsable === false) void this.close(sessionId);
     }
   }
 
   states(): readonly BrowserEntryState[] {
-    return [...this.entries].map(([sessionId, entry]) => ({
+    // Las entradas con la vista destruida por fuera se omiten: las cierra el siguiente barrido.
+    return [...this.entries]
+      .filter(([, entry]) => entry.handle.isUsable)
+      .map(([sessionId, entry]) => ({
       ...entry.handle.state(),
       sessionId,
       control: entry.control,

@@ -63,6 +63,7 @@ function createFakes() {
     debugger: debuggerFake,
     navigationHistory: history,
     close: vi.fn(),
+    isDestroyed: vi.fn(() => false),
   };
   const view = {
     webContents: contents,
@@ -349,6 +350,26 @@ describe('IsolatedBrowser close', () => {
 
     expect(debuggerFake.detach).toHaveBeenCalledTimes(1);
     expect(contents.close).toHaveBeenCalledTimes(1);
+    expect(fakeSession.clearData).toHaveBeenCalledTimes(1);
+  });
+
+  it('isUsable_destroyedContents_false', () => {
+    const { browser, contents } = createBrowser();
+    expect(browser.isUsable).toBe(true);
+
+    contents.isDestroyed.mockReturnValue(true);
+
+    expect(browser.isUsable).toBe(false);
+  });
+
+  it('close_destroyedContents_clearsDataWithoutClosing', async () => {
+    const { browser, contents, debuggerFake, fakeSession } = createBrowser();
+    contents.isDestroyed.mockReturnValue(true);
+
+    await browser.close();
+
+    expect(debuggerFake.isAttached).not.toHaveBeenCalled();
+    expect(contents.close).not.toHaveBeenCalled();
     expect(fakeSession.clearData).toHaveBeenCalledTimes(1);
   });
 

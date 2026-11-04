@@ -132,6 +132,11 @@ export class IsolatedBrowser {
     return this.closed;
   }
 
+  /** Falso si se cerró o si Electron destruyó el `webContents` por fuera (p. ej. al cerrarse su ventana). */
+  get isUsable(): boolean {
+    return !this.closed && !this.contents.isDestroyed();
+  }
+
   /** D-S2: Detener suelta el CDP; el siguiente comando del agente lo vuelve a adjuntar si el control lo permite. */
   releaseControl(): void {
     if (this.closed) return;
@@ -210,8 +215,10 @@ export class IsolatedBrowser {
     this.closed = true;
     this.elements.clear();
     this.stateListeners.clear();
-    if (this.contents.debugger.isAttached()) this.contents.debugger.detach();
-    this.contents.close();
+    if (!this.contents.isDestroyed()) {
+      if (this.contents.debugger.isAttached()) this.contents.debugger.detach();
+      this.contents.close();
+    }
     // Electron 44 no tiene API para destruir una Session: se vacía la partición y su nombre, único por
     // instancia, nunca se reutiliza.
     await this.session.clearData();
