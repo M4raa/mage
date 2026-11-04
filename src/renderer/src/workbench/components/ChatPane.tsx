@@ -10,6 +10,7 @@ import { BlockChat } from './BlockChat';
 import { PromptBar } from './PromptBar';
 import { RateLimitBanner } from './RateLimitBanner';
 import { TabSubline } from './TabSubline';
+import { TaskStrip } from '../tasks/TaskStrip';
 import { QuestionDock } from './QuestionDock';
 import { ElicitationDock } from './ElicitationDock';
 import { AgentsDock } from './AgentsDock';
@@ -129,6 +130,7 @@ export function ChatPane({
       >
         {/* Cuenta · carpeta · rama, justo bajo la barra de pestañas de este panel y encima del hilo (Q-U11). */}
         <TabSubline />
+        <TaskStrip />
         <BlockChat />
         <RateLimitBanner />
         {/* La pregunta pendiente del agente, anclada encima del input (P-026 3.3). */}
