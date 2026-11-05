@@ -57,7 +57,7 @@ import { writeLongTranscript } from './lib/longTranscriptFixture.mjs';
 import { runMageBench } from './lib/benchMage.mjs';
 import { appendDomText } from './lib/domTextDump.mjs';
 import { redactLocalUser, redactUserData } from './lib/redactUserData.mjs';
-import { seededAppSettings } from './lib/profileSeed.mjs';
+import { seededAppSettings, seedTestAccounts } from './lib/profileSeed.mjs';
 import { cleanupProfile, credentialDigest } from '../spike/f0-profile-cleanup.mjs';
 import { claudeUsage, codexRateLimits, guardedUsage, prepareCodexHome } from '../spike/bench/headless.mjs';
 
@@ -899,7 +899,7 @@ const CHECKS = [
         await fila.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
       } catch {
         const cuentas = await page.evaluate(() => (window.__mageDev?.store.getState().accounts ?? []).filter((a) => a.loginStatus === 'logged_in').length);
-        if (cuentas === 0) return { ok: true, detail: 'ninguna cuenta con login: no hay CLI (falso) que sondear, no aplicable' };
+        if (cuentas === 0) return { ok: false, notRunnable: HARNESS_HOME === os.homedir(), detail: HARNESS_HOME === os.homedir() ? 'HOME real sin ninguna cuenta con login: no ejecutable' : 'el HOME de prueba no tiene cuentas con login: falló la siembra' };
         return { ok: false, detail: `con ${cuentas} cuentas con login no aparece la fila ${FAKE_MCP_AUTH_SERVER}` };
       }
       const estadoAntes = await fila.locator('[data-mcp-status]').innerText();
@@ -973,7 +973,7 @@ const CHECKS = [
       const grupo = (await recien.count()) > 0 ? recien.first() : page.locator('[data-mcp-connector-group]').first();
       if ((await grupo.count()) === 0) {
         await page.locator('[data-mcp-tab="servers"]').click();
-        return { ok: true, detail: 'sin cuentas de Claude: no hay grupos de conectores, no aplicable' };
+        return { ok: false, notRunnable: HARNESS_HOME === os.homedir(), detail: HARNESS_HOME === os.homedir() ? 'HOME real sin cuentas de Claude: no ejecutable' : 'el HOME de prueba no tiene cuentas de Claude: falló la siembra' };
       }
       return measureClaudeConnectorGroup(page, { userDataDir }, grupo);
     },
@@ -4258,7 +4258,7 @@ const CHECKS = [
         const s = window.__mageDev.store.getState();
         return s.accounts.find((a) => a.id !== s.activeAccountId && a.loginStatus === 'logged_in')?.id ?? null;
       });
-      if (destino === null) return { ok: true, detail: 'sin otra cuenta con login: no aplicable' };
+      if (destino === null) return { ok: false, notRunnable: HARNESS_HOME === os.homedir(), detail: HARNESS_HOME === os.homedir() ? 'HOME real sin otra cuenta con login: no ejecutable' : 'el HOME de prueba no tiene una segunda cuenta con login: falló la siembra' };
       await openTemporaryConversation(page);
       const tabId = await page.evaluate(() => window.__mageDev.store.getState().activeTabId);
       const indice = await page.evaluate((id) => window.__mageDev.store.getState().accounts.findIndex((a) => a.id === id), destino);
@@ -13282,6 +13282,7 @@ function killTree(child) {
 
 // --- Informe -------------------------------------------------------------------------------------
 
+// NO EJECUTABLE: el caso no se pudo medir en este entorno y lo dice con su motivo; no cuenta como verde ni como fallo.
 function writeReport(runDir, results, consoleErrors) {
   const lines = ['# Verificacion GUI de Mage', ''];
   lines.push(`- Fecha: ${new Date().toISOString()}`);
@@ -13291,7 +13292,7 @@ function writeReport(runDir, results, consoleErrors) {
   lines.push('| Resultado | Comprobacion | Medida |');
   lines.push('|---|---|---|');
   for (const result of results) {
-    const mark = result.ok ? 'OK' : 'FALLA';
+    const mark = result.notRunnable === true ? 'NO EJECUTABLE' : result.ok ? 'OK' : 'FALLA';
     lines.push(`| ${mark} | ${result.name} | ${result.detail.replace(/\|/g, '\\|')} |`);
   }
   lines.push('');
@@ -13336,9 +13337,10 @@ async function main() {
   fs.mkdirSync(runDir, { recursive: true });
   fs.mkdirSync(userDataDir, { recursive: true });
   if (forcedTurnTarget() !== 'real') {
-    // HOME de prueba dentro del perfil de la tanda (V6): la app descubre las cuentas ahí, con la de Claude vacía y sin sesión.
+    // HOME de prueba dentro del perfil de la tanda (V6): la app descubre ahí dos cuentas de Claude de PRUEBA con login (V7). Su token no sale a la red: main la cierra con MAGE_TEST_HOME.
     HARNESS_HOME = path.join(userDataDir, 'vg-home');
     fs.mkdirSync(path.join(HARNESS_HOME, '.claude', 'plans'), { recursive: true });
+    seedTestAccounts(HARNESS_HOME);
     process.env.MAGE_TEST_HOME = HARNESS_HOME;
   }
   prunePreviousProfiles(userDataDir);
@@ -13412,7 +13414,7 @@ async function main() {
         if (before !== null) fs.appendFileSync(path.join(runDir, 'layout-evidence.jsonl'), JSON.stringify({ name: check.name, before, after: await captureLayoutEvidence(page), outcome }) + '\n');
         const detail = redactUserData(outcome.detail, accountAliases);
         results.push({ name: check.name, ...outcome, detail });
-        console.log(`  ${outcome.ok ? '✓' : '✗'} ${check.name} — ${detail}`);
+        console.log(`  ${outcome.notRunnable === true ? '–' : outcome.ok ? '✓' : '✗'} ${check.name} — ${detail}`);
       } catch (error) {
         const detail = redactUserData(`excepcion: ${error.message}`, accountAliases);
         results.push({ name: check.name, ok: false, detail });
@@ -13437,9 +13439,10 @@ async function main() {
     else console.log('[verify:gui] --keep: la app sigue abierta; ciérrala tú.');
   }
 
-  const failed = results.filter((result) => !result.ok);
+  const notRunnable = results.filter((result) => result.notRunnable === true);
+  const failed = results.filter((result) => !result.ok && result.notRunnable !== true);
   console.log(`\n[verify:gui] informe: ${path.join(runDir, 'session.md')}`);
-  console.log(`[verify:gui] ${results.length - failed.length}/${results.length} comprobaciones en verde`);
+  console.log(`[verify:gui] ${results.length - failed.length - notRunnable.length}/${results.length} comprobaciones en verde${notRunnable.length === 0 ? '' : `, ${notRunnable.length} NO EJECUTABLES (ver el informe)`}`);
   process.exit(failed.length === 0 ? 0 : 1);
 }
 
