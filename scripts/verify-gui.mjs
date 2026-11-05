@@ -5989,94 +5989,99 @@ const CHECKS = [
       return { ok, detail: JSON.stringify(medido) };
     },
   },
-  // Q09 (#31, F5.6): las referencias del chat (F0.4, §3.4…) se enlazan a encabezados UNICOS de los
-  // documentos asociados. Las tres comprobaciones comparten UNA conversacion temporal con dos .md
-  // escritos por el harness y un mensaje del agente con las referencias; la tercera la deshace. Se
-  // inyecta por `handleEvent` (como 2.10) y por `setState` (el mensaje): ningun turno, ningun CLI.
+  // Q09 (#31, F5.6): las referencias del chat (F0.4, §3.4…) se enlazan a encabezados UNICOS de los documentos asociados. Cada comprobación monta SU conversación temporal con dos .md escritos por el harness y un mensaje del agente con las referencias: runGuiCheck restaura los stores al acabar cada caso, así que nada se comparte entre ellas (V7). Se inyecta por `handleEvent` y `setState`: ningún turno, ningún CLI.
   ...(() => {
-    const q09 = { montado: null, fallo: null };
     const REFERENCIA = '[data-plan-ref="F0.4"]';
+    // Monta la conversación de Q09 y espera a que la referencia sea un enlace. Devuelve las rutas para borrarlas al final.
+    const montarQ09 = async (page) => {
+      await openTemporaryConversation(page);
+      const cwd = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return s.tabs.find((t) => t.id === s.activeTabId)?.cwd ?? null;
+      });
+      if (cwd === null) throw new Error('la conversacion temporal no tiene cwd');
+      const planPath = path.join(cwd, 'plan.md');
+      const otroPath = path.join(cwd, 'otro.md');
+      fs.writeFileSync(planPath, '## F0.4 Arranque\n\n## 3.4 Identidad\n\n### H2 uno\n', 'utf-8');
+      fs.writeFileSync(otroPath, '### H2 dos\n', 'utf-8');
+      await page.evaluate(
+        ({ plan, otro }) => {
+          const dev = window.__mageDev;
+          const tabId = dev.store.getState().activeTabId;
+          const sessionId = 'verify-q09-session';
+          dev.store.setState((state) => ({ sessionIdByChat: { ...state.sessionIdByChat, [tabId]: sessionId } }));
+          const handle = (event) => dev.store.getState().handleEvent(sessionId, event);
+          [['tu-q09-plan', plan], ['tu-q09-otro', otro]].forEach(([id, ruta]) => {
+            handle({ kind: 'tool_use', tool: { toolUseId: id, toolName: 'Write', input: { file_path: ruta } } });
+            handle({ kind: 'tool_result', result: { toolUseId: id, isError: false, output: 'File created successfully', durationMs: 3, file: { path: ruta, content: '' } } });
+          });
+          // Un turno real acaba con `result`: sin él la pestaña sigue en `streaming` y el índice de referencias no se construye (V6).
+          handle({ kind: 'result', result: { isError: false, subtype: 'success', numTurns: 1 } });
+          const agente = { kind: 'agent', id: 'q09-agent', runs: [{ code: false, text: 'Mira F0.4, §3.4, H2 y `F0.4`.' }], streaming: false };
+          dev.store.setState((state) => ({ blocksByChat: { ...state.blocksByChat, [tabId]: [...(state.blocksByChat[tabId] ?? []), agente] } }));
+        },
+        { plan: planPath, otro: otroPath },
+      );
+      const fallo = await page.waitForSelector(REFERENCIA, { timeout: CONFIG.actionTimeoutMs }).then(() => null, (error) => error.message);
+      return { planPath, otroPath, fallo };
+    };
+    const borrarQ09 = (montado) => {
+      fs.rmSync(montado.planPath, { force: true });
+      fs.rmSync(montado.otroPath, { force: true });
+    };
     return [
       {
         name: 'Q09: solo se enlazan las referencias unicas y fuera de codigo',
         async run(page) {
-          const previoStore = await page.evaluate(() => {
-            const s = window.__mageDev.store.getState();
-            return { tabs: s.tabs, activeTabId: s.activeTabId, splitLayout: s.splitLayout, sessionIdByChat: s.sessionIdByChat, blocksByChat: s.blocksByChat };
-          });
-          await openTemporaryConversation(page);
-          const cwd = await page.evaluate(() => {
-            const s = window.__mageDev.store.getState();
-            return s.tabs.find((t) => t.id === s.activeTabId)?.cwd ?? null;
-          });
-          if (cwd === null) throw new Error('la conversacion temporal no tiene cwd');
-          const planPath = path.join(cwd, 'plan.md');
-          const otroPath = path.join(cwd, 'otro.md');
-          fs.writeFileSync(planPath, '## F0.4 Arranque\n\n## 3.4 Identidad\n\n### H2 uno\n', 'utf-8');
-          fs.writeFileSync(otroPath, '### H2 dos\n', 'utf-8');
-          q09.montado = { previoStore, planPath, otroPath };
-          await page.evaluate(
-            ({ plan, otro }) => {
-              const dev = window.__mageDev;
-              const tabId = dev.store.getState().activeTabId;
-              const sessionId = 'verify-q09-session';
-              dev.store.setState((state) => ({ sessionIdByChat: { ...state.sessionIdByChat, [tabId]: sessionId } }));
-              const handle = (event) => dev.store.getState().handleEvent(sessionId, event);
-              [['tu-q09-plan', plan], ['tu-q09-otro', otro]].forEach(([id, ruta]) => {
-                handle({ kind: 'tool_use', tool: { toolUseId: id, toolName: 'Write', input: { file_path: ruta } } });
-                handle({ kind: 'tool_result', result: { toolUseId: id, isError: false, output: 'File created successfully', durationMs: 3, file: { path: ruta, content: '' } } });
-              });
-              // Un turno real acaba con `result`: sin él la pestaña sigue en `streaming` y el índice de referencias no se construye (V6).
-              handle({ kind: 'result', result: { isError: false, subtype: 'success', numTurns: 1 } });
-              const agente = { kind: 'agent', id: 'q09-agent', runs: [{ code: false, text: 'Mira F0.4, §3.4, H2 y `F0.4`.' }], streaming: false };
-              dev.store.setState((state) => ({ blocksByChat: { ...state.blocksByChat, [tabId]: [...(state.blocksByChat[tabId] ?? []), agente] } }));
-            },
-            { plan: planPath, otro: otroPath },
-          );
-          await page.waitForSelector(REFERENCIA, { timeout: CONFIG.actionTimeoutMs }).catch((error) => {
-            q09.fallo = error.message;
-          });
-          const medido = await page.evaluate(() => ({
-            f04: document.querySelectorAll('[data-plan-ref="F0.4"]').length,
-            seccion: document.querySelectorAll('[data-plan-ref="§3.4"]').length,
-            ambigua: document.querySelectorAll('[data-plan-ref="H2"]').length,
-            // El `F0.4` de dentro de codigo sigue siendo texto: ningun boton vive dentro de un <code>.
-            enCodigo: document.querySelectorAll('code [data-plan-ref], pre [data-plan-ref]').length,
-          }));
-          const ok = q09.fallo === null && medido.f04 === 1 && medido.seccion === 1 && medido.ambigua === 0 && medido.enCodigo === 0;
-          return { ok, detail: JSON.stringify({ ...medido, fallo: q09.fallo }) };
+          const montado = await montarQ09(page);
+          try {
+            const medido = await page.evaluate(() => ({
+              f04: document.querySelectorAll('[data-plan-ref="F0.4"]').length,
+              seccion: document.querySelectorAll('[data-plan-ref="§3.4"]').length,
+              ambigua: document.querySelectorAll('[data-plan-ref="H2"]').length,
+              // El `F0.4` de dentro de codigo sigue siendo texto: ningun boton vive dentro de un <code>.
+              enCodigo: document.querySelectorAll('code [data-plan-ref], pre [data-plan-ref]').length,
+            }));
+            const ok = montado.fallo === null && medido.f04 === 1 && medido.seccion === 1 && medido.ambigua === 0 && medido.enCodigo === 0;
+            return { ok, detail: JSON.stringify({ ...medido, fallo: montado.fallo }) };
+          } finally {
+            borrarQ09(montado);
+          }
         },
       },
       {
         name: 'Q09: pulsar abre Ficheros en el punto y lo resalta',
         async run(page) {
-          if (q09.montado === null) return { ok: false, detail: 'la comprobacion anterior no monto la conversacion' };
-          await page.locator(REFERENCIA).click();
-          const resaltado = await page
-            .waitForFunction(
-              () => document.querySelector('[data-files-panel="true"] [data-anchor-highlight="true"]')?.textContent?.trim() ?? null,
-              null,
-              { timeout: CONFIG.actionTimeoutMs },
-            )
-            .then((handle) => handle.jsonValue())
-            .catch(() => null);
-          const medido = await page.evaluate(() => {
-            const panel = document.querySelector('[data-files-panel="true"]');
-            const abierto = [...(panel?.querySelectorAll('[data-created-file]') ?? [])].find((n) => n.getAttribute('aria-expanded') === 'true');
-            return { panel: panel !== null, abierto: abierto?.getAttribute('data-created-file') ?? null };
-          });
-          const ok = medido.panel === true && (medido.abierto ?? '').endsWith('plan.md') && (resaltado ?? '').startsWith('F0.4');
-          return { ok, detail: JSON.stringify({ ...medido, resaltado }) };
+          const montado = await montarQ09(page);
+          try {
+            if (montado.fallo !== null) return { ok: false, detail: JSON.stringify({ fallo: montado.fallo }) };
+            await page.locator(REFERENCIA).click();
+            const resaltado = await page
+              .waitForFunction(
+                () => document.querySelector('[data-files-panel="true"] [data-anchor-highlight="true"]')?.textContent?.trim() ?? null,
+                null,
+                { timeout: CONFIG.actionTimeoutMs },
+              )
+              .then((handle) => handle.jsonValue())
+              .catch(() => null);
+            const medido = await page.evaluate(() => {
+              const panel = document.querySelector('[data-files-panel="true"]');
+              const abierto = [...(panel?.querySelectorAll('[data-created-file]') ?? [])].find((n) => n.getAttribute('aria-expanded') === 'true');
+              return { panel: panel !== null, abierto: abierto?.getAttribute('data-created-file') ?? null };
+            });
+            const ok = medido.panel === true && (medido.abierto ?? '').endsWith('plan.md') && (resaltado ?? '').startsWith('F0.4');
+            return { ok, detail: JSON.stringify({ ...medido, resaltado }) };
+          } finally {
+            borrarQ09(montado);
+          }
         },
       },
       {
         name: 'Q09: si el punto desaparece, se dice',
         async run(page) {
-          const montado = q09.montado;
-          if (montado === null) return { ok: false, detail: 'la comprobacion anterior no monto la conversacion' };
+          const montado = await montarQ09(page);
           try {
-            // Espera a que el resaltado de la pulsacion anterior se apague (2 s), para que lo que se mida sea de ESTA.
-            await page.waitForFunction(() => document.querySelector('[data-anchor-highlight="true"]') === null, null, { timeout: CONFIG.actionTimeoutMs });
+            if (montado.fallo !== null) return { ok: false, detail: JSON.stringify({ fallo: montado.fallo }) };
             fs.writeFileSync(montado.planPath, '## 3.4 Identidad\n\n### H2 uno\n', 'utf-8');
             await page.locator(REFERENCIA).click();
             await page.waitForSelector('[data-files-panel="true"] [data-anchor-gone="true"]', { timeout: CONFIG.actionTimeoutMs });
@@ -6087,11 +6092,7 @@ const CHECKS = [
             const ok = medido.aviso === 'Ese punto ya no está en el documento' && medido.resaltados === 0;
             return { ok, detail: JSON.stringify(medido) };
           } finally {
-            fs.rmSync(montado.planPath, { force: true });
-            fs.rmSync(montado.otroPath, { force: true });
-            await page.evaluate((estado) => window.__mageDev.store.setState(estado), montado.previoStore);
-            await page.waitForTimeout(CONFIG.settleMs);
-            q09.montado = null;
+            borrarQ09(montado);
           }
         },
       },
