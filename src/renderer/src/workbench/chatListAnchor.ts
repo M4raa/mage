@@ -33,3 +33,49 @@ export function appendedTailKeys(prev: { readonly length: number; readonly lastK
   const at = keys.lastIndexOf(prev.lastKey);
   return at < 0 ? [] : keys.slice(at + 1);
 }
+
+// Por debajo de este margen el usuario cuenta como «pegado» al final (mismo valor que `useStickToBottom`, el del panel de Actividad).
+export const STICK_TO_BOTTOM_PX = 80;
+
+// Lo que el seguimiento del final necesita del scroller (en tests, un objeto plano).
+export interface WatchedScroller<T> {
+  scrollTop: number;
+  readonly scrollHeight: number;
+  readonly clientHeight: number;
+  readonly firstElementChild: { readonly children: ArrayLike<T> } | null;
+  addEventListener(type: 'scroll', listener: () => void, options: { readonly passive: true }): void;
+  removeEventListener(type: 'scroll', listener: () => void): void;
+}
+
+export interface SizeObserver<T> {
+  observe(target: T | WatchedScroller<T>): void;
+  disconnect(): void;
+}
+
+export function distanceToBottom(scroller: Pick<WatchedScroller<unknown>, 'scrollTop' | 'scrollHeight' | 'clientHeight'>): number {
+  return scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
+}
+
+// Al final REAL del DOM, no al que calcula Virtuoso con alturas que puede no haber medido aún (V7, R59).
+export function pinToBottom(scroller: Pick<WatchedScroller<unknown>, 'scrollTop' | 'scrollHeight' | 'clientHeight'>): void {
+  scroller.scrollTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+}
+
+// Sigue el final del chat. «Pegado» solo cambia con un scroll: encoger la vista (un dock que aparece) o crecer el
+// contenido no despega. Mientras está pegado, cualquier cambio de tamaño del scroller o de los hijos de su viewport
+// (cabecera, lista y pie de Virtuoso) vuelve a pegarlo. Devuelve la función que lo desmonta.
+export function watchChatBottom<T>(scroller: WatchedScroller<T>, stuck: { current: boolean }, createObserver: (onResize: () => void) => SizeObserver<T>): () => void {
+  const onScroll = (): void => {
+    stuck.current = distanceToBottom(scroller) <= STICK_TO_BOTTOM_PX;
+  };
+  const observer = createObserver(() => {
+    if (stuck.current) pinToBottom(scroller);
+  });
+  observer.observe(scroller);
+  for (const child of Array.from(scroller.firstElementChild?.children ?? [])) observer.observe(child);
+  scroller.addEventListener('scroll', onScroll, { passive: true });
+  return () => {
+    observer.disconnect();
+    scroller.removeEventListener('scroll', onScroll);
+  };
+}
