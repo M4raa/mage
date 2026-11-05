@@ -10727,7 +10727,7 @@ const CHECKS = [
   {
     // La franja de la tarea (`[data-task-strip]`) no se mide: solo sale en la pestaña cuya sesión o conversación es la de la
     // tarea, y `createTask` por IPC las deja a null (se enlazan al lanzar el agente, lo que aquí no se hace).
-    name: 'F3.6 (en): lateral con proyecto, conversación y tarea de nombre largo',
+    name: 'F3.6 (en): lateral con proyecto, conversación y tarea de nombre largo, y su franja',
     async run(page, { runDir }) {
       const cuenta = await page.evaluate(() => {
         const state = window.__mageDev.store.getState();
@@ -10747,7 +10747,6 @@ const CHECKS = [
             goal: F36_LONG_TEXT, language: 'es', provider: 'claude', accountDir: cuenta.id, folders: [trabajo], documents: [], capabilities: [],
           });
           taskId = creada.id;
-          // El store de tareas no está en `__mageDev`: la lista se recarga con `page.reload()`, como en la comprobación R.
           await page.reload();
           await page.waitForFunction(() => window.__mageDev !== undefined);
           await page.locator('[role="toolbar"]').first().waitFor({ state: 'attached', timeout: CONFIG.bootTimeoutMs });
@@ -10765,9 +10764,19 @@ const CHECKS = [
           await proyecto.locator('[data-project-key]').click();
           await proyecto.locator('[data-history-session="vg-f36-chat"]').waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
           await waitForStillBox(page, '[data-history-session="vg-f36-chat"]');
+          // La franja sale en la pestaña cuya sesión es la de la tarea: se enlaza una pestaña temporal a una sesión ficticia (no se lanza nada).
+          await openTemporaryConversation(page);
+          await page.evaluate(({ id, sessionId }) => {
+            const dev = window.__mageDev;
+            dev.taskStore.setState((s) => ({ tasks: s.tasks.map((task) => (task.id === id ? { ...task, sessionId } : task)) }));
+            const tabId = dev.store.getState().activeTabId;
+            dev.store.setState((s) => ({ tabs: s.tabs.map((tab) => (tab.id === tabId ? { ...tab, provider: 'claude' } : tab)), sessionIdByChat: { ...s.sessionIdByChat, [tabId]: sessionId } }));
+          }, { id: taskId, sessionId: 'vg-f36-task-session' });
+          await page.locator('[data-task-strip]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
           return textFitOutcome({
             lateral: await textFitProblems(page, '[data-chat-sidebar]'),
             tareas: await textFitProblems(page, '[data-tasks-section]'),
+            franja: await textFitProblems(page, '[data-task-strip]'),
           });
         });
       } finally {
