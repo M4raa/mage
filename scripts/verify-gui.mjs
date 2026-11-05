@@ -58,8 +58,8 @@ import { runMageBench } from './lib/benchMage.mjs';
 import { appendDomText } from './lib/domTextDump.mjs';
 import { redactLocalUser, redactUserData } from './lib/redactUserData.mjs';
 import { seededAppSettings, seedTestAccounts } from './lib/profileSeed.mjs';
-import { cleanupProfile, credentialDigest } from '../spike/f0-profile-cleanup.mjs';
-import { claudeUsage, codexRateLimits, guardedUsage, prepareCodexHome } from '../spike/bench/headless.mjs';
+import { cleanupProfile } from '../spike/f0-profile-cleanup.mjs';
+import { benchApiKey, changedFiles, copiesUnder, credentialFingerprints, userCredentialFiles } from './lib/benchCredentials.mjs';
 
 const repoRoot = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 // Version de Mage que corre (la de package.json): la usan el seed de ajustes y las notas de version.
@@ -13209,7 +13209,7 @@ function launchApp(userDataDir, extraEnv = {}) {
       VITE_MAGE_RELEASE_NOTES_IN_DEV: '1',
       // Los locks de conversación (#55) van a la carpeta de la tanda, nunca a la real del usuario (H3 de la devolución 17).
       [HARNESS_LOCKS_ENV]: HARNESS_LOCKS_DIR,
-      // --bench: la casa temporal con las credenciales COPIADAS (nunca las reales del usuario).
+      // --bench: la casa temporal, sin credenciales del usuario.
       ...extraEnv,
     },
     windowsHide: true,
@@ -13458,37 +13458,47 @@ function withDomTextDump(check) {
   } };
 }
 
-// Benchmark F0-B, ruta R3 (`--bench --provider=claude|codex --rep=<n> --out=<fichero> [--tasks=T1,..]`):
-// Mage con perfil aislado y una CASA temporal (USERPROFILE/HOME) con copia de la credencial del
-// proveedor, retirada en finally con su comprobación de token. Gasta turnos reales (autorizados para el baseline).
+// Benchmark F0-B, ruta R3 (`--bench --provider=claude --rep=<n> --out=<fichero> [--tasks=T1,..]`): Mage con perfil aislado
+// y una CASA temporal (USERPROFILE/HOME) SIN credenciales del usuario. La cuenta es de Claude por clave de API DESECHABLE
+// (MAGE_BENCH_ANTHROPIC_API_KEY), dada de alta por el IPC del producto: la clave va a la bóveda del perfil temporal y se
+// borra con él. Al acabar se comprueba que las credenciales del usuario no cambiaron ni se copiaron. Gasta turnos reales.
 async function runBenchMode() {
   const arg = (name) => process.argv.find((a) => a.startsWith(`--${name}=`))?.split('=')[1];
   const provider = arg('provider');
   const out = arg('out');
   const rep = Number(arg('rep'));
   if (!['claude', 'codex'].includes(provider) || out === undefined || !Number.isInteger(rep)) throw new Error('--bench exige --provider, --rep y --out');
+  const apiKey = benchApiKey(provider, process.env);
+  const userFiles = userCredentialFiles(os.homedir());
+  const userBefore = credentialFingerprints(userFiles);
   const tasks = arg('tasks')?.split(',');
   const root = fs.mkdtempSync(path.join(os.tmpdir(), `mage-f0-bench-r3-${provider}-`));
   const home = path.join(root, 'home');
-  const credential = prepareBenchHome(home, provider);
-  const initial = credentialDigest(credential);
+  fs.mkdirSync(home, { recursive: true });
   const userDataDir = path.join(root, 'user-data');
   fs.mkdirSync(userDataDir);
   seedOnboardingDone(userDataDir);
-  if (provider === 'codex') fs.writeFileSync(path.join(userDataDir, 'provider-accounts.json'), JSON.stringify({ version: 1, accounts: [{ providerId: 'codex', authKind: 'subscription', name: 'bench', home: path.join(home, '.codex') }] }));
   // APPDATA también dentro de la casa: con USERPROFILE cambiado, Electron no resolvía 'appData'. LOCALAPPDATA
   // se queda el real: ahí localiza Mage el ejecutable de Codex.
   const appData = path.join(home, 'AppData', 'Roaming');
   fs.mkdirSync(appData, { recursive: true });
   const { child, log } = launchApp(userDataDir, { USERPROFILE: home, HOME: home, APPDATA: appData });
   let browser = null;
+  let accountDir = null;
   try {
     browser = await chromium.connectOverCDP(await waitForCdp());
     const page = await findMainPage(browser);
     await page.locator('[role="toolbar"]').first().waitFor({ state: 'attached', timeout: CONFIG.bootTimeoutMs });
+    const account = await page.evaluate(async (key) => {
+      const info = await window.mage.createProviderAccount({ providerId: 'claude', authKind: 'api-key', name: 'bench', apiKey: key });
+      await window.__mageDev.store.getState().refreshAccounts();
+      return { configDir: info.configDir };
+    }, apiKey);
+    accountDir = account.configDir;
     await page.waitForFunction(() => window.__mageDev?.store.getState().accounts.length > 0, undefined, { timeout: CONFIG.bootTimeoutMs });
-    const usageAllows = guardedUsage(() => (provider === 'claude' ? claudeUsage(credential) : codexRateLimits(path.join(home, '.codex'))));
-    await runMageBench(page, { provider, rep, tasks, root, usageAllows, out, claudeConfigDir: path.join(home, '.claude') });
+    // Una clave de API desechable no tiene ventanas de suscripción: su presupuesto es el de la clave.
+    const usageAllows = async () => ({ usage: [], allowed: true });
+    await runMageBench(page, { provider, rep, tasks, root, usageAllows, out, claudeConfigDir: account.configDir });
   } catch (error) {
     fs.writeFileSync(`${out}.arranque.log`, log.join('').slice(-20_000), 'utf-8');
     throw error;
@@ -13496,20 +13506,12 @@ async function runBenchMode() {
     if (browser !== null) await browser.close().catch(() => {});
     killTree(child);
     await new Promise((r) => setTimeout(r, 3000)); // Electron suelta el perfil antes de borrarlo
-    cleanupProfile(root, credential, initial);
+    const copies = copiesUnder(root, userBefore);
+    cleanupProfile(root, path.join(accountDir ?? path.join(home, '.claude-bench'), '.credentials.json'), null);
+    const changed = changedFiles(userBefore, credentialFingerprints(userFiles));
+    console.log(JSON.stringify({ stage: 'credenciales-del-usuario', copiadas: copies.length, cambiadas: changed.length }));
+    if (copies.length > 0 || changed.length > 0) process.exitCode = 1;
   }
-}
-
-// Casa temporal del benchmark: solo la credencial del proveedor medido, copiada.
-function prepareBenchHome(home, provider) {
-  if (provider === 'codex') {
-    prepareCodexHome(path.join(home, '.codex'));
-    return path.join(home, '.codex', 'auth.json');
-  }
-  fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
-  fs.copyFileSync(path.join(os.homedir(), '.claude', '.credentials.json'), path.join(home, '.claude', '.credentials.json'));
-  fs.writeFileSync(path.join(home, '.claude.json'), JSON.stringify({ hasCompletedOnboarding: true }));
-  return path.join(home, '.claude', '.credentials.json');
 }
 
 // Borra los perfiles de ejecuciones anteriores. Best-effort: si Electron aun tiene el lock, se deja
