@@ -10725,8 +10725,6 @@ const CHECKS = [
     },
   },
   {
-    // La franja de la tarea (`[data-task-strip]`) no se mide: solo sale en la pestaña cuya sesión o conversación es la de la
-    // tarea, y `createTask` por IPC las deja a null (se enlazan al lanzar el agente, lo que aquí no se hace).
     name: 'F3.6 (en): lateral con proyecto, conversación y tarea de nombre largo, y su franja',
     async run(page, { runDir }) {
       const cuenta = await page.evaluate(() => {
