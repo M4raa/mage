@@ -8088,11 +8088,22 @@ const CHECKS = [
       await openTemporaryConversation(page);
       await page.evaluate(() => { const store = window.__mageDev.store; const id = store.getState().activeTabId; store.setState(s => ({ blocksByChat: { ...s.blocksByChat, [id]: Array.from({ length: 32 }, (_, i) => ({ kind: 'user', id: 'vg-tail-' + i, text: 'Fila ' + i + '\n' + 'Contenido largo de prueba. '.repeat(20), time: '12:00', attachments: [] })) } })); });
       await page.waitForTimeout(CONFIG.settleMs);
-      await page.evaluate(() => { const element = document.querySelector('[data-pane-tab-id] .overflow-y-auto'); element.scrollTop = element.scrollHeight; element.dispatchEvent(new Event('scroll')); });
+      await page.evaluate(() => { const element = document.querySelector('[data-pane-tab-id] [data-chat-scroller]'); element.scrollTop = element.scrollHeight; element.dispatchEvent(new Event('scroll')); });
       await injectPermissionRequest(page, ASK_USER_QUESTION_INPUT, 'vg-tail-question');
       await waitForDockReady(page, '[data-question-dock="true"]');
-      const { gap, footerPx } = await page.evaluate(() => { const element = document.querySelector('[data-pane-tab-id] .overflow-y-auto'); return { gap: element.scrollHeight - element.scrollTop - element.clientHeight, footerPx: document.querySelector('[data-pane-tab-id] [data-chat-footer]')?.getBoundingClientRect().height ?? null }; });
-      return { ok: gap <= 3, detail: JSON.stringify({ bottomGap: gap, footerPx }) };
+      // Espera por condición (V7): el re-anclaje sigue al dock y al pie mientras animan; se da por perdido al agotar el plazo.
+      const alFondo = await page
+        .waitForFunction(() => { const element = document.querySelector('[data-pane-tab-id] [data-chat-scroller]'); return element !== null && element.scrollHeight - element.scrollTop - element.clientHeight <= 3; }, null, { timeout: CONFIG.actionTimeoutMs })
+        .then(() => true, () => false);
+      const medido = await page.evaluate(() => {
+        const element = document.querySelector('[data-pane-tab-id] [data-chat-scroller]');
+        return {
+          bottomGap: element === null ? null : Math.round(element.scrollHeight - element.scrollTop - element.clientHeight),
+          footerPx: document.querySelector('[data-pane-tab-id] [data-chat-footer]')?.getBoundingClientRect().height ?? null,
+          dockPx: document.querySelector('[data-question-dock="true"]')?.getBoundingClientRect().height ?? null,
+        };
+      });
+      return { ok: alFondo && medido.bottomGap !== null && medido.bottomGap <= 3, detail: JSON.stringify({ alFondo, ...medido }) };
     },
   },
   {
