@@ -2257,6 +2257,7 @@ export interface MessageValues {
   readonly "tasks.deliverable.noPreview": never;
   readonly "tasks.deliverable.notFile": never;
   readonly "tasks.deliverable.ok": never;
+  readonly "tasks.deliverable.okHint": never;
   readonly "tasks.deliverable.open": never;
   readonly "tasks.deliverable.outsideScope": never;
   readonly "tasks.deliverable.preview": never;

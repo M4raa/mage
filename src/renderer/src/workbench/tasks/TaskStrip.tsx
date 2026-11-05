@@ -43,7 +43,7 @@ function StripBody({ task, tabId }: { readonly task: TaskRecord; readonly tabId:
       <div className="flex items-center gap-[8px]">
         <button onClick={() => setOpen(!open)} aria-expanded={open} aria-label={open ? t('tasks.strip.collapse') : t('tasks.strip.expand')} className="text-mg-icon hover:text-mg-body">{open ? '▾' : '▸'}</button>
         <span className="min-w-0 flex-1 truncate font-semibold">{taskTitle(task.goal)}</span>
-        <span data-task-phase={phase} className="text-[10.5px] text-mg-muted">{t(`tasks.phase.${phase}`)}</span>
+        <span data-task-phase={phase} title={phase === 'verified' ? t('tasks.deliverable.okHint') : undefined} className="text-[10.5px] text-mg-muted">{t(`tasks.phase.${phase}`)}</span>
         {plan !== null && <span className="text-[10.5px] text-mg-muted">{done}/{plan.length}</span>}
       </div>
       {open && (
@@ -114,7 +114,7 @@ function DeliverableRow({ task, deliverable }: { readonly task: TaskRecord; read
       <div className="flex items-baseline gap-[8px]">
         <span className="font-semibold">{name}</span>
         <span className="min-w-0 flex-1 truncate text-[10.5px] text-mg-muted" title={dir}>{dir}</span>
-        <span className={ok ? 'text-mg-body' : 'text-mg-danger'}>{t(`tasks.deliverable.${deliverable.status}`)}</span>
+        <span title={ok ? t('tasks.deliverable.okHint') : undefined} className={ok ? 'text-mg-body' : 'text-mg-danger'}>{t(`tasks.deliverable.${deliverable.status}`)}</span>
       </div>
       {ok && deliverable.bytes !== null && deliverable.modifiedAtMs !== null && (
         <span className="text-[10.5px] text-mg-muted">{formatSize(deliverable.bytes)} · {formatDateTime(deliverable.modifiedAtMs)}</span>
