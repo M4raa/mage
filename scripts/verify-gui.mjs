@@ -5075,6 +5075,12 @@ const CHECKS = [
       const botones = page.locator('[data-table-copy]');
       await botones.nth(1).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
       const tipos = await botones.evaluateAll((nodes) => nodes.map((n) => n.getAttribute('data-table-copy')));
+      // La barra vive fuera de la tabla (V7): su borde inferior no baja del borde superior de la tabla.
+      const solape = await page.evaluate(() => {
+        const barra = document.querySelector('[data-table-copy]')?.parentElement?.getBoundingClientRect() ?? null;
+        const tabla = document.querySelector('[data-block="agent"] table')?.getBoundingClientRect() ?? null;
+        return barra === null || tabla === null ? null : Math.round(barra.bottom - tabla.top);
+      });
       await page.evaluate(() => {
         window.__vgQ04Copiados = [];
         Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async (t) => void window.__vgQ04Copiados.push(t) } });
@@ -5084,8 +5090,8 @@ const CHECKS = [
         await page.locator('[data-table-copy="markdown"]').first().click();
         await page.waitForTimeout(CONFIG.settleMs);
         const copiados = await page.evaluate(() => window.__vgQ04Copiados);
-        const ok = tipos.join(',') === 'markdown,tsv' && copiados[0] === 'a\tb\n1\t2' && copiados[1] === tabla;
-        return { ok, detail: JSON.stringify({ tipos, copiados }) };
+        const ok = tipos.join(',') === 'markdown,tsv' && copiados[0] === 'a\tb\n1\t2' && copiados[1] === tabla && solape !== null && solape <= 0;
+        return { ok, detail: JSON.stringify({ tipos, copiados, solape }) };
       } finally {
         await page.evaluate(() => {
           delete navigator.clipboard;
