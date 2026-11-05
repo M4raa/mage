@@ -200,19 +200,19 @@ function TableNode({ block }: { readonly block: Extract<MdBlock, { type: 'table'
     [block],
   );
   return (
-    <div className="group relative">
+    <div className="group">
       <TableCopyButtons header={cells.header} rows={cells.rows} />
       <TableGrid block={block} />
     </div>
   );
 }
 
-// Dos botones pequenos arriba a la derecha, visibles con el raton encima o el foco dentro (#44).
+// Dos botones pequeños encima de la tabla, a la derecha, visibles con el ratón encima o el foco dentro (#44).
 function TableCopyButtons({ header, rows }: { readonly header: readonly string[]; readonly rows: readonly (readonly string[])[] }): React.JSX.Element {
   const t = useT();
-  // Oculta (`opacity-0`) no recibe el puntero: si no, tapaba y se comía los clics de una tabla pequeña (V6, Q04).
+  // En su propia franja, encima de la tabla: un control no puede tapar el contenido al que sirve (V7, Q04). Oculta no recibe el puntero.
   return (
-    <div className="pointer-events-none absolute right-[4px] top-[4px] z-10 flex gap-[2px] rounded-[5px] bg-mg-block opacity-0 group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100">
+    <div className="pointer-events-none flex justify-end gap-[2px] pb-[2px] opacity-0 group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100">
       <TableCopyButton kind="markdown" label={t('chat.table.copyMarkdown')} text={() => tableToMarkdown(header, rows)} />
       <TableCopyButton kind="tsv" label={t('chat.table.copyTsv')} text={() => tableToTsv(header, rows)} />
     </div>

@@ -1,7 +1,7 @@
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
-import { describe, expect, it } from 'vitest';
-import { accountsHomeFrom, decideTestHome, TEST_HOME_ENV } from './testHome';
+import { describe, expect, it, vi } from 'vitest';
+import { accountsFetchFor, accountsHomeFrom, decideTestHome, TEST_HOME_ENV } from './testHome';
 
 const abs = resolve(tmpdir(), 'vg-home');
 
@@ -29,5 +29,24 @@ describe('accountsHomeFrom', () => {
   });
   it('accountsHomeFrom_sinPrueba_elReal', () => {
     expect(accountsHomeFrom(null, '/real')).toBe('/real');
+  });
+});
+
+describe('accountsFetchFor', () => {
+  it('accountsFetchFor_sinHomeDePrueba_devuelveLaReal', () => {
+    const real = vi.fn();
+    expect(accountsFetchFor(null, real)).toBe(real);
+  });
+  it('accountsFetchFor_conHomeDePrueba_rechazaConLaUrl', async () => {
+    const real = vi.fn();
+    const closed = accountsFetchFor('C:\\prueba', real);
+    await expect(closed('https://api.anthropic.com/api/oauth/usage')).rejects.toThrow(
+      new Error('Red cerrada con MAGE_TEST_HOME: https://api.anthropic.com/api/oauth/usage'),
+    );
+    expect(real).not.toHaveBeenCalled();
+  });
+  it('accountsFetchFor_conHomeDePruebaYUrlObjeto_rechazaConLaUrl', async () => {
+    const closed = accountsFetchFor('C:\\prueba', vi.fn());
+    await expect(closed(new URL('https://example.invalid/x'))).rejects.toThrow(/https:\/\/example\.invalid\/x$/);
   });
 });

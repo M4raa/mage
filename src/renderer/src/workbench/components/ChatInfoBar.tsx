@@ -57,7 +57,7 @@ export function ChatInfoBar(): React.JSX.Element | null {
       <span
         data-tip={privacy.title}
         aria-label={privacy.title}
-        className="inline-flex max-w-[280px] cursor-help items-center gap-[5px] rounded-full border border-mg-border-subtle px-[8px] py-[2px]"
+        className="inline-flex min-w-0 max-w-[280px] cursor-help items-center gap-[5px] rounded-full border border-mg-border-subtle px-[8px] py-[2px]"
       >
         <Icon name={privacy.icon} size={12} />
         <span className="truncate">{privacy.label}</span>

@@ -20,3 +20,17 @@ export function decideTestHome(input: TestHomeInput): string | null {
 export function accountsHomeFrom(testHome: string | null, realHome: string): string {
   return testHome ?? realHome;
 }
+
+type Fetch = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
+
+// Con el HOME de prueba las cuentas son de prueba: su token nunca sale a la red. El uso y la renovación reciben un
+// `fetch` que rechaza SIN conectar (y lo dice); sin HOME de prueba, el real.
+export function accountsFetchFor(testHome: string | null, realFetch: Fetch): Fetch {
+  if (testHome === null) return realFetch;
+  return (input) => Promise.reject(new Error(`Red cerrada con ${TEST_HOME_ENV}: ${requestUrl(input)}`));
+}
+
+function requestUrl(input: string | URL | Request): string {
+  if (typeof input === 'string') return input;
+  return input instanceof URL ? input.href : input.url;
+}

@@ -194,7 +194,7 @@ function AlertList({ alerts }: { readonly alerts: readonly WidgetAlert[] }): Rea
       {alerts.map((alert, i) => (
         <div
           key={i}
-          className="flex items-center gap-[6px] rounded-[6px] px-[8px] py-[5px] text-[10.5px]"
+          className="flex min-w-0 items-center gap-[6px] rounded-[6px] px-[8px] py-[5px] text-[10.5px]"
           style={{ background: 'var(--color-mg-code)', color: SEVERITY_COLOR[alert.severity] }}
         >
           <Icon name={alert.severity === 'critical' ? 'error' : 'warning'} size={12} />
@@ -232,12 +232,12 @@ function WidgetRowView({ row, actions }: { readonly row: WidgetRow; readonly act
       <button
         onClick={() => actions.open(row)}
         title={t('app.widget.goToAgent', { title, account: row.accountAlias })}
-        className="flex items-center gap-[8px] text-left"
+        className="flex min-w-0 items-center gap-[8px] text-left"
       >
         <span className="h-[8px] w-[8px] shrink-0 rounded-[2px]" style={{ background: row.accentBase }} />
         <span className="flex min-w-0 flex-1 flex-col">
-          <span className="truncate text-[11px] text-mg-body">{title}</span>
-          <span className="truncate text-[9.5px] text-mg-muted">{row.accountAlias}</span>
+          <span className="truncate text-[11px] text-mg-body" title={title}>{title}</span>
+          <span className="truncate text-[9.5px] text-mg-muted" title={row.accountAlias}>{row.accountAlias}</span>
         </span>
         <StatusChip status={row.status} />
       </button>
@@ -308,7 +308,7 @@ function RequestBody({ request }: { readonly request: WidgetRequestView }): Reac
   return (
     <>
       <span className="text-mg-body">{t('app.widget.permissionAsks', { tool: request.tool })}</span>
-      {request.detail !== null && <span className="truncate font-mono text-[9.5px] text-mg-muted">{request.detail}</span>}
+      {request.detail !== null && <span className="truncate font-mono text-[9.5px] text-mg-muted" title={request.detail}>{request.detail}</span>}
     </>
   );
 }

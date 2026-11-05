@@ -176,7 +176,7 @@ function RowMeta({ row, account, timeText }: { readonly row: SidebarRow; readonl
       {account !== undefined && (
         <>
           <span aria-hidden="true" className="h-[7px] w-[7px] flex-none rounded-full" style={{ background: account.accent.base }} />
-          <span className="truncate">{account.apiBilled ? `${account.alias} · ${apiBilledLabel()}` : account.alias}</span>
+          <span className="truncate" title={account.apiBilled ? `${account.alias} · ${apiBilledLabel()}` : account.alias}>{account.apiBilled ? `${account.alias} · ${apiBilledLabel()}` : account.alias}</span>
           <span aria-hidden="true">·</span>
         </>
       )}

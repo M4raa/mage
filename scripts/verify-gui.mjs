@@ -56,9 +56,11 @@ import { runPerfBaseline } from './lib/perfBaseline.mjs';
 import { writeLongTranscript } from './lib/longTranscriptFixture.mjs';
 import { runMageBench } from './lib/benchMage.mjs';
 import { appendDomText } from './lib/domTextDump.mjs';
+import { classifyTextFit, collectTextFit } from './lib/textFit.mjs';
 import { redactLocalUser, redactUserData } from './lib/redactUserData.mjs';
-import { cleanupProfile, credentialDigest } from '../spike/f0-profile-cleanup.mjs';
-import { claudeUsage, codexRateLimits, guardedUsage, prepareCodexHome } from '../spike/bench/headless.mjs';
+import { seededAppSettings, seedTestAccounts } from './lib/profileSeed.mjs';
+import { cleanupProfile } from '../spike/f0-profile-cleanup.mjs';
+import { benchApiKey, changedFiles, copiesUnder, credentialFingerprints, userCredentialFiles } from './lib/benchCredentials.mjs';
 
 const repoRoot = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 // Version de Mage que corre (la de package.json): la usan el seed de ajustes y las notas de version.
@@ -96,6 +98,9 @@ const CONFIG = {
 // fichero es un .mjs que corre en node, sin el pipeline de TS: si alguien cambia el catalogo, el aviso o
 // una etiqueta y no toca esto, la comprobacion lo canta en su medida en vez de pasar en verde.
 const MODAL = '[role="dialog"][aria-modal="true"]';
+// F3.6: textos largos de prueba (inglés, como la interfaz): una frase larga y un «token» sin espacios (una ruta).
+const F36_LONG_TEXT = 'Quarterly reconciliation of the international subsidiaries general ledger, including every supporting document and the follow-up notes from the external auditors';
+const F36_LONG_TOKEN = 'C:\\Projects\\InternationalSubsidiaries\\QuarterlyReconciliation\\SupportingDocumentation\\AuditorsFollowUp\\final-report-v12-reviewed-and-approved.md';
 const NEW_TAB_DIALOG = '[role="dialog"][aria-labelledby="newtab-title"]';
 // Etiquetas de los campos del dialogo de nueva conversacion (el <label> envuelve a su control).
 const NEW_TAB_FIELD = { provider: 'PROVEEDOR', model: 'MODELO' };
@@ -211,6 +216,7 @@ function measureLibraryCards(page) {
       licencia: (skill?.textContent ?? '').includes('MIT'),
       codexBloqueo: skill?.querySelector('[data-library-engine="codex"]')?.getAttribute('data-library-block') ?? null,
       exaClaude: card('exa-mcp')?.querySelector('[data-library-engine="claude"]')?.getAttribute('data-library-block') ?? null,
+      exaClaveEnBoveda: card('exa-mcp')?.querySelector('[data-library-needs-key]') != null,
       eccEjecutaCodigo: card('ecc')?.querySelector('[data-library-runs-code]') != null,
     };
   }, LIBRARY_SKILL_ID);
@@ -897,7 +903,7 @@ const CHECKS = [
         await fila.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
       } catch {
         const cuentas = await page.evaluate(() => (window.__mageDev?.store.getState().accounts ?? []).filter((a) => a.loginStatus === 'logged_in').length);
-        if (cuentas === 0) return { ok: true, detail: 'ninguna cuenta con login: no hay CLI (falso) que sondear, no aplicable' };
+        if (cuentas === 0) return { ok: false, notRunnable: HARNESS_HOME === os.homedir(), detail: HARNESS_HOME === os.homedir() ? 'HOME real sin ninguna cuenta con login: no ejecutable' : 'el HOME de prueba no tiene cuentas con login: falló la siembra' };
         return { ok: false, detail: `con ${cuentas} cuentas con login no aparece la fila ${FAKE_MCP_AUTH_SERVER}` };
       }
       const estadoAntes = await fila.locator('[data-mcp-status]').innerText();
@@ -971,7 +977,7 @@ const CHECKS = [
       const grupo = (await recien.count()) > 0 ? recien.first() : page.locator('[data-mcp-connector-group]').first();
       if ((await grupo.count()) === 0) {
         await page.locator('[data-mcp-tab="servers"]').click();
-        return { ok: true, detail: 'sin cuentas de Claude: no hay grupos de conectores, no aplicable' };
+        return { ok: false, notRunnable: HARNESS_HOME === os.homedir(), detail: HARNESS_HOME === os.homedir() ? 'HOME real sin cuentas de Claude: no ejecutable' : 'el HOME de prueba no tiene cuentas de Claude: falló la siembra' };
       }
       return measureClaudeConnectorGroup(page, { userDataDir }, grupo);
     },
@@ -4256,7 +4262,7 @@ const CHECKS = [
         const s = window.__mageDev.store.getState();
         return s.accounts.find((a) => a.id !== s.activeAccountId && a.loginStatus === 'logged_in')?.id ?? null;
       });
-      if (destino === null) return { ok: true, detail: 'sin otra cuenta con login: no aplicable' };
+      if (destino === null) return { ok: false, notRunnable: HARNESS_HOME === os.homedir(), detail: HARNESS_HOME === os.homedir() ? 'HOME real sin otra cuenta con login: no ejecutable' : 'el HOME de prueba no tiene una segunda cuenta con login: falló la siembra' };
       await openTemporaryConversation(page);
       const tabId = await page.evaluate(() => window.__mageDev.store.getState().activeTabId);
       const indice = await page.evaluate((id) => window.__mageDev.store.getState().accounts.findIndex((a) => a.id === id), destino);
@@ -5075,6 +5081,12 @@ const CHECKS = [
       const botones = page.locator('[data-table-copy]');
       await botones.nth(1).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
       const tipos = await botones.evaluateAll((nodes) => nodes.map((n) => n.getAttribute('data-table-copy')));
+      // La barra vive fuera de la tabla (V7): su borde inferior no baja del borde superior de la tabla.
+      const solape = await page.evaluate(() => {
+        const barra = document.querySelector('[data-table-copy]')?.parentElement?.getBoundingClientRect() ?? null;
+        const tabla = document.querySelector('[data-block="agent"] table')?.getBoundingClientRect() ?? null;
+        return barra === null || tabla === null ? null : Math.round(barra.bottom - tabla.top);
+      });
       await page.evaluate(() => {
         window.__vgQ04Copiados = [];
         Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async (t) => void window.__vgQ04Copiados.push(t) } });
@@ -5084,8 +5096,8 @@ const CHECKS = [
         await page.locator('[data-table-copy="markdown"]').first().click();
         await page.waitForTimeout(CONFIG.settleMs);
         const copiados = await page.evaluate(() => window.__vgQ04Copiados);
-        const ok = tipos.join(',') === 'markdown,tsv' && copiados[0] === 'a\tb\n1\t2' && copiados[1] === tabla;
-        return { ok, detail: JSON.stringify({ tipos, copiados }) };
+        const ok = tipos.join(',') === 'markdown,tsv' && copiados[0] === 'a\tb\n1\t2' && copiados[1] === tabla && solape !== null && solape <= 0;
+        return { ok, detail: JSON.stringify({ tipos, copiados, solape }) };
       } finally {
         await page.evaluate(() => {
           delete navigator.clipboard;
@@ -5983,94 +5995,99 @@ const CHECKS = [
       return { ok, detail: JSON.stringify(medido) };
     },
   },
-  // Q09 (#31, F5.6): las referencias del chat (F0.4, §3.4…) se enlazan a encabezados UNICOS de los
-  // documentos asociados. Las tres comprobaciones comparten UNA conversacion temporal con dos .md
-  // escritos por el harness y un mensaje del agente con las referencias; la tercera la deshace. Se
-  // inyecta por `handleEvent` (como 2.10) y por `setState` (el mensaje): ningun turno, ningun CLI.
+  // Q09 (#31, F5.6): las referencias del chat (F0.4, §3.4…) se enlazan a encabezados UNICOS de los documentos asociados. Cada comprobación monta SU conversación temporal con dos .md escritos por el harness y un mensaje del agente con las referencias: runGuiCheck restaura los stores al acabar cada caso, así que nada se comparte entre ellas (V7). Se inyecta por `handleEvent` y `setState`: ningún turno, ningún CLI.
   ...(() => {
-    const q09 = { montado: null, fallo: null };
     const REFERENCIA = '[data-plan-ref="F0.4"]';
+    // Monta la conversación de Q09 y espera a que la referencia sea un enlace. Devuelve las rutas para borrarlas al final.
+    const montarQ09 = async (page) => {
+      await openTemporaryConversation(page);
+      const cwd = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return s.tabs.find((t) => t.id === s.activeTabId)?.cwd ?? null;
+      });
+      if (cwd === null) throw new Error('la conversacion temporal no tiene cwd');
+      const planPath = path.join(cwd, 'plan.md');
+      const otroPath = path.join(cwd, 'otro.md');
+      fs.writeFileSync(planPath, '## F0.4 Arranque\n\n## 3.4 Identidad\n\n### H2 uno\n', 'utf-8');
+      fs.writeFileSync(otroPath, '### H2 dos\n', 'utf-8');
+      await page.evaluate(
+        ({ plan, otro }) => {
+          const dev = window.__mageDev;
+          const tabId = dev.store.getState().activeTabId;
+          const sessionId = 'verify-q09-session';
+          dev.store.setState((state) => ({ sessionIdByChat: { ...state.sessionIdByChat, [tabId]: sessionId } }));
+          const handle = (event) => dev.store.getState().handleEvent(sessionId, event);
+          [['tu-q09-plan', plan], ['tu-q09-otro', otro]].forEach(([id, ruta]) => {
+            handle({ kind: 'tool_use', tool: { toolUseId: id, toolName: 'Write', input: { file_path: ruta } } });
+            handle({ kind: 'tool_result', result: { toolUseId: id, isError: false, output: 'File created successfully', durationMs: 3, file: { path: ruta, content: '' } } });
+          });
+          // Un turno real acaba con `result`: sin él la pestaña sigue en `streaming` y el índice de referencias no se construye (V6).
+          handle({ kind: 'result', result: { isError: false, subtype: 'success', numTurns: 1 } });
+          const agente = { kind: 'agent', id: 'q09-agent', runs: [{ code: false, text: 'Mira F0.4, §3.4, H2 y `F0.4`.' }], streaming: false };
+          dev.store.setState((state) => ({ blocksByChat: { ...state.blocksByChat, [tabId]: [...(state.blocksByChat[tabId] ?? []), agente] } }));
+        },
+        { plan: planPath, otro: otroPath },
+      );
+      const fallo = await page.waitForSelector(REFERENCIA, { timeout: CONFIG.actionTimeoutMs }).then(() => null, (error) => error.message);
+      return { planPath, otroPath, fallo };
+    };
+    const borrarQ09 = (montado) => {
+      fs.rmSync(montado.planPath, { force: true });
+      fs.rmSync(montado.otroPath, { force: true });
+    };
     return [
       {
         name: 'Q09: solo se enlazan las referencias unicas y fuera de codigo',
         async run(page) {
-          const previoStore = await page.evaluate(() => {
-            const s = window.__mageDev.store.getState();
-            return { tabs: s.tabs, activeTabId: s.activeTabId, splitLayout: s.splitLayout, sessionIdByChat: s.sessionIdByChat, blocksByChat: s.blocksByChat };
-          });
-          await openTemporaryConversation(page);
-          const cwd = await page.evaluate(() => {
-            const s = window.__mageDev.store.getState();
-            return s.tabs.find((t) => t.id === s.activeTabId)?.cwd ?? null;
-          });
-          if (cwd === null) throw new Error('la conversacion temporal no tiene cwd');
-          const planPath = path.join(cwd, 'plan.md');
-          const otroPath = path.join(cwd, 'otro.md');
-          fs.writeFileSync(planPath, '## F0.4 Arranque\n\n## 3.4 Identidad\n\n### H2 uno\n', 'utf-8');
-          fs.writeFileSync(otroPath, '### H2 dos\n', 'utf-8');
-          q09.montado = { previoStore, planPath, otroPath };
-          await page.evaluate(
-            ({ plan, otro }) => {
-              const dev = window.__mageDev;
-              const tabId = dev.store.getState().activeTabId;
-              const sessionId = 'verify-q09-session';
-              dev.store.setState((state) => ({ sessionIdByChat: { ...state.sessionIdByChat, [tabId]: sessionId } }));
-              const handle = (event) => dev.store.getState().handleEvent(sessionId, event);
-              [['tu-q09-plan', plan], ['tu-q09-otro', otro]].forEach(([id, ruta]) => {
-                handle({ kind: 'tool_use', tool: { toolUseId: id, toolName: 'Write', input: { file_path: ruta } } });
-                handle({ kind: 'tool_result', result: { toolUseId: id, isError: false, output: 'File created successfully', durationMs: 3, file: { path: ruta, content: '' } } });
-              });
-              // Un turno real acaba con `result`: sin él la pestaña sigue en `streaming` y el índice de referencias no se construye (V6).
-              handle({ kind: 'result', result: { isError: false, subtype: 'success', numTurns: 1 } });
-              const agente = { kind: 'agent', id: 'q09-agent', runs: [{ code: false, text: 'Mira F0.4, §3.4, H2 y `F0.4`.' }], streaming: false };
-              dev.store.setState((state) => ({ blocksByChat: { ...state.blocksByChat, [tabId]: [...(state.blocksByChat[tabId] ?? []), agente] } }));
-            },
-            { plan: planPath, otro: otroPath },
-          );
-          await page.waitForSelector(REFERENCIA, { timeout: CONFIG.actionTimeoutMs }).catch((error) => {
-            q09.fallo = error.message;
-          });
-          const medido = await page.evaluate(() => ({
-            f04: document.querySelectorAll('[data-plan-ref="F0.4"]').length,
-            seccion: document.querySelectorAll('[data-plan-ref="§3.4"]').length,
-            ambigua: document.querySelectorAll('[data-plan-ref="H2"]').length,
-            // El `F0.4` de dentro de codigo sigue siendo texto: ningun boton vive dentro de un <code>.
-            enCodigo: document.querySelectorAll('code [data-plan-ref], pre [data-plan-ref]').length,
-          }));
-          const ok = q09.fallo === null && medido.f04 === 1 && medido.seccion === 1 && medido.ambigua === 0 && medido.enCodigo === 0;
-          return { ok, detail: JSON.stringify({ ...medido, fallo: q09.fallo }) };
+          const montado = await montarQ09(page);
+          try {
+            const medido = await page.evaluate(() => ({
+              f04: document.querySelectorAll('[data-plan-ref="F0.4"]').length,
+              seccion: document.querySelectorAll('[data-plan-ref="§3.4"]').length,
+              ambigua: document.querySelectorAll('[data-plan-ref="H2"]').length,
+              // El `F0.4` de dentro de codigo sigue siendo texto: ningun boton vive dentro de un <code>.
+              enCodigo: document.querySelectorAll('code [data-plan-ref], pre [data-plan-ref]').length,
+            }));
+            const ok = montado.fallo === null && medido.f04 === 1 && medido.seccion === 1 && medido.ambigua === 0 && medido.enCodigo === 0;
+            return { ok, detail: JSON.stringify({ ...medido, fallo: montado.fallo }) };
+          } finally {
+            borrarQ09(montado);
+          }
         },
       },
       {
         name: 'Q09: pulsar abre Ficheros en el punto y lo resalta',
         async run(page) {
-          if (q09.montado === null) return { ok: false, detail: 'la comprobacion anterior no monto la conversacion' };
-          await page.locator(REFERENCIA).click();
-          const resaltado = await page
-            .waitForFunction(
-              () => document.querySelector('[data-files-panel="true"] [data-anchor-highlight="true"]')?.textContent?.trim() ?? null,
-              null,
-              { timeout: CONFIG.actionTimeoutMs },
-            )
-            .then((handle) => handle.jsonValue())
-            .catch(() => null);
-          const medido = await page.evaluate(() => {
-            const panel = document.querySelector('[data-files-panel="true"]');
-            const abierto = [...(panel?.querySelectorAll('[data-created-file]') ?? [])].find((n) => n.getAttribute('aria-expanded') === 'true');
-            return { panel: panel !== null, abierto: abierto?.getAttribute('data-created-file') ?? null };
-          });
-          const ok = medido.panel === true && (medido.abierto ?? '').endsWith('plan.md') && (resaltado ?? '').startsWith('F0.4');
-          return { ok, detail: JSON.stringify({ ...medido, resaltado }) };
+          const montado = await montarQ09(page);
+          try {
+            if (montado.fallo !== null) return { ok: false, detail: JSON.stringify({ fallo: montado.fallo }) };
+            await page.locator(REFERENCIA).click();
+            const resaltado = await page
+              .waitForFunction(
+                () => document.querySelector('[data-files-panel="true"] [data-anchor-highlight="true"]')?.textContent?.trim() ?? null,
+                null,
+                { timeout: CONFIG.actionTimeoutMs },
+              )
+              .then((handle) => handle.jsonValue())
+              .catch(() => null);
+            const medido = await page.evaluate(() => {
+              const panel = document.querySelector('[data-files-panel="true"]');
+              const abierto = [...(panel?.querySelectorAll('[data-created-file]') ?? [])].find((n) => n.getAttribute('aria-expanded') === 'true');
+              return { panel: panel !== null, abierto: abierto?.getAttribute('data-created-file') ?? null };
+            });
+            const ok = medido.panel === true && (medido.abierto ?? '').endsWith('plan.md') && (resaltado ?? '').startsWith('F0.4');
+            return { ok, detail: JSON.stringify({ ...medido, resaltado }) };
+          } finally {
+            borrarQ09(montado);
+          }
         },
       },
       {
         name: 'Q09: si el punto desaparece, se dice',
         async run(page) {
-          const montado = q09.montado;
-          if (montado === null) return { ok: false, detail: 'la comprobacion anterior no monto la conversacion' };
+          const montado = await montarQ09(page);
           try {
-            // Espera a que el resaltado de la pulsacion anterior se apague (2 s), para que lo que se mida sea de ESTA.
-            await page.waitForFunction(() => document.querySelector('[data-anchor-highlight="true"]') === null, null, { timeout: CONFIG.actionTimeoutMs });
+            if (montado.fallo !== null) return { ok: false, detail: JSON.stringify({ fallo: montado.fallo }) };
             fs.writeFileSync(montado.planPath, '## 3.4 Identidad\n\n### H2 uno\n', 'utf-8');
             await page.locator(REFERENCIA).click();
             await page.waitForSelector('[data-files-panel="true"] [data-anchor-gone="true"]', { timeout: CONFIG.actionTimeoutMs });
@@ -6081,11 +6098,7 @@ const CHECKS = [
             const ok = medido.aviso === 'Ese punto ya no está en el documento' && medido.resaltados === 0;
             return { ok, detail: JSON.stringify(medido) };
           } finally {
-            fs.rmSync(montado.planPath, { force: true });
-            fs.rmSync(montado.otroPath, { force: true });
-            await page.evaluate((estado) => window.__mageDev.store.setState(estado), montado.previoStore);
-            await page.waitForTimeout(CONFIG.settleMs);
-            q09.montado = null;
+            borrarQ09(montado);
           }
         },
       },
@@ -8079,11 +8092,22 @@ const CHECKS = [
       await openTemporaryConversation(page);
       await page.evaluate(() => { const store = window.__mageDev.store; const id = store.getState().activeTabId; store.setState(s => ({ blocksByChat: { ...s.blocksByChat, [id]: Array.from({ length: 32 }, (_, i) => ({ kind: 'user', id: 'vg-tail-' + i, text: 'Fila ' + i + '\n' + 'Contenido largo de prueba. '.repeat(20), time: '12:00', attachments: [] })) } })); });
       await page.waitForTimeout(CONFIG.settleMs);
-      await page.evaluate(() => { const element = document.querySelector('[data-pane-tab-id] .overflow-y-auto'); element.scrollTop = element.scrollHeight; element.dispatchEvent(new Event('scroll')); });
+      await page.evaluate(() => { const element = document.querySelector('[data-pane-tab-id] [data-chat-scroller]'); element.scrollTop = element.scrollHeight; element.dispatchEvent(new Event('scroll')); });
       await injectPermissionRequest(page, ASK_USER_QUESTION_INPUT, 'vg-tail-question');
       await waitForDockReady(page, '[data-question-dock="true"]');
-      const { gap, footerPx } = await page.evaluate(() => { const element = document.querySelector('[data-pane-tab-id] .overflow-y-auto'); return { gap: element.scrollHeight - element.scrollTop - element.clientHeight, footerPx: document.querySelector('[data-pane-tab-id] [data-chat-footer]')?.getBoundingClientRect().height ?? null }; });
-      return { ok: gap <= 3, detail: JSON.stringify({ bottomGap: gap, footerPx }) };
+      // Espera por condición (V7): el re-anclaje sigue al dock y al pie mientras animan; se da por perdido al agotar el plazo.
+      const alFondo = await page
+        .waitForFunction(() => { const element = document.querySelector('[data-pane-tab-id] [data-chat-scroller]'); return element !== null && element.scrollHeight - element.scrollTop - element.clientHeight <= 3; }, null, { timeout: CONFIG.actionTimeoutMs })
+        .then(() => true, () => false);
+      const medido = await page.evaluate(() => {
+        const element = document.querySelector('[data-pane-tab-id] [data-chat-scroller]');
+        return {
+          bottomGap: element === null ? null : Math.round(element.scrollHeight - element.scrollTop - element.clientHeight),
+          footerPx: document.querySelector('[data-pane-tab-id] [data-chat-footer]')?.getBoundingClientRect().height ?? null,
+          dockPx: document.querySelector('[data-question-dock="true"]')?.getBoundingClientRect().height ?? null,
+        };
+      });
+      return { ok: alFondo && medido.bottomGap !== null && medido.bottomGap <= 3, detail: JSON.stringify({ alFondo, ...medido }) };
     },
   },
   {
@@ -10417,8 +10441,9 @@ const CHECKS = [
         await picker.selectOption(fixtureValue);
         await entry.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
         const fichas = await measureLibraryCards(page);
+        // Desde R, Exa (MCP stdio con clave) se instala: sin bloqueo para Claude y con la línea de la clave en la bóveda.
         const fichasOk = fichas.entradas >= LIBRARY_MIN_ENTRIES && fichas.tipo === 'Skill' && fichas.version && fichas.licencia
-          && fichas.codexBloqueo === 'codexSkillsUnmeasured' && fichas.exaClaude === 'needsSecrets' && fichas.eccEjecutaCodigo;
+          && fichas.codexBloqueo === 'codexSkillsUnmeasured' && fichas.exaClaude === '' && fichas.exaClaveEnBoveda && fichas.eccEjecutaCodigo;
 
         // Sin efectos: abrir la vista previa y cancelarla no cambia ni un fichero.
         const antes = [...listTreeWithSizes(fixtureRoot), '--', ...listTreeWithSizes(capabilitiesRoot)];
@@ -10641,6 +10666,172 @@ const CHECKS = [
       }
     },
   },
+  // --- F3.6: textos largos con la interfaz en inglés (carril Y) ------------------------------------------
+  //
+  // Miden desbordes, cortes sin elipsis y solapes (`scripts/lib/textFit.mjs`). Ninguna pulsa Enter en el prompt ni
+  // lanza un CLI. Van antes del turno mínimo, que sigue siendo la última de la lista.
+  {
+    name: 'F3.6 (en): pestañas, split y prompt con textos largos',
+    state: { tabs: 1 },
+    async run(page) {
+      return withEnglish(page, async () => {
+        await openTemporaryConversation(page);
+        await page.evaluate(({ title, cwd }) => {
+          const store = window.__mageDev.store;
+          store.setState((s) => ({ tabs: s.tabs.map((t) => (t.id === s.activeTabId ? { ...t, title, cwd } : t)) }));
+          const base = store.getState().tabs.find((t) => t.id === store.getState().activeTabId);
+          store.setState({ tabs: [{ ...base, id: 'vg-f36-a' }, { ...base, id: 'vg-f36-b' }], activeTabId: 'vg-f36-a', splitLayout: { kind: 'split', direction: 'row', ratio: 0.5, a: { kind: 'leaf', tabIds: ['vg-f36-a'], activeTabId: 'vg-f36-a' }, b: { kind: 'leaf', tabIds: ['vg-f36-b'], activeTabId: 'vg-f36-b' } } });
+        }, { title: F36_LONG_TEXT, cwd: F36_LONG_TOKEN });
+        await page.locator('[data-pane-tab-id="vg-f36-a"] .cm-content').focus();
+        await page.keyboard.type(`${F36_LONG_TEXT} ${F36_LONG_TOKEN}`);
+        await page.waitForTimeout(CONFIG.settleMs);
+        return textFitOutcome({
+          tabs: await textFitProblems(page, '[role="tablist"]'),
+          panelA: await textFitProblems(page, '[data-pane-tab-id="vg-f36-a"]'),
+          panelB: await textFitProblems(page, '[data-pane-tab-id="vg-f36-b"]'),
+          prompt: await textFitProblems(page, '[data-pane-tab-id="vg-f36-a"] [data-prompt-editor]'),
+          barraDeEstado: await textFitProblems(page, '[data-status-bar]'),
+        });
+      });
+    },
+  },
+  {
+    // La tabla tiene su propio scroll horizontal: un desborde recortado por su contenedor no cuenta (`clippedByAncestor`).
+    name: 'F3.6 (en): tabla ancha con celdas largas',
+    state: { tabs: 1 },
+    async run(page) {
+      return withEnglish(page, async () => {
+        const tabla = `| Item | Detail | Notes |\n| --- | --- | --- |\n| ${F36_LONG_TEXT} | ${F36_LONG_TOKEN} | ${F36_LONG_TEXT} |`;
+        await hydrateBlocks(page, [{ kind: 'agent', id: 'vg-f36-table', runs: [{ code: false, text: tabla }], streaming: false }]);
+        await page.locator('[data-block="agent"] table').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        return textFitOutcome({ chat: await textFitProblems(page, '[data-pane-tab-id] [data-chat-scroller]') });
+      });
+    },
+  },
+  {
+    name: 'F3.6 (en): avisos con título y cuerpo largos',
+    async run(page) {
+      return withEnglish(page, async () => {
+        await clearNotifications(page);
+        try {
+          await page.evaluate(({ title, body }) => window.__mageDev.notify({ level: 'error', title, body, source: 'verify' }), { title: `${F36_LONG_TEXT} ${F36_LONG_TOKEN}`, body: F36_LONG_TOKEN });
+          await page.locator('[data-notification-level="error"]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+          await waitForStillBox(page, '[data-notification-level="error"]');
+          return textFitOutcome({ aviso: await textFitProblems(page, '[data-notification-level="error"]') });
+        } finally {
+          await clearNotifications(page);
+        }
+      });
+    },
+  },
+  {
+    name: 'F3.6 (en): lateral con proyecto, conversación y tarea de nombre largo, y su franja',
+    async run(page, { runDir }) {
+      const cuenta = await page.evaluate(() => {
+        const state = window.__mageDev.store.getState();
+        const active = state.accounts.find((account) => account.id === state.activeAccountId);
+        return active === undefined ? null : { id: active.id, providerId: active.providerId };
+      });
+      if (cuenta === null || cuenta.providerId !== 'claude') return { ok: false, notRunnable: true, detail: 'sin cuenta de Claude en el perfil: no ejecutable' };
+      const raiz = path.join(runDir, 'f36-tarea');
+      const trabajo = path.join(raiz, 'trabajo');
+      fs.mkdirSync(trabajo, { recursive: true });
+      const projectId = 'vg-f36-project';
+      let taskId = null;
+      let projectCreated = false;
+      try {
+        return await withEnglish(page, async () => {
+          const creada = await page.evaluate((draft) => window.mage.createTask(draft), {
+            goal: F36_LONG_TEXT, language: 'es', provider: 'claude', accountDir: cuenta.id, folders: [trabajo], documents: [], capabilities: [],
+          });
+          taskId = creada.id;
+          await page.reload();
+          await page.waitForFunction(() => window.__mageDev !== undefined);
+          await page.locator('[role="toolbar"]').first().waitFor({ state: 'attached', timeout: CONFIG.bootTimeoutMs });
+          await page.evaluate(() => window.__mageDev.panelStore.getState().revealPanelById('conversations'));
+          await page.locator(`[data-task-row="${taskId}"]`).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+          projectCreated = true;
+          await page.evaluate(async ({ id, name, title, cwd }) => {
+            const dev = window.__mageDev;
+            await dev.store.getState().saveChatProject({ id, name, instructions: '', cwd: null, sessionIds: ['vg-f36-chat'] });
+            const item = { sessionId: 'vg-f36-chat', configDir: '.claude', cwd, title, privacy: 'shared', updatedAtMs: Date.now(), sizeBytes: 100, isScheduled: false };
+            dev.store.setState((s) => ({ conversationHistory: [item], allConversationHistory: [{ accountId: s.activeAccountId, item }] }));
+          }, { id: projectId, name: F36_LONG_TEXT, title: F36_LONG_TEXT, cwd: F36_LONG_TOKEN });
+          const proyecto = page.locator(`[data-chat-project="${projectId}"]`);
+          await proyecto.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+          await proyecto.locator('[data-project-key]').click();
+          await proyecto.locator('[data-history-session="vg-f36-chat"]').waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+          await waitForStillBox(page, '[data-history-session="vg-f36-chat"]');
+          // La franja sale en la pestaña cuya sesión es la de la tarea: se enlaza una pestaña temporal a una sesión ficticia (no se lanza nada).
+          await openTemporaryConversation(page);
+          await page.evaluate(({ id, sessionId }) => {
+            const dev = window.__mageDev;
+            dev.taskStore.setState((s) => ({ tasks: s.tasks.map((task) => (task.id === id ? { ...task, sessionId } : task)) }));
+            const tabId = dev.store.getState().activeTabId;
+            dev.store.setState((s) => ({ tabs: s.tabs.map((tab) => (tab.id === tabId ? { ...tab, provider: 'claude' } : tab)), sessionIdByChat: { ...s.sessionIdByChat, [tabId]: sessionId } }));
+          }, { id: taskId, sessionId: 'vg-f36-task-session' });
+          await page.locator('[data-task-strip]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+          return textFitOutcome({
+            lateral: await textFitProblems(page, '[data-chat-sidebar]'),
+            tareas: await textFitProblems(page, '[data-tasks-section]'),
+            franja: await textFitProblems(page, '[data-task-strip]'),
+          });
+        });
+      } finally {
+        if (projectCreated) await page.evaluate((id) => window.__mageDev.store.getState().deleteChatProject(id), projectId);
+        if (taskId !== null) await page.evaluate((id) => window.mage.removeTask(id), taskId);
+        fs.rmSync(raiz, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
+      }
+    },
+  },
+  {
+    // La página de prueba solo sirve `/`: una ruta larga da 404, que es justo la dirección larga que se quiere medir.
+    name: 'F3.6 (en): navegador con un título y una dirección largos',
+    async run(page, { userDataDir }) {
+      const pageServer = await startBrowserPageServer();
+      const fake = await startFakeOpenAiServer();
+      let tabId = null;
+      try {
+        return await withEnglish(page, async () => {
+          ({ tabId } = await openRuntimeTab(page, { fake, userDataDir, provider: BROWSER_TURN_PROVIDER, model: QUEUE_TURN_MODEL }));
+          await page.evaluate(({ id, title }) => window.__mageDev.store.getState().renameTab(id, title), { id: tabId, title: F36_LONG_TEXT });
+          const sessionId = await page.evaluate((id) => window.__mageDev.store.getState().ensureSession(id), tabId);
+          await openBrowserInPanel(page, sessionId, `${pageServer.url}${'a'.repeat(180)}`);
+          await page.waitForTimeout(CONFIG.settleMs);
+          return textFitOutcome({ navegador: await textFitProblems(page, '[data-browser-panel]') });
+        });
+      } finally {
+        if (tabId !== null) await page.evaluate((id) => window.__mageDev.store.getState().closeTab(id), tabId);
+        await page.evaluate((id) => window.__mageDev.store.getState().removeCustomProvider(id), BROWSER_TURN_PROVIDER.id);
+        await fake.close();
+        await pageServer.close();
+      }
+    },
+  },
+  {
+    name: 'F3.6 (en): widget con una conversación de título largo',
+    state: { tabs: 1 },
+    async run(page) {
+      try {
+        return await withEnglish(page, async () => {
+          await page.evaluate((title) => window.__mageDev.store.getState().renameTab(window.__mageDev.store.getState().activeTabId, title), F36_LONG_TEXT);
+          await page.evaluate(() => window.mage.setWidgetPrefs({ expanded: false, doNotDisturb: false }));
+          await page.evaluate(() => window.__mageDev.store.getState().setWidgetEnabled(true));
+          const widget = await widgetPageOf(page);
+          await widget.locator('[data-widget-pill]').waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+          await widget.locator('[data-widget-toggle-view]').click();
+          await widget.locator('[data-widget-pill]').waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+          await widget.waitForFunction(() => window.innerWidth >= 318, null, { timeout: CONFIG.actionTimeoutMs });
+          await widget.waitForTimeout(CONFIG.settleMs);
+          return textFitOutcome({ widget: await textFitProblems(widget, 'body') });
+        });
+      } finally {
+        await page.evaluate(() => window.__mageDev.store.getState().setWidgetEnabled(false));
+        await waitForWidgetPages(page, 0);
+        await page.evaluate(() => window.mage.setWidgetPrefs({ expanded: false, doNotDisturb: false }));
+      }
+    },
+  },
   {
     // Grupo 0 (0.1.2, ficha D11 de P-032): UN turno minimo de verdad, de punta a punta — teclear, Enter,
     // proceso del CLI, respuesta pintada. Es la unica comprobacion que envia: todas las demas miden sin
@@ -10838,6 +11029,39 @@ async function realFocusOf(widget) {
 }
 
 // La página de la ventana del widget (la abre MAIN tras el IPC): espera a que exista y la devuelve, o lanza con el motivo.
+// F3.6: mide una zona y devuelve sus problemas de texto (vacío = bien). `scope` es la página o el widget.
+async function textFitProblems(scope, rootSelector) {
+  return classifyTextFit(await scope.evaluate(collectTextFit, rootSelector));
+}
+
+// F3.6: pone la interfaz en inglés, ejecuta `fn` y la deja como estaba. Copia el `setLanguage` y el `previo` de
+// 'F3.3' (que los lleva dentro de su `run`, no reutilizables sin tocarla).
+async function withEnglish(page, fn) {
+  const setLanguage = (pref) =>
+    page.evaluate(async (value) => {
+      const store = window.__mageDev.store;
+      const { uiLanguage: _actual, ...resto } = store.getState().settings;
+      const settings = value === null ? resto : { ...resto, uiLanguage: value };
+      store.setState({ settings });
+      await window.mage.saveSettings(settings);
+    }, pref);
+  const previo = await page.evaluate(() => window.__mageDev.store.getState().settings.uiLanguage ?? null);
+  try {
+    await setLanguage('en');
+    await page.waitForFunction(() => document.documentElement.lang === 'en', null, { timeout: CONFIG.actionTimeoutMs });
+    return await fn();
+  } finally {
+    await setLanguage(previo);
+    await page.waitForFunction((pref) => document.documentElement.lang === (pref ?? document.documentElement.lang), previo, { timeout: CONFIG.actionTimeoutMs }).catch(() => undefined);
+  }
+}
+
+// F3.6: el resultado común de una comprobación de textos largos.
+function textFitOutcome(zonas) {
+  const sinProblemas = Object.values(zonas).every((problemas) => problemas.length === 0);
+  return { ok: sinProblemas, detail: JSON.stringify({ zonas }) };
+}
+
 async function widgetPageOf(page) {
   const deadline = Date.now() + CONFIG.actionTimeoutMs;
   while (Date.now() < deadline) {
@@ -11375,19 +11599,16 @@ const SEEDED_HINT = '[carpeta]';
 // El perfil aislado es una instalacion LIMPIA, asi que el asistente de primer arranque saldria en cada
 // tanda y taparia la app entera: las ~98 comprobaciones medirian un modal. Se siembra como ya visto, y
 // el asistente tiene su propia comprobacion, que lo reabre a proposito y lo vuelve a cerrar.
-function seedOnboardingDone(userDataDir) {
+function seedOnboardingDone(userDataDir, trustedFolders = []) {
   const file = path.join(userDataDir, 'app-settings.json');
   // El resto de ajustes se quedan en sus defaults: main los completa al leer (esquema tolerante).
-  // Se siembra un numero ALTO y no `ONBOARDING_VERSION` (que vive en un .ts que este script no puede
-  // importar): cualquier version futura del asistente sigue quedando por debajo, asi que subirla no
-  // vuelve a tapar la tanda entera. La comprobacion del asistente no depende de esto — lo reabre
-  // llamando al store.
+  // La comprobacion del asistente no depende de esto — lo reabre llamando al store.
   // Grupo F: las notas de version, dadas por vistas en la version actual. Sin esto, con el asistente
   // completado y el campo vacio, la app lo tomaria por una actualizacion desde la 0.1.1 y abriria la
   // pestaña de novedades en cada tanda (el harness levanta la condicion de dev, ver `launchApp`).
   fs.writeFileSync(
     file,
-    JSON.stringify({ version: 1, notificationRules: [], onboardingCompletedVersion: 9999, lastSeenReleaseNotesVersion: APP_VERSION }, null, 2),
+    JSON.stringify(seededAppSettings({ appVersion: APP_VERSION, trustedFolders }), null, 2),
     'utf-8',
   );
 }
@@ -13191,7 +13412,7 @@ function launchApp(userDataDir, extraEnv = {}) {
       VITE_MAGE_RELEASE_NOTES_IN_DEV: '1',
       // Los locks de conversación (#55) van a la carpeta de la tanda, nunca a la real del usuario (H3 de la devolución 17).
       [HARNESS_LOCKS_ENV]: HARNESS_LOCKS_DIR,
-      // --bench: la casa temporal con las credenciales COPIADAS (nunca las reales del usuario).
+      // --bench: la casa temporal, sin credenciales del usuario.
       ...extraEnv,
     },
     windowsHide: true,
@@ -13264,6 +13485,7 @@ function killTree(child) {
 
 // --- Informe -------------------------------------------------------------------------------------
 
+// NO EJECUTABLE: el caso no se pudo medir en este entorno y lo dice con su motivo; no cuenta como verde ni como fallo.
 function writeReport(runDir, results, consoleErrors) {
   const lines = ['# Verificacion GUI de Mage', ''];
   lines.push(`- Fecha: ${new Date().toISOString()}`);
@@ -13273,7 +13495,7 @@ function writeReport(runDir, results, consoleErrors) {
   lines.push('| Resultado | Comprobacion | Medida |');
   lines.push('|---|---|---|');
   for (const result of results) {
-    const mark = result.ok ? 'OK' : 'FALLA';
+    const mark = result.notRunnable === true ? 'NO EJECUTABLE' : result.ok ? 'OK' : 'FALLA';
     lines.push(`| ${mark} | ${result.name} | ${result.detail.replace(/\|/g, '\\|')} |`);
   }
   lines.push('');
@@ -13318,19 +13540,20 @@ async function main() {
   fs.mkdirSync(runDir, { recursive: true });
   fs.mkdirSync(userDataDir, { recursive: true });
   if (forcedTurnTarget() !== 'real') {
-    // HOME de prueba dentro del perfil de la tanda (V6): la app descubre las cuentas ahí, con la de Claude vacía y sin sesión.
+    // HOME de prueba dentro del perfil de la tanda (V6): la app descubre ahí dos cuentas de Claude de PRUEBA con login (V7). Su token no sale a la red: main la cierra con MAGE_TEST_HOME.
     HARNESS_HOME = path.join(userDataDir, 'vg-home');
     fs.mkdirSync(path.join(HARNESS_HOME, '.claude', 'plans'), { recursive: true });
+    seedTestAccounts(HARNESS_HOME);
     process.env.MAGE_TEST_HOME = HARNESS_HOME;
   }
   prunePreviousProfiles(userDataDir);
   seedCommandCatalog(userDataDir);
-  if (reuseProfile === undefined || !fs.existsSync(path.join(userDataDir, 'app-settings.json'))) seedOnboardingDone(userDataDir);
-  seedMcpCommon(userDataDir);
   // Q01: la conversacion larga del runtime propio que `--perf-baseline` abre desde el historial (en produccion no hay puente).
-  const longTranscript = process.argv.includes('--perf-baseline')
-    ? writeLongTranscript(userDataDir, { cwd: path.join(userDataDir, 'vg-t3-cwd'), blocks: LONG_TRANSCRIPT_BLOCKS })
-    : null;
+  // Su carpeta se siembra de confianza en ESTE perfil: sin eso, TrustFolderDialog tapa la medicion en `--prod` (V7).
+  const perfCwd = process.argv.includes('--perf-baseline') ? path.join(userDataDir, 'vg-t3-cwd') : null;
+  if (reuseProfile === undefined || !fs.existsSync(path.join(userDataDir, 'app-settings.json'))) seedOnboardingDone(userDataDir, perfCwd === null ? [] : [perfCwd]);
+  seedMcpCommon(userDataDir);
+  const longTranscript = perfCwd === null ? null : writeLongTranscript(userDataDir, { cwd: perfCwd, blocks: LONG_TRANSCRIPT_BLOCKS });
 
   console.log(`[verify:gui] perfil aislado: ${userDataDir}`);
   const { child, log } = launchApp(userDataDir);
@@ -13394,7 +13617,7 @@ async function main() {
         if (before !== null) fs.appendFileSync(path.join(runDir, 'layout-evidence.jsonl'), JSON.stringify({ name: check.name, before, after: await captureLayoutEvidence(page), outcome }) + '\n');
         const detail = redactUserData(outcome.detail, accountAliases);
         results.push({ name: check.name, ...outcome, detail });
-        console.log(`  ${outcome.ok ? '✓' : '✗'} ${check.name} — ${detail}`);
+        console.log(`  ${outcome.notRunnable === true ? '–' : outcome.ok ? '✓' : '✗'} ${check.name} — ${detail}`);
       } catch (error) {
         const detail = redactUserData(`excepcion: ${error.message}`, accountAliases);
         results.push({ name: check.name, ok: false, detail });
@@ -13419,9 +13642,10 @@ async function main() {
     else console.log('[verify:gui] --keep: la app sigue abierta; ciérrala tú.');
   }
 
-  const failed = results.filter((result) => !result.ok);
+  const notRunnable = results.filter((result) => result.notRunnable === true);
+  const failed = results.filter((result) => !result.ok && result.notRunnable !== true);
   console.log(`\n[verify:gui] informe: ${path.join(runDir, 'session.md')}`);
-  console.log(`[verify:gui] ${results.length - failed.length}/${results.length} comprobaciones en verde`);
+  console.log(`[verify:gui] ${results.length - failed.length - notRunnable.length}/${results.length} comprobaciones en verde${notRunnable.length === 0 ? '' : `, ${notRunnable.length} NO EJECUTABLES (ver el informe)`}`);
   process.exit(failed.length === 0 ? 0 : 1);
 }
 
@@ -13437,37 +13661,47 @@ function withDomTextDump(check) {
   } };
 }
 
-// Benchmark F0-B, ruta R3 (`--bench --provider=claude|codex --rep=<n> --out=<fichero> [--tasks=T1,..]`):
-// Mage con perfil aislado y una CASA temporal (USERPROFILE/HOME) con copia de la credencial del
-// proveedor, retirada en finally con su comprobación de token. Gasta turnos reales (autorizados para el baseline).
+// Benchmark F0-B, ruta R3 (`--bench --provider=claude --rep=<n> --out=<fichero> [--tasks=T1,..]`): Mage con perfil aislado
+// y una CASA temporal (USERPROFILE/HOME) SIN credenciales del usuario. La cuenta es de Claude por clave de API DESECHABLE
+// (MAGE_BENCH_ANTHROPIC_API_KEY), dada de alta por el IPC del producto: la clave va a la bóveda del perfil temporal y se
+// borra con él. Al acabar se comprueba que las credenciales del usuario no cambiaron ni se copiaron. Gasta turnos reales.
 async function runBenchMode() {
   const arg = (name) => process.argv.find((a) => a.startsWith(`--${name}=`))?.split('=')[1];
   const provider = arg('provider');
   const out = arg('out');
   const rep = Number(arg('rep'));
   if (!['claude', 'codex'].includes(provider) || out === undefined || !Number.isInteger(rep)) throw new Error('--bench exige --provider, --rep y --out');
+  const apiKey = benchApiKey(provider, process.env);
+  const userFiles = userCredentialFiles(os.homedir());
+  const userBefore = credentialFingerprints(userFiles);
   const tasks = arg('tasks')?.split(',');
   const root = fs.mkdtempSync(path.join(os.tmpdir(), `mage-f0-bench-r3-${provider}-`));
   const home = path.join(root, 'home');
-  const credential = prepareBenchHome(home, provider);
-  const initial = credentialDigest(credential);
+  fs.mkdirSync(home, { recursive: true });
   const userDataDir = path.join(root, 'user-data');
   fs.mkdirSync(userDataDir);
   seedOnboardingDone(userDataDir);
-  if (provider === 'codex') fs.writeFileSync(path.join(userDataDir, 'provider-accounts.json'), JSON.stringify({ version: 1, accounts: [{ providerId: 'codex', authKind: 'subscription', name: 'bench', home: path.join(home, '.codex') }] }));
   // APPDATA también dentro de la casa: con USERPROFILE cambiado, Electron no resolvía 'appData'. LOCALAPPDATA
   // se queda el real: ahí localiza Mage el ejecutable de Codex.
   const appData = path.join(home, 'AppData', 'Roaming');
   fs.mkdirSync(appData, { recursive: true });
   const { child, log } = launchApp(userDataDir, { USERPROFILE: home, HOME: home, APPDATA: appData });
   let browser = null;
+  let accountDir = null;
   try {
     browser = await chromium.connectOverCDP(await waitForCdp());
     const page = await findMainPage(browser);
     await page.locator('[role="toolbar"]').first().waitFor({ state: 'attached', timeout: CONFIG.bootTimeoutMs });
+    const account = await page.evaluate(async (key) => {
+      const info = await window.mage.createProviderAccount({ providerId: 'claude', authKind: 'api-key', name: 'bench', apiKey: key });
+      await window.__mageDev.store.getState().refreshAccounts();
+      return { configDir: info.configDir };
+    }, apiKey);
+    accountDir = account.configDir;
     await page.waitForFunction(() => window.__mageDev?.store.getState().accounts.length > 0, undefined, { timeout: CONFIG.bootTimeoutMs });
-    const usageAllows = guardedUsage(() => (provider === 'claude' ? claudeUsage(credential) : codexRateLimits(path.join(home, '.codex'))));
-    await runMageBench(page, { provider, rep, tasks, root, usageAllows, out, claudeConfigDir: path.join(home, '.claude') });
+    // Una clave de API desechable no tiene ventanas de suscripción: su presupuesto es el de la clave.
+    const usageAllows = async () => ({ usage: [], allowed: true });
+    await runMageBench(page, { provider, rep, tasks, root, usageAllows, out, claudeConfigDir: account.configDir });
   } catch (error) {
     fs.writeFileSync(`${out}.arranque.log`, log.join('').slice(-20_000), 'utf-8');
     throw error;
@@ -13475,20 +13709,12 @@ async function runBenchMode() {
     if (browser !== null) await browser.close().catch(() => {});
     killTree(child);
     await new Promise((r) => setTimeout(r, 3000)); // Electron suelta el perfil antes de borrarlo
-    cleanupProfile(root, credential, initial);
+    const copies = copiesUnder(root, userBefore);
+    cleanupProfile(root, path.join(accountDir ?? path.join(home, '.claude-bench'), '.credentials.json'), null);
+    const changed = changedFiles(userBefore, credentialFingerprints(userFiles));
+    console.log(JSON.stringify({ stage: 'credenciales-del-usuario', copiadas: copies.length, cambiadas: changed.length }));
+    if (copies.length > 0 || changed.length > 0) process.exitCode = 1;
   }
-}
-
-// Casa temporal del benchmark: solo la credencial del proveedor medido, copiada.
-function prepareBenchHome(home, provider) {
-  if (provider === 'codex') {
-    prepareCodexHome(path.join(home, '.codex'));
-    return path.join(home, '.codex', 'auth.json');
-  }
-  fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
-  fs.copyFileSync(path.join(os.homedir(), '.claude', '.credentials.json'), path.join(home, '.claude', '.credentials.json'));
-  fs.writeFileSync(path.join(home, '.claude.json'), JSON.stringify({ hasCompletedOnboarding: true }));
-  return path.join(home, '.claude', '.credentials.json');
 }
 
 // Borra los perfiles de ejecuciones anteriores. Best-effort: si Electron aun tiene el lock, se deja

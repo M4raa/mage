@@ -6,6 +6,7 @@ import { usePanelLayoutStore } from './panelLayoutStore';
 import { PANEL_REGISTRY } from './panels/panelRegistry';
 import { notify, useNotificationStore } from './notificationStore';
 import { useCodexAppsStore } from './codexAppsStore';
+import { useTaskStore } from './tasks/taskStore';
 import { toPersistedWorkspace } from './workspaceView';
 
 // Asidero SOLO de desarrollo para `pnpm verify:gui`: deja medir el DOM del chat sin gastar un turno
@@ -41,6 +42,8 @@ export interface MageDevBridge {
   // al acabar cada comprobacion.
   readonly notify: typeof notify;
   readonly notifications: typeof useNotificationStore;
+  // Tareas (F8): el harness enlaza una tarea a una pestaña ficticia para medir su franja sin lanzar nada.
+  readonly taskStore: typeof useTaskStore;
 }
 
 (window as unknown as { __mageDev?: MageDevBridge }).__mageDev = {
@@ -59,4 +62,5 @@ export interface MageDevBridge {
   panelRegistry: PANEL_REGISTRY,
   notify,
   notifications: useNotificationStore,
+  taskStore: useTaskStore,
 };

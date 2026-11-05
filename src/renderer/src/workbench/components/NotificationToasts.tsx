@@ -104,7 +104,7 @@ export function NotificationContent({
       <Icon name={LEVEL_ICON[notification.level]} className="mt-[1px] shrink-0" />
       <div className="flex min-w-0 flex-1 flex-col gap-[3px]">
         <div className="flex items-baseline gap-[6px]">
-          <span id={titleId} className="min-w-0 flex-1 font-medium">
+          <span id={titleId} className="min-w-0 flex-1 font-medium [overflow-wrap:anywhere]">
             {title}
           </span>
           {count > 1 && <span className="shrink-0 font-mono text-[10px] opacity-75" data-notification-count="true">×{count}</span>}

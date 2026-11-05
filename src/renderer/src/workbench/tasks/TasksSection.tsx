@@ -65,7 +65,7 @@ function TaskRow({ task }: { readonly task: TaskRecord }): React.JSX.Element {
   return (
     <div data-task-row={task.id} data-task-phase={phase} className="group flex items-center gap-[4px] rounded-[6px] hover:bg-mg-hover">
       <button onClick={() => openTask(task, t)} className="flex min-w-0 flex-1 flex-col gap-[1px] p-[4px_9px] text-left">
-        <span className="truncate text-mg-body">{taskTitle(task.goal)}</span>
+        <span className="truncate text-mg-body" title={taskTitle(task.goal)}>{taskTitle(task.goal)}</span>
         <span className="text-[10px] text-mg-muted">{t(`tasks.phase.${phase}`)}</span>
       </button>
       <button

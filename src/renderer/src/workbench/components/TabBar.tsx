@@ -414,7 +414,7 @@ function Tab({
       )}
       {tab.pinned === true && <Icon name="pin" size={10} className="flex-none text-mg-ter" />}
 
-      <span className="max-w-[220px] truncate">{displayTitle(tab.title, translate)}</span>
+      <span className="max-w-[220px] truncate" title={displayTitle(tab.title, translate)}>{displayTitle(tab.title, translate)}</span>
       {/* El ✕ ocupa su hueco en TODAS las pestañas (la no activa lo lleva invisible hasta el hover o el foco): la
           pestaña no cambia de ancho al activarse. */}
       <button

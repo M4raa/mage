@@ -29,7 +29,7 @@ import { chatRows, currentTurnSummary, stickResetKey, type ChatRow } from '../ch
 import { usePaneTabId, usePaneTranscriptStore } from '../paneContext';
 import type { Block, ImageAttachment } from '../types';
 import { classifySystemWrapper } from '@shared/systemWrappers';
-import { INITIAL_ANCHOR, appendedTailKeys, nextListAnchor, type ListAnchor } from '../chatListAnchor';
+import { INITIAL_ANCHOR, STICK_TO_BOTTOM_PX, appendedTailKeys, nextListAnchor, watchChatBottom, type ListAnchor } from '../chatListAnchor';
 import { MOTION_S } from '../motionPresets';
 import { RecentProjects } from './RecentProjects';
 import { reportActionError } from '../notificationStore';
@@ -81,12 +81,12 @@ export function BlockChat(): React.JSX.Element {
   const anchor = useListAnchor(activeTabId, rows);
   const enteringKeys = useEnteringRowKeys(`${activeTabId}:${anchor.generation}`, rows);
   const expandedRows = useExpandedRowsStore(activeTabId);
-  const { virtuosoRef, onAtBottomChange, repinIfStuck } = useChatAutoScroll({ tailSize, turnLive, resetKey: stickResetKey(activeTabId, blocks) });
+  const { virtuosoRef, onScrollerRef } = useChatAutoScroll({ tailSize, turnLive, resetKey: stickResetKey(activeTabId, blocks) });
   const lastRow = rows[rows.length - 1];
   const lastRowKey = lastRow === undefined ? null : rowKey(lastRow);
   const footerContext = useMemo<ChatListContext>(
-    () => ({ accent, lastRowKey, enteringKeys, turnLive, runningTool, capability, steps: turnSummary.steps, errors: turnSummary.errors, repinIfStuck }),
-    [accent, lastRowKey, enteringKeys, turnLive, runningTool, capability, turnSummary.steps, turnSummary.errors, repinIfStuck],
+    () => ({ accent, lastRowKey, enteringKeys, turnLive, runningTool, capability, steps: turnSummary.steps, errors: turnSummary.errors }),
+    [accent, lastRowKey, enteringKeys, turnLive, runningTool, capability, turnSummary.steps, turnSummary.errors],
   );
 
   if (blocks.length === 0 && !turnLive) {
@@ -118,7 +118,7 @@ export function BlockChat(): React.JSX.Element {
           increaseViewportBy={{ top: VIEWPORT_OVERSCAN_PX, bottom: VIEWPORT_OVERSCAN_PX }}
           atBottomThreshold={STICK_TO_BOTTOM_PX}
           followOutput={(atBottom) => (atBottom ? 'auto' : false)}
-          atBottomStateChange={onAtBottomChange}
+          scrollerRef={onScrollerRef}
           components={CHAT_LIST_COMPONENTS}
           context={footerContext}
           itemContent={renderChatItem}
@@ -139,9 +139,6 @@ function useChatReferenceLinks(tabId: string): ReferenceLinks {
   );
 }
 
-// Mismo valor que `useStickToBottom` (que sigue usando el panel de Actividad): por debajo de este margen
-// el usuario cuenta como «pegado» al final.
-const STICK_TO_BOTTOM_PX = 80;
 // Filas que Virtuoso mantiene montadas por encima y por debajo de lo visible.
 const VIEWPORT_OVERSCAN_PX = 600;
 
@@ -156,8 +153,6 @@ interface ChatListContext {
   readonly capability: TurnCapability | null;
   readonly steps: number;
   readonly errors: number;
-  // Re-ancla al final si el usuario estaba pegado; lo llama el pie al cambiar de alto.
-  readonly repinIfStuck: () => void;
 }
 
 // `data-last-row` es el ancla del harness para saber que la ultima fila ya esta pintada; `data-row-key`, para
@@ -181,20 +176,10 @@ const CHAT_LIST_COMPONENTS: Components<ChatRow, ChatListContext> = {
   Footer: ({ context }) => <ChatFooter context={context} />,
 };
 
-// Pie de la lista: la línea de «trabajando». Virtuoso mide el pie DESPUÉS del commit en que aparece el indicador, así que
-// el re-anclaje del cambio de `turnLive` se quedaba corto en su altura (V6, R59): al cambiar de alto se vuelve a anclar.
+// Pie de la lista: la línea de «trabajando». Sus cambios de alto los sigue `watchChatBottom` (observa los hijos del viewport).
 function ChatFooter({ context }: { readonly context: ChatListContext }): React.JSX.Element {
-  const ref = useRef<HTMLDivElement>(null);
-  const { repinIfStuck } = context;
-  useLayoutEffect(() => {
-    const element = ref.current;
-    if (element === null) return undefined;
-    const observer = new ResizeObserver(() => repinIfStuck());
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, [repinIfStuck]);
   return (
-    <div ref={ref} data-chat-footer="true" className="px-[22px] pb-[16px]">
+    <div data-chat-footer="true" className="px-[22px] pb-[16px]">
       {context.turnLive && <ThinkingIndicator accent={context.accent} tool={context.runningTool} capability={context.capability} steps={context.steps} errors={context.errors} />}
     </div>
   );
@@ -246,17 +231,17 @@ function useEnteringRowKeys(resetKey: string, rows: readonly ChatRow[]): Readonl
 
 // Seguir el final: `followOutput` ve filas nuevas, pero el texto en streaming crece DENTRO de la ultima
 // fila; ese caso (y enviar un mensaje, que vuelve al final aunque se hubiera subido a leer) se resuelve aqui.
+// «Pegado» lo decide el listener de scroll propio (Virtuoso puede declararse fuera del final al encoger la vista antes de que nadie re-ancle).
 function useChatAutoScroll({ tailSize, turnLive, resetKey }: { readonly tailSize: number; readonly turnLive: boolean; readonly resetKey: string }): {
   readonly virtuosoRef: React.RefObject<VirtuosoHandle | null>;
-  readonly onAtBottomChange: (atBottom: boolean) => void;
-  readonly repinIfStuck: () => void;
+  readonly onScrollerRef: (ref: HTMLElement | Window | null) => void;
 } {
   const virtuosoRef = useRef<VirtuosoHandle>(null);
   const stuckRef = useRef(true);
-  const onAtBottomChange = useCallback((atBottom: boolean): void => {
-    stuckRef.current = atBottom;
-  }, []);
-  const repinIfStuck = useCallback((): void => { if (stuckRef.current) scrollToLastRow(virtuosoRef.current); }, []);
+  const [scroller, setScroller] = useState<HTMLElement | null>(null);
+  const onScrollerRef = useCallback((ref: HTMLElement | Window | null): void => setScroller(ref instanceof HTMLElement ? ref : null), []);
+  // Pegado al final REAL: listener de scroll propio y ResizeObserver del scroller y su contenido (V7, R59).
+  useLayoutEffect(() => (scroller === null ? undefined : watchChatBottom(scroller, stuckRef, (onResize) => new ResizeObserver(onResize))), [scroller]);
   useLayoutEffect(() => {
     if (stuckRef.current) scrollToLastRow(virtuosoRef.current);
   }, [tailSize, turnLive]);
@@ -264,7 +249,7 @@ function useChatAutoScroll({ tailSize, turnLive, resetKey }: { readonly tailSize
     stuckRef.current = true;
     scrollToLastRow(virtuosoRef.current);
   }, [resetKey]);
-  return { virtuosoRef, onAtBottomChange, repinIfStuck };
+  return { virtuosoRef, onScrollerRef };
 }
 
 function scrollToLastRow(handle: VirtuosoHandle | null): void {
