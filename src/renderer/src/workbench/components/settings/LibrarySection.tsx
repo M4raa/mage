@@ -241,7 +241,7 @@ function CardCompatibility({ entry }: { readonly entry: LibraryEntryView }): Rea
           {t('library.runsCode')}
         </div>
       )}
-      {entry.requiresSecrets.length > 0 && <div className="text-mg-warn-text">{t('library.needsSecrets', { names: entry.requiresSecrets.join(LIST_SEPARATOR) })}</div>}
+      <SecretsLine entry={entry} t={t} />
       {entry.missingCommands.map((command) => (
         <div key={command} className="text-mg-warn-text">
           {t('library.missingCommand', { command })}
@@ -264,6 +264,16 @@ function EngineLine({ entry, engine, t }: { readonly entry: LibraryEntryView; re
       {block === null ? t('library.engineOk', { engine: name }) : `${t('library.engineBlocked', { engine: name })} — ${t(blockKey(block))}`}
     </div>
   );
+}
+
+// Clave que pide la entrada: si algún motor la bloquea por ella, aún no se instala; si no, se instala y la clave va a la bóveda (R).
+function SecretsLine({ entry, t }: { readonly entry: LibraryEntryView; readonly t: Translate }): React.JSX.Element | null {
+  if (entry.requiresSecrets.length === 0) return null;
+  const names = entry.requiresSecrets.join(LIST_SEPARATOR);
+  const blocked = entry.engines.some((engine) => entry.blocks[engine] === 'needsSecrets');
+  return blocked
+    ? <div className="text-mg-warn-text">{t('library.needsSecrets', { names })}</div>
+    : <div data-library-needs-key className="text-mg-muted">{t('library.needsKey', { names })}</div>;
 }
 
 function CardStatus({ entry, install }: { readonly entry: LibraryEntryView; readonly install: LibraryInstallView | null }): React.JSX.Element | null {

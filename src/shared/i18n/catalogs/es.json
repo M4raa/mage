@@ -1070,6 +1070,7 @@
   "library.kind.skill": "Skill",
   "library.license": "Licencia {spdx}",
   "library.missingCommand": "Falta {command} en el PATH.",
+  "library.needsKey": "Necesita una clave ({names}); al instalar, Mage la guarda en su bóveda.",
   "library.needsSecrets": "Necesita una clave ({names}); todavía no se puede instalar desde Mage.",
   "library.platform.darwin": "macOS",
   "library.platform.linux": "Linux",

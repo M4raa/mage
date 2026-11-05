@@ -212,6 +212,7 @@ function measureLibraryCards(page) {
       licencia: (skill?.textContent ?? '').includes('MIT'),
       codexBloqueo: skill?.querySelector('[data-library-engine="codex"]')?.getAttribute('data-library-block') ?? null,
       exaClaude: card('exa-mcp')?.querySelector('[data-library-engine="claude"]')?.getAttribute('data-library-block') ?? null,
+      exaClaveEnBoveda: card('exa-mcp')?.querySelector('[data-library-needs-key]') != null,
       eccEjecutaCodigo: card('ecc')?.querySelector('[data-library-runs-code]') != null,
     };
   }, LIBRARY_SKILL_ID);
@@ -10425,8 +10426,9 @@ const CHECKS = [
         await picker.selectOption(fixtureValue);
         await entry.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
         const fichas = await measureLibraryCards(page);
+        // Desde R, Exa (MCP stdio con clave) se instala: sin bloqueo para Claude y con la línea de la clave en la bóveda.
         const fichasOk = fichas.entradas >= LIBRARY_MIN_ENTRIES && fichas.tipo === 'Skill' && fichas.version && fichas.licencia
-          && fichas.codexBloqueo === 'codexSkillsUnmeasured' && fichas.exaClaude === 'needsSecrets' && fichas.eccEjecutaCodigo;
+          && fichas.codexBloqueo === 'codexSkillsUnmeasured' && fichas.exaClaude === '' && fichas.exaClaveEnBoveda && fichas.eccEjecutaCodigo;
 
         // Sin efectos: abrir la vista previa y cancelarla no cambia ni un fichero.
         const antes = [...listTreeWithSizes(fixtureRoot), '--', ...listTreeWithSizes(capabilitiesRoot)];

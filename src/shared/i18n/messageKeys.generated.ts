@@ -1072,6 +1072,7 @@ export interface MessageValues {
   readonly "library.kind.skill": never;
   readonly "library.license": { readonly "spdx": string | number };
   readonly "library.missingCommand": { readonly "command": string | number };
+  readonly "library.needsKey": { readonly "names": string | number };
   readonly "library.needsSecrets": { readonly "names": string | number };
   readonly "library.platform.darwin": never;
   readonly "library.platform.linux": never;
