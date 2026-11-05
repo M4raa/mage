@@ -56,6 +56,7 @@ import { runPerfBaseline } from './lib/perfBaseline.mjs';
 import { writeLongTranscript } from './lib/longTranscriptFixture.mjs';
 import { runMageBench } from './lib/benchMage.mjs';
 import { appendDomText } from './lib/domTextDump.mjs';
+import { classifyTextFit, collectTextFit } from './lib/textFit.mjs';
 import { redactLocalUser, redactUserData } from './lib/redactUserData.mjs';
 import { seededAppSettings, seedTestAccounts } from './lib/profileSeed.mjs';
 import { cleanupProfile } from '../spike/f0-profile-cleanup.mjs';
@@ -97,6 +98,9 @@ const CONFIG = {
 // fichero es un .mjs que corre en node, sin el pipeline de TS: si alguien cambia el catalogo, el aviso o
 // una etiqueta y no toca esto, la comprobacion lo canta en su medida en vez de pasar en verde.
 const MODAL = '[role="dialog"][aria-modal="true"]';
+// F3.6: textos largos de prueba (inglés, como la interfaz): una frase larga y un «token» sin espacios (una ruta).
+const F36_LONG_TEXT = 'Quarterly reconciliation of the international subsidiaries general ledger, including every supporting document and the follow-up notes from the external auditors';
+const F36_LONG_TOKEN = 'C:\\Projects\\InternationalSubsidiaries\\QuarterlyReconciliation\\SupportingDocumentation\\AuditorsFollowUp\\final-report-v12-reviewed-and-approved.md';
 const NEW_TAB_DIALOG = '[role="dialog"][aria-labelledby="newtab-title"]';
 // Etiquetas de los campos del dialogo de nueva conversacion (el <label> envuelve a su control).
 const NEW_TAB_FIELD = { provider: 'PROVEEDOR', model: 'MODELO' };
@@ -10662,6 +10666,165 @@ const CHECKS = [
       }
     },
   },
+  // --- F3.6: textos largos con la interfaz en inglés (carril Y) ------------------------------------------
+  //
+  // Miden desbordes, cortes sin elipsis y solapes (`scripts/lib/textFit.mjs`). Ninguna pulsa Enter en el prompt ni
+  // lanza un CLI. Van antes del turno mínimo, que sigue siendo la última de la lista.
+  {
+    name: 'F3.6 (en): pestañas, split y prompt con textos largos',
+    state: { tabs: 1 },
+    async run(page) {
+      return withEnglish(page, async () => {
+        await openTemporaryConversation(page);
+        await page.evaluate(({ title, cwd }) => {
+          const store = window.__mageDev.store;
+          store.setState((s) => ({ tabs: s.tabs.map((t) => (t.id === s.activeTabId ? { ...t, title, cwd } : t)) }));
+          const base = store.getState().tabs.find((t) => t.id === store.getState().activeTabId);
+          store.setState({ tabs: [{ ...base, id: 'vg-f36-a' }, { ...base, id: 'vg-f36-b' }], activeTabId: 'vg-f36-a', splitLayout: { kind: 'split', direction: 'row', ratio: 0.5, a: { kind: 'leaf', tabIds: ['vg-f36-a'], activeTabId: 'vg-f36-a' }, b: { kind: 'leaf', tabIds: ['vg-f36-b'], activeTabId: 'vg-f36-b' } } });
+        }, { title: F36_LONG_TEXT, cwd: F36_LONG_TOKEN });
+        await page.locator('[data-pane-tab-id="vg-f36-a"] .cm-content').focus();
+        await page.keyboard.type(`${F36_LONG_TEXT} ${F36_LONG_TOKEN}`);
+        await page.waitForTimeout(CONFIG.settleMs);
+        return textFitOutcome({
+          tabs: await textFitProblems(page, '[role="tablist"]'),
+          panelA: await textFitProblems(page, '[data-pane-tab-id="vg-f36-a"]'),
+          panelB: await textFitProblems(page, '[data-pane-tab-id="vg-f36-b"]'),
+          prompt: await textFitProblems(page, '[data-pane-tab-id="vg-f36-a"] [data-prompt-editor]'),
+          barraDeEstado: await textFitProblems(page, '[data-status-bar]'),
+        });
+      });
+    },
+  },
+  {
+    // La tabla tiene su propio scroll horizontal: un desborde recortado por su contenedor no cuenta (`clippedByAncestor`).
+    name: 'F3.6 (en): tabla ancha con celdas largas',
+    state: { tabs: 1 },
+    async run(page) {
+      return withEnglish(page, async () => {
+        const tabla = `| Item | Detail | Notes |\n| --- | --- | --- |\n| ${F36_LONG_TEXT} | ${F36_LONG_TOKEN} | ${F36_LONG_TEXT} |`;
+        await hydrateBlocks(page, [{ kind: 'agent', id: 'vg-f36-table', runs: [{ code: false, text: tabla }], streaming: false }]);
+        await page.locator('[data-block="agent"] table').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        return textFitOutcome({ chat: await textFitProblems(page, '[data-pane-tab-id] [data-chat-scroller]') });
+      });
+    },
+  },
+  {
+    name: 'F3.6 (en): avisos con título y cuerpo largos',
+    async run(page) {
+      return withEnglish(page, async () => {
+        await clearNotifications(page);
+        try {
+          await page.evaluate(({ title, body }) => window.__mageDev.notify({ level: 'error', title, body, source: 'verify' }), { title: `${F36_LONG_TEXT} ${F36_LONG_TOKEN}`, body: F36_LONG_TOKEN });
+          await page.locator('[data-notification-level="error"]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+          await waitForStillBox(page, '[data-notification-level="error"]');
+          return textFitOutcome({ aviso: await textFitProblems(page, '[data-notification-level="error"]') });
+        } finally {
+          await clearNotifications(page);
+        }
+      });
+    },
+  },
+  {
+    // La franja de la tarea (`[data-task-strip]`) no se mide: solo sale en la pestaña cuya sesión o conversación es la de la
+    // tarea, y `createTask` por IPC las deja a null (se enlazan al lanzar el agente, lo que aquí no se hace).
+    name: 'F3.6 (en): lateral con proyecto, conversación y tarea de nombre largo',
+    async run(page, { runDir }) {
+      const cuenta = await page.evaluate(() => {
+        const state = window.__mageDev.store.getState();
+        const active = state.accounts.find((account) => account.id === state.activeAccountId);
+        return active === undefined ? null : { id: active.id, providerId: active.providerId };
+      });
+      if (cuenta === null || cuenta.providerId !== 'claude') return { ok: false, notRunnable: true, detail: 'sin cuenta de Claude en el perfil: no ejecutable' };
+      const raiz = path.join(runDir, 'f36-tarea');
+      const trabajo = path.join(raiz, 'trabajo');
+      fs.mkdirSync(trabajo, { recursive: true });
+      const projectId = 'vg-f36-project';
+      let taskId = null;
+      let projectCreated = false;
+      try {
+        return await withEnglish(page, async () => {
+          const creada = await page.evaluate((draft) => window.mage.createTask(draft), {
+            goal: F36_LONG_TEXT, language: 'es', provider: 'claude', accountDir: cuenta.id, folders: [trabajo], documents: [], capabilities: [],
+          });
+          taskId = creada.id;
+          // El store de tareas no está en `__mageDev`: la lista se recarga con `page.reload()`, como en la comprobación R.
+          await page.reload();
+          await page.waitForFunction(() => window.__mageDev !== undefined);
+          await page.locator('[role="toolbar"]').first().waitFor({ state: 'attached', timeout: CONFIG.bootTimeoutMs });
+          await page.evaluate(() => window.__mageDev.panelStore.getState().revealPanelById('conversations'));
+          await page.locator(`[data-task-row="${taskId}"]`).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+          projectCreated = true;
+          await page.evaluate(async ({ id, name, title, cwd }) => {
+            const dev = window.__mageDev;
+            await dev.store.getState().saveChatProject({ id, name, instructions: '', cwd: null, sessionIds: ['vg-f36-chat'] });
+            const item = { sessionId: 'vg-f36-chat', configDir: '.claude', cwd, title, privacy: 'shared', updatedAtMs: Date.now(), sizeBytes: 100, isScheduled: false };
+            dev.store.setState((s) => ({ conversationHistory: [item], allConversationHistory: [{ accountId: s.activeAccountId, item }] }));
+          }, { id: projectId, name: F36_LONG_TEXT, title: F36_LONG_TEXT, cwd: F36_LONG_TOKEN });
+          const proyecto = page.locator(`[data-chat-project="${projectId}"]`);
+          await proyecto.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+          await proyecto.locator('[data-project-key]').click();
+          await proyecto.locator('[data-history-session="vg-f36-chat"]').waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+          await waitForStillBox(page, '[data-history-session="vg-f36-chat"]');
+          return textFitOutcome({
+            lateral: await textFitProblems(page, '[data-chat-sidebar]'),
+            tareas: await textFitProblems(page, '[data-tasks-section]'),
+          });
+        });
+      } finally {
+        if (projectCreated) await page.evaluate((id) => window.__mageDev.store.getState().deleteChatProject(id), projectId);
+        if (taskId !== null) await page.evaluate((id) => window.mage.removeTask(id), taskId);
+        fs.rmSync(raiz, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
+      }
+    },
+  },
+  {
+    // La página de prueba solo sirve `/`: una ruta larga da 404, que es justo la dirección larga que se quiere medir.
+    name: 'F3.6 (en): navegador con un título y una dirección largos',
+    async run(page, { userDataDir }) {
+      const pageServer = await startBrowserPageServer();
+      const fake = await startFakeOpenAiServer();
+      let tabId = null;
+      try {
+        return await withEnglish(page, async () => {
+          ({ tabId } = await openRuntimeTab(page, { fake, userDataDir, provider: BROWSER_TURN_PROVIDER, model: QUEUE_TURN_MODEL }));
+          await page.evaluate(({ id, title }) => window.__mageDev.store.getState().renameTab(id, title), { id: tabId, title: F36_LONG_TEXT });
+          const sessionId = await page.evaluate((id) => window.__mageDev.store.getState().ensureSession(id), tabId);
+          await openBrowserInPanel(page, sessionId, `${pageServer.url}${'a'.repeat(180)}`);
+          await page.waitForTimeout(CONFIG.settleMs);
+          return textFitOutcome({ navegador: await textFitProblems(page, '[data-browser-panel]') });
+        });
+      } finally {
+        if (tabId !== null) await page.evaluate((id) => window.__mageDev.store.getState().closeTab(id), tabId);
+        await page.evaluate((id) => window.__mageDev.store.getState().removeCustomProvider(id), BROWSER_TURN_PROVIDER.id);
+        await fake.close();
+        await pageServer.close();
+      }
+    },
+  },
+  {
+    name: 'F3.6 (en): widget con una conversación de título largo',
+    state: { tabs: 1 },
+    async run(page) {
+      try {
+        return await withEnglish(page, async () => {
+          await page.evaluate((title) => window.__mageDev.store.getState().renameTab(window.__mageDev.store.getState().activeTabId, title), F36_LONG_TEXT);
+          await page.evaluate(() => window.mage.setWidgetPrefs({ expanded: false, doNotDisturb: false }));
+          await page.evaluate(() => window.__mageDev.store.getState().setWidgetEnabled(true));
+          const widget = await widgetPageOf(page);
+          await widget.locator('[data-widget-pill]').waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+          await widget.locator('[data-widget-toggle-view]').click();
+          await widget.locator('[data-widget-pill]').waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+          await widget.waitForFunction(() => window.innerWidth >= 318, null, { timeout: CONFIG.actionTimeoutMs });
+          await widget.waitForTimeout(CONFIG.settleMs);
+          return textFitOutcome({ widget: await textFitProblems(widget, 'body') });
+        });
+      } finally {
+        await page.evaluate(() => window.__mageDev.store.getState().setWidgetEnabled(false));
+        await waitForWidgetPages(page, 0);
+        await page.evaluate(() => window.mage.setWidgetPrefs({ expanded: false, doNotDisturb: false }));
+      }
+    },
+  },
   {
     // Grupo 0 (0.1.2, ficha D11 de P-032): UN turno minimo de verdad, de punta a punta — teclear, Enter,
     // proceso del CLI, respuesta pintada. Es la unica comprobacion que envia: todas las demas miden sin
@@ -10859,6 +11022,39 @@ async function realFocusOf(widget) {
 }
 
 // La página de la ventana del widget (la abre MAIN tras el IPC): espera a que exista y la devuelve, o lanza con el motivo.
+// F3.6: mide una zona y devuelve sus problemas de texto (vacío = bien). `scope` es la página o el widget.
+async function textFitProblems(scope, rootSelector) {
+  return classifyTextFit(await scope.evaluate(collectTextFit, rootSelector));
+}
+
+// F3.6: pone la interfaz en inglés, ejecuta `fn` y la deja como estaba. Copia el `setLanguage` y el `previo` de
+// 'F3.3' (que los lleva dentro de su `run`, no reutilizables sin tocarla).
+async function withEnglish(page, fn) {
+  const setLanguage = (pref) =>
+    page.evaluate(async (value) => {
+      const store = window.__mageDev.store;
+      const { uiLanguage: _actual, ...resto } = store.getState().settings;
+      const settings = value === null ? resto : { ...resto, uiLanguage: value };
+      store.setState({ settings });
+      await window.mage.saveSettings(settings);
+    }, pref);
+  const previo = await page.evaluate(() => window.__mageDev.store.getState().settings.uiLanguage ?? null);
+  try {
+    await setLanguage('en');
+    await page.waitForFunction(() => document.documentElement.lang === 'en', null, { timeout: CONFIG.actionTimeoutMs });
+    return await fn();
+  } finally {
+    await setLanguage(previo);
+    await page.waitForFunction((pref) => document.documentElement.lang === (pref ?? document.documentElement.lang), previo, { timeout: CONFIG.actionTimeoutMs }).catch(() => undefined);
+  }
+}
+
+// F3.6: el resultado común de una comprobación de textos largos.
+function textFitOutcome(zonas) {
+  const sinProblemas = Object.values(zonas).every((problemas) => problemas.length === 0);
+  return { ok: sinProblemas, detail: JSON.stringify({ zonas }) };
+}
+
 async function widgetPageOf(page) {
   const deadline = Date.now() + CONFIG.actionTimeoutMs;
   while (Date.now() < deadline) {
