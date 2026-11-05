@@ -38,7 +38,7 @@ import {
 } from 'node:fs';
 import { glob, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
-import { accountsHomeFrom, decideTestHome } from './os/testHome';
+import { accountsFetchFor, accountsHomeFrom, decideTestHome } from './os/testHome';
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { isUnderCliScratchpad as isUnderCliScratchpadPure } from './files/cliScratchpad';
 import { fileURLToPath } from 'node:url';
@@ -1404,8 +1404,10 @@ function readCliAuthStatus(configDir: string): Promise<string> {
 
 // Renovacion de sesion para el panel de Uso. Quien renueva normalmente es el CLI al correr un turno;
 // esto cubre la cuenta inactiva, que es justo la que quieres consultar y la unica que da 401.
+// HOME de prueba (verify:gui): las cuentas son de prueba y su token no sale a la red (ver `os/testHome.ts`).
+const accountsFetch = accountsFetchFor(decideTestHome({ env: process.env, isPackaged: app.isPackaged }), fetch);
 const tokenRefreshService = new TokenRefreshService({
-  fetch,
+  fetch: accountsFetch,
   readOauthBlock: (configDir) => readOauthBlock(configDir),
   writeOauthBlock: (configDir, oauth) => writeCredentials(configDir, oauth, credentialsDeps),
   now: () => Date.now(),
@@ -1418,7 +1420,7 @@ const tokenRefreshService = new TokenRefreshService({
 // (imprescindible o el endpoint devuelve 429); se resuelve una vez y cachea. fetch es el global de
 // Node 22 (toda la red va en main: la CSP del renderer es connect-src 'self').
 const usageService = new UsageService({
-  fetch,
+  fetch: accountsFetch,
   readAccessToken: (configDir) => readAccessToken(configDir),
   now: () => Date.now(),
     // Getter, no valor: `claudeUserAgent()` hace un `execFileSync` del binario para leer su version
