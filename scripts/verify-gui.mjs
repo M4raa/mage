@@ -57,6 +57,7 @@ import { writeLongTranscript } from './lib/longTranscriptFixture.mjs';
 import { runMageBench } from './lib/benchMage.mjs';
 import { appendDomText } from './lib/domTextDump.mjs';
 import { redactLocalUser, redactUserData } from './lib/redactUserData.mjs';
+import { seededAppSettings } from './lib/profileSeed.mjs';
 import { cleanupProfile, credentialDigest } from '../spike/f0-profile-cleanup.mjs';
 import { claudeUsage, codexRateLimits, guardedUsage, prepareCodexHome } from '../spike/bench/headless.mjs';
 
@@ -11382,19 +11383,16 @@ const SEEDED_HINT = '[carpeta]';
 // El perfil aislado es una instalacion LIMPIA, asi que el asistente de primer arranque saldria en cada
 // tanda y taparia la app entera: las ~98 comprobaciones medirian un modal. Se siembra como ya visto, y
 // el asistente tiene su propia comprobacion, que lo reabre a proposito y lo vuelve a cerrar.
-function seedOnboardingDone(userDataDir) {
+function seedOnboardingDone(userDataDir, trustedFolders = []) {
   const file = path.join(userDataDir, 'app-settings.json');
   // El resto de ajustes se quedan en sus defaults: main los completa al leer (esquema tolerante).
-  // Se siembra un numero ALTO y no `ONBOARDING_VERSION` (que vive en un .ts que este script no puede
-  // importar): cualquier version futura del asistente sigue quedando por debajo, asi que subirla no
-  // vuelve a tapar la tanda entera. La comprobacion del asistente no depende de esto — lo reabre
-  // llamando al store.
+  // La comprobacion del asistente no depende de esto — lo reabre llamando al store.
   // Grupo F: las notas de version, dadas por vistas en la version actual. Sin esto, con el asistente
   // completado y el campo vacio, la app lo tomaria por una actualizacion desde la 0.1.1 y abriria la
   // pestaña de novedades en cada tanda (el harness levanta la condicion de dev, ver `launchApp`).
   fs.writeFileSync(
     file,
-    JSON.stringify({ version: 1, notificationRules: [], onboardingCompletedVersion: 9999, lastSeenReleaseNotesVersion: APP_VERSION }, null, 2),
+    JSON.stringify(seededAppSettings({ appVersion: APP_VERSION, trustedFolders }), null, 2),
     'utf-8',
   );
 }
@@ -13332,12 +13330,12 @@ async function main() {
   }
   prunePreviousProfiles(userDataDir);
   seedCommandCatalog(userDataDir);
-  if (reuseProfile === undefined || !fs.existsSync(path.join(userDataDir, 'app-settings.json'))) seedOnboardingDone(userDataDir);
-  seedMcpCommon(userDataDir);
   // Q01: la conversacion larga del runtime propio que `--perf-baseline` abre desde el historial (en produccion no hay puente).
-  const longTranscript = process.argv.includes('--perf-baseline')
-    ? writeLongTranscript(userDataDir, { cwd: path.join(userDataDir, 'vg-t3-cwd'), blocks: LONG_TRANSCRIPT_BLOCKS })
-    : null;
+  // Su carpeta se siembra de confianza en ESTE perfil: sin eso, TrustFolderDialog tapa la medicion en `--prod` (V7).
+  const perfCwd = process.argv.includes('--perf-baseline') ? path.join(userDataDir, 'vg-t3-cwd') : null;
+  if (reuseProfile === undefined || !fs.existsSync(path.join(userDataDir, 'app-settings.json'))) seedOnboardingDone(userDataDir, perfCwd === null ? [] : [perfCwd]);
+  seedMcpCommon(userDataDir);
+  const longTranscript = perfCwd === null ? null : writeLongTranscript(userDataDir, { cwd: perfCwd, blocks: LONG_TRANSCRIPT_BLOCKS });
 
   console.log(`[verify:gui] perfil aislado: ${userDataDir}`);
   const { child, log } = launchApp(userDataDir);
