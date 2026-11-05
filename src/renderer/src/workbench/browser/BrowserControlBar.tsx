@@ -6,7 +6,7 @@ import { Icon } from '../components/Icon';
 
 // Barra de control del navegador (I3): dice quién lleva la pestaña y deja quitársela al agente (Detener) o devolvérsela.
 // Detener siempre está a la vista mientras el agente controla (P-S2).
-const BAR = 'flex shrink-0 items-center gap-[8px] border-b border-mg-border-subtle px-[10px] py-[5px] text-[10.5px] text-mg-body2';
+const BAR = 'flex min-w-0 shrink-0 items-center gap-[8px] border-b border-mg-border-subtle px-[10px] py-[5px] text-[10.5px] text-mg-body2';
 const ACTION = 'flex items-center gap-[4px] rounded-[6px] border border-mg-border-ctrl px-[8px] py-[3px] text-[10.5px] text-mg-body2 hover:bg-mg-hover hover:text-mg-body disabled:opacity-50';
 
 export function BrowserControlBar({ state }: { readonly state: BrowserEntryState }): React.JSX.Element | null {

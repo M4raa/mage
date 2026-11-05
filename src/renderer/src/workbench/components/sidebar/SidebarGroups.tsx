@@ -100,7 +100,7 @@ export function ProjectGroupView(props: ProjectGroupViewProps): React.JSX.Elemen
         >
           <span aria-hidden="true" className="text-mg-icon"><RotatingChevron open={open} size={12} /></span>
           <Icon name="folder" size={12} />
-          <span className="truncate">{group.name}</span>
+          <span className="truncate" title={group.name}>{group.name}</span>
         </button>
         <span className="flex flex-none items-center gap-[6px] text-[10.5px] font-normal text-mg-muted">
           {summary.attention > 0 && (

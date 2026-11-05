@@ -31,9 +31,9 @@ export function TabSubline(): React.JSX.Element | null {
   if (tab === undefined) return null;
   const folder = folderChip(tab.cwd, scratchRoots.length > 0 ? scratchRoots : scratchDir);
   const parts: readonly React.ReactNode[] = [
-    <span key="account" data-tab-subline-account className="inline-flex items-center gap-[6px]">
+    <span key="account" data-tab-subline-account className="inline-flex min-w-0 items-center gap-[6px]">
       <span aria-hidden="true" className="h-[7px] w-[7px] flex-none rounded-full" style={{ background: account?.accent.base ?? 'transparent' }} />
-      <span className="truncate">{tab.accountAlias}</span>
+      <span className="truncate" title={tab.accountAlias}>{tab.accountAlias}</span>
       {account?.apiBilled === true && <span data-subline-api-billed="true" className="flex-none text-mg-warn">{apiBilledLabel()}</span>}
     </span>,
     ...(folder === null
@@ -44,7 +44,7 @@ export function TabSubline(): React.JSX.Element | null {
             onClick={() => void window.mage.openPath(tab.cwd).catch(() => undefined)}
             data-tip={folder.title}
             aria-label={folder.title}
-            className="inline-flex max-w-[280px] items-center gap-[5px] rounded-[4px] px-[3px] transition-colors duration-90 ease-out hover:bg-mg-hover hover:text-mg-body"
+            className="inline-flex min-w-0 max-w-[280px] items-center gap-[5px] rounded-[4px] px-[3px] transition-colors duration-90 ease-out hover:bg-mg-hover hover:text-mg-body"
           >
             <Icon name={folder.icon} size={12} />
             <span className="truncate">{folder.label}</span>
