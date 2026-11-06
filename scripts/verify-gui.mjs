@@ -3180,7 +3180,7 @@ const CHECKS = [
         medido.permitido = (await waitForFile(ajustes, (t) => reglas(t).allow.includes(AGY_VG_COMMAND))) !== null;
         await comandos.getByRole('button', { name: ui('chat.permission.state.allowed'), exact: true }).click();
         medido.denegado = (await waitForFile(ajustes, (t) => reglas(t).deny.includes(AGY_VG_COMMAND) && !reglas(t).allow.includes(AGY_VG_COMMAND))) !== null;
-        await dialogo.getByRole('button', { name: `Quitar ${AGY_VG_COMMAND}`, exact: true }).click();
+        await dialogo.getByRole('button', { name: ui('settings.agyCommands.removeAria', { rule: AGY_VG_COMMAND }), exact: true }).click();
         medido.quitado = (await waitForFile(ajustes, (t) => !reglas(t).deny.includes(AGY_VG_COMMAND))) !== null;
         await dialogo.getByRole('button', { name: ui('settings.agyCommands.done'), exact: true }).click();
         await dialogo.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
@@ -3232,7 +3232,7 @@ const CHECKS = [
         medido.fila = (await mcp.locator('[data-agy-command-list="true"] li').first().innerText()).replace(/\s+/g, ' ').trim();
         await mcp.getByRole('button', { name: ui('chat.permission.state.allowed'), exact: true }).click();
         medido.denegada = (await waitForFile(ajustes, (t) => reglas(t).deny.includes(todas) && !reglas(t).allow.includes(todas))) !== null;
-        await mcp.getByRole('button', { name: `Quitar ${SEEDED_AGY_SERVER} · todas`, exact: true }).click();
+        await mcp.getByRole('button', { name: ui('settings.agyCommands.removeAria', { rule: ui('settings.agyCommands.mcp.allTools', { server: SEEDED_AGY_SERVER }) }), exact: true }).click();
         medido.quitada = (await waitForFile(ajustes, (t) => !reglas(t).deny.includes(todas))) !== null;
         await page.locator('[data-agy-commands-dialog="true"]').getByRole('button', { name: ui('settings.agyCommands.done'), exact: true }).click();
         await page.locator('[data-agy-commands-dialog="true"]').waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
@@ -3251,10 +3251,10 @@ const CHECKS = [
         (medido.servidores ?? []).includes(SEEDED_AGY_SERVER) &&
         medido.errorInvalida === 1 &&
         medido.permitida &&
-        medido.fila?.startsWith(`${SEEDED_AGY_SERVER} · todas`) &&
+        medido.fila?.startsWith(ui('settings.agyCommands.mcp.allTools', { server: SEEDED_AGY_SERVER })) &&
         medido.denegada &&
         medido.quitada &&
-        /esta herramienta/.test(medido.textoAviso ?? '') &&
+        (medido.textoAviso ?? '').includes(ui('chat.agyDenied.allowTool')) &&
         medido.desdeElAviso;
       return { ok: ok === true, detail: JSON.stringify(medido) };
     },
@@ -4026,12 +4026,12 @@ const CHECKS = [
       await page.waitForTimeout(CONFIG.settleMs);
       const ok =
         posicion.encimaDelInput &&
-        posicion.contador === '1 de 3' &&
+        posicion.contador === ui('prompt.question.counter', { step: 1, total: 3 }) &&
         posicion.enElHilo === 0 &&
         visibleTrasScroll &&
         trasElegir.opcion2 === 'true' &&
         trasElegir.sigue === 'vg-ask-3' &&
-        contadorTras === '2 de 3';
+        contadorTras === ui('prompt.question.counter', { step: 2, total: 3 });
       return { ok, detail: JSON.stringify({ ...posicion, layoutEvidence, visibleTrasScroll, ...trasElegir, contadorTras }) };
     },
   },
@@ -4046,10 +4046,13 @@ const CHECKS = [
         return { tabs: s.tabs, activeTabId: s.activeTabId, splitLayout: s.splitLayout, elicitationsByChat: s.elicitationsByChat };
       });
       await openTemporaryConversation(page);
+      // El título del campo `usuario` es el del catálogo; el resto de títulos son datos del fixture. Los obligatorios llevan « *».
+      const userTitle = ui('chat.instructions.scopeUser');
+      const userLabel = `${userTitle} *`;
       const request = {
         requestId: 'vg-elic-1', server: 'vg_server', message: 'Datos de prueba', mode: 'form',
         schema: { type: 'object', required: ['usuario', 'edad'], properties: {
-          usuario: { type: 'string', title: ui('chat.instructions.scopeUser') }, clave: { type: 'string', title: 'Clave', format: 'password' },
+          usuario: { type: 'string', title: userTitle }, clave: { type: 'string', title: 'Clave', format: 'password' },
           edad: { type: 'integer', title: 'Edad', minimum: 18 }, ok: { type: 'boolean', title: 'Acepto' } } },
       };
       await page.evaluate((req) => {
@@ -4070,7 +4073,7 @@ const CHECKS = [
         };
       });
       const vacio = await medida();
-      await dock.getByLabel('Usuario *').fill('ana');
+      await dock.getByLabel(userLabel).fill('ana');
       await dock.getByLabel('Edad *').fill('17');
       const menor = await medida();
       await dock.getByLabel('Edad *').fill('30');
@@ -4086,7 +4089,7 @@ const CHECKS = [
       await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
       await page.waitForTimeout(CONFIG.settleMs);
       const ok = vacio.encimaDelInput && vacio.clave && vacio.aceptarDeshabilitado === true && menor.aceptarDeshabilitado === true &&
-        valido.aceptarDeshabilitado === false && cerrado === 0 && vacio.etiquetas.includes('Usuario *') && vacio.etiquetas.includes('Edad *');
+        valido.aceptarDeshabilitado === false && cerrado === 0 && vacio.etiquetas.includes(userLabel) && vacio.etiquetas.includes('Edad *');
       return { ok, detail: JSON.stringify({ vacio, menor: menor.aceptarDeshabilitado, valido: valido.aceptarDeshabilitado, cerrado }) };
     },
   },
@@ -4999,8 +5002,8 @@ const CHECKS = [
         const ok =
           inicial.parar === 1 && inicial.cola === ui('prompt.queueSend.button') && inicial.colaDesactivado === true && inicial.retorno === 0 &&
           claude.desactivado === false && claude.seguiaEnMarcha === true && atajoTip.test(claude.tip ?? '') && atajo.test(claude.atajo ?? '') &&
-          agy.desactivado === true && /agy no permite enviar durante un turno/.test(agy.tip ?? '') &&
-          review.desactivado === true && /turno de revisión no admite mensajes directos/.test(review.tip ?? '') &&
+          agy.desactivado === true && (agy.tip ?? '').includes(ui('prompt.sendNow.providerUnsupported', { provider: 'agy' })) &&
+          review.desactivado === true && (review.tip ?? '').includes(uiPlural('chat.steer.notSteerable', { turnKind: 'review' })) &&
           vacio.desactivado === true &&
           reposo.retorno === 1 && reposo.split === 0;
         return { ok, detail: JSON.stringify({ inicial, claude, agy, review, vacio, reposo }) };
@@ -5775,7 +5778,7 @@ const CHECKS = [
         measured.tarjeta.masInformacion === true &&
         // El panel sigue ofreciendo la misma decision, ahi CON el numero del atajo visible, y ademas es
         // el que ensena el detalle (diff) y lo configurado.
-        measured.panel?.permitir?.texto === 'Permitir1' &&
+        measured.panel?.permitir?.texto === `${ui('app.widget.allow')}1` &&
         measured.panel.permitirSiempre?.atajo === '2' &&
         measured.panel.denegar?.atajo === '3' &&
         measured.panel.diff === true &&
@@ -5815,14 +5818,15 @@ const CHECKS = [
       await injectPermissionRequest(page, { file_path: 'C:/proj/a.ts', content: 'a' }, 'verify-always-1', 'Write');
       await page.evaluate(() => window.__mageDev.store.getState().allowAlwaysAndAnswer('Write'));
       await page.waitForTimeout(CONFIG.settleMs);
-      const conRegla = await page.evaluate(() => {
+      const revokeAria = ui('chat.permissions.alwaysAllowed.revokeAria', { tool: 'Write' }).replace(/["\\]/g, '\\$&');
+      const conRegla = await page.evaluate((revokeAria) => {
         const s = window.__mageDev.store.getState();
         const tab = s.tabs.find((t) => t.id === s.activeTabId);
         return {
           regla: tab?.alwaysAllowTools ?? [],
-          enElPanel: document.querySelector('button[aria-label="Revocar el permiso permanente de Write"]') !== null,
+          enElPanel: document.querySelector(`button[aria-label="${revokeAria}"]`) !== null,
         };
-      });
+      }, revokeAria);
       // La peticion sigue pendiente porque sin sesion viva no hay a quien contestar: se cierra por el
       // mismo camino que el CLI para dejar el hilo limpio antes de medir la segunda.
       await cancelInjectedPermission(page, 'verify-always-1');
@@ -5837,13 +5841,13 @@ const CHECKS = [
         s.revokeAlwaysAllow(s.activeTabId, 'Write');
       });
       await page.waitForTimeout(CONFIG.settleMs);
-      const trasRevocar = await page.evaluate(() => {
+      const trasRevocar = await page.evaluate((revokeAria) => {
         const s = window.__mageDev.store.getState();
         return {
           reglas: (s.tabs.find((t) => t.id === s.activeTabId)?.alwaysAllowTools ?? []).length,
-          enElPanel: document.querySelector('button[aria-label="Revocar el permiso permanente de Write"]') !== null,
+          enElPanel: document.querySelector(`button[aria-label="${revokeAria}"]`) !== null,
         };
-      });
+      }, revokeAria);
       if (!abiertoAntes) {
         await icon.click();
         await page.waitForTimeout(CONFIG.settleMs);
