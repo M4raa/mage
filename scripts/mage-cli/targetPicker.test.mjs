@@ -100,6 +100,56 @@ describe('resolveTarget', () => {
       expect(createdWith(rpc)).toBe('/h/.codex-a');
     });
 
+    describe('nombre dado con --name', () => {
+      const withAccounts = (accounts, accountId, provider = 'claude') => setup({
+        target: { kind: 'new', accountId, provider, cwd: null },
+        responses: { 'accounts.list': { accounts }, 'session.create': { sessionId: 's8' } },
+      });
+      const CPI = { id: 'C:/h/.claude-cpI-api', name: '.claude-cpI-api', provider: 'claude' };
+
+      it('resolveAccountId_nombreSinPrefijo_casa', async () => {
+        const { run, rpc } = withAccounts([CPI], 'cpI-api');
+
+        await run();
+
+        expect(createdWith(rpc)).toBe('C:/h/.claude-cpI-api');
+      });
+
+      it('resolveAccountId_nombreConPrefijo_casa', async () => {
+        const { run, rpc } = withAccounts([CPI], '.claude-cpI-api');
+
+        await run();
+
+        expect(createdWith(rpc)).toBe('C:/h/.claude-cpI-api');
+      });
+
+      it('resolveAccountId_dosCasan_errorConLasRutas', async () => {
+        const plain = { id: 'C:/h/otra', name: 'cpI-api', provider: 'claude' };
+        const { run, rpc } = withAccounts([plain, CPI], 'cpI-api');
+
+        await expect(run()).rejects.toMatchObject({ exitCode: 2, message: expect.stringMatching(/C:\/h\/otra[\s\S]*C:\/h\/\.claude-cpI-api/) });
+
+        expect(rpc.call).not.toHaveBeenCalledWith('session.create', expect.anything());
+      });
+
+      it('resolveAccountId_prefijoDeOtroProveedor_noCasa', async () => {
+        const codex = { id: 'C:/h/.codex-cpI-api', name: '.codex-cpI-api', provider: 'codex' };
+        const { run, rpc } = withAccounts([CPI, codex], 'cpI-api', 'codex');
+
+        await run();
+
+        expect(createdWith(rpc)).toBe('C:/h/.codex-cpI-api');
+      });
+
+      it('resolveAccountId_prefijoDeClaudeEnCodex_noCasa', async () => {
+        const { run, rpc } = withAccounts([{ ...CPI, provider: 'codex' }], 'cpI-api', 'codex');
+
+        await run();
+
+        expect(createdWith(rpc)).toBe('cpI-api');
+      });
+    });
+
     it('resolveTarget_newSinCoincidencia_pasaElTexto', async () => {
       const { run, rpc } = created('nadie');
 

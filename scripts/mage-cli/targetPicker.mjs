@@ -44,13 +44,15 @@ async function askChoice({ ask, write, messages }, { prompt, size, allowNew }) {
   throw withExitCode(messages.invalidChoice(lastAnswer), EXIT_BAD_ARGUMENTS);
 }
 
-// `--account` admite el id (la ruta del config dir) o el nombre que imprime `mage account add`, dentro del proveedor
-// pedido. Varios con ese nombre: error con las rutas. Ninguno: el texto va tal cual y el host contesta «cuenta desconocida».
+// `--account` admite el id (la ruta del config dir), el nombre que imprime `mage account add` o el que se le dio con
+// `--name`, sin el prefijo de carpeta (`.claude-`/`.codex-`), dentro del proveedor pedido. Varios con ese nombre: error
+// con las rutas. Ninguno: el texto va tal cual y el host contesta «cuenta desconocida».
 async function resolveAccountId({ rpc, messages }, { provider, accountId }) {
   const { accounts } = await rpc.call('accounts.list');
   const ofProvider = accounts.filter((account) => account.provider === provider);
   if (ofProvider.some((account) => account.id === accountId)) return accountId;
-  const named = ofProvider.filter((account) => account.name === accountId);
+  const folderName = `.${provider}-${accountId}`;
+  const named = ofProvider.filter((account) => account.name === accountId || account.name === folderName);
   if (named.length > 1) throw withExitCode(messages.ambiguousAccount(accountId, named.map((account) => account.id)), EXIT_BAD_ARGUMENTS);
   if (named.length === 1) return named[0].id;
   return accountId;
