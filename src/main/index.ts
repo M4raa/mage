@@ -1,5 +1,5 @@
 import { resolvedPath as canonicalPath } from './os/resolvedPath';
-import { localMageRoot, localScratchRoot, workspaceTrusted, ensureWorkingDirectory } from './os/scratchWorkspace';
+import { localMageRoot, localScratchRoot, scratchWorkspacePaths, workspaceTrusted, ensureWorkingDirectory } from './os/scratchWorkspace';
 import { ConversationLocks, HEARTBEAT_MS } from './locks/conversationLocks';
 import { runLockHeartbeatTick } from './locks/conversationLockHeartbeat';
 import { lockFileName, nodeLockFs, pidAliveCheck, resolveConversationLocksDir } from './locks/conversationLockEnv';
@@ -200,7 +200,7 @@ import { claudeSharedLaunch } from './config/mcpProviderTranslate';
 import { mergeServerLists, selectForTarget, type ResolvedMcpServer } from './config/mcpResolved';
 import { mcpFamilyOf } from '@shared/mcp';
 import { AccountService } from './accounts/accountService';
-import { ConversationsService, withLastAccount, type ConversationsDeps } from './conversations/conversationsService';
+import { ConversationsService, withHostOwner, withLastAccount, type ConversationsDeps } from './conversations/conversationsService';
 import { CodexHistoryService } from './conversations/codexHistory';
 import { deleteCodexConversation } from './conversations/codexDeletion';
 import { updateLegacyCodexThread } from './conversations/codexLegacyUpdate';
@@ -2712,7 +2712,8 @@ function existsDirs(paths: unknown): readonly boolean[] {
 // Raiz de los directorios de borrador. Un solo sitio: si la calculan dos, un dia divergen y la fila de
 // informacion deja de reconocer el scratchpad sin que nada falle.
 function scratchRoot(): string {
-  return localScratchRoot({ platform: process.platform, home: homedir(), userData: app.getPath('userData'), temp: app.getPath('temp'), env: process.env });
+  const paths = { platform: process.platform, home: homedir(), userData: app.getPath('userData'), temp: app.getPath('temp'), env: process.env };
+  return localScratchRoot(scratchWorkspacePaths(paths, decideTestHome({ env: process.env, isPackaged: app.isPackaged })));
 }
 function scratchRoots(): readonly string[] { return [scratchRoot(), join(app.getPath('temp'), 'mage-scratch'), join(app.getPath('userData'), 'mage-scratch')].map(root => canonicalPath(root)); }
 
@@ -3523,6 +3524,19 @@ function sendMissingConversation(sender: Electron.WebContents, transcriptId: str
   if (!sender.isDestroyed()) sender.send(TRANSCRIPT_BATCH_CHANNEL, payload);
 }
 
+// Historial de una cuenta de Claude, con la última cuenta usada y la dueña (conversaciones creadas fuera de la ventana)
+// que sabe el índice de Mage.
+function listClaudeConversations(accountDir: string): readonly ConversationSummary[] {
+  if (!isManagedAccountConfigDir(accountDir)) {
+    throw new Error(`Cuenta no valida para listar conversaciones: ${accountDir}`);
+  }
+  const listed = withLastAccount(conversationsService.listConversations(accountDir), (id) => {
+    const prefs = getConversationIndexStore().loadPrefs(id);
+    return prefs?.hostOwnerAccountId ?? prefs?.accountId;
+  });
+  return withHostOwner(listed, (id) => getConversationIndexStore().loadPrefs(id)?.hostOwnerAccountId);
+}
+
 function registerTranscriptIpc2(deps: IpcDependencies): void {
   const { conversationAdminService, requireSafeConversation } = deps;
   ipcMain.handle(IpcChannel.TranscriptCancel, (_e, transcriptId: string) => {
@@ -3546,13 +3560,7 @@ function registerTranscriptIpc2(deps: IpcDependencies): void {
     if (codex !== null) return codexHistory.list(codex.home);
     const agyProfile = agyProfileOfAccount(accountDir);
     if (agyProfile !== null) return agyHistory.list(agyProfile, accountDir, agyExternalProfileOf(accountDir));
-    if (!isManagedAccountConfigDir(accountDir)) {
-      throw new Error(`Cuenta no valida para listar conversaciones: ${accountDir}`);
-    }
-    return withLastAccount(conversationsService.listConversations(accountDir), (id) => {
-      const prefs = getConversationIndexStore().loadPrefs(id);
-      return prefs?.hostOwnerAccountId ?? prefs?.accountId;
-    });
+    return listClaudeConversations(accountDir);
   });
   ipcMain.handle(IpcChannel.ConversationsDelete, async (_e, params: DeleteConversationParams): Promise<void> => {
     requireSafeConversation(params.accountDir, params.sessionId);

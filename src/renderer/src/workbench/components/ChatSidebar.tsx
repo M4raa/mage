@@ -88,6 +88,7 @@ export function ChatSidebar(): React.JSX.Element {
       key={rowKey(row)}
       row={row}
       account={view.accountOf(row)}
+      missingOwner={view.missingOwnerOf(row)}
       status={view.statusOf(row)}
       indicator={view.indicatorOf(row)}
       background={view.backgroundOf(row)}

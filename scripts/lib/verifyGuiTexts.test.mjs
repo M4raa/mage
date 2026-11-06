@@ -257,3 +257,49 @@ describe('verifyGuiTexts', () => {
     expect(findings.map((finding) => finding.text)).toEqual([`aria-label="${value}"`, `/${value}/`]);
   });
 });
+
+// Regex literales `/…/` de verify-gui.mjs: cada trozo de texto fijo (sin `^`, `$`, escapes ni clases) de 8 o más caracteres que sea un
+// tramo de un valor TRADUCIDO de es.json es un texto castellano de la interfaz, aunque no sea un valor ni un tramo entero.
+const MIN_REGEX_LITERAL_LENGTH = 8;
+const TRANSLATED_ES_VALUES = [...TRANSLATED_VALUES];
+
+// Excepciones: texto del arnés o del fixture (no de la interfaz) que casualmente es un tramo de un mensaje del catálogo.
+const ALLOWED_REGEX_LITERALS = new Map([
+  ['ANTIGRAVITY', 'nombre propio del producto: igual en todos los idiomas'],
+  ['Electron', 'nombre propio de la tecnología: igual en todos los idiomas'],
+]);
+
+function regexLiteralFindings(sourceText, fileName) {
+  const sourceFile = ts.createSourceFile(fileName, sourceText, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+  const findings = [];
+  const visit = (node) => {
+    if (ts.isRegularExpressionLiteral(node)) {
+      const body = /^\/(.*)\/[a-z]*$/s.exec(node.text)?.[1] ?? '';
+      const pieces = regexAlternatives(body).flatMap(regexTexts).map((piece) => piece.trim());
+      const hit = pieces.find((piece) => piece.length >= MIN_REGEX_LITERAL_LENGTH && !ALLOWED_REGEX_LITERALS.has(piece) && TRANSLATED_ES_VALUES.some((value) => value.includes(piece)));
+      if (hit !== undefined) findings.push({ line: sourceFile.getLineAndCharacterOfPosition(node.getStart()).line + 1, text: node.text });
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return findings;
+}
+
+describe('verifyGuiRegexLiterals', () => {
+  it('verifyGui_regexLiterals_noContienenTextoCastellanoDelCatalogo', () => {
+    const fileName = 'scripts/verify-gui.mjs';
+
+    const findings = regexLiteralFindings(readText('../verify-gui.mjs'), fileName);
+
+    expect(describeFindings(fileName, findings)).toBe('');
+  });
+
+  it('verifyGui_regexConTramoDeUnMensaje_loDetecta', () => {
+    const piece = es['accounts.add.agy.checking'].slice(0, 12);
+    const source = `x.test(/${piece}/); x.test(/nada de nada/);`;
+
+    const findings = regexLiteralFindings(source, 'inventado.mjs');
+
+    expect(findings.map((finding) => finding.text)).toEqual([`/${piece}/`]);
+  });
+});

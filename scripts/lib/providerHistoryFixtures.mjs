@@ -2,7 +2,7 @@
 // datos aislada del harness, con una conversación sintética cada uno (la misma forma medida que leen los
 // lectores de main). Sin nada real del usuario y sin lanzar ningún CLI.
 import { DatabaseSync } from 'node:sqlite';
-import { copyFileSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
 export const CODEX_FIXTURE_ID = '11111111-2222-3333-4444-555555555555';
@@ -76,6 +76,10 @@ export function seedProviderHistory({ userDataDir, repoRoot }) {
   const rollout = join(codexHome, 'sessions', '2026', '10', '05', `rollout-2026-10-05T10-00-00-${CODEX_FIXTURE_ID}.jsonl`);
   mkdirSync(dirname(rollout), { recursive: true });
   copyFileSync(join(repoRoot, 'src', 'shared', 'fixtures', 'codex-rollout.jsonl'), rollout);
+  // `copyFileSync` conserva en Windows el mtime del fichero del repositorio (la hora del checkout), y el historial de Codex
+  // fecha la conversación por él: se pone a «ahora» para que la fila diga siempre lo mismo.
+  const now = new Date();
+  utimesSync(rollout, now, now);
   seedCodexRevertThread(codexHome);
   const dbPath = join(agyHome, '.gemini', 'antigravity-cli', 'conversations', `${AGY_FIXTURE_ID}.db`);
   mkdirSync(dirname(dbPath), { recursive: true });

@@ -24,6 +24,8 @@ export interface ConversationSummary {
   readonly providerId?: AccountProviderId;
   // Última cuenta con la que se usó la conversación, del índice de Mage; solo Claude.
   readonly lastAccountId?: string;
+  // Cuenta dueña de una conversación creada fuera de la ventana (terminal o MCP), del índice de Mage; solo Claude.
+  readonly hostOwnerAccountId?: string;
 }
 
 // Borrado de una conversacion en disco (#2 de AJUSTES). accountDir es la cuenta RAIZ; privacy indica

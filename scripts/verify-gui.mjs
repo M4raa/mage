@@ -60,8 +60,26 @@ import { appendDomText } from './lib/domTextDump.mjs';
 import { classifyTextFit, collectTextFit } from './lib/textFit.mjs';
 import { redactLocalUser, redactUserData } from './lib/redactUserData.mjs';
 import { seededAppSettings, seedTestAccounts } from './lib/profileSeed.mjs';
-import { ui, uiIn, uiPrefix, uiRegExp, uiSegment, escapeRegExp, cssAttr, getUiLanguage, setUiLanguage, parseUiLangArg } from './lib/uiText.mjs';
+import { ui, uiIn, uiPlural, uiPrefix, uiRegExp, uiSegment, escapeRegExp, cssAttr, getUiLanguage, setUiLanguage, parseUiLangArg } from './lib/uiText.mjs';
 
+// Línea resumen del dock de subagentes (agentsDock.ts): «N en ejecución · M terminados», sin la parte que vale cero.
+const agentsSummary = (running, finished) => [running > 0 ? ui('chat.agents.summaryRunning', { count: running }) : null, finished > 0 ? uiPlural('chat.agents.summaryFinished', { count: finished }) : null].filter((part) => part !== null).join(' · ');
+// Línea de conversaciones privadas del diálogo de eliminar cuenta: contando, fallo, ninguna, una o N (el N se deja abierto).
+const privateLineRegExp = () => new RegExp(`(?:${[
+  escapeRegExp(ui('accounts.delete.privateCounting')),
+  escapeRegExp(uiPrefix('accounts.delete.privateCountFailed')),
+  escapeRegExp(uiPlural('accounts.delete.privateCount', { count: 0 })),
+  escapeRegExp(uiPlural('accounts.delete.privateCount', { count: 1 })),
+  escapeRegExp(uiPlural('accounts.delete.privateCount', { count: 2 })).replace('2', '\\d+'),
+].join('|')})`);
+// Indicador de uso de la barra de estado («5h 12% · sem 40% · reset …»): el inicio fijo del mensaje hasta la 2ª variable.
+const statusBarWindowsRegExp = () => new RegExp(`${escapeRegExp(uiSegment('app.statusBar.windows', 0))}\\s*\\d+${escapeRegExp(uiSegment('app.statusBar.windows', 1))}`);
+// Entero con el agrupador del idioma de la tanda (la app formatea igual con Intl).
+const localizedInteger = (value) => new Intl.NumberFormat(getUiLanguage()).format(value);
+// Decimal con un dígito, con el separador del idioma de la tanda (la app formatea igual con Intl).
+const localizedDecimal = (value) => new Intl.NumberFormat(getUiLanguage(), { minimumFractionDigits: 1, maximumFractionDigits: 1, useGrouping: false }).format(value);
+// Tiempo relativo de una fila («hace 3 min», «ahora»): los mensajes de format.time.* con su número abierto.
+const relativeTimeRegExp = () => new RegExp(`(?:${['daysAgo', 'hoursAgo', 'minutesAgo'].map((unit) => `${escapeRegExp(uiSegment(`format.time.${unit}`, 0))}\\s*\\d+\\s*${escapeRegExp(uiSegment(`format.time.${unit}`, 1))}`).concat(escapeRegExp(ui('format.time.now'))).join('|')})`);
 // Regex de varios textos de la interfaz (alternativas), cada uno escapado. `^` delante si `anchored`.
 const uiAnyOf = (texts, anchored = false) => new RegExp(`${anchored ? '^' : ''}(?:${texts.map(escapeRegExp).join('|')})`);
 // Regex de «empieza por el tramo fijo inicial del mensaje» (p. ej. `Desinstalar {name}` -> /^Desinstalar(\s|$)/).
@@ -115,7 +133,14 @@ const F36_LONG_TEXT = 'Quarterly reconciliation of the international subsidiarie
 const F36_LONG_TOKEN = 'C:\\Projects\\InternationalSubsidiaries\\QuarterlyReconciliation\\SupportingDocumentation\\AuditorsFollowUp\\final-report-v12-reviewed-and-approved.md';
 const NEW_TAB_DIALOG = '[role="dialog"][aria-labelledby="newtab-title"]';
 // Etiquetas de los campos del dialogo de nueva conversacion (el <label> envuelve a su control).
-const NEW_TAB_FIELD = { provider: 'PROVEEDOR', model: 'MODELO' };
+// La etiqueta se pinta en mayúsculas (CSS aparte, el texto es el del catálogo): se casa sin distinguirlas y al inicio.
+const newTabFieldPattern = (key) => new RegExp(`^\\s*${escapeRegExp(ui(key))}`, 'i');
+const NEW_TAB_FIELD = {
+  get provider() { return newTabFieldPattern('dialogs.newTab.providerLabel'); },
+  get model() { return newTabFieldPattern('dialogs.newTab.modelLabel'); },
+};
+// Botón «＋ Añadir proveedor» de la sección Proveedores, sin el símbolo (el accesible empieza por el texto).
+const addProviderButtonName = () => new RegExp(escapeRegExp(ui('settings.providers.addProvider').replace(/^＋\s*/, '')));
 // Motivo del rechazo del formulario de ALTA de proveedor (`idSuffix="nuevo"` en SettingsView).
 const PROVIDER_NEW_ERROR = '#provider-error-nuevo';
 // PROVIDER_TEMPLATES de src/shared/providers.ts: solo prerrellenan el formulario, no son proveedores.
@@ -127,8 +152,8 @@ const OLLAMA_TEMPLATE = {
   modelCount: 3,
 };
 // Primeras palabras de NO_PERMISSION_CONTROL_WARNING y del aviso de `agy` sin instalar (E3).
-const NO_PERMISSION_HEAD = 'Sin control de permisos';
-const AGY_MISSING_HEAD = 'No se ha encontrado el CLI';
+const NO_PERMISSION_HEAD = ui('prompt.providers.noPermissionControl').split(':')[0];
+const AGY_MISSING_HEAD = ui('dialogs.newTab.agyMissingEmphasis');
 const AGY_PROVIDER_ID = 'agy';
 const AGY_PERMISSION_CHIP = ui('prompt.permission.none');
 // Grupo E, fase 2: comando y carpeta de prueba (nunca se lanza agy con ellos).
@@ -249,7 +274,14 @@ const CHECKS = [
     async run(page) {
       const title = await page.title();
       const railCount = await page.locator('[role="toolbar"]').count();
-      return { ok: railCount > 0, detail: `title=${JSON.stringify(title)} toolbars=${railCount}` };
+      // El prompt tiene su nombre accesible desde el primer pintado (también antes de que llegue el editor diferido) y,
+      // sin pestañas, dice qué hacer.
+      const prompt = page.getByRole('textbox', { name: ui('prompt.editor.ariaLabel'), exact: true });
+      const promptCount = await prompt.count();
+      const tabCount = await page.locator('[role="tab"][data-tab-id]').count();
+      const promptText = promptCount === 0 ? '' : await prompt.first().innerText();
+      const emptyStateOk = tabCount > 0 || promptText.includes(ui('prompt.placeholder.noTab'));
+      return { ok: railCount > 0 && promptCount > 0 && emptyStateOk, detail: JSON.stringify({ title, toolbars: railCount, prompt: promptCount, pestañas: tabCount, textoPrompt: promptText }) };
     },
   },
   {
@@ -388,7 +420,7 @@ const CHECKS = [
         measured.bordeUtil - measured.derecha <= 12 &&
         measured.alto >= 16 &&
         // Dice que se va al navegador ANTES de pulsarlo, no despues.
-        /navegador/i.test(measured.etiqueta) &&
+        measured.etiqueta === ui('app.titleBar.bugLabel') &&
         /GitHub/i.test(measured.tip);
       return { ok, detail: `bug=${JSON.stringify(measured)}` };
     },
@@ -432,7 +464,7 @@ const CHECKS = [
         measured.mismaAltura &&
         measured.alto >= 16 &&
         // Dice que se va al navegador ANTES de pulsarlo, igual que el de fallo.
-        /navegador/i.test(measured.etiquetaIdea) &&
+        measured.etiquetaIdea === ui('app.titleBar.ideaLabel') &&
         /GitHub/i.test(measured.tipIdea);
       return { ok, detail: `idea=${JSON.stringify(measured)}` };
     },
@@ -859,7 +891,7 @@ const CHECKS = [
     state: { settingsSection: ui('mcp.section.tabsAria') },
     async run(page, { userDataDir }) {
       const dialogo = page.locator('[data-mcp-server-dialog]');
-      await page.getByRole('button', { name: `Editar ${SEEDED_MCP_HTTP}`, exact: true }).click();
+      await page.getByRole('button', { name: ui('mcp.servers.editAria', { name: SEEDED_MCP_HTTP }), exact: true }).click();
       await dialogo.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
       const enmascarado = await page.evaluate(
         (secreto) => !document.documentElement.outerHTML.includes(secreto) && [...document.querySelectorAll('input')].every((i) => !i.value.includes(secreto)),
@@ -868,7 +900,7 @@ const CHECKS = [
       await page.keyboard.press('Escape');
       await dialogo.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
       const configuracionAbierta = (await page.locator('[data-mcp-section]').count()) === 1;
-      await page.getByRole('button', { name: `Editar ${SEEDED_MCP_HTTP}`, exact: true }).click();
+      await page.getByRole('button', { name: ui('mcp.servers.editAria', { name: SEEDED_MCP_HTTP }), exact: true }).click();
       await dialogo.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
       await dialogo.getByRole('button', { name: ui('chat.files.save'), exact: true }).click();
       await dialogo.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
@@ -922,7 +954,7 @@ const CHECKS = [
         return { ok: false, detail: `con ${cuentas} cuentas con login no aparece la fila ${FAKE_MCP_AUTH_SERVER}` };
       }
       const estadoAntes = await fila.locator('[data-mcp-status]').innerText();
-      const botones = fila.getByRole('button', { name: new RegExp(`^Autenticar ${FAKE_MCP_AUTH_SERVER} en `) });
+      const botones = fila.getByRole('button', { name: new RegExp(`^${escapeRegExp(ui('mcp.auth.buttonAria', { server: FAKE_MCP_AUTH_SERVER, account: '' }))}`) });
       const antes = await botones.count();
       const boton = botones.first();
       const etiqueta = await boton.getAttribute('aria-label');
@@ -933,7 +965,7 @@ const CHECKS = [
       const texto = await mensaje.first().innerText();
       const despues = await botones.count();
       const sigueSuBoton = (await fila.getByRole('button', { name: etiqueta, exact: true }).count()) > 0;
-      const ok = estadoAntes.includes(ui('mcp.status.needsAuth')) && antes >= 1 && vioAutenticando && /Autenticado/.test(texto) && despues === antes - 1 && !sigueSuBoton;
+      const ok = estadoAntes.includes(ui('mcp.status.needsAuth')) && antes >= 1 && vioAutenticando && texto.includes(ui('mcp.auth.connected')) && despues === antes - 1 && !sigueSuBoton;
       return { ok, detail: `estadoAntes=«${estadoAntes}» botones ${antes}→${despues} autenticando=${vioAutenticando} mensaje=«${texto}»` };
     },
   },
@@ -1303,7 +1335,7 @@ const CHECKS = [
     name: 'B.2: «Acerca de» enseña los avisos de terceros con su copyright',
     async run(page) {
       await openSettingsDialog(page);
-      await openSection(page, /Acerca de/);
+      await openSection(page, uiRegExp('settings.sections.about.nav'));
       const medido = await waitForNotices(page);
       const closed = await closeDialog(page);
       const ok =
@@ -1329,7 +1361,7 @@ const CHECKS = [
       for (const label of PROVIDER_TEMPLATE_LABELS) {
         templates.push(await page.getByRole('button', { name: label, exact: true }).count());
       }
-      const addButton = await page.getByRole('button', { name: /Añadir proveedor/ }).count();
+      const addButton = await page.getByRole('button', { name: addProviderButtonName() }).count();
       const closed = await closeDialog(page);
       const ok = rows === 0 && templates.every((count) => count === 1) && addButton === 1 && closed === 0;
       return {
@@ -1347,7 +1379,7 @@ const CHECKS = [
     async run(page) {
       await openSettingsDialog(page);
       await openSection(page, uiRegExp('mcp.servers.column.providers'));
-      await page.getByRole('button', { name: /Añadir proveedor/ }).click();
+      await page.getByRole('button', { name: addProviderButtonName() }).click();
       const reasons = [
         await submitNewProvider(page, { label: '', baseUrl: '', models: '' }),
         await submitNewProvider(page, { label: 'Prueba', baseUrl: 'localhost:11434', models: 'llama3' }),
@@ -1367,10 +1399,10 @@ const CHECKS = [
       const ok =
         rows === 0 &&
         closed === 0 &&
-        /nombre/i.test(reasons[0] ?? '') &&
+        (reasons[0] ?? '').includes(ui('prompt.models.nameRequired')) &&
         (reasons[1] ?? '').includes('"localhost:11434"') &&
         /http/i.test(reasons[1] ?? '') &&
-        /al menos un modelo/i.test(reasons[2] ?? '');
+        (reasons[2] ?? '').includes(ui('prompt.models.modelsRequired'));
       return {
         ok,
         detail: `motivos=${JSON.stringify(reasons)} filas guardadas=${rows} foco tras Cancelar=${focusAfterCancel} dialogos tras Escape=${closed}`,
@@ -1464,7 +1496,7 @@ const CHECKS = [
       try {
         await openSettingsDialog(page);
         await openSection(page, uiRegExp('mcp.servers.column.providers'));
-        await page.getByRole('button', { name: /Añadir proveedor/ }).click();
+        await page.getByRole('button', { name: addProviderButtonName() }).click();
         await page.getByRole('textbox', { name: ui('settings.providers.form.urlAria') }).fill(fake.baseUrl);
         await page.locator('[data-runtime-probe="true"]').click();
         const status = page.locator('[data-runtime-probe-status="true"]');
@@ -1481,7 +1513,7 @@ const CHECKS = [
         const ok =
           measured.modelos === FAKE_SCENARIOS.length + 1 &&
           measured.ventana === '32768' &&
-          measured.herramientas.endsWith('sí') &&
+          measured.herramientas.endsWith(ui('settings.providers.tools.yes').split(': ').pop()) &&
           measured.peticionesDeModelos >= 1 &&
           closed === 0;
         return { ok, detail: JSON.stringify({ ...measured, dialogosAlCerrar: closed }) };
@@ -1500,7 +1532,7 @@ const CHECKS = [
     async run(page, { userDataDir }) {
       await openSettingsDialog(page);
       await openSection(page, uiRegExp('mcp.servers.column.providers'));
-      await page.getByRole('button', { name: /Añadir proveedor/ }).click();
+      await page.getByRole('button', { name: addProviderButtonName() }).click();
       await page.getByRole('textbox', { name: ui('settings.providers.form.nameAria') }).fill(SECRET_PROVIDER.label);
       await page.getByRole('textbox', { name: ui('settings.providers.form.urlAria') }).fill(SECRET_PROVIDER.baseUrl);
       await page.getByRole('textbox', { name: ui('settings.providers.form.modelsAria') }).fill('vg');
@@ -1797,23 +1829,23 @@ const CHECKS = [
       const dialog = page.locator(MODAL);
       await dialog.first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
 
-      const measured = await page.evaluate(({ adopt }) => {
+      const measured = await page.evaluate(({ adopt, emailLabel, cliName }) => {
         const modal = document.querySelector('[role="dialog"]');
         const text = modal?.textContent ?? '';
         return {
           campos: modal?.querySelectorAll('input[type="text"], input:not([type])').length ?? 0,
           casillas: modal?.querySelectorAll('input[type="checkbox"]').length ?? 0,
-          pideEmail: /EMAIL/.test(text),
-          diceCli: /CLI de Claude Code/.test(text),
+          pideEmail: text.includes(emailLabel),
+          diceCli: text.includes(cliName),
           dicePrivada: text.includes(window.__mageDev.t('accounts.add.claude.hint.privateWindow')),
           // Restos del flujo embebido que NO deben quedar.
-          diceDentroDeMage: /dentro de Mage/.test(text),
+          diceDentroDeMage: /dentro de Mage|inside Mage/.test(text),
           botonesAdoptar: [...(modal?.querySelectorAll('button') ?? [])].filter((b) =>
             (b.textContent ?? '').startsWith(adopt),
           ).length,
           conLogin: (window.__mageDev?.store.getState().accounts ?? []).filter((a) => a.providerId === 'claude' && a.loginStatus === 'logged_in').length,
         };
-      }, { adopt: uiPrefix('accounts.add.adopt.use') });
+      }, { adopt: uiPrefix('accounts.add.adopt.use'), emailLabel: ui('accounts.add.claude.emailLabel'), cliName: ui('accounts.add.claude.hint.cli') });
       const closed = await closeDialog(page);
 
       const ok =
@@ -2083,7 +2115,7 @@ const CHECKS = [
           texto: document.querySelector('[data-account-switch-note]')?.textContent ?? '',
         }));
         await page.keyboard.press('Escape');
-        const ok = medido.texto.includes('sigue siendo la misma conversación') && medido.boton.some((t) => t.startsWith(uiPrefix('accounts.switch.migrate')))
+        const ok = medido.texto.includes(uiSegment('accounts.switch.note.crossProvider', 1)) && medido.boton.some((t) => t.startsWith(uiPrefix('accounts.switch.migrate')))
           && medido.boton.some((t) => t === ui('accounts.switch.handoff'));
         return { ok, detail: JSON.stringify(medido) };
       } finally {
@@ -2108,7 +2140,7 @@ const CHECKS = [
       const despues = await crear.isDisabled();
       const texto = (await dialog.innerText()).replace(/\s+/g, ' ');
       const closed = await closeDialog(page);
-      const ok = antes && !despues && texto.includes(uiPrefix('accounts.add.agy.hint')) && texto.includes('independiente de la sesión de agy de tu equipo') && closed === 0;
+      const ok = antes && !despues && texto.includes(uiPrefix('accounts.add.agy.hint')) && texto.includes(uiSegment('accounts.add.agy.hint', 1)) && closed === 0;
       return { ok, detail: JSON.stringify({ antes, despues, perfilPropio: texto.includes(uiPrefix('accounts.add.agy.hint')), cerrado: closed === 0 }) };
     },
   },
@@ -2150,14 +2182,14 @@ const CHECKS = [
         medido.agy = await puente('GEMINI.md');
         fs.writeFileSync(path.join(cwd, 'AGENTS.md'), '# El suyo\n');
         await ponerProveedor('codex'); // cambia el proveedor: el panel vuelve a leer
-        await proyecto.getByText(/No se le pasa: Codex usa su propio/).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        await proyecto.getByText(ui('chat.instructions.bridgeOwnFile', { cli: 'Codex' })).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
         medido.conElSuyo = await proyecto.locator('[data-instructions-bridge]').count();
       } finally {
         await page.evaluate((l) => window.__mageDev.panelStore.setState({ layout: l }), layout);
         await restoreTurnState(page, previo);
         if (cwd !== null) for (const name of ['CLAUDE.md', 'AGENTS.md']) fs.rmSync(path.join(cwd, name), { force: true });
       }
-      const ok = /como AGENTS\.md/.test(medido.codex ?? '') && /a agy como GEMINI\.md/.test(medido.agy ?? '') && medido.conElSuyo === 0;
+      const ok = (medido.codex ?? '').includes(ui('chat.instructions.bridgeUsed', { cli: 'Codex', target: 'AGENTS.md' })) && (medido.agy ?? '').includes(ui('chat.instructions.bridgeUsed', { cli: 'agy', target: 'GEMINI.md' })) && medido.conElSuyo === 0;
       return { ok, detail: JSON.stringify(medido) };
     },
   },
@@ -2286,10 +2318,11 @@ const CHECKS = [
         dev.panelStore.getState().revealPanelById('permissions');
       });
       await waitForPanelContent(page, 'permissions');
-      const measured = await page.locator('[data-permissions-panel="true"]').evaluate((panel) => ({
+      const expectedNote = ui('chat.permissions.otherProvider', { provider: 'codex' });
+      const measured = await page.locator('[data-permissions-panel="true"]').evaluate((panel, expectedNote) => ({
         rejected: panel.textContent?.includes('Cuenta no valida') ?? false,
-        provider: panel.textContent?.includes('CLI de codex') ?? false,
-      }));
+        provider: panel.textContent?.includes(expectedNote) ?? false,
+      }), expectedNote);
       return { ok: !measured.rejected && measured.provider, detail: JSON.stringify(measured) };
     },
   },
@@ -2876,7 +2909,7 @@ const CHECKS = [
       await tab.click({ button: 'right' });
       const menu = page.getByRole('menu');
       await menu.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
-      const splitItems = menu.getByRole('menuitem', { name: /^Dividir/ });
+      const splitItems = menu.getByRole('menuitem', { name: uiAnyOf(['tabs.menu.splitBottom', 'tabs.menu.splitLeft', 'tabs.menu.splitRight', 'tabs.menu.splitTop'].map((key) => ui(key)), true) });
       const count = await splitItems.count();
       const disabledFlags = [];
       for (let i = 0; i < count; i++) disabledFlags.push(await splitItems.nth(i).isDisabled());
@@ -3155,7 +3188,7 @@ const CHECKS = [
         medido.permitido = (await waitForFile(ajustes, (t) => reglas(t).allow.includes(AGY_VG_COMMAND))) !== null;
         await comandos.getByRole('button', { name: ui('chat.permission.state.allowed'), exact: true }).click();
         medido.denegado = (await waitForFile(ajustes, (t) => reglas(t).deny.includes(AGY_VG_COMMAND) && !reglas(t).allow.includes(AGY_VG_COMMAND))) !== null;
-        await dialogo.getByRole('button', { name: `Quitar ${AGY_VG_COMMAND}`, exact: true }).click();
+        await dialogo.getByRole('button', { name: ui('settings.agyCommands.removeAria', { rule: AGY_VG_COMMAND }), exact: true }).click();
         medido.quitado = (await waitForFile(ajustes, (t) => !reglas(t).deny.includes(AGY_VG_COMMAND))) !== null;
         await dialogo.getByRole('button', { name: ui('settings.agyCommands.done'), exact: true }).click();
         await dialogo.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
@@ -3207,7 +3240,7 @@ const CHECKS = [
         medido.fila = (await mcp.locator('[data-agy-command-list="true"] li').first().innerText()).replace(/\s+/g, ' ').trim();
         await mcp.getByRole('button', { name: ui('chat.permission.state.allowed'), exact: true }).click();
         medido.denegada = (await waitForFile(ajustes, (t) => reglas(t).deny.includes(todas) && !reglas(t).allow.includes(todas))) !== null;
-        await mcp.getByRole('button', { name: `Quitar ${SEEDED_AGY_SERVER} · todas`, exact: true }).click();
+        await mcp.getByRole('button', { name: ui('settings.agyCommands.removeAria', { rule: ui('settings.agyCommands.mcp.allTools', { server: SEEDED_AGY_SERVER }) }), exact: true }).click();
         medido.quitada = (await waitForFile(ajustes, (t) => !reglas(t).deny.includes(todas))) !== null;
         await page.locator('[data-agy-commands-dialog="true"]').getByRole('button', { name: ui('settings.agyCommands.done'), exact: true }).click();
         await page.locator('[data-agy-commands-dialog="true"]').waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
@@ -3226,10 +3259,10 @@ const CHECKS = [
         (medido.servidores ?? []).includes(SEEDED_AGY_SERVER) &&
         medido.errorInvalida === 1 &&
         medido.permitida &&
-        medido.fila?.startsWith(`${SEEDED_AGY_SERVER} · todas`) &&
+        medido.fila?.startsWith(ui('settings.agyCommands.mcp.allTools', { server: SEEDED_AGY_SERVER })) &&
         medido.denegada &&
         medido.quitada &&
-        /esta herramienta/.test(medido.textoAviso ?? '') &&
+        (medido.textoAviso ?? '').includes(ui('chat.agyDenied.allowTool')) &&
         medido.desdeElAviso;
       return { ok: ok === true, detail: JSON.stringify(medido) };
     },
@@ -3621,7 +3654,7 @@ const CHECKS = [
       if (selected !== 1) return { ok: false, detail: `pestañas seleccionadas=${selected} (se esperaba 1; no se clica nada)` };
       await active.click({ button: 'right' });
       await page.locator(TAB_MENU).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
-      await page.locator(TAB_MENU).getByRole('menuitem', { name: /^Cerrar todas/ }).click();
+      await page.locator(TAB_MENU).getByRole('menuitem', { name: new RegExp(`^${escapeRegExp(uiPrefix('tabs.menu.closeAll'))}`) }).click();
 
       // La medida de "sin confirmacion" es que el menu se DESMONTA con ese unico clic: la confirmacion
       // vivia dentro y lo habria dejado abierto esperando. Se espera al desmontaje, no a un tiempo fijo
@@ -4001,12 +4034,12 @@ const CHECKS = [
       await page.waitForTimeout(CONFIG.settleMs);
       const ok =
         posicion.encimaDelInput &&
-        posicion.contador === '1 de 3' &&
+        posicion.contador === ui('prompt.question.counter', { step: 1, total: 3 }) &&
         posicion.enElHilo === 0 &&
         visibleTrasScroll &&
         trasElegir.opcion2 === 'true' &&
         trasElegir.sigue === 'vg-ask-3' &&
-        contadorTras === '2 de 3';
+        contadorTras === ui('prompt.question.counter', { step: 2, total: 3 });
       return { ok, detail: JSON.stringify({ ...posicion, layoutEvidence, visibleTrasScroll, ...trasElegir, contadorTras }) };
     },
   },
@@ -4021,10 +4054,13 @@ const CHECKS = [
         return { tabs: s.tabs, activeTabId: s.activeTabId, splitLayout: s.splitLayout, elicitationsByChat: s.elicitationsByChat };
       });
       await openTemporaryConversation(page);
+      // El título del campo `usuario` es el del catálogo; el resto de títulos son datos del fixture. Los obligatorios llevan « *».
+      const userTitle = ui('chat.instructions.scopeUser');
+      const userLabel = `${userTitle} *`;
       const request = {
         requestId: 'vg-elic-1', server: 'vg_server', message: 'Datos de prueba', mode: 'form',
         schema: { type: 'object', required: ['usuario', 'edad'], properties: {
-          usuario: { type: 'string', title: ui('chat.instructions.scopeUser') }, clave: { type: 'string', title: 'Clave', format: 'password' },
+          usuario: { type: 'string', title: userTitle }, clave: { type: 'string', title: 'Clave', format: 'password' },
           edad: { type: 'integer', title: 'Edad', minimum: 18 }, ok: { type: 'boolean', title: 'Acepto' } } },
       };
       await page.evaluate((req) => {
@@ -4045,7 +4081,7 @@ const CHECKS = [
         };
       });
       const vacio = await medida();
-      await dock.getByLabel('Usuario *').fill('ana');
+      await dock.getByLabel(userLabel).fill('ana');
       await dock.getByLabel('Edad *').fill('17');
       const menor = await medida();
       await dock.getByLabel('Edad *').fill('30');
@@ -4061,7 +4097,7 @@ const CHECKS = [
       await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
       await page.waitForTimeout(CONFIG.settleMs);
       const ok = vacio.encimaDelInput && vacio.clave && vacio.aceptarDeshabilitado === true && menor.aceptarDeshabilitado === true &&
-        valido.aceptarDeshabilitado === false && cerrado === 0 && vacio.etiquetas.includes('Usuario *') && vacio.etiquetas.includes('Edad *');
+        valido.aceptarDeshabilitado === false && cerrado === 0 && vacio.etiquetas.includes(userLabel) && vacio.etiquetas.includes('Edad *');
       return { ok, detail: JSON.stringify({ vacio, menor: menor.aceptarDeshabilitado, valido: valido.aceptarDeshabilitado, cerrado }) };
     },
   },
@@ -4231,11 +4267,11 @@ const CHECKS = [
         dev.panelStore.getState().revealPanelById('context');
       });
       await waitForPanelContent(page, 'context');
-      const medido = await page.locator('[data-provider-context-panel="codex"]').evaluate((panel) => {
+      const medido = await page.locator('[data-provider-context-panel="codex"]').evaluate((panel, totalText) => {
         const text = (panel.textContent ?? '').replace(/\s+/g, ' ');
         return { texto: text.slice(0, 400), ventana: /258/.test(text) && /7\s?%/.test(text), cargando: text.includes(window.__mageDev.t('chat.transcript.loading')),
-          total: /18\.791 tok/.test(text), cache: text.includes(window.__mageDev.t('chat.context.categoryCacheRead')), entrada: text.includes(window.__mageDev.t('chat.context.categoryInput')) };
-      });
+          total: text.includes(totalText), cache: text.includes(window.__mageDev.t('chat.context.categoryCacheRead')), entrada: text.includes(window.__mageDev.t('chat.context.categoryInput')) };
+      }, `${localizedInteger(18791)} tok`);
       await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
       await page.waitForTimeout(CONFIG.settleMs);
       const ok = medido.ventana && !medido.cargando && medido.total && medido.cache && medido.entrada;
@@ -4247,7 +4283,7 @@ const CHECKS = [
     // o bien trae las DOS ventanas con su reset (5 h y 7 d). Nunca un 0 % de relleno.
     name: '22: popover «Uso general» con 5 h y 7 d y su reset por cuenta',
     async run(page) {
-      const disparador = page.locator('span[tabindex="0"]', { hasText: /5h \d+% · sem/ }).first();
+      const disparador = page.locator('span[tabindex="0"]', { hasText: statusBarWindowsRegExp() }).first();
       if ((await disparador.count()) === 0) return { ok: false, detail: 'sin indicador de uso en la barra' };
       await disparador.hover();
       await page.waitForTimeout(CONFIG.settleMs);
@@ -4323,8 +4359,8 @@ const CHECKS = [
       await dialogo.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
       const siguen = await page.evaluate(() => window.__mageDev.store.getState().accounts.length);
       const ok =
-        !principalOfrece && otraOfrece && /privad/.test(texto) && /compartidas no se tocan/.test(texto) && siguen === cuentas.length;
-      return { ok, detail: JSON.stringify({ principalOfrece, otraOfrece, dicePrivadas: /privad/.test(texto), siguen }) };
+        !principalOfrece && otraOfrece && privateLineRegExp().test(texto) && texto.includes(ui('accounts.delete.sharedUntouched')) && siguen === cuentas.length;
+      return { ok, detail: JSON.stringify({ principalOfrece, otraOfrece, dicePrivadas: privateLineRegExp().test(texto), siguen }) };
     },
   },
   {
@@ -4405,7 +4441,7 @@ const CHECKS = [
       await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
       await page.waitForTimeout(CONFIG.settleMs);
       // Q02: la fila ya NO lleva el peso (va a la barra de estado): dice monograma del proveedor, cuenta y tiempo.
-      const ok = linea !== null && /(hace|ahora)/.test(linea) && !/\b(B|kB|MB)\b/.test(linea) && !/· (opus|sonnet|haiku)/.test(linea);
+      const ok = linea !== null && relativeTimeRegExp().test(linea) && !/\b(B|kB|MB)\b/.test(linea) && !/· (opus|sonnet|haiku)/.test(linea);
       return { ok, detail: `segunda linea=${JSON.stringify(linea)}` };
     },
   },
@@ -4457,7 +4493,7 @@ const CHECKS = [
         medido.chips.length === 1 &&
         medido.chips[0] === '/rename REVISION-MAGE' &&
         !medido.xmlEnElChat &&
-        medido.tarjeta === 'Tarea programada: say-hello' &&
+        medido.tarjeta === `${ui('chat.scheduledTask.label')} say-hello` &&
         medido.plegada === true &&
         medido.insignias === 1;
       return { ok, detail: JSON.stringify(medido) };
@@ -4646,7 +4682,7 @@ const CHECKS = [
         chat.agente === 1 &&
         chat.fallidas === 1 &&
         (chat.estado ?? '').includes(ui('chat.thinking.runningTool', { tool: 'Read' })) &&
-        /4 pasos/.test(chat.estado ?? '') &&
+        (chat.estado ?? '').includes(uiPlural('chat.thinking.steps', { count: 4 })) &&
         /1 error/.test(chat.estado ?? '') &&
         panel.filas === 4 &&
         panel.conError === 1 &&
@@ -4739,13 +4775,13 @@ const CHECKS = [
       }));
       await restoreTurnState(page, previo);
       const ok =
-        resumen === '1 en ejecución · 1 terminado' &&
+        resumen === agentsSummary(1, 1) &&
         vivo.filas.length === 2 &&
         new RegExp(`^running:buscar el bug.*Explore.*${escapeRegExp(ui('chat.agents.stepRunningTool', { tool: 'Grep' }))}`).test(vivo.filas[0] ?? '') &&
         new RegExp(`^done:planear.*Plan.*${escapeRegExp(ui('chat.agents.stateDone'))}`).test(vivo.filas[1] ?? '') &&
         vivo.encimaDelInput &&
         vivo.lineas.length === 1 &&
-        /Lanzó 2 subagentes/.test(vivo.lineas[0] ?? '') &&
+        (vivo.lineas[0] ?? '').includes(uiPlural('chat.subagents.launched', { count: 2 })) &&
         vivo.bloquesSubagente === 0 &&
         filtrado === 2 &&
         final.dock === 0 &&
@@ -4836,7 +4872,7 @@ const CHECKS = [
         lanzados.resumen === ui('chat.agents.summaryRunning', { count: 2 }) &&
         panel.length === 2 &&
         panel.every((fila) => fila.startsWith('running:') && fila.includes('claude-haiku-4-5')) &&
-        trasUno.resumen === '1 en ejecución · 1 terminado' &&
+        trasUno.resumen === agentsSummary(1, 1) &&
         JSON.stringify(trasUno.filas) === JSON.stringify(['done', 'running']) &&
         trasUno.equis === 1 &&
         trasUno.pararDock === 1 &&
@@ -4974,8 +5010,8 @@ const CHECKS = [
         const ok =
           inicial.parar === 1 && inicial.cola === ui('prompt.queueSend.button') && inicial.colaDesactivado === true && inicial.retorno === 0 &&
           claude.desactivado === false && claude.seguiaEnMarcha === true && atajoTip.test(claude.tip ?? '') && atajo.test(claude.atajo ?? '') &&
-          agy.desactivado === true && /agy no permite enviar durante un turno/.test(agy.tip ?? '') &&
-          review.desactivado === true && /turno de revisión no admite mensajes directos/.test(review.tip ?? '') &&
+          agy.desactivado === true && (agy.tip ?? '').includes(ui('prompt.sendNow.providerUnsupported', { provider: 'agy' })) &&
+          review.desactivado === true && (review.tip ?? '').includes(uiPlural('chat.steer.notSteerable', { turnKind: 'review' })) &&
           vacio.desactivado === true &&
           reposo.retorno === 1 && reposo.split === 0;
         return { ok, detail: JSON.stringify({ inicial, claude, agy, review, vacio, reposo }) };
@@ -5615,18 +5651,18 @@ const CHECKS = [
       const svg = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"/>', 'utf-8').toString('base64');
       await pasteFiles(page, [{ name: 'adjunto-invalido.svg', type: 'image/svg+xml', base64: svg }]);
       await page.waitForTimeout(CONFIG.settleMs);
-      const invalido = await page.evaluate(() => {
+      const invalido = await page.evaluate((unsupported) => {
         const alerts = [...document.querySelectorAll('[role="alert"]')].map((n) => n.textContent ?? '');
         return {
-          errores: alerts.filter((t) => /no admitido/i.test(t)).length,
+          errores: alerts.filter((t) => t.includes(unsupported)).length,
           conElTipo: alerts.some((t) => t.includes('image/svg+xml')),
           miniaturas: document.querySelectorAll('img[data-attachment="thumb"]').length,
         };
-      });
+      }, uiSegment('errors.attachments.unsupportedType', 0));
 
       // El error NO viaja a otra pestaña, ni vuelve al regresar a la suya.
       const erroresDeAdjuntar = () =>
-        page.evaluate(() => [...document.querySelectorAll('[role="alert"]')].filter((n) => /adjuntar/i.test(n.textContent ?? '')).length);
+        page.evaluate((failed) => [...document.querySelectorAll('[role="alert"]')].filter((n) => (n.textContent ?? '').includes(failed)).length, uiPrefix('prompt.attach.failed'));
       await openTemporaryConversation(page);
       await page.waitForTimeout(CONFIG.settleMs);
       const enOtraPestana = await erroresDeAdjuntar();
@@ -5750,7 +5786,7 @@ const CHECKS = [
         measured.tarjeta.masInformacion === true &&
         // El panel sigue ofreciendo la misma decision, ahi CON el numero del atajo visible, y ademas es
         // el que ensena el detalle (diff) y lo configurado.
-        measured.panel?.permitir?.texto === 'Permitir1' &&
+        measured.panel?.permitir?.texto === `${ui('app.widget.allow')}1` &&
         measured.panel.permitirSiempre?.atajo === '2' &&
         measured.panel.denegar?.atajo === '3' &&
         measured.panel.diff === true &&
@@ -5790,14 +5826,15 @@ const CHECKS = [
       await injectPermissionRequest(page, { file_path: 'C:/proj/a.ts', content: 'a' }, 'verify-always-1', 'Write');
       await page.evaluate(() => window.__mageDev.store.getState().allowAlwaysAndAnswer('Write'));
       await page.waitForTimeout(CONFIG.settleMs);
-      const conRegla = await page.evaluate(() => {
+      const revokeAria = ui('chat.permissions.alwaysAllowed.revokeAria', { tool: 'Write' }).replace(/["\\]/g, '\\$&');
+      const conRegla = await page.evaluate((revokeAria) => {
         const s = window.__mageDev.store.getState();
         const tab = s.tabs.find((t) => t.id === s.activeTabId);
         return {
           regla: tab?.alwaysAllowTools ?? [],
-          enElPanel: document.querySelector('button[aria-label="Revocar el permiso permanente de Write"]') !== null,
+          enElPanel: document.querySelector(`button[aria-label="${revokeAria}"]`) !== null,
         };
-      });
+      }, revokeAria);
       // La peticion sigue pendiente porque sin sesion viva no hay a quien contestar: se cierra por el
       // mismo camino que el CLI para dejar el hilo limpio antes de medir la segunda.
       await cancelInjectedPermission(page, 'verify-always-1');
@@ -5812,13 +5849,13 @@ const CHECKS = [
         s.revokeAlwaysAllow(s.activeTabId, 'Write');
       });
       await page.waitForTimeout(CONFIG.settleMs);
-      const trasRevocar = await page.evaluate(() => {
+      const trasRevocar = await page.evaluate((revokeAria) => {
         const s = window.__mageDev.store.getState();
         return {
           reglas: (s.tabs.find((t) => t.id === s.activeTabId)?.alwaysAllowTools ?? []).length,
-          enElPanel: document.querySelector('button[aria-label="Revocar el permiso permanente de Write"]') !== null,
+          enElPanel: document.querySelector(`button[aria-label="${revokeAria}"]`) !== null,
         };
-      });
+      }, revokeAria);
       if (!abiertoAntes) {
         await icon.click();
         await page.waitForTimeout(CONFIG.settleMs);
@@ -6603,7 +6640,7 @@ const CHECKS = [
       });
       await openTemporaryConversation(page);
 
-      const medido = await page.evaluate(async (resumen) => {
+      const medido = await page.evaluate(async ({ resumen, resetText }) => {
         const dev = window.__mageDev;
         if (dev === undefined) throw new Error('window.__mageDev no existe (¿la app no esta en modo desarrollo?)');
         const tabId = dev.store.getState().activeTabId;
@@ -6635,7 +6672,7 @@ const CHECKS = [
           existe: banner !== null,
           // La linea del hilo TAMBIEN tiene que estar: el banner es la accion, no el relato.
           lineasEnElHilo: lineas.length,
-          conHora: /se restablece a las/.test(lineas[0]?.text ?? ''),
+          conHora: (lineas[0]?.text ?? '').includes(resetText),
           tooltipCli: document.querySelector(`[data-tip="${CSS.escape(resumen)}"]`) !== null,
           casillaContinuar: banner?.querySelector('input[type="checkbox"]') !== null && banner !== null,
           destinos: banner === null ? [] : [...banner.querySelectorAll('button')].map((b) => (b.textContent ?? '').trim()),
@@ -6645,7 +6682,7 @@ const CHECKS = [
         await new Promise((resolve) => requestAnimationFrame(resolve));
         const trasLimpiar = [...document.querySelectorAll('[role="status"]')].filter((n) => (n.textContent ?? '').includes(LINEA)).length;
         return { statusAntes: antes, ...conBanner, trasLimpiar };
-      }, RATE_LIMIT_SUMMARY);
+      }, { resumen: RATE_LIMIT_SUMMARY, resetText: uiSegment('chat.rateLimit.lineWithReset', 0) });
 
       await page.evaluate((state) => window.__mageDev.store.setState(state), previo);
       await page.waitForTimeout(CONFIG.settleMs);
@@ -7081,11 +7118,11 @@ const CHECKS = [
         await page.locator('[data-pr-confirm]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
         const sinConfirmar = await runsText();
         await page.locator('[data-pr-confirm]').getByRole('button', { name: ui('app.prBar.confirm'), exact: true }).click();
-        await waitForRunText(page, 'checken marcha');
+        await waitForRunText(page, `check${ui('app.prBar.runPending')}`);
         await page.locator('[data-pr-runs] li', { hasText: /^lint/ }).getByRole('button', { name: ui('app.prBar.cancelRun'), exact: true }).click();
         await page.locator('[data-pr-confirm]').getByRole('button', { name: ui('app.prBar.confirm'), exact: true }).click();
-        await waitForRunText(page, 'lintcancelado');
-        const autoMerge = page.locator('[data-pr-details]').getByRole('checkbox', { name: 'Auto-merge', exact: true });
+        await waitForRunText(page, `lint${ui('app.prBar.runCancel')}`);
+        const autoMerge = page.locator('[data-pr-details]').getByRole('checkbox', { name: ui('app.prBar.autoMerge'), exact: true });
         await autoMerge.click();
         await page.locator('[data-pr-confirm]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
         const marcadoSinConfirmar = await autoMerge.isChecked();
@@ -7096,12 +7133,12 @@ const CHECKS = [
         await page.locator('[data-pr-confirm]').getByRole('button', { name: ui('app.prBar.confirm'), exact: true }).click();
         await page.locator('[data-pr-details]').getByText(ui('chat.pr.autoMerge'), { exact: true }).waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
         const ok =
-          chip.includes('#7 · Borrador') &&
+          chip.includes(`#7 · ${ui('chat.pr.state.draft')}`) &&
           chip.includes('✗1') &&
           chip.includes('●1') &&
           fallan.some((t) => t.includes('check')) &&
-          runsAntes.some((t) => t.startsWith('checkfalla')) &&
-          sinConfirmar.some((t) => t.startsWith('checkfalla')) &&
+          runsAntes.some((t) => t.startsWith(`check${ui('app.prBar.runFail')}`)) &&
+          sinConfirmar.some((t) => t.startsWith(`check${ui('app.prBar.runFail')}`)) &&
           marcadoSinConfirmar === false;
         return { ok, detail: `chip=${JSON.stringify(chip)} fallan=${JSON.stringify(fallan)} runs=${JSON.stringify(runsAntes)} sinConfirmar=${JSON.stringify(sinConfirmar)} autoMergeSinConfirmar=${marcadoSinConfirmar}` };
       } finally {
@@ -7393,7 +7430,7 @@ const CHECKS = [
         await page.waitForTimeout(50);
       }
 
-      const abrirCon = page.getByRole('button', { name: uiAnyOf([ui('chat.artifact.openWithPicker')], true) }).first();
+      const abrirCon = page.getByRole('button', { name: uiStartsWith('chat.artifact.openWithPickerAria') }).first();
       const hayDesplegable = await abrirCon.isVisible().catch(() => false);
       let cuentasOfrecidas = 0;
       if (hayDesplegable) {
@@ -7516,7 +7553,8 @@ const CHECKS = [
       await page.waitForTimeout(CONFIG.settleMs * 2);
 
       const medido = { paneles: {} };
-      for (const [nombre, panelId] of [[ui('menu.panel.context'), 'context'], ['Logs', 'logs'], ['MCP', 'mcp']]) {
+      const contextName = ui('menu.panel.context');
+      for (const [nombre, panelId] of [[contextName, 'context'], ['Logs', 'logs'], ['MCP', 'mcp']]) {
         const boton = page.getByRole('button', { name: nombre, exact: true }).first();
         if (!(await boton.isVisible().catch(() => false))) {
           medido.paneles[nombre] = 'sin icono';
@@ -7547,11 +7585,11 @@ const CHECKS = [
         // Ninguno puede negar que hay conversacion...
         !textos.some((t) => t.includes(ui('chat.memory.noConversation'))) &&
         // ...Contexto y Logs tienen que enseñar CONTENIDO de la transcripcion cargada...
-        medido.paneles.Contexto.includes('TOKENS') &&
+        medido.paneles[contextName].includes('TOKENS') &&
         medido.paneles.Logs.length > 20 &&
         // ...y MCP, que de verdad no puede saberlo sin sesion, tiene que decir POR QUE en vez de
         // afirmar en falso que esta conversacion no cargo ninguno.
-        medido.paneles.MCP.includes('al arrancar');
+        medido.paneles.MCP.includes(ui('mcp.inspector.noSessionYet').split('. ')[0]);
       return { ok, detail: JSON.stringify(medido) };
     },
   },
@@ -7822,9 +7860,9 @@ const CHECKS = [
         // En minusculas para comparar: el panel pinta las cabeceras con `uppercase` de CSS y `innerText`
         // devuelve el texto YA transformado. Lo que se comprueba es el agrupamiento y el orden, no de
         // que color son las letras.
-        medido.grupos.map((g) => g.toLowerCase()).join(' | ') === 'nativas (2) | database (1) | playwright (1)' &&
+        medido.grupos.map((g) => g.toLowerCase()).join(' | ') === `${ui('chat.tools.builtinGroup').toLowerCase()} (2) | database (1) | playwright (1)` &&
         medido.nombresCompletos.length === 2 &&
-        medido.extensiones.join(' | ') === 'Plugins (1) | Skills (2)';
+        medido.extensiones.join(' | ') === `${ui('chat.tools.plugins')} (1) | ${ui('chat.tools.skills')} (2)`;
       return { ok, detail: JSON.stringify({ enElInspector, abiertoSolo, ...medido }) };
     },
   },
@@ -7872,15 +7910,26 @@ const CHECKS = [
         const id = store.getState().activeTabId;
         store.setState({ blocksByChat: { ...store.getState().blocksByChat, [id]: [{ kind: 'system', id: 'vg-largo-ruta', text: ruta }, { kind: 'system', id: 'vg-largo-parrafo', text: parrafo }] } });
       }, { ruta, parrafo });
-      const measure = () => page.evaluate((texts) => {
-        const scroller = document.querySelector('[data-pane-tab-id] .overflow-y-auto');
-        const box = scroller.getBoundingClientRect();
-        const spans = texts.map((text) => [...scroller.querySelectorAll('span')].find((el) => el.textContent === text));
-        return {
-          horizontalOverflow: scroller.scrollWidth - scroller.clientWidth,
-          outside: spans.map((el) => (el === undefined ? 'ausente' : Math.round(el.getBoundingClientRect().right - box.right))),
-        };
-      }, [ruta, parrafo]);
+      // Con la lista virtual solo están montadas las filas a la vista: cada aviso se mide con su fila delante (la ruta,
+      // que es la primera, arriba del todo; el párrafo, al final). Así no depende del tamaño que dejó otra comprobación.
+      const measureOne = async (text, edge) => {
+        await page.evaluate((where) => {
+          const scroller = document.querySelector('[data-pane-tab-id] .overflow-y-auto');
+          scroller.scrollTop = where === 'top' ? 0 : scroller.scrollHeight;
+        }, edge);
+        await page.waitForTimeout(CONFIG.settleMs);
+        return page.evaluate((wanted) => {
+          const scroller = document.querySelector('[data-pane-tab-id] .overflow-y-auto');
+          const box = scroller.getBoundingClientRect();
+          const span = [...scroller.querySelectorAll('span')].find((el) => el.textContent === wanted);
+          return { horizontalOverflow: scroller.scrollWidth - scroller.clientWidth, outside: span === undefined ? 'ausente' : Math.round(span.getBoundingClientRect().right - box.right) };
+        }, text);
+      };
+      const measure = async () => {
+        const first = await measureOne(ruta, 'top');
+        const last = await measureOne(parrafo, 'bottom');
+        return { horizontalOverflow: Math.max(first.horizontalOverflow, last.horizontalOverflow), outside: [first.outside, last.outside] };
+      };
       await page.setViewportSize(ESTRECHO);
       await page.waitForTimeout(CONFIG.settleMs);
       const estrecho = await measure();
@@ -7944,7 +7993,7 @@ const CHECKS = [
         });
         await page.waitForTimeout(CONFIG.settleMs);
         const secundaria = await medir();
-        const ok = principal.visible && principal.botones.join('|') === ui('dialogs.newTab.relogin') && secundaria.botones.join('|') === 'Iniciar sesión|Eliminar';
+        const ok = principal.visible && principal.botones.join('|') === ui('dialogs.newTab.relogin') && secundaria.botones.join('|') === `${ui('sidebar.orphan.login')}|${ui('sidebar.orphan.delete')}`;
         return { ok, detail: JSON.stringify({ principal, secundaria }) };
       } finally {
         await page.evaluate((accounts) => window.__mageDev.store.setState({ accounts }), previo);
@@ -8054,7 +8103,7 @@ const CHECKS = [
         await page.evaluate(() => { const dev = window.__mageDev; dev.transcriptStoreFor(dev.store.getState().activeTabId).setState({ isFinal: true, errorMessage: 'vg-lectura-fallida' }); });
         await page.waitForTimeout(CONFIG.settleMs);
         const error = await medir();
-        const ok = derecha.filas >= 1 && derecha.alto > 40 && abajo.filas >= 1 && abajo.alto > 40 && /Cargando/.test(cargando.texto ?? '') && /vg-lectura-fallida/.test(error.texto ?? '');
+        const ok = derecha.filas >= 1 && derecha.alto > 40 && abajo.filas >= 1 && abajo.alto > 40 && (cargando.texto ?? '').includes(ui('chat.activity.loading')) && /vg-lectura-fallida/.test(error.texto ?? '');
         return { ok, detail: JSON.stringify({ derecha, abajo, cargando, error }) };
       } finally {
         if (sitio !== null) await page.evaluate((s) => window.__mageDev.panelStore.getState().movePanel('activity', s.anchor, s.zone), sitio);
@@ -8249,8 +8298,9 @@ const CHECKS = [
     // justo lo que se pidio evitar ("al lado del estado del servidor").
     name: 'Barra de estado: la version de la app, junto al estado del servicio',
     async run(page) {
-      const medido = await page.evaluate(() => {
-        const estado = document.querySelector('[aria-label^="Estado del servicio"]');
+      const serviceLabelPrefix = cssAttr(uiPrefix('app.statusBar.serviceLabel'));
+      const medido = await page.evaluate((serviceLabelPrefix) => {
+        const estado = document.querySelector(`[aria-label^="${serviceLabelPrefix}"]`);
         const barra = estado?.closest('div[class*="border-t"]') ?? null;
         const textos = barra === null ? [] : [...barra.querySelectorAll('span')].map((n) => (n.textContent ?? '').trim());
         const version = textos.find((t) => /^v\d+\.\d+\.\d+/.test(t)) ?? null;
@@ -8266,7 +8316,7 @@ const CHECKS = [
               ? null
               : Math.round(nodoVersion.getBoundingClientRect().left - estado.getBoundingClientRect().right),
         };
-      });
+      }, serviceLabelPrefix);
       const ok =
         medido.version !== null &&
         medido.xVersion !== null &&
@@ -9292,7 +9342,7 @@ const CHECKS = [
         const barra = page.locator('[data-status-size]');
         await barra.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
         const texto = ((await barra.textContent()) ?? '').trim();
-        return { ok: texto.includes('3,7 MB'), detail: `barra de estado=${JSON.stringify(texto)}` };
+        return { ok: texto.includes(`${localizedDecimal(3.7)} MB`), detail: `barra de estado=${JSON.stringify(texto)}` };
       } finally {
         await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
         await page.waitForTimeout(CONFIG.settleMs);
@@ -10357,8 +10407,8 @@ const CHECKS = [
         await dialog.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
         const llamadas = await page.evaluate(() => window.__vgKRewindCalls.length);
         const ok =
-          /Se descartan 2 mensajes/.test(medido.descartados ?? '') && medido.ficherosMarcados === false && medido.ficherosHabilitados === true &&
-          /a\.txt/.test(medido.lista ?? '') && medido.avisoBash && medido.detieneElTurno && /Los 2 mensajes de la cola/.test(medido.cola ?? '') &&
+          (medido.descartados ?? '').includes(uiPlural('chat.rewind.discarded', { count: 2 })) && medido.ficherosMarcados === false && medido.ficherosHabilitados === true &&
+          /a\.txt/.test(medido.lista ?? '') && medido.avisoBash && medido.detieneElTurno && (medido.cola ?? '').includes(uiPlural('chat.rewind.queueReturns', { count: 2 })) &&
           medido.confirmar === 1 && llamadas === 0;
         return { ok, detail: JSON.stringify({ medido, llamadas }) };
       } finally {
@@ -10408,7 +10458,7 @@ const CHECKS = [
         const llamadas = await page.evaluate(() => window.__vgKRewindCalls.length);
         const ok =
           medidoNormal.copiaMarcada === false && medidoNormal.casillaFicheros === 0 && medidoNormal.avisoFicheros &&
-          medidoLegacy.motivo === 'legacy' && /versión anterior de Codex/.test(medidoLegacy.texto ?? '') && medidoLegacy.actualizar === 1 && medidoLegacy.confirmar === 0 &&
+          medidoLegacy.motivo === 'legacy' && (medidoLegacy.texto ?? '').includes(ui('errors.rewind.legacy')) && medidoLegacy.actualizar === 1 && medidoLegacy.confirmar === 0 &&
           llamadas === 0;
         return { ok, detail: JSON.stringify({ medidoNormal, medidoLegacy, llamadas }) };
       } finally {
@@ -11427,7 +11477,7 @@ async function waitForFile(file, predicate) {
 // Filas de proveedor GUARDADAS. Se ancla al boton de borrar (`aria-label` explicito): un contador de
 // divs de la seccion incluiria el formulario y los textos de ayuda.
 function providerRows(page) {
-  return page.locator('[aria-label^="Eliminar el proveedor "]');
+  return page.locator(`[aria-label^="${cssAttr(uiPrefix('settings.providers.removeAria'))} "]`);
 }
 
 // Valores que tiene ahora mismo el formulario de alta (para comprobar que una plantilla PRERRELLENA).
@@ -11453,10 +11503,10 @@ async function submitNewProvider(page, draft) {
 
 // Resumen (URL + nº de modelos) de la fila de un proveedor guardado, o null si no esta.
 async function providerRowSummary(page, label) {
-  return page.evaluate((name) => {
-    const remove = document.querySelector(`[aria-label="Eliminar el proveedor ${name}"]`);
+  return page.evaluate((removeAria) => {
+    const remove = [...document.querySelectorAll('[aria-label]')].find((node) => node.getAttribute('aria-label') === removeAria);
     return remove?.parentElement?.textContent?.trim() ?? null;
-  }, label);
+  }, ui('settings.providers.removeAria', { provider: label }));
 }
 
 // Etiquetas de los selectores de modelo (uno por proveedor OFRECIDO), en "Proveedores y modelos".
@@ -13792,7 +13842,7 @@ async function measureClaudeConnectorGroup(page, { userDataDir }, group) {
       await page.locator('[data-mcp-tab="servers"]').click();
       const ok =
         (!hayConector || (conectar === 1 && etiquetaApagado === ui('mcp.connectors.off'))) &&
-        /Última comprobación/.test(fecha) === hayConector &&
+        fecha.includes(uiPrefix('mcp.checkedAt.raw')) === hayConector &&
         chrome.includes(ui('mcp.connectors.desktopOnly')) &&
         codex.includes(ui('mcp.codexApps.title')) &&
         guardado &&

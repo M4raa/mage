@@ -282,6 +282,11 @@ describe('relativeTime', () => {
     expect(relativeTime(NOW - 30 * 24 * 60 * 60_000, NOW)).toBe('2026-08-27');
   });
 
+  it('relativeTime_menosDeUnaHora_minutosNuncaHoras', () => {
+    expect(relativeTime(NOW - 59 * 60_000, NOW)).toBe('hace 59 min');
+    expect(relativeTime(NOW - (60 * 60_000 - 1), NOW)).toBe('hace 59 min');
+  });
+
   it('relativeTime_instanteFuturo_ahora', () => {
     expect(relativeTime(NOW + 5_000, NOW)).toBe('ahora');
   });

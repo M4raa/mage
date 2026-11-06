@@ -15,8 +15,9 @@ export function benchApiKey(provider, env) {
 }
 
 // La cuenta de Claude que el bench acaba de dar de alta, por su carpeta (la casa de prueba trae además una `.claude` vacía).
+// En el renderer el id de una cuenta de Claude ES su config dir: la cuenta no tiene otro campo con la carpeta.
 export function benchAccountId(accounts, configDir) {
-  const match = accounts.find((a) => a.providerId === 'claude' && a.configDir === configDir);
+  const match = accounts.find((a) => a.providerId === 'claude' && a.id === configDir);
   if (match === undefined) {
     const claude = accounts.filter((a) => a.providerId === 'claude').length;
     throw new Error(`Mage no ve la cuenta del bench entre sus ${claude} cuentas de Claude`);

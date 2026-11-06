@@ -8,6 +8,7 @@ import {
   applySidebarFilter,
   buildSidebarRows,
   groupSidebarRows,
+  missingOwnerOf as findMissingOwner,
   providerOfRow,
   rowIndicator,
   sidebarRowId,
@@ -53,6 +54,7 @@ export interface SidebarView {
   readonly indicatorOf: (row: SidebarRow) => RowIndicator | null;
   readonly backgroundOf: (row: SidebarRow) => BackgroundSession | undefined;
   readonly accountOf: (row: SidebarRow) => Account | undefined;
+  readonly missingOwnerOf: (row: SidebarRow) => string | undefined;
 }
 
 // Todo lo que el lateral necesita para pintarse: filas de todas las cuentas, filtradas y agrupadas. Estado
@@ -102,7 +104,8 @@ export function useSidebarModel(filter: SidebarFilter): SidebarView {
       statusOf,
       indicatorOf,
       backgroundOf,
-      accountOf: (row) => accountById.get(row.accountId),
+      accountOf: (row) => (findMissingOwner(row, (id) => accountById.has(id)) === undefined ? accountById.get(row.accountId) : undefined),
+      missingOwnerOf: (row) => findMissingOwner(row, (id) => accountById.has(id)),
     };
   }, [rows, filter, statuses, readOnlyIds, settings, scratchRoots, sessionIdByChat, backgroundSessions, accounts, accountById]);
 }

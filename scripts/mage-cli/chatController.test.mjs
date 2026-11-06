@@ -513,3 +513,69 @@ describe('ChatController: /rewind', () => {
     expect(callsTo(link, 'session.send')).toHaveLength(0);
   });
 });
+
+describe('ChatController: fin de la entrada', () => {
+  it('onEndOfInput_conTurnoPropioEnCurso_esperaAlResultadoYLuegoSale', async () => {
+    const { controller, link, deps, text } = setup();
+    await controller.attach();
+    await controller.onLine('hola');
+
+    controller.onEndOfInput();
+
+    expect(deps.exit).not.toHaveBeenCalled();
+    emit(link, { kind: 'result', result: { subtype: 'success' } });
+    expect(deps.exit).toHaveBeenCalledTimes(1);
+    expect(deps.exit).toHaveBeenCalledWith(0);
+    expect(text().indexOf(messages.turnEnded('success'))).toBeGreaterThanOrEqual(0);
+    expect(text().indexOf(messages.turnEnded('success'))).toBeLessThan(text().indexOf(messages.leaving()));
+  });
+
+  it('onEndOfInput_sinTurnoPropio_saleEnseguida', async () => {
+    const { controller, deps } = setup({ snapshot: { state: 'running' } });
+    await controller.attach();
+
+    controller.onEndOfInput();
+
+    expect(deps.exit).toHaveBeenCalledWith(0);
+  });
+
+  it('onEndOfInput_envioRechazadoPorElHost_saleEnseguida', async () => {
+    const { controller, link, deps } = setup();
+    link.rpc.call.mockImplementation(async (method) => {
+      if (method === 'session.send') throw Object.assign(new Error('no'), { code: -32000 });
+      return method === 'session.subscribe' ? { subscriptionId: 'sub-1', snapshot: { ...BASE_SNAPSHOT } } : undefined;
+    });
+    await controller.attach();
+    await controller.onLine('hola');
+
+    controller.onEndOfInput();
+
+    expect(deps.exit).toHaveBeenCalledWith(0);
+  });
+
+  it('onEndOfInput_dosTurnosPropios_saleTrasElSegundoResultado', async () => {
+    const { controller, link, deps } = setup();
+    await controller.attach();
+    await controller.onLine('uno');
+    await controller.onLine('dos');
+    controller.onEndOfInput();
+
+    emit(link, { kind: 'result', result: { subtype: 'success' } }, 6);
+    expect(deps.exit).not.toHaveBeenCalled();
+    emit(link, { kind: 'result', result: { subtype: 'success' } }, 7);
+
+    expect(deps.exit).toHaveBeenCalledWith(0);
+  });
+
+  it('showPending_conLaEntradaCerrada_diceQueSeContesteEnMageYSale', async () => {
+    const { controller, link, deps, text } = setup();
+    await controller.attach();
+    await controller.onLine('hola');
+    controller.onEndOfInput();
+
+    emit(link, permissionRequest());
+
+    expect(deps.exit).toHaveBeenCalledWith(0);
+    expect(text()).toContain(messages.answerInMage());
+  });
+});

@@ -81,14 +81,19 @@ describe('changedFiles', () => {
 
 describe('benchAccountId', () => {
   it('benchAccountId_dosCuentasDeClaude_devuelveLaDeSuCarpeta', () => {
-    const accounts = [{ id: 'a', providerId: 'claude', configDir: 'H/.claude' }, { id: 'b', providerId: 'claude', configDir: 'H/.claude-bench' }];
+    const accounts = [{ id: 'H/.claude', providerId: 'claude' }, { id: 'H/.claude-bench', providerId: 'claude' }];
 
-    expect(benchAccountId(accounts, 'H/.claude-bench')).toBe('b');
+    expect(benchAccountId(accounts, 'H/.claude-bench')).toBe('H/.claude-bench');
   });
   it('benchAccountId_carpetaDeOtroProveedor_lanza', () => {
-    const accounts = [{ id: 'c', providerId: 'codex', configDir: 'X' }];
+    const accounts = [{ id: 'X', providerId: 'codex' }];
 
     expect(() => benchAccountId(accounts, 'X')).toThrow('0 cuentas de Claude');
+  });
+  it('benchAccountId_cuentaConConfigDirPeroOtroId_lanza', () => {
+    const accounts = [{ id: 'otra', providerId: 'claude', configDir: 'H/.claude-bench' }];
+
+    expect(() => benchAccountId(accounts, 'H/.claude-bench')).toThrow('1 cuentas de Claude');
   });
   it('benchAccountId_sinCuentas_lanza', () => {
     expect(() => benchAccountId([], 'X')).toThrow('0 cuentas de Claude');

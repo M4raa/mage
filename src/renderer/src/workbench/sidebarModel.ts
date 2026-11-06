@@ -54,6 +54,13 @@ export function sidebarRowId(row: SidebarRow, sessionIdByChat: Readonly<Record<s
   return conversationIdOfTab(row.tab, sessionIdByChat[row.tab.id]);
 }
 
+// Cuenta dueña que ya no existe de una fila (conversación creada fuera de la ventana cuya cuenta se borró), o undefined.
+// La fila no puede nombrar otra cuenta: la conversación es de solo lectura y no se envía con ninguna.
+export function missingOwnerOf(row: SidebarRow, knownAccount: (accountId: string) => boolean): string | undefined {
+  const owner = row.kind === 'tab' ? (row.tab.accountPinned === true ? row.tab.accountId : undefined) : row.item.hostOwnerAccountId;
+  return owner === undefined || knownAccount(owner) ? undefined : owner;
+}
+
 export function providerOfRow(row: SidebarRow): string {
   return row.kind === 'tab' ? row.tab.provider : (row.item.providerId ?? DEFAULT_PROVIDER);
 }

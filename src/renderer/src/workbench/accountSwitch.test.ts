@@ -37,7 +37,11 @@ describe('planAccountSwitch', () => {
   it('planAccountSwitch_pestanaParadaDeOtraCuenta_ask', () => {
     // Restaurada: solo `resumeSessionId`, sin sesion viva (el caso que `continueInAccount` ignoraba).
     expect(planAccountSwitch(ctx())).toBe('ask');
-    expect(planAccountSwitch(ctx({ activeTab: { accountId: A }, liveSessionId: 'live' }))).toBe('ask');
+    expect(planAccountSwitch(ctx({ activeTab: { accountId: A }, liveSessionId: 'live', hasBlocks: true }))).toBe('ask');
+  });
+
+  it('planAccountSwitch_sesionVivaSinTurnos_switchAndNewChat', () => {
+    expect(planAccountSwitch(ctx({ activeTab: { accountId: A }, liveSessionId: 'live', hasBlocks: false }))).toBe('switch-and-new-chat');
   });
 
   it('planAccountSwitch_pinnedTabWithConversation_switchOnly', () => {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { AccountInfo } from '@shared/accounts';
-import { applyAccentOverrides, assignMissingAccents, providerBadge, providerLabel, toAccountView } from './accountView';
+import { aliasFromConfigDir, applyAccentOverrides, assignMissingAccents, providerBadge, providerLabel, toAccountView } from './accountView';
 
 function info(overrides: Partial<AccountInfo>): AccountInfo {
   return {
@@ -166,5 +166,19 @@ describe('assignMissingAccents (#46, H3)', () => {
     const result = assignMissingAccents(['a', 'b', 'c', 'd', 'e', 'f', 'g'], {});
 
     expect(result.g).toBe(0);
+  });
+});
+
+describe('aliasFromConfigDir', () => {
+  it('aliasFromConfigDir_rutaWindows_nombreSinPunto', () => {
+    expect(aliasFromConfigDir('C:\\x\\home\\.claude-x-inval')).toBe('claude-x-inval');
+  });
+
+  it('aliasFromConfigDir_rutaPosixConBarraFinal_nombreSinPunto', () => {
+    expect(aliasFromConfigDir('/home/u/.claude-p/')).toBe('claude-p');
+  });
+
+  it('aliasFromConfigDir_vacio_vacio', () => {
+    expect(aliasFromConfigDir('')).toBe('');
   });
 });

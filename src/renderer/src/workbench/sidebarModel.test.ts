@@ -11,6 +11,7 @@ import {
   folderProjectName,
   groupSidebarRows,
   mergeAccountHistories,
+  missingOwnerOf,
   normalizeFolderKey,
   projectSummary,
   providerMonogram,
@@ -342,5 +343,31 @@ describe('recentFolderProjects', () => {
     const history = [entry('1', 'C:/vg/a', 10), entry('2', 'C:\\vg\\b', 20), entry('3', 'C:/vg/c', 30)];
 
     expect(recentFolderProjects(history, [], new Set(), 2).map((p) => p.name)).toEqual(['c', 'b']);
+  });
+});
+
+describe('missingOwnerOf', () => {
+  const known = (id: string): boolean => id === 'acc-a';
+  const historyRow = (item: ConversationSummary): SidebarRow => ({ kind: 'history', item, accountId: 'acc-a' });
+  const tabRow = (over: Partial<Tab>): SidebarRow => ({ kind: 'tab', tab: tab({ accountId: 'acc-x', ...over }), accountId: 'acc-x' });
+
+  it('missingOwnerOf_historialConDuenaBorrada_devuelveLaDuena', () => {
+    expect(missingOwnerOf(historyRow(summary({ hostOwnerAccountId: 'acc-x' })), known)).toBe('acc-x');
+  });
+
+  it('missingOwnerOf_historialConDuenaViva_undefined', () => {
+    expect(missingOwnerOf(historyRow(summary({ hostOwnerAccountId: 'acc-a' })), known)).toBeUndefined();
+  });
+
+  it('missingOwnerOf_historialSinDuena_undefined', () => {
+    expect(missingOwnerOf(historyRow(summary()), known)).toBeUndefined();
+  });
+
+  it('missingOwnerOf_pestanaFijadaSinCuenta_devuelveSuCuenta', () => {
+    expect(missingOwnerOf(tabRow({ accountPinned: true }), known)).toBe('acc-x');
+  });
+
+  it('missingOwnerOf_pestanaNoFijada_undefined', () => {
+    expect(missingOwnerOf(tabRow({}), known)).toBeUndefined();
   });
 });

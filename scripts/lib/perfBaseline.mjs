@@ -200,16 +200,33 @@ export async function scrollActiveChatToBottom(page) {
   }), INTERACTION_TIMEOUT_MS);
 }
 
+const SEARCH_FILL_ATTEMPTS = 3;
+const SEARCH_SETTLE_MS = 300;
+
+// Escribe en un campo y confirma que el texto se quedó en ÉL: justo después de abrir una conversación el foco puede
+// saltar al prompt y llevarse lo escrito. Reintenta hasta `attempts` veces; si no, lanza con lo que había.
+export async function fillAndConfirm(locator, text, { attempts = SEARCH_FILL_ATTEMPTS, settleMs = SEARCH_SETTLE_MS, wait }) {
+  let value = '';
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    await locator.fill(text);
+    await wait(settleMs);
+    value = await locator.inputValue();
+    if (value === text) return attempt;
+  }
+  throw new Error(`El campo no se quedó con ${JSON.stringify(text)} en ${attempts} intentos (tenía ${JSON.stringify(value)})`);
+}
+
 // Cambio de pestaña con una conversacion REAL larga abierta desde el historial (vale en produccion, sin
 // puente): busca la del fixture en el lateral, la abre (solo lee su transcripcion), abre una vacia y mide el
 // cambio entre ambas.
 export async function measureLongTranscriptTabSwitch(page, { openConversation, title }) {
   const before = await tabIdsInBar(page);
-  await page.getByRole('textbox', { name: SIDEBAR_SEARCH_LABEL }).fill(LONG_TRANSCRIPT_SEARCH);
+  await fillAndConfirm(page.getByRole('textbox', { name: SIDEBAR_SEARCH_LABEL, exact: true }), LONG_TRANSCRIPT_SEARCH, { wait: (ms) => page.waitForTimeout(ms) });
   await page.locator('[data-history-session]').filter({ hasText: title }).first().click();
   await page.waitForFunction((count) => document.querySelectorAll('[role="tab"][data-tab-id]').length > count, before.length, { timeout: INTERACTION_TIMEOUT_MS });
   const longId = (await tabIdsInBar(page)).at(-1);
-  await page.waitForSelector(`[data-pane-tab-id="${longId}"] [data-last-row="true"]`, { timeout: INTERACTION_TIMEOUT_MS });
+  // «Montada», no «visible»: la misma condición de «listo» que el cambio de pestaña que se mide después.
+  await page.waitForFunction(tabSwitchReadyExpr(longId), undefined, { timeout: INTERACTION_TIMEOUT_MS });
   await openConversation(page);
   const emptyId = (await tabIdsInBar(page)).at(-1);
   return measureTabSwitch(page, [longId, emptyId]);

@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import type { ConversationSummary } from '@shared/conversations';
-import { ConversationsService, withLastAccount, type ConversationsDeps } from './conversationsService';
+import { ConversationsService, withHostOwner, withLastAccount, type ConversationsDeps } from './conversationsService';
 
 const ACC = join('/home/u', '.claude-p');
 const SHARED = join(ACC, 'projects');
@@ -254,5 +254,25 @@ describe('withLastAccount', () => {
 
   it('withLastAccount_empty_returnsEmpty', () => {
     expect(withLastAccount([], () => 'acc-1')).toEqual([]);
+  });
+});
+
+describe('withHostOwner', () => {
+  const summary = (sessionId: string): ConversationSummary => ({
+    sessionId, configDir: ACC, cwd: '', title: sessionId, privacy: 'shared', updatedAtMs: 0, sizeBytes: 0, isScheduled: false,
+  });
+
+  it('withHostOwner_known_addsField', () => {
+    const result = withHostOwner([summary('a')], () => 'acc-1');
+
+    expect(result).toEqual([{ ...summary('a'), hostOwnerAccountId: 'acc-1' }]);
+  });
+
+  it('withHostOwner_unknown_keepsItem', () => {
+    const item = summary('a');
+
+    const result = withHostOwner([item], () => undefined);
+
+    expect(result[0]).toBe(item);
   });
 });

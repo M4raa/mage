@@ -29,9 +29,12 @@ export function planAccountSwitch(ctx: AccountSwitchContext): AccountSwitchPlan 
   // Una conversación creada fuera de la ventana se queda con su cuenta: cambiar de cuenta no se la lleva.
   if (tab.accountPinned === true) return 'switch';
   if (ctx.status === 'streaming' || ctx.status === 'needs_permission') return 'switch-and-new-chat';
+  // Sin turnos no hay transcripción que llevarse: la pestaña se queda como está (con su sesión) y la cuenta destino
+  // empieza un chat nuevo, como con un turno en marcha.
+  if (tab.resumeSessionId === undefined && !ctx.hasBlocks) return ctx.liveSessionId === undefined ? 'reassign' : 'switch-and-new-chat';
   const migratable = ctx.liveSessionId !== undefined || tab.resumeSessionId !== undefined;
   if (migratable) return 'ask';
-  return ctx.hasBlocks ? 'switch' : 'reassign';
+  return 'switch';
 }
 
 // Modelo de un chat nuevo que cambia de cuenta (punto 31): se conserva si la cuenta destino lo ofrece

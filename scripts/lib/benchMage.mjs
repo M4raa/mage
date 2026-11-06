@@ -55,7 +55,7 @@ async function installCollector(page) {
 // Abre la pestaña de la tarea y envía sus prompts (el segundo, a mitad del primero si la tarea lo pide).
 async function sendTask(page, { cwd, task, provider, configDir }) {
   const model = provider === 'claude' ? CLAUDE_MODEL : CODEX_MODEL;
-  const accounts = await page.evaluate(() => window.__mageDev.store.getState().accounts.map((a) => ({ id: a.id, providerId: a.providerId, configDir: a.configDir })));
+  const accounts = await page.evaluate(() => window.__mageDev.store.getState().accounts.map((a) => ({ id: a.id, providerId: a.providerId })));
   const accountId = benchAccountId(accounts, configDir);
   return page.evaluate(async ({ cwd, prompts, midTurnDelayMs, provider, model, accountId }) => {
     const store = window.__mageDev.store;

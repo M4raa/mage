@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 
 // Textos de la interfaz que buscan las comprobaciones de verify:gui, tomados del catálogo por CLAVE y en el idioma de
 // la tanda (`--lang=es|en`). Así una comprobación no depende de que la interfaz esté en castellano.
@@ -98,3 +99,19 @@ export const uiRegExp = (key, flags = '') => new RegExp(escapeRegExp(ui(key)), f
 
 // Para meter un texto dentro de `"…"` en un selector de atributo.
 export const cssAttr = (text) => text.replace(/["\\]/g, '\\$&');
+
+// Mensajes plural/select del catálogo formateados con la MISMA biblioteca que la app (Lingui), en el idioma de la tanda.
+// `@lingui/message-utils` no cuelga de node_modules/@lingui: se resuelve desde `@lingui/vite-plugin`.
+const repoRequire = createRequire(new URL('../../package.json', import.meta.url));
+const linguiRequire = createRequire(repoRequire.resolve('@lingui/vite-plugin'));
+const { compileMessage } = linguiRequire('@lingui/message-utils/compileMessage');
+const { setupI18n } = repoRequire('@lingui/core');
+
+export function uiPluralIn(lang, key, vars) {
+  const message = messageOf(lang, key);
+  if (vars === null || typeof vars !== 'object') throw new Error(`uiPlural(${key}) necesita sus variables: ${JSON.stringify(vars)}`);
+  const i18n = setupI18n({ locale: lang, messages: { [lang]: { [key]: compileMessage(message) } } });
+  return i18n._(key, vars);
+}
+
+export const uiPlural = (key, vars) => uiPluralIn(getUiLanguage(), key, vars);

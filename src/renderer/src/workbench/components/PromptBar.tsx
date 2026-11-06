@@ -131,6 +131,16 @@ function promptPlaceholder(tabId: string, readOnlyLock: { readonly profile: Loca
   return tabId.length === 0 ? translate('prompt.placeholder.noTab') : translate('prompt.placeholder.default');
 }
 
+// Mientras llega el editor (se carga en diferido), el hueco ya dice qué es y qué hacer: el mismo nombre accesible y el
+// mismo texto de ayuda que tendrá el editor, sin poder escribir todavía.
+function PromptEditorFallback({ placeholder, ariaLabel }: { readonly placeholder: string; readonly ariaLabel: string }): React.JSX.Element {
+  return (
+    <div role="textbox" aria-label={ariaLabel} aria-readonly="true" aria-placeholder={placeholder} data-prompt-editor-fallback="true" className="min-h-[1.5em] flex-1 text-mg-muted">
+      {placeholder}
+    </div>
+  );
+}
+
 // Solo lectura por el bloqueo entre instancias (#55): quién la tiene y, solo si esa instancia parece muerta (pid caído o
 // sin latido en 90 s), «Tomar el control».
 function ReadOnlyLockNotice({ tabId, profile, orphan }: { readonly tabId: string; readonly profile: LocalizedText; readonly orphan: boolean }): React.JSX.Element {
@@ -765,7 +775,7 @@ export function PromptBar(): React.JSX.Element {
           </div>
         )}
         <span className="pt-[1px] font-mono text-mg-ter">›</span>
-        <Suspense fallback={<div className="min-h-[1.5em] flex-1" aria-hidden="true" />}>
+        <Suspense fallback={<PromptEditorFallback placeholder={promptPlaceholder(activeTabId, readOnlyLock, permissionPending)} ariaLabel={t('prompt.editor.ariaLabel')} />}>
           <PromptEditor
             handleRef={editorRef}
             value={text}

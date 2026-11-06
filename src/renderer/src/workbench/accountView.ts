@@ -25,6 +25,13 @@ export function apiBilledLabel(): string {
   return t('accounts.apiBilled.badge');
 }
 
+// Nombre de una cuenta que ya no está, sacado de su config dir: lo mismo que su alias cuando existía (el nombre de la
+// carpeta sin los puntos del principio). Nunca la ruta entera, que lleva el usuario del equipo.
+export function aliasFromConfigDir(configDir: string): string {
+  const last = configDir.split(/[\\/]/).filter((part) => part.length > 0).at(-1) ?? '';
+  return last.replace(/^\.+/, '');
+}
+
 // Mapea una cuenta de dominio (AccountInfo, segura) a la cuenta de PRESENTACION que consume la UI.
 export function toAccountView(info: AccountInfo, accentOverride?: number): Account {
   const alias = info.name.replace(/^\.+/, ''); // ".claude-p" -> "claude-p"
