@@ -14,6 +14,16 @@ export function benchApiKey(provider, env) {
   return key.trim();
 }
 
+// La cuenta de Claude que el bench acaba de dar de alta, por su carpeta (la casa de prueba trae además una `.claude` vacía).
+export function benchAccountId(accounts, configDir) {
+  const match = accounts.find((a) => a.providerId === 'claude' && a.configDir === configDir);
+  if (match === undefined) {
+    const claude = accounts.filter((a) => a.providerId === 'claude').length;
+    throw new Error(`Mage no ve la cuenta del bench entre sus ${claude} cuentas de Claude`);
+  }
+  return match.id;
+}
+
 // Los ficheros de credenciales del usuario que el bench nunca debe cambiar ni copiar.
 export function userCredentialFiles(home) {
   return [path.join(home, '.claude', '.credentials.json'), path.join(home, '.codex', 'auth.json')];

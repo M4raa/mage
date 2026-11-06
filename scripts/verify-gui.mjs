@@ -13665,6 +13665,8 @@ function withDomTextDump(check) {
 // y una CASA temporal (USERPROFILE/HOME) SIN credenciales del usuario. La cuenta es de Claude por clave de API DESECHABLE
 // (MAGE_BENCH_ANTHROPIC_API_KEY), dada de alta por el IPC del producto: la clave va a la bóveda del perfil temporal y se
 // borra con él. Al acabar se comprueba que las credenciales del usuario no cambiaron ni se copiaron. Gasta turnos reales.
+// Siempre deja el log de la app en `<out>.app.log`, con el usuario local tapado.
+const BENCH_APP_LOG_TAIL_CHARS = 200_000;
 async function runBenchMode() {
   const arg = (name) => process.argv.find((a) => a.startsWith(`--${name}=`))?.split('=')[1];
   const provider = arg('provider');
@@ -13703,9 +13705,9 @@ async function runBenchMode() {
     const usageAllows = async () => ({ usage: [], allowed: true });
     await runMageBench(page, { provider, rep, tasks, root, usageAllows, out, claudeConfigDir: account.configDir });
   } catch (error) {
-    fs.writeFileSync(`${out}.arranque.log`, log.join('').slice(-20_000), 'utf-8');
     throw error;
   } finally {
+    fs.writeFileSync(`${out}.app.log`, redactLocalUser(log.join('').slice(-BENCH_APP_LOG_TAIL_CHARS)), 'utf-8');
     if (browser !== null) await browser.close().catch(() => {});
     killTree(child);
     await new Promise((r) => setTimeout(r, 3000)); // Electron suelta el perfil antes de borrarlo

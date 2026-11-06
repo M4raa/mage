@@ -7,6 +7,7 @@ import path from 'node:path';
 import { createWorkspace, tasksFor } from '../../spike/bench/tasks.mjs';
 import { initSummary, roundsOf } from '../../spike/bench/transcript.mjs';
 import { CLAUDE_MODEL, CODEX_MODEL } from '../../spike/bench/headless.mjs';
+import { benchAccountId } from './benchCredentials.mjs';
 
 const TASK_TIMEOUT_MS = 300_000;
 
@@ -52,16 +53,16 @@ async function installCollector(page) {
 }
 
 // Abre la pestaña de la tarea y envía sus prompts (el segundo, a mitad del primero si la tarea lo pide).
-async function sendTask(page, { cwd, task, provider }) {
+async function sendTask(page, { cwd, task, provider, configDir }) {
   const model = provider === 'claude' ? CLAUDE_MODEL : CODEX_MODEL;
-  return page.evaluate(async ({ cwd, prompts, midTurnDelayMs, provider, model }) => {
+  const accounts = await page.evaluate(() => window.__mageDev.store.getState().accounts.map((a) => ({ id: a.id, providerId: a.providerId, configDir: a.configDir })));
+  const accountId = benchAccountId(accounts, configDir);
+  return page.evaluate(async ({ cwd, prompts, midTurnDelayMs, provider, model, accountId }) => {
     const store = window.__mageDev.store;
-    const account = store.getState().accounts.find((a) => a.providerId === provider);
-    if (account === undefined) throw new Error(`Mage no ve ninguna cuenta de ${provider}`);
     // Claude: `acceptEdits`, como R2. Codex no admite ese modo en Mage: su modo por defecto equivale a la
     // política `on-request` con sandbox de escritura en el proyecto que usa R2.
     const permissionMode = provider === 'claude' ? { permissionMode: 'acceptEdits' } : {};
-    await store.getState().newTab({ accountId: account.id, cwd, model: model.model, effort: model.effort, provider, privacy: 'shared', ...permissionMode });
+    await store.getState().newTab({ accountId, cwd, model: model.model, effort: model.effort, provider, privacy: 'shared', ...permissionMode });
     const tabId = store.getState().activeTabId;
     const startedAt = performance.now();
     await store.getState().sendMessageToTab(tabId, prompts[0]);
@@ -70,7 +71,7 @@ async function sendTask(page, { cwd, task, provider }) {
       await store.getState().sendMessageToTab(tabId, prompt);
     }
     return { tabId, startedAt };
-  }, { cwd, prompts: task.prompts, midTurnDelayMs: task.midTurnDelayMs, provider, model });
+  }, { cwd, prompts: task.prompts, midTurnDelayMs: task.midTurnDelayMs, provider, model, accountId });
 }
 
 // Espera a que la pestaña acabe (resultados, cola vacía y en reposo; o la marca final) y lee sus métricas.
@@ -128,7 +129,7 @@ export async function runMageBench(page, { provider, rep, tasks, root, usageAllo
       }
       const cwd = createWorkspace(fs.mkdtempSync(path.join(root, `${task.id}-`)));
       const prepared = task.prepare(cwd);
-      const sent = await sendTask(page, { cwd, task, provider });
+      const sent = await sendTask(page, { cwd, task, provider, configDir: claudeConfigDir });
       const run = await collect(page, { ...sent, task });
       const verdict = task.check(cwd, run, prepared);
       Object.assign(row, summarize(run), provider === 'claude' ? claudeExtra(run, task, claudeConfigDir) : {}, { realTurns: task.turns, ok: verdict.ok, detail: verdict.detail });
