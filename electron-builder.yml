@@ -143,6 +143,12 @@ linux:
     - from: resources/bin
       to: bin
       filter: ['mage']
+  # Z02: AppRun propio = el generado por app-builder-lib + ozone headless sin pantalla (Arch sin X: 133). El empaquetado copia la
+  # carpeta de la app sobre el AppImage DESPUÉS de escribir su AppRun, así que este lo sustituye. Deriva: scripts/lib/appRunHeadless.test.mjs.
+  # En el deb y el rpm queda también en /opt/Mage/AppRun, sin uso.
+  extraFiles:
+    - from: resources/bin/AppRun
+      to: AppRun
 
 # F1.8 (H4 b): el `Exec` del AppImage SIN `--no-sandbox` (sin esto electron-builder lo pone por defecto en
 # la toolset heredada). Ojo: su `AppRun` generado lo sigue añadiendo SOLO si `unshare -Ur true` falla
