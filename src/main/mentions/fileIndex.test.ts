@@ -48,6 +48,15 @@ describe('FileIndexService.search', () => {
     expect(deps.walk).toHaveBeenCalledWith(CWD, 50_000);
   });
 
+  it('search_gitEmptyList_fallsBackToWalk', async () => {
+    const deps = makeDeps({ listGitFiles: vi.fn(async () => []) });
+
+    const result = await new FileIndexService(deps).search(params());
+
+    expect(result.candidates.map((c) => c.relPath)).toEqual(['walked.ts']);
+    expect(deps.walk).toHaveBeenCalledWith(CWD, 50_000);
+  });
+
   it('search_cachedWithinTtl_listsOnce', async () => {
     const deps = makeDeps({ now: () => 1000 });
     const service = new FileIndexService(deps);

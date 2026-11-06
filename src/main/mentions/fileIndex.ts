@@ -54,7 +54,9 @@ export class FileIndexService {
 
   private async loadList(cwd: string): Promise<{ files: readonly string[]; truncated: boolean }> {
     const fromGit = await this.deps.listGitFiles(cwd);
-    const all = fromGit ?? (await this.deps.walk(cwd, MAX_INDEXED_FILES));
+    // Git devuelve una lista vacía (no null) en una carpeta ignorada por un repositorio superior o en un repositorio
+    // sin ficheros: entonces se recorre la carpeta, como fuera de git.
+    const all = fromGit !== null && fromGit.length > 0 ? fromGit : await this.deps.walk(cwd, MAX_INDEXED_FILES);
     return { files: all.slice(0, MAX_INDEXED_FILES), truncated: all.length >= MAX_INDEXED_FILES };
   }
 
