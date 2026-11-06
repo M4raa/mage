@@ -374,3 +374,58 @@ describe('ConversationIndexStore — delegación (H3)', () => {
     expect(() => store.recordDelegation('c', { createdBy: null, creatorChain: ['1', '2', '3', '4', '5', '6'] })).toThrow('6');
   });
 });
+
+describe('ConversationIndexStore — sesiones del host', () => {
+  const OWNER = '/h/.claude-inval';
+  const record = { accountId: OWNER, provider: 'claude', model: 'claude-haiku-4-5', effort: 'low', permissionMode: 'default' } as const;
+
+  it('recordHostSession_newConversation_savesPrefsAndOwner', () => {
+    const store = memoryStore();
+
+    store.recordHostSession('conv-1', record);
+
+    expect(store.loadPrefs('conv-1')).toEqual({
+      model: 'claude-haiku-4-5',
+      effort: 'low',
+      permissionMode: 'default',
+      accountId: OWNER,
+      hostOwnerAccountId: OWNER,
+    });
+  });
+
+  it('recordHostSession_codexProvider_savesProvider', () => {
+    const store = memoryStore();
+
+    store.recordHostSession('conv-1', { ...record, provider: 'codex' });
+
+    expect(store.loadPrefs('conv-1')?.provider).toBe('codex');
+  });
+
+  it('savePrefs_afterHostSession_keepsOwner', () => {
+    const store = memoryStore();
+    store.recordHostSession('conv-1', record);
+
+    store.savePrefs('conv-1', { accountId: '/h/.claude-otra', model: 'm2', hostOwnerAccountId: '/h/.claude-otra' });
+
+    const prefs = store.loadPrefs('conv-1');
+    expect(prefs?.hostOwnerAccountId).toBe(OWNER);
+    expect(prefs?.accountId).toBe('/h/.claude-otra');
+  });
+
+  it('recordHostSession_byNativeId_writesResolvedEntry', () => {
+    const store = memoryStore();
+    const { conversationId } = store.resolveConversation({ provider: 'codex', accountDir: '/h/.codex', nativeId: 'n-1' });
+
+    store.recordHostSession('n-1', { ...record, provider: 'codex' });
+
+    expect(store.loadPrefs(conversationId)?.hostOwnerAccountId).toBe(OWNER);
+  });
+
+  it('recordHostSession_emptyId_throws', () => {
+    expect(() => memoryStore().recordHostSession('', record)).toThrow('id vacio al guardar la sesion del host');
+  });
+
+  it('recordHostSession_emptyAccount_throws', () => {
+    expect(() => memoryStore().recordHostSession('conv-1', { ...record, accountId: '' })).toThrow('cuenta vacia en la sesion del host conv-1');
+  });
+});

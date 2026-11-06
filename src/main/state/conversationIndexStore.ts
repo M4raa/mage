@@ -8,6 +8,7 @@ import {
   type ConversationPrefs,
 } from '@shared/conversationIndex';
 import type { ConversationId, NativeSessionRef } from '@shared/coordination';
+import type { PermissionMode } from '@shared/ipc';
 import { writeAtomic, type AtomicWriteDeps } from '../os/atomicFile';
 
 // Persistencia del indice propio de Mage por conversacion (2.1) y del registro de artifacts (2.4), en
@@ -32,6 +33,15 @@ export interface ConversationEntry extends ConversationPrefs {
   readonly creatorChain?: readonly string[];
 }
 
+// Cómo se lanzó una sesión del host: su cuenta (la dueña), su CLI y lo que la ventana necesita para reabrirla igual.
+export interface HostSessionRecord {
+  readonly accountId: string;
+  readonly provider: string;
+  readonly model: string;
+  readonly effort?: string;
+  readonly permissionMode?: PermissionMode;
+}
+
 export interface ConversationIndexFile {
   readonly version: number;
   readonly conversations: Readonly<Record<ConversationId, ConversationEntry>>;
@@ -44,7 +54,7 @@ const LEGACY_INDEX_VERSION = 1;
 // (comprueba la version), asi que volver atras pierde las preferencias si no hay copia.
 const LEGACY_BACKUP_SUFFIX = '.v1.bak';
 
-const PREF_KEYS = ['model', 'effort', 'permissionMode', 'provider', 'accountId', 'alwaysAllowTools'] as const;
+const PREF_KEYS = ['model', 'effort', 'permissionMode', 'provider', 'accountId', 'alwaysAllowTools', 'hostOwnerAccountId'] as const;
 
 const PREFS_SCHEMA = z.object({
   model: z.string().min(1).optional(),
@@ -53,6 +63,8 @@ const PREFS_SCHEMA = z.object({
   provider: z.string().min(1).optional().catch(undefined),
   // Última cuenta con la que se usó la conversación (lateral de todas las cuentas).
   accountId: z.string().min(1).optional().catch(undefined),
+  // Cuenta dueña de una conversación creada por el host (la escribe solo `recordHostSession`).
+  hostOwnerAccountId: z.string().min(1).optional().catch(undefined),
   // "Permitir siempre <tool> aqui" (2.3b).
   alwaysAllowTools: z.array(z.string().min(1)).optional(),
 });
@@ -110,6 +122,24 @@ export class ConversationIndexStore {
     const index = this.read();
     const key = keyFor(index, id);
     const merged = mergePrefs(index.conversations[key], prefs);
+    this.write({ ...index, conversations: { ...index.conversations, [key]: merged } });
+  }
+
+  // Conversación de una sesión del host: guarda su cuenta, modelo, esfuerzo y modo como preferencias y la marca como de
+  // esa cuenta. Claude no se apunta como proveedor (igual que hace la ventana). `id` es el ConversationId o el nativo.
+  recordHostSession(id: string, record: HostSessionRecord): void {
+    if (id.length === 0) throw new Error(`id vacio al guardar la sesion del host: ${JSON.stringify(id)}`);
+    if (record.accountId.length === 0) throw new Error(`cuenta vacia en la sesion del host ${id}`);
+    const index = this.read();
+    const key = keyFor(index, id);
+    const prefs: ConversationPrefs = {
+      accountId: record.accountId,
+      model: record.model,
+      ...(record.effort === undefined ? {} : { effort: record.effort }),
+      ...(record.permissionMode === undefined ? {} : { permissionMode: record.permissionMode }),
+      ...(record.provider === 'claude' ? {} : { provider: record.provider }),
+    };
+    const merged: ConversationEntry = { ...mergePrefs(index.conversations[key], prefs), hostOwnerAccountId: record.accountId };
     this.write({ ...index, conversations: { ...index.conversations, [key]: merged } });
   }
 
