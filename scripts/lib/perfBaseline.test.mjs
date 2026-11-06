@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { summarize, tabSwitchReadyExpr, topSelfTime, withStep } from './perfBaseline.mjs';
+import { describe, expect, it, vi } from 'vitest';
+import { fillAndConfirm, summarize, tabSwitchReadyExpr, topSelfTime, withStep } from './perfBaseline.mjs';
 
 describe('perfBaseline (#40)', () => {
   it('summarize_muestras_medianaP90YMaximo', () => {
@@ -66,5 +66,33 @@ describe('withStep', () => {
     const error = await withStep('x', async () => { throw new Error('boom'); }).catch((e) => e);
 
     expect(error.message).not.toContain('overlays');
+  });
+});
+
+describe('fillAndConfirm', () => {
+  const fakeField = (values) => {
+    const inputValue = vi.fn(async () => values.shift() ?? '');
+    return { fill: vi.fn(async () => undefined), inputValue };
+  };
+  const wait = vi.fn(async () => undefined);
+
+  it('fillAndConfirm_seQuedaAlPrimero_unIntento', async () => {
+    const field = fakeField(['VG-T3']);
+
+    expect(await fillAndConfirm(field, 'VG-T3', { wait })).toBe(1);
+    expect(field.fill).toHaveBeenCalledTimes(1);
+  });
+
+  it('fillAndConfirm_elFocoSeLoLlevaUnaVez_reintentaYConfirma', async () => {
+    const field = fakeField(['', 'VG-T3']);
+
+    expect(await fillAndConfirm(field, 'VG-T3', { wait })).toBe(2);
+  });
+
+  it('fillAndConfirm_nuncaSeQueda_lanzaConElValor', async () => {
+    const field = fakeField([]);
+
+    await expect(fillAndConfirm(field, 'VG-T3', { attempts: 3, wait })).rejects.toThrow('""');
+    expect(field.fill).toHaveBeenCalledTimes(3);
   });
 });
