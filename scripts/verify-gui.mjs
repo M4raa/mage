@@ -60,8 +60,10 @@ import { appendDomText } from './lib/domTextDump.mjs';
 import { classifyTextFit, collectTextFit } from './lib/textFit.mjs';
 import { redactLocalUser, redactUserData } from './lib/redactUserData.mjs';
 import { seededAppSettings, seedTestAccounts } from './lib/profileSeed.mjs';
-import { ui, uiIn, uiPrefix, uiRegExp, uiSegment, escapeRegExp, cssAttr, getUiLanguage, setUiLanguage, parseUiLangArg } from './lib/uiText.mjs';
+import { ui, uiIn, uiPlural, uiPrefix, uiRegExp, uiSegment, escapeRegExp, cssAttr, getUiLanguage, setUiLanguage, parseUiLangArg } from './lib/uiText.mjs';
 
+// Línea resumen del dock de subagentes (agentsDock.ts): «N en ejecución · M terminados», sin la parte que vale cero.
+const agentsSummary = (running, finished) => [running > 0 ? ui('chat.agents.summaryRunning', { count: running }) : null, finished > 0 ? uiPlural('chat.agents.summaryFinished', { count: finished }) : null].filter((part) => part !== null).join(' · ');
 // Regex de varios textos de la interfaz (alternativas), cada uno escapado. `^` delante si `anchored`.
 const uiAnyOf = (texts, anchored = false) => new RegExp(`${anchored ? '^' : ''}(?:${texts.map(escapeRegExp).join('|')})`);
 // Regex de «empieza por el tramo fijo inicial del mensaje» (p. ej. `Desinstalar {name}` -> /^Desinstalar(\s|$)/).
@@ -4653,7 +4655,7 @@ const CHECKS = [
         chat.agente === 1 &&
         chat.fallidas === 1 &&
         (chat.estado ?? '').includes(ui('chat.thinking.runningTool', { tool: 'Read' })) &&
-        /4 pasos/.test(chat.estado ?? '') &&
+        (chat.estado ?? '').includes(uiPlural('chat.thinking.steps', { count: 4 })) &&
         /1 error/.test(chat.estado ?? '') &&
         panel.filas === 4 &&
         panel.conError === 1 &&
@@ -4746,13 +4748,13 @@ const CHECKS = [
       }));
       await restoreTurnState(page, previo);
       const ok =
-        resumen === '1 en ejecución · 1 terminado' &&
+        resumen === agentsSummary(1, 1) &&
         vivo.filas.length === 2 &&
         new RegExp(`^running:buscar el bug.*Explore.*${escapeRegExp(ui('chat.agents.stepRunningTool', { tool: 'Grep' }))}`).test(vivo.filas[0] ?? '') &&
         new RegExp(`^done:planear.*Plan.*${escapeRegExp(ui('chat.agents.stateDone'))}`).test(vivo.filas[1] ?? '') &&
         vivo.encimaDelInput &&
         vivo.lineas.length === 1 &&
-        /Lanzó 2 subagentes/.test(vivo.lineas[0] ?? '') &&
+        (vivo.lineas[0] ?? '').includes(uiPlural('chat.subagents.launched', { count: 2 })) &&
         vivo.bloquesSubagente === 0 &&
         filtrado === 2 &&
         final.dock === 0 &&
@@ -4843,7 +4845,7 @@ const CHECKS = [
         lanzados.resumen === ui('chat.agents.summaryRunning', { count: 2 }) &&
         panel.length === 2 &&
         panel.every((fila) => fila.startsWith('running:') && fila.includes('claude-haiku-4-5')) &&
-        trasUno.resumen === '1 en ejecución · 1 terminado' &&
+        trasUno.resumen === agentsSummary(1, 1) &&
         JSON.stringify(trasUno.filas) === JSON.stringify(['done', 'running']) &&
         trasUno.equis === 1 &&
         trasUno.pararDock === 1 &&
@@ -10375,8 +10377,8 @@ const CHECKS = [
         await dialog.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
         const llamadas = await page.evaluate(() => window.__vgKRewindCalls.length);
         const ok =
-          /Se descartan 2 mensajes/.test(medido.descartados ?? '') && medido.ficherosMarcados === false && medido.ficherosHabilitados === true &&
-          /a\.txt/.test(medido.lista ?? '') && medido.avisoBash && medido.detieneElTurno && /Los 2 mensajes de la cola/.test(medido.cola ?? '') &&
+          (medido.descartados ?? '').includes(uiPlural('chat.rewind.discarded', { count: 2 })) && medido.ficherosMarcados === false && medido.ficherosHabilitados === true &&
+          /a\.txt/.test(medido.lista ?? '') && medido.avisoBash && medido.detieneElTurno && (medido.cola ?? '').includes(uiPlural('chat.rewind.queueReturns', { count: 2 })) &&
           medido.confirmar === 1 && llamadas === 0;
         return { ok, detail: JSON.stringify({ medido, llamadas }) };
       } finally {
