@@ -74,6 +74,8 @@ const privateLineRegExp = () => new RegExp(`(?:${[
 ].join('|')})`);
 // Indicador de uso de la barra de estado («5h 12% · sem 40% · reset …»): el inicio fijo del mensaje hasta la 2ª variable.
 const statusBarWindowsRegExp = () => new RegExp(`${escapeRegExp(uiSegment('app.statusBar.windows', 0))}\\s*\\d+${escapeRegExp(uiSegment('app.statusBar.windows', 1))}`);
+// Entero con el agrupador del idioma de la tanda (la app formatea igual con Intl).
+const localizedInteger = (value) => new Intl.NumberFormat(getUiLanguage()).format(value);
 // Decimal con un dígito, con el separador del idioma de la tanda (la app formatea igual con Intl).
 const localizedDecimal = (value) => new Intl.NumberFormat(getUiLanguage(), { minimumFractionDigits: 1, maximumFractionDigits: 1, useGrouping: false }).format(value);
 // Tiempo relativo de una fila («hace 3 min», «ahora»): los mensajes de format.time.* con su número abierto.
@@ -889,7 +891,7 @@ const CHECKS = [
     state: { settingsSection: ui('mcp.section.tabsAria') },
     async run(page, { userDataDir }) {
       const dialogo = page.locator('[data-mcp-server-dialog]');
-      await page.getByRole('button', { name: `Editar ${SEEDED_MCP_HTTP}`, exact: true }).click();
+      await page.getByRole('button', { name: ui('mcp.servers.editAria', { name: SEEDED_MCP_HTTP }), exact: true }).click();
       await dialogo.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
       const enmascarado = await page.evaluate(
         (secreto) => !document.documentElement.outerHTML.includes(secreto) && [...document.querySelectorAll('input')].every((i) => !i.value.includes(secreto)),
@@ -898,7 +900,7 @@ const CHECKS = [
       await page.keyboard.press('Escape');
       await dialogo.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
       const configuracionAbierta = (await page.locator('[data-mcp-section]').count()) === 1;
-      await page.getByRole('button', { name: `Editar ${SEEDED_MCP_HTTP}`, exact: true }).click();
+      await page.getByRole('button', { name: ui('mcp.servers.editAria', { name: SEEDED_MCP_HTTP }), exact: true }).click();
       await dialogo.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
       await dialogo.getByRole('button', { name: ui('chat.files.save'), exact: true }).click();
       await dialogo.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
@@ -952,7 +954,7 @@ const CHECKS = [
         return { ok: false, detail: `con ${cuentas} cuentas con login no aparece la fila ${FAKE_MCP_AUTH_SERVER}` };
       }
       const estadoAntes = await fila.locator('[data-mcp-status]').innerText();
-      const botones = fila.getByRole('button', { name: new RegExp(`^Autenticar ${FAKE_MCP_AUTH_SERVER} en `) });
+      const botones = fila.getByRole('button', { name: new RegExp(`^${escapeRegExp(ui('mcp.auth.buttonAria', { server: FAKE_MCP_AUTH_SERVER, account: '' }))}`) });
       const antes = await botones.count();
       const boton = botones.first();
       const etiqueta = await boton.getAttribute('aria-label');
@@ -963,7 +965,7 @@ const CHECKS = [
       const texto = await mensaje.first().innerText();
       const despues = await botones.count();
       const sigueSuBoton = (await fila.getByRole('button', { name: etiqueta, exact: true }).count()) > 0;
-      const ok = estadoAntes.includes(ui('mcp.status.needsAuth')) && antes >= 1 && vioAutenticando && /Autenticado/.test(texto) && despues === antes - 1 && !sigueSuBoton;
+      const ok = estadoAntes.includes(ui('mcp.status.needsAuth')) && antes >= 1 && vioAutenticando && texto.includes(ui('mcp.auth.connected')) && despues === antes - 1 && !sigueSuBoton;
       return { ok, detail: `estadoAntes=«${estadoAntes}» botones ${antes}→${despues} autenticando=${vioAutenticando} mensaje=«${texto}»` };
     },
   },
@@ -4265,11 +4267,11 @@ const CHECKS = [
         dev.panelStore.getState().revealPanelById('context');
       });
       await waitForPanelContent(page, 'context');
-      const medido = await page.locator('[data-provider-context-panel="codex"]').evaluate((panel) => {
+      const medido = await page.locator('[data-provider-context-panel="codex"]').evaluate((panel, totalText) => {
         const text = (panel.textContent ?? '').replace(/\s+/g, ' ');
         return { texto: text.slice(0, 400), ventana: /258/.test(text) && /7\s?%/.test(text), cargando: text.includes(window.__mageDev.t('chat.transcript.loading')),
-          total: /18\.791 tok/.test(text), cache: text.includes(window.__mageDev.t('chat.context.categoryCacheRead')), entrada: text.includes(window.__mageDev.t('chat.context.categoryInput')) };
-      });
+          total: text.includes(totalText), cache: text.includes(window.__mageDev.t('chat.context.categoryCacheRead')), entrada: text.includes(window.__mageDev.t('chat.context.categoryInput')) };
+      }, `${localizedInteger(18791)} tok`);
       await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
       await page.waitForTimeout(CONFIG.settleMs);
       const ok = medido.ventana && !medido.cargando && medido.total && medido.cache && medido.entrada;
@@ -5649,18 +5651,18 @@ const CHECKS = [
       const svg = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"/>', 'utf-8').toString('base64');
       await pasteFiles(page, [{ name: 'adjunto-invalido.svg', type: 'image/svg+xml', base64: svg }]);
       await page.waitForTimeout(CONFIG.settleMs);
-      const invalido = await page.evaluate(() => {
+      const invalido = await page.evaluate((unsupported) => {
         const alerts = [...document.querySelectorAll('[role="alert"]')].map((n) => n.textContent ?? '');
         return {
-          errores: alerts.filter((t) => /no admitido/i.test(t)).length,
+          errores: alerts.filter((t) => t.includes(unsupported)).length,
           conElTipo: alerts.some((t) => t.includes('image/svg+xml')),
           miniaturas: document.querySelectorAll('img[data-attachment="thumb"]').length,
         };
-      });
+      }, uiSegment('errors.attachments.unsupportedType', 0));
 
       // El error NO viaja a otra pestaña, ni vuelve al regresar a la suya.
       const erroresDeAdjuntar = () =>
-        page.evaluate(() => [...document.querySelectorAll('[role="alert"]')].filter((n) => /adjuntar/i.test(n.textContent ?? '')).length);
+        page.evaluate((failed) => [...document.querySelectorAll('[role="alert"]')].filter((n) => (n.textContent ?? '').includes(failed)).length, uiPrefix('prompt.attach.failed'));
       await openTemporaryConversation(page);
       await page.waitForTimeout(CONFIG.settleMs);
       const enOtraPestana = await erroresDeAdjuntar();
@@ -7116,11 +7118,11 @@ const CHECKS = [
         await page.locator('[data-pr-confirm]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
         const sinConfirmar = await runsText();
         await page.locator('[data-pr-confirm]').getByRole('button', { name: ui('app.prBar.confirm'), exact: true }).click();
-        await waitForRunText(page, 'checken marcha');
+        await waitForRunText(page, `check${ui('app.prBar.runPending')}`);
         await page.locator('[data-pr-runs] li', { hasText: /^lint/ }).getByRole('button', { name: ui('app.prBar.cancelRun'), exact: true }).click();
         await page.locator('[data-pr-confirm]').getByRole('button', { name: ui('app.prBar.confirm'), exact: true }).click();
-        await waitForRunText(page, 'lintcancelado');
-        const autoMerge = page.locator('[data-pr-details]').getByRole('checkbox', { name: 'Auto-merge', exact: true });
+        await waitForRunText(page, `lint${ui('app.prBar.runCancel')}`);
+        const autoMerge = page.locator('[data-pr-details]').getByRole('checkbox', { name: ui('app.prBar.autoMerge'), exact: true });
         await autoMerge.click();
         await page.locator('[data-pr-confirm]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
         const marcadoSinConfirmar = await autoMerge.isChecked();
@@ -7131,12 +7133,12 @@ const CHECKS = [
         await page.locator('[data-pr-confirm]').getByRole('button', { name: ui('app.prBar.confirm'), exact: true }).click();
         await page.locator('[data-pr-details]').getByText(ui('chat.pr.autoMerge'), { exact: true }).waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
         const ok =
-          chip.includes('#7 · Borrador') &&
+          chip.includes(`#7 · ${ui('chat.pr.state.draft')}`) &&
           chip.includes('✗1') &&
           chip.includes('●1') &&
           fallan.some((t) => t.includes('check')) &&
-          runsAntes.some((t) => t.startsWith('checkfalla')) &&
-          sinConfirmar.some((t) => t.startsWith('checkfalla')) &&
+          runsAntes.some((t) => t.startsWith(`check${ui('app.prBar.runFail')}`)) &&
+          sinConfirmar.some((t) => t.startsWith(`check${ui('app.prBar.runFail')}`)) &&
           marcadoSinConfirmar === false;
         return { ok, detail: `chip=${JSON.stringify(chip)} fallan=${JSON.stringify(fallan)} runs=${JSON.stringify(runsAntes)} sinConfirmar=${JSON.stringify(sinConfirmar)} autoMergeSinConfirmar=${marcadoSinConfirmar}` };
       } finally {
@@ -7428,7 +7430,7 @@ const CHECKS = [
         await page.waitForTimeout(50);
       }
 
-      const abrirCon = page.getByRole('button', { name: uiAnyOf([ui('chat.artifact.openWithPicker')], true) }).first();
+      const abrirCon = page.getByRole('button', { name: uiStartsWith('chat.artifact.openWithPickerAria') }).first();
       const hayDesplegable = await abrirCon.isVisible().catch(() => false);
       let cuentasOfrecidas = 0;
       if (hayDesplegable) {
@@ -7551,7 +7553,8 @@ const CHECKS = [
       await page.waitForTimeout(CONFIG.settleMs * 2);
 
       const medido = { paneles: {} };
-      for (const [nombre, panelId] of [[ui('menu.panel.context'), 'context'], ['Logs', 'logs'], ['MCP', 'mcp']]) {
+      const contextName = ui('menu.panel.context');
+      for (const [nombre, panelId] of [[contextName, 'context'], ['Logs', 'logs'], ['MCP', 'mcp']]) {
         const boton = page.getByRole('button', { name: nombre, exact: true }).first();
         if (!(await boton.isVisible().catch(() => false))) {
           medido.paneles[nombre] = 'sin icono';
@@ -7582,11 +7585,11 @@ const CHECKS = [
         // Ninguno puede negar que hay conversacion...
         !textos.some((t) => t.includes(ui('chat.memory.noConversation'))) &&
         // ...Contexto y Logs tienen que enseñar CONTENIDO de la transcripcion cargada...
-        medido.paneles.Contexto.includes('TOKENS') &&
+        medido.paneles[contextName].includes('TOKENS') &&
         medido.paneles.Logs.length > 20 &&
         // ...y MCP, que de verdad no puede saberlo sin sesion, tiene que decir POR QUE en vez de
         // afirmar en falso que esta conversacion no cargo ninguno.
-        medido.paneles.MCP.includes('al arrancar');
+        medido.paneles.MCP.includes(ui('mcp.inspector.noSessionYet').split('. ')[0]);
       return { ok, detail: JSON.stringify(medido) };
     },
   },
@@ -7857,9 +7860,9 @@ const CHECKS = [
         // En minusculas para comparar: el panel pinta las cabeceras con `uppercase` de CSS y `innerText`
         // devuelve el texto YA transformado. Lo que se comprueba es el agrupamiento y el orden, no de
         // que color son las letras.
-        medido.grupos.map((g) => g.toLowerCase()).join(' | ') === 'nativas (2) | database (1) | playwright (1)' &&
+        medido.grupos.map((g) => g.toLowerCase()).join(' | ') === `${ui('chat.tools.builtinGroup').toLowerCase()} (2) | database (1) | playwright (1)` &&
         medido.nombresCompletos.length === 2 &&
-        medido.extensiones.join(' | ') === 'Plugins (1) | Skills (2)';
+        medido.extensiones.join(' | ') === `${ui('chat.tools.plugins')} (1) | ${ui('chat.tools.skills')} (2)`;
       return { ok, detail: JSON.stringify({ enElInspector, abiertoSolo, ...medido }) };
     },
   },
@@ -8100,7 +8103,7 @@ const CHECKS = [
         await page.evaluate(() => { const dev = window.__mageDev; dev.transcriptStoreFor(dev.store.getState().activeTabId).setState({ isFinal: true, errorMessage: 'vg-lectura-fallida' }); });
         await page.waitForTimeout(CONFIG.settleMs);
         const error = await medir();
-        const ok = derecha.filas >= 1 && derecha.alto > 40 && abajo.filas >= 1 && abajo.alto > 40 && /Cargando/.test(cargando.texto ?? '') && /vg-lectura-fallida/.test(error.texto ?? '');
+        const ok = derecha.filas >= 1 && derecha.alto > 40 && abajo.filas >= 1 && abajo.alto > 40 && (cargando.texto ?? '').includes(ui('chat.activity.loading')) && /vg-lectura-fallida/.test(error.texto ?? '');
         return { ok, detail: JSON.stringify({ derecha, abajo, cargando, error }) };
       } finally {
         if (sitio !== null) await page.evaluate((s) => window.__mageDev.panelStore.getState().movePanel('activity', s.anchor, s.zone), sitio);
@@ -10455,7 +10458,7 @@ const CHECKS = [
         const llamadas = await page.evaluate(() => window.__vgKRewindCalls.length);
         const ok =
           medidoNormal.copiaMarcada === false && medidoNormal.casillaFicheros === 0 && medidoNormal.avisoFicheros &&
-          medidoLegacy.motivo === 'legacy' && /versión anterior de Codex/.test(medidoLegacy.texto ?? '') && medidoLegacy.actualizar === 1 && medidoLegacy.confirmar === 0 &&
+          medidoLegacy.motivo === 'legacy' && (medidoLegacy.texto ?? '').includes(ui('errors.rewind.legacy')) && medidoLegacy.actualizar === 1 && medidoLegacy.confirmar === 0 &&
           llamadas === 0;
         return { ok, detail: JSON.stringify({ medidoNormal, medidoLegacy, llamadas }) };
       } finally {
@@ -13839,7 +13842,7 @@ async function measureClaudeConnectorGroup(page, { userDataDir }, group) {
       await page.locator('[data-mcp-tab="servers"]').click();
       const ok =
         (!hayConector || (conectar === 1 && etiquetaApagado === ui('mcp.connectors.off'))) &&
-        /Última comprobación/.test(fecha) === hayConector &&
+        fecha.includes(uiPrefix('mcp.checkedAt.raw')) === hayConector &&
         chrome.includes(ui('mcp.connectors.desktopOnly')) &&
         codex.includes(ui('mcp.codexApps.title')) &&
         guardado &&
