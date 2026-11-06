@@ -56,7 +56,43 @@ export function uiPrefix(key) {
   return (brace === -1 ? message : message.slice(0, brace)).trimEnd();
 }
 
-const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+// Tramos fijos de un mensaje (el texto entre variables), sin `trim()` y en orden. Corta en cada `{` de primer nivel y en
+// su `}` de cierre, así que un plural/select entero cuenta como una sola variable.
+export function messageSegments(message) {
+  const segments = [];
+  let depth = 0;
+  let current = '';
+  for (const char of message) {
+    if (char === '{') {
+      if (depth === 0) {
+        segments.push(current);
+        current = '';
+      }
+      depth += 1;
+    } else if (char === '}' && depth > 0) {
+      depth -= 1;
+    } else if (depth === 0) {
+      current += char;
+    }
+  }
+  segments.push(current);
+  return segments;
+}
+
+// Tramo fijo nº `index` (desde 0) del mensaje en el idioma activo, con `trim()`. Solo vale si es y en trocean igual.
+export function uiSegment(key, index) {
+  const lang = getUiLanguage();
+  const esCount = messageSegments(messageOf('es', key)).length;
+  const enCount = messageSegments(messageOf('en', key)).length;
+  if (esCount !== enCount) throw new Error(`uiSegment: ${key} tiene ${esCount} tramos en es y ${enCount} en en`);
+  const segments = messageSegments(messageOf(lang, key));
+  if (!Number.isInteger(index) || index < 0 || index >= segments.length) {
+    throw new Error(`uiSegment: ${key} no tiene el tramo ${index} (${segments.length} tramos, ${lang})`);
+  }
+  return segments[index].trim();
+}
+
+export const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 export const uiRegExp = (key, flags = '') => new RegExp(escapeRegExp(ui(key)), flags);
 

@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { afterEach, describe, expect, it } from 'vitest';
-import { cssAttr, getUiLanguage, parseUiLangArg, setUiLanguage, ui, uiIn, uiPrefix, uiRegExp } from './uiText.mjs';
+import { cssAttr, getUiLanguage, messageSegments, parseUiLangArg, setUiLanguage, ui, uiIn, uiPrefix, uiRegExp, uiSegment } from './uiText.mjs';
 
 const catalog = (lang) => JSON.parse(readFileSync(new URL(`../../src/shared/i18n/catalogs/${lang}.json`, import.meta.url), 'utf8'));
 const es = catalog('es');
@@ -60,6 +60,27 @@ describe('uiText', () => {
     expect(uiRegExp('accounts.add.adopt.start', 'i').test(ui('accounts.add.adopt.start'))).toBe(true);
     expect(uiRegExp('accounts.add.agy.checking').test(ui('accounts.add.agy.checking').replace('…', '.'))).toBe(false);
   });
+  it('messageSegments_sinVariables_unTramo', () => {
+    expect(messageSegments('Hola mundo')).toEqual(['Hola mundo']);
+  });
+  it('messageSegments_dosVariables_tresTramos', () => {
+    expect(messageSegments('a {x} b {y} c')).toEqual(['a ', ' b ', ' c']);
+  });
+  it('messageSegments_plural_cortaEnLaLlaveDeNivelSuperior', () => {
+    expect(messageSegments('N {n, plural, one {a {n}} other {b}} fin')).toEqual(['N ', ' fin']);
+  });
+
+  it('uiSegment_tramoCentral_loDevuelve', () => {
+    expect(uiSegment('accounts.add.apiKey.hint', 1)).toBe('. Esta cuenta FACTURA LA API: sus pestañas llevan la marca «');
+    setUiLanguage('en');
+    expect(uiSegment('accounts.add.apiKey.hint', 1)).toBe('will be created. This account BILLS THE API: its tabs carry the “');
+  });
+  it('uiSegment_indiceFuera_lanza', () => {
+    expect(() => uiSegment('accounts.add.apiKey.hint', 3)).toThrow('accounts.add.apiKey.hint');
+    expect(() => uiSegment('accounts.add.apiKey.hint', -1)).toThrow('-1');
+  });
+  // uiSegment_tramosDistintosEntreIdiomas_lanza: omitido, ninguna clave real tiene distinto número de tramos en es y en.
+
   it('cssAttr_comillasYBarra_escapadas', () => {
     expect(cssAttr('a"b\\c')).toBe('a\\"b\\\\c');
   });
