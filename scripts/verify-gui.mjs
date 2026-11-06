@@ -7879,15 +7879,26 @@ const CHECKS = [
         const id = store.getState().activeTabId;
         store.setState({ blocksByChat: { ...store.getState().blocksByChat, [id]: [{ kind: 'system', id: 'vg-largo-ruta', text: ruta }, { kind: 'system', id: 'vg-largo-parrafo', text: parrafo }] } });
       }, { ruta, parrafo });
-      const measure = () => page.evaluate((texts) => {
-        const scroller = document.querySelector('[data-pane-tab-id] .overflow-y-auto');
-        const box = scroller.getBoundingClientRect();
-        const spans = texts.map((text) => [...scroller.querySelectorAll('span')].find((el) => el.textContent === text));
-        return {
-          horizontalOverflow: scroller.scrollWidth - scroller.clientWidth,
-          outside: spans.map((el) => (el === undefined ? 'ausente' : Math.round(el.getBoundingClientRect().right - box.right))),
-        };
-      }, [ruta, parrafo]);
+      // Con la lista virtual solo están montadas las filas a la vista: cada aviso se mide con su fila delante (la ruta,
+      // que es la primera, arriba del todo; el párrafo, al final). Así no depende del tamaño que dejó otra comprobación.
+      const measureOne = async (text, edge) => {
+        await page.evaluate((where) => {
+          const scroller = document.querySelector('[data-pane-tab-id] .overflow-y-auto');
+          scroller.scrollTop = where === 'top' ? 0 : scroller.scrollHeight;
+        }, edge);
+        await page.waitForTimeout(CONFIG.settleMs);
+        return page.evaluate((wanted) => {
+          const scroller = document.querySelector('[data-pane-tab-id] .overflow-y-auto');
+          const box = scroller.getBoundingClientRect();
+          const span = [...scroller.querySelectorAll('span')].find((el) => el.textContent === wanted);
+          return { horizontalOverflow: scroller.scrollWidth - scroller.clientWidth, outside: span === undefined ? 'ausente' : Math.round(span.getBoundingClientRect().right - box.right) };
+        }, text);
+      };
+      const measure = async () => {
+        const first = await measureOne(ruta, 'top');
+        const last = await measureOne(parrafo, 'bottom');
+        return { horizontalOverflow: Math.max(first.horizontalOverflow, last.horizontalOverflow), outside: [first.outside, last.outside] };
+      };
       await page.setViewportSize(ESTRECHO);
       await page.waitForTimeout(CONFIG.settleMs);
       const estrecho = await measure();
