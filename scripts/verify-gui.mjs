@@ -3246,6 +3246,9 @@ const CHECKS = [
         await page.locator('[data-agy-commands-dialog="true"]').waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
         await hydrateBlocks(page, [{ kind: 'error', id: 'vg-mcp-denied', message: `agy denegó la herramienta MCP «${SEEDED_AGY_SERVER}/vg_tool»`, deniedCommand: AGY_VG_DENIED_MCP }]);
         const boton = page.locator('[data-agy-allow-command="true"]');
+        // El texto del botón llega tras hidratar el bloque: se espera a que no esté vacío antes de leerlo.
+        await boton.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        await page.waitForFunction(() => (document.querySelector('[data-agy-allow-command="true"]')?.textContent ?? '').trim() !== '', null, { timeout: CONFIG.actionTimeoutMs });
         medido.textoAviso = (await boton.innerText()).trim();
         await boton.click();
         await page.locator('[data-agy-command-allowed="true"]').waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
@@ -4785,7 +4788,7 @@ const CHECKS = [
         vivo.bloquesSubagente === 0 &&
         filtrado === 2 &&
         final.dock === 0 &&
-        /2 terminados/.test(final.linea) &&
+        final.linea.includes(uiPlural('chat.agents.summaryFinished', { count: 2 })) &&
         final.linea.includes(ui('chat.subagents.failed', { count: 1 }));
       return { ok, detail: `resumen=${JSON.stringify(resumen)} vivo=${JSON.stringify(vivo)} layoutEvidence=${JSON.stringify(layoutEvidence)} filtrado=${filtrado} final=${JSON.stringify(final)}` };
     },
@@ -4869,7 +4872,7 @@ const CHECKS = [
       await restoreTurnState(page, previo);
       const ok =
         lanzados.estado === 'idle' &&
-        lanzados.resumen === ui('chat.agents.summaryRunning', { count: 2 }) &&
+        lanzados.resumen === uiPlural('chat.agents.summaryRunning', { count: 2 }) &&
         panel.length === 2 &&
         panel.every((fila) => fila.startsWith('running:') && fila.includes('claude-haiku-4-5')) &&
         trasUno.resumen === agentsSummary(1, 1) &&
