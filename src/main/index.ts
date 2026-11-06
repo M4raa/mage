@@ -1,5 +1,5 @@
 import { resolvedPath as canonicalPath } from './os/resolvedPath';
-import { localMageRoot, localScratchRoot, workspaceTrusted, ensureWorkingDirectory } from './os/scratchWorkspace';
+import { localMageRoot, localScratchRoot, scratchWorkspacePaths, workspaceTrusted, ensureWorkingDirectory } from './os/scratchWorkspace';
 import { ConversationLocks, HEARTBEAT_MS } from './locks/conversationLocks';
 import { runLockHeartbeatTick } from './locks/conversationLockHeartbeat';
 import { lockFileName, nodeLockFs, pidAliveCheck, resolveConversationLocksDir } from './locks/conversationLockEnv';
@@ -2712,7 +2712,8 @@ function existsDirs(paths: unknown): readonly boolean[] {
 // Raiz de los directorios de borrador. Un solo sitio: si la calculan dos, un dia divergen y la fila de
 // informacion deja de reconocer el scratchpad sin que nada falle.
 function scratchRoot(): string {
-  return localScratchRoot({ platform: process.platform, home: homedir(), userData: app.getPath('userData'), temp: app.getPath('temp'), env: process.env });
+  const paths = { platform: process.platform, home: homedir(), userData: app.getPath('userData'), temp: app.getPath('temp'), env: process.env };
+  return localScratchRoot(scratchWorkspacePaths(paths, decideTestHome({ env: process.env, isPackaged: app.isPackaged })));
 }
 function scratchRoots(): readonly string[] { return [scratchRoot(), join(app.getPath('temp'), 'mage-scratch'), join(app.getPath('userData'), 'mage-scratch')].map(root => canonicalPath(root)); }
 

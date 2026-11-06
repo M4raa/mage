@@ -15,6 +15,13 @@ export function localScratchRoot(paths: WorkspacePaths): string {
   const profile = createHash('sha256').update(paths.userData).digest('hex').slice(0, 16);
   return join(localMageRoot(paths), profile, 'mage-scratch');
 }
+// Con HOME de prueba (sin empaquetar) los borradores cuelgan de esa casa y no de la raíz local real del usuario: la raíz
+// local se calcula como si el HOME fuera el de prueba y sin las variables que la llevarían a la real.
+export function scratchWorkspacePaths(paths: WorkspacePaths, testHome: string | null): WorkspacePaths {
+  if (testHome === null) return paths;
+  const { LOCALAPPDATA: _local, XDG_DATA_HOME: _xdg, ...env } = paths.env;
+  return { ...paths, home: testHome, env };
+}
 export function workspaceTrusted(cwd: string, own: readonly string[], roots: readonly string[]): boolean {
   const canonical = resolvedPath(cwd);
   return roots.some(root => within(canonical, resolvedPath(root))) || isTrusted(canonical, own.filter(folder => folder.trim().length > 0).map(folder => resolvedPath(folder)));
