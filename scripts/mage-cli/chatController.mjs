@@ -31,6 +31,8 @@ export class ChatController {
   #resendQueue = [];
   #pending = new PendingSends();
   #closing = false;
+  #ownTurns = 0;
+  #inputEnded = false;
   #rewind;
 
   constructor(deps) {
@@ -88,10 +90,12 @@ export class ChatController {
     return undefined;
   }
 
-  // Ctrl+D: salir no es cancelar.
+  // Ctrl+D o una tubería que se acaba: salir no es cancelar. Si esta terminal mandó un turno que aún no ha terminado,
+  // espera a su final (se pinta) y luego sale.
   onEndOfInput() {
     if (this.#closing) return;
-    this.leave();
+    this.#inputEnded = true;
+    if (this.#ownTurns === 0) this.leave();
   }
 
   // SIGHUP / SIGTERM: sale SIN llamar a nada del host (conserva sesión, trabajo y permiso pendiente).
@@ -173,7 +177,15 @@ export class ChatController {
     if (event.kind === 'session_state') this.#turnActive = isTurnActive(event.state);
     const text = renderEvent(event, this.#deps.messages);
     if (text !== null) this.#deps.write(text);
+    if (event.kind === 'result') this.#onTurnResult();
     return this.#onPendingEvent(event);
+  }
+
+  // ponytail: cuenta resultados, no turnos por id; si en la cola hay un turno de otro cliente antes que el nuestro, se
+  // sale un turno antes. Con ids de turno en el evento `result`, casarlos.
+  #onTurnResult() {
+    if (this.#ownTurns > 0) this.#ownTurns -= 1;
+    if (this.#inputEnded && this.#ownTurns === 0 && !this.#closing) this.leave();
   }
 
   #onSubscriptionClosed(params) {
@@ -202,6 +214,11 @@ export class ChatController {
 
   // Lo que la terminal sabe pintar se contesta aquí, de una en una; lo demás se contesta en la ventana de Mage.
   #showPending(pending) {
+    // Con la entrada cerrada nadie puede contestar desde esta terminal: se dice dónde y se sale.
+    if (this.#inputEnded) {
+      this.#say(this.#deps.messages.answerInMage());
+      return this.leave();
+    }
     const prompt = promptFromPending(pending);
     if (prompt === null) {
       this.#say(this.#deps.messages.answerInMage());
@@ -268,6 +285,7 @@ export class ChatController {
     // Sin respuesta (conexión caída) queda sin resolver: lo recoge `onDisconnected`.
     if (outcome.status === 'lost') return;
     this.#pending.settle(commandId);
+    if (outcome.status === 'ok') this.#ownTurns += 1;
     if (outcome.status === 'ok' && outcome.value.status === 'queued') this.#say(this.#deps.messages.queued());
   }
 
