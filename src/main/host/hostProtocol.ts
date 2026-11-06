@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { MageEvent } from '@shared/events';
-import { renderLocalized } from '@shared/i18n/localizedText';
+import { UI_LANGUAGES } from '@shared/i18n/language';
+import { renderLocalized, type LocalizedText } from '@shared/i18n/localizedText';
 import type { Translate } from '@shared/i18n/translator';
 import { ELICITATION_ANSWER_SCHEMA } from '@shared/elicitation';
 import { PERMISSION_MODES } from '@shared/ipc';
@@ -19,7 +20,8 @@ export const HOST_PROTOCOL_MAJOR = 1;
 // 1.3 (F7): `host.stop`, `accounts.create`, `session.updateQueued` y la notificación `subscription.closed`.
 // 1.4 (0.1.4): `session.rewindPoints`, `session.rewindPlan` y `session.rewind` (el orquestador de la ventana).
 // 1.5 (0.1.4): `hello.caller` y el túnel MCP `mcp.message` para los clientes `mcp` (D-M5).
-export const HOST_PROTOCOL_MINOR = 5;
+// 1.6 (0.1.4): `client.setLanguage` (el idioma del cliente para los mensajes de error) y `error.data.localized`.
+export const HOST_PROTOCOL_MINOR = 6;
 export const HOST_PROTOCOL = `${HOST_PROTOCOL_MAJOR}.${HOST_PROTOCOL_MINOR}`;
 
 // Códigos JSON-RPC estándar (-32700…-32603) y propios (-32001…-32099).
@@ -118,6 +120,7 @@ const CANCEL_QUEUED_SCHEMA = z.object({ sessionId: SESSION_ID_SCHEMA, queuedId: 
 const UPDATE_QUEUED_SCHEMA = z.object({ sessionId: SESSION_ID_SCHEMA, queuedId: hostId, text: z.string().min(1).max(MAX_MESSAGE_CHARS) }).strict();
 // Un mensaje JSON-RPC de MCP dentro del túnel (1.5): lo valida el transporte del servidor MCP, no el host.
 const MCP_MESSAGE_SCHEMA = z.object({ message: z.record(z.unknown()) }).strict();
+export const CLIENT_LANGUAGE_SCHEMA = z.object({ language: z.enum(UI_LANGUAGES) }).strict();
 
 // Esquema de los parámetros de cada método posterior al `hello`.
 export const HOST_METHOD_SCHEMAS = {
@@ -143,6 +146,7 @@ export const HOST_METHOD_SCHEMAS = {
   'host.stop': HOST_STOP_SCHEMA,
   'accounts.create': ACCOUNTS_CREATE_SCHEMA,
   'mcp.message': MCP_MESSAGE_SCHEMA,
+  'client.setLanguage': CLIENT_LANGUAGE_SCHEMA,
 } as const;
 export type HostMethod = keyof typeof HOST_METHOD_SCHEMAS;
 
@@ -179,6 +183,7 @@ export function withLegacyText(event: MageEvent, translate: Translate): Record<s
 export interface HostErrorBody {
   readonly code: number;
   readonly message: string;
+  readonly data?: { readonly localized: LocalizedText };
 }
 
 export function errorResponse(id: RequestId | null, error: HostErrorBody): string {

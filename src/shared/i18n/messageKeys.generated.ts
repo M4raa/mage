@@ -866,6 +866,10 @@ export interface MessageValues {
   readonly "errors.host.directoryNotPrivate": { readonly "directory": string | number; readonly "mode": string | number; readonly "owner": string | number; readonly "user": string | number };
   readonly "errors.host.socketPathTooLong": { readonly "address": string | number; readonly "bytes": string | number; readonly "max": string | number };
   readonly "errors.host.startFailedCleanup": { readonly "detail": string | number; readonly "reason": string | number };
+  readonly "errors.host.trustRequired": { readonly "cwd": string | number };
+  readonly "errors.host.unknownAccount": { readonly "accountId": string | number; readonly "provider": string | number };
+  readonly "errors.host.unknownConversation": { readonly "conversationId": string | number };
+  readonly "errors.host.unsupportedMethod": { readonly "method": string | number };
   readonly "errors.locks.cannotCreate": { readonly "nativeId": string | number; readonly "path": string | number };
   readonly "errors.mentions.missing": { readonly "name": string | number };
   readonly "errors.mentions.notFound": { readonly "name": string | number };

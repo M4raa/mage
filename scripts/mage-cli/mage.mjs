@@ -26,6 +26,8 @@ const EXIT_OK = 0;
 const EXIT_ERROR = 1;
 const EXIT_BAD_ARGUMENTS = 2;
 const CLIENT_VERSION = 'mage-chat';
+// Idioma del cliente, calculado una vez: pinta los textos del CLI y se le pide al host para sus errores (1.6).
+const CLIENT_LANGUAGE = pickLanguage({ env: process.env, intlLocale: Intl.DateTimeFormat().resolvedOptions().locale });
 
 function connectSocket(address) {
   return new Promise((resolve, reject) => {
@@ -77,10 +79,10 @@ function createAsk(rl) {
 
 // Contexto común de todos los comandos: idioma y cómo conectar o arrancar Mage sin ventanas.
 function createContext(args) {
-  const messages = createMessages(pickLanguage({ env: process.env, intlLocale: Intl.DateTimeFormat().resolvedOptions().locale }));
+  const messages = createMessages(CLIENT_LANGUAGE);
   const defaultDir = defaultUserDataDir({ platform: process.platform, env: process.env, homedir: os.homedir() });
   const userDataDir = args.userDataDir ?? defaultDir;
-  const connect = () => connectVerified({ userDataDir, clientVersion: CLIENT_VERSION, deps: linkDeps });
+  const connect = () => connectVerified({ userDataDir, clientVersion: CLIENT_VERSION, deps: linkDeps, language: CLIENT_LANGUAGE });
   const launch = () => {
     const plan = headlessLaunch({
       platform: process.platform, execPath: process.execPath, isElectron: process.versions.electron !== undefined,
@@ -211,7 +213,7 @@ async function runAccountAddCommand(args, ctx) {
 function runMcpCommand(args, ctx) {
   const userDataDir = args.userDataDir ?? defaultUserDataDir({ platform: process.platform, env: process.env, homedir: os.homedir() });
   return runMcpRelay({
-    connect: (client) => connectVerified({ userDataDir, clientVersion: CLIENT_VERSION, deps: linkDeps, client }),
+    connect: (client) => connectVerified({ userDataDir, clientVersion: CLIENT_VERSION, deps: linkDeps, client, language: CLIENT_LANGUAGE }),
     stdin: process.stdin, stdout: process.stdout, stderr: process.stderr, env: process.env, messages: ctx.messages, exit: process.exit,
   });
 }

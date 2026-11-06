@@ -6,7 +6,7 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { posix, win32 } from 'node:path';
 
-export const HOST_PROTOCOL = '1.5';
+export const HOST_PROTOCOL = '1.6';
 export const CHALLENGE_CONTEXT = 'mage-host-challenge-v1:';
 export const CHALLENGE_NONCE_BYTES = 32;
 export const NOT_MAGE_SERVER = 'El servidor del pipe no es el de Mage';
@@ -176,7 +176,14 @@ function helloClient(client, clientVersion) {
   return { client: { kind: client.kind, version: clientVersion }, ...caller };
 }
 
-export async function connectVerified({ userDataDir, clientVersion, deps, client = { kind: 'terminal' } }) {
+// El host 1.6 entiende `client.setLanguage`; a uno anterior no se le manda (su `hello` y sus métodos son estrictos).
+export function supportsClientLanguage(protocol) {
+  if (typeof protocol !== 'string') return false;
+  const match = /^(\d+)\.(\d+)$/.exec(protocol);
+  return match !== null && Number(match[1]) === 1 && Number(match[2]) >= 6;
+}
+
+export async function connectVerified({ userDataDir, clientVersion, deps, client = { kind: 'terminal' }, language }) {
   const { address, token } = readHostFiles(userDataDir, deps);
   verifyUnixEndpoint(address, deps);
   const socket = await deps.connect(address);
@@ -188,5 +195,15 @@ export async function connectVerified({ userDataDir, clientVersion, deps, client
     throw error;
   }
   const hello = await rpc.call('hello', { protocol: HOST_PROTOCOL, ...helloClient(client, clientVersion), token });
+  if (language !== undefined && supportsClientLanguage(hello.protocol)) await setLanguage(rpc, socket, language);
   return { rpc, socket, hello };
+}
+
+async function setLanguage(rpc, socket, language) {
+  try {
+    await rpc.call('client.setLanguage', { language });
+  } catch (error) {
+    socket.destroy();
+    throw error;
+  }
 }

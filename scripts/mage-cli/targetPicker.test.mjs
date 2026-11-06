@@ -40,7 +40,7 @@ describe('resolveTarget', () => {
 
   it('resolveTarget_new_creaConTrustNoReconocido', async () => {
     const target = { kind: 'new', accountId: 'a1', provider: 'codex', cwd: null, model: 'm', effort: 'low' };
-    const { run, rpc } = setup({ target, responses: { 'session.create': { sessionId: 's3' } } });
+    const { run, rpc } = setup({ target, responses: { 'accounts.list': { accounts: [] }, 'session.create': { sessionId: 's3' } } });
 
     expect(await run()).toBe('s3');
     expect(rpc.call).toHaveBeenCalledWith('session.create', {
@@ -50,9 +50,63 @@ describe('resolveTarget', () => {
 
   it('resolveTarget_new_trustRequired_exitCode3', async () => {
     const refused = Object.assign(new Error('Carpeta sin confianza'), { code: -32007 });
-    const { run } = setup({ target: { kind: 'new', accountId: 'a', provider: 'claude', cwd: '/x' }, responses: { 'session.create': refused } });
+    const { run } = setup({ target: { kind: 'new', accountId: 'a', provider: 'claude', cwd: '/x' }, responses: { 'accounts.list': { accounts: [] }, 'session.create': refused } });
 
     await expect(run()).rejects.toMatchObject({ message: 'Carpeta sin confianza', exitCode: 3 });
+  });
+
+  describe('--account por nombre', () => {
+    const NAMED = { accounts: [
+      { id: '/h/.claude-a', provider: 'claude', name: 'trabajo', billing: 'api' },
+      { id: '/h/.claude-b', provider: 'claude', name: 'casa', billing: 'subscription' },
+      { id: '/h/.claude-c', provider: 'claude', name: 'casa', billing: 'api' },
+      { id: '/h/.codex-a', provider: 'codex', name: 'trabajo', billing: 'api' },
+    ] };
+    const created = (accountId, provider = 'claude') => setup({
+      target: { kind: 'new', accountId, provider, cwd: null },
+      responses: { 'accounts.list': NAMED, 'session.create': { sessionId: 's7' } },
+    });
+    const createdWith = (rpc) => rpc.call.mock.calls.find(([method]) => method === 'session.create')?.[1].accountId;
+
+    it('resolveTarget_newConNombreUnico_creaConSuRuta', async () => {
+      const { run, rpc } = created('trabajo');
+
+      await run();
+
+      expect(createdWith(rpc)).toBe('/h/.claude-a');
+    });
+
+    it('resolveTarget_newConRuta_laPasaTalCual', async () => {
+      const { run, rpc } = created('/h/.claude-b');
+
+      await run();
+
+      expect(createdWith(rpc)).toBe('/h/.claude-b');
+    });
+
+    it('resolveTarget_newConNombreAmbiguo_salida2ConLasRutas', async () => {
+      const { run, rpc } = created('casa');
+
+      await expect(run()).rejects.toMatchObject({ exitCode: 2, message: expect.stringMatching(/\/h\/\.claude-b[\s\S]*\/h\/\.claude-c/) });
+
+      expect(rpc.call).not.toHaveBeenCalledWith('session.create', expect.anything());
+    });
+
+    it('resolveTarget_newNombreDeOtroProveedor_noLoToma', async () => {
+      const { run, rpc } = created('trabajo', 'codex');
+
+      await run();
+
+      expect(createdWith(rpc)).toBe('/h/.codex-a');
+    });
+
+    it('resolveTarget_newSinCoincidencia_pasaElTexto', async () => {
+      const { run, rpc } = created('nadie');
+
+      await run();
+
+      expect(createdWith(rpc)).toBe('nadie');
+    });
   });
 
   it('resolveTarget_pickConSesiones_eligeLaSegunda', async () => {
