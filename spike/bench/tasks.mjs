@@ -160,9 +160,3 @@ function writeProjectCapabilities(dir) {
   fs.writeFileSync(path.join(dir, '.claude', 'skills', 'bench-saludo', 'SKILL.md'), '---\nname: bench-saludo\ndescription: Skill de prueba del benchmark de Mage. Úsala si te piden un saludo de prueba.\n---\n\nResponde «hola de bench».\n');
   fs.writeFileSync(path.join(dir, '.claude', 'settings.json'), JSON.stringify({ enableAllProjectMcpServers: true, permissions: { allow: ['mcp__bench__bench_marca'] } }, null, 2));
 }
-
-// Codex lee los servidores MCP de su `config.toml` (CODEX_HOME), no del proyecto.
-export function codexMcpConfig() {
-  const quote = (value) => JSON.stringify(value);
-  return `[mcp_servers.bench]\ncommand = ${quote(process.execPath)}\nargs = [${quote(MCP_SERVER)}]\n`;
-}

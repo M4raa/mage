@@ -8,6 +8,7 @@ import { notify, useNotificationStore } from './notificationStore';
 import { useCodexAppsStore } from './codexAppsStore';
 import { useTaskStore } from './tasks/taskStore';
 import { toPersistedWorkspace } from './workspaceView';
+import { t } from '../i18n/uiLanguage';
 
 // Asidero SOLO de desarrollo para `pnpm verify:gui`: deja medir el DOM del chat sin gastar un turno
 // real ni spawnear el CLI. Sin el, el harness no puede hidratar una conversacion (el store de Zustand
@@ -44,6 +45,8 @@ export interface MageDevBridge {
   readonly notifications: typeof useNotificationStore;
   // Tareas (F8): el harness enlaza una tarea a una pestaña ficticia para medir su franja sin lanzar nada.
   readonly taskStore: typeof useTaskStore;
+  // verify:gui: textos en el idioma activo desde las funciones que corren en el renderer (Z06).
+  readonly t: typeof t;
 }
 
 (window as unknown as { __mageDev?: MageDevBridge }).__mageDev = {
@@ -63,4 +66,5 @@ export interface MageDevBridge {
   notify,
   notifications: useNotificationStore,
   taskStore: useTaskStore,
+  t,
 };

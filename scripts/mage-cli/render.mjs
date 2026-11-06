@@ -4,7 +4,7 @@
 const RENDERERS = {
   stream_delta: (event) => event.text,
   tool_use: (event, m) => `\n${m.toolUse(event.tool.toolName)}\n`,
-  result: (event, m) => `\n${m.turnEnded(event.result.subtype)}\n`,
+  result: (event, m) => `\n${m.turnEnded(event.result.isError === true ? 'error' : event.result.subtype)}\n`,
   error: (event, m) => `${m.error(event.message ?? '')}\n`,
   notice: (event, m) => `${m.notice(event.text ?? '')}\n`,
   queue_changed: (event, m) => `${m.queueSize(event.queue.length)}\n`,

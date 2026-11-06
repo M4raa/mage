@@ -22,6 +22,18 @@ describe('seededAppSettings', () => {
     expect(() => seededAppSettings({ appVersion: '' })).toThrow('appVersion no valida: ""');
   });
 
+  it('seededAppSettings_uiLanguageEn_loIncluye', () => {
+    expect(seededAppSettings({ appVersion: '0.1.4', uiLanguage: 'en' }).uiLanguage).toBe('en');
+  });
+
+  it('seededAppSettings_sinUiLanguage_noLoIncluye', () => {
+    expect(Object.hasOwn(seededAppSettings({ appVersion: '0.1.4' }), 'uiLanguage')).toBe(false);
+  });
+
+  it('seededAppSettings_uiLanguageInvalido_lanza', () => {
+    expect(() => seededAppSettings({ appVersion: '0.1.4', uiLanguage: 'fr' })).toThrow('uiLanguage no valido: "fr"');
+  });
+
   it('seededAppSettings_carpetaVacia_lanzaConElValor', () => {
     expect(() => seededAppSettings({ appVersion: '0.1.4', trustedFolders: [''] })).toThrow('trustedFolders no validas: [""]');
   });

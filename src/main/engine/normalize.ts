@@ -1,5 +1,6 @@
 import type { MageEvent, ToolFileInfo, ToolUse } from '@shared/events';
 import type { UsageWindowInfo } from '@shared/usage';
+import { localized } from '@shared/i18n/localizedText';
 // Se reutiliza el conversor de fechas del panel de Uso (unico sitio que sabe distinguir epoch en
 // segundos de epoch en ms) en vez de escribir aqui un segundo: el `resetsAt` del stream viene en
 // SEGUNDOS y ese es justo el caso que ya resuelve.
@@ -260,6 +261,11 @@ function normalizeAssistant(raw: Record<string, unknown>): MageEvent[] {
   // asistente: es un aviso, y va al hilo como linea de sistema.
   if (raw.error === 'rate_limit') {
     return [{ kind: 'rate_limit', summary: assistantTextOf(message.content), resetsAtMs: null }];
+  }
+  // Error de la API (MEDIDO con 2.1.314 contra un 401; igual en 2.1.318): `assistant` sintético con `is_api_error_message: true` y el texto
+  // del error; el `result` que sigue dice `subtype: "success"` con `is_error: true`. No es texto del asistente: es un error.
+  if (raw.is_api_error_message === true) {
+    return [{ kind: 'error', localized: localized('events.cli.apiError', { detail: assistantTextOf(message.content) }) }];
   }
   const events: MageEvent[] = [];
   const text = assistantTextOf(message.content);

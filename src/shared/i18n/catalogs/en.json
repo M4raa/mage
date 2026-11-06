@@ -987,6 +987,7 @@
   "events.agy.stepFailedTool": "agy marked the tool {tool} (step {index}) as failed and may still report the turn as successful: check whether what you asked for was really done.",
   "events.agy.turnFailed": "agy ended the turn with an error: {detail}",
   "events.agy.turnFailedStatus": "agy ended the turn with an error: status {status}",
+  "events.cli.apiError": "API error: {detail}",
   "events.cli.controlRejected": "The CLI rejected a control request: {detail}",
   "events.cli.unparseableEvent": "Unparseable event from the CLI: {detail}",
   "events.codex.error": "codex: {detail}",

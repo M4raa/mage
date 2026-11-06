@@ -5,8 +5,10 @@
 // en que la condicion de «listo» se cumple. Con el perfil de CPU de Chromium (CDP Profiler) se
 // atribuye el tiempo a funciones para buscar las causas antes de tocar nada.
 
+import { ui } from './uiText.mjs';
+
 export const PERF_REPEATS = 20;
-const PROMPT = 'Escribe una instrucción para el agente';
+const PROMPT = ui('prompt.editor.ariaLabel');
 const PROFILE_TOP = 15;
 // Funciones que se conservan aunque no esten entre las primeras: el sidebar (criterio de F2.5, «el sidebar ya no
 // aparece en el perfil del cambio de pestaña»). Con muestreo de 200 µs, un render mas corto puede no salir.
@@ -178,6 +180,26 @@ export async function measurePrependAnchor(page) {
   }));
 }
 
+// Devuelve la pestaña activa al final del hilo (`measurePrependAnchor` la deja a mitad a propósito, y volver a una pestaña
+// respeta dónde se estaba leyendo: medido, Z). «Listo» = última fila pintada y a ≤ 2 px del final.
+export async function scrollActiveChatToBottom(page) {
+  return page.evaluate((timeoutMs) => new Promise((resolve, reject) => {
+    const id = window.__mageDev.store.getState().activeTabId;
+    const scroller = document.querySelector(`[data-pane-tab-id="${id}"] [data-chat-scroller]`);
+    if (scroller === null) return resolve({ alFinal: null, motivo: 'no hay lista virtual en la pestaña activa' });
+    const deadline = performance.now() + timeoutMs;
+    const tick = () => {
+      const distancia = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
+      const ultimaFila = scroller.querySelector('[data-last-row="true"]') !== null;
+      if (ultimaFila && distancia <= 2) return resolve({ alFinal: true });
+      if (performance.now() > deadline) return reject(new Error(`La pestaña activa no vuelve al final en ${timeoutMs} ms: ${JSON.stringify({ ultimaFila, distancia: Math.round(distancia) })}`));
+      scroller.scrollTop = scroller.scrollHeight;
+      requestAnimationFrame(tick);
+    };
+    tick();
+  }), INTERACTION_TIMEOUT_MS);
+}
+
 // Cambio de pestaña con una conversacion REAL larga abierta desde el historial (vale en produccion, sin
 // puente): busca la del fixture en el lateral, la abre (solo lee su transcripcion), abre una vacia y mide el
 // cambio entre ambas.
@@ -225,8 +247,8 @@ export async function profileWhile(page, action) {
 const LONG_CONVERSATION_SIZES = [200, 1000, 3000];
 // Plazo de la espera «última fila al fondo»: `page.evaluate` no tiene plazo propio y, sin él, una condición que no llega cuelga la medición para siempre.
 const LONG_CONVERSATION_TIMEOUT_MS = 60_000;
-// Texto del buscador del lateral (catalogo `sidebar.search.label` de es.json) y lo que se teclea para hallar el fixture.
-const SIDEBAR_SEARCH_LABEL = 'Buscar conversaciones';
+// Texto del buscador del lateral (catalogo `sidebar.search.label`, en el idioma de la tanda) y lo que se teclea para hallar el fixture.
+const SIDEBAR_SEARCH_LABEL = ui('sidebar.search.label');
 const LONG_TRANSCRIPT_SEARCH = 'VG-T3';
 const PANELS = ['activity', 'context', 'logs'];
 const PROFILE_KEYS = 30;
@@ -302,6 +324,7 @@ export async function runPerfBaseline(page, { openConversation, devBridge, longT
 async function measureWithDevBridge(page, out, tabs) {
   out.conversacionLarga = await withStep('conversacionLarga', () => measureLongConversations(page), page);
   out.anclaAlAnteponer = await withStep('anclaAlAnteponer', () => measurePrependAnchor(page), page);
+  out.volverAlFinal = await withStep('volverAlFinal', () => scrollActiveChatToBottom(page), page);
   out.escrituraConConversacionLarga = await withStep('escrituraConConversacionLarga', () => measureTyping(page), page);
   out.cambioPestanaConConversacionLarga = await withStep('cambioPestanaConConversacionLarga', () => measureTabSwitch(page, tabs), page);
   out.perfilEscrituraConConversacionLarga = await withStep('perfilEscrituraConConversacionLarga', () => profileWhile(page, async () => { for (let i = 0; i < PROFILE_KEYS; i++) await page.keyboard.press('x'); }), page);

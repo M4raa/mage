@@ -157,6 +157,18 @@ describe('inAppNoticeForEvent', () => {
     expect(inAppNoticeForEvent(event, { tabTitle: 'proj' })?.level).toBe('success');
   });
 
+  it('inAppNoticeForEvent_resultConError_nivelError', () => {
+    const event: MageEvent = { kind: 'result', result: { isError: true, subtype: 'success', numTurns: 1 } };
+
+    expect(inAppNoticeForEvent(event, { tabTitle: 'proj' })?.level).toBe('error');
+  });
+
+  it('inAppNoticeForEvent_resultSinError_nivelExito', () => {
+    const event: MageEvent = { kind: 'result', result: { isError: false, subtype: 'success', numTurns: 1 } };
+
+    expect(inAppNoticeForEvent(event, { tabTitle: 'proj' })?.level).toBe('success');
+  });
+
   it('inAppNoticeForEvent_eventoDeRuido_esNull', () => {
     expect(inAppNoticeForEvent({ kind: 'stream_delta', text: 'x' }, { tabTitle: 'proj' })).toBeNull();
   });

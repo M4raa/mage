@@ -247,6 +247,10 @@ describe('IsolatedBrowser readDom', () => {
   });
 });
 
+const SCREENCAST_PARAMS = { format: 'jpeg', quality: 1, maxWidth: 64, maxHeight: 64 };
+const screencastCalls = (sendCommand: { mock: { calls: unknown[][] } }) =>
+  sendCommand.mock.calls.filter(([method]) => method === 'Page.startScreencast');
+
 describe('IsolatedBrowser click', () => {
   it('click_elementId_dispatchesAtCenterAfterAttaching', async () => {
     const { browser, debuggerFake } = await browserWithElement();
@@ -256,8 +260,28 @@ describe('IsolatedBrowser click', () => {
 
     expect(debuggerFake.attach).toHaveBeenCalledTimes(1);
     expect(debuggerFake.attach).toHaveBeenCalledWith('1.3');
-    expect(debuggerFake.sendCommand).toHaveBeenNthCalledWith(1, ...mousePressed);
-    expect(debuggerFake.sendCommand).toHaveBeenNthCalledWith(2, ...mouseReleased);
+    expect(debuggerFake.sendCommand).toHaveBeenNthCalledWith(1, 'Page.startScreencast', SCREENCAST_PARAMS);
+    expect(debuggerFake.sendCommand).toHaveBeenNthCalledWith(2, ...mousePressed);
+    expect(debuggerFake.sendCommand).toHaveBeenNthCalledWith(3, ...mouseReleased);
+  });
+
+  it('click_twice_startsScreencastOnce', async () => {
+    const { browser, debuggerFake } = createBrowser();
+
+    await browser.click({ x: 1, y: 1 });
+    await browser.click({ x: 1, y: 1 });
+
+    expect(screencastCalls(debuggerFake.sendCommand)).toHaveLength(1);
+  });
+
+  it('click_afterDetach_startsScreencastAgain', async () => {
+    const { browser, debuggerFake } = createBrowser();
+
+    await browser.click({ x: 1, y: 1 });
+    debuggerFake.attached = false;
+    await browser.click({ x: 1, y: 1 });
+
+    expect(screencastCalls(debuggerFake.sendCommand)).toHaveLength(2);
   });
 
   it('click_coordinates_dispatchesThere', async () => {
@@ -265,7 +289,8 @@ describe('IsolatedBrowser click', () => {
 
     await browser.click({ x: 10, y: 20 });
 
-    expect(debuggerFake.sendCommand).toHaveBeenNthCalledWith(1, 'Input.dispatchMouseEvent', {
+    expect(debuggerFake.sendCommand).toHaveBeenNthCalledWith(1, 'Page.startScreencast', SCREENCAST_PARAMS);
+    expect(debuggerFake.sendCommand).toHaveBeenNthCalledWith(2, 'Input.dispatchMouseEvent', {
       type: 'mousePressed',
       x: 10,
       y: 20,
@@ -311,7 +336,7 @@ describe('IsolatedBrowser type', () => {
 
     await browser.type({ elementId: 1, text: 'hola' });
 
-    expect(debuggerFake.sendCommand).toHaveBeenNthCalledWith(3, 'Input.insertText', { text: 'hola' });
+    expect(debuggerFake.sendCommand).toHaveBeenNthCalledWith(4, 'Input.insertText', { text: 'hola' });
   });
 
   it('type_emptyText_throws', async () => {

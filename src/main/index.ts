@@ -135,10 +135,10 @@ import { BROWSER_STATE_CHANNEL } from '@shared/browser';
 import { registerBrowserIpc } from './browser/browserIpc';
 import { BROWSER_SWEEP_INTERVAL_MS, BrowserRegistry } from './browser/browserRegistry';
 import { createBrowserAgent } from './browser/browserAgent';
-import { electronBrowserDeps, electronImageDeps } from './browser/electronBrowserDeps';
+import { createParkingWindow, electronBrowserDeps, electronImageDeps } from './browser/electronBrowserDeps';
 import { IsolatedBrowser } from './browser/isolatedBrowser';
 import { PenSessions } from './browser/penSession';
-import { ViewPlacement } from './browser/viewPlacement';
+import { createParkingHost, ViewPlacement } from './browser/viewPlacement';
 import { libraryStatePath, loadLibraryState } from './capabilities/library/libraryState';
 import { LibraryService, type LibraryAccount } from './capabilities/library/libraryService';
 import { decideTestLibraryClaudeDir, testLibraryAccounts } from './capabilities/library/testLibraryAccount';
@@ -2846,14 +2846,14 @@ function launchSession(params: CreateSessionParams, sender: Electron.WebContents
 const adoptableSessions = new AdoptableSessions();
 // D-M6: credencial por sesion que identifica al hijo ante `mage mcp`.
 const mcpCallers = new McpCallers({ randomBytes, isLive: (id) => sessionCoordinator.ownerOf(id) !== undefined });
-// Navegador de Mage (F11b): uno por sesión viva (D-S1), en la ventana de su panel (D-S3).
-const viewPlacement = new ViewPlacement();
+// Navegador de Mage (F11b): uno por sesión viva (D-S1), en la ventana de su panel o, sin panel, en la de aparcamiento (D-S3, Z01).
+const viewPlacement = new ViewPlacement(createParkingHost(createParkingWindow));
 const browserRegistry = new BrowserRegistry({
   createBrowser: (instanceId) => new IsolatedBrowser(instanceId, electronBrowserDeps),
   newId: randomUUID,
   isLive: (sessionId) => sessionCoordinator.ownerOf(sessionId) !== undefined,
   onChange: (states) => windowManager.broadcast(BROWSER_STATE_CHANNEL, states),
-  onOpened: (_sessionId, handle) => viewPlacement.ensureHosted(handle, windowManager.get(MAIN_WINDOW_ID)),
+  onOpened: (_sessionId, handle) => viewPlacement.ensureHosted(handle),
   onClosed: (sessionId, handle) => { viewPlacement.forget(handle); penSessions.discard(sessionId); },
   log: mainLog,
 });

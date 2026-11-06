@@ -29,7 +29,7 @@ import { chatRows, currentTurnSummary, stickResetKey, type ChatRow } from '../ch
 import { usePaneTabId, usePaneTranscriptStore } from '../paneContext';
 import type { Block, ImageAttachment } from '../types';
 import { classifySystemWrapper } from '@shared/systemWrappers';
-import { INITIAL_ANCHOR, STICK_TO_BOTTOM_PX, appendedTailKeys, nextListAnchor, watchChatBottom, type ListAnchor } from '../chatListAnchor';
+import { INITIAL_ANCHOR, STICK_TO_BOTTOM_PX, appendedTailKeys, nextListAnchor, settleAtBottom, watchChatBottom, type FrameApi, type ListAnchor } from '../chatListAnchor';
 import { MOTION_S } from '../motionPresets';
 import { RecentProjects } from './RecentProjects';
 import { reportActionError } from '../notificationStore';
@@ -249,8 +249,16 @@ function useChatAutoScroll({ tailSize, turnLive, resetKey }: { readonly tailSize
     stuckRef.current = true;
     scrollToLastRow(virtuosoRef.current);
   }, [resetKey]);
+  // Tras cada salto al final (filas nuevas, texto en streaming, cambio de contenido o scroller recién montado), unos
+  // frames más pegado al final REAL: Virtuoso puede reajustar después sin que cambie ningún tamaño observado (Z).
+  useLayoutEffect(() => {
+    if (scroller === null || !stuckRef.current) return undefined;
+    return settleAtBottom(scroller, stuckRef, BROWSER_FRAMES);
+  }, [scroller, tailSize, turnLive, resetKey]);
   return { virtuosoRef, onScrollerRef };
 }
+
+const BROWSER_FRAMES: FrameApi = { request: (callback) => requestAnimationFrame(callback), cancel: (id) => cancelAnimationFrame(id) };
 
 function scrollToLastRow(handle: VirtuosoHandle | null): void {
   handle?.scrollToIndex({ index: 'LAST', align: 'end', behavior: 'auto' });

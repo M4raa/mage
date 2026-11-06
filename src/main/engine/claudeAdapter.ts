@@ -269,7 +269,7 @@ export class ClaudeAdapter implements ProviderAdapter {
     };
   }
 
-  // Peticiones de rewind (F4.4/F4.5). MEDIDO en 2.1.311 (INFORME-040; Mage corre con 2.1.314):
+  // Peticiones de rewind (F4.4/F4.5). MEDIDO en 2.1.311 (INFORME-040; Mage corre con 2.1.314, sin cambios en 2.1.318):
   //  - C-2 `rewind_conversation` contesta `{ rewound, targetMessageUuid, prefillText, precedingAssistantUuid }`;
   //    sus rechazos son `stale_target`, `target_not_found` y `turn_running`.
   //  - C-5 `rewind_files` con `dry_run` contesta `{ canRewind, filesChanged, insertions, deletions }`.

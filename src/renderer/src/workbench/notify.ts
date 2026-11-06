@@ -37,7 +37,7 @@ export function inAppNoticeForEvent(event: MageEvent, context: NotificationConte
 }
 
 function inAppLevelFor(event: MageEvent): NotifyLevel {
-  if (event.kind === 'result') return 'success';
+  if (event.kind === 'result') return event.result.isError ? 'error' : 'success';
   if (event.kind === 'error') return 'error';
   if (event.kind === 'permission_request' || event.kind === 'elicitation_request') return 'warning';
   return 'info';

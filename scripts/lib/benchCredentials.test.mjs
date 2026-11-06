@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { benchApiKey, changedFiles, copiesUnder, credentialFingerprints, userCredentialFiles } from './benchCredentials.mjs';
+import { benchAccountId, benchApiKey, changedFiles, copiesUnder, credentialFingerprints, userCredentialFiles } from './benchCredentials.mjs';
 
 let tmp = null;
 afterEach(() => {
@@ -76,5 +76,21 @@ describe('copiesUnder', () => {
 describe('changedFiles', () => {
   it('changedFiles_unoCambia_loDevuelve', () => {
     expect(changedFiles({ a: '1', b: null }, { a: '2', b: null })).toEqual(['a']);
+  });
+});
+
+describe('benchAccountId', () => {
+  it('benchAccountId_dosCuentasDeClaude_devuelveLaDeSuCarpeta', () => {
+    const accounts = [{ id: 'a', providerId: 'claude', configDir: 'H/.claude' }, { id: 'b', providerId: 'claude', configDir: 'H/.claude-bench' }];
+
+    expect(benchAccountId(accounts, 'H/.claude-bench')).toBe('b');
+  });
+  it('benchAccountId_carpetaDeOtroProveedor_lanza', () => {
+    const accounts = [{ id: 'c', providerId: 'codex', configDir: 'X' }];
+
+    expect(() => benchAccountId(accounts, 'X')).toThrow('0 cuentas de Claude');
+  });
+  it('benchAccountId_sinCuentas_lanza', () => {
+    expect(() => benchAccountId([], 'X')).toThrow('0 cuentas de Claude');
   });
 });
