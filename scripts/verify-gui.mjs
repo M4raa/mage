@@ -50,6 +50,7 @@ import { connectVerified } from './mage-cli/hostLink.mjs';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
 import { FAKE_SCENARIOS, startFakeOpenAiServer } from './fake-openai-server.mjs';
+import { listenLoopback } from './lib/loopbackListen.mjs';
 import { decideTurnTarget, parseTurnAnswer, spentPercent } from './lib/usageGuard.mjs';
 import { withGuiState } from './lib/guiState.mjs';
 import { closeCheckOverlays, runGuiCheck } from './lib/guiCheckState.mjs';
@@ -12868,9 +12869,9 @@ async function startBrowserPageServer() {
     res.writeHead(body === undefined ? 404 : 200, { 'content-type': 'text/html; charset=utf-8' });
     res.end(body);
   });
-  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const port = await listenLoopback(server);
   return {
-    url: `http://127.0.0.1:${server.address().port}/`,
+    url: `http://127.0.0.1:${port}/`,
     // Chromium mantiene conexiones abiertas: sin cerrarlas, `close` no terminaría.
     close: () => new Promise((resolve) => { server.close(resolve); server.closeAllConnections(); }),
   };

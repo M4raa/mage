@@ -9,6 +9,7 @@
 // con null el campo no se envía.
 import http from 'node:http';
 import path from 'node:path';
+import { listenLoopback } from './lib/loopbackListen.mjs';
 
 const CACHE_TOKENS = 10;
 
@@ -32,7 +33,7 @@ export function startFakeAnthropic({ cwd, cacheTtl = '1h' }) {
     await stream(res, plan, usage);
     res.end();
   });
-  return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve({ url: `http://127.0.0.1:${server.address().port}`, requests, close: () => new Promise((r) => { server.closeAllConnections?.(); server.close(r); }) })));
+  return listenLoopback(server).then((port) => ({ url: `http://127.0.0.1:${port}`, requests, close: () => new Promise((r) => { server.closeAllConnections?.(); server.close(r); }) }));
 }
 
 // `usage` de message_start; con cacheTtl null, sin el campo `cache_creation`.
