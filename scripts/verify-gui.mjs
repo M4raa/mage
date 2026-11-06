@@ -18,6 +18,7 @@
 //
 // Uso:
 //   pnpm verify:gui             # arranca, comprueba y limpia
+//   pnpm verify:gui --lang=en       # la tanda con la interfaz en inglés (siembra uiLanguage en el perfil)
 //   pnpm verify:gui --keep      # deja la app abierta al terminar (para mirar a ojo)
 //   pnpm verify:gui --only=texto # solo las comprobaciones cuyo nombre contenga `texto`
 //   pnpm verify:gui --turn=local # el turno minimo contra el servidor falso, sin gastar cuota
@@ -59,6 +60,7 @@ import { appendDomText } from './lib/domTextDump.mjs';
 import { classifyTextFit, collectTextFit } from './lib/textFit.mjs';
 import { redactLocalUser, redactUserData } from './lib/redactUserData.mjs';
 import { seededAppSettings, seedTestAccounts } from './lib/profileSeed.mjs';
+import { ui, uiIn, uiPrefix, uiRegExp, cssAttr, getUiLanguage, setUiLanguage, parseUiLangArg } from './lib/uiText.mjs';
 import { cleanupProfile } from '../spike/f0-profile-cleanup.mjs';
 import { benchApiKey, changedFiles, copiesUnder, credentialFingerprints, userCredentialFiles } from './lib/benchCredentials.mjs';
 
@@ -654,15 +656,18 @@ const CHECKS = [
         return window.__mageDev.store.getState().settings.uiLanguage ?? null;
       });
       const inicial = await label.textContent();
-      await page.locator('[data-setting="ui-language"] [data-language="en"]').click();
-      await page.waitForFunction(() => document.querySelector('[data-setting="ui-language"] > span')?.textContent === 'LANGUAGE', null, { timeout: CONFIG.actionTimeoutMs }).catch(() => undefined);
+      // Va al OTRO idioma del de la tanda (`--lang`), así vale partiendo del castellano o del inglés.
+      const destino = getUiLanguage() === 'en' ? 'es' : 'en';
+      const etiquetaDestino = uiIn(destino, 'settings.language.label');
+      await page.locator(`[data-setting="ui-language"] [data-language="${destino}"]`).click();
+      await page.waitForFunction((esperado) => document.querySelector('[data-setting="ui-language"] > span')?.textContent === esperado, etiquetaDestino, { timeout: CONFIG.actionTimeoutMs }).catch(() => undefined);
       const enCaliente = await page.evaluate(() => ({
         texto: document.querySelector('[data-setting="ui-language"] > span')?.textContent ?? null,
         lang: document.documentElement.lang,
         sinRecargar: window.__mageF31Marca === true,
       }));
       const file = path.join(userDataDir, 'app-settings.json');
-      const enDisco = await waitForFile(file, (text) => JSON.parse(text).uiLanguage === 'en');
+      const enDisco = await waitForFile(file, (text) => JSON.parse(text).uiLanguage === destino);
       await page.reload();
       await page.locator('[role="toolbar"]').first().waitFor({ state: 'attached', timeout: CONFIG.bootTimeoutMs });
       const trasRecargar = await page.evaluate(async () => ({ lang: document.documentElement.lang, main: (await window.mage.getUiLanguage()).language }));
@@ -676,8 +681,8 @@ const CHECKS = [
       await page.waitForFunction((pref) => document.documentElement.lang === (pref ?? document.documentElement.lang), previo, { timeout: CONFIG.actionTimeoutMs }).catch(() => undefined);
       const restaurado = await page.evaluate(async () => (await window.mage.getUiLanguage()).language);
       const ok =
-        enCaliente.texto === 'LANGUAGE' && enCaliente.lang === 'en' && enCaliente.sinRecargar &&
-        inicial !== 'LANGUAGE' && enDisco !== null && trasRecargar.lang === 'en' && trasRecargar.main === 'en';
+        enCaliente.texto === etiquetaDestino && enCaliente.lang === destino && enCaliente.sinRecargar &&
+        inicial !== etiquetaDestino && enDisco !== null && trasRecargar.lang === destino && trasRecargar.main === destino;
       return { ok, detail: JSON.stringify({ inicial, enCaliente, guardadoEnDisco: enDisco !== null, trasRecargar, previo, restaurado }) };
     },
   },
@@ -11050,11 +11055,14 @@ async function withEnglish(page, fn) {
       await window.mage.saveSettings(settings);
     }, pref);
   const previo = await page.evaluate(() => window.__mageDev.store.getState().settings.uiLanguage ?? null);
+  const previoTextos = getUiLanguage();
   try {
     await setLanguage('en');
+    setUiLanguage('en');
     await page.waitForFunction(() => document.documentElement.lang === 'en', null, { timeout: CONFIG.actionTimeoutMs });
     return await fn();
   } finally {
+    setUiLanguage(previoTextos);
     await setLanguage(previo);
     await page.waitForFunction((pref) => document.documentElement.lang === (pref ?? document.documentElement.lang), previo, { timeout: CONFIG.actionTimeoutMs }).catch(() => undefined);
   }
@@ -11612,7 +11620,7 @@ function seedOnboardingDone(userDataDir, trustedFolders = []) {
   // pestaña de novedades en cada tanda (el harness levanta la condicion de dev, ver `launchApp`).
   fs.writeFileSync(
     file,
-    JSON.stringify(seededAppSettings({ appVersion: APP_VERSION, trustedFolders }), null, 2),
+    JSON.stringify(seededAppSettings({ appVersion: APP_VERSION, trustedFolders, uiLanguage: parseUiLangArg(process.argv) ?? undefined }), null, 2),
     'utf-8',
   );
 }
@@ -13495,6 +13503,7 @@ function writeReport(runDir, results, consoleErrors) {
   lines.push(`- Fecha: ${new Date().toISOString()}`);
   lines.push(`- Plataforma: ${process.platform}`);
   lines.push(`- HOME de prueba: ${HARNESS_HOME !== os.homedir() ? 'sí' : 'no'}`);
+  lines.push(`- Idioma de la interfaz: ${parseUiLangArg(process.argv) ?? 'el del sistema (textos esperados: es)'}`);
   lines.push('');
   lines.push('| Resultado | Comprobacion | Medida |');
   lines.push('|---|---|---|');

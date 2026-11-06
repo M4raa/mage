@@ -5,8 +5,10 @@
 // en que la condicion de «listo» se cumple. Con el perfil de CPU de Chromium (CDP Profiler) se
 // atribuye el tiempo a funciones para buscar las causas antes de tocar nada.
 
+import { ui } from './uiText.mjs';
+
 export const PERF_REPEATS = 20;
-const PROMPT = 'Escribe una instrucción para el agente';
+const PROMPT = ui('prompt.editor.ariaLabel');
 const PROFILE_TOP = 15;
 // Funciones que se conservan aunque no esten entre las primeras: el sidebar (criterio de F2.5, «el sidebar ya no
 // aparece en el perfil del cambio de pestaña»). Con muestreo de 200 µs, un render mas corto puede no salir.
@@ -245,8 +247,8 @@ export async function profileWhile(page, action) {
 const LONG_CONVERSATION_SIZES = [200, 1000, 3000];
 // Plazo de la espera «última fila al fondo»: `page.evaluate` no tiene plazo propio y, sin él, una condición que no llega cuelga la medición para siempre.
 const LONG_CONVERSATION_TIMEOUT_MS = 60_000;
-// Texto del buscador del lateral (catalogo `sidebar.search.label` de es.json) y lo que se teclea para hallar el fixture.
-const SIDEBAR_SEARCH_LABEL = 'Buscar conversaciones';
+// Texto del buscador del lateral (catalogo `sidebar.search.label`, en el idioma de la tanda) y lo que se teclea para hallar el fixture.
+const SIDEBAR_SEARCH_LABEL = ui('sidebar.search.label');
 const LONG_TRANSCRIPT_SEARCH = 'VG-T3';
 const PANELS = ['activity', 'context', 'logs'];
 const PROFILE_KEYS = 30;
