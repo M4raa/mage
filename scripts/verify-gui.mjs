@@ -7839,6 +7839,9 @@ const CHECKS = [
     // desbordar el chat: ni scroll horizontal ni texto por fuera, en ventana estrecha y con zoom.
     name: 'F1.2 #14: los avisos largos no desbordan el chat estrecho ni con zoom',
     async run(page) {
+      const previo = page.viewportSize();
+      const ESTRECHO = { width: 760, height: 800 };
+      const ZOOM_150 = 1.5;
       await openTemporaryConversation(page);
       const ruta = 'C:/' + 'carpeta-sin-espacios-'.repeat(15);
       const parrafo = 'Aviso de prueba con un párrafo largo que tiene que partirse en varias líneas sin salirse del panel. '.repeat(4);
@@ -7856,14 +7859,15 @@ const CHECKS = [
           outside: spans.map((el) => (el === undefined ? 'ausente' : Math.round(el.getBoundingClientRect().right - box.right))),
         };
       }, [ruta, parrafo]);
-      await page.setViewportSize({ width: 760, height: 800 });
+      await page.setViewportSize(ESTRECHO);
       await page.waitForTimeout(CONFIG.settleMs);
       const estrecho = await measure();
-      await page.evaluate(() => { document.body.style.zoom = '1.5'; });
+      // Zoom de Chromium al 150 % = viewport ÷ 1,5 en px CSS (el zoom de CSS no lo admite la lista virtual y Mage no lo usa; medido, Z).
+      await page.setViewportSize({ width: Math.round(ESTRECHO.width / ZOOM_150), height: Math.round(ESTRECHO.height / ZOOM_150) });
       await page.waitForTimeout(CONFIG.settleMs);
       const zoom = await measure();
-      await page.evaluate(() => { document.body.style.zoom = ''; });
       const fits = (m) => m.horizontalOverflow <= 1 && m.outside.every((d) => typeof d === 'number' && d <= 1);
+      if (previo !== null) await page.setViewportSize(previo);
       return { ok: fits(estrecho) && fits(zoom), detail: JSON.stringify({ estrecho, zoom }) };
     },
   },
