@@ -44,6 +44,18 @@ async function askChoice({ ask, write, messages }, { prompt, size, allowNew }) {
   throw withExitCode(messages.invalidChoice(lastAnswer), EXIT_BAD_ARGUMENTS);
 }
 
+// `--account` admite el id (la ruta del config dir) o el nombre que imprime `mage account add`, dentro del proveedor
+// pedido. Varios con ese nombre: error con las rutas. Ninguno: el texto va tal cual y el host contesta «cuenta desconocida».
+async function resolveAccountId({ rpc, messages }, { provider, accountId }) {
+  const { accounts } = await rpc.call('accounts.list');
+  const ofProvider = accounts.filter((account) => account.provider === provider);
+  if (ofProvider.some((account) => account.id === accountId)) return accountId;
+  const named = ofProvider.filter((account) => account.name === accountId);
+  if (named.length > 1) throw withExitCode(messages.ambiguousAccount(accountId, named.map((account) => account.id)), EXIT_BAD_ARGUMENTS);
+  if (named.length === 1) return named[0].id;
+  return accountId;
+}
+
 async function pickAccount(context, cwd) {
   const { rpc, write, messages } = context;
   const { accounts } = await rpc.call('accounts.list');
@@ -72,7 +84,8 @@ export async function resolveTarget({ rpc, target, cwd, ask, write, messages, ne
   if (target.kind === 'session') return target.sessionId;
   if (target.kind === 'conversation') return (await rpc.call('session.resume', { conversationId: target.conversationId })).sessionId;
   if (target.kind === 'new') {
-    return createSession(context, { provider: target.provider, accountId: target.accountId, cwd: target.cwd ?? cwd, optional: pickedOptions(target) });
+    const accountId = await resolveAccountId(context, target);
+    return createSession(context, { provider: target.provider, accountId, cwd: target.cwd ?? cwd, optional: pickedOptions(target) });
   }
   if (target.kind === 'pick') return pickSession(context, cwd);
   throw new Error(`Objetivo de chat desconocido: ${JSON.stringify(target)}`);

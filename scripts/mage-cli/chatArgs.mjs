@@ -1,7 +1,7 @@
 // Argumentos de `mage chat` y perfil por defecto (F7.3). Puro.
 import { posix, win32 } from 'node:path';
 
-const USAGE = 'Uso: mage chat [--user-data-dir <dir>] [--session <id> | --conversation <id> | --new --account <id> --provider claude|codex [--cwd <dir>] [--model <m>] [--effort <e>] [--permission-mode <p>]]';
+const USAGE = 'Uso: mage chat [--user-data-dir <dir>] [--session <id> | --conversation <id> | --new --account <nombre|ruta> --provider claude|codex [--cwd <dir>] [--model <m>] [--effort <e>] [--permission-mode <p>]]';
 const PROVIDERS = ['claude', 'codex'];
 const VALUE_OPTIONS = new Map([
   ['--user-data-dir', 'userDataDir'], ['--session', 'session'], ['--conversation', 'conversation'],
