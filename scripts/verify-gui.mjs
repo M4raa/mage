@@ -124,7 +124,7 @@ const NEW_TAB_FIELD = {
   get model() { return newTabFieldPattern('dialogs.newTab.modelLabel'); },
 };
 // Botón «＋ Añadir proveedor» de la sección Proveedores, sin el símbolo (el accesible empieza por el texto).
-const addProviderButtonName = () => new RegExp(escapeRegExp(ui('settings.providers.addProvider').replace(/^＋s*/, '')));
+const addProviderButtonName = () => new RegExp(escapeRegExp(ui('settings.providers.addProvider').replace(/^＋\s*/, '')));
 // Motivo del rechazo del formulario de ALTA de proveedor (`idSuffix="nuevo"` en SettingsView).
 const PROVIDER_NEW_ERROR = '#provider-error-nuevo';
 // PROVIDER_TEMPLATES de src/shared/providers.ts: solo prerrellenan el formulario, no son proveedores.
@@ -136,8 +136,8 @@ const OLLAMA_TEMPLATE = {
   modelCount: 3,
 };
 // Primeras palabras de NO_PERMISSION_CONTROL_WARNING y del aviso de `agy` sin instalar (E3).
-const NO_PERMISSION_HEAD = 'Sin control de permisos';
-const AGY_MISSING_HEAD = 'No se ha encontrado el CLI';
+const NO_PERMISSION_HEAD = ui('prompt.providers.noPermissionControl').split(':')[0];
+const AGY_MISSING_HEAD = ui('dialogs.newTab.agyMissingEmphasis');
 const AGY_PROVIDER_ID = 'agy';
 const AGY_PERMISSION_CHIP = ui('prompt.permission.none');
 // Grupo E, fase 2: comando y carpeta de prueba (nunca se lanza agy con ellos).
@@ -2166,14 +2166,14 @@ const CHECKS = [
         medido.agy = await puente('GEMINI.md');
         fs.writeFileSync(path.join(cwd, 'AGENTS.md'), '# El suyo\n');
         await ponerProveedor('codex'); // cambia el proveedor: el panel vuelve a leer
-        await proyecto.getByText(/No se le pasa: Codex usa su propio/).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        await proyecto.getByText(ui('chat.instructions.bridgeOwnFile', { cli: 'Codex' })).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
         medido.conElSuyo = await proyecto.locator('[data-instructions-bridge]').count();
       } finally {
         await page.evaluate((l) => window.__mageDev.panelStore.setState({ layout: l }), layout);
         await restoreTurnState(page, previo);
         if (cwd !== null) for (const name of ['CLAUDE.md', 'AGENTS.md']) fs.rmSync(path.join(cwd, name), { force: true });
       }
-      const ok = /como AGENTS\.md/.test(medido.codex ?? '') && /a agy como GEMINI\.md/.test(medido.agy ?? '') && medido.conElSuyo === 0;
+      const ok = (medido.codex ?? '').includes(ui('chat.instructions.bridgeUsed', { cli: 'Codex', target: 'AGENTS.md' })) && (medido.agy ?? '').includes(ui('chat.instructions.bridgeUsed', { cli: 'agy', target: 'GEMINI.md' })) && medido.conElSuyo === 0;
       return { ok, detail: JSON.stringify(medido) };
     },
   },
@@ -2302,10 +2302,11 @@ const CHECKS = [
         dev.panelStore.getState().revealPanelById('permissions');
       });
       await waitForPanelContent(page, 'permissions');
-      const measured = await page.locator('[data-permissions-panel="true"]').evaluate((panel) => ({
+      const expectedNote = ui('chat.permissions.otherProvider', { provider: 'codex' });
+      const measured = await page.locator('[data-permissions-panel="true"]').evaluate((panel, expectedNote) => ({
         rejected: panel.textContent?.includes('Cuenta no valida') ?? false,
-        provider: panel.textContent?.includes('CLI de codex') ?? false,
-      }));
+        provider: panel.textContent?.includes(expectedNote) ?? false,
+      }), expectedNote);
       return { ok: !measured.rejected && measured.provider, detail: JSON.stringify(measured) };
     },
   },
