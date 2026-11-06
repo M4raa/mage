@@ -262,7 +262,7 @@ function normalizeAssistant(raw: Record<string, unknown>): MageEvent[] {
   if (raw.error === 'rate_limit') {
     return [{ kind: 'rate_limit', summary: assistantTextOf(message.content), resetsAtMs: null }];
   }
-  // Error de la API (MEDIDO con 2.1.314 contra un 401): `assistant` sintético con `is_api_error_message: true` y el texto
+  // Error de la API (MEDIDO con 2.1.314 contra un 401; igual en 2.1.318): `assistant` sintético con `is_api_error_message: true` y el texto
   // del error; el `result` que sigue dice `subtype: "success"` con `is_error: true`. No es texto del asistente: es un error.
   if (raw.is_api_error_message === true) {
     return [{ kind: 'error', localized: localized('events.cli.apiError', { detail: assistantTextOf(message.content) }) }];

@@ -202,7 +202,7 @@ describe('normalizeRawEvent: el turno', () => {
       usage: { inputTokens: 9, outputTokens: 2, totalTokens: 11, cacheReadTokens: 0, cacheCreationTokens: 0 } } }]);
   });
 
-  // TTL de la caché que pidió el CLI (medido en 2.1.314, desglose `usage.cache_creation`).
+  // TTL de la caché que pidió el CLI (medido en 2.1.314 y sin cambios en 2.1.318, desglose `usage.cache_creation`).
   const ttlOf = (cacheCreation?: Record<string, number>): number | null | undefined => {
     const usage = { input_tokens: 1, output_tokens: 1, ...(cacheCreation === undefined ? {} : { cache_creation: cacheCreation }) };
     const [event] = normalizeRawEvent({ type: 'result', subtype: 'success', usage });
