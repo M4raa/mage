@@ -349,7 +349,7 @@ const CHECKS = [
     name: 'Cabecera: el boton de informar de un fallo va pegado a los botones del SO y es alcanzable',
     async run(page) {
       const measured = await page.evaluate(() => {
-        const boton = document.querySelector('button[aria-label^="Informar de un fallo"]');
+        const boton = document.querySelector(`button[aria-label^="${window.__mageDev.t('app.titleBar.bugLabel').replace(/["\\]/g, '\\$&')}"]`);
         const bar = document.querySelector('[data-titlebar]');
         if (!boton || !bar) return null;
         const b = boton.getBoundingClientRect();
@@ -394,8 +394,8 @@ const CHECKS = [
     name: 'Cabecera: los dos botones de GitHub (idea y fallo) estan, en orden y sin solaparse',
     async run(page) {
       const measured = await page.evaluate(() => {
-        const idea = document.querySelector('button[aria-label^="Aportar una idea"]');
-        const fallo = document.querySelector('button[aria-label^="Informar de un fallo"]');
+        const idea = document.querySelector(`button[aria-label^="${window.__mageDev.t('app.titleBar.ideaLabel').replace(/["\\]/g, '\\$&')}"]`);
+        const fallo = document.querySelector(`button[aria-label^="${window.__mageDev.t('app.titleBar.bugLabel').replace(/["\\]/g, '\\$&')}"]`);
         if (!idea || !fallo) return null;
         const i = idea.getBoundingClientRect();
         const f = fallo.getBoundingClientRect();
@@ -584,7 +584,7 @@ const CHECKS = [
         const texto = (await aviso.textContent()) ?? '';
         await page.evaluate(() => window.__mageDev?.store.getState().setDefaultPermissionMode(''));
         await aviso.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
-        const ok = conBypass === 1 && texto.includes('sin preguntar');
+        const ok = conBypass === 1 && texto.includes(ui('settings.providers.permission.bypassWarning'));
         return { ok, detail: `avisos con bypass=${conBypass} texto=${JSON.stringify(texto)} sin bypass=${await aviso.count()}` };
       } finally {
         await page.evaluate((modo) => window.__mageDev?.store.getState().setDefaultPermissionMode(modo), previo);
@@ -973,12 +973,12 @@ const CHECKS = [
       const conLogin = await page.evaluate(() => (window.__mageDev?.store.getState().accounts ?? []).filter((a) => a.loginStatus === 'logged_in').length);
       if (conLogin > 0) {
         await page.waitForFunction(
-          () => [...document.querySelectorAll('[data-mcp-connector-group] [data-mcp-checked-at]')].some((f) => (f.textContent ?? '').includes('hace un momento')),
+          () => [...document.querySelectorAll('[data-mcp-connector-group] [data-mcp-checked-at]')].some((f) => (f.textContent ?? '').includes(window.__mageDev.t('mcp.checkedAt.justNow'))),
           null,
           { timeout: 30_000 },
         );
       }
-      const recien = page.locator('[data-mcp-connector-group]').filter({ has: page.locator('[data-mcp-checked-at]', { hasText: 'hace un momento' }) });
+      const recien = page.locator('[data-mcp-connector-group]').filter({ has: page.locator('[data-mcp-checked-at]', { hasText: ui('mcp.checkedAt.justNow') }) });
       const grupo = (await recien.count()) > 0 ? recien.first() : page.locator('[data-mcp-connector-group]').first();
       if ((await grupo.count()) === 0) {
         await page.locator('[data-mcp-tab="servers"]').click();
@@ -997,7 +997,7 @@ const CHECKS = [
       await page.locator('[data-mcp-tab="extensions"]').click();
       const tarjeta = page.locator(`[data-mcp-extension="${SEEDED_EXTENSION}"]`);
       await tarjeta.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
-      const pideConfigurar = (await tarjeta.locator('[data-mcp-extension-problem]').innerText()).includes('Falta configurar');
+      const pideConfigurar = (await tarjeta.locator('[data-mcp-extension-problem]').innerText()).includes(ui('mcp.main.extensionNeedsConfig'));
       const dialogo = page.locator('[data-mcp-extension-config]');
       await tarjeta.getByRole('button', { name: ui('mcp.extensions.settings'), exact: true }).click();
       await dialogo.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
@@ -1026,7 +1026,7 @@ const CHECKS = [
       await importada.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
       const limpia = !fs.existsSync(path.join(userDataDir, 'extensions', SEEDED_DESKTOP_EXTENSION));
       await page.locator('[data-mcp-tab="servers"]').click();
-      const ok = pideConfigurar && configurada && !reabierto.enDom && reabierto.guardado.includes('guardado') && !enAjustes && !enBoveda && copiada && limpia;
+      const ok = pideConfigurar && configurada && !reabierto.enDom && reabierto.guardado.includes(ui('mcp.common.maskedPlaceholder')) && !enAjustes && !enBoveda && copiada && limpia;
       return { ok, detail: `pideConfigurar=${pideConfigurar} configurada=${configurada} secretoEnDom=${reabierto.enDom} placeholder=«${reabierto.guardado}» enAjustes=${enAjustes} enClaroEnBoveda=${enBoveda} copiada=${copiada} desinstalada=${limpia}` };
     },
   },
@@ -1787,7 +1787,7 @@ const CHECKS = [
       const dialog = page.locator(MODAL);
       await dialog.first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
 
-      const measured = await page.evaluate(() => {
+      const measured = await page.evaluate(({ adopt }) => {
         const modal = document.querySelector('[role="dialog"]');
         const text = modal?.textContent ?? '';
         return {
@@ -1795,15 +1795,15 @@ const CHECKS = [
           casillas: modal?.querySelectorAll('input[type="checkbox"]').length ?? 0,
           pideEmail: /EMAIL/.test(text),
           diceCli: /CLI de Claude Code/.test(text),
-          dicePrivada: /ventana privada/.test(text),
+          dicePrivada: text.includes(window.__mageDev.t('accounts.add.claude.hint.privateWindow')),
           // Restos del flujo embebido que NO deben quedar.
           diceDentroDeMage: /dentro de Mage/.test(text),
           botonesAdoptar: [...(modal?.querySelectorAll('button') ?? [])].filter((b) =>
-            (b.textContent ?? '').startsWith('Usar la sesión de'),
+            (b.textContent ?? '').startsWith(adopt),
           ).length,
           conLogin: (window.__mageDev?.store.getState().accounts ?? []).filter((a) => a.providerId === 'claude' && a.loginStatus === 'logged_in').length,
         };
-      });
+      }, { adopt: uiPrefix('accounts.add.adopt.use') });
       const closed = await closeDialog(page);
 
       const ok =
@@ -2073,7 +2073,7 @@ const CHECKS = [
           texto: document.querySelector('[data-account-switch-note]')?.textContent ?? '',
         }));
         await page.keyboard.press('Escape');
-        const ok = medido.texto.includes('sigue siendo la misma conversación') && medido.boton.some((t) => t.startsWith('Migrar la conversación a'))
+        const ok = medido.texto.includes('sigue siendo la misma conversación') && medido.boton.some((t) => t.startsWith(uiPrefix('accounts.switch.migrate')))
           && medido.boton.some((t) => t === ui('accounts.switch.handoff'));
         return { ok, detail: JSON.stringify(medido) };
       } finally {
@@ -2098,8 +2098,8 @@ const CHECKS = [
       const despues = await crear.isDisabled();
       const texto = (await dialog.innerText()).replace(/\s+/g, ' ');
       const closed = await closeDialog(page);
-      const ok = antes && !despues && texto.includes('perfil propio') && texto.includes('independiente de la sesión de agy de tu equipo') && closed === 0;
-      return { ok, detail: JSON.stringify({ antes, despues, perfilPropio: texto.includes('perfil propio'), cerrado: closed === 0 }) };
+      const ok = antes && !despues && texto.includes(uiPrefix('accounts.add.agy.hint')) && texto.includes('independiente de la sesión de agy de tu equipo') && closed === 0;
+      return { ok, detail: JSON.stringify({ antes, despues, perfilPropio: texto.includes(uiPrefix('accounts.add.agy.hint')), cerrado: closed === 0 }) };
     },
   },
   {
@@ -2196,7 +2196,7 @@ const CHECKS = [
       await page.getByRole('button', { name: ui('prompt.effort.ariaLabel') }).click();
       await page.locator('[data-step-slider-popover] input[type="range"]').press('ArrowRight');
       await page.keyboard.press('Escape');
-      await page.getByRole('button', { name: /^Modo de permiso:/ }).click();
+      await page.getByRole('button', { name: new RegExp('^' + uiPrefix('prompt.permission.ariaLabel').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')) }).click();
       await page.locator('[data-step-slider-popover] input[type="range"]').press('ArrowRight');
       const selected = await page.evaluate(() => {
         const state = window.__mageDev.store.getState();
@@ -2251,13 +2251,13 @@ const CHECKS = [
         await provider.selectOption('codex');
         const codex = await page.locator(NEW_TAB_DIALOG).evaluate((dialog) => ({
           account: dialog.querySelector('select')?.value,
-          model: [...dialog.querySelectorAll('select')].find((item) => item.closest('label')?.textContent?.toLowerCase().includes('modelo'))?.value,
-          effort: !![...dialog.querySelectorAll('label')].find((item) => item.textContent?.toLowerCase().includes('esfuerzo')),
+          model: [...dialog.querySelectorAll('select')].find((item) => item.closest('label')?.textContent?.toLowerCase().includes(window.__mageDev.t('dialogs.newTab.modelLabel').toLowerCase()))?.value,
+          effort: !![...dialog.querySelectorAll('label')].find((item) => item.textContent?.toLowerCase().includes(window.__mageDev.t('dialogs.newTab.effortLabel').toLowerCase())),
         }));
         await provider.selectOption('claude');
         const claude = await page.locator(NEW_TAB_DIALOG).evaluate((dialog) => ({
           account: dialog.querySelector('select')?.value,
-          model: [...dialog.querySelectorAll('select')].find((item) => item.closest('label')?.textContent?.toLowerCase().includes('modelo'))?.value,
+          model: [...dialog.querySelectorAll('select')].find((item) => item.closest('label')?.textContent?.toLowerCase().includes(window.__mageDev.t('dialogs.newTab.modelLabel').toLowerCase()))?.value,
         }));
         const ok = codex.account === 'C:\\vg\\.codex-vg' && codex.model?.startsWith('gpt-') && codex.effort
           && claude.account !== codex.account && !!claude.model && !claude.model.startsWith('gpt-'); // el de Claude sale del settings.json real de la cuenta: no se fija
@@ -2295,7 +2295,7 @@ const CHECKS = [
         await provider.selectOption('codex');
         await page.waitForTimeout(CONFIG.settleMs);
         const after = await page.locator(`${NEW_TAB_DIALOG} [data-unverified-provider]`).count();
-        const ok = (options ?? []).some((o) => o.startsWith('codex|') && !o.includes('sin verificar')) && before === 0 && after === 0;
+        const ok = (options ?? []).some((o) => o.startsWith('codex|') && !o.toLowerCase().includes(ui('prompt.provider.unverified').toLowerCase())) && before === 0 && after === 0;
         return { ok, detail: JSON.stringify({ codexOfrecido: (options ?? []).some((o) => o.startsWith('codex|')), avisoAntes: before, avisoDespues: after }) };
       });
     },
@@ -2355,8 +2355,8 @@ const CHECKS = [
         // Cuenta sin registrar: el IPC real rechaza ANTES de lanzar CLI, cero turnos.
         await apps.getByRole('status').waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
         const text = await apps.innerText();
-        const measured = { error: text.includes('No se pudieron consultar'), retry: text.includes('Puedes volver a intentarlo'),
-          falseEmpty: text.includes('no ha devuelto ninguna App'), enabled: await apps.getByRole('button', { name: ui('mcp.codexApps.refresh'), exact: true }).isEnabled() };
+        const measured = { error: text.includes(ui('errors.codexApps.queryFailed')), retry: text.includes(ui('mcp.codexApps.error', { error: ui('errors.codexApps.queryFailed') })),
+          falseEmpty: text.includes(ui('mcp.codexApps.empty')), enabled: await apps.getByRole('button', { name: ui('mcp.codexApps.refresh'), exact: true }).isEnabled() };
         return { ok: measured.error && measured.retry && !measured.falseEmpty && measured.enabled, detail: JSON.stringify(measured) };
       }, restore: async () => {
         await page.evaluate((state) => window.__mageDev.codexAppsStore.setState(state), appsState);
@@ -2431,8 +2431,8 @@ const CHECKS = [
         await page.evaluate((id) => window.__mageDev.store.getState().closeTab(id), tabId);
         const liberado = await waitForCondition(() => !fs.existsSync(lockFile), CONFIG.actionTimeoutMs);
         const ok = segunda.owner === true && ficheroConLaSegunda && !enLaCarpetaReal && soloLectura.estado?.owner === false && soloLectura.estado.orphan === false
-          && soloLectura.aviso?.includes(`Abierta en otra instancia de Mage (${second.profileName})`) === true && soloLectura.tomar === 0
-          && soloLectura.editable === 'false' && soloLectura.envio.startsWith('Abierta en otra instancia de Mage')
+          && soloLectura.aviso?.includes(ui('prompt.lock.openElsewhere', { profile: second.profileName })) === true && soloLectura.tomar === 0
+          && soloLectura.editable === 'false' && soloLectura.envio.startsWith(uiPrefix('prompt.lock.openElsewhere'))
           && duena.estado?.owner === true && duena.editable === 'true' && liberado;
         return { ok, detail: JSON.stringify({ segunda, ficheroConLaSegunda, enLaCarpetaReal, soloLectura, duena, liberado }) };
       } finally {
@@ -2483,7 +2483,7 @@ const CHECKS = [
         await page.evaluate((id) => window.__mageDev.store.getState().closeTab(id), tabId);
         const liberado = await waitForCondition(() => !fs.existsSync(lockFile), CONFIG.actionTimeoutMs);
         const ok = segunda.owner === true && soltadoEnDisco && msHastaDuena < READ_ONLY_RECHECK_MS_FOR_CHECK
-          && duena.estado?.owner === true && duena.aviso?.startsWith('Ya puedes continuar aquí') === true && duena.soloLectura === 0
+          && duena.estado?.owner === true && duena.aviso?.startsWith(ui('prompt.lock.reclaimed')) === true && duena.soloLectura === 0
           && duena.editable === 'true' && ficheroDeEsta && liberado;
         return { ok, detail: JSON.stringify({ segunda, soltadoEnDisco, msHastaDuena, duena, ficheroDeEsta, liberado }) };
       } finally {
@@ -2694,7 +2694,7 @@ const CHECKS = [
     // ningun `set_permission_mode` al CLI, solo cambia el estado de la pestaña.
     name: 'Shift+Tab con el input vacio cicla el modo de permiso',
     async run(page) {
-      const chip = page.locator('[aria-label^="Modo de permiso:"]');
+      const chip = page.locator(`[aria-label^="${cssAttr(uiPrefix('prompt.permission.ariaLabel'))}"]`);
       // Autosuficiente: con `--only` no hay pestaña de una comprobacion anterior.
       const previo = await page.evaluate(() => {
         const s = window.__mageDev.store.getState();
@@ -2893,11 +2893,11 @@ const CHECKS = [
         const s = window.__mageDev.store.getState();
         return { tabs: s.tabs, activeTabId: s.activeTabId, splitLayout: s.splitLayout };
       });
-      const propia = (await page.locator('button[aria-label^="Modo de permiso:"]').count()) === 0;
+      const propia = (await page.locator(`button[aria-label^="${cssAttr(uiPrefix('prompt.permission.ariaLabel'))}"]`).count()) === 0;
       if (propia) await openTemporaryConversation(page);
       const casos = [
         { chip: `button[aria-label="${cssAttr(ui('prompt.effort.ariaLabel'))}"]`, pasos: 6 },
-        { chip: 'button[aria-label^="Modo de permiso:"]', pasos: 5 },
+        { chip: `button[aria-label^="${cssAttr(uiPrefix('prompt.permission.ariaLabel'))}"]`, pasos: 5 },
       ];
       const medidas = [];
       try {
@@ -3940,7 +3940,7 @@ const CHECKS = [
       ]);
       const texto = await page.evaluate(() => document.querySelector('[data-scheduled-task="true"]')?.textContent ?? null);
       await page.evaluate((estado) => window.__mageDev.store.setState({ blocksByChat: estado }), previo);
-      const ok = texto !== null && texto.includes('las lanza la app de escritorio de Claude');
+      const ok = texto !== null && texto.includes(ui('chat.scheduledTask.note'));
       return { ok, detail: `texto=${JSON.stringify(texto)}` };
     },
   },
@@ -4223,8 +4223,8 @@ const CHECKS = [
       await waitForPanelContent(page, 'context');
       const medido = await page.locator('[data-provider-context-panel="codex"]').evaluate((panel) => {
         const text = (panel.textContent ?? '').replace(/\s+/g, ' ');
-        return { texto: text.slice(0, 400), ventana: /258/.test(text) && /7\s?%/.test(text), cargando: /Cargando transcripción/.test(text),
-          total: /18\.791 tok/.test(text), cache: /Lectura de caché/.test(text), entrada: /Entrada/.test(text) };
+        return { texto: text.slice(0, 400), ventana: /258/.test(text) && /7\s?%/.test(text), cargando: text.includes(window.__mageDev.t('chat.transcript.loading')),
+          total: /18\.791 tok/.test(text), cache: text.includes(window.__mageDev.t('chat.context.categoryCacheRead')), entrada: text.includes(window.__mageDev.t('chat.context.categoryInput')) };
       });
       await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
       await page.waitForTimeout(CONFIG.settleMs);
@@ -4244,10 +4244,10 @@ const CHECKS = [
       const medido = await page.evaluate(() => {
         const pop = document.querySelector('[data-usage-popover="true"]');
         const filas = [...(pop?.querySelectorAll('[data-usage-account]') ?? [])].map((f) => ({
-          sinDato: /sin dato/.test(f.textContent ?? ''),
+          sinDato: (f.textContent ?? '').includes(window.__mageDev.t('usage.popover.noData')),
           ventanas: [...f.querySelectorAll('[data-usage-window]')].map((w) => (w.textContent ?? '').trim()),
         }));
-        return { titulo: /USO GENERAL/.test(pop?.textContent ?? ''), filas };
+        return { titulo: (pop?.textContent ?? '').includes(window.__mageDev.t('usage.popover.title')), filas };
       });
       await page.mouse.move(0, 0);
       const filasOk = medido.filas.every((f) => f.sinDato || ([2, 4].includes(f.ventanas.length) && f.ventanas.every((t) => /% · reset /.test(t))));
@@ -5127,15 +5127,15 @@ const CHECKS = [
           dev.store.setState((s) => dev.reduceEvent(s, id, { kind: 'result', result: { isError: false, subtype: 'success', numTurns: 1, usage } }));
         });
         await page.locator('[data-last-turn-usage]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
-        const medido = await page.evaluate(() => {
+        const medido = await page.evaluate(({ tokens }) => {
           const s = window.__mageDev.store.getState();
           const blocks = s.blocksByChat[s.activeTabId] ?? [];
           return {
             fila: document.querySelector('[data-last-turn-usage]')?.textContent ?? '',
-            bloquesConTokens: blocks.filter((b) => b.kind === 'system' && b.text.includes('Tokens del turno')).length,
-            hiloConTexto: (document.querySelector('[data-chat-scroller]')?.textContent ?? '').includes('Tokens del turno'),
+            bloquesConTokens: blocks.filter((b) => b.kind === 'system' && tokens.some((x) => b.text.includes(x))).length,
+            hiloConTexto: tokens.some((x) => (document.querySelector('[data-chat-scroller]')?.textContent ?? '').includes(x)),
           };
-        });
+        }, { tokens: [uiPrefix('chat.turnUsage.line'), uiPrefix('chat.turnUsage.lineEstimated')] });
         const ok = medido.fila.startsWith('Tokens del último turno:') && medido.bloquesConTokens === 0 && medido.hiloConTexto === false;
         return { ok, detail: JSON.stringify(medido) };
       } finally {
@@ -5250,13 +5250,13 @@ const CHECKS = [
     state: { tabs: 1 },
     async run(page) {
       await hydrateBlocks(page, [artifactBlock('a2')]);
-      const measured = await page.evaluate(() => {
+      const measured = await page.evaluate(({ openWith }) => {
         const buttons = [...document.querySelectorAll('button')].map((b) => b.textContent?.trim() ?? '');
         return {
           abrirCon: buttons.filter((t) => t === window.__mageDev.t('chat.artifact.openWithPicker')).length,
-          abrirDirecto: buttons.filter((t) => t.startsWith('Abrir con ') && t !== window.__mageDev.t('chat.artifact.openWithPicker')).length,
+          abrirDirecto: buttons.filter((t) => t.startsWith(openWith) && t !== window.__mageDev.t('chat.artifact.openWithPicker')).length,
         };
-      });
+      }, { openWith: uiPrefix('chat.artifact.openWith') });
       const ok = measured.abrirCon === 1 && measured.abrirDirecto === 0;
       return { ok, detail: `botones=${JSON.stringify(measured)}` };
     },
@@ -5350,17 +5350,17 @@ const CHECKS = [
       await page.locator(MODAL).first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
       await openSection(page, uiRegExp('settings.sections.hooksPermissions.nav'));
       await page.getByRole('heading', { name: /^Hooks \(/ }).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
-      const measured = await page.evaluate(() => {
+      const measured = await page.evaluate(({ reglas }) => {
         const dialog = document.querySelector('[role="dialog"][aria-modal="true"]');
         const text = dialog?.textContent ?? '';
         return {
           errores: dialog?.querySelectorAll('[role="alert"]').length ?? 0,
           conHooks: text.includes('Hooks ('),
-          conReglas: text.includes('Reglas de permisos ('),
+          conReglas: text.includes(reglas),
           // El estado vacio es un MENSAJE, no una lista de cero filas sin explicar.
-          conMensaje: text.includes('No hay') || text.includes(window.__mageDev.t('settings.hooks.intro.union')),
+          conMensaje: text.includes(window.__mageDev.t('settings.hooks.noHooks')) || text.includes(window.__mageDev.t('settings.hooks.noRules')) || text.includes(window.__mageDev.t('settings.hooks.intro.union')),
         };
-      });
+      }, { reglas: uiPrefix('settings.hooks.rulesHeading') });
       await closeDialog(page);
       const ok = measured.errores === 0 && measured.conHooks && measured.conReglas && measured.conMensaje;
       return { ok, detail: `seccion=${JSON.stringify(measured)}` };
@@ -5675,7 +5675,7 @@ const CHECKS = [
         requestId,
         'Write',
       );
-      const measured = await page.evaluate(() => {
+      const measured = await page.evaluate(({ siempre }) => {
         // Los botones se miden POR AMBITO (tarjeta del chat / panel del dock) y no con un
         // `querySelector` global: desde 2.3b los dos sitios ofrecen la misma decision con el mismo
         // nombre accesible, y el selector global devolvia el primero del DOM — el de la tarjeta.
@@ -5704,18 +5704,18 @@ const CHECKS = [
                 denegar: boton(panel, window.__mageDev.t('chat.permission.denyAria')),
                 diff: (panel.textContent ?? '').includes('export const a = 1;'),
                 modo: (panel.textContent ?? '').includes(window.__mageDev.t('chat.permissions.mode.title')),
-                configurados: (panel.textContent ?? '').includes('Permitido siempre en esta conversación'),
+                configurados: (panel.textContent ?? '').includes(siempre),
                 reglasDelCli: (panel.textContent ?? '').includes(window.__mageDev.t('chat.permissions.cliRules.title')),
               },
           // El numero del atajo NO debe entrar en el nombre accesible (era el fallo original).
           numeroEnElNombre: [...document.querySelectorAll('button[aria-label]')].some((b) =>
             /^Permitir\d/.test(b.getAttribute('aria-label') ?? ''),
           ),
-          avisoDeEscritura: document.body.innerText.includes('quiere escribir en el proyecto'),
+          avisoDeEscritura: document.body.innerText.includes(window.__mageDev.t('chat.permission.prompt.write')),
           // 2.3b: el aviso "Claude necesita tu atención" ya NO va al hilo (lo sustituye la tarjeta).
-          avisoDeAtencion: document.body.innerText.includes('necesita tu atención'),
+          avisoDeAtencion: document.body.innerText.includes(window.__mageDev.t('notifications.event.needsAttention')),
         };
-      });
+      }, { siempre: uiPrefix('chat.permissions.alwaysAllowed.title') });
       await cancelInjectedPermission(page, requestId);
       const trasCancelar = await page.evaluate(() => ({
         botones: document.querySelectorAll(`button[aria-label="${window.__mageDev.t('app.widget.allow').replace(/["\\]/g, '\\$&')}"]`).length,
@@ -5903,10 +5903,10 @@ const CHECKS = [
         await page.getByRole('textbox', { name: 'Contenido de plan.md' }).fill('# Lo mio\n');
         await page.getByRole('button', { name: 'Guardar plan.md' }).click();
         await page.waitForTimeout(CONFIG.settleMs * 4);
-        pasos.conflicto = await page.evaluate(() => ({
-          aviso: [...document.querySelectorAll('[role="alert"]')].some((n) => (n.textContent ?? '').includes('cambió en disco')),
+        pasos.conflicto = await page.evaluate((cambio) => ({
+          aviso: [...document.querySelectorAll('[role="alert"]')].some((n) => (n.textContent ?? '').includes(cambio)),
           sigueEditando: document.querySelector('textarea[aria-label="Contenido de plan.md"]') !== null,
-        }));
+        }), uiPrefix('errors.files.changedOnDisk'));
         pasos.trasConflicto = fs.readFileSync(filePath, 'utf-8');
       } catch (error) {
         pasos.fallo = error.message;
@@ -6152,7 +6152,7 @@ const CHECKS = [
           const aviso = panel?.querySelector('[data-outside-cwd="true"]') ?? null;
           return {
             aviso: aviso !== null,
-            boton: [...(aviso?.querySelectorAll('button') ?? [])].some((b) => (b.textContent ?? '').includes('Abrir de todos modos')),
+            boton: [...(aviso?.querySelectorAll('button') ?? [])].some((b) => (b.textContent ?? '').includes(window.__mageDev.t('chat.files.openAnyway'))),
             errores: [...(panel?.querySelectorAll('[role="alert"]') ?? [])].map((n) => n.textContent ?? ''),
             contenidoFiltrado: (panel?.textContent ?? '').includes('Nota de fuera'),
           };
@@ -6841,7 +6841,7 @@ const CHECKS = [
         const tabId = dev.store.getState().activeTabId;
         const cwd = dev.store.getState().tabs.find((t) => t.id === tabId)?.cwd ?? '';
         const editor = document.querySelector('[data-prompt-editor="true"]');
-        const carpeta = [...document.querySelectorAll('button')].find((b) => (b.getAttribute('aria-label') ?? '').includes('abrir la carpeta')) ?? null;
+        const carpeta = [...document.querySelectorAll('button')].find((b) => (b.getAttribute('aria-label') ?? '').includes(window.__mageDev.t('chat.info.folderTitle', { cwd: '' }).trim())) ?? null;
         const fila = carpeta?.parentElement ?? null;
         const etiquetas = fila === null ? [] : [...fila.children].filter((n) => n.getAttribute('aria-hidden') !== 'true').map((n) => ({
           texto: (n.textContent ?? '').trim(),
@@ -6867,7 +6867,7 @@ const CHECKS = [
       let etiquetaScratch = null;
       for (let i = 0; i < 25; i += 1) {
         etiquetaScratch = await page.evaluate(
-          () => [...document.querySelectorAll('button')].find((b) => (b.getAttribute('aria-label') ?? '').includes('abrir la carpeta'))?.textContent?.trim() ?? null,
+          () => [...document.querySelectorAll('button')].find((b) => (b.getAttribute('aria-label') ?? '').includes(window.__mageDev.t('chat.info.folderTitle', { cwd: '' }).trim()))?.textContent?.trim() ?? null,
         );
         if ((etiquetaScratch ?? '').includes('Scratchpad')) break;
         await page.waitForTimeout(80);
@@ -6951,7 +6951,7 @@ const CHECKS = [
           chipsAntesDeConfiar === 0 &&
           (sucio.rama ?? '').includes('main') &&
           sucio.bloqueada &&
-          sucio.motivo.includes('sin confirmar') &&
+          sucio.motivo.includes(ui('history.branchSwitch.dirty')) &&
           sucio.cambios === '+2−0' &&
           sucio.boton === 1 &&
           trasConfirmar.borrador.startsWith('Haz commit de los cambios pendientes') &&
@@ -7034,7 +7034,7 @@ const CHECKS = [
           vinculado.chip.includes('#7') &&
           quitado.prNumber === null &&
           quitado.prDismissed === 7 &&
-          (aviso ?? '').includes('inicia sesión en gh') &&
+          (aviso ?? '').includes(ui('chat.gh.noAuth')) &&
           descartado === true;
         return { ok, detail: `crear=${JSON.stringify({ ...trasCrear, borrador: trasCrear.borrador.slice(0, 40) })} vinculado=${JSON.stringify(vinculado)} quitado=${JSON.stringify(quitado)} aviso=${JSON.stringify(aviso)} descartado=${descartado}` };
       } finally {
@@ -7165,7 +7165,7 @@ const CHECKS = [
         });
         const ok =
           hecho === false &&
-          aviso.includes('La PR cambió desde que la cargaste') &&
+          aviso.includes(ui('pr.conflict')) &&
           trasConflicto.estado === 'open' &&
           !trasConflicto.comentarios.some((c) => c.includes('VG no debe escribirse')) &&
           trasConflicto.head !== 'f'.repeat(40);
@@ -7528,7 +7528,7 @@ const CHECKS = [
       const ok =
         textos.length === 3 &&
         // Ninguno puede negar que hay conversacion...
-        !textos.some((t) => t.includes('Sin conversación activa')) &&
+        !textos.some((t) => t.includes(ui('chat.memory.noConversation'))) &&
         // ...Contexto y Logs tienen que enseñar CONTENIDO de la transcripcion cargada...
         medido.paneles.Contexto.includes('TOKENS') &&
         medido.paneles.Logs.length > 20 &&
@@ -7887,7 +7887,7 @@ const CHECKS = [
       const check = page.locator('[data-update-check="true"]');
       await check.getByRole('button', { name: ui('settings.update.check'), exact: true }).click();
       const status = check.getByRole('status');
-      await page.waitForFunction(() => document.querySelector('[data-update-check="true"] [role="status"]')?.textContent?.includes('En desarrollo'), undefined, { timeout: CONFIG.actionTimeoutMs });
+      await page.waitForFunction(() => document.querySelector('[data-update-check="true"] [role="status"]')?.textContent?.includes(window.__mageDev.t('app.update.devNoCheck')), undefined, { timeout: CONFIG.actionTimeoutMs });
       const alBuscar = await status.textContent();
       await page.evaluate(() => window.__mageDev.store.setState({ updateState: { kind: 'checking' } }));
       const deshabilitado = await check.getByRole('button', { name: ui('settings.update.check'), exact: true }).isDisabled();
@@ -7897,7 +7897,7 @@ const CHECKS = [
       await dialogo.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
       await page.evaluate(() => { const store = window.__mageDev.store; store.getState().dismissUpdatePrompt(); store.setState({ updateState: { kind: 'idle' } }); });
       await dialogo.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
-      const ok = alBuscar?.includes('En desarrollo') === true && deshabilitado;
+      const ok = alBuscar?.includes(ui('app.update.devNoCheck')) === true && deshabilitado;
       return { ok, detail: JSON.stringify({ alBuscar, deshabilitadoBuscando: deshabilitado, dialogo: true }) };
     },
   },
@@ -8075,7 +8075,7 @@ const CHECKS = [
     async run(page) {
       await openTemporaryConversation(page);
       await page.evaluate(() => { const dev = window.__mageDev; const id = dev.store.getState().activeTabId; dev.store.setState(s => ({ tabs: s.tabs.map(t => t.id === id ? { ...t, resumeSessionId: 'vg-carga-pendiente' } : t), blocksByChat: { ...s.blocksByChat, [id]: [] } })); dev.transcriptStoreFor(id).setState({ isFinal: false }); });
-      await page.getByRole('status').filter({ hasText: 'Cargando conversación' }).waitFor({ state: 'visible', timeout: 2500 });
+      await page.getByRole('status').filter({ hasText: ui('chat.load.loading') }).waitFor({ state: 'visible', timeout: 2500 });
       // Un fallo de lectura se dice, no se disfraza de conversación vacía.
       await page.evaluate(() => { const dev = window.__mageDev; dev.transcriptStoreFor(dev.store.getState().activeTabId).setState({ isFinal: true, errorMessage: 'vg-lectura-fallida' }); });
       await page.getByRole('status').filter({ hasText: 'No se pudo cargar la conversación: vg-lectura-fallida' }).waitFor({ state: 'visible', timeout: 2500 });
@@ -8187,7 +8187,7 @@ const CHECKS = [
       }, CARPETA);
       await page.waitForTimeout(CONFIG.settleMs);
 
-      const dialogo = page.getByRole('dialog').filter({ hasText: 'Confías en los archivos' });
+      const dialogo = page.getByRole('dialog').filter({ hasText: ui('dialogs.trustFolder.title') });
       const focoSeguro = await dialogo.getByRole('button', { name: ui('dialogs.trustFolder.refuse') }).evaluate(button => button === document.activeElement);
       const opcionPadre = await dialogo.getByRole('checkbox', { name: ui('dialogs.trustFolder.trustParent') }).count();
       const visible = await dialogo.isVisible().catch(() => false);
@@ -9362,7 +9362,7 @@ const CHECKS = [
         const s = window.__mageDev.store.getState();
         const tab = s.tabs.find((t) => t.id === s.activeTabId);
         const subline = document.querySelector('[data-tab-subline]');
-        const carpetas = [...document.querySelectorAll('button')].filter((b) => (b.getAttribute('aria-label') ?? '').includes('abrir la carpeta'));
+        const carpetas = [...document.querySelectorAll('button')].filter((b) => (b.getAttribute('aria-label') ?? '').includes(window.__mageDev.t('chat.info.folderTitle', { cwd: '' }).trim()));
         return {
           alias: tab?.accountAlias ?? null,
           texto: (subline?.textContent ?? '').trim(),
@@ -9741,7 +9741,7 @@ const CHECKS = [
       const tab = await activeTurnTab(page);
       try {
         if (tab === null || tab.provider !== RUNTIME_MODES_PROVIDER.id) return { ok: false, detail: `pestaña activa inesperada: ${JSON.stringify(tab)}` };
-        const chip = page.locator('button[aria-label^="Modo de permiso:"]').first();
+        const chip = page.locator(`button[aria-label^="${cssAttr(uiPrefix('prompt.permission.ariaLabel'))}"]`).first();
         await chip.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
         await chip.click();
         const popover = page.locator('[data-step-slider-popover="true"]');
@@ -9752,7 +9752,7 @@ const CHECKS = [
         const antes = await permissionModeLabel(page);
         await clearPrompt(page);
         await page.getByRole('textbox', { name: ui('prompt.editor.ariaLabel') }).press('Shift+Tab');
-        await page.waitForFunction((label) => !(document.querySelector('button[aria-label^="Modo de permiso:"]')?.getAttribute('aria-label') ?? '').endsWith(label), antes, { timeout: CONFIG.actionTimeoutMs });
+        await page.waitForFunction((label) => !(document.querySelector(`button[aria-label^="${window.__mageDev.t('prompt.permission.ariaLabel', { mode: '' }).trim()}"]`)?.getAttribute('aria-label') ?? '').endsWith(label), antes, { timeout: CONFIG.actionTimeoutMs });
         const despues = await permissionModeLabel(page);
         const modo = await page.evaluate((id) => window.__mageDev.store.getState().tabs.find((t) => t.id === id)?.permissionMode ?? null, tab.id);
         const ok = pasos === 5 && antes === 'Manual' && despues !== antes && modo === 'acceptEdits';
@@ -9838,7 +9838,7 @@ const CHECKS = [
         const texto = (await promptText(page)).replaceAll(NBSP, ' ');
         const fichas = await page.locator('[data-mention-chip="src/util.ts"]').count();
         const aviso = (await page.locator('[role="alert"]').allTextContents()).join(' ');
-        const ok = texto === '@src/util.ts ' && fichas === 1 && fake.stats.completions === 0 && aviso.includes('ya no existe');
+        const ok = texto === '@src/util.ts ' && fichas === 1 && fake.stats.completions === 0 && aviso.includes(ui('errors.mentions.missing', { name: '' }).trim());
         return { ok, detail: JSON.stringify({ texto, fichas, peticiones: fake.stats.completions, aviso }) };
       });
     },
@@ -10370,7 +10370,7 @@ const CHECKS = [
           return {
             copiaMarcada: root.querySelector('[data-rewind-save-copy]')?.checked ?? null,
             casillaFicheros: root.querySelectorAll('[data-rewind-files]').length,
-            avisoFicheros: (root.textContent ?? '').includes('no restaura ficheros'),
+            avisoFicheros: (root.textContent ?? '').includes(window.__mageDev.t('chat.rewind.codexFiles')),
           };
         });
         await normal.getByRole('button', { name: ui('accounts.add.cancel'), exact: true }).click();
@@ -11214,8 +11214,8 @@ async function separatorValue(handle) {
 
 // Modo de permiso que declara el chip de la PromptBar ("Manual", "Aceptar ediciones", "Plan", "Auto", "Omitir permisos").
 async function permissionModeLabel(page) {
-  const chip = page.locator('[aria-label^="Modo de permiso:"]').first();
-  return ((await chip.getAttribute('aria-label')) ?? '').replace('Modo de permiso:', '').trim();
+  const chip = page.locator(`[aria-label^="${cssAttr(uiPrefix('prompt.permission.ariaLabel'))}"]`).first();
+  return ((await chip.getAttribute('aria-label')) ?? '').replace(uiPrefix('prompt.permission.ariaLabel'), '').trim();
 }
 
 // Nombres ("/mcp") de las sugerencias abiertas ahora mismo en el popover de comandos. Se lee el PRIMER
@@ -11327,7 +11327,7 @@ async function waitForEngineStatus(page) {
       if (caja === null) return null;
       const texto = caja.textContent ?? '';
       return {
-        comprobando: texto.includes('Comprobando'),
+        comprobando: texto.includes(window.__mageDev.t('dialogs.onboarding.checking')),
         instalado: texto.includes(window.__mageDev.t('dialogs.onboarding.installed')),
         conComando: caja.querySelector('code') !== null && document.querySelector('[data-onboarding="recheck"]') !== null,
       };
@@ -12304,7 +12304,7 @@ function measurePermissionPanel(page) {
     return {
       permitir: texts.filter((t) => t === window.__mageDev.t('app.widget.allow')).length,
       denegar: texts.filter((t) => t.startsWith(window.__mageDev.t('app.widget.deny'))).length,
-      avisoDePregunta: document.body.innerText.includes('se contesta encima del input'),
+      avisoDePregunta: document.body.innerText.includes(window.__mageDev.t('chat.permissions.question.end')),
     };
   });
 }
@@ -12537,7 +12537,7 @@ async function verifyMigrationWithLogin(page) {
       const s = window.__mageDev.store.getState();
       return { originalRemains: s.tabs.some((t) => t.id === id && t.resumeSessionId === 'vg-migrar'), switched: s.activeAccountId === 'vg-migrate-target' };
     }, tabId);
-    return { ok: buttons.some((b) => b.startsWith('Abrir un chat nuevo en')) && buttons.some((b) => b.startsWith('Migrar la conversación a')) && migration && measured.originalRemains && measured.switched,
+    return { ok: buttons.some((b) => b.startsWith(uiPrefix('accounts.switch.newChat'))) && buttons.some((b) => b.startsWith(uiPrefix('accounts.switch.migrate'))) && migration && measured.originalRemains && measured.switched,
       detail: JSON.stringify({ buttons, migration, ...measured }) };
   } finally {
     await page.evaluate((state) => {
@@ -13784,7 +13784,7 @@ async function measureClaudeConnectorGroup(page, { userDataDir }, group) {
         guardado &&
         repuesto !== null &&
         !(JSON.parse(repuesto).claudeAiConnectorsOff ?? []).includes(cuenta);
-      return { ok, detail: `conector=${hayConector} conectar=${conectar} fecha=«${fecha}» apagado=«${etiquetaApagado}» guardado=${guardado} chrome=${chrome.includes('Solo disponible')} codex=${codex.includes('sin verificar')}` };
+      return { ok, detail: `conector=${hayConector} conectar=${conectar} fecha=«${fecha}» apagado=«${etiquetaApagado}» guardado=${guardado} chrome=${chrome.includes(ui('mcp.connectors.desktopOnly'))} codex=${codex.toLowerCase().includes(ui('prompt.provider.unverified').toLowerCase())}` };
     }
 
 // Evidencia acotada de posicion: separa el layout de las transformaciones de entrada/salida.
