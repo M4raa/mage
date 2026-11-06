@@ -100,15 +100,15 @@ describe('createMcpConnector', () => {
     expect(JSON.stringify(result)).toContain('delegation_depth_exceeded');
   });
 
-  it('open_knownCallerWithBrowser_fourteenToolsAndBrowserForCaller', async () => {
+  it('open_knownCallerWithBrowser_onlySevenSessionTools', async () => {
     const browserFor = vi.fn(() => ({}) as BrowserToolsPort);
     const client = await connect(makeDeps({ browserFor }), CREDENTIAL);
 
     const { tools } = await client.listTools();
 
-    expect(tools).toHaveLength(14);
-    expect(tools.filter((tool) => tool.name.startsWith('mage_browser_'))).toHaveLength(7);
-    expect(browserFor).toHaveBeenCalledWith('session-1');
+    expect(tools.map((tool) => tool.name).sort()).toEqual(TOOLS);
+    expect(tools.some((tool) => tool.name.startsWith('mage_browser_'))).toBe(false);
+    expect(browserFor).not.toHaveBeenCalled();
   });
 
   it('open_unknownCallerWithBrowser_sevenToolsNoBrowserFor', async () => {

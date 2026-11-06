@@ -2880,3 +2880,61 @@ describe('adoptLiveSession (U17)', () => {
     });
   });
 });
+
+// Una conversación creada fuera de la ventana (terminal o MCP) se abre con la cuenta y el modelo de su sesión (facturación).
+describe('openConversation — dueña del host', () => {
+  const claudeAccount = (id: string) => ({ id, alias: id, providerId: 'claude', loginStatus: 'logged_in' }) as unknown as Account;
+  const item = (): ConversationSummary => ({ sessionId: 'n-1', configDir: 'acc-active', cwd: 'C:\proyecto', title: 't', updatedAtMs: 0, privacy: 'shared' } as ConversationSummary);
+
+  function hostStore(prefs: unknown, over: Partial<MageApi> = {}) {
+    const createSession = vi.fn().mockResolvedValue({ sessionId: 's-new' });
+    const store = createWorkbenchStore(fakeMage({
+      loadConversationPrefs: vi.fn().mockResolvedValue(prefs), saveConversationPrefs: vi.fn().mockResolvedValue(undefined),
+      saveWorkspace: vi.fn().mockResolvedValue(undefined), createSession, ...over,
+    }));
+    store.setState({ accounts: [claudeAccount('acc-active'), claudeAccount('acc-owner')], activeAccountId: 'acc-active' });
+    return { store, createSession };
+  }
+
+  it('openConversation_hostOwned_opensWithOwnerAccountAndSavedModel', async () => {
+    const { store } = hostStore({ hostOwnerAccountId: 'acc-owner', accountId: 'acc-owner', model: 'claude-haiku-4-5' });
+
+    await store.getState().openConversation(item(), 'acc-active');
+
+    const opened = store.getState().tabs.find((t) => t.resumeSessionId === 'n-1');
+    expect(opened).toMatchObject({ accountId: 'acc-owner', model: 'claude-haiku-4-5', accountPinned: true });
+    expect(store.getState().activeAccountId).toBe('acc-owner');
+  });
+
+  it('openConversation_noOwner_keepsRequestedAccount', async () => {
+    const { store } = hostStore(null);
+
+    await store.getState().openConversation(item(), 'acc-active');
+
+    const opened = store.getState().tabs.find((t) => t.resumeSessionId === 'n-1');
+    expect(opened?.accountId).toBe('acc-active');
+    expect(opened?.accountPinned).toBeUndefined();
+  });
+
+  it('openConversation_hostOwnedAccountMissing_readOnlyAndActiveUnchanged', async () => {
+    const { store, createSession } = hostStore({ hostOwnerAccountId: 'acc-borrada', accountId: 'acc-borrada', model: 'claude-haiku-4-5' });
+
+    await store.getState().openConversation(item(), 'acc-active');
+
+    const opened = store.getState().tabs.find((t) => t.resumeSessionId === 'n-1');
+    expect(opened).toMatchObject({ accountId: 'acc-borrada', accountPinned: true });
+    expect(store.getState().activeAccountId).toBe('acc-active');
+    await expect(store.getState().ensureSession(opened?.id ?? '')).rejects.toThrow(/solo lectura/);
+    expect(createSession).not.toHaveBeenCalled();
+  });
+
+  it('openConversation_hostOwnedTabOnOtherAccount_reassignsToOwner', async () => {
+    const { store } = hostStore({ hostOwnerAccountId: 'acc-owner', accountId: 'acc-owner', model: 'claude-haiku-4-5' });
+    store.setState({ tabs: [tab('t1', { accountId: 'acc-active', resumeSessionId: 'n-1' })], activeTabId: 't1', splitLayout: singleLeaf('t1') });
+
+    await store.getState().openConversation(item(), 'acc-active');
+
+    expect(store.getState().tabs).toHaveLength(1);
+    expect(store.getState().tabs[0]).toMatchObject({ id: 't1', accountId: 'acc-owner', accountPinned: true });
+  });
+});

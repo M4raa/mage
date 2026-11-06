@@ -12,6 +12,7 @@ import { defaultUserDataDir } from './chatArgs.mjs';
 import { ChatController } from './chatController.mjs';
 import { parseCliArgs } from './cliArgs.mjs';
 import { runAccountAdd, runStop } from './commands.mjs';
+import { EarlyInput } from './earlyInput.mjs';
 import { connectVerified } from './hostLink.mjs';
 import { runMcpRelay } from './mcpRelay.mjs';
 import { ensureHost, headlessLaunch, isNoHostError } from './hostStarter.mjs';
@@ -109,6 +110,10 @@ async function runChat(args, ctx) {
 
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout, terminal: process.stdin.isTTY === true });
   const setMuted = installMute(rl);
+  // Lo escrito mientras se crea la sesión no se pierde: se envía al estar lista.
+  const early = new EarlyInput();
+  rl.on('line', (text) => guardPromise(Promise.resolve(early.push(text))));
+  rl.on('close', () => early.end());
   const sessionId = await resolveTarget({
     rpc: link.rpc, target: args.target, cwd: process.cwd(), ask: createAsk(rl), write: writeOut, messages, newCommandId: randomUUID,
   });
@@ -129,11 +134,10 @@ async function runChat(args, ctx) {
   controller = new ChatController({ link, sessionId, messages, write: writeOut, now: Date.now, exit, reconnect, setMuted, prefill: (text) => rl.write(text) });
   watchSocket(link);
 
-  rl.on('line', (text) => guardPromise(controller.onLine(text)));
   rl.on('SIGINT', () => guardPromise(controller.onCtrlC()));
-  rl.on('close', () => controller.onEndOfInput());
   for (const signal of ['SIGHUP', 'SIGTERM']) process.on(signal, () => controller.onKilled());
-  await controller.attach();
+  if (!(await controller.attach())) return;
+  await early.drainTo({ onLine: (text) => controller.onLine(text), onEnd: () => controller.onEndOfInput() });
 }
 
 // Sin terminal interactiva no hay a quién preguntar: `null`. Con ella, `s`/`y` confirma y todo lo demás niega.

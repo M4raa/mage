@@ -428,6 +428,7 @@
   "chat.git.switchBranchFailed": "No se pudo cambiar de rama",
   "chat.git.sync": "{ahead} por delante y {behind} por detrás de {upstream}",
   "chat.hint.retry": "⟳ Reintentar",
+  "chat.hostOwner.accountMissing": "Esta conversación se creó fuera de la ventana con la cuenta {account}, que ya no está en Mage. Queda de solo lectura: no se envía con otra cuenta.",
   "chat.info.folderTitle": "{cwd} · abrir la carpeta",
   "chat.info.private": "Privado",
   "chat.info.privateTitle": "Conversación privada: usa el perfil mage-private de la cuenta",

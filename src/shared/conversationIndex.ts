@@ -18,6 +18,9 @@ export interface ConversationPrefs {
   // Última cuenta con la que se usó la conversación (id de cuenta de Mage). El lateral de todas las cuentas
   // la usa para decidir de quién es una conversación compartida de Claude.
   readonly accountId?: string;
+  // Cuenta de la sesión que creó la conversación fuera de la ventana (terminal o MCP). Solo la escribe main
+  // (`recordHostSession`) y `savePrefs` la ignora: la ventana la abre siempre con esta cuenta (facturación).
+  readonly hostOwnerAccountId?: string;
 }
 
 // Artifact publicado: pertenece a la cuenta que lo publico y NO cambia de dueño al abrir la

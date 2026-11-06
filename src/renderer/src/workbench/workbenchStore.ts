@@ -62,7 +62,7 @@ export interface DocumentTarget {
 }
 import { mergeIntoDraft, type QueuedMessage } from './messageQueue';
 import type { ConversationSnapshot, SendMode, SendReceipt } from '@shared/coordination';
-import { adoptedTab, adoptionTarget, chatStatusOf, snapshotEvents } from './adoptSession';
+import { adoptedTab, adoptionTarget, chatStatusOf, pinnedAccountMissing, snapshotEvents } from './adoptSession';
 import { deliveryNotices } from './sendNow';
 import { readOnlyLockMessage, type ConversationLockStatus } from '@shared/conversationLock';
 import { lockRefOf } from './conversationLockSync';
@@ -2240,7 +2240,14 @@ export function createWorkbenchStore(mage: MageClient) {
       // transcripcion, y re-engancharse a la viva era el camino caro. Si estaba esperando un permiso,
       // ese turno se pierde y hay que repetir la orden.
       await get().discardBackgroundConversation(item.sessionId);
-      const accountId = accountIdOverride ?? get().activeAccountId;
+      // Indice propio de Mage (2.1): modelo, esfuerzo y modo de permiso con los que se dejo ESTA
+      // conversacion. Se lee ANTES de construir la Tab a proposito: `effort` es un flag de ARRANQUE del
+      // CLI, asi que ponerlo despues del primer `ensureSession` no tendria ningun efecto.
+      // El índice ANTES de decidir la cuenta: una conversación creada fuera de la ventana se abre siempre con la cuenta de
+      // su sesión (`hostOwnerAccountId`), elija lo que elija el lateral, y nunca con otra (facturación).
+      const indexPrefs = await loadConversationPrefsSafely(mage, item.sessionId);
+      const owner = indexPrefs?.hostOwnerAccountId;
+      const accountId = owner ?? accountIdOverride ?? get().activeAccountId;
       const account = get().accounts.find((a) => a.id === accountId);
       const plan = planOpenConversation({
         tabs: get().tabs,
@@ -2268,7 +2275,7 @@ export function createWorkbenchStore(mage: MageClient) {
             ? {
                 tabs: s.tabs.map((t) =>
                   t.id === plan.tabId
-                    ? { ...t, accountId, accountAlias: account?.alias ?? accountId, resolvedConfigDir: item.configDir }
+                    ? { ...t, accountId, accountAlias: account?.alias ?? accountId, resolvedConfigDir: item.configDir, ...(owner === undefined ? {} : { accountPinned: true }) }
                     : t,
                 ),
               }
@@ -2280,10 +2287,6 @@ export function createWorkbenchStore(mage: MageClient) {
         persistConversationPrefs(mage, get(), plan.tabId);
         return;
       }
-      // Indice propio de Mage (2.1): modelo, esfuerzo y modo de permiso con los que se dejo ESTA
-      // conversacion. Se lee ANTES de construir la Tab a proposito: `effort` es un flag de ARRANQUE del
-      // CLI, asi que ponerlo despues del primer `ensureSession` no tendria ningun efecto.
-      const indexPrefs = await loadConversationPrefsSafely(mage, item.sessionId);
       const prefs = resolveReopenedTabPrefs({
         indexPrefs,
         accountDefaultModel: account?.defaultModel ?? null,
@@ -2298,16 +2301,19 @@ export function createWorkbenchStore(mage: MageClient) {
         prefs: providerModel === null ? prefs : { ...prefs, model: providerModel } });
       const project = get().settings.chatProjects.find((p) => p.sessionIds.includes(item.sessionId) || (p.cwd !== null && p.cwd === item.cwd));
       const tab = project === undefined ? reopened : { ...reopened, projectId: project.id };
+      const pinned: Tab = owner === undefined ? tab : { ...tab, accountPinned: true };
+      // Sin la cuenta dueña la pestaña se abre de solo lectura y la cuenta activa no cambia (no existe esa cuenta).
+      const readOnly = pinnedAccountMissing(pinned, get().accounts);
       set((s) => ({
-        tabs: [...s.tabs, tab],
-        activeTabId: tab.id,
-        activeAccountId: accountId,
-        splitLayout: addTabToLeaf(s.splitLayout, paneForNewTab(s), tab.id),
+        tabs: [...s.tabs, pinned],
+        activeTabId: pinned.id,
+        ...(readOnly ? {} : { activeAccountId: accountId }),
+        splitLayout: addTabToLeaf(s.splitLayout, paneForNewTab(s), pinned.id),
         newTabAnchorTabId: null,
       }));
       get().focusPrompt();
       schedulePersist(mage, get);
-      persistConversationPrefs(mage, get(), tab.id);
+      persistConversationPrefs(mage, get(), pinned.id);
     },
 
     // Cierra la pestana abierta de una conversacion (por sessionId) para que ningun proceso siga
@@ -2578,6 +2584,11 @@ export function createWorkbenchStore(mage: MageClient) {
     },
 
     ensureSession: (tabId) => {
+      const target = get().tabs.find((t) => t.id === tabId);
+      // Solo lectura: la cuenta de su sesión ya no está, y no se arranca con otra.
+      if (target !== undefined && pinnedAccountMissing(target, get().accounts)) {
+        return Promise.reject(new Error(t('chat.hostOwner.accountMissing', { account: target.accountAlias })));
+      }
       const existing = get().sessionIdByChat[tabId];
       if (existing !== undefined) return Promise.resolve(existing);
       // Guarda de REENTRADA (B16). El `if` de arriba no basta: entre que la primera llamada mira el
