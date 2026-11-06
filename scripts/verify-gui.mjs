@@ -64,6 +64,14 @@ import { ui, uiIn, uiPlural, uiPrefix, uiRegExp, uiSegment, escapeRegExp, cssAtt
 
 // Línea resumen del dock de subagentes (agentsDock.ts): «N en ejecución · M terminados», sin la parte que vale cero.
 const agentsSummary = (running, finished) => [running > 0 ? ui('chat.agents.summaryRunning', { count: running }) : null, finished > 0 ? uiPlural('chat.agents.summaryFinished', { count: finished }) : null].filter((part) => part !== null).join(' · ');
+// Línea de conversaciones privadas del diálogo de eliminar cuenta: contando, fallo, ninguna, una o N (el N se deja abierto).
+const privateLineRegExp = () => new RegExp(`(?:${[
+  escapeRegExp(ui('accounts.delete.privateCounting')),
+  escapeRegExp(uiPrefix('accounts.delete.privateCountFailed')),
+  escapeRegExp(uiPlural('accounts.delete.privateCount', { count: 0 })),
+  escapeRegExp(uiPlural('accounts.delete.privateCount', { count: 1 })),
+  escapeRegExp(uiPlural('accounts.delete.privateCount', { count: 2 })).replace('2', '\\d+'),
+].join('|')})`);
 // Regex de varios textos de la interfaz (alternativas), cada uno escapado. `^` delante si `anchored`.
 const uiAnyOf = (texts, anchored = false) => new RegExp(`${anchored ? '^' : ''}(?:${texts.map(escapeRegExp).join('|')})`);
 // Regex de «empieza por el tramo fijo inicial del mensaje» (p. ej. `Desinstalar {name}` -> /^Desinstalar(\s|$)/).
@@ -1813,23 +1821,23 @@ const CHECKS = [
       const dialog = page.locator(MODAL);
       await dialog.first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
 
-      const measured = await page.evaluate(({ adopt }) => {
+      const measured = await page.evaluate(({ adopt, emailLabel, cliName }) => {
         const modal = document.querySelector('[role="dialog"]');
         const text = modal?.textContent ?? '';
         return {
           campos: modal?.querySelectorAll('input[type="text"], input:not([type])').length ?? 0,
           casillas: modal?.querySelectorAll('input[type="checkbox"]').length ?? 0,
-          pideEmail: /EMAIL/.test(text),
-          diceCli: /CLI de Claude Code/.test(text),
+          pideEmail: text.includes(emailLabel),
+          diceCli: text.includes(cliName),
           dicePrivada: text.includes(window.__mageDev.t('accounts.add.claude.hint.privateWindow')),
           // Restos del flujo embebido que NO deben quedar.
-          diceDentroDeMage: /dentro de Mage/.test(text),
+          diceDentroDeMage: /dentro de Mage|inside Mage/.test(text),
           botonesAdoptar: [...(modal?.querySelectorAll('button') ?? [])].filter((b) =>
             (b.textContent ?? '').startsWith(adopt),
           ).length,
           conLogin: (window.__mageDev?.store.getState().accounts ?? []).filter((a) => a.providerId === 'claude' && a.loginStatus === 'logged_in').length,
         };
-      }, { adopt: uiPrefix('accounts.add.adopt.use') });
+      }, { adopt: uiPrefix('accounts.add.adopt.use'), emailLabel: ui('accounts.add.claude.emailLabel'), cliName: ui('accounts.add.claude.hint.cli') });
       const closed = await closeDialog(page);
 
       const ok =
@@ -2124,7 +2132,7 @@ const CHECKS = [
       const despues = await crear.isDisabled();
       const texto = (await dialog.innerText()).replace(/\s+/g, ' ');
       const closed = await closeDialog(page);
-      const ok = antes && !despues && texto.includes(uiPrefix('accounts.add.agy.hint')) && texto.includes('independiente de la sesión de agy de tu equipo') && closed === 0;
+      const ok = antes && !despues && texto.includes(uiPrefix('accounts.add.agy.hint')) && texto.includes(uiSegment('accounts.add.agy.hint', 1)) && closed === 0;
       return { ok, detail: JSON.stringify({ antes, despues, perfilPropio: texto.includes(uiPrefix('accounts.add.agy.hint')), cerrado: closed === 0 }) };
     },
   },
@@ -4340,8 +4348,8 @@ const CHECKS = [
       await dialogo.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
       const siguen = await page.evaluate(() => window.__mageDev.store.getState().accounts.length);
       const ok =
-        !principalOfrece && otraOfrece && /privad/.test(texto) && /compartidas no se tocan/.test(texto) && siguen === cuentas.length;
-      return { ok, detail: JSON.stringify({ principalOfrece, otraOfrece, dicePrivadas: /privad/.test(texto), siguen }) };
+        !principalOfrece && otraOfrece && privateLineRegExp().test(texto) && texto.includes(ui('accounts.delete.sharedUntouched')) && siguen === cuentas.length;
+      return { ok, detail: JSON.stringify({ principalOfrece, otraOfrece, dicePrivadas: privateLineRegExp().test(texto), siguen }) };
     },
   },
   {
@@ -6620,7 +6628,7 @@ const CHECKS = [
       });
       await openTemporaryConversation(page);
 
-      const medido = await page.evaluate(async (resumen) => {
+      const medido = await page.evaluate(async ({ resumen, resetText }) => {
         const dev = window.__mageDev;
         if (dev === undefined) throw new Error('window.__mageDev no existe (¿la app no esta en modo desarrollo?)');
         const tabId = dev.store.getState().activeTabId;
@@ -6652,7 +6660,7 @@ const CHECKS = [
           existe: banner !== null,
           // La linea del hilo TAMBIEN tiene que estar: el banner es la accion, no el relato.
           lineasEnElHilo: lineas.length,
-          conHora: /se restablece a las/.test(lineas[0]?.text ?? ''),
+          conHora: (lineas[0]?.text ?? '').includes(resetText),
           tooltipCli: document.querySelector(`[data-tip="${CSS.escape(resumen)}"]`) !== null,
           casillaContinuar: banner?.querySelector('input[type="checkbox"]') !== null && banner !== null,
           destinos: banner === null ? [] : [...banner.querySelectorAll('button')].map((b) => (b.textContent ?? '').trim()),
@@ -6662,7 +6670,7 @@ const CHECKS = [
         await new Promise((resolve) => requestAnimationFrame(resolve));
         const trasLimpiar = [...document.querySelectorAll('[role="status"]')].filter((n) => (n.textContent ?? '').includes(LINEA)).length;
         return { statusAntes: antes, ...conBanner, trasLimpiar };
-      }, RATE_LIMIT_SUMMARY);
+      }, { resumen: RATE_LIMIT_SUMMARY, resetText: uiSegment('chat.rateLimit.lineWithReset', 0) });
 
       await page.evaluate((state) => window.__mageDev.store.setState(state), previo);
       await page.waitForTimeout(CONFIG.settleMs);
@@ -7972,7 +7980,7 @@ const CHECKS = [
         });
         await page.waitForTimeout(CONFIG.settleMs);
         const secundaria = await medir();
-        const ok = principal.visible && principal.botones.join('|') === ui('dialogs.newTab.relogin') && secundaria.botones.join('|') === 'Iniciar sesión|Eliminar';
+        const ok = principal.visible && principal.botones.join('|') === ui('dialogs.newTab.relogin') && secundaria.botones.join('|') === `${ui('sidebar.orphan.login')}|${ui('sidebar.orphan.delete')}`;
         return { ok, detail: JSON.stringify({ principal, secundaria }) };
       } finally {
         await page.evaluate((accounts) => window.__mageDev.store.setState({ accounts }), previo);
