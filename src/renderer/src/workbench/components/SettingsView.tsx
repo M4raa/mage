@@ -30,8 +30,8 @@ import { findConflict } from '../keybindings/conflicts';
 import { comboFromEvent, displayKeyCombo, formatKeyCombo, parseKeyCombo } from '../keybindings/keyParser';
 import { isArrowNavKey, nextIndexForArrow } from '../a11y/keyboardNav';
 import { isMacPlatform } from '../keybindings/platform';
-import { CHANGELOG_ENTRIES } from '../releaseNotesContent';
-import { useT } from '../../i18n/uiLanguage';
+import { changelogEntriesFor } from '../releaseNotesContent';
+import { useT, useUiLanguageStore } from '../../i18n/uiLanguage';
 import { aboutNoticesText } from '../aboutView';
 import type { MessageKey } from '@shared/i18n/messageKeys.generated';
 import type { Translate } from '@shared/i18n/translator';
@@ -430,6 +430,7 @@ function ReleaseNotesSection(): React.JSX.Element {
   const openReleaseNotes = useWorkbenchStore((s) => s.openReleaseNotes);
   const installed = useWorkbenchStore((s) => s.appVersion);
   const t = useT();
+  const entries = changelogEntriesFor(useUiLanguageStore((s) => s.resolved.language));
   const open = (version?: string): void => {
     closeSettings();
     openReleaseNotes(version);
@@ -445,7 +446,7 @@ function ReleaseNotesSection(): React.JSX.Element {
       </button>
       <UpdateCheck />
       <ul className="flex flex-col gap-[1px]" aria-label={t('settings.releaseNotes.versionsAria')}>
-        {CHANGELOG_ENTRIES.map((entry) => (
+        {entries.map((entry) => (
           <li key={entry.version}>
             <button
               onClick={() => open(entry.version)}
