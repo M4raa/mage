@@ -63,7 +63,7 @@ import { seededAppSettings, seedTestAccounts } from './lib/profileSeed.mjs';
 import { ui, uiIn, uiPlural, uiPrefix, uiRegExp, uiSegment, escapeRegExp, cssAttr, getUiLanguage, setUiLanguage, parseUiLangArg } from './lib/uiText.mjs';
 
 // Línea resumen del dock de subagentes (agentsDock.ts): «N en ejecución · M terminados», sin la parte que vale cero.
-const agentsSummary = (running, finished) => [running > 0 ? ui('chat.agents.summaryRunning', { count: running }) : null, finished > 0 ? uiPlural('chat.agents.summaryFinished', { count: finished }) : null].filter((part) => part !== null).join(' · ');
+const agentsSummary = (running, finished) => [running > 0 ? uiPlural('chat.agents.summaryRunning', { count: running }) : null, finished > 0 ? uiPlural('chat.agents.summaryFinished', { count: finished }) : null].filter((part) => part !== null).join(' · ');
 // Línea de conversaciones privadas del diálogo de eliminar cuenta: contando, fallo, ninguna, una o N (el N se deja abierto).
 const privateLineRegExp = () => new RegExp(`(?:${[
   escapeRegExp(ui('accounts.delete.privateCounting')),
@@ -4881,7 +4881,7 @@ const CHECKS = [
         trasUno.pararDock === 1 &&
         trasUno.pararPanel === 1 &&
         JSON.stringify(parado) === JSON.stringify(['ag-v37-b']) &&
-        /19\.906 tokens/.test(trasUno.panelA ?? '') &&
+        /19[.,]906 tokens/.test(trasUno.panelA ?? '') &&
         (trasUno.panelA ?? '').includes(ui('chat.agents.toolsCount', { count: 2 })) &&
         trasQuitar.filas === 1 &&
         trasQuitar.enElPanel === 2 &&
