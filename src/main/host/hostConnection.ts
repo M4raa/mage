@@ -3,8 +3,10 @@ import type { PermissionDecision } from '@shared/events';
 import type { ElicitationAnswer } from '@shared/elicitation';
 import type { AnswerReceipt, ConversationSnapshot, QueuedMessage, SendReceipt } from '@shared/coordination';
 import type { RewindApplyParams, RewindApplyResult, RewindPlanParams, SendMessageParams } from '@shared/ipc';
-import { UserFacingError, renderForLog } from '@shared/i18n/localizedText';
-import type { Translate } from '@shared/i18n/translator';
+import type { UiLanguage } from '@shared/i18n/language';
+import type { LocalizedText } from '@shared/i18n/localizedText';
+import { UserFacingError, renderForLog, renderLocalized } from '@shared/i18n/localizedText';
+import { createTranslator, type Translate } from '@shared/i18n/translator';
 import type { SessionLogFn } from '../engine/agentSession';
 import type { RewindCoordinator } from '../coordination/rewindCoordinator';
 import type { SequencedSessionEvent } from '../coordination/sessionCoordinator';
@@ -110,6 +112,8 @@ export class HostConnection {
   // Credencial MCP_CALLER del `hello` (D-M6): es un secreto, no se loguea ni se devuelve.
   private caller: string | null = null;
   private tunnel: McpTunnelHandle | null = null;
+  // Idioma que pidió el cliente para los errores (1.6); null = castellano, como antes de 1.6.
+  private errorTranslate: Translate | null = null;
   private readonly framer: NdjsonFramer;
   private readonly subscriptions = new Map<string, () => void>();
   private readonly cancelHelloTimer: () => void;
@@ -246,7 +250,7 @@ export class HostConnection {
       }
       if (id !== undefined) this.transport.write(resultResponse(id, result));
     } catch (err) {
-      this.reply(id, toErrorBody(err));
+      this.reply(id, toErrorBody(err, this.errorTranslate));
     }
   }
 
@@ -257,7 +261,7 @@ export class HostConnection {
 
   private replyAsyncError(id: RequestId | undefined, err: unknown): void {
     if (this.phase !== 'ready') return;
-    this.reply(id, toErrorBody(err));
+    this.reply(id, toErrorBody(err, this.errorTranslate));
   }
 
   private run(method: HostMethod, params: unknown): unknown {
@@ -275,8 +279,14 @@ export class HostConnection {
       }
       case 'session.answerElicitation': return sessions.answerElicitation(params as ElicitationAnswer);
       case 'mcp.message': return this.tunnelReceive((params as { message: Record<string, unknown> }).message);
+      case 'client.setLanguage': return this.setLanguage((params as { language: UiLanguage }).language);
       default: return this.runV12(method, params);
     }
+  }
+
+  private setLanguage(language: UiLanguage): Record<string, never> {
+    this.errorTranslate = createTranslator(language);
+    return {};
   }
 
   // Un mensaje del cliente `mcp` hacia su servidor MCP (1.5).
@@ -441,18 +451,24 @@ const OWN_ERROR_CODES: readonly (readonly [abstract new (...args: never[]) => Er
   [UnsupportedMethodError, HostErrorCode.Unsupported],
 ];
 
-// Un UserFacingError lleva marca y JSON tras el castellano: al cliente solo le llega el castellano limpio.
-function errorMessageOf(err: unknown): string {
-  if (err instanceof UserFacingError) return renderForLog(err.localized);
+// Un UserFacingError lleva marca y JSON tras el castellano: al cliente solo le llega el texto limpio, en el idioma que pidió (1.6) o en castellano.
+function errorMessageOf(err: unknown, translate: Translate | null): string {
+  if (err instanceof UserFacingError) return translate === null ? renderForLog(err.localized) : renderLocalized(translate, err.localized);
   return err instanceof Error ? err.message : String(err);
 }
 
 // Un fallo del coordinador: sesión inexistente es un error propio; el resto es interno (el mensaje llega al
 // cliente, que es de confianza: ya presentó el token).
-function toErrorBody(err: unknown): HostErrorBody {
-  const message = errorMessageOf(err);
+function toErrorBody(err: unknown, translate: Translate | null): HostErrorBody {
+  const message = errorMessageOf(err, translate);
+  const data = localizedData(err);
   const own = OWN_ERROR_CODES.find(([errorClass]) => err instanceof errorClass);
-  if (own !== undefined) return { code: own[1], message };
-  if (message.startsWith('Sesion inexistente')) return { code: HostErrorCode.UnknownSession, message };
-  return { code: HostErrorCode.Internal, message };
+  if (own !== undefined) return { code: own[1], message, ...data };
+  if (message.startsWith('Sesion inexistente')) return { code: HostErrorCode.UnknownSession, message, ...data };
+  return { code: HostErrorCode.Internal, message, ...data };
+}
+
+// Todo UserFacingError viaja también como `LocalizedText` en `error.data` (1.6); un error ajeno no lleva `data`.
+function localizedData(err: unknown): { readonly data?: { readonly localized: LocalizedText } } {
+  return err instanceof UserFacingError ? { data: { localized: err.localized } } : {};
 }

@@ -4,7 +4,7 @@ import { HOST_PROTOCOL as SERVER_PROTOCOL } from '../../src/main/host/hostProtoc
 import { CHALLENGE_CONTEXT as SERVER_CONTEXT, CHALLENGE_NONCE_BYTES as SERVER_NONCE_BYTES, challengeProof } from '../../src/main/host/hostToken.ts';
 import {
   CHALLENGE_CONTEXT, CHALLENGE_NONCE_BYTES, HOST_PROTOCOL, NOT_MAGE_SERVER,
-  computeProof, connectVerified, createRpc, readHostFiles, verifyUnixEndpoint,
+  computeProof, connectVerified, createRpc, readHostFiles, supportsClientLanguage, verifyUnixEndpoint,
 } from './hostLink.mjs';
 
 const TOKEN = 'a'.repeat(64);
@@ -64,7 +64,7 @@ describe('hostLink', () => {
     expect(first.method).toBe('host.challenge');
     expect(second.method).toBe('hello');
     expect(second.params.token).toBe(TOKEN);
-    expect(second.params.protocol).toBe('1.5');
+    expect(second.params.protocol).toBe('1.6');
     expect(hello).toEqual(HELLO_RESULT);
   });
 
@@ -230,5 +230,55 @@ describe('createRpc', () => {
 
     await expect(first).rejects.toMatchObject({ message: 'cierre', code: -32600 });
     await expect(second).rejects.toMatchObject({ message: 'cierre', code: -32600 });
+  });
+});
+
+describe('client.setLanguage (host 1.6)', () => {
+  // Host falso: contesta el reto y el hello con el protocolo dado; anota los métodos en orden.
+  const hostThatSpeaks = (protocol) => {
+    const socket = new FakeSocket();
+    socket.respond = (request) => {
+      const result = request.method === 'host.challenge'
+        ? { proof: computeProof(TOKEN, request.params.nonce) }
+        : request.method === 'hello' ? { ...HELLO_RESULT, protocol } : {};
+      socket.reply({ jsonrpc: '2.0', id: request.id, result });
+    };
+    return socket;
+  };
+  const connectWith = (socket, language) => connectVerified({ userDataDir: 'C:\\perfil', clientVersion: 't', deps: deps(socket), language });
+  const methodsOf = (socket) => socket.writes.map((line) => JSON.parse(line).method);
+
+  it('supportsClientLanguage_versiones_soloDesde16', () => {
+    expect(supportsClientLanguage('1.6')).toBe(true);
+    expect(supportsClientLanguage('1.10')).toBe(true);
+    expect(supportsClientLanguage('1.5')).toBe(false);
+    expect(supportsClientLanguage('2.0')).toBe(false);
+    expect(supportsClientLanguage('1')).toBe(false);
+    expect(supportsClientLanguage(undefined)).toBe(false);
+  });
+
+  it('connectVerified_host16ConIdioma_llamaASetLanguage', async () => {
+    const socket = hostThatSpeaks('1.6');
+
+    await connectWith(socket, 'en');
+
+    expect(methodsOf(socket)).toEqual(['host.challenge', 'hello', 'client.setLanguage']);
+    expect(JSON.parse(socket.writes[2]).params).toEqual({ language: 'en' });
+  });
+
+  it('connectVerified_host15ConIdioma_noLoLlama', async () => {
+    const socket = hostThatSpeaks('1.5');
+
+    await connectWith(socket, 'en');
+
+    expect(methodsOf(socket)).toEqual(['host.challenge', 'hello']);
+  });
+
+  it('connectVerified_sinIdioma_noLoLlama', async () => {
+    const socket = hostThatSpeaks('1.6');
+
+    await connectWith(socket, undefined);
+
+    expect(methodsOf(socket)).toEqual(['host.challenge', 'hello']);
   });
 });

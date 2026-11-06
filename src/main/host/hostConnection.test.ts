@@ -601,6 +601,52 @@ describe('HostConnection — métodos 1.2', () => {
     expect(h.isEnded()).toBe(false);
   });
 
+  it('clientSetLanguage_en_errorPropioEnInglesConLocalized', () => {
+    const h = harness({ control: { createSession: vi.fn(() => { throw new TrustRequiredError('/x'); }) } });
+    h.hello();
+
+    h.send({ jsonrpc: '2.0', id: 2, method: 'client.setLanguage', params: { language: 'en' } });
+    h.send({ jsonrpc: '2.0', id: 3, method: 'session.create', params: CREATE });
+
+    const [, language, create] = h.lines();
+    expect(language!.result).toEqual({});
+    expect(create!.error.code).toBe(HostErrorCode.TrustRequired);
+    expect(create!.error.message).toContain('The folder is not trusted: /x');
+    expect(create!.error.data).toEqual({ localized: { key: 'errors.host.trustRequired', values: { cwd: '/x' } } });
+  });
+
+  it('sessionCreate_trustRequiredSinIdioma_castellanoSinMarcaYConLocalized', () => {
+    const h = harness({ control: { createSession: vi.fn(() => { throw new TrustRequiredError('/x'); }) } });
+    h.hello();
+
+    const reply = call(h, 'session.create', CREATE);
+
+    expect(reply.error.message).toContain('La carpeta no es de confianza: /x');
+    expect(reply.error.message).not.toContain('⁣');
+    expect(reply.error.data.localized.key).toBe('errors.host.trustRequired');
+  });
+
+  it('clientSetLanguage_idiomaNoSoportado_invalidParams', () => {
+    const h = harness();
+    h.hello();
+
+    const reply = call(h, 'client.setLanguage', { language: 'fr' });
+
+    expect(reply.error.code).toBe(HostErrorCode.InvalidParams);
+    expect(h.isEnded()).toBe(false);
+  });
+
+  it('errorAjeno_sinData', () => {
+    const h = harness({ control: { createSession: vi.fn(() => { throw new Error('boom'); }) } });
+    h.hello();
+
+    const reply = call(h, 'session.create', CREATE);
+
+    expect(reply.error.code).toBe(HostErrorCode.Internal);
+    expect(reply.error.message).toBe('boom');
+    expect(reply.error.data).toBeUndefined();
+  });
+
   it('sessionCreate_unknownAccount_codigoPropio', () => {
     const h = harness({ control: { createSession: vi.fn(() => { throw new UnknownAccountError('/h/.claude', 'claude'); }) } });
     h.hello();
