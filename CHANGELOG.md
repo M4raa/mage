@@ -4,6 +4,54 @@ Lo que cambia de una versión a otra, contado para quien usa la app. La más rec
 enseña estas mismas notas en su pestaña de novedades al actualizarse, y en Configuración › Notas de
 versión.
 
+## 0.1.4 — 2026-11-07
+
+### Añadido
+- **Rebobinar, Reintentar y Divergir.** Desde la burbuja de un mensaje puedes volver a ese punto de la conversación. En Claude puedes restaurar también los ficheros (casilla apagada por defecto; no cubre lo que se escribió con Bash). En Codex se rebobina la conversación, no los ficheros, y puedes guardar antes una copia. **Reintentar** repite un turno y **Divergir** abre una conversación nueva desde ese mensaje («Rama de …»). Lo que tenías en la cola vuelve a borrador.
+- **Mantener viva la caché de Claude.** Con una conversación grande abierta (100 000 tokens o más, ajustable), Mage refresca la caché antes de que caduque con un turno mínimo que no queda en la conversación, para que el siguiente mensaje no la pague entera otra vez. Se configura en Ajustes, enseña cuántos se han hecho y su coste, y viene apagado en las cuentas por clave de API.
+- **El comando `mage` en la terminal.** `mage chat` conversa con tus sesiones desde una terminal (contesta permisos y preguntas), `mage stop` cierra un Mage sin ventanas y `mage account add` da de alta una cuenta por clave de API sin que la clave pase por la línea de comandos. En Windows, el instalador lo añade a tu PATH (casilla marcada); en Linux, el paquete deja `/usr/bin/mage` si está libre. Si no hay ningún Mage abierto, `mage` lo arranca sin ventanas.
+- **Las conversaciones de la terminal aparecen en la ventana** como una pestaña más, con su cuenta y su modelo, y se pueden seguir desde los dos sitios.
+- **Sesiones que crean sesiones.** Mage se ofrece como servidor MCP a Claude y a Codex (Ajustes › Servidor MCP de Mage): una conversación puede encargar trabajo a otra de Claude o Codex, preguntarle a su creadora y devolver el resultado. Cada delegada tiene su pestaña con «Encargada por …» y la profundidad máxima se ajusta (de 1 a 5).
+- **El widget acompañante.** Una píldora que crece a lista con tus sesiones y su estado (permiso pendiente, error, trabajando…), para contestar un permiso sin volver a la ventana. Aparece sin quitarte el foco y respeta «No molestar».
+- **Biblioteca de capacidades.** En Configuración › Biblioteca: un catálogo curado (con ECC) de skills, agentes, MCP, hooks y plugins con su versión, su procedencia y su licencia; vista previa de lo que se instala sin ejecutar nada; instalar, activar, actualizar y quitar en tus cuentas sin tocar lo que no es suyo. Los MCP que piden clave la guardan en la bóveda.
+- **Tareas.** Una sección «Tareas» en el lateral para encargar trabajos generales (un documento con fuentes, una síntesis, ordenar una carpeta) con sus carpetas y documentos autorizados. La pestaña enseña el plan, el progreso y los entregables, y Mage comprueba que los ficheros existen y se pueden abrir (no juzga si el trabajo está bien).
+- **Navegador integrado** en un panel, aislado del resto de Mage, con **pluma** para dibujar sobre una captura y mandársela al modelo.
+- **Interfaz nueva:** el lateral reúne las conversaciones de todas tus cuentas (Fijadas, Proyectos, Sin proyecto, Privadas) con filtros y búsqueda (Ctrl/Cmd+K); pestaña, cabecera y caja del prompt rediseñadas; menciones con `@` de ficheros, imágenes y PDF; panel de **pull requests** que distingue PR de repositorios distintos con el mismo número; las referencias al plan del chat («F0.4», «§3.4») se enlazan; iconos con movimiento que respetan «reducir movimiento».
+- **El chat va mucho más fluido** con conversaciones largas: cambiar a una pestaña con miles de mensajes pasa de más de 1,6 s a unos 130 ms.
+- **Temas importados** con mejor contraste: Mage deriva los bordes, la selección y el foco cuando el tema no los distingue, y el texto sobre la selección se lee (al menos 4,5:1). Un tema claro importado ya pinta sus colores.
+
+### Cambiado
+- El instalador de Windows se llama `mage-<versión>.exe` (antes `mage-setup-beta-…`).
+- En Linux el paquete se llama **`mage-desktop`**: Debian y Ubuntu ya tienen otro paquete `mage`. Si tenías el `.deb` de 0.1.3, desinstálalo antes (`sudo apt remove mage`).
+- Borrar una conversación de Codex la borra de verdad en disco (antes solo desaparecía de la lista), junto con sus revisiones.
+- El instalador de Windows pregunta el idioma y Mage lo usa en su primer arranque.
+
+### Corregido
+- Las conversaciones creadas desde la terminal o por otra sesión usan siempre su propia cuenta y su modelo; si Mage no puede saberlos, la pestaña queda de solo lectura (nunca cobra a otra cuenta).
+- El error de una clave de API inválida se ve como error, en la ventana y en `mage chat`, en vez de un turno vacío.
+- `mage chat` ya no pierde lo que escribes antes de que la sesión esté lista.
+- Escape sobre un menú abierto ya no interrumpe el turno.
+- Una barra invisible ya no tapa las tablas pequeñas del chat.
+- El AppImage en modo terminal funciona sin pantalla.
+- Con zoom grande, todos los avisos del chat se ven.
+- Las menciones con `@` ofrecen los ficheros también en una carpeta que un repositorio superior ignora.
+- `mage chat --account` acepta el nombre que diste en `mage account add --name`, y los errores del host salen en el idioma de la terminal.
+- Borrar una conversación borra también lo que Mage guardaba de sus rebobinados.
+- Migrar un chat nuevo sin mensajes ya no hace desaparecer la pestaña.
+
+### Seguridad
+- El navegador integrado no comparte cookies ni sesión con el tuyo, no tiene acceso a Mage y solo abre `http(s)` y `localhost`.
+- El servidor MCP de Mage solo atiende a las sesiones de Mage (cada una con su credencial) y cada una solo ve las sesiones que creó.
+- Un cliente de terminal comprueba que el host es el de Mage antes de enviarle nada.
+
+### Limitaciones conocidas
+- Las herramientas para que el agente maneje el navegador (navegar, hacer clic, escribir, capturar) no salen en esta versión: vendrán en 0.1.5. El panel del navegador y la pluma sí.
+- Con Codex: los ficheros no se rebobinan; las carpetas extra de una tarea son de solo lectura; parte de lo nuevo (menciones de PDF, preguntas de una delegada, el navegador) no se ha podido probar con Codex real.
+- Con el chat virtualizado, la búsqueda del navegador (Ctrl+F) no encuentra mensajes que no estén en pantalla.
+- Mientras haya un Mage sin ventanas en marcha, el acceso directo no abre la ventana: ciérralo con `mage stop`.
+- Linux: solo se ha probado en WSL sin escritorio (Ubuntu 26.04, Debian 13, Arch). El rpm se genera sin probar.
+- La instalación y la actualización automática desde 0.1.3 en Windows no se han probado en una máquina limpia.
+
 ## 0.1.3 — 2026-11-02
 
 ### Corregido
