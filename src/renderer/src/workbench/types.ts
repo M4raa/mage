@@ -118,6 +118,8 @@ export interface Tab {
 export interface AccountSwitchPrompt {
   readonly tabId: string;
   readonly destAccountId: string;
+  // Cuenta de la conversación al abrir el diálogo: el texto no puede depender de que la pestaña siga abierta.
+  readonly sourceAccountId: string;
 }
 
 // Skills y plugins cargados por una sesion (P-026 2.6), tal como los reporta su `system/init`.

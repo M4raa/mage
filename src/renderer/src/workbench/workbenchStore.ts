@@ -1497,7 +1497,7 @@ export function createWorkbenchStore(mage: MageClient) {
         hasBlocks: (state.blocksByChat[state.activeTabId]?.length ?? 0) > 0,
       });
       if (plan === 'ask' && tab !== undefined) {
-        set({ accountSwitchPrompt: { tabId: tab.id, destAccountId } });
+        set({ accountSwitchPrompt: { tabId: tab.id, destAccountId, sourceAccountId: tab.accountId } });
         return;
       }
       if (plan === 'reassign' && tab !== undefined) reassignNewChat(mage, get, set, { tabId: tab.id, destAccountId });
@@ -2379,7 +2379,15 @@ export function createWorkbenchStore(mage: MageClient) {
         await migrateToOtherProvider(get, mage, { tabId, sessionId, destAccountId });
         return;
       }
-      await get().moveConversation(sessionId, tab.cwd, tab.privacy, destAccountId, tab.privacy, tab.accountId);
+      try {
+        await get().moveConversation(sessionId, tab.cwd, tab.privacy, destAccountId, tab.privacy, tab.accountId);
+      } catch (err) {
+        // Mover cierra antes la pestaña: si falla, la conversación sigue en su cuenta y se reabre desde su historial para
+        // no perderla. El error sube igual (lo enseña el diálogo).
+        const left = get().conversationHistory.find((c) => c.sessionId === sessionId);
+        if (left !== undefined) await get().openConversation(left, tab.accountId);
+        throw err;
+      }
       get().setActiveAccount(destAccountId);
       await get().loadConversationHistory();
       const moved = get().conversationHistory.find((c) => c.sessionId === sessionId);

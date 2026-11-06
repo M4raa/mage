@@ -1463,8 +1463,19 @@ describe('requestAccountSwitch y continueInAccount', () => {
 
     store.getState().requestAccountSwitch(B);
 
-    expect(store.getState().accountSwitchPrompt).toEqual({ tabId: 'a', destAccountId: B });
+    expect(store.getState().accountSwitchPrompt).toEqual({ tabId: 'a', destAccountId: B, sourceAccountId: accounts[0]!.id });
     expect(store.getState().activeAccountId).toBe(accounts[0]!.id);
+  });
+
+  it('requestAccountSwitch_sesionVivaSinTurnos_noPreguntaYAbreChatNuevoEnDestino', () => {
+    const store = mounted({ getScratchDir: vi.fn(() => new Promise<string>(() => undefined)) });
+    store.setState({ tabs: [tab('a')], sessionIdByChat: { a: 's-a' }, blocksByChat: {} });
+
+    store.getState().requestAccountSwitch(B);
+
+    expect(store.getState().accountSwitchPrompt).toBeNull();
+    expect(store.getState().activeAccountId).toBe(B);
+    expect(store.getState().tabs.find((t) => t.id === 'a')?.accountId).toBe(tab('a').accountId);
   });
 
   it('requestAccountSwitch_haciaCuentaDeCodex_tambienPreguntaPorLaMigracion', () => {
@@ -1472,7 +1483,22 @@ describe('requestAccountSwitch y continueInAccount', () => {
 
     store.getState().requestAccountSwitch('C:/Users/u/.codex-x');
 
-    expect(store.getState().accountSwitchPrompt).toEqual({ tabId: 'a', destAccountId: 'C:/Users/u/.codex-x' });
+    expect(store.getState().accountSwitchPrompt).toEqual({ tabId: 'a', destAccountId: 'C:/Users/u/.codex-x', sourceAccountId: accounts[0]!.id });
+  });
+
+  it('continueInAccount_moverFalla_reabreLaConversacionYElErrorSube', async () => {
+    const store = mounted({
+      moveConversation: vi.fn().mockRejectedValue(new Error('No existe la transcripción a mover')),
+      closeSession: vi.fn().mockResolvedValue({ background: false }),
+      releaseConversationLock: vi.fn().mockResolvedValue(undefined),
+      listConversations: vi.fn().mockResolvedValue([{ sessionId: 's-old', configDir: accounts[0]!.id, cwd: '/p', title: 't', privacy: 'shared', updatedAtMs: 1, sizeBytes: 1, isScheduled: false }]),
+      loadConversationPrefs: vi.fn().mockResolvedValue(null),
+    });
+
+    await expect(store.getState().continueInAccount('a', B)).rejects.toThrow('No existe la transcripción a mover');
+
+    expect(store.getState().tabs.some((t) => t.resumeSessionId === 's-old')).toBe(true);
+    expect(store.getState().activeAccountId).toBe(accounts[0]!.id);
   });
 
   it('continueInAccount_haciaOtroProveedor_migraLaConversacionYReabreLaDelDestino', async () => {

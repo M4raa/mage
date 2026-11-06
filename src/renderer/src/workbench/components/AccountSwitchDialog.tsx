@@ -27,7 +27,7 @@ function AccountSwitchBody({ prompt }: { readonly prompt: AccountSwitchPrompt })
   const title = tabTitle === undefined ? t('accounts.switch.thisConversation') : displayTitle(tabTitle, t);
   // Entre cuentas de Claude la transcripción se mueve; con otro CLI cada uno guarda la suya, así que la
   // conversación sigue en la destino como una nueva que arranca con su historial como contexto.
-  const crossProvider = useWorkbenchStore((s) => ![s.tabs.find((tab) => tab.id === prompt.tabId)?.accountId, prompt.destAccountId].every((id) => s.accounts.find((a) => a.id === id)?.providerId === 'claude'));
+  const crossProvider = useWorkbenchStore((s) => ![prompt.sourceAccountId, prompt.destAccountId].every((id) => s.accounts.find((a) => a.id === id)?.providerId === 'claude'));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const dialogRef = useDialogA11y({ onClose: close });
