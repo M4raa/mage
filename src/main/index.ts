@@ -3523,6 +3523,19 @@ function sendMissingConversation(sender: Electron.WebContents, transcriptId: str
   if (!sender.isDestroyed()) sender.send(TRANSCRIPT_BATCH_CHANNEL, payload);
 }
 
+// Historial de una cuenta de Claude, con la última cuenta usada y la dueña (conversaciones creadas fuera de la ventana)
+// que sabe el índice de Mage.
+function listClaudeConversations(accountDir: string): readonly ConversationSummary[] {
+  if (!isManagedAccountConfigDir(accountDir)) {
+    throw new Error(`Cuenta no valida para listar conversaciones: ${accountDir}`);
+  }
+  const listed = withLastAccount(conversationsService.listConversations(accountDir), (id) => {
+    const prefs = getConversationIndexStore().loadPrefs(id);
+    return prefs?.hostOwnerAccountId ?? prefs?.accountId;
+  });
+  return withHostOwner(listed, (id) => getConversationIndexStore().loadPrefs(id)?.hostOwnerAccountId);
+}
+
 function registerTranscriptIpc2(deps: IpcDependencies): void {
   const { conversationAdminService, requireSafeConversation } = deps;
   ipcMain.handle(IpcChannel.TranscriptCancel, (_e, transcriptId: string) => {
@@ -3546,14 +3559,7 @@ function registerTranscriptIpc2(deps: IpcDependencies): void {
     if (codex !== null) return codexHistory.list(codex.home);
     const agyProfile = agyProfileOfAccount(accountDir);
     if (agyProfile !== null) return agyHistory.list(agyProfile, accountDir, agyExternalProfileOf(accountDir));
-    if (!isManagedAccountConfigDir(accountDir)) {
-      throw new Error(`Cuenta no valida para listar conversaciones: ${accountDir}`);
-    }
-    const listed = withLastAccount(conversationsService.listConversations(accountDir), (id) => {
-      const prefs = getConversationIndexStore().loadPrefs(id);
-      return prefs?.hostOwnerAccountId ?? prefs?.accountId;
-    });
-    return withHostOwner(listed, (id) => getConversationIndexStore().loadPrefs(id)?.hostOwnerAccountId);
+    return listClaudeConversations(accountDir);
   });
   ipcMain.handle(IpcChannel.ConversationsDelete, async (_e, params: DeleteConversationParams): Promise<void> => {
     requireSafeConversation(params.accountDir, params.sessionId);
