@@ -249,7 +249,14 @@ const CHECKS = [
     async run(page) {
       const title = await page.title();
       const railCount = await page.locator('[role="toolbar"]').count();
-      return { ok: railCount > 0, detail: `title=${JSON.stringify(title)} toolbars=${railCount}` };
+      // El prompt tiene su nombre accesible desde el primer pintado (también antes de que llegue el editor diferido) y,
+      // sin pestañas, dice qué hacer.
+      const prompt = page.getByRole('textbox', { name: ui('prompt.editor.ariaLabel'), exact: true });
+      const promptCount = await prompt.count();
+      const tabCount = await page.locator('[role="tab"][data-tab-id]').count();
+      const promptText = promptCount === 0 ? '' : await prompt.first().innerText();
+      const emptyStateOk = tabCount > 0 || promptText.includes(ui('prompt.placeholder.noTab'));
+      return { ok: railCount > 0 && promptCount > 0 && emptyStateOk, detail: JSON.stringify({ title, toolbars: railCount, prompt: promptCount, pestañas: tabCount, textoPrompt: promptText }) };
     },
   },
   {
