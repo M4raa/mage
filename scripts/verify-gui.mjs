@@ -60,7 +60,17 @@ import { appendDomText } from './lib/domTextDump.mjs';
 import { classifyTextFit, collectTextFit } from './lib/textFit.mjs';
 import { redactLocalUser, redactUserData } from './lib/redactUserData.mjs';
 import { seededAppSettings, seedTestAccounts } from './lib/profileSeed.mjs';
-import { ui, uiIn, uiPrefix, uiRegExp, cssAttr, getUiLanguage, setUiLanguage, parseUiLangArg } from './lib/uiText.mjs';
+import { ui, uiIn, uiPrefix, uiRegExp, uiSegment, escapeRegExp, cssAttr, getUiLanguage, setUiLanguage, parseUiLangArg } from './lib/uiText.mjs';
+
+// Regex de varios textos de la interfaz (alternativas), cada uno escapado. `^` delante si `anchored`.
+const uiAnyOf = (texts, anchored = false) => new RegExp(`${anchored ? '^' : ''}(?:${texts.map(escapeRegExp).join('|')})`);
+// Regex de «empieza por el tramo fijo inicial del mensaje» (p. ej. `Desinstalar {name}` -> /^Desinstalar(\s|$)/).
+const uiStartsWith = (key) => new RegExp(`^${escapeRegExp(uiPrefix(key))}(?:\\s|$)`);
+// Entradas que el menú ⋯ del prompt ya NO tiene. «Adjuntar» no está en el catálogo (se quitó con la entrada): se
+// busca en los dos idiomas a mano; «Abrir carpeta» es la clave de otro aviso con el mismo texto.
+const removedPromptMenuItems = () => uiAnyOf(['Adjuntar', 'Attach', ui('notifications.worktree.openFolder')]);
+// Botón de abrir pestaña del diálogo de Nueva conversación, con su texto de «Abriendo…».
+const openTabButtonName = () => uiAnyOf([ui('dialogs.newTab.open'), ui('dialogs.newTab.opening')]);
 import { cleanupProfile } from '../spike/f0-profile-cleanup.mjs';
 import { benchApiKey, changedFiles, copiesUnder, credentialFingerprints, userCredentialFiles } from './lib/benchCredentials.mjs';
 
@@ -323,7 +333,7 @@ const CHECKS = [
       // ANCLADO al control concreto, no a cualquier boton que contenga la palabra: 'Mage (común)' es
       // una etiqueta de ORIGEN de permisos que tambien se pinta como boton, y hacia que esto contara 2
       // segun que pantalla dejara abierta la comprobacion anterior.
-      const nombreAccesible = await page.getByRole('button', { name: /^Mage · Configuración$/ }).count();
+      const nombreAccesible = await page.getByRole('button', { name: ui('app.titleBar.settingsLabel'), exact: true }).count();
       const ok =
         measured !== null &&
         !measured.texto.includes('MAGE') &&
@@ -951,7 +961,7 @@ const CHECKS = [
       const ok =
         JSON.stringify(medida.pestañas) === JSON.stringify(['servers', 'connectors', 'extensions']) &&
         medida.pastillasLocal === 'ClaudeCodexLocales' &&
-        medida.filaAgy.includes('Solo agy') &&
+        medida.filaAgy.includes(ui('mcp.scope.ownedBy', { provider: 'agy' })) &&
         !medida.conectorEnServidores;
       return { ok, detail: JSON.stringify(medida) };
     },
@@ -966,7 +976,7 @@ const CHECKS = [
     async run(page, { userDataDir }) {
       await page.locator('[data-mcp-tab="connectors"]').click();
       // Autosuficiente: sondea con el CLI falso (el ultimo estado queda guardado con su fecha).
-      const sondear = page.locator('[data-mcp-connectors]').getByRole('button', { name: /Comprobar estado|Comprobando/ });
+      const sondear = page.locator('[data-mcp-connectors]').getByRole('button', { name: uiAnyOf([ui('mcp.probe.button'), ui('mcp.probe.running')]) });
       await sondear.click();
       // Hecho cuando alguna cuenta con login tiene fecha de «hace un momento». Sin cuentas con login el
       // CLI falso no se sondea: no hay grupo con fecha y se mide el primero.
@@ -1021,7 +1031,7 @@ const CHECKS = [
       const importada = page.locator(`[data-mcp-extension="${SEEDED_DESKTOP_EXTENSION}"]`);
       await importada.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
       const copiada = fs.existsSync(path.join(userDataDir, 'extensions', SEEDED_DESKTOP_EXTENSION, 'manifest.json'));
-      await importada.getByRole('button', { name: /^Desinstalar / }).click();
+      await importada.getByRole('button', { name: uiStartsWith('mcp.extensions.uninstallAria') }).click();
       await importada.getByRole('button', { name: ui('mcp.extensions.confirmUninstall'), exact: true }).click();
       await importada.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
       const limpia = !fs.existsSync(path.join(userDataDir, 'extensions', SEEDED_DESKTOP_EXTENSION));
@@ -1399,7 +1409,7 @@ const CHECKS = [
         // local de un endpoint HTTP.
         summary.includes(ui('settings.providers.kind.http')) &&
         added.length === 1 &&
-        added[0] === `Modelo por defecto de ${OLLAMA_TEMPLATE.label}` &&
+        added[0] === ui('settings.providers.defaultModelAria', { provider: OLLAMA_TEMPLATE.label }) &&
         closed === 0;
       return {
         ok,
@@ -1427,7 +1437,7 @@ const CHECKS = [
     async run(page) {
       await openSettingsDialog(page);
       await openSection(page, uiRegExp('mcp.servers.column.providers'));
-      const remove = page.getByRole('button', { name: `Eliminar el proveedor ${OLLAMA_TEMPLATE.label}` });
+      const remove = page.getByRole('button', { name: ui('settings.providers.removeAria', { provider: OLLAMA_TEMPLATE.label }) });
       const targets = await remove.count();
       if (targets === 1) await remove.click();
       await page.waitForTimeout(CONFIG.settleMs);
@@ -1435,7 +1445,7 @@ const CHECKS = [
       const models = await modelSelectorLabels(page);
       const closed = await closeDialog(page);
       const options = await withNewTabDialog(page, (dialogPage) => selectOptionsOf(dialogPage, NEW_TAB_FIELD.provider));
-      const inModels = models.includes(`Modelo por defecto de ${OLLAMA_TEMPLATE.label}`);
+      const inModels = models.includes(ui('settings.providers.defaultModelAria', { provider: OLLAMA_TEMPLATE.label }));
       const inNewTab = options !== null && options.some((option) => option.endsWith(`|${OLLAMA_TEMPLATE.label}`));
       const ok = targets === 1 && rows === 0 && !inModels && !inNewTab && closed === 0;
       return {
@@ -1496,7 +1506,7 @@ const CHECKS = [
       await page.getByRole('textbox', { name: ui('settings.providers.form.modelsAria') }).fill('vg');
       await page.getByLabel(ui('settings.providers.form.apiKeyAria')).fill(SECRET_PROVIDER.key);
       await page.getByRole('button', { name: ui('accounts.add.local.submit'), exact: true }).click();
-      await page.getByRole('button', { name: `Eliminar el proveedor ${SECRET_PROVIDER.label}` }).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      await page.getByRole('button', { name: ui('settings.providers.removeAria', { provider: SECRET_PROVIDER.label }) }).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
       const settingsFile = path.join(userDataDir, 'app-settings.json');
       const secretsFile = path.join(userDataDir, 'secrets.json');
       // Los ajustes se guardan con debounce: `SettingsLoad` solo sabe del proveedor cuando ha llegado a disco.
@@ -1513,7 +1523,7 @@ const CHECKS = [
       const keyField = modal.getByLabel(ui('settings.providers.form.apiKeyAria'));
       const editField = { value: await keyField.inputValue(), placeholder: await keyField.getAttribute('placeholder') };
       await modal.getByRole('button', { name: ui('accounts.add.cancel'), exact: true }).click();
-      await page.getByRole('button', { name: `Eliminar el proveedor ${SECRET_PROVIDER.label}` }).click();
+      await page.getByRole('button', { name: ui('settings.providers.removeAria', { provider: SECRET_PROVIDER.label }) }).click();
       const vaultAfter = await waitForFile(secretsFile, (text) => !text.includes(secretId));
       const closed = await closeDialog(page);
       const measured = {
@@ -2554,7 +2564,7 @@ const CHECKS = [
       try {
         instance = await startRestartInstance(profile, rendererUrl);
         await instance.page.evaluate((home) => window.__mageDev.store.getState().setActiveAccount(home), fx.codexHome);
-        await instance.page.getByText(D19_MISSING_NOTICE, { exact: true }).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        await instance.page.getByText(d19MissingNotice(),{ exact: true }).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
         // El aviso sale antes de que CodeMirror monte: sin esta espera, editable se leía a veces como null (carrera).
         await instance.page.locator(`[data-pane-tab-id="${tabId}"] .cm-content`).waitFor({ state: 'attached', timeout: CONFIG.actionTimeoutMs });
         const medido = await readRestoredTab(instance.page, tabId);
@@ -3063,7 +3073,7 @@ const CHECKS = [
       await provider.selectOption(AGY_PROVIDER_ID);
       await page.waitForTimeout(CONFIG.settleMs);
       const warning = (await page.locator(`${NEW_TAB_DIALOG} [role="status"]`).last().innerText()).trim();
-      const open = page.getByRole('button', { name: /Abrir pestaña|Abriendo/ });
+      const open = page.getByRole('button', { name: openTabButtonName() });
       const enabled = await open.isEnabled();
       if (warning.includes(AGY_MISSING_HEAD)) {
         const closed = await closeDialog(page);
@@ -4077,7 +4087,7 @@ const CHECKS = [
       ]);
       await page.waitForTimeout(CONFIG.settleMs * 2);
       const pegadas = await leer();
-      await page.getByRole('button', { name: 'Quitar el adjunto 1' }).click();
+      await page.getByRole('button', { name: ui('prompt.attach.remove', { n: 1 }) }).click();
       await page.waitForTimeout(CONFIG.settleMs);
       const trasQuitar = await leer();
       await page.evaluate((id) => window.__mageDev.store.getState().setDraft(id, null), tabId);
@@ -4250,7 +4260,7 @@ const CHECKS = [
         return { titulo: (pop?.textContent ?? '').includes(window.__mageDev.t('usage.popover.title')), filas };
       });
       await page.mouse.move(0, 0);
-      const filasOk = medido.filas.every((f) => f.sinDato || ([2, 4].includes(f.ventanas.length) && f.ventanas.every((t) => /% · reset /.test(t))));
+      const filasOk = medido.filas.every((f) => f.sinDato || ([2, 4].includes(f.ventanas.length) && f.ventanas.every((t) => t.includes(uiSegment('usage.popover.windowLine', 1)))));
       return { ok: medido.titulo && medido.filas.length > 0 && filasOk, detail: JSON.stringify(medido) };
     },
   },
@@ -4360,7 +4370,7 @@ const CHECKS = [
       await page.locator('[role="menu"]').first().waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
       await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
       await page.waitForTimeout(CONFIG.settleMs);
-      const ok = items.length >= 1 && !items.some((t) => /Adjuntar|Abrir carpeta/.test(t)) && items.some((t) => t.includes(ui('prompt.actions.openTerminal')));
+      const ok = items.length >= 1 && !items.some((t) => removedPromptMenuItems().test(t)) && items.some((t) => t.includes(ui('prompt.actions.openTerminal')));
       return { ok, detail: `items=${JSON.stringify(items)}` };
     },
   },
@@ -4635,7 +4645,7 @@ const CHECKS = [
         chat.usuario === 1 &&
         chat.agente === 1 &&
         chat.fallidas === 1 &&
-        /Ejecutando Read/.test(chat.estado ?? '') &&
+        (chat.estado ?? '').includes(ui('chat.thinking.runningTool', { tool: 'Read' })) &&
         /4 pasos/.test(chat.estado ?? '') &&
         /1 error/.test(chat.estado ?? '') &&
         panel.filas === 4 &&
@@ -4731,8 +4741,8 @@ const CHECKS = [
       const ok =
         resumen === '1 en ejecución · 1 terminado' &&
         vivo.filas.length === 2 &&
-        /^running:buscar el bug.*Explore.*Ejecutando Grep/.test(vivo.filas[0] ?? '') &&
-        /^done:planear.*Plan.*Terminado/.test(vivo.filas[1] ?? '') &&
+        new RegExp(`^running:buscar el bug.*Explore.*${escapeRegExp(ui('chat.agents.stepRunningTool', { tool: 'Grep' }))}`).test(vivo.filas[0] ?? '') &&
+        new RegExp(`^done:planear.*Plan.*${escapeRegExp(ui('chat.agents.stateDone'))}`).test(vivo.filas[1] ?? '') &&
         vivo.encimaDelInput &&
         vivo.lineas.length === 1 &&
         /Lanzó 2 subagentes/.test(vivo.lineas[0] ?? '') &&
@@ -4740,7 +4750,7 @@ const CHECKS = [
         filtrado === 2 &&
         final.dock === 0 &&
         /2 terminados/.test(final.linea) &&
-        /1 con error/.test(final.linea);
+        final.linea.includes(ui('chat.subagents.failed', { count: 1 }));
       return { ok, detail: `resumen=${JSON.stringify(resumen)} vivo=${JSON.stringify(vivo)} layoutEvidence=${JSON.stringify(layoutEvidence)} filtrado=${filtrado} final=${JSON.stringify(final)}` };
     },
   },
@@ -4823,7 +4833,7 @@ const CHECKS = [
       await restoreTurnState(page, previo);
       const ok =
         lanzados.estado === 'idle' &&
-        lanzados.resumen === '2 en ejecución' &&
+        lanzados.resumen === ui('chat.agents.summaryRunning', { count: 2 }) &&
         panel.length === 2 &&
         panel.every((fila) => fila.startsWith('running:') && fila.includes('claude-haiku-4-5')) &&
         trasUno.resumen === '1 en ejecución · 1 terminado' &&
@@ -4833,7 +4843,7 @@ const CHECKS = [
         trasUno.pararPanel === 1 &&
         JSON.stringify(parado) === JSON.stringify(['ag-v37-b']) &&
         /19\.906 tokens/.test(trasUno.panelA ?? '') &&
-        /2 herramientas/.test(trasUno.panelA ?? '') &&
+        (trasUno.panelA ?? '').includes(ui('chat.agents.toolsCount', { count: 2 })) &&
         trasQuitar.filas === 1 &&
         trasQuitar.enElPanel === 2 &&
         final === 0;
@@ -4959,7 +4969,8 @@ const CHECKS = [
         }));
         const mac = process.platform === 'darwin';
         const atajo = mac ? /⌘/ : /Ctrl\+Enter/;
-        const atajoTip = mac ? /Enviar ahora \(.*⌘.*\)/ : /Enviar ahora \(Ctrl\+Enter\)/;
+        const sendNowStart = escapeRegExp(uiPrefix('prompt.sendNow.tip'));
+        const atajoTip = new RegExp(mac ? `${sendNowStart}.*⌘.*\\)` : `${sendNowStart}Ctrl\\+Enter\\)`);
         const ok =
           inicial.parar === 1 && inicial.cola === ui('prompt.queueSend.button') && inicial.colaDesactivado === true && inicial.retorno === 0 &&
           claude.desactivado === false && claude.seguiaEnMarcha === true && atajoTip.test(claude.tip ?? '') && atajo.test(claude.atajo ?? '') &&
@@ -5136,7 +5147,7 @@ const CHECKS = [
             hiloConTexto: tokens.some((x) => (document.querySelector('[data-chat-scroller]')?.textContent ?? '').includes(x)),
           };
         }, { tokens: [uiPrefix('chat.turnUsage.line'), uiPrefix('chat.turnUsage.lineEstimated')] });
-        const ok = medido.fila.startsWith('Tokens del último turno:') && medido.bloquesConTokens === 0 && medido.hiloConTexto === false;
+        const ok = medido.fila.startsWith(uiPrefix('chat.context.lastTurnUsage')) && medido.bloquesConTokens === 0 && medido.hiloConTexto === false;
         return { ok, detail: JSON.stringify(medido) };
       } finally {
         await restoreTurnState(page, previo);
@@ -5624,7 +5635,7 @@ const CHECKS = [
       const alVolver = await erroresDeAdjuntar();
 
       // Se quita la miniatura: la comprobacion no deja adjuntos colgando para las siguientes.
-      const quitar = page.getByRole('button', { name: /Quitar el adjunto/ });
+      const quitar = page.getByRole('button', { name: uiAnyOf([uiPrefix('prompt.attach.remove')]) });
       if ((await quitar.count()) > 0) await quitar.first().click();
       await page.waitForTimeout(CONFIG.settleMs);
       const limpio = await page.locator('img[data-attachment="thumb"]').count();
@@ -5692,7 +5703,7 @@ const CHECKS = [
                 estado: card.getAttribute('data-permission-card'),
                 objetivo: (card.textContent ?? '').includes('C:/proj/nuevo.ts'),
                 permitir: boton(card, window.__mageDev.t('app.widget.allow')),
-                permitirSiempre: boton(card, 'Permitir siempre Write aquí'),
+                permitirSiempre: boton(card, window.__mageDev.t('chat.permission.allowAlwaysAria', { tool: 'Write' })),
                 denegar: boton(card, window.__mageDev.t('chat.permission.denyAria')),
                 masInformacion: [...card.querySelectorAll('button')].some((b) => (b.textContent ?? '').trim() === window.__mageDev.t('chat.permission.moreInfo')),
               },
@@ -5700,7 +5711,7 @@ const CHECKS = [
             ? null
             : {
                 permitir: boton(panel, window.__mageDev.t('app.widget.allow')),
-                permitirSiempre: boton(panel, 'Permitir siempre Write aquí'),
+                permitirSiempre: boton(panel, window.__mageDev.t('chat.permission.allowAlwaysAria', { tool: 'Write' })),
                 denegar: boton(panel, window.__mageDev.t('chat.permission.denyAria')),
                 diff: (panel.textContent ?? '').includes('export const a = 1;'),
                 modo: (panel.textContent ?? '').includes(window.__mageDev.t('chat.permissions.mode.title')),
@@ -5708,9 +5719,11 @@ const CHECKS = [
                 reglasDelCli: (panel.textContent ?? '').includes(window.__mageDev.t('chat.permissions.cliRules.title')),
               },
           // El numero del atajo NO debe entrar en el nombre accesible (era el fallo original).
-          numeroEnElNombre: [...document.querySelectorAll('button[aria-label]')].some((b) =>
-            /^Permitir\d/.test(b.getAttribute('aria-label') ?? ''),
-          ),
+          numeroEnElNombre: [...document.querySelectorAll('button[aria-label]')].some((b) => {
+            const allow = window.__mageDev.t('app.widget.allow');
+            const label = b.getAttribute('aria-label') ?? '';
+            return label.startsWith(allow) && /^\d/.test(label.slice(allow.length));
+          }),
           avisoDeEscritura: document.body.innerText.includes(window.__mageDev.t('chat.permission.prompt.write')),
           // 2.3b: el aviso "Claude necesita tu atención" ya NO va al hilo (lo sustituye la tarjeta).
           avisoDeAtencion: document.body.innerText.includes(window.__mageDev.t('notifications.event.needsAttention')),
@@ -5890,23 +5903,27 @@ const CHECKS = [
       // Editar y guardar por la INTERFAZ real, no por el store. Si algo de esto falla, el error se
       // devuelve en la medida en vez de tumbar la comprobacion sin decir que se habia visto.
       const pasos = {};
+      const planName = { name: 'plan.md' };
+      const editPlan = () => page.getByRole('button', { name: ui('chat.files.editFile', planName) });
+      const savePlan = () => page.getByRole('button', { name: ui('chat.files.saveFile', planName) });
+      const planContentLabel = ui('chat.files.contentOf', planName);
       try {
-        await page.getByRole('button', { name: 'Editar plan.md' }).click();
-        await page.getByRole('textbox', { name: 'Contenido de plan.md' }).fill('# Plan editado\n\n- segundo\n');
-        await page.getByRole('button', { name: 'Guardar plan.md' }).click();
+        await editPlan().click();
+        await page.getByRole('textbox', { name: planContentLabel }).fill('# Plan editado\n\n- segundo\n');
+        await savePlan().click();
         await page.waitForTimeout(CONFIG.settleMs * 4);
         pasos.enDisco = fs.readFileSync(filePath, 'utf-8');
 
         // Compare-and-swap: alguien (el agente, u otro editor) toca el fichero y el guardado se niega.
-        await page.getByRole('button', { name: 'Editar plan.md' }).click();
+        await editPlan().click();
         fs.writeFileSync(filePath, '# Lo cambio otro\n', 'utf-8');
-        await page.getByRole('textbox', { name: 'Contenido de plan.md' }).fill('# Lo mio\n');
-        await page.getByRole('button', { name: 'Guardar plan.md' }).click();
+        await page.getByRole('textbox', { name: planContentLabel }).fill('# Lo mio\n');
+        await savePlan().click();
         await page.waitForTimeout(CONFIG.settleMs * 4);
-        pasos.conflicto = await page.evaluate((cambio) => ({
+        pasos.conflicto = await page.evaluate(({ cambio, contentLabel }) => ({
           aviso: [...document.querySelectorAll('[role="alert"]')].some((n) => (n.textContent ?? '').includes(cambio)),
-          sigueEditando: document.querySelector('textarea[aria-label="Contenido de plan.md"]') !== null,
-        }), uiPrefix('errors.files.changedOnDisk'));
+          sigueEditando: document.querySelector(`textarea[aria-label="${contentLabel}"]`) !== null,
+        }), { cambio: uiPrefix('errors.files.changedOnDisk'), contentLabel: planContentLabel });
         pasos.trasConflicto = fs.readFileSync(filePath, 'utf-8');
       } catch (error) {
         pasos.fallo = error.message;
@@ -7006,7 +7023,7 @@ const CHECKS = [
           const s = window.__mageDev.store.getState();
           return { prNumber: s.tabs.find((t) => t.id === s.activeTabId)?.prNumber ?? null, chip: document.querySelector('[data-pr-chip]')?.textContent?.trim() ?? '' };
         });
-        await page.getByRole('button', { name: 'Dejar de seguir el PR #7', exact: true }).click();
+        await page.getByRole('button', { name: ui('app.prBar.unbindLabel', { number: 7 }), exact: true }).click();
         await page.locator('[data-pr-chip]').first().waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
         const quitado = await page.evaluate(() => {
           const s = window.__mageDev.store.getState();
@@ -7376,7 +7393,7 @@ const CHECKS = [
         await page.waitForTimeout(50);
       }
 
-      const abrirCon = page.getByRole('button', { name: /^Abrir con…/ }).first();
+      const abrirCon = page.getByRole('button', { name: uiAnyOf([ui('chat.artifact.openWithPicker')], true) }).first();
       const hayDesplegable = await abrirCon.isVisible().catch(() => false);
       let cuentasOfrecidas = 0;
       if (hayDesplegable) {
@@ -8078,7 +8095,7 @@ const CHECKS = [
       await page.getByRole('status').filter({ hasText: ui('chat.load.loading') }).waitFor({ state: 'visible', timeout: 2500 });
       // Un fallo de lectura se dice, no se disfraza de conversación vacía.
       await page.evaluate(() => { const dev = window.__mageDev; dev.transcriptStoreFor(dev.store.getState().activeTabId).setState({ isFinal: true, errorMessage: 'vg-lectura-fallida' }); });
-      await page.getByRole('status').filter({ hasText: 'No se pudo cargar la conversación: vg-lectura-fallida' }).waitFor({ state: 'visible', timeout: 2500 });
+      await page.getByRole('status').filter({ hasText: ui('chat.load.failed', { error: 'vg-lectura-fallida' }) }).waitFor({ state: 'visible', timeout: 2500 });
       return { ok: true, detail: 'Indicador visible mientras la lectura no es final y error visible si falla.' };
     },
   },
@@ -8157,7 +8174,7 @@ const CHECKS = [
     async run(page) {
       await openTemporaryConversation(page);
       const tabId = await page.evaluate(() => window.__mageDev.store.getState().activeTabId);
-      const notice = 'Se ha recreado vacía la carpeta de borrador de prueba. La conversación se conserva; los archivos anteriores se perdieron.';
+      const notice = ui('events.workspace.scratchRecreatedKept', { path: 'vg-borrador' });
       await page.evaluate(({ tabId, notice }) => {
         const store = window.__mageDev.store;
         store.setState({ blocksByChat: { ...store.getState().blocksByChat, [tabId]: [{ kind: 'system', id: 'vg-recreated', text: notice }] } });
@@ -8865,7 +8882,7 @@ const CHECKS = [
         esperado >= 1 &&
         conTrabajo.aparecio &&
         conTrabajo.trabajando === esperado &&
-        conTrabajo.botones.join('|') === 'Cancelar|Cerrar Mage|Mantener en segundo plano' &&
+        conTrabajo.botones.join('|') === [ui('dialogs.closeMage.cancel'), ui('dialogs.closeMage.quit'), ui('dialogs.closeMage.keepInBackground')].join('|') &&
         conTrabajo.enfocado === ui('dialogs.closeMage.keepInBackground') &&
         conTrabajo.recordar &&
         conTrabajo.cerrado &&
@@ -8925,11 +8942,11 @@ const CHECKS = [
         // que no hay nada listo y la guarda rechaza instalar.
         principal.kind !== 'ready' &&
         /No hay ninguna actualizacion lista/.test(guarda) &&
-        alAbrir.titulo === 'Mage 9.9.9 está lista para instalarse' &&
+        alAbrir.titulo === ui('dialogs.updateReady.title', { version: '9.9.9' }) &&
         alAbrir.notas.includes('Nota de prueba de verify:gui') &&
         alAbrir.enfocado === ui('dialogs.updateReady.restartNow') &&
         trasMasTarde.indicador === 1 &&
-        trasMasTarde.texto === '9.9.9 lista · Reiniciar' &&
+        trasMasTarde.texto === ui('app.statusBar.updateReady', { version: '9.9.9' }) &&
         reabre &&
         alLimpiar === 0;
       return { ok, detail: JSON.stringify({ principal, guarda, alAbrir, trasMasTarde, reabre, alLimpiar }) };
@@ -8948,7 +8965,7 @@ const CHECKS = [
       await page.evaluate((path) => {
         window.__mageDev.notify({
           level: 'warning',
-          title: 'Worktree conservado: tiene cambios sin confirmar',
+          title: window.__mageDev.t('notifications.worktree.keptTitle', { reason: window.__mageDev.t('notifications.worktree.reasonDirty') }),
           body: path,
           source: 'worktree',
           dedupeKey: `worktree-kept:${path}`,
@@ -8985,7 +9002,7 @@ const CHECKS = [
       const ok =
         medido.nivel === 'warning' &&
         medido.region === 'status' &&
-        medido.titulo === 'Worktree conservado: tiene cambios sin confirmar' &&
+        medido.titulo === ui('notifications.worktree.keptTitle', { reason: ui('notifications.worktree.reasonDirty') }) &&
         JSON.stringify(medido.botones) === JSON.stringify([ui('notifications.worktree.openFolder'), ui('notifications.worktree.copyPath'), ui('notifications.toasts.dismiss')]) &&
         medido.rutaEnTitle &&
         medido.rutaRecortada &&
@@ -11147,7 +11164,7 @@ async function medirSeccionDeConfianza(page, folder) {
 
   const listada = await page.getByTitle(folder).isVisible().catch(() => false);
   if (listada) {
-    await page.getByRole('button', { name: `Retirar la confianza de ${folder}` }).click();
+    await page.getByRole('button', { name: ui('settings.trustedFolders.revokeAria', { folder }) }).click();
     await page.waitForTimeout(CONFIG.settleMs);
   }
   const trasRetirar = await page.evaluate(() => window.__mageDev.store.getState().settings.trustedFolders.length);
@@ -11256,10 +11273,6 @@ async function pickDropdownOption(page, ariaLabel, pattern) {
   return match;
 }
 
-function escapeRegExp(text) {
-  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
 // Etiqueta de la pestaña que tiene el foco ('' si el foco no esta en una).
 async function focusedTabLabel(page) {
   return page.evaluate(() => {
@@ -11284,7 +11297,7 @@ async function measureAgyProfileLinks(page, userDataDir) {
   await campo.fill(AGY_VG_LINK);
   await editor.getByRole('button', { name: ui('settings.agyLinks.link'), exact: true }).click();
   const guardada = await waitForFile(ajustes, (t) => (JSON.parse(t).agyLinkedPaths ?? []).includes(AGY_VG_LINK));
-  await editor.getByRole('button', { name: `Dejar de enlazar ${AGY_VG_LINK}`, exact: true }).click();
+  await editor.getByRole('button', { name: ui('settings.agyLinks.unlinkAria', { path: AGY_VG_LINK }), exact: true }).click();
   const quitada = await waitForFile(ajustes, (t) => !(JSON.parse(t).agyLinkedPaths ?? []).includes(AGY_VG_LINK));
   const ok = error === 1 && guardada !== null && quitada !== null;
   return { ok, detail: `error con ../fuera=${error} guardada=${guardada !== null} quitada=${quitada !== null}` };
@@ -12166,7 +12179,7 @@ async function openTemporaryConversationConDialogo(page) {
   await page.locator(`button[aria-label="${cssAttr(ui('tabs.bar.newLabel'))}"]`).first().click({ button: 'right' });
   await page.locator(NEW_TAB_DIALOG).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
   await page.getByRole('button', { name: ui('dialogs.newTab.scratchFolder'), exact: true }).click();
-  await page.getByRole('button', { name: /Abrir pestaña|Abriendo/ }).click();
+  await page.getByRole('button', { name: openTabButtonName() }).click();
   await page.locator(MODAL).first().waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
 }
 
@@ -12524,14 +12537,15 @@ async function verifyMigrationWithLogin(page) {
   try {
     await openTemporaryConversation(page);
     const tabId = await seedMigrationTarget(page);
-    const other = page.getByRole('group', { name: ui('accounts.switcher.groupAria'), exact: true }).getByRole('button', { name: /^Cuenta vg-migracion,/ });
+    const other = page.getByRole('group', { name: ui('accounts.switcher.groupAria'), exact: true }).getByRole('button', { name: new RegExp(`^${escapeRegExp(`${uiSegment('accounts.switcher.accountAria', 0)} vg-migracion${uiSegment('accounts.switcher.accountAria', 1)}`)}`) });
     if ((await other.count()) !== 1) throw new Error('Destino controlado de migración ambiguo');
     await other.click();
     const dialog = page.locator('[data-account-switch-dialog="true"]');
     await dialog.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
     const buttons = await dialog.locator('button').allTextContents();
-    const migration = /Compartida: se reanuda con .+\. Privada: se mueve a /.test((await dialog.textContent()) ?? '');
-    await dialog.getByRole('button', { name: /^Abrir un chat nuevo en / }).click();
+    const noteKey = 'accounts.switch.note.sameProvider';
+    const migration = new RegExp(`${escapeRegExp(uiSegment(noteKey, 0))} .+${escapeRegExp(uiSegment(noteKey, 1))} `).test((await dialog.textContent()) ?? '');
+    await dialog.getByRole('button', { name: uiStartsWith('accounts.switch.newChat') }).click();
     await dialog.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
     const measured = await page.evaluate((id) => {
       const s = window.__mageDev.store.getState();
@@ -13336,7 +13350,7 @@ async function startSecondInstance({ profile = fs.mkdtempSync(path.join(os.tmpdi
 const D19_MAGE_SESSION_ID = 'd19d19d1-9999-4999-8999-d19d19d19d19';
 // Lo que guardó 0.1.2 en el workspace: un UUID de Mage que no es de ninguna conversación de la cuenta.
 const D19_ORPHAN_ID = 'd19aaaaa-0000-4000-8000-0000000000d1';
-const D19_MISSING_NOTICE = 'No se encontró esta conversación de Codex. Ábrela desde el historial de la cuenta.';
+const d19MissingNotice = () => ui('chat.load.missing', { provider: 'Codex' });
 
 // Perfil aislado propio (fuera del de la tanda) con el asistente hecho, MCP falso y una cuenta de Codex con un rollout
 // sintético (`seedProviderHistory`, la misma forma que lee `adaptCodexLine`). Sin datos del usuario ni CLI.
@@ -13372,7 +13386,7 @@ function readRestoredTab(page, tabId) {
       faltaConversacion: s.missingConversationByChat[id] ?? null,
       aviso: [...document.querySelectorAll('[role="status"]')].some((n) => n.textContent?.trim() === notice),
     };
-  }, { id: tabId, notice: D19_MISSING_NOTICE });
+  }, { id: tabId, notice: d19MissingNotice() });
 }
 
 async function waitForCondition(condition, timeoutMs) {
@@ -13763,11 +13777,11 @@ async function measureClaudeConnectorGroup(page, { userDataDir }, group) {
       const cuenta = await group.getAttribute('data-mcp-connector-group');
       const conector = group.locator(`[data-mcp-connector="${FAKE_MCP_CONNECTOR_NAME}"]`);
       const hayConector = (await conector.count()) === 1;
-      const conectar = hayConector ? await conector.getByRole('button', { name: /^Autenticar / }).count() : 0;
+      const conectar = hayConector ? await conector.getByRole('button', { name: uiStartsWith('mcp.auth.buttonAria') }).count() : 0;
       const fecha = await group.locator('[data-mcp-checked-at]').innerText();
       const chrome = await group.locator('[data-mcp-connector="Claude in Chrome"]').innerText();
       const codex = await page.locator('[data-mcp-codex-apps]').innerText();
-      const interruptor = group.getByRole('checkbox', { name: /^Usar los conectores de claude\.ai en / });
+      const interruptor = group.getByRole('checkbox', { name: uiStartsWith('mcp.connectors.claudeAiToggleAria') });
       await interruptor.uncheck();
       const ajustes = path.join(userDataDir, 'app-settings.json');
       const apagado = await waitForFile(ajustes, (t) => (JSON.parse(t).claudeAiConnectorsOff ?? []).includes(cuenta));
