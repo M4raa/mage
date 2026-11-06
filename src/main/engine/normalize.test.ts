@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { localized } from '@shared/i18n/localizedText';
 import { normalizeRawEvent } from './normalize';
 
 // Lo que pasa DURANTE un turno: deltas de pensamiento y de texto, texto del asistente, peticiones
@@ -230,6 +231,32 @@ describe('normalizeRawEvent: el turno', () => {
     expect(normalizeRawEvent(raw)).toEqual([
       { kind: 'result', result: { isError: true, subtype: 'error_max_turns', numTurns: null } },
     ]);
+  });
+
+  const apiErrorRaw = (isApiError: boolean) => ({
+    type: 'assistant', error: 'authentication_failed', is_api_error_message: isApiError, api_error_status: 401,
+    message: { model: '<synthetic>', content: [{ type: 'text', text: 'Invalid API key · Fix external API key' }] },
+  });
+
+  it('normalizeRawEvent_assistantApiError_emiteErrorConElTexto', () => {
+    const events = normalizeRawEvent(apiErrorRaw(true));
+
+    expect(events).toEqual([{ kind: 'error', localized: localized('events.cli.apiError', { detail: 'Invalid API key · Fix external API key' }) }]);
+  });
+
+  it('normalizeRawEvent_assistantConIsApiErrorFalse_sigueSiendoTexto', () => {
+    const events = normalizeRawEvent(apiErrorRaw(false));
+
+    // El modelo `<synthetic>` ya emite ademas `local_command_output` (comportamiento previo): lo que importa es que NO sea `error`.
+    const kinds = events.map((e) => e.kind);
+    expect(kinds).toContain('assistant_text');
+    expect(kinds).not.toContain('error');
+  });
+
+  it('normalizeRawEvent_resultSuccessConIsError_marcaError', () => {
+    const [event] = normalizeRawEvent({ type: 'result', subtype: 'success', is_error: true, result: 'Invalid API key' });
+
+    expect(event?.kind === 'result' && event.result.isError).toBe(true);
   });
 
   it('normalize_unknownType_returnsEmpty', () => {

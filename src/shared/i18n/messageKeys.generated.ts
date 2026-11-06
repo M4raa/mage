@@ -989,6 +989,7 @@ export interface MessageValues {
   readonly "events.agy.stepFailedTool": { readonly "index": string | number; readonly "tool": string | number };
   readonly "events.agy.turnFailed": { readonly "detail": string | number };
   readonly "events.agy.turnFailedStatus": { readonly "status": string | number };
+  readonly "events.cli.apiError": { readonly "detail": string | number };
   readonly "events.cli.controlRejected": { readonly "detail": string | number };
   readonly "events.cli.unparseableEvent": { readonly "detail": string | number };
   readonly "events.codex.error": { readonly "detail": string | number };

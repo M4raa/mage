@@ -9,6 +9,8 @@ describe('renderEvent', () => {
     [{ kind: 'stream_delta', text: 'hola' }, 'hola'],
     [{ kind: 'tool_use', tool: { toolName: 'Bash' } }, '\n[herramienta: Bash]\n'],
     [{ kind: 'result', result: { subtype: 'success' } }, '\n[fin del turno: success]\n'],
+    [{ kind: 'result', result: { subtype: 'success', isError: true } }, '\n[fin del turno: error]\n'],
+    [{ kind: 'result', result: { subtype: 'success', isError: false } }, '\n[fin del turno: success]\n'],
     [{ kind: 'error', message: 'roto' }, '[error] roto\n'],
     [{ kind: 'notice', text: 'ojo' }, '[aviso] ojo\n'],
     [{ kind: 'queue_changed', queue: [{ id: 'a' }, { id: 'b' }] }, '[cola: 2]\n'],

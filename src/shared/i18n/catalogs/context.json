@@ -853,6 +853,7 @@
   "events.agy.stepFailedTool": { "description": "Error. Línea en el hilo de la conversación.", "usage": "src/main/engine/agyNormalize.ts:356", "variables": {"index":"string","tool":"string"} },
   "events.agy.turnFailed": { "description": "Error. Línea en el hilo de la conversación.", "usage": "src/main/engine/agyNormalize.ts:300", "variables": {"detail":"string"} },
   "events.agy.turnFailedStatus": { "description": "Error. Línea en el hilo de la conversación.", "usage": "src/main/engine/agyNormalize.ts:300", "variables": {"status":"string"} },
+  "events.cli.apiError": { "description": "Error. Línea en el hilo de la conversación.", "usage": "src/main/engine/normalize.ts:265", "variables": {"detail":"string"} },
   "events.cli.controlRejected": { "description": "Error. Línea en el hilo de la conversación.", "usage": "src/main/engine/agentSession.ts:575", "variables": {"detail":"string"} },
   "events.cli.unparseableEvent": { "description": "Error. Línea en el hilo de la conversación.", "usage": "src/main/engine/agentSession.ts:481", "variables": {"detail":"string"} },
   "events.codex.error": { "description": "Error. Línea en el hilo de la conversación.", "usage": "src/main/engine/codexProtocol.ts:151", "variables": {"detail":"string"} },
