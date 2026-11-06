@@ -203,6 +203,7 @@ import { AccountService } from './accounts/accountService';
 import { ConversationsService, withHostOwner, withLastAccount, type ConversationsDeps } from './conversations/conversationsService';
 import { CodexHistoryService } from './conversations/codexHistory';
 import { deleteCodexConversation } from './conversations/codexDeletion';
+import { forgetDeletedConversation } from './conversations/deletedConversation';
 import { updateLegacyCodexThread } from './conversations/codexLegacyUpdate';
 import { ConversationMigrationService } from './conversations/conversationMigration';
 import { createMigrationEndpoints } from './conversations/migrationEndpoints';
@@ -3568,16 +3569,8 @@ function registerTranscriptIpc2(deps: IpcDependencies): void {
     // Codex borra por su app-server (y primero los hijos de review); el resto, por los ficheros de Claude.
     if (codex === null) conversationAdminService.deleteConversation(params);
     else await deleteCodexConversation(codexDeletionDeps(), codex.home, params.sessionId);
-    forgetDeletedConversation(params.sessionId);
+    forgetDeletedConversation({ index: getConversationIndexStore(), prCatalog: getPrCatalogStore(), thinking: getThinkingStore(), rewindState: getRewindState() }, params.sessionId);
   });
-}
-
-// Lo que Mage guarda de una conversación borrada: su entrada del indice (2.1; sin esto el fichero crece para siempre con
-// preferencias de conversaciones que ya no existen) y sus pensamientos (si no, queda un `.jsonl` huerfano por cada una).
-function forgetDeletedConversation(sessionId: string): void {
-  getConversationIndexStore().forgetConversation(sessionId);
-  getPrCatalogStore().forgetConversation(sessionId);
-  getThinkingStore().forget(sessionId);
 }
 
 function codexDeletionDeps(): Parameters<typeof deleteCodexConversation>[0] {
