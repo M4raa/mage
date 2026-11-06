@@ -72,6 +72,10 @@ const privateLineRegExp = () => new RegExp(`(?:${[
   escapeRegExp(uiPlural('accounts.delete.privateCount', { count: 1 })),
   escapeRegExp(uiPlural('accounts.delete.privateCount', { count: 2 })).replace('2', '\\d+'),
 ].join('|')})`);
+// Indicador de uso de la barra de estado («5h 12% · sem 40% · reset …»): el inicio fijo del mensaje hasta la 2ª variable.
+const statusBarWindowsRegExp = () => new RegExp(`${escapeRegExp(uiSegment('app.statusBar.windows', 0))}\\s*\\d+${escapeRegExp(uiSegment('app.statusBar.windows', 1))}`);
+// Decimal con un dígito, con el separador del idioma de la tanda (la app formatea igual con Intl).
+const localizedDecimal = (value) => new Intl.NumberFormat(getUiLanguage(), { minimumFractionDigits: 1, maximumFractionDigits: 1, useGrouping: false }).format(value);
 // Regex de varios textos de la interfaz (alternativas), cada uno escapado. `^` delante si `anchored`.
 const uiAnyOf = (texts, anchored = false) => new RegExp(`${anchored ? '^' : ''}(?:${texts.map(escapeRegExp).join('|')})`);
 // Regex de «empieza por el tramo fijo inicial del mensaje» (p. ej. `Desinstalar {name}` -> /^Desinstalar(\s|$)/).
@@ -412,7 +416,7 @@ const CHECKS = [
         measured.bordeUtil - measured.derecha <= 12 &&
         measured.alto >= 16 &&
         // Dice que se va al navegador ANTES de pulsarlo, no despues.
-        /navegador/i.test(measured.etiqueta) &&
+        measured.etiqueta === ui('app.titleBar.bugLabel') &&
         /GitHub/i.test(measured.tip);
       return { ok, detail: `bug=${JSON.stringify(measured)}` };
     },
@@ -456,7 +460,7 @@ const CHECKS = [
         measured.mismaAltura &&
         measured.alto >= 16 &&
         // Dice que se va al navegador ANTES de pulsarlo, igual que el de fallo.
-        /navegador/i.test(measured.etiquetaIdea) &&
+        measured.etiquetaIdea === ui('app.titleBar.ideaLabel') &&
         /GitHub/i.test(measured.tipIdea);
       return { ok, detail: `idea=${JSON.stringify(measured)}` };
     },
@@ -1327,7 +1331,7 @@ const CHECKS = [
     name: 'B.2: «Acerca de» enseña los avisos de terceros con su copyright',
     async run(page) {
       await openSettingsDialog(page);
-      await openSection(page, /Acerca de/);
+      await openSection(page, uiRegExp('settings.sections.about.nav'));
       const medido = await waitForNotices(page);
       const closed = await closeDialog(page);
       const ok =
@@ -4275,7 +4279,7 @@ const CHECKS = [
     // o bien trae las DOS ventanas con su reset (5 h y 7 d). Nunca un 0 % de relleno.
     name: '22: popover «Uso general» con 5 h y 7 d y su reset por cuenta',
     async run(page) {
-      const disparador = page.locator('span[tabindex="0"]', { hasText: /5h \d+% · sem/ }).first();
+      const disparador = page.locator('span[tabindex="0"]', { hasText: statusBarWindowsRegExp() }).first();
       if ((await disparador.count()) === 0) return { ok: false, detail: 'sin indicador de uso en la barra' };
       await disparador.hover();
       await page.waitForTimeout(CONFIG.settleMs);
@@ -8289,8 +8293,9 @@ const CHECKS = [
     // justo lo que se pidio evitar ("al lado del estado del servidor").
     name: 'Barra de estado: la version de la app, junto al estado del servicio',
     async run(page) {
-      const medido = await page.evaluate(() => {
-        const estado = document.querySelector('[aria-label^="Estado del servicio"]');
+      const serviceLabelPrefix = cssAttr(uiPrefix('app.statusBar.serviceLabel'));
+      const medido = await page.evaluate((serviceLabelPrefix) => {
+        const estado = document.querySelector(`[aria-label^="${serviceLabelPrefix}"]`);
         const barra = estado?.closest('div[class*="border-t"]') ?? null;
         const textos = barra === null ? [] : [...barra.querySelectorAll('span')].map((n) => (n.textContent ?? '').trim());
         const version = textos.find((t) => /^v\d+\.\d+\.\d+/.test(t)) ?? null;
@@ -8306,7 +8311,7 @@ const CHECKS = [
               ? null
               : Math.round(nodoVersion.getBoundingClientRect().left - estado.getBoundingClientRect().right),
         };
-      });
+      }, serviceLabelPrefix);
       const ok =
         medido.version !== null &&
         medido.xVersion !== null &&
@@ -9332,7 +9337,7 @@ const CHECKS = [
         const barra = page.locator('[data-status-size]');
         await barra.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
         const texto = ((await barra.textContent()) ?? '').trim();
-        return { ok: texto.includes('3,7 MB'), detail: `barra de estado=${JSON.stringify(texto)}` };
+        return { ok: texto.includes(`${localizedDecimal(3.7)} MB`), detail: `barra de estado=${JSON.stringify(texto)}` };
       } finally {
         await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
         await page.waitForTimeout(CONFIG.settleMs);
