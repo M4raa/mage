@@ -77,6 +77,7 @@ import {
   UPDATE_PROMPT_CHANNEL,
   UPDATE_STATE_CHANNEL,
   CONVERSATION_LOCK_LOST_CHANNEL,
+  isPermissionMode,
 } from '@shared/ipc';
 import type {
   ModelCatalogChange,
@@ -251,6 +252,7 @@ import { readActiveBranchEntries } from './transcripts/activeBranchReader';
 import { canControlSession } from './coordination/sessionAccess';
 import type { ConversationSnapshot } from '@shared/coordination';
 import { AdoptableSessions } from './host/adoptableSessions';
+import { HostOwnership } from './host/hostOwnership';
 import { closeFromWindow as closeSessionFromWindow, toAttachTarget, WindowAttachments } from './host/windowAttachments';
 import { readHostMode, startLocalHost } from './host/hostBootstrap';
 import { cliRelayArgs, cliRelayPlan } from './host/cliRelay';
@@ -2844,6 +2846,12 @@ function launchSession(params: CreateSessionParams, sender: Electron.WebContents
 
 // U17: sesiones del host (sin ventana) que la ventana principal puede adoptar, y quién sigue cuál.
 const adoptableSessions = new AdoptableSessions();
+// Cuenta dueña y modelo de cada sesión del host, guardados en el índice para que la ventana nunca la abra con otra cuenta.
+const hostOwnership = new HostOwnership({
+  coordinator: sessionCoordinator,
+  index: { recordHostSession: (id, record) => getConversationIndexStore().recordHostSession(id, record) },
+  log: mainLog,
+});
 // D-M6: credencial por sesion que identifica al hijo ante `mage mcp`.
 const mcpCallers = new McpCallers({ randomBytes, isLive: (id) => sessionCoordinator.ownerOf(id) !== undefined });
 // Navegador de Mage (F11b): uno por sesión viva (D-S1), en la ventana de su panel o, sin panel, en la de aparcamiento (D-S3, Z01).
@@ -2881,6 +2889,11 @@ function launchHostSession(params: CreateSessionParams, origin: AdoptableSession
     origin, createdBy,
   };
   adoptableSessions.add(entry);
+  hostOwnership.watch(sessionId, {
+    accountId: params.accountDir, provider: params.provider, model: params.model,
+    ...(params.effort === undefined ? {} : { effort: params.effort }),
+    ...(params.permissionMode === undefined ? {} : { permissionMode: params.permissionMode }),
+  });
   const ids = liveIdsOf(sessionId);
   if (ids !== null) liveMainWindow()?.webContents.send(SESSION_ADOPTABLE_CHANNEL, { ...entry, ...ids });
   return sessionId;
@@ -3065,10 +3078,10 @@ function registerSessionIpc1(): void {
     validateAttachments,
     listAdoptable: () => adoptableSessions.list(liveIdsOf),
     attachWindow: (event, sessionId) => attachWindowToHostSession(event.sender, sessionId),
-    // D-M11: el registro de delegaciones es un suscriptor más del coordinador; no cuenta como cliente que mantenga viva la sesión.
+    // D-M11: el registro de delegaciones es un suscriptor más del coordinador; no cuenta como cliente que mantenga viva la sesión; tampoco la marca de la cuenta dueña.
     closeFromWindow: (event, sessionId) => closeSessionFromWindow({
       attachments: windowAttachments,
-      coordinator: { subscriberCount: (id) => sessionCoordinator.subscriberCount(id) - delegationLog.watchCount(id), close: (id) => sessionCoordinator.close(id) },
+      coordinator: { subscriberCount: (id) => sessionCoordinator.subscriberCount(id) - delegationLog.watchCount(id) - hostOwnership.watchCount(id), close: (id) => sessionCoordinator.close(id) },
     }, event.sender.id, sessionId),
     // Solo la ventana que creo la sesion y la principal le dan ordenes (F2.6).
     canControl: (senderId, sessionId) => canControlSession({
@@ -3536,7 +3549,10 @@ function registerTranscriptIpc2(deps: IpcDependencies): void {
     if (!isManagedAccountConfigDir(accountDir)) {
       throw new Error(`Cuenta no valida para listar conversaciones: ${accountDir}`);
     }
-    return withLastAccount(conversationsService.listConversations(accountDir), (id) => getConversationIndexStore().loadPrefs(id)?.accountId);
+    return withLastAccount(conversationsService.listConversations(accountDir), (id) => {
+      const prefs = getConversationIndexStore().loadPrefs(id);
+      return prefs?.hostOwnerAccountId ?? prefs?.accountId;
+    });
   });
   ipcMain.handle(IpcChannel.ConversationsDelete, async (_e, params: DeleteConversationParams): Promise<void> => {
     requireSafeConversation(params.accountDir, params.sessionId);
@@ -4338,7 +4354,15 @@ function hostControlDeps(): HostControlDeps {
     isTrusted: isFolderTrusted,
     launch: (params) => launchHostSession(params, 'terminal'),
     conversationIdOf: (sessionId) => sessionCoordinator.conversationIdOf(sessionId),
-    options: sessionManager,
+    // Lo que se cambia desde la terminal también queda en el índice (la ventana reabre con ello).
+    options: {
+      setModel: (id, model) => { sessionManager.setModel(id, model); hostOwnership.updateOptions(id, { model }); },
+      setEffort: (id, effort) => { sessionManager.setEffort(id, effort); hostOwnership.updateOptions(id, { effort }); },
+      setPermissionMode: (id, mode) => {
+        sessionManager.setPermissionMode(id, mode);
+        if (isPermissionMode(mode)) hostOwnership.updateOptions(id, { permissionMode: mode });
+      },
+    },
     createAccount: (params) => getProviderAccounts().create(params),
     requestQuit: () => { setTimeout(() => app.quit(), HOST_STOP_DELAY_MS); },
   };
