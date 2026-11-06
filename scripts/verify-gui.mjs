@@ -8820,6 +8820,40 @@ const CHECKS = [
     },
   },
   {
+    // Notas de version (DEVOLUCION-077): la seccion 0.1.4 sale en el idioma de la interfaz. En «en» lleva
+    // el subtitulo «Added» y la primera viñeta inglesa; en «es», «Añadido» y la castellana. Cierra la
+    // pestaña al acabar (error n.º 6 de la skill).
+    name: 'Notas de versión: la sección 0.1.4 sale en el idioma de la interfaz',
+    async run(page) {
+      const english = getUiLanguage() === 'en';
+      const expected = english
+        ? { heading: 'Added', bullet: 'Rewind, Retry and Branch.' }
+        : { heading: 'Añadido', bullet: 'Rebobinar, Reintentar y Divergir.' };
+      await openSettingsDialog(page);
+      await openSection(page, uiRegExp('settings.sections.releaseNotes.nav'));
+      await page.getByRole('button', { name: ui('settings.releaseNotes.open'), exact: true }).click();
+      await waitForModalsGone(page);
+      await page.locator(RELEASE_NOTES_PANE).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+      await page.locator(`${RELEASE_NOTES_PANE} nav button`).filter({ hasText: '0.1.4' }).first().click();
+      await page.waitForTimeout(CONFIG.settleMs);
+      const medido = await page.evaluate((pane) => {
+        const article = document.querySelector(`${pane} article`);
+        return {
+          titulo: article?.querySelector('h2')?.textContent?.trim() ?? null,
+          subtitulos: [...(article?.querySelectorAll('[data-md-heading]') ?? [])].map((h) => h.textContent?.trim() ?? ''),
+          texto: article?.textContent ?? '',
+        };
+      }, RELEASE_NOTES_PANE);
+      const cerrado = await closeReleaseNotesTab(page);
+      const ok =
+        medido.titulo === 'Mage 0.1.4' &&
+        medido.subtitulos.includes(expected.heading) &&
+        medido.texto.includes(expected.bullet) &&
+        cerrado.paneles === 0;
+      return { ok, detail: JSON.stringify({ idioma: english ? 'en' : 'es', esperado: expected, titulo: medido.titulo, subtitulos: medido.subtitulos, cerrado }) };
+    },
+  },
+  {
     // Grupo F: la apertura AUTOMATICA, que es el camino real. Se simula una actualizacion desde la 0.1.0
     // guardando esa version como la ultima vista y recargando el renderer (el arranque vuelve a decidir).
     // Se exige que la pestaña este abierta al montar, sin prompt, en la version instalada, y que EN DISCO
