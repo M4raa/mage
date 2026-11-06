@@ -40,6 +40,13 @@ describe('planAccountSwitch', () => {
     expect(planAccountSwitch(ctx({ activeTab: { accountId: A }, liveSessionId: 'live' }))).toBe('ask');
   });
 
+  it('planAccountSwitch_pinnedTabWithConversation_switchOnly', () => {
+    const activeTab = { accountId: A, resumeSessionId: 'r', accountPinned: true };
+
+    expect(planAccountSwitch(ctx({ activeTab, status: 'idle' }))).toBe('switch');
+    expect(planAccountSwitch(ctx({ activeTab: { accountId: A, resumeSessionId: 'r' }, status: 'idle' }))).toBe('ask');
+  });
+
   it('planAccountSwitch_chatNuevoSinBloques_reassign', () => {
     expect(planAccountSwitch(ctx({ activeTab: { accountId: A } }))).toBe('reassign');
   });

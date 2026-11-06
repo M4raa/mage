@@ -430,6 +430,7 @@ export interface MessageValues {
   readonly "chat.git.switchBranchFailed": never;
   readonly "chat.git.sync": { readonly "ahead": string | number; readonly "behind": string | number; readonly "upstream": string | number };
   readonly "chat.hint.retry": never;
+  readonly "chat.hostOwner.accountMissing": { readonly "account": string | number };
   readonly "chat.info.folderTitle": { readonly "cwd": string | number };
   readonly "chat.info.private": never;
   readonly "chat.info.privateTitle": never;

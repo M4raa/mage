@@ -13,7 +13,7 @@ export type AccountSwitchPlan = 'switch' | 'switch-and-new-chat' | 'ask' | 'reas
 
 export interface AccountSwitchContext {
   // La pestaña que se esta mirando; undefined si no hay ninguna.
-  readonly activeTab: { readonly accountId: string; readonly resumeSessionId?: string } | undefined;
+  readonly activeTab: { readonly accountId: string; readonly resumeSessionId?: string; readonly accountPinned?: boolean } | undefined;
   readonly status: ChatStatus | undefined;
   readonly liveSessionId: string | undefined;
   readonly destAccountId: string;
@@ -26,6 +26,8 @@ export interface AccountSwitchContext {
 export function planAccountSwitch(ctx: AccountSwitchContext): AccountSwitchPlan {
   const tab = ctx.activeTab;
   if (tab === undefined || tab.accountId === ctx.destAccountId || !ctx.destLoggedIn) return 'switch';
+  // Una conversación creada fuera de la ventana se queda con su cuenta: cambiar de cuenta no se la lleva.
+  if (tab.accountPinned === true) return 'switch';
   if (ctx.status === 'streaming' || ctx.status === 'needs_permission') return 'switch-and-new-chat';
   const migratable = ctx.liveSessionId !== undefined || tab.resumeSessionId !== undefined;
   if (migratable) return 'ask';

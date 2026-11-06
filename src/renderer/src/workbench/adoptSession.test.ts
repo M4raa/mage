@@ -3,7 +3,7 @@ import type { ConversationSnapshot, CoordinatedState } from '@shared/coordinatio
 import type { AdoptableSession } from '@shared/ipc';
 import type { PermissionRequest } from '@shared/events';
 import type { ElicitationRequest } from '@shared/elicitation';
-import { adoptedTab, adoptionTarget, chatStatusOf, creatorTabOf, snapshotEvents } from './adoptSession';
+import { adoptedTab, adoptionTarget, chatStatusOf, creatorTabOf, pinnedAccountMissing, snapshotEvents } from './adoptSession';
 import type { Tab } from './types';
 
 const ACCOUNT = '/home/u/.claude';
@@ -54,7 +54,7 @@ describe('adoptedTab', () => {
   it('adoptedTab_fullSession_mapsAllFields', () => {
     const result = adoptedTab(session({ effort: 'high', permissionMode: 'plan', configDir: '/priv' }), ids);
     expect(result).toEqual({ id: 'tab7', accountId: ACCOUNT, accountAlias: 'principal', cwd: '/proj/app', model: 'sonnet', provider: 'claude',
-      title: 'app', privacy: 'shared', resolvedConfigDir: '/priv', resumeSessionId: 'n1', effort: 'high', permissionMode: 'plan', createdAtMs: 1234, worktreeOff: true });
+      title: 'app', privacy: 'shared', accountPinned: true, resolvedConfigDir: '/priv', resumeSessionId: 'n1', effort: 'high', permissionMode: 'plan', createdAtMs: 1234, worktreeOff: true });
   });
 
   it('adoptedTab_nullNativeId_noResumeSessionId', () => {
@@ -123,5 +123,21 @@ describe('snapshotEvents', () => {
 
   it('snapshotEvents_empty_returnsEmpty', () => {
     expect(snapshotEvents(snapshot())).toEqual([]);
+  });
+});
+
+describe('pinnedAccountMissing', () => {
+  const accounts = [{ id: 'a' }];
+
+  it('pinnedAccountMissing_pinnedAndAbsent_true', () => {
+    expect(pinnedAccountMissing({ accountPinned: true, accountId: 'b' }, accounts)).toBe(true);
+  });
+
+  it('pinnedAccountMissing_pinnedAndPresent_false', () => {
+    expect(pinnedAccountMissing({ accountPinned: true, accountId: 'a' }, accounts)).toBe(false);
+  });
+
+  it('pinnedAccountMissing_notPinnedAndAbsent_false', () => {
+    expect(pinnedAccountMissing({ accountId: 'b' }, accounts)).toBe(false);
   });
 });

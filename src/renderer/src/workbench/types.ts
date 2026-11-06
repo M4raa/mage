@@ -60,6 +60,9 @@ export interface Tab {
   readonly title: string;
   // #29: la sesión que la encargó por el MCP. No se persiste: tras reiniciar, la creadora ya no está viva.
   readonly createdBy?: { readonly conversationId: string; readonly sessionId: string };
+  // Conversación creada fuera de la ventana (terminal o MCP): su cuenta es la de su sesión y no cambia al abrirla
+  // del historial ni al cambiar de cuenta (facturación). Se persiste.
+  readonly accountPinned?: boolean;
   // U26: la delegada preguntó a su creadora con `mage_ask_creator` y espera respuesta. No se persiste.
   readonly awaitingCreator?: boolean;
   readonly projectId?: string;

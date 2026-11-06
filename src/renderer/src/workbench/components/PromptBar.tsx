@@ -5,6 +5,7 @@ import { isPermissionMode } from '@shared/ipc';
 import type { EditorInfo } from '@shared/ipc';
 import { AGY_EFFORT_LEVELS, AGY_PROVIDER_ID, CODEX_PROVIDER_ID, isAutoApprovedProvider, isUnverifiedProvider, runsOnMageRuntime } from '@shared/providers';
 import { useWorkbenchStore } from '../workbenchStore';
+import { pinnedAccountMissing } from '../adoptSession';
 import { displayModelId, modelOptionsForProvider } from '../models';
 import { describeAttachment, insertImageTokens, reconcileImageTokens, removeImageToken } from '@shared/imageRefs';
 import { motion } from 'motion/react';
@@ -177,6 +178,8 @@ export function PromptBar(): React.JSX.Element {
   // #55 (F2.8): la conversación la tiene otra instancia de Mage; aquí se lee pero no se escribe.
   const lock = useWorkbenchStore((s) => s.lockByChat[activeTabId]);
   const readOnlyLock = lock !== undefined && !lock.owner ? lock : null;
+  const accounts = useWorkbenchStore((s) => s.accounts);
+  const ownerMissing = activeTab !== undefined && pinnedAccountMissing(activeTab, accounts);
   const lockReclaimed = useWorkbenchStore((s) => s.lockReclaimedByChat[activeTabId] === true);
   const resolvedModel = useWorkbenchStore((s) => s.resolvedModelByChat[activeTabId] ?? null);
   // Modelos reales de la cuenta (P-026 2.4): el config dir EFECTIVO (el perfil privado tiene el suyo)
@@ -245,7 +248,7 @@ export function PromptBar(): React.JSX.Element {
   // Imagenes pegadas cuyo base64 aun se esta leyendo: cuentan para numerar el token del siguiente pegado.
   const pendingReadsRef = useRef(0);
 
-  const disabled = activeTabId.length === 0 || readOnlyLock !== null;
+  const disabled = activeTabId.length === 0 || readOnlyLock !== null || ownerMissing;
   const activeModel = activeTab?.model ?? '';
   const providerId = activeTab?.provider ?? 'claude';
   const customProviders = useWorkbenchStore((s) => s.settings.customProviders);
@@ -675,6 +678,7 @@ export function PromptBar(): React.JSX.Element {
       )}
 
       {readOnlyLock !== null && <ReadOnlyLockNotice tabId={activeTabId} profile={readOnlyLock.profile} orphan={readOnlyLock.orphan} />}
+      {ownerMissing && <div role="status" data-host-owner="missing" className="mb-[6px] flex items-center gap-[8px] rounded-[7px] border border-mg-warn-border bg-mg-warn-bg px-[10px] py-[5px] text-[11px] text-mg-warn-text">{t('chat.hostOwner.accountMissing', { account: activeTab.accountAlias })}</div>}
       {readOnlyLock === null && lockReclaimed && <ReclaimedLockNotice />}
 
       {preview !== null && (

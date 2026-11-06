@@ -428,6 +428,7 @@
   "chat.git.switchBranchFailed": "Could not switch branch",
   "chat.git.sync": "{ahead} ahead and {behind} behind {upstream}",
   "chat.hint.retry": "⟳ Retry",
+  "chat.hostOwner.accountMissing": "This conversation was created outside the window with the account {account}, which is no longer in Mage. It is read-only: it is not sent with another account.",
   "chat.info.folderTitle": "{cwd} · open the folder",
   "chat.info.private": "Private",
   "chat.info.privateTitle": "Private conversation: uses the account's mage-private profile",

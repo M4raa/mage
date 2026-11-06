@@ -41,6 +41,7 @@ export function adoptedTab(session: AdoptableSession, ids: AdoptedTabIds): Tab {
     provider: session.provider,
     title: ids.title,
     privacy: 'shared',
+    accountPinned: true,
     resolvedConfigDir: session.configDir,
     ...(session.createdBy === null ? {} : { createdBy: session.createdBy }),
     ...(session.nativeId === null ? {} : { resumeSessionId: session.nativeId }),
@@ -83,4 +84,10 @@ export function creatorTabOf(
   const { sessionId } = tab.createdBy;
   const creator = state.tabs.find((t) => state.sessionIdByChat[t.id] === sessionId);
   return creator === undefined ? null : { tabId: creator.id, title: creator.title };
+}
+
+// Pestaña de una conversación creada fuera de la ventana cuya cuenta ya no está en Mage: queda de solo lectura (no se
+// envía con otra cuenta, que cobraría a quien no es).
+export function pinnedAccountMissing(tab: Pick<Tab, 'accountPinned' | 'accountId'>, accounts: readonly { readonly id: string }[]): boolean {
+  return tab.accountPinned === true && !accounts.some((account) => account.id === tab.accountId);
 }
