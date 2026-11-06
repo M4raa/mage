@@ -104,6 +104,42 @@ describe('transcriptToBlocks', () => {
     ]);
   });
 
+  it('transcriptToBlocks_apiErrorMessage_errorBlockNotAgent', () => {
+    const raw = {
+      type: 'assistant',
+      isApiErrorMessage: true,
+      error: 'authentication_failed',
+      message: { role: 'assistant', model: '<synthetic>', content: [{ type: 'text', text: 'Invalid API key · Fix external API key' }] },
+    };
+
+    const blocks = transcriptToBlocks([entry('assistant', raw, 5)]);
+
+    expect(blocks).toEqual([{ kind: 'error', id: 'tb-5-0', message: 'Error de la API: Invalid API key · Fix external API key' }]);
+  });
+
+  it('transcriptToBlocks_rateLimitWithApiErrorFlag_stillSystemLine', () => {
+    const raw = {
+      type: 'assistant',
+      error: 'rate_limit',
+      isApiErrorMessage: true,
+      message: { role: 'assistant', content: [{ type: 'text', text: "You've hit your session limit · resets 3pm" }] },
+    };
+
+    const blocks = transcriptToBlocks([entry('assistant', raw, 4)]);
+
+    expect(blocks).toEqual([
+      { kind: 'system', id: 'tb-4-0', text: 'Límite de uso alcanzado', tip: "You've hit your session limit · resets 3pm" },
+    ]);
+  });
+
+  it('transcriptToBlocks_apiErrorFlagFalse_agentText', () => {
+    const raw = { type: 'assistant', isApiErrorMessage: false, message: { role: 'assistant', content: [{ type: 'text', text: 'hola' }] } };
+
+    const blocks = transcriptToBlocks([entry('assistant', raw, 6)]);
+
+    expect(blocks[0]).toEqual({ kind: 'agent', id: 'tb-6-0', runs: [{ code: false, text: 'hola' }], streaming: false });
+  });
+
   it('textoAsistente_generaBloqueAgentNoStreaming', () => {
     const blocks = transcriptToBlocks([assistantText('respuesta', 1)]);
 

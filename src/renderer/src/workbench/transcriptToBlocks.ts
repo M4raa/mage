@@ -174,6 +174,12 @@ function appendAssistant(entry: TranscriptEntry, blocks: Block[], toolIndexById:
     blocks.push({ kind: 'system', id: blockId(entry.index, 0), text: rateLimitLine(), ...(tip.length === 0 ? {} : { tip }) });
     return;
   }
+  // Error de la API (401, 500…): el CLI lo persiste como `assistant` sintético con `isApiErrorMessage: true`. No lo dijo
+  // el agente: se pinta como el mismo bloque de error que en vivo.
+  if (isRecord(entry.raw) && entry.raw.isApiErrorMessage === true) {
+    blocks.push({ kind: 'error', id: blockId(entry.index, 0), message: t('events.cli.apiError', { detail: assistantText(entry.raw).trim() }) });
+    return;
+  }
   let slot = 0;
   // Pensamiento (2.5). MEDIDO: el CLI persiste los bloques `thinking` con texto VACIO (solo su firma),
   // asi que al reanudar se puede decir "pensó" pero no QUE penso. Se pinta igualmente: esconderlo
