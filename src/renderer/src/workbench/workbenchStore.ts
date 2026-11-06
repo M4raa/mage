@@ -14,7 +14,7 @@ import { isPermissionMode, MAIN_WINDOW_ID, PERMISSION_MODES } from '@shared/ipc'
 import { RELEASE_NOTES_TAB_ID, releaseNotesDecision } from './releaseNotes';
 import type { AgyUsageSnapshot, UsageInfo } from '@shared/usage';
 import type { StatusInfo } from '@shared/status';
-import { applyAccentOverrides } from './accountView';
+import { aliasFromConfigDir, applyAccentOverrides } from './accountView';
 import { nextIndexForArrow } from './a11y/keyboardNav';
 import { canChangeCwd } from './cwdChange';
 import {
@@ -2275,7 +2275,7 @@ export function createWorkbenchStore(mage: MageClient) {
             ? {
                 tabs: s.tabs.map((t) =>
                   t.id === plan.tabId
-                    ? { ...t, accountId, accountAlias: account?.alias ?? accountId, resolvedConfigDir: item.configDir, ...(owner === undefined ? {} : { accountPinned: true }) }
+                    ? { ...t, accountId, accountAlias: account?.alias ?? aliasFromConfigDir(accountId), resolvedConfigDir: item.configDir, ...(owner === undefined ? {} : { accountPinned: true }) }
                     : t,
                 ),
               }
@@ -2297,7 +2297,7 @@ export function createWorkbenchStore(mage: MageClient) {
       // El modelo de Claude de la cuenta/índice no vale para otro CLI: se parte del suyo.
       const providerModel = item.providerId === undefined || item.providerId === 'claude' ? null
         : (get().settings.defaultModelByProvider[item.providerId] ?? providerFallbackModel(item.providerId, get().settings.customProviders));
-      const reopened = tabFromConversation({ id: nextTabId(), item, accountId, accountAlias: account?.alias ?? accountId,
+      const reopened = tabFromConversation({ id: nextTabId(), item, accountId, accountAlias: account?.alias ?? aliasFromConfigDir(accountId),
         prefs: providerModel === null ? prefs : { ...prefs, model: providerModel } });
       const project = get().settings.chatProjects.find((p) => p.sessionIds.includes(item.sessionId) || (p.cwd !== null && p.cwd === item.cwd));
       const tab = project === undefined ? reopened : { ...reopened, projectId: project.id };

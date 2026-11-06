@@ -2943,12 +2943,12 @@ describe('openConversation — dueña del host', () => {
   });
 
   it('openConversation_hostOwnedAccountMissing_readOnlyAndActiveUnchanged', async () => {
-    const { store, createSession } = hostStore({ hostOwnerAccountId: 'acc-borrada', accountId: 'acc-borrada', model: 'claude-haiku-4-5' });
+    const { store, createSession } = hostStore({ hostOwnerAccountId: 'C:\\x\\home\\.claude-x-inval', accountId: 'C:\\x\\home\\.claude-x-inval', model: 'claude-haiku-4-5' });
 
     await store.getState().openConversation(item(), 'acc-active');
 
     const opened = store.getState().tabs.find((t) => t.resumeSessionId === 'n-1');
-    expect(opened).toMatchObject({ accountId: 'acc-borrada', accountPinned: true });
+    expect(opened).toMatchObject({ accountId: 'C:\\x\\home\\.claude-x-inval', accountPinned: true, accountAlias: 'claude-x-inval' });
     expect(store.getState().activeAccountId).toBe('acc-active');
     await expect(store.getState().ensureSession(opened?.id ?? '')).rejects.toThrow(/solo lectura/);
     expect(createSession).not.toHaveBeenCalled();

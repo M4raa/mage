@@ -200,7 +200,7 @@ import { claudeSharedLaunch } from './config/mcpProviderTranslate';
 import { mergeServerLists, selectForTarget, type ResolvedMcpServer } from './config/mcpResolved';
 import { mcpFamilyOf } from '@shared/mcp';
 import { AccountService } from './accounts/accountService';
-import { ConversationsService, withLastAccount, type ConversationsDeps } from './conversations/conversationsService';
+import { ConversationsService, withHostOwner, withLastAccount, type ConversationsDeps } from './conversations/conversationsService';
 import { CodexHistoryService } from './conversations/codexHistory';
 import { deleteCodexConversation } from './conversations/codexDeletion';
 import { updateLegacyCodexThread } from './conversations/codexLegacyUpdate';
@@ -3549,10 +3549,11 @@ function registerTranscriptIpc2(deps: IpcDependencies): void {
     if (!isManagedAccountConfigDir(accountDir)) {
       throw new Error(`Cuenta no valida para listar conversaciones: ${accountDir}`);
     }
-    return withLastAccount(conversationsService.listConversations(accountDir), (id) => {
+    const listed = withLastAccount(conversationsService.listConversations(accountDir), (id) => {
       const prefs = getConversationIndexStore().loadPrefs(id);
       return prefs?.hostOwnerAccountId ?? prefs?.accountId;
     });
+    return withHostOwner(listed, (id) => getConversationIndexStore().loadPrefs(id)?.hostOwnerAccountId);
   });
   ipcMain.handle(IpcChannel.ConversationsDelete, async (_e, params: DeleteConversationParams): Promise<void> => {
     requireSafeConversation(params.accountDir, params.sessionId);

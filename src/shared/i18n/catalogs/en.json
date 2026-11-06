@@ -2199,6 +2199,7 @@
   "sidebar.projects.title": "PROJECTS",
   "sidebar.recent.title": "RECENT",
   "sidebar.row.moreActions": "More actions",
+  "sidebar.row.ownerMissing": "{account} (account removed)",
   "sidebar.row.readOnly": "Read only: open in another window",
   "sidebar.search.clear": "Clear search",
   "sidebar.search.label": "Search conversations",

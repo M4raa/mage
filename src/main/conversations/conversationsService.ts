@@ -29,6 +29,17 @@ export function withLastAccount(
   });
 }
 
+// Añade la cuenta dueña de las conversaciones creadas fuera de la ventana (la sabe el índice de Mage). Sin dato, igual.
+export function withHostOwner(
+  items: readonly ConversationSummary[],
+  ownerOf: (sessionId: string) => string | undefined,
+): ConversationSummary[] {
+  return items.map((item) => {
+    const hostOwnerAccountId = ownerOf(item.sessionId);
+    return hostOwnerAccountId === undefined ? item : { ...item, hostOwnerAccountId };
+  });
+}
+
 export interface ConversationsDeps {
   readonly exists: (path: string) => boolean;
   readonly listDir: (path: string) => string[];

@@ -2199,6 +2199,7 @@
   "sidebar.projects.title": "PROYECTOS",
   "sidebar.recent.title": "RECIENTES",
   "sidebar.row.moreActions": "Más acciones",
+  "sidebar.row.ownerMissing": "{account} (cuenta eliminada)",
   "sidebar.row.readOnly": "Solo lectura: la tiene abierta otra ventana",
   "sidebar.search.clear": "Limpiar búsqueda",
   "sidebar.search.label": "Buscar conversaciones",

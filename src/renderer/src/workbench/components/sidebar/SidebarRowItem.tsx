@@ -7,7 +7,7 @@ import type { Account, ChatStatus } from '../../types';
 import { relativeTime, rowRecency } from '../../conversationList';
 import { backgroundLabel, backgroundMoveBlockedReason, type BackgroundSession } from '../../backgroundWork';
 import { providerMonogram, providerOfRow, type RowIndicator, type SidebarRow } from '../../sidebarModel';
-import { apiBilledLabel } from '../../accountView';
+import { apiBilledLabel, aliasFromConfigDir } from '../../accountView';
 import { displayTitle } from '../../conversationTitle';
 import { useT } from '../../../i18n/uiLanguage';
 
@@ -40,6 +40,8 @@ function statusLabel(status: ChatStatus | undefined): StatusLabelKey {
 export interface SidebarRowItemProps {
   readonly row: SidebarRow;
   readonly account: Account | undefined;
+  // Cuenta dueña borrada (config dir): la fila lo dice en vez de nombrar otra cuenta.
+  readonly missingOwner: string | undefined;
   readonly status: ChatStatus | undefined;
   readonly indicator: RowIndicator | null;
   // Presente = la conversación se cerró con trabajo en vuelo y su CLI sigue vivo (solo filas de historial).
@@ -61,7 +63,7 @@ export const SidebarRowItem = memo(function SidebarRowItem(props: SidebarRowItem
 const ROW_CLASS = 'group relative flex items-center rounded-[6px] transition-colors duration-90 ease-out';
 
 function TabRow(props: SidebarRowItemProps & { readonly row: Extract<SidebarRow, { kind: 'tab' }> }): React.JSX.Element {
-  const { row, account, status, indicator, onSelectTab, onRename, onMenu } = props;
+  const { row, account, missingOwner, status, indicator, onSelectTab, onRename, onMenu } = props;
   const t = useT();
   const { tab } = row;
   const selected = useConversation(tab.id, selectIsActiveTab);
@@ -104,7 +106,7 @@ function TabRow(props: SidebarRowItemProps & { readonly row: Extract<SidebarRow,
         className="flex min-w-0 flex-1 flex-col gap-[2px] p-[5px_8px] text-left"
       >
         <span className={`block truncate ${selected ? 'font-semibold text-mg-sel-ink' : 'text-mg-body2'}`}>{title}</span>
-        <RowMeta row={row} account={account} timeText={relativeTime(rowRecency(row) === 0 ? Date.now() : rowRecency(row))} />
+        <RowMeta row={row} account={account} missingOwner={missingOwner} timeText={relativeTime(rowRecency(row) === 0 ? Date.now() : rowRecency(row))} />
       </button>
       <RowTail row={row} indicator={indicator} background={undefined} account={account} onMenu={onMenu} />
     </div>
@@ -112,7 +114,7 @@ function TabRow(props: SidebarRowItemProps & { readonly row: Extract<SidebarRow,
 }
 
 function HistoryRow(props: SidebarRowItemProps & { readonly row: Extract<SidebarRow, { kind: 'history' }> }): React.JSX.Element {
-  const { row, account, indicator, background, onOpenHistory, onDragOutside, onMenu } = props;
+  const { row, account, missingOwner, indicator, background, onOpenHistory, onDragOutside, onMenu } = props;
   const t = useT();
   const { item } = row;
   const highlighted = useHighlight(item.sessionId);
@@ -153,7 +155,7 @@ function HistoryRow(props: SidebarRowItemProps & { readonly row: Extract<Sidebar
             </span>
           )}
         </span>
-        <RowMeta row={row} account={account} timeText={timeText} />
+        <RowMeta row={row} account={account} missingOwner={missingOwner} timeText={timeText} />
       </button>
       <RowTail row={row} indicator={indicator} background={background} account={account} onMenu={onMenu} />
     </div>
@@ -162,7 +164,8 @@ function HistoryRow(props: SidebarRowItemProps & { readonly row: Extract<Sidebar
 
 // Segunda línea: monograma del proveedor, punto con el acento de la cuenta, su alias («Factura API» detrás si
 // factura la API) y el tiempo. Sin peso en disco: va a la barra de estado.
-function RowMeta({ row, account, timeText }: { readonly row: SidebarRow; readonly account: Account | undefined; readonly timeText: string }): React.JSX.Element {
+function RowMeta({ row, account, missingOwner, timeText }: { readonly row: SidebarRow; readonly account: Account | undefined; readonly missingOwner: string | undefined; readonly timeText: string }): React.JSX.Element {
+  const t = useT();
   const providerId = providerOfRow(row);
   return (
     <span data-row-meta="true" className="flex min-w-0 items-center gap-[5px] text-[10.5px] text-mg-muted">
@@ -177,6 +180,12 @@ function RowMeta({ row, account, timeText }: { readonly row: SidebarRow; readonl
         <>
           <span aria-hidden="true" className="h-[7px] w-[7px] flex-none rounded-full" style={{ background: account.accent.base }} />
           <span className="truncate" title={account.apiBilled ? `${account.alias} · ${apiBilledLabel()}` : account.alias}>{account.apiBilled ? `${account.alias} · ${apiBilledLabel()}` : account.alias}</span>
+          <span aria-hidden="true">·</span>
+        </>
+      )}
+      {account === undefined && missingOwner !== undefined && (
+        <>
+          <span data-row-owner-missing="true" className="truncate" title={t('sidebar.row.ownerMissing', { account: aliasFromConfigDir(missingOwner) })}>{t('sidebar.row.ownerMissing', { account: aliasFromConfigDir(missingOwner) })}</span>
           <span aria-hidden="true">·</span>
         </>
       )}

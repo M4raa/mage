@@ -2201,6 +2201,7 @@ export interface MessageValues {
   readonly "sidebar.projects.title": never;
   readonly "sidebar.recent.title": never;
   readonly "sidebar.row.moreActions": never;
+  readonly "sidebar.row.ownerMissing": { readonly "account": string | number };
   readonly "sidebar.row.readOnly": never;
   readonly "sidebar.search.clear": never;
   readonly "sidebar.search.label": never;
