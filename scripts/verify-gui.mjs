@@ -117,7 +117,14 @@ const F36_LONG_TEXT = 'Quarterly reconciliation of the international subsidiarie
 const F36_LONG_TOKEN = 'C:\\Projects\\InternationalSubsidiaries\\QuarterlyReconciliation\\SupportingDocumentation\\AuditorsFollowUp\\final-report-v12-reviewed-and-approved.md';
 const NEW_TAB_DIALOG = '[role="dialog"][aria-labelledby="newtab-title"]';
 // Etiquetas de los campos del dialogo de nueva conversacion (el <label> envuelve a su control).
-const NEW_TAB_FIELD = { provider: 'PROVEEDOR', model: 'MODELO' };
+// La etiqueta se pinta en mayúsculas (CSS aparte, el texto es el del catálogo): se casa sin distinguirlas y al inicio.
+const newTabFieldPattern = (key) => new RegExp(`^\\s*${escapeRegExp(ui(key))}`, 'i');
+const NEW_TAB_FIELD = {
+  get provider() { return newTabFieldPattern('dialogs.newTab.providerLabel'); },
+  get model() { return newTabFieldPattern('dialogs.newTab.modelLabel'); },
+};
+// Botón «＋ Añadir proveedor» de la sección Proveedores, sin el símbolo (el accesible empieza por el texto).
+const addProviderButtonName = () => new RegExp(escapeRegExp(ui('settings.providers.addProvider').replace(/^＋s*/, '')));
 // Motivo del rechazo del formulario de ALTA de proveedor (`idSuffix="nuevo"` en SettingsView).
 const PROVIDER_NEW_ERROR = '#provider-error-nuevo';
 // PROVIDER_TEMPLATES de src/shared/providers.ts: solo prerrellenan el formulario, no son proveedores.
@@ -1338,7 +1345,7 @@ const CHECKS = [
       for (const label of PROVIDER_TEMPLATE_LABELS) {
         templates.push(await page.getByRole('button', { name: label, exact: true }).count());
       }
-      const addButton = await page.getByRole('button', { name: /Añadir proveedor/ }).count();
+      const addButton = await page.getByRole('button', { name: addProviderButtonName() }).count();
       const closed = await closeDialog(page);
       const ok = rows === 0 && templates.every((count) => count === 1) && addButton === 1 && closed === 0;
       return {
@@ -1356,7 +1363,7 @@ const CHECKS = [
     async run(page) {
       await openSettingsDialog(page);
       await openSection(page, uiRegExp('mcp.servers.column.providers'));
-      await page.getByRole('button', { name: /Añadir proveedor/ }).click();
+      await page.getByRole('button', { name: addProviderButtonName() }).click();
       const reasons = [
         await submitNewProvider(page, { label: '', baseUrl: '', models: '' }),
         await submitNewProvider(page, { label: 'Prueba', baseUrl: 'localhost:11434', models: 'llama3' }),
@@ -1376,10 +1383,10 @@ const CHECKS = [
       const ok =
         rows === 0 &&
         closed === 0 &&
-        /nombre/i.test(reasons[0] ?? '') &&
+        (reasons[0] ?? '').includes(ui('prompt.models.nameRequired')) &&
         (reasons[1] ?? '').includes('"localhost:11434"') &&
         /http/i.test(reasons[1] ?? '') &&
-        /al menos un modelo/i.test(reasons[2] ?? '');
+        (reasons[2] ?? '').includes(ui('prompt.models.modelsRequired'));
       return {
         ok,
         detail: `motivos=${JSON.stringify(reasons)} filas guardadas=${rows} foco tras Cancelar=${focusAfterCancel} dialogos tras Escape=${closed}`,
@@ -1473,7 +1480,7 @@ const CHECKS = [
       try {
         await openSettingsDialog(page);
         await openSection(page, uiRegExp('mcp.servers.column.providers'));
-        await page.getByRole('button', { name: /Añadir proveedor/ }).click();
+        await page.getByRole('button', { name: addProviderButtonName() }).click();
         await page.getByRole('textbox', { name: ui('settings.providers.form.urlAria') }).fill(fake.baseUrl);
         await page.locator('[data-runtime-probe="true"]').click();
         const status = page.locator('[data-runtime-probe-status="true"]');
@@ -1490,7 +1497,7 @@ const CHECKS = [
         const ok =
           measured.modelos === FAKE_SCENARIOS.length + 1 &&
           measured.ventana === '32768' &&
-          measured.herramientas.endsWith('sí') &&
+          measured.herramientas.endsWith(ui('settings.providers.tools.yes').split(': ').pop()) &&
           measured.peticionesDeModelos >= 1 &&
           closed === 0;
         return { ok, detail: JSON.stringify({ ...measured, dialogosAlCerrar: closed }) };
@@ -1509,7 +1516,7 @@ const CHECKS = [
     async run(page, { userDataDir }) {
       await openSettingsDialog(page);
       await openSection(page, uiRegExp('mcp.servers.column.providers'));
-      await page.getByRole('button', { name: /Añadir proveedor/ }).click();
+      await page.getByRole('button', { name: addProviderButtonName() }).click();
       await page.getByRole('textbox', { name: ui('settings.providers.form.nameAria') }).fill(SECRET_PROVIDER.label);
       await page.getByRole('textbox', { name: ui('settings.providers.form.urlAria') }).fill(SECRET_PROVIDER.baseUrl);
       await page.getByRole('textbox', { name: ui('settings.providers.form.modelsAria') }).fill('vg');
@@ -11447,7 +11454,7 @@ async function waitForFile(file, predicate) {
 // Filas de proveedor GUARDADAS. Se ancla al boton de borrar (`aria-label` explicito): un contador de
 // divs de la seccion incluiria el formulario y los textos de ayuda.
 function providerRows(page) {
-  return page.locator('[aria-label^="Eliminar el proveedor "]');
+  return page.locator(`[aria-label^="${cssAttr(uiPrefix('settings.providers.removeAria'))} "]`);
 }
 
 // Valores que tiene ahora mismo el formulario de alta (para comprobar que una plantilla PRERRELLENA).
@@ -11473,10 +11480,10 @@ async function submitNewProvider(page, draft) {
 
 // Resumen (URL + nº de modelos) de la fila de un proveedor guardado, o null si no esta.
 async function providerRowSummary(page, label) {
-  return page.evaluate((name) => {
-    const remove = document.querySelector(`[aria-label="Eliminar el proveedor ${name}"]`);
+  return page.evaluate((removeAria) => {
+    const remove = [...document.querySelectorAll('[aria-label]')].find((node) => node.getAttribute('aria-label') === removeAria);
     return remove?.parentElement?.textContent?.trim() ?? null;
-  }, label);
+  }, ui('settings.providers.removeAria', { provider: label }));
 }
 
 // Etiquetas de los selectores de modelo (uno por proveedor OFRECIDO), en "Proveedores y modelos".
