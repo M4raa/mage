@@ -43,6 +43,9 @@ export interface BrowserPageState {
 // La de la medición I1.
 const CDP_PROTOCOL_VERSION = '1.3';
 
+// Un screencast mínimo mantiene pintando la vista con Mage minimizado o tapado (medido, Z): sin ack ni espera.
+const KEEP_PAINTING_SCREENCAST = { format: 'jpeg', quality: 1, maxWidth: 64, maxHeight: 64 } as const;
+
 // Eventos del webContents tras los que cambia el estado que enseña la barra del panel.
 const STATE_EVENTS = ['did-navigate', 'did-navigate-in-page', 'page-title-updated', 'did-start-loading', 'did-stop-loading'];
 
@@ -238,7 +241,10 @@ export class IsolatedBrowser {
   private async sendCdp(method: string, params: Record<string, unknown>): Promise<unknown> {
     // El CDP lo usa SOLO main; ni la página ni el renderer lo ven.
     const debuggerApi = this.contents.debugger;
-    if (!debuggerApi.isAttached()) debuggerApi.attach(CDP_PROTOCOL_VERSION);
+    if (!debuggerApi.isAttached()) {
+      debuggerApi.attach(CDP_PROTOCOL_VERSION);
+      await debuggerApi.sendCommand('Page.startScreencast', KEEP_PAINTING_SCREENCAST);
+    }
     return debuggerApi.sendCommand(method, params);
   }
 }

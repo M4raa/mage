@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
-import { HIDDEN_DEFAULT_BOUNDS, ViewPlacement, type PlacementHandle, type PlacementWindow } from './viewPlacement';
+import {
+  createParkingHost,
+  HIDDEN_DEFAULT_BOUNDS,
+  ViewPlacement,
+  type PlacementHandle,
+  type PlacementWindow,
+} from './viewPlacement';
 
 const BOUNDS = { x: 10, y: 20, width: 300, height: 200 };
 
@@ -25,7 +31,8 @@ function fakeHandle() {
 
 describe('ViewPlacement', () => {
   it('show_firstTime_addsBoundsVisible', () => {
-    const placement = new ViewPlacement();
+    const parking = fakeWindow();
+    const placement = new ViewPlacement(() => parking.window);
     const { window } = fakeWindow();
     const handle = fakeHandle();
 
@@ -37,7 +44,8 @@ describe('ViewPlacement', () => {
   });
 
   it('show_sameWindow_noReAdd', () => {
-    const placement = new ViewPlacement();
+    const parking = fakeWindow();
+    const placement = new ViewPlacement(() => parking.window);
     const { window } = fakeWindow();
     const handle = fakeHandle();
 
@@ -50,7 +58,8 @@ describe('ViewPlacement', () => {
   });
 
   it('show_otherWindow_movesView', () => {
-    const placement = new ViewPlacement();
+    const parking = fakeWindow();
+    const placement = new ViewPlacement(() => parking.window);
     const first = fakeWindow();
     const second = fakeWindow();
     const handle = fakeHandle();
@@ -63,7 +72,8 @@ describe('ViewPlacement', () => {
   });
 
   it('show_oldWindowDestroyed_noRemove', () => {
-    const placement = new ViewPlacement();
+    const parking = fakeWindow();
+    const placement = new ViewPlacement(() => parking.window);
     const first = fakeWindow();
     const second = fakeWindow();
     const handle = fakeHandle();
@@ -76,63 +86,86 @@ describe('ViewPlacement', () => {
     expect(second.window.contentView.addChildView).toHaveBeenCalledTimes(1);
   });
 
-  it('hide_placed_invisible', () => {
-    const placement = new ViewPlacement();
+  it('show_fromParking_movesToPanel', () => {
+    const parking = fakeWindow();
+    const placement = new ViewPlacement(() => parking.window);
+    const { window } = fakeWindow();
+    const handle = fakeHandle();
+    placement.ensureHosted(handle);
+
+    placement.show(handle, window, BOUNDS);
+
+    expect(parking.window.contentView.removeChildView).toHaveBeenCalledWith(handle.view);
+    expect(window.contentView.addChildView).toHaveBeenCalledWith(handle.view);
+    expect(handle.setBounds).toHaveBeenLastCalledWith(BOUNDS);
+  });
+
+  it('hide_placed_movesToParkingVisible', () => {
+    const parking = fakeWindow();
+    const placement = new ViewPlacement(() => parking.window);
     const { window } = fakeWindow();
     const handle = fakeHandle();
     placement.show(handle, window, BOUNDS);
 
     placement.hide(handle);
 
-    expect(handle.setVisible).toHaveBeenLastCalledWith(false);
+    expect(window.contentView.removeChildView).toHaveBeenCalledWith(handle.view);
+    expect(parking.window.contentView.addChildView).toHaveBeenCalledWith(handle.view);
+    expect(handle.setBounds).toHaveBeenLastCalledWith(HIDDEN_DEFAULT_BOUNDS);
+    expect(handle.setVisible).not.toHaveBeenCalledWith(false);
   });
 
   it('hide_notPlaced_noop', () => {
-    const placement = new ViewPlacement();
+    const parking = fakeWindow();
+    const placement = new ViewPlacement(() => parking.window);
     const handle = fakeHandle();
 
     placement.hide(handle);
 
     expect(handle.setVisible).not.toHaveBeenCalled();
+    expect(parking.window.contentView.addChildView).not.toHaveBeenCalled();
   });
 
-  it('ensureHosted_noFallback_noop', () => {
-    const placement = new ViewPlacement();
+  it('hide_alreadyParked_noReAdd', () => {
+    const parking = fakeWindow();
+    const placement = new ViewPlacement(() => parking.window);
     const handle = fakeHandle();
+    placement.ensureHosted(handle);
 
-    placement.ensureHosted(handle, null);
+    placement.hide(handle);
 
-    expect(handle.setBounds).not.toHaveBeenCalled();
-    expect(handle.setVisible).not.toHaveBeenCalled();
+    expect(parking.window.contentView.addChildView).toHaveBeenCalledTimes(1);
   });
 
-  it('ensureHosted_fallback_hiddenDefaultBounds', () => {
-    const placement = new ViewPlacement();
-    const { window } = fakeWindow();
+  it('ensureHosted_notPlaced_parksVisibleWithDefaultBounds', () => {
+    const parking = fakeWindow();
+    const placement = new ViewPlacement(() => parking.window);
     const handle = fakeHandle();
 
-    placement.ensureHosted(handle, window);
+    placement.ensureHosted(handle);
 
-    expect(window.contentView.addChildView).toHaveBeenCalledWith(handle.view);
+    expect(parking.window.contentView.addChildView).toHaveBeenCalledWith(handle.view);
     expect(handle.setBounds).toHaveBeenCalledWith(HIDDEN_DEFAULT_BOUNDS);
-    expect(handle.setVisible).toHaveBeenCalledWith(false);
+    expect(handle.setVisible).toHaveBeenCalledWith(true);
+    expect(handle.setVisible).not.toHaveBeenCalledWith(false);
   });
 
   it('ensureHosted_alreadyPlaced_noop', () => {
-    const placement = new ViewPlacement();
+    const parking = fakeWindow();
+    const placement = new ViewPlacement(() => parking.window);
     const first = fakeWindow();
-    const fallback = fakeWindow();
     const handle = fakeHandle();
     placement.show(handle, first.window, BOUNDS);
 
-    placement.ensureHosted(handle, fallback.window);
+    placement.ensureHosted(handle);
 
-    expect(fallback.window.contentView.addChildView).not.toHaveBeenCalled();
+    expect(parking.window.contentView.addChildView).not.toHaveBeenCalled();
     expect(handle.setVisible).not.toHaveBeenCalledWith(false);
   });
 
   it('forget_removesFromWindow', () => {
-    const placement = new ViewPlacement();
+    const parking = fakeWindow();
+    const placement = new ViewPlacement(() => parking.window);
     const { window } = fakeWindow();
     const handle = fakeHandle();
     placement.show(handle, window, BOUNDS);
@@ -145,7 +178,8 @@ describe('ViewPlacement', () => {
   });
 
   it('windowClosed_forgetsHost', () => {
-    const placement = new ViewPlacement();
+    const parking = fakeWindow();
+    const placement = new ViewPlacement(() => parking.window);
     const first = fakeWindow();
     const second = fakeWindow();
     const handle = fakeHandle();
@@ -156,5 +190,41 @@ describe('ViewPlacement', () => {
 
     expect(first.window.contentView.removeChildView).not.toHaveBeenCalled();
     expect(second.window.contentView.addChildView).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('createParkingHost', () => {
+  it('createParkingHost_firstCall_createsWindow', () => {
+    const made = fakeWindow();
+    const factory = vi.fn(() => made.window);
+
+    const result = createParkingHost(factory)();
+
+    expect(factory).toHaveBeenCalledTimes(1);
+    expect(result).toBe(made.window);
+  });
+
+  it('createParkingHost_secondCall_reusesWindow', () => {
+    const factory = vi.fn(() => fakeWindow().window);
+    const host = createParkingHost(factory);
+
+    const first = host();
+    const second = host();
+
+    expect(factory).toHaveBeenCalledTimes(1);
+    expect(second).toBe(first);
+  });
+
+  it('createParkingHost_destroyed_createsNew', () => {
+    const made = fakeWindow();
+    const factory = vi.fn().mockReturnValueOnce(made.window).mockReturnValueOnce(fakeWindow().window);
+    const host = createParkingHost(factory);
+    const first = host();
+
+    made.state.destroyed = true;
+    const second = host();
+
+    expect(factory).toHaveBeenCalledTimes(2);
+    expect(second).not.toBe(first);
   });
 });
