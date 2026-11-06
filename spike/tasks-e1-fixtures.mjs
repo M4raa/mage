@@ -1,4 +1,4 @@
-// Fixtures y comprobadores de los tres recorridos de E1 (carril R, INFORME-046 §E1): documento con fuentes,
+// Fixtures y comprobadores de los tres recorridos de E1: documento con fuentes,
 // investigación con síntesis y organizar archivos. Puro: solo `node:fs`/`node:path`/`node:crypto`; no lanza ningún CLI.
 // `createRecorrido(n, root)` crea lo que el recorrido necesita en `root` y devuelve `{ goal, folders, documents, check }`.
 // `check()` devuelve `{ ok, details }` y NUNCA lanza por un fichero ausente (eso es un fallo del recorrido, no del comprobador).

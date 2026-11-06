@@ -1,4 +1,4 @@
-// Spike E2 (carril R, INFORME-046): ¿aíslan las carpetas extra en Claude? Mide si `--add-dir <dir>` y
+// Spike E2: ¿aíslan las carpetas extra en Claude? Mide si `--add-dir <dir>` y
 // `--settings {"permissions":{"additionalDirectories":[<dir>]}}` (lo que usa `withTaskDirectories`) se comportan igual, y
 // qué escrituras piden permiso en los modos `default` y `acceptEdits`.
 //

@@ -10,7 +10,7 @@ export interface CodexDeletionDeps {
   readonly log: (level: 'warn', message: string, data?: unknown) => void;
 }
 
-// Lo que dice Codex (medido, INFORME-040 X-3) al borrar un padre del que cuelga un fork.
+// Lo que dice Codex (medido) al borrar un padre del que cuelga un fork.
 const FORKED_HISTORY_ERROR = 'forked history still references it';
 
 function errorText(error: unknown): string {

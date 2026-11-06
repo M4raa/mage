@@ -1,4 +1,4 @@
-// Spike E1 (carril R, INFORME-046 §E1): los tres recorridos de tareas con el código REAL de Mage
+// Spike E1: los tres recorridos de tareas con el código REAL de Mage
 // (`buildTaskInstructions`, `withTaskDirectories`, `parseDeliverables`, `checkDeliverables`; entrada `tasks-e1-entry.ts`,
 // empaquetada aquí con esbuild) y el comprobador de cada recorrido (`tasks-e1-fixtures.mjs`).
 //
@@ -102,7 +102,7 @@ function claudeArgs(spike, task) {
 
 function runClaudeTurn({ spike, task, message }) {
   const env = spike.scrubAgentEnv(process.env);
-  delete env.CLAUDE_CONFIG_DIR; // la cuenta de ~/.claude del usuario (DEVOLUCION-028)
+  delete env.CLAUDE_CONFIG_DIR; // la cuenta de ~/.claude del usuario
   return new Promise((resolve) => {
     const child = spawn(CLAUDE, claudeArgs(spike, task), { cwd: task.folders[0], env, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
     const state = { finished: false, lastText: '', resultText: null, subtype: null, allowed: 0, denied: [], error: null };

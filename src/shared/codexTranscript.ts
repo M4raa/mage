@@ -77,7 +77,7 @@ export interface CodexRolloutHead {
   readonly title: string;
   // `history_mode` del `session_meta`: solo 'legacy' o 'paginated'; ausente o cualquier otro valor, null.
   readonly historyMode: 'legacy' | 'paginated' | null;
-  // Hilo padre de un hijo de `review/start` (medido, INFORME-046 A5); null si no es hijo.
+  // Hilo padre de un hijo de `review/start` (medido); null si no es hijo.
   readonly parentThreadId: string | null;
 }
 

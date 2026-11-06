@@ -269,7 +269,7 @@ export class ClaudeAdapter implements ProviderAdapter {
     };
   }
 
-  // Peticiones de rewind (F4.4/F4.5). MEDIDO en 2.1.311 (INFORME-040; Mage corre con 2.1.314, sin cambios en 2.1.318):
+  // Peticiones de rewind (F4.4/F4.5). MEDIDO en 2.1.311 (Mage corre con 2.1.314, sin cambios en 2.1.318):
   //  - C-2 `rewind_conversation` contesta `{ rewound, targetMessageUuid, prefillText, precedingAssistantUuid }`;
   //    sus rechazos son `stale_target`, `target_not_found` y `turn_running`.
   //  - C-5 `rewind_files` con `dry_run` contesta `{ canRewind, filesChanged, insertions, deletions }`.
@@ -385,13 +385,13 @@ function requireUuid(value: string): string {
   return value;
 }
 
-// Checkpoints de ficheros (T1 de INFORME-040, C-5, medido en 2.1.311): sin esta variable `rewind_files` contesta
+// Checkpoints de ficheros (medido en 2.1.311): sin esta variable `rewind_files` contesta
 // «File rewinding is not enabled.». Las copias van al `file-history/` del config dir de la cuenta, que es del CLI;
 // no cubre lo escrito con Bash. Va DESPUES del saneado del entorno.
 const FILE_CHECKPOINTING_ENV = 'CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING';
 
 // Argumentos de sesion. Reanudar (`--resume <id>`) continua la conversacion; arrancar (`--session-id <id>`) crea una.
-// Divergir (A2 de INFORME-046, medido en 2.1.311) = `--resume <origen> --resume-session-at <at> --fork-session
+// Divergir (medido en 2.1.311) = `--resume <origen> --resume-session-at <at> --fork-session
 // --session-id <nuevo>`; el original no cambia (C-3b). Fork y resume son excluyentes.
 function sessionArgsOf(params: LaunchParams): string[] {
   const fork = params.forkFrom;

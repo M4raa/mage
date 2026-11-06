@@ -29,7 +29,7 @@ export interface Annotation {
   readonly strokes: readonly Stroke[];
 }
 
-// Formato I2 (INFORME-046). `deviceScale` = px de la imagen ENTREGADA por DIP.
+// Formato I2. `deviceScale` = px de la imagen ENTREGADA por DIP.
 export interface AnnotatedCapture {
   readonly image: {
     readonly mime: 'image/png';

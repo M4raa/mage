@@ -3,11 +3,11 @@
 //   node spike/keepalive-claude.mjs --build-only                       solo empaqueta la entrada (comprueba que compila; sin CLI)
 //   node spike/keepalive-claude.mjs [--long] [--big-chars <n>] [--out <fichero>]
 // Serie corta (3 turnos): T1 con ~200 000 caracteres de líneas numeradas fabricadas, un keep-alive que vence YA (el spike adelanta una hora el reloj
-// del coordinador, no el real) con su rewind, y T3. Espera: cacheTtlSeconds 3600 (suscripción, INFORME-048), T3.cacheRead >= 0.85 x (T1.cacheRead +
+// del coordinador, no el real) con su rewind, y T3. Espera: cacheTtlSeconds 3600 (suscripción), T3.cacheRead >= 0.85 x (T1.cacheRead +
 // T1.cacheCreation), 0 `tool_use` en el keep-alive y el registro cuenta 1. `--long` añade 3 turnos y ~70 min de espera REAL (sin desplazar el reloj):
 // el keep-alive lo dispara el temporizador de Mage a TTL - 60 s (~59 min) y a los 70 min un turno nuevo debe leer de la caché (>= 0.85 x contexto de T1').
 // El contexto debe pasar el umbral del keep-alive (100 000 tokens, DEFAULT_KEEP_ALIVE): si el informe dice `timerRegistered: false`, repetir con
-// `--big-chars 330000` (el tamaño de a1.mjs en INFORME-048).
+// `--big-chars 330000` (el tamaño de a1.mjs en la medición).
 // Diseñado con Claude Code 2.1.314. Turnos REALES: 3 de haiku/low (6 con --long), con la cuenta de ~/.claude (suscripción); el config dir ES esa carpeta y
 // no se copia ninguna credencial. Sin pasos previos del usuario salvo tener `claude` con sesión iniciada. Al terminar borra SOLO las carpetas de
 // transcripciones de sus carpetas de trabajo `mage-k-ka-*` en ~/.claude/projects/ (y esas carpetas temporales). Sale con 0 si todo da lo esperado y con 1

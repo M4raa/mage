@@ -371,8 +371,8 @@ export class CodexAdapter implements ProviderAdapter {
     this.queuedInputs = [];
     for (const { input, messageId } of queued) this.startTurn(input, messageId);
     // El esquema 0.164.0 pone `default: "legacy"`, pero un campo AUSENTE no se trata como legacy: los hilos que abre
-    // Mage son `paginated` (X-4 de INFORME-040). El revert de un legacy se rechaza con `-32600 thread/revert only
-    // supports paginated threads` (A6 de INFORME-046).
+    // Mage son `paginated`. El revert de un legacy se rechaza con `-32600 thread/revert only
+    // supports paginated threads`.
     const mode = thread.historyMode === 'legacy' || thread.historyMode === 'paginated' ? thread.historyMode : null;
     return [
       { kind: 'session_init', sessionId: thread.id, model, tools: [], mcpServers: [], slashCommands: [], skills: [], plugins: [], pluginErrors: [] },

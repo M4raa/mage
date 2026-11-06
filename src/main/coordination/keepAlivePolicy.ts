@@ -3,9 +3,9 @@ import type { KeepAliveSettings } from '@shared/settings';
 // Politica PURA del keep-alive de la cache de Claude (F4.6, D-K4): dice, con lo que se sabe de una sesion, si hay
 // que esperar, enviar ya o no hacer nada. Sin timers ni IO: el coordinador la consulta y ejecuta.
 
-export const KEEP_ALIVE_MARGIN_MS = 60_000; // INFORME-048: TTL - 60 s
-export const KEEP_ALIVE_FALLBACK_MS = 240_000; // sin TTL: 5 min - 60 s (A1 de INFORME-046)
-export const KEEP_ALIVE_PROMPT = 'Responde solo: ok'; // el de la medicion (INFORME-048 A1)
+export const KEEP_ALIVE_MARGIN_MS = 60_000; // medido: TTL - 60 s
+export const KEEP_ALIVE_FALLBACK_MS = 240_000; // sin TTL: 5 min - 60 s
+export const KEEP_ALIVE_PROMPT = 'Responde solo: ok'; // el de la medicion
 
 const MS_PER_HOUR = 3_600_000;
 const CLAUDE_PROVIDER_ID = 'claude';

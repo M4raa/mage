@@ -16,11 +16,11 @@ import {
 } from './rewindPoints';
 import type { EngineResponse, RewindContext, SessionCoordinator } from './sessionCoordinator';
 
-// Orquestador del rewind, de Reintentar y de Divergir (F4.4/F4.5, INFORME-040 §3.2): planifica lo que se descartaria y
+// Orquestador del rewind, de Reintentar y de Divergir (F4.4/F4.5): planifica lo que se descartaria y
 // lo aplica con las operaciones NATIVAS de cada CLI, en un orden que no deja nada a medias. Nunca toca git, copia
 // ficheros ni borra burbujas, y no hay camino para volver a una rama abandonada (A7).
 
-export const REWIND_IDLE_TIMEOUT_MS = 10_000; // INFORME-040 §3.2: si el turno no para en este plazo, no se aplica nada
+export const REWIND_IDLE_TIMEOUT_MS = 10_000; // si el turno no para en este plazo, no se aplica nada
 export const ENGINE_REQUEST_TIMEOUT_MS = 15_000;
 const MAX_TURN_PAGES = 1_000; // un servidor que repitiera el cursor no deja a main en un bucle
 
@@ -98,7 +98,7 @@ function isSupported(provider: string): boolean {
   return provider === CLAUDE_PROVIDER_ID || provider === CODEX_PROVIDER_ID;
 }
 
-// Por que no se puede, en el orden de INFORME-040: proveedor, segundo plano, legacy, turno en marcha (solo al divergir)
+// Por que no se puede, en este orden: proveedor, segundo plano, legacy, turno en marcha (solo al divergir)
 // y, por fin, que la conversacion ni siquiera tenga id nativo.
 function unavailableReason(ctx: RewindContext, action: RewindPlanParams['action']): RewindUnavailableReason | null {
   if (!isSupported(ctx.provider)) return 'unsupported';
@@ -182,7 +182,7 @@ export class RewindCoordinator {
     return claudePrompts(entries).map((p, userIndex) => ({ userIndex, text: p.text, nativeId: p.uuid, rewindable: true }));
   }
 
-  // Rebobina (o rebobina y reenvia, `retry`). Orden de INFORME-040 §3.2: cola, parar el turno, ficheros, conversacion.
+  // Rebobina (o rebobina y reenvia, `retry`). Orden: cola, parar el turno, ficheros, conversacion.
   async apply(params: RewindApplyParams): Promise<RewindApplyResult> {
     const { sessionId, action } = params;
     const { coordinator } = this.deps;

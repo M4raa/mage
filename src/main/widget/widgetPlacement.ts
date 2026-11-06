@@ -4,7 +4,7 @@ import type { Rect } from '../windows/windowBounds';
 export interface Size { readonly width: number; readonly height: number }
 export const WIDGET_SIZES = { compact: { width: 232, height: 52 }, expanded: { width: 320, height: 460 } } as const satisfies Record<'compact' | 'expanded', Size>;
 export const WIDGET_SCREEN_MARGIN = 24;
-// Redondeo medido de setBounds a 125 % y 150 % (INFORME-046 §F2): +1/+2 px. Por debajo, no se recoloca.
+// Redondeo medido de setBounds a 125 % y 150 %: +1/+2 px. Por debajo, no se recoloca.
 export const WIDGET_BOUNDS_TOLERANCE_PX = 2;
 
 // Esquina superior derecha del área de trabajo, con margen.

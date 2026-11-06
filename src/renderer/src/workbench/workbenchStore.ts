@@ -545,7 +545,7 @@ export interface WorkbenchState extends PrState, PrActions, PrPanelStoreState, P
   updateQueuedMessage: (tabId: string, id: string, text: string) => Promise<void>;
   // Rebobinar / Reintentar / Divergir desde una burbuja del usuario (K07). El diálogo pide el plan SIEMPRE por
   // `getRewindPlan` y nunca a `mage` directamente: así verify:gui (K10) puede sustituirla con
-  // `__mageDev.store.setState` por un plan sintético, sin CLI (INFORME-040 §5, F4.4).
+  // `__mageDev.store.setState` por un plan sintético, sin CLI (F4.4).
   getRewindPlan: (tabId: string, blockId: string, action: RewindAction) => Promise<RewindPlan>;
   // Aplica «rewind» o «retry». Si falla avisa y RELANZA, para que el diálogo no se cierre.
   rewindTo: (tabId: string, blockId: string, options: RewindOptions) => Promise<void>;

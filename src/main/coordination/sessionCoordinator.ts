@@ -496,7 +496,7 @@ export class SessionCoordinator {
     const run = tracked.keepAlive;
     if (run === null) return false;
     if (event.kind === 'request_started') {
-      // El keep-alive refresca la cache (INFORME-048), pero no es una peticion del usuario.
+      // El keep-alive refresca la cache, pero no es una peticion del usuario.
       tracked.lastRequestStartMs = this.deps.now();
       return true;
     }
