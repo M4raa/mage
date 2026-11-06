@@ -79,3 +79,35 @@ export function watchChatBottom<T>(scroller: WatchedScroller<T>, stuck: { curren
     scroller.removeEventListener('scroll', onScroll);
   };
 }
+
+// Frames que se sigue re-pegando al final real tras un salto programático: Virtuoso puede reajustar `scrollTop`
+// después de medir filas sin cambiar ningún tamaño observado (medido, Z: se quedaba a 10 px del final).
+export const SETTLE_FRAMES = 30;
+
+export interface FrameApi {
+  request(callback: () => void): number;
+  cancel(id: number): void;
+}
+
+// Mientras siga «pegado», durante `frames` frames vuelve al final REAL si algo lo ha movido. Para en cuanto deja de
+// estar pegado (el usuario subió). Devuelve la función que lo cancela.
+export function settleAtBottom(
+  scroller: Pick<WatchedScroller<unknown>, 'scrollTop' | 'scrollHeight' | 'clientHeight'>,
+  stuck: { readonly current: boolean },
+  frameApi: FrameApi,
+  frames: number = SETTLE_FRAMES,
+): () => void {
+  if (!Number.isInteger(frames) || frames < 0) throw new Error(`frames no valido: ${frames}`);
+  let pending: number | null = null;
+  const step = (left: number): void => {
+    pending = null;
+    if (left === 0 || !stuck.current) return;
+    if (distanceToBottom(scroller) > 0) pinToBottom(scroller);
+    pending = frameApi.request(() => step(left - 1));
+  };
+  pending = frameApi.request(() => step(frames));
+  return () => {
+    if (pending !== null) frameApi.cancel(pending);
+    pending = null;
+  };
+}

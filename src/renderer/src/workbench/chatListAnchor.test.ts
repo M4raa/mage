@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { FIRST_ITEM_INDEX_BASE, INITIAL_ANCHOR, appendedTailKeys, nextListAnchor, pinToBottom, watchChatBottom, type ListAnchor, type SizeObserver, type WatchedScroller } from './chatListAnchor';
+import { FIRST_ITEM_INDEX_BASE, INITIAL_ANCHOR, SETTLE_FRAMES, appendedTailKeys, nextListAnchor, pinToBottom, settleAtBottom, watchChatBottom, type FrameApi, type ListAnchor, type SizeObserver, type WatchedScroller } from './chatListAnchor';
 
 const keyOf = (s: string): string => s;
 
@@ -165,5 +165,91 @@ describe('pinToBottom', () => {
     const scroller = { scrollTop: 0, scrollHeight: 300, clientHeight: 500 };
     pinToBottom(scroller);
     expect(scroller.scrollTop).toBe(0);
+  });
+});
+
+function fakeFrames(): { requested: number; run: () => void; pendingCount: () => number; api: FrameApi } {
+  const queue: { id: number; callback: () => void }[] = [];
+  const state = {
+    requested: 0,
+    run: (): void => {
+      queue.shift()?.callback();
+    },
+    pendingCount: (): number => queue.length,
+    api: {
+      request: (callback: () => void): number => {
+        state.requested += 1;
+        queue.push({ id: state.requested, callback });
+        return state.requested;
+      },
+      cancel: (id: number): void => {
+        const at = queue.findIndex((entry) => entry.id === id);
+        if (at >= 0) queue.splice(at, 1);
+      },
+    },
+  };
+  return state;
+}
+
+function drain(frames: { run: () => void; pendingCount: () => number }): void {
+  while (frames.pendingCount() > 0) frames.run();
+}
+
+describe('settleAtBottom', () => {
+  it('settleAtBottom_stuckYDespegado_pegaEnElSiguienteFrame', () => {
+    const scroller = fakeScroller({ scrollTop: 0, scrollHeight: 1000, clientHeight: 200 });
+    const frames = fakeFrames();
+    settleAtBottom(scroller, { current: true }, frames.api);
+    frames.run();
+    expect(scroller.scrollTop).toBe(800);
+  });
+
+  it('settleAtBottom_virtuosoLoMueveDespues_vuelveAPegar', () => {
+    const scroller = fakeScroller({ scrollTop: 0, scrollHeight: 1000, clientHeight: 200 });
+    const frames = fakeFrames();
+    settleAtBottom(scroller, { current: true }, frames.api);
+    frames.run();
+    scroller.scrollTop = 790;
+    frames.run();
+    expect(scroller.scrollTop).toBe(800);
+  });
+
+  it('settleAtBottom_noPegado_noTocaYNoPideMas', () => {
+    const scroller = fakeScroller({ scrollTop: 0, scrollHeight: 1000, clientHeight: 200 });
+    const frames = fakeFrames();
+    settleAtBottom(scroller, { current: false }, frames.api);
+    frames.run();
+    expect(scroller.scrollTop).toBe(0);
+    expect(frames.requested).toBe(1);
+  });
+
+  it('settleAtBottom_trasLosFrames_para', () => {
+    const scroller = fakeScroller({ scrollTop: 0, scrollHeight: 1000, clientHeight: 200 });
+    const frames = fakeFrames();
+    settleAtBottom(scroller, { current: true }, frames.api, 3);
+    drain(frames);
+    expect(frames.requested).toBe(4);
+  });
+
+  it('settleAtBottom_cancelar_noEjecutaMas', () => {
+    const scroller = fakeScroller({ scrollTop: 0, scrollHeight: 1000, clientHeight: 200 });
+    const frames = fakeFrames();
+    const cancel = settleAtBottom(scroller, { current: true }, frames.api);
+    cancel();
+    frames.run();
+    expect(scroller.scrollTop).toBe(0);
+  });
+
+  it('settleAtBottom_framesNegativo_lanzaConElValor', () => {
+    const scroller = fakeScroller({ scrollTop: 0, scrollHeight: 1000, clientHeight: 200 });
+    expect(() => settleAtBottom(scroller, { current: true }, fakeFrames().api, -1)).toThrow('-1');
+  });
+
+  it('settleAtBottom_porDefecto_usaSettleFrames', () => {
+    const scroller = fakeScroller({ scrollTop: 0, scrollHeight: 1000, clientHeight: 200 });
+    const frames = fakeFrames();
+    settleAtBottom(scroller, { current: true }, frames.api);
+    drain(frames);
+    expect(frames.requested).toBe(SETTLE_FRAMES + 1);
   });
 });
