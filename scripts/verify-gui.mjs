@@ -76,6 +76,8 @@ const privateLineRegExp = () => new RegExp(`(?:${[
 const statusBarWindowsRegExp = () => new RegExp(`${escapeRegExp(uiSegment('app.statusBar.windows', 0))}\\s*\\d+${escapeRegExp(uiSegment('app.statusBar.windows', 1))}`);
 // Decimal con un dígito, con el separador del idioma de la tanda (la app formatea igual con Intl).
 const localizedDecimal = (value) => new Intl.NumberFormat(getUiLanguage(), { minimumFractionDigits: 1, maximumFractionDigits: 1, useGrouping: false }).format(value);
+// Tiempo relativo de una fila («hace 3 min», «ahora»): los mensajes de format.time.* con su número abierto.
+const relativeTimeRegExp = () => new RegExp(`(?:${['daysAgo', 'hoursAgo', 'minutesAgo'].map((unit) => `${escapeRegExp(uiSegment(`format.time.${unit}`, 0))}\\s*\\d+\\s*${escapeRegExp(uiSegment(`format.time.${unit}`, 1))}`).concat(escapeRegExp(ui('format.time.now'))).join('|')})`);
 // Regex de varios textos de la interfaz (alternativas), cada uno escapado. `^` delante si `anchored`.
 const uiAnyOf = (texts, anchored = false) => new RegExp(`${anchored ? '^' : ''}(?:${texts.map(escapeRegExp).join('|')})`);
 // Regex de «empieza por el tramo fijo inicial del mensaje» (p. ej. `Desinstalar {name}` -> /^Desinstalar(\s|$)/).
@@ -2111,7 +2113,7 @@ const CHECKS = [
           texto: document.querySelector('[data-account-switch-note]')?.textContent ?? '',
         }));
         await page.keyboard.press('Escape');
-        const ok = medido.texto.includes('sigue siendo la misma conversación') && medido.boton.some((t) => t.startsWith(uiPrefix('accounts.switch.migrate')))
+        const ok = medido.texto.includes(uiSegment('accounts.switch.note.crossProvider', 1)) && medido.boton.some((t) => t.startsWith(uiPrefix('accounts.switch.migrate')))
           && medido.boton.some((t) => t === ui('accounts.switch.handoff'));
         return { ok, detail: JSON.stringify(medido) };
       } finally {
@@ -2905,7 +2907,7 @@ const CHECKS = [
       await tab.click({ button: 'right' });
       const menu = page.getByRole('menu');
       await menu.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
-      const splitItems = menu.getByRole('menuitem', { name: /^Dividir/ });
+      const splitItems = menu.getByRole('menuitem', { name: uiAnyOf(['tabs.menu.splitBottom', 'tabs.menu.splitLeft', 'tabs.menu.splitRight', 'tabs.menu.splitTop'].map((key) => ui(key)), true) });
       const count = await splitItems.count();
       const disabledFlags = [];
       for (let i = 0; i < count; i++) disabledFlags.push(await splitItems.nth(i).isDisabled());
@@ -3650,7 +3652,7 @@ const CHECKS = [
       if (selected !== 1) return { ok: false, detail: `pestañas seleccionadas=${selected} (se esperaba 1; no se clica nada)` };
       await active.click({ button: 'right' });
       await page.locator(TAB_MENU).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
-      await page.locator(TAB_MENU).getByRole('menuitem', { name: /^Cerrar todas/ }).click();
+      await page.locator(TAB_MENU).getByRole('menuitem', { name: new RegExp(`^${escapeRegExp(uiPrefix('tabs.menu.closeAll'))}`) }).click();
 
       // La medida de "sin confirmacion" es que el menu se DESMONTA con ese unico clic: la confirmacion
       // vivia dentro y lo habria dejado abierto esperando. Se espera al desmontaje, no a un tiempo fijo
@@ -4437,7 +4439,7 @@ const CHECKS = [
       await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
       await page.waitForTimeout(CONFIG.settleMs);
       // Q02: la fila ya NO lleva el peso (va a la barra de estado): dice monograma del proveedor, cuenta y tiempo.
-      const ok = linea !== null && /(hace|ahora)/.test(linea) && !/\b(B|kB|MB)\b/.test(linea) && !/· (opus|sonnet|haiku)/.test(linea);
+      const ok = linea !== null && relativeTimeRegExp().test(linea) && !/\b(B|kB|MB)\b/.test(linea) && !/· (opus|sonnet|haiku)/.test(linea);
       return { ok, detail: `segunda linea=${JSON.stringify(linea)}` };
     },
   },
@@ -4489,7 +4491,7 @@ const CHECKS = [
         medido.chips.length === 1 &&
         medido.chips[0] === '/rename REVISION-MAGE' &&
         !medido.xmlEnElChat &&
-        medido.tarjeta === 'Tarea programada: say-hello' &&
+        medido.tarjeta === `${ui('chat.scheduledTask.label')} say-hello` &&
         medido.plegada === true &&
         medido.insignias === 1;
       return { ok, detail: JSON.stringify(medido) };
