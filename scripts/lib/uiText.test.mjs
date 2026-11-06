@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { afterEach, describe, expect, it } from 'vitest';
-import { cssAttr, getUiLanguage, messageSegments, parseUiLangArg, setUiLanguage, ui, uiIn, uiPrefix, uiRegExp, uiSegment } from './uiText.mjs';
+import { cssAttr, getUiLanguage, messageSegments, parseUiLangArg, setUiLanguage, ui, uiIn, uiPluralIn, uiPrefix, uiRegExp, uiSegment } from './uiText.mjs';
 
 const catalog = (lang) => JSON.parse(readFileSync(new URL(`../../src/shared/i18n/catalogs/${lang}.json`, import.meta.url), 'utf8'));
 const es = catalog('es');
@@ -83,5 +83,22 @@ describe('uiText', () => {
 
   it('cssAttr_comillasYBarra_escapadas', () => {
     expect(cssAttr('a"b\\c')).toBe('a\\"b\\\\c');
+  });
+
+  it('uiPluralIn_esPlural_formateaComoLaApp', () => {
+    expect(uiPluralIn('es', 'chat.subagents.launched', { count: 2 })).toBe('Lanzó 2 subagentes');
+    expect(uiPluralIn('es', 'chat.subagents.launched', { count: 1 })).toBe('Lanzó 1 subagente');
+  });
+  it('uiPluralIn_enPlural_formateaComoLaApp', () => {
+    expect(uiPluralIn('en', 'chat.thinking.steps', { count: 4 })).toBe('4 steps');
+  });
+  it('uiPluralIn_almohadilla_numero', () => {
+    expect(uiPluralIn('es', 'chat.agents.summaryFinished', { count: 1 })).toBe('1 terminado');
+  });
+  it('uiPluralIn_sinVariables_lanza', () => {
+    expect(() => uiPluralIn('es', 'chat.thinking.steps')).toThrow('uiPlural(chat.thinking.steps)');
+  });
+  it('uiPluralIn_claveDesconocida_lanza', () => {
+    expect(() => uiPluralIn('es', 'no.existe.clave', { count: 1 })).toThrow('Clave de catálogo desconocida');
   });
 });
