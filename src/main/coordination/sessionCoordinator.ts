@@ -752,6 +752,9 @@ export class SessionCoordinator {
         armPrGuard(tracked, steering.message.text);
         return { into: 'active_turn', late: false, turnKind: null };
       case 'new_turn':
+        // Deducido tras el `result` del propio turno del directo: ese turno ya acabó. Marcar `running` aquí dejaba
+        // la sesión ocupada sin ningún evento por llegar (turno fantasma de 0 tokens).
+        if (event.inferred === true) return { into: 'new_turn', late: true, turnKind: null, turnClosed: true };
         // Claude abrio un turno propio para el directo tras el `result` del anterior.
         tracked.state = 'running';
         armPrGuard(tracked, steering.message.text);

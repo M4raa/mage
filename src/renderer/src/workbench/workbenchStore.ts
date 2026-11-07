@@ -2995,10 +2995,12 @@ function settleDelivery(mage: MageClient, get: () => WorkbenchState, set: SetFn,
 }
 
 // Dentro del turno la burbuja se queda; con turno propio arranca el reloj; a la cola sale del hilo (la pinta la
-// cola); fallido sale, deja el error SIN cambiar el estado del turno y el texto vuelve al borrador.
+// cola); fallido sale, deja el error SIN cambiar el estado del turno y el texto vuelve al borrador. Un turno nuevo ya cerrado no arranca nada.
 function settleOwnSteer(mage: MageClient, get: () => WorkbenchState, set: SetFn, own: { readonly tabId: string; readonly blockId: string; readonly event: DeliveryEvent }): void {
   const { tabId, blockId, event } = own;
   if (event.into === 'active_turn') return;
+  // Turno ya cerrado (lo dedujo main tras su `result`): el mensaje se envió y la burbuja se queda, pero no hay reloj que arrancar.
+  if (event.into === 'new_turn' && event.turnClosed === true) return;
   if (event.into === 'new_turn') return startTurnClock(mage, get, set, tabId);
   patchBlocks(set, tabId, (blocks) => blocks.filter((b) => b.id !== blockId));
   if (event.into === 'queue') return;

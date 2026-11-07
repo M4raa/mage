@@ -2059,7 +2059,7 @@ describe('cola de mensajes', () => {
     return last?.kind === 'system' ? last.text : undefined;
   };
   const commandIdOfFirstSend = (sendMessage: ReturnType<typeof vi.fn>) => (sendMessage.mock.calls[0]![0] as { commandId: string }).commandId;
-  const deliver = (store: ReturnType<typeof createWorkbenchStore>, commandId: string, delivery: { into: 'active_turn' | 'new_turn' | 'queue' | 'failed'; late: boolean; turnKind: string | null }) =>
+  const deliver = (store: ReturnType<typeof createWorkbenchStore>, commandId: string, delivery: { into: 'active_turn' | 'new_turn' | 'queue' | 'failed'; late: boolean; turnKind: string | null; turnClosed?: boolean }) =>
     store.getState().handleEvent('s-a', { kind: 'message_delivery', commandId, message: { id: commandId, text: 'ya', attachments: [] }, ...delivery });
   const TURN_ENDED_TEXT = 'El turno ya había terminado: se envió como mensaje nuevo.';
 
@@ -2118,6 +2118,23 @@ describe('cola de mensajes', () => {
     deliver(store, commandId, { into: 'new_turn', late: true, turnKind: null });
 
     expect(store.getState().turnStartByChat.a).not.toBe(1000);
+    expect(userTexts(store)).toEqual(['ya']);
+    expect(lastSystemText(store)).toBe(TURN_ENDED_TEXT);
+  });
+
+  it('messageDelivery_turnoNuevoYaCerrado_noArrancaElRelojNiOcupaLaPestana', async () => {
+    // Arrange: el directo salió y su turno ya terminó (la pestaña volvió a reposo).
+    const { store, sendMessage } = mounted('streaming', steering());
+    await store.getState().sendMessageToTab('a', 'ya', [], 'steer');
+    const commandId = commandIdOfFirstSend(sendMessage);
+    store.setState((s) => ({ statusByChat: { ...s.statusByChat, a: 'idle' }, turnStartByChat: { ...s.turnStartByChat, a: 1000 } }));
+
+    // Act
+    deliver(store, commandId, { into: 'new_turn', late: true, turnKind: null, turnClosed: true });
+
+    // Assert
+    expect(store.getState().statusByChat.a).toBe('idle');
+    expect(store.getState().turnStartByChat.a).toBe(1000);
     expect(userTexts(store)).toEqual(['ya']);
     expect(lastSystemText(store)).toBe(TURN_ENDED_TEXT);
   });
