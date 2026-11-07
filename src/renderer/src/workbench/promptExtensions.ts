@@ -2,6 +2,7 @@ import { EditorView, Decoration, ViewPlugin, WidgetType, type DecorationSet, typ
 import { EditorState, type Extension } from '@codemirror/state';
 import { findImageTokens } from '@shared/imageRefs';
 import { decorationRangesFor, type DecorationKind } from './promptDecorations';
+import { isFileDrag } from './tabActions';
 
 // Todo lo especifico de CodeMirror 6 vive AQUI y en `PromptEditor.tsx`, en ningun otro sitio: la logica
 // (que decorar, que hace Enter, que adjuntos valen) esta en modulos puros y testeados.
@@ -134,6 +135,13 @@ const promptTheme = EditorView.theme({
   '.cm-placeholder': { color: 'var(--color-mg-muted)' },
 });
 
+// Los ficheros soltados sobre el editor los adjunta el panel (ChatPane), no CodeMirror: sin esto, CodeMirror
+// insertaría el CONTENIDO del fichero como texto. Devolver `true` solo salta el manejo propio de CodeMirror; el
+// evento sigue subiendo hasta el panel.
+const fileDropGuard = EditorView.domEventHandlers({
+  drop: (event) => event.dataTransfer !== null && isFileDrag(event.dataTransfer.types),
+});
+
 export function promptExtensions(): readonly Extension[] {
-  return [decorationsPlugin, imageRefPlugin, promptTheme, EditorView.lineWrapping, EditorState.allowMultipleSelections.of(false)];
+  return [decorationsPlugin, imageRefPlugin, fileDropGuard, promptTheme, EditorView.lineWrapping, EditorState.allowMultipleSelections.of(false)];
 }

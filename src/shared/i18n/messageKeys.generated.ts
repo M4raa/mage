@@ -1040,6 +1040,8 @@ export interface MessageValues {
   readonly "history.lock.checkFailed": never;
   readonly "history.lock.releaseFailed": never;
   readonly "history.recentProjects.title": never;
+  readonly "i2.prompt.attachImage": never;
+  readonly "i2.prompt.attachImageTip": never;
   readonly "library.account.label": never;
   readonly "library.account.none": never;
   readonly "library.account.option": { readonly "engine": string | number; readonly "label": string | number };

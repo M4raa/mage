@@ -14,7 +14,7 @@ import { composerLayout, type ComposerLayout } from '../composerLayout';
 import type { ProviderModel } from '@shared/providers';
 import { continueListOnNewline, indentLines, outdentLines, type TextState } from '../promptEditing';
 import { enterAction } from '../promptEnter';
-import { assertPastedImages, base64ByteLength, validateAttachmentSet } from '@shared/attachments';
+import { ALLOWED_IMAGE_TYPES, assertPastedImages, base64ByteLength, validateAttachmentSet } from '@shared/attachments';
 import type { PromptEditorHandle } from './PromptEditor';
 import { Icon, type IconName } from './Icon';
 import { SendControls } from './SendControls';
@@ -56,6 +56,9 @@ const PromptEditor = lazy(() => import('./PromptEditor').then((m) => ({ default:
 // Referencia estable para "esta pestana no ha reportado comandos": devolver [] recien creado en cada
 // render haria que el selector de Zustand viera un valor nuevo siempre y re-renderizara sin parar.
 const EMPTY_COMMANDS: readonly SlashCommand[] = [];
+
+// Lo que ofrece el selector nativo de «Adjuntar imagen»: los mismos tipos que valida `addFiles`.
+const IMAGE_ACCEPT = [...ALLOWED_IMAGE_TYPES].join(',');
 
 // Los cinco llevan icono: uno sin el hacia que el chip encogiera 16 px al pasar por el y la fila, alineada
 // a la derecha, lo desplazaba.
@@ -175,7 +178,12 @@ function ReclaimedLockNotice(): React.JSX.Element {
   );
 }
 
-export function PromptBar(): React.JSX.Element {
+export interface PromptBarProps {
+  // La barra pone aquí su `addFiles`, para que su panel (ChatPane) le pase las imágenes que se sueltan en el chat.
+  readonly fileDropRef?: React.MutableRefObject<((files: readonly File[]) => void) | null>;
+}
+
+export function PromptBar({ fileDropRef }: PromptBarProps = {}): React.JSX.Element {
   // La pestaña de ESTE panel (item 13). Las acciones del store siguen operando sobre la pestaña
   // ACTIVA, no sobre esta: es correcto porque el panel se enfoca (focusPane) en cuanto se interactua
   // con el — ver ChatPane.tsx. Aqui solo se LEE, para que el panel sin foco pinte sus propios datos.
@@ -257,6 +265,7 @@ export function PromptBar(): React.JSX.Element {
   const editorRef = useRef<PromptEditorHandle>(null);
   // Imagenes pegadas cuyo base64 aun se esta leyendo: cuentan para numerar el token del siguiente pegado.
   const pendingReadsRef = useRef(0);
+  const imageInputRef = useRef<HTMLInputElement>(null);
 
   const disabled = activeTabId.length === 0 || readOnlyLock !== null || ownerMissing;
   const activeModel = activeTab?.model ?? '';
@@ -621,7 +630,7 @@ export function PromptBar(): React.JSX.Element {
     }
   };
 
-  // Adjuntar imagenes (2.12.1), por pegado (el selector de ficheros se quito en P-026, 2.1). La validacion es la del
+  // Adjuntar imagenes (2.12.1), por pegado, con el botón «Adjuntar imagen» o soltándolas en el chat. La validacion es la del
   // modulo puro y su error se pinta en la linea `role="alert"` que ya existe: un adjunto que se cae en
   // silencio es peor que un error.
   //
@@ -657,6 +666,20 @@ export function PromptBar(): React.JSX.Element {
         pendingReadsRef.current -= files.length;
       });
   };
+
+  const onPickImages = (e: React.ChangeEvent<HTMLInputElement>): void => {
+    addFiles(Array.from(e.currentTarget.files ?? []));
+    e.currentTarget.value = ''; // elegir otra vez el mismo fichero vuelve a disparar `change`
+  };
+
+  // Sin dependencias a propósito: la ref apunta siempre al `addFiles` del último render (lee la pestaña y el borrador de ese render).
+  useEffect(() => {
+    if (fileDropRef === undefined) return undefined;
+    fileDropRef.current = addFiles;
+    return () => {
+      fileDropRef.current = null;
+    };
+  });
 
   const insertTokensAtCursor = (fromN: number, count: number, fallbackText: string): void => {
     const editor = editorRef.current;
@@ -803,8 +826,23 @@ export function PromptBar(): React.JSX.Element {
           data-prompt-controls="true"
           className={`flex min-w-0 max-w-full flex-wrap items-center justify-end gap-[10px] ${layout === 'stacked' ? 'ml-auto' : ''}`}
         >
-          {/* Ni «Adjuntar una imagen» ni «Abrir carpeta» en el menu (P-026, 2.1, peticion del usuario): las
-              imagenes entran pegandolas (Ctrl+V) y la carpeta se abre desde su insignia, encima del input. */}
+          {/* «Abrir carpeta» no está en el menú: la carpeta se abre desde su insignia, encima del input. Las imágenes
+              entran pegándolas, soltándolas en el chat o con el botón de adjuntar. */}
+          {activeTab !== undefined && (
+            <>
+              <input ref={imageInputRef} type="file" accept={IMAGE_ACCEPT} multiple hidden data-attach-input="image" onChange={onPickImages} />
+              <button
+                type="button"
+                aria-label={t('i2.prompt.attachImage')}
+                data-tip={t('i2.prompt.attachImageTip')}
+                disabled={disabled}
+                onClick={() => imageInputRef.current?.click()}
+                className="shrink-0 self-center rounded-[4px] p-[3px] text-mg-sec transition-colors duration-90 ease-out hover:bg-mg-hover hover:text-mg-body disabled:opacity-40"
+              >
+                <Icon name="paperclip" size={13} />
+              </button>
+            </>
+          )}
           {activeTab !== undefined && (
             <ActionsMenu
               busy={busy}
