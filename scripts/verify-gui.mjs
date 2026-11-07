@@ -8820,7 +8820,7 @@ const CHECKS = [
     },
   },
   {
-    // Notas de version (DEVOLUCION-077): la seccion 0.1.4 sale en el idioma de la interfaz. En «en» lleva
+    // Notas de version (0.1.4): la seccion 0.1.4 sale en el idioma de la interfaz. En «en» lleva
     // el subtitulo «Added» y la primera viñeta inglesa; en «es», «Añadido» y la castellana. Cierra la
     // pestaña al acabar (error n.º 6 de la skill).
     name: 'Notas de versión: la sección 0.1.4 sale en el idioma de la interfaz',
@@ -10847,6 +10847,102 @@ const CHECKS = [
       const grupos = await measureGroupMagnets(page);
       const dock = await measureDockMagnets(page);
       return { ok: grupos.pegado && grupos.libre && dock.ok, detail: JSON.stringify({ grupos, dock }) };
+    },
+  },
+  {
+    // La `/` a mitad de frase ofrece skills (sirven como texto) y no los comandos internos del CLI (a mitad de
+    // frase le llegarían como texto y no se ejecutarían). `a/b` y una URL no abren el popover. Se escribe con
+    // `type`, NUNCA se pulsa Enter (Tab completa con el popover abierto).
+    name: 'I2: "/" a mitad de frase sugiere skills y no comandos internos; "a/b" no sugiere nada',
+    state: { tabs: 1 },
+    async run(page) {
+      const listbox = page.getByRole('listbox', { name: ui('prompt.slash.listLabel') });
+      try {
+        await clearPrompt(page);
+        await typeInPrompt(page, 'hola /');
+        const aparece = await listbox.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs }).then(() => true, () => false);
+        const mitad = aparece ? await slashOptionNames(page) : [];
+        await page.keyboard.press('Escape');
+        await clearPrompt(page);
+        await typeInPrompt(page, 'hola /itb');
+        await page.keyboard.press('Tab');
+        const completado = await promptText(page);
+        await clearPrompt(page);
+        await typeInPrompt(page, 'a/b');
+        await page.waitForTimeout(CONFIG.settleMs);
+        const ruta = await listbox.count();
+        await clearPrompt(page);
+        await typeInPrompt(page, 'ver https://x.y/');
+        await page.waitForTimeout(CONFIG.settleMs);
+        const url = await listbox.count();
+        const internos = ['clear', 'compact', 'config', 'context', 'doctor', 'init', 'mcp', 'model', 'rename', 'security-review', 'usage'];
+        const internosEnLista = internos.filter((nombre) => mitad.includes(`/${nombre}`));
+        const ok =
+          mitad.includes(`/${SEEDED_NAMESPACED_COMMAND}`) &&
+          internosEnLista.length === 0 &&
+          (completado ?? '').startsWith(`hola /${SEEDED_NAMESPACED_COMMAND}`) &&
+          ruta === 0 &&
+          url === 0;
+        return { ok, detail: JSON.stringify({ mitad, internosEnLista, completado, ruta, url }) };
+      } finally {
+        await clearPrompt(page);
+      }
+    },
+  },
+  {
+    // El botón «Adjuntar imagen» y soltar ficheros en el chat reutilizan `addFiles` del pegado: mismas
+    // validaciones y mismo error. Sin abrir el diálogo nativo (`setInputFiles`) y sin pulsar Enter.
+    name: 'I2: el botón y soltar adjuntan una imagen; un .exe y una de más de 5 MiB dan error',
+    async run(page) {
+      const previo = await page.evaluate(() => {
+        const st = window.__mageDev.store.getState();
+        return { tabs: st.tabs, activeTabId: st.activeTabId, splitLayout: st.splitLayout };
+      });
+      const miniaturas = () => page.locator('img[data-attachment="thumb"]').count();
+      const erroresDeAdjuntar = () =>
+        page.evaluate((failed) => [...document.querySelectorAll('[role="alert"]')].filter((n) => (n.textContent ?? '').includes(failed)).length, uiPrefix('prompt.attach.failed'));
+      const dropFiles = (tabId, files) =>
+        page.evaluate(({ id, payload }) => {
+          const transfer = new DataTransfer();
+          for (const file of payload) {
+            const bytes = Uint8Array.from(atob(file.base64), (c) => c.charCodeAt(0));
+            transfer.items.add(new File([bytes], file.name, { type: file.type }));
+          }
+          const pane = document.querySelector(`[data-pane-tab-id="${id}"]`);
+          if (pane === null) throw new Error(`no hay panel para la pestaña ${id}`);
+          pane.dispatchEvent(new DragEvent('drop', { dataTransfer: transfer, bubbles: true, cancelable: true }));
+        }, { id: tabId, payload: files });
+      try {
+        await openTemporaryConversation(page);
+        const tabId = await page.evaluate(() => window.__mageDev.store.getState().activeTabId);
+        const boton = await page.getByRole('button', { name: ui('i2.prompt.attachImage') }).count();
+        const input = page.locator(`[data-pane-tab-id="${tabId}"] input[data-attach-input="image"]`);
+        await input.setInputFiles({ name: 'boton.png', mimeType: 'image/png', buffer: Buffer.from(TINY_PNG_BASE64, 'base64') });
+        await page.waitForTimeout(CONFIG.settleMs);
+        const trasBoton = await miniaturas();
+        await dropFiles(tabId, [{ name: 'soltada.png', type: 'image/png', base64: TINY_PNG_BASE64 }]);
+        await page.waitForTimeout(CONFIG.settleMs);
+        const trasSoltar = await miniaturas();
+        await dropFiles(tabId, [{ name: 'malo.exe', type: 'application/x-msdownload', base64: Buffer.from('MZ').toString('base64') }]);
+        await page.waitForTimeout(CONFIG.settleMs);
+        const exe = { errores: await erroresDeAdjuntar(), miniaturas: await miniaturas() };
+        await input.setInputFiles({ name: 'grande.png', mimeType: 'image/png', buffer: Buffer.alloc(5 * 1024 * 1024 + 1) });
+        await page.waitForTimeout(CONFIG.settleMs);
+        const tamano = uiSegment('errors.attachments.imageTooLarge', 0);
+        const conTamano = await page.evaluate((segment) => [...document.querySelectorAll('[role="alert"]')].some((n) => (n.textContent ?? '').includes(segment)), tamano);
+        const grande = { conTamano, miniaturas: await miniaturas() };
+        const ok = boton === 1 && trasBoton === 1 && trasSoltar === 2 && exe.errores >= 1 && exe.miniaturas === 2 && grande.conTamano && grande.miniaturas === 2;
+        const nota = trasSoltar === 2 ? '' : ' (soltar: CDP no lo simuló o no adjuntó)';
+        return { ok, detail: `${JSON.stringify({ boton, trasBoton, trasSoltar, exe, grande })}${nota}` };
+      } finally {
+        const quitar = page.getByRole('button', { name: uiAnyOf([uiPrefix('prompt.attach.remove')]) });
+        while ((await miniaturas()) > 0 && (await quitar.count()) > 0) {
+          await quitar.first().click();
+          await page.waitForTimeout(CONFIG.settleMs);
+        }
+        await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
+        await page.waitForTimeout(CONFIG.settleMs);
+      }
     },
   },
   // --- F3.6: textos largos con la interfaz en inglés (carril Y) ------------------------------------------
