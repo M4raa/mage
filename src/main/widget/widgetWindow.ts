@@ -3,6 +3,7 @@ import { BrowserWindow, screen } from 'electron';
 import { UI_LANGUAGE_CHANGED_CHANNEL, WIDGET_PREFS_CHANNEL, WIDGET_SESSIONS_CHANNEL, WIDGET_SNAPSHOT_CHANNEL } from '@shared/ipc';
 import type { ResolvedUiLanguage } from '@shared/i18n/language';
 import type { WidgetPrefs, WidgetSessionsPayload, WidgetSnapshot } from '@shared/widget';
+import { installNavigationGuard, isRendererUrl } from '../windows/navigationGuard';
 import { relocate, resizeAnchored, sameBounds, topRightOf, WIDGET_SCREEN_MARGIN, WIDGET_SIZES } from './widgetPlacement';
 
 // preloadPath: mismo preload que la principal (expone window.mage). rendererBaseUrl: URL de dev de
@@ -143,6 +144,8 @@ export class WidgetWindowController {
         sandbox: true,
       },
     });
+    // Lleva el preload de Mage: no puede navegar a nada que no sea su renderer.
+    installNavigationGuard(window.webContents, (url) => isRendererUrl(url, { devUrl: this.deps.rendererBaseUrl, rendererDir: this.deps.rendererDir }));
     // Arriba a la derecha del area de trabajo de la pantalla donde esta el cursor.
     const workArea = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea;
     window.setBounds(topRightOf(workArea, size, WIDGET_SCREEN_MARGIN));

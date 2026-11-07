@@ -318,6 +318,7 @@ import { isPathUnder, pathEquals } from './os/pathUtils';
 import { isWindowId, MAIN_WINDOW_ID, WindowManager, type WindowPlacement } from './windows/windowManager';
 import { installExternalLinkHandler, type ExternalLinkDeps } from './windows/externalLinks';
 import { resolveDropTarget } from './windows/dropTarget';
+import { installNavigationGuard, isRendererUrl, originForLog } from './windows/navigationGuard';
 import { PERSISTED_TAB_SCHEMA } from '@shared/stateSchema';
 import type { PersistedTab } from '@shared/state';
 import type { DropTabOutcome } from '@shared/ipc';
@@ -2407,6 +2408,8 @@ function createWorkbenchWindow(windowId: string, placement?: WindowPlacement): B
       sandbox: true,
     },
   });
+  // La ventana solo carga el renderer de Mage: soltar un enlace o un .html no la lleva a otra página con el preload.
+  installNavigationGuard(window.webContents, (url) => isRendererUrl(url, { devUrl: process.env['ELECTRON_RENDERER_URL'], rendererDir }), logBlockedNavigation);
 
   if (isDev) {
     window.on('page-title-updated', (event, title) => {
@@ -2442,6 +2445,10 @@ function windowGeometry(saved: SavedWindowBounds | null, placement: WindowPlacem
   if (placement !== undefined) return { x: placement.x, y: placement.y, width: WINDOW.width, height: WINDOW.height };
   if (saved !== null) return { x: saved.x, y: saved.y, width: saved.width, height: saved.height };
   return { width: WINDOW.width, height: WINDOW.height };
+}
+
+function logBlockedNavigation(url: string): void {
+  mainLog('warn', 'Navegación bloqueada: la ventana solo carga el renderer de Mage', { origin: originForLog(url) });
 }
 
 // Una pestaña que llega por IPC se valida con el MISMO esquema con que se lee el workspace: lo que
