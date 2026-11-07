@@ -27,9 +27,22 @@ describe('claudeTranscriptText', () => {
   const lines = claudeTranscriptText(CONVERSATION, { sessionId: 's1', newId: ids(), clock: CLOCK }).trim().split('\n').map((l) => JSON.parse(l) as Record<string, unknown>);
 
   it('claudeTranscriptText_conversacion_encadenaLasLineasPorParentUuid', () => {
-    expect(lines[0]!.parentUuid).toBeNull();
-    for (let i = 1; i < lines.length; i += 1) expect(lines[i]!.parentUuid).toBe(lines[i - 1]!.uuid);
-    expect(lines.every((l) => l.sessionId === 's1' && l.cwd === 'C:\\proyecto')).toBe(true);
+    const chained = lines.filter((l) => l.type !== 'custom-title');
+    expect(chained[0]!.parentUuid).toBeNull();
+    for (let i = 1; i < chained.length; i += 1) expect(chained[i]!.parentUuid).toBe(chained[i - 1]!.uuid);
+    expect(chained.every((l) => l.sessionId === 's1' && l.cwd === 'C:\\proyecto')).toBe(true);
+  });
+
+  it('claudeTranscriptText_conTitulo_terminaConSuCustomTitle', () => {
+    const last = lines.at(-1)!;
+
+    expect(last).toEqual({ type: 'custom-title', customTitle: 'Lista los ficheros', sessionId: 's1' });
+  });
+
+  it('claudeTranscriptText_sinTitulo_noEscribeCustomTitle', () => {
+    const untitled = claudeTranscriptText({ ...CONVERSATION, title: '  ' }, { sessionId: 's1', newId: ids(), clock: CLOCK }).trim().split('\n').map((l) => JSON.parse(l) as Record<string, unknown>);
+
+    expect(untitled.some((l) => l.type === 'custom-title')).toBe(false);
   });
 
   it('claudeTranscriptText_idaYVuelta_recuperaLaMismaConversacion', () => {

@@ -54,6 +54,10 @@ export function claudeTranscriptText(conversation: NeutralConversation, context:
     } else if (item.kind === 'user') push({ type: 'user', message: { role: 'user', content: item.text } }, at);
     else push(assistant([{ type: 'text', text: item.text }], 'end_turn'), at);
   });
+  // El título de Mage, como lo escribe el CLI al renombrar: el historial lo lee (`custom-title`) y la conversación
+  // migrada conserva el nombre que tenía.
+  const title = conversation.title.trim();
+  if (title.length > 0) lines.push({ type: 'custom-title', customTitle: title, sessionId: context.sessionId });
   return lines.map((line) => JSON.stringify(line)).join('\n') + '\n';
 }
 

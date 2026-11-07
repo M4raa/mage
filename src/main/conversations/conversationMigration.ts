@@ -48,7 +48,8 @@ export class ConversationMigrationService {
     if (conversation.items.length === 0) throw new UserFacingError(localized('errors.conversations.migrationEmpty', { sessionId: params.sessionId }));
     const dest = { accountDir: params.destAccountDir, privacy: params.privacy };
     const copied = params.sourceProvider === params.destProvider ? target.sink.copyFrom?.(ref, dest) : undefined;
-    const written = copied ?? target.sink.write({ ...conversation, cwd: conversation.cwd || params.cwd }, dest);
+    const titled = params.title === undefined ? conversation : { ...conversation, title: params.title };
+    const written = copied ?? target.sink.write({ ...titled, cwd: conversation.cwd || params.cwd }, dest);
     // `configDir` ya es el directorio EFECTIVO (cuenta o perfil privado): no se vuelve a resolver la privacidad.
     const writtenRef: ConversationRef = { accountDir: written.configDir, sessionId: written.sessionId, cwd: conversation.cwd || params.cwd, privacy: 'shared' };
     await this.verifyOrDiscard(target, writtenRef, conversation.items.length);
