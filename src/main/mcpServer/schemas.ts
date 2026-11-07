@@ -1,3 +1,4 @@
+import { EFFORT_LEVELS } from '@shared/ipc';
 import { z } from 'zod';
 
 export const MAGE_MCP_CONTRACT_VERSION = 1;
@@ -27,6 +28,7 @@ export const publicMessageSchema = z.object({ seq: integer('seq'), role: id('rol
 export const listInputSchema = z.object({ projectId: id('projectId').optional(), includeFinished: z.boolean().optional() }).strict();
 export const createInputSchema = z.object({
   requestId: requestId, provider, accountId: id('accountId').optional(), cwd: id('cwd'), prompt: text, model: id('model').optional(),
+  effort: z.enum(EFFORT_LEVELS, { errorMap: diagnostic('effort') }).optional(), permissionMode: id('permissionMode').optional(),
 }).strict();
 export const statusInputSchema = z.object({ conversationId: id('conversationId') }).strict();
 export const readInputSchema = z.object({

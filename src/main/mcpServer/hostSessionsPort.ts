@@ -3,10 +3,14 @@ import { buildUpdatedInput, parseAskUserQuestion } from '@shared/askUserQuestion
 import type { AskQuestion } from '@shared/askUserQuestion';
 import type { PendingRequest, SendReceipt } from '@shared/coordination';
 import type { MageEvent } from '@shared/events';
+import { isPermissionMode } from '@shared/ipc';
+import type { ProviderModel } from '@shared/providers';
 import type { SessionCoordinator } from '../coordination/sessionCoordinator';
 import type { ConversationIndexStore } from '../state/conversationIndexStore';
 import { TrustRequiredError, UnknownAccountError } from '../host/hostErrors';
 import type { HostCreateRequest } from '../host/hostProtocol';
+import { resolveDelegatedSettings } from './delegatedSettings';
+import type { DelegatedSettings, SessionSettings } from './delegatedSettings';
 import type { DelegationLog, DelegationView } from './delegationLog';
 import { MagePolicyError } from './errors';
 import type { AskCreatorInput, AskCreatorOutput, CancelInput, CancelOutput, CreateOutput, ListInput, PublicMessage, SendInput, SendOutput, StatusOutput } from './types';
@@ -31,6 +35,12 @@ export interface HostSessionsPortDeps {
   // Lanza por la frontera del host (`resolveHostLaunchParams` + `launchHostSession(…, 'mcp', createdBy)`); devuelve el sessionId.
   readonly launch: (request: HostCreateRequest, createdBy: { readonly conversationId: string; readonly sessionId: string }) => string;
   readonly setTimer: (fn: () => void, ms: number) => () => void;
+  // Lo que main sabe de la creadora (`SessionSettingsRegistry`); null si no la tiene anotada.
+  readonly creatorSettings: () => SessionSettings | null;
+  // Catálogo de modelos cacheado de una cuenta (vacío si nunca se midió).
+  readonly modelCatalog: (accountId: string) => readonly ProviderModel[];
+  // El modo de Codex se fija tras lanzar y antes del primer mensaje (el adapter lo guarda para el siguiente turno).
+  readonly setPermissionMode: (sessionId: string, mode: string) => void;
 }
 
 export class HostSessionsPort implements MageSessionsPort {
@@ -49,10 +59,12 @@ export class HostSessionsPort implements MageSessionsPort {
     const { caller, coordinator, index, log, launch } = this.deps;
     const { target, prompt, requestId } = cmd;
     if (cmd.createdBy === undefined) throw new Error(`createdBy es obligatorio para delegar desde ${caller.conversationId}`);
-    const sessionId = this.launchTranslated(launch, {
-      commandId: requestId, provider: target.provider, accountId: target.accountId, cwd: target.cwd,
-      ...(cmd.model === undefined ? {} : { model: cmd.model }), trust: { acknowledged: false },
+    const settings = resolveDelegatedSettings({
+      creator: this.deps.creatorSettings(), targetProvider: target.provider,
+      requested: { model: cmd.model, effort: cmd.effort, permissionMode: cmd.permissionMode }, catalog: this.deps.modelCatalog(target.accountId),
     });
+    const sessionId = this.launchTranslated(launch, launchRequestOf(cmd, settings));
+    if (target.provider === 'codex') this.deps.setPermissionMode(sessionId, settings.permissionMode);
     const conversationId = await this.waitForConversationId(sessionId);
     index.recordDelegation(conversationId, { createdBy: cmd.createdBy, creatorChain: cmd.creatorChain });
     log.watch({
@@ -207,6 +219,17 @@ export class ExternalSessionsPort implements MageSessionsPort {
 }
 function reject(): Promise<never> {
   return Promise.reject(new MagePolicyError('mage_external_caller: las herramientas de Mage solo funcionan desde una sesión lanzada por Mage'));
+}
+
+// Claude recibe el modo como flag de arranque; Codex no (se fija con `setPermissionMode` tras lanzar).
+function launchRequestOf(cmd: CreateSessionCommand, settings: DelegatedSettings): HostCreateRequest {
+  const { target, requestId } = cmd;
+  return {
+    commandId: requestId, provider: target.provider, accountId: target.accountId, cwd: target.cwd, trust: { acknowledged: false },
+    ...(settings.model === undefined ? {} : { model: settings.model }),
+    ...(settings.effort === undefined ? {} : { effort: settings.effort }),
+    ...(target.provider === 'claude' && isPermissionMode(settings.permissionMode) ? { permissionMode: settings.permissionMode } : {}),
+  };
 }
 
 const path = (value: string): string => resolve(value);

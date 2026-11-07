@@ -22,6 +22,8 @@ export interface CreateSessionCommand {
   readonly target: CreationTarget;
   readonly prompt: string;
   readonly model?: string;
+  readonly effort?: string;
+  readonly permissionMode?: string;
   readonly requestId: string;
   readonly createdBy?: CreatedBy;
   readonly creatorChain: readonly string[];

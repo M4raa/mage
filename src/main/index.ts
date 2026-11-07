@@ -12,6 +12,7 @@ import { mageMcpLaunch } from './mcpServer/registration';
 import { McpRegistrationService, type McpRegistrationDeps } from './mcpServer/registrationService';
 import { DelegationLog } from './mcpServer/delegationLog';
 import { HostSessionsPort } from './mcpServer/hostSessionsPort';
+import { SessionSettingsRegistry } from './mcpServer/sessionSettingsRegistry';
 import { MemoryIdempotencyStore } from './mcpServer/idempotencyStore';
 import { createMcpConnector as createHostMcpConnector } from './mcpServer/mcpConnector';
 import { execFile, spawn, spawnSync, type ChildProcessWithoutNullStreams } from 'node:child_process';
@@ -2878,6 +2879,8 @@ const penSessions = new PenSessions({ registry: browserRegistry, imageDeps: elec
 const windowAttachments = new WindowAttachments({ coordinator: sessionCoordinator, eventChannel: EVENT_CHANNEL });
 // D-M11: registro de main de las delegadas del MCP (uno para todas las conexiones).
 const delegationLog = new DelegationLog({ coordinator: sessionCoordinator, now: Date.now });
+// Modelo, esfuerzo y modo de cada sesión viva: lo hereda una delegada (mage_create_session).
+const sessionSettings = new SessionSettingsRegistry();
 // D-M11: UN almacén de idempotencia para todas las conexiones MCP.
 const mcpIdempotency = new MemoryIdempotencyStore();
 
@@ -4390,6 +4393,9 @@ export function createHostSessionsPort(callerSessionId: string): HostSessionsPor
       .map((account) => ({ id: account.configDir, provider: account.providerId })),
     projects: () => getSettingsStore().load().chatProjects,
     launch: (request, createdBy) => launchHostSession(resolveHostLaunchParams(deps, request), 'mcp', createdBy),
+    creatorSettings: () => sessionSettings.get(callerSessionId),
+    modelCatalog: (accountDir) => getCommandCatalogStore().loadModels(accountDir),
+    setPermissionMode: (sessionId, mode) => { sessionManager.setPermissionMode(sessionId, mode); sessionSettings.apply(sessionId, 'permissionMode', mode); },
     setTimer: (fn, ms) => {
       const timer = setTimeout(fn, ms);
       return () => clearTimeout(timer);

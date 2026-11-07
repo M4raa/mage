@@ -2,7 +2,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { ASK_CREATOR_DESCRIPTION, startMageMcpServer } from './server';
+import { ASK_CREATOR_DESCRIPTION, CREATE_SESSION_DESCRIPTION, startMageMcpServer } from './server';
+import { createInputSchema } from './schemas';
 import { MemorySessionsPort } from './memorySessionsPort';
 import { MemoryIdempotencyStore } from './idempotencyStore';
 import type { ConnectionScope } from './scope';
@@ -75,6 +76,24 @@ describe('Mage MCP server', () => {
     const tool = (await client.listTools()).tools.find((item) => item.name === 'mage_ask_creator');
     expect(tool?.description).toBe(ASK_CREATOR_DESCRIPTION);
     expect(tool?.description).toContain('termina tu turno');
+  });
+  it('mage_create_session_tieneDescripcionYLosTresCamposOpcionales', async () => {
+    const { client } = await connect();
+    const tool = (await client.listTools()).tools.find((item) => item.name === 'mage_create_session');
+    expect(tool?.description).toBe(CREATE_SESSION_DESCRIPTION);
+    expect(tool?.description).toContain('hereda');
+    expect(Object.keys(tool?.inputSchema.properties ?? {})).toEqual(expect.arrayContaining(['model', 'effort', 'permissionMode']));
+    expect(tool?.inputSchema.required ?? []).not.toEqual(expect.arrayContaining(['model']));
+    expect(tool?.inputSchema.required ?? []).not.toContain('effort');
+    expect(tool?.inputSchema.required ?? []).not.toContain('permissionMode');
+  });
+  it('createInputSchema_esfuerzoFueraDeLaLista_rechaza', () => {
+    const base = { requestId: REQUEST, provider: 'claude', cwd: '/x', prompt: 'p' };
+    expect(createInputSchema.safeParse({ ...base, effort: 'turbo' }).success).toBe(false);
+  });
+  it('createInputSchema_esfuerzoValido_acepta', () => {
+    const base = { requestId: REQUEST, provider: 'claude', cwd: '/x', prompt: 'p' };
+    expect(createInputSchema.safeParse({ ...base, effort: 'high' }).success).toBe(true);
   });
   it('callTool_askCreator_memoryPort_acceptedYRegistrada', async () => {
     const { call, port } = await connect();
