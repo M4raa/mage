@@ -2,12 +2,13 @@ import { randomUUID } from 'node:crypto';
 import type { ImageAttachment } from '@shared/ipc';
 import { base64ByteLength, ERROR_FORMAT_LOCALE, validateAttachment } from '@shared/attachments';
 import { buildUserContentBlocks } from '@shared/imageRefs';
-import type { MageEvent, PermissionDecision } from '@shared/events';
+import type { MageEvent, PermissionDecision, PermissionScope } from '@shared/events';
 import { localized } from '@shared/i18n/localizedText';
 import { isUuid } from '@shared/sessionInput';
 import { parseElicitationRequest, type ElicitationAnswer } from '@shared/elicitation';
 import { resolveClaudeBinary } from '../os/claudeBinaryResolver';
 import { normalizeRawEvent } from './normalize';
+import { allowRulesOf, allowScopesFor, formatRule, updatedPermissionsFor, type ClaudeRule } from './claudePermissionRules';
 import { CommandLifecycleSchema } from './schemas';
 import type { AuthModel, EngineRequest, LaunchParams, PermissionRef, ProviderAdapter, SpawnPlan, SteerEncoding } from './providerAdapter';
 import { MAGE_MCP_CALLER_ENV } from '../host/mcpCallers';
@@ -112,6 +113,7 @@ export class ClaudeAdapter implements ProviderAdapter {
   buildSpawnPlan(params: LaunchParams): SpawnPlan {
     this.steers.clear(); // proceso nuevo: los directos del anterior murieron con el
     this.engineRequests.clear(); // y las peticiones al motor sin respuesta tambien
+    this.permissionRules.clear(); // y sus permisos abiertos
     // Reanudar (`--resume <id>`) continua la conversacion existente y sigue escribiendo en su misma
     // transcripcion; arrancar (`--session-id <id>`) crea una nueva con el id dado. Mutuamente
     // excluyentes: el CLI no acepta ambos.
@@ -196,15 +198,24 @@ export class ClaudeAdapter implements ProviderAdapter {
   // (2.3). Sin el, `{}` — que NO es un bug: el fuente del CLI dice que significa "usa el input
   // original" y es lo que mandan sus clientes moviles. El campo del payload es `toolUseID`, con la D y
   // la ID en mayusculas; escribirlo `toolUseId` compila igual y el CLI no lo reconoce.
+  // Con alcance («esta sesión» o «siempre») van además las reglas que el CLI sugirió para ESTA llamada (ver
+  // claudePermissionRules.ts); el destino lo pone el alcance.
   encodePermissionResponse(ref: PermissionRef, decision: PermissionDecision): unknown {
-    const payload =
-      decision.behavior === 'allow'
-        ? { behavior: 'allow', updatedInput: decision.updatedInput ?? {}, toolUseID: ref.toolUseId }
-        : { behavior: 'deny', message: decision.message, toolUseID: ref.toolUseId };
-    return {
-      type: 'control_response',
-      response: { subtype: 'success', request_id: ref.requestId, response: payload },
-    };
+    const open = this.permissionRules.get(ref.requestId);
+    this.permissionRules.delete(ref.requestId);
+    if (decision.behavior === 'deny') {
+      return this.permissionResponse(ref, { behavior: 'deny', message: decision.message, toolUseID: ref.toolUseId });
+    }
+    const allow = { behavior: 'allow', updatedInput: decision.updatedInput ?? {}, toolUseID: ref.toolUseId };
+    if (decision.scope === undefined) return this.permissionResponse(ref, allow);
+    if (open === undefined || !open.scopes.includes(decision.scope)) {
+      throw new Error(`La petición de permiso ${ref.requestId} no admite el alcance ${decision.scope}`);
+    }
+    return this.permissionResponse(ref, { ...allow, updatedPermissions: updatedPermissionsFor(open.rules, decision.scope) });
+  }
+
+  private permissionResponse(ref: PermissionRef, payload: Record<string, unknown>): unknown {
+    return { type: 'control_response', response: { subtype: 'success', request_id: ref.requestId, response: payload } };
   }
 
   encodeInterrupt(): unknown {
@@ -301,6 +312,9 @@ export class ClaudeAdapter implements ProviderAdapter {
   private readonly steers = new Map<string, boolean>();
   // request_id de las peticiones al motor sin respuesta (`encodeEngineRequest`).
   private readonly engineRequests = new Set<string>();
+  // Peticiones de permiso abiertas: request_id -> reglas del CLI y alcances ofrecidos. Viven en main: el renderer
+  // solo elige el alcance, nunca la regla.
+  private readonly permissionRules = new Map<string, { readonly rules: readonly ClaudeRule[]; readonly scopes: readonly PermissionScope[] }>();
 
   takeOutgoing(): readonly unknown[] {
     const taken = this.outgoing;
@@ -323,7 +337,30 @@ export class ClaudeAdapter implements ProviderAdapter {
     const type = (raw as { type?: unknown } | null)?.type;
     if (type === 'command_lifecycle') return this.normalizeSteer(raw);
     const events = normalizeRawEvent(raw);
-    return type === 'result' ? [...events, ...this.afterResult()] : events;
+    if (type === 'control_cancel_request') this.forgetPermission(raw);
+    const decorated = type === 'control_request' ? this.withPermissionScopes(raw, events) : events;
+    return type === 'result' ? [...decorated, ...this.afterResult()] : decorated;
+  }
+
+  // can_use_tool: guarda las reglas y anuncia en la petición los alcances que se pueden aplicar y la regla que se guardaría.
+  private withPermissionScopes(raw: unknown, events: MageEvent[]): MageEvent[] {
+    const message = raw as { request_id?: unknown; request?: Record<string, unknown> };
+    const request = message.request;
+    if (typeof message.request_id !== 'string' || request?.subtype !== 'can_use_tool') return events;
+    const requestId = message.request_id;
+    return events.map((event) => {
+      if (event.kind !== 'permission_request' || event.request.requestId !== requestId) return event;
+      const rules = allowRulesOf(request.permission_suggestions, event.request.toolName);
+      const scopes = allowScopesFor({ toolName: event.request.toolName, input: event.request.input, requiresUserInteraction: event.request.requiresUserInteraction, suppressAlwaysAllow: request.suppress_always_allow_rule === true });
+      this.permissionRules.set(requestId, { rules, scopes });
+      if (scopes.length === 0) return event;
+      return { ...event, request: { ...event.request, allowScopes: scopes, rule: rules.map(formatRule).join(', ') } };
+    });
+  }
+
+  private forgetPermission(raw: unknown): void {
+    const requestId = (raw as { request_id?: unknown }).request_id;
+    if (typeof requestId === 'string') this.permissionRules.delete(requestId);
   }
 
   // La respuesta a una peticion al motor sale como `engine_response` (exito o rechazo): un rechazo NO pasa ademas
