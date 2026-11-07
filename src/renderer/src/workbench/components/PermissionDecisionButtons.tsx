@@ -1,12 +1,12 @@
 import { isPermissionSending, useWorkbenchStore } from '../workbenchStore';
-import type { PermissionDecision } from '@shared/events';
+import type { PermissionDecision, PermissionScope } from '@shared/events';
 import { usePaneTabId } from '../paneContext';
 import { useT } from '../../i18n/uiLanguage';
 
-// Las TRES decisiones de un permiso, en un solo sitio (2.3b). Las pintan la tarjeta del chat
-// (PermissionCard) y el panel de Permisos, y son la misma cosa: el mismo can_use_tool, los mismos
-// atajos anunciados y la misma semantica. Con el bloque duplicado en los dos ficheros, "permitir
-// siempre" ya habia divergido una vez.
+// Las CUATRO decisiones de un permiso (esta vez, esta sesión, siempre y denegar), en un solo sitio (2.3b). Las pintan la
+// tarjeta del chat (PermissionCard) y el panel de Permisos, y son la misma cosa: el mismo can_use_tool, los mismos
+// atajos anunciados y la misma semantica.
+// «Permitir siempre» no contesta: abre un aviso con la regla y la cuenta, y se confirma ahí.
 //
 // `aria-label` ESTABLE y separado del contenido: sin el, el nombre accesible sale del texto visible y
 // se cuela el numero del atajo ("Permitir1"), que un lector de pantalla lee tal cual y que no hay
@@ -14,19 +14,25 @@ import { useT } from '../../i18n/uiLanguage';
 
 export interface PermissionKeys {
   readonly allow: string | null;
+  readonly allowSession: string | null;
   readonly allowAlways: string | null;
   readonly deny: string | null;
 }
 
-const DEFAULT_KEYS: PermissionKeys = { allow: '1', allowAlways: '2', deny: '3' };
+const DEFAULT_KEYS: PermissionKeys = { allow: '1', allowSession: '2', allowAlways: '3', deny: '4' };
 
 export function PermissionDecisionButtons({
   toolLabel,
   requestId,
+  allowScopes,
+  rule,
   compact = false,
   keys = DEFAULT_KEYS,
 }: {
   readonly toolLabel: string;
+  // Alcances que admite la petición (los decide main) y la regla de «siempre», para su aviso.
+  readonly allowScopes: readonly PermissionScope[];
+  readonly rule: string | null;
   // La peticion que contestan. La tarjeta pasa la SUYA: con varias en cola (tools en paralelo), cada
   // tarjeta decide sobre su can_use_tool. Sin ella (panel), la primera de la cola.
   readonly requestId?: string;
@@ -42,6 +48,14 @@ export function PermissionDecisionButtons({
   // La respuesta va de camino a main: los botones se desactivan hasta que `permission_resolved` cierre la tarjeta.
   const sending = useWorkbenchStore((s) => isPermissionSending(s, tabId, requestId));
   const answer = (decision: PermissionDecision): void => answerFor(tabId, decision, requestId);
+  const headRequestId = useWorkbenchStore((s) => s.pendingByChat[tabId]?.[0]?.requestId);
+  const ownRequestId = requestId ?? headRequestId;
+  const alwaysOpen = useWorkbenchStore((s) => ownRequestId !== undefined && s.alwaysPromptByChat[tabId] === ownRequestId);
+  const account = useWorkbenchStore((s) => s.tabs.find((tab) => tab.id === tabId)?.accountAlias ?? '');
+  const requestAlways = useWorkbenchStore((s) => s.requestAlwaysAllow);
+  const confirmAlways = useWorkbenchStore((s) => s.confirmAlwaysAllow);
+  const cancelAlways = useWorkbenchStore((s) => s.cancelAlwaysAllow);
+  const shownRule = rule ?? toolLabel;
   const t = useT();
   return (
     <div
@@ -50,8 +64,18 @@ export function PermissionDecisionButtons({
       className={compact ? 'flex flex-wrap items-center gap-[6px] text-[11.5px]' : 'flex flex-col gap-[6px] text-[12px]'}
     >
       <Option shortcut={keys.allow} label={t('chat.permission.allow')} primary compact={compact} disabled={sending} onClick={() => answer({ behavior: 'allow' })}>
-        {t('chat.permission.allow')}
+        {t('i3.permission.allowOnce')}
       </Option>
+      {allowScopes.includes('session') && (
+        <Option shortcut={keys.allowSession} label={t('i3.permission.allowSessionAria', { tool: toolLabel })} compact={compact} disabled={sending} onClick={() => answer({ behavior: 'allow', scope: 'session' })}>
+          {t('i3.permission.allowSession')}
+        </Option>
+      )}
+      {allowScopes.includes('always') && (
+        <Option shortcut={keys.allowAlways} label={t('i3.permission.allowAlwaysAria', { rule: shownRule })} compact={compact} disabled={sending} onClick={() => requestAlways(tabId, ownRequestId)}>
+          {t('i3.permission.allowAlways')}
+        </Option>
+      )}
       <Option
         shortcut={keys.deny}
         deny
@@ -62,6 +86,19 @@ export function PermissionDecisionButtons({
       >
         {t('chat.permission.deny')}
       </Option>
+      {alwaysOpen && (
+        <div role="alert" data-permission-always-warning="true" className="basis-full rounded-[7px] border border-mg-danger bg-mg-block p-[8px_10px] text-[11.5px] leading-[1.5] text-mg-body2">
+          <p>{t('i3.permission.alwaysWarning', { rule: shownRule, account })}</p>
+          <div className="mt-[6px] flex flex-wrap items-center gap-[6px]">
+            <button type="button" data-permission-always-confirm="true" disabled={sending} onClick={() => confirmAlways(tabId)} className="rounded-[7px] border border-mg-danger px-[10px] py-[4px] font-semibold text-mg-danger hover:bg-mg-hover disabled:opacity-50">
+              {t('i3.permission.alwaysConfirm')}
+            </button>
+            <button type="button" onClick={() => cancelAlways(tabId)} className="rounded-[7px] px-[10px] py-[4px] text-mg-sec hover:bg-mg-hover hover:text-mg-body">
+              {t('i3.permission.alwaysCancel')}
+            </button>
+          </div>
+        </div>
+      )}
       {sending && <span className="text-[11px] text-mg-muted">{t('chat.permission.sending')}</span>}
     </div>
   );

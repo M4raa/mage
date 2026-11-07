@@ -89,7 +89,7 @@ export function PermissionPanel(): React.JSX.Element {
         <div className="flex flex-col gap-[11px] border-b border-mg-border-subtle p-[14px]">
           <div className="text-[12px] leading-[1.5] text-mg-body2">{permission.prompt}</div>
           <PermissionDiff permission={permission} />
-          <PermissionDecisionButtons toolLabel={permission.toolLabel} />
+          <PermissionDecisionButtons toolLabel={permission.toolLabel} allowScopes={permission.allowScopes} rule={permission.rule} />
         </div>
       )}
 

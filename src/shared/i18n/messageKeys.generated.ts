@@ -1047,6 +1047,15 @@ export interface MessageValues {
   readonly "i3.files.section.mentioned": never;
   readonly "i3.files.section.plans": never;
   readonly "i3.files.section.read": never;
+  readonly "i3.menu.action.permissionAllowSession": never;
+  readonly "i3.permission.allowAlways": never;
+  readonly "i3.permission.allowAlwaysAria": { readonly "rule": string | number };
+  readonly "i3.permission.allowOnce": never;
+  readonly "i3.permission.allowSession": never;
+  readonly "i3.permission.allowSessionAria": { readonly "tool": string | number };
+  readonly "i3.permission.alwaysCancel": never;
+  readonly "i3.permission.alwaysConfirm": never;
+  readonly "i3.permission.alwaysWarning": { readonly "account": string | number; readonly "rule": string | number };
   readonly "library.account.label": never;
   readonly "library.account.none": never;
   readonly "library.account.option": { readonly "engine": string | number; readonly "label": string | number };

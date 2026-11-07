@@ -41,7 +41,7 @@ export interface KeybindingAction {
 }
 
 // Definicion de una accion tal como se escribe aqui: etiqueta y categoria como CLAVES del catalogo de textos.
-type ActionLabelKey = 'menu.action.promptSend' | 'menu.action.promptSendNow' | 'menu.action.promptIndent' | 'menu.action.promptOutdent' | 'menu.action.promptCyclePermissionMode' | 'menu.action.conversationNew' | 'menu.action.windowNew' | 'menu.action.tabClose' | 'menu.action.tabNext' | 'menu.action.tabPrevious' | 'menu.action.sessionInterrupt' | 'menu.action.sessionCompact' | 'menu.action.appOpenSettings' | 'menu.action.appToggleSidebar' | 'menu.action.appToggleInspector' | 'menu.action.permissionAllow' | 'menu.action.permissionAllowAlways' | 'menu.action.permissionDeny' | 'menu.action.permissionCycleMode' | 'menu.action.sidebarFocusSearch';
+type ActionLabelKey = 'menu.action.promptSend' | 'menu.action.promptSendNow' | 'menu.action.promptIndent' | 'menu.action.promptOutdent' | 'menu.action.promptCyclePermissionMode' | 'menu.action.conversationNew' | 'menu.action.windowNew' | 'menu.action.tabClose' | 'menu.action.tabNext' | 'menu.action.tabPrevious' | 'menu.action.sessionInterrupt' | 'menu.action.sessionCompact' | 'menu.action.appOpenSettings' | 'menu.action.appToggleSidebar' | 'menu.action.appToggleInspector' | 'menu.action.permissionAllow' | 'i3.menu.action.permissionAllowSession' |'menu.action.permissionAllowAlways' | 'menu.action.permissionDeny' | 'menu.action.permissionCycleMode' | 'menu.action.sidebarFocusSearch';
 type ActionCategoryKey = 'menu.category.prompt' | 'menu.category.app' | 'menu.category.session' | 'menu.category.permission' | 'menu.category.panels';
 interface ActionDefinition extends Omit<KeybindingAction, 'label' | 'category'> {
   readonly labelKey: ActionLabelKey;
@@ -153,11 +153,20 @@ const ACTION_DEFINITIONS: readonly ActionDefinition[] = [
     guard: canAnswerPermission,
   },
   {
+    id: 'permission.allowSession',
+    labelKey: 'i3.menu.action.permissionAllowSession',
+    categoryKey: 'menu.category.permission',
+    scope: 'global',
+    defaultKeys: '2',
+    rebindable: true,
+    guard: canAnswerPermission,
+  },
+  {
     id: 'permission.allowAlways',
     labelKey: 'menu.action.permissionAllowAlways',
     categoryKey: 'menu.category.permission',
     scope: 'global',
-    defaultKeys: '2',
+    defaultKeys: '3',
     rebindable: true,
     guard: canAnswerPermission,
   },
@@ -166,7 +175,7 @@ const ACTION_DEFINITIONS: readonly ActionDefinition[] = [
     labelKey: 'menu.action.permissionDeny',
     categoryKey: 'menu.category.permission',
     scope: 'global',
-    defaultKeys: '3',
+    defaultKeys: '4',
     rebindable: true,
     guard: canAnswerPermission,
   },

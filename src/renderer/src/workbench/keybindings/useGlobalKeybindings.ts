@@ -86,6 +86,11 @@ export function runGlobalAction(actionId: string): void {
     case 'permission.allow':
       store.answerActivePermission({ behavior: 'allow' });
       return;
+    case 'permission.allowSession': {
+      // Solo si la petición lo admite (lo decide main por motor); si no, la tecla no hace nada.
+      if (headPermission(store, store.activeTabId)?.view.allowScopes.includes('session') === true) store.answerActivePermission({ behavior: 'allow', scope: 'session' });
+      return;
+    }
     case 'permission.allowAlways':
       // Abre el aviso de «Permitir siempre» (no contesta): la confirmación es un botón del aviso.
       store.requestAlwaysAllow(store.activeTabId);

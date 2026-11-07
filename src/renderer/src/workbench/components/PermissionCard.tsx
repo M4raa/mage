@@ -57,7 +57,7 @@ export function PermissionCard({ block }: { readonly block: Extract<Block, { kin
 
       {block.state === 'pending' && (
         <div className="mt-[10px] flex flex-wrap items-center gap-[8px]">
-          <PermissionDecisionButtons toolLabel={block.toolName} requestId={block.requestId} compact keys={keys} />
+          <PermissionDecisionButtons toolLabel={block.toolName} requestId={block.requestId} allowScopes={block.allowScopes ?? []} rule={block.rule ?? null} compact keys={keys} />
           {/* El detalle vive en el panel (decision del usuario): aqui solo el camino hasta el. */}
           <button
             onClick={() => revealPanel('permissions')}
