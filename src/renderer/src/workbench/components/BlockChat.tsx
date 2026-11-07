@@ -3,6 +3,8 @@ import { Virtuoso, type Components, type ScrollerProps, type VirtuosoHandle } fr
 import { createPortal } from 'react-dom';
 import { AnimatePresence } from 'motion/react';
 import { CopyButton } from './CopyButton';
+import { firstImageOf } from '../clipboardContent';
+import { keepFirstImageToken } from '@shared/imageRefs';
 import { Icon, type IconName } from './Icon';
 import { AgyCommandsDialog } from './AgyCommandsDialog';
 import { RewindDialog } from './RewindDialog';
@@ -877,11 +879,12 @@ function UserBlock({ block }: { readonly block: Extract<Block, { kind: 'user' }>
   // En directo el comando llega tal cual se tecleo (P-028): mismo chip que al reabrir.
   if (block.attachments.length === 0 && isSlashCommandText(block.text)) return <CommandChip command={block.text.trim()} />;
   if (wrapper.kind === 'scheduled-task') return <ScheduledTaskCard id={block.id} name={wrapper.name} body={wrapper.body} />;
+  const copiedImage = firstImageOf(block.attachments);
   return (
     <div className="flex justify-end">
       <div className="group relative flex max-w-[80%] min-w-0 flex-col gap-[3px] rounded-[12px] rounded-br-[4px] border border-mg-border-emph bg-mg-sel p-[9px_13px] text-mg-sel-ink leading-[1.55]">
         <div className="absolute right-[4px] top-[-10px] z-[1] flex items-center gap-[2px] opacity-0 focus-within:opacity-100 group-hover:opacity-100">
-          <CopyButton text={block.text} label={t('chat.copy.userMessage')} className="border border-mg-border-subtle bg-mg-block" />
+          <CopyButton text={copiedImage === null ? block.text : keepFirstImageToken(block.text)} image={copiedImage} label={t('chat.copy.userMessage')} className="border border-mg-border-subtle bg-mg-block" />
           {offersRewind && <BubbleActions onPick={setRewindAction} />}
         </div>
         {rewindAction !== null && <RewindDialog tabId={tabId} blockId={block.id} action={rewindAction} onClose={() => setRewindAction(null)} />}

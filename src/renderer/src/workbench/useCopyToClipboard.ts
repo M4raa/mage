@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import type { ImageAttachment } from '@shared/ipc';
 import { t } from '../i18n/uiLanguage';
+import { BROWSER_CLIPBOARD, copyTextAndImage } from './clipboardContent';
 
 // Cuanto tiempo se ve «Copiado» antes de volver a «Copiar».
 const COPIED_FLASH_MS = 1500;
@@ -21,15 +23,16 @@ export async function copyText(
 export function useCopyToClipboard(): {
   readonly copied: boolean;
   readonly error: string | null;
-  readonly copy: (text: string) => void;
+  readonly copy: (text: string, image?: ImageAttachment | null) => void;
 } {
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => () => clearTimeout(timer.current), []);
 
-  const copy = useCallback((text: string): void => {
-    void copyText(navigator.clipboard, text).then((failure) => {
+  const copy = useCallback((text: string, image?: ImageAttachment | null): void => {
+    const pending = image === undefined || image === null ? copyText(navigator.clipboard, text) : copyTextAndImage(BROWSER_CLIPBOARD(), { text, image });
+    void pending.then((failure) => {
       setError(failure);
       setCopied(failure === null);
       clearTimeout(timer.current);

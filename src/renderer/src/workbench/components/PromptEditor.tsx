@@ -4,6 +4,7 @@ import { Compartment, EditorState, Prec } from '@codemirror/state';
 import { history, historyKeymap, standardKeymap } from '@codemirror/commands';
 import { promptExtensions } from '../promptExtensions';
 import type { TextState } from '../promptEditing';
+import { withoutImageTokens } from '@shared/imageRefs';
 
 // Envoltorio de CodeMirror 6 para el prompt (2.7). TODO lo especifico de CM6 vive aqui y en
 // `promptExtensions.ts`: el resto de la app sigue hablando de `TextState` (value + seleccion), que es
@@ -107,10 +108,14 @@ export function PromptEditor({
           Prec.highest(
             EditorView.domEventHandlers({
               keydown: (event) => handlersRef.current.onKeyDown(event),
-              paste: (event) => {
+              paste: (event, view) => {
                 const files = [...(event.clipboardData?.files ?? [])];
                 if (files.length === 0) return false; // texto normal: que lo pegue CodeMirror
                 event.preventDefault();
+                // Texto e imágenes a la vez (un mensaje copiado con su imagen): el texto se pega sin sus tokens y
+                // `onPasteImages` pone el de cada imagen que adjunta, en el cursor, detrás del texto.
+                const text = withoutImageTokens(event.clipboardData?.getData('text/plain') ?? '');
+                if (text.length > 0) view.dispatch(view.state.replaceSelection(text));
                 handlersRef.current.onPasteImages(files);
                 return true;
               },
