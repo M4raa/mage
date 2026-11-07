@@ -2092,6 +2092,57 @@ const CHECKS = [
     },
   },
   {
+    // I3 (0.1.4), punto 2: migrar una pestaña de agy a una cuenta de Codex desde el store (el mismo camino que «Continuar
+    // en otra cuenta»): la conversación nueva ocupa la MISMA posición en su barra, conserva el título de la pestaña y el
+    // borrador del prompt, y la vieja desaparece. Migración real de ficheros en la carpeta aislada; ningún CLI se lanza
+    // (las pestañas no arrancan sesión) y no se pulsa Enter.
+    name: 'I3: migrar una conversación a otra cuenta la deja en su sitio con su título y su borrador',
+    async run(page, { userDataDir }) {
+      const fx = seedProviderHistory({ userDataDir, repoRoot });
+      const previo = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return { tabs: s.tabs, activeTabId: s.activeTabId, splitLayout: s.splitLayout, activeAccountId: s.activeAccountId, draftByChat: s.draftByChat };
+      });
+      try {
+        await refreshAccountsUntil(page, fx.codexHome2);
+        const item = (await page.evaluate((home) => window.mage.listConversations(home), fx.agyHome)).find((c) => c.sessionId === AGY_FIXTURE_ID);
+        if (item === undefined) return { ok: false, detail: 'el fixture de agy no aparece en su historial' };
+        await page.evaluate(async ({ conv, home }) => { await window.__mageDev.store.getState().openConversation(conv, home); }, { conv: item, home: fx.agyHome });
+        await page.waitForTimeout(CONFIG.settleMs);
+        const viejo = await page.evaluate(() => window.__mageDev.store.getState().activeTabId);
+        await openTemporaryConversation(page);
+        const antes = await page.evaluate((id) => {
+          const dev = window.__mageDev;
+          dev.store.getState().setActiveTab(id);
+          dev.store.getState().renameTab(id, 'Título I3');
+          dev.store.getState().setDraft(id, { text: 'borrador I3', attachments: [], mentions: [] });
+          const s = dev.store.getState();
+          const hojaDe = (node, tab) => (node.kind === 'leaf' ? (node.tabIds.includes(tab) ? node : null) : (hojaDe(node.a, tab) ?? hojaDe(node.b, tab)));
+          const hoja = hojaDe(s.splitLayout, id);
+          return { indice: hoja?.tabIds.indexOf(id) ?? -1, vecinas: hoja?.tabIds.length ?? 0 };
+        }, viejo);
+        await page.evaluate(async ({ id, dest }) => { await window.__mageDev.store.getState().continueInAccount(id, dest); }, { id: viejo, dest: fx.codexHome2 });
+        await page.waitForTimeout(CONFIG.settleMs);
+        const tras = await page.evaluate((id) => {
+          const s = window.__mageDev.store.getState();
+          const nueva = s.tabs.find((t) => t.id === s.activeTabId);
+          const hojaDe = (node, tab) => (node.kind === 'leaf' ? (node.tabIds.includes(tab) ? node : null) : (hojaDe(node.a, tab) ?? hojaDe(node.b, tab)));
+          const hoja = nueva === undefined ? null : hojaDe(s.splitLayout, nueva.id);
+          return { viejaSigue: s.tabs.some((t) => t.id === id), proveedor: nueva?.provider ?? null, titulo: nueva?.title ?? null, borrador: nueva === undefined ? null : (s.draftByChat[nueva.id]?.text ?? null), indice: hoja === null || nueva === undefined ? -1 : hoja.tabIds.indexOf(nueva.id) };
+        }, viejo);
+        const ok = !tras.viejaSigue && tras.proveedor === 'codex' && tras.titulo === 'Título I3' && tras.borrador === 'borrador I3' && tras.indice === antes.indice && antes.indice >= 0 && antes.vecinas >= 2;
+        return { ok, detail: JSON.stringify({ antes, tras }) };
+      } finally {
+        await page.evaluate((estado) => {
+          window.__mageDev.store.getState().setActiveAccount(estado.activeAccountId);
+          window.__mageDev.store.setState({ tabs: estado.tabs, activeTabId: estado.activeTabId, splitLayout: estado.splitLayout, draftByChat: estado.draftByChat });
+        }, previo);
+        await page.waitForTimeout(CONFIG.settleMs);
+        fx.cleanup();
+      }
+    },
+  },
+  {
     // Migrar una conversación de Claude a una cuenta de otro proveedor: el diálogo dice que la original se queda y
     // que la nueva arranca con su historial. No se pulsa nada: seguir crearía una pestaña.
     name: 'Historial: pasar una conversación de Claude a Codex ofrece migrarla y, aparte, un handoff con su historial',
