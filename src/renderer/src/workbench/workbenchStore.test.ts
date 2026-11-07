@@ -1483,6 +1483,9 @@ describe('requestAccountSwitch y continueInAccount', () => {
     { id: B, alias: 'otra', providerId: 'claude', loginStatus: 'logged_in' },
     { id: 'C:/Users/u/.codex-x', alias: 'codex', providerId: 'codex', loginStatus: 'logged_in' },
   ] as unknown as Account[];
+  const API = 'C:/Users/u/.claude-api';
+  const apiAccount = { id: API, alias: 'api', providerId: 'claude', loginStatus: 'logged_in', apiBilled: true } as unknown as Account;
+  const notice = { kind: 'system', id: 'sys-1', text: 'Carpeta autorizada' } as const;
 
   function mounted(over: Partial<MageApi> = {}, status: 'idle' | 'streaming' = 'idle') {
     const store = createWorkbenchStore(
@@ -1514,15 +1517,83 @@ describe('requestAccountSwitch y continueInAccount', () => {
     expect(store.getState().activeAccountId).toBe(accounts[0]!.id);
   });
 
-  it('requestAccountSwitch_sesionVivaSinTurnos_noPreguntaYAbreChatNuevoEnDestino', () => {
-    const store = mounted({ getScratchDir: vi.fn(() => new Promise<string>(() => undefined)) });
-    store.setState({ tabs: [tab('a')], sessionIdByChat: { a: 's-a' }, blocksByChat: {} });
+  it('requestAccountSwitch_sesionVivaSinTurnos_reasignaLaPestanaYCierraSuSesion', () => {
+    // Arrange: pestaña nueva con sesión viva sin turnos y solo un aviso de sistema.
+    const closeSession = vi.fn().mockResolvedValue({ background: false });
+    const store = mounted({ closeSession });
+    store.setState({ tabs: [tab('a')], sessionIdByChat: { a: 's-a' }, blocksByChat: { a: [notice] } });
+
+    // Act
+    store.getState().requestAccountSwitch(B);
+
+    // Assert: sin diálogo ni pestaña nueva; la misma pestaña pasa a B y su sesión vieja se cierra.
+    const s = store.getState();
+    expect(s.accountSwitchPrompt).toBeNull();
+    expect(s.activeAccountId).toBe(B);
+    expect(s.tabs).toHaveLength(1);
+    expect(s.tabs[0]).toMatchObject({ id: 'a', accountId: B, accountAlias: 'otra', provider: 'claude' });
+    expect(s.sessionIdByChat.a).toBeUndefined();
+    expect(closeSession).toHaveBeenCalledWith('s-a');
+  });
+
+  it('requestAccountSwitch_sesionVivaSinTurnosHaciaCodex_cambiaElProveedorDeLaPestana', () => {
+    const closeSession = vi.fn().mockResolvedValue({ background: false });
+    const store = mounted({ closeSession });
+    store.setState({ tabs: [tab('a', { model: 'opus' })], sessionIdByChat: { a: 's-a' }, blocksByChat: {} });
+
+    store.getState().requestAccountSwitch('C:/Users/u/.codex-x');
+
+    const moved = store.getState().tabs[0]!;
+    expect(moved).toMatchObject({ id: 'a', accountId: 'C:/Users/u/.codex-x', provider: 'codex' });
+    expect(moved.model).not.toBe('opus');
+    expect(closeSession).toHaveBeenCalledWith('s-a');
+  });
+
+  it('requestAccountSwitch_sesionVivaSinTurnosHaciaCuentaApi_laPestanaPasaALaCuentaApi', () => {
+    const closeSession = vi.fn().mockResolvedValue({ background: false });
+    const store = mounted({ closeSession });
+    store.setState({ accounts: [...accounts, apiAccount], tabs: [tab('a')], sessionIdByChat: { a: 's-a' }, blocksByChat: {} });
+
+    store.getState().requestAccountSwitch(API);
+
+    expect(store.getState().tabs[0]).toMatchObject({ id: 'a', accountId: API, accountAlias: 'api', provider: 'claude' });
+    expect(store.getState().activeAccountId).toBe(API);
+    expect(closeSession).toHaveBeenCalledWith('s-a');
+  });
+
+  it('requestAccountSwitch_desdeCuentaApiSinTurnos_vuelveALaSuscripcion', () => {
+    const closeSession = vi.fn().mockResolvedValue({ background: false });
+    const store = mounted({ closeSession });
+    store.setState({ accounts: [...accounts, apiAccount], activeAccountId: API, tabs: [tab('a', { accountId: API, accountAlias: 'api' })], sessionIdByChat: { a: 's-a' }, blocksByChat: {} });
 
     store.getState().requestAccountSwitch(B);
 
-    expect(store.getState().accountSwitchPrompt).toBeNull();
+    expect(store.getState().tabs[0]).toMatchObject({ id: 'a', accountId: B, accountAlias: 'otra' });
+    expect(closeSession).toHaveBeenCalledWith('s-a');
+  });
+
+  it('requestAccountSwitch_conConversacionYSesionViva_preguntaComoAntes', () => {
+    const closeSession = vi.fn();
+    const store = mounted({ closeSession });
+    store.setState({ tabs: [tab('a')], sessionIdByChat: { a: 's-a' }, blocksByChat: { a: [{ kind: 'user', id: 'u1', text: 'hola', time: '', attachments: [], nativeId: null }] } });
+
+    store.getState().requestAccountSwitch(B);
+
+    expect(store.getState().accountSwitchPrompt).toEqual({ tabId: 'a', destAccountId: B, sourceAccountId: accounts[0]!.id });
+    expect(store.getState().tabs[0]!.accountId).toBe(accounts[0]!.id);
+    expect(closeSession).not.toHaveBeenCalled();
+  });
+
+  it('requestAccountSwitch_pestanaFijadaSinTurnos_soloCambiaLaCuentaActiva', () => {
+    const closeSession = vi.fn();
+    const store = mounted({ closeSession });
+    store.setState({ tabs: [tab('a', { accountPinned: true })], sessionIdByChat: { a: 's-a' }, blocksByChat: {} });
+
+    store.getState().requestAccountSwitch(B);
+
+    expect(store.getState().tabs[0]!.accountId).toBe(accounts[0]!.id);
     expect(store.getState().activeAccountId).toBe(B);
-    expect(store.getState().tabs.find((t) => t.id === 'a')?.accountId).toBe(tab('a').accountId);
+    expect(closeSession).not.toHaveBeenCalled();
   });
 
   it('requestAccountSwitch_haciaCuentaDeCodex_tambienPreguntaPorLaMigracion', () => {
@@ -1701,7 +1772,7 @@ describe('requestAccountSwitch y continueInAccount', () => {
 
   it('requestAccountSwitch_chatConBloques_soloCambiaDeCuenta', () => {
     const store = mounted();
-    store.setState({ tabs: [tab('a')], blocksByChat: { a: [{ id: 'b1', kind: 'system', text: 'x' }] as never } });
+    store.setState({ tabs: [tab('a')], blocksByChat: { a: [{ id: 'b1', kind: 'user', text: 'x' }] as never } });
 
     store.getState().requestAccountSwitch(B);
 

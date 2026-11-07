@@ -71,7 +71,7 @@ import type { Account, AccountSwitchPrompt, Block, ChatStatus, ContextInfo, Imag
 import type { ConversationPrivacy } from '@shared/state';
 import type { ConversationSummary } from '@shared/conversations';
 import { planOpenConversation, tabFromConversation } from './conversationList';
-import { modelForReassignedTab, planAccountSwitch } from './accountSwitch';
+import { hasConversationBlocks, modelForReassignedTab, planAccountSwitch } from './accountSwitch';
 import { importedConversationContext, MODEL_UNTITLED_TITLE } from './conversationContext';
 import { accumulateProviderUsage, type ProviderUsageTotals } from './providerUsage';
 import {
@@ -1040,9 +1040,29 @@ async function closeSessionInMain(mage: MageClient, sessionId: string): Promise<
   }
 }
 
+// La sesión viva de un chat sin conversación que cambia de cuenta (0.1.4): era de la cuenta vieja y no tiene turnos.
+// Se olvida su estado de motor y se cierra en main; el primer mensaje arranca otra con la cuenta nueva
+// (`ensureSession`). `closeSessionInMain` ya trata «Sesion inexistente» como ausencia y avisa de cualquier otro fallo.
+function dropLiveSessionOfTab(mage: MageClient, set: SetFn, target: { readonly tabId: string; readonly sessionId: string }): void {
+  const { tabId, sessionId } = target;
+  set((s) => ({
+    sessionIdByChat: without(s.sessionIdByChat, tabId),
+    statusByChat: without(s.statusByChat, tabId),
+    slashCommandsByChat: without(s.slashCommandsByChat, tabId),
+    toolsByChat: without(s.toolsByChat, tabId),
+    mcpServersByChat: without(s.mcpServersByChat, tabId),
+    extensionsByChat: without(s.extensionsByChat, tabId),
+    resolvedModelByChat: without(s.resolvedModelByChat, tabId),
+    contextUsageByChat: without(s.contextUsageByChat, tabId),
+    providerUsageByChat: without(s.providerUsageByChat, tabId),
+    rateLimitByChat: without(s.rateLimitByChat, tabId),
+  }));
+  void closeSessionInMain(mage, sessionId);
+}
+
 // Chat NUEVO que sigue a la cuenta pulsada (P-028, punto 31): reescribe cuenta, alias y modelo de la
 // pestaña y olvida su config dir resuelto (el de la cuenta vieja). Conserva cwd, privacidad y borrador.
-// Solo se llama con el plan 'reassign', que ya garantiza que no hay sesion ni nada que migrar.
+// Solo se llama con el plan 'reassign': no hay conversación que migrar. Si había sesión viva (sin turnos), se para.
 function reassignNewChat(
   mage: MageClient,
   get: () => WorkbenchState,
@@ -1050,6 +1070,7 @@ function reassignNewChat(
   target: { readonly tabId: string; readonly destAccountId: string },
 ): void {
   const state = get();
+  const liveSessionId = state.sessionIdByChat[target.tabId];
   const dest = state.accounts.find((a) => a.id === target.destAccountId);
   if (dest === undefined) throw new Error(`Cuenta destino inexistente al reasignar el chat: ${target.destAccountId}`);
   const catalog = state.modelCatalogByAccount[dest.id]?.map((m) => m.id);
@@ -1084,6 +1105,7 @@ function reassignNewChat(
       return { ...rest, accountId: dest.id, accountAlias: dest.alias, model };
     }),
   }));
+  if (liveSessionId !== undefined) dropLiveSessionOfTab(mage, set, { tabId: target.tabId, sessionId: liveSessionId });
   schedulePersist(mage, get);
 }
 
@@ -1494,7 +1516,7 @@ export function createWorkbenchStore(mage: MageClient) {
         liveSessionId: state.sessionIdByChat[state.activeTabId],
         destAccountId,
         destLoggedIn: state.accounts.find((a) => a.id === destAccountId)?.loginStatus === 'logged_in',
-        hasBlocks: (state.blocksByChat[state.activeTabId]?.length ?? 0) > 0,
+        hasBlocks: hasConversationBlocks(state.blocksByChat[state.activeTabId] ?? []),
       });
       if (plan === 'ask' && tab !== undefined) {
         set({ accountSwitchPrompt: { tabId: tab.id, destAccountId, sourceAccountId: tab.accountId } });

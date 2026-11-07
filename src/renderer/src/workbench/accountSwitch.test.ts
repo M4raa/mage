@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { modelForReassignedTab, planAccountSwitch, type AccountSwitchContext } from './accountSwitch';
+import { hasConversationBlocks, modelForReassignedTab, planAccountSwitch, type AccountSwitchContext } from './accountSwitch';
 
 const A = 'C:/Users/u/.claude';
 const B = 'C:/Users/u/.claude-p';
@@ -40,8 +40,8 @@ describe('planAccountSwitch', () => {
     expect(planAccountSwitch(ctx({ activeTab: { accountId: A }, liveSessionId: 'live', hasBlocks: true }))).toBe('ask');
   });
 
-  it('planAccountSwitch_sesionVivaSinTurnos_switchAndNewChat', () => {
-    expect(planAccountSwitch(ctx({ activeTab: { accountId: A }, liveSessionId: 'live', hasBlocks: false }))).toBe('switch-and-new-chat');
+  it('planAccountSwitch_sesionVivaSinTurnos_reassign', () => {
+    expect(planAccountSwitch(ctx({ activeTab: { accountId: A }, liveSessionId: 'live', hasBlocks: false }))).toBe('reassign');
   });
 
   it('planAccountSwitch_pinnedTabWithConversation_switchOnly', () => {
@@ -66,6 +66,24 @@ describe('planAccountSwitch', () => {
   it('planAccountSwitch_pestanaConError_ask', () => {
     // Un turno que fallo ya no esta en marcha: la conversacion se puede llevar.
     expect(planAccountSwitch(ctx({ status: 'error' }))).toBe('ask');
+  });
+});
+
+describe('hasConversationBlocks', () => {
+  it('hasConversationBlocks_vacio_false', () => {
+    expect(hasConversationBlocks([])).toBe(false);
+  });
+
+  it('hasConversationBlocks_soloAvisos_false', () => {
+    expect(hasConversationBlocks([{ kind: 'system' }, { kind: 'error' }, { kind: 'command-output' }])).toBe(false);
+  });
+
+  it('hasConversationBlocks_conMensajeDeUsuario_true', () => {
+    expect(hasConversationBlocks([{ kind: 'system' }, { kind: 'user' }])).toBe(true);
+  });
+
+  it.each(['agent', 'tool', 'subagent', 'thinking', 'question', 'permission'])('hasConversationBlocks_bloque_%s_true', (kind) => {
+    expect(hasConversationBlocks([{ kind }])).toBe(true);
   });
 });
 
