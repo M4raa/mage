@@ -6155,6 +6155,61 @@ const CHECKS = [
       return { ok, detail: JSON.stringify(medido) };
     },
   },
+  {
+    // I3 (0.1.4), punto 5: el panel de Ficheros agrupa en Creados / Editados / Leídos / Mencionados con herramientas de
+    // Claude, el apply_patch de Codex y las de agy, cada fichero en una sola sección (la más fuerte) y el más reciente
+    // primero. Los eventos entran por `handleEvent`, como el stream, en una conversación temporal. Ningún CLI ni Enter.
+    name: 'I3: el panel de Ficheros agrupa creados, editados, leídos y mencionados sin duplicar',
+    async run(page) {
+      const previo = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return { tabs: s.tabs, activeTabId: s.activeTabId, splitLayout: s.splitLayout, sessionIdByChat: s.sessionIdByChat };
+      });
+      try {
+        await openTemporaryConversation(page);
+        const cwd = await page.evaluate(() => {
+          const s = window.__mageDev.store.getState();
+          return s.tabs.find((t) => t.id === s.activeTabId)?.cwd ?? null;
+        });
+        if (cwd === null) return { ok: false, detail: 'la conversacion temporal no tiene cwd' };
+        const nombres = ['creado.txt', 'editado.txt', 'leido.txt', 'parche.txt', 'parche-editado.txt', 'agy-leido.txt', 'agy-creado.txt'];
+        const r = Object.fromEntries(nombres.map((n) => [n, path.join(cwd, n)]));
+        for (const p of Object.values(r)) fs.writeFileSync(p, 'x\n', 'utf-8');
+        await page.evaluate((rutas) => {
+          const dev = window.__mageDev;
+          const tabId = dev.store.getState().activeTabId;
+          const sessionId = 'i3-files-session';
+          dev.store.setState((st) => ({ sessionIdByChat: { ...st.sessionIdByChat, [tabId]: sessionId } }));
+          dev.store.getState().hydrateBlocks(tabId, [{ kind: 'user', id: 'i3-u', text: 'mira docs/notas.md', time: '', attachments: [], nativeId: null }]);
+          const handle = (event) => dev.store.getState().handleEvent(sessionId, event);
+          const tool = (id, toolName, input, file) => {
+            handle({ kind: 'tool_use', tool: { toolUseId: id, toolName, input } });
+            handle({ kind: 'tool_result', result: { toolUseId: id, isError: false, output: 'ok', durationMs: 1, ...(file === undefined ? {} : { file }) } });
+          };
+          tool('i3-w', 'Write', { file_path: rutas['creado.txt'], content: 'x' }, { path: rutas['creado.txt'], content: 'x' });
+          tool('i3-e', 'Edit', { file_path: rutas['editado.txt'], old_string: 'x', new_string: 'xx' });
+          tool('i3-r', 'Read', { file_path: rutas['leido.txt'] });
+          tool('i3-r2', 'Read', { file_path: rutas['creado.txt'] });
+          tool('i3-p', 'apply_patch', { changes: [{ path: rutas['parche.txt'], kind: { type: 'add' }, diff: 'x' }, { path: rutas['parche-editado.txt'], kind: { type: 'update' }, diff: '@@ -1 +1 @@\n-x\n+y' }] });
+          tool('i3-v', 'view_file', { AbsolutePath: rutas['agy-leido.txt'] });
+          tool('i3-a', 'write_to_file', { TargetFile: rutas['agy-creado.txt'] });
+        }, r);
+        await page.locator('[data-files-panel="true"] [data-files-section]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const medido = await page.evaluate(() => {
+          const panel = document.querySelector('[data-files-panel="true"]');
+          const secciones = [...panel.querySelectorAll('[data-files-section]')].map((e) => e.getAttribute('data-files-section'));
+          const filas = [...panel.querySelectorAll('[data-created-file]')].map((b) => `${b.getAttribute('data-file-section')}:${(b.getAttribute('data-created-file') ?? '').split(/[\\/]/).pop()}`);
+          return { secciones, filas };
+        });
+        const esperado = ['created:agy-creado.txt', 'created:parche.txt', 'created:creado.txt', 'edited:parche-editado.txt', 'edited:editado.txt', 'read:agy-leido.txt', 'read:leido.txt', 'mentioned:notas.md'];
+        const ok = JSON.stringify(medido.secciones) === JSON.stringify(['created', 'edited', 'read', 'mentioned']) && JSON.stringify(medido.filas) === JSON.stringify(esperado);
+        return { ok, detail: JSON.stringify(medido) };
+      } finally {
+        await page.evaluate((estado) => window.__mageDev.store.setState({ tabs: estado.tabs, activeTabId: estado.activeTabId, splitLayout: estado.splitLayout, sessionIdByChat: estado.sessionIdByChat }), previo);
+        await page.waitForTimeout(CONFIG.settleMs);
+      }
+    },
+  },
   // Q09 (#31, F5.6): las referencias del chat (F0.4, §3.4…) se enlazan a encabezados UNICOS de los documentos asociados. Cada comprobación monta SU conversación temporal con dos .md escritos por el harness y un mensaje del agente con las referencias: runGuiCheck restaura los stores al acabar cada caso, así que nada se comparte entre ellas (V7). Se inyecta por `handleEvent` y `setState`: ningún turno, ningún CLI.
   ...(() => {
     const REFERENCIA = '[data-plan-ref="F0.4"]';
