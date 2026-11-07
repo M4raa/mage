@@ -22,7 +22,7 @@ import { sendNowAvailability } from '../sendNow';
 import { providerLabel } from '../accountView';
 import type { SendMode } from '@shared/coordination';
 import type { ImageAttachment, PendingAttachment, PromptDraft } from '../types';
-import { buildSlashCatalog, completionFor, filterSlashCommands, type SlashCommand } from '../slashCommands';
+import { buildSlashCatalog, insertSlashCommand, slashQueryAt, slashSuggestionsAt, type SlashCommand } from '../slashCommands';
 import { useCachedCommandCatalog } from '../commandCatalogStore';
 import { resolveKeyEvent, shortcutText } from '../keybindings/resolver';
 import { isMacPlatform } from '../keybindings/platform';
@@ -302,16 +302,16 @@ export function PromptBar(): React.JSX.Element {
     () => buildSlashCatalog(sessionSlashCommands.length > 0 ? sessionSlashCommands : cachedSlashCommands),
     [sessionSlashCommands, cachedSlashCommands],
   );
-  // Sugerencias de comando "/" para el texto actual (vacio si no procede). El popover se abre salvo
+  // Menciones `@` (Q06): el cursor lo avisa el editor; elegir una pone `@ruta ` en el texto y la ficha en el borrador.
+  const [cursor, setCursor] = useState(0);
+  // Sugerencias de comando "/" para el token `/` bajo el cursor (vacio si no procede). El popover se abre salvo
   // que el usuario lo haya descartado con Escape (se reabre al seguir escribiendo).
   // Memoizado: se recalculaba en CADA pulsacion de tecla, y el catalogo real tiene cientos de
   // entradas cuando hay plugins (P16).
-  const slashSuggestions = useMemo(() => filterSlashCommands(text, slashCatalog), [text, slashCatalog]);
+  const slashSuggestions = useMemo(() => slashSuggestionsAt(text, cursor, slashCatalog), [text, cursor, slashCatalog]);
   const slashOpen = slashSuggestions.length > 0 && !slashDismissed && !disabled;
   useLocalPopover(slashOpen);
   const slashCursor = Math.min(slashIndex, slashSuggestions.length - 1);
-  // Menciones `@` (Q06): el cursor lo avisa el editor; elegir una pone `@ruta ` en el texto y la ficha en el borrador.
-  const [cursor, setCursor] = useState(0);
   const tabCwd = activeTab?.cwd ?? '';
   const tabAccountDir = activeTab?.resolvedConfigDir ?? activeTab?.accountId ?? '';
   const mentionTab = useMemo(() => (tabCwd.length === 0 ? null : { tabId: activeTabId, cwd: tabCwd, accountDir: tabAccountDir }), [activeTabId, tabCwd, tabAccountDir]);
@@ -521,12 +521,15 @@ export function PromptBar(): React.JSX.Element {
     queueMicrotask(() => editor.applyTextState({ value: result.text, selectionStart: caret, selectionEnd: caret }));
   };
 
-  // Inserta el comando elegido ("/name ") y cierra el popover; el cursor queda al final para el argumento.
+  // Sustituye SOLO el token `/…` bajo el cursor por "/name " y cierra el popover; el cursor queda tras el espacio.
   const completeSlash = (command: SlashCommand): void => {
-    const completion = completionFor(command);
-    setText(completion);
+    const state = currentTextState();
+    const at = slashQueryAt(state.value, state.selectionStart);
+    if (at === null) return;
+    const inserted = insertSlashCommand(state.value, at, command);
+    setText(inserted.text);
     setSlashDismissed(true);
-    editorRef.current?.applyTextState({ value: completion, selectionStart: completion.length, selectionEnd: completion.length });
+    editorRef.current?.applyTextState({ value: inserted.text, selectionStart: inserted.cursor, selectionEnd: inserted.cursor });
   };
 
   // Puente de teclado del editor (2.7). MISMO orden de precedencia que tenia el textarea, y devuelve
