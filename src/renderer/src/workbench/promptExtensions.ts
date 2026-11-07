@@ -1,4 +1,4 @@
-import { EditorView, Decoration, ViewPlugin, type DecorationSet, type ViewUpdate } from '@codemirror/view';
+import { EditorView, Decoration, ViewPlugin, WidgetType, type DecorationSet, type ViewUpdate } from '@codemirror/view';
 import { EditorState, type Extension } from '@codemirror/state';
 import { findImageTokens } from '@shared/imageRefs';
 import { decorationRangesFor, type DecorationKind } from './promptDecorations';
@@ -34,33 +34,63 @@ const CLASS_BY_KIND: Readonly<Record<DecorationKind, string>> = {
   'heading-6': 'cm-mg-h6',
 };
 
-// Construye las decoraciones del documento actual con el modulo PURO. `sort: true` porque
-// `Decoration.set` exige orden por posicion y el modulo emite por lineas.
-function buildDecorations(view: EditorView): DecorationSet {
-  const text = view.state.doc.toString();
-  const cursorLine = view.state.doc.lineAt(view.state.selection.main.head).number - 1;
-  const marks = decorationRangesFor(text, cursorLine).map((range) =>
-    Decoration.mark({ class: CLASS_BY_KIND[range.kind] }).range(range.from, Math.min(range.to, text.length)),
-  );
-  return Decoration.set(marks, true);
+// La viñeta como WIDGET que sustituye al `- ` (0.1.4). Con la marca `font-size: 0` + `::before` el `•` se perdía
+// con el cursor justo delante o detrás. El rango es atómico, como `[Imagen N]`: el cursor lo salta y
+// Backspace/Supr lo borran entero. El documento conserva el `- ` literal: lo enviado sigue siendo markdown.
+class BulletWidget extends WidgetType {
+  override eq(): boolean {
+    return true;
+  }
+
+  override toDOM(): HTMLElement {
+    const bullet = document.createElement('span');
+    bullet.className = CLASS_BY_KIND['bullet-painted'];
+    bullet.textContent = '•';
+    return bullet;
+  }
+}
+
+const bulletDecoration = Decoration.replace({ widget: new BulletWidget() });
+
+export interface PromptDecorationSets {
+  readonly all: DecorationSet;
+  readonly atomic: DecorationSet; // solo las viñetas
+}
+
+function decorationFor(kind: DecorationKind): Decoration {
+  return kind === 'bullet-painted' ? bulletDecoration : Decoration.mark({ class: CLASS_BY_KIND[kind] });
+}
+
+// Decoraciones del documento con el modulo PURO. `sort: true` porque `Decoration.set` exige orden por posicion y el
+// modulo emite por lineas. Recibe el estado (no la vista) para poder probarse sin DOM.
+export function buildPromptDecorations(state: EditorState): PromptDecorationSets {
+  const text = state.doc.toString();
+  const cursorLine = state.doc.lineAt(state.selection.main.head).number - 1;
+  const ranges = decorationRangesFor(text, cursorLine);
+  const all = ranges.map((range) => decorationFor(range.kind).range(range.from, Math.min(range.to, text.length)));
+  const bullets = ranges.filter((range) => range.kind === 'bullet-painted').map((range) => bulletDecoration.range(range.from, Math.min(range.to, text.length)));
+  return { all: Decoration.set(all, true), atomic: Decoration.set(bullets, true) };
 }
 
 const decorationsPlugin = ViewPlugin.fromClass(
   class {
-    decorations: DecorationSet;
+    sets: PromptDecorationSets;
 
     constructor(view: EditorView) {
-      this.decorations = buildDecorations(view);
+      this.sets = buildPromptDecorations(view.state);
     }
 
     update(update: ViewUpdate): void {
       // Tambien al mover el cursor: de eso depende que el marcador de la linea editada se VEA.
       if (update.docChanged || update.selectionSet || update.viewportChanged) {
-        this.decorations = buildDecorations(update.view);
+        this.sets = buildPromptDecorations(update.state);
       }
     }
   },
-  { decorations: (value) => value.decorations },
+  {
+    decorations: (value) => value.sets.all,
+    provide: (plugin) => EditorView.atomicRanges.of((view) => view.plugin(plugin)?.sets.atomic ?? Decoration.none),
+  },
 );
 
 // `[Imagen N]` como BLOQUE (P-028 19b): una marca `cm-mg-imgref` y rango atomico, para que el cursor lo

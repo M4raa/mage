@@ -504,14 +504,9 @@ select:focus-visible,
 .cm-mg-marker-hidden {
   font-size: 0;
 }
-/* La viñeta fuera de la linea del cursor: el `- ` sigue ahi a `font-size: 0` (mismo motivo que arriba)
-   y un `::before` pinta el `•` que el usuario ve. Los numeros de lista NO pasan por aqui: se ven siempre. */
+/* La viñeta: un widget `•` que sustituye al `- ` (atómico, como `[Imagen N]`). Los numeros de lista NO pasan por
+   aqui: son texto real y se ven siempre. */
 .cm-mg-bullet-painted {
-  font-size: 0;
-}
-.cm-mg-bullet-painted::before {
-  content: '•';
-  font-size: 12.5px;
   margin-right: 0.45em;
   color: var(--color-mg-ter);
 }
