@@ -100,7 +100,7 @@ describe('reduceEvent — permisos', () => {
   const pendingEntry = (requestId: string) => ({
     requestId,
     input: {},
-    view: { prompt: '', target: '', toolLabel: 'Write', rememberable: true, diff: [], summary: '' },
+    view: { prompt: '', target: '', toolLabel: 'Write', allowScopes: [], rule: null, diff: [], summary: '' },
   });
 
   it('reduceEvent_permissionRequest_dejaLaPestanaEsperandoPermiso', () => {
@@ -168,7 +168,7 @@ describe('reduceEvent — permisos', () => {
   });
 
   it('reduceEvent_permissionResolvedYaContestadaAqui_noCambiaNada', () => {
-    const current = state({ blocksByChat: { [TAB]: [{ kind: 'permission', id: 'b', requestId: 'r1', toolName: 'Write', prompt: '', target: '', summary: '', rememberable: true, state: 'allowed' } as Block] } });
+    const current = state({ blocksByChat: { [TAB]: [{ kind: 'permission', id: 'b', requestId: 'r1', toolName: 'Write', prompt: '', target: '', summary: '', allowScopes: [], state: 'allowed' } as Block] } });
 
     expect(reduceEvent(current, TAB, { kind: 'permission_resolved', requestId: 'r1', behavior: 'allow' })).toEqual({});
   });

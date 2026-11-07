@@ -86,14 +86,10 @@ export function runGlobalAction(actionId: string): void {
     case 'permission.allow':
       store.answerActivePermission({ behavior: 'allow' });
       return;
-    case 'permission.allowAlways': {
-      // Mismo alcance que el boton del panel (2.3b): concede Y guarda la regla por conversacion. Hasta
-      // ahora el atajo hacia un `allow` a secas —igual que la tecla de al lado— asi que el usuario
-      // pulsaba "Permitir siempre" y la siguiente peticion de la misma tool volvia a preguntar.
-      const tool = headPermission(store, store.activeTabId)?.view.toolLabel;
-      if (tool !== undefined) store.allowAlwaysAndAnswer(tool);
+    case 'permission.allowAlways':
+      // Abre el aviso de «Permitir siempre» (no contesta): la confirmación es un botón del aviso.
+      store.requestAlwaysAllow(store.activeTabId);
       return;
-    }
     case 'permission.deny':
       store.answerActivePermission({ behavior: 'deny', message: 'Denegado por el usuario' });
       return;

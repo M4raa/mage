@@ -23,13 +23,10 @@ const DEFAULT_KEYS: PermissionKeys = { allow: '1', allowAlways: '2', deny: '3' }
 export function PermissionDecisionButtons({
   toolLabel,
   requestId,
-  rememberable = true,
   compact = false,
   keys = DEFAULT_KEYS,
 }: {
   readonly toolLabel: string;
-  // false = la peticion es de fuera del proyecto o de red (runtime propio): no se ofrece recordarla.
-  readonly rememberable?: boolean;
   // La peticion que contestan. La tarjeta pasa la SUYA: con varias en cola (tools en paralelo), cada
   // tarjeta decide sobre su can_use_tool. Sin ella (panel), la primera de la cola.
   readonly requestId?: string;
@@ -42,11 +39,9 @@ export function PermissionDecisionButtons({
 }): React.JSX.Element {
   const tabId = usePaneTabId();
   const answerFor = useWorkbenchStore((s) => s.answerPermissionFor);
-  const allowAlwaysFor = useWorkbenchStore((s) => s.allowAlwaysAndAnswer);
   // La respuesta va de camino a main: los botones se desactivan hasta que `permission_resolved` cierre la tarjeta.
   const sending = useWorkbenchStore((s) => isPermissionSending(s, tabId, requestId));
   const answer = (decision: PermissionDecision): void => answerFor(tabId, decision, requestId);
-  const allowAlways = (tool: string): void => allowAlwaysFor(tool, tabId);
   const t = useT();
   return (
     <div
@@ -57,19 +52,6 @@ export function PermissionDecisionButtons({
       <Option shortcut={keys.allow} label={t('chat.permission.allow')} primary compact={compact} disabled={sending} onClick={() => answer({ behavior: 'allow' })}>
         {t('chat.permission.allow')}
       </Option>
-      {/* "Permitir siempre" SI recuerda (2.3b): guarda una regla por conversacion en el indice de Mage y
-          los siguientes can_use_tool de esa tool se auto-aprueban. Se lista y se revoca en el panel. */}
-      {rememberable && (
-        <Option
-          shortcut={keys.allowAlways}
-          label={t('chat.permission.allowAlwaysAria', { tool: toolLabel })}
-          compact={compact}
-          disabled={sending}
-          onClick={() => allowAlways(toolLabel)}
-        >
-          {t('chat.permission.allowAlwaysStart')} <span className="font-mono text-[11px]">{toolLabel}</span> {t('chat.permission.allowAlwaysEnd')}
-        </Option>
-      )}
       <Option
         shortcut={keys.deny}
         deny

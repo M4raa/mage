@@ -41,7 +41,7 @@ import {
   resolvePermissionBlock,
   restartingText,
 } from './engineBlocks';
-import { addAlwaysAllow, removeAlwaysAllow } from './permissionRules';
+import { removeAlwaysAllow } from './permissionRules';
 import { createSettingsActions } from './settingsActions';
 import { createHistoryActions, withIdPresence } from './historyActions';
 import { EMPTY_SIDEBAR_FILTER, type AccountConversation, type SidebarFilter } from './sidebarModel';
@@ -652,10 +652,14 @@ export interface WorkbenchState extends PrState, PrActions, PrPanelStoreState, P
   // contestar "la activa" ahi seria responder por la conversacion equivocada.
   // Sin `requestId` contesta la PRIMERA de la cola; con el, esa peticion concreta (la de una tarjeta).
   answerPermissionFor: (tabId: string, decision: PermissionDecision, requestId?: string) => void;
-  // "Permitir siempre <tool> aqui" (2.3b): guarda la regla en la conversacion (persiste en el indice
-  // de Mage) y concede TODAS las peticiones de esa tool que esperan en la cola, no solo una: la regla
-  // ya dice que si. `revokeAlwaysAllow` la quita desde el panel.
-  allowAlwaysAndAnswer: (toolName: string, tabId?: string) => void;
+  // «Permitir siempre» pide confirmación (aviso de peligro): pestaña -> petición cuyo aviso está abierto.
+  alwaysPromptByChat: Readonly<Record<string, string>>;
+  // Abre el aviso de «Permitir siempre» para una petición que lo admite (sin requestId: la primera de la cola). No contesta.
+  requestAlwaysAllow: (tabId: string, requestId?: string) => void;
+  // Confirma el aviso abierto: contesta «permitir» con alcance `always` y lo cierra.
+  confirmAlwaysAllow: (tabId: string) => void;
+  cancelAlwaysAllow: (tabId: string) => void;
+  // `revokeAlwaysAllow` quita desde el panel una regla ya guardada.
   revokeAlwaysAllow: (tabId: string, toolName: string) => void;
   // Contesta una tarjeta de pregunta del chat (2.3): construye el `updatedInput` con las respuestas y
   // responde el MISMO can_use_tool que tendria el panel de permiso.
@@ -1462,6 +1466,7 @@ export function createWorkbenchStore(mage: MageClient) {
 
     blocksByChat: {},
     sessionIdByChat: {},
+    alwaysPromptByChat: {},
     streamingIdByChat: {},
     statusByChat: {},
     pendingByChat: {},
@@ -2855,20 +2860,21 @@ export function createWorkbenchStore(mage: MageClient) {
       });
     },
 
-    // "Permitir siempre <tool> aqui" (2.3b): la regla y luego las respuestas. Se conceden todas las de
-    // esa tool que esperan en la cola (lo mismo que `shouldAutoAllow` haria si llegaran ahora), menos
-    // las PREGUNTAS, que no son una autorizacion sino un turno de palabra.
-    allowAlwaysAndAnswer: (toolName, tabId = get().activeTabId) => {
-      const matching = (get().pendingByChat[tabId] ?? []).filter(
-        (p) => p.view.toolLabel === toolName && p.view.rememberable && parseAskUserQuestion(p.input) === null,
-      );
-      if (matching.length === 0) return; // sin peticion viva no hay nada que conceder
-      set((s) => ({
-        tabs: s.tabs.map((t) => (t.id === tabId ? { ...t, alwaysAllowTools: addAlwaysAllow(t.alwaysAllowTools ?? [], toolName) } : t)),
-      }));
-      persistConversationPrefs(mage, get(), tabId);
-      for (const p of matching) get().answerPermissionFor(tabId, { behavior: 'allow' }, p.requestId);
+    requestAlwaysAllow: (tabId, requestId) => {
+      const queue = get().pendingByChat[tabId] ?? [];
+      const pending = requestId === undefined ? queue[0] : queue.find((p) => p.requestId === requestId);
+      if (pending === undefined || !pending.view.allowScopes.includes('always')) return;
+      set((s) => ({ alwaysPromptByChat: { ...s.alwaysPromptByChat, [tabId]: pending.requestId } }));
     },
+
+    confirmAlwaysAllow: (tabId) => {
+      const requestId = get().alwaysPromptByChat[tabId];
+      if (requestId === undefined) return;
+      set((s) => ({ alwaysPromptByChat: without(s.alwaysPromptByChat, tabId) }));
+      get().answerPermissionFor(tabId, { behavior: 'allow', scope: 'always' }, requestId);
+    },
+
+    cancelAlwaysAllow: (tabId) => set((s) => ({ alwaysPromptByChat: without(s.alwaysPromptByChat, tabId) })),
 
     // Revoca una regla desde el panel de Permisos. No toca ningun permiso en vuelo: solo deja de
     // auto-aprobar los SIGUIENTES.
@@ -3319,7 +3325,8 @@ export function reduceEvent(state: WorkbenchState, tabId: string, event: MageEve
                   prompt: view.prompt,
                   target: view.target,
                   summary: view.summary,
-                  rememberable: view.rememberable,
+                  allowScopes: view.allowScopes,
+                  rule: view.rule,
                 })
               : appendQuestionBlock(blocks, { id: nextBlockId(), requestId: event.request.requestId, questions }),
           );

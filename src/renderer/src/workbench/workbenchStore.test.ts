@@ -1327,15 +1327,64 @@ describe('permisos en cola', () => {
     expect(answerPermission).toHaveBeenCalledTimes(1);
   });
 
-  it('allowAlwaysAndAnswer_conVariasDeLaMismaTool_lasConcedeTodasYNoLasDeOtra', () => {
+  const READ_SCOPED = (requestId: string) => ({ kind: 'permission_request', request: { requestId, toolUseId: `u-${requestId}`, toolName: 'Bash', input: { command: 'npm test' }, description: null, requiresUserInteraction: false, displayName: null, allowScopes: ['session', 'always'], rule: 'Bash(npm test *)' } }) as const;
+
+  it('answerPermissionFor_conAlcanceSesion_loMandaAMain', () => {
     const { store, answerPermission } = withTwoPending();
-    store.getState().handleEvent('s-a', READ('r3', 'Bash'));
 
-    store.getState().allowAlwaysAndAnswer('Read', 'a');
+    store.getState().answerPermissionFor('a', { behavior: 'allow', scope: 'session' }, 'r1');
 
-    expect(answerPermission.mock.calls.map(([arg]) => (arg as { requestId: string }).requestId)).toEqual(['r1', 'r2']);
-    expect(sendingIds(store)).toEqual(['r1', 'r2']);
-    expect(store.getState().tabs[0]?.alwaysAllowTools).toEqual(['Read']);
+    expect(answerPermission).toHaveBeenCalledWith({ sessionId: 's-a', requestId: 'r1', decision: { behavior: 'allow', scope: 'session' } });
+  });
+
+  it('requestAlwaysAllow_peticionConSiempre_abreElAvisoSinContestar', () => {
+    const { store, answerPermission } = withTwoPending();
+    store.getState().handleEvent('s-a', READ_SCOPED('r9'));
+
+    store.getState().requestAlwaysAllow('a', 'r9');
+
+    expect(store.getState().alwaysPromptByChat.a).toBe('r9');
+    expect(answerPermission).not.toHaveBeenCalled();
+  });
+
+  it('requestAlwaysAllow_peticionSinSiempre_noAbreNada', () => {
+    const { store } = withTwoPending();
+
+    store.getState().requestAlwaysAllow('a', 'r1');
+
+    expect(store.getState().alwaysPromptByChat.a).toBeUndefined();
+  });
+
+  it('requestAlwaysAllow_sinRequestId_usaLaPrimeraDeLaCola', () => {
+    const { store } = withTwoPending();
+    store.setState((s) => ({ pendingByChat: { ...s.pendingByChat, a: [] } }));
+    store.getState().handleEvent('s-a', READ_SCOPED('r9'));
+
+    store.getState().requestAlwaysAllow('a');
+
+    expect(store.getState().alwaysPromptByChat.a).toBe('r9');
+  });
+
+  it('confirmAlwaysAllow_contestaConAlcanceSiempreYCierraElAviso', () => {
+    const { store, answerPermission } = withTwoPending();
+    store.getState().handleEvent('s-a', READ_SCOPED('r9'));
+    store.getState().requestAlwaysAllow('a', 'r9');
+
+    store.getState().confirmAlwaysAllow('a');
+
+    expect(answerPermission).toHaveBeenCalledWith({ sessionId: 's-a', requestId: 'r9', decision: { behavior: 'allow', scope: 'always' } });
+    expect(store.getState().alwaysPromptByChat.a).toBeUndefined();
+  });
+
+  it('cancelAlwaysAllow_cierraElAvisoSinContestar', () => {
+    const { store, answerPermission } = withTwoPending();
+    store.getState().handleEvent('s-a', READ_SCOPED('r9'));
+    store.getState().requestAlwaysAllow('a', 'r9');
+
+    store.getState().cancelAlwaysAllow('a');
+
+    expect(store.getState().alwaysPromptByChat.a).toBeUndefined();
+    expect(answerPermission).not.toHaveBeenCalled();
   });
 });
 
@@ -1390,7 +1439,7 @@ describe('permiso auto-permitido', () => {
     store.getState().handleEvent('s-a', { ...outside, request: { ...outside.request, description: 'Fuera del proyecto: rm -rf ~', outsideProject: true } });
 
     expect(answerPermission).not.toHaveBeenCalled();
-    expect(store.getState().pendingByChat.a?.[0]?.view.rememberable).toBe(false);
+    expect(store.getState().pendingByChat.a?.[0]?.view.allowScopes).toEqual([]);
   });
 
   it('handleEvent_segundoPlanoFueraDelProyectoConRegla_pideAccion', () => {

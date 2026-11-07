@@ -1,4 +1,4 @@
-import type { PermissionRequest, ToolResult, ToolUse, TurnUsage } from '@shared/events';
+import type { PermissionRequest, PermissionScope, ToolResult, ToolUse, TurnUsage } from '@shared/events';
 import { SUBAGENT_ASYNC_LAUNCHED, type SubagentRunInfo } from '@shared/subagentRun';
 import type { AskQuestion } from '@shared/askUserQuestion';
 import type { Block, ImageAttachment, PermissionView, TextRun } from './types';
@@ -140,7 +140,8 @@ export function appendPermissionBlock(
     readonly prompt: string;
     readonly target: string;
     readonly summary: string;
-    readonly rememberable?: boolean;
+    readonly allowScopes?: readonly PermissionScope[];
+    readonly rule?: string | null;
   },
 ): readonly Block[] {
   return [...blocks, { kind: 'permission', ...permission, state: 'pending' }];
@@ -540,7 +541,8 @@ export function mapPermissionToView(request: PermissionRequest): PermissionView 
     prompt: buildPrompt(toolName),
     target: patch?.target ?? buildTarget(toolName, input),
     toolLabel: toolName,
-    rememberable: !outside,
+    allowScopes: outside ? [] : (request.allowScopes ?? []),
+    rule: request.rule ?? null,
     diff: patch?.diff ?? buildDiff(toolName, input),
     summary: permissionSummary(request, patch?.summary ?? buildSummary(toolName, input)),
   };
