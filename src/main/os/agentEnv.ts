@@ -22,6 +22,7 @@
 export const TEST_ANTHROPIC_BASE_URL_ENV = 'MAGE_TEST_ANTHROPIC_BASE_URL';
 
 // Variables que NUNCA deben llegar al hijo. Todas son credenciales o redirecciones de endpoint.
+// Nombres contrastados con los binarios: claude 2.1.319, codex-cli 0.164.0 y agy 1.5.3.
 const BLOCKED_ENV_VARS = [
   // Anthropic: clave de API, token de auth alternativo y redireccion de endpoint.
   'ANTHROPIC_API_KEY',
@@ -33,12 +34,23 @@ const BLOCKED_ENV_VARS = [
   'CLAUDE_CODE_OAUTH_TOKEN',
   'CLAUDE_CODE_USE_BEDROCK',
   'CLAUDE_CODE_USE_VERTEX',
+  // Microsoft Foundry y el token de Bedrock: con cualquiera, el CLI factura a la nube en vez de al login de la cuenta.
+  'CLAUDE_CODE_USE_FOUNDRY',
+  'ANTHROPIC_FOUNDRY_API_KEY',
+  'ANTHROPIC_FOUNDRY_BASE_URL',
+  'ANTHROPIC_FOUNDRY_RESOURCE',
+  'AWS_BEARER_TOKEN_BEDROCK',
+  // Cabeceras que el CLI añade a cada petición: pueden llevar la credencial de un proxy.
+  'ANTHROPIC_CUSTOM_HEADERS',
   // Otros proveedores, para los adapters que no son Claude (agy usa Gemini).
   'GEMINI_API_KEY',
   'GOOGLE_API_KEY',
   // OpenAI: `codex` lee las dos del entorno y con cualquiera factura la API en vez de la cuenta.
   'OPENAI_API_KEY',
   'CODEX_API_KEY',
+  // Redirecciones de endpoint de los otros CLI: `codex` hacia otro servidor OpenAI y `agy` hacia Vertex AI.
+  'OPENAI_BASE_URL',
+  'GOOGLE_GENAI_USE_VERTEXAI',
   // La credencial MCP de una sesion de Mage (D-M6): un Mage lanzado desde una sesion no se la hereda a
   // sus hijos; cada adapter pone la SUYA despues del saneado.
   'MAGE_MCP_CALLER',
