@@ -3,7 +3,7 @@ import type { AccountCreateParams, AccountInfo } from '@shared/accounts';
 import type { ConversationId } from '@shared/coordination';
 import type { CreateSessionParams } from '@shared/ipc';
 import type { ChatProject } from '@shared/settings';
-import { TrustRequiredError, UnknownAccountError } from './hostErrors';
+import { BypassPermissionsBlockedError, TrustRequiredError, UnknownAccountError } from './hostErrors';
 import type { HostAccountCreateRequest, HostCreateRequest, HostOptionKey } from './hostProtocol';
 
 // Lo que el host 1.2 (F7.2) hace fuera del coordinador: crear una sesión con la frontera de confianza de main,
@@ -49,6 +49,7 @@ export interface HostControlDeps {
 // Recibos de `session.create` recordados para deduplicar reintentos: los últimos, no todos.
 export const MAX_CREATE_RECEIPTS = 100;
 export const EFFORT_KEY_SUFFIX = '#effort';
+const BLOCKED_HOST_PERMISSION_MODE = 'bypassPermissions';
 
 const toHostAccount = (account: AccountInfo): HostAccount => ({ id: account.configDir, name: account.name, provider: account.providerId, billing: account.authKind });
 const nonEmpty = (value: string | undefined): string | undefined => (value === undefined || value.length === 0 ? undefined : value);
@@ -56,8 +57,8 @@ const nonEmpty = (value: string | undefined): string | undefined => (value === u
 export function createHostControl(deps: HostControlDeps): HostControl {
   const receipts = new Map<string, HostCreateResult>();
   return {
-    createSession: (request) => createOnce(deps, receipts, request),
-    setOption: (sessionId, key, value) => applyOption(deps.options, sessionId, key, value),
+    createSession: (request) => createOnce(deps, receipts, guardHostCreate(request)),
+    setOption: (sessionId, key, value) => applyOption(deps.options, sessionId, key, guardHostOption(key, value)),
     listProjects: () => deps.listProjects().map(({ id, name, cwd }) => ({ id, name, cwd })),
     listAccounts: () => deps.listAccounts().map(toHostAccount),
     createApiAccount: (request) => toHostAccount(deps.createAccount({ providerId: request.provider, authKind: 'api-key', name: request.name, apiKey: request.apiKey })),
@@ -75,15 +76,27 @@ function createOnce(deps: HostControlDeps, receipts: Map<string, HostCreateResul
   return result;
 }
 
+// Frontera de la terminal (no del MCP, que pasa por `resolveHostLaunchParams` sin esto): sin «Omitir permisos» y,
+// al crear, el modo solo en Claude.
+function guardHostCreate(request: HostCreateRequest): HostCreateRequest {
+  if (request.permissionMode === BLOCKED_HOST_PERMISSION_MODE) throw new BypassPermissionsBlockedError();
+  if (request.permissionMode !== undefined && request.provider !== 'claude') {
+    throw new Error(`El modo de permiso solo se elige al crear en Claude (pedido en ${request.provider})`);
+  }
+  return request;
+}
+
+function guardHostOption(key: HostOptionKey, value: string): string {
+  if (key === 'permissionMode' && value === BLOCKED_HOST_PERMISSION_MODE) throw new BypassPermissionsBlockedError();
+  return value;
+}
+
 // Valida la petición y resuelve cuenta, modelo y esfuerzo. La confianza la decide main, nunca `trust.acknowledged`.
 // La frontera de `session.create` (cuenta, modelo por defecto y confianza decidida por main), también para el MCP.
 export function resolveHostLaunchParams(deps: HostControlDeps, request: HostCreateRequest): CreateSessionParams {
   if (!isAbsolute(request.cwd)) throw new Error(`La carpeta tiene que ser una ruta absoluta: ${request.cwd}`);
   const account = deps.listAccounts().find((a) => a.configDir === request.accountId && a.providerId === request.provider);
   if (account === undefined) throw new UnknownAccountError(request.accountId, request.provider);
-  if (request.permissionMode !== undefined && request.provider !== 'claude') {
-    throw new Error(`El modo de permiso solo se elige al crear en Claude (pedido en ${request.provider})`);
-  }
   const defaults = deps.defaultModels();
   const model = request.model ?? nonEmpty(defaults[request.provider]) ?? nonEmpty(account.defaultModel ?? undefined);
   if (model === undefined) throw new Error(`No hay modelo por defecto para ${request.provider}: indica uno`);

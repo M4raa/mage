@@ -55,6 +55,13 @@ describe('resolveTarget', () => {
     await expect(run()).rejects.toMatchObject({ message: 'Carpeta sin confianza', exitCode: 3 });
   });
 
+  it('resolveTarget_new_bypassBloqueado_exitCode4ConElMensajeDelHost', async () => {
+    const refused = Object.assign(new Error('El host de Mage no acepta…'), { code: -32011 });
+    const { run } = setup({ target: { kind: 'new', accountId: 'a', provider: 'claude', cwd: '/x', permissionMode: 'bypassPermissions' }, responses: { 'accounts.list': { accounts: [] }, 'session.create': refused } });
+
+    await expect(run()).rejects.toMatchObject({ message: 'El host de Mage no acepta…', exitCode: 4 });
+  });
+
   describe('--account por nombre', () => {
     const NAMED = { accounts: [
       { id: '/h/.claude-a', provider: 'claude', name: 'trabajo', billing: 'api' },

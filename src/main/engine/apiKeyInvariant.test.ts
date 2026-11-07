@@ -9,7 +9,21 @@ import { TEST_ANTHROPIC_BASE_URL_ENV } from '../os/agentEnv';
 // API, las pone solo el adapter de su CLI, y una clave exportada en el entorno del usuario no llega a
 // ningun hijo. Se comprueba sobre los cuatro adapters a la vez.
 
-const USER_KEYS = { ANTHROPIC_BASE_URL: 'https://proxy-del-usuario.example', ANTHROPIC_API_KEY: 'sk-ant-usuario', GEMINI_API_KEY: 'gm-usuario', OPENAI_API_KEY: 'sk-oa-usuario', CODEX_API_KEY: 'sk-cx-usuario' };
+const USER_KEYS = {
+  ANTHROPIC_BASE_URL: 'https://proxy-del-usuario.example',
+  ANTHROPIC_API_KEY: 'sk-ant-usuario',
+  GEMINI_API_KEY: 'gm-usuario',
+  OPENAI_API_KEY: 'sk-oa-usuario',
+  CODEX_API_KEY: 'sk-cx-usuario',
+  CLAUDE_CODE_USE_FOUNDRY: '1-usuario',
+  ANTHROPIC_FOUNDRY_API_KEY: 'fd-usuario',
+  ANTHROPIC_FOUNDRY_BASE_URL: 'https://foundry-del-usuario.example',
+  ANTHROPIC_FOUNDRY_RESOURCE: 'recurso-usuario',
+  AWS_BEARER_TOKEN_BEDROCK: 'bedrock-usuario',
+  ANTHROPIC_CUSTOM_HEADERS: 'X-Proxy-Auth: cabecera-usuario',
+  OPENAI_BASE_URL: 'https://openai-del-usuario.example',
+  GOOGLE_GENAI_USE_VERTEXAI: 'true-usuario',
+};
 const API_DIR = '/home/u/.claude-api';
 const launch = (accountDir: string): LaunchParams => ({ sessionId: 's1', accountDir, model: 'm', cwd: '/proj' });
 const claudeKeyFor = (dir: string): string | null => (dir === API_DIR ? 'sk-ant-de-la-cuenta' : null);
@@ -42,6 +56,15 @@ describe('invariante de claves de API', () => {
         expect(Object.values(env)).not.toContain(value);
       }
     }
+  });
+
+  it('suscripcionDeClaude_conFoundryYCabecerasExportadas_elHijoNoLasRecibe', () => {
+    const env = new ClaudeAdapter({ resolveBinary: () => 'claude', resolveApiKey: claudeKeyFor }).buildSpawnPlan(launch('/home/u/.claude')).env;
+
+    expect(env.CLAUDE_CODE_USE_FOUNDRY).toBeUndefined();
+    expect(env.ANTHROPIC_FOUNDRY_API_KEY).toBeUndefined();
+    expect(env.ANTHROPIC_CUSTOM_HEADERS).toBeUndefined();
+    expect(env.ANTHROPIC_API_KEY).toBeUndefined();
   });
 
   it('cuentaDeClaudePorApi_soloSuHijoRecibeSuClave', () => {

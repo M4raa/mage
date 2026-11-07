@@ -2,11 +2,14 @@
 // así que se prueba sin terminal. Sin dependencias: solo `node:*`.
 
 const TRUST_REQUIRED_CODE = -32007;
+const PERMISSION_MODE_BLOCKED_CODE = -32011;
 const MAX_CHOICE_ATTEMPTS = 3;
 const NEW_CONVERSATION_ANSWER = 'n';
 const TERMINAL_PROVIDERS = ['claude', 'codex'];
 const EXIT_TRUST_REQUIRED = 3;
 const EXIT_BAD_ARGUMENTS = 2;
+// El host se negó: el mismo valor que EXIT_REFUSED de commands.mjs.
+const EXIT_HOST_REFUSED = 4;
 
 function withExitCode(message, exitCode, cause) {
   return Object.assign(new Error(message, { cause }), { exitCode });
@@ -19,6 +22,7 @@ async function createSession({ rpc, newCommandId }, { provider, accountId, cwd, 
     return (await rpc.call('session.create', params)).sessionId;
   } catch (error) {
     if (error?.code === TRUST_REQUIRED_CODE) throw withExitCode(error.message, EXIT_TRUST_REQUIRED, error);
+    if (error?.code === PERMISSION_MODE_BLOCKED_CODE) throw withExitCode(error.message, EXIT_HOST_REFUSED, error);
     throw error;
   }
 }

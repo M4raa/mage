@@ -47,7 +47,8 @@ export class MageToolHandlers {
       const at = schemas.utcSchema.parse(now());
       const createdBy = scope.caller === undefined ? undefined : { conversationId: scope.caller.conversationId, requestId: input.requestId, at };
       const result = await callPort('createSession', () => port.createSession({
-        target: validatedTarget, prompt: input.prompt, model: input.model, requestId: input.requestId, createdBy, creatorChain,
+        target: validatedTarget, prompt: input.prompt, model: input.model, effort: input.effort, permissionMode: input.permissionMode,
+        requestId: input.requestId, createdBy, creatorChain,
       }));
       return schemas.createOutputSchema.parse({ conversationId: result.conversationId, state: result.state });
     });

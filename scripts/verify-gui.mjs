@@ -40,6 +40,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
+import http from 'node:http';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
@@ -11148,6 +11149,48 @@ const CHECKS = [
       }
     },
   },
+  // --- S2 (0.1.4): la ventana no navega fuera de Mage. Ninguna pulsa Enter. ---
+  {
+    // Soltar un enlace o un .html fuera del chat (barra lateral, de pestañas o cabecera) no puede llevar la ventana a otra
+    // página: esa página recibiría el preload entero. Arrastres reales de Chromium por CDP (un DragEvent sintético no
+    // navega nunca); el enlace apunta a un servidor local de la comprobación para que una navegación, si ocurre, se complete.
+    name: 'S2: soltar un enlace o un .html fuera del chat no navega la ventana',
+    state: { tabs: 1 },
+    async run(page) {
+      const original = page.url();
+      const sonda = http.createServer((_req, res) => { res.setHeader('content-type', 'text/html'); res.end('<!doctype html><title>sonda</title>'); });
+      await new Promise((resolve) => sonda.listen(0, '127.0.0.1', resolve));
+      const enlace = `http://127.0.0.1:${sonda.address().port}/mage-drop-probe`;
+      const carpeta = fs.mkdtempSync(path.join(os.tmpdir(), 'mage-verify-drop-'));
+      const html = path.join(carpeta, 'sonda.html');
+      fs.writeFileSync(html, '<!doctype html><title>sonda</title>');
+      const zonas = {
+        barraLateral: '[data-chat-sidebar]',
+        pestanas: `[role="tablist"][aria-label^="${cssAttr(ui('tabs.bar.listLabel'))}"]`,
+        cabecera: '[data-titlebar]',
+      };
+      const cargas = {
+        enlace: { items: [{ mimeType: 'text/uri-list', data: enlace }], dragOperationsMask: 19 },
+        html: { items: [], files: [html], dragOperationsMask: 19 },
+      };
+      const cdp = await page.context().newCDPSession(page);
+      const medidas = {};
+      try {
+        for (const [zona, selector] of Object.entries(zonas)) {
+          const caja = await page.locator(selector).first().boundingBox();
+          for (const [carga, data] of Object.entries(cargas)) {
+            medidas[`${zona}.${carga}`] = caja === null ? 'sin-zona' : await soltarYMedir(page, cdp, { caja, data, original });
+          }
+        }
+      } finally {
+        await cdp.detach().catch((err) => console.warn(`[S2] detach CDP: ${err.message}`));
+        sonda.close();
+        fs.rmSync(carpeta, { recursive: true, force: true });
+      }
+      const ok = Object.values(medidas).every((medida) => medida === 'igual');
+      return { ok, detail: JSON.stringify(medidas) };
+    },
+  },
   // --- F3.6: textos largos con la interfaz en inglés (carril Y) ------------------------------------------
   //
   // Miden desbordes, cortes sin elipsis y solapes (`scripts/lib/textFit.mjs`). Ninguna pulsa Enter en el prompt ni
@@ -11683,6 +11726,20 @@ async function separatorValue(handle) {
   const raw = await handle.getAttribute('aria-valuenow');
   const value = Number(raw);
   return raw === null || !Number.isFinite(value) ? null : value;
+}
+
+// Un arrastre real (entrar, pasar, soltar) en el centro de la zona; si la ventana navega, vuelve a la URL original y espera
+// al workbench para no romper a las comprobaciones siguientes. Devuelve 'igual' o la URL a la que fue.
+async function soltarYMedir(page, cdp, { caja, data, original }) {
+  const x = Math.round(caja.x + caja.width / 2);
+  const y = Math.round(caja.y + caja.height / 2);
+  for (const type of ['dragEnter', 'dragOver', 'drop']) await cdp.send('Input.dispatchDragEvent', { type, x, y, data });
+  await page.waitForTimeout(1500);
+  const ahora = page.url();
+  if (ahora === original) return 'igual';
+  await page.goto(original);
+  await page.locator('[role="toolbar"]').first().waitFor({ state: 'attached', timeout: CONFIG.bootTimeoutMs });
+  return ahora;
 }
 
 // --- I2 (0.1.4): selector legible, viñeta con el cursor e imanes de los divisores -----------------------

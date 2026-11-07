@@ -29,3 +29,12 @@ export class UnsupportedMethodError extends UserFacingError {
     this.name = 'UnsupportedMethodError';
   }
 }
+
+// Un cliente del host (terminal, MCP, widget) corre como el mismo usuario que el agente: si pudiera poner una sesión en
+// «Omitir permisos», un agente que lea el token del host se saltaría la barrera de permisos. Solo la ventana lo activa.
+export class BypassPermissionsBlockedError extends UserFacingError {
+  constructor() {
+    super(localized('errors.host.bypassPermissionsBlocked'));
+    this.name = 'BypassPermissionsBlockedError';
+  }
+}

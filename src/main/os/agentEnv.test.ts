@@ -67,6 +67,31 @@ describe('scrubAgentEnv', () => {
     expect(env).toEqual({ PATH: '/usr/bin' });
   });
 
+  it('scrubAgentEnv_foundryCabecerasYEndpointsDeOtrosCli_noLlegan', () => {
+    const names = [
+      'CLAUDE_CODE_USE_FOUNDRY',
+      'ANTHROPIC_FOUNDRY_API_KEY',
+      'ANTHROPIC_FOUNDRY_BASE_URL',
+      'ANTHROPIC_FOUNDRY_RESOURCE',
+      'AWS_BEARER_TOKEN_BEDROCK',
+      'ANTHROPIC_CUSTOM_HEADERS',
+      'OPENAI_BASE_URL',
+      'GOOGLE_GENAI_USE_VERTEXAI',
+    ];
+    const base: NodeJS.ProcessEnv = { ...Object.fromEntries(names.map((name) => [name, 'ficticio'])), PATH: '/usr/bin' };
+
+    const env = scrubAgentEnv(base);
+
+    expect(env).toEqual({ PATH: '/usr/bin' });
+    expect(BLOCKED_AGENT_ENV_VARS).toEqual(expect.arrayContaining(names));
+  });
+
+  it('scrubAgentEnv_googleApplicationCredentials_seConserva', () => {
+    const base: NodeJS.ProcessEnv = { GOOGLE_APPLICATION_CREDENTIALS: '/ruta/ficticia.json', PATH: '/usr/bin' };
+
+    expect(scrubAgentEnv(base)).toEqual(base);
+  });
+
   it('scrubAgentEnv_testBaseUrlVar_removed', () => {
     const env = scrubAgentEnv({ MAGE_TEST_ANTHROPIC_BASE_URL: 'http://127.0.0.1:1234', PATH: '/usr/bin' });
 

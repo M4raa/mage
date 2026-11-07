@@ -2,8 +2,10 @@ import { resolve } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import type { AnswerReceipt, ConversationSnapshot, CoordinatedState, PendingRequest, SendReceipt } from '@shared/coordination';
 import type { MageEvent, PermissionDecision, PermissionRequest } from '@shared/events';
+import type { ProviderModel } from '@shared/providers';
 import type { SessionListener } from '../coordination/sessionCoordinator';
 import { TrustRequiredError, UnknownAccountError } from '../host/hostErrors';
+import type { SessionSettings } from './delegatedSettings';
 import type { DelegatedSession, DelegationView } from './delegationLog';
 import { CONVERSATION_ID_TIMEOUT_MS, ExternalSessionsPort, HostSessionsPort, NO_PROJECT_ID } from './hostSessionsPort';
 import type { HostSessionsPortDeps } from './hostSessionsPort';
@@ -30,7 +32,10 @@ const child = (overrides: Partial<DelegatedSession> = {}): DelegatedSession => (
 const view = (overrides: Partial<DelegationView> & { child?: DelegatedSession } = {}): DelegationView => (
   { child: child(), state: 'working', turnCount: 0, lastEventAt: AT, closed: false, ...overrides });
 
-function setup(options: { views?: DelegationView[]; snapshot?: ConversationSnapshot; launch?: HostSessionsPortDeps['launch']; accounts?: HostSessionsPortDeps['accounts']; log?: Partial<HostSessionsPortDeps['log']> } = {}) {
+function setup(options: {
+  views?: DelegationView[]; snapshot?: ConversationSnapshot; launch?: HostSessionsPortDeps['launch']; accounts?: HostSessionsPortDeps['accounts'];
+  log?: Partial<HostSessionsPortDeps['log']>; creator?: SessionSettings | null; catalog?: readonly ProviderModel[];
+} = {}) {
   const views = options.views ?? [view()];
   const listeners: SessionListener[] = [];
   const announced: { sessionId: string; event: MageEvent }[] = [];
@@ -58,6 +63,9 @@ function setup(options: { views?: DelegationView[]; snapshot?: ConversationSnaps
     projects: () => [{ id: 'p1', cwd: CWD }, { id: 'p2', cwd: null }],
     launch: options.launch ?? vi.fn(() => 'child-s'),
     setTimer: vi.fn((fn: () => void, ms: number) => { timers.push({ fn, ms }); return cancelTimer; }),
+    creatorSettings: vi.fn(() => options.creator ?? null),
+    modelCatalog: vi.fn(() => options.catalog ?? []),
+    setPermissionMode: vi.fn(),
   };
   return { port: new HostSessionsPort(deps), deps, listeners, announced, answers, timers, cancelTimer };
 }
@@ -98,7 +106,7 @@ describe('HostSessionsPort.createSession', () => {
     const result = await port.createSession(command({ model: 'm1' }));
     expect(result).toEqual({ conversationId: 'child-c', state: 'running' });
     expect(deps.launch).toHaveBeenCalledWith(
-      { commandId: REQUEST, provider: 'claude', accountId: 'acc1', cwd: CWD, model: 'm1', trust: { acknowledged: false } }, { conversationId: 'caller-c', sessionId: 'caller-s' });
+      { commandId: REQUEST, provider: 'claude', accountId: 'acc1', cwd: CWD, model: 'm1', permissionMode: 'default', trust: { acknowledged: false } }, { conversationId: 'caller-c', sessionId: 'caller-s' });
     expect(deps.index.recordDelegation).toHaveBeenCalledWith('child-c', { createdBy: command().createdBy, creatorChain: ['caller-c'] });
     expect(deps.log.watch).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 'child-s', conversationId: 'child-c', creatorSessionId: 'caller-s', title: 'Haz algo' }));
     expect(deps.coordinator.send).toHaveBeenCalledWith({ sessionId: 'child-s', text: 'Haz algo\nsegunda línea', commandId: REQUEST });
@@ -106,6 +114,38 @@ describe('HostSessionsPort.createSession', () => {
       { sessionId: 'caller-s', event: { kind: 'delegation_created', childId: 'child-c', requestId: REQUEST } },
       { sessionId: 'child-s', event: { kind: 'delegation_message', fromId: 'caller-c', toId: 'child-c', messageKind: 'instruction', text: 'Haz algo\nsegunda línea' } },
     ]);
+  });
+  it('createSession_sinParametros_lanzaConLoHeredadoDeLaCreadora', async () => {
+    const creator = { provider: 'claude', model: 'sonnet', effort: 'high', permissionMode: 'plan' };
+    const { port, deps } = setup({ snapshot: snap('child-c'), creator });
+    await port.createSession(command());
+    expect(deps.launch).toHaveBeenCalledWith(expect.objectContaining({ model: 'sonnet', effort: 'high', permissionMode: 'plan' }), expect.anything());
+    expect(deps.setPermissionMode).not.toHaveBeenCalled();
+  });
+  it('createSession_modoMasPermisivoQueLaCreadora_rechazaSinLanzarNiEnviar', async () => {
+    const { port, deps } = setup({ snapshot: snap('child-c'), creator: { provider: 'claude', permissionMode: 'default' } });
+    await expect(port.createSession(command({ permissionMode: 'bypassPermissions' }))).rejects.toThrow(/^permission_mode_exceeds_creator:/);
+    expect(deps.launch).not.toHaveBeenCalled();
+    expect(deps.coordinator.send).not.toHaveBeenCalled();
+  });
+  it('createSession_haciaCodex_modoTraducidoAntesDelPrimerMensaje', async () => {
+    const creator = { provider: 'claude', model: 'sonnet', effort: 'high', permissionMode: 'plan' };
+    const { port, deps } = setup({ snapshot: snap('child-c'), creator });
+    await port.createSession(command({ target: { projectId: 'p1', accountId: 'acc2', provider: 'codex', cwd: CWD } }));
+    const launched = vi.mocked(deps.launch).mock.calls[0]?.[0];
+    expect(launched).not.toHaveProperty('model');
+    expect(launched).not.toHaveProperty('effort');
+    expect(launched).not.toHaveProperty('permissionMode');
+    expect(deps.setPermissionMode).toHaveBeenCalledWith('child-s', ':read-only|never');
+    const modeOrder = vi.mocked(deps.setPermissionMode).mock.invocationCallOrder[0] as number;
+    const sendOrder = vi.mocked(deps.coordinator.send).mock.invocationCallOrder[0] as number;
+    expect(modeOrder).toBeLessThan(sendOrder);
+  });
+  it('createSession_modeloFueraDelCatalogo_rechazaSinLanzar', async () => {
+    const { port, deps } = setup({ snapshot: snap('child-c'), catalog: [{ id: 'sonnet', label: 'Sonnet' }] });
+    await expect(port.createSession(command({ model: 'otro' }))).rejects.toThrow(/^invalid_model: otro/);
+    expect(deps.launch).not.toHaveBeenCalled();
+    expect(deps.modelCatalog).toHaveBeenCalledWith('acc1');
   });
   it('createSession_trustRequired_policyError', async () => {
     const launch = () => { throw new TrustRequiredError(CWD); };
@@ -279,6 +319,13 @@ describe('MageToolHandlers con el puerto de main', () => {
     return new MageToolHandlers({ port, scope, store: new MemoryIdempotencyStore(), now: () => AT, maxDepth });
   };
   const input = { requestId: REQUEST, provider: 'claude' as const, cwd: CWD, prompt: 'x' };
+  it('create_conEsfuerzoYModo_llegaAlPuerto', async () => {
+    const { port, deps } = setup({ snapshot: snap('child-c'), creator: { provider: 'claude', model: 'sonnet', permissionMode: 'plan' } });
+    const scope = snapshotScope({ accountIds: ['acc1'], caller: { conversationId: 'caller-c', creatorChain: [] } });
+    const handlers = new MageToolHandlers({ port, scope, store: new MemoryIdempotencyStore(), now: () => AT });
+    await handlers.create({ ...input, effort: 'high', permissionMode: 'plan' });
+    expect(deps.launch).toHaveBeenCalledWith(expect.objectContaining({ effort: 'high', permissionMode: 'plan' }), expect.anything());
+  });
   it('handlers_createFromChildAtMaxDepth_depthExceeded', async () => {
     await expect(handlersFor(['a', 'b'], 3).create(input)).rejects.toThrow('delegation_depth_exceeded');
   });
