@@ -3,7 +3,7 @@ import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { readOnlyLockMessage } from '@shared/conversationLock';
 import { isPermissionMode } from '@shared/ipc';
 import type { EditorInfo } from '@shared/ipc';
-import { AGY_EFFORT_LEVELS, AGY_PROVIDER_ID, CODEX_PROVIDER_ID, isAutoApprovedProvider, isUnverifiedProvider, runsOnMageRuntime } from '@shared/providers';
+import { AGY_EFFORT_LEVELS, AGY_PROVIDER_ID, agyModelFixesEffort, CODEX_PROVIDER_ID, isAutoApprovedProvider, isUnverifiedProvider, runsOnMageRuntime } from '@shared/providers';
 import { useWorkbenchStore } from '../workbenchStore';
 import { pinnedAccountMissing } from '../adoptSession';
 import { displayModelId, modelOptionsForProvider } from '../models';
@@ -907,7 +907,7 @@ export function PromptBar(): React.JSX.Element {
               leading={isPermissionMode(permissionMode) ? <Icon name={PERMISSION_MODE_ICON[permissionMode]} size={11} /> : undefined}
             />
           )}
-          {(isClaude || isCodex || isAgy) && (
+          {(isClaude || isCodex || (isAgy && !agyModelFixesEffort(activeModel))) && (
             // Esfuerzo (--effort, M2.4 / B4; P-028 33: deslizador de seis pasos con Auto a la izquierda).
             // Flag de ARRANQUE del CLI, no hay cambio en caliente: el aviso y la nota lo aclaran.
             <StepSlider
