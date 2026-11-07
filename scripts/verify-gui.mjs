@@ -5798,7 +5798,7 @@ const CHECKS = [
     // 2.3 (la otra mitad): el panel de permisos NORMAL — el que sale con Write/Bash y NO es una pregunta.
     // Nace de un fallo de verificacion real: el nombre accesible del boton era "Permitir1" (se colaba el
     // numero del atajo), asi que era imposible anclarlo desde fuera y varias tandas de prueba con turnos
-    // REALES se quedaron colgadas creyendo que el boton no existia. Ahora los tres botones llevan
+    // REALES se quedaron colgadas creyendo que el boton no existia. Ahora los cuatro botones llevan
     // `aria-label` estable y `aria-keyshortcuts`, y esto lo fija.
     name: '2.3: un permiso de Write pinta la tarjeta en el chat y los botones del panel',
     async run(page) {
@@ -5822,6 +5822,7 @@ const CHECKS = [
         { file_path: 'C:/proj/nuevo.ts', content: 'export const a = 1;\n' },
         requestId,
         'Write',
+        { allowScopes: ['session', 'always'], rule: 'Write' },
       );
       const measured = await page.evaluate(({ siempre }) => {
         // Los botones se miden POR AMBITO (tarjeta del chat / panel del dock) y no con un
@@ -5840,7 +5841,8 @@ const CHECKS = [
                 estado: card.getAttribute('data-permission-card'),
                 objetivo: (card.textContent ?? '').includes('C:/proj/nuevo.ts'),
                 permitir: boton(card, window.__mageDev.t('app.widget.allow')),
-                permitirSiempre: boton(card, window.__mageDev.t('chat.permission.allowAlwaysAria', { tool: 'Write' })),
+                permitirSesion: boton(card, window.__mageDev.t('i3.permission.allowSessionAria', { tool: 'Write' })),
+                permitirSiempre: boton(card, window.__mageDev.t('i3.permission.allowAlwaysAria', { rule: 'Write' })),
                 denegar: boton(card, window.__mageDev.t('chat.permission.denyAria')),
                 masInformacion: [...card.querySelectorAll('button')].some((b) => (b.textContent ?? '').trim() === window.__mageDev.t('chat.permission.moreInfo')),
               },
@@ -5848,7 +5850,8 @@ const CHECKS = [
             ? null
             : {
                 permitir: boton(panel, window.__mageDev.t('app.widget.allow')),
-                permitirSiempre: boton(panel, window.__mageDev.t('chat.permission.allowAlwaysAria', { tool: 'Write' })),
+                permitirSesion: boton(panel, window.__mageDev.t('i3.permission.allowSessionAria', { tool: 'Write' })),
+                permitirSiempre: boton(panel, window.__mageDev.t('i3.permission.allowAlwaysAria', { rule: 'Write' })),
                 denegar: boton(panel, window.__mageDev.t('chat.permission.denyAria')),
                 diff: (panel.textContent ?? '').includes('export const a = 1;'),
                 modo: (panel.textContent ?? '').includes(window.__mageDev.t('chat.permissions.mode.title')),
@@ -5882,14 +5885,16 @@ const CHECKS = [
         measured.tarjeta?.estado === 'pending' &&
         measured.tarjeta.objetivo === true &&
         measured.tarjeta.permitir?.atajo === '1' &&
-        measured.tarjeta.permitirSiempre?.atajo === '2' &&
-        measured.tarjeta.denegar?.atajo === '3' &&
+        measured.tarjeta.permitirSesion?.atajo === '2' &&
+        measured.tarjeta.permitirSiempre?.atajo === '3' &&
+        measured.tarjeta.denegar?.atajo === '4' &&
         measured.tarjeta.masInformacion === true &&
         // El panel sigue ofreciendo la misma decision, ahi CON el numero del atajo visible, y ademas es
         // el que ensena el detalle (diff) y lo configurado.
-        measured.panel?.permitir?.texto === `${ui('app.widget.allow')}1` &&
-        measured.panel.permitirSiempre?.atajo === '2' &&
-        measured.panel.denegar?.atajo === '3' &&
+        measured.panel?.permitir?.texto === `${ui('i3.permission.allowOnce')}1` &&
+        measured.panel.permitirSesion?.atajo === '2' &&
+        measured.panel.permitirSiempre?.atajo === '3' &&
+        measured.panel.denegar?.atajo === '4' &&
         measured.panel.diff === true &&
         measured.panel.modo === true &&
         measured.panel.configurados === true &&
@@ -5905,13 +5910,12 @@ const CHECKS = [
     },
   },
   {
-    // 2.3b: "Permitir siempre <tool> aqui" tiene que RECORDAR. La regla se concede por la accion real
-    // del store y no por un clic: sin sesion viva la respuesta no llega a main, que es justo lo que deja
-    // medir la regla sin tocar el CLI ni gastar un turno. Desde F2.4 la regla la APLICA main antes de
-    // anunciar el permiso (lo mide «F2.4: segundo plano en main» con una sesion real); aqui se comprueba la
-    // parte del renderer: la regla queda en la pestaña, se ve en el panel, una peticion que si llega (main
-    // decidio preguntar) lleva su tarjeta, y revocar la quita.
-    name: '2.3b: "Permitir siempre" guarda la tool y el panel la deja revocar',
+    // 2.3b: una regla «Permitir siempre … aqui» ya guardada se ve en el panel y se puede revocar. Ya no se crean
+    // reglas por conversación, así que se siembra una como la que dejó una versión anterior. Desde F2.4 la regla
+    // la APLICA main antes de anunciar el permiso (lo mide «F2.4: segundo plano en main» con una sesion real);
+    // aqui se comprueba la parte del renderer: la regla sembrada se ve en el panel, una peticion que si llega
+    // (main decidio preguntar) lleva su tarjeta, y revocar la quita.
+    name: '2.3b: una regla «Permitir siempre … aquí» ya guardada se ve en el panel y se puede revocar',
     async run(page) {
       const previoStore = await page.evaluate(() => {
         const s = window.__mageDev.store.getState();
@@ -5925,7 +5929,12 @@ const CHECKS = [
         await page.waitForTimeout(CONFIG.settleMs);
       }
       await injectPermissionRequest(page, { file_path: 'C:/proj/a.ts', content: 'a' }, 'verify-always-1', 'Write');
-      await page.evaluate(() => window.__mageDev.store.getState().allowAlwaysAndAnswer('Write'));
+      // Ya no se crean reglas por conversación (0.1.4): se siembra una como la que dejó una versión anterior.
+      await page.evaluate(() => {
+        const dev = window.__mageDev;
+        const s = dev.store.getState();
+        dev.store.setState({ tabs: s.tabs.map((t) => (t.id === s.activeTabId ? { ...t, alwaysAllowTools: ['Write'] } : t)) });
+      });
       await page.waitForTimeout(CONFIG.settleMs);
       const revokeAria = ui('chat.permissions.alwaysAllowed.revokeAria', { tool: 'Write' }).replace(/["\\]/g, '\\$&');
       const conRegla = await page.evaluate((revokeAria) => {
@@ -5970,6 +5979,45 @@ const CHECKS = [
         trasRevocar.reglas === 0 &&
         trasRevocar.enElPanel === false;
       return { ok, detail: `conRegla=${JSON.stringify(conRegla)} otraTool=${otraTool} trasRevocar=${JSON.stringify(trasRevocar)}` };
+    },
+  },
+  {
+    // I3 (0.1.4), punto 6: «Permitir siempre» no contesta: abre un aviso de peligro con la regla y la cuenta de la pestaña,
+    // y «Cancelar» lo cierra sin responder. Petición inyectada por el reducer real; ninguna respuesta llega a main (la
+    // pestaña no tiene sesión) y no se pulsa Enter.
+    name: 'I3: «Permitir siempre» avisa con la regla y la cuenta antes de confirmar, y Cancelar no contesta',
+    async run(page) {
+      const previoStore = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return { tabs: s.tabs, activeTabId: s.activeTabId, splitLayout: s.splitLayout };
+      });
+      const requestId = 'i3-always-1';
+      try {
+        await openTemporaryConversation(page);
+        await injectPermissionRequest(page, { command: 'npm test' }, requestId, 'Bash', { allowScopes: ['session', 'always'], rule: 'Bash(npm test *)', requiresUserInteraction: false });
+        const card = page.locator('[data-permission-pending="true"]').first();
+        await card.getByRole('button', { name: ui('i3.permission.allowAlwaysAria', { rule: 'Bash(npm test *)' }), exact: true }).click();
+        const aviso = page.locator('[data-permission-always-warning="true"]').first();
+        await aviso.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const medido = await page.evaluate(() => {
+          const s = window.__mageDev.store.getState();
+          const tab = s.tabs.find((t) => t.id === s.activeTabId);
+          const texto = document.querySelector('[data-permission-always-warning="true"]')?.textContent ?? '';
+          return { regla: texto.includes('Bash(npm test *)'), cuenta: tab !== undefined && texto.includes(tab.accountAlias), confirmar: document.querySelector('[data-permission-always-confirm="true"]') !== null, enviando: (s.pendingByChat[s.activeTabId] ?? []).some((p) => p.sending === true) };
+        });
+        await aviso.getByRole('button', { name: ui('i3.permission.alwaysCancel'), exact: true }).click();
+        await aviso.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+        const tras = await page.evaluate((id) => {
+          const s = window.__mageDev.store.getState();
+          return { pendiente: (s.pendingByChat[s.activeTabId] ?? []).some((p) => p.requestId === id), aviso: s.alwaysPromptByChat[s.activeTabId] ?? null };
+        }, requestId);
+        const ok = medido.regla && medido.cuenta && medido.confirmar && !medido.enviando && tras.pendiente && tras.aviso === null;
+        return { ok, detail: JSON.stringify({ medido, tras }) };
+      } finally {
+        await cancelInjectedPermission(page, requestId);
+        await page.evaluate((estado) => window.__mageDev.store.setState(estado), previoStore);
+        await page.waitForTimeout(CONFIG.settleMs);
+      }
     },
   },
   {
@@ -12852,9 +12900,9 @@ const ASK_USER_QUESTION_INPUT = {
 
 // Inyecta un `permission_request` sintetico por el puente de desarrollo, como si lo hubiera emitido el
 // CLI. NO spawnea nada ni gasta turno: entra por el mismo reducer que el evento real.
-async function injectPermissionRequest(page, input, requestId, toolName = 'AskUserQuestion') {
+async function injectPermissionRequest(page, input, requestId, toolName = 'AskUserQuestion', extra = {}) {
   await page.evaluate(
-    ([payload, id, tool]) => {
+    ([payload, id, tool, more]) => {
       const dev = window.__mageDev;
       if (dev === undefined) throw new Error('window.__mageDev no existe (¿la app no esta en modo desarrollo?)');
       const tabId = dev.store.getState().activeTabId;
@@ -12868,13 +12916,14 @@ async function injectPermissionRequest(page, input, requestId, toolName = 'AskUs
           description: null,
           requiresUserInteraction: true,
           displayName: tool,
+          ...more,
         },
       };
       // Se pasa por el reducer REAL (no se fabrica el bloque a mano): lo que se mide es lo que hace la
       // app con el evento del CLI, no lo que el harness sabe construir.
       dev.store.setState((state) => dev.reduceEvent(state, tabId, event));
     },
-    [input, requestId, toolName],
+    [input, requestId, toolName, extra],
   );
   await page.waitForTimeout(CONFIG.settleMs);
 }
