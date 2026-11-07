@@ -21,6 +21,11 @@ export const TAB_DRAG_MIME = 'application/x-mage-tab-id';
 // del `dataTransfer` van en minusculas: un UUID ya lo esta.
 export const TAB_DRAG_ORIGIN_MIME = `application/x-mage-origin-${crypto.randomUUID()}`;
 
+// Arrastre de FICHEROS del sistema, no de una pestaña de Mage: lo que se suelta así en el chat se adjunta.
+export function isFileDrag(types: readonly string[]): boolean {
+  return types.includes('Files') && !types.includes(TAB_DRAG_MIME);
+}
+
 // #47/#22: lado de la pestaña destino en el que cae una pestaña soltada: la mitad izquierda la pone
 // delante y la derecha detras. Un ancho no positivo no tiene mitades: lanza con el valor.
 export function tabDropSide(left: number, width: number, clientX: number): 'before' | 'after' {

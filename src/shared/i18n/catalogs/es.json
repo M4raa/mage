@@ -1038,6 +1038,8 @@
   "history.lock.checkFailed": "No se pudo comprobar si la conversación está abierta en otra instancia",
   "history.lock.releaseFailed": "No se pudo soltar la conversación",
   "history.recentProjects.title": "PROYECTOS RECIENTES",
+  "i2.prompt.attachImage": "Adjuntar imagen",
+  "i2.prompt.attachImageTip": "Adjuntar una imagen (PNG, JPEG, WebP o GIF). También puedes pegarla o soltarla en el chat.",
   "library.account.label": "Cuenta",
   "library.account.none": "No hay ninguna cuenta de Claude ni de Codex.",
   "library.account.option": "{engine} · {label}",

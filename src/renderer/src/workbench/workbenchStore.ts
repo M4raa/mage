@@ -137,7 +137,7 @@ import type { AgyCommandVerdict } from '@shared/agyRules';
 import { AGY_PROVIDER_ID, CODEX_PROVIDER_ID, ownsConversation, runsOnMageRuntime, writesClaudeTranscript, type CustomProvider, type ProviderModel } from '@shared/providers';
 import { applyThemeFromSettings, findActiveImportedTheme, resolveTheme, systemPrefersDark } from './theme';
 import { toWidgetSnapshot } from './widgetView';
-import { deriveTitleFromPrompt, displayTitle, isSlashCommandText, renamedTitleFrom } from './conversationTitle';
+import { deriveTitleFromPrompt, displayTitle, isSlashCommandText, renamedTitleFrom, typedRenameTitle } from './conversationTitle';
 import { isPlaceholderTitle } from '@shared/conversationTitle';
 import { resolveDefaultModel } from './modelDefaults';
 import { resolveReopenedTabPrefs, toConversationPrefs } from './conversationPrefs';
@@ -2630,6 +2630,14 @@ export function createWorkbenchStore(mage: MageClient) {
       // #55: en solo lectura no se escribe en la conversación (la tiene otra instancia de Mage).
       const lock = get().lockByChat[tabId];
       if (lock !== undefined && !lock.owner) throw new Error(renderLocalized(t, readOnlyLockMessage(lock.profile)));
+      // `/rename <nombre>` tecleado: la pestaña cambia AL MOMENTO, también con un turno en marcha, y el CLI lo recibe
+      // por el `/rename` silencioso de `renameConversation` en cuanto la sesión esté ociosa. Mismo nombre final en el
+      // índice y en el CLI, sin esperar a la cola. `/rename` a secas, con adjuntos o en otro proveedor, como siempre.
+      const typedTitle = attachments.length === 0 ? typedRenameTitle(trimmed) : null;
+      if (typedTitle !== null && writesClaudeTranscript(get().tabs.find((t) => t.id === tabId)?.provider ?? '')) {
+        get().renameConversation(tabId, typedTitle);
+        return;
+      }
       // Un `/rename` tecleado es el nombre mas nuevo: el pendiente de la UI ya no debe pisarlo al
       // acabar el turno (gana el ultimo, D3). Tambien si espera en la cola: saldria detras del pendiente.
       if (get().tabs.find((t) => t.id === tabId)?.pendingCliTitle !== undefined && /^\/rename\b/.test(trimmed)) {

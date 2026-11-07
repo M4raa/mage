@@ -120,7 +120,7 @@ export function Dropdown({
         aria-label={ariaLabel}
         data-tip={tip}
         {...triggerData}
-        className={`shrink-0 cursor-pointer self-center ${bare ? 'rounded-[4px] px-[3px]' : 'rounded-full border border-mg-border-ctrl px-[8px] py-[2px]'} bg-transparent text-[10.5px] text-mg-sec outline-none transition-colors duration-90 ease-out hover:text-mg-body ${triggerClassName}`}
+        className={`shrink-0 cursor-pointer self-center ${bare ? 'rounded-[4px] px-[3px]' : 'rounded-full border border-mg-border-ctrl px-[8px] py-[2px]'} bg-transparent text-[10.5px] text-mg-text outline-none transition-colors duration-90 ease-out ${triggerClassName}`}
       >
         {leading === undefined ? (
           selectedLabel
@@ -166,9 +166,8 @@ export function Dropdown({
                       if (o.value !== value) onChange(o.value);
                       close();
                     }}
-                    className={`block w-full px-[10px] py-[5px] text-left transition-colors duration-90 ease-out hover:bg-mg-hover ${
-                      o.value === value ? 'font-bold text-mg-focus' : ''
-                    }`}
+                    // La elegida, con el par selección/tinta que el tema garantiza a 4,5:1 (F5.2); `text-mg-focus` era el color del anillo de foco y en algunos temas no se leía sin pasar el ratón.
+                    className={`block w-full px-[10px] py-[5px] text-left transition-colors duration-90 ease-out ${o.value === value ? 'bg-mg-sel font-bold text-mg-sel-ink' : 'hover:bg-mg-hover'}`}
                   >
                     {o.accent === undefined ? o.label : (
                       <span className="inline-flex items-center gap-[6px]">

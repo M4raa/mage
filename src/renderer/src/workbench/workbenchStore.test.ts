@@ -11,6 +11,7 @@ import { useNotificationStore } from './notificationStore';
 import { EMPTY_NOTIFICATIONS } from './notifications';
 import type { Account, Tab } from './types';
 import type { AccountInfo } from '@shared/accounts';
+import { CODEX_PROVIDER_ID } from '@shared/providers';
 import { makeEntry } from '@testing/transcriptEntry';
 
 // El store alcanzaba `window.mage` directamente en 18 sitios, asi que estas 850 lineas de orquestacion
@@ -1098,6 +1099,52 @@ describe('renameConversation', () => {
     expect(sendMessage).not.toHaveBeenCalled();
     expect(store.getState().tabs[0]).toMatchObject({ title: 'Nuevo' });
     expect(store.getState().tabs[0]?.pendingCliTitle).toBeUndefined();
+  });
+
+  it('sendMessageToTab_renameConNombreOcioso_renombraYMandaElSilencioso', async () => {
+    const { store, sendMessage } = mounted('idle');
+
+    await store.getState().sendMessageToTab('a', '/rename prueba');
+
+    expect(store.getState().tabs[0]?.title).toBe('prueba');
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(sendMessage).toHaveBeenCalledWith({ sessionId: 's-a', text: '/rename prueba' });
+    expect((store.getState().blocksByChat.a ?? []).filter((b) => b.kind === 'user')).toEqual([]);
+  });
+
+  it('sendMessageToTab_renameConTurnoEnMarcha_renombraAlMomentoYSaleAlAcabar', async () => {
+    const { store, sendMessage } = mounted('streaming');
+
+    await store.getState().sendMessageToTab('a', '/rename prueba');
+
+    expect(store.getState().tabs[0]?.title).toBe('prueba');
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(store.getState().tabs[0]?.pendingCliTitle).toBe('prueba');
+
+    store.getState().handleEvent('s-a', RESULT(3));
+
+    expect(sendMessage).toHaveBeenCalledWith({ sessionId: 's-a', text: '/rename prueba' });
+  });
+
+  it('sendMessageToTab_renameSinNombre_vaAlCliComoMensaje', async () => {
+    const { store, sendMessage } = mounted('idle');
+    sendMessage.mockResolvedValue({ status: 'accepted' });
+
+    await store.getState().sendMessageToTab('a', '/rename');
+
+    expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 's-a', text: '/rename' }));
+    expect(store.getState().tabs[0]?.title).toBe('Conversacion a');
+  });
+
+  it('sendMessageToTab_renameEnCodex_vaAlCliComoMensaje', async () => {
+    const { store, sendMessage } = mounted('idle');
+    sendMessage.mockResolvedValue({ status: 'accepted' });
+    store.setState({ tabs: [tab('a', { provider: CODEX_PROVIDER_ID })] });
+
+    await store.getState().sendMessageToTab('a', '/rename prueba');
+
+    expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({ text: '/rename prueba' }));
+    expect(store.getState().tabs[0]?.title).toBe('Conversacion a');
   });
 
   // P-028, punto 3: la salida del `/rename` renombra la pestaña al llegar, sin esperar a releer.

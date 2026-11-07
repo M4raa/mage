@@ -1038,6 +1038,8 @@
   "history.lock.checkFailed": "Could not check whether the conversation is open in another instance",
   "history.lock.releaseFailed": "Could not release the conversation",
   "history.recentProjects.title": "RECENT PROJECTS",
+  "i2.prompt.attachImage": "Attach image",
+  "i2.prompt.attachImageTip": "Attach an image (PNG, JPEG, WebP or GIF). You can also paste it or drop it on the chat.",
   "library.account.label": "Account",
   "library.account.none": "There are no Claude or Codex accounts.",
   "library.account.option": "{engine} · {label}",

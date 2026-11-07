@@ -1,5 +1,5 @@
 import { useRef } from 'react';
-import { MIN_ZONE_SIZE_PX, RESIZE_STEP_PX, resolveResize, type Anchor } from '@shared/panelLayout';
+import { MIN_ZONE_SIZE_PX, RESIZE_STEP_PX, resolveResize, snapToMagnets, type Anchor } from '@shared/panelLayout';
 
 // Divisor de resize de una zona (F6 Fase 4, PLAN-F6-PANELES.md §6). Restriccion de rendimiento
 // explicita del plan: durante el arrastre, el feedback visual muta una variable CSS DIRECTAMENTE sobre
@@ -54,11 +54,17 @@ const MAX_ZONE_FRACTION = 0.6;
 // puede crecer casi hasta el final y 'b' encogerse de verdad, sin llegar nunca a colapsar a 0.
 const MAX_SPLIT_FRACTION = 0.85;
 
-function maxSizePx(orientation: 'vertical' | 'horizontal', axis: ResizeAxis): number {
-  const viewportPx = orientation === 'horizontal' ? window.innerHeight : window.innerWidth;
-  const fraction = axis === 'split' ? MAX_SPLIT_FRACTION : MAX_ZONE_FRACTION;
-  return Math.max(MIN_ZONE_SIZE_PX, Math.floor(viewportPx * fraction));
+function viewportPxFor(orientation: 'vertical' | 'horizontal'): number {
+  return orientation === 'horizontal' ? window.innerHeight : window.innerWidth;
 }
+
+function maxSizePx(orientation: 'vertical' | 'horizontal', axis: ResizeAxis): number {
+  const fraction = axis === 'split' ? MAX_SPLIT_FRACTION : MAX_ZONE_FRACTION;
+  return Math.max(MIN_ZONE_SIZE_PX, Math.floor(viewportPxFor(orientation) * fraction));
+}
+
+// Alt o Mayús durante el arrastre desactivan los imanes.
+const magnetsOff = (e: { readonly altKey: boolean; readonly shiftKey: boolean }): boolean => e.altKey || e.shiftKey;
 
 function clientPosOf(orientation: 'vertical' | 'horizontal', e: { readonly clientX: number; readonly clientY: number }): number {
   return orientation === 'vertical' ? e.clientX : e.clientY;
@@ -83,11 +89,12 @@ export function ZoneResizeHandle({ anchor, sizePx, paneRef, onCommit, ariaLabel,
   const max = maxSizePx(orientation, axis);
   const dragStartRef = useRef<{ readonly pos: number; readonly size: number } | null>(null);
 
-  const sizeFromPointer = (clientPos: number): number => {
+  const sizeFromPointer = (clientPos: number, free: boolean): number => {
     const drag = dragStartRef.current;
     if (drag === null) return sizePx;
-    const delta = (clientPos - drag.pos) * dragSign;
-    return Math.min(Math.max(drag.size + delta, MIN_ZONE_SIZE_PX), max);
+    const raw = drag.size + (clientPos - drag.pos) * dragSign;
+    const snapped = free ? raw : snapToMagnets(raw, viewportPxFor(orientation));
+    return Math.min(Math.max(snapped, MIN_ZONE_SIZE_PX), max);
   };
 
   const onPointerDown = (e: React.PointerEvent<HTMLDivElement>): void => {
@@ -96,13 +103,13 @@ export function ZoneResizeHandle({ anchor, sizePx, paneRef, onCommit, ariaLabel,
     dragStartRef.current = { pos: clientPosOf(orientation, e), size: sizePx };
 
     const onMove = (ev: PointerEvent): void => {
-      paneRef.current?.style.setProperty(sizeVar, `${sizeFromPointer(clientPosOf(orientation, ev))}px`);
+      paneRef.current?.style.setProperty(sizeVar, `${sizeFromPointer(clientPosOf(orientation, ev), magnetsOff(ev))}px`);
     };
     const onUp = (ev: PointerEvent): void => {
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
       if (dragStartRef.current === null) return;
-      onCommit(sizeFromPointer(clientPosOf(orientation, ev)));
+      onCommit(sizeFromPointer(clientPosOf(orientation, ev), magnetsOff(ev)));
       dragStartRef.current = null;
     };
     window.addEventListener('pointermove', onMove);

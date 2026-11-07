@@ -170,3 +170,41 @@ export function filterSlashCommands(
 export function completionFor(command: SlashCommand): string {
   return `/${command.name} `;
 }
+
+export interface SlashQuery {
+  readonly start: number; // índice de la `/`
+  readonly query: string; // lo escrito tras la `/` hasta el cursor
+  readonly midSentence: boolean; // hay texto (no solo espacios) antes de la `/`
+}
+
+// Token `/…` bajo el cursor, como `mentionQueryAt`: la `/` va al inicio del texto o tras un espacio (así no
+// dispara en `a/b` ni en una URL) y no hay espacios entre ella y el cursor. null si el cursor no está en uno.
+export function slashQueryAt(text: string, cursor: number): SlashQuery | null {
+  const end = Math.min(Math.max(cursor, 0), text.length);
+  for (let i = end - 1; i >= 0; i -= 1) {
+    const char = text.charAt(i);
+    if (/\s/.test(char)) return null;
+    if (char !== '/') continue;
+    if (i > 0 && !/\s/.test(text.charAt(i - 1))) return null;
+    return { start: i, query: text.slice(i + 1, end), midSentence: text.slice(0, i).trim().length > 0 };
+  }
+  return null;
+}
+
+// Sugerencias para el token `/` bajo el cursor. A mitad de frase el CLI no ejecuta un comando (le llega como
+// texto), así que solo se ofrece lo que sirve como texto —skills, comandos de proyecto y de plugin—, no los
+// internos del CLI que Mage conoce (`/clear`, `/rename`…).
+export function slashSuggestionsAt(text: string, cursor: number, catalog: readonly SlashCommand[] = SLASH_COMMANDS): readonly SlashCommand[] {
+  const at = slashQueryAt(text, cursor);
+  if (at === null) return [];
+  const pool = at.midSentence ? catalog.filter((command) => !CURATED_COMMANDS.has(command.name)) : catalog;
+  return filterSlashCommands(`/${at.query}`, pool);
+}
+
+// Sustituye el token `/query` por `/name ` y deja el cursor tras el espacio (igual que `insertMention`).
+export function insertSlashCommand(text: string, at: SlashQuery, command: SlashCommand): { readonly text: string; readonly cursor: number } {
+  const completion = completionFor(command);
+  const before = text.slice(0, at.start);
+  const after = text.slice(at.start + 1 + at.query.length);
+  return { text: `${before}${completion}${after}`, cursor: before.length + completion.length };
+}

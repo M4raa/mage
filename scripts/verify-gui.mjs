@@ -5435,14 +5435,14 @@ const CHECKS = [
         ocultos: document.querySelectorAll('[data-prompt-editor="true"] .cm-mg-marker-hidden').length,
       }));
       // Se baja de linea con Shift+Enter (NO Enter: eso enviaria) para que la primera deje de ser la
-      // del cursor y su `- ` se sustituya por la viñeta pintada (P-026, 1.5: un `::before` con `•`).
+      // del cursor y su `- ` se sustituya por la viñeta pintada (P-026, 1.5: un widget `•` que sustituye al `- `).
       await page.keyboard.press('Shift+Enter');
       await page.waitForTimeout(CONFIG.settleMs);
       const trasBajar = await page.evaluate(() => {
         const pintadas = [...document.querySelectorAll('[data-prompt-editor="true"] .cm-mg-bullet-painted')];
         return {
           pintadas: pintadas.length,
-          vineta: pintadas[0] === undefined ? null : getComputedStyle(pintadas[0], '::before').content,
+          vineta: pintadas[0] === undefined ? null : pintadas[0].textContent,
         };
       });
       const documento = await promptText(page);
@@ -5451,7 +5451,7 @@ const CHECKS = [
         enLaLineaDelCursor.pintadaEnElCursor === 1 &&
         enLaLineaDelCursor.ocultos === 0 &&
         trasBajar.pintadas >= 1 &&
-        trasBajar.vineta === '"•"' &&
+        trasBajar.vineta === '•' &&
         (documento ?? '').includes('- uno');
       return {
         ok,
@@ -8820,7 +8820,7 @@ const CHECKS = [
     },
   },
   {
-    // Notas de version (DEVOLUCION-077): la seccion 0.1.4 sale en el idioma de la interfaz. En «en» lleva
+    // Notas de version (0.1.4): la seccion 0.1.4 sale en el idioma de la interfaz. En «en» lleva
     // el subtitulo «Added» y la primera viñeta inglesa; en «es», «Añadido» y la castellana. Cierra la
     // pestaña al acabar (error n.º 6 de la skill).
     name: 'Notas de versión: la sección 0.1.4 sale en el idioma de la interfaz',
@@ -10780,6 +10780,171 @@ const CHECKS = [
       }
     },
   },
+  // --- I2 (0.1.4): retoques pequeños. Ninguna pulsa Enter. ---
+  {
+    // El selector de modelo se lee sin pasar el ratón: la opción elegida (par selección/tinta) y el botón,
+    // en el tema oscuro, el claro y uno importado (Nord sintético).
+    name: 'I2: el selector de modelo se lee sin hover (oscuro, claro y Nord)',
+    state: { tabs: 1 },
+    async run(page) {
+      const trigger = page.getByRole('button', { name: ui('prompt.model.ariaLabel') });
+      const previo = await page.evaluate(() => {
+        const st = window.__mageDev.store.getState();
+        return { tabs: st.tabs, activeTabId: st.activeTabId, splitLayout: st.splitLayout, theme: st.settings.theme, activeThemeId: st.settings.activeThemeId };
+      });
+      const propia = (await trigger.count()) === 0;
+      try {
+        if (propia) await openTemporaryConversation(page);
+        const detail = {};
+        for (const tema of ['dark', 'light', 'nord']) detail[tema] = await measureModelSelectorIn(page, trigger, tema);
+        const ok = Object.values(detail).every((medida) => medida.opcion >= 4.5 && medida.boton >= 4.5);
+        return { ok, detail: JSON.stringify(detail) };
+      } finally {
+        await page.evaluate((estado) => {
+          const st = window.__mageDev.store.getState();
+          st.selectImportedTheme(estado.activeThemeId ?? null);
+          st.setTheme(estado.theme);
+          if (estado.propia) window.__mageDev.store.setState({ tabs: estado.tabs, activeTabId: estado.activeTabId, splitLayout: estado.splitLayout });
+        }, { ...previo, propia });
+        await page.waitForTimeout(CONFIG.settleMs);
+      }
+    },
+  },
+  {
+    // La viñeta es un widget `•` y el número de lista es texto real: los dos se ven con el cursor en cualquier sitio
+    // de la línea (con la viñeta antigua, `font-size: 0` + `::before`, desaparecía con el cursor delante o detrás).
+    name: 'I2: la viñeta y el número se ven con el cursor delante, detrás y dentro',
+    state: { tabs: 1 },
+    async run(page) {
+      try {
+        await clearPrompt(page);
+        await typeInPrompt(page, '- uno');
+        const vinetas = {};
+        for (const posicion of ['Home', 'End', 'Home+ArrowRight']) {
+          await moveCursorTo(page, posicion);
+          vinetas[posicion] = await measurePromptMarker(page, '.cm-mg-bullet-painted');
+        }
+        await clearPrompt(page);
+        await typeInPrompt(page, '1. dos');
+        const ordinales = {};
+        for (const posicion of ['Home', 'End']) {
+          await moveCursorTo(page, posicion);
+          ordinales[posicion] = await measurePromptMarker(page, '.cm-mg-ordinal');
+        }
+        const sirve = (medida, texto) => medida.cuantos === 1 && medida.texto === texto && medida.ancho > 0;
+        const ok = Object.values(vinetas).every((medida) => sirve(medida, '•')) && Object.values(ordinales).every((medida) => sirve(medida, '1.'));
+        return { ok, detail: JSON.stringify({ vinetas, ordinales }) };
+      } finally {
+        await clearPrompt(page);
+      }
+    },
+  },
+  {
+    // Los divisores se pegan al 25, 33, 50, 67 y 75 % y Alt (o Mayús) los desactiva: el de grupos contra su
+    // contenedor y el del dock contra la ventana.
+    name: 'I2: los divisores se pegan a los imanes y con Alt no',
+    async run(page) {
+      const grupos = await measureGroupMagnets(page);
+      const dock = await measureDockMagnets(page);
+      return { ok: grupos.pegado && grupos.libre && dock.ok, detail: JSON.stringify({ grupos, dock }) };
+    },
+  },
+  {
+    // La `/` a mitad de frase ofrece skills (sirven como texto) y no los comandos internos del CLI (a mitad de
+    // frase le llegarían como texto y no se ejecutarían). `a/b` y una URL no abren el popover. Se escribe con
+    // `type`, NUNCA se pulsa Enter (Tab completa con el popover abierto).
+    name: 'I2: "/" a mitad de frase sugiere skills y no comandos internos; "a/b" no sugiere nada',
+    state: { tabs: 1 },
+    async run(page) {
+      const listbox = page.getByRole('listbox', { name: ui('prompt.slash.listLabel') });
+      try {
+        await clearPrompt(page);
+        await typeInPrompt(page, 'hola /');
+        const aparece = await listbox.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs }).then(() => true, () => false);
+        const mitad = aparece ? await slashOptionNames(page) : [];
+        await page.keyboard.press('Escape');
+        await clearPrompt(page);
+        await typeInPrompt(page, 'hola /itb');
+        await page.keyboard.press('Tab');
+        const completado = await promptText(page);
+        await clearPrompt(page);
+        await typeInPrompt(page, 'a/b');
+        await page.waitForTimeout(CONFIG.settleMs);
+        const ruta = await listbox.count();
+        await clearPrompt(page);
+        await typeInPrompt(page, 'ver https://x.y/');
+        await page.waitForTimeout(CONFIG.settleMs);
+        const url = await listbox.count();
+        const internos = ['clear', 'compact', 'config', 'context', 'doctor', 'init', 'mcp', 'model', 'rename', 'security-review', 'usage'];
+        const internosEnLista = internos.filter((nombre) => mitad.includes(`/${nombre}`));
+        const ok =
+          mitad.includes(`/${SEEDED_NAMESPACED_COMMAND}`) &&
+          internosEnLista.length === 0 &&
+          (completado ?? '').startsWith(`hola /${SEEDED_NAMESPACED_COMMAND}`) &&
+          ruta === 0 &&
+          url === 0;
+        return { ok, detail: JSON.stringify({ mitad, internosEnLista, completado, ruta, url }) };
+      } finally {
+        await clearPrompt(page);
+      }
+    },
+  },
+  {
+    // El botón «Adjuntar imagen» y soltar ficheros en el chat reutilizan `addFiles` del pegado: mismas
+    // validaciones y mismo error. Sin abrir el diálogo nativo (`setInputFiles`) y sin pulsar Enter.
+    name: 'I2: el botón y soltar adjuntan una imagen; un .exe y una de más de 5 MiB dan error',
+    async run(page) {
+      const previo = await page.evaluate(() => {
+        const st = window.__mageDev.store.getState();
+        return { tabs: st.tabs, activeTabId: st.activeTabId, splitLayout: st.splitLayout };
+      });
+      const miniaturas = () => page.locator('img[data-attachment="thumb"]').count();
+      const erroresDeAdjuntar = () =>
+        page.evaluate((failed) => [...document.querySelectorAll('[role="alert"]')].filter((n) => (n.textContent ?? '').includes(failed)).length, uiPrefix('prompt.attach.failed'));
+      const dropFiles = (tabId, files) =>
+        page.evaluate(({ id, payload }) => {
+          const transfer = new DataTransfer();
+          for (const file of payload) {
+            const bytes = Uint8Array.from(atob(file.base64), (c) => c.charCodeAt(0));
+            transfer.items.add(new File([bytes], file.name, { type: file.type }));
+          }
+          const pane = document.querySelector(`[data-pane-tab-id="${id}"]`);
+          if (pane === null) throw new Error(`no hay panel para la pestaña ${id}`);
+          pane.dispatchEvent(new DragEvent('drop', { dataTransfer: transfer, bubbles: true, cancelable: true }));
+        }, { id: tabId, payload: files });
+      try {
+        await openTemporaryConversation(page);
+        const tabId = await page.evaluate(() => window.__mageDev.store.getState().activeTabId);
+        const boton = await page.getByRole('button', { name: ui('i2.prompt.attachImage') }).count();
+        const input = page.locator(`[data-pane-tab-id="${tabId}"] input[data-attach-input="image"]`);
+        await input.setInputFiles({ name: 'boton.png', mimeType: 'image/png', buffer: Buffer.from(TINY_PNG_BASE64, 'base64') });
+        await page.waitForTimeout(CONFIG.settleMs);
+        const trasBoton = await miniaturas();
+        await dropFiles(tabId, [{ name: 'soltada.png', type: 'image/png', base64: TINY_PNG_BASE64 }]);
+        await page.waitForTimeout(CONFIG.settleMs);
+        const trasSoltar = await miniaturas();
+        await dropFiles(tabId, [{ name: 'malo.exe', type: 'application/x-msdownload', base64: Buffer.from('MZ').toString('base64') }]);
+        await page.waitForTimeout(CONFIG.settleMs);
+        const exe = { errores: await erroresDeAdjuntar(), miniaturas: await miniaturas() };
+        await input.setInputFiles({ name: 'grande.png', mimeType: 'image/png', buffer: Buffer.alloc(5 * 1024 * 1024 + 1) });
+        await page.waitForTimeout(CONFIG.settleMs);
+        const tamano = uiSegment('errors.attachments.imageTooLarge', 0);
+        const conTamano = await page.evaluate((segment) => [...document.querySelectorAll('[role="alert"]')].some((n) => (n.textContent ?? '').includes(segment)), tamano);
+        const grande = { conTamano, miniaturas: await miniaturas() };
+        const ok = boton === 1 && trasBoton === 1 && trasSoltar === 2 && exe.errores >= 1 && exe.miniaturas === 2 && grande.conTamano && grande.miniaturas === 2;
+        const nota = trasSoltar === 2 ? '' : ' (soltar: CDP no lo simuló o no adjuntó)';
+        return { ok, detail: `${JSON.stringify({ boton, trasBoton, trasSoltar, exe, grande })}${nota}` };
+      } finally {
+        const quitar = page.getByRole('button', { name: uiAnyOf([uiPrefix('prompt.attach.remove')]) });
+        while ((await miniaturas()) > 0 && (await quitar.count()) > 0) {
+          await quitar.first().click();
+          await page.waitForTimeout(CONFIG.settleMs);
+        }
+        await page.evaluate((estado) => window.__mageDev.store.setState(estado), previo);
+        await page.waitForTimeout(CONFIG.settleMs);
+      }
+    },
+  },
   // --- F3.6: textos largos con la interfaz en inglés (carril Y) ------------------------------------------
   //
   // Miden desbordes, cortes sin elipsis y solapes (`scripts/lib/textFit.mjs`). Ninguna pulsa Enter en el prompt ni
@@ -11315,6 +11480,183 @@ async function separatorValue(handle) {
   const raw = await handle.getAttribute('aria-valuenow');
   const value = Number(raw);
   return raw === null || !Number.isFinite(value) ? null : value;
+}
+
+// --- I2 (0.1.4): selector legible, viñeta con el cursor e imanes de los divisores -----------------------
+
+// A cuántos px de un imán se suelta el divisor (dentro de la tolerancia de 8 px de `snapToMagnets`).
+const IMANES_DESPLAZAMIENTO_PX = 5;
+const REDONDEO_CONTRASTE = 100;
+
+const redondear2 = (valor) => Math.round(valor * REDONDEO_CONTRASTE) / REDONDEO_CONTRASTE;
+
+// Pone el tema pedido: `dark`/`light` de serie, o `nord` (el sintético) sobre el oscuro. Devuelve lo que hay que
+// pasar a `restoreSyntheticTheme` (null si no se importó nada).
+async function applySelectorTheme(page, tema) {
+  if (tema === 'nord') {
+    await page.evaluate(() => window.__mageDev.store.getState().setTheme('dark'));
+    return applySyntheticNord(page);
+  }
+  await page.evaluate((nombre) => {
+    const st = window.__mageDev.store.getState();
+    st.selectImportedTheme(null);
+    st.setTheme(nombre);
+  }, tema);
+  await page.waitForTimeout(CONFIG.settleMs);
+  return null;
+}
+
+// Color del botón y de la opción elegida del selector de modelo en el tema activo, SIN ratón encima. El fondo del
+// botón es el primero no transparente subiendo por sus ancestros.
+async function readModelSelectorColors(page, trigger, tema) {
+  const boton = await trigger.evaluate((node) => {
+    const esTransparente = (css) => css === 'rgba(0, 0, 0, 0)' || css === 'transparent';
+    let fondoNode = node;
+    while (fondoNode !== null && esTransparente(getComputedStyle(fondoNode).backgroundColor)) fondoNode = fondoNode.parentElement;
+    if (fondoNode === null) throw new Error('el botón del selector no tiene ningún ancestro con fondo');
+    return { color: getComputedStyle(node).color, fondo: getComputedStyle(fondoNode).backgroundColor };
+  });
+  await page.mouse.move(2, 2);
+  await trigger.click();
+  await page.getByRole('listbox', { name: ui('prompt.model.ariaLabel') }).waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+  const opcion = await page.evaluate(() => {
+    const elegida = document.querySelector('[role="listbox"] [role="option"][aria-selected="true"]');
+    if (elegida === null) throw new Error('el selector abierto no tiene ninguna opción elegida');
+    const estilo = getComputedStyle(elegida);
+    return { color: estilo.color, fondo: estilo.backgroundColor };
+  });
+  await page.screenshot({ path: path.join(CONFIG.outDir, `i2-selector-${tema}.png`) });
+  await page.mouse.click(2, 2);
+  await page.waitForTimeout(CONFIG.settleMs);
+  return { boton, opcion };
+}
+
+// Contraste del botón y de la opción elegida en un tema; restaura el sintético al acabar la pasada.
+async function measureModelSelectorIn(page, trigger, tema) {
+  const previo = await applySelectorTheme(page, tema);
+  try {
+    const { boton, opcion } = await readModelSelectorColors(page, trigger, tema);
+    const [botonColor, botonFondo, opcionColor, opcionFondo] = await cssColorsToRgb(page, [boton.color, boton.fondo, opcion.color, opcion.fondo]);
+    return {
+      boton: redondear2(wcagContrast(botonColor, botonFondo)),
+      opcion: redondear2(wcagContrast(opcionColor, opcionFondo)),
+      colores: { boton, opcion },
+    };
+  } finally {
+    if (previo !== null) await restoreSyntheticTheme(page, previo);
+  }
+}
+
+// Coloca el cursor del prompt: `Home`, `End` o `Home+ArrowRight` (un carácter dentro de la línea).
+async function moveCursorTo(page, posicion) {
+  for (const tecla of posicion.split('+')) await page.keyboard.press(tecla);
+  await page.waitForTimeout(CONFIG.settleMs);
+}
+
+// Cuántos nodos casan con `selector` en el editor del prompt, y texto y ancho del primero.
+async function measurePromptMarker(page, selector) {
+  return page.evaluate((css) => {
+    const nodos = [...document.querySelectorAll(`[data-prompt-editor="true"] ${css}`)];
+    const primero = nodos[0] ?? null;
+    return {
+      cuantos: nodos.length,
+      texto: primero === null ? null : (primero.textContent ?? '').trim(),
+      ancho: primero === null ? 0 : primero.getBoundingClientRect().width,
+    };
+  }, selector);
+}
+
+// Arrastra un separador `deltaX` px (misma y), con o sin Alt pulsado durante todo el gesto.
+async function dragSeparatorBy(page, handle, deltaX, withAlt) {
+  const box = await handle.boundingBox();
+  if (box === null) throw new Error('el separador no tiene caja (¿no está montado?)');
+  const x = box.x + box.width / 2;
+  const y = box.y + box.height / 2;
+  if (withAlt) await page.keyboard.down('Alt');
+  try {
+    await page.mouse.move(x, y);
+    await page.mouse.down();
+    await page.mouse.move(x + deltaX, y, { steps: 8 });
+    await page.mouse.up();
+  } finally {
+    if (withAlt) await page.keyboard.up('Alt');
+  }
+  await page.waitForTimeout(CONFIG.settleMs);
+}
+
+// Divisor de grupos: dos arrastres desde su sitio, el primero a 5 px del imán del tercio y el segundo, con Alt, a 5 px del
+// medio. Restaura el estado del store al acabar.
+async function measureGroupMagnets(page) {
+  const original = await page.evaluate(() => {
+    const s = window.__mageDev.store.getState();
+    return { tabs: s.tabs, activeTabId: s.activeTabId, splitLayout: s.splitLayout, sessionIdByChat: s.sessionIdByChat };
+  });
+  try {
+    await openTemporaryConversation(page);
+    const tabA = await page.evaluate(() => window.__mageDev.store.getState().activeTabId);
+    await openTemporaryConversation(page);
+    await page.evaluate((a) => window.__mageDev.store.getState().movePaneTab(a, [], 'left'), tabA);
+    await page.waitForTimeout(CONFIG.settleMs);
+    const handle = page.locator(`[role="separator"][aria-label="${cssAttr(ui('app.splitLayout.resizeHandleLabel'))}"]`);
+    const contenedor = await handle.evaluate((n) => {
+      const r = n.parentElement.getBoundingClientRect();
+      return { left: r.left, width: r.width };
+    });
+    const readRatio = () => page.evaluate(() => window.__mageDev.store.getState().splitLayout.ratio ?? null);
+    const centro = async () => {
+      const box = await handle.boundingBox();
+      return box.x + box.width / 2;
+    };
+    await dragSeparatorBy(page, handle, contenedor.left + contenedor.width / 3 + IMANES_DESPLAZAMIENTO_PX - (await centro()), false);
+    const tercio = await readRatio();
+    await dragSeparatorBy(page, handle, contenedor.left + contenedor.width / 2 + IMANES_DESPLAZAMIENTO_PX - (await centro()), true);
+    const medio = await readRatio();
+    return {
+      ratioConIman: tercio,
+      ratioConAlt: medio,
+      pegado: tercio !== null && Math.abs(tercio - 1 / 3) < 0.01,
+      libre: medio !== null && Math.abs(medio - 0.5) > 0.002 && Math.abs(medio - 0.5) < 0.02,
+    };
+  } finally {
+    await page.evaluate((s) => window.__mageDev.store.setState(s), original);
+    await page.waitForTimeout(CONFIG.settleMs);
+  }
+}
+
+// Zona izquierda del dock: el imán es el 25 % de la ventana (o el tercio si el 25 % cae fuera del rango del separador).
+async function measureDockMagnets(page) {
+  const separadores = page.locator('[role="separator"][aria-valuenow][aria-orientation="vertical"]');
+  const ancho = await page.evaluate(() => window.innerWidth);
+  let handle = null;
+  for (let i = 0; i < (await separadores.count()); i++) {
+    const box = await separadores.nth(i).boundingBox();
+    if (box !== null && box.x < ancho / 2) {
+      handle = separadores.nth(i);
+      break;
+    }
+  }
+  if (handle === null) return { ok: false, nota: 'no hay ningún separador vertical en la mitad izquierda de la ventana' };
+  const original = await separatorValue(handle);
+  const minimo = Number(await handle.getAttribute('aria-valuemin'));
+  const maximo = Number(await handle.getAttribute('aria-valuemax'));
+  const cuarto = Math.round(ancho * 0.25);
+  const usaCuarto = cuarto >= minimo && cuarto <= maximo;
+  const objetivo = usaCuarto ? cuarto : Math.round(ancho / 3);
+  await dragSeparatorBy(page, handle, objetivo + IMANES_DESPLAZAMIENTO_PX - original, false);
+  const conIman = await separatorValue(handle);
+  await dragSeparatorBy(page, handle, IMANES_DESPLAZAMIENTO_PX, true);
+  const conAlt = await separatorValue(handle);
+  await dragSeparatorBy(page, handle, original - (objetivo + IMANES_DESPLAZAMIENTO_PX), true);
+  const restaurado = await separatorValue(handle);
+  return {
+    ok: conIman === objetivo && conAlt === objetivo + IMANES_DESPLAZAMIENTO_PX && restaurado === original,
+    original,
+    objetivo,
+    conIman,
+    conAlt,
+    restaurado,
+    nota: usaCuarto ? 'imán del 25 %' : 'el 25 % cae fuera del rango del separador: se usa el tercio de la ventana',
+  };
 }
 
 // Modo de permiso que declara el chip de la PromptBar ("Manual", "Aceptar ediciones", "Plan", "Auto", "Omitir permisos").
