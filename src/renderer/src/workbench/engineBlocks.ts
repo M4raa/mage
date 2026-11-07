@@ -8,6 +8,7 @@ import { classifyTool } from './toolClassify';
 import { completeArtifactPublication, parseArtifactDraft } from '@shared/artifacts';
 import { formatToolMeta, planTextField, SKILL_TOOL_NAME, summarizeToolInput } from './toolSummary';
 import { codexChangeView } from './codexChanges';
+import { fileTouchesField } from './fileTouches';
 import { t } from '../i18n/uiLanguage';
 import type { MessageKey } from '@shared/i18n/messageKeys.generated';
 import type { Translate } from '@shared/i18n/translator';
@@ -194,6 +195,7 @@ export function appendToolUse(blocks: readonly Block[], tool: ToolUse, id: strin
     artifactDraft: parseArtifactDraft(tool.toolName, tool.input),
     parentToolUseId: tool.parentToolUseId ?? null,
     ...planTextField(tool.toolName, tool.input),
+    ...fileTouchesField(tool.toolName, tool.input),
   };
   return [...blocks, block];
 }

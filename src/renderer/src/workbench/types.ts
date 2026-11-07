@@ -9,6 +9,7 @@ import type { MentionCandidate } from '@shared/mentions';
 import type { DiffLine } from './diffLines';
 import type { ToolClass } from './toolClassify';
 import type { SubagentStatus } from './engineBlocks';
+import type { FileTouch } from './fileTouches';
 import type { LoginStatus } from '@shared/accounts';
 import type { ConversationPrivacy } from '@shared/state';
 
@@ -196,6 +197,8 @@ export type Block =
       readonly parentToolUseId: string | null;
       // Texto del plan de un ExitPlanMode (input.plan). Ausente en cualquier otra herramienta.
       readonly planText?: string;
+      // Ficheros que toca (creado/editado/leído), calculados al crear el bloque (panel de Ficheros). Ausente si no toca ninguno.
+      readonly fileTouches?: readonly FileTouch[];
     }
   // Subagente (Task/Agent). `agentId` llega con el tool_result; hasta entonces no se puede abrir su
   // transcripcion. La anidacion no se modela (nivel 1), igual que en subagentView.ts.

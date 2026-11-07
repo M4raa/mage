@@ -6,6 +6,7 @@ import { classifyTool } from './toolClassify';
 import { completeArtifactPublication, parseArtifactDraft } from '@shared/artifacts';
 import { planTextField, SUBAGENT_TOOL_NAMES } from './toolSummary';
 import { noticeTextFor } from './cliNotices';
+import { fileTouchesField } from './fileTouches';
 import { rateLimitLine } from './rateLimit';
 import { t } from '../i18n/uiLanguage';
 import { classifySystemWrapper } from '@shared/systemWrappers';
@@ -233,6 +234,7 @@ function appendAssistant(entry: TranscriptEntry, blocks: Block[], toolIndexById:
       // Los pasos de los subagentes viven en su propio `agent-<id>.jsonl`: en el principal, todo es suyo.
       parentToolUseId: null,
       ...planTextField(use.toolName, use.input),
+      ...fileTouchesField(use.toolName, use.input),
     });
     toolIndexById.set(use.toolUseId, blocks.length - 1);
   }
