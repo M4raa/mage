@@ -39,6 +39,16 @@ export function prTurnBlockReason(command: string): string | null {
   return null;
 }
 
+// ¿Algún segmento del comando es uno de los que vigila la barrera del turno de PR (`git push`, `git commit`, `gh pr
+// create`)? A esos no se les ofrece «permitir en esta sesión» ni «siempre»: una regla de prefijo dejaría pasar después una
+// variante forzada sin que la barrera llegue a verla (solo actúa cuando el motor pregunta).
+export function touchesPrTurnCommand(command: string): boolean {
+  return command.split(SEGMENT_SEPARATORS).some((segment) => {
+    const tokens = segment.trim().split(/\s+/).filter((token) => token.length > 0);
+    return PR_TURN_RULES.some((rule) => commandStart(tokens, rule.command) >= 0);
+  });
+}
+
 function blockedFlag(tokens: readonly string[], rule: Rule): string | null {
   const start = commandStart(tokens, rule.command);
   if (start < 0) return null;
