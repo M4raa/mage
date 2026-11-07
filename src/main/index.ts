@@ -12,7 +12,7 @@ import { mageMcpLaunch } from './mcpServer/registration';
 import { McpRegistrationService, type McpRegistrationDeps } from './mcpServer/registrationService';
 import { DelegationLog } from './mcpServer/delegationLog';
 import { HostSessionsPort } from './mcpServer/hostSessionsPort';
-import { SessionSettingsRegistry } from './mcpServer/sessionSettingsRegistry';
+import { SessionSettingsRegistry, settingsOfLaunch } from './mcpServer/sessionSettingsRegistry';
 import { MemoryIdempotencyStore } from './mcpServer/idempotencyStore';
 import { createMcpConnector as createHostMcpConnector } from './mcpServer/mcpConnector';
 import { execFile, spawn, spawnSync, type ChildProcessWithoutNullStreams } from 'node:child_process';
@@ -247,6 +247,7 @@ import { agyBridgeSpec, bridgeDocument, codexBridgeSpec, resolveBridge, type Bri
 import { EffectiveSettingsService } from './config/effectiveSettingsService';
 import { ConversationIndexStore } from './state/conversationIndexStore';
 import { registerSessionIpc } from './coordination/sessionIpc';
+import type { SessionCommands } from './coordination/sessionIpc';
 import { isUuid } from '@shared/sessionInput';
 import { RewindCoordinator } from './coordination/rewindCoordinator';
 import { RewindStateStore } from './conversations/rewindStateStore';
@@ -2779,6 +2780,7 @@ function stopSessionsWhenDestroyed(sender: Electron.WebContents): void {
 // empujan al webContents que creo la sesion (guardando contra un renderer ya destruido).
 function relaySessionEvent(payload: { readonly sessionId: string; readonly event: MageEvent },
   { sender, configDir, accountDir }: { sender: Electron.WebContents | null; configDir: string; accountDir: string }): void {
+  sessionSettings.observe(payload.sessionId, payload.event);
       // Cache del catalogo "/" (2.2): la sesion es la UNICA fuente del catalogo real, y una
       // conversacion recien abierta no tiene sesion. Se escribe con el config dir EFECTIVO (para una
       // conversacion privada, el perfil `mage-private`), nunca con el de la cuenta: si no, la cache de
@@ -2848,6 +2850,7 @@ function launchSession(params: CreateSessionParams, sender: Electron.WebContents
     } finally {
       launchingTaskExtras = [];
     }
+    sessionSettings.record(sessionId, settingsOfLaunch(params));
     if (task !== null) getTaskService().bindSession(task.id, sessionId, task.provider);
     if (params.forkFrom !== undefined) recordClaudeFork(sessionId, params.forkFrom.sessionId);
     if (sender !== null) stopSessionsWhenDestroyed(sender);
@@ -3083,7 +3086,7 @@ function registerApplicationIpc(deps: IpcDependencies): void {
 function registerSessionIpc1(): void {
   registerSessionIpc({
     handle: (channel, listener) => ipcMain.handle(channel, listener),
-    sessions: sessionManager,
+    sessions: trackedSessionCommands(),
     coordinator: sessionCoordinator,
     rewind: createRewindCoordinator(),
     createSession: createSessionFromIpc,
@@ -3108,6 +3111,16 @@ function registerSessionIpc1(): void {
       return canonicalPath(dir);
     },
   });
+}
+
+// Los cambios de modelo, esfuerzo y modo desde la ventana quedan anotados para la herencia de las delegadas.
+function trackedSessionCommands(): SessionCommands {
+  return {
+    setModel: (id, model) => { sessionManager.setModel(id, model); sessionSettings.apply(id, 'model', model); },
+    setEffort: (id, effort) => { sessionManager.setEffort(id, effort); sessionSettings.apply(id, 'effort', effort); },
+    setPermissionMode: (id, mode) => { sessionManager.setPermissionMode(id, mode); sessionSettings.apply(id, 'permissionMode', mode); },
+    stopTask: (id, taskId) => sessionManager.stopTask(id, taskId),
+  };
 }
 
 function registerSessionIpc2(): void {
@@ -4367,11 +4380,20 @@ function hostControlDeps(): HostControlDeps {
     conversationIdOf: (sessionId) => sessionCoordinator.conversationIdOf(sessionId),
     // Lo que se cambia desde la terminal también queda en el índice (la ventana reabre con ello).
     options: {
-      setModel: (id, model) => { sessionManager.setModel(id, model); hostOwnership.updateOptions(id, { model }); },
-      setEffort: (id, effort) => { sessionManager.setEffort(id, effort); hostOwnership.updateOptions(id, { effort }); },
+      setModel: (id, model) => {
+        sessionManager.setModel(id, model);
+        hostOwnership.updateOptions(id, { model });
+        sessionSettings.apply(id, 'model', model);
+      },
+      setEffort: (id, effort) => {
+        sessionManager.setEffort(id, effort);
+        hostOwnership.updateOptions(id, { effort });
+        sessionSettings.apply(id, 'effort', effort);
+      },
       setPermissionMode: (id, mode) => {
         sessionManager.setPermissionMode(id, mode);
         if (isPermissionMode(mode)) hostOwnership.updateOptions(id, { permissionMode: mode });
+        sessionSettings.apply(id, 'permissionMode', mode);
       },
     },
     createAccount: (params) => getProviderAccounts().create(params),
