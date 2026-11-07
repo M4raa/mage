@@ -4336,6 +4336,52 @@ const CHECKS = [
     },
   },
   {
+    // I3 (0.1.4), punto 1: una pestaña nueva CON sesión viva (sin turnos) y un aviso de sistema también sigue a la
+    // cuenta pulsada: cambia su cuenta y su monograma en la barra de pestañas, y su sesión vieja se suelta. La sesión es
+    // sintética (`i3-live`): main contesta «Sesion inexistente» y el renderer lo trata como ausencia. No se envía nada.
+    name: 'I3: pestaña nueva con sesión viva cambia de cuenta y de monograma al pulsar otra cuenta',
+    async run(page) {
+      const previo = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return { tabs: s.tabs, activeTabId: s.activeTabId, splitLayout: s.splitLayout, activeAccountId: s.activeAccountId, sessionIdByChat: s.sessionIdByChat, blocksByChat: s.blocksByChat };
+      });
+      const destino = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return s.accounts.find((a) => a.id !== s.activeAccountId && a.loginStatus === 'logged_in')?.id ?? null;
+      });
+      if (destino === null) return { ok: false, notRunnable: HARNESS_HOME === os.homedir(), detail: HARNESS_HOME === os.homedir() ? 'HOME real sin otra cuenta con login: no ejecutable' : 'el HOME de prueba no tiene una segunda cuenta con login: falló la siembra' };
+      try {
+        await openTemporaryConversation(page);
+        const tabId = await page.evaluate(() => {
+          const dev = window.__mageDev;
+          const s = dev.store.getState();
+          const id = s.activeTabId;
+          dev.store.setState({ sessionIdByChat: { ...s.sessionIdByChat, [id]: 'i3-live' }, blocksByChat: { ...s.blocksByChat, [id]: [{ kind: 'system', id: 'i3-sys', text: 'aviso' }] } });
+          return id;
+        });
+        const monogramaAntes = await page.locator(`[data-tab-id="${tabId}"] [data-tab-monogram]`).first().getAttribute('data-tab-monogram');
+        const indice = await page.evaluate((id) => window.__mageDev.store.getState().accounts.findIndex((a) => a.id === id), destino);
+        await page.locator(`[role="group"][aria-label="${cssAttr(ui('accounts.switcher.groupAria'))}"] button[aria-pressed]`).nth(indice).click();
+        await page.waitForTimeout(CONFIG.settleMs);
+        const tras = await page.evaluate(({ id, dest }) => {
+          const s = window.__mageDev.store.getState();
+          const t = s.tabs.find((x) => x.id === id);
+          const cuenta = s.accounts.find((a) => a.id === dest);
+          return { dialogo: s.accountSwitchPrompt !== null, cuentaPestana: t?.accountId ?? null, proveedorPestana: t?.provider ?? null, proveedorCuenta: cuenta?.providerId ?? null, sesion: s.sessionIdByChat[id] ?? null, pestanas: s.tabs.length };
+        }, { id: tabId, dest: destino });
+        const monogramaDespues = await page.locator(`[data-tab-id="${tabId}"] [data-tab-monogram]`).first().getAttribute('data-tab-monogram');
+        const ok = !tras.dialogo && tras.cuentaPestana === destino && tras.proveedorPestana === tras.proveedorCuenta && tras.sesion === null && monogramaDespues !== null;
+        return { ok, detail: JSON.stringify({ ...tras, monogramaAntes, monogramaDespues }) };
+      } finally {
+        await page.evaluate((estado) => {
+          window.__mageDev.store.getState().setActiveAccount(estado.activeAccountId);
+          window.__mageDev.store.setState({ tabs: estado.tabs, activeTabId: estado.activeTabId, splitLayout: estado.splitLayout, sessionIdByChat: estado.sessionIdByChat, blocksByChat: estado.blocksByChat });
+        }, previo);
+        await page.waitForTimeout(CONFIG.settleMs);
+      }
+    },
+  },
+  {
     // P-028, punto 30: el menu contextual del avatar ofrece «Eliminar cuenta…» en las cuentas que no
     // son la principal, y NUNCA en la principal. Se abre la confirmacion y se CANCELA: pulsar
     // «Eliminar la cuenta» borraria de verdad un dir del HOME real (el harness no aisla el HOME).
