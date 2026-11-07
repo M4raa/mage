@@ -352,16 +352,16 @@ export type MageEvent =
   // `steer_result` del motor; `message` es el envio, para devolverlo al borrador si fallo.
   | ({ readonly kind: 'message_delivery'; readonly commandId: string; readonly message: QueuedMessage } & MessageDelivery);
 
+// Alcance de un «Permitir» (0.1.4). Sin él, solo esta vez. `session`: mientras viva la sesión de la pestaña (se pierde al
+// cerrarla o relanzarla); `always`: regla general de la cuenta (Claude: `permissions.allow` de su settings.json).
+export type PermissionScope = 'session' | 'always';
+
 // Decision del usuario ante un permiso (viaja renderer -> main -> CLI).
 //
 // `updatedInput` REESCRIBE el input de la tool: es el canal por el que viajan las respuestas de
 // AskUserQuestion (`answers`). AUSENTE => el adapter manda `{}`, que el CLI interpreta como "usa el
 // input original" (comprobado en su fuente; los clientes moviles mandan eso). Un `{}` explicito y un
 // campo ausente son, por tanto, lo mismo: no hay ambiguedad que resolver.
-// Alcance de un «Permitir» (0.1.4). Sin él, solo esta vez. `session`: mientras viva la sesión de la pestaña (se pierde al
-// cerrarla o relanzarla); `always`: regla general de la cuenta (Claude: `permissions.allow` de su settings.json).
-export type PermissionScope = 'session' | 'always';
-
 export type PermissionDecision =
   | { readonly behavior: 'allow'; readonly updatedInput?: Readonly<Record<string, unknown>>; readonly scope?: PermissionScope }
   | { readonly behavior: 'deny'; readonly message: string };

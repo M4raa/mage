@@ -10234,9 +10234,9 @@ const CHECKS = [
   {
     // F2.4: con la pestaña CERRADA, main sigue decidiendo los permisos. Turno del runtime propio contra el servidor
     // falso (escenario `pr-barrera`, modo Manual), sin CLI ni cuota: se envía el prompt de «Crear PR»; el agente
-    // pide un `git push --force` (la barrera lo deniega) y un `mkdir` que SÍ pregunta. La regla se crea por la
-    // acción del store `allowAlwaysAndAnswer` (la cadena entera: acción → persistConversationPrefs → main), se
-    // cierra la pestaña con el turno en marcha (segundo plano en main) y el segundo `mkdir` lo contesta la regla.
+    // pide un `git push --force` (la barrera lo deniega) y un `mkdir` que SÍ pregunta. Ya no se crean reglas por conversación desde la interfaz (0.1.4), pero main sigue respetando las guardadas: se siembra
+    // una en el índice (como la dejó una versión anterior), la petición de ahora se contesta «esta vez», se cierra la pestaña
+    // con el turno en marcha (segundo plano en main) y el segundo `mkdir` lo contesta la regla.
     // Va antes del turno mínimo por la transcripción que deja en el perfil.
     name: 'F2.4: segundo plano en main: con la pestaña cerrada, la barrera de PR deniega y la regla creada desde la interfaz permite',
     async run(page, { userDataDir }) {
@@ -10253,8 +10253,11 @@ const CHECKS = [
         }, tabId);
         // Sin regla, el `mkdir` llega al usuario: la barrera ya denegó el push forzado sin preguntar.
         await page.waitForFunction((id) => (window.__mageDev.store.getState().pendingByChat[id] ?? []).some((p) => p.view.toolLabel === 'Bash'), tabId, { timeout: CONFIG.actionTimeoutMs });
-        const preguntaba = await page.evaluate((id) => window.__mageDev.store.getState().pendingByChat[id].map((p) => p.view.rememberable), tabId);
-        await page.evaluate((id) => window.__mageDev.store.getState().allowAlwaysAndAnswer('Bash', id), tabId);
+        const preguntaba = await page.evaluate((id) => window.__mageDev.store.getState().pendingByChat[id].map((p) => p.view.allowScopes.includes('session')), tabId);
+        await page.evaluate(async ({ id, sid }) => {
+          await window.mage.saveConversationPrefs({ sessionId: sid, prefs: { alwaysAllowTools: ['Bash'] } });
+          window.__mageDev.store.getState().answerPermissionFor(id, { behavior: 'allow' });
+        }, { id: tabId, sid: sessionId });
         // El guardado es asíncrono: se espera a que main tenga la regla ANTES de cerrar la pestaña.
         await page.waitForFunction(async (sid) => ((await window.mage.loadConversationPrefs(sid))?.alwaysAllowTools ?? []).includes('Bash'), sessionId, { timeout: CONFIG.actionTimeoutMs });
         await page.waitForFunction((id) => window.__mageDev.store.getState().statusByChat[id] === 'streaming', tabId, { timeout: CONFIG.actionTimeoutMs });
