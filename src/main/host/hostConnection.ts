@@ -11,7 +11,7 @@ import type { SessionLogFn } from '../engine/agentSession';
 import type { RewindCoordinator } from '../coordination/rewindCoordinator';
 import type { SequencedSessionEvent } from '../coordination/sessionCoordinator';
 import { MAX_LINE_BYTES, NdjsonFramer } from './ndjsonFramer';
-import { TrustRequiredError, UnknownAccountError, UnknownConversationError, UnsupportedMethodError } from './hostErrors';
+import { BypassPermissionsBlockedError, TrustRequiredError, UnknownAccountError, UnknownConversationError, UnsupportedMethodError } from './hostErrors';
 import type { HostControl } from './hostControl';
 import type { HostMode } from './hostServer';
 import { decideStop, type HostStopResult } from './hostStop';
@@ -449,6 +449,7 @@ const OWN_ERROR_CODES: readonly (readonly [abstract new (...args: never[]) => Er
   [UnknownAccountError, HostErrorCode.UnknownAccount],
   [UnknownConversationError, HostErrorCode.UnknownConversation],
   [UnsupportedMethodError, HostErrorCode.Unsupported],
+  [BypassPermissionsBlockedError, HostErrorCode.PermissionModeBlocked],
 ];
 
 // Un UserFacingError lleva marca y JSON tras el castellano: al cliente solo le llega el texto limpio, en el idioma que pidió (1.6) o en castellano.

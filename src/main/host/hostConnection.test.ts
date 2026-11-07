@@ -6,7 +6,7 @@ import type { SequencedSessionEvent } from '../coordination/sessionCoordinator';
 import { HELLO_DEADLINE_MS, HostConnection, MAX_BUFFERED_BYTES, type HostConnectionDeps, type McpTunnelHandle, type HostSessions, type HostTransport } from './hostConnection';
 import type { HostControl } from './hostControl';
 import type { HostMode } from './hostServer';
-import { TrustRequiredError, UnknownAccountError } from './hostErrors';
+import { BypassPermissionsBlockedError, TrustRequiredError, UnknownAccountError } from './hostErrors';
 import { HOST_PROTOCOL, HostErrorCode } from './hostProtocol';
 import { challengeProof } from './hostToken';
 
@@ -693,6 +693,29 @@ describe('HostConnection — métodos 1.2', () => {
 
     expect(h.control.setOption).toHaveBeenCalledWith('s1', 'model', 'opus');
     expect(reply.result).toEqual({ applied: true });
+  });
+
+  it('sessionSetOption_controlRechazaBypass_errorMenos32011Localizado', () => {
+    const h = harness({ control: { setOption: vi.fn(() => { throw new BypassPermissionsBlockedError(); }) } });
+    h.hello();
+
+    const reply = call(h, 'session.setOption', { sessionId: 's1', key: 'permissionMode', value: 'bypassPermissions' });
+
+    expect(reply.error.code).toBe(HostErrorCode.PermissionModeBlocked);
+    expect(reply.error.data.localized.key).toBe('errors.host.bypassPermissionsBlocked');
+    expect(h.isEnded()).toBe(false);
+  });
+
+  it('clientSetLanguage_enConBypassBloqueado_mensajeEnInglesDeLaClave', () => {
+    const h = harness({ control: { setOption: vi.fn(() => { throw new BypassPermissionsBlockedError(); }) } });
+    h.hello();
+
+    h.send({ jsonrpc: '2.0', id: 2, method: 'client.setLanguage', params: { language: 'en' } });
+    h.send({ jsonrpc: '2.0', id: 3, method: 'session.setOption', params: { sessionId: 's1', key: 'permissionMode', value: 'bypassPermissions' } });
+
+    const [, , blocked] = h.lines();
+    expect(blocked!.error.code).toBe(HostErrorCode.PermissionModeBlocked);
+    expect(blocked!.error.message).toContain('does not accept the “Bypass permissions” mode');
   });
 
   it('sessionCancelQueued_llegaARemoveQueued', () => {

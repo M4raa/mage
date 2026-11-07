@@ -2,8 +2,8 @@ import { resolve } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import type { AccountCreateParams, AccountInfo } from '@shared/accounts';
 import type { ChatProject } from '@shared/settings';
-import { createHostControl, MAX_CREATE_RECEIPTS, type HostControlDeps } from './hostControl';
-import { TrustRequiredError, UnknownAccountError } from './hostErrors';
+import { createHostControl, MAX_CREATE_RECEIPTS, resolveHostLaunchParams, type HostControlDeps } from './hostControl';
+import { BypassPermissionsBlockedError, TrustRequiredError, UnknownAccountError } from './hostErrors';
 import type { HostCreateRequest } from './hostProtocol';
 
 const CWD = resolve('proyecto');
@@ -87,6 +87,31 @@ describe('HostControl.createSession', () => {
     expect(h.deps.launch).not.toHaveBeenCalled();
   });
 
+  it('createSession_bypassPermissions_rechazaSinLanzarNiGuardarRecibo', () => {
+    const h = harness();
+
+    expect(() => h.control.createSession(request({ permissionMode: 'bypassPermissions' }))).toThrow(BypassPermissionsBlockedError);
+    expect(h.deps.launch).not.toHaveBeenCalled();
+    h.control.createSession(request({ permissionMode: 'default' }));
+    expect(h.deps.launch).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['plan', 'acceptEdits', 'default', 'auto'] as const)('createSession_%s_siguenLanzando', (permissionMode) => {
+    const h = harness();
+
+    h.control.createSession(request({ permissionMode }));
+
+    expect(h.deps.launch).toHaveBeenCalledWith(expect.objectContaining({ permissionMode }));
+  });
+
+  it('resolveHostLaunchParams_permissionModeEnCodex_loDejaPasar', () => {
+    const h = harness();
+
+    const params = resolveHostLaunchParams(h.deps, request({ provider: 'codex', accountId: '/h/.codex', model: 'gpt-x', permissionMode: 'plan' }));
+
+    expect(params.permissionMode).toBe('plan');
+  });
+
   it('createSession_sinModeloEnNingunSitio_error', () => {
     const h = harness();
 
@@ -139,6 +164,21 @@ describe('HostControl — opciones y catálogos', () => {
     h.control.setOption('s-1', key, value);
 
     expect(h.deps.options[setter]).toHaveBeenCalledWith('s-1', value);
+  });
+
+  it('setOption_permissionModeBypass_rechazaSinLlamarAlSetter', () => {
+    const h = harness();
+
+    expect(() => h.control.setOption('s-1', 'permissionMode', 'bypassPermissions')).toThrow(BypassPermissionsBlockedError);
+    expect(h.deps.options.setPermissionMode).not.toHaveBeenCalled();
+  });
+
+  it('setOption_modelLlamadoBypassPermissions_noSeBloquea', () => {
+    const h = harness();
+
+    h.control.setOption('s-1', 'model', 'bypassPermissions');
+
+    expect(h.deps.options.setModel).toHaveBeenCalledWith('s-1', 'bypassPermissions');
   });
 
   it('listAccounts_soloIdNombreProveedorYFacturacion', () => {

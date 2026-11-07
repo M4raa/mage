@@ -21,7 +21,8 @@ export const HOST_PROTOCOL_MAJOR = 1;
 // 1.4 (0.1.4): `session.rewindPoints`, `session.rewindPlan` y `session.rewind` (el orquestador de la ventana).
 // 1.5 (0.1.4): `hello.caller` y el túnel MCP `mcp.message` para los clientes `mcp` (D-M5).
 // 1.6 (0.1.4): `client.setLanguage` (el idioma del cliente para los mensajes de error) y `error.data.localized`.
-export const HOST_PROTOCOL_MINOR = 6;
+// 1.7 (0.1.4): `session.create` y `session.setOption` rechazan `bypassPermissions` con -32011 (solo se activa desde la ventana).
+export const HOST_PROTOCOL_MINOR = 7;
 export const HOST_PROTOCOL = `${HOST_PROTOCOL_MAJOR}.${HOST_PROTOCOL_MINOR}`;
 
 // Códigos JSON-RPC estándar (-32700…-32603) y propios (-32001…-32099).
@@ -41,6 +42,7 @@ export const HostErrorCode = {
   Unsupported: -32008,
   UnknownConversation: -32009,
   UnknownAccount: -32010,
+  PermissionModeBlocked: -32011,
 } as const;
 
 const MAX_METHOD_CHARS = 64;
