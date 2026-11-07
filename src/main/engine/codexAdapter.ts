@@ -207,8 +207,9 @@ export class CodexAdapter implements ProviderAdapter {
   encodePermissionResponse(ref: PermissionRef, decision: PermissionDecision): unknown {
     const pending = this.approvals.get(ref.requestId);
     if (pending === undefined) throw new UserFacingError(localized('errors.engine.codexApprovalUnknown', { requestId: ref.requestId }));
+    const result = approvalResult(pending.method, pending.params, decision); // antes de borrar: un «siempre» rechazado no pierde la petición
     this.approvals.delete(ref.requestId);
-    return { jsonrpc: '2.0', id: pending.rawId, result: approvalResult(pending.method, pending.params, decision.behavior === 'allow') };
+    return { jsonrpc: '2.0', id: pending.rawId, result };
   }
 
   encodeElicitationResponse(answer: ElicitationAnswer): unknown {

@@ -114,6 +114,21 @@ describe('registerSessionIpc', () => {
     expect(coordinator.answerPermission).toHaveBeenCalledWith('s1', 'r1', { behavior: 'deny', message: 'no' });
   });
 
+  it('answerPermission_conAlcanceDesdeLaVentana_llegaAlCoordinador', () => {
+    const { coordinator, invoke } = setup();
+
+    invoke(IpcChannel.SessionAnswerPermission, { sessionId: 's1', requestId: 'r1', decision: { behavior: 'allow', scope: 'session' } });
+
+    expect(coordinator.answerPermission).toHaveBeenCalledWith('s1', 'r1', { behavior: 'allow', scope: 'session' });
+  });
+
+  it('answerPermission_alcanceDesconocido_seRechaza', () => {
+    const { coordinator, invoke } = setup();
+
+    expect(() => invoke(IpcChannel.SessionAnswerPermission, { sessionId: 's1', requestId: 'r1', decision: { behavior: 'allow', scope: 'forever' } })).toThrow(new RegExp(IpcChannel.SessionAnswerPermission));
+    expect(coordinator.answerPermission).not.toHaveBeenCalled();
+  });
+
   it('opciones_yParada_vanAlGestorConSusArgumentos', () => {
     const { sessions, coordinator, invoke } = setup();
 

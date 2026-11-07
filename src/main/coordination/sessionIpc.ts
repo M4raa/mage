@@ -3,7 +3,7 @@ import { IpcChannel } from '@shared/ipc';
 import type { AdoptableSession, CreateSessionParams, CreateSessionResult, ImageAttachment } from '@shared/ipc';
 import type { CloseReceipt, ConversationSnapshot } from '@shared/coordination';
 import {
-  ANSWER_PERMISSION_SCHEMA,
+  RENDERER_ANSWER_PERMISSION_SCHEMA,
   parseSessionInput,
   QUEUED_MESSAGE_SCHEMA,
   RENDERER_SEND_MESSAGE_SCHEMA,
@@ -76,7 +76,7 @@ export function registerSessionIpc(deps: SessionIpcDeps): void {
     return coordinator.send({ ...params, attachments: deps.validateAttachments(params.attachments) });
   });
   handle(IpcChannel.SessionAnswerPermission, (event, arg) => {
-    const params = authorize(event, IpcChannel.SessionAnswerPermission, parseSessionInput(ANSWER_PERMISSION_SCHEMA, arg, IpcChannel.SessionAnswerPermission));
+    const params = authorize(event, IpcChannel.SessionAnswerPermission, parseSessionInput(RENDERER_ANSWER_PERMISSION_SCHEMA, arg, IpcChannel.SessionAnswerPermission));
     return coordinator.answerPermission(params.sessionId, params.requestId, params.decision);
   });
   handle(IpcChannel.SessionAnswerElicitation, (event, arg) =>

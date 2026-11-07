@@ -45,6 +45,13 @@ export const ANSWER_PERMISSION_SCHEMA = z.object({ sessionId: id, requestId: id,
 export const QUEUED_MESSAGE_SCHEMA = z.object({ sessionId: id, messageId: id }).strict();
 // Envío desde el renderer (F4.1): el de siempre más el modo. Esquema APARTE para no cambiar el del host.
 export const RENDERER_SEND_MESSAGE_SCHEMA = SEND_MESSAGE_SCHEMA.extend({ mode: z.enum(['queue', 'steer']).optional() });
+// Respuesta a un permiso desde la VENTANA (0.1.4): la de siempre más el alcance («esta sesión» o «siempre»). Esquema APARTE
+// para no cambiar el del host: un cliente externo no puede guardar reglas en la cuenta.
+const RENDERER_PERMISSION_DECISION_SCHEMA = z.discriminatedUnion('behavior', [
+  z.object({ behavior: z.literal('allow'), updatedInput: z.record(z.string(), z.unknown()).optional(), scope: z.enum(['session', 'always']).optional() }).strict(),
+  z.object({ behavior: z.literal('deny'), message: z.string().max(MAX_DENY_MESSAGE_CHARS) }).strict(),
+]);
+export const RENDERER_ANSWER_PERMISSION_SCHEMA = z.object({ sessionId: id, requestId: id, decision: RENDERER_PERMISSION_DECISION_SCHEMA }).strict();
 export const UPDATE_QUEUED_SCHEMA = z.object({ sessionId: id, messageId: id, text: z.string().max(MAX_MESSAGE_CHARS) }).strict();
 export const SET_PERMISSION_MODE_SCHEMA = z.object({ sessionId: id, mode: label }).strict();
 export const SET_MODEL_SCHEMA = z.object({ sessionId: id, model: label }).strict();
