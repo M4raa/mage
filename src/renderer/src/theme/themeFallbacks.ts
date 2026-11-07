@@ -210,7 +210,7 @@ function contrastRatio(first: Rgba, second: Rgba): number {
   return ((lighter ?? 0) + 0.05) / ((darker ?? 0) + 0.05);
 }
 
-function contrastHex(first: string, second: string): number {
+export function contrastHex(first: string, second: string): number {
   const a = parseColor(first);
   const b = parseColor(second);
   if (a === null || b === null) throw new Error(`colores no comparables: ${first} y ${second}`);
