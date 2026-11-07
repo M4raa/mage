@@ -620,3 +620,90 @@ describe('ClaudeAdapter — adjunto PDF', () => {
     ]);
   });
 });
+
+describe('ClaudeAdapter: permisos con alcance', () => {
+  const fresh = () => new ClaudeAdapter({ resolveBinary: () => 'claude' });
+  const canUseTool = (suppress: boolean) => ({
+    type: 'control_request',
+    request_id: 'r7',
+    request: {
+      subtype: 'can_use_tool',
+      tool_name: 'Bash',
+      input: { command: 'mkdir probe-a', description: 'x' },
+      tool_use_id: 'u7',
+      permission_suggestions: [
+        { type: 'addRules', rules: [{ toolName: 'Bash', ruleContent: 'mkdir probe-a *' }], behavior: 'allow', destination: 'localSettings' },
+        { type: 'setMode', mode: 'acceptEdits', destination: 'session' },
+      ],
+      suppress_always_allow_rule: suppress,
+    },
+  });
+  const CAN_USE_TOOL = canUseTool(false);
+  const REF = { requestId: 'r7', toolUseId: 'u7' };
+  const rulesFor = (destination: string) => [
+    { type: 'addRules', rules: [{ toolName: 'Bash', ruleContent: 'mkdir probe-a *' }], behavior: 'allow', destination },
+  ];
+  const responseOf = (payload: unknown) => (payload as { response: { response: unknown } }).response.response;
+
+  it('normalize_canUseTool_anunciaAlcancesYRegla', () => {
+    const events = fresh().normalize(CAN_USE_TOOL);
+
+    const request = events.find((event) => event.kind === 'permission_request');
+    expect(request).toMatchObject({ request: { allowScopes: ['session', 'always'], rule: 'Bash(mkdir probe-a *)' } });
+  });
+
+  it('normalize_canUseToolSuprimido_sinAlcances', () => {
+    const events = fresh().normalize(canUseTool(true));
+
+    const request = events.find((event) => event.kind === 'permission_request');
+    expect(request).toBeDefined();
+    expect(request?.kind === 'permission_request' && request.request.allowScopes).toBeUndefined();
+    expect(request?.kind === 'permission_request' && request.request.rule).toBeUndefined();
+  });
+
+  it('encodePermissionResponse_sesion_mandaLasReglasConDestinoSession', () => {
+    const a = fresh();
+    a.normalize(CAN_USE_TOOL);
+
+    const payload = a.encodePermissionResponse(REF, { behavior: 'allow', scope: 'session' });
+
+    expect(responseOf(payload)).toEqual({ behavior: 'allow', updatedInput: {}, toolUseID: 'u7', updatedPermissions: rulesFor('session') });
+  });
+
+  it('encodePermissionResponse_siempre_destinoUserSettings', () => {
+    const a = fresh();
+    a.normalize(CAN_USE_TOOL);
+
+    const payload = a.encodePermissionResponse(REF, { behavior: 'allow', scope: 'always' });
+
+    expect(responseOf(payload)).toEqual({ behavior: 'allow', updatedInput: {}, toolUseID: 'u7', updatedPermissions: rulesFor('userSettings') });
+  });
+
+  it('encodePermissionResponse_alcanceSinPeticionConocida_lanzaConElId', () => {
+    expect(() => fresh().encodePermissionResponse({ requestId: 'r404', toolUseId: 'u' }, { behavior: 'allow', scope: 'session' })).toThrow(/r404/);
+  });
+
+  it('encodePermissionResponse_alcanceEnPeticionSinAlcances_lanza', () => {
+    const a = fresh();
+    a.normalize(canUseTool(true));
+
+    expect(() => a.encodePermissionResponse(REF, { behavior: 'allow', scope: 'always' })).toThrow(/r7/);
+  });
+
+  it('encodePermissionResponse_sinAlcance_igualQueAntes', () => {
+    const a = fresh();
+    a.normalize(CAN_USE_TOOL);
+
+    const payload = a.encodePermissionResponse(REF, { behavior: 'allow' });
+
+    expect(responseOf(payload)).toEqual({ behavior: 'allow', updatedInput: {}, toolUseID: 'u7' });
+  });
+
+  it('normalize_cancelacion_olvidaLasReglas', () => {
+    const a = fresh();
+    a.normalize(CAN_USE_TOOL);
+    a.normalize({ type: 'control_cancel_request', request_id: 'r7' });
+
+    expect(() => a.encodePermissionResponse(REF, { behavior: 'allow', scope: 'session' })).toThrow(/r7/);
+  });
+});

@@ -3,12 +3,13 @@
 // @shared/accounts; ambos se mapean a estos tipos en la frontera (accountView.ts / engineBlocks.ts).
 
 import type { AskQuestion } from '@shared/askUserQuestion';
-import type { SessionPlugin } from '@shared/events';
+import type { PermissionScope, SessionPlugin } from '@shared/events';
 import type { ArtifactDraft, ArtifactPublication } from '@shared/artifacts';
 import type { MentionCandidate } from '@shared/mentions';
 import type { DiffLine } from './diffLines';
 import type { ToolClass } from './toolClassify';
 import type { SubagentStatus } from './engineBlocks';
+import type { FileTouch } from './fileTouches';
 import type { LoginStatus } from '@shared/accounts';
 import type { ConversationPrivacy } from '@shared/state';
 
@@ -196,6 +197,8 @@ export type Block =
       readonly parentToolUseId: string | null;
       // Texto del plan de un ExitPlanMode (input.plan). Ausente en cualquier otra herramienta.
       readonly planText?: string;
+      // Ficheros que toca (creado/editado/leído), calculados al crear el bloque (panel de Ficheros). Ausente si no toca ninguno.
+      readonly fileTouches?: readonly FileTouch[];
     }
   // Subagente (Task/Agent). `agentId` llega con el tool_result; hasta entonces no se puede abrir su
   // transcripcion. La anidacion no se modela (nivel 1), igual que en subagentView.ts.
@@ -256,8 +259,9 @@ export type Block =
       readonly prompt: string;
       readonly target: string;
       readonly summary: string;
-      // Ver `PermissionView.rememberable`; ausente = se puede recordar.
-      readonly rememberable?: boolean;
+      // Ver PermissionView.allowScopes y .rule; ausentes = ninguno.
+      readonly allowScopes?: readonly PermissionScope[];
+      readonly rule?: string | null;
       readonly state: 'pending' | 'allowed' | 'denied' | 'cancelled';
     }
   | { readonly kind: 'error'; readonly id: string; readonly message: string; readonly deniedCommand?: string }
@@ -275,9 +279,11 @@ export type Block =
 export interface PermissionView {
   readonly prompt: string; // "El agente quiere escribir en el proyecto:"
   readonly target: string; // "Write src/services/TokenService.ts"
-  readonly toolLabel: string; // "Write" (para "Permitir siempre X aqui")
-  // false = peticion de fuera del proyecto o de red (runtime propio): «Permitir siempre» no se ofrece.
-  readonly rememberable: boolean;
+  readonly toolLabel: string; // "Write"
+  // Alcances que se ofrecen además de «esta vez» (los decide main por motor; fuera del proyecto, ninguno) y la regla que
+  // guardaría «Permitir siempre», para su aviso.
+  readonly allowScopes: readonly PermissionScope[];
+  readonly rule: string | null;
   readonly diff: readonly DiffLine[];
   readonly summary: string; // "+14 −3 · 2 tests actualizados"
 }

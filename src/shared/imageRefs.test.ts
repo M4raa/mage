@@ -7,7 +7,9 @@ import {
   findImageTokens,
   imageToken,
   insertImageTokens,
+  keepFirstImageToken,
   reconcileImageTokens,
+  withoutImageTokens,
   removeImageToken,
 } from './imageRefs';
 
@@ -222,6 +224,24 @@ describe('describeAttachment', () => {
 
   it('describeAttachment_1coma5MiB_enUS_conPunto', () => {
     expect(describeAttachment(1, 'image/png', 1.5 * 1024 * 1024, 'en-US')).toBe('Imagen 1 · png · 1.5 MiB');
+  });
+});
+
+describe('keepFirstImageToken y withoutImageTokens', () => {
+  it('keepFirstImageToken_dosImagenes_quitaLaSegunda', () => {
+    expect(keepFirstImageToken('mira [Imagen 1] y [Imagen 2] ya')).toBe('mira [Imagen 1] y ya');
+  });
+
+  it('keepFirstImageToken_sinTokens_igual', () => {
+    expect(keepFirstImageToken('hola')).toBe('hola');
+  });
+
+  it('withoutImageTokens_variosTokens_quitaTodos', () => {
+    expect(withoutImageTokens('[Imagen 1] mira [Imagen 2] y [Imagen 3]')).toBe('mira y');
+  });
+
+  it('withoutImageTokens_vacio_vacio', () => {
+    expect(withoutImageTokens('')).toBe('');
   });
 });
 

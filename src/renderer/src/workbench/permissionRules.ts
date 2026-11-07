@@ -17,15 +17,6 @@ export function isAlwaysAllowed(rules: readonly string[], toolName: string): boo
   return rules.includes(wanted);
 }
 
-// Añade la regla. Idempotente y con ORDEN ESTABLE (la nueva al final): el panel las lista en el orden
-// en que se concedieron, que es el que ayuda a reconocerlas. Una tool vacia no genera regla: seria una
-// regla que casa con nada y solo ensuciaria la lista.
-export function addAlwaysAllow(rules: readonly string[], toolName: string): readonly string[] {
-  const wanted = toolName.trim();
-  if (wanted.length === 0 || rules.includes(wanted)) return rules;
-  return [...rules, wanted];
-}
-
 // Revoca la regla. Devuelve el MISMO array si no estaba (mismo contrato que `cancelQuestionBlock` en
 // engineBlocks): el caller puede distinguir "no habia nada que cambiar" sin comparar contenidos.
 export function removeAlwaysAllow(rules: readonly string[], toolName: string): readonly string[] {

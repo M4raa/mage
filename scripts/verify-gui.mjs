@@ -2092,6 +2092,57 @@ const CHECKS = [
     },
   },
   {
+    // I3 (0.1.4), punto 2: migrar una pestaña de agy a una cuenta de Codex desde el store (el mismo camino que «Continuar
+    // en otra cuenta»): la conversación nueva ocupa la MISMA posición en su barra, conserva el título de la pestaña y el
+    // borrador del prompt, y la vieja desaparece. Migración real de ficheros en la carpeta aislada; ningún CLI se lanza
+    // (las pestañas no arrancan sesión) y no se pulsa Enter.
+    name: 'I3: migrar una conversación a otra cuenta la deja en su sitio con su título y su borrador',
+    async run(page, { userDataDir }) {
+      const fx = seedProviderHistory({ userDataDir, repoRoot });
+      const previo = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return { tabs: s.tabs, activeTabId: s.activeTabId, splitLayout: s.splitLayout, activeAccountId: s.activeAccountId, draftByChat: s.draftByChat };
+      });
+      try {
+        await refreshAccountsUntil(page, fx.codexHome2);
+        const item = (await page.evaluate((home) => window.mage.listConversations(home), fx.agyHome)).find((c) => c.sessionId === AGY_FIXTURE_ID);
+        if (item === undefined) return { ok: false, detail: 'el fixture de agy no aparece en su historial' };
+        await page.evaluate(async ({ conv, home }) => { await window.__mageDev.store.getState().openConversation(conv, home); }, { conv: item, home: fx.agyHome });
+        await page.waitForTimeout(CONFIG.settleMs);
+        const viejo = await page.evaluate(() => window.__mageDev.store.getState().activeTabId);
+        await openTemporaryConversation(page);
+        const antes = await page.evaluate((id) => {
+          const dev = window.__mageDev;
+          dev.store.getState().setActiveTab(id);
+          dev.store.getState().renameTab(id, 'Título I3');
+          dev.store.getState().setDraft(id, { text: 'borrador I3', attachments: [], mentions: [] });
+          const s = dev.store.getState();
+          const hojaDe = (node, tab) => (node.kind === 'leaf' ? (node.tabIds.includes(tab) ? node : null) : (hojaDe(node.a, tab) ?? hojaDe(node.b, tab)));
+          const hoja = hojaDe(s.splitLayout, id);
+          return { indice: hoja?.tabIds.indexOf(id) ?? -1, vecinas: hoja?.tabIds.length ?? 0 };
+        }, viejo);
+        await page.evaluate(async ({ id, dest }) => { await window.__mageDev.store.getState().continueInAccount(id, dest); }, { id: viejo, dest: fx.codexHome2 });
+        await page.waitForTimeout(CONFIG.settleMs);
+        const tras = await page.evaluate((id) => {
+          const s = window.__mageDev.store.getState();
+          const nueva = s.tabs.find((t) => t.id === s.activeTabId);
+          const hojaDe = (node, tab) => (node.kind === 'leaf' ? (node.tabIds.includes(tab) ? node : null) : (hojaDe(node.a, tab) ?? hojaDe(node.b, tab)));
+          const hoja = nueva === undefined ? null : hojaDe(s.splitLayout, nueva.id);
+          return { viejaSigue: s.tabs.some((t) => t.id === id), proveedor: nueva?.provider ?? null, titulo: nueva?.title ?? null, borrador: nueva === undefined ? null : (s.draftByChat[nueva.id]?.text ?? null), indice: hoja === null || nueva === undefined ? -1 : hoja.tabIds.indexOf(nueva.id) };
+        }, viejo);
+        const ok = !tras.viejaSigue && tras.proveedor === 'codex' && tras.titulo === 'Título I3' && tras.borrador === 'borrador I3' && tras.indice === antes.indice && antes.indice >= 0 && antes.vecinas >= 2;
+        return { ok, detail: JSON.stringify({ antes, tras }) };
+      } finally {
+        await page.evaluate((estado) => {
+          window.__mageDev.store.getState().setActiveAccount(estado.activeAccountId);
+          window.__mageDev.store.setState({ tabs: estado.tabs, activeTabId: estado.activeTabId, splitLayout: estado.splitLayout, draftByChat: estado.draftByChat });
+        }, previo);
+        await page.waitForTimeout(CONFIG.settleMs);
+        fx.cleanup();
+      }
+    },
+  },
+  {
     // Migrar una conversación de Claude a una cuenta de otro proveedor: el diálogo dice que la original se queda y
     // que la nueva arranca con su historial. No se pulsa nada: seguir crearía una pestaña.
     name: 'Historial: pasar una conversación de Claude a Codex ofrece migrarla y, aparte, un handoff con su historial',
@@ -4336,6 +4387,52 @@ const CHECKS = [
     },
   },
   {
+    // I3 (0.1.4), punto 1: una pestaña nueva CON sesión viva (sin turnos) y un aviso de sistema también sigue a la
+    // cuenta pulsada: cambia su cuenta y su monograma en la barra de pestañas, y su sesión vieja se suelta. La sesión es
+    // sintética (`i3-live`): main contesta «Sesion inexistente» y el renderer lo trata como ausencia. No se envía nada.
+    name: 'I3: pestaña nueva con sesión viva cambia de cuenta y de monograma al pulsar otra cuenta',
+    async run(page) {
+      const previo = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return { tabs: s.tabs, activeTabId: s.activeTabId, splitLayout: s.splitLayout, activeAccountId: s.activeAccountId, sessionIdByChat: s.sessionIdByChat, blocksByChat: s.blocksByChat };
+      });
+      const destino = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return s.accounts.find((a) => a.id !== s.activeAccountId && a.loginStatus === 'logged_in')?.id ?? null;
+      });
+      if (destino === null) return { ok: false, notRunnable: HARNESS_HOME === os.homedir(), detail: HARNESS_HOME === os.homedir() ? 'HOME real sin otra cuenta con login: no ejecutable' : 'el HOME de prueba no tiene una segunda cuenta con login: falló la siembra' };
+      try {
+        await openTemporaryConversation(page);
+        const tabId = await page.evaluate(() => {
+          const dev = window.__mageDev;
+          const s = dev.store.getState();
+          const id = s.activeTabId;
+          dev.store.setState({ sessionIdByChat: { ...s.sessionIdByChat, [id]: 'i3-live' }, blocksByChat: { ...s.blocksByChat, [id]: [{ kind: 'system', id: 'i3-sys', text: 'aviso' }] } });
+          return id;
+        });
+        const monogramaAntes = await page.locator(`[data-tab-id="${tabId}"] [data-tab-monogram]`).first().getAttribute('data-tab-monogram');
+        const indice = await page.evaluate((id) => window.__mageDev.store.getState().accounts.findIndex((a) => a.id === id), destino);
+        await page.locator(`[role="group"][aria-label="${cssAttr(ui('accounts.switcher.groupAria'))}"] button[aria-pressed]`).nth(indice).click();
+        await page.waitForTimeout(CONFIG.settleMs);
+        const tras = await page.evaluate(({ id, dest }) => {
+          const s = window.__mageDev.store.getState();
+          const t = s.tabs.find((x) => x.id === id);
+          const cuenta = s.accounts.find((a) => a.id === dest);
+          return { dialogo: s.accountSwitchPrompt !== null, cuentaPestana: t?.accountId ?? null, proveedorPestana: t?.provider ?? null, proveedorCuenta: cuenta?.providerId ?? null, sesion: s.sessionIdByChat[id] ?? null, pestanas: s.tabs.length };
+        }, { id: tabId, dest: destino });
+        const monogramaDespues = await page.locator(`[data-tab-id="${tabId}"] [data-tab-monogram]`).first().getAttribute('data-tab-monogram');
+        const ok = !tras.dialogo && tras.cuentaPestana === destino && tras.proveedorPestana === tras.proveedorCuenta && tras.sesion === null && monogramaDespues !== null;
+        return { ok, detail: JSON.stringify({ ...tras, monogramaAntes, monogramaDespues }) };
+      } finally {
+        await page.evaluate((estado) => {
+          window.__mageDev.store.getState().setActiveAccount(estado.activeAccountId);
+          window.__mageDev.store.setState({ tabs: estado.tabs, activeTabId: estado.activeTabId, splitLayout: estado.splitLayout, sessionIdByChat: estado.sessionIdByChat, blocksByChat: estado.blocksByChat });
+        }, previo);
+        await page.waitForTimeout(CONFIG.settleMs);
+      }
+    },
+  },
+  {
     // P-028, punto 30: el menu contextual del avatar ofrece «Eliminar cuenta…» en las cuentas que no
     // son la principal, y NUNCA en la principal. Se abre la confirmacion y se CANCELA: pulsar
     // «Eliminar la cuenta» borraria de verdad un dir del HOME real (el harness no aisla el HOME).
@@ -5701,7 +5798,7 @@ const CHECKS = [
     // 2.3 (la otra mitad): el panel de permisos NORMAL — el que sale con Write/Bash y NO es una pregunta.
     // Nace de un fallo de verificacion real: el nombre accesible del boton era "Permitir1" (se colaba el
     // numero del atajo), asi que era imposible anclarlo desde fuera y varias tandas de prueba con turnos
-    // REALES se quedaron colgadas creyendo que el boton no existia. Ahora los tres botones llevan
+    // REALES se quedaron colgadas creyendo que el boton no existia. Ahora los cuatro botones llevan
     // `aria-label` estable y `aria-keyshortcuts`, y esto lo fija.
     name: '2.3: un permiso de Write pinta la tarjeta en el chat y los botones del panel',
     async run(page) {
@@ -5725,6 +5822,7 @@ const CHECKS = [
         { file_path: 'C:/proj/nuevo.ts', content: 'export const a = 1;\n' },
         requestId,
         'Write',
+        { allowScopes: ['session', 'always'], rule: 'Write' },
       );
       const measured = await page.evaluate(({ siempre }) => {
         // Los botones se miden POR AMBITO (tarjeta del chat / panel del dock) y no con un
@@ -5743,7 +5841,8 @@ const CHECKS = [
                 estado: card.getAttribute('data-permission-card'),
                 objetivo: (card.textContent ?? '').includes('C:/proj/nuevo.ts'),
                 permitir: boton(card, window.__mageDev.t('app.widget.allow')),
-                permitirSiempre: boton(card, window.__mageDev.t('chat.permission.allowAlwaysAria', { tool: 'Write' })),
+                permitirSesion: boton(card, window.__mageDev.t('i3.permission.allowSessionAria', { tool: 'Write' })),
+                permitirSiempre: boton(card, window.__mageDev.t('i3.permission.allowAlwaysAria', { rule: 'Write' })),
                 denegar: boton(card, window.__mageDev.t('chat.permission.denyAria')),
                 masInformacion: [...card.querySelectorAll('button')].some((b) => (b.textContent ?? '').trim() === window.__mageDev.t('chat.permission.moreInfo')),
               },
@@ -5751,7 +5850,8 @@ const CHECKS = [
             ? null
             : {
                 permitir: boton(panel, window.__mageDev.t('app.widget.allow')),
-                permitirSiempre: boton(panel, window.__mageDev.t('chat.permission.allowAlwaysAria', { tool: 'Write' })),
+                permitirSesion: boton(panel, window.__mageDev.t('i3.permission.allowSessionAria', { tool: 'Write' })),
+                permitirSiempre: boton(panel, window.__mageDev.t('i3.permission.allowAlwaysAria', { rule: 'Write' })),
                 denegar: boton(panel, window.__mageDev.t('chat.permission.denyAria')),
                 diff: (panel.textContent ?? '').includes('export const a = 1;'),
                 modo: (panel.textContent ?? '').includes(window.__mageDev.t('chat.permissions.mode.title')),
@@ -5785,14 +5885,16 @@ const CHECKS = [
         measured.tarjeta?.estado === 'pending' &&
         measured.tarjeta.objetivo === true &&
         measured.tarjeta.permitir?.atajo === '1' &&
-        measured.tarjeta.permitirSiempre?.atajo === '2' &&
-        measured.tarjeta.denegar?.atajo === '3' &&
+        measured.tarjeta.permitirSesion?.atajo === '2' &&
+        measured.tarjeta.permitirSiempre?.atajo === '3' &&
+        measured.tarjeta.denegar?.atajo === '4' &&
         measured.tarjeta.masInformacion === true &&
         // El panel sigue ofreciendo la misma decision, ahi CON el numero del atajo visible, y ademas es
         // el que ensena el detalle (diff) y lo configurado.
-        measured.panel?.permitir?.texto === `${ui('app.widget.allow')}1` &&
-        measured.panel.permitirSiempre?.atajo === '2' &&
-        measured.panel.denegar?.atajo === '3' &&
+        measured.panel?.permitir?.texto === `${ui('i3.permission.allowOnce')}1` &&
+        measured.panel.permitirSesion?.atajo === '2' &&
+        measured.panel.permitirSiempre?.atajo === '3' &&
+        measured.panel.denegar?.atajo === '4' &&
         measured.panel.diff === true &&
         measured.panel.modo === true &&
         measured.panel.configurados === true &&
@@ -5808,13 +5910,12 @@ const CHECKS = [
     },
   },
   {
-    // 2.3b: "Permitir siempre <tool> aqui" tiene que RECORDAR. La regla se concede por la accion real
-    // del store y no por un clic: sin sesion viva la respuesta no llega a main, que es justo lo que deja
-    // medir la regla sin tocar el CLI ni gastar un turno. Desde F2.4 la regla la APLICA main antes de
-    // anunciar el permiso (lo mide «F2.4: segundo plano en main» con una sesion real); aqui se comprueba la
-    // parte del renderer: la regla queda en la pestaña, se ve en el panel, una peticion que si llega (main
-    // decidio preguntar) lleva su tarjeta, y revocar la quita.
-    name: '2.3b: "Permitir siempre" guarda la tool y el panel la deja revocar',
+    // 2.3b: una regla «Permitir siempre … aqui» ya guardada se ve en el panel y se puede revocar. Ya no se crean
+    // reglas por conversación, así que se siembra una como la que dejó una versión anterior. Desde F2.4 la regla
+    // la APLICA main antes de anunciar el permiso (lo mide «F2.4: segundo plano en main» con una sesion real);
+    // aqui se comprueba la parte del renderer: la regla sembrada se ve en el panel, una peticion que si llega
+    // (main decidio preguntar) lleva su tarjeta, y revocar la quita.
+    name: '2.3b: una regla «Permitir siempre … aquí» ya guardada se ve en el panel y se puede revocar',
     async run(page) {
       const previoStore = await page.evaluate(() => {
         const s = window.__mageDev.store.getState();
@@ -5828,7 +5929,12 @@ const CHECKS = [
         await page.waitForTimeout(CONFIG.settleMs);
       }
       await injectPermissionRequest(page, { file_path: 'C:/proj/a.ts', content: 'a' }, 'verify-always-1', 'Write');
-      await page.evaluate(() => window.__mageDev.store.getState().allowAlwaysAndAnswer('Write'));
+      // Ya no se crean reglas por conversación (0.1.4): se siembra una como la que dejó una versión anterior.
+      await page.evaluate(() => {
+        const dev = window.__mageDev;
+        const s = dev.store.getState();
+        dev.store.setState({ tabs: s.tabs.map((t) => (t.id === s.activeTabId ? { ...t, alwaysAllowTools: ['Write'] } : t)) });
+      });
       await page.waitForTimeout(CONFIG.settleMs);
       const revokeAria = ui('chat.permissions.alwaysAllowed.revokeAria', { tool: 'Write' }).replace(/["\\]/g, '\\$&');
       const conRegla = await page.evaluate((revokeAria) => {
@@ -5873,6 +5979,45 @@ const CHECKS = [
         trasRevocar.reglas === 0 &&
         trasRevocar.enElPanel === false;
       return { ok, detail: `conRegla=${JSON.stringify(conRegla)} otraTool=${otraTool} trasRevocar=${JSON.stringify(trasRevocar)}` };
+    },
+  },
+  {
+    // I3 (0.1.4), punto 6: «Permitir siempre» no contesta: abre un aviso de peligro con la regla y la cuenta de la pestaña,
+    // y «Cancelar» lo cierra sin responder. Petición inyectada por el reducer real; ninguna respuesta llega a main (la
+    // pestaña no tiene sesión) y no se pulsa Enter.
+    name: 'I3: «Permitir siempre» avisa con la regla y la cuenta antes de confirmar, y Cancelar no contesta',
+    async run(page) {
+      const previoStore = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return { tabs: s.tabs, activeTabId: s.activeTabId, splitLayout: s.splitLayout };
+      });
+      const requestId = 'i3-always-1';
+      try {
+        await openTemporaryConversation(page);
+        await injectPermissionRequest(page, { command: 'npm test' }, requestId, 'Bash', { allowScopes: ['session', 'always'], rule: 'Bash(npm test *)', requiresUserInteraction: false });
+        const card = page.locator('[data-permission-pending="true"]').first();
+        await card.getByRole('button', { name: ui('i3.permission.allowAlwaysAria', { rule: 'Bash(npm test *)' }), exact: true }).click();
+        const aviso = page.locator('[data-permission-always-warning="true"]').first();
+        await aviso.waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const medido = await page.evaluate(() => {
+          const s = window.__mageDev.store.getState();
+          const tab = s.tabs.find((t) => t.id === s.activeTabId);
+          const texto = document.querySelector('[data-permission-always-warning="true"]')?.textContent ?? '';
+          return { regla: texto.includes('Bash(npm test *)'), cuenta: tab !== undefined && texto.includes(tab.accountAlias), confirmar: document.querySelector('[data-permission-always-confirm="true"]') !== null, enviando: (s.pendingByChat[s.activeTabId] ?? []).some((p) => p.sending === true) };
+        });
+        await aviso.getByRole('button', { name: ui('i3.permission.alwaysCancel'), exact: true }).click();
+        await aviso.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
+        const tras = await page.evaluate((id) => {
+          const s = window.__mageDev.store.getState();
+          return { pendiente: (s.pendingByChat[s.activeTabId] ?? []).some((p) => p.requestId === id), aviso: s.alwaysPromptByChat[s.activeTabId] ?? null };
+        }, requestId);
+        const ok = medido.regla && medido.cuenta && medido.confirmar && !medido.enviando && tras.pendiente && tras.aviso === null;
+        return { ok, detail: JSON.stringify({ medido, tras }) };
+      } finally {
+        await cancelInjectedPermission(page, requestId);
+        await page.evaluate((estado) => window.__mageDev.store.setState(estado), previoStore);
+        await page.waitForTimeout(CONFIG.settleMs);
+      }
     },
   },
   {
@@ -6056,6 +6201,61 @@ const CHECKS = [
             plan.toggle?.visorFuera === true &&
             plan.toggle?.reabre === true));
       return { ok, detail: JSON.stringify(medido) };
+    },
+  },
+  {
+    // I3 (0.1.4), punto 5: el panel de Ficheros agrupa en Creados / Editados / Leídos / Mencionados con herramientas de
+    // Claude, el apply_patch de Codex y las de agy, cada fichero en una sola sección (la más fuerte) y el más reciente
+    // primero. Los eventos entran por `handleEvent`, como el stream, en una conversación temporal. Ningún CLI ni Enter.
+    name: 'I3: el panel de Ficheros agrupa creados, editados, leídos y mencionados sin duplicar',
+    async run(page) {
+      const previo = await page.evaluate(() => {
+        const s = window.__mageDev.store.getState();
+        return { tabs: s.tabs, activeTabId: s.activeTabId, splitLayout: s.splitLayout, sessionIdByChat: s.sessionIdByChat };
+      });
+      try {
+        await openTemporaryConversation(page);
+        const cwd = await page.evaluate(() => {
+          const s = window.__mageDev.store.getState();
+          return s.tabs.find((t) => t.id === s.activeTabId)?.cwd ?? null;
+        });
+        if (cwd === null) return { ok: false, detail: 'la conversacion temporal no tiene cwd' };
+        const nombres = ['creado.txt', 'editado.txt', 'leido.txt', 'parche.txt', 'parche-editado.txt', 'agy-leido.txt', 'agy-creado.txt'];
+        const r = Object.fromEntries(nombres.map((n) => [n, path.join(cwd, n)]));
+        for (const p of Object.values(r)) fs.writeFileSync(p, 'x\n', 'utf-8');
+        await page.evaluate((rutas) => {
+          const dev = window.__mageDev;
+          const tabId = dev.store.getState().activeTabId;
+          const sessionId = 'i3-files-session';
+          dev.store.setState((st) => ({ sessionIdByChat: { ...st.sessionIdByChat, [tabId]: sessionId } }));
+          dev.store.getState().hydrateBlocks(tabId, [{ kind: 'user', id: 'i3-u', text: 'mira docs/notas.md', time: '', attachments: [], nativeId: null }]);
+          const handle = (event) => dev.store.getState().handleEvent(sessionId, event);
+          const tool = (id, toolName, input, file) => {
+            handle({ kind: 'tool_use', tool: { toolUseId: id, toolName, input } });
+            handle({ kind: 'tool_result', result: { toolUseId: id, isError: false, output: 'ok', durationMs: 1, ...(file === undefined ? {} : { file }) } });
+          };
+          tool('i3-w', 'Write', { file_path: rutas['creado.txt'], content: 'x' }, { path: rutas['creado.txt'], content: 'x' });
+          tool('i3-e', 'Edit', { file_path: rutas['editado.txt'], old_string: 'x', new_string: 'xx' });
+          tool('i3-r', 'Read', { file_path: rutas['leido.txt'] });
+          tool('i3-r2', 'Read', { file_path: rutas['creado.txt'] });
+          tool('i3-p', 'apply_patch', { changes: [{ path: rutas['parche.txt'], kind: { type: 'add' }, diff: 'x' }, { path: rutas['parche-editado.txt'], kind: { type: 'update' }, diff: '@@ -1 +1 @@\n-x\n+y' }] });
+          tool('i3-v', 'view_file', { AbsolutePath: rutas['agy-leido.txt'] });
+          tool('i3-a', 'write_to_file', { TargetFile: rutas['agy-creado.txt'] });
+        }, r);
+        await page.locator('[data-files-panel="true"] [data-files-section]').first().waitFor({ state: 'visible', timeout: CONFIG.actionTimeoutMs });
+        const medido = await page.evaluate(() => {
+          const panel = document.querySelector('[data-files-panel="true"]');
+          const secciones = [...panel.querySelectorAll('[data-files-section]')].map((e) => e.getAttribute('data-files-section'));
+          const filas = [...panel.querySelectorAll('[data-created-file]')].map((b) => `${b.getAttribute('data-file-section')}:${(b.getAttribute('data-created-file') ?? '').split(/[\\/]/).pop()}`);
+          return { secciones, filas };
+        });
+        const esperado = ['created:agy-creado.txt', 'created:parche.txt', 'created:creado.txt', 'edited:parche-editado.txt', 'edited:editado.txt', 'read:agy-leido.txt', 'read:leido.txt', 'mentioned:notas.md'];
+        const ok = JSON.stringify(medido.secciones) === JSON.stringify(['created', 'edited', 'read', 'mentioned']) && JSON.stringify(medido.filas) === JSON.stringify(esperado);
+        return { ok, detail: JSON.stringify(medido) };
+      } finally {
+        await page.evaluate((estado) => window.__mageDev.store.setState({ tabs: estado.tabs, activeTabId: estado.activeTabId, splitLayout: estado.splitLayout, sessionIdByChat: estado.sessionIdByChat }), previo);
+        await page.waitForTimeout(CONFIG.settleMs);
+      }
     },
   },
   // Q09 (#31, F5.6): las referencias del chat (F0.4, §3.4…) se enlazan a encabezados UNICOS de los documentos asociados. Cada comprobación monta SU conversación temporal con dos .md escritos por el harness y un mensaje del agente con las referencias: runGuiCheck restaura los stores al acabar cada caso, así que nada se comparte entre ellas (V7). Se inyecta por `handleEvent` y `setState`: ningún turno, ningún CLI.
@@ -10034,9 +10234,9 @@ const CHECKS = [
   {
     // F2.4: con la pestaña CERRADA, main sigue decidiendo los permisos. Turno del runtime propio contra el servidor
     // falso (escenario `pr-barrera`, modo Manual), sin CLI ni cuota: se envía el prompt de «Crear PR»; el agente
-    // pide un `git push --force` (la barrera lo deniega) y un `mkdir` que SÍ pregunta. La regla se crea por la
-    // acción del store `allowAlwaysAndAnswer` (la cadena entera: acción → persistConversationPrefs → main), se
-    // cierra la pestaña con el turno en marcha (segundo plano en main) y el segundo `mkdir` lo contesta la regla.
+    // pide un `git push --force` (la barrera lo deniega) y un `mkdir` que SÍ pregunta. Ya no se crean reglas por conversación desde la interfaz (0.1.4), pero main sigue respetando las guardadas: se siembra
+    // una en el índice (como la dejó una versión anterior), la petición de ahora se contesta «esta vez», se cierra la pestaña
+    // con el turno en marcha (segundo plano en main) y el segundo `mkdir` lo contesta la regla.
     // Va antes del turno mínimo por la transcripción que deja en el perfil.
     name: 'F2.4: segundo plano en main: con la pestaña cerrada, la barrera de PR deniega y la regla creada desde la interfaz permite',
     async run(page, { userDataDir }) {
@@ -10053,8 +10253,11 @@ const CHECKS = [
         }, tabId);
         // Sin regla, el `mkdir` llega al usuario: la barrera ya denegó el push forzado sin preguntar.
         await page.waitForFunction((id) => (window.__mageDev.store.getState().pendingByChat[id] ?? []).some((p) => p.view.toolLabel === 'Bash'), tabId, { timeout: CONFIG.actionTimeoutMs });
-        const preguntaba = await page.evaluate((id) => window.__mageDev.store.getState().pendingByChat[id].map((p) => p.view.rememberable), tabId);
-        await page.evaluate((id) => window.__mageDev.store.getState().allowAlwaysAndAnswer('Bash', id), tabId);
+        const preguntaba = await page.evaluate((id) => window.__mageDev.store.getState().pendingByChat[id].map((p) => p.view.allowScopes.includes('session')), tabId);
+        await page.evaluate(async ({ id, sid }) => {
+          await window.mage.saveConversationPrefs({ sessionId: sid, prefs: { alwaysAllowTools: ['Bash'] } });
+          window.__mageDev.store.getState().answerPermissionFor(id, { behavior: 'allow' });
+        }, { id: tabId, sid: sessionId });
         // El guardado es asíncrono: se espera a que main tenga la regla ANTES de cerrar la pestaña.
         await page.waitForFunction(async (sid) => ((await window.mage.loadConversationPrefs(sid))?.alwaysAllowTools ?? []).includes('Bash'), sessionId, { timeout: CONFIG.actionTimeoutMs });
         await page.waitForFunction((id) => window.__mageDev.store.getState().statusByChat[id] === 'streaming', tabId, { timeout: CONFIG.actionTimeoutMs });
@@ -12700,9 +12903,9 @@ const ASK_USER_QUESTION_INPUT = {
 
 // Inyecta un `permission_request` sintetico por el puente de desarrollo, como si lo hubiera emitido el
 // CLI. NO spawnea nada ni gasta turno: entra por el mismo reducer que el evento real.
-async function injectPermissionRequest(page, input, requestId, toolName = 'AskUserQuestion') {
+async function injectPermissionRequest(page, input, requestId, toolName = 'AskUserQuestion', extra = {}) {
   await page.evaluate(
-    ([payload, id, tool]) => {
+    ([payload, id, tool, more]) => {
       const dev = window.__mageDev;
       if (dev === undefined) throw new Error('window.__mageDev no existe (¿la app no esta en modo desarrollo?)');
       const tabId = dev.store.getState().activeTabId;
@@ -12716,13 +12919,14 @@ async function injectPermissionRequest(page, input, requestId, toolName = 'AskUs
           description: null,
           requiresUserInteraction: true,
           displayName: tool,
+          ...more,
         },
       };
       // Se pasa por el reducer REAL (no se fabrica el bloque a mano): lo que se mide es lo que hace la
       // app con el evento del CLI, no lo que el harness sabe construir.
       dev.store.setState((state) => dev.reduceEvent(state, tabId, event));
     },
-    [input, requestId, toolName],
+    [input, requestId, toolName, extra],
   );
   await page.waitForTimeout(CONFIG.settleMs);
 }

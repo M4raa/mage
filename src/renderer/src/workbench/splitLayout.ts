@@ -191,6 +191,18 @@ export function moveTabToLeaf(layout: SplitLayout, tabId: string, targetPath: Sp
   return addTabToLeaf(layout, targetPath, tabId);
 }
 
+// `newTabId` ocupa el sitio EXACTO de `oldTabId` (misma barra, mismo índice) y queda activa en esa barra; la vieja sale
+// del árbol. Si la nueva ya estaba en otra barra, se saca antes (invariante 3), aunque eso colapse aquella; por eso el
+// sitio de la vieja se busca DESPUÉS. Es lo que necesita una conversación migrada, que nace como pestaña nueva.
+export function replaceTabInPlace(layout: SplitLayout, oldTabId: string, newTabId: string): SplitLayout {
+  if (oldTabId === newTabId) return layout;
+  if (findLeafPath(layout, oldTabId) === null) throw new Error(`replaceTabInPlace: la pestaña "${oldTabId}" no esta en el arbol`);
+  const without = findLeafPath(layout, newTabId) === null ? layout : (closeTab(layout, newTabId) ?? layout);
+  const path = findLeafPath(without, oldTabId)!;
+  const tabIds = leafAt(without, path).tabIds.map((id) => (id === oldTabId ? newTabId : id));
+  return replaceAt(without, path, leaf(tabIds, newTabId));
+}
+
 // --- Tamaño de los paneles ----------------------------------------------------------------------
 
 function clampToRange(ratio: number, min: number, max: number): number {

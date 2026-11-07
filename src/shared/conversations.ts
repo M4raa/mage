@@ -65,6 +65,9 @@ export interface MigrateConversationParams {
   readonly privacy: ConversationPrivacy;
   readonly destAccountDir: string;
   readonly destProvider: AccountProviderId;
+  // Título visible de la conversación en Mage: el destino lo conserva (Claude: línea `custom-title`). Sin él, el destino
+  // titula por el primer mensaje.
+  readonly title?: string;
 }
 
 export interface MigrateConversationResult {

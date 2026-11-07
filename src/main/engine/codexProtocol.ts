@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { ContextUsage, MageEvent, PermissionRequest, TurnUsage } from '@shared/events';
+import type { ContextUsage, MageEvent, PermissionDecision, PermissionRequest, PermissionScope, TurnUsage } from '@shared/events';
 import { codexItemOutput, codexItemTool, isFailedCodexItem } from '@shared/codexTranscript';
 import { localized } from '@shared/i18n/localizedText';
 import type { ProviderModel } from '@shared/providers';
@@ -222,11 +222,14 @@ export const APPROVAL_METHODS = {
   permissions: 'item/permissions/requestApproval',
 } as const;
 
+// Los tres métodos admiten «esta sesión»; «siempre» solo existe como enmienda de execpolicy (otro sistema) y no se ofrece.
+const SESSION_ONLY: readonly PermissionScope[] = ['session'];
+
 // Peticion de aprobacion -> tarjeta de permiso de Mage. null = un metodo que Mage no sabe contestar.
 export function approvalRequest(requestId: string, method: string, params: unknown): PermissionRequest | null {
   if (!isRecord(params) || typeof params.itemId !== 'string') return null;
   const reason = typeof params.reason === 'string' ? params.reason : null;
-  const base = { requestId, toolUseId: params.itemId, description: reason, requiresUserInteraction: false };
+  const base = { requestId, toolUseId: params.itemId, description: reason, requiresUserInteraction: false, allowScopes: SESSION_ONLY };
   switch (method) {
     case APPROVAL_METHODS.command:
       return { ...base, toolName: 'Bash', displayName: 'Ejecutar un comando', input: { command: params.command, cwd: params.cwd } };
@@ -241,12 +244,16 @@ export function approvalRequest(requestId: string, method: string, params: unkno
   }
 }
 
-// Respuesta a la aprobacion con la decision de Mage. `permissions` concede lo pedido (o nada), solo para
-// este turno.
-export function approvalResult(method: string, params: unknown, allow: boolean): unknown {
+// Respuesta a la aprobación con la decisión de Mage (MEDIDO con el esquema de codex-cli 0.164.0: comandos y ficheros
+// admiten `acceptForSession`; los permisos, `scope: 'session'`). «Siempre» no existe aquí: solo «esta vez» y «esta sesión».
+export function approvalResult(method: string, params: unknown, decision: PermissionDecision): unknown {
+  const allow = decision.behavior === 'allow';
+  const session = allow && decision.scope === 'session';
+  if (allow && decision.scope === 'always') throw new Error(`Codex no admite «permitir siempre» (${method})`);
   if (method === APPROVAL_METHODS.permissions) {
     const requested = isRecord(params) && isRecord(params.permissions) ? params.permissions : {};
-    return { permissions: allow ? requested : {}, scope: 'turn' };
+    return { permissions: allow ? requested : {}, scope: session ? 'session' : 'turn' };
   }
+  if (session) return { decision: 'acceptForSession' };
   return { decision: allow ? 'accept' : 'decline' };
 }

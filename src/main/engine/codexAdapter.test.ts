@@ -440,6 +440,49 @@ describe('CodexAdapter: aprobaciones (forma del esquema)', () => {
     expect(adapter.encodePermissionResponse({ requestId: 'codex-7', toolUseId: 'item-1' }, { behavior: 'allow' })).toEqual({ jsonrpc: '2.0', id: 7, result: { decision: 'accept' } });
   });
 
+  const commandApproval = (adapter: ReturnType<typeof codex>) =>
+    adapter.normalize({ jsonrpc: '2.0', id: 7, method: 'item/commandExecution/requestApproval', params: { itemId: 'item-1', threadId: 't', turnId: 'u', startedAtMs: 1, command: 'npm test', cwd: '/p' } });
+
+  it('encodePermissionResponse_comandoEnEstaSesion_acceptForSession', () => {
+    const adapter = codex();
+    commandApproval(adapter);
+
+    expect(adapter.encodePermissionResponse({ requestId: 'codex-7', toolUseId: 'item-1' }, { behavior: 'allow', scope: 'session' })).toEqual({ jsonrpc: '2.0', id: 7, result: { decision: 'acceptForSession' } });
+  });
+
+  it('encodePermissionResponse_permisosEnEstaSesion_scopeSession', () => {
+    const adapter = codex();
+    const permissions = { fileSystem: { write: ['/p'] } };
+    adapter.normalize({ jsonrpc: '2.0', id: 8, method: 'item/permissions/requestApproval', params: { itemId: 'item-2', threadId: 't', turnId: 'u', cwd: '/p', permissions } });
+
+    const response = adapter.encodePermissionResponse({ requestId: 'codex-8', toolUseId: 'item-2' }, { behavior: 'allow', scope: 'session' }) as { result: { scope: string; permissions: unknown } };
+
+    expect(response.result.scope).toBe('session');
+    expect(response.result.permissions).toEqual(permissions);
+  });
+
+  it('encodePermissionResponse_siempre_lanza', () => {
+    const adapter = codex();
+    commandApproval(adapter);
+
+    expect(() => adapter.encodePermissionResponse({ requestId: 'codex-7', toolUseId: 'item-1' }, { behavior: 'allow', scope: 'always' })).toThrow(/siempre/);
+  });
+
+  it('encodePermissionResponse_siempreRechazado_noPierdeLaPeticion', () => {
+    const adapter = codex();
+    commandApproval(adapter);
+    const ref = { requestId: 'codex-7', toolUseId: 'item-1' };
+    expect(() => adapter.encodePermissionResponse(ref, { behavior: 'allow', scope: 'always' })).toThrow();
+
+    expect(adapter.encodePermissionResponse(ref, { behavior: 'allow' })).toEqual({ jsonrpc: '2.0', id: 7, result: { decision: 'accept' } });
+  });
+
+  it('approvalRequest_comando_ofreceSoloEstaSesion', () => {
+    const events = commandApproval(codex());
+
+    expect(events[0]).toMatchObject({ kind: 'permission_request', request: { allowScopes: ['session'] } });
+  });
+
   it('encodePermissionResponse_denegar_decline', () => {
     const adapter = codex();
     adapter.normalize({ jsonrpc: '2.0', id: 'x', method: 'item/fileChange/requestApproval', params: { itemId: 'i', threadId: 't', turnId: 'u', startedAtMs: 1 } });

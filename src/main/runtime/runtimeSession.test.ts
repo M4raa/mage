@@ -341,6 +341,85 @@ describe('RuntimeSession permisos', () => {
     );
   });
 
+  const permissionRequests = (events: readonly MageEvent[]) =>
+    events.flatMap((e) => (e.kind === 'permission_request' ? [e.request] : []));
+
+  it('answerPermission_estaSesion_laMismaHerramientaYaNoPregunta', async () => {
+    const { session, events, tools } = setup([toolCallReply('Write', '{"file_path":"a"}'), textReply('x'), toolCallReply('Write', '{"file_path":"b"}'), textReply('y')], { gate: ask });
+    session.start();
+    session.sendUserMessage('escribe');
+    await settle();
+    session.answerPermission(permissionRequests(events)[0]!.requestId, { behavior: 'allow', scope: 'session' });
+    await settle();
+    await settle();
+
+    session.sendUserMessage('otra vez');
+    await settle();
+    await settle();
+
+    expect(permissionRequests(events)).toHaveLength(1);
+    expect(tools.ran).toEqual(['Write', 'Write']);
+  });
+
+  it('answerPermission_estaSesionEnBash_soloElMismoComando', async () => {
+    const bash = (command: string) => toolCallReply('Bash', JSON.stringify({ command }));
+    const { session, events } = setup([bash('npm test'), textReply('x'), bash('npm test'), textReply('y'), bash('npm run build'), textReply('z')], { gate: ask });
+    session.start();
+    session.sendUserMessage('1');
+    await settle();
+    session.answerPermission(permissionRequests(events)[0]!.requestId, { behavior: 'allow', scope: 'session' });
+    await settle();
+    await settle();
+    session.sendUserMessage('2');
+    await settle();
+    await settle();
+    expect(permissionRequests(events)).toHaveLength(1);
+
+    session.sendUserMessage('3');
+    await settle();
+
+    expect(permissionRequests(events)).toHaveLength(2);
+  });
+
+  it('answerPermission_siempre_lanza', async () => {
+    const { session, events } = setup([toolCallReply('Write', '{"file_path":"a"}'), textReply('x')], { gate: ask });
+    session.start();
+    session.sendUserMessage('escribe');
+    await settle();
+
+    expect(() => session.answerPermission(permissionRequests(events)[0]!.requestId, { behavior: 'allow', scope: 'always' })).toThrow(/siempre/);
+  });
+
+  it('answerPermission_siempreRechazado_laPeticionSigueAbierta', async () => {
+    const { session, events } = setup([toolCallReply('Write', '{"file_path":"a"}'), textReply('x')], { gate: ask });
+    session.start();
+    session.sendUserMessage('escribe');
+    await settle();
+    const requestId = permissionRequests(events)[0]!.requestId;
+
+    expect(() => session.answerPermission(requestId, { behavior: 'allow', scope: 'always' })).toThrow(/siempre/);
+    expect(() => session.answerPermission(requestId, { behavior: 'allow' })).not.toThrow();
+  });
+
+  it('authorize_peticionNormal_ofreceEstaSesion', async () => {
+    const { session, events } = setup([toolCallReply('Write', '{"file_path":"a"}'), textReply('x')], { gate: ask });
+    session.start();
+    session.sendUserMessage('escribe');
+    await settle();
+
+    expect(permissionRequests(events)[0]).toMatchObject({ allowScopes: ['session'] });
+  });
+
+  it('authorize_fueraDelProyecto_sinAlcances', async () => {
+    const outside = (): GateVerdict => ({ verdict: 'ask', outside: 'Fuera del proyecto: /etc/x' });
+    const { session, events } = setup([toolCallReply('Write', '{"file_path":"a"}'), textReply('x')], { gate: outside });
+    session.start();
+    session.sendUserMessage('escribe');
+    await settle();
+
+    expect(permissionRequests(events)[0]!.allowScopes).toBeUndefined();
+  });
+
   it('permissionRequest_fueraDelProyecto_llevaElObjetivoYLaFraseEnCastellano', async () => {
     const outside = () => ({ verdict: 'ask' as const, outside: 'Fuera del proyecto: /etc/x', outsideTarget: '/etc/x' });
     const { session, events } = setup([toolCallReply('Write', '{"file_path":"a"}'), textReply('x')], { gate: outside });

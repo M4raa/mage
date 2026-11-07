@@ -19,6 +19,7 @@ import {
   moveTabToLeaf,
   pruneSplitLayout,
   reconcileSplitLayoutAfterClose,
+  replaceTabInPlace,
   resizeAt,
   singleLeaf,
   visibleTabIds,
@@ -245,6 +246,45 @@ describe('moveTabToLeaf', () => {
     const result = moveTabToLeaf(layout, 't2', ['b']);
     expect(result).toEqual(split(singleLeaf('t1'), leaf(['t3', 't2'], 't2')));
     expectInvariants(result);
+  });
+});
+
+describe('replaceTabInPlace', () => {
+  it('replaceTabInPlace_mismaBarra_ocupaSuIndiceYQuedaActiva', () => {
+    const result = replaceTabInPlace(leaf(['a', 'old', 'b', 'new'], 'a'), 'old', 'new');
+
+    expect(result).toEqual(leaf(['a', 'new', 'b'], 'new'));
+    expectInvariants(result);
+  });
+
+  it('replaceTabInPlace_nuevaEnOtraBarra_laSacaDeAlliYOcupaElSitio', () => {
+    const result = replaceTabInPlace(split(leaf(['old', 'x'], 'old'), leaf(['new', 'y'], 'new')), 'old', 'new');
+
+    expect(result).toEqual(split(leaf(['new', 'x'], 'new'), leaf(['y'], 'y')));
+    expectInvariants(result);
+  });
+
+  it('replaceTabInPlace_nuevaSolaEnSuBarra_suPanelColapsaYLaViejaSeSustituye', () => {
+    const result = replaceTabInPlace(split(leaf(['old'], 'old'), leaf(['new'], 'new')), 'old', 'new');
+
+    expect(result).toEqual(leaf(['new'], 'new'));
+    expectInvariants(result);
+  });
+
+  it('replaceTabInPlace_nuevaFueraDelArbol_seSustituyeSinMas', () => {
+    const result = replaceTabInPlace(leaf(['old', 'b'], 'b'), 'old', 'n');
+
+    expect(result).toEqual(leaf(['n', 'b'], 'n'));
+  });
+
+  it('replaceTabInPlace_viejaFueraDelArbol_lanzaConElId', () => {
+    expect(() => replaceTabInPlace(leaf(['a'], 'a'), 'zz', 'n')).toThrow(/zz/);
+  });
+
+  it('replaceTabInPlace_mismaPestana_devuelveElMismoArbol', () => {
+    const l = leaf(['a', 'b'], 'a');
+
+    expect(replaceTabInPlace(l, 'a', 'a')).toBe(l);
   });
 });
 

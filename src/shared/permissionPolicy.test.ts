@@ -1,5 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import { automaticAnswer, prTurnBlockReason } from './permissionPolicy';
+import { automaticAnswer, prTurnBlockReason, touchesPrTurnCommand } from './permissionPolicy';
+
+describe('touchesPrTurnCommand', () => {
+  it.each(['git push origin main', 'npm test && git commit -m x', 'git -C repo push', 'gh pr create --fill', 'echo git push'])(
+    'touchesPrTurnCommand_%s_true',
+    (command) => {
+      expect(touchesPrTurnCommand(command)).toBe(true);
+    },
+  );
+
+  it.each(['git status', 'mkdir a', 'gh pr view 3', ''])('touchesPrTurnCommand_%s_false', (command) => {
+    expect(touchesPrTurnCommand(command)).toBe(false);
+  });
+});
 
 describe('prTurnBlockReason', () => {
   it('prTurnBlockReason_pushNormalYGhPrCreateSimple_null', () => {

@@ -237,10 +237,10 @@ describe('mapPermissionToView', () => {
 
     expect(view.diff).toEqual([]);
   });
-  it('mapPermissionToView_outsideProject_notRememberableAndSummaryIsReason', () => {
-    const view = mapPermissionToView({ ...permission({ toolName: 'Read', input: { file_path: '/etc/hosts' } }), description: 'Fuera del proyecto: /etc/hosts', outsideProject: true });
+  it('mapPermissionToView_outsideProject_sinAlcancesAndSummaryIsReason', () => {
+    const view = mapPermissionToView({ ...permission({ toolName: 'Read', input: { file_path: '/etc/hosts' }, allowScopes: ['session', 'always'] }), description: 'Fuera del proyecto: /etc/hosts', outsideProject: true });
 
-    expect(view).toMatchObject({ rememberable: false, summary: 'Fuera del proyecto: /etc/hosts' });
+    expect(view).toMatchObject({ allowScopes: [], summary: 'Fuera del proyecto: /etc/hosts' });
   });
 
   it('mapPermissionToView_outsideTarget_fraseTraducida', () => {
@@ -255,8 +255,16 @@ describe('mapPermissionToView', () => {
     expect(mapPermissionToView(request).summary).toBe('Red: curl x');
   });
 
-  it('mapPermissionToView_normalRequest_rememberable', () => {
-    expect(mapPermissionToView(permission({ toolName: 'Read', input: { file_path: 'a' } })).rememberable).toBe(true);
+  it('mapPermissionToView_peticionConAlcances_losPasaConSuRegla', () => {
+    const view = mapPermissionToView(permission({ toolName: 'Bash', input: { command: 'npm test' }, allowScopes: ['session', 'always'], rule: 'Bash(npm test *)' }));
+
+    expect(view).toMatchObject({ allowScopes: ['session', 'always'], rule: 'Bash(npm test *)' });
+  });
+
+  it('mapPermissionToView_sinAlcances_vacioYSinRegla', () => {
+    const view = mapPermissionToView(permission({ toolName: 'Read', input: { file_path: 'a' } }));
+
+    expect(view).toMatchObject({ allowScopes: [], rule: null });
   });
 
   it('mapPermissionToView_edit_buildsDiffAndSummary', () => {

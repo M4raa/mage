@@ -2,6 +2,7 @@ import { useCopyToClipboard } from '../useCopyToClipboard';
 import { Icon } from './Icon';
 import { useT } from '../../i18n/uiLanguage';
 import type { Translate } from '@shared/i18n/translator';
+import type { ImageAttachment } from '@shared/ipc';
 
 function buttonText(t: Translate, copied: boolean, failed: boolean): string {
   if (failed) return t('chat.copy.error');
@@ -13,9 +14,12 @@ function buttonText(t: Translate, copied: boolean, failed: boolean): string {
 export function CopyButton({
   text,
   label,
+  image,
   className = '',
 }: {
   readonly text: string;
+  // Con imagen se copian el texto y esa imagen (mensajes del usuario con adjuntos).
+  readonly image?: ImageAttachment | null;
   readonly label: string;
   readonly className?: string;
 }): React.JSX.Element {
@@ -27,7 +31,7 @@ export function CopyButton({
     <button
       type="button"
       data-copy-button="true"
-      onClick={() => copy(text)}
+      onClick={() => copy(text, image ?? null)}
       title={error ?? label}
       aria-label={error ?? (copied ? t('chat.copy.copied') : label)}
       className={`flex cursor-pointer items-center gap-[4px] rounded-[5px] px-[5px] py-[2px] text-[10.5px] hover:bg-mg-hover ${tone} ${className}`}

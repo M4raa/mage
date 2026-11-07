@@ -60,6 +60,10 @@ export interface PermissionRequest {
   readonly outsideProject?: boolean;
   // Runtime propio: lo que queda fuera del proyecto (ruta o comando); el renderer pinta la frase en su idioma (F3.3b).
   readonly outsideTarget?: string;
+  // Alcances que el motor sabe aplicar a ESTA petición, además de «esta vez» (ausente = ninguno). Lo decide main.
+  readonly allowScopes?: readonly PermissionScope[];
+  // La regla que se guardaría (p. ej. `Bash(npm test *)`), para el aviso de «Permitir siempre». Solo para mostrar.
+  readonly rule?: string;
 }
 
 // Uso de una llamada a tool ya emitida por el asistente (para render de tool calls).
@@ -348,6 +352,10 @@ export type MageEvent =
   // `steer_result` del motor; `message` es el envio, para devolverlo al borrador si fallo.
   | ({ readonly kind: 'message_delivery'; readonly commandId: string; readonly message: QueuedMessage } & MessageDelivery);
 
+// Alcance de un «Permitir» (0.1.4). Sin él, solo esta vez. `session`: mientras viva la sesión de la pestaña (se pierde al
+// cerrarla o relanzarla); `always`: regla general de la cuenta (Claude: `permissions.allow` de su settings.json).
+export type PermissionScope = 'session' | 'always';
+
 // Decision del usuario ante un permiso (viaja renderer -> main -> CLI).
 //
 // `updatedInput` REESCRIBE el input de la tool: es el canal por el que viajan las respuestas de
@@ -355,5 +363,5 @@ export type MageEvent =
 // input original" (comprobado en su fuente; los clientes moviles mandan eso). Un `{}` explicito y un
 // campo ausente son, por tanto, lo mismo: no hay ambiguedad que resolver.
 export type PermissionDecision =
-  | { readonly behavior: 'allow'; readonly updatedInput?: Readonly<Record<string, unknown>> }
+  | { readonly behavior: 'allow'; readonly updatedInput?: Readonly<Record<string, unknown>>; readonly scope?: PermissionScope }
   | { readonly behavior: 'deny'; readonly message: string };

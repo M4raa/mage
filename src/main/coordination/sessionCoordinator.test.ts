@@ -1100,6 +1100,50 @@ describe('SessionCoordinator — directo y cola (F4.1, F4.2)', () => {
     expect(h.sessions.sendMessage).toHaveBeenCalledWith(id, 'B', [], undefined);
   });
 
+  it('steerResult_newTurnInferidoTrasSuResult_noPoneRunningYSaleComoTurnoCerrado', () => {
+    // Arrange: directo en vuelo, el turno acaba y despues acaba tambien el turno propio del directo sin `started`.
+    const h = harness();
+    const id = running(h);
+    steer(h, id);
+    const queued = h.coordinator.send({ sessionId: id, text: 'B', commandId: 'b' });
+    expect(queued.status).toBe('queued');
+    h.emit(id, result);
+    h.emit(id, state('idle'));
+
+    // Act: la salvaguarda del adapter lo deduce DESPUES del `result` de ese turno.
+    h.emit(id, steered(C1, 'new_turn', { inferred: true }));
+
+    // Assert: no hay turno abierto que esperar; la cola sale.
+    expect(deliveries(h)).toMatchObject([{ into: 'new_turn', late: true, turnClosed: true }]);
+    expect(h.sessions.sendMessage).toHaveBeenCalledWith(id, 'B', [], undefined);
+  });
+
+  it('steerResult_newTurnInferidoSinCola_quedaEnReposo', () => {
+    const h = harness();
+    const id = running(h);
+    steer(h, id);
+    h.emit(id, result);
+    h.emit(id, state('idle'));
+
+    h.emit(id, steered(C1, 'new_turn', { inferred: true }));
+
+    expect(h.coordinator.snapshot(id).state).toBe('idle');
+  });
+
+  it('steerResult_noActiveTurnEnReposo_seEnviaComoMensajeNormalYUnaSolaVez', () => {
+    const h = harness();
+    const id = running(h);
+    steer(h, id);
+    h.emit(id, result);
+    h.emit(id, state('idle'));
+
+    h.emit(id, steered(C1, 'no_active_turn'));
+
+    expect(deliveries(h)).toMatchObject([{ into: 'new_turn', late: true }]);
+    expect(h.sessions.sendMessage).toHaveBeenCalledTimes(1);
+    expect(h.coordinator.snapshot(id).state).toBe('running');
+  });
+
   it('send_normalConDirectoEnVueloSinTurno_esperaEnLaCola', () => {
     const h = harness();
     const id = running(h);

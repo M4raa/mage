@@ -60,6 +60,26 @@ export function shiftImageTokens(text: string, offset: number): string {
   return text.replace(TOKEN_PATTERN, (_token, digits: string) => imageToken(Number(digits) + offset));
 }
 
+// Mayor número de imagen citado en el texto (0 si no hay ninguno).
+function highestImageToken(text: string): number {
+  return findImageTokens(text).reduce((max, token) => Math.max(max, token.n), 0);
+}
+
+// Solo el token de la PRIMERA imagen: al copiar un mensaje viajan el texto y la primera imagen, y los tokens de las
+// demás no apuntarían a nada.
+export function keepFirstImageToken(text: string): string {
+  let result = text;
+  for (let n = highestImageToken(text); n >= 2; n -= 1) result = removeImageToken(result, n);
+  return result;
+}
+
+// Sin ningún token: al pegar texto junto con imágenes, el editor pone los de las imágenes que adjunta.
+export function withoutImageTokens(text: string): string {
+  let result = text;
+  for (let n = highestImageToken(text); n >= 1; n -= 1) result = removeImageToken(result, n);
+  return result;
+}
+
 export type UserContentBlock =
   | { readonly type: 'text'; readonly text: string }
   | { readonly type: 'image'; readonly source: { readonly type: 'base64'; readonly media_type: string; readonly data: string } }
@@ -98,7 +118,7 @@ function pushText(blocks: UserContentBlock[], text: string): void {
   if (text.length > 0) blocks.push({ type: 'text', text });
 }
 
-function isDocument(attachment: ImageAttachment): boolean {
+export function isDocument(attachment: ImageAttachment): boolean {
   return attachment.mediaType === 'application/pdf';
 }
 

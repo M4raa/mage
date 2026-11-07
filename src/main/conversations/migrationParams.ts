@@ -4,6 +4,8 @@ import { z } from 'zod';
 // sea de verdad del proveedor que dice y que el id de conversación sea un segmento de ruta seguro.
 const PROVIDER = z.enum(['claude', 'codex', 'agy']);
 const SAFE_ID = /^[A-Za-z0-9_-]+$/;
+// Un título de pestaña; mas largo no es un título.
+const MAX_TITLE_CHARS = 500;
 
 export const MIGRATE_CONVERSATION_SCHEMA = z.object({
   sourceAccountDir: z.string().min(1),
@@ -13,4 +15,5 @@ export const MIGRATE_CONVERSATION_SCHEMA = z.object({
   privacy: z.enum(['shared', 'private']),
   destAccountDir: z.string().min(1),
   destProvider: PROVIDER,
+  title: z.string().max(MAX_TITLE_CHARS).optional(),
 }).strict();

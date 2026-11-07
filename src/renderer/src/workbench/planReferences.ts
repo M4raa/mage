@@ -1,4 +1,5 @@
-import { createdFilesOf, type CreatedFile } from './createdFilesView';
+import { createdFilesOf, listedFile, type CreatedFile } from './createdFilesView';
+import type { FileTouch, FileTouchAction } from './fileTouches';
 import type { Block } from './types';
 
 // Referencias del chat al plan (F5.6, #31): modulo PURO. Una referencia del texto de un mensaje
@@ -213,24 +214,62 @@ export function anchorTextMatcher(key: string): RegExp {
 
 // ---- Lista del panel Ficheros ----
 
+export type FileSection = FileTouchAction | 'mentioned';
+
 export type PanelEntry =
-  | { readonly kind: 'file'; readonly docId: string; readonly file: CreatedFile; readonly cited: boolean }
+  | { readonly kind: 'file'; readonly docId: string; readonly file: CreatedFile; readonly section: FileSection; readonly cited: boolean }
   | { readonly kind: 'plan'; readonly docId: string; readonly title: string; readonly text: string };
+
+// Orden de las secciones y, a la vez, su fuerza: un fichero se queda en la más fuerte en la que aparezca.
+const SECTION_RANK: Readonly<Record<FileSection, number>> = { created: 0, edited: 1, read: 2, mentioned: 3 };
+// Herramientas que, sin `fileTouches` (bloques viejos o inyectados), se clasifican por su `filePath` como antes.
+const LEGACY_ACTION: ReadonlyMap<string, FileTouchAction> = new Map([['Write', 'created'], ['Edit', 'edited'], ['MultiEdit', 'edited'], ['NotebookEdit', 'edited'], ['Read', 'read']]);
+
+interface SectionedFile {
+  readonly docId: string;
+  readonly file: CreatedFile;
+  readonly section: FileSection;
+}
+
+function touchesOf(block: Block): readonly FileTouch[] {
+  if (block.kind !== 'tool') return [];
+  if (block.fileTouches !== undefined) return block.fileTouches;
+  const action = LEGACY_ACTION.get(block.tool);
+  // `== null`: un bloque inyectado puede no traer el campo.
+  if (action === undefined || block.filePath == null || block.filePath.trim().length === 0) return [];
+  return [{ path: block.filePath.trim(), action }];
+}
+
+// Una pasada (O(n)) con un Map por `docId`: una acción igual o más fuerte lo pasa a lo más reciente; una más débil no
+// lo mueve. Después, por sección y, dentro de cada una, del más reciente al más antiguo.
+function touchedSections(blocks: readonly Block[], cwd: string): readonly SectionedFile[] {
+  const byDoc = new Map<string, SectionedFile>();
+  for (const block of blocks) {
+    for (const touch of touchesOf(block)) {
+      const docId = resolveInside(touch.path, cwd) ?? touch.path;
+      const previous = byDoc.get(docId);
+      if (previous !== undefined && SECTION_RANK[previous.section] < SECTION_RANK[touch.action]) continue;
+      byDoc.delete(docId);
+      byDoc.set(docId, { docId, file: listedFile(touch.path, block.id, block.kind === 'tool' && block.isError), section: touch.action });
+    }
+  }
+  return [...byDoc.values()].reverse().sort((a, b) => SECTION_RANK[a.section] - SECTION_RANK[b.section]);
+}
 
 function citedFile(path: string): CreatedFile {
   const cut = path.lastIndexOf('/');
   return { path, name: path.slice(cut + 1), dir: path.slice(0, Math.max(cut, 0)), blockId: '', failed: false };
 }
 
-// Lo que ensena el panel: los ficheros creados (mas reciente primero), los .md citados en el hilo que no
-// se han creado en el y los planes del modo plan. Un fichero y un documento citado comparten `docId`
-// (la ruta resuelta), que es la clave con la que se indexan sus anclas.
+// Lo que enseña el panel: Creados, Editados y Leídos (cada fichero en la sección más fuerte), los .md citados en el hilo
+// que no estén ya (Mencionados) y los planes del modo plan. Un fichero y un documento citado comparten `docId` (la ruta
+// resuelta), que es la clave con la que se indexan sus anclas.
 export function panelEntries(blocks: readonly Block[], cwd: string): readonly PanelEntry[] {
-  const created = createdFilesOf(blocks).map((file): PanelEntry => ({ kind: 'file', docId: resolveInside(file.path, cwd) ?? file.path, file, cited: false }));
-  const known = new Set(created.map((entry) => entry.docId));
+  const touched = touchedSections(blocks, cwd).map((f): PanelEntry => ({ kind: 'file', docId: f.docId, file: f.file, section: f.section, cited: false }));
+  const known = new Set(touched.map((entry) => entry.docId));
   const cited = associatedDocumentPaths(blocks, cwd)
     .filter((path) => !known.has(path))
-    .map((path): PanelEntry => ({ kind: 'file', docId: path, file: citedFile(path), cited: true }));
+    .map((path): PanelEntry => ({ kind: 'file', docId: path, file: citedFile(path), section: 'mentioned', cited: true }));
   const plans = planDocuments(blocks).map((doc): PanelEntry => ({ kind: 'plan', docId: doc.docId, title: doc.title, text: doc.text }));
-  return [...created, ...cited, ...plans];
+  return [...touched, ...cited, ...plans];
 }

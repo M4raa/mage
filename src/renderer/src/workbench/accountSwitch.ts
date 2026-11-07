@@ -6,9 +6,9 @@ import type { ChatStatus } from './types';
 //   - 'switch-and-new-chat': la conversacion tiene un turno EN MARCHA (D5: «activo» = eso). Sigue
 //     trabajando en su cuenta, y en la destino se abre un chat nuevo.
 //   - 'ask': conversacion parada con algo que migrar: se pregunta si llevarsela (sin «recordar», D6).
-//   - 'reassign': chat NUEVO (sin sesion, sin `resumeSessionId` y sin bloques): la pestaña se pasa a la
-//     cuenta destino sin preguntar (P-028, punto 31). Antes era 'switch' y el primer mensaje salia por
-//     la cuenta vieja, que es la que seguia en `tab.accountId`.
+//   - 'reassign': chat SIN conversación (sin `resumeSessionId` ni bloques de conversación): la pestaña se pasa a la
+//     cuenta destino sin preguntar (P-028, punto 31). Si tenía sesión viva sin turnos, se para antes (0.1.4): antes
+//     caía en 'switch-and-new-chat', la barra cambiaba de cuenta y la pestaña seguía en la vieja (riesgo de facturación).
 export type AccountSwitchPlan = 'switch' | 'switch-and-new-chat' | 'ask' | 'reassign';
 
 export interface AccountSwitchContext {
@@ -19,7 +19,7 @@ export interface AccountSwitchContext {
   readonly destAccountId: string;
   // Una cuenta sin sesion no puede ni abrir un chat ni reanudar uno: solo se cambia (y avisa su panel).
   readonly destLoggedIn: boolean;
-  // La pestaña ya tiene algo en pantalla (bloques del stream o hidratados): ya no es un chat nuevo.
+  // La pestaña ya tiene conversación en pantalla (ver hasConversationBlocks): ya no es un chat nuevo.
   readonly hasBlocks: boolean;
 }
 
@@ -29,9 +29,8 @@ export function planAccountSwitch(ctx: AccountSwitchContext): AccountSwitchPlan 
   // Una conversación creada fuera de la ventana se queda con su cuenta: cambiar de cuenta no se la lleva.
   if (tab.accountPinned === true) return 'switch';
   if (ctx.status === 'streaming' || ctx.status === 'needs_permission') return 'switch-and-new-chat';
-  // Sin turnos no hay transcripción que llevarse: la pestaña se queda como está (con su sesión) y la cuenta destino
-  // empieza un chat nuevo, como con un turno en marcha.
-  if (tab.resumeSessionId === undefined && !ctx.hasBlocks) return ctx.liveSessionId === undefined ? 'reassign' : 'switch-and-new-chat';
+  // Sin conversación no hay nada que llevarse: la pestaña sigue a la cuenta pulsada (con sesión viva o sin ella).
+  if (tab.resumeSessionId === undefined && !ctx.hasBlocks) return 'reassign';
   const migratable = ctx.liveSessionId !== undefined || tab.resumeSessionId !== undefined;
   if (migratable) return 'ask';
   return 'switch';
@@ -47,4 +46,12 @@ export function modelForReassignedTab(
 ): string {
   if (destCatalogIds === undefined || destCatalogIds.includes(currentModel)) return currentModel;
   return resolveForDest();
+}
+
+// Bloques que hacen de una pestaña una conversación. Los avisos (`system`, `error`, `command-output`) no: una
+// pestaña nueva puede traer el aviso de la carpeta o del espacio de trabajo y sigue siendo un chat nuevo.
+const CONVERSATION_BLOCK_KINDS: ReadonlySet<string> = new Set(['user', 'agent', 'tool', 'subagent', 'thinking', 'question', 'permission']);
+
+export function hasConversationBlocks(blocks: readonly { readonly kind: string }[]): boolean {
+  return blocks.some((block) => CONVERSATION_BLOCK_KINDS.has(block.kind));
 }

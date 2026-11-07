@@ -41,7 +41,7 @@ import {
   resolvePermissionBlock,
   restartingText,
 } from './engineBlocks';
-import { addAlwaysAllow, removeAlwaysAllow } from './permissionRules';
+import { removeAlwaysAllow } from './permissionRules';
 import { createSettingsActions } from './settingsActions';
 import { createHistoryActions, withIdPresence } from './historyActions';
 import { EMPTY_SIDEBAR_FILTER, type AccountConversation, type SidebarFilter } from './sidebarModel';
@@ -71,7 +71,7 @@ import type { Account, AccountSwitchPrompt, Block, ChatStatus, ContextInfo, Imag
 import type { ConversationPrivacy } from '@shared/state';
 import type { ConversationSummary } from '@shared/conversations';
 import { planOpenConversation, tabFromConversation } from './conversationList';
-import { modelForReassignedTab, planAccountSwitch } from './accountSwitch';
+import { hasConversationBlocks, modelForReassignedTab, planAccountSwitch } from './accountSwitch';
 import { importedConversationContext, MODEL_UNTITLED_TITLE } from './conversationContext';
 import { accumulateProviderUsage, type ProviderUsageTotals } from './providerUsage';
 import {
@@ -104,6 +104,7 @@ import {
   leafAt,
   neighborOf,
   reconcileSplitLayoutAfterClose,
+  replaceTabInPlace,
   resizeAt,
   singleLeaf,
   visibleTabIds,
@@ -651,10 +652,14 @@ export interface WorkbenchState extends PrState, PrActions, PrPanelStoreState, P
   // contestar "la activa" ahi seria responder por la conversacion equivocada.
   // Sin `requestId` contesta la PRIMERA de la cola; con el, esa peticion concreta (la de una tarjeta).
   answerPermissionFor: (tabId: string, decision: PermissionDecision, requestId?: string) => void;
-  // "Permitir siempre <tool> aqui" (2.3b): guarda la regla en la conversacion (persiste en el indice
-  // de Mage) y concede TODAS las peticiones de esa tool que esperan en la cola, no solo una: la regla
-  // ya dice que si. `revokeAlwaysAllow` la quita desde el panel.
-  allowAlwaysAndAnswer: (toolName: string, tabId?: string) => void;
+  // «Permitir siempre» pide confirmación (aviso de peligro): pestaña -> petición cuyo aviso está abierto.
+  alwaysPromptByChat: Readonly<Record<string, string>>;
+  // Abre el aviso de «Permitir siempre» para una petición que lo admite (sin requestId: la primera de la cola). No contesta.
+  requestAlwaysAllow: (tabId: string, requestId?: string) => void;
+  // Confirma el aviso abierto: contesta «permitir» con alcance `always` y lo cierra.
+  confirmAlwaysAllow: (tabId: string) => void;
+  cancelAlwaysAllow: (tabId: string) => void;
+  // `revokeAlwaysAllow` quita desde el panel una regla ya guardada.
   revokeAlwaysAllow: (tabId: string, toolName: string) => void;
   // Contesta una tarjeta de pregunta del chat (2.3): construye el `updatedInput` con las respuestas y
   // responde el MISMO can_use_tool que tendria el panel de permiso.
@@ -1040,9 +1045,29 @@ async function closeSessionInMain(mage: MageClient, sessionId: string): Promise<
   }
 }
 
+// La sesión viva de un chat sin conversación que cambia de cuenta (0.1.4): era de la cuenta vieja y no tiene turnos.
+// Se olvida su estado de motor y se cierra en main; el primer mensaje arranca otra con la cuenta nueva
+// (`ensureSession`). `closeSessionInMain` ya trata «Sesion inexistente» como ausencia y avisa de cualquier otro fallo.
+function dropLiveSessionOfTab(mage: MageClient, set: SetFn, target: { readonly tabId: string; readonly sessionId: string }): void {
+  const { tabId, sessionId } = target;
+  set((s) => ({
+    sessionIdByChat: without(s.sessionIdByChat, tabId),
+    statusByChat: without(s.statusByChat, tabId),
+    slashCommandsByChat: without(s.slashCommandsByChat, tabId),
+    toolsByChat: without(s.toolsByChat, tabId),
+    mcpServersByChat: without(s.mcpServersByChat, tabId),
+    extensionsByChat: without(s.extensionsByChat, tabId),
+    resolvedModelByChat: without(s.resolvedModelByChat, tabId),
+    contextUsageByChat: without(s.contextUsageByChat, tabId),
+    providerUsageByChat: without(s.providerUsageByChat, tabId),
+    rateLimitByChat: without(s.rateLimitByChat, tabId),
+  }));
+  void closeSessionInMain(mage, sessionId);
+}
+
 // Chat NUEVO que sigue a la cuenta pulsada (P-028, punto 31): reescribe cuenta, alias y modelo de la
 // pestaña y olvida su config dir resuelto (el de la cuenta vieja). Conserva cwd, privacidad y borrador.
-// Solo se llama con el plan 'reassign', que ya garantiza que no hay sesion ni nada que migrar.
+// Solo se llama con el plan 'reassign': no hay conversación que migrar. Si había sesión viva (sin turnos), se para.
 function reassignNewChat(
   mage: MageClient,
   get: () => WorkbenchState,
@@ -1050,6 +1075,7 @@ function reassignNewChat(
   target: { readonly tabId: string; readonly destAccountId: string },
 ): void {
   const state = get();
+  const liveSessionId = state.sessionIdByChat[target.tabId];
   const dest = state.accounts.find((a) => a.id === target.destAccountId);
   if (dest === undefined) throw new Error(`Cuenta destino inexistente al reasignar el chat: ${target.destAccountId}`);
   const catalog = state.modelCatalogByAccount[dest.id]?.map((m) => m.id);
@@ -1084,6 +1110,7 @@ function reassignNewChat(
       return { ...rest, accountId: dest.id, accountAlias: dest.alias, model };
     }),
   }));
+  if (liveSessionId !== undefined) dropLiveSessionOfTab(mage, set, { tabId: target.tabId, sessionId: liveSessionId });
   schedulePersist(mage, get);
 }
 
@@ -1439,6 +1466,7 @@ export function createWorkbenchStore(mage: MageClient) {
 
     blocksByChat: {},
     sessionIdByChat: {},
+    alwaysPromptByChat: {},
     streamingIdByChat: {},
     statusByChat: {},
     pendingByChat: {},
@@ -1494,7 +1522,7 @@ export function createWorkbenchStore(mage: MageClient) {
         liveSessionId: state.sessionIdByChat[state.activeTabId],
         destAccountId,
         destLoggedIn: state.accounts.find((a) => a.id === destAccountId)?.loginStatus === 'logged_in',
-        hasBlocks: (state.blocksByChat[state.activeTabId]?.length ?? 0) > 0,
+        hasBlocks: hasConversationBlocks(state.blocksByChat[state.activeTabId] ?? []),
       });
       if (plan === 'ask' && tab !== undefined) {
         set({ accountSwitchPrompt: { tabId: tab.id, destAccountId, sourceAccountId: tab.accountId } });
@@ -2363,9 +2391,9 @@ export function createWorkbenchStore(mage: MageClient) {
     // `--resume <sessionId>`. Lo unico que faltaba era encadenarlos sin que el usuario tenga que saber
     // que ese es el camino.
     //
-    // El orden importa: primero MOVER (con la cuenta origen explicita, que con el workspace dividido no
-    // es por fuerza la activa), luego activar la cuenta destino, y solo entonces recargar el historial
-    // —el de la cuenta NUEVA, que es donde ya esta la conversacion— para poder reabrirla.
+    // El orden importa: primero soltar la sesión de la pestaña (sin cerrarla), luego MOVER con la cuenta origen explícita
+    // (con el workspace dividido no es por fuerza la activa), activar la cuenta destino y recargar su historial: la
+    // reapertura encuentra la misma pestaña y la reasigna, así que conserva su sitio, su título y su borrador (0.1.4).
     continueInAccount: async (tabId, destAccountId) => {
       const tab = get().tabs.find((t) => t.id === tabId);
       // Una pestaña restaurada no tiene sesion viva, solo `resumeSessionId` (mismo criterio que el
@@ -2376,24 +2404,24 @@ export function createWorkbenchStore(mage: MageClient) {
       // Entre cuentas de Claude se mueve la transcripción; en cualquier otro caso se traduce a formato nativo del
       // destino y sigue siendo LA MISMA conversación (la de origen se retira).
       if (![tab.accountId, destAccountId].every((id) => get().accounts.find((a) => a.id === id)?.providerId === 'claude')) {
-        await migrateToOtherProvider(get, mage, { tabId, sessionId, destAccountId });
+        await migrateToOtherProvider(get, set, mage, { tabId, sessionId, destAccountId });
         return;
       }
+      // La pestaña se queda (sitio, título y borrador): solo se suelta su sesión y, movida la transcripción, la reapertura la
+      // reasigna a la cuenta destino. Se llama a main directamente: la acción `moveConversation` cerraría la pestaña.
+      await releaseTabSessionForMigration(mage, get, set, { tabId, conversationId: sessionId });
+      await get().discardBackgroundConversation(sessionId);
       try {
-        await get().moveConversation(sessionId, tab.cwd, tab.privacy, destAccountId, tab.privacy, tab.accountId);
-      } catch (err) {
-        // Mover cierra antes la pestaña: si falla, la conversación sigue en su cuenta y se reabre desde su historial para
-        // no perderla. El error sube igual (lo enseña el diálogo).
-        const left = get().conversationHistory.find((c) => c.sessionId === sessionId);
-        if (left !== undefined) await get().openConversation(left, tab.accountId);
-        throw err;
+        await mage.moveConversation({ accountDir: tab.accountId, sessionId, cwd: tab.cwd, privacy: tab.privacy, destAccountDir: destAccountId, destPrivacy: tab.privacy });
+      } finally {
+        await get().loadConversationHistory();
       }
       get().setActiveAccount(destAccountId);
       await get().loadConversationHistory();
       const moved = get().conversationHistory.find((c) => c.sessionId === sessionId);
-      // Sin entrada en el historial no se reabre nada: es preferible dejar al usuario en la cuenta
-      // nueva con el sidebar cargado que abrir una pestana apuntando a un fichero que no aparecio.
-      if (moved !== undefined) get().openConversation(moved);
+      // Sin entrada en el historial no se reabre nada: la pestaña apuntaría a un fichero que no apareció.
+      if (moved === undefined) return get().closeTab(tabId, { moved: true });
+      await get().openConversation(moved);
     },
 
     continueWithHistoryIn: async (tabId, destAccountId) => {
@@ -2832,20 +2860,21 @@ export function createWorkbenchStore(mage: MageClient) {
       });
     },
 
-    // "Permitir siempre <tool> aqui" (2.3b): la regla y luego las respuestas. Se conceden todas las de
-    // esa tool que esperan en la cola (lo mismo que `shouldAutoAllow` haria si llegaran ahora), menos
-    // las PREGUNTAS, que no son una autorizacion sino un turno de palabra.
-    allowAlwaysAndAnswer: (toolName, tabId = get().activeTabId) => {
-      const matching = (get().pendingByChat[tabId] ?? []).filter(
-        (p) => p.view.toolLabel === toolName && p.view.rememberable && parseAskUserQuestion(p.input) === null,
-      );
-      if (matching.length === 0) return; // sin peticion viva no hay nada que conceder
-      set((s) => ({
-        tabs: s.tabs.map((t) => (t.id === tabId ? { ...t, alwaysAllowTools: addAlwaysAllow(t.alwaysAllowTools ?? [], toolName) } : t)),
-      }));
-      persistConversationPrefs(mage, get(), tabId);
-      for (const p of matching) get().answerPermissionFor(tabId, { behavior: 'allow' }, p.requestId);
+    requestAlwaysAllow: (tabId, requestId) => {
+      const queue = get().pendingByChat[tabId] ?? [];
+      const pending = requestId === undefined ? queue[0] : queue.find((p) => p.requestId === requestId);
+      if (pending === undefined || !pending.view.allowScopes.includes('always')) return;
+      set((s) => ({ alwaysPromptByChat: { ...s.alwaysPromptByChat, [tabId]: pending.requestId } }));
     },
+
+    confirmAlwaysAllow: (tabId) => {
+      const requestId = get().alwaysPromptByChat[tabId];
+      if (requestId === undefined) return;
+      set((s) => ({ alwaysPromptByChat: without(s.alwaysPromptByChat, tabId) }));
+      get().answerPermissionFor(tabId, { behavior: 'allow', scope: 'always' }, requestId);
+    },
+
+    cancelAlwaysAllow: (tabId) => set((s) => ({ alwaysPromptByChat: without(s.alwaysPromptByChat, tabId) })),
 
     // Revoca una regla desde el panel de Permisos. No toca ningun permiso en vuelo: solo deja de
     // auto-aprobar los SIGUIENTES.
@@ -2995,10 +3024,12 @@ function settleDelivery(mage: MageClient, get: () => WorkbenchState, set: SetFn,
 }
 
 // Dentro del turno la burbuja se queda; con turno propio arranca el reloj; a la cola sale del hilo (la pinta la
-// cola); fallido sale, deja el error SIN cambiar el estado del turno y el texto vuelve al borrador.
+// cola); fallido sale, deja el error SIN cambiar el estado del turno y el texto vuelve al borrador. Un turno nuevo ya cerrado no arranca nada.
 function settleOwnSteer(mage: MageClient, get: () => WorkbenchState, set: SetFn, own: { readonly tabId: string; readonly blockId: string; readonly event: DeliveryEvent }): void {
   const { tabId, blockId, event } = own;
   if (event.into === 'active_turn') return;
+  // Turno ya cerrado (lo dedujo main tras su `result`): el mensaje se envió y la burbuja se queda, pero no hay reloj que arrancar.
+  if (event.into === 'new_turn' && event.turnClosed === true) return;
   if (event.into === 'new_turn') return startTurnClock(mage, get, set, tabId);
   patchBlocks(set, tabId, (blocks) => blocks.filter((b) => b.id !== blockId));
   if (event.into === 'queue') return;
@@ -3070,10 +3101,47 @@ function settleElicitation(state: WorkbenchState, tabId: string, requestId: stri
   };
 }
 
-// Migra la conversación de una pestaña a una cuenta de otro proveedor (o de otra cuenta de Codex/agy) y la reabre
-// ahí. Se cierra la pestaña y se para su sesión ANTES: el origen se retira al acabar y nadie debe estar escribiéndolo.
+// Suelta la sesión de una pestaña que se va a migrar SIN cerrarla (0.1.4): la pestaña conserva su sitio, su título y su
+// borrador, y queda apuntando a su conversación (`resumeSessionId`) para que reabrirla la reutilice. Una sesión que main
+// deja en segundo plano al cerrarla (turno en marcha o permiso pendiente) se para igual: migrar descarta ese turno.
+async function releaseTabSessionForMigration(mage: MageClient, get: () => WorkbenchState, set: SetFn, target: { readonly tabId: string; readonly conversationId: string }): Promise<void> {
+  const { tabId, conversationId } = target;
+  const live = get().sessionIdByChat[tabId];
+  set((s) => ({
+    tabs: s.tabs.map((t) => (t.id === tabId ? { ...t, resumeSessionId: conversationId } : t)),
+    sessionIdByChat: without(s.sessionIdByChat, tabId),
+    statusByChat: without(s.statusByChat, tabId),
+    pendingByChat: without(s.pendingByChat, tabId),
+    elicitationsByChat: without(s.elicitationsByChat, tabId),
+    streamingIdByChat: without(s.streamingIdByChat, tabId),
+    queuedByChat: without(s.queuedByChat, tabId),
+    steeringByChat: without(s.steeringByChat, tabId),
+  }));
+  if (live === undefined) return;
+  if (await closeSessionInMain(mage, live)) await mage.stop(live);
+}
+
+// La pestaña de la conversación migrada ocupa el sitio exacto de la vieja, con su título y su borrador; después la vieja
+// se cierra como «movida» (sin sesión y fuera del árbol: no colapsa ningún panel ni archiva el worktree).
+async function placeMigratedTab(get: () => WorkbenchState, set: SetFn, target: { readonly oldTabId: string; readonly newTabId: string }): Promise<void> {
+  const { oldTabId, newTabId } = target;
+  const old = get().tabs.find((t) => t.id === oldTabId);
+  if (old === undefined) throw new Error(`Pestaña migrada inexistente: ${oldTabId}`);
+  const draft = get().draftByChat[oldTabId];
+  set((s) => ({
+    splitLayout: replaceTabInPlace(s.splitLayout, oldTabId, newTabId),
+    activeTabId: newTabId,
+    tabs: s.tabs.map((t) => (t.id === newTabId && !isPlaceholderTitle(old.title) ? { ...t, title: old.title } : t)),
+    draftByChat: draft === undefined ? s.draftByChat : { ...s.draftByChat, [newTabId]: draft },
+  }));
+  await get().closeTab(oldTabId, { moved: true });
+}
+
+// Migra la conversación de una pestaña a una cuenta de otro proveedor (o de otra cuenta de Codex/agy). La pestaña no se
+// cierra antes: se suelta su sesión, y la conversación nueva ocupa después su sitio con su título y su borrador.
 async function migrateToOtherProvider(
   get: () => WorkbenchState,
+  set: SetFn,
   mage: MageClient,
   ctx: { readonly tabId: string; readonly sessionId: string; readonly destAccountId: string },
 ): Promise<void> {
@@ -3083,16 +3151,21 @@ async function migrateToOtherProvider(
   if (tab === undefined || source === undefined || dest === undefined || tab.provider !== source.providerId) {
     throw new Error(`Esta conversacion (${tab?.provider ?? 'sin pestana'}) no se puede migrar a ${dest?.providerId ?? ctx.destAccountId}`);
   }
-  await closeMatchingTab(get, ctx.sessionId);
+  await releaseTabSessionForMigration(mage, get, set, { tabId: ctx.tabId, conversationId: ctx.sessionId });
   await get().discardBackgroundConversation(ctx.sessionId);
   const result = await mage.migrateConversation({
     sourceAccountDir: source.id, sourceProvider: asAccountProvider(source.providerId), sessionId: ctx.sessionId, cwd: tab.cwd, privacy: tab.privacy,
     destAccountDir: dest.id, destProvider: asAccountProvider(dest.providerId),
+    ...(isPlaceholderTitle(tab.title) ? {} : { title: tab.title }),
   });
   get().setActiveAccount(dest.id);
   await get().loadConversationHistory();
   const migrated = get().conversationHistory.find((c) => c.sessionId === result.sessionId);
-  if (migrated !== undefined) get().openConversation(migrated);
+  if (migrated === undefined) return get().closeTab(ctx.tabId, { moved: true });
+  await get().openConversation(migrated);
+  const created = get().tabs.find((t) => t.id !== ctx.tabId && t.resumeSessionId === result.sessionId);
+  if (created === undefined) throw new Error(`La conversación migrada no se abrió: ${result.sessionId}`);
+  await placeMigratedTab(get, set, { oldTabId: ctx.tabId, newTabId: created.id });
 }
 
 function asAccountProvider(id: string): AccountProviderId {
@@ -3252,7 +3325,8 @@ export function reduceEvent(state: WorkbenchState, tabId: string, event: MageEve
                   prompt: view.prompt,
                   target: view.target,
                   summary: view.summary,
-                  rememberable: view.rememberable,
+                  allowScopes: view.allowScopes,
+                  rule: view.rule,
                 })
               : appendQuestionBlock(blocks, { id: nextBlockId(), requestId: event.request.requestId, questions }),
           );

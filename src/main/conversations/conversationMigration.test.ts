@@ -33,6 +33,15 @@ describe('ConversationMigrationService.migrate', () => {
     expect(origin.source.remove).toHaveBeenCalledWith({ accountDir: 'A', sessionId: 's1', cwd: 'C:\\p', privacy: 'shared' });
   });
 
+  it('migrate_conTitulo_loEscribeEnLaConversacionDelDestino', async () => {
+    const origin = endpoints();
+    const target = endpoints();
+
+    await service(origin, target).migrate({ ...PARAMS, title: 'Refactor del login' });
+
+    expect(target.sink.write).toHaveBeenCalledWith({ ...CONVERSATION, title: 'Refactor del login' }, { accountDir: 'B', privacy: 'shared' });
+  });
+
   it('migrate_laVerificacionLeeMenosMensajes_deshaceElDestinoYNoTocaElOrigen', async () => {
     const origin = endpoints();
     const target = endpoints({ source: { read: async () => ({ ...CONVERSATION, items: [CONVERSATION.items[0]!] }) } });

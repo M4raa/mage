@@ -1,4 +1,4 @@
-import type { PermissionRequest, ToolResult, ToolUse, TurnUsage } from '@shared/events';
+import type { PermissionRequest, PermissionScope, ToolResult, ToolUse, TurnUsage } from '@shared/events';
 import { SUBAGENT_ASYNC_LAUNCHED, type SubagentRunInfo } from '@shared/subagentRun';
 import type { AskQuestion } from '@shared/askUserQuestion';
 import type { Block, ImageAttachment, PermissionView, TextRun } from './types';
@@ -8,6 +8,7 @@ import { classifyTool } from './toolClassify';
 import { completeArtifactPublication, parseArtifactDraft } from '@shared/artifacts';
 import { formatToolMeta, planTextField, SKILL_TOOL_NAME, summarizeToolInput } from './toolSummary';
 import { codexChangeView } from './codexChanges';
+import { fileTouchesField } from './fileTouches';
 import { t } from '../i18n/uiLanguage';
 import type { MessageKey } from '@shared/i18n/messageKeys.generated';
 import type { Translate } from '@shared/i18n/translator';
@@ -139,7 +140,8 @@ export function appendPermissionBlock(
     readonly prompt: string;
     readonly target: string;
     readonly summary: string;
-    readonly rememberable?: boolean;
+    readonly allowScopes?: readonly PermissionScope[];
+    readonly rule?: string | null;
   },
 ): readonly Block[] {
   return [...blocks, { kind: 'permission', ...permission, state: 'pending' }];
@@ -194,6 +196,7 @@ export function appendToolUse(blocks: readonly Block[], tool: ToolUse, id: strin
     artifactDraft: parseArtifactDraft(tool.toolName, tool.input),
     parentToolUseId: tool.parentToolUseId ?? null,
     ...planTextField(tool.toolName, tool.input),
+    ...fileTouchesField(tool.toolName, tool.input),
   };
   return [...blocks, block];
 }
@@ -538,7 +541,8 @@ export function mapPermissionToView(request: PermissionRequest): PermissionView 
     prompt: buildPrompt(toolName),
     target: patch?.target ?? buildTarget(toolName, input),
     toolLabel: toolName,
-    rememberable: !outside,
+    allowScopes: outside ? [] : (request.allowScopes ?? []),
+    rule: request.rule ?? null,
     diff: patch?.diff ?? buildDiff(toolName, input),
     summary: permissionSummary(request, patch?.summary ?? buildSummary(toolName, input)),
   };

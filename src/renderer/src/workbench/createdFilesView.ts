@@ -31,14 +31,19 @@ function splitPath(fullPath: string): { readonly dir: string; readonly name: str
   return { dir: fullPath.slice(0, cut), name: fullPath.slice(cut + 1) };
 }
 
+// Fichero de la lista a partir de su ruta (nombre y carpeta ya separados).
+export function listedFile(path: string, blockId: string, failed: boolean): CreatedFile {
+  const { dir, name } = splitPath(path);
+  return { path, name, dir, blockId, failed };
+}
+
 export function createdFileFrom(block: Block): CreatedFile | null {
   // `== null` (no `=== null`): un bloque sin el campo —uno viejo en memoria, o inyectado por el
   // harness— no puede tumbar el panel.
   if (block.kind !== 'tool' || block.tool !== 'Write' || block.filePath == null) return null;
   const trimmed = block.filePath.trim();
   if (trimmed.length === 0) return null;
-  const { dir, name } = splitPath(trimmed);
-  return { path: trimmed, name, dir, blockId: block.id, failed: block.isError };
+  return listedFile(trimmed, block.id, block.isError);
 }
 
 // Todos los ficheros creados en el hilo, del mas reciente al mas antiguo (lo ultimo que ha escrito el
@@ -70,8 +75,7 @@ function touchedFileFrom(block: Block): CreatedFile | null {
   if (block.kind !== 'tool' || !TOUCHING_TOOLS.has(block.tool)) return null;
   const raw = (block.filePath ?? block.command).trim();
   if (raw.length === 0 || raw.endsWith(SUMMARY_TRUNCATION_MARK)) return null;
-  const { dir, name } = splitPath(raw);
-  return { path: raw, name, dir, blockId: block.id, failed: block.isError };
+  return listedFile(raw, block.id, block.isError);
 }
 
 // Lo creado (`createdFilesOf`) mas lo editado y leido, sin duplicar por ruta; gana la ultima aparicion y
