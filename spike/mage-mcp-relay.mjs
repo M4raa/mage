@@ -1,5 +1,5 @@
 // cp/M-03: `mage mcp` contra un Mage REAL sin ventanas (el main construido), SIN turnos de modelo (0 turnos reales).
-// Mide: las siete herramientas `mage_*`, el rechazo de un cliente sin sesión de Mage (M-U2) con y sin credencial
+// Mide: las siete herramientas `mage_*` (y que `mage_create_session` ofrece model, effort y permissionMode), el rechazo de un cliente sin sesión de Mage (M-U2) con y sin credencial
 // inventada, que con Mage parado `mage mcp` sale con 1 sin arrancar nada, y los tiempos de initialize y listTools.
 // Requiere `pnpm build` antes (out/main/index.js). Medido contra: protocolo del host 1.5, SDK MCP del repo.
 // Uso: node spike/mage-mcp-relay.mjs --out <fichero.json> [--packaged <carpeta de win-unpacked>]
@@ -108,7 +108,8 @@ async function measureOpen(packaged, profile, env) {
     const { tools } = await client.listTools();
     const listToolsMs = nowMs() - listStart;
     const call = await client.callTool({ name: 'mage_list_sessions', arguments: {} });
-    return { initializeMs, listToolsMs, toolNames: tools.map((tool) => tool.name).sort(), externalRejection: isExternalRejection(call) };
+    const createProps = Object.keys(tools.find((tool) => tool.name === 'mage_create_session')?.inputSchema?.properties ?? {}).sort();
+    return { initializeMs, listToolsMs, toolNames: tools.map((tool) => tool.name).sort(), createProps, externalRejection: isExternalRejection(call) };
   });
 }
 
@@ -146,7 +147,8 @@ async function main() {
     const clean = { ...process.env };
     delete clean.MAGE_MCP_CALLER;
     const known = await measureOpen(packaged, profile, clean);
-    report.r1 = { ok: JSON.stringify(known.toolNames) === JSON.stringify(EXPECTED_TOOLS), toolNames: known.toolNames };
+    const offersSettings = ['effort', 'model', 'permissionMode'].every((name) => known.createProps.includes(name));
+    report.r1 = { ok: JSON.stringify(known.toolNames) === JSON.stringify(EXPECTED_TOOLS) && offersSettings, toolNames: known.toolNames, createProps: known.createProps };
     report.r2 = { ok: known.externalRejection };
     const forged = await measureOpen(packaged, profile, { ...clean, MAGE_MCP_CALLER: FAKE_CALLER });
     report.r3 = { ok: forged.externalRejection };
