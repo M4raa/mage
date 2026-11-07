@@ -104,6 +104,7 @@ import {
   leafAt,
   neighborOf,
   reconcileSplitLayoutAfterClose,
+  replaceTabInPlace,
   resizeAt,
   singleLeaf,
   visibleTabIds,
@@ -2385,9 +2386,9 @@ export function createWorkbenchStore(mage: MageClient) {
     // `--resume <sessionId>`. Lo unico que faltaba era encadenarlos sin que el usuario tenga que saber
     // que ese es el camino.
     //
-    // El orden importa: primero MOVER (con la cuenta origen explicita, que con el workspace dividido no
-    // es por fuerza la activa), luego activar la cuenta destino, y solo entonces recargar el historial
-    // —el de la cuenta NUEVA, que es donde ya esta la conversacion— para poder reabrirla.
+    // El orden importa: primero soltar la sesión de la pestaña (sin cerrarla), luego MOVER con la cuenta origen explícita
+    // (con el workspace dividido no es por fuerza la activa), activar la cuenta destino y recargar su historial: la
+    // reapertura encuentra la misma pestaña y la reasigna, así que conserva su sitio, su título y su borrador (0.1.4).
     continueInAccount: async (tabId, destAccountId) => {
       const tab = get().tabs.find((t) => t.id === tabId);
       // Una pestaña restaurada no tiene sesion viva, solo `resumeSessionId` (mismo criterio que el
@@ -2398,24 +2399,24 @@ export function createWorkbenchStore(mage: MageClient) {
       // Entre cuentas de Claude se mueve la transcripción; en cualquier otro caso se traduce a formato nativo del
       // destino y sigue siendo LA MISMA conversación (la de origen se retira).
       if (![tab.accountId, destAccountId].every((id) => get().accounts.find((a) => a.id === id)?.providerId === 'claude')) {
-        await migrateToOtherProvider(get, mage, { tabId, sessionId, destAccountId });
+        await migrateToOtherProvider(get, set, mage, { tabId, sessionId, destAccountId });
         return;
       }
+      // La pestaña se queda (sitio, título y borrador): solo se suelta su sesión y, movida la transcripción, la reapertura la
+      // reasigna a la cuenta destino. Se llama a main directamente: la acción `moveConversation` cerraría la pestaña.
+      await releaseTabSessionForMigration(mage, get, set, { tabId, conversationId: sessionId });
+      await get().discardBackgroundConversation(sessionId);
       try {
-        await get().moveConversation(sessionId, tab.cwd, tab.privacy, destAccountId, tab.privacy, tab.accountId);
-      } catch (err) {
-        // Mover cierra antes la pestaña: si falla, la conversación sigue en su cuenta y se reabre desde su historial para
-        // no perderla. El error sube igual (lo enseña el diálogo).
-        const left = get().conversationHistory.find((c) => c.sessionId === sessionId);
-        if (left !== undefined) await get().openConversation(left, tab.accountId);
-        throw err;
+        await mage.moveConversation({ accountDir: tab.accountId, sessionId, cwd: tab.cwd, privacy: tab.privacy, destAccountDir: destAccountId, destPrivacy: tab.privacy });
+      } finally {
+        await get().loadConversationHistory();
       }
       get().setActiveAccount(destAccountId);
       await get().loadConversationHistory();
       const moved = get().conversationHistory.find((c) => c.sessionId === sessionId);
-      // Sin entrada en el historial no se reabre nada: es preferible dejar al usuario en la cuenta
-      // nueva con el sidebar cargado que abrir una pestana apuntando a un fichero que no aparecio.
-      if (moved !== undefined) get().openConversation(moved);
+      // Sin entrada en el historial no se reabre nada: la pestaña apuntaría a un fichero que no apareció.
+      if (moved === undefined) return get().closeTab(tabId, { moved: true });
+      await get().openConversation(moved);
     },
 
     continueWithHistoryIn: async (tabId, destAccountId) => {
@@ -3094,10 +3095,47 @@ function settleElicitation(state: WorkbenchState, tabId: string, requestId: stri
   };
 }
 
-// Migra la conversación de una pestaña a una cuenta de otro proveedor (o de otra cuenta de Codex/agy) y la reabre
-// ahí. Se cierra la pestaña y se para su sesión ANTES: el origen se retira al acabar y nadie debe estar escribiéndolo.
+// Suelta la sesión de una pestaña que se va a migrar SIN cerrarla (0.1.4): la pestaña conserva su sitio, su título y su
+// borrador, y queda apuntando a su conversación (`resumeSessionId`) para que reabrirla la reutilice. Una sesión que main
+// deja en segundo plano al cerrarla (turno en marcha o permiso pendiente) se para igual: migrar descarta ese turno.
+async function releaseTabSessionForMigration(mage: MageClient, get: () => WorkbenchState, set: SetFn, target: { readonly tabId: string; readonly conversationId: string }): Promise<void> {
+  const { tabId, conversationId } = target;
+  const live = get().sessionIdByChat[tabId];
+  set((s) => ({
+    tabs: s.tabs.map((t) => (t.id === tabId ? { ...t, resumeSessionId: conversationId } : t)),
+    sessionIdByChat: without(s.sessionIdByChat, tabId),
+    statusByChat: without(s.statusByChat, tabId),
+    pendingByChat: without(s.pendingByChat, tabId),
+    elicitationsByChat: without(s.elicitationsByChat, tabId),
+    streamingIdByChat: without(s.streamingIdByChat, tabId),
+    queuedByChat: without(s.queuedByChat, tabId),
+    steeringByChat: without(s.steeringByChat, tabId),
+  }));
+  if (live === undefined) return;
+  if (await closeSessionInMain(mage, live)) await mage.stop(live);
+}
+
+// La pestaña de la conversación migrada ocupa el sitio exacto de la vieja, con su título y su borrador; después la vieja
+// se cierra como «movida» (sin sesión y fuera del árbol: no colapsa ningún panel ni archiva el worktree).
+async function placeMigratedTab(get: () => WorkbenchState, set: SetFn, target: { readonly oldTabId: string; readonly newTabId: string }): Promise<void> {
+  const { oldTabId, newTabId } = target;
+  const old = get().tabs.find((t) => t.id === oldTabId);
+  if (old === undefined) throw new Error(`Pestaña migrada inexistente: ${oldTabId}`);
+  const draft = get().draftByChat[oldTabId];
+  set((s) => ({
+    splitLayout: replaceTabInPlace(s.splitLayout, oldTabId, newTabId),
+    activeTabId: newTabId,
+    tabs: s.tabs.map((t) => (t.id === newTabId && !isPlaceholderTitle(old.title) ? { ...t, title: old.title } : t)),
+    draftByChat: draft === undefined ? s.draftByChat : { ...s.draftByChat, [newTabId]: draft },
+  }));
+  await get().closeTab(oldTabId, { moved: true });
+}
+
+// Migra la conversación de una pestaña a una cuenta de otro proveedor (o de otra cuenta de Codex/agy). La pestaña no se
+// cierra antes: se suelta su sesión, y la conversación nueva ocupa después su sitio con su título y su borrador.
 async function migrateToOtherProvider(
   get: () => WorkbenchState,
+  set: SetFn,
   mage: MageClient,
   ctx: { readonly tabId: string; readonly sessionId: string; readonly destAccountId: string },
 ): Promise<void> {
@@ -3107,16 +3145,21 @@ async function migrateToOtherProvider(
   if (tab === undefined || source === undefined || dest === undefined || tab.provider !== source.providerId) {
     throw new Error(`Esta conversacion (${tab?.provider ?? 'sin pestana'}) no se puede migrar a ${dest?.providerId ?? ctx.destAccountId}`);
   }
-  await closeMatchingTab(get, ctx.sessionId);
+  await releaseTabSessionForMigration(mage, get, set, { tabId: ctx.tabId, conversationId: ctx.sessionId });
   await get().discardBackgroundConversation(ctx.sessionId);
   const result = await mage.migrateConversation({
     sourceAccountDir: source.id, sourceProvider: asAccountProvider(source.providerId), sessionId: ctx.sessionId, cwd: tab.cwd, privacy: tab.privacy,
     destAccountDir: dest.id, destProvider: asAccountProvider(dest.providerId),
+    ...(isPlaceholderTitle(tab.title) ? {} : { title: tab.title }),
   });
   get().setActiveAccount(dest.id);
   await get().loadConversationHistory();
   const migrated = get().conversationHistory.find((c) => c.sessionId === result.sessionId);
-  if (migrated !== undefined) get().openConversation(migrated);
+  if (migrated === undefined) return get().closeTab(ctx.tabId, { moved: true });
+  await get().openConversation(migrated);
+  const created = get().tabs.find((t) => t.id !== ctx.tabId && t.resumeSessionId === result.sessionId);
+  if (created === undefined) throw new Error(`La conversación migrada no se abrió: ${result.sessionId}`);
+  await placeMigratedTab(get, set, { oldTabId: ctx.tabId, newTabId: created.id });
 }
 
 function asAccountProvider(id: string): AccountProviderId {
