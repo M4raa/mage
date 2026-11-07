@@ -4,12 +4,15 @@ import { MotionConfig } from 'motion/react';
 import { App } from './App';
 import { ErrorBoundary } from './ErrorBoundary';
 import { installRendererLogForwarding } from './rendererLogForwarding';
+import { installDocumentDropGuard } from './documentDropGuard';
 import { initUiLanguage } from './i18n/uiLanguage';
 import { applyCustomThemeTokens, applyResolvedTheme, readStartupCustomTokens, readStartupTheme } from './workbench/theme';
 import './index.css';
 
 // Reenvia consola/errores del renderer al stream de debug (no-op en produccion).
 installRendererLogForwarding();
+// Soltar un enlace o un fichero fuera del chat no navega la ventana (main también lo impide).
+installDocumentDropGuard(document);
 
 // Aplica el tema ANTES de montar React usando los hints de localStorage (sin esto habria un parpadeo al
 // tema contrario mientras llega la configuracion por IPC). Primero el tema base (data-theme) y luego,
