@@ -168,8 +168,8 @@ export class RuntimeSession implements ManagedSession {
   answerPermission(requestId: string, decision: PermissionDecision): void {
     const entry = this.pending.get(requestId);
     if (entry === undefined) throw new UserFacingError(localized('errors.runtime.permissionUnknown', { requestId }));
-    this.pending.delete(requestId);
     if (decision.behavior === 'allow' && decision.scope === 'always') throw new Error(`El runtime no admite «permitir siempre» (${requestId})`);
+    this.pending.delete(requestId);
     if (decision.behavior === 'allow' && decision.scope === 'session' && entry.sessionKey !== null) this.sessionAllowed.add(entry.sessionKey);
     entry.resolve(decision.behavior === 'allow' ? decision : { behavior: 'deny', message: decision.message, byUser: true });
   }

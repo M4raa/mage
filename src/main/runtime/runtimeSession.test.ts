@@ -390,6 +390,17 @@ describe('RuntimeSession permisos', () => {
     expect(() => session.answerPermission(permissionRequests(events)[0]!.requestId, { behavior: 'allow', scope: 'always' })).toThrow(/siempre/);
   });
 
+  it('answerPermission_siempreRechazado_laPeticionSigueAbierta', async () => {
+    const { session, events } = setup([toolCallReply('Write', '{"file_path":"a"}'), textReply('x')], { gate: ask });
+    session.start();
+    session.sendUserMessage('escribe');
+    await settle();
+    const requestId = permissionRequests(events)[0]!.requestId;
+
+    expect(() => session.answerPermission(requestId, { behavior: 'allow', scope: 'always' })).toThrow(/siempre/);
+    expect(() => session.answerPermission(requestId, { behavior: 'allow' })).not.toThrow();
+  });
+
   it('authorize_peticionNormal_ofreceEstaSesion', async () => {
     const { session, events } = setup([toolCallReply('Write', '{"file_path":"a"}'), textReply('x')], { gate: ask });
     session.start();
