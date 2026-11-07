@@ -1042,6 +1042,11 @@ export interface MessageValues {
   readonly "history.recentProjects.title": never;
   readonly "i2.prompt.attachImage": never;
   readonly "i2.prompt.attachImageTip": never;
+  readonly "i3.files.section.created": never;
+  readonly "i3.files.section.edited": never;
+  readonly "i3.files.section.mentioned": never;
+  readonly "i3.files.section.plans": never;
+  readonly "i3.files.section.read": never;
   readonly "library.account.label": never;
   readonly "library.account.none": never;
   readonly "library.account.option": { readonly "engine": string | number; readonly "label": string | number };

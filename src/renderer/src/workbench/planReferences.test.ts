@@ -158,4 +158,38 @@ describe('panelEntries', () => {
 
     expect(entries.map((e) => e.docId)).toEqual(['C:/proj/plan.md', 'C:/proj/otro.md', 'plan:p1']);
   });
+
+  it('panelEntries_secciones_cadaFicheroEnLaMasFuerteYElMasRecientePrimero', () => {
+    const tool = (id: string, toolName: string, fileTouches: readonly { path: string; action: string }[], isError = false) =>
+      ({ kind: 'tool', id, tool: toolName, isError, filePath: null, command: '', fileTouches });
+    const blocks = [
+      tool('b1', 'Write', [{ path: 'C:/proj/a.ts', action: 'created' }]),
+      tool('b2', 'Read', [{ path: 'C:/proj/r.ts', action: 'read' }]),
+      tool('b3', 'Edit', [{ path: 'C:/proj/e.ts', action: 'edited' }]),
+      tool('b4', 'Read', [{ path: 'C:/proj/a.ts', action: 'read' }]),
+      tool('b5', 'apply_patch', [{ path: 'C:/proj/n.ts', action: 'created' }, { path: 'C:/proj/r.ts', action: 'edited' }]),
+      userBlock('u1', 'mira @notas.md'),
+      { kind: 'tool', id: 'p1', tool: 'ExitPlanMode', planText: '# P' },
+    ] as unknown as Block[];
+
+    const entries = panelEntries(blocks, 'C:/proj');
+
+    expect(entries.map((e) => [e.kind === 'file' ? e.section : 'plan', e.docId])).toEqual([
+      ['created', 'C:/proj/n.ts'],
+      ['created', 'C:/proj/a.ts'],
+      ['edited', 'C:/proj/r.ts'],
+      ['edited', 'C:/proj/e.ts'],
+      ['mentioned', 'C:/proj/notas.md'],
+      ['plan', 'plan:p1'],
+    ]);
+  });
+
+  it('panelEntries_bloqueSinFileTouches_seClasificaPorSuToolComoAntes', () => {
+    const blocks = [
+      { kind: 'tool', id: 'b1', tool: 'Read', isError: false, filePath: 'C:/proj/r.ts', command: '' },
+      { kind: 'tool', id: 'b2', tool: 'Bash', isError: false, filePath: null, command: 'cat C:/proj/x.ts' },
+    ] as unknown as Block[];
+
+    expect(panelEntries(blocks, 'C:/proj').map((e) => (e.kind === 'file' ? [e.section, e.docId] : null))).toEqual([['read', 'C:/proj/r.ts']]);
+  });
 });

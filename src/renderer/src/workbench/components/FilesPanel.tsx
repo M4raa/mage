@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { HighlightedLines } from './Markdown';
 import { useWorkbenchStore, type DocumentTarget } from '../workbenchStore';
 import { useT } from '../../i18n/uiLanguage';
 import { usePaneTabId } from '../paneContext';
 import type { CreatedFile } from '../createdFilesView';
-import { anchorTextMatcher, indexDocumentAnchors, panelEntries, type PanelEntry } from '../planReferences';
+import { anchorTextMatcher, indexDocumentAnchors, panelEntries, type FileSection, type PanelEntry } from '../planReferences';
 import { Markdown } from './Markdown';
 import { Hint } from './TranscriptHint';
 import { useHighlightedCode } from '../highlighter';
@@ -20,7 +20,7 @@ import { describeError } from '../describeError';
 //
 // Tres decisiones que explican la forma de esto:
 //
-//  - La LISTA sale de los bloques del chat (`createdFilesOf`), no de un registro nuevo. Igual que el
+//  - La LISTA sale de los bloques del chat (`panelEntries`), no de un registro nuevo. Igual que el
 //    panel de Artifacts, y por lo mismo: los bloques se hidratan desde la transcripcion al reabrir la
 //    conversacion, asi que la lista sale completa tambien en una conversacion de hace un mes.
 //  - El CONTENIDO se lee de DISCO, no del `writtenContent` del bloque. El fichero pudo cambiar despues
@@ -103,13 +103,22 @@ export function FilesPanel(): React.JSX.Element {
           que scrollea tiene que ser el conjunto lista+visor, no una cajita del 35% con el visor colgando
           por debajo. */}
       <ul className="flex min-h-0 flex-1 flex-col overflow-y-auto p-[6px]">
-        {entries.map((entry) => {
+        {entries.map((entry, index) => {
           const label = entryLabel(entry, planNumbers.get(entry.docId) ?? null, t);
           const isSelected = entry.docId === selected?.docId;
+          const section = sectionOf(entry);
+          const startsSection = index === 0 || sectionOf(entries[index - 1]!) !== section;
           return (
-          <li key={entry.docId} className="flex min-w-0 flex-col">
+          <Fragment key={entry.docId}>
+          {startsSection && (
+            <li role="presentation" data-files-section={section} className="px-[8px] pb-[2px] pt-[8px] text-[9.5px] font-bold tracking-[.06em] text-mg-ter first:pt-[2px]">
+              {sectionLabel(section, t)}
+            </li>
+          )}
+          <li className="flex min-w-0 flex-col">
             <button
               onClick={() => toggle(entry.docId)}
+              data-file-section={entry.kind === 'file' ? entry.section : undefined}
               aria-pressed={isSelected}
               aria-expanded={isSelected}
               {...(entry.kind === 'file' ? { 'data-created-file': entry.file.path } : { 'data-plan-doc': entry.docId })}
@@ -166,6 +175,7 @@ export function FilesPanel(): React.JSX.Element {
               )}
             </AnimatePresence>
           </li>
+          </Fragment>
           );
         })}
       </ul>
@@ -194,6 +204,27 @@ function entryLabel(entry: PanelEntry, planNumber: number | null, t: Translate):
   if (entry.kind === 'file') return { name: entry.file.name, dir: entry.file.dir, failed: entry.file.failed, cited: entry.cited };
   const name = planNumber === null ? t('chat.references.planTitle') : t('chat.references.planTitleNumbered', { number: planNumber });
   return { name, dir: entry.title, failed: false, cited: false };
+}
+
+type PanelSection = FileSection | 'plans';
+
+function sectionOf(entry: PanelEntry): PanelSection {
+  return entry.kind === 'plan' ? 'plans' : entry.section;
+}
+
+function sectionLabel(section: PanelSection, t: Translate): string {
+  switch (section) {
+    case 'created':
+      return t('i3.files.section.created');
+    case 'edited':
+      return t('i3.files.section.edited');
+    case 'read':
+      return t('i3.files.section.read');
+    case 'mentioned':
+      return t('i3.files.section.mentioned');
+    case 'plans':
+      return t('i3.files.section.plans');
+  }
 }
 
 // Destino pendiente de ESTE documento en ESTA pestana, o null.
