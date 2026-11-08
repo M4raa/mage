@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ClaudeAdapter } from './claudeAdapter';
 import { normalizeRawEvent } from './normalize';
+import { localized } from '@shared/i18n/localizedText';
 
 const launch = { sessionId: 's1', accountDir: '/home/u/.claude-p', model: 'haiku', cwd: '/proj' };
 
@@ -411,15 +412,81 @@ describe('ClaudeAdapter: directo (F4.1)', () => {
     expect(started).toEqual([{ kind: 'steer_result', messageId: U, outcome: 'active_turn' }]);
   });
 
-  it('normalize_startedTrasElResult_emiteNewTurn', () => {
+  // Lineas MEDIDAS en 2.1.319 (directo escrito justo antes del `initialize` de refresco): el directo tras el `result` se envia con
+  // `status requesting` + su uuid; si el CLI lo descarta, `informational` con `prompt_submit_outcome` y sin uuid.
+  const status = (uuids: readonly string[]) => ({ type: 'system', subtype: 'status', status: 'requesting', session_id: 'sess', uuid: 'st-1', user_message_uuids: uuids });
+  const NOT_SUBMITTED = {
+    type: 'system',
+    subtype: 'informational',
+    content: 'UserPromptSubmit operation blocked by hook:\nThe SDK host reconnected before its prompt hook answered, so this prompt was not submitted. Send it again.',
+    level: 'warning',
+    prevent_continuation: true,
+    prompt_submit_outcome: {
+      kind: 'blocked_by_hook',
+      prompt_kept: false,
+      reason: 'The SDK host reconnected before its prompt hook answered, so this prompt was not submitted. Send it again.',
+    },
+    uuid: 'e271585f-fbdf-4b6e-a8fc-41314b3ee594',
+    session_id: '40eb2867-4655-40a4-9ba9-98f3eb0b2b0a',
+  };
+
+  it('normalize_startedTrasElResult_esperaAlStatusYEmiteNewTurn', () => {
     const adapter = fresh();
     adapter.encodeSteer(U, 'x');
 
     const afterResult = adapter.normalize(RESULT);
     const started = adapter.normalize(lifecycle('started'));
+    const requesting = adapter.normalize(status([U]));
 
     expect(afterResult.some((event) => event.kind === 'steer_result')).toBe(false);
-    expect(started).toEqual([{ kind: 'steer_result', messageId: U, outcome: 'new_turn' }]);
+    expect(started).toEqual([]);
+    expect(requesting).toEqual([{ kind: 'steer_result', messageId: U, outcome: 'new_turn' }, { kind: 'request_started' }]);
+  });
+
+  it('normalize_informationalPromptNoEnviado_emiteFailedConElAvisoDelDirecto', () => {
+    // Arrange
+    const adapter = fresh();
+    adapter.encodeSteer(U, 'x');
+    adapter.normalize(RESULT);
+    adapter.normalize(lifecycle('started'));
+
+    // Act
+    const events = adapter.normalize(NOT_SUBMITTED);
+    const nextResult = adapter.normalize(RESULT);
+
+    // Assert
+    expect(events).toEqual([{ kind: 'steer_result', messageId: U, outcome: 'failed', localized: localized('i5.chat.promptNotSubmitted') }]);
+    expect(nextResult.some((event) => event.kind === 'steer_result')).toBe(false);
+  });
+
+  it('normalize_informationalPromptNoEnviadoSinDirecto_emiteErrorVisible', () => {
+    const adapter = fresh();
+
+    expect(adapter.normalize(NOT_SUBMITTED)).toEqual([{ kind: 'error', localized: localized('i5.chat.promptNotSubmitted') }]);
+  });
+
+  it('normalize_informationalConPromptConservado_noEmiteNada', () => {
+    const adapter = fresh();
+    const kept = { ...NOT_SUBMITTED, prompt_submit_outcome: { ...NOT_SUBMITTED.prompt_submit_outcome, prompt_kept: true } };
+
+    expect(adapter.normalize(kept)).toEqual([]);
+  });
+
+  it('normalize_startedTrasElResultYResultSinStatus_emiteNewTurnInferido', () => {
+    const adapter = fresh();
+    adapter.encodeSteer(U, 'x');
+    adapter.normalize(RESULT);
+    adapter.normalize(lifecycle('started'));
+
+    const closed = adapter.normalize(RESULT);
+
+    expect(closed).toContainEqual({ kind: 'steer_result', messageId: U, outcome: 'new_turn', inferred: true });
+  });
+
+  it('normalize_statusSinUuidsDeDirectos_devuelveLoDeSiempre', () => {
+    const adapter = fresh();
+
+    expect(adapter.normalize(status(['ajeno']))).toEqual(normalizeRawEvent(status(['ajeno'])));
   });
 
   it('normalize_cancelled_emiteFailed', () => {

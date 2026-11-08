@@ -2413,6 +2413,31 @@ describe('cola de mensajes', () => {
     expect(store.getState().draftByChat.a?.text).toBe('ya');
   });
 
+  it('messageDelivery_promptNoEnviadoPorElCli_avisaYAnteponeAlBorradorSinAvisoDeMensajeNuevo', async () => {
+    // Arrange
+    const { store, sendMessage } = mounted('streaming', steering());
+    await store.getState().sendMessageToTab('a', 'ya', [], 'steer');
+    const commandId = commandIdOfFirstSend(sendMessage);
+    store.getState().setDraft('a', { text: 'sigo escribiendo', attachments: [], mentions: [] });
+
+    // Act
+    store.getState().handleEvent('s-a', {
+      kind: 'message_delivery',
+      commandId,
+      message: { id: commandId, text: 'ya', attachments: [] },
+      into: 'failed',
+      late: false,
+      turnKind: null,
+      localized: localized('i5.chat.promptNotSubmitted'),
+    });
+
+    // Assert
+    expect(userTexts(store)).toEqual([]);
+    expect(blocksOfKind(store, 'error').map((b) => b.kind === 'error' && b.message)).toContain('El CLI no llegó a enviar este mensaje. Vuelve a enviarlo.');
+    expect(blocksOfKind(store, 'system').map((b) => b.kind === 'system' && b.text)).not.toContain(TURN_ENDED_TEXT);
+    expect(store.getState().draftByChat.a?.text).toBe('ya\n\nsigo escribiendo');
+  });
+
   it('messageDelivery_deOtroCliente_soloDejaElAviso', () => {
     const { store } = mounted('streaming');
 

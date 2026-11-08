@@ -99,6 +99,10 @@ export class AgentSession {
   private launchStale = false;
   // Hay un turno en marcha (desde el mensaje hasta su `result`): no se recicla el proceso a mitad de uno.
   private turnActive = false;
+  // Se escribio un directo desde el ultimo `result`. MEDIDO en 2.1.319: un `initialize` que llega al CLI con el hook
+  // `UserPromptSubmit` de un directo aun sin contestar lo cancela y descarta el prompt («The SDK host reconnected
+  // before its prompt hook answered…»). Con un directo en vuelo, el refresco del catalogo espera al siguiente `result`.
+  private steerSinceResult = false;
   // Id de la conversacion del CLI tras un `/clear` (P-028): el relanzado reanuda ESA y no la de antes
   // del clear. null = la del arranque (`params.sessionId`).
   private resetConversationId: string | null = null;
@@ -241,6 +245,7 @@ export class AgentSession {
       this.trackAndEmit({ kind: 'steer_result', messageId, outcome: 'no_active_turn' });
       return;
     }
+    this.steerSinceResult = true;
     this.writePayload(encoding.payload);
   }
 
@@ -555,7 +560,9 @@ export class AgentSession {
       // Refresco del catalogo de comandos "/" (2.2): un `/reload-plugins` o un plugin instalado a
       // mitad de sesion aparece SIN reiniciar nada. Medido: un segundo `initialize` responde con los
       // 159 comandos y NO duplica los hooks (un turno de prueba recibio un solo hook_callback de Stop).
-      this.requestCommandCatalog();
+      // Salvo con un directo en vuelo (ver `steerSinceResult`): se deja para el siguiente `result`.
+      if (!this.steerSinceResult) this.requestCommandCatalog();
+      this.steerSinceResult = false;
     } else if (event.kind === 'engine_response') {
       this.pendingEngineRequests.delete(event.requestId);
     } else if (event.kind === 'conversation_reset') {

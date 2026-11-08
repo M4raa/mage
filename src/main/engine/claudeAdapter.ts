@@ -112,6 +112,7 @@ export class ClaudeAdapter implements ProviderAdapter {
 
   buildSpawnPlan(params: LaunchParams): SpawnPlan {
     this.steers.clear(); // proceso nuevo: los directos del anterior murieron con el
+    this.awaitingSubmit.clear();
     this.engineRequests.clear(); // y las peticiones al motor sin respuesta tambien
     this.permissionRules.clear(); // y sus permisos abiertos
     // Reanudar (`--resume <id>`) continua la conversacion existente y sigue escribiendo en su misma
@@ -312,6 +313,8 @@ export class ClaudeAdapter implements ProviderAdapter {
   private outgoing: unknown[] = [];
   // Directos en vuelo: uuid -> true si ya paso un `result` desde que se escribio (su `started` abrira turno propio).
   private readonly steers = new Map<string, boolean>();
+  // Directos con `started` tras el `result` que aun no consta que el CLI haya enviado (ver normalizePromptSubmit).
+  private readonly awaitingSubmit = new Set<string>();
   // request_id de las peticiones al motor sin respuesta (`encodeEngineRequest`).
   private readonly engineRequests = new Set<string>();
   // Peticiones de permiso abiertas: request_id -> reglas del CLI y alcances ofrecidos. Viven en main: el renderer
@@ -338,6 +341,8 @@ export class ClaudeAdapter implements ProviderAdapter {
     if (engine !== null) return engine;
     const type = (raw as { type?: unknown } | null)?.type;
     if (type === 'command_lifecycle') return this.normalizeSteer(raw);
+    const submit = this.normalizePromptSubmit(raw);
+    if (submit !== null) return submit;
     const events = normalizeRawEvent(raw);
     if (type === 'control_cancel_request') this.forgetPermission(raw);
     const decorated = type === 'control_request' ? this.withPermissionScopes(raw, events) : events;
@@ -377,7 +382,8 @@ export class ClaudeAdapter implements ProviderAdapter {
     return [{ kind: 'engine_response', requestId, ok, result: ok ? (response.response ?? null) : null, error: ok ? null : error }];
   }
 
-  // `started` antes de un `result` = absorbido en el turno; despues = turno propio. `cancelled` = no llego.
+  // `started` antes de un `result` = absorbido en el turno; despues = turno propio, que aun puede no enviarse (ver
+  // normalizePromptSubmit): se resuelve con su `system/status`. `cancelled` = no llego.
   // Un uuid que no es un directo nuestro, o una linea malformada, no emite nada.
   private normalizeSteer(raw: unknown): MageEvent[] {
     const parsed = CommandLifecycleSchema.safeParse(raw);
@@ -387,14 +393,38 @@ export class ClaudeAdapter implements ProviderAdapter {
     if (afterResult === undefined || (state !== 'started' && state !== 'cancelled')) return [];
     this.steers.delete(messageId);
     if (state === 'cancelled') return [{ kind: 'steer_result', messageId, outcome: 'failed' }];
-    return [{ kind: 'steer_result', messageId, outcome: afterResult ? 'new_turn' : 'active_turn' }];
+    if (!afterResult) return [{ kind: 'steer_result', messageId, outcome: 'active_turn' }];
+    this.awaitingSubmit.add(messageId);
+    return [];
+  }
+
+  // MEDIDO en 2.1.319: un directo que abre turno propio tras el `result` se envia de verdad cuando
+  // llega `system/status requesting` con su uuid en `user_message_uuids`. Si su hook UserPromptSubmit se cancela, el
+  // CLI no lo envia y lo dice con `system/informational` + `prompt_submit_outcome {prompt_kept:false}`, SIN uuid: se
+  // atribuye al directo que esperaba envio; sin ninguno, error visible. null = la linea no es de esto.
+  private normalizePromptSubmit(raw: unknown): MageEvent[] | null {
+    const line = raw as { type?: unknown; subtype?: unknown; user_message_uuids?: unknown; prompt_submit_outcome?: { prompt_kept?: unknown } } | null;
+    if (line?.type !== 'system') return null;
+    if (line.subtype === 'status' && Array.isArray(line.user_message_uuids)) {
+      const submitted = line.user_message_uuids.filter((id): id is string => typeof id === 'string' && this.awaitingSubmit.delete(id));
+      const steers = submitted.map((messageId): MageEvent => ({ kind: 'steer_result', messageId, outcome: 'new_turn' }));
+      return [...steers, ...normalizeRawEvent(raw)];
+    }
+    if (line.subtype !== 'informational' || line.prompt_submit_outcome?.prompt_kept !== false) return null;
+    const notSubmitted = localized('i5.chat.promptNotSubmitted');
+    const [messageId] = this.awaitingSubmit;
+    if (messageId === undefined) return [{ kind: 'error', localized: notSubmitted }];
+    this.awaitingSubmit.delete(messageId);
+    return [{ kind: 'steer_result', messageId, outcome: 'failed', localized: notSubmitted }];
   }
 
   // Cierre de turno: los directos sin `started` pasan a «tras result». Salvaguarda: uno que ya lo estaba
   // y ve OTRO `result` sin haber recibido `started` se da por turno propio (inferido), para que la cola
-  // nunca se quede esperando una señal que no llega.
+  // nunca se quede esperando una señal que no llega. Igual uno con `started` cuyo turno cerro sin `status`.
   private afterResult(): MageEvent[] {
     const inferred: MageEvent[] = [];
+    for (const messageId of this.awaitingSubmit) inferred.push({ kind: 'steer_result', messageId, outcome: 'new_turn', inferred: true });
+    this.awaitingSubmit.clear();
     for (const [messageId, afterResult] of this.steers) {
       if (!afterResult) {
         this.steers.set(messageId, true);

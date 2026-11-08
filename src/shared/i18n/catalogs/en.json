@@ -1055,6 +1055,7 @@
   "i3.permission.alwaysCancel": "Cancel",
   "i3.permission.alwaysConfirm": "Always allow",
   "i3.permission.alwaysWarning": "Warning: the rule {rule} will be saved in the settings of the account {account}. It will apply to every new conversation of that account, and the agent will no longer ask before using it.",
+  "i5.chat.promptNotSubmitted": "The CLI didn't submit this message. Send it again.",
   "library.account.label": "Account",
   "library.account.none": "There are no Claude or Codex accounts.",
   "library.account.option": "{engine} · {label}",

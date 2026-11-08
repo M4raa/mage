@@ -1057,6 +1057,7 @@ export interface MessageValues {
   readonly "i3.permission.alwaysCancel": never;
   readonly "i3.permission.alwaysConfirm": never;
   readonly "i3.permission.alwaysWarning": { readonly "account": string | number; readonly "rule": string | number };
+  readonly "i5.chat.promptNotSubmitted": never;
   readonly "library.account.label": never;
   readonly "library.account.none": never;
   readonly "library.account.option": { readonly "engine": string | number; readonly "label": string | number };

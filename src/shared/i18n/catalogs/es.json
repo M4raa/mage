@@ -1055,6 +1055,7 @@
   "i3.permission.alwaysCancel": "Cancelar",
   "i3.permission.alwaysConfirm": "Permitir siempre",
   "i3.permission.alwaysWarning": "Atención: se guardará la regla {rule} en los ajustes de la cuenta {account}. Valdrá para todas las conversaciones nuevas de esa cuenta y el agente ya no preguntará antes de usarla.",
+  "i5.chat.promptNotSubmitted": "El CLI no llegó a enviar este mensaje. Vuelve a enviarlo.",
   "library.account.label": "Cuenta",
   "library.account.none": "No hay ninguna cuenta de Claude ni de Codex.",
   "library.account.option": "{engine} · {label}",

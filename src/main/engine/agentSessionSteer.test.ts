@@ -45,6 +45,28 @@ describe('AgentSession directo (F4.1)', () => {
     expect(h.events.at(-1)).toEqual({ kind: 'steer_result', messageId: 'm1', outcome: 'no_active_turn' });
   });
 
+  // Medido en 2.1.319: el `initialize` de refresco con el hook UserPromptSubmit del directo aun sin
+  // contestar hace que el CLI descarte el directo. Con uno en vuelo, el refresco espera al siguiente `result`.
+  it('result_conDirectoEscritoDesdeElUltimoResult_noReenviaInitializeHastaElSiguiente', () => {
+    // Arrange
+    const h = withEncode((id, text): SteerEncoding => ({ kind: 'write', payload: { steer: id, text } }));
+    h.session.start();
+    const result = { kind: 'result', result: { subtype: 'success', isError: false, numTurns: 1 } } as const;
+    const isInit = (line: unknown) => (line as { request?: { subtype?: string } }).request?.subtype === 'initialize';
+    const initsBefore = written(h.children[0]!).filter(isInit).length;
+
+    // Act
+    h.session.steerUserMessage('m1', 'x');
+    emitLine(h.children[0]!, [result]);
+    const initsAfterFirst = written(h.children[0]!).filter(isInit).length;
+    emitLine(h.children[0]!, [result]);
+    const initsAfterSecond = written(h.children[0]!).filter(isInit).length;
+
+    // Assert
+    expect(initsAfterFirst).toBe(initsBefore);
+    expect(initsAfterSecond).toBe(initsBefore + 1);
+  });
+
   it('normalize_steerResultInferido_loEmiteYDejaUnWarn', () => {
     const log = vi.fn();
     const h = harness(undefined, log);

@@ -3065,7 +3065,8 @@ function settleOwnSteer(mage: MageClient, get: () => WorkbenchState, set: SetFn,
   if (event.into === 'queue') return;
   const reason = renderLocalized(t, event.localized ?? localized('chat.steer.failed'));
   patchBlocks(set, tabId, (blocks) => appendErrorBlock(blocks, reason, nextBlockId()));
-  restoreDraftAfterFailedSend(set, tabId, event.message.text, event.message.attachments);
+  // Delante de lo que ya se haya escrito, sin pisarlo (p. ej. el directo que el CLI no llegó a enviar).
+  returnMessagesToDraft(get, tabId, [event.message]);
 }
 
 // #1: aviso de «Omitir permisos» al ACTIVARLO, venga de donde venga (chip, Shift+Tab, atajo o evento del
