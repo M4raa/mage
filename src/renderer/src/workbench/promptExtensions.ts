@@ -1,5 +1,5 @@
 import { EditorView, Decoration, ViewPlugin, WidgetType, type DecorationSet, type ViewUpdate } from '@codemirror/view';
-import { EditorState, type Extension } from '@codemirror/state';
+import { EditorState, type Extension, type Transaction } from '@codemirror/state';
 import { findImageTokens } from '@shared/imageRefs';
 import { decorationRangesFor, type DecorationKind } from './promptDecorations';
 import { isFileDrag } from './tabActions';
@@ -142,6 +142,70 @@ const fileDropGuard = EditorView.domEventHandlers({
   drop: (event) => event.dataTransfer !== null && isFileDrag(event.dataTransfer.types),
 });
 
+// Tiempo que la región en vivo de CodeMirror conserva un anuncio (p. ej. «Selection deleted»): un lector de pantalla lo
+// lee al cambiar la región (aria-live polite); después se vacía para que no quede texto viejo delante del placeholder.
+const ANNOUNCEMENT_CLEAR_MS = 1500;
+
+export function announcesSomething(transactions: readonly Transaction[]): boolean {
+  return transactions.some((tr) => tr.effects.some((effect) => effect.is(EditorView.announce)));
+}
+
+export interface AnnouncementCleaner {
+  readonly onAnnounce: () => void;
+  readonly dispose: () => void;
+}
+
+export interface AnnouncementCleanerDeps {
+  readonly clear: () => void;
+  readonly setTimer: (fn: () => void, ms: number) => () => void; // devuelve el cancelador
+  readonly delayMs: number;
+}
+
+export function createAnnouncementCleaner(deps: AnnouncementCleanerDeps): AnnouncementCleaner {
+  let cancelPending: (() => void) | null = null;
+  const dispose = (): void => {
+    cancelPending?.();
+    cancelPending = null;
+  };
+  const onAnnounce = (): void => {
+    dispose();
+    cancelPending = deps.setTimer(() => {
+      cancelPending = null;
+      deps.clear();
+    }, deps.delayMs);
+  };
+  return { onAnnounce, dispose };
+}
+
+// Vacía la región `.cm-announced` un rato después de cada anuncio. El anuncio NO se quita (sigue siendo accesible).
+const announcementCleanupPlugin = ViewPlugin.fromClass(
+  class {
+    private readonly cleaner: AnnouncementCleaner;
+
+    constructor(view: EditorView) {
+      this.cleaner = createAnnouncementCleaner({
+        clear: () => {
+          const region = view.dom.querySelector('.cm-announced');
+          if (region !== null) region.textContent = '';
+        },
+        setTimer: (fn, ms) => {
+          const id = window.setTimeout(fn, ms);
+          return () => window.clearTimeout(id);
+        },
+        delayMs: ANNOUNCEMENT_CLEAR_MS,
+      });
+    }
+
+    update(update: ViewUpdate): void {
+      if (announcesSomething(update.transactions)) this.cleaner.onAnnounce();
+    }
+
+    destroy(): void {
+      this.cleaner.dispose();
+    }
+  },
+);
+
 export function promptExtensions(): readonly Extension[] {
-  return [decorationsPlugin, imageRefPlugin, fileDropGuard, promptTheme, EditorView.lineWrapping, EditorState.allowMultipleSelections.of(false)];
+  return [decorationsPlugin, imageRefPlugin, announcementCleanupPlugin, fileDropGuard, promptTheme, EditorView.lineWrapping, EditorState.allowMultipleSelections.of(false)];
 }
