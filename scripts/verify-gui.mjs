@@ -11229,6 +11229,56 @@ const CHECKS = [
       }
     },
   },
+  {
+    // U51 (0.1.4): al copiar un mensaje, cada `[Imagen N]` añadida con el botón lleva su ruta y la pegada no. Pestaña del
+    // runtime propio contra el servidor falso (sin CLI ni cuota). La imagen del botón entra por `DOM.setFileInputFiles` de
+    // CDP con un fichero REAL (así `webUtils.getPathForFile` da su ruta); la segunda se pega. No se pulsa Enter: se envía el
+    // borrador por el store con las rutas del borrador, como hace `submit`. El runtime aún no admite imágenes, así que main
+    // rechaza el envío; la burbuja optimista se queda y es la que se copia. El portapapeles va MOCKEADO (el del SO falla en
+    // silencio, ver 2.9.b): se lee el `text/plain` del ClipboardItem que se escribió.
+    name: 'U51: copiar un mensaje lleva la ruta de la imagen del botón y no la de la pegada',
+    async run(page, { userDataDir }) {
+      const fake = await startFakeOpenAiServer();
+      const carpeta = fs.mkdtempSync(path.join(os.tmpdir(), 'mage-verify-ruta-'));
+      const fixture = path.join(carpeta, 'captura ruta.png');
+      fs.writeFileSync(fixture, Buffer.from(TINY_PNG_BASE64, 'base64'));
+      const cdp = await page.context().newCDPSession(page);
+      let tabId = null;
+      try {
+        ({ tabId } = await openRuntimeTab(page, { fake, userDataDir, provider: IMAGE_PATH_PROVIDER, model: 'fake:eco' }));
+        const { root } = await cdp.send('DOM.getDocument', { depth: 0 });
+        const { nodeId } = await cdp.send('DOM.querySelector', { nodeId: root.nodeId, selector: `[data-pane-tab-id="${tabId}"] input[data-attach-input="image"]` });
+        await cdp.send('DOM.setFileInputFiles', { nodeId, files: [fixture] });
+        await page.waitForFunction((id) => (window.__mageDev.store.getState().draftByChat[id]?.attachments.length ?? 0) === 1, tabId, { timeout: CONFIG.actionTimeoutMs });
+        await pasteFiles(page, [{ name: 'pegada.png', type: 'image/png', base64: TINY_PNG_BASE64 }]);
+        await page.waitForFunction((id) => (window.__mageDev.store.getState().draftByChat[id]?.attachments.length ?? 0) === 2, tabId, { timeout: CONFIG.actionTimeoutMs });
+        const borrador = await page.evaluate(async (id) => {
+          const state = () => window.__mageDev.store.getState();
+          const draft = state().draftByChat[id];
+          const rutas = draft.attachments.map((a) => a.sourcePath);
+          state().setDraft(id, null);
+          await state().sendMessageToTab(id, draft.text, draft.attachments.map((a) => a.attachment), { attachmentPaths: rutas });
+          return { texto: draft.text, rutas };
+        }, tabId);
+        const copiado = await copyUserBubble(page, tabId);
+        const esperado = `[Imagen 1](${fixture}) [Imagen 2]`;
+        const ok = borrador.rutas[0] === fixture && borrador.rutas[1] === null && copiado.texto === esperado && copiado.conImagen;
+        return { ok, detail: JSON.stringify({ borrador, copiado, esperado }) };
+      } finally {
+        await cdp.detach();
+        if (tabId !== null) {
+          await page.evaluate((id) => {
+            const state = window.__mageDev.store.getState();
+            state.setDraft(id, null);
+            state.closeTab(id);
+          }, tabId);
+        }
+        await page.evaluate((id) => window.__mageDev.store.getState().removeCustomProvider(id), IMAGE_PATH_PROVIDER.id);
+        await fake.close();
+        fs.rmSync(carpeta, { recursive: true, force: true });
+      }
+    },
+  },
   // --- S2 (0.1.4): la ventana no navega fuera de Mage. Ninguna pulsa Enter. ---
   {
     // Soltar un enlace o un .html fuera del chat (barra lateral, de pestañas o cabecera) no puede llevar la ventana a otra
@@ -13228,6 +13278,36 @@ async function pasteFiles(page, files) {
     }
     target.dispatchEvent(new ClipboardEvent('paste', { clipboardData: transfer, bubbles: true, cancelable: true }));
   }, files);
+}
+
+const IMAGE_PATH_PROVIDER = { id: 'custom:vg-ruta-imagen', label: 'VG ruta imagen' };
+
+// Pulsa «Copiar» de la (única) burbuja del usuario de la pestaña con el portapapeles MOCKEADO y devuelve el `text/plain`
+// escrito y si llevaba imagen. Con imagen, el botón escribe un ClipboardItem (`write`); sin ella, `writeText`.
+async function copyUserBubble(page, tabId) {
+  const selector = `[data-pane-tab-id="${tabId}"] button[data-copy-button="true"][aria-label="${cssAttr(ui('chat.copy.userMessage'))}"]`;
+  await page.waitForFunction((sel) => document.querySelectorAll(sel).length === 1, selector, { timeout: CONFIG.actionTimeoutMs });
+  return page.evaluate(async (sel) => {
+    const escrito = [];
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: {
+        write: async (items) => void escrito.push(...items),
+        writeText: async (text) => void escrito.push(text),
+      },
+    });
+    try {
+      document.querySelector(sel).click();
+      const limite = Date.now() + 5_000;
+      while (escrito.length === 0 && Date.now() < limite) await new Promise((r) => setTimeout(r, 30));
+      const item = escrito[0];
+      if (item === undefined) return { texto: null, conImagen: false };
+      if (typeof item === 'string') return { texto: item, conImagen: false };
+      return { texto: await (await item.getType('text/plain')).text(), conImagen: item.types.includes('image/png') };
+    } finally {
+      delete navigator.clipboard;
+    }
+  }, selector);
 }
 
 // --- Git (P-026 3.5): repo temporal que monta el SCRIPT, nunca la app ------------------------------
