@@ -93,7 +93,7 @@ export function ZoneResizeHandle({ anchor, sizePx, paneRef, onCommit, ariaLabel,
     const drag = dragStartRef.current;
     if (drag === null) return sizePx;
     const raw = drag.size + (clientPos - drag.pos) * dragSign;
-    const snapped = free ? raw : snapToMagnets(raw, viewportPxFor(orientation));
+    const snapped = free ? raw : snapToMagnets(raw, viewportPxFor(orientation), { minPx: MIN_ZONE_SIZE_PX, maxPx: max });
     return Math.min(Math.max(snapped, MIN_ZONE_SIZE_PX), max);
   };
 

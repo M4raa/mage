@@ -361,6 +361,18 @@ describe('snapToMagnets', () => {
     expect(snapToMagnets(12, 40)).toBe(13);
   });
 
+  it('snapToMagnets_imanPorDebajoDelMinimo_noEngancha', () => {
+    expect(snapToMagnets(290, 859, { minPx: 320, maxPx: 539 })).toBe(290);
+  });
+
+  it('snapToMagnets_imanPorEncimaDelMaximo_noEngancha', () => {
+    expect(snapToMagnets(570, 859, { minPx: 320, maxPx: 539 })).toBe(570);
+  });
+
+  it('snapToMagnets_imanDentroDeLosLimites_engancha', () => {
+    expect(snapToMagnets(503, 1000, { minPx: 320, maxPx: 680 })).toBe(500);
+  });
+
   it('snapToMagnets_cero_noPega', () => {
     expect(snapToMagnets(0, 1000)).toBe(0);
   });

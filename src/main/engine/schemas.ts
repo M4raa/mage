@@ -223,6 +223,8 @@ export const ResultSchema = z.object({
   subtype: z.string(),
   is_error: z.boolean().optional(),
   num_turns: z.number().nullish(),
+  // Id de la conversación del `result`. MEDIDO en 2.1.319: tras `/clear` ya es el nuevo.
+  session_id: z.string().min(1).optional().catch(undefined),
   // Medido con claude 2.1.292 y ANTHROPIC_API_KEY contra el servidor local del spike de uso API.
   usage: z.object({
     input_tokens: z.number().int().nonnegative(),

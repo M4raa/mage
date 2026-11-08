@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { snapToMagnets } from '@shared/panelLayout';
+import { dragRatio } from '../splitLayout';
 
 // Divisor de resize entre los dos lados de una division del workspace (I11 — generaliza el split fijo
 // de Ronda 3 item 13). A diferencia de `dock/ZoneResizeHandle.tsx` (F6), que resizea una zona en PIXELES
@@ -48,9 +48,7 @@ export function SplitPaneResizeHandle({ direction, ratio, containerRef, onCommit
   const ratioFromPointer = (pos: number, free: boolean): number => {
     const drag = dragStartRef.current;
     if (drag === null || drag.size <= 0) return ratio;
-    const raw = drag.ratio + (pos - drag.pos) / drag.size;
-    const snapped = free ? raw : snapToMagnets(raw * drag.size, drag.size) / drag.size;
-    return Math.min(MAX_RATIO, Math.max(MIN_RATIO, snapped));
+    return dragRatio({ startRatio: drag.ratio, deltaPx: pos - drag.pos, sizePx: drag.size, free });
   };
 
   const onPointerDown = (e: React.PointerEvent<HTMLDivElement>): void => {

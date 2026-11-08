@@ -93,13 +93,15 @@ function guardHostOption(key: HostOptionKey, value: string): string {
 
 // Valida la petición y resuelve cuenta, modelo y esfuerzo. La confianza la decide main, nunca `trust.acknowledged`.
 // La frontera de `session.create` (cuenta, modelo por defecto y confianza decidida por main), también para el MCP.
-export function resolveHostLaunchParams(deps: HostControlDeps, request: HostCreateRequest): CreateSessionParams {
+export function resolveHostLaunchParams(deps: HostControlDeps, request: HostCreateRequest, options: { readonly cliDefaultModel?: boolean } = {}): CreateSessionParams {
   if (!isAbsolute(request.cwd)) throw new Error(`La carpeta tiene que ser una ruta absoluta: ${request.cwd}`);
   const account = deps.listAccounts().find((a) => a.configDir === request.accountId && a.providerId === request.provider);
   if (account === undefined) throw new UnknownAccountError(request.accountId, request.provider);
   const defaults = deps.defaultModels();
-  const model = request.model ?? nonEmpty(defaults[request.provider]) ?? nonEmpty(account.defaultModel ?? undefined);
-  if (model === undefined) throw new Error(`No hay modelo por defecto para ${request.provider}: indica uno`);
+  const requested = request.model ?? nonEmpty(defaults[request.provider]) ?? nonEmpty(account.defaultModel ?? undefined);
+  // La terminal tiene que indicar modelo; el MCP no: una delegada sin modelo conocido usa el del CLI (como antes de S2).
+  if (requested === undefined && options.cliDefaultModel !== true) throw new Error(`No hay modelo por defecto para ${request.provider}: indica uno`);
+  const model = requested ?? '';
   const effort = request.effort ?? nonEmpty(defaults[`${request.provider}${EFFORT_KEY_SUFFIX}`]);
   if (!deps.isTrusted(request.cwd, account.configDir)) throw new TrustRequiredError(request.cwd);
   return {

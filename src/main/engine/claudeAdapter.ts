@@ -117,7 +117,9 @@ export class ClaudeAdapter implements ProviderAdapter {
     // Reanudar (`--resume <id>`) continua la conversacion existente y sigue escribiendo en su misma
     // transcripcion; arrancar (`--session-id <id>`) crea una nueva con el id dado. Mutuamente
     // excluyentes: el CLI no acepta ambos.
-    const args = [...BASE_ARGS, ...sessionArgsOf(params), '--model', params.model];
+    const args = [...BASE_ARGS, ...sessionArgsOf(params)];
+    // Modelo vacío = sin `--model`: el CLI elige el suyo (una delegada sin modelo conocido).
+    if (params.model.length > 0) args.push('--model', params.model);
     // Effort opcional (M2.4): solo se anade si viene (ya validado en la frontera); sin el, default CLI.
     if (params.effort !== undefined && params.effort.length > 0) args.push('--effort', params.effort);
     // Tope de gasto opcional (M2.4): centavos enteros -> dolares con 2 decimales SOLO en la frontera

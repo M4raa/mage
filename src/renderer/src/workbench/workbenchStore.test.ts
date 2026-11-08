@@ -9,7 +9,7 @@ import { createWorkbenchStore, type ConversationFolderChoice } from './workbench
 import { findLeafPath, singleLeaf } from './splitLayout';
 import { useNotificationStore } from './notificationStore';
 import { EMPTY_NOTIFICATIONS } from './notifications';
-import type { Account, Tab } from './types';
+import type { Account, Block, Tab } from './types';
 import type { AccountInfo } from '@shared/accounts';
 import { CODEX_PROVIDER_ID } from '@shared/providers';
 import { makeEntry } from '@testing/transcriptEntry';
@@ -1090,6 +1090,36 @@ describe('renameConversation', () => {
     expect(notify).toHaveBeenCalledTimes(1);
   });
 
+  const RENAME_OUTPUT = { kind: 'local_command_output', command: 'rename', args: 'Nuevo', text: 'Session renamed to: Nuevo' } as const;
+  const commandOutputs = (store: ReturnType<typeof mounted>['store']) => (store.getState().blocksByChat.a ?? []).filter((b) => b.kind === 'command-output');
+
+  it('renameConversation_salidaDelRenameSilencioso_noPintaFila', () => {
+    const { store } = mounted('idle');
+    store.getState().renameConversation('a', 'Nuevo');
+
+    store.getState().handleEvent('s-a', RENAME_OUTPUT);
+
+    expect(commandOutputs(store)).toHaveLength(0);
+  });
+
+  it('localCommandOutput_renameTecleadoPorElUsuario_siPintaFila', () => {
+    const { store } = mounted('idle');
+
+    store.getState().handleEvent('s-a', RENAME_OUTPUT);
+
+    expect(commandOutputs(store)).toHaveLength(1);
+  });
+
+  it('renameConversation_soloSeTragaUnaSalida', () => {
+    const { store } = mounted('idle');
+    store.getState().renameConversation('a', 'Nuevo');
+
+    store.getState().handleEvent('s-a', RENAME_OUTPUT);
+    store.getState().handleEvent('s-a', RENAME_OUTPUT);
+
+    expect(commandOutputs(store)).toHaveLength(1);
+  });
+
   it('renameConversation_proveedorSinTranscripcionDeClaude_noMandaNada', () => {
     const { store, sendMessage } = mounted('idle');
     store.setState({ tabs: [tab('a', { provider: 'agy' })] });
@@ -1583,6 +1613,20 @@ describe('requestAccountSwitch y continueInAccount', () => {
     expect(s.tabs[0]).toMatchObject({ id: 'a', accountId: B, accountAlias: 'otra', provider: 'claude' });
     expect(s.sessionIdByChat.a).toBeUndefined();
     expect(closeSession).toHaveBeenCalledWith('s-a');
+  });
+
+  it('requestAccountSwitch_pestanaNuevaConSoloModel_reasignaSinDialogo', () => {
+    const closeSession = vi.fn().mockResolvedValue({ background: false });
+    const store = mounted({ closeSession });
+    const echo = { kind: 'user', id: 'u-1', text: '/model', attachments: [] };
+    const output = { kind: 'command-output', id: 'c-1', command: 'model', args: '', text: 'ok' };
+    store.setState({ tabs: [tab('a')], sessionIdByChat: { a: 's-a' }, blocksByChat: { a: [echo, output] as never } });
+
+    store.getState().requestAccountSwitch(B);
+
+    const s = store.getState();
+    expect(s.accountSwitchPrompt).toBeNull();
+    expect(s.tabs[0]).toMatchObject({ id: 'a', accountId: B });
   });
 
   it('requestAccountSwitch_sesionVivaSinTurnosHaciaCodex_cambiaElProveedorDeLaPestana', () => {
@@ -3041,6 +3085,42 @@ describe('adoptLiveSession (U17)', () => {
     expect(store.getState().sessionIdByChat[adopted?.id ?? '']).toBe('s-host');
     expect(store.getState().statusByChat[adopted?.id ?? '']).toBe('streaming');
     expect(findLeafPath(store.getState().splitLayout, adopted?.id ?? '')).not.toBeNull();
+  });
+
+  const textBlock = (kind: 'user' | 'agent', id: string, text: string): Block => ({ kind, id, text, attachments: [] }) as unknown as Block;
+  const liveBlocks = [textBlock('user', 'blk1', 'hola'), textBlock('agent', 'blk2', 'ok')];
+  const transcript = [textBlock('user', 'tb-0-0', 'hola'), textBlock('agent', 'tb-1-0', 'ok')];
+
+  async function adoptedWith(blocks: readonly Block[], status: 'idle' | 'streaming') {
+    const store = mountedHost(vi.fn().mockResolvedValue(snapshotOf()));
+    await store.getState().adoptLiveSession(hostSession());
+    const adoptedId = store.getState().tabs.find((t) => t.id !== 'tab1')?.id ?? '';
+    store.setState((s) => ({ blocksByChat: { ...s.blocksByChat, [adoptedId]: blocks }, statusByChat: { ...s.statusByChat, [adoptedId]: status } }));
+    return { store, adoptedId };
+  }
+
+  it('hydrateBlocks_pestanaAdoptadaConBloquesEnVivoYTurnoAcabado_noDuplica', async () => {
+    const { store, adoptedId } = await adoptedWith(liveBlocks, 'idle');
+
+    store.getState().hydrateBlocks(adoptedId, transcript);
+
+    expect(store.getState().blocksByChat[adoptedId]?.map((b) => b.id)).toEqual(['tb-0-0', 'tb-1-0']);
+  });
+
+  it('hydrateBlocks_pestanaAdoptadaEnPlenoTurno_esperaYNoToca', async () => {
+    const { store, adoptedId } = await adoptedWith(liveBlocks, 'streaming');
+
+    store.getState().hydrateBlocks(adoptedId, transcript);
+
+    expect(store.getState().blocksByChat[adoptedId]?.map((b) => b.id)).toEqual(['blk1', 'blk2']);
+  });
+
+  it('hydrateBlocks_pestanaAdoptadaYaHidratada_noRepite', async () => {
+    const { store, adoptedId } = await adoptedWith(transcript, 'idle');
+
+    store.getState().hydrateBlocks(adoptedId, transcript);
+
+    expect(store.getState().blocksByChat[adoptedId]?.map((b) => b.id)).toEqual(['tb-0-0', 'tb-1-0']);
   });
 
   it('adoptLiveSession_alreadyBound_doesNothing', async () => {

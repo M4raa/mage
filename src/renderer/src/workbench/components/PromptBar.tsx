@@ -837,7 +837,7 @@ export function PromptBar({ fileDropRef }: PromptBarProps = {}): React.JSX.Eleme
                 data-tip={t('i2.prompt.attachImageTip')}
                 disabled={disabled}
                 onClick={() => imageInputRef.current?.click()}
-                className="shrink-0 self-center rounded-[4px] p-[3px] text-mg-sec transition-colors duration-90 ease-out hover:bg-mg-hover hover:text-mg-body disabled:opacity-40"
+                className="flex h-[22px] w-[24px] shrink-0 items-center justify-center self-center rounded-[6px] text-mg-sec transition-colors duration-90 ease-out hover:bg-mg-hover hover:text-mg-body disabled:opacity-40"
               >
                 <Icon name="paperclip" size={13} />
               </button>

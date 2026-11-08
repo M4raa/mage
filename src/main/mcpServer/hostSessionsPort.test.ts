@@ -11,6 +11,7 @@ import { CONVERSATION_ID_TIMEOUT_MS, ExternalSessionsPort, HostSessionsPort, NO_
 import type { HostSessionsPortDeps } from './hostSessionsPort';
 import { MageToolHandlers } from './handlers';
 import { MemoryIdempotencyStore } from './idempotencyStore';
+import { MagePolicyError } from './errors';
 import { snapshotScope } from './scope';
 import type { CreateSessionCommand } from './sessionsPort';
 
@@ -140,6 +141,29 @@ describe('HostSessionsPort.createSession', () => {
     const modeOrder = vi.mocked(deps.setPermissionMode).mock.invocationCallOrder[0] as number;
     const sendOrder = vi.mocked(deps.coordinator.send).mock.invocationCallOrder[0] as number;
     expect(modeOrder).toBeLessThan(sendOrder);
+  });
+  it('createSession_launchLanzaErrorComun_launchFailedConElMotivo', async () => {
+    const launch = vi.fn((): string => { throw new Error('No hay modelo por defecto para codex: indica uno'); });
+
+    const pending = setup({ launch }).port.createSession(command());
+
+    await expect(pending).rejects.toBeInstanceOf(MagePolicyError);
+    await expect(pending).rejects.toThrow('launch_failed: No hay modelo por defecto para codex: indica uno');
+  });
+  it('createSession_fijarModoDeCodexLanza_launchFailedConElMotivo', async () => {
+    const { port, deps } = setup({ snapshot: snap('child-c'), creator: { provider: 'claude', permissionMode: 'plan' } });
+    deps.setPermissionMode.mockImplementation(() => { throw new Error('sesion cerrada'); });
+
+    await expect(port.createSession(command({ target: { projectId: 'p1', accountId: 'acc2', provider: 'codex', cwd: CWD } })))
+      .rejects.toThrow('launch_failed: sesion cerrada');
+  });
+  it('createSession_claudeACodexSinCatalogoNiModelo_lanzaSinModelo', async () => {
+    const creator = { provider: 'claude', model: 'sonnet', permissionMode: 'plan' };
+    const { port, deps } = setup({ snapshot: snap('child-c'), creator, catalog: [] });
+
+    await port.createSession(command({ target: { projectId: 'p1', accountId: 'acc2', provider: 'codex', cwd: CWD } }));
+
+    expect(vi.mocked(deps.launch).mock.calls[0]?.[0]).not.toHaveProperty('model');
   });
   it('createSession_modeloFueraDelCatalogo_rechazaSinLanzar', async () => {
     const { port, deps } = setup({ snapshot: snap('child-c'), catalog: [{ id: 'sonnet', label: 'Sonnet' }] });
@@ -325,6 +349,17 @@ describe('MageToolHandlers con el puerto de main', () => {
     const handlers = new MageToolHandlers({ port, scope, store: new MemoryIdempotencyStore(), now: () => AT });
     await handlers.create({ ...input, effort: 'high', permissionMode: 'plan' });
     expect(deps.launch).toHaveBeenCalledWith(expect.objectContaining({ effort: 'high', permissionMode: 'plan' }), expect.anything());
+  });
+  it('create_rechazoPorModoYReintentoMismoRequestId_crea', async () => {
+    const { port, deps } = setup({ snapshot: snap('child-c'), creator: { provider: 'claude', model: 'sonnet', permissionMode: 'default' } });
+    const scope = snapshotScope({ accountIds: ['acc1'], caller: { conversationId: 'caller-c', creatorChain: [] } });
+    const handlers = new MageToolHandlers({ port, scope, store: new MemoryIdempotencyStore(), now: () => AT });
+
+    await expect(handlers.create({ ...input, permissionMode: 'bypassPermissions' })).rejects.toThrow(/^permission_mode_exceeds_creator:/);
+    const created = await handlers.create({ ...input, permissionMode: 'default' });
+
+    expect(created).toEqual({ conversationId: 'child-c', state: 'running' });
+    expect(deps.launch).toHaveBeenCalledTimes(1);
   });
   it('handlers_createFromChildAtMaxDepth_depthExceeded', async () => {
     await expect(handlersFor(['a', 'b'], 3).create(input)).rejects.toThrow('delegation_depth_exceeded');

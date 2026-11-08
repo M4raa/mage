@@ -12,7 +12,7 @@ import type { HostCreateRequest } from '../host/hostProtocol';
 import { resolveDelegatedSettings } from './delegatedSettings';
 import type { DelegatedSettings, SessionSettings } from './delegatedSettings';
 import type { DelegationLog, DelegationView } from './delegationLog';
-import { MagePolicyError } from './errors';
+import { MagePolicyError, MageValidationError } from './errors';
 import type { AskCreatorInput, AskCreatorOutput, CancelInput, CancelOutput, CreateOutput, ListInput, PublicMessage, SendInput, SendOutput, StatusOutput } from './types';
 import type { CreateSessionCommand, CreationRequest, CreationTarget, MageSessionsPort, SessionMetadata } from './sessionsPort';
 
@@ -64,7 +64,7 @@ export class HostSessionsPort implements MageSessionsPort {
       requested: { model: cmd.model, effort: cmd.effort, permissionMode: cmd.permissionMode }, catalog: this.deps.modelCatalog(target.accountId),
     });
     const sessionId = this.launchTranslated(launch, launchRequestOf(cmd, settings));
-    if (target.provider === 'codex') this.deps.setPermissionMode(sessionId, settings.permissionMode);
+    if (target.provider === 'codex') this.setCodexMode(sessionId, settings.permissionMode);
     const conversationId = await this.waitForConversationId(sessionId);
     index.recordDelegation(conversationId, { createdBy: cmd.createdBy, creatorChain: cmd.creatorChain });
     log.watch({
@@ -138,13 +138,21 @@ export class HostSessionsPort implements MageSessionsPort {
     return first.id;
   }
 
+  private setCodexMode(sessionId: string, mode: string): void {
+    try {
+      this.deps.setPermissionMode(sessionId, mode);
+    } catch (error) {
+      throw launchFailed(error);
+    }
+  }
+
   private launchTranslated(launch: HostSessionsPortDeps['launch'], request: HostCreateRequest): string {
     try {
       return launch(request, { conversationId: this.deps.caller.conversationId, sessionId: this.deps.caller.sessionId });
     } catch (error) {
-      if (error instanceof TrustRequiredError) throw new MagePolicyError(`trust_required: ${error.cwd}`, { cause: error });
-      if (error instanceof UnknownAccountError) throw new MagePolicyError(`unknown_account: ${error.accountId}`, { cause: error });
-      throw error;
+      if (error instanceof TrustRequiredError) throw new MageValidationError(`trust_required: ${error.cwd}`, { cause: error });
+      if (error instanceof UnknownAccountError) throw new MageValidationError(`unknown_account: ${error.accountId}`, { cause: error });
+      throw launchFailed(error);
     }
   }
 
@@ -230,6 +238,11 @@ function launchRequestOf(cmd: CreateSessionCommand, settings: DelegatedSettings)
     ...(settings.effort === undefined ? {} : { effort: settings.effort }),
     ...(target.provider === 'claude' && isPermissionMode(settings.permissionMode) ? { permissionMode: settings.permissionMode } : {}),
   };
+}
+
+// Un fallo al crear llega al agente con su motivo (el texto de `Error` de main, sin credenciales por construcción).
+function launchFailed(error: unknown): MagePolicyError {
+  return new MagePolicyError(`launch_failed: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
 }
 
 const path = (value: string): string => resolve(value);

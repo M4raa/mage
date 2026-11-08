@@ -224,6 +224,28 @@ describe('CodexAdapter: turno', () => {
     expect(requests.find((r) => r.method === 'thread/start')?.params?.effort).toBeUndefined();
   });
 
+  it('threadStart_modeloVacio_sinCampoModel', () => {
+    const requests = handshake(codex(), { ...launch, model: '' });
+
+    expect(requests.find((r) => r.method === 'thread/start')?.params).not.toHaveProperty('model');
+  });
+
+  it('threadStart_conModelo_llevaElCampoModel', () => {
+    const requests = handshake(codex());
+
+    expect(requests.find((r) => r.method === 'thread/start')?.params?.model).toBe('gpt-5.6-sol');
+  });
+
+  it('turnStart_modeloVacio_sinCampoModel', () => {
+    const adapter = codex();
+    const requests = handshake(adapter, { ...launch, model: '' });
+    answer(adapter, requests, 'thread/start', fixture('thread-start'));
+
+    adapter.encodeUserMessage('hola');
+
+    expect((adapter.takeOutgoing() as Rpc[])[0]?.params).not.toHaveProperty('model');
+  });
+
   it.each([undefined, ''])('encodeUserMessage_sinEsfuerzoConservaElDelCli_%s', (effort) => {
     const adapter = codex();
     const requests = handshake(adapter, { ...launch, effort });

@@ -81,8 +81,13 @@ export const SNAP_FRACTIONS: readonly number[] = [0.25, 1 / 3, 0.5, 2 / 3, 0.75]
 export const SNAP_TOLERANCE_PX = 8;
 
 // Pega `sizePx` al imán más cercano de `totalPx` si está a SNAP_TOLERANCE_PX o menos; si no, lo devuelve igual.
-// Sin tamaño de referencia (0 o negativo) no hay imanes.
-export function snapToMagnets(sizePx: number, totalPx: number): number {
+// Sin tamaño de referencia (0 o negativo) no hay imanes. Un imán que deja un lado por debajo de su mínimo no engancha.
+export interface MagnetBounds {
+  readonly minPx: number;
+  readonly maxPx: number;
+}
+
+export function snapToMagnets(sizePx: number, totalPx: number, bounds?: MagnetBounds): number {
   if (!Number.isFinite(sizePx) || !Number.isFinite(totalPx)) {
     throw new Error(`snapToMagnets necesita números finitos: sizePx=${sizePx}, totalPx=${totalPx}`);
   }
@@ -91,6 +96,7 @@ export function snapToMagnets(sizePx: number, totalPx: number): number {
   let bestDistance = SNAP_TOLERANCE_PX;
   for (const fraction of SNAP_FRACTIONS) {
     const magnet = Math.round(totalPx * fraction);
+    if (bounds !== undefined && (magnet < bounds.minPx || magnet > bounds.maxPx)) continue;
     const distance = Math.abs(sizePx - magnet);
     if (distance > bestDistance) continue;
     snapped = magnet;

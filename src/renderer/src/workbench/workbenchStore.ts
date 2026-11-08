@@ -7,7 +7,7 @@ import { buildUpdatedInput, parseAskUserQuestion } from '@shared/askUserQuestion
 import type { AdoptableSession, CloseAnswer, DivergeResult, NotificationTarget, PermissionMode, PermissionModesByProviderView, RewindAction, RewindPlan, RewindPointRef, SessionEventPayload } from '@shared/ipc';
 import type { TranscriptBatch } from '@shared/transcripts';
 import { divergeTitle, rewindPointOf } from './rewindActions';
-import { transcriptToBlocks } from './transcriptToBlocks';
+import { TRANSCRIPT_BLOCK_ID_PREFIX, transcriptToBlocks } from './transcriptToBlocks';
 import { defaultModeOf, hasPermissionModes, permissionCycleForProvider } from './stepSliderModel';
 import { IDLE_UPDATE_STATE, type UpdateState } from '@shared/update';
 import { isPermissionMode, MAIN_WINDOW_ID, PERMISSION_MODES } from '@shared/ipc';
@@ -1282,12 +1282,25 @@ async function createSessionFor(
 // no existio. El recuento acota lo que se traga: nunca mas `result` de los `/rename` enviados.
 const silentRenamesBySession = new Map<string, number>();
 
-function consumeSilentRename(sessionId: string, numTurns: number | null): boolean {
-  const pending = silentRenamesBySession.get(sessionId) ?? 0;
-  if (pending === 0 || numTurns !== 0) return false;
-  if (pending === 1) silentRenamesBySession.delete(sessionId);
-  else silentRenamesBySession.set(sessionId, pending - 1);
+// Su salida («Session renamed to…») es un `local_command_output`: se cuenta aparte, con el mismo patrón.
+const silentRenameOutputsBySession = new Map<string, number>();
+
+// Consume UNO del recuento de la sesión; false si no quedaba ninguno.
+function takeOne(counts: Map<string, number>, sessionId: string): boolean {
+  const pending = counts.get(sessionId) ?? 0;
+  if (pending === 0) return false;
+  if (pending === 1) counts.delete(sessionId);
+  else counts.set(sessionId, pending - 1);
   return true;
+}
+
+function consumeSilentRename(sessionId: string, numTurns: number | null): boolean {
+  if (numTurns !== 0) return false;
+  return takeOne(silentRenamesBySession, sessionId);
+}
+
+function consumeSilentRenameOutput(sessionId: string): boolean {
+  return takeOne(silentRenameOutputsBySession, sessionId);
 }
 
 // Manda el nombre pendiente de la pestaña si su sesion esta viva y ociosa (D3). Si el envio falla, el
@@ -1303,10 +1316,12 @@ function flushPendingCliTitle(
   const status = get().statusByChat[tabId] ?? 'idle';
   if (title === undefined || sessionId === undefined || status !== 'idle') return;
   silentRenamesBySession.set(sessionId, (silentRenamesBySession.get(sessionId) ?? 0) + 1);
+  silentRenameOutputsBySession.set(sessionId, (silentRenameOutputsBySession.get(sessionId) ?? 0) + 1);
   set((s) => ({ tabs: s.tabs.map((t) => (t.id === tabId ? withoutPendingCliTitle(t) : t)) }));
   schedulePersist(mage, get);
   mage.sendMessage({ sessionId, text: `/rename ${title}` }).catch((err: unknown) => {
     consumeSilentRename(sessionId, 0);
+    consumeSilentRenameOutput(sessionId);
     set((s) => ({ tabs: s.tabs.map((t) => (t.id === tabId && t.pendingCliTitle === undefined ? { ...t, pendingCliTitle: title } : t)) }));
     console.warn(`No se pudo mandar /rename al CLI (${tabId}):`, describeError(err));
   });
@@ -1345,6 +1360,10 @@ async function adoptHostSessionsIfMain(mage: MageClient, get: () => WorkbenchSta
 // Pestañas con un rewind pedido desde aquí: su `conversation_rewound` ya lo trata `applyRewind` con la proyección.
 const rewindsInFlight = new Set<string>();
 
+// U17: pestañas adoptadas del host. Hasta hidratarse solo tienen lo que llegó en vivo.
+// ponytail: no se poda al cerrar (ids que no se reutilizan); limpiar en closeTab si algún día pesa.
+const adoptedTabIds = new Set<string>();
+
 // Alta de la pestaña adoptada SIN robar el foco: entra en el panel enfocado pero ni su pestaña activa ni
 // la cuenta activa cambian. Sin ninguna pestaña, pasa a ser la activa como cualquier pestaña de un panel vacío.
 function addBackgroundTab(s: WorkbenchState, tab: Tab): Partial<WorkbenchState> {
@@ -1357,6 +1376,7 @@ function addBackgroundTab(s: WorkbenchState, tab: Tab): Partial<WorkbenchState> 
 // Deshace el alta de una pestaña adoptada cuyo `attachSession` falló: como `closeTab`, pero sin cerrar la
 // sesión de main (sigue viva para la terminal).
 function removeAdoptedTab(set: SetFn, tabId: string): void {
+  adoptedTabIds.delete(tabId);
   disposeTranscriptStore(tabId);
   set((s) => {
     const activeTabId = s.activeTabId === tabId ? nextActiveAfterClose(s.tabs, s.splitLayout, tabId) : s.activeTabId;
@@ -1398,6 +1418,7 @@ async function adoptLiveSessionInto(mage: MageClient, get: () => WorkbenchState,
     set((s) => addBackgroundTab(s, tab));
   }
   set((s) => ({ sessionIdByChat: { ...s.sessionIdByChat, [tabId]: session.sessionId } }));
+  adoptedTabIds.add(tabId);
   let snapshot: ConversationSnapshot;
   try {
     snapshot = await mage.attachSession(session.sessionId);
@@ -1426,6 +1447,8 @@ export function createWorkbenchStore(mage: MageClient) {
   clearAutoContinueTimer();
   // Lo mismo con los `/rename` silenciosos: los recuentos son de las sesiones del store anterior.
   silentRenamesBySession.clear();
+  silentRenameOutputsBySession.clear();
+  adoptedTabIds.clear();
   gitTrustAsked.clear();
   resetPrActionsState();
   resetPrPanelState();
@@ -2600,6 +2623,11 @@ export function createWorkbenchStore(mage: MageClient) {
         // `openConversation` ya hace focusPrompt(). Anteponer es lo correcto en los dos casos, y
         // sigue siendo idempotente: si ya se hidrato, `vivos` empieza por esos mismos bloques.
         if (vivos.length === 0) return { blocksByChat: { ...s.blocksByChat, [tabId]: blocks } };
+        // U17: una pestaña adoptada sin historial hidratado solo tiene bloques EN VIVO, que su transcripción ya contiene. Con
+        // el turno acabado la transcripción los sustituye (anteponerla duplicaba la respuesta); en pleno turno se espera.
+        if (adoptedTabIds.has(tabId) && !vivos.some((b) => b.id.startsWith(TRANSCRIPT_BLOCK_ID_PREFIX))) {
+          return (s.statusByChat[tabId] ?? 'idle') === 'idle' ? { blocksByChat: { ...s.blocksByChat, [tabId]: blocks } } : {};
+        }
         // Conversacion NUEVA con contenido ya en pantalla: no hay nada que rescatar (auditoria B.1.4,
         // REPRODUCIDO en `workbenchStore.test.ts`). B6 se diseño para la conversacion REANUDADA, donde
         // el historial vive en disco y el chat arranca vacio. En una nueva, el primer `open()` no
@@ -2916,6 +2944,8 @@ export function createWorkbenchStore(mage: MageClient) {
       }
       // El `result` de un `/rename` que mando Mage (D3) no es un turno: ni cierra nada ni notifica.
       if (event.kind === 'result' && consumeSilentRename(sessionId, event.result.numTurns)) return;
+      // Y su salida («Session renamed to…»): el nombre ya está puesto en la pestaña.
+      if (event.kind === 'local_command_output' && event.command === 'rename' && consumeSilentRenameOutput(sessionId)) return;
       // UN SOLO `set` por evento (P5). Cada `set` de zustand ejecuta los selectores de TODOS los
       // componentes montados, asi que dos parches por evento eran el doble de trabajo por token. La
       // señal de actividad (que usa el indicador de "pensando" para el timer y para detectar cuelgues)
@@ -3174,7 +3204,8 @@ function asAccountProvider(id: string): AccountProviderId {
 }
 
 function lastTurnUsagePatch(state: WorkbenchState, tabId: string, usage: TurnUsage | undefined): Partial<WorkbenchState> {
-  if (usage === undefined) return {};
+  // Un `result` sin tokens (comando local, directo absorbido) no es el último turno: se conserva el anterior.
+  if (usage === undefined || usage.totalTokens === 0) return {};
   return { lastTurnUsageByChat: { ...state.lastTurnUsageByChat, [tabId]: usage } };
 }
 

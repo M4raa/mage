@@ -187,6 +187,18 @@ describe('ClaudeAdapter', () => {
       else process.env.ANTHROPIC_API_KEY = original;
     });
 
+    it('buildSpawnPlan_modeloVacio_sinFlagModel', () => {
+      const plan = adapter.buildSpawnPlan({ ...launch, model: '' });
+
+      expect(plan.args).not.toContain('--model');
+    });
+
+    it('buildSpawnPlan_conModelo_llevaFlagModel', () => {
+      const plan = adapter.buildSpawnPlan(launch);
+
+      expect(plan.args.slice(plan.args.indexOf('--model'), plan.args.indexOf('--model') + 2)).toEqual(['--model', 'haiku']);
+    });
+
     it('buildSpawnPlan_child_stripsApiKeyAndSetsConfigDir', () => {
       const plan = adapter.buildSpawnPlan(launch);
 

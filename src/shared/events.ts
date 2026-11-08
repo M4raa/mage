@@ -37,7 +37,11 @@ export interface ResultInfo {
   readonly numTurns: number | null;
   // Uso del turno cuando el proveedor lo reporta (E3, `agy`). Ausente = no lo reporta.
   readonly usage?: TurnUsage;
+  // Claude: `total_cost_usd`, que es el ACUMULADO de la conversación (medido en 2.1.319: crece turno a turno, sigue
+  // tras `--resume`, vuelve a 0 tras `/clear` y un comando local lo repite con 0 tokens). El coste del turno lo
+  // saca `ApiUsageStore` por diferencia.
   readonly costMicroUsd?: number;
+  readonly conversationId?: string;
   // Quien abrio el turno (`origin.kind` del `result`). MEDIDO en 2.1.284: `'task-notification'` cuando
   // lo abrio el CLI solo, al terminar un subagente en segundo plano. Ausente en un turno del usuario.
   readonly origin?: string;

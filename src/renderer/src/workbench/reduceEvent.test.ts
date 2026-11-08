@@ -476,6 +476,17 @@ describe('reduceEvent — uso del turno (E3)', () => {
     expect(patch.statusByChat?.[TAB]).toBe('idle');
   });
 
+  it('handleEvent_resultSinTokens_conservaElUltimoTurno', () => {
+    const withTokens = { ...RESULT_BASE, usage: { inputTokens: 10, outputTokens: 5, totalTokens: 25, cacheReadTokens: 10, thinkingTokens: 0 } };
+    const empty = { ...RESULT_BASE, usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0, cacheReadTokens: 0, thinkingTokens: 0 } };
+    const first = reduceEvent(state(), TAB, { kind: 'result', result: withTokens });
+
+    const second = reduceEvent({ ...state(), ...first }, TAB, { kind: 'result', result: empty });
+
+    expect(second.lastTurnUsageByChat).toBeUndefined();
+    expect(first.lastTurnUsageByChat?.[TAB]?.totalTokens).toBe(25);
+  });
+
   // El CLI de Claude no reporta uso en su `result`: su conversacion no debe ganar ningun marcador.
   it('reduceEvent_resultSinUsage_noAnadeNingunBloque', () => {
     const patch = reduceEvent(state(), TAB, { kind: 'result', result: RESULT_BASE });

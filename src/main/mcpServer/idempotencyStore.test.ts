@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { MagePolicyError, MageValidationError } from './errors';
 import { canonicalFingerprint, MemoryIdempotencyStore } from './idempotencyStore';
 
 const request = (requestId: string, fingerprint = 'same') => ({ namespace: 'create:scope', requestId, fingerprint });
@@ -57,6 +58,30 @@ describe('MemoryIdempotencyStore', () => {
     await expect(failed).rejects.toThrow('failure');
     expect(store.execute(request('1'), effect)).toBe(failed);
     await expect(failed).rejects.toThrow('failure');
+    expect(effect).toHaveBeenCalledTimes(1);
+  });
+  it('execute_rechazoDeValidacion_mismoIdSePuedeReintentar', async () => {
+    const store = new MemoryIdempotencyStore();
+    await expect(store.execute(request('1', 'a'), async () => { throw new MageValidationError('invalid_model: x'); })).rejects.toThrow('invalid_model');
+    const effect = vi.fn(async () => 'ok');
+
+    await expect(store.execute(request('1', 'otra'), effect)).resolves.toBe('ok');
+
+    expect(effect).toHaveBeenCalledTimes(1);
+  });
+  it('execute_rechazoComun_elIdSigueGastado', async () => {
+    const store = new MemoryIdempotencyStore();
+    await expect(store.execute(request('1', 'a'), async () => { throw new MagePolicyError('launch_failed: x'); })).rejects.toThrow('launch_failed');
+
+    expect(() => store.execute(request('1', 'otra'), async () => 'ok')).toThrow('idempotency_conflict: requestId 1');
+  });
+  it('execute_rechazoDeValidacion_mismaHuellaReintentaElEfecto', async () => {
+    const store = new MemoryIdempotencyStore();
+    await expect(store.execute(request('1'), async () => { throw new MageValidationError('invalid_effort: x'); })).rejects.toThrow('invalid_effort');
+    const effect = vi.fn(async () => 'ok');
+
+    await expect(store.execute(request('1'), effect)).resolves.toBe('ok');
+
     expect(effect).toHaveBeenCalledTimes(1);
   });
   it('canonicalFingerprint_propiedadesReordenadas_mismaHuella', () => {

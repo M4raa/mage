@@ -1,7 +1,72 @@
 import { EditorState } from '@codemirror/state';
-import type { DecorationSet } from '@codemirror/view';
-import { describe, expect, it } from 'vitest';
-import { buildPromptDecorations } from './promptExtensions';
+import { EditorView, type DecorationSet } from '@codemirror/view';
+import { describe, expect, it, vi } from 'vitest';
+import { announcesSomething, buildPromptDecorations, createAnnouncementCleaner } from './promptExtensions';
+
+// Temporizador de prueba: guarda la función programada y cuenta las cancelaciones.
+function fakeTimer() {
+  const pending: (() => void)[] = [];
+  const cancelled = vi.fn();
+  const setTimer = (fn: () => void): (() => void) => {
+    pending.push(fn);
+    return () => {
+      cancelled();
+      pending.splice(pending.indexOf(fn), 1);
+    };
+  };
+  return { pending, cancelled, setTimer };
+}
+
+describe('announcesSomething', () => {
+  it('announcesSomething_transaccionConAnuncio_true', () => {
+    const state = EditorState.create({ doc: 'x' });
+
+    expect(announcesSomething([state.update({ effects: EditorView.announce.of('Selection deleted') })])).toBe(true);
+  });
+
+  it('announcesSomething_sinAnuncio_false', () => {
+    const state = EditorState.create({ doc: 'x' });
+
+    expect(announcesSomething([state.update({ changes: { from: 0, insert: 'a' } })])).toBe(false);
+  });
+});
+
+describe('createAnnouncementCleaner', () => {
+  it('createAnnouncementCleaner_trasElPlazo_limpia', () => {
+    const timer = fakeTimer();
+    const clear = vi.fn();
+    const cleaner = createAnnouncementCleaner({ clear, setTimer: timer.setTimer, delayMs: 10 });
+
+    cleaner.onAnnounce();
+    expect(clear).not.toHaveBeenCalled();
+    timer.pending[0]!();
+
+    expect(clear).toHaveBeenCalledTimes(1);
+  });
+
+  it('createAnnouncementCleaner_dosAnunciosSeguidos_soloUnaLimpiezaConElUltimoPlazo', () => {
+    const timer = fakeTimer();
+    const clear = vi.fn();
+    const cleaner = createAnnouncementCleaner({ clear, setTimer: timer.setTimer, delayMs: 10 });
+
+    cleaner.onAnnounce();
+    cleaner.onAnnounce();
+
+    expect(timer.cancelled).toHaveBeenCalledTimes(1);
+    expect(timer.pending).toHaveLength(1);
+  });
+
+  it('createAnnouncementCleaner_dispose_cancelaLaPendiente', () => {
+    const timer = fakeTimer();
+    const cleaner = createAnnouncementCleaner({ clear: vi.fn(), setTimer: timer.setTimer, delayMs: 10 });
+
+    cleaner.onAnnounce();
+    cleaner.dispose();
+
+    expect(timer.cancelled).toHaveBeenCalledTimes(1);
+    expect(timer.pending).toHaveLength(0);
+  });
+});
 
 interface Seen { readonly from: number; readonly to: number; readonly widget: boolean }
 

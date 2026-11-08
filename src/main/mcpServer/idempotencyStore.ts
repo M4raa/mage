@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { MagePolicyError } from './errors';
+import { MagePolicyError, MageValidationError } from './errors';
 
 // Cota de memoria por proceso de conexión, configurable; no sustituye persistencia de F7.
 export const DEFAULT_IDEMPOTENCY_CAPACITY = 1024;
@@ -37,7 +37,11 @@ export class MemoryIdempotencyStore implements IdempotencyStore {
     const promise = Promise.resolve().then(effect);
     const entry: Entry = { fingerprint: request.fingerprint, promise, settled: false };
     this.entries.set(key, entry);
-    void promise.then(() => { entry.settled = true; }, () => { entry.settled = true; });
+    void promise.then(() => { entry.settled = true; }, (error: unknown) => {
+      entry.settled = true;
+      // Un rechazo de validación no creó nada: el id no se gasta.
+      if (error instanceof MageValidationError && this.entries.get(key) === entry) this.entries.delete(key);
+    });
     return promise;
   }
   private makeRoom(): void {

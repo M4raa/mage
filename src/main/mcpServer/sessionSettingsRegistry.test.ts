@@ -80,6 +80,13 @@ describe('settingsOfLaunch', () => {
     expect(settings).not.toHaveProperty('permissionMode');
   });
 
+  it('settingsOfLaunch_modeloVacio_sinModel', () => {
+    const settings = settingsOfLaunch({ provider: 'codex', model: '' });
+
+    expect(settings).toEqual({ provider: 'codex' });
+    expect(settings).not.toHaveProperty('model');
+  });
+
   it('settingsOfLaunch_esfuerzoVacio_loOmite', () => {
     expect(settingsOfLaunch({ provider: 'claude', model: 'sonnet', effort: '' })).not.toHaveProperty('effort');
   });

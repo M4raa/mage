@@ -1,3 +1,4 @@
+import { isSlashCommandText } from './conversationTitle';
 import type { ChatStatus } from './types';
 
 // Que hacer al pulsar otra cuenta en la cabecera con una conversacion abierta (P-026 2.7, D5/D6).
@@ -49,9 +50,23 @@ export function modelForReassignedTab(
 }
 
 // Bloques que hacen de una pestaña una conversación. Los avisos (`system`, `error`, `command-output`) no: una
-// pestaña nueva puede traer el aviso de la carpeta o del espacio de trabajo y sigue siendo un chat nuevo.
+// pestaña nueva puede traer el aviso de la carpeta o del espacio de trabajo y sigue siendo un chat nuevo, ni el eco de
+// un comando `/`.
 const CONVERSATION_BLOCK_KINDS: ReadonlySet<string> = new Set(['user', 'agent', 'tool', 'subagent', 'thinking', 'question', 'permission']);
 
-export function hasConversationBlocks(blocks: readonly { readonly kind: string }[]): boolean {
-  return blocks.some((block) => CONVERSATION_BLOCK_KINDS.has(block.kind));
+interface BlockLike {
+  readonly kind: string;
+  readonly text?: string;
+  readonly attachments?: readonly unknown[];
+}
+
+// El eco de un comando `/` (sin adjuntos) no es conversación: su salida tampoco lo es (`command-output`).
+function isConversationBlock(block: BlockLike): boolean {
+  if (!CONVERSATION_BLOCK_KINDS.has(block.kind)) return false;
+  if (block.kind !== 'user') return true;
+  return (block.attachments?.length ?? 0) > 0 || !isSlashCommandText(block.text ?? '');
+}
+
+export function hasConversationBlocks(blocks: readonly BlockLike[]): boolean {
+  return blocks.some(isConversationBlock);
 }

@@ -4414,7 +4414,7 @@ export function createHostSessionsPort(callerSessionId: string): HostSessionsPor
     accounts: () => listAllAccounts().filter((account) => (HOST_SESSION_PROVIDERS as readonly string[]).includes(account.providerId))
       .map((account) => ({ id: account.configDir, provider: account.providerId })),
     projects: () => getSettingsStore().load().chatProjects,
-    launch: (request, createdBy) => launchHostSession(resolveHostLaunchParams(deps, request), 'mcp', createdBy),
+    launch: (request, createdBy) => launchHostSession(resolveHostLaunchParams(deps, request, { cliDefaultModel: true }), 'mcp', createdBy),
     creatorSettings: () => sessionSettings.get(callerSessionId),
     modelCatalog: (accountDir) => getCommandCatalogStore().loadModels(accountDir),
     setPermissionMode: (sessionId, mode) => { sessionManager.setPermissionMode(sessionId, mode); sessionSettings.apply(sessionId, 'permissionMode', mode); },

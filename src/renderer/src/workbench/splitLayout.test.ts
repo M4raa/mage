@@ -9,6 +9,7 @@ import {
   applyDrop,
   clampRatioForSize,
   closeTab,
+  dragRatio,
   dropTabBeside,
   findLeafPath,
   firstLeafPath,
@@ -330,6 +331,31 @@ describe('clampRatioForSize', () => {
 
   it('MIN_PANE_PX_esElMinimoQueUsaResizeAt', () => {
     expect(MIN_PANE_PX).toBe(320);
+  });
+});
+
+describe('dragRatio', () => {
+  it('dragRatio_contenedor859AlTercio_noEnganchaYCoincideConLoGuardado', () => {
+    const result = dragRatio({ startRatio: 0.5, deltaPx: 859 / 3 + 5 - 859 / 2, sizePx: 859, free: false });
+    const saved = (resizeAt(split(singleLeaf('t1'), singleLeaf('t2')), [], result, 859) as { ratio: number }).ratio;
+    expect(result).toBeCloseTo(320 / 859, 6);
+    expect(result).toBe(saved);
+  });
+
+  it('dragRatio_contenedor1200AlTercio_engancha', () => {
+    expect(dragRatio({ startRatio: 0.5, deltaPx: 400 + 5 - 600, sizePx: 1200, free: false })).toBe(400 / 1200);
+  });
+
+  it('dragRatio_libre_noEngancha', () => {
+    expect(dragRatio({ startRatio: 0.5, deltaPx: 405 - 600, sizePx: 1200, free: true })).toBeCloseTo(405 / 1200, 9);
+  });
+
+  it('dragRatio_tamanoCero_devuelveElInicialAcotado', () => {
+    expect(dragRatio({ startRatio: 0.95, deltaPx: 10, sizePx: 0, free: false })).toBe(0.9);
+  });
+
+  it('dragRatio_noFinito_lanza', () => {
+    expect(() => dragRatio({ startRatio: Number.NaN, deltaPx: 10, sizePx: 1000, free: false })).toThrow(/NaN/);
   });
 });
 

@@ -204,6 +204,17 @@ describe('Mage MCP server', () => {
     expect(JSON.stringify(first)).toContain(`port_error: ${operation}`);
     expect(JSON.stringify(first)).not.toContain(SECRET);
   });
+  it('create_puertoRechazaConLaunchFailed_elAgenteVeElMotivoYNoPortError', async () => {
+    const port = makePort();
+    vi.spyOn(port, 'createSession').mockRejectedValue(new MagePolicyError('launch_failed: x'));
+    const { call } = await connect({ port });
+
+    const result = await call('create_session', createArgs());
+
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result)).toContain('launch_failed: x');
+    expect(JSON.stringify(result)).not.toContain('port_error');
+  });
   it('list_filtroProyectoAjeno_rechazaSinListar', async () => {
     const port = makePort();
     const list = vi.spyOn(port, 'listSessions');
