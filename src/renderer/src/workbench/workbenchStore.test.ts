@@ -1090,6 +1090,36 @@ describe('renameConversation', () => {
     expect(notify).toHaveBeenCalledTimes(1);
   });
 
+  const RENAME_OUTPUT = { kind: 'local_command_output', command: 'rename', args: 'Nuevo', text: 'Session renamed to: Nuevo' } as const;
+  const commandOutputs = (store: ReturnType<typeof mounted>['store']) => (store.getState().blocksByChat.a ?? []).filter((b) => b.kind === 'command-output');
+
+  it('renameConversation_salidaDelRenameSilencioso_noPintaFila', () => {
+    const { store } = mounted('idle');
+    store.getState().renameConversation('a', 'Nuevo');
+
+    store.getState().handleEvent('s-a', RENAME_OUTPUT);
+
+    expect(commandOutputs(store)).toHaveLength(0);
+  });
+
+  it('localCommandOutput_renameTecleadoPorElUsuario_siPintaFila', () => {
+    const { store } = mounted('idle');
+
+    store.getState().handleEvent('s-a', RENAME_OUTPUT);
+
+    expect(commandOutputs(store)).toHaveLength(1);
+  });
+
+  it('renameConversation_soloSeTragaUnaSalida', () => {
+    const { store } = mounted('idle');
+    store.getState().renameConversation('a', 'Nuevo');
+
+    store.getState().handleEvent('s-a', RENAME_OUTPUT);
+    store.getState().handleEvent('s-a', RENAME_OUTPUT);
+
+    expect(commandOutputs(store)).toHaveLength(1);
+  });
+
   it('renameConversation_proveedorSinTranscripcionDeClaude_noMandaNada', () => {
     const { store, sendMessage } = mounted('idle');
     store.setState({ tabs: [tab('a', { provider: 'agy' })] });
