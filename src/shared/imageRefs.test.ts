@@ -7,7 +7,6 @@ import {
   findImageTokens,
   imageToken,
   insertImageTokens,
-  keepFirstImageToken,
   reconcileImageTokens,
   withImagePaths,
   withoutImageTokens,
@@ -276,21 +275,49 @@ describe('withImagePaths', () => {
   });
 });
 
-describe('keepFirstImageToken y withoutImageTokens', () => {
-  it('keepFirstImageToken_dosImagenes_quitaLaSegunda', () => {
-    expect(keepFirstImageToken('mira [Imagen 1] y [Imagen 2] ya')).toBe('mira [Imagen 1] y ya');
-  });
-
-  it('keepFirstImageToken_sinTokens_igual', () => {
-    expect(keepFirstImageToken('hola')).toBe('hola');
-  });
-
+describe('withoutImageTokens', () => {
   it('withoutImageTokens_variosTokens_quitaTodos', () => {
     expect(withoutImageTokens('[Imagen 1] mira [Imagen 2] y [Imagen 3]')).toBe('mira y');
   });
 
   it('withoutImageTokens_vacio_vacio', () => {
     expect(withoutImageTokens('')).toBe('');
+  });
+
+  it('withoutImageTokens_tokenConRuta_quitaTokenYRuta', () => {
+    // Arrange
+    const text = 'mira [Imagen 1](C:\\a.png) ya';
+    // Act
+    const result = withoutImageTokens(text);
+    // Assert
+    expect(result).toBe('mira ya');
+  });
+
+  it('withoutImageTokens_rutaConParentesis_laQuitaEntera', () => {
+    // Arrange
+    const text = '[Imagen 1](C:\\Program Files (x86)\\a.png) hola';
+    // Act
+    const result = withoutImageTokens(text);
+    // Assert
+    expect(result).toBe('hola');
+  });
+
+  it('withoutImageTokens_textoEntreParentesisSeparado_noSeToca', () => {
+    // Arrange
+    const text = '[Imagen 1] (nota)';
+    // Act
+    const result = withoutImageTokens(text);
+    // Assert
+    expect(result).toBe('(nota)');
+  });
+
+  it('withoutImageTokens_mezcla_conYSinRuta', () => {
+    // Arrange
+    const text = '[Imagen 1](C:\\a.png) y [Imagen 2]';
+    // Act
+    const result = withoutImageTokens(text);
+    // Assert
+    expect(result).toBe('y');
   });
 });
 

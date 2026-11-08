@@ -65,14 +65,6 @@ function highestImageToken(text: string): number {
   return findImageTokens(text).reduce((max, token) => Math.max(max, token.n), 0);
 }
 
-// Solo el token de la PRIMERA imagen: al copiar un mensaje viajan el texto y la primera imagen, y los tokens de las
-// demás no apuntarían a nada.
-export function keepFirstImageToken(text: string): string {
-  let result = text;
-  for (let n = highestImageToken(text); n >= 2; n -= 1) result = removeImageToken(result, n);
-  return result;
-}
-
 // Al copiar un mensaje (U51): cada `[Imagen N]` cuya ruta `paths[N-1]` existe pasa a `[Imagen N](<ruta>)`, con la
 // ruta literal; los demás (pegadas, sin ruta, N fuera de rango) se quedan igual.
 export function withImagePaths(text: string, paths: readonly (string | null)[]): string {
@@ -82,9 +74,14 @@ export function withImagePaths(text: string, paths: readonly (string | null)[]):
   });
 }
 
-// Sin ningún token: al pegar texto junto con imágenes, el editor pone los de las imágenes que adjunta.
+// Un token con la ruta que le pega `withImagePaths`: `[Imagen N](<ruta>)`, con la ruta sin saltos de línea y
+// con, como mucho, un nivel de paréntesis dentro (`C:\Program Files (x86)\a.png`).
+const TOKEN_WITH_PATH_PATTERN = /\[Imagen (\d+)\]\((?:[^()\n]|\([^()\n]*\))*\)/g;
+
+// Sin ningún token: al pegar texto junto con imágenes, el editor pone los de las imágenes que adjunta. Un token
+// copiado con su ruta cae entero, como un solo bloque: se le quita la ruta y luego se trata como cualquier otro.
 export function withoutImageTokens(text: string): string {
-  let result = text;
+  let result = text.replace(TOKEN_WITH_PATH_PATTERN, (_m, digits: string) => imageToken(Number(digits)));
   for (let n = highestImageToken(text); n >= 1; n -= 1) result = removeImageToken(result, n);
   return result;
 }
