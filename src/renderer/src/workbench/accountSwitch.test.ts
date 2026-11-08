@@ -79,7 +79,23 @@ describe('hasConversationBlocks', () => {
   });
 
   it('hasConversationBlocks_conMensajeDeUsuario_true', () => {
-    expect(hasConversationBlocks([{ kind: 'system' }, { kind: 'user' }])).toBe(true);
+    expect(hasConversationBlocks([{ kind: 'system' }, { kind: 'user', text: 'hola' }])).toBe(true);
+  });
+
+  it('hasConversationBlocks_ecoDeComandoYSuSalida_false', () => {
+    expect(hasConversationBlocks([{ kind: 'user', text: '/model', attachments: [] }, { kind: 'command-output' }])).toBe(false);
+  });
+
+  it('hasConversationBlocks_mensajeNormal_true', () => {
+    expect(hasConversationBlocks([{ kind: 'user', text: 'hola', attachments: [] }])).toBe(true);
+  });
+
+  it('hasConversationBlocks_comandoConImagen_true', () => {
+    expect(hasConversationBlocks([{ kind: 'user', text: '/model', attachments: [{}] }])).toBe(true);
+  });
+
+  it('hasConversationBlocks_rutaQueEmpiezaPorBarra_true', () => {
+    expect(hasConversationBlocks([{ kind: 'user', text: '/src/app.ts falla', attachments: [] }])).toBe(true);
   });
 
   it.each(['agent', 'tool', 'subagent', 'thinking', 'question', 'permission'])('hasConversationBlocks_bloque_%s_true', (kind) => {

@@ -1585,6 +1585,20 @@ describe('requestAccountSwitch y continueInAccount', () => {
     expect(closeSession).toHaveBeenCalledWith('s-a');
   });
 
+  it('requestAccountSwitch_pestanaNuevaConSoloModel_reasignaSinDialogo', () => {
+    const closeSession = vi.fn().mockResolvedValue({ background: false });
+    const store = mounted({ closeSession });
+    const echo = { kind: 'user', id: 'u-1', text: '/model', attachments: [] };
+    const output = { kind: 'command-output', id: 'c-1', command: 'model', args: '', text: 'ok' };
+    store.setState({ tabs: [tab('a')], sessionIdByChat: { a: 's-a' }, blocksByChat: { a: [echo, output] as never } });
+
+    store.getState().requestAccountSwitch(B);
+
+    const s = store.getState();
+    expect(s.accountSwitchPrompt).toBeNull();
+    expect(s.tabs[0]).toMatchObject({ id: 'a', accountId: B });
+  });
+
   it('requestAccountSwitch_sesionVivaSinTurnosHaciaCodex_cambiaElProveedorDeLaPestana', () => {
     const closeSession = vi.fn().mockResolvedValue({ background: false });
     const store = mounted({ closeSession });
