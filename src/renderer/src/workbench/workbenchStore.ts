@@ -40,6 +40,7 @@ import {
   mapPermissionToView,
   resolvePermissionBlock,
   restartingText,
+  type NewUserBlock,
 } from './engineBlocks';
 import { removeAlwaysAllow } from './permissionRules';
 import { createSettingsActions } from './settingsActions';
@@ -158,6 +159,13 @@ import { formatClockTime } from '../i18n/format';
 
 // Contexto en placeholder hasta M1.3 (el uso/contexto real llega con UsageService).
 const CONTEXT_PLACEHOLDER: ContextInfo = { usedTokens: '—', maxTokens: '200k', usedPct: 0, tokensOut: '—' };
+
+// Opciones de un envío: el modo (cola o directo) y la ruta de cada adjunto, alineada por índice con `attachments`
+// (U51). Las rutas solo llegan a la burbuja propia, para copiarla: nunca viajan a main.
+export interface SendOptions {
+  readonly mode?: SendMode;
+  readonly attachmentPaths?: readonly (string | null)[];
+}
 
 // Estado del workbench. Cuentas y pestanas son REALES (M1.2): las cuentas se descubren en disco via
 // window.mage.listAccounts (mapeadas con toAccountView) y cada pestana es una conversacion ligada a
@@ -617,10 +625,10 @@ export interface WorkbenchState extends PrState, PrActions, PrPanelStoreState, P
   attachTaskToTab: (tabId: string, taskId: string) => void;
   // `attachments` (2.12.1): imagenes del mensaje. Vacio o ausente = mensaje de solo texto, y
   // entonces el adapter manda EXACTAMENTE el payload de siempre.
-  sendActiveMessage: (text: string, attachments?: readonly ImageAttachment[], mode?: SendMode) => Promise<void>;
+  sendActiveMessage: (text: string, attachments?: readonly ImageAttachment[], options?: SendOptions) => Promise<void>;
   // Lo mismo contra una pestaña concreta (la activa o no): el continuar automatico (P-028, 20) escribe
   // en pestañas que pueden no estar a la vista.
-  sendMessageToTab: (tabId: string, text: string, attachments?: readonly ImageAttachment[], mode?: SendMode) => Promise<void>;
+  sendMessageToTab: (tabId: string, text: string, attachments?: readonly ImageAttachment[], options?: SendOptions) => Promise<void>;
   // Continuar automatico al restablecerse el limite de esa pestaña (opt-in desde el banner).
   setRateLimitAutoContinue: (tabId: string, enabled: boolean) => void;
   // Cambio de modelo de la pestana activa (M2.4, solo Claude). Si hay sesion viva envia set_model
@@ -2669,7 +2677,7 @@ export function createWorkbenchStore(mage: MageClient) {
     },
 
     // Envia un mensaje del usuario en la pestana activa: bloque optimista + sesion + envio al motor.
-    sendActiveMessage: (text, attachments = [], mode = 'queue') => get().sendMessageToTab(get().activeTabId, text, attachments, mode),
+    sendActiveMessage: (text, attachments = [], options = {}) => get().sendMessageToTab(get().activeTabId, text, attachments, options),
 
     setRateLimitAutoContinue: (tabId, enabled) => {
       const notice = get().rateLimitByChat[tabId];
@@ -2679,7 +2687,8 @@ export function createWorkbenchStore(mage: MageClient) {
       syncAutoContinueTimer(get);
     },
 
-    sendMessageToTab: async (tabId, text, attachments = [], mode = 'queue') => {
+    sendMessageToTab: async (tabId, text, attachments = [], options = {}) => {
+      const { mode = 'queue', attachmentPaths } = options;
       const trimmed = text.trim();
       // Un mensaje SIN texto pero CON imagen es valido (mandar solo un pantallazo es un caso real).
       if ((trimmed.length === 0 && attachments.length === 0) || tabId.length === 0) return;
@@ -2703,14 +2712,15 @@ export function createWorkbenchStore(mage: MageClient) {
       // se ve: con un turno en marcha no hay burbuja ni reloj nuevo (la cola se pinta con `queue_changed`);
       // sin el, la burbuja sale al instante. Si main decide otra cosa, `reconcileReceipt` lo corrige.
       const commandId = crypto.randomUUID();
-      const optimisticBlockId = isTurnRunning(get().statusByChat[tabId]) ? null : beginTurnLocally(mage, get, set, tabId, { text: trimmed, attachments, nativeId: commandId });
+      const paths = attachmentPaths === undefined ? {} : { attachmentPaths };
+      const optimisticBlockId = isTurnRunning(get().statusByChat[tabId]) ? null : beginTurnLocally(mage, get, set, tabId, { text: trimmed, attachments, nativeId: commandId, ...paths });
       try {
         const sessionId = await get().ensureSession(tabId);
         const receipt = await mage.sendMessage({ sessionId, text: trimmed, commandId, ...(attachments.length === 0 ? {} : { attachments }), ...(mode === 'steer' ? { mode } : {}) });
-        reconcileReceipt(mage, get, set, { tabId, receipt, optimisticBlockId, text: trimmed, attachments, commandId });
+        reconcileReceipt(mage, get, set, { tabId, receipt, optimisticBlockId, text: trimmed, attachments, commandId, ...paths });
       } catch (err) {
         failChat(set, tabId, describeError(err));
-        restoreDraftAfterFailedSend(set, tabId, trimmed, attachments);
+        restoreDraftAfterFailedSend(set, tabId, { text: trimmed, attachments, ...paths });
       }
     },
 
@@ -2999,7 +3009,7 @@ export function createWorkbenchStore(mage: MageClient) {
       if (event.kind === 'queued_message_sent') beginTurnLocally(mage, get, set, tabId, { text: event.message.text, attachments: event.message.attachments, nativeId: event.message.id });
       if (event.kind === 'queued_message_failed') {
         failChat(set, tabId, renderLocalized(t, event.localized));
-        restoreDraftAfterFailedSend(set, tabId, event.message.text, event.message.attachments);
+        restoreDraftAfterFailedSend(set, tabId, { text: event.message.text, attachments: event.message.attachments });
       }
       // Destino real de un directo (F4.1). Y con el fin del turno, «Enviar ahora» vuelve a estar disponible.
       if (event.kind === 'message_delivery') settleDelivery(mage, get, set, tabId, event);
@@ -3030,10 +3040,11 @@ export function createWorkbenchStore(mage: MageClient) {
 
 // #24: si el envío falla, lo enviado vuelve a la caja para reintentar sin reescribirlo. Solo si la caja
 // sigue vacia: lo que el usuario haya empezado a escribir despues no se pisa.
-function restoreDraftAfterFailedSend(set: SetFn, tabId: string, text: string, attachments: readonly ImageAttachment[]): void {
+function restoreDraftAfterFailedSend(set: SetFn, tabId: string, sent: { readonly text: string; readonly attachments: readonly ImageAttachment[]; readonly attachmentPaths?: readonly (string | null)[] }): void {
+  const { text, attachments } = sent;
   set((s) => {
     if (s.draftByChat[tabId] !== undefined) return {};
-    const restored = attachments.map((attachment) => ({ attachment, byteLength: base64ByteLength(attachment.data) }));
+    const restored = attachments.map((attachment, index) => ({ attachment, byteLength: base64ByteLength(attachment.data), sourcePath: sent.attachmentPaths?.[index] ?? null }));
     return { draftByChat: { ...s.draftByChat, [tabId]: { text, attachments: restored, mentions: [] } } };
   });
 }
@@ -3719,15 +3730,15 @@ function toastIfHidden(get: () => WorkbenchState, event: MageEvent, context: Hid
 
 // Lo que se ve al EMPEZAR un turno del usuario: auto-titulo, burbuja, estado, reloj y avisos que caducan.
 // Lo usan el envio directo y el mensaje que main saca de su cola. Devuelve el id de la burbuja.
-function beginTurnLocally(mage: MageClient, get: () => WorkbenchState, set: SetFn, tabId: string, message: { readonly text: string; readonly attachments: readonly ImageAttachment[]; readonly nativeId: string | null }): string {
-  const { text, attachments, nativeId } = message;
+function beginTurnLocally(mage: MageClient, get: () => WorkbenchState, set: SetFn, tabId: string, message: Omit<NewUserBlock, 'id' | 'time'>): string {
+  const { text } = message;
   // Auto-titulo (M2.6): el primer mensaje de una conversacion aun sin titulo lo fija desde el prompt.
   // Un comando "/" no titula (P-028): la pestaña sigue «Nuevo chat» hasta el primer prompt real.
   const tab = get().tabs.find((t) => t.id === tabId);
   if (tab !== undefined && shouldAutoTitle(tab, get().blocksByChat[tabId] ?? EMPTY_BLOCKS, text)) get().renameTab(tabId, deriveTitleFromPrompt(text));
   // El bloque optimista lleva ya los adjuntos, asi que la miniatura se ve al instante.
   const blockId = nextBlockId();
-  patchBlocks(set, tabId, (blocks) => appendUserBlock(blocks, { id: blockId, text, time: currentTime(), attachments, nativeId }));
+  patchBlocks(set, tabId, (blocks) => appendUserBlock(blocks, { ...message, id: blockId, time: currentTime() }));
   startTurnClock(mage, get, set, tabId);
   return blockId;
 }
@@ -3755,7 +3766,14 @@ interface ReceiptContext {
   readonly optimisticBlockId: string | null;
   readonly text: string;
   readonly attachments: readonly ImageAttachment[];
+  readonly attachmentPaths?: readonly (string | null)[];
   readonly commandId: string;
+}
+
+// La burbuja propia del mensaje que se envió (con sus rutas, si las trae).
+function ownUserMessage(context: ReceiptContext): Omit<NewUserBlock, 'id' | 'time'> {
+  const { text, attachments, attachmentPaths, commandId } = context;
+  return { text, attachments, nativeId: commandId, ...(attachmentPaths === undefined ? {} : { attachmentPaths }) };
 }
 
 // El renderer adelanto lo que creia (burbuja o nada); main decidio. Si no coinciden (un turno que el renderer
@@ -3768,7 +3786,7 @@ function reconcileReceipt(mage: MageClient, get: () => WorkbenchState, set: SetF
     patchBlocks(set, tabId, (blocks) => blocks.filter((b) => b.id !== optimisticBlockId));
     return;
   }
-  if (receipt.status === 'accepted' && optimisticBlockId === null) beginTurnLocally(mage, get, set, tabId, { text: context.text, attachments: context.attachments, nativeId: context.commandId });
+  if (receipt.status === 'accepted' && optimisticBlockId === null) beginTurnLocally(mage, get, set, tabId, ownUserMessage(context));
 }
 
 // Directo dentro del turno en marcha (F4.1): su burbuja sale ya, sin reloj nuevo (el turno sigue siendo el mismo),
@@ -3778,7 +3796,7 @@ function acceptSteering(set: SetFn, context: ReceiptContext, awaitsAnswer: boole
   const { tabId, commandId } = context;
   const blockId = context.optimisticBlockId ?? nextBlockId();
   if (context.optimisticBlockId === null) {
-    patchBlocks(set, tabId, (blocks) => appendUserBlock(blocks, { id: blockId, text: context.text, time: currentTime(), attachments: context.attachments, nativeId: commandId }));
+    patchBlocks(set, tabId, (blocks) => appendUserBlock(blocks, { ...ownUserMessage(context), id: blockId, time: currentTime() }));
   }
   set((s) => ({ steeringByChat: { ...s.steeringByChat, [tabId]: { ...(s.steeringByChat[tabId] ?? {}), [commandId]: blockId } } }));
   if (awaitsAnswer) patchBlocks(set, tabId, (blocks) => appendSystemBlock(blocks, t('chat.steer.awaitsAnswer'), nextBlockId()));
@@ -3880,7 +3898,7 @@ function adoptProjection(set: SetFn, tabId: string, projection: TranscriptBatch 
 }
 
 function pendingAttachmentsOf(attachments: readonly ImageAttachment[]): PromptDraft['attachments'] {
-  return attachments.map((attachment) => ({ attachment, byteLength: base64ByteLength(attachment.data) }));
+  return attachments.map((attachment) => ({ attachment, byteLength: base64ByteLength(attachment.data), sourcePath: null }));
 }
 
 async function applyRewind(mage: MageClient, get: () => WorkbenchState, set: SetFn, tabId: string, blockId: string, options: RewindOptions): Promise<void> {

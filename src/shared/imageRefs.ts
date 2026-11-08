@@ -73,6 +73,15 @@ export function keepFirstImageToken(text: string): string {
   return result;
 }
 
+// Al copiar un mensaje (U51): cada `[Imagen N]` cuya ruta `paths[N-1]` existe pasa a `[Imagen N](<ruta>)`, con la
+// ruta literal; los demás (pegadas, sin ruta, N fuera de rango) se quedan igual.
+export function withImagePaths(text: string, paths: readonly (string | null)[]): string {
+  return text.replace(TOKEN_PATTERN, (token, digits: string) => {
+    const path = paths[Number(digits) - 1];
+    return typeof path === 'string' ? `${token}(${path})` : token;
+  });
+}
+
 // Sin ningún token: al pegar texto junto con imágenes, el editor pone los de las imágenes que adjunta.
 export function withoutImageTokens(text: string): string {
   let result = text;

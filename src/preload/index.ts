@@ -1,7 +1,7 @@
 import { BROWSER_STATE_CHANNEL, type BrowserEntryState } from '@shared/browser';
 import type { ConversationLockParams, ConversationLockRef } from '@shared/conversationLock';
 import type { MentionPreviewParams, MentionResolveParams, MentionSearchParams } from '@shared/mentions';
-import { contextBridge, ipcRenderer, webFrame } from 'electron';
+import { contextBridge, ipcRenderer, webFrame, webUtils } from 'electron';
 import {
   EVENT_CHANNEL,
   SESSION_ADOPTABLE_CHANNEL,
@@ -393,6 +393,7 @@ const api: MageApi = {
     return () => ipcRenderer.removeListener(BROWSER_STATE_CHANNEL, handler);
   },
   getUiZoomFactor: () => webFrame.getZoomFactor(),
+  pathForFile: (file) => webUtils.getPathForFile(file),
   listTasks: () => ipcRenderer.invoke(IpcChannel.TasksList),
   createTask: (draft) => ipcRenderer.invoke(IpcChannel.TasksCreate, draft),
   verifyTask: (params) => ipcRenderer.invoke(IpcChannel.TasksVerify, params),

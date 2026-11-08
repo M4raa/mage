@@ -1386,6 +1386,9 @@ export interface MageApi {
   onBrowserState(listener: (states: readonly BrowserEntryState[]) => void): () => void;
   // El zoom propio de esta ventana: el panel convierte su hueco a DIP de la ventana con él.
   getUiZoomFactor(): number;
+  // Ruta en disco de un `File` (botón de adjuntar o soltado); '' si no viene del disco (pegado). Solo del preload
+  // (`webUtils.getPathForFile`), sin IPC: la ruta se queda en el renderer.
+  pathForFile(file: File): string;
 
   // --- Modo de tareas (F8) ---
   listTasks(): Promise<readonly TaskRecord[]>;

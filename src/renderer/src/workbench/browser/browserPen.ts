@@ -61,5 +61,5 @@ export function replacePenInDraft(
   const byteLength = base64ByteLength(next.attachment.data);
   validateAttachmentSet(kept.map(metaOf), [{ mediaType: next.attachment.mediaType, byteLength }], formatLocale);
   const text = keptText === '' ? next.caption : `${keptText}${PARAGRAPH_BREAK}${next.caption}`;
-  return { ...draft, text, attachments: [...kept, { attachment: next.attachment, byteLength }] };
+  return { ...draft, text, attachments: [...kept, { attachment: next.attachment, byteLength, sourcePath: null }] };
 }

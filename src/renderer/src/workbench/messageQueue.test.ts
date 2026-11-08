@@ -16,7 +16,7 @@ describe('mergeIntoDraft (Stop y editar devuelven al input)', () => {
   it('merge_conImagenes_renumeraLosTokensYJuntaLosAdjuntos', () => {
     const draft = mergeIntoDraft(
       [msg('a', 'mira [Imagen 1]', [img('AAAA')]), msg('b', '[Imagen 1] y [Imagen 2]', [img('BBBB'), img('CCCC')])],
-      { text: 'y [Imagen 1]', attachments: [{ attachment: img('DDDD'), byteLength: 3 }], mentions: [] },
+      { text: 'y [Imagen 1]', attachments: [{ attachment: img('DDDD'), byteLength: 3, sourcePath: null }], mentions: [] },
     );
 
     expect(draft.text).toBe('mira [Imagen 1]\n\n[Imagen 2] y [Imagen 3]\n\ny [Imagen 4]');

@@ -121,7 +121,28 @@ describe('sendMessageToTab — envío fallido (#24)', () => {
 
     await store.getState().sendMessageToTab('a', 'Arregla el login', [image]);
 
-    expect(store.getState().draftByChat.a).toEqual({ text: 'Arregla el login', attachments: [{ attachment: image, byteLength: 5 }], mentions: [] });
+    expect(store.getState().draftByChat.a).toEqual({ text: 'Arregla el login', attachments: [{ attachment: image, byteLength: 5, sourcePath: null }], mentions: [] });
+  });
+
+  it('sendMessageToTab_conRutas_burbujaYBorradorConservanLaRuta', async () => {
+    // Arrange
+    const sendMessage = vi.fn();
+    const store = createWorkbenchStore(fakeMage({ saveWorkspace: vi.fn().mockResolvedValue(undefined), isFolderTrusted: vi.fn().mockResolvedValue(true), createSession: vi.fn().mockRejectedValue(new Error('sin red')), sendMessage }));
+    store.setState({ tabs: [tab('a')], activeTabId: 'a', splitLayout: singleLeaf('a') });
+    let bubblePaths: unknown = 'sin burbuja';
+    const unsubscribe = store.subscribe((s) => {
+      const user = (s.blocksByChat.a ?? []).find((b) => b.kind === 'user');
+      if (user !== undefined && user.kind === 'user') bubblePaths = user.attachmentPaths;
+    });
+
+    // Act
+    await store.getState().sendMessageToTab('a', '[Imagen 1] [Imagen 2]', [image, image], { attachmentPaths: ['C:\\a.png', null] });
+    unsubscribe();
+
+    // Assert
+    expect(bubblePaths).toEqual(['C:\\a.png', null]);
+    expect(store.getState().draftByChat.a?.attachments.map((p) => p.sourcePath)).toEqual(['C:\\a.png', null]);
+    expect(sendMessage).not.toHaveBeenCalled();
   });
 
   it('sendMessageToTab_fallaYaHayOtroBorrador_noLoPisa', async () => {
@@ -2313,7 +2334,7 @@ describe('cola de mensajes', () => {
   it('sendActiveMessage_conModoSteer_loPasaAlEnvio', async () => {
     const { store, sendMessage } = mounted('streaming', steering());
 
-    await store.getState().sendActiveMessage('ya', [], 'steer');
+    await store.getState().sendActiveMessage('ya', [], { mode: 'steer' });
 
     expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({ mode: 'steer' }));
   });
@@ -2321,7 +2342,7 @@ describe('cola de mensajes', () => {
   it('sendMessageToTab_enviarAhoraConTurno_mandaModoSteerYPintaLaBurbujaSinReloj', async () => {
     const { store, sendMessage } = mounted('streaming', steering());
 
-    await store.getState().sendMessageToTab('a', 'ya', [], 'steer');
+    await store.getState().sendMessageToTab('a', 'ya', [], { mode: 'steer' });
 
     expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({ mode: 'steer' }));
     expect(userTexts(store)).toEqual(['ya']);
@@ -2340,14 +2361,14 @@ describe('cola de mensajes', () => {
   it('sendMessageToTab_directoConPermisoPendiente_avisaQueLlegaraAlContestar', async () => {
     const { store } = mounted('streaming', steering(true));
 
-    await store.getState().sendMessageToTab('a', 'ya', [], 'steer');
+    await store.getState().sendMessageToTab('a', 'ya', [], { mode: 'steer' });
 
     expect(lastSystemText(store)).toBe('Llegará al modelo cuando contestes el permiso');
   });
 
   it('messageDelivery_dentroDelTurno_laBurbujaSeQueda', async () => {
     const { store, sendMessage } = mounted('streaming', steering());
-    await store.getState().sendMessageToTab('a', 'ya', [], 'steer');
+    await store.getState().sendMessageToTab('a', 'ya', [], { mode: 'steer' });
     const commandId = commandIdOfFirstSend(sendMessage);
 
     deliver(store, commandId, { into: 'active_turn', late: false, turnKind: null });
@@ -2359,7 +2380,7 @@ describe('cola de mensajes', () => {
 
   it('messageDelivery_turnoNuevoTardio_arrancaElRelojYAvisa', async () => {
     const { store, sendMessage } = mounted('streaming', steering());
-    await store.getState().sendMessageToTab('a', 'ya', [], 'steer');
+    await store.getState().sendMessageToTab('a', 'ya', [], { mode: 'steer' });
     const commandId = commandIdOfFirstSend(sendMessage);
 
     deliver(store, commandId, { into: 'new_turn', late: true, turnKind: null });
@@ -2372,7 +2393,7 @@ describe('cola de mensajes', () => {
   it('messageDelivery_turnoNuevoYaCerrado_noArrancaElRelojNiOcupaLaPestana', async () => {
     // Arrange: el directo salió y su turno ya terminó (la pestaña volvió a reposo).
     const { store, sendMessage } = mounted('streaming', steering());
-    await store.getState().sendMessageToTab('a', 'ya', [], 'steer');
+    await store.getState().sendMessageToTab('a', 'ya', [], { mode: 'steer' });
     const commandId = commandIdOfFirstSend(sendMessage);
     store.setState((s) => ({ statusByChat: { ...s.statusByChat, a: 'idle' }, turnStartByChat: { ...s.turnStartByChat, a: 1000 } }));
 
@@ -2388,7 +2409,7 @@ describe('cola de mensajes', () => {
 
   it('messageDelivery_colaPorReview_quitaLaBurbujaAvisaYBloqueaHastaElResult', async () => {
     const { store, sendMessage } = mounted('streaming', steering());
-    await store.getState().sendMessageToTab('a', 'ya', [], 'steer');
+    await store.getState().sendMessageToTab('a', 'ya', [], { mode: 'steer' });
     const commandId = commandIdOfFirstSend(sendMessage);
 
     deliver(store, commandId, { into: 'queue', late: false, turnKind: 'review' });
@@ -2402,7 +2423,7 @@ describe('cola de mensajes', () => {
 
   it('messageDelivery_fallido_quitaLaBurbujaDejaElErrorYDevuelveElBorrador', async () => {
     const { store, sendMessage } = mounted('streaming', steering());
-    await store.getState().sendMessageToTab('a', 'ya', [], 'steer');
+    await store.getState().sendMessageToTab('a', 'ya', [], { mode: 'steer' });
     const commandId = commandIdOfFirstSend(sendMessage);
 
     deliver(store, commandId, { into: 'failed', late: false, turnKind: null });
@@ -2416,7 +2437,7 @@ describe('cola de mensajes', () => {
   it('messageDelivery_promptNoEnviadoPorElCli_avisaYAnteponeAlBorradorSinAvisoDeMensajeNuevo', async () => {
     // Arrange
     const { store, sendMessage } = mounted('streaming', steering());
-    await store.getState().sendMessageToTab('a', 'ya', [], 'steer');
+    await store.getState().sendMessageToTab('a', 'ya', [], { mode: 'steer' });
     const commandId = commandIdOfFirstSend(sendMessage);
     store.getState().setDraft('a', { text: 'sigo escribiendo', attachments: [], mentions: [] });
 

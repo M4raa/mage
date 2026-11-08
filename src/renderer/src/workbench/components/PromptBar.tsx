@@ -4,7 +4,7 @@ import { readOnlyLockMessage } from '@shared/conversationLock';
 import { isPermissionMode } from '@shared/ipc';
 import type { EditorInfo } from '@shared/ipc';
 import { AGY_EFFORT_LEVELS, AGY_PROVIDER_ID, agyModelFixesEffort, CODEX_PROVIDER_ID, isAutoApprovedProvider, isUnverifiedProvider, runsOnMageRuntime } from '@shared/providers';
-import { useWorkbenchStore } from '../workbenchStore';
+import { useWorkbenchStore, type SendOptions } from '../workbenchStore';
 import { pinnedAccountMissing } from '../adoptSession';
 import { displayModelId, modelOptionsForProvider } from '../models';
 import { describeAttachment, insertImageTokens, reconcileImageTokens, removeImageToken } from '@shared/imageRefs';
@@ -14,7 +14,7 @@ import { composerLayout, type ComposerLayout } from '../composerLayout';
 import type { ProviderModel } from '@shared/providers';
 import { continueListOnNewline, indentLines, outdentLines, type TextState } from '../promptEditing';
 import { enterAction } from '../promptEnter';
-import { ALLOWED_IMAGE_TYPES, assertPastedImages, base64ByteLength, validateAttachmentSet } from '@shared/attachments';
+import { ALLOWED_IMAGE_TYPES, assertPastedImages, base64ByteLength, sourcePathOf, validateAttachmentSet, type ImageSource } from '@shared/attachments';
 import type { PromptEditorHandle } from './PromptEditor';
 import { Icon, type IconName } from './Icon';
 import { SendControls } from './SendControls';
@@ -85,7 +85,7 @@ function permissionChipSkin(mode: string): string {
 // Aceptar / Rechazar / Rehacer (no reemplaza el borrador hasta que el usuario acepta).
 // Lee un `File` a base64 SIN el prefijo `data:`. La validacion de tipo/tamaño la hace el modulo puro:
 // aqui solo se convierte.
-async function readImageFile(file: File): Promise<PendingAttachment> {
+async function readImageFile(file: File, sourcePath: string | null): Promise<PendingAttachment> {
   const buffer = await file.arrayBuffer();
   const bytes = new Uint8Array(buffer);
   let binary = '';
@@ -93,6 +93,7 @@ async function readImageFile(file: File): Promise<PendingAttachment> {
   return {
     attachment: { mediaType: file.type as ImageAttachment['mediaType'], data: btoa(binary) },
     byteLength: bytes.byteLength,
+    sourcePath,
   };
 }
 
@@ -399,19 +400,21 @@ export function PromptBar({ fileDropRef }: PromptBarProps = {}): React.JSX.Eleme
     // Con adjuntos, un mensaje SIN texto es valido (mandar solo una imagen es un caso real).
     if ((trimmed.length === 0 && attachments.length === 0) || disabled || resolvingRef.current) return;
     const sent = attachments.map((a) => a.attachment);
+    // Las rutas se quedan en el renderer (solo la burbuja las usa al copiar, U51): no viajan con `sent`.
+    const options: SendOptions = { mode, attachmentPaths: attachments.map((a) => a.sourcePath) };
     if (draft.mentions.length > 0) {
-      void sendWithMentions(trimmed, sent, mode);
+      void sendWithMentions(trimmed, sent, options);
       return;
     }
     setDraft(activeTabId, null);
     setPreview(null);
     setError(null);
-    void sendActiveMessage(trimmed, sent, mode);
+    void sendActiveMessage(trimmed, sent, options);
   };
 
   // Con menciones, main resuelve los ficheros JUSTO ahora (el disco puede haber cambiado desde que se eligieron):
   // si alguno ya no existe o esta fuera de la carpeta no se envia y el borrador se queda (Q06).
-  const sendWithMentions = async (trimmed: string, sent: readonly ImageAttachment[], mode: SendMode): Promise<void> => {
+  const sendWithMentions = async (trimmed: string, sent: readonly ImageAttachment[], options: SendOptions): Promise<void> => {
     if (activeTab === undefined) return;
     const tabId = activeTabId;
     const refs = draft.mentions.map(({ absPath, relPath }) => ({ absPath, relPath }));
@@ -431,7 +434,8 @@ export function PromptBar({ fileDropRef }: PromptBarProps = {}): React.JSX.Eleme
       validateAttachmentSet([], merged.attachments.map((a) => ({ mediaType: a.mediaType, byteLength: base64ByteLength(a.data) })), activeFormatLocale());
       setDraft(tabId, null);
       setPreview(null);
-      void sendMessageToTab(tabId, merged.text, merged.attachments, mode);
+      // Los PDF de las menciones van detrás de las imágenes: `attachmentPaths` sigue alineado por índice.
+      void sendMessageToTab(tabId, merged.text, merged.attachments, options);
     } catch (err) {
       console.warn('No se pudieron resolver las menciones:', describeError(err));
       setError(t('errors.mentions.resolveFailed', { error: describeError(err) }));
@@ -637,7 +641,7 @@ export function PromptBar({ fileDropRef }: PromptBarProps = {}): React.JSX.Eleme
   // P-026 3.2 (D13): cada imagen deja un token `[Imagen N]` donde esta el cursor, y al enviar viaja justo
   // detras de el. Numero y tipo se validan ANTES de leer (`File.type`/`size` ya los dan), asi que el
   // error sale al pegar y no se inserta ningun token; los tokens van en el acto y el base64 despues.
-  const addFiles = (files: readonly File[]): void => {
+  const addFiles = (files: readonly File[], source: ImageSource): void => {
     if (files.length === 0) return;
     const tabId = activeTabId;
     const current = draftOf(tabId);
@@ -655,7 +659,7 @@ export function PromptBar({ fileDropRef }: PromptBarProps = {}): React.JSX.Eleme
     const fromN = current.attachments.length + pendingReadsRef.current + 1;
     pendingReadsRef.current += files.length;
     insertTokensAtCursor(fromN, files.length, current.text);
-    void Promise.all(files.map(readImageFile))
+    void Promise.all(files.map((file) => readImageFile(file, sourcePathOf(source, () => window.mage.pathForFile(file)))))
       .then((candidates) => {
         // Del store, no del cierre: mientras se leia, el usuario pudo seguir escribiendo.
         const latest = draftOf(tabId);
@@ -668,14 +672,14 @@ export function PromptBar({ fileDropRef }: PromptBarProps = {}): React.JSX.Eleme
   };
 
   const onPickImages = (e: React.ChangeEvent<HTMLInputElement>): void => {
-    addFiles(Array.from(e.currentTarget.files ?? []));
+    addFiles(Array.from(e.currentTarget.files ?? []), 'disk');
     e.currentTarget.value = ''; // elegir otra vez el mismo fichero vuelve a disparar `change`
   };
 
   // Sin dependencias a propósito: la ref apunta siempre al `addFiles` del último render (lee la pestaña y el borrador de ese render).
   useEffect(() => {
     if (fileDropRef === undefined) return undefined;
-    fileDropRef.current = addFiles;
+    fileDropRef.current = (files) => addFiles(files, 'disk');
     return () => {
       fileDropRef.current = null;
     };
@@ -811,7 +815,7 @@ export function PromptBar({ fileDropRef }: PromptBarProps = {}): React.JSX.Eleme
             onChange={onChangeText}
             onSelectionChange={setCursor}
             onKeyDown={onKeyDown}
-            onPasteImages={addFiles}
+            onPasteImages={(files) => addFiles(files, 'pasted')}
             onWrapChange={setWraps}
             onTextWidthChange={setTextWidth}
             stacked={layout === 'stacked'}

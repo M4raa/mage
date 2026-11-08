@@ -4,7 +4,7 @@ import { createPortal } from 'react-dom';
 import { AnimatePresence } from 'motion/react';
 import { CopyButton } from './CopyButton';
 import { firstImageOf } from '../clipboardContent';
-import { keepFirstImageToken } from '@shared/imageRefs';
+import { withImagePaths } from '@shared/imageRefs';
 import { Icon, type IconName } from './Icon';
 import { AgyCommandsDialog } from './AgyCommandsDialog';
 import { RewindDialog } from './RewindDialog';
@@ -884,7 +884,7 @@ function UserBlock({ block }: { readonly block: Extract<Block, { kind: 'user' }>
     <div className="flex justify-end">
       <div className="group relative flex max-w-[80%] min-w-0 flex-col gap-[3px] rounded-[12px] rounded-br-[4px] border border-mg-border-emph bg-mg-sel p-[9px_13px] text-mg-sel-ink leading-[1.55]">
         <div className="absolute right-[4px] top-[-10px] z-[1] flex items-center gap-[2px] opacity-0 focus-within:opacity-100 group-hover:opacity-100">
-          <CopyButton text={copiedImage === null ? block.text : keepFirstImageToken(block.text)} image={copiedImage} label={t('chat.copy.userMessage')} className="border border-mg-border-subtle bg-mg-block" />
+          <CopyButton text={withImagePaths(block.text, block.attachmentPaths ?? [])} image={copiedImage} label={t('chat.copy.userMessage')} className="border border-mg-border-subtle bg-mg-block" />
           {offersRewind && <BubbleActions onPick={setRewindAction} />}
         </div>
         {rewindAction !== null && <RewindDialog tabId={tabId} blockId={block.id} action={rewindAction} onClose={() => setRewindAction(null)} />}

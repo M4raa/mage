@@ -8,7 +8,7 @@ import { displayToDip, penCaption, replacePenInDraft } from './browserPen';
 const translate = ((key: string, values?: unknown) => `${key}|${JSON.stringify(values)}`) as unknown as Translate;
 const LOCALE = 'es-ES';
 const image = (data: string): ImageAttachment => ({ mediaType: 'image/png', data });
-const pending = (data: string) => ({ attachment: image(data), byteLength: 4 });
+const pending = (data: string) => ({ attachment: image(data), byteLength: 4, sourcePath: null });
 const draftOf = (text: string, attachments: PromptDraft['attachments'] = []): PromptDraft => ({ text, attachments, mentions: [] });
 const resultOf = (elementsText: string, strokesText: string): BrowserPenResult => ({
   attachment: image('AAAA'),
@@ -58,7 +58,7 @@ describe('replacePenInDraft', () => {
     const result = replacePenInDraft(draftOf(''), null, next, LOCALE);
 
     expect(result.text).toBe('CAP2');
-    expect(result.attachments).toEqual([{ attachment: next.attachment, byteLength: 3 }]);
+    expect(result.attachments).toEqual([{ attachment: next.attachment, byteLength: 3, sourcePath: null }]);
   });
 
   it('replacePenInDraft_withText_appendsAfterBlankLine', () => {

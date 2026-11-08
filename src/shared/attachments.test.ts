@@ -4,6 +4,7 @@ import {
   MAX_ATTACHMENT_BYTES,
   MAX_ATTACHMENTS,
   assertPastedImages,
+  sourcePathOf,
   validateAttachment,
   validateAttachmentSet,
   type ImageAttachmentMeta,
@@ -134,5 +135,28 @@ describe('assertPastedImages', () => {
 
   it('assertPastedImages_mayusculas_noLanza', () => {
     expect(() => assertPastedImages([{ mediaType: 'IMAGE/PNG', byteLength: 10 }])).not.toThrow();
+  });
+});
+
+describe('sourcePathOf', () => {
+  it('sourcePathOf_pegado_nullSinPreguntarLaRuta', () => {
+    // Arrange
+    let asked = false;
+    // Act
+    const result = sourcePathOf('pasted', () => {
+      asked = true;
+      return 'C:\\a.png';
+    });
+    // Assert
+    expect(result).toBeNull();
+    expect(asked).toBe(false);
+  });
+
+  it('sourcePathOf_botonConRuta_laRuta', () => {
+    expect(sourcePathOf('disk', () => 'C:\\capturas\\a.png')).toBe('C:\\capturas\\a.png');
+  });
+
+  it('sourcePathOf_discoSinRuta_null', () => {
+    expect(sourcePathOf('disk', () => '')).toBeNull();
   });
 });

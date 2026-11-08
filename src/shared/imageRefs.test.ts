@@ -9,6 +9,7 @@ import {
   insertImageTokens,
   keepFirstImageToken,
   reconcileImageTokens,
+  withImagePaths,
   withoutImageTokens,
   removeImageToken,
 } from './imageRefs';
@@ -224,6 +225,54 @@ describe('describeAttachment', () => {
 
   it('describeAttachment_1coma5MiB_enUS_conPunto', () => {
     expect(describeAttachment(1, 'image/png', 1.5 * 1024 * 1024, 'en-US')).toBe('Imagen 1 · png · 1.5 MiB');
+  });
+});
+
+describe('withImagePaths', () => {
+  it('withImagePaths_rutaEnTodas_poneTodas', () => {
+    // Arrange
+    const text = 'mira [Imagen 1] y [Imagen 2]';
+    // Act
+    const result = withImagePaths(text, ['C:\\a.png', 'C:\\b.png']);
+    // Assert
+    expect(result).toBe('mira [Imagen 1](C:\\a.png) y [Imagen 2](C:\\b.png)');
+  });
+
+  it('withImagePaths_rutaEnNinguna_igual', () => {
+    expect(withImagePaths('mira [Imagen 1] y [Imagen 2]', [null, null])).toBe('mira [Imagen 1] y [Imagen 2]');
+  });
+
+  it('withImagePaths_sinRutas_igual', () => {
+    expect(withImagePaths('mira [Imagen 1]', [])).toBe('mira [Imagen 1]');
+  });
+
+  it('withImagePaths_rutaEnAlgunas_soloEsas', () => {
+    expect(withImagePaths('[Imagen 1] [Imagen 2] [Imagen 3]', [null, '/tmp/b.png', null])).toBe('[Imagen 1] [Imagen 2](/tmp/b.png) [Imagen 3]');
+  });
+
+  it('withImagePaths_nFueraDeRango_igual', () => {
+    expect(withImagePaths('[Imagen 0] [Imagen 3]', ['/a.png', '/b.png'])).toBe('[Imagen 0] [Imagen 3]');
+  });
+
+  it('withImagePaths_textoSinTokens_igual', () => {
+    expect(withImagePaths('hola', ['/a.png'])).toBe('hola');
+  });
+
+  it('withImagePaths_textoVacio_vacio', () => {
+    expect(withImagePaths('', ['/a.png'])).toBe('');
+  });
+
+  it('withImagePaths_rutaConEspaciosYParentesis_literal', () => {
+    // Arrange
+    const path = 'C:\\Mis capturas\\foto (2) $1.png';
+    // Act
+    const result = withImagePaths('[Imagen 1]', [path]);
+    // Assert
+    expect(result).toBe(`[Imagen 1](${path})`);
+  });
+
+  it('withImagePaths_tokenRepetido_rutaEnCadaCopia', () => {
+    expect(withImagePaths('[Imagen 1] y [Imagen 1]', ['/a.png'])).toBe('[Imagen 1](/a.png) y [Imagen 1](/a.png)');
   });
 });
 

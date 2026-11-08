@@ -20,7 +20,7 @@ export function mergeIntoDraft(messages: readonly QueuedMessage[], draft: Prompt
   const attachments: PromptDraft['attachments'][number][] = [];
   for (const message of messages) {
     pushText(texts, shiftImageTokens(message.text, attachments.length));
-    for (const attachment of message.attachments) attachments.push({ attachment, byteLength: base64ByteLength(attachment.data) });
+    for (const attachment of message.attachments) attachments.push({ attachment, byteLength: base64ByteLength(attachment.data), sourcePath: null });
   }
   pushText(texts, shiftImageTokens(draft.text, attachments.length));
   return { text: texts.join(JOIN), attachments: [...attachments, ...draft.attachments], mentions: draft.mentions };

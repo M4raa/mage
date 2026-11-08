@@ -67,6 +67,8 @@ export interface NewUserBlock {
   // Imagenes del mensaje. La ruta VIVA todavia manda siempre [] (enviar imagenes es de la Fase E);
   // existe aqui para que el bloque optimista y el reconstruido desde la transcripcion sean el mismo.
   readonly attachments: readonly ImageAttachment[];
+  // Ruta de cada adjunto, alineada con `attachments` (ver `Block`); ausente si el mensaje no viene del borrador.
+  readonly attachmentPaths?: readonly (string | null)[];
   // Id del mensaje ante su CLI (ver `Block`): null si no se conoce.
   readonly nativeId: string | null;
 }

@@ -166,6 +166,9 @@ export type Block =
       // estado viejo que tolerar, y un array obligatorio convierte en error de compilacion cualquier
       // constructor que se lo olvide.
       readonly attachments: readonly ImageAttachment[];
+      // Ruta de cada adjunto, alineada por índice con `attachments` (null = sin ruta), para copiar el mensaje con
+      // `[Imagen N](ruta)` (U51). Ausente en los bloques hidratados de la transcripción.
+      readonly attachmentPaths?: readonly (string | null)[];
       // Id del mensaje ante su CLI (Claude: el `uuid` que Mage mandó o el de la transcripción; Codex: el
       // id del item o el `clientUserMessageId`); null si no se conoce, y entonces la burbuja no ofrece
       // rebobinar.
@@ -314,6 +317,9 @@ export interface RateLimitNotice {
 export interface PendingAttachment {
   readonly attachment: ImageAttachment;
   readonly byteLength: number;
+  // Ruta del fichero si se añadió con el botón o soltándolo (U51); null si se pegó o se recuperó sin ella. Solo
+  // sirve para copiar el mensaje: nunca sale del renderer.
+  readonly sourcePath: string | null;
 }
 
 // Lo que el usuario lleva escrito en UNA conversacion y aun no ha enviado. Antes era estado local del

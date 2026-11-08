@@ -92,6 +92,17 @@ export function base64ByteLength(data: string): number {
   return Math.max(0, Math.floor((data.length * 3) / 4) - padding);
 }
 
+// De dónde viene una imagen del borrador: del disco (botón o soltar, con ruta) o pegada (sin fichero, sin ruta).
+export type ImageSource = 'disk' | 'pasted';
+
+// Ruta del fichero para copiar el mensaje (U51): solo las del disco; '' (el File no viene del disco) es sin ruta.
+// `pathForFile` se llama solo para las del disco.
+export function sourcePathOf(source: ImageSource, pathForFile: () => string): string | null {
+  if (source === 'pasted') return null;
+  const path = pathForFile();
+  return path.length > 0 ? path : null;
+}
+
 export function formatBytes(bytes: number, locale: string): string {
   return bytes >= 1024 * 1024 ? `${localizeDecimalPoint((bytes / (1024 * 1024)).toFixed(1), locale)} MiB` : `${Math.round(bytes / 1024)} KiB`;
 }
