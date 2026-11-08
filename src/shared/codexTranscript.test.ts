@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { adaptCodexLine, codexTurnsToLines, isCodexInjectedContext, readCodexRolloutHead } from './codexTranscript';
+import { adaptCodexLine, codexItemOutput, codexItemTool, codexTurnsToLines, isCodexInjectedContext, isFailedCodexItem, readCodexRolloutHead } from './codexTranscript';
 
 // Rollout sintético con la forma medida en codex-cli 0.160.0 (sin contenido real).
 const lines = readFileSync(join(__dirname, 'fixtures', 'codex-rollout.jsonl'), 'utf8').split('\n').filter((l) => l.length > 0);
@@ -54,7 +54,30 @@ describe('readCodexRolloutHead', () => {
       cwd: 'C:\\proyecto',
       startedAtMs: Date.parse('2026-10-05T08:00:00.000Z'),
       title: 'Lista los ficheros',
+      historyMode: null,
+      parentThreadId: null,
     });
+  });
+
+  const withMeta = (extra: Record<string, unknown>): string[] => {
+    const meta = JSON.parse(lines[0]!) as { payload: Record<string, unknown> };
+    return [JSON.stringify({ ...meta, payload: { ...meta.payload, ...extra } }), ...lines.slice(1)];
+  };
+
+  it('readCodexRolloutHead_historyModeLegacy', () => {
+    expect(readCodexRolloutHead(withMeta({ history_mode: 'legacy' }))?.historyMode).toBe('legacy');
+    expect(readCodexRolloutHead(withMeta({ history_mode: 'paginated' }))?.historyMode).toBe('paginated');
+    expect(readCodexRolloutHead(withMeta({ history_mode: 'otro' }))?.historyMode).toBeNull();
+  });
+
+  it('readCodexRolloutHead_missingHistoryMode_null', () => {
+    expect(readCodexRolloutHead(lines)?.historyMode).toBeNull();
+  });
+
+  it('readCodexRolloutHead_parentThreadId', () => {
+    expect(readCodexRolloutHead(withMeta({ parent_thread_id: 'padre-1' }))?.parentThreadId).toBe('padre-1');
+    expect(readCodexRolloutHead(withMeta({ parent_thread_id: '' }))?.parentThreadId).toBeNull();
+    expect(readCodexRolloutHead(withMeta({ parent_thread_id: 7 }))?.parentThreadId).toBeNull();
   });
 
   it('readCodexRolloutHead_primeroUnToolResultYLuegoTexto_noUsaElResultadoComoTitulo', () => {
@@ -131,5 +154,41 @@ describe('codexTurnsToLines', () => {
 
   it('codexTurnsToLines_sinTurnos_vacio', () => {
     expect(codexTurnsToLines([])).toEqual([]);
+  });
+});
+
+describe('codexItemTool', () => {
+  it('codexItemTool_commandExecution_returnsBash', () => {
+    const tool = codexItemTool({ id: 'c', type: 'commandExecution', command: 'ls', cwd: 'C:\p' });
+
+    expect(tool).toEqual({ name: 'Bash', input: { command: 'ls', cwd: 'C:\p' } });
+  });
+
+  it('codexItemTool_unknownType_returnsNull', () => {
+    expect(codexItemTool({ id: 'x', type: 'reasoning' })).toBeNull();
+  });
+});
+
+describe('codexItemOutput', () => {
+  it('codexItemOutput_mcpWithError_returnsEmpty', () => {
+    const item = { id: 'm', type: 'mcpToolCall', error: { message: 'x' }, result: { content: [{ type: 'text', text: 'hola' }] } };
+
+    expect(codexItemOutput(item)).toBe('');
+  });
+
+  it('codexItemOutput_mcpWithResult_joinsTextBlocks', () => {
+    const item = { id: 'm', type: 'mcpToolCall', result: { content: [{ type: 'text', text: 'a' }, { type: 'image' }, { type: 'text', text: 'b' }] } };
+
+    expect(codexItemOutput(item)).toBe('a\nb');
+  });
+});
+
+describe('isFailedCodexItem', () => {
+  it('isFailedCodexItem_nonZeroExit_returnsTrue', () => {
+    expect(isFailedCodexItem({ id: 'c', type: 'commandExecution', status: 'completed', exitCode: 2 })).toBe(true);
+  });
+
+  it('isFailedCodexItem_completed_returnsFalse', () => {
+    expect(isFailedCodexItem({ id: 'c', type: 'commandExecution', status: 'completed', exitCode: 0 })).toBe(false);
   });
 });

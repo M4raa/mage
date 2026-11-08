@@ -23,7 +23,7 @@ function setup({ snapshot, responses, reconnect } = {}) {
   let clock = 0;
   const deps = {
     link, sessionId: 's1', messages, write: (text) => output.push(text), now: () => clock, exit: vi.fn(),
-    reconnect: reconnect ?? vi.fn(),
+    reconnect: reconnect ?? vi.fn(), setMuted: vi.fn(), prefill: vi.fn(),
   };
   const controller = new ChatController(deps);
   return { controller, link, deps, output, setNow: (ms) => { clock = ms; }, text: () => output.join('') };
@@ -266,5 +266,316 @@ describe('ChatController: reconexión de D2', () => {
 
     expect(text()).toContain(messages.sessionClosed());
     expect(deps.exit).toHaveBeenCalledWith(0);
+  });
+});
+
+const QUESTION_INPUT = { questions: [{ question: '¿Rojo o azul?', header: 'Color', options: [{ label: 'Rojo', description: 'cálido' }, { label: 'Azul' }], multiSelect: false }, { question: '¿Qué frutas?', header: 'Frutas', options: [{ label: 'Pera', description: '' }, { label: 'Uva', description: '' }, { label: 'Kiwi', description: '' }], multiSelect: true }] };
+const formRequest = (properties, required = []) => ({ kind: 'elicitation_request', request: { requestId: 'e1', server: 'srv', message: 'Datos', mode: 'form', schema: { type: 'object', properties, required } } });
+const urlRequest = (requestId) => ({ kind: 'elicitation_request', request: { requestId, server: 'srv', message: 'Entra', mode: 'url', url: `https://ejemplo.test/${requestId}`, elicitationId: requestId } });
+
+describe('ChatController: subscription.closed', () => {
+  it('subscriptionClosed_propia_avisaYSale0', async () => {
+    const { controller, link, deps, text } = setup();
+    await controller.attach();
+
+    link.rpc.handler('subscription.closed', { subscriptionId: 'sub-1' });
+
+    expect(text()).toContain(messages.sessionClosed());
+    expect(deps.exit).toHaveBeenCalledWith(0);
+  });
+
+  it('subscriptionClosed_deOtra_seIgnora', async () => {
+    const { controller, link, deps } = setup();
+    await controller.attach();
+
+    link.rpc.handler('subscription.closed', { subscriptionId: 'sub-otra' });
+
+    expect(deps.exit).not.toHaveBeenCalled();
+  });
+});
+
+describe('ChatController: preguntas y elicitations en la terminal', () => {
+  it('pregunta_seContestaEnLaTerminal', async () => {
+    const { controller, link, text } = setup();
+    await controller.attach();
+    emit(link, permissionRequest({ requiresUserInteraction: true, toolName: 'AskUserQuestion', input: QUESTION_INPUT }));
+    expect(text()).toContain('[pregunta 1 de 2] Color: ¿Rojo o azul?');
+
+    await controller.onLine('2');
+    await controller.onLine('1,3');
+
+    expect(callsTo(link, 'session.answerPermission')).toHaveLength(1);
+    expect(callsTo(link, 'session.answerPermission')[0][1].decision.updatedInput.answers).toEqual({ '¿Rojo o azul?': 'Azul', '¿Qué frutas?': 'Pera, Kiwi' });
+    expect(callsTo(link, 'session.send')).toHaveLength(0);
+  });
+
+  it('pregunta_respuestaInvalida_repiteSinLlamar', async () => {
+    const { controller, link, text } = setup();
+    await controller.attach();
+    emit(link, permissionRequest({ requiresUserInteraction: true, toolName: 'AskUserQuestion', input: QUESTION_INPUT }));
+
+    await controller.onLine('7');
+
+    expect(text()).toContain(messages.questionInvalid());
+    expect(callsTo(link, 'session.answerPermission')).toHaveLength(0);
+  });
+
+  it('elicitationForm_campoACampo_accept', async () => {
+    const { controller, link } = setup();
+    await controller.attach();
+    emit(link, formRequest({ nombre: { type: 'string' }, edad: { type: 'integer' } }, ['nombre']));
+
+    await controller.onLine('Ana');
+    await controller.onLine('');
+
+    expect(callsTo(link, 'session.answerElicitation')).toEqual([
+      ['session.answerElicitation', { sessionId: 's1', requestId: 'e1', action: 'accept', content: { nombre: 'Ana' } }],
+    ]);
+  });
+
+  it('elicitationForm_password_silenciaYDevuelveElEco', async () => {
+    const { controller, link, deps } = setup();
+    await controller.attach();
+
+    emit(link, formRequest({ clave: { type: 'string', format: 'password' } }, ['clave']));
+
+    expect(deps.setMuted).toHaveBeenLastCalledWith(true);
+    await controller.onLine('secreta');
+    expect(deps.setMuted).toHaveBeenLastCalledWith(false);
+  });
+
+  it('elicitationUrl_n_decline', async () => {
+    const { controller, link, text } = setup();
+    await controller.attach();
+    emit(link, urlRequest('u1'));
+    expect(text()).toContain('https://ejemplo.test/u1');
+
+    await controller.onLine('n');
+
+    expect(callsTo(link, 'session.answerElicitation')).toEqual([['session.answerElicitation', { sessionId: 's1', requestId: 'u1', action: 'decline' }]]);
+  });
+
+  it('dosPeticiones_seMuestranDeUnaEnUna', async () => {
+    const { controller, link, text } = setup();
+    await controller.attach();
+    emit(link, permissionRequest({ requestId: 'r1', description: 'primera' }));
+    emit(link, permissionRequest({ requestId: 'r2', description: 'segunda' }));
+    expect(text()).toContain('primera');
+    expect(text()).not.toContain('segunda');
+
+    await controller.onLine('s');
+    expect(text()).toContain('segunda');
+    await controller.onLine('n');
+
+    const calls = callsTo(link, 'session.answerPermission');
+    expect(calls).toHaveLength(2);
+    expect(calls[0][1]).toMatchObject({ requestId: 'r1', decision: { behavior: 'allow' } });
+    expect(calls[1][1]).toMatchObject({ requestId: 'r2', decision: { behavior: 'deny' } });
+  });
+
+  it('contestadaEnLaVentana_seQuitaYPasaALaSiguiente', async () => {
+    const { controller, link, text } = setup();
+    await controller.attach();
+    emit(link, urlRequest('e1'));
+    emit(link, urlRequest('e2'));
+
+    emit(link, { kind: 'elicitation_resolved', requestId: 'e1', action: 'accept' });
+
+    expect(text()).toContain(messages.answeredElsewhere());
+    expect(text()).toContain('https://ejemplo.test/e2');
+    await controller.onLine('s');
+    expect(callsTo(link, 'session.answerElicitation')).toEqual([['session.answerElicitation', { sessionId: 's1', requestId: 'e2', action: 'accept' }]]);
+  });
+});
+
+describe('ChatController: mensajes escritos durante una reconexión', () => {
+  function withManualReconnect() {
+    const newLink = fakeLink({ lastSeq: 9 });
+    let finish;
+    const reconnect = vi.fn(() => new Promise((resolve) => { finish = () => resolve(newLink); }));
+    const context = setup({ reconnect });
+    return { ...context, newLink, finish: () => finish() };
+  }
+
+  it('lineaDuranteLaReconexion_noSeEnviaYSeOfreceDespues', async () => {
+    const { controller, link, newLink, finish, text } = withManualReconnect();
+    await controller.attach();
+    const disconnected = controller.onDisconnected();
+
+    await controller.onLine('hola');
+
+    expect(text()).toContain(messages.notSentOffline());
+    expect(callsTo(link, 'session.send')).toHaveLength(0);
+    finish();
+    await disconnected;
+    expect(text()).toContain(messages.unsentDuringReconnect(1));
+    expect(text()).toContain(messages.resendUnsentAsk('hola'));
+    expect(callsTo(newLink, 'session.send')).toHaveLength(0);
+
+    await controller.onLine('s');
+
+    expect(callsTo(newLink, 'session.send')).toHaveLength(1);
+    expect(callsTo(newLink, 'session.send')[0][1].text).toBe('hola');
+  });
+
+  it('exitDuranteLaReconexion_saleSinGuardarlo', async () => {
+    const { controller, link, deps, text } = withManualReconnect();
+    await controller.attach();
+    void controller.onDisconnected();
+
+    await controller.onLine('exit');
+
+    expect(deps.exit).toHaveBeenCalledWith(0);
+    expect(text()).not.toContain(messages.notSentOffline());
+    expect(callsTo(link, 'session.send')).toHaveLength(0);
+  });
+
+  it('lineaDuranteLaReconexion_respuestaN_noEnvia', async () => {
+    const { controller, newLink, finish } = withManualReconnect();
+    await controller.attach();
+    const disconnected = controller.onDisconnected();
+    await controller.onLine('hola');
+    finish();
+    await disconnected;
+
+    await controller.onLine('n');
+
+    expect(callsTo(newLink, 'session.send')).toHaveLength(0);
+  });
+
+  it('desconexion_limpiaLaPeticionActiva', async () => {
+    const newLink = fakeLink({ lastSeq: 9 });
+    const { controller, link, text } = setup({ reconnect: vi.fn(async () => newLink) });
+    await controller.attach();
+    emit(link, permissionRequest());
+    expect(text()).toContain('¿Permitir Bash?');
+
+    await controller.onDisconnected();
+    await controller.onLine('s');
+
+    expect(callsTo(newLink, 'session.answerPermission')).toHaveLength(0);
+    expect(callsTo(newLink, 'session.send')).toHaveLength(1);
+    expect(callsTo(newLink, 'session.send')[0][1].text).toBe('s');
+  });
+});
+
+describe('ChatController: /rewind', () => {
+  const POINTS = { points: [{ userIndex: 0, text: 'uno', nativeId: 'u1', rewindable: true }, { userIndex: 1, text: 'dos', nativeId: 'u2', rewindable: true }] };
+  const PLAN = { provider: 'claude', unavailable: null, discardedMessages: 2, files: { available: true, changed: [], insertions: 0, deletions: 0 }, turnRunning: false, queuedCount: 0, canSaveCopy: false };
+  const RESULT = { draft: 'dos', returnedQueue: [], filesRestored: true, copyThreadId: null, retried: null };
+  const responses = (over = {}) => ({ 'session.rewindPoints': POINTS, 'session.rewindPlan': PLAN, 'session.rewind': RESULT, ...over });
+
+  it('rewind_fullFlow_callsPlanThenApplyAndPrefills', async () => {
+    const { controller, link, deps, text } = setup({ responses: responses() });
+    await controller.attach();
+
+    await controller.onLine('/rewind --files');
+    await controller.onLine('2');
+    await controller.onLine('s');
+
+    const point = { userIndex: 1, text: 'dos', nativeId: 'u2' };
+    expect(callsTo(link, 'session.rewindPlan')).toEqual([['session.rewindPlan', { sessionId: 's1', point, action: 'rewind' }]]);
+    expect(callsTo(link, 'session.rewind')).toEqual([['session.rewind', { sessionId: 's1', point, action: 'rewind', restoreFiles: true, saveCopy: false }]]);
+    expect(deps.prefill).toHaveBeenCalledWith('dos');
+    expect(text()).toContain('Se descartarán 2 mensajes.');
+    expect(text()).toContain('Conversación rebobinada. Ficheros restaurados.');
+  });
+
+  it('rewind_unavailablePlan_saysReasonAndDoesNotApply', async () => {
+    const { controller, link, text } = setup({ responses: responses({ 'session.rewindPlan': { ...PLAN, unavailable: 'background' } }) });
+    await controller.attach();
+
+    await controller.onLine('/rewind');
+    await controller.onLine('1');
+
+    expect(text()).toContain('segundo plano');
+    expect(callsTo(link, 'session.rewind')).toHaveLength(0);
+  });
+
+  it('rewind_confirmNo_cancelsWithoutApply', async () => {
+    const { controller, link, text } = setup({ responses: responses() });
+    await controller.attach();
+
+    await controller.onLine('/rewind');
+    await controller.onLine('1');
+    await controller.onLine('n');
+
+    expect(callsTo(link, 'session.rewind')).toHaveLength(0);
+    expect(text()).toContain('[rebobinado cancelado]');
+  });
+
+  it('rewind_textIsNotSentToSession', async () => {
+    const { controller, link } = setup({ responses: responses() });
+    await controller.attach();
+
+    for (const line of ['/rewind', 'x', '1', 's']) await controller.onLine(line);
+
+    expect(callsTo(link, 'session.send')).toHaveLength(0);
+  });
+});
+
+describe('ChatController: fin de la entrada', () => {
+  it('onEndOfInput_conTurnoPropioEnCurso_esperaAlResultadoYLuegoSale', async () => {
+    const { controller, link, deps, text } = setup();
+    await controller.attach();
+    await controller.onLine('hola');
+
+    controller.onEndOfInput();
+
+    expect(deps.exit).not.toHaveBeenCalled();
+    emit(link, { kind: 'result', result: { subtype: 'success' } });
+    expect(deps.exit).toHaveBeenCalledTimes(1);
+    expect(deps.exit).toHaveBeenCalledWith(0);
+    expect(text().indexOf(messages.turnEnded('success'))).toBeGreaterThanOrEqual(0);
+    expect(text().indexOf(messages.turnEnded('success'))).toBeLessThan(text().indexOf(messages.leaving()));
+  });
+
+  it('onEndOfInput_sinTurnoPropio_saleEnseguida', async () => {
+    const { controller, deps } = setup({ snapshot: { state: 'running' } });
+    await controller.attach();
+
+    controller.onEndOfInput();
+
+    expect(deps.exit).toHaveBeenCalledWith(0);
+  });
+
+  it('onEndOfInput_envioRechazadoPorElHost_saleEnseguida', async () => {
+    const { controller, link, deps } = setup();
+    link.rpc.call.mockImplementation(async (method) => {
+      if (method === 'session.send') throw Object.assign(new Error('no'), { code: -32000 });
+      return method === 'session.subscribe' ? { subscriptionId: 'sub-1', snapshot: { ...BASE_SNAPSHOT } } : undefined;
+    });
+    await controller.attach();
+    await controller.onLine('hola');
+
+    controller.onEndOfInput();
+
+    expect(deps.exit).toHaveBeenCalledWith(0);
+  });
+
+  it('onEndOfInput_dosTurnosPropios_saleTrasElSegundoResultado', async () => {
+    const { controller, link, deps } = setup();
+    await controller.attach();
+    await controller.onLine('uno');
+    await controller.onLine('dos');
+    controller.onEndOfInput();
+
+    emit(link, { kind: 'result', result: { subtype: 'success' } }, 6);
+    expect(deps.exit).not.toHaveBeenCalled();
+    emit(link, { kind: 'result', result: { subtype: 'success' } }, 7);
+
+    expect(deps.exit).toHaveBeenCalledWith(0);
+  });
+
+  it('showPending_conLaEntradaCerrada_diceQueSeContesteEnMageYSale', async () => {
+    const { controller, link, deps, text } = setup();
+    await controller.attach();
+    await controller.onLine('hola');
+    controller.onEndOfInput();
+
+    emit(link, permissionRequest());
+
+    expect(deps.exit).toHaveBeenCalledWith(0);
+    expect(text()).toContain(messages.answerInMage());
   });
 });

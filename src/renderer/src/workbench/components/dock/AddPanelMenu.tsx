@@ -1,3 +1,4 @@
+import { useLocalPopover } from '../../localPopovers';
 import { useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { motion } from 'motion/react';
@@ -27,6 +28,7 @@ export function AddPanelMenu({
 }): React.JSX.Element {
   const t = useT();
   const menuRef = useRef<HTMLDivElement>(null);
+  useLocalPopover(true); // el menu existe solo abierto
 
   useEffect(() => {
     menuRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
@@ -64,7 +66,7 @@ export function AddPanelMenu({
               onSelect(p.id);
               onClose();
             }}
-            className="flex w-full items-center gap-[8px] px-[10px] py-[5px] text-left transition-colors duration-150 ease-out hover:bg-mg-hover"
+            className="flex w-full items-center gap-[8px] px-[10px] py-[5px] text-left transition-colors duration-90 ease-out hover:bg-mg-hover"
           >
             <Icon name={p.icon} size={PANEL_ICON_PX} />
             {p.title}

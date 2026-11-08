@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { orderTabsForDisplay, tabColorVar, tabDropSide, tabsToCloseAll, tabsToCloseInactive } from './tabActions';
+import {
+  isFileDrag,
+  orderTabsForDisplay,
+  tabColorVar,
+  TAB_DRAG_MIME,
+  TAB_DRAG_ORIGIN_MIME,
+  tabDropSide,
+  tabsToCloseAll,
+  tabsToCloseInactive,
+} from './tabActions';
 import type { ChatStatus, Tab } from './types';
 
 function tab(id: string, overrides: Partial<Tab> = {}): Tab {
@@ -117,5 +126,27 @@ describe('tabDropSide (#47)', () => {
   it('tabDropSide_anchoCeroONegativo_lanzaConElValor', () => {
     expect(() => tabDropSide(100, 0, 100)).toThrow('0');
     expect(() => tabDropSide(100, -5, 100)).toThrow('-5');
+  });
+});
+
+describe('isFileDrag', () => {
+  it('isFileDrag_ficheros_true', () => {
+    expect(isFileDrag(['Files'])).toBe(true);
+  });
+
+  it('isFileDrag_pestana_false', () => {
+    expect(isFileDrag([TAB_DRAG_MIME, TAB_DRAG_ORIGIN_MIME])).toBe(false);
+  });
+
+  it('isFileDrag_pestanaConFiles_false', () => {
+    expect(isFileDrag(['Files', TAB_DRAG_MIME])).toBe(false);
+  });
+
+  it('isFileDrag_texto_false', () => {
+    expect(isFileDrag(['text/plain'])).toBe(false);
+  });
+
+  it('isFileDrag_vacio_false', () => {
+    expect(isFileDrag([])).toBe(false);
   });
 });

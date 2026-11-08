@@ -1,6 +1,6 @@
 import type { Plugin } from 'vite';
 
-// F3.1 (DEVOLUCION-018): el pseudolocale de desarrollo `en-XA` no puede llegar a un build. El renderer lo carga con
+// F3.1: el pseudolocale de desarrollo `en-XA` no puede llegar a un build. El renderer lo carga con
 // un import dinámico bajo `import.meta.env.DEV`, que Rollup elimina al construir; este plugin lo COMPRUEBA mirando
 // los MÓDULOS de cada chunk (no un texto: la constante `en-XA` se sacude aunque el módulo entre entero, medido).
 const PSEUDO_MODULE = /[\\/]shared[\\/]i18n[\\/]pseudoLocale\.ts$/;

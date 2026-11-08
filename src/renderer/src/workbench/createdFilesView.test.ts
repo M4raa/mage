@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createdFileFrom, createdFilesOf } from './createdFilesView';
+import { createdFileFrom, createdFilesOf, touchedFilesOf } from './createdFilesView';
 import type { Block } from './types';
 
 function toolBlock(overrides: Partial<Extract<Block, { kind: 'tool' }>> = {}): Block {
@@ -96,5 +96,32 @@ describe('createdFilesOf', () => {
 
   it('createdFilesOf_hiloSinEscrituras_listaVacia', () => {
     expect(createdFilesOf([{ kind: 'system', id: 's1', text: 'x' }])).toEqual([]);
+  });
+});
+
+describe('touchedFilesOf', () => {
+  it('touchedFilesOf_editAndRead_included', () => {
+    const blocks = [
+      toolBlock({ id: 'w', tool: 'Write', filePath: '/p/new.ts' }),
+      toolBlock({ id: 'e', tool: 'Edit', filePath: '/p/edit.ts' }),
+      toolBlock({ id: 'm', tool: 'MultiEdit', filePath: null, command: '/p/multi.ts' }),
+      toolBlock({ id: 'n', tool: 'NotebookEdit', filePath: '/p/nb.ipynb' }),
+      toolBlock({ id: 'r', tool: 'Read', filePath: null, command: '/p/read.ts' }),
+      toolBlock({ id: 'b', tool: 'Bash', filePath: null, command: 'ls /p' }),
+    ];
+
+    expect(touchedFilesOf(blocks).map((f) => f.path)).toEqual(['/p/read.ts', '/p/nb.ipynb', '/p/multi.ts', '/p/edit.ts', '/p/new.ts']);
+    expect(createdFilesOf(blocks).map((f) => f.path)).toEqual(['/p/new.ts']);
+  });
+
+  it('touchedFilesOf_duplicatePath_once', () => {
+    const blocks = [toolBlock({ id: 'r', tool: 'Read', filePath: '/p/a.ts' }), toolBlock({ id: 'e', tool: 'Edit', filePath: '/p/a.ts' })];
+
+    expect(touchedFilesOf(blocks)).toHaveLength(1);
+    expect(touchedFilesOf(blocks)[0]?.blockId).toBe('e');
+  });
+
+  it('touchedFilesOf_truncatedSummary_skipped', () => {
+    expect(touchedFilesOf([toolBlock({ tool: 'Read', filePath: null, command: '/p/muy/larga…' })])).toEqual([]);
   });
 });

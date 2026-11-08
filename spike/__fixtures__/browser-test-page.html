@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="es"><head><meta charset="utf-8"><title>Prueba Mage</title></head>
+<body>
+  <h1>Página de prueba del navegador de Mage</h1>
+  <button id="pulsar">Pulsar</button>
+  <label>Nombre <input id="nombre" aria-label="Nombre"></label>
+  <a href="/segunda">Segunda</a>
+  <script>
+    const send = (body) => fetch('/evento', { method: 'POST', body: JSON.stringify(body) });
+    document.getElementById('pulsar').addEventListener('click', () => { document.title = 'Pulsado'; send({ kind: 'click' }); });
+    document.getElementById('nombre').addEventListener('input', (event) => send({ kind: 'input', value: event.target.value }));
+    document.cookie = 'prueba=1';
+    send({ kind: 'globals', mage: typeof window.mage, require: typeof require, process: typeof process, electron: typeof window.electron });
+  </script>
+</body></html>

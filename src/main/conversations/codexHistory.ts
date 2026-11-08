@@ -12,7 +12,7 @@ const SESSIONS_DIR = 'sessions';
 const ROLLOUT_PREFIX = 'rollout-';
 const ROLLOUT_EXT = '.jsonl';
 // Nombre de un rollout: grupo 2 = hilo, grupo 3 = segmento (solo tras un `thread/revert`). Medida con
-// codex-cli 0.164.0, INFORME-046 A4.
+// codex-cli 0.164.0.
 export const ROLLOUT_NAME = /^rollout-(\d{4}-\d\d-\d\dT[\d-]+)-([0-9a-f-]{36})(?:_([0-9a-f-]{36}))?\.jsonl$/;
 const SESSION_ID = /^[A-Za-z0-9-]+$/;
 // El `session_meta` lleva las instrucciones base enteras (decenas de KB): hace falta más cabeza que en Claude
@@ -75,6 +75,8 @@ export class CodexHistoryService {
   constructor(
     private readonly deps: ConversationsDeps,
     private readonly log: LogFn,
+    // Así una copia de «Guardar una copia antes» (U3) sale como «Copia de …».
+    private readonly decorateTitle?: (threadId: string, title: string) => string,
   ) {}
 
   list(home: string): ConversationSummary[] {
@@ -104,6 +106,34 @@ export class CodexHistoryService {
   hasSegments(home: string, threadId: string): boolean {
     this.assertSessionId(threadId);
     return (this.rolloutGroups(home).get(threadId)?.segments.length ?? 0) > 0;
+  }
+
+  // Modo de historial del hilo: el de la cabecera del original o, sin original, del primer segmento. null si no hay hilo.
+  historyModeOf(home: string, threadId: string): 'legacy' | 'paginated' | null {
+    this.assertSessionId(threadId);
+    const first = this.threadFiles(home, threadId)[0];
+    if (first === undefined) return null;
+    return this.read(first, this.deps.statFile(first)).head?.historyMode ?? null;
+  }
+
+  // Los hilos hijos (p. ej. de `review/start`) cuyo `parent_thread_id` es `threadId`, por la cabecera de su primer fichero.
+  childThreadsOf(home: string, threadId: string): readonly string[] {
+    this.assertSessionId(threadId);
+    const children: string[] = [];
+    for (const [id, group] of this.rolloutGroups(home)) {
+      const first = group.original ?? group.segments[0];
+      if (id === threadId || first === undefined) continue;
+      if (this.read(first, this.deps.statFile(first)).head?.parentThreadId === threadId) children.push(id);
+    }
+    return children;
+  }
+
+  // Los ficheros de un hilo: el original, si lo hay, y los segmentos.
+  threadFiles(home: string, threadId: string): readonly string[] {
+    this.assertSessionId(threadId);
+    const group = this.rolloutGroups(home).get(threadId);
+    if (group === undefined) return [];
+    return group.original === null ? group.segments : [group.original, ...group.segments];
   }
 
   private assertSessionId(sessionId: string): void {
@@ -174,7 +204,7 @@ export class CodexHistoryService {
         sessionId: head.sessionId,
         configDir: home,
         cwd: head.cwd,
-        title: head.title,
+        title: this.decorateTitle?.(head.sessionId, head.title) ?? head.title,
         privacy: 'shared',
         updatedAtMs,
         sizeBytes,

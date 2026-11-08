@@ -43,6 +43,14 @@ export function renamedTitleFrom(output: { readonly args: string; readonly text:
   return output.text.trim().length === 0 && args.length > 0 ? args : null;
 }
 
+// Nombre de un `/rename <nombre>` TECLEADO: la pestaña lo toma al instante y el CLI lo recibe por el `/rename`
+// silencioso de siempre. null si no es un `/rename` con nombre en una sola línea (`/rename` a secas sigue yendo
+// al CLI, que genera uno).
+export function typedRenameTitle(text: string): string | null {
+  const match = /^\/rename[ \t]+(\S[^\n]*)$/.exec(text.trim());
+  return match?.[1]?.trim() ?? null;
+}
+
 // El ULTIMO `custom-title` de la transcripcion (P-026, 1.6): el nombre que el usuario le dio con
 // `/rename`, en Mage o en el CLI. El CLI re-añade la linea y la que vale es la ultima, asi que se
 // recorre hacia atras. null si no hay ninguna.

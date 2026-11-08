@@ -2,7 +2,7 @@ import { SUBAGENT_STATUS } from './engineBlocks';
 import { describe, expect, it } from 'vitest';
 import type { TranscriptEntry } from '@shared/transcripts';
 import type { Block } from './types';
-import { transcriptToBlocks } from './transcriptToBlocks';
+import { nativeIdOf, transcriptToBlocks } from './transcriptToBlocks';
 import { makeEntry } from '@testing/transcriptEntry';
 
 // Construye una entrada normalizada minima: solo `kind`, `index`, `raw` (y lo que se sobrescriba)
@@ -62,11 +62,31 @@ const userTextAndImage = (index: number, mediaType = 'image/png', data = TINY_PN
     index,
   );
 
+describe('nativeIdOf', () => {
+  it('nativeIdOf_codexPrefix_stripped', () => {
+    expect(nativeIdOf('codex-item-7')).toBe('item-7');
+  });
+
+  it('nativeIdOf_claudeUuid_unchanged', () => {
+    expect(nativeIdOf('9253933c-a6b0')).toBe('9253933c-a6b0');
+  });
+
+  it('nativeIdOf_null_null', () => {
+    expect(nativeIdOf(null)).toBeNull();
+  });
+});
+
 describe('transcriptToBlocks', () => {
+  it('transcriptToBlocks_userEntry_carriesNativeId', () => {
+    const blocks = transcriptToBlocks([userMsg('hola', 3)]);
+
+    expect(blocks[0]).toMatchObject({ kind: 'user', nativeId: 'u3' });
+  });
+
   it('mensajeUsuario_generaBloqueUser', () => {
     const blocks = transcriptToBlocks([userMsg('hola', 0)]);
 
-    expect(blocks).toEqual([{ kind: 'user', id: 'tb-0-0', text: 'hola', time: '', attachments: [] }]);
+    expect(blocks).toEqual([{ kind: 'user', id: 'tb-0-0', text: 'hola', time: '', attachments: [], nativeId: 'u0' }]);
   });
 
   it('transcriptToBlocks_assistantErrorRateLimit_lineaDeSistema', () => {
@@ -84,10 +104,52 @@ describe('transcriptToBlocks', () => {
     ]);
   });
 
+  it('transcriptToBlocks_apiErrorMessage_errorBlockNotAgent', () => {
+    const raw = {
+      type: 'assistant',
+      isApiErrorMessage: true,
+      error: 'authentication_failed',
+      message: { role: 'assistant', model: '<synthetic>', content: [{ type: 'text', text: 'Invalid API key · Fix external API key' }] },
+    };
+
+    const blocks = transcriptToBlocks([entry('assistant', raw, 5)]);
+
+    expect(blocks).toEqual([{ kind: 'error', id: 'tb-5-0', message: 'Error de la API: Invalid API key · Fix external API key' }]);
+  });
+
+  it('transcriptToBlocks_rateLimitWithApiErrorFlag_stillSystemLine', () => {
+    const raw = {
+      type: 'assistant',
+      error: 'rate_limit',
+      isApiErrorMessage: true,
+      message: { role: 'assistant', content: [{ type: 'text', text: "You've hit your session limit · resets 3pm" }] },
+    };
+
+    const blocks = transcriptToBlocks([entry('assistant', raw, 4)]);
+
+    expect(blocks).toEqual([
+      { kind: 'system', id: 'tb-4-0', text: 'Límite de uso alcanzado', tip: "You've hit your session limit · resets 3pm" },
+    ]);
+  });
+
+  it('transcriptToBlocks_apiErrorFlagFalse_agentText', () => {
+    const raw = { type: 'assistant', isApiErrorMessage: false, message: { role: 'assistant', content: [{ type: 'text', text: 'hola' }] } };
+
+    const blocks = transcriptToBlocks([entry('assistant', raw, 6)]);
+
+    expect(blocks[0]).toEqual({ kind: 'agent', id: 'tb-6-0', runs: [{ code: false, text: 'hola' }], streaming: false });
+  });
+
   it('textoAsistente_generaBloqueAgentNoStreaming', () => {
     const blocks = transcriptToBlocks([assistantText('respuesta', 1)]);
 
     expect(blocks[0]).toEqual({ kind: 'agent', id: 'tb-1-0', runs: [{ code: false, text: 'respuesta' }], streaming: false });
+  });
+
+  it('transcriptToBlocks_exitPlanMode_planText', () => {
+    const blocks = transcriptToBlocks([assistantToolUse('tp1', 'ExitPlanMode', { plan: '## 3.4 Identidad' }, 2)]);
+
+    expect(blocks[0]).toMatchObject({ kind: 'tool', tool: 'ExitPlanMode', planText: '## 3.4 Identidad' });
   });
 
   it('toolUseYSuResult_emparejaYRellenaElBloqueTool', () => {
@@ -214,6 +276,7 @@ describe('transcriptToBlocks — adjuntos de imagen', () => {
         text: 'he hecho:',
         time: '',
         attachments: [{ mediaType: 'image/png', data: TINY_PNG_BASE64 }],
+        nativeId: 'u5',
       },
     ]);
   });
@@ -234,7 +297,7 @@ describe('transcriptToBlocks — adjuntos de imagen', () => {
   it('transcriptToBlocks_imagenConMediaTypeNoSoportado_descartaElAdjuntoYConservaElTexto', () => {
     const blocks = transcriptToBlocks([userTextAndImage(5, 'image/tiff')]);
 
-    expect(blocks[0]).toEqual({ kind: 'user', id: 'tb-5-0', text: 'he hecho:', time: '', attachments: [] });
+    expect(blocks[0]).toEqual({ kind: 'user', id: 'tb-5-0', text: 'he hecho:', time: '', attachments: [], nativeId: 'u5' });
   });
 
   it('transcriptToBlocks_bloqueImageSinSourceBase64_noLanza', () => {
@@ -460,5 +523,29 @@ describe('transcriptToBlocks — imagenes intercaladas', () => {
 
     expect(block).toMatchObject({ kind: 'user', text: 'compara [Imagen 1] con [Imagen 2]' });
     expect(block?.kind === 'user' ? block.attachments.map((a) => a.data) : []).toEqual(['A', 'B']);
+  });
+});
+
+describe('transcriptToBlocks — bloque document', () => {
+  it('transcriptToBlocks_userDocumentBlock_keepsText', () => {
+    const withPdf = entry(
+      'user',
+      {
+        type: 'user',
+        message: {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'lee el pdf' },
+            { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: 'JVBERg==' } },
+          ],
+        },
+      },
+      7,
+    );
+
+    const blocks = transcriptToBlocks([withPdf]);
+
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0]).toMatchObject({ kind: 'user', text: 'lee el pdf' });
   });
 });

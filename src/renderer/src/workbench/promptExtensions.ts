@@ -1,7 +1,8 @@
-import { EditorView, Decoration, ViewPlugin, type DecorationSet, type ViewUpdate } from '@codemirror/view';
-import { EditorState, type Extension } from '@codemirror/state';
+import { EditorView, Decoration, ViewPlugin, WidgetType, type DecorationSet, type ViewUpdate } from '@codemirror/view';
+import { EditorState, type Extension, type Transaction } from '@codemirror/state';
 import { findImageTokens } from '@shared/imageRefs';
 import { decorationRangesFor, type DecorationKind } from './promptDecorations';
+import { isFileDrag } from './tabActions';
 
 // Todo lo especifico de CodeMirror 6 vive AQUI y en `PromptEditor.tsx`, en ningun otro sitio: la logica
 // (que decorar, que hace Enter, que adjuntos valen) esta en modulos puros y testeados.
@@ -34,33 +35,63 @@ const CLASS_BY_KIND: Readonly<Record<DecorationKind, string>> = {
   'heading-6': 'cm-mg-h6',
 };
 
-// Construye las decoraciones del documento actual con el modulo PURO. `sort: true` porque
-// `Decoration.set` exige orden por posicion y el modulo emite por lineas.
-function buildDecorations(view: EditorView): DecorationSet {
-  const text = view.state.doc.toString();
-  const cursorLine = view.state.doc.lineAt(view.state.selection.main.head).number - 1;
-  const marks = decorationRangesFor(text, cursorLine).map((range) =>
-    Decoration.mark({ class: CLASS_BY_KIND[range.kind] }).range(range.from, Math.min(range.to, text.length)),
-  );
-  return Decoration.set(marks, true);
+// La viñeta como WIDGET que sustituye al `- ` (0.1.4). Con la marca `font-size: 0` + `::before` el `•` se perdía
+// con el cursor justo delante o detrás. El rango es atómico, como `[Imagen N]`: el cursor lo salta y
+// Backspace/Supr lo borran entero. El documento conserva el `- ` literal: lo enviado sigue siendo markdown.
+class BulletWidget extends WidgetType {
+  override eq(): boolean {
+    return true;
+  }
+
+  override toDOM(): HTMLElement {
+    const bullet = document.createElement('span');
+    bullet.className = CLASS_BY_KIND['bullet-painted'];
+    bullet.textContent = '•';
+    return bullet;
+  }
+}
+
+const bulletDecoration = Decoration.replace({ widget: new BulletWidget() });
+
+export interface PromptDecorationSets {
+  readonly all: DecorationSet;
+  readonly atomic: DecorationSet; // solo las viñetas
+}
+
+function decorationFor(kind: DecorationKind): Decoration {
+  return kind === 'bullet-painted' ? bulletDecoration : Decoration.mark({ class: CLASS_BY_KIND[kind] });
+}
+
+// Decoraciones del documento con el modulo PURO. `sort: true` porque `Decoration.set` exige orden por posicion y el
+// modulo emite por lineas. Recibe el estado (no la vista) para poder probarse sin DOM.
+export function buildPromptDecorations(state: EditorState): PromptDecorationSets {
+  const text = state.doc.toString();
+  const cursorLine = state.doc.lineAt(state.selection.main.head).number - 1;
+  const ranges = decorationRangesFor(text, cursorLine);
+  const all = ranges.map((range) => decorationFor(range.kind).range(range.from, Math.min(range.to, text.length)));
+  const bullets = ranges.filter((range) => range.kind === 'bullet-painted').map((range) => bulletDecoration.range(range.from, Math.min(range.to, text.length)));
+  return { all: Decoration.set(all, true), atomic: Decoration.set(bullets, true) };
 }
 
 const decorationsPlugin = ViewPlugin.fromClass(
   class {
-    decorations: DecorationSet;
+    sets: PromptDecorationSets;
 
     constructor(view: EditorView) {
-      this.decorations = buildDecorations(view);
+      this.sets = buildPromptDecorations(view.state);
     }
 
     update(update: ViewUpdate): void {
       // Tambien al mover el cursor: de eso depende que el marcador de la linea editada se VEA.
       if (update.docChanged || update.selectionSet || update.viewportChanged) {
-        this.decorations = buildDecorations(update.view);
+        this.sets = buildPromptDecorations(update.state);
       }
     }
   },
-  { decorations: (value) => value.decorations },
+  {
+    decorations: (value) => value.sets.all,
+    provide: (plugin) => EditorView.atomicRanges.of((view) => view.plugin(plugin)?.sets.atomic ?? Decoration.none),
+  },
 );
 
 // `[Imagen N]` como BLOQUE (P-028 19b): una marca `cm-mg-imgref` y rango atomico, para que el cursor lo
@@ -104,6 +135,77 @@ const promptTheme = EditorView.theme({
   '.cm-placeholder': { color: 'var(--color-mg-muted)' },
 });
 
+// Los ficheros soltados sobre el editor los adjunta el panel (ChatPane), no CodeMirror: sin esto, CodeMirror
+// insertaría el CONTENIDO del fichero como texto. Devolver `true` solo salta el manejo propio de CodeMirror; el
+// evento sigue subiendo hasta el panel.
+const fileDropGuard = EditorView.domEventHandlers({
+  drop: (event) => event.dataTransfer !== null && isFileDrag(event.dataTransfer.types),
+});
+
+// Tiempo que la región en vivo de CodeMirror conserva un anuncio (p. ej. «Selection deleted»): un lector de pantalla lo
+// lee al cambiar la región (aria-live polite); después se vacía para que no quede texto viejo delante del placeholder.
+const ANNOUNCEMENT_CLEAR_MS = 1500;
+
+export function announcesSomething(transactions: readonly Transaction[]): boolean {
+  return transactions.some((tr) => tr.effects.some((effect) => effect.is(EditorView.announce)));
+}
+
+export interface AnnouncementCleaner {
+  readonly onAnnounce: () => void;
+  readonly dispose: () => void;
+}
+
+export interface AnnouncementCleanerDeps {
+  readonly clear: () => void;
+  readonly setTimer: (fn: () => void, ms: number) => () => void; // devuelve el cancelador
+  readonly delayMs: number;
+}
+
+export function createAnnouncementCleaner(deps: AnnouncementCleanerDeps): AnnouncementCleaner {
+  let cancelPending: (() => void) | null = null;
+  const dispose = (): void => {
+    cancelPending?.();
+    cancelPending = null;
+  };
+  const onAnnounce = (): void => {
+    dispose();
+    cancelPending = deps.setTimer(() => {
+      cancelPending = null;
+      deps.clear();
+    }, deps.delayMs);
+  };
+  return { onAnnounce, dispose };
+}
+
+// Vacía la región `.cm-announced` un rato después de cada anuncio. El anuncio NO se quita (sigue siendo accesible).
+const announcementCleanupPlugin = ViewPlugin.fromClass(
+  class {
+    private readonly cleaner: AnnouncementCleaner;
+
+    constructor(view: EditorView) {
+      this.cleaner = createAnnouncementCleaner({
+        clear: () => {
+          const region = view.dom.querySelector('.cm-announced');
+          if (region !== null) region.textContent = '';
+        },
+        setTimer: (fn, ms) => {
+          const id = window.setTimeout(fn, ms);
+          return () => window.clearTimeout(id);
+        },
+        delayMs: ANNOUNCEMENT_CLEAR_MS,
+      });
+    }
+
+    update(update: ViewUpdate): void {
+      if (announcesSomething(update.transactions)) this.cleaner.onAnnounce();
+    }
+
+    destroy(): void {
+      this.cleaner.dispose();
+    }
+  },
+);
+
 export function promptExtensions(): readonly Extension[] {
-  return [decorationsPlugin, imageRefPlugin, promptTheme, EditorView.lineWrapping, EditorState.allowMultipleSelections.of(false)];
+  return [decorationsPlugin, imageRefPlugin, announcementCleanupPlugin, fileDropGuard, promptTheme, EditorView.lineWrapping, EditorState.allowMultipleSelections.of(false)];
 }

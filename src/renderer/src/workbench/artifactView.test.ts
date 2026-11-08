@@ -52,7 +52,7 @@ describe('artifactCardFrom', () => {
   });
 
   it('artifactCardFrom_bloqueQueNoEsTool_devuelveNull', () => {
-    expect(artifactCardFrom({ kind: 'user', id: 'u', text: 'hola', time: '', attachments: [] })).toBeNull();
+    expect(artifactCardFrom({ kind: 'user', id: 'u', text: 'hola', time: '', attachments: [], nativeId: null })).toBeNull();
   });
 });
 

@@ -1,5 +1,6 @@
 import { z } from 'zod';
-import type { ContextUsage, MageEvent, PermissionRequest, TurnUsage } from '@shared/events';
+import type { ContextUsage, MageEvent, PermissionDecision, PermissionRequest, PermissionScope, TurnUsage } from '@shared/events';
+import { codexItemOutput, codexItemTool, isFailedCodexItem } from '@shared/codexTranscript';
 import { localized } from '@shared/i18n/localizedText';
 import type { ProviderModel } from '@shared/providers';
 import type { UsageWindowInfo } from '@shared/usage';
@@ -83,52 +84,23 @@ function textEvent(kind: 'stream_delta' | 'thinking_delta', delta: unknown): Mag
 // Nombres de herramienta con los que Mage pinta cada item. `commandExecution` es una orden de shell: se
 // pinta como el Bash de Claude.
 function itemStarted(item: ThreadItem): MageEvent[] {
-  const tool = toolOf(item);
+  const tool = codexItemTool(item);
   return tool === null ? [] : [{ kind: 'tool_use', tool: { toolUseId: item.id, toolName: tool.name, input: tool.input } }];
 }
 
-function toolOf(item: ThreadItem): { readonly name: string; readonly input: Readonly<Record<string, unknown>> } | null {
-  switch (item.type) {
-    case 'commandExecution':
-      return { name: 'Bash', input: { command: item.command, cwd: item.cwd } };
-    case 'fileChange':
-      return { name: 'apply_patch', input: { changes: item.changes } };
-    case 'mcpToolCall':
-      return { name: `mcp__${String(item.server)}__${String(item.tool)}`, input: isRecord(item.arguments) ? item.arguments : {} };
-    case 'webSearch':
-      return { name: 'WebSearch', input: { query: item.query } };
-    default:
-      return null;
-  }
-}
-
-const FAILED_ITEM_STATUSES: readonly string[] = ['failed', 'declined'];
-
 function itemCompleted(item: ThreadItem): MageEvent[] {
   if (item.type === 'agentMessage') return typeof item.text === 'string' ? [{ kind: 'assistant_text', text: item.text }] : [];
-  if (toolOf(item) === null) return [];
-  const status = typeof item.status === 'string' ? item.status : '';
-  const exitFailed = typeof item.exitCode === 'number' && item.exitCode !== 0;
-  const isError = FAILED_ITEM_STATUSES.includes(status) || exitFailed;
-  return [{ kind: 'tool_result', result: { toolUseId: item.id, isError, output: itemOutput(item), durationMs: null } }];
+  if (codexItemTool(item) === null) return [];
+  const isError = isFailedCodexItem(item);
+  return [{ kind: 'tool_result', result: { toolUseId: item.id, isError, output: liveItemOutput(item), durationMs: null } }];
 }
 
-function itemOutput(item: ThreadItem): string {
-  if (typeof item.aggregatedOutput === 'string') return item.aggregatedOutput;
-  // 0.160.0 entrega el resultado MCP en result.content, no en aggregatedOutput.
-  if (item.type === 'mcpToolCall') return mcpOutput(item);
-  if (item.type === 'fileChange' && Array.isArray(item.changes)) {
-    return item.changes.map((change) => (isRecord(change) && typeof change.diff === 'string' ? change.diff : '')).join('\n');
-  }
-  return '';
-}
+// El texto en castellano se queda (decisión F-0293 de 0.1.3): lo lee el modelo, como el de agy.
+const MCP_FAILED_TEXT = 'La llamada MCP de Codex falló.';
 
-function mcpOutput(item: ThreadItem): string {
-  if (item.error !== undefined && item.error !== null) return 'La llamada MCP de Codex falló.';
-  if (!isRecord(item.result) || !Array.isArray(item.result.content)) return '';
-  return item.result.content.flatMap((block: unknown) =>
-    isRecord(block) && block.type === 'text' && typeof block.text === 'string' ? [block.text] : [],
-  ).join('\n');
+function liveItemOutput(item: ThreadItem): string {
+  if (item.type === 'mcpToolCall' && item.error !== undefined && item.error !== null) return MCP_FAILED_TEXT;
+  return codexItemOutput(item);
 }
 
 function turnCompleted(turn: z.infer<typeof TurnSchema>, usage: TurnUsage | null): MageEvent[] {
@@ -250,11 +222,14 @@ export const APPROVAL_METHODS = {
   permissions: 'item/permissions/requestApproval',
 } as const;
 
+// Los tres métodos admiten «esta sesión»; «siempre» solo existe como enmienda de execpolicy (otro sistema) y no se ofrece.
+const SESSION_ONLY: readonly PermissionScope[] = ['session'];
+
 // Peticion de aprobacion -> tarjeta de permiso de Mage. null = un metodo que Mage no sabe contestar.
 export function approvalRequest(requestId: string, method: string, params: unknown): PermissionRequest | null {
   if (!isRecord(params) || typeof params.itemId !== 'string') return null;
   const reason = typeof params.reason === 'string' ? params.reason : null;
-  const base = { requestId, toolUseId: params.itemId, description: reason, requiresUserInteraction: false };
+  const base = { requestId, toolUseId: params.itemId, description: reason, requiresUserInteraction: false, allowScopes: SESSION_ONLY };
   switch (method) {
     case APPROVAL_METHODS.command:
       return { ...base, toolName: 'Bash', displayName: 'Ejecutar un comando', input: { command: params.command, cwd: params.cwd } };
@@ -269,12 +244,16 @@ export function approvalRequest(requestId: string, method: string, params: unkno
   }
 }
 
-// Respuesta a la aprobacion con la decision de Mage. `permissions` concede lo pedido (o nada), solo para
-// este turno.
-export function approvalResult(method: string, params: unknown, allow: boolean): unknown {
+// Respuesta a la aprobación con la decisión de Mage (MEDIDO con el esquema de codex-cli 0.164.0: comandos y ficheros
+// admiten `acceptForSession`; los permisos, `scope: 'session'`). «Siempre» no existe aquí: solo «esta vez» y «esta sesión».
+export function approvalResult(method: string, params: unknown, decision: PermissionDecision): unknown {
+  const allow = decision.behavior === 'allow';
+  const session = allow && decision.scope === 'session';
+  if (allow && decision.scope === 'always') throw new Error(`Codex no admite «permitir siempre» (${method})`);
   if (method === APPROVAL_METHODS.permissions) {
     const requested = isRecord(params) && isRecord(params.permissions) ? params.permissions : {};
-    return { permissions: allow ? requested : {}, scope: 'turn' };
+    return { permissions: allow ? requested : {}, scope: session ? 'session' : 'turn' };
   }
+  if (session) return { decision: 'acceptForSession' };
   return { decision: allow ? 'accept' : 'decline' };
 }

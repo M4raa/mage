@@ -26,6 +26,8 @@ import {
   SUBAGENT_STATUS,
   subagentStatusLabel,
   turnUsageText,
+  turnUsageCounters,
+  currentTurnCapability,
 } from './engineBlocks';
 import type { Block } from './types';
 
@@ -86,7 +88,7 @@ describe('closeStreaming', () => {
   });
 
   it('closeStreaming_nullId_returnsSameBlocks', () => {
-    const blocks: readonly Block[] = [{ kind: 'user', id: 'u1', text: 'hi', time: '10:00', attachments: [] }];
+    const blocks: readonly Block[] = [{ kind: 'user', id: 'u1', text: 'hi', time: '10:00', attachments: [], nativeId: null }];
 
     expect(closeStreaming(blocks, null)).toBe(blocks);
   });
@@ -115,6 +117,18 @@ describe('appendToolUse', () => {
         parentToolUseId: null,
       },
     ]);
+  });
+
+  it('appendToolUse_exitPlanMode_keepsPlanText', () => {
+    const blocks = appendToolUse([], { toolUseId: 't2', toolName: 'ExitPlanMode', input: { plan: '## 1 Plan' } }, 'b2');
+
+    expect(blocks[0]).toMatchObject({ kind: 'tool', planText: '## 1 Plan' });
+  });
+
+  it('appendToolUse_otherTool_noPlanText', () => {
+    const blocks = appendToolUse([], { toolUseId: 't3', toolName: 'Bash', input: { command: 'ls', plan: 'x' } }, 'b3');
+
+    expect(blocks[0]).not.toHaveProperty('planText');
   });
 });
 
@@ -223,10 +237,10 @@ describe('mapPermissionToView', () => {
 
     expect(view.diff).toEqual([]);
   });
-  it('mapPermissionToView_outsideProject_notRememberableAndSummaryIsReason', () => {
-    const view = mapPermissionToView({ ...permission({ toolName: 'Read', input: { file_path: '/etc/hosts' } }), description: 'Fuera del proyecto: /etc/hosts', outsideProject: true });
+  it('mapPermissionToView_outsideProject_sinAlcancesAndSummaryIsReason', () => {
+    const view = mapPermissionToView({ ...permission({ toolName: 'Read', input: { file_path: '/etc/hosts' }, allowScopes: ['session', 'always'] }), description: 'Fuera del proyecto: /etc/hosts', outsideProject: true });
 
-    expect(view).toMatchObject({ rememberable: false, summary: 'Fuera del proyecto: /etc/hosts' });
+    expect(view).toMatchObject({ allowScopes: [], summary: 'Fuera del proyecto: /etc/hosts' });
   });
 
   it('mapPermissionToView_outsideTarget_fraseTraducida', () => {
@@ -241,8 +255,16 @@ describe('mapPermissionToView', () => {
     expect(mapPermissionToView(request).summary).toBe('Red: curl x');
   });
 
-  it('mapPermissionToView_normalRequest_rememberable', () => {
-    expect(mapPermissionToView(permission({ toolName: 'Read', input: { file_path: 'a' } })).rememberable).toBe(true);
+  it('mapPermissionToView_peticionConAlcances_losPasaConSuRegla', () => {
+    const view = mapPermissionToView(permission({ toolName: 'Bash', input: { command: 'npm test' }, allowScopes: ['session', 'always'], rule: 'Bash(npm test *)' }));
+
+    expect(view).toMatchObject({ allowScopes: ['session', 'always'], rule: 'Bash(npm test *)' });
+  });
+
+  it('mapPermissionToView_sinAlcances_vacioYSinRegla', () => {
+    const view = mapPermissionToView(permission({ toolName: 'Read', input: { file_path: 'a' } }));
+
+    expect(view).toMatchObject({ allowScopes: [], rule: null });
   });
 
   it('mapPermissionToView_edit_buildsDiffAndSummary', () => {
@@ -285,8 +307,8 @@ describe('mapPermissionToView', () => {
 
 describe('appendUserBlock / appendErrorBlock', () => {
   it('appendUserBlock_addsUserBlock', () => {
-    expect(appendUserBlock([], { id: 'u1', text: 'hola', time: '14:31', attachments: [] })).toEqual([
-      { kind: 'user', id: 'u1', text: 'hola', time: '14:31', attachments: [] },
+    expect(appendUserBlock([], { id: 'u1', text: 'hola', time: '14:31', attachments: [], nativeId: null })).toEqual([
+      { kind: 'user', id: 'u1', text: 'hola', time: '14:31', attachments: [], nativeId: null },
     ]);
   });
 
@@ -295,9 +317,9 @@ describe('appendUserBlock / appendErrorBlock', () => {
     // construye la ruta hidratada desde la transcripcion.
     const attachments = [{ mediaType: 'image/png', data: 'AAAA' }] as const;
 
-    const blocks = appendUserBlock([], { id: 'u1', text: 'mira', time: '14:31', attachments });
+    const blocks = appendUserBlock([], { id: 'u1', text: 'mira', time: '14:31', attachments, nativeId: null });
 
-    expect(blocks[0]).toEqual({ kind: 'user', id: 'u1', text: 'mira', time: '14:31', attachments });
+    expect(blocks[0]).toEqual({ kind: 'user', id: 'u1', text: 'mira', time: '14:31', attachments, nativeId: null });
   });
 
   it('appendErrorBlock_addsErrorBlock', () => {
@@ -307,7 +329,7 @@ describe('appendUserBlock / appendErrorBlock', () => {
 
 describe('appendSystemBlock / compactionText', () => {
   it('appendSystemBlock_anadeMarcadorAlFinal', () => {
-    const existing = appendUserBlock([], { id: 'u1', text: 'hola', time: '14:31', attachments: [] });
+    const existing = appendUserBlock([], { id: 'u1', text: 'hola', time: '14:31', attachments: [], nativeId: null });
 
     const blocks = appendSystemBlock(existing, '🗜 Contexto compactado (manual)', 's1');
 
@@ -347,14 +369,14 @@ describe('restartingText', () => {
 
 describe('hasVisibleContent', () => {
   it('bloquesConTexto_seMuestran', () => {
-    expect(hasVisibleContent({ kind: 'user', id: 'u', text: 'hola', time: '10:00', attachments: [] })).toBe(true);
+    expect(hasVisibleContent({ kind: 'user', id: 'u', text: 'hola', time: '10:00', attachments: [], nativeId: null })).toBe(true);
     expect(hasVisibleContent({ kind: 'error', id: 'e', message: 'boom' })).toBe(true);
     expect(hasVisibleContent({ kind: 'system', id: 's', text: 'compactado' })).toBe(true);
     expect(hasVisibleContent({ kind: 'agent', id: 'a', runs: [{ code: false, text: 'texto' }], streaming: false })).toBe(true);
   });
 
   it('bloquesVacios_seOcultan_evitaRayasFantasma', () => {
-    expect(hasVisibleContent({ kind: 'user', id: 'u', text: '   ', time: '', attachments: [] })).toBe(false);
+    expect(hasVisibleContent({ kind: 'user', id: 'u', text: '   ', time: '', attachments: [], nativeId: null })).toBe(false);
     expect(hasVisibleContent({ kind: 'error', id: 'e', message: '' })).toBe(false);
     expect(hasVisibleContent({ kind: 'system', id: 's', text: '' })).toBe(false);
     expect(hasVisibleContent({ kind: 'agent', id: 'a', runs: [{ code: false, text: '\n\n' }], streaming: false })).toBe(false);
@@ -366,13 +388,13 @@ describe('hasVisibleContent', () => {
 
   it('hasVisibleContent_usuarioSinTextoConAdjunto_seMuestra', () => {
     // Un mensaje que era SOLO una imagen: con la condicion anterior (solo texto) desaparecia del hilo.
-    const block: Block = { kind: 'user', id: 'u', text: '', time: '10:00', attachments: [{ mediaType: 'image/png', data: 'AAAA' }] };
+    const block: Block = { kind: 'user', id: 'u', text: '', time: '10:00', attachments: [{ mediaType: 'image/png', data: 'AAAA' }], nativeId: null };
 
     expect(hasVisibleContent(block)).toBe(true);
   });
 
   it('hasVisibleContent_usuarioSinTextoNiAdjuntos_seOculta', () => {
-    expect(hasVisibleContent({ kind: 'user', id: 'u', text: '', time: '10:00', attachments: [] })).toBe(false);
+    expect(hasVisibleContent({ kind: 'user', id: 'u', text: '', time: '10:00', attachments: [], nativeId: null })).toBe(false);
   });
 
   it('toolSinNombre_seOculta', () => {
@@ -394,6 +416,51 @@ describe('hasVisibleContent', () => {
     } as const;
     expect(hasVisibleContent({ ...base, tool: 'Bash' })).toBe(true);
     expect(hasVisibleContent({ ...base, tool: '' })).toBe(false);
+  });
+});
+
+describe('turnUsageCounters', () => {
+  it('turnUsageCounters_sinPrefijo_soloLosContadores', () => {
+    const counters = turnUsageCounters({ inputTokens: 10, outputTokens: 5, totalTokens: 15, thinkingTokens: null, cacheReadTokens: null });
+
+    expect(counters).toBe(turnUsageText({ inputTokens: 10, outputTokens: 5, totalTokens: 15, thinkingTokens: null, cacheReadTokens: null })?.replace(/^[^:]*: /, ''));
+    expect(counters).not.toContain('◷');
+  });
+
+  it('turnUsageCounters_sinNingunContador_devuelveNull', () => {
+    expect(turnUsageCounters({ inputTokens: null, outputTokens: null, totalTokens: null, thinkingTokens: null, cacheReadTokens: null })).toBeNull();
+  });
+});
+
+describe('currentTurnCapability', () => {
+  const user: Block = { kind: 'user', id: 'u', text: 'hola', time: '', attachments: [], nativeId: null };
+  const withTools = (...uses: ToolUse[]): readonly Block[] => uses.reduce<readonly Block[]>((blocks, use, i) => appendToolUse(blocks, use, `t${i}`), []);
+
+  it('currentTurnCapability_skillInTurn_returnsSkill', () => {
+    const blocks = [user, ...withTools(toolUse({ toolName: 'Skill', input: { skill: 'pdf' } }), toolUse({ toolUseId: 't2', toolName: 'Read', input: { file_path: 'a.ts' } }))];
+
+    expect(currentTurnCapability(blocks)).toEqual({ kind: 'skill', name: 'pdf' });
+  });
+
+  it('currentTurnCapability_mcpTool_splitsServerAndTool', () => {
+    const blocks = [user, ...withTools(toolUse({ toolName: 'mcp__my_server__list_items', input: {} }))];
+
+    expect(currentTurnCapability(blocks)).toEqual({ kind: 'mcp', server: 'my_server', tool: 'list_items' });
+  });
+
+  it('currentTurnCapability_previousTurnOnly_null', () => {
+    const blocks = [...withTools(toolUse({ toolName: 'Skill', input: { skill: 'pdf' } })), user];
+
+    expect(currentTurnCapability(blocks)).toBeNull();
+  });
+
+  it('currentTurnCapability_noTools_null', () => {
+    expect(currentTurnCapability([])).toBeNull();
+    expect(currentTurnCapability([user, ...withTools(toolUse())])).toBeNull();
+  });
+
+  it('currentTurnCapability_malformedMcpName_null', () => {
+    expect(currentTurnCapability(withTools(toolUse({ toolName: 'mcp__solo', input: {} })))).toBeNull();
   });
 });
 
@@ -628,7 +695,7 @@ describe('subagentes y pensamiento (2.5)', () => {
   });
 
   it('closeThinking_sinBloqueEnCurso_noCambiaNada', () => {
-    const blocks = appendUserBlock([], { id: 'u1', text: 'hola', time: '', attachments: [] });
+    const blocks = appendUserBlock([], { id: 'u1', text: 'hola', time: '', attachments: [], nativeId: null });
 
     expect(closeThinking(blocks, 1)).toBe(blocks);
   });

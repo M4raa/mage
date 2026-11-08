@@ -44,6 +44,7 @@ import { showStartupWarnings } from './workbench/startupWarnings';
 import { startConversationLockSync } from './workbench/conversationLockSync';
 import { RELEASE_NOTES_TAB_ID } from './workbench/releaseNotes';
 import { usePanelLayoutStore } from './workbench/panelLayoutStore';
+import { useDockDefaults } from './workbench/dockDefaults';
 import { useGlobalKeybindings } from './workbench/keybindings/useGlobalKeybindings';
 import { useT } from './i18n/uiLanguage';
 
@@ -191,6 +192,8 @@ export function App(): React.JSX.Element {
   // Layout de paneles acoplables (F6 Fase 4): carga async por IPC: NUNCA roba el foco al hidratar
   // (§6) — el store ya pinta con los defaults sincronos del registro hasta que esto resuelva.
   useEffect(() => initPanelLayout(), [initPanelLayout]);
+  // Defaults del dock (el derecho nace cerrado): una vez por perfil, cuando ajustes y layout ya están cargados.
+  useDockDefaults();
   // Atajos de teclado de scope 'global' (D5): funcionan sin importar donde este el foco.
   useGlobalKeybindings();
   // Con preferencia 'system', seguir al SO en caliente: al cambiar prefers-color-scheme, re-resolver y

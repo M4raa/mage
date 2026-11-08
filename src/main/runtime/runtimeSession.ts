@@ -1,7 +1,7 @@
 import type { ImageAttachment } from '@shared/ipc';
 import { RUNTIME_PERMISSION_MODES, type RuntimePermissionMode } from '@shared/providers';
 import { localized, UserFacingError, wrapError, type LocalizedText } from '@shared/i18n/localizedText';
-import type { ContextUsage, MageEvent, McpServerStatus, PermissionDecision, TurnUsage } from '@shared/events';
+import type { ContextUsage, MageEvent, McpServerStatus, PermissionDecision, PermissionScope, TurnUsage } from '@shared/events';
 import type { ManagedSession } from '../engine/sessionManager';
 import type { ElicitationAnswer } from '@shared/elicitation';
 import type { ElicitationBroker } from './mcp/elicitationBroker';
@@ -101,7 +101,16 @@ const TOOL_CALL_AS_TEXT = /<tool_call>|\[TOOL_REQUEST\]|^\s*```(?:json)?\s*\{\s*
 
 interface PendingPermission {
   readonly toolUseId: string;
+  readonly sessionKey: string | null; // null = no se puede recordar
   readonly resolve: (decision: Authorization) => void;
+}
+
+const SESSION_ONLY: readonly PermissionScope[] = ['session'];
+
+// Clave de «esta sesión»: la herramienta, salvo Bash, que se recuerda por comando EXACTO (una regla por herramienta le
+// abriría paso a cualquier comando, también a los que vigila la barrera del turno de PR).
+function sessionKeyOf(call: PreparedCall): string {
+  return call.name === 'Bash' ? `Bash\u0000${String(call.input.command ?? '')}` : call.name;
 }
 
 const CLEAR_COMMAND = '/clear';
@@ -116,6 +125,8 @@ export class RuntimeSession implements ManagedSession {
   private history: ChatMessage[];
   private readonly queue: string[] = [];
   private readonly pending = new Map<string, PendingPermission>();
+  // «Permitir en esta sesión» (0.1.4): lo concedido mientras viva la sesión. Bash, por comando exacto.
+  private readonly sessionAllowed = new Set<string>();
   private turn: AbortController | null = null;
   private budget: ModelBudget | null = null;
   private preparedFor: string | null = null;
@@ -157,7 +168,9 @@ export class RuntimeSession implements ManagedSession {
   answerPermission(requestId: string, decision: PermissionDecision): void {
     const entry = this.pending.get(requestId);
     if (entry === undefined) throw new UserFacingError(localized('errors.runtime.permissionUnknown', { requestId }));
+    if (decision.behavior === 'allow' && decision.scope === 'always') throw new Error(`El runtime no admite «permitir siempre» (${requestId})`);
     this.pending.delete(requestId);
+    if (decision.behavior === 'allow' && decision.scope === 'session' && entry.sessionKey !== null) this.sessionAllowed.add(entry.sessionKey);
     entry.resolve(decision.behavior === 'allow' ? decision : { behavior: 'deny', message: decision.message, byUser: true });
   }
 
@@ -388,10 +401,13 @@ export class RuntimeSession implements ManagedSession {
     if (gate.verdict === 'deny') return Promise.resolve({ behavior: 'deny', message: gate.reason, byUser: false });
     if (signal.aborted) return Promise.resolve({ behavior: 'deny', message: 'turno interrumpido', byUser: false });
     const outside = gate.outside;
+    const sessionKey = outside === undefined ? sessionKeyOf(call) : null;
+    if (sessionKey !== null && this.sessionAllowed.has(sessionKey)) return Promise.resolve({ behavior: 'allow' });
     const requestId = this.deps.newId();
     return new Promise<Authorization>((resolve) => {
       this.pending.set(requestId, {
         toolUseId: call.id,
+        sessionKey,
         resolve: (decision) => {
           if (!this.stopped) this.deps.emit({ kind: 'session_state', state: 'running' });
           resolve(decision);
@@ -408,6 +424,7 @@ export class RuntimeSession implements ManagedSession {
           requiresUserInteraction: false,
           displayName: null,
           ...(outside === undefined ? {} : { outsideProject: true }),
+          ...(sessionKey === null ? {} : { allowScopes: SESSION_ONLY }),
           ...(gate.outsideTarget === undefined ? {} : { outsideTarget: gate.outsideTarget }),
         },
       });

@@ -53,6 +53,9 @@ export type MessageDelivery = {
   readonly into: DeliveryTarget;
   readonly late: boolean;
   readonly turnKind: string | null;
+  // `new_turn` cuyo turno YA terminó: el motor lo dedujo después de su `result` (salvaguarda sin la señal del CLI).
+  // No hay turno que esperar: quien lo reciba no abre ninguno.
+  readonly turnClosed?: boolean;
   readonly localized?: LocalizedText;
 };
 

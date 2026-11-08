@@ -24,6 +24,8 @@ export interface TurnUsage {
   readonly thinkingTokens: number | null;
   readonly cacheReadTokens: number | null;
   readonly cacheCreationTokens?: number | null;
+  // TTL de la caché que pidió el CLI en el turno (segundos); null si el `result` no lo dice.
+  readonly cacheTtlSeconds?: number | null;
   // true = el proveedor no dio el uso y Mage lo ESTIMO (runtime propio, ficha D14 de P-032).
   readonly estimated?: boolean;
 }
@@ -35,7 +37,11 @@ export interface ResultInfo {
   readonly numTurns: number | null;
   // Uso del turno cuando el proveedor lo reporta (E3, `agy`). Ausente = no lo reporta.
   readonly usage?: TurnUsage;
+  // Claude: `total_cost_usd`, que es el ACUMULADO de la conversación (medido en 2.1.319: crece turno a turno, sigue
+  // tras `--resume`, vuelve a 0 tras `/clear` y un comando local lo repite con 0 tokens). El coste del turno lo
+  // saca `ApiUsageStore` por diferencia.
   readonly costMicroUsd?: number;
+  readonly conversationId?: string;
   // Quien abrio el turno (`origin.kind` del `result`). MEDIDO en 2.1.284: `'task-notification'` cuando
   // lo abrio el CLI solo, al terminar un subagente en segundo plano. Ausente en un turno del usuario.
   readonly origin?: string;
@@ -58,6 +64,10 @@ export interface PermissionRequest {
   readonly outsideProject?: boolean;
   // Runtime propio: lo que queda fuera del proyecto (ruta o comando); el renderer pinta la frase en su idioma (F3.3b).
   readonly outsideTarget?: string;
+  // Alcances que el motor sabe aplicar a ESTA petición, además de «esta vez» (ausente = ninguno). Lo decide main.
+  readonly allowScopes?: readonly PermissionScope[];
+  // La regla que se guardaría (p. ej. `Bash(npm test *)`), para el aviso de «Permitir siempre». Solo para mostrar.
+  readonly rule?: string;
 }
 
 // Uso de una llamada a tool ya emitida por el asistente (para render de tool calls).
@@ -157,6 +167,27 @@ export type SteerOutcome = 'active_turn' | 'new_turn' | 'no_active_turn' | 'not_
 
 // Union discriminada por `kind`. Cada variante es inmutable.
 export type MageEvent =
+  // Delegacion (D-M9), en la conversacion creadora: nace una hija por la peticion `requestId`.
+  | { readonly kind: 'delegation_created'; readonly childId: string; readonly requestId: string }
+  // Delegacion: un mensaje entre conversaciones. H3 lo llama `kind`, pero `kind` ya es el discriminante
+  // del evento.
+  | {
+      readonly kind: 'delegation_message';
+      readonly fromId: string;
+      readonly toId: string;
+      readonly messageKind: 'instruction' | 'question' | 'answer' | 'result';
+      readonly text: string;
+    }
+  // Delegacion: estado de la hija (los de `mage_get_status`, src/main/mcpServer/schemas.ts; shared no
+  // importa de main, por eso la union se repite aqui).
+  | {
+      readonly kind: 'delegation_state';
+      readonly childId: string;
+      readonly state: 'working' | 'waiting_answer' | 'permission_pending' | 'done' | 'interrupted';
+    }
+  // Delegacion (U26): en la propia DELEGADA, si espera la respuesta de su creadora tras `mage_ask_creator`.
+  // `creatorId` es la conversacion creadora. Lo pinta el chip de su pestana; no se persiste.
+  | { readonly kind: 'delegation_waiting'; readonly creatorId: string; readonly waiting: boolean }
   // Arranque de sesion. `mcpServers` y `slashCommands` son lo que la sesion cargo DE VERDAD (unica
   // fuente fiable: ni el modelo ni `claude mcp list` lo saben). Vacios si el CLI no los reporta.
   | {
@@ -222,7 +253,7 @@ export type MageEvent =
   // convierte en un error visible; si era telemetria nuestra (registrar hooks, pedir el desglose de
   // contexto) se queda en el log, porque ensuciar la conversacion con un fallo que el usuario no ha
   // provocado —y que en un CLI de otra version pasaria en CADA arranque— seria peor que el fallo.
-  // Dato/texto ajeno: no se traduce (F3.3, INFORME-033 §4).
+  // Dato/texto ajeno: no se traduce (F3.3).
   | { readonly kind: 'control_error'; readonly requestId: string; readonly message: string }
   // Compactacion de contexto completada (M2.4): system/compact_boundary del CLI. trigger:
   // 'manual' (/compact) o 'auto' (umbral del CLI); string laxo por si aparecen valores nuevos.
@@ -236,7 +267,7 @@ export type MageEvent =
   // `summary` es ESE texto, tal cual: el CLI es el unico que sabe cuando se restablece y en que zona.
   // `resetsAtMs` queda en null mientras no se mida un campo con la marca de tiempo — deducirla del
   // texto seria inventarla.
-  // Dato/texto ajeno: no se traduce (F3.3, INFORME-033 §4).
+  // Dato/texto ajeno: no se traduce (F3.3).
   | { readonly kind: 'rate_limit'; readonly summary: string; readonly resetsAtMs: number | null }
   // Foto del consumo de la suscripcion que el CLI emite SOLO, sin que Mage pregunte a ningun
   // endpoint. MEDIDO el 2026-09-14 contra el CLI 2.1.270 (Fase 9, S3): llega en un turno normal
@@ -290,6 +321,10 @@ export type MageEvent =
   | { readonly kind: 'queue_changed'; readonly queue: readonly QueuedMessage[] }
   | { readonly kind: 'queued_message_sent'; readonly message: QueuedMessage }
   | { readonly kind: 'queued_message_failed'; readonly message: QueuedMessage; readonly localized: LocalizedText }
+  // Rewind (K04): la cola vuelve a borradores SIN ejecutarse (acompaña al `queue_changed` vacío), y la
+  // conversacion quedo rebobinada al mensaje `targetNativeId` (`retry`: reintento del mismo mensaje).
+  | { readonly kind: 'queue_returned'; readonly messages: readonly QueuedMessage[] }
+  | { readonly kind: 'conversation_rewound'; readonly targetNativeId: string; readonly action: 'rewind' | 'retry' }
   // Un permiso (o pregunta) se contestó (F2.3): lo emite la coordinación de main al aceptar LA respuesta, para
   // que todo cliente cierre su tarjeta, también el que no contestó.
   // `answers`: las respuestas de una PREGUNTA (AskUserQuestion), para que otro cliente cierre su tarjeta con ellas.
@@ -298,7 +333,14 @@ export type MageEvent =
   // (`blocked`: el comando denegado; null si lo permitió una regla). Ese permiso NO se anunció a los clientes.
   // Una sesion en segundo plano que nadie reclamo caduca (F2.4): main la para justo despues de este evento.
   | { readonly kind: 'background_expired' }
-  // Dato/texto ajeno: no se traduce (F3.3, INFORME-033 §4).
+  // Respuesta del motor a una peticion de Mage con `requestId` (rewind/fork, F4.4/F4.5): la emite el adapter al
+  // reconocer la respuesta del CLI. `result` es el cuerpo TAL CUAL (su forma depende de la peticion); `error`
+  // lleva el motivo cuando `ok` es false (o `process_not_running`/`process_exited` si no hubo proceso).
+  | { readonly kind: 'engine_response'; readonly requestId: string; readonly ok: boolean; readonly result: unknown; readonly error: string | null }
+  // Como guarda Codex el historial del hilo que acaba de abrir (`thread.historyMode`); null = no lo dijo.
+  // Solo un hilo `paginated` admite `thread/revert`.
+  | { readonly kind: 'thread_history'; readonly mode: 'legacy' | 'paginated' | null }
+  // Dato/texto ajeno: no se traduce (F3.3).
   | { readonly kind: 'permission_auto_answered'; readonly requestId: string; readonly toolName: string; readonly behavior: 'allow' | 'deny'; readonly blocked: string | null }
   // `inferred`: el adapter lo dedujo sin la señal del CLI (salvaguarda); `turnKind`: el tipo de turno que
   // rechazo el directo; `localized`: el detalle de un fallo.
@@ -314,6 +356,10 @@ export type MageEvent =
   // `steer_result` del motor; `message` es el envio, para devolverlo al borrador si fallo.
   | ({ readonly kind: 'message_delivery'; readonly commandId: string; readonly message: QueuedMessage } & MessageDelivery);
 
+// Alcance de un «Permitir» (0.1.4). Sin él, solo esta vez. `session`: mientras viva la sesión de la pestaña (se pierde al
+// cerrarla o relanzarla); `always`: regla general de la cuenta (Claude: `permissions.allow` de su settings.json).
+export type PermissionScope = 'session' | 'always';
+
 // Decision del usuario ante un permiso (viaja renderer -> main -> CLI).
 //
 // `updatedInput` REESCRIBE el input de la tool: es el canal por el que viajan las respuestas de
@@ -321,5 +367,5 @@ export type MageEvent =
 // input original" (comprobado en su fuente; los clientes moviles mandan eso). Un `{}` explicito y un
 // campo ausente son, por tanto, lo mismo: no hay ambiguedad que resolver.
 export type PermissionDecision =
-  | { readonly behavior: 'allow'; readonly updatedInput?: Readonly<Record<string, unknown>> }
+  | { readonly behavior: 'allow'; readonly updatedInput?: Readonly<Record<string, unknown>>; readonly scope?: PermissionScope }
   | { readonly behavior: 'deny'; readonly message: string };

@@ -1,8 +1,8 @@
 import { useWorkbenchStore } from '../workbenchStore';
 import { pickReleaseNotesEntry, RELEASE_NOTES_TAB_ID } from '../releaseNotes';
-import { CHANGELOG_ENTRIES } from '../releaseNotesContent';
+import { changelogEntriesFor } from '../releaseNotesContent';
 import { Markdown } from './Markdown';
-import { useT } from '../../i18n/uiLanguage';
+import { useT, useUiLanguageStore } from '../../i18n/uiLanguage';
 
 // Panel de la pseudo-pestaña de novedades: ocupa el sitio de un `ChatPane`, pero sin prompt (no es una
 // conversacion). A la izquierda, todas las versiones del changelog; a la derecha, las notas de la elegida,
@@ -13,7 +13,8 @@ export function ReleaseNotesPane({ focused, split }: { readonly focused: boolean
   const requested = useWorkbenchStore((s) => s.releaseNotesVersion);
   const installed = useWorkbenchStore((s) => s.appVersion);
   const t = useT();
-  const entry = pickReleaseNotesEntry(CHANGELOG_ENTRIES, requested, installed);
+  const entries = changelogEntriesFor(useUiLanguageStore((s) => s.resolved.language));
+  const entry = pickReleaseNotesEntry(entries, requested, installed);
   // Mismo contrato que `ChatPane`: interactuar con el panel lo enfoca, y el panel enfocado es `activeTabId`.
   const take = (): void => {
     if (!focused) setActiveTab(RELEASE_NOTES_TAB_ID);
@@ -30,15 +31,15 @@ export function ReleaseNotesPane({ focused, split }: { readonly focused: boolean
     >
       <nav aria-label={t('settings.releaseNotes.versionsAria')} className="flex w-[168px] shrink-0 flex-col gap-[1px] overflow-y-auto border-r border-mg-border p-[12px]">
         <div className="mb-[6px] px-[10px] text-[9.5px] font-bold tracking-[.1em] text-mg-ter">{t('settings.releaseNotes.versionsHeading')}</div>
-        {CHANGELOG_ENTRIES.map((candidate) => {
+        {entries.map((candidate) => {
           const current = candidate.version === entry?.version;
           return (
             <button
               key={candidate.version}
               aria-current={current ? 'page' : undefined}
               onClick={() => openReleaseNotes(candidate.version)}
-              className={`flex items-baseline justify-between gap-[6px] rounded-[7px] px-[10px] py-[6px] text-left text-[11.5px] transition-colors duration-150 ease-out ${
-                current ? 'bg-mg-sel text-mg-body' : 'text-mg-body2 hover:bg-mg-hover'
+              className={`flex items-baseline justify-between gap-[6px] rounded-[7px] px-[10px] py-[6px] text-left text-[11.5px] transition-colors duration-90 ease-out ${
+                current ? 'bg-mg-sel text-mg-sel-ink relative before:pointer-events-none before:absolute before:inset-y-0 before:left-0 before:w-[2px] before:bg-mg-sel-mark' : 'text-mg-body2 hover:bg-mg-hover'
               }`}
             >
               <span className="font-mono">{candidate.version}</span>

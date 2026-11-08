@@ -212,7 +212,7 @@ class SourceReader {
     }
   }
 
-  // Ausente -> null sin aviso (es lo normal). Ilegible o JSON invalido -> null CON aviso que nombra el
+  // Ausente -> null sin aviso (es lo normal). Ilegible o JSON inválido -> null CON aviso que nombra el
   // fichero y su tamaño, nunca el contenido (lleva los `env`).
   private readJson(path: string, label: LocalizedText): Record<string, unknown> | null {
     if (!this.deps.exists(path)) return null;

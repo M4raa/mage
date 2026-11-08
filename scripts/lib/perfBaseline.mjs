@@ -5,8 +5,10 @@
 // en que la condicion de «listo» se cumple. Con el perfil de CPU de Chromium (CDP Profiler) se
 // atribuye el tiempo a funciones para buscar las causas antes de tocar nada.
 
+import { ui } from './uiText.mjs';
+
 export const PERF_REPEATS = 20;
-const PROMPT = 'Escribe una instrucción para el agente';
+const PROMPT = ui('prompt.editor.ariaLabel');
 const PROFILE_TOP = 15;
 // Funciones que se conservan aunque no esten entre las primeras: el sidebar (criterio de F2.5, «el sidebar ya no
 // aparece en el perfil del cambio de pestaña»). Con muestreo de 200 µs, un render mas corto puede no salir.
@@ -89,12 +91,18 @@ export async function measureTyping(page, repeats = PERF_REPEATS) {
   return result;
 }
 
+// «Listo» del cambio de pestaña: el panel de destino esta montado y, si es un chat con lista virtual, ya
+// pinto su ultima fila (con lista virtual, «panel montado» no implica «ultima fila pintada»).
+export function tabSwitchReadyExpr(target) {
+  return `(() => { const p = document.querySelector('[data-pane-tab-id="${target}"]'); return p !== null && (p.querySelector('[data-chat-scroller]') === null || p.querySelector('[data-last-row="true"]') !== null); })()`;
+}
+
 // Cambio de pestaña con el raton entre dos pestañas: «listo» = el panel enseña la de destino.
 export async function measureTabSwitch(page, tabIds, repeats = PERF_REPEATS) {
   if (tabIds.length < 2) throw new Error(`Hacen falta dos pestañas para medir el cambio: ${JSON.stringify(tabIds)}`);
   return measureRepeated(repeats, async (i) => {
     const target = tabIds[(i + 1) % 2];
-    return measureInteraction(page, 'pointerdown', `document.querySelector('[data-pane-tab-id="${target}"]') !== null`, () => page.locator(`[role="tab"][data-tab-id="${target}"]`).click());
+    return measureInteraction(page, 'pointerdown', tabSwitchReadyExpr(target), () => page.locator(`[role="tab"][data-tab-id="${target}"]`).click());
   });
 }
 
@@ -111,9 +119,10 @@ export async function measurePanelOpen(page, panelId, repeats = PERF_REPEATS) {
 }
 
 // Render de una conversacion larga ya en memoria (necesita el puente de desarrollo): se inyectan
-// `count` bloques usuario/agente con Markdown y se mide hasta el frame en que estan en el DOM.
+// `count` bloques usuario/agente con Markdown y se mide hasta el frame en que la lista virtual pinto la ultima fila y esta al final (con lista virtual nunca
+// llegan a estar los `count` bloques en el DOM).
 export async function measureLongConversation(page, count) {
-  return page.evaluate((n) => new Promise((resolve) => {
+  return page.evaluate(({ n, timeoutMs }) => new Promise((resolve, reject) => {
     const store = window.__mageDev.store;
     const id = store.getState().activeTabId;
     const text = 'Párrafo de prueba con **negrita**, `código` y una lista:\n\n- uno\n- dos\n\n' + 'Texto largo de relleno. '.repeat(20);
@@ -121,13 +130,106 @@ export async function measureLongConversation(page, count) {
       ? { kind: 'user', id: `pb-u${i}`, text: `Mensaje ${i}: ${text}`, time: '12:00', attachments: [] }
       : { kind: 'agent', id: `pb-a${i}`, runs: [{ code: false, text: `Respuesta ${i}: ${text}` }], streaming: false }));
     const t0 = performance.now();
+    const deadline = t0 + timeoutMs;
     store.setState((s) => ({ blocksByChat: { ...s.blocksByChat, [id]: blocks } }));
     const tick = () => {
-      if (document.querySelectorAll(`[data-pane-tab-id="${id}"] [data-block]`).length < n) return requestAnimationFrame(tick);
+      const pane = document.querySelector(`[data-pane-tab-id="${id}"]`);
+      const scroller = pane?.querySelector('[data-chat-scroller]') ?? null;
+      const atBottom = scroller !== null && scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= 2;
+      if (pane?.querySelector('[data-last-row="true"]') == null || !atBottom) {
+        if (performance.now() > deadline) {
+          const medido = { ultimaFila: pane?.querySelector('[data-last-row="true"]') != null, distanciaAlFondo: scroller === null ? null : Math.round(scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight) };
+          reject(new Error(`Sin la última fila al fondo en ${timeoutMs} ms con ${n} bloques: ${JSON.stringify(medido)}`));
+          return undefined;
+        }
+        return requestAnimationFrame(tick);
+      }
       setTimeout(() => resolve({ bloques: n, ms: Math.round(performance.now() - t0), nodosDom: document.getElementsByTagName('*').length }), 0);
     };
     requestAnimationFrame(tick);
-  }), count);
+  }), { n: count, timeoutMs: LONG_CONVERSATION_TIMEOUT_MS });
+}
+
+// Ancla al anteponer historial (necesita el puente): con la pestaña activa ya en 3000 bloques, lee una fila
+// a mitad del hilo, antepone 200 bloques y mide cuanto se movio esa fila (debe ser 0 px).
+export async function measurePrependAnchor(page) {
+  return page.evaluate(() => new Promise((resolve) => {
+    const frames = (n, done) => (n === 0 ? done() : requestAnimationFrame(() => frames(n - 1, done)));
+    const store = window.__mageDev.store;
+    const id = store.getState().activeTabId;
+    const scroller = document.querySelector(`[data-pane-tab-id="${id}"] [data-chat-scroller]`);
+    if (scroller === null) return resolve({ anclaAlAnteponerPx: null, motivo: 'no hay lista virtual en la pestaña activa' });
+    scroller.scrollTop = (scroller.scrollHeight - scroller.clientHeight) / 2;
+    frames(2, () => {
+      const box = scroller.getBoundingClientRect();
+      const read = [...scroller.querySelectorAll('[data-block]')].find((el) => { const top = el.getBoundingClientRect().top; return top >= box.top && top <= box.bottom; });
+      const key = read?.closest('[data-row-key]')?.getAttribute('data-row-key') ?? null;
+      if (read === undefined || key === null) return resolve({ anclaAlAnteponerPx: null, motivo: 'ninguna fila de lectura dentro del scroller' });
+      const before = read.getBoundingClientRect().top;
+      const text = 'Párrafo de prueba con **negrita**, `código` y una lista:\n\n- uno\n- dos\n\n' + 'Texto largo de relleno. '.repeat(20);
+      const fresh = Array.from({ length: 200 }, (_, i) => (i % 2 === 0
+        ? { kind: 'user', id: `pb-pre${i}`, text: `Mensaje ${i}: ${text}`, time: '12:00', attachments: [] }
+        : { kind: 'agent', id: `pb-pre${i}`, runs: [{ code: false, text: `Respuesta ${i}: ${text}` }], streaming: false }));
+      store.setState((s) => ({ blocksByChat: { ...s.blocksByChat, [id]: [...fresh, ...s.blocksByChat[id]] } }));
+      frames(2, () => {
+        const after = scroller.querySelector(`[data-row-key="${key}"] [data-block]`);
+        if (after === null) return resolve({ anclaAlAnteponerPx: null, motivo: 'la fila de lectura salió del DOM' });
+        resolve({ anclaAlAnteponerPx: Math.round((after.getBoundingClientRect().top - before) * 10) / 10 });
+      });
+    });
+  }));
+}
+
+// Devuelve la pestaña activa al final del hilo (`measurePrependAnchor` la deja a mitad a propósito, y volver a una pestaña
+// respeta dónde se estaba leyendo: medido, Z). «Listo» = última fila pintada y a ≤ 2 px del final.
+export async function scrollActiveChatToBottom(page) {
+  return page.evaluate((timeoutMs) => new Promise((resolve, reject) => {
+    const id = window.__mageDev.store.getState().activeTabId;
+    const scroller = document.querySelector(`[data-pane-tab-id="${id}"] [data-chat-scroller]`);
+    if (scroller === null) return resolve({ alFinal: null, motivo: 'no hay lista virtual en la pestaña activa' });
+    const deadline = performance.now() + timeoutMs;
+    const tick = () => {
+      const distancia = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
+      const ultimaFila = scroller.querySelector('[data-last-row="true"]') !== null;
+      if (ultimaFila && distancia <= 2) return resolve({ alFinal: true });
+      if (performance.now() > deadline) return reject(new Error(`La pestaña activa no vuelve al final en ${timeoutMs} ms: ${JSON.stringify({ ultimaFila, distancia: Math.round(distancia) })}`));
+      scroller.scrollTop = scroller.scrollHeight;
+      requestAnimationFrame(tick);
+    };
+    tick();
+  }), INTERACTION_TIMEOUT_MS);
+}
+
+const SEARCH_FILL_ATTEMPTS = 3;
+const SEARCH_SETTLE_MS = 300;
+
+// Escribe en un campo y confirma que el texto se quedó en ÉL: justo después de abrir una conversación el foco puede
+// saltar al prompt y llevarse lo escrito. Reintenta hasta `attempts` veces; si no, lanza con lo que había.
+export async function fillAndConfirm(locator, text, { attempts = SEARCH_FILL_ATTEMPTS, settleMs = SEARCH_SETTLE_MS, wait }) {
+  let value = '';
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    await locator.fill(text);
+    await wait(settleMs);
+    value = await locator.inputValue();
+    if (value === text) return attempt;
+  }
+  throw new Error(`El campo no se quedó con ${JSON.stringify(text)} en ${attempts} intentos (tenía ${JSON.stringify(value)})`);
+}
+
+// Cambio de pestaña con una conversacion REAL larga abierta desde el historial (vale en produccion, sin
+// puente): busca la del fixture en el lateral, la abre (solo lee su transcripcion), abre una vacia y mide el
+// cambio entre ambas.
+export async function measureLongTranscriptTabSwitch(page, { openConversation, title }) {
+  const before = await tabIdsInBar(page);
+  await fillAndConfirm(page.getByRole('textbox', { name: SIDEBAR_SEARCH_LABEL, exact: true }), LONG_TRANSCRIPT_SEARCH, { wait: (ms) => page.waitForTimeout(ms) });
+  await page.locator('[data-history-session]').filter({ hasText: title }).first().click();
+  await page.waitForFunction((count) => document.querySelectorAll('[role="tab"][data-tab-id]').length > count, before.length, { timeout: INTERACTION_TIMEOUT_MS });
+  const longId = (await tabIdsInBar(page)).at(-1);
+  // «Montada», no «visible»: la misma condición de «listo» que el cambio de pestaña que se mide después.
+  await page.waitForFunction(tabSwitchReadyExpr(longId), undefined, { timeout: INTERACTION_TIMEOUT_MS });
+  await openConversation(page);
+  const emptyId = (await tabIdsInBar(page)).at(-1);
+  return measureTabSwitch(page, [longId, emptyId]);
 }
 
 // Eco de IPC a main (`getUpdateState`, sin trabajo): mide si el proceso main responde con holgura.
@@ -160,8 +262,50 @@ export async function profileWhile(page, action) {
 }
 
 const LONG_CONVERSATION_SIZES = [200, 1000, 3000];
+// Plazo de la espera «última fila al fondo»: `page.evaluate` no tiene plazo propio y, sin él, una condición que no llega cuelga la medición para siempre.
+const LONG_CONVERSATION_TIMEOUT_MS = 60_000;
+// Texto del buscador del lateral (catalogo `sidebar.search.label`, en el idioma de la tanda) y lo que se teclea para hallar el fixture.
+const SIDEBAR_SEARCH_LABEL = ui('sidebar.search.label');
+const LONG_TRANSCRIPT_SEARCH = 'VG-T3';
 const PANELS = ['activity', 'context', 'logs'];
 const PROFILE_KEYS = 30;
+
+// Para nombrar el modal que tapa una medida sin copiar texto que pueda ser del usuario: rol, id de su título y nombres de atributos.
+export async function describeOverlays(page) {
+  return page.evaluate(() => {
+    const dataNames = (root, depth, into) => {
+      for (const attr of root.attributes) if (attr.name.startsWith('data-')) into.add(attr.name);
+      if (depth > 0) for (const child of root.children) dataNames(child, depth - 1, into);
+      return into;
+    };
+    return [...document.querySelectorAll('.fixed.inset-0')]
+      .filter((el) => {
+        const box = el.getBoundingClientRect();
+        return getComputedStyle(el).display !== 'none' && box.width > 0 && box.height > 0;
+      })
+      .map((el) => {
+        const withRole = el.getAttribute('role') !== null ? el : el.querySelector('[role]');
+        const withLabel = el.getAttribute('aria-labelledby') !== null ? el : el.querySelector('[aria-labelledby]');
+        return {
+          clase: el.className,
+          rol: withRole?.getAttribute('role') ?? null,
+          labelledby: withLabel?.getAttribute('aria-labelledby') ?? null,
+          datos: [...dataNames(el, 2, new Set())].sort(),
+        };
+      });
+  });
+}
+
+// Ejecuta un paso de la medición con nombre: si falla, el error dice en qué paso fue y, con `page`, qué overlays había encima.
+export async function withStep(name, run, page) {
+  try {
+    return await run();
+  } catch (error) {
+    const overlays = page === undefined ? [] : await describeOverlays(page).catch((overlayError) => [{ error: String(overlayError) }]);
+    const suffix = overlays.length === 0 ? '' : ` · overlays: ${JSON.stringify(overlays)}`;
+    throw new Error(`Paso «${name}»: ${error instanceof Error ? error.message : String(error)}${suffix}`, { cause: error });
+  }
+}
 
 // Ids de las pestañas visibles en la barra, por el DOM (vale tambien sin el puente de desarrollo).
 function tabIdsInBar(page) {
@@ -176,22 +320,29 @@ async function measureLongConversations(page) {
 
 // Toda la medicion del baseline. `openConversation` es el helper del harness (Ctrl+N); con `devBridge`
 // falso (build de produccion) se omite lo que necesita inyectar estado.
-export async function runPerfBaseline(page, { openConversation, devBridge }) {
-  await openConversation(page);
-  await openConversation(page);
+export async function runPerfBaseline(page, { openConversation, devBridge, longTranscriptTitle }) {
+  await withStep('abrirConversaciones', async () => { await openConversation(page); await openConversation(page); }, page);
   const tabs = (await tabIdsInBar(page)).slice(-2);
   const out = { modo: devBridge ? 'desarrollo (electron-vite dev, React de desarrollo)' : 'producción (electron-vite preview del build)', repeticiones: PERF_REPEATS };
-  out.escrituraPrompt = await measureTyping(page);
-  out.cambioPestana = await measureTabSwitch(page, tabs);
+  out.escrituraPrompt = await withStep('escrituraPrompt', () => measureTyping(page), page);
+  out.cambioPestana = await withStep('cambioPestana', () => measureTabSwitch(page, tabs), page);
   out.aperturaPanel = {};
-  for (const panel of PANELS) out.aperturaPanel[panel] = await measurePanelOpen(page, panel);
-  out.ecoIpcMain = await measureIpcEcho(page);
-  out.perfilEscritura = await profileWhile(page, async () => { for (let i = 0; i < PROFILE_KEYS; i++) await page.keyboard.press('x'); });
-  out.perfilCambioPestana = await profileWhile(page, async () => { for (let i = 0; i < 10; i++) await page.locator(`[role="tab"][data-tab-id="${tabs[i % 2]}"]`).click(); });
-  if (!devBridge) return out;
-  out.conversacionLarga = await measureLongConversations(page);
-  out.escrituraConConversacionLarga = await measureTyping(page);
-  out.cambioPestanaConConversacionLarga = await measureTabSwitch(page, tabs);
-  out.perfilEscrituraConConversacionLarga = await profileWhile(page, async () => { for (let i = 0; i < PROFILE_KEYS; i++) await page.keyboard.press('x'); });
+  for (const panel of PANELS) out.aperturaPanel[panel] = await withStep(`aperturaPanel.${panel}`, () => measurePanelOpen(page, panel), page);
+  out.ecoIpcMain = await withStep('ecoIpcMain', () => measureIpcEcho(page), page);
+  out.perfilEscritura = await withStep('perfilEscritura', () => profileWhile(page, async () => { for (let i = 0; i < PROFILE_KEYS; i++) await page.keyboard.press('x'); }), page);
+  out.perfilCambioPestana = await withStep('perfilCambioPestana', () => profileWhile(page, async () => { for (let i = 0; i < 10; i++) await page.locator(`[role="tab"][data-tab-id="${tabs[i % 2]}"]`).click(); }), page);
+  if (devBridge) await measureWithDevBridge(page, out, tabs);
+  // Al final: abrir la conversacion larga cambia la pestaña activa, y las medidas con puente van sobre `tabs`.
+  out.cambioPestanaConTranscripcionLarga = await withStep('cambioPestanaConTranscripcionLarga', () => measureLongTranscriptTabSwitch(page, { openConversation, title: longTranscriptTitle }), page);
   return out;
+}
+
+// Las medidas que inyectan estado por el puente de desarrollo.
+async function measureWithDevBridge(page, out, tabs) {
+  out.conversacionLarga = await withStep('conversacionLarga', () => measureLongConversations(page), page);
+  out.anclaAlAnteponer = await withStep('anclaAlAnteponer', () => measurePrependAnchor(page), page);
+  out.volverAlFinal = await withStep('volverAlFinal', () => scrollActiveChatToBottom(page), page);
+  out.escrituraConConversacionLarga = await withStep('escrituraConConversacionLarga', () => measureTyping(page), page);
+  out.cambioPestanaConConversacionLarga = await withStep('cambioPestanaConConversacionLarga', () => measureTabSwitch(page, tabs), page);
+  out.perfilEscrituraConConversacionLarga = await withStep('perfilEscrituraConConversacionLarga', () => profileWhile(page, async () => { for (let i = 0; i < PROFILE_KEYS; i++) await page.keyboard.press('x'); }), page);
 }

@@ -88,6 +88,30 @@ describe('ConversationIndexStore — preferencias (2.1)', () => {
     expect(store.loadPrefs(SESSION)).toEqual({ model: 'opus' });
   });
 
+  it('savePrefs_withAccountId_persistsIt', () => {
+    const store = memoryStore();
+
+    store.savePrefs(SESSION, { model: 'opus', accountId: 'acc-1' });
+
+    expect(store.loadPrefs(SESSION)).toEqual({ model: 'opus', accountId: 'acc-1' });
+  });
+
+  it('loadPrefs_invalidAccountId_dropsField', () => {
+    const file = JSON.stringify({ version: 2, conversations: { [SESSION]: { model: 'opus', accountId: 42 } }, artifacts: {} });
+    const store = new ConversationIndexStore(buildDeps({ readFile: () => file }));
+
+    expect(store.loadPrefs(SESSION)).toEqual({ model: 'opus' });
+  });
+
+  it('savePrefs_emptyAccountId_removesIt', () => {
+    const store = memoryStore();
+    store.savePrefs(SESSION, { model: 'opus', accountId: 'acc-1' });
+
+    store.savePrefs(SESSION, { accountId: '' });
+
+    expect(store.loadPrefs(SESSION)).toEqual({ model: 'opus' });
+  });
+
   it('savePrefs_sessionIdVacio_lanzaConElValorRecibido', () => {
     const writeFile = vi.fn();
     const store = new ConversationIndexStore(buildDeps({ writeFile }));
@@ -309,5 +333,99 @@ describe('ConversationIndexStore — identidades y migración v2 (F2.1)', () => 
 
   it('resolveConversation_idNativoVacio_lanzaConElValor', () => {
     expect(() => memoryDisk().store.resolveConversation({ ...CODEX_REF, nativeId: '' })).toThrow(/nativeId vacio/);
+  });
+});
+
+describe('ConversationIndexStore — delegación (H3)', () => {
+  const record = { createdBy: { conversationId: 'parent', requestId: 'req-1', at: '2026-11-03T10:00:00.000Z' }, creatorChain: ['root', 'parent'] };
+
+  it('recordDelegation_thenDelegationOf_roundTrip', () => {
+    const { store } = memoryDisk();
+
+    store.recordDelegation('child', record);
+
+    expect(store.delegationOf('child')).toEqual(record);
+  });
+
+  it('delegationOf_unknown_returnsManual', () => {
+    expect(memoryDisk().store.delegationOf('nada')).toEqual({ createdBy: null, creatorChain: [] });
+  });
+
+  it('recordDelegation_keepsPrefs', () => {
+    const { store } = memoryDisk();
+    store.savePrefs('child', { model: 'opus' });
+
+    store.recordDelegation('child', record);
+
+    expect(store.loadPrefs('child')).toEqual({ model: 'opus' });
+  });
+
+  it('load_corruptCreatedBy_ignoredOthersKept', () => {
+    const file = JSON.stringify({ version: 2, conversations: { c: { model: 'opus', createdBy: { conversationId: '', requestId: 'r', at: 'ayer' }, creatorChain: ['a'] } }, artifacts: {} });
+    const { store } = memoryDisk({ [FILE]: file });
+
+    expect(store.delegationOf('c')).toEqual({ createdBy: null, creatorChain: ['a'] });
+    expect(store.loadPrefs('c')).toEqual({ model: 'opus' });
+  });
+
+  it('recordDelegation_chainTooLong_throwsWithLength', () => {
+    const { store } = memoryDisk();
+
+    expect(() => store.recordDelegation('c', { createdBy: null, creatorChain: ['1', '2', '3', '4', '5', '6'] })).toThrow('6');
+  });
+});
+
+describe('ConversationIndexStore — sesiones del host', () => {
+  const OWNER = '/h/.claude-inval';
+  const record = { accountId: OWNER, provider: 'claude', model: 'claude-haiku-4-5', effort: 'low', permissionMode: 'default' } as const;
+
+  it('recordHostSession_newConversation_savesPrefsAndOwner', () => {
+    const store = memoryStore();
+
+    store.recordHostSession('conv-1', record);
+
+    expect(store.loadPrefs('conv-1')).toEqual({
+      model: 'claude-haiku-4-5',
+      effort: 'low',
+      permissionMode: 'default',
+      accountId: OWNER,
+      hostOwnerAccountId: OWNER,
+    });
+  });
+
+  it('recordHostSession_codexProvider_savesProvider', () => {
+    const store = memoryStore();
+
+    store.recordHostSession('conv-1', { ...record, provider: 'codex' });
+
+    expect(store.loadPrefs('conv-1')?.provider).toBe('codex');
+  });
+
+  it('savePrefs_afterHostSession_keepsOwner', () => {
+    const store = memoryStore();
+    store.recordHostSession('conv-1', record);
+
+    store.savePrefs('conv-1', { accountId: '/h/.claude-otra', model: 'm2', hostOwnerAccountId: '/h/.claude-otra' });
+
+    const prefs = store.loadPrefs('conv-1');
+    expect(prefs?.hostOwnerAccountId).toBe(OWNER);
+    expect(prefs?.accountId).toBe('/h/.claude-otra');
+  });
+
+  it('recordHostSession_byNativeId_writesResolvedEntry', () => {
+    const store = memoryStore();
+    const { conversationId } = store.resolveConversation({ provider: 'codex', accountDir: '/h/.codex', nativeId: 'n-1' });
+
+    store.recordHostSession('n-1', { ...record, provider: 'codex' });
+
+    expect(store.loadPrefs(conversationId)?.hostOwnerAccountId).toBe(OWNER);
+  });
+
+  it('recordHostSession_emptyId_throws', () => {
+    expect(() => memoryStore().recordHostSession('', record)).toThrow('id vacio al guardar la sesion del host');
+  });
+
+  it('recordHostSession_emptyAccount_throws', () => {
+    expect(() => memoryStore().recordHostSession('conv-1', { ...record, accountId: '' })).toThrow('cuenta vacia en la sesion del host conv-1');
   });
 });

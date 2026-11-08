@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { modelForReassignedTab, planAccountSwitch, type AccountSwitchContext } from './accountSwitch';
+import { hasConversationBlocks, modelForReassignedTab, planAccountSwitch, type AccountSwitchContext } from './accountSwitch';
 
 const A = 'C:/Users/u/.claude';
 const B = 'C:/Users/u/.claude-p';
@@ -37,7 +37,18 @@ describe('planAccountSwitch', () => {
   it('planAccountSwitch_pestanaParadaDeOtraCuenta_ask', () => {
     // Restaurada: solo `resumeSessionId`, sin sesion viva (el caso que `continueInAccount` ignoraba).
     expect(planAccountSwitch(ctx())).toBe('ask');
-    expect(planAccountSwitch(ctx({ activeTab: { accountId: A }, liveSessionId: 'live' }))).toBe('ask');
+    expect(planAccountSwitch(ctx({ activeTab: { accountId: A }, liveSessionId: 'live', hasBlocks: true }))).toBe('ask');
+  });
+
+  it('planAccountSwitch_sesionVivaSinTurnos_reassign', () => {
+    expect(planAccountSwitch(ctx({ activeTab: { accountId: A }, liveSessionId: 'live', hasBlocks: false }))).toBe('reassign');
+  });
+
+  it('planAccountSwitch_pinnedTabWithConversation_switchOnly', () => {
+    const activeTab = { accountId: A, resumeSessionId: 'r', accountPinned: true };
+
+    expect(planAccountSwitch(ctx({ activeTab, status: 'idle' }))).toBe('switch');
+    expect(planAccountSwitch(ctx({ activeTab: { accountId: A, resumeSessionId: 'r' }, status: 'idle' }))).toBe('ask');
   });
 
   it('planAccountSwitch_chatNuevoSinBloques_reassign', () => {
@@ -55,6 +66,40 @@ describe('planAccountSwitch', () => {
   it('planAccountSwitch_pestanaConError_ask', () => {
     // Un turno que fallo ya no esta en marcha: la conversacion se puede llevar.
     expect(planAccountSwitch(ctx({ status: 'error' }))).toBe('ask');
+  });
+});
+
+describe('hasConversationBlocks', () => {
+  it('hasConversationBlocks_vacio_false', () => {
+    expect(hasConversationBlocks([])).toBe(false);
+  });
+
+  it('hasConversationBlocks_soloAvisos_false', () => {
+    expect(hasConversationBlocks([{ kind: 'system' }, { kind: 'error' }, { kind: 'command-output' }])).toBe(false);
+  });
+
+  it('hasConversationBlocks_conMensajeDeUsuario_true', () => {
+    expect(hasConversationBlocks([{ kind: 'system' }, { kind: 'user', text: 'hola' }])).toBe(true);
+  });
+
+  it('hasConversationBlocks_ecoDeComandoYSuSalida_false', () => {
+    expect(hasConversationBlocks([{ kind: 'user', text: '/model', attachments: [] }, { kind: 'command-output' }])).toBe(false);
+  });
+
+  it('hasConversationBlocks_mensajeNormal_true', () => {
+    expect(hasConversationBlocks([{ kind: 'user', text: 'hola', attachments: [] }])).toBe(true);
+  });
+
+  it('hasConversationBlocks_comandoConImagen_true', () => {
+    expect(hasConversationBlocks([{ kind: 'user', text: '/model', attachments: [{}] }])).toBe(true);
+  });
+
+  it('hasConversationBlocks_rutaQueEmpiezaPorBarra_true', () => {
+    expect(hasConversationBlocks([{ kind: 'user', text: '/src/app.ts falla', attachments: [] }])).toBe(true);
+  });
+
+  it.each(['agent', 'tool', 'subagent', 'thinking', 'question', 'permission'])('hasConversationBlocks_bloque_%s_true', (kind) => {
+    expect(hasConversationBlocks([{ kind }])).toBe(true);
   });
 });
 

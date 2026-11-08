@@ -7,7 +7,7 @@ import type { ScopeSnapshot } from './scope';
 import type { MageSessionsPort, SessionMetadata } from './sessionsPort';
 import { createResultPage } from './resultPage';
 import * as schemas from './schemas';
-import type { CancelInput, CreateInput, ListInput, ReadInput, SendInput, StatusInput } from './types';
+import type { AskCreatorInput, CancelInput, CreateInput, ListInput, ReadInput, SendInput, StatusInput } from './types';
 
 export interface HandlerContext {
   readonly port: MageSessionsPort;
@@ -47,7 +47,8 @@ export class MageToolHandlers {
       const at = schemas.utcSchema.parse(now());
       const createdBy = scope.caller === undefined ? undefined : { conversationId: scope.caller.conversationId, requestId: input.requestId, at };
       const result = await callPort('createSession', () => port.createSession({
-        target: validatedTarget, prompt: input.prompt, model: input.model, requestId: input.requestId, createdBy, creatorChain,
+        target: validatedTarget, prompt: input.prompt, model: input.model, effort: input.effort, permissionMode: input.permissionMode,
+        requestId: input.requestId, createdBy, creatorChain,
       }));
       return schemas.createOutputSchema.parse({ conversationId: result.conversationId, state: result.state });
     });
@@ -73,6 +74,12 @@ export class MageToolHandlers {
     await this.authorize(input.conversationId);
     const result = await callPort('cancel', () => this.context.port.cancel(input));
     return schemas.cancelOutputSchema.parse({ cancelled: result.cancelled });
+  }
+  async askCreator(input: AskCreatorInput) {
+    return this.context.store.execute(this.request('ask_creator', input.requestId, input), async () => {
+      const result = await callPort('askCreator', () => this.context.port.askCreator(input));
+      return schemas.askCreatorOutputSchema.parse({ receipt: result.receipt });
+    });
   }
   private async authorize(conversationId: string): Promise<void> {
     const session = await callPort('getSession', () => this.context.port.getSession(conversationId));

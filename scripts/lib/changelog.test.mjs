@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { extractVersionSection } from './changelog.mjs';
+import { buildReleaseBody, extractVersionSection } from './changelog.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const SAMPLE = ['# Novedades', '', '## 0.1.2 — en desarrollo', '', '- Nuevo.', '', '## 0.1.1 — 2026-09-30', '- Viejo.'].join('\n');
@@ -30,6 +30,28 @@ describe('extractVersionSection', () => {
 
   it('extractVersionSection_textoVacio_lanza', () => {
     expect(() => extractVersionSection('', '0.1.0')).toThrow('"0.1.0"');
+  });
+});
+
+describe('extractVersionSection con nombre de fichero', () => {
+  it('extractVersionSection_versionAusente_nombraElFicheroDado', () => {
+    expect(() => extractVersionSection(SAMPLE, '0.2.0', 'CHANGELOG.en.md')).toThrow('CHANGELOG.en.md');
+  });
+
+  it('extractVersionSection_sinNombre_nombraChangelogMd', () => {
+    expect(() => extractVersionSection(SAMPLE, '0.2.0')).toThrow('CHANGELOG.md no tiene');
+  });
+});
+
+describe('buildReleaseBody', () => {
+  const EN = '## 0.1.2 — 2026-10-01\n- New.';
+
+  it('buildReleaseBody_ambosIdiomas_castellanoRayaEnglishIngles', () => {
+    expect(buildReleaseBody(SAMPLE, EN, '0.1.2')).toBe('- Nuevo.\n\n---\n\n## English\n\n- New.');
+  });
+
+  it('buildReleaseBody_faltaElIngles_lanzaNombrandoElFichero', () => {
+    expect(() => buildReleaseBody(SAMPLE, '## 0.1.1\n- Old.', '0.1.2')).toThrow('CHANGELOG.en.md');
   });
 });
 

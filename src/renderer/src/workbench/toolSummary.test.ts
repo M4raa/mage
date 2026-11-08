@@ -9,6 +9,10 @@ import type { TranscriptEntry } from '@shared/transcripts';
 // viniera del stream en vivo o de reconstruir el hilo desde la transcripcion.
 
 describe('summarizeToolInput', () => {
+  it('summarizeToolInput_skill_usaElNombreDeLaSkill', () => {
+    expect(summarizeToolInput('Skill', { skill: 'pdf', args: 'x' })).toBe('pdf');
+  });
+
   it('summarizeToolInput_bash_usaElComando', () => {
     expect(summarizeToolInput('Bash', { command: 'pnpm test', description: 'corre los tests' })).toBe('pnpm test');
   });

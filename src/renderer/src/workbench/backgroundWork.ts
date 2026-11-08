@@ -15,7 +15,7 @@ export type BackgroundState =
 export interface BackgroundSession {
   readonly sessionId: string; // la sesion VIVA de Mage: con la que se habla con main (parar, eventos)
   // La CONVERSACION (conversationIdOfTab al cerrar), con la que pregunta el historial. En Codex y agy es el
-  // hilo y no coincide con `sessionId`; sin hilo todavia no hay conversacion que buscar (H3, devolucion 18).
+  // hilo y no coincide con `sessionId`; sin hilo todavia no hay conversacion que buscar.
   readonly conversationId: string | undefined;
   readonly title: string; // el de la pestaña al cerrarla (la fila del historial puede tardar en refrescarse)
   readonly accountId: string;
@@ -65,6 +65,12 @@ export function nextBackgroundState(current: BackgroundState, event: MageEvent):
   // turno sigue, vuelve a ser trabajo normal.
   if ((event.kind === 'permission_cancelled' || event.kind === 'elicitation_cancelled' || event.kind === 'elicitation_resolved') && current === 'needs_action') return 'working';
   return current;
+}
+
+// Cuántas sesiones sin pestaña siguen haciendo algo que importa: trabajando o esperando una acción tuya. Las
+// terminadas ('done') solo esperan revisión y no cuentan. Es el número de «N en segundo plano» de la barra de título.
+export function countBackgroundWork(sessions: Readonly<Record<string, BackgroundSession>>): number {
+  return Object.values(sessions).filter((session) => session.state !== 'done').length;
 }
 
 // Etiqueta de la fila del panel de Conversaciones.

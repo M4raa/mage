@@ -69,7 +69,7 @@ Mage no sustituye nada de eso: lo envuelve.
 > Code, Codex o `agy`) instalado y con sesión iniciada. Lee [Qué tienes que poner tú](#qué-tienes-que-poner-tú) — sin eso la app arranca,
 > pero no podrás abrir una conversación.
 
-1. Descarga `mage-setup-beta-<versión>.exe` de la sección de **[releases](https://github.com/M4raa/mage/releases)**. Hay también un `.msi`, para desplegar
+1. Descarga `mage-<versión>.exe` de la sección de **[releases](https://github.com/M4raa/mage/releases)**. Hay también un `.msi`, para desplegar
    por política de grupo o con `msiexec /qn`; para instalarlo tú, el que quieres es el `.exe`.
 2. Ejecútalo. Se instala **por usuario**, sin permisos de administrador.
 3. Al primer arranque sale un asistente de tres pasos: comprueba el motor, eliges tema y escala, y te

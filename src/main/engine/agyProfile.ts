@@ -83,6 +83,8 @@ const EXTENSION_BY_TYPE: Readonly<Record<ImageAttachment['mediaType'], string>> 
   'image/jpeg': 'jpg',
   'image/webp': 'webp',
   'image/gif': 'gif',
+  // El tipo de adjunto incluye PDF; agy nunca lo recibe porque su adapter lo rechaza (Q05, paso 5).
+  'application/pdf': 'pdf',
 };
 
 // Ruta de la imagen `index` de un mensaje de la sesion. Solo letras, numeros y guiones del id: es una

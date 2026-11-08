@@ -5,6 +5,7 @@ import type {
   WidgetSnapshot,
   WidgetUsage,
 } from '@shared/widget';
+import type { ConversationLockStatus } from '@shared/conversationLock';
 import type { Account, ChatStatus, Tab } from './types';
 import { severityForPct, type UsageSeverity } from './usageView';
 import { t } from '../i18n/uiLanguage';
@@ -20,6 +21,8 @@ export interface WidgetViewInput {
   readonly accounts: readonly Account[];
   readonly activeAccountId: string;
   readonly statusByChat: Readonly<Record<string, ChatStatus>>;
+  readonly sessionIdByChat?: Readonly<Record<string, string>>;
+  readonly lockByChat?: Readonly<Record<string, ConversationLockStatus>>;
 }
 
 // Rango de urgencia de cada estado: ordena los agentes (mas urgente primero) y decide "activo".
@@ -53,18 +56,27 @@ export function toWidgetSnapshot(
 function buildAgents(input: WidgetViewInput): readonly WidgetAgent[] {
   const accentById = new Map(input.accounts.map((a) => [a.id, a.accent.base]));
   return input.tabs
-    .map((tab, index) => ({ agent: toAgent(tab, input.statusByChat[tab.id] ?? 'idle', accentById), index }))
+    .map((tab, index) => ({ agent: toAgent(tab, { status: input.statusByChat[tab.id] ?? 'idle', accentById, input }), index }))
     .sort((a, b) => STATUS_RANK[b.agent.status] - STATUS_RANK[a.agent.status] || a.index - b.index)
     .map((entry) => entry.agent);
 }
 
-function toAgent(tab: Tab, status: ChatStatus, accentById: ReadonlyMap<string, string>): WidgetAgent {
+interface AgentContext {
+  readonly status: ChatStatus;
+  readonly accentById: ReadonlyMap<string, string>;
+  readonly input: WidgetViewInput;
+}
+
+function toAgent(tab: Tab, ctx: AgentContext): WidgetAgent {
+  const sessionId = ctx.input.sessionIdByChat?.[tab.id];
   return {
     tabId: tab.id,
     title: displayTitle(tab.title),
     accountAlias: tab.accountAlias,
-    accentBase: accentById.get(tab.accountId) ?? '',
-    status,
+    accentBase: ctx.accentById.get(tab.accountId) ?? '',
+    status: ctx.status,
+    ...(sessionId === undefined ? {} : { sessionId }),
+    readOnly: ctx.input.lockByChat?.[tab.id]?.owner === false,
   };
 }
 

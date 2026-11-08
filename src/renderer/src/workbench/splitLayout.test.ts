@@ -9,6 +9,7 @@ import {
   applyDrop,
   clampRatioForSize,
   closeTab,
+  dragRatio,
   dropTabBeside,
   findLeafPath,
   firstLeafPath,
@@ -19,6 +20,7 @@ import {
   moveTabToLeaf,
   pruneSplitLayout,
   reconcileSplitLayoutAfterClose,
+  replaceTabInPlace,
   resizeAt,
   singleLeaf,
   visibleTabIds,
@@ -248,6 +250,45 @@ describe('moveTabToLeaf', () => {
   });
 });
 
+describe('replaceTabInPlace', () => {
+  it('replaceTabInPlace_mismaBarra_ocupaSuIndiceYQuedaActiva', () => {
+    const result = replaceTabInPlace(leaf(['a', 'old', 'b', 'new'], 'a'), 'old', 'new');
+
+    expect(result).toEqual(leaf(['a', 'new', 'b'], 'new'));
+    expectInvariants(result);
+  });
+
+  it('replaceTabInPlace_nuevaEnOtraBarra_laSacaDeAlliYOcupaElSitio', () => {
+    const result = replaceTabInPlace(split(leaf(['old', 'x'], 'old'), leaf(['new', 'y'], 'new')), 'old', 'new');
+
+    expect(result).toEqual(split(leaf(['new', 'x'], 'new'), leaf(['y'], 'y')));
+    expectInvariants(result);
+  });
+
+  it('replaceTabInPlace_nuevaSolaEnSuBarra_suPanelColapsaYLaViejaSeSustituye', () => {
+    const result = replaceTabInPlace(split(leaf(['old'], 'old'), leaf(['new'], 'new')), 'old', 'new');
+
+    expect(result).toEqual(leaf(['new'], 'new'));
+    expectInvariants(result);
+  });
+
+  it('replaceTabInPlace_nuevaFueraDelArbol_seSustituyeSinMas', () => {
+    const result = replaceTabInPlace(leaf(['old', 'b'], 'b'), 'old', 'n');
+
+    expect(result).toEqual(leaf(['n', 'b'], 'n'));
+  });
+
+  it('replaceTabInPlace_viejaFueraDelArbol_lanzaConElId', () => {
+    expect(() => replaceTabInPlace(leaf(['a'], 'a'), 'zz', 'n')).toThrow(/zz/);
+  });
+
+  it('replaceTabInPlace_mismaPestana_devuelveElMismoArbol', () => {
+    const l = leaf(['a', 'b'], 'a');
+
+    expect(replaceTabInPlace(l, 'a', 'a')).toBe(l);
+  });
+});
+
 describe('clampRatioForSize', () => {
   it('minimoEnPixelesMasRestrictivoQueLaFraccion_acota', () => {
     // 1000px con minimo 320px -> fraccion minima 0.32 y maxima 0.68
@@ -290,6 +331,31 @@ describe('clampRatioForSize', () => {
 
   it('MIN_PANE_PX_esElMinimoQueUsaResizeAt', () => {
     expect(MIN_PANE_PX).toBe(320);
+  });
+});
+
+describe('dragRatio', () => {
+  it('dragRatio_contenedor859AlTercio_noEnganchaYCoincideConLoGuardado', () => {
+    const result = dragRatio({ startRatio: 0.5, deltaPx: 859 / 3 + 5 - 859 / 2, sizePx: 859, free: false });
+    const saved = (resizeAt(split(singleLeaf('t1'), singleLeaf('t2')), [], result, 859) as { ratio: number }).ratio;
+    expect(result).toBeCloseTo(320 / 859, 6);
+    expect(result).toBe(saved);
+  });
+
+  it('dragRatio_contenedor1200AlTercio_engancha', () => {
+    expect(dragRatio({ startRatio: 0.5, deltaPx: 400 + 5 - 600, sizePx: 1200, free: false })).toBe(400 / 1200);
+  });
+
+  it('dragRatio_libre_noEngancha', () => {
+    expect(dragRatio({ startRatio: 0.5, deltaPx: 405 - 600, sizePx: 1200, free: true })).toBeCloseTo(405 / 1200, 9);
+  });
+
+  it('dragRatio_tamanoCero_devuelveElInicialAcotado', () => {
+    expect(dragRatio({ startRatio: 0.95, deltaPx: 10, sizePx: 0, free: false })).toBe(0.9);
+  });
+
+  it('dragRatio_noFinito_lanza', () => {
+    expect(() => dragRatio({ startRatio: Number.NaN, deltaPx: 10, sizePx: 1000, free: false })).toThrow(/NaN/);
   });
 });
 

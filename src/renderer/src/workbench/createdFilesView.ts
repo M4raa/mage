@@ -31,14 +31,19 @@ function splitPath(fullPath: string): { readonly dir: string; readonly name: str
   return { dir: fullPath.slice(0, cut), name: fullPath.slice(cut + 1) };
 }
 
+// Fichero de la lista a partir de su ruta (nombre y carpeta ya separados).
+export function listedFile(path: string, blockId: string, failed: boolean): CreatedFile {
+  const { dir, name } = splitPath(path);
+  return { path, name, dir, blockId, failed };
+}
+
 export function createdFileFrom(block: Block): CreatedFile | null {
   // `== null` (no `=== null`): un bloque sin el campo —uno viejo en memoria, o inyectado por el
   // harness— no puede tumbar el panel.
   if (block.kind !== 'tool' || block.tool !== 'Write' || block.filePath == null) return null;
   const trimmed = block.filePath.trim();
   if (trimmed.length === 0) return null;
-  const { dir, name } = splitPath(trimmed);
-  return { path: trimmed, name, dir, blockId: block.id, failed: block.isError };
+  return listedFile(trimmed, block.id, block.isError);
 }
 
 // Todos los ficheros creados en el hilo, del mas reciente al mas antiguo (lo ultimo que ha escrito el
@@ -53,6 +58,33 @@ export function createdFilesOf(blocks: readonly Block[]): readonly CreatedFile[]
     // El `delete` no es adorno: un `Map` conserva el sitio de la PRIMERA insercion de cada clave, asi
     // que re-escribir un fichero actualizaba el valor pero lo dejaba donde estaba — el `reverse()` de
     // abajo lo ordenaba por primera escritura y el fichero recien tocado salia el ultimo.
+    byPath.delete(file.path);
+    byPath.set(file.path, file);
+  }
+  return [...byPath.values()].reverse();
+}
+
+// Herramientas que tocan o leen un fichero ya existente: junto con `Write`, lo que el popover de menciones
+// ofrece como «En esta conversacion». `createdFilesOf` NO las incluye (el panel Ficheros es solo de lo creado).
+const TOUCHING_TOOLS: ReadonlySet<string> = new Set(['Edit', 'MultiEdit', 'NotebookEdit', 'Read']);
+const SUMMARY_TRUNCATION_MARK = '…';
+
+// La ruta real viene del resultado de la tool (`filePath`); mientras corre, del resumen de su input
+// (`file_path`/`notebook_path`), que se descarta si `summarizeToolInput` lo recorto.
+function touchedFileFrom(block: Block): CreatedFile | null {
+  if (block.kind !== 'tool' || !TOUCHING_TOOLS.has(block.tool)) return null;
+  const raw = (block.filePath ?? block.command).trim();
+  if (raw.length === 0 || raw.endsWith(SUMMARY_TRUNCATION_MARK)) return null;
+  return listedFile(raw, block.id, block.isError);
+}
+
+// Lo creado (`createdFilesOf`) mas lo editado y leido, sin duplicar por ruta; gana la ultima aparicion y
+// la lista va del mas reciente al mas antiguo.
+export function touchedFilesOf(blocks: readonly Block[]): readonly CreatedFile[] {
+  const byPath = new Map<string, CreatedFile>();
+  for (const block of blocks) {
+    const file = createdFileFrom(block) ?? touchedFileFrom(block);
+    if (file === null) continue;
     byPath.delete(file.path);
     byPath.set(file.path, file);
   }

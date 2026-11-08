@@ -106,7 +106,7 @@ export function McpImportDialog({ onClose }: { readonly onClose: () => void }): 
                   role="radio"
                   aria-checked={filter === option.id}
                   onClick={() => setFilter(option.id)}
-                  className={`rounded-[6px] border px-[9px] py-[3px] text-[10.5px] ${filter === option.id ? 'border-mg-focus bg-mg-sel text-mg-body' : 'border-mg-border-subtle text-mg-body2 hover:bg-mg-hover'}`}
+                  className={`rounded-[6px] border px-[9px] py-[3px] text-[10.5px] ${filter === option.id ? 'border-mg-focus bg-mg-sel text-mg-sel-ink relative before:pointer-events-none before:absolute before:inset-y-0 before:left-0 before:w-[2px] before:bg-mg-sel-mark' : 'border-mg-border-subtle text-mg-body2 hover:bg-mg-hover'}`}
                 >
                   {option.product ?? t('mcp.import.filter.both')}
                 </button>

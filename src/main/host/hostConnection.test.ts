@@ -1,11 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { ConversationSnapshot } from '@shared/coordination';
-import { UserFacingError, localized } from '@shared/i18n/localizedText';
+import { UserFacingError, localized, renderForLog } from '@shared/i18n/localizedText';
 import { createTranslator } from '@shared/i18n/translator';
 import type { SequencedSessionEvent } from '../coordination/sessionCoordinator';
-import { HELLO_DEADLINE_MS, HostConnection, MAX_BUFFERED_BYTES, type HostSessions, type HostTransport } from './hostConnection';
+import { HELLO_DEADLINE_MS, HostConnection, MAX_BUFFERED_BYTES, type HostConnectionDeps, type McpTunnelHandle, type HostSessions, type HostTransport } from './hostConnection';
 import type { HostControl } from './hostControl';
-import { TrustRequiredError, UnknownAccountError } from './hostErrors';
+import type { HostMode } from './hostServer';
+import { BypassPermissionsBlockedError, TrustRequiredError, UnknownAccountError } from './hostErrors';
 import { HOST_PROTOCOL, HostErrorCode } from './hostProtocol';
 import { challengeProof } from './hostToken';
 
@@ -14,7 +15,7 @@ const NONCE = '0'.repeat(64);
 const SNAPSHOT: ConversationSnapshot = { sessionId: 's1', provider: 'claude', conversationId: 'c1', nativeRef: null, lastSeq: 7, state: 'idle', queue: [], pending: [], background: false };
 const EVENT: SequencedSessionEvent = { sessionId: 's1', conversationId: 'c1', seq: 8, at: 1, event: { kind: 'result', result: { isError: false, subtype: 'success', numTurns: 1 } } };
 
-function harness(options: { sessions?: Partial<HostSessions>; control?: Partial<HostControl>; maxLineBytes?: number } = {}) {
+function harness(options: { sessions?: Partial<HostSessions>; control?: Partial<HostControl>; rewind?: Partial<HostConnectionDeps['rewind']>; maxLineBytes?: number; mode?: HostMode } = {}) {
   const written: string[] = [];
   let buffered = 0;
   let ended = false;
@@ -28,6 +29,7 @@ function harness(options: { sessions?: Partial<HostSessions>; control?: Partial<
     send: vi.fn(() => ({ status: 'accepted' as const, commandId: 'k' })),
     interrupt: vi.fn(() => []),
     removeQueued: vi.fn(() => null),
+    updateQueued: vi.fn(() => null),
     answerPermission: vi.fn(() => ({ status: 'accepted' as const })),
     answerElicitation: vi.fn(() => ({ status: 'accepted' as const })),
     ...options.sessions,
@@ -37,13 +39,19 @@ function harness(options: { sessions?: Partial<HostSessions>; control?: Partial<
     setOption: vi.fn(),
     listProjects: vi.fn(() => []),
     listAccounts: vi.fn(() => []),
+    createApiAccount: vi.fn(() => ({ id: '/h/k', name: 'K', provider: 'claude' as const, billing: 'api-key' as const })),
+    requestQuit: vi.fn(),
     ...options.control,
   };
+  const rewind: HostConnectionDeps['rewind'] = { points: vi.fn(async () => []), plan: vi.fn(), apply: vi.fn(), ...options.rewind };
+  const tunnel = { receive: vi.fn(), close: vi.fn() } satisfies McpTunnelHandle;
+  const mcpSends: { send: (message: Record<string, unknown>) => void }[] = [];
+  const mcp: HostConnectionDeps['mcp'] = { open: vi.fn((context) => { mcpSends.push(context); return tunnel; }) };
   const timers: { fn: () => void; ms: number; cancelled: boolean }[] = [];
   const log = vi.fn();
   let ids = 0;
   const connection = new HostConnection(transport, {
-    sessions, control, mode: 'gui', token: TOKEN, hostVersion: '0.1.3', log, newId: () => `sub-${++ids}`, translate: createTranslator('es'),
+    sessions, control, rewind, mcp, mode: options.mode ?? 'gui', token: TOKEN, hostVersion: '0.1.3', log, newId: () => `sub-${++ids}`, translate: createTranslator('es'),
     setTimer: (fn, ms) => { const timer = { fn, ms, cancelled: false }; timers.push(timer); return () => { timer.cancelled = true; }; },
     ...(options.maxLineBytes === undefined ? {} : { maxLineBytes: options.maxLineBytes }),
   });
@@ -51,7 +59,7 @@ function harness(options: { sessions?: Partial<HostSessions>; control?: Partial<
   const lines = () => written.join('').split('\n').filter((line) => line.length > 0).map((line) => JSON.parse(line) as Record<string, any>);
   const hello = (overrides: Record<string, unknown> = {}) =>
     send({ jsonrpc: '2.0', id: 1, method: 'hello', params: { protocol: HOST_PROTOCOL, client: { kind: 'terminal', version: '1' }, token: TOKEN, ...overrides } });
-  return { connection, sessions, control, send, lines, written, hello, sinks, unsubscribe, timers, log, isEnded: () => ended, setBuffered: (n: number) => { buffered = n; } };
+  return { connection, sessions, control, rewind, mcp, tunnel, mcpSends, send, lines, written, hello, sinks, unsubscribe, timers, log, isEnded: () => ended, setBuffered: (n: number) => { buffered = n; } };
 }
 
 describe('HostConnection — autenticación', () => {
@@ -121,6 +129,46 @@ describe('HostConnection — autenticación', () => {
 
     expect(h.lines()[0]!.error.code).toBe(HostErrorCode.InvalidParams);
     expect(h.isEnded()).toBe(true);
+  });
+
+  describe('caller (D-M6)', () => {
+    const CALLER = 'ab'.repeat(32);
+
+    it('hello_withCaller_accepted', () => {
+      const h = harness();
+
+      h.hello({ caller: CALLER });
+
+      expect(h.lines()[0]!.result).toMatchObject({ protocol: HOST_PROTOCOL });
+      expect(h.connection.callerCredential).toBe(CALLER);
+    });
+
+    it('hello_callerNotHex_invalidParams', () => {
+      const h = harness();
+
+      h.hello({ caller: 'Z'.repeat(64) });
+
+      expect(h.lines()[0]!.error.code).toBe(HostErrorCode.InvalidParams);
+      expect(h.isEnded()).toBe(true);
+    });
+
+    it('hello_withoutCaller_accepted', () => {
+      const h = harness();
+
+      h.hello();
+
+      expect(h.lines()[0]!.result).toBeDefined();
+      expect(h.connection.callerCredential).toBeNull();
+    });
+
+    it('hello_withCaller_credentialNotInAnyWrite', () => {
+      const h = harness();
+
+      h.hello({ caller: CALLER });
+      h.send({ jsonrpc: '2.0', id: 2, method: 'no.existe' });
+
+      expect(h.written.join('')).not.toContain(CALLER);
+    });
   });
 
   it('plazoDelHello_sinPresentarse_cierra', () => {
@@ -359,6 +407,51 @@ describe('HostConnection — métodos', () => {
     expect(h.unsubscribe).toHaveBeenCalledTimes(1);
   });
 
+  it('onClosed_laSesionTermina_notificaSubscriptionClosed', () => {
+    const h = harness();
+    h.hello();
+    h.send({ jsonrpc: '2.0', id: 2, method: 'session.subscribe', params: { sessionId: 's1' } });
+
+    h.sinks[0]!.onClosed();
+
+    expect(h.lines().at(-1)).toEqual({ jsonrpc: '2.0', method: 'subscription.closed', params: { subscriptionId: 'sub-1' } });
+    expect(h.isEnded()).toBe(false);
+  });
+
+  it('onClosed_dosVeces_notificaUnaSola', () => {
+    const h = harness();
+    h.hello();
+    h.send({ jsonrpc: '2.0', id: 2, method: 'session.subscribe', params: { sessionId: 's1' } });
+
+    h.sinks[0]!.onClosed();
+    h.sinks[0]!.onClosed();
+
+    expect(h.lines().filter((line) => line.method === 'subscription.closed')).toHaveLength(1);
+  });
+
+  it('onClosed_trasUnsubscribe_noNotifica', () => {
+    const h = harness();
+    h.hello();
+    h.send({ jsonrpc: '2.0', id: 2, method: 'session.subscribe', params: { sessionId: 's1' } });
+    h.send({ jsonrpc: '2.0', id: 3, method: 'session.unsubscribe', params: { subscriptionId: 'sub-1' } });
+
+    h.sinks[0]!.onClosed();
+
+    expect(h.lines().filter((line) => line.method === 'subscription.closed')).toHaveLength(0);
+  });
+
+  it('onClosed_conexionYaCerrada_noEscribe', () => {
+    const h = harness();
+    h.hello();
+    h.send({ jsonrpc: '2.0', id: 2, method: 'session.subscribe', params: { sessionId: 's1' } });
+    h.connection.closed();
+    const before = h.written.length;
+
+    h.sinks[0]!.onClosed();
+
+    expect(h.written.length).toBe(before);
+  });
+
   it('pushEvent_consumidorLento_cierraLaConexion', () => {
     const h = harness();
     h.hello();
@@ -484,7 +577,7 @@ describe('HostConnection — métodos 1.2', () => {
 
     expect(reply.result).toMatchObject({ protocol: HOST_PROTOCOL, mode: 'gui' });
     expect(reply.result.capabilities).toContain('session.create');
-    expect(reply.result.capabilities).not.toContain('session.rewind');
+    expect(reply.result.capabilities).toContain('session.rewind');
   });
 
   it('sessionCreate_llegaAlControlYDevuelveSuResultado', () => {
@@ -506,6 +599,52 @@ describe('HostConnection — métodos 1.2', () => {
     expect(reply.error.code).toBe(HostErrorCode.TrustRequired);
     expect(reply.error.message).toContain('/x');
     expect(h.isEnded()).toBe(false);
+  });
+
+  it('clientSetLanguage_en_errorPropioEnInglesConLocalized', () => {
+    const h = harness({ control: { createSession: vi.fn(() => { throw new TrustRequiredError('/x'); }) } });
+    h.hello();
+
+    h.send({ jsonrpc: '2.0', id: 2, method: 'client.setLanguage', params: { language: 'en' } });
+    h.send({ jsonrpc: '2.0', id: 3, method: 'session.create', params: CREATE });
+
+    const [, language, create] = h.lines();
+    expect(language!.result).toEqual({});
+    expect(create!.error.code).toBe(HostErrorCode.TrustRequired);
+    expect(create!.error.message).toContain('The folder is not trusted: /x');
+    expect(create!.error.data).toEqual({ localized: { key: 'errors.host.trustRequired', values: { cwd: '/x' } } });
+  });
+
+  it('sessionCreate_trustRequiredSinIdioma_castellanoSinMarcaYConLocalized', () => {
+    const h = harness({ control: { createSession: vi.fn(() => { throw new TrustRequiredError('/x'); }) } });
+    h.hello();
+
+    const reply = call(h, 'session.create', CREATE);
+
+    expect(reply.error.message).toContain('La carpeta no es de confianza: /x');
+    expect(reply.error.message).not.toContain('⁣');
+    expect(reply.error.data.localized.key).toBe('errors.host.trustRequired');
+  });
+
+  it('clientSetLanguage_idiomaNoSoportado_invalidParams', () => {
+    const h = harness();
+    h.hello();
+
+    const reply = call(h, 'client.setLanguage', { language: 'fr' });
+
+    expect(reply.error.code).toBe(HostErrorCode.InvalidParams);
+    expect(h.isEnded()).toBe(false);
+  });
+
+  it('errorAjeno_sinData', () => {
+    const h = harness({ control: { createSession: vi.fn(() => { throw new Error('boom'); }) } });
+    h.hello();
+
+    const reply = call(h, 'session.create', CREATE);
+
+    expect(reply.error.code).toBe(HostErrorCode.Internal);
+    expect(reply.error.message).toBe('boom');
+    expect(reply.error.data).toBeUndefined();
   });
 
   it('sessionCreate_unknownAccount_codigoPropio', () => {
@@ -556,6 +695,29 @@ describe('HostConnection — métodos 1.2', () => {
     expect(reply.result).toEqual({ applied: true });
   });
 
+  it('sessionSetOption_controlRechazaBypass_errorMenos32011Localizado', () => {
+    const h = harness({ control: { setOption: vi.fn(() => { throw new BypassPermissionsBlockedError(); }) } });
+    h.hello();
+
+    const reply = call(h, 'session.setOption', { sessionId: 's1', key: 'permissionMode', value: 'bypassPermissions' });
+
+    expect(reply.error.code).toBe(HostErrorCode.PermissionModeBlocked);
+    expect(reply.error.data.localized.key).toBe('errors.host.bypassPermissionsBlocked');
+    expect(h.isEnded()).toBe(false);
+  });
+
+  it('clientSetLanguage_enConBypassBloqueado_mensajeEnInglesDeLaClave', () => {
+    const h = harness({ control: { setOption: vi.fn(() => { throw new BypassPermissionsBlockedError(); }) } });
+    h.hello();
+
+    h.send({ jsonrpc: '2.0', id: 2, method: 'client.setLanguage', params: { language: 'en' } });
+    h.send({ jsonrpc: '2.0', id: 3, method: 'session.setOption', params: { sessionId: 's1', key: 'permissionMode', value: 'bypassPermissions' } });
+
+    const [, , blocked] = h.lines();
+    expect(blocked!.error.code).toBe(HostErrorCode.PermissionModeBlocked);
+    expect(blocked!.error.message).toContain('does not accept the “Bypass permissions” mode');
+  });
+
   it('sessionCancelQueued_llegaARemoveQueued', () => {
     const h = harness();
     h.hello();
@@ -566,17 +728,23 @@ describe('HostConnection — métodos 1.2', () => {
     expect(reply.result).toEqual({ removed: null });
   });
 
-  it.each([
-    ['session.rewind', { sessionId: 's1', targetMessageId: 'm1', scope: 'both' }],
-    ['session.updateQueued', { sessionId: 's1', queuedId: 'q1', text: 'nuevo' }],
-  ])('sessionRewindYUpdateQueued_unsupportedYSigueAbierta_%s', (method, params) => {
+  it('sessionUpdateQueued_llegaAlCoordinadorYDevuelveElMensaje', () => {
+    const h = harness({ sessions: { updateQueued: vi.fn(() => ({ id: 'q1', text: 'nuevo' }) as never) } });
+    h.hello();
+
+    const reply = call(h, 'session.updateQueued', { sessionId: 's1', queuedId: 'q1', text: 'nuevo' });
+
+    expect(h.sessions.updateQueued).toHaveBeenCalledWith('s1', 'q1', 'nuevo');
+    expect(reply.result).toEqual({ updated: { id: 'q1', text: 'nuevo' } });
+  });
+
+  it('sessionUpdateQueued_noEstaEnLaCola_devuelveUpdatedNull', () => {
     const h = harness();
     h.hello();
 
-    const reply = call(h, method, params);
+    const reply = call(h, 'session.updateQueued', { sessionId: 's1', queuedId: 'q1', text: 'nuevo' });
 
-    expect(reply.error.code).toBe(HostErrorCode.Unsupported);
-    expect(h.isEnded()).toBe(false);
+    expect(reply.result).toEqual({ updated: null });
   });
 
   it('projectsYAccountsList_devuelvenLoDelControl', () => {
@@ -600,5 +768,277 @@ describe('HostConnection — métodos 1.2', () => {
     expect(h.lines()[0]!.error.code).toBe(HostErrorCode.NotAuthenticated);
     expect(h.isEnded()).toBe(true);
     expect(h.control.createSession).not.toHaveBeenCalled();
+  });
+});
+
+describe('HostConnection — métodos 1.3', () => {
+  const KEY = 'sk-ant-SECRETA';
+  const call = (h: ReturnType<typeof harness>, method: string, params?: unknown) => {
+    h.send({ jsonrpc: '2.0', id: 2, method, ...(params === undefined ? {} : { params }) });
+    return h.lines()[1]!;
+  };
+  const running = { listSessions: vi.fn(() => [{ ...SNAPSHOT, state: 'running' as const }]) };
+
+  it('hostStop_conVentana_rechazaYNoSale', () => {
+    const h = harness();
+    h.hello();
+
+    const reply = call(h, 'host.stop');
+
+    expect(reply.result).toEqual({ outcome: 'refused', reason: 'gui' });
+    expect(h.control.requestQuit).not.toHaveBeenCalled();
+    expect(h.isEnded()).toBe(false);
+  });
+
+  it('hostStop_sinVentanaSinTrabajo_contestaStoppingYPideSalir', () => {
+    const h = harness({ mode: 'headless' });
+    h.hello();
+
+    const reply = call(h, 'host.stop');
+
+    expect(reply.result).toEqual({ outcome: 'stopping' });
+    expect(h.control.requestQuit).toHaveBeenCalledTimes(1);
+  });
+
+  it('hostStop_sinVentanaConTurno_rechazaListandoSinSalir', () => {
+    const h = harness({ mode: 'headless', sessions: running });
+    h.hello();
+
+    const reply = call(h, 'host.stop');
+
+    expect(reply.result.outcome).toBe('refused');
+    expect(reply.result.reason).toBe('active');
+    expect(reply.result.sessions[0].sessionId).toBe('s1');
+    expect(h.control.requestQuit).not.toHaveBeenCalled();
+  });
+
+  it('hostStop_sinVentanaConTurnoYForce_pideSalir', () => {
+    const h = harness({ mode: 'headless', sessions: running });
+    h.hello();
+
+    const reply = call(h, 'host.stop', { force: true });
+
+    expect(reply.result).toEqual({ outcome: 'stopping' });
+    expect(h.control.requestQuit).toHaveBeenCalledTimes(1);
+  });
+
+  it('hostStop_parametroDesconocido_invalidParams', () => {
+    const h = harness({ mode: 'headless' });
+    h.hello();
+
+    const reply = call(h, 'host.stop', { forzar: true });
+
+    expect(reply.error.code).toBe(HostErrorCode.InvalidParams);
+    expect(h.control.requestQuit).not.toHaveBeenCalled();
+  });
+
+  it('accountsCreate_devuelveLaCuentaSinLaClave', () => {
+    const h = harness();
+    h.hello();
+    const params = { provider: 'claude', name: 'K', apiKey: KEY };
+
+    const reply = call(h, 'accounts.create', params);
+
+    expect(h.control.createApiAccount).toHaveBeenCalledWith(params);
+    expect(reply.result).toEqual({ account: { id: '/h/k', name: 'K', provider: 'claude', billing: 'api-key' } });
+    expect(h.written.join('')).not.toContain(KEY);
+  });
+
+  it('accountsCreate_laBovedaFalla_errorSinLaClave', () => {
+    const failing = vi.fn(() => { throw new UserFacingError(localized('errors.accounts.providerNameInvalid', { name: '"K"' })); });
+    const h = harness({ control: { createApiAccount: failing } });
+    h.hello();
+
+    const reply = call(h, 'accounts.create', { provider: 'claude', name: 'K', apiKey: KEY });
+
+    expect(reply.error.code).toBe(HostErrorCode.Internal);
+    expect(h.isEnded()).toBe(false);
+    expect(h.written.join('')).not.toContain(KEY);
+    expect(JSON.stringify(h.log.mock.calls)).not.toContain(KEY);
+  });
+
+  it('accountsCreate_proveedorAgy_invalidParamsSinCrear', () => {
+    const h = harness();
+    h.hello();
+
+    const reply = call(h, 'accounts.create', { provider: 'agy', name: 'K', apiKey: KEY });
+
+    expect(reply.error.code).toBe(HostErrorCode.InvalidParams);
+    expect(h.control.createApiAccount).not.toHaveBeenCalled();
+    expect(reply.error.message).not.toContain(KEY);
+  });
+
+  it('accountsCreate_claveVacia_invalidParams', () => {
+    const h = harness();
+    h.hello();
+
+    const reply = call(h, 'accounts.create', { provider: 'claude', name: 'K', apiKey: '' });
+
+    expect(reply.error.code).toBe(HostErrorCode.InvalidParams);
+  });
+});
+
+describe('rewind (1.4)', () => {
+  const POINT = { userIndex: 0, text: 'uno', nativeId: 'u1' };
+  const APPLY = { sessionId: 's1', point: POINT, action: 'rewind', restoreFiles: false, saveCopy: false };
+  const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
+  const request = async (h: ReturnType<typeof harness>, method: string, params: unknown) => {
+    h.send({ jsonrpc: '2.0', id: 2, method, params });
+    await flush();
+    return h.lines()[1]!;
+  };
+
+  it('rewindPoints_liveSession_repliesWithPoints', async () => {
+    const points = [{ userIndex: 0, text: 'uno', nativeId: 'u1', rewindable: true }];
+    const h = harness({ rewind: { points: vi.fn(async () => points) } });
+    h.hello();
+
+    const reply = await request(h, 'session.rewindPoints', { sessionId: 's1' });
+
+    expect(h.rewind.points).toHaveBeenCalledWith('s1');
+    expect(reply.result).toEqual({ points });
+  });
+
+  it('rewindPlan_validParams_delegatesToCoordinator', async () => {
+    const plan = { provider: 'claude', unavailable: null, discardedMessages: 2 };
+    const h = harness({ rewind: { plan: vi.fn(async () => plan as never) } });
+    h.hello();
+    const params = { sessionId: 's1', point: POINT, action: 'retry' };
+
+    const reply = await request(h, 'session.rewindPlan', params);
+
+    expect(h.rewind.plan).toHaveBeenCalledWith(params);
+    expect(reply.result).toEqual(plan);
+  });
+
+  it('rewind_apply_repliesWithoutProjection', async () => {
+    const result = { draft: 'uno', returnedQueue: [], filesRestored: false, copyThreadId: null, projection: { entries: [] }, retried: null };
+    const h = harness({ rewind: { apply: vi.fn(async () => result as never) } });
+    h.hello();
+
+    const reply = await request(h, 'session.rewind', APPLY);
+
+    expect(reply.result).toEqual({ draft: 'uno', returnedQueue: [], filesRestored: false, copyThreadId: null, retried: null });
+    expect(reply.result).not.toHaveProperty('projection');
+  });
+
+  it('rewind_coordinatorRejectsUserFacing_repliesErrorWithSpanishText', async () => {
+    const text = localized('errors.rewind.background');
+    const h = harness({ rewind: { apply: vi.fn(async () => { throw new UserFacingError(text); }) } });
+    h.hello();
+
+    const reply = await request(h, 'session.rewind', APPLY);
+
+    expect(reply.error.code).toBe(HostErrorCode.Internal);
+    expect(reply.error.message).toBe(renderForLog(text));
+    expect(reply.error.message).not.toContain('{');
+  });
+
+  it('rewind_negativeUserIndex_repliesInvalidParams', async () => {
+    const h = harness();
+    h.hello();
+
+    const reply = await request(h, 'session.rewind', { ...APPLY, point: { ...POINT, userIndex: -1 } });
+
+    expect(reply.error.code).toBe(HostErrorCode.InvalidParams);
+    expect(h.rewind.apply).not.toHaveBeenCalled();
+  });
+
+  it('rewind_connectionClosedBeforeResolve_writesNothing', async () => {
+    let resolve: (value: never) => void = () => undefined;
+    const pending = new Promise<never>((r) => { resolve = r; });
+    const h = harness({ rewind: { apply: vi.fn(() => pending) } });
+    h.hello();
+    h.send({ jsonrpc: '2.0', id: 2, method: 'session.rewind', params: APPLY });
+    h.connection.closed();
+    const before = h.written.length;
+
+    resolve({ draft: '', returnedQueue: [], filesRestored: false, copyThreadId: null, projection: null, retried: null } as never);
+    await flush();
+
+    expect(h.written.length).toBe(before);
+  });
+});
+
+describe('HostConnection — túnel MCP (1.5)', () => {
+  const CALLER = 'cd'.repeat(32);
+  const mcpHello = (h: ReturnType<typeof harness>, overrides: Record<string, unknown> = {}) => h.hello({ client: { kind: 'mcp', version: '1' }, ...overrides });
+
+  it('hello_mcpClient_opensTunnelWithCaller', () => {
+    const h = harness();
+
+    mcpHello(h, { caller: CALLER });
+
+    expect(h.mcp.open).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(h.mcp.open).mock.calls[0]![0].callerCredential).toBe(CALLER);
+  });
+
+  it('hello_terminalClient_noTunnel', () => {
+    const h = harness();
+
+    h.hello();
+
+    expect(h.mcp.open).not.toHaveBeenCalled();
+  });
+
+  it('mcpMessage_fromMcpClient_reachesTunnel', () => {
+    const h = harness();
+    mcpHello(h);
+
+    h.send({ jsonrpc: '2.0', id: 2, method: 'mcp.message', params: { message: { jsonrpc: '2.0', id: 1, method: 'tools/list' } } });
+
+    expect(h.tunnel.receive).toHaveBeenCalledWith({ jsonrpc: '2.0', id: 1, method: 'tools/list' });
+    expect(h.lines()[1]).toMatchObject({ id: 2, result: {} });
+  });
+
+  it('mcpMessage_fromTerminal_rejected', () => {
+    const h = harness();
+    h.hello();
+
+    h.send({ jsonrpc: '2.0', id: 2, method: 'mcp.message', params: { message: {} } });
+
+    expect(h.lines()[1]!.error.message).toMatch(/solo vale para clientes mcp/);
+    expect(h.tunnel.receive).not.toHaveBeenCalled();
+  });
+
+  it('tunnelSend_writesMcpMessageNotification', () => {
+    const h = harness();
+    mcpHello(h);
+
+    h.mcpSends[0]!.send({ jsonrpc: '2.0', id: 1, result: {} });
+
+    expect(h.lines()[1]).toEqual({ jsonrpc: '2.0', method: 'mcp.message', params: { message: { jsonrpc: '2.0', id: 1, result: {} } } });
+  });
+
+  it('tunnelSend_afterClose_writesNothing', () => {
+    const h = harness();
+    mcpHello(h);
+    h.connection.closed();
+    const before = h.written.length;
+
+    h.mcpSends[0]!.send({ jsonrpc: '2.0', id: 1, result: {} });
+
+    expect(h.written.length).toBe(before);
+  });
+
+  it('tunnelSend_slowConsumer_closesConnection', () => {
+    const h = harness();
+    mcpHello(h);
+    h.setBuffered(MAX_BUFFERED_BYTES + 1);
+
+    h.mcpSends[0]!.send({ jsonrpc: '2.0', id: 1, result: {} });
+
+    expect(h.lines()[1]!.error.code).toBe(HostErrorCode.SlowConsumer);
+    expect(h.isEnded()).toBe(true);
+  });
+
+  it('closed_mcpClient_closesTunnelOnce', () => {
+    const h = harness();
+    mcpHello(h);
+
+    h.connection.closed();
+    h.connection.closed();
+
+    expect(h.tunnel.close).toHaveBeenCalledTimes(1);
   });
 });

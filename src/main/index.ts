@@ -1,11 +1,20 @@
 import { resolvedPath as canonicalPath } from './os/resolvedPath';
-import { localMageRoot, localScratchRoot, workspaceTrusted, ensureWorkingDirectory } from './os/scratchWorkspace';
+import { localMageRoot, localScratchRoot, scratchWorkspacePaths, workspaceTrusted, ensureWorkingDirectory } from './os/scratchWorkspace';
 import { ConversationLocks, HEARTBEAT_MS } from './locks/conversationLocks';
 import { runLockHeartbeatTick } from './locks/conversationLockHeartbeat';
 import { lockFileName, nodeLockFs, pidAliveCheck, resolveConversationLocksDir } from './locks/conversationLockEnv';
 import { registerConversationLockIpc } from './locks/conversationLockIpc';
 import { readOnlyLockMessage } from '@shared/conversationLock';
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { McpCallers } from './host/mcpCallers';
+import { codexHomeHasMageServer } from './mcpServer/registrationStatus';
+import { mageMcpLaunch } from './mcpServer/registration';
+import { McpRegistrationService, type McpRegistrationDeps } from './mcpServer/registrationService';
+import { DelegationLog } from './mcpServer/delegationLog';
+import { HostSessionsPort } from './mcpServer/hostSessionsPort';
+import { SessionSettingsRegistry, settingsOfLaunch } from './mcpServer/sessionSettingsRegistry';
+import { MemoryIdempotencyStore } from './mcpServer/idempotencyStore';
+import { createMcpConnector as createHostMcpConnector } from './mcpServer/mcpConnector';
 import { execFile, spawn, spawnSync, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import {
   appendFileSync,
@@ -30,6 +39,7 @@ import {
 } from 'node:fs';
 import { glob, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
+import { accountsFetchFor, accountsHomeFrom, decideTestHome } from './os/testHome';
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { isUnderCliScratchpad as isUnderCliScratchpadPure } from './files/cliScratchpad';
 import { fileURLToPath } from 'node:url';
@@ -52,6 +62,7 @@ import {
 import {
   CLOSE_PROMPT_CHANNEL,
   EVENT_CHANNEL,
+  SESSION_ADOPTABLE_CHANNEL,
   IpcChannel,
   JUMP_LIST_OPEN_CHANNEL,
   MODEL_CATALOG_CHANGED_CHANNEL,
@@ -62,14 +73,17 @@ import {
   TRANSCRIPT_BATCH_CHANNEL,
   WIDGET_ENABLED_CHANGED_CHANNEL,
   WIDGET_FOCUS_TAB_CHANNEL,
+  WIDGET_PREFS_CHANNEL,
   WINDOW_TAB_RECEIVED_CHANNEL,
   UPDATE_PROMPT_CHANNEL,
   UPDATE_STATE_CHANNEL,
   CONVERSATION_LOCK_LOST_CHANNEL,
+  isPermissionMode,
 } from '@shared/ipc';
 import type {
   ModelCatalogChange,
   CreateSessionParams,
+  AdoptableSession,
   CreateSessionResult,
   HandoffPromptParams,
   JumpListOpenPayload,
@@ -81,6 +95,9 @@ import type {
   LoginStartParams,
   OpenEditorParams,
   OpenTranscriptParams,
+  CodexThreadParams,
+  CodexLegacyStatus,
+  CodexLegacyUpdateResult,
   TranscriptBatchPayload,
   ReadInstructionsParams,
   ReadMemoryParams,
@@ -96,7 +113,7 @@ import { buildAboutInfo } from './about/aboutService';
 import type { MemoryFile } from '@shared/memory';
 import type { MageEvent, SlashCommandInfo } from '@shared/events';
 import { localized, localizedFromError, localizedWithParts, renderForLog, UserFacingError, type LocalizedText } from '@shared/i18n/localizedText';
-import type { ImageAttachment, ProviderProbeParams } from '@shared/ipc';
+import type { ImageAttachment, KeepAliveStats, McpRegistrationResult, ProviderProbeParams } from '@shared/ipc';
 import { base64ByteLength, ERROR_FORMAT_LOCALE, validateAttachmentSet } from '@shared/attachments';
 import type { EffectiveSettings, InstructionsFile, ProjectFileContent, ReadProjectFileParams, WriteProjectFileParams } from '@shared/ipc';
 import type { ConversationSummary, DeleteConversationParams, MigrateConversationResult, MoveConversationParams, MoveConversationResult } from '@shared/conversations';
@@ -111,6 +128,28 @@ import type { AccountCreateParams, AccountInfo, AccountProviderId, AgyLoginStart
 import { BASE_ARGS as CLAUDE_BASE_ARGS, ClaudeAdapter } from './engine/claudeAdapter';
 import { probeModelCatalogs, type ProbeProcess } from './engine/modelProbe';
 import { registerMcpIpc } from './config/mcpIpc';
+import { execFileRunner } from './capabilities/commandRunner';
+import { nodeCapabilityFs } from './capabilities/capabilityFs';
+import type { CapabilityEngine } from './capabilities/capabilityPackage';
+import { bundledContents, loadBundledCatalog } from './capabilities/catalog/libraryCatalog';
+import { registerLibraryIpc } from './capabilities/library/libraryIpc';
+import { BROWSER_STATE_CHANNEL } from '@shared/browser';
+import { registerBrowserIpc } from './browser/browserIpc';
+import { BROWSER_SWEEP_INTERVAL_MS, BrowserRegistry } from './browser/browserRegistry';
+import { createBrowserAgent } from './browser/browserAgent';
+import { createParkingWindow, electronBrowserDeps, electronImageDeps } from './browser/electronBrowserDeps';
+import { IsolatedBrowser } from './browser/isolatedBrowser';
+import { PenSessions } from './browser/penSession';
+import { createParkingHost, ViewPlacement } from './browser/viewPlacement';
+import { libraryStatePath, loadLibraryState } from './capabilities/library/libraryState';
+import { LibraryService, type LibraryAccount } from './capabilities/library/libraryService';
+import { decideTestLibraryClaudeDir, testLibraryAccounts } from './capabilities/library/testLibraryAccount';
+import { registerTaskIpc } from './tasks/taskIpc';
+import { buildTaskInstructions } from './tasks/taskInstructions';
+import { nodeDeliverableFs, nodeIsDirectory, nodeIsFile, nodeTaskStoreFs } from './tasks/taskNodeFs';
+import { TaskService } from './tasks/taskService';
+import { loadTasks, saveTasks } from './tasks/taskStore';
+import { withTaskDirectories } from './tasks/taskLaunch';
 import { resolveClaudeDesktopDirs, type McpAccountLocation } from './config/mcpInventory';
 import { probeMcpStatuses } from './config/mcpStatusProbe';
 import { authenticateMcp } from './config/mcpAuthFlow';
@@ -159,11 +198,14 @@ import {
 } from './config/sharedConfigService';
 import { createMcpServices, type McpServices } from './config/mcpServices';
 import { claudeSharedLaunch } from './config/mcpProviderTranslate';
-import { selectForTarget } from './config/mcpResolved';
+import { mergeServerLists, selectForTarget, type ResolvedMcpServer } from './config/mcpResolved';
 import { mcpFamilyOf } from '@shared/mcp';
 import { AccountService } from './accounts/accountService';
-import { ConversationsService, type ConversationsDeps } from './conversations/conversationsService';
+import { ConversationsService, withHostOwner, withLastAccount, type ConversationsDeps } from './conversations/conversationsService';
 import { CodexHistoryService } from './conversations/codexHistory';
+import { deleteCodexConversation } from './conversations/codexDeletion';
+import { forgetDeletedConversation } from './conversations/deletedConversation';
+import { updateLegacyCodexThread } from './conversations/codexLegacyUpdate';
 import { ConversationMigrationService } from './conversations/conversationMigration';
 import { createMigrationEndpoints } from './conversations/migrationEndpoints';
 import { codexThreadDelete, codexThreadTurnsList } from './conversations/codexRpc';
@@ -185,7 +227,7 @@ import { TokenRefreshService } from './accounts/tokenRefreshService';
 import { parseStoredOauth } from './accounts/oauthFlow';
 import { defaultLinkDeps, LinkService } from './os/linkService';
 import { resolveClaudeBinary } from './os/claudeBinaryResolver';
-import { scrubAgentEnv } from './os/agentEnv';
+import { scrubAgentEnv, TEST_ANTHROPIC_BASE_URL_ENV } from './os/agentEnv';
 import { OpenWithService } from './os/openWithService';
 import { buildJumpListCategories, parseJumpListArgs } from './os/jumpList';
 import { UsageService } from './usage/usageService';
@@ -194,7 +236,7 @@ import { StatusService } from './status/statusService';
 import { claudeUserAgent } from './os/claudeVersion';
 import { LogBus } from './debug/logBus';
 import { DebugWindowController } from './debug/debugWindow';
-import { TranscriptService } from './transcripts/transcriptService';
+import { TranscriptService, type BranchReadOptions } from './transcripts/transcriptService';
 import { resolveSubagentTranscriptPath, resolveTranscriptPath } from './transcripts/transcriptPath';
 import { MemoryService, resolveMemoryDir } from './memory/memoryService';
 import { WorkspaceStore } from './state/workspaceStore';
@@ -205,17 +247,36 @@ import { agyBridgeSpec, bridgeDocument, codexBridgeSpec, resolveBridge, type Bri
 import { EffectiveSettingsService } from './config/effectiveSettingsService';
 import { ConversationIndexStore } from './state/conversationIndexStore';
 import { registerSessionIpc } from './coordination/sessionIpc';
+import type { SessionCommands } from './coordination/sessionIpc';
+import { isUuid } from '@shared/sessionInput';
+import { RewindCoordinator } from './coordination/rewindCoordinator';
+import { RewindStateStore } from './conversations/rewindStateStore';
+import { readActiveBranchEntries } from './transcripts/activeBranchReader';
 import { canControlSession } from './coordination/sessionAccess';
+import type { ConversationSnapshot } from '@shared/coordination';
+import { AdoptableSessions } from './host/adoptableSessions';
+import { HostOwnership } from './host/hostOwnership';
+import { closeFromWindow as closeSessionFromWindow, toAttachTarget, WindowAttachments } from './host/windowAttachments';
 import { readHostMode, startLocalHost } from './host/hostBootstrap';
-import { createHostControl } from './host/hostControl';
+import { cliRelayArgs, cliRelayPlan } from './host/cliRelay';
+import { createHostControl, resolveHostLaunchParams } from './host/hostControl';
+import type { HostControlDeps } from './host/hostControl';
+import { HOST_SESSION_PROVIDERS } from './host/hostProtocol';
 import type { HostMode, HostServerHandle } from './host/hostServer';
+import { HOST_STOP_DELAY_MS } from './host/hostStop';
 import { HEADLESS_GUI_UNAVAILABLE, isHeadlessHost, lockFailureMessage, startupWarnings } from './startupMode';
 import { registerConversationPrefsIpc } from './coordination/conversationPrefsIpc';
+import { FileIndexService } from './mentions/fileIndex';
+import { previewMention } from './mentions/mentionPreview';
+import { resolveMentions, type MentionResolverDeps } from './mentions/mentionResolver';
+import { registerMentionsIpc } from './mentions/mentionsIpc';
+import { nodeReaddir, readHeadBytes, statBytes, walkFiles } from './mentions/walkFiles';
 import { SessionCoordinator } from './coordination/sessionCoordinator';
 import { ProjectFileService, resolveProjectFilePath } from './files/projectFileService';
 import { resolvedPath } from './os/resolvedPath';
 import { writeAtomic, type AtomicWriteDeps } from './os/atomicFile';
 import { SettingsStore } from './state/settingsStore';
+import { INSTALLER_LANGUAGE_FILE, readInstallerLanguage } from './i18n/installerLanguage';
 import { UiLanguageService } from './i18n/uiLanguageService';
 import { SecretStore } from './secrets/secretStore';
 import type { VaultStatus } from './secrets/vaultGate';
@@ -240,13 +301,18 @@ import type { GhAutoMergeParams, GhRunActionParams, GhRunsParams, GhRunsSnapshot
 import { findGhBinary } from './os/ghBinaryResolver';
 import { createGhService, type GhRunner, type GhService } from './gh/ghService';
 import { PrMonitor } from './gh/prMonitor';
+import { migrateTabPr, PrCatalogStore } from './gh/prCatalogStore';
+import { registerPrIpc } from './gh/prIpc';
 import { FAKE_GH_BIN, runFakeGh } from './gh/ghFakeRunner';
 import { createWorktreeService, nodeWorktreeFs, type WorktreeService } from './git/worktreeService';
 import type { WorktreeCreateParams, WorktreeMergeBaseParams, WorktreeRemoveResult } from '@shared/worktree';
 import { PanelLayoutStore } from './state/panelLayoutStore';
 import { PromptService } from './prompt/promptService';
 import { WidgetWindowController } from './widget/widgetWindow';
-import type { WidgetSnapshot } from '@shared/widget';
+import { registerWidgetIpc } from './widget/widgetIpc';
+import { WidgetPrefsStore } from './widget/widgetPrefsStore';
+import { WidgetSessionTracker } from './widget/widgetSessionTracker';
+import type { WidgetPrefs, WidgetSnapshot } from '@shared/widget';
 import { ThemeMarketService } from './theme/themeMarketService';
 import type { FetchThemeParams } from '@shared/themeMarket';
 import { checkForUpdatesNow, flushPendingUpdatePrompt, getUpdateState, installUpdate, startAutoUpdate } from './update/autoUpdate';
@@ -254,6 +320,7 @@ import { isPathUnder, pathEquals } from './os/pathUtils';
 import { isWindowId, MAIN_WINDOW_ID, WindowManager, type WindowPlacement } from './windows/windowManager';
 import { installExternalLinkHandler, type ExternalLinkDeps } from './windows/externalLinks';
 import { resolveDropTarget } from './windows/dropTarget';
+import { installNavigationGuard, isRendererUrl, originForLog } from './windows/navigationGuard';
 import { PERSISTED_TAB_SCHEMA } from '@shared/stateSchema';
 import type { PersistedTab } from '@shared/state';
 import type { DropTabOutcome } from '@shared/ipc';
@@ -282,10 +349,13 @@ const currentDir = dirname(fileURLToPath(import.meta.url));
 // Cada cuanto puede refrescarse la jump list como mucho (P1). El disparador es el foco de ventana, y
 // un alt-tab seguido la llamaria varias veces por segundo sobre un escaneo de disco de cientos de ms.
 // Un minuto es de sobra: lo que muestra son conversaciones recientes, no algo que cambie por segundo.
+// HOME para descubrir y validar cuentas, historial y MCP: el de prueba de verify:gui o el real (ver `os/testHome.ts`).
+const accountsHome = (): string => accountsHomeFrom(decideTestHome({ env: process.env, isPackaged: app.isPackaged }), homedir());
+
 // ¿La ruta cuelga del home del usuario? Se compara segmento a segmento con `pathEquals`, que en
 // win32 ignora mayusculas y en POSIX no (donde SI son directorios distintos).
 function isInsideHome(resolved: string): boolean {
-  const home = homedir();
+  const home = accountsHome();
   return resolved.length > home.length + 1 && pathEquals(resolved.slice(0, home.length), home) && resolved[home.length] === sep;
 }
 
@@ -355,6 +425,9 @@ const WINDOWS_APP_USER_MODEL_ID = 'com.m4raa.mage';
 let tray: Tray | null = null;
 // Controlador del widget flotante (M3): lazy (necesita app.whenReady para userData/preload).
 let widgetWindow: WidgetWindowController | null = null;
+// Seguimiento de las sesiones vivas para el widget acompañante (F9) y sus preferencias: también perezosos.
+let widgetSessionTracker: WidgetSessionTracker | null = null;
+let widgetPrefsSingleton: WidgetPrefsStore | null = null;
 
 // Tope de una peticion PUNTUAL al CLI (mejora de prompt / handoff). No es una sesion: si tarda mas
 // que esto, algo va mal y se termina el arbol de procesos.
@@ -404,9 +477,9 @@ function importSharedMcpOnce(): void {
     const accounts = accountService.listAccounts().map((account) => ({
       label: account.name,
       // La principal guarda su estado en HOME, no dentro de `~/.claude` (mismo criterio que AccountService).
-      text: readIfExists(account.isMain ? join(homedir(), stateFileName) : join(account.configDir, stateFileName)),
+      text: readIfExists(account.isMain ? join(accountsHome(), stateFileName) : join(account.configDir, stateFileName)),
     }));
-    const shared = { label: LEGACY_SHARED_MCP_FILE, text: readIfExists(join(homedir(), mainDirName, LEGACY_SHARED_MCP_FILE)) };
+    const shared = { label: LEGACY_SHARED_MCP_FILE, text: readIfExists(join(accountsHome(), mainDirName, LEGACY_SHARED_MCP_FILE)) };
     const notes = getSharedConfigService().importMcpCommonIfMissing(mcpCommonPath(), shared, accounts);
     if (notes === null) return;
     mcpImportNotes = notes;
@@ -432,7 +505,7 @@ function mcpAccountLocations(): readonly McpAccountLocation[] {
     configDir: account.configDir,
     label: account.name.replace(/^\./, ''),
     stateFile:
-      mcpFakeSourcesPath(`${account.name}.json`) ?? (account.isMain ? join(homedir(), stateFileName) : join(account.configDir, stateFileName)),
+      mcpFakeSourcesPath(`${account.name}.json`) ?? (account.isMain ? join(accountsHome(), stateFileName) : join(account.configDir, stateFileName)),
   }));
 }
 
@@ -450,7 +523,7 @@ const MCP_FAKE_CLI = process.env.MAGE_MCP_FAKE_CLI === '1';
 // --settings y el interruptor de conectores): es lo que carga una sesion.
 function spawnMcpStatusProbe(configDir: string): ProbeProcess {
   if (MCP_FAKE_CLI) return spawnFakeMcpCli(configDir);
-  const shared = claudeSharedLaunch(loadSharedLaunch('claude', configDir), configDir, getMcpServices().writeClaudeMcpConfig);
+  const shared = claudeSharedLaunch(loadSharedLaunch('claude', configDir, null), configDir, getMcpServices().writeClaudeMcpConfig);
   return spawnModelProbe(configDir, shared.args, shared.env);
 }
 
@@ -476,7 +549,7 @@ function getMcpServices(): McpServices {
   if (mcpServicesSingleton === null) {
     mcpServicesSingleton = createMcpServices({
       userDataDir: app.getPath('userData'),
-      homedir: homedir(),
+      homedir: accountsHome(),
       platform: process.platform,
       pathSeparator: sep,
       vault: getSecretStore(),
@@ -486,6 +559,8 @@ function getMcpServices(): McpServices {
       loadCommon: () => getSharedConfigService().loadMcpCommon(mcpCommonPath()),
       accountDirs: () => accountService.listAccounts().map((account) => account.configDir),
       warn: (message) => mainLog('warn', message),
+      loadLibraryInstalls: () => loadLibraryState(nodeCapabilityFs(), libraryStatePath(app.getPath('userData'))).installs,
+      caseInsensitivePaths: process.platform === 'win32' || process.platform === 'darwin',
     });
   }
   return mcpServicesSingleton;
@@ -494,13 +569,13 @@ function getMcpServices(): McpServices {
 // mcp_config.json de agy: su raiz sigue al perfil del usuario (medido en 1.2.14, no hay variable para
 // moverla). En verify:gui, el falso de MAGE_MCP_FAKE_SOURCES.
 function agyMcpConfigPath(): string {
-  return mcpFakeSourcesPath(join('agy', 'mcp_config.json')) ?? join(homedir(), '.gemini', 'config', 'mcp_config.json');
+  return mcpFakeSourcesPath(join('agy', 'mcp_config.json')) ?? join(accountsHome(), '.gemini', 'config', 'mcp_config.json');
 }
 
 function mcpDesktopDirs(): readonly string[] {
   const fake = mcpFakeSourcesPath('Claude');
   if (fake !== null) return existsSync(fake) ? [fake] : [];
-  return resolveClaudeDesktopDirs({ platform: process.platform, env: process.env, homedir: homedir(), exists: existsSync, listDir: (path) => readdirSync(path) });
+  return resolveClaudeDesktopDirs({ platform: process.platform, env: process.env, homedir: accountsHome(), exists: existsSync, listDir: (path) => readdirSync(path) });
 }
 
 // Tras cambiar lo que Mage comparte: sincronizacion automatica con agy (si el usuario la activo). Un
@@ -515,19 +590,60 @@ function onSharedMcpChanged(): void {
 // Perfil privado de una cuenta (AccountService): cuenta como su cuenta (mismo login, mismo «Solo en…»).
 const PRIVATE_PROFILE_DIR_NAME = 'mage-private';
 
+// Carpetas extra de la tarea que se está lanzando (F8); solo vive durante `sessionCoordinator.create`.
+// ponytail: canal por variable de módulo porque create() es síncrono; si deja de serlo, pasar las carpetas por SharedLaunchConfig
+let launchingTaskExtras: readonly string[] = [];
+
 // Lo comun de UN lanzamiento (proveedor + cuenta). Se re-lee en CADA lanzamiento (nunca se cachea):
 // son ficheros que el usuario puede editar entre una sesion y la siguiente.
-function loadSharedLaunch(provider: string, accountDir: string): SharedLaunchConfig {
+function loadSharedLaunch(provider: string, accountDir: string, sessionId: string | null): SharedLaunchConfig {
   const family = mcpFamilyOf(provider);
   const account = basename(accountDir) === PRIVATE_PROFILE_DIR_NAME ? dirname(accountDir) : accountDir;
   const shared = getMcpServices().sharedMcp();
   for (const warning of shared.warnings) mainLog('warn', warning);
   const settingsCommon = getSharedConfigService().loadSettingsCommon(settingsCommonPath());
   return {
-    mcpServers: selectForTarget(shared.servers, { family, accountId: family === 'claude' ? account : null }),
-    settingsFragment: buildSettingsFragment(settingsCommon),
+    mcpServers: withLibraryServers(selectForTarget(shared.servers, { family, accountId: family === 'claude' ? account : null }), family, account),
+    settingsFragment: family === 'claude' ? withTaskDirectories(buildSettingsFragment(settingsCommon), launchingTaskExtras) : buildSettingsFragment(settingsCommon),
     claudeAiConnectors: !getSettingsStore().load().claudeAiConnectorsOff.includes(account),
+    ...mageCallerFor(provider, accountDir, sessionId),
   };
+}
+
+// Degradación registrada a propósito: un library.json corrupto no impide lanzar ninguna sesión
+// (la pantalla de la biblioteca sigue mostrando el error).
+function libraryMcpOrNull(family: 'claude' | 'codex', account: string): ReturnType<ReturnType<typeof getMcpServices>['libraryMcp']> | null {
+  try {
+    return getMcpServices().libraryMcp(family, account);
+  } catch (error) {
+    mainLog('warn', 'MCP de la biblioteca omitidos: no se pudo leer su estado', { error: error instanceof Error ? error.message : String(error) });
+    return null;
+  }
+}
+
+// MCP con clave de la biblioteca (tercera fuente): solo Claude y Codex; con el mismo nombre gana lo común.
+function withLibraryServers(servers: readonly ResolvedMcpServer[], family: string, account: string): readonly ResolvedMcpServer[] {
+  if (family !== 'claude' && family !== 'codex') return servers;
+  const library = libraryMcpOrNull(family, account);
+  if (library === null) return servers;
+  const merged = mergeServerLists({ servers, warnings: [] }, library);
+  for (const warning of merged.warnings) mainLog('warn', warning);
+  return merged.servers;
+}
+
+// D-M6: solo Claude y Codex hablan con `mage mcp`; los demas proveedores no reciben credencial.
+// Sin sesion (sondeos de estado de MCP) no hay llamante: `sessionId` null -> sin credencial.
+function mageCallerFor(provider: string, accountDir: string, sessionId: string | null): Pick<SharedLaunchConfig, 'mageCaller'> {
+  if (sessionId === null) return {};
+  if (provider !== 'claude' && provider !== 'codex') return {};
+  const codexHome = provider === 'codex' ? getProviderAccounts().find('codex', accountDir)?.home : undefined;
+  const forwardToCodexMcp = codexHome !== undefined && codexHomeHasMageServer(codexHome, {
+    exists: existsSync,
+    read: (path) => readFileSync(path, 'utf8'),
+    join,
+    warn: (message, data) => mainLog('warn', message, data),
+  });
+  return { mageCaller: { credential: mcpCallers.mint(sessionId), forwardToCodexMcp } };
 }
 
 // Gestor de sesiones del motor. La fabrica elige el runtime por proveedor (`sessionFactory.ts`): los
@@ -541,9 +657,9 @@ const sessionManager = new SessionManager(
       buildRuntime: (id, runtimeBase) => buildRuntimeSession(id, runtimeBase, runtimeEnv()),
     }),
   {
-    homedir: homedir(),
+    homedir: accountsHome(),
     fileExists: existsSync,
-    listHome: () => readdirSync(homedir()),
+    listHome: () => readdirSync(accountsHome()),
     resolveShared: loadSharedLaunch,
     hasClaudeLogin,
     isKnownPermissionMode: (provider, mode) => isKnownPermissionMode(provider, mode),
@@ -577,6 +693,18 @@ const sessionCoordinator = new SessionCoordinator({
     },
     release: (sessionId) => getConversationLocks().releaseWhere((holder) => holder === `session:${sessionId}`),
   },
+  // A8: el corte pendiente de un rewind de Claude se borra en cuanto sale el siguiente mensaje.
+  onUserMessageSent: (ref) => { if (ref.provider === 'claude') getRewindState().clearPendingCut(ref.nativeId); },
+  // Keep-alive de la cache (F4.6). Para saber si una cuenta es de API basta su ficha: no se lee la clave de la boveda.
+  keepAliveSettings: () => getSettingsStore().load().keepAlive,
+  isApiKeyAccount: (dir) => getProviderAccounts().find('claude', dir)?.authKind === 'api-key',
+  onKeepAliveDone: (ref, sample, rewound, kaUuid) => {
+    getRewindState().recordKeepAlive(ref.nativeId, sample);
+    // Tras el rewind el fichero sigue terminando en la respuesta del keep-alive: el corte pendiente (A8) hace que
+    // reabrir la conversacion no la ensene; se borra con el siguiente mensaje real.
+    if (rewound) getRewindState().setPendingCut(ref.nativeId, kaUuid);
+    mainLog('info', 'Keep-alive hecho', { sessionId: ref.nativeId, rewound, ...sample });
+  },
 });
 
 // Bloqueo de conversacion entre instancias (#55, F2.8): un fichero por conversacion abierta en `<raiz local>/mage/locks`,
@@ -598,7 +726,7 @@ function getConversationLocks(): ConversationLocks {
 }
 
 // El latido de las conversaciones de esta instancia; las que haya PERDIDO se avisan a las ventanas (solo lectura). El
-// tick nunca deja escapar una excepcion (H1 de la devolucion 17).
+// tick nunca deja escapar una excepcion.
 function startConversationLockHeartbeat(): void {
   setInterval(() => {
     runLockHeartbeatTick({
@@ -713,7 +841,16 @@ function buildAdapter(provider: string): ProviderAdapter {
   const writeMcpConfig = getMcpServices().writeClaudeMcpConfig;
   // La clave de una cuenta por API la pone SOLO el adapter de su CLI, y solo en el hijo de esa cuenta
   // (agentEnv.ts, excepcion 2). Las de suscripcion resuelven null.
-  if (provider === 'claude') return new ClaudeAdapter(undefined, writeMcpConfig, claudeApiKeyFor, () => getSettingsStore().load().artifactEnabled);
+  if (provider === 'claude') {
+    return new ClaudeAdapter({
+      writeMcpConfig,
+      resolveApiKey: claudeApiKeyFor,
+      artifactEnabled: () => getSettingsStore().load().artifactEnabled,
+      testBaseUrl: () => process.env[TEST_ANTHROPIC_BASE_URL_ENV],
+      isPackaged: () => app.isPackaged,
+      log: mainLog,
+    });
+  }
   if (provider === AGY_PROVIDER_ID) return buildAgyAdapter();
   if (provider === CODEX_PROVIDER_ID) return buildCodexAdapter();
   throw new Error(`Proveedor sin CLI: ${JSON.stringify(provider)}`);
@@ -772,10 +909,10 @@ const instructionsFs: BridgeFs = { exists: existsSync, readFile: (path) => readF
 // El CLAUDE.md global que se puentea: el de la cuenta de Claude principal.
 // ponytail: siempre ~/.claude; si el usuario solo tiene cuentas alternativas con su propio CLAUDE.md,
 // resolver aqui la cuenta por defecto como sessionDefaults.ts.
-const claudeUserDir = (): string => join(homedir(), '.claude');
+const claudeUserDir = (): string => join(accountsHome(), '.claude');
 
 function codexHomeFor(accountDir: string): string {
-  return getProviderAccounts().find('codex', accountDir)?.home ?? join(homedir(), '.codex');
+  return getProviderAccounts().find('codex', accountDir)?.home ?? join(accountsHome(), '.codex');
 }
 
 function agyProfileFor(accountDir: string): string {
@@ -838,7 +975,7 @@ function buildCodexAdapter(): CodexAdapter {
       return { home: entry.home, apiKey: getProviderAccounts().apiKeyFor('codex', dir) };
     },
     resolveInstructions: (cwd, codexHome) =>
-      resolveBridge(instructionsFs, { cwd, claudeUserDir: claudeUserDir(), spec: codexBridgeSpec(codexHome ?? join(homedir(), '.codex')) }),
+      resolveBridge(instructionsFs, { cwd, claudeUserDir: claudeUserDir(), spec: codexBridgeSpec(codexHome ?? join(accountsHome(), '.codex')) }),
   });
 }
 
@@ -997,7 +1134,7 @@ function getProviderAccounts(): ProviderAccountService {
   if (providerAccountsSingleton === null) {
     providerAccountsSingleton = new ProviderAccountService({
       filePath: join(app.getPath('userData'), 'provider-accounts.json'),
-      homedir: homedir(),
+      homedir: accountsHome(),
       userDataDir: app.getPath('userData'),
       vault: getSecretStore(),
       exists: existsSync,
@@ -1128,8 +1265,8 @@ const accountService = new AccountService({
   // Hoy el unico proveedor con multicuenta gestionada por Mage es Claude; cuando otro la tenga,
   // aqui se elegira el suyo y AccountService no cambia una linea.
   layout: accountLayoutOf(new ClaudeAdapter()),
-  homedir: homedir(),
-  listHome: () => readdirSync(homedir()),
+  homedir: accountsHome(),
+  listHome: () => readdirSync(accountsHome()),
   listDir: (path) => (existsSync(path) ? readdirSync(path) : []),
   isDirectory: (path) => tryIsDirectory(path),
   exists: existsSync,
@@ -1164,7 +1301,8 @@ const conversationFsDeps: ConversationsDeps = {
 };
 const conversationsService = new ConversationsService(conversationFsDeps);
 // Historial de las cuentas de Codex: sus rollouts, medidos con codex-cli 0.160.0.
-const codexHistory = new CodexHistoryService(conversationFsDeps, mainLog);
+// El tercer argumento titula una copia de «Guardar una copia antes» (U3) como «Copia de …»; `getRewindState` es lazy y solo se llama al listar.
+const codexHistory = new CodexHistoryService(conversationFsDeps, mainLog, (id, title) => (getRewindState().copyOrigin(id) === null ? title : getUiLanguageService().translate('chat.rewind.copyTitle', { title })));
 // Historial de agy: las bases SQLite de los perfiles con los que Mage lo lanza (resumibles con `--conversation`).
 const agyHistory = new AgyHistoryService(createAgySqliteStore());
 
@@ -1272,8 +1410,10 @@ function readCliAuthStatus(configDir: string): Promise<string> {
 
 // Renovacion de sesion para el panel de Uso. Quien renueva normalmente es el CLI al correr un turno;
 // esto cubre la cuenta inactiva, que es justo la que quieres consultar y la unica que da 401.
+// HOME de prueba (verify:gui): las cuentas son de prueba y su token no sale a la red (ver `os/testHome.ts`).
+const accountsFetch = accountsFetchFor(decideTestHome({ env: process.env, isPackaged: app.isPackaged }), fetch);
 const tokenRefreshService = new TokenRefreshService({
-  fetch,
+  fetch: accountsFetch,
   readOauthBlock: (configDir) => readOauthBlock(configDir),
   writeOauthBlock: (configDir, oauth) => writeCredentials(configDir, oauth, credentialsDeps),
   now: () => Date.now(),
@@ -1286,7 +1426,7 @@ const tokenRefreshService = new TokenRefreshService({
 // (imprescindible o el endpoint devuelve 429); se resuelve una vez y cachea. fetch es el global de
 // Node 22 (toda la red va en main: la CSP del renderer es connect-src 'self').
 const usageService = new UsageService({
-  fetch,
+  fetch: accountsFetch,
   readAccessToken: (configDir) => readAccessToken(configDir),
   now: () => Date.now(),
     // Getter, no valor: `claudeUserAgent()` hace un `execFileSync` del binario para leer su version
@@ -1354,7 +1494,7 @@ function isUnderManagedProjects(targetPath: string): boolean {
   // distinguen mayusculas, asi que una ruta con la unidad en minusculas se rechazaba con
   // `bad_request_invalid_config_dir`. `pathEquals` ya resuelve eso, y solo en win32.
   if (!isInsideHome(resolved)) return false;
-  const segments = resolved.slice(homedir().length).split(sep).filter(Boolean);
+  const segments = resolved.slice(accountsHome().length).split(sep).filter(Boolean);
   if (segments.length < 2 || !ACCOUNT_DIR_PATTERN.test(segments[0] ?? '')) return false;
   if (segments[1] === 'projects') return true;
   return segments[1] === PRIVATE_PROFILE_SEGMENT && segments[2] === 'projects';
@@ -1386,7 +1526,7 @@ function isUnderManagedMemory(targetPath: string): boolean {
 function segmentsInsideManagedConfigDir(targetPath: string): readonly string[] | null {
   const resolved = resolve(targetPath);
   if (!isInsideHome(resolved)) return null;
-  const segments = resolved.slice(homedir().length).split(sep).filter(Boolean);
+  const segments = resolved.slice(accountsHome().length).split(sep).filter(Boolean);
   if (!ACCOUNT_DIR_PATTERN.test(segments[0] ?? '')) return null;
   return segments[1] === PRIVATE_PROFILE_SEGMENT ? segments.slice(2) : segments.slice(1);
 }
@@ -1459,7 +1599,7 @@ function isManagedAccountConfigDir(dir: string): boolean {
   // distinguen mayusculas, asi que una ruta con la unidad en minusculas se rechazaba con
   // `bad_request_invalid_config_dir`. `pathEquals` ya resuelve eso, y solo en win32.
   if (!isInsideHome(resolved)) return false;
-  const segments = resolved.slice(homedir().length).split(sep).filter(Boolean);
+  const segments = resolved.slice(accountsHome().length).split(sep).filter(Boolean);
   return segments.length === 1 && ACCOUNT_DIR_PATTERN.test(segments[0] ?? '');
 }
 
@@ -1561,13 +1701,17 @@ function chmod600(path: string): void {
   chmodSync(path, 0o600);
 }
 
-// Idioma de la interfaz (F3.1). Lazy por lo mismo que el SettingsStore. La preferencia inicial (la del instalador
-// de Windows, U3) la aporta F3.7: hasta entonces no hay ninguna.
+// Idioma de la interfaz (F3.1). Lazy por lo mismo que el SettingsStore. La preferencia inicial es la del instalador
+// de Windows (U3, F3.7): `installerLanguage.ts` la lee de userData mientras no haya una guardada en Ajustes.
 let uiLanguageServiceSingleton: UiLanguageService | null = null;
 function getUiLanguageService(): UiLanguageService {
   uiLanguageServiceSingleton ??= new UiLanguageService({
     savedPreference: () => getSettingsStore().load().uiLanguage,
-    initialPreference: () => undefined,
+    initialPreference: () => readInstallerLanguage({
+      filePath: join(app.getPath('userData'), INSTALLER_LANGUAGE_FILE),
+      readFile: (file) => (existsSync(file) ? readFileSync(file, 'utf8') : null),
+      log: mainLog,
+    }),
     preferredSystemLanguages: () => app.getPreferredSystemLanguages(),
     broadcast: (resolved) => {
       windowManager.broadcast(UI_LANGUAGE_CHANGED_CHANNEL, resolved);
@@ -1597,6 +1741,39 @@ function getSettingsStore(): SettingsStore {
     });
   }
   return settingsStoreSingleton;
+}
+
+// Estado propio del rewind (corte pendiente, forks y copias de Codex). Lazy como SettingsStore: `userData` solo existe tras `ready`.
+let rewindStateSingleton: RewindStateStore | null = null;
+function getRewindState(): RewindStateStore {
+  if (rewindStateSingleton === null) {
+    rewindStateSingleton = new RewindStateStore({
+      filePath: join(app.getPath('userData'), 'rewind-state.json'),
+      exists: existsSync,
+      readFile: (path) => readFileSync(path, 'utf8'),
+      writeFile: (path, data) => writeFileSync(path, data, 'utf8'),
+      rename: renameSync,
+      removeFile: (path) => rmSync(path, { force: true }),
+      tempSuffix: () => randomUUID(),
+      log: (level, message, data) => mainLog(level, message, data),
+    });
+  }
+  return rewindStateSingleton;
+}
+
+// Rewind, Reintentar y Divergir (F4.4/F4.5): sobre la coordinacion, con la rama activa leida como la ve el renderer.
+function createRewindCoordinator(): RewindCoordinator {
+  return new RewindCoordinator({
+    coordinator: sessionCoordinator,
+    readClaudeBranch: ({ accountDir, cwd, sessionId, pendingCutUuid }) => readActiveBranchEntries(transcriptService, conversationTranscriptPath(accountDir, cwd, sessionId), {
+      ...(pendingCutUuid === null ? {} : { pendingCutUuid }),
+      onMissingParent: (uuid) => mainLog('warn', 'Transcripcion con un padre inexistente al rebobinar', { uuid }),
+    }),
+    state: getRewindState(),
+    newId: randomUUID,
+    now: Date.now,
+    log: (level, message, data) => mainLog(level, message, data),
+  });
 }
 
 // Boveda de secretos (claves de API de proveedores): cifrada con `safeStorage` (DPAPI en Windows).
@@ -1731,7 +1908,9 @@ const runRealGh: GhRunner = async (bin, args, options) => {
     return { code: 0, stdout: await execCapturingStdout(bin, args, { ...options, timeoutMs: GIT_TIMEOUT_MS, maxBufferBytes: GIT_MAX_BUFFER_BYTES }) };
   } catch (err) {
     // Ni stderr ni el mensaje (puede llevar la linea de comandos): solo el codigo, que es lo que se clasifica.
-    const code = (err as { code?: unknown }).code;
+    const { code, stdout } = err as { code?: unknown; stdout?: unknown };
+    // `pr diff` pide tolerar el desborde: lo leido hasta el tope vale, el servicio lo corta a su limite.
+    if (options.tolerateOverflow === true && code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' && typeof stdout === 'string') return { code: 0, stdout };
     return { code: typeof code === 'number' ? code : -1, stdout: '' };
   }
 };
@@ -1851,6 +2030,14 @@ function registerGhHandlers(): void {
     if (typeof params.enabled !== 'boolean') throw new Error(`Auto-merge no valido: ${String(params.enabled)}`);
     return getGhService().setAutoMerge(params.cwd, params.accountDir, params.number, params.enabled);
   });
+  registerPrIpc({
+    handle: (channel, listener) => ipcMain.handle(channel, listener),
+    gh: getGhService,
+    catalog: getPrCatalogStore,
+    migrate: (params) => migrateTabPr(params, { remote: (cwd, accountDir) => getGitService().remote(cwd, accountDir), catalog: getPrCatalogStore() }),
+    remote: (cwd, accountDir) => getGitService().remote(cwd, accountDir),
+    assertFolder: assertGitParams,
+  });
 }
 
 let thinkingStoreSingleton: ThinkingStore | null = null;
@@ -1882,6 +2069,17 @@ function getConversationIndexStore(): ConversationIndexStore {
     });
   }
   return conversationIndexStoreSingleton;
+}
+
+// Catalogo de PR por clave con su vinculo a conversaciones (F5.5).
+let prCatalogStoreSingleton: PrCatalogStore | null = null;
+function getPrCatalogStore(): PrCatalogStore {
+  prCatalogStoreSingleton ??= new PrCatalogStore({
+    filePath: join(app.getPath('userData'), 'pr-catalog.json'),
+    ...fileSystemDeps(),
+    log: (level, message) => mainLog(level, message),
+  });
+  return prCatalogStoreSingleton;
 }
 
 // Dependencias de FS que comparten todos los stores con escritura atomica.
@@ -2212,6 +2410,8 @@ function createWorkbenchWindow(windowId: string, placement?: WindowPlacement): B
       sandbox: true,
     },
   });
+  // La ventana solo carga el renderer de Mage: soltar un enlace o un .html no la lleva a otra página con el preload.
+  installNavigationGuard(window.webContents, (url) => isRendererUrl(url, { devUrl: process.env['ELECTRON_RENDERER_URL'], rendererDir }), logBlockedNavigation);
 
   if (isDev) {
     window.on('page-title-updated', (event, title) => {
@@ -2247,6 +2447,10 @@ function windowGeometry(saved: SavedWindowBounds | null, placement: WindowPlacem
   if (placement !== undefined) return { x: placement.x, y: placement.y, width: WINDOW.width, height: WINDOW.height };
   if (saved !== null) return { x: saved.x, y: saved.y, width: saved.width, height: saved.height };
   return { width: WINDOW.width, height: WINDOW.height };
+}
+
+function logBlockedNavigation(url: string): void {
+  mainLog('warn', 'Navegación bloqueada: la ventana solo carga el renderer de Mage', { origin: originForLog(url) });
 }
 
 // Una pestaña que llega por IPC se valida con el MISMO esquema con que se lee el workspace: lo que
@@ -2440,8 +2644,48 @@ function createTray(): Tray {
 // Alterna el widget desde el tray y avisa al renderer del nuevo estado (para sincronizar el checkbox
 // de Configuracion y que lo persista; el renderer es el unico escritor de settings).
 function toggleWidgetFromTray(): void {
-  const enabled = getWidgetWindow().toggle();
+  const enabled = !getWidgetWindow().isOpen();
+  if (enabled) openWidget();
+  else closeWidget();
   notifyWidgetEnabledChanged(enabled);
+}
+
+// Menciones @ (Q05): el indice de ficheros usa `git ls-files` (respeta .gitignore) y, sin repo, un
+// recorrido propio. Mismo criterio de confianza que git y que el arranque de un agente.
+const MENTION_INDEX_MAX_BUFFER_BYTES = 32 * 1024 * 1024;
+async function listGitFilesForMentions(cwd: string): Promise<readonly string[] | null> {
+  const bin = findGitBinary();
+  if (bin === null) return null;
+  try {
+    const stdout = await execCapturingStdout(bin, ['-c', 'core.fsmonitor=false', 'ls-files', '-z', '--cached', '--others', '--exclude-standard'], {
+      cwd,
+      env: { ...process.env, GIT_OPTIONAL_LOCKS: '0', GIT_TERMINAL_PROMPT: '0' },
+      timeoutMs: GIT_TIMEOUT_MS,
+      maxBufferBytes: MENTION_INDEX_MAX_BUFFER_BYTES,
+    });
+    return stdout.split('\0').filter((file) => file.length > 0);
+  } catch (err) {
+    mainLog('warn', 'git ls-files fallo para las menciones; se recorre la carpeta', { cwd, error: err instanceof Error ? err.message : String(err) });
+    return null;
+  }
+}
+
+let fileIndexSingleton: FileIndexService | null = null;
+function getFileIndexService(): FileIndexService {
+  fileIndexSingleton ??= new FileIndexService({
+    listGitFiles: listGitFilesForMentions,
+    walk: (cwd, maxFiles) =>
+      walkFiles(cwd, maxFiles, { readdir: nodeReaddir, onUnreadable: (dir, err) => mainLog('warn', 'Carpeta ilegible al indexar menciones', { dir, error: String(err) }) }),
+    isTrusted: isFolderTrusted,
+    stat: statBytes,
+    readHead: readHeadBytes,
+    now: Date.now,
+  });
+  return fileIndexSingleton;
+}
+
+function mentionResolverDeps(): MentionResolverDeps {
+  return { isTrusted: isFolderTrusted, realpath: nodeRealpath, platform: process.platform, stat: statBytes, readHead: readHeadBytes, readFile };
 }
 
 // Confia el usuario en esta carpeta? Suman DOS fuentes, y las dos son decisiones suyas:
@@ -2478,7 +2722,8 @@ function existsDirs(paths: unknown): readonly boolean[] {
 // Raiz de los directorios de borrador. Un solo sitio: si la calculan dos, un dia divergen y la fila de
 // informacion deja de reconocer el scratchpad sin que nada falle.
 function scratchRoot(): string {
-  return localScratchRoot({ platform: process.platform, home: homedir(), userData: app.getPath('userData'), temp: app.getPath('temp'), env: process.env });
+  const paths = { platform: process.platform, home: homedir(), userData: app.getPath('userData'), temp: app.getPath('temp'), env: process.env };
+  return localScratchRoot(scratchWorkspacePaths(paths, decideTestHome({ env: process.env, isPackaged: app.isPackaged })));
 }
 function scratchRoots(): readonly string[] { return [scratchRoot(), join(app.getPath('temp'), 'mage-scratch'), join(app.getPath('userData'), 'mage-scratch')].map(root => canonicalPath(root)); }
 
@@ -2535,6 +2780,7 @@ function stopSessionsWhenDestroyed(sender: Electron.WebContents): void {
 // empujan al webContents que creo la sesion (guardando contra un renderer ya destruido).
 function relaySessionEvent(payload: { readonly sessionId: string; readonly event: MageEvent },
   { sender, configDir, accountDir }: { sender: Electron.WebContents | null; configDir: string; accountDir: string }): void {
+  sessionSettings.observe(payload.sessionId, payload.event);
       // Cache del catalogo "/" (2.2): la sesion es la UNICA fuente del catalogo real, y una
       // conversacion recien abierta no tiene sesion. Se escribe con el config dir EFECTIVO (para una
       // conversacion privada, el perfil `mage-private`), nunca con el de la cuenta: si no, la cache de
@@ -2591,13 +2837,97 @@ function launchSession(params: CreateSessionParams, sender: Electron.WebContents
     const configDir =
       params.privacy === 'private' && params.provider === 'claude' ? accountService.ensurePrivateProfile(params.accountDir) : params.accountDir;
     const project = params.projectId === undefined ? undefined : getSettingsStore().load().chatProjects.find((candidate) => candidate.id === params.projectId);
-    const projectInstructions = [project?.instructions.trim().slice(0, 8000), params.contextImport?.slice(0, IMPORTED_CONTEXT_LIMITS.max)]
+    const task = params.provider === 'claude' || params.provider === 'codex'
+      ? getTaskService().claimForLaunch({ provider: params.provider, accountDir: params.accountDir, cwd: params.cwd, resumeSessionId: params.resumeSessionId, taskId: params.taskId })
+      : null;
+    const projectInstructions = [task === null ? undefined : buildTaskInstructions(task), project?.instructions.trim().slice(0, 8000), params.contextImport?.slice(0, IMPORTED_CONTEXT_LIMITS.max)]
       .filter((text): text is string => text !== undefined && text.length > 0).join('\n\n') || undefined;
     const effectiveParams = { ...params, accountDir: configDir, projectInstructions };
-    const sessionId = sessionCoordinator.create(effectiveParams, (payload) => relaySessionEvent(payload, { sender, configDir, accountDir: params.accountDir }), sender?.id);
+    launchingTaskExtras = task === null ? [] : getTaskService().launchExtrasFor(task, params.cwd);
+    let sessionId: string;
+    try {
+      sessionId = sessionCoordinator.create(effectiveParams, (payload) => relaySessionEvent(payload, { sender, configDir, accountDir: params.accountDir }), sender?.id);
+    } finally {
+      launchingTaskExtras = [];
+    }
+    sessionSettings.record(sessionId, settingsOfLaunch(params));
+    if (task !== null) getTaskService().bindSession(task.id, sessionId, task.provider);
+    if (params.forkFrom !== undefined) recordClaudeFork(sessionId, params.forkFrom.sessionId);
     if (sender !== null) stopSessionsWhenDestroyed(sender);
     return { sessionId, configDir, ...(recreated ? { workspaceWarning: localized('events.workspace.scratchRecreatedKept', { path: params.cwd }) } : {}) };
   }
+
+// U17: sesiones del host (sin ventana) que la ventana principal puede adoptar, y quién sigue cuál.
+const adoptableSessions = new AdoptableSessions();
+// Cuenta dueña y modelo de cada sesión del host, guardados en el índice para que la ventana nunca la abra con otra cuenta.
+const hostOwnership = new HostOwnership({
+  coordinator: sessionCoordinator,
+  index: { recordHostSession: (id, record) => getConversationIndexStore().recordHostSession(id, record) },
+  log: mainLog,
+});
+// D-M6: credencial por sesion que identifica al hijo ante `mage mcp`.
+const mcpCallers = new McpCallers({ randomBytes, isLive: (id) => sessionCoordinator.ownerOf(id) !== undefined });
+// Navegador de Mage (F11b): uno por sesión viva (D-S1), en la ventana de su panel o, sin panel, en la de aparcamiento (D-S3, Z01).
+const viewPlacement = new ViewPlacement(createParkingHost(createParkingWindow));
+const browserRegistry = new BrowserRegistry({
+  createBrowser: (instanceId) => new IsolatedBrowser(instanceId, electronBrowserDeps),
+  newId: randomUUID,
+  isLive: (sessionId) => sessionCoordinator.ownerOf(sessionId) !== undefined,
+  onChange: (states) => windowManager.broadcast(BROWSER_STATE_CHANNEL, states),
+  onOpened: (_sessionId, handle) => viewPlacement.ensureHosted(handle),
+  onClosed: (sessionId, handle) => { viewPlacement.forget(handle); penSessions.discard(sessionId); },
+  log: mainLog,
+});
+const penSessions = new PenSessions({ registry: browserRegistry, imageDeps: electronImageDeps, newId: randomUUID });
+const windowAttachments = new WindowAttachments({ coordinator: sessionCoordinator, eventChannel: EVENT_CHANNEL });
+// D-M11: registro de main de las delegadas del MCP (uno para todas las conexiones).
+const delegationLog = new DelegationLog({ coordinator: sessionCoordinator, now: Date.now });
+// Modelo, esfuerzo y modo de cada sesión viva: lo hereda una delegada (mage_create_session).
+const sessionSettings = new SessionSettingsRegistry();
+// D-M11: UN almacén de idempotencia para todas las conexiones MCP.
+const mcpIdempotency = new MemoryIdempotencyStore();
+
+// Los ids vivos de una sesión del host; null si el coordinador ya no la sigue.
+function liveIdsOf(sessionId: string): { conversationId: string | null; nativeId: string | null } | null {
+  if (sessionCoordinator.ownerOf(sessionId) === undefined) return null;
+  const snapshot = sessionCoordinator.snapshot(sessionId);
+  return { conversationId: snapshot.conversationId, nativeId: snapshot.nativeRef?.nativeId ?? null };
+}
+
+// Una sesión del host (sin ventana): se lanza como siempre y queda adoptable por la ventana principal (U17).
+function launchHostSession(params: CreateSessionParams, origin: AdoptableSession['origin'], createdBy: AdoptableSession['createdBy'] = null): string {
+  const { sessionId, configDir } = launchSession(params, null);
+  const entry = {
+    sessionId, provider: params.provider, accountId: params.accountDir, configDir, cwd: params.cwd, model: params.model,
+    ...(params.effort === undefined ? {} : { effort: params.effort }),
+    ...(params.permissionMode === undefined ? {} : { permissionMode: params.permissionMode }),
+    origin, createdBy,
+  };
+  adoptableSessions.add(entry);
+  hostOwnership.watch(sessionId, {
+    accountId: params.accountDir, provider: params.provider, model: params.model,
+    ...(params.effort === undefined ? {} : { effort: params.effort }),
+    ...(params.permissionMode === undefined ? {} : { permissionMode: params.permissionMode }),
+  });
+  const ids = liveIdsOf(sessionId);
+  if (ids !== null) liveMainWindow()?.webContents.send(SESSION_ADOPTABLE_CHANNEL, { ...entry, ...ids });
+  return sessionId;
+}
+
+// Adoptar solo vale para sesiones del host: una con ventana ya tiene su dueño.
+function attachWindowToHostSession(sender: Electron.WebContents, sessionId: string): ConversationSnapshot {
+  if (!adoptableSessions.has(sessionId)) throw new Error(`SessionAttach: la sesión ${sessionId} no es del host`);
+  return windowAttachments.attach(toAttachTarget(sender), sessionId);
+}
+
+// Divergir: la sesion ya esta creada; anotar de quien nacio no debe tumbarla si el disco falla.
+function recordClaudeFork(childId: string, parentId: string): void {
+  try {
+    getRewindState().recordFork(childId, parentId, 'claude', Date.now());
+  } catch (err) {
+    mainLog('warn', 'No se pudo anotar el fork', { childId, parentId, error: err instanceof Error ? err.message : String(err) });
+  }
+}
 
 function createSessionFromIpc(event: Electron.IpcMainInvokeEvent, params: CreateSessionParams): CreateSessionResult {
   return launchSession(params, event.sender);
@@ -2740,6 +3070,7 @@ function registerApplicationIpc(deps: IpcDependencies): void {
   registerTranscriptIpc2(deps);
   registerConversationsIpc1(deps);
   registerConversationMigrationIpc();
+  registerCodexLegacyIpc(deps.requireSafeConversation);
   registerSettingsIpc1(deps);
   registerThinkingIpc1();
   registerArtifactIpc1(deps);
@@ -2748,16 +3079,26 @@ function registerApplicationIpc(deps: IpcDependencies): void {
   registerPromptIpc1(deps);
   registerPromptIpc2(deps);
   registerThemeIpc1();
+  ipcMain.handle(IpcChannel.KeepAliveStats, (): KeepAliveStats => getRewindState().keepAliveTotals());
+  registerMcpRegistrationIpc();
 }
 
 function registerSessionIpc1(): void {
   registerSessionIpc({
     handle: (channel, listener) => ipcMain.handle(channel, listener),
-    sessions: sessionManager,
+    sessions: trackedSessionCommands(),
     coordinator: sessionCoordinator,
+    rewind: createRewindCoordinator(),
     createSession: createSessionFromIpc,
     validateAttachments,
-    // Solo la ventana que creo la sesion y la principal le dan ordenes (F2.6, H3 de la devolucion 14).
+    listAdoptable: () => adoptableSessions.list(liveIdsOf),
+    attachWindow: (event, sessionId) => attachWindowToHostSession(event.sender, sessionId),
+    // D-M11: el registro de delegaciones es un suscriptor más del coordinador; no cuenta como cliente que mantenga viva la sesión; tampoco la marca de la cuenta dueña.
+    closeFromWindow: (event, sessionId) => closeSessionFromWindow({
+      attachments: windowAttachments,
+      coordinator: { subscriberCount: (id) => sessionCoordinator.subscriberCount(id) - delegationLog.watchCount(id) - hostOwnership.watchCount(id), close: (id) => sessionCoordinator.close(id) },
+    }, event.sender.id, sessionId),
+    // Solo la ventana que creo la sesion y la principal le dan ordenes (F2.6).
     canControl: (senderId, sessionId) => canControlSession({
       ownerOf: (id) => sessionCoordinator.ownerOf(id),
       isMainWindow: (webContentsId) => windowManager.windowIdOf(webContentsId) === MAIN_WINDOW_ID,
@@ -2770,6 +3111,16 @@ function registerSessionIpc1(): void {
       return canonicalPath(dir);
     },
   });
+}
+
+// Los cambios de modelo, esfuerzo y modo desde la ventana quedan anotados para la herencia de las delegadas.
+function trackedSessionCommands(): SessionCommands {
+  return {
+    setModel: (id, model) => { sessionManager.setModel(id, model); sessionSettings.apply(id, 'model', model); },
+    setEffort: (id, effort) => { sessionManager.setEffort(id, effort); sessionSettings.apply(id, 'effort', effort); },
+    setPermissionMode: (id, mode) => { sessionManager.setPermissionMode(id, mode); sessionSettings.apply(id, 'permissionMode', mode); },
+    stopTask: (id, taskId) => sessionManager.stopTask(id, taskId),
+  };
 }
 
 function registerSessionIpc2(): void {
@@ -2794,7 +3145,7 @@ function registerSessionIpc2(): void {
   ipcMain.handle(IpcChannel.ProviderProbe, (_e, params: ProviderProbeParams) =>
     probeProvider(
       params,
-      defaultProbeDeps(() => getCommandCatalogStore().loadModels(join(homedir(), cliLogin.accounts.mainDirName)), readCustomProviderApiKey),
+      defaultProbeDeps(() => getCommandCatalogStore().loadModels(join(accountsHome(), cliLogin.accounts.mainDirName)), readCustomProviderApiKey),
     ),
   );
   // «Iniciar sesión» del aviso de un MCP del runtime propio (D3 de P-033).
@@ -3100,6 +3451,15 @@ function resolveTranscriptSource(params: OpenTranscriptParams): TranscriptSource
   return { kind: 'file', filePath, activeBranch: params.agentId === undefined };
 }
 
+// Opciones de la lectura por rama activa: respeta el corte pendiente de un rewind de Claude (A8).
+function branchOptions(sessionId: string, transcriptId: string): BranchReadOptions {
+  const pendingCutUuid = isUuid(sessionId) ? getRewindState().pendingCut(sessionId) : null;
+  return {
+    ...(pendingCutUuid === null ? {} : { pendingCutUuid }),
+    onMissingParent: (uuid) => mainLog('warn', 'Transcripcion con un padre inexistente: la rama se corta ahi', { transcriptId, uuid }),
+  };
+}
+
 // Abre en streaming y empuja lotes por TRANSCRIPT_BATCH_CHANNEL sin bloquear el invoke.
 function streamTranscript(sender: Electron.WebContents, transcriptId: string, params: OpenTranscriptParams): void {
   const source = resolveTranscriptSource(params);
@@ -3114,7 +3474,7 @@ function streamTranscript(sender: Electron.WebContents, transcriptId: string, pa
     try {
       let batches: AsyncIterable<TranscriptBatch>;
       if (source.kind === 'codexTurns') batches = codexTurnsBatches(() => codexThreadTurnsList({ spawnProbe: codexAccountProbeDeps().spawnProbe, timeoutMs: CLI_PROBE_TIMEOUT_MS }, source.home, source.threadId));
-      else if (source.activeBranch) batches = transcriptService.openBranchStream(source.filePath, controller.signal, params.resumeFrom, { onMissingParent: (uuid) => mainLog('warn', 'Transcripcion con un padre inexistente: la rama se corta ahi', { transcriptId, uuid }) });
+      else if (source.activeBranch) batches = transcriptService.openBranchStream(source.filePath, controller.signal, params.resumeFrom, branchOptions(params.sessionId, transcriptId));
       else batches = transcriptService.openStream(source.filePath, controller.signal, params.resumeFrom, source.adapt);
       for await (const batch of batches) {
         if (sender.isDestroyed()) break;
@@ -3188,6 +3548,19 @@ function sendMissingConversation(sender: Electron.WebContents, transcriptId: str
   if (!sender.isDestroyed()) sender.send(TRANSCRIPT_BATCH_CHANNEL, payload);
 }
 
+// Historial de una cuenta de Claude, con la última cuenta usada y la dueña (conversaciones creadas fuera de la ventana)
+// que sabe el índice de Mage.
+function listClaudeConversations(accountDir: string): readonly ConversationSummary[] {
+  if (!isManagedAccountConfigDir(accountDir)) {
+    throw new Error(`Cuenta no valida para listar conversaciones: ${accountDir}`);
+  }
+  const listed = withLastAccount(conversationsService.listConversations(accountDir), (id) => {
+    const prefs = getConversationIndexStore().loadPrefs(id);
+    return prefs?.hostOwnerAccountId ?? prefs?.accountId;
+  });
+  return withHostOwner(listed, (id) => getConversationIndexStore().loadPrefs(id)?.hostOwnerAccountId);
+}
+
 function registerTranscriptIpc2(deps: IpcDependencies): void {
   const { conversationAdminService, requireSafeConversation } = deps;
   ipcMain.handle(IpcChannel.TranscriptCancel, (_e, transcriptId: string) => {
@@ -3211,19 +3584,112 @@ function registerTranscriptIpc2(deps: IpcDependencies): void {
     if (codex !== null) return codexHistory.list(codex.home);
     const agyProfile = agyProfileOfAccount(accountDir);
     if (agyProfile !== null) return agyHistory.list(agyProfile, accountDir, agyExternalProfileOf(accountDir));
-    if (!isManagedAccountConfigDir(accountDir)) {
-      throw new Error(`Cuenta no valida para listar conversaciones: ${accountDir}`);
-    }
-    return conversationsService.listConversations(accountDir);
+    return listClaudeConversations(accountDir);
   });
-  ipcMain.handle(IpcChannel.ConversationsDelete, (_e, params: DeleteConversationParams): void => {
+  ipcMain.handle(IpcChannel.ConversationsDelete, async (_e, params: DeleteConversationParams): Promise<void> => {
     requireSafeConversation(params.accountDir, params.sessionId);
-    conversationAdminService.deleteConversation(params);
-    // Y su entrada del indice (2.1): sin esto el fichero crece para siempre con preferencias de
-    // conversaciones que ya no existen.
-    getConversationIndexStore().forgetConversation(params.sessionId);
-    // Y sus pensamientos, por lo mismo: si no, queda un `.jsonl` huerfano por cada conversacion borrada.
-    getThinkingStore().forget(params.sessionId);
+    const codex = getProviderAccounts().find('codex', params.accountDir);
+    // Codex borra por su app-server (y primero los hijos de review); el resto, por los ficheros de Claude.
+    if (codex === null) conversationAdminService.deleteConversation(params);
+    else await deleteCodexConversation(codexDeletionDeps(), codex.home, params.sessionId);
+    forgetDeletedConversation({ index: getConversationIndexStore(), prCatalog: getPrCatalogStore(), thinking: getThinkingStore(), rewindState: getRewindState() }, params.sessionId);
+  });
+}
+
+function codexDeletionDeps(): Parameters<typeof deleteCodexConversation>[0] {
+  return {
+    history: codexHistory,
+    deleteThread: (home, id) => codexThreadDelete({ spawnProbe: codexAccountProbeDeps().spawnProbe, timeoutMs: CLI_PROBE_TIMEOUT_MS }, home, id),
+    forget: (id) => getRewindState().forgetThread(id),
+    log: mainLog,
+  };
+}
+
+// Un CLI de una sola pasada (U13, H4): tope de 60 s, al vencer mata SU árbol de procesos. Solo captura stderr.
+const CLI_ONESHOT_TIMEOUT_MS = 60_000;
+function runCliForStderr(command: string, args: readonly string[], env: NodeJS.ProcessEnv): Promise<{ readonly exitCode: number | null; readonly stderr: string }> {
+  const child = spawn(command, args, { env, stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true });
+  return new Promise((resolveRun, rejectRun) => {
+    let stderr = '';
+    const timer = setTimeout(() => killProcessTree(child, defaultKillTreeDeps()), CLI_ONESHOT_TIMEOUT_MS);
+    child.stderr.setEncoding('utf8');
+    child.stderr.on('data', (chunk: string) => { stderr += chunk; });
+    child.on('error', (error) => { clearTimeout(timer); rejectRun(error); });
+    child.on('close', (exitCode) => { clearTimeout(timer); resolveRun({ exitCode, stderr }); });
+  });
+}
+
+// `codex migrate-rollouts` (U13).
+function runCodex(home: string, args: readonly string[]): Promise<{ readonly exitCode: number | null; readonly stderr: string }> {
+  const launch = codexSpawn(args);
+  return runCliForStderr(launch.command, launch.args, { ...scrubAgentEnv(process.env), ...launch.env, CODEX_HOME: home });
+}
+
+// `claude mcp add|remove` (H4) en el config dir de una cuenta.
+function runClaudeCli(configDir: string, args: readonly string[]): Promise<{ readonly exitCode: number | null; readonly stderr: string }> {
+  return runCliForStderr(resolveClaudeBinary(), args, { ...scrubAgentEnv(process.env), CLAUDE_CONFIG_DIR: configDir });
+}
+
+// Registro del servidor MCP de Mage en las cuentas de Claude y Codex (H4, D-M10). Nunca perfiles privados.
+type McpAccount = ReturnType<McpRegistrationDeps['accounts']>[number];
+function mcpRegistrationAccounts(): readonly McpAccount[] {
+  const result: McpAccount[] = [];
+  for (const account of listAllAccounts()) {
+    const base = { id: account.configDir, name: account.name };
+    if (account.providerId === 'claude') result.push({ ...base, provider: 'claude', configHome: account.configDir });
+    const codex = account.providerId === 'codex' ? getProviderAccounts().find('codex', account.configDir) : null;
+    if (codex !== null) result.push({ ...base, provider: 'codex', configHome: codex.home });
+  }
+  return result;
+}
+
+let mcpRegistrationSingleton: McpRegistrationService | null = null;
+function getMcpRegistration(): McpRegistrationService {
+  mcpRegistrationSingleton ??= new McpRegistrationService({
+    accounts: mcpRegistrationAccounts,
+    readText: (path) => (existsSync(path) ? readFileSync(path, 'utf8') : null),
+    runCli: (provider, configHome, args) => (provider === 'codex' ? runCodex(configHome, args) : runClaudeCli(configHome, args)),
+    launch: () => mageMcpLaunch({
+      isPackaged: app.isPackaged, execPath: process.execPath, resourcesPath: process.resourcesPath,
+      appPath: app.getAppPath(), appImage: process.env['APPIMAGE'], userDataDir: app.getPath('userData'),
+    }),
+    log: (level, message, data) => mainLog(level, message, data),
+  });
+  return mcpRegistrationSingleton;
+}
+
+function registerMcpRegistrationIpc(): void {
+  const requireMain = (event: Electron.IpcMainInvokeEvent): void => {
+    const windowId = senderWindowId(event);
+    if (windowId !== MAIN_WINDOW_ID) throw new Error(`Solo la ventana principal puede cambiar el registro MCP: ${windowId}`);
+  };
+  ipcMain.handle(IpcChannel.McpRegistrationStatus, (): McpRegistrationResult => getMcpRegistration().status());
+  ipcMain.handle(IpcChannel.McpRegister, (event): Promise<McpRegistrationResult> => { requireMain(event); return getMcpRegistration().registerAll(); });
+  ipcMain.handle(IpcChannel.McpUnregister, (event): Promise<McpRegistrationResult> => { requireMain(event); return getMcpRegistration().unregisterAll(); });
+}
+
+// Cuenta de Codex de un hilo pedido por el renderer: solo cuentas registradas y ids validados.
+function codexHomeOfThread(params: CodexThreadParams): string {
+  const codex = getProviderAccounts().find('codex', params.accountDir);
+  if (codex === null) throw new Error(`La cuenta no es de Codex: ${params.accountDir}`);
+  return codex.home;
+}
+
+function registerCodexLegacyIpc(requireSafeConversation: (accountDir: string, sessionId: string) => void): void {
+  ipcMain.handle(IpcChannel.ConversationsCodexLegacyStatus, (_e, params: CodexThreadParams): CodexLegacyStatus => {
+    requireSafeConversation(params.accountDir, params.threadId);
+    return { legacy: codexHistory.historyModeOf(codexHomeOfThread(params), params.threadId) === 'legacy' };
+  });
+  ipcMain.handle(IpcChannel.ConversationsCodexLegacyUpdate, (_e, params: CodexThreadParams): Promise<CodexLegacyUpdateResult> => {
+    requireSafeConversation(params.accountDir, params.threadId);
+    return updateLegacyCodexThread({
+      history: codexHistory,
+      backupRoot: join(app.getPath('userData'), 'codex-backups'),
+      mkdir: (dir) => { mkdirSync(dir, { recursive: true }); },
+      copyFile: copyFileSync,
+      runCodex,
+      now: Date.now,
+    }, codexHomeOfThread(params), params.threadId);
   });
 }
 
@@ -3371,6 +3837,12 @@ function registerThinkingIpc1(): void {
     getCommandCatalogStore().load(accountDir),
   );
   registerConversationPrefsIpc({ handle: (channel, listener) => ipcMain.handle(channel, listener), index: getConversationIndexStore, coordinator: sessionCoordinator });
+  registerMentionsIpc({
+    handle: (channel, listener) => ipcMain.handle(channel, listener),
+    index: getFileIndexService,
+    resolve: (params) => resolveMentions(params, mentionResolverDeps()),
+    preview: (params) => previewMention(params, mentionResolverDeps()),
+  });
   ipcMain.handle(IpcChannel.ArtifactRecordSave, (_e, params: RecordArtifactParams): void =>
     getConversationIndexStore().recordArtifact(params.url, params.record),
   );
@@ -3460,6 +3932,87 @@ function registerSharedIpc1(): void {
   });
 }
 
+// Biblioteca de capacidades (F6): perezosa porque depende de app.getPath('userData').
+let librarySingleton: LibraryService | null = null;
+
+function codexBinaryOrThrow(): string {
+  const binary = findCodexBinary();
+  if (binary === null) throw new UserFacingError(localized('errors.capabilities.cliMissing', { engine: 'codex' }));
+  return binary;
+}
+
+function libraryAccounts(): readonly LibraryAccount[] {
+  const real = listAllAccounts().flatMap((a): LibraryAccount[] =>
+    a.providerId === 'claude' || a.providerId === 'codex' ? [{ configDir: a.configDir, engine: a.providerId satisfies CapabilityEngine }] : [],
+  );
+  const userDataDir = app.getPath('userData');
+  return [...real, ...testLibraryAccounts(decideTestLibraryClaudeDir({ env: process.env, isPackaged: app.isPackaged, userDataDir }))];
+}
+
+// Modo de tareas (F8): perezoso porque depende de app.getPath('userData').
+let taskSingleton: TaskService | null = null;
+
+function getTaskService(): TaskService {
+  if (taskSingleton !== null) return taskSingleton;
+  const file = join(app.getPath('userData'), 'tasks', 'tasks.json');
+  const storeFs = nodeTaskStoreFs((message, data) => mainLog('warn', message, data));
+  taskSingleton = new TaskService({
+    load: () => loadTasks(storeFs, file),
+    save: (tasks) => saveTasks(storeFs, file, tasks),
+    now: Date.now,
+    newId: randomUUID,
+    listAccounts: () => listAllAccounts().flatMap((a) => (a.providerId === 'claude' || a.providerId === 'codex' ? [{ provider: a.providerId, configDir: a.configDir }] : [])),
+    isDirectory: nodeIsDirectory,
+    isFile: nodeIsFile,
+    deliverableFs: nodeDeliverableFs,
+    caseInsensitive: process.platform === 'win32' || process.platform === 'darwin',
+    nativeIdOf: (id) => liveIdsOf(id)?.nativeId ?? null,
+  });
+  return taskSingleton;
+}
+
+// Diálogo nativo de rutas del modo de tareas; cancelado = [].
+async function pickTaskPaths(kind: 'folders' | 'documents'): Promise<readonly string[]> {
+  const options = { properties: [kind === 'folders' ? 'openDirectory' as const : 'openFile' as const, 'multiSelections' as const] };
+  const parent = liveMainWindow();
+  const result = parent !== null ? await dialog.showOpenDialog(parent, options) : await dialog.showOpenDialog(options);
+  return result.canceled ? [] : result.filePaths;
+}
+
+async function pickTaskSavePath(defaultPath: string): Promise<string | null> {
+  const parent = liveMainWindow();
+  const result = parent !== null ? await dialog.showSaveDialog(parent, { defaultPath }) : await dialog.showSaveDialog({ defaultPath });
+  return result.canceled || !result.filePath ? null : result.filePath;
+}
+
+function wireTaskIpc(): void {
+  registerTaskIpc({
+    handle: (channel, listener) => ipcMain.handle(channel, listener as Parameters<typeof ipcMain.handle>[1]),
+    service: getTaskService,
+    pickPaths: pickTaskPaths,
+    showSaveDialog: pickTaskSavePath,
+    copyFile: (from, to) => copyFileSync(from, to),
+  });
+}
+
+function getLibraryService(): LibraryService {
+  librarySingleton ??= new LibraryService({
+    catalog: loadBundledCatalog(),
+    contentsOf: bundledContents,
+    fs: nodeCapabilityFs(),
+    userDataDir: app.getPath('userData'),
+    platform: process.platform,
+    caseInsensitivePaths: process.platform === 'win32' || process.platform === 'darwin',
+    listAccounts: libraryAccounts,
+    binaryFor: (engine) => (engine === 'claude' ? resolveClaudeBinary() : codexBinaryOrThrow()),
+    runner: execFileRunner,
+    baseEnv: () => process.env,
+    isCommandAvailable: isCommandOnPath,
+    vault: getSecretStore(),
+  });
+  return librarySingleton;
+}
+
 function registerPromptIpc1(deps: IpcDependencies): void {
   const { promptService } = deps;
   // MCP y conectores (P-028 puntos 5 y 34).
@@ -3469,7 +4022,7 @@ function registerPromptIpc1(deps: IpcDependencies): void {
     fs: { exists: existsSync, readFile: (path) => readFileSync(path, 'utf8'), listDir: (path) => readdirSync(path) },
     commonPath: mcpCommonPath,
     accounts: mcpAccountLocations,
-    legacySharedPath: () => mcpFakeSourcesPath(LEGACY_SHARED_MCP_FILE) ?? join(homedir(), cliLogin.accounts.mainDirName, LEGACY_SHARED_MCP_FILE),
+    legacySharedPath: () => mcpFakeSourcesPath(LEGACY_SHARED_MCP_FILE) ?? join(accountsHome(), cliLogin.accounts.mainDirName, LEGACY_SHARED_MCP_FILE),
     desktopDirs: mcpDesktopDirs,
     agyConfigPath: agyMcpConfigPath,
     extensions: getMcpServices().extensions,
@@ -3486,9 +4039,26 @@ function registerPromptIpc1(deps: IpcDependencies): void {
     authenticate: (accountDir, serverName) =>
       authenticateMcp({ spawnProbe: spawnMcpStatusProbe, openUrl: openMcpAuthUrl, timeoutMs: MCP_AUTH_TIMEOUT_MS, pollMs: MCP_AUTH_POLL_MS, exitGraceMs: MODEL_PROBE_EXIT_GRACE_MS }, accountDir, serverName),
   });
+  registerLibraryIpc({
+    handle: (channel, listener) => ipcMain.handle(channel, listener as Parameters<typeof ipcMain.handle>[1]),
+    service: getLibraryService,
+  });
+  registerBrowserIpcFromMain();
+  wireTaskIpc();
   ipcMain.handle(IpcChannel.PromptImprove, (_e, params: ImprovePromptParams): Promise<string> =>
     promptService.improve(params.draft, params.accountDir),
   );
+}
+
+// Navegador de Mage (F11b.3): su IPC va aparte para no engordar el registro de arriba.
+function registerBrowserIpcFromMain(): void {
+  registerBrowserIpc({
+    handle: (channel, listener) => ipcMain.handle(channel, listener as Parameters<typeof ipcMain.handle>[1]),
+    registry: browserRegistry,
+    placement: viewPlacement,
+    pens: penSessions,
+    windowOf: (id) => { const windowId = windowManager.windowIdOf(id); return windowId === null ? null : windowManager.get(windowId); },
+  });
 }
 
 function registerPromptIpc2(deps: IpcDependencies): void {
@@ -3510,8 +4080,8 @@ function registerPromptIpc2(deps: IpcDependencies): void {
   // Update recibe el snapshot del renderer principal y lo empuja a la ventana (no-op si no existe).
   // ActivateTab (desde el widget) enfoca la principal y le reenvia el tabId para activar la pestana.
   ipcMain.handle(IpcChannel.WidgetSetEnabled, (_e, enabled: boolean) => {
-    if (enabled) getWidgetWindow().open();
-    else getWidgetWindow().close();
+    if (enabled) openWidget();
+    else closeWidget();
     // Se avisa SIEMPRE del nuevo estado, no solo cuando la ventana se cierra por fuera: el ✕ del propio
     // widget llega por aqui, y sin este eco Configuracion seguia mostrando el widget como activo (E4).
     notifyWidgetEnabledChanged(enabled);
@@ -3524,6 +4094,93 @@ function registerPromptIpc2(deps: IpcDependencies): void {
     if (!windowManager.focus(MAIN_WINDOW_ID)) return;
     liveMainWindow()?.webContents.send(WIDGET_FOCUS_TAB_CHANNEL, tabId);
   });
+  registerWidgetCompanionIpc();
+}
+
+// Widget acompañante (F9): contestar, detener, ir a la conversación y preferencias (lógica en widgetIpc.ts).
+// Función aparte para que `registerPromptIpc2` no supere las 40 líneas del estándar.
+function registerWidgetCompanionIpc(): void {
+  registerWidgetIpc({
+    handle: ipcMain.handle.bind(ipcMain),
+    on: ipcMain.on.bind(ipcMain),
+    sessions: sessionCoordinator,
+    prefs: { load: () => getWidgetPrefs().load(), update: (patch) => getWidgetPrefs().update(patch) },
+    isWidget: (id) => widgetWindow?.webContentsId() === id,
+    openSession: openSessionFromWidget,
+    onPrefsChanged: applyWidgetPrefs,
+  });
+}
+
+// Preferencias propias del widget (vista expandida, No molestar). Lazy: `userData` solo existe tras `ready`.
+function getWidgetPrefs(): WidgetPrefsStore {
+  if (widgetPrefsSingleton === null) {
+    widgetPrefsSingleton = new WidgetPrefsStore({
+      filePath: join(app.getPath('userData'), 'widget-prefs.json'),
+      exists: existsSync,
+      readFile: (path) => readFileSync(path, 'utf8'),
+      writeFile: (path, data) => writeFileSync(path, data, 'utf8'),
+      rename: renameSync,
+      removeFile: (path) => rmSync(path, { force: true }),
+      tempSuffix: () => randomUUID(),
+      log: (level, message, data) => mainLog(level, message, data),
+    });
+  }
+  return widgetPrefsSingleton;
+}
+
+// Seguimiento de las sesiones vivas del coordinador para el widget. Una petición nueva lo expande sin foco.
+function getWidgetSessionTracker(): WidgetSessionTracker {
+  if (widgetSessionTracker === null) {
+    widgetSessionTracker = new WidgetSessionTracker({
+      sessions: sessionCoordinator,
+      defer: queueMicrotask,
+      every: (fn, ms) => {
+        const timer = setInterval(fn, ms);
+        return () => clearInterval(timer);
+      },
+      onChange: (payload) => widgetWindow?.pushSessions(payload),
+      onNewRequest: () => revealWidgetForRequest(),
+    });
+  }
+  return widgetSessionTracker;
+}
+
+// U-N3: al llegar un permiso o pregunta el widget se expande SIN foco; con «No molestar» no se toca.
+function revealWidgetForRequest(): void {
+  const prefs = getWidgetPrefs().load();
+  if (prefs.doNotDisturb) return;
+  if (!prefs.expanded) applyWidgetPrefs(getWidgetPrefs().update({ expanded: true }));
+  widgetWindow?.reveal();
+}
+
+// Aplica unas preferencias nuevas: tamaño de la ventana, widget y Ajustes de cada ventana.
+function applyWidgetPrefs(prefs: WidgetPrefs): void {
+  widgetWindow?.setExpanded(prefs.expanded);
+  widgetWindow?.pushPrefs(prefs);
+  windowManager.broadcast(WIDGET_PREFS_CHANNEL, prefs);
+}
+
+// Abre el widget y arranca el seguimiento de sesiones; lo usan el IPC, el tray y el arranque.
+function openWidget(): void {
+  const widget = getWidgetWindow();
+  widget.open();
+  getWidgetSessionTracker().start();
+  widget.pushPrefs(getWidgetPrefs().load());
+}
+
+// Cierra el widget y para el seguimiento; lo usan el IPC, el tray, el cierre por fuera y la salida.
+function closeWidget(): void {
+  widgetWindow?.close();
+  widgetSessionTracker?.stop();
+}
+
+// Lleva a la ventana de Mage a la conversación de esa sesión (el renderer sabe llevar el aviso a su pestaña).
+function openSessionFromWidget(sessionId: string): void {
+  getWidgetSessionTracker().acknowledge(sessionId);
+  const owner = sessionCoordinator.ownerOf(sessionId);
+  const windowId = owner === null || owner === undefined ? MAIN_WINDOW_ID : (windowManager.windowIdOf(owner) ?? MAIN_WINDOW_ID);
+  if (!windowManager.focus(windowId)) return;
+  windowManager.sendTo(windowId, NOTIFICATION_CLICKED_CHANNEL, { sessionId });
 }
 
 function registerThemeIpc1(): void {
@@ -3564,13 +4221,17 @@ function applyContentSecurityPolicy(): void {
 // de settings). El fondo se resuelve por tema (sin re-fijar la UI nativa, ya lo hace la principal).
 function getWidgetWindow(): WidgetWindowController {
   if (widgetWindow === null) {
-    widgetWindow = new WidgetWindowController(
+    widgetWindow = new WidgetWindowController({
       preloadPath,
-      process.env['ELECTRON_RENDERER_URL'],
+      rendererBaseUrl: process.env['ELECTRON_RENDERER_URL'],
       rendererDir,
-      () => resolveThemeBackgroundColor(),
-      () => notifyWidgetEnabledChanged(false),
-    );
+      resolveBackgroundColor: () => resolveThemeBackgroundColor(),
+      onClosed: () => {
+        widgetSessionTracker?.stop();
+        notifyWidgetEnabledChanged(false);
+      },
+      initiallyExpanded: () => getWidgetPrefs().load().expanded,
+    });
   }
   return widgetWindow;
 }
@@ -3675,16 +4336,31 @@ function focusMainWindow(): void {
   windowManager.focus(MAIN_WINDOW_ID);
 }
 
+// El cliente hereda la terminal (stdin, stdout y stderr) y su código de salida es el de este proceso.
+function runCliRelay(args: readonly string[]): void {
+  const plan = cliRelayPlan({ execPath: process.execPath, resourcesPath: process.resourcesPath, args, env: process.env });
+  const child = spawn(plan.command, [...plan.args], { stdio: 'inherit', env: plan.env });
+  child.on('error', (err) => {
+    console.error(`[mage] No se pudo ejecutar el cliente de terminal: ${err.message}`);
+    app.exit(1);
+  });
+  child.on('exit', (code) => app.exit(code ?? 1));
+}
+
+// `Mage.AppImage --cli …` (F7.4): solo releva al cliente de terminal; no pide el lock ni arranca nada más.
+const cliRelay = cliRelayArgs(process.argv);
+if (cliRelay !== null) runCliRelay(cliRelay);
+
 // INSTANCIA UNICA (grupo G). Dos instancias de Mage escriben a la vez los mismos ficheros de estado
 // bajo userData (workspace-state.json, app-settings.json): la ultima en renombrar gana y el usuario
 // pierde pestanas o configuracion sin ver un error. Ademas duplicaria tray y widget. Si ya hay una
 // instancia, esta se cierra y la existente se enfoca (comportamiento estandar de escritorio).
 // El lock se pide ANTES de whenReady: cuanto menos haya arrancado la segunda instancia, mejor.
-const gotSingleInstanceLock = app.requestSingleInstanceLock();
+const gotSingleInstanceLock = cliRelay === null && app.requestSingleInstanceLock();
 // Host sin pantalla (F2.6, §3.4): Linux sin DISPLAY ni WAYLAND_DISPLAY, o `--headless`. No crea ventanas.
 const runsHeadless = isHeadlessHost({ platform: process.platform, argv: process.argv, env: process.env });
-// Linux sin pantalla: sin `--password-store`, Chromium elige basic_text aunque haya un llavero desbloqueado (medido en
-// INFORME-006 y en la validación de F2.7), y la bóveda no se podría usar nunca. Se pide el Secret Service salvo que el
+// Linux sin pantalla: sin `--password-store`, Chromium elige basic_text aunque haya un llavero desbloqueado (medido en la
+// validación de F2.7), y la bóveda no se podría usar nunca. Se pide el Secret Service salvo que el
 // usuario haya elegido otro; antes de `ready`, que es cuando Chromium lo lee (medido: vale para este switch). Con
 // pantalla, Chromium elige como siempre (kwallet en KDE): forzarlo dejaría ilegibles las bóvedas que ya existen.
 if (runsHeadless && process.platform === 'linux' && !app.commandLine.hasSwitch('password-store')) {
@@ -3693,6 +4369,61 @@ if (runsHeadless && process.platform === 'linux' && !app.commandLine.hasSwitch('
 
 // El host local (F2.6): terminal, widget y MCP hablan con el por un socket privado. Vive en los dos modos.
 let localHost: HostServerHandle | null = null;
+// Las dependencias del host (terminal y MCP): la frontera de `session.create` es la misma para los dos.
+function hostControlDeps(): HostControlDeps {
+  return {
+    listAccounts: listAllAccounts,
+    listProjects: () => getSettingsStore().load().chatProjects,
+    defaultModels: () => getSettingsStore().load().defaultModelByProvider,
+    isTrusted: isFolderTrusted,
+    launch: (params) => launchHostSession(params, 'terminal'),
+    conversationIdOf: (sessionId) => sessionCoordinator.conversationIdOf(sessionId),
+    // Lo que se cambia desde la terminal también queda en el índice (la ventana reabre con ello).
+    options: {
+      setModel: (id, model) => {
+        sessionManager.setModel(id, model);
+        hostOwnership.updateOptions(id, { model });
+        sessionSettings.apply(id, 'model', model);
+      },
+      setEffort: (id, effort) => {
+        sessionManager.setEffort(id, effort);
+        hostOwnership.updateOptions(id, { effort });
+        sessionSettings.apply(id, 'effort', effort);
+      },
+      setPermissionMode: (id, mode) => {
+        sessionManager.setPermissionMode(id, mode);
+        if (isPermissionMode(mode)) hostOwnership.updateOptions(id, { permissionMode: mode });
+        sessionSettings.apply(id, 'permissionMode', mode);
+      },
+    },
+    createAccount: (params) => getProviderAccounts().create(params),
+    requestQuit: () => { setTimeout(() => app.quit(), HOST_STOP_DELAY_MS); },
+  };
+}
+
+// El puerto del MCP de UNA conexión (la M07 lo conecta): null si la sesión que llama aún no tiene conversationId.
+export function createHostSessionsPort(callerSessionId: string): HostSessionsPort | null {
+  const conversationId = sessionCoordinator.conversationIdOf(callerSessionId);
+  if (conversationId === null) return null;
+  const deps = hostControlDeps();
+  return new HostSessionsPort({
+    caller: { sessionId: callerSessionId, conversationId, accountId: sessionCoordinator.rewindContext(callerSessionId).accountDir },
+    log: delegationLog,
+    index: getConversationIndexStore(),
+    coordinator: sessionCoordinator,
+    accounts: () => listAllAccounts().filter((account) => (HOST_SESSION_PROVIDERS as readonly string[]).includes(account.providerId))
+      .map((account) => ({ id: account.configDir, provider: account.providerId })),
+    projects: () => getSettingsStore().load().chatProjects,
+    launch: (request, createdBy) => launchHostSession(resolveHostLaunchParams(deps, request, { cliDefaultModel: true }), 'mcp', createdBy),
+    creatorSettings: () => sessionSettings.get(callerSessionId),
+    modelCatalog: (accountDir) => getCommandCatalogStore().loadModels(accountDir),
+    setPermissionMode: (sessionId, mode) => { sessionManager.setPermissionMode(sessionId, mode); sessionSettings.apply(sessionId, 'permissionMode', mode); },
+    setTimer: (fn, ms) => {
+      const timer = setTimeout(fn, ms);
+      return () => clearTimeout(timer);
+    },
+  });
+}
 // Motivo por el que el host no arrancó (null si escucha): el renderer lo enseña como aviso persistente (H1, devolución 16).
 let hostFailure: Promise<LocalizedText | null> = Promise.resolve(null);
 function startHost(mode: HostMode): Promise<void> {
@@ -3704,14 +4435,22 @@ function startHost(mode: HostMode): Promise<void> {
     fs: { mkdirSync, chmodSync, statSync, writeFileSync, rmSync },
     getuid: process.getuid?.bind(process),
     sessions: sessionCoordinator,
-    control: createHostControl({
-      listAccounts: listAllAccounts,
-      listProjects: () => getSettingsStore().load().chatProjects,
-      defaultModels: () => getSettingsStore().load().defaultModelByProvider,
-      isTrusted: isFolderTrusted,
-      launch: (params) => launchSession(params, null).sessionId,
-      conversationIdOf: (sessionId) => sessionCoordinator.conversationIdOf(sessionId),
-      options: sessionManager,
+    rewind: createRewindCoordinator(),
+    control: createHostControl(hostControlDeps()),
+    mcp: createHostMcpConnector({
+      resolveCaller: (credential) => mcpCallers.resolve(credential ?? undefined),
+      createPort: (sessionId) => {
+        const port = createHostSessionsPort(sessionId);
+        const conversationId = sessionCoordinator.conversationIdOf(sessionId);
+        return port === null || conversationId === null ? null : { port, conversationId };
+      },
+      creatorChainOf: (conversationId) => getConversationIndexStore().delegationOf(conversationId).creatorChain,
+      accountIds: () => listAllAccounts().filter((account) => account.providerId === 'claude' || account.providerId === 'codex').map((account) => account.configDir),
+      maxDepth: () => getSettingsStore().load().delegation.maxDepth,
+      browserFor: (sessionId) => createBrowserAgent({ registry: browserRegistry, sessionId, imageDeps: electronImageDeps }),
+      store: mcpIdempotency,
+      now: () => new Date().toISOString(),
+      log: mainLog,
     }),
     hostVersion: app.getVersion(),
     log: mainLog,
@@ -3733,7 +4472,9 @@ function lockHolderMode(): HostMode | null {
   });
 }
 
-if (!gotSingleInstanceLock) {
+if (cliRelay !== null) {
+  // El relevo sale con el código del cliente (`runCliRelay`).
+} else if (!gotSingleInstanceLock) {
   // Se dice EN VOZ ALTA por que se cierra. Sin esta linea, la segunda instancia se rendia en silencio y
   // lo unico que se veia era la ventana de la instancia VIEJA saltando al frente: quien lanzaba
   // `pnpm dev` con la app instalada abierta concluia "el dev no aplica mis cambios" (paso de verdad).
@@ -3755,6 +4496,16 @@ if (!gotSingleInstanceLock) {
   });
 }
 
+// Lo que las sesiones necesitan con ventana y sin ella: el latido de los bloqueos de conversación, las claves de
+// proveedor antiguas ya en la bóveda y los MCP compartidos importados antes de la primera sesión.
+function prepareSessionServices(): void {
+  startConversationLockHeartbeat();
+  migrateLegacyProviderKeysOnce();
+  importSharedMcpOnce();
+  // Y a agy, lo que haya cambiado mientras Mage estaba cerrado (si la sincronizacion automatica esta activa).
+  onSharedMcpChanged();
+}
+
 app.whenReady().then(async () => {
   // Guarda: si no se obtuvo el lock ya se llamo a app.quit(); no se arranca nada mas (registrar IPC o
   // ventanas desde una instancia que se esta cerrando solo crea efectos a medias).
@@ -3763,6 +4514,7 @@ app.whenReady().then(async () => {
     // Solo el host: sin ventanas, ni tray, ni widget, ni actualizador, ni IPC del renderer (no hay renderer).
     mainLog('info', 'Mage arrancado sin pantalla', { platform: process.platform });
     await assessVaultOnce();
+    prepareSessionServices();
     await startHost('headless').catch((err: unknown) => {
       mainLog('error', 'No se pudo arrancar el host local; se cierra el proceso sin pantalla', { error: renderForLog(localizedFromError(err)) });
       app.exit(1);
@@ -3778,13 +4530,9 @@ app.whenReady().then(async () => {
   Menu.setApplicationMenu(buildApplicationMenu());
   // La bóveda, antes de admitir sesiones y de migrar nada a ella (D1).
   await assessVaultOnce();
-  startConversationLockHeartbeat();
-  migrateLegacyProviderKeysOnce();
-  registerIpcHandlers();
   // Antes de la primera ventana: la primera sesion ya tiene que recibir los MCP importados.
-  importSharedMcpOnce();
-  // Y a agy, lo que haya cambiado mientras Mage estaba cerrado (si la sincronizacion automatica esta activa).
-  onSharedMcpChanged();
+  prepareSessionServices();
+  registerIpcHandlers();
 
   const mainWindow = windowManager.ensureMain();
   tray = createTray();
@@ -3804,7 +4552,7 @@ app.whenReady().then(async () => {
   );
 
   // Widget flotante (M3): reabrir al arrancar si la preferencia persistida estaba activa.
-  if (getSettingsStore().load().widgetEnabled) getWidgetWindow().open();
+  if (getSettingsStore().load().widgetEnabled) openWidget();
 
   if (isDev) {
     // La ventana de debug NO se auto-abre al arrancar (molesta); se abre a demanda con el atajo.
@@ -3816,6 +4564,7 @@ app.whenReady().then(async () => {
   // defecto ('never'). `unref` para que el temporizador no sea motivo de que el proceso siga vivo.
   sweepScratchDirs();
   setInterval(sweepScratchDirs, SWEEP_INTERVAL_MS).unref();
+  setInterval(() => browserRegistry.sweep(), BROWSER_SWEEP_INTERVAL_MS).unref();
 
   // Auto-update (B2): no-op si la app no esta empaquetada. Comprueba con margen tras el arranque,
   // descarga en segundo plano y solo entonces avisa: indicador en todas las ventanas y dialogo propio
@@ -3856,6 +4605,8 @@ app.on('before-quit', () => {
   localHost?.closeFilesSync();
   void localHost?.close().catch((err: unknown) => mainLog('warn', 'El host local no cerro limpio', { error: err instanceof Error ? err.message : String(err) }));
   sessionCoordinator.stopAll();
+  // Los navegadores mueren con sus sesiones; sus particiones están en memoria.
+  void browserRegistry.closeAll();
   // #55: las conversaciones de esta instancia quedan libres para las demas (despues de parar las sesiones).
   conversationLocksSingleton?.releaseAll();
   // Incognito ('session'): las carpetas de trabajo no sobreviven a la ejecucion. Se barre aqui ADEMAS
@@ -3865,6 +4616,7 @@ app.on('before-quit', () => {
   for (const controller of openTranscriptControllers.values()) controller.abort();
   openTranscriptControllers.clear();
   debugWindow?.dispose();
+  widgetSessionTracker?.stop();
   widgetWindow?.dispose();
   if (isDev) globalShortcut.unregisterAll();
 });

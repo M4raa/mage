@@ -1,3 +1,4 @@
+import { useLocalPopover } from '../localPopovers';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useT } from '../../i18n/uiLanguage';
@@ -53,6 +54,8 @@ export function AppMenu({
   // Preferencias) en vez de añadirse y empujarlo — que fue justo la queja del primer intento.
   const setExpanded = onExpandedChange;
   const [openIndex, setOpenIndex] = useState<number | null>(null);
+  // La barra desplegada y un menu abierto son estado local: Escape los pliega y no debe cortar el turno.
+  useLocalPopover(expanded || openIndex !== null);
   // Punto del cursor en el momento de desplegar. Al hacerlo, las etiquetas aparecen justo DONDE estaba
   // el raton (encima del boton de tres puntos) y el `mouseenter` que provoca ese cambio de layout abria
   // "Conversación" sola — parecia que viniera con un clic ya dado.
@@ -122,7 +125,7 @@ export function AppMenu({
         style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
         // Mismo alto que los botones de cuenta (26 px en una franja de 32): el primer intento lo dejo
         // en un glifo diminuto que no habia manera de acertar con el raton.
-        className="flex h-[26px] w-[26px] items-center justify-center rounded-[7px] text-[16px] leading-none transition-colors duration-150 ease-out hover:bg-mg-hover hover:text-mg-body"
+        className="flex h-[26px] w-[26px] items-center justify-center rounded-[7px] text-[16px] leading-none transition-colors duration-90 ease-out hover:bg-mg-hover hover:text-mg-body"
       >
         ⋮
       </button>
@@ -199,7 +202,7 @@ function MenuButton({
         aria-expanded={open}
         onClick={onToggle}
         onMouseEnter={onHover}
-        className={`rounded-[5px] px-[8px] py-[2px] transition-colors duration-150 ease-out hover:bg-mg-hover hover:text-mg-body ${open ? 'bg-mg-hover text-mg-body' : ''}`}
+        className={`rounded-[5px] px-[8px] py-[2px] transition-colors duration-90 ease-out hover:bg-mg-hover hover:text-mg-body ${open ? 'bg-mg-hover text-mg-body' : ''}`}
       >
         {menu.label}
       </button>
@@ -221,6 +224,7 @@ function MenuDropdown({
 }): React.JSX.Element {
   const menuRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ width: MENU_MIN_WIDTH_PX, height: 0 });
+  useLocalPopover(true); // el menu existe solo abierto
 
   useEffect(() => {
     const element = menuRef.current;
@@ -291,7 +295,7 @@ function MenuRow({ item, onClose }: { readonly item: AppMenuItem; readonly onClo
       role="menuitem"
       disabled={!item.enabled}
       onClick={activate}
-      className="flex w-full items-center gap-[18px] px-[10px] py-[5px] text-left transition-colors duration-150 ease-out hover:bg-mg-hover disabled:opacity-40 disabled:hover:bg-transparent"
+      className="flex w-full items-center gap-[18px] px-[10px] py-[5px] text-left transition-colors duration-90 ease-out hover:bg-mg-hover disabled:opacity-40 disabled:hover:bg-transparent"
     >
       <span className="flex-1">{item.label}</span>
       {item.shortcut !== null && <span className="flex-none font-mono text-[10px] text-mg-muted">{item.shortcut}</span>}

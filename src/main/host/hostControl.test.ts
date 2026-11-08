@@ -1,9 +1,9 @@
 import { resolve } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import type { AccountInfo } from '@shared/accounts';
+import type { AccountCreateParams, AccountInfo } from '@shared/accounts';
 import type { ChatProject } from '@shared/settings';
-import { createHostControl, MAX_CREATE_RECEIPTS, type HostControlDeps } from './hostControl';
-import { TrustRequiredError, UnknownAccountError } from './hostErrors';
+import { createHostControl, MAX_CREATE_RECEIPTS, resolveHostLaunchParams, type HostControlDeps } from './hostControl';
+import { BypassPermissionsBlockedError, TrustRequiredError, UnknownAccountError } from './hostErrors';
 import type { HostCreateRequest } from './hostProtocol';
 
 const CWD = resolve('proyecto');
@@ -21,6 +21,8 @@ function harness(overrides: Partial<HostControlDeps> = {}) {
     launch: vi.fn(() => 's-1'),
     conversationIdOf: vi.fn(() => null),
     options: { setModel: vi.fn(), setEffort: vi.fn(), setPermissionMode: vi.fn() },
+    createAccount: vi.fn((params: AccountCreateParams): AccountInfo => ({ ...CODEX, configDir: '/h/codex-nueva', name: params.name, providerId: params.providerId, authKind: 'api-key' })),
+    requestQuit: vi.fn(),
     ...overrides,
   };
   return { deps, control: createHostControl(deps) };
@@ -85,10 +87,49 @@ describe('HostControl.createSession', () => {
     expect(h.deps.launch).not.toHaveBeenCalled();
   });
 
+  it('createSession_bypassPermissions_rechazaSinLanzarNiGuardarRecibo', () => {
+    const h = harness();
+
+    expect(() => h.control.createSession(request({ permissionMode: 'bypassPermissions' }))).toThrow(BypassPermissionsBlockedError);
+    expect(h.deps.launch).not.toHaveBeenCalled();
+    h.control.createSession(request({ permissionMode: 'default' }));
+    expect(h.deps.launch).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['plan', 'acceptEdits', 'default', 'auto'] as const)('createSession_%s_siguenLanzando', (permissionMode) => {
+    const h = harness();
+
+    h.control.createSession(request({ permissionMode }));
+
+    expect(h.deps.launch).toHaveBeenCalledWith(expect.objectContaining({ permissionMode }));
+  });
+
+  it('resolveHostLaunchParams_permissionModeEnCodex_loDejaPasar', () => {
+    const h = harness();
+
+    const params = resolveHostLaunchParams(h.deps, request({ provider: 'codex', accountId: '/h/.codex', model: 'gpt-x', permissionMode: 'plan' }));
+
+    expect(params.permissionMode).toBe('plan');
+  });
+
   it('createSession_sinModeloEnNingunSitio_error', () => {
     const h = harness();
 
     expect(() => h.control.createSession(request({ provider: 'codex', accountId: '/h/.codex' }))).toThrow('No hay modelo por defecto para codex');
+  });
+
+  it('resolveHostLaunchParams_sinModeloConCliDefault_lanzaSinModelo', () => {
+    const h = harness();
+
+    const params = resolveHostLaunchParams(h.deps, request({ provider: 'codex', accountId: '/h/.codex' }), { cliDefaultModel: true });
+
+    expect(params.model).toBe('');
+  });
+
+  it('resolveHostLaunchParams_sinModeloSinOpcion_lanza', () => {
+    const h = harness();
+
+    expect(() => resolveHostLaunchParams(h.deps, request({ provider: 'codex', accountId: '/h/.codex' }))).toThrow('No hay modelo por defecto para codex');
   });
 
   it('createSession_modeloDeLosAjustes_ganaAlDeLaCuenta', () => {
@@ -139,6 +180,21 @@ describe('HostControl — opciones y catálogos', () => {
     expect(h.deps.options[setter]).toHaveBeenCalledWith('s-1', value);
   });
 
+  it('setOption_permissionModeBypass_rechazaSinLlamarAlSetter', () => {
+    const h = harness();
+
+    expect(() => h.control.setOption('s-1', 'permissionMode', 'bypassPermissions')).toThrow(BypassPermissionsBlockedError);
+    expect(h.deps.options.setPermissionMode).not.toHaveBeenCalled();
+  });
+
+  it('setOption_modelLlamadoBypassPermissions_noSeBloquea', () => {
+    const h = harness();
+
+    h.control.setOption('s-1', 'model', 'bypassPermissions');
+
+    expect(h.deps.options.setModel).toHaveBeenCalledWith('s-1', 'bypassPermissions');
+  });
+
   it('listAccounts_soloIdNombreProveedorYFacturacion', () => {
     const h = harness();
 
@@ -156,5 +212,29 @@ describe('HostControl — opciones y catálogos', () => {
     const result = h.control.listProjects();
 
     expect(result).toEqual([{ id: 'p1', name: 'P', cwd: '/x' }]);
+  });
+
+  it('createApiAccount_pasaClaveYTipoApiKeyYDevuelveLaProyeccion', () => {
+    const h = harness();
+
+    const result = h.control.createApiAccount({ provider: 'codex', name: 'Trabajo', apiKey: 'sk-SECRETA-123' });
+
+    expect(h.deps.createAccount).toHaveBeenCalledWith({ providerId: 'codex', authKind: 'api-key', name: 'Trabajo', apiKey: 'sk-SECRETA-123' });
+    expect(result).toEqual({ id: '/h/codex-nueva', name: 'Trabajo', provider: 'codex', billing: 'api-key' });
+    expect(JSON.stringify(result)).not.toContain('sk-SECRETA-123');
+  });
+
+  it('createApiAccount_laCreacionFalla_propagaElError', () => {
+    const h = harness({ createAccount: vi.fn(() => { throw new Error('bóveda no disponible'); }) });
+
+    expect(() => h.control.createApiAccount({ provider: 'claude', name: 'K', apiKey: 'sk-x' })).toThrow('bóveda no disponible');
+  });
+
+  it('requestQuit_delegaEnLaDependencia', () => {
+    const h = harness();
+
+    h.control.requestQuit();
+
+    expect(h.deps.requestQuit).toHaveBeenCalledTimes(1);
   });
 });

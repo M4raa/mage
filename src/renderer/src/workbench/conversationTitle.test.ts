@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { deriveTitleFromPrompt, displayTitle, isSlashCommandText, latestCustomTitle, renamedTitleFrom } from './conversationTitle';
+import { deriveTitleFromPrompt, displayTitle, isSlashCommandText, latestCustomTitle, renamedTitleFrom, typedRenameTitle } from './conversationTitle';
 import { createTranslator } from '@shared/i18n/translator';
 import { makeEntry } from '@testing/transcriptEntry';
 
@@ -89,5 +89,27 @@ describe('renamedTitleFrom', () => {
   it('renamedTitleFrom_salidaDeError_null', () => {
     expect(renamedTitleFrom({ args: 'x', text: 'Name too long' })).toBeNull();
     expect(renamedTitleFrom({ args: '', text: '' })).toBeNull();
+  });
+});
+
+describe('typedRenameTitle', () => {
+  it('typedRenameTitle_conNombre_devuelveElNombre', () => {
+    expect(typedRenameTitle('/rename prueba')).toBe('prueba');
+  });
+
+  it('typedRenameTitle_conEspacios_recorta', () => {
+    expect(typedRenameTitle('  /rename   mi nombre  ')).toBe('mi nombre');
+  });
+
+  it.each(['/rename', '/rename   ', ''])('typedRenameTitle_sinNombre_%j_null', (text) => {
+    expect(typedRenameTitle(text)).toBeNull();
+  });
+
+  it.each(['/renamex foo', '/compact', 'hola /rename x'])('typedRenameTitle_noEsRename_%j_null', (text) => {
+    expect(typedRenameTitle(text)).toBeNull();
+  });
+
+  it('typedRenameTitle_variasLineas_null', () => {
+    expect(typedRenameTitle('/rename a\nb')).toBeNull();
   });
 });

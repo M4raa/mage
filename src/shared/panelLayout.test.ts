@@ -6,6 +6,7 @@ import {
   PANEL_LAYOUT_VERSION,
   reconcileLayoutWithRegistry,
   resolveResize,
+  snapToMagnets,
   type Anchor,
   type PanelLayoutState,
   type PanelPlacement,
@@ -338,3 +339,58 @@ function buildLayout(zones: Partial<Record<'left' | 'right' | 'bottom', Partial<
   });
   return { version: 1, stripes: { left: stripe('left'), right: stripe('right'), bottom: stripe('bottom') }, hiddenPanelIds: hidden } as never;
 }
+
+describe('snapToMagnets', () => {
+  it('snapToMagnets_cercaDelCincuenta_pegaAlCincuenta', () => {
+    expect(snapToMagnets(503, 1000)).toBe(500);
+  });
+
+  it('snapToMagnets_enElLimiteDeTolerancia_pega', () => {
+    expect(snapToMagnets(508, 1000)).toBe(500);
+  });
+
+  it('snapToMagnets_justoFueraDeTolerancia_noPega', () => {
+    expect(snapToMagnets(509, 1000)).toBe(509);
+  });
+
+  it.each([[250, 250], [330, 333], [670, 667], [745, 750]])('snapToMagnets_cadaIman_%i_pegaA%i', (size, expected) => {
+    expect(snapToMagnets(size, 1000)).toBe(expected);
+  });
+
+  it('snapToMagnets_dosImanesEnTolerancia_ganaElMasCercano', () => {
+    expect(snapToMagnets(12, 40)).toBe(13);
+  });
+
+  it('snapToMagnets_imanPorDebajoDelMinimo_noEngancha', () => {
+    expect(snapToMagnets(290, 859, { minPx: 320, maxPx: 539 })).toBe(290);
+  });
+
+  it('snapToMagnets_imanPorEncimaDelMaximo_noEngancha', () => {
+    expect(snapToMagnets(570, 859, { minPx: 320, maxPx: 539 })).toBe(570);
+  });
+
+  it('snapToMagnets_imanDentroDeLosLimites_engancha', () => {
+    expect(snapToMagnets(503, 1000, { minPx: 320, maxPx: 680 })).toBe(500);
+  });
+
+  it('snapToMagnets_cero_noPega', () => {
+    expect(snapToMagnets(0, 1000)).toBe(0);
+  });
+
+  it('snapToMagnets_extremo_noPega', () => {
+    expect(snapToMagnets(1000, 1000)).toBe(1000);
+  });
+
+  it('snapToMagnets_totalCero_devuelveIgual', () => {
+    expect(snapToMagnets(5, 0)).toBe(5);
+  });
+
+  it('snapToMagnets_totalNegativo_devuelveIgual', () => {
+    expect(snapToMagnets(5, -100)).toBe(5);
+  });
+
+  it('snapToMagnets_noFinito_lanzaConLosValores', () => {
+    expect(() => snapToMagnets(Number.NaN, 1000)).toThrow(/sizePx=NaN/);
+    expect(() => snapToMagnets(10, Number.POSITIVE_INFINITY)).toThrow(/totalPx=Infinity/);
+  });
+});

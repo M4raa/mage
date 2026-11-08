@@ -11,7 +11,7 @@ export interface DefaultsDeps {
   readonly listHome: () => string[];
   // Resuelve lo comun (MCP de mcp-common.json y extensiones, settings-common.json) para ESTE proveedor y
   // cuenta; se llama en cada sesion nueva para leerlo fresco (nunca se cachea).
-  readonly resolveShared: (provider: string, accountDir: string) => SharedLaunchConfig;
+  readonly resolveShared: (provider: string, accountDir: string, sessionId: string) => SharedLaunchConfig;
   // ¿Puede autenticar esta cuenta de Claude? Login del CLI o, en una cuenta de API, clave en la boveda
   // (grupo E). Ausente = solo el login del CLI (`.credentials.json`).
   readonly hasClaudeLogin?: (accountDir: string) => boolean;
@@ -35,7 +35,10 @@ export function resolveLaunchParams(
   resume = false,
 ): LaunchParams {
   const model = params.model.trim();
-  if (model.length === 0) throw new Error('El modelo no puede estar vacio');
+  // Solo Codex arranca sin modelo (una delegada sin modelo conocido): su adapter lo omite y elige el app-server.
+  if (model.length === 0 && params.provider !== 'codex') {
+    throw new Error(`El modelo no puede estar vacio (proveedor ${params.provider}): ${JSON.stringify(params.model)}`);
+  }
 
   // El runtime propio (P-032) no corre bajo ninguna cuenta de Claude: sin cuenta, no se busca una.
   const accountDir = params.accountDir.trim() || (runsOnMageRuntime(params.provider) ? '' : resolveDefaultAccountDir(deps));
@@ -55,7 +58,7 @@ export function resolveLaunchParams(
     model,
     cwd,
     resume,
-    shared: deps.resolveShared(params.provider, accountDir),
+    shared: deps.resolveShared(params.provider, accountDir, sessionId),
     ...(params.projectInstructions === undefined ? {} : { projectInstructions: params.projectInstructions }),
     ...(effort === undefined ? {} : { effort }),
     ...(maxBudgetUsdCents === undefined ? {} : { maxBudgetUsdCents }),

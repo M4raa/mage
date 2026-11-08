@@ -1,3 +1,4 @@
+import { useLocalPopover } from '../localPopovers';
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { AnimatePresence, motion } from 'motion/react';
@@ -55,6 +56,7 @@ export function StepSlider({
   // Posicion del popover, fijada al abrir (null = cerrado): ver `stepSliderPlacement`.
   const [placement, setPlacement] = useState<StepSliderPlacement | null>(null);
   const open = placement !== null;
+  useLocalPopover(open);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const rangeRef = useRef<HTMLInputElement>(null);
   const index = stepIndexOf(steps, value);
@@ -107,7 +109,7 @@ export function StepSlider({
         aria-expanded={open}
         aria-label={ariaLabel}
         data-tip={tip}
-        className={`shrink-0 cursor-pointer self-center rounded-full border border-mg-border-ctrl bg-transparent px-[8px] py-[2px] text-[10.5px] text-mg-sec outline-none transition-colors duration-150 ease-out hover:text-mg-body ${triggerClassName}`}
+        className={`shrink-0 cursor-pointer self-center rounded-full border border-mg-border-ctrl bg-transparent px-[8px] py-[2px] text-[10.5px] text-mg-sec outline-none transition-colors duration-90 ease-out hover:text-mg-body ${triggerClassName}`}
       >
         {leading === undefined ? (
           label

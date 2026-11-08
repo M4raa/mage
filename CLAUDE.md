@@ -37,6 +37,7 @@ multicuenta, análisis de uso/logs y más.
   la de por defecto y sus pestañas dicen «Factura API». La clave de un proveedor del runtime propio
   también vive en la bóveda y solo viaja en la cabecera `Authorization` de sus peticiones (nunca a un
   hijo ni al renderer). Test: `src/main/engine/apiKeyInvariant.test.ts`.
+  Única excepción de prueba (T6): `MAGE_TEST_ANTHROPIC_BASE_URL` apunta el hijo de una cuenta de Claude POR CLAVE DE API a un servidor Messages falso local; solo sin empaquetar y en loopback (`decideTestAnthropicBaseUrl`, `agentEnv.ts`); una cuenta de suscripción nunca la recibe.
 - **Multiplataforma (crítico):** Windows/macOS/Linux. Nada de rutas/comandos hardcodeados por SO;
   todo tras abstracción (`LinkService`, `OpenWithService` y los tres resolutores de binario:
   `claudeBinaryResolver`, `agyBinaryResolver` y su núcleo común `agentBinaryResolver`); usar
@@ -66,9 +67,9 @@ modo plan para diseñar cada milestone; verifica end-to-end (arranca lo construi
 - **`pnpm verify:gui`** — arranca la app real con **perfil aislado**, mide el DOM por CDP y deja informe
   + capturas en `.verify-out/`. **No escribas un driver CDP desechable: añade una comprobación aquí.**
   Envía **un solo turno real por ejecución**: la última comprobación, contra Claude con el modelo y el
-  esfuerzo más bajos, tras afirmar el proveedor de la pestaña. Antes mira el uso de la cuenta: con más
-  del 70 % gastado avisa y deja elegir real o local (servidor falso); sin terminal interactiva elige
-  local y lo dice en el informe (`--turn=local|real` fuerza uno). Ninguna otra comprobación pulsa
+  esfuerzo más bajos, tras afirmar el proveedor de la pestaña. El perfil usa un HOME de prueba
+  (`MAGE_TEST_HOME`) y no lee las cuentas del usuario, así que el turno es LOCAL (servidor falso) salvo
+  que se pida `--turn=real` de forma explícita, y lo dice en el informe. Ninguna otra comprobación pulsa
   `Enter` en el prompt ni spawnea el CLI.
 - **`spike/`** — spikes reproducibles contra los CLI reales (`engine-spike.mjs`, `agy-spike.mjs`).
   Un CLI nuevo se **mide**, no se deduce de su `--help` (que ya mintió una vez).

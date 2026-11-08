@@ -1,3 +1,4 @@
+import { EFFORT_LEVELS } from '@shared/ipc';
 import { z } from 'zod';
 
 export const MAGE_MCP_CONTRACT_VERSION = 1;
@@ -14,17 +15,20 @@ function diagnostic(field: string): z.ZodErrorMap {
 }
 const id = (field: string) => z.string({ errorMap: diagnostic(field) }).min(1);
 const integer = (field: string) => z.number({ errorMap: diagnostic(field) }).int().nonnegative();
-const uuid = z.string({ errorMap: diagnostic('requestId') }).uuid();
+// Clave de idempotencia del llamante (V6: los modelos no siempre mandan un UUID): cualquier texto no vacío y acotado.
+export const MAX_REQUEST_ID_CHARS = 128;
+const requestId = z.string({ errorMap: diagnostic('requestId') }).min(1).max(MAX_REQUEST_ID_CHARS);
 const provider = z.enum(['claude', 'codex'], { errorMap: diagnostic('provider') });
 const text = z.string({ errorMap: () => ({ message: 'Se requiere texto' }) });
 export const utcSchema = z.string().datetime({ offset: false });
 export const stateSchema = z.enum(['working', 'waiting_answer', 'permission_pending', 'done', 'interrupted']);
-export const createdBySchema = z.object({ conversationId: id('conversationId'), requestId: uuid, at: utcSchema }).strict();
+export const createdBySchema = z.object({ conversationId: id('conversationId'), requestId: requestId, at: utcSchema }).strict();
 export const publicMessageSchema = z.object({ seq: integer('seq'), role: id('role'), text }).strict();
 
 export const listInputSchema = z.object({ projectId: id('projectId').optional(), includeFinished: z.boolean().optional() }).strict();
 export const createInputSchema = z.object({
-  requestId: uuid, provider, accountId: id('accountId').optional(), cwd: id('cwd'), prompt: text, model: id('model').optional(),
+  requestId: requestId, provider, accountId: id('accountId').optional(), cwd: id('cwd'), prompt: text, model: id('model').optional(),
+  effort: z.enum(EFFORT_LEVELS, { errorMap: diagnostic('effort') }).optional(), permissionMode: id('permissionMode').optional(),
 }).strict();
 export const statusInputSchema = z.object({ conversationId: id('conversationId') }).strict();
 export const readInputSchema = z.object({
@@ -32,13 +36,14 @@ export const readInputSchema = z.object({
   maxBytes: z.number({ errorMap: diagnostic('maxBytes') }).int().min(1).max(DEFAULT_MAX_RESULT_BYTES).optional(),
 }).strict();
 export const sendInputSchema = z.object({
-  requestId: uuid, conversationId: id('conversationId'), text,
+  requestId: requestId, conversationId: id('conversationId'), text,
   mode: z.enum(['direct', 'queue'], { errorMap: diagnostic('mode') }),
 }).strict();
 export const cancelInputSchema = z.object({
   conversationId: id('conversationId'), scope: z.literal('turn', { errorMap: diagnostic('scope') }),
 }).strict();
-export const listOutputSchema = z.object({ sessions: z.array(z.object({
+export const askCreatorInputSchema = z.object({ requestId: requestId, text: text.min(1) }).strict();
+export const listOutputSchema =z.object({ sessions: z.array(z.object({
   conversationId: id('conversationId'), title: text, provider: id('provider'), state: stateSchema, createdBy: id('createdBy').optional(),
 }).strict()) }).strict();
 export const createOutputSchema = z.object({ conversationId: id('conversationId'), state: z.enum(['queued', 'running']) }).strict();
@@ -48,5 +53,6 @@ export const readOutputSchema = z.object({
 }).strict();
 export const sendOutputSchema = z.object({ receipt: z.enum(['accepted', 'queued', 'rejected']), reason: text.optional() }).strict();
 export const cancelOutputSchema = z.object({ cancelled: z.boolean() }).strict();
+export const askCreatorOutputSchema = z.object({ receipt: z.literal('accepted') }).strict();
 
 export const creationTargetSchema = z.object({ projectId: id('projectId'), accountId: id('accountId'), provider, cwd: id('cwd') }).strict();

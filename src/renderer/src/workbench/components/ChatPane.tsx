@@ -3,13 +3,14 @@ import type { SplitPath } from '../splitLayout';
 import { useWorkbenchStore } from '../workbenchStore';
 import { PaneTabProvider } from '../paneContext';
 import { useTranscriptLifecycle } from '../useTranscriptLifecycle';
-import { TAB_DRAG_MIME, TAB_DRAG_ORIGIN_MIME } from '../tabActions';
+import { isFileDrag, TAB_DRAG_MIME, TAB_DRAG_ORIGIN_MIME } from '../tabActions';
 import { zoneFromPoint, type DropZone } from '../splitLayout';
 import { shouldFocusPromptOnClick } from '../promptFocus';
 import { BlockChat } from './BlockChat';
 import { PromptBar } from './PromptBar';
 import { RateLimitBanner } from './RateLimitBanner';
-import { ChatInfoBar } from './ChatInfoBar';
+import { TabSubline } from './TabSubline';
+import { TaskStrip } from '../tasks/TaskStrip';
 import { QuestionDock } from './QuestionDock';
 import { ElicitationDock } from './ElicitationDock';
 import { AgentsDock } from './AgentsDock';
@@ -85,7 +86,15 @@ export function ChatPane({
   const containerRef = useRef<HTMLDivElement>(null);
   const [dropZone, setDropZone] = useState<DropZone | null>(null);
 
+  const fileDropRef = useRef<((files: readonly File[]) => void) | null>(null);
+
   const onDragOver = (e: React.DragEvent<HTMLDivElement>): void => {
+    // Ficheros del sistema (no una pestaña): se aceptan para adjuntarlos, sin pintar zona de división.
+    if (isFileDrag(e.dataTransfer.types)) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'copy';
+      return;
+    }
     // Solo pestañas de ESTA ventana (P-028, 36): una de otra ventana de Mage se deja pasar sin aceptar,
     // y su origen la mueve aqui por el cursor.
     if (!e.dataTransfer.types.includes(TAB_DRAG_MIME) || !e.dataTransfer.types.includes(TAB_DRAG_ORIGIN_MIME)) return;
@@ -95,6 +104,13 @@ export function ChatPane({
     setDropZone(zoneFromPoint(rect, e.clientX, e.clientY));
   };
   const onDrop = (e: React.DragEvent<HTMLDivElement>): void => {
+    // Imágenes soltadas en el chat: a la barra de ESTE panel, con las validaciones y el error del pegado.
+    if (isFileDrag(e.dataTransfer.types)) {
+      e.preventDefault();
+      setDropZone(null);
+      fileDropRef.current?.(Array.from(e.dataTransfer.files));
+      return;
+    }
     const draggedTabId = e.dataTransfer.getData(TAB_DRAG_MIME);
     setDropZone(null);
     if (draggedTabId.length === 0) return;
@@ -127,18 +143,18 @@ export function ChatPane({
           split ? (focused ? 'outline outline-1 -outline-offset-1 outline-mg-border-emph' : 'opacity-80') : ''
         }`}
       >
+        {/* Cuenta · carpeta · rama, justo bajo la barra de pestañas de este panel y encima del hilo (Q-U11). */}
+        <TabSubline />
+        <TaskStrip />
         <BlockChat />
         <RateLimitBanner />
-        {/* Encima del input, no dentro: es informacion de la CONVERSACION, no un control del mensaje
-            que se esta escribiendo. Ese es tambien el orden en que se lee la pantalla. */}
-        <ChatInfoBar />
         {/* La pregunta pendiente del agente, anclada encima del input (P-026 3.3). */}
         <QuestionDock />
         <ElicitationDock />
         <AgentsDock />
         {/* Lo enviado con el turno en marcha espera aqui, no en el hilo (0.1.1 R2, punto 30). */}
         <QueuedMessagesDock />
-        <PromptBar />
+        <PromptBar fileDropRef={fileDropRef} />
         {dropZone !== null && (
           <div aria-hidden="true" className="pointer-events-none absolute inset-0 z-10">
             <div className={`absolute border-2 border-mg-focus bg-mg-focus/20 ${ZONE_RECT_CLASS[dropZone]}`} />

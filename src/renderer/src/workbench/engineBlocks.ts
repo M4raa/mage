@@ -1,4 +1,4 @@
-import type { PermissionRequest, ToolResult, ToolUse, TurnUsage } from '@shared/events';
+import type { PermissionRequest, PermissionScope, ToolResult, ToolUse, TurnUsage } from '@shared/events';
 import { SUBAGENT_ASYNC_LAUNCHED, type SubagentRunInfo } from '@shared/subagentRun';
 import type { AskQuestion } from '@shared/askUserQuestion';
 import type { Block, ImageAttachment, PermissionView, TextRun } from './types';
@@ -6,8 +6,9 @@ import type { DiffLine } from './diffLines';
 import { parseStructuredPatch } from './diffLines';
 import { classifyTool } from './toolClassify';
 import { completeArtifactPublication, parseArtifactDraft } from '@shared/artifacts';
-import { formatToolMeta, summarizeToolInput } from './toolSummary';
+import { formatToolMeta, planTextField, SKILL_TOOL_NAME, summarizeToolInput } from './toolSummary';
 import { codexChangeView } from './codexChanges';
+import { fileTouchesField } from './fileTouches';
 import { t } from '../i18n/uiLanguage';
 import type { MessageKey } from '@shared/i18n/messageKeys.generated';
 import type { Translate } from '@shared/i18n/translator';
@@ -66,6 +67,10 @@ export interface NewUserBlock {
   // Imagenes del mensaje. La ruta VIVA todavia manda siempre [] (enviar imagenes es de la Fase E);
   // existe aqui para que el bloque optimista y el reconstruido desde la transcripcion sean el mismo.
   readonly attachments: readonly ImageAttachment[];
+  // Ruta de cada adjunto, alineada con `attachments` (ver `Block`); ausente si el mensaje no viene del borrador.
+  readonly attachmentPaths?: readonly (string | null)[];
+  // Id del mensaje ante su CLI (ver `Block`): null si no se conoce.
+  readonly nativeId: string | null;
 }
 
 // Bloque de usuario (optimista: lo anadimos al enviar; el CLI no reemite el mensaje del usuario).
@@ -137,7 +142,8 @@ export function appendPermissionBlock(
     readonly prompt: string;
     readonly target: string;
     readonly summary: string;
-    readonly rememberable?: boolean;
+    readonly allowScopes?: readonly PermissionScope[];
+    readonly rule?: string | null;
   },
 ): readonly Block[] {
   return [...blocks, { kind: 'permission', ...permission, state: 'pending' }];
@@ -191,6 +197,8 @@ export function appendToolUse(blocks: readonly Block[], tool: ToolUse, id: strin
     // ruta): el resto del input no entra en el estado.
     artifactDraft: parseArtifactDraft(tool.toolName, tool.input),
     parentToolUseId: tool.parentToolUseId ?? null,
+    ...planTextField(tool.toolName, tool.input),
+    ...fileTouchesField(tool.toolName, tool.input),
   };
   return [...blocks, block];
 }
@@ -432,19 +440,56 @@ export function pendingToolName(blocks: readonly Block[]): string | null {
   return null;
 }
 
+// Skill o herramienta MCP mas reciente del turno EN CURSO (desde el ultimo mensaje del usuario): la que enseña el
+// estado del turno mientras piensa (#42). Una skill lleva su nombre en `command` (ver summarizeToolInput); una
+// herramienta MCP se llama `mcp__<servidor>__<herramienta>` y el servidor puede llevar «_», asi que se parte por
+// la ULTIMA aparicion de «__». PURO.
+export type TurnCapability =
+  | { readonly kind: 'skill'; readonly name: string }
+  | { readonly kind: 'mcp'; readonly server: string; readonly tool: string };
+
+const MCP_PREFIX = 'mcp__';
+const MCP_SEPARATOR = '__';
+
+export function currentTurnCapability(blocks: readonly Block[]): TurnCapability | null {
+  for (let i = blocks.length - 1; i >= 0; i -= 1) {
+    const block = blocks[i];
+    if (block === undefined || block.kind === 'user') return null;
+    if (block.kind !== 'tool') continue;
+    const capability = capabilityOfTool(block.tool, block.command);
+    if (capability !== null) return capability;
+  }
+  return null;
+}
+
+function capabilityOfTool(tool: string, command: string): TurnCapability | null {
+  if (tool === SKILL_TOOL_NAME) return command.length > 0 ? { kind: 'skill', name: command } : null;
+  if (!tool.startsWith(MCP_PREFIX)) return null;
+  const rest = tool.slice(MCP_PREFIX.length);
+  const cut = rest.lastIndexOf(MCP_SEPARATOR);
+  if (cut <= 0 || cut + MCP_SEPARATOR.length >= rest.length) return null;
+  return { kind: 'mcp', server: rest.slice(0, cut), tool: rest.slice(cut + MCP_SEPARATOR.length) };
+}
+
 // Texto del marcador de uso de un turno (E3). Solo los proveedores que reportan uso en su terminador
 // lo traen (hoy `agy`), y es la UNICA forma de ver lo que gasta esa pestana: el panel de Uso lee el
 // historial de la cuenta de Claude, que no sabe nada de `agy`. Los contadores que el proveedor no
 // reporta se OMITEN (nunca se pintan como 0: no es lo mismo). Devuelve null si no hay ninguno.
 export function turnUsageText(usage: TurnUsage): string | null {
+  const counters = turnUsageCounters(usage);
+  if (counters === null) return null;
+  return usage.estimated === true ? t('chat.turnUsage.lineEstimated', { counters }) : t('chat.turnUsage.line', { counters });
+}
+
+// Solo los contadores del turno («1.2k entrada · 40 salida…»), sin prefijo; null si el proveedor no reporto ninguno.
+// Lo comparten el texto del marcador y la fila «Tokens del último turno» del panel Contexto.
+export function turnUsageCounters(usage: TurnUsage): string | null {
   const parts: string[] = [];
   pushInput(parts, usage);
   pushCounter(parts, usage.outputTokens, t('chat.turnUsage.output'));
   pushCounter(parts, usage.thinkingTokens, t('chat.turnUsage.thinking'));
   pushCounter(parts, usage.totalTokens, t('chat.turnUsage.total'));
-  if (parts.length === 0) return null;
-  const counters = parts.join(' · ');
-  return usage.estimated === true ? t('chat.turnUsage.lineEstimated', { counters }) : t('chat.turnUsage.line', { counters });
+  return parts.length === 0 ? null : parts.join(' · ');
 }
 
 // «Entrada» significa lo mismo en los tres proveedores: TODO lo que se mando al modelo, con su caché dentro. Codex y
@@ -498,7 +543,8 @@ export function mapPermissionToView(request: PermissionRequest): PermissionView 
     prompt: buildPrompt(toolName),
     target: patch?.target ?? buildTarget(toolName, input),
     toolLabel: toolName,
-    rememberable: !outside,
+    allowScopes: outside ? [] : (request.allowScopes ?? []),
+    rule: request.rule ?? null,
     diff: patch?.diff ?? buildDiff(toolName, input),
     summary: permissionSummary(request, patch?.summary ?? buildSummary(toolName, input)),
   };

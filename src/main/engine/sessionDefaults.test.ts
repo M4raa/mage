@@ -26,6 +26,32 @@ describe('resolveLaunchParams', () => {
     expect(() => resolveLaunchParams('s1', { ...params, model: '  ' }, deps({}))).toThrow(/modelo/i);
   });
 
+  it('resolveLaunchParams_codexSinModelo_seAcepta', () => {
+    // Arrange
+    const codex = { ...params, provider: 'codex', model: '', accountDir: '/home/u/.codex-1' };
+
+    // Act
+    const result = resolveLaunchParams('s1', codex, deps({}));
+
+    // Assert
+    expect(result.model).toBe('');
+  });
+
+  it('resolveLaunchParams_claudeSinModelo_lanzaError', () => {
+    // Arrange
+    const claude = { ...params, model: '' };
+
+    // Act
+    const act = () => resolveLaunchParams('s1', claude, deps({}));
+
+    // Assert
+    expect(act).toThrow('El modelo no puede estar vacio (proveedor claude): ""');
+  });
+
+  it('resolveLaunchParams_otroProveedorSinModelo_lanzaErrorConElProveedor', () => {
+    expect(() => resolveLaunchParams('s1', { ...params, provider: 'agy', model: ' ' }, deps({}))).toThrow('proveedor agy');
+  });
+
   it('resolve_explicitAccountWithCreds_usesIt', () => {
     const result = resolveLaunchParams(
       's1',

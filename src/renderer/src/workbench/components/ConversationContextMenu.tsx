@@ -1,3 +1,4 @@
+import { useLocalPopover } from '../localPopovers';
 import { useEffect, useState } from 'react';
 import { Icon } from './Icon';
 import { createPortal } from 'react-dom';
@@ -7,6 +8,11 @@ import type { Account } from '../types';
 import type { ChatProject } from '@shared/settings';
 import { POPOVER_VARIANTS } from '../motionPresets';
 import { useT } from '../../i18n/uiLanguage';
+import { CODEX_PROVIDER_ID } from '@shared/providers';
+import { useWorkbenchStore } from '../workbenchStore';
+import { conversationIdOfTab } from '../conversationId';
+import { describeError } from '../describeError';
+import { notify, reportActionError } from '../notificationStore';
 
 // Descriptor de la conversacion sobre la que se abrio el menu (clic derecho). sessionId puede faltar
 // si la pestana aun no ha arrancado sesion (no hay nada en disco -> eliminar/mover deshabilitados).
@@ -15,6 +21,8 @@ export interface ConversationTarget {
   readonly cwd: string;
   readonly privacy: ConversationPrivacy;
   readonly title: string;
+  // Cuenta de la fila (el lateral enseña todas las cuentas): borrar y mover actúan sobre ELLA, no sobre la activa.
+  readonly accountId: string;
 }
 
 // Menu contextual de una conversacion (#2 de AJUSTES): eliminar y mover (entre Compartido/Privado y a
@@ -34,6 +42,10 @@ export function ConversationContextMenu({
   newWindowBlockedReason = null,
   projects = [],
   onAssignProject,
+  pinned = false,
+  archived = false,
+  onTogglePinned,
+  onToggleArchived,
 }: {
   readonly target: ConversationTarget;
   readonly x: number;
@@ -53,9 +65,17 @@ export function ConversationContextMenu({
   readonly newWindowBlockedReason?: string | null;
   readonly projects?: readonly ChatProject[];
   readonly onAssignProject?: (projectId: string | null) => void;
+  // Fijar y archivar (lateral): el estado actual decide el texto de cada entrada.
+  readonly pinned?: boolean;
+  readonly archived?: boolean;
+  readonly onTogglePinned?: () => void;
+  readonly onToggleArchived?: () => void;
 }): React.JSX.Element {
   const t = useT();
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  useLocalPopover(true); // el menu existe solo abierto
+  const [confirmingUpdate, setConfirmingUpdate] = useState(false);
+  const legacy = useLegacyCodexUpdate(target.sessionId, activeAccountId);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
@@ -104,6 +124,18 @@ export function ConversationContextMenu({
           </>
         )}
 
+        {onTogglePinned !== undefined && (
+          <MenuItem disabled={!hasSession} onClick={onTogglePinned}>
+            {pinned ? t('sidebar.contextMenu.unpin') : t('sidebar.contextMenu.pin')}
+          </MenuItem>
+        )}
+        {onToggleArchived !== undefined && (
+          <MenuItem disabled={!hasSession} onClick={onToggleArchived}>
+            {archived ? t('sidebar.contextMenu.unarchive') : t('sidebar.contextMenu.archive')}
+          </MenuItem>
+        )}
+        {(onTogglePinned !== undefined || onToggleArchived !== undefined) && <div className="my-[3px] h-px bg-mg-border-subtle" />}
+
         {/* Mover a la otra seccion de la MISMA cuenta. */}
         {onAssignProject !== undefined && (
           <>
@@ -132,6 +164,31 @@ export function ConversationContextMenu({
                 </span>
               </MenuItem>
             ))}
+          </>
+        )}
+
+        {/* Actualizar una conversacion de Codex de una version anterior (K07), con su confirmacion aqui mismo. */}
+        {legacy.isLegacy && (
+          <>
+            <div className="my-[3px] h-px bg-mg-border-subtle" />
+            {!confirmingUpdate ? (
+              <MenuItem onClick={() => setConfirmingUpdate(true)}>{t('history.legacyCodex.update')}</MenuItem>
+            ) : (
+              <div data-legacy-update-confirm="true" className="px-[10px] py-[6px]">
+                <div className="mb-[6px] text-[10.5px] text-mg-body">{t('history.legacyCodex.confirm')}</div>
+                <div className="flex justify-end gap-[6px]">
+                  <button onClick={onClose} className="rounded-[5px] border border-mg-border-emph px-[8px] py-[3px] text-[10.5px] text-mg-body2 hover:bg-mg-hover">
+                    {t('chat.rewind.cancel')}
+                  </button>
+                  <button
+                    onClick={() => { onClose(); legacy.update(); }}
+                    className="rounded-[5px] bg-mg-sel px-[8px] py-[3px] text-[10.5px] font-semibold text-mg-sel-ink hover:bg-mg-hover"
+                  >
+                    {t('history.legacyCodex.update')}
+                  </button>
+                </div>
+              </div>
+            )}
           </>
         )}
 
@@ -167,6 +224,36 @@ export function ConversationContextMenu({
   );
 }
 
+// «Actualizar esta conversación» (K07): solo para una conversación de Codex de una versión anterior. El menú
+// pregunta a main al abrirse; la entrada sale solo si la respuesta es «legacy».
+function useLegacyCodexUpdate(sessionId: string | undefined, accountDir: string): { readonly isLegacy: boolean; readonly update: () => void } {
+  const t = useT();
+  const isCodex = useWorkbenchStore((s) => s.conversationHistory.some((item) => item.sessionId === sessionId && item.providerId === CODEX_PROVIDER_ID));
+  const openTabId = useWorkbenchStore((s) => s.tabs.find((tab) => conversationIdOfTab(tab, s.sessionIdByChat[tab.id]) === sessionId)?.id ?? null);
+  const updateLegacyCodex = useWorkbenchStore((s) => s.updateLegacyCodex);
+  const [isLegacy, setIsLegacy] = useState(false);
+
+  useEffect(() => {
+    if (!isCodex || sessionId === undefined || sessionId.length === 0) return;
+    let cancelled = false;
+    window.mage.codexLegacyStatus({ accountDir, threadId: sessionId }).then(
+      (status) => { if (!cancelled) setIsLegacy(status.legacy); },
+      // No se oculta el fallo: se queda en la consola de la ventana, y la entrada no sale.
+      (err: unknown) => console.warn(`No se pudo comprobar si la conversación ${JSON.stringify(sessionId)} de Codex es antigua:`, describeError(err)),
+    );
+    return () => { cancelled = true; };
+  }, [isCodex, sessionId, accountDir]);
+
+  const update = (): void => {
+    if (sessionId === undefined) return;
+    updateLegacyCodex(openTabId, accountDir, sessionId).then(
+      (backupDir) => notify({ level: 'success', title: t('history.legacyCodex.done', { backupDir }), source: 'history' }),
+      (err: unknown) => reportActionError(t('history.legacyCodex.update'), err, 'history'),
+    );
+  };
+  return { isLegacy, update };
+}
+
 function MenuItem({
   children,
   onClick,
@@ -186,7 +273,7 @@ function MenuItem({
       disabled={disabled}
       onClick={onClick}
       data-tip={tip ?? undefined}
-      className={`block w-full px-[10px] py-[5px] text-left transition-colors duration-150 ease-out disabled:opacity-40 ${
+      className={`block w-full px-[10px] py-[5px] text-left transition-colors duration-90 ease-out disabled:opacity-40 ${
         danger ? 'text-mg-danger hover:bg-mg-danger-bg' : 'hover:bg-mg-hover'
       }`}
     >

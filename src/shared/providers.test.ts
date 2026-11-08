@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { AGY_PROVIDER_ID, BUILT_IN_PROVIDERS, chatCompletionsUrl, CODEX_PROVIDER_ID, supportsSteer } from './providers';
+import { AGY_PROVIDER_ID, agyModelFixesEffort, BUILT_IN_PROVIDERS, chatCompletionsUrl, CODEX_PROVIDER_ID, supportsSteer } from './providers';
 import { renderForLog, UserFacingError } from './i18n/localizedText';
 import measuredModels from './__fixtures__/codex-models-0160.json';
 
@@ -54,4 +54,20 @@ describe('supportsSteer', () => {
     expect(supportsSteer('agy')).toBe(false);
     expect(supportsSteer('ollama-local')).toBe(false);
   });
+});
+
+describe('agyModelFixesEffort', () => {
+  it.each(['gemini-3.8-flash-high', 'gemini-3.8-flash-medium', 'gemini-3.8-flash-low', 'gpt-oss-120b-medium', 'modelo-max'])(
+    'agyModelFixesEffort_idConSufijo_%s_true',
+    (modelId) => {
+      expect(agyModelFixesEffort(modelId)).toBe(true);
+    },
+  );
+
+  it.each(['claude-sonnet-4-6', 'claude-opus-4-6-thinking', 'gemini-3.8-flash', 'flash-highest', ''])(
+    'agyModelFixesEffort_idSinSufijo_%s_false',
+    (modelId) => {
+      expect(agyModelFixesEffort(modelId)).toBe(false);
+    },
+  );
 });

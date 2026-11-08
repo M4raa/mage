@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { validateDelegation } from './delegation';
+import { DEFAULT_DELEGATION, DELEGATION_DEPTH_MAX, DELEGATION_DEPTH_MIN } from '@shared/settings';
+import { DEFAULT_MAX_DELEGATION_DEPTH, MAX_DELEGATION_DEPTH, validateDelegation } from './delegation';
 
 describe('validateDelegation', () => {
   it('validateDelegation_humano_devuelveCadenaVacia', () => {
@@ -27,5 +28,13 @@ describe('validateDelegation', () => {
     { creatorChain: ['A', 'A'] },
   ])('validateDelegation_ciclo_precedeProfundidad', (input) => {
     expect(() => validateDelegation({ ...input, maxDepth: 1 })).toThrow(/delegation_cycle: A→/);
+  });
+});
+
+describe('ajustes de delegación', () => {
+  it('delegationDefaults_matchMcpCore', () => {
+    expect(DEFAULT_DELEGATION.maxDepth).toBe(DEFAULT_MAX_DELEGATION_DEPTH);
+    expect(DELEGATION_DEPTH_MAX).toBe(MAX_DELEGATION_DEPTH);
+    expect(DELEGATION_DEPTH_MIN).toBe(1);
   });
 });

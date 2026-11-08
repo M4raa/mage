@@ -4,8 +4,9 @@ import { SUPPORTED_IMAGE_MEDIA_TYPES } from './types';
 import { extractToolResult, extractToolUses } from './toolView';
 import { classifyTool } from './toolClassify';
 import { completeArtifactPublication, parseArtifactDraft } from '@shared/artifacts';
-import { SUBAGENT_TOOL_NAMES } from './toolSummary';
+import { planTextField, SUBAGENT_TOOL_NAMES } from './toolSummary';
 import { noticeTextFor } from './cliNotices';
+import { fileTouchesField } from './fileTouches';
 import { rateLimitLine } from './rateLimit';
 import { t } from '../i18n/uiLanguage';
 import { classifySystemWrapper } from '@shared/systemWrappers';
@@ -80,7 +81,16 @@ function appendUserOrResult(entry: TranscriptEntry, blocks: Block[], toolIndexBy
   // desaparecia del hilo.
   if (text.length === 0 && attachments.length === 0) return;
   if (attachments.length === 0 && appendWrapperNotice(entry, text, blocks, toolIndexById)) return;
-  blocks.push({ kind: 'user', id: blockId(entry.index, 0), text, time: formatTime(entry.timestampMs), attachments });
+  blocks.push({ kind: 'user', id: blockId(entry.index, 0), text, time: formatTime(entry.timestampMs), attachments, nativeId: nativeIdOf(entry.uuid) });
+}
+
+const CODEX_UUID_PREFIX = 'codex-';
+
+// Id del mensaje ante su CLI a partir del uuid de la entrada: el uuid tal cual (Claude) o sin el
+// prefijo `codex-` con el que la transcripción de Codex lo envuelve; null si no hay.
+export function nativeIdOf(uuid: string | null): string | null {
+  if (uuid === null) return null;
+  return uuid.startsWith(CODEX_UUID_PREFIX) ? uuid.slice(CODEX_UUID_PREFIX.length) : uuid;
 }
 
 // Envoltorios de sistema que el CLI guarda como mensaje del usuario (P-026, D20): los avisos y los
@@ -165,6 +175,12 @@ function appendAssistant(entry: TranscriptEntry, blocks: Block[], toolIndexById:
     blocks.push({ kind: 'system', id: blockId(entry.index, 0), text: rateLimitLine(), ...(tip.length === 0 ? {} : { tip }) });
     return;
   }
+  // Error de la API (401, 500…): el CLI lo persiste como `assistant` sintético con `isApiErrorMessage: true`. No lo dijo
+  // el agente: se pinta como el mismo bloque de error que en vivo.
+  if (isRecord(entry.raw) && entry.raw.isApiErrorMessage === true) {
+    blocks.push({ kind: 'error', id: blockId(entry.index, 0), message: t('events.cli.apiError', { detail: assistantText(entry.raw).trim() }) });
+    return;
+  }
   let slot = 0;
   // Pensamiento (2.5). MEDIDO: el CLI persiste los bloques `thinking` con texto VACIO (solo su firma),
   // asi que al reanudar se puede decir "pensó" pero no QUE penso. Se pinta igualmente: esconderlo
@@ -217,6 +233,8 @@ function appendAssistant(entry: TranscriptEntry, blocks: Block[], toolIndexById:
       artifactDraft: parseArtifactDraft(use.toolName, use.input),
       // Los pasos de los subagentes viven en su propio `agent-<id>.jsonl`: en el principal, todo es suyo.
       parentToolUseId: null,
+      ...planTextField(use.toolName, use.input),
+      ...fileTouchesField(use.toolName, use.input),
     });
     toolIndexById.set(use.toolUseId, blocks.length - 1);
   }
@@ -232,7 +250,7 @@ function appendSystemNotice(entry: TranscriptEntry, blocks: Block[]): void {
   // lineas `system/local_command`, con los MISMOS envoltorios que en una linea de usuario.
   if (raw.subtype === 'local_command' && typeof raw.content === 'string') {
     if (!appendWrapperNotice(entry, raw.content, blocks) && classifySystemWrapper(raw.content).kind === 'command') {
-      blocks.push({ kind: 'user', id: blockId(entry.index, 0), text: raw.content, time: formatTime(entry.timestampMs), attachments: [] });
+      blocks.push({ kind: 'user', id: blockId(entry.index, 0), text: raw.content, time: formatTime(entry.timestampMs), attachments: [], nativeId: null });
     }
     return;
   }
@@ -311,8 +329,10 @@ function messageContent(raw: unknown): unknown {
   return isRecord(message) ? message.content : null;
 }
 
+export const TRANSCRIPT_BLOCK_ID_PREFIX = 'tb-';
+
 function blockId(entryIndex: number, slot: number): string {
-  return `tb-${entryIndex}-${slot}`;
+  return `${TRANSCRIPT_BLOCK_ID_PREFIX}${entryIndex}-${slot}`;
 }
 
 // Hora local HH:MM del bloque de usuario (presentacion). Vacio si la entrada no trae timestamp.

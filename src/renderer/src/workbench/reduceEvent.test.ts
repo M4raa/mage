@@ -100,7 +100,7 @@ describe('reduceEvent — permisos', () => {
   const pendingEntry = (requestId: string) => ({
     requestId,
     input: {},
-    view: { prompt: '', target: '', toolLabel: 'Write', rememberable: true, diff: [], summary: '' },
+    view: { prompt: '', target: '', toolLabel: 'Write', allowScopes: [], rule: null, diff: [], summary: '' },
   });
 
   it('reduceEvent_permissionRequest_dejaLaPestanaEsperandoPermiso', () => {
@@ -168,7 +168,7 @@ describe('reduceEvent — permisos', () => {
   });
 
   it('reduceEvent_permissionResolvedYaContestadaAqui_noCambiaNada', () => {
-    const current = state({ blocksByChat: { [TAB]: [{ kind: 'permission', id: 'b', requestId: 'r1', toolName: 'Write', prompt: '', target: '', summary: '', rememberable: true, state: 'allowed' } as Block] } });
+    const current = state({ blocksByChat: { [TAB]: [{ kind: 'permission', id: 'b', requestId: 'r1', toolName: 'Write', prompt: '', target: '', summary: '', allowScopes: [], state: 'allowed' } as Block] } });
 
     expect(reduceEvent(current, TAB, { kind: 'permission_resolved', requestId: 'r1', behavior: 'allow' })).toEqual({});
   });
@@ -435,13 +435,31 @@ describe('reduceEvent — estado de sesion y compactacion', () => {
 
     expect(reduceEvent(current, TAB, { kind: 'permission_mode', mode: 'auto' }).tabs?.[0]?.permissionMode).toBe('auto');
   });
+
+  it('reduceEvent_delegationWaiting_marcaYDesmarcaLaPestana', () => {
+    const current = state({ tabs: [tab({ id: TAB, createdBy: { conversationId: 'c', sessionId: 's' } })] });
+
+    const waiting = reduceEvent(current, TAB, { kind: 'delegation_waiting', creatorId: 'c', waiting: true });
+    const stopped = reduceEvent(state({ tabs: waiting.tabs }), TAB, { kind: 'delegation_waiting', creatorId: 'c', waiting: false });
+
+    expect(waiting.tabs?.[0]?.awaitingCreator).toBe(true);
+    expect(stopped.tabs?.[0]?.awaitingCreator).toBe(false);
+  });
+
+  it('reduceEvent_delegationWaiting_otraPestana_noLaToca', () => {
+    const current = state({ tabs: [tab({ id: 'otra' })] });
+
+    const patch = reduceEvent(current, TAB, { kind: 'delegation_waiting', creatorId: 'c', waiting: true });
+
+    expect(patch.tabs?.[0]?.awaitingCreator).toBeUndefined();
+  });
 });
 
 // Uso real en el terminador del turno (E3, `agy`): se deja como marcador de sistema en la conversacion.
 describe('reduceEvent — uso del turno (E3)', () => {
   const RESULT_BASE = { isError: false, subtype: 'success', numTurns: 1 };
 
-  it('reduceEvent_resultConUsage_dejaUnMarcadorDeSistemaConLosTokens', () => {
+  it('reduceEvent_resultConUsage_guardaElUsoPorPestanaYNoDejaBloqueEnElHilo', () => {
     const event: MageEvent = {
       kind: 'result',
       result: {
@@ -453,10 +471,20 @@ describe('reduceEvent — uso del turno (E3)', () => {
     const patch = reduceEvent(state(), TAB, event);
     const blocks = blocksOf(patch);
 
-    expect(blocks).toHaveLength(1);
-    expect(blocks[0]).toMatchObject({ kind: 'system' });
-    expect((blocks[0] as Extract<Block, { kind: 'system' }>).text).toContain('Tokens del turno');
+    expect(blocks).toEqual([]);
+    expect(patch.lastTurnUsageByChat?.[TAB]).toMatchObject({ inputTokens: 17533, outputTokens: 7 });
     expect(patch.statusByChat?.[TAB]).toBe('idle');
+  });
+
+  it('handleEvent_resultSinTokens_conservaElUltimoTurno', () => {
+    const withTokens = { ...RESULT_BASE, usage: { inputTokens: 10, outputTokens: 5, totalTokens: 25, cacheReadTokens: 10, thinkingTokens: 0 } };
+    const empty = { ...RESULT_BASE, usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0, cacheReadTokens: 0, thinkingTokens: 0 } };
+    const first = reduceEvent(state(), TAB, { kind: 'result', result: withTokens });
+
+    const second = reduceEvent({ ...state(), ...first }, TAB, { kind: 'result', result: empty });
+
+    expect(second.lastTurnUsageByChat).toBeUndefined();
+    expect(first.lastTurnUsageByChat?.[TAB]?.totalTokens).toBe(25);
   });
 
   // El CLI de Claude no reporta uso en su `result`: su conversacion no debe ganar ningun marcador.
@@ -464,6 +492,7 @@ describe('reduceEvent — uso del turno (E3)', () => {
     const patch = reduceEvent(state(), TAB, { kind: 'result', result: RESULT_BASE });
 
     expect(blocksOf(patch)).toEqual([]);
+    expect(patch.lastTurnUsageByChat).toBeUndefined();
     expect(patch.statusByChat?.[TAB]).toBe('idle');
   });
 });

@@ -2,11 +2,14 @@
 // así que se prueba sin terminal. Sin dependencias: solo `node:*`.
 
 const TRUST_REQUIRED_CODE = -32007;
+const PERMISSION_MODE_BLOCKED_CODE = -32011;
 const MAX_CHOICE_ATTEMPTS = 3;
 const NEW_CONVERSATION_ANSWER = 'n';
 const TERMINAL_PROVIDERS = ['claude', 'codex'];
 const EXIT_TRUST_REQUIRED = 3;
 const EXIT_BAD_ARGUMENTS = 2;
+// El host se negó: el mismo valor que EXIT_REFUSED de commands.mjs.
+const EXIT_HOST_REFUSED = 4;
 
 function withExitCode(message, exitCode, cause) {
   return Object.assign(new Error(message, { cause }), { exitCode });
@@ -19,6 +22,7 @@ async function createSession({ rpc, newCommandId }, { provider, accountId, cwd, 
     return (await rpc.call('session.create', params)).sessionId;
   } catch (error) {
     if (error?.code === TRUST_REQUIRED_CODE) throw withExitCode(error.message, EXIT_TRUST_REQUIRED, error);
+    if (error?.code === PERMISSION_MODE_BLOCKED_CODE) throw withExitCode(error.message, EXIT_HOST_REFUSED, error);
     throw error;
   }
 }
@@ -42,6 +46,20 @@ async function askChoice({ ask, write, messages }, { prompt, size, allowNew }) {
     write(`${messages.invalidChoice(lastAnswer)}\n`);
   }
   throw withExitCode(messages.invalidChoice(lastAnswer), EXIT_BAD_ARGUMENTS);
+}
+
+// `--account` admite el id (la ruta del config dir), el nombre que imprime `mage account add` o el que se le dio con
+// `--name`, sin el prefijo de carpeta (`.claude-`/`.codex-`), dentro del proveedor pedido. Varios con ese nombre: error
+// con las rutas. Ninguno: el texto va tal cual y el host contesta «cuenta desconocida».
+async function resolveAccountId({ rpc, messages }, { provider, accountId }) {
+  const { accounts } = await rpc.call('accounts.list');
+  const ofProvider = accounts.filter((account) => account.provider === provider);
+  if (ofProvider.some((account) => account.id === accountId)) return accountId;
+  const folderName = `.${provider}-${accountId}`;
+  const named = ofProvider.filter((account) => account.name === accountId || account.name === folderName);
+  if (named.length > 1) throw withExitCode(messages.ambiguousAccount(accountId, named.map((account) => account.id)), EXIT_BAD_ARGUMENTS);
+  if (named.length === 1) return named[0].id;
+  return accountId;
 }
 
 async function pickAccount(context, cwd) {
@@ -72,7 +90,8 @@ export async function resolveTarget({ rpc, target, cwd, ask, write, messages, ne
   if (target.kind === 'session') return target.sessionId;
   if (target.kind === 'conversation') return (await rpc.call('session.resume', { conversationId: target.conversationId })).sessionId;
   if (target.kind === 'new') {
-    return createSession(context, { provider: target.provider, accountId: target.accountId, cwd: target.cwd ?? cwd, optional: pickedOptions(target) });
+    const accountId = await resolveAccountId(context, target);
+    return createSession(context, { provider: target.provider, accountId, cwd: target.cwd ?? cwd, optional: pickedOptions(target) });
   }
   if (target.kind === 'pick') return pickSession(context, cwd);
   throw new Error(`Objetivo de chat desconocido: ${JSON.stringify(target)}`);

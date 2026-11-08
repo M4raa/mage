@@ -17,6 +17,9 @@ export const ERROR_FORMAT_LOCALE = 'es-ES';
 // luego no se puede mostrar seria incoherente.
 export const ALLOWED_IMAGE_TYPES: ReadonlySet<string> = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
 
+// Documentos que viajan como adjunto (menciones @, Q05): solo PDF, y solo hacia Claude (bloque `document`).
+export const ALLOWED_DOCUMENT_TYPES: ReadonlySet<string> = new Set(['application/pdf']);
+
 // Topes. La imagen viaja en base64 por IPC, asi que 5 MiB de fichero son ~6,7 MB de string: pasarse de
 // aqui no es "una imagen grande", es congelar la app al enviar.
 export const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
@@ -35,9 +38,9 @@ export interface AttachmentCandidate {
 
 export function validateAttachment(candidate: AttachmentCandidate, formatLocale: string): ImageAttachmentMeta {
   const mediaType = candidate.mediaType.trim().toLowerCase();
-  if (!ALLOWED_IMAGE_TYPES.has(mediaType)) {
+  if (!ALLOWED_IMAGE_TYPES.has(mediaType) && !ALLOWED_DOCUMENT_TYPES.has(mediaType)) {
     throw new UserFacingError(
-      localized('errors.attachments.unsupportedType', { type: JSON.stringify(candidate.mediaType), allowed: [...ALLOWED_IMAGE_TYPES].join(', ') }),
+      localized('errors.attachments.unsupportedType', { type: JSON.stringify(candidate.mediaType), allowed: [...ALLOWED_IMAGE_TYPES, ...ALLOWED_DOCUMENT_TYPES].join(', ') }),
     );
   }
   if (!Number.isInteger(candidate.byteLength) || candidate.byteLength <= 0) {
@@ -73,11 +76,31 @@ export function validateAttachmentSet(
   return all;
 }
 
+// El pegado del prompt solo adjunta imágenes: el PDF entra por mención (Q05), que decide por motor si viaja.
+export function assertPastedImages(candidates: readonly AttachmentCandidate[]): void {
+  const rejected = candidates.find((candidate) => !ALLOWED_IMAGE_TYPES.has(candidate.mediaType.trim().toLowerCase()));
+  if (rejected === undefined) return;
+  throw new UserFacingError(
+    localized('errors.attachments.unsupportedType', { type: JSON.stringify(rejected.mediaType), allowed: [...ALLOWED_IMAGE_TYPES].join(', ') }),
+  );
+}
+
 // Bytes REALES de un base64. Hace falta porque por IPC viaja la cadena, no el fichero: usar
 // `data.length` como tamaño rechazaria imagenes validas (base64 abulta ~4/3) y colaria otras.
 export function base64ByteLength(data: string): number {
   const padding = data.endsWith('==') ? 2 : data.endsWith('=') ? 1 : 0;
   return Math.max(0, Math.floor((data.length * 3) / 4) - padding);
+}
+
+// De dónde viene una imagen del borrador: del disco (botón o soltar, con ruta) o pegada (sin fichero, sin ruta).
+export type ImageSource = 'disk' | 'pasted';
+
+// Ruta del fichero para copiar el mensaje (U51): solo las del disco; '' (el File no viene del disco) es sin ruta.
+// `pathForFile` se llama solo para las del disco.
+export function sourcePathOf(source: ImageSource, pathForFile: () => string): string | null {
+  if (source === 'pasted') return null;
+  const path = pathForFile();
+  return path.length > 0 ? path : null;
 }
 
 export function formatBytes(bytes: number, locale: string): string {

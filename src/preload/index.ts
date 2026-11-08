@@ -1,7 +1,10 @@
+import { BROWSER_STATE_CHANNEL, type BrowserEntryState } from '@shared/browser';
 import type { ConversationLockParams, ConversationLockRef } from '@shared/conversationLock';
-import { contextBridge, ipcRenderer, webFrame } from 'electron';
+import type { MentionPreviewParams, MentionResolveParams, MentionSearchParams } from '@shared/mentions';
+import { contextBridge, ipcRenderer, webFrame, webUtils } from 'electron';
 import {
   EVENT_CHANNEL,
+  SESSION_ADOPTABLE_CHANNEL,
   IpcChannel,
   JUMP_LIST_OPEN_CHANNEL,
   TRANSCRIPT_BATCH_CHANNEL,
@@ -9,6 +12,8 @@ import {
   WIDGET_FOCUS_TAB_CHANNEL,
   NOTIFICATION_CLICKED_CHANNEL,
   WIDGET_SNAPSHOT_CHANNEL,
+  WIDGET_SESSIONS_CHANNEL,
+  WIDGET_PREFS_CHANNEL,
   SETTINGS_CHANGED_CHANNEL,
   UI_LANGUAGE_CHANGED_CHANNEL,
   MODEL_CATALOG_CHANGED_CHANNEL,
@@ -60,15 +65,20 @@ import type {
   SendMessageParams,
   QueuedMessageParams,
   UpdateQueuedMessageParams,
+  RewindPlanParams,
+  RewindApplyParams,
+  DivergeParams,
   SessionEventPayload,
+  AdoptableSession,
   SetModelParams,
   SetEffortParams,
   StopTaskParams,
   SetPermissionModeParams,
   TranscriptBatchPayload,
   MoveTabToWindowParams,
+  CodexThreadParams,
 } from '@shared/ipc';
-import type { WidgetSnapshot } from '@shared/widget';
+import type { WidgetAnswer, WidgetPrefs, WidgetSessionsPayload, WidgetSnapshot } from '@shared/widget';
 import type { FetchThemeParams } from '@shared/themeMarket';
 import { DebugChannel } from '@shared/debug';
 import type { LogEntry, MageDebugApi, RendererLogInput } from '@shared/debug';
@@ -90,6 +100,13 @@ const api: MageApi = {
   interrupt: (sessionId: string) => ipcRenderer.invoke(IpcChannel.SessionInterrupt, sessionId),
   removeQueuedMessage: (params: QueuedMessageParams) => ipcRenderer.invoke(IpcChannel.SessionQueueRemove, params),
   updateQueuedMessage: (params: UpdateQueuedMessageParams) => ipcRenderer.invoke(IpcChannel.SessionQueueUpdate, params),
+  rewindPlan: (params: RewindPlanParams) => ipcRenderer.invoke(IpcChannel.SessionRewindPlan, params),
+  rewindApply: (params: RewindApplyParams) => ipcRenderer.invoke(IpcChannel.SessionRewindApply, params),
+  keepAliveStats: () => ipcRenderer.invoke(IpcChannel.KeepAliveStats),
+  mcpRegistrationStatus: () => ipcRenderer.invoke(IpcChannel.McpRegistrationStatus),
+  registerMageMcp: () => ipcRenderer.invoke(IpcChannel.McpRegister),
+  unregisterMageMcp: () => ipcRenderer.invoke(IpcChannel.McpUnregister),
+  divergeConversation: (params: DivergeParams) => ipcRenderer.invoke(IpcChannel.SessionDiverge, params),
   takeQueuedMessages: (sessionId: string) => ipcRenderer.invoke(IpcChannel.SessionQueueTake, sessionId),
   setModel: (params: SetModelParams) => ipcRenderer.invoke(IpcChannel.SessionSetModel, params),
   setEffort: (params: SetEffortParams) => ipcRenderer.invoke(IpcChannel.SessionSetEffort, params),
@@ -99,6 +116,8 @@ const api: MageApi = {
   stop: (sessionId: string) => ipcRenderer.invoke(IpcChannel.SessionStop, sessionId),
   closeSession: (sessionId: string) => ipcRenderer.invoke(IpcChannel.SessionClose, sessionId),
   getSessionSnapshot: (sessionId: string) => ipcRenderer.invoke(IpcChannel.SessionSnapshot, sessionId),
+  listAdoptableSessions: () => ipcRenderer.invoke(IpcChannel.SessionsAdoptable),
+  attachSession: (sessionId: string) => ipcRenderer.invoke(IpcChannel.SessionAttach, sessionId),
   getScratchDir: () => ipcRenderer.invoke(IpcChannel.SessionGetScratchDir),
   getScratchRoot: () => ipcRenderer.invoke(IpcChannel.SessionGetScratchRoot),
   getScratchRoots: () => ipcRenderer.invoke(IpcChannel.SessionGetScratchRoots),
@@ -147,6 +166,15 @@ const api: MageApi = {
   ghRuns: (params) => ipcRenderer.invoke(IpcChannel.GhRuns, params),
   ghRunAction: (params) => ipcRenderer.invoke(IpcChannel.GhRunAction, params),
   ghAutoMerge: (params) => ipcRenderer.invoke(IpcChannel.GhAutoMerge, params),
+  listPrs: (params) => ipcRenderer.invoke(IpcChannel.PrList, params),
+  prDetail: (params) => ipcRenderer.invoke(IpcChannel.PrDetail, params),
+  prDiff: (params) => ipcRenderer.invoke(IpcChannel.PrDiff, params),
+  writePr: (params) => ipcRenderer.invoke(IpcChannel.PrWrite, params),
+  listPrCatalog: (conversationId) => ipcRenderer.invoke(IpcChannel.PrCatalogList, conversationId),
+  linkPr: (params) => ipcRenderer.invoke(IpcChannel.PrCatalogLink, params),
+  unlinkPr: (params) => ipcRenderer.invoke(IpcChannel.PrCatalogUnlink, params),
+  migrateTabPr: (params) => ipcRenderer.invoke(IpcChannel.PrMigrate, params),
+  prRepoOf: (params) => ipcRenderer.invoke(IpcChannel.PrRepoOf, params),
   worktreeCreate: (params) => ipcRenderer.invoke(IpcChannel.WorktreeCreate, params),
   worktreeRestore: (params) => ipcRenderer.invoke(IpcChannel.WorktreeRestore, params),
   worktreeRemove: (params) => ipcRenderer.invoke(IpcChannel.WorktreeRemove, params),
@@ -189,6 +217,11 @@ const api: MageApi = {
     ipcRenderer.on(EVENT_CHANNEL, handler);
     return () => ipcRenderer.removeListener(EVENT_CHANNEL, handler);
   },
+  onSessionAdoptable: (listener: (session: AdoptableSession) => void) => {
+    const handler = (_: unknown, session: AdoptableSession) => listener(session);
+    ipcRenderer.on(SESSION_ADOPTABLE_CHANNEL, handler);
+    return () => ipcRenderer.removeListener(SESSION_ADOPTABLE_CHANNEL, handler);
+  },
   openTranscript: (transcriptId: string, params: OpenTranscriptParams) => ipcRenderer.invoke(IpcChannel.TranscriptOpen, transcriptId, params),
   cancelTranscript: (transcriptId: string) => ipcRenderer.invoke(IpcChannel.TranscriptCancel, transcriptId),
   onTranscriptBatch: (listener: (payload: TranscriptBatchPayload) => void) => {
@@ -198,9 +231,14 @@ const api: MageApi = {
   },
   readMemory: (params: ReadMemoryParams) => ipcRenderer.invoke(IpcChannel.MemoryRead, params),
   listConversations: (accountDir: string) => ipcRenderer.invoke(IpcChannel.ConversationsList, accountDir),
+  searchMentions: (params: MentionSearchParams) => ipcRenderer.invoke(IpcChannel.MentionsSearch, params),
+  resolveMentions: (params: MentionResolveParams) => ipcRenderer.invoke(IpcChannel.MentionsResolve, params),
+  previewMention: (params: MentionPreviewParams) => ipcRenderer.invoke(IpcChannel.MentionsPreview, params),
   deleteConversation: (params: DeleteConversationParams) => ipcRenderer.invoke(IpcChannel.ConversationsDelete, params),
   moveConversation: (params: MoveConversationParams) => ipcRenderer.invoke(IpcChannel.ConversationsMove, params),
   migrateConversation: (params: MigrateConversationParams) => ipcRenderer.invoke(IpcChannel.ConversationsMigrate, params),
+  codexLegacyStatus: (params: CodexThreadParams) => ipcRenderer.invoke(IpcChannel.ConversationsCodexLegacyStatus, params),
+  updateLegacyCodexConversation: (params: CodexThreadParams) => ipcRenderer.invoke(IpcChannel.ConversationsCodexLegacyUpdate, params),
   loadWorkspace: () => ipcRenderer.invoke(IpcChannel.StateLoad),
   saveWorkspace: (state: PersistedWorkspace) => ipcRenderer.invoke(IpcChannel.StateSave, state),
   loadCommandCatalog: (accountDir: string) => ipcRenderer.invoke(IpcChannel.CommandCatalogLoad, accountDir),
@@ -232,6 +270,21 @@ const api: MageApi = {
     const handler = (_: unknown, tabId: string) => listener(tabId);
     ipcRenderer.on(WIDGET_FOCUS_TAB_CHANNEL, handler);
     return () => ipcRenderer.removeListener(WIDGET_FOCUS_TAB_CHANNEL, handler);
+  },
+  answerFromWidget: (answer: WidgetAnswer) => ipcRenderer.invoke(IpcChannel.WidgetAnswer, answer),
+  interruptFromWidget: (sessionId: string) => ipcRenderer.invoke(IpcChannel.WidgetInterrupt, sessionId),
+  openSessionFromWidget: (sessionId: string) => ipcRenderer.send(IpcChannel.WidgetOpenSession, sessionId),
+  getWidgetPrefs: () => ipcRenderer.invoke(IpcChannel.WidgetGetPrefs),
+  setWidgetPrefs: (patch: Partial<WidgetPrefs>) => ipcRenderer.invoke(IpcChannel.WidgetSetPrefs, patch),
+  onWidgetSessions: (listener: (payload: WidgetSessionsPayload) => void) => {
+    const handler = (_: unknown, payload: WidgetSessionsPayload) => listener(payload);
+    ipcRenderer.on(WIDGET_SESSIONS_CHANNEL, handler);
+    return () => ipcRenderer.removeListener(WIDGET_SESSIONS_CHANNEL, handler);
+  },
+  onWidgetPrefs: (listener: (prefs: WidgetPrefs) => void) => {
+    const handler = (_: unknown, prefs: WidgetPrefs) => listener(prefs);
+    ipcRenderer.on(WIDGET_PREFS_CHANNEL, handler);
+    return () => ipcRenderer.removeListener(WIDGET_PREFS_CHANNEL, handler);
   },
   onNotificationClicked: (listener: (target: NotificationTarget) => void) => {
     const handler = (_: unknown, target: NotificationTarget) => listener(target);
@@ -319,6 +372,35 @@ const api: MageApi = {
   },
   installUpdate: () => ipcRenderer.invoke(IpcChannel.UpdateInstall),
   checkForUpdates: () => ipcRenderer.invoke(IpcChannel.UpdateCheck),
+  libraryView: () => ipcRenderer.invoke(IpcChannel.LibraryView),
+  libraryPreview: (target) => ipcRenderer.invoke(IpcChannel.LibraryPreview, target),
+  libraryApply: (params) => ipcRenderer.invoke(IpcChannel.LibraryApply, params),
+  // Navegador de Mage (F11b.3).
+  browserList: () => ipcRenderer.invoke(IpcChannel.BrowserList),
+  browserOpen: (sessionId) => ipcRenderer.invoke(IpcChannel.BrowserOpen, sessionId),
+  browserNavigate: (params) => ipcRenderer.invoke(IpcChannel.BrowserNavigate, params),
+  browserBack: (sessionId) => ipcRenderer.invoke(IpcChannel.BrowserBack, sessionId),
+  browserReload: (sessionId) => ipcRenderer.invoke(IpcChannel.BrowserReload, sessionId),
+  browserClose: (sessionId) => ipcRenderer.invoke(IpcChannel.BrowserClose, sessionId),
+  browserSetBounds: (params) => ipcRenderer.invoke(IpcChannel.BrowserSetBounds, params),
+  browserTakeControl: (sessionId) => ipcRenderer.invoke(IpcChannel.BrowserTakeControl, sessionId),
+  browserReturnControl: (sessionId) => ipcRenderer.invoke(IpcChannel.BrowserReturnControl, sessionId),
+  browserPenCapture: (sessionId) => ipcRenderer.invoke(IpcChannel.BrowserPenCapture, sessionId),
+  browserPenCompose: (params) => ipcRenderer.invoke(IpcChannel.BrowserPenCompose, params),
+  onBrowserState: (listener) => {
+    const handler = (_: unknown, states: readonly BrowserEntryState[]) => listener(states);
+    ipcRenderer.on(BROWSER_STATE_CHANNEL, handler);
+    return () => ipcRenderer.removeListener(BROWSER_STATE_CHANNEL, handler);
+  },
+  getUiZoomFactor: () => webFrame.getZoomFactor(),
+  pathForFile: (file) => webUtils.getPathForFile(file),
+  listTasks: () => ipcRenderer.invoke(IpcChannel.TasksList),
+  createTask: (draft) => ipcRenderer.invoke(IpcChannel.TasksCreate, draft),
+  verifyTask: (params) => ipcRenderer.invoke(IpcChannel.TasksVerify, params),
+  removeTask: (taskId) => ipcRenderer.invoke(IpcChannel.TasksRemove, taskId),
+  pickTaskFolders: () => ipcRenderer.invoke(IpcChannel.TasksPickFolders),
+  pickTaskDocuments: () => ipcRenderer.invoke(IpcChannel.TasksPickDocuments),
+  saveTaskDeliverableCopy: (params) => ipcRenderer.invoke(IpcChannel.TasksSaveCopy, params),
 };
 
 contextBridge.exposeInMainWorld('mage', api);

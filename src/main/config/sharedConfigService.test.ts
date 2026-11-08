@@ -238,7 +238,7 @@ describe('parseSettingsCommonJson (puro)', () => {
     const result = parseSettingsCommonJson('nope');
 
     expect(result.value).toBeNull();
-    expect(result.warnings[0]).toContain('JSON invalido');
+    expect(result.warnings[0]).toContain('JSON inválido');
   });
 
   it('parseSettingsCommonJson_valido_devuelveValueSinWarnings', () => {
@@ -437,7 +437,7 @@ describe('SharedConfigService.saveSettingsCommonText', () => {
 
     const thrown = thrownText(() => service.saveSettingsCommonText(SETTINGS_PATH, 'nope', '{}'));
 
-    expect(thrown).toEqual(localized('errors.config.settingsSaveInvalid', { reason: `JSON invalido: ${jsonMessage('nope')}`, length: '4' }));
+    expect(thrown).toEqual(localized('errors.config.settingsSaveInvalid', { reason: `JSON inválido: ${jsonMessage('nope')}`, length: '4' }));
   });
 
   it('saveSettingsCommonText_conClaveDescartada_escribeYDevuelveElAviso', () => {

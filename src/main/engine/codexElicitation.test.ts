@@ -114,7 +114,7 @@ describe('ElicitationBroker', () => {
 
 // Medido con `node spike/claude-elicitation-spike.mjs` (claude 2.1.292, servidor Anthropic falso, 0 turnos de pago).
 describe('ClaudeAdapter: elicitation MCP (2.1.292)', () => {
-  const adapter = (): ClaudeAdapter => new ClaudeAdapter(() => 'claude');
+  const adapter = (): ClaudeAdapter => new ClaudeAdapter({ resolveBinary: () => 'claude' });
   const control = (request: Record<string, unknown>): unknown => ({ type: 'control_request', request_id: 'rq1', request: { subtype: 'elicitation', mcp_server_name: 'elic', ...request } });
 
   it('normalize_elicitationDeFormulario_emiteSolicitudConElIdDelCli', () => {

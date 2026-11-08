@@ -25,6 +25,14 @@ describe('KEYBINDING_ACTIONS — panel.toggle.<id> (I10b)', () => {
   });
 });
 
+describe('permisos', () => {
+  it('catalogo_permisos_cuatroTeclas1a4', () => {
+    const keysOf = (id: string) => KEYBINDING_ACTIONS.find((a) => a.id === id)?.defaultKeys;
+
+    expect(['permission.allow', 'permission.allowSession', 'permission.allowAlways', 'permission.deny'].map(keysOf)).toEqual(['1', '2', '3', '4']);
+  });
+});
+
 describe('prompt.sendNow (G-U1)', () => {
   it('catalogo_sendNow_esCmdOrCtrlEnterEnElScopePrompt', () => {
     const action = KEYBINDING_ACTIONS.find((a) => a.id === 'prompt.sendNow');

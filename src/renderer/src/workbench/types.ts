@@ -3,11 +3,13 @@
 // @shared/accounts; ambos se mapean a estos tipos en la frontera (accountView.ts / engineBlocks.ts).
 
 import type { AskQuestion } from '@shared/askUserQuestion';
-import type { SessionPlugin } from '@shared/events';
+import type { PermissionScope, SessionPlugin } from '@shared/events';
 import type { ArtifactDraft, ArtifactPublication } from '@shared/artifacts';
+import type { MentionCandidate } from '@shared/mentions';
 import type { DiffLine } from './diffLines';
 import type { ToolClass } from './toolClassify';
 import type { SubagentStatus } from './engineBlocks';
+import type { FileTouch } from './fileTouches';
 import type { LoginStatus } from '@shared/accounts';
 import type { ConversationPrivacy } from '@shared/state';
 
@@ -57,6 +59,13 @@ export interface Tab {
   readonly model: string; // id de modelo (--model)
   readonly provider: string; // 'claude' | 'openai' | 'gemini' | 'ollama' | 'lmstudio'
   readonly title: string;
+  // #29: la sesión que la encargó por el MCP. No se persiste: tras reiniciar, la creadora ya no está viva.
+  readonly createdBy?: { readonly conversationId: string; readonly sessionId: string };
+  // Conversación creada fuera de la ventana (terminal o MCP): su cuenta es la de su sesión y no cambia al abrirla
+  // del historial ni al cambiar de cuenta (facturación). Se persiste.
+  readonly accountPinned?: boolean;
+  // U26: la delegada preguntó a su creadora con `mage_ask_creator` y espera respuesta. No se persiste.
+  readonly awaitingCreator?: boolean;
   readonly projectId?: string;
   // Historial de otra conversación (de otro proveedor) con el que arranca esta; se entrega UNA vez, al crear la sesión.
   readonly importedContext?: string;
@@ -110,6 +119,8 @@ export interface Tab {
 export interface AccountSwitchPrompt {
   readonly tabId: string;
   readonly destAccountId: string;
+  // Cuenta de la conversación al abrir el diálogo: el texto no puede depender de que la pestaña siga abierta.
+  readonly sourceAccountId: string;
 }
 
 // Skills y plugins cargados por una sesion (P-026 2.6), tal como los reporta su `system/init`.
@@ -155,6 +166,13 @@ export type Block =
       // estado viejo que tolerar, y un array obligatorio convierte en error de compilacion cualquier
       // constructor que se lo olvide.
       readonly attachments: readonly ImageAttachment[];
+      // Ruta de cada adjunto, alineada por índice con `attachments` (null = sin ruta), para copiar el mensaje con
+      // `[Imagen N](ruta)` (U51). Ausente en los bloques hidratados de la transcripción.
+      readonly attachmentPaths?: readonly (string | null)[];
+      // Id del mensaje ante su CLI (Claude: el `uuid` que Mage mandó o el de la transcripción; Codex: el
+      // id del item o el `clientUserMessageId`); null si no se conoce, y entonces la burbuja no ofrece
+      // rebobinar.
+      readonly nativeId: string | null;
     }
   | {
       readonly kind: 'tool';
@@ -180,6 +198,10 @@ export type Block =
       readonly artifactDraft: ArtifactDraft | null;
       // Subagente que la lanzo (`tool_use_id` de su Task/Agent); null en el agente principal (P-026 3.4).
       readonly parentToolUseId: string | null;
+      // Texto del plan de un ExitPlanMode (input.plan). Ausente en cualquier otra herramienta.
+      readonly planText?: string;
+      // Ficheros que toca (creado/editado/leído), calculados al crear el bloque (panel de Ficheros). Ausente si no toca ninguno.
+      readonly fileTouches?: readonly FileTouch[];
     }
   // Subagente (Task/Agent). `agentId` llega con el tool_result; hasta entonces no se puede abrir su
   // transcripcion. La anidacion no se modela (nivel 1), igual que en subagentView.ts.
@@ -240,8 +262,9 @@ export type Block =
       readonly prompt: string;
       readonly target: string;
       readonly summary: string;
-      // Ver `PermissionView.rememberable`; ausente = se puede recordar.
-      readonly rememberable?: boolean;
+      // Ver PermissionView.allowScopes y .rule; ausentes = ninguno.
+      readonly allowScopes?: readonly PermissionScope[];
+      readonly rule?: string | null;
       readonly state: 'pending' | 'allowed' | 'denied' | 'cancelled';
     }
   | { readonly kind: 'error'; readonly id: string; readonly message: string; readonly deniedCommand?: string }
@@ -259,9 +282,11 @@ export type Block =
 export interface PermissionView {
   readonly prompt: string; // "El agente quiere escribir en el proyecto:"
   readonly target: string; // "Write src/services/TokenService.ts"
-  readonly toolLabel: string; // "Write" (para "Permitir siempre X aqui")
-  // false = peticion de fuera del proyecto o de red (runtime propio): «Permitir siempre» no se ofrece.
-  readonly rememberable: boolean;
+  readonly toolLabel: string; // "Write"
+  // Alcances que se ofrecen además de «esta vez» (los decide main por motor; fuera del proyecto, ninguno) y la regla que
+  // guardaría «Permitir siempre», para su aviso.
+  readonly allowScopes: readonly PermissionScope[];
+  readonly rule: string | null;
   readonly diff: readonly DiffLine[];
   readonly summary: string; // "+14 −3 · 2 tests actualizados"
 }
@@ -292,6 +317,9 @@ export interface RateLimitNotice {
 export interface PendingAttachment {
   readonly attachment: ImageAttachment;
   readonly byteLength: number;
+  // Ruta del fichero si se añadió con el botón o soltándolo (U51); null si se pegó o se recuperó sin ella. Solo
+  // sirve para copiar el mensaje: nunca sale del renderer.
+  readonly sourcePath: string | null;
 }
 
 // Lo que el usuario lleva escrito en UNA conversacion y aun no ha enviado. Antes era estado local del
@@ -300,4 +328,6 @@ export interface PendingAttachment {
 export interface PromptDraft {
   readonly text: string;
   readonly attachments: readonly PendingAttachment[];
+  // Ficheros mencionados con @ (Q06): viven en el texto como `@ruta` y aqui como ficha.
+  readonly mentions: readonly MentionCandidate[];
 }

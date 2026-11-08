@@ -4,12 +4,22 @@ import {
   ACCOUNT_ACCENT_COUNT,
   CLOSE_BEHAVIORS,
   DEFAULT_APP_SETTINGS,
+  DEFAULT_DELEGATION,
+  DEFAULT_KEEP_ALIVE,
+  DELEGATION_DEPTH_MAX,
+  DELEGATION_DEPTH_MIN,
   DEFAULT_PERMISSION_MODES,
   IMPORTED_CONTEXT_LIMITS,
+  KEEP_ALIVE_MAX_PAUSE_MAX,
+  KEEP_ALIVE_MAX_PAUSE_MIN,
+  KEEP_ALIVE_MIN_CONTEXT_MAX,
+  KEEP_ALIVE_MIN_CONTEXT_MIN,
   NEW_CONVERSATION_FOLDERS,
   RUNTIME_SHELLS,
   SCRATCH_RETENTIONS,
   THEME_PREFERENCES,
+  ACCOUNT_AVATARS_PLACEMENTS,
+  SEPARATOR_CONTRASTS,
   UI_SCALE_MAX,
   UI_SCALE_MIN,
 } from '@shared/settings';
@@ -90,13 +100,34 @@ const CUSTOM_PROVIDER_SCHEMA = z.object({
   supportsTools: z.boolean().optional().catch(undefined),
 });
 
+// Keep-alive de la caché (F4.6). Ausente (fichero anterior) o basura -> el default, sin subir la versión; cada campo
+// cae a su default por separado y los enteros se acotan aquí también (el fichero es editable a mano).
+const DELEGATION_SCHEMA = z.object({
+  maxDepth: z.number().int().min(DELEGATION_DEPTH_MIN).max(DELEGATION_DEPTH_MAX).catch(DEFAULT_DELEGATION.maxDepth),
+}).catch(DEFAULT_DELEGATION);
+
+const KEEP_ALIVE_SCHEMA = z.object({
+  subscriptionEnabled: z.boolean().catch(DEFAULT_KEEP_ALIVE.subscriptionEnabled),
+  apiKeyEnabled: z.boolean().catch(DEFAULT_KEEP_ALIVE.apiKeyEnabled),
+  minContextTokens: z.number().int().min(KEEP_ALIVE_MIN_CONTEXT_MIN).max(KEEP_ALIVE_MIN_CONTEXT_MAX).catch(DEFAULT_KEEP_ALIVE.minContextTokens),
+  maxPauseHours: z.number().int().min(KEEP_ALIVE_MAX_PAUSE_MIN).max(KEEP_ALIVE_MAX_PAUSE_MAX).catch(DEFAULT_KEEP_ALIVE.maxPauseHours),
+}).catch(DEFAULT_KEEP_ALIVE);
+
 const APP_SETTINGS_SCHEMA = z.object({
   version: z.number(),
   notificationRules: z.array(NOTIFICATION_RULE_SCHEMA),
   chatProjects: z.array(CHAT_PROJECT_SCHEMA).catch([]),
+  // Ids de conversación fijadas/archivadas: un valor que no sea array de cadenas no vacías cae a [].
+  pinnedConversations: z.array(z.string().min(1)).catch([]),
+  archivedConversations: z.array(z.string().min(1)).catch([]),
   // theme opcional en disco: ficheros antiguos (sin la clave) y valores invalidos caen a 'dark' via
   // .catch (frontera laxa; el default preserva el aspecto oscuro actual).
   theme: z.enum(THEME_PREFERENCES).catch('dark'),
+  // Colocación de los avatares y contraste de separaciones: un valor inválido cae al defecto.
+  accountAvatarsPlacement: z.enum(ACCOUNT_AVATARS_PLACEMENTS).catch('top'),
+  separatorContrast: z.enum(SEPARATOR_CONTRASTS).catch('normal'),
+  // Entero >= 0; cualquier otra cosa cae a 0 (se reaplicarían los defaults del dock una vez).
+  dockDefaultsVersion: z.number().int().min(0).catch(0),
   // widgetEnabled opcional en disco: ficheros antiguos (sin la clave) o valores invalidos caen a
   // false via .catch (widget apagado por defecto, opt-in).
   widgetEnabled: z.boolean().catch(false),
@@ -172,6 +203,8 @@ const APP_SETTINGS_SCHEMA = z.object({
     .catch({}),
   // Idioma (F3). Ausente o basura -> ausente: «sin preferencia», que hereda la inicial o sigue al sistema.
   uiLanguage: z.enum(UI_LANGUAGE_PREFERENCES).optional().catch(undefined),
+  keepAlive: KEEP_ALIVE_SCHEMA,
+  delegation: DELEGATION_SCHEMA,
 });
 
 export class SettingsStore {

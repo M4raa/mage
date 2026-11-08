@@ -1,9 +1,10 @@
-// T4 de DEVOLUCION-018: volcado del texto del DOM por comprobación de `verify:gui`, SOLO durante F3 y solo con la
+// Volcado del texto del DOM por comprobación de `verify:gui`, SOLO durante F3 y solo con la
 // opción explícita `--dump-dom-text=<fichero.jsonl>`. No es una comprobación permanente: daría falsos fallos con cada
 // cambio de texto intencionado. Sirve para el criterio de F3.2: el texto en «es» es idéntico antes y después de
 // extraer las claves. Se compara con `node scripts/compare-dom-text.mjs antes.jsonl despues.jsonl`.
 
 import fs from 'node:fs';
+import { redactLocalUser } from './redactUserData.mjs';
 
 // Atributos que la extracción también mueve al catálogo (los visibles y los de accesibilidad).
 export const DUMPED_ATTRIBUTES = ['aria-label', 'title', 'placeholder', 'alt', 'aria-description', 'aria-valuetext', 'data-tip'];
@@ -45,7 +46,9 @@ export function collectDomText({ attributes, excluded }) {
 
 export async function appendDomText(page, file, name) {
   const dump = await page.evaluate(collectDomText, { attributes: DUMPED_ATTRIBUTES, excluded: EXCLUDED_SUBTREES });
-  fs.appendFileSync(file, JSON.stringify({ name, ...dump }) + '\n');
+  // El HOME y el usuario de Windows no salen al fichero (V6), ni en el texto ni en los atributos.
+  const redacted = { text: redactLocalUser(dump.text), attrs: dump.attrs.map((attr) => redactLocalUser(attr)) };
+  fs.appendFileSync(file, JSON.stringify({ name, ...redacted }) + '\n');
 }
 
 // Lo que cambia entre dos tandas SIN que cambie ningún texto: relojes, duraciones, contadores, ids y rutas temporales.
@@ -116,7 +119,7 @@ export function diffAttrs(before, after) {
   return diffByName(before, after, (a, b) => diffLines(attrsOf(a), attrsOf(b)));
 }
 
-// Fragmento de cada lado alrededor de la primera posición que difiere (como en la sonda de INFORME-037).
+// Fragmento de cada lado alrededor de la primera posición que difiere.
 const FRAGMENT_BEFORE_CHARS = 60;
 const FRAGMENT_AFTER_CHARS = 80;
 function fragmentsAroundFirstDifference(a, b) {

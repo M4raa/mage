@@ -6,6 +6,9 @@ import { severityForPct, type UsageSeverity } from '../usageView';
 import { UsagePopover } from './UsagePopover';
 import { reportActionError } from '../notificationStore';
 import { providerLabel } from '../accountView';
+import { conversationIdOfTab } from '../conversationId';
+import { conversationSizeById } from '../sidebarModel';
+import { formatSize } from '../conversationList';
 import type { Account } from '../types';
 import type { StatusIndicator, StatusInfo } from '@shared/status';
 import { formatMicroUsd } from '@shared/usage';
@@ -113,6 +116,12 @@ function AppVersion(): React.JSX.Element | null {
 function AccountStatus({ account, provider }: { readonly account: Account; readonly provider: string }): React.JSX.Element {
   const t = useT();
   const { fiveHour, weekly } = account.usage;
+  // Peso de la conversación de la pestaña activa (sale de la fila del lateral): primitivo, así que solo repinta si cambia.
+  const sizeBytes = useWorkbenchStore((s) => {
+    const tab = s.tabs.find((candidate) => candidate.id === s.activeTabId);
+    const id = tab === undefined ? undefined : conversationIdOfTab(tab, s.sessionIdByChat[tab.id]);
+    return id === undefined ? 0 : (conversationSizeById(s.allConversationHistory).get(id) ?? 0);
+  });
   const apiUsage = useWorkbenchStore((s) => s.usageByAccount[account.id]?.apiUsage);
   // Severidad global de la cuenta: la peor de sus ventanas (para el aviso ⚠/⛔ en la barra).
   const severity = worst(severityForPct(fiveHour.pct), severityForPct(weekly.pct));
@@ -155,6 +164,11 @@ function AccountStatus({ account, provider }: { readonly account: Account; reado
           <UsagePopover />
         </div>
       </div>
+      {sizeBytes > 0 && (
+        <span data-status-size="true" data-volatile-text="true" title={t('sidebar.history.sizeOnDisk', { bytes: formatInteger(sizeBytes) })} className="-ml-[8px]">
+          <span aria-hidden="true">· </span>{formatSize(sizeBytes)}
+        </span>
+      )}
     </>
   );
 }

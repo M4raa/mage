@@ -2,10 +2,13 @@ import { z } from 'zod';
 import {
   CONVERSATION_INDEX_VERSION,
   MAX_ARTIFACTS,
+  MAX_CREATOR_CHAIN,
   type ArtifactRecord,
+  type DelegationRecord,
   type ConversationPrefs,
 } from '@shared/conversationIndex';
 import type { ConversationId, NativeSessionRef } from '@shared/coordination';
+import type { PermissionMode } from '@shared/ipc';
 import { writeAtomic, type AtomicWriteDeps } from '../os/atomicFile';
 
 // Persistencia del indice propio de Mage por conversacion (2.1) y del registro de artifacts (2.4), en
@@ -26,6 +29,17 @@ import { writeAtomic, type AtomicWriteDeps } from '../os/atomicFile';
 export interface ConversationEntry extends ConversationPrefs {
   readonly nativeRef?: NativeSessionRef;
   readonly lastSeq?: number;
+  readonly createdBy?: NonNullable<DelegationRecord['createdBy']>;
+  readonly creatorChain?: readonly string[];
+}
+
+// Cómo se lanzó una sesión del host: su cuenta (la dueña), su CLI y lo que la ventana necesita para reabrirla igual.
+export interface HostSessionRecord {
+  readonly accountId: string;
+  readonly provider: string;
+  readonly model: string;
+  readonly effort?: string;
+  readonly permissionMode?: PermissionMode;
 }
 
 export interface ConversationIndexFile {
@@ -40,13 +54,17 @@ const LEGACY_INDEX_VERSION = 1;
 // (comprueba la version), asi que volver atras pierde las preferencias si no hay copia.
 const LEGACY_BACKUP_SUFFIX = '.v1.bak';
 
-const PREF_KEYS = ['model', 'effort', 'permissionMode', 'provider', 'alwaysAllowTools'] as const;
+const PREF_KEYS = ['model', 'effort', 'permissionMode', 'provider', 'accountId', 'alwaysAllowTools', 'hostOwnerAccountId'] as const;
 
 const PREFS_SCHEMA = z.object({
   model: z.string().min(1).optional(),
   effort: z.string().min(1).optional(),
   permissionMode: z.enum(['default', 'acceptEdits', 'plan', 'auto', 'bypassPermissions']).optional().catch(undefined),
   provider: z.string().min(1).optional().catch(undefined),
+  // Última cuenta con la que se usó la conversación (lateral de todas las cuentas).
+  accountId: z.string().min(1).optional().catch(undefined),
+  // Cuenta dueña de una conversación creada por el host (la escribe solo `recordHostSession`).
+  hostOwnerAccountId: z.string().min(1).optional().catch(undefined),
   // "Permitir siempre <tool> aqui" (2.3b).
   alwaysAllowTools: z.array(z.string().min(1)).optional(),
 });
@@ -56,6 +74,8 @@ const NATIVE_REF_SCHEMA = z.object({ provider: z.string().min(1), accountDir: z.
 const ENTRY_SCHEMA = PREFS_SCHEMA.extend({
   nativeRef: NATIVE_REF_SCHEMA.optional().catch(undefined),
   lastSeq: z.number().int().nonnegative().optional().catch(undefined),
+  createdBy: z.object({ conversationId: z.string().min(1), requestId: z.string().min(1), at: z.string().datetime() }).optional().catch(undefined),
+  creatorChain: z.array(z.string().min(1)).max(MAX_CREATOR_CHAIN).optional().catch(undefined),
 });
 
 const ARTIFACT_SCHEMA = z.object({
@@ -105,6 +125,24 @@ export class ConversationIndexStore {
     this.write({ ...index, conversations: { ...index.conversations, [key]: merged } });
   }
 
+  // Conversación de una sesión del host: guarda su cuenta, modelo, esfuerzo y modo como preferencias y la marca como de
+  // esa cuenta. Claude no se apunta como proveedor (igual que hace la ventana). `id` es el ConversationId o el nativo.
+  recordHostSession(id: string, record: HostSessionRecord): void {
+    if (id.length === 0) throw new Error(`id vacio al guardar la sesion del host: ${JSON.stringify(id)}`);
+    if (record.accountId.length === 0) throw new Error(`cuenta vacia en la sesion del host ${id}`);
+    const index = this.read();
+    const key = keyFor(index, id);
+    const prefs: ConversationPrefs = {
+      accountId: record.accountId,
+      model: record.model,
+      ...(record.effort === undefined ? {} : { effort: record.effort }),
+      ...(record.permissionMode === undefined ? {} : { permissionMode: record.permissionMode }),
+      ...(record.provider === 'claude' ? {} : { provider: record.provider }),
+    };
+    const merged: ConversationEntry = { ...mergePrefs(index.conversations[key], prefs), hostOwnerAccountId: record.accountId };
+    this.write({ ...index, conversations: { ...index.conversations, [key]: merged } });
+  }
+
   // Olvida una conversacion (la borra `ConversationsDelete`). No-op si no estaba.
   forgetConversation(id: string): void {
     const index = this.read();
@@ -139,6 +177,25 @@ export class ConversationIndexStore {
 
   nativeRefOf(conversationId: ConversationId): NativeSessionRef | null {
     return this.read().conversations[conversationId]?.nativeRef ?? null;
+  }
+
+  // Quien creo esta conversacion por delegacion (H3). Escribe los dos campos en la entrada, que crea si no
+  // existe; las preferencias de la entrada siguen.
+  recordDelegation(conversationId: ConversationId, record: DelegationRecord): void {
+    if (record.creatorChain.length > MAX_CREATOR_CHAIN) {
+      throw new Error(`creatorChain demasiado larga (${record.creatorChain.length} > ${MAX_CREATOR_CHAIN}) en ${conversationId}`);
+    }
+    const index = this.read();
+    const entry = { ...index.conversations[conversationId], creatorChain: [...record.creatorChain] };
+    const { createdBy: _previous, ...rest } = entry;
+    const next: ConversationEntry = record.createdBy === null ? rest : { ...rest, createdBy: record.createdBy };
+    this.write({ ...index, conversations: { ...index.conversations, [conversationId]: next } });
+  }
+
+  // Lo guardado, o conversacion manual si no hay nada.
+  delegationOf(conversationId: ConversationId): DelegationRecord {
+    const entry = this.read().conversations[conversationId];
+    return { createdBy: entry?.createdBy ?? null, creatorChain: entry?.creatorChain ?? [] };
   }
 
   recordArtifact(url: string, record: ArtifactRecord): void {
@@ -224,7 +281,7 @@ function prefsOf(entry: ConversationEntry): ConversationPrefs | null {
 // Fusion campo a campo: `undefined` conserva lo que hubiera; cadena vacia borra.
 function mergePrefs(current: ConversationEntry | undefined, incoming: ConversationPrefs): ConversationEntry {
   const merged: Record<string, unknown> = { ...current };
-  for (const key of ['model', 'effort', 'permissionMode', 'provider'] as const) {
+  for (const key of ['model', 'effort', 'permissionMode', 'provider', 'accountId'] as const) {
     const value = incoming[key];
     if (value === undefined) continue;
     if (value.length === 0) delete merged[key];

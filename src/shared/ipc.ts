@@ -2,17 +2,21 @@
 // El preload expone estos canales como `window.mage.*`; si cambia una firma, el compilador
 // rompe en ambos lados. El renderer NUNCA accede a Node/procesos: todo pasa por aqui.
 
+import type { BrowserBounds, BrowserEntryState, BrowserPenCapture, BrowserPenResult, BrowserPenStroke } from './browser';
 import type { ConversationLockParams, ConversationLockRef, ConversationLockStatus } from './conversationLock';
 import type { ResolvedUiLanguage } from './i18n/language';
 import type { LocalizedText } from './i18n/localizedText';
 import type { GitParams, GitSnapshot, GitSwitchParams } from './git';
 import type { WorktreeCreateParams, WorktreeMergeBaseParams, WorktreeRemoveResult } from './worktree';
+import type { PrCatalogEntry, PrCatalogLinkParams, PrCatalogUnlinkParams, PrDetail, PrListParams, PrListResult, PrMigrateParams, PrReadParams, PrWriteParams, PrWriteResult } from './pr';
 import type { GhAutoMergeParams, GhPrUpdate, GhRunActionParams, GhRunsParams, GhRunsSnapshot, GhSnapshot, GhWatchParams } from './gh';
+import type { TaskDraft, TaskRecord } from './tasks';
 import type { AccountCreateParams, AccountInfo, AccountProviderId, AgyLoginStart, CliLoginStart, CodexLoginOutcome, EmbeddedLoginResult } from './accounts';
 import type { ProviderModel } from './providers';
 import type { AgyUsageSnapshot } from './usage';
 import type { MageEvent, PermissionDecision, SlashCommandInfo } from './events';
 import type { ArtifactRecord, ConversationPrefs } from './conversationIndex';
+import type { MentionPreview, MentionPreviewParams, MentionResolution, MentionResolveParams, MentionSearchParams, MentionSearchResult } from './mentions';
 import type { AnswerReceipt, CloseReceipt, ConversationId, ConversationSnapshot, QueuedMessage, SendMode, SendReceipt } from './coordination';
 import type { UsageInfo } from './usage';
 import type { StatusInfo } from './status';
@@ -23,7 +27,7 @@ import type { ConversationPrivacy, PersistedWorkspace } from './state';
 import type { AppSettings } from './settings';
 import type { ElicitationAnswer } from './elicitation';
 import type { UpdateState } from './update';
-import type { WidgetSnapshot } from './widget';
+import type { WidgetAnswer, WidgetPrefs, WidgetSessionsPayload, WidgetSnapshot } from './widget';
 import type { FetchThemeParams, FetchedVscodeTheme, ThemeSearchItem } from './themeMarket';
 import type { PanelLayoutState, PanelPlacement } from './panelLayout';
 import type {
@@ -101,6 +105,10 @@ export const IpcChannel = {
   SessionQueueRemove: 'session:queueRemove',
   SessionQueueTake: 'session:queueTake',
   SessionQueueUpdate: 'session:queueUpdate',
+  // Rewind (F4.4/F4.5): planificar, rebobinar (o reintentar) y divergir desde una burbuja de usuario.
+  SessionRewindPlan: 'session:rewindPlan',
+  SessionRewindApply: 'session:rewindApply',
+  SessionDiverge: 'session:diverge',
   SessionSetModel: 'session:setModel',
   SessionSetEffort: 'session:setEffort',
   SessionSetPermissionMode: 'session:setPermissionMode',
@@ -110,6 +118,9 @@ export const IpcChannel = {
   SessionClose: 'session:close',
   // F2.1: instantanea de solo lectura de una sesion viva (identidad, estado y ultima secuencia).
   SessionSnapshot: 'session:snapshot',
+  // U17: sesiones del host (terminal/MCP) sin ventana, y adoptar una como pestaña.
+  SessionsAdoptable: 'sessions:adoptable',
+  SessionAttach: 'session:attach',
   SessionGetScratchDir: 'session:getScratchDir',
   // La RAIZ de los borradores, sin crear nada (a diferencia de la de arriba, que acuña una carpeta).
   SessionGetScratchRoot: 'session:getScratchRoot',
@@ -191,10 +202,17 @@ export const IpcChannel = {
   ProjectFileApproveOutside: 'projectFile:approveOutside',
   // Historial de conversaciones en disco de una cuenta (M2.6, sidebar = historial).
   ConversationsList: 'conversations:list',
+  // Menciones @ de ficheros de la carpeta (Q05): buscar, resolver al enviar y vista previa; todo en main.
+  MentionsSearch: 'mentions:search',
+  MentionsResolve: 'mentions:resolve',
+  MentionsPreview: 'mentions:preview',
   // Administracion de conversaciones (#2 de AJUSTES): borrar y mover entre secciones/cuentas.
   ConversationsDelete: 'conversations:delete',
   ConversationsMove: 'conversations:move',
   ConversationsMigrate: 'conversations:migrate',
+  // Conversaciones de Codex en formato legacy (K06, U13): si lo son y actualizarlas (con copia previa).
+  ConversationsCodexLegacyStatus: 'conversations:codexLegacyStatus',
+  ConversationsCodexLegacyUpdate: 'conversations:codexLegacyUpdate',
   StateLoad: 'state:load',
   StateSave: 'state:save',
   SettingsLoad: 'settings:load',
@@ -213,6 +231,16 @@ export const IpcChannel = {
   GhRuns: 'gh:runs',
   GhRunAction: 'gh:runAction',
   GhAutoMerge: 'gh:autoMerge',
+  // Panel de PR por clave (F5.5): listado, detalle, diff, escrituras atadas al head esperado y catalogo.
+  PrList: 'pr:list',
+  PrDetail: 'pr:detail',
+  PrDiff: 'pr:diff',
+  PrWrite: 'pr:write',
+  PrCatalogList: 'pr:catalogList',
+  PrCatalogLink: 'pr:catalogLink',
+  PrCatalogUnlink: 'pr:catalogUnlink',
+  PrMigrate: 'pr:migrate',
+  PrRepoOf: 'pr:repoOf',
   // Worktrees de Mage (grupo D, bloque 3): crear al empezar, recrear al reabrir, archivar y traer la base.
   WorktreeCreate: 'worktree:create',
   WorktreeRestore: 'worktree:restore',
@@ -225,6 +253,12 @@ export const IpcChannel = {
   WidgetSetEnabled: 'widget:setEnabled',
   WidgetUpdate: 'widget:update',
   WidgetActivateTab: 'widget:activateTab',
+  // Widget acompañante (F9): contestar una petición, detener, ir a la conversación y preferencias propias.
+  WidgetAnswer: 'widget:answer',
+  WidgetInterrupt: 'widget:interrupt',
+  WidgetOpenSession: 'widget:openSession',
+  WidgetGetPrefs: 'widget:getPrefs',
+  WidgetSetPrefs: 'widget:setPrefs',
   // Mercado de temas Open VSX (M3): buscar y traer un tema de color de VS Code.
   ThemeMarketSearch: 'themeMarket:search',
   ThemeMarketFetch: 'themeMarket:fetch',
@@ -301,6 +335,36 @@ export const IpcChannel = {
   UpdateGetState: 'update:getState',
   UpdateInstall: 'update:install',
   UpdateCheck: 'update:check',
+  // Keep-alive de la cache de Claude (F4.6): cuantos se hicieron y cuanto costaron.
+  KeepAliveStats: 'keepAlive:stats',
+  // Biblioteca de capacidades (F6).
+  LibraryView: 'library:view',
+  LibraryPreview: 'library:preview',
+  LibraryApply: 'library:apply',
+  // Modo de tareas (F8).
+  TasksList: 'tasks:list',
+  TasksCreate: 'tasks:create',
+  TasksVerify: 'tasks:verify',
+  TasksRemove: 'tasks:remove',
+  TasksPickFolders: 'tasks:pickFolders',
+  TasksPickDocuments: 'tasks:pickDocuments',
+  TasksSaveCopy: 'tasks:saveCopy',
+  // Registro del servidor MCP de Mage en las cuentas de Claude y Codex (H4).
+  McpRegistrationStatus: 'mcp:registrationStatus',
+  McpRegister: 'mcp:register',
+  McpUnregister: 'mcp:unregister',
+  // Navegador de Mage (F11b.3).
+  BrowserList: 'browser:list',
+  BrowserOpen: 'browser:open',
+  BrowserNavigate: 'browser:navigate',
+  BrowserBack: 'browser:back',
+  BrowserReload: 'browser:reload',
+  BrowserClose: 'browser:close',
+  BrowserSetBounds: 'browser:set-bounds',
+  BrowserTakeControl: 'browser:take-control',
+  BrowserReturnControl: 'browser:return-control',
+  BrowserPenCapture: 'browser:pen-capture',
+  BrowserPenCompose: 'browser:pen-compose',
 } as const;
 
 export type IpcChannel = (typeof IpcChannel)[keyof typeof IpcChannel];
@@ -359,6 +423,11 @@ export interface CreateSessionParams {
   readonly projectInstructions?: string;
   // Historial de otra conversación (de otro proveedor) con el que arranca esta; main lo suma a las instrucciones.
   readonly contextImport?: string;
+  // Divergir (solo Claude): la conversacion nueva sale de `sessionId` cortada en el mensaje `atUuid`. Lo rellena el
+  // renderer con lo que devuelve main al Divergir; excluyente con `resumeSessionId`.
+  readonly forkFrom?: { readonly sessionId: string; readonly atUuid: string };
+  // F8: id de la tarea cuya PRIMERA sesión es esta (lo manda `startTask`); main enlaza por él. Ausente = no es una tarea, o se reanuda (entonces enlaza `resumeSessionId`).
+  readonly taskId?: string;
 }
 
 // Resultado de crear una sesion: el id y el config dir EFECTIVO con el que se lanzo (la cuenta o su
@@ -395,11 +464,45 @@ export interface UpdateQueuedMessageParams {
   readonly text: string;
 }
 
+// Burbuja de usuario que el renderer quiere rebobinar, reintentar o divergir (D-K2 de DISENO-K).
+export interface RewindPointRef { readonly userIndex: number; readonly text: string; readonly nativeId: string | null }
+export type RewindAction = 'rewind' | 'retry' | 'diverge';
+export type RewindUnavailableReason = 'unsupported' | 'background' | 'legacy' | 'notFound' | 'midTurn' | 'busy';
+export interface RewindPlanParams { readonly sessionId: string; readonly point: RewindPointRef; readonly action: RewindAction }
+export interface RewindFilesPlan { readonly available: boolean; readonly changed: readonly string[]; readonly insertions: number; readonly deletions: number }
+export interface RewindPlan {
+  readonly provider: string;
+  readonly unavailable: RewindUnavailableReason | null;   // null = se puede
+  readonly discardedMessages: number;                      // mensajes de usuario desde el punto (incluido)
+  readonly files: RewindFilesPlan | null;                  // solo Claude y no en 'diverge'; null en Codex
+  readonly recoverable: boolean;                           // Claude: lo descartado sigue en la transcripcion; Codex: no
+  readonly turnRunning: boolean;
+  readonly queuedCount: number;
+  readonly pendingCount: number;
+  readonly canSaveCopy: boolean;                           // Codex, no en 'diverge' (U3)
+}
+export interface RewindApplyParams {
+  readonly sessionId: string; readonly point: RewindPointRef; readonly action: 'rewind' | 'retry';
+  readonly restoreFiles: boolean; readonly saveCopy: boolean; readonly attachments?: readonly ImageAttachment[];
+}
+export interface RewindApplyResult {
+  readonly draft: string;                                  // texto para el cuadro de texto ('' en retry)
+  readonly returnedQueue: readonly QueuedMessage[];        // la cola que vuelve a borradores
+  readonly filesRestored: boolean;
+  readonly copyThreadId: string | null;                    // Codex con «Guardar una copia antes»
+  readonly projection: TranscriptBatch | null;             // la conversacion vigente tras rebobinar (Claude: su rama activa; Codex: sus turnos); null si no se pudo releer
+  readonly retried: SendReceipt | null;
+}
+export interface DivergeParams { readonly sessionId: string; readonly point: RewindPointRef }
+export type DivergeResult =
+  | { readonly kind: 'claude'; readonly forkFrom: { readonly sessionId: string; readonly atUuid: string } }
+  | { readonly kind: 'codex'; readonly threadId: string };
+
 // Imagen adjunta a un mensaje del usuario. Vive en el contrato IPC porque cruza main<->renderer; la
 // validacion (tipos permitidos y topes de tamaño) es del modulo puro `attachments.ts`, y se aplica en
 // los DOS lados: el renderer para dar un error bonito, main porque es la frontera de verdad.
 export interface ImageAttachment {
-  readonly mediaType: 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif';
+  readonly mediaType: 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif' | 'application/pdf';
   readonly data: string;
 }
 
@@ -460,6 +563,20 @@ export interface OpenTranscriptParams {
   // I5: reanuda desde esta posicion en vez de leer desde el principio (lectura incremental/tail).
   // Ausente o `TRANSCRIPT_TAIL_START` = comportamiento de siempre (todo el fichero).
   readonly resumeFrom?: TranscriptTailPosition;
+}
+
+// Un hilo de Codex de una cuenta: main resuelve el CODEX_HOME por la cuenta, nunca una ruta del renderer.
+export interface CodexThreadParams {
+  readonly accountDir: string;
+  readonly threadId: string;
+}
+
+export interface CodexLegacyStatus {
+  readonly legacy: boolean;
+}
+
+export interface CodexLegacyUpdateResult {
+  readonly backupDir: string;
 }
 
 // La memoria es por PROYECTO (cwd), no por sesión: se identifica por la cuenta activa + cwd (main
@@ -586,6 +703,25 @@ export interface LoadPanelLayoutParams {
 
 export const EVENT_CHANNEL = 'session:event';
 
+// Main avisa a la ventana principal de una sesión nueva sin ventana (U17).
+export const SESSION_ADOPTABLE_CHANNEL = 'session:adoptable';
+
+// Sesión viva sin ventana (la creó el host: la terminal o el MCP) que la ventana principal puede adoptar como pestaña (U17).
+export interface AdoptableSession {
+  readonly sessionId: string;
+  readonly conversationId: string | null;   // null hasta que el proveedor dice su id nativo
+  readonly nativeId: string | null;         // id de la transcripción (Claude) o del hilo (Codex); null hasta entonces
+  readonly provider: string;
+  readonly accountId: string;               // la cuenta (su config dir), como `Tab.accountId`
+  readonly configDir: string;               // el config dir EFECTIVO con el que se lanzó
+  readonly cwd: string;
+  readonly model: string;
+  readonly effort?: string;
+  readonly permissionMode?: PermissionMode;
+  readonly origin: 'terminal' | 'mcp';
+  readonly createdBy: { readonly conversationId: string; readonly sessionId: string } | null;  // la M05 lo rellena para el MCP; `sessionId` es el VIVO de la creadora
+}
+
 export interface SessionEventPayload {
   readonly sessionId: string;
   readonly event: MageEvent;
@@ -604,6 +740,10 @@ export const TRANSCRIPT_BATCH_CHANNEL = 'transcript:batch';
 // pintar). WIDGET_FOCUS_TAB: main -> renderer principal (activar la pestana clicada en el widget).
 export const WIDGET_SNAPSHOT_CHANNEL = 'widget:snapshot';
 export const WIDGET_FOCUS_TAB_CHANNEL = 'widget:focusTab';
+// main -> ventana del widget: las sesiones vivas del coordinador con sus peticiones (F9).
+export const WIDGET_SESSIONS_CHANNEL = 'widget:sessions';
+// main -> widget y todas las ventanas (Ajustes): las preferencias del widget cambiaron (F9).
+export const WIDGET_PREFS_CHANNEL = 'widget:prefs';
 // main -> renderer: el usuario pulso una notificacion de Mage; payload `NotificationTarget` (P-028 40).
 export const NOTIFICATION_CLICKED_CHANNEL = 'notification:clicked';
 // main -> renderer principal: la preferencia del widget cambio FUERA del renderer (toggle del tray o
@@ -816,6 +956,27 @@ export type DropTabOutcome = 'moved' | 'none';
 
 // --- API tipada que el preload expone en window.mage ------------------------------------------
 
+// Lo que Mage lleva gastado en keep-alive de la cache (suma de todas las conversaciones; coste en micro-USD enteros).
+export interface KeepAliveStats {
+  readonly count: number;
+  readonly cacheReadTokens: number;
+  readonly cacheCreationTokens: number;
+  readonly costMicroUsd: number;
+}
+
+// Registro del servidor MCP de Mage en una cuenta (H4).
+export interface McpRegistrationEntry {
+  readonly accountId: string;
+  readonly accountName: string;
+  readonly provider: 'claude' | 'codex';
+  readonly registered: boolean;
+}
+
+export interface McpRegistrationResult {
+  readonly entries: readonly McpRegistrationEntry[];
+  readonly failures: readonly { readonly accountId: string; readonly message: string }[];
+}
+
 export interface MageApi {
   // ¿Corre este renderer en el sandbox de Chromium? (`process.sandboxed` del preload; F2.6). Solo lo lee verify:gui.
   readonly sandboxed: boolean;
@@ -833,6 +994,16 @@ export interface MageApi {
   removeQueuedMessage(params: QueuedMessageParams): Promise<QueuedMessage | null>;
   // Cambia el texto de un mensaje de la cola sin moverlo y lo devuelve (null si ya no estaba).
   updateQueuedMessage(params: UpdateQueuedMessageParams): Promise<QueuedMessage | null>;
+  // Rewind (F4.4/F4.5): lo que se descartaria, la aplicacion (rebobinar o reintentar) y la rama nueva.
+  rewindPlan(params: RewindPlanParams): Promise<RewindPlan>;
+  rewindApply(params: RewindApplyParams): Promise<RewindApplyResult>;
+  // Keep-alive de la cache de Claude (F4.6): totales de lo que se hizo y lo que costo.
+  keepAliveStats(): Promise<KeepAliveStats>;
+  // Servidor MCP de Mage (H4): estado por cuenta, registrar y quitar en todas.
+  mcpRegistrationStatus(): Promise<McpRegistrationResult>;
+  registerMageMcp(): Promise<McpRegistrationResult>;
+  unregisterMageMcp(): Promise<McpRegistrationResult>;
+  divergeConversation(params: DivergeParams): Promise<DivergeResult>;
   // Vacía la cola de main y devuelve sus mensajes.
   takeQueuedMessages(sessionId: string): Promise<readonly QueuedMessage[]>;
   // Cambia el modelo de una sesion viva (M2.4, solo Claude); aplica al siguiente turno.
@@ -902,6 +1073,12 @@ export interface MageApi {
   openEditor(params: OpenEditorParams): Promise<void>;
   // Suscripcion a eventos; devuelve funcion para desuscribir.
   onSessionEvent(listener: (payload: SessionEventPayload) => void): () => void;
+  // Sesiones del host sin ventana que esta ventana puede adoptar (U17).
+  listAdoptableSessions(): Promise<readonly AdoptableSession[]>;
+  // Adopta una sesión del host: suscribe esta ventana a sus eventos y devuelve la instantánea (U17).
+  attachSession(sessionId: string): Promise<ConversationSnapshot>;
+  // Aviso de una sesión del host nueva y adoptable; devuelve función para desuscribir (U17).
+  onSessionAdoptable(listener: (session: AdoptableSession) => void): () => void;
   // Cuentas: descubrir en disco, crear una nueva, y lanzar el login interactivo (terminal externa).
   listAccounts(): Promise<readonly AccountInfo[]>;
   confirmCodexAccounts(): Promise<readonly AccountInfo[]>;
@@ -950,6 +1127,17 @@ export interface MageApi {
   ghRuns(params: GhRunsParams): Promise<GhRunsSnapshot>;
   ghRunAction(params: GhRunActionParams): Promise<void>;
   ghAutoMerge(params: GhAutoMergeParams): Promise<void>;
+  // Panel de PR (F5.5). Las escrituras llevan el head que el usuario vio y devuelven `conflict` si cambio.
+  listPrs(params: PrListParams): Promise<PrListResult>;
+  prDetail(params: PrReadParams): Promise<PrDetail>;
+  prDiff(params: PrReadParams): Promise<{ readonly patch: string; readonly truncated: boolean }>;
+  writePr(params: PrWriteParams): Promise<PrWriteResult>;
+  listPrCatalog(conversationId?: string): Promise<readonly PrCatalogEntry[]>;
+  linkPr(params: PrCatalogLinkParams): Promise<void>;
+  unlinkPr(params: PrCatalogUnlinkParams): Promise<void>;
+  migrateTabPr(params: PrMigrateParams): Promise<string | null>;
+  // Repo de GitHub de la carpeta de una pestaña (null sin remoto o si no es github.com).
+  prRepoOf(params: GitParams): Promise<{ readonly host: string; readonly owner: string; readonly repo: string } | null>;
   onGhPrUpdate(listener: (update: GhPrUpdate) => void): () => void;
   // Worktrees (grupo D). `worktreeCreate` da null si la carpeta no es la raiz del repo.
   worktreeCreate(params: WorktreeCreateParams): Promise<{ readonly path: string; readonly branch: string } | null>;
@@ -983,10 +1171,17 @@ export interface MageApi {
   // Lista las conversaciones EN DISCO de una cuenta (M2.6, sidebar = historial): compartidas (pozo
   // comun) + privadas (perfil mage-private), mas recientes primero. Solo metadatos (sin contenido).
   listConversations(accountDir: string): Promise<readonly ConversationSummary[]>;
+  // Menciones @ (Q05): candidatos de la carpeta, resolucion por motor justo al enviar y vista previa.
+  searchMentions(params: MentionSearchParams): Promise<MentionSearchResult>;
+  resolveMentions(params: MentionResolveParams): Promise<MentionResolution>;
+  previewMention(params: MentionPreviewParams): Promise<MentionPreview>;
   deleteConversation(params: DeleteConversationParams): Promise<void>;
   moveConversation(params: MoveConversationParams): Promise<MoveConversationResult>;
   // Sigue la MISMA conversación en una cuenta de otro proveedor (formato nativo del destino); la de origen se retira.
   migrateConversation(params: MigrateConversationParams): Promise<MigrateConversationResult>;
+  // ¿Está el hilo de Codex en formato legacy? Y su actualización (copia previa en la carpeta de copias de Mage).
+  codexLegacyStatus(params: CodexThreadParams): Promise<CodexLegacyStatus>;
+  updateLegacyCodexConversation(params: CodexThreadParams): Promise<CodexLegacyUpdateResult>;
   // Persistencia del workspace (M2.5): lista de pestanas + activa. null si nunca se guardo o el
   // fichero esta corrupto (arranque limpio). El contenido de las conversaciones NO se guarda aqui.
   loadWorkspace(): Promise<PersistedWorkspace | null>;
@@ -1055,6 +1250,19 @@ export interface MageApi {
   // Suscripcion al cambio de preferencia hecho fuera del renderer (toggle del tray / cierre de la
   // ventana). El renderer principal actualiza su estado y persiste (unico escritor de settings).
   onWidgetEnabledChanged(listener: (enabled: boolean) => void): () => void;
+  // Widget acompañante (F9). Contesta una petición pendiente; la respuesta única la garantiza el coordinador de main.
+  answerFromWidget(answer: WidgetAnswer): Promise<AnswerReceipt>;
+  // Detiene el turno de una sesión desde el widget (main lo rechaza si hay mensajes en cola).
+  interruptFromWidget(sessionId: string): Promise<void>;
+  // Lleva a la ventana de Mage a la conversación de esa sesión (fire-and-forget).
+  openSessionFromWidget(sessionId: string): void;
+  // Preferencias propias del widget (vista expandida y No molestar).
+  getWidgetPrefs(): Promise<WidgetPrefs>;
+  setWidgetPrefs(patch: Partial<WidgetPrefs>): Promise<WidgetPrefs>;
+  // Suscripción a las sesiones que main empuja al widget. Devuelve función para desuscribir.
+  onWidgetSessions(listener: (payload: WidgetSessionsPayload) => void): () => void;
+  // Suscripción a los cambios de preferencias del widget. Devuelve función para desuscribir.
+  onWidgetPrefs(listener: (prefs: WidgetPrefs) => void): () => void;
 
   // --- Mercado de temas Open VSX (M3) ---------------------------------------------------------
   // Busca temas de color de VS Code en Open VSX. Lanza si la red falla.
@@ -1158,4 +1366,73 @@ export interface MageApi {
   installUpdate(): Promise<void>;
   // «Buscar actualizaciones» (F1.3, #15): el resultado llega por `onUpdateState`.
   checkForUpdates(): Promise<void>;
+
+  // --- Biblioteca de capacidades (F6) ---
+  libraryView(): Promise<LibraryView>;
+  libraryPreview(target: LibraryTarget): Promise<LibraryPreviewView>;
+  libraryApply(params: LibraryApplyParams): Promise<LibraryActionResult>;
+  // --- Navegador de Mage (F11b.3) ---
+  browserList(): Promise<readonly BrowserEntryState[]>;
+  browserOpen(sessionId: string): Promise<readonly BrowserEntryState[]>;
+  browserNavigate(params: { readonly sessionId: string; readonly url: string }): Promise<void>;
+  browserBack(sessionId: string): Promise<void>;
+  browserReload(sessionId: string): Promise<void>;
+  browserClose(sessionId: string): Promise<void>;
+  browserSetBounds(params: { readonly sessionId: string; readonly bounds: BrowserBounds | null }): Promise<void>;
+  browserTakeControl(sessionId: string): Promise<void>;
+  browserReturnControl(sessionId: string): Promise<void>;
+  browserPenCapture(sessionId: string): Promise<BrowserPenCapture>;
+  browserPenCompose(params: { readonly sessionId: string; readonly captureId: string; readonly strokes: readonly BrowserPenStroke[] }): Promise<BrowserPenResult>;
+  onBrowserState(listener: (states: readonly BrowserEntryState[]) => void): () => void;
+  // El zoom propio de esta ventana: el panel convierte su hueco a DIP de la ventana con él.
+  getUiZoomFactor(): number;
+  // Ruta en disco de un `File` (botón de adjuntar o soltado); '' si no viene del disco (pegado). Solo del preload
+  // (`webUtils.getPathForFile`), sin IPC: la ruta se queda en el renderer.
+  pathForFile(file: File): string;
+
+  // --- Modo de tareas (F8) ---
+  listTasks(): Promise<readonly TaskRecord[]>;
+  createTask(draft: TaskDraft): Promise<TaskRecord>;
+  verifyTask(params: { taskId: string; declared: readonly string[] }): Promise<TaskRecord>;
+  removeTask(taskId: string): Promise<void>;
+  pickTaskFolders(): Promise<readonly string[]>;
+  pickTaskDocuments(): Promise<readonly string[]>;
+  saveTaskDeliverableCopy(params: { taskId: string; path: string }): Promise<boolean>;
 }
+
+// --- Biblioteca de capacidades (F6) ----------------------------------------------------------------
+// Lo que viaja por IPC entre el servicio de la biblioteca (main) y su pantalla. Solo strings, números y booleanos.
+export type LibraryEngine = 'claude' | 'codex';
+export type LibraryKind = 'skill' | 'agent' | 'mcp' | 'hook' | 'plugin';
+export type LibraryBlock = 'engineNotDeclared' | 'platformUnsupported' | 'needsSecrets' | 'kindNotInstallable' | 'codexSkillsUnmeasured';
+export type LibraryAction = 'install' | 'enable' | 'disable' | 'update' | 'remove';
+export interface LibraryTarget { readonly packageId: string; readonly engine: LibraryEngine; readonly accountDir: string }
+export interface LibraryApplyParams extends LibraryTarget { readonly action: LibraryAction; readonly secrets?: Readonly<Record<string, string>> }
+export interface LibraryComponentView { readonly engine: LibraryEngine | 'both'; readonly kind: LibraryKind | 'command'; readonly count: number | null; readonly names: readonly string[] }
+export interface LibraryEntryView {
+  readonly id: string; readonly title: string; readonly summary: string; readonly publisher: string;
+  readonly kind: LibraryKind; readonly version: string; readonly engines: readonly LibraryEngine[];
+  readonly platforms: readonly string[]; readonly scopes: readonly ('user' | 'project')[];
+  readonly provenance: { readonly repo: string; readonly ref: string; readonly commit: string | null; readonly path: string | null; readonly retrievedAt: string };
+  readonly license: { readonly spdx: string; readonly url: string };
+  readonly distribution: 'copied' | 'linked'; readonly runsCode: boolean;
+  readonly components: readonly LibraryComponentView[];
+  readonly requiresCommands: readonly string[]; readonly missingCommands: readonly string[]; readonly requiresSecrets: readonly string[];
+  readonly blocks: { readonly claude: LibraryBlock | null; readonly codex: LibraryBlock | null };
+}
+export interface LibraryInstallView { readonly packageId: string; readonly engine: LibraryEngine; readonly accountDir: string; readonly version: string; readonly enabled: boolean; readonly inCatalog: boolean; readonly updateAvailable: boolean; readonly keyed: boolean }
+export interface LibraryAccountView { readonly accountDir: string; readonly engine: LibraryEngine; readonly label: string }
+export interface LibraryView { readonly platform: string; readonly accounts: readonly LibraryAccountView[]; readonly entries: readonly LibraryEntryView[]; readonly installs: readonly LibraryInstallView[] }
+export interface LibraryPreviewView {
+  readonly packageId: string; readonly version: string; readonly engine: LibraryEngine; readonly accountDir: string;
+  readonly block: LibraryBlock | null; readonly route: 'native' | 'ownedFiles' | 'mageMcp' | null;
+  readonly files: readonly { readonly absPath: string; readonly bytes: number; readonly sha256: string }[];
+  readonly commands: readonly string[]; readonly envVar: 'CLAUDE_CONFIG_DIR' | 'CODEX_HOME';
+  readonly components: readonly LibraryComponentView[]; readonly runsCode: boolean;
+  readonly requiresCommands: readonly string[]; readonly requiresSecrets: readonly string[];
+}
+export type LibraryActionResult =
+  | { readonly status: 'done'; readonly appliesOnNextSession: true }
+  | { readonly status: 'collision'; readonly items: readonly string[] }
+  | { readonly status: 'modifiedByUser'; readonly items: readonly string[] }
+  | { readonly status: 'rolledBack'; readonly detail: string };

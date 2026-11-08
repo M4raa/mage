@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { addAlwaysAllow, isAlwaysAllowed, removeAlwaysAllow, sanitizeAlwaysAllow } from './permissionRules';
+import { isAlwaysAllowed, removeAlwaysAllow, sanitizeAlwaysAllow } from './permissionRules';
 
 describe('isAlwaysAllowed', () => {
   it('isAlwaysAllowed_toolConRegla_true', () => {
@@ -24,26 +24,6 @@ describe('isAlwaysAllowed', () => {
     // Los nombres de tool del CLI son sensibles a mayusculas (`Write`, `Bash`, `mcp__x__y`): casar
     // `write` con `Write` autorizaria una tool distinta de la que el usuario vio.
     expect(isAlwaysAllowed(['Write'], 'write')).toBe(false);
-  });
-});
-
-describe('addAlwaysAllow', () => {
-  it('addAlwaysAllow_toolNueva_laAñadeAlFinal', () => {
-    expect(addAlwaysAllow(['Write'], 'Bash')).toEqual(['Write', 'Bash']);
-  });
-
-  it('addAlwaysAllow_toolRepetida_devuelveElMismoArray', () => {
-    const rules = ['Write'];
-    expect(addAlwaysAllow(rules, 'Write')).toBe(rules);
-  });
-
-  it('addAlwaysAllow_toolVacia_devuelveElMismoArray', () => {
-    const rules = ['Write'];
-    expect(addAlwaysAllow(rules, '  ')).toBe(rules);
-  });
-
-  it('addAlwaysAllow_conEspacios_guardaElNombreLimpio', () => {
-    expect(addAlwaysAllow([], ' Write ')).toEqual(['Write']);
   });
 });
 

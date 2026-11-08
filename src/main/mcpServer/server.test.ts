@@ -2,11 +2,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { startMageMcpServer } from './server';
+import { ASK_CREATOR_DESCRIPTION, CREATE_SESSION_DESCRIPTION, startMageMcpServer } from './server';
+import { createInputSchema } from './schemas';
 import { MemorySessionsPort } from './memorySessionsPort';
 import { MemoryIdempotencyStore } from './idempotencyStore';
 import type { ConnectionScope } from './scope';
 import type { SessionMetadata } from './sessionsPort';
+import { MagePolicyError, callPort } from './errors';
+import { authorizeTarget, isSessionAllowed, scopeIdentity, snapshotScope } from './scope';
 
 const NOW = '2026-10-31T12:00:00.000Z';
 const REQUEST = '11111111-1111-4111-8111-111111111111';
@@ -57,16 +60,81 @@ afterEach(async () => {
 });
 
 describe('Mage MCP server', () => {
-  it('listTools_conexionReal_seisHerramientasConAmbosEsquemas', async () => {
+  it('listTools_conexionReal_sieteHerramientasConAmbosEsquemas', async () => {
     const { client } = await connect();
     const result = await client.listTools();
-    expect(result.tools.map((tool) => tool.name).sort()).toEqual(['mage_cancel', 'mage_create_session', 'mage_get_status', 'mage_list_sessions', 'mage_read_result', 'mage_send']);
+    expect(result.tools.map((tool) => tool.name).sort()).toEqual(['mage_ask_creator', 'mage_cancel', 'mage_create_session', 'mage_get_status', 'mage_list_sessions', 'mage_read_result', 'mage_send']);
     for (const tool of result.tools) {
       expect(tool.inputSchema.type).toBe('object');
       expect(tool.inputSchema.additionalProperties).toBe(false);
       expect(tool.outputSchema?.type).toBe('object');
     }
     expect(client.getServerVersion()).toEqual({ name: 'mage', version: '1' });
+  });
+  it('listTools_askCreator_descripcionPideTerminarElTurno', async () => {
+    const { client } = await connect();
+    const tool = (await client.listTools()).tools.find((item) => item.name === 'mage_ask_creator');
+    expect(tool?.description).toBe(ASK_CREATOR_DESCRIPTION);
+    expect(tool?.description).toContain('termina tu turno');
+  });
+  it('mage_create_session_tieneDescripcionYLosTresCamposOpcionales', async () => {
+    const { client } = await connect();
+    const tool = (await client.listTools()).tools.find((item) => item.name === 'mage_create_session');
+    expect(tool?.description).toBe(CREATE_SESSION_DESCRIPTION);
+    expect(tool?.description).toContain('hereda');
+    expect(Object.keys(tool?.inputSchema.properties ?? {})).toEqual(expect.arrayContaining(['model', 'effort', 'permissionMode']));
+    expect(tool?.inputSchema.required ?? []).not.toEqual(expect.arrayContaining(['model']));
+    expect(tool?.inputSchema.required ?? []).not.toContain('effort');
+    expect(tool?.inputSchema.required ?? []).not.toContain('permissionMode');
+  });
+  it('createInputSchema_esfuerzoFueraDeLaLista_rechaza', () => {
+    const base = { requestId: REQUEST, provider: 'claude', cwd: '/x', prompt: 'p' };
+    expect(createInputSchema.safeParse({ ...base, effort: 'turbo' }).success).toBe(false);
+  });
+  it('createInputSchema_esfuerzoValido_acepta', () => {
+    const base = { requestId: REQUEST, provider: 'claude', cwd: '/x', prompt: 'p' };
+    expect(createInputSchema.safeParse({ ...base, effort: 'high' }).success).toBe(true);
+  });
+  it('callTool_askCreator_memoryPort_acceptedYRegistrada', async () => {
+    const { call, port } = await connect();
+    const result = await call('ask_creator', { requestId: REQUEST, text: 'hola' });
+    expect(result.structuredContent).toEqual({ receipt: 'accepted' });
+    expect(port.questions).toEqual([{ requestId: REQUEST, text: 'hola' }]);
+  });
+  it('callTool_askCreator_textoVacio_isError', async () => {
+    const { call, port } = await connect();
+    const result = await call('ask_creator', { requestId: REQUEST, text: '' });
+    expect(result.isError).toBe(true);
+    expect(port.questions).toEqual([]);
+  });
+  it('callTool_requestIdTexto_createAceptado', async () => {
+    const { call } = await connect();
+    const result = await call('create_session', createArgs({ requestId: 'claude-pref-num-20261104' }));
+    expect(result.isError).not.toBe(true);
+  });
+  it('callTool_requestIdTexto_askCreatorAceptado', async () => {
+    const { call, port } = await connect();
+    const result = await call('ask_creator', { requestId: 'preferred-integer-1-to-9', text: 'hola' });
+    expect(result.isError).not.toBe(true);
+    expect(result.structuredContent).toEqual({ receipt: 'accepted' });
+    expect(port.questions).toEqual([{ requestId: 'preferred-integer-1-to-9', text: 'hola' }]);
+  });
+  it('callTool_requestId128_aceptado', async () => {
+    const { call } = await connect();
+    const result = await call('ask_creator', { requestId: 'a'.repeat(128), text: 'hola' });
+    expect(result.isError).not.toBe(true);
+  });
+  it('callTool_requestId129_isErrorConCampo', async () => {
+    const { call } = await connect();
+    const result = await call('ask_creator', { requestId: 'a'.repeat(129), text: 'hola' });
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result)).toContain('requestId');
+  });
+  it('callTool_requestIdVacio_isErrorConCampo', async () => {
+    const { call } = await connect();
+    const result = await call('ask_creator', { requestId: '', text: 'hola' });
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result)).toContain('requestId');
   });
   it('tools_caminosNominales_devuelvenContratoH1', async () => {
     const { call } = await connect();
@@ -135,6 +203,17 @@ describe('Mage MCP server', () => {
     expect(first.isError).toBe(true);
     expect(JSON.stringify(first)).toContain(`port_error: ${operation}`);
     expect(JSON.stringify(first)).not.toContain(SECRET);
+  });
+  it('create_puertoRechazaConLaunchFailed_elAgenteVeElMotivoYNoPortError', async () => {
+    const port = makePort();
+    vi.spyOn(port, 'createSession').mockRejectedValue(new MagePolicyError('launch_failed: x'));
+    const { call } = await connect({ port });
+
+    const result = await call('create_session', createArgs());
+
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result)).toContain('launch_failed: x');
+    expect(JSON.stringify(result)).not.toContain('port_error');
   });
   it('list_filtroProyectoAjeno_rechazaSinListar', async () => {
     const port = makePort();
@@ -240,7 +319,7 @@ describe('Mage MCP server', () => {
     expect(create).not.toHaveBeenCalled();
   });
   it.each([
-    ['create_session', createArgs({ requestId: 'bad-uuid' }), 'requestId', 'bad-uuid'],
+    ['create_session', createArgs({ requestId: 12345 }), 'requestId', '12345'],
     ['create_session', { provider: 'claude', cwd: '/synthetic', prompt: SECRET }, 'requestId', 'undefined'],
     ['get_status', {}, 'conversationId', 'undefined'],
     ['create_session', { requestId: REQUEST, provider: 'claude', prompt: SECRET }, 'cwd', 'undefined'],
@@ -293,5 +372,33 @@ describe('Mage MCP server', () => {
     await vi.waitFor(() => expect(acceptSend).toBeTypeOf('function'));
     acceptSend({ receipt: 'accepted' });
     expect((await delivery).structuredContent).toEqual({ receipt: 'accepted' });
+  });
+});
+
+describe('alcance sin restricción de proyecto (D-M7)', () => {
+  const anyProject = () => snapshotScope({ accountIds: ['a'] });
+  it('isSessionAllowed_nullProjects_anyProject', () => {
+    expect(isSessionAllowed(anyProject(), metadata({ projectId: 'whatever' }))).toBe(true);
+    expect(isSessionAllowed(anyProject(), metadata({ accountId: 'foreign' }))).toBe(false);
+  });
+  it('authorizeTarget_nullProjects_onlyAccountAndProvider', () => {
+    const target = { projectId: 'x', accountId: 'a', provider: 'claude' as const, cwd: '/c' };
+    expect(() => authorizeTarget(anyProject(), target, 'claude')).not.toThrow();
+    expect(() => authorizeTarget(anyProject(), { ...target, accountId: 'b' }, 'claude')).toThrow('scope_denied');
+    expect(() => authorizeTarget(anyProject(), target, 'codex')).toThrow('scope_denied');
+  });
+  it('scopeIdentity_nullProjects_keepsNull', () => {
+    expect(scopeIdentity(anyProject())).toMatchObject({ projectIds: null });
+    expect(scopeIdentity(snapshotScope({ projectIds: ['b', 'a'], accountIds: ['a'] }))).toMatchObject({ projectIds: ['a', 'b'] });
+  });
+});
+
+describe('callPort', () => {
+  it('callPort_policyError_rethrownAsIs', async () => {
+    const policy = new MagePolicyError('trust_required: /c');
+    await expect(callPort('op', () => Promise.reject(policy))).rejects.toBe(policy);
+  });
+  it('callPort_otherError_portError', async () => {
+    await expect(callPort('op', () => Promise.reject(new Error('boom')))).rejects.toThrow('port_error: op');
   });
 });

@@ -1,0 +1,40 @@
+[
+  {
+    "author": { "id": "U_1", "is_bot": false, "login": "vg-dev", "name": "Dev Demo" },
+    "autoMergeRequest": null,
+    "baseRefName": "main",
+    "headRefName": "feat/uno",
+    "headRefOid": "1111111111111111111111111111111111111111",
+    "headRepositoryOwner": { "login": "acme" },
+    "isCrossRepository": false,
+    "isDraft": false,
+    "mergeStateStatus": "CLEAN",
+    "mergeable": "MERGEABLE",
+    "number": 12,
+    "reviewDecision": "APPROVED",
+    "state": "OPEN",
+    "statusCheckRollup": [],
+    "title": "Primera PR",
+    "updatedAt": "2026-10-01T10:00:00Z",
+    "url": "https://github.com/acme/demo/pull/12"
+  },
+  {
+    "author": { "id": "U_2", "is_bot": true, "login": "app/vg-bot" },
+    "autoMergeRequest": null,
+    "baseRefName": "main",
+    "headRefName": "feat/dos",
+    "headRefOid": "2222222222222222222222222222222222222222",
+    "headRepositoryOwner": { "login": "acme" },
+    "isCrossRepository": false,
+    "isDraft": true,
+    "mergeStateStatus": "BLOCKED",
+    "mergeable": "UNKNOWN",
+    "number": 13,
+    "reviewDecision": "",
+    "state": "OPEN",
+    "statusCheckRollup": [],
+    "title": "Segunda PR",
+    "updatedAt": "no es una fecha",
+    "url": "https://github.com/acme/demo/pull/13"
+  }
+]

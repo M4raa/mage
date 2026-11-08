@@ -1,8 +1,9 @@
 import { homedir } from 'node:os';
 import type { ImageAttachment } from '@shared/ipc';
+import { ALLOWED_IMAGE_TYPES } from '@shared/attachments';
 import type { MageEvent, PermissionDecision } from '@shared/events';
 import { localized, UserFacingError } from '@shared/i18n/localizedText';
-import { AGY_EFFORT_LEVELS, AGY_PERMISSION_MODES } from '@shared/providers';
+import { AGY_EFFORT_LEVELS, AGY_PERMISSION_MODES, agyModelFixesEffort } from '@shared/providers';
 import { resolveAgyBinary } from '../os/agyBinaryResolver';
 import { AgyTurnTracker } from './agyNormalize';
 import { AGY_FILE_TOKEN_ENV, type AgyProfileMode } from './agyProfile';
@@ -113,7 +114,8 @@ export class AgyAdapter implements ProviderAdapter {
     }
     // Nivel de esfuerzo (--effort low|medium|high|max). Lo que no encaje (xhigh es de Claude) se omite
     // en vez de abortar la sesion con un flag invalido.
-    if (params.effort !== undefined && AGY_EFFORT_LEVELS.includes(params.effort)) {
+    // Si el id del modelo ya lleva el esfuerzo (sufijo -low/-medium/-high/-max), no se pasa: agy 1.5.2 aborta con uno distinto.
+    if (params.effort !== undefined && AGY_EFFORT_LEVELS.includes(params.effort) && !agyModelFixesEffort(params.model)) {
       args.push('--effort', params.effort);
     }
     // `params.shared` no se traduce aqui: agy no tiene flag de sesion para MCP (medido en 1.2.14). Lo que
@@ -167,6 +169,10 @@ export class AgyAdapter implements ProviderAdapter {
   // mensaje, junto a su token `[Imagen N]`, para que el agente la abra con `view_file`.
   encodeUserMessage(text: string, attachments: readonly ImageAttachment[] = []): unknown {
     if (attachments.length === 0) return { event: 'user', message: { content: text } };
+    // Contrato (Q05): agy solo recibe imagenes; la resolucion de menciones nunca le manda un PDF.
+    for (const attachment of attachments) {
+      if (!ALLOWED_IMAGE_TYPES.has(attachment.mediaType)) throw new Error(`agy solo admite imagenes como adjunto, llego ${JSON.stringify(attachment.mediaType)}`);
+    }
     const save = this.deps.saveAttachment;
     if (save === undefined) {
       throw new Error(`No hay donde guardar las ${attachments.length} imagenes del mensaje para agy`);

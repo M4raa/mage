@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { dragRatio } from '../splitLayout';
 
 // Divisor de resize entre los dos lados de una division del workspace (I11 — generaliza el split fijo
 // de Ronda 3 item 13). A diferencia de `dock/ZoneResizeHandle.tsx` (F6), que resizea una zona en PIXELES
@@ -22,6 +23,9 @@ export function splitRatioVars(ratio: number): React.CSSProperties {
   return { [SPLIT_A_VAR]: ratio, [SPLIT_B_VAR]: 1 - ratio } as React.CSSProperties;
 }
 
+// Alt o Mayús durante el arrastre desactivan los imanes.
+const magnetsOff = (e: { readonly altKey: boolean; readonly shiftKey: boolean }): boolean => e.altKey || e.shiftKey;
+
 export interface SplitPaneResizeHandleProps {
   readonly direction: 'row' | 'col'; // misma orientacion que el split al que pertenece
   readonly ratio: number;
@@ -41,11 +45,10 @@ export function SplitPaneResizeHandle({ direction, ratio, containerRef, onCommit
   useEffect(() => () => detachRef.current?.(), []);
   const clientPos = (e: { readonly clientX: number; readonly clientY: number }): number => (direction === 'row' ? e.clientX : e.clientY);
 
-  const ratioFromPointer = (pos: number): number => {
+  const ratioFromPointer = (pos: number, free: boolean): number => {
     const drag = dragStartRef.current;
     if (drag === null || drag.size <= 0) return ratio;
-    const delta = (pos - drag.pos) / drag.size;
-    return Math.min(MAX_RATIO, Math.max(MIN_RATIO, drag.ratio + delta));
+    return dragRatio({ startRatio: drag.ratio, deltaPx: pos - drag.pos, sizePx: drag.size, free });
   };
 
   const onPointerDown = (e: React.PointerEvent<HTMLDivElement>): void => {
@@ -57,7 +60,7 @@ export function SplitPaneResizeHandle({ direction, ratio, containerRef, onCommit
     dragStartRef.current = { pos: clientPos(e), size: direction === 'row' ? rect.width : rect.height, ratio };
 
     const onMove = (ev: PointerEvent): void => {
-      const next = ratioFromPointer(clientPos(ev));
+      const next = ratioFromPointer(clientPos(ev), magnetsOff(ev));
       container.style.setProperty(SPLIT_A_VAR, `${next}`);
       container.style.setProperty(SPLIT_B_VAR, `${1 - next}`);
     };
@@ -70,7 +73,7 @@ export function SplitPaneResizeHandle({ direction, ratio, containerRef, onCommit
     };
     const onUp = (ev: PointerEvent): void => {
       const dragging = dragStartRef.current !== null;
-      const next = ratioFromPointer(clientPos(ev));
+      const next = ratioFromPointer(clientPos(ev), magnetsOff(ev));
       detach();
       if (dragging) onCommit(next);
     };
@@ -113,7 +116,7 @@ export function SplitPaneResizeHandle({ direction, ratio, containerRef, onCommit
       tabIndex={0}
       onPointerDown={onPointerDown}
       onKeyDown={onKeyDown}
-      className={`relative z-10 shrink-0 bg-mg-border outline-none after:absolute after:content-[''] hover:bg-mg-focus hover:shadow-[0_0_0_1px_var(--color-mg-focus)] focus-visible:bg-mg-focus focus-visible:shadow-[0_0_0_1px_var(--color-mg-focus)] ${grabArea} ${
+      className={`relative z-10 shrink-0 bg-mg-border outline-none transition-colors duration-90 active:transition-none after:absolute after:content-[''] hover:bg-mg-focus hover:shadow-[0_0_0_1px_var(--color-mg-focus)] focus-visible:bg-mg-focus focus-visible:shadow-[0_0_0_1px_var(--color-mg-focus)] ${grabArea} ${
         direction === 'row' ? 'w-px cursor-col-resize' : 'h-px cursor-row-resize'
       }`}
     />

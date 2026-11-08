@@ -1,6 +1,7 @@
 import { usePanelLayoutStore } from '../panelLayoutStore';
 import { Icon } from './Icon';
 import { PermissionDecisionButtons } from './PermissionDecisionButtons';
+import { usePermissionKeys } from './usePermissionKeys';
 import type { Block } from '../types';
 import { useT } from '../../i18n/uiLanguage';
 
@@ -28,6 +29,7 @@ export function PermissionCard({ block }: { readonly block: Extract<Block, { kin
   const revealPanel = usePanelLayoutStore((s) => s.revealPanelById);
   const resuelto = ESTADO[block.state];
   const t = useT();
+  const keys = usePermissionKeys();
 
   return (
     <div
@@ -36,8 +38,9 @@ export function PermissionCard({ block }: { readonly block: Extract<Block, { kin
       role="group"
       aria-label={t('chat.permission.cardAria', { target: block.target })}
       data-permission-card={block.state}
+      data-permission-pending={block.state === 'pending' ? 'true' : undefined}
       className={`rounded-[9px] border p-[11px_13px] ${
-        block.state === 'pending' ? 'border-mg-warn-border bg-mg-warn-bg' : 'border-mg-border-subtle bg-mg-block'
+        block.state === 'pending' ? 'border-mg-warn-border border-l-[3px] border-l-mg-warn bg-mg-warn-bg' : 'border-mg-border-subtle bg-mg-block'
       }`}
     >
       <div className="mb-[7px] flex items-center gap-[7px] text-[10px] font-bold uppercase tracking-[.06em] text-mg-ter">
@@ -54,7 +57,7 @@ export function PermissionCard({ block }: { readonly block: Extract<Block, { kin
 
       {block.state === 'pending' && (
         <div className="mt-[10px] flex flex-wrap items-center gap-[8px]">
-          <PermissionDecisionButtons toolLabel={block.toolName} requestId={block.requestId} rememberable={block.rememberable !== false} compact />
+          <PermissionDecisionButtons toolLabel={block.toolName} requestId={block.requestId} allowScopes={block.allowScopes ?? []} rule={block.rule ?? null} compact keys={keys} />
           {/* El detalle vive en el panel (decision del usuario): aqui solo el camino hasta el. */}
           <button
             onClick={() => revealPanel('permissions')}

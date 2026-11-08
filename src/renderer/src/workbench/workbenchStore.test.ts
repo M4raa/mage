@@ -1,13 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { MageApi } from '@shared/ipc';
+import { MAIN_WINDOW_ID, type AdoptableSession, type MageApi } from '@shared/ipc';
+import type { ConversationSnapshot } from '@shared/coordination';
+import type { PermissionRequest } from '@shared/events';
+import { disposeTranscriptStore, transcriptStoreForTab } from './transcriptStore';
 import type { ConversationSummary } from '@shared/conversations';
 import { foreignText, localized, UserFacingError, type LocalizedText } from '@shared/i18n/localizedText';
 import { createWorkbenchStore, type ConversationFolderChoice } from './workbenchStore';
 import { findLeafPath, singleLeaf } from './splitLayout';
 import { useNotificationStore } from './notificationStore';
 import { EMPTY_NOTIFICATIONS } from './notifications';
-import type { Account, Tab } from './types';
+import type { Account, Block, Tab } from './types';
 import type { AccountInfo } from '@shared/accounts';
+import { CODEX_PROVIDER_ID } from '@shared/providers';
+import { makeEntry } from '@testing/transcriptEntry';
 
 // El store alcanzaba `window.mage` directamente en 18 sitios, asi que estas 850 lineas de orquestacion
 // no tenian una sola red — y ahi vivia el bug de `closeTab`. Con el cliente inyectado (decision A1) se
@@ -63,8 +68,8 @@ describe('setDraft', () => {
     store.setState({ tabs: [tab('a'), tab('b')], activeTabId: 'a' });
 
     // Act
-    store.getState().setDraft('a', { text: 'para A', attachments: [] });
-    store.getState().setDraft('b', { text: 'para B', attachments: [] });
+    store.getState().setDraft('a', { text: 'para A', attachments: [], mentions: [] });
+    store.getState().setDraft('b', { text: 'para B', attachments: [], mentions: [] });
 
     // Assert
     expect(store.getState().draftByChat['a']?.text).toBe('para A');
@@ -74,10 +79,10 @@ describe('setDraft', () => {
   it('setDraft_borradorVacio_borraLaEntradaEnVezDeGuardarla', () => {
     // Arrange
     const store = createWorkbenchStore(fakeMage());
-    store.setState({ tabs: [tab('a')], activeTabId: 'a', draftByChat: { a: { text: 'a medias', attachments: [] } } });
+    store.setState({ tabs: [tab('a')], activeTabId: 'a', draftByChat: { a: { text: 'a medias', attachments: [], mentions: [] } } });
 
     // Act
-    store.getState().setDraft('a', { text: '', attachments: [] });
+    store.getState().setDraft('a', { text: '', attachments: [], mentions: [] });
 
     // Assert
     expect(store.getState().draftByChat).toEqual({});
@@ -86,7 +91,7 @@ describe('setDraft', () => {
   it('setDraft_null_borraElBorrador', () => {
     // Arrange
     const store = createWorkbenchStore(fakeMage());
-    store.setState({ tabs: [tab('a')], activeTabId: 'a', draftByChat: { a: { text: 'enviado', attachments: [] } } });
+    store.setState({ tabs: [tab('a')], activeTabId: 'a', draftByChat: { a: { text: 'enviado', attachments: [], mentions: [] } } });
 
     // Act
     store.getState().setDraft('a', null);
@@ -100,7 +105,7 @@ describe('setDraft', () => {
     const store = createWorkbenchStore(fakeMage());
 
     // Act
-    store.getState().setDraft('', { text: 'huerfano', attachments: [] });
+    store.getState().setDraft('', { text: 'huerfano', attachments: [], mentions: [] });
 
     // Assert
     expect(store.getState().draftByChat).toEqual({});
@@ -116,12 +121,33 @@ describe('sendMessageToTab — envío fallido (#24)', () => {
 
     await store.getState().sendMessageToTab('a', 'Arregla el login', [image]);
 
-    expect(store.getState().draftByChat.a).toEqual({ text: 'Arregla el login', attachments: [{ attachment: image, byteLength: 5 }] });
+    expect(store.getState().draftByChat.a).toEqual({ text: 'Arregla el login', attachments: [{ attachment: image, byteLength: 5, sourcePath: null }], mentions: [] });
+  });
+
+  it('sendMessageToTab_conRutas_burbujaYBorradorConservanLaRuta', async () => {
+    // Arrange
+    const sendMessage = vi.fn();
+    const store = createWorkbenchStore(fakeMage({ saveWorkspace: vi.fn().mockResolvedValue(undefined), isFolderTrusted: vi.fn().mockResolvedValue(true), createSession: vi.fn().mockRejectedValue(new Error('sin red')), sendMessage }));
+    store.setState({ tabs: [tab('a')], activeTabId: 'a', splitLayout: singleLeaf('a') });
+    let bubblePaths: unknown = 'sin burbuja';
+    const unsubscribe = store.subscribe((s) => {
+      const user = (s.blocksByChat.a ?? []).find((b) => b.kind === 'user');
+      if (user !== undefined && user.kind === 'user') bubblePaths = user.attachmentPaths;
+    });
+
+    // Act
+    await store.getState().sendMessageToTab('a', '[Imagen 1] [Imagen 2]', [image, image], { attachmentPaths: ['C:\\a.png', null] });
+    unsubscribe();
+
+    // Assert
+    expect(bubblePaths).toEqual(['C:\\a.png', null]);
+    expect(store.getState().draftByChat.a?.attachments.map((p) => p.sourcePath)).toEqual(['C:\\a.png', null]);
+    expect(sendMessage).not.toHaveBeenCalled();
   });
 
   it('sendMessageToTab_fallaYaHayOtroBorrador_noLoPisa', async () => {
     const store = createWorkbenchStore(fakeMage({ saveWorkspace: vi.fn().mockResolvedValue(undefined), isFolderTrusted: vi.fn().mockResolvedValue(true), createSession: vi.fn().mockRejectedValue(new Error('sin red')) }));
-    store.setState({ tabs: [tab('a')], activeTabId: 'a', splitLayout: singleLeaf('a'), draftByChat: { a: { text: 'lo nuevo', attachments: [] } } });
+    store.setState({ tabs: [tab('a')], activeTabId: 'a', splitLayout: singleLeaf('a'), draftByChat: { a: { text: 'lo nuevo', attachments: [], mentions: [] } } });
 
     await store.getState().sendMessageToTab('a', 'lo enviado');
 
@@ -184,7 +210,7 @@ describe('closeTab', () => {
       blocksByChat: { a: [] },
       turnStartByChat: { a: 1_000 },
       lastActivityByChat: { a: 2_000 },
-      draftByChat: { a: { text: 'a medias', attachments: [] } },
+      draftByChat: { a: { text: 'a medias', attachments: [], mentions: [] } },
     });
 
     await store.getState().closeTab('a');
@@ -566,6 +592,30 @@ describe('ensureSession', () => {
     expect(createSession).toHaveBeenCalledTimes(1);
   });
 
+  it('ensureSession_pestanaConTarea_mandaTaskIdUnaVez', async () => {
+    const createSession = vi.fn().mockResolvedValue(sesionCreada);
+    const store = createWorkbenchStore(
+      fakeMage({ createSession, isFolderTrusted: vi.fn().mockResolvedValue(true), saveWorkspace: vi.fn().mockResolvedValue(undefined), saveConversationPrefs: vi.fn().mockResolvedValue(undefined) }),
+    );
+    store.setState({ tabs: [tab('a')], activeTabId: 'a', splitLayout: singleLeaf('a') });
+    store.getState().attachTaskToTab('a', 't1');
+
+    await store.getState().ensureSession('a');
+    store.setState({ sessionIdByChat: {} }); // la sesión se pierde
+    await store.getState().ensureSession('a');
+
+    expect(createSession).toHaveBeenCalledTimes(2);
+    expect(createSession.mock.calls[0]?.[0]).toMatchObject({ taskId: 't1' });
+    expect(createSession.mock.calls[1]?.[0]).not.toHaveProperty('taskId');
+  });
+
+  it('attachTaskToTab_idVacio_lanza', () => {
+    const store = createWorkbenchStore(fakeMage());
+
+    expect(() => store.getState().attachTaskToTab('a', '')).toThrow('"taskId":""');
+    expect(() => store.getState().attachTaskToTab('', 't1')).toThrow('"tabId":""');
+  });
+
   it('ensureSession_conSesionYaViva_noVuelveACrear', async () => {
     const createSession = vi.fn();
     const store = createWorkbenchStore(fakeMage({ createSession }));
@@ -651,12 +701,13 @@ describe('ensureSession', () => {
 });
 
 describe('hydrateBlocks', () => {
-  const bloque = (id: string): { kind: 'user'; id: string; text: string; time: string; attachments: readonly never[] } => ({
+  const bloque = (id: string): { kind: 'user'; id: string; text: string; time: string; attachments: readonly never[]; nativeId: null } => ({
     kind: 'user',
     id,
     text: id,
     time: '12:00',
     attachments: [],
+    nativeId: null,
   });
 
   it('hydrateBlocks_conUnMensajeYaEscrito_anteponeElHistorialEnVezDeDescartarlo', () => {
@@ -1060,6 +1111,36 @@ describe('renameConversation', () => {
     expect(notify).toHaveBeenCalledTimes(1);
   });
 
+  const RENAME_OUTPUT = { kind: 'local_command_output', command: 'rename', args: 'Nuevo', text: 'Session renamed to: Nuevo' } as const;
+  const commandOutputs = (store: ReturnType<typeof mounted>['store']) => (store.getState().blocksByChat.a ?? []).filter((b) => b.kind === 'command-output');
+
+  it('renameConversation_salidaDelRenameSilencioso_noPintaFila', () => {
+    const { store } = mounted('idle');
+    store.getState().renameConversation('a', 'Nuevo');
+
+    store.getState().handleEvent('s-a', RENAME_OUTPUT);
+
+    expect(commandOutputs(store)).toHaveLength(0);
+  });
+
+  it('localCommandOutput_renameTecleadoPorElUsuario_siPintaFila', () => {
+    const { store } = mounted('idle');
+
+    store.getState().handleEvent('s-a', RENAME_OUTPUT);
+
+    expect(commandOutputs(store)).toHaveLength(1);
+  });
+
+  it('renameConversation_soloSeTragaUnaSalida', () => {
+    const { store } = mounted('idle');
+    store.getState().renameConversation('a', 'Nuevo');
+
+    store.getState().handleEvent('s-a', RENAME_OUTPUT);
+    store.getState().handleEvent('s-a', RENAME_OUTPUT);
+
+    expect(commandOutputs(store)).toHaveLength(1);
+  });
+
   it('renameConversation_proveedorSinTranscripcionDeClaude_noMandaNada', () => {
     const { store, sendMessage } = mounted('idle');
     store.setState({ tabs: [tab('a', { provider: 'agy' })] });
@@ -1069,6 +1150,52 @@ describe('renameConversation', () => {
     expect(sendMessage).not.toHaveBeenCalled();
     expect(store.getState().tabs[0]).toMatchObject({ title: 'Nuevo' });
     expect(store.getState().tabs[0]?.pendingCliTitle).toBeUndefined();
+  });
+
+  it('sendMessageToTab_renameConNombreOcioso_renombraYMandaElSilencioso', async () => {
+    const { store, sendMessage } = mounted('idle');
+
+    await store.getState().sendMessageToTab('a', '/rename prueba');
+
+    expect(store.getState().tabs[0]?.title).toBe('prueba');
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(sendMessage).toHaveBeenCalledWith({ sessionId: 's-a', text: '/rename prueba' });
+    expect((store.getState().blocksByChat.a ?? []).filter((b) => b.kind === 'user')).toEqual([]);
+  });
+
+  it('sendMessageToTab_renameConTurnoEnMarcha_renombraAlMomentoYSaleAlAcabar', async () => {
+    const { store, sendMessage } = mounted('streaming');
+
+    await store.getState().sendMessageToTab('a', '/rename prueba');
+
+    expect(store.getState().tabs[0]?.title).toBe('prueba');
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(store.getState().tabs[0]?.pendingCliTitle).toBe('prueba');
+
+    store.getState().handleEvent('s-a', RESULT(3));
+
+    expect(sendMessage).toHaveBeenCalledWith({ sessionId: 's-a', text: '/rename prueba' });
+  });
+
+  it('sendMessageToTab_renameSinNombre_vaAlCliComoMensaje', async () => {
+    const { store, sendMessage } = mounted('idle');
+    sendMessage.mockResolvedValue({ status: 'accepted' });
+
+    await store.getState().sendMessageToTab('a', '/rename');
+
+    expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 's-a', text: '/rename' }));
+    expect(store.getState().tabs[0]?.title).toBe('Conversacion a');
+  });
+
+  it('sendMessageToTab_renameEnCodex_vaAlCliComoMensaje', async () => {
+    const { store, sendMessage } = mounted('idle');
+    sendMessage.mockResolvedValue({ status: 'accepted' });
+    store.setState({ tabs: [tab('a', { provider: CODEX_PROVIDER_ID })] });
+
+    await store.getState().sendMessageToTab('a', '/rename prueba');
+
+    expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({ text: '/rename prueba' }));
+    expect(store.getState().tabs[0]?.title).toBe('Conversacion a');
   });
 
   // P-028, punto 3: la salida del `/rename` renombra la pestaña al llegar, sin esperar a releer.
@@ -1251,15 +1378,64 @@ describe('permisos en cola', () => {
     expect(answerPermission).toHaveBeenCalledTimes(1);
   });
 
-  it('allowAlwaysAndAnswer_conVariasDeLaMismaTool_lasConcedeTodasYNoLasDeOtra', () => {
+  const READ_SCOPED = (requestId: string) => ({ kind: 'permission_request', request: { requestId, toolUseId: `u-${requestId}`, toolName: 'Bash', input: { command: 'npm test' }, description: null, requiresUserInteraction: false, displayName: null, allowScopes: ['session', 'always'], rule: 'Bash(npm test *)' } }) as const;
+
+  it('answerPermissionFor_conAlcanceSesion_loMandaAMain', () => {
     const { store, answerPermission } = withTwoPending();
-    store.getState().handleEvent('s-a', READ('r3', 'Bash'));
 
-    store.getState().allowAlwaysAndAnswer('Read', 'a');
+    store.getState().answerPermissionFor('a', { behavior: 'allow', scope: 'session' }, 'r1');
 
-    expect(answerPermission.mock.calls.map(([arg]) => (arg as { requestId: string }).requestId)).toEqual(['r1', 'r2']);
-    expect(sendingIds(store)).toEqual(['r1', 'r2']);
-    expect(store.getState().tabs[0]?.alwaysAllowTools).toEqual(['Read']);
+    expect(answerPermission).toHaveBeenCalledWith({ sessionId: 's-a', requestId: 'r1', decision: { behavior: 'allow', scope: 'session' } });
+  });
+
+  it('requestAlwaysAllow_peticionConSiempre_abreElAvisoSinContestar', () => {
+    const { store, answerPermission } = withTwoPending();
+    store.getState().handleEvent('s-a', READ_SCOPED('r9'));
+
+    store.getState().requestAlwaysAllow('a', 'r9');
+
+    expect(store.getState().alwaysPromptByChat.a).toBe('r9');
+    expect(answerPermission).not.toHaveBeenCalled();
+  });
+
+  it('requestAlwaysAllow_peticionSinSiempre_noAbreNada', () => {
+    const { store } = withTwoPending();
+
+    store.getState().requestAlwaysAllow('a', 'r1');
+
+    expect(store.getState().alwaysPromptByChat.a).toBeUndefined();
+  });
+
+  it('requestAlwaysAllow_sinRequestId_usaLaPrimeraDeLaCola', () => {
+    const { store } = withTwoPending();
+    store.setState((s) => ({ pendingByChat: { ...s.pendingByChat, a: [] } }));
+    store.getState().handleEvent('s-a', READ_SCOPED('r9'));
+
+    store.getState().requestAlwaysAllow('a');
+
+    expect(store.getState().alwaysPromptByChat.a).toBe('r9');
+  });
+
+  it('confirmAlwaysAllow_contestaConAlcanceSiempreYCierraElAviso', () => {
+    const { store, answerPermission } = withTwoPending();
+    store.getState().handleEvent('s-a', READ_SCOPED('r9'));
+    store.getState().requestAlwaysAllow('a', 'r9');
+
+    store.getState().confirmAlwaysAllow('a');
+
+    expect(answerPermission).toHaveBeenCalledWith({ sessionId: 's-a', requestId: 'r9', decision: { behavior: 'allow', scope: 'always' } });
+    expect(store.getState().alwaysPromptByChat.a).toBeUndefined();
+  });
+
+  it('cancelAlwaysAllow_cierraElAvisoSinContestar', () => {
+    const { store, answerPermission } = withTwoPending();
+    store.getState().handleEvent('s-a', READ_SCOPED('r9'));
+    store.getState().requestAlwaysAllow('a', 'r9');
+
+    store.getState().cancelAlwaysAllow('a');
+
+    expect(store.getState().alwaysPromptByChat.a).toBeUndefined();
+    expect(answerPermission).not.toHaveBeenCalled();
   });
 });
 
@@ -1314,7 +1490,7 @@ describe('permiso auto-permitido', () => {
     store.getState().handleEvent('s-a', { ...outside, request: { ...outside.request, description: 'Fuera del proyecto: rm -rf ~', outsideProject: true } });
 
     expect(answerPermission).not.toHaveBeenCalled();
-    expect(store.getState().pendingByChat.a?.[0]?.view.rememberable).toBe(false);
+    expect(store.getState().pendingByChat.a?.[0]?.view.allowScopes).toEqual([]);
   });
 
   it('handleEvent_segundoPlanoFueraDelProyectoConRegla_pideAccion', () => {
@@ -1407,6 +1583,9 @@ describe('requestAccountSwitch y continueInAccount', () => {
     { id: B, alias: 'otra', providerId: 'claude', loginStatus: 'logged_in' },
     { id: 'C:/Users/u/.codex-x', alias: 'codex', providerId: 'codex', loginStatus: 'logged_in' },
   ] as unknown as Account[];
+  const API = 'C:/Users/u/.claude-api';
+  const apiAccount = { id: API, alias: 'api', providerId: 'claude', loginStatus: 'logged_in', apiBilled: true } as unknown as Account;
+  const notice = { kind: 'system', id: 'sys-1', text: 'Carpeta autorizada' } as const;
 
   function mounted(over: Partial<MageApi> = {}, status: 'idle' | 'streaming' = 'idle') {
     const store = createWorkbenchStore(
@@ -1414,6 +1593,7 @@ describe('requestAccountSwitch y continueInAccount', () => {
         saveWorkspace: vi.fn().mockResolvedValue(undefined),
         getUsage: vi.fn().mockResolvedValue(null),
         listConversations: vi.fn().mockResolvedValue([]),
+        saveConversationPrefs: vi.fn().mockResolvedValue(undefined),
         ...over,
       }),
     );
@@ -1433,8 +1613,101 @@ describe('requestAccountSwitch y continueInAccount', () => {
 
     store.getState().requestAccountSwitch(B);
 
-    expect(store.getState().accountSwitchPrompt).toEqual({ tabId: 'a', destAccountId: B });
+    expect(store.getState().accountSwitchPrompt).toEqual({ tabId: 'a', destAccountId: B, sourceAccountId: accounts[0]!.id });
     expect(store.getState().activeAccountId).toBe(accounts[0]!.id);
+  });
+
+  it('requestAccountSwitch_sesionVivaSinTurnos_reasignaLaPestanaYCierraSuSesion', () => {
+    // Arrange: pestaña nueva con sesión viva sin turnos y solo un aviso de sistema.
+    const closeSession = vi.fn().mockResolvedValue({ background: false });
+    const store = mounted({ closeSession });
+    store.setState({ tabs: [tab('a')], sessionIdByChat: { a: 's-a' }, blocksByChat: { a: [notice] } });
+
+    // Act
+    store.getState().requestAccountSwitch(B);
+
+    // Assert: sin diálogo ni pestaña nueva; la misma pestaña pasa a B y su sesión vieja se cierra.
+    const s = store.getState();
+    expect(s.accountSwitchPrompt).toBeNull();
+    expect(s.activeAccountId).toBe(B);
+    expect(s.tabs).toHaveLength(1);
+    expect(s.tabs[0]).toMatchObject({ id: 'a', accountId: B, accountAlias: 'otra', provider: 'claude' });
+    expect(s.sessionIdByChat.a).toBeUndefined();
+    expect(closeSession).toHaveBeenCalledWith('s-a');
+  });
+
+  it('requestAccountSwitch_pestanaNuevaConSoloModel_reasignaSinDialogo', () => {
+    const closeSession = vi.fn().mockResolvedValue({ background: false });
+    const store = mounted({ closeSession });
+    const echo = { kind: 'user', id: 'u-1', text: '/model', attachments: [] };
+    const output = { kind: 'command-output', id: 'c-1', command: 'model', args: '', text: 'ok' };
+    store.setState({ tabs: [tab('a')], sessionIdByChat: { a: 's-a' }, blocksByChat: { a: [echo, output] as never } });
+
+    store.getState().requestAccountSwitch(B);
+
+    const s = store.getState();
+    expect(s.accountSwitchPrompt).toBeNull();
+    expect(s.tabs[0]).toMatchObject({ id: 'a', accountId: B });
+  });
+
+  it('requestAccountSwitch_sesionVivaSinTurnosHaciaCodex_cambiaElProveedorDeLaPestana', () => {
+    const closeSession = vi.fn().mockResolvedValue({ background: false });
+    const store = mounted({ closeSession });
+    store.setState({ tabs: [tab('a', { model: 'opus' })], sessionIdByChat: { a: 's-a' }, blocksByChat: {} });
+
+    store.getState().requestAccountSwitch('C:/Users/u/.codex-x');
+
+    const moved = store.getState().tabs[0]!;
+    expect(moved).toMatchObject({ id: 'a', accountId: 'C:/Users/u/.codex-x', provider: 'codex' });
+    expect(moved.model).not.toBe('opus');
+    expect(closeSession).toHaveBeenCalledWith('s-a');
+  });
+
+  it('requestAccountSwitch_sesionVivaSinTurnosHaciaCuentaApi_laPestanaPasaALaCuentaApi', () => {
+    const closeSession = vi.fn().mockResolvedValue({ background: false });
+    const store = mounted({ closeSession });
+    store.setState({ accounts: [...accounts, apiAccount], tabs: [tab('a')], sessionIdByChat: { a: 's-a' }, blocksByChat: {} });
+
+    store.getState().requestAccountSwitch(API);
+
+    expect(store.getState().tabs[0]).toMatchObject({ id: 'a', accountId: API, accountAlias: 'api', provider: 'claude' });
+    expect(store.getState().activeAccountId).toBe(API);
+    expect(closeSession).toHaveBeenCalledWith('s-a');
+  });
+
+  it('requestAccountSwitch_desdeCuentaApiSinTurnos_vuelveALaSuscripcion', () => {
+    const closeSession = vi.fn().mockResolvedValue({ background: false });
+    const store = mounted({ closeSession });
+    store.setState({ accounts: [...accounts, apiAccount], activeAccountId: API, tabs: [tab('a', { accountId: API, accountAlias: 'api' })], sessionIdByChat: { a: 's-a' }, blocksByChat: {} });
+
+    store.getState().requestAccountSwitch(B);
+
+    expect(store.getState().tabs[0]).toMatchObject({ id: 'a', accountId: B, accountAlias: 'otra' });
+    expect(closeSession).toHaveBeenCalledWith('s-a');
+  });
+
+  it('requestAccountSwitch_conConversacionYSesionViva_preguntaComoAntes', () => {
+    const closeSession = vi.fn();
+    const store = mounted({ closeSession });
+    store.setState({ tabs: [tab('a')], sessionIdByChat: { a: 's-a' }, blocksByChat: { a: [{ kind: 'user', id: 'u1', text: 'hola', time: '', attachments: [], nativeId: null }] } });
+
+    store.getState().requestAccountSwitch(B);
+
+    expect(store.getState().accountSwitchPrompt).toEqual({ tabId: 'a', destAccountId: B, sourceAccountId: accounts[0]!.id });
+    expect(store.getState().tabs[0]!.accountId).toBe(accounts[0]!.id);
+    expect(closeSession).not.toHaveBeenCalled();
+  });
+
+  it('requestAccountSwitch_pestanaFijadaSinTurnos_soloCambiaLaCuentaActiva', () => {
+    const closeSession = vi.fn();
+    const store = mounted({ closeSession });
+    store.setState({ tabs: [tab('a', { accountPinned: true })], sessionIdByChat: { a: 's-a' }, blocksByChat: {} });
+
+    store.getState().requestAccountSwitch(B);
+
+    expect(store.getState().tabs[0]!.accountId).toBe(accounts[0]!.id);
+    expect(store.getState().activeAccountId).toBe(B);
+    expect(closeSession).not.toHaveBeenCalled();
   });
 
   it('requestAccountSwitch_haciaCuentaDeCodex_tambienPreguntaPorLaMigracion', () => {
@@ -1442,7 +1715,22 @@ describe('requestAccountSwitch y continueInAccount', () => {
 
     store.getState().requestAccountSwitch('C:/Users/u/.codex-x');
 
-    expect(store.getState().accountSwitchPrompt).toEqual({ tabId: 'a', destAccountId: 'C:/Users/u/.codex-x' });
+    expect(store.getState().accountSwitchPrompt).toEqual({ tabId: 'a', destAccountId: 'C:/Users/u/.codex-x', sourceAccountId: accounts[0]!.id });
+  });
+
+  it('continueInAccount_moverFalla_reabreLaConversacionYElErrorSube', async () => {
+    const store = mounted({
+      moveConversation: vi.fn().mockRejectedValue(new Error('No existe la transcripción a mover')),
+      closeSession: vi.fn().mockResolvedValue({ background: false }),
+      releaseConversationLock: vi.fn().mockResolvedValue(undefined),
+      listConversations: vi.fn().mockResolvedValue([{ sessionId: 's-old', configDir: accounts[0]!.id, cwd: '/p', title: 't', privacy: 'shared', updatedAtMs: 1, sizeBytes: 1, isScheduled: false }]),
+      loadConversationPrefs: vi.fn().mockResolvedValue(null),
+    });
+
+    await expect(store.getState().continueInAccount('a', B)).rejects.toThrow('No existe la transcripción a mover');
+
+    expect(store.getState().tabs.some((t) => t.resumeSessionId === 's-old')).toBe(true);
+    expect(store.getState().activeAccountId).toBe(accounts[0]!.id);
   });
 
   it('continueInAccount_haciaOtroProveedor_migraLaConversacionYReabreLaDelDestino', async () => {
@@ -1481,10 +1769,93 @@ describe('requestAccountSwitch y continueInAccount', () => {
     expect(store.getState().activeAccountId).toBe(accounts[0]!.id);
   });
 
+  it('continueInAccount_claudeAClaude_laMismaPestanaPasaALaCuentaYConservaSitioTituloYBorrador', async () => {
+    // Arrange: la pestaña 'a' (con sesión viva) está entre otras dos y tiene borrador.
+    const moveConversation = vi.fn().mockResolvedValue({ sessionId: 's-old' });
+    const closeSession = vi.fn().mockResolvedValue({ background: false });
+    const listConversations = vi.fn().mockResolvedValue([{ sessionId: 's-old', configDir: B, cwd: '/p', title: 't', privacy: 'shared', updatedAtMs: 1, sizeBytes: 1, isScheduled: false }]);
+    const store = mounted({ moveConversation, closeSession, listConversations, loadConversationPrefs: vi.fn().mockResolvedValue(null), releaseConversationLock: vi.fn().mockResolvedValue(undefined) });
+    store.setState({
+      tabs: [tab('x'), tab('a', { title: 'Mi título' }), tab('y')],
+      activeTabId: 'a',
+      splitLayout: { kind: 'leaf', tabIds: ['x', 'a', 'y'], activeTabId: 'a' },
+      sessionIdByChat: { a: 's-old' },
+      draftByChat: { a: { text: 'borrador', attachments: [], mentions: [] } },
+    });
+
+    // Act
+    await store.getState().continueInAccount('a', B);
+
+    // Assert
+    const s = store.getState();
+    expect(moveConversation).toHaveBeenCalledWith(expect.objectContaining({ accountDir: accounts[0]!.id, sessionId: 's-old', destAccountDir: B }));
+    expect(closeSession).toHaveBeenCalledWith('s-old');
+    expect(s.splitLayout).toEqual({ kind: 'leaf', tabIds: ['x', 'a', 'y'], activeTabId: 'a' });
+    expect(s.tabs.find((t) => t.id === 'a')).toMatchObject({ accountId: B, title: 'Mi título', resumeSessionId: 's-old' });
+    expect(s.draftByChat.a?.text).toBe('borrador');
+    expect(s.activeAccountId).toBe(B);
+  });
+
+  it('continueInAccount_turnoEnMarchaEnSegundoPlano_tambienParaElProcesoAntesDeMover', async () => {
+    const stop = vi.fn().mockResolvedValue(undefined);
+    const moveConversation = vi.fn().mockResolvedValue({ sessionId: 's-old' });
+    const store = mounted({ moveConversation, stop, closeSession: vi.fn().mockResolvedValue({ background: true }), listConversations: vi.fn().mockResolvedValue([]), loadConversationPrefs: vi.fn().mockResolvedValue(null) }, 'streaming');
+    store.setState({ sessionIdByChat: { a: 's-old' } });
+
+    await store.getState().continueInAccount('a', B);
+
+    expect(stop).toHaveBeenCalledWith('s-old');
+    expect(stop.mock.invocationCallOrder[0]!).toBeLessThan(moveConversation.mock.invocationCallOrder[0]!);
+  });
+
+  it('continueInAccount_haciaOtroProveedor_laNuevaOcupaElSitioConTituloYBorrador', async () => {
+    const migrateConversation = vi.fn().mockResolvedValue({ sessionId: 'hilo-nuevo', configDir: 'C:/Users/u/.codex-x', provider: 'codex' });
+    const listConversations = vi.fn().mockResolvedValue([
+      { sessionId: 'hilo-nuevo', configDir: 'C:/Users/u/.codex-x', cwd: '/p', title: 'primer mensaje', privacy: 'shared', updatedAtMs: 1, sizeBytes: 1, isScheduled: false, providerId: 'codex' },
+    ]);
+    const store = mounted({ migrateConversation, listConversations, loadConversationPrefs: vi.fn().mockResolvedValue(null) });
+    store.setState({
+      tabs: [tab('x'), tab('a', { resumeSessionId: 's-old', title: 'Mi título' }), tab('y')],
+      activeTabId: 'a',
+      splitLayout: { kind: 'split', direction: 'row', ratio: 0.5, a: { kind: 'leaf', tabIds: ['x', 'a'], activeTabId: 'a' }, b: { kind: 'leaf', tabIds: ['y'], activeTabId: 'y' } },
+      draftByChat: { a: { text: 'borrador', attachments: [], mentions: [] } },
+    });
+
+    await store.getState().continueInAccount('a', 'C:/Users/u/.codex-x');
+
+    const s = store.getState();
+    const created = s.tabs.find((t) => t.resumeSessionId === 'hilo-nuevo')!;
+    expect(migrateConversation).toHaveBeenCalledWith(expect.objectContaining({ title: 'Mi título', destProvider: 'codex' }));
+    expect(s.tabs.some((t) => t.id === 'a')).toBe(false);
+    expect(s.splitLayout).toEqual({ kind: 'split', direction: 'row', ratio: 0.5, a: { kind: 'leaf', tabIds: ['x', created.id], activeTabId: created.id }, b: { kind: 'leaf', tabIds: ['y'], activeTabId: 'y' } });
+    expect(created).toMatchObject({ provider: 'codex', title: 'Mi título' });
+    expect(s.draftByChat[created.id]?.text).toBe('borrador');
+    expect(s.activeTabId).toBe(created.id);
+  });
+
+  it('continueInAccount_haciaOtroProveedorConTituloDeRelleno_noMandaTitulo', async () => {
+    const migrateConversation = vi.fn().mockRejectedValue(new Error('parada tras medir'));
+    const store = mounted({ migrateConversation });
+    store.setState({ tabs: [tab('a', { resumeSessionId: 's-old', title: 'Nuevo chat' })] });
+
+    await expect(store.getState().continueInAccount('a', 'C:/Users/u/.codex-x')).rejects.toThrow('parada tras medir');
+
+    expect(migrateConversation.mock.calls[0]![0]).not.toHaveProperty('title');
+  });
+
+  it('continueInAccount_laMigracionFalla_laPestanaSigueEnSuSitioConSuCuenta', async () => {
+    const migrateConversation = vi.fn().mockRejectedValue(new Error('no se pudo comprobar'));
+    const store = mounted({ migrateConversation });
+
+    await expect(store.getState().continueInAccount('a', 'C:/Users/u/.codex-x')).rejects.toThrow('no se pudo comprobar');
+
+    expect(store.getState().tabs.find((t) => t.id === 'a')).toMatchObject({ accountId: accounts[0]!.id, resumeSessionId: 's-old' });
+  });
+
   it('continueWithHistoryIn_haciaOtroProveedor_abreChatNuevoConElHistorialYNoMigra', async () => {
     const migrateConversation = vi.fn();
     const store = mounted({ migrateConversation, getScratchDir: vi.fn(() => new Promise<string>(() => undefined)) });
-    store.setState({ blocksByChat: { a: [{ kind: 'user', id: 'u1', text: 'arregla el login', time: '', attachments: [] }] } });
+    store.setState({ blocksByChat: { a: [{ kind: 'user', id: 'u1', text: 'arregla el login', time: '', attachments: [], nativeId: null }] } });
 
     await store.getState().continueWithHistoryIn('a', 'C:/Users/u/.codex-x');
 
@@ -1598,7 +1969,7 @@ describe('requestAccountSwitch y continueInAccount', () => {
 
   it('requestAccountSwitch_chatConBloques_soloCambiaDeCuenta', () => {
     const store = mounted();
-    store.setState({ tabs: [tab('a')], blocksByChat: { a: [{ id: 'b1', kind: 'system', text: 'x' }] as never } });
+    store.setState({ tabs: [tab('a')], blocksByChat: { a: [{ id: 'b1', kind: 'user', text: 'x' }] as never } });
 
     store.getState().requestAccountSwitch(B);
 
@@ -1705,6 +2076,107 @@ describe('stopSubagent', () => {
   });
 });
 
+// K07: Rebobinar, Reintentar y Divergir desde la burbuja del usuario.
+describe('rebobinar, reintentar y divergir', () => {
+  const userBlock = (id: string, text: string, nativeId: string | null) => ({ kind: 'user', id, text, time: '', attachments: [], nativeId }) as const;
+  const entry = (index: number, text: string) =>
+    makeEntry({ kind: 'user', index, uuid: `n${index}`, raw: { type: 'user', message: { role: 'user', content: text } } });
+  const projectionOf = (...texts: string[]) => ({ entries: texts.map((text, index) => entry(index, text)), errors: [], isFinal: true, totalLinesSoFar: texts.length, bytesReadSoFar: 0, rawLineNumber: 0 });
+  const applied = (over: Record<string, unknown> = {}) => ({ draft: 'dos', returnedQueue: [], filesRestored: false, copyThreadId: null, projection: projectionOf('uno'), retried: null, ...over });
+
+  function mounted(rewindApply: unknown, over: Partial<MageApi> = {}) {
+    const store = createWorkbenchStore(fakeMage({ rewindApply: rewindApply as MageApi['rewindApply'], saveWorkspace: vi.fn().mockResolvedValue(undefined), ...over }));
+    store.setState({
+      tabs: [tab('a')],
+      activeTabId: 'a',
+      splitLayout: singleLeaf('a'),
+      sessionIdByChat: { a: 's-a' },
+      blocksByChat: { a: [userBlock('b1', 'uno', 'n0'), userBlock('b2', 'dos', 'n1')] },
+    });
+    return store;
+  }
+
+  it('getRewindPlan_blockWithoutSession_throws', () => {
+    const store = mounted(vi.fn());
+    store.setState({ sessionIdByChat: {} });
+
+    expect(() => void store.getState().getRewindPlan('a', 'b2', 'rewind')).toThrow('sesión');
+  });
+
+  it('getRewindPlan_secondBubble_sendsPointWithIndex1', async () => {
+    const rewindPlan = vi.fn().mockResolvedValue({ unavailable: null });
+    const store = mounted(vi.fn(), { rewindPlan });
+
+    await store.getState().getRewindPlan('a', 'b2', 'diverge');
+
+    expect(rewindPlan).toHaveBeenCalledWith({ sessionId: 's-a', point: { userIndex: 1, text: 'dos', nativeId: 'n1' }, action: 'diverge' });
+  });
+
+  it('rewindTo_rewind_replacesBlocksAndFillsDraft', async () => {
+    const store = mounted(vi.fn().mockResolvedValue(applied()));
+
+    await store.getState().rewindTo('a', 'b2', { restoreFiles: false, saveCopy: false, action: 'rewind' });
+
+    expect(store.getState().blocksByChat.a?.map((b) => b.kind === 'user' && b.text)).toEqual(['uno']);
+    expect(store.getState().draftByChat.a).toEqual({ text: 'dos', attachments: [], mentions: [] });
+  });
+
+  it('rewindTo_rewindWithQueue_queueGoesInFrontOfDraft', async () => {
+    const queue = [{ id: 'q1', text: 'encolado', attachments: [] }];
+    const store = mounted(vi.fn().mockResolvedValue(applied({ returnedQueue: queue })));
+
+    await store.getState().rewindTo('a', 'b2', { restoreFiles: false, saveCopy: false, action: 'rewind' });
+
+    expect(store.getState().draftByChat.a?.text).toBe('encolado\n\ndos');
+  });
+
+  it('rewindTo_retryAccepted_paintsOneRetryBubble', async () => {
+    const store = mounted(vi.fn().mockResolvedValue(applied({ draft: '', retried: { status: 'accepted', commandId: 'c9' } })));
+
+    await store.getState().rewindTo('a', 'b2', { restoreFiles: false, saveCopy: false, action: 'retry' });
+
+    const users = (store.getState().blocksByChat.a ?? []).filter((b) => b.kind === 'user');
+    expect(users.map((b) => b.kind === 'user' && [b.text, b.nativeId])).toEqual([['uno', 'n0'], ['dos', 'c9']]);
+    expect(store.getState().draftByChat.a).toBeUndefined();
+  });
+
+  it('rewindTo_mainFails_rethrowsAndKeepsBlocks', async () => {
+    const store = mounted(vi.fn().mockRejectedValue(new Error('sin CLI')));
+
+    await expect(store.getState().rewindTo('a', 'b2', { restoreFiles: true, saveCopy: false, action: 'rewind' })).rejects.toThrow('sin CLI');
+
+    expect(store.getState().blocksByChat.a).toHaveLength(2);
+  });
+
+  it('updateLegacyCodex_noOpenTab_updatesWithoutReopening', async () => {
+    const update = vi.fn().mockResolvedValue({ backupDir: 'C:\\copias\\t1' });
+    const store = mounted(vi.fn(), { updateLegacyCodexConversation: update });
+
+    const backupDir = await store.getState().updateLegacyCodex(null, 'C:\\codex', 't1');
+
+    expect(backupDir).toBe('C:\\copias\\t1');
+    expect(update).toHaveBeenCalledWith({ accountDir: 'C:\\codex', threadId: 't1' });
+    expect(store.getState().tabs).toHaveLength(1);
+  });
+
+  it('divergeFrom_claude_forkTravelsOnlyInFirstCreateSession', async () => {
+    const forkFrom = { sessionId: 'orig', atUuid: 'n1' };
+    const createSession = vi.fn().mockResolvedValue({ sessionId: 'fork-1', configDir: 'C:\\cfg' });
+    const store = mounted(vi.fn(), {
+      divergeConversation: vi.fn().mockResolvedValue({ kind: 'claude', forkFrom }),
+      createSession, isFolderTrusted: vi.fn().mockResolvedValue(true), saveConversationPrefs: vi.fn().mockResolvedValue(undefined),
+    });
+    store.setState({ accounts: [{ id: tab('a').accountId, alias: 'principal', providerId: 'claude', loginStatus: 'logged_in' } as unknown as Account] });
+
+    await store.getState().divergeFrom('a', 'b2');
+
+    expect(createSession).toHaveBeenCalledTimes(1);
+    expect(createSession).toHaveBeenCalledWith(expect.objectContaining({ forkFrom }));
+    const forkTab = store.getState().tabs.find((candidate) => candidate.id === store.getState().activeTabId);
+    expect(forkTab).toMatchObject({ id: expect.not.stringMatching(/^a$/) as unknown, resumeSessionId: 'fork-1', title: 'Rama de Conversacion a' });
+  });
+});
+
 // 0.1.1 R2, punto 30: con un turno en marcha la cola es de Mage. Nada va al stdin hasta que acaba.
 // F2.2: la cola es de main. El renderer envía siempre (con su commandId), adelanta lo que se ve, pinta la
 // cola que llega en `queue_changed` y reacciona a lo que main saca de ella.
@@ -1738,6 +2210,16 @@ describe('cola de mensajes', () => {
     });
     return { store, sendMessage, interrupt, removeQueuedMessage, updateQueuedMessage };
   }
+
+  it('sendMessageToTab_optimisticBlockNativeIdIsCommandId', async () => {
+    const { store, sendMessage } = mounted('idle');
+
+    await store.getState().sendMessageToTab('a', 'hola');
+
+    const sent = sendMessage.mock.calls[0]?.[0] as { commandId: string };
+    const block = (store.getState().blocksByChat.a ?? []).find((b) => b.kind === 'user');
+    expect(block).toMatchObject({ kind: 'user', nativeId: sent.commandId });
+  });
 
   it('sendMessageToTab_turnoEnMarcha_loMandaAMainSinBurbujaNiReloj', async () => {
     const { store, sendMessage } = mounted('streaming');
@@ -1820,7 +2302,7 @@ describe('cola de mensajes', () => {
   it('interrupt_losMensajesQueDevuelveMainVuelvenAlInput', async () => {
     const { store, interrupt } = mounted('streaming');
     interrupt.mockResolvedValue([{ id: 'q1', text: 'uno', attachments: [] }, { id: 'q2', text: 'mira [Imagen 1]', attachments: [IMG] }]);
-    store.getState().setDraft('a', { text: 'borrador', attachments: [] });
+    store.getState().setDraft('a', { text: 'borrador', attachments: [], mentions: [] });
 
     store.getState().interruptActiveSession();
 
@@ -1845,14 +2327,14 @@ describe('cola de mensajes', () => {
     return last?.kind === 'system' ? last.text : undefined;
   };
   const commandIdOfFirstSend = (sendMessage: ReturnType<typeof vi.fn>) => (sendMessage.mock.calls[0]![0] as { commandId: string }).commandId;
-  const deliver = (store: ReturnType<typeof createWorkbenchStore>, commandId: string, delivery: { into: 'active_turn' | 'new_turn' | 'queue' | 'failed'; late: boolean; turnKind: string | null }) =>
+  const deliver = (store: ReturnType<typeof createWorkbenchStore>, commandId: string, delivery: { into: 'active_turn' | 'new_turn' | 'queue' | 'failed'; late: boolean; turnKind: string | null; turnClosed?: boolean }) =>
     store.getState().handleEvent('s-a', { kind: 'message_delivery', commandId, message: { id: commandId, text: 'ya', attachments: [] }, ...delivery });
   const TURN_ENDED_TEXT = 'El turno ya había terminado: se envió como mensaje nuevo.';
 
   it('sendActiveMessage_conModoSteer_loPasaAlEnvio', async () => {
     const { store, sendMessage } = mounted('streaming', steering());
 
-    await store.getState().sendActiveMessage('ya', [], 'steer');
+    await store.getState().sendActiveMessage('ya', [], { mode: 'steer' });
 
     expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({ mode: 'steer' }));
   });
@@ -1860,7 +2342,7 @@ describe('cola de mensajes', () => {
   it('sendMessageToTab_enviarAhoraConTurno_mandaModoSteerYPintaLaBurbujaSinReloj', async () => {
     const { store, sendMessage } = mounted('streaming', steering());
 
-    await store.getState().sendMessageToTab('a', 'ya', [], 'steer');
+    await store.getState().sendMessageToTab('a', 'ya', [], { mode: 'steer' });
 
     expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({ mode: 'steer' }));
     expect(userTexts(store)).toEqual(['ya']);
@@ -1879,14 +2361,14 @@ describe('cola de mensajes', () => {
   it('sendMessageToTab_directoConPermisoPendiente_avisaQueLlegaraAlContestar', async () => {
     const { store } = mounted('streaming', steering(true));
 
-    await store.getState().sendMessageToTab('a', 'ya', [], 'steer');
+    await store.getState().sendMessageToTab('a', 'ya', [], { mode: 'steer' });
 
     expect(lastSystemText(store)).toBe('Llegará al modelo cuando contestes el permiso');
   });
 
   it('messageDelivery_dentroDelTurno_laBurbujaSeQueda', async () => {
     const { store, sendMessage } = mounted('streaming', steering());
-    await store.getState().sendMessageToTab('a', 'ya', [], 'steer');
+    await store.getState().sendMessageToTab('a', 'ya', [], { mode: 'steer' });
     const commandId = commandIdOfFirstSend(sendMessage);
 
     deliver(store, commandId, { into: 'active_turn', late: false, turnKind: null });
@@ -1898,7 +2380,7 @@ describe('cola de mensajes', () => {
 
   it('messageDelivery_turnoNuevoTardio_arrancaElRelojYAvisa', async () => {
     const { store, sendMessage } = mounted('streaming', steering());
-    await store.getState().sendMessageToTab('a', 'ya', [], 'steer');
+    await store.getState().sendMessageToTab('a', 'ya', [], { mode: 'steer' });
     const commandId = commandIdOfFirstSend(sendMessage);
 
     deliver(store, commandId, { into: 'new_turn', late: true, turnKind: null });
@@ -1908,9 +2390,26 @@ describe('cola de mensajes', () => {
     expect(lastSystemText(store)).toBe(TURN_ENDED_TEXT);
   });
 
+  it('messageDelivery_turnoNuevoYaCerrado_noArrancaElRelojNiOcupaLaPestana', async () => {
+    // Arrange: el directo salió y su turno ya terminó (la pestaña volvió a reposo).
+    const { store, sendMessage } = mounted('streaming', steering());
+    await store.getState().sendMessageToTab('a', 'ya', [], { mode: 'steer' });
+    const commandId = commandIdOfFirstSend(sendMessage);
+    store.setState((s) => ({ statusByChat: { ...s.statusByChat, a: 'idle' }, turnStartByChat: { ...s.turnStartByChat, a: 1000 } }));
+
+    // Act
+    deliver(store, commandId, { into: 'new_turn', late: true, turnKind: null, turnClosed: true });
+
+    // Assert
+    expect(store.getState().statusByChat.a).toBe('idle');
+    expect(store.getState().turnStartByChat.a).toBe(1000);
+    expect(userTexts(store)).toEqual(['ya']);
+    expect(lastSystemText(store)).toBe(TURN_ENDED_TEXT);
+  });
+
   it('messageDelivery_colaPorReview_quitaLaBurbujaAvisaYBloqueaHastaElResult', async () => {
     const { store, sendMessage } = mounted('streaming', steering());
-    await store.getState().sendMessageToTab('a', 'ya', [], 'steer');
+    await store.getState().sendMessageToTab('a', 'ya', [], { mode: 'steer' });
     const commandId = commandIdOfFirstSend(sendMessage);
 
     deliver(store, commandId, { into: 'queue', late: false, turnKind: 'review' });
@@ -1924,7 +2423,7 @@ describe('cola de mensajes', () => {
 
   it('messageDelivery_fallido_quitaLaBurbujaDejaElErrorYDevuelveElBorrador', async () => {
     const { store, sendMessage } = mounted('streaming', steering());
-    await store.getState().sendMessageToTab('a', 'ya', [], 'steer');
+    await store.getState().sendMessageToTab('a', 'ya', [], { mode: 'steer' });
     const commandId = commandIdOfFirstSend(sendMessage);
 
     deliver(store, commandId, { into: 'failed', late: false, turnKind: null });
@@ -1933,6 +2432,31 @@ describe('cola de mensajes', () => {
     expect(blocksOfKind(store, 'error').map((b) => b.kind === 'error' && b.message)).toContain('No se pudo enviar el mensaje directo.');
     expect(store.getState().statusByChat.a).toBe('streaming');
     expect(store.getState().draftByChat.a?.text).toBe('ya');
+  });
+
+  it('messageDelivery_promptNoEnviadoPorElCli_avisaYAnteponeAlBorradorSinAvisoDeMensajeNuevo', async () => {
+    // Arrange
+    const { store, sendMessage } = mounted('streaming', steering());
+    await store.getState().sendMessageToTab('a', 'ya', [], { mode: 'steer' });
+    const commandId = commandIdOfFirstSend(sendMessage);
+    store.getState().setDraft('a', { text: 'sigo escribiendo', attachments: [], mentions: [] });
+
+    // Act
+    store.getState().handleEvent('s-a', {
+      kind: 'message_delivery',
+      commandId,
+      message: { id: commandId, text: 'ya', attachments: [] },
+      into: 'failed',
+      late: false,
+      turnKind: null,
+      localized: localized('i5.chat.promptNotSubmitted'),
+    });
+
+    // Assert
+    expect(userTexts(store)).toEqual([]);
+    expect(blocksOfKind(store, 'error').map((b) => b.kind === 'error' && b.message)).toContain('El CLI no llegó a enviar este mensaje. Vuelve a enviarlo.');
+    expect(blocksOfKind(store, 'system').map((b) => b.kind === 'system' && b.text)).not.toContain(TURN_ENDED_TEXT);
+    expect(store.getState().draftByChat.a?.text).toBe('ya\n\nsigo escribiendo');
   });
 
   it('messageDelivery_deOtroCliente_soloDejaElAviso', () => {
@@ -2256,7 +2780,7 @@ describe('worktree de la pestaña (grupo D)', () => {
       activeTabId: 'a',
       splitLayout: singleLeaf('a'),
       gitByCwd: { 'C:/proyecto': { snapshot: REPO_SNAPSHOT, branches: ['main'], error: null } },
-      blocksByChat: { a: [{ kind: 'user', id: 'b1', text: 'Arreglar el login', time: '10:00', attachments: [] }] },
+      blocksByChat: { a: [{ kind: 'user', id: 'b1', text: 'Arreglar el login', time: '10:00', attachments: [], nativeId: null }] },
     });
     return store;
   }
@@ -2575,5 +3099,261 @@ describe('bloqueo entre instancias', () => {
 
     expect(takeOverConversationLock).toHaveBeenCalledWith({ provider: 'claude', accountDir: expect.any(String), nativeId: 's-a', tabId: 'a' });
     expect(store.getState().lockByChat['a']).toEqual({ owner: true });
+  });
+});
+
+// U17: una sesión viva creada por el host entra como pestaña en segundo plano; un rewind de fuera la relee.
+describe('adoptLiveSession (U17)', () => {
+  const hostAccount = { id: tab('x').accountId, alias: 'principal', providerId: 'claude', loginStatus: 'logged_in' } as unknown as Account;
+  const hostSession = (over: Partial<AdoptableSession> = {}): AdoptableSession => ({
+    sessionId: 's-host', conversationId: 'c1', nativeId: 'n1', provider: 'claude', accountId: hostAccount.id, configDir: hostAccount.id,
+    cwd: '/proj/app', model: 'sonnet', origin: 'terminal', createdBy: null, ...over,
+  });
+  const snapshotOf = (over: Partial<ConversationSnapshot> = {}): ConversationSnapshot => ({
+    sessionId: 's-host', provider: 'claude', conversationId: 'c1', nativeRef: null, lastSeq: 0, state: 'idle', queue: [], pending: [], background: false, ...over,
+  });
+  const permission = { requestId: 'p1', toolUseId: 't1', toolName: 'Bash', input: { command: 'ls' }, description: null, requiresUserInteraction: false, displayName: null } as PermissionRequest;
+
+  function mountedHost(attachSession: unknown, over: Partial<MageApi> = {}) {
+    const store = createWorkbenchStore(fakeMage({ attachSession: attachSession as MageApi['attachSession'], saveWorkspace: vi.fn().mockResolvedValue(undefined), ...over }));
+    store.setState({ accounts: [hostAccount], tabs: [tab('tab1')], activeTabId: 'tab1', splitLayout: singleLeaf('tab1') });
+    return store;
+  }
+
+  it('adoptLiveSession_newSession_addsBackgroundTabWithoutChangingActive', async () => {
+    const store = mountedHost(vi.fn().mockResolvedValue(snapshotOf({ state: 'running' })));
+
+    await store.getState().adoptLiveSession(hostSession());
+
+    const adopted = store.getState().tabs.find((t) => t.id !== 'tab1');
+    expect(adopted).toMatchObject({ title: 'app', resumeSessionId: 'n1', privacy: 'shared', resolvedConfigDir: hostAccount.id });
+    expect(store.getState().activeTabId).toBe('tab1');
+    expect(store.getState().sessionIdByChat[adopted?.id ?? '']).toBe('s-host');
+    expect(store.getState().statusByChat[adopted?.id ?? '']).toBe('streaming');
+    expect(findLeafPath(store.getState().splitLayout, adopted?.id ?? '')).not.toBeNull();
+  });
+
+  const textBlock = (kind: 'user' | 'agent', id: string, text: string): Block => ({ kind, id, text, attachments: [] }) as unknown as Block;
+  const liveBlocks = [textBlock('user', 'blk1', 'hola'), textBlock('agent', 'blk2', 'ok')];
+  const transcript = [textBlock('user', 'tb-0-0', 'hola'), textBlock('agent', 'tb-1-0', 'ok')];
+
+  async function adoptedWith(blocks: readonly Block[], status: 'idle' | 'streaming') {
+    const store = mountedHost(vi.fn().mockResolvedValue(snapshotOf()));
+    await store.getState().adoptLiveSession(hostSession());
+    const adoptedId = store.getState().tabs.find((t) => t.id !== 'tab1')?.id ?? '';
+    store.setState((s) => ({ blocksByChat: { ...s.blocksByChat, [adoptedId]: blocks }, statusByChat: { ...s.statusByChat, [adoptedId]: status } }));
+    return { store, adoptedId };
+  }
+
+  it('hydrateBlocks_pestanaAdoptadaConBloquesEnVivoYTurnoAcabado_noDuplica', async () => {
+    const { store, adoptedId } = await adoptedWith(liveBlocks, 'idle');
+
+    store.getState().hydrateBlocks(adoptedId, transcript);
+
+    expect(store.getState().blocksByChat[adoptedId]?.map((b) => b.id)).toEqual(['tb-0-0', 'tb-1-0']);
+  });
+
+  it('hydrateBlocks_pestanaAdoptadaEnPlenoTurno_esperaYNoToca', async () => {
+    const { store, adoptedId } = await adoptedWith(liveBlocks, 'streaming');
+
+    store.getState().hydrateBlocks(adoptedId, transcript);
+
+    expect(store.getState().blocksByChat[adoptedId]?.map((b) => b.id)).toEqual(['blk1', 'blk2']);
+  });
+
+  it('hydrateBlocks_pestanaAdoptadaYaHidratada_noRepite', async () => {
+    const { store, adoptedId } = await adoptedWith(transcript, 'idle');
+
+    store.getState().hydrateBlocks(adoptedId, transcript);
+
+    expect(store.getState().blocksByChat[adoptedId]?.map((b) => b.id)).toEqual(['tb-0-0', 'tb-1-0']);
+  });
+
+  it('adoptLiveSession_alreadyBound_doesNothing', async () => {
+    const attachSession = vi.fn().mockResolvedValue(snapshotOf());
+    const store = mountedHost(attachSession);
+    store.setState({ sessionIdByChat: { tab1: 's-host' } });
+
+    await store.getState().adoptLiveSession(hostSession());
+
+    expect(attachSession).not.toHaveBeenCalled();
+    expect(store.getState().tabs).toHaveLength(1);
+  });
+
+  it('adoptLiveSession_restoredTab_reusesItAndNeverCreatesSession', async () => {
+    const createSession = vi.fn();
+    const store = mountedHost(vi.fn().mockResolvedValue(snapshotOf()), { createSession });
+    store.setState({ tabs: [tab('tab1'), tab('tab2', { resumeSessionId: 'n1' })] });
+
+    await store.getState().adoptLiveSession(hostSession());
+
+    expect(store.getState().tabs.map((t) => t.id)).toEqual(['tab1', 'tab2']);
+    expect(store.getState().sessionIdByChat.tab2).toBe('s-host');
+    expect(createSession).not.toHaveBeenCalled();
+  });
+
+  it('adoptLiveSession_pendingPermission_showsCard', async () => {
+    const store = mountedHost(vi.fn().mockResolvedValue(snapshotOf({ state: 'requires_action', pending: [{ kind: 'permission', request: permission }] })), { notify: vi.fn().mockResolvedValue(undefined) });
+
+    await store.getState().adoptLiveSession(hostSession());
+
+    const adoptedId = store.getState().tabs.find((t) => t.id !== 'tab1')?.id ?? '';
+    expect(store.getState().pendingByChat[adoptedId]?.map((p) => p.requestId)).toEqual(['p1']);
+    expect(store.getState().statusByChat[adoptedId]).toBe('needs_permission');
+  });
+
+  it('adoptLiveSession_attachFails_removesNewTab', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const store = mountedHost(vi.fn().mockRejectedValue(new Error('sesión desaparecida')));
+
+    await store.getState().adoptLiveSession(hostSession());
+
+    expect(store.getState().tabs.map((t) => t.id)).toEqual(['tab1']);
+    expect(store.getState().sessionIdByChat).toEqual({});
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it('adoptLiveSession_unknownAccount_noTab', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const attachSession = vi.fn();
+    const store = mountedHost(attachSession);
+
+    await store.getState().adoptLiveSession(hostSession({ accountId: 'otra-cuenta' }));
+
+    expect(store.getState().tabs).toHaveLength(1);
+    expect(attachSession).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  describe('conversation_rewound', () => {
+    const userBlock = (id: string, text: string, nativeId: string | null) => ({ kind: 'user', id, text, time: '', attachments: [], nativeId }) as const;
+    const rewound = { kind: 'conversation_rewound', targetNativeId: 'n0', action: 'rewind' } as const;
+
+    function mountedRewind(rewindApply: unknown) {
+      const store = createWorkbenchStore(fakeMage({ rewindApply: rewindApply as MageApi['rewindApply'], saveWorkspace: vi.fn().mockResolvedValue(undefined) }));
+      store.setState({ tabs: [tab('rw')], activeTabId: 'rw', splitLayout: singleLeaf('rw'), sessionIdByChat: { rw: 's-rw' }, blocksByChat: { rw: [userBlock('b1', 'uno', 'n0')] } });
+      const refresh = vi.fn();
+      transcriptStoreForTab('rw').setState({ refresh });
+      return { store, refresh };
+    }
+
+    afterEach(() => disposeTranscriptStore('rw'));
+
+    it('conversationRewound_notInitiatedHere_refreshesTranscript', () => {
+      const { store, refresh } = mountedRewind(vi.fn());
+
+      store.getState().handleEvent('s-rw', rewound);
+
+      expect(refresh).toHaveBeenCalledTimes(1);
+    });
+
+    it('conversationRewound_initiatedHere_noRefresh', async () => {
+      let emitDuringRewind: () => void = () => undefined;
+      const rewindApply = vi.fn().mockImplementation(async () => {
+        emitDuringRewind();
+        return { draft: 'uno', returnedQueue: [], filesRestored: false, copyThreadId: null, projection: { entries: [], errors: [], isFinal: true, totalLinesSoFar: 0, bytesReadSoFar: 0, rawLineNumber: 0 }, retried: null };
+      });
+      const { store, refresh } = mountedRewind(rewindApply);
+      emitDuringRewind = () => store.getState().handleEvent('s-rw', rewound);
+
+      await store.getState().rewindTo('rw', 'b1', { restoreFiles: false, saveCopy: false, action: 'rewind' });
+
+      expect(refresh).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('init', () => {
+    function initStore(windowId: string) {
+      const listAdoptableSessions = vi.fn().mockResolvedValue([hostSession(), hostSession({ sessionId: 's-2' })]);
+      const api = new Proxy({ loadSettings: () => Promise.reject(new Error('sin ajustes')), loadWorkspace: async () => null, listWindows: async () => [{ windowId, isCurrent: true }], listAdoptableSessions } as unknown as MageApi, {
+        get: (target, prop: string) => {
+          if (prop in target) return (target as unknown as Record<string, unknown>)[prop];
+          if (prop.startsWith('on')) return () => () => {};
+          return async () => [];
+        },
+      });
+      const store = createWorkbenchStore(api);
+      const adoptLiveSession = vi.fn().mockResolvedValue(undefined);
+      store.setState({ adoptLiveSession });
+      return { store, adoptLiveSession, listAdoptableSessions };
+    }
+
+    it('init_secondaryWindow_doesNotAdopt', async () => {
+      const { store, adoptLiveSession, listAdoptableSessions } = initStore('w2');
+
+      store.getState().init();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(listAdoptableSessions).not.toHaveBeenCalled();
+      expect(adoptLiveSession).not.toHaveBeenCalled();
+    });
+
+    it('init_mainWindow_adoptsListedSessions', async () => {
+      const { store, adoptLiveSession } = initStore(MAIN_WINDOW_ID);
+
+      store.getState().init();
+
+      await vi.waitFor(() => expect(adoptLiveSession).toHaveBeenCalledTimes(2));
+      expect(adoptLiveSession.mock.calls.map(([s]) => (s as AdoptableSession).sessionId)).toEqual(['s-host', 's-2']);
+    });
+  });
+});
+
+// Una conversación creada fuera de la ventana (terminal o MCP) se abre con la cuenta y el modelo de su sesión (facturación).
+describe('openConversation — dueña del host', () => {
+  const claudeAccount = (id: string) => ({ id, alias: id, providerId: 'claude', loginStatus: 'logged_in' }) as unknown as Account;
+  const item = (): ConversationSummary => ({ sessionId: 'n-1', configDir: 'acc-active', cwd: 'C:\proyecto', title: 't', updatedAtMs: 0, privacy: 'shared' } as ConversationSummary);
+
+  function hostStore(prefs: unknown, over: Partial<MageApi> = {}) {
+    const createSession = vi.fn().mockResolvedValue({ sessionId: 's-new' });
+    const store = createWorkbenchStore(fakeMage({
+      loadConversationPrefs: vi.fn().mockResolvedValue(prefs), saveConversationPrefs: vi.fn().mockResolvedValue(undefined),
+      saveWorkspace: vi.fn().mockResolvedValue(undefined), createSession, ...over,
+    }));
+    store.setState({ accounts: [claudeAccount('acc-active'), claudeAccount('acc-owner')], activeAccountId: 'acc-active' });
+    return { store, createSession };
+  }
+
+  it('openConversation_hostOwned_opensWithOwnerAccountAndSavedModel', async () => {
+    const { store } = hostStore({ hostOwnerAccountId: 'acc-owner', accountId: 'acc-owner', model: 'claude-haiku-4-5' });
+
+    await store.getState().openConversation(item(), 'acc-active');
+
+    const opened = store.getState().tabs.find((t) => t.resumeSessionId === 'n-1');
+    expect(opened).toMatchObject({ accountId: 'acc-owner', model: 'claude-haiku-4-5', accountPinned: true });
+    expect(store.getState().activeAccountId).toBe('acc-owner');
+  });
+
+  it('openConversation_noOwner_keepsRequestedAccount', async () => {
+    const { store } = hostStore(null);
+
+    await store.getState().openConversation(item(), 'acc-active');
+
+    const opened = store.getState().tabs.find((t) => t.resumeSessionId === 'n-1');
+    expect(opened?.accountId).toBe('acc-active');
+    expect(opened?.accountPinned).toBeUndefined();
+  });
+
+  it('openConversation_hostOwnedAccountMissing_readOnlyAndActiveUnchanged', async () => {
+    const { store, createSession } = hostStore({ hostOwnerAccountId: 'C:\\x\\home\\.claude-x-inval', accountId: 'C:\\x\\home\\.claude-x-inval', model: 'claude-haiku-4-5' });
+
+    await store.getState().openConversation(item(), 'acc-active');
+
+    const opened = store.getState().tabs.find((t) => t.resumeSessionId === 'n-1');
+    expect(opened).toMatchObject({ accountId: 'C:\\x\\home\\.claude-x-inval', accountPinned: true, accountAlias: 'claude-x-inval' });
+    expect(store.getState().activeAccountId).toBe('acc-active');
+    await expect(store.getState().ensureSession(opened?.id ?? '')).rejects.toThrow(/solo lectura/);
+    expect(createSession).not.toHaveBeenCalled();
+  });
+
+  it('openConversation_hostOwnedTabOnOtherAccount_reassignsToOwner', async () => {
+    const { store } = hostStore({ hostOwnerAccountId: 'acc-owner', accountId: 'acc-owner', model: 'claude-haiku-4-5' });
+    store.setState({ tabs: [tab('t1', { accountId: 'acc-active', resumeSessionId: 'n-1' })], activeTabId: 't1', splitLayout: singleLeaf('t1') });
+
+    await store.getState().openConversation(item(), 'acc-active');
+
+    expect(store.getState().tabs).toHaveLength(1);
+    expect(store.getState().tabs[0]).toMatchObject({ id: 't1', accountId: 'acc-owner', accountPinned: true });
   });
 });

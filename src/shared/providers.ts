@@ -97,6 +97,13 @@ export const AUTO_APPROVED_PROVIDER_IDS: readonly string[] = [AGY_PROVIDER_ID];
 // usan su adapter (main) y los selectores (renderer).
 export const AGY_EFFORT_LEVELS: readonly string[] = ['low', 'medium', 'high', 'max'];
 
+// MEDIDO con agy 1.5.2 (2026-11-07): un id con sufijo de esfuerzo (`gemini-3.8-flash-high`) ya lo fija, y un
+// `--effort` distinto aborta el arranque («--model X conflicts with --effort=Y», antes de gastar nada); con el
+// mismo nivel arranca. Con sufijo, Mage no manda `--effort` ni enseña el control de esfuerzo.
+export function agyModelFixesEffort(modelId: string): boolean {
+  return AGY_EFFORT_LEVELS.some((level) => modelId.endsWith(`-${level}`));
+}
+
 // Modos de permiso de agy: su `--mode` solo admite `accept-edits` y `plan` (medido en 1.2.14), con los nombres de Mage.
 // En los dos el CLI deniega los comandos: no hay modo manual.
 export const AGY_PERMISSION_MODES: readonly string[] = ['acceptEdits', 'plan'];

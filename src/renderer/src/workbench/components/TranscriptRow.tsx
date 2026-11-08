@@ -48,7 +48,7 @@ export function TranscriptRow({
 }
 
 function categoryBadgeClass(category: TranscriptEntry['category']): string {
-  if (category === 'turn') return 'bg-mg-sel text-mg-body';
+  if (category === 'turn') return 'bg-mg-sel text-mg-sel-ink';
   if (category === 'metadata') return 'bg-mg-hover text-mg-ter';
   return 'bg-mg-danger-bg text-mg-danger'; // unknown: destaca tipos no catalogados
 }

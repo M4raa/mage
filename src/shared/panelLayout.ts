@@ -74,6 +74,37 @@ export const MIN_ZONE_SIZE_PX = 160;
 // Paso de ajuste del divisor de resize con teclado (flechas), §6: RESIZE_STEP_PX, no un numero suelto.
 export const RESIZE_STEP_PX = 24;
 
+// Imanes del arrastre de un divisor (0.1.4): fracciones donde el divisor se pega —del contenedor en el divisor de
+// grupos; del viewport en el dock— y a cuántos px engancha. Alt o Mayús al arrastrar los desactivan; el teclado
+// no los usa.
+export const SNAP_FRACTIONS: readonly number[] = [0.25, 1 / 3, 0.5, 2 / 3, 0.75];
+export const SNAP_TOLERANCE_PX = 8;
+
+// Pega `sizePx` al imán más cercano de `totalPx` si está a SNAP_TOLERANCE_PX o menos; si no, lo devuelve igual.
+// Sin tamaño de referencia (0 o negativo) no hay imanes. Un imán que deja un lado por debajo de su mínimo no engancha.
+export interface MagnetBounds {
+  readonly minPx: number;
+  readonly maxPx: number;
+}
+
+export function snapToMagnets(sizePx: number, totalPx: number, bounds?: MagnetBounds): number {
+  if (!Number.isFinite(sizePx) || !Number.isFinite(totalPx)) {
+    throw new Error(`snapToMagnets necesita números finitos: sizePx=${sizePx}, totalPx=${totalPx}`);
+  }
+  if (totalPx <= 0) return sizePx;
+  let snapped = sizePx;
+  let bestDistance = SNAP_TOLERANCE_PX;
+  for (const fraction of SNAP_FRACTIONS) {
+    const magnet = Math.round(totalPx * fraction);
+    if (bounds !== undefined && (magnet < bounds.minPx || magnet > bounds.maxPx)) continue;
+    const distance = Math.abs(sizePx - magnet);
+    if (distance > bestDistance) continue;
+    snapped = magnet;
+    bestDistance = distance;
+  }
+  return snapped;
+}
+
 // Tamaño por defecto de una zona recien abierta, por borde. left/right igualan el ancho MEDIDO hoy de
 // ChatSidebar/Inspector (§2 del plan) para que v1 reproduzca el layout actual sin saltos de tamaño;
 // bottom no tiene equivalente medido (panel nuevo en v1, vacio por catalogo, §4.1) — valor de partida

@@ -9,13 +9,14 @@ describe('renderEvent', () => {
     [{ kind: 'stream_delta', text: 'hola' }, 'hola'],
     [{ kind: 'tool_use', tool: { toolName: 'Bash' } }, '\n[herramienta: Bash]\n'],
     [{ kind: 'result', result: { subtype: 'success' } }, '\n[fin del turno: success]\n'],
+    [{ kind: 'result', result: { subtype: 'success', isError: true } }, '\n[fin del turno: error]\n'],
+    [{ kind: 'result', result: { subtype: 'success', isError: false } }, '\n[fin del turno: success]\n'],
     [{ kind: 'error', message: 'roto' }, '[error] roto\n'],
     [{ kind: 'notice', text: 'ojo' }, '[aviso] ojo\n'],
     [{ kind: 'queue_changed', queue: [{ id: 'a' }, { id: 'b' }] }, '[cola: 2]\n'],
     [{ kind: 'queued_message_failed', error: 'no' }, '[no se pudo enviar desde la cola: no]\n'],
     [{ kind: 'permission_resolved', requestId: 'r', behavior: 'deny' }, '[permiso: denegado]\n'],
     [{ kind: 'background_expired' }, '[la sesión caducó en segundo plano]\n'],
-    [{ kind: 'elicitation_request', request: {} }, '[hay una pregunta pendiente: contéstala en la ventana de Mage]\n'],
   ])('renderEvent_casos (%j)', (event, expected) => {
     expect(renderEvent(event, messages)).toBe(expected);
   });
@@ -26,7 +27,8 @@ describe('renderEvent', () => {
     expect(renderEvent({ kind: 'toString' }, messages)).toBeNull();
   });
 
-  it('renderEvent_permissionRequest_null', () => {
+  it('renderEvent_peticiones_null', () => {
+    expect(renderEvent({ kind: 'elicitation_request', request: {} }, messages)).toBeNull();
     expect(renderEvent({ kind: 'permission_request', request: {} }, messages)).toBeNull();
   });
 });

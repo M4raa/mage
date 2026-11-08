@@ -19,7 +19,7 @@ export interface TranscriptStoreState {
   // en vez de releer el fichero entero desde el principio en cada turno.
   readonly tailPosition: TranscriptTailPosition;
   readonly errorMessage: string | null;
-  // El error es que la conversacion no existe en la cuenta (Codex o agy), no un fallo de lectura (devolucion 19).
+  // El error es que la conversacion no existe en la cuenta (Codex o agy), no un fallo de lectura.
   readonly missing: boolean;
   // Ultimos params abiertos: permiten reintentar (refresh) sin que el panel tenga que conocerlos.
   readonly lastParams: OpenTranscriptParams | null;

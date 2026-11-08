@@ -51,7 +51,9 @@ describe('CodexAdapter: arranque (codex app-server, sin verificar)', () => {
 
   it('buildSpawnPlan_suscripcionPorDefecto_appServerSinCodexHomeNiClaves', () => {
     const previous = process.env.OPENAI_API_KEY;
+    const previousHome = process.env.CODEX_HOME;
     process.env.OPENAI_API_KEY = 'sk-del-usuario';
+    delete process.env.CODEX_HOME;
     try {
       const plan = new CodexAdapter({ resolveBinary: () => 'codex.exe' }).buildSpawnPlan(launch);
 
@@ -63,6 +65,8 @@ describe('CodexAdapter: arranque (codex app-server, sin verificar)', () => {
     } finally {
       if (previous === undefined) delete process.env.OPENAI_API_KEY;
       else process.env.OPENAI_API_KEY = previous;
+      if (previousHome === undefined) delete process.env.CODEX_HOME;
+      else process.env.CODEX_HOME = previousHome;
     }
   });
 
@@ -86,6 +90,41 @@ describe('CodexAdapter: arranque (codex app-server, sin verificar)', () => {
     expect(plan.args.join(' ')).toContain(`env_key="${CODEX_API_KEY_ENV}"`);
     expect(plan.args).toContain('model_provider="mage-openai"');
     expect(plan.args.join(' ')).not.toContain('sk-cuenta');
+  });
+
+  describe('mageCaller (D-M6)', () => {
+    const credential = 'd'.repeat(64);
+    const withCaller = (forwardToCodexMcp: boolean): LaunchParams => ({
+      ...launch,
+      shared: { mcpServers: [], settingsFragment: null, claudeAiConnectors: true, mageCaller: { credential, forwardToCodexMcp } },
+    });
+
+    it('buildSpawnPlan_mageCallerRegistered_envAndEnvVarsOverride', () => {
+      const plan = codex().buildSpawnPlan(withCaller(true));
+
+      expect(plan.env.MAGE_MCP_CALLER).toBe(credential);
+      expect(plan.args).toContain('mcp_servers.mage.env_vars=["MAGE_MCP_CALLER"]');
+    });
+
+    it('buildSpawnPlan_mageCallerNotRegistered_envWithoutOverride', () => {
+      const plan = codex().buildSpawnPlan(withCaller(false));
+
+      expect(plan.env.MAGE_MCP_CALLER).toBe(credential);
+      expect(plan.args.join(' ')).not.toContain('mcp_servers.mage');
+    });
+
+    it('buildSpawnPlan_mageCaller_credentialRedactedAsSecret', () => {
+      const adapter = codex();
+      adapter.buildSpawnPlan(withCaller(true));
+      const raw = notification('item/completed', { item: { id: 'm', type: 'mcpToolCall', server: 's', tool: 't',
+        status: 'completed', result: { content: [{ type: 'text', text: `respuesta ${credential}` }] },
+      } });
+
+      const serialized = JSON.stringify(adapter.normalize(raw));
+
+      expect(serialized.includes(credential)).toBe(false);
+      expect(serialized).toContain('[clave oculta]');
+    });
   });
 
   it('buildSpawnPlan_siempre_encolaInitializeConClientInfo', () => {
@@ -183,6 +222,28 @@ describe('CodexAdapter: turno', () => {
 
     expect((adapter.takeOutgoing() as Rpc[])[0]?.params?.effort).toBe('low');
     expect(requests.find((r) => r.method === 'thread/start')?.params?.effort).toBeUndefined();
+  });
+
+  it('threadStart_modeloVacio_sinCampoModel', () => {
+    const requests = handshake(codex(), { ...launch, model: '' });
+
+    expect(requests.find((r) => r.method === 'thread/start')?.params).not.toHaveProperty('model');
+  });
+
+  it('threadStart_conModelo_llevaElCampoModel', () => {
+    const requests = handshake(codex());
+
+    expect(requests.find((r) => r.method === 'thread/start')?.params?.model).toBe('gpt-5.6-sol');
+  });
+
+  it('turnStart_modeloVacio_sinCampoModel', () => {
+    const adapter = codex();
+    const requests = handshake(adapter, { ...launch, model: '' });
+    answer(adapter, requests, 'thread/start', fixture('thread-start'));
+
+    adapter.encodeUserMessage('hola');
+
+    expect((adapter.takeOutgoing() as Rpc[])[0]?.params).not.toHaveProperty('model');
   });
 
   it.each([undefined, ''])('encodeUserMessage_sinEsfuerzoConservaElDelCli_%s', (effort) => {
@@ -399,6 +460,49 @@ describe('CodexAdapter: aprobaciones (forma del esquema)', () => {
 
     expect(events[0]).toMatchObject({ kind: 'permission_request', request: { requestId: 'codex-7', toolUseId: 'item-1', toolName: 'Bash', input: { command: 'git push' } } });
     expect(adapter.encodePermissionResponse({ requestId: 'codex-7', toolUseId: 'item-1' }, { behavior: 'allow' })).toEqual({ jsonrpc: '2.0', id: 7, result: { decision: 'accept' } });
+  });
+
+  const commandApproval = (adapter: ReturnType<typeof codex>) =>
+    adapter.normalize({ jsonrpc: '2.0', id: 7, method: 'item/commandExecution/requestApproval', params: { itemId: 'item-1', threadId: 't', turnId: 'u', startedAtMs: 1, command: 'npm test', cwd: '/p' } });
+
+  it('encodePermissionResponse_comandoEnEstaSesion_acceptForSession', () => {
+    const adapter = codex();
+    commandApproval(adapter);
+
+    expect(adapter.encodePermissionResponse({ requestId: 'codex-7', toolUseId: 'item-1' }, { behavior: 'allow', scope: 'session' })).toEqual({ jsonrpc: '2.0', id: 7, result: { decision: 'acceptForSession' } });
+  });
+
+  it('encodePermissionResponse_permisosEnEstaSesion_scopeSession', () => {
+    const adapter = codex();
+    const permissions = { fileSystem: { write: ['/p'] } };
+    adapter.normalize({ jsonrpc: '2.0', id: 8, method: 'item/permissions/requestApproval', params: { itemId: 'item-2', threadId: 't', turnId: 'u', cwd: '/p', permissions } });
+
+    const response = adapter.encodePermissionResponse({ requestId: 'codex-8', toolUseId: 'item-2' }, { behavior: 'allow', scope: 'session' }) as { result: { scope: string; permissions: unknown } };
+
+    expect(response.result.scope).toBe('session');
+    expect(response.result.permissions).toEqual(permissions);
+  });
+
+  it('encodePermissionResponse_siempre_lanza', () => {
+    const adapter = codex();
+    commandApproval(adapter);
+
+    expect(() => adapter.encodePermissionResponse({ requestId: 'codex-7', toolUseId: 'item-1' }, { behavior: 'allow', scope: 'always' })).toThrow(/siempre/);
+  });
+
+  it('encodePermissionResponse_siempreRechazado_noPierdeLaPeticion', () => {
+    const adapter = codex();
+    commandApproval(adapter);
+    const ref = { requestId: 'codex-7', toolUseId: 'item-1' };
+    expect(() => adapter.encodePermissionResponse(ref, { behavior: 'allow', scope: 'always' })).toThrow();
+
+    expect(adapter.encodePermissionResponse(ref, { behavior: 'allow' })).toEqual({ jsonrpc: '2.0', id: 7, result: { decision: 'accept' } });
+  });
+
+  it('approvalRequest_comando_ofreceSoloEstaSesion', () => {
+    const events = commandApproval(codex());
+
+    expect(events[0]).toMatchObject({ kind: 'permission_request', request: { allowScopes: ['session'] } });
   });
 
   it('encodePermissionResponse_denegar_decline', () => {
@@ -651,5 +755,144 @@ describe('CodexAdapter: directo (turn/steer)', () => {
     const events = adapter.normalize(completed());
 
     expect(events.some((event) => event.kind === 'steer_result')).toBe(false);
+  });
+});
+
+describe('CodexAdapter: id propio del mensaje (F4.4)', () => {
+  function withThread(): { adapter: CodexAdapter; requests: Rpc[] } {
+    const adapter = codex();
+    const requests = handshake(adapter);
+    answer(adapter, requests, 'thread/start', fixture('thread-start'));
+    return { adapter, requests };
+  }
+
+  it('encodeUserMessage_withMessageId_turnStartCarriesClientUserMessageId', () => {
+    const { adapter } = withThread();
+
+    adapter.encodeUserMessage('hola', [], 'm-1');
+
+    expect((adapter.takeOutgoing() as Rpc[])[0]?.params?.clientUserMessageId).toBe('m-1');
+  });
+
+  it('encodeUserMessage_beforeThread_keepsMessageIdUntilTurnStart', () => {
+    const adapter = codex();
+    const requests = handshake(adapter);
+
+    adapter.encodeUserMessage('hola', [], 'm-2');
+    answer(adapter, requests, 'thread/start', fixture('thread-start'));
+
+    const turnStart = (adapter.takeOutgoing() as Rpc[]).find((r) => r.method === 'turn/start');
+    expect(turnStart?.params?.clientUserMessageId).toBe('m-2');
+  });
+
+  it('encodeUserMessage_withoutMessageId_turnStartHasNoClientUserMessageId', () => {
+    const { adapter } = withThread();
+
+    adapter.encodeUserMessage('hola');
+
+    expect((adapter.takeOutgoing() as Rpc[])[0]?.params).not.toHaveProperty('clientUserMessageId');
+  });
+
+  it('encodeSteer_carriesClientUserMessageId', () => {
+    const { adapter } = withThread();
+    adapter.encodeUserMessage('primero');
+    const turnStart = (adapter.takeOutgoing() as Rpc[]).find((r) => r.method === 'turn/start')!;
+    adapter.normalize({ jsonrpc: '2.0', id: turnStart.id, result: { turn: { id: 't1' } } });
+
+    adapter.encodeSteer('m-3', 'x');
+
+    const steer = (adapter.takeOutgoing() as Rpc[]).find((r) => r.method === 'turn/steer');
+    expect(steer?.params?.clientUserMessageId).toBe('m-3');
+  });
+});
+
+describe('CodexAdapter: peticiones al motor (F4.4/F4.5)', () => {
+  function withThread(): CodexAdapter {
+    const adapter = codex();
+    answer(adapter, handshake(adapter), 'thread/start', fixture('thread-start'));
+    return adapter;
+  }
+  const THREAD = (fixture('thread-start').result as { thread: { id: string } }).thread.id;
+
+  it('encodeEngineRequest_threadRevert_buildsJsonRpc', () => {
+    const adapter = withThread();
+
+    const message = adapter.encodeEngineRequest('r1', { kind: 'thread_revert', beforeTurnId: 't9' }) as Rpc;
+
+    expect(message).toMatchObject({ method: 'thread/revert', params: { threadId: THREAD, beforeTurnId: 't9' } });
+  });
+
+  it('encodeEngineRequest_threadForkExcludesTurns', () => {
+    const adapter = withThread();
+
+    const message = adapter.encodeEngineRequest('r1', { kind: 'thread_fork', lastTurnId: 't3' }) as Rpc;
+
+    expect(message).toMatchObject({ method: 'thread/fork', params: { threadId: THREAD, lastTurnId: 't3', excludeTurns: true } });
+  });
+
+  it('encodeEngineRequest_threadTurnsWithCursor_includesCursor', () => {
+    const adapter = withThread();
+
+    const first = adapter.encodeEngineRequest('r1', { kind: 'thread_turns', cursor: null }) as Rpc;
+    const next = adapter.encodeEngineRequest('r2', { kind: 'thread_turns', cursor: 'c1' }) as Rpc;
+
+    expect(first).toMatchObject({ method: 'thread/turns/list', params: { threadId: THREAD, itemsView: 'full', sortDirection: 'asc' } });
+    expect(first.params).not.toHaveProperty('cursor');
+    expect(next.params?.cursor).toBe('c1');
+  });
+
+  it('encodeEngineRequest_withoutThread_throws', () => {
+    const adapter = codex();
+    handshake(adapter);
+
+    expect(() => adapter.encodeEngineRequest('r1', { kind: 'thread_turns', cursor: null })).toThrow('r1');
+  });
+
+  it('encodeEngineRequest_claudeOnlyKind_throws', () => {
+    expect(() => withThread().encodeEngineRequest('r1', { kind: 'rewind_files', userMessageUuid: 'u', dryRun: true })).toThrow('rewind_files');
+  });
+
+  it('normalize_engineResponseOk_carriesResult', () => {
+    const adapter = withThread();
+    const message = adapter.encodeEngineRequest('r1', { kind: 'thread_turns', cursor: null }) as Rpc;
+
+    const events = adapter.normalize({ jsonrpc: '2.0', id: message.id, result: { data: [] } });
+
+    expect(events).toEqual([{ kind: 'engine_response', requestId: 'r1', ok: true, result: { data: [] }, error: null }]);
+  });
+
+  it('normalize_engineResponseError_carriesCodeAndMessage', () => {
+    const adapter = withThread();
+    const message = adapter.encodeEngineRequest('r1', { kind: 'thread_revert', beforeTurnId: 't9' }) as Rpc;
+
+    const events = adapter.normalize({ jsonrpc: '2.0', id: message.id, error: { code: -32600, message: 'forked history still references it' } });
+
+    expect(events).toEqual([{ kind: 'engine_response', requestId: 'r1', ok: false, result: null, error: '-32600 forked history still references it' }]);
+  });
+
+  it('afterThread_historyModeLegacy_emitsThreadHistoryLegacy', () => {
+    const adapter = codex();
+    const requests = handshake(adapter);
+
+    const events = answer(adapter, requests, 'thread/start', fixture('thread-start'));
+
+    expect(events).toContainEqual({ kind: 'thread_history', mode: 'legacy' });
+  });
+
+  it('afterThread_historyModeMissing_emitsThreadHistoryNull', () => {
+    const adapter = codex();
+    const requests = handshake(adapter);
+    const response = structuredClone(fixture('thread-start')) as { result: { thread: Record<string, unknown> } };
+    delete response.result.thread.historyMode;
+
+    const events = answer(adapter, requests, 'thread/start', response);
+
+    expect(events).toContainEqual({ kind: 'thread_history', mode: null });
+  });
+});
+
+describe('CodexAdapter — adjuntos', () => {
+  it('buildInput_pdfAttachment_throwsWithType', () => {
+    expect(() => codex().encodeUserMessage('hola', [{ mediaType: 'application/pdf', data: 'JVBERg==' }])).toThrow('application/pdf');
   });
 });

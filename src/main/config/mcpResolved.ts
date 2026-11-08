@@ -11,7 +11,7 @@ import {
 // adapter lo traduce a su CLI (`mcpProviderTranslate.ts`: Claude, Codex, agy) y el runtime propio lo
 // consume tal cual. Modulo PURO.
 
-export type McpServerSource = 'common' | 'extension';
+export type McpServerSource = 'common' | 'extension' | 'library';
 
 // Datos de OAuth del propio servidor MCP que necesitara quien haga el flujo sin CLI (el runtime
 // propio). Los CLI hacen su OAuth por su cuenta (Claude con `mcp_authenticate`, codex con

@@ -1,9 +1,11 @@
+import { useLocalPopover } from '../localPopovers';
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { readOnlyLockMessage } from '@shared/conversationLock';
 import { isPermissionMode } from '@shared/ipc';
 import type { EditorInfo } from '@shared/ipc';
-import { AGY_EFFORT_LEVELS, AGY_PROVIDER_ID, CODEX_PROVIDER_ID, isAutoApprovedProvider, isUnverifiedProvider, runsOnMageRuntime } from '@shared/providers';
-import { useWorkbenchStore } from '../workbenchStore';
+import { AGY_EFFORT_LEVELS, AGY_PROVIDER_ID, agyModelFixesEffort, CODEX_PROVIDER_ID, isAutoApprovedProvider, isUnverifiedProvider, runsOnMageRuntime } from '@shared/providers';
+import { useWorkbenchStore, type SendOptions } from '../workbenchStore';
+import { pinnedAccountMissing } from '../adoptSession';
 import { displayModelId, modelOptionsForProvider } from '../models';
 import { describeAttachment, insertImageTokens, reconcileImageTokens, removeImageToken } from '@shared/imageRefs';
 import { motion } from 'motion/react';
@@ -12,7 +14,7 @@ import { composerLayout, type ComposerLayout } from '../composerLayout';
 import type { ProviderModel } from '@shared/providers';
 import { continueListOnNewline, indentLines, outdentLines, type TextState } from '../promptEditing';
 import { enterAction } from '../promptEnter';
-import { validateAttachmentSet } from '@shared/attachments';
+import { ALLOWED_IMAGE_TYPES, assertPastedImages, base64ByteLength, sourcePathOf, validateAttachmentSet, type ImageSource } from '@shared/attachments';
 import type { PromptEditorHandle } from './PromptEditor';
 import { Icon, type IconName } from './Icon';
 import { SendControls } from './SendControls';
@@ -20,10 +22,11 @@ import { sendNowAvailability } from '../sendNow';
 import { providerLabel } from '../accountView';
 import type { SendMode } from '@shared/coordination';
 import type { ImageAttachment, PendingAttachment, PromptDraft } from '../types';
-import { buildSlashCatalog, completionFor, filterSlashCommands, type SlashCommand } from '../slashCommands';
+import { buildSlashCatalog, insertSlashCommand, slashQueryAt, slashSuggestionsAt, type SlashCommand } from '../slashCommands';
 import { useCachedCommandCatalog } from '../commandCatalogStore';
 import { resolveKeyEvent, shortcutText } from '../keybindings/resolver';
 import { isMacPlatform } from '../keybindings/platform';
+import { ChatInfoBar } from './ChatInfoBar';
 import { effortChangeAdvice, modelChangeAdvice, type CostAdvice } from '../costAdvice';
 import { notify } from '../notificationStore';
 import { displayTitle } from '../conversationTitle';
@@ -36,6 +39,12 @@ import { t as translate, useT } from '../../i18n/uiLanguage';
 import { activeFormatLocale } from '../../i18n/format';
 import type { PermissionMode } from '@shared/ipc';
 import { describeError } from '../describeError';
+import { addMention, applyResolution, failedMentions, insertMention, mentionQueryAt, reconcileMentions, removeMentionToken, type MentionFailure } from '../mentionDraft';
+import { useMentionPreviews } from '../useMentionPreviews';
+import { MentionChips } from './MentionChips';
+import { useMentionSuggestions } from '../useMentionSuggestions';
+import { MentionPopover } from './MentionPopover';
+import type { MentionCandidate } from '@shared/mentions';
 
 // Referencia ESTABLE para el selector de zustand (un array nuevo por render seria un bucle).
 const NO_MODELS: readonly ProviderModel[] = [];
@@ -47,6 +56,9 @@ const PromptEditor = lazy(() => import('./PromptEditor').then((m) => ({ default:
 // Referencia estable para "esta pestana no ha reportado comandos": devolver [] recien creado en cada
 // render haria que el selector de Zustand viera un valor nuevo siempre y re-renderizara sin parar.
 const EMPTY_COMMANDS: readonly SlashCommand[] = [];
+
+// Lo que ofrece el selector nativo de «Adjuntar imagen»: los mismos tipos que valida `addFiles`.
+const IMAGE_ACCEPT = [...ALLOWED_IMAGE_TYPES].join(',');
 
 // Los cinco llevan icono: uno sin el hacia que el chip encogiera 16 px al pasar por el y la fila, alineada
 // a la derecha, lo desplazaba.
@@ -73,7 +85,7 @@ function permissionChipSkin(mode: string): string {
 // Aceptar / Rechazar / Rehacer (no reemplaza el borrador hasta que el usuario acepta).
 // Lee un `File` a base64 SIN el prefijo `data:`. La validacion de tipo/tamaño la hace el modulo puro:
 // aqui solo se convierte.
-async function readImageFile(file: File): Promise<PendingAttachment> {
+async function readImageFile(file: File, sourcePath: string | null): Promise<PendingAttachment> {
   const buffer = await file.arrayBuffer();
   const bytes = new Uint8Array(buffer);
   let binary = '';
@@ -81,12 +93,22 @@ async function readImageFile(file: File): Promise<PendingAttachment> {
   return {
     attachment: { mediaType: file.type as ImageAttachment['mediaType'], data: btoa(binary) },
     byteLength: bytes.byteLength,
+    sourcePath,
   };
 }
 
 // Referencia ESTABLE para "esta pestaña no tiene borrador": un objeto nuevo por render haria que el
 // selector de zustand viera un valor distinto siempre y repintara la barra en bucle.
-const EMPTY_DRAFT: PromptDraft = { text: '', attachments: [] };
+const EMPTY_DRAFT: PromptDraft = { text: '', attachments: [], mentions: [] };
+const NO_FAILURES: ReadonlyMap<string, MentionFailure> = new Map();
+
+// El aviso de un envio rechazado: una frase por ficha que falla, con el nombre del fichero.
+function mentionFailureMessages(failures: ReadonlyMap<string, MentionFailure>, mentions: readonly MentionCandidate[]): string {
+  const names = new Map(mentions.map((m) => [m.relPath, m.relPath.slice(m.relPath.lastIndexOf('/') + 1)] as const));
+  return [...failures]
+    .map(([relPath, failure]) => translate(failure === 'missing' ? 'errors.mentions.missing' : 'errors.mentions.outside', { name: names.get(relPath) ?? relPath }))
+    .join('. ');
+}
 
 // Borrador ACTUAL de una pestaña, leido del store (no del render): lo usan los callbacks asincronos.
 function draftOf(tabId: string): PromptDraft {
@@ -107,9 +129,20 @@ function measureInlineEditorWidth(row: HTMLElement | null, controls: HTMLElement
   return Number.isFinite(width) ? width : null;
 }
 
-function promptPlaceholder(tabId: string, readOnlyLock: { readonly profile: LocalizedText } | null): string {
+function promptPlaceholder(tabId: string, readOnlyLock: { readonly profile: LocalizedText } | null, permissionPending: boolean): string {
   if (readOnlyLock !== null) return translate('prompt.placeholder.readOnly', { lock: renderLocalized(translate, readOnlyLockMessage(readOnlyLock.profile)) });
+  if (permissionPending) return translate('prompt.placeholder.permission');
   return tabId.length === 0 ? translate('prompt.placeholder.noTab') : translate('prompt.placeholder.default');
+}
+
+// Mientras llega el editor (se carga en diferido), el hueco ya dice qué es y qué hacer: el mismo nombre accesible y el
+// mismo texto de ayuda que tendrá el editor, sin poder escribir todavía.
+function PromptEditorFallback({ placeholder, ariaLabel }: { readonly placeholder: string; readonly ariaLabel: string }): React.JSX.Element {
+  return (
+    <div role="textbox" aria-label={ariaLabel} aria-readonly="true" aria-placeholder={placeholder} data-prompt-editor-fallback="true" className="min-h-[1.5em] flex-1 text-mg-muted">
+      {placeholder}
+    </div>
+  );
 }
 
 // Solo lectura por el bloqueo entre instancias (#55): quién la tiene y, solo si esa instancia parece muerta (pid caído o
@@ -146,18 +179,26 @@ function ReclaimedLockNotice(): React.JSX.Element {
   );
 }
 
-export function PromptBar(): React.JSX.Element {
+export interface PromptBarProps {
+  // La barra pone aquí su `addFiles`, para que su panel (ChatPane) le pase las imágenes que se sueltan en el chat.
+  readonly fileDropRef?: React.MutableRefObject<((files: readonly File[]) => void) | null>;
+}
+
+export function PromptBar({ fileDropRef }: PromptBarProps = {}): React.JSX.Element {
   // La pestaña de ESTE panel (item 13). Las acciones del store siguen operando sobre la pestaña
   // ACTIVA, no sobre esta: es correcto porque el panel se enfoca (focusPane) en cuanto se interactua
   // con el — ver ChatPane.tsx. Aqui solo se LEE, para que el panel sin foco pinte sus propios datos.
   const t = useT();
   const activeTabId = usePaneTabId();
   const sendActiveMessage = useWorkbenchStore((s) => s.sendActiveMessage);
+  const sendMessageToTab = useWorkbenchStore((s) => s.sendMessageToTab);
   const activeTab = useWorkbenchStore((s) => s.tabs.find((t) => t.id === activeTabId));
   const sessionId = useWorkbenchStore((s) => s.sessionIdByChat[activeTabId]);
   // #55 (F2.8): la conversación la tiene otra instancia de Mage; aquí se lee pero no se escribe.
   const lock = useWorkbenchStore((s) => s.lockByChat[activeTabId]);
   const readOnlyLock = lock !== undefined && !lock.owner ? lock : null;
+  const accounts = useWorkbenchStore((s) => s.accounts);
+  const ownerMissing = activeTab !== undefined && pinnedAccountMissing(activeTab, accounts);
   const lockReclaimed = useWorkbenchStore((s) => s.lockReclaimedByChat[activeTabId] === true);
   const resolvedModel = useWorkbenchStore((s) => s.resolvedModelByChat[activeTabId] ?? null);
   // Modelos reales de la cuenta (P-026 2.4): el config dir EFECTIVO (el perfil privado tiene el suyo)
@@ -177,6 +218,8 @@ export function PromptBar(): React.JSX.Element {
   const keybindingOverrides = useWorkbenchStore((s) => s.settings.keybindingOverrides);
   // Estado del turno de la pestana activa: con el turno en marcha se ofrece "Parar" en vez de ⏎.
   const chatStatus = useWorkbenchStore((s) => s.statusByChat[activeTabId] ?? 'idle');
+  // Un permiso sin contestar en esta pestana: el borrador se conserva y el placeholder lo dice.
+  const permissionPending = useWorkbenchStore((s) => (s.pendingByChat[activeTabId]?.length ?? 0) > 0);
   const notSteerable = useWorkbenchStore((s) => s.notSteerableByChat[activeTabId] ?? null);
   // Comandos "/" reales que declaro la sesion en su arranque (D4); vacio -> se usa la lista curada.
   const sessionSlashCommands = useWorkbenchStore((s) => s.slashCommandsByChat[activeTabId] ?? EMPTY_COMMANDS);
@@ -190,7 +233,7 @@ export function PromptBar(): React.JSX.Element {
   const setDraft = useWorkbenchStore((s) => s.setDraft);
   const text = draft.text;
   const attachments = draft.attachments;
-  const setText = (next: string): void => setDraft(activeTabId, { text: next, attachments });
+  const setText = (next: string): void => setDraft(activeTabId, { text: next, attachments, mentions: reconcileMentions(next, draftOf(activeTabId).mentions) });
   // Autocompletado de comandos "/" (M2.6): indice seleccionado + flag de descartado (Escape).
   const [slashIndex, setSlashIndex] = useState(0);
   const [slashDismissed, setSlashDismissed] = useState(false);
@@ -223,8 +266,9 @@ export function PromptBar(): React.JSX.Element {
   const editorRef = useRef<PromptEditorHandle>(null);
   // Imagenes pegadas cuyo base64 aun se esta leyendo: cuentan para numerar el token del siguiente pegado.
   const pendingReadsRef = useRef(0);
+  const imageInputRef = useRef<HTMLInputElement>(null);
 
-  const disabled = activeTabId.length === 0 || readOnlyLock !== null;
+  const disabled = activeTabId.length === 0 || readOnlyLock !== null || ownerMissing;
   const activeModel = activeTab?.model ?? '';
   const providerId = activeTab?.provider ?? 'claude';
   const customProviders = useWorkbenchStore((s) => s.settings.customProviders);
@@ -268,13 +312,39 @@ export function PromptBar(): React.JSX.Element {
     () => buildSlashCatalog(sessionSlashCommands.length > 0 ? sessionSlashCommands : cachedSlashCommands),
     [sessionSlashCommands, cachedSlashCommands],
   );
-  // Sugerencias de comando "/" para el texto actual (vacio si no procede). El popover se abre salvo
+  // Menciones `@` (Q06): el cursor lo avisa el editor; elegir una pone `@ruta ` en el texto y la ficha en el borrador.
+  const [cursor, setCursor] = useState(0);
+  // Sugerencias de comando "/" para el token `/` bajo el cursor (vacio si no procede). El popover se abre salvo
   // que el usuario lo haya descartado con Escape (se reabre al seguir escribiendo).
   // Memoizado: se recalculaba en CADA pulsacion de tecla, y el catalogo real tiene cientos de
   // entradas cuando hay plugins (P16).
-  const slashSuggestions = useMemo(() => filterSlashCommands(text, slashCatalog), [text, slashCatalog]);
+  const slashSuggestions = useMemo(() => slashSuggestionsAt(text, cursor, slashCatalog), [text, cursor, slashCatalog]);
   const slashOpen = slashSuggestions.length > 0 && !slashDismissed && !disabled;
+  useLocalPopover(slashOpen);
   const slashCursor = Math.min(slashIndex, slashSuggestions.length - 1);
+  const tabCwd = activeTab?.cwd ?? '';
+  const tabAccountDir = activeTab?.resolvedConfigDir ?? activeTab?.accountId ?? '';
+  const mentionTab = useMemo(() => (tabCwd.length === 0 ? null : { tabId: activeTabId, cwd: tabCwd, accountDir: tabAccountDir }), [activeTabId, tabCwd, tabAccountDir]);
+  const pickMention = (candidate: MentionCandidate): void => {
+    const editor = editorRef.current;
+    if (editor === null) return;
+    const state = editor.getTextState();
+    const at = mentionQueryAt(state.value, state.selectionStart);
+    if (at === null) return;
+    const inserted = insertMention(state.value, at, candidate.relPath);
+    const latest = draftOf(activeTabId);
+    setDraft(activeTabId, { text: inserted.text, attachments: latest.attachments, mentions: addMention(latest.mentions, candidate) });
+    editor.applyTextState({ value: inserted.text, selectionStart: inserted.cursor, selectionEnd: inserted.cursor });
+  };
+  // Fichas en rojo tras un envio rechazado (`missing` / `outsideFolder`) y envio en curso: la resolucion de main es
+  // asincrona, y solo se hace una peticion por envio.
+  const [mentionFailures, setMentionFailures] = useState(NO_FAILURES);
+  const [resolving, setResolving] = useState(false);
+  const resolvingRef = useRef(false);
+  useEffect(() => setMentionFailures(NO_FAILURES), [activeTabId]);
+  const previews = useMentionPreviews(mentionTab);
+  const mentions = useMentionSuggestions({ tab: mentionTab, text, cursor, blocked: slashOpen || disabled, onPick: pickMention, onError: setError });
+  useLocalPopover(mentions.open);
   const canImprove = !disabled && !busy && text.trim().length > 0 && isClaude;
   // Handoff: necesita una sesion reanudable (viva o restaurada) y solo Claude soporta --resume.
   const canHandoff = isClaude && (sessionId !== undefined || activeTab?.resumeSessionId !== undefined);
@@ -328,17 +398,61 @@ export function PromptBar(): React.JSX.Element {
   const submit = (override?: string, mode: SendMode = 'queue'): void => {
     const trimmed = (override ?? text).trim();
     // Con adjuntos, un mensaje SIN texto es valido (mandar solo una imagen es un caso real).
-    if ((trimmed.length === 0 && attachments.length === 0) || disabled) return;
+    if ((trimmed.length === 0 && attachments.length === 0) || disabled || resolvingRef.current) return;
     const sent = attachments.map((a) => a.attachment);
+    // Las rutas se quedan en el renderer (solo la burbuja las usa al copiar, U51): no viajan con `sent`.
+    const options: SendOptions = { mode, attachmentPaths: attachments.map((a) => a.sourcePath) };
+    if (draft.mentions.length > 0) {
+      void sendWithMentions(trimmed, sent, options);
+      return;
+    }
     setDraft(activeTabId, null);
     setPreview(null);
     setError(null);
-    void sendActiveMessage(trimmed, sent, mode);
+    void sendActiveMessage(trimmed, sent, options);
+  };
+
+  // Con menciones, main resuelve los ficheros JUSTO ahora (el disco puede haber cambiado desde que se eligieron):
+  // si alguno ya no existe o esta fuera de la carpeta no se envia y el borrador se queda (Q06).
+  const sendWithMentions = async (trimmed: string, sent: readonly ImageAttachment[], options: SendOptions): Promise<void> => {
+    if (activeTab === undefined) return;
+    const tabId = activeTabId;
+    const refs = draft.mentions.map(({ absPath, relPath }) => ({ absPath, relPath }));
+    resolvingRef.current = true;
+    setResolving(true);
+    setError(null);
+    setMentionFailures(NO_FAILURES);
+    try {
+      const resolution = await window.mage.resolveMentions({ cwd: activeTab.cwd, accountDir: activeTab.resolvedConfigDir ?? activeTab.accountId, provider: activeTab.provider, refs });
+      const failures = failedMentions(resolution);
+      if (failures.size > 0) {
+        setMentionFailures(failures);
+        setError(mentionFailureMessages(failures, draft.mentions));
+        return;
+      }
+      const merged = applyResolution(trimmed, sent, resolution);
+      validateAttachmentSet([], merged.attachments.map((a) => ({ mediaType: a.mediaType, byteLength: base64ByteLength(a.data) })), activeFormatLocale());
+      setDraft(tabId, null);
+      setPreview(null);
+      // Los PDF de las menciones van detrás de las imágenes: `attachmentPaths` sigue alineado por índice.
+      void sendMessageToTab(tabId, merged.text, merged.attachments, options);
+    } catch (err) {
+      console.warn('No se pudieron resolver las menciones:', describeError(err));
+      setError(t('errors.mentions.resolveFailed', { error: describeError(err) }));
+    } finally {
+      resolvingRef.current = false;
+      setResolving(false);
+    }
+  };
+
+  const removeMention = (mention: MentionCandidate): void => {
+    const latest = draftOf(activeTabId);
+    setDraft(activeTabId, { text: removeMentionToken(latest.text, mention.relPath), attachments: latest.attachments, mentions: latest.mentions.filter((m) => m.absPath !== mention.absPath) });
   };
 
   // #24: el botón de enviar hace lo mismo que Enter cuando Enter envía: el borrador entero y, si el cursor
   // está en un item de lista VACÍO, sin su marcador huérfano. Vacío o sin pestaña, no se puede pulsar.
-  const canSend = !disabled && (text.trim().length > 0 || attachments.length > 0);
+  const canSend = !disabled && !resolving && (text.trim().length > 0 || attachments.length > 0);
   // El borrador tal como lo mandaría Enter: entero y, si el cursor está en un item de lista VACÍO, sin su marcador huérfano.
   const draftToSend = (): string | undefined => {
     const state = currentTextState();
@@ -413,19 +527,22 @@ export function PromptBar(): React.JSX.Element {
   const removeDeletedImageAttachments = (value: string): void => {
     const latest = draftOf(activeTabId);
     const result = reconcileImageTokens(latest.text, value, latest.attachments);
-    setDraft(activeTabId, { text: result.text, attachments: result.attachments });
+    setDraft(activeTabId, { text: result.text, attachments: result.attachments, mentions: reconcileMentions(result.text, latest.mentions) });
     const editor = editorRef.current;
     if (result.text === value || editor === null) return;
     const caret = Math.min(editor.getTextState().selectionStart, result.text.length);
     queueMicrotask(() => editor.applyTextState({ value: result.text, selectionStart: caret, selectionEnd: caret }));
   };
 
-  // Inserta el comando elegido ("/name ") y cierra el popover; el cursor queda al final para el argumento.
+  // Sustituye SOLO el token `/…` bajo el cursor por "/name " y cierra el popover; el cursor queda tras el espacio.
   const completeSlash = (command: SlashCommand): void => {
-    const completion = completionFor(command);
-    setText(completion);
+    const state = currentTextState();
+    const at = slashQueryAt(state.value, state.selectionStart);
+    if (at === null) return;
+    const inserted = insertSlashCommand(state.value, at, command);
+    setText(inserted.text);
     setSlashDismissed(true);
-    editorRef.current?.applyTextState({ value: completion, selectionStart: completion.length, selectionEnd: completion.length });
+    editorRef.current?.applyTextState({ value: inserted.text, selectionStart: inserted.cursor, selectionEnd: inserted.cursor });
   };
 
   // Puente de teclado del editor (2.7). MISMO orden de precedencia que tenia el textarea, y devuelve
@@ -451,6 +568,8 @@ export function PromptBar(): React.JSX.Element {
         return true;
       }
     }
+    // 1b. Popover `@` abierto: mismas teclas que el de `/` (Enter elige y no envia).
+    if (mentions.onKeyDown(e)) return true;
     // 2. Shift+Enter: continuar lista si aplica; si no, salto de linea del editor. NO es rebindable
     // (D5 §2.2): es la convencion universal de "salto de linea".
     if (e.key === 'Enter' && e.shiftKey) {
@@ -515,19 +634,20 @@ export function PromptBar(): React.JSX.Element {
     }
   };
 
-  // Adjuntar imagenes (2.12.1), por pegado (el selector de ficheros se quito en P-026, 2.1). La validacion es la del
+  // Adjuntar imagenes (2.12.1), por pegado, con el botón «Adjuntar imagen» o soltándolas en el chat. La validacion es la del
   // modulo puro y su error se pinta en la linea `role="alert"` que ya existe: un adjunto que se cae en
   // silencio es peor que un error.
   //
   // P-026 3.2 (D13): cada imagen deja un token `[Imagen N]` donde esta el cursor, y al enviar viaja justo
   // detras de el. Numero y tipo se validan ANTES de leer (`File.type`/`size` ya los dan), asi que el
   // error sale al pegar y no se inserta ningun token; los tokens van en el acto y el base64 despues.
-  const addFiles = (files: readonly File[]): void => {
+  const addFiles = (files: readonly File[], source: ImageSource): void => {
     if (files.length === 0) return;
     const tabId = activeTabId;
     const current = draftOf(tabId);
     try {
       const metas = current.attachments.map((a) => ({ mediaType: a.attachment.mediaType, byteLength: a.byteLength }));
+      assertPastedImages(files.map((file) => ({ mediaType: file.type, byteLength: file.size })));
       validateAttachmentSet(metas, files.map((file) => ({ mediaType: file.type, byteLength: file.size })), activeFormatLocale());
     } catch (err) {
       setError(t('prompt.attach.failed', { error: err instanceof Error ? describeError(err) : String(err) }));
@@ -539,17 +659,31 @@ export function PromptBar(): React.JSX.Element {
     const fromN = current.attachments.length + pendingReadsRef.current + 1;
     pendingReadsRef.current += files.length;
     insertTokensAtCursor(fromN, files.length, current.text);
-    void Promise.all(files.map(readImageFile))
+    void Promise.all(files.map((file) => readImageFile(file, sourcePathOf(source, () => window.mage.pathForFile(file)))))
       .then((candidates) => {
         // Del store, no del cierre: mientras se leia, el usuario pudo seguir escribiendo.
         const latest = draftOf(tabId);
-        setDraft(tabId, { text: latest.text, attachments: [...latest.attachments, ...candidates] });
+        setDraft(tabId, { text: latest.text, attachments: [...latest.attachments, ...candidates], mentions: latest.mentions });
       })
       .catch((err: unknown) => setError(t('prompt.attach.failed', { error: err instanceof Error ? err.message : String(err) })))
       .finally(() => {
         pendingReadsRef.current -= files.length;
       });
   };
+
+  const onPickImages = (e: React.ChangeEvent<HTMLInputElement>): void => {
+    addFiles(Array.from(e.currentTarget.files ?? []), 'disk');
+    e.currentTarget.value = ''; // elegir otra vez el mismo fichero vuelve a disparar `change`
+  };
+
+  // Sin dependencias a propósito: la ref apunta siempre al `addFiles` del último render (lee la pestaña y el borrador de ese render).
+  useEffect(() => {
+    if (fileDropRef === undefined) return undefined;
+    fileDropRef.current = (files) => addFiles(files, 'disk');
+    return () => {
+      fileDropRef.current = null;
+    };
+  });
 
   const insertTokensAtCursor = (fromN: number, count: number, fallbackText: string): void => {
     const editor = editorRef.current;
@@ -564,11 +698,14 @@ export function PromptBar(): React.JSX.Element {
   // Quitar la miniatura N quita su token y renumera los de detras (igual que la lista de adjuntos).
   const removeAttachment = (index: number): void => {
     setError(null);
-    setDraft(activeTabId, { text: removeImageToken(text, index + 1), attachments: attachments.filter((_, i) => i !== index) });
+    setDraft(activeTabId, { text: removeImageToken(text, index + 1), attachments: attachments.filter((_, i) => i !== index), mentions: draft.mentions });
   };
 
   return (
     <div className="border-t border-mg-border p-[12px_22px]">
+      {/* La informacion de la CONVERSACION (creadora, PR, privacidad) va justo bajo la linea del input y a 6 px de
+          la caja (#41): la linea es de esta barra, asi que con la fila vacia sigue estando, sin hueco doble. */}
+      <ChatInfoBar />
       {/* Una sola linea de error para toda la barra: cada origen (mejora del prompt, adjuntos) pone su
           propio prefijo, para que el mensaje describa lo que de verdad ha fallado. */}
       {error !== null && (
@@ -581,6 +718,7 @@ export function PromptBar(): React.JSX.Element {
       )}
 
       {readOnlyLock !== null && <ReadOnlyLockNotice tabId={activeTabId} profile={readOnlyLock.profile} orphan={readOnlyLock.orphan} />}
+      {ownerMissing && <div role="status" data-host-owner="missing" className="mb-[6px] flex items-center gap-[8px] rounded-[7px] border border-mg-warn-border bg-mg-warn-bg px-[10px] py-[5px] text-[11px] text-mg-warn-text">{t('chat.hostOwner.accountMissing', { account: activeTab.accountAlias })}</div>}
       {readOnlyLock === null && lockReclaimed && <ReclaimedLockNotice />}
 
       {preview !== null && (
@@ -600,8 +738,8 @@ export function PromptBar(): React.JSX.Element {
       )}
 
       {/* Tira de adjuntos (2.12.1): las imagenes que se van a enviar con este mensaje. */}
-      {attachments.length > 0 && (
-        <div className="mb-[8px] flex flex-wrap gap-[6px]">
+      {(attachments.length > 0 || draft.mentions.length > 0) && (
+        <div className="mb-[8px] flex flex-wrap items-center gap-[6px]">
           {attachments.map((item, index) => (
             <div key={`${item.attachment.data.slice(0, 24)}-${index}`} className="relative">
               <img
@@ -628,12 +766,14 @@ export function PromptBar(): React.JSX.Element {
               </button>
             </div>
           ))}
+          <MentionChips mentions={draft.mentions} provider={providerId} failures={mentionFailures} previews={previews} onRemove={removeMention} />
         </div>
       )}
 
       {/* `flex-wrap`: los controles (todos `shrink-0`) bajan a la linea siguiente cuando no caben junto al
           editor, en vez de estrujarlo a 0 px de ancho — ver el comentario del host en PromptEditor.tsx. */}
       <div ref={rowRef} className="relative flex flex-wrap items-end gap-[10px] rounded-[9px] border border-mg-border-ctrl bg-mg-panel p-[10px_14px]">
+        {mentions.open && <MentionPopover suggestions={mentions} />}
         {slashOpen && (
           // Popover de comandos "/" (M2.6): navegable con flechas/Enter/Tab; click completa.
           <div
@@ -665,16 +805,17 @@ export function PromptBar(): React.JSX.Element {
           </div>
         )}
         <span className="pt-[1px] font-mono text-mg-ter">›</span>
-        <Suspense fallback={<div className="min-h-[1.5em] flex-1" aria-hidden="true" />}>
+        <Suspense fallback={<PromptEditorFallback placeholder={promptPlaceholder(activeTabId, readOnlyLock, permissionPending)} ariaLabel={t('prompt.editor.ariaLabel')} />}>
           <PromptEditor
             handleRef={editorRef}
             value={text}
             disabled={disabled}
             ariaLabel={t('prompt.editor.ariaLabel')}
-            placeholder={promptPlaceholder(activeTabId, readOnlyLock)}
+            placeholder={promptPlaceholder(activeTabId, readOnlyLock, permissionPending)}
             onChange={onChangeText}
+            onSelectionChange={setCursor}
             onKeyDown={onKeyDown}
-            onPasteImages={addFiles}
+            onPasteImages={(files) => addFiles(files, 'pasted')}
             onWrapChange={setWraps}
             onTextWidthChange={setTextWidth}
             stacked={layout === 'stacked'}
@@ -689,8 +830,23 @@ export function PromptBar(): React.JSX.Element {
           data-prompt-controls="true"
           className={`flex min-w-0 max-w-full flex-wrap items-center justify-end gap-[10px] ${layout === 'stacked' ? 'ml-auto' : ''}`}
         >
-          {/* Ni «Adjuntar una imagen» ni «Abrir carpeta» en el menu (P-026, 2.1, peticion del usuario): las
-              imagenes entran pegandolas (Ctrl+V) y la carpeta se abre desde su insignia, encima del input. */}
+          {/* «Abrir carpeta» no está en el menú: la carpeta se abre desde su insignia, encima del input. Las imágenes
+              entran pegándolas, soltándolas en el chat o con el botón de adjuntar. */}
+          {activeTab !== undefined && (
+            <>
+              <input ref={imageInputRef} type="file" accept={IMAGE_ACCEPT} multiple hidden data-attach-input="image" onChange={onPickImages} />
+              <button
+                type="button"
+                aria-label={t('i2.prompt.attachImage')}
+                data-tip={t('i2.prompt.attachImageTip')}
+                disabled={disabled}
+                onClick={() => imageInputRef.current?.click()}
+                className="flex h-[22px] w-[24px] shrink-0 items-center justify-center self-center rounded-[6px] text-mg-sec transition-colors duration-90 ease-out hover:bg-mg-hover hover:text-mg-body disabled:opacity-40"
+              >
+                <Icon name="paperclip" size={13} />
+              </button>
+            </>
+          )}
           {activeTab !== undefined && (
             <ActionsMenu
               busy={busy}
@@ -796,7 +952,7 @@ export function PromptBar(): React.JSX.Element {
               leading={isPermissionMode(permissionMode) ? <Icon name={PERMISSION_MODE_ICON[permissionMode]} size={11} /> : undefined}
             />
           )}
-          {(isClaude || isCodex || isAgy) && (
+          {(isClaude || isCodex || (isAgy && !agyModelFixesEffort(activeModel))) && (
             // Esfuerzo (--effort, M2.4 / B4; P-028 33: deslizador de seis pasos con Auto a la izquierda).
             // Flag de ARRANQUE del CLI, no hay cambio en caliente: el aviso y la nota lo aclaran.
             <StepSlider
@@ -924,6 +1080,7 @@ interface ActionItem {
 function ActionsMenu({ items, busy }: { readonly items: readonly ActionItem[]; readonly busy: boolean }): React.JSX.Element {
   const t = useT();
   const [open, setOpen] = useState(false);
+  useLocalPopover(open);
   const visible = items.filter((i) => i.hidden !== true);
 
   const run = (item: ActionItem): void => {

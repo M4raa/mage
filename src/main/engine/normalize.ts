@@ -1,5 +1,6 @@
 import type { MageEvent, ToolFileInfo, ToolUse } from '@shared/events';
 import type { UsageWindowInfo } from '@shared/usage';
+import { localized } from '@shared/i18n/localizedText';
 // Se reutiliza el conversor de fechas del panel de Uso (unico sitio que sabe distinguir epoch en
 // segundos de epoch en ms) en vez de escribir aqui un segundo: el `resetsAt` del stream viene en
 // SEGUNDOS y ese es justo el caso que ya resuelve.
@@ -261,6 +262,11 @@ function normalizeAssistant(raw: Record<string, unknown>): MageEvent[] {
   if (raw.error === 'rate_limit') {
     return [{ kind: 'rate_limit', summary: assistantTextOf(message.content), resetsAtMs: null }];
   }
+  // Error de la API (MEDIDO con 2.1.314 contra un 401; igual en 2.1.318): `assistant` sintético con `is_api_error_message: true` y el texto
+  // del error; el `result` que sigue dice `subtype: "success"` con `is_error: true`. No es texto del asistente: es un error.
+  if (raw.is_api_error_message === true) {
+    return [{ kind: 'error', localized: localized('events.cli.apiError', { detail: assistantTextOf(message.content) }) }];
+  }
   const events: MageEvent[] = [];
   const text = assistantTextOf(message.content);
   if (text.length > 0) events.push({ kind: 'assistant_text', text });
@@ -462,6 +468,16 @@ function toStreamWindow(window: { utilization?: number | null; resetsAt?: number
   return { utilization: Math.round(fraction * 100), resetsAt: parseEpochMs(window?.resetsAt) };
 }
 
+// TTL de la caché según el desglose de `cache_creation`: gana el de 1 h si hubo escritura con él.
+const CACHE_TTL_1H_SECONDS = 3600;
+const CACHE_TTL_5M_SECONDS = 300;
+
+function cacheTtlSeconds(creation: { ephemeral_1h_input_tokens?: number; ephemeral_5m_input_tokens?: number } | undefined): number | null {
+  if ((creation?.ephemeral_1h_input_tokens ?? 0) > 0) return CACHE_TTL_1H_SECONDS;
+  if ((creation?.ephemeral_5m_input_tokens ?? 0) > 0) return CACHE_TTL_5M_SECONDS;
+  return null;
+}
+
 function normalizeResult(raw: Record<string, unknown>): MageEvent[] {
   const parsed = ResultSchema.parse(raw);
   const isError = parsed.is_error ?? parsed.subtype !== 'success';
@@ -480,11 +496,13 @@ function normalizeResult(raw: Record<string, unknown>): MageEvent[] {
           outputTokens: usage.output_tokens,
           cacheReadTokens: usage.cache_read_input_tokens ?? null,
           cacheCreationTokens: usage.cache_creation_input_tokens ?? null,
+          cacheTtlSeconds: cacheTtlSeconds(usage.cache_creation),
           thinkingTokens: usage.output_tokens_details?.thinking_tokens ?? null,
           totalTokens: usage.input_tokens + usage.output_tokens + (usage.cache_read_input_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0),
         } }),
         ...(costMicroUsd === null ? {} : { costMicroUsd }),
         ...(origin === undefined ? {} : { origin }),
+        ...(parsed.session_id === undefined ? {} : { conversationId: parsed.session_id }),
       },
     },
   ];

@@ -12,6 +12,7 @@
 
 import http from 'node:http';
 import { pathToFileURL } from 'node:url';
+import { listenLoopback } from './lib/loopbackListen.mjs';
 
 export const FAKE_OPENAI_MODEL = 'vg-modelo-falso';
 export const FAKE_OPENAI_REPLY = 'respuesta del servidor falso';
@@ -165,12 +166,13 @@ export function startFakeOpenAiServer(options = {}) {
   const server = http.createServer((req, res) => {
     route(req, res, stats, fallback).catch((err) => sendJson(res, 500, { error: { message: String(err?.message ?? err) } }));
   });
+  const served = (port) => ({ port, baseUrl: `http://127.0.0.1:${port}/v1`, stats, close: () => new Promise((done) => server.close(done)) });
+  // Sin puerto dado (o 0, el del CLI sin `--port`), uno efímero que `fetch` no bloquee («bad port»); un puerto
+  // explícito se usa tal cual.
+  if ((options.port ?? 0) === 0) return listenLoopback(server).then(served);
   return new Promise((resolve, reject) => {
     server.once('error', reject);
-    server.listen(options.port ?? 0, '127.0.0.1', () => {
-      const { port } = server.address();
-      resolve({ port, baseUrl: `http://127.0.0.1:${port}/v1`, stats, close: () => new Promise((done) => server.close(done)) });
-    });
+    server.listen(options.port, '127.0.0.1', () => resolve(served(server.address().port)));
   });
 }
 

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { resolveFormatLocale, resolveUiLanguage, resolveUiLanguageWithFormat } from './language';
 
-// Las seis entradas son las MEDIDAS con Electron 44.4.5 real (INFORME-033 §2): Windows y cinco combinaciones de
+// Las seis entradas son las MEDIDAS con Electron 44.4.5 real: Windows y cinco combinaciones de
 // LANG/LANGUAGE en WSL Ubuntu, tal como las devuelve `app.getPreferredSystemLanguages()`.
 describe('resolveUiLanguage — sistema (medido)', () => {
   it.each([

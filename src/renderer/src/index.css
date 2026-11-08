@@ -3,7 +3,7 @@
 /* Sistema de diseno de Mage — Workbench. Base neutra en gris; tema conmutable claro/oscuro (M3).
    Los tokens `mg-*` viven como variables CSS: el bloque @theme son los valores OSCUROS por defecto
    (Tailwind v4 genera las utilidades `bg-mg-*`/`text-mg-*`/... que resuelven var(--color-mg-*) en
-   runtime). El tema claro SOLO sobrescribe esas variables bajo `:root[data-theme='light']`, sin tocar
+   runtime). El tema claro SOLO sobrescribe esas variables bajo `:root:where([data-theme='light'])`, sin tocar
    ninguna className. Los unicos colores cromaticos siguen siendo acentos POR CUENTA (inline, data-driven)
    y las series de graficas/estado (variables `--mg-*` mas abajo). NO usar `@theme inline` (inlinearia
    los valores y romperia el override por variable). */
@@ -41,6 +41,10 @@
   --color-mg-focus: #d8d8d8;
   /* Anillo de foco (a11y): tono sutil, NO el acento casi-blanco de --color-mg-focus (rectangulo feo). */
   --color-mg-focus-ring: #5a6072;
+  /* Texto sobre la selección y marca de 2 px de la fila seleccionada. Un tema importado los fija desde
+     themeFallbacks; la marca, solo cuando su selección se confunde con el hover. */
+  --color-mg-sel-ink: #dcdcdc;
+  --color-mg-sel-mark: transparent;
   --color-mg-track: #2c2c2c;
   --color-mg-fill: #8f8f8f;
   --color-mg-primary: #e6e6e6;
@@ -87,6 +91,14 @@
 :root {
   color-scheme: dark;
 
+  /* Duraciones y curvas del movimiento: los MISMOS valores que MOTION_S, EASE_ENTER y EASE_EXIT de
+     workbench/motionPresets.ts (lo que anima motion y lo que anima CSS van a una). */
+  --mg-dur-fast: 90ms;
+  --mg-dur-base: 140ms;
+  --mg-dur-slow: 200ms;
+  --mg-ease-enter: cubic-bezier(.22, .61, .36, 1);
+  --mg-ease-exit: cubic-bezier(.4, 0, 1, 1);
+
   /* Sombras */
   --mg-shadow-modal: 0 18px 50px rgba(0, 0, 0, 0.6);
   --mg-shadow-pop: 0 10px 30px rgba(0, 0, 0, 0.5);
@@ -126,7 +138,11 @@
 }
 
 /* --- Tema CLARO: override de todas las variables (mg-* de @theme + las --mg-* de JS) ------------- */
-:root[data-theme='light'] {
+/* `:where` deja el selector con la especificidad de `:root`: gana al bloque oscuro de arriba por orden y
+   pierde ante el `:root{…}` que inyecta un tema importado claro (theme.ts), que va después. Con
+   `:root[data-theme='light']` el bloque claro ganaba por especificidad y un tema importado claro no
+   aplicaba ninguno de sus colores (medido en Chromium 156, 2026-11-02). */
+:root:where([data-theme='light']) {
   color-scheme: light;
 
   /* Fondos */
@@ -161,6 +177,7 @@
   --color-mg-idle: #c6c6cb;
   --color-mg-focus: #27272a;
   --color-mg-focus-ring: #9aa0b4;
+  --color-mg-sel-ink: #27272a;
   --color-mg-track: #e3e3e7;
   --color-mg-fill: #71717a;
   --color-mg-primary: #18181b;
@@ -312,7 +329,21 @@ body {
   }
 }
 .mg-pulse {
-  animation: mg-pulse 1.2s infinite;
+  animation: mg-pulse 2s infinite;
+}
+/* Entrada de una fila de chat que llega EN VIVO (BlockChat pone la clase solo entonces). */
+@keyframes mg-enter {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.mg-enter {
+  animation: mg-enter var(--mg-dur-base) var(--mg-ease-enter) both;
 }
 .mg-blink {
   animation: mg-blink 1s steps(1) infinite;
@@ -473,14 +504,9 @@ select:focus-visible,
 .cm-mg-marker-hidden {
   font-size: 0;
 }
-/* La viñeta fuera de la linea del cursor: el `- ` sigue ahi a `font-size: 0` (mismo motivo que arriba)
-   y un `::before` pinta el `•` que el usuario ve. Los numeros de lista NO pasan por aqui: se ven siempre. */
+/* La viñeta: un widget `•` que sustituye al `- ` (atómico, como `[Imagen N]`). Los numeros de lista NO pasan por
+   aqui: son texto real y se ven siempre. */
 .cm-mg-bullet-painted {
-  font-size: 0;
-}
-.cm-mg-bullet-painted::before {
-  content: '•';
-  font-size: 12.5px;
   margin-right: 0.45em;
   color: var(--color-mg-ter);
 }
@@ -592,5 +618,22 @@ select:focus-visible,
 @media (prefers-reduced-motion: reduce) {
   .mg-step-thumb {
     transition: none;
+  }
+}
+
+/* Movimiento reducido: las señales de estado se RALENTIZAN (siguen diciendo «trabajando»), las entradas de
+   bloque se quitan. Los transform de motion los quita `MotionConfig reducedMotion="user"`. */
+@media (prefers-reduced-motion: reduce) {
+  .mg-pulse {
+    animation-duration: 4s;
+  }
+  .mg-blink {
+    animation-duration: 2s;
+  }
+  .animate-spin {
+    animation-duration: 3s;
+  }
+  .mg-enter {
+    animation: none;
   }
 }

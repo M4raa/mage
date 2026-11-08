@@ -60,9 +60,37 @@ export function shiftImageTokens(text: string, offset: number): string {
   return text.replace(TOKEN_PATTERN, (_token, digits: string) => imageToken(Number(digits) + offset));
 }
 
+// Mayor número de imagen citado en el texto (0 si no hay ninguno).
+function highestImageToken(text: string): number {
+  return findImageTokens(text).reduce((max, token) => Math.max(max, token.n), 0);
+}
+
+// Al copiar un mensaje (U51): cada `[Imagen N]` cuya ruta `paths[N-1]` existe pasa a `[Imagen N](<ruta>)`, con la
+// ruta literal; los demás (pegadas, sin ruta, N fuera de rango) se quedan igual.
+export function withImagePaths(text: string, paths: readonly (string | null)[]): string {
+  return text.replace(TOKEN_PATTERN, (token, digits: string) => {
+    const path = paths[Number(digits) - 1];
+    return typeof path === 'string' ? `${token}(${path})` : token;
+  });
+}
+
+// Un token con la ruta que le pega `withImagePaths`: `[Imagen N](<ruta>)`, con la ruta sin saltos de línea y
+// con, como mucho, un nivel de paréntesis dentro (`C:\Program Files (x86)\a.png`).
+const TOKEN_WITH_PATH_PATTERN = /\[Imagen (\d+)\]\((?:[^()\n]|\([^()\n]*\))*\)/g;
+
+// Sin ningún token: al pegar texto junto con imágenes, el editor pone los de las imágenes que adjunta. Un token
+// copiado con su ruta cae entero, como un solo bloque: se le quita la ruta y luego se trata como cualquier otro.
+export function withoutImageTokens(text: string): string {
+  let result = text.replace(TOKEN_WITH_PATH_PATTERN, (_m, digits: string) => imageToken(Number(digits)));
+  for (let n = highestImageToken(text); n >= 1; n -= 1) result = removeImageToken(result, n);
+  return result;
+}
+
 export type UserContentBlock =
   | { readonly type: 'text'; readonly text: string }
-  | { readonly type: 'image'; readonly source: { readonly type: 'base64'; readonly media_type: string; readonly data: string } };
+  | { readonly type: 'image'; readonly source: { readonly type: 'base64'; readonly media_type: string; readonly data: string } }
+  // PDF (menciones @, Q05; forma medida en B4): sin marca visible en el texto.
+  | { readonly type: 'document'; readonly source: { readonly type: 'base64'; readonly media_type: 'application/pdf'; readonly data: string } };
 
 // El contenido del mensaje: el texto partido por los tokens y cada imagen justo detras del PRIMER token
 // suyo. Juntar los textos con '' devuelve el texto original (asi lo reconstruye `transcriptToBlocks` al
@@ -86,7 +114,7 @@ export function buildUserContentBlocks(text: string, attachments: readonly Image
   attachments.forEach((attachment, index) => {
     if (placed.has(index + 1)) return;
     // Con un espacio delante si ya hay algo: al reabrir, los textos se juntan y se leeria «mira[Imagen 1]».
-    pushText(blocks, `${blocks.length > 0 ? ' ' : ''}${imageToken(index + 1)}`);
+    if (!isDocument(attachment)) pushText(blocks, `${blocks.length > 0 ? ' ' : ''}${imageToken(index + 1)}`);
     blocks.push(imageBlock(attachment));
   });
   return blocks;
@@ -96,7 +124,14 @@ function pushText(blocks: UserContentBlock[], text: string): void {
   if (text.length > 0) blocks.push({ type: 'text', text });
 }
 
+export function isDocument(attachment: ImageAttachment): boolean {
+  return attachment.mediaType === 'application/pdf';
+}
+
 function imageBlock(attachment: ImageAttachment): UserContentBlock {
+  if (attachment.mediaType === 'application/pdf') {
+    return { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: attachment.data } };
+  }
   return { type: 'image', source: { type: 'base64', media_type: attachment.mediaType, data: attachment.data } };
 }
 

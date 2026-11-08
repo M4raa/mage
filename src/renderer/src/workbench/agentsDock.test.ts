@@ -5,7 +5,7 @@ import type { Block } from './types';
 
 type ToolBlock = Extract<Block, { kind: 'tool' }>;
 
-const user = (id: string): Block => ({ kind: 'user', id, text: 'hola', time: '', attachments: [] });
+const user = (id: string): Block => ({ kind: 'user', id, text: 'hola', time: '', attachments: [], nativeId: null });
 const subagent = (id: string, status: SubagentStatus | null = null, elapsedMs: number | null = null): Block => ({
   kind: 'subagent',
   id,

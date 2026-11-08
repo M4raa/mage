@@ -6,10 +6,10 @@ import { createTranslator, type Translate } from '@shared/i18n/translator';
 export interface UiLanguageDeps {
   // Lo guardado en ajustes; undefined = el usuario no ha elegido nada.
   readonly savedPreference: () => UiLanguagePreference | undefined;
-  // Preferencia inicial para cuando no hay nada guardado: la elegida en el instalador de Windows (U3). La aporta
-  // F3.7; hasta entonces no hay ninguna y se sigue al sistema.
+  // Preferencia inicial para cuando no hay nada guardado: la elegida en el instalador de Windows (U3), que deja en userData `installerLanguage.ts`.
+  // Sin ella se sigue al sistema.
   readonly initialPreference: () => UiLanguagePreference | undefined;
-  // `app.getPreferredSystemLanguages()` (respeta LANGUAGE en Linux, medido en INFORME-033).
+  // `app.getPreferredSystemLanguages()` (respeta LANGUAGE en Linux, medido).
   readonly preferredSystemLanguages: () => readonly string[];
   readonly broadcast: (resolved: ResolvedUiLanguage) => void;
 }

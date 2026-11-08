@@ -34,17 +34,39 @@ describe('withLegacyText', () => {
 });
 
 describe('HOST_PROTOCOL', () => {
-  it('HOST_PROTOCOL_igualA12', () => {
-    expect(HOST_PROTOCOL).toBe('1.2');
+  it('hostProtocol_version_is16', () => {
+    expect(HOST_PROTOCOL).toBe('1.7');
+  });
+
+  it('mcpMessageSchema_nonObjectMessage_rejected', () => {
+    expect(HOST_METHOD_SCHEMAS['mcp.message'].safeParse({ message: 'texto' }).success).toBe(false);
+    expect(HOST_METHOD_SCHEMAS['mcp.message'].safeParse({ message: [] }).success).toBe(false);
+    expect(HOST_METHOD_SCHEMAS['mcp.message'].safeParse({ message: { jsonrpc: '2.0' } }).success).toBe(true);
   });
 });
 
 describe('host 1.2 — capacidades y esquemas', () => {
   const CREATE = { commandId: '6f1c2b3a-4d5e-4f60-8a7b-9c0d1e2f3a4b', provider: 'claude', accountId: 'C:\\Users\\u\\.claude', cwd: 'C:\\tmp\\x', trust: { acknowledged: false } };
 
-  it('capabilities_noAnuncianRewindNiUpdateQueued', () => {
-    expect(HOST_CAPABILITIES).not.toContain('session.rewind');
-    expect(HOST_CAPABILITIES).not.toContain('session.updateQueued');
+  it('capabilities_includeRewindMethods', () => {
+    expect(HOST_CAPABILITIES).toEqual(expect.arrayContaining(['session.rewindPoints', 'session.rewindPlan', 'session.rewind']));
+  });
+
+  it('rewindApplySchema_attachments_rejected', () => {
+    const params = { sessionId: 's1', point: { userIndex: 0, text: 'a', nativeId: 'u1' }, action: 'rewind', restoreFiles: false, saveCopy: false };
+
+    expect(HOST_METHOD_SCHEMAS['session.rewind'].safeParse(params).success).toBe(true);
+    expect(HOST_METHOD_SCHEMAS['session.rewind'].safeParse({ ...params, attachments: [] }).success).toBe(false);
+  });
+
+  it('rewindPlanSchema_divergeAction_rejected', () => {
+    const params = { sessionId: 's1', point: { userIndex: 0, text: 'a', nativeId: null }, action: 'diverge' };
+
+    expect(HOST_METHOD_SCHEMAS['session.rewindPlan'].safeParse(params).success).toBe(false);
+  });
+
+  it('capabilities_anuncianLosMetodosDe13', () => {
+    expect(HOST_CAPABILITIES).toEqual(expect.arrayContaining(['host.stop', 'accounts.create', 'session.updateQueued']));
   });
 
   it('capabilities_anuncianLosMetodosDe12', () => {

@@ -8,6 +8,8 @@ import {
   imageToken,
   insertImageTokens,
   reconcileImageTokens,
+  withImagePaths,
+  withoutImageTokens,
   removeImageToken,
 } from './imageRefs';
 
@@ -66,6 +68,23 @@ describe('removeImageToken', () => {
 });
 
 describe('buildUserContentBlocks', () => {
+  it('buildUserContentBlocks_pdfWithoutToken_documentBlockNoText', () => {
+    const pdf: ImageAttachment = { mediaType: 'application/pdf', data: 'JVBERg==' };
+
+    expect(buildUserContentBlocks('mira', [pdf])).toEqual([
+      { type: 'text', text: 'mira' },
+      { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: 'JVBERg==' } },
+    ]);
+  });
+
+  it('buildUserContentBlocks_imagesUnchanged', () => {
+    expect(buildUserContentBlocks('hola', [img('A')])).toEqual([
+      { type: 'text', text: 'hola' },
+      { type: 'text', text: ' [Imagen 1]' },
+      { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'A' } },
+    ]);
+  });
+
   it('buildUserContentBlocks_intercalado_cadaImagenDetrasDeSuToken', () => {
     const blocks = buildUserContentBlocks('mira [Imagen 1] y compara con [Imagen 2]', [img('A'), img('B')]);
 
@@ -205,6 +224,100 @@ describe('describeAttachment', () => {
 
   it('describeAttachment_1coma5MiB_enUS_conPunto', () => {
     expect(describeAttachment(1, 'image/png', 1.5 * 1024 * 1024, 'en-US')).toBe('Imagen 1 · png · 1.5 MiB');
+  });
+});
+
+describe('withImagePaths', () => {
+  it('withImagePaths_rutaEnTodas_poneTodas', () => {
+    // Arrange
+    const text = 'mira [Imagen 1] y [Imagen 2]';
+    // Act
+    const result = withImagePaths(text, ['C:\\a.png', 'C:\\b.png']);
+    // Assert
+    expect(result).toBe('mira [Imagen 1](C:\\a.png) y [Imagen 2](C:\\b.png)');
+  });
+
+  it('withImagePaths_rutaEnNinguna_igual', () => {
+    expect(withImagePaths('mira [Imagen 1] y [Imagen 2]', [null, null])).toBe('mira [Imagen 1] y [Imagen 2]');
+  });
+
+  it('withImagePaths_sinRutas_igual', () => {
+    expect(withImagePaths('mira [Imagen 1]', [])).toBe('mira [Imagen 1]');
+  });
+
+  it('withImagePaths_rutaEnAlgunas_soloEsas', () => {
+    expect(withImagePaths('[Imagen 1] [Imagen 2] [Imagen 3]', [null, '/tmp/b.png', null])).toBe('[Imagen 1] [Imagen 2](/tmp/b.png) [Imagen 3]');
+  });
+
+  it('withImagePaths_nFueraDeRango_igual', () => {
+    expect(withImagePaths('[Imagen 0] [Imagen 3]', ['/a.png', '/b.png'])).toBe('[Imagen 0] [Imagen 3]');
+  });
+
+  it('withImagePaths_textoSinTokens_igual', () => {
+    expect(withImagePaths('hola', ['/a.png'])).toBe('hola');
+  });
+
+  it('withImagePaths_textoVacio_vacio', () => {
+    expect(withImagePaths('', ['/a.png'])).toBe('');
+  });
+
+  it('withImagePaths_rutaConEspaciosYParentesis_literal', () => {
+    // Arrange
+    const path = 'C:\\Mis capturas\\foto (2) $1.png';
+    // Act
+    const result = withImagePaths('[Imagen 1]', [path]);
+    // Assert
+    expect(result).toBe(`[Imagen 1](${path})`);
+  });
+
+  it('withImagePaths_tokenRepetido_rutaEnCadaCopia', () => {
+    expect(withImagePaths('[Imagen 1] y [Imagen 1]', ['/a.png'])).toBe('[Imagen 1](/a.png) y [Imagen 1](/a.png)');
+  });
+});
+
+describe('withoutImageTokens', () => {
+  it('withoutImageTokens_variosTokens_quitaTodos', () => {
+    expect(withoutImageTokens('[Imagen 1] mira [Imagen 2] y [Imagen 3]')).toBe('mira y');
+  });
+
+  it('withoutImageTokens_vacio_vacio', () => {
+    expect(withoutImageTokens('')).toBe('');
+  });
+
+  it('withoutImageTokens_tokenConRuta_quitaTokenYRuta', () => {
+    // Arrange
+    const text = 'mira [Imagen 1](C:\\a.png) ya';
+    // Act
+    const result = withoutImageTokens(text);
+    // Assert
+    expect(result).toBe('mira ya');
+  });
+
+  it('withoutImageTokens_rutaConParentesis_laQuitaEntera', () => {
+    // Arrange
+    const text = '[Imagen 1](C:\\Program Files (x86)\\a.png) hola';
+    // Act
+    const result = withoutImageTokens(text);
+    // Assert
+    expect(result).toBe('hola');
+  });
+
+  it('withoutImageTokens_textoEntreParentesisSeparado_noSeToca', () => {
+    // Arrange
+    const text = '[Imagen 1] (nota)';
+    // Act
+    const result = withoutImageTokens(text);
+    // Assert
+    expect(result).toBe('(nota)');
+  });
+
+  it('withoutImageTokens_mezcla_conYSinRuta', () => {
+    // Arrange
+    const text = '[Imagen 1](C:\\a.png) y [Imagen 2]';
+    // Act
+    const result = withoutImageTokens(text);
+    // Assert
+    expect(result).toBe('y');
   });
 });
 

@@ -1,4 +1,4 @@
-// Registro de propiedad de los ficheros que Mage escribe por su cuenta (decisión C3 de INFORME-046): qué ficheros
+// Registro de propiedad de los ficheros que Mage escribe por su cuenta (decisión de diseño): qué ficheros
 // son de qué paquete, con el hash que tenían al escribirlos. Es la única forma de borrar solo lo propio y de
 // detectar colisiones antes de escribir. El esquema es ESTRICTO: es nuestro propio fichero y un registro mal leído
 // acabaría borrando ficheros ajenos, así que un registro corrupto lanza y nunca se sustituye por uno vacío.
@@ -68,10 +68,10 @@ export function loadOwnershipRegistry(fs: CapabilityFs, path: string): Ownership
 }
 
 export function saveOwnershipRegistry(fs: CapabilityFs, path: string, registry: OwnershipRegistry): void {
-  writeAtomic(toAtomicDeps(fs), path, JSON.stringify(registry, null, 2) + '\n');
+  writeAtomic(capabilityAtomicDeps(fs), path, JSON.stringify(registry, null, 2) + '\n');
 }
 
-function toAtomicDeps(fs: CapabilityFs): AtomicWriteDeps {
+export function capabilityAtomicDeps(fs: CapabilityFs): AtomicWriteDeps {
   return {
     exists: fs.exists,
     readFile: (p) => fs.readFile(p).toString('utf8'),

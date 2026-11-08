@@ -8,6 +8,7 @@ import { agentsDockRows, agentsDockSummaryText, summarizeAgentsDock, type AgentD
 import { formatElapsed } from '../thinkingStatus';
 import type { Block } from '../types';
 import { Icon } from './Icon';
+import { RotatingChevron } from './AnimatedIcon';
 
 // Subagentes ANCLADOS encima del input (P-026 3.4, paso C, D21), con el estilo del dock de preguntas, que
 // va encima si hay una pendiente. P-028 38: UNA linea «N en ejecución · M terminados» que se despliega
@@ -54,7 +55,7 @@ function AgentsDockBody({ tabId, rows }: { readonly tabId: string; readonly rows
             data-agents-dock-summary="true"
             className="flex h-full min-w-0 flex-1 items-center gap-[8px] pl-[10px] text-left text-mg-body2 hover:text-mg-text"
           >
-            <Icon name="chevron" size={10} className={`flex-none transition-transform ${expanded ? 'rotate-90' : ''}`} />
+            <RotatingChevron open={expanded} size={10} />
             <span aria-hidden="true" className={`h-[7px] w-[7px] flex-none rounded-full ${AGENT_STATE_DOT[summary.running > 0 ? 'running' : 'done']}`} />
             <span className="truncate font-semibold">{agentsDockSummaryText(summary, t)}</span>
           </button>
@@ -91,7 +92,7 @@ function AgentDockRowView({ tabId, row, elapsedMs }: { readonly tabId: string; r
         <span aria-hidden="true" className={`h-[7px] w-[7px] flex-none rounded-full ${AGENT_STATE_DOT[row.state]}`} />
         {/* 37b: la TAREA en primer plano (nueve «general-purpose» iguales no dicen nada); el tipo, chip. */}
         <span className="min-w-0 truncate font-semibold text-mg-body2" title={row.description ?? undefined}>{row.description ?? row.name}</span>
-        <span className="flex-none rounded-[4px] bg-mg-sel px-[5px] py-[1px] text-[9px] text-mg-body">{row.name}</span>
+        <span className="flex-none rounded-[4px] bg-mg-sel px-[5px] py-[1px] text-[9px] text-mg-sel-ink">{row.name}</span>
         <span className="min-w-0 flex-1 truncate text-mg-sec">{row.currentStep}</span>
         <span className="flex-none font-mono text-[10px] text-mg-muted" style={{ fontVariantNumeric: 'tabular-nums' }}>
           {formatElapsed(elapsedMs)}
@@ -106,7 +107,7 @@ function AgentDockRowView({ tabId, row, elapsedMs }: { readonly tabId: string; r
           data-agents-dock-dismiss="true"
           aria-label={t('chat.agents.dockDismissAria', { name: row.description ?? row.name })}
           data-tip={t('chat.agents.dockDismissTip')}
-          className="mr-[6px] flex h-[18px] w-[18px] flex-none items-center justify-center rounded-[4px] text-mg-muted hover:bg-mg-sel hover:text-mg-body"
+          className="mr-[6px] flex h-[18px] w-[18px] flex-none items-center justify-center rounded-[4px] text-mg-muted hover:bg-mg-sel hover:text-mg-sel-ink"
         >
           <Icon name="close" size={10} />
         </button>

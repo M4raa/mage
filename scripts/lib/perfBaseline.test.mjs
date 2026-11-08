@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { summarize, topSelfTime } from './perfBaseline.mjs';
+import { describe, expect, it, vi } from 'vitest';
+import { fillAndConfirm, summarize, tabSwitchReadyExpr, topSelfTime, withStep } from './perfBaseline.mjs';
 
 describe('perfBaseline (#40)', () => {
   it('summarize_muestras_medianaP90YMaximo', () => {
@@ -39,5 +39,60 @@ describe('perfBaseline (#40)', () => {
     };
 
     expect(topSelfTime(profile, 1).map((e) => e.fn)).toEqual(['caro · src/a.ts:1', 'HistoryItem · src/workbench/components/ChatSidebar.tsx:1']);
+  });
+
+  it('tabSwitchReadyExpr_destino_pideLaUltimaFilaSoloSiHayListaVirtual', () => {
+    const expr = tabSwitchReadyExpr('t7');
+
+    expect(expr).toContain('[data-pane-tab-id="t7"]');
+    expect(expr).toContain('[data-chat-scroller]');
+    expect(expr).toContain('[data-last-row="true"]');
+  });
+});
+
+describe('withStep', () => {
+  it('withStep_ok_devuelveElValor', async () => {
+    expect(await withStep('x', async () => 7)).toBe(7);
+  });
+
+  it('withStep_falla_prefijaElPasoYConservaLaCausa', async () => {
+    const error = await withStep('x', async () => { throw new Error('boom'); }).catch((e) => e);
+
+    expect(error.message).toBe('Paso «x»: boom');
+    expect(error.cause.message).toBe('boom');
+  });
+
+  it('withStep_fallaSinPagina_noAnadeOverlays', async () => {
+    const error = await withStep('x', async () => { throw new Error('boom'); }).catch((e) => e);
+
+    expect(error.message).not.toContain('overlays');
+  });
+});
+
+describe('fillAndConfirm', () => {
+  const fakeField = (values) => {
+    const inputValue = vi.fn(async () => values.shift() ?? '');
+    return { fill: vi.fn(async () => undefined), inputValue };
+  };
+  const wait = vi.fn(async () => undefined);
+
+  it('fillAndConfirm_seQuedaAlPrimero_unIntento', async () => {
+    const field = fakeField(['VG-T3']);
+
+    expect(await fillAndConfirm(field, 'VG-T3', { wait })).toBe(1);
+    expect(field.fill).toHaveBeenCalledTimes(1);
+  });
+
+  it('fillAndConfirm_elFocoSeLoLlevaUnaVez_reintentaYConfirma', async () => {
+    const field = fakeField(['', 'VG-T3']);
+
+    expect(await fillAndConfirm(field, 'VG-T3', { wait })).toBe(2);
+  });
+
+  it('fillAndConfirm_nuncaSeQueda_lanzaConElValor', async () => {
+    const field = fakeField([]);
+
+    await expect(fillAndConfirm(field, 'VG-T3', { attempts: 3, wait })).rejects.toThrow('""');
+    expect(field.fill).toHaveBeenCalledTimes(3);
   });
 });

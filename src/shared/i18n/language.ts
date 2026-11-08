@@ -1,4 +1,4 @@
-// Idioma de la interfaz (F3, INFORME-033 §3 con U1 de DEVOLUCION-018). Funciones PURAS: main las usa con lo que dice
+// Idioma de la interfaz (F3). Funciones PURAS: main las usa con lo que dice
 // el sistema y los tests con las combinaciones medidas en Electron real (Windows y WSL Ubuntu).
 // El idioma de la interfaz NUNCA cambia lo que se envía al modelo ni la salida de los CLI.
 
@@ -20,7 +20,7 @@ export interface ResolvedUiLanguage {
   // El que daría «Sistema», para decirlo en el selector aunque el usuario haya elegido otro.
   readonly systemLanguage: UiLanguage;
   // Locale que se pasa SIEMPRE explícito a `Intl` (nunca el que tenga por defecto: en Linux con
-  // `LANGUAGE=es:en` el `Intl` por defecto sigue en en-US, medido en INFORME-033).
+  // `LANGUAGE=es:en` el `Intl` por defecto sigue en en-US, medido).
   readonly formatLocale: string;
 }
 

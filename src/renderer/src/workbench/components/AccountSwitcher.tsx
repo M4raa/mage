@@ -17,7 +17,7 @@ import { useT } from '../../i18n/uiLanguage';
 //
 // `no-drag` en el contenedor: la cabecera es region de arrastre de ventana y sin esto el clic se lo
 // come el arrastre. Vale para todos los hijos, asi que no se repite por boton.
-export function AccountSwitcher(): React.JSX.Element | null {
+export function AccountSwitcher({ orientation }: { readonly orientation: 'horizontal' | 'vertical' }): React.JSX.Element | null {
   const accounts = useWorkbenchStore((s) => s.accounts);
   const activeAccountId = useWorkbenchStore((s) => s.activeAccountId);
   // Con una conversacion abierta de otra cuenta no basta con cambiar la activa (P-026 2.7).
@@ -34,7 +34,8 @@ export function AccountSwitcher(): React.JSX.Element | null {
 
   return (
     <div
-      className="flex items-center gap-[4px]"
+      className={orientation === 'vertical' ? 'flex flex-col items-center gap-[4px]' : 'flex items-center gap-[4px]'}
+      data-account-switcher={orientation}
       style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
       role="group"
       aria-label={t('accounts.switcher.groupAria')}
@@ -46,7 +47,7 @@ export function AccountSwitcher(): React.JSX.Element | null {
         onClick={openAddAccount}
         data-tip={t('accounts.switcher.add')}
         aria-label={t('accounts.switcher.add')}
-        className={`flex shrink-0 items-center justify-center rounded-[7px] text-[13px] text-mg-muted transition-colors duration-150 ease-out hover:bg-mg-hover hover:text-mg-body ${SIZE}`}
+        className={`flex shrink-0 items-center justify-center rounded-[7px] text-[13px] text-mg-muted transition-colors duration-90 ease-out hover:bg-mg-hover hover:text-mg-body ${SIZE}`}
       >
         ＋
       </button>

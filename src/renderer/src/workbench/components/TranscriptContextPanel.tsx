@@ -23,6 +23,7 @@ import { Hint } from './TranscriptHint';
 import { AGY_PROVIDER_ID, CODEX_PROVIDER_ID } from '@shared/providers';
 import { providerUsageCategoryTotals } from '../providerUsage';
 import { formatInteger } from '../../i18n/format';
+import { turnUsageCounters } from '../engineBlocks';
 
 // Color fijo por categoria (orden fijo, nunca por rango). Tokens `dataviz` slots 1-4 como variables
 // CSS del tema (M3, conmutan claro/oscuro): cada barra ademas lleva su etiqueta -> identidad nunca solo por color.
@@ -77,6 +78,7 @@ export function TranscriptContextPanel(): React.JSX.Element {
 
   return (
     <div className="flex flex-col gap-[16px] p-[14px] text-[11px]">
+      <LastTurnUsageRow />
       {context.advice.level !== 'ok' && (
         <ContextAdvisor
           advice={context.advice}
@@ -108,6 +110,19 @@ export function TranscriptContextPanel(): React.JSX.Element {
   );
 }
 
+// «Tokens del ultimo turno» (#39): lo que antes era un bloque de sistema en el hilo. Sin dato del proveedor, no se pinta.
+function LastTurnUsageRow(): React.JSX.Element | null {
+  const t = useT();
+  const usage = useWorkbenchStore((s) => s.lastTurnUsageByChat[s.activeTabId]);
+  const counters = usage === undefined ? null : turnUsageCounters(usage);
+  if (counters === null) return null;
+  return (
+    <div data-last-turn-usage="true" className="text-[10.5px] text-mg-body2" style={{ fontVariantNumeric: 'tabular-nums' }}>
+      {t('chat.context.lastTurnUsage', { counters })}
+    </div>
+  );
+}
+
 // Panel de Contexto de una pestaña de Codex o agy: ocupación de la ventana (solo Codex la informa) y tokens acumulados
 // desde que Mage abrió la conversación.
 function ProviderContextPanel({ provider }: { readonly provider: string }): React.JSX.Element {
@@ -122,6 +137,7 @@ function ProviderContextPanel({ provider }: { readonly provider: string }): Reac
   const name = provider === AGY_PROVIDER_ID ? 'agy' : 'Codex';
   return (
     <div data-provider-context-panel={provider} className="flex flex-col gap-[16px] p-[14px] text-[11px]">
+      <LastTurnUsageRow />
       {context !== null && context.advice.level !== 'ok' && (
         <ContextAdvisor advice={context.advice} canHandoff={false} onHandoff={() => undefined} onCompact={() => undefined} />
       )}

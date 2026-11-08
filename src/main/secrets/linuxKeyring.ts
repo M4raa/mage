@@ -1,7 +1,7 @@
 // Detección acotada del llavero seguro de Linux (D1, F2.7). Dice en qué estado está el Secret Service ANTES de
 // llamar a `safeStorage`, que es síncrono y no se puede interrumpir: si el llavero no sirve, ni se toca.
 //
-// Reglas medidas en F0.5c (INFORME-008) y fijadas en el plan (§3.4):
+// Reglas medidas en F0.5c:
 //   - D-Bus SIN activación implícita: sin `DBUS_SESSION_BUS_ADDRESS` no se pregunta (dbus-send intentaría autolanzar
 //     un bus), y al servicio solo se le habla si `NameHasOwner` dice que ya tiene dueño (preguntar al bus por un
 //     nombre no lo arranca);

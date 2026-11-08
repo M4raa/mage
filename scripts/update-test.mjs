@@ -15,7 +15,7 @@
 //   node scripts/update-test.mjs build   # `pnpm run build` + las dos builds en release/update-test/
 //   node scripts/update-test.mjs serve   # sirve release/update-test/to en http://127.0.0.1:8765/
 // Y a mano:
-//   1. Instalar release/update-test/from/mage-setup-beta-<version>.exe (asistente de Mage, idioma es_ES).
+//   1. Instalar release/update-test/from/mage-<version>.exe (asistente de Mage, idioma es_ES).
 //   2. Con `serve` en marcha, abrir MageUpdateTest. A los ~20 s descarga la 0.1.3: el dialogo propio
 //      sale en la ventana enfocada (con las notas de abajo) y la barra de estado dice «0.1.3 lista».
 //      Con la ventana en la bandeja no sale nada hasta volver a abrirla.

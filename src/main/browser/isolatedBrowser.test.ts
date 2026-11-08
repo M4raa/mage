@@ -55,15 +55,21 @@ function createFakes() {
     }),
     loadURL: vi.fn(async (_url: string) => undefined),
     getURL: vi.fn(() => 'http://localhost:5173/'),
-    capturePage: vi.fn(async () => image),
+    getTitle: vi.fn(() => 'Título'),
+    isLoading: vi.fn(() => false),
+    reload: vi.fn(),
+    capturePage: vi.fn(async (_rect?: unknown, _options?: unknown) => image),
     executeJavaScript: vi.fn(async (_script: string): Promise<unknown> => []),
     debugger: debuggerFake,
     navigationHistory: history,
     close: vi.fn(),
+    isDestroyed: vi.fn(() => false),
   };
   const view = {
     webContents: contents,
     getBounds: () => ({ x: 0, y: 0, width: 900, height: 600 }),
+    setBounds: vi.fn(),
+    setVisible: vi.fn(),
   };
   const deps = {
     createSession: vi.fn((_partition: string) => fakeSession as unknown as Session),
@@ -241,6 +247,10 @@ describe('IsolatedBrowser readDom', () => {
   });
 });
 
+const SCREENCAST_PARAMS = { format: 'jpeg', quality: 1, maxWidth: 64, maxHeight: 64 };
+const screencastCalls = (sendCommand: { mock: { calls: unknown[][] } }) =>
+  sendCommand.mock.calls.filter(([method]) => method === 'Page.startScreencast');
+
 describe('IsolatedBrowser click', () => {
   it('click_elementId_dispatchesAtCenterAfterAttaching', async () => {
     const { browser, debuggerFake } = await browserWithElement();
@@ -250,8 +260,28 @@ describe('IsolatedBrowser click', () => {
 
     expect(debuggerFake.attach).toHaveBeenCalledTimes(1);
     expect(debuggerFake.attach).toHaveBeenCalledWith('1.3');
-    expect(debuggerFake.sendCommand).toHaveBeenNthCalledWith(1, ...mousePressed);
-    expect(debuggerFake.sendCommand).toHaveBeenNthCalledWith(2, ...mouseReleased);
+    expect(debuggerFake.sendCommand).toHaveBeenNthCalledWith(1, 'Page.startScreencast', SCREENCAST_PARAMS);
+    expect(debuggerFake.sendCommand).toHaveBeenNthCalledWith(2, ...mousePressed);
+    expect(debuggerFake.sendCommand).toHaveBeenNthCalledWith(3, ...mouseReleased);
+  });
+
+  it('click_twice_startsScreencastOnce', async () => {
+    const { browser, debuggerFake } = createBrowser();
+
+    await browser.click({ x: 1, y: 1 });
+    await browser.click({ x: 1, y: 1 });
+
+    expect(screencastCalls(debuggerFake.sendCommand)).toHaveLength(1);
+  });
+
+  it('click_afterDetach_startsScreencastAgain', async () => {
+    const { browser, debuggerFake } = createBrowser();
+
+    await browser.click({ x: 1, y: 1 });
+    debuggerFake.attached = false;
+    await browser.click({ x: 1, y: 1 });
+
+    expect(screencastCalls(debuggerFake.sendCommand)).toHaveLength(2);
   });
 
   it('click_coordinates_dispatchesThere', async () => {
@@ -259,7 +289,8 @@ describe('IsolatedBrowser click', () => {
 
     await browser.click({ x: 10, y: 20 });
 
-    expect(debuggerFake.sendCommand).toHaveBeenNthCalledWith(1, 'Input.dispatchMouseEvent', {
+    expect(debuggerFake.sendCommand).toHaveBeenNthCalledWith(1, 'Page.startScreencast', SCREENCAST_PARAMS);
+    expect(debuggerFake.sendCommand).toHaveBeenNthCalledWith(2, 'Input.dispatchMouseEvent', {
       type: 'mousePressed',
       x: 10,
       y: 20,
@@ -305,7 +336,7 @@ describe('IsolatedBrowser type', () => {
 
     await browser.type({ elementId: 1, text: 'hola' });
 
-    expect(debuggerFake.sendCommand).toHaveBeenNthCalledWith(3, 'Input.insertText', { text: 'hola' });
+    expect(debuggerFake.sendCommand).toHaveBeenNthCalledWith(4, 'Input.insertText', { text: 'hola' });
   });
 
   it('type_emptyText_throws', async () => {
@@ -347,6 +378,26 @@ describe('IsolatedBrowser close', () => {
     expect(fakeSession.clearData).toHaveBeenCalledTimes(1);
   });
 
+  it('isUsable_destroyedContents_false', () => {
+    const { browser, contents } = createBrowser();
+    expect(browser.isUsable).toBe(true);
+
+    contents.isDestroyed.mockReturnValue(true);
+
+    expect(browser.isUsable).toBe(false);
+  });
+
+  it('close_destroyedContents_clearsDataWithoutClosing', async () => {
+    const { browser, contents, debuggerFake, fakeSession } = createBrowser();
+    contents.isDestroyed.mockReturnValue(true);
+
+    await browser.close();
+
+    expect(debuggerFake.isAttached).not.toHaveBeenCalled();
+    expect(contents.close).not.toHaveBeenCalled();
+    expect(fakeSession.clearData).toHaveBeenCalledTimes(1);
+  });
+
   it('close_twice_isIdempotent', async () => {
     const { browser, contents, fakeSession } = createBrowser();
 
@@ -367,5 +418,106 @@ describe('IsolatedBrowser close', () => {
     await expect(browser.click({ x: 1, y: 1 })).rejects.toThrow(/ya está cerrado/);
     await expect(browser.type({ elementId: 1, text: 'a' })).rejects.toThrow(/ya está cerrado/);
     expect(() => browser.back()).toThrow(/ya está cerrado/);
+  });
+});
+
+describe('IsolatedBrowser captureRaw', () => {
+  it('captureRaw_capturesWithStayHidden', async () => {
+    const { browser, contents, image } = createBrowser();
+
+    const raw = await browser.captureRaw();
+
+    expect(contents.capturePage).toHaveBeenCalledWith(undefined, { stayHidden: true });
+    expect(raw).toEqual({
+      image,
+      widthDip: 900,
+      heightDip: 600,
+      url: 'http://localhost:5173/',
+      capturedAt: '2026-10-31T12:00:00.000Z',
+    });
+  });
+
+  it('captureRaw_emptyImage_throws', async () => {
+    const { browser, image } = createBrowser();
+    image.isEmpty.mockReturnValue(true);
+
+    await expect(browser.captureRaw()).rejects.toThrow(/vacía/);
+  });
+});
+
+describe('IsolatedBrowser control and state', () => {
+  it('releaseControl_attached_detaches', async () => {
+    const { browser, debuggerFake } = await browserWithElement();
+    await browser.click({ elementId: 1 });
+
+    browser.releaseControl();
+
+    expect(debuggerFake.detach).toHaveBeenCalledTimes(1);
+  });
+
+  it('releaseControl_notAttached_noop', () => {
+    const { browser, debuggerFake } = createBrowser();
+
+    browser.releaseControl();
+
+    expect(debuggerFake.detach).not.toHaveBeenCalled();
+  });
+
+  it('releaseControl_closed_noop', async () => {
+    const { browser, debuggerFake } = createBrowser();
+    await browser.close();
+    debuggerFake.attached = true;
+    debuggerFake.detach.mockClear();
+
+    browser.releaseControl();
+
+    expect(debuggerFake.detach).not.toHaveBeenCalled();
+  });
+
+  it('reload_expiresElementsAndReloads', async () => {
+    const { browser, contents } = await browserWithElement();
+
+    browser.reload();
+
+    expect(contents.reload).toHaveBeenCalledTimes(1);
+    await expect(browser.click({ elementId: 1 })).rejects.toThrow(/caducado/);
+  });
+
+  it('state_returnsUrlTitleBackLoading', () => {
+    const { browser, contents } = createBrowser();
+    contents.isLoading.mockReturnValue(true);
+
+    expect(browser.state()).toEqual({ url: 'http://localhost:5173/', title: 'Título', canGoBack: true, loading: true });
+  });
+
+  it('onStateChange_navigateEvent_notifiesUntilUnsubscribed', () => {
+    const { browser, handlers } = createBrowser();
+    const listener = vi.fn();
+    const unsubscribe = browser.onStateChange(listener);
+
+    handlers.contentsEvents.get('did-navigate')?.();
+    unsubscribe();
+    handlers.contentsEvents.get('did-navigate')?.();
+
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
+
+  it('setBoundsAndVisible_passToView', () => {
+    const { browser, view } = createBrowser();
+    const bounds = { x: 1, y: 2, width: 300, height: 200 };
+
+    browser.setBounds(bounds);
+    browser.setVisible(false);
+
+    expect(view.setBounds).toHaveBeenCalledWith(bounds);
+    expect(view.setVisible).toHaveBeenCalledWith(false);
+  });
+
+  it('setVisible_afterClose_throws', async () => {
+    const { browser } = createBrowser();
+    await browser.close();
+
+    expect(browser.isClosed).toBe(true);
+    expect(() => browser.setVisible(true)).toThrow(/ya está cerrado/);
   });
 });

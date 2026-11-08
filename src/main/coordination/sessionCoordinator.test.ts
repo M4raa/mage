@@ -22,6 +22,7 @@ function harness(options: { index?: Partial<ConversationIdentityIndex>; emitOnSt
     stop: vi.fn(),
     sendMessage: vi.fn(),
     steerMessage: vi.fn(),
+    engineRequest: vi.fn(),
     interrupt: vi.fn(),
     answerPermission: vi.fn(),
     answerElicitation: vi.fn(),
@@ -253,7 +254,7 @@ describe('SessionCoordinator — cola de mensajes en main (F2.2)', () => {
     const receipt = h.coordinator.send({ sessionId: id, text: 'hola', commandId: 'c1' });
 
     expect(receipt).toEqual({ status: 'accepted', commandId: 'c1' });
-    expect(h.sessions.sendMessage).toHaveBeenCalledWith(id, 'hola', []);
+    expect(h.sessions.sendMessage).toHaveBeenCalledWith(id, 'hola', [], undefined);
     expect(h.coordinator.snapshot(id).state).toBe('running');
   });
 
@@ -708,7 +709,7 @@ describe('SessionCoordinator — cierre y segundo plano en main (F2.4)', () => {
   });
 
   it('close_conTurnoEnMarcha_segundoPlanoYLaColaNoSaleAlAcabar', () => {
-    // Cierra la ventana de INFORME-022 (decisión 3): descartar la cola y pasar a segundo plano es un solo paso.
+    // Cierra la ventana: descartar la cola y pasar a segundo plano es un solo paso.
     const h = harness();
     const id = h.create();
     h.coordinator.send({ sessionId: id, text: 'primero' });
@@ -868,6 +869,29 @@ describe('SessionCoordinator — varios clientes por sesión (F2.6, H2 de la dev
     expect(other.events.map((e) => e.seq)).toEqual([2]);
   });
 
+  it('subscriberCount_afterCreate_isZero', () => {
+    const h = harness();
+
+    expect(h.coordinator.subscriberCount(h.create())).toBe(0);
+  });
+
+  it('subscriberCount_twoSubscribersThenOneLeaves_isOne', () => {
+    const h = harness();
+    const id = h.create();
+    const first = h.coordinator.subscribe(id, listener().listener);
+    h.coordinator.subscribe(id, listener().listener);
+
+    first.unsubscribe();
+
+    expect(h.coordinator.subscriberCount(id)).toBe(1);
+  });
+
+  it('subscriberCount_unknownSession_throws', () => {
+    const h = harness();
+
+    expect(() => h.coordinator.subscriberCount('nope')).toThrow();
+  });
+
   it('unsubscribe_dejaDeRecibir_yEsIdempotente', () => {
     const h = harness();
     const id = h.create();
@@ -1019,7 +1043,7 @@ describe('SessionCoordinator — directo y cola (F4.1, F4.2)', () => {
     const receipt = steer(h, id);
 
     expect(receipt).toEqual({ status: 'accepted', commandId: C1 });
-    expect(h.sessions.sendMessage).toHaveBeenCalledWith(id, 'ya', []);
+    expect(h.sessions.sendMessage).toHaveBeenCalledWith(id, 'ya', [], C1);
     expect(h.sessions.steerMessage).not.toHaveBeenCalled();
   });
 
@@ -1073,7 +1097,51 @@ describe('SessionCoordinator — directo y cola (F4.1, F4.2)', () => {
     expect(h.coordinator.snapshot(id).state).toBe('running');
     expect(h.sessions.sendMessage).not.toHaveBeenCalled();
     h.emit(id, result);
-    expect(h.sessions.sendMessage).toHaveBeenCalledWith(id, 'B', []);
+    expect(h.sessions.sendMessage).toHaveBeenCalledWith(id, 'B', [], undefined);
+  });
+
+  it('steerResult_newTurnInferidoTrasSuResult_noPoneRunningYSaleComoTurnoCerrado', () => {
+    // Arrange: directo en vuelo, el turno acaba y despues acaba tambien el turno propio del directo sin `started`.
+    const h = harness();
+    const id = running(h);
+    steer(h, id);
+    const queued = h.coordinator.send({ sessionId: id, text: 'B', commandId: 'b' });
+    expect(queued.status).toBe('queued');
+    h.emit(id, result);
+    h.emit(id, state('idle'));
+
+    // Act: la salvaguarda del adapter lo deduce DESPUES del `result` de ese turno.
+    h.emit(id, steered(C1, 'new_turn', { inferred: true }));
+
+    // Assert: no hay turno abierto que esperar; la cola sale.
+    expect(deliveries(h)).toMatchObject([{ into: 'new_turn', late: true, turnClosed: true }]);
+    expect(h.sessions.sendMessage).toHaveBeenCalledWith(id, 'B', [], undefined);
+  });
+
+  it('steerResult_newTurnInferidoSinCola_quedaEnReposo', () => {
+    const h = harness();
+    const id = running(h);
+    steer(h, id);
+    h.emit(id, result);
+    h.emit(id, state('idle'));
+
+    h.emit(id, steered(C1, 'new_turn', { inferred: true }));
+
+    expect(h.coordinator.snapshot(id).state).toBe('idle');
+  });
+
+  it('steerResult_noActiveTurnEnReposo_seEnviaComoMensajeNormalYUnaSolaVez', () => {
+    const h = harness();
+    const id = running(h);
+    steer(h, id);
+    h.emit(id, result);
+    h.emit(id, state('idle'));
+
+    h.emit(id, steered(C1, 'no_active_turn'));
+
+    expect(deliveries(h)).toMatchObject([{ into: 'new_turn', late: true }]);
+    expect(h.sessions.sendMessage).toHaveBeenCalledTimes(1);
+    expect(h.coordinator.snapshot(id).state).toBe('running');
   });
 
   it('send_normalConDirectoEnVueloSinTurno_esperaEnLaCola', () => {
@@ -1097,7 +1165,7 @@ describe('SessionCoordinator — directo y cola (F4.1, F4.2)', () => {
 
     h.emit(id, steered(C1, 'no_active_turn'));
 
-    expect(h.sessions.sendMessage).toHaveBeenCalledWith(id, 'ya', []);
+    expect(h.sessions.sendMessage).toHaveBeenCalledWith(id, 'ya', [], C1);
     expect(deliveries(h)).toMatchObject([{ into: 'new_turn', late: true, turnKind: null }]);
     expect(h.coordinator.snapshot(id).state).toBe('running');
   });
@@ -1125,7 +1193,7 @@ describe('SessionCoordinator — directo y cola (F4.1, F4.2)', () => {
     expect(second).toEqual({ status: 'queued', commandId: C2 });
     expect(h.sessions.steerMessage).toHaveBeenCalledTimes(1);
     h.emit(id, result);
-    expect(h.sessions.sendMessage).toHaveBeenCalledWith(id, 'ya', []);
+    expect(h.sessions.sendMessage).toHaveBeenCalledWith(id, 'ya', [], C1);
     h.emit(id, state('running'));
     expect(steer(h, id, '33333333-3333-4333-8333-333333333333').status).toBe('steering');
   });

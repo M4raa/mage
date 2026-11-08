@@ -1,4 +1,4 @@
-// Politica de respuesta automatica a los permisos (H1 de la devolucion 14). PURO, en shared: hoy la aplica
+// Politica de respuesta automatica a los permisos. PURO, en shared: hoy la aplica
 // el renderer y en F2.4 la aplica main antes de anunciar el permiso a los clientes.
 
 import type { PermissionDecision, PermissionRequest } from './events';
@@ -39,6 +39,16 @@ export function prTurnBlockReason(command: string): string | null {
   return null;
 }
 
+// ¿Algún segmento del comando es uno de los que vigila la barrera del turno de PR (`git push`, `git commit`, `gh pr
+// create`)? A esos no se les ofrece «permitir en esta sesión» ni «siempre»: una regla de prefijo dejaría pasar después una
+// variante forzada sin que la barrera llegue a verla (solo actúa cuando el motor pregunta).
+export function touchesPrTurnCommand(command: string): boolean {
+  return command.split(SEGMENT_SEPARATORS).some((segment) => {
+    const tokens = segment.trim().split(/\s+/).filter((token) => token.length > 0);
+    return PR_TURN_RULES.some((rule) => commandStart(tokens, rule.command) >= 0);
+  });
+}
+
 function blockedFlag(tokens: readonly string[], rule: Rule): string | null {
   const start = commandStart(tokens, rule.command);
   if (start < 0) return null;
@@ -56,7 +66,7 @@ export function prTurnDenyMessage(blocked: string): string {
   return `Mage no permite \`${blocked}\` en el turno de crear el PR: haz un push normal de la rama, sin forzar ni saltar los hooks, y abre el PR en este repositorio.`;
 }
 
-// --- Respuesta automatica a un permiso (H1 de la devolucion 14) --------------------------------------
+// --- Respuesta automatica a un permiso --------------------------------------
 // Orden fijo: barrera del turno de PR > fuera del proyecto > regla «Permitir siempre» > preguntar (null).
 // La barrera va primero porque una regla «Permitir siempre Bash» no puede abrirle paso a un push forzado:
 // antes salia el allow, main lo aceptaba y el deny llegaba tarde. Una PREGUNTA no se auto-permite nunca:

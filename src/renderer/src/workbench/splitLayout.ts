@@ -1,3 +1,4 @@
+import { snapToMagnets } from '@shared/panelLayout';
 import type { SplitLayout } from '@shared/state';
 
 // Arbol de division del centro (I11, ampliado en I12): generaliza Ronda 3 item 13 ("como mucho 2
@@ -191,6 +192,18 @@ export function moveTabToLeaf(layout: SplitLayout, tabId: string, targetPath: Sp
   return addTabToLeaf(layout, targetPath, tabId);
 }
 
+// `newTabId` ocupa el sitio EXACTO de `oldTabId` (misma barra, mismo índice) y queda activa en esa barra; la vieja sale
+// del árbol. Si la nueva ya estaba en otra barra, se saca antes (invariante 3), aunque eso colapse aquella; por eso el
+// sitio de la vieja se busca DESPUÉS. Es lo que necesita una conversación migrada, que nace como pestaña nueva.
+export function replaceTabInPlace(layout: SplitLayout, oldTabId: string, newTabId: string): SplitLayout {
+  if (oldTabId === newTabId) return layout;
+  if (findLeafPath(layout, oldTabId) === null) throw new Error(`replaceTabInPlace: la pestaña "${oldTabId}" no esta en el arbol`);
+  const without = findLeafPath(layout, newTabId) === null ? layout : (closeTab(layout, newTabId) ?? layout);
+  const path = findLeafPath(without, oldTabId)!;
+  const tabIds = leafAt(without, path).tabIds.map((id) => (id === oldTabId ? newTabId : id));
+  return replaceAt(without, path, leaf(tabIds, newTabId));
+}
+
 // --- Tamaño de los paneles ----------------------------------------------------------------------
 
 function clampToRange(ratio: number, min: number, max: number): number {
@@ -225,6 +238,25 @@ export function clampRatioForSize(ratio: number, totalPx: number, minPanePx: num
   const absoluta = minPanePx / totalPx;
   const minFraction = absoluta * 2 <= 1 ? absoluta : MIN_PANE_FRACTION;
   return clampToRange(ratio, Math.max(MIN_RATIO, minFraction), Math.min(MAX_RATIO, 1 - minFraction));
+}
+
+export interface DragRatioInput {
+  readonly startRatio: number;
+  readonly deltaPx: number;
+  readonly sizePx: number;
+  readonly free: boolean;
+}
+
+// Reparto en vivo de un arrastre: los imanes solo enganchan si respetan el mínimo de los dos lados, y el resultado pasa por
+// el MISMO acotado que `resizeAt` aplica al soltar, así que lo que se ve es lo que se guarda.
+export function dragRatio(input: DragRatioInput): number {
+  const { startRatio, deltaPx, sizePx, free } = input;
+  if (sizePx <= 0) return clampRatioForSize(startRatio, 0, MIN_PANE_PX);
+  const raw = startRatio + deltaPx / sizePx;
+  const min = clampRatioForSize(0, sizePx, MIN_PANE_PX);
+  const max = clampRatioForSize(1, sizePx, MIN_PANE_PX);
+  const snapped = free ? raw : snapToMagnets(raw * sizePx, sizePx, { minPx: min * sizePx, maxPx: max * sizePx }) / sizePx;
+  return clampRatioForSize(snapped, sizePx, MIN_PANE_PX);
 }
 
 // Cambia el reparto (0..1, fraccion de `a`) del nodo de division señalado por `path`. Se acota a

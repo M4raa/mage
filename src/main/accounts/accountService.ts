@@ -53,7 +53,7 @@ export interface AccountDeps {
   readonly listDir: (path: string) => string[]; // entradas de un dir (vacio si no existe)
   readonly isDirectory: (path: string) => boolean;
   readonly exists: (path: string) => boolean;
-  readonly readJson: (path: string) => unknown; // null si no existe/ilegible/JSON invalido
+  readonly readJson: (path: string) => unknown; // null si no existe/ilegible/JSON inválido
   readonly mkdir: (path: string) => void;
   readonly writeFile: (path: string, content: string) => void;
   readonly rmrf: (path: string) => void; // borrado recursivo del dir de cuenta (ya sin enlaces)

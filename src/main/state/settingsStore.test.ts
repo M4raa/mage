@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { DEFAULT_APP_SETTINGS } from '@shared/settings';
+import { DEFAULT_APP_SETTINGS, DEFAULT_DELEGATION, DEFAULT_KEEP_ALIVE } from '@shared/settings';
 import type { AppSettings } from '@shared/settings';
 import { SettingsStore, type SettingsStoreDeps } from './settingsStore';
 
@@ -7,7 +7,12 @@ const VALID: AppSettings = {
   version: 1,
   notificationRules: [{ id: 'r1', label: 'Deploy', pattern: 'deploy (ok|listo)', enabled: true }],
   chatProjects: [],
+  pinnedConversations: [],
+  archivedConversations: [],
   theme: 'light',
+  accountAvatarsPlacement: 'top',
+  separatorContrast: 'normal',
+  dockDefaultsVersion: 0,
   widgetEnabled: true,
   backgroundOpacity: 80,
   importedThemes: [{ id: 'ovsx:acme.dark', label: 'Acme Dark', type: 'dark', tokens: { '--color-mg-window': '#101010' } }],
@@ -37,6 +42,8 @@ const VALID: AppSettings = {
   agyLinkedPaths: ['.aws'],
   runtimeShell: 'powershell',
   runtimeToolAccess: { 'custom:lm': [{ model: '*', allow: null, deny: ['Bash'] }] },
+  keepAlive: { subscriptionEnabled: false, apiKeyEnabled: true, minContextTokens: 50_000, maxPauseHours: 4 },
+  delegation: DEFAULT_DELEGATION,
 };
 
 function deps(overrides: Partial<SettingsStoreDeps> = {}): SettingsStoreDeps {
@@ -106,6 +113,41 @@ describe('SettingsStore.load', () => {
     expect(new SettingsStore(deps({ readFile: () => JSON.stringify(previo) })).load().accentByAccount).toEqual({});
   });
 
+  it('settingsStore_legacyFileWithoutKeepAlive_loadsDefaults', () => {
+    const { keepAlive: _omitted, ...legacy } = VALID;
+
+    expect(new SettingsStore(deps({ readFile: () => JSON.stringify(legacy) })).load().keepAlive).toEqual(DEFAULT_KEEP_ALIVE);
+  });
+
+  it('settingsStore_keepAliveOutOfRange_fallsBackToDefault', () => {
+    const outOfRange = { ...VALID, keepAlive: { subscriptionEnabled: false, apiKeyEnabled: 'si', minContextTokens: 5_000_000, maxPauseHours: 0 } };
+
+    const loaded = new SettingsStore(deps({ readFile: () => JSON.stringify(outOfRange) })).load().keepAlive;
+
+    expect(loaded).toEqual({ ...DEFAULT_KEEP_ALIVE, subscriptionEnabled: false });
+  });
+
+  describe('delegation (U10)', () => {
+    const loadDepth = (delegation: unknown): number => {
+      const { delegation: _omitted, ...rest } = VALID;
+      const file = delegation === undefined ? rest : { ...rest, delegation };
+      return new SettingsStore(deps({ readFile: () => JSON.stringify(file) })).load().delegation.maxDepth;
+    };
+
+    it('load_noDelegation_defaultsTo3', () => {
+      expect(loadDepth(undefined)).toBe(3);
+    });
+    it('load_depth0_defaultsTo3', () => {
+      expect(loadDepth({ maxDepth: 0 })).toBe(3);
+    });
+    it('load_depth6_defaultsTo3', () => {
+      expect(loadDepth({ maxDepth: 6 })).toBe(3);
+    });
+    it('load_depth5_kept', () => {
+      expect(loadDepth({ maxDepth: 5 })).toBe(5);
+    });
+  });
+
   it('load_ficheroValido_devuelveLaConfiguracion', () => {
     expect(new SettingsStore(deps()).load()).toEqual(VALID);
   });
@@ -120,6 +162,18 @@ describe('SettingsStore.load', () => {
     const project = { id: 'p1', name: 'Python', instructions: 'Experto en Python', cwd: 'C:/apps/Python', sessionIds: ['s1'] };
     const store = new SettingsStore(deps({ readFile: () => JSON.stringify({ ...VALID, chatProjects: [project] }) }));
     expect(store.load().chatProjects).toEqual([project]);
+  });
+
+  it('load_conversacionesFijadasYArchivadas_sePersisten', () => {
+    const store = new SettingsStore(deps({ readFile: () => JSON.stringify({ ...VALID, pinnedConversations: ['a'], archivedConversations: ['b', 'c'] }) }));
+    expect(store.load().pinnedConversations).toEqual(['a']);
+    expect(store.load().archivedConversations).toEqual(['b', 'c']);
+  });
+
+  it('load_conversacionesFijadasInvalidas_caenAVacio', () => {
+    const store = new SettingsStore(deps({ readFile: () => JSON.stringify({ ...VALID, pinnedConversations: 'x', archivedConversations: ['ok', ''] }) }));
+    expect(store.load().pinnedConversations).toEqual([]);
+    expect(store.load().archivedConversations).toEqual([]);
   });
 
   it('load_jsonCorrupto_devuelveDefaults', () => {
@@ -158,6 +212,44 @@ describe('SettingsStore.load', () => {
     const store = new SettingsStore(deps({ readFile: () => JSON.stringify({ version: 1, notificationRules: [], theme: 'system' }) }));
 
     expect(store.load().theme).toBe('system');
+  });
+
+  it('parseSettings_avatarsPlacementInvalid_defaultsTop', () => {
+    const store = new SettingsStore(deps({ readFile: () => JSON.stringify({ ...VALID, accountAvatarsPlacement: 'bottom' }) }));
+
+    expect(store.load().accountAvatarsPlacement).toBe('top');
+  });
+
+  it('parseSettings_avatarsPlacementRail_isKept', () => {
+    const store = new SettingsStore(deps({ readFile: () => JSON.stringify({ ...VALID, accountAvatarsPlacement: 'rail' }) }));
+
+    expect(store.load().accountAvatarsPlacement).toBe('rail');
+  });
+
+  it('parseSettings_separatorContrastInvalid_defaultsNormal', () => {
+    const store = new SettingsStore(deps({ readFile: () => JSON.stringify({ ...VALID, separatorContrast: 'loud' }) }));
+
+    expect(store.load().separatorContrast).toBe('normal');
+  });
+
+  it('parseSettings_separatorContrastStrong_isKept', () => {
+    const store = new SettingsStore(deps({ readFile: () => JSON.stringify({ ...VALID, separatorContrast: 'strong' }) }));
+
+    expect(store.load().separatorContrast).toBe('strong');
+  });
+
+  it('parseSettings_dockDefaultsVersionInvalid_defaultsZero', () => {
+    for (const bad of [-1, 1.5, 'x', null]) {
+      const store = new SettingsStore(deps({ readFile: () => JSON.stringify({ ...VALID, dockDefaultsVersion: bad }) }));
+
+      expect(store.load().dockDefaultsVersion).toBe(0);
+    }
+  });
+
+  it('parseSettings_dockDefaultsVersionValid_isKept', () => {
+    const store = new SettingsStore(deps({ readFile: () => JSON.stringify({ ...VALID, dockDefaultsVersion: 1 }) }));
+
+    expect(store.load().dockDefaultsVersion).toBe(1);
   });
 
   it('load_modoPorDefectoValido_seConserva', () => {

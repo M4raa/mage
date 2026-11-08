@@ -3,6 +3,9 @@ import {
   buildSlashCatalog,
   completionFor,
   filterSlashCommands,
+  insertSlashCommand,
+  slashQueryAt,
+  slashSuggestionsAt,
   SLASH_COMMANDS,
   SLASH_SUGGESTION_LIMIT,
   type SlashCommand,
@@ -222,5 +225,103 @@ describe('buildSlashCatalog / filterSlashCommands — argumentHint y aliases', (
 
   it('buildSlashCatalog_sinNada_caeALaListaCurada', () => {
     expect(buildSlashCatalog([])).toBe(SLASH_COMMANDS);
+  });
+});
+
+const MID_CATALOG: readonly SlashCommand[] = [
+  { name: 'clear', description: '' },
+  { name: 'compact', description: '' },
+  { name: 'itb-skills:itb-core', description: '' },
+  { name: 'mi-skill', description: '' },
+];
+
+const names = (commands: readonly SlashCommand[]): readonly string[] => commands.map((c) => c.name);
+
+function queryOrThrow(text: string, cursor: number): NonNullable<ReturnType<typeof slashQueryAt>> {
+  const at = slashQueryAt(text, cursor);
+  if (at === null) throw new Error('sin token');
+  return at;
+}
+
+describe('slashQueryAt', () => {
+  it('slashQueryAt_barraAlInicio_devuelveConsulta', () => {
+    expect(slashQueryAt('/co', 3)).toEqual({ start: 0, query: 'co', midSentence: false });
+  });
+
+  it('slashQueryAt_barraTrasEspacio_esMitadDeFrase', () => {
+    expect(slashQueryAt('hola /sk', 8)).toEqual({ start: 5, query: 'sk', midSentence: true });
+  });
+
+  it('slashQueryAt_barraSola_esMitadDeFrase', () => {
+    expect(slashQueryAt('hola /', 6)).toEqual({ start: 5, query: '', midSentence: true });
+  });
+
+  it('slashQueryAt_espaciosDelante_noEsMitadDeFrase', () => {
+    expect(slashQueryAt('  /co', 5)).toEqual({ start: 2, query: 'co', midSentence: false });
+  });
+
+  it('slashQueryAt_rutaAB_null', () => {
+    expect(slashQueryAt('a/b', 3)).toBeNull();
+  });
+
+  it('slashQueryAt_url_null', () => {
+    expect(slashQueryAt('ver https://x.y/', 16)).toBeNull();
+  });
+
+  it('slashQueryAt_espacioTrasLaBarra_null', () => {
+    expect(slashQueryAt('/compact algo', 13)).toBeNull();
+  });
+
+  it('slashQueryAt_cursorCero_null', () => {
+    expect(slashQueryAt('/co', 0)).toBeNull();
+  });
+
+  it('slashQueryAt_textoVacio_null', () => {
+    expect(slashQueryAt('', 0)).toBeNull();
+  });
+
+  it('slashQueryAt_cursorFueraDeRango_seAcota', () => {
+    expect(slashQueryAt('/co', 99)).toEqual({ start: 0, query: 'co', midSentence: false });
+  });
+});
+
+describe('slashSuggestionsAt', () => {
+  it('slashSuggestionsAt_alInicio_ofreceTodo', () => {
+    expect(names(slashSuggestionsAt('/', 1, MID_CATALOG))).toEqual(['clear', 'compact', 'itb-skills:itb-core', 'mi-skill']);
+  });
+
+  it('slashSuggestionsAt_aMitadDeFrase_soloLoQueNoEsInterno', () => {
+    expect(names(slashSuggestionsAt('hola /', 6, MID_CATALOG))).toEqual(['itb-skills:itb-core', 'mi-skill']);
+  });
+
+  it('slashSuggestionsAt_aMitadDeFraseConConsulta_filtra', () => {
+    expect(names(slashSuggestionsAt('hola /mi', 8, MID_CATALOG))).toEqual(['mi-skill']);
+  });
+
+  it('slashSuggestionsAt_aMitadDeFraseComandoInterno_vacio', () => {
+    expect(names(slashSuggestionsAt('hola /cle', 9, MID_CATALOG))).toEqual([]);
+  });
+
+  it('slashSuggestionsAt_ruta_vacio', () => {
+    expect(names(slashSuggestionsAt('a/b', 3, MID_CATALOG))).toEqual([]);
+  });
+});
+
+describe('insertSlashCommand', () => {
+  const miSkill: SlashCommand = { name: 'mi-skill', description: '' };
+
+  it('insertSlashCommand_alInicio_completaComoAntes', () => {
+    const at = queryOrThrow('/co', 3);
+    expect(insertSlashCommand('/co', at, { name: 'compact', description: '' })).toEqual({ text: '/compact ', cursor: 9 });
+  });
+
+  it('insertSlashCommand_aMitadDeFraseAlFinal_sustituyeSoloElToken', () => {
+    const text = 'hola /mi';
+    expect(insertSlashCommand(text, queryOrThrow(text, 8), miSkill)).toEqual({ text: 'hola /mi-skill ', cursor: 15 });
+  });
+
+  it('insertSlashCommand_aMitadDeFraseConTextoDetras_conservaElResto', () => {
+    const text = 'hola /mi y';
+    expect(insertSlashCommand(text, queryOrThrow(text, 8), miSkill)).toEqual({ text: 'hola /mi-skill  y', cursor: 15 });
   });
 });

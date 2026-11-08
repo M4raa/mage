@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { ImageAttachment } from './ipc';
 
 // Esquemas de entrada de las sesiones (F2.6, H3 de la devolución 14). Los comparten el IPC del renderer y el
 // host local: toda entrada se valida AQUÍ, antes de llegar al coordinador. Antes `SessionAnswerPermission` y
@@ -28,10 +29,10 @@ export const PERMISSION_DECISION_SCHEMA = z.discriminatedUnion('behavior', [
   z.object({ behavior: z.literal('deny'), message: z.string().max(MAX_DENY_MESSAGE_CHARS) }).strict(),
 ]);
 
-const ATTACHMENT_SCHEMA = z.object({
-  mediaType: z.enum(['image/png', 'image/jpeg', 'image/webp', 'image/gif']),
-  data: z.string(),
-}).strict();
+// Tipos que viajan como adjunto: las cuatro imágenes y el PDF de las menciones (Q05). Aquí solo la forma: el
+// tipo, el tamaño y el número los valida de verdad `validateAttachments` de main (`@shared/attachments`).
+export const ATTACHMENT_MEDIA_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'application/pdf'] as const satisfies readonly ImageAttachment['mediaType'][];
+export const ATTACHMENT_SCHEMA = z.object({ mediaType: z.enum(ATTACHMENT_MEDIA_TYPES), data: z.string() }).strict();
 
 export const SEND_MESSAGE_SCHEMA = z.object({
   sessionId: id,
@@ -44,6 +45,13 @@ export const ANSWER_PERMISSION_SCHEMA = z.object({ sessionId: id, requestId: id,
 export const QUEUED_MESSAGE_SCHEMA = z.object({ sessionId: id, messageId: id }).strict();
 // Envío desde el renderer (F4.1): el de siempre más el modo. Esquema APARTE para no cambiar el del host.
 export const RENDERER_SEND_MESSAGE_SCHEMA = SEND_MESSAGE_SCHEMA.extend({ mode: z.enum(['queue', 'steer']).optional() });
+// Respuesta a un permiso desde la VENTANA (0.1.4): la de siempre más el alcance («esta sesión» o «siempre»). Esquema APARTE
+// para no cambiar el del host: un cliente externo no puede guardar reglas en la cuenta.
+const RENDERER_PERMISSION_DECISION_SCHEMA = z.discriminatedUnion('behavior', [
+  z.object({ behavior: z.literal('allow'), updatedInput: z.record(z.string(), z.unknown()).optional(), scope: z.enum(['session', 'always']).optional() }).strict(),
+  z.object({ behavior: z.literal('deny'), message: z.string().max(MAX_DENY_MESSAGE_CHARS) }).strict(),
+]);
+export const RENDERER_ANSWER_PERMISSION_SCHEMA = z.object({ sessionId: id, requestId: id, decision: RENDERER_PERMISSION_DECISION_SCHEMA }).strict();
 export const UPDATE_QUEUED_SCHEMA = z.object({ sessionId: id, messageId: id, text: z.string().max(MAX_MESSAGE_CHARS) }).strict();
 export const SET_PERMISSION_MODE_SCHEMA = z.object({ sessionId: id, mode: label }).strict();
 export const SET_MODEL_SCHEMA = z.object({ sessionId: id, model: label }).strict();

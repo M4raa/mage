@@ -1,8 +1,9 @@
 import type { IpcMainInvokeEvent } from 'electron';
 import { IpcChannel } from '@shared/ipc';
-import type { CreateSessionParams, CreateSessionResult, ImageAttachment } from '@shared/ipc';
+import type { AdoptableSession, CreateSessionParams, CreateSessionResult, ImageAttachment } from '@shared/ipc';
+import type { CloseReceipt, ConversationSnapshot } from '@shared/coordination';
 import {
-  ANSWER_PERMISSION_SCHEMA,
+  RENDERER_ANSWER_PERMISSION_SCHEMA,
   parseSessionInput,
   QUEUED_MESSAGE_SCHEMA,
   RENDERER_SEND_MESSAGE_SCHEMA,
@@ -15,6 +16,8 @@ import {
 } from '@shared/sessionInput';
 import { ELICITATION_ANSWER_SCHEMA } from '@shared/elicitation';
 import type { SessionManager } from '../engine/sessionManager';
+import { parseDiverge, parseRewindApply, parseRewindPlan } from './rewindInput';
+import type { RewindCoordinator } from './rewindCoordinator';
 import type { SessionCoordinator } from './sessionCoordinator';
 
 // Registro IPC del dominio de sesiones (F2, H7 de la devolución 13): sale de `index.ts` con sus
@@ -37,7 +40,9 @@ export interface SessionIpcDeps {
   readonly handle: IpcRegister;
   readonly sessions: SessionCommands;
   readonly coordinator: Pick<SessionCoordinator,
-    'send' | 'interrupt' | 'removeQueued' | 'updateQueued' | 'takeQueue' | 'answerPermission' | 'answerElicitation' | 'stop' | 'close' | 'snapshot'>;
+    'send' | 'interrupt' | 'removeQueued' | 'updateQueued' | 'takeQueue' | 'answerPermission' | 'answerElicitation' | 'stop' | 'snapshot'>;
+  // Rewind, Reintentar y Divergir (F4.4/F4.5): planifica y aplica el orquestador de main.
+  readonly rewind: Pick<RewindCoordinator, 'plan' | 'apply' | 'diverge'>;
   readonly createSession: (event: IpcMainInvokeEvent, params: CreateSessionParams) => CreateSessionResult;
   readonly validateAttachments: (attachments: readonly ImageAttachment[] | undefined) => readonly ImageAttachment[];
   // Carpeta scratch AISLADA por conversación (subdir único y vacío), ya creada y canonizada.
@@ -46,6 +51,10 @@ export interface SessionIpcDeps {
   // que la coordinación no sigue se deja pasar: el coordinador contesta «Sesion inexistente», que es la
   // ausencia idempotente que ya esperan los clientes.
   readonly canControl: (senderId: number, sessionId: string) => boolean;
+  // U17: sesiones del host que la ventana puede adoptar, adoptar una y cerrar su pestaña sin cortar a otros clientes.
+  readonly listAdoptable: () => readonly AdoptableSession[];
+  readonly attachWindow: (event: IpcMainInvokeEvent, sessionId: string) => ConversationSnapshot;
+  readonly closeFromWindow: (event: IpcMainInvokeEvent, sessionId: string) => CloseReceipt;
 }
 
 export function registerSessionIpc(deps: SessionIpcDeps): void {
@@ -67,7 +76,7 @@ export function registerSessionIpc(deps: SessionIpcDeps): void {
     return coordinator.send({ ...params, attachments: deps.validateAttachments(params.attachments) });
   });
   handle(IpcChannel.SessionAnswerPermission, (event, arg) => {
-    const params = authorize(event, IpcChannel.SessionAnswerPermission, parseSessionInput(ANSWER_PERMISSION_SCHEMA, arg, IpcChannel.SessionAnswerPermission));
+    const params = authorize(event, IpcChannel.SessionAnswerPermission, parseSessionInput(RENDERER_ANSWER_PERMISSION_SCHEMA, arg, IpcChannel.SessionAnswerPermission));
     return coordinator.answerPermission(params.sessionId, params.requestId, params.decision);
   });
   handle(IpcChannel.SessionAnswerElicitation, (event, arg) =>
@@ -82,14 +91,29 @@ export function registerSessionIpc(deps: SessionIpcDeps): void {
     const params = authorize(event, IpcChannel.SessionQueueUpdate, parseSessionInput(UPDATE_QUEUED_SCHEMA, arg, IpcChannel.SessionQueueUpdate));
     return coordinator.updateQueued(params.sessionId, params.messageId, params.text);
   });
+  registerRewind(deps, authorize);
   registerSessionOptions(deps, authorize);
   handle(IpcChannel.SessionStop, (event, sessionId) => coordinator.stop(authorizeId(event, IpcChannel.SessionStop, sessionId)));
-  handle(IpcChannel.SessionClose, (event, sessionId) => coordinator.close(authorizeId(event, IpcChannel.SessionClose, sessionId)));
+  handle(IpcChannel.SessionClose, (event, sessionId) => deps.closeFromWindow(event, authorizeId(event, IpcChannel.SessionClose, sessionId)));
+  handle(IpcChannel.SessionsAdoptable, () => deps.listAdoptable());
+  handle(IpcChannel.SessionAttach, (event, sessionId) => deps.attachWindow(event, authorizeId(event, IpcChannel.SessionAttach, sessionId)));
   handle(IpcChannel.SessionSnapshot, (event, sessionId) => coordinator.snapshot(authorizeId(event, IpcChannel.SessionSnapshot, sessionId)));
   handle(IpcChannel.SessionGetScratchDir, () => deps.newScratchDir());
 }
 
 type Authorize = <T extends { readonly sessionId: string }>(event: IpcMainInvokeEvent, channel: string, value: T) => T;
+
+// Los tres canales del rewind: validan con `rewindInput`, comprueban al emisor y, en `apply`, los adjuntos.
+function registerRewind({ handle, rewind, validateAttachments }: SessionIpcDeps, authorize: Authorize): void {
+  handle(IpcChannel.SessionRewindPlan, (event, arg) =>
+    rewind.plan(authorize(event, IpcChannel.SessionRewindPlan, parseRewindPlan(arg, IpcChannel.SessionRewindPlan))));
+  handle(IpcChannel.SessionRewindApply, (event, arg) => {
+    const params = authorize(event, IpcChannel.SessionRewindApply, parseRewindApply(arg, IpcChannel.SessionRewindApply));
+    return rewind.apply({ ...params, attachments: validateAttachments(params.attachments) });
+  });
+  handle(IpcChannel.SessionDiverge, (event, arg) =>
+    rewind.diverge(authorize(event, IpcChannel.SessionDiverge, parseDiverge(arg, IpcChannel.SessionDiverge))));
+}
 
 function registerSessionOptions({ handle, sessions }: SessionIpcDeps, authorize: Authorize): void {
   handle(IpcChannel.SessionSetPermissionMode, (event, arg) => {

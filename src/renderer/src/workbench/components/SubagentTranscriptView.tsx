@@ -55,7 +55,7 @@ export function SubagentTranscriptView({ accountDir, cwd, sessionId, subagent, o
         <button onClick={onClose} className="shrink-0 rounded-[4px] px-[6px] py-[2px] text-[11px] text-mg-body2 hover:bg-mg-hover" data-tip={t('chat.subagent.backTip')}>
           {t('chat.subagent.back')}
         </button>
-        <span className="shrink-0 rounded-[4px] bg-mg-sel px-[5px] py-[1px] text-[9px] text-mg-body">{subagent.agentType ?? t('chat.subagent.defaultType')}</span>
+        <span className="shrink-0 rounded-[4px] bg-mg-sel px-[5px] py-[1px] text-[9px] text-mg-sel-ink">{subagent.agentType ?? t('chat.subagent.defaultType')}</span>
         <span className="truncate text-[10.5px] text-mg-sec">{subagent.description ?? t('chat.subagent.noDescription')}</span>
       </div>
       {/* `min-h-0`: sin el, la lista (height:100%) crece al total de filas y se sale de la capa (punto 39). */}

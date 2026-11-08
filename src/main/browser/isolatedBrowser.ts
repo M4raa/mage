@@ -1,4 +1,5 @@
 import type { Session, WebContents, WebContentsView } from 'electron';
+import type { RawCapture } from './annotatedCapture';
 import { hardenContents, hardenSession } from './browserHardening';
 import { deriveDeviceScale } from './deviceScale';
 import { buildDomReadScript } from './domReadScript';
@@ -32,8 +33,21 @@ export interface TypeRequest {
   text: string;
 }
 
+export interface BrowserPageState {
+  readonly url: string;
+  readonly title: string;
+  readonly canGoBack: boolean;
+  readonly loading: boolean;
+}
+
 // La de la medición I1.
 const CDP_PROTOCOL_VERSION = '1.3';
+
+// Un screencast mínimo mantiene pintando la vista con Mage minimizado o tapado (medido, Z): sin ack ni espera.
+const KEEP_PAINTING_SCREENCAST = { format: 'jpeg', quality: 1, maxWidth: 64, maxHeight: 64 } as const;
+
+// Eventos del webContents tras los que cambia el estado que enseña la barra del panel.
+const STATE_EVENTS = ['did-navigate', 'did-navigate-in-page', 'page-title-updated', 'did-start-loading', 'did-stop-loading'];
 
 /**
  * Núcleo de F11b.1, sin consumidores todavía: F11b.2 (herramientas MCP `mage_browser_*`) y F11b.3 (interfaz)
@@ -43,6 +57,7 @@ export class IsolatedBrowser {
   readonly view: WebContentsView;
   private readonly session: Session;
   private readonly elements = new ElementRegistry();
+  private readonly stateListeners = new Set<() => void>();
   private closed = false;
 
   constructor(
@@ -57,6 +72,13 @@ export class IsolatedBrowser {
     hardenSession(this.session);
     this.view = deps.createView(this.session);
     hardenContents(this.view.webContents);
+    for (const event of STATE_EVENTS) {
+      this.view.webContents.on(event as 'did-navigate', () => this.notifyStateChange());
+    }
+  }
+
+  private notifyStateChange(): void {
+    for (const listener of this.stateListeners) listener();
   }
 
   private get contents(): WebContents {
@@ -81,14 +103,21 @@ export class IsolatedBrowser {
     return this.contents.getURL();
   }
 
-  async screenshot(): Promise<BrowserScreenshot> {
+  /** Captura cruda (imagen de Electron + tamaño en DIP), sin reducir ni anotar: `composeCapture` lo hace. */
+  async captureRaw(): Promise<RawCapture> {
     this.assertOpen();
-    const image = await this.contents.capturePage();
+    // D-S3: también con la vista oculta; sin medir, cp/S-01.
+    const image = await this.contents.capturePage(undefined, { stayHidden: true });
     if (image.isEmpty()) {
       throw new Error(`La captura salió vacía (${this.contents.getURL()}): ¿la vista está colocada en una ventana?`);
     }
-    const { width: widthPx, height: heightPx } = image.getSize();
     const { width: widthDip, height: heightDip } = this.view.getBounds();
+    return { image, widthDip, heightDip, url: this.contents.getURL(), capturedAt: this.deps.now().toISOString() };
+  }
+
+  async screenshot(): Promise<BrowserScreenshot> {
+    const { image, widthDip, heightDip, url, capturedAt } = await this.captureRaw();
+    const { width: widthPx, height: heightPx } = image.getSize();
     return {
       mime: 'image/png',
       base64: image.toPNG().toString('base64'),
@@ -97,9 +126,58 @@ export class IsolatedBrowser {
       widthDip,
       heightDip,
       deviceScale: deriveDeviceScale(widthPx, widthDip),
-      url: this.contents.getURL(),
-      capturedAt: this.deps.now().toISOString(),
+      url,
+      capturedAt,
     };
+  }
+
+  get isClosed(): boolean {
+    return this.closed;
+  }
+
+  /** Falso si se cerró o si Electron destruyó el `webContents` por fuera (p. ej. al cerrarse su ventana). */
+  get isUsable(): boolean {
+    return !this.closed && !this.contents.isDestroyed();
+  }
+
+  /** D-S2: Detener suelta el CDP; el siguiente comando del agente lo vuelve a adjuntar si el control lo permite. */
+  releaseControl(): void {
+    if (this.closed) return;
+    if (this.contents.debugger.isAttached()) this.contents.debugger.detach();
+  }
+
+  reload(): void {
+    this.assertOpen();
+    this.elements.clear();
+    this.contents.reload();
+  }
+
+  state(): BrowserPageState {
+    this.assertOpen();
+    return {
+      url: this.contents.getURL(),
+      title: this.contents.getTitle(),
+      canGoBack: this.contents.navigationHistory.canGoBack(),
+      loading: this.contents.isLoading(),
+    };
+  }
+
+  /** Avisa de cualquier cambio de URL, título o carga; devuelve la función que quita el oyente. */
+  onStateChange(listener: () => void): () => void {
+    this.stateListeners.add(listener);
+    return () => {
+      this.stateListeners.delete(listener);
+    };
+  }
+
+  setBounds(bounds: { x: number; y: number; width: number; height: number }): void {
+    this.assertOpen();
+    this.view.setBounds(bounds);
+  }
+
+  setVisible(visible: boolean): void {
+    this.assertOpen();
+    this.view.setVisible(visible);
   }
 
   async readDom(options: ReadDomOptions = {}): Promise<DomElement[]> {
@@ -139,8 +217,11 @@ export class IsolatedBrowser {
     if (this.closed) return;
     this.closed = true;
     this.elements.clear();
-    if (this.contents.debugger.isAttached()) this.contents.debugger.detach();
-    this.contents.close();
+    this.stateListeners.clear();
+    if (!this.contents.isDestroyed()) {
+      if (this.contents.debugger.isAttached()) this.contents.debugger.detach();
+      this.contents.close();
+    }
     // Electron 44 no tiene API para destruir una Session: se vacía la partición y su nombre, único por
     // instancia, nunca se reutiliza.
     await this.session.clearData();
@@ -160,7 +241,10 @@ export class IsolatedBrowser {
   private async sendCdp(method: string, params: Record<string, unknown>): Promise<unknown> {
     // El CDP lo usa SOLO main; ni la página ni el renderer lo ven.
     const debuggerApi = this.contents.debugger;
-    if (!debuggerApi.isAttached()) debuggerApi.attach(CDP_PROTOCOL_VERSION);
+    if (!debuggerApi.isAttached()) {
+      debuggerApi.attach(CDP_PROTOCOL_VERSION);
+      await debuggerApi.sendCommand('Page.startScreencast', KEEP_PAINTING_SCREENCAST);
+    }
     return debuggerApi.sendCommand(method, params);
   }
 }

@@ -71,12 +71,19 @@ describe('AgyAdapter (sesion persistente, agy 1.2.14)', () => {
     expect(adapter.buildSpawnPlan({ ...launch, conversationId: '' }).args).not.toContain('--conversation');
   });
 
-  it.each(['low', 'medium', 'high', 'max'])('buildSpawnPlan_effortSoportado_%s_seAnade', (effort) => {
-    expect(valueAfter(adapter.buildSpawnPlan({ ...launch, effort }).args, '--effort')).toBe(effort);
+  it.each(['low', 'medium', 'high', 'max'])('buildSpawnPlan_modeloSinSufijo_effortSoportado_%s_seAnade', (effort) => {
+    expect(valueAfter(adapter.buildSpawnPlan({ ...launch, model: 'claude-sonnet-4-6', effort }).args, '--effort')).toBe(effort);
   });
 
   it.each(['xhigh', 'raro'])('buildSpawnPlan_effortQueAgyNoConoce_%s_seOmite', (effort) => {
-    expect(adapter.buildSpawnPlan({ ...launch, effort }).args).not.toContain('--effort');
+    expect(adapter.buildSpawnPlan({ ...launch, model: 'claude-sonnet-4-6', effort }).args).not.toContain('--effort');
+  });
+
+  it.each(['low', 'medium', 'high', 'max'])('buildSpawnPlan_modeloConSufijo_effort_%s_noPasaEffort', (effort) => {
+    const args = adapter.buildSpawnPlan({ ...launch, model: 'gemini-3.8-flash-high', effort }).args;
+
+    expect(args).not.toContain('--effort');
+    expect(valueAfter(args, '--model')).toBe('gemini-3.8-flash-high');
   });
 
   // Invariante: una cuenta de suscripcion no recibe NINGUNA clave, aunque el usuario la tenga exportada.
@@ -282,5 +289,11 @@ describe('AgyAdapter: puente de instrucciones', () => {
 
     expect(bridge).not.toHaveBeenCalled();
     expect(addDirs(plan.args)).toEqual(['/proj']);
+  });
+});
+
+describe('AgyAdapter — adjuntos', () => {
+  it('encodeUserMessage_pdfAttachment_throwsWithType', () => {
+    expect(() => adapter.encodeUserMessage('hola', [{ mediaType: 'application/pdf', data: 'JVBERg==' }])).toThrow('application/pdf');
   });
 });

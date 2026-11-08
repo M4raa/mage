@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { CapabilityEngine, NativeInstall } from './capabilityPackage';
-import { nativeInstallCommands, nativeListCommand, nativeUninstallCommands } from './nativeCommands';
+import { nativeInstallCommands, nativeListCommand, nativeUninstallCommands, withPlatformLauncher } from './nativeCommands';
 
 const mcp: NativeInstall = { type: 'mcpStdio', name: 'demo', command: 'node', args: ['server.js', '--flag'] };
 const plugin: NativeInstall = { type: 'plugin', name: 'tool', marketplace: { name: 'mk', source: 'owner/repo' } };
@@ -103,5 +103,74 @@ describe('nativeListCommand', () => {
     const command = nativeListCommand(engine, type);
     // Assert
     expect(command).toEqual({ engine, args: expected });
+  });
+});
+
+const eccUrl = 'https://github.com/affaan-m/ECC.git';
+const pluginWithRef: NativeInstall = {
+  type: 'plugin',
+  name: 'ecc',
+  marketplace: { name: 'ecc', source: eccUrl, ref: 'v2.2.3' },
+};
+
+describe('nativeInstallCommands (marketplace con ref)', () => {
+  it('nativeInstallCommands_claudePluginWithRef_appendsHashRef', () => {
+    // Arrange / Act
+    const commands = nativeInstallCommands('claude', pluginWithRef);
+    // Assert
+    expect(commands.map((c) => c.args)).toEqual([
+      ['plugin', 'marketplace', 'add', `${eccUrl}#v2.2.3`],
+      ['plugin', 'install', 'ecc@ecc', '--scope', 'user'],
+    ]);
+  });
+
+  it('nativeInstallCommands_codexPluginWithRef_passesRefFlag', () => {
+    // Arrange / Act
+    const commands = nativeInstallCommands('codex', pluginWithRef);
+    // Assert
+    expect(commands.map((c) => c.args)).toEqual([
+      ['plugin', 'marketplace', 'add', eccUrl, '--ref', 'v2.2.3'],
+      ['plugin', 'add', 'ecc@ecc'],
+    ]);
+  });
+
+  it('nativeInstallCommands_pluginWithoutRef_keepsSourceAsIs', () => {
+    // Arrange / Act
+    const claude = nativeInstallCommands('claude', plugin).map((c) => c.args[3]);
+    const codex = nativeInstallCommands('codex', plugin);
+    // Assert
+    expect(claude[0]).toBe('owner/repo');
+    expect(codex[0]?.args).toEqual(['plugin', 'marketplace', 'add', 'owner/repo']);
+  });
+});
+
+describe('withPlatformLauncher', () => {
+  const npxServer: NativeInstall = {
+    type: 'mcpStdio',
+    name: 'context7',
+    command: 'npx',
+    args: ['-y', '@upstash/context7-mcp@4.4.2'],
+  };
+
+  it('withPlatformLauncher_npxOnWindows_wrapsInCmd', () => {
+    // Arrange / Act
+    const result = withPlatformLauncher(npxServer, 'win32');
+    // Assert
+    expect(result).toEqual({ ...npxServer, command: 'cmd', args: ['/c', 'npx', '-y', '@upstash/context7-mcp@4.4.2'] });
+  });
+
+  it('withPlatformLauncher_npxOnLinux_unchanged', () => {
+    // Arrange / Act / Assert
+    expect(withPlatformLauncher(npxServer, 'linux')).toBe(npxServer);
+  });
+
+  it('withPlatformLauncher_otherCommandOnWindows_unchanged', () => {
+    // Arrange / Act / Assert
+    expect(withPlatformLauncher(mcp, 'win32')).toBe(mcp);
+  });
+
+  it('withPlatformLauncher_plugin_unchanged', () => {
+    // Arrange / Act / Assert
+    expect(withPlatformLauncher(plugin, 'win32')).toBe(plugin);
   });
 });

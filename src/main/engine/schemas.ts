@@ -223,6 +223,8 @@ export const ResultSchema = z.object({
   subtype: z.string(),
   is_error: z.boolean().optional(),
   num_turns: z.number().nullish(),
+  // Id de la conversación del `result`. MEDIDO en 2.1.319: tras `/clear` ya es el nuevo.
+  session_id: z.string().min(1).optional().catch(undefined),
   // Medido con claude 2.1.292 y ANTHROPIC_API_KEY contra el servidor local del spike de uso API.
   usage: z.object({
     input_tokens: z.number().int().nonnegative(),
@@ -230,6 +232,11 @@ export const ResultSchema = z.object({
     cache_creation_input_tokens: z.number().int().nonnegative().optional(),
     cache_read_input_tokens: z.number().int().nonnegative().optional(),
     output_tokens_details: z.object({ thinking_tokens: z.number().int().nonnegative().optional() }).passthrough().optional(),
+    // Desglose por TTL de la caché que pidió el CLI. Medido en 2.1.314, sin cambios en 2.1.318 (`evidencias-048/salidas/a1-s1.json`, `resultUsage`).
+    cache_creation: z.object({
+      ephemeral_1h_input_tokens: z.number().int().nonnegative().optional(),
+      ephemeral_5m_input_tokens: z.number().int().nonnegative().optional(),
+    }).passthrough().optional(),
   }).passthrough().optional(),
   total_cost_usd: z.union([z.number().nonnegative(), z.string()]).optional(),
 });

@@ -6,6 +6,7 @@ import { useCachedCommandCatalog } from '../commandCatalogStore';
 import { filterCommands, groupCommandsByOrigin, SESSION_GROUP } from '../commandCatalogView';
 import { Hint } from './TranscriptHint';
 import type { SlashCommandInfo } from '@shared/events';
+import { ExpandableDescriptionRow, toggleInSet } from './ExpandableDescriptionRow';
 
 // Panel "Comandos y skills" (2.9.b): el catalogo REAL de comandos "/" de la cuenta, agrupado por el
 // plugin o la skill de origen, con su descripcion, su pista de argumento y sus alias.
@@ -21,6 +22,7 @@ export function CommandsPanel(): React.JSX.Element {
   const sessionCommands = useWorkbenchStore((s) => s.slashCommandsByChat[tabId] ?? EMPTY);
   const cached = useCachedCommandCatalog();
   const [query, setQuery] = useState('');
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
 
   const commands = sessionCommands.length > 0 ? sessionCommands : cached;
   const groups = useMemo(() => groupCommandsByOrigin(filterCommands(commands, query)), [commands, query]);
@@ -52,7 +54,7 @@ export function CommandsPanel(): React.JSX.Element {
                 {group.origin === SESSION_GROUP ? t('chat.commands.sessionGroup') : group.origin} ({group.commands.length})
               </div>
               {group.commands.map((command) => (
-                <CommandRow key={command.name} command={command} />
+                <CommandRow key={command.name} command={command} expanded={expanded.has(command.name)} onToggle={() => setExpanded((set) => toggleInSet(set, command.name))} />
               ))}
             </section>
           ))
@@ -62,20 +64,17 @@ export function CommandsPanel(): React.JSX.Element {
   );
 }
 
-function CommandRow({ command }: { readonly command: SlashCommandInfo }): React.JSX.Element {
+function CommandRow({ command, expanded, onToggle }: { readonly command: SlashCommandInfo; readonly expanded: boolean; readonly onToggle: () => void }): React.JSX.Element {
   return (
-    <div className="flex flex-col gap-[1px] rounded-[6px] p-[4px_6px] hover:bg-mg-hover">
-      <div className="flex items-baseline gap-[7px]">
+    <ExpandableDescriptionRow description={command.description} expanded={expanded} onToggle={onToggle}>
+      <span className="flex items-baseline gap-[7px]">
         <span className="font-mono text-[11px] text-mg-body">/{command.name}</span>
         {/* La pista del argumento se PINTA, nunca se inserta: dice QUE espera, no con que valor. */}
         {command.argumentHint !== null && (
           <span className="font-mono text-[10px] italic text-mg-ter">{command.argumentHint}</span>
         )}
         {command.aliases.length > 0 && <span className="text-[10px] text-mg-muted">({command.aliases.join(', ')})</span>}
-      </div>
-      {command.description.length > 0 && (
-        <span className="text-[10.5px] leading-[1.4] text-mg-sec2">{command.description}</span>
-      )}
-    </div>
+      </span>
+    </ExpandableDescriptionRow>
   );
 }

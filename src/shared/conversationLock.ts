@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { localizedWithParts, type LocalizedText } from './i18n/localizedText';
 import { MAX_ID_CHARS } from './sessionInput';
 
-// Bloqueo de conversación entre instancias de Mage (#55, F2.8; §4 de INFORME-019 con H4 de la devolución 13). Una
+// Bloqueo de conversación entre instancias de Mage (#55, F2.8). Una
 // conversación abierta en una instancia (la instalada, la de desarrollo u otro perfil) la tiene esa instancia; las
 // demás la ven en solo lectura. Un `claude` lanzado a mano en una terminal no se puede bloquear desde Mage.
 

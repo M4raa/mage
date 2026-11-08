@@ -1,6 +1,7 @@
 import { join } from 'node:path';
 import { BrowserWindow } from 'electron';
 import { DebugChannel } from '@shared/debug';
+import { installNavigationGuard, isRendererUrl } from '../windows/navigationGuard';
 import type { LogBus } from './logBus';
 
 // Dimensiones de la ventana de debug (sin magic numbers dispersos).
@@ -54,6 +55,8 @@ export class DebugWindowController {
         sandbox: true,
       },
     });
+    // Lleva el preload de Mage: no puede navegar a nada que no sea su renderer.
+    installNavigationGuard(window.webContents, (url) => isRendererUrl(url, { devUrl: this.rendererBaseUrl, rendererDir: this.rendererDir }));
     window.on('ready-to-show', () => window.showInactive()); // no robar foco a la principal
     window.on('closed', () => {
       this.unsubscribe?.();

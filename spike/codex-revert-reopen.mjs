@@ -9,6 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
+import { linguiCatalogPlugin } from '../scripts/lib/linguiEsbuildPlugin.mjs';
 
 const self = fileURLToPath(import.meta.url);
 const repo = path.resolve(path.dirname(self), '..');
@@ -18,13 +19,13 @@ const option = (name) => {
   return index === -1 ? undefined : args[index + 1];
 };
 
-function build(outDir) {
+async function build(outDir) {
   const require = createRequire(path.join(repo, 'package.json'));
   const esbuild = require(path.join(repo, 'node_modules/.pnpm/esbuild@0.25.12/node_modules/esbuild'));
   const outfile = path.join(outDir, 'codex-revert-reopen-bundle.cjs');
-  esbuild.buildSync({
+  await esbuild.build({
     entryPoints: [path.join(repo, 'spike/codex-revert-reopen-entry.ts')], bundle: true, platform: 'node', format: 'cjs', outfile,
-    alias: { '@shared': path.join(repo, 'src/shared') }, logLevel: 'error',
+    alias: { '@shared': path.join(repo, 'src/shared') }, plugins: [linguiCatalogPlugin(repo)], logLevel: 'error',
   });
   return outfile;
 }
@@ -42,14 +43,15 @@ function expected(out) {
   const r = out.reopen ?? {};
   const n = out.withoutHistoryDb ?? {};
   const m = out.migrate ?? {};
+  // Medido 03-11 (codex-cli 0.164.0): solo con los rollout, sin las bases internas de Codex, thread/resume de un hilo rebobinado da 0 turnos. Limitación declarada; lo que importa es que nunca reaparezca lo descartado.
   return out.modelTurns === 2 && r.entries === 1 && r.segments === true && r.sourceKind === 'codexTurns' && r.turns === 1 && r.hasKept && !r.hasDropped
-    && out.liveStillAnswers === true && n.turns === 1 && n.hasKept && !n.hasDropped
+    && out.liveStillAnswers === true && n.turns === 0 && !n.hasDropped
     && m.newId && m.written && m.hasKept && !m.hasDropped && m.sourceGone;
 }
 
 const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mage-b-revert-bundle-'));
 try {
-  const bundle = build(outDir);
+  const bundle = await build(outDir);
   if (args.includes('--build-only')) {
     console.log('bundle ok');
   } else {

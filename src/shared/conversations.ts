@@ -22,6 +22,10 @@ export interface ConversationSummary {
   readonly isScheduled: boolean;
   // CLI al que pertenece (Codex lee sus rollouts, medidos). Ausente = Claude, el historial de siempre.
   readonly providerId?: AccountProviderId;
+  // Última cuenta con la que se usó la conversación, del índice de Mage; solo Claude.
+  readonly lastAccountId?: string;
+  // Cuenta dueña de una conversación creada fuera de la ventana (terminal o MCP), del índice de Mage; solo Claude.
+  readonly hostOwnerAccountId?: string;
 }
 
 // Borrado de una conversacion en disco (#2 de AJUSTES). accountDir es la cuenta RAIZ; privacy indica
@@ -61,6 +65,9 @@ export interface MigrateConversationParams {
   readonly privacy: ConversationPrivacy;
   readonly destAccountDir: string;
   readonly destProvider: AccountProviderId;
+  // Título visible de la conversación en Mage: el destino lo conserva (Claude: línea `custom-title`). Sin él, el destino
+  // titula por el primer mensaje.
+  readonly title?: string;
 }
 
 export interface MigrateConversationResult {

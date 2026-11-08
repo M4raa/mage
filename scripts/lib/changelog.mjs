@@ -8,13 +8,21 @@ const SECTION_HEADING = /^## /;
 
 // Cuerpo de la seccion de `version` (sin su titulo), recortado. Lanza si no existe o si esta vacia: un
 // release sin notas es justo lo que esta puerta viene a impedir.
-export function extractVersionSection(markdown, version) {
+export function extractVersionSection(markdown, version, fileName = 'CHANGELOG.md') {
   const lines = markdown.split(/\r?\n/);
   const start = lines.findIndex((line) => VERSION_HEADING.exec(line)?.[1] === version);
-  if (start < 0) throw new Error(`CHANGELOG.md no tiene seccion para la version ${JSON.stringify(version)}`);
+  if (start < 0) throw new Error(`${fileName} no tiene seccion para la version ${JSON.stringify(version)}`);
   const rest = lines.slice(start + 1);
   const end = rest.findIndex((line) => SECTION_HEADING.test(line));
   const body = (end < 0 ? rest : rest.slice(0, end)).join('\n').trim();
-  if (body.length === 0) throw new Error(`La seccion ${JSON.stringify(version)} de CHANGELOG.md esta vacia`);
+  if (body.length === 0) throw new Error(`La seccion ${JSON.stringify(version)} de ${fileName} esta vacia`);
   return body;
+}
+
+// Cuerpo del release de GitHub: la seccion castellana, una raya y la inglesa. Lanza (nombrando el fichero)
+// si a cualquiera de los dos le falta la version.
+export function buildReleaseBody(spanishMarkdown, englishMarkdown, version) {
+  const spanish = extractVersionSection(spanishMarkdown, version);
+  const english = extractVersionSection(englishMarkdown, version, 'CHANGELOG.en.md');
+  return `${spanish}\n\n---\n\n## English\n\n${english}`;
 }

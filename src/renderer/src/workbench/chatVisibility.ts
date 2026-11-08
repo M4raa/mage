@@ -39,7 +39,8 @@ export function isFailedMainTool(block: Block): block is ToolBlock {
 }
 
 export type ChatRow =
-  | { readonly kind: 'block'; readonly block: Block }
+  // `repeat`: cuantos fallos IDENTICOS seguidos se funden en esta fila (ausente = 1).
+  | { readonly kind: 'block'; readonly block: Block; readonly repeat?: number }
   | { readonly kind: 'tool-failed'; readonly block: ToolBlock }
   // Los subagentes que lanzo el orquestador en un turno, en UNA linea (D21), donde salio el primero.
   | { readonly kind: 'subagents'; readonly id: string; readonly blocks: readonly SubagentBlock[] };
@@ -58,10 +59,20 @@ export function chatRows(blocks: readonly Block[]): readonly ChatRow[] {
     } else if (isFailedMainTool(block)) {
       rows.push({ kind: 'tool-failed', block });
     } else if (isChatBlock(block)) {
-      rows.push({ kind: 'block', block });
+      if (!mergeRepeatedError(rows, block)) rows.push({ kind: 'block', block });
     }
   }
   return rows;
+}
+
+// Un error igual (mismo mensaje y mismo comando denegado) que la ULTIMA fila visible se funde con ella
+// subiendo su `repeat`; la fila conserva la clave del primero. Devuelve si lo fundio. Una sola pasada.
+function mergeRepeatedError(rows: ChatRow[], block: Block): boolean {
+  const last = rows[rows.length - 1];
+  if (block.kind !== 'error' || last === undefined || last.kind !== 'block' || last.block.kind !== 'error') return false;
+  if (last.block.message !== block.message || last.block.deniedCommand !== block.deniedCommand) return false;
+  rows[rows.length - 1] = { kind: 'block', block: last.block, repeat: (last.repeat ?? 1) + 1 };
+  return true;
 }
 
 // Lo que va al panel: todo lo que no es del chat, menos un permiso que aun espera (ese esta en el chat) y

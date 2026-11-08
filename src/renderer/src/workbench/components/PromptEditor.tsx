@@ -4,6 +4,7 @@ import { Compartment, EditorState, Prec } from '@codemirror/state';
 import { history, historyKeymap, standardKeymap } from '@codemirror/commands';
 import { promptExtensions } from '../promptExtensions';
 import type { TextState } from '../promptEditing';
+import { withoutImageTokens } from '@shared/imageRefs';
 
 // Envoltorio de CodeMirror 6 para el prompt (2.7). TODO lo especifico de CM6 vive aqui y en
 // `promptExtensions.ts`: el resto de la app sigue hablando de `TextState` (value + seleccion), que es
@@ -31,6 +32,8 @@ export interface PromptEditorProps {
   // `userDeleted`: el cambio es un borrado del usuario (Backspace/Supr/borrar palabra), no un cortar ni un
   // cambio por programa. Con el la barra quita el adjunto de un `[Imagen N]` borrado (P-028 19b).
   readonly onChange: (value: string, userDeleted: boolean) => void;
+  // La posicion del cursor (de la seleccion principal) cambia, por escribir o por moverse: el popover de menciones `@` la necesita sin esperar a una tecla.
+  readonly onSelectionChange: (cursor: number) => void;
   // Devuelve `true` si la tecla se ha consumido (entonces CodeMirror no la ve).
   readonly onKeyDown: (event: KeyboardEvent) => boolean;
   readonly onPasteImages: (files: readonly File[]) => void;
@@ -70,6 +73,7 @@ export function PromptEditor({
   disabled,
   ariaLabel,
   onChange,
+  onSelectionChange,
   onKeyDown,
   onPasteImages,
   onWrapChange,
@@ -81,8 +85,8 @@ export function PromptEditor({
   const viewRef = useRef<EditorView | null>(null);
   // Los callbacks viven en una ref para que el editor se cree UNA vez: recrearlo en cada render
   // perderia el foco, el historial y el cursor a cada tecla.
-  const handlersRef = useRef({ onChange, onKeyDown, onPasteImages, onWrapChange, onTextWidthChange });
-  handlersRef.current = { onChange, onKeyDown, onPasteImages, onWrapChange, onTextWidthChange };
+  const handlersRef = useRef({ onChange, onSelectionChange, onKeyDown, onPasteImages, onWrapChange, onTextWidthChange });
+  handlersRef.current = { onChange, onSelectionChange, onKeyDown, onPasteImages, onWrapChange, onTextWidthChange };
   const wrapsRef = useRef(false);
   const textWidthRef = useRef<number | null>(null);
   // El placeholder SI cambia (depende de `disabled`: «Abre una pestaña…» sin pestaña): va en su propio
@@ -104,10 +108,14 @@ export function PromptEditor({
           Prec.highest(
             EditorView.domEventHandlers({
               keydown: (event) => handlersRef.current.onKeyDown(event),
-              paste: (event) => {
+              paste: (event, view) => {
                 const files = [...(event.clipboardData?.files ?? [])];
                 if (files.length === 0) return false; // texto normal: que lo pegue CodeMirror
                 event.preventDefault();
+                // Texto e imágenes a la vez (un mensaje copiado con su imagen): el texto se pega sin sus tokens y
+                // `onPasteImages` pone el de cada imagen que adjunta, en el cursor, detrás del texto.
+                const text = withoutImageTokens(event.clipboardData?.getData('text/plain') ?? '');
+                if (text.length > 0) view.dispatch(view.state.replaceSelection(text));
                 handlersRef.current.onPasteImages(files);
                 return true;
               },
@@ -115,6 +123,7 @@ export function PromptEditor({
           ),
           EditorView.updateListener.of((update) => {
             if (update.docChanged) handlersRef.current.onChange(update.state.doc.toString(), isUserDelete(update));
+            if (update.docChanged || update.selectionSet) handlersRef.current.onSelectionChange(update.state.selection.main.head);
             if (!update.docChanged && !update.geometryChanged) return;
             // Con el documento vacio el que puede envolver es el PLACEHOLDER, no el texto del usuario: no cuenta.
             const wraps = update.state.doc.length > 0 && update.view.contentHeight > update.view.defaultLineHeight * WRAP_LINE_FACTOR;

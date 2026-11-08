@@ -46,6 +46,14 @@ export type DefaultPermissionMode = (typeof DEFAULT_PERMISSION_MODES)[number];
 export const THEME_PREFERENCES = ['system', 'light', 'dark'] as const;
 export type ThemePreference = (typeof THEME_PREFERENCES)[number];
 
+// Dónde se pintan los avatares de cuenta: en la barra de título o en la columna del rail izquierdo (U1).
+export const ACCOUNT_AVATARS_PLACEMENTS = ['top', 'rail'] as const;
+export type AccountAvatarsPlacement = (typeof ACCOUNT_AVATARS_PLACEMENTS)[number];
+
+// Fuerza de las separaciones del tema: suave, la del tema o marcada (U7).
+export const SEPARATOR_CONTRASTS = ['soft', 'normal', 'strong'] as const;
+export type SeparatorContrast = (typeof SEPARATOR_CONTRASTS)[number];
+
 // Tema de color importado desde Open VSX (VS Code). Se guarda YA MAPEADO a los tokens de Mage
 // (--color-mg-* -> color), asi aplicarlo en runtime es solo inyectar variables. `type` decide el tema
 // base (data-theme) para los tokens no mapeados.
@@ -93,8 +101,19 @@ export interface AppSettings {
   readonly version: number;
   readonly notificationRules: readonly NotificationRule[];
   readonly chatProjects: readonly ChatProject[];
+  // Ids de conversación fijadas en el lateral (grupo «Fijadas»). Una pestaña fijada y su conversación van a la par.
+  readonly pinnedConversations: readonly string[];
+  // Ids de conversación archivadas: salen del lateral salvo con el chip «Archivadas».
+  readonly archivedConversations: readonly string[];
   // Preferencia de tema base (claro/oscuro/sistema). Default 'dark' para preservar el aspecto actual.
   readonly theme: ThemePreference;
+  // Dónde van los avatares de cuenta (U1). Default 'top' (barra de título).
+  readonly accountAvatarsPlacement: AccountAvatarsPlacement;
+  // Fuerza de las separaciones (U7). Default 'normal' = lo que traiga el tema.
+  readonly separatorContrast: SeparatorContrast;
+  // Versión de los valores por defecto del dock que ya se aplicaron a este perfil (0 = ninguna). Permite cambiar un
+  // defecto del dock UNA vez por perfil sin pisar después el layout guardado.
+  readonly dockDefaultsVersion: number;
   // Widget flotante always-on-top (M3): si esta activo, se abre al arrancar. Default false (opt-in).
   readonly widgetEnabled: boolean;
   // Opacidad de los FONDOS de la app, 50..100 (%). 100 = opaco, como siempre. Por debajo, las
@@ -193,7 +212,40 @@ export interface AppSettings {
   // instalador de Windows, U3/F3.7) y, sin ella, «Sistema». Elegir «Sistema» en Configuración lo guarda explícito y
   // ya no se hereda nada. Default: ausente.
   readonly uiLanguage?: UiLanguagePreference;
+  // Keep-alive de la caché de Claude (F4.6, D-K4): un mensaje oculto que la mantiene caliente mientras la pestaña
+  // sigue abierta. Default: activado en suscripción, apagado en cuentas por clave de API.
+  readonly keepAlive: KeepAliveSettings;
+  // Delegacion entre conversaciones (U10): profundidad maxima de la cadena de creadoras.
+  readonly delegation: DelegationSettings;
 }
+
+export interface DelegationSettings {
+  readonly maxDepth: number;
+}
+
+// Limites de `delegation.maxDepth` (U10): coinciden con los del nucleo MCP (src/main/mcpServer/delegation.ts).
+export const DELEGATION_DEPTH_MIN = 1;
+export const DELEGATION_DEPTH_MAX = 5;
+export const DEFAULT_DELEGATION: DelegationSettings = { maxDepth: 3 };
+
+export interface KeepAliveSettings {
+  // U11: activado por defecto en las cuentas de suscripción.
+  readonly subscriptionEnabled: boolean;
+  // U15: apagado por defecto en las cuentas por clave de API (cada keep-alive se factura).
+  readonly apiKeyEnabled: boolean;
+  // Solo se mantiene la caché de conversaciones con al menos estos tokens de contexto (U11: 100 000).
+  readonly minContextTokens: number;
+  // Horas máximas de pausa del usuario durante las que se sigue manteniendo (plan: 8).
+  readonly maxPauseHours: number;
+}
+
+// Límites de `keepAlive`, compartidos por Configuración y el store.
+export const KEEP_ALIVE_MIN_CONTEXT_MIN = 0;
+export const KEEP_ALIVE_MIN_CONTEXT_MAX = 2_000_000;
+export const KEEP_ALIVE_MAX_PAUSE_MIN = 1;
+export const KEEP_ALIVE_MAX_PAUSE_MAX = 24;
+
+export const DEFAULT_KEEP_ALIVE: KeepAliveSettings = { subscriptionEnabled: true, apiKeyEnabled: false, minContextTokens: 100_000, maxPauseHours: 8 };
 
 // Nº de acentos del tema (--mg-accent-<i>-* en index.css); lo comparten cuentas y pestañas.
 export const ACCOUNT_ACCENT_COUNT = 6;
@@ -228,7 +280,12 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   version: APP_SETTINGS_VERSION,
   notificationRules: [],
   chatProjects: [],
+  pinnedConversations: [],
+  archivedConversations: [],
   theme: 'dark',
+  accountAvatarsPlacement: 'top',
+  separatorContrast: 'normal',
+  dockDefaultsVersion: 0,
   widgetEnabled: false,
   backgroundOpacity: 100,
   importedThemes: [],
@@ -256,4 +313,6 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   agyLinkedPaths: [],
   runtimeShell: 'auto',
   runtimeToolAccess: {},
+  keepAlive: DEFAULT_KEEP_ALIVE,
+  delegation: DEFAULT_DELEGATION,
 };

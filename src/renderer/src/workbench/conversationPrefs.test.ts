@@ -68,16 +68,21 @@ describe('resolveReopenedTabPrefs', () => {
 
 describe('toConversationPrefs', () => {
   it('toConversationPrefs_pestanaConLosTres_losGuardaTodos', () => {
-    expect(toConversationPrefs({ model: 'opus', effort: 'high', permissionMode: 'plan' })).toEqual({
+    expect(toConversationPrefs({ model: 'opus', effort: 'high', permissionMode: 'plan', accountId: 'acc-1' })).toEqual({
       model: 'opus',
       effort: 'high',
       permissionMode: 'plan',
+      accountId: 'acc-1',
     });
   });
 
   it('toConversationPrefs_sinEffort_loMandaVacioParaQueSeBorre', () => {
     // Con `undefined` el indice conservaria el esfuerzo viejo y la conversacion seguiria reabriendose
     // con un esfuerzo que el usuario acaba de quitar.
-    expect(toConversationPrefs({ model: 'opus' })).toEqual({ model: 'opus', effort: '' });
+    expect(toConversationPrefs({ model: 'opus', accountId: 'acc-1' })).toEqual({ model: 'opus', effort: '', accountId: 'acc-1' });
+  });
+
+  it('toConversationPrefs_withAccount_keepsAccountId', () => {
+    expect(toConversationPrefs({ model: 'opus', accountId: 'acc-2' }).accountId).toBe('acc-2');
   });
 });

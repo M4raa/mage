@@ -1,5 +1,18 @@
 import type { MageApi } from '@shared/ipc';
-import { clampUiScale, DEFAULT_PERMISSION_MODES, IMPORTED_CONTEXT_LIMITS, ONBOARDING_VERSION, RUNTIME_SHELLS } from '@shared/settings';
+import {
+  clampUiScale,
+  DELEGATION_DEPTH_MAX,
+  DELEGATION_DEPTH_MIN,
+  DEFAULT_PERMISSION_MODES,
+  IMPORTED_CONTEXT_LIMITS,
+  KEEP_ALIVE_MAX_PAUSE_MAX,
+  KEEP_ALIVE_MAX_PAUSE_MIN,
+  KEEP_ALIVE_MIN_CONTEXT_MAX,
+  KEEP_ALIVE_MIN_CONTEXT_MIN,
+  ONBOARDING_VERSION,
+  RUNTIME_SHELLS,
+  type KeepAliveSettings,
+} from '@shared/settings';
 import { setAgyCommandVerdict } from '@shared/agyRules';
 import { applyAccentOverrides } from './accountView';
 import { effortSettingKey } from './models';
@@ -15,6 +28,9 @@ import { describeError } from './describeError';
 export type SettingsActionName =
   | 'saveNotificationRules'
   | 'setTheme'
+  | 'setAccountAvatarsPlacement'
+  | 'setSeparatorContrast'
+  | 'setDockDefaultsVersion'
   | 'setUiScale'
   | 'setUiLanguage'
   | 'setAccountAccent'
@@ -23,6 +39,8 @@ export type SettingsActionName =
   | 'setAgyLinkedPaths'
   | 'setDefaultProvider'
   | 'setArtifactEnabled'
+  | 'setKeepAlive'
+  | 'setDelegationDepth'
   | 'setDefaultPermissionMode'
   | 'setRuntimeToolAccess'
   | 'setRuntimeShell'
@@ -33,6 +51,7 @@ export type SettingsActionName =
   | 'setImportedContextMaxChars'
   | 'setBackgroundOpacity'
   | 'applyImportedTheme'
+  | 'replaceImportedTheme'
   | 'removeImportedTheme'
   | 'selectImportedTheme'
   | 'setWidgetEnabled'
@@ -57,6 +76,23 @@ export interface SettingsDeps {
   readonly isReleaseNotesDevRun: () => boolean;
 }
 
+// Precondicion de `setKeepAlive`: cada campo que venga es del tipo y del rango que acepta main.
+function assertKeepAlivePatch(patch: Partial<KeepAliveSettings>): void {
+  assertIntInRange('minContextTokens', patch.minContextTokens, KEEP_ALIVE_MIN_CONTEXT_MIN, KEEP_ALIVE_MIN_CONTEXT_MAX);
+  assertIntInRange('maxPauseHours', patch.maxPauseHours, KEEP_ALIVE_MAX_PAUSE_MIN, KEEP_ALIVE_MAX_PAUSE_MAX);
+  for (const field of ['subscriptionEnabled', 'apiKeyEnabled'] as const) {
+    const value = patch[field];
+    if (value !== undefined && typeof value !== 'boolean') throw new Error(`Keep-alive: ${field} debe ser booleano, recibido ${JSON.stringify(value)}`);
+  }
+}
+
+function assertIntInRange(field: string, value: number | undefined, min: number, max: number): void {
+  if (value === undefined) return;
+  if (!Number.isInteger(value) || value < min || value > max) {
+    throw new Error(`Keep-alive: ${field} debe ser un entero entre ${min} y ${max}, recibido ${JSON.stringify(value)}`);
+  }
+}
+
 export function createSettingsActions(deps: SettingsDeps): SettingsActions {
   const { mage, get, set } = deps;
   return {
@@ -72,6 +108,25 @@ export function createSettingsActions(deps: SettingsDeps): SettingsActions {
       set((s) => ({ settings: { ...s.settings, theme: pref, activeThemeId: null } }));
       applyThemeFromSettings(get().settings, systemPrefersDark());
       deps.persistSettings();
+    },
+
+    // Dónde van los avatares de cuenta (U1). Solo cambia el DOM de la cabecera/rail: basta persistir con debounce.
+    setAccountAvatarsPlacement: (placement) => {
+      set((s) => ({ settings: { ...s.settings, accountAvatarsPlacement: placement } }));
+      deps.persistSettings();
+    },
+
+    // Contraste de separaciones (U7): se guarda y se reaplica el tema, que es quien fija (o quita) las tres propiedades.
+    setSeparatorContrast: (level) => {
+      set((s) => ({ settings: { ...s.settings, separatorContrast: level } }));
+      applyThemeFromSettings(get().settings, systemPrefersDark());
+      deps.persistSettings();
+    },
+
+    // Marca que los defaults del dock ya se aplicaron a este perfil. Se guarda YA: es una decisión de una sola vez.
+    setDockDefaultsVersion: (version) => {
+      set((s) => ({ settings: { ...s.settings, dockDefaultsVersion: version } }));
+      deps.persistSettingsNow();
     },
 
     setUiScale: (percent) => {
@@ -125,6 +180,20 @@ export function createSettingsActions(deps: SettingsDeps): SettingsActions {
 
     setArtifactEnabled: (enabled) => {
       set((s) => ({ settings: { ...s.settings, artifactEnabled: enabled } }));
+      deps.persistSettings();
+    },
+
+    setKeepAlive: (patch) => {
+      assertKeepAlivePatch(patch);
+      set((s) => ({ settings: { ...s.settings, keepAlive: { ...s.settings.keepAlive, ...patch } } }));
+      deps.persistSettings();
+    },
+
+    setDelegationDepth: (depth) => {
+      if (!Number.isInteger(depth) || depth < DELEGATION_DEPTH_MIN || depth > DELEGATION_DEPTH_MAX) {
+        throw new Error(`Profundidad de delegación inválida: ${JSON.stringify(depth)}`);
+      }
+      set((s) => ({ settings: { ...s.settings, delegation: { maxDepth: depth } } }));
       deps.persistSettings();
     },
 
@@ -205,6 +274,13 @@ export function createSettingsActions(deps: SettingsDeps): SettingsActions {
         },
       }));
       applyThemeFromSettings(get().settings, systemPrefersDark());
+      deps.persistSettings();
+    },
+
+    // Sustituye un tema importado conservando su id (volver a importar). No lo activa: si ya era el activo, se reaplica.
+    replaceImportedTheme: (imported) => {
+      set((s) => ({ settings: { ...s.settings, importedThemes: s.settings.importedThemes.map((t) => (t.id === imported.id ? imported : t)) } }));
+      if (get().settings.activeThemeId === imported.id) applyThemeFromSettings(get().settings, systemPrefersDark());
       deps.persistSettings();
     },
 

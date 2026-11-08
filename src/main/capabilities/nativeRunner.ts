@@ -2,7 +2,7 @@ import { isAbsolute } from 'node:path';
 import { scrubAgentEnv } from '../os/agentEnv';
 import type { CapabilityEngine } from './capabilityPackage';
 import type { CommandResult, CommandRunner } from './commandRunner';
-import type { NativeCommand } from './nativeCommands';
+import { configDirEnvVar, type NativeCommand } from './nativeCommands';
 import { previewValue } from './capabilityPackage';
 
 // `plugin marketplace add` clona un repositorio git: puede tardar. Dos minutos como techo.
@@ -33,10 +33,6 @@ export class NativeCommandError extends Error {
     );
     this.name = 'NativeCommandError';
   }
-}
-
-export function configDirEnvVar(engine: CapabilityEngine): 'CLAUDE_CONFIG_DIR' | 'CODEX_HOME' {
-  return engine === 'claude' ? 'CLAUDE_CONFIG_DIR' : 'CODEX_HOME';
 }
 
 // El saneado va PRIMERO (CLAUDE.md, invariante de facturación) y estos comandos no reciben ninguna clave, ni siquiera

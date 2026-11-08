@@ -1,4 +1,6 @@
 import { useState } from 'react';
+import { AnimatePresence, motion } from 'motion/react';
+import { DISCLOSURE_VARIANTS } from '../motionPresets';
 import { Icon } from './Icon';
 import { useWorkbenchStore } from '../workbenchStore';
 import { usePaneTabId } from '../paneContext';
@@ -11,7 +13,22 @@ import { useT } from '../../i18n/uiLanguage';
 // Va entre el hilo y el prompt, y no dentro del hilo, a proposito: el hilo es el RELATO (ahi ya esta la
 // linea "⏳ Limite de uso alcanzado" que pone `cliNotices`) y esto es una ACCION sobre el estado de
 // ahora. Metida como bloque se iria hacia arriba con el scroll justo cuando hace falta.
-export function RateLimitBanner(): React.JSX.Element | null {
+export function RateLimitBanner(): React.JSX.Element {
+  const tabId = usePaneTabId();
+  const visible = useWorkbenchStore((s) => s.rateLimitByChat[tabId] !== undefined && s.tabs.some((t) => t.id === tabId));
+  // `initial={false}`: al hidratar o cambiar de pestaña con el aviso ya activo no hay entrada.
+  return (
+    <AnimatePresence initial={false}>
+      {visible && (
+        <motion.div variants={DISCLOSURE_VARIANTS} initial="initial" animate="animate" exit="exit" className="overflow-hidden">
+          <RateLimitBannerBody />
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
+}
+
+function RateLimitBannerBody(): React.JSX.Element | null {
   const tabId = usePaneTabId();
   const notice = useWorkbenchStore((s) => s.rateLimitByChat[tabId]);
   const tab = useWorkbenchStore((s) => s.tabs.find((t) => t.id === tabId));
@@ -66,7 +83,7 @@ export function RateLimitBanner(): React.JSX.Element | null {
                   .catch((err: unknown) => console.error('No se pudo continuar en la otra cuenta:', err instanceof Error ? err.message : String(err)))
                   .finally(() => setMoving(false));
               }}
-              className="inline-flex items-center gap-[6px] rounded-[6px] border border-mg-border-emph px-[8px] py-[3px] text-mg-body transition-colors duration-150 ease-out hover:bg-mg-hover disabled:opacity-50"
+              className="inline-flex items-center gap-[6px] rounded-[6px] border border-mg-border-emph px-[8px] py-[3px] text-mg-body transition-colors duration-90 ease-out hover:bg-mg-hover disabled:opacity-50"
             >
               <span className="h-[7px] w-[7px] flex-none rounded-[2px]" style={{ background: account.accent.base }} />
               <span className="truncate">{account.alias}</span>

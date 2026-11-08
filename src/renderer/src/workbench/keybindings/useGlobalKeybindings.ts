@@ -10,7 +10,9 @@ import type { PanelId } from '@shared/panelLayout';
 import { resolveKeyEvent } from './resolver';
 import type { KeyEventLike } from './keyParser';
 import { isMacPlatform } from './platform';
+import { focusSidebarSearch, revealSidebarPanel } from '../sidebarFocus';
 import { hasPendingQuestion } from '../engineBlocks';
+import { hasOpenLocalPopover } from '../localPopovers';
 import { reportActionError } from '../notificationStore';
 import { t } from '../../i18n/uiLanguage';
 
@@ -76,17 +78,23 @@ export function runGlobalAction(actionId: string): void {
     case 'app.toggleInspector':
       store.toggleInspector();
       return;
+    case 'sidebar.focusSearch': {
+      revealSidebarPanel();
+      focusSidebarSearch();
+      return;
+    }
     case 'permission.allow':
       store.answerActivePermission({ behavior: 'allow' });
       return;
-    case 'permission.allowAlways': {
-      // Mismo alcance que el boton del panel (2.3b): concede Y guarda la regla por conversacion. Hasta
-      // ahora el atajo hacia un `allow` a secas —igual que la tecla de al lado— asi que el usuario
-      // pulsaba "Permitir siempre" y la siguiente peticion de la misma tool volvia a preguntar.
-      const tool = headPermission(store, store.activeTabId)?.view.toolLabel;
-      if (tool !== undefined) store.allowAlwaysAndAnswer(tool);
+    case 'permission.allowSession': {
+      // Solo si la petición lo admite (lo decide main por motor); si no, la tecla no hace nada.
+      if (headPermission(store, store.activeTabId)?.view.allowScopes.includes('session') === true) store.answerActivePermission({ behavior: 'allow', scope: 'session' });
       return;
     }
+    case 'permission.allowAlways':
+      // Abre el aviso de «Permitir siempre» (no contesta): la confirmación es un botón del aviso.
+      store.requestAlwaysAllow(store.activeTabId);
+      return;
     case 'permission.deny':
       store.answerActivePermission({ behavior: 'deny', message: 'Denegado por el usuario' });
       return;
@@ -115,7 +123,7 @@ export function useGlobalKeybindings(): void {
           permissionPending: headPermission(state, state.activeTabId) !== null,
           questionPending: hasPendingQuestion(headPermission(state, state.activeTabId), state.blocksByChat[state.activeTabId] ?? []),
           turnRunning: status === 'streaming' || status === 'needs_permission',
-          dialogOrPopoverOpen: dialogOpen,
+          dialogOrPopoverOpen: dialogOpen || hasOpenLocalPopover(),
           focusInEditableText,
         },
       });

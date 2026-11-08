@@ -17,7 +17,7 @@ function transcriptService(contents: () => string): TranscriptService {
   });
 }
 // El último lote con lo leído plegado como lo pliega el renderer: un corte por tiempo puede dejar el último
-// lote vacío y sin `reset` (H1 de DEVOLUCION-018).
+// lote vacío y sin `reset`.
 async function lastBatch(service: TranscriptService, from?: TranscriptTailPosition): Promise<TranscriptBatch> {
   const read = await readFoldedTranscript(service, 'fixture.jsonl', from);
   return { ...read.last, entries: read.entries, errors: read.errors, ...(read.reset ? { reset: true } : {}) };

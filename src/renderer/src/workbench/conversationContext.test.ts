@@ -3,7 +3,7 @@ import { importedConversationContext } from './conversationContext';
 import type { Block } from './types';
 
 const SOURCE = { title: 'Arreglar el login', fromProvider: 'Codex' };
-const user = (text: string): Block => ({ kind: 'user', id: 'u', text, time: '', attachments: [] });
+const user = (text: string): Block => ({ kind: 'user', id: 'u', text, time: '', attachments: [], nativeId: null });
 const agent = (text: string): Block => ({ kind: 'agent', id: 'a', runs: [{ code: false, text }], streaming: false });
 const tool = (command: string, isError = false, output = ''): Block => ({ kind: 'tool', id: 't', toolUseId: 'x', tool: 'Bash', command, isError, output: output === '' ? [] : [{ code: true, text: output }] } as unknown as Block);
 

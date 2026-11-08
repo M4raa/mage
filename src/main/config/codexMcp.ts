@@ -51,7 +51,7 @@ export interface CodexMcpServer {
   readonly config: Readonly<Record<string, unknown>> | null;
 }
 
-// Parsea la salida de `codex mcp list --json`. JSON invalido o que no es una lista LANZA con el tamaño
+// Parsea la salida de `codex mcp list --json`. JSON inválido o que no es una lista LANZA con el tamaño
 // (nunca el texto: lleva valores de env). Una entrada que no encaja se omite, no tumba al resto.
 export function parseCodexMcpList(text: string): readonly CodexMcpServer[] {
   let parsed: unknown;

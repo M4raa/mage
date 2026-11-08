@@ -143,7 +143,7 @@ function HandoffBody({
           <button
             onClick={copy}
             disabled={!canAct}
-            className="rounded-[7px] border border-mg-border-emph px-[12px] py-[6px] text-[11.5px] text-mg-body2 transition-colors duration-150 ease-out hover:bg-mg-hover disabled:opacity-50"
+            className="rounded-[7px] border border-mg-border-emph px-[12px] py-[6px] text-[11.5px] text-mg-body2 transition-colors duration-90 ease-out hover:bg-mg-hover disabled:opacity-50"
           >
             {copied ? t('prompt.handoff.copied') : t('prompt.handoff.copy')}
           </button>
