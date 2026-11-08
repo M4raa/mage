@@ -329,8 +329,10 @@ function messageContent(raw: unknown): unknown {
   return isRecord(message) ? message.content : null;
 }
 
+export const TRANSCRIPT_BLOCK_ID_PREFIX = 'tb-';
+
 function blockId(entryIndex: number, slot: number): string {
-  return `tb-${entryIndex}-${slot}`;
+  return `${TRANSCRIPT_BLOCK_ID_PREFIX}${entryIndex}-${slot}`;
 }
 
 // Hora local HH:MM del bloque de usuario (presentacion). Vacio si la entrada no trae timestamp.

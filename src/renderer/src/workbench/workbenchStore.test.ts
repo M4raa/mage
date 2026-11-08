@@ -9,7 +9,7 @@ import { createWorkbenchStore, type ConversationFolderChoice } from './workbench
 import { findLeafPath, singleLeaf } from './splitLayout';
 import { useNotificationStore } from './notificationStore';
 import { EMPTY_NOTIFICATIONS } from './notifications';
-import type { Account, Tab } from './types';
+import type { Account, Block, Tab } from './types';
 import type { AccountInfo } from '@shared/accounts';
 import { CODEX_PROVIDER_ID } from '@shared/providers';
 import { makeEntry } from '@testing/transcriptEntry';
@@ -3055,6 +3055,42 @@ describe('adoptLiveSession (U17)', () => {
     expect(store.getState().sessionIdByChat[adopted?.id ?? '']).toBe('s-host');
     expect(store.getState().statusByChat[adopted?.id ?? '']).toBe('streaming');
     expect(findLeafPath(store.getState().splitLayout, adopted?.id ?? '')).not.toBeNull();
+  });
+
+  const textBlock = (kind: 'user' | 'agent', id: string, text: string): Block => ({ kind, id, text, attachments: [] }) as unknown as Block;
+  const liveBlocks = [textBlock('user', 'blk1', 'hola'), textBlock('agent', 'blk2', 'ok')];
+  const transcript = [textBlock('user', 'tb-0-0', 'hola'), textBlock('agent', 'tb-1-0', 'ok')];
+
+  async function adoptedWith(blocks: readonly Block[], status: 'idle' | 'streaming') {
+    const store = mountedHost(vi.fn().mockResolvedValue(snapshotOf()));
+    await store.getState().adoptLiveSession(hostSession());
+    const adoptedId = store.getState().tabs.find((t) => t.id !== 'tab1')?.id ?? '';
+    store.setState((s) => ({ blocksByChat: { ...s.blocksByChat, [adoptedId]: blocks }, statusByChat: { ...s.statusByChat, [adoptedId]: status } }));
+    return { store, adoptedId };
+  }
+
+  it('hydrateBlocks_pestanaAdoptadaConBloquesEnVivoYTurnoAcabado_noDuplica', async () => {
+    const { store, adoptedId } = await adoptedWith(liveBlocks, 'idle');
+
+    store.getState().hydrateBlocks(adoptedId, transcript);
+
+    expect(store.getState().blocksByChat[adoptedId]?.map((b) => b.id)).toEqual(['tb-0-0', 'tb-1-0']);
+  });
+
+  it('hydrateBlocks_pestanaAdoptadaEnPlenoTurno_esperaYNoToca', async () => {
+    const { store, adoptedId } = await adoptedWith(liveBlocks, 'streaming');
+
+    store.getState().hydrateBlocks(adoptedId, transcript);
+
+    expect(store.getState().blocksByChat[adoptedId]?.map((b) => b.id)).toEqual(['blk1', 'blk2']);
+  });
+
+  it('hydrateBlocks_pestanaAdoptadaYaHidratada_noRepite', async () => {
+    const { store, adoptedId } = await adoptedWith(transcript, 'idle');
+
+    store.getState().hydrateBlocks(adoptedId, transcript);
+
+    expect(store.getState().blocksByChat[adoptedId]?.map((b) => b.id)).toEqual(['tb-0-0', 'tb-1-0']);
   });
 
   it('adoptLiveSession_alreadyBound_doesNothing', async () => {

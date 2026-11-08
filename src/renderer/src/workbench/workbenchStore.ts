@@ -7,7 +7,7 @@ import { buildUpdatedInput, parseAskUserQuestion } from '@shared/askUserQuestion
 import type { AdoptableSession, CloseAnswer, DivergeResult, NotificationTarget, PermissionMode, PermissionModesByProviderView, RewindAction, RewindPlan, RewindPointRef, SessionEventPayload } from '@shared/ipc';
 import type { TranscriptBatch } from '@shared/transcripts';
 import { divergeTitle, rewindPointOf } from './rewindActions';
-import { transcriptToBlocks } from './transcriptToBlocks';
+import { TRANSCRIPT_BLOCK_ID_PREFIX, transcriptToBlocks } from './transcriptToBlocks';
 import { defaultModeOf, hasPermissionModes, permissionCycleForProvider } from './stepSliderModel';
 import { IDLE_UPDATE_STATE, type UpdateState } from '@shared/update';
 import { isPermissionMode, MAIN_WINDOW_ID, PERMISSION_MODES } from '@shared/ipc';
@@ -1345,6 +1345,10 @@ async function adoptHostSessionsIfMain(mage: MageClient, get: () => WorkbenchSta
 // Pestañas con un rewind pedido desde aquí: su `conversation_rewound` ya lo trata `applyRewind` con la proyección.
 const rewindsInFlight = new Set<string>();
 
+// U17: pestañas adoptadas del host. Hasta hidratarse solo tienen lo que llegó en vivo.
+// ponytail: no se poda al cerrar (ids que no se reutilizan); limpiar en closeTab si algún día pesa.
+const adoptedTabIds = new Set<string>();
+
 // Alta de la pestaña adoptada SIN robar el foco: entra en el panel enfocado pero ni su pestaña activa ni
 // la cuenta activa cambian. Sin ninguna pestaña, pasa a ser la activa como cualquier pestaña de un panel vacío.
 function addBackgroundTab(s: WorkbenchState, tab: Tab): Partial<WorkbenchState> {
@@ -1357,6 +1361,7 @@ function addBackgroundTab(s: WorkbenchState, tab: Tab): Partial<WorkbenchState> 
 // Deshace el alta de una pestaña adoptada cuyo `attachSession` falló: como `closeTab`, pero sin cerrar la
 // sesión de main (sigue viva para la terminal).
 function removeAdoptedTab(set: SetFn, tabId: string): void {
+  adoptedTabIds.delete(tabId);
   disposeTranscriptStore(tabId);
   set((s) => {
     const activeTabId = s.activeTabId === tabId ? nextActiveAfterClose(s.tabs, s.splitLayout, tabId) : s.activeTabId;
@@ -1398,6 +1403,7 @@ async function adoptLiveSessionInto(mage: MageClient, get: () => WorkbenchState,
     set((s) => addBackgroundTab(s, tab));
   }
   set((s) => ({ sessionIdByChat: { ...s.sessionIdByChat, [tabId]: session.sessionId } }));
+  adoptedTabIds.add(tabId);
   let snapshot: ConversationSnapshot;
   try {
     snapshot = await mage.attachSession(session.sessionId);
@@ -1426,6 +1432,7 @@ export function createWorkbenchStore(mage: MageClient) {
   clearAutoContinueTimer();
   // Lo mismo con los `/rename` silenciosos: los recuentos son de las sesiones del store anterior.
   silentRenamesBySession.clear();
+  adoptedTabIds.clear();
   gitTrustAsked.clear();
   resetPrActionsState();
   resetPrPanelState();
@@ -2600,6 +2607,11 @@ export function createWorkbenchStore(mage: MageClient) {
         // `openConversation` ya hace focusPrompt(). Anteponer es lo correcto en los dos casos, y
         // sigue siendo idempotente: si ya se hidrato, `vivos` empieza por esos mismos bloques.
         if (vivos.length === 0) return { blocksByChat: { ...s.blocksByChat, [tabId]: blocks } };
+        // U17: una pestaña adoptada sin historial hidratado solo tiene bloques EN VIVO, que su transcripción ya contiene. Con
+        // el turno acabado la transcripción los sustituye (anteponerla duplicaba la respuesta); en pleno turno se espera.
+        if (adoptedTabIds.has(tabId) && !vivos.some((b) => b.id.startsWith(TRANSCRIPT_BLOCK_ID_PREFIX))) {
+          return (s.statusByChat[tabId] ?? 'idle') === 'idle' ? { blocksByChat: { ...s.blocksByChat, [tabId]: blocks } } : {};
+        }
         // Conversacion NUEVA con contenido ya en pantalla: no hay nada que rescatar (auditoria B.1.4,
         // REPRODUCIDO en `workbenchStore.test.ts`). B6 se diseño para la conversacion REANUDADA, donde
         // el historial vive en disco y el chat arranca vacio. En una nueva, el primer `open()` no
