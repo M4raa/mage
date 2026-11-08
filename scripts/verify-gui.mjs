@@ -10540,6 +10540,10 @@ const CHECKS = [
         await page.keyboard.press('Escape');
         await listbox.waitFor({ state: 'detached', timeout: CONFIG.actionTimeoutMs });
         const trasPrimero = await status();
+        // `useLocalPopover` descuenta el popover en un `setTimeout(0)` aplazado (a propósito: el Escape que lo cierra no
+        // debe interrumpir). Medido: un Escape enviado justo tras el desmontaje llega antes que ese temporizador (la
+        // entrada tiene prioridad) y el atajo global aún ve el popover. Otro `setTimeout(0)` en la página corre detrás.
+        await page.evaluate(() => new Promise((done) => setTimeout(done, 0)));
         const inicio = Date.now();
         await page.keyboard.press('Escape');
         await page.waitForFunction((id) => window.__mageDev.store.getState().statusByChat[id] !== 'streaming', tabId, { timeout: CONFIG.actionTimeoutMs });
