@@ -2,7 +2,7 @@
 
 What changes from one version to the next, written for the people who use the app. The most recent version is at the top. Mage shows these same notes in its what's-new tab after an update, and in Settings › Release notes.
 
-## 0.1.4 — 2026-11-07
+## 0.1.4 — 2026-11-08
 
 ### Added
 - **Rewind, Retry and Branch.** From a message's bubble you can go back to that point in the conversation. With Claude you can also restore the files (checkbox off by default; it does not cover what was written with Bash). With Codex the conversation is rewound, not the files, and you can save a copy first. **Retry** repeats a turn and **Branch** opens a new conversation from that message ("Branch of …"). Whatever you had in the queue goes back to a draft.
@@ -17,12 +17,21 @@ What changes from one version to the next, written for the people who use the ap
 - **New interface:** the sidebar gathers the conversations of all your accounts (Pinned, Projects, No project, Private) with filters and search (Ctrl/Cmd+K); redesigned tab, header and prompt box; `@` mentions of files, images and PDFs; a **pull requests** panel that tells apart PRs from different repositories with the same number; references to the chat's plan ("F0.4", "§3.4") become links; animated icons that respect "reduce motion".
 - **The chat is much smoother** with long conversations: switching to a tab with thousands of messages goes from more than 1.6 s to about 130 ms.
 - **Imported themes** with better contrast: Mage derives the borders, the selection and the focus when the theme does not tell them apart, and the text on the selection is readable (at least 4.5:1). An imported light theme now paints its colors.
+- **Four buttons on every permission prompt:** "Allow once", "Allow for this session", "Always allow" and "Deny" (keys 1–4). "Always allow" exists only in Claude: it saves the rule, per command, in that account's settings and warns first that it will apply to all its new conversations. Codex and your own providers have "once", "this session" and "deny". Gemini (agy) doesn't ask for permission: it applies its rules without asking. "This session" and "always" aren't offered for questions or for `git push`, `git commit` or `gh pr create`.
+- **Attach images** with a button in the prompt bar or by dropping them on the chat (as well as pasting them).
+- **Snapping when resizing** panes and tools: the divider snaps to 25, 33, 50, 67 and 75 % (hold Alt or Shift to turn it off).
+- **Delegated sessions inherit** the permission mode, effort and model of the session that starts them, unless the request says otherwise ("with sonnet, high effort and plan mode"). They can never have more permissions than their creator.
+- The **Files** panel is grouped into Created, Edited, Read and Mentioned, also for Codex and agy.
+- Typing `/` in the middle of a sentence suggests skills and project or plugin commands.
 
 ### Changed
 - The Windows installer is named `mage-<version>.exe` (it was `mage-setup-beta-…`).
 - On Linux the package is called **`mage-desktop`**: Debian and Ubuntu already have another package named `mage`. If you had the 0.1.3 `.deb`, uninstall it first (`sudo apt remove mage`).
 - Deleting a Codex conversation really deletes it on disk (before, it only disappeared from the list), along with its revisions.
 - The Windows installer asks for the language and Mage uses it on its first launch.
+- `/rename <name>` renames the tab instantly, even while a turn is running.
+- Copying a message with images copies the text and the first image (the system clipboard holds only one). In the text, each `[Imagen N]` image you added with the button or by dragging it carries its path; pasted ones don't.
+- The default permission keys are now 1/2/3/4 (Deny moves from 3 to 4). Shortcuts you changed are kept.
 
 ### Fixed
 - Conversations created from the terminal or by another session always use their own account and model; if Mage cannot tell which, the tab becomes read-only (it never charges another account).
@@ -36,11 +45,23 @@ What changes from one version to the next, written for the people who use the ap
 - `mage chat --account` accepts the name you gave in `mage account add --name`, and host errors come out in the terminal's language.
 - Deleting a conversation also deletes what Mage kept of its rewinds.
 - Migrating a new chat with no messages no longer makes the tab disappear.
+- Gemini (agy) no longer fails to start with "--model … conflicts with --effort": for models that already carry the effort in their name, the effort control is hidden.
+- Switching account on a new tab also switches its provider and model (the message could previously go out on the old account).
+- Continuing a chat on another account keeps it in the same place, with its title and your unsent text.
+- Sending with Ctrl+Enter right as the turn ends no longer leaves the tab busy with a 0-token turn, nor loses the message: Mage no longer causes the CLI to drop it and, if it still isn't submitted, says so and puts it back in the prompt.
+- **Costs for API-key accounts were over-counted** in every conversation longer than one turn (the CLI reports a cumulative cost and Mage added it up on every turn). They are counted correctly from this version on; see "Known limitations".
+- In tabs created from the terminal or by another session, the reply no longer appears twice.
+- The selected model in the pickers is readable without hovering.
+- A list bullet in the prompt no longer disappears when the cursor is next to it.
 
 ### Security
 - The built-in browser does not share cookies or session with yours, has no access to Mage and only opens `http(s)` and `localhost`.
 - Mage's MCP server only serves Mage's own sessions (each with its own credential) and each one only sees the sessions it created.
 - A terminal client checks that the host is Mage's before sending it anything.
+- The terminal (`mage chat`) and any other process can no longer switch a session to "Bypass permissions": only the window can.
+- The Mage window no longer loads outside pages (for example, when a link is dropped outside the chat).
+- Mage no longer passes to agents the Microsoft Foundry variables, the Bedrock token, Anthropic custom headers, `OPENAI_BASE_URL` or `GOOGLE_GENAI_USE_VERTEXAI` from your environment (they could change who gets billed).
+- The MCP library is updated to 1.32.2, which fixes forwarding headers when following a redirect to another server.
 
 ### Known limitations
 - The tools that let the agent drive the browser (navigate, click, type, capture) are not in this version: they will come in 0.1.5. The browser panel and the pen are.
@@ -49,6 +70,11 @@ What changes from one version to the next, written for the people who use the ap
 - While a windowless Mage is running, the shortcut does not open the window: close it with `mage stop`.
 - Linux: only tested on WSL without a desktop (Ubuntu 26.04, Debian 13, Arch). The rpm is generated untested.
 - Installing and auto-updating from 0.1.3 on Windows has not been tested on a clean machine.
+- Usage totals for API-key accounts saved before this version are inflated and are not recalculated. They only go back to zero if you remove the account and add it again. A conversation that already existed adds its cumulative cost once, on its first turn after updating.
+- The cost of "Keep Claude's cache warm" on API-key accounts is still over-counted: fixed in 0.1.5.
+- All Claude accounts share the conversations, skills, plugins, commands and agents in `~/.claude`, and a new account inherits the main account's permission rules; this can't be separated per account yet.
+- With Codex, a delegated session's translation of Claude's permission mode has only been tested with tests.
+- Deleting an `[Imagen N]` token from the text doesn't remove the attached image; remove it from its thumbnail.
 
 ## 0.1.3 — 2026-11-02
 
